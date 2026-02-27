@@ -38,8 +38,8 @@ use crate::{
         msm::AssignedMsm,
         transcript_gadget::TranscriptGadget,
         utils::{
-            evaluate_interpolated_polynomial, inner_product, mul_add, truncated_powers,
-            AssignedBoundedScalar,
+            evaluate_interpolated_polynomial_from_x_minus_xs, inner_product, mul_add, prod,
+            truncated_powers, AssignedBoundedScalar,
         },
         AssignedAccumulator, SelfEmulation,
     },
@@ -388,16 +388,21 @@ where
         .zip(q_evals_on_x3.iter())
         .rev()
         .try_fold(zero, |acc_eval, ((points, evals), proof_eval)| {
-            let r_eval =
-                evaluate_interpolated_polynomial(layouter, scalar_chip, points, evals, &x3.scalar)?;
+            let x3_minus_points = points
+                .iter()
+                .map(|point| scalar_chip.sub(layouter, &x3.scalar, point))
+                .collect::<Result<Vec<_>, Error>>()?;
+
+            let r_eval = evaluate_interpolated_polynomial_from_x_minus_xs(
+                layouter,
+                scalar_chip,
+                points,
+                evals,
+                &x3_minus_points,
+            )?;
 
             // eval = (proof_eval - r_eval) / prod_i (x3 - point_i)
-            let mut den = scalar_chip.sub(layouter, &x3.scalar, &points[0])?;
-            for point in points.iter().skip(1) {
-                // TODO: This can be optimized with add_and_double_mul
-                let x3_minus_point = scalar_chip.sub(layouter, &x3.scalar, point)?;
-                den = scalar_chip.mul(layouter, &den, &x3_minus_point, None)?;
-            }
+            let den = prod::<S::F>(layouter, scalar_chip, &x3_minus_points)?;
             let mut eval = scalar_chip.sub(layouter, proof_eval, &r_eval)?;
             eval = scalar_chip.div(layouter, &eval, &den)?;
 

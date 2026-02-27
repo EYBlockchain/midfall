@@ -43,7 +43,7 @@ pub(crate) fn permutation_expressions<S: SelfEmulation>(
     instance_evals: &[AssignedNative<S::F>],
     l_0: &AssignedNative<S::F>,
     l_last: &AssignedNative<S::F>,
-    l_blind: &AssignedNative<S::F>,
+    active_rows: &AssignedNative<S::F>,
     beta: &AssignedNative<S::F>,
     gamma: &AssignedNative<S::F>,
     x: &AssignedNative<S::F>,
@@ -177,12 +177,7 @@ pub(crate) fn permutation_expressions<S: SelfEmulation>(
 
             // (left - &right) * (S::F::ONE - &(l_last + &l_blind))
             let aux1 = scalar_chip.sub(layouter, &left, &right)?;
-            let aux2 = scalar_chip.linear_combination(
-                layouter,
-                &[(-S::F::ONE, l_last.clone()), (-S::F::ONE, l_blind.clone())],
-                S::F::ONE,
-            )?;
-            scalar_chip.mul(layouter, &aux1, &aux2, None)
+            scalar_chip.mul(layouter, &aux1, active_rows, None)
         })
         .collect::<Result<Vec<AssignedNative<S::F>>, Error>>()?;
 

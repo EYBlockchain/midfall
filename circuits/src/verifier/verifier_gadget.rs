@@ -28,10 +28,13 @@ use midnight_proofs::{
     poly::{CommitmentLabel, EvaluationDomain, Rotation},
 };
 
+#[cfg(feature = "truncated-challenges")]
+use crate::verifier::utils::truncate;
 use crate::{
     field::AssignedNative,
     instructions::{
-        assignments::AssignmentInstructions, ArithInstructions, PublicInputInstructions,
+        assignments::AssignmentInstructions, hash::HashInstructions, ArithInstructions,
+        PublicInputInstructions,
     },
     verifier::{
         expressions::{
@@ -43,7 +46,10 @@ use crate::{
         permutation::{self, evaluate_permutation_common},
         transcript_gadget::TranscriptGadget,
         trash,
-        utils::{evaluate_lagrange_polynomials, inner_product, sum, AssignedBoundedScalar},
+        utils::{
+            evaluate_lagrange_polynomials_from_xn_minus_one, inner_product, sum,
+            AssignedBoundedScalar,
+        },
         vanishing, Accumulator, AssignedAccumulator, AssignedVk, SelfEmulation, VerifyingKey,
     },
 };
@@ -356,10 +362,33 @@ impl<S: SelfEmulation> VerifierGadget<S> {
         trace: super::traces::VerifierTrace<S>,
         assigned_committed_instances: &[S::AssignedPoint],
         assigned_instances: &[&[AssignedNative<S::F>]],
-        mut transcript: TranscriptGadget<S>,
+        transcript: TranscriptGadget<S>,
     ) -> Result<AssignedAccumulator<S>, Error> {
+        let (acc, _) = self.verify_algebraic_constraints_with_digest(
+            layouter,
+            assigned_vk,
+            trace,
+            assigned_committed_instances,
+            assigned_instances,
+            transcript,
+        )?;
+        Ok(acc)
+    }
+
+    /// Same as [Self::verify_algebraic_constraints], also returning a digest of
+    /// the fully absorbed proof transcript.
+    pub fn verify_algebraic_constraints_with_digest(
+        &self,
+        layouter: &mut impl Layouter<S::F>,
+        assigned_vk: &AssignedVk<S>,
+        trace: super::traces::VerifierTrace<S>,
+        assigned_committed_instances: &[S::AssignedPoint],
+        assigned_instances: &[&[AssignedNative<S::F>]],
+        mut transcript: TranscriptGadget<S>,
+    ) -> Result<(AssignedAccumulator<S>, AssignedNative<S::F>), Error> {
         let cs = &assigned_vk.cs;
         let k = assigned_vk.domain.k();
+        let n = 1u64 << k;
         let nb_committed_instances = assigned_committed_instances.len();
 
         let super::traces::VerifierTrace {
@@ -385,22 +414,59 @@ impl<S: SelfEmulation> VerifierGadget<S> {
         // high probability
         let x = transcript.squeeze_challenge(layouter)?;
 
+        let splitting_factor = ArithInstructions::pow(&self.scalar_chip, layouter, &x, n - 1)?;
+        let xn = self.scalar_chip.mul(layouter, &x, &splitting_factor, None)?;
+        let xn_minus_one = self.scalar_chip.add_constant(layouter, &xn, -S::F::ONE)?;
+
+        let blinding_factors = cs.blinding_factors();
+        let last_rotation = -((blinding_factors + 1) as i32);
+        let (min_rotation, max_rotation) =
+            cs.instance_queries().iter().fold((0, 0), |(min, max), (_, rotation)| {
+                (
+                    std::cmp::min(min, rotation.0),
+                    std::cmp::max(max, rotation.0),
+                )
+            });
+        let start = std::cmp::min(-max_rotation, last_rotation);
+        let end = cs
+            .instance_queries()
+            .iter()
+            .filter(|(column, _)| column.index() >= nb_committed_instances)
+            .map(|(column, rotation)| {
+                let instances = assigned_instances[column.index() - nb_committed_instances];
+                -rotation.0 + instances.len() as i32
+            })
+            .max()
+            .unwrap_or(max_rotation.abs() + min_rotation.abs() + 1)
+            .max(1);
+
+        let l_i_s = evaluate_lagrange_polynomials_from_xn_minus_one(
+            layouter,
+            &self.scalar_chip,
+            n,
+            assigned_vk.domain.get_omega(),
+            start..end,
+            &x,
+            &xn_minus_one,
+        )?;
+
+        let l_0 = l_i_s[(0 - start) as usize].clone();
+        let l_last = l_i_s[(last_rotation - start) as usize].clone();
+        let l_blind = if blinding_factors == 0 {
+            self.scalar_chip.assign_fixed(layouter, S::F::ZERO)?
+        } else {
+            let blind_start = (-(blinding_factors as i32) - start) as usize;
+            let blind_end = (-1 - start) as usize;
+            sum::<S::F>(layouter, &self.scalar_chip, &l_i_s[blind_start..=blind_end])?
+        };
+        let active_rows = self.scalar_chip.linear_combination(
+            layouter,
+            &[(-S::F::ONE, l_last.clone()), (-S::F::ONE, l_blind.clone())],
+            S::F::ONE,
+        )?;
+
         let instance_evals = {
             let instance_queries = cs.instance_queries();
-            let min_rotation = instance_queries.iter().map(|(_, rot)| rot.0).min().unwrap();
-            let max_rotation = instance_queries.iter().map(|(_, rot)| rot.0).max().unwrap();
-
-            let max_instance_len =
-                assigned_instances.iter().map(|instance| instance.len()).max().unwrap_or(0);
-
-            let l_i_s = evaluate_lagrange_polynomials(
-                layouter,
-                &self.scalar_chip,
-                1 << k,
-                assigned_vk.domain.get_omega(),
-                (-max_rotation)..(max_instance_len as i32 + min_rotation.abs()),
-                &x,
-            )?;
 
             instance_queries
                 .iter()
@@ -409,7 +475,7 @@ impl<S: SelfEmulation> VerifierGadget<S> {
                         transcript.read_scalar(layouter)
                     } else {
                         let instances = assigned_instances[column.index() - nb_committed_instances];
-                        let offset = (max_rotation - rotation.0) as usize;
+                        let offset = (-rotation.0 - start) as usize;
                         inner_product(
                             layouter,
                             &self.scalar_chip,
@@ -449,20 +515,6 @@ impl<S: SelfEmulation> VerifierGadget<S> {
         // This check ensures the circuit is satisfied so long as the polynomial
         // commitments open to the correct values.
         let vanishing = {
-            let blinding_factors = cs.blinding_factors();
-
-            let l_evals = evaluate_lagrange_polynomials(
-                layouter,
-                &self.scalar_chip,
-                1 << k,
-                assigned_vk.domain.get_omega(),
-                (-((blinding_factors + 1) as i32))..1,
-                &x,
-            )?;
-            assert_eq!(l_evals.len(), 2 + blinding_factors);
-            let l_last = l_evals[0].clone();
-            let l_blind = sum::<S::F>(layouter, &self.scalar_chip, &l_evals[1..=blinding_factors])?;
-            let l_0 = l_evals[1 + blinding_factors].clone();
             let flattened_lookups =
                 cs.lookups().iter().flat_map(|l| l.split(cs.degree())).collect::<Vec<_>>();
 
@@ -495,7 +547,7 @@ impl<S: SelfEmulation> VerifierGadget<S> {
                     &instance_evals,
                     &l_0,
                     &l_last,
-                    &l_blind,
+                    &active_rows,
                     &beta,
                     &gamma,
                     &x,
@@ -516,7 +568,7 @@ impl<S: SelfEmulation> VerifierGadget<S> {
                             &instance_evals,
                             &l_0,
                             &l_last,
-                            &l_blind,
+                            &active_rows,
                             &theta,
                             &beta,
                         )
@@ -552,9 +604,6 @@ impl<S: SelfEmulation> VerifierGadget<S> {
                     .chain(evaluated_trashcan_ids)
                     .collect::<Vec<_>>()
             };
-            let splitting_factor =
-                ArithInstructions::pow(&self.scalar_chip, layouter, &x, (1 << k) - 1)?;
-            let xn = self.scalar_chip.mul(layouter, &x, &splitting_factor, None)?;
             vanishing.verify(
                 layouter,
                 &self.scalar_chip,
@@ -647,7 +696,122 @@ impl<S: SelfEmulation> VerifierGadget<S> {
             queries,
         )?;
 
-        Ok(multiopen_check)
+        // Bind all absorbed proof elements, including PCS openings.
+        let digest = transcript.squeeze_challenge(layouter)?;
+
+        Ok((multiopen_check, digest))
+    }
+
+    /// Prepares a plonk proof into a PCS instance and returns a transcript
+    /// digest that can be used to derive a cheap batching scalar.
+    pub fn prepare_with_digest(
+        &self,
+        layouter: &mut impl Layouter<S::F>,
+        assigned_vk: &AssignedVk<S>,
+        assigned_committed_instances: &[S::AssignedPoint],
+        assigned_instances: &[&[AssignedNative<S::F>]],
+        proof: Value<Vec<u8>>,
+    ) -> Result<(AssignedAccumulator<S>, AssignedNative<S::F>), Error> {
+        let (trace, transcript) = self.parse_trace(
+            layouter,
+            assigned_vk,
+            assigned_committed_instances,
+            assigned_instances,
+            proof,
+        )?;
+
+        self.verify_algebraic_constraints_with_digest(
+            layouter,
+            assigned_vk,
+            trace,
+            assigned_committed_instances,
+            assigned_instances,
+            transcript,
+        )
+    }
+
+    /// Prepares and batches two proofs that share the same verifying key.
+    pub fn prepare_two_same_vk(
+        &self,
+        layouter: &mut impl Layouter<S::F>,
+        assigned_vk: &AssignedVk<S>,
+        proof1_committed_instances: &[S::AssignedPoint],
+        proof1_instances: &[&[AssignedNative<S::F>]],
+        proof1: Value<Vec<u8>>,
+        proof2_committed_instances: &[S::AssignedPoint],
+        proof2_instances: &[&[AssignedNative<S::F>]],
+        proof2: Value<Vec<u8>>,
+    ) -> Result<AssignedAccumulator<S>, Error> {
+        let (acc1, digest1) = self.prepare_with_digest(
+            layouter,
+            assigned_vk,
+            proof1_committed_instances,
+            proof1_instances,
+            proof1,
+        )?;
+        let (acc2, digest2) = self.prepare_with_digest(
+            layouter,
+            assigned_vk,
+            proof2_committed_instances,
+            proof2_instances,
+            proof2,
+        )?;
+
+        let r = self.sponge_chip.hash(layouter, &[digest1, digest2])?;
+        #[cfg(feature = "truncated-challenges")]
+        let r = truncate::<S::F>(layouter, &self.scalar_chip, &r)?;
+        #[cfg(not(feature = "truncated-challenges"))]
+        let r = AssignedBoundedScalar::new(&r, None);
+
+        AssignedAccumulator::accumulate_two_with_r(layouter, &self.scalar_chip, &acc1, &acc2, &r)
+    }
+
+    /// Same as [Self::prepare_two_same_vk], collapsing each proof accumulator
+    /// before batching. This is the preferred recursive path.
+    pub fn prepare_two_same_vk_collapsed(
+        &self,
+        layouter: &mut impl Layouter<S::F>,
+        assigned_vk: &AssignedVk<S>,
+        proof1_committed_instances: &[S::AssignedPoint],
+        proof1_instances: &[&[AssignedNative<S::F>]],
+        proof1: Value<Vec<u8>>,
+        proof2_committed_instances: &[S::AssignedPoint],
+        proof2_instances: &[&[AssignedNative<S::F>]],
+        proof2: Value<Vec<u8>>,
+    ) -> Result<AssignedAccumulator<S>, Error> {
+        let (mut acc1, digest1) = self.prepare_with_digest(
+            layouter,
+            assigned_vk,
+            proof1_committed_instances,
+            proof1_instances,
+            proof1,
+        )?;
+        acc1.collapse(layouter, &self.curve_chip, &self.scalar_chip)?;
+
+        let (mut acc2, digest2) = self.prepare_with_digest(
+            layouter,
+            assigned_vk,
+            proof2_committed_instances,
+            proof2_instances,
+            proof2,
+        )?;
+        acc2.collapse(layouter, &self.curve_chip, &self.scalar_chip)?;
+
+        let r = self.sponge_chip.hash(layouter, &[digest1, digest2])?;
+        #[cfg(feature = "truncated-challenges")]
+        let r = truncate::<S::F>(layouter, &self.scalar_chip, &r)?;
+        #[cfg(not(feature = "truncated-challenges"))]
+        let r = AssignedBoundedScalar::new(&r, None);
+
+        let mut batched = AssignedAccumulator::accumulate_two_with_r(
+            layouter,
+            &self.scalar_chip,
+            &acc1,
+            &acc2,
+            &r,
+        )?;
+        batched.collapse(layouter, &self.curve_chip, &self.scalar_chip)?;
+        Ok(batched)
     }
 
     /// Prepares a plonk proof into a PCS instance that can be finalized or
@@ -666,22 +830,14 @@ impl<S: SelfEmulation> VerifierGadget<S> {
         assigned_instances: &[&[AssignedNative<S::F>]],
         proof: Value<Vec<u8>>,
     ) -> Result<AssignedAccumulator<S>, Error> {
-        let (trace, transcript) = self.parse_trace(
+        let (acc, _) = self.prepare_with_digest(
             layouter,
             assigned_vk,
             assigned_committed_instances,
             assigned_instances,
             proof,
         )?;
-
-        self.verify_algebraic_constraints(
-            layouter,
-            assigned_vk,
-            trace,
-            assigned_committed_instances,
-            assigned_instances,
-            transcript,
-        )
+        Ok(acc)
     }
 }
 
@@ -692,7 +848,9 @@ pub(crate) mod tests {
     use midnight_proofs::{
         circuit::SimpleFloorPlanner,
         dev::MockProver,
-        plonk::{create_proof, keygen_pk, keygen_vk_with_k, prepare, Circuit, Error},
+        plonk::{
+            create_proof, keygen_pk, keygen_vk_with_k, prepare, prepare_with_digest, Circuit, Error,
+        },
         poly::kzg::{params::ParamsKZG, KZGCommitmentScheme},
         transcript::{CircuitTranscript, Transcript},
     };
@@ -900,6 +1058,84 @@ pub(crate) mod tests {
         }
     }
 
+    #[derive(Clone, Debug)]
+    pub struct TwoProofTestCircuit {
+        inner_vk: (EvaluationDomain<F>, ConstraintSystem<F>, Value<F>), // (domain, cs, vk_repr)
+        inner_committed_instance_1: Value<C>,
+        inner_instances_1: Value<[F; NB_INNER_INSTANCES]>,
+        inner_proof_1: Value<Vec<u8>>,
+        inner_committed_instance_2: Value<C>,
+        inner_instances_2: Value<[F; NB_INNER_INSTANCES]>,
+        inner_proof_2: Value<Vec<u8>>,
+    }
+
+    impl Circuit<F> for TwoProofTestCircuit {
+        type Config = (
+            NativeConfig,
+            P2RDecompositionConfig,
+            ForeignEccConfig<C>,
+            PoseidonConfig<F>,
+        );
+        type FloorPlanner = SimpleFloorPlanner;
+        type Params = ();
+
+        fn without_witnesses(&self) -> Self {
+            unreachable!()
+        }
+
+        fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+            TestCircuit::configure(meta)
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<F>,
+        ) -> Result<(), Error> {
+            let native_chip = <NativeChip<F> as ComposableChip<F>>::new(&config.0, &());
+            let core_decomp_chip = P2RDecompositionChip::new(&config.1, &16);
+            let native_gadget = NativeGadget::new(core_decomp_chip.clone(), native_chip.clone());
+            let curve_chip = ForeignEccChip::new(&config.2, &native_gadget, &native_gadget);
+            let poseidon_chip = PoseidonChip::new(&config.3, &native_chip);
+
+            let verifier_chip =
+                VerifierGadget::<S>::new(&curve_chip, &native_gadget, &poseidon_chip);
+
+            let assigned_inner_vk: AssignedVk<S> = verifier_chip.assign_vk_as_public_input(
+                &mut layouter,
+                "inner_vk",
+                &self.inner_vk.0,
+                &self.inner_vk.1,
+                self.inner_vk.2,
+            )?;
+
+            let assigned_committed_instance_1 =
+                curve_chip.assign(&mut layouter, self.inner_committed_instance_1)?;
+            let assigned_committed_instance_2 =
+                curve_chip.assign(&mut layouter, self.inner_committed_instance_2)?;
+
+            let assigned_inner_pi_1 = native_gadget
+                .assign_many(&mut layouter, &self.inner_instances_1.transpose_array())?;
+            let assigned_inner_pi_2 = native_gadget
+                .assign_many(&mut layouter, &self.inner_instances_2.transpose_array())?;
+
+            let inner_proof_acc = verifier_chip.prepare_two_same_vk_collapsed(
+                &mut layouter,
+                &assigned_inner_vk,
+                &[assigned_committed_instance_1],
+                &[&assigned_inner_pi_1],
+                self.inner_proof_1.clone(),
+                &[assigned_committed_instance_2],
+                &[&assigned_inner_pi_2],
+                self.inner_proof_2.clone(),
+            )?;
+
+            verifier_chip.constrain_as_public_input(&mut layouter, &inner_proof_acc)?;
+
+            core_decomp_chip.load(&mut layouter)
+        }
+    }
+
     #[test]
     fn test_verify_proof() {
         let mut rng = ChaCha8Rng::from_seed([0u8; 32]);
@@ -958,7 +1194,7 @@ pub(crate) mod tests {
         // The inner proof is ready.
         // Now, let us make a proof that we know an inner proof.
 
-        const K: u32 = 18;
+        const K: u32 = 19;
 
         let mut public_inputs = AssignedVk::<S>::as_public_input(&inner_vk);
         public_inputs.extend(AssignedAccumulator::as_public_input(&inner_acc));
@@ -972,6 +1208,98 @@ pub(crate) mod tests {
             inner_committed_instance: Value::known(C::identity()),
             inner_instances: Value::known([output]),
             inner_proof: Value::known(inner_proof),
+        };
+
+        let prover =
+            MockProver::run(K, &circuit, vec![vec![], public_inputs]).expect("MockProver failed");
+        prover.assert_satisfied();
+    }
+
+    #[test]
+    fn test_prepare_two_same_vk_collapsed() {
+        let mut rng = ChaCha8Rng::from_seed([1u8; 32]);
+
+        let inner_k = 10;
+        let inner_params = ParamsKZG::unsafe_setup(inner_k, &mut rng);
+        let inner_vk = keygen_vk_with_k(&inner_params, &InnerCircuit::default(), inner_k).unwrap();
+        let inner_pk = keygen_pk(inner_vk.clone(), &InnerCircuit::default()).unwrap();
+
+        let preimage = [F::random(&mut rng), F::random(&mut rng)];
+        let output = <PoseidonChip<F> as HashCPU<F, F>>::hash(&preimage);
+        let inner_public_inputs = vec![output];
+
+        let inner_proof = {
+            let mut transcript = CircuitTranscript::<PoseidonState<F>>::init();
+            create_proof::<
+                F,
+                KZGCommitmentScheme<E>,
+                CircuitTranscript<PoseidonState<F>>,
+                InnerCircuit,
+            >(
+                &inner_params,
+                &inner_pk,
+                &[InnerCircuit::from_witness(preimage)],
+                1,
+                &[&[&[], &inner_public_inputs]],
+                &mut rng,
+                &mut transcript,
+            )
+            .unwrap_or_else(|_| panic!("Problem creating the inner proof"));
+            transcript.finalize()
+        };
+
+        let fixed_bases = crate::verifier::fixed_bases::<S>("inner_vk", &inner_vk);
+
+        let (dual_msm_1, digest_1) = {
+            let mut transcript =
+                CircuitTranscript::<PoseidonState<F>>::init_from_bytes(&inner_proof);
+            prepare_with_digest::<F, KZGCommitmentScheme<E>, CircuitTranscript<PoseidonState<F>>>(
+                &inner_vk,
+                &[&[C::identity()]],
+                &[&[&inner_public_inputs]],
+                &mut transcript,
+            )
+            .expect("Problem preparing the first inner proof")
+        };
+        let (dual_msm_2, digest_2) = {
+            let mut transcript =
+                CircuitTranscript::<PoseidonState<F>>::init_from_bytes(&inner_proof);
+            prepare_with_digest::<F, KZGCommitmentScheme<E>, CircuitTranscript<PoseidonState<F>>>(
+                &inner_vk,
+                &[&[C::identity()]],
+                &[&[&inner_public_inputs]],
+                &mut transcript,
+            )
+            .expect("Problem preparing the second inner proof")
+        };
+        assert!(dual_msm_1.clone().check(&inner_params.verifier_params()));
+        assert!(dual_msm_2.clone().check(&inner_params.verifier_params()));
+
+        let mut acc_1 = Accumulator::<S>::from_dual_msm(dual_msm_1, "inner_vk", &fixed_bases);
+        let mut acc_2 = Accumulator::<S>::from_dual_msm(dual_msm_2, "inner_vk", &fixed_bases);
+        acc_1.collapse();
+        acc_2.collapse();
+        let r = Accumulator::<S>::batching_scalar_from_digests(digest_1, digest_2);
+        let mut inner_acc = Accumulator::<S>::accumulate_two_with_r(&acc_1, &acc_2, r);
+        inner_acc.collapse();
+        assert!(inner_acc.check(&inner_params.s_g2().into(), &fixed_bases));
+
+        const K: u32 = 19;
+        let mut public_inputs = AssignedVk::<S>::as_public_input(&inner_vk);
+        public_inputs.extend(AssignedAccumulator::as_public_input(&inner_acc));
+
+        let circuit = TwoProofTestCircuit {
+            inner_vk: (
+                inner_vk.get_domain().clone(),
+                inner_vk.cs().clone(),
+                Value::known(inner_vk.transcript_repr()),
+            ),
+            inner_committed_instance_1: Value::known(C::identity()),
+            inner_instances_1: Value::known([output]),
+            inner_proof_1: Value::known(inner_proof.clone()),
+            inner_committed_instance_2: Value::known(C::identity()),
+            inner_instances_2: Value::known([output]),
+            inner_proof_2: Value::known(inner_proof),
         };
 
         let prover =

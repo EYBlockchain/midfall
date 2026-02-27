@@ -34,7 +34,11 @@ use midnight_circuits::{
 };
 use midnight_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
-    plonk::{create_proof, keygen_pk, keygen_vk_with_k, prepare, Circuit, ConstraintSystem, Error},
+    dev::MockProver,
+    plonk::{
+        create_proof, keygen_pk, keygen_vk_with_k, prepare, prepare_with_digest, Circuit,
+        ConstraintSystem, Error,
+    },
     poly::{kzg::KZGCommitmentScheme, EvaluationDomain},
     transcript::{CircuitTranscript, Transcript},
 };
@@ -64,6 +68,18 @@ pub struct IvcCircuit {
     prev_state: Value<F>,
     prev_proof: Value<Vec<u8>>,
     prev_acc: Value<Accumulator<S>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct IvcTwoProofFoldCircuit {
+    self_vk: (EvaluationDomain<F>, ConstraintSystem<F>, Value<F>), // (domain, cs, vk_repr)
+    prev_state: Value<F>,
+    mid_state: Value<F>,
+    proof1: Value<Vec<u8>>,
+    proof2: Value<Vec<u8>>,
+    carry_acc: Value<Accumulator<S>>,
+    mid_acc: Value<Accumulator<S>>,
+    next_acc: Value<Accumulator<S>>,
 }
 
 fn configure_ivc_circuit(
@@ -235,6 +251,145 @@ impl Circuit<F> for IvcCircuit {
     }
 }
 
+impl Circuit<F> for IvcTwoProofFoldCircuit {
+    type Config = (
+        NativeConfig,
+        P2RDecompositionConfig,
+        ForeignEccConfig<C>,
+        PoseidonConfig<F>,
+    );
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        unreachable!()
+    }
+
+    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+        configure_ivc_circuit(meta)
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<F>,
+    ) -> Result<(), Error> {
+        let native_chip = <NativeChip<F> as ComposableChip<F>>::new(&config.0, &());
+        let core_decomp_chip = P2RDecompositionChip::new(&config.1, &(K as usize - 1));
+        let scalar_chip = NativeGadget::new(core_decomp_chip.clone(), native_chip.clone());
+        let curve_chip = { ForeignEccChip::new(&config.2, &scalar_chip, &scalar_chip) };
+        let poseidon_chip = PoseidonChip::new(&config.3, &native_chip);
+
+        let verifier_chip = VerifierGadget::new(&curve_chip, &scalar_chip, &poseidon_chip);
+
+        let self_vk_name = "self_vk";
+        let (self_domain, self_cs, self_vk_value) = &self.self_vk;
+        let assigned_self_vk: AssignedVk<S> = verifier_chip.assign_vk_as_public_input(
+            &mut layouter,
+            self_vk_name,
+            self_domain,
+            self_cs,
+            *self_vk_value,
+        )?;
+
+        let prev_state = scalar_chip.assign(&mut layouter, self.prev_state)?;
+        let mid_state = scalar_chip.assign(&mut layouter, self.mid_state)?;
+        let expected_mid_state = scalar_chip.add_constant(&mut layouter, &prev_state, F::ONE)?;
+        scalar_chip.assert_equal(&mut layouter, &mid_state, &expected_mid_state)?;
+        let next_state = scalar_chip.add_constant(&mut layouter, &mid_state, F::ONE)?;
+        scalar_chip.constrain_as_public_input(&mut layouter, &next_state)?;
+
+        let fixed_base_names = verifier::fixed_base_names::<S>(
+            self_vk_name,
+            self_cs.num_fixed_columns() + self_cs.num_selectors(),
+            self_cs.permutation().columns.len(),
+        );
+        let carry_acc = AssignedAccumulator::assign(
+            &mut layouter,
+            &curve_chip,
+            &scalar_chip,
+            1,
+            1,
+            &[],
+            &fixed_base_names,
+            self.carry_acc.clone(),
+        )?;
+        let mid_acc = AssignedAccumulator::assign(
+            &mut layouter,
+            &curve_chip,
+            &scalar_chip,
+            1,
+            1,
+            &[],
+            &fixed_base_names,
+            self.mid_acc.clone(),
+        )?;
+        let next_acc = AssignedAccumulator::assign(
+            &mut layouter,
+            &curve_chip,
+            &scalar_chip,
+            1,
+            1,
+            &[],
+            &fixed_base_names,
+            self.next_acc.clone(),
+        )?;
+
+        let id_point = curve_chip.assign_fixed(&mut layouter, C::identity())?;
+
+        let vk_pi = verifier_chip.as_public_input(&mut layouter, &assigned_self_vk)?;
+        let proof1_pi = [
+            vk_pi.clone(),
+            vec![mid_state.clone()],
+            verifier_chip.as_public_input(&mut layouter, &mid_acc)?,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+        let proof2_pi = [
+            vk_pi,
+            vec![next_state.clone()],
+            verifier_chip.as_public_input(&mut layouter, &next_acc)?,
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+
+        let proofs_acc = verifier_chip.prepare_two_same_vk_collapsed(
+            &mut layouter,
+            &assigned_self_vk,
+            std::slice::from_ref(&id_point),
+            &[&proof1_pi],
+            self.proof1.clone(),
+            std::slice::from_ref(&id_point),
+            &[&proof2_pi],
+            self.proof2.clone(),
+        )?;
+
+        // Fold the two-proof batch with the older carried accumulator.
+        let mut folded_acc = AssignedAccumulator::<S>::accumulate(
+            &mut layouter,
+            &verifier_chip,
+            &scalar_chip,
+            &poseidon_chip,
+            &[proofs_acc, carry_acc],
+        )?;
+        folded_acc.collapse(&mut layouter, &curve_chip, &scalar_chip)?;
+        verifier_chip.constrain_as_public_input(&mut layouter, &folded_acc)?;
+
+        core_decomp_chip.load(&mut layouter)
+    }
+}
+
+#[derive(Clone, Debug)]
+struct IterationData {
+    prev_state: F,
+    next_state: F,
+    proof: Vec<u8>,
+    input_acc: Accumulator<S>,
+    output_acc: Accumulator<S>,
+}
+
 fn main() {
     let self_k = K;
 
@@ -286,6 +441,7 @@ fn main() {
     // Set the state (and acc) that we will prove (they are PI to the proof).
     let mut state = prev_state + F::ONE;
     let mut acc = trivial_acc;
+    let mut iterations = Vec::new();
 
     // Run the IVC loop.
     for i in 0..3 {
@@ -345,6 +501,14 @@ fn main() {
             proof_acc
         };
 
+        iterations.push(IterationData {
+            prev_state,
+            next_state: state,
+            proof: proof.clone(),
+            input_acc: prev_acc.clone(),
+            output_acc: acc.clone(),
+        });
+
         // Prepare the witnesses of the next iteration.
         prev_state = state;
         prev_proof = proof;
@@ -367,4 +531,102 @@ fn main() {
         state += F::ONE;
         acc = accumulated;
     }
+
+    // Run a two-proof same-VK fold over two consecutive proofs (stride-by-2 path).
+    let first = &iterations[0];
+    let second = &iterations[1];
+    assert_eq!(
+        first.next_state + F::ONE,
+        second.next_state,
+        "Selected proofs are not consecutive"
+    );
+
+    let proof1_public_inputs = {
+        let mut pi = AssignedVk::<S>::as_public_input(&vk);
+        pi.extend(AssignedNative::<F>::as_public_input(&first.next_state));
+        pi.extend(AssignedAccumulator::as_public_input(&first.output_acc));
+        pi
+    };
+    let proof2_public_inputs = {
+        let mut pi = AssignedVk::<S>::as_public_input(&vk);
+        pi.extend(AssignedNative::<F>::as_public_input(&second.next_state));
+        pi.extend(AssignedAccumulator::as_public_input(&second.output_acc));
+        pi
+    };
+
+    let (proof1_dual_msm, digest1) = {
+        let mut transcript = CircuitTranscript::<PoseidonState<F>>::init_from_bytes(&first.proof);
+        prepare_with_digest::<F, KZGCommitmentScheme<E>, CircuitTranscript<PoseidonState<F>>>(
+            &vk,
+            &[&[C::identity()]],
+            &[&[&proof1_public_inputs]],
+            &mut transcript,
+        )
+        .expect("Verification failed on first proof of two-proof fold")
+    };
+    let (proof2_dual_msm, digest2) = {
+        let mut transcript = CircuitTranscript::<PoseidonState<F>>::init_from_bytes(&second.proof);
+        prepare_with_digest::<F, KZGCommitmentScheme<E>, CircuitTranscript<PoseidonState<F>>>(
+            &vk,
+            &[&[C::identity()]],
+            &[&[&proof2_public_inputs]],
+            &mut transcript,
+        )
+        .expect("Verification failed on second proof of two-proof fold")
+    };
+
+    assert!(proof1_dual_msm.clone().check(&srs.verifier_params()));
+    assert!(proof2_dual_msm.clone().check(&srs.verifier_params()));
+
+    let mut proof1_acc =
+        Accumulator::<S>::from_dual_msm(proof1_dual_msm, self_vk_name, &fixed_bases);
+    proof1_acc.collapse();
+    let mut proof2_acc =
+        Accumulator::<S>::from_dual_msm(proof2_dual_msm, self_vk_name, &fixed_bases);
+    proof2_acc.collapse();
+
+    let r = Accumulator::<S>::batching_scalar_from_digests(digest1, digest2);
+    let mut batched_proofs_acc =
+        Accumulator::<S>::accumulate_two_with_r(&proof1_acc, &proof2_acc, r);
+    batched_proofs_acc.collapse();
+
+    let mut expected_folded_acc =
+        Accumulator::<S>::accumulate(&[batched_proofs_acc, first.input_acc.clone()]);
+    expected_folded_acc.collapse();
+    assert!(
+        expected_folded_acc.check(&srs.s_g2().into(), &fixed_bases),
+        "Two-proof IVC fold invariant failed"
+    );
+
+    let two_proof_circuit = IvcTwoProofFoldCircuit {
+        self_vk: (
+            self_domain.clone(),
+            self_cs.clone(),
+            Value::known(vk.transcript_repr()),
+        ),
+        prev_state: Value::known(first.prev_state),
+        mid_state: Value::known(first.next_state),
+        proof1: Value::known(first.proof.clone()),
+        proof2: Value::known(second.proof.clone()),
+        carry_acc: Value::known(first.input_acc.clone()),
+        mid_acc: Value::known(first.output_acc.clone()),
+        next_acc: Value::known(second.output_acc.clone()),
+    };
+
+    let mut two_proof_public_inputs = AssignedVk::<S>::as_public_input(&vk);
+    two_proof_public_inputs.extend(AssignedNative::<F>::as_public_input(&second.next_state));
+    two_proof_public_inputs.extend(AssignedAccumulator::as_public_input(&expected_folded_acc));
+
+    let two_proof_k = K;
+    let prover = MockProver::run(
+        two_proof_k,
+        &two_proof_circuit,
+        vec![vec![], two_proof_public_inputs],
+    )
+    .expect("MockProver failed for two-proof IVC fold");
+    prover.assert_satisfied();
+    println!(
+        "Two-proof same-VK fold variant satisfied for states {:?} -> {:?}",
+        first.next_state, second.next_state
+    );
 }

@@ -40,18 +40,10 @@ pub(crate) fn lookup_expressions<S: SelfEmulation>(
     instance_evals: &[AssignedNative<S::F>],
     l_0: &AssignedNative<S::F>,
     l_last: &AssignedNative<S::F>,
-    l_blind: &AssignedNative<S::F>,
+    active_rows: &AssignedNative<S::F>,
     theta: &AssignedNative<S::F>,
     beta: &AssignedNative<S::F>,
 ) -> Result<Vec<AssignedNative<S::F>>, Error> {
-    let active_rows = {
-        scalar_chip.linear_combination(
-            layouter,
-            &[(-S::F::ONE, l_last.clone()), (-S::F::ONE, l_blind.clone())],
-            S::F::ONE,
-        )?
-    };
-
     let compressed_inputs_with_beta = input_expressions
         .iter()
         .map(|input| {
@@ -141,7 +133,7 @@ pub(crate) fn lookup_expressions<S: SelfEmulation>(
         };
 
         let left_minus_right = scalar_chip.sub(layouter, &left, &right)?;
-        scalar_chip.mul(layouter, &left_minus_right, &active_rows, None)?
+        scalar_chip.mul(layouter, &left_minus_right, active_rows, None)?
     };
 
     // (l_0(x) + l_last(x)) * Z(x) = 0

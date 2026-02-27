@@ -148,6 +148,7 @@ pub(crate) fn truncate<F: CircuitField>(
 /// # Unsatisfiable Circuit
 ///
 /// If x^n = 1.
+#[allow(dead_code)]
 pub fn evaluate_lagrange_polynomials<F: CircuitField>(
     layouter: &mut impl Layouter<F>,
     scalar_chip: &impl ArithInstructions<F, AssignedNative<F>>,
@@ -158,9 +159,39 @@ pub fn evaluate_lagrange_polynomials<F: CircuitField>(
 ) -> Result<Vec<AssignedNative<F>>, Error> {
     // For every i, Li(X) := (w^i / n) * (X^n - 1) / (X - w^i).
 
-    let n_inv = F::from(n).invert().unwrap();
     let xn = scalar_chip.pow(layouter, x, n)?;
     let xn_minus_one = scalar_chip.add_constant(layouter, &xn, -F::ONE)?;
+
+    evaluate_lagrange_polynomials_from_xn_minus_one(
+        layouter,
+        scalar_chip,
+        n,
+        w,
+        i_indices,
+        x,
+        &xn_minus_one,
+    )
+}
+
+/// Evaluates the i-th Lagrange polynomial (with respect to n-root of unity w)
+/// at the given point x, for all the given i.
+///
+/// This variant assumes `xn_minus_one = x^n - 1` has been computed already.
+///
+/// # Unsatisfiable Circuit
+///
+/// If x^n = 1.
+pub fn evaluate_lagrange_polynomials_from_xn_minus_one<F: CircuitField>(
+    layouter: &mut impl Layouter<F>,
+    scalar_chip: &impl ArithInstructions<F, AssignedNative<F>>,
+    n: u64,
+    w: F,
+    i_indices: Range<i32>,
+    x: &AssignedNative<F>,
+    xn_minus_one: &AssignedNative<F>,
+) -> Result<Vec<AssignedNative<F>>, Error> {
+    // For every i, Li(X) := (w^i / n) * (X^n - 1) / (X - w^i).
+    let n_inv = F::from(n).invert().unwrap();
 
     i_indices
         .map(|i| {
@@ -179,6 +210,7 @@ pub fn evaluate_lagrange_polynomials<F: CircuitField>(
 ///
 /// That is, let f be the polynomial of smallest degree such that f(x_i) = y_i
 /// for all i in \[n\]. This function returns f(x).
+#[allow(dead_code)]
 pub fn evaluate_interpolated_polynomial<F: CircuitField>(
     layouter: &mut impl Layouter<F>,
     scalar_chip: &impl ArithInstructions<F, AssignedNative<F>>,
@@ -199,12 +231,38 @@ pub fn evaluate_interpolated_polynomial<F: CircuitField>(
         return Ok(evals[0].clone());
     }
 
-    // Compute the Lagrange bases L_j evaluated at x.
-    let mut lj_s = vec![];
     let x_minus_xs = points
         .iter()
         .map(|xi| scalar_chip.sub(layouter, x, xi))
         .collect::<Result<Vec<_>, Error>>()?;
+    evaluate_interpolated_polynomial_from_x_minus_xs(
+        layouter,
+        scalar_chip,
+        points,
+        evals,
+        &x_minus_xs,
+    )
+}
+
+/// Given n evaluation points {x_i}_i, n evaluations {y_i}_i and the n values
+/// `(x - x_i)`, returns the evaluation at x of the minimal polynomial that
+/// interpolates them.
+pub fn evaluate_interpolated_polynomial_from_x_minus_xs<F: CircuitField>(
+    layouter: &mut impl Layouter<F>,
+    scalar_chip: &impl ArithInstructions<F, AssignedNative<F>>,
+    points: &[AssignedNative<F>],
+    evals: &[AssignedNative<F>],
+    x_minus_xs: &[AssignedNative<F>],
+) -> Result<AssignedNative<F>, Error> {
+    assert_eq!(points.len(), evals.len());
+    assert_eq!(points.len(), x_minus_xs.len());
+
+    if points.len() == 1 {
+        return Ok(evals[0].clone());
+    }
+
+    // Compute the Lagrange bases L_j evaluated at x.
+    let mut lj_s = vec![];
     for (j, xj) in points.iter().enumerate() {
         let mut num_terms = vec![];
         let mut den_terms = vec![];

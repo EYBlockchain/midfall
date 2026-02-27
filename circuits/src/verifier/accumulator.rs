@@ -167,6 +167,23 @@ impl<S: SelfEmulation> Accumulator<S> {
         (self.lhs.eval(fixed_bases), self.rhs.eval(fixed_bases))
     }
 
+    /// Accumulates two accumulators with the given scalar r.
+    pub fn accumulate_two_with_r(a: &Self, b: &Self, r: S::F) -> Self {
+        Self {
+            lhs: a.lhs.accumulate_with_r(&b.lhs, r),
+            rhs: a.rhs.accumulate_with_r(&b.rhs, r),
+        }
+    }
+
+    /// Derives a batching scalar from two proof digests.
+    pub fn batching_scalar_from_digests(digest1: S::F, digest2: S::F) -> S::F {
+        let r = <S::SpongeChip as HashCPU<S::F, S::F>>::hash(&[digest1, digest2]);
+        #[cfg(feature = "truncated-challenges")]
+        return truncate_off_circuit(r);
+        #[cfg(not(feature = "truncated-challenges"))]
+        return r;
+    }
+
     /// Accumulates several accumulators together. The resulting acc will
     /// satisfy the invariant iff all the accumulators individually do.
     pub fn accumulate(accs: &[Self]) -> Self {
@@ -326,6 +343,20 @@ impl<S: SelfEmulation> AssignedAccumulator<S> {
         let lhs_pt = self.lhs.eval(layouter, curve_chip, fixed_bases)?;
         let rhs_pt = self.rhs.eval(layouter, curve_chip, fixed_bases)?;
         Ok((lhs_pt, rhs_pt))
+    }
+
+    /// Accumulates two assigned accumulators with the given scalar r.
+    pub fn accumulate_two_with_r(
+        layouter: &mut impl Layouter<S::F>,
+        scalar_chip: &S::ScalarChip,
+        a: &Self,
+        b: &Self,
+        r: &AssignedBoundedScalar<S::F>,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            lhs: a.lhs.accumulate_with_r(layouter, scalar_chip, &b.lhs, r)?,
+            rhs: a.rhs.accumulate_with_r(layouter, scalar_chip, &b.rhs, r)?,
+        })
     }
 
     /// Accumulates several accumulators together. The resulting acc will

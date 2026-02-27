@@ -403,6 +403,52 @@ where
 /// instance columns.
 ///
 /// The verifier will error if there are trailing bytes in the transcript.
+pub fn prepare_with_digest<F, CS: PolynomialCommitmentScheme<F>, T: Transcript>(
+    vk: &VerifyingKey<F, CS>,
+    // Unlike the prover, the verifier gets their instances in two arguments:
+    // committed and normal (non-committed). Note that the total number of
+    // instance columns is expected to be the sum of committed instances and
+    // normal instances for every proof. (Committed instances go first, that is,
+    // the first instance columns are devoted to committed instances.)
+    #[cfg(feature = "committed-instances")] committed_instances: &[&[CS::Commitment]],
+    instances: &[&[&[F]]],
+    transcript: &mut T,
+) -> Result<(CS::VerificationGuard, F), Error>
+where
+    F: WithSmallOrderMulGroup<3>
+        + Hashable<T::Hash>
+        + Sampleable<T::Hash>
+        + FromUniformBytes<64>
+        + Hash
+        + Ord,
+    CS::Commitment: Hashable<T::Hash>,
+{
+    let trace = parse_trace(
+        vk,
+        #[cfg(feature = "committed-instances")]
+        committed_instances,
+        instances,
+        transcript,
+    )?;
+
+    let guard = verify_algebraic_constraints(
+        vk,
+        trace,
+        #[cfg(feature = "committed-instances")]
+        committed_instances,
+        instances,
+        transcript,
+    )?;
+
+    let digest = transcript.squeeze_challenge();
+    Ok((guard, digest))
+}
+
+/// Prepares a plonk proof into a PCS instance that can be finalized or
+/// batched. It is responsibility of the verifier to check the validity of the
+/// instance columns.
+///
+/// The verifier will error if there are trailing bytes in the transcript.
 pub fn prepare<F, CS: PolynomialCommitmentScheme<F>, T: Transcript>(
     vk: &VerifyingKey<F, CS>,
     // Unlike the prover, the verifier gets their instances in two arguments:
@@ -423,20 +469,12 @@ where
         + Ord,
     CS::Commitment: Hashable<T::Hash>,
 {
-    let trace = parse_trace(
+    let (guard, _) = prepare_with_digest(
         vk,
         #[cfg(feature = "committed-instances")]
         committed_instances,
         instances,
         transcript,
     )?;
-
-    verify_algebraic_constraints(
-        vk,
-        trace,
-        #[cfg(feature = "committed-instances")]
-        committed_instances,
-        instances,
-        transcript,
-    )
+    Ok(guard)
 }
