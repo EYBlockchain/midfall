@@ -41,7 +41,7 @@ use midnight_aggregation::ivc::{self, IvcCircuit, IvcContext, IvcIO, IvcState, I
 use midnight_circuits::{
     hash::poseidon::{PoseidonChip, PoseidonState},
     instructions::{hash::HashCPU, *},
-    types::{AssignedBit, AssignedNative, Instantiable},
+    types::{AssignedNative, Instantiable},
     verifier::{self, Accumulator, AssignedAccumulator, BlstrsEmulation, SelfEmulation},
 };
 use midnight_proofs::{
@@ -142,14 +142,6 @@ impl IvcState for ProofAggregation {
                 &ctx.fixed_bases().keys().cloned().collect::<Vec<_>>(),
             ),
         }
-    }
-
-    fn is_genesis(
-        &self,
-        layouter: &mut impl Layouter<F>,
-        state: &Self::AssignedState,
-    ) -> Result<AssignedBit<F>, Error> {
-        self.std_lib.is_zero(layouter, &state.statements_hash)
     }
 
     fn decider(ctx: &InnerCircuitContext, state: &State) -> bool {

@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://book.async.rs/overview
 ### Changed
 * Adapt `LightAggregator` to affine SRS storage [#350](https://github.com/midnightntwrk/midnight-zk/pull/350)
 * Adapt to configurable `NB_ARITH_COLS` [#287](https://github.com/midnightntwrk/midnight-zk/pull/287)
+* Remove `is_genesis` from `IvcState` trait; genesis detection is now derived generically from `format_public_input` [#272](https://github.com/midnightntwrk/midnight-zk/pull/272)
 * Rename `proof_aggregation` example to `single_circuit_aggregation` [#264](https://github.com/midnightntwrk/midnight-zk/pull/264)
 * Remove `InnerValue` and `Instantiable` requirements from IVC `AssignedState` [#264](https://github.com/midnightntwrk/midnight-zk/pull/264)
 * Decouple `IvcTransition` from `IvcIO` [#264](https://github.com/midnightntwrk/midnight-zk/pull/264)
