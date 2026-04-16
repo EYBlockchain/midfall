@@ -23,6 +23,7 @@ verification keys break backwards compatibility.
 * Add `CircuitField` implementations for `k256::Fp` and `k256::Fq` [#192](https://github.com/midnightntwrk/midnight-zk/pull/192)
 * Add `square`, `mod_square` operations in `BigUintGadget` [#259](https://github.com/midnightntwrk/midnight-zk/pull/259)
 * Add `PartialEq` impl for `AssignedBigUint` [#259](https://github.com/midnightntwrk/midnight-zk/pull/259)
+* Add full accumulator/MSM collapse paths that also evaluate fixed-base terms in-circuit and off-circuit
 
 ### Fixed
 * Fix cost model to pass correct number of committed instances [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
