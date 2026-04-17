@@ -12,6 +12,7 @@ verification keys break backwards compatibility.
 
 ## [Unreleased]
 ### Added
+* Fix redundant explicit intra-doc links in `parsing::scanner::substring` [#311](https://github.com/midnightntwrk/midnight-zk/pull/311)
 * Add Curve25519 [#181](https://github.com/midnightntwrk/midnight-zk/pull/181)
 * Expose helper functions directly in `verifier_gadget` [#227](https://github.com/midnightntwrk/midnight-zk/pull/227)
 * `CircuitField` refactor: remove helpers, add `ScalarField` in `CircuitCurve` [#201](https://github.com/midnightntwrk/midnight-zk/pull/201)
