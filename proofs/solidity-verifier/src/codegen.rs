@@ -84,6 +84,25 @@ pub struct VkInfo {
     pub s_g2_eip2537: [u8; 256],
     /// -G2 (negated generator) for the pairing's lhs.
     pub neg_g2_eip2537: [u8; 256],
+    /// Concatenated RPN bytecode of every gate polynomial, in iteration
+    /// order (`cs.gates().flat_map(|g| g.polynomials())`), each program
+    /// terminated by `OP_END`. Consumed by the Solidity bytecode
+    /// interpreter via `_evalBytecode` to compute
+    /// `partially_evaluate_identities`' gate contributions at x.
+    pub gate_bytecode: Vec<u8>,
+    /// For each program in `gate_bytecode`, the fixed-column index of
+    /// the first simple selector queried by the gate (if any). None is
+    /// encoded as 0xFFFFFFFF. Used by
+    /// `compute_linearization_commitment` to key the grouping MSM.
+    pub gate_selector_cols: Vec<Option<u32>>,
+    /// Fixed-column indices that correspond to simple, multiplicative
+    /// selectors. These columns' evaluations are implicit 1 (they
+    /// aren't transcript-read), but their commitments participate as
+    /// distinct points in the linearization MSM.
+    pub simple_selector_cols: Vec<u32>,
+    /// Total number of gate polynomials (sum over gates of
+    /// polynomials.len()). Equal to `gate_selector_cols.len()`.
+    pub num_gate_polys: usize,
 }
 
 impl VkInfo {
@@ -150,6 +169,30 @@ impl VkInfo {
             .filter(|(col, _)| col.index() < nb_committed_instances)
             .count();
 
+        // Serialize every gate polynomial into RPN bytecode + record the
+        // gate's simple-selector column (if any) so the linearization MSM
+        // on the Solidity side can group by selector.
+        let mut gate_bytecode: Vec<u8> = Vec::new();
+        let mut gate_selector_cols: Vec<Option<u32>> = Vec::new();
+        for gate in cs.gates().iter() {
+            let selector_col = gate
+                .queried_selectors()
+                .iter()
+                .filter(|s| s.is_simple())
+                .map(|s| s.index() as u32)
+                .next();
+            for poly in gate.polynomials().iter() {
+                gate_bytecode.extend(crate::expr_bytecode::encode_expression(poly));
+                gate_selector_cols.push(selector_col);
+            }
+        }
+        let num_gate_polys = gate_selector_cols.len();
+
+        let simple_selector_cols: Vec<u32> = (0..cs.num_fixed_columns())
+            .filter(|&i| cs.has_simple_selector_col(i))
+            .map(|i| i as u32)
+            .collect();
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -181,6 +224,10 @@ impl VkInfo {
             perm_comms_eip2537,
             s_g2_eip2537,
             neg_g2_eip2537,
+            gate_bytecode,
+            gate_selector_cols,
+            simple_selector_cols,
+            num_gate_polys,
         }
     }
 }
@@ -267,6 +314,23 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     blob.extend_from_slice(&vk.s_g2_eip2537);
     blob.extend_from_slice(&vk.neg_g2_eip2537);
 
+    // Gate bytecode section:
+    //   uint32 num_simple_selectors
+    //     uint32 col_idx  × num_simple_selectors
+    //   uint32 num_gate_polys
+    //     for each poly: uint32 selector_col (0xFFFFFFFF for None)
+    //   uint32 total_gate_bytecode_len
+    //   gate_bytecode bytes
+    blob.extend_from_slice(&(vk.simple_selector_cols.len() as u32).to_be_bytes());
+    for &c in &vk.simple_selector_cols { blob.extend_from_slice(&c.to_be_bytes()); }
+    blob.extend_from_slice(&(vk.num_gate_polys as u32).to_be_bytes());
+    for sel in &vk.gate_selector_cols {
+        let v: u32 = sel.unwrap_or(0xFFFFFFFF);
+        blob.extend_from_slice(&v.to_be_bytes());
+    }
+    blob.extend_from_slice(&(vk.gate_bytecode.len() as u32).to_be_bytes());
+    blob.extend_from_slice(&vk.gate_bytecode);
+
     let total = blob.len();
     let hex_blob = hex::encode(&blob);
 
@@ -337,6 +401,16 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
     for c in &vk.perm_comms_eip2537  { blob.extend_from_slice(c); }
     blob.extend_from_slice(&vk.s_g2_eip2537);
     blob.extend_from_slice(&vk.neg_g2_eip2537);
+
+    blob.extend_from_slice(&(vk.simple_selector_cols.len() as u32).to_be_bytes());
+    for &c in &vk.simple_selector_cols { blob.extend_from_slice(&c.to_be_bytes()); }
+    blob.extend_from_slice(&(vk.num_gate_polys as u32).to_be_bytes());
+    for sel in &vk.gate_selector_cols {
+        let v: u32 = sel.unwrap_or(0xFFFFFFFF);
+        blob.extend_from_slice(&v.to_be_bytes());
+    }
+    blob.extend_from_slice(&(vk.gate_bytecode.len() as u32).to_be_bytes());
+    blob.extend_from_slice(&vk.gate_bytecode);
 
     blob
 }
