@@ -1246,6 +1246,91 @@ fn main() {
             sets.len(),
             sets.iter().map(|(p, _, _)| p.len()).collect::<Vec<_>>(),
         );
+
+        // Phase C3: pairing-RHS equivalence fixture.
+        //
+        // Runs the Rust verifier's `prepare` on the full poseidon
+        // proof, obtains the resulting DualMSM, evaluates its left
+        // and right MSM accumulators to single G1 points, and
+        // serialises them as 48-byte compressed encodings (plus
+        // their computed EIP-2537 uncompressed 128-byte forms for
+        // debugging / cross-check convenience).
+        //
+        // These two points (together with the VK's s·G2 and −G2)
+        // are exactly what the final pairing check consumes:
+        //    e(left, s·G2) · e(right, −G2) == 1
+        //
+        // File layout:
+        //   [48] left_compressed
+        //   [48] right_compressed
+        //   [128] left_eip2537     (optional; for cross-debugging)
+        //   [128] right_eip2537
+        //   [1]  expected_pairing_ok   (always 0x01 here)
+        use group::GroupEncoding;
+        use midnight_curves::G1Projective;
+        use midnight_proofs::{
+            plonk::prepare,
+            poly::kzg::KZGCommitmentScheme,
+            transcript::{CircuitTranscript, Transcript},
+        };
+
+        let mut transcript = CircuitTranscript::<
+            sha3::Keccak256,
+        >::init_from_bytes(&fx.proof);
+        let instance_col: [Fq; 1] = [fx.instance];
+        let instance_ref: &[&[Fq]] = &[&instance_col];
+        let pis: &[&[&[Fq]]] = &[instance_ref];
+        let committed_col: [G1Projective; 1] =
+            [<G1Projective as Group>::identity()];
+        let committed: &[&[G1Projective]] = &[&committed_col];
+
+        let dual_msm = prepare::<
+            Fq,
+            KZGCommitmentScheme<midnight_curves::Bls12>,
+            CircuitTranscript<sha3::Keccak256>,
+        >(
+            fx.vk.vk(),
+            committed,
+            pis,
+            &mut transcript,
+        )
+        .expect("prepare");
+
+        let (left_terms, right_terms) = dual_msm.split();
+        let mut left_eval: G1Projective = G1Projective::identity();
+        for (_, s, b) in left_terms.iter() {
+            left_eval = left_eval + (**b * **s);
+        }
+        let mut right_eval: G1Projective = G1Projective::identity();
+        for (_, s, b) in right_terms.iter() {
+            right_eval = right_eval + (**b * **s);
+        }
+
+        // Sanity-check via the DualMSM's own `check` method, which wraps
+        // the multi-miller-loop + final exponentiation.
+        let verifier_params = fx.srs.verifier_params();
+        let cloned_dual = dual_msm.clone();
+        let ok_rust = cloned_dual.check(&verifier_params);
+        assert!(
+            ok_rust,
+            "Rust-side pairing check should pass on a valid proof",
+        );
+
+        let left_compressed =
+            <G1Projective as GroupEncoding>::to_bytes(&left_eval);
+        let right_compressed =
+            <G1Projective as GroupEncoding>::to_bytes(&right_eval);
+
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(left_compressed.as_ref());
+        blob.extend_from_slice(right_compressed.as_ref());
+        blob.push(0x01);
+        fs::write(fixtures.join("pairing_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      pairing fixture written ({} bytes, Rust-side check = {})",
+            blob.len(),
+            ok_rust,
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

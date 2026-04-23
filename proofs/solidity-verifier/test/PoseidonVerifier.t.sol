@@ -500,6 +500,51 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C3: real pairing RHS check.
+    /// Reads `fixtures/pairing_fixture.bin` which contains the
+    /// Rust-computed `left` and `right` G1 points (compressed,
+    /// 48B each) produced by evaluating the DualMSM returned by
+    /// `plonk::prepare` on the valid poseidon proof. Invokes the
+    /// Solidity `pairingCheckFromPair` helper which decompresses
+    /// both, reads `s·G2` and `-G2` from the VK blob, and runs
+    /// `e(left, s·G2) · e(right, -G2) == 1` via the EIP-2537
+    /// precompile. Asserts the pairing check passes.
+    ///
+    /// Also negative-tests by flipping a byte of `right` and
+    /// asserting the check fails.
+    function test_pairing_rhs() public {
+        bytes memory f = vm.readFileBinary("fixtures/pairing_fixture.bin");
+        require(f.length >= 97, "pairing fixture len");
+        bytes memory left = new bytes(48);
+        bytes memory right = new bytes(48);
+        for (uint256 i = 0; i < 48; i++) left[i] = f[i];
+        for (uint256 i = 0; i < 48; i++) right[i] = f[48 + i];
+        uint8 expected = uint8(f[96]);
+        require(expected == 0x01, "fixture expects pass");
+
+        bool ok = v.pairingCheckFromPair(left, right);
+        require(ok, "pairing check should pass on valid pair");
+
+        // Negative case: perturb right and expect the check to fail.
+        bytes memory rightBad = new bytes(48);
+        for (uint256 i = 0; i < 48; i++) rightBad[i] = right[i];
+        // Flip a low-order bit of the x-coordinate (last byte).
+        rightBad[47] = bytes1(uint8(rightBad[47]) ^ uint8(0x01));
+        // The bit-flipped compressed encoding may not correspond to a
+        // valid curve point (y^2 = x^3 + 4 may have no square root at
+        // the perturbed x). In that case decompression reverts inside
+        // the modular square-root step, which counts as "check
+        // failed" for our purposes — catch the revert and treat it
+        // as the negative outcome.
+        try v.pairingCheckFromPair(left, rightBad) returns (bool badOk) {
+            require(!badOk, "perturbed right should not verify");
+        } catch {
+            // Expected path: ModExp reject / not-on-curve.
+        }
+
+        emit log_named_uint("pairing RHS verified, negative case rejected", 1);
+    }
+
     /// Phase C2 step 1: Lagrange + Horner f_eval fold equivalence.
     /// Reads `fixtures/feval_fold_fixture.bin` which contains x2/x3,
     /// three synthetic point sets of sizes 1/2/3 with their evals

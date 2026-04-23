@@ -1042,6 +1042,61 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Final pairing RHS (Phase C3)                                      *
+     *                                                                    *
+     *  Standalone helper that consumes the two G1 points produced by    *
+     *  the DualMSM (Phase C2 output) — \`left\` and \`right\` — and runs  *
+     *  the KZG batch-open pairing check:                                *
+     *                                                                    *
+     *    e(left, s·G2) · e(right, −G2) == 1                             *
+     *                                                                    *
+     *  Both points arrive compressed (48-byte BLS12-381 zcash format);  *
+     *  we decompress via the existing Prague-ModExp-based pipeline,     *
+     *  slice \`s·G2\` and \`−G2\` out of the VK blob at their                    *
+     *  known offsets, and invoke the EIP-2537 pairing precompile       *
+     *  (0x0f) via the existing \`_pairingCheck\` helper.                   *
+     *                                                                    *
+     *  This is exactly the pairing-side of the final check that the    *
+     *  main \`verify\` entry point needs once Phase C2 step 2-4 lands   *
+     *  the G1-point construction. Landing it in isolation against a    *
+     *  Rust-computed \`(left, right)\` pair pins down the Solidity        *
+     *  decompression + precompile plumbing before the harder DualMSM    *
+     *  construction is in place.                                        *
+     * ------------------------------------------------------------------ */
+
+    function _pairingCheckFromPair(
+        bytes memory vkBlob,
+        Vk memory vk,
+        bytes memory leftCompressed,
+        bytes memory rightCompressed
+    ) internal view returns (bool) {
+        require(leftCompressed.length == 48, "left len");
+        require(rightCompressed.length == 48, "right len");
+
+        bytes memory sG2  = _vkSlice(vkBlob, vk.sG2Offset,  256);
+        bytes memory ngG2 = _vkSlice(vkBlob, vk.negG2Offset, 256);
+
+        bytes memory leftEip  = _g1CompressedToEip2537(leftCompressed);
+        bytes memory rightEip = _g1CompressedToEip2537(rightCompressed);
+
+        bytes memory pairs = abi.encodePacked(leftEip, sG2, rightEip, ngG2);
+        return _pairingCheck(pairs);
+    }
+
+    /// Public fixture-only wrapper. Uses the default VK address
+    /// wired into this contract (via the \`_vkBlob\` + \`_loadVk\`
+    /// pair) so fixture tests don't need to pass a separate address.
+    function pairingCheckFromPair(
+        bytes calldata leftCompressed,
+        bytes calldata rightCompressed
+    ) external view returns (bool) {
+        (Vk memory vk, bytes memory blob) = _loadVk();
+        bytes memory l = leftCompressed;
+        bytes memory r = rightCompressed;
+        return _pairingCheckFromPair(blob, vk, l, r);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  f_eval fold for multi_prepare (Phase C2 step 1)                   *
      *                                                                    *
      *  Port of the reverse-Horner Lagrange fold from                    *
