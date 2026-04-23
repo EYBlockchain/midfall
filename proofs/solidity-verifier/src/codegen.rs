@@ -103,6 +103,20 @@ pub struct VkInfo {
     /// Total number of gate polynomials (sum over gates of
     /// polynomials.len()). Equal to `gate_selector_cols.len()`.
     pub num_gate_polys: usize,
+    /// Per-permutation-column metadata in the exact order returned by
+    /// `cs.permutation().get_columns()`. Each entry is
+    /// `(column_kind, query_index_at_cur_rotation)` where `column_kind`
+    /// is 0 = advice, 1 = fixed, 2 = instance. The Solidity
+    /// `_permExpressions` function uses these to look up each column's
+    /// evaluation at x inside the main chunk-product constraint.
+    pub permutation_columns: Vec<(u8, u16)>,
+    /// The chunked structure of `permutation.columns` that the Rust
+    /// verifier's `permutation::expressions` walks via
+    /// `p.columns.chunks(chunk_len)`. Equal to
+    /// `(num_permutation_columns + chunk_len - 1) / chunk_len`. Kept
+    /// alongside the column metadata so Solidity doesn't have to
+    /// re-derive chunk boundaries.
+    pub permutation_chunk_len: usize,
 }
 
 impl VkInfo {
@@ -193,6 +207,53 @@ impl VkInfo {
             .map(|i| i as u32)
             .collect();
 
+        // Per-permutation-column metadata. The Rust verifier's permutation
+        // `expressions` reads each column's evaluation at x via
+        // `cs.get_any_query_index(column, Rotation::cur())` then indexes
+        // advice_evals/fixed_evals/instance_evals by that query index. Here
+        // we replicate the lookup using the public `{advice,fixed,instance}_queries()`
+        // accessors so the Solidity side gets a flat (kind, query_idx) array.
+        use midnight_proofs::plonk::Any;
+        use midnight_proofs::poly::Rotation;
+        let permutation_columns: Vec<(u8, u16)> = cs
+            .permutation()
+            .get_columns()
+            .iter()
+            .map(|column| {
+                let kind: u8 = match column.column_type() {
+                    Any::Advice(_) => 0,
+                    Any::Fixed => 1,
+                    Any::Instance => 2,
+                };
+                // Find the query index for this column at Rotation::cur().
+                let query_idx: usize = match column.column_type() {
+                    Any::Advice(_) => cs
+                        .advice_queries()
+                        .iter()
+                        .position(|(c, rot)| {
+                            c.index() == column.index() && rot.0 == Rotation::cur().0
+                        })
+                        .expect("advice column missing cur-rotation query"),
+                    Any::Fixed => cs
+                        .fixed_queries()
+                        .iter()
+                        .position(|(c, rot)| {
+                            c.index() == column.index() && rot.0 == Rotation::cur().0
+                        })
+                        .expect("fixed column missing cur-rotation query"),
+                    Any::Instance => cs
+                        .instance_queries()
+                        .iter()
+                        .position(|(c, rot)| {
+                            c.index() == column.index() && rot.0 == Rotation::cur().0
+                        })
+                        .expect("instance column missing cur-rotation query"),
+                };
+                (kind, query_idx as u16)
+            })
+            .collect();
+        let permutation_chunk_len = cs.degree() - 2;
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -228,6 +289,8 @@ impl VkInfo {
             gate_selector_cols,
             simple_selector_cols,
             num_gate_polys,
+            permutation_columns,
+            permutation_chunk_len,
         }
     }
 }
@@ -331,6 +394,17 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     blob.extend_from_slice(&(vk.gate_bytecode.len() as u32).to_be_bytes());
     blob.extend_from_slice(&vk.gate_bytecode);
 
+    // Permutation-expressions metadata:
+    //   u32 permutation_chunk_len
+    //   u32 num_permutation_columns
+    //     { u8 kind (0=advice, 1=fixed, 2=instance), u16 query_idx } × n
+    blob.extend_from_slice(&(vk.permutation_chunk_len as u32).to_be_bytes());
+    blob.extend_from_slice(&(vk.permutation_columns.len() as u32).to_be_bytes());
+    for &(kind, qidx) in &vk.permutation_columns {
+        blob.push(kind);
+        blob.extend_from_slice(&qidx.to_be_bytes());
+    }
+
     let total = blob.len();
     let hex_blob = hex::encode(&blob);
 
@@ -411,6 +485,13 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
     }
     blob.extend_from_slice(&(vk.gate_bytecode.len() as u32).to_be_bytes());
     blob.extend_from_slice(&vk.gate_bytecode);
+
+    blob.extend_from_slice(&(vk.permutation_chunk_len as u32).to_be_bytes());
+    blob.extend_from_slice(&(vk.permutation_columns.len() as u32).to_be_bytes());
+    for &(kind, qidx) in &vk.permutation_columns {
+        blob.push(kind);
+        blob.extend_from_slice(&qidx.to_be_bytes());
+    }
 
     blob
 }
