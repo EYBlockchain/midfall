@@ -630,6 +630,110 @@ fn main() {
         );
     }
 
+    // Emit the trashcan-expressions fixture (Phase A2b). Replicates
+    // `midnight_proofs::plonk::trash::Evaluated::expressions`
+    // (proofs/src/plonk/trash.rs:57+, pub(crate)) using deterministic
+    // inputs, and dumps the scalar inputs + the expected one-per-
+    // trashcan expression that Solidity's `_trashExpressions` must
+    // reproduce byte-for-byte.
+    //
+    // File layout:
+    //   [32]  trash_challenge (τ)
+    //   [32]  num_trashcans (u256 BE)
+    //     [32] × n   trash_eval per trashcan
+    //   [32]  num_advice_evals
+    //     [32] × n   advice_evals
+    //   [32]  num_fixed_evals
+    //     [32] × n   fixed_evals
+    //   [32]  num_instance_evals
+    //     [32] × n   instance_evals
+    //   [32]  num_challenges
+    //     [32] × n   challenges
+    //   [32]  num_expected
+    //     [32] × n   expected (Rust-computed expressions)
+    {
+        use ff::{Field, PrimeField};
+        let vk_inner = fx.vk.vk();
+        let cs = vk_inner.cs();
+
+        let trashcans = cs.trashcans();
+        let n_trash = trashcans.len();
+
+        // Deterministic synthetic env.
+        let trash_challenge = Fq::from(950u64);
+        let trash_evals: Vec<Fq> =
+            (0..n_trash).map(|i| Fq::from(9500u64 + i as u64)).collect();
+
+        let n_advice = cs.advice_queries().len();
+        let n_fixed = cs.num_fixed_columns();
+        let n_instance = cs.instance_queries().len();
+        let n_challenges = cs.num_challenges();
+
+        let advice_evals: Vec<Fq> = (0..n_advice).map(|i| Fq::from(11000u64 + i as u64)).collect();
+        let fixed_evals: Vec<Fq> = (0..n_fixed)
+            .map(|i| if cs.has_simple_selector_col(i) { Fq::ONE } else { Fq::from(12000u64 + i as u64) })
+            .collect();
+        let instance_evals: Vec<Fq> = (0..n_instance).map(|i| Fq::from(13000u64 + i as u64)).collect();
+        let challenges: Vec<Fq> = (0..n_challenges).map(|i| Fq::from(14000u64 + i as u64)).collect();
+
+        let eval_expression = |expr: &midnight_proofs::plonk::Expression<Fq>| -> Fq {
+            expr.evaluate(
+                &|c| c,
+                &|_| panic!("virtual selector"),
+                &|q| fixed_evals[q.index().unwrap()],
+                &|q| advice_evals[q.index.unwrap()],
+                &|q| instance_evals[q.index.unwrap()],
+                &|ch| challenges[ch.index()],
+                &|a: Fq| -a,
+                &|a: Fq, b: Fq| a + b,
+                &|a: Fq, b: Fq| a * b,
+                &|a: Fq, k: Fq| a * k,
+            )
+        };
+
+        // Replica of trash::Evaluated::expressions.
+        let mut expected: Vec<Fq> = Vec::new();
+        for (i, arg) in trashcans.iter().enumerate() {
+            let compressed_constraints = arg
+                .constraint_expressions()
+                .iter()
+                .map(&eval_expression)
+                .fold(Fq::ZERO, |acc, eval| acc * trash_challenge + eval);
+            let q = eval_expression(arg.selector());
+            let expr = compressed_constraints - (Fq::ONE - q) * trash_evals[i];
+            expected.push(expr);
+        }
+
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &trash_challenge);
+        push_u256(&mut blob, trash_evals.len() as u64);
+        for v in &trash_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, advice_evals.len() as u64);
+        for v in &advice_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, fixed_evals.len() as u64);
+        for v in &fixed_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, instance_evals.len() as u64);
+        for v in &instance_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, challenges.len() as u64);
+        for v in &challenges { push_fq(&mut blob, v); }
+        push_u256(&mut blob, expected.len() as u64);
+        for v in &expected { push_fq(&mut blob, v); }
+
+        fs::write(fixtures.join("trashcan_expressions_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      trashcan expressions fixture written ({} bytes, {} expressions, {} trashcans)",
+            blob.len(),
+            expected.len(),
+            n_trash,
+        );
+    }
+
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
     // the proof's G1 points. The forge test uses these to unit-test the
     // Solidity decompression function before attempting the full pairing.

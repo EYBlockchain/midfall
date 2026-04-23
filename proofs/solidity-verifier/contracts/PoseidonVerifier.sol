@@ -681,6 +681,111 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Trashcan-argument expressions (Phase A2b)                         *
+     *                                                                    *
+     *  Port of `midnight_proofs::plonk::trash::Evaluated::expressions`   *
+     *  from proofs/src/plonk/trash.rs:57+. One expression per trashcan:  *
+     *    compressed_constraints − (1 − q) · trash_eval                   *
+     *  where `compressed_constraints` = τ-fold of                        *
+     *  `constraint_expressions` (like θ-fold in logup) and `q` is the   *
+     *  selector evaluation at x.                                         *
+     * ------------------------------------------------------------------ */
+
+    struct TrashEnv {
+        uint256 trashChallenge;
+        uint256[] trashEvals;
+        // Shared with bytecode evaluation:
+        uint256[] adviceEvals;
+        uint256[] fixedEvals;
+        uint256[] instanceEvals;
+        uint256[] challenges;
+    }
+
+    /// Skip through one trashcan's bytecode and return the new offset.
+    function _sizeTrashcan(bytes memory vkBlob, uint256 offsetIn)
+        internal pure returns (uint256 offsetOut)
+    {
+        uint256 probe = offsetIn;
+        uint32 selLen = _readU32FromBlob(vkBlob, probe); probe += 4 + selLen;
+        uint32 nC = _readU32FromBlob(vkBlob, probe); probe += 4;
+        for (uint256 i = 0; i < nC; i++) {
+            uint32 l = _readU32FromBlob(vkBlob, probe); probe += 4 + l;
+        }
+        offsetOut = probe;
+    }
+
+    function _trashExpressions(
+        bytes memory vkBlob,
+        uint256 sectionOffset,
+        TrashEnv memory tenv
+    ) internal view returns (uint256[] memory out, uint256 newOffset) {
+        uint32 numTrash = _readU32FromBlob(vkBlob, sectionOffset);
+        require(numTrash == tenv.trashEvals.length, "trash_evals length");
+        uint256 cursor = sectionOffset + 4;
+
+        out = new uint256[](numTrash);
+
+        GateEnv memory env = GateEnv({
+            x: 0, beta: 0, gamma: 0, theta: 0,
+            trashChal: tenv.trashChallenge,
+            l0: 0, lLast: 0, lBlind: 0,
+            fixedEvals: tenv.fixedEvals, adviceEvals: tenv.adviceEvals,
+            instanceEvals: tenv.instanceEvals, challenges: tenv.challenges
+        });
+
+        for (uint256 t = 0; t < numTrash; t++) {
+            uint32 selLen = _readU32FromBlob(vkBlob, cursor);
+            cursor += 4;
+            (uint256 q, uint256 selEnd) = _evalBytecode(vkBlob, cursor, env);
+            require(selEnd == cursor + selLen, "trash selector length mismatch");
+            cursor = selEnd;
+
+            uint32 nC = _readU32FromBlob(vkBlob, cursor); cursor += 4;
+            // τ-fold: acc = acc·τ + eval
+            uint256 compressed = 0;
+            for (uint256 i = 0; i < nC; i++) {
+                uint32 l = _readU32FromBlob(vkBlob, cursor); cursor += 4;
+                (uint256 v, uint256 consumed) = _evalBytecode(vkBlob, cursor, env);
+                require(consumed == cursor + l, "trash constraint length mismatch");
+                cursor = consumed;
+                compressed = addmod(
+                    mulmod(compressed, tenv.trashChallenge, FR_MODULUS),
+                    v, FR_MODULUS
+                );
+            }
+            // expr = compressed − (1 − q) · trash_eval
+            uint256 oneMinusQ = _frSub(1, q);
+            uint256 sub = _frMul(oneMinusQ, tenv.trashEvals[t]);
+            out[t] = _frSub(compressed, sub);
+        }
+        newOffset = cursor;
+    }
+
+    /// Public wrapper for fixture testing.
+    function trashExpressions(
+        address vkAddr,
+        uint256 trashSectionOffset,
+        uint256 trashChallenge,
+        uint256[] calldata trashEvals,
+        uint256[] calldata adviceEvals,
+        uint256[] calldata fixedEvals,
+        uint256[] calldata instanceEvals,
+        uint256[] calldata challenges
+    ) external view returns (uint256[] memory) {
+        bytes memory blob = vkAddr.code;
+        TrashEnv memory tenv = TrashEnv({
+            trashChallenge: trashChallenge,
+            trashEvals: _copyToMemArr(trashEvals),
+            adviceEvals: _copyToMemArr(adviceEvals),
+            fixedEvals: _copyToMemArr(fixedEvals),
+            instanceEvals: _copyToMemArr(instanceEvals),
+            challenges: _copyToMemArr(challenges)
+        });
+        (uint256[] memory out, ) = _trashExpressions(blob, trashSectionOffset, tenv);
+        return out;
+    }
+
+    /* ------------------------------------------------------------------ *
      *  RPN bytecode interpreter for partially_evaluate_identities        *
      *                                                                    *
      *  Each gate polynomial is serialised on the Rust side into compact  *

@@ -396,32 +396,90 @@ contract PoseidonVerifierTest is Test {
     function _validateLookupSection(
         bytes memory blob, uint256 startAfterHeader, uint32 nLookups, uint256 L
     ) internal pure returns (bool) {
-        uint256 p = startAfterHeader + 4;
-        for (uint32 lk = 0; lk < nLookups; lk++) {
+        uint256 p = _walkLookupSection(blob, startAfterHeader, nLookups, L);
+        if (p == type(uint256).max) return false;
+        // Trashcan section follows: u32 nTrashcans + per-trashcan.
+        if (p + 4 > L) return false;
+        uint32 nTrash = _readU32(blob, p); p += 4;
+        if (nTrash > 16) return false;
+        for (uint32 t = 0; t < nTrash; t++) {
             if (p + 4 > L) return false;
             uint32 selLen = _readU32(blob, p); p += 4 + selLen; if (p > L) return false;
             if (p + 4 > L) return false;
-            uint32 nTable = _readU32(blob, p); p += 4;
-            for (uint32 i = 0; i < nTable; i++) {
+            uint32 nC = _readU32(blob, p); p += 4;
+            for (uint32 i = 0; i < nC; i++) {
                 if (p + 4 > L) return false;
                 uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
             }
-            if (p + 4 > L) return false;
+        }
+        return p == L;
+    }
+
+    function _walkLookupSection(
+        bytes memory blob, uint256 startAfterHeader, uint32 nLookups, uint256 L
+    ) internal pure returns (uint256) {
+        uint256 p = startAfterHeader + 4;
+        for (uint32 lk = 0; lk < nLookups; lk++) {
+            if (p + 4 > L) return type(uint256).max;
+            uint32 selLen = _readU32(blob, p); p += 4 + selLen; if (p > L) return type(uint256).max;
+            if (p + 4 > L) return type(uint256).max;
+            uint32 nTable = _readU32(blob, p); p += 4;
+            for (uint32 i = 0; i < nTable; i++) {
+                if (p + 4 > L) return type(uint256).max;
+                uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return type(uint256).max;
+            }
+            if (p + 4 > L) return type(uint256).max;
             uint32 nChunks = _readU32(blob, p); p += 4;
             for (uint32 c = 0; c < nChunks; c++) {
-                if (p + 4 > L) return false;
+                if (p + 4 > L) return type(uint256).max;
                 uint32 nPar = _readU32(blob, p); p += 4;
                 for (uint32 pp = 0; pp < nPar; pp++) {
-                    if (p + 4 > L) return false;
+                    if (p + 4 > L) return type(uint256).max;
                     uint32 nCols = _readU32(blob, p); p += 4;
                     for (uint32 k = 0; k < nCols; k++) {
-                        if (p + 4 > L) return false;
-                        uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
+                        if (p + 4 > L) return type(uint256).max;
+                        uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return type(uint256).max;
                     }
                 }
             }
         }
-        return p == L;
+        return p;
+    }
+
+    /// Phase A2b: trashcan-expressions equivalence test.
+    function test_trash_expressions() public {
+        bytes memory blob = vm.readFileBinary("fixtures/trashcan_expressions_fixture.bin");
+        uint256 off = 0;
+        uint256 trashChallenge = _readUint(blob, off); off += 32;
+        (uint256[] memory trashEvals, uint256 off1) = _readArr(blob, off);
+        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
+        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
+        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
+        (uint256[] memory challenges, uint256 off5) = _readArr(blob, off4);
+        (uint256[] memory expected, ) = _readArr(blob, off5);
+
+        uint256 lookupOffset = _findLookupSection();
+        uint256 trashOffset = _findTrashSection(lookupOffset);
+
+        uint256[] memory got = v.trashExpressions(
+            vkAddr, trashOffset, trashChallenge, trashEvals,
+            adviceEvals, fixedEvals, instanceEvals, challenges
+        );
+
+        require(got.length == expected.length, "trash expr len mismatch");
+        for (uint256 i = 0; i < got.length; i++) {
+            require(got[i] == expected[i], "trash expression mismatch");
+        }
+        emit log_named_uint("trash expressions verified", got.length);
+    }
+
+    function _findTrashSection(uint256 lookupOffset) internal view returns (uint256) {
+        bytes memory vkBlob = vkAddr.code;
+        uint256 L = vkBlob.length;
+        uint32 nLookups = _readU32(vkBlob, lookupOffset);
+        uint256 afterLookups = _walkLookupSection(vkBlob, lookupOffset, nLookups, L);
+        require(afterLookups != type(uint256).max && afterLookups + 4 <= L, "trash section not found");
+        return afterLookups;
     }
 
     function test_verify_poseidon_proof() public {

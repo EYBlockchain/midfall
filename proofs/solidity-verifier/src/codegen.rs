@@ -122,6 +122,11 @@ pub struct VkInfo {
     /// needed by Solidity to reconstruct the `logup::Evaluated::
     /// expressions(...)` iterator output.
     pub lookups_bytecode: Vec<LookupBytecode>,
+    /// One entry per trashcan argument. Each contains the bytecode-
+    /// serialised selector + constraint expressions needed by
+    /// Solidity to reconstruct the `trash::Evaluated::
+    /// expressions(...)` iterator output.
+    pub trashcans_bytecode: Vec<TrashcanBytecode>,
 }
 
 /// Serialised (RPN bytecode) form of a single midnight-proofs lookup
@@ -138,6 +143,21 @@ pub struct LookupBytecode {
     /// Chunked inputs: `input_chunks[chunk][parallel_lookup][column]`
     /// where each `column` is an RPN bytecode program.
     pub input_chunks: Vec<Vec<Vec<Vec<u8>>>>,
+}
+
+/// Serialised form of a single trashcan argument. The trashcan
+/// constraint is shaped: `compressed_constraints - (1 - q) · trash_eval`
+/// where `compressed_constraints` is the trash-challenge-compressed
+/// fold of `constraint_expressions`. One bytecode program per
+/// constraint + one for the selector `q` suffices for Solidity's
+/// `_trashExpressions` to reproduce the iterator output.
+#[derive(Clone, Debug)]
+pub struct TrashcanBytecode {
+    /// RPN bytecode of the selector expression.
+    pub selector: Vec<u8>,
+    /// RPN bytecode of each constraint expression (trash-challenge
+    /// folded in order).
+    pub constraints: Vec<Vec<u8>>,
 }
 
 impl VkInfo {
@@ -309,6 +329,21 @@ impl VkInfo {
             })
             .collect();
 
+        // Same shape for trashcans: selector + constraint expressions.
+        let trashcans_bytecode: Vec<TrashcanBytecode> = cs
+            .trashcans()
+            .iter()
+            .map(|arg| {
+                let selector = crate::expr_bytecode::encode_expression(arg.selector());
+                let constraints = arg
+                    .constraint_expressions()
+                    .iter()
+                    .map(crate::expr_bytecode::encode_expression)
+                    .collect();
+                TrashcanBytecode { selector, constraints }
+            })
+            .collect();
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -347,6 +382,7 @@ impl VkInfo {
             permutation_columns,
             permutation_chunk_len,
             lookups_bytecode,
+            trashcans_bytecode,
         }
     }
 }
@@ -476,6 +512,14 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     //         for each col: u32 len, <bytecode>
     append_lookups_section(&mut blob, &vk.lookups_bytecode);
 
+    // Trashcan-expressions bytecode (Phase A2b):
+    //   u32 num_trashcans
+    //   for each trashcan:
+    //     u32 selector_len, <bytecode>
+    //     u32 num_constraints
+    //     for each constraint: u32 len, <bytecode>
+    append_trashcans_section(&mut blob, &vk.trashcans_bytecode);
+
     let total = blob.len();
     let hex_blob = hex::encode(&blob);
 
@@ -565,6 +609,7 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
     }
 
     append_lookups_section(&mut blob, &vk.lookups_bytecode);
+    append_trashcans_section(&mut blob, &vk.trashcans_bytecode);
 
     blob
 }
@@ -591,6 +636,20 @@ fn append_lookups_section(blob: &mut Vec<u8>, lookups: &[LookupBytecode]) {
                     blob.extend_from_slice(col);
                 }
             }
+        }
+    }
+}
+
+/// Shared serialiser for the trashcan bytecode section.
+fn append_trashcans_section(blob: &mut Vec<u8>, trashcans: &[TrashcanBytecode]) {
+    blob.extend_from_slice(&(trashcans.len() as u32).to_be_bytes());
+    for tc in trashcans {
+        blob.extend_from_slice(&(tc.selector.len() as u32).to_be_bytes());
+        blob.extend_from_slice(&tc.selector);
+        blob.extend_from_slice(&(tc.constraints.len() as u32).to_be_bytes());
+        for c in &tc.constraints {
+            blob.extend_from_slice(&(c.len() as u32).to_be_bytes());
+            blob.extend_from_slice(c);
         }
     }
 }
