@@ -12,6 +12,7 @@
 
 use std::{fs, io::Write, path::PathBuf};
 
+use midnight_curves::Fq;
 use midnight_solidity_verifier::{
     codegen::{render_verifying_key, VkInfo},
     eip2537::fq_to_be,
@@ -82,6 +83,68 @@ fn main() {
         eprintln!(
             "      G1 identity compressed = 0x{}",
             hex::encode(b.as_ref())
+        );
+    }
+
+    // Emit algebra-primitive fixtures so the forge test can unit-test the
+    // Solidity Fr/Lagrange/interpolation helpers against blst/midnight-
+    // proofs before relying on them from the full verifier.
+    //
+    // File layout (big-endian, all scalars 32 bytes):
+    //   fixtures/algebra_fixtures.bin:
+    //       [0  .. 32)   omega
+    //       [32 .. 64)   n (as an Fr element)
+    //       [64 .. 96)   x  (random challenge)
+    //       [96 ..128)   xn = x^n
+    //       [128..160)   a  (random Fr)
+    //       [160..192)   a_inv
+    //       [192..224)   nb_lagrange_evals N (uint256 BE)
+    //       [224.. ... ) L_0(x), L_1(x), ..., L_{N-1}(x)  (32 bytes each)
+    {
+        use ff::{Field, PrimeField};
+        let domain = fx.vk.vk().get_domain();
+        let omega = domain.get_omega();
+        let n: u64 = vk_info.n;
+        let n_fq = Fq::from(n);
+        // Use a deterministic "random" x challenge independent of the proof
+        // (constants chosen to match a future forge test fixture).
+        let x_bytes: [u8; 32] = [
+            0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,
+            0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,
+            0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,
+            0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,
+        ];
+        let x = {
+            let mut le = x_bytes;
+            le.reverse();
+            Fq::from_repr(le).unwrap()
+        };
+        let xn = x.pow_vartime([n]);
+
+        let a = Fq::from(0x1234_5678_9abc_defu64);
+        let a_inv = a.invert().unwrap();
+
+        // L_i(x) for i in 0..n (full domain).
+        let lagrange_evals: Vec<Fq> =
+            domain.l_i_range(x, xn, 0..(n as i32)).iter().copied().collect();
+
+        let mut blob = Vec::new();
+        blob.extend_from_slice(&fq_to_be(&omega));
+        blob.extend_from_slice(&fq_to_be(&n_fq));
+        blob.extend_from_slice(&fq_to_be(&x));
+        blob.extend_from_slice(&fq_to_be(&xn));
+        blob.extend_from_slice(&fq_to_be(&a));
+        blob.extend_from_slice(&fq_to_be(&a_inv));
+        // Pad u64 big-endian length to a full 32-byte word MSB-first so that
+        // Solidity's `mload` (big-endian uint256) sees the length directly.
+        blob.extend_from_slice(&[0u8; 24]);
+        blob.extend_from_slice(&(lagrange_evals.len() as u64).to_be_bytes());
+        for e in &lagrange_evals { blob.extend_from_slice(&fq_to_be(e)); }
+        fs::write(fixtures.join("algebra_fixtures.bin"), &blob).unwrap();
+        eprintln!(
+            "      algebra fixtures written ({} bytes, {} Lagrange evals)",
+            blob.len(),
+            lagrange_evals.len(),
         );
     }
 

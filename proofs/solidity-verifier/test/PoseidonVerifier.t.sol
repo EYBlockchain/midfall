@@ -62,6 +62,76 @@ contract PoseidonVerifierTest is Test {
         for (uint256 i = 0; i < len; i++) out[i] = b[off + i];
     }
 
+    /// Unit test for the scalar field + Lagrange-basis primitives.
+    ///
+    /// Reads `fixtures/algebra_fixtures.bin` produced by `cargo run --bin
+    /// generate`:
+    ///   [ 0.. 32)  omega
+    ///   [32.. 64)  n  (Fr element)
+    ///   [64.. 96)  x  (random challenge)
+    ///   [96..128)  xn = x^n
+    ///   [128..160) a
+    ///   [160..192) a_inv
+    ///   [192..224) N (big-endian uint256: number of Lagrange evals that follow)
+    ///   [224..   ) L_0(x), L_1(x), ..., L_{N-1}(x)
+    function test_algebra_primitives() public {
+        bytes memory blob = vm.readFileBinary("fixtures/algebra_fixtures.bin");
+        require(blob.length >= 224, "bad algebra fixture");
+
+        uint256 omega  = _readUint(blob, 0);
+        uint256 n      = _readUint(blob, 32);
+        uint256 x      = _readUint(blob, 64);
+        uint256 xn     = _readUint(blob, 96);
+        uint256 a      = _readUint(blob, 128);
+        uint256 aInv   = _readUint(blob, 160);
+        uint256 nEvals = _readUint(blob, 192);
+        require(blob.length == 224 + nEvals * 32, "fixture len mismatch");
+
+        // 1) `frInv(a) == a_inv` (Fermat's little theorem via ModExp).
+        require(v.frInv(a) == aInv, "frInv mismatch");
+
+        // 2) `frPow(omega, n) == 1` (n-th root of unity).
+        require(v.frPow(omega, n) == 1, "omega^n != 1");
+
+        // 3) `rotateOmega(1, i, omega, n) == omega^i` for a few i values.
+        for (int256 i = 0; i < 8; i++) {
+            require(
+                v.rotateOmega(1, i, omega, n) == v.frPow(omega, uint256(i)),
+                "rotateOmega pos mismatch"
+            );
+        }
+
+        // 4) Full domain Lagrange: L_i(x) for i in 0..n matches the Rust-
+        //    computed `domain.l_i_range(x, xn, 0..n)`.
+        uint256[] memory lSol = v.lagrangeIRange(x, xn, 0, int256(nEvals) - 1, omega, n);
+        require(lSol.length == nEvals, "L len mismatch");
+        for (uint256 i = 0; i < nEvals; i++) {
+            uint256 expected = _readUint(blob, 224 + i * 32);
+            require(lSol[i] == expected, "L_i mismatch");
+        }
+
+        // 5) Lagrange interpolation sanity: pick 3 distinct omega^i and
+        //    their L_i(x) values, interpolate at x3 = x, and check we
+        //    recover the expected sum (trivial identity since L_i(x) is
+        //    itself a Lagrange polynomial evaluated at x).
+        uint256[] memory pts = new uint256[](3);
+        uint256[] memory evs = new uint256[](3);
+        pts[0] = v.frPow(omega, 0);
+        pts[1] = v.frPow(omega, 1);
+        pts[2] = v.frPow(omega, 2);
+        evs[0] = 11;
+        evs[1] = 22;
+        evs[2] = 33;
+        // Evaluating at x = pts[1] must return evs[1] exactly.
+        require(v.lagrangeInterpAtX3(pts, evs, pts[1]) == 22, "interp wrong");
+
+        emit log_named_uint("algebra primitives ok", nEvals);
+    }
+
+    function _readUint(bytes memory b, uint256 off) internal pure returns (uint256 v_) {
+        assembly { v_ := mload(add(add(b, 32), off)) }
+    }
+
     function test_verify_poseidon_proof() public {
         bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
         bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");

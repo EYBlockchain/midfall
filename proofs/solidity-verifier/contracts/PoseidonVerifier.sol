@@ -255,6 +255,36 @@ contract PoseidonVerifier {
         return _g1CompressedToEip2537(c);
     }
 
+    /// Public view wrappers around the Fr primitives so that forge unit
+    /// tests can assert them against Rust-computed fixtures before relying
+    /// on them inside the verifier body.
+    function frPow(uint256 base, uint256 exp) external view returns (uint256) {
+        return _frPow(base, exp);
+    }
+
+    function frInv(uint256 a) external view returns (uint256) { return _frInv(a); }
+
+    function rotateOmega(uint256 x, int256 rotation, uint256 omega, uint256 n)
+        external view returns (uint256)
+    { return _rotateOmega(x, rotation, omega, n); }
+
+    function lagrangeIRange(
+        uint256 x, uint256 xn, int256 startIncl, int256 endIncl,
+        uint256 omega, uint256 n
+    ) external view returns (uint256[] memory) {
+        return _lagrangeIRange(x, xn, startIncl, endIncl, omega, n);
+    }
+
+    function lagrangeInterpAtX3(
+        uint256[] calldata points, uint256[] calldata evals, uint256 x3
+    ) external view returns (uint256) {
+        uint256[] memory p = new uint256[](points.length);
+        uint256[] memory e = new uint256[](evals.length);
+        for (uint256 i = 0; i < points.length; i++) p[i] = points[i];
+        for (uint256 i = 0; i < evals.length; i++) e[i] = evals[i];
+        return _lagrangeInterpAtX3(p, e, x3);
+    }
+
     /* ------------------------------------------------------------------ *
      *  Proof stream reader                                               *
      *                                                                    *
@@ -939,6 +969,196 @@ contract PoseidonVerifier {
             r[i] = bytes1(uint8(uint32(diff)));
             if (i == 0) break;
             unchecked { i--; }
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Fr (scalar field) arithmetic                                      *
+     *                                                                    *
+     *  The BLS12-381 scalar field fits in one 256-bit word, so we can    *
+     *  use the EVM's native `addmod` / `mulmod` for basic arithmetic.    *
+     *  For inversion and arbitrary exponentiation we reuse the ModExp    *
+     *  precompile (0x05) with the 32-byte scalar modulus `r = FR_MODULUS`*
+     *  and Fermat's little theorem: a^{-1} ≡ a^{r-2} (mod r).            *
+     * ------------------------------------------------------------------ */
+
+    function _frAdd(uint256 a, uint256 b) internal pure returns (uint256) {
+        return addmod(a, b, FR_MODULUS);
+    }
+
+    function _frSub(uint256 a, uint256 b) internal pure returns (uint256) {
+        return addmod(a, FR_MODULUS - b, FR_MODULUS);
+    }
+
+    function _frNeg(uint256 a) internal pure returns (uint256) {
+        return a == 0 ? 0 : FR_MODULUS - a;
+    }
+
+    function _frMul(uint256 a, uint256 b) internal pure returns (uint256) {
+        return mulmod(a, b, FR_MODULUS);
+    }
+
+    /// Compute `base^exp mod r` via the Prague ModExp precompile.
+    function _frPow(uint256 base, uint256 exp) internal view returns (uint256 result) {
+        bytes32 b = bytes32(base);
+        bytes32 e = bytes32(exp);
+        bytes32 m = bytes32(FR_MODULUS);
+        bytes memory input = abi.encodePacked(
+            uint256(32), uint256(32), uint256(32), b, e, m
+        );
+        (bool ok, bytes memory out) = PC_MODEXP.staticcall(input);
+        require(ok && out.length == 32, "Fr ModExp failed");
+        assembly { result := mload(add(out, 32)) }
+    }
+
+    function _frInv(uint256 a) internal view returns (uint256) {
+        require(a != 0, "inverse of zero");
+        return _frPow(a, FR_MODULUS - 2);
+    }
+
+    /// Returns `x * omega^rotation` where `rotation` is a signed offset in
+    /// the evaluation domain, mirroring `EvaluationDomain::rotate_omega`.
+    /// Matches the Rust helper `Rotation(k)` where negative rotations are
+    /// handled via multiplication by `omega^{-k}`.
+    function _rotateOmega(uint256 x, int256 rotation, uint256 omega, uint256 n)
+        internal view returns (uint256)
+    {
+        if (rotation == 0) return x;
+        if (rotation > 0) {
+            return _frMul(x, _frPow(omega, uint256(rotation)));
+        } else {
+            // x * omega^{-|r|} = x * omega^{n - |r|}  (since omega^n = 1).
+            uint256 absR = uint256(-rotation);
+            return _frMul(x, _frPow(omega, n - (absR % n)));
+        }
+    }
+
+    /// Batch-compute the Lagrange basis evaluations `L_i(x)` for a
+    /// contiguous range of integer indices. Mirrors
+    /// `EvaluationDomain::l_i_range(x, xn, range)` on the Rust side.
+    ///
+    /// Uses the closed-form:
+    ///
+    ///     L_i(x) = ω^i · (x^n − 1) / (n · (x − ω^i))
+    ///
+    /// which is valid for any `i` in the domain's index ring when `x` is
+    /// outside the domain (the verifier's `x` always is, with overwhelming
+    /// probability). The `xn = x^n` argument is passed separately since
+    /// callers (e.g. `verify_algebraic_constraints`) already compute it.
+    function _lagrangeIRange(
+        uint256 x,
+        uint256 xn,
+        int256 startInclusive,
+        int256 endInclusive,
+        uint256 omega,
+        uint256 n
+    ) internal view returns (uint256[] memory out) {
+        require(endInclusive >= startInclusive, "empty range");
+        uint256 len = uint256(endInclusive - startInclusive + 1);
+        out = new uint256[](len);
+
+        // Common numerator: (x^n - 1).
+        uint256 numer = _frSub(xn, 1);
+        // Common denominator factor: n (as an Fr element).
+        uint256 nInv = _frInv(n % FR_MODULUS);
+
+        // For efficiency, compute omega^start and walk through the range.
+        uint256 wI = _rotateOmega(1, startInclusive, omega, n);
+        uint256 wStep = omega; // multiply by ω to advance i by +1
+
+        for (uint256 k = 0; k < len; k++) {
+            // denominator = n * (x - ω^i)
+            uint256 xMinusWi = _frSub(x, wI);
+            uint256 invXMinusWi = _frInv(xMinusWi);
+            // L_i(x) = ω^i · (x^n - 1) / (n · (x - ω^i))
+            uint256 li = _frMul(wI, _frMul(numer, _frMul(nInv, invXMinusWi)));
+            out[k] = li;
+            wI = _frMul(wI, wStep);
+        }
+    }
+
+    /// Compute the evaluation of an instance column at point `x` given the
+    /// public-input values by taking the inner product with the Lagrange
+    /// basis at `x`, exactly as the Rust verifier does for non-committed
+    /// instance columns.
+    ///
+    /// For the poseidon example there is exactly one non-committed
+    /// instance column with a single value. `lagrangeSlice` is the
+    /// pre-computed L_i(x) values over the rotation range required by
+    /// `cs.instance_queries()`.
+    function _instanceEvalFromLagrange(
+        uint256[] memory instance,
+        uint256[] memory lagrangeSlice
+    ) internal pure returns (uint256 acc) {
+        require(instance.length <= lagrangeSlice.length, "short L slice");
+        acc = 0;
+        for (uint256 i = 0; i < instance.length; i++) {
+            acc = addmod(acc, mulmod(instance[i], lagrangeSlice[i], FR_MODULUS), FR_MODULUS);
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  EIP-2537 G1MSM wrapper                                            *
+     *                                                                    *
+     *  The G1MSM precompile expects `(point, scalar)` pairs where the    *
+     *  point is EIP-2537 128-byte uncompressed and the scalar is 32      *
+     *  bytes big-endian. Returns a single 128-byte G1 point.             *
+     * ------------------------------------------------------------------ */
+
+    function _g1MsmSingle(bytes memory point, uint256 scalar)
+        internal view returns (bytes memory)
+    {
+        require(point.length == 128, "msm bad point");
+        bytes memory input = abi.encodePacked(point, bytes32(scalar));
+        return _g1Msm(input);
+    }
+
+    /// Compute `sum_i scalars[i] * points[i]` via the G1MSM precompile in a
+    /// single call. `points` is a concatenation of 128-byte EIP-2537 G1
+    /// encodings and must be the same length (in entries) as `scalars`.
+    function _g1MsmBatch(bytes[] memory points, uint256[] memory scalars)
+        internal view returns (bytes memory)
+    {
+        require(points.length == scalars.length, "msm len mismatch");
+        require(points.length > 0, "msm empty");
+        bytes memory input = new bytes(points.length * 160);
+        uint256 dst = 0;
+        for (uint256 i = 0; i < points.length; i++) {
+            require(points[i].length == 128, "msm bad point");
+            for (uint256 j = 0; j < 128; j++) input[dst + j] = points[i][j];
+            dst += 128;
+            bytes32 s = bytes32(scalars[i]);
+            for (uint256 j = 0; j < 32; j++) input[dst + j] = s[j];
+            dst += 32;
+        }
+        return _g1Msm(input);
+    }
+
+    /// Lagrange interpolation at `x3`: given a set of (point, eval) pairs
+    /// `(z_i, y_i)`, returns `r(x3)` where `r` is the unique degree-<n
+    /// polynomial satisfying `r(z_i) = y_i`. Used by `multi_prepare` to
+    /// reconstruct `f_eval` from the prover's `q_evals_on_x3`.
+    ///
+    /// Implementation follows the barycentric form:
+    ///     r(x3) = sum_i  y_i *  prod_{j ≠ i} (x3 - z_j) / (z_i - z_j)
+    function _lagrangeInterpAtX3(
+        uint256[] memory points,
+        uint256[] memory evals,
+        uint256 x3
+    ) internal view returns (uint256 result) {
+        require(points.length == evals.length, "lagrange len");
+        uint256 n_ = points.length;
+        result = 0;
+        for (uint256 i = 0; i < n_; i++) {
+            uint256 num = 1;
+            uint256 den = 1;
+            for (uint256 j = 0; j < n_; j++) {
+                if (j == i) continue;
+                num = _frMul(num, _frSub(x3, points[j]));
+                den = _frMul(den, _frSub(points[i], points[j]));
+            }
+            uint256 term = _frMul(evals[i], _frMul(num, _frInv(den)));
+            result = _frAdd(result, term);
         }
     }
 }
