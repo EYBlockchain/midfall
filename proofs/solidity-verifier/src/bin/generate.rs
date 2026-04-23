@@ -1152,6 +1152,100 @@ fn main() {
             vk_info.fixed_query_rotation_idx.len(),
             vk_info.instance_query_rotation_idx.len(),
         );
+
+        // Phase C2 (step 1): Lagrange + Horner f_eval fold fixture.
+        //
+        // The Rust verifier's `multi_prepare` computes, after
+        // multi-open batching, a scalar `f_eval` by reverse-folding
+        // over all point sets (proofs/src/poly/kzg/mod.rs:330-340):
+        //
+        //   acc = 0
+        //   for (points, evals, proof_eval) in zip(..).rev():
+        //       r_eval = eval(lagrange_interp(points, evals), x3)
+        //       den    = ∏(x3 − point_j)
+        //       eval_i = (proof_eval − r_eval) / den
+        //       acc    = acc · x2 + eval_i
+        //
+        // Fixture layout (all 32B BE unless noted):
+        //   [32] x2   [32] x3
+        //   [32] num_sets  (u256)
+        //     per set:
+        //       [32] m (size of the point set)
+        //       [32] × m   points
+        //       [32] × m   evals
+        //       [32]       proof_eval
+        //   [32] expected_f_eval
+        let x2 = Fq::from(2024u64);
+        let x3 = Fq::from(2025u64);
+        // Synthetic heterogeneous point sets to exercise multi-size
+        // scenarios (the poseidon proof's actual point sets have
+        // sizes 1, 1, 1, 2 — Lagrange interp reduces to identity on
+        // singletons but still exercises the denominator product).
+        let sets: Vec<(Vec<Fq>, Vec<Fq>, Fq)> = vec![
+            (
+                vec![Fq::from(11u64)],
+                vec![Fq::from(101u64)],
+                Fq::from(1001u64),
+            ),
+            (
+                vec![Fq::from(22u64), Fq::from(33u64)],
+                vec![Fq::from(202u64), Fq::from(303u64)],
+                Fq::from(2002u64),
+            ),
+            (
+                vec![Fq::from(44u64), Fq::from(55u64), Fq::from(66u64)],
+                vec![Fq::from(404u64), Fq::from(505u64), Fq::from(606u64)],
+                Fq::from(3003u64),
+            ),
+        ];
+        let lagrange_interp_at_x3 = |points: &[Fq], evals: &[Fq]| -> Fq {
+            let n = points.len();
+            let mut result = Fq::ZERO;
+            for i in 0..n {
+                let mut num = Fq::ONE;
+                let mut den = Fq::ONE;
+                for j in 0..n {
+                    if i == j { continue; }
+                    num *= x3 - points[j];
+                    den *= points[i] - points[j];
+                }
+                result += evals[i] * num * den.invert().unwrap();
+            }
+            result
+        };
+
+        let mut acc = Fq::ZERO;
+        for (pts, evs, proof_eval) in sets.iter().rev() {
+            let r_eval = lagrange_interp_at_x3(pts, evs);
+            let den: Fq = pts.iter().fold(Fq::ONE, |a, p| a * (x3 - p));
+            let eval_i = (*proof_eval - r_eval) * den.invert().unwrap();
+            acc = acc * x2 + eval_i;
+        }
+
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+        push_fq(&mut blob, &x2);
+        push_fq(&mut blob, &x3);
+        push_u256(&mut blob, sets.len() as u64);
+        for (pts, evs, proof_eval) in &sets {
+            push_u256(&mut blob, pts.len() as u64);
+            for p in pts { push_fq(&mut blob, p); }
+            for e in evs { push_fq(&mut blob, e); }
+            push_fq(&mut blob, proof_eval);
+        }
+        push_fq(&mut blob, &acc);
+
+        fs::write(fixtures.join("feval_fold_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      f_eval fold fixture written ({} bytes, {} sets, sizes {:?})",
+            blob.len(),
+            sets.len(),
+            sets.iter().map(|(p, _, _)| p.len()).collect::<Vec<_>>(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

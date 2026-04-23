@@ -500,6 +500,51 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C2 step 1: Lagrange + Horner f_eval fold equivalence.
+    /// Reads `fixtures/feval_fold_fixture.bin` which contains x2/x3,
+    /// three synthetic point sets of sizes 1/2/3 with their evals
+    /// and proof_evals_at_x3, and the Rust-computed expected
+    /// `f_eval` scalar. Invokes `computeFEvalFold` and asserts
+    /// byte-for-byte equality. This exercises Lagrange
+    /// interpolation on single and multi-point sets + the reverse
+    /// x2-Horner accumulator that the Rust `multi_prepare` uses.
+    function test_feval_fold() public {
+        bytes memory f = vm.readFileBinary("fixtures/feval_fold_fixture.bin");
+        uint256 off = 0;
+        uint256 x2 = _readUint(f, off); off += 32;
+        uint256 x3 = _readUint(f, off); off += 32;
+        uint256 nSets = _readUint(f, off); off += 32;
+
+        uint256[] memory lens = new uint256[](nSets);
+        uint256 total = 0;
+        for (uint256 i = 0; i < nSets; i++) {
+            lens[i] = _readUint(f, off); off += 32;
+            uint256 m = lens[i];
+            off += 32 * (m + m + 1);  // points + evals + proof_eval
+            total += m;
+        }
+        // Second pass: fill flat arrays + qEvalsOnX3.
+        off = 32 + 32 + 32;
+        uint256[] memory pointsFlat = new uint256[](total);
+        uint256[] memory evalsFlat = new uint256[](total);
+        uint256[] memory qEvalsOnX3 = new uint256[](nSets);
+        uint256 cursor = 0;
+        for (uint256 i = 0; i < nSets; i++) {
+            off += 32;
+            uint256 m = lens[i];
+            for (uint256 j = 0; j < m; j++) { pointsFlat[cursor + j] = _readUint(f, off + 32 * j); }
+            for (uint256 j = 0; j < m; j++) { evalsFlat[cursor + j] = _readUint(f, off + 32 * (m + j)); }
+            qEvalsOnX3[i] = _readUint(f, off + 32 * (2 * m));
+            off += 32 * (2 * m + 1);
+            cursor += m;
+        }
+        uint256 expected = _readUint(f, off);
+
+        uint256 got = v.computeFEvalFold(lens, pointsFlat, evalsFlat, qEvalsOnX3, x2, x3);
+        require(got == expected, "f_eval mismatch");
+        emit log_named_uint("f_eval fold verified over sets", nSets);
+    }
+
     /// Phase C1: query-schedule equivalence test.
     /// Reads `fixtures/query_schedule_fixture.bin` which contains
     /// the deterministic x challenge and the Rust-computed rotated

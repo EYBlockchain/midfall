@@ -1042,6 +1042,82 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  f_eval fold for multi_prepare (Phase C2 step 1)                   *
+     *                                                                    *
+     *  Port of the reverse-Horner Lagrange fold from                    *
+     *  \`KZGCommitmentScheme::multi_prepare\` (kzg/mod.rs:330-340). Given *
+     *  the x1-folded per-set (point_set, eval_set, proof_eval_at_x3)    *
+     *  triples + the batching challenges x2, x3, produces the scalar    *
+     *  \`f_eval\` that enters the x4-fold producing the final v scalar  *
+     *  used in the pairing RHS.                                         *
+     *                                                                    *
+     *  Algorithm (verbatim):                                             *
+     *    acc = 0                                                         *
+     *    for (points, evals, proof_eval) in zip(..).rev():               *
+     *        r_eval = eval(lagrange(points, evals), x3)                  *
+     *        den    = ∏(x3 − point_j)                                    *
+     *        acc    = acc · x2 + (proof_eval − r_eval) / den             *
+     * ------------------------------------------------------------------ */
+
+    function _computeFEvalFold(
+        uint256[] memory pointSetLens,
+        uint256[] memory pointSetsFlat,
+        uint256[] memory evalSetsFlat,
+        uint256[] memory qEvalsOnX3,
+        uint256 x2,
+        uint256 x3
+    ) internal view returns (uint256 acc) {
+        uint256 n = pointSetLens.length;
+        require(qEvalsOnX3.length == n, "qEvalsOnX3 length");
+        // Precompute set-start offsets so reverse iteration is cheap.
+        uint256[] memory offs = new uint256[](n + 1);
+        for (uint256 i = 0; i < n; i++) offs[i + 1] = offs[i] + pointSetLens[i];
+        require(offs[n] == pointSetsFlat.length, "points flat length");
+        require(offs[n] == evalSetsFlat.length, "evals flat length");
+
+        acc = 0;
+        for (uint256 k = n; k > 0; k--) {
+            uint256 i = k - 1;
+            uint256 len = pointSetLens[i];
+            uint256 start = offs[i];
+            // Carve out the per-set (points, evals) slices.
+            uint256[] memory pts = new uint256[](len);
+            uint256[] memory evs = new uint256[](len);
+            for (uint256 j = 0; j < len; j++) {
+                pts[j] = pointSetsFlat[start + j];
+                evs[j] = evalSetsFlat[start + j];
+            }
+            uint256 rEval = _lagrangeInterpAtX3(pts, evs, x3);
+            // den = ∏(x3 − point_j)
+            uint256 den = 1;
+            for (uint256 j = 0; j < len; j++) {
+                den = _frMul(den, _frSub(x3, pts[j]));
+            }
+            uint256 numer = _frSub(qEvalsOnX3[i], rEval);
+            uint256 eval_i = _frMul(numer, _frInv(den));
+            acc = _frAdd(_frMul(acc, x2), eval_i);
+        }
+    }
+
+    /// Public wrapper for fixture testing.
+    function computeFEvalFold(
+        uint256[] calldata pointSetLens,
+        uint256[] calldata pointSetsFlat,
+        uint256[] calldata evalSetsFlat,
+        uint256[] calldata qEvalsOnX3,
+        uint256 x2,
+        uint256 x3
+    ) external view returns (uint256) {
+        return _computeFEvalFold(
+            _copyToMemArr(pointSetLens),
+            _copyToMemArr(pointSetsFlat),
+            _copyToMemArr(evalSetsFlat),
+            _copyToMemArr(qEvalsOnX3),
+            x2, x3
+        );
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Query-rotation schedule (Phase C1)                                *
      *                                                                    *
      *  Reads the distinct-rotations + per-query-kind rotation-index     *
