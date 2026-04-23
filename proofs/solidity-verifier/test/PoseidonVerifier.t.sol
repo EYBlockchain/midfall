@@ -500,6 +500,70 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C2a: construct_intermediate_sets equivalence.
+    /// Reads `fixtures/interm_sets_fixture.bin` which contains a
+    /// synthetic (commitment_id, point_value) query list + the
+    /// Rust-computed (commitment_ids, commitment_set_idx,
+    /// commitment_point_indices, point_sets) tuple. Invokes the
+    /// Solidity `constructIntermediateSets` helper and asserts
+    /// byte-for-byte match across all four output arrays.
+    function test_intermediate_sets() public {
+        bytes memory f = vm.readFileBinary("fixtures/interm_sets_fixture.bin");
+        uint256 off = 0;
+        uint256 nq = _readU32(f, off); off += 4;
+        uint256[] memory qCids = new uint256[](nq);
+        uint256[] memory qPvs  = new uint256[](nq);
+        for (uint256 i = 0; i < nq; i++) {
+            qCids[i] = _readU32(f, off); off += 4;
+            qPvs[i]  = _readUint(f, off); off += 32;
+        }
+        uint256 nC = _readU32(f, off); off += 4;
+        uint256[] memory expIds = new uint256[](nC);
+        uint256[] memory expSetIdx = new uint256[](nC);
+        uint256[][] memory expPtIdx = new uint256[][](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            expIds[c] = _readU32(f, off); off += 4;
+            expSetIdx[c] = _readU32(f, off); off += 4;
+            uint256 m = _readU32(f, off); off += 4;
+            uint256[] memory pi = new uint256[](m);
+            for (uint256 i = 0; i < m; i++) { pi[i] = _readU32(f, off); off += 4; }
+            expPtIdx[c] = pi;
+        }
+        uint256 nS = _readU32(f, off); off += 4;
+        uint256[][] memory expSets = new uint256[][](nS);
+        for (uint256 s = 0; s < nS; s++) {
+            uint256 m = _readU32(f, off); off += 4;
+            uint256[] memory pv = new uint256[](m);
+            for (uint256 i = 0; i < m; i++) { pv[i] = _readUint(f, off); off += 32; }
+            expSets[s] = pv;
+        }
+
+        (
+            uint256[] memory gotIds,
+            uint256[] memory gotSetIdx,
+            uint256[][] memory gotPtIdx,
+            uint256[][] memory gotSets
+        ) = v.constructIntermediateSets(qCids, qPvs);
+
+        require(gotIds.length == nC, "nC mismatch");
+        for (uint256 c = 0; c < nC; c++) {
+            require(gotIds[c] == expIds[c], "cid mismatch");
+            require(gotSetIdx[c] == expSetIdx[c], "setIdx mismatch");
+            require(gotPtIdx[c].length == expPtIdx[c].length, "pt_idx len mismatch");
+            for (uint256 i = 0; i < gotPtIdx[c].length; i++) {
+                require(gotPtIdx[c][i] == expPtIdx[c][i], "pt_idx mismatch");
+            }
+        }
+        require(gotSets.length == nS, "nS mismatch");
+        for (uint256 s = 0; s < nS; s++) {
+            require(gotSets[s].length == expSets[s].length, "set size mismatch");
+            for (uint256 i = 0; i < gotSets[s].length; i++) {
+                require(gotSets[s][i] == expSets[s][i], "set point mismatch");
+            }
+        }
+        emit log_named_uint("intermediate-sets verified, sets", nS);
+    }
+
     /// Phase C3: real pairing RHS check.
     /// Reads `fixtures/pairing_fixture.bin` which contains the
     /// Rust-computed `left` and `right` G1 points (compressed,

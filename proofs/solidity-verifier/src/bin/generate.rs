@@ -1331,6 +1331,155 @@ fn main() {
             blob.len(),
             ok_rust,
         );
+
+        // Phase C2a: construct_intermediate_sets equivalence fixture.
+        //
+        // Ports a synthetic (commitment_id, point_value) query list
+        // through a faithful Rust replica of
+        // `proofs/src/poly/kzg/utils.rs::construct_intermediate_sets`,
+        // capturing:
+        //   - per-commitment FIFO order + point_indices (query-
+        //     insertion order per commitment),
+        //   - set_idx per commitment (FIFO dedup of the sorted
+        //     point_index set, in commitment-iteration order),
+        //   - point_sets[s] = sorted ascending point VALUES of set s.
+        //
+        // Input layout mimics a poseidon-shaped workload:
+        //   3 commitments × 3 rotations cross-product (9 queries),
+        //   plus a handful of duplicated commitments queried at
+        //   only the "cur" rotation to stress the size-1 set case.
+        //
+        // File layout:
+        //   [4] nQueries
+        //     per query: [4] commitment_id, [32] point_value
+        //   [4] nCommitments
+        //     per commitment:
+        //       [4] commitment_id
+        //       [4] set_idx
+        //       [4] num_point_indices
+        //         per: [4] point_idx       (query-insertion order)
+        //   [4] nSets
+        //     per set:
+        //       [4] size
+        //         per: [32] point_value    (sorted ascending by
+        //                                   point_idx, not by value)
+        struct IntermSet {
+            commitment_ids: Vec<u32>,
+            commitment_set_idx: Vec<u32>,
+            commitment_point_idx: Vec<Vec<u32>>,
+            point_sets: Vec<Vec<Fq>>, // sorted ascending by point_idx
+        }
+        fn compute_intermediate_sets(queries: &[(u32, Fq)]) -> IntermSet {
+            // FIFO point_value → point_idx.
+            let mut unique_points: Vec<Fq> = Vec::new();
+            let mut q_pidx: Vec<u32> = Vec::with_capacity(queries.len());
+            for (_, pv) in queries {
+                let p_idx = match unique_points.iter().position(|p| p == pv) {
+                    Some(k) => k,
+                    None => {
+                        unique_points.push(*pv);
+                        unique_points.len() - 1
+                    }
+                };
+                q_pidx.push(p_idx as u32);
+            }
+            // FIFO commitment dedup + per-commitment point_indices.
+            let mut c_ids: Vec<u32> = Vec::new();
+            let mut c_pts: Vec<Vec<u32>> = Vec::new();
+            for (qi, (cid, _)) in queries.iter().enumerate() {
+                let c_pos = match c_ids.iter().position(|c| c == cid) {
+                    Some(k) => k,
+                    None => {
+                        c_ids.push(*cid);
+                        c_pts.push(Vec::new());
+                        c_ids.len() - 1
+                    }
+                };
+                // Rust's construct_intermediate_sets rejects duplicate
+                // (commitment, point) queries. Our fixture uses distinct
+                // rotations per query so this never triggers.
+                c_pts[c_pos].push(q_pidx[qi]);
+            }
+            // FIFO set dedup (per sorted point_index set).
+            let mut c_set_idx: Vec<u32> = Vec::with_capacity(c_ids.len());
+            let mut set_owner: Vec<usize> = Vec::new();
+            let mut sorted_sets: Vec<Vec<u32>> = Vec::new();
+            for (c, pts) in c_pts.iter().enumerate() {
+                let mut sorted = pts.clone();
+                sorted.sort();
+                let idx = match sorted_sets.iter().position(|s| s == &sorted) {
+                    Some(k) => k,
+                    None => {
+                        sorted_sets.push(sorted.clone());
+                        set_owner.push(c);
+                        sorted_sets.len() - 1
+                    }
+                };
+                c_set_idx.push(idx as u32);
+            }
+            // Build point_sets: sorted ascending by point_idx → point_value.
+            let mut point_sets: Vec<Vec<Fq>> = Vec::with_capacity(sorted_sets.len());
+            for sorted in &sorted_sets {
+                let mut ps = Vec::with_capacity(sorted.len());
+                for &pi in sorted {
+                    ps.push(unique_points[pi as usize]);
+                }
+                point_sets.push(ps);
+            }
+            IntermSet {
+                commitment_ids: c_ids,
+                commitment_set_idx: c_set_idx,
+                commitment_point_idx: c_pts,
+                point_sets,
+            }
+        }
+
+        // Synthetic query list shaped like a poseidon verifier would
+        // produce: 3 rotations (cur, next, last) × 3 commitments +
+        // 3 size-1 queries.
+        let p0 = Fq::from(1001u64);
+        let p1 = Fq::from(1002u64);
+        let p2 = Fq::from(1003u64);
+        let queries: Vec<(u32, Fq)> = vec![
+            (10, p0), (10, p1), (10, p2),   // commitment 10 at 3 points
+            (11, p0), (11, p2),             // commitment 11 at 2 points
+            (12, p0),                       // commitment 12 at 1 point (new set)
+            (13, p1),                       // commitment 13 at 1 point (new set)
+            (14, p0),                       // commitment 14 at 1 point, same set as 12
+        ];
+        let result = compute_intermediate_sets(&queries);
+
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(&(queries.len() as u32).to_be_bytes());
+        for (cid, pv) in &queries {
+            blob.extend_from_slice(&cid.to_be_bytes());
+            blob.extend_from_slice(&fq_to_be(pv));
+        }
+        blob.extend_from_slice(&(result.commitment_ids.len() as u32).to_be_bytes());
+        for (i, cid) in result.commitment_ids.iter().enumerate() {
+            blob.extend_from_slice(&cid.to_be_bytes());
+            blob.extend_from_slice(&result.commitment_set_idx[i].to_be_bytes());
+            let pidx = &result.commitment_point_idx[i];
+            blob.extend_from_slice(&(pidx.len() as u32).to_be_bytes());
+            for &pi in pidx {
+                blob.extend_from_slice(&pi.to_be_bytes());
+            }
+        }
+        blob.extend_from_slice(&(result.point_sets.len() as u32).to_be_bytes());
+        for ps in &result.point_sets {
+            blob.extend_from_slice(&(ps.len() as u32).to_be_bytes());
+            for pv in ps {
+                blob.extend_from_slice(&fq_to_be(pv));
+            }
+        }
+        fs::write(fixtures.join("interm_sets_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      intermediate-sets fixture written ({} bytes, {} queries, {} commitments, {} sets)",
+            blob.len(),
+            queries.len(),
+            result.commitment_ids.len(),
+            result.point_sets.len(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

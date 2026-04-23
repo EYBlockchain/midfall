@@ -1042,6 +1042,179 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  construct_intermediate_sets (Phase C2a)                           *
+     *                                                                    *
+     *  Solidity port of                                                  *
+     *  \`proofs/src/poly/kzg/utils.rs::construct_intermediate_sets\`.     *
+     *  Given a flat list of (commitment_id, point_value) query tuples,  *
+     *  groups them into:                                                 *
+     *    - per-commitment FIFO order + point_indices                    *
+     *      (query-insertion order per commitment),                       *
+     *    - per-commitment set_idx, where distinct sorted                *
+     *      point_index sets get FIFO-assigned indices in                 *
+     *      commitment-iteration order,                                   *
+     *    - per-set sorted-ascending point VALUES (indexed by set_idx).  *
+     *                                                                    *
+     *  This is the grouping primitive that the remaining C2 steps       *
+     *  (per-set x1-inner-product MSM fold; x4 DualMSM) consume to       *
+     *  build the two G1 points fed into the Phase-C3 pairing.           *
+     * ------------------------------------------------------------------ */
+
+    struct IntermediateSets {
+        uint256[] commitmentIds;            // len = nCommitments
+        uint256[] commitmentSetIdx;         // len = nCommitments
+        uint256[][] commitmentPointIdx;     // query-insertion order per commitment
+        uint256[][] pointSets;              // sorted-ascending point VALUES per set
+    }
+
+    function _constructIntermediateSets(
+        uint256[] memory queryCommitmentIds,
+        uint256[] memory queryPointValues
+    ) internal pure returns (IntermediateSets memory out) {
+        uint256 nq = queryCommitmentIds.length;
+        require(nq == queryPointValues.length, "query len mismatch");
+
+        // 1. FIFO dedup of point values → point_idx per query.
+        uint256[] memory uPts = new uint256[](nq);
+        uint256[] memory qPidx = new uint256[](nq);
+        uint256 nU = 0;
+        for (uint256 q = 0; q < nq; q++) {
+            uint256 pv = queryPointValues[q];
+            uint256 pIdx = nU;
+            for (uint256 k = 0; k < nU; k++) {
+                if (uPts[k] == pv) { pIdx = k; break; }
+            }
+            if (pIdx == nU) { uPts[pIdx] = pv; nU++; }
+            qPidx[q] = pIdx;
+        }
+
+        // 2. FIFO dedup of commitment ids + count per-commitment
+        //    point_indices for exact allocation in pass 3.
+        uint256[] memory cIds = new uint256[](nq);
+        uint256[] memory cCnt = new uint256[](nq);
+        uint256[] memory qCidx = new uint256[](nq);
+        uint256 nC = 0;
+        for (uint256 q = 0; q < nq; q++) {
+            uint256 cid = queryCommitmentIds[q];
+            uint256 cPos = nC;
+            for (uint256 k = 0; k < nC; k++) {
+                if (cIds[k] == cid) { cPos = k; break; }
+            }
+            if (cPos == nC) { cIds[cPos] = cid; nC++; }
+            qCidx[q] = cPos;
+            cCnt[cPos] += 1;
+        }
+
+        // 3. Allocate per-commitment point_idx arrays; fill in query
+        //    insertion order.
+        uint256[][] memory cPtIdx = new uint256[][](nC);
+        uint256[] memory cFill = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) cPtIdx[c] = new uint256[](cCnt[c]);
+        for (uint256 q = 0; q < nq; q++) {
+            uint256 c = qCidx[q];
+            cPtIdx[c][cFill[c]] = qPidx[q];
+            cFill[c] += 1;
+        }
+
+        // 4. Per-commitment sorted point_idx (insertion sort; per-set
+        //    keys) + FIFO set dedup.
+        uint256[][] memory cSorted = new uint256[][](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            uint256 m = cCnt[c];
+            uint256[] memory s = new uint256[](m);
+            for (uint256 i = 0; i < m; i++) s[i] = cPtIdx[c][i];
+            for (uint256 i = 1; i < m; i++) {
+                uint256 key = s[i];
+                uint256 j = i;
+                while (j > 0 && s[j - 1] > key) { s[j] = s[j - 1]; j--; }
+                s[j] = key;
+            }
+            cSorted[c] = s;
+        }
+        uint256[] memory cSetIdx = new uint256[](nC);
+        uint256[] memory setOwner = new uint256[](nC);
+        uint256 nSets = _fifoDedupSortedSets(cSorted, cSetIdx, setOwner, nC);
+
+        // 5. Build pointSets[s] = sorted ascending point VALUES.
+        uint256[][] memory pointSets = new uint256[][](nSets);
+        for (uint256 s = 0; s < nSets; s++) {
+            uint256 owner = setOwner[s];
+            uint256[] memory sortedIdx = cSorted[owner];
+            uint256 m = sortedIdx.length;
+            uint256[] memory ps = new uint256[](m);
+            for (uint256 i = 0; i < m; i++) ps[i] = uPts[sortedIdx[i]];
+            pointSets[s] = ps;
+        }
+
+        // 6. Shrink cIds, cSetIdx, cPtIdx to nC.
+        uint256[] memory outIds = new uint256[](nC);
+        uint256[] memory outSetIdx = new uint256[](nC);
+        uint256[][] memory outPtIdx = new uint256[][](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            outIds[c] = cIds[c];
+            outSetIdx[c] = cSetIdx[c];
+            outPtIdx[c] = cPtIdx[c];
+        }
+
+        out.commitmentIds = outIds;
+        out.commitmentSetIdx = outSetIdx;
+        out.commitmentPointIdx = outPtIdx;
+        out.pointSets = pointSets;
+    }
+
+    function _fifoDedupSortedSets(
+        uint256[][] memory cSorted,
+        uint256[] memory cSetIdx,
+        uint256[] memory setOwner,
+        uint256 nC
+    ) internal pure returns (uint256 nSets) {
+        nSets = 0;
+        for (uint256 c = 0; c < nC; c++) {
+            uint256 sIdx = _findExistingSet(cSorted, setOwner, nSets, c);
+            if (sIdx == nSets) { setOwner[sIdx] = c; nSets++; }
+            cSetIdx[c] = sIdx;
+        }
+    }
+
+    function _findExistingSet(
+        uint256[][] memory cSorted,
+        uint256[] memory setOwner,
+        uint256 nSets,
+        uint256 c
+    ) internal pure returns (uint256) {
+        uint256[] memory target = cSorted[c];
+        uint256 tLen = target.length;
+        for (uint256 s = 0; s < nSets; s++) {
+            uint256[] memory cand = cSorted[setOwner[s]];
+            if (cand.length != tLen) continue;
+            bool eq_ = true;
+            for (uint256 i = 0; i < tLen; i++) {
+                if (cand[i] != target[i]) { eq_ = false; break; }
+            }
+            if (eq_) return s;
+        }
+        return nSets;
+    }
+
+    /// Public fixture-only wrapper.
+    function constructIntermediateSets(
+        uint256[] calldata queryCommitmentIds,
+        uint256[] calldata queryPointValues
+    ) external pure returns (
+        uint256[] memory commitmentIds,
+        uint256[] memory commitmentSetIdx,
+        uint256[][] memory commitmentPointIdx,
+        uint256[][] memory pointSets
+    ) {
+        uint256[] memory cids = new uint256[](queryCommitmentIds.length);
+        uint256[] memory pvs  = new uint256[](queryPointValues.length);
+        for (uint256 i = 0; i < cids.length; i++) cids[i] = queryCommitmentIds[i];
+        for (uint256 i = 0; i < pvs.length;  i++) pvs[i]  = queryPointValues[i];
+        IntermediateSets memory s = _constructIntermediateSets(cids, pvs);
+        return (s.commitmentIds, s.commitmentSetIdx, s.commitmentPointIdx, s.pointSets);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Final pairing RHS (Phase C3)                                      *
      *                                                                    *
      *  Standalone helper that consumes the two G1 points produced by    *
