@@ -1,0 +1,30 @@
+[package]
+name = "midnight-solidity-verifier"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Solidity port of the midnight-proofs PLONK verifier (specialized for zk_stdlib/examples/poseidon), using EIP-2537 BLS12-381 precompiles and Keccak256 Fiat-Shamir transcript"
+
+[dependencies]
+midnight-proofs = { path = "..", features = ["keccak-transcript", "committed-instances"] }
+midnight-zk-stdlib = { path = "../../zk_stdlib" }
+midnight-circuits = { path = "../../circuits", features = ["testing"] }
+midnight-curves = { version = "0.2.0" }
+ff = { workspace = true }
+group = { workspace = true }
+sha3 = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hex = "0.4"
+
+[dev-dependencies]
+
+[[bin]]
+name = "generate"
+path = "src/bin/generate.rs"
+
+[[test]]
+name = "forge"
+path = "tests/forge.rs"
