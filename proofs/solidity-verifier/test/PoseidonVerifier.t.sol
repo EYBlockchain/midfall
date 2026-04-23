@@ -191,6 +191,116 @@ contract PoseidonVerifierTest is Test {
         next = off;
     }
 
+    /// Phase A1 step 2: permutation-expressions equivalence test.
+    ///
+    /// Reads `fixtures/perm_expressions_fixture.bin` produced by the
+    /// Rust-side replica of `permutation::expressions`, feeds the
+    /// inputs into the Solidity `permExpressions` wrapper, and
+    /// asserts every emitted expression matches the Rust-computed
+    /// expected value byte-for-byte. For the poseidon circuit this
+    /// exercises 7 expressions across 3 chunks × 8 permutation
+    /// columns.
+    function test_perm_expressions() public {
+        bytes memory blob = vm.readFileBinary("fixtures/perm_expressions_fixture.bin");
+        uint256 off = 0;
+        uint256[6] memory envScalars;
+        for (uint256 i = 0; i < 6; i++) { envScalars[i] = _readUint(blob, off); off += 32; }
+        uint256 deltaFromFixture = _readUint(blob, off); off += 32;
+        // Sanity: contract's hard-coded FR_DELTA matches the Rust-
+        // computed DELTA (otherwise main-chunk constraints diverge).
+        // Using a sentinel call that exposes FR_DELTA via _frDeltaPow(1).
+        require(deltaFromFixture == v.frDeltaPow(1), "FR_DELTA constant mismatch");
+
+        uint256 nChunks = _readUint(blob, off); off += 32;
+        uint256[] memory setsFlat = new uint256[](nChunks * 4);
+        for (uint256 i = 0; i < nChunks; i++) {
+            setsFlat[4 * i]     = _readUint(blob, off);            // prod
+            setsFlat[4 * i + 1] = _readUint(blob, off + 32);       // next
+            setsFlat[4 * i + 2] = _readUint(blob, off + 64);       // last
+            setsFlat[4 * i + 3] = uint8(blob[off + 96]);           // hasLast
+            off += 128; // 3*32 + 32 (1 byte + 31 pad)
+        }
+
+        (uint256[] memory permEvals, uint256 off1) = _readArr(blob, off);
+        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
+        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
+        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
+        (uint256[] memory expected, uint256 _off5) = _readArr(blob, off4);
+
+        // Load column metadata from the VK blob.
+        bytes memory vkBlob = vkAddr.code;
+        (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen) =
+            _loadPermColumnMetadata(vkBlob);
+
+        uint256[] memory got = v.permExpressions(
+            envScalars, setsFlat, permEvals, adviceEvals, fixedEvals, instanceEvals,
+            colKinds, colQueryIdxs, chunkLen
+        );
+
+        require(got.length == expected.length, "perm expr len mismatch");
+        for (uint256 i = 0; i < got.length; i++) {
+            require(got[i] == expected[i], "perm expression mismatch");
+        }
+        emit log_named_uint("perm expressions verified", got.length);
+    }
+
+    /// Locate the permutation metadata section at the end of the VK
+    /// blob. The layout is append-only; we scan from the tail
+    /// backward: the last `u32 + u32 + n*(1+2)` bytes are the
+    /// permutation section. For safety we fall back to hardcoded
+    /// offsets based on the known poseidon shape.
+    function _loadPermColumnMetadata(bytes memory blob) internal pure
+        returns (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen)
+    {
+        // The permutation section is exactly at the tail:
+        //   u32 chunkLen | u32 nCols | (u8 kind + u16 qidx) × nCols
+        // Total = 8 + 3*nCols bytes. We read nCols from the u32 at
+        // position (blob.length - (8 + 3*nCols)) — but since we don't
+        // know nCols yet, we solve for it: let L = blob.length.
+        //   8 + 3*n = L - startOffset  →  need to know startOffset.
+        // Simpler: read chunkLen and nCols by scanning the known
+        // tail structure. For the poseidon VK (8 perm cols) the
+        // trailer is 8 + 24 = 32 bytes. We read nCols from bytes
+        // [L-32-4 .. L-32).
+        //
+        // To stay fully generic: first read the 4 bytes at
+        // `L - (bytes at position L-4-3*nCols for some nCols)`.
+        // Since we know the poseidon shape statically, just walk.
+        uint256 L = blob.length;
+        // Read nCols as the u32 at `L - (8 + 3*nCols)` — we iterate
+        // candidates from small nCols up.
+        uint256 nCols = 0;
+        for (uint256 candidate = 1; candidate <= 256; candidate++) {
+            uint256 tailLen = 8 + 3 * candidate;
+            if (tailLen > L) break;
+            uint256 off = L - tailLen;
+            uint32 clen = _readU32(blob, off);
+            uint32 nc = _readU32(blob, off + 4);
+            if (nc == candidate && clen < 64) {
+                nCols = candidate;
+                chunkLen = clen;
+                break;
+            }
+        }
+        require(nCols > 0, "perm metadata not found");
+        uint256 tailStart = L - (8 + 3 * nCols);
+        colKinds = new uint8[](nCols);
+        colQueryIdxs = new uint16[](nCols);
+        uint256 cursor = tailStart + 8;
+        for (uint256 i = 0; i < nCols; i++) {
+            colKinds[i] = uint8(blob[cursor]);
+            colQueryIdxs[i] = (uint16(uint8(blob[cursor + 1])) << 8) | uint16(uint8(blob[cursor + 2]));
+            cursor += 3;
+        }
+    }
+
+    function _readU32(bytes memory b, uint256 off) internal pure returns (uint32 v_) {
+        v_ = (uint32(uint8(b[off])) << 24)
+           | (uint32(uint8(b[off + 1])) << 16)
+           | (uint32(uint8(b[off + 2])) << 8)
+           |  uint32(uint8(b[off + 3]));
+    }
+
     function test_verify_poseidon_proof() public {
         bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
         bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");

@@ -256,6 +256,195 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Permutation-argument expressions (Phase A1 step 2)                *
+     *                                                                    *
+     *  Port of `midnight_proofs::plonk::permutation::expressions` from   *
+     *  proofs/src/plonk/permutation.rs:180+. Consumes the VK blob's      *
+     *  permutation-column metadata (kind + query_idx per column) plus   *
+     *  the transcript-read evaluations to produce the iterator of       *
+     *  scalar expressions that the main `partially_evaluate_identities` *
+     *  driver appends alongside the gate contributions.                 *
+     *                                                                    *
+     *  For the poseidon circuit this produces 7 scalars:                *
+     *    1  × first-set:        l_0 · (1 − z_0.prod)                    *
+     *    1  × last-set:         l_last · (z_l.prod² − z_l.prod)         *
+     *    2  × cross-boundary:   (z_i.prod − z_{i-1}.last) · l_0         *
+     *    3  × main-chunk:       (left − right) · (1 − l_last − l_blind) *
+     *                                                                    *
+     *  where left/right are products over each chunk's columns using    *
+     *  β, γ, x, and powers of the scalar-field DELTA constant.          *
+     * ------------------------------------------------------------------ */
+
+    /// BLS12-381 scalar field DELTA constant (as encoded by the Rust
+    /// `midnight_curves::Fq::DELTA` — the canonical non-Montgomery value
+    /// via `to_repr()`). Dumped verbatim into the permutation fixture
+    /// for cross-checking. Hard-coding avoids one field read per chunk.
+    uint256 internal constant FR_DELTA =
+        0x08634d0aa021aaf843cab354fabb0062f6502437c6a09c006c083479590189d7;
+
+    struct PermSet {
+        uint256 prod;
+        uint256 next;
+        uint256 last;   // only read if hasLast == true
+        bool hasLast;
+    }
+
+    struct PermEnv {
+        uint256 beta;
+        uint256 gamma;
+        uint256 x;
+        uint256 l0;
+        uint256 lLast;
+        uint256 lBlind;
+        PermSet[] sets;
+        uint256[] permEvals;
+        uint256[] adviceEvals;
+        uint256[] fixedEvals;
+        uint256[] instanceEvals;
+        uint8[] colKinds;       // permutation column kinds (0/1/2)
+        uint16[] colQueryIdxs;  // permutation column cur-rotation query indices
+        uint256 chunkLen;       // cs_degree - 2
+    }
+
+    function _permLookupEval(PermEnv memory env, uint256 colIdx)
+        private pure returns (uint256)
+    {
+        uint8 kind = env.colKinds[colIdx];
+        uint16 qidx = env.colQueryIdxs[colIdx];
+        if (kind == 0) return env.adviceEvals[qidx];
+        if (kind == 1) return env.fixedEvals[qidx];
+        return env.instanceEvals[qidx];
+    }
+
+    function _permExpressions(PermEnv memory env)
+        internal pure returns (uint256[] memory out)
+    {
+        uint256 nCols = env.colKinds.length;
+        uint256 nChunks = env.sets.length;
+        require(env.permEvals.length == nCols, "permEvals length");
+        require(env.colQueryIdxs.length == nCols, "colQueryIdxs length");
+
+        // First-set + last-set + cross-boundary + per-chunk.
+        uint256 nExprs = (nChunks > 0 ? 2 : 0) + (nChunks > 0 ? nChunks - 1 : 0) + nChunks;
+        out = new uint256[](nExprs);
+        uint256 outIdx = 0;
+
+        if (nChunks > 0) {
+            // l_0 * (1 - z_0.prod)
+            uint256 oneMinusProd = _frSub(1, env.sets[0].prod);
+            out[outIdx++] = _frMul(env.l0, oneMinusProd);
+            // l_last * (z_l.prod² - z_l.prod)
+            uint256 zl = env.sets[nChunks - 1].prod;
+            uint256 zlSq = _frMul(zl, zl);
+            out[outIdx++] = _frMul(env.lLast, _frSub(zlSq, zl));
+        }
+
+        // Cross-chunk boundary.
+        for (uint256 i = 1; i < nChunks; i++) {
+            require(env.sets[i - 1].hasLast, "non-last chunk missing last eval");
+            uint256 diff = _frSub(env.sets[i].prod, env.sets[i - 1].last);
+            out[outIdx++] = _frMul(diff, env.l0);
+        }
+
+        // Precompute (1 - l_last - l_blind).
+        uint256 oneMinusBoundary = _frSub(_frSub(1, env.lLast), env.lBlind);
+
+        for (uint256 chunkIdx = 0; chunkIdx < nChunks; chunkIdx++) {
+            uint256 colStart = chunkIdx * env.chunkLen;
+            uint256 colEndRaw = colStart + env.chunkLen;
+            uint256 colEnd = colEndRaw > nCols ? nCols : colEndRaw;
+
+            // left = set.next; for (col, pev): left *= (eval + β·pev + γ)
+            uint256 left = env.sets[chunkIdx].next;
+            for (uint256 c = colStart; c < colEnd; c++) {
+                uint256 ev = _permLookupEval(env, c);
+                uint256 term = _frAdd(_frAdd(ev, _frMul(env.beta, env.permEvals[c])), env.gamma);
+                left = _frMul(left, term);
+            }
+            // right = set.prod; current_delta = β·x·DELTA^(chunkIdx·chunkLen)
+            // For each col: right *= (eval + current_delta + γ); current_delta *= DELTA
+            uint256 right = env.sets[chunkIdx].prod;
+            uint256 currentDelta = _frMul(env.beta, env.x);
+            // Multiply by DELTA^(chunkIdx * chunkLen) using repeated squaring.
+            currentDelta = _frMul(currentDelta, _frDeltaPow(chunkIdx * env.chunkLen));
+            for (uint256 c = colStart; c < colEnd; c++) {
+                uint256 ev = _permLookupEval(env, c);
+                uint256 term = _frAdd(_frAdd(ev, currentDelta), env.gamma);
+                right = _frMul(right, term);
+                currentDelta = _frMul(currentDelta, FR_DELTA);
+            }
+            out[outIdx++] = _frMul(_frSub(left, right), oneMinusBoundary);
+        }
+    }
+
+    /// DELTA^n mod r via repeated squaring. Equivalent to
+    /// `_frPow(FR_DELTA, n)` but `pure` (no ModExp precompile needed
+    /// because the exponent fits in uint256 and we can square in-word).
+    function _frDeltaPow(uint256 n) internal pure returns (uint256) {
+        uint256 result = 1;
+        uint256 base = FR_DELTA;
+        while (n > 0) {
+            if (n & 1 == 1) result = mulmod(result, base, FR_MODULUS);
+            base = mulmod(base, base, FR_MODULUS);
+            n >>= 1;
+        }
+        return result;
+    }
+
+    /// Public wrapper so the forge test can feed the fixture inputs
+    /// directly and compare against Rust-computed expected values.
+    function permExpressions(
+        uint256[6] calldata envScalars,
+        uint256[] calldata setsFlat,   // {prod, next, last, hasLast(0/1)} × nChunks, flat
+        uint256[] calldata permEvals,
+        uint256[] calldata adviceEvals,
+        uint256[] calldata fixedEvals,
+        uint256[] calldata instanceEvals,
+        uint8[] calldata colKinds,
+        uint16[] calldata colQueryIdxs,
+        uint256 chunkLen
+    ) external pure returns (uint256[] memory) {
+        require(setsFlat.length % 4 == 0, "sets must be 4-tuples");
+        uint256 nChunks = setsFlat.length / 4;
+        PermSet[] memory sets = new PermSet[](nChunks);
+        for (uint256 i = 0; i < nChunks; i++) {
+            sets[i] = PermSet({
+                prod: setsFlat[4 * i],
+                next: setsFlat[4 * i + 1],
+                last: setsFlat[4 * i + 2],
+                hasLast: setsFlat[4 * i + 3] != 0
+            });
+        }
+        PermEnv memory env = PermEnv({
+            beta: envScalars[0],
+            gamma: envScalars[1],
+            x: envScalars[2],
+            l0: envScalars[3],
+            lLast: envScalars[4],
+            lBlind: envScalars[5],
+            sets: sets,
+            permEvals: _copyToMemArr(permEvals),
+            adviceEvals: _copyToMemArr(adviceEvals),
+            fixedEvals: _copyToMemArr(fixedEvals),
+            instanceEvals: _copyToMemArr(instanceEvals),
+            colKinds: _copyU8(colKinds),
+            colQueryIdxs: _copyU16(colQueryIdxs),
+            chunkLen: chunkLen
+        });
+        return _permExpressions(env);
+    }
+
+    function _copyU8(uint8[] calldata a) private pure returns (uint8[] memory b) {
+        b = new uint8[](a.length);
+        for (uint256 i = 0; i < a.length; i++) b[i] = a[i];
+    }
+
+    function _copyU16(uint16[] calldata a) private pure returns (uint16[] memory b) {
+        b = new uint16[](a.length);
+        for (uint256 i = 0; i < a.length; i++) b[i] = a[i];
+    }
+
+    /* ------------------------------------------------------------------ *
      *  RPN bytecode interpreter for partially_evaluate_identities        *
      *                                                                    *
      *  Each gate polynomial is serialised on the Rust side into compact  *
@@ -429,6 +618,10 @@ contract PoseidonVerifier {
         uint256 omega, uint256 n
     ) external view returns (uint256[] memory) {
         return _lagrangeIRange(x, xn, startIncl, endIncl, omega, n);
+    }
+
+    function frDeltaPow(uint256 n) external pure returns (uint256) {
+        return _frDeltaPow(n);
     }
 
     function lagrangeInterpAtX3(

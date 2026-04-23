@@ -293,6 +293,184 @@ fn main() {
         );
     }
 
+    // Emit the permutation-expressions fixture. Replicates the logic of
+    // `midnight_proofs::plonk::permutation::expressions` (which is
+    // pub(in crate::plonk), not accessible to external callers) using
+    // deterministic inputs, and dumps both the inputs + the 7 expression
+    // outputs that the poseidon circuit produces (1 first-set + 1
+    // last-set + 2 cross-boundary + 3 main-chunk).
+    //
+    // File layout (all 32-byte values BE):
+    //   [0..32)    beta
+    //   [32..64)   gamma
+    //   [64..96)   x
+    //   [96..128)  l_0
+    //   [128..160) l_last
+    //   [160..192) l_blind
+    //   [192..224) DELTA (for cross-check with Solidity's hardcoded constant)
+    //   [224..256) num_chunks (u256 BE)
+    //     for each chunk i in 0..num_chunks:
+    //       32 bytes: prod_eval
+    //       32 bytes: next_eval
+    //       32 bytes: last_eval (zero if None)
+    //       1 byte:   has_last (0 or 1)
+    //       31 bytes: padding
+    //   [..]       num_perm_evals (u256 BE)
+    //     [..]     perm_eval × n
+    //   [..]       num_advice_evals (u256 BE)
+    //     [..]     advice_eval × n
+    //   [..]       num_fixed_evals (u256 BE)
+    //     [..]     fixed_eval × n
+    //   [..]       num_instance_evals (u256 BE)
+    //     [..]     instance_eval × n
+    //   [..]       num_expressions (u256 BE)
+    //     [..]     expression × n  (Rust-computed expected values)
+    {
+        use ff::{Field, PrimeField};
+        let vk_inner = fx.vk.vk();
+        let cs = vk_inner.cs();
+        use midnight_proofs::plonk::Any;
+        use midnight_proofs::poly::Rotation;
+
+        let perm_columns = cs.permutation().get_columns();
+        let chunk_len = cs.degree() - 2;
+        let n_perm_cols = perm_columns.len();
+        let n_chunks = (n_perm_cols + chunk_len - 1) / chunk_len;
+        let n_advice = cs.advice_queries().len();
+        let n_fixed = cs.num_fixed_columns();
+        let n_instance = cs.instance_queries().len();
+
+        // Deterministic synthetic env.
+        let beta = Fq::from(500u64);
+        let gamma = Fq::from(501u64);
+        let x = Fq::from(1337u64);
+        let l_0 = Fq::from(700u64);
+        let l_last = Fq::from(701u64);
+        let l_blind = Fq::from(702u64);
+
+        // One prod/next/last triple per chunk. Last chunk has no
+        // `permutation_product_last_eval` (its "next" set doesn't exist).
+        struct EvSet { prod: Fq, next: Fq, last: Option<Fq> }
+        let sets: Vec<EvSet> = (0..n_chunks)
+            .map(|i| EvSet {
+                prod: Fq::from(1000u64 + i as u64 * 10),
+                next: Fq::from(1001u64 + i as u64 * 10),
+                last: if i + 1 < n_chunks { Some(Fq::from(1002u64 + i as u64 * 10)) } else { None },
+            })
+            .collect();
+
+        let perm_evals: Vec<Fq> = (0..n_perm_cols).map(|i| Fq::from(2000u64 + i as u64)).collect();
+        let advice_evals: Vec<Fq> = (0..n_advice).map(|i| Fq::from(100u64 + i as u64)).collect();
+        let fixed_evals: Vec<Fq> = (0..n_fixed)
+            .map(|i| if cs.has_simple_selector_col(i) { Fq::ONE } else { Fq::from(200u64 + i as u64) })
+            .collect();
+        let instance_evals: Vec<Fq> = (0..n_instance).map(|i| Fq::from(300u64 + i as u64)).collect();
+
+        // Replica of `permutation::expressions`. See
+        //   /Users/Julien.Coolen/midfall/proofs/src/plonk/permutation.rs:180+
+        // for the authoritative Rust source.
+        let eval_col = |column: &midnight_proofs::plonk::Column<Any>| -> Fq {
+            match column.column_type() {
+                Any::Advice(_) => {
+                    let q = cs.advice_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).expect("advice cur");
+                    advice_evals[q]
+                }
+                Any::Fixed => {
+                    let q = cs.fixed_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).expect("fixed cur");
+                    fixed_evals[q]
+                }
+                Any::Instance => {
+                    let q = cs.instance_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).expect("instance cur");
+                    instance_evals[q]
+                }
+            }
+        };
+
+        let mut expressions: Vec<Fq> = Vec::new();
+        // First set constraint: l_0 * (1 - z_0.prod_eval)
+        if let Some(first) = sets.first() {
+            expressions.push(l_0 * (Fq::ONE - first.prod));
+        }
+        // Last set constraint: l_last * (z_l.prod² - z_l.prod)
+        if let Some(last) = sets.last() {
+            expressions.push((last.prod * last.prod - last.prod) * l_last);
+        }
+        // Cross-chunk boundary: for each set after the first,
+        //   (set.prod - prev.last) * l_0
+        for i in 1..n_chunks {
+            let prev_last = sets[i - 1].last.expect("non-last chunk has last_eval");
+            expressions.push((sets[i].prod - prev_last) * l_0);
+        }
+        // Main chunk constraints.
+        for (chunk_idx, set) in sets.iter().enumerate() {
+            let col_start = chunk_idx * chunk_len;
+            let col_end = std::cmp::min(col_start + chunk_len, n_perm_cols);
+            let cols = &perm_columns[col_start..col_end];
+            let pevs = &perm_evals[col_start..col_end];
+
+            let mut left = set.next;
+            for (col, pev) in cols.iter().zip(pevs.iter()) {
+                left *= eval_col(col) + beta * pev + gamma;
+            }
+            let mut right = set.prod;
+            let mut current_delta = (beta * x) * Fq::DELTA.pow_vartime([(chunk_idx * chunk_len) as u64]);
+            for col in cols.iter() {
+                right *= eval_col(col) + current_delta + gamma;
+                current_delta *= Fq::DELTA;
+            }
+            expressions.push((left - right) * (Fq::ONE - (l_last + l_blind)));
+        }
+
+        // Serialise.
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &beta);
+        push_fq(&mut blob, &gamma);
+        push_fq(&mut blob, &x);
+        push_fq(&mut blob, &l_0);
+        push_fq(&mut blob, &l_last);
+        push_fq(&mut blob, &l_blind);
+        push_fq(&mut blob, &Fq::DELTA);
+        push_u256(&mut blob, n_chunks as u64);
+        for set in &sets {
+            push_fq(&mut blob, &set.prod);
+            push_fq(&mut blob, &set.next);
+            push_fq(&mut blob, &set.last.unwrap_or(Fq::ZERO));
+            blob.push(if set.last.is_some() { 1 } else { 0 });
+            blob.extend_from_slice(&[0u8; 31]);
+        }
+        push_u256(&mut blob, perm_evals.len() as u64);
+        for v in &perm_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, advice_evals.len() as u64);
+        for v in &advice_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, fixed_evals.len() as u64);
+        for v in &fixed_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, instance_evals.len() as u64);
+        for v in &instance_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, expressions.len() as u64);
+        for v in &expressions { push_fq(&mut blob, v); }
+
+        fs::write(fixtures.join("perm_expressions_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      perm expressions fixture written ({} bytes, {} expressions, {} chunks, {} cols)",
+            blob.len(),
+            expressions.len(),
+            n_chunks,
+            n_perm_cols,
+        );
+    }
+
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
     // the proof's G1 points. The forge test uses these to unit-test the
     // Solidity decompression function before attempting the full pairing.
