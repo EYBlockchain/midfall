@@ -412,6 +412,17 @@ contract PoseidonVerifierTest is Test {
                 uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
             }
         }
+        // Query-schedule section follows (Phase C1):
+        //   u32 nRotations; i32 × n
+        //   u32 nAdvice;   u8 × n
+        //   u32 nFixed;    u8 × n
+        //   u32 nInstance; u8 × n
+        if (p + 4 > L) return false;
+        uint32 nRot = _readU32(blob, p); p += 4 + 4 * nRot; if (p > L) return false;
+        for (uint256 k = 0; k < 3; k++) {
+            if (p + 4 > L) return false;
+            uint32 nArr = _readU32(blob, p); p += 4 + nArr; if (p > L) return false;
+        }
         return p == L;
     }
 
@@ -489,6 +500,56 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C1: query-schedule equivalence test.
+    /// Reads `fixtures/query_schedule_fixture.bin` which contains
+    /// the deterministic x challenge and the Rust-computed rotated
+    /// points `ω^rotation · x` for each distinct rotation. Invokes
+    /// the Solidity `computeRotatedPoints` helper and asserts every
+    /// rotated point matches byte-for-byte + every per-query-kind
+    /// rotation-index array matches the embedded VK schedule.
+    function test_query_schedule() public {
+        bytes memory f = vm.readFileBinary("fixtures/query_schedule_fixture.bin");
+        uint256 off = 0;
+        uint256 x = _readUint(f, off); off += 32;
+        uint256 nRot = _readUint(f, off); off += 32;
+
+        int32[] memory expRot = new int32[](nRot);
+        uint256[] memory expPoint = new uint256[](nRot);
+        for (uint256 i = 0; i < nRot; i++) {
+            expRot[i] = int32(uint32(_readU32(f, off))); off += 4;
+            expPoint[i] = _readUint(f, off); off += 32;
+        }
+        uint256 nAdvice = _readUint(f, off); off += 32;
+        uint8[] memory expAdvice = new uint8[](nAdvice);
+        for (uint256 i = 0; i < nAdvice; i++) { expAdvice[i] = uint8(f[off + i]); }
+        off += nAdvice;
+        uint256 nFixed = _readUint(f, off); off += 32;
+        uint8[] memory expFixed = new uint8[](nFixed);
+        for (uint256 i = 0; i < nFixed; i++) { expFixed[i] = uint8(f[off + i]); }
+        off += nFixed;
+        uint256 nInst = _readUint(f, off); off += 32;
+        uint8[] memory expInst = new uint8[](nInst);
+        for (uint256 i = 0; i < nInst; i++) { expInst[i] = uint8(f[off + i]); }
+
+        (int32[] memory gotRot, uint256[] memory gotPoint) = v.computeRotatedPoints(vkAddr, x);
+        require(gotRot.length == expRot.length, "rotation count mismatch");
+        for (uint256 i = 0; i < gotRot.length; i++) {
+            require(gotRot[i] == expRot[i], "rotation mismatch");
+            require(gotPoint[i] == expPoint[i], "rotated point mismatch");
+        }
+
+        (, uint8[] memory gotAdvice, uint8[] memory gotFixed, uint8[] memory gotInst) =
+            v.loadQuerySchedule(vkAddr);
+        require(gotAdvice.length == expAdvice.length, "advice idx len mismatch");
+        for (uint256 i = 0; i < gotAdvice.length; i++) require(gotAdvice[i] == expAdvice[i], "advice idx mismatch");
+        require(gotFixed.length == expFixed.length, "fixed idx len mismatch");
+        for (uint256 i = 0; i < gotFixed.length; i++) require(gotFixed[i] == expFixed[i], "fixed idx mismatch");
+        require(gotInst.length == expInst.length, "instance idx len mismatch");
+        for (uint256 i = 0; i < gotInst.length; i++) require(gotInst[i] == expInst[i], "instance idx mismatch");
+
+        emit log_named_uint("query schedule rotations verified", nRot);
+    }
+
     /// Phase B: compute_linearization_commitment equivalence test.
     /// Reads `fixtures/linearization_fixture.bin` which contains y/xn/
     /// splitting_factor, deterministic quotient-limb commitments, the

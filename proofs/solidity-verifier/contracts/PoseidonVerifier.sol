@@ -1042,6 +1042,114 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Query-rotation schedule (Phase C1)                                *
+     *                                                                    *
+     *  Reads the distinct-rotations + per-query-kind rotation-index     *
+     *  table appended to the VK blob at codegen time, and materialises  *
+     *  each distinct rotation's `ω^at · x` for a given challenge x.     *
+     *  Phase C2's multi-prepare DualMSM groups VerifierQueries by this  *
+     *  rotation index, so having the mapping in a shared pre-computed  *
+     *  form avoids re-hashing the verifier's query structure on-chain.  *
+     * ------------------------------------------------------------------ */
+
+    struct QuerySchedule {
+        int32[] rotations;              // distinct `at` values
+        uint8[] adviceRotationIdx;      // per advice query
+        uint8[] fixedRotationIdx;       // per non-simple-selector fixed query
+        uint8[] instanceRotationIdx;    // per committed-instance query
+        uint256 sectionOffset;          // start of section (u32 nRotations)
+    }
+
+    /// Locate the query-schedule section: it sits immediately after
+    /// the trashcan bytecode at the tail of the VK blob.
+    function _findQuerySection(bytes memory blob) internal view returns (uint256) {
+        SectionOffsets memory so = _loadSectionOffsets(blob);
+        // Walk the trashcan section to find its end.
+        uint256 p = so.trash;
+        uint32 nT = _readU32FromBlob(blob, p); p += 4;
+        for (uint256 t = 0; t < nT; t++) {
+            uint32 selLen = _readU32FromBlob(blob, p); p += 4 + selLen;
+            uint32 nC = _readU32FromBlob(blob, p); p += 4;
+            for (uint256 i = 0; i < nC; i++) {
+                uint32 l = _readU32FromBlob(blob, p); p += 4 + l;
+            }
+        }
+        return p;
+    }
+
+    function _loadQuerySchedule(bytes memory blob) internal view returns (QuerySchedule memory qs) {
+        qs.sectionOffset = _findQuerySection(blob);
+        uint256 p = qs.sectionOffset;
+
+        uint32 nRot = _readU32FromBlob(blob, p); p += 4;
+        qs.rotations = new int32[](nRot);
+        for (uint256 i = 0; i < nRot; i++) {
+            qs.rotations[i] = int32(uint32(_readU32FromBlob(blob, p)));
+            p += 4;
+        }
+        uint32 nAdvice = _readU32FromBlob(blob, p); p += 4;
+        qs.adviceRotationIdx = new uint8[](nAdvice);
+        for (uint256 i = 0; i < nAdvice; i++) { qs.adviceRotationIdx[i] = uint8(blob[p + i]); }
+        p += nAdvice;
+
+        uint32 nFixed = _readU32FromBlob(blob, p); p += 4;
+        qs.fixedRotationIdx = new uint8[](nFixed);
+        for (uint256 i = 0; i < nFixed; i++) { qs.fixedRotationIdx[i] = uint8(blob[p + i]); }
+        p += nFixed;
+
+        uint32 nInst = _readU32FromBlob(blob, p); p += 4;
+        qs.instanceRotationIdx = new uint8[](nInst);
+        for (uint256 i = 0; i < nInst; i++) { qs.instanceRotationIdx[i] = uint8(blob[p + i]); }
+    }
+
+    /// Compute `ω^at · x` for every distinct rotation in the schedule.
+    /// Returns a parallel array: rotatedPoints[i] = ω^rotations[i] · x.
+    function _computeRotatedPoints(
+        bytes memory blob,
+        uint256 x
+    ) internal view returns (int32[] memory rotations, uint256[] memory rotatedPoints) {
+        QuerySchedule memory qs = _loadQuerySchedule(blob);
+        uint256 omega = _readUint256(blob, 32);  // omega lives at VK blob offset 32
+        uint256 n = _readN(blob);
+        rotations = qs.rotations;
+        rotatedPoints = new uint256[](rotations.length);
+        for (uint256 i = 0; i < rotations.length; i++) {
+            rotatedPoints[i] = _rotateOmega(x, int256(rotations[i]), omega, n);
+        }
+    }
+
+    function _readUint256(bytes memory blob, uint256 off) internal pure returns (uint256 v) {
+        assembly { v := mload(add(add(blob, 32), off)) }
+    }
+
+    function _readN(bytes memory blob) internal pure returns (uint256 n) {
+        // constants 1 is at offset 64; first 8 bytes are `uint64 n` (BE).
+        uint256 off = 64;
+        uint256 word;
+        assembly { word := mload(add(add(blob, 32), off)) }
+        n = word >> 192;
+    }
+
+    /// Public wrapper for fixture testing.
+    function computeRotatedPoints(address vkAddr, uint256 x)
+        external view returns (int32[] memory rotations, uint256[] memory rotatedPoints)
+    {
+        bytes memory blob = vkAddr.code;
+        return _computeRotatedPoints(blob, x);
+    }
+
+    function loadQuerySchedule(address vkAddr) external view returns (
+        int32[] memory rotations,
+        uint8[] memory adviceIdx,
+        uint8[] memory fixedIdx,
+        uint8[] memory instanceIdx
+    ) {
+        bytes memory blob = vkAddr.code;
+        QuerySchedule memory qs = _loadQuerySchedule(blob);
+        return (qs.rotations, qs.adviceRotationIdx, qs.fixedRotationIdx, qs.instanceRotationIdx);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  compute_linearization_commitment (Phase B)                        *
      *                                                                    *
      *  Port of \`midnight_proofs::plonk::linearization::verifier::       *

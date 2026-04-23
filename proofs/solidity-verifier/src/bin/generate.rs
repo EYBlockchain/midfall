@@ -1093,6 +1093,65 @@ fn main() {
             num_limbs,
             identities_points.len(),
         );
+
+        // Phase C1: query-schedule fixture.
+        // Dump each distinct rotation's expected `ω^at · x` for a
+        // deterministic x, so the forge test can verify that the
+        // Solidity rotation helper produces identical values.
+        //
+        // File layout:
+        //   [32]  x
+        //   [32]  num_distinct_rotations
+        //     per rotation:
+        //       [4]  i32 rotation
+        //       [32] expected ω^rotation · x
+        //   [32] num_advice_queries
+        //     [1] rotation_idx × n
+        //   [32] num_fixed_queries
+        //     [1] rotation_idx × n
+        //   [32] num_instance_queries
+        //     [1] rotation_idx × n
+        let x_rot = Fq::from(7777u64);
+        let omega = vk_inner.get_domain().get_omega();
+
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &x_rot);
+        push_u256(&mut blob, vk_info.distinct_rotations.len() as u64);
+        for &r in &vk_info.distinct_rotations {
+            blob.extend_from_slice(&(r as u32).to_be_bytes());
+            // ω^r · x: use positive pow for positive r, inverse-ω pow for negative.
+            let rotated = if r == 0 {
+                x_rot
+            } else if r > 0 {
+                x_rot * omega.pow_vartime([r as u64])
+            } else {
+                let inv_omega = omega.invert().unwrap();
+                x_rot * inv_omega.pow_vartime([(-r) as u64])
+            };
+            push_fq(&mut blob, &rotated);
+        }
+        push_u256(&mut blob, vk_info.advice_query_rotation_idx.len() as u64);
+        blob.extend_from_slice(&vk_info.advice_query_rotation_idx);
+        push_u256(&mut blob, vk_info.fixed_query_rotation_idx.len() as u64);
+        blob.extend_from_slice(&vk_info.fixed_query_rotation_idx);
+        push_u256(&mut blob, vk_info.instance_query_rotation_idx.len() as u64);
+        blob.extend_from_slice(&vk_info.instance_query_rotation_idx);
+
+        fs::write(fixtures.join("query_schedule_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      query schedule fixture written ({} bytes, {} rotations, {}/{}/{} queries a/f/i)",
+            blob.len(),
+            vk_info.distinct_rotations.len(),
+            vk_info.advice_query_rotation_idx.len(),
+            vk_info.fixed_query_rotation_idx.len(),
+            vk_info.instance_query_rotation_idx.len(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

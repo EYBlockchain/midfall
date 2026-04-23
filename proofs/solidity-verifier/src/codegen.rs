@@ -127,6 +127,24 @@ pub struct VkInfo {
     /// Solidity to reconstruct the `trash::Evaluated::
     /// expressions(...)` iterator output.
     pub trashcans_bytecode: Vec<TrashcanBytecode>,
+    /// The set of distinct rotations `at` used across every
+    /// VerifierQuery emitted by `partial_prepare`. For each query,
+    /// its point is `ω^at · x`. The verifier pre-computes the
+    /// rotated x values and reuses them across all queries with the
+    /// same rotation; Phase C2's multi-prepare DualMSM then groups
+    /// queries by their rotation set. Rotations are encoded as
+    /// `i32` (serialised big-endian as `u32` with two's complement
+    /// reinterpretation — Solidity sign-extends on read).
+    pub distinct_rotations: Vec<i32>,
+    /// For each advice query in `cs.advice_queries()`, the index
+    /// into `distinct_rotations` of its `at` value. Phase C2 uses
+    /// this to map a given advice_eval[i] to its point.
+    pub advice_query_rotation_idx: Vec<u8>,
+    /// Likewise for fixed queries, but filtered to exclude simple
+    /// multiplicative selectors (whose eval is implicit `1`).
+    pub fixed_query_rotation_idx: Vec<u8>,
+    /// Likewise for instance queries on committed instance columns.
+    pub instance_query_rotation_idx: Vec<u8>,
 }
 
 /// Serialised (RPN bytecode) form of a single midnight-proofs lookup
@@ -344,6 +362,69 @@ impl VkInfo {
             })
             .collect();
 
+        // Query-rotation schedule (Phase C1).
+        //
+        // Collect every `at` rotation that the verifier uses when
+        // building its VerifierQuery list. The concrete sources are:
+        //
+        //   * advice/fixed/instance queries (per `cs.*_queries()`);
+        //   * permutation queries always at `cur` (0) and `next` (1),
+        //     plus `last` at rotation `-(blinding_factors + 1)` for
+        //     all permutation sets except the last one;
+        //   * lookup accumulator at `cur` + `next`; multiplicities and
+        //     helpers at `cur`;
+        //   * trashcan accumulator at `cur`;
+        //   * permutation_common evals (one per perm col) at `cur`;
+        //   * quotient-limb commitments and the linearization
+        //     commitment at `cur`.
+        //
+        // Gathering only the distinct values keeps the Solidity-side
+        // `ω^at · x` computation to one rotation per unique rotation,
+        // shared across all queries that reuse it.
+        let blinding = cs.blinding_factors() as i32;
+        let last_rot = -(blinding + 1);
+        let mut distinct_rotations: Vec<i32> = Vec::new();
+        let mut push_rot = |rs: &mut Vec<i32>, r: i32| {
+            if !rs.contains(&r) { rs.push(r); }
+        };
+        // Canonical ordering: start with the zero rotation, then
+        // next(1), then the last-row rotation, then anything else
+        // from the queries in insertion order.
+        push_rot(&mut distinct_rotations, 0);
+        push_rot(&mut distinct_rotations, 1);
+        push_rot(&mut distinct_rotations, last_rot);
+        for (_, rot) in cs.advice_queries() {
+            push_rot(&mut distinct_rotations, rot.0);
+        }
+        for (_, rot) in cs.fixed_queries() {
+            push_rot(&mut distinct_rotations, rot.0);
+        }
+        for (_, rot) in cs.instance_queries() {
+            push_rot(&mut distinct_rotations, rot.0);
+        }
+        let rot_idx = |r: i32| -> u8 {
+            distinct_rotations.iter().position(|&x| x == r).unwrap() as u8
+        };
+        let advice_query_rotation_idx: Vec<u8> = cs
+            .advice_queries()
+            .iter()
+            .map(|(_, rot)| rot_idx(rot.0))
+            .collect();
+        let fixed_query_rotation_idx: Vec<u8> = cs
+            .fixed_queries()
+            .iter()
+            .filter(|(col, _)| !cs.has_simple_selector_col(col.index()))
+            .map(|(_, rot)| rot_idx(rot.0))
+            .collect();
+        // Only committed-instance queries are transcript-read.
+        let nb_committed_instances_u = 1usize;
+        let instance_query_rotation_idx: Vec<u8> = cs
+            .instance_queries()
+            .iter()
+            .filter(|(col, _)| col.index() < nb_committed_instances_u)
+            .map(|(_, rot)| rot_idx(rot.0))
+            .collect();
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -383,6 +464,10 @@ impl VkInfo {
             permutation_chunk_len,
             lookups_bytecode,
             trashcans_bytecode,
+            distinct_rotations,
+            advice_query_rotation_idx,
+            fixed_query_rotation_idx,
+            instance_query_rotation_idx,
         }
     }
 }
@@ -520,6 +605,23 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     //     for each constraint: u32 len, <bytecode>
     append_trashcans_section(&mut blob, &vk.trashcans_bytecode);
 
+    // Query-rotation schedule (Phase C1):
+    //   u32 num_distinct_rotations
+    //     i32 × n     distinct rotations (two's complement big-endian)
+    //   u32 num_advice_queries    (mirrors cs.advice_queries().len())
+    //     u8  × n     rotation index per advice query
+    //   u32 num_fixed_queries     (non-simple-selector only)
+    //     u8  × n     rotation index per fixed query
+    //   u32 num_committed_instance_queries
+    //     u8  × n     rotation index per committed-instance query
+    append_rotations_section(
+        &mut blob,
+        &vk.distinct_rotations,
+        &vk.advice_query_rotation_idx,
+        &vk.fixed_query_rotation_idx,
+        &vk.instance_query_rotation_idx,
+    );
+
     let total = blob.len();
     let hex_blob = hex::encode(&blob);
 
@@ -610,6 +712,13 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
 
     append_lookups_section(&mut blob, &vk.lookups_bytecode);
     append_trashcans_section(&mut blob, &vk.trashcans_bytecode);
+    append_rotations_section(
+        &mut blob,
+        &vk.distinct_rotations,
+        &vk.advice_query_rotation_idx,
+        &vk.fixed_query_rotation_idx,
+        &vk.instance_query_rotation_idx,
+    );
 
     blob
 }
@@ -638,6 +747,27 @@ fn append_lookups_section(blob: &mut Vec<u8>, lookups: &[LookupBytecode]) {
             }
         }
     }
+}
+
+/// Shared serialiser for the query-rotation schedule (Phase C1).
+fn append_rotations_section(
+    blob: &mut Vec<u8>,
+    rotations: &[i32],
+    advice_idx: &[u8],
+    fixed_idx: &[u8],
+    instance_idx: &[u8],
+) {
+    blob.extend_from_slice(&(rotations.len() as u32).to_be_bytes());
+    for &r in rotations {
+        // Two's complement → u32 → big-endian.
+        blob.extend_from_slice(&(r as u32).to_be_bytes());
+    }
+    blob.extend_from_slice(&(advice_idx.len() as u32).to_be_bytes());
+    blob.extend_from_slice(advice_idx);
+    blob.extend_from_slice(&(fixed_idx.len() as u32).to_be_bytes());
+    blob.extend_from_slice(fixed_idx);
+    blob.extend_from_slice(&(instance_idx.len() as u32).to_be_bytes());
+    blob.extend_from_slice(instance_idx);
 }
 
 /// Shared serialiser for the trashcan bytecode section.
