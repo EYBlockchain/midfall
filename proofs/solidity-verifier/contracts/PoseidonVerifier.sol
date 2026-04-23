@@ -30,6 +30,25 @@ contract PoseidonVerifier {
     uint256 private constant FR_MODULUS =
         0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;
 
+    /// BLS12-381 base-field modulus p (381-bit, upper and lower halves).
+    /// p = 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f624_1eabfffeb153ffffb9feffffffffaaab
+    uint256 private constant FP_MODULUS_HI =
+        0x000000000000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd7;
+    uint256 private constant FP_MODULUS_LO =
+        0x64774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab;
+
+    /// (p + 1) / 4, used as the exponent in the BLS12-381 tonelli-shanks-free
+    /// square root (since p ≡ 3 mod 4, sqrt(a) = a^((p+1)/4) mod p). The
+    /// value (48 bytes big-endian) is
+    ///   0x0680447a8e5ff9a692c6e9ed90d2eb35
+    ///     d91dd2e13ce144afd9cc34a83dac3d89
+    ///     07aaffffac54ffffee7fbfffffffeaab
+    /// (split here across three 128-bit lines for legibility).
+    uint256 private constant FP_SQRT_EXP_HI =
+        0x000000000000000000000000000000000680447a8e5ff9a692c6e9ed90d2eb35;
+    uint256 private constant FP_SQRT_EXP_LO =
+        0xd91dd2e13ce144afd9cc34a83dac3d8907aaffffac54ffffee7fbfffffffeaab;
+
     /// Transcript byte-prefixes.
     uint8 private constant PREFIX_COMMON    = 1;
     uint8 private constant PREFIX_CHALLENGE = 0;
@@ -38,6 +57,7 @@ contract PoseidonVerifier {
     address private constant PC_G1ADD   = address(0x0b);
     address private constant PC_G1MSM   = address(0x0c);
     address private constant PC_PAIRING = address(0x0f);
+    address private constant PC_MODEXP  = address(0x05);
 
     /// Memory layout constant: VK blob is returned by the VK contract's
     /// constructor as code and we RETURNDATACOPY it at verification time.
@@ -203,11 +223,36 @@ contract PoseidonVerifier {
 
     /// Pairing check via 0x0f. Each (G1, G2) pair = 128+256 = 384 bytes.
     /// Returns 0x01 if sum of pairings equals the identity.
+    ///
+    /// NB: Per EIP-2537, an invalid input (off-curve point, not in subgroup,
+    /// wrong y) causes the precompile to consume *all* gas forwarded. We
+    /// therefore cap the forwarded gas to a generous upper bound — valid
+    /// inputs cost ~120k gas for two pairs — so that a buggy port doesn't
+    /// silently exhaust the test harness's gas budget.
     function _pairingCheck(bytes memory pairs) internal view returns (bool) {
         require(pairs.length % 384 == 0 && pairs.length > 0, "bad pairing len");
-        (bool ok, bytes memory out) = PC_PAIRING.staticcall(pairs);
-        require(ok && out.length == 32, "PAIRING failed");
-        return uint256(bytes32(out)) == 1;
+        uint256 gasCap = 2_000_000;
+        address precompile = PC_PAIRING;
+        bool ok;
+        bytes32 result;
+        assembly {
+            let ptr := add(pairs, 32)
+            let sz  := mload(pairs)
+            let ok0 := staticcall(gasCap, precompile, ptr, sz, 0, 32)
+            ok := ok0
+            result := mload(0)
+        }
+        if (!ok) return false;
+        return uint256(result) == 1;
+    }
+
+    /// Public view wrapper around the internal decompressor so that unit
+    /// tests can cross-check Solidity decompression against Rust fixtures
+    /// before the (much larger) full-verifier path exercises it.
+    function decompressG1(bytes calldata c48) external view returns (bytes memory) {
+        bytes memory c = new bytes(48);
+        for (uint256 i = 0; i < 48; i++) c[i] = c48[i];
+        return _g1CompressedToEip2537(c);
     }
 
     /* ------------------------------------------------------------------ *
@@ -689,16 +734,28 @@ contract PoseidonVerifier {
         Vk memory vk,
         bytes memory pi,
         bytes memory /*fCom*/
-    ) internal view returns (bool) {
-        // Build a skeleton pairing: e(pi_decompressed, s_g2) * e(-pi, -g2).
-        // A proof passes this trivial structural check, but the *full*
-        // verification also requires the MSM RHS to equal pi; see comments
-        // in the Rust `KZGCommitmentScheme::multi_prepare` for the exact
-        // relation.
+    ) internal returns (bool) {
+        // Perform the structural pairing check with *real* decompressed
+        // points. The full 1:1 port of
+        // `KZGCommitmentScheme::multi_prepare` still needs to build the
+        // `C − v·G + x3·π` right-hand side via the linearization/multi-open
+        // MSM (see TODO in this contract's docstring). Until that lands,
+        // this function exercises the EIP-2537 pairing precompile with the
+        // decompressed π, the VK's s·G2 and −G2, and emits a
+        // `TraceIntermediate` event with the decompressed π so the Rust
+        // harness can cross-check that side of the equivalence.
         bytes memory sG2  = _vkSlice(vkBlob, vk.sG2Offset,  256);
         bytes memory ngG2 = _vkSlice(vkBlob, vk.negG2Offset, 256);
 
         bytes memory piEip = _g1CompressedToEip2537(pi);
+
+        // Emit the decompressed π coordinates as two scalar events so that
+        // the Rust-side tracer can reconstruct the exact bytes the
+        // precompile received. Each coordinate is a 48-byte Fp element
+        // zero-padded to 64 bytes; we hash the two halves so a single
+        // bytes32 event is sufficient.
+        bytes32 piDigest = keccak256(piEip);
+        emit TraceIntermediate("pi_decompressed_digest", piDigest);
 
         bytes memory pairs = abi.encodePacked(piEip, sG2, piEip, ngG2);
         return _pairingCheck(pairs);
@@ -711,22 +768,177 @@ contract PoseidonVerifier {
         for (uint256 i = 0; i < len; i++) out[i] = blob[o + i];
     }
 
-    /// Decompress a BLS12-381 compressed G1 point (48 bytes, BE) to the 128
-    /// byte EIP-2537 format. This is a *partial* implementation that relies
-    /// on the compressed flag bits and leaves the y recovery to the
-    /// precompile — we therefore round-trip through G1ADD by adding the
-    /// zero point, which forces the precompile to canonicalise the input.
-    /// For the equivalence test we pass through uncompressed points read
-    /// from a companion `DecompressHelper` (TODO).
-    function _g1CompressedToEip2537(bytes memory /*c48*/)
-        internal pure returns (bytes memory out)
+    /// Decompress a BLS12-381 compressed G1 point (48 bytes, big-endian) to
+    /// the 128-byte EIP-2537 uncompressed format (`pad16 || x || pad16 || y`).
+    ///
+    /// Compressed encoding (zcash BLS12-381 format, as produced by
+    /// midnight-curves `G1Projective::to_bytes`):
+    ///   * byte 0, bit 7 (0x80): compressed flag (always 1 for compressed)
+    ///   * byte 0, bit 6 (0x40): infinity flag (all other bits must be 0)
+    ///   * byte 0, bit 5 (0x20): y-parity flag ("sort bit"): 1 iff y is the
+    ///                           lexicographically greater of (y, p - y)
+    ///   * remaining 381 bits   : x coordinate (BE)
+    ///
+    /// Decompression follows:
+    ///   y² = x³ + 4  (BLS12-381 short Weierstrass b = 4)
+    ///   y  = y² ^ ((p+1)/4) mod p    (since p ≡ 3 mod 4)
+    ///   if sort_flag xor (y > p/2): y = p - y
+    ///
+    /// Field arithmetic is performed via the Prague ModExp precompile (0x05):
+    /// cubing uses B^3 mod p directly, the "add 4" step is folded into the
+    /// ModExp reduction by appending a one-bit prefix to the cube bytes.
+    function _g1CompressedToEip2537(bytes memory c48)
+        internal view returns (bytes memory out)
     {
-        // The EIP-2537 precompiles only accept uncompressed coordinates; on
-        // the Rust side the proof is stored compressed. A full port would
-        // need to implement sqrt in Fp here. For the purposes of the
-        // infrastructure demo we return the identity point; the pairing
-        // check will therefore not pass algebraically — see the integration
-        // test for the full flow that uses pre-decompressed points.
+        require(c48.length == 48, "bad compressed len");
+
+        // Read flags from the most significant byte.
+        uint8 flags = uint8(c48[0]);
+        bool isCompressed = (flags & 0x80) != 0;
+        bool isInfinity   = (flags & 0x40) != 0;
+        bool sortFlag     = (flags & 0x20) != 0;
+        require(isCompressed, "not compressed");
+
+        // The 128-byte EIP-2537 encoding of the identity is all zeros.
+        if (isInfinity) {
+            return new bytes(128);
+        }
+
+        // Clear the top 3 flag bits to recover x (still 48 bytes, BE).
+        bytes memory xBytes = new bytes(48);
+        for (uint256 i = 0; i < 48; i++) xBytes[i] = c48[i];
+        xBytes[0] = bytes1(uint8(xBytes[0]) & 0x1f);
+
+        // Compute x³ mod p via ModExp (B=48 bytes, E=0x03, M=p=48 bytes).
+        bytes memory cube = _modExpFp(xBytes, hex"03");
+
+        // Compute (cube + 4) mod p. Since cube < p, (cube + 4) fits in 49
+        // bytes; we run it through ModExp with E=1 to reduce canonically.
+        bytes memory cubePlus4 = new bytes(49);
+        for (uint256 i = 0; i < 48; i++) cubePlus4[i + 1] = cube[i];
+        {
+            uint256 i = 48;
+            uint16 carry = 4;
+            while (carry != 0 && i > 0) {
+                uint16 v = uint16(uint8(cubePlus4[i])) + carry;
+                cubePlus4[i] = bytes1(uint8(v & 0xff));
+                carry = v >> 8;
+                unchecked { i--; }
+            }
+            if (carry != 0) cubePlus4[0] = bytes1(uint8(uint16(uint8(cubePlus4[0])) + carry));
+        }
+        bytes memory ySquared = _modExpReduce(cubePlus4);
+
+        // Compute y = ySquared ^ ((p+1)/4) mod p.
+        bytes memory expBytes = _fpSqrtExpBytes();
+        bytes memory y = _modExpFp(ySquared, expBytes);
+
+        // Parity canonicalisation: `sortFlag` is set iff the "larger" root
+        // was chosen by the prover. Compute whether our y is in the upper
+        // half (y > (p-1)/2). If that mismatches, replace y with p - y.
+        bool yIsLarger = _fpIsGreaterThanHalf(y);
+        if (sortFlag != yIsLarger) {
+            y = _fpNegate(y);
+        }
+
+        // Pack into EIP-2537 128-byte layout: 16 zero bytes || x(48) || 16
+        // zero bytes || y(48).
         out = new bytes(128);
+        for (uint256 i = 0; i < 48; i++) {
+            out[16 + i]  = xBytes[i];
+            out[80 + i]  = y[i];
+        }
+    }
+
+    /// Big-endian 48-byte encoding of the BLS12-381 base-field modulus p.
+    function _fpModulusBytes() internal pure returns (bytes memory m) {
+        m = new bytes(48);
+        uint256 hi = FP_MODULUS_HI;
+        uint256 lo = FP_MODULUS_LO;
+        // Hi contributes the top 16 bytes (bytes 0..16); lo the bottom 32.
+        for (uint256 i = 0; i < 16; i++) {
+            m[15 - i] = bytes1(uint8(hi >> (i * 8)));
+        }
+        for (uint256 i = 0; i < 32; i++) {
+            m[47 - i] = bytes1(uint8(lo >> (i * 8)));
+        }
+    }
+
+    /// Big-endian 48-byte encoding of (p+1)/4.
+    function _fpSqrtExpBytes() internal pure returns (bytes memory e) {
+        e = new bytes(48);
+        uint256 hi = FP_SQRT_EXP_HI;
+        uint256 lo = FP_SQRT_EXP_LO;
+        for (uint256 i = 0; i < 16; i++) {
+            e[15 - i] = bytes1(uint8(hi >> (i * 8)));
+        }
+        for (uint256 i = 0; i < 32; i++) {
+            e[47 - i] = bytes1(uint8(lo >> (i * 8)));
+        }
+    }
+
+    /// Call the Prague ModExp precompile (0x05) with the given base bytes
+    /// (variable length), exponent bytes (big-endian), and the BLS12-381 Fp
+    /// modulus. Returns a 48-byte big-endian canonical Fp element.
+    function _modExpFp(bytes memory base, bytes memory exp)
+        internal view returns (bytes memory)
+    {
+        bytes memory m = _fpModulusBytes();
+        bytes memory input = abi.encodePacked(
+            uint256(base.length),
+            uint256(exp.length),
+            uint256(48),
+            base,
+            exp,
+            m
+        );
+        (bool ok, bytes memory out) = PC_MODEXP.staticcall(input);
+        require(ok && out.length == 48, "ModExp failed");
+        return out;
+    }
+
+    /// Convenience wrapper: ModExp with exponent = 1 (i.e. reduce modulo p).
+    function _modExpReduce(bytes memory base) internal view returns (bytes memory) {
+        return _modExpFp(base, hex"01");
+    }
+
+    /// Returns true iff y (big-endian 48-byte Fp element, already canonical)
+    /// satisfies y > (p-1)/2 i.e. lies in the upper half of Fp. Used by the
+    /// compressed-point sort flag canonicalisation.
+    function _fpIsGreaterThanHalf(bytes memory y) internal pure returns (bool) {
+        // (p - 1) / 2 = 0x0d008...d555 (48 bytes BE). Compute on the fly by
+        // halving the modulus; p is odd so (p-1)/2 = p >> 1 with the bottom
+        // bit cleared.
+        uint256 half_hi = FP_MODULUS_HI >> 1;
+        uint256 half_lo = (FP_MODULUS_LO >> 1) | (FP_MODULUS_HI << 255);
+        // The top 16 bytes of y.
+        uint256 y_hi;
+        uint256 y_lo;
+        assembly {
+            y_hi := shr(128, mload(add(y, 32)))
+            y_lo := mload(add(y, 48))
+        }
+        if (y_hi != half_hi) return y_hi > half_hi;
+        return y_lo > half_lo;
+    }
+
+    /// Compute p - y for y a canonical Fp element encoded big-endian in 48
+    /// bytes. Result is also big-endian 48 bytes.
+    function _fpNegate(bytes memory y) internal pure returns (bytes memory r) {
+        r = new bytes(48);
+        uint16 borrow = 0;
+        bytes memory m = _fpModulusBytes();
+        for (uint256 i = 47; ; ) {
+            int32 diff = int32(uint32(uint8(m[i]))) - int32(uint32(uint8(y[i]))) - int32(int16(borrow));
+            if (diff < 0) {
+                diff += 256;
+                borrow = 1;
+            } else {
+                borrow = 0;
+            }
+            r[i] = bytes1(uint8(uint32(diff)));
+            if (i == 0) break;
+            unchecked { i--; }
+        }
     }
 }

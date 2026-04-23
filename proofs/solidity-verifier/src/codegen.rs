@@ -268,27 +268,75 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     blob.extend_from_slice(&vk.neg_g2_eip2537);
 
     let total = blob.len();
+    let hex_blob = hex::encode(&blob);
 
-    // Emit the contract as a single mstore-per-word assembly block, just like
-    // the Halo2VerifyingKey template in halo2-solidity-verifier.
-    let mut body = String::new();
-    body.push_str(&format!("    constructor() {{\n        assembly {{\n"));
-    for (i, chunk) in blob.chunks(32).enumerate() {
-        let mut word = [0u8; 32];
-        word[..chunk.len()].copy_from_slice(chunk);
-        body.push_str(&format!(
-            "            mstore({:#06x}, 0x{})\n",
-            i * 32,
-            hex::encode(word)
-        ));
-    }
-    body.push_str(&format!("            return(0, {:#06x})\n", total));
-    body.push_str("        }\n    }\n");
-
+    // Emit a minimal contract whose constructor returns the raw blob.
+    // The deployed runtime code of the VK contract IS the blob; the
+    // verifier retrieves it via `extcodecopy`. This keeps the source
+    // very short regardless of how many circuit commitments we store.
     format!(
-        "// SPDX-License-Identifier: MIT\npragma solidity ^0.8.24;\n\n\
-         // Auto-generated from midnight-proofs VerifyingKey (poseidon example).\n\
-         // Total VK blob size: {total} bytes.\n\
-         contract PoseidonVerifyingKey {{\n{body}}}\n",
+        "// SPDX-License-Identifier: MIT\n\
+pragma solidity ^0.8.24;\n\
+\n\
+/// @notice Auto-generated minimal verifying key for the poseidon example.\n\
+/// @dev The constructor returns a packed byte blob that the verifier reads\n\
+/// with `extcodecopy`. The blob layout is fixed by `codegen.rs` and mirrored\n\
+/// in `PoseidonVerifier._loadVk`; see that function for the field offsets.\n\
+///\n\
+/// VK blob size: {total} bytes.\n\
+contract PoseidonVerifyingKey {{\n\
+    constructor() {{\n\
+        bytes memory blob = hex\"{hex_blob}\";\n\
+        assembly {{ return(add(blob, 32), mload(blob)) }}\n\
+    }}\n\
+}}\n"
     )
+}
+
+/// Read-only helper that re-emits the entire VK blob as a `bytes memory` so
+/// that tests can compare the on-chain VK contract's runtime bytecode with the
+/// bytes produced by the codegen. This is purely for diagnostics and is not
+/// used by the verifier contract.
+pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
+    let mut blob: Vec<u8> = Vec::new();
+    blob.extend_from_slice(&vk.transcript_repr_be);
+    blob.extend_from_slice(&vk.omega_be);
+
+    let mut c1 = [0u8; 32];
+    c1[0..8].copy_from_slice(&vk.n.to_be_bytes());
+    c1[8..12].copy_from_slice(&vk.k.to_be_bytes());
+    c1[12..16].copy_from_slice(&(vk.num_advice_columns as u32).to_be_bytes());
+    c1[16..20].copy_from_slice(&(vk.num_fixed_columns as u32).to_be_bytes());
+    c1[20..24].copy_from_slice(&(vk.num_instance_columns as u32).to_be_bytes());
+    c1[24..28].copy_from_slice(&(vk.num_challenges as u32).to_be_bytes());
+    c1[28..32].copy_from_slice(&(vk.num_phases as u32).to_be_bytes());
+    blob.extend_from_slice(&c1);
+
+    let mut c2 = [0u8; 32];
+    c2[0..4].copy_from_slice(&(vk.cs_degree as u32).to_be_bytes());
+    c2[4..8].copy_from_slice(&(vk.num_simple_selectors as u32).to_be_bytes());
+    c2[8..12].copy_from_slice(&(vk.blinding_factors as u32).to_be_bytes());
+    c2[12..16].copy_from_slice(&(vk.num_advice_queries as u32).to_be_bytes());
+    c2[16..20].copy_from_slice(&(vk.num_fixed_queries as u32).to_be_bytes());
+    c2[20..24].copy_from_slice(&(vk.num_instance_queries as u32).to_be_bytes());
+    c2[24..28].copy_from_slice(&(vk.num_lookups as u32).to_be_bytes());
+    c2[28..32].copy_from_slice(&(vk.num_trashcans as u32).to_be_bytes());
+    blob.extend_from_slice(&c2);
+
+    let total_lookup_helpers: u32 =
+        vk.lookup_num_chunks.iter().map(|&c| c as u32).sum();
+    let mut c3 = [0u8; 32];
+    c3[0..4].copy_from_slice(&(vk.num_permutation_columns as u32).to_be_bytes());
+    c3[4..8].copy_from_slice(&(vk.num_permutation_chunks as u32).to_be_bytes());
+    c3[8..12].copy_from_slice(&(vk.num_quotient_limbs as u32).to_be_bytes());
+    c3[12..16].copy_from_slice(&total_lookup_helpers.to_be_bytes());
+    c3[16..20].copy_from_slice(&(vk.num_committed_instance_evals as u32).to_be_bytes());
+    blob.extend_from_slice(&c3);
+
+    for c in &vk.fixed_comms_eip2537 { blob.extend_from_slice(c); }
+    for c in &vk.perm_comms_eip2537  { blob.extend_from_slice(c); }
+    blob.extend_from_slice(&vk.s_g2_eip2537);
+    blob.extend_from_slice(&vk.neg_g2_eip2537);
+
+    blob
 }

@@ -85,6 +85,34 @@ fn main() {
         );
     }
 
+    // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
+    // the proof's G1 points. The forge test uses these to unit-test the
+    // Solidity decompression function before attempting the full pairing.
+    {
+        use group::{Group, GroupEncoding};
+        let mut pairs: Vec<u8> = Vec::new();
+        let mut write_pair = |p: &midnight_curves::G1Projective| {
+            let c: <midnight_curves::G1Projective as GroupEncoding>::Repr =
+                <midnight_curves::G1Projective as GroupEncoding>::to_bytes(p);
+            let u = midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(p);
+            pairs.extend_from_slice(c.as_ref()); // 48 bytes
+            pairs.extend_from_slice(&u);         // 128 bytes
+        };
+
+        // Use the SRS generator and two random-ish points from the fixed
+        // commitments as test vectors.
+        write_pair(&<midnight_curves::G1Projective as Group>::generator());
+        for c in fx.vk.vk().fixed_commitments().iter().take(3) {
+            write_pair(c);
+        }
+        fs::write(fixtures.join("decomp_pairs.bin"), &pairs).unwrap();
+        eprintln!(
+            "      decomp fixture pairs written ({} bytes = {} x (48+128))",
+            pairs.len(),
+            pairs.len() / 176,
+        );
+    }
+
     eprintln!("OK — see {}/ for generated files", contracts.display());
     eprintln!("         {}/ for fixtures", fixtures.display());
 }
