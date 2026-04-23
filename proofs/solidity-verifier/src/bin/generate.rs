@@ -1480,6 +1480,91 @@ fn main() {
             result.commitment_ids.len(),
             result.point_sets.len(),
         );
+
+        // Phase C2b: per-set x1-inner-product evals fold fixture.
+        //
+        // Given:
+        //   - commitment_set_idx[c] (from C2a),
+        //   - per-commitment evals in sorted-set order
+        //     (commitment_evals[c][j] = eval at the j-th point in
+        //     the sorted point set of the set c belongs to),
+        //   - challenge x1,
+        // the Rust verifier computes, for each set s:
+        //   q_eval_sets[s][j] = Σ_{c ∈ set s, FIFO} x1^{pos_c_in_s} ·
+        //                       commitment_evals[c][j]
+        // where `pos_c_in_s` is c's iteration position within the
+        // FIFO commitment order restricted to set s.
+        //
+        // Fixture layout:
+        //   [4] num_commitments
+        //     per commitment: [4] set_idx, [4] evals_len,
+        //                     [32] × evals_len per-point evals
+        //   [4] x1 offset sentinel (always 0xDEADBEEF for struct boundary)
+        //   [32] x1
+        //   [4] num_sets
+        //     per set:
+        //       [4] size
+        //         per: [32] expected q_eval_sets[s][j]
+        //
+        // The commitments here are the same 5-commitment workload
+        // from the C2a fixture; evals per commitment are synthetic
+        // but deterministic (commit_id * 100 + point_idx).
+        use ff::Field as _;
+        let x1 = Fq::from(777u64);
+        let mut c_evals: Vec<Vec<Fq>> = Vec::with_capacity(result.commitment_ids.len());
+        for (c, cid) in result.commitment_ids.iter().enumerate() {
+            let set_len = result.point_sets[result.commitment_set_idx[c] as usize].len();
+            let mut ev = Vec::with_capacity(set_len);
+            for j in 0..set_len {
+                ev.push(Fq::from(*cid as u64 * 100u64 + j as u64));
+            }
+            c_evals.push(ev);
+        }
+        // Rust replica of the x1 evals fold.
+        let n_sets = result.point_sets.len();
+        let mut q_evals: Vec<Vec<Fq>> = Vec::with_capacity(n_sets);
+        for s in 0..n_sets {
+            let set_size = result.point_sets[s].len();
+            let mut folded = vec![Fq::ZERO; set_size];
+            let mut x1_pow = Fq::ONE;
+            // Iterate commitments in FIFO order, picking those in set s.
+            for c in 0..result.commitment_ids.len() {
+                if result.commitment_set_idx[c] as usize != s {
+                    continue;
+                }
+                for j in 0..set_size {
+                    folded[j] += x1_pow * c_evals[c][j];
+                }
+                x1_pow *= x1;
+            }
+            q_evals.push(folded);
+        }
+
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(&(result.commitment_ids.len() as u32).to_be_bytes());
+        for c in 0..result.commitment_ids.len() {
+            blob.extend_from_slice(&result.commitment_set_idx[c].to_be_bytes());
+            blob.extend_from_slice(&(c_evals[c].len() as u32).to_be_bytes());
+            for ev in &c_evals[c] {
+                blob.extend_from_slice(&fq_to_be(ev));
+            }
+        }
+        blob.extend_from_slice(&0xDEADBEEF_u32.to_be_bytes());
+        blob.extend_from_slice(&fq_to_be(&x1));
+        blob.extend_from_slice(&(n_sets as u32).to_be_bytes());
+        for s in 0..n_sets {
+            blob.extend_from_slice(&(q_evals[s].len() as u32).to_be_bytes());
+            for e in &q_evals[s] {
+                blob.extend_from_slice(&fq_to_be(e));
+            }
+        }
+        fs::write(fixtures.join("x1_evals_fold_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      x1-evals-fold fixture written ({} bytes, {} sets, sizes {:?})",
+            blob.len(),
+            n_sets,
+            q_evals.iter().map(|v| v.len()).collect::<Vec<_>>(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

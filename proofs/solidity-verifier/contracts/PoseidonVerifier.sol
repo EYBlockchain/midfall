@@ -1042,6 +1042,85 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Per-set x1 evals inner-product fold (Phase C2b)                  *
+     *                                                                    *
+     *  Given the per-set partitioning produced by C2a plus each         *
+     *  commitment's evals in sorted-set order + the batching           *
+     *  challenge x1, produces                                           *
+     *    q_eval_sets[s][j] = Σ_{c ∈ s FIFO} x1^{i_c} · evals[c][j]      *
+     *  where \`i_c\` is c's FIFO position within set s. This is the      *
+     *  x1-inner-product scalar fold from                                *
+     *  \`KZGCommitmentScheme::multi_prepare\` (kzg/mod.rs:298-302).       *
+     *                                                                    *
+     *  The parallel G1-side fold — which produces the per-set          *
+     *  commitment MSM \`q_coms[s]\` — is structurally identical but     *
+     *  defers base evaluation to the final pairing step. For a         *
+     *  verifier consuming only single-term commitments, the commitment *
+     *  MSM's folded (scalar, base) list is simply                       *
+     *    [(x1^0, C_0), (x1^1, C_1), ...]                                 *
+     *  with commitments in per-set FIFO order; this commit carries     *
+     *  just the evals fold (the algebraic kernel), deferring the G1   *
+     *  side to C2c's x4 outer fold where the two sides are combined.   *
+     * ------------------------------------------------------------------ */
+
+    function _x1EvalFoldPerSet(
+        uint256[] memory commitmentSetIdx,
+        uint256[][] memory commitmentEvals,
+        uint256 numSets,
+        uint256 x1
+    ) internal view returns (uint256[][] memory qEvalSets) {
+        uint256 nC = commitmentSetIdx.length;
+        qEvalSets = new uint256[][](numSets);
+        for (uint256 s = 0; s < numSets; s++) {
+            // First pass: find set size (same for all commitments in the set).
+            uint256 setSize = 0;
+            for (uint256 c = 0; c < nC; c++) {
+                if (commitmentSetIdx[c] == s) {
+                    setSize = commitmentEvals[c].length;
+                    break;
+                }
+            }
+            uint256[] memory folded = new uint256[](setSize);
+            uint256 x1Pow = 1;
+            for (uint256 c = 0; c < nC; c++) {
+                if (commitmentSetIdx[c] != s) continue;
+                require(commitmentEvals[c].length == setSize, "set-size mismatch");
+                for (uint256 j = 0; j < setSize; j++) {
+                    folded[j] = _frAdd(folded[j], _frMul(x1Pow, commitmentEvals[c][j]));
+                }
+                x1Pow = _frMul(x1Pow, x1);
+            }
+            qEvalSets[s] = folded;
+        }
+    }
+
+    /// Public fixture-only wrapper. Uses flat-array packaging for
+    /// calldata ergonomics; the nested `commitmentEvals` array is
+    /// reconstructed from (`evalsFlat`, `evalsLen`).
+    function x1EvalFoldPerSet(
+        uint256[] calldata commitmentSetIdx,
+        uint256[] calldata evalsFlat,
+        uint256[] calldata evalsLen,
+        uint256 numSets,
+        uint256 x1
+    ) external view returns (uint256[][] memory) {
+        uint256 nC = commitmentSetIdx.length;
+        require(nC == evalsLen.length, "len mismatch");
+        uint256[][] memory cEvals = new uint256[][](nC);
+        uint256 off = 0;
+        for (uint256 c = 0; c < nC; c++) {
+            uint256 m = evalsLen[c];
+            uint256[] memory ev = new uint256[](m);
+            for (uint256 j = 0; j < m; j++) ev[j] = evalsFlat[off + j];
+            cEvals[c] = ev;
+            off += m;
+        }
+        uint256[] memory sidx = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) sidx[c] = commitmentSetIdx[c];
+        return _x1EvalFoldPerSet(sidx, cEvals, numSets, x1);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  construct_intermediate_sets (Phase C2a)                           *
      *                                                                    *
      *  Solidity port of                                                  *

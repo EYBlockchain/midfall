@@ -500,6 +500,63 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C2b: per-set x1 evals inner-product fold.
+    /// Reads `fixtures/x1_evals_fold_fixture.bin` which contains
+    /// the commitment set_idx + per-commitment evals in sorted-
+    /// set order + x1, along with the Rust-computed expected
+    /// `q_eval_sets[s][j] = Σ_{c FIFO in s} x1^{i_c} · evals[c][j]`.
+    /// Invokes `x1EvalFoldPerSet` and asserts byte-for-byte match.
+    function test_x1_evals_fold() public {
+        bytes memory f = vm.readFileBinary("fixtures/x1_evals_fold_fixture.bin");
+        uint256 off = 0;
+        uint256 nC = _readU32(f, off); off += 4;
+        uint256[] memory setIdx = new uint256[](nC);
+        uint256[] memory eLen = new uint256[](nC);
+        // First pass: capture setIdx + lens + compute total flat length.
+        uint256 totalEvals = 0;
+        uint256 mark = off;
+        for (uint256 c = 0; c < nC; c++) {
+            setIdx[c] = _readU32(f, off); off += 4;
+            eLen[c] = _readU32(f, off); off += 4;
+            totalEvals += eLen[c];
+            off += 32 * eLen[c];
+        }
+        // Second pass: fill flat evals.
+        uint256[] memory evalsFlat = new uint256[](totalEvals);
+        off = mark;
+        uint256 cursor = 0;
+        for (uint256 c = 0; c < nC; c++) {
+            off += 8;                       // skip setIdx + len
+            for (uint256 j = 0; j < eLen[c]; j++) {
+                evalsFlat[cursor + j] = _readUint(f, off);
+                off += 32;
+            }
+            cursor += eLen[c];
+        }
+        // Sentinel + x1.
+        require(_readU32(f, off) == 0xDEADBEEF, "sentinel mismatch");
+        off += 4;
+        uint256 x1 = _readUint(f, off); off += 32;
+        uint256 nS = _readU32(f, off); off += 4;
+        uint256[][] memory expSets = new uint256[][](nS);
+        for (uint256 s = 0; s < nS; s++) {
+            uint256 m = _readU32(f, off); off += 4;
+            uint256[] memory pv = new uint256[](m);
+            for (uint256 j = 0; j < m; j++) { pv[j] = _readUint(f, off); off += 32; }
+            expSets[s] = pv;
+        }
+
+        uint256[][] memory gotSets = v.x1EvalFoldPerSet(setIdx, evalsFlat, eLen, nS, x1);
+        require(gotSets.length == nS, "set count mismatch");
+        for (uint256 s = 0; s < nS; s++) {
+            require(gotSets[s].length == expSets[s].length, "set size mismatch");
+            for (uint256 j = 0; j < gotSets[s].length; j++) {
+                require(gotSets[s][j] == expSets[s][j], "folded eval mismatch");
+            }
+        }
+        emit log_named_uint("x1 evals fold verified, sets", nS);
+    }
+
     /// Phase C2a: construct_intermediate_sets equivalence.
     /// Reads `fixtures/interm_sets_fixture.bin` which contains a
     /// synthetic (commitment_id, point_value) query list + the
