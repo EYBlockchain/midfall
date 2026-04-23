@@ -190,30 +190,54 @@ contract PoseidonVerifierTest is Test {
         trace = string.concat(trace, "]");
         vm.writeFile("fixtures/solidity_trace.json", trace);
 
-        emit log_named_bool("verify_ok_structural", ok);
-        // NOTE: `ok` being false here is *expected*. The current port
-        // implements:
-        //   * the full Keccak256 Fiat-Shamir transcript,
-        //   * `parse_trace` (VK-hash → advice → challenges → lookup/perm/
-        //     trash commitments → y → quotient limbs → x → evaluations),
-        //   * the `multi_prepare` *reads* (x1, x2, f_com, x3, q_evals, x4, π),
-        //   * Fp-sqrt-based G1 decompression (unit-tested against blst),
-        //   * and the EIP-2537 pairing precompile (see `_finalPairing`).
-        //
-        // What is still deferred to a follow-up session:
+        emit log_named_bool("verify_ok", ok);
+
+        // Strict soundness assertion: the verifier MUST accept a valid
+        // proof produced by the canonical Rust prover for the poseidon
+        // example. When this assertion fails it means one of the
+        // algebraically-sound layers is either missing or buggy:
         //   * `partially_evaluate_identities` (per-gate Solidity codegen),
         //   * `compute_linearization_commitment` MSM,
         //   * `multi_prepare` MSM (construct_intermediate_sets, Lagrange
         //     interpolation at x3, DualMSM),
         //   * instance eval via domain Lagrange basis for non-committed
-        //     instance columns.
-        // Until these land, `_finalPairing` calls the precompile with π and
-        // s·G2 / -G2 for structural coverage only; the algebraic
-        // `C − v·G + x3·π` right-hand side is not yet built, so the
-        // pairing returns false. Byte-for-byte transcript equivalence with
-        // the canonical Rust verifier is asserted by the Rust-side
-        // `rust_and_solidity_traces_match` integration test in
-        // tests/forge.rs, which *is* passing (82/82 entries).
+        //     instance columns,
+        //   * `l_0` / `l_last` / `l_blind` at x (permutation boundary),
+        //   * or the real pairing RHS `e(C − v·G + x3·π, -G2)`.
+        // The layers that ARE in place — full Keccak256 Fiat-Shamir
+        // transcript, `parse_trace`, the `multi_prepare` reads (x1, x2,
+        // f_com, x3, q_evals, x4, π), Fp-sqrt G1 decompression, Fr
+        // arithmetic + Lagrange basis / interpolation, and the EIP-2537
+        // pairing precompile wiring — are covered by the unit tests
+        // above and by the Rust-side `rust_and_solidity_traces_match`
+        // integration test in tests/forge.rs.
+        require(ok, "verify(): valid proof was rejected");
+    }
+
+    /// Negative soundness assertion: flipping a single byte of the proof
+    /// must cause `verify()` to return false (or revert). Guards against
+    /// a trivial-accept implementation that short-circuits to `true`
+    /// regardless of the input.
+    function test_verify_rejects_mutated_proof() public {
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+        require(instanceBE.length == 32, "instance size");
+        bytes32 instance;
+        assembly { instance := mload(add(instanceBE, 32)) }
+
+        // Mutate one byte in the middle of the proof (past the fixed
+        // commitments prefix so we land in an evaluation or perm product).
+        uint256 idx = proof.length / 2;
+        proof[idx] = bytes1(uint8(proof[idx]) ^ 0x01);
+
+        bool ok;
+        try v.verify(instance, proof) returns (bool r) {
+            ok = r;
+        } catch {
+            ok = false;
+        }
+        require(!ok, "verify() accepted a mutated proof");
+        emit log_named_bool("mutation rejected", !ok);
     }
 
     event log_named_uint(string, uint256);
