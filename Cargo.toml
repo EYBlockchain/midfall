@@ -37,6 +37,14 @@ midnight-proofs = { path = "proofs" }
 midnight-curves = { path = "curves" }
 midnight-circuits = { path = "circuits" }
 
+# Locally vendored patch of `blake2b_halo2` that adds explicit type
+# annotations in its `usage_utils` module. This is required because the
+# `keccak-transcript` feature of `midnight-proofs` introduces a second
+# `Hashable<_>` implementation for `G1Projective`, which makes the
+# upstream `CircuitTranscript::init_from_bytes(proof)` call ambiguous.
+[patch."https://github.com/eryxcoop/blake2b_halo2"]
+blake2b_halo2 = { path = "vendor/blake2b_halo2" }
+
 ## Benchmarks
 
 [profile.bench]
