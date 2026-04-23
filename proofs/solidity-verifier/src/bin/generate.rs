@@ -148,6 +148,151 @@ fn main() {
         );
     }
 
+    // Emit the gate-expression bytecode fixture. For every polynomial of
+    // every gate in the ConstraintSystem, encode the expression tree as
+    // compact RPN bytecode and evaluate it against a deterministic
+    // environment. The Solidity test loads this file and runs its own
+    // bytecode interpreter, asserting byte-for-byte that its result
+    // matches the Rust-computed value.
+    //
+    // File layout (all 32-byte values BE):
+    //   [ 0.. 32)  x           (same as algebra fixture for consistency)
+    //   [32.. 64)  beta        = Fq::from(500)
+    //   [64.. 96)  gamma       = Fq::from(501)
+    //   [96..128)  theta       = Fq::from(502)
+    //   [128..160) trash       = Fq::from(503)
+    //   [160..192) l_0         = Fq::from(700)
+    //   [192..224) l_last      = Fq::from(701)
+    //   [224..256) l_blind     = Fq::from(702)
+    //   [256..288) nFixed (u256 BE)
+    //     [..]     fe[0], fe[1], ...
+    //   [     ]    nAdvice   (u256 BE) + ae[...]
+    //   [     ]    nInstance (u256 BE) + ie[...]
+    //   [     ]    nChallenge(u256 BE) + ch[...]
+    //   [     ]    nGates    (u256 BE)
+    //     for each gate polynomial:
+    //       u256 BE bytecode_len
+    //       bytecode
+    //       32 bytes expected value BE
+    {
+        use ff::{Field, PrimeField};
+        use midnight_solidity_verifier::expr_bytecode::{encode_expression, eval_bytecode, OP_FIXED, OP_ADVICE, OP_INSTANCE, OP_CHALLENGE, OP_L_0, OP_L_LAST, OP_L_BLIND, OP_BETA, OP_GAMMA, OP_THETA, OP_TRASH, OP_X};
+        let vk_inner = fx.vk.vk();
+        let cs = vk_inner.cs();
+
+        // Deterministic env.
+        let x_bytes: [u8; 32] = [
+            0x11,0x22,0x33,0x44,0x55,0x66,0x77,0x88,
+            0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff,0x01,
+            0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,
+            0x0a,0x0b,0x0c,0x0d,0x0e,0x0f,0x10,0x11,
+        ];
+        let x = { let mut le = x_bytes; le.reverse(); Fq::from_repr(le).unwrap() };
+        let beta = Fq::from(500u64);
+        let gamma = Fq::from(501u64);
+        let theta = Fq::from(502u64);
+        let trash = Fq::from(503u64);
+        let l_0 = Fq::from(700u64);
+        let l_last = Fq::from(701u64);
+        let l_blind = Fq::from(702u64);
+
+        let n_fixed = cs.num_fixed_columns();
+        let n_advice = cs.advice_queries().len();
+        let n_instance = cs.instance_queries().len();
+        let n_challenges = cs.num_challenges();
+
+        let fixed_evals: Vec<Fq> = (0..n_fixed)
+            .map(|i| if cs.has_simple_selector_col(i) { Fq::ONE } else { Fq::from(200u64 + i as u64) })
+            .collect();
+        let advice_evals: Vec<Fq> = (0..n_advice).map(|i| Fq::from(100u64 + i as u64)).collect();
+        let instance_evals: Vec<Fq> = (0..n_instance).map(|i| Fq::from(300u64 + i as u64)).collect();
+        let challenges: Vec<Fq> = (0..n_challenges).map(|i| Fq::from(400u64 + i as u64)).collect();
+
+        let mut blob: Vec<u8> = Vec::new();
+        let mut push_fq = |blob: &mut Vec<u8>, v: &Fq| { blob.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |blob: &mut Vec<u8>, v: u64| {
+            blob.extend_from_slice(&[0u8; 24]);
+            blob.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &x);
+        push_fq(&mut blob, &beta);
+        push_fq(&mut blob, &gamma);
+        push_fq(&mut blob, &theta);
+        push_fq(&mut blob, &trash);
+        push_fq(&mut blob, &l_0);
+        push_fq(&mut blob, &l_last);
+        push_fq(&mut blob, &l_blind);
+
+        push_u256(&mut blob, n_fixed as u64);
+        for v in &fixed_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, n_advice as u64);
+        for v in &advice_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, n_instance as u64);
+        for v in &instance_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, n_challenges as u64);
+        for v in &challenges { push_fq(&mut blob, v); }
+
+        // Gates.
+        let all_polys: Vec<&midnight_proofs::plonk::Expression<Fq>> =
+            cs.gates().iter().flat_map(|g| g.polynomials().iter()).collect();
+
+        push_u256(&mut blob, all_polys.len() as u64);
+
+        let lookup = |op: u8, idx: u16| -> Fq {
+            let i = idx as usize;
+            match op {
+                OP_FIXED => fixed_evals[i],
+                OP_ADVICE => advice_evals[i],
+                OP_INSTANCE => instance_evals[i],
+                OP_CHALLENGE => challenges[i],
+                _ => unreachable!(),
+            }
+        };
+        let special = |op: u8| -> Fq {
+            match op {
+                OP_L_0 => l_0,
+                OP_L_LAST => l_last,
+                OP_L_BLIND => l_blind,
+                OP_BETA => beta,
+                OP_GAMMA => gamma,
+                OP_THETA => theta,
+                OP_TRASH => trash,
+                OP_X => x,
+                _ => unreachable!(),
+            }
+        };
+
+        for poly in &all_polys {
+            let bc = encode_expression(poly);
+            // Sanity-check: bytecode-evaluated value must equal native.
+            let (v_bc, consumed) = eval_bytecode(&bc, &lookup, &special);
+            assert_eq!(consumed, bc.len(), "bytecode not fully consumed");
+            let v_native = poly.evaluate(
+                &|c| c,
+                &|_| panic!("selector"),
+                &|q| fixed_evals[q.index().unwrap()],
+                &|q| advice_evals[q.index.unwrap()],
+                &|q| instance_evals[q.index.unwrap()],
+                &|ch| challenges[ch.index()],
+                &|a| -a, &|a, b| a + b, &|a, b| a * b, &|a, k| a * k,
+            );
+            assert_eq!(v_bc, v_native, "bytecode != native for a gate polynomial");
+
+            push_u256(&mut blob, bc.len() as u64);
+            blob.extend_from_slice(&bc);
+            push_fq(&mut blob, &v_native);
+        }
+
+        fs::write(fixtures.join("gate_eval_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      gate eval fixture written ({} bytes, {} gate polys, {} fixed/{} advice/{} instance/{} challenge)",
+            blob.len(),
+            all_polys.len(),
+            n_fixed, n_advice, n_instance, n_challenges,
+        );
+    }
+
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
     // the proof's G1 points. The forge test uses these to unit-test the
     // Solidity decompression function before attempting the full pairing.

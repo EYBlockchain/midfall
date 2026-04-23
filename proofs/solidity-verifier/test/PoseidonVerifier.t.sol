@@ -132,6 +132,65 @@ contract PoseidonVerifierTest is Test {
         assembly { v_ := mload(add(add(b, 32), off)) }
     }
 
+    /// Unit test for the gate-expression bytecode interpreter.
+    ///
+    /// The Rust generator serialises every gate polynomial of the
+    /// ConstraintSystem into RPN bytecode (see src/expr_bytecode.rs),
+    /// evaluates each polynomial against a deterministic environment
+    /// (x, β, γ, θ, τ, l_0, l_last, l_blind, plus fixed/advice/instance/
+    /// challenge query arrays), and writes both the bytecode and the
+    /// Rust-computed expected value to `fixtures/gate_eval_fixture.bin`.
+    /// This test replays the evaluation on-chain and asserts that the
+    /// Solidity interpreter produces exactly the same Fr element.
+    ///
+    /// A mismatch here means either:
+    ///   * the encoding in expr_bytecode.rs doesn't match the decoding
+    ///     in PoseidonVerifier._evalBytecode, or
+    ///   * the Rust-side self-check inside `generate` has silently
+    ///     accepted a bogus bytecode.
+    function test_gate_bytecode_interpreter() public {
+        bytes memory blob = vm.readFileBinary("fixtures/gate_eval_fixture.bin");
+        require(blob.length >= 256, "bad gate fixture");
+
+        uint256[] memory env = new uint256[](8);
+        for (uint256 i = 0; i < 8; i++) env[i] = _readUint(blob, i * 32);
+        uint256 off = 256;
+
+        (uint256[] memory fe, uint256 off1) = _readArr(blob, off);
+        (uint256[] memory ae, uint256 off2) = _readArr(blob, off1);
+        (uint256[] memory ie, uint256 off3) = _readArr(blob, off2);
+        (uint256[] memory ch, uint256 off4) = _readArr(blob, off3);
+
+        uint256 nGates = _readUint(blob, off4);
+        uint256 cursor = off4 + 32;
+        for (uint256 g = 0; g < nGates; g++) {
+            uint256 bcLen = _readUint(blob, cursor);
+            cursor += 32;
+            bytes memory bc = new bytes(bcLen);
+            for (uint256 k = 0; k < bcLen; k++) bc[k] = blob[cursor + k];
+            cursor += bcLen;
+            uint256 expected = _readUint(blob, cursor);
+            cursor += 32;
+
+            uint256 got = v.evalGateBytecode(bc, env, fe, ae, ie, ch);
+            require(got == expected, "gate bytecode mismatch");
+        }
+        emit log_named_uint("gate bytecode polys verified", nGates);
+    }
+
+    function _readArr(bytes memory b, uint256 off) internal pure
+        returns (uint256[] memory arr, uint256 next)
+    {
+        uint256 n = _readUint(b, off);
+        off += 32;
+        arr = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) {
+            arr[i] = _readUint(b, off);
+            off += 32;
+        }
+        next = off;
+    }
+
     function test_verify_poseidon_proof() public {
         bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
         bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");

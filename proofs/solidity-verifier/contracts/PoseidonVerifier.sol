@@ -255,6 +255,162 @@ contract PoseidonVerifier {
         return _g1CompressedToEip2537(c);
     }
 
+    /* ------------------------------------------------------------------ *
+     *  RPN bytecode interpreter for partially_evaluate_identities        *
+     *                                                                    *
+     *  Each gate polynomial is serialised on the Rust side into compact  *
+     *  reverse-polish bytecode (see `src/expr_bytecode.rs`). This        *
+     *  interpreter walks the bytecode with a 32-slot uint256[] stack,    *
+     *  looking up query values and special variables in the supplied    *
+     *  `GateEnv` struct. It is semantically identical to                 *
+     *  `Expression::evaluate` on the Rust side.                          *
+     * ------------------------------------------------------------------ */
+
+    struct GateEnv {
+        uint256 x;
+        uint256 beta;
+        uint256 gamma;
+        uint256 theta;
+        uint256 trashChal;
+        uint256 l0;
+        uint256 lLast;
+        uint256 lBlind;
+        uint256[] fixedEvals;
+        uint256[] adviceEvals;
+        uint256[] instanceEvals;
+        uint256[] challenges;
+    }
+
+    uint8 internal constant OP_CONST = 0x00;
+    uint8 internal constant OP_FIXED = 0x01;
+    uint8 internal constant OP_ADVICE = 0x02;
+    uint8 internal constant OP_INSTANCE = 0x03;
+    uint8 internal constant OP_CHALLENGE = 0x04;
+    uint8 internal constant OP_L_0 = 0x05;
+    uint8 internal constant OP_L_LAST = 0x06;
+    uint8 internal constant OP_L_BLIND = 0x07;
+    uint8 internal constant OP_BETA = 0x08;
+    uint8 internal constant OP_GAMMA = 0x09;
+    uint8 internal constant OP_THETA = 0x0A;
+    uint8 internal constant OP_TRASH = 0x0B;
+    uint8 internal constant OP_X = 0x0C;
+    uint8 internal constant OP_NEG = 0x20;
+    uint8 internal constant OP_ADD = 0x21;
+    uint8 internal constant OP_MUL = 0x22;
+    uint8 internal constant OP_SCALED = 0x23;
+    uint8 internal constant OP_END = 0xFF;
+
+    /// Evaluate a single RPN program (one expression terminated by OP_END)
+    /// starting at `bytecode[offset]`. Returns `(value, newOffset)`.
+    function _evalBytecode(bytes memory bytecode, uint256 offset, GateEnv memory env)
+        internal pure returns (uint256 value, uint256 newOffset)
+    {
+        uint256[] memory stack = new uint256[](64);
+        uint256 sp = 0;
+        uint256 i = offset;
+        while (i < bytecode.length) {
+            uint8 op = uint8(bytecode[i]);
+            unchecked { i++; }
+            if (op == OP_CONST) {
+                uint256 v;
+                assembly { v := mload(add(add(bytecode, 32), i)) }
+                i += 32;
+                stack[sp++] = v % FR_MODULUS;
+            } else if (op == OP_FIXED) {
+                uint16 idx = (uint16(uint8(bytecode[i])) << 8) | uint16(uint8(bytecode[i+1]));
+                i += 2;
+                stack[sp++] = env.fixedEvals[idx];
+            } else if (op == OP_ADVICE) {
+                uint16 idx = (uint16(uint8(bytecode[i])) << 8) | uint16(uint8(bytecode[i+1]));
+                i += 2;
+                stack[sp++] = env.adviceEvals[idx];
+            } else if (op == OP_INSTANCE) {
+                uint16 idx = (uint16(uint8(bytecode[i])) << 8) | uint16(uint8(bytecode[i+1]));
+                i += 2;
+                stack[sp++] = env.instanceEvals[idx];
+            } else if (op == OP_CHALLENGE) {
+                uint16 idx = (uint16(uint8(bytecode[i])) << 8) | uint16(uint8(bytecode[i+1]));
+                i += 2;
+                stack[sp++] = env.challenges[idx];
+            } else if (op == OP_L_0) {
+                stack[sp++] = env.l0;
+            } else if (op == OP_L_LAST) {
+                stack[sp++] = env.lLast;
+            } else if (op == OP_L_BLIND) {
+                stack[sp++] = env.lBlind;
+            } else if (op == OP_BETA) {
+                stack[sp++] = env.beta;
+            } else if (op == OP_GAMMA) {
+                stack[sp++] = env.gamma;
+            } else if (op == OP_THETA) {
+                stack[sp++] = env.theta;
+            } else if (op == OP_TRASH) {
+                stack[sp++] = env.trashChal;
+            } else if (op == OP_X) {
+                stack[sp++] = env.x;
+            } else if (op == OP_NEG) {
+                uint256 a = stack[--sp];
+                stack[sp++] = a == 0 ? 0 : FR_MODULUS - a;
+            } else if (op == OP_ADD) {
+                uint256 b = stack[--sp];
+                uint256 a = stack[--sp];
+                stack[sp++] = addmod(a, b, FR_MODULUS);
+            } else if (op == OP_MUL) {
+                uint256 b = stack[--sp];
+                uint256 a = stack[--sp];
+                stack[sp++] = mulmod(a, b, FR_MODULUS);
+            } else if (op == OP_SCALED) {
+                uint256 k;
+                assembly { k := mload(add(add(bytecode, 32), i)) }
+                i += 32;
+                uint256 a = stack[--sp];
+                stack[sp++] = mulmod(a, k % FR_MODULUS, FR_MODULUS);
+            } else if (op == OP_END) {
+                require(sp == 1, "bytecode stack not singleton at END");
+                return (stack[0], i);
+            } else {
+                revert("unknown opcode");
+            }
+        }
+        revert("bytecode ran off end without END");
+    }
+
+    /// Public view wrapper so the forge test can drive the interpreter
+    /// without deploying a separate harness contract.
+    function evalGateBytecode(
+        bytes calldata bytecode,
+        uint256[] calldata envScalars,
+        uint256[] calldata fixedEvals,
+        uint256[] calldata adviceEvals,
+        uint256[] calldata instanceEvals,
+        uint256[] calldata challenges
+    ) external pure returns (uint256) {
+        require(envScalars.length == 8, "env scalars must be 8");
+        GateEnv memory env = GateEnv({
+            x: envScalars[0],
+            beta: envScalars[1],
+            gamma: envScalars[2],
+            theta: envScalars[3],
+            trashChal: envScalars[4],
+            l0: envScalars[5],
+            lLast: envScalars[6],
+            lBlind: envScalars[7],
+            fixedEvals: _copyToMemArr(fixedEvals),
+            adviceEvals: _copyToMemArr(adviceEvals),
+            instanceEvals: _copyToMemArr(instanceEvals),
+            challenges: _copyToMemArr(challenges)
+        });
+        bytes memory bc = bytecode;
+        (uint256 v, uint256 consumed) = _evalBytecode(bc, 0, env);
+        require(consumed == bc.length, "bytecode not fully consumed");
+        return v;
+    }
+
+    function _copyToMemArr(uint256[] calldata a) private pure returns (uint256[] memory b) {
+        b = new uint256[](a.length);
+        for (uint256 i = 0; i < a.length; i++) b[i] = a[i];
+    }
+
     /// Public view wrappers around the Fr primitives so that forge unit
     /// tests can assert them against Rust-computed fixtures before relying
     /// on them inside the verifier body.

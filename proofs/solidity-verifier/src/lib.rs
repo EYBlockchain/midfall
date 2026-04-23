@@ -19,3 +19,4 @@ pub mod codegen;
 pub mod transcript;
 pub mod eip2537;
 pub mod poseidon_fixture;
+pub mod expr_bytecode;
