@@ -988,6 +988,111 @@ fn main() {
             expected.len(),
             expected.iter().filter(|(s, _)| s.is_some()).count(),
         );
+
+        // Phase B: compute_linearization_commitment fixture.
+        // Replicates the Rust algorithm (linearization/verifier.rs:45+)
+        // using the SAME `expected` (selector_idx, eval) pairs we
+        // just computed and a deterministic y/xn/splitting_factor.
+        //
+        // File layout:
+        //   [32]  y
+        //   [32]  xn
+        //   [32]  splitting_factor
+        //   [32]  num_quotient_limbs
+        //     [128 × n]  quotient_limb commitments (EIP-2537)
+        //   [32]  num_identity_scalars
+        //   for each: 4B selector + 32B scalar  (≡ partial_eval_fixture
+        //     tail; duplicated here so the forge test doesn't have to
+        //     cross-load)
+        //   [32]  num_output_points
+        //     [128 × n]  output points (EIP-2537)
+        //     [32 × n]   output scalars
+        //   [32]  expected_eval
+        use std::collections::BTreeMap;
+        use group::Group;
+        let y = Fq::from(987u64);
+        let xn_val = Fq::from(654u64);
+        let splitting_factor = Fq::from(321u64);
+
+        let num_limbs = vk_info.num_quotient_limbs;
+        // Deterministic G1 points for quotient-limb commitments.
+        let gen = <midnight_curves::G1Projective as Group>::generator();
+        let quotient_limbs: Vec<midnight_curves::G1Projective> =
+            (0..num_limbs).map(|i| gen * Fq::from(9000u64 + i as u64)).collect();
+
+        // Replica of compute_linearization_commitment.
+        let mut identities_scalars: Vec<Fq> = Vec::new();
+        let mut identities_points: Vec<midnight_curves::G1Projective> = Vec::new();
+        let mut splitting_pow = Fq::ONE - xn_val;
+        for q in &quotient_limbs {
+            identities_scalars.push(splitting_pow);
+            identities_points.push(*q);
+            splitting_pow *= splitting_factor;
+        }
+
+        // Group by selector (None < Some(a) < Some(b) for a<b).
+        let mut grouped: BTreeMap<Option<usize>, Fq> = BTreeMap::new();
+        let mut y_pow = Fq::ONE;
+        for (col_idx, eval) in expected.iter().rev() {
+            let key = col_idx.map(|c| c as usize);
+            *grouped.entry(key).or_insert(Fq::ZERO) += y_pow * eval;
+            y_pow *= y;
+        }
+
+        let mut expected_eval = Fq::ZERO;
+        for (col_idx, eval) in grouped.into_iter() {
+            match col_idx {
+                Some(c) => {
+                    let comm: midnight_curves::G1Projective =
+                        vk_inner.fixed_commitments()[c].into();
+                    identities_points.push(comm);
+                    identities_scalars.push(eval);
+                }
+                None => { expected_eval -= eval; }
+            }
+        }
+
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &y);
+        push_fq(&mut blob, &xn_val);
+        push_fq(&mut blob, &splitting_factor);
+        push_u256(&mut blob, num_limbs as u64);
+        for q in &quotient_limbs {
+            blob.extend_from_slice(
+                &midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(q),
+            );
+        }
+
+        // Identity scalars (mirrors partial_eval_fixture tail):
+        push_u256(&mut blob, expected.len() as u64);
+        for (sel, v) in &expected {
+            let sel_be = sel.unwrap_or(0xFFFFFFFFu32);
+            blob.extend_from_slice(&sel_be.to_be_bytes());
+            push_fq(&mut blob, v);
+        }
+
+        push_u256(&mut blob, identities_points.len() as u64);
+        for p in &identities_points {
+            blob.extend_from_slice(
+                &midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(p),
+            );
+        }
+        for s in &identities_scalars { push_fq(&mut blob, s); }
+        push_fq(&mut blob, &expected_eval);
+
+        fs::write(fixtures.join("linearization_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      linearization fixture written ({} bytes, {} quotient limbs, {} output points)",
+            blob.len(),
+            num_limbs,
+            identities_points.len(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

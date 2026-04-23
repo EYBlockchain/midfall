@@ -1042,6 +1042,178 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  compute_linearization_commitment (Phase B)                        *
+     *                                                                    *
+     *  Port of \`midnight_proofs::plonk::linearization::verifier::       *
+     *  compute_linearization_commitment\` (linearization/verifier.rs:45+).*
+     *  Groups the 22 (selector, scalar) pairs from Phase A3 by           *
+     *  selector column, weights them with powers-of-y in reverse         *
+     *  iteration order, and emits the MSM (points, scalars) +            *
+     *  expected_eval that Phase C's multi-prepare DualMSM consumes.      *
+     *                                                                    *
+     *  Algorithm (verbatim):                                             *
+     *    1. Push quotient-limb commitments with scalars                  *
+     *         (1 − xn)·splitting_factor^i                                *
+     *    2. Group expressions in reverse:                                *
+     *         grouped[col] += y^i · eval_i                               *
+     *    3. For each group in ordered iteration (None first, then        *
+     *       ascending Some):                                             *
+     *         None  → expected_eval −= scalar                           *
+     *         Some  → push (fixed_commitments[col], scalar)              *
+     * ------------------------------------------------------------------ */
+
+    /// Compute `(1 − xn)·splitting_factor^i mod r` for the first i
+    /// quotient limbs. Splits out so the driver stays within stack
+    /// limits.
+    function _quotientSplittingScalars(
+        uint256 xn,
+        uint256 splittingFactor,
+        uint256 nLimbs
+    ) internal pure returns (uint256[] memory out) {
+        out = new uint256[](nLimbs);
+        uint256 pow = _frSub(1, xn);
+        for (uint256 i = 0; i < nLimbs; i++) {
+            out[i] = pow;
+            pow = mulmod(pow, splittingFactor, FR_MODULUS);
+        }
+    }
+
+    /// Group (selector, scalar) pairs via powers-of-y in reverse.
+    /// Returns `buckets[col]` where bucket index 0 is the None
+    /// accumulator and bucket i+1 is the Some(i) accumulator;
+    /// `nonEmptyMask[i]` is 1 iff `buckets[i]` received at least one
+    /// contribution (used to skip zero buckets during emission).
+    function _groupByPowersOfY(
+        uint32[] memory selectors,
+        uint256[] memory scalars,
+        uint256 y,
+        uint256 numFixedCols
+    ) internal pure returns (uint256[] memory buckets, bool[] memory nonEmpty) {
+        buckets = new uint256[](numFixedCols + 1);
+        nonEmpty = new bool[](numFixedCols + 1);
+        uint256 yPow = 1;
+        // Reverse iteration: entry[len-1] gets y_pow=1, entry[0] gets y_pow=y^(len-1).
+        for (uint256 k = selectors.length; k > 0; k--) {
+            uint256 i = k - 1;
+            uint256 idx;
+            if (selectors[i] == 0xFFFFFFFF) idx = 0;
+            else idx = uint256(selectors[i]) + 1;
+            uint256 contrib = mulmod(yPow, scalars[i], FR_MODULUS);
+            buckets[idx] = addmod(buckets[idx], contrib, FR_MODULUS);
+            nonEmpty[idx] = true;
+            yPow = mulmod(yPow, y, FR_MODULUS);
+        }
+    }
+
+    /// Read a fixed commitment at slot `idx` from the VK blob. Each
+    /// fixed commitment is 128 bytes (EIP-2537 uncompressed G1) and
+    /// they start at offset 160 (just after the 5×32-byte header).
+    /// Returns 4 uint256 words (x_hi, x_lo, y_hi, y_lo) in the same
+    /// layout as other G1 points in the codebase.
+    function _readFixedCommitment(bytes memory blob, uint256 idx)
+        internal pure returns (uint256[4] memory out)
+    {
+        uint256 off = 160 + idx * 128;
+        assembly {
+            let base := add(add(blob, 32), off)
+            mstore(out, mload(base))
+            mstore(add(out, 32), mload(add(base, 32)))
+            mstore(add(out, 64), mload(add(base, 64)))
+            mstore(add(out, 96), mload(add(base, 96)))
+        }
+    }
+
+    /// Core driver. Consumes the Phase A3 output + the transcript-
+    /// read quotient-limb commitments and produces the
+    /// linearization-commitment MSM + the constant term
+    /// `expected_eval`.
+    function _computeLinearizationCommitment(
+        bytes memory blob,
+        uint32[] memory selectors,
+        uint256[] memory scalars,
+        uint256 y,
+        uint256 xn,
+        uint256 splittingFactor,
+        uint256[] memory quotientLimbCommsFlat  // numLimbs * 4 uint256s
+    ) internal pure returns (
+        uint256[] memory pointsFlat,
+        uint256[] memory outScalars,
+        uint256 expectedEval
+    ) {
+        require(quotientLimbCommsFlat.length % 4 == 0, "quot limbs not 4-flat");
+        uint256 nLimbs = quotientLimbCommsFlat.length / 4;
+
+        // Quotient-limb scalars.
+        uint256[] memory splitScalars =
+            _quotientSplittingScalars(xn, splittingFactor, nLimbs);
+
+        // Bucket by selector (with reverse-iteration powers-of-y).
+        uint256 numFixedCols = _readU32FromBlob(blob, 64 + 16); // c1[16..20]
+        (uint256[] memory buckets, bool[] memory nonEmpty) =
+            _groupByPowersOfY(selectors, scalars, y, numFixedCols);
+
+        // Count non-empty Some buckets (index 0 is None; we skip it).
+        uint256 nSome = 0;
+        for (uint256 i = 1; i < buckets.length; i++) {
+            if (nonEmpty[i]) nSome++;
+        }
+
+        pointsFlat = new uint256[]((nLimbs + nSome) * 4);
+        outScalars = new uint256[](nLimbs + nSome);
+
+        // Quotient limbs first.
+        for (uint256 i = 0; i < nLimbs; i++) {
+            pointsFlat[4 * i]     = quotientLimbCommsFlat[4 * i];
+            pointsFlat[4 * i + 1] = quotientLimbCommsFlat[4 * i + 1];
+            pointsFlat[4 * i + 2] = quotientLimbCommsFlat[4 * i + 2];
+            pointsFlat[4 * i + 3] = quotientLimbCommsFlat[4 * i + 3];
+            outScalars[i] = splitScalars[i];
+        }
+
+        // None bucket folds into expected_eval (negated).
+        expectedEval = nonEmpty[0] ? _frSub(0, buckets[0]) : 0;
+
+        // Some buckets in ascending column index.
+        uint256 k = nLimbs;
+        for (uint256 i = 1; i < buckets.length; i++) {
+            if (!nonEmpty[i]) continue;
+            uint256 col = i - 1;
+            uint256[4] memory p = _readFixedCommitment(blob, col);
+            pointsFlat[4 * k]     = p[0];
+            pointsFlat[4 * k + 1] = p[1];
+            pointsFlat[4 * k + 2] = p[2];
+            pointsFlat[4 * k + 3] = p[3];
+            outScalars[k] = buckets[i];
+            k++;
+        }
+    }
+
+    /// Public wrapper for fixture testing.
+    function computeLinearizationCommitment(
+        address vkAddr,
+        uint32[] calldata selectors,
+        uint256[] calldata scalars,
+        uint256 y,
+        uint256 xn,
+        uint256 splittingFactor,
+        uint256[] calldata quotientLimbCommsFlat
+    ) external view returns (
+        uint256[] memory pointsFlat,
+        uint256[] memory outScalars,
+        uint256 expectedEval
+    ) {
+        bytes memory blob = vkAddr.code;
+        uint32[] memory selMem = new uint32[](selectors.length);
+        for (uint256 i = 0; i < selectors.length; i++) selMem[i] = selectors[i];
+        return _computeLinearizationCommitment(
+            blob, selMem,
+            _copyToMemArr(scalars),
+            y, xn, splittingFactor,
+            _copyToMemArr(quotientLimbCommsFlat)
+        );
+    }
+
+    /* ------------------------------------------------------------------ *
      *  RPN bytecode interpreter for partially_evaluate_identities        *
      *                                                                    *
      *  Each gate polynomial is serialised on the Rust side into compact  *

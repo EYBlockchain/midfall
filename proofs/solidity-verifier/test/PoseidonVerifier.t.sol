@@ -489,6 +489,67 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase B: compute_linearization_commitment equivalence test.
+    /// Reads `fixtures/linearization_fixture.bin` which contains y/xn/
+    /// splitting_factor, deterministic quotient-limb commitments, the
+    /// full 22-entry (selector, scalar) identity array, and Rust-
+    /// computed expected (points, scalars, expected_eval). Invokes
+    /// Solidity's `computeLinearizationCommitment` and asserts every
+    /// G1 point + scalar + the final `expected_eval` matches byte-
+    /// for-byte.
+    function test_linearization_commitment() public {
+        bytes memory f = vm.readFileBinary("fixtures/linearization_fixture.bin");
+        uint256 off = 0;
+        uint256 y = _readUint(f, off); off += 32;
+        uint256 xn = _readUint(f, off); off += 32;
+        uint256 splittingFactor = _readUint(f, off); off += 32;
+
+        uint256 nLimbs = _readUint(f, off); off += 32;
+        uint256[] memory quotientFlat = new uint256[](nLimbs * 4);
+        for (uint256 i = 0; i < nLimbs; i++) {
+            for (uint256 w = 0; w < 4; w++) {
+                quotientFlat[4 * i + w] = _readUint(f, off + 32 * w);
+            }
+            off += 128;
+        }
+
+        uint256 nId = _readUint(f, off); off += 32;
+        uint32[] memory selectors = new uint32[](nId);
+        uint256[] memory scalars = new uint256[](nId);
+        for (uint256 i = 0; i < nId; i++) {
+            selectors[i] = _readU32(f, off); off += 4;
+            scalars[i] = _readUint(f, off); off += 32;
+        }
+
+        uint256 nOut = _readUint(f, off); off += 32;
+        uint256[] memory expPoints = new uint256[](nOut * 4);
+        for (uint256 i = 0; i < nOut; i++) {
+            for (uint256 w = 0; w < 4; w++) {
+                expPoints[4 * i + w] = _readUint(f, off + 32 * w);
+            }
+            off += 128;
+        }
+        uint256[] memory expScalars = new uint256[](nOut);
+        for (uint256 i = 0; i < nOut; i++) { expScalars[i] = _readUint(f, off); off += 32; }
+        uint256 expEval = _readUint(f, off);
+
+        (uint256[] memory gotPoints, uint256[] memory gotScalars, uint256 gotEval) =
+            v.computeLinearizationCommitment(
+                vkAddr, selectors, scalars, y, xn, splittingFactor, quotientFlat
+            );
+
+        require(gotPoints.length == expPoints.length, "points length mismatch");
+        for (uint256 i = 0; i < gotPoints.length; i++) {
+            require(gotPoints[i] == expPoints[i], "point coord mismatch");
+        }
+        require(gotScalars.length == expScalars.length, "scalars length mismatch");
+        for (uint256 i = 0; i < gotScalars.length; i++) {
+            require(gotScalars[i] == expScalars[i], "scalar mismatch");
+        }
+        require(gotEval == expEval, "expected_eval mismatch");
+        emit log_named_uint("linearization MSM size", nOut);
+    }
+
     function test_partial_eval_driver() public {
         bytes memory f = vm.readFileBinary("fixtures/partial_eval_fixture.bin");
         uint256 off = 0;
