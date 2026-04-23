@@ -482,6 +482,73 @@ contract PoseidonVerifierTest is Test {
         return afterLookups;
     }
 
+    /// Phase A3: full `partially_evaluate_identities` driver
+    /// equivalence test. Runs the Solidity driver on the shared
+    /// deterministic env from `partial_eval_fixture.bin` and asserts
+    /// every (selector, scalar) pair matches the Rust-computed
+    /// expected values. For the poseidon circuit this is 22 scalars
+    /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
+    /// gate-selector column annotations.
+    function test_partial_eval_driver() public {
+        bytes memory f = vm.readFileBinary("fixtures/partial_eval_fixture.bin");
+        uint256 off = 0;
+
+        PoseidonVerifier.PartialEvalEnv memory e;
+        e.x = _readUint(f, off); off += 32;
+        e.beta = _readUint(f, off); off += 32;
+        e.gamma = _readUint(f, off); off += 32;
+        e.theta = _readUint(f, off); off += 32;
+        e.trashChallenge = _readUint(f, off); off += 32;
+        e.l0 = _readUint(f, off); off += 32;
+        e.lLast = _readUint(f, off); off += 32;
+        e.lBlind = _readUint(f, off); off += 32;
+
+        uint256 off1; uint256 off2; uint256 off3; uint256 off4;
+        (e.adviceEvals, off1) = _readArr(f, off);
+        (e.fixedEvals, off2) = _readArr(f, off1);
+        (e.instanceEvals, off3) = _readArr(f, off2);
+        (e.challenges, off4) = _readArr(f, off3);
+
+        // Permutation sets: num + (prod/next/last/hasLast)×n, 128 bytes each.
+        uint256 nSets = _readUint(f, off4); off4 += 32;
+        e.permSetsFlat = new uint256[](nSets * 4);
+        for (uint256 i = 0; i < nSets; i++) {
+            e.permSetsFlat[4 * i]     = _readUint(f, off4);
+            e.permSetsFlat[4 * i + 1] = _readUint(f, off4 + 32);
+            e.permSetsFlat[4 * i + 2] = _readUint(f, off4 + 64);
+            e.permSetsFlat[4 * i + 3] = uint8(f[off4 + 96]);
+            off4 += 128;
+        }
+        uint256 off5;
+        (e.permEvals, off5) = _readArr(f, off4);
+
+        e.accumulatorEval = _readUint(f, off5); off5 += 32;
+        e.accumulatorNextEval = _readUint(f, off5); off5 += 32;
+        e.multiplicitiesEval = _readUint(f, off5); off5 += 32;
+        uint256 off6;
+        (e.helperEvals, off6) = _readArr(f, off5);
+
+        uint256 off7;
+        (e.trashEvals, off7) = _readArr(f, off6);
+
+        uint256 nExpected = _readUint(f, off7); off7 += 32;
+        uint32[] memory expSel = new uint32[](nExpected);
+        uint256[] memory expVal = new uint256[](nExpected);
+        for (uint256 i = 0; i < nExpected; i++) {
+            expSel[i] = _readU32(f, off7); off7 += 4;
+            expVal[i] = _readUint(f, off7); off7 += 32;
+        }
+
+        (uint32[] memory gotSel, uint256[] memory gotVal) =
+            v.partiallyEvaluateIdentities(vkAddr, e);
+        require(gotSel.length == nExpected, "driver output count mismatch");
+        for (uint256 i = 0; i < nExpected; i++) {
+            require(gotSel[i] == expSel[i], "selector mismatch");
+            require(gotVal[i] == expVal[i], "scalar mismatch");
+        }
+        emit log_named_uint("partial-eval driver scalars verified", nExpected);
+    }
+
     function test_verify_poseidon_proof() public {
         bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
         bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");

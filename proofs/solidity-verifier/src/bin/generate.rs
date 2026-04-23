@@ -734,6 +734,262 @@ fn main() {
         );
     }
 
+    // Emit the `partially_evaluate_identities` full-driver fixture
+    // (Phase A3). This uses the SAME deterministic synthetic env as
+    // the four component fixtures but concatenates their outputs in
+    // the canonical Rust order (gates → perm → lookup → trash) and
+    // annotates each with the selector column that
+    // `partially_evaluate_identities` pairs it with.
+    //
+    // File layout (all 32-byte BE unless noted):
+    //   [32] x     [32] β   [32] γ   [32] θ   [32] τ
+    //   [32] l_0   [32] lLast  [32] lBlind
+    //   u256 | advice_evals
+    //   u256 | fixed_evals
+    //   u256 | instance_evals
+    //   u256 | challenges
+    //   # perm bits:
+    //   u256 num_perm_chunks
+    //     per chunk: 32B prod + 32B next + 32B last + 1B hasLast + 31B pad
+    //   u256 | perm_evals
+    //   # lookup bits (for the single poseidon lookup):
+    //   [32] accumulator_eval
+    //   [32] accumulator_next_eval
+    //   [32] multiplicities_eval
+    //   u256 | helper_evals
+    //   # trash bits:
+    //   u256 | trash_evals  (per trashcan)
+    //   # expected:
+    //   u256 num_expected
+    //     per expected: 4B selector_idx (0xFFFFFFFF = None) + 32B scalar
+    {
+        use ff::{Field, PrimeField};
+        let vk_inner = fx.vk.vk();
+        let cs = vk_inner.cs();
+        use midnight_proofs::plonk::Any;
+        use midnight_proofs::poly::Rotation;
+
+        // Single shared deterministic env (numerically distinct from
+        // the 4 component fixtures to catch env-leak bugs).
+        let x = Fq::from(1111u64);
+        let beta = Fq::from(2222u64);
+        let gamma = Fq::from(3333u64);
+        let theta = Fq::from(4444u64);
+        let trash_challenge = Fq::from(5555u64);
+        let l_0 = Fq::from(6666u64);
+        let l_last = Fq::from(7777u64);
+        let l_blind = Fq::from(8888u64);
+
+        let n_advice = cs.advice_queries().len();
+        let n_fixed = cs.num_fixed_columns();
+        let n_instance = cs.instance_queries().len();
+        let n_challenges = cs.num_challenges();
+
+        let advice_evals: Vec<Fq> = (0..n_advice).map(|i| Fq::from(10000u64 + i as u64)).collect();
+        let fixed_evals: Vec<Fq> = (0..n_fixed)
+            .map(|i| if cs.has_simple_selector_col(i) { Fq::ONE } else { Fq::from(20000u64 + i as u64) })
+            .collect();
+        let instance_evals: Vec<Fq> = (0..n_instance).map(|i| Fq::from(30000u64 + i as u64)).collect();
+        let challenges: Vec<Fq> = (0..n_challenges).map(|i| Fq::from(40000u64 + i as u64)).collect();
+
+        // ---- Permutation env ----
+        let perm_columns = cs.permutation().get_columns();
+        let perm_chunk_len = cs.degree() - 2;
+        let n_perm_cols = perm_columns.len();
+        let n_perm_chunks = (n_perm_cols + perm_chunk_len - 1) / perm_chunk_len;
+
+        struct PSet { prod: Fq, next: Fq, last: Option<Fq> }
+        let perm_sets: Vec<PSet> = (0..n_perm_chunks)
+            .map(|i| PSet {
+                prod: Fq::from(50000u64 + i as u64 * 10),
+                next: Fq::from(50001u64 + i as u64 * 10),
+                last: if i + 1 < n_perm_chunks { Some(Fq::from(50002u64 + i as u64 * 10)) } else { None },
+            })
+            .collect();
+        let perm_evals: Vec<Fq> = (0..n_perm_cols).map(|i| Fq::from(60000u64 + i as u64)).collect();
+
+        // ---- Lookup env (poseidon has one) ----
+        let n_lookups = cs.lookups().len();
+        assert_eq!(n_lookups, 1, "driver fixture assumes one lookup");
+        let lk_arg = &cs.lookups()[0];
+        let lk_chunked = lk_arg.chunk_by_degree(cs.degree());
+        let n_lk_chunks = lk_chunked.input_expression_chunks().len();
+        let accumulator_eval = Fq::from(70001u64);
+        let accumulator_next_eval = Fq::from(70002u64);
+        let multiplicities_eval = Fq::from(70003u64);
+        let helper_evals: Vec<Fq> = (0..n_lk_chunks).map(|i| Fq::from(80000u64 + i as u64)).collect();
+
+        // ---- Trashcan env ----
+        let trashcans = cs.trashcans();
+        let n_trash = trashcans.len();
+        let trash_evals: Vec<Fq> = (0..n_trash).map(|i| Fq::from(90000u64 + i as u64)).collect();
+
+        // -------------------- Replica --------------------
+        let eval_expression = |expr: &midnight_proofs::plonk::Expression<Fq>| -> Fq {
+            expr.evaluate(
+                &|c| c,
+                &|_| panic!("virtual selector"),
+                &|q| fixed_evals[q.index().unwrap()],
+                &|q| advice_evals[q.index.unwrap()],
+                &|q| instance_evals[q.index.unwrap()],
+                &|ch| challenges[ch.index()],
+                &|a: Fq| -a,
+                &|a: Fq, b: Fq| a + b,
+                &|a: Fq, b: Fq| a * b,
+                &|a: Fq, k: Fq| a * k,
+            )
+        };
+
+        let mut expected: Vec<(Option<u32>, Fq)> = Vec::new();
+
+        // 1. Gate polynomials.
+        for gate in cs.gates().iter() {
+            let sel = gate.queried_selectors().iter().find(|s| s.is_simple()).map(|s| s.index() as u32);
+            for poly in gate.polynomials().iter() {
+                let v = eval_expression(poly);
+                expected.push((sel, v));
+            }
+        }
+
+        // 2. Permutation.
+        let eval_col = |column: &midnight_proofs::plonk::Column<Any>| -> Fq {
+            match column.column_type() {
+                Any::Advice(_) => {
+                    let q = cs.advice_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).unwrap();
+                    advice_evals[q]
+                }
+                Any::Fixed => {
+                    let q = cs.fixed_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).unwrap();
+                    fixed_evals[q]
+                }
+                Any::Instance => {
+                    let q = cs.instance_queries().iter().position(|(c, rot)| {
+                        c.index() == column.index() && rot.0 == Rotation::cur().0
+                    }).unwrap();
+                    instance_evals[q]
+                }
+            }
+        };
+        if let Some(first) = perm_sets.first() {
+            expected.push((None, l_0 * (Fq::ONE - first.prod)));
+        }
+        if let Some(last) = perm_sets.last() {
+            expected.push((None, (last.prod * last.prod - last.prod) * l_last));
+        }
+        for i in 1..n_perm_chunks {
+            let prev_last = perm_sets[i - 1].last.unwrap();
+            expected.push((None, (perm_sets[i].prod - prev_last) * l_0));
+        }
+        for (chunk_idx, set) in perm_sets.iter().enumerate() {
+            let col_start = chunk_idx * perm_chunk_len;
+            let col_end = std::cmp::min(col_start + perm_chunk_len, n_perm_cols);
+            let cols = &perm_columns[col_start..col_end];
+            let pevs = &perm_evals[col_start..col_end];
+
+            let mut left = set.next;
+            for (col, pev) in cols.iter().zip(pevs.iter()) {
+                left *= eval_col(col) + beta * pev + gamma;
+            }
+            let mut right = set.prod;
+            let mut current_delta = (beta * x) * Fq::DELTA.pow_vartime([(chunk_idx * perm_chunk_len) as u64]);
+            for col in cols.iter() {
+                right *= eval_col(col) + current_delta + gamma;
+                current_delta *= Fq::DELTA;
+            }
+            expected.push((None, (left - right) * (Fq::ONE - (l_last + l_blind))));
+        }
+
+        // 3. Lookup.
+        let compress_exprs = |exprs: &[midnight_proofs::plonk::Expression<Fq>]| -> Fq {
+            exprs.iter().fold(Fq::ZERO, |acc, e| acc * theta + eval_expression(e))
+        };
+        let active_rows = Fq::ONE - (l_last + l_blind);
+        let compressed_table = compress_exprs(lk_chunked.table_expressions());
+        let selector_val = eval_expression(lk_chunked.selector_expression());
+        expected.push((None, (l_0 + l_last) * accumulator_eval));
+        let mut sum_helpers = Fq::ZERO;
+        for (i, chunk) in lk_chunked.input_expression_chunks().iter().enumerate() {
+            let helper_eval = helper_evals[i];
+            let cwb: Vec<Fq> = chunk.iter().map(|pl| compress_exprs(pl) + beta).collect();
+            let product: Fq = cwb.iter().fold(Fq::ONE, |a, b| a * b);
+            let sum: Fq = cwb.iter().map(|f| product * f.invert().unwrap()).fold(Fq::ZERO, |a, b| a + b);
+            sum_helpers += helper_eval;
+            expected.push((None, helper_eval * product - sum));
+        }
+        let diff = (accumulator_next_eval - accumulator_eval - selector_val * sum_helpers)
+            * (compressed_table + beta)
+            + multiplicities_eval;
+        expected.push((None, diff * active_rows));
+
+        // 4. Trashcan.
+        for (i, arg) in trashcans.iter().enumerate() {
+            let compressed = arg.constraint_expressions().iter().map(&eval_expression)
+                .fold(Fq::ZERO, |acc, e| acc * trash_challenge + e);
+            let q = eval_expression(arg.selector());
+            expected.push((None, compressed - (Fq::ONE - q) * trash_evals[i]));
+        }
+
+        // -------------------- Serialise --------------------
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]); b.extend_from_slice(&v.to_be_bytes());
+        };
+        let push_arr = |b: &mut Vec<u8>, arr: &[Fq]| {
+            push_u256(b, arr.len() as u64);
+            for v in arr { push_fq(b, v); }
+        };
+
+        push_fq(&mut blob, &x);
+        push_fq(&mut blob, &beta);
+        push_fq(&mut blob, &gamma);
+        push_fq(&mut blob, &theta);
+        push_fq(&mut blob, &trash_challenge);
+        push_fq(&mut blob, &l_0);
+        push_fq(&mut blob, &l_last);
+        push_fq(&mut blob, &l_blind);
+        push_arr(&mut blob, &advice_evals);
+        push_arr(&mut blob, &fixed_evals);
+        push_arr(&mut blob, &instance_evals);
+        push_arr(&mut blob, &challenges);
+
+        push_u256(&mut blob, perm_sets.len() as u64);
+        for set in &perm_sets {
+            push_fq(&mut blob, &set.prod);
+            push_fq(&mut blob, &set.next);
+            push_fq(&mut blob, &set.last.unwrap_or(Fq::ZERO));
+            blob.push(if set.last.is_some() { 1 } else { 0 });
+            blob.extend_from_slice(&[0u8; 31]);
+        }
+        push_arr(&mut blob, &perm_evals);
+
+        push_fq(&mut blob, &accumulator_eval);
+        push_fq(&mut blob, &accumulator_next_eval);
+        push_fq(&mut blob, &multiplicities_eval);
+        push_arr(&mut blob, &helper_evals);
+
+        push_arr(&mut blob, &trash_evals);
+
+        push_u256(&mut blob, expected.len() as u64);
+        for (sel, v) in &expected {
+            let sel_be = sel.unwrap_or(0xFFFFFFFFu32);
+            blob.extend_from_slice(&sel_be.to_be_bytes());
+            push_fq(&mut blob, v);
+        }
+
+        fs::write(fixtures.join("partial_eval_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      partial-eval driver fixture written ({} bytes, {} scalars, {} with selector)",
+            blob.len(),
+            expected.len(),
+            expected.iter().filter(|(s, _)| s.is_some()).count(),
+        );
+    }
+
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
     // the proof's G1 points. The forge test uses these to unit-test the
     // Solidity decompression function before attempting the full pairing.

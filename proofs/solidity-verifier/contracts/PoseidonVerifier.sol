@@ -786,6 +786,262 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  _partiallyEvaluateIdentities driver (Phase A3)                   *
+     *                                                                    *
+     *  Port of \`midnight_proofs::plonk::partially_evaluate_identities\`  *
+     *  (proofs/src/plonk/mod.rs:486+). Concatenates the four algebraic  *
+     *  component outputs in the exact Rust iterator order:               *
+     *    1. Gate polynomials (one scalar per gate poly, each paired     *
+     *       with an Option<usize> selector-column index).                *
+     *    2. Permutation expressions (all paired with None).             *
+     *    3. Lookup expressions (all paired with None).                  *
+     *    4. Trashcan expressions (all paired with None).                *
+     *                                                                    *
+     *  None is encoded in the output `selectors` array as 0xFFFFFFFF.   *
+     *  The output is the `Vec<(Option<usize>, Fr)>` that Phase B's       *
+     *  linearization MSM will consume.                                   *
+     * ------------------------------------------------------------------ */
+
+    struct PartialEvalEnv {
+        uint256 x;
+        uint256 beta;
+        uint256 gamma;
+        uint256 theta;
+        uint256 trashChallenge;
+        uint256 l0;
+        uint256 lLast;
+        uint256 lBlind;
+        uint256[] adviceEvals;
+        uint256[] fixedEvals;
+        uint256[] instanceEvals;
+        uint256[] challenges;
+        // Permutation bits.
+        uint256[] permSetsFlat;  // {prod, next, last, hasLast}×n
+        uint256[] permEvals;
+        // Lookup bits (flattened: for each lookup, accEval/accNextEval/mEval,
+        // then helperEvals concatenated).
+        uint256 accumulatorEval;
+        uint256 accumulatorNextEval;
+        uint256 multiplicitiesEval;
+        uint256[] helperEvals;
+        // Trashcan bits.
+        uint256[] trashEvals;
+    }
+
+    struct SectionOffsets {
+        uint256 gate;       // points at `u32 num_simple_selectors`
+        uint256 perm;       // points at `u32 permutation_chunk_len`
+        uint256 lookup;     // points at `u32 num_lookups`
+        uint256 trash;      // points at `u32 num_trashcans`
+    }
+
+    /// Locate the four bytecode sections inside the VK blob. The
+    /// pre-bytecode header is fixed-size:
+    ///   32 (transcript_repr) + 32 (omega) + 32+32+32 (constants 1/2/3)
+    /// = 160 bytes, followed by `num_fixed * 128` + `num_perm_cols * 128`
+    /// + 256 (s_g2) + 256 (neg_g2). After that the gate section starts.
+    /// From there we walk forward to find perm / lookup / trash
+    /// boundaries (each section has a self-describing length).
+    function _loadSectionOffsets(bytes memory blob) internal pure returns (SectionOffsets memory so) {
+        uint256 numFixed = _readU32FromBlob(blob, 64 + 16);         // c1[16..20] per codegen
+        uint256 numPermCols = _readU32FromBlob(blob, 128 + 0);      // c3[0..4]
+        so.gate = 160 + numFixed * 128 + numPermCols * 128 + 512;
+
+        // Walk the gate section to find the perm offset.
+        uint256 p = so.gate;
+        uint32 nSimple = _readU32FromBlob(blob, p); p += 4 + 4 * nSimple;
+        uint32 nPolys = _readU32FromBlob(blob, p); p += 4 + 4 * nPolys;
+        uint32 gateBcLen = _readU32FromBlob(blob, p); p += 4 + gateBcLen;
+        so.perm = p;
+
+        // Walk perm: u32 chunkLen + u32 nCols + 3*nCols bytes.
+        p += 4;
+        uint32 nPerm = _readU32FromBlob(blob, p); p += 4 + 3 * nPerm;
+        so.lookup = p;
+
+        // Walk lookup via the same logic used by test: for each lookup,
+        // selector + table + chunks.
+        uint32 nLookups = _readU32FromBlob(blob, p); p += 4;
+        for (uint256 lk = 0; lk < nLookups; lk++) {
+            uint32 selLen = _readU32FromBlob(blob, p); p += 4 + selLen;
+            uint32 nTable = _readU32FromBlob(blob, p); p += 4;
+            for (uint256 i = 0; i < nTable; i++) {
+                uint32 l = _readU32FromBlob(blob, p); p += 4 + l;
+            }
+            uint32 nChunks = _readU32FromBlob(blob, p); p += 4;
+            for (uint256 c = 0; c < nChunks; c++) {
+                uint32 nPar = _readU32FromBlob(blob, p); p += 4;
+                for (uint256 pp = 0; pp < nPar; pp++) {
+                    uint32 nCols = _readU32FromBlob(blob, p); p += 4;
+                    for (uint256 k = 0; k < nCols; k++) {
+                        uint32 l = _readU32FromBlob(blob, p); p += 4 + l;
+                    }
+                }
+            }
+        }
+        so.trash = p;
+    }
+
+    /// Evaluate the gate-polynomial section and pair each scalar with
+    /// its selector column (0xFFFFFFFF = None). Returns the flat
+    /// (selectors[], scalars[]) pair in Rust iterator order.
+    function _gateExpressions(
+        bytes memory blob,
+        uint256 gateOff,
+        GateEnv memory env
+    ) internal view returns (uint32[] memory selectors, uint256[] memory scalars) {
+        uint256 p = gateOff;
+        uint32 nSimple = _readU32FromBlob(blob, p); p += 4 + 4 * nSimple;
+        uint32 nPolys = _readU32FromBlob(blob, p); p += 4;
+        uint256 selArrStart = p;
+        p += 4 * nPolys;
+        uint32 bcLen = _readU32FromBlob(blob, p); p += 4;
+        uint256 bcStart = p;
+
+        selectors = new uint32[](nPolys);
+        scalars = new uint256[](nPolys);
+        uint256 cursor = bcStart;
+        for (uint256 i = 0; i < nPolys; i++) {
+            selectors[i] = _readU32FromBlob(blob, selArrStart + 4 * i);
+            (uint256 v, uint256 next) = _evalBytecode(blob, cursor, env);
+            scalars[i] = v;
+            cursor = next;
+        }
+        require(cursor == bcStart + bcLen, "gate bytecode under/over-consumed");
+    }
+
+    /// Unpack the caller's flat perm-sets array into a PermEnv.
+    function _buildPermEnv(PartialEvalEnv memory e, uint8[] memory colKinds,
+        uint16[] memory colQueryIdxs, uint256 chunkLen) internal pure returns (PermEnv memory pe)
+    {
+        uint256 nSets = e.permSetsFlat.length / 4;
+        PermSet[] memory sets = new PermSet[](nSets);
+        for (uint256 i = 0; i < nSets; i++) {
+            sets[i] = PermSet({
+                prod: e.permSetsFlat[4 * i],
+                next: e.permSetsFlat[4 * i + 1],
+                last: e.permSetsFlat[4 * i + 2],
+                hasLast: e.permSetsFlat[4 * i + 3] != 0
+            });
+        }
+        pe = PermEnv({
+            beta: e.beta, gamma: e.gamma, x: e.x,
+            l0: e.l0, lLast: e.lLast, lBlind: e.lBlind,
+            sets: sets, permEvals: e.permEvals,
+            adviceEvals: e.adviceEvals, fixedEvals: e.fixedEvals, instanceEvals: e.instanceEvals,
+            colKinds: colKinds, colQueryIdxs: colQueryIdxs, chunkLen: chunkLen
+        });
+    }
+
+    /// Core driver. Concatenates gate+perm+lookup+trash outputs in the
+    /// canonical Rust iterator order.
+    function _partiallyEvaluateIdentities(bytes memory blob, PartialEvalEnv memory e)
+        internal view returns (uint32[] memory selectors, uint256[] memory scalars)
+    {
+        SectionOffsets memory so = _loadSectionOffsets(blob);
+
+        // 1. Gate polynomials.
+        GateEnv memory gateEnv = GateEnv({
+            x: e.x, beta: e.beta, gamma: e.gamma, theta: e.theta,
+            trashChal: e.trashChallenge,
+            l0: e.l0, lLast: e.lLast, lBlind: e.lBlind,
+            fixedEvals: e.fixedEvals, adviceEvals: e.adviceEvals,
+            instanceEvals: e.instanceEvals, challenges: e.challenges
+        });
+        (uint32[] memory gateSel, uint256[] memory gateVals) =
+            _gateExpressions(blob, so.gate, gateEnv);
+
+        // 2. Permutation.
+        (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen) =
+            _loadPermColumnMetadataFromBlob(blob, so.perm);
+        PermEnv memory pe = _buildPermEnv(e, colKinds, colQueryIdxs, chunkLen);
+        uint256[] memory permVals = _permExpressions(pe);
+
+        // 3. Lookup.
+        LookupEnv memory lenv = LookupEnv({
+            theta: e.theta, beta: e.beta, l0: e.l0, lLast: e.lLast, lBlind: e.lBlind,
+            accumulatorEval: e.accumulatorEval,
+            accumulatorNextEval: e.accumulatorNextEval,
+            multiplicitiesEval: e.multiplicitiesEval,
+            helperEvals: e.helperEvals,
+            adviceEvals: e.adviceEvals, fixedEvals: e.fixedEvals,
+            instanceEvals: e.instanceEvals, challenges: e.challenges
+        });
+        (uint256[] memory lkVals, ) = _lookupExpressions(blob, so.lookup, lenv);
+
+        // 4. Trashcan.
+        TrashEnv memory tenv = TrashEnv({
+            trashChallenge: e.trashChallenge,
+            trashEvals: e.trashEvals,
+            adviceEvals: e.adviceEvals, fixedEvals: e.fixedEvals,
+            instanceEvals: e.instanceEvals, challenges: e.challenges
+        });
+        (uint256[] memory trVals, ) = _trashExpressions(blob, so.trash, tenv);
+
+        // Concatenate.
+        uint256 total = gateVals.length + permVals.length + lkVals.length + trVals.length;
+        selectors = new uint32[](total);
+        scalars = new uint256[](total);
+        uint256 k = 0;
+        for (uint256 i = 0; i < gateVals.length; i++) {
+            selectors[k] = gateSel[i]; scalars[k] = gateVals[i]; k++;
+        }
+        for (uint256 i = 0; i < permVals.length; i++) {
+            selectors[k] = 0xFFFFFFFF; scalars[k] = permVals[i]; k++;
+        }
+        for (uint256 i = 0; i < lkVals.length; i++) {
+            selectors[k] = 0xFFFFFFFF; scalars[k] = lkVals[i]; k++;
+        }
+        for (uint256 i = 0; i < trVals.length; i++) {
+            selectors[k] = 0xFFFFFFFF; scalars[k] = trVals[i]; k++;
+        }
+    }
+
+    /// Permutation metadata reader keyed off of the known section
+    /// offset (duplicates `_loadPermColumnMetadata` in the test but
+    /// doesn't require the candidate-iteration scan).
+    function _loadPermColumnMetadataFromBlob(bytes memory blob, uint256 permOff)
+        internal pure returns (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen)
+    {
+        chunkLen = _readU32FromBlob(blob, permOff);
+        uint32 nCols = _readU32FromBlob(blob, permOff + 4);
+        colKinds = new uint8[](nCols);
+        colQueryIdxs = new uint16[](nCols);
+        uint256 p = permOff + 8;
+        for (uint256 i = 0; i < nCols; i++) {
+            colKinds[i] = uint8(blob[p]);
+            colQueryIdxs[i] = (uint16(uint8(blob[p + 1])) << 8) | uint16(uint8(blob[p + 2]));
+            p += 3;
+        }
+    }
+
+    /// Public view wrapper so the forge test can drive the full
+    /// algebraic pipeline and compare against the Rust-computed
+    /// (selector, scalar) array.
+    function partiallyEvaluateIdentities(address vkAddr, PartialEvalEnv calldata ein)
+        external view returns (uint32[] memory selectors, uint256[] memory scalars)
+    {
+        bytes memory blob = vkAddr.code;
+        PartialEvalEnv memory e = PartialEvalEnv({
+            x: ein.x, beta: ein.beta, gamma: ein.gamma, theta: ein.theta,
+            trashChallenge: ein.trashChallenge,
+            l0: ein.l0, lLast: ein.lLast, lBlind: ein.lBlind,
+            adviceEvals: _copyToMemArr(ein.adviceEvals),
+            fixedEvals: _copyToMemArr(ein.fixedEvals),
+            instanceEvals: _copyToMemArr(ein.instanceEvals),
+            challenges: _copyToMemArr(ein.challenges),
+            permSetsFlat: _copyToMemArr(ein.permSetsFlat),
+            permEvals: _copyToMemArr(ein.permEvals),
+            accumulatorEval: ein.accumulatorEval,
+            accumulatorNextEval: ein.accumulatorNextEval,
+            multiplicitiesEval: ein.multiplicitiesEval,
+            helperEvals: _copyToMemArr(ein.helperEvals),
+            trashEvals: _copyToMemArr(ein.trashEvals)
+        });
+        return _partiallyEvaluateIdentities(blob, e);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  RPN bytecode interpreter for partially_evaluate_identities        *
      *                                                                    *
      *  Each gate polynomial is serialised on the Rust side into compact  *
