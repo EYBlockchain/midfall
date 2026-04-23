@@ -445,6 +445,242 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Lookup-argument expressions (Phase A2a)                           *
+     *                                                                    *
+     *  Port of `midnight_proofs::plonk::logup::Evaluated::expressions`   *
+     *  from proofs/src/plonk/logup.rs:400+. Walks the VK blob's lookup   *
+     *  bytecode section in step with the transcript-read lookup         *
+     *  evaluations to produce the scalar expressions appended to the    *
+     *  `partially_evaluate_identities` output.                          *
+     *                                                                    *
+     *  Per lookup this produces (num_chunks + 2) scalars:               *
+     *    1  × boundary:      (l_0 + l_last) · Z                         *
+     *    k  × helpers:       helper_eval_i · ∏ⱼ(fⱼ+β) − Σⱼ ∏_{k≠j}(fₖ+β) *
+     *    1  × accumulator:   ((Z_next − Z − s·Σh)·(t+β) + m) · active   *
+     * ------------------------------------------------------------------ */
+
+    struct LookupEnv {
+        uint256 theta;
+        uint256 beta;
+        uint256 l0;
+        uint256 lLast;
+        uint256 lBlind;
+        uint256 accumulatorEval;
+        uint256 accumulatorNextEval;
+        uint256 multiplicitiesEval;
+        uint256[] helperEvals;
+        // Shared with bytecode evaluation:
+        uint256[] adviceEvals;
+        uint256[] fixedEvals;
+        uint256[] instanceEvals;
+        uint256[] challenges;
+    }
+
+    /// Compress a list of expression bytecodes via θ-folding
+    /// (`acc = acc·θ + eval`). `buf` is a concatenation of
+    /// `num_exprs` RPN programs each ending in END, with a 4-byte
+    /// big-endian length prefix. The `offset` in/out lets the caller
+    /// chain multiple compressions without re-parsing.
+    function _compressExpressions(
+        bytes memory vkBlob,
+        uint256 offset,
+        uint32 numExprs,
+        GateEnv memory env,
+        uint256 theta
+    ) internal view returns (uint256 acc, uint256 newOffset) {
+        uint256 cursor = offset;
+        acc = 0;
+        for (uint256 j = 0; j < numExprs; j++) {
+            uint32 len = _readU32FromBlob(vkBlob, cursor);
+            cursor += 4;
+            (uint256 v, uint256 consumed) = _evalBytecode(vkBlob, cursor, env);
+            require(consumed == cursor + len, "lookup expr length mismatch");
+            acc = addmod(mulmod(acc, theta, FR_MODULUS), v, FR_MODULUS);
+            cursor = consumed;
+        }
+        newOffset = cursor;
+    }
+
+    /// Core evaluator. Reads the lookup-bytecode section of the VK
+    /// starting at `sectionOffset` (pointing at `u32 num_lookups`),
+    /// consumes all lookups found there, and returns the concatenated
+    /// expression values in emission order.
+    /// State packet threaded through the chunk-walking helper so the
+    /// top-level `_lookupExpressions` stays within Yul's stack-depth
+    /// limits. The (cursor, outIdx, helperIdx, sumHelpers) fields are
+    /// updated per-chunk; `out` is shared.
+    struct LookupWalk {
+        bytes vkBlob;
+        uint256 cursor;
+        uint256 outIdx;
+        uint256 helperIdx;
+        uint256 sumHelpers;
+        uint256[] out;
+    }
+
+    function _lookupChunk(
+        LookupWalk memory w,
+        GateEnv memory env,
+        LookupEnv memory lenv
+    ) internal view {
+        uint32 nParallel = _readU32FromBlob(w.vkBlob, w.cursor);
+        w.cursor += 4;
+        uint256[] memory compressedWithBeta = new uint256[](nParallel);
+        for (uint256 p = 0; p < nParallel; p++) {
+            uint32 nCols = _readU32FromBlob(w.vkBlob, w.cursor);
+            w.cursor += 4;
+            (uint256 comp, uint256 afterComp) =
+                _compressExpressions(w.vkBlob, w.cursor, nCols, env, lenv.theta);
+            w.cursor = afterComp;
+            compressedWithBeta[p] = _frAdd(comp, lenv.beta);
+        }
+        uint256 product = 1;
+        for (uint256 p = 0; p < nParallel; p++) {
+            product = _frMul(product, compressedWithBeta[p]);
+        }
+        uint256 sum = 0;
+        for (uint256 p = 0; p < nParallel; p++) {
+            uint256 inv = _frInv(compressedWithBeta[p]);
+            sum = _frAdd(sum, _frMul(product, inv));
+        }
+        uint256 helperEval = lenv.helperEvals[w.helperIdx++];
+        w.sumHelpers = _frAdd(w.sumHelpers, helperEval);
+        w.out[w.outIdx++] = _frSub(_frMul(helperEval, product), sum);
+    }
+
+    /// Skip through one lookup's bytecode + return the total output
+    /// length (2 + num_chunks). Split off so the sizing pass doesn't
+    /// share locals with the evaluation loop.
+    function _sizeLookup(bytes memory vkBlob, uint256 offsetIn)
+        internal pure returns (uint256 offsetOut, uint256 outAdd)
+    {
+        uint256 probe = offsetIn;
+        uint32 selLen = _readU32FromBlob(vkBlob, probe); probe += 4 + selLen;
+        uint32 nTable = _readU32FromBlob(vkBlob, probe); probe += 4;
+        for (uint256 i = 0; i < nTable; i++) {
+            uint32 l = _readU32FromBlob(vkBlob, probe); probe += 4 + l;
+        }
+        uint32 nChunks = _readU32FromBlob(vkBlob, probe); probe += 4;
+        outAdd = 2 + nChunks;
+        for (uint256 c = 0; c < nChunks; c++) {
+            uint32 nParallel = _readU32FromBlob(vkBlob, probe); probe += 4;
+            for (uint256 p = 0; p < nParallel; p++) {
+                uint32 nCols = _readU32FromBlob(vkBlob, probe); probe += 4;
+                for (uint256 k = 0; k < nCols; k++) {
+                    uint32 l = _readU32FromBlob(vkBlob, probe); probe += 4 + l;
+                }
+            }
+        }
+        offsetOut = probe;
+    }
+
+    function _lookupExpressions(
+        bytes memory vkBlob,
+        uint256 sectionOffset,
+        LookupEnv memory lenv
+    ) internal view returns (uint256[] memory out, uint256 newOffset) {
+        uint32 numLookups = _readU32FromBlob(vkBlob, sectionOffset);
+        uint256 cursor = sectionOffset + 4;
+
+        // Size pass.
+        uint256 outLen = 0;
+        {
+            uint256 probe = cursor;
+            for (uint256 lk = 0; lk < numLookups; lk++) {
+                (uint256 nxt, uint256 add) = _sizeLookup(vkBlob, probe);
+                probe = nxt; outLen += add;
+            }
+            newOffset = probe;
+        }
+        out = new uint256[](outLen);
+
+        // Build GateEnv once.
+        GateEnv memory env = GateEnv({
+            x: 0, beta: lenv.beta, gamma: 0, theta: lenv.theta, trashChal: 0,
+            l0: lenv.l0, lLast: lenv.lLast, lBlind: lenv.lBlind,
+            fixedEvals: lenv.fixedEvals, adviceEvals: lenv.adviceEvals,
+            instanceEvals: lenv.instanceEvals, challenges: lenv.challenges
+        });
+
+        LookupWalk memory w = LookupWalk({
+            vkBlob: vkBlob,
+            cursor: cursor,
+            outIdx: 0,
+            helperIdx: 0,
+            sumHelpers: 0,
+            out: out
+        });
+        uint256 activeRows = _frSub(_frSub(1, lenv.lLast), lenv.lBlind);
+
+        for (uint256 lk = 0; lk < numLookups; lk++) {
+            uint32 selLen = _readU32FromBlob(w.vkBlob, w.cursor);
+            w.cursor += 4;
+            (uint256 selectorVal, uint256 selEnd) = _evalBytecode(w.vkBlob, w.cursor, env);
+            require(selEnd == w.cursor + selLen, "selector length mismatch");
+            w.cursor = selEnd;
+
+            uint32 nTable = _readU32FromBlob(w.vkBlob, w.cursor); w.cursor += 4;
+            (uint256 compressedTable, uint256 afterTable) =
+                _compressExpressions(w.vkBlob, w.cursor, nTable, env, lenv.theta);
+            w.cursor = afterTable;
+
+            w.out[w.outIdx++] = _frMul(_frAdd(lenv.l0, lenv.lLast), lenv.accumulatorEval);
+
+            w.sumHelpers = 0;
+            uint32 nChunks = _readU32FromBlob(w.vkBlob, w.cursor); w.cursor += 4;
+            for (uint256 c = 0; c < nChunks; c++) {
+                _lookupChunk(w, env, lenv);
+            }
+
+            uint256 selSum = _frMul(selectorVal, w.sumHelpers);
+            uint256 diff = _frSub(_frSub(lenv.accumulatorNextEval, lenv.accumulatorEval), selSum);
+            uint256 tPlusBeta = _frAdd(compressedTable, lenv.beta);
+            uint256 acc = _frAdd(_frMul(diff, tPlusBeta), lenv.multiplicitiesEval);
+            w.out[w.outIdx++] = _frMul(acc, activeRows);
+        }
+    }
+
+    function _readU32FromBlob(bytes memory b, uint256 off) internal pure returns (uint32 v_) {
+        v_ = (uint32(uint8(b[off])) << 24)
+           | (uint32(uint8(b[off + 1])) << 16)
+           | (uint32(uint8(b[off + 2])) << 8)
+           |  uint32(uint8(b[off + 3]));
+    }
+
+    /// Public wrapper exposing `_lookupExpressions` for fixture testing.
+    /// `lookupSectionOffset` points to the `u32 num_lookups` header of
+    /// the lookup-bytecode section inside the VK blob.
+    function lookupExpressions(
+        address vkAddr,
+        uint256 lookupSectionOffset,
+        uint256[8] calldata scalars,  // theta β l0 lLast lBlind accEval accNextEval mEval
+        uint256[] calldata helperEvals,
+        uint256[] calldata adviceEvals,
+        uint256[] calldata fixedEvals,
+        uint256[] calldata instanceEvals,
+        uint256[] calldata challenges
+    ) external view returns (uint256[] memory) {
+        bytes memory blob = vkAddr.code;
+        LookupEnv memory lenv = LookupEnv({
+            theta: scalars[0],
+            beta: scalars[1],
+            l0: scalars[2],
+            lLast: scalars[3],
+            lBlind: scalars[4],
+            accumulatorEval: scalars[5],
+            accumulatorNextEval: scalars[6],
+            multiplicitiesEval: scalars[7],
+            helperEvals: _copyToMemArr(helperEvals),
+            adviceEvals: _copyToMemArr(adviceEvals),
+            fixedEvals: _copyToMemArr(fixedEvals),
+            instanceEvals: _copyToMemArr(instanceEvals),
+            challenges: _copyToMemArr(challenges)
+        });
+        (uint256[] memory out, ) = _lookupExpressions(blob, lookupSectionOffset, lenv);
+        return out;
+    }
+
+    /* ------------------------------------------------------------------ *
      *  RPN bytecode interpreter for partially_evaluate_identities        *
      *                                                                    *
      *  Each gate polynomial is serialised on the Rust side into compact  *

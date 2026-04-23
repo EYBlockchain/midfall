@@ -244,46 +244,36 @@ contract PoseidonVerifierTest is Test {
         emit log_named_uint("perm expressions verified", got.length);
     }
 
-    /// Locate the permutation metadata section at the end of the VK
-    /// blob. The layout is append-only; we scan from the tail
-    /// backward: the last `u32 + u32 + n*(1+2)` bytes are the
-    /// permutation section. For safety we fall back to hardcoded
-    /// offsets based on the known poseidon shape.
+    /// Locate the permutation metadata section inside the VK blob.
+    /// After Phase A2a appended the lookup-bytecode section, the
+    /// permutation section is no longer at the tail; it sits
+    /// immediately before the `u32 num_lookups` header of the
+    /// lookup section. We recover its position via the same
+    /// candidate-nCols scan used by `_findLookupSection`.
     function _loadPermColumnMetadata(bytes memory blob) internal pure
         returns (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen)
     {
-        // The permutation section is exactly at the tail:
-        //   u32 chunkLen | u32 nCols | (u8 kind + u16 qidx) × nCols
-        // Total = 8 + 3*nCols bytes. We read nCols from the u32 at
-        // position (blob.length - (8 + 3*nCols)) — but since we don't
-        // know nCols yet, we solve for it: let L = blob.length.
-        //   8 + 3*n = L - startOffset  →  need to know startOffset.
-        // Simpler: read chunkLen and nCols by scanning the known
-        // tail structure. For the poseidon VK (8 perm cols) the
-        // trailer is 8 + 24 = 32 bytes. We read nCols from bytes
-        // [L-32-4 .. L-32).
-        //
-        // To stay fully generic: first read the 4 bytes at
-        // `L - (bytes at position L-4-3*nCols for some nCols)`.
-        // Since we know the poseidon shape statically, just walk.
         uint256 L = blob.length;
-        // Read nCols as the u32 at `L - (8 + 3*nCols)` — we iterate
-        // candidates from small nCols up.
         uint256 nCols = 0;
+        uint256 tailStart = 0;
         for (uint256 candidate = 1; candidate <= 256; candidate++) {
-            uint256 tailLen = 8 + 3 * candidate;
-            if (tailLen > L) break;
-            uint256 off = L - tailLen;
-            uint32 clen = _readU32(blob, off);
-            uint32 nc = _readU32(blob, off + 4);
-            if (nc == candidate && clen < 64) {
-                nCols = candidate;
-                chunkLen = clen;
-                break;
+            for (uint256 pos = 0; pos + 8 + 3 * candidate + 4 <= L; pos++) {
+                uint32 clen = _readU32(blob, pos);
+                uint32 nc = _readU32(blob, pos + 4);
+                if (nc != candidate || clen >= 64) continue;
+                uint256 lookupStart = pos + 8 + 3 * candidate;
+                uint32 nLookups = _readU32(blob, lookupStart);
+                if (nLookups == 0 || nLookups > 16) continue;
+                if (_validateLookupSection(blob, lookupStart, nLookups, L)) {
+                    nCols = candidate;
+                    chunkLen = clen;
+                    tailStart = pos;
+                    break;
+                }
             }
+            if (nCols > 0) break;
         }
         require(nCols > 0, "perm metadata not found");
-        uint256 tailStart = L - (8 + 3 * nCols);
         colKinds = new uint8[](nCols);
         colQueryIdxs = new uint16[](nCols);
         uint256 cursor = tailStart + 8;
@@ -299,6 +289,139 @@ contract PoseidonVerifierTest is Test {
            | (uint32(uint8(b[off + 1])) << 16)
            | (uint32(uint8(b[off + 2])) << 8)
            |  uint32(uint8(b[off + 3]));
+    }
+
+    /// Phase A2a: lookup-expressions equivalence test.
+    ///
+    /// Mirrors `test_perm_expressions` but for the logup argument.
+    /// Reads `fixtures/lookup_expressions_fixture.bin` produced by
+    /// the Rust-side replica of `logup::Evaluated::expressions`,
+    /// locates the lookup-bytecode section at the tail of the VK
+    /// blob (just after the permutation section), and asserts the
+    /// Solidity output matches expression-for-expression. For the
+    /// poseidon circuit this exercises 3 expressions (1 boundary +
+    /// 1 helper + 1 accumulator) across the argument's single
+    /// chunk.
+    function test_lookup_expressions() public {
+        bytes memory blob = vm.readFileBinary("fixtures/lookup_expressions_fixture.bin");
+        uint256 off = 0;
+        uint256[8] memory scalars;
+        for (uint256 i = 0; i < 8; i++) { scalars[i] = _readUint(blob, off); off += 32; }
+        (uint256[] memory helperEvals, uint256 off1) = _readArr(blob, off);
+        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
+        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
+        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
+        (uint256[] memory challenges, uint256 off5) = _readArr(blob, off4);
+        (uint256[] memory expected, ) = _readArr(blob, off5);
+
+        uint256 sectionOffset = _findLookupSection();
+
+        uint256[] memory got = v.lookupExpressions(
+            vkAddr, sectionOffset, scalars, helperEvals,
+            adviceEvals, fixedEvals, instanceEvals, challenges
+        );
+
+        require(got.length == expected.length, "lookup expr len mismatch");
+        for (uint256 i = 0; i < got.length; i++) {
+            require(got[i] == expected[i], "lookup expression mismatch");
+        }
+        emit log_named_uint("lookup expressions verified", got.length);
+    }
+
+    /// Find where the lookup-bytecode section starts inside the VK
+    /// blob. The layout is append-only:
+    ///   ... gate bytecode, permutation metadata, lookup bytecode
+    /// The permutation section ends at a known tail offset (we
+    /// computed it for test_perm_expressions). The lookup section
+    /// follows immediately. Since the permutation section's trailing
+    /// byte count is `8 + 3*nCols`, we recover nCols the same way
+    /// `_loadPermColumnMetadata` does, but we scan _beyond_ the end
+    /// of the permutation tail — the lookup section itself has its
+    /// own u32 num_lookups header and a variable-length tail, so we
+    /// can't just compute \"L - offset\" numerically.
+    ///
+    /// Approach: walk from the end of the permutation section (which
+    /// is recoverable by locating where `u32 permutation_chunk_len`
+    /// + `u32 num_cols` + `num_cols*3` bytes start). To find that
+    /// start, we reuse the size-scanning logic by trying candidate
+    /// `nLookups` and bytecode lengths — but this is fragile, so we
+    /// instead call `_loadPermColumnMetadata` to recover the
+    /// permutation tail length and infer the section boundary.
+    function _findLookupSection() internal view returns (uint256) {
+        bytes memory vkBlob = vkAddr.code;
+        // _loadPermColumnMetadata finds the permutation section; its
+        // start is (L - (8 + 3*nCols) - lookup_section_len). We don't
+        // yet know lookup_section_len; but the permutation section
+        // appears before lookups, so the LOOKUP SECTION STARTS
+        // IMMEDIATELY AFTER THE PERMUTATION SECTION.
+        //
+        // Recover the permutation section's END by iterating the same
+        // way as _loadPermColumnMetadata but recording the position:
+        //    tail_before_lookup_section = position of `u32 num_lookups`
+        // This equals: (position where _loadPermColumnMetadata found
+        // its candidate u32 pair) + 8 + 3*nCols.
+        uint256 L = vkBlob.length;
+        for (uint256 candidate = 1; candidate <= 256; candidate++) {
+            // We want to find the permutation section at the MIDDLE
+            // of the blob (no longer the end). The section length is
+            // 8 + 3*candidate. Scan for its header.
+            // Since the layout is append-only and the permutation
+            // section is IMMEDIATELY followed by the lookup section,
+            // we look for a position `pos` in [0, L) such that:
+            //   * vkBlob[pos..pos+4] reads as chunkLen (< 64)
+            //   * vkBlob[pos+4..pos+8] reads as candidate  (the number of perm cols)
+            //   * at pos+8+3*candidate, a plausible u32 num_lookups
+            //     (< 16) starts.
+            // The position is the start of the permutation metadata.
+            // We scan from high offsets (trailing lookup section is
+            // typically the biggest) down.
+            for (uint256 tailStart = 0; tailStart + 8 + 3 * candidate < L; tailStart++) {
+                uint32 clen = _readU32(vkBlob, tailStart);
+                uint32 nc = _readU32(vkBlob, tailStart + 4);
+                if (nc != candidate || clen >= 64) continue;
+                uint256 lookupStart = tailStart + 8 + 3 * candidate;
+                if (lookupStart + 4 > L) continue;
+                uint32 nLookups = _readU32(vkBlob, lookupStart);
+                if (nLookups == 0 || nLookups > 16) continue;
+                // Sanity-check by stepping through: for each lookup,
+                // read the lengths and verify they stay within L.
+                if (_validateLookupSection(vkBlob, lookupStart, nLookups, L)) {
+                    return lookupStart;
+                }
+            }
+        }
+        revert("lookup section not found");
+    }
+
+    function _validateLookupSection(
+        bytes memory blob, uint256 startAfterHeader, uint32 nLookups, uint256 L
+    ) internal pure returns (bool) {
+        uint256 p = startAfterHeader + 4;
+        for (uint32 lk = 0; lk < nLookups; lk++) {
+            if (p + 4 > L) return false;
+            uint32 selLen = _readU32(blob, p); p += 4 + selLen; if (p > L) return false;
+            if (p + 4 > L) return false;
+            uint32 nTable = _readU32(blob, p); p += 4;
+            for (uint32 i = 0; i < nTable; i++) {
+                if (p + 4 > L) return false;
+                uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
+            }
+            if (p + 4 > L) return false;
+            uint32 nChunks = _readU32(blob, p); p += 4;
+            for (uint32 c = 0; c < nChunks; c++) {
+                if (p + 4 > L) return false;
+                uint32 nPar = _readU32(blob, p); p += 4;
+                for (uint32 pp = 0; pp < nPar; pp++) {
+                    if (p + 4 > L) return false;
+                    uint32 nCols = _readU32(blob, p); p += 4;
+                    for (uint32 k = 0; k < nCols; k++) {
+                        if (p + 4 > L) return false;
+                        uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
+                    }
+                }
+            }
+        }
+        return p == L;
     }
 
     function test_verify_poseidon_proof() public {

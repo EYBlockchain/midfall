@@ -471,6 +471,165 @@ fn main() {
         );
     }
 
+    // Emit the lookup-expressions fixture (Phase A2a). Replicates the
+    // algorithm of `logup::Evaluated::expressions`
+    // (proofs/src/plonk/logup.rs:400+, pub(in crate::plonk)) using
+    // deterministic inputs, and dumps the scalar inputs + the expected
+    // sequence of expressions that Solidity's `_lookupExpressions` must
+    // reproduce byte-for-byte.
+    //
+    // File layout (per lookup concatenated, but poseidon has just 1):
+    //   [32]  theta        [32] beta      [32] l_0
+    //   [32]  l_last       [32] l_blind
+    //   [32]  accumulator_eval
+    //   [32]  accumulator_next_eval
+    //   [32]  multiplicities_eval
+    //   [32]  num_helpers (u256 BE)
+    //     [32] × num_helpers  helper_evals
+    //   [32]  num_advice_evals
+    //     [32] × n   advice_evals
+    //   [32]  num_fixed_evals
+    //     [32] × n   fixed_evals
+    //   [32]  num_instance_evals
+    //     [32] × n   instance_evals
+    //   [32]  num_challenges
+    //     [32] × n   challenges
+    //   [32]  num_expected
+    //     [32] × n   expected  (Rust-computed expressions())
+    {
+        use ff::{Field, PrimeField};
+        let vk_inner = fx.vk.vk();
+        let cs = vk_inner.cs();
+
+        // Take the first (and only) lookup. Multi-lookup is handled by
+        // re-running this per lookup in production.
+        assert_eq!(cs.lookups().len(), 1, "poseidon has a single lookup");
+        let batched = &cs.lookups()[0];
+        let chunked = batched.chunk_by_degree(cs.degree());
+        let input_chunks = chunked.input_expression_chunks();
+        let table_exprs = chunked.table_expressions();
+        let selector_expr = chunked.selector_expression();
+        let n_chunks = input_chunks.len();
+
+        // Deterministic synthetic env (different offsets from perm).
+        let theta = Fq::from(800u64);
+        let beta = Fq::from(801u64);
+        let l_0 = Fq::from(900u64);
+        let l_last = Fq::from(901u64);
+        let l_blind = Fq::from(902u64);
+        let accumulator_eval = Fq::from(3000u64);
+        let accumulator_next_eval = Fq::from(3001u64);
+        let multiplicities_eval = Fq::from(3002u64);
+
+        let n_advice = cs.advice_queries().len();
+        let n_fixed = cs.num_fixed_columns();
+        let n_instance = cs.instance_queries().len();
+        let n_challenges = cs.num_challenges();
+
+        let advice_evals: Vec<Fq> = (0..n_advice).map(|i| Fq::from(4000u64 + i as u64)).collect();
+        let fixed_evals: Vec<Fq> = (0..n_fixed)
+            .map(|i| if cs.has_simple_selector_col(i) { Fq::ONE } else { Fq::from(5000u64 + i as u64) })
+            .collect();
+        let instance_evals: Vec<Fq> = (0..n_instance).map(|i| Fq::from(6000u64 + i as u64)).collect();
+        let challenges: Vec<Fq> = (0..n_challenges).map(|i| Fq::from(7000u64 + i as u64)).collect();
+
+        let helper_evals: Vec<Fq> = (0..n_chunks).map(|i| Fq::from(8000u64 + i as u64)).collect();
+
+        // Native Expression<F> evaluation closures.
+        let eval_expression = |expr: &midnight_proofs::plonk::Expression<Fq>| -> Fq {
+            expr.evaluate(
+                &|c| c,
+                &|_| panic!("virtual selector"),
+                &|q| fixed_evals[q.index().unwrap()],
+                &|q| advice_evals[q.index.unwrap()],
+                &|q| instance_evals[q.index.unwrap()],
+                &|ch| challenges[ch.index()],
+                &|a: Fq| -a,
+                &|a: Fq, b: Fq| a + b,
+                &|a: Fq, b: Fq| a * b,
+                &|a: Fq, k: Fq| a * k,
+            )
+        };
+
+        // compress_expressions: fold-with-theta as in the Rust source.
+        let compress_exprs = |exprs: &[midnight_proofs::plonk::Expression<Fq>]| -> Fq {
+            exprs.iter().fold(Fq::ZERO, |acc, e| acc * theta + eval_expression(e))
+        };
+
+        // Replica of logup::Evaluated::expressions.
+        let active_rows = Fq::ONE - (l_last + l_blind);
+        let compressed_table = compress_exprs(table_exprs);
+        let selector_val = eval_expression(selector_expr);
+        let boundary = (l_0 + l_last) * accumulator_eval;
+
+        let mut sum_helpers = Fq::ZERO;
+        let mut expected: Vec<Fq> = Vec::new();
+        expected.push(boundary);
+
+        for (i, chunk) in input_chunks.iter().enumerate() {
+            let helper_eval = helper_evals[i];
+            // For each parallel lookup in the chunk:
+            //   compress_exprs(lookup_cols) + beta
+            let compressed_with_beta: Vec<Fq> = chunk
+                .iter()
+                .map(|parallel_lookup| compress_exprs(parallel_lookup) + beta)
+                .collect();
+            let product: Fq = compressed_with_beta.iter().fold(Fq::ONE, |a, b| a * b);
+            let sum: Fq = compressed_with_beta
+                .iter()
+                .map(|f| product * f.invert().unwrap())
+                .fold(Fq::ZERO, |a, b| a + b);
+            sum_helpers += helper_eval;
+            expected.push(helper_eval * product - sum);
+        }
+
+        // accumulator_constraint = ((acc_next - acc - sel·Σh)·(t+β) + m)·active_rows
+        let acc_constraint = {
+            let diff = (accumulator_next_eval - accumulator_eval - selector_val * sum_helpers)
+                * (compressed_table + beta)
+                + multiplicities_eval;
+            diff * active_rows
+        };
+        expected.push(acc_constraint);
+
+        // Serialise.
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+
+        push_fq(&mut blob, &theta);
+        push_fq(&mut blob, &beta);
+        push_fq(&mut blob, &l_0);
+        push_fq(&mut blob, &l_last);
+        push_fq(&mut blob, &l_blind);
+        push_fq(&mut blob, &accumulator_eval);
+        push_fq(&mut blob, &accumulator_next_eval);
+        push_fq(&mut blob, &multiplicities_eval);
+        push_u256(&mut blob, helper_evals.len() as u64);
+        for v in &helper_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, advice_evals.len() as u64);
+        for v in &advice_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, fixed_evals.len() as u64);
+        for v in &fixed_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, instance_evals.len() as u64);
+        for v in &instance_evals { push_fq(&mut blob, v); }
+        push_u256(&mut blob, challenges.len() as u64);
+        for v in &challenges { push_fq(&mut blob, v); }
+        push_u256(&mut blob, expected.len() as u64);
+        for v in &expected { push_fq(&mut blob, v); }
+
+        fs::write(fixtures.join("lookup_expressions_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      lookup expressions fixture written ({} bytes, {} expressions, {} chunks)",
+            blob.len(),
+            expected.len(),
+            n_chunks,
+        );
+    }
+
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
     // the proof's G1 points. The forge test uses these to unit-test the
     // Solidity decompression function before attempting the full pairing.

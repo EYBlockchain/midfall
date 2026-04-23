@@ -117,6 +117,27 @@ pub struct VkInfo {
     /// alongside the column metadata so Solidity doesn't have to
     /// re-derive chunk boundaries.
     pub permutation_chunk_len: usize,
+    /// One entry per lookup argument. Each contains the bytecode-
+    /// serialised selector, table, and input-expression chunks
+    /// needed by Solidity to reconstruct the `logup::Evaluated::
+    /// expressions(...)` iterator output.
+    pub lookups_bytecode: Vec<LookupBytecode>,
+}
+
+/// Serialised (RPN bytecode) form of a single midnight-proofs lookup
+/// argument's expression trees. The structure mirrors the Rust
+/// `ChunkedArgument` exactly: chunks → parallel_lookups → columns,
+/// plus a shared selector + table. Solidity's `_lookupExpressions`
+/// walks this in step with the transcript-read evaluations.
+#[derive(Clone, Debug)]
+pub struct LookupBytecode {
+    /// RPN bytecode of the lookup's selector expression (one END).
+    pub selector: Vec<u8>,
+    /// RPN bytecode of each table-column expression.
+    pub table_columns: Vec<Vec<u8>>,
+    /// Chunked inputs: `input_chunks[chunk][parallel_lookup][column]`
+    /// where each `column` is an RPN bytecode program.
+    pub input_chunks: Vec<Vec<Vec<Vec<u8>>>>,
 }
 
 impl VkInfo {
@@ -254,6 +275,40 @@ impl VkInfo {
             .collect();
         let permutation_chunk_len = cs.degree() - 2;
 
+        // Serialise lookup expression trees. Each lookup's selector
+        // + table + input chunks gets bytecode-encoded (reusing the
+        // gate-bytecode opcode set) so Solidity can re-run the same
+        // algorithm that `logup::Evaluated::expressions` uses in Rust.
+        let lookups_bytecode: Vec<LookupBytecode> = cs
+            .lookups()
+            .iter()
+            .map(|batched| {
+                let chunked = batched.chunk_by_degree(cs.degree());
+                let selector = crate::expr_bytecode::encode_expression(chunked.selector_expression());
+                let table_columns = chunked
+                    .table_expressions()
+                    .iter()
+                    .map(crate::expr_bytecode::encode_expression)
+                    .collect();
+                let input_chunks = chunked
+                    .input_expression_chunks()
+                    .iter()
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .map(|parallel_lookup| {
+                                parallel_lookup
+                                    .iter()
+                                    .map(crate::expr_bytecode::encode_expression)
+                                    .collect()
+                            })
+                            .collect()
+                    })
+                    .collect();
+                LookupBytecode { selector, table_columns, input_chunks }
+            })
+            .collect();
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -291,6 +346,7 @@ impl VkInfo {
             num_gate_polys,
             permutation_columns,
             permutation_chunk_len,
+            lookups_bytecode,
         }
     }
 }
@@ -405,6 +461,21 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
         blob.extend_from_slice(&qidx.to_be_bytes());
     }
 
+    // Lookup-expressions bytecode (Phase A2a):
+    //   u32 num_lookups
+    //   for each lookup:
+    //     u32 selector_len
+    //     <selector bytecode>
+    //     u32 num_table_cols
+    //     for each table col: u32 len, <bytecode>
+    //     u32 num_chunks
+    //     for each chunk:
+    //       u32 num_parallel_lookups
+    //       for each parallel lookup:
+    //         u32 num_cols
+    //         for each col: u32 len, <bytecode>
+    append_lookups_section(&mut blob, &vk.lookups_bytecode);
+
     let total = blob.len();
     let hex_blob = hex::encode(&blob);
 
@@ -493,5 +564,33 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
         blob.extend_from_slice(&qidx.to_be_bytes());
     }
 
+    append_lookups_section(&mut blob, &vk.lookups_bytecode);
+
     blob
+}
+
+/// Shared serialiser for the lookup bytecode section. Used by both the
+/// `PoseidonVerifyingKey.sol` embedding path and the `vk_blob` helper.
+fn append_lookups_section(blob: &mut Vec<u8>, lookups: &[LookupBytecode]) {
+    blob.extend_from_slice(&(lookups.len() as u32).to_be_bytes());
+    for lk in lookups {
+        blob.extend_from_slice(&(lk.selector.len() as u32).to_be_bytes());
+        blob.extend_from_slice(&lk.selector);
+        blob.extend_from_slice(&(lk.table_columns.len() as u32).to_be_bytes());
+        for col in &lk.table_columns {
+            blob.extend_from_slice(&(col.len() as u32).to_be_bytes());
+            blob.extend_from_slice(col);
+        }
+        blob.extend_from_slice(&(lk.input_chunks.len() as u32).to_be_bytes());
+        for chunk in &lk.input_chunks {
+            blob.extend_from_slice(&(chunk.len() as u32).to_be_bytes());
+            for parallel_lookup in chunk {
+                blob.extend_from_slice(&(parallel_lookup.len() as u32).to_be_bytes());
+                for col in parallel_lookup {
+                    blob.extend_from_slice(&(col.len() as u32).to_be_bytes());
+                    blob.extend_from_slice(col);
+                }
+            }
+        }
+    }
 }
