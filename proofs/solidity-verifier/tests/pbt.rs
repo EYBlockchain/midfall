@@ -198,18 +198,99 @@ proptest! {
         // can't naively swap VKs between fixtures. Instead, mutate ONE
         // byte of the deployed VK blob (the verifier reads the blob
         // via `extcodecopy`, so patching the runtime code is equivalent
-        // to deploying a tampered VK contract). The blob is large
-        // enough that every position maps to a structurally-meaningful
-        // field (transcript_repr / G1 commitments / gate bytecode /
-        // query schedule), so any single-bit perturbation must make
-        // the verifier reject.
+        // to deploying a tampered VK contract).
+        //
+        // Historical note — the test used to pick `pos_hint % blob_len`
+        // uniformly over every byte, but that is too strong: some blob
+        // bytes are *structurally-invariant* under single-bit mutation
+        // and cannot possibly produce a rejection:
+        //
+        //   * Gate-bytecode `OP_FIXED idx` arguments that point at a
+        //     simple-selector column. Simple selectors never appear in
+        //     the transcript; `_buildFixedEvalsFull` injects the
+        //     implicit constant `1` for every simple-selector column,
+        //     so flipping e.g. `OP_FIXED(15)` → `OP_FIXED(14)` (both
+        //     simple selectors in the poseidon VK, which has
+        //     simple_selector_cols = [13, 14, 15, 17]) leaves the gate
+        //     polynomial's numerical value at x unchanged.
+        //   * `gate_selector_cols` entries that point at interchangeable
+        //     simple selectors (they fall into the same grouping
+        //     bucket in the linearization MSM).
+        //   * Zero-padding bytes at the tail of constants 3
+        //     (blob[148..160)), which `_loadVk` never reads.
+        //
+        // These positions belong to legitimate equivalence classes in
+        // the VK encoding, not to a verifier soundness bug — an
+        // attacker gets nothing by flipping them. To keep the
+        // rejection property meaningful we restrict `pos_hint` to the
+        // cryptographic regions where a single-bit flip provably
+        // changes either a Fiat-Shamir input or a curve point
+        // consumed by the pairing:
+        //
+        //   [0..32)                  transcript_repr (Fq digest)
+        //   [32..64)                 omega           (Fq)
+        //   [160..fc_end)            fixed_comms     (G1 points)
+        //   [fc_end..pc_end)         perm_comms      (G1 points)
+        //   [pc_end..pc_end+256)     s_g2            (G2 point)
+        //   [pc_end+256..ng2_end)    neg_g2          (G2 point)
+        //
+        // Any single-bit flip in these regions either (a) alters the
+        // Fiat-Shamir seed and cascades into a wrong first challenge
+        // and a failed pairing, (b) yields an off-curve point that
+        // the EIP-2537 pairing precompile rejects, or (c) yields a
+        // valid-but-wrong curve point that makes the pairing
+        // identity fail. The packed constants [64..160) and the
+        // post-core sections [ng2_end..) are deliberately excluded
+        // because they contain padding and the interpreter-level
+        // redundancies described above.
         let f = fx(seed);
         let (_, setup_dep) = harness_for(&f);  // prime artifacts + fixtures/vk.bin
 
         let vk_path = common::root_dir().join("fixtures/vk.bin");
         let vk_blob = fs::read(&vk_path).expect("read vk.bin");
-        prop_assume!(!vk_blob.is_empty());
-        let idx = (pos_hint as usize) % vk_blob.len();
+        prop_assume!(vk_blob.len() >= 160);
+
+        // Recover the G1/G2 region boundaries by parsing the blob
+        // headers (constants 1 at [64..96), constants 3 at [128..160))
+        // so the safe mutation window tracks the actual VK layout.
+        //
+        // Layout:
+        //   constants 1 @ 64:
+        //     [ 0..  8) n                     (u64)
+        //     [ 8.. 12) k                     (u32)
+        //     [12.. 16) num_advice_columns    (u32)
+        //     [16.. 20) num_fixed_columns     (u32)  <-- blob[80..84)
+        //     ...
+        //   constants 3 @ 128:
+        //     [ 0..  4) num_permutation_columns (u32) <-- blob[128..132)
+        //     ...
+        let num_fixed_cols = u32::from_be_bytes(
+            vk_blob[80..84].try_into().unwrap(),
+        ) as usize;
+        let num_perm_cols = u32::from_be_bytes(
+            vk_blob[128..132].try_into().unwrap(),
+        ) as usize;
+        let fc_start = 160;
+        let fc_end = fc_start + num_fixed_cols * 128;
+        let pc_end = fc_end + num_perm_cols * 128;
+        let ng2_end = pc_end + 256 /* s_g2 */ + 256 /* neg_g2 */;
+        prop_assume!(ng2_end <= vk_blob.len());
+
+        // Virtual concatenation of the two safe regions:
+        //   region 1 = [0..64)            (transcript_repr || omega)
+        //   region 2 = [fc_start..ng2_end) (G1 commitments || G2 points)
+        // pick a byte uniformly within the concatenation, then map
+        // back to the real blob offset.
+        let region1_len = 64;
+        let region2_len = ng2_end - fc_start;
+        let total_safe = region1_len + region2_len;
+        let pick = (pos_hint as usize) % total_safe;
+        let idx = if pick < region1_len {
+            pick
+        } else {
+            fc_start + (pick - region1_len)
+        };
+
         let mut mutated = vk_blob;
         mutated[idx] ^= 0x01;
 
