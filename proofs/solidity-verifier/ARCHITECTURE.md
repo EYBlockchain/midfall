@@ -247,26 +247,114 @@ which branches on `column.index() < nb_committed_instances`.
 
 ## 5. Build, test, bench — command reference
 
-All commands below assume `SRS_DIR` points at the downloaded Filecoin
-trusted setup files used by `zk_stdlib` (≈1 GB of `phase1radix2m*`).
-If the env var is unset the tests automatically use a pre-bundled test
-SRS, but the `generate` binary needs the real one.
+#### The `SRS_DIR` environment variable
+
+The poseidon prover uses Filecoin's production KZG trusted setup
+(BLS12-381, degree 2^19). Both the `generate` binary and every test
+that calls `prepare()`/`verify()` on a real proof need access to the
+SRS file on disk.
+
+`SRS_DIR` tells `zk_stdlib`'s loader (`zk_stdlib/src/utils/plonk_api.rs`
+`filecoin_srs`) where to look:
+
+```
+$SRS_DIR/bls_filecoin_2p<k>          # exact match for a given k
+$SRS_DIR/bls_filecoin_2p19           # any k ≤ 19 — auto-downsized
+```
+
+If `SRS_DIR` is unset the loader defaults to `./examples/assets`
+**relative to the current working directory**. That path is correct
+when running from `zk_stdlib/` but **wrong for everything under
+`proofs/solidity-verifier/`** — so every `cargo run generate`,
+`cargo test -p midnight-solidity-verifier`, and
+`scripts/run-all-tests.sh` invocation should either export
+`SRS_DIR` first or pass it inline.
 
 ```bash
-# From the repo root.
+# From the repo root — point at the committed assets dir (the file
+# itself is .gitignore'd, only the .gitignore is checked in).
 export SRS_DIR=$PWD/zk_stdlib/examples/assets
 ```
+
+##### Downloading the SRS
+
+The `bls_filecoin_2p19` blob is ≈50 MB (or ≈1 GB for the
+uncompressed `phase1radix2m19` source) and isn't redistributed in
+the repo. Download it once with either:
+
+```bash
+# Fastest path — pre-parsed blob served by Midnight's mirror.
+mkdir -p $SRS_DIR
+curl -L -o $SRS_DIR/bls_filecoin_2p19 \
+  https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com/bls_filecoin_2p19
+```
+
+or — if you prefer to audit the provenance yourself — download the
+raw Filecoin PoT transcript from IPFS and re-parse it locally:
+
+```bash
+curl -L -o $SRS_DIR/phase1radix2m19 \
+  https://trusted-setup.filecoin.io/phase1/phase1radix2m19
+cd zk_stdlib && cargo run --example parse_filecoin_srs --release
+# emits $SRS_DIR/bls_filecoin_2p19
+```
+
+For smaller `k` values (e.g. `k=6` used by the poseidon example at
+`POSEIDON_K=6`), the loader will auto-downsize the 2^19 blob on
+first use and cache the result at `$SRS_DIR/bls_filecoin_2p<k>`;
+you don't need to download per-k files yourself.
+
+Only the `generate` binary and the Rust-side integration tests need
+the real SRS. The Solidity forge suite reads only the pre-generated
+`fixtures/` directory and therefore **does not require `SRS_DIR`**
+once the fixtures exist.
+
+##### debug-trace-hooks feature
+
+`generate` enables the `debug-trace-hooks` feature on
+`midnight-proofs` (see `Cargo.toml`). That feature activates the
+thread-local event recorder in `proofs/src/debug_trace.rs` and the
+`emit_*` calls scattered through `plonk/mod.rs`,
+`plonk/linearization/verifier.rs`, `plonk/permutation.rs`,
+`plonk/logup.rs`, `plonk/trash.rs`, and `poly/kzg/mod.rs`. The
+recorded events are serialised into
+`fixtures/verifier_trace.bin` (MTR1 format) and consumed by
+`test_verifier_trace_instrumented_tags` to guard against regression
+of the instrumentation sites. The feature has **zero runtime cost
+when disabled** (empty `is_enabled()` returns `false` and every
+`emit_*` short-circuits), so keeping it enabled only in the
+`solidity-verifier` crate is safe.
 
 ### 5.1 Regenerate VK contract + fixtures
 
 ```bash
-cargo run -p midnight-solidity-verifier --bin generate
+# From the repo root, with SRS_DIR already exported (see preamble).
+SRS_DIR=$PWD/zk_stdlib/examples/assets \
+  cargo run -p midnight-solidity-verifier --bin generate
 ```
 
 Produces:
 * `contracts/PoseidonVerifyingKey.sol` — new VK blob
 * `fixtures/proof.bin`, `fixtures/instance.be`
-* `fixtures/vk.bin`, `fixtures/*_fixture.bin` — all per-phase witnesses
+* `fixtures/vk.bin` — VK blob layout consumed by `PoseidonVerifier.sol`
+* `fixtures/algebra_fixtures.bin` — omega / n / x / xn / Lagrange evals
+* `fixtures/gate_eval_fixture.bin` — RPN bytecode + expected values for
+  every gate polynomial (consumed by the on-chain bytecode interpreter)
+* `fixtures/verifier_trace.bin` — **instrumented trace** of the real
+  `prepare()` call, tagged per emission site
+  (`partial_eval.*`, `linearization.*`, `permutation.*`, `logup.*`,
+   `trash.*`, `multi_prepare.*`); the canonical source of truth for
+  all intermediate scalars
+* `fixtures/pairing_fixture.bin`, `fixtures/right_g1_fixture.bin`,
+  `fixtures/right_msm_inputs_digest_fixture.bin`,
+  `fixtures/right_msm_terms_fixture.bin` — derived from
+  `DualMSM.split()` post-`prepare()` (not replicas)
+* `fixtures/query_schedule_fixture.bin`,
+  `fixtures/lagrange_aux_fixture.bin`,
+  `fixtures/evals_signature_fixture.bin` — produced via real
+  `VerifyingKey` / domain / transcript helpers
+* `fixtures/decomp_pairs.bin` — EIP-2537 (compressed, uncompressed) test
+  vectors for the G1 decompressor
 * `fixtures/adversarial_fixtures.bin` — 8-entry rejection matrix
   (bit_early / bit_mid / bit_late / byte_zero_head / byte_ff_mid /
   trunc_48 / ext_17 / inst_xor1), consumed by both the forge suite
@@ -297,6 +385,15 @@ Run a single test verbosely:
 forge test --match-test test_verify_poseidon_proof -vvv
 ```
 
+Run just the instrumented-trace structural guard (loads
+`verifier_trace.bin`, asserts 12 expected tag families each appear
+with non-trivial cardinality):
+
+```bash
+cd proofs/solidity-verifier
+forge test --match-test test_verifier_trace_instrumented_tags -vv
+```
+
 Run just the adversarial-fixture matrix (deterministic 8-entry
 rejection replay, §3 bullet 6):
 
@@ -305,14 +402,44 @@ cd proofs/solidity-verifier
 forge test --match-test test_adversarial_matrix_all_rejected -vv
 ```
 
-The full suite currently contains **25 tests**, all passing. The
-latest addition — `test_adversarial_matrix_all_rejected` — loads
-`fixtures/adversarial_fixtures.bin` (see §5.1 output for its 8 entries)
-and asserts each pre-computed rejection vector is rejected by
-`verify()`. Each inner call is gas-capped at 50 M so a pathological
-mutation cannot starve subsequent iterations of the per-test block
-gas budget. Expected wall time: ≈0.2 s once the artifacts are built
-(with a cold `forge build`, add ≈5 s).
+The full suite currently contains **12 tests**, all passing
+(reduced from 25 after retiring the Category B replica tests in
+commit `2c7ee7c`; the component-level checks they provided are now
+carried by `test_verifier_trace_instrumented_tags` reading
+`fixtures/verifier_trace.bin`). Expected wall time: ≈0.2 s once the
+artifacts are built (with a cold `forge build`, add ≈5 s).
+
+The retained tests are:
+
+| Test | Purpose |
+|------|---------|
+| `test_g1_decompression` | BLS12-381 G1 decompression vs blst reference |
+| `test_algebra_primitives` | Fr inversion, ω^n, Lagrange basis |
+| `test_gate_bytecode_interpreter` | RPN bytecode eval vs `Expression::evaluate` |
+| `test_lagrange_aux` | `l_0`, `l_last`, `l_blind` via domain helper |
+| `test_query_schedule` | VK rotation schedule × x |
+| `test_evals_signature` | Transcript eval-read positional signature |
+| `test_pairing_rhs` | `DualMSM.split()` pairing check |
+| `test_final_right_g1_digest` | `right_g1` keccak digest |
+| `test_verifier_trace_instrumented_tags` | MTR1 trace structural guard |
+| `test_verify_poseidon_proof` | End-to-end valid-proof acceptance |
+| `test_verify_rejects_mutated_proof` | End-to-end mutated-proof rejection |
+| `test_adversarial_matrix_all_rejected` | 8-entry pre-computed rejection matrix |
+
+#### midnight-proofs lib tests under `debug-trace-hooks`
+
+To make sure the feature-gated `emit_*` calls inserted through
+`plonk/` + `poly/kzg/` don't break the rest of the prover/verifier
+test matrix:
+
+```bash
+cargo build -p midnight-proofs
+cargo build -p midnight-proofs --features debug-trace-hooks
+cargo test  -p midnight-proofs --lib --features debug-trace-hooks
+```
+
+Expected: both builds succeed; the 32 library unit tests pass under
+the feature.
 
 ### 5.4 Gas benchmarks
 
@@ -539,7 +666,7 @@ Sample summary:
 ==== summary ====
   [ok  ] Regenerate VK contract + proof fixtures                         4s
   [ok  ] forge build                                                     1s
-  [ok  ] forge test (25 Solidity unit / component / end-to-end tests)    1s
+  [ok  ] forge test (12 Solidity unit / component / end-to-end tests)    1s
   [ok  ] cargo test --test forge (Rust <-> Solidity trace-diff harness)  3s
   [ok  ] cargo test --test pbt (8 property-based tests, ~65 s)          65s
 =================
