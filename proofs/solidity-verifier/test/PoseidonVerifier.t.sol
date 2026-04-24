@@ -500,6 +500,33 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D1: Lagrange-aux helper (l_0, l_last, l_blind).
+    /// Reads `fixtures/lagrange_aux_fixture.bin` which contains
+    /// the deterministic x + the real poseidon circuit's n, omega,
+    /// blinding_factors, plus Rust-computed l_0, l_last, l_blind.
+    /// Invokes `computeLagrangeAux` and asserts byte-for-byte
+    /// equivalence — Phase D2 will feed these into the partial-
+    /// eval driver inside `verify()`.
+    function test_lagrange_aux() public {
+        bytes memory f = vm.readFileBinary("fixtures/lagrange_aux_fixture.bin");
+        uint256 off = 0;
+        uint256 x = _readUint(f, off); off += 32;
+        uint256 xn = _readUint(f, off); off += 32;
+        uint256 n = _readUint(f, off); off += 32;
+        uint256 omega = _readUint(f, off); off += 32;
+        uint256 bf = _readUint(f, off); off += 32;
+        uint256 expL0 = _readUint(f, off); off += 32;
+        uint256 expLLast = _readUint(f, off); off += 32;
+        uint256 expLBlind = _readUint(f, off); off += 32;
+
+        (uint256 l0, uint256 lLast, uint256 lBlind) =
+            v.computeLagrangeAux(x, xn, n, omega, bf);
+        require(l0 == expL0, "l_0 mismatch");
+        require(lLast == expLLast, "l_last mismatch");
+        require(lBlind == expLBlind, "l_blind mismatch");
+        emit log_named_uint("lagrange_aux verified (l_0, l_last, l_blind)", 3);
+    }
+
     /// Phase C2c: x4 DualMSM outer fold.
     /// Reads `fixtures/x4_outer_fold_fixture.bin` which contains
     /// the per-commitment (setIdx, posInSet) + nSets + x1/x4/x3 +

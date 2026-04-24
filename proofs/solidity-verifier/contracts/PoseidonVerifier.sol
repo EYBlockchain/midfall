@@ -1042,6 +1042,55 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Lagrange aux evaluations l_0, l_last, l_blind (Phase D1)          *
+     *                                                                    *
+     *  Ports the three Lagrange basis evaluations at the random point x *
+     *  used by the partial-eval identity driver (proofs/src/plonk/      *
+     *  mod.rs:506-513). Given:                                          *
+     *                                                                    *
+     *    l_evals = l_i_range(x, xn, -(blinding_factors+1)..=0)          *
+     *                                                                    *
+     *  we extract:                                                      *
+     *    l_last  = l_evals[0]               // L_{-(bf+1)}(x)            *
+     *    l_blind = Σ l_evals[1..1+bf]       // L_{-bf}..L_{-1}           *
+     *    l_0     = l_evals[1 + bf]          // L_0(x)                    *
+     *                                                                    *
+     *  These are the last three missing algebraic-kernel inputs for     *
+     *  \`_partiallyEvaluateIdentities\` that Phase D2 will feed into    *
+     *  the main \`verify\` entry from the transcript-derived x challenge.*
+     * ------------------------------------------------------------------ */
+
+    function _computeLagrangeAux(
+        uint256 x,
+        uint256 xn,
+        uint256 n,
+        uint256 omega,
+        uint256 blindingFactors
+    ) internal view returns (uint256 l0, uint256 lLast, uint256 lBlind) {
+        // l_evals covers the range [-(bf+1), 0] inclusive, length = bf + 2.
+        int256 start = -(int256(blindingFactors) + 1);
+        uint256[] memory lEvals = _lagrangeIRange(x, xn, start, 0, omega, n);
+        require(lEvals.length == blindingFactors + 2, "l_evals length");
+        lLast = lEvals[0];
+        lBlind = 0;
+        for (uint256 i = 1; i <= blindingFactors; i++) {
+            lBlind = _frAdd(lBlind, lEvals[i]);
+        }
+        l0 = lEvals[1 + blindingFactors];
+    }
+
+    /// Public fixture-only wrapper.
+    function computeLagrangeAux(
+        uint256 x,
+        uint256 xn,
+        uint256 n,
+        uint256 omega,
+        uint256 blindingFactors
+    ) external view returns (uint256 l0, uint256 lLast, uint256 lBlind) {
+        return _computeLagrangeAux(x, xn, n, omega, blindingFactors);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  x4 DualMSM outer fold (Phase C2c)                                *
      *                                                                    *
      *  Ports the x4-power outer fold from                               *

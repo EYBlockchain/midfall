@@ -1656,6 +1656,67 @@ fn main() {
             n_c,
             n_sets,
         );
+
+        // Phase D1: Lagrange-aux (l_0, l_last, l_blind) fixture.
+        //
+        // Ports proofs/src/plonk/mod.rs:506-513:
+        //   l_evals = l_i_range(x, xn, -(bf+1)..=0)
+        //   l_last  = l_evals[0]
+        //   l_blind = Σ l_evals[1..1+bf]
+        //   l_0     = l_evals[1 + bf]
+        //
+        // Uses a deterministic synthetic x (not the transcript-
+        // derived one — Phase D2 will wire that) + the real
+        // poseidon circuit's omega, n, blinding_factors so the
+        // helper is tested against the exact parameters it will
+        // consume inside verify().
+        //
+        // File layout (all 32B BE unless noted):
+        //   [32] x
+        //   [32] xn
+        //   [32] n (stored as uint256; actual value < 2^64)
+        //   [32] omega
+        //   [32] blinding_factors (stored as uint256; actual < 2^32)
+        //   [32] expected_l_0
+        //   [32] expected_l_last
+        //   [32] expected_l_blind
+        let x_d = Fq::from(0xD1u64);
+        let bf = vk_info.blinding_factors as u64;
+        let n_d = vk_info.n;
+        let omega_d = vk_inner.get_domain().get_omega();
+        let xn_d = x_d.pow_vartime([n_d]);
+        let domain_d = vk_inner.get_domain();
+        let l_evals_d = domain_d.l_i_range(x_d, xn_d, -((bf + 1) as i32)..=0);
+        assert_eq!(l_evals_d.len() as u64, 2 + bf);
+        let l_last_d = l_evals_d[0];
+        let mut l_blind_d = Fq::ZERO;
+        for i in 1..=bf as usize {
+            l_blind_d += l_evals_d[i];
+        }
+        let l_0_d = l_evals_d[1 + bf as usize];
+
+        let mut blob: Vec<u8> = Vec::new();
+        let push_fq = |b: &mut Vec<u8>, v: &Fq| { b.extend_from_slice(&fq_to_be(v)); };
+        let push_u256 = |b: &mut Vec<u8>, v: u64| {
+            b.extend_from_slice(&[0u8; 24]);
+            b.extend_from_slice(&v.to_be_bytes());
+        };
+        push_fq(&mut blob, &x_d);
+        push_fq(&mut blob, &xn_d);
+        push_u256(&mut blob, n_d);
+        push_fq(&mut blob, &omega_d);
+        push_u256(&mut blob, bf);
+        push_fq(&mut blob, &l_0_d);
+        push_fq(&mut blob, &l_last_d);
+        push_fq(&mut blob, &l_blind_d);
+
+        fs::write(fixtures.join("lagrange_aux_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      lagrange-aux fixture written ({} bytes, n={}, bf={})",
+            blob.len(),
+            n_d,
+            bf,
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of
