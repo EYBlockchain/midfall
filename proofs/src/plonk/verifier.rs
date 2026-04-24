@@ -433,6 +433,16 @@ where
         .chain(iter::once(lin_com))
         .collect::<Vec<_>>();
 
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_usize};
+        emit_usize("query_list.length", queries.len());
+        for (i, q) in queries.iter().enumerate() {
+            emit_scalar(&format!("query_list.point[{i}]"), &q.point);
+            emit_scalar(&format!("query_list.eval[{i}]"), &q.eval);
+        }
+    }
+
     // We are now convinced the circuit is satisfied so long as the
     // polynomial commitments open to the correct values.
     CS::multi_prepare(&queries, transcript).map_err(|_| Error::Opening)

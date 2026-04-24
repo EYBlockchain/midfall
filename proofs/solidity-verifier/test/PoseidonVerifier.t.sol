@@ -442,6 +442,7 @@ contract PoseidonVerifierTest is Test {
         bytes32 readScalarSig = keccak256("TraceReadScalar(string,bytes32)");
         bytes32 readPointSig = keccak256("TraceReadPoint(string,bytes)");
         bytes32 pairingSig = keccak256("TracePairing(bool)");
+        bytes32 intermediateSig = keccak256("TraceIntermediate(string,bytes32)");
 
         string memory trace = "[";
         bool first = true;
@@ -465,6 +466,21 @@ contract PoseidonVerifierTest is Test {
                 bool r = abi.decode(logs[i].data, (bool));
                 trace = _appendTrace(trace, first, "PairingResult", r ? "true" : "false", "", "");
                 first = false;
+            } else if (logs[i].topics[0] == intermediateSig) {
+                (string memory name, bytes32 fe) = abi.decode(logs[i].data, (string, bytes32));
+                // Only persist aggregate signatures + singleton scalars
+                // that the Rust cross-trace check in
+                // tests/forge.rs::rust_and_solidity_intermediates_match
+                // consumes. Per-element diagnostic intermediates
+                // (ql_point[i], right_term_*, fifo_*, dbg_*) are
+                // omitted to keep the JSON small enough to build in
+                // one forge-memory budget — they balloon to hundreds
+                // of entries and trigger MemoryOOG during
+                // string.concat in the worst case.
+                if (_isCrossTraceTag(name)) {
+                    trace = _appendTrace(trace, first, "Intermediate", name, _toHex(fe), "");
+                    first = false;
+                }
             }
         }
         trace = string.concat(trace, "]");
@@ -635,6 +651,33 @@ contract PoseidonVerifierTest is Test {
 
     function _logBench(string memory name, uint256 g) internal {
         emit log_named_uint(name, g);
+    }
+
+    /// Whitelist of TraceIntermediate tags that the Rust test
+    /// `rust_and_solidity_intermediates_match` cross-checks against
+    /// `verifier_trace.bin`. Everything else (per-element debug
+    /// events like `ql_point[i]`, `right_term_*`, `fifo_*`,
+    /// `dbg_*`) is skipped when persisting `solidity_trace.json` so
+    /// the JSON stays small enough to fit forge's memory budget.
+    function _isCrossTraceTag(string memory name) internal pure returns (bool) {
+        bytes32 h = keccak256(bytes(name));
+        if (h == 0x8032e79944f79d4840bc8967793b58695375842d06f2710c9b4adc70e8512c97) return true; // evals_signature
+        if (h == 0xfdd113731fc2652c8c48c5ff8c4226bb118d24e8f03522a823cc7ed6e53a2839) return true; // partial_eval_signature
+        if (h == 0x4d69c43dafa55345887e50aa1e4095c7bcba7e6a9a54b4c2396a16b78e16c887) return true; // linearization_signature
+        if (h == 0x221921acb943fa4687701ec52ad96ca90bd8d609612574ad564d4b60d6aa558d) return true; // query_list_signature
+        if (h == 0x5e75595ad04c304b3ae8447b4e6fa8de4f9de6c709c8e81ef8ed66878fc37e95) return true; // multi_prepare_signature
+        if (h == 0x1f6473952abeda21578d700cdb896d9497f1a069e29723201dcb011a70e5052f) return true; // final_msm_scalar_signature
+        if (h == 0x42a62cfbca35679a7e168cdc63e3dc36d56b35303e1ad929b447171f322b1fec) return true; // v_scalar
+        if (h == 0x445db563f2210b5aee1fd2359b86368bd12485a635d7b8ebd098870eefd6c429) return true; // fComScalar
+        if (h == 0x78058d27fea733432a5a4037bc2333160471f51b1b409f1bb893b872ce1d8d78) return true; // gScalar
+        if (h == 0xd6890489f1a76b796f8d98ea3ea839c46cdbfee60d061a61790d48cd899328a5) return true; // fEval_sol
+        if (h == 0xfce5f2e219a7a49449b2e73322a8c8e9779ce8f058bba5a3f21ebbd8f021e37f) return true; // right_g1_digest
+        if (h == 0x999f0dc6bcfd8a8c5b56deabb6953f4220df7ffdeccfdf3c7ec1b247560531be) return true; // right_g1_len
+        if (h == 0x84c842168cbf653a408572b3e7b16056bdead25a13ffaf16caf489c9ba68f854) return true; // num_sets
+        if (h == 0x83e03df1d76412aa01bece72f0c5594bc73011d33a4233df43d5cb3521b57b0b) return true; // num_commitments
+        if (h == 0x19d000e4b7753845f7f11b01f80be61e6c6bfb40f7d2fa606956e4221ecf427b) return true; // pi_decompressed_digest
+        if (h == 0x16fcceb6d467c5dada87a2e77288109316013a7f2a7414c5b8588c84f5d8f16c) return true; // final_pairing_result
+        return false;
     }
 
     function _appendTrace(

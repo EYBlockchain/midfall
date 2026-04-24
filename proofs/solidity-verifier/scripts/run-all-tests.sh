@@ -221,9 +221,9 @@ step 3 'forge test (24 Solidity unit / component / end-to-end tests)' \
     'Runs the full Foundry test suite: per-phase positional signatures, algebra helpers, gate / lookup / trashcan bytecode interpreters, linearization commitment, multi-prepare driver, final pairing RHS, and test_verify_poseidon_proof / test_verify_rejects_mutated_proof. A bit-flip anywhere in the proof is rejected.' \
     "cd '$CRATE_DIR' && forge test"
 
-step 4 'cargo test --test forge (Rust ↔ Solidity trace-diff harness)' \
-    'Regenerates the proof, runs forge test -vv, replays the Fiat-Shamir transcript on the Rust side and asserts element-wise identical traces across all challenges, scalar reads and point reads.' \
-    "cd '$REPO_ROOT' && cargo test --quiet -p midnight-solidity-verifier --test forge --release"
+step 4 'cargo test --test forge (Rust ↔ Solidity trace-diff harnesses)' \
+    'Regenerates the proof, runs forge test -vv, then runs two cross-checks: (a) rust_and_solidity_traces_match asserts element-wise identical transcript traces across all challenges, scalar reads and point reads; (b) rust_and_solidity_intermediates_match asserts Rust-recomputed verifier-internal aggregate signatures (partial_eval, query_list, multi_prepare v/g/f_eval) match the Solidity TraceIntermediate emissions.' \
+    "cd '$REPO_ROOT' && cargo test --quiet -p midnight-solidity-verifier --test forge --release -- --test-threads=1"
 
 step 5 'cargo test --test pbt (7 property-based tests, ~60 s)' \
     '7 #[ignore] tests driving the Solidity verifier in-process via revm: determinism, positive accept, wrong instance, mutated proof, VK blob byte mutation, 5 malformed-calldata variants, and mutated-VK-source + forge rebuild.' \

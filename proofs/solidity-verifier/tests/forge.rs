@@ -321,3 +321,263 @@ fn rust_and_solidity_traces_match() {
 
     assert_eq!(rs_normalised, sol_normalised, "rust vs solidity trace divergence");
 }
+
+// =====================================================================
+// Intermediate cross-trace equivalence
+//
+// The transcript-level `rust_and_solidity_traces_match` test above
+// pins the Fiat-Shamir sequence (challenges + transcript reads). It
+// does NOT cover internal algebraic intermediates: quantities that
+// exist only inside the verifier body, never hitting the transcript.
+//
+// This test closes that gap by cross-checking each aggregate
+// `TraceIntermediate` signature the Solidity verifier emits against
+// a value re-computed in Rust from `verifier_trace.bin` (the
+// instrumented `prepare()` trace under the `debug-trace-hooks`
+// feature).
+//
+// Coverage in this pass:
+//   * partial_eval_signature      — Σ i · (selector + scalar)
+//   * query_list_signature        — Σ (i+1) · (point + eval)
+//   * direct equality on three multi_prepare scalars:
+//       v_scalar   ↔ multi_prepare.v
+//       gScalar    ↔ multi_prepare.g_scalar
+//       fEval_sol  ↔ multi_prepare.f_eval
+//
+// Explicitly deferred (require additional midnight-proofs emission
+// sites that are larger surgeries than a single commit here):
+//   * linearization_signature     — needs linearization MSM point
+//                                   coords (Fp halves). Requires a
+//                                   `debug_commitment_bytes` trait
+//                                   method on `PolynomialCommitmentScheme`.
+//   * multi_prepare_signature     — needs the per-commitment final
+//                                   scalars `commScalars[i]` and
+//                                   `f_com_scalar` from the x4-over-x1
+//                                   fold in `poly::kzg::multi_prepare`.
+//   * final_msm_scalar_signature  — needs the flat expanded right-MSM
+//                                   scalar vector.
+//
+// Each of those is a well-defined follow-up: add `emit_scalar` calls
+// at the named sites in midnight-proofs, then add a new sub-assertion
+// here. The Solidity side already emits every signature; the Rust
+// side just needs to catch up.
+
+type MtrEvent = (String, Vec<u8>);
+
+fn parse_mtr1(blob: &[u8]) -> Vec<MtrEvent> {
+    assert!(blob.len() >= 8, "MTR1 blob too short");
+    assert_eq!(&blob[..4], b"MTR1", "bad MTR1 magic");
+    let n_events = u32::from_be_bytes(blob[4..8].try_into().unwrap()) as usize;
+    let mut off = 8;
+    let mut out = Vec::with_capacity(n_events);
+    for _ in 0..n_events {
+        let tag_len = u32::from_be_bytes(blob[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        let tag = std::str::from_utf8(&blob[off..off + tag_len])
+            .expect("utf8 tag")
+            .to_string();
+        off += tag_len;
+        let payload_len = u32::from_be_bytes(blob[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        let payload = blob[off..off + payload_len].to_vec();
+        off += payload_len;
+        out.push((tag, payload));
+    }
+    assert_eq!(off, blob.len(), "MTR1 trailing bytes");
+    out
+}
+
+fn fq_from_be32(bytes: &[u8]) -> midnight_curves::Fq {
+    use ff::PrimeField;
+    assert_eq!(bytes.len(), 32, "Fq BE payload must be 32 bytes");
+    let mut le = [0u8; 32];
+    for i in 0..32 {
+        le[i] = bytes[31 - i];
+    }
+    midnight_curves::Fq::from_repr(le).expect("payload is a canonical Fq element")
+}
+
+fn fq_to_be_hex(v: &midnight_curves::Fq) -> String {
+    eip2537::fq_to_be_hex(v)
+}
+
+fn u64_from_be8(bytes: &[u8]) -> u64 {
+    assert_eq!(bytes.len(), 8, "u64 BE payload must be 8 bytes");
+    u64::from_be_bytes(bytes.try_into().unwrap())
+}
+
+/// Load the most recent Solidity `TraceIntermediate` emissions from
+/// `fixtures/solidity_trace.json` (written by `test_verify_poseidon_proof`).
+fn load_solidity_intermediates() -> std::collections::HashMap<String, String> {
+    let path = here().join("fixtures/solidity_trace.json");
+    let raw = fs::read_to_string(&path).expect("read solidity_trace.json");
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
+    entries
+        .iter()
+        .filter_map(|v| {
+            if v["kind"].as_str()? != "Intermediate" {
+                return None;
+            }
+            let tag = v["tag"].as_str()?.to_string();
+            let hex = v["fe_be_hex"].as_str()?.to_string();
+            Some((tag, hex))
+        })
+        .collect()
+}
+
+fn require_sol(sol: &std::collections::HashMap<String, String>, tag: &str) -> midnight_curves::Fq {
+    let hex = sol
+        .get(tag)
+        .unwrap_or_else(|| panic!("Solidity trace missing intermediate `{tag}`"));
+    let mut be = [0u8; 32];
+    let decoded = hex::decode(hex).expect("hex-decodable Solidity intermediate");
+    assert_eq!(decoded.len(), 32, "`{tag}` payload must be 32 bytes");
+    be.copy_from_slice(&decoded);
+    fq_from_be32(&be)
+}
+
+/// Compute `_partialEvalSignature` the exact way the Solidity contract
+/// does: `Σ i · (selector + scalar) mod FR` over the identities emitted
+/// under tag prefix `partial_eval.identity[..]`.
+fn rust_partial_eval_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
+    use midnight_curves::Fq;
+    let mut selectors: std::collections::BTreeMap<usize, u64> = Default::default();
+    let mut scalars: std::collections::BTreeMap<usize, Fq> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("partial_eval.identity[") {
+            let (idx_str, suffix) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            match suffix {
+                ".selector" => {
+                    selectors.insert(idx, u64_from_be8(payload));
+                }
+                ".scalar" => {
+                    scalars.insert(idx, fq_from_be32(payload));
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!(
+        selectors.len(),
+        scalars.len(),
+        "partial_eval.identity selectors/scalars length mismatch"
+    );
+    let n = selectors.len();
+    let mut sig = Fq::from(0);
+    for i in 0..n {
+        let sel = Fq::from(selectors[&i]);
+        let s = scalars[&i];
+        // combined = selector + scalar  (addmod FR)
+        let combined = sel + s;
+        // sig += i * combined
+        sig += Fq::from(i as u64) * combined;
+    }
+    sig
+}
+
+/// Compute `_queryListSignature`: `Σ (i+1) · (point + eval) mod FR`
+/// over the `query_list.{point,eval}[i]` events emitted by the
+/// instrumented verifier (see `plonk::verifier::verify_algebraic_constraints`).
+fn rust_query_list_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
+    use midnight_curves::Fq;
+    let mut points: std::collections::BTreeMap<usize, Fq> = Default::default();
+    let mut evals: std::collections::BTreeMap<usize, Fq> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("query_list.point[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            points.insert(idx, fq_from_be32(payload));
+        } else if let Some(rest) = tag.strip_prefix("query_list.eval[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            evals.insert(idx, fq_from_be32(payload));
+        }
+    }
+    assert!(
+        !points.is_empty(),
+        "verifier_trace.bin has no `query_list.point[*]` entries. \
+         Rebuild midnight-proofs with the debug-trace-hooks feature \
+         and re-run `cargo run --bin generate`."
+    );
+    assert_eq!(
+        points.len(),
+        evals.len(),
+        "query_list.point / query_list.eval length mismatch"
+    );
+    let n = points.len();
+    let mut sig = Fq::from(0);
+    for i in 0..n {
+        let combined = points[&i] + evals[&i];
+        sig += Fq::from((i + 1) as u64) * combined;
+    }
+    sig
+}
+
+fn find_first<'a>(events: &'a [MtrEvent], tag: &str) -> &'a [u8] {
+    &events
+        .iter()
+        .find(|(t, _)| t == tag)
+        .unwrap_or_else(|| panic!("verifier_trace.bin missing tag `{tag}`"))
+        .1
+}
+
+#[test]
+fn rust_and_solidity_intermediates_match() {
+    // Force a fresh regen so verifier_trace.bin + solidity_trace.json
+    // reflect the current midnight-proofs instrumentation and the
+    // current Solidity contract code.
+    regenerate();
+    run_forge_test();
+
+    let mtr_blob = fs::read(here().join("fixtures/verifier_trace.bin"))
+        .expect("read verifier_trace.bin");
+    let events = parse_mtr1(&mtr_blob);
+    eprintln!("[intermediates] parsed {} events from verifier_trace.bin", events.len());
+
+    let sol = load_solidity_intermediates();
+    eprintln!("[intermediates] loaded {} Solidity Intermediate entries", sol.len());
+
+    // 1. partial_eval_signature
+    {
+        let rust_sig = rust_partial_eval_signature(&events);
+        let sol_sig = require_sol(&sol, "partial_eval_signature");
+        assert_eq!(
+            rust_sig, sol_sig,
+            "partial_eval_signature divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_sig),
+            fq_to_be_hex(&sol_sig),
+        );
+        eprintln!("[intermediates] partial_eval_signature OK ({})", fq_to_be_hex(&rust_sig));
+    }
+
+    // 2. query_list_signature
+    {
+        let rust_sig = rust_query_list_signature(&events);
+        let sol_sig = require_sol(&sol, "query_list_signature");
+        assert_eq!(
+            rust_sig, sol_sig,
+            "query_list_signature divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_sig),
+            fq_to_be_hex(&sol_sig),
+        );
+        eprintln!("[intermediates] query_list_signature OK ({})", fq_to_be_hex(&rust_sig));
+    }
+
+    // 3. Direct scalar matches: three multi_prepare outputs.
+    for (rust_tag, sol_tag) in [
+        ("multi_prepare.v",        "v_scalar"),
+        ("multi_prepare.g_scalar", "gScalar"),
+        ("multi_prepare.f_eval",   "fEval_sol"),
+    ] {
+        let rust_val = fq_from_be32(find_first(&events, rust_tag));
+        let sol_val = require_sol(&sol, sol_tag);
+        assert_eq!(
+            rust_val, sol_val,
+            "{rust_tag} / {sol_tag} divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_val),
+            fq_to_be_hex(&sol_val),
+        );
+        eprintln!("[intermediates] {sol_tag} == {rust_tag} ({})", fq_to_be_hex(&rust_val));
+    }
+}

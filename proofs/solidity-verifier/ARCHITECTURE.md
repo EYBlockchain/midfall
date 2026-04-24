@@ -192,9 +192,25 @@ Algebraic equivalence is enforced at five granularity levels:
    regenerates the proof, runs `forge test`, replays the Fiat–Shamir
    sequence in Rust while emitting the same `TraceEntry` schema, then
    requires the two traces to be element-wise identical across all
-   challenges, scalar reads and point reads.
+   challenges, scalar reads and point reads. Only pins the
+   transcript-observable subset.
 
-5. **Property-based tests** (`tests/pbt.rs` + `tests/common/mod.rs`):
+5. **Intermediate trace cross-check**
+   (`tests/forge.rs::rust_and_solidity_intermediates_match`):
+   complements §3 bullet 4 by pinning the **internal algebraic
+   intermediates** that never hit the transcript. Parses
+   `fixtures/verifier_trace.bin` (MTR1 events emitted by the real
+   `prepare()` under the `debug-trace-hooks` feature), loads the
+   whitelisted `TraceIntermediate` entries from
+   `fixtures/solidity_trace.json`, and re-computes each Solidity
+   aggregate signature in Rust using the exact same formula. Covers
+   `partial_eval_signature`, `query_list_signature`, and the three
+   `multi_prepare` singleton scalars (`v_scalar ↔ multi_prepare.v`,
+   `gScalar ↔ multi_prepare.g_scalar`,
+   `fEval_sol ↔ multi_prepare.f_eval`). See §5.5.1 for the runbook,
+   current coverage, and deferred signatures.
+
+6. **Property-based tests** (`tests/pbt.rs` + `tests/common/mod.rs`):
    8 tests driving the Solidity verifier **in-process** via
    [`revm`](https://github.com/bluealloy/revm) (v36, `blst` feature
    enabled for EIP-2537) instead of spawning `forge test` per
@@ -204,7 +220,7 @@ Algebraic equivalence is enforced at five granularity levels:
    proofs plus rejection under every tampered variant. See §5.6 for
    the harness architecture and per-test run commands.
 
-6. **Adversarial fixture matrix** (`fixtures/adversarial_fixtures.bin`):
+7. **Adversarial fixture matrix** (`fixtures/adversarial_fixtures.bin`):
    8 pre-computed rejection vectors generated alongside the baseline
    proof (see §5.1) and replayed by **both** the forge suite
    (`test_adversarial_matrix_all_rejected`) and the PBT suite
@@ -359,7 +375,7 @@ Produces:
   (bit_early / bit_mid / bit_late / byte_zero_head / byte_ff_mid /
   trunc_48 / ext_17 / inst_xor1), consumed by both the forge suite
   (`test_adversarial_matrix_all_rejected`) and the PBT suite
-  (`adversarial_matrix_all_rejected`). See §3 bullet 6.
+  (`adversarial_matrix_all_rejected`). See §3 bullet 7.
 
 Environment variables (optional):
 * `POSEIDON_K` — log2 of the domain size (default 6)
@@ -395,7 +411,7 @@ forge test --match-test test_verifier_trace_instrumented_tags -vv
 ```
 
 Run just the adversarial-fixture matrix (deterministic 8-entry
-rejection replay, §3 bullet 6):
+rejection replay, §3 bullet 7):
 
 ```bash
 cd proofs/solidity-verifier
@@ -494,7 +510,7 @@ The columns mean very different things:
   algebraically-wrong scalars and only rejects at the final
   `e(C − v·G + x3·π, −G2) == 1` check. That full run is deliberately
   gas-capped at 50 M in `test_adversarial_matrix_all_rejected` (see
-  `test/PoseidonVerifier.t.sol` and §3 bullet 6); the max lives
+  `test/PoseidonVerifier.t.sol` and §3 bullet 7); the max lives
   right under that cap by design.
 * **Avg ≈ 16.2 M** — arithmetic mean over the 18 heterogeneous calls.
   A single 49 M outlier pulls the mean up by ≈ 2.75 M by itself, so
@@ -505,16 +521,103 @@ precompile short-circuits vs max ≈ 2.4 M on a full pairing of
 well-formed-but-wrong inputs). **For regression tracking, always read
 the median column, not avg or max.**
 
-### 5.5 Rust ↔ Solidity trace-diff end-to-end test
+### 5.5 Rust ↔ Solidity trace-diff end-to-end tests
+
+Two complementary Rust-side integration tests in
+`tests/forge.rs`. Both drive the same `regenerate()` + `forge test`
+pipeline and must be run with `SRS_DIR` exported because the Rust
+side (not just the `generate` sub-process) touches the SRS.
 
 ```bash
+# Run both tests serially (parallel runs race on fixture writes):
 SRS_DIR=$PWD/zk_stdlib/examples/assets \
-    cargo test -p midnight-solidity-verifier --test forge
+    cargo test -p midnight-solidity-verifier --test forge \
+    -- --test-threads=1
 ```
 
-This harness regenerates the VK + proof, runs `forge test -vv`,
-replays the Fiat–Shamir sequence in Rust and asserts the two traces
-are identical.
+Individually:
+
+```bash
+# Transcript-level equivalence (challenges + scalar/point reads):
+SRS_DIR=$PWD/zk_stdlib/examples/assets \
+    cargo test -p midnight-solidity-verifier --test forge \
+    rust_and_solidity_traces_match
+
+# Internal-algebraic-intermediate equivalence
+# (signature-level cross-check — see §5.5.1):
+SRS_DIR=$PWD/zk_stdlib/examples/assets \
+    cargo test -p midnight-solidity-verifier --test forge \
+    rust_and_solidity_intermediates_match
+```
+
+`rust_and_solidity_traces_match` regenerates the VK + proof, runs
+`forge test -vv`, replays the Fiat–Shamir sequence in Rust and
+asserts the two traces are element-wise identical across every
+`Challenge`, `ReadScalar` and `ReadPoint` event. It does **not**
+cover verifier-internal intermediates; that gap is closed by §5.5.1.
+
+#### 5.5.1 `rust_and_solidity_intermediates_match`
+
+Closes the algebraic-intermediate gap left by the transcript-only
+diff in §5.5. Parses `fixtures/verifier_trace.bin` (MTR1 events
+emitted by the real `prepare()` under `debug-trace-hooks`), reads
+the whitelisted `TraceIntermediate` entries the forge test persists
+into `fixtures/solidity_trace.json`, and re-computes each Solidity
+aggregate signature in Rust using the exact same formula Solidity
+uses inside `verify()`.
+
+**Current coverage (5 assertions):**
+
+| Solidity `TraceIntermediate` | Rust source tag(s)                      | Formula                         |
+|------------------------------|------------------------------------------|---------------------------------|
+| `partial_eval_signature`     | `partial_eval.identity[i].{selector,scalar}` | `Σ i · (selector + scalar) mod Fr` |
+| `query_list_signature`       | `query_list.{point,eval}[i]` ¹           | `Σ (i+1) · (point + eval) mod Fr` |
+| `v_scalar`                   | `multi_prepare.v`                        | direct equality                 |
+| `gScalar`                    | `multi_prepare.g_scalar`                 | direct equality                 |
+| `fEval_sol`                  | `multi_prepare.f_eval`                   | direct equality                 |
+
+¹ `query_list.{point,eval}[i]` is emitted from a dedicated
+debug-trace site added to `proofs/src/plonk/verifier.rs` after
+`queries.collect()` in `verify_algebraic_constraints`. It exposes
+the pre-sort verifier-query enumeration that Solidity
+`_buildQueryList` walks before feeding
+`_constructIntermediateSets`.
+
+**Solidity side — what lands in `solidity_trace.json`.**
+`test_verify_poseidon_proof` (`test/PoseidonVerifier.t.sol`)
+inspects every `TraceIntermediate(string,bytes32)` event and only
+persists those whose tag passes `_isCrossTraceTag` (a
+keccak256-gated whitelist of aggregate signatures + singleton
+scalars). Per-element diagnostic intermediates (`ql_point[i]`,
+`right_term_*`, `fifo_*`, `dbg_*`) stay on-chain-only so the JSON
+stays within forge's memory budget during `string.concat`.
+
+**Deferred signatures (follow-up work).** Three Solidity
+signatures currently have no Rust source of truth because their
+inputs are not yet emitted under `debug-trace-hooks`:
+
+* `linearization_signature` — needs linearization MSM point
+  coordinates (Fp halves). Requires a `debug_commitment_bytes`
+  trait method on `PolynomialCommitmentScheme` returning the
+  compressed encoding for each `CS::Commitment`, consumed by a
+  loop in `plonk::linearization::verifier::compute_linearization_commitment`.
+* `multi_prepare_signature` — needs per-commitment final scalars
+  (`commScalars[i]`) and `f_com_scalar` from the `x4`-over-`x1`
+  fold in `poly::kzg::multi_prepare`.
+* `final_msm_scalar_signature` — needs the flat expanded
+  right-MSM scalar vector.
+
+Each is commented in `tests/forge.rs` with the exact emission site
+that needs to be added. Landing any of them is a self-contained
+change (add `emit_scalar` calls at the named Rust site, then add
+one more assertion block in the test).
+
+**Soundness validation.** The test was shown to fail (catching the
+divergence) when `_queryListSignature` in `PoseidonVerifier.sol`
+was mutated from `ql.evals[i]` to `ql.evals[0]`; all other Solidity
+tests (including `test_verify_poseidon_proof`) continued to pass
+under that same mutation, confirming that this cross-check covers
+ground no other test did.
 
 ### 5.6 Property-based tests (PBT)
 
