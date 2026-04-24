@@ -20,6 +20,8 @@ serde_json = { workspace = true }
 hex = "0.4"
 
 [dev-dependencies]
+proptest = "1"
+revm = { version = "36", features = ["std", "blst"] }
 
 [[bin]]
 name = "generate"
@@ -28,3 +30,7 @@ path = "src/bin/generate.rs"
 [[test]]
 name = "forge"
 path = "tests/forge.rs"
+
+[[test]]
+name = "pbt"
+path = "tests/pbt.rs"
