@@ -1390,6 +1390,116 @@ contract PoseidonVerifierTest is Test {
         emit log_named_bool("mutation rejected", !ok);
     }
 
+    /// Adversarial matrix: load fixtures/adversarial_fixtures.bin and
+    /// assert that every pre-computed entry is rejected by verify().
+    ///
+    /// Kinds covered (see src/bin/generate.rs Phase F1 for the
+    /// authoritative definition):
+    ///   0 = proof_bit_flip   (early / mid / late variants)
+    ///   1 = proof_byte       (overwritten byte)
+    ///   2 = proof_truncated  (drops π -> `remaining < 48` require)
+    ///   3 = proof_extended   (appends 17 bytes -> non-multiple-of-32 tail)
+    ///   4 = wrong_instance   (diverges the Fiat-Shamir sequence)
+    ///
+    /// The baseline valid proof is verified first so a trivially-reject
+    /// implementation cannot pass this test.
+    ///
+    /// Each inner verify() is given a hard 50M-gas cap so a single
+    /// pathological mutation (e.g. one that sends a decompressed-but-
+    /// degenerate point into the interpreter) cannot burn through the
+    /// whole block-gas budget and starve the subsequent iterations.
+    /// A valid verify costs ~11.25M gas (see OPTIMISATIONS.md), so 50M
+    /// is ~4x headroom.
+    uint256 constant ADVERSARIAL_VERIFY_GAS_CAP = 50_000_000;
+
+    function test_adversarial_matrix_all_rejected() public {
+        // Baseline sanity.
+        {
+            bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+            bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+            require(instanceBE.length == 32, "instance size");
+            bytes32 instance;
+            assembly { instance := mload(add(instanceBE, 32)) }
+            bool baselineOk;
+            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(instance, proof)
+                returns (bool r)
+            {
+                baselineOk = r;
+            } catch {
+                baselineOk = false;
+            }
+            require(
+                baselineOk,
+                "baseline invalidated - cannot trust rejection assertions"
+            );
+        }
+
+        bytes memory man =
+            vm.readFileBinary("fixtures/adversarial_fixtures.bin");
+        require(man.length >= 8, "manifest too short");
+        uint256 off = 0;
+
+        uint32 version = _readU32(man, off); off += 4;
+        require(version == 1, "unsupported adversarial manifest version");
+        uint32 num = _readU32(man, off); off += 4;
+        require(num > 0, "empty adversarial matrix");
+
+        for (uint32 i = 0; i < num; i++) {
+            uint8 kind = uint8(man[off]); off += 1;
+            uint8 labLen = uint8(man[off]); off += 1;
+            bytes memory label = _sliceBytes(man, off, uint256(labLen));
+            off += uint256(labLen);
+
+            bytes32 inst;
+            assembly { inst := mload(add(add(man, 32), off)) }
+            off += 32;
+
+            uint32 plen = _readU32(man, off); off += 4;
+            bytes memory proof = _sliceBytes(man, off, uint256(plen));
+            off += uint256(plen);
+
+            bool accepted;
+            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(inst, proof)
+                returns (bool r)
+            {
+                accepted = r;
+            } catch {
+                accepted = false;
+            }
+            // Silence unused-variable warning for `kind` (kept in the
+            // manifest for downstream consumers / debugging).
+            kind;
+            require(
+                !accepted,
+                string.concat(
+                    "adversarial entry accepted: ",
+                    string(label)
+                )
+            );
+        }
+
+        emit log_named_uint("adversarial entries rejected", uint256(num));
+    }
+
+    /// Bulk-copy `len` bytes of `src` starting at `off` into a fresh
+    /// `bytes` via the identity precompile (0x04). Avoids an O(n) loop
+    /// in the Solidity interpreter when the source is a large manifest.
+    function _sliceBytes(bytes memory src, uint256 off, uint256 len)
+        internal
+        view
+        returns (bytes memory out)
+    {
+        out = new bytes(len);
+        if (len == 0) return out;
+        assembly {
+            let srcPtr := add(add(src, 32), off)
+            let dstPtr := add(out, 32)
+            if iszero(staticcall(gas(), 0x04, srcPtr, len, dstPtr, len)) {
+                revert(0, 0)
+            }
+        }
+    }
+
     event log_named_uint(string, uint256);
     event log_named_bool(string, bool);
 

@@ -2804,6 +2804,172 @@ fn main() {
         }
     }
 
+    // Adversarial matrix (Phase F1).
+    //
+    // Emit a small set of pre-computed rejection fixtures derived from
+    // the canonical valid proof + instance. Each entry must be rejected
+    // by `verify()` (either returns false or reverts). Consumers:
+    //
+    //   * test/PoseidonVerifier.t.sol::test_adversarial_matrix_all_rejected
+    //   * tests/pbt.rs::adversarial_matrix_all_rejected
+    //
+    // File layout (all integers BE):
+    //   [u32]  version = 1
+    //   [u32]  num_entries
+    //   per entry:
+    //     [u8]   kind (0=proof_bit, 1=proof_byte, 2=proof_trunc,
+    //                  3=proof_extend, 4=wrong_instance)
+    //     [u8]   label_len  (label is ASCII, <= 64 bytes)
+    //     [...]  label bytes
+    //     [32]   instance BE
+    //     [u32]  proof_len
+    //     [...]  proof bytes
+    {
+        struct Entry {
+            kind: u8,
+            label: &'static str,
+            instance_be: [u8; 32],
+            proof: Vec<u8>,
+        }
+        const KIND_PROOF_BIT: u8 = 0;
+        const KIND_PROOF_BYTE: u8 = 1;
+        const KIND_PROOF_TRUNC: u8 = 2;
+        const KIND_PROOF_EXT: u8 = 3;
+        const KIND_WRONG_INST: u8 = 4;
+
+        let valid_proof = fx.proof.clone();
+        let valid_inst_be = fq_to_be(&fx.instance);
+        let pn = valid_proof.len();
+        assert!(pn >= 128, "proof unexpectedly short: {pn} bytes");
+
+        let mut entries: Vec<Entry> = Vec::new();
+
+        // 1. Bit-flip in the transcript-prefix region (byte 50, bit 7).
+        {
+            let mut p = valid_proof.clone();
+            p[50] ^= 0x80;
+            entries.push(Entry {
+                kind: KIND_PROOF_BIT,
+                label: "bit_early",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 2. Bit-flip in the middle of the proof (scalar-reads region).
+        {
+            let mut p = valid_proof.clone();
+            p[pn / 2] ^= 0x08;
+            entries.push(Entry {
+                kind: KIND_PROOF_BIT,
+                label: "bit_mid",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 3. Bit-flip near the tail (inside the π region).
+        {
+            let mut p = valid_proof.clone();
+            p[pn - 48] ^= 0x01;
+            entries.push(Entry {
+                kind: KIND_PROOF_BIT,
+                label: "bit_late",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 4. Byte overwrite: zero out byte 0 (clobbers first commitment's
+        //    compression tag).
+        {
+            let mut p = valid_proof.clone();
+            p[0] = 0;
+            entries.push(Entry {
+                kind: KIND_PROOF_BYTE,
+                label: "byte_zero_head",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 5. Byte overwrite: 0xFF at roughly 1/3 of the proof.
+        {
+            let mut p = valid_proof.clone();
+            p[pn / 3] = 0xFF;
+            entries.push(Entry {
+                kind: KIND_PROOF_BYTE,
+                label: "byte_ff_mid",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 6. Truncated proof: drop the last 48 bytes (removes π entirely
+        //    -> trips `require(remaining >= 48 && ...)` in verify()).
+        {
+            let p = valid_proof[..pn - 48].to_vec();
+            entries.push(Entry {
+                kind: KIND_PROOF_TRUNC,
+                label: "trunc_48",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 7. Extended proof: append 17 arbitrary bytes
+        //    (non-multiple-of-32 -> trips `(remaining - 48) % 32 != 0`).
+        {
+            let mut p = valid_proof.clone();
+            p.extend_from_slice(&[0xabu8; 17]);
+            entries.push(Entry {
+                kind: KIND_PROOF_EXT,
+                label: "ext_17",
+                instance_be: valid_inst_be,
+                proof: p,
+            });
+        }
+        // 8. Wrong instance: XOR the last byte with 0x01 — smallest
+        //    possible delta, guaranteed to diverge the Fiat-Shamir
+        //    sequence from the first squeeze onwards.
+        {
+            let mut inst = valid_inst_be;
+            inst[31] ^= 0x01;
+            entries.push(Entry {
+                kind: KIND_WRONG_INST,
+                label: "inst_xor1",
+                instance_be: inst,
+                proof: valid_proof.clone(),
+            });
+        }
+
+        // Serialise.
+        let version: u32 = 1;
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(&version.to_be_bytes());
+        blob.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+        for e in &entries {
+            let lab = e.label.as_bytes();
+            assert!(lab.len() <= 64, "label '{}' too long", e.label);
+            blob.push(e.kind);
+            blob.push(lab.len() as u8);
+            blob.extend_from_slice(lab);
+            blob.extend_from_slice(&e.instance_be);
+            blob.extend_from_slice(&(e.proof.len() as u32).to_be_bytes());
+            blob.extend_from_slice(&e.proof);
+        }
+        fs::write(fixtures.join("adversarial_fixtures.bin"), &blob).unwrap();
+        eprintln!(
+            "      adversarial matrix written ({} bytes, {} entries)",
+            blob.len(),
+            entries.len(),
+        );
+        for (i, e) in entries.iter().enumerate() {
+            eprintln!(
+                "        [{:02}] kind={} label={:<16} inst=0x{}... proof={}B",
+                i,
+                e.kind,
+                e.label,
+                hex::encode(&e.instance_be[..4]),
+                e.proof.len(),
+            );
+        }
+    }
+
     eprintln!("OK — see {}/ for generated files", contracts.display());
     eprintln!("         {}/ for fixtures", fixtures.display());
 }

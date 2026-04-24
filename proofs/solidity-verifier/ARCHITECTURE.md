@@ -58,10 +58,10 @@ proofs/solidity-verifier/
 │   ├── trace.rs                   # trace event schema
 │   └── poseidon_fixture.rs        # helper for building the poseidon circuit
 ├── test/
-│   └── PoseidonVerifier.t.sol     # 24 forge tests (unit + end-to-end)
+│   └── PoseidonVerifier.t.sol     # 25 forge tests (unit + end-to-end + adversarial)
 ├── tests/
 │   ├── forge.rs                   # Rust harness: regen + forge + trace-diff
-│   ├── pbt.rs                     # 7 property-based tests (revm, #[ignore])
+│   ├── pbt.rs                     # 8 property-based tests (revm, #[ignore])
 │   ├── pbt.proptest-regressions   # checked-in regression seeds
 │   └── common/mod.rs              # reusable revm Harness (VK+verifier deploy,
 │                                  #   verify / verify_raw, VK tampering)
@@ -195,7 +195,7 @@ Algebraic equivalence is enforced at five granularity levels:
    challenges, scalar reads and point reads.
 
 5. **Property-based tests** (`tests/pbt.rs` + `tests/common/mod.rs`):
-   7 tests driving the Solidity verifier **in-process** via
+   8 tests driving the Solidity verifier **in-process** via
    [`revm`](https://github.com/bluealloy/revm) (v36, `blst` feature
    enabled for EIP-2537) instead of spawning `forge test` per
    iteration. `proptest` randomises prover seeds, instance
@@ -203,6 +203,17 @@ Algebraic equivalence is enforced at five granularity levels:
    VK-source hex-literal rewrites, asserting acceptance of valid
    proofs plus rejection under every tampered variant. See §5.6 for
    the harness architecture and per-test run commands.
+
+6. **Adversarial fixture matrix** (`fixtures/adversarial_fixtures.bin`):
+   8 pre-computed rejection vectors generated alongside the baseline
+   proof (see §5.1) and replayed by **both** the forge suite
+   (`test_adversarial_matrix_all_rejected`) and the PBT suite
+   (`adversarial_matrix_all_rejected`). Covers single-bit flips in
+   early/mid/late proof regions, byte overwrites (zero-head, 0xFF-mid),
+   calldata-length anomalies (π-truncation, 17-byte extension) and
+   instance-delta. Each forge-side inner call is gas-capped at 50 M
+   to keep the whole test inside the per-test block gas budget even
+   when a mutation drives the verifier into a pathological code path.
 
 ## 4. Non-uniform handling of instance columns
 
@@ -256,6 +267,11 @@ Produces:
 * `contracts/PoseidonVerifyingKey.sol` — new VK blob
 * `fixtures/proof.bin`, `fixtures/instance.be`
 * `fixtures/vk.bin`, `fixtures/*_fixture.bin` — all per-phase witnesses
+* `fixtures/adversarial_fixtures.bin` — 8-entry rejection matrix
+  (bit_early / bit_mid / bit_late / byte_zero_head / byte_ff_mid /
+  trunc_48 / ext_17 / inst_xor1), consumed by both the forge suite
+  (`test_adversarial_matrix_all_rejected`) and the PBT suite
+  (`adversarial_matrix_all_rejected`). See §3 bullet 6.
 
 Environment variables (optional):
 * `POSEIDON_K` — log2 of the domain size (default 6)
@@ -281,7 +297,22 @@ Run a single test verbosely:
 forge test --match-test test_verify_poseidon_proof -vvv
 ```
 
-The full suite currently contains **24 tests**, all passing.
+Run just the adversarial-fixture matrix (deterministic 8-entry
+rejection replay, §3 bullet 6):
+
+```bash
+cd proofs/solidity-verifier
+forge test --match-test test_adversarial_matrix_all_rejected -vv
+```
+
+The full suite currently contains **25 tests**, all passing. The
+latest addition — `test_adversarial_matrix_all_rejected` — loads
+`fixtures/adversarial_fixtures.bin` (see §5.1 output for its 8 entries)
+and asserts each pre-computed rejection vector is rejected by
+`verify()`. Each inner call is gas-capped at 50 M so a pathological
+mutation cannot starve subsequent iterations of the per-test block
+gas budget. Expected wall time: ≈0.2 s once the artifacts are built
+(with a cold `forge build`, add ≈5 s).
 
 ### 5.4 Gas benchmarks
 
@@ -353,7 +384,7 @@ locally for deeper fuzzing. Regression seeds recorded by proptest are
 checked in at `tests/pbt.proptest-regressions` and are replayed first
 on every invocation.
 
-**The 7 tests**:
+**The 8 tests**:
 
 | # | Test | What it asserts |
 |---|------|-----------------|
@@ -364,6 +395,7 @@ on every invocation.
 | 5 | `pbt_solidity_rejects_wrong_verifying_keys` | `verify()` rejects when a single byte of the **deployed VK blob** is flipped. Naïvely swapping VKs between two fixtures would be a no-op here because the poseidon VK is seed-independent; mutating the blob itself tests every structurally-meaningful field (transcript_repr / G1 commitments / gate bytecode / query schedule). |
 | 6 | `malformed_calldata_variants_are_rejected` | `verify()` rejects each of: **wrong selector** (flipped bit 0 of selector), **empty proof** (ABI-encoded with `length = 0`), **64-byte tail-truncated calldata** (drops past the padding into real proof data), **proof-length header extended by 32** (forces the ABI decoder to read past the calldata end), **instance byte flipped** (diverges the Fiat–Shamir sequence). |
 | 7 | `mutated_vk_contract_is_rejected` | Rewrites the first large hex literal in `contracts/PoseidonVerifyingKey.sol`, runs `forge build`, redeploys, asserts rejection, **and restores the original source** before returning (with `catch_unwind` to guarantee restoration on panic). This complements test 5 by covering the full source → build → deploy path, not just the runtime-code overwrite. |
+| 8 | `adversarial_matrix_all_rejected` | Deterministic replay of the 8 pre-computed rejection vectors in `fixtures/adversarial_fixtures.bin` (see §5.1 output: `bit_early`, `bit_mid`, `bit_late`, `byte_zero_head`, `byte_ff_mid`, `trunc_48`, `ext_17`, `inst_xor1`). Complements tests 3 / 4 / 6 by exercising a checked-in set of rejection paths that stays stable across prover-RNG variation. The same manifest is consumed by the forge-side `test_adversarial_matrix_all_rejected`. |
 
 **Run the full PBT suite**:
 
@@ -374,11 +406,12 @@ SRS_DIR=$PWD/zk_stdlib/examples/assets \
     -- --ignored --test-threads=1
 ```
 
-Expected wall time: ≈60 s for 7 tests × `CASES = 8` proptest iterations
-on an M2-class machine. `--test-threads=1` is mandatory because test 7
-(mutated VK source) rewrites a shared contract file and depends on a
-single-threaded ordering with tests 1-6 (both read/write
-`contracts/PoseidonVerifyingKey.sol` and `fixtures/vk.bin`).
+Expected wall time: ≈65 s for 8 tests (7 × `CASES = 8` proptest
+iterations + 1 deterministic adversarial-matrix replay) on an M2-class
+machine. `--test-threads=1` is mandatory because test 7 (mutated VK
+source) rewrites a shared contract file and depends on a
+single-threaded ordering with tests 1-6 and 8 (all of which read /
+write `contracts/PoseidonVerifyingKey.sol` and `fixtures/vk.bin`).
 
 **Run a single PBT test** (re-uses `SRS_DIR`):
 
@@ -410,6 +443,11 @@ cargo test -p midnight-solidity-verifier --test pbt --release \
 # 7. Mutated VK source file + forge rebuild → reject
 cargo test -p midnight-solidity-verifier --test pbt --release \
     -- --ignored mutated_vk_contract_is_rejected
+
+# 8. Adversarial-fixture matrix replay (deterministic, 8 pre-computed
+#    rejection vectors sharing the manifest with the forge suite)
+cargo test -p midnight-solidity-verifier --test pbt --release \
+    -- --ignored adversarial_matrix_all_rejected
 ```
 
 **Bumping iteration count** (e.g., for local fuzz sessions):
@@ -455,11 +493,11 @@ Sample summary:
 ==== summary ====
   [ok  ] Regenerate VK contract + proof fixtures                         4s
   [ok  ] forge build                                                     1s
-  [ok  ] forge test (24 Solidity unit / component / end-to-end tests)    1s
+  [ok  ] forge test (25 Solidity unit / component / end-to-end tests)    1s
   [ok  ] cargo test --test forge (Rust <-> Solidity trace-diff harness)  3s
-  [ok  ] cargo test --test pbt (7 property-based tests, ~60 s)          62s
+  [ok  ] cargo test --test pbt (8 property-based tests, ~65 s)          65s
 =================
-[pass] all 5 stages succeeded in 70s total.
+[pass] all 5 stages succeeded in 74s total.
        log written to target/solidity-verifier-logs/run-all-tests-<ts>.log
 ```
 

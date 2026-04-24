@@ -325,3 +325,89 @@ fn mutated_vk_contract_is_rejected() {
     let ok = rebuild.expect("test body panicked");
     assert!(!ok, "verify() accepted a mutated VK contract");
 }
+
+/* -------------------------------------------------------------------- *
+ *  Adversarial matrix replay                                           *
+ * -------------------------------------------------------------------- */
+
+/// Load `fixtures/adversarial_fixtures.bin` (produced by
+/// `src/bin/generate.rs` Phase F1) and drive every entry through the
+/// in-process verifier via `Harness::verify_raw`, asserting rejection
+/// in every case. Uses the same binary manifest that
+/// `test_adversarial_matrix_all_rejected` in the forge suite consumes.
+///
+/// This complements the per-property PBT tests by replaying a
+/// deterministic pre-recorded set of rejection vectors — so a change
+/// to the verifier that silently un-covers one of the rejection paths
+/// is caught even when `proptest` happens to pick different seeds.
+#[test]
+#[ignore = "solidity/EVM-heavy; run in release mode"]
+fn adversarial_matrix_all_rejected() {
+    let f = fx(1);
+    let (mut h, dep) = harness_for(&f);
+
+    // Baseline sanity: the canonical on-disk proof must be accepted
+    // (the manifest's rejection assertions are only meaningful against
+    // a working baseline — otherwise a stuck-at-reject verifier would
+    // vacuously pass).
+    let baseline_proof =
+        fs::read(common::root_dir().join("fixtures/proof.bin"))
+            .expect("read proof.bin");
+    let baseline_inst_raw =
+        fs::read(common::root_dir().join("fixtures/instance.be"))
+            .expect("read instance.be");
+    assert_eq!(baseline_inst_raw.len(), 32, "instance.be must be 32 bytes");
+    let mut baseline_inst = [0u8; 32];
+    baseline_inst.copy_from_slice(&baseline_inst_raw);
+    assert!(
+        h.verify(&dep, baseline_inst, &baseline_proof),
+        "baseline on-disk proof rejected — harness/fixture mismatch",
+    );
+
+    let manifest =
+        fs::read(common::root_dir().join("fixtures/adversarial_fixtures.bin"))
+            .expect("read adversarial_fixtures.bin");
+    assert!(manifest.len() >= 8, "adversarial manifest truncated");
+
+    let read_u32 = |b: &[u8], o: usize| -> u32 {
+        u32::from_be_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]])
+    };
+
+    let mut off = 0usize;
+    let version = read_u32(&manifest, off);
+    off += 4;
+    assert_eq!(version, 1, "unsupported adversarial manifest version");
+    let num = read_u32(&manifest, off) as usize;
+    off += 4;
+    assert!(num > 0, "empty adversarial matrix");
+
+    for i in 0..num {
+        let kind = manifest[off];
+        off += 1;
+        let lab_len = manifest[off] as usize;
+        off += 1;
+        let label = std::str::from_utf8(&manifest[off..off + lab_len])
+            .expect("utf-8 label")
+            .to_string();
+        off += lab_len;
+        let mut inst = [0u8; 32];
+        inst.copy_from_slice(&manifest[off..off + 32]);
+        off += 32;
+        let plen = read_u32(&manifest, off) as usize;
+        off += 4;
+        let proof = manifest[off..off + plen].to_vec();
+        off += plen;
+
+        // Use verify_raw so entries whose calldata-shape makes the
+        // verifier revert (trunc/ext) are also counted as "rejected"
+        // (revert on the low-level call yields ok == false).
+        let cd = common::encode_verify_calldata(inst, &proof);
+        let (ok, out) = h.verify_raw(&dep, cd);
+        let accepted = Harness::raw_is_accept(ok, &out);
+        assert!(
+            !accepted,
+            "adversarial entry [{i}] kind={kind} '{label}' accepted by verify()",
+        );
+    }
+    assert_eq!(off, manifest.len(), "trailing bytes in adversarial manifest");
+}
