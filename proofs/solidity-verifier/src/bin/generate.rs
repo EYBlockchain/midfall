@@ -1748,15 +1748,14 @@ fn main() {
         for _ in 0..vk_info.num_advice_columns {
             let _: G1Projective = trans.read().unwrap();
         }
-        for _ in 0..vk_info.num_challenges {
-            let _: Fq = trans.squeeze_challenge();
-        }
-        let _theta: Fq = trans.squeeze_challenge();
+        let _advice_challenges: Vec<Fq> =
+            (0..vk_info.num_challenges).map(|_| trans.squeeze_challenge()).collect();
+        let theta_d3: Fq = trans.squeeze_challenge();
         for _ in 0..vk_info.num_lookups {
             let _: G1Projective = trans.read().unwrap();
         }
-        let _beta: Fq  = trans.squeeze_challenge();
-        let _gamma: Fq = trans.squeeze_challenge();
+        let beta_d3: Fq  = trans.squeeze_challenge();
+        let gamma_d3: Fq = trans.squeeze_challenge();
         for _ in 0..vk_info.num_permutation_chunks {
             let _: G1Projective = trans.read().unwrap();
         }
@@ -1765,7 +1764,7 @@ fn main() {
         for _ in 0..total_lookup_commits {
             let _: G1Projective = trans.read().unwrap();
         }
-        let _trash_challenge: Fq = trans.squeeze_challenge();
+        let trash_challenge_d3: Fq = trans.squeeze_challenge();
         for _ in 0..vk_info.num_trashcans {
             let _: G1Projective = trans.read().unwrap();
         }
@@ -1773,7 +1772,7 @@ fn main() {
         for _ in 0..vk_info.num_quotient_limbs {
             let _: G1Projective = trans.read().unwrap();
         }
-        let _x: Fq = trans.squeeze_challenge();
+        let x_d3: Fq = trans.squeeze_challenge();
 
         // Eval reads — collect in the exact order verify() does.
         let mut evals_flat: Vec<Fq> = Vec::new();
@@ -1825,6 +1824,218 @@ fn main() {
             blob.len(),
             evals_flat.len(),
         );
+
+        // -------------- Phase D3: partial_eval_signature -------------
+        //
+        // Replays the transcript-derived env through the replica of
+        // `partially_evaluate_identities` (same pattern used by
+        // `partial_eval_fixture`) and dumps the positional signature
+        // `Σ i · (selector_i + scalar_i) mod FR`.
+        //
+        // File layout:
+        //   [32] num_scalars
+        //   [32] signature
+        {
+            use midnight_proofs::plonk::Any;
+            use midnight_proofs::poly::Rotation;
+            let vk_inner = fx.vk.vk();
+            let cs = vk_inner.cs();
+
+            // Re-slice evals_flat in transcript-read order.
+            let mut pos = 0usize;
+            let committed_instance_evals_t = &evals_flat[pos..pos + vk_info.num_committed_instance_evals];
+            pos += vk_info.num_committed_instance_evals;
+            let advice_evals_t = &evals_flat[pos..pos + vk_info.num_advice_queries];
+            pos += vk_info.num_advice_queries;
+            let fixed_evals_t = &evals_flat[pos..pos + vk_info.num_fixed_queries];
+            pos += vk_info.num_fixed_queries;
+            let perm_common_t = &evals_flat[pos..pos + vk_info.num_permutation_columns];
+            pos += vk_info.num_permutation_columns;
+            // Interleaved (cur, next, last?) per perm chunk:
+            let mut perm_sets_t: Vec<(Fq, Fq, Option<Fq>)> = Vec::new();
+            for i in 0..vk_info.num_permutation_chunks {
+                let c = evals_flat[pos]; pos += 1;
+                let n = evals_flat[pos]; pos += 1;
+                let last = if i + 1 != vk_info.num_permutation_chunks {
+                    let l = evals_flat[pos]; pos += 1;
+                    Some(l)
+                } else { None };
+                perm_sets_t.push((c, n, last));
+            }
+            // Lookup (single, numLookups=1 guarded below).
+            assert_eq!(vk_info.num_lookups, 1);
+            let m_eval_t = evals_flat[pos]; pos += 1;
+            let helper_evals_t: Vec<Fq> = (0..total_lookup_helpers).map(|_| {
+                let v = evals_flat[pos]; pos += 1; v
+            }).collect();
+            let acc_eval_t = evals_flat[pos]; pos += 1;
+            let acc_next_eval_t = evals_flat[pos]; pos += 1;
+            let trash_evals_t: Vec<Fq> = (0..vk_info.num_trashcans).map(|_| {
+                let v = evals_flat[pos]; pos += 1; v
+            }).collect();
+            let _ = (pos, committed_instance_evals_t);
+
+            // Lagrange aux at x (matches Phase D1 helper).
+            let xn_d3 = x_d3.pow_vartime([vk_info.n]);
+            let bf_i = vk_info.blinding_factors as i32;
+            let l_evals = vk_inner.get_domain().l_i_range(x_d3, xn_d3, -(bf_i + 1)..=0);
+            let l_last = l_evals[0];
+            let l_blind: Fq = l_evals[1..=bf_i as usize].iter().copied().sum();
+            let l_0 = l_evals[1 + bf_i as usize];
+
+            // Build fixed_evals[col] with 1s for simple selectors (per
+            // `cs.has_simple_selector_col(col)`), injecting transcript
+            // values at remaining positions. Matches
+            // _buildFixedEvalsFull on the Sol side.
+            let n_fixed_cols = cs.num_fixed_columns();
+            let mut fx_evals: Vec<Fq> = Vec::with_capacity(n_fixed_cols);
+            let mut ti = 0usize;
+            for c in 0..n_fixed_cols {
+                if cs.has_simple_selector_col(c) {
+                    fx_evals.push(Fq::ONE);
+                } else {
+                    fx_evals.push(fixed_evals_t[ti]); ti += 1;
+                }
+            }
+
+            // Instance evals collapse: `instance * l_0` per query
+            // (poseidon has num_committed_instance_evals=0, single
+            // non-committed col of length 1 at rotation 0).
+            let inst_collapsed = fx.instance * l_0;
+            let instance_evals: Vec<Fq> = (0..vk_info.num_instance_queries)
+                .map(|_| inst_collapsed).collect();
+
+            let challenges: Vec<Fq> = Vec::new();
+            let advice_evals = advice_evals_t.to_vec();
+
+            let eval_expression = |expr: &midnight_proofs::plonk::Expression<Fq>| -> Fq {
+                expr.evaluate(
+                    &|c| c, &|_| panic!("virtual selector"),
+                    &|q| fx_evals[q.index().unwrap()],
+                    &|q| advice_evals[q.index.unwrap()],
+                    &|q| instance_evals[q.index.unwrap()],
+                    &|ch| challenges[ch.index()],
+                    &|a: Fq| -a, &|a, b| a + b, &|a, b| a * b, &|a, k| a * k,
+                )
+            };
+
+            let mut expected: Vec<(Option<u32>, Fq)> = Vec::new();
+
+            // 1. Gates.
+            for gate in cs.gates().iter() {
+                let sel = gate.queried_selectors().iter()
+                    .find(|s| s.is_simple())
+                    .map(|s| s.index() as u32);
+                for poly in gate.polynomials().iter() {
+                    expected.push((sel, eval_expression(poly)));
+                }
+            }
+
+            // 2. Permutation.
+            let eval_col = |col: &midnight_proofs::plonk::Column<Any>| -> Fq {
+                match col.column_type() {
+                    Any::Advice(_) => {
+                        let q = cs.advice_queries().iter().position(|(c, rot)|
+                            c.index() == col.index() && rot.0 == Rotation::cur().0
+                        ).unwrap();
+                        advice_evals[q]
+                    }
+                    Any::Fixed => {
+                        let q = cs.fixed_queries().iter().position(|(c, rot)|
+                            c.index() == col.index() && rot.0 == Rotation::cur().0
+                        ).unwrap();
+                        fx_evals[q]
+                    }
+                    Any::Instance => {
+                        let q = cs.instance_queries().iter().position(|(c, rot)|
+                            c.index() == col.index() && rot.0 == Rotation::cur().0
+                        ).unwrap();
+                        instance_evals[q]
+                    }
+                }
+            };
+            let perm_columns = cs.permutation().get_columns();
+            let perm_chunk_len = cs.degree() - 2;
+            let n_perm_cols = perm_columns.len();
+            let n_perm_chunks = vk_info.num_permutation_chunks;
+            if let Some(first) = perm_sets_t.first() {
+                expected.push((None, l_0 * (Fq::ONE - first.0)));
+            }
+            if let Some(last) = perm_sets_t.last() {
+                expected.push((None, (last.0 * last.0 - last.0) * l_last));
+            }
+            for i in 1..n_perm_chunks {
+                let prev_last = perm_sets_t[i - 1].2.unwrap();
+                expected.push((None, (perm_sets_t[i].0 - prev_last) * l_0));
+            }
+            for (chunk_idx, set) in perm_sets_t.iter().enumerate() {
+                let col_start = chunk_idx * perm_chunk_len;
+                let col_end = std::cmp::min(col_start + perm_chunk_len, n_perm_cols);
+                let cols = &perm_columns[col_start..col_end];
+                let pevs = &perm_common_t[col_start..col_end];
+                let mut left = set.1;
+                for (col, pev) in cols.iter().zip(pevs.iter()) {
+                    left *= eval_col(col) + beta_d3 * pev + gamma_d3;
+                }
+                let mut right = set.0;
+                let mut current_delta = (beta_d3 * x_d3)
+                    * Fq::DELTA.pow_vartime([(chunk_idx * perm_chunk_len) as u64]);
+                for col in cols.iter() {
+                    right *= eval_col(col) + current_delta + gamma_d3;
+                    current_delta *= Fq::DELTA;
+                }
+                expected.push((None, (left - right) * (Fq::ONE - (l_last + l_blind))));
+            }
+
+            // 3. Lookup (single).
+            let lk_arg = &cs.lookups()[0];
+            let lk_chunked = lk_arg.chunk_by_degree(cs.degree());
+            let compress_exprs = |exprs: &[midnight_proofs::plonk::Expression<Fq>]| -> Fq {
+                exprs.iter().fold(Fq::ZERO, |acc, e| acc * theta_d3 + eval_expression(e))
+            };
+            let active_rows = Fq::ONE - (l_last + l_blind);
+            let compressed_table = compress_exprs(lk_chunked.table_expressions());
+            let selector_val = eval_expression(lk_chunked.selector_expression());
+            expected.push((None, (l_0 + l_last) * acc_eval_t));
+            let mut sum_helpers = Fq::ZERO;
+            for (i, chunk) in lk_chunked.input_expression_chunks().iter().enumerate() {
+                let helper_eval = helper_evals_t[i];
+                let cwb: Vec<Fq> = chunk.iter().map(|pl| compress_exprs(pl) + beta_d3).collect();
+                let product: Fq = cwb.iter().fold(Fq::ONE, |a, b| a * b);
+                let sum: Fq = cwb.iter().map(|f| product * f.invert().unwrap()).fold(Fq::ZERO, |a, b| a + b);
+                sum_helpers += helper_eval;
+                expected.push((None, helper_eval * product - sum));
+            }
+            let diff = (acc_next_eval_t - acc_eval_t - selector_val * sum_helpers)
+                * (compressed_table + beta_d3) + m_eval_t;
+            expected.push((None, diff * active_rows));
+
+            // 4. Trashcan.
+            for (i, arg) in cs.trashcans().iter().enumerate() {
+                let compressed = arg.constraint_expressions().iter().map(&eval_expression)
+                    .fold(Fq::ZERO, |acc, e| acc * trash_challenge_d3 + e);
+                let q = eval_expression(arg.selector());
+                expected.push((None, compressed - (Fq::ONE - q) * trash_evals_t[i]));
+            }
+
+            // Positional signature: Σ i · (sel_as_fq + scalar) mod FR.
+            let mut sig_d3 = Fq::ZERO;
+            for (i, (sel, v)) in expected.iter().enumerate() {
+                let sel_fq = Fq::from(sel.unwrap_or(0xFFFFFFFFu32) as u64);
+                sig_d3 += Fq::from(i as u64) * (sel_fq + v);
+            }
+
+            let mut pblob: Vec<u8> = Vec::new();
+            pblob.extend_from_slice(&[0u8; 24]);
+            pblob.extend_from_slice(&(expected.len() as u64).to_be_bytes());
+            pblob.extend_from_slice(&fq_to_be(&sig_d3));
+            fs::write(fixtures.join("partial_eval_signature_fixture.bin"), &pblob).unwrap();
+            eprintln!(
+                "      partial-eval-signature fixture written ({} bytes, {} scalars)",
+                pblob.len(),
+                expected.len(),
+            );
+        }
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

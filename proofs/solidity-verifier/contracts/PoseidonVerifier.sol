@@ -1042,6 +1042,182 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  PartialEvalEnv assembly + partial-eval call (Phase D3)            *
+     *                                                                    *
+     *  Marshals the Phase D2 EvalArrays + transcript challenges +        *
+     *  Phase D1 Lagrange-aux into a PartialEvalEnv, then calls the       *
+     *  already-landed \`_partiallyEvaluateIdentities\` driver from        *
+     *  Phase A3. Emits a second \`partial_eval_signature\` trace event    *
+     *  \`Σ i · scalar_i mod FR_MODULUS\` over the flat output for         *
+     *  positional equivalence with Rust's                                *
+     *  \`partially_evaluate_identities\`.                                 *
+     *                                                                    *
+     *  Poseidon-specific simplifications (documented for D3.5 / future   *
+     *  circuits):                                                        *
+     *    * NB_COMMITTED_INSTANCES = 1, col 0 is empty (no queries),      *
+     *      all instance queries hit col 1 (non-committed) at             *
+     *      rotation 0, and the user instance has length 1. Instance      *
+     *      evals therefore collapse to \`instance · l_0\` for every      *
+     *      query. Multi-column / multi-rotation / length>1 instances    *
+     *      will need the full inner-product via                         *
+     *      \`_lagrangeIRange(-maxRot..maxLen+|minRot|)\`.                 *
+     *    * numChallenges = 0, so the challenges array is empty.         *
+     *    * numLookups = 1, so lookup evals split trivially as           *
+     *      flat[0] = mEval, flat[1..1+nChunks] = helpers,                *
+     *      flat[1+nChunks] = accEval, flat[2+nChunks] = accNextEval.    *
+     *      Multi-lookup circuits will need a loop (and the lookup      *
+     *      expression driver to accept parallel eval arrays).           *
+     *    * fixed_queries[i].column_idx == i (each fixed column queried  *
+     *      once at Rotation::cur()), so the simple-selector 1s are      *
+     *      injected at column indices directly.                         *
+     * ------------------------------------------------------------------ */
+
+    function _extractSimpleSelectorCols(bytes memory blob)
+        internal view returns (uint32[] memory cols)
+    {
+        SectionOffsets memory so = _loadSectionOffsets(blob);
+        uint32 n = _readU32FromBlob(blob, so.gate);
+        cols = new uint32[](n);
+        for (uint256 i = 0; i < n; i++) {
+            cols[i] = _readU32FromBlob(blob, so.gate + 4 + 4 * i);
+        }
+    }
+
+    /// Inject 1 at each simple-selector column position into a flat
+    /// fixed-evals array of size numFixedCols (= cs.fixed_queries().len()
+    /// for the single-rotation-per-column case).
+    function _buildFixedEvalsFull(
+        uint32 numFixedCols,
+        uint32[] memory simpleSelCols,
+        uint256[] memory transcriptEvals
+    ) internal pure returns (uint256[] memory full) {
+        full = new uint256[](numFixedCols);
+        uint256 ri = 0;
+        for (uint256 i = 0; i < numFixedCols; i++) {
+            bool isSimple = false;
+            for (uint256 s = 0; s < simpleSelCols.length; s++) {
+                if (simpleSelCols[s] == i) { isSimple = true; break; }
+            }
+            if (isSimple) {
+                full[i] = 1;
+            } else {
+                require(ri < transcriptEvals.length, "fixed transcript underflow");
+                full[i] = transcriptEvals[ri++];
+            }
+        }
+        require(ri == transcriptEvals.length, "fixed transcript overflow");
+    }
+
+    function _buildPermSetsFlat(Vk memory vk, EvalArrays memory ea)
+        internal pure returns (uint256[] memory flat)
+    {
+        flat = new uint256[](uint256(vk.numPermChunks) * 4);
+        for (uint256 i = 0; i < vk.numPermChunks; i++) {
+            flat[4 * i]     = ea.permChunkCurEvals[i];
+            flat[4 * i + 1] = ea.permChunkNextEvals[i];
+            bool hasLast = i + 1 != vk.numPermChunks;
+            flat[4 * i + 2] = hasLast ? ea.permChunkLastEvals[i] : 0;
+            flat[4 * i + 3] = hasLast ? 1 : 0;
+        }
+    }
+
+    struct LookupSplit {
+        uint256 accEval;
+        uint256 accNextEval;
+        uint256 mEval;
+        uint256[] helperEvals;
+    }
+
+    function _splitSingleLookup(Vk memory vk, EvalArrays memory ea)
+        internal pure returns (LookupSplit memory ls)
+    {
+        require(vk.numLookups == 1, "Phase D3: only numLookups==1 supported");
+        uint256 nChunks = vk.totalLookupHelpers;
+        require(ea.lookupEvalsFlat.length == nChunks + 3, "lookup flat length");
+        ls.mEval       = ea.lookupEvalsFlat[0];
+        ls.helperEvals = new uint256[](nChunks);
+        for (uint256 i = 0; i < nChunks; i++) {
+            ls.helperEvals[i] = ea.lookupEvalsFlat[1 + i];
+        }
+        ls.accEval     = ea.lookupEvalsFlat[1 + nChunks];
+        ls.accNextEval = ea.lookupEvalsFlat[2 + nChunks];
+    }
+
+    /// Build PartialEvalEnv from the Phase D2 EvalArrays + transcript
+    /// challenges. See the section header for the poseidon-specific
+    /// simplifications baked into instance-eval assembly + lookup split.
+    struct PEInputs {
+        uint256 x;
+        uint256 xn;
+        uint256 beta;
+        uint256 gamma;
+        uint256 theta;
+        uint256 trashChallenge;
+        uint256 instance;     // the single user instance scalar
+    }
+
+    function _buildPartialEvalEnv(
+        bytes memory blob,
+        Vk memory vk,
+        EvalArrays memory ea,
+        PEInputs memory pin
+    ) internal view returns (PartialEvalEnv memory e) {
+        e.x = pin.x;
+        e.beta = pin.beta;
+        e.gamma = pin.gamma;
+        e.theta = pin.theta;
+        e.trashChallenge = pin.trashChallenge;
+
+        (e.l0, e.lLast, e.lBlind) = _computeLagrangeAux(
+            pin.x, pin.xn, uint256(vk.n),
+            uint256(vk.omegaBE), uint256(vk.blindingFactors)
+        );
+
+        e.adviceEvals = ea.adviceEvals;
+        // Simple-selector injection — see section header for the
+        // fixed_queries[i].column_idx == i assumption.
+        e.fixedEvals = _buildFixedEvalsFull(
+            vk.numFixedCols,
+            _extractSimpleSelectorCols(blob),
+            ea.fixedEvals
+        );
+        // Instance-eval collapse under poseidon-specific assumptions.
+        {
+            uint256 collapsed = _frMul(pin.instance, e.l0);
+            uint256[] memory inst = new uint256[](vk.numInstanceQueries);
+            for (uint256 i = 0; i < vk.numInstanceQueries; i++) {
+                inst[i] = collapsed;
+            }
+            e.instanceEvals = inst;
+        }
+        e.challenges = new uint256[](vk.numChallenges);
+
+        e.permSetsFlat = _buildPermSetsFlat(vk, ea);
+        e.permEvals = ea.permCommonEvals;
+
+        LookupSplit memory ls = _splitSingleLookup(vk, ea);
+        e.accumulatorEval = ls.accEval;
+        e.accumulatorNextEval = ls.accNextEval;
+        e.multiplicitiesEval = ls.mEval;
+        e.helperEvals = ls.helperEvals;
+
+        e.trashEvals = ea.trashcanEvals;
+    }
+
+    /// Positional signature over (selectors, scalars):
+    /// \`Σ i · (selector_as_u256 + scalar) mod FR\`.
+    function _partialEvalSignature(uint32[] memory sels, uint256[] memory vals)
+        internal pure returns (uint256 sig)
+    {
+        require(sels.length == vals.length, "sigs length mismatch");
+        sig = 0;
+        for (uint256 i = 0; i < vals.length; i++) {
+            uint256 combined = addmod(uint256(sels[i]), vals[i], FR_MODULUS);
+            sig = addmod(sig, mulmod(i, combined, FR_MODULUS), FR_MODULUS);
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Transcript eval collection (Phase D2)                             *
      *                                                                    *
      *  Extracts the scalar-reads from the \`verify\` transcript walk into *
@@ -2568,6 +2744,29 @@ contract PoseidonVerifier {
             uint256 sig = _evalsSignature(ea);
             emit TraceIntermediate("evals_signature", bytes32(sig));
         }
+
+        /* --- Phase D3: partial-eval driver call ------------------- */
+        gStart = gasleft();
+        {
+            uint256 xU = uint256(x);
+            uint256 xnU = _frMul(xU, _frPow(xU, uint256(vk.n) - 1));  // xn = x^n
+            PEInputs memory pin = PEInputs({
+                x: xU,
+                xn: xnU,
+                beta: uint256(beta),
+                gamma: uint256(gamma),
+                theta: uint256(theta),
+                trashChallenge: uint256(trashCh),
+                instance: uint256(instance)
+            });
+            PartialEvalEnv memory penv = _buildPartialEvalEnv(vkBlob, vk, ea, pin);
+            (uint32[] memory peSel, uint256[] memory peVals) =
+                _partiallyEvaluateIdentities(vkBlob, penv);
+            uint256 peSig = _partialEvalSignature(peSel, peVals);
+            emit TraceIntermediate("partial_eval_signature", bytes32(peSig));
+        }
+        gEnd = gasleft();
+        emit PhaseGas("partial_eval", gStart - gEnd);
 
         /* --- KZG multi-open (multi_prepare) ----------------------- */
         //   let x1: Fr = transcript.squeeze_challenge();

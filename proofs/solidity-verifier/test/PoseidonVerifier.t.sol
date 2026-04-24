@@ -500,6 +500,52 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D3: partial-eval driver call from inside verify().
+    /// verify() now emits `TraceIntermediate("partial_eval_signature",
+    /// sig)` where `sig = Σ i · (selector_i + scalar_i) mod FR` over
+    /// the Rust-iterator-ordered `(selectors, scalars)` output of
+    /// `partially_evaluate_identities`. The Rust fixture replays the
+    /// same transcript and runs the `partial_eval_fixture`-style
+    /// expression replica to compute the expected signature — if
+    /// every algebraic kernel (gate bytecode interpreter, permutation
+    /// expressions, logup lookup evaluator, trashcan, Lagrange-aux,
+    /// fixed-eval simple-selector injection, instance-eval collapse)
+    /// produces identical output, the signatures match. One scalar
+    /// difference anywhere in the 22-scalar output catches a
+    /// regression.
+    function test_partial_eval_signature() public {
+        bytes memory f =
+            vm.readFileBinary("fixtures/partial_eval_signature_fixture.bin");
+        uint256 expCount = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("partial_eval_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "partial_eval_signature event not emitted");
+        require(gotSig == expSig, "partial_eval_signature mismatch");
+        emit log_named_uint(
+            "partial_eval_signature verified, total scalars", expCount);
+    }
+
     /// Phase D2: transcript-eval collection signature.
     /// Runs `verify()` on the real poseidon proof. `verify()` now
     /// emits a `TraceIntermediate("evals_signature", sig)` event
