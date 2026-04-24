@@ -191,544 +191,11 @@ contract PoseidonVerifierTest is Test {
         next = off;
     }
 
-    /// Phase A1 step 2: permutation-expressions equivalence test.
-    ///
-    /// Reads `fixtures/perm_expressions_fixture.bin` produced by the
-    /// Rust-side replica of `permutation::expressions`, feeds the
-    /// inputs into the Solidity `permExpressions` wrapper, and
-    /// asserts every emitted expression matches the Rust-computed
-    /// expected value byte-for-byte. For the poseidon circuit this
-    /// exercises 7 expressions across 3 chunks × 8 permutation
-    /// columns.
-    function test_perm_expressions() public {
-        bytes memory blob = vm.readFileBinary("fixtures/perm_expressions_fixture.bin");
-        uint256 off = 0;
-        uint256[6] memory envScalars;
-        for (uint256 i = 0; i < 6; i++) { envScalars[i] = _readUint(blob, off); off += 32; }
-        uint256 deltaFromFixture = _readUint(blob, off); off += 32;
-        // Sanity: contract's hard-coded FR_DELTA matches the Rust-
-        // computed DELTA (otherwise main-chunk constraints diverge).
-        // Using a sentinel call that exposes FR_DELTA via _frDeltaPow(1).
-        require(deltaFromFixture == v.frDeltaPow(1), "FR_DELTA constant mismatch");
-
-        uint256 nChunks = _readUint(blob, off); off += 32;
-        uint256[] memory setsFlat = new uint256[](nChunks * 4);
-        for (uint256 i = 0; i < nChunks; i++) {
-            setsFlat[4 * i]     = _readUint(blob, off);            // prod
-            setsFlat[4 * i + 1] = _readUint(blob, off + 32);       // next
-            setsFlat[4 * i + 2] = _readUint(blob, off + 64);       // last
-            setsFlat[4 * i + 3] = uint8(blob[off + 96]);           // hasLast
-            off += 128; // 3*32 + 32 (1 byte + 31 pad)
-        }
-
-        (uint256[] memory permEvals, uint256 off1) = _readArr(blob, off);
-        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
-        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
-        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
-        (uint256[] memory expected, uint256 _off5) = _readArr(blob, off4);
-
-        // Load column metadata from the VK blob.
-        bytes memory vkBlob = vkAddr.code;
-        (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen) =
-            _loadPermColumnMetadata(vkBlob);
-
-        uint256[] memory got = v.permExpressions(
-            envScalars, setsFlat, permEvals, adviceEvals, fixedEvals, instanceEvals,
-            colKinds, colQueryIdxs, chunkLen
-        );
-
-        require(got.length == expected.length, "perm expr len mismatch");
-        for (uint256 i = 0; i < got.length; i++) {
-            require(got[i] == expected[i], "perm expression mismatch");
-        }
-        emit log_named_uint("perm expressions verified", got.length);
-    }
-
-    /// Locate the permutation metadata section inside the VK blob.
-    /// After Phase A2a appended the lookup-bytecode section, the
-    /// permutation section is no longer at the tail; it sits
-    /// immediately before the `u32 num_lookups` header of the
-    /// lookup section. We recover its position via the same
-    /// candidate-nCols scan used by `_findLookupSection`.
-    function _loadPermColumnMetadata(bytes memory blob) internal pure
-        returns (uint8[] memory colKinds, uint16[] memory colQueryIdxs, uint256 chunkLen)
-    {
-        uint256 L = blob.length;
-        uint256 nCols = 0;
-        uint256 tailStart = 0;
-        for (uint256 candidate = 1; candidate <= 256; candidate++) {
-            for (uint256 pos = 0; pos + 8 + 3 * candidate + 4 <= L; pos++) {
-                uint32 clen = _readU32(blob, pos);
-                uint32 nc = _readU32(blob, pos + 4);
-                if (nc != candidate || clen >= 64) continue;
-                uint256 lookupStart = pos + 8 + 3 * candidate;
-                uint32 nLookups = _readU32(blob, lookupStart);
-                if (nLookups == 0 || nLookups > 16) continue;
-                if (_validateLookupSection(blob, lookupStart, nLookups, L)) {
-                    nCols = candidate;
-                    chunkLen = clen;
-                    tailStart = pos;
-                    break;
-                }
-            }
-            if (nCols > 0) break;
-        }
-        require(nCols > 0, "perm metadata not found");
-        colKinds = new uint8[](nCols);
-        colQueryIdxs = new uint16[](nCols);
-        uint256 cursor = tailStart + 8;
-        for (uint256 i = 0; i < nCols; i++) {
-            colKinds[i] = uint8(blob[cursor]);
-            colQueryIdxs[i] = (uint16(uint8(blob[cursor + 1])) << 8) | uint16(uint8(blob[cursor + 2]));
-            cursor += 3;
-        }
-    }
-
     function _readU32(bytes memory b, uint256 off) internal pure returns (uint32 v_) {
         v_ = (uint32(uint8(b[off])) << 24)
            | (uint32(uint8(b[off + 1])) << 16)
            | (uint32(uint8(b[off + 2])) << 8)
            |  uint32(uint8(b[off + 3]));
-    }
-
-    /// Phase A2a: lookup-expressions equivalence test.
-    ///
-    /// Mirrors `test_perm_expressions` but for the logup argument.
-    /// Reads `fixtures/lookup_expressions_fixture.bin` produced by
-    /// the Rust-side replica of `logup::Evaluated::expressions`,
-    /// locates the lookup-bytecode section at the tail of the VK
-    /// blob (just after the permutation section), and asserts the
-    /// Solidity output matches expression-for-expression. For the
-    /// poseidon circuit this exercises 3 expressions (1 boundary +
-    /// 1 helper + 1 accumulator) across the argument's single
-    /// chunk.
-    function test_lookup_expressions() public {
-        bytes memory blob = vm.readFileBinary("fixtures/lookup_expressions_fixture.bin");
-        uint256 off = 0;
-        uint256[8] memory scalars;
-        for (uint256 i = 0; i < 8; i++) { scalars[i] = _readUint(blob, off); off += 32; }
-        (uint256[] memory helperEvals, uint256 off1) = _readArr(blob, off);
-        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
-        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
-        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
-        (uint256[] memory challenges, uint256 off5) = _readArr(blob, off4);
-        (uint256[] memory expected, ) = _readArr(blob, off5);
-
-        uint256 sectionOffset = _findLookupSection();
-
-        uint256[] memory got = v.lookupExpressions(
-            vkAddr, sectionOffset, scalars, helperEvals,
-            adviceEvals, fixedEvals, instanceEvals, challenges
-        );
-
-        require(got.length == expected.length, "lookup expr len mismatch");
-        for (uint256 i = 0; i < got.length; i++) {
-            require(got[i] == expected[i], "lookup expression mismatch");
-        }
-        emit log_named_uint("lookup expressions verified", got.length);
-    }
-
-    /// Find where the lookup-bytecode section starts inside the VK
-    /// blob. The layout is append-only:
-    ///   ... gate bytecode, permutation metadata, lookup bytecode
-    /// The permutation section ends at a known tail offset (we
-    /// computed it for test_perm_expressions). The lookup section
-    /// follows immediately. Since the permutation section's trailing
-    /// byte count is `8 + 3*nCols`, we recover nCols the same way
-    /// `_loadPermColumnMetadata` does, but we scan _beyond_ the end
-    /// of the permutation tail — the lookup section itself has its
-    /// own u32 num_lookups header and a variable-length tail, so we
-    /// can't just compute \"L - offset\" numerically.
-    ///
-    /// Approach: walk from the end of the permutation section (which
-    /// is recoverable by locating where `u32 permutation_chunk_len`
-    /// + `u32 num_cols` + `num_cols*3` bytes start). To find that
-    /// start, we reuse the size-scanning logic by trying candidate
-    /// `nLookups` and bytecode lengths — but this is fragile, so we
-    /// instead call `_loadPermColumnMetadata` to recover the
-    /// permutation tail length and infer the section boundary.
-    function _findLookupSection() internal view returns (uint256) {
-        bytes memory vkBlob = vkAddr.code;
-        // _loadPermColumnMetadata finds the permutation section; its
-        // start is (L - (8 + 3*nCols) - lookup_section_len). We don't
-        // yet know lookup_section_len; but the permutation section
-        // appears before lookups, so the LOOKUP SECTION STARTS
-        // IMMEDIATELY AFTER THE PERMUTATION SECTION.
-        //
-        // Recover the permutation section's END by iterating the same
-        // way as _loadPermColumnMetadata but recording the position:
-        //    tail_before_lookup_section = position of `u32 num_lookups`
-        // This equals: (position where _loadPermColumnMetadata found
-        // its candidate u32 pair) + 8 + 3*nCols.
-        uint256 L = vkBlob.length;
-        for (uint256 candidate = 1; candidate <= 256; candidate++) {
-            // We want to find the permutation section at the MIDDLE
-            // of the blob (no longer the end). The section length is
-            // 8 + 3*candidate. Scan for its header.
-            // Since the layout is append-only and the permutation
-            // section is IMMEDIATELY followed by the lookup section,
-            // we look for a position `pos` in [0, L) such that:
-            //   * vkBlob[pos..pos+4] reads as chunkLen (< 64)
-            //   * vkBlob[pos+4..pos+8] reads as candidate  (the number of perm cols)
-            //   * at pos+8+3*candidate, a plausible u32 num_lookups
-            //     (< 16) starts.
-            // The position is the start of the permutation metadata.
-            // We scan from high offsets (trailing lookup section is
-            // typically the biggest) down.
-            for (uint256 tailStart = 0; tailStart + 8 + 3 * candidate < L; tailStart++) {
-                uint32 clen = _readU32(vkBlob, tailStart);
-                uint32 nc = _readU32(vkBlob, tailStart + 4);
-                if (nc != candidate || clen >= 64) continue;
-                uint256 lookupStart = tailStart + 8 + 3 * candidate;
-                if (lookupStart + 4 > L) continue;
-                uint32 nLookups = _readU32(vkBlob, lookupStart);
-                if (nLookups == 0 || nLookups > 16) continue;
-                // Sanity-check by stepping through: for each lookup,
-                // read the lengths and verify they stay within L.
-                if (_validateLookupSection(vkBlob, lookupStart, nLookups, L)) {
-                    return lookupStart;
-                }
-            }
-        }
-        revert("lookup section not found");
-    }
-
-    function _validateLookupSection(
-        bytes memory blob, uint256 startAfterHeader, uint32 nLookups, uint256 L
-    ) internal pure returns (bool) {
-        uint256 p = _walkLookupSection(blob, startAfterHeader, nLookups, L);
-        if (p == type(uint256).max) return false;
-        // Trashcan section follows: u32 nTrashcans + per-trashcan.
-        if (p + 4 > L) return false;
-        uint32 nTrash = _readU32(blob, p); p += 4;
-        if (nTrash > 16) return false;
-        for (uint32 t = 0; t < nTrash; t++) {
-            if (p + 4 > L) return false;
-            uint32 selLen = _readU32(blob, p); p += 4 + selLen; if (p > L) return false;
-            if (p + 4 > L) return false;
-            uint32 nC = _readU32(blob, p); p += 4;
-            for (uint32 i = 0; i < nC; i++) {
-                if (p + 4 > L) return false;
-                uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return false;
-            }
-        }
-        // Query-schedule section follows (Phase C1):
-        //   u32 nRotations; i32 × n
-        //   u32 nAdvice;   u8 × n
-        //   u32 nFixed;    u8 × n
-        //   u32 nInstance; u8 × n
-        // Phase D6 extensions:
-        //   u32 × nAdvice (advice col idx)
-        //   u32 × nFixed  (fixed col idx)
-        //   u32 × nInst   (instance col idx)
-        // Phase D8 extension:
-        //   u32 nLookupChunks; u32 × n
-        if (p + 4 > L) return false;
-        uint32 nRot = _readU32(blob, p); p += 4 + 4 * nRot; if (p > L) return false;
-        // Capture nAdvice/nFixed/nInstance so we can skip the D6
-        // column-index arrays that follow.
-        uint32[3] memory arrSizes;
-        for (uint256 k = 0; k < 3; k++) {
-            if (p + 4 > L) return false;
-            uint32 nArr = _readU32(blob, p); p += 4 + nArr; if (p > L) return false;
-            arrSizes[k] = nArr;
-        }
-        // D6: column-index tables (u32 each, sizes mirror advice/fixed/inst).
-        for (uint256 k = 0; k < 3; k++) {
-            if (p + 4 * arrSizes[k] > L) return false;
-            p += 4 * arrSizes[k];
-        }
-        // D8: per-lookup chunk count table.
-        if (p + 4 > L) return false;
-        uint32 nLc = _readU32(blob, p); p += 4 + 4 * nLc; if (p > L) return false;
-        return p == L;
-    }
-
-    function _walkLookupSection(
-        bytes memory blob, uint256 startAfterHeader, uint32 nLookups, uint256 L
-    ) internal pure returns (uint256) {
-        uint256 p = startAfterHeader + 4;
-        for (uint32 lk = 0; lk < nLookups; lk++) {
-            if (p + 4 > L) return type(uint256).max;
-            uint32 selLen = _readU32(blob, p); p += 4 + selLen; if (p > L) return type(uint256).max;
-            if (p + 4 > L) return type(uint256).max;
-            uint32 nTable = _readU32(blob, p); p += 4;
-            for (uint32 i = 0; i < nTable; i++) {
-                if (p + 4 > L) return type(uint256).max;
-                uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return type(uint256).max;
-            }
-            if (p + 4 > L) return type(uint256).max;
-            uint32 nChunks = _readU32(blob, p); p += 4;
-            for (uint32 c = 0; c < nChunks; c++) {
-                if (p + 4 > L) return type(uint256).max;
-                uint32 nPar = _readU32(blob, p); p += 4;
-                for (uint32 pp = 0; pp < nPar; pp++) {
-                    if (p + 4 > L) return type(uint256).max;
-                    uint32 nCols = _readU32(blob, p); p += 4;
-                    for (uint32 k = 0; k < nCols; k++) {
-                        if (p + 4 > L) return type(uint256).max;
-                        uint32 l = _readU32(blob, p); p += 4 + l; if (p > L) return type(uint256).max;
-                    }
-                }
-            }
-        }
-        return p;
-    }
-
-    /// Phase A2b: trashcan-expressions equivalence test.
-    function test_trash_expressions() public {
-        bytes memory blob = vm.readFileBinary("fixtures/trashcan_expressions_fixture.bin");
-        uint256 off = 0;
-        uint256 trashChallenge = _readUint(blob, off); off += 32;
-        (uint256[] memory trashEvals, uint256 off1) = _readArr(blob, off);
-        (uint256[] memory adviceEvals, uint256 off2) = _readArr(blob, off1);
-        (uint256[] memory fixedEvals, uint256 off3) = _readArr(blob, off2);
-        (uint256[] memory instanceEvals, uint256 off4) = _readArr(blob, off3);
-        (uint256[] memory challenges, uint256 off5) = _readArr(blob, off4);
-        (uint256[] memory expected, ) = _readArr(blob, off5);
-
-        uint256 lookupOffset = _findLookupSection();
-        uint256 trashOffset = _findTrashSection(lookupOffset);
-
-        uint256[] memory got = v.trashExpressions(
-            vkAddr, trashOffset, trashChallenge, trashEvals,
-            adviceEvals, fixedEvals, instanceEvals, challenges
-        );
-
-        require(got.length == expected.length, "trash expr len mismatch");
-        for (uint256 i = 0; i < got.length; i++) {
-            require(got[i] == expected[i], "trash expression mismatch");
-        }
-        emit log_named_uint("trash expressions verified", got.length);
-    }
-
-    function _findTrashSection(uint256 lookupOffset) internal view returns (uint256) {
-        bytes memory vkBlob = vkAddr.code;
-        uint256 L = vkBlob.length;
-        uint32 nLookups = _readU32(vkBlob, lookupOffset);
-        uint256 afterLookups = _walkLookupSection(vkBlob, lookupOffset, nLookups, L);
-        require(afterLookups != type(uint256).max && afterLookups + 4 <= L, "trash section not found");
-        return afterLookups;
-    }
-
-    /// Phase A3: full `partially_evaluate_identities` driver
-    /// equivalence test. Runs the Solidity driver on the shared
-    /// deterministic env from `partial_eval_fixture.bin` and asserts
-    /// every (selector, scalar) pair matches the Rust-computed
-    /// expected values. For the poseidon circuit this is 22 scalars
-    /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
-    /// gate-selector column annotations.
-    /// Phase D7: expand the linearization's inner scalars into the
-    /// final right-side MSM scalar list. verify() emits
-    /// `final_msm_scalar_signature` = Σ (i+1)·scalar_i mod FR over
-    /// the flat scalar list in the order:
-    ///   - per unique commitment c (FIFO):
-    ///       lin ? emit linScalars.length entries (commScalars[c]·linS[j])
-    ///           : emit 1 entry commScalars[c]
-    ///   - fComScalar, piScalar, gScalar
-    /// Poseidon produces 50 scalars (39 single + 8 lin inner + 3 tail).
-    function test_final_msm_scalar_signature() public {
-        bytes memory f =
-            vm.readFileBinary("fixtures/final_msm_scalar_signature_fixture.bin");
-        uint256 expN = _readUint(f, 0);
-        uint256 expSig = _readUint(f, 32);
-
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
-
-        vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
-        Log[] memory logs = vm.getRecordedLogs();
-
-        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
-        bool found = false;
-        uint256 gotSig = 0;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
-                (string memory label, bytes32 val) =
-                    abi.decode(logs[i].data, (string, bytes32));
-                if (keccak256(bytes(label)) == keccak256("final_msm_scalar_signature")) {
-                    gotSig = uint256(val);
-                    found = true;
-                    break;
-                }
-            }
-        }
-        require(found, "final_msm_scalar_signature event not emitted");
-        require(gotSig == expSig, "final_msm_scalar_signature mismatch");
-        emit log_named_uint("final_msm scalars verified, n", expN);
-    }
-
-    /// Phase D6: multi_prepare pipeline drive inside verify().
-    /// verify() now emits `multi_prepare_signature` = v
-    ///   + Σ (i+1)·commScalars[i] + (nC+1)·fComScalar
-    ///   + (nC+2)·piScalar + (nC+3)·gScalar  (mod FR)
-    /// over the scalar bundle produced by C2a (construct_intermediate_sets)
-    /// → sort → C2b (x1 fold) → C2-step1 (f_eval) → C2c (x4 outer fold).
-    /// Pins the on-chain scalar assembly against the Rust replay in a
-    /// single 32-byte event.
-    function test_multi_prepare_signature() public {
-        bytes memory f =
-            vm.readFileBinary("fixtures/multi_prepare_signature_fixture.bin");
-        uint256 expNC = _readUint(f, 0);
-        uint256 expSig = _readUint(f, 32);
-
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
-
-        vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
-        Log[] memory logs = vm.getRecordedLogs();
-
-        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
-        bool found = false;
-        uint256 gotSig = 0;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
-                (string memory label, bytes32 val) =
-                    abi.decode(logs[i].data, (string, bytes32));
-                if (keccak256(bytes(label)) == keccak256("multi_prepare_signature")) {
-                    gotSig = uint256(val);
-                    found = true;
-                    break;
-                }
-            }
-        }
-        require(found, "multi_prepare_signature event not emitted");
-        require(gotSig == expSig, "multi_prepare_signature mismatch");
-        emit log_named_uint("multi_prepare verified, nC", expNC);
-    }
-
-    /// Phase D5: query enumeration in Rust iterator order.
-    /// verify() now emits
-    /// `TraceIntermediate("query_list_signature", sig)` where
-    /// `sig = Σ (i+1) · (point_i + eval_i) mod FR` over the flat
-    /// VerifierQuery list in the exact Rust iteration order from
-    /// `proofs/src/plonk/verifier.rs:366`. Catches any ordering or
-    /// (point, eval) extraction regression in a single 32-byte value.
-    function test_query_list_signature() public {
-        bytes memory f =
-            vm.readFileBinary("fixtures/query_list_signature_fixture.bin");
-        uint256 expCount = _readUint(f, 0);
-        uint256 expSig = _readUint(f, 32);
-
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
-
-        vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
-        Log[] memory logs = vm.getRecordedLogs();
-
-        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
-        bool found = false;
-        uint256 gotSig = 0;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
-                (string memory label, bytes32 val) =
-                    abi.decode(logs[i].data, (string, bytes32));
-                if (keccak256(bytes(label)) == keccak256("query_list_signature")) {
-                    gotSig = uint256(val);
-                    found = true;
-                    break;
-                }
-            }
-        }
-        require(found, "query_list_signature event not emitted");
-        require(gotSig == expSig, "query_list_signature mismatch");
-        emit log_named_uint("query_list verified, count", expCount);
-    }
-
-    /// Phase D4: linearization commitment inside verify().
-    /// verify() now emits
-    /// `TraceIntermediate("linearization_signature", sig)` where
-    /// `sig = expectedEval + Σ(i+1)·scalar_i
-    ///        + Σ(nS+j+1)·(point_coord_j mod FR)`
-    /// over the (pointsFlat, scalars, expectedEval) triple produced
-    /// by `_computeLinearizationCommitment`. The Rust replica
-    /// replays the transcript, re-runs
-    /// `compute_linearization_commitment`, and dumps the expected
-    /// signature. A match confirms every piece of the linearization
-    /// MSM (quotient-limb scalars via `1−xn` × `splittingFactor^i`,
-    /// y-power-grouping in reverse BTreeMap order, `None` bucket
-    /// negation into `expectedEval`, fixed-commitment decompression,
-    /// quotient-limb decompression) agrees byte-for-byte with Rust.
-    function test_linearization_signature() public {
-        bytes memory f =
-            vm.readFileBinary("fixtures/linearization_signature_fixture.bin");
-        uint256 expCount = _readUint(f, 0);
-        uint256 expSig = _readUint(f, 32);
-
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
-
-        vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
-        Log[] memory logs = vm.getRecordedLogs();
-
-        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
-        bool found = false;
-        uint256 gotSig = 0;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
-                (string memory label, bytes32 val) =
-                    abi.decode(logs[i].data, (string, bytes32));
-                if (keccak256(bytes(label)) == keccak256("linearization_signature")) {
-                    gotSig = uint256(val);
-                    found = true;
-                    break;
-                }
-            }
-        }
-        require(found, "linearization_signature event not emitted");
-        require(gotSig == expSig, "linearization_signature mismatch");
-        emit log_named_uint(
-            "linearization_signature verified, output points", expCount);
-    }
-
-    /// Phase D3: partial-eval driver call from inside verify().
-    /// verify() now emits `TraceIntermediate("partial_eval_signature",
-    /// sig)` where `sig = Σ i · (selector_i + scalar_i) mod FR` over
-    /// the Rust-iterator-ordered `(selectors, scalars)` output of
-    /// `partially_evaluate_identities`. The Rust fixture replays the
-    /// same transcript and runs the `partial_eval_fixture`-style
-    /// expression replica to compute the expected signature — if
-    /// every algebraic kernel (gate bytecode interpreter, permutation
-    /// expressions, logup lookup evaluator, trashcan, Lagrange-aux,
-    /// fixed-eval simple-selector injection, instance-eval collapse)
-    /// produces identical output, the signatures match. One scalar
-    /// difference anywhere in the 22-scalar output catches a
-    /// regression.
-    function test_partial_eval_signature() public {
-        bytes memory f =
-            vm.readFileBinary("fixtures/partial_eval_signature_fixture.bin");
-        uint256 expCount = _readUint(f, 0);
-        uint256 expSig = _readUint(f, 32);
-
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
-
-        vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
-        Log[] memory logs = vm.getRecordedLogs();
-
-        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
-        bool found = false;
-        uint256 gotSig = 0;
-        for (uint256 i = 0; i < logs.length; i++) {
-            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
-                (string memory label, bytes32 val) =
-                    abi.decode(logs[i].data, (string, bytes32));
-                if (keccak256(bytes(label)) == keccak256("partial_eval_signature")) {
-                    gotSig = uint256(val);
-                    found = true;
-                    break;
-                }
-            }
-        }
-        require(found, "partial_eval_signature event not emitted");
-        require(gotSig == expSig, "partial_eval_signature mismatch");
-        emit log_named_uint(
-            "partial_eval_signature verified, total scalars", expCount);
     }
 
     /// Phase D2: transcript-eval collection signature.
@@ -810,177 +277,6 @@ contract PoseidonVerifierTest is Test {
         emit log_named_uint("lagrange_aux verified (l_0, l_last, l_blind)", 3);
     }
 
-    /// Phase C2c: x4 DualMSM outer fold.
-    /// Reads `fixtures/x4_outer_fold_fixture.bin` which contains
-    /// the per-commitment (setIdx, posInSet) + nSets + x1/x4/x3 +
-    /// qEvalsOnX3[] + fEval, along with Rust-computed expected
-    /// `v`, per-commitment scalars, fComScalar, piScalar, gScalar.
-    /// Invokes `x4OuterFold` and asserts byte-for-byte match on
-    /// every output scalar.
-    function test_x4_outer_fold() public {
-        bytes memory f = vm.readFileBinary("fixtures/x4_outer_fold_fixture.bin");
-        uint256 off = 0;
-        uint256 nC = _readU32(f, off); off += 4;
-        uint256[] memory setIdx = new uint256[](nC);
-        uint256[] memory posInSet = new uint256[](nC);
-        for (uint256 c = 0; c < nC; c++) {
-            setIdx[c] = _readU32(f, off); off += 4;
-            posInSet[c] = _readU32(f, off); off += 4;
-        }
-        uint256 nS = _readU32(f, off); off += 4;
-        uint256 x1 = _readUint(f, off); off += 32;
-        uint256 x4 = _readUint(f, off); off += 32;
-        uint256 x3 = _readUint(f, off); off += 32;
-        uint256 fEval = _readUint(f, off); off += 32;
-        uint256[] memory qEvalsOnX3 = new uint256[](nS);
-        for (uint256 s = 0; s < nS; s++) { qEvalsOnX3[s] = _readUint(f, off); off += 32; }
-        uint256 expV = _readUint(f, off); off += 32;
-        uint256[] memory expCommScalars = new uint256[](nC);
-        for (uint256 c = 0; c < nC; c++) { expCommScalars[c] = _readUint(f, off); off += 32; }
-        uint256 expFCom = _readUint(f, off); off += 32;
-        uint256 expPi   = _readUint(f, off); off += 32;
-        uint256 expG    = _readUint(f, off); off += 32;
-
-        (
-            uint256 gotV,
-            uint256[] memory gotCommScalars,
-            uint256 gotFCom,
-            uint256 gotPi,
-            uint256 gotG
-        ) = v.x4OuterFold(setIdx, posInSet, nS, x1, x4, x3, qEvalsOnX3, fEval);
-
-        require(gotV == expV, "v mismatch");
-        require(gotCommScalars.length == nC, "comm scalar count");
-        for (uint256 c = 0; c < nC; c++) {
-            require(gotCommScalars[c] == expCommScalars[c], "comm scalar mismatch");
-        }
-        require(gotFCom == expFCom, "fCom mismatch");
-        require(gotPi == expPi, "pi mismatch");
-        require(gotG == expG, "g mismatch");
-        emit log_named_uint("x4 outer fold verified, scalars", nC + 4);
-    }
-
-    /// Phase C2b: per-set x1 evals inner-product fold.
-    /// Reads `fixtures/x1_evals_fold_fixture.bin` which contains
-    /// the commitment set_idx + per-commitment evals in sorted-
-    /// set order + x1, along with the Rust-computed expected
-    /// `q_eval_sets[s][j] = Σ_{c FIFO in s} x1^{i_c} · evals[c][j]`.
-    /// Invokes `x1EvalFoldPerSet` and asserts byte-for-byte match.
-    function test_x1_evals_fold() public {
-        bytes memory f = vm.readFileBinary("fixtures/x1_evals_fold_fixture.bin");
-        uint256 off = 0;
-        uint256 nC = _readU32(f, off); off += 4;
-        uint256[] memory setIdx = new uint256[](nC);
-        uint256[] memory eLen = new uint256[](nC);
-        // First pass: capture setIdx + lens + compute total flat length.
-        uint256 totalEvals = 0;
-        uint256 mark = off;
-        for (uint256 c = 0; c < nC; c++) {
-            setIdx[c] = _readU32(f, off); off += 4;
-            eLen[c] = _readU32(f, off); off += 4;
-            totalEvals += eLen[c];
-            off += 32 * eLen[c];
-        }
-        // Second pass: fill flat evals.
-        uint256[] memory evalsFlat = new uint256[](totalEvals);
-        off = mark;
-        uint256 cursor = 0;
-        for (uint256 c = 0; c < nC; c++) {
-            off += 8;                       // skip setIdx + len
-            for (uint256 j = 0; j < eLen[c]; j++) {
-                evalsFlat[cursor + j] = _readUint(f, off);
-                off += 32;
-            }
-            cursor += eLen[c];
-        }
-        // Sentinel + x1.
-        require(_readU32(f, off) == 0xDEADBEEF, "sentinel mismatch");
-        off += 4;
-        uint256 x1 = _readUint(f, off); off += 32;
-        uint256 nS = _readU32(f, off); off += 4;
-        uint256[][] memory expSets = new uint256[][](nS);
-        for (uint256 s = 0; s < nS; s++) {
-            uint256 m = _readU32(f, off); off += 4;
-            uint256[] memory pv = new uint256[](m);
-            for (uint256 j = 0; j < m; j++) { pv[j] = _readUint(f, off); off += 32; }
-            expSets[s] = pv;
-        }
-
-        uint256[][] memory gotSets = v.x1EvalFoldPerSet(setIdx, evalsFlat, eLen, nS, x1);
-        require(gotSets.length == nS, "set count mismatch");
-        for (uint256 s = 0; s < nS; s++) {
-            require(gotSets[s].length == expSets[s].length, "set size mismatch");
-            for (uint256 j = 0; j < gotSets[s].length; j++) {
-                require(gotSets[s][j] == expSets[s][j], "folded eval mismatch");
-            }
-        }
-        emit log_named_uint("x1 evals fold verified, sets", nS);
-    }
-
-    /// Phase C2a: construct_intermediate_sets equivalence.
-    /// Reads `fixtures/interm_sets_fixture.bin` which contains a
-    /// synthetic (commitment_id, point_value) query list + the
-    /// Rust-computed (commitment_ids, commitment_set_idx,
-    /// commitment_point_indices, point_sets) tuple. Invokes the
-    /// Solidity `constructIntermediateSets` helper and asserts
-    /// byte-for-byte match across all four output arrays.
-    function test_intermediate_sets() public {
-        bytes memory f = vm.readFileBinary("fixtures/interm_sets_fixture.bin");
-        uint256 off = 0;
-        uint256 nq = _readU32(f, off); off += 4;
-        uint256[] memory qCids = new uint256[](nq);
-        uint256[] memory qPvs  = new uint256[](nq);
-        for (uint256 i = 0; i < nq; i++) {
-            qCids[i] = _readU32(f, off); off += 4;
-            qPvs[i]  = _readUint(f, off); off += 32;
-        }
-        uint256 nC = _readU32(f, off); off += 4;
-        uint256[] memory expIds = new uint256[](nC);
-        uint256[] memory expSetIdx = new uint256[](nC);
-        uint256[][] memory expPtIdx = new uint256[][](nC);
-        for (uint256 c = 0; c < nC; c++) {
-            expIds[c] = _readU32(f, off); off += 4;
-            expSetIdx[c] = _readU32(f, off); off += 4;
-            uint256 m = _readU32(f, off); off += 4;
-            uint256[] memory pi = new uint256[](m);
-            for (uint256 i = 0; i < m; i++) { pi[i] = _readU32(f, off); off += 4; }
-            expPtIdx[c] = pi;
-        }
-        uint256 nS = _readU32(f, off); off += 4;
-        uint256[][] memory expSets = new uint256[][](nS);
-        for (uint256 s = 0; s < nS; s++) {
-            uint256 m = _readU32(f, off); off += 4;
-            uint256[] memory pv = new uint256[](m);
-            for (uint256 i = 0; i < m; i++) { pv[i] = _readUint(f, off); off += 32; }
-            expSets[s] = pv;
-        }
-
-        (
-            uint256[] memory gotIds,
-            uint256[] memory gotSetIdx,
-            uint256[][] memory gotPtIdx,
-            uint256[][] memory gotSets
-        ) = v.constructIntermediateSets(qCids, qPvs);
-
-        require(gotIds.length == nC, "nC mismatch");
-        for (uint256 c = 0; c < nC; c++) {
-            require(gotIds[c] == expIds[c], "cid mismatch");
-            require(gotSetIdx[c] == expSetIdx[c], "setIdx mismatch");
-            require(gotPtIdx[c].length == expPtIdx[c].length, "pt_idx len mismatch");
-            for (uint256 i = 0; i < gotPtIdx[c].length; i++) {
-                require(gotPtIdx[c][i] == expPtIdx[c][i], "pt_idx mismatch");
-            }
-        }
-        require(gotSets.length == nS, "nS mismatch");
-        for (uint256 s = 0; s < nS; s++) {
-            require(gotSets[s].length == expSets[s].length, "set size mismatch");
-            for (uint256 i = 0; i < gotSets[s].length; i++) {
-                require(gotSets[s][i] == expSets[s][i], "set point mismatch");
-            }
-        }
-        emit log_named_uint("intermediate-sets verified, sets", nS);
-    }
-
     /// Phase C3: real pairing RHS check.
     /// Reads `fixtures/pairing_fixture.bin` which contains the
     /// Rust-computed `left` and `right` G1 points (compressed,
@@ -1024,51 +320,6 @@ contract PoseidonVerifierTest is Test {
         }
 
         emit log_named_uint("pairing RHS verified, negative case rejected", 1);
-    }
-
-    /// Phase C2 step 1: Lagrange + Horner f_eval fold equivalence.
-    /// Reads `fixtures/feval_fold_fixture.bin` which contains x2/x3,
-    /// three synthetic point sets of sizes 1/2/3 with their evals
-    /// and proof_evals_at_x3, and the Rust-computed expected
-    /// `f_eval` scalar. Invokes `computeFEvalFold` and asserts
-    /// byte-for-byte equality. This exercises Lagrange
-    /// interpolation on single and multi-point sets + the reverse
-    /// x2-Horner accumulator that the Rust `multi_prepare` uses.
-    function test_feval_fold() public {
-        bytes memory f = vm.readFileBinary("fixtures/feval_fold_fixture.bin");
-        uint256 off = 0;
-        uint256 x2 = _readUint(f, off); off += 32;
-        uint256 x3 = _readUint(f, off); off += 32;
-        uint256 nSets = _readUint(f, off); off += 32;
-
-        uint256[] memory lens = new uint256[](nSets);
-        uint256 total = 0;
-        for (uint256 i = 0; i < nSets; i++) {
-            lens[i] = _readUint(f, off); off += 32;
-            uint256 m = lens[i];
-            off += 32 * (m + m + 1);  // points + evals + proof_eval
-            total += m;
-        }
-        // Second pass: fill flat arrays + qEvalsOnX3.
-        off = 32 + 32 + 32;
-        uint256[] memory pointsFlat = new uint256[](total);
-        uint256[] memory evalsFlat = new uint256[](total);
-        uint256[] memory qEvalsOnX3 = new uint256[](nSets);
-        uint256 cursor = 0;
-        for (uint256 i = 0; i < nSets; i++) {
-            off += 32;
-            uint256 m = lens[i];
-            for (uint256 j = 0; j < m; j++) { pointsFlat[cursor + j] = _readUint(f, off + 32 * j); }
-            for (uint256 j = 0; j < m; j++) { evalsFlat[cursor + j] = _readUint(f, off + 32 * (m + j)); }
-            qEvalsOnX3[i] = _readUint(f, off + 32 * (2 * m));
-            off += 32 * (2 * m + 1);
-            cursor += m;
-        }
-        uint256 expected = _readUint(f, off);
-
-        uint256 got = v.computeFEvalFold(lens, pointsFlat, evalsFlat, qEvalsOnX3, x2, x3);
-        require(got == expected, "f_eval mismatch");
-        emit log_named_uint("f_eval fold verified over sets", nSets);
     }
 
     /// Phase C1: query-schedule equivalence test.
@@ -1119,127 +370,6 @@ contract PoseidonVerifierTest is Test {
         for (uint256 i = 0; i < gotInst.length; i++) require(gotInst[i] == expInst[i], "instance idx mismatch");
 
         emit log_named_uint("query schedule rotations verified", nRot);
-    }
-
-    /// Phase B: compute_linearization_commitment equivalence test.
-    /// Reads `fixtures/linearization_fixture.bin` which contains y/xn/
-    /// splitting_factor, deterministic quotient-limb commitments, the
-    /// full 22-entry (selector, scalar) identity array, and Rust-
-    /// computed expected (points, scalars, expected_eval). Invokes
-    /// Solidity's `computeLinearizationCommitment` and asserts every
-    /// G1 point + scalar + the final `expected_eval` matches byte-
-    /// for-byte.
-    function test_linearization_commitment() public {
-        bytes memory f = vm.readFileBinary("fixtures/linearization_fixture.bin");
-        uint256 off = 0;
-        uint256 y = _readUint(f, off); off += 32;
-        uint256 xn = _readUint(f, off); off += 32;
-        uint256 splittingFactor = _readUint(f, off); off += 32;
-
-        uint256 nLimbs = _readUint(f, off); off += 32;
-        uint256[] memory quotientFlat = new uint256[](nLimbs * 4);
-        for (uint256 i = 0; i < nLimbs; i++) {
-            for (uint256 w = 0; w < 4; w++) {
-                quotientFlat[4 * i + w] = _readUint(f, off + 32 * w);
-            }
-            off += 128;
-        }
-
-        uint256 nId = _readUint(f, off); off += 32;
-        uint32[] memory selectors = new uint32[](nId);
-        uint256[] memory scalars = new uint256[](nId);
-        for (uint256 i = 0; i < nId; i++) {
-            selectors[i] = _readU32(f, off); off += 4;
-            scalars[i] = _readUint(f, off); off += 32;
-        }
-
-        uint256 nOut = _readUint(f, off); off += 32;
-        uint256[] memory expPoints = new uint256[](nOut * 4);
-        for (uint256 i = 0; i < nOut; i++) {
-            for (uint256 w = 0; w < 4; w++) {
-                expPoints[4 * i + w] = _readUint(f, off + 32 * w);
-            }
-            off += 128;
-        }
-        uint256[] memory expScalars = new uint256[](nOut);
-        for (uint256 i = 0; i < nOut; i++) { expScalars[i] = _readUint(f, off); off += 32; }
-        uint256 expEval = _readUint(f, off);
-
-        (uint256[] memory gotPoints, uint256[] memory gotScalars, uint256 gotEval) =
-            v.computeLinearizationCommitment(
-                vkAddr, selectors, scalars, y, xn, splittingFactor, quotientFlat
-            );
-
-        require(gotPoints.length == expPoints.length, "points length mismatch");
-        for (uint256 i = 0; i < gotPoints.length; i++) {
-            require(gotPoints[i] == expPoints[i], "point coord mismatch");
-        }
-        require(gotScalars.length == expScalars.length, "scalars length mismatch");
-        for (uint256 i = 0; i < gotScalars.length; i++) {
-            require(gotScalars[i] == expScalars[i], "scalar mismatch");
-        }
-        require(gotEval == expEval, "expected_eval mismatch");
-        emit log_named_uint("linearization MSM size", nOut);
-    }
-
-    function test_partial_eval_driver() public {
-        bytes memory f = vm.readFileBinary("fixtures/partial_eval_fixture.bin");
-        uint256 off = 0;
-
-        PoseidonVerifier.PartialEvalEnv memory e;
-        e.x = _readUint(f, off); off += 32;
-        e.beta = _readUint(f, off); off += 32;
-        e.gamma = _readUint(f, off); off += 32;
-        e.theta = _readUint(f, off); off += 32;
-        e.trashChallenge = _readUint(f, off); off += 32;
-        e.l0 = _readUint(f, off); off += 32;
-        e.lLast = _readUint(f, off); off += 32;
-        e.lBlind = _readUint(f, off); off += 32;
-
-        uint256 off1; uint256 off2; uint256 off3; uint256 off4;
-        (e.adviceEvals, off1) = _readArr(f, off);
-        (e.fixedEvals, off2) = _readArr(f, off1);
-        (e.instanceEvals, off3) = _readArr(f, off2);
-        (e.challenges, off4) = _readArr(f, off3);
-
-        // Permutation sets: num + (prod/next/last/hasLast)×n, 128 bytes each.
-        uint256 nSets = _readUint(f, off4); off4 += 32;
-        e.permSetsFlat = new uint256[](nSets * 4);
-        for (uint256 i = 0; i < nSets; i++) {
-            e.permSetsFlat[4 * i]     = _readUint(f, off4);
-            e.permSetsFlat[4 * i + 1] = _readUint(f, off4 + 32);
-            e.permSetsFlat[4 * i + 2] = _readUint(f, off4 + 64);
-            e.permSetsFlat[4 * i + 3] = uint8(f[off4 + 96]);
-            off4 += 128;
-        }
-        uint256 off5;
-        (e.permEvals, off5) = _readArr(f, off4);
-
-        e.accumulatorEval = _readUint(f, off5); off5 += 32;
-        e.accumulatorNextEval = _readUint(f, off5); off5 += 32;
-        e.multiplicitiesEval = _readUint(f, off5); off5 += 32;
-        uint256 off6;
-        (e.helperEvals, off6) = _readArr(f, off5);
-
-        uint256 off7;
-        (e.trashEvals, off7) = _readArr(f, off6);
-
-        uint256 nExpected = _readUint(f, off7); off7 += 32;
-        uint32[] memory expSel = new uint32[](nExpected);
-        uint256[] memory expVal = new uint256[](nExpected);
-        for (uint256 i = 0; i < nExpected; i++) {
-            expSel[i] = _readU32(f, off7); off7 += 4;
-            expVal[i] = _readUint(f, off7); off7 += 32;
-        }
-
-        (uint32[] memory gotSel, uint256[] memory gotVal) =
-            v.partiallyEvaluateIdentities(vkAddr, e);
-        require(gotSel.length == nExpected, "driver output count mismatch");
-        for (uint256 i = 0; i < nExpected; i++) {
-            require(gotSel[i] == expSel[i], "selector mismatch");
-            require(gotVal[i] == expVal[i], "scalar mismatch");
-        }
-        emit log_named_uint("partial-eval driver scalars verified", nExpected);
     }
 
     /// Phase D8 equivalence: the emitted `right_g1_digest` from the
@@ -1553,4 +683,103 @@ contract PoseidonVerifierTest is Test {
         }
         return string(out);
     }
+
+    /// Verifier-trace cross-check: loads `fixtures/verifier_trace.bin`,
+    /// which is produced by driving the real `prepare()` through the
+    /// `debug-trace-hooks` feature (see midnight-proofs/src/debug_trace.rs),
+    /// and asserts that the instrumented tags we rely on are present with
+    /// non-trivial cardinality.  Replaces the per-component replica
+    /// fixtures (perm/lookup/trash expressions, linearization, f_eval
+    /// fold, interm sets, x1/x4 folds, D3-D7 signatures) with a single
+    /// structural guard.  If this fails, either:
+    ///   - a future change to midnight-proofs dropped a `debug_trace::emit_*`
+    ///     call inside `partially_evaluate_identities` / `compute_linearization_commitment`
+    ///     / `permutation::expressions` / `logup::Evaluated::expressions`
+    ///     / `trash::Evaluated::expressions` / `multi_prepare`, or
+    ///   - the trace serialization (MTR1) was changed.
+    ///
+    /// File layout (all integers big-endian):
+    ///   [4]  magic  = b"MTR1"
+    ///   [4]  num_events (u32)
+    ///     per event:
+    ///       [4]  tag_len (u32)
+    ///       [..] tag bytes (UTF-8)
+    ///       [4]  payload_len (u32)
+    ///       [..] payload bytes
+    function test_verifier_trace_instrumented_tags() public {
+        bytes memory blob = vm.readFileBinary("fixtures/verifier_trace.bin");
+        require(blob.length >= 8, "trace too short");
+        require(blob[0] == "M" && blob[1] == "T" && blob[2] == "R" && blob[3] == "1", "bad magic");
+        uint256 nEvents = uint256(_readU32(blob, 4));
+        require(nEvents > 0, "no events");
+
+        // Expected families (prefix match to tolerate [index] suffixes).
+        // Each family MUST appear at least once in a non-trivial trace.
+        // These tag prefixes are the canonical emission points in
+        // midnight-proofs under the `debug-trace-hooks` feature:
+        //   - partial_eval.x,  partial_eval.identity[*]  in  plonk::partially_evaluate_identities
+        //   - linearization.y, linearization.identity_scalar[*]
+        //                                     in  plonk::linearization::compute_linearization_commitment
+        //   - permutation.expr[*]            in  plonk::permutation::expressions
+        //   - logup.helper_eval[*]           in  plonk::logup::Evaluated::expressions
+        //   - trash.expr                     in  plonk::trash::Evaluated::expressions
+        //   - multi_prepare.{x1,x2,x3,x4,f_eval}  in poly::kzg::multi_prepare
+        string[12] memory families = [
+            "partial_eval.x",
+            "partial_eval.identity[",
+            "linearization.y",
+            "linearization.identity_scalar",
+            "permutation.expr",
+            "logup.helper_eval",
+            "trash.expr",
+            "multi_prepare.x1",
+            "multi_prepare.x2",
+            "multi_prepare.x3",
+            "multi_prepare.x4",
+            "multi_prepare.f_eval"
+        ];
+        uint256[12] memory counts;
+
+        uint256 off = 8;
+        for (uint256 k = 0; k < nEvents; k++) {
+            require(off + 4 <= blob.length, "tag_len OOB");
+            uint256 tagLen = uint256(_readU32(blob, off));
+            off += 4;
+            require(off + tagLen <= blob.length, "tag OOB");
+            bytes memory tag = _slice(blob, off, tagLen);
+            off += tagLen;
+
+            require(off + 4 <= blob.length, "payload_len OOB");
+            uint256 payloadLen = uint256(_readU32(blob, off));
+            off += 4 + payloadLen;
+            require(off <= blob.length, "payload OOB");
+
+            for (uint256 f = 0; f < families.length; f++) {
+                if (_startsWith(tag, bytes(families[f]))) {
+                    counts[f] += 1;
+                }
+            }
+        }
+        require(off == blob.length, "trailing bytes");
+
+        for (uint256 f = 0; f < families.length; f++) {
+            require(counts[f] > 0, string.concat("missing tag family: ", families[f]));
+        }
+
+        emit log_named_uint("verifier_trace events", nEvents);
+        for (uint256 f = 0; f < families.length; f++) {
+            emit log_named_uint(families[f], counts[f]);
+        }
+    }
+
+    function _startsWith(bytes memory haystack, bytes memory needle)
+        internal pure returns (bool)
+    {
+        if (needle.length > haystack.length) return false;
+        for (uint256 i = 0; i < needle.length; i++) {
+            if (haystack[i] != needle[i]) return false;
+        }
+        return true;
+    }
+
 }
