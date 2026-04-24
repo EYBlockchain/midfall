@@ -1042,6 +1042,155 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Transcript eval collection (Phase D2)                             *
+     *                                                                    *
+     *  Extracts the scalar-reads from the \`verify\` transcript walk into *
+     *  a typed \`EvalArrays\` struct so Phase D3 can marshal them into a *
+     *  \`PartialEvalEnv\` + call the already-landed algebraic-identity  *
+     *  pipeline. Preserves all \`TraceReadScalar\` emissions so the     *
+     *  existing per-scalar trace harness still works; adds a new        *
+     *  \`evals_signature\` \`TraceIntermediate\` event emitting \`Σ i·v_i\`*
+     *  over the flat read order for positional end-to-end validation.   *
+     * ------------------------------------------------------------------ */
+
+    struct EvalArrays {
+        uint256[] committedInstanceEvals;       // len = numCommittedInstanceEvals
+        uint256[] adviceEvals;                  // len = numAdviceQueries
+        uint256[] fixedEvals;                   // len = numFixedQueries
+        uint256[] permCommonEvals;              // len = numPermColumns
+        uint256[] permChunkCurEvals;            // len = numPermChunks
+        uint256[] permChunkNextEvals;           // len = numPermChunks
+        uint256[] permChunkLastEvals;           // len = numPermChunks - 1
+        uint256[] lookupEvalsFlat;              // len = totalLookupHelpers + 3*numLookups
+        uint256[] trashcanEvals;                // len = numTrashcans
+    }
+
+    function _allocEvalArrays(Vk memory vk) internal pure returns (EvalArrays memory ea) {
+        ea.committedInstanceEvals = new uint256[](vk.numCommittedInstanceEvals);
+        ea.adviceEvals            = new uint256[](vk.numAdviceQueries);
+        ea.fixedEvals             = new uint256[](vk.numFixedQueries);
+        ea.permCommonEvals        = new uint256[](vk.numPermColumns);
+        ea.permChunkCurEvals      = new uint256[](vk.numPermChunks);
+        ea.permChunkNextEvals     = new uint256[](vk.numPermChunks);
+        ea.permChunkLastEvals     = new uint256[](vk.numPermChunks == 0 ? 0 : vk.numPermChunks - 1);
+        ea.lookupEvalsFlat        = new uint256[](uint256(vk.totalLookupHelpers) + uint256(vk.numLookups) * 3);
+        ea.trashcanEvals          = new uint256[](vk.numTrashcans);
+    }
+
+    /// Mirror of the inline eval-read block, but populates `ea` in
+    /// parallel with the existing TraceReadScalar emissions + absorbs.
+    function _readEvals(
+        Reader memory rd,
+        Transcript memory t,
+        Vk memory vk,
+        EvalArrays memory ea
+    ) internal {
+        for (uint256 i = 0; i < vk.numCommittedInstanceEvals; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.committedInstanceEvals[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("committed_instance_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+        for (uint256 i = 0; i < vk.numAdviceQueries; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.adviceEvals[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("advice_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+        for (uint256 i = 0; i < vk.numFixedQueries; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.fixedEvals[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("fixed_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+        for (uint256 i = 0; i < vk.numPermColumns; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.permCommonEvals[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("perm_common_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+        _readPermChunkEvals(rd, t, vk, ea);
+        _readLookupAndTrashEvals(rd, t, vk, ea);
+    }
+
+    function _readPermChunkEvals(
+        Reader memory rd,
+        Transcript memory t,
+        Vk memory vk,
+        EvalArrays memory ea
+    ) internal {
+        for (uint256 i = 0; i < vk.numPermChunks; i++) {
+            bytes32 eCur = _readScalarLE32(rd);
+            ea.permChunkCurEvals[i] = uint256(_leToBe(eCur));
+            emit TraceReadScalar("perm_cur", _leToBe(eCur));
+            _absorbScalar(t, eCur);
+            bytes32 eNxt = _readScalarLE32(rd);
+            ea.permChunkNextEvals[i] = uint256(_leToBe(eNxt));
+            emit TraceReadScalar("perm_next", _leToBe(eNxt));
+            _absorbScalar(t, eNxt);
+            if (i + 1 != vk.numPermChunks) {
+                bytes32 eLst = _readScalarLE32(rd);
+                ea.permChunkLastEvals[i] = uint256(_leToBe(eLst));
+                emit TraceReadScalar("perm_last", _leToBe(eLst));
+                _absorbScalar(t, eLst);
+            }
+        }
+    }
+
+    function _readLookupAndTrashEvals(
+        Reader memory rd,
+        Transcript memory t,
+        Vk memory vk,
+        EvalArrays memory ea
+    ) internal {
+        uint256 totalLookupEvals =
+            uint256(vk.totalLookupHelpers) + uint256(vk.numLookups) * 3;
+        for (uint256 i = 0; i < totalLookupEvals; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.lookupEvalsFlat[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("lookup_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+        for (uint256 i = 0; i < vk.numTrashcans; i++) {
+            bytes32 e = _readScalarLE32(rd);
+            ea.trashcanEvals[i] = uint256(_leToBe(e));
+            emit TraceReadScalar("trash_eval", _leToBe(e));
+            _absorbScalar(t, e);
+        }
+    }
+
+    /// Positional signature: Σ i · eval_i (mod FR) over the flat
+    /// eval sequence in transcript read order. Catches both
+    /// value-level regressions and ordering regressions.
+    function _evalsSignature(EvalArrays memory ea) internal pure returns (uint256 sig) {
+        uint256 idx = 0;
+        sig = 0;
+        sig = _addWithIdx(sig, ea.committedInstanceEvals, idx); idx += ea.committedInstanceEvals.length;
+        sig = _addWithIdx(sig, ea.adviceEvals, idx);            idx += ea.adviceEvals.length;
+        sig = _addWithIdx(sig, ea.fixedEvals, idx);             idx += ea.fixedEvals.length;
+        sig = _addWithIdx(sig, ea.permCommonEvals, idx);        idx += ea.permCommonEvals.length;
+        // Interleave cur/next/last per chunk to match transcript order.
+        for (uint256 i = 0; i < ea.permChunkCurEvals.length; i++) {
+            sig = addmod(sig, mulmod(idx, ea.permChunkCurEvals[i], FR_MODULUS), FR_MODULUS); idx++;
+            sig = addmod(sig, mulmod(idx, ea.permChunkNextEvals[i], FR_MODULUS), FR_MODULUS); idx++;
+            if (i < ea.permChunkLastEvals.length) {
+                sig = addmod(sig, mulmod(idx, ea.permChunkLastEvals[i], FR_MODULUS), FR_MODULUS); idx++;
+            }
+        }
+        sig = _addWithIdx(sig, ea.lookupEvalsFlat, idx); idx += ea.lookupEvalsFlat.length;
+        sig = _addWithIdx(sig, ea.trashcanEvals, idx);
+    }
+
+    function _addWithIdx(uint256 acc, uint256[] memory arr, uint256 startIdx)
+        internal pure returns (uint256)
+    {
+        for (uint256 i = 0; i < arr.length; i++) {
+            acc = addmod(acc, mulmod(startIdx + i, arr[i], FR_MODULUS), FR_MODULUS);
+        }
+        return acc;
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Lagrange aux evaluations l_0, l_last, l_blind (Phase D1)          *
      *                                                                    *
      *  Ports the three Lagrange basis evaluations at the random point x *
@@ -2399,62 +2548,26 @@ contract PoseidonVerifier {
         // column), advice_evals, fixed_evals (minus simple selectors),
         // permutation common evals, permutation set evals
         // (cur/next/last), lookup evals, trashcan evals.
+        //
+        // Phase D2: in addition to absorbing + tracing each scalar
+        // (preserved behaviour), we now collect evals into typed
+        // memory arrays so Phase D3 can marshal them into a
+        // \`PartialEvalEnv\` + drive the algebraic-identity pipeline.
         gStart = gasleft();
-        for (uint256 i = 0; i < vk.numCommittedInstanceEvals; i++) {
-            bytes32 e = _readScalarLE32(rd);
-            emit TraceReadScalar("committed_instance_eval", _leToBe(e));
-            _absorbScalar(t, e);
-        }
-        for (uint256 i = 0; i < vk.numAdviceQueries; i++) {
-            bytes32 e = _readScalarLE32(rd);
-            emit TraceReadScalar("advice_eval", _leToBe(e));
-            _absorbScalar(t, e);
-        }
-        for (uint256 i = 0; i < vk.numFixedQueries; i++) {
-            bytes32 e = _readScalarLE32(rd);
-            emit TraceReadScalar("fixed_eval", _leToBe(e));
-            _absorbScalar(t, e);
-        }
-        for (uint256 i = 0; i < vk.numPermColumns; i++) {
-            bytes32 e = _readScalarLE32(rd);
-            emit TraceReadScalar("perm_common_eval", _leToBe(e));
-            _absorbScalar(t, e);
-        }
-        // Per permutation chunk: (cur, next, and last if not the last chunk).
-        for (uint256 i = 0; i < vk.numPermChunks; i++) {
-            bytes32 eCur = _readScalarLE32(rd);  emit TraceReadScalar("perm_cur", _leToBe(eCur));
-            _absorbScalar(t, eCur);
-            bytes32 eNxt = _readScalarLE32(rd);  emit TraceReadScalar("perm_next", _leToBe(eNxt));
-            _absorbScalar(t, eNxt);
-            if (i + 1 != vk.numPermChunks) {
-                bytes32 eLst = _readScalarLE32(rd);
-                emit TraceReadScalar("perm_last", _leToBe(eLst));
-                _absorbScalar(t, eLst);
-            }
-        }
-        // Lookup evals: for each lookup, read:
-        //   - m_eval                    (1)
-        //   - helper_evals[num_chunks]  (num_chunks)
-        //   - accumulator_eval          (1)
-        //   - accumulator_next_eval     (1)
-        // Total = sum(num_chunks) + 3 * num_lookups.
-        {
-            uint256 totalEvals =
-                uint256(vk.totalLookupHelpers) + uint256(vk.numLookups) * 3;
-            for (uint256 i = 0; i < totalEvals; i++) {
-                bytes32 e = _readScalarLE32(rd);
-                emit TraceReadScalar("lookup_eval", _leToBe(e));
-                _absorbScalar(t, e);
-            }
-        }
-        // Trashcan evals: per trashcan, 1 value.
-        for (uint256 i = 0; i < vk.numTrashcans; i++) {
-            bytes32 e = _readScalarLE32(rd);
-            emit TraceReadScalar("trash_eval", _leToBe(e));
-            _absorbScalar(t, e);
-        }
+        EvalArrays memory ea = _allocEvalArrays(vk);
+        _readEvals(rd, t, vk, ea);
         gEnd = gasleft();
         emit PhaseGas("evaluations", gStart - gEnd);
+
+        // Emit a positional signature of the collected evals so the
+        // equivalence test can pin the read-order + value-correctness
+        // without needing to parse every TraceReadScalar event. The
+        // signature is \`Σ i · eval_i\` (all reduced mod FR_MODULUS)
+        // over the flat eval sequence in transcript read order.
+        {
+            uint256 sig = _evalsSignature(ea);
+            emit TraceIntermediate("evals_signature", bytes32(sig));
+        }
 
         /* --- KZG multi-open (multi_prepare) ----------------------- */
         //   let x1: Fr = transcript.squeeze_challenge();

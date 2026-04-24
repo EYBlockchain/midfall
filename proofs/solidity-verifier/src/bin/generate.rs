@@ -1717,6 +1717,114 @@ fn main() {
             n_d,
             bf,
         );
+
+        // Phase D2: transcript-evals signature fixture.
+        //
+        // Re-parses the real poseidon proof's transcript in the
+        // same eval-read order as verify() and dumps:
+        //   - the total eval count (nEvals)
+        //   - the positional signature Σ i · eval_i mod FR_MODULUS
+        // over the flat read sequence.
+        //
+        // File layout (all 32B BE unless noted):
+        //   [32] num_evals
+        //   [32] signature
+        let mut trans = CircuitTranscript::<sha3::Keccak256>::init_from_bytes(&fx.proof);
+
+        // Absorb vk.transcript_repr + instance (matches verify()).
+        let repr: Fq = fx.vk.vk().transcript_repr();
+        trans.common(&repr).unwrap();
+        // committed instance identity placeholder.
+        let committed_proj: G1Projective = G1Projective::identity();
+        trans.common(&committed_proj).unwrap();
+        // instance length + instance value.
+        trans.common(&Fq::from(1u64)).unwrap();
+        trans.common(&fx.instance).unwrap();
+
+        // Phase reads: advice commitments, challenges, lookup_mult,
+        // perm products, lookup, trashcans, quotient limbs. These
+        // don't feed into the eval signature (they're G1 commitments
+        // + challenges), so we just advance the transcript.
+        for _ in 0..vk_info.num_advice_columns {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        for _ in 0..vk_info.num_challenges {
+            let _: Fq = trans.squeeze_challenge();
+        }
+        let _theta: Fq = trans.squeeze_challenge();
+        for _ in 0..vk_info.num_lookups {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        let _beta: Fq  = trans.squeeze_challenge();
+        let _gamma: Fq = trans.squeeze_challenge();
+        for _ in 0..vk_info.num_permutation_chunks {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        let total_lookup_helpers: usize = vk_info.lookup_num_chunks.iter().sum();
+        let total_lookup_commits = total_lookup_helpers + vk_info.num_lookups;
+        for _ in 0..total_lookup_commits {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        let _trash_challenge: Fq = trans.squeeze_challenge();
+        for _ in 0..vk_info.num_trashcans {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        let _y: Fq = trans.squeeze_challenge();
+        for _ in 0..vk_info.num_quotient_limbs {
+            let _: G1Projective = trans.read().unwrap();
+        }
+        let _x: Fq = trans.squeeze_challenge();
+
+        // Eval reads — collect in the exact order verify() does.
+        let mut evals_flat: Vec<Fq> = Vec::new();
+        for _ in 0..vk_info.num_committed_instance_evals {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+        for _ in 0..vk_info.num_advice_queries {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+        for _ in 0..vk_info.num_fixed_queries {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+        for _ in 0..vk_info.num_permutation_columns {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+        for i in 0..vk_info.num_permutation_chunks {
+            let e_cur: Fq  = trans.read().unwrap(); evals_flat.push(e_cur);
+            let e_next: Fq = trans.read().unwrap(); evals_flat.push(e_next);
+            if i + 1 != vk_info.num_permutation_chunks {
+                let e_last: Fq = trans.read().unwrap(); evals_flat.push(e_last);
+            }
+        }
+        let total_lookup_evals = total_lookup_helpers + vk_info.num_lookups * 3;
+        for _ in 0..total_lookup_evals {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+        for _ in 0..vk_info.num_trashcans {
+            let e: Fq = trans.read().unwrap();
+            evals_flat.push(e);
+        }
+
+        let mut sig = Fq::ZERO;
+        for (i, e) in evals_flat.iter().enumerate() {
+            sig += Fq::from(i as u64) * e;
+        }
+
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(&[0u8; 24]);
+        blob.extend_from_slice(&(evals_flat.len() as u64).to_be_bytes());
+        blob.extend_from_slice(&fq_to_be(&sig));
+        fs::write(fixtures.join("evals_signature_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      evals-signature fixture written ({} bytes, {} evals)",
+            blob.len(),
+            evals_flat.len(),
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

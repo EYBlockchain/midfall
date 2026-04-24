@@ -500,6 +500,58 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D2: transcript-eval collection signature.
+    /// Runs `verify()` on the real poseidon proof. `verify()` now
+    /// emits a `TraceIntermediate("evals_signature", sig)` event
+    /// where `sig = Σ i · eval_i` over the flat transcript-read
+    /// eval sequence in verify order. The Rust-side fixture
+    /// (`evals_signature_fixture.bin`) replays the same transcript
+    /// via `CircuitTranscript<Keccak256>` and dumps the expected
+    /// count + signature. This test re-records the logs from the
+    /// verify() call, finds the evals_signature event, and asserts
+    /// the Solidity-side signature matches Rust byte-for-byte.
+    ///
+    /// Validates that verify()'s scalar-read loop populates the new
+    /// `EvalArrays` memory struct correctly in both count and
+    /// read-order, without requiring the strict pairing check to
+    /// pass (which is still placeholder-gated until Phase D3-D8).
+    function test_evals_signature() public {
+        bytes memory f = vm.readFileBinary("fixtures/evals_signature_fixture.bin");
+        uint256 expCount = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool /*ok*/) {
+            // We don't require verify() to return true; the strict
+            // soundness test is separately tracked by
+            // test_verify_poseidon_proof.
+        } catch {
+            // Same tolerance as above — the pairing placeholder may
+            // revert on decompression of the placeholder π input.
+        }
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) = abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("evals_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "evals_signature event not emitted");
+        require(gotSig == expSig, "evals_signature mismatch");
+        emit log_named_uint("evals_signature verified, total evals", expCount);
+    }
+
     /// Phase D1: Lagrange-aux helper (l_0, l_last, l_blind).
     /// Reads `fixtures/lagrange_aux_fixture.bin` which contains
     /// the deterministic x + the real poseidon circuit's n, omega,
