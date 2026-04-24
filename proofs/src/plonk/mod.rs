@@ -511,7 +511,31 @@ where
     let l_blind: F =
         l_evals[1..(1 + blinding_factors)].iter().fold(F::ZERO, |acc, eval| acc + eval);
     let l_0 = l_evals[1 + blinding_factors];
-    advice_evals
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_usize};
+        emit_usize("partial_eval.blinding_factors", blinding_factors);
+        emit_scalar("partial_eval.x", &x);
+        emit_scalar("partial_eval.xn", &xn);
+        emit_scalar("partial_eval.beta", &beta);
+        emit_scalar("partial_eval.gamma", &gamma);
+        emit_scalar("partial_eval.theta", &theta);
+        emit_scalar("partial_eval.trash_challenge", &trash_challenge);
+        emit_scalar("partial_eval.l_0", &l_0);
+        emit_scalar("partial_eval.l_last", &l_last);
+        emit_scalar("partial_eval.l_blind", &l_blind);
+        emit_usize("partial_eval.num_fixed_evals", fixed_evals.len());
+        for (i, v) in fixed_evals.iter().enumerate() {
+            emit_scalar(&format!("partial_eval.fixed[{i}]"), v);
+        }
+        emit_usize("partial_eval.num_challenges", challenges.len());
+        for (i, v) in challenges.iter().enumerate() {
+            emit_scalar(&format!("partial_eval.challenge[{i}]"), v);
+        }
+    }
+
+    let identities = advice_evals
         .iter()
         .zip(instance_evals)
         .zip(permutation_evals)
@@ -602,5 +626,22 @@ where
                     )
             },
         )
-        .collect::<Vec<(Option<usize>, F)>>()
+        .collect::<Vec<(Option<usize>, F)>>();
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_u64, emit_usize};
+        emit_usize("partial_eval.num_identities", identities.len());
+        for (i, (sel, v)) in identities.iter().enumerate() {
+            // Encode None as 0xFFFFFFFF, matching existing fixture convention.
+            let sel_as_u64 = match sel {
+                Some(idx) => *idx as u64,
+                None => 0xFFFFFFFFu64,
+            };
+            emit_u64(&format!("partial_eval.identity[{i}].selector"), sel_as_u64);
+            emit_scalar(&format!("partial_eval.identity[{i}].scalar"), v);
+        }
+    }
+
+    identities
 }

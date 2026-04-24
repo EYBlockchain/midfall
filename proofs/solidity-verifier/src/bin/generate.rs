@@ -1299,6 +1299,13 @@ fn main() {
                 qi, col.index(), rot.0
             );
         }
+
+        // Enable the midnight-proofs debug-trace recorder so that every
+        // instrumented emission point (`partial_eval.*`, `linearization.*`,
+        // `permutation.*`, `logup.*`, `trash.*`, `multi_prepare.*`) pushes
+        // into a thread-local event buffer. This replaces the per-algorithm
+        // replica fixtures with values sourced from the *real* verifier.
+        midnight_proofs::debug_trace::start();
         let dual_msm = prepare::<
             Fq,
             KZGCommitmentScheme<midnight_curves::Bls12>,
@@ -1310,6 +1317,76 @@ fn main() {
             &mut transcript,
         )
         .expect("prepare");
+        let trace_events = midnight_proofs::debug_trace::stop();
+        eprintln!(
+            "      debug-trace captured {} events during prepare()",
+            trace_events.len(),
+        );
+
+        // Serialize the captured events into `fixtures/verifier_trace.bin`.
+        //
+        // File layout (all integers are big-endian):
+        //   [4]  magic  = b"MTR1"        (Midnight TRace v1)
+        //   [4]  num_events (u32)
+        //     per event:
+        //       [4]  tag_len (u32)
+        //       [..] tag bytes (UTF-8, not NUL-terminated)
+        //       [4]  payload_len (u32)
+        //       [..] payload bytes (scalar: 32 BE; u64: 8 BE; i32: 4 BE)
+        //
+        // Scalars are encoded as canonical 32-byte big-endian (mirrors
+        // `fq_to_be`). Unknown future emission types are opaque to the
+        // Solidity consumer and can be skipped by reading
+        // `payload_len` bytes.
+        {
+            let mut blob: Vec<u8> = Vec::new();
+            blob.extend_from_slice(b"MTR1");
+            blob.extend_from_slice(&(trace_events.len() as u32).to_be_bytes());
+            for ev in &trace_events {
+                let tag = ev.tag.as_bytes();
+                blob.extend_from_slice(&(tag.len() as u32).to_be_bytes());
+                blob.extend_from_slice(tag);
+                blob.extend_from_slice(&(ev.payload.len() as u32).to_be_bytes());
+                blob.extend_from_slice(&ev.payload);
+            }
+            fs::write(fixtures.join("verifier_trace.bin"), &blob).unwrap();
+            eprintln!(
+                "      verifier_trace fixture written ({} bytes, {} events)",
+                blob.len(),
+                trace_events.len(),
+            );
+            // Emit a small histogram of emission sites so the operator can
+            // eyeball coverage without loading the fixture.
+            let mut tag_counts: std::collections::BTreeMap<&str, usize> =
+                std::collections::BTreeMap::new();
+            for ev in &trace_events {
+                // Collapse bracketed indices so, e.g.,
+                //   "partial_eval.identity[0].scalar"
+                //   "partial_eval.identity[1].scalar"
+                // both bucket under "partial_eval.identity[*].scalar".
+                let mut out = String::with_capacity(ev.tag.len());
+                let mut in_br = false;
+                for c in ev.tag.chars() {
+                    if c == '[' {
+                        in_br = true;
+                        out.push('[');
+                        out.push('*');
+                    } else if c == ']' {
+                        in_br = false;
+                        out.push(']');
+                    } else if !in_br {
+                        out.push(c);
+                    }
+                }
+                *tag_counts
+                    .entry(Box::leak(out.into_boxed_str()))
+                    .or_insert(0) += 1;
+            }
+            eprintln!("      debug-trace coverage by tag:");
+            for (tag, n) in tag_counts.iter() {
+                eprintln!("        {:<45} × {}", tag, n);
+            }
+        }
 
         let (left_terms, right_terms) = dual_msm.split();
         let mut left_eval: G1Projective = G1Projective::identity();

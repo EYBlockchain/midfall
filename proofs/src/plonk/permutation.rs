@@ -200,7 +200,38 @@ pub(in crate::plonk) fn expressions<'a, F: PrimeField, CS: PolynomialCommitmentS
     x: F,
 ) -> impl Iterator<Item = F> + 'a {
     let chunk_len = vk.cs_degree - 2;
-    iter::empty()
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_usize};
+        emit_usize("permutation.num_sets", sets.len());
+        emit_usize("permutation.chunk_len", chunk_len);
+        emit_usize("permutation.num_columns", p.columns.len());
+        emit_scalar("permutation.beta", &beta);
+        emit_scalar("permutation.gamma", &gamma);
+        emit_scalar("permutation.x", &x);
+        emit_scalar("permutation.l_0", &l_0);
+        emit_scalar("permutation.l_last", &l_last);
+        emit_scalar("permutation.l_blind", &l_blind);
+        for (i, s) in sets.iter().enumerate() {
+            emit_scalar(
+                &format!("permutation.set[{i}].prod"),
+                &s.permutation_product_eval,
+            );
+            emit_scalar(
+                &format!("permutation.set[{i}].next"),
+                &s.permutation_product_next_eval,
+            );
+            if let Some(last) = s.permutation_product_last_eval {
+                emit_scalar(&format!("permutation.set[{i}].last"), &last);
+            }
+        }
+        for (i, v) in common.permutation_evals.iter().enumerate() {
+            emit_scalar(&format!("permutation.common_eval[{i}]"), v);
+        }
+    }
+
+    let out: Vec<F> = iter::empty::<F>()
         // Enforce only for the first set.
         // l_0(X) * (1 - z_0(X)) = 0
         .chain(
@@ -225,7 +256,7 @@ pub(in crate::plonk) fn expressions<'a, F: PrimeField, CS: PolynomialCommitmentS
                         last_set.permutation_product_last_eval.unwrap(),
                     )
                 })
-                .map(move |(set, prev_last)| (set - &prev_last) * &l_0),
+                .map(|(set, prev_last)| (set - &prev_last) * &l_0),
         )
         // And for all the sets we enforce:
         // (1 - (l_last(X) + l_blind(X))) * (
@@ -237,7 +268,7 @@ pub(in crate::plonk) fn expressions<'a, F: PrimeField, CS: PolynomialCommitmentS
                 .zip(p.columns.chunks(chunk_len))
                 .zip(common.permutation_evals.chunks(chunk_len))
                 .enumerate()
-                .map(move |(chunk_index, ((set, columns), permutation_evals))| {
+                .map(|(chunk_index, ((set, columns), permutation_evals))| {
                     let mut left = set.permutation_product_next_eval;
                     for (eval, permutation_eval) in columns
                         .iter()
@@ -279,4 +310,16 @@ pub(in crate::plonk) fn expressions<'a, F: PrimeField, CS: PolynomialCommitmentS
                     (left - &right) * (F::ONE - &(l_last + &l_blind))
                 }),
         )
+        .collect();
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_usize};
+        emit_usize("permutation.num_expressions", out.len());
+        for (i, v) in out.iter().enumerate() {
+            emit_scalar(&format!("permutation.expr[{i}]"), v);
+        }
+    }
+
+    out.into_iter()
 }

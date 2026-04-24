@@ -6,7 +6,7 @@ license = "MIT OR Apache-2.0"
 description = "Solidity port of the midnight-proofs PLONK verifier (specialized for zk_stdlib/examples/poseidon), using EIP-2537 BLS12-381 precompiles and Keccak256 Fiat-Shamir transcript"
 
 [dependencies]
-midnight-proofs = { path = "..", features = ["keccak-transcript", "committed-instances"] }
+midnight-proofs = { path = "..", features = ["keccak-transcript", "committed-instances", "debug-trace-hooks"] }
 midnight-zk-stdlib = { path = "../../zk_stdlib" }
 midnight-circuits = { path = "../../circuits", features = ["testing"] }
 midnight-curves = { version = "0.2.0" }

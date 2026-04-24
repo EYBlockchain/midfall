@@ -262,7 +262,27 @@ where
         let x1: E::Fr = transcript.squeeze_challenge();
         let x2: E::Fr = transcript.squeeze_challenge();
 
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::{emit_scalar, emit_usize};
+            emit_usize("multi_prepare.num_queries", queries.len());
+            emit_scalar("multi_prepare.x1", &x1);
+            emit_scalar("multi_prepare.x2", &x2);
+        }
+
         let (commitment_map, point_sets) = construct_intermediate_sets(queries)?;
+
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::{emit_scalar, emit_usize};
+            emit_usize("multi_prepare.num_point_sets", point_sets.len());
+            for (s, set) in point_sets.iter().enumerate() {
+                emit_usize(&format!("multi_prepare.point_set[{s}].size"), set.len());
+                for (j, p) in set.iter().enumerate() {
+                    emit_scalar(&format!("multi_prepare.point_set[{s}][{j}]"), p);
+                }
+            }
+        }
 
         let mut q_coms: Vec<_> = vec![vec![]; point_sets.len()];
         let mut q_eval_sets = vec![vec![]; point_sets.len()];
@@ -325,9 +345,24 @@ where
         #[cfg(feature = "truncated-challenges")]
         let x3 = truncate(x3);
 
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::emit_scalar;
+            emit_scalar("multi_prepare.x3", &x3);
+        }
+
         let mut q_evals_on_x3 = Vec::<E::Fr>::with_capacity(q_eval_sets.len());
         for _ in 0..q_eval_sets.len() {
             q_evals_on_x3.push(transcript.read().map_err(|_| Error::SamplingError)?);
+        }
+
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::{emit_scalar, emit_usize};
+            emit_usize("multi_prepare.num_q_evals_on_x3", q_evals_on_x3.len());
+            for (i, e) in q_evals_on_x3.iter().enumerate() {
+                emit_scalar(&format!("multi_prepare.q_eval_on_x3[{i}]"), e);
+            }
         }
 
         // We can compute the expected msm_eval at x_3 using the u provided
@@ -345,7 +380,19 @@ where
                 },
             );
 
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::emit_scalar;
+            emit_scalar("multi_prepare.f_eval", &f_eval);
+        }
+
         let x4: E::Fr = transcript.squeeze_challenge();
+
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::emit_scalar;
+            emit_scalar("multi_prepare.x4", &x4);
+        }
 
         let final_com = {
             let size = q_coms.len() + 1;
@@ -382,6 +429,12 @@ where
             inner_product(&evals, powers)
         };
 
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::emit_scalar;
+            emit_scalar("multi_prepare.v", &v);
+        }
+
         let pi: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
 
         let mut pi_msm = MSMKZG::<E>::init();
@@ -403,6 +456,21 @@ where
             right: final_com,
         };
         msm_accumulator.right.add_msm(&scaled_pi);
+
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::{emit_scalar, emit_usize};
+            emit_scalar("multi_prepare.pi_scalar", &x3);
+            emit_scalar("multi_prepare.g_scalar", &(-v));
+            emit_usize(
+                "multi_prepare.final_right_len",
+                msm_accumulator.right.scalars.len(),
+            );
+            emit_usize(
+                "multi_prepare.final_left_len",
+                msm_accumulator.left.scalars.len(),
+            );
+        }
 
         Ok(msm_accumulator)
     }

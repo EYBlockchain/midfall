@@ -9,6 +9,7 @@
 #![deny(unsafe_code)]
 
 pub mod circuit;
+pub mod debug_trace;
 pub mod plonk;
 pub mod poly;
 pub mod transcript;

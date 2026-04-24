@@ -62,11 +62,33 @@ pub(crate) fn compute_linearization_commitment<
 
     identities_points.extend(quotient_limb_commitments);
 
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_usize};
+        emit_scalar("linearization.y", y);
+        emit_scalar("linearization.x", &x);
+        emit_scalar("linearization.xn", xn);
+        emit_scalar("linearization.splitting_factor", splitting_factor);
+        emit_usize(
+            "linearization.num_quotient_limbs",
+            quotient_limb_commitments.len(),
+        );
+    }
+
     let mut splitting_pow = F::ONE - *xn;
     for _ in 0..quotient_limb_commitments.len() {
         identities_scalars.push(splitting_pow);
         identities_labels.push(CommitmentLabel::NoLabel);
         splitting_pow *= splitting_factor;
+    }
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::emit_scalar;
+        // Emit the quotient-limb scalars (the pre-grouping part of the MSM).
+        for (i, s) in identities_scalars.iter().enumerate() {
+            emit_scalar(&format!("linearization.quotient_limb_scalar[{i}]"), s);
+        }
     }
 
     // Group multiples of the same point in the MSM
@@ -92,6 +114,34 @@ pub(crate) fn compute_linearization_commitment<
             }
         }
     });
+
+    #[cfg(feature = "debug-trace-hooks")]
+    if crate::debug_trace::is_enabled() {
+        use crate::debug_trace::{emit_scalar, emit_u64, emit_usize};
+        emit_usize(
+            "linearization.num_identities_after_group",
+            identities_points.len(),
+        );
+        // Emit all grouped identity scalars (includes quotient-limb
+        // prefix emitted above; duplicate payload is intentional so
+        // consumers don't need to splice two slices together).
+        for (i, s) in identities_scalars.iter().enumerate() {
+            emit_scalar(&format!("linearization.identity_scalar[{i}]"), s);
+        }
+        // Emit per-identity label classification as a small u64 code.
+        for (i, lbl) in identities_labels.iter().enumerate() {
+            let code: u64 = match lbl {
+                CommitmentLabel::NoLabel => 0,
+                CommitmentLabel::Fixed(idx) => 0x1_0000_0000u64 | (*idx as u64),
+                CommitmentLabel::Advice(idx) => 0x2_0000_0000u64 | (*idx as u64),
+                CommitmentLabel::Instance(idx) => 0x3_0000_0000u64 | (*idx as u64),
+                CommitmentLabel::Permutation(idx) => 0x4_0000_0000u64 | (*idx as u64),
+                CommitmentLabel::Custom(_) => 0x5_0000_0000u64,
+            };
+            emit_u64(&format!("linearization.identity_label[{i}]"), code);
+        }
+        emit_scalar("linearization.expected_eval", &expected_eval);
+    }
 
     VerifierQuery::new_linear(
         x,

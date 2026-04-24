@@ -84,6 +84,18 @@ impl<F: PrimeField> Evaluated<F> {
             .fold(F::ZERO, |acc, eval| acc * &trash_challenge + &eval);
 
         let q = evaluate_expression(argument.selector());
-        vec![compressed_expressions - (F::ONE - q) * self.trash_eval].into_iter()
+        let expr = compressed_expressions - (F::ONE - q) * self.trash_eval;
+
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::emit_scalar;
+            emit_scalar("trash.challenge", &trash_challenge);
+            emit_scalar("trash.selector", &q);
+            emit_scalar("trash.trash_eval", &self.trash_eval);
+            emit_scalar("trash.compressed", &compressed_expressions);
+            emit_scalar("trash.expr", &expr);
+        }
+
+        vec![expr].into_iter()
     }
 }

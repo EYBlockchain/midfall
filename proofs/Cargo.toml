@@ -109,5 +109,14 @@ single-h-commitment = []
 # polynomials, which may slightly increase proof size.
 fewer-point-sets = []
 
+# Enables thread-local recording of intermediate values computed inside the
+# PLONK verifier (`prepare`, `partially_evaluate_identities`,
+# `compute_linearization_commitment`, `permutation::expressions`,
+# `logup::Evaluated::expressions`, `trash::Evaluated::expressions`,
+# `multi_prepare`). When disabled, all emit sites compile to no-ops.
+# Callers drive recording via [`debug_trace::start`] / [`debug_trace::stop`].
+# Intended for cross-verifier fixture generation, not for production use.
+debug-trace-hooks = []
+
 [lib]
 bench = false

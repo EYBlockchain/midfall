@@ -476,6 +476,31 @@ impl<F: PrimeField> Evaluated<F> {
             diff * active_rows
         };
 
+        #[cfg(feature = "debug-trace-hooks")]
+        if crate::debug_trace::is_enabled() {
+            use crate::debug_trace::{emit_scalar, emit_usize};
+            emit_scalar("logup.theta", &theta);
+            emit_scalar("logup.beta", &beta);
+            emit_scalar("logup.l_0", &l_0);
+            emit_scalar("logup.l_last", &l_last);
+            emit_scalar("logup.l_blind", &l_blind);
+            emit_scalar("logup.accumulator_eval", &self.accumulator_eval);
+            emit_scalar("logup.accumulator_next_eval", &self.accumulator_next_eval);
+            emit_scalar("logup.multiplicities_eval", &self.multiplicities_eval);
+            emit_usize("logup.num_helpers", self.helper_evals.len());
+            for (i, h) in self.helper_evals.iter().enumerate() {
+                emit_scalar(&format!("logup.helper_eval[{i}]"), h);
+            }
+            emit_scalar("logup.boundary", &boundary);
+            emit_scalar("logup.compressed_table", &compressed_table);
+            emit_scalar("logup.selector", &selector);
+            emit_usize("logup.num_helper_constraints", helper_constraints.len());
+            for (i, hc) in helper_constraints.iter().enumerate() {
+                emit_scalar(&format!("logup.helper_constraint[{i}]"), hc);
+            }
+            emit_scalar("logup.accumulator_constraint", &accumulator_constraint);
+        }
+
         std::iter::once(boundary)
             .chain(helper_constraints)
             .chain(std::iter::once(accumulator_constraint))
