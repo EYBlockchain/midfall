@@ -332,6 +332,52 @@ forge test --match-test test_verify_poseidon_proof -vv
 Each phase prints one `  . <phase>` line and the total verification
 gas is reported as `verify() total`.
 
+#### Reading the `verify` row correctly
+
+`forge test --gas-report` aggregates min/avg/median/max over **every**
+call-site across the whole suite, which for `verify()` currently means
+18 heterogeneous calls: the valid-proof end-to-end test, the negative
+soundness test, several Phase D/E sub-pipeline drivers, and the
+8-entry adversarial matrix (§5.1, `fixtures/adversarial_fixtures.bin`).
+A typical row looks like:
+
+```
+verify | min 132k | avg 16.2M | median 11.1M | max 49.4M | 18 calls
+```
+
+The columns mean very different things:
+
+* **Median ≈ 11.1 M** — the real baseline: the cost of a single valid
+  `verify()` on the poseidon fixture. This is the number to compare
+  against the 11.25 M baseline documented in
+  [`OPTIMISATIONS.md`](./OPTIMISATIONS.md) §1 when tracking
+  regressions; the ±100 k swing around it is just calldata-length
+  variation and `try`-catch framing.
+* **Min ≈ 132 k** — the early-reject adversarial vectors
+  (`trunc_48`, `ext_17`) that trip the
+  `require(remaining >= 48 && (remaining - 48) % 32 == 0)` guard in
+  `verify()` before any precompile is touched. Paying only calldata
+  + one `require` is the whole cost.
+* **Max ≈ 49 M** — the `inst_xor1` "deep reject" vector: XOR one bit
+  into the instance. The proof bytes stay well-formed so
+  Fiat–Shamir just squeezes a **different** challenge sequence from
+  the first squeeze on. The verifier therefore walks every phase
+  (22 identity RPN evaluations, linearization MSM, `multi_prepare`,
+  and the final pairing) with internally-consistent but
+  algebraically-wrong scalars and only rejects at the final
+  `e(C − v·G + x3·π, −G2) == 1` check. That full run is deliberately
+  gas-capped at 50 M in `test_adversarial_matrix_all_rejected` (see
+  `test/PoseidonVerifier.t.sol` and §3 bullet 6); the max lives
+  right under that cap by design.
+* **Avg ≈ 16.2 M** — arithmetic mean over the 18 heterogeneous calls.
+  A single 49 M outlier pulls the mean up by ≈ 2.75 M by itself, so
+  this column is not a useful proxy for "how expensive is verify".
+
+The same pattern is visible on `pairingCheckFromPair` (min ≈ 508 k on
+precompile short-circuits vs max ≈ 2.4 M on a full pairing of
+well-formed-but-wrong inputs). **For regression tracking, always read
+the median column, not avg or max.**
+
 ### 5.5 Rust ↔ Solidity trace-diff end-to-end test
 
 ```bash
