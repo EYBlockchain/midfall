@@ -290,9 +290,16 @@ cd proofs/solidity-verifier
 forge test --gas-report
 ```
 
-`verify()` is already instrumented with per-phase `PhaseGas` events;
-`test_verify_poseidon_proof` prints them under `  . <phase>` lines when
-run with `-vv`. Total verification gas is reported as `verify() total`.
+For the per-phase breakdown (the `PhaseGas(name, gasUsed)` events
+emitted inside `verify()`), run the end-to-end test with `-vv`:
+
+```bash
+cd proofs/solidity-verifier
+forge test --match-test test_verify_poseidon_proof -vv
+```
+
+Each phase prints one `  . <phase>` line and the total verification
+gas is reported as `verify() total`.
 
 ### 5.5 Rust ↔ Solidity trace-diff end-to-end test
 

@@ -12,17 +12,23 @@
 #
 # Each stage prints a coloured banner with a short description of what
 # it exercises, then runs the command and reports pass/fail + timing.
-# Everything (stdout + stderr) is mirrored to a timestamped log file
-# under `target/solidity-verifier-logs/`. The script exits non-zero on
-# the first failing stage and prints a final summary table.
+# By default the noisy compilation/test output from cargo + forge is
+# written to a timestamped log file only (kept quiet on the terminal
+# so the orchestration banners stay readable); set VERBOSE=1 to also
+# stream that output to the terminal. On failure, the last 40 lines
+# of the log are dumped so the reader has enough context to debug
+# without having to open the log file manually.
 #
 # Usage:
 #   bash proofs/solidity-verifier/scripts/run-all-tests.sh
+#   VERBOSE=1 bash proofs/solidity-verifier/scripts/run-all-tests.sh
 #
 # Environment:
 #   SRS_DIR   Path to the KZG trusted-setup assets. Defaults to
 #             $REPO_ROOT/zk_stdlib/examples/assets.
-#   NO_COLOR  Disable ANSI colours (honored in addition to non-TTY
+#   VERBOSE   If set and non-empty, also stream cargo/forge output to
+#             the terminal (otherwise it's kept in the log file only).
+#   NO_COLOR  Disable ANSI colours (honoured in addition to non-TTY
 #             detection).
 
 set -u
@@ -37,10 +43,7 @@ mkdir -p "$LOG_DIR"
 TIMESTAMP="$(date +%Y%m%dT%H%M%S)"
 LOG_FILE="$LOG_DIR/run-all-tests-$TIMESTAMP.log"
 
-# ---------------------------------------------------- colour detection (pre-exec)
-# Must happen before we redirect stdout: after `exec > >(tee ...)` the
-# [ -t 1 ] check would always be false even when the user is watching
-# interactively.
+# ---------------------------------------------------- colour detection
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     BOLD=$'\e[1m'
     DIM=$'\e[2m'
@@ -56,17 +59,59 @@ else
     COLOR_MODE="off"
 fi
 
-# ------------------------------------------------- mirror all output to a log
-exec > >(tee -a "$LOG_FILE") 2>&1
+# ---------------------------------------------------- quiet / verbose modes
+# Default: hide cargo/forge output from the terminal, keep it in the log
+# file only. Orchestration banners still appear on the terminal (and in
+# the log). Set VERBOSE=1 to also stream the raw compilation output.
+QUIET_MODE="${VERBOSE:+off}"    # "off" means verbose
+QUIET_MODE="${QUIET_MODE:-on}"  # default to quiet
 
-# Force downstream tools to keep coloured output even though their
-# stdout is now a pipe (to tee).
+# FD 3 appends to the log file; used by `say` below to duplicate banner
+# lines into the log without going through a tee pipe.
+exec 3>>"$LOG_FILE"
+
+# Force downstream tools to emit colour even though their stdout is a
+# file (not a TTY). This keeps the log file readable with `less -R` and
+# preserves colour in VERBOSE mode.
 export CARGO_TERM_COLOR=always
 export FORCE_COLOR=1
 export CLICOLOR_FORCE=1
 
 # ----------------------------------------------------------------- env defaults
 export SRS_DIR="${SRS_DIR:-$REPO_ROOT/zk_stdlib/examples/assets}"
+
+# ----------------------------------------------------- orchestration helpers
+# `say` writes a formatted line to the terminal AND the log file. The
+# argument list matches `printf` (format string + args). Use this
+# everywhere instead of bare printf so the log captures the full
+# orchestration narrative.
+say() {
+    # shellcheck disable=SC2059
+    printf "$@"
+    # shellcheck disable=SC2059
+    printf "$@" >&3
+}
+
+# Run a stage command. In QUIET_MODE=on the command's stdout+stderr go
+# to the log file only; in VERBOSE mode they're also streamed to the
+# terminal via tee. Returns the command's exit status in both paths.
+run_cmd() {
+    local cmd="$1"
+    if [ "$QUIET_MODE" = "on" ]; then
+        ( eval "$cmd" ) >>"$LOG_FILE" 2>&1
+    else
+        ( eval "$cmd" ) 2>&1 | tee -a "$LOG_FILE"
+    fi
+}
+
+# Print the last N lines of the log file (terminal only; the log file
+# already contains them). Used on stage failure.
+dump_log_tail() {
+    local n="$1"
+    say '%s----- last %s lines of %s -----%s\n' "$DIM" "$n" "$LOG_FILE" "$RESET"
+    tail -n "$n" "$LOG_FILE" || true
+    say '%s----- end log tail -----%s\n' "$DIM" "$RESET"
+}
 
 # ----------------------------------------------------------------- preflight
 missing=""
@@ -76,13 +121,13 @@ for bin in cargo forge; do
     fi
 done
 if [ -n "$missing" ]; then
-    printf '%s[fatal]%s required binaries missing:%s\n' \
+    say '%s[fatal]%s required binaries missing:%s\n' \
         "$RED$BOLD" "$RESET" "$missing"
-    printf '        install cargo (rustup) and forge (foundryup) and retry.\n'
+    say '        install cargo (rustup) and forge (foundryup) and retry.\n'
     exit 127
 fi
 if [ ! -d "$SRS_DIR" ]; then
-    printf '%s[warn]%s SRS_DIR=%s does not exist; the `generate` stage will fail.\n' \
+    say '%s[warn]%s SRS_DIR=%s does not exist; the `generate` stage will fail.\n' \
         "$YELLOW$BOLD" "$RESET" "$SRS_DIR"
 fi
 
@@ -95,27 +140,33 @@ TOTAL_STAGES=5
 
 step() {
     local idx="$1" title="$2" desc="$3" cmd="$4"
-    printf '\n%s==> [%s/%s]%s %s%s%s\n' \
+    say '\n%s==> [%s/%s]%s %s%s%s\n' \
         "$BOLD$CYAN" "$idx" "$TOTAL_STAGES" "$RESET" "$BOLD" "$title" "$RESET"
-    printf '    %s%s%s\n' "$DIM" "$desc" "$RESET"
-    printf '    %s$ %s%s\n' "$GREY" "$cmd" "$RESET"
+    say '    %s%s%s\n' "$DIM" "$desc" "$RESET"
+    say '    %s$ %s%s\n' "$GREY" "$cmd" "$RESET"
+    if [ "$QUIET_MODE" = "on" ]; then
+        say '    %s(compilation output hidden; set VERBOSE=1 to stream)%s\n' \
+            "$DIM" "$RESET"
+    fi
 
     STAGES+=("$title")
     local start=$SECONDS
-    # Run in a subshell so stage-local `cd` doesn't leak into later stages.
-    if ( eval "$cmd" ); then
+    if run_cmd "$cmd"; then
         local dur=$((SECONDS - start))
         TIMINGS+=("$dur")
         STATUSES+=("ok")
-        printf '    %s[ok]%s   in %ss\n' "$GREEN$BOLD" "$RESET" "$dur"
+        say '    %s[ok]%s   in %ss\n' "$GREEN$BOLD" "$RESET" "$dur"
     else
         local rc=$?
         local dur=$((SECONDS - start))
         TIMINGS+=("$dur")
         STATUSES+=("fail")
-        printf '    %s[fail]%s in %ss (exit %s)\n' \
+        say '    %s[fail]%s in %ss (exit %s)\n' \
             "$RED$BOLD" "$RESET" "$dur" "$rc"
-        printf '    %sFull log: %s%s\n' "$YELLOW" "$LOG_FILE" "$RESET"
+        say '    %sFull log: %s%s\n' "$YELLOW" "$LOG_FILE" "$RESET"
+        if [ "$QUIET_MODE" = "on" ]; then
+            dump_log_tail 40
+        fi
         summarise_and_exit 1
     fi
 }
@@ -123,7 +174,7 @@ step() {
 summarise_and_exit() {
     local exit_code="$1"
     local total=$((SECONDS - TOTAL_START))
-    printf '\n%s==== summary ====%s\n' "$BOLD" "$RESET"
+    say '\n%s==== summary ====%s\n' "$BOLD" "$RESET"
     for i in "${!STAGES[@]}"; do
         local tag
         if [ "${STATUSES[$i]}" = "ok" ]; then
@@ -131,30 +182,31 @@ summarise_and_exit() {
         else
             tag="${RED}fail${RESET}"
         fi
-        printf '  [%b] %-60s %4ss\n' "$tag" "${STAGES[$i]}" "${TIMINGS[$i]}"
+        say '  [%b] %-60s %4ss\n' "$tag" "${STAGES[$i]}" "${TIMINGS[$i]}"
     done
-    printf '%s=================%s\n' "$BOLD" "$RESET"
+    say '%s=================%s\n' "$BOLD" "$RESET"
     if [ "$exit_code" = 0 ]; then
-        printf '%s[pass]%s all %s stages succeeded in %ss total.\n' \
+        say '%s[pass]%s all %s stages succeeded in %ss total.\n' \
             "$GREEN$BOLD" "$RESET" "$TOTAL_STAGES" "$total"
     else
-        printf '%s[fail]%s after %ss total.\n' \
+        say '%s[fail]%s after %ss total.\n' \
             "$RED$BOLD" "$RESET" "$total"
     fi
-    printf '       log written to %s\n' "$LOG_FILE"
+    say '       log written to %s\n' "$LOG_FILE"
     exit "$exit_code"
 }
 
 # ---------------------------------------------------------------------- banner
-printf '%s==================================================%s\n' "$BOLD$CYAN" "$RESET"
-printf '%s Solidity verifier - full test suite%s\n' "$BOLD$CYAN" "$RESET"
-printf '%s==================================================%s\n' "$BOLD$CYAN" "$RESET"
-printf '  repo root   : %s\n' "$REPO_ROOT"
-printf '  crate dir   : %s\n' "$CRATE_DIR"
-printf '  SRS_DIR     : %s\n' "$SRS_DIR"
-printf '  log file    : %s\n' "$LOG_FILE"
-printf '  colour mode : %s\n' "$COLOR_MODE"
-printf '  started     : %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+say '%s==================================================%s\n' "$BOLD$CYAN" "$RESET"
+say '%s Solidity verifier - full test suite%s\n' "$BOLD$CYAN" "$RESET"
+say '%s==================================================%s\n' "$BOLD$CYAN" "$RESET"
+say '  repo root   : %s\n' "$REPO_ROOT"
+say '  crate dir   : %s\n' "$CRATE_DIR"
+say '  SRS_DIR     : %s\n' "$SRS_DIR"
+say '  log file    : %s\n' "$LOG_FILE"
+say '  colour mode : %s\n' "$COLOR_MODE"
+say '  quiet mode  : %s (set VERBOSE=1 to stream cargo/forge output)\n' "$QUIET_MODE"
+say '  started     : %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # ---------------------------------------------------------------------- stages
 step 1 'Regenerate VK contract + proof fixtures' \
