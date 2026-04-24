@@ -500,6 +500,46 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D6: multi_prepare pipeline drive inside verify().
+    /// verify() now emits `multi_prepare_signature` = v
+    ///   + Σ (i+1)·commScalars[i] + (nC+1)·fComScalar
+    ///   + (nC+2)·piScalar + (nC+3)·gScalar  (mod FR)
+    /// over the scalar bundle produced by C2a (construct_intermediate_sets)
+    /// → sort → C2b (x1 fold) → C2-step1 (f_eval) → C2c (x4 outer fold).
+    /// Pins the on-chain scalar assembly against the Rust replay in a
+    /// single 32-byte event.
+    function test_multi_prepare_signature() public {
+        bytes memory f =
+            vm.readFileBinary("fixtures/multi_prepare_signature_fixture.bin");
+        uint256 expNC = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("multi_prepare_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "multi_prepare_signature event not emitted");
+        require(gotSig == expSig, "multi_prepare_signature mismatch");
+        emit log_named_uint("multi_prepare verified, nC", expNC);
+    }
+
     /// Phase D5: query enumeration in Rust iterator order.
     /// verify() now emits
     /// `TraceIntermediate("query_list_signature", sig)` where

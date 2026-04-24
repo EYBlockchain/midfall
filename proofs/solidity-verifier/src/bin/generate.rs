@@ -2237,6 +2237,316 @@ fn main() {
                         qblob.len(),
                         points.len(),
                     );
+
+                    // ---------- Phase D6: multi_prepare_signature ----------
+                    //
+                    // Replays the multi_prepare pipeline verbatim,
+                    // mirroring the Solidity `_driveMultiPrepare` shape:
+                    //   (points, evals, commIds)
+                    //   → construct_intermediate_sets
+                    //   → sort sets by (len, i) asc
+                    //   → per-comm evals in sorted-set order
+                    //   → x1 fold per set
+                    //   → f_eval via reverse-Horner Lagrange
+                    //   → x4 outer fold → (v, commScalars, fComScalar,
+                    //                      piScalar, gScalar)
+                    // then emits sig = v + Σ(i+1)·commScalars[i]
+                    //                + (nC+1)·fComScalar + (nC+2)·piScalar
+                    //                + (nC+3)·gScalar  mod FR.
+                    //
+                    // File layout: [32] num_commitments; [32] sig.
+                    {
+                        // Mirror Solidity commId scheme.
+                        let num_advice_cols = vk_info.num_advice_columns;
+                        let num_inst_cols = vk_info.num_instance_columns;
+                        let num_perm_chunks = vk_info.num_permutation_chunks;
+                        let num_lookups = vk_info.num_lookups;
+                        let total_helpers = total_lookup_helpers;
+                        let num_trashcans = vk_info.num_trashcans;
+                        let num_fixed_cols = vk_info.num_fixed_columns;
+                        let num_perm_cols = vk_info.num_permutation_columns;
+
+                        let cb_advice        = 0usize;
+                        let cb_instance      = cb_advice + num_advice_cols;
+                        let cb_perm_prod     = cb_instance + num_inst_cols;
+                        let cb_lookup_m      = cb_perm_prod + num_perm_chunks;
+                        let cb_lookup_helper = cb_lookup_m + num_lookups;
+                        let cb_lookup_acc    = cb_lookup_helper + total_helpers;
+                        let cb_trash         = cb_lookup_acc + num_lookups;
+                        let cb_fixed         = cb_trash + num_trashcans;
+                        let cb_perm_common   = cb_fixed + num_fixed_cols;
+                        let cb_lin           = cb_perm_common + num_perm_cols;
+
+                        // Build (points, evals, commIds) in Rust
+                        // iterator order matching the verify() ql.
+                        let mut d6_pts: Vec<Fq> = Vec::new();
+                        let mut d6_evs: Vec<Fq> = Vec::new();
+                        let mut d6_cid: Vec<usize> = Vec::new();
+                        // 1. Advice.
+                        for (qi, (col, rot)) in cs.advice_queries().iter().enumerate() {
+                            d6_pts.push(rotate(rot.0));
+                            d6_evs.push(advice_evals_t[qi]);
+                            d6_cid.push(cb_advice + col.index());
+                        }
+                        // 2. Instance (committed).
+                        let mut ci2 = 0usize;
+                        for (col, rot) in cs.instance_queries().iter() {
+                            if col.index() < 1 {
+                                d6_pts.push(rotate(rot.0));
+                                d6_evs.push(committed_instance_evals_t[ci2]);
+                                d6_cid.push(cb_instance + col.index());
+                                ci2 += 1;
+                            }
+                        }
+                        // 3. Perm chunks.
+                        for (i, (cur, next, _)) in perm_sets_t.iter().enumerate() {
+                            d6_pts.push(x_q);      d6_evs.push(*cur);
+                            d6_cid.push(cb_perm_prod + i);
+                            d6_pts.push(x_next_q); d6_evs.push(*next);
+                            d6_cid.push(cb_perm_prod + i);
+                        }
+                        if num_perm_chunks > 1 {
+                            for i in (1..num_perm_chunks).rev() {
+                                let last = perm_sets_t[i - 1].2.unwrap();
+                                d6_pts.push(x_last_q);
+                                d6_evs.push(last);
+                                d6_cid.push(cb_perm_prod + (i - 1));
+                            }
+                        }
+                        // 4. Lookup.
+                        d6_pts.push(x_q); d6_evs.push(m_eval_t); d6_cid.push(cb_lookup_m);
+                        for (j, h) in helper_evals_t.iter().enumerate() {
+                            d6_pts.push(x_q); d6_evs.push(*h);
+                            d6_cid.push(cb_lookup_helper + j);
+                        }
+                        d6_pts.push(x_q);      d6_evs.push(acc_eval_t);
+                        d6_cid.push(cb_lookup_acc);
+                        d6_pts.push(x_next_q); d6_evs.push(acc_next_eval_t);
+                        d6_cid.push(cb_lookup_acc);
+                        // 5. Trash.
+                        for (i, t) in trash_evals_t.iter().enumerate() {
+                            d6_pts.push(x_q); d6_evs.push(*t);
+                            d6_cid.push(cb_trash + i);
+                        }
+                        // 6. Fixed (filtered).
+                        let mut fi2 = 0usize;
+                        for (col, rot) in cs.fixed_queries().iter() {
+                            if cs.has_simple_selector_col(col.index()) { continue; }
+                            d6_pts.push(rotate(rot.0));
+                            d6_evs.push(fixed_evals_t[fi2]);
+                            d6_cid.push(cb_fixed + col.index());
+                            fi2 += 1;
+                        }
+                        // 7. Perm common.
+                        for (i, p) in perm_common_t.iter().enumerate() {
+                            d6_pts.push(x_q); d6_evs.push(*p);
+                            d6_cid.push(cb_perm_common + i);
+                        }
+                        // 8. Linearization.
+                        d6_pts.push(x_q); d6_evs.push(expected_eval_d4);
+                        d6_cid.push(cb_lin);
+
+                        // Finish reading transcript up to x1/x2/x3/x4.
+                        let x1_d6: Fq = trans.squeeze_challenge();
+                        let x2_d6: Fq = trans.squeeze_challenge();
+                        let _f_com_d6: G1Projective = trans.read().unwrap();
+                        let x3_d6: Fq = trans.squeeze_challenge();
+
+                        // construct_intermediate_sets (Solidity port's
+                        // algorithm: FIFO dedup points by query order,
+                        // FIFO dedup sets by sorted point_idx list).
+                        let nq = d6_pts.len();
+                        let mut u_pts: Vec<Fq> = Vec::new();
+                        let mut q_pidx: Vec<usize> = vec![0; nq];
+                        for q in 0..nq {
+                            let pv = d6_pts[q];
+                            let p_idx = match u_pts.iter().position(|&p| p == pv) {
+                                Some(i) => i,
+                                None => { u_pts.push(pv); u_pts.len() - 1 }
+                            };
+                            q_pidx[q] = p_idx;
+                        }
+                        let mut c_ids: Vec<usize> = Vec::new();
+                        let mut q_cidx: Vec<usize> = vec![0; nq];
+                        for q in 0..nq {
+                            let cid = d6_cid[q];
+                            let c_pos = match c_ids.iter().position(|&c| c == cid) {
+                                Some(i) => i,
+                                None => { c_ids.push(cid); c_ids.len() - 1 }
+                            };
+                            q_cidx[q] = c_pos;
+                        }
+                        let nC = c_ids.len();
+                        // Per-commitment point_idx in FIFO order.
+                        let mut c_pt_idx: Vec<Vec<usize>> = vec![Vec::new(); nC];
+                        for q in 0..nq {
+                            c_pt_idx[q_cidx[q]].push(q_pidx[q]);
+                        }
+                        // Per-commitment SORTED point_idx list.
+                        let mut c_sorted: Vec<Vec<usize>> = c_pt_idx
+                            .iter()
+                            .map(|v| { let mut w = v.clone(); w.sort(); w })
+                            .collect();
+                        // FIFO dedup of sorted sets → commitmentSetIdx,
+                        // setOwner (one commitment per set for building
+                        // pointSets).
+                        let mut seen_sets: Vec<Vec<usize>> = Vec::new();
+                        let mut c_set_idx: Vec<usize> = vec![0; nC];
+                        let mut set_owner: Vec<usize> = Vec::new();
+                        for c in 0..nC {
+                            let key = &c_sorted[c];
+                            let pos = match seen_sets.iter().position(|s| s == key) {
+                                Some(i) => i,
+                                None => {
+                                    seen_sets.push(key.clone());
+                                    set_owner.push(c);
+                                    seen_sets.len() - 1
+                                }
+                            };
+                            c_set_idx[c] = pos;
+                        }
+                        let n_sets = seen_sets.len();
+                        let mut point_sets: Vec<Vec<Fq>> = Vec::with_capacity(n_sets);
+                        for s in 0..n_sets {
+                            let owner = set_owner[s];
+                            let sorted_idx = &c_sorted[owner];
+                            point_sets.push(sorted_idx.iter().map(|&i| u_pts[i]).collect());
+                        }
+
+                        // Sort sets by (len, orig_i) ascending.
+                        let mut perm: Vec<usize> = (0..n_sets).collect();
+                        perm.sort_by_key(|&i| (point_sets[i].len(), i));
+                        let inv_perm: Vec<usize> = {
+                            let mut ip = vec![0usize; n_sets];
+                            for i in 0..n_sets { ip[perm[i]] = i; }
+                            ip
+                        };
+                        let sorted_point_sets: Vec<Vec<Fq>> =
+                            perm.iter().map(|&i| point_sets[i].clone()).collect();
+                        let sorted_set_idx: Vec<usize> =
+                            c_set_idx.iter().map(|&i| inv_perm[i]).collect();
+                        // Rebuild c_sorted parallel to sorted set order;
+                        // per-commitment we need the SAME sorted pts as the
+                        // set it belongs to.
+                        // Per-commitment evals in sorted-point-set order.
+                        let mut c_evals_sorted: Vec<Vec<Fq>> = vec![Vec::new(); nC];
+                        for c in 0..nC {
+                            let sidx = sorted_set_idx[c];
+                            let m = sorted_point_sets[sidx].len();
+                            c_evals_sorted[c] = vec![Fq::ZERO; m];
+                        }
+                        for q in 0..nq {
+                            let c = q_cidx[q];
+                            let sidx = sorted_set_idx[c];
+                            let pv = d6_pts[q];
+                            let pos = sorted_point_sets[sidx].iter()
+                                .position(|&p| p == pv).unwrap();
+                            c_evals_sorted[c][pos] = d6_evs[q];
+                        }
+
+                        // x1 fold per set.
+                        let mut q_eval_sets: Vec<Vec<Fq>> = vec![Vec::new(); n_sets];
+                        for s in 0..n_sets {
+                            let m = sorted_point_sets[s].len();
+                            let mut folded = vec![Fq::ZERO; m];
+                            let mut x1_pow = Fq::ONE;
+                            for c in 0..nC {
+                                if sorted_set_idx[c] != s { continue; }
+                                for j in 0..m {
+                                    folded[j] += x1_pow * c_evals_sorted[c][j];
+                                }
+                                x1_pow *= x1_d6;
+                            }
+                            q_eval_sets[s] = folded;
+                        }
+
+                        // Read q_evals on x3 (one per set).
+                        let mut q_evals_on_x3: Vec<Fq> = Vec::new();
+                        for _ in 0..n_sets {
+                            q_evals_on_x3.push(trans.read().unwrap());
+                        }
+                        // x4.
+                        let x4_d6: Fq = trans.squeeze_challenge();
+
+                        // Reverse-Horner Lagrange: acc = acc·x2 + (proof - r_eval)/den.
+                        // Lagrange interpolation eval at x3.
+                        fn lag_interp_eval(pts: &[Fq], evs: &[Fq], x: Fq) -> Fq {
+                            let m = pts.len();
+                            let mut r = Fq::ZERO;
+                            for i in 0..m {
+                                let mut num = Fq::ONE;
+                                let mut den = Fq::ONE;
+                                for j in 0..m {
+                                    if i == j { continue; }
+                                    num *= x - pts[j];
+                                    den *= pts[i] - pts[j];
+                                }
+                                r += evs[i] * num * den.invert().unwrap();
+                            }
+                            r
+                        }
+                        let mut f_eval = Fq::ZERO;
+                        for i in (0..n_sets).rev() {
+                            let pts = &sorted_point_sets[i];
+                            let evs = &q_eval_sets[i];
+                            let r_eval = lag_interp_eval(pts, evs, x3_d6);
+                            let mut den = Fq::ONE;
+                            for pt in pts { den *= x3_d6 - pt; }
+                            let e = (q_evals_on_x3[i] - r_eval) * den.invert().unwrap();
+                            f_eval = f_eval * x2_d6 + e;
+                        }
+
+                        // x4 outer fold.
+                        let mut v = Fq::ZERO;
+                        let mut x4_pow = Fq::ONE;
+                        for s in 0..n_sets {
+                            v += x4_pow * q_evals_on_x3[s];
+                            x4_pow *= x4_d6;
+                        }
+                        v += x4_pow * f_eval;
+                        let f_com_scalar = x4_pow;
+
+                        // Pos-in-set (FIFO in sorted view).
+                        let mut pos_in_set: Vec<usize> = vec![0; nC];
+                        let mut set_fill: Vec<usize> = vec![0; n_sets];
+                        for c in 0..nC {
+                            pos_in_set[c] = set_fill[sorted_set_idx[c]];
+                            set_fill[sorted_set_idx[c]] += 1;
+                        }
+                        // x4^s and x1^i power tables.
+                        let mut x4_powers = vec![Fq::ONE; n_sets];
+                        for s in 1..n_sets { x4_powers[s] = x4_powers[s-1] * x4_d6; }
+                        let mut x1_powers = vec![Fq::ONE; nC];
+                        for i in 1..nC { x1_powers[i] = x1_powers[i-1] * x1_d6; }
+                        let mut comm_scalars = vec![Fq::ZERO; nC];
+                        for c in 0..nC {
+                            comm_scalars[c] =
+                                x4_powers[sorted_set_idx[c]] * x1_powers[pos_in_set[c]];
+                        }
+                        let pi_scalar = x3_d6;
+                        let g_scalar = -v;
+
+                        let mut mp_sig = v;
+                        for i in 0..nC {
+                            mp_sig += Fq::from((i + 1) as u64) * comm_scalars[i];
+                        }
+                        mp_sig += Fq::from((nC + 1) as u64) * f_com_scalar;
+                        mp_sig += Fq::from((nC + 2) as u64) * pi_scalar;
+                        mp_sig += Fq::from((nC + 3) as u64) * g_scalar;
+
+                        let mut mblob: Vec<u8> = Vec::new();
+                        mblob.extend_from_slice(&[0u8; 24]);
+                        mblob.extend_from_slice(&(nC as u64).to_be_bytes());
+                        mblob.extend_from_slice(&fq_to_be(&mp_sig));
+                        fs::write(
+                            fixtures.join("multi_prepare_signature_fixture.bin"),
+                            &mblob,
+                        ).unwrap();
+                        eprintln!(
+                            "      multi-prepare-signature fixture written ({} bytes, {} commitments, {} sets)",
+                            mblob.len(), nC, n_sets,
+                        );
+                    }
                 }
             }
         }

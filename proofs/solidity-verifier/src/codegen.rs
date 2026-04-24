@@ -145,6 +145,15 @@ pub struct VkInfo {
     pub fixed_query_rotation_idx: Vec<u8>,
     /// Likewise for instance queries on committed instance columns.
     pub instance_query_rotation_idx: Vec<u8>,
+    /// Per-query column indices (Phase D6). Multi_prepare's
+    /// `construct_intermediate_sets` groups queries sharing the same
+    /// underlying commitment, so two queries on advice column 3 at
+    /// different rotations must share the same commitment ID. These
+    /// arrays let the on-chain enumerator recover col_idx → commId
+    /// without having to re-parse the gate bytecode.
+    pub advice_query_col_idx: Vec<u32>,
+    pub fixed_query_col_idx: Vec<u32>,
+    pub committed_instance_query_col_idx: Vec<u32>,
 }
 
 /// Serialised (RPN bytecode) form of a single midnight-proofs lookup
@@ -425,6 +434,25 @@ impl VkInfo {
             .map(|(_, rot)| rot_idx(rot.0))
             .collect();
 
+        // Per-query column indices (Phase D6 – drives commId grouping).
+        let advice_query_col_idx: Vec<u32> = cs
+            .advice_queries()
+            .iter()
+            .map(|(col, _)| col.index() as u32)
+            .collect();
+        let fixed_query_col_idx: Vec<u32> = cs
+            .fixed_queries()
+            .iter()
+            .filter(|(col, _)| !cs.has_simple_selector_col(col.index()))
+            .map(|(col, _)| col.index() as u32)
+            .collect();
+        let committed_instance_query_col_idx: Vec<u32> = cs
+            .instance_queries()
+            .iter()
+            .filter(|(col, _)| col.index() < nb_committed_instances_u)
+            .map(|(col, _)| col.index() as u32)
+            .collect();
+
         Self {
             k: domain.k(),
             n: vk.n(),
@@ -467,6 +495,9 @@ impl VkInfo {
             distinct_rotations,
             advice_query_rotation_idx,
             fixed_query_rotation_idx,
+            advice_query_col_idx,
+            fixed_query_col_idx,
+            committed_instance_query_col_idx,
             instance_query_rotation_idx,
         }
     }
@@ -605,7 +636,7 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     //     for each constraint: u32 len, <bytecode>
     append_trashcans_section(&mut blob, &vk.trashcans_bytecode);
 
-    // Query-rotation schedule (Phase C1):
+    // Query-rotation schedule (Phase C1) + column-index tables (Phase D6):
     //   u32 num_distinct_rotations
     //     i32 × n     distinct rotations (two's complement big-endian)
     //   u32 num_advice_queries    (mirrors cs.advice_queries().len())
@@ -614,12 +645,18 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
     //     u8  × n     rotation index per fixed query
     //   u32 num_committed_instance_queries
     //     u8  × n     rotation index per committed-instance query
+    //   u32 × num_advice_queries   (column index per advice query)
+    //   u32 × num_fixed_queries    (column index per fixed query)
+    //   u32 × num_committed_instance_queries (column index per instance q)
     append_rotations_section(
         &mut blob,
         &vk.distinct_rotations,
         &vk.advice_query_rotation_idx,
         &vk.fixed_query_rotation_idx,
         &vk.instance_query_rotation_idx,
+        &vk.advice_query_col_idx,
+        &vk.fixed_query_col_idx,
+        &vk.committed_instance_query_col_idx,
     );
 
     let total = blob.len();
@@ -718,6 +755,9 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
         &vk.advice_query_rotation_idx,
         &vk.fixed_query_rotation_idx,
         &vk.instance_query_rotation_idx,
+        &vk.advice_query_col_idx,
+        &vk.fixed_query_col_idx,
+        &vk.committed_instance_query_col_idx,
     );
 
     blob
@@ -749,13 +789,17 @@ fn append_lookups_section(blob: &mut Vec<u8>, lookups: &[LookupBytecode]) {
     }
 }
 
-/// Shared serialiser for the query-rotation schedule (Phase C1).
+/// Shared serialiser for the query-rotation schedule (Phase C1) +
+/// per-query column indices (Phase D6).
 fn append_rotations_section(
     blob: &mut Vec<u8>,
     rotations: &[i32],
     advice_idx: &[u8],
     fixed_idx: &[u8],
     instance_idx: &[u8],
+    advice_cols: &[u32],
+    fixed_cols: &[u32],
+    instance_cols: &[u32],
 ) {
     blob.extend_from_slice(&(rotations.len() as u32).to_be_bytes());
     for &r in rotations {
@@ -768,6 +812,17 @@ fn append_rotations_section(
     blob.extend_from_slice(fixed_idx);
     blob.extend_from_slice(&(instance_idx.len() as u32).to_be_bytes());
     blob.extend_from_slice(instance_idx);
+    // Phase D6: column-index tables (lengths mirror the rotation
+    // tables, so Solidity only needs the header count once).
+    for &c in advice_cols {
+        blob.extend_from_slice(&c.to_be_bytes());
+    }
+    for &c in fixed_cols {
+        blob.extend_from_slice(&c.to_be_bytes());
+    }
+    for &c in instance_cols {
+        blob.extend_from_slice(&c.to_be_bytes());
+    }
 }
 
 /// Shared serialiser for the trashcan bytecode section.

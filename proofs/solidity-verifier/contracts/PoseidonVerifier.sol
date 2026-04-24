@@ -1042,6 +1042,233 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Multi_prepare driver (Phase D6)                                   *
+     *                                                                    *
+     *  Consumes the flat (points, evals, commIds) query list produced   *
+     *  by Phase D5 plus the transcript challenges (x1..x4) and the      *
+     *  KZG proof-eval reads (qEvalsOnX3) to drive the full              *
+     *  multi_prepare pipeline from                                       *
+     *  \`KZGCommitmentScheme::multi_prepare\` (kzg/mod.rs:236):           *
+     *                                                                    *
+     *    1. construct_intermediate_sets (C2a)                            *
+     *    2. stable-sort sets by (len, i) ascending                      *
+     *    3. per-commitment evals in sorted-set order                    *
+     *    4. x1-inner-product fold per set (C2b)                         *
+     *    5. reverse-Horner Lagrange f_eval fold at x3 (C2 step 1)       *
+     *    6. x4 outer fold → (v, commScalars, fComScalar, piScalar,     *
+     *                         gScalar) (C2c)                            *
+     *                                                                    *
+     *  The output scalar bundle feeds the final pairing-side MSM        *
+     *  landed in Phase D7-D8. For D6 we emit a positional signature    *
+     *  over the bundle                                                  *
+     *    sig = v                                                        *
+     *        + Σ (i+1)·commScalars[i]                                  *
+     *        + (nC+1)·fComScalar                                       *
+     *        + (nC+2)·piScalar                                         *
+     *        + (nC+3)·gScalar   (mod FR)                                *
+     *  to catch regressions in the scalar assembly before the G1      *
+     *  side comes online.                                                *
+     * ------------------------------------------------------------------ */
+
+    struct MultiPrepareOut {
+        uint256 v;
+        uint256[] commScalars;  // length = nCommitments
+        uint256 fComScalar;
+        uint256 piScalar;
+        uint256 gScalar;
+        uint256 numSets;
+        uint256 numCommitments;
+    }
+
+    /// Build per-commitment evals table in sorted-point-set order
+    /// after `_constructIntermediateSets` output. For each commitment
+    /// c, `sorted[c][j]` is the claimed eval at pointSets[setIdx][j]
+    /// (sorted-ascending point order) derived from the ql entries.
+    function _buildPerCommEvalsSorted(
+        IntermediateSets memory s,
+        QueryList memory ql,
+        uint256[] memory qPidx   // per query, its point-value index in uPts
+    ) internal pure returns (uint256[][] memory sorted) {
+        uint256 nC = s.commitmentIds.length;
+        uint256 nq = ql.commIds.length;
+        sorted = new uint256[][](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            uint256 setIdx = s.commitmentSetIdx[c];
+            uint256 m = s.pointSets[setIdx].length;
+            sorted[c] = new uint256[](m);
+        }
+        // Walk queries; find the position in the sorted point set and
+        // deposit the eval.
+        for (uint256 q = 0; q < nq; q++) {
+            // Locate commitment index for this query.
+            uint256 c = 0;
+            for (uint256 cc = 0; cc < nC; cc++) {
+                if (s.commitmentIds[cc] == ql.commIds[q]) { c = cc; break; }
+            }
+            // The point value for this query = pointSets[setIdx][pos].
+            uint256 setIdx = s.commitmentSetIdx[c];
+            uint256[] memory pts = s.pointSets[setIdx];
+            uint256 pv = ql.points[q];
+            uint256 pos = 0;
+            for (uint256 j = 0; j < pts.length; j++) {
+                if (pts[j] == pv) { pos = j; break; }
+            }
+            sorted[c][pos] = ql.evals[q];
+            qPidx;  // unused in this shape; keep parameter for API symmetry
+        }
+    }
+
+    /// Stable-sort sets by (length, original-index) ascending; return
+    /// the permutation so the caller can remap commitmentSetIdx.
+    function _sortSetsByCardinality(uint256[][] memory pointSets)
+        internal pure returns (uint256[] memory perm)
+    {
+        uint256 n = pointSets.length;
+        perm = new uint256[](n);
+        for (uint256 i = 0; i < n; i++) perm[i] = i;
+        // Insertion sort on (len, orig).
+        for (uint256 i = 1; i < n; i++) {
+            uint256 key = perm[i];
+            uint256 kl  = pointSets[key].length;
+            uint256 j   = i;
+            while (j > 0) {
+                uint256 pl = pointSets[perm[j - 1]].length;
+                if (pl < kl || (pl == kl && perm[j - 1] < key)) break;
+                perm[j] = perm[j - 1];
+                j--;
+            }
+            perm[j] = key;
+        }
+    }
+
+    /// Intermediate payload bundled between steps of the multi_prepare
+    /// pipeline to keep stack depth manageable.
+    struct MPState {
+        IntermediateSets sSorted;
+        uint256[][] qEvalSets;
+        uint256 fEval;
+    }
+
+    function _mpConstructAndSort(QueryList memory ql, uint256 x1)
+        internal pure returns (MPState memory st, uint256 nC, uint256 nS)
+    {
+        IntermediateSets memory s =
+            _constructIntermediateSets(ql.commIds, ql.points);
+        nS = s.pointSets.length;
+        nC = s.commitmentIds.length;
+
+        uint256[] memory setPerm = _sortSetsByCardinality(s.pointSets);
+        uint256[] memory invPerm = new uint256[](nS);
+        for (uint256 i = 0; i < nS; i++) invPerm[setPerm[i]] = i;
+        uint256[][] memory sortedPointSets = new uint256[][](nS);
+        for (uint256 i = 0; i < nS; i++) sortedPointSets[i] = s.pointSets[setPerm[i]];
+        uint256[] memory sortedCommSetIdx = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            sortedCommSetIdx[c] = invPerm[s.commitmentSetIdx[c]];
+        }
+
+        st.sSorted.commitmentIds      = s.commitmentIds;
+        st.sSorted.commitmentSetIdx   = sortedCommSetIdx;
+        st.sSorted.commitmentPointIdx = s.commitmentPointIdx;
+        st.sSorted.pointSets          = sortedPointSets;
+        x1;
+    }
+
+    function _mpFoldEvalsAndFEval(
+        MPState memory st,
+        QueryList memory ql,
+        uint256[] memory qEvalsOnX3,
+        uint256 x1, uint256 x2, uint256 x3
+    ) internal view {
+        uint256 nS = st.sSorted.pointSets.length;
+        uint256[][] memory cEvalsSorted =
+            _buildPerCommEvalsSorted(st.sSorted, ql, new uint256[](0));
+        st.qEvalSets = _x1EvalFoldPerSet(
+            st.sSorted.commitmentSetIdx, cEvalsSorted, nS, x1
+        );
+
+        uint256 totalPts = 0;
+        uint256[] memory pointSetLens = new uint256[](nS);
+        for (uint256 i = 0; i < nS; i++) {
+            pointSetLens[i] = st.sSorted.pointSets[i].length;
+            totalPts += pointSetLens[i];
+        }
+        uint256[] memory pointSetsFlat = new uint256[](totalPts);
+        uint256[] memory evalSetsFlat  = new uint256[](totalPts);
+        uint256 off = 0;
+        for (uint256 i = 0; i < nS; i++) {
+            uint256 m = pointSetLens[i];
+            for (uint256 j = 0; j < m; j++) {
+                pointSetsFlat[off + j] = st.sSorted.pointSets[i][j];
+                evalSetsFlat [off + j] = st.qEvalSets[i][j];
+            }
+            off += m;
+        }
+        st.fEval = _computeFEvalFold(
+            pointSetLens, pointSetsFlat, evalSetsFlat, qEvalsOnX3, x2, x3
+        );
+    }
+
+    /// Drive the full multi_prepare pipeline. Returns the scalar
+    /// bundle needed by the final pairing-side MSM (Phase D7/D8).
+    function _driveMultiPrepare(
+        QueryList memory ql,
+        uint256[] memory qEvalsOnX3,
+        uint256 x1,
+        uint256 x2,
+        uint256 x3,
+        uint256 x4
+    ) internal view returns (MultiPrepareOut memory out) {
+        (MPState memory st, uint256 nC, uint256 nS) = _mpConstructAndSort(ql, x1);
+        _mpFoldEvalsAndFEval(st, ql, qEvalsOnX3, x1, x2, x3);
+
+        uint256[] memory posInSet = _computePosInSet(st.sSorted);
+        X4OuterFold memory xout = _x4OuterFold(
+            st.sSorted.commitmentSetIdx, posInSet, nS,
+            x1, x4, x3,
+            qEvalsOnX3, st.fEval
+        );
+
+        out.v              = xout.v;
+        out.commScalars    = xout.commScalars;
+        out.fComScalar     = xout.fComScalar;
+        out.piScalar       = xout.piScalar;
+        out.gScalar        = xout.gScalar;
+        out.numSets        = nS;
+        out.numCommitments = nC;
+    }
+
+    /// Compute per-commitment position in its set: the FIFO order of
+    /// that commitment's first appearance within queries belonging to
+    /// its set. Matches Rust's `evals_inner_product` input order.
+    function _computePosInSet(IntermediateSets memory s)
+        internal pure returns (uint256[] memory posInSet)
+    {
+        uint256 nC = s.commitmentIds.length;
+        uint256 nS = s.pointSets.length;
+        posInSet = new uint256[](nC);
+        uint256[] memory setFill = new uint256[](nS);
+        for (uint256 c = 0; c < nC; c++) {
+            uint256 sIdx = s.commitmentSetIdx[c];
+            posInSet[c] = setFill[sIdx];
+            setFill[sIdx] += 1;
+        }
+    }
+
+    function _multiPrepareSignature(MultiPrepareOut memory o)
+        internal pure returns (uint256 sig)
+    {
+        sig = o.v;
+        for (uint256 i = 0; i < o.commScalars.length; i++) {
+            sig = addmod(sig, mulmod(i + 1, o.commScalars[i], FR_MODULUS), FR_MODULUS);
+        }
+        uint256 nc = o.commScalars.length;
+        sig = addmod(sig, mulmod(nc + 1, o.fComScalar, FR_MODULUS), FR_MODULUS);
+        sig = addmod(sig, mulmod(nc + 2, o.piScalar,    FR_MODULUS), FR_MODULUS);
+        sig = addmod(sig, mulmod(nc + 3, o.gScalar,     FR_MODULUS), FR_MODULUS);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Query enumeration in Rust iterator order (Phase D5)               *
      *                                                                    *
      *  Flattens the multi_prepare VerifierQuery list into two memory    *
@@ -1074,6 +1301,41 @@ contract PoseidonVerifier {
     struct QueryList {
         uint256[] points;
         uint256[] evals;
+        uint256[] commIds;
+    }
+
+    /// Commitment-ID offsets per kind, computed from VK counts.
+    /// Ensures that two queries on the same underlying commitment
+    /// (e.g. two rotations of the same advice column) share a commId
+    /// so `_constructIntermediateSets` groups them correctly.
+    struct CommIdBases {
+        uint256 advice;
+        uint256 instance;
+        uint256 permProd;
+        uint256 lookupM;
+        uint256 lookupHelper;
+        uint256 lookupAcc;
+        uint256 trash;
+        uint256 fixedB;
+        uint256 permCommon;
+        uint256 lin;
+        uint256 total;
+    }
+
+    function _computeCommIdBases(Vk memory vk)
+        internal pure returns (CommIdBases memory b)
+    {
+        b.advice       = 0;
+        b.instance     = b.advice       + uint256(vk.numAdviceCols);
+        b.permProd     = b.instance     + uint256(vk.numInstanceCols);
+        b.lookupM      = b.permProd     + uint256(vk.numPermChunks);
+        b.lookupHelper = b.lookupM      + uint256(vk.numLookups);
+        b.lookupAcc    = b.lookupHelper + uint256(vk.totalLookupHelpers);
+        b.trash        = b.lookupAcc    + uint256(vk.numLookups);
+        b.fixedB       = b.trash        + uint256(vk.numTrashcans);
+        b.permCommon   = b.fixedB       + uint256(vk.numFixedCols);
+        b.lin          = b.permCommon   + uint256(vk.numPermColumns);
+        b.total        = b.lin          + 1;
     }
 
     /// Compute the three special evaluation points used by the queries:
@@ -1137,66 +1399,83 @@ contract PoseidonVerifier {
         );
 
         uint256 total = _countQueries(vk);
-        ql.points = new uint256[](total);
-        ql.evals  = new uint256[](total);
+        ql.points  = new uint256[](total);
+        ql.evals   = new uint256[](total);
+        ql.commIds = new uint256[](total);
+
+        CommIdBases memory cb = _computeCommIdBases(vk);
 
         uint256 k = 0;
         // 1. Advice queries.
         for (uint256 q = 0; q < vk.numAdviceQueries; q++) {
-            ql.points[k] = rotatedPoints[uint256(qs.adviceRotationIdx[q])];
-            ql.evals[k]  = ea.adviceEvals[q];
+            ql.points[k]  = rotatedPoints[uint256(qs.adviceRotationIdx[q])];
+            ql.evals[k]   = ea.adviceEvals[q];
+            ql.commIds[k] = cb.advice + uint256(qs.adviceColIdx[q]);
             k++;
         }
-        // 2. Instance queries (committed-only; 0 for poseidon).
+        // 2. Instance queries (committed-only; 1 for poseidon, col 0).
         for (uint256 q = 0; q < vk.numCommittedInstanceEvals; q++) {
-            ql.points[k] = rotatedPoints[uint256(qs.instanceRotationIdx[q])];
-            ql.evals[k]  = ea.committedInstanceEvals[q];
+            ql.points[k]  = rotatedPoints[uint256(qs.instanceRotationIdx[q])];
+            ql.evals[k]   = ea.committedInstanceEvals[q];
+            ql.commIds[k] = cb.instance + uint256(qs.instanceColIdx[q]);
             k++;
         }
         // 3. Permutation chunk queries: per chunk cur@x + next@ω·x,
         //    then in REVERSE from second-to-last chunk down to 0:
-        //    last@ω^{-(bf+1)}·x (skip the final chunk).
+        //    last@ω^{-(bf+1)}·x (skip the final chunk). Both cur/next
+        //    AND last share the same perm-product commitment per chunk.
         for (uint256 i = 0; i < vk.numPermChunks; i++) {
-            ql.points[k] = sp.x;     ql.evals[k] = ea.permChunkCurEvals[i];  k++;
-            ql.points[k] = sp.xNext; ql.evals[k] = ea.permChunkNextEvals[i]; k++;
+            ql.points[k] = sp.x;     ql.evals[k] = ea.permChunkCurEvals[i];
+            ql.commIds[k] = cb.permProd + i; k++;
+            ql.points[k] = sp.xNext; ql.evals[k] = ea.permChunkNextEvals[i];
+            ql.commIds[k] = cb.permProd + i; k++;
         }
         if (vk.numPermChunks > 1) {
             for (uint256 i = vk.numPermChunks - 1; i > 0; i--) {
                 ql.points[k] = sp.xLast;
                 ql.evals[k]  = ea.permChunkLastEvals[i - 1];
+                ql.commIds[k] = cb.permProd + (i - 1);
                 k++;
             }
         }
         // 4. Lookup queries (per lookup): m@x, helpers@x, acc@x, acc@x_next.
         {
             LookupSplit memory ls = _splitSingleLookup(vk, ea);
-            ql.points[k] = sp.x; ql.evals[k] = ls.mEval; k++;
+            ql.points[k] = sp.x; ql.evals[k] = ls.mEval;
+            ql.commIds[k] = cb.lookupM; k++;
             for (uint256 j = 0; j < ls.helperEvals.length; j++) {
                 ql.points[k] = sp.x;
                 ql.evals[k]  = ls.helperEvals[j];
+                ql.commIds[k] = cb.lookupHelper + j;
                 k++;
             }
-            ql.points[k] = sp.x;     ql.evals[k] = ls.accEval;     k++;
-            ql.points[k] = sp.xNext; ql.evals[k] = ls.accNextEval; k++;
+            ql.points[k] = sp.x;     ql.evals[k] = ls.accEval;
+            ql.commIds[k] = cb.lookupAcc; k++;
+            ql.points[k] = sp.xNext; ql.evals[k] = ls.accNextEval;
+            ql.commIds[k] = cb.lookupAcc; k++;
         }
         // 5. Trashcan queries.
         for (uint256 i = 0; i < vk.numTrashcans; i++) {
-            ql.points[k] = sp.x; ql.evals[k] = ea.trashcanEvals[i]; k++;
+            ql.points[k] = sp.x; ql.evals[k] = ea.trashcanEvals[i];
+            ql.commIds[k] = cb.trash + i; k++;
         }
         // 6. Fixed queries (simple-selector-filtered already since
         //    ea.fixedEvals only has transcript reads).
         for (uint256 q = 0; q < vk.numFixedQueries; q++) {
             ql.points[k] = rotatedPoints[uint256(qs.fixedRotationIdx[q])];
             ql.evals[k]  = ea.fixedEvals[q];
+            ql.commIds[k] = cb.fixedB + uint256(qs.fixedColIdx[q]);
             k++;
         }
         // 7. Permutation common queries @x.
         for (uint256 i = 0; i < vk.numPermColumns; i++) {
-            ql.points[k] = sp.x; ql.evals[k] = ea.permCommonEvals[i]; k++;
+            ql.points[k] = sp.x; ql.evals[k] = ea.permCommonEvals[i];
+            ql.commIds[k] = cb.permCommon + i; k++;
         }
         // 8. Linearization @ x with eval = expectedEval.
-        ql.points[k] = sp.x;
-        ql.evals[k]  = expectedEval;
+        ql.points[k]  = sp.x;
+        ql.evals[k]   = expectedEval;
+        ql.commIds[k] = cb.lin;
         k++;
         require(k == total, "query count mismatch");
     }
@@ -2135,6 +2414,9 @@ contract PoseidonVerifier {
         uint8[] adviceRotationIdx;      // per advice query
         uint8[] fixedRotationIdx;       // per non-simple-selector fixed query
         uint8[] instanceRotationIdx;    // per committed-instance query
+        uint32[] adviceColIdx;          // Phase D6: per advice query
+        uint32[] fixedColIdx;           // Phase D6: per fixed query
+        uint32[] instanceColIdx;        // Phase D6: per committed-instance q
         uint256 sectionOffset;          // start of section (u32 nRotations)
     }
 
@@ -2178,6 +2460,21 @@ contract PoseidonVerifier {
         uint32 nInst = _readU32FromBlob(blob, p); p += 4;
         qs.instanceRotationIdx = new uint8[](nInst);
         for (uint256 i = 0; i < nInst; i++) { qs.instanceRotationIdx[i] = uint8(blob[p + i]); }
+        p += nInst;
+
+        // Phase D6: column-index tables (lengths mirror rotation tables).
+        qs.adviceColIdx = new uint32[](nAdvice);
+        for (uint256 i = 0; i < nAdvice; i++) {
+            qs.adviceColIdx[i] = _readU32FromBlob(blob, p); p += 4;
+        }
+        qs.fixedColIdx = new uint32[](nFixed);
+        for (uint256 i = 0; i < nFixed; i++) {
+            qs.fixedColIdx[i] = _readU32FromBlob(blob, p); p += 4;
+        }
+        qs.instanceColIdx = new uint32[](nInst);
+        for (uint256 i = 0; i < nInst; i++) {
+            qs.instanceColIdx[i] = _readU32FromBlob(blob, p); p += 4;
+        }
     }
 
     /// Compute `ω^at · x` for every distinct rotation in the schedule.
@@ -2969,6 +3266,7 @@ contract PoseidonVerifier {
         /* --- Phase D3: partial-eval driver call ------------------- */
         /* --- Phase D4: linearization commitment call ------------- */
         gStart = gasleft();
+        QueryList memory ql;  // hoisted for Phase D6 use below
         {
             uint256 xU = uint256(x);
             uint256 splittingFactor = _frPow(xU, uint256(vk.n) - 1);
@@ -3001,8 +3299,7 @@ contract PoseidonVerifier {
             emit TraceIntermediate("linearization_signature", bytes32(linSig));
 
             // Phase D5: enumerate queries in Rust iterator order.
-            QueryList memory ql =
-                _buildQueryList(vkBlob, vk, ea, xU, linExpectedEval);
+            ql = _buildQueryList(vkBlob, vk, ea, xU, linExpectedEval);
             uint256 qlSig = _queryListSignature(ql);
             emit TraceIntermediate("query_list_signature", bytes32(qlSig));
         }
@@ -3029,14 +3326,17 @@ contract PoseidonVerifier {
         // the multi-open argument. We derive it from the remaining proof
         // byte length: after this block we must still have exactly 48 bytes
         // left to read the final pi point.
+        uint256[] memory qEvalsOnX3;
         {
             uint256 remaining = rd.data.length - rd.pos;
             require(remaining >= 48 && (remaining - 48) % 32 == 0, "bad q_eval tail");
             uint256 numQEvals = (remaining - 48) / 32;
+            qEvalsOnX3 = new uint256[](numQEvals);
             for (uint256 i = 0; i < numQEvals; i++) {
                 bytes32 e = _readScalarLE32(rd);
                 emit TraceReadScalar("q_eval", _leToBe(e));
                 _absorbScalar(t, e);
+                qEvalsOnX3[i] = uint256(_leToBe(e));
             }
         }
         bytes32 x4 = _squeezeFq(t);  emit TraceChallenge("x4", x4);
@@ -3045,6 +3345,19 @@ contract PoseidonVerifier {
         _absorbG1Compressed(t, pi);
         gEnd = gasleft();
         emit PhaseGas("multi_prepare", gStart - gEnd);
+
+        // Phase D6: drive the multi_prepare pipeline to produce the
+        // final scalar bundle (v, commScalars, fComScalar, piScalar,
+        // gScalar). Only the scalar side is exercised here; the
+        // parallel G1-side MSM lands in Phase D7-D8.
+        {
+            MultiPrepareOut memory mp = _driveMultiPrepare(
+                ql, qEvalsOnX3,
+                uint256(x1), uint256(x2), uint256(x3), uint256(x4)
+            );
+            uint256 mpSig = _multiPrepareSignature(mp);
+            emit TraceIntermediate("multi_prepare_signature", bytes32(mpSig));
+        }
 
         /* --- Final pairing check --------------------------------- *
          *                                                           *
