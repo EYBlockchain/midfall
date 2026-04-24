@@ -1565,6 +1565,97 @@ fn main() {
             n_sets,
             q_evals.iter().map(|v| v.len()).collect::<Vec<_>>(),
         );
+
+        // Phase C2c: x4 outer DualMSM fold fixture.
+        //
+        // Ports the x4-power outer fold from
+        // \`KZGCommitmentScheme::multi_prepare\` (kzg/mod.rs:340-410).
+        // For each commitment c in FIFO order, its final-right-MSM
+        // scalar is
+        //   comm_scalar[c] = x4^{setIdx[c]} · x1^{posInSet[c]}
+        // where \`posInSet[c]\` is c's FIFO position within set
+        // \`setIdx[c]\`. The f_com commitment picks up
+        //   f_com_scalar = x4^{nSets}
+        // and the DualMSM-assembly terms are
+        //   pi_scalar = x3    (for π in the right MSM)
+        //   g_scalar  = −v    (for G1 in the right MSM)
+        //   v         = Σ_{s<nSets} x4^s · qEvalsOnX3[s] +
+        //               x4^{nSets} · f_eval
+        //
+        // Fixture layout:
+        //   [4] num_commitments
+        //     per commitment: [4] set_idx, [4] pos_in_set
+        //   [4] num_sets
+        //   [32] x1  [32] x4  [32] x3  [32] f_eval
+        //   per set: [32] qEvalsOnX3[s]
+        //   [32] expected_v
+        //   per commitment: [32] expected_comm_scalar
+        //   [32] expected_f_com_scalar
+        //   [32] expected_pi_scalar
+        //   [32] expected_g_scalar
+        let n_c = result.commitment_ids.len();
+        let mut pos_in_set: Vec<u32> = vec![0; n_c];
+        let mut set_counters: Vec<u32> = vec![0; n_sets];
+        for c in 0..n_c {
+            let s = result.commitment_set_idx[c] as usize;
+            pos_in_set[c] = set_counters[s];
+            set_counters[s] += 1;
+        }
+
+        let x4 = Fq::from(333u64);
+        let x3_outer = Fq::from(222u64);
+        let f_eval = Fq::from(4444u64);
+        let q_evals_on_x3: Vec<Fq> = (0..n_sets)
+            .map(|s| Fq::from((s as u64 + 1) * 1111))
+            .collect();
+
+        // v = Σ x4^s · qEvalsOnX3[s] + x4^nSets · f_eval
+        let mut v_scalar = Fq::ZERO;
+        let mut x4_pow = Fq::ONE;
+        for s in 0..n_sets {
+            v_scalar += x4_pow * q_evals_on_x3[s];
+            x4_pow *= x4;
+        }
+        v_scalar += x4_pow * f_eval;
+        let f_com_scalar = x4_pow;                  // x4^nSets
+        // Per-commitment: x4^{setIdx} · x1^{posInSet}.
+        let mut comm_scalars: Vec<Fq> = Vec::with_capacity(n_c);
+        for c in 0..n_c {
+            let s = result.commitment_set_idx[c] as usize;
+            let i = pos_in_set[c] as u64;
+            let mut x4_s = Fq::ONE;
+            for _ in 0..s { x4_s *= x4; }
+            let mut x1_i = Fq::ONE;
+            for _ in 0..i { x1_i *= x1; }
+            comm_scalars.push(x4_s * x1_i);
+        }
+        let pi_scalar = x3_outer;
+        let g_scalar = -v_scalar;
+
+        let mut blob: Vec<u8> = Vec::new();
+        blob.extend_from_slice(&(n_c as u32).to_be_bytes());
+        for c in 0..n_c {
+            blob.extend_from_slice(&result.commitment_set_idx[c].to_be_bytes());
+            blob.extend_from_slice(&pos_in_set[c].to_be_bytes());
+        }
+        blob.extend_from_slice(&(n_sets as u32).to_be_bytes());
+        blob.extend_from_slice(&fq_to_be(&x1));
+        blob.extend_from_slice(&fq_to_be(&x4));
+        blob.extend_from_slice(&fq_to_be(&x3_outer));
+        blob.extend_from_slice(&fq_to_be(&f_eval));
+        for qe in &q_evals_on_x3 { blob.extend_from_slice(&fq_to_be(qe)); }
+        blob.extend_from_slice(&fq_to_be(&v_scalar));
+        for sc in &comm_scalars { blob.extend_from_slice(&fq_to_be(sc)); }
+        blob.extend_from_slice(&fq_to_be(&f_com_scalar));
+        blob.extend_from_slice(&fq_to_be(&pi_scalar));
+        blob.extend_from_slice(&fq_to_be(&g_scalar));
+        fs::write(fixtures.join("x4_outer_fold_fixture.bin"), &blob).unwrap();
+        eprintln!(
+            "      x4-outer-fold fixture written ({} bytes, {} commitments, {} sets)",
+            blob.len(),
+            n_c,
+            n_sets,
+        );
     }
 
     // Emit a (compressed, EIP-2537 uncompressed) fixture pair for each of

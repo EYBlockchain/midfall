@@ -500,6 +500,56 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase C2c: x4 DualMSM outer fold.
+    /// Reads `fixtures/x4_outer_fold_fixture.bin` which contains
+    /// the per-commitment (setIdx, posInSet) + nSets + x1/x4/x3 +
+    /// qEvalsOnX3[] + fEval, along with Rust-computed expected
+    /// `v`, per-commitment scalars, fComScalar, piScalar, gScalar.
+    /// Invokes `x4OuterFold` and asserts byte-for-byte match on
+    /// every output scalar.
+    function test_x4_outer_fold() public {
+        bytes memory f = vm.readFileBinary("fixtures/x4_outer_fold_fixture.bin");
+        uint256 off = 0;
+        uint256 nC = _readU32(f, off); off += 4;
+        uint256[] memory setIdx = new uint256[](nC);
+        uint256[] memory posInSet = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            setIdx[c] = _readU32(f, off); off += 4;
+            posInSet[c] = _readU32(f, off); off += 4;
+        }
+        uint256 nS = _readU32(f, off); off += 4;
+        uint256 x1 = _readUint(f, off); off += 32;
+        uint256 x4 = _readUint(f, off); off += 32;
+        uint256 x3 = _readUint(f, off); off += 32;
+        uint256 fEval = _readUint(f, off); off += 32;
+        uint256[] memory qEvalsOnX3 = new uint256[](nS);
+        for (uint256 s = 0; s < nS; s++) { qEvalsOnX3[s] = _readUint(f, off); off += 32; }
+        uint256 expV = _readUint(f, off); off += 32;
+        uint256[] memory expCommScalars = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) { expCommScalars[c] = _readUint(f, off); off += 32; }
+        uint256 expFCom = _readUint(f, off); off += 32;
+        uint256 expPi   = _readUint(f, off); off += 32;
+        uint256 expG    = _readUint(f, off); off += 32;
+
+        (
+            uint256 gotV,
+            uint256[] memory gotCommScalars,
+            uint256 gotFCom,
+            uint256 gotPi,
+            uint256 gotG
+        ) = v.x4OuterFold(setIdx, posInSet, nS, x1, x4, x3, qEvalsOnX3, fEval);
+
+        require(gotV == expV, "v mismatch");
+        require(gotCommScalars.length == nC, "comm scalar count");
+        for (uint256 c = 0; c < nC; c++) {
+            require(gotCommScalars[c] == expCommScalars[c], "comm scalar mismatch");
+        }
+        require(gotFCom == expFCom, "fCom mismatch");
+        require(gotPi == expPi, "pi mismatch");
+        require(gotG == expG, "g mismatch");
+        emit log_named_uint("x4 outer fold verified, scalars", nC + 4);
+    }
+
     /// Phase C2b: per-set x1 evals inner-product fold.
     /// Reads `fixtures/x1_evals_fold_fixture.bin` which contains
     /// the commitment set_idx + per-commitment evals in sorted-

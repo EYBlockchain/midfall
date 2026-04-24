@@ -1042,6 +1042,121 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  x4 DualMSM outer fold (Phase C2c)                                *
+     *                                                                    *
+     *  Ports the x4-power outer fold from                               *
+     *  \`KZGCommitmentScheme::multi_prepare\` (kzg/mod.rs:340-410):     *
+     *                                                                    *
+     *    v = Σ_{s<nSets} x4^s · qEvalsOnX3[s]                            *
+     *        + x4^{nSets} · f_eval                                       *
+     *                                                                    *
+     *    per-commitment scalar:                                          *
+     *      comm_scalar[c] = x4^{setIdx[c]} · x1^{posInSet[c]}           *
+     *                                                                    *
+     *    f_com_scalar = x4^{nSets}                                       *
+     *    pi_scalar    = x3                                               *
+     *    g_scalar     = −v                                               *
+     *                                                                    *
+     *  These scalars index into the final right-MSM base list:          *
+     *    [C_0, C_1, ..., C_{nC−1}, f_com, π, G1]                          *
+     *  with matching scalars                                             *
+     *    [cs_0, cs_1, ..., cs_{nC−1}, f_com_scalar, pi_scalar, g_scalar]*
+     *                                                                    *
+     *  The left MSM is always [(1, π)].                                  *
+     *                                                                    *
+     *  Phase D evaluates the final right MSM via the EIP-2537 G1MSM    *
+     *  precompile and feeds (left=π, right) into the Phase-C3          *
+     *  \`_pairingCheckFromPair\` helper to close the verification loop.  *
+     * ------------------------------------------------------------------ */
+
+    struct X4OuterFold {
+        uint256 v;
+        uint256[] commScalars;        // len = nC
+        uint256 fComScalar;
+        uint256 piScalar;
+        uint256 gScalar;
+    }
+
+    function _x4OuterFold(
+        uint256[] memory commitmentSetIdx,
+        uint256[] memory posInSet,
+        uint256 numSets,
+        uint256 x1,
+        uint256 x4,
+        uint256 x3,
+        uint256[] memory qEvalsOnX3,
+        uint256 fEval
+    ) internal view returns (X4OuterFold memory out) {
+        uint256 nC = commitmentSetIdx.length;
+        require(nC == posInSet.length, "posInSet len");
+        require(qEvalsOnX3.length == numSets, "qEvals len");
+
+        // v = Σ_{s<nSets} x4^s · qEvalsOnX3[s] + x4^nSets · f_eval
+        uint256 v = 0;
+        uint256 x4Pow = 1;
+        for (uint256 s = 0; s < numSets; s++) {
+            v = _frAdd(v, _frMul(x4Pow, qEvalsOnX3[s]));
+            x4Pow = _frMul(x4Pow, x4);
+        }
+        v = _frAdd(v, _frMul(x4Pow, fEval));
+        uint256 fComScalar = x4Pow;
+
+        // Precompute x4^s and x1^i power tables for efficient per-
+        // commitment scalar assembly.
+        uint256[] memory x4Powers = new uint256[](numSets);
+        x4Powers[0] = 1;
+        for (uint256 s = 1; s < numSets; s++) {
+            x4Powers[s] = _frMul(x4Powers[s - 1], x4);
+        }
+        // x1^i max count = max posInSet + 1; we over-allocate to nC (safe bound).
+        uint256[] memory x1Powers = new uint256[](nC);
+        x1Powers[0] = 1;
+        for (uint256 i = 1; i < nC; i++) {
+            x1Powers[i] = _frMul(x1Powers[i - 1], x1);
+        }
+        uint256[] memory commScalars = new uint256[](nC);
+        for (uint256 c = 0; c < nC; c++) {
+            commScalars[c] = _frMul(
+                x4Powers[commitmentSetIdx[c]],
+                x1Powers[posInSet[c]]
+            );
+        }
+
+        out.v           = v;
+        out.commScalars = commScalars;
+        out.fComScalar  = fComScalar;
+        out.piScalar    = x3;
+        out.gScalar     = _frSub(0, v);
+    }
+
+    /// Public fixture-only wrapper.
+    function x4OuterFold(
+        uint256[] calldata commitmentSetIdx,
+        uint256[] calldata posInSet,
+        uint256 numSets,
+        uint256 x1,
+        uint256 x4,
+        uint256 x3,
+        uint256[] calldata qEvalsOnX3,
+        uint256 fEval
+    ) external view returns (
+        uint256 v,
+        uint256[] memory commScalars,
+        uint256 fComScalar,
+        uint256 piScalar,
+        uint256 gScalar
+    ) {
+        X4OuterFold memory o = _x4OuterFold(
+            _copyToMemArr(commitmentSetIdx),
+            _copyToMemArr(posInSet),
+            numSets, x1, x4, x3,
+            _copyToMemArr(qEvalsOnX3),
+            fEval
+        );
+        return (o.v, o.commScalars, o.fComScalar, o.piScalar, o.gScalar);
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Per-set x1 evals inner-product fold (Phase C2b)                  *
      *                                                                    *
      *  Given the per-set partitioning produced by C2a plus each         *
