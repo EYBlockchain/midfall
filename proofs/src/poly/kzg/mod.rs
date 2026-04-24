@@ -287,6 +287,14 @@ where
         let mut q_coms: Vec<_> = vec![vec![]; point_sets.len()];
         let mut q_eval_sets = vec![vec![]; point_sets.len()];
 
+        // Per-top-level commitment metadata, recorded in BTreeMap
+        // iteration order (= Solidity's `commitmentIds` storage order):
+        //   comm_info[i] = (original_set_idx, pos_within_original_set)
+        // Used by the debug-trace-hooks block below to reconstruct the
+        // Solidity-side `commScalars[c] = x1^pos · x4^sorted_set(c)`.
+        #[cfg(feature = "debug-trace-hooks")]
+        let mut comm_info: Vec<(usize, usize)> = Vec::new();
+
         for com_data in commitment_map.into_iter() {
             let mut msm = MSMKZG::init();
             let terms = com_data.commitment.as_terms();
@@ -297,6 +305,8 @@ where
             for ((scalar, commitment), label) in terms.into_iter().zip(term_labels) {
                 msm.append_term(scalar, commitment, label);
             }
+            #[cfg(feature = "debug-trace-hooks")]
+            comm_info.push((com_data.set_index, q_coms[com_data.set_index].len()));
             q_coms[com_data.set_index].push(msm);
             q_eval_sets[com_data.set_index].push(com_data.evals);
         }
@@ -328,13 +338,22 @@ where
         //
         // The (len, i) key provides a deterministic total order even when two sets
         // share the same cardinality.
+        let mut sort_order: Vec<usize> = (0..point_sets.len()).collect();
+        sort_order.sort_by_key(|&i| (point_sets[i].len(), i));
         let (q_coms, q_eval_sets, point_sets) = {
-            let mut order: Vec<usize> = (0..point_sets.len()).collect();
-            order.sort_by_key(|&i| (point_sets[i].len(), i));
-            let q_coms: Vec<_> = order.iter().map(|&i| q_coms[i].clone()).collect();
-            let q_eval_sets: Vec<_> = order.iter().map(|&i| q_eval_sets[i].clone()).collect();
-            let point_sets: Vec<_> = order.iter().map(|&i| point_sets[i].clone()).collect();
+            let q_coms: Vec<_> = sort_order.iter().map(|&i| q_coms[i].clone()).collect();
+            let q_eval_sets: Vec<_> = sort_order.iter().map(|&i| q_eval_sets[i].clone()).collect();
+            let point_sets: Vec<_> = sort_order.iter().map(|&i| point_sets[i].clone()).collect();
             (q_coms, q_eval_sets, point_sets)
+        };
+        // Inverse: sorted_of_original[k] = sorted_set_idx given original k.
+        #[cfg(feature = "debug-trace-hooks")]
+        let sorted_of_original: Vec<usize> = {
+            let mut inv = vec![0usize; sort_order.len()];
+            for (sorted_idx, &orig) in sort_order.iter().enumerate() {
+                inv[orig] = sorted_idx;
+            }
+            inv
         };
 
         let f_com: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
@@ -470,6 +489,58 @@ where
                 "multi_prepare.final_left_len",
                 msm_accumulator.left.scalars.len(),
             );
+
+            // Expose the per-term breakdown of the final right-side MSM
+            // so the Solidity equivalence test can cross-check
+            // _multiPrepareSignature and _finalMsmScalarSignature.
+            //
+            // Per-top-level-commitment outer scalars
+            // (Solidity `commScalars[c] = x1^pos(c) · x4^sorted_set(c)`).
+            // Iterated in `commitment_map` BTreeMap order, which mirrors
+            // Solidity's `commitmentIds` FIFO-first-appearance storage
+            // order because both sides come from the same
+            // `construct_intermediate_sets` pass. For the linearization
+            // commitment this yields ONE outer scalar; the
+            // `linScalars[j]` inner expansion is left to the final-MSM
+            // build site.
+            emit_usize("multi_prepare.num_top_level_commitments", comm_info.len());
+            for (i, &(orig_set, pos_in_set)) in comm_info.iter().enumerate() {
+                let sorted_set = sorted_of_original[orig_set];
+                let x4_pow = powers(x4).nth(sorted_set).unwrap();
+                let x1_pow = powers(x1).nth(pos_in_set).unwrap();
+                let outer = x4_pow * x1_pow;
+                emit_scalar(&format!("multi_prepare.comm_scalar[{i}]"), &outer);
+            }
+
+            // msm_accumulator.right.scalars layout:
+            //   [0..n-3]  flat per-term scalars (linearization-expanded)
+            //   [n-3]     fComScalar (= x4^(num_sets))
+            //   [n-2]     piScalar   (= x3)
+            //   [n-1]     v, the scalar on base -G. Solidity carries the
+            //             equivalent -v on base G, i.e. gScalar = -v.
+            //             Emit the Solidity-compatible form so downstream
+            //             consumers can use the raw tag values directly.
+            let right = &msm_accumulator.right;
+            let n = right.scalars.len();
+            assert!(
+                n >= 3,
+                "final right-MSM must have at least fComScalar/piScalar/gScalar"
+            );
+            emit_scalar("multi_prepare.f_com_scalar", &right.scalars[n - 3]);
+
+            // final_msm.scalar[i]: the flat right-MSM scalar vector in
+            // Solidity order. Matches Rust right.scalars as-is for the
+            // comm/fCom/pi prefix; the last slot (gScalar) is negated so
+            // the signature Σ(i+1)·scalar_i lines up with Solidity's
+            // gScalar = -v.
+            emit_usize("final_msm.length", n);
+            for (i, s) in right.scalars.iter().enumerate() {
+                if i + 1 < n {
+                    emit_scalar(&format!("final_msm.scalar[{i}]"), s);
+                } else {
+                    emit_scalar(&format!("final_msm.scalar[{i}]"), &(-*s));
+                }
+            }
         }
 
         Ok(msm_accumulator)

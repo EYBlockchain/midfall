@@ -204,11 +204,14 @@ Algebraic equivalence is enforced at five granularity levels:
    whitelisted `TraceIntermediate` entries from
    `fixtures/solidity_trace.json`, and re-computes each Solidity
    aggregate signature in Rust using the exact same formula. Covers
-   `partial_eval_signature`, `query_list_signature`, and the three
-   `multi_prepare` singleton scalars (`v_scalar ↔ multi_prepare.v`,
-   `gScalar ↔ multi_prepare.g_scalar`,
-   `fEval_sol ↔ multi_prepare.f_eval`). See §5.5.1 for the runbook,
-   current coverage, and deferred signatures.
+   **all eight** emitted signatures: `partial_eval_signature`,
+   `query_list_signature`, `v_scalar ↔ multi_prepare.v`, `gScalar ↔
+   multi_prepare.g_scalar`, `fEval_sol ↔ multi_prepare.f_eval`,
+   `final_msm_scalar_signature` (flat right-MSM scalar vector),
+   `multi_prepare_signature` (per-top-level outer commScalars +
+   fCom/pi/g), and `linearization_signature` (identity scalars +
+   grouped-identity MSM points in EIP-2537 halves). See §5.5.1 for
+   the runbook and per-signature source-of-truth tags.
 
 6. **Property-based tests** (`tests/pbt.rs` + `tests/common/mod.rs`):
    8 tests driving the Solidity verifier **in-process** via
@@ -566,15 +569,20 @@ into `fixtures/solidity_trace.json`, and re-computes each Solidity
 aggregate signature in Rust using the exact same formula Solidity
 uses inside `verify()`.
 
-**Current coverage (5 assertions):**
+**Current coverage (8 assertions).** All Solidity aggregate
+signatures emitted by `verify()` now have a matching Rust source of
+truth emitted from `midnight-proofs` under `debug-trace-hooks`:
 
-| Solidity `TraceIntermediate` | Rust source tag(s)                      | Formula                         |
-|------------------------------|------------------------------------------|---------------------------------|
-| `partial_eval_signature`     | `partial_eval.identity[i].{selector,scalar}` | `Σ i · (selector + scalar) mod Fr` |
-| `query_list_signature`       | `query_list.{point,eval}[i]` ¹           | `Σ (i+1) · (point + eval) mod Fr` |
-| `v_scalar`                   | `multi_prepare.v`                        | direct equality                 |
-| `gScalar`                    | `multi_prepare.g_scalar`                 | direct equality                 |
-| `fEval_sol`                  | `multi_prepare.f_eval`                   | direct equality                 |
+| Solidity `TraceIntermediate`     | Rust source tag(s)                               | Formula                                                                                                    |
+|----------------------------------|---------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `partial_eval_signature`         | `partial_eval.identity[i].{selector,scalar}`      | `Σ i · (selector + scalar) mod Fr`                                                                         |
+| `query_list_signature`           | `query_list.{point,eval}[i]` ¹                    | `Σ (i+1) · (point + eval) mod Fr`                                                                          |
+| `v_scalar`                       | `multi_prepare.v`                                 | direct equality                                                                                            |
+| `gScalar`                        | `multi_prepare.g_scalar`                          | direct equality                                                                                            |
+| `fEval_sol`                      | `multi_prepare.f_eval`                            | direct equality                                                                                            |
+| `final_msm_scalar_signature`     | `final_msm.scalar[i]` ²                           | `Σ (i+1) · scalar_i mod Fr`                                                                                |
+| `multi_prepare_signature`        | `multi_prepare.{comm_scalar[i],f_com_scalar,…}` ³ | `v + Σ (i+1)·commScalars[i] + (nc+1)·fCom + (nc+2)·piScalar + (nc+3)·gScalar`                              |
+| `linearization_signature`        | `linearization.{identity_scalar[i],point_compressed[i],expected_eval}` ⁴ | `expectedEval + Σ (i+1)·scalar_i + Σ (off+j+1)·(pointCoord_j mod Fr)`, `off = scalars.length`              |
 
 ¹ `query_list.{point,eval}[i]` is emitted from a dedicated
 debug-trace site added to `proofs/src/plonk/verifier.rs` after
@@ -582,6 +590,29 @@ debug-trace site added to `proofs/src/plonk/verifier.rs` after
 the pre-sort verifier-query enumeration that Solidity
 `_buildQueryList` walks before feeding
 `_constructIntermediateSets`.
+
+² `final_msm.scalar[i]` is emitted from
+`poly::kzg::multi_prepare` using the final `msm_accumulator.right`
+scalar vector. The last entry is the scalar on `-G`, and is negated
+before emission so the value matches Solidity's `gScalar = -v` on
+the positive generator.
+
+³ `multi_prepare.comm_scalar[i]` is one outer scalar per
+**top-level** commitment (the linearization commitment contributes
+a single outer scalar; its `linScalars[j]` inner expansion happens
+only when Solidity builds the final MSM), computed as
+`x1^pos_in_set · x4^sorted_set_idx`. Iteration order matches the
+`commitment_map` BTreeMap walk, which mirrors Solidity's
+`commitmentIds` FIFO-first-appearance storage order.
+
+⁴ `linearization.point_compressed[i]` is the 48-byte
+`GroupEncoding` of each MSM point (quotient-limb commitments and
+grouped-identity commitments). The Rust test decompresses each
+point via `midnight_curves::G1Affine::from_bytes`, re-encodes it
+using the EIP-2537 format (`pad16 || x(48) || pad16 || y(48)`), and
+splits it into four 32-byte halves (`x_hi`, `x_lo`, `y_hi`, `y_lo`)
+for the signature fold — the same halves Solidity assembles in
+`_computeLinearizationCommitment`.
 
 **Solidity side — what lands in `solidity_trace.json`.**
 `test_verify_poseidon_proof` (`test/PoseidonVerifier.t.sol`)
@@ -592,32 +623,19 @@ scalars). Per-element diagnostic intermediates (`ql_point[i]`,
 `right_term_*`, `fifo_*`, `dbg_*`) stay on-chain-only so the JSON
 stays within forge's memory budget during `string.concat`.
 
-**Deferred signatures (follow-up work).** Three Solidity
-signatures currently have no Rust source of truth because their
-inputs are not yet emitted under `debug-trace-hooks`:
+**Soundness validation.** The test has been repeatedly shown to
+fail when the Solidity side is mutated, and reverting restores all
+8 checks:
 
-* `linearization_signature` — needs linearization MSM point
-  coordinates (Fp halves). Requires a `debug_commitment_bytes`
-  trait method on `PolynomialCommitmentScheme` returning the
-  compressed encoding for each `CS::Commitment`, consumed by a
-  loop in `plonk::linearization::verifier::compute_linearization_commitment`.
-* `multi_prepare_signature` — needs per-commitment final scalars
-  (`commScalars[i]`) and `f_com_scalar` from the `x4`-over-`x1`
-  fold in `poly::kzg::multi_prepare`.
-* `final_msm_scalar_signature` — needs the flat expanded
-  right-MSM scalar vector.
+* `_queryListSignature` mutated `ql.evals[i]` → `ql.evals[0]`
+  (Phase 1).
+* A single byte flipped in the first `linearization.point_compressed[0]`
+  emission (Phase 2c soundness probe — the corrupted payload makes
+  `G1Affine::from_bytes` reject, which itself makes the test fail).
 
-Each is commented in `tests/forge.rs` with the exact emission site
-that needs to be added. Landing any of them is a self-contained
-change (add `emit_scalar` calls at the named Rust site, then add
-one more assertion block in the test).
-
-**Soundness validation.** The test was shown to fail (catching the
-divergence) when `_queryListSignature` in `PoseidonVerifier.sol`
-was mutated from `ql.evals[i]` to `ql.evals[0]`; all other Solidity
-tests (including `test_verify_poseidon_proof`) continued to pass
-under that same mutation, confirming that this cross-check covers
-ground no other test did.
+All other Solidity tests (including `test_verify_poseidon_proof`
+itself) continued to pass under the Phase 1 mutation, confirming
+that this cross-check covers ground no other test did.
 
 ### 5.6 Property-based tests (PBT)
 

@@ -117,7 +117,8 @@ pub(crate) fn compute_linearization_commitment<
 
     #[cfg(feature = "debug-trace-hooks")]
     if crate::debug_trace::is_enabled() {
-        use crate::debug_trace::{emit_scalar, emit_u64, emit_usize};
+        use crate::debug_trace::{emit_bytes, emit_scalar, emit_u64, emit_usize};
+        use group::GroupEncoding;
         emit_usize(
             "linearization.num_identities_after_group",
             identities_points.len(),
@@ -141,6 +142,18 @@ pub(crate) fn compute_linearization_commitment<
             emit_u64(&format!("linearization.identity_label[{i}]"), code);
         }
         emit_scalar("linearization.expected_eval", &expected_eval);
+        // Emit each linearization MSM point's GroupEncoding (compressed).
+        // The Solidity `_linearizationSignature` folds point coords
+        // (Fp halves in EIP-2537 encoding) into the signature; the
+        // Rust-side cross-check test decompresses these bytes and
+        // reconstructs the same halves.
+        for (i, p) in identities_points.iter().enumerate() {
+            let bytes = p.to_bytes();
+            emit_bytes(
+                &format!("linearization.point_compressed[{i}]"),
+                bytes.as_ref(),
+            );
+        }
     }
 
     VerifierQuery::new_linear(

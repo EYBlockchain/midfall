@@ -401,6 +401,42 @@ fn fq_to_be_hex(v: &midnight_curves::Fq) -> String {
     eip2537::fq_to_be_hex(v)
 }
 
+/// Reduce a 32-byte big-endian uint256 modulo the Fq (FR) modulus and
+/// return it as an Fq element. `ff::Fq::from_repr` rejects values
+/// >= FR_MODULUS, so we route through `from_uniform_bytes` which
+/// performs a proper wide-to-narrow reduction.
+fn fq_from_be32_mod(bytes_be: &[u8]) -> midnight_curves::Fq {
+    use ff::FromUniformBytes;
+    assert_eq!(bytes_be.len(), 32, "u256 mod Fr input must be 32 bytes");
+    let mut padded = [0u8; 64];
+    // `from_uniform_bytes` reads its input as a little-endian integer;
+    // place the LE form of our value in the low 32 bytes.
+    for i in 0..32 {
+        padded[i] = bytes_be[31 - i];
+    }
+    midnight_curves::Fq::from_uniform_bytes(&padded)
+}
+
+/// Decompress a 48-byte G1 compressed payload (as emitted by
+/// `GroupEncoding::to_bytes()` on midnight-curves G1) and convert to the
+/// 128-byte EIP-2537 uncompressed form. Returns the four 32-byte halves
+/// (x_hi, x_lo, y_hi, y_lo) each as a separate slice.
+fn g1_compressed_to_eip2537_halves(compressed: &[u8]) -> [[u8; 32]; 4] {
+    use group::GroupEncoding;
+    use midnight_curves::G1Affine;
+    assert_eq!(compressed.len(), 48, "G1 compressed must be 48 bytes");
+    let mut repr = <G1Affine as GroupEncoding>::Repr::default();
+    repr.as_mut().copy_from_slice(compressed);
+    let affine: G1Affine = Option::from(G1Affine::from_bytes(&repr))
+        .expect("linearization point decompresses to a valid G1 affine");
+    let eip = eip2537::g1_to_eip2537(&affine);
+    let mut out = [[0u8; 32]; 4];
+    for (i, slot) in out.iter_mut().enumerate() {
+        slot.copy_from_slice(&eip[i * 32..(i + 1) * 32]);
+    }
+    out
+}
+
 fn u64_from_be8(bytes: &[u8]) -> u64 {
     assert_eq!(bytes.len(), 8, "u64 BE payload must be 8 bytes");
     u64::from_be_bytes(bytes.try_into().unwrap())
@@ -472,6 +508,129 @@ fn rust_partial_eval_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
         let combined = sel + s;
         // sig += i * combined
         sig += Fq::from(i as u64) * combined;
+    }
+    sig
+}
+
+/// Compute `_linearizationSignature`:
+///   `expectedEval % FR + Σ (i+1)·scalar_i
+///      + Σ (off + j + 1) · (pointCoord_j mod FR)`  where
+/// `off = scalars.length` and `pointCoord_j` iterates the linearization
+/// MSM points' EIP-2537 halves (x_hi, x_lo, y_hi, y_lo) in point order.
+fn rust_linearization_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
+    use midnight_curves::Fq;
+    // Collect scalars in order.
+    let mut scalars: std::collections::BTreeMap<usize, Fq> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("linearization.identity_scalar[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            scalars.insert(idx, fq_from_be32(payload));
+        }
+    }
+    assert!(
+        !scalars.is_empty(),
+        "verifier_trace.bin has no `linearization.identity_scalar[*]` entries."
+    );
+    let expected_eval = fq_from_be32(find_first(events, "linearization.expected_eval"));
+
+    // Collect linearization MSM points (compressed bytes) in order.
+    let mut point_bytes: std::collections::BTreeMap<usize, Vec<u8>> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("linearization.point_compressed[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            point_bytes.insert(idx, payload.clone());
+        }
+    }
+    assert_eq!(
+        point_bytes.len(),
+        scalars.len(),
+        "linearization points/scalars length mismatch"
+    );
+
+    // Signature.
+    // expectedEval is already < FR, so reduction is a no-op; use it as-is.
+    let mut sig = expected_eval;
+    let n_scalars = scalars.len();
+    for i in 0..n_scalars {
+        sig += Fq::from((i + 1) as u64) * scalars[&i];
+    }
+    let off = n_scalars;
+    // pointsFlat ordering: for each point j, 4 halves (x_hi, x_lo, y_hi, y_lo).
+    for pj in 0..point_bytes.len() {
+        let halves = g1_compressed_to_eip2537_halves(&point_bytes[&pj]);
+        for (h_idx, half) in halves.iter().enumerate() {
+            let j = pj * 4 + h_idx;
+            let coord = fq_from_be32_mod(half);
+            sig += Fq::from((off + j + 1) as u64) * coord;
+        }
+    }
+    sig
+}
+
+/// Compute `_multiPrepareSignature`:
+///   `v + Σ (i+1)·commScalars[i] + (nc+1)·fComScalar
+///      + (nc+2)·piScalar + (nc+3)·gScalar  (mod FR)`.
+///
+/// Inputs are sourced from the debug-trace events emitted in
+/// `poly::kzg::multi_prepare`.
+fn rust_multi_prepare_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
+    use midnight_curves::Fq;
+    let v          = fq_from_be32(find_first(events, "multi_prepare.v"));
+    let f_com_s    = fq_from_be32(find_first(events, "multi_prepare.f_com_scalar"));
+    let pi_s       = fq_from_be32(find_first(events, "multi_prepare.pi_scalar"));
+    let g_s        = fq_from_be32(find_first(events, "multi_prepare.g_scalar"));
+
+    let mut comm: std::collections::BTreeMap<usize, Fq> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("multi_prepare.comm_scalar[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            comm.insert(idx, fq_from_be32(payload));
+        }
+    }
+    assert!(
+        !comm.is_empty(),
+        "verifier_trace.bin has no `multi_prepare.comm_scalar[*]` entries. \
+         Rebuild midnight-proofs with the debug-trace-hooks feature \
+         and re-run `cargo run --bin generate`."
+    );
+    let nc = comm.len();
+    let mut sig = v;
+    for i in 0..nc {
+        sig += Fq::from((i + 1) as u64) * comm[&i];
+    }
+    sig += Fq::from((nc + 1) as u64) * f_com_s;
+    sig += Fq::from((nc + 2) as u64) * pi_s;
+    sig += Fq::from((nc + 3) as u64) * g_s;
+    sig
+}
+
+/// Compute `_finalMsmScalarSignature`: `Σ (i+1)·scalar_i mod FR` over
+/// the flat `final_msm.scalar[i]` events. The Rust side emits these in
+/// Solidity-order (commScalars/linearization-expanded, fComScalar,
+/// piScalar, gScalar).
+fn rust_final_msm_scalar_signature(events: &[MtrEvent]) -> midnight_curves::Fq {
+    use midnight_curves::Fq;
+    let mut scalars: std::collections::BTreeMap<usize, Fq> = Default::default();
+    for (tag, payload) in events {
+        if let Some(rest) = tag.strip_prefix("final_msm.scalar[") {
+            let (idx_str, _) = rest.split_once(']').expect("bracketed index");
+            let idx: usize = idx_str.parse().expect("numeric index");
+            scalars.insert(idx, fq_from_be32(payload));
+        }
+    }
+    assert!(
+        !scalars.is_empty(),
+        "verifier_trace.bin has no `final_msm.scalar[*]` entries. \
+         Rebuild midnight-proofs with the debug-trace-hooks feature \
+         and re-run `cargo run --bin generate`."
+    );
+    let n = scalars.len();
+    let mut sig = Fq::from(0);
+    for i in 0..n {
+        sig += Fq::from((i + 1) as u64) * scalars[&i];
     }
     sig
 }
@@ -579,5 +738,61 @@ fn rust_and_solidity_intermediates_match() {
             fq_to_be_hex(&sol_val),
         );
         eprintln!("[intermediates] {sol_tag} == {rust_tag} ({})", fq_to_be_hex(&rust_val));
+    }
+
+    // 4. final_msm_scalar_signature (Phase 2a): formula
+    //    Σ (i+1)·scalar_i over the flat right-MSM scalar vector. The
+    //    Rust side emits `final_msm.scalar[i]` in Solidity order:
+    //    per-sorted-set / per-commitment / linearization-inner expanded,
+    //    then fComScalar, piScalar, gScalar (= -v on base G).
+    {
+        let rust_sig = rust_final_msm_scalar_signature(&events);
+        let sol_sig = require_sol(&sol, "final_msm_scalar_signature");
+        assert_eq!(
+            rust_sig, sol_sig,
+            "final_msm_scalar_signature divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_sig),
+            fq_to_be_hex(&sol_sig),
+        );
+        eprintln!("[intermediates] final_msm_scalar_signature OK ({})", fq_to_be_hex(&rust_sig));
+    }
+
+    // 5. multi_prepare_signature (Phase 2b): formula
+    //    v + Σ (i+1)·commScalars[i] + (nc+1)·fComScalar
+    //      + (nc+2)·piScalar + (nc+3)·gScalar
+    // The Rust side emits one `multi_prepare.comm_scalar[i]` per
+    // TOP-LEVEL commitment (nc = top-level count; the linearization
+    // commitment contributes a single outer scalar that Solidity later
+    // multiplies by `linScalars[j]` during _buildFinalMsmInputs).
+    {
+        let rust_sig = rust_multi_prepare_signature(&events);
+        let sol_sig = require_sol(&sol, "multi_prepare_signature");
+        assert_eq!(
+            rust_sig, sol_sig,
+            "multi_prepare_signature divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_sig),
+            fq_to_be_hex(&sol_sig),
+        );
+        eprintln!("[intermediates] multi_prepare_signature OK ({})", fq_to_be_hex(&rust_sig));
+    }
+
+    // 6. linearization_signature (Phase 2c): formula
+    //    expectedEval % FR + Σ (i+1)·scalar_i
+    //      + Σ (off+j+1)·(pointCoord_j % FR)
+    // where `pointCoord_j` iterates the linearization MSM points in
+    // EIP-2537 halves (x_hi, x_lo, y_hi, y_lo) per point. The Rust
+    // side emits GroupEncoding-compressed bytes per point (`p.to_bytes()`);
+    // this test decompresses and re-encodes to EIP-2537 so the halves
+    // match exactly what Solidity folds into its signature.
+    {
+        let rust_sig = rust_linearization_signature(&events);
+        let sol_sig = require_sol(&sol, "linearization_signature");
+        assert_eq!(
+            rust_sig, sol_sig,
+            "linearization_signature divergence: rust={} sol={}",
+            fq_to_be_hex(&rust_sig),
+            fq_to_be_hex(&sol_sig),
+        );
+        eprintln!("[intermediates] linearization_signature OK ({})", fq_to_be_hex(&rust_sig));
     }
 }
