@@ -572,6 +572,55 @@ bytecode, query schedules, column indices directly off a live
 `midnight-proofs` `VerifyingKey`. A second circuit's blob would be
 produced fine; the blocker is `PoseidonVerifier.sol` (see §7).
 
+### 6.1 Comparison to halo2-solidity-verifier
+
+It is worth naming the architectural contrast with the reference
+on-chain halo2 verifier explicitly, because it drives both the
+generality story and the gas-cost story (see `OPTIMISATIONS.md` §2.2):
+
+* **halo2-solidity-verifier is a per-circuit template codegen.** For a
+  given `VerifyingKey` it emits a flat Yul/Solidity verifier where
+  every gate, every lookup, every permutation-check scalar is
+  hard-coded as an immediate. No loops over a VK blob, no runtime
+  bytecode interpretation. Swapping circuits means regenerating the
+  verifier contract.
+* **This crate is a runtime interpreter over a VK blob.** Gate RPN
+  bytecode, permutation metadata, lookup/trashcan bytecode, query
+  schedules and column indices all live as data inside the
+  `PoseidonVerifyingKey` blob; `PoseidonVerifier.sol` walks them at
+  `verify()` time. Swapping circuits would mean re-running
+  `generate` to emit a new VK contract — the verifier contract
+  itself would, in principle, not need to change. This is what
+  `generate.rs` means by *"its logic is circuit-agnostic within the
+  constraints baked into the VK blob."*
+
+So at the architectural level this verifier **is** more generic: one
+deployed verifier contract can host many circuits whose VK blobs
+decode under the same constraint-system shape. The tradeoff is that
+"interpreter + data" costs ≈ 40× more gas than "template + immediates"
+for the same circuit (see `OPTIMISATIONS.md` §2.2).
+
+Two important caveats on "same CS shape":
+
+1. §7.2 lists six poseidon-specific shortcuts the hand-maintained
+   contract still takes (single lookup, `instance · l_0` collapse,
+   `G1::identity()` committed-instance commitment, zero per-phase
+   challenges, `fixed_queries[i].column_idx == i`, `num_proofs == 1`).
+   These are not enforced by the CS parameters themselves — they are
+   places where the contract trusts the poseidon-example's VK shape.
+   A VK whose CS diverges on any of those axes would be rejected or
+   silently mis-evaluated even though the blob encoding supports it.
+2. §7.3 lists three `midnight-proofs` feature flags
+   (`truncated-challenges`, `single-h-commitment`, `fewer-point-sets`)
+   that the Solidity side does not implement. A VK built with any of
+   them enabled would not verify, regardless of blob shape.
+
+In other words, the verifier is **architecturally** VK-driven rather
+than circuit-inlined, and `VkInfo::from_live` is already largely
+circuit-generic, but today the deployed contract only accepts VKs
+whose CS shape matches the six hard-coded assumptions above. Lifting
+them is the §9 "circuit generalisation" workstream.
+
 ## 7. Tradeoffs & scope: "not a strict generic 1-to-1 port"
 
 This crate is **not** a drop-in replacement for the Rust
