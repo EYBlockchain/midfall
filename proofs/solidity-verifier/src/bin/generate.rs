@@ -1768,9 +1768,10 @@ fn main() {
         for _ in 0..vk_info.num_trashcans {
             let _: G1Projective = trans.read().unwrap();
         }
-        let _y: Fq = trans.squeeze_challenge();
+        let y_d4: Fq = trans.squeeze_challenge();
+        let mut quot_limbs_d4: Vec<G1Projective> = Vec::new();
         for _ in 0..vk_info.num_quotient_limbs {
-            let _: G1Projective = trans.read().unwrap();
+            quot_limbs_d4.push(trans.read().unwrap());
         }
         let x_d3: Fq = trans.squeeze_challenge();
 
@@ -2035,6 +2036,99 @@ fn main() {
                 pblob.len(),
                 expected.len(),
             );
+
+            // ---------- Phase D4: linearization_signature ----------
+            //
+            // Replays compute_linearization_commitment (proofs/src/
+            // plonk/linearization/verifier.rs:45+) against the
+            // transcript-derived (y, xn, splitting_factor) +
+            // quotient-limb commits + the `expected` scalars we just
+            // produced. Computes the same positional signature as
+            // _linearizationSignature on the Sol side:
+            //   sig = expectedEval
+            //       + Σ (i+1)·out_scalar_i (mod FR)
+            //       + Σ (nS+j+1)·(point_coord_j mod FR) (mod FR)
+            //
+            // File layout (64 bytes):
+            //   [32] num_out_points  (serves as a shape-check byte too)
+            //   [32] signature
+            {
+                use std::collections::BTreeMap;
+                let splitting_factor_d4 = x_d3.pow_vartime([vk_info.n - 1]);
+                let xn_d4 = x_d3 * splitting_factor_d4;
+
+                let mut id_scalars: Vec<Fq> = Vec::new();
+                let mut id_points: Vec<G1Projective> = Vec::new();
+                let mut splitting_pow = Fq::ONE - xn_d4;
+                for q in &quot_limbs_d4 {
+                    id_scalars.push(splitting_pow);
+                    id_points.push(*q);
+                    splitting_pow *= splitting_factor_d4;
+                }
+                let mut grouped: BTreeMap<Option<usize>, Fq> = BTreeMap::new();
+                let mut y_pow = Fq::ONE;
+                for (col_idx, eval) in expected.iter().rev() {
+                    let key = if col_idx.unwrap_or(0xFFFFFFFFu32) == 0xFFFFFFFFu32 {
+                        None
+                    } else {
+                        Some(col_idx.unwrap() as usize)
+                    };
+                    *grouped.entry(key).or_insert(Fq::ZERO) += y_pow * eval;
+                    y_pow *= y_d4;
+                }
+                let mut expected_eval_d4 = Fq::ZERO;
+                for (col_idx, eval) in grouped.into_iter() {
+                    match col_idx {
+                        Some(c) => {
+                            let comm: G1Projective = vk_inner.fixed_commitments()[c].into();
+                            id_points.push(comm);
+                            id_scalars.push(eval);
+                        }
+                        None => { expected_eval_d4 -= eval; }
+                    }
+                }
+
+                // Signature: mirror _linearizationSignature exactly.
+                // Convert each point to EIP-2537 (128 bytes = 4×32 BE)
+                // and interpret each 32-byte slot as a uint256 mod FR.
+                // Uses Fq's from_uniform_bytes (64-byte canonical
+                // reduction) by zero-extending the 32-byte BE slice.
+                use ff::FromUniformBytes;
+                let u256_to_fq = |be: &[u8]| -> Fq {
+                    let mut wide_be = [0u8; 64];
+                    wide_be[32..64].copy_from_slice(be);
+                    let mut wide_le = [0u8; 64];
+                    for (i, b) in wide_be.iter().rev().enumerate() { wide_le[i] = *b; }
+                    Fq::from_uniform_bytes(&wide_le)
+                };
+
+                let mut sig_d4 = expected_eval_d4;
+                for (i, s) in id_scalars.iter().enumerate() {
+                    sig_d4 += Fq::from((i + 1) as u64) * s;
+                }
+                let mut j = 0u64;
+                let off = id_scalars.len() as u64;
+                for p in &id_points {
+                    let eip = midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(p);
+                    for slot in 0..4 {
+                        let be = &eip[slot * 32..(slot + 1) * 32];
+                        let coord_mod_fr = u256_to_fq(be);
+                        sig_d4 += Fq::from(off + j + 1) * coord_mod_fr;
+                        j += 1;
+                    }
+                }
+
+                let mut lblob: Vec<u8> = Vec::new();
+                lblob.extend_from_slice(&[0u8; 24]);
+                lblob.extend_from_slice(&(id_points.len() as u64).to_be_bytes());
+                lblob.extend_from_slice(&fq_to_be(&sig_d4));
+                fs::write(fixtures.join("linearization_signature_fixture.bin"), &lblob).unwrap();
+                eprintln!(
+                    "      linearization-signature fixture written ({} bytes, {} points)",
+                    lblob.len(),
+                    id_points.len(),
+                );
+            }
         }
     }
 

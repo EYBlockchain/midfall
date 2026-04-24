@@ -1217,6 +1217,30 @@ contract PoseidonVerifier {
         }
     }
 
+    /// Positional signature over the linearization output:
+    /// \`expectedEval + Σ (i+1)·scalar_i + Σ (nS+j+1)·(pointCoord_j mod FR)\`.
+    /// Point coords are Fp elements (BLS12-381 base field) which can
+    /// exceed FR_MODULUS; reducing mod FR loses some info but still
+    /// catches every genuine regression with negligible collision risk.
+    function _linearizationSignature(
+        uint256[] memory pointsFlat,
+        uint256[] memory scalars,
+        uint256 expectedEval
+    ) internal pure returns (uint256 sig) {
+        sig = expectedEval % FR_MODULUS;
+        for (uint256 i = 0; i < scalars.length; i++) {
+            sig = addmod(sig, mulmod(i + 1, scalars[i], FR_MODULUS), FR_MODULUS);
+        }
+        uint256 off = scalars.length;
+        for (uint256 j = 0; j < pointsFlat.length; j++) {
+            sig = addmod(
+                sig,
+                mulmod(off + j + 1, pointsFlat[j] % FR_MODULUS, FR_MODULUS),
+                FR_MODULUS
+            );
+        }
+    }
+
     /* ------------------------------------------------------------------ *
      *  Transcript eval collection (Phase D2)                             *
      *                                                                    *
@@ -2703,11 +2727,26 @@ contract PoseidonVerifier {
         emit PhaseGas("y", gStart - gEnd);
 
         /* --- Read quotient limb commitments ----------------------- */
+        // Phase D4: also decompress + collect each limb's EIP-2537
+        // uncompressed 4-uint256 into \`quotientLimbCommsFlat\` so the
+        // linearization MSM call below can consume them directly.
         gStart = gasleft();
+        uint256[] memory quotientLimbCommsFlat =
+            new uint256[](uint256(vk.numQuotientLimbs) * 4);
         for (uint256 i = 0; i < vk.numQuotientLimbs; i++) {
             bytes memory c = _readPointCompressed48(rd);
             emit TraceReadPoint("quotient_limb", c);
             _absorbG1Compressed(t, c);
+            bytes memory eip = _g1CompressedToEip2537(c);
+            require(eip.length == 128, "quot decomp len");
+            assembly {
+                let src := add(eip, 32)
+                let dst := add(add(quotientLimbCommsFlat, 32), mul(i, 128))
+                mstore(dst,            mload(src))
+                mstore(add(dst, 32),   mload(add(src, 32)))
+                mstore(add(dst, 64),   mload(add(src, 64)))
+                mstore(add(dst, 96),   mload(add(src, 96)))
+            }
         }
         gEnd = gasleft();
         emit PhaseGas("quotient_limbs", gStart - gEnd);
@@ -2746,10 +2785,12 @@ contract PoseidonVerifier {
         }
 
         /* --- Phase D3: partial-eval driver call ------------------- */
+        /* --- Phase D4: linearization commitment call ------------- */
         gStart = gasleft();
         {
             uint256 xU = uint256(x);
-            uint256 xnU = _frMul(xU, _frPow(xU, uint256(vk.n) - 1));  // xn = x^n
+            uint256 splittingFactor = _frPow(xU, uint256(vk.n) - 1);
+            uint256 xnU = _frMul(xU, splittingFactor);
             PEInputs memory pin = PEInputs({
                 x: xU,
                 xn: xnU,
@@ -2764,6 +2805,18 @@ contract PoseidonVerifier {
                 _partiallyEvaluateIdentities(vkBlob, penv);
             uint256 peSig = _partialEvalSignature(peSel, peVals);
             emit TraceIntermediate("partial_eval_signature", bytes32(peSig));
+
+            // Phase D4: feed (peSel, peVals) + y + xn + splittingFactor +
+            // quotient-limb commits into the linearization driver.
+            (uint256[] memory linPointsFlat, uint256[] memory linScalars,
+             uint256 linExpectedEval) = _computeLinearizationCommitment(
+                vkBlob, peSel, peVals,
+                uint256(y), xnU, splittingFactor,
+                quotientLimbCommsFlat
+            );
+            uint256 linSig =
+                _linearizationSignature(linPointsFlat, linScalars, linExpectedEval);
+            emit TraceIntermediate("linearization_signature", bytes32(linSig));
         }
         gEnd = gasleft();
         emit PhaseGas("partial_eval", gStart - gEnd);

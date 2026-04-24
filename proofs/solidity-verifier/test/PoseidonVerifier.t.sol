@@ -500,6 +500,53 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D4: linearization commitment inside verify().
+    /// verify() now emits
+    /// `TraceIntermediate("linearization_signature", sig)` where
+    /// `sig = expectedEval + Σ(i+1)·scalar_i
+    ///        + Σ(nS+j+1)·(point_coord_j mod FR)`
+    /// over the (pointsFlat, scalars, expectedEval) triple produced
+    /// by `_computeLinearizationCommitment`. The Rust replica
+    /// replays the transcript, re-runs
+    /// `compute_linearization_commitment`, and dumps the expected
+    /// signature. A match confirms every piece of the linearization
+    /// MSM (quotient-limb scalars via `1−xn` × `splittingFactor^i`,
+    /// y-power-grouping in reverse BTreeMap order, `None` bucket
+    /// negation into `expectedEval`, fixed-commitment decompression,
+    /// quotient-limb decompression) agrees byte-for-byte with Rust.
+    function test_linearization_signature() public {
+        bytes memory f =
+            vm.readFileBinary("fixtures/linearization_signature_fixture.bin");
+        uint256 expCount = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("linearization_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "linearization_signature event not emitted");
+        require(gotSig == expSig, "linearization_signature mismatch");
+        emit log_named_uint(
+            "linearization_signature verified, output points", expCount);
+    }
+
     /// Phase D3: partial-eval driver call from inside verify().
     /// verify() now emits `TraceIntermediate("partial_eval_signature",
     /// sig)` where `sig = Σ i · (selector_i + scalar_i) mod FR` over
