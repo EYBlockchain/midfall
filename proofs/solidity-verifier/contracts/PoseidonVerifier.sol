@@ -1042,6 +1042,212 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  BLS12-381 G1 generator (EIP-2537 128-byte encoding)               *
+     *                                                                    *
+     *  Used by the final right-side MSM as the base for the -v·G term.  *
+     *  Hard-coded from the canonical BLS12-381 generator coordinates.   *
+     * ------------------------------------------------------------------ */
+
+    uint256 private constant G1_GEN_X_HI =
+        0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f;
+    uint256 private constant G1_GEN_X_LO =
+        0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb;
+    uint256 private constant G1_GEN_Y_HI =
+        0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4;
+    uint256 private constant G1_GEN_Y_LO =
+        0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1;
+
+    function _g1Generator() internal pure returns (uint256[4] memory g) {
+        g[0] = G1_GEN_X_HI;
+        g[1] = G1_GEN_X_LO;
+        g[2] = G1_GEN_Y_HI;
+        g[3] = G1_GEN_Y_LO;
+    }
+
+    function _emitCommIds(uint256[] memory ids) internal {
+        for (uint256 i = 0; i < ids.length; i++) {
+            emit TraceIntermediate("fifo_commId", bytes32(ids[i]));
+        }
+    }
+
+    function _emitSetIdx(uint256[] memory idx) internal {
+        for (uint256 i = 0; i < idx.length; i++) {
+            emit TraceIntermediate("fifo_setIdx", bytes32(idx[i]));
+        }
+    }
+
+    function _emitQueryList(QueryList memory ql) internal {
+        emit TraceIntermediate("ql_length", bytes32(ql.commIds.length));
+        for (uint256 i = 0; i < ql.commIds.length; i++) {
+            emit TraceIntermediate("ql_commId", bytes32(ql.commIds[i]));
+            emit TraceIntermediate("ql_point",  bytes32(ql.points[i]));
+        }
+    }
+
+    function _emitDbgMpSets(MultiPrepareOut memory mp, IntermediateSets memory sSorted) internal {
+        mp;
+        for (uint256 si = 0; si < sSorted.pointSets.length; si++) {
+            for (uint256 pj = 0; pj < sSorted.pointSets[si].length; pj++) {
+                emit TraceIntermediate("dbg_point", bytes32(sSorted.pointSets[si][pj]));
+            }
+        }
+    }
+
+    /// Debug helper: emit each MSM input as a series of
+    /// TraceIntermediate events so the test can diff term-by-term
+    /// against the Rust fixture.
+    function _emitMsmTerms(
+        uint256[] memory scalars,
+        uint256[] memory pointsFlat
+    ) internal {
+        for (uint256 i = 0; i < scalars.length; i++) {
+            emit TraceIntermediate("right_term_scalar", bytes32(scalars[i]));
+            emit TraceIntermediate("right_term_x_hi", bytes32(pointsFlat[i * 4]));
+            emit TraceIntermediate("right_term_x_lo", bytes32(pointsFlat[i * 4 + 1]));
+            emit TraceIntermediate("right_term_y_hi", bytes32(pointsFlat[i * 4 + 2]));
+            emit TraceIntermediate("right_term_y_lo", bytes32(pointsFlat[i * 4 + 3]));
+        }
+    }
+
+    /// Decode a 128-byte EIP-2537 G1 point into its 4 uint256 words.
+    function _bytesToG1Flat(bytes memory eip128)
+        internal pure returns (uint256[4] memory out)
+    {
+        require(eip128.length == 128, "bytesToG1Flat: bad len");
+        assembly {
+            let src := add(eip128, 32)
+            mstore(out,            mload(src))
+            mstore(add(out, 32),   mload(add(src, 32)))
+            mstore(add(out, 64),   mload(add(src, 64)))
+            mstore(add(out, 96),   mload(add(src, 96)))
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
+     *  Commitment store + final MSM assembly (Phase D8)                  *
+     *                                                                    *
+     *  Accumulates every G1 commitment the on-chain verifier needs to   *
+     *  feed the final right-side MSM:                                   *
+     *    - advice (per column, decompressed from proof)                *
+     *    - lookup_m / helpers / acc (from proof)                        *
+     *    - perm-product (from proof)                                    *
+     *    - trashcan (from proof)                                        *
+     *    - fixed column (from VK)                                       *
+     *    - permutation common (from VK)                                *
+     *    - committed instance (identity G1 for poseidon)                *
+     *    - linearization inner terms (from Phase D4 output)             *
+     *    - f_com, π (from proof)                                        *
+     *    - G1 generator (constant, for the -v·G term)                   *
+     *                                                                    *
+     *  The store is indexed by the commitment-ID scheme introduced in   *
+     *  Phase D6 (CommIdBases); each slot holds 4 uint256s               *
+     *  (EIP-2537 x_hi / x_lo / y_hi / y_lo). Phase D8 uses this store   *
+     *  to assemble the (scalar, point) pairs for the final pairing     *
+     *  right-side MSM and to run the actual check.                      *
+     * ------------------------------------------------------------------ */
+
+    struct CommStore {
+        uint256[] flat;   // cb.total * 4 uint256s, commId-indexed
+    }
+
+    function _allocCommStore(Vk memory vk)
+        internal pure returns (CommStore memory s)
+    {
+        CommIdBases memory cb = _computeCommIdBases(vk);
+        s.flat = new uint256[](cb.total * 4);
+    }
+
+    /// Decompress a 48-byte compressed G1 point and store the resulting
+    /// 4 uint256s at slot `commId` in the store.
+    function _storeCommFromCompressed(
+        CommStore memory s,
+        uint256 commId,
+        bytes memory compressed48
+    ) internal view {
+        bytes memory eip = _g1CompressedToEip2537(compressed48);
+        require(eip.length == 128, "store: bad decompressed len");
+        uint256 off = commId * 4;
+        assembly {
+            let src := add(eip, 32)
+            let dstPtr := add(mload(s), 32)
+            mstore(add(dstPtr, mul(off, 32)),            mload(src))
+            mstore(add(dstPtr, mul(add(off, 1), 32)),   mload(add(src, 32)))
+            mstore(add(dstPtr, mul(add(off, 2), 32)),   mload(add(src, 64)))
+            mstore(add(dstPtr, mul(add(off, 3), 32)),   mload(add(src, 96)))
+        }
+    }
+
+    /// Read 4 uint256s from the store at slot `commId`.
+    function _loadComm(CommStore memory s, uint256 commId)
+        internal pure returns (uint256[4] memory out)
+    {
+        uint256 off = commId * 4;
+        out[0] = s.flat[off];
+        out[1] = s.flat[off + 1];
+        out[2] = s.flat[off + 2];
+        out[3] = s.flat[off + 3];
+    }
+
+    /// Write the 4-uint256 payload of a VK-resident fixed commitment to
+    /// its commStore slot. Used to copy vk.fixed_commitments into the
+    /// store indexed by commId.
+    function _storeFixedFromVk(
+        CommStore memory s,
+        CommIdBases memory cb,
+        bytes memory vkBlob,
+        uint256 col
+    ) internal pure {
+        uint256[4] memory p = _readFixedCommitment(vkBlob, col);
+        uint256 off = (cb.fixedB + col) * 4;
+        s.flat[off]     = p[0];
+        s.flat[off + 1] = p[1];
+        s.flat[off + 2] = p[2];
+        s.flat[off + 3] = p[3];
+    }
+
+    /// Write the 4-uint256 payload of a VK-resident permutation-common
+    /// commitment to its commStore slot.
+    function _storePermCommonFromVk(
+        CommStore memory s,
+        CommIdBases memory cb,
+        bytes memory vkBlob,
+        Vk memory vk,
+        uint256 col
+    ) internal pure {
+        uint256 base = vk.permCommsOffset + col * 128;
+        uint256 off = (cb.permCommon + col) * 4;
+        assembly {
+            let src := add(add(vkBlob, 32), base)
+            let dstPtr := add(mload(s), 32)
+            mstore(add(dstPtr, mul(off, 32)),            mload(src))
+            mstore(add(dstPtr, mul(add(off, 1), 32)),   mload(add(src, 32)))
+            mstore(add(dstPtr, mul(add(off, 2), 32)),   mload(add(src, 64)))
+            mstore(add(dstPtr, mul(add(off, 3), 32)),   mload(add(src, 96)))
+        }
+    }
+
+    /// Populate VK-resident slots (fixed, perm_common, committed-instance
+    /// as identity) once up front so the transcript-read loop only has
+    /// to handle the proof-side commitments.
+    function _seedCommStoreFromVk(
+        CommStore memory s,
+        Vk memory vk,
+        bytes memory vkBlob
+    ) internal pure {
+        CommIdBases memory cb = _computeCommIdBases(vk);
+        for (uint256 c = 0; c < vk.numFixedCols; c++) {
+            _storeFixedFromVk(s, cb, vkBlob, c);
+        }
+        for (uint256 c = 0; c < vk.numPermColumns; c++) {
+            _storePermCommonFromVk(s, cb, vkBlob, vk, c);
+        }
+        // Committed instance columns: commitment is G1::identity() per
+        // the stdlib `verify` wrapper (committed_instance_unwrap defaults
+        // to identity). We leave those slots as zero which represents
+        // the identity in EIP-2537 encoding.
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Final right-side MSM scalar expansion (Phase D7)                  *
      *                                                                    *
      *  Phase D6 produced per-commitment outer scalars                   *
@@ -1088,14 +1294,18 @@ contract PoseidonVerifier {
 
         out = new uint256[](total);
         uint256 k = 0;
-        for (uint256 c = 0; c < nC; c++) {
-            if (s.commitmentIds[c] == linCommId) {
-                uint256 outer = mp.commScalars[c];
-                for (uint256 j = 0; j < linScalars.length; j++) {
-                    out[k++] = mulmod(outer, linScalars[j], FR_MODULUS);
+        uint256 nS = s.pointSets.length;
+        for (uint256 sIdx = 0; sIdx < nS; sIdx++) {
+            for (uint256 c = 0; c < nC; c++) {
+                if (s.commitmentSetIdx[c] != sIdx) continue;
+                if (s.commitmentIds[c] == linCommId) {
+                    uint256 outer = mp.commScalars[c];
+                    for (uint256 j = 0; j < linScalars.length; j++) {
+                        out[k++] = mulmod(outer, linScalars[j], FR_MODULUS);
+                    }
+                } else {
+                    out[k++] = mp.commScalars[c];
                 }
-            } else {
-                out[k++] = mp.commScalars[c];
             }
         }
         out[k++] = mp.fComScalar;
@@ -1109,6 +1319,170 @@ contract PoseidonVerifier {
         sig = 0;
         for (uint256 i = 0; i < scalars.length; i++) {
             sig = addmod(sig, mulmod(i + 1, scalars[i], FR_MODULUS), FR_MODULUS);
+        }
+    }
+
+    /// Build the flat (scalars, pointsFlat) arrays for the final
+    /// right-side MSM. `pointsFlat` has length 4 * scalars.length and
+    /// holds the EIP-2537 4-uint256 encoding per point.
+    ///
+    /// Traversal order matches Rust's `msm_inner_product`-based layout:
+    ///   - iterate sets in ascending sorted-set order (smallest
+    ///     cardinality first, ties broken by original set index),
+    ///   - within each set, iterate commitments in FIFO first-
+    ///     appearance order (as laid down by
+    ///     `construct_intermediate_sets`),
+    ///   - expand the linearization commitment's inner terms in place.
+    /// This matches Rust's final_com flattening exactly, which then
+    /// matches DualMSM.right term-for-term.
+    struct BuildMsmIn {
+        CommStore cs;
+        IntermediateSets s;
+        MultiPrepareOut mp;
+        uint256 linCommId;
+        uint256[] linScalars;
+        uint256[] linPointsFlat;
+        uint256[4] fComPt;
+        uint256[4] piPt;
+    }
+
+    function _writeMsmSlot(
+        uint256[] memory scalars,
+        uint256[] memory pointsFlat,
+        uint256 k,
+        uint256 scalar,
+        uint256 w0, uint256 w1, uint256 w2, uint256 w3
+    ) internal pure {
+        scalars[k] = scalar;
+        pointsFlat[k * 4]     = w0;
+        pointsFlat[k * 4 + 1] = w1;
+        pointsFlat[k * 4 + 2] = w2;
+        pointsFlat[k * 4 + 3] = w3;
+    }
+
+    function _writeLinSlots(
+        BuildMsmIn memory m,
+        uint256[] memory scalars,
+        uint256[] memory pointsFlat,
+        uint256 k,
+        uint256 outer
+    ) internal pure returns (uint256 nk) {
+        uint256 n = m.linScalars.length;
+        for (uint256 j = 0; j < n; j++) {
+            _writeMsmSlot(
+                scalars, pointsFlat, k + j,
+                mulmod(outer, m.linScalars[j], FR_MODULUS),
+                m.linPointsFlat[j * 4],
+                m.linPointsFlat[j * 4 + 1],
+                m.linPointsFlat[j * 4 + 2],
+                m.linPointsFlat[j * 4 + 3]
+            );
+        }
+        nk = k + n;
+    }
+
+    function _buildFinalMsmInputs(
+        CommStore memory cs_,
+        IntermediateSets memory s_,
+        MultiPrepareOut memory mp_,
+        uint256 linCommId,
+        uint256[] memory linScalars,
+        uint256[] memory linPointsFlat,
+        uint256[4] memory fComPt,
+        uint256[4] memory piPt
+    ) internal pure returns (uint256[] memory scalars, uint256[] memory pointsFlat) {
+        BuildMsmIn memory m = BuildMsmIn({
+            cs: cs_,
+            s: s_,
+            mp: mp_,
+            linCommId: linCommId,
+            linScalars: linScalars,
+            linPointsFlat: linPointsFlat,
+            fComPt: fComPt,
+            piPt: piPt
+        });
+        uint256 nC = m.s.commitmentIds.length;
+        uint256 nS = m.s.pointSets.length;
+        uint256 total = 3;
+        for (uint256 c = 0; c < nC; c++) {
+            total += (m.s.commitmentIds[c] == linCommId)
+                ? linScalars.length : 1;
+        }
+        scalars    = new uint256[](total);
+        pointsFlat = new uint256[](total * 4);
+
+        uint256 k = _fillCommSlots(m, scalars, pointsFlat, nC, nS);
+        _fillTailSlots(m, scalars, pointsFlat, k);
+    }
+
+    function _fillCommSlots(
+        BuildMsmIn memory m,
+        uint256[] memory scalars,
+        uint256[] memory pointsFlat,
+        uint256 nC,
+        uint256 nS
+    ) internal pure returns (uint256 k) {
+        k = 0;
+        for (uint256 sIdx = 0; sIdx < nS; sIdx++) {
+            for (uint256 c = 0; c < nC; c++) {
+                if (m.s.commitmentSetIdx[c] != sIdx) continue;
+                if (m.s.commitmentIds[c] == m.linCommId) {
+                    k = _writeLinSlots(m, scalars, pointsFlat, k, m.mp.commScalars[c]);
+                } else {
+                    uint256[4] memory pt = _loadComm(m.cs, m.s.commitmentIds[c]);
+                    _writeMsmSlot(
+                        scalars, pointsFlat, k,
+                        m.mp.commScalars[c],
+                        pt[0], pt[1], pt[2], pt[3]
+                    );
+                    k++;
+                }
+            }
+        }
+    }
+
+    function _fillTailSlots(
+        BuildMsmIn memory m,
+        uint256[] memory scalars,
+        uint256[] memory pointsFlat,
+        uint256 k0
+    ) internal pure {
+        uint256 k = k0;
+        _writeMsmSlot(
+            scalars, pointsFlat, k, m.mp.fComScalar,
+            m.fComPt[0], m.fComPt[1], m.fComPt[2], m.fComPt[3]
+        );
+        k++;
+        _writeMsmSlot(
+            scalars, pointsFlat, k, m.mp.piScalar,
+            m.piPt[0], m.piPt[1], m.piPt[2], m.piPt[3]
+        );
+        k++;
+        uint256[4] memory g = _g1Generator();
+        _writeMsmSlot(
+            scalars, pointsFlat, k, m.mp.gScalar,
+            g[0], g[1], g[2], g[3]
+        );
+    }
+
+    /// Flatten 4-uint256 points to EIP-2537 (128-byte-per-point) bytes
+    /// blob suitable for the G1MSM precompile.
+    function _pointsFlatToBytesArray(uint256[] memory pointsFlat)
+        internal pure returns (bytes[] memory bs)
+    {
+        uint256 n = pointsFlat.length / 4;
+        bs = new bytes[](n);
+        for (uint256 i = 0; i < n; i++) {
+            bytes memory b = new bytes(128);
+            assembly {
+                let dst := add(b, 32)
+                let srcOff := add(add(pointsFlat, 32), mul(mul(i, 4), 32))
+                mstore(dst,            mload(srcOff))
+                mstore(add(dst, 32),   mload(add(srcOff, 32)))
+                mstore(add(dst, 64),   mload(add(srcOff, 64)))
+                mstore(add(dst, 96),   mload(add(srcOff, 96)))
+            }
+            bs[i] = b;
         }
     }
 
@@ -1153,6 +1527,13 @@ contract PoseidonVerifier {
         // identify the linearization commitment when expanding its
         // scalars.
         uint256[] commitmentIds;
+        // Phase D8: sorted-set index per commitment (ascending
+        // cardinality, ties broken by original set idx). Used to
+        // iterate the final MSM in set-then-FIFO order matching the
+        // Rust `multi_prepare` flatten.
+        uint256[] commitmentSetIdx;
+        // Phase D8 debug: f_eval = eval of f at x3 folded across sets.
+        uint256 fEval;
     }
 
     /// Build per-commitment evals table in sorted-point-set order
@@ -1254,13 +1635,30 @@ contract PoseidonVerifier {
         QueryList memory ql,
         uint256[] memory qEvalsOnX3,
         uint256 x1, uint256 x2, uint256 x3
-    ) internal view {
+    ) internal {
         uint256 nS = st.sSorted.pointSets.length;
         uint256[][] memory cEvalsSorted =
             _buildPerCommEvalsSorted(st.sSorted, ql, new uint256[](0));
         st.qEvalSets = _x1EvalFoldPerSet(
             st.sSorted.commitmentSetIdx, cEvalsSorted, nS, x1
         );
+        // DEBUG: emit points + qEvalSets per set.
+        for (uint256 __si = 0; __si < nS; __si++) {
+            for (uint256 __pj = 0; __pj < st.sSorted.pointSets[__si].length; __pj++) {
+                emit TraceIntermediate("dbg_sol_point", bytes32(st.sSorted.pointSets[__si][__pj]));
+            }
+            for (uint256 __pj = 0; __pj < st.qEvalSets[__si].length; __pj++) {
+                emit TraceIntermediate("dbg_sol_qev",  bytes32(st.qEvalSets[__si][__pj]));
+            }
+        }
+        // DEBUG: emit per-comm sorted evals for set 0.
+        for (uint256 __c = 0; __c < st.sSorted.commitmentIds.length; __c++) {
+            if (st.sSorted.commitmentSetIdx[__c] != 0) continue;
+            emit TraceIntermediate("dbg_set0_commId", bytes32(st.sSorted.commitmentIds[__c]));
+            for (uint256 __j = 0; __j < cEvalsSorted[__c].length; __j++) {
+                emit TraceIntermediate("dbg_set0_eval",  bytes32(cEvalsSorted[__c][__j]));
+            }
+        }
 
         uint256 totalPts = 0;
         uint256[] memory pointSetLens = new uint256[](nS);
@@ -1293,7 +1691,7 @@ contract PoseidonVerifier {
         uint256 x2,
         uint256 x3,
         uint256 x4
-    ) internal view returns (MultiPrepareOut memory out) {
+    ) internal returns (MultiPrepareOut memory out) {
         (MPState memory st, uint256 nC, uint256 nS) = _mpConstructAndSort(ql, x1);
         _mpFoldEvalsAndFEval(st, ql, qEvalsOnX3, x1, x2, x3);
 
@@ -1312,6 +1710,8 @@ contract PoseidonVerifier {
         out.numSets        = nS;
         out.numCommitments = nC;
         out.commitmentIds  = st.sSorted.commitmentIds;
+        out.commitmentSetIdx = st.sSorted.commitmentSetIdx;
+        out.fEval            = st.fEval;
     }
 
     /// Compute per-commitment position in its set: the FIFO order of
@@ -1718,12 +2118,27 @@ contract PoseidonVerifier {
             _extractSimpleSelectorCols(blob),
             ea.fixedEvals
         );
-        // Instance-eval collapse under poseidon-specific assumptions.
+        // Instance-eval assembly:
+        //   query q:
+        //     - if q < numCommittedInstanceEvals: eval = transcript-read
+        //       (`ea.committedInstanceEvals[q]`), mirroring Rust's
+        //       `transcript.read()` branch for queries whose column is
+        //       a committed-instance column (col.index() <
+        //       nb_committed_instances).
+        //     - else: eval = Σ instance_i · l_i(x), which for the
+        //       poseidon example collapses to `instance * l_0`
+        //       because there is exactly one public input.
+        //   This mirrors `cs.instance_queries()` iteration in
+        //   `plonk/verifier.rs:252`.
         {
             uint256 collapsed = _frMul(pin.instance, e.l0);
             uint256[] memory inst = new uint256[](vk.numInstanceQueries);
             for (uint256 i = 0; i < vk.numInstanceQueries; i++) {
-                inst[i] = collapsed;
+                if (i < vk.numCommittedInstanceEvals) {
+                    inst[i] = ea.committedInstanceEvals[i];
+                } else {
+                    inst[i] = collapsed;
+                }
             }
             e.instanceEvals = inst;
         }
@@ -2493,6 +2908,7 @@ contract PoseidonVerifier {
         uint32[] adviceColIdx;          // Phase D6: per advice query
         uint32[] fixedColIdx;           // Phase D6: per fixed query
         uint32[] instanceColIdx;        // Phase D6: per committed-instance q
+        uint32[] lookupNumChunks;       // Phase D8: per-lookup chunk count
         uint256 sectionOffset;          // start of section (u32 nRotations)
     }
 
@@ -2550,6 +2966,13 @@ contract PoseidonVerifier {
         qs.instanceColIdx = new uint32[](nInst);
         for (uint256 i = 0; i < nInst; i++) {
             qs.instanceColIdx[i] = _readU32FromBlob(blob, p); p += 4;
+        }
+
+        // Phase D8: per-lookup chunk counts.
+        uint32 nLk = _readU32FromBlob(blob, p); p += 4;
+        qs.lookupNumChunks = new uint32[](nLk);
+        for (uint256 i = 0; i < nLk; i++) {
+            qs.lookupNumChunks[i] = _readU32FromBlob(blob, p); p += 4;
         }
     }
 
@@ -3193,11 +3616,19 @@ contract PoseidonVerifier {
         //       for (phase, challenge) in ...
         //       { if current_phase == *phase { *challenge = transcript.squeeze_challenge(); } }
         //   }
+        // Phase D8: seed the commStore with VK-resident slots (fixed,
+        // perm_common, committed-instance identity) before reading any
+        // proof commitments.
+        CommStore memory commStore = _allocCommStore(vk);
+        _seedCommStoreFromVk(commStore, vk, vkBlob);
+        CommIdBases memory cb = _computeCommIdBases(vk);
+
         gStart = gasleft();
         for (uint256 p = 0; p < vk.numAdviceCols; p++) {
             bytes memory c = _readPointCompressed48(rd);
             emit TraceReadPoint("advice", c);
             _absorbG1Compressed(t, c);
+            _storeCommFromCompressed(commStore, cb.advice + p, c);
         }
         // Challenges (none in the poseidon example, but we emit for debug).
         for (uint256 c = 0; c < vk.numChallenges; c++) {
@@ -3221,6 +3652,7 @@ contract PoseidonVerifier {
             bytes memory c = _readPointCompressed48(rd);
             emit TraceReadPoint("lookup_mult", c);
             _absorbG1Compressed(t, c);
+            _storeCommFromCompressed(commStore, cb.lookupM + l, c);
         }
         gEnd = gasleft();
         emit PhaseGas("lookup_mult", gStart - gEnd);
@@ -3238,20 +3670,36 @@ contract PoseidonVerifier {
             bytes memory c = _readPointCompressed48(rd);
             emit TraceReadPoint("perm_product", c);
             _absorbG1Compressed(t, c);
+            _storeCommFromCompressed(commStore, cb.permProd + i, c);
         }
         gEnd = gasleft();
         emit PhaseGas("perm_products", gStart - gEnd);
 
         /* --- Read lookup commitments ------------------------------ */
         gStart = gasleft();
-        // Each lookup contributes `num_chunks` helper commitments plus 1
-        // accumulator commitment. `totalLookupHelpers` == sum(num_chunks).
+        // Each lookup contributes `num_chunks` helper commitments then
+        // 1 accumulator commitment (Rust order). Uses
+        // `qs.lookupNumChunks` to size each lookup's helper block.
         {
-            uint256 totalCommits = uint256(vk.totalLookupHelpers) + uint256(vk.numLookups);
-            for (uint256 i = 0; i < totalCommits; i++) {
-                bytes memory c = _readPointCompressed48(rd);
-                emit TraceReadPoint("lookup", c);
-                _absorbG1Compressed(t, c);
+            QuerySchedule memory qsTmp = _loadQuerySchedule(vkBlob);
+            uint256 hBase = 0;
+            for (uint256 lk = 0; lk < vk.numLookups; lk++) {
+                uint256 chunks = uint256(qsTmp.lookupNumChunks[lk]);
+                for (uint256 j = 0; j < chunks; j++) {
+                    bytes memory c = _readPointCompressed48(rd);
+                    emit TraceReadPoint("lookup", c);
+                    _absorbG1Compressed(t, c);
+                    _storeCommFromCompressed(
+                        commStore, cb.lookupHelper + hBase, c
+                    );
+                    hBase++;
+                }
+                bytes memory cAcc = _readPointCompressed48(rd);
+                emit TraceReadPoint("lookup", cAcc);
+                _absorbG1Compressed(t, cAcc);
+                _storeCommFromCompressed(
+                    commStore, cb.lookupAcc + lk, cAcc
+                );
             }
         }
         gEnd = gasleft();
@@ -3270,6 +3718,7 @@ contract PoseidonVerifier {
             bytes memory c = _readPointCompressed48(rd);
             emit TraceReadPoint("trashcan", c);
             _absorbG1Compressed(t, c);
+            _storeCommFromCompressed(commStore, cb.trash + i, c);
         }
         gEnd = gasleft();
         emit PhaseGas("trashcans", gStart - gEnd);
@@ -3344,6 +3793,7 @@ contract PoseidonVerifier {
         gStart = gasleft();
         QueryList memory ql;  // hoisted for Phase D6 use below
         uint256[] memory linScalarsD7;  // hoisted for Phase D7 expansion
+        uint256[] memory linPointsFlatD8;  // hoisted for Phase D8 MSM
         {
             uint256 xU = uint256(x);
             uint256 splittingFactor = _frPow(xU, uint256(vk.n) - 1);
@@ -3375,6 +3825,7 @@ contract PoseidonVerifier {
                 _linearizationSignature(linPointsFlat, linScalars, linExpectedEval);
             emit TraceIntermediate("linearization_signature", bytes32(linSig));
             linScalarsD7 = linScalars;
+            linPointsFlatD8 = linPointsFlat;
 
             // Phase D5: enumerate queries in Rust iterator order.
             ql = _buildQueryList(vkBlob, vk, ea, xU, linExpectedEval);
@@ -3437,19 +3888,78 @@ contract PoseidonVerifier {
             emit TraceIntermediate("multi_prepare_signature", bytes32(mpSig));
 
             // Phase D7: expand the linearization's inner scalars into
-            // the flat right-side MSM scalar list. Pins the scalar
-            // assembly before the G1-side goes online in D8.
+            // the flat right-side MSM scalar list.
             {
-                CommIdBases memory cb = _computeCommIdBases(vk);
-                IntermediateSets memory sSorted;
-                sSorted.commitmentIds     = mp.commitmentIds;
-                sSorted.commitmentSetIdx  = new uint256[](0);  // unused
-                sSorted.commitmentPointIdx = new uint256[][](0);
-                sSorted.pointSets         = new uint256[][](0);
+                IntermediateSets memory sD7;
+                sD7.commitmentIds     = mp.commitmentIds;
+                sD7.commitmentSetIdx  = mp.commitmentSetIdx;
+                sD7.commitmentPointIdx = new uint256[][](0);
+                sD7.pointSets         = new uint256[][](mp.numSets);
                 uint256[] memory finalScalars =
-                    _expandFinalMsmScalars(sSorted, mp, cb.lin, linScalarsD7);
+                    _expandFinalMsmScalars(sD7, mp, cb.lin, linScalarsD7);
                 uint256 fmSig = _finalMsmScalarSignature(finalScalars);
                 emit TraceIntermediate("final_msm_scalar_signature", bytes32(fmSig));
+            }
+
+            // Phase D8: decompress fCom + pi, build the full (scalar,
+            // point) list, run the right-side MSM, and then the
+            // pairing check that closes KZG multi-open verification.
+            bytes memory piEip = _g1CompressedToEip2537(pi);
+            {
+                uint256[4] memory fComPt = _bytesToG1Flat(
+                    _g1CompressedToEip2537(fCom)
+                );
+                uint256[4] memory piPt = _bytesToG1Flat(piEip);
+
+                // IntermediateSets recomputed for MSM assembly; the
+                // `pointSets` array is only used here as a size
+                // vector so we allocate a sentinel with the right
+                // cardinality.
+                IntermediateSets memory sSorted;
+                sSorted.commitmentIds     = mp.commitmentIds;
+                sSorted.commitmentSetIdx  = mp.commitmentSetIdx;
+                sSorted.commitmentPointIdx = new uint256[][](0);
+                sSorted.pointSets         = new uint256[][](mp.numSets);
+                for (uint256 si = 0; si < mp.numSets; si++) {
+                    sSorted.pointSets[si] = new uint256[](0);
+                }
+                (uint256[] memory finalScalars,
+                 uint256[] memory finalPointsFlat) =
+                    _buildFinalMsmInputs(
+                        commStore, sSorted, mp, cb.lin,
+                        linScalarsD7, linPointsFlatD8,
+                        fComPt, piPt
+                    );
+
+                bytes[] memory pointBytes =
+                    _pointsFlatToBytesArray(finalPointsFlat);
+                bytes memory rightG1 =
+                    _g1MsmBatch(pointBytes, finalScalars);
+
+                emit TraceIntermediate("v_scalar", bytes32(mp.v));
+                emit TraceIntermediate("fComScalar", bytes32(mp.fComScalar));
+                emit TraceIntermediate("gScalar", bytes32(mp.gScalar));
+                emit TraceIntermediate("fEval_sol", bytes32(mp.fEval));
+                emit TraceIntermediate("right_g1_digest", keccak256(rightG1));
+                emit TraceIntermediate("right_g1_len", bytes32(rightG1.length));
+                _emitCommIds(mp.commitmentIds);
+                _emitSetIdx(mp.commitmentSetIdx);
+                emit TraceIntermediate("num_sets", bytes32(mp.numSets));
+                emit TraceIntermediate("num_commitments", bytes32(mp.numCommitments));
+                _emitQueryList(ql);
+                _emitMsmTerms(finalScalars, finalPointsFlat);
+
+                bytes memory sG2  = _vkSlice(vkBlob, vk.sG2Offset,  256);
+                bytes memory ngG2 = _vkSlice(vkBlob, vk.negG2Offset, 256);
+                bytes memory pairs =
+                    abi.encodePacked(piEip, sG2, rightG1, ngG2);
+                bool pOk = _pairingCheck(pairs);
+                emit TraceIntermediate(
+                    "final_pairing_result",
+                    bytes32(uint256(pOk ? 1 : 0))
+                );
+                if (!pOk) return false;
+                return true;
             }
         }
 

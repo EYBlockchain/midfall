@@ -1086,6 +1086,11 @@ fn main() {
         for s in &identities_scalars { push_fq(&mut blob, s); }
         push_fq(&mut blob, &expected_eval);
 
+        eprintln!("  lin identities_scalars ({}):", identities_scalars.len());
+        for (i, s) in identities_scalars.iter().enumerate() {
+            eprintln!("    ls[{}] = {}", i, hex::encode(fq_to_be(s)));
+        }
+
         fs::write(fixtures.join("linearization_fixture.bin"), &blob).unwrap();
         eprintln!(
             "      linearization fixture written ({} bytes, {} quotient limbs, {} output points)",
@@ -1284,6 +1289,16 @@ fn main() {
             [<G1Projective as Group>::identity()];
         let committed: &[&[G1Projective]] = &[&committed_col];
 
+        // Debug: print the advice_queries list used by `prepare`.
+        eprintln!("  ---- prepare-time advice_queries ----");
+        for (qi, (col, rot)) in
+            fx.vk.vk().cs().advice_queries().iter().enumerate()
+        {
+            eprintln!(
+                "      q={:2} col={} rot={}",
+                qi, col.index(), rot.0
+            );
+        }
         let dual_msm = prepare::<
             Fq,
             KZGCommitmentScheme<midnight_curves::Bls12>,
@@ -1331,6 +1346,142 @@ fn main() {
             blob.len(),
             ok_rust,
         );
+
+        // Phase D8 debug: print v and related scalars recovered from
+        // dual_msm.right (term 49 = -G with scalar v; term 47 = f_com
+        // with scalar x4^nSets).
+        {
+            let (_, right_terms_dbg) = dual_msm.split();
+            let n = right_terms_dbg.len();
+            eprintln!("      right terms: {}", n);
+            for i in [0, 1, n - 3, n - 2, n - 1].iter() {
+                let (lbl, s, _) = right_terms_dbg[*i];
+                eprintln!("        term[{}] label={} scalar={}", i, lbl, hex::encode(fq_to_be(s)));
+            }
+            // term[n-1] is -G with scalar v, term[n-3] is f_com with scalar x4^nSets.
+            let v = right_terms_dbg[n - 1].1;
+            let f_com_scalar = right_terms_dbg[n - 3].1;
+            eprintln!("      rust v = {}", hex::encode(fq_to_be(v)));
+            eprintln!("      rust f_com_scalar = {}", hex::encode(fq_to_be(f_com_scalar)));
+            let pi_scalar = right_terms_dbg[n - 2].1;
+            eprintln!("      rust x3 (pi_scalar) = {}", hex::encode(fq_to_be(pi_scalar)));
+
+            // Extract the per-set x4 multipliers on the right MSM's set
+            // sections. Before f_com (at n-3), the preceding terms are
+            // set-by-set MSM flattenings. We can read the first term of
+            // each sorted set (which carries the "sorted set 0" ==
+            // scalar 1 token) to recover x4 by looking at set-boundary
+            // transitions. Simpler: print all term scalars and find
+            // "new set" markers manually.
+            // All right-term scalars for detailed diff.
+            eprintln!("      all right term scalars:");
+            for (i, (lbl, s, _)) in right_terms_dbg.iter().enumerate() {
+                eprintln!("        rt[{:2}] lbl={:25} scalar={}", i, format!("{}", lbl), hex::encode(fq_to_be(s)));
+            }
+            eprintln!("  fixed_queries (col, rot):");
+            for (qi, (col, rot)) in fx.vk.vk().cs().fixed_queries().iter().enumerate() {
+                eprintln!("    fq[{:2}] col={} rot={}", qi, col.index(), rot.0);
+            }
+            let simple: Vec<usize> = (0..fx.vk.vk().cs().num_fixed_columns()).filter(|&i| fx.vk.vk().cs().has_simple_selector_col(i)).collect();
+            eprintln!("  simple_selectors: {:?}", simple);
+        }
+
+        // Phase D8 debug: right_g1 EIP-2537 bytes + keccak digest so the
+        // Solidity side can compare its emitted right_g1 against the
+        // Rust-side reference.
+        {
+            use sha3::{Digest, Keccak256};
+            let right_eip =
+                midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(
+                    &right_eval,
+                );
+            let digest = Keccak256::digest(&right_eip);
+            let mut b: Vec<u8> = Vec::new();
+            b.extend_from_slice(&right_eip);
+            b.extend_from_slice(&digest);
+            fs::write(fixtures.join("right_g1_fixture.bin"), &b).unwrap();
+            eprintln!(
+                "      right-g1 fixture written ({} bytes = 128 + 32)",
+                b.len(),
+            );
+        }
+
+        // Phase D8 inputs digest: emit the Rust DualMSM.right as the
+        // concatenation of (scalar_be || eip2537_point) in insertion
+        // order, plus its keccak digest, so the Solidity `verify()`
+        // emission of `right_msm_inputs_digest` can be matched
+        // bit-for-bit against this fixture.
+        {
+            use sha3::{Digest, Keccak256};
+            let (_, right_terms) = dual_msm.split();
+            let mut concat: Vec<u8> = Vec::new();
+            for (_lbl, scalar, base) in right_terms.iter() {
+                concat.extend_from_slice(&fq_to_be(scalar));
+                let pt =
+                    midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(
+                        base,
+                    );
+                concat.extend_from_slice(&pt);
+            }
+            let digest = Keccak256::digest(&concat);
+            let mut b: Vec<u8> = Vec::new();
+            b.extend_from_slice(&digest);
+            b.extend_from_slice(
+                &(right_terms.len() as u64).to_be_bytes(),
+            );
+            fs::write(
+                fixtures.join("right_msm_inputs_digest_fixture.bin"),
+                &b,
+            ).unwrap();
+            eprintln!(
+                "      right-msm-inputs-digest fixture written ({} bytes, {} terms)",
+                b.len(),
+                right_terms.len(),
+            );
+        }
+
+        // Phase D8 per-term dump: emit the Rust DualMSM.right as a
+        // list of (label, scalar, point) entries in DualMSM insertion
+        // order. Solidity-side D8 MSM assembly will be compared against
+        // this fixture to find the first mismatching term.
+        //
+        // File layout:
+        //   [4] n
+        //     per term:
+        //       [4] label_len
+        //       [label_len]  label_bytes   (e.g. "advice_0", "fixed_3",
+        //                                   "linearization_poly",
+        //                                   "-G", "π", "f_com")
+        //       [32] scalar_be
+        //       [128] eip2537_point
+        {
+            let (_, right_terms) = dual_msm.split();
+            let mut b: Vec<u8> = Vec::new();
+            b.extend_from_slice(&(right_terms.len() as u32).to_be_bytes());
+            for (label, scalar, base) in right_terms.iter() {
+                let lb = format!("{}", label);
+                let lb_bytes = lb.as_bytes();
+                b.extend_from_slice(
+                    &(lb_bytes.len() as u32).to_be_bytes()
+                );
+                b.extend_from_slice(lb_bytes);
+                b.extend_from_slice(&fq_to_be(scalar));
+                let pt =
+                    midnight_solidity_verifier::eip2537::g1_projective_to_eip2537(
+                        base,
+                    );
+                b.extend_from_slice(&pt);
+            }
+            fs::write(
+                fixtures.join("right_msm_terms_fixture.bin"),
+                &b,
+            ).unwrap();
+            eprintln!(
+                "      right-msm-terms fixture written ({} bytes, {} terms)",
+                b.len(),
+                right_terms.len(),
+            );
+        }
 
         // Phase C2a: construct_intermediate_sets equivalence fixture.
         //
@@ -1899,12 +2050,21 @@ fn main() {
                 }
             }
 
-            // Instance evals collapse: `instance * l_0` per query
-            // (poseidon has num_committed_instance_evals=0, single
-            // non-committed col of length 1 at rotation 0).
+            // Instance evals: mirror Solidity's `_buildPartialEvalEnv`
+            //   query q:
+            //     - if q < num_committed_instance_evals: committed eval
+            //       from transcript (`committed_instance_evals_t[q]`)
+            //     - else: `instance * l_0` (single public input case)
             let inst_collapsed = fx.instance * l_0;
             let instance_evals: Vec<Fq> = (0..vk_info.num_instance_queries)
-                .map(|_| inst_collapsed).collect();
+                .map(|q| {
+                    if q < vk_info.num_committed_instance_evals {
+                        committed_instance_evals_t[q]
+                    } else {
+                        inst_collapsed
+                    }
+                })
+                .collect();
 
             let challenges: Vec<Fq> = Vec::new();
             let advice_evals = advice_evals_t.to_vec();
@@ -2561,14 +2721,23 @@ fn main() {
                             // D4 fixture replica (id_points/id_scalars
                             // flow already built `id_scalars`).
                             let mut final_scalars: Vec<Fq> = Vec::new();
-                            for (c, &cid) in c_ids.iter().enumerate() {
-                                if cid == cb_lin {
-                                    let outer = comm_scalars[c];
-                                    for s in &id_scalars {
-                                        final_scalars.push(outer * s);
+                            // Iterate set-ascending, FIFO-within-set
+                            // to match Rust multi_prepare's flattened
+                            // final_com layout (what DualMSM.right
+                            // ends up carrying).
+                            for s_idx in 0..n_sets {
+                                for (c, &cid) in c_ids.iter().enumerate() {
+                                    if sorted_set_idx[c] != s_idx {
+                                        continue;
                                     }
-                                } else {
-                                    final_scalars.push(comm_scalars[c]);
+                                    if cid == cb_lin {
+                                        let outer = comm_scalars[c];
+                                        for sc in &id_scalars {
+                                            final_scalars.push(outer * sc);
+                                        }
+                                    } else {
+                                        final_scalars.push(comm_scalars[c]);
+                                    }
                                 }
                             }
                             final_scalars.push(f_com_scalar);
@@ -2627,8 +2796,28 @@ fn main() {
         );
     }
 
+    // Debug: advice_queries list.
+    {
+        eprintln!("  ---- advice_queries (col, rot) ----");
+        for (qi, (c, r)) in vk_info_debug_advice_queries(&fx).iter().enumerate() {
+            eprintln!("    q={:2} col={} rot={}", qi, c, r);
+        }
+    }
+
     eprintln!("OK — see {}/ for generated files", contracts.display());
     eprintln!("         {}/ for fixtures", fixtures.display());
+}
+
+fn vk_info_debug_advice_queries(
+    fx: &midnight_solidity_verifier::poseidon_fixture::PoseidonFixture,
+) -> Vec<(usize, i32)> {
+    fx.vk
+        .vk()
+        .cs()
+        .advice_queries()
+        .iter()
+        .map(|(c, r)| (c.index(), r.0))
+        .collect()
 }
 
 fn write_vk_blob(vk: &VkInfo, out: &mut impl Write) {

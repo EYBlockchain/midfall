@@ -657,6 +657,7 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
         &vk.advice_query_col_idx,
         &vk.fixed_query_col_idx,
         &vk.committed_instance_query_col_idx,
+        &vk.lookup_num_chunks,
     );
 
     let total = blob.len();
@@ -758,6 +759,7 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
         &vk.advice_query_col_idx,
         &vk.fixed_query_col_idx,
         &vk.committed_instance_query_col_idx,
+        &vk.lookup_num_chunks,
     );
 
     blob
@@ -790,7 +792,7 @@ fn append_lookups_section(blob: &mut Vec<u8>, lookups: &[LookupBytecode]) {
 }
 
 /// Shared serialiser for the query-rotation schedule (Phase C1) +
-/// per-query column indices (Phase D6).
+/// per-query column indices (Phase D6) + per-lookup chunk counts (D8).
 fn append_rotations_section(
     blob: &mut Vec<u8>,
     rotations: &[i32],
@@ -800,6 +802,7 @@ fn append_rotations_section(
     advice_cols: &[u32],
     fixed_cols: &[u32],
     instance_cols: &[u32],
+    lookup_num_chunks: &[usize],
 ) {
     blob.extend_from_slice(&(rotations.len() as u32).to_be_bytes());
     for &r in rotations {
@@ -822,6 +825,11 @@ fn append_rotations_section(
     }
     for &c in instance_cols {
         blob.extend_from_slice(&c.to_be_bytes());
+    }
+    // Phase D8: per-lookup chunk counts.
+    blob.extend_from_slice(&(lookup_num_chunks.len() as u32).to_be_bytes());
+    for &c in lookup_num_chunks {
+        blob.extend_from_slice(&(c as u32).to_be_bytes());
     }
 }
 

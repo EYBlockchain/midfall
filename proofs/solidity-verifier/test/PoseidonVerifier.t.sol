@@ -417,12 +417,30 @@ contract PoseidonVerifierTest is Test {
         //   u32 nAdvice;   u8 × n
         //   u32 nFixed;    u8 × n
         //   u32 nInstance; u8 × n
+        // Phase D6 extensions:
+        //   u32 × nAdvice (advice col idx)
+        //   u32 × nFixed  (fixed col idx)
+        //   u32 × nInst   (instance col idx)
+        // Phase D8 extension:
+        //   u32 nLookupChunks; u32 × n
         if (p + 4 > L) return false;
         uint32 nRot = _readU32(blob, p); p += 4 + 4 * nRot; if (p > L) return false;
+        // Capture nAdvice/nFixed/nInstance so we can skip the D6
+        // column-index arrays that follow.
+        uint32[3] memory arrSizes;
         for (uint256 k = 0; k < 3; k++) {
             if (p + 4 > L) return false;
             uint32 nArr = _readU32(blob, p); p += 4 + nArr; if (p > L) return false;
+            arrSizes[k] = nArr;
         }
+        // D6: column-index tables (u32 each, sizes mirror advice/fixed/inst).
+        for (uint256 k = 0; k < 3; k++) {
+            if (p + 4 * arrSizes[k] > L) return false;
+            p += 4 * arrSizes[k];
+        }
+        // D8: per-lookup chunk count table.
+        if (p + 4 > L) return false;
+        uint32 nLc = _readU32(blob, p); p += 4 + 4 * nLc; if (p > L) return false;
         return p == L;
     }
 
@@ -1222,6 +1240,46 @@ contract PoseidonVerifierTest is Test {
             require(gotVal[i] == expVal[i], "scalar mismatch");
         }
         emit log_named_uint("partial-eval driver scalars verified", nExpected);
+    }
+
+    /// Phase D8 equivalence: the emitted `right_g1_digest` from the
+    /// Solidity verify() must match the keccak256(right_eip2537) that
+    /// `generate.rs` computes from the Rust `DualMSM.right.eval()`.
+    function test_final_right_g1_digest() public {
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+        require(instanceBE.length == 32, "instance size");
+        bytes32 instance;
+        assembly { instance := mload(add(instanceBE, 32)) }
+
+        bytes memory fixt = vm.readFileBinary("fixtures/right_g1_fixture.bin");
+        require(fixt.length == 160, "right_g1 fixture bad len");
+        bytes32 expected;
+        assembly { expected := mload(add(fixt, add(32, 128))) }
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 intSig = keccak256("TraceIntermediate(string,bytes32)");
+        bytes32 gotDigest = bytes32(0);
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == intSig) {
+                (string memory name, bytes32 v_) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(name)) == keccak256("right_g1_digest")) {
+                    gotDigest = v_;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "right_g1_digest event not emitted");
+        require(
+            gotDigest == expected,
+            "right_g1 digest mismatch: Solidity MSM != Rust DualMSM.right"
+        );
     }
 
     function test_verify_poseidon_proof() public {
