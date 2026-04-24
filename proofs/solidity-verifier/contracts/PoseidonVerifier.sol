@@ -1042,6 +1042,188 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Query enumeration in Rust iterator order (Phase D5)               *
+     *                                                                    *
+     *  Flattens the multi_prepare VerifierQuery list into two memory    *
+     *  arrays (point values, claimed evals) in the exact Rust           *
+     *  iteration order from \`proofs/src/plonk/verifier.rs:366\`:        *
+     *                                                                    *
+     *    advice_queries              (advice_evals @ ω^rot · x)          *
+     *    instance_queries (filtered) (committed only, 0 for poseidon)  *
+     *    perm_chunk cur/next/last    (x, ω·x, ω^{-(bf+1)}·x)            *
+     *    lookup m / helpers / acc    (x, x, x, x_next)                  *
+     *    trash                       (x)                                *
+     *    fixed_queries (filtered)    (fixed_evals @ ω^rot · x)           *
+     *    perm_common                 (x)                                *
+     *    linearization               (x, expectedEval)                  *
+     *                                                                    *
+     *  The list total for poseidon is 45 queries:                       *
+     *    11 advice + 0 instance + 8 perm-set + 14 lookup + 1 trash     *
+     *    + 15 fixed + 8 perm-common + 1 linearization = 58. (Counts    *
+     *    verified against the Rust-side fixture replay.)                *
+     *                                                                    *
+     *  Phase D5 emits a positional signature                            *
+     *    Σ (i+1)·(point_i + eval_i) mod FR                              *
+     *  so the equivalence test can pin both the enumeration order and  *
+     *  the per-query (point, eval) extraction in one 32-byte value.   *
+     *  Phase D6 will add commitment IDs to drive \`_constructInterm-   *
+     *  ediateSets\`; for D5 the signature is sufficient to catch any    *
+     *  enumeration-level regression.                                    *
+     * ------------------------------------------------------------------ */
+
+    struct QueryList {
+        uint256[] points;
+        uint256[] evals;
+    }
+
+    /// Compute the three special evaluation points used by the queries:
+    ///   x      — Rotation::cur()
+    ///   x_next — Rotation::next() = ω · x
+    ///   x_last — Rotation(-(bf+1)) = ω^{-(bf+1)} · x
+    /// Uses the Phase-C1 rotated-points cache (distinct rotations
+    /// stored in the VK's query schedule section).
+    struct SpecialPoints {
+        uint256 x;
+        uint256 xNext;
+        uint256 xLast;
+    }
+
+    function _computeSpecialPoints(
+        bytes memory blob,
+        uint256 x,
+        int32[] memory rotations,
+        uint256[] memory rotatedPoints,
+        uint256 blindingFactors
+    ) internal pure returns (SpecialPoints memory sp) {
+        sp.x = x;
+        int32 lastRot = -(int32(int256(blindingFactors)) + 1);
+        bool foundNext = false;
+        bool foundLast = false;
+        for (uint256 i = 0; i < rotations.length; i++) {
+            if (rotations[i] == int32(1)) { sp.xNext = rotatedPoints[i]; foundNext = true; }
+            if (rotations[i] == lastRot)  { sp.xLast = rotatedPoints[i]; foundLast = true; }
+        }
+        require(foundNext && foundLast, "special rotations missing");
+        blob;
+    }
+
+    /// Build the flat (points, evals) query list in Rust order.
+    /// Commitment IDs are deferred to Phase D6.
+    function _buildQueryList(
+        bytes memory blob,
+        Vk memory vk,
+        EvalArrays memory ea,
+        uint256 x,
+        uint256 expectedEval
+    ) internal view returns (QueryList memory ql) {
+        QuerySchedule memory qs = _loadQuerySchedule(blob);
+        uint256 omega = uint256(vk.omegaBE);
+        // Rotated points parallel to qs.rotations.
+        uint256[] memory rotatedPoints = new uint256[](qs.rotations.length);
+        for (uint256 i = 0; i < qs.rotations.length; i++) {
+            int32 r = qs.rotations[i];
+            if (r == 0) {
+                rotatedPoints[i] = x;
+            } else if (r > 0) {
+                rotatedPoints[i] = _frMul(x, _frPow(omega, uint256(uint32(r))));
+            } else {
+                // ω^r for r<0: use ω^(n-|r|).
+                uint256 pos = uint256(vk.n) - uint256(uint32(-r));
+                rotatedPoints[i] = _frMul(x, _frPow(omega, pos));
+            }
+        }
+        SpecialPoints memory sp = _computeSpecialPoints(
+            blob, x, qs.rotations, rotatedPoints, uint256(vk.blindingFactors)
+        );
+
+        uint256 total = _countQueries(vk);
+        ql.points = new uint256[](total);
+        ql.evals  = new uint256[](total);
+
+        uint256 k = 0;
+        // 1. Advice queries.
+        for (uint256 q = 0; q < vk.numAdviceQueries; q++) {
+            ql.points[k] = rotatedPoints[uint256(qs.adviceRotationIdx[q])];
+            ql.evals[k]  = ea.adviceEvals[q];
+            k++;
+        }
+        // 2. Instance queries (committed-only; 0 for poseidon).
+        for (uint256 q = 0; q < vk.numCommittedInstanceEvals; q++) {
+            ql.points[k] = rotatedPoints[uint256(qs.instanceRotationIdx[q])];
+            ql.evals[k]  = ea.committedInstanceEvals[q];
+            k++;
+        }
+        // 3. Permutation chunk queries: per chunk cur@x + next@ω·x,
+        //    then in REVERSE from second-to-last chunk down to 0:
+        //    last@ω^{-(bf+1)}·x (skip the final chunk).
+        for (uint256 i = 0; i < vk.numPermChunks; i++) {
+            ql.points[k] = sp.x;     ql.evals[k] = ea.permChunkCurEvals[i];  k++;
+            ql.points[k] = sp.xNext; ql.evals[k] = ea.permChunkNextEvals[i]; k++;
+        }
+        if (vk.numPermChunks > 1) {
+            for (uint256 i = vk.numPermChunks - 1; i > 0; i--) {
+                ql.points[k] = sp.xLast;
+                ql.evals[k]  = ea.permChunkLastEvals[i - 1];
+                k++;
+            }
+        }
+        // 4. Lookup queries (per lookup): m@x, helpers@x, acc@x, acc@x_next.
+        {
+            LookupSplit memory ls = _splitSingleLookup(vk, ea);
+            ql.points[k] = sp.x; ql.evals[k] = ls.mEval; k++;
+            for (uint256 j = 0; j < ls.helperEvals.length; j++) {
+                ql.points[k] = sp.x;
+                ql.evals[k]  = ls.helperEvals[j];
+                k++;
+            }
+            ql.points[k] = sp.x;     ql.evals[k] = ls.accEval;     k++;
+            ql.points[k] = sp.xNext; ql.evals[k] = ls.accNextEval; k++;
+        }
+        // 5. Trashcan queries.
+        for (uint256 i = 0; i < vk.numTrashcans; i++) {
+            ql.points[k] = sp.x; ql.evals[k] = ea.trashcanEvals[i]; k++;
+        }
+        // 6. Fixed queries (simple-selector-filtered already since
+        //    ea.fixedEvals only has transcript reads).
+        for (uint256 q = 0; q < vk.numFixedQueries; q++) {
+            ql.points[k] = rotatedPoints[uint256(qs.fixedRotationIdx[q])];
+            ql.evals[k]  = ea.fixedEvals[q];
+            k++;
+        }
+        // 7. Permutation common queries @x.
+        for (uint256 i = 0; i < vk.numPermColumns; i++) {
+            ql.points[k] = sp.x; ql.evals[k] = ea.permCommonEvals[i]; k++;
+        }
+        // 8. Linearization @ x with eval = expectedEval.
+        ql.points[k] = sp.x;
+        ql.evals[k]  = expectedEval;
+        k++;
+        require(k == total, "query count mismatch");
+    }
+
+    function _countQueries(Vk memory vk) internal pure returns (uint256 n) {
+        n = uint256(vk.numAdviceQueries)
+          + uint256(vk.numCommittedInstanceEvals)
+          + uint256(vk.numPermChunks) * 2
+          + (vk.numPermChunks > 1 ? uint256(vk.numPermChunks) - 1 : 0)
+          + 3 + uint256(vk.totalLookupHelpers)  // lookup: m + helpers + acc + acc_next
+          + uint256(vk.numTrashcans)
+          + uint256(vk.numFixedQueries)
+          + uint256(vk.numPermColumns)
+          + 1;  // linearization
+    }
+
+    function _queryListSignature(QueryList memory ql)
+        internal pure returns (uint256 sig)
+    {
+        sig = 0;
+        for (uint256 i = 0; i < ql.points.length; i++) {
+            uint256 combined = addmod(ql.points[i], ql.evals[i], FR_MODULUS);
+            sig = addmod(sig, mulmod(i + 1, combined, FR_MODULUS), FR_MODULUS);
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
      *  PartialEvalEnv assembly + partial-eval call (Phase D3)            *
      *                                                                    *
      *  Marshals the Phase D2 EvalArrays + transcript challenges +        *
@@ -2817,6 +2999,12 @@ contract PoseidonVerifier {
             uint256 linSig =
                 _linearizationSignature(linPointsFlat, linScalars, linExpectedEval);
             emit TraceIntermediate("linearization_signature", bytes32(linSig));
+
+            // Phase D5: enumerate queries in Rust iterator order.
+            QueryList memory ql =
+                _buildQueryList(vkBlob, vk, ea, xU, linExpectedEval);
+            uint256 qlSig = _queryListSignature(ql);
+            emit TraceIntermediate("query_list_signature", bytes32(qlSig));
         }
         gEnd = gasleft();
         emit PhaseGas("partial_eval", gStart - gEnd);

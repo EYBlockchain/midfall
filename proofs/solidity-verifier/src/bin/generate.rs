@@ -2128,6 +2128,116 @@ fn main() {
                     lblob.len(),
                     id_points.len(),
                 );
+
+                // ---------- Phase D5: query_list_signature ----------
+                //
+                // Replays the Rust query enumeration order from
+                // proofs/src/plonk/verifier.rs:366 and dumps a flat
+                // (points, evals) list. Computes the same positional
+                // signature as _queryListSignature: Σ (i+1)·(point+eval)
+                // mod FR.
+                //
+                // File layout (64 bytes):
+                //   [32] num_queries
+                //   [32] signature
+                {
+                    let cs = vk_inner.cs();
+                    let domain = vk_inner.get_domain();
+                    let omega = domain.get_omega();
+                    let x_q = x_d3;
+                    let x_next_q = omega * x_q;
+                    let bf_q = vk_info.blinding_factors as i32;
+                    let last_rot_q = -(bf_q + 1);
+                    let x_last_q = omega.pow_vartime(
+                        [(vk_info.n as i64 + last_rot_q as i64) as u64]
+                    ) * x_q;
+
+                    // Helper: compute ω^rot · x for any rotation i32.
+                    let rotate = |rot: i32| -> Fq {
+                        if rot == 0 { x_q }
+                        else if rot > 0 { omega.pow_vartime([rot as u64]) * x_q }
+                        else {
+                            omega.pow_vartime(
+                                [(vk_info.n as i64 + rot as i64) as u64]
+                            ) * x_q
+                        }
+                    };
+
+                    let mut points: Vec<Fq> = Vec::new();
+                    let mut evals: Vec<Fq> = Vec::new();
+
+                    // 1. Advice queries.
+                    for (qi, (_, rot)) in cs.advice_queries().iter().enumerate() {
+                        points.push(rotate(rot.0));
+                        evals.push(advice_evals_t[qi]);
+                    }
+                    // 2. Instance (committed-only; empty for poseidon).
+                    let nb_committed: usize = 1;
+                    let mut ci_i = 0usize;
+                    for (_, (col, rot)) in cs.instance_queries().iter().enumerate() {
+                        if col.index() < nb_committed {
+                            points.push(rotate(rot.0));
+                            evals.push(committed_instance_evals_t[ci_i]);
+                            ci_i += 1;
+                        }
+                    }
+                    // 3. Permutation chunk queries.
+                    for (cur, next, _) in perm_sets_t.iter() {
+                        points.push(x_q);      evals.push(*cur);
+                        points.push(x_next_q); evals.push(*next);
+                    }
+                    if vk_info.num_permutation_chunks > 1 {
+                        for i in (1..vk_info.num_permutation_chunks).rev() {
+                            let last = perm_sets_t[i - 1].2.unwrap();
+                            points.push(x_last_q);
+                            evals.push(last);
+                        }
+                    }
+                    // 4. Lookup queries (single lookup).
+                    points.push(x_q); evals.push(m_eval_t);
+                    for h in &helper_evals_t {
+                        points.push(x_q); evals.push(*h);
+                    }
+                    points.push(x_q);      evals.push(acc_eval_t);
+                    points.push(x_next_q); evals.push(acc_next_eval_t);
+                    // 5. Trashcan queries.
+                    for t in &trash_evals_t {
+                        points.push(x_q); evals.push(*t);
+                    }
+                    // 6. Fixed (simple-selector-filtered).
+                    let mut fi = 0usize;
+                    for (col, rot) in cs.fixed_queries().iter() {
+                        if cs.has_simple_selector_col(col.index()) { continue; }
+                        points.push(rotate(rot.0));
+                        evals.push(fixed_evals_t[fi]);
+                        fi += 1;
+                    }
+                    // 7. Perm common queries.
+                    for p in perm_common_t {
+                        points.push(x_q);
+                        evals.push(*p);
+                    }
+                    // 8. Linearization @ x with eval = expectedEval.
+                    points.push(x_q);
+                    evals.push(expected_eval_d4);
+
+                    // Positional signature: Σ (i+1)·(point+eval) mod FR.
+                    let mut qsig = Fq::ZERO;
+                    for i in 0..points.len() {
+                        qsig += Fq::from((i + 1) as u64) * (points[i] + evals[i]);
+                    }
+
+                    let mut qblob: Vec<u8> = Vec::new();
+                    qblob.extend_from_slice(&[0u8; 24]);
+                    qblob.extend_from_slice(&(points.len() as u64).to_be_bytes());
+                    qblob.extend_from_slice(&fq_to_be(&qsig));
+                    fs::write(fixtures.join("query_list_signature_fixture.bin"), &qblob).unwrap();
+                    eprintln!(
+                        "      query-list-signature fixture written ({} bytes, {} queries)",
+                        qblob.len(),
+                        points.len(),
+                    );
+                }
             }
         }
     }

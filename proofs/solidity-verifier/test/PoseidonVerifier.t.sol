@@ -500,6 +500,45 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D5: query enumeration in Rust iterator order.
+    /// verify() now emits
+    /// `TraceIntermediate("query_list_signature", sig)` where
+    /// `sig = Σ (i+1) · (point_i + eval_i) mod FR` over the flat
+    /// VerifierQuery list in the exact Rust iteration order from
+    /// `proofs/src/plonk/verifier.rs:366`. Catches any ordering or
+    /// (point, eval) extraction regression in a single 32-byte value.
+    function test_query_list_signature() public {
+        bytes memory f =
+            vm.readFileBinary("fixtures/query_list_signature_fixture.bin");
+        uint256 expCount = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("query_list_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "query_list_signature event not emitted");
+        require(gotSig == expSig, "query_list_signature mismatch");
+        emit log_named_uint("query_list verified, count", expCount);
+    }
+
     /// Phase D4: linearization commitment inside verify().
     /// verify() now emits
     /// `TraceIntermediate("linearization_signature", sig)` where
