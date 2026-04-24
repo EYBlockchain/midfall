@@ -2546,6 +2546,53 @@ fn main() {
                             "      multi-prepare-signature fixture written ({} bytes, {} commitments, {} sets)",
                             mblob.len(), nC, n_sets,
                         );
+
+                        // ---------- Phase D7: final_msm_scalar_signature ----------
+                        //
+                        // Expand the linearization commitment's inner
+                        // scalars into the flat right-side MSM scalar
+                        // list and emit a positional signature.
+                        //
+                        // File layout:
+                        //   [32] num_scalars
+                        //   [32] sig
+                        {
+                            // Reconstruct the lin inner scalars from the
+                            // D4 fixture replica (id_points/id_scalars
+                            // flow already built `id_scalars`).
+                            let mut final_scalars: Vec<Fq> = Vec::new();
+                            for (c, &cid) in c_ids.iter().enumerate() {
+                                if cid == cb_lin {
+                                    let outer = comm_scalars[c];
+                                    for s in &id_scalars {
+                                        final_scalars.push(outer * s);
+                                    }
+                                } else {
+                                    final_scalars.push(comm_scalars[c]);
+                                }
+                            }
+                            final_scalars.push(f_com_scalar);
+                            final_scalars.push(pi_scalar);
+                            final_scalars.push(g_scalar);
+
+                            let mut fm_sig = Fq::ZERO;
+                            for (i, s) in final_scalars.iter().enumerate() {
+                                fm_sig += Fq::from((i + 1) as u64) * s;
+                            }
+
+                            let mut fblob: Vec<u8> = Vec::new();
+                            fblob.extend_from_slice(&[0u8; 24]);
+                            fblob.extend_from_slice(&(final_scalars.len() as u64).to_be_bytes());
+                            fblob.extend_from_slice(&fq_to_be(&fm_sig));
+                            fs::write(
+                                fixtures.join("final_msm_scalar_signature_fixture.bin"),
+                                &fblob,
+                            ).unwrap();
+                            eprintln!(
+                                "      final-msm-scalar-signature fixture written ({} bytes, {} scalars)",
+                                fblob.len(), final_scalars.len(),
+                            );
+                        }
                     }
                 }
             }

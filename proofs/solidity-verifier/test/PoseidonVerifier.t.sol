@@ -500,6 +500,47 @@ contract PoseidonVerifierTest is Test {
     /// expected values. For the poseidon circuit this is 22 scalars
     /// (11 gate + 7 perm + 3 lookup + 1 trash), of which 11 carry
     /// gate-selector column annotations.
+    /// Phase D7: expand the linearization's inner scalars into the
+    /// final right-side MSM scalar list. verify() emits
+    /// `final_msm_scalar_signature` = Σ (i+1)·scalar_i mod FR over
+    /// the flat scalar list in the order:
+    ///   - per unique commitment c (FIFO):
+    ///       lin ? emit linScalars.length entries (commScalars[c]·linS[j])
+    ///           : emit 1 entry commScalars[c]
+    ///   - fComScalar, piScalar, gScalar
+    /// Poseidon produces 50 scalars (39 single + 8 lin inner + 3 tail).
+    function test_final_msm_scalar_signature() public {
+        bytes memory f =
+            vm.readFileBinary("fixtures/final_msm_scalar_signature_fixture.bin");
+        uint256 expN = _readUint(f, 0);
+        uint256 expSig = _readUint(f, 32);
+
+        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+
+        vm.recordLogs();
+        try v.verify(instance, proof) returns (bool) {} catch {}
+        Log[] memory logs = vm.getRecordedLogs();
+
+        bytes32 wantTopic = keccak256("TraceIntermediate(string,bytes32)");
+        bool found = false;
+        uint256 gotSig = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length >= 1 && logs[i].topics[0] == wantTopic) {
+                (string memory label, bytes32 val) =
+                    abi.decode(logs[i].data, (string, bytes32));
+                if (keccak256(bytes(label)) == keccak256("final_msm_scalar_signature")) {
+                    gotSig = uint256(val);
+                    found = true;
+                    break;
+                }
+            }
+        }
+        require(found, "final_msm_scalar_signature event not emitted");
+        require(gotSig == expSig, "final_msm_scalar_signature mismatch");
+        emit log_named_uint("final_msm scalars verified, n", expN);
+    }
+
     /// Phase D6: multi_prepare pipeline drive inside verify().
     /// verify() now emits `multi_prepare_signature` = v
     ///   + Σ (i+1)·commScalars[i] + (nC+1)·fComScalar

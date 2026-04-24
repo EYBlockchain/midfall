@@ -1042,6 +1042,77 @@ contract PoseidonVerifier {
     }
 
     /* ------------------------------------------------------------------ *
+     *  Final right-side MSM scalar expansion (Phase D7)                  *
+     *                                                                    *
+     *  Phase D6 produced per-commitment outer scalars                   *
+     *    commScalars[c] = x4^set(c) · x1^pos(c)                         *
+     *  where each commitment is treated as a single opaque entity.     *
+     *  The linearization commitment is actually a MULTI-TERM MSM        *
+     *  assembled in Phase D4: its inner (scalar, G1) terms are the     *
+     *  quotient-limb openings plus the y-grouped fixed-column           *
+     *  buckets. To feed the real on-chain MSM we need to DISTRIBUTE    *
+     *  commScalars[lin] across the linearization's inner terms:        *
+     *    finalScalar_j = commScalars[lin] · linScalars[j]              *
+     *                                                                    *
+     *  The right-side MSM then becomes                                  *
+     *    · For every unique commitment c (FIFO order from C2a):        *
+     *        - If c == lin: emit linScalars.length entries              *
+     *        - Else: emit one entry commScalars[c]                     *
+     *    · Append fComScalar (coefficient of f_com)                    *
+     *    · Append piScalar  (coefficient of π on the right)             *
+     *    · Append gScalar   (coefficient of G on the right)             *
+     *                                                                    *
+     *  Phase D7 emits a positional signature over this expanded        *
+     *  scalar list so the Rust replay can pin the scalar-side of the   *
+     *  MSM before the G1-side plumbing (commitment-store collection   *
+     *  + actual EIP-2537 MSM call) lands in Phase D8.                   *
+     * ------------------------------------------------------------------ */
+
+    function _expandFinalMsmScalars(
+        IntermediateSets memory s,
+        MultiPrepareOut memory mp,
+        uint256 linCommId,
+        uint256[] memory linScalars
+    ) internal pure returns (uint256[] memory out) {
+        uint256 nC = s.commitmentIds.length;
+        // First pass: count total terms.
+        uint256 total = 0;
+        for (uint256 c = 0; c < nC; c++) {
+            if (s.commitmentIds[c] == linCommId) {
+                total += linScalars.length;
+            } else {
+                total += 1;
+            }
+        }
+        total += 3;  // fCom + pi + G
+
+        out = new uint256[](total);
+        uint256 k = 0;
+        for (uint256 c = 0; c < nC; c++) {
+            if (s.commitmentIds[c] == linCommId) {
+                uint256 outer = mp.commScalars[c];
+                for (uint256 j = 0; j < linScalars.length; j++) {
+                    out[k++] = mulmod(outer, linScalars[j], FR_MODULUS);
+                }
+            } else {
+                out[k++] = mp.commScalars[c];
+            }
+        }
+        out[k++] = mp.fComScalar;
+        out[k++] = mp.piScalar;
+        out[k++] = mp.gScalar;
+    }
+
+    function _finalMsmScalarSignature(uint256[] memory scalars)
+        internal pure returns (uint256 sig)
+    {
+        sig = 0;
+        for (uint256 i = 0; i < scalars.length; i++) {
+            sig = addmod(sig, mulmod(i + 1, scalars[i], FR_MODULUS), FR_MODULUS);
+        }
+    }
+
+    /* ------------------------------------------------------------------ *
      *  Multi_prepare driver (Phase D6)                                   *
      *                                                                    *
      *  Consumes the flat (points, evals, commIds) query list produced   *
@@ -1078,6 +1149,10 @@ contract PoseidonVerifier {
         uint256 gScalar;
         uint256 numSets;
         uint256 numCommitments;
+        // commitmentIds in FIFO order from C2a — needed by Phase D7 to
+        // identify the linearization commitment when expanding its
+        // scalars.
+        uint256[] commitmentIds;
     }
 
     /// Build per-commitment evals table in sorted-point-set order
@@ -1236,6 +1311,7 @@ contract PoseidonVerifier {
         out.gScalar        = xout.gScalar;
         out.numSets        = nS;
         out.numCommitments = nC;
+        out.commitmentIds  = st.sSorted.commitmentIds;
     }
 
     /// Compute per-commitment position in its set: the FIFO order of
@@ -3267,6 +3343,7 @@ contract PoseidonVerifier {
         /* --- Phase D4: linearization commitment call ------------- */
         gStart = gasleft();
         QueryList memory ql;  // hoisted for Phase D6 use below
+        uint256[] memory linScalarsD7;  // hoisted for Phase D7 expansion
         {
             uint256 xU = uint256(x);
             uint256 splittingFactor = _frPow(xU, uint256(vk.n) - 1);
@@ -3297,6 +3374,7 @@ contract PoseidonVerifier {
             uint256 linSig =
                 _linearizationSignature(linPointsFlat, linScalars, linExpectedEval);
             emit TraceIntermediate("linearization_signature", bytes32(linSig));
+            linScalarsD7 = linScalars;
 
             // Phase D5: enumerate queries in Rust iterator order.
             ql = _buildQueryList(vkBlob, vk, ea, xU, linExpectedEval);
@@ -3349,7 +3427,7 @@ contract PoseidonVerifier {
         // Phase D6: drive the multi_prepare pipeline to produce the
         // final scalar bundle (v, commScalars, fComScalar, piScalar,
         // gScalar). Only the scalar side is exercised here; the
-        // parallel G1-side MSM lands in Phase D7-D8.
+        // parallel G1-side MSM lands in Phase D8.
         {
             MultiPrepareOut memory mp = _driveMultiPrepare(
                 ql, qEvalsOnX3,
@@ -3357,6 +3435,22 @@ contract PoseidonVerifier {
             );
             uint256 mpSig = _multiPrepareSignature(mp);
             emit TraceIntermediate("multi_prepare_signature", bytes32(mpSig));
+
+            // Phase D7: expand the linearization's inner scalars into
+            // the flat right-side MSM scalar list. Pins the scalar
+            // assembly before the G1-side goes online in D8.
+            {
+                CommIdBases memory cb = _computeCommIdBases(vk);
+                IntermediateSets memory sSorted;
+                sSorted.commitmentIds     = mp.commitmentIds;
+                sSorted.commitmentSetIdx  = new uint256[](0);  // unused
+                sSorted.commitmentPointIdx = new uint256[][](0);
+                sSorted.pointSets         = new uint256[][](0);
+                uint256[] memory finalScalars =
+                    _expandFinalMsmScalars(sSorted, mp, cb.lin, linScalarsD7);
+                uint256 fmSig = _finalMsmScalarSignature(finalScalars);
+                emit TraceIntermediate("final_msm_scalar_signature", bytes32(fmSig));
+            }
         }
 
         /* --- Final pairing check --------------------------------- *
