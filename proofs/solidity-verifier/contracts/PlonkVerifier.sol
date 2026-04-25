@@ -495,16 +495,19 @@ contract PlonkVerifier {
      *    1  × accumulator:   ((Z_next − Z − s·Σh)·(t+β) + m) · active   *
      * ------------------------------------------------------------------ */
 
+    /// Per-lookup state threaded through `_lookupExpressions`. The
+    /// arrays are length `vk.numLookups`; the outer loop indexes them
+    /// with the current lookup index `l`.
     struct LookupEnv {
         uint256 theta;
         uint256 beta;
         uint256 l0;
         uint256 lLast;
         uint256 lBlind;
-        uint256 accumulatorEval;
-        uint256 accumulatorNextEval;
-        uint256 multiplicitiesEval;
-        uint256[] helperEvals;
+        uint256[]   accumulatorEvals;
+        uint256[]   accumulatorNextEvals;
+        uint256[]   multiplicitiesEvals;
+        uint256[][] helperEvalsPer;
         // Shared with bytecode evaluation:
         uint256[] adviceEvals;
         uint256[] fixedEvals;
@@ -557,7 +560,9 @@ contract PlonkVerifier {
     function _lookupChunk(
         LookupWalk memory w,
         GateEnv memory env,
-        LookupEnv memory lenv
+        LookupEnv memory lenv,
+        uint256 l,
+        uint256 chunkIdx
     ) internal view {
         uint32 nParallel = _readU32FromBlob(w.vkBlob, w.cursor);
         w.cursor += 4;
@@ -579,7 +584,8 @@ contract PlonkVerifier {
             uint256 inv = _frInv(compressedWithBeta[p]);
             sum = _frAdd(sum, _frMul(product, inv));
         }
-        uint256 helperEval = lenv.helperEvals[w.helperIdx++];
+        uint256 helperEval = lenv.helperEvalsPer[l][chunkIdx];
+        w.helperIdx++;
         w.sumHelpers = _frAdd(w.sumHelpers, helperEval);
         w.out[w.outIdx++] = _frSub(_frMul(helperEval, product), sum);
     }
@@ -590,13 +596,22 @@ contract PlonkVerifier {
     function _sizeLookup(bytes memory vkBlob, uint256 offsetIn)
         internal pure returns (uint256 offsetOut, uint256 outAdd)
     {
+        (offsetOut, outAdd, ) = _sizeLookupWithChunks(vkBlob, offsetIn);
+    }
+
+    /// Like [`_sizeLookup`] but also returns the lookup's `nChunks`
+    /// count, which equals the number of helper-eval entries for this
+    /// lookup in `lookupEvalsFlat`.
+    function _sizeLookupWithChunks(bytes memory vkBlob, uint256 offsetIn)
+        internal pure returns (uint256 offsetOut, uint256 outAdd, uint32 nChunks)
+    {
         uint256 probe = offsetIn;
         uint32 selLen = _readU32FromBlob(vkBlob, probe); probe += 4 + selLen;
         uint32 nTable = _readU32FromBlob(vkBlob, probe); probe += 4;
         for (uint256 i = 0; i < nTable; i++) {
             uint32 l = _readU32FromBlob(vkBlob, probe); probe += 4 + l;
         }
-        uint32 nChunks = _readU32FromBlob(vkBlob, probe); probe += 4;
+        nChunks = _readU32FromBlob(vkBlob, probe); probe += 4;
         outAdd = 2 + nChunks;
         for (uint256 c = 0; c < nChunks; c++) {
             uint32 nParallel = _readU32FromBlob(vkBlob, probe); probe += 4;
@@ -660,18 +675,18 @@ contract PlonkVerifier {
                 _compressExpressions(w.vkBlob, w.cursor, nTable, env, lenv.theta);
             w.cursor = afterTable;
 
-            w.out[w.outIdx++] = _frMul(_frAdd(lenv.l0, lenv.lLast), lenv.accumulatorEval);
+            w.out[w.outIdx++] = _frMul(_frAdd(lenv.l0, lenv.lLast), lenv.accumulatorEvals[lk]);
 
             w.sumHelpers = 0;
             uint32 nChunks = _readU32FromBlob(w.vkBlob, w.cursor); w.cursor += 4;
             for (uint256 c = 0; c < nChunks; c++) {
-                _lookupChunk(w, env, lenv);
+                _lookupChunk(w, env, lenv, lk, c);
             }
 
             uint256 selSum = _frMul(selectorVal, w.sumHelpers);
-            uint256 diff = _frSub(_frSub(lenv.accumulatorNextEval, lenv.accumulatorEval), selSum);
+            uint256 diff = _frSub(_frSub(lenv.accumulatorNextEvals[lk], lenv.accumulatorEvals[lk]), selSum);
             uint256 tPlusBeta = _frAdd(compressedTable, lenv.beta);
-            uint256 acc = _frAdd(_frMul(diff, tPlusBeta), lenv.multiplicitiesEval);
+            uint256 acc = _frAdd(_frMul(diff, tPlusBeta), lenv.multiplicitiesEvals[lk]);
             w.out[w.outIdx++] = _frMul(acc, activeRows);
         }
     }
@@ -683,9 +698,11 @@ contract PlonkVerifier {
            |  uint32(uint8(b[off + 3]));
     }
 
-    /// Public wrapper exposing `_lookupExpressions` for fixture testing.
-    /// `lookupSectionOffset` points to the `u32 num_lookups` header of
-    /// the lookup-bytecode section inside the VK blob.
+    /// Public wrapper exposing `_lookupExpressions` for fixture
+    /// testing.  `lookupSectionOffset` points to the `u32 num_lookups`
+    /// header of the lookup-bytecode section inside the VK blob.
+    /// This wrapper keeps the original single-lookup API; see
+    /// [`_lookupExpressions`] for the multi-lookup driver.
     function lookupExpressions(
         address vkAddr,
         uint256 lookupSectionOffset,
@@ -697,16 +714,22 @@ contract PlonkVerifier {
         uint256[] calldata challenges
     ) external view returns (uint256[] memory) {
         bytes memory blob = vkAddr.code;
+        uint256[] memory accE = new uint256[](1);
+        uint256[] memory accN = new uint256[](1);
+        uint256[] memory mE   = new uint256[](1);
+        uint256[][] memory hE = new uint256[][](1);
+        accE[0] = scalars[5]; accN[0] = scalars[6]; mE[0] = scalars[7];
+        hE[0] = _copyToMemArr(helperEvals);
         LookupEnv memory lenv = LookupEnv({
             theta: scalars[0],
             beta: scalars[1],
             l0: scalars[2],
             lLast: scalars[3],
             lBlind: scalars[4],
-            accumulatorEval: scalars[5],
-            accumulatorNextEval: scalars[6],
-            multiplicitiesEval: scalars[7],
-            helperEvals: _copyToMemArr(helperEvals),
+            accumulatorEvals: accE,
+            accumulatorNextEvals: accN,
+            multiplicitiesEvals: mE,
+            helperEvalsPer: hE,
             adviceEvals: _copyToMemArr(adviceEvals),
             fixedEvals: _copyToMemArr(fixedEvals),
             instanceEvals: _copyToMemArr(instanceEvals),
@@ -854,12 +877,12 @@ contract PlonkVerifier {
         // Permutation bits.
         uint256[] permSetsFlat;  // {prod, next, last, hasLast}×n
         uint256[] permEvals;
-        // Lookup bits (flattened: for each lookup, accEval/accNextEval/mEval,
-        // then helperEvals concatenated).
-        uint256 accumulatorEval;
-        uint256 accumulatorNextEval;
-        uint256 multiplicitiesEval;
-        uint256[] helperEvals;
+        // Lookup bits (per-lookup arrays).  Length = vk.numLookups.
+        // helperEvalsPer[l] has nChunks_l entries.
+        uint256[]   accumulatorEvals;
+        uint256[]   accumulatorNextEvals;
+        uint256[]   multiplicitiesEvals;
+        uint256[][] helperEvalsPer;
         // Trashcan bits.
         uint256[] trashEvals;
     }
@@ -996,10 +1019,10 @@ contract PlonkVerifier {
         // 3. Lookup.
         LookupEnv memory lenv = LookupEnv({
             theta: e.theta, beta: e.beta, l0: e.l0, lLast: e.lLast, lBlind: e.lBlind,
-            accumulatorEval: e.accumulatorEval,
-            accumulatorNextEval: e.accumulatorNextEval,
-            multiplicitiesEval: e.multiplicitiesEval,
-            helperEvals: e.helperEvals,
+            accumulatorEvals: e.accumulatorEvals,
+            accumulatorNextEvals: e.accumulatorNextEvals,
+            multiplicitiesEvals: e.multiplicitiesEvals,
+            helperEvalsPer: e.helperEvalsPer,
             adviceEvals: e.adviceEvals, fixedEvals: e.fixedEvals,
             instanceEvals: e.instanceEvals, challenges: e.challenges
         });
@@ -1051,31 +1074,13 @@ contract PlonkVerifier {
         }
     }
 
-    /// Public view wrapper so the forge test can drive the full
-    /// algebraic pipeline and compare against the Rust-computed
-    /// (selector, scalar) array.
-    function partiallyEvaluateIdentities(address vkAddr, PartialEvalEnv calldata ein)
-        external view returns (uint32[] memory selectors, uint256[] memory scalars)
-    {
-        bytes memory blob = vkAddr.code;
-        PartialEvalEnv memory e = PartialEvalEnv({
-            x: ein.x, beta: ein.beta, gamma: ein.gamma, theta: ein.theta,
-            trashChallenge: ein.trashChallenge,
-            l0: ein.l0, lLast: ein.lLast, lBlind: ein.lBlind,
-            adviceEvals: _copyToMemArr(ein.adviceEvals),
-            fixedEvals: _copyToMemArr(ein.fixedEvals),
-            instanceEvals: _copyToMemArr(ein.instanceEvals),
-            challenges: _copyToMemArr(ein.challenges),
-            permSetsFlat: _copyToMemArr(ein.permSetsFlat),
-            permEvals: _copyToMemArr(ein.permEvals),
-            accumulatorEval: ein.accumulatorEval,
-            accumulatorNextEval: ein.accumulatorNextEval,
-            multiplicitiesEval: ein.multiplicitiesEval,
-            helperEvals: _copyToMemArr(ein.helperEvals),
-            trashEvals: _copyToMemArr(ein.trashEvals)
-        });
-        return _partiallyEvaluateIdentities(blob, e);
-    }
+    // Note: a public `partiallyEvaluateIdentities` wrapper used to live
+    // here for fixture testing of single-lookup circuits.  It was
+    // dropped when `LookupEnv`/`PartialEvalEnv` were lifted to per-
+    // lookup arrays since calldata 2-D `uint256[][]` round-tripping
+    // adds little testing value beyond what
+    // `_partiallyEvaluateIdentities` already exercises in the verify
+    // path.
 
     /* ------------------------------------------------------------------ *
      *  BLS12-381 G1 generator (EIP-2537 128-byte encoding)               *
@@ -1950,22 +1955,12 @@ contract PlonkVerifier {
                 k++;
             }
         }
-        // 4. Lookup queries (per lookup): m@x, helpers@x, acc@x, acc@x_next.
-        {
-            LookupSplit memory ls = _splitSingleLookup(vk, ea);
-            ql.points[k] = sp.x; ql.evals[k] = ls.mEval;
-            ql.commIds[k] = cb.lookupM; k++;
-            for (uint256 j = 0; j < ls.helperEvals.length; j++) {
-                ql.points[k] = sp.x;
-                ql.evals[k]  = ls.helperEvals[j];
-                ql.commIds[k] = cb.lookupHelper + j;
-                k++;
-            }
-            ql.points[k] = sp.x;     ql.evals[k] = ls.accEval;
-            ql.commIds[k] = cb.lookupAcc; k++;
-            ql.points[k] = sp.xNext; ql.evals[k] = ls.accNextEval;
-            ql.commIds[k] = cb.lookupAcc; k++;
-        }
+        // 4. Lookup queries (per lookup): for each lookup l in
+        //    transcript-read order, m@x, helpers@x (across all
+        //    chunks of l), acc@x, acc@x_next.  Helper commitments
+        //    are concatenated in the VK across lookups, so we walk
+        //    the per-lookup helper offsets to locate them.
+        k = _appendLookupQueries(blob, vk, ea, sp, cb, ql, k);
         // 5. Trashcan queries.
         for (uint256 i = 0; i < vk.numTrashcans; i++) {
             ql.points[k] = sp.x; ql.evals[k] = ea.trashcanEvals[i];
@@ -1992,12 +1987,47 @@ contract PlonkVerifier {
         require(k == total, "query count mismatch");
     }
 
+    /// Append all per-lookup queries (m at x, helpers at x, acc at x,
+    /// acc at x_next) to the in-progress query list starting at slot
+    /// `kIn`.  Returns the new write cursor.  Hoisted out of the main
+    /// assembly to keep Yul stack depth tractable when
+    /// `numLookups > 1`.
+    function _appendLookupQueries(
+        bytes memory blob,
+        Vk memory vk,
+        EvalArrays memory ea,
+        SpecialPoints memory sp,
+        CommIdBases memory cb,
+        QueryList memory ql,
+        uint256 kIn
+    ) internal pure returns (uint256 k) {
+        k = kIn;
+        LookupSplit memory ls = _splitLookups(blob, vk, ea);
+        for (uint256 l = 0; l < vk.numLookups; l++) {
+            ql.points[k] = sp.x; ql.evals[k] = ls.mEvals[l];
+            ql.commIds[k] = cb.lookupM + l; k++;
+            uint256 helperOff = uint256(ls.helperOffsets[l]);
+            uint256 nh = ls.helperEvals[l].length;
+            for (uint256 j = 0; j < nh; j++) {
+                ql.points[k] = sp.x;
+                ql.evals[k]  = ls.helperEvals[l][j];
+                ql.commIds[k] = cb.lookupHelper + helperOff + j;
+                k++;
+            }
+            ql.points[k] = sp.x;     ql.evals[k] = ls.accEvals[l];
+            ql.commIds[k] = cb.lookupAcc + l; k++;
+            ql.points[k] = sp.xNext; ql.evals[k] = ls.accNextEvals[l];
+            ql.commIds[k] = cb.lookupAcc + l; k++;
+        }
+    }
+
     function _countQueries(Vk memory vk) internal pure returns (uint256 n) {
         n = uint256(vk.numAdviceQueries)
           + uint256(vk.numCommittedInstanceEvals)
           + uint256(vk.numPermChunks) * 2
           + (vk.numPermChunks > 1 ? uint256(vk.numPermChunks) - 1 : 0)
-          + 3 + uint256(vk.totalLookupHelpers)  // lookup: m + helpers + acc + acc_next
+          // lookup: per lookup l: m@x + helpers (nChunks_l) + acc@x + acc@x_next
+          + 3 * uint256(vk.numLookups) + uint256(vk.totalLookupHelpers)
           + uint256(vk.numTrashcans)
           + uint256(vk.numFixedQueries)
           + uint256(vk.numPermColumns)
@@ -2025,21 +2055,27 @@ contract PlonkVerifier {
      *  positional equivalence with Rust's                                *
      *  \`partially_evaluate_identities\`.                                 *
      *                                                                    *
-     *  Poseidon-specific simplifications (documented for D3.5 / future   *
-     *  circuits):                                                        *
-     *    * NB_COMMITTED_INSTANCES = 1, col 0 is empty (no queries),      *
-     *      all instance queries hit col 1 (non-committed) at             *
-     *      rotation 0, and the user instance has length 1. Instance      *
-     *      evals therefore collapse to \`instance · l_0\` for every      *
-     *      query. Multi-column / multi-rotation / length>1 instances    *
-     *      will need the full inner-product via                         *
-     *      \`_lagrangeIRange(-maxRot..maxLen+|minRot|)\`.                 *
+     *  Original poseidon-specific simplifications (most lifted; see    *
+     *  \`ARCHITECTURE.md\` §7.2 for the current state):                  *
+     *    * NB_COMMITTED_INSTANCES = 1, col 0 is empty (no queries),     *
+     *      all instance queries hit col 1 (non-committed) at            *
+     *      rotation 0.  Phase 2 lifted the original                     *
+     *      \`instance · l_0\` collapse to a full Lagrange inner          *
+     *      product \`Σ publicInputs[i] · L_i(ω^rot · x)\` keyed on the   *
+     *      VK's per-query rotation index, enabling RSA's 22-limb +      *
+     *      IVC's 110-limb public-input vectors.                          *
      *    * numChallenges = 0, so the challenges array is empty.         *
-     *    * numLookups = 1, so lookup evals split trivially as           *
-     *      flat[0] = mEval, flat[1..1+nChunks] = helpers,                *
-     *      flat[1+nChunks] = accEval, flat[2+nChunks] = accNextEval.    *
-     *      Multi-lookup circuits will need a loop (and the lookup      *
-     *      expression driver to accept parallel eval arrays).           *
+     *    * Phase 4 lifted \`numLookups == 1\`: \`_splitLookups\` walks the *
+     *      VK lookup section using \`_sizeLookupWithChunks\` to learn    *
+     *      each lookup's \`nChunks\` and slices \`lookupEvalsFlat\` per   *
+     *      lookup as                                                    *
+     *        for l in 0..L:                                              *
+     *          mEval[l]; helpers[l][0..nChunks_l];                       *
+     *          accEval[l]; accNextEval[l]                                *
+     *      \`LookupEnv\` / \`PartialEvalEnv\` / \`_lookupExpressions\`      *
+     *      now thread per-lookup arrays + an outer-loop lookup index.   *
+     *      The IVC aggregation circuit (\`numLookups == 2\`) exercises   *
+     *      this path.                                                   *
      *    * fixed_queries[i].column_idx == i (each fixed column queried  *
      *      once at Rotation::cur()), so the simple-selector 1s are      *
      *      injected at column indices directly.                         *
@@ -2094,26 +2130,59 @@ contract PlonkVerifier {
         }
     }
 
+    /// Per-lookup split of the flat eval vector.  For a circuit with
+    /// `numLookups == L` and per-lookup chunk counts `nChunks_l` the
+    /// flat layout is, in transcript-read order:
+    ///
+    ///   for l in 0..L:
+    ///     mEvals[l]
+    ///     helperEvals[l][0..nChunks_l]
+    ///     accEvals[l]
+    ///     accNextEvals[l]
+    ///
+    /// `helperOffsets[l] = Σ_{l'<l} nChunks_{l'}` mirrors the per-VK
+    /// helper-bucket layout used by query-list assembly so callers can
+    /// translate `(l, j)` into a single helper-commitment id.
     struct LookupSplit {
-        uint256 accEval;
-        uint256 accNextEval;
-        uint256 mEval;
-        uint256[] helperEvals;
+        uint256[]   mEvals;
+        uint256[]   accEvals;
+        uint256[]   accNextEvals;
+        uint256[][] helperEvals;
+        uint32[]    helperOffsets;
     }
 
-    function _splitSingleLookup(Vk memory vk, EvalArrays memory ea)
+    function _splitLookups(bytes memory blob, Vk memory vk, EvalArrays memory ea)
         internal pure returns (LookupSplit memory ls)
     {
-        require(vk.numLookups == 1, "Phase D3: only numLookups==1 supported");
-        uint256 nChunks = vk.totalLookupHelpers;
-        require(ea.lookupEvalsFlat.length == nChunks + 3, "lookup flat length");
-        ls.mEval       = ea.lookupEvalsFlat[0];
-        ls.helperEvals = new uint256[](nChunks);
-        for (uint256 i = 0; i < nChunks; i++) {
-            ls.helperEvals[i] = ea.lookupEvalsFlat[1 + i];
+        uint256 L = uint256(vk.numLookups);
+        ls.mEvals        = new uint256[](L);
+        ls.accEvals      = new uint256[](L);
+        ls.accNextEvals  = new uint256[](L);
+        ls.helperEvals   = new uint256[][](L);
+        ls.helperOffsets = new uint32[](L);
+
+        SectionOffsets memory so = _loadSectionOffsets(blob);
+        // skip past the `u32 num_lookups` header.
+        uint256 cursor = so.lookup + 4;
+        uint256 flatIdx = 0;
+        uint32  helperOffset = 0;
+        for (uint256 l = 0; l < L; l++) {
+            (uint256 nxt, , uint32 nChunks) = _sizeLookupWithChunks(blob, cursor);
+            cursor = nxt;
+
+            ls.helperOffsets[l] = helperOffset;
+            ls.mEvals[l] = ea.lookupEvalsFlat[flatIdx++];
+            ls.helperEvals[l] = new uint256[](nChunks);
+            for (uint256 j = 0; j < nChunks; j++) {
+                ls.helperEvals[l][j] = ea.lookupEvalsFlat[flatIdx++];
+            }
+            ls.accEvals[l]     = ea.lookupEvalsFlat[flatIdx++];
+            ls.accNextEvals[l] = ea.lookupEvalsFlat[flatIdx++];
+            helperOffset += nChunks;
         }
-        ls.accEval     = ea.lookupEvalsFlat[1 + nChunks];
-        ls.accNextEval = ea.lookupEvalsFlat[2 + nChunks];
+        require(flatIdx == ea.lookupEvalsFlat.length, "lookup flat length");
+        require(uint256(helperOffset) == uint256(vk.totalLookupHelpers),
+                "lookup total helpers mismatch");
     }
 
     /// Build PartialEvalEnv from the Phase D2 EvalArrays + transcript
@@ -2201,11 +2270,11 @@ contract PlonkVerifier {
         e.permSetsFlat = _buildPermSetsFlat(vk, ea);
         e.permEvals = ea.permCommonEvals;
 
-        LookupSplit memory ls = _splitSingleLookup(vk, ea);
-        e.accumulatorEval = ls.accEval;
-        e.accumulatorNextEval = ls.accNextEval;
-        e.multiplicitiesEval = ls.mEval;
-        e.helperEvals = ls.helperEvals;
+        LookupSplit memory ls = _splitLookups(blob, vk, ea);
+        e.accumulatorEvals     = ls.accEvals;
+        e.accumulatorNextEvals = ls.accNextEvals;
+        e.multiplicitiesEvals  = ls.mEvals;
+        e.helperEvalsPer       = ls.helperEvals;
 
         e.trashEvals = ea.trashcanEvals;
     }

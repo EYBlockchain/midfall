@@ -114,12 +114,14 @@ Things the current test matrix might still miss:
    pairing-identity test notices. Typically defense-in-depth, but
    risk is not zero.
 2. **Poseidon-specific shortcuts the Solidity side takes.**
-   Enumerated in `ARCHITECTURE.md` §7.2 (six rows:
-   `numLookups == 1`, `instance · l_0` collapse, G1-identity
-   committed instance, `num_challenges == 0`,
-   `fixed_queries[i].column_idx == i`, `num_proofs == 1`). These
-   are not missed checks — they are deliberate narrowings that are
-   algebraically correct for poseidon but wrong for a general circuit.
+   Enumerated in `ARCHITECTURE.md` §7.2.  The original poseidon-only
+   shortcuts (`instance · l_0` collapse, `fixed_queries[i].column_idx
+   == i`, `numLookups == 1`) were lifted in Phases 2-4; the
+   remaining narrowings (G1-identity committed instance,
+   `num_challenges == 0`, `num_proofs == 1`) are deliberate scope
+   restrictions that are algebraically correct for every example
+   circuit (poseidon, RSA-signature, IVC aggregation) but wrong for a
+   future circuit that opts into one of those features.
 3. **Feature-gated paths.** `truncated-challenges`,
    `single-h-commitment`, `fewer-point-sets` enabled on the prover
    produce a proof stream Solidity cannot parse. Documented as "not

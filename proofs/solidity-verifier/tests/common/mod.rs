@@ -81,6 +81,12 @@ pub const RSA_SIGNATURE: Circuit = Circuit {
     fixtures_subdir: "rsa_signature",
 };
 
+pub const IVC: Circuit = Circuit {
+    vk_sol: "IvcVerifyingKey.sol",
+    vk_contract: "IvcVerifyingKey",
+    fixtures_subdir: "ivc",
+};
+
 /// Run `forge build` if Foundry artifacts are missing.
 pub fn ensure_build(force: bool) {
     let verifier_art = artifact_path(&root_dir(), "PlonkVerifier.sol", "PlonkVerifier");
@@ -267,12 +273,25 @@ impl Harness {
 
     /// Low-level call. Returns `(success, output_bytes)`. Revert → `(false, revert_data)`.
     pub fn call_raw(&mut self, to: Address, data: Vec<u8>) -> (bool, Vec<u8>) {
+        self.call_raw_with_gas(to, data, 30_000_000)
+    }
+
+    /// Like [`call_raw`] but with a caller-supplied gas budget. The IVC
+    /// circuit produces a 110-element public-input vector and therefore
+    /// pushes Lagrange-eval workloads beyond the 30 M default cap, so
+    /// `tests/ivc.rs` opts into a 1 G budget.
+    pub fn call_raw_with_gas(
+        &mut self,
+        to: Address,
+        data: Vec<u8>,
+        gas_limit: u64,
+    ) -> (bool, Vec<u8>) {
         let tx = TxEnv::builder()
             .caller(self.caller)
             .kind(TxKind::Call(to))
             .data(Bytes::from(data))
             .nonce(self.nonce)
-            .gas_limit(30_000_000)
+            .gas_limit(gas_limit)
             .build()
             .expect("build call tx");
         self.nonce += 1;

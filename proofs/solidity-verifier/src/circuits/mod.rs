@@ -11,5 +11,6 @@
 //! that still remain in `contracts/Verifier.sol` are tracked in
 //! ARCHITECTURE.md §7.2.
 
+pub mod ivc;
 pub mod poseidon;
 pub mod rsa_signature;

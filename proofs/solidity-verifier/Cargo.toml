@@ -9,9 +9,11 @@ description = "Solidity port of the midnight-proofs PLONK verifier (specialized 
 midnight-proofs = { path = "..", features = ["keccak-transcript", "committed-instances", "debug-trace-hooks"] }
 midnight-zk-stdlib = { path = "../../zk_stdlib" }
 midnight-circuits = { path = "../../circuits", features = ["testing"] }
+midnight-aggregation = { path = "../../aggregation" }
 midnight-curves = { version = "0.2.0" }
 ff = { workspace = true }
 group = { workspace = true }
+sha2 = { workspace = true }
 sha3 = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
@@ -33,6 +35,10 @@ path = "src/bin/generate.rs"
 name = "generate_rsa"
 path = "src/bin/generate_rsa.rs"
 
+[[bin]]
+name = "generate_ivc"
+path = "src/bin/generate_ivc.rs"
+
 [[test]]
 name = "forge"
 path = "tests/forge.rs"
@@ -40,3 +46,7 @@ path = "tests/forge.rs"
 [[test]]
 name = "pbt"
 path = "tests/pbt.rs"
+
+[[test]]
+name = "ivc"
+path = "tests/ivc.rs"
