@@ -76,7 +76,7 @@ fn run_forge_test() {
 /// test therefore re-runs only the *deterministic* keygen and then replays
 /// the transcript against the proof bytes freshly written by
 /// `cargo run --bin generate`.
-fn rust_verifier_trace(proof: &[u8], instance: &midnight_curves::Fq) -> Trace {
+fn rust_verifier_trace(proof: &[u8], public_inputs: &[midnight_curves::Fq]) -> Trace {
     use ff::PrimeField;
     use midnight_curves::Fq;
 
@@ -101,10 +101,13 @@ fn rust_verifier_trace(proof: &[u8], instance: &midnight_curves::Fq) -> Trace {
     t.common_g1(&committed_identity).unwrap();
 
     // --- hash non-committed instance: for each instance, common(len); common(v).
-    // For poseidon: 1 non-committed instance column, 1 value.
-    let inst_len = Fq::from_u128(1u128);
+    // Phase 2: the public-input vector can be of any length
+    // (`format_instance` output).
+    let inst_len = Fq::from_u128(public_inputs.len() as u128);
     t.common_fq(&inst_len).unwrap();
-    t.common_fq(instance).unwrap();
+    for v in public_inputs {
+        t.common_fq(v).unwrap();
+    }
 
     // --- phases loop: read advice, squeeze challenges ---
     for (phase_idx, _phase) in cs.phases().enumerate() {
@@ -238,13 +241,13 @@ fn rust_and_solidity_traces_match() {
 
     // Rebuild the fixture so we're comparing against the SAME proof bytes
     // that the Solidity test just consumed.
-    let proof_path  = here().join("fixtures/proof.bin");
-    let trace_path  = here().join("fixtures/solidity_trace.json");
+    let proof_path  = here().join("fixtures/poseidon/proof.bin");
+    let trace_path  = here().join("fixtures/poseidon/solidity_trace.json");
 
     // Load the proof bytes freshly written by `generate`.
     use ff::PrimeField;
     let on_disk_proof = fs::read(&proof_path).expect("read proof.bin");
-    let instance_be = fs::read(here().join("fixtures/instance.be")).expect("read instance.be");
+    let instance_be = fs::read(here().join("fixtures/poseidon/instance.be")).expect("read instance.be");
     assert_eq!(instance_be.len(), 32);
     let mut inst_le = [0u8; 32];
     for i in 0..32 {
@@ -271,9 +274,9 @@ fn rust_and_solidity_traces_match() {
         eprintln!("[harness] canonical Rust verify OK");
     }
 
-    let rust_trace = rust_verifier_trace(&on_disk_proof, &instance);
+    let rust_trace = rust_verifier_trace(&on_disk_proof, std::slice::from_ref(&instance));
     fs::write(
-        here().join("fixtures/rust_trace.json"),
+        here().join("fixtures/poseidon/rust_trace.json"),
         rust_trace.to_json_pretty(),
     )
     .unwrap();
@@ -445,7 +448,7 @@ fn u64_from_be8(bytes: &[u8]) -> u64 {
 /// Load the most recent Solidity `TraceIntermediate` emissions from
 /// `fixtures/solidity_trace.json` (written by `test_verify_poseidon_proof`).
 fn load_solidity_intermediates() -> std::collections::HashMap<String, String> {
-    let path = here().join("fixtures/solidity_trace.json");
+    let path = here().join("fixtures/poseidon/solidity_trace.json");
     let raw = fs::read_to_string(&path).expect("read solidity_trace.json");
     let entries: Vec<serde_json::Value> = serde_json::from_str(&raw).unwrap();
     entries
@@ -689,7 +692,7 @@ fn rust_and_solidity_intermediates_match() {
     regenerate();
     run_forge_test();
 
-    let mtr_blob = fs::read(here().join("fixtures/verifier_trace.bin"))
+    let mtr_blob = fs::read(here().join("fixtures/poseidon/verifier_trace.bin"))
         .expect("read verifier_trace.bin");
     let events = parse_mtr1(&mtr_blob);
     eprintln!("[intermediates] parsed {} events from verifier_trace.bin", events.len());

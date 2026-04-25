@@ -55,14 +55,39 @@ pub fn root_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// Per-circuit artifact layout — picked up by [`Harness::fresh_with`]
+/// so the same revm-driven harness can mount either the poseidon VK
+/// or the RSA-signature VK behind the generic `PlonkVerifier`.
+#[derive(Clone, Copy)]
+pub struct Circuit {
+    /// `.sol` filename passed to `forge build`, relative to
+    /// `contracts/` (so forge's `out/<file>/<contract>.json` path
+    /// is built from this).
+    pub vk_sol: &'static str,
+    pub vk_contract: &'static str,
+    /// Fixture directory name under `fixtures/`.
+    pub fixtures_subdir: &'static str,
+}
+
+pub const POSEIDON: Circuit = Circuit {
+    vk_sol: "PoseidonVerifyingKey.sol",
+    vk_contract: "PoseidonVerifyingKey",
+    fixtures_subdir: "poseidon",
+};
+
+pub const RSA_SIGNATURE: Circuit = Circuit {
+    vk_sol: "RsaSignatureVerifyingKey.sol",
+    vk_contract: "RsaSignatureVerifyingKey",
+    fixtures_subdir: "rsa_signature",
+};
+
 /// Run `forge build` if Foundry artifacts are missing.
 pub fn ensure_build(force: bool) {
-    let verifier_art =
-        artifact_path(&root_dir(), "PoseidonVerifier.sol", "PoseidonVerifier");
+    let verifier_art = artifact_path(&root_dir(), "PlonkVerifier.sol", "PlonkVerifier");
     let vk_art = artifact_path(
         &root_dir(),
-        "PoseidonVerifyingKey.sol",
-        "PoseidonVerifyingKey",
+        POSEIDON.vk_sol,
+        POSEIDON.vk_contract,
     );
     if !force && verifier_art.exists() && vk_art.exists() {
         return;
@@ -83,16 +108,44 @@ pub fn selector(sig: &str) -> [u8; 4] {
     out
 }
 
-/// ABI calldata for `verify(bytes32 instance, bytes proof)`.
-pub fn encode_verify_calldata(instance: [u8; 32], proof: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(4 + 32 + 32 + 32 + proof.len() + 31);
-    out.extend_from_slice(&selector("verify(bytes32,bytes)"));
-    out.extend_from_slice(&instance);
-    // proof offset: 0x40 (two words past selector tail)
-    let mut off = [0u8; 32];
-    off[31] = 0x40;
-    out.extend_from_slice(&off);
-    // proof length
+/// ABI calldata for `verify(bytes32[] publicInputs, bytes proof)`.
+///
+/// Layout (head + tail regions are separated by the `// ---` comment):
+/// ```
+/// [0..4]    selector("verify(bytes32[],bytes)")
+/// [4..36]   offset of publicInputs head word (0x40)
+/// [36..68]  offset of proof head word (0x60 + 32 * publicInputs.len())
+/// // ---
+/// [head[pi]] publicInputs.len() as u256 (big-endian)
+/// [head[pi] + 32 * i] publicInputs[i]
+/// [head[proof]]       proof.len() as u256 (big-endian)
+/// [head[proof] + 32] proof bytes, zero-padded to a multiple of 32
+/// ```
+pub fn encode_verify_calldata(public_inputs: &[[u8; 32]], proof: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(
+        4 + 32 + 32 + 32 + 32 * public_inputs.len() + 32 + proof.len() + 31,
+    );
+    out.extend_from_slice(&selector("verify(bytes32[],bytes)"));
+
+    // Head: two offsets (always 32 bytes apart at the start of calldata).
+    let pi_head_off: u64 = 0x40;
+    let proof_head_off: u64 = pi_head_off + 32 + 32 * public_inputs.len() as u64;
+    let mut buf = [0u8; 32];
+    buf[24..32].copy_from_slice(&pi_head_off.to_be_bytes());
+    out.extend_from_slice(&buf);
+    buf = [0u8; 32];
+    buf[24..32].copy_from_slice(&proof_head_off.to_be_bytes());
+    out.extend_from_slice(&buf);
+
+    // Tail 1: publicInputs.len() then each element.
+    let mut plen = [0u8; 32];
+    plen[24..32].copy_from_slice(&(public_inputs.len() as u64).to_be_bytes());
+    out.extend_from_slice(&plen);
+    for pi in public_inputs {
+        out.extend_from_slice(pi);
+    }
+
+    // Tail 2: proof.len() then zero-padded proof bytes.
     let mut plen = [0u8; 32];
     let n = proof.len() as u64;
     plen[24..32].copy_from_slice(&n.to_be_bytes());
@@ -122,7 +175,23 @@ impl Harness {
         Self::fresh_with(None, None)
     }
 
+    /// Back-compat wrapper: deploys the poseidon VK against the
+    /// generic `PlonkVerifier`.  RSA-targeted tests should call
+    /// [`Harness::fresh_for`] directly.
     pub fn fresh_with(
+        vk_runtime_override: Option<Vec<u8>>,
+        verifier_creation_override: Option<Vec<u8>>,
+    ) -> (Self, Deployed) {
+        Self::fresh_for(POSEIDON, vk_runtime_override, verifier_creation_override)
+    }
+
+    /// Deploy the generic `PlonkVerifier` wired to whichever circuit's
+    /// VK blob is requested.  `vk_runtime_override` allows the
+    /// adversarial tests to replace the deployed VK bytes post-deploy
+    /// (mutated-VK scenarios); `verifier_creation_override` likewise
+    /// allows swapping the verifier creation bytecode.
+    pub fn fresh_for(
+        circuit: Circuit,
         vk_runtime_override: Option<Vec<u8>>,
         verifier_creation_override: Option<Vec<u8>>,
     ) -> (Self, Deployed) {
@@ -131,14 +200,14 @@ impl Harness {
         let root = root_dir();
         let vk_creation = load_creation_bytecode(&artifact_path(
             &root,
-            "PoseidonVerifyingKey.sol",
-            "PoseidonVerifyingKey",
+            circuit.vk_sol,
+            circuit.vk_contract,
         ));
         let verifier_creation = verifier_creation_override.unwrap_or_else(|| {
             load_creation_bytecode(&artifact_path(
                 &root,
-                "PoseidonVerifier.sol",
-                "PoseidonVerifier",
+                "PlonkVerifier.sol",
+                "PlonkVerifier",
             ))
         });
 
@@ -222,7 +291,19 @@ impl Harness {
     }
 
     pub fn verify(&mut self, dep: &Deployed, instance: [u8; 32], proof: &[u8]) -> bool {
-        let cd = encode_verify_calldata(instance, proof);
+        let pis = [instance];
+        self.verify_multi(dep, &pis, proof)
+    }
+
+    /// Phase-2 generic entry: for circuits whose single non-committed
+    /// instance column holds more than one Fq value (e.g. RSA).
+    pub fn verify_multi(
+        &mut self,
+        dep: &Deployed,
+        public_inputs: &[[u8; 32]],
+        proof: &[u8],
+    ) -> bool {
+        let cd = encode_verify_calldata(public_inputs, proof);
         let (ok, out) = self.call_raw(dep.verifier_addr, cd);
         Self::raw_is_accept(ok, &out)
     }

@@ -4,9 +4,10 @@ cache/
 broadcast/
 
 # Runtime-generated fixtures (created by `cargo run --bin generate`).
-fixtures/*.bin
-fixtures/*.be
-fixtures/*_trace.json
+# Per-circuit subdirectories (see src/circuits/ and contracts/circuits/).
+fixtures/**/*.bin
+fixtures/**/*.be
+fixtures/**/*_trace.json
 
 # Rust target
 target/

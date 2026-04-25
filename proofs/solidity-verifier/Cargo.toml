@@ -18,6 +18,8 @@ rand_chacha = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 hex = "0.4"
+num-bigint = { version = "0.4", features = ["rand"] }
+num-traits = "0.2"
 
 [dev-dependencies]
 proptest = "1"
@@ -26,6 +28,10 @@ revm = { version = "36", features = ["std", "blst"] }
 [[bin]]
 name = "generate"
 path = "src/bin/generate.rs"
+
+[[bin]]
+name = "generate_rsa"
+path = "src/bin/generate_rsa.rs"
 
 [[test]]
 name = "forge"

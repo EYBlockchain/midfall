@@ -64,12 +64,13 @@ fn regen_contracts_to_match(fx: &PoseidonFixture) {
     use midnight_solidity_verifier::codegen::{render_verifying_key, VkInfo};
     let vk_info = VkInfo::from_live(fx.vk.vk(), &fx.srs);
     let sol = render_verifying_key(&vk_info);
-    let vk_path = common::root_dir().join("contracts/PoseidonVerifyingKey.sol");
+    let vk_path = common::root_dir()
+        .join("contracts/circuits/poseidon/PoseidonVerifyingKey.sol");
 
     let existing = fs::read_to_string(&vk_path).unwrap_or_default();
     // Also dump the VK blob so the mutated-VK tests can slice it.
     let vk_blob = midnight_solidity_verifier::codegen::vk_blob(&vk_info);
-    let vk_bin_path = common::root_dir().join("fixtures/vk.bin");
+    let vk_bin_path = common::root_dir().join("fixtures/poseidon/vk.bin");
     fs::write(&vk_bin_path, &vk_blob).expect("write vk.bin");
 
     if existing == sol {
@@ -246,7 +247,7 @@ proptest! {
         let f = fx(seed);
         let (_, setup_dep) = harness_for(&f);  // prime artifacts + fixtures/vk.bin
 
-        let vk_path = common::root_dir().join("fixtures/vk.bin");
+        let vk_path = common::root_dir().join("fixtures/poseidon/vk.bin");
         let vk_blob = fs::read(&vk_path).expect("read vk.bin");
         prop_assume!(vk_blob.len() >= 160);
 
@@ -317,7 +318,7 @@ fn malformed_calldata_variants_are_rejected() {
 
     // Baseline: valid calldata must be accepted. This guards against a
     // broken harness that would make the negative cases trivially true.
-    let valid = encode_verify_calldata(instance_be(&f), &f.proof);
+    let valid = encode_verify_calldata(&[instance_be(&f)], &f.proof);
     let (ok, out) = h.verify_raw(&dep, valid.clone());
     assert!(
         Harness::raw_is_accept(ok, &out),
@@ -331,7 +332,7 @@ fn malformed_calldata_variants_are_rejected() {
 
     // Empty proof: `encode_verify_calldata` with a zero-length proof —
     // transcript reads fail immediately.
-    let empty_proof = encode_verify_calldata(instance_be(&f), &[]);
+    let empty_proof = encode_verify_calldata(&[instance_be(&f)], &[]);
 
     // Truncated proof: drop 64 bytes off the tail so we reliably slice
     // into real proof data (the poseidon fixture's calldata has only
@@ -385,7 +386,8 @@ fn mutated_vk_contract_is_rejected() {
 
     // Read the VK source, mutate the hex literal, write to a temporary
     // copy in the same directory so forge picks it up, then rebuild.
-    let vk_path = common::root_dir().join("contracts/PoseidonVerifyingKey.sol");
+    let vk_path = common::root_dir()
+        .join("contracts/circuits/poseidon/PoseidonVerifyingKey.sol");
     let backup = fs::read_to_string(&vk_path).expect("read VK");
 
     let mutated = mutate_first_large_hex_literal(&backup);
@@ -432,10 +434,10 @@ fn adversarial_matrix_all_rejected() {
     // a working baseline — otherwise a stuck-at-reject verifier would
     // vacuously pass).
     let baseline_proof =
-        fs::read(common::root_dir().join("fixtures/proof.bin"))
+        fs::read(common::root_dir().join("fixtures/poseidon/proof.bin"))
             .expect("read proof.bin");
     let baseline_inst_raw =
-        fs::read(common::root_dir().join("fixtures/instance.be"))
+        fs::read(common::root_dir().join("fixtures/poseidon/instance.be"))
             .expect("read instance.be");
     assert_eq!(baseline_inst_raw.len(), 32, "instance.be must be 32 bytes");
     let mut baseline_inst = [0u8; 32];
@@ -446,7 +448,7 @@ fn adversarial_matrix_all_rejected() {
     );
 
     let manifest =
-        fs::read(common::root_dir().join("fixtures/adversarial_fixtures.bin"))
+        fs::read(common::root_dir().join("fixtures/poseidon/adversarial_fixtures.bin"))
             .expect("read adversarial_fixtures.bin");
     assert!(manifest.len() >= 8, "adversarial manifest truncated");
 
@@ -482,7 +484,7 @@ fn adversarial_matrix_all_rejected() {
         // Use verify_raw so entries whose calldata-shape makes the
         // verifier revert (trunc/ext) are also counted as "rejected"
         // (revert on the low-level call yields ok == false).
-        let cd = common::encode_verify_calldata(inst, &proof);
+        let cd = common::encode_verify_calldata(&[inst], &proof);
         let (ok, out) = h.verify_raw(&dep, cd);
         let accepted = Harness::raw_is_accept(ok, &out);
         assert!(

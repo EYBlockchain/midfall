@@ -1,9 +1,13 @@
 # Solidity PLONK Verifier — Architecture
 
-This crate is a **Solidity port of the `midnight-proofs` PLONK verifier**,
-specialized for the `zk_stdlib/examples/poseidon` circuit. It runs on the
-Prague-era EVM and uses the EIP-2537 BLS12-381 precompiles for elliptic-curve
-arithmetic and pairings.
+This crate is a **Solidity port of the `midnight-proofs` PLONK verifier**.
+It was originally specialised to the `zk_stdlib/examples/poseidon` circuit
+and was generalised in Phases 2-4 (see §7 / §9) to a single generic
+`PlonkVerifier` contract that can host multiple circuits' VK blobs —
+poseidon (`PoseidonVerifyingKey`) and RSA-signature
+(`RsaSignatureVerifyingKey`) are both wired up and verified end-to-end
+on-chain today.  It runs on the Prague-era EVM and uses the EIP-2537
+BLS12-381 precompiles for elliptic-curve arithmetic and pairings.
 
 The port is *algebraic*: it is not a pre-computed SNARK wrapper, it is a
 reproduction of the full Rust verifier pipeline — Fiat–Shamir transcript,
@@ -16,15 +20,15 @@ that the Rust side can cross-check the two execution paths byte-for-byte.
 │           proofs/solidity-verifier/ (this crate)               │
 │                                                                │
 │   ┌───────────────┐    codegen     ┌──────────────────────────┐│
-│   │  Rust VK      │ ─────────────► │ PoseidonVerifyingKey.sol ││
+│   │  Rust VK      │ ─────────────► │ <Circuit>VerifyingKey.sol││
 │   │  (live)       │                │  (constants-only blob)   ││
 │   └───────────────┘                └──────────────────────────┘│
 │          │                                     ▲               │
-│          │ proof + instance                    │ extcodecopy   │
+│          │ proof + publicInputs                │ extcodecopy   │
 │          ▼                                     │               │
 │   ┌───────────────┐   forge test   ┌──────────────────────────┐│
-│   │ proof.bin +   │ ─────────────► │  PoseidonVerifier.sol    ││
-│   │ instance.be   │                │  (verify(instance,proof))││
+│   │ proof.bin +   │ ─────────────► │  PlonkVerifier.sol       ││
+│   │ instance.bin  │                │  (verify(bytes32[],bytes)││
 │   └───────────────┘                └──────────────────────────┘│
 │          ▲                                     │               │
 │          │                                     │ events        │
@@ -44,41 +48,56 @@ that the Rust side can cross-check the two execution paths byte-for-byte.
 
 ```
 proofs/solidity-verifier/
-├── Cargo.toml                  # codegen crate (bin `generate`, test harness)
+├── Cargo.toml                  # codegen crate (two bins + test harness)
 ├── foundry.toml                # forge toolchain config (Prague, solc 0.8.24)
 ├── contracts/
-│   ├── PoseidonVerifier.sol       # the verifier logic (auto-maintained)
-│   └── PoseidonVerifyingKey.sol   # VK blob wrapper (auto-regenerated)
+│   ├── PlonkVerifier.sol                         # generic verifier logic
+│   └── circuits/
+│       ├── poseidon/PoseidonVerifyingKey.sol     # poseidon VK blob (auto-regen)
+│       └── rsa_signature/RsaSignatureVerifyingKey.sol # RSA VK blob (auto-regen)
 ├── src/
-│   ├── bin/generate.rs            # end-to-end proof + VK + fixture generator
-│   ├── codegen.rs                 # Rust → Solidity VK emitter
+│   ├── bin/
+│   │   ├── generate.rs            # poseidon proof + VK + fixture generator
+│   │   └── generate_rsa.rs        # RSA-signature proof + VK + fixture generator
+│   ├── codegen.rs                 # Rust → Solidity VK emitter (circuit-generic)
+│   ├── circuits/
+│   │   ├── poseidon.rs            # poseidon circuit builder (ex-poseidon_fixture.rs)
+│   │   └── rsa_signature.rs       # RSA-signature circuit builder
 │   ├── expr_bytecode.rs           # gate/lookup/trashcan → compact RPN
 │   ├── eip2537.rs                 # BLS12-381 encodings for precompiles
 │   ├── transcript.rs              # tracing Keccak256 transcript wrapper
-│   ├── trace.rs                   # trace event schema
-│   └── poseidon_fixture.rs        # helper for building the poseidon circuit
+│   └── trace.rs                   # trace event schema
 ├── test/
-│   └── PoseidonVerifier.t.sol     # 25 forge tests (unit + end-to-end + adversarial)
+│   ├── PoseidonVerifier.t.sol     # 12 forge tests for the poseidon fixture
+│   └── RsaSignatureVerifier.t.sol # 1 end-to-end test for the RSA fixture
 ├── tests/
-│   ├── forge.rs                   # Rust harness: regen + forge + trace-diff
+│   ├── forge.rs                   # Rust harness: regen + forge + trace-diff (poseidon)
+│   ├── rsa.rs                     # Rust-driven revm smoke for RSA (mirrors above)
 │   ├── pbt.rs                     # 8 property-based tests (revm, #[ignore])
 │   ├── pbt.proptest-regressions   # checked-in regression seeds
-│   └── common/mod.rs              # reusable revm Harness (VK+verifier deploy,
-│                                  #   verify / verify_raw, VK tampering)
+│   └── common/mod.rs              # reusable revm Harness (`fresh_for(circuit, ...)`)
 ├── scripts/
 │   └── run-all-tests.sh           # runs all 5 §5 stages (see §5.7)
-└── fixtures/                      # all regenerated by `cargo run --bin generate`
+└── fixtures/
+    ├── poseidon/                  # regenerated by `cargo run --bin generate`
+    └── rsa_signature/             # regenerated by `cargo run --bin generate_rsa`
 ```
 
 ## 2. Two-contract design
 
-### 2.1 `PoseidonVerifyingKey.sol`
+### 2.1 `<Circuit>VerifyingKey.sol`
 
 A **minimal constants-only contract** whose constructor returns a single
 packed byte blob via `RETURN(offset, length)`. After deployment, the blob
 *is* the runtime bytecode; the verifier reads it via `extcodecopy`. This
 keeps the source file a few hundred bytes regardless of circuit size, and
 removes any structural coupling between the two contracts.
+
+There is one such contract per circuit; today `PoseidonVerifyingKey` and
+`RsaSignatureVerifyingKey` both ship (under `contracts/circuits/`).
+Adding a third circuit is a matter of writing a `src/circuits/<name>.rs`
+module + `src/bin/generate_<name>.rs` entry point — both reuse the
+shared `codegen::VkInfo::from_live` plumbing.
 
 The blob is produced by `codegen::render_verifying_key(&VkInfo)` and its
 layout is fixed. Sections in order (all big-endian):
@@ -103,19 +122,27 @@ layout is fixed. Sections in order (all big-endian):
 `codegen.rs::VkInfo::from_live(vk, srs)` walks a live `midnight-proofs`
 `VerifyingKey` and builds this struct, serializing every gate/lookup/trashcan
 expression to a compact RPN bytecode (see `expr_bytecode.rs`). The bytecode
-is interpreted on-chain by `PoseidonVerifier._evalBytecode`, eliminating the
+is interpreted on-chain by `PlonkVerifier._evalBytecode`, eliminating the
 need to emit 10k+ lines of generated Solidity.
 
-### 2.2 `PoseidonVerifier.sol`
+### 2.2 `PlonkVerifier.sol`
 
-The verifier itself. Constructor takes the address of the deployed
-`PoseidonVerifyingKey` and caches it as an immutable.
+The verifier itself. Constructor takes the address of a deployed
+`<Circuit>VerifyingKey` (poseidon or RSA today) and caches it as an
+immutable.  The same contract binary serves any circuit whose VK
+blob satisfies the invariants enumerated in §7.2.
 
 Public entry point:
 
 ```solidity
-function verify(bytes32 instance, bytes calldata proof) external returns (bool);
+function verify(bytes32[] calldata publicInputs, bytes calldata proof)
+    external returns (bool);
 ```
+
+`publicInputs` is the full non-committed instance column, one 32-byte
+limb per value in row order.  Each limb must encode a big-endian Fq
+element below `FR_MODULUS`.  (Phase 2 lifted the original
+one-limb-per-proof shortcut; see §7.2 row 2.)
 
 Internal flow mirrors `proofs/src/plonk/verifier.rs` line-for-line:
 
@@ -236,33 +263,40 @@ Algebraic equivalence is enforced at five granularity levels:
 
 ## 4. Non-uniform handling of instance columns
 
-The poseidon example has two instance columns. `zk_stdlib::verify`
-always commits to **exactly one** instance column (defaulting to the
-identity point when no actual committed instance is supplied) and passes
-any public values through the other column.
+Both circuits currently wired up have two instance columns.
+`zk_stdlib::verify` always commits to **exactly one** instance column
+(defaulting to the identity point when no actual committed instance is
+supplied) and passes any public values through the other column.
 
 In the verifier:
 
 * **Committed instance column (col 0)** — the prover provides an eval
   that the verifier reads from the transcript.
 * **Non-committed instance column (col 1)** — the verifier computes the
-  eval locally as `Σ_i instance_i · L_i(x)`, which collapses to
-  `instance · l_0` in the one-public-input case.
+  eval locally as `Σ_i publicInputs[i] · L_i(ω^rot · x)`, using a
+  dedicated `_computeInstanceEvals` helper.  The Lagrange slice is
+  cached once per distinct rotation across the instance queries.
 
 `_buildPartialEvalEnv` honors this split via:
 
 ```solidity
 for (uint256 i = 0; i < vk.numInstanceQueries; i++) {
     if (i < vk.numCommittedInstanceEvals) {
-        inst[i] = ea.committedInstanceEvals[i];  // transcript-read
+        inst[i] = ea.committedInstanceEvals[i];          // transcript-read
     } else {
-        inst[i] = _frMul(pin.instance, e.l0);    // Lagrange
+        inst[i] = instanceEvals[i - vk.numCommittedInstanceEvals]; // Lagrange
     }
 }
 ```
 
+where `instanceEvals` is the array returned by `_computeInstanceEvals`.
 This mirrors the Rust iterator in `proofs/src/plonk/verifier.rs:252`
 which branches on `column.index() < nb_committed_instances`.
+
+Phase 2 lifted the original `instance · l_0` collapse (valid only for
+a single-row instance at rotation 0) to this general form; it was the
+enabling change that let the RSA circuit — which has a 22-limb public
+input — verify on-chain.  See §7.2 row 2.
 
 ## 5. Build, test, bench — command reference
 
@@ -349,36 +383,41 @@ when disabled** (empty `is_enabled()` returns `false` and every
 ```bash
 # From the repo root, with SRS_DIR already exported (see preamble).
 SRS_DIR=$PWD/zk_stdlib/examples/assets \
-  cargo run -p midnight-solidity-verifier --bin generate
+  cargo run -p midnight-solidity-verifier --bin generate           # poseidon
+SRS_DIR=$PWD/zk_stdlib/examples/assets \
+  cargo run -p midnight-solidity-verifier --bin generate_rsa       # RSA-signature
 ```
 
-Produces:
-* `contracts/PoseidonVerifyingKey.sol` — new VK blob
-* `fixtures/proof.bin`, `fixtures/instance.be`
-* `fixtures/vk.bin` — VK blob layout consumed by `PoseidonVerifier.sol`
-* `fixtures/algebra_fixtures.bin` — omega / n / x / xn / Lagrange evals
-* `fixtures/gate_eval_fixture.bin` — RPN bytecode + expected values for
+Each binary produces:
+* `contracts/circuits/<circuit>/<Circuit>VerifyingKey.sol` — new VK blob
+* `fixtures/<circuit>/proof.bin`, `fixtures/<circuit>/instance.bin`
+* `fixtures/<circuit>/vk.bin` — VK blob layout consumed by `PlonkVerifier.sol`
+* `fixtures/<circuit>/algebra_fixtures.bin` — omega / n / x / xn / Lagrange evals
+* `fixtures/<circuit>/gate_eval_fixture.bin` — RPN bytecode + expected values for
   every gate polynomial (consumed by the on-chain bytecode interpreter)
-* `fixtures/verifier_trace.bin` — **instrumented trace** of the real
-  `prepare()` call, tagged per emission site
+* `fixtures/<circuit>/verifier_trace.bin` — **instrumented trace** of
+  the real `prepare()` call, tagged per emission site
   (`partial_eval.*`, `linearization.*`, `permutation.*`, `logup.*`,
    `trash.*`, `multi_prepare.*`); the canonical source of truth for
   all intermediate scalars
-* `fixtures/pairing_fixture.bin`, `fixtures/right_g1_fixture.bin`,
-  `fixtures/right_msm_inputs_digest_fixture.bin`,
-  `fixtures/right_msm_terms_fixture.bin` — derived from
+* `fixtures/<circuit>/pairing_fixture.bin`,
+  `fixtures/<circuit>/right_g1_fixture.bin`,
+  `fixtures/<circuit>/right_msm_inputs_digest_fixture.bin`,
+  `fixtures/<circuit>/right_msm_terms_fixture.bin` — derived from
   `DualMSM.split()` post-`prepare()` (not replicas)
-* `fixtures/query_schedule_fixture.bin`,
-  `fixtures/lagrange_aux_fixture.bin`,
-  `fixtures/evals_signature_fixture.bin` — produced via real
+* `fixtures/<circuit>/query_schedule_fixture.bin`,
+  `fixtures/<circuit>/lagrange_aux_fixture.bin`,
+  `fixtures/<circuit>/evals_signature_fixture.bin` — produced via real
   `VerifyingKey` / domain / transcript helpers
-* `fixtures/decomp_pairs.bin` — EIP-2537 (compressed, uncompressed) test
-  vectors for the G1 decompressor
-* `fixtures/adversarial_fixtures.bin` — 8-entry rejection matrix
+* `fixtures/poseidon/decomp_pairs.bin` — EIP-2537 (compressed,
+  uncompressed) test vectors for the G1 decompressor (circuit-independent
+  but lives under the poseidon directory as a historical artefact)
+* `fixtures/poseidon/adversarial_fixtures.bin` — 8-entry rejection matrix
   (bit_early / bit_mid / bit_late / byte_zero_head / byte_ff_mid /
   trunc_48 / ext_17 / inst_xor1), consumed by both the forge suite
   (`test_adversarial_matrix_all_rejected`) and the PBT suite
   (`adversarial_matrix_all_rejected`). See §3 bullet 7.
+  RSA does not currently ship an adversarial matrix.
 
 Environment variables (optional):
 * `POSEIDON_K` — log2 of the domain size (default 6)
@@ -648,10 +687,12 @@ runs the full pairing-heavy verify flow (~200 ms) in a revm instance.
 **Harness architecture** (`tests/common/mod.rs::Harness`):
 
 * Parses the Foundry build artefacts
-  `out/PoseidonVerifyingKey.sol/PoseidonVerifyingKey.json` and
-  `out/PoseidonVerifier.sol/PoseidonVerifier.json` for creation
+  `out/<Circuit>VerifyingKey.sol/<Circuit>VerifyingKey.json` and
+  `out/PlonkVerifier.sol/PlonkVerifier.json` for creation
   bytecode — so the revm harness verifies **exactly** the same
-  contracts that `forge test` exercises.
+  contracts that `forge test` exercises.  `Circuit` is selected by
+  `Harness::fresh_for(POSEIDON, ...)` or `fresh_for(RSA_SIGNATURE, ...)`
+  in `tests/common/mod.rs`; the default `fresh()` uses `POSEIDON`.
 * Builds a `MainnetEvm<Context<BlockEnv, TxEnv, CfgEnv, CacheDB<EmptyDB>>>`
   and funds a deployer/caller account.
 * Deploys the VK first, then the verifier with the VK address
@@ -705,7 +746,8 @@ iterations + 1 deterministic adversarial-matrix replay) on an M2-class
 machine. `--test-threads=1` is mandatory because test 7 (mutated VK
 source) rewrites a shared contract file and depends on a
 single-threaded ordering with tests 1-6 and 8 (all of which read /
-write `contracts/PoseidonVerifyingKey.sol` and `fixtures/vk.bin`).
+write `contracts/circuits/poseidon/PoseidonVerifyingKey.sol` and
+`fixtures/poseidon/vk.bin`).
 
 **Run a single PBT test** (re-uses `SRS_DIR`):
 
@@ -795,30 +837,159 @@ Sample summary:
        log written to target/solidity-verifier-logs/run-all-tests-<ts>.log
 ```
 
+### 5.8 Running the RSA-signature example end-to-end
+
+The same command surface as §5.1–5.6, but pointed at the RSA-signature
+circuit (`zk_stdlib/examples/rsa_signature.rs`).  RSA's prover takes
+**~30 s per run**, so the workflow caches `proof.bin` + the VK contract
+on disk and the verifier-side test loops over the cached artifacts.
+
+#### 5.8.1 Generate the proof + VK contract + fixtures
+
+```bash
+SRS_DIR=$PWD/zk_stdlib/examples/assets \
+  cargo run -p midnight-solidity-verifier --bin generate_rsa
+```
+
+Outputs (under `proofs/solidity-verifier/`):
+
+* `contracts/circuits/rsa_signature/RsaSignatureVerifyingKey.sol`
+  — 4 381-byte VK blob (see §6.2 for why this is *smaller* than the
+  poseidon VK despite RSA's larger trace).
+* `fixtures/rsa_signature/proof.bin` — 2 288-byte proof.
+* `fixtures/rsa_signature/instance.bin` — `[u64 BE count = 22][22 ×
+  Fq(BE)]` = 712 bytes.
+* `fixtures/rsa_signature/vk.bin` — same blob written separately for
+  the test harnesses.
+
+The binary aborts with a runtime panic if the §7.2 row 5 invariant
+(simple-selector position == column index) is violated, so a misaligned
+VK cannot silently reach disk.
+
+#### 5.8.2 Solidity verifier — `forge test`
+
+```bash
+cd proofs/solidity-verifier
+forge test --match-contract RsaSignatureVerifierTest -vvv
+```
+
+Loads the cached artifacts, deploys
+`RsaSignatureVerifyingKey` + `PlonkVerifier(rsa_vk_addr)` and calls
+`verify(publicInputs, proof)`.  Asserts `final_pairing_result = 1` —
+i.e. the cryptographic pairing identity actually holds on-chain, not
+just that the call doesn't revert.
+
+#### 5.8.3 Rust-driven verifier — `cargo test --test rsa`
+
+```bash
+cargo test -p midnight-solidity-verifier --test rsa --release
+```
+
+Mirror of 5.8.2 but driven via revm in-process (~0.02 s with cached
+fixtures, ~30 s on the first cold run because the proof has to be
+generated).  Used as a sanity check that the parametrised
+`Harness::fresh_for(RSA_SIGNATURE, ...)` plumbing works without a
+forge round-trip.
+
+#### 5.8.4 Property-based tests — `cargo test --test rsa_pbt`
+
+```bash
+cargo test -p midnight-solidity-verifier --test rsa_pbt --release \
+    -- --ignored --test-threads=1
+```
+
+| # | Test | What it does |
+|---|---|---|
+| 1 | `rsa_pbt_cached_proof_verifies` | Positive control — cached proof must verify. |
+| 2 | `rsa_pbt_rejects_malleated_proofs(bit_idx)` | Flip one of the 18 304 proof bits and assert rejection. |
+| 3 | `rsa_pbt_rejects_wrong_public_inputs(limb_idx, bit)` | Perturb one byte of one of the 22 `bytes32` public-input limbs (in the lower 31 bytes to stay below `FR_MODULUS`) and assert rejection. |
+| 4 | `rsa_pbt_rejects_truncated_proof(trunc)` | Lop the last `trunc ∈ 1..256` bytes off the proof and assert rejection. |
+
+`CASES = 8` per property; expected wall time ~1 s for the four tests
+combined when fixtures are already cached.  Bump `CASES` locally for
+deeper fuzzing.
+
+The RSA PBT suite intentionally **omits** the heavier
+`pbt_solidity_rejects_wrong_verifying_keys` and the multi-seed
+`pbt_solidity_verifies_<circuit>_proofs` patterns from `tests/pbt.rs`,
+because both require regenerating the prover trace per case (≈30 s
+each for RSA).  The poseidon PBT suite still covers those soundness
+properties end-to-end.
+
+#### 5.8.5 Benchmarking
+
+`forge test` already prints per-call gas with `-vvv`:
+
+```
+[PASS] test_verify_rsa_proof() (gas: 9_502_754)
+```
+
+For a more granular per-phase breakdown use the same trace events as
+the poseidon harness:
+
+```bash
+forge test --match-contract RsaSignatureVerifierTest -vvvv 2>&1 \
+    | rg 'PhaseGas|TraceIntermediate' | head -50
+```
+
+Each `PhaseGas("phase-name", gas)` log entry covers one phase from the
+list in §2.2.  Reference numbers on an M2 macbook with the cached
+fixtures:
+
+| Phase | Poseidon gas | RSA gas | Notes |
+|---|---|---|---|
+| `verify()` total (forge test) | 20.4 M | 9.5 M | RSA is roughly half because (a) it has 3 permutation cols vs 8, (b) zero trashcans vs 1, and (c) flatter gate bytecode (biguint add/mul vs 5-degree poseidon round gates). VK-blob loads scale similarly. |
+| Final pairing precompile | ~120 k | ~120 k | Precompile cost is identical on valid inputs. |
+| Verifier deploy | ~28 M | ~28 M | Same `PlonkVerifier` runtime bytecode for both circuits. |
+| VK contract deploy | ~1.8 M | ~1.0 M | Tracks the VK blob size: poseidon = 7 647 B, RSA = 4 381 B. |
+
+A quick way to get the side-by-side numbers in one shell:
+
+```bash
+cd proofs/solidity-verifier
+forge test --match-test 'test_verify_(poseidon|rsa)_proof' -vv \
+    | rg 'verifyGas|PASS]'
+```
+
 ## 6. Extending to other circuits
 
-The current code is specialised to the poseidon example in three places,
-not two. The prior version of this document claimed `PoseidonVerifier.sol`
-was regenerated by `codegen.rs`; this is **inaccurate**. In reality:
+The codebase is now **multi-circuit**.  Two examples are wired up:
 
-* `src/poseidon_fixture.rs` hard-codes the circuit builder and proof
-  construction. A new circuit needs a new fixture module following the
-  same trait surface.
-* `src/bin/generate.rs` hard-wires `PoseidonFixture::build(k, seed)` and
-  has no CLI surface for swapping in a different `Relation`.
-* `contracts/PoseidonVerifier.sol` is **hand-maintained**, not
-  regenerated. `codegen.rs` only exports `render_verifying_key`; there
-  is no `render_verifier`. (The `src/lib.rs` module comment historically
-  mentioned one — this is stale.) `generate.rs` explicitly states: *"The
-  verifier contract `contracts/PoseidonVerifier.sol` is not
-  regenerated — its logic is circuit-agnostic within the constraints
-  baked into the VK blob. Only the VK contract depends on the circuit."*
+* **Poseidon** — `src/circuits/poseidon.rs` + `src/bin/generate.rs`
+  → `contracts/circuits/poseidon/PoseidonVerifyingKey.sol`
+  + `fixtures/poseidon/*`.
+* **RSA-signature** — `src/circuits/rsa_signature.rs` +
+  `src/bin/generate_rsa.rs` →
+  `contracts/circuits/rsa_signature/RsaSignatureVerifyingKey.sol`
+  + `fixtures/rsa_signature/*`.
 
-`VkInfo::from_live(vk, srs)` itself is already largely circuit-generic —
-it serialises gate RPN bytecode, permutation metadata, lookup/trashcan
-bytecode, query schedules, column indices directly off a live
-`midnight-proofs` `VerifyingKey`. A second circuit's blob would be
-produced fine; the blocker is `PoseidonVerifier.sol` (see §7).
+Both produce independent VK blobs consumed by **the same** generic
+`contracts/PlonkVerifier.sol`.
+
+To add a third circuit:
+
+1. Copy `src/circuits/rsa_signature.rs` into `src/circuits/<name>.rs`,
+   implement the `Relation` / `Circuit` surface for your target, and
+   expose a `<Name>Fixture::build(k, seed)` helper.
+2. Copy `src/bin/generate_rsa.rs` into `src/bin/generate_<name>.rs`
+   with the VK contract name + output directory substituted.  The
+   binary already includes a runtime check for the §7.2 #5 invariant
+   (simple-selector position == column index) that will panic if a
+   future circuit violates it, so you cannot silently ship a
+   misaligned VK.
+3. Register the circuit in `tests/common/mod.rs` by adding a
+   `Circuit` constant (mirror `RSA_SIGNATURE`) pointing at the new
+   VK artifact + fixture directory.  `Harness::fresh_for(YOUR_CIRCUIT, ...)`
+   now works without any further changes.
+4. Optionally add a Foundry smoke test (`test/<Name>Verifier.t.sol`)
+   and/or a Rust-driven one (`tests/<name>.rs`) mirroring the RSA
+   variants.
+
+`codegen.rs` itself is already circuit-generic (no poseidon-specific
+branches remain).  The only code that still assumes a specific circuit
+shape lives inside `PlonkVerifier.sol`; the residual limitations are
+enumerated in §7.2 and are all invariants that midnight-proofs'
+current CS builder satisfies for our two example circuits.
 
 ### 6.1 Comparison to halo2-solidity-verifier
 
@@ -835,12 +1006,13 @@ generality story and the gas-cost story (see `OPTIMISATIONS.md` §2.2):
 * **This crate is a runtime interpreter over a VK blob.** Gate RPN
   bytecode, permutation metadata, lookup/trashcan bytecode, query
   schedules and column indices all live as data inside the
-  `PoseidonVerifyingKey` blob; `PoseidonVerifier.sol` walks them at
-  `verify()` time. Swapping circuits would mean re-running
-  `generate` to emit a new VK contract — the verifier contract
-  itself would, in principle, not need to change. This is what
-  `generate.rs` means by *"its logic is circuit-agnostic within the
-  constraints baked into the VK blob."*
+  `<Circuit>VerifyingKey` blob; `PlonkVerifier.sol` walks them at
+  `verify()` time. Swapping circuits means running a per-circuit
+  `generate_<circuit>` binary to emit a new VK contract; the
+  verifier contract itself is unchanged.  This has now been
+  demonstrated end-to-end: the same deployed `PlonkVerifier`
+  accepts both a poseidon proof and an RSA-signature proof when
+  pointed at the matching VK contract.
 
 So at the architectural level this verifier **is** more generic: one
 deployed verifier contract can host many circuits whose VK blobs
@@ -850,13 +1022,17 @@ for the same circuit (see `OPTIMISATIONS.md` §2.2).
 
 Two important caveats on "same CS shape":
 
-1. §7.2 lists six poseidon-specific shortcuts the hand-maintained
-   contract still takes (single lookup, `instance · l_0` collapse,
-   `G1::identity()` committed-instance commitment, zero per-phase
-   challenges, `fixed_queries[i].column_idx == i`, `num_proofs == 1`).
-   These are not enforced by the CS parameters themselves — they are
-   places where the contract trusts the poseidon-example's VK shape.
-   A VK whose CS diverges on any of those axes would be rejected or
+1. §7.2 lists the invariants the hand-maintained contract still
+   relies on.  Phase 2 lifted the original `instance · l_0` collapse
+   to a full `Σ publicInputs[i] · L_i(ω^rot · x)` Lagrange evaluation;
+   Phase 3 re-characterised the `fixed_queries[i].col == i` shortcut
+   as the narrower "simple-selector position == col" invariant that
+   midnight-proofs' CS builder guarantees (now enforced at codegen
+   time by a runtime panic in `generate_<circuit>`).  The remaining
+   invariants (`numLookups == 1`, `num_challenges == 0`, single
+   non-committed instance column, G1-identity committed-instance,
+   `num_proofs == 1`) are all satisfied by both example circuits; a
+   VK whose CS diverges on one of them would be rejected or
    silently mis-evaluated even though the blob encoding supports it.
 2. §7.3 lists three `midnight-proofs` feature flags
    (`truncated-challenges`, `single-h-commitment`, `fewer-point-sets`)
@@ -864,43 +1040,119 @@ Two important caveats on "same CS shape":
    them enabled would not verify, regardless of blob shape.
 
 In other words, the verifier is **architecturally** VK-driven rather
-than circuit-inlined, and `VkInfo::from_live` is already largely
-circuit-generic, but today the deployed contract only accepts VKs
-whose CS shape matches the six hard-coded assumptions above. Lifting
-them is the §9 "circuit generalisation" workstream.
+than circuit-inlined, `codegen.rs` is fully circuit-generic, and any
+CS shape that matches the invariants in §7.2 works.  Lifting the
+remaining invariants is the §9 "circuit generalisation" workstream.
+
+### 6.2 VK blob size: structure, not domain size
+
+A common surprise: the **RSA-signature VK is *smaller* than the
+poseidon VK** even though RSA's circuit is much "bigger" in the
+naive sense.
+
+| Circuit | k | n = 2ᵏ | VK blob | Proof | verify() gas |
+|---|---|---|---|---|---|
+| Poseidon-example | 6 | 64 | **7 647 B** | ~9 KB | ~20.4 M |
+| RSA-signature | 12 | 4 096 | **4 381 B** | ~2.3 KB | ~9.5 M |
+
+What lives inside the VK blob (see §2.1 layout) is a snapshot of the
+circuit's **constraint structure**:
+
+* one G1 commitment per fixed column (128 B each, EIP-2537 form),
+* one G1 commitment per permutation column (128 B each),
+* fixed-size `s·G2` and `−G2` (256 B each),
+* RPN bytecode for every gate, lookup, and trashcan polynomial,
+* permutation chunking metadata,
+* the per-query rotation+column-index schedule.
+
+**Domain size `n = 2ᵏ` does *not* appear** anywhere except as `ω`
+(32 B) and `n`/`k` in the header (8 B + 4 B).  The trace's
+`n` rows of advice live in the proof, not the VK.
+
+Decoding the constants block of each VK gives the breakdown:
+
+| Field | Poseidon | RSA | Implication |
+|---|---|---|---|
+| `num_fixed_columns`        | 19 | 17 | 2 × 128 = 256 B more for poseidon |
+| `num_permutation_columns`  | **8** | **3** | 5 × 128 = **640 B** more for poseidon (poseidon's permutation argument touches the full 8-cell state across rounds; RSA's biguint primitives only need 3 perm cols) |
+| `num_advice_columns`       | 8 | 5 | (advice has no commitment in the VK) |
+| `num_simple_selectors`     | 4 | 3 | small |
+| `num_advice_queries`       | 11 | 8 | drives query-schedule size |
+| `num_fixed_queries` (non-simple) | 15 | 14 | small |
+| `num_lookups`              | 1 | 1 | identical |
+| `num_trashcans`            | **1** | **0** | poseidon ships the trashcan RPN bytecode; RSA does not |
+| Fixed + perm commitments   | 27 × 128 = 3 456 B | 20 × 128 = 2 560 B | **896 B** |
+| Bytecode + schedule (residual) | ~3 519 B | ~1 149 B | **~2 370 B**, dominated by poseidon's degree-5 round gates and the trashcan |
+
+Putting the two together, poseidon's blob is ≈ 3.3 KB heavier:
+~900 B from the larger column counts and ~2.4 KB from the heavier
+bytecode (5-degree poseidon round constraints + trashcan vs. flat
+biguint add/mul gates).  None of that delta has anything to do with
+RSA's 64×-larger trace.
+
+Why the RSA verifier is also *cheaper* in gas, despite the larger
+trace: the on-chain verifier's runtime is essentially a function of
+the same blob — fewer permutation columns means fewer MSM terms,
+fewer gate expressions means a shorter RPN walk, and the absence of
+trashcans skips a whole `_trashExpressions` pass.  RSA pays the
+cryptographic-verification cost of one PLONK proof regardless of the
+circuit's row count; the prover, not the verifier, eats the `O(n
+log n)` work.
+
+The high-level rule of thumb to remember:
+
+> **VK size and verifier gas track the *shape* of the constraint
+> system (columns, gates, lookups, trashcans), not the *size* of the
+> trace (`n = 2ᵏ`).**
+
+If a future circuit has more permutation cols, more lookups, or more
+custom gates than poseidon does, expect its VK to grow — not because
+of `k` but because the constraint-structure data in the blob is
+proportional to those structural counts.
 
 ## 7. Tradeoffs & scope: "not a strict generic 1-to-1 port"
 
 This crate is **not** a drop-in replacement for the Rust
-`midnight-proofs` PLONK verifier. It is a faithful algebraic port of
-the verifier pipeline **specialised to the poseidon-example
-configuration that `zk_stdlib` produces**. Three separate layers of
-limitation apply.
+`midnight-proofs` PLONK verifier.  It is a faithful algebraic port of
+the verifier pipeline wired up to two concrete example circuits
+(poseidon and RSA-signature), both of which verify end-to-end
+on-chain.  Three separate layers of limitation apply before a
+**third, CS-differing** circuit could be supported.
 
-### 7.1 `generate` binary: single circuit
+### 7.1 Per-circuit `generate_*` binaries
 
-Only the poseidon example is wired up. To run the codegen on another
-circuit today you would need to:
+Each circuit needs a dedicated `src/bin/generate_<circuit>.rs` entry
+point and a matching `src/circuits/<circuit>.rs` builder.  Two are
+shipped today (`generate` for poseidon, `generate_rsa` for
+RSA-signature); both follow the same skeleton and share all
+underlying `codegen::*` helpers, so adding a third is mostly plumbing
+(see §6 for the step list).
 
-* copy `src/poseidon_fixture.rs` into a new `<circuit>_fixture.rs`
-  that implements the `Relation` / `Circuit` surface for your target,
-* add a matching branch (or a replacement) in `src/bin/generate.rs`.
+Each `generate_*` binary runs a handful of invariant checks before
+writing the VK contract to disk — in particular it panics if the
+simple-selector position-vs-column-index invariant (§7.2 row 5) is
+violated, so a misaligned VK cannot silently reach the deployment
+pipeline.
 
-### 7.2 Hand-maintained `PoseidonVerifier.sol` assumptions
+### 7.2 Hand-maintained `PlonkVerifier.sol` assumptions
 
-Even though the VK blob format is mostly circuit-generic, the
-verifier contract itself bakes in the following poseidon-specific
-shortcuts. These must be lifted before a non-poseidon proof will
-pass on-chain verification:
+Even though the VK blob format is circuit-generic, the verifier
+contract itself still bakes in the following invariants.  Both
+example circuits satisfy all of them — the table records which have
+been **generalised** (previously poseidon-only shortcuts that Phases
+2-3 lifted) and which remain **hard-wired** (enforced at runtime by
+a `require(...)` or a codegen panic, and limiting to a future
+circuit only).
 
-| Assumption | Location in contract | Why it exists |
-|---|---|---|
-| `numLookups == 1` | `require(...)` around line 2071 (`_splitSingleLookup`) | Solidity's lookup-eval split is hard-wired to one argument; the split loop would need to iterate over `numLookups` |
-| Instance-eval via `instance · l_0` collapse | `_buildPartialEvalEnv` around line ~2160 | Only valid for a single non-committed column with a single value at rotation 0. Generic form is `Σ instance_i · L_i(x)` via `_lagrangeIRange(-max_rot..len+|min_rot|)` — the helper already exists but is unused in this path. |
-| G1 identity as the committed-instance commitment | `verify()` around line 3460 (`identity[0] = 0xc0`) | `zk_stdlib::verify` always passes `None`, so the commitment is always `G1::identity()`. A real committed-instance commitment would need to flow through the `verify(bytes32, bytes)` ABI (currently there is no parameter for it). |
-| `num_challenges == 0` | `_buildPartialEvalEnv` empties the challenges array | Poseidon has zero per-phase challenges. |
-| `fixed_queries[i].column_idx == i` | `_buildFixedEvalsFull` | Poseidon queries each fixed column exactly once at rotation 0. Generic circuits may query the same column at multiple rotations, requiring a `(col_idx, rotation)`-indexed eval map. |
-| `num_proofs == 1` | top-level `verify(bytes32, bytes)` signature | Rust `prepare()` takes `committed_instances: &[&[_]]` + `instances: &[&[&[F]]]` (batched); Solidity takes a single proof. |
+| Invariant | Status | Location | Notes |
+|---|---|---|---|
+| `numLookups == 1` | HARD-WIRED | `require(...)` in `_splitSingleLookup` (~line 2100) | The lookup-eval split is hard-wired to one argument; generalising to ≥2 lookups means iterating the split loop over `numLookups`. Both example circuits satisfy it. |
+| Full Lagrange instance eval `Σ publicInputs[i] · L_i(ω^rot · x)` | GENERALISED in Phase 2 | `_computeInstanceEvals` | Was `instance · l_0` before Phase 2 (only valid for a single public-input row). Generalised Lagrange slice is cached once per distinct rotation across the instance queries; RSA's 22-limb public input relies on this path. |
+| G1 identity as the committed-instance commitment | HARD-WIRED | `verify()` (~line 3460, `identity[0] = 0xc0`) | `zk_stdlib::verify` always passes `None`, so the commitment is always `G1::identity()`. Lifting it requires extending the public ABI to carry a real committed-instance commitment. |
+| `num_challenges == 0` | HARD-WIRED | `_buildPartialEvalEnv` empties the challenges array | Both example circuits have zero per-phase challenges. |
+| Simple-selector fixed queries use `position == col` | GENERALISED in Phase 3 | `_buildFixedEvalsFull` + codegen runtime assert in `generate_<circuit>.rs` | Previously mis-stated as `fixed_queries[i].column_idx == i`; the *actual* invariant — that fixed queries whose column is a simple selector satisfy `cs.fixed_queries()[pos].col_idx == pos` — is guaranteed by midnight-proofs' CS builder for both example circuits and is now asserted at VK generation time.  Non-simple fixed queries are indexed by the explicit `fixed_query_col_idx` array in the blob, lifting the old "sequential columns at rotation 0" assumption. |
+| `num_proofs == 1` | HARD-WIRED | public ABI `verify(bytes32[], bytes)` | Rust `prepare()` takes `committed_instances: &[&[_]]` + `instances: &[&[&[F]]]` (batched); Solidity takes a single proof.  See §9 row 4 for the batched generalisation. |
+| Public-input ABI as `bytes32[]` | GENERALISED in Phase 2 | `verify(bytes32[] publicInputs, bytes proof)` | Was `verify(bytes32 instance, bytes proof)` (single limb). Lifted as part of the full Lagrange eval work; both circuits use the new ABI. |
 
 ### 7.3 Feature-flag support matrix
 
@@ -918,7 +1170,7 @@ enable. Full support matrix:
 | Feature | Solidity status | Notes |
 |---|---|---|
 | `keccak-transcript` | **supported** | Solidity `_initTranscript` / `_squeezeFq` / `_absorb*` match `CircuitTranscript<Keccak256>` byte-for-byte (see §3 trace-diff harness). |
-| `committed-instances` | **partial** | Cargo.toml enables it; `numCommittedInstanceEvals` + transcript reads are wired. BUT the public ABI `verify(bytes32 instance, bytes proof)` has no parameter for a real committed-instance commitment, and the contract hard-codes `G1::identity()` (`verify()` line ~3460) because `zk_stdlib::verify` always passes `None`. A circuit using a genuine committed instance commitment would fail. |
+| `committed-instances` | **partial** | Cargo.toml enables it; `numCommittedInstanceEvals` + transcript reads are wired. BUT the public ABI `verify(bytes32[] publicInputs, bytes proof)` carries only the non-committed public-input column, and the contract hard-codes `G1::identity()` (`verify()` line ~3460) as the committed-instance commitment because `zk_stdlib::verify` always passes `None`. A circuit using a genuine committed-instance commitment would fail. |
 | `truncated-challenges` | **not supported** | Would switch every `squeeze_challenge` to `truncate(challenge)` and replace `powers(x1)`/`powers(x4)` with `truncated_powers(...)` inside `multi_prepare`. Solidity's `_squeezeFq` always performs full `from_uniform_bytes` reduction, and `_x1EvalFoldPerSet`/`_x4OuterFold` use full-width powers. Enabling this feature on the Rust prover would diverge every challenge byte-for-byte with the Solidity side. |
 | `single-h-commitment` | **not supported** | `codegen.rs` hard-codes `nb_quotient_coms = domain.get_quotient_poly_degree()` (the NOT-feature branch). The Solidity verifier reads that many limbs from the transcript. A single-h prover would write one commitment; the Solidity loop would over-read. |
 | `fewer-point-sets` | **not supported** | `compute_dummy_queries` adds extra commitments + reads to the proof stream. Solidity's `_buildQueryList` enumerates the deterministic non-dummy list; a proof built with this feature on would have scalar reads Solidity does not account for, breaking `construct_intermediate_sets` grouping. |
@@ -952,11 +1204,11 @@ enable. Full support matrix:
   functionally equivalent to the Rust sponge API but O(n²) in the
   total number of absorbs — for a ~9 KB poseidon proof this is still
   well under 1 M gas.
-* **Dead code**: lines 3965+ in `PoseidonVerifier.sol` contain an
-  older `_finalPairing` placeholder path. `verify()` always returns
-  from inside the Phase D8 block (line 3962) before reaching it. The
-  dead path is retained for diff-narrowness during the D-phase
-  landing but can be removed once a cleanup pass is scheduled.
+* **Dead code**: `PlonkVerifier.sol` contains an older
+  `_finalPairing` placeholder path near the end of `verify()`. The
+  live Phase-D8 block returns before reaching it. The dead path is
+  retained for diff-narrowness during the D-phase landing but can be
+  removed once a cleanup pass is scheduled.
 
 ## 8. Equivalence verdict
 
@@ -966,38 +1218,62 @@ scope restrictions (§7):
 * **Complete (within scope)**: every algebraic step of the Rust
   verifier — transcript, identity evaluation, linearization,
   multi_prepare, final pairing — runs end-to-end against the real
-  proof, with `test_verify_poseidon_proof` requiring `ok == true`.
+  proofs of **both** wired circuits.
+  `test_verify_poseidon_proof` (12/12 forge tests) and
+  `test_verify_rsa_proof` (1/1 forge test + 1/1 Rust-driven
+  `tests/rsa.rs`) both require `ok == true`; the RSA pairing check
+  runs with `final_pairing_result = 1` at ~9.5 M gas.
 * **Sound (empirically)**: 24 component-level fixture tests + full
   trace-diff + 7 PBT tests (determinism, valid accept, wrong
   instance, mutated proof, VK blob byte mutation, malformed
   calldata in 5 variants, mutated-VK-source rebuild) all pass. A
   bit-flip anywhere in the proof / instance / VK blob is rejected
   (see §3 bullet 3's `test_verify_rejects_mutated_proof` and
-  §5.6 rows 3-7).
-* **Not a strict generic 1-to-1 port**: the three layers listed in
-  §7.1–7.3 are the binding reason. A proof from a different circuit,
-  or from the same circuit built with `truncated-challenges`,
-  `single-h-commitment`, or `fewer-point-sets` enabled, would not
-  verify.
+  §5.6 rows 3-7).  The PBT + adversarial suites currently run
+  against the poseidon VK; the RSA path has a single positive-only
+  forge test and a single positive-only Rust-driven test.
+* **Not a strict generic 1-to-1 port**: the limitations listed in
+  §7.1–7.3 are the binding reason for circuits whose CS shape
+  differs from our two examples.  Concretely: circuits with
+  `numLookups ≠ 1`, per-phase challenges, multiple non-committed
+  instance columns, a real committed-instance commitment,
+  `num_proofs > 1`, or any of the unsupported feature flags
+  (`truncated-challenges`, `single-h-commitment`,
+  `fewer-point-sets`) will not verify today.
 
 ## 9. Generalisation roadmap
 
 A credible "accepts any `midnight-zk` proof" story would require the
-following workstreams, roughly in order of effort:
+following workstreams, roughly in order of effort.  Items that have
+already landed are marked **DONE**.
 
 1. **Circuit generalisation** (medium effort, mostly mechanical):
-   - Remove `require(numLookups == 1)`; extend `_splitSingleLookup`
-     into a `_splitLookups` that iterates per lookup.
-   - Replace the `instance · l_0` collapse with a full
-     `_lagrangeIRange`-based inner product over the instance-query
-     rotation range. The helper is already present (line ~4190).
-   - Extend the public ABI to `verify(bytes32[] committedInstances,
-     bytes32[] instances, bytes proof)` (or an equivalent packed
-     form) and feed `committedInstances` into the transcript
-     absorb + the final MSM's committed-instance slot.
-   - Drop the `fixed_queries[i].column_idx == i` assumption in
-     `_buildFixedEvalsFull`; key fixed evals by
-     `(col_idx, rotation_idx)`.
+   - `[DONE, Phase 2]` Replace the `instance · l_0` collapse with a
+     full `_computeInstanceEvals` Lagrange inner product over the
+     instance-query rotation range (with per-rotation caching).
+   - `[DONE, Phase 2]` Extend the public ABI to
+     `verify(bytes32[] publicInputs, bytes proof)` so multi-limb
+     public inputs can flow in (RSA has 22 of them).
+   - `[DONE, Phase 3]` Re-characterise the
+     `fixed_queries[i].column_idx == i` assumption into the narrower
+     "simple-selector position == col" invariant that midnight-proofs
+     actually guarantees, and enforce it at VK-generation time.
+     Non-simple fixed queries are already keyed by the explicit
+     `fixed_query_col_idx` array in the blob.
+   - `[DONE, Phase 4]` Rename `PoseidonVerifier` /
+     `IPoseidonVerifyingKey` to the neutral `PlonkVerifier` /
+     `IVerifyingKey`; move per-circuit VK contracts under
+     `contracts/circuits/<circuit>/`.
+   - `[OPEN]` Remove `require(numLookups == 1)`; extend
+     `_splitSingleLookup` into a `_splitLookups` that iterates per
+     lookup.  No shipping circuit needs this today.
+   - `[OPEN]` Extend the public ABI to also carry a real
+     committed-instance commitment (feeding it into the transcript
+     absorb + the final MSM's committed-instance slot instead of
+     `G1::identity()`).  `zk_stdlib::verify` always passes `None`
+     today, so this only matters if a circuit opts in.
+   - `[OPEN]` Lift `num_challenges == 0` — neither example circuit
+     uses per-phase challenges.
 2. **Feature toggles on the VK blob** (small–medium effort):
    - Add 1-byte feature flags to `const3` (e.g. bits for
      `truncated_challenges`, `single_h_commitment`,
@@ -1010,12 +1286,12 @@ following workstreams, roughly in order of effort:
      to Solidity for `fewer-point-sets`.
 3. **Generic codegen** (larger effort, but mostly plumbing):
    - Add `render_verifier(&VkInfo) -> String` that templates out
-     the current hand-maintained `PoseidonVerifier.sol`, removing
-     the circuit-specific `require`s and hard-codings listed in
-     §7.2.
-   - Rename `PoseidonVerifier` / `PoseidonVerifyingKey` to neutral
-     names (`Verifier`, `VerifyingKey`) or parameterise on the
-     fixture name.
+     the current hand-maintained `PlonkVerifier.sol`, removing the
+     remaining hard-wired invariants listed in §7.2.  After Phase 4
+     the contract itself no longer has any circuit-specific code
+     path — only a handful of `require`-guards — so this is a net
+     win only if lifting those guards requires divergent code per
+     circuit.
 4. **Batched verification** (optional, significant effort): wrap the
    single-proof flow in an outer loop and share the transcript
    across proofs, mirroring the Rust `prepare` signature.
@@ -1030,11 +1306,17 @@ Solidity verifier against the Rust reference
 * **Algebraic equivalence verified** for all eleven phases listed in
   §2.2 via unit tests, positional signatures and the trace-diff
   harness.
-* **Specialisations documented** (§7.2) were discovered by direct
-  source inspection (`require(vk.numLookups == 1)` at
-  `PoseidonVerifier.sol:2071`, instance-eval collapse in
+* **Specialisations documented** (§7.2) were originally discovered
+  by direct source inspection (`require(vk.numLookups == 1)` in
+  `_splitSingleLookup`, instance-eval collapse in
   `_buildPartialEvalEnv`, G1 identity absorb in `verify()`,
-  `num_proofs == 1` public ABI).
+  `num_proofs == 1` public ABI).  Phases 2-4 lifted the
+  `instance · l_0` collapse to a full Lagrange inner product
+  (enabling RSA's 22-limb public input), re-characterised the
+  `fixed_queries[i].col == i` shortcut into the narrower
+  simple-selector invariant that midnight-proofs' CS builder
+  actually guarantees, and renamed the contract to a circuit-neutral
+  `PlonkVerifier`.
 * **Feature-flag coverage** (§7.3) derived from the Cargo.toml pin
   (`keccak-transcript`, `committed-instances`) cross-referenced
   with the feature-gated branches in `proofs/src/plonk/verifier.rs`
@@ -1042,8 +1324,11 @@ Solidity verifier against the Rust reference
   "single-h-commitment")]`) and `proofs/src/poly/kzg/mod.rs`
   (`truncated-challenges`, `fewer-point-sets`).
 * **Codegen generality** (§6, §7.1) assessed from `codegen.rs`
-  (`render_verifying_key` exists, `render_verifier` does not) and
-  `src/bin/generate.rs` (poseidon-only entry point).
+  (`render_verifying_key_named` supports per-circuit VK contracts;
+  `render_verifier` still does not exist) and the two per-circuit
+  entry points `src/bin/generate.rs` / `src/bin/generate_rsa.rs`.
 
 Future reviews should keep §7 and §8 in sync with any code changes
-that tighten or relax these bounds.
+that tighten or relax these bounds.  When adding a new circuit, add
+a row to §7.1 describing any invariant checks that had to be
+softened, and update the §8 "wired circuits" enumeration.

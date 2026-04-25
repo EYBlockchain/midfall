@@ -18,5 +18,12 @@ pub mod trace;
 pub mod codegen;
 pub mod transcript;
 pub mod eip2537;
-pub mod poseidon_fixture;
+pub mod circuits;
 pub mod expr_bytecode;
+
+// Back-compat re-export so external callers (and any still-in-flight
+// Phase 1+ refactor work) can continue to import the poseidon fixture
+// under its historical path while the surrounding modules are being
+// generalised. Prefer `midnight_solidity_verifier::circuits::poseidon`
+// in new code.
+pub use circuits::poseidon as poseidon_fixture;

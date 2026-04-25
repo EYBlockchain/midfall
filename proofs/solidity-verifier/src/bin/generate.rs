@@ -1,32 +1,45 @@
-//! Generate Solidity contracts + fixture files for the poseidon example.
+//! Generate Solidity contracts + fixture files for a supported circuit.
 //!
-//! Running `cargo run --bin generate` will:
-//!   1. Build the SRS, keygen VK/PK, and prove the poseidon circuit using
+//! Running `cargo run --bin generate` (default: poseidon) will:
+//!   1. Build the SRS, keygen VK/PK, and prove the target circuit using
 //!      the Keccak256 transcript.
-//!   2. Dump the proof, instance, and execution trace to `fixtures/`.
-//!   3. Render `contracts/PoseidonVerifyingKey.sol` with the runtime data.
+//!   2. Dump the proof, instance, and execution trace to
+//!      `fixtures/<circuit>/`.
+//!   3. Render `contracts/circuits/<circuit>/<Name>VerifyingKey.sol`
+//!      with the runtime data.
 //!
 //! The verifier contract `contracts/PoseidonVerifier.sol` is *not*
 //! regenerated — its logic is circuit-agnostic within the constraints baked
-//! into the VK blob. Only the VK contract depends on the circuit.
+//! into the VK blob (see ARCHITECTURE.md §7.2 for the current poseidon-
+//! specific shortcuts that block non-poseidon circuits from verifying).
+//! Only the VK contract depends on the circuit.
+//!
+//! Phase 0: only the `poseidon` circuit is wired. Phase 1 adds
+//! `--circuit rsa-signature`.
 
 use std::{fs, io::Write, path::PathBuf};
 
 use midnight_curves::Fq;
 use midnight_solidity_verifier::{
+    circuits::poseidon::PoseidonFixture,
     codegen::{render_verifying_key, VkInfo},
     eip2537::fq_to_be,
-    poseidon_fixture::PoseidonFixture,
 };
 
 fn main() {
     let here: PathBuf = std::env::var_os("CARGO_MANIFEST_DIR")
         .map(PathBuf::from)
         .expect("CARGO_MANIFEST_DIR");
-    let fixtures = here.join("fixtures");
-    let contracts = here.join("contracts");
+
+    // Per-circuit output roots. In Phase 0 the only wired circuit is
+    // poseidon; `bin/generate.rs` still has no CLI flag, which is
+    // added in Phase 1.
+    let circuit_name = "poseidon";
+    let fixtures = here.join("fixtures").join(circuit_name);
+    let contracts_root = here.join("contracts");
+    let circuit_contracts = contracts_root.join("circuits").join(circuit_name);
     fs::create_dir_all(&fixtures).expect("mkdir fixtures");
-    fs::create_dir_all(&contracts).expect("mkdir contracts");
+    fs::create_dir_all(&circuit_contracts).expect("mkdir circuit contracts dir");
 
     let k = std::env::var("POSEIDON_K").ok().and_then(|s| s.parse().ok()).unwrap_or(6u32);
     let seed: u64 = std::env::var("POSEIDON_SEED").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
@@ -59,7 +72,8 @@ fn main() {
 
     eprintln!("[3/4] writing Solidity VK contract");
     let sol = render_verifying_key(&vk_info);
-    fs::write(contracts.join("PoseidonVerifyingKey.sol"), sol).expect("write sol");
+    fs::write(circuit_contracts.join("PoseidonVerifyingKey.sol"), sol)
+        .expect("write sol");
 
     eprintln!("[4/4] dumping proof + instance");
     fs::write(fixtures.join("proof.bin"), &fx.proof).expect("write proof");
@@ -1052,7 +1066,7 @@ fn main() {
         }
     }
 
-    eprintln!("OK — see {}/ for generated files", contracts.display());
+    eprintln!("OK — see {}/ for generated files", circuit_contracts.display());
     eprintln!("         {}/ for fixtures", fixtures.display());
 }
 

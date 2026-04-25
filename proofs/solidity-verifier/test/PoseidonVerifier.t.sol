@@ -2,27 +2,37 @@
 pragma solidity ^0.8.24;
 
 import { Test, Log } from "./forge-std-min.sol";
-import { PoseidonVerifier } from "../contracts/PoseidonVerifier.sol";
-import { PoseidonVerifyingKey } from "../contracts/PoseidonVerifyingKey.sol";
+import { PlonkVerifier } from "../contracts/PlonkVerifier.sol";
+import { PoseidonVerifyingKey } from "../contracts/circuits/poseidon/PoseidonVerifyingKey.sol";
 
 /// @notice End-to-end Solidity verifier test running against the Prague EVM.
 ///
 /// The test:
 ///   1. Deploys `PoseidonVerifyingKey` (tiny constants-only contract).
-///   2. Deploys `PoseidonVerifier` wired to the VK contract's address.
-///   3. Loads `fixtures/proof.bin` and `fixtures/instance.be` produced by
+///   2. Deploys `PlonkVerifier` wired to the VK contract's address.
+///   3. Loads `fixtures/poseidon/*` produced by
 ///      the Rust `cargo run --bin generate`.
-///   4. Calls `verify(instance, proof)` and measures gas for each of the
-///      verifier's internal phases via the `PhaseGas(name, gas)` event.
+///   4. Calls `verify(publicInputs, proof)` and measures gas for each
+///      of the verifier's internal phases via the `PhaseGas(name, gas)`
+///      event.
 ///   5. Dumps deployment gas, call gas, and every traced challenge / read /
-///      pairing outcome to `fixtures/solidity_trace.json` so the Rust
-///      harness can cross-check the two execution traces.
+///      pairing outcome to `fixtures/poseidon/solidity_trace.json` so the
+///      Rust harness can cross-check the two execution traces.
 contract PoseidonVerifierTest is Test {
-    PoseidonVerifier v;
+    PlonkVerifier v;
     address vkAddr;
 
     uint256 public vkDeployGas;
     uint256 public verifierDeployGas;
+
+    /// Wrap a single instance scalar in a `bytes32[]` to match the
+    /// Phase-2 public ABI `verify(bytes32[] publicInputs, bytes proof)`.
+    /// The poseidon example circuit has a single public input value so
+    /// this is always a length-1 array on-chain.
+    function _pis(bytes32 instance) internal pure returns (bytes32[] memory a) {
+        a = new bytes32[](1);
+        a[0] = instance;
+    }
 
     function setUp() public {
         uint256 g0 = gasleft();
@@ -30,7 +40,7 @@ contract PoseidonVerifierTest is Test {
         vkDeployGas = g0 - gasleft();
 
         g0 = gasleft();
-        v = new PoseidonVerifier(vkAddr);
+        v = new PlonkVerifier(vkAddr);
         verifierDeployGas = g0 - gasleft();
     }
 
@@ -40,7 +50,7 @@ contract PoseidonVerifierTest is Test {
     /// Solidity decompressor produces the exact EIP-2537 byte layout
     /// emitted by blst on the Rust side.
     function test_g1_decompression() public {
-        bytes memory blob = vm.readFileBinary("fixtures/decomp_pairs.bin");
+        bytes memory blob = vm.readFileBinary("fixtures/poseidon/decomp_pairs.bin");
         require(blob.length > 0 && blob.length % 176 == 0, "bad fixture len");
         uint256 n = blob.length / 176;
         for (uint256 k = 0; k < n; k++) {
@@ -75,7 +85,7 @@ contract PoseidonVerifierTest is Test {
     ///   [192..224) N (big-endian uint256: number of Lagrange evals that follow)
     ///   [224..   ) L_0(x), L_1(x), ..., L_{N-1}(x)
     function test_algebra_primitives() public {
-        bytes memory blob = vm.readFileBinary("fixtures/algebra_fixtures.bin");
+        bytes memory blob = vm.readFileBinary("fixtures/poseidon/algebra_fixtures.bin");
         require(blob.length >= 224, "bad algebra fixture");
 
         uint256 omega  = _readUint(blob, 0);
@@ -145,11 +155,11 @@ contract PoseidonVerifierTest is Test {
     ///
     /// A mismatch here means either:
     ///   * the encoding in expr_bytecode.rs doesn't match the decoding
-    ///     in PoseidonVerifier._evalBytecode, or
+    ///     in PlonkVerifier._evalBytecode, or
     ///   * the Rust-side self-check inside `generate` has silently
     ///     accepted a bogus bytecode.
     function test_gate_bytecode_interpreter() public {
-        bytes memory blob = vm.readFileBinary("fixtures/gate_eval_fixture.bin");
+        bytes memory blob = vm.readFileBinary("fixtures/poseidon/gate_eval_fixture.bin");
         require(blob.length >= 256, "bad gate fixture");
 
         uint256[] memory env = new uint256[](8);
@@ -214,15 +224,15 @@ contract PoseidonVerifierTest is Test {
     /// read-order, without requiring the strict pairing check to
     /// pass (which is still placeholder-gated until Phase D3-D8).
     function test_evals_signature() public {
-        bytes memory f = vm.readFileBinary("fixtures/evals_signature_fixture.bin");
+        bytes memory f = vm.readFileBinary("fixtures/poseidon/evals_signature_fixture.bin");
         uint256 expCount = _readUint(f, 0);
         uint256 expSig = _readUint(f, 32);
 
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/instance.be"), 0));
+        bytes memory proof = vm.readFileBinary("fixtures/poseidon/proof.bin");
+        bytes32 instance = bytes32(_readUint(vm.readFileBinary("fixtures/poseidon/instance.be"), 0));
 
         vm.recordLogs();
-        try v.verify(instance, proof) returns (bool /*ok*/) {
+        try v.verify(_pis(instance), proof) returns (bool /*ok*/) {
             // We don't require verify() to return true; the strict
             // soundness test is separately tracked by
             // test_verify_poseidon_proof.
@@ -258,7 +268,7 @@ contract PoseidonVerifierTest is Test {
     /// equivalence — Phase D2 will feed these into the partial-
     /// eval driver inside `verify()`.
     function test_lagrange_aux() public {
-        bytes memory f = vm.readFileBinary("fixtures/lagrange_aux_fixture.bin");
+        bytes memory f = vm.readFileBinary("fixtures/poseidon/lagrange_aux_fixture.bin");
         uint256 off = 0;
         uint256 x = _readUint(f, off); off += 32;
         uint256 xn = _readUint(f, off); off += 32;
@@ -290,7 +300,7 @@ contract PoseidonVerifierTest is Test {
     /// Also negative-tests by flipping a byte of `right` and
     /// asserting the check fails.
     function test_pairing_rhs() public {
-        bytes memory f = vm.readFileBinary("fixtures/pairing_fixture.bin");
+        bytes memory f = vm.readFileBinary("fixtures/poseidon/pairing_fixture.bin");
         require(f.length >= 97, "pairing fixture len");
         bytes memory left = new bytes(48);
         bytes memory right = new bytes(48);
@@ -330,7 +340,7 @@ contract PoseidonVerifierTest is Test {
     /// rotated point matches byte-for-byte + every per-query-kind
     /// rotation-index array matches the embedded VK schedule.
     function test_query_schedule() public {
-        bytes memory f = vm.readFileBinary("fixtures/query_schedule_fixture.bin");
+        bytes memory f = vm.readFileBinary("fixtures/poseidon/query_schedule_fixture.bin");
         uint256 off = 0;
         uint256 x = _readUint(f, off); off += 32;
         uint256 nRot = _readUint(f, off); off += 32;
@@ -376,19 +386,19 @@ contract PoseidonVerifierTest is Test {
     /// Solidity verify() must match the keccak256(right_eip2537) that
     /// `generate.rs` computes from the Rust `DualMSM.right.eval()`.
     function test_final_right_g1_digest() public {
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+        bytes memory proof = vm.readFileBinary("fixtures/poseidon/proof.bin");
+        bytes memory instanceBE = vm.readFileBinary("fixtures/poseidon/instance.be");
         require(instanceBE.length == 32, "instance size");
         bytes32 instance;
         assembly { instance := mload(add(instanceBE, 32)) }
 
-        bytes memory fixt = vm.readFileBinary("fixtures/right_g1_fixture.bin");
+        bytes memory fixt = vm.readFileBinary("fixtures/poseidon/right_g1_fixture.bin");
         require(fixt.length == 160, "right_g1 fixture bad len");
         bytes32 expected;
         assembly { expected := mload(add(fixt, add(32, 128))) }
 
         vm.recordLogs();
-        try v.verify(instance, proof) returns (bool) {} catch {}
+        try v.verify(_pis(instance), proof) returns (bool) {} catch {}
         Log[] memory logs = vm.getRecordedLogs();
 
         bytes32 intSig = keccak256("TraceIntermediate(string,bytes32)");
@@ -413,8 +423,8 @@ contract PoseidonVerifierTest is Test {
     }
 
     function test_verify_poseidon_proof() public {
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+        bytes memory proof = vm.readFileBinary("fixtures/poseidon/proof.bin");
+        bytes memory instanceBE = vm.readFileBinary("fixtures/poseidon/instance.be");
         require(instanceBE.length == 32, "instance size");
         bytes32 instance;
         assembly { instance := mload(add(instanceBE, 32)) }
@@ -423,7 +433,7 @@ contract PoseidonVerifierTest is Test {
         vm.recordLogs();
         uint256 g0 = gasleft();
         bool ok;
-        try v.verify(instance, proof) returns (bool r) {
+        try v.verify(_pis(instance), proof) returns (bool r) {
             ok = r;
         } catch {
             ok = false;
@@ -484,7 +494,7 @@ contract PoseidonVerifierTest is Test {
             }
         }
         trace = string.concat(trace, "]");
-        vm.writeFile("fixtures/solidity_trace.json", trace);
+        vm.writeFile("fixtures/poseidon/solidity_trace.json", trace);
 
         emit log_named_bool("verify_ok", ok);
 
@@ -515,8 +525,8 @@ contract PoseidonVerifierTest is Test {
     /// a trivial-accept implementation that short-circuits to `true`
     /// regardless of the input.
     function test_verify_rejects_mutated_proof() public {
-        bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-        bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+        bytes memory proof = vm.readFileBinary("fixtures/poseidon/proof.bin");
+        bytes memory instanceBE = vm.readFileBinary("fixtures/poseidon/instance.be");
         require(instanceBE.length == 32, "instance size");
         bytes32 instance;
         assembly { instance := mload(add(instanceBE, 32)) }
@@ -527,7 +537,7 @@ contract PoseidonVerifierTest is Test {
         proof[idx] = bytes1(uint8(proof[idx]) ^ 0x01);
 
         bool ok;
-        try v.verify(instance, proof) returns (bool r) {
+        try v.verify(_pis(instance), proof) returns (bool r) {
             ok = r;
         } catch {
             ok = false;
@@ -561,13 +571,13 @@ contract PoseidonVerifierTest is Test {
     function test_adversarial_matrix_all_rejected() public {
         // Baseline sanity.
         {
-            bytes memory proof = vm.readFileBinary("fixtures/proof.bin");
-            bytes memory instanceBE = vm.readFileBinary("fixtures/instance.be");
+            bytes memory proof = vm.readFileBinary("fixtures/poseidon/proof.bin");
+            bytes memory instanceBE = vm.readFileBinary("fixtures/poseidon/instance.be");
             require(instanceBE.length == 32, "instance size");
             bytes32 instance;
             assembly { instance := mload(add(instanceBE, 32)) }
             bool baselineOk;
-            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(instance, proof)
+            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(_pis(instance), proof)
                 returns (bool r)
             {
                 baselineOk = r;
@@ -581,7 +591,7 @@ contract PoseidonVerifierTest is Test {
         }
 
         bytes memory man =
-            vm.readFileBinary("fixtures/adversarial_fixtures.bin");
+            vm.readFileBinary("fixtures/poseidon/adversarial_fixtures.bin");
         require(man.length >= 8, "manifest too short");
         uint256 off = 0;
 
@@ -605,7 +615,7 @@ contract PoseidonVerifierTest is Test {
             off += uint256(plen);
 
             bool accepted;
-            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(inst, proof)
+            try v.verify{gas: ADVERSARIAL_VERIFY_GAS_CAP}(_pis(inst), proof)
                 returns (bool r)
             {
                 accepted = r;
@@ -750,7 +760,7 @@ contract PoseidonVerifierTest is Test {
     ///       [4]  payload_len (u32)
     ///       [..] payload bytes
     function test_verifier_trace_instrumented_tags() public {
-        bytes memory blob = vm.readFileBinary("fixtures/verifier_trace.bin");
+        bytes memory blob = vm.readFileBinary("fixtures/poseidon/verifier_trace.bin");
         require(blob.length >= 8, "trace too short");
         require(blob[0] == "M" && blob[1] == "T" && blob[2] == "R" && blob[3] == "1", "bad magic");
         uint256 nEvents = uint256(_readU32(blob, 4));

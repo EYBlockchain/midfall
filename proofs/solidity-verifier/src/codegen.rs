@@ -143,7 +143,13 @@ pub struct VkInfo {
     /// Likewise for fixed queries, but filtered to exclude simple
     /// multiplicative selectors (whose eval is implicit `1`).
     pub fixed_query_rotation_idx: Vec<u8>,
-    /// Likewise for instance queries on committed instance columns.
+    /// Rotation index per instance query — includes BOTH committed and
+    /// non-committed queries (Phase 2 genericization).  Prior to
+    /// Phase 2 this was filtered to committed-only queries; the
+    /// non-committed entries are now needed so that
+    /// `PoseidonVerifier._buildPartialEvalEnv` can compute
+    /// `Σ_i instance_i · L_i(ω^rot · x)` for each non-committed query
+    /// without hard-coding `rot == 0`.
     pub instance_query_rotation_idx: Vec<u8>,
     /// Per-query column indices (Phase D6). Multi_prepare's
     /// `construct_intermediate_sets` groups queries sharing the same
@@ -153,7 +159,10 @@ pub struct VkInfo {
     /// without having to re-parse the gate bytecode.
     pub advice_query_col_idx: Vec<u32>,
     pub fixed_query_col_idx: Vec<u32>,
-    pub committed_instance_query_col_idx: Vec<u32>,
+    /// Column index per instance query — includes BOTH committed and
+    /// non-committed queries (Phase 2).  Length matches
+    /// `num_instance_queries`.
+    pub instance_query_col_idx: Vec<u32>,
 }
 
 /// Serialised (RPN bytecode) form of a single midnight-proofs lookup
@@ -425,12 +434,13 @@ impl VkInfo {
             .filter(|(col, _)| !cs.has_simple_selector_col(col.index()))
             .map(|(_, rot)| rot_idx(rot.0))
             .collect();
-        // Only committed-instance queries are transcript-read.
-        let nb_committed_instances_u = 1usize;
+        // Phase 2: the Solidity verifier needs the rotation of every
+        // instance query, not just the committed ones, so it can
+        // compute `Σ instance_i · L_i(ω^rot · x)` for non-committed
+        // queries.
         let instance_query_rotation_idx: Vec<u8> = cs
             .instance_queries()
             .iter()
-            .filter(|(col, _)| col.index() < nb_committed_instances_u)
             .map(|(_, rot)| rot_idx(rot.0))
             .collect();
 
@@ -446,10 +456,12 @@ impl VkInfo {
             .filter(|(col, _)| !cs.has_simple_selector_col(col.index()))
             .map(|(col, _)| col.index() as u32)
             .collect();
-        let committed_instance_query_col_idx: Vec<u32> = cs
+        // Phase 2: cover ALL queries, not just committed.  The
+        // committed/non-committed split on the Solidity side is derived
+        // by `col_idx < numCommittedInstanceColumns`.
+        let instance_query_col_idx: Vec<u32> = cs
             .instance_queries()
             .iter()
-            .filter(|(col, _)| col.index() < nb_committed_instances_u)
             .map(|(col, _)| col.index() as u32)
             .collect();
 
@@ -497,7 +509,7 @@ impl VkInfo {
             fixed_query_rotation_idx,
             advice_query_col_idx,
             fixed_query_col_idx,
-            committed_instance_query_col_idx,
+            instance_query_col_idx,
             instance_query_rotation_idx,
         }
     }
@@ -520,7 +532,21 @@ impl ToReprLe32 for Fq {
 /// Render the `PoseidonVerifyingKey.sol` contract — a tiny constants-only
 /// contract whose constructor returns a packed byte blob. The verifier reads
 /// this blob to initialise its runtime constants.
+///
+/// Back-compat wrapper around [`render_verifying_key_named`] with the
+/// contract name hard-coded to `PoseidonVerifyingKey`. Prefer the
+/// `_named` variant in new code so other circuits can emit their own VK
+/// contract under a distinct name.
 pub fn render_verifying_key(vk: &VkInfo) -> String {
+    render_verifying_key_named(vk, "PoseidonVerifyingKey")
+}
+
+/// Same as [`render_verifying_key`] but the Solidity contract name is
+/// caller-controlled. Every circuit's `*VerifyingKey.sol` contract
+/// needs a unique name so Foundry's artifact resolution
+/// (`out/<file>.sol/<ContractName>.json`) doesn't collide between
+/// circuits.
+pub fn render_verifying_key_named(vk: &VkInfo, contract_name: &str) -> String {
     // Layout of the blob (all big-endian, all 32/64/128/256-byte aligned):
     //   [0      .. 32)  transcript_repr (Fq, BE padded to 32)
     //   [32     .. 64)  omega           (Fq, BE)
@@ -656,7 +682,7 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
         &vk.instance_query_rotation_idx,
         &vk.advice_query_col_idx,
         &vk.fixed_query_col_idx,
-        &vk.committed_instance_query_col_idx,
+        &vk.instance_query_col_idx,
         &vk.lookup_num_chunks,
     );
 
@@ -671,13 +697,13 @@ pub fn render_verifying_key(vk: &VkInfo) -> String {
         "// SPDX-License-Identifier: MIT\n\
 pragma solidity ^0.8.24;\n\
 \n\
-/// @notice Auto-generated minimal verifying key for the poseidon example.\n\
+/// @notice Auto-generated minimal verifying key blob for a single circuit.\n\
 /// @dev The constructor returns a packed byte blob that the verifier reads\n\
 /// with `extcodecopy`. The blob layout is fixed by `codegen.rs` and mirrored\n\
-/// in `PoseidonVerifier._loadVk`; see that function for the field offsets.\n\
+/// in `PlonkVerifier._loadVk`; see that function for the field offsets.\n\
 ///\n\
 /// VK blob size: {total} bytes.\n\
-contract PoseidonVerifyingKey {{\n\
+contract {contract_name} {{\n\
     constructor() {{\n\
         bytes memory blob = hex\"{hex_blob}\";\n\
         assembly {{ return(add(blob, 32), mload(blob)) }}\n\
@@ -758,7 +784,7 @@ pub fn vk_blob(vk: &VkInfo) -> Vec<u8> {
         &vk.instance_query_rotation_idx,
         &vk.advice_query_col_idx,
         &vk.fixed_query_col_idx,
-        &vk.committed_instance_query_col_idx,
+        &vk.instance_query_col_idx,
         &vk.lookup_num_chunks,
     );
 

@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// Auto-generated: Solidity port of the Rust PLONK verifier
-/// (`proofs/src/plonk/verifier.rs`) specialised for the poseidon example.
+/// Solidity port of the Rust PLONK verifier
+/// (`proofs/src/plonk/verifier.rs`).  Generalised in Phases 2+3 from a
+/// poseidon-specific specialisation to any midnight-proofs relation whose
+/// VK satisfies the invariants documented in `ARCHITECTURE.md` §7.2
+/// (single non-committed instance column, single committed-instance
+/// identity, `position == col` for simple-selector fixed queries, etc.).
 ///
 /// The comments have been preserved verbatim from the Rust source so that the
 /// structural correspondence between the two implementations is explicit.
@@ -19,9 +23,9 @@ pragma solidity ^0.8.24;
 ///   * squeeze():  h1 = keccak(state || [0]); h2 = keccak(state || [1]);
 ///                 out = h1 || h2 (64 bytes); state = keccak(out)
 
-interface IPoseidonVerifyingKey {}
+interface IVerifyingKey {}
 
-contract PoseidonVerifier {
+contract PlonkVerifier {
     /* ------------------------------------------------------------------ *
      *  CONSTANTS                                                         *
      * ------------------------------------------------------------------ */
@@ -121,6 +125,38 @@ contract PoseidonVerifier {
         // The Rust side absorbs G1 points in their *compressed* 48-byte BLS
         // form (Hashable<Keccak256> for G1Projective -> to_bytes()).
         t.buf = abi.encodePacked(t.buf, PREFIX_COMMON, compressed48);
+    }
+
+    /// Convert a calldata `bytes32[]` into an in-memory `uint256[]` —
+    /// extracted out of `verify()` so the latter's Yul frame doesn't
+    /// trip the stack-too-deep limit.  Each element is reinterpreted
+    /// as a big-endian Fq scalar (same convention the old ABI used
+    /// for the single-`bytes32 instance` argument).
+    function _publicInputsToUint(bytes32[] calldata publicInputs)
+        internal pure returns (uint256[] memory piU)
+    {
+        piU = new uint256[](publicInputs.length);
+        for (uint256 k = 0; k < publicInputs.length; k++) {
+            piU[k] = uint256(publicInputs[k]);
+        }
+    }
+
+    /// Hash the single non-committed instance column into the
+    /// transcript, mirroring the Rust-side
+    /// `for instance in instance.iter() { common(len); for v { common(v) } }`
+    /// block.  Length is absorbed as a `F::from_u128(...)` scalar,
+    /// each value as its canonical LE 32-byte repr.
+    function _hashInstanceColumn(Transcript memory t, uint256[] memory piU)
+        internal pure
+    {
+        require(piU.length < (1 << 64), "publicInputs too big");
+        _absorbU128(t, uint128(piU.length));
+        bytes memory instLE = new bytes(32);
+        for (uint256 k = 0; k < piU.length; k++) {
+            bytes32 v = bytes32(piU[k]);
+            for (uint256 i = 0; i < 32; i++) instLE[i] = v[31 - i];
+            _absorb(t, instLE);
+        }
     }
 
     /// Squeeze a 64-byte challenge and reseed the transcript with it.
@@ -2090,7 +2126,12 @@ contract PoseidonVerifier {
         uint256 gamma;
         uint256 theta;
         uint256 trashChallenge;
-        uint256 instance;     // the single user instance scalar
+        // All non-committed instance-column values (`Relation::format_instance`
+        // output), used by `_buildPartialEvalEnv` to compute
+        // `Σ_i publicInputs[i] · L_i(ω^rot · x)` for every non-committed
+        // instance query.  For the poseidon example this is a single
+        // scalar; for the RSA example it is 22 scalars.
+        uint256[] publicInputs;
     }
 
     function _buildPartialEvalEnv(
@@ -2111,8 +2152,31 @@ contract PoseidonVerifier {
         );
 
         e.adviceEvals = ea.adviceEvals;
-        // Simple-selector injection — see section header for the
-        // fixed_queries[i].column_idx == i assumption.
+        // Phase 3 notes on the Rust mirror
+        // (`proofs/src/plonk/verifier.rs:296-303`):
+        //
+        //   let mut fixed_evals = read_n(transcript, numFixedCols - numSimple)?;
+        //   for (idx, (col, _)) in cs.fixed_queries().iter().enumerate() {
+        //       if cs.has_simple_selector_col(col.index()) {
+        //           fixed_evals.insert(idx, F::ONE)
+        //       }
+        //   }
+        //
+        // i.e. Rust reads one scalar per NON-simple query, then
+        // interleaves `F::ONE` at the positions of simple-selector
+        // queries in `cs.fixed_queries()`.  The resulting
+        // `fixed_evals` is indexed by query position and has length
+        // `cs.fixed_queries().len() == numFixedCols` for every
+        // midnight-proofs circuit where each fixed column is queried
+        // at most once (poseidon + RSA both satisfy this).
+        //
+        // The OLD `_buildFixedEvalsFull` treated `i ∈ simpleSelCols`
+        // as "position `i` in `cs.fixed_queries()` is a simple
+        // selector" which works because midnight-proofs always
+        // assigns query position == column index for simple-selector
+        // queries.  Keep the invariant asserted so future circuits
+        // that violate it fail loudly instead of silently scrambling
+        // evals.
         e.fixedEvals = _buildFixedEvalsFull(
             vk.numFixedCols,
             _extractSimpleSelectorCols(blob),
@@ -2125,23 +2189,13 @@ contract PoseidonVerifier {
         //       `transcript.read()` branch for queries whose column is
         //       a committed-instance column (col.index() <
         //       nb_committed_instances).
-        //     - else: eval = Σ instance_i · l_i(x), which for the
-        //       poseidon example collapses to `instance * l_0`
-        //       because there is exactly one public input.
+        //     - else: eval = Σ_i publicInputs[i] · L_i(ω^rot · x).
+        //       The rotation comes from the query schedule baked into
+        //       the VK blob; we cache one `L_{0..publicInputs.len-1}`
+        //       vector per distinct rotation.
         //   This mirrors `cs.instance_queries()` iteration in
         //   `plonk/verifier.rs:252`.
-        {
-            uint256 collapsed = _frMul(pin.instance, e.l0);
-            uint256[] memory inst = new uint256[](vk.numInstanceQueries);
-            for (uint256 i = 0; i < vk.numInstanceQueries; i++) {
-                if (i < vk.numCommittedInstanceEvals) {
-                    inst[i] = ea.committedInstanceEvals[i];
-                } else {
-                    inst[i] = collapsed;
-                }
-            }
-            e.instanceEvals = inst;
-        }
+        e.instanceEvals = _computeInstanceEvals(blob, vk, ea, pin);
         e.challenges = new uint256[](vk.numChallenges);
 
         e.permSetsFlat = _buildPermSetsFlat(vk, ea);
@@ -2154,6 +2208,65 @@ contract PoseidonVerifier {
         e.helperEvals = ls.helperEvals;
 
         e.trashEvals = ea.trashcanEvals;
+    }
+
+    /// Compute the `vk.numInstanceQueries`-sized instance-eval vector
+    /// used by the algebraic-identity pipeline.
+    ///
+    /// For each query `q`:
+    ///   * committed (`q < numCommittedInstanceEvals`):
+    ///       eval = `ea.committedInstanceEvals[q]` (transcript read).
+    ///   * non-committed: eval = `Σ_i publicInputs[i] · L_i(ω^rot · x)`
+    ///     where `rot = qs.rotations[qs.instanceRotationIdx[q]]` is the
+    ///     rotation recorded in the VK's query schedule.
+    ///
+    /// Lagrange vectors are cached per distinct rotation: the
+    /// midnight-proofs example circuits emit every instance query at
+    /// rotation 0, so the naive per-query recomputation would be
+    /// wasteful.
+    function _computeInstanceEvals(
+        bytes memory blob,
+        Vk memory vk,
+        EvalArrays memory ea,
+        PEInputs memory pin
+    ) internal view returns (uint256[] memory inst) {
+        inst = new uint256[](vk.numInstanceQueries);
+
+        if (vk.numInstanceQueries == vk.numCommittedInstanceEvals) {
+            // Every query is transcript-read.
+            for (uint256 q = 0; q < vk.numCommittedInstanceEvals; q++) {
+                inst[q] = ea.committedInstanceEvals[q];
+            }
+            return inst;
+        }
+
+        QuerySchedule memory qs = _loadQuerySchedule(blob);
+        uint256 omega = uint256(vk.omegaBE);
+        uint256 n = uint256(vk.n);
+        uint256 piLen = pin.publicInputs.length;
+
+        // Cache `L_{0..piLen-1}(ω^rot · x)` per distinct rotation the
+        // schedule knows about.  `cache[r] == null` until first use.
+        uint256[][] memory cache = new uint256[][](qs.rotations.length);
+
+        for (uint256 q = 0; q < vk.numInstanceQueries; q++) {
+            if (q < vk.numCommittedInstanceEvals) {
+                inst[q] = ea.committedInstanceEvals[q];
+                continue;
+            }
+
+            uint8 rotIdx = qs.instanceRotationIdx[q];
+            uint256[] memory laSlice = cache[rotIdx];
+            if (laSlice.length == 0) {
+                int256 rotation = int256(qs.rotations[rotIdx]);
+                uint256 xRot = _rotateOmega(pin.x, rotation, omega, n);
+                laSlice = _lagrangeIRange(
+                    xRot, pin.xn, int256(0), int256(piLen) - 1, omega, n
+                );
+                cache[rotIdx] = laSlice;
+            }
+            inst[q] = _instanceEvalFromLagrange(pin.publicInputs, laSlice);
+        }
     }
 
     /// Positional signature over (selectors, scalars):
@@ -3538,14 +3651,18 @@ contract PoseidonVerifier {
      *  EVM.                                                              *
      *                                                                    *
      *  Inputs:                                                           *
-     *    - `instance`: the single public input Fq (BE 32 bytes).         *
+     *    - `publicInputs`: full vector of public-input Fq values         *
+     *      (BE 32 bytes each) for the single non-committed instance      *
+     *      column produced by the zk_stdlib example's                    *
+     *      `Relation::format_instance`.  Length may be 1 (poseidon) or   *
+     *      tens of elements (RSA `(pk, msg)` decomposition).             *
      *    - `proof`: raw proof bytestream produced by the Rust prover     *
      *      with a `CircuitTranscript<Keccak256>`.                        *
      *                                                                    *
      *  Returns true iff the pairing check passes.                        *
      * ------------------------------------------------------------------ */
 
-    function verify(bytes32 instance, bytes calldata proof)
+    function verify(bytes32[] calldata publicInputs, bytes calldata proof)
         external
         returns (bool)
     {
@@ -3555,6 +3672,14 @@ contract PoseidonVerifier {
         (Vk memory vk, bytes memory vkBlob) = _loadVk();
         Reader memory rd = Reader({data: proof, pos: 0});
         Transcript memory t = _initTranscript();
+
+        // Materialise the calldata publicInputs into a memory
+        // `uint256[]` immediately. All downstream consumers
+        // (hash-instances, Lagrange inner product, diagnostics) read
+        // it as uint256 so this de-duplicates conversions and keeps
+        // the Yul stack shallower across the remaining phases of
+        // verify(); the calldata slot can be discarded afterwards.
+        uint256[] memory piU = _publicInputsToUint(publicInputs);
 
         /* --- Hash verification key into transcript ---------------- */
         // transcript.common(&vk.transcript_repr)
@@ -3594,10 +3719,10 @@ contract PoseidonVerifier {
             identity[0] = 0xc0; // compressed + infinity flag
             _absorbG1Compressed(t, identity);
 
-            _absorbU128(t, 1);
-            bytes memory instLE = new bytes(32);
-            for (uint256 i = 0; i < 32; i++) instLE[i] = instance[31 - i];
-            _absorb(t, instLE);
+            // Rust side absorbs `F::from_u128(instance.len() as u128)`
+            // then `common(value)` for each public-input scalar in the
+            // single non-committed instance column.
+            _hashInstanceColumn(t, piU);
         }
         gEnd = gasleft();
         emit PhaseGas("hash_instances", gStart - gEnd);
@@ -3805,7 +3930,7 @@ contract PoseidonVerifier {
                 gamma: uint256(gamma),
                 theta: uint256(theta),
                 trashChallenge: uint256(trashCh),
-                instance: uint256(instance)
+                publicInputs: piU
             });
             PartialEvalEnv memory penv = _buildPartialEvalEnv(vkBlob, vk, ea, pin);
             (uint32[] memory peSel, uint256[] memory peVals) =
