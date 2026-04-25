@@ -16,7 +16,7 @@ use midnight_circuits::{
 use midnight_proofs::{
     plonk::{self},
     poly::kzg::{params::ParamsKZG, KZGCommitmentScheme},
-    transcript::{CircuitTranscript, Transcript},
+    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash},
 };
 use midnight_zk_stdlib::MidnightPK;
 use rand::rngs::OsRng;
@@ -57,7 +57,48 @@ impl<T: Ivc> IvcProver<T> {
     ///
     /// If the current state is genesis (no previous proof), a trivial
     /// accumulator is used instead of verifying the previous proof.
+    ///
+    /// Uses [`PoseidonState<F>`] for the outer Fiat-Shamir transcript, which
+    /// matches the in-circuit verifier baked into [`IvcCircuit`] and is
+    /// therefore suitable as an intermediate chain step. To produce a
+    /// **final** proof under a different transcript flavour (e.g.
+    /// `sha3::Keccak256` for on-chain Solidity verifiers), use
+    /// [`prove_step_with`](Self::prove_step_with) instead.
     pub fn prove_step(&mut self, transition_witness: T::Witness) -> Result<Vec<u8>, IvcError> {
+        self.prove_step_with::<PoseidonState<F>>(transition_witness)
+    }
+
+    /// Like [`prove_step`](Self::prove_step) but produces the **outer**
+    /// Fiat-Shamir transcript of the returned proof under a caller-supplied
+    /// [`TranscriptHash`].  This is intended for the **final** proof of an
+    /// IVC chain when that proof needs to be consumed by a verifier whose
+    /// transcript flavour differs from the in-circuit Poseidon one — most
+    /// notably an on-chain Solidity verifier expecting
+    /// `CircuitTranscript<sha3::Keccak256>`.
+    ///
+    /// The chain semantics are unchanged: every previous step produced a
+    /// Poseidon-transcript proof, and the off-circuit prepare on
+    /// `self.proof` (the one being absorbed into the new accumulator) still
+    /// uses [`PoseidonState<F>`].  Only the **outermost** prove call emits
+    /// the proof under `H`.
+    ///
+    /// IMPORTANT: After calling `prove_step_with::<H>` with a non-Poseidon
+    /// `H`, the prover's [`self.proof`] holds bytes encoded under `H`'s
+    /// transcript.  Calling [`prove_step`] (or `prove_step_with::<H'>` with
+    /// a different `H'`) afterwards will fail in the off-circuit prepare on
+    /// the previous proof because the embedded `init_from_bytes` is hard-
+    /// coded to Poseidon.  In the typical "final proof of the chain"
+    /// pattern this is fine — `prove_step_with::<Keccak256>` is the last
+    /// call on the prover.
+    pub fn prove_step_with<H>(
+        &mut self,
+        transition_witness: T::Witness,
+    ) -> Result<Vec<u8>, IvcError>
+    where
+        H: TranscriptHash,
+        midnight_curves::G1Projective: Hashable<H>,
+        midnight_curves::Fq: Hashable<H> + Sampleable<H>,
+    {
         let next_state =
             T::transition(self.relation.ctx(), &self.state, transition_witness.clone());
         let is_genesis = self.proof.is_empty();
@@ -67,7 +108,10 @@ impl<T: Ivc> IvcProver<T> {
 
         let fixed_bases = midnight_circuits::verifier::fixed_bases::<S>("self_vk", vk);
 
-        // Off-circuit verification of the previous proof.
+        // Off-circuit verification of the previous proof.  The previous
+        // proof was produced by [`prove_step`] above and therefore uses
+        // PoseidonState<F> regardless of which `H` we are about to use for
+        // the outer prove of THIS step.
         let proof_acc = if is_genesis {
             // In the case of genesis, we simply set `proof_acc` to be the trivial
             // accumulator (which evaluates to the identity point on both sides).
@@ -125,7 +169,7 @@ impl<T: Ivc> IvcProver<T> {
             transition_witness,
         };
 
-        let proof = midnight_zk_stdlib::prove::<IvcCircuit<T>, PoseidonState<F>>(
+        let proof = midnight_zk_stdlib::prove::<IvcCircuit<T>, H>(
             &self.params,
             &self.pk,
             &self.relation,

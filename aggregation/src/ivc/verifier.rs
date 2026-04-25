@@ -10,7 +10,7 @@ use midnight_circuits::{hash::poseidon::PoseidonState, verifier::Accumulator};
 use midnight_proofs::{
     plonk::{self},
     poly::kzg::{params::ParamsVerifierKZG, KZGCommitmentScheme},
-    transcript::{CircuitTranscript, Transcript},
+    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash},
 };
 use midnight_zk_stdlib::{MidnightVK, Relation};
 
@@ -48,6 +48,30 @@ impl IvcVerifier {
         instance: &IvcInstance<T>,
         proof: &[u8],
     ) -> Result<(), IvcError> {
+        self.verify_with::<T, PoseidonState<F>>(ctx, instance, proof)
+    }
+
+    /// Like [`verify`](Self::verify) but parses the outer proof's
+    /// Fiat-Shamir transcript under a caller-supplied [`TranscriptHash`].
+    /// The companion to
+    /// [`IvcProver::prove_step_with`](super::IvcProver::prove_step_with);
+    /// use this to verify the **final** proof of an IVC chain when that
+    /// proof was emitted under a non-Poseidon transcript (e.g.
+    /// `sha3::Keccak256`).
+    ///
+    /// All non-transcript checks (instance VK match, decider, accumulator
+    /// pairing) are unchanged from [`verify`](Self::verify).
+    pub fn verify_with<T: Ivc, H>(
+        &self,
+        ctx: &T::Context,
+        instance: &IvcInstance<T>,
+        proof: &[u8],
+    ) -> Result<(), IvcError>
+    where
+        H: TranscriptHash,
+        midnight_curves::G1Projective: Hashable<H>,
+        midnight_curves::Fq: Hashable<H> + Sampleable<H>,
+    {
         // Reject proofs whose instance claims a different verifying key.
         if instance.vk_repr != self.vk.vk().transcript_repr() {
             return Err(IvcError::VkMismatch);
@@ -62,15 +86,14 @@ impl IvcVerifier {
         let pi =
             IvcCircuit::<T>::format_instance(instance).map_err(|_| IvcError::InvalidInstance)?;
 
-        let mut transcript = CircuitTranscript::<PoseidonState<F>>::init_from_bytes(proof);
-        let dual_msm =
-            plonk::prepare::<F, KZGCommitmentScheme<E>, CircuitTranscript<PoseidonState<F>>>(
-                self.vk.vk(),
-                &[&[C::identity()]],
-                &[&[&pi]],
-                &mut transcript,
-            )
-            .map_err(|_| IvcError::InvalidProof)?;
+        let mut transcript = CircuitTranscript::<H>::init_from_bytes(proof);
+        let dual_msm = plonk::prepare::<F, KZGCommitmentScheme<E>, CircuitTranscript<H>>(
+            self.vk.vk(),
+            &[&[C::identity()]],
+            &[&[&pi]],
+            &mut transcript,
+        )
+        .map_err(|_| IvcError::InvalidProof)?;
 
         transcript.assert_empty().map_err(|_| IvcError::TranscriptNotEmpty)?;
 

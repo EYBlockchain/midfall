@@ -13,6 +13,16 @@
 //! At each IVC step the transition function verifies one inner proof
 //! in-circuit and folds the result into the running accumulator.
 //!
+//! The first `STEPS - 1` chain steps run with the default
+//! `CircuitTranscript<PoseidonState<F>>` outer transcript (matches the
+//! in-circuit verifier baked into `IvcCircuit`).  The **final** step
+//! re-runs the same IVC transition but emits its outer Fiat-Shamir
+//! transcript under [`sha3::Keccak256`] via
+//! [`IvcProver::prove_step_with`] / [`IvcVerifier::verify_with`], so
+//! that the resulting last-proof-of-the-chain is consumable by a
+//! Keccak-friendly verifier — most notably the on-chain Solidity
+//! `PlonkVerifier` in `proofs/solidity-verifier/`.
+//!
 //! DO NOT add this example to the CI as it is slow.
 
 #[path = "common/mod.rs"]
@@ -44,6 +54,7 @@ use midnight_zk_stdlib::{
     utils::plonk_api::{load_srs, SrsSource},
     MidnightVK, Relation, ZkStdLib, ZkStdLibArch,
 };
+use sha3::Keccak256;
 
 use crate::common::sha_preimage;
 
@@ -389,22 +400,57 @@ fn main() {
     println!("IVC setup completed in {:.2?}", start.elapsed());
 
     // Aggregation steps.
+    //
+    // Steps `0 .. STEPS - 1` use the default Poseidon-backed outer
+    // transcript so the chain stays compatible with the in-circuit
+    // verifier hard-coded inside `IvcCircuit`.  The final step
+    // (`STEPS - 1`) re-uses the very same transition logic but emits
+    // its outer proof under `sha3::Keccak256`, yielding a proof that a
+    // Keccak-friendly off-chain or on-chain verifier (e.g. the Solidity
+    // `PlonkVerifier`) can consume directly.
+    let mut keccak_proof: Option<Vec<u8>> = None;
     for i in 0..STEPS {
         let ivc_witness = AggregationWitness {
             inner_statement: inner_statements[i],
             inner_proof: inner_proofs[i].clone(),
         };
 
+        let is_final = i + 1 == STEPS;
+
         let start = Instant::now();
-        let ivc_proof = prover.prove_step(ivc_witness).unwrap();
+        let ivc_proof = if is_final {
+            // FINAL step: emit the outer proof under Keccak256 so this
+            // proof can be verified by `IvcVerifier::verify_with::<_,
+            // Keccak256>` and (downstream) by Keccak-transcript Solidity
+            // verifiers.
+            prover.prove_step_with::<Keccak256>(ivc_witness).unwrap()
+        } else {
+            prover.prove_step(ivc_witness).unwrap()
+        };
         let prove_time = start.elapsed();
 
         let ivc_instance = prover.instance();
         let start = Instant::now();
-        verifier.verify(&inner_ctx, &ivc_instance, &ivc_proof).unwrap();
+        if is_final {
+            verifier
+                .verify_with::<ProofAggregation, Keccak256>(&inner_ctx, &ivc_instance, &ivc_proof)
+                .unwrap();
+        } else {
+            verifier.verify(&inner_ctx, &ivc_instance, &ivc_proof).unwrap();
+        }
         let verify_time = start.elapsed();
 
-        println!("Step {i}: IVC prove {prove_time:.2?}, verify {verify_time:.2?}");
+        let transcript_label = if is_final { "Keccak256" } else { "Poseidon" };
+        println!(
+            "Step {i} [{transcript_label} outer transcript]: \
+             IVC prove {prove_time:.2?}, verify {verify_time:.2?}, \
+             proof {} bytes",
+            ivc_proof.len()
+        );
+
+        if is_final {
+            keccak_proof = Some(ivc_proof);
+        }
     }
 
     let final_state = prover.instance().state().clone();
@@ -414,4 +460,14 @@ fn main() {
         println!("  {i}: {hex}");
     }
     println!("Statements hash: {:?}", final_state.statements_hash);
+
+    // The final-step proof emitted under Keccak256 is the artefact a
+    // downstream Keccak-transcript verifier (e.g. the Solidity
+    // `PlonkVerifier` in `proofs/solidity-verifier/`) would consume.
+    let final_proof = keccak_proof.expect("final Keccak proof produced");
+    println!(
+        "\nFinal Keccak256-transcript proof: {} bytes (suitable for \
+         Keccak-friendly off-chain / on-chain verification).",
+        final_proof.len()
+    );
 }
