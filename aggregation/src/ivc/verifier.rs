@@ -85,4 +85,58 @@ impl IvcVerifier {
 
         Ok(())
     }
+
+    /// Verifies an IVC proof that was produced by
+    /// [`IvcProver::prove_final_step`](super::IvcProver::prove_final_step)
+    /// (i.e. under a Keccak-256 transcript) against the given instance.
+    ///
+    /// Identical to [`verify`](Self::verify) except that the outer
+    /// Fiat-Shamir transcript is parsed as Keccak rather than Poseidon. All
+    /// other checks (vk match, decider, accumulator pairing) are unchanged.
+    ///
+    /// This is the off-circuit twin of the on-chain Solidity verifier, useful
+    /// as a sanity check before deploying / dispatching a final IVC proof to
+    /// an EVM contract.
+    #[cfg(feature = "keccak-transcript")]
+    pub fn verify_final<T: Ivc>(
+        &self,
+        ctx: &T::Context,
+        instance: &IvcInstance<T>,
+        proof: &[u8],
+    ) -> Result<(), IvcError> {
+        use sha3::Keccak256;
+
+        if instance.vk_repr != self.vk.vk().transcript_repr() {
+            return Err(IvcError::VkMismatch);
+        }
+
+        if !T::decider(ctx, &instance.state) {
+            return Err(IvcError::DeciderFailed);
+        }
+
+        let fixed_bases = midnight_circuits::verifier::fixed_bases::<S>("self_vk", self.vk.vk());
+
+        let pi =
+            IvcCircuit::<T>::format_instance(instance).map_err(|_| IvcError::InvalidInstance)?;
+
+        let mut transcript = CircuitTranscript::<Keccak256>::init_from_bytes(proof);
+        let dual_msm = plonk::prepare::<F, KZGCommitmentScheme<E>, CircuitTranscript<Keccak256>>(
+            self.vk.vk(),
+            &[&[C::identity()]],
+            &[&[&pi]],
+            &mut transcript,
+        )
+        .map_err(|_| IvcError::InvalidProof)?;
+
+        transcript.assert_empty().map_err(|_| IvcError::TranscriptNotEmpty)?;
+
+        let proof_acc = Accumulator::from_dual_msm(dual_msm, "self_vk", &fixed_bases);
+
+        let final_acc = Accumulator::<S>::accumulate(&[proof_acc, instance.acc.clone()]);
+        if !final_acc.check(&self.params_verifier, &fixed_bases) {
+            return Err(IvcError::InvalidProof);
+        };
+
+        Ok(())
+    }
 }

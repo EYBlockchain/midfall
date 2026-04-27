@@ -154,4 +154,111 @@ impl<T: Ivc> IvcProver<T> {
             acc: self.acc.clone(),
         }
     }
+
+    /// Like [`prove_step`](Self::prove_step), but emits the final-step proof
+    /// under a Keccak-256 transcript instead of the Poseidon transcript used
+    /// by the regular IVC chain.
+    ///
+    /// This is intended to be called as the **last** step in an IVC chain when
+    /// the resulting proof must be verified by an EVM Solidity contract: the
+    /// EVM has cheap native Keccak (the `KECCAK256` opcode + `keccakf` is
+    /// ~36 gas/word), but Poseidon over Fr requires hundreds of EVM ops per
+    /// permutation.
+    ///
+    /// Compared to [`prove_step`](Self::prove_step):
+    /// - The off-circuit verification of the *previous* proof still uses
+    ///   `PoseidonState<F>` (since prior steps emitted Poseidon-transcript
+    ///   proofs).
+    /// - The IVC circuit's *in-circuit* re-verification of the previous proof
+    ///   also still uses Poseidon (the IVC gadget hard-codes
+    ///   `PoseidonState`); this is what makes prior-proof verification cheap
+    ///   in-circuit.
+    /// - Only the **outer** Fiat-Shamir transcript used to produce the new
+    ///   final proof switches to Keccak.
+    ///
+    /// As a consequence, a proof produced by `prove_final_step` cannot be
+    /// folded into a subsequent IVC step: the next IVC circuit would expect
+    /// a Poseidon transcript. Use this only as a one-shot terminator.
+    ///
+    /// The instance shape is identical to [`prove_step`](Self::prove_step)'s
+    /// output and can still be queried via [`instance`](Self::instance).
+    #[cfg(feature = "keccak-transcript")]
+    pub fn prove_final_step(
+        &mut self,
+        transition_witness: T::Witness,
+    ) -> Result<Vec<u8>, IvcError> {
+        use sha3::Keccak256;
+
+        let next_state =
+            T::transition(self.relation.ctx(), &self.state, transition_witness.clone());
+        let is_genesis = self.proof.is_empty();
+
+        let vk = self.pk.pk().get_vk();
+        let vk_repr = vk.transcript_repr();
+
+        let fixed_bases = midnight_circuits::verifier::fixed_bases::<S>("self_vk", vk);
+
+        // Off-circuit verification of the previous proof still uses Poseidon
+        // because prior steps were generated under PoseidonState<F>. The
+        // resulting `proof_acc` is what we accumulate and what the IVC
+        // circuit re-verifies in-circuit.
+        let proof_acc = if is_genesis {
+            Accumulator::<S>::trivial(&fixed_bases.keys().cloned().collect::<Vec<_>>())
+        } else {
+            let prev_pi = [
+                AssignedVk::<S>::as_public_input(vk),
+                T::format_public_input(&self.state),
+                AssignedAccumulator::<S>::as_public_input(&self.acc),
+            ]
+            .concat();
+
+            let mut transcript =
+                CircuitTranscript::<PoseidonState<F>>::init_from_bytes(&self.proof);
+            let dual_msm = plonk::prepare::<
+                F,
+                KZGCommitmentScheme<E>,
+                CircuitTranscript<PoseidonState<F>>,
+            >(vk, &[&[C::identity()]], &[&[&prev_pi]], &mut transcript)?;
+
+            if !dual_msm.clone().check(&self.params.verifier_params()) {
+                return Err(IvcError::InvalidProof);
+            }
+
+            Accumulator::from_dual_msm(dual_msm, "self_vk", &fixed_bases)
+        };
+
+        let mut next_acc = Accumulator::accumulate(&[proof_acc, self.acc.clone()]);
+        next_acc.collapse();
+
+        let instance = IvcInstance {
+            vk_repr,
+            state: next_state.clone(),
+            acc: next_acc.clone(),
+        };
+
+        let witness = IvcWitness {
+            prev_state: self.state.clone(),
+            prev_acc: self.acc.clone(),
+            prev_proof: self.proof.clone(),
+            transition_witness,
+        };
+
+        // The ONLY difference from `prove_step`: emit the new proof under a
+        // Keccak transcript. The IVC circuit's gates are unchanged - the
+        // outer Fiat-Shamir transcript is the only thing that switches.
+        let proof = midnight_zk_stdlib::prove::<IvcCircuit<T>, Keccak256>(
+            &self.params,
+            &self.pk,
+            &self.relation,
+            &instance,
+            witness,
+            OsRng,
+        )?;
+
+        self.state = next_state;
+        self.proof = proof.clone();
+        self.acc = next_acc;
+
+        Ok(proof)
+    }
 }
