@@ -28,6 +28,16 @@ pub struct IvcVerifier {
 }
 
 impl IvcVerifier {
+    /// Returns a reference to the canonical IVC verifying key.
+    ///
+    /// Useful when an external consumer (e.g. an EVM Solidity-verifier
+    /// renderer) needs the underlying `MidnightVK` to drive its codegen
+    /// or to read circuit metadata (constraint system, fixed
+    /// commitments, permutation commitments).
+    pub fn vk(&self) -> &MidnightVK {
+        &self.vk
+    }
+
     /// Verifies an IVC proof against the given instance.
     ///
     /// Checks that the proof is valid with respect to the given instance by:
