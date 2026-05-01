@@ -51,8 +51,13 @@ single-h-commitment = [
     "midnight-circuits/single-h-commitment",
     "midnight-zk-stdlib/single-h-commitment",
 ]
-fewer-point-sets = [
+proof-fewer-point-sets = ["midnight-proofs/fewer-point-sets"]
+in-circuit-fewer-point-sets = [
     "midnight-proofs/fewer-point-sets",
+    "midnight-circuits/in-circuit-fewer-point-sets",
+]
+fewer-point-sets = [
+    "proof-fewer-point-sets",
     "midnight-circuits/fewer-point-sets",
 ]
 # Enables `IvcProver::prove_final_step` / `IvcVerifier::verify_final`,

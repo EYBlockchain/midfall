@@ -330,7 +330,7 @@ pub(crate) fn multi_prepare<S: SelfEmulation>(
     queries: &[VerifierQuery<S>],
 ) -> Result<AssignedAccumulator<S>, Error> {
     // Add dummy queries to reduce the number of distinct multi-open point sets.
-    #[cfg(feature = "fewer-point-sets")]
+    #[cfg(any(feature = "fewer-point-sets", feature = "in-circuit-fewer-point-sets"))]
     let queries = &{
         let pairs: Vec<_> = queries.iter().map(|q| (q.get_commitment(), q.get_point())).collect();
         let dummy_openings = midnight_proofs::poly::kzg::compute_dummy_queries(&pairs);

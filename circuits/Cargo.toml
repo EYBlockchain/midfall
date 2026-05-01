@@ -55,9 +55,15 @@ heap_profiling = []
 truncated-challenges = ["midnight-proofs/truncated-challenges"]
 # Commit to the quotient polynomial H as a single commitment (see midnight-proofs)
 single-h-commitment = ["midnight-proofs/single-h-commitment"]
-# Enables a heuristic to reduce the number of distinct multi-open point sets,
-# lowering the verifier MSM length (see midnight-proofs for details).
-fewer-point-sets = ["midnight-proofs/fewer-point-sets"]
+# Enables the in-circuit verifier dummy-query heuristic, lowering the verifier
+# MSM length for proofs checked inside a circuit.
+in-circuit-fewer-point-sets = []
+# Backwards-compatible feature: enable both the in-circuit verifier heuristic
+# and the proof-system dummy-query capability.
+fewer-point-sets = [
+    "in-circuit-fewer-point-sets",
+    "midnight-proofs/fewer-point-sets",
+]
 # Enable development curves (BN256, Pasta)
 dev-curves = ["midnight-curves/dev-curves", "midnight-proofs/dev-curves"]
 
