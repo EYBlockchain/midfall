@@ -208,7 +208,9 @@ impl Hashable<Keccak256> for G1 {
 #[cfg(all(feature = "dev-curves", feature = "keccak-transcript"))]
 impl Hashable<Keccak256> for Fr {
     fn to_input(&self) -> Vec<u8> {
-        self.to_bytes().to_vec()
+        let mut bytes = self.to_bytes().to_vec();
+        bytes.reverse();
+        bytes
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -258,7 +260,9 @@ impl Hashable<Keccak256> for midnight_curves::G1Projective {
 #[cfg(feature = "keccak-transcript")]
 impl Hashable<Keccak256> for midnight_curves::Fq {
     fn to_input(&self) -> Vec<u8> {
-        self.to_repr().to_vec()
+        let mut bytes = self.to_repr().to_vec();
+        bytes.reverse();
+        bytes
     }
 
     fn to_bytes(&self) -> Vec<u8> {
