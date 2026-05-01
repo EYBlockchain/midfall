@@ -10,14 +10,6 @@ const BLAKE2B_PREFIX_CHALLENGE: u8 = 0;
 /// Prefix to a prover's message
 const BLAKE2B_PREFIX_COMMON: u8 = 1;
 
-/// Prefix to a prover's message soliciting a challenge (Keccak256 transcript)
-#[cfg(feature = "keccak-transcript")]
-const KECCAK256_PREFIX_CHALLENGE: u8 = 0;
-
-/// Prefix to a prover's message (Keccak256 transcript)
-#[cfg(feature = "keccak-transcript")]
-const KECCAK256_PREFIX_COMMON: u8 = 1;
-
 /// Hash function that can be used for transcript
 pub trait TranscriptHash: Clone {
     /// Input type of the hash function

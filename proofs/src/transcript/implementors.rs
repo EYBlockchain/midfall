@@ -9,7 +9,6 @@ use midnight_curves::bn256::{Fr, G1};
 use sha3::{Digest, Keccak256};
 
 #[cfg(feature = "keccak-transcript")]
-use crate::transcript::{KECCAK256_PREFIX_CHALLENGE, KECCAK256_PREFIX_COMMON};
 use crate::transcript::{
     Hashable, Sampleable, TranscriptHash, BLAKE2B_PREFIX_CHALLENGE, BLAKE2B_PREFIX_COMMON,
 };
@@ -163,34 +162,18 @@ impl TranscriptHash for Keccak256 {
     type Output = Vec<u8>;
 
     fn init() -> Self {
-        let mut hasher = Keccak256::new();
-        hasher.update(b"Domain separator for transcript");
-        hasher
+        Keccak256::new()
     }
 
     fn absorb(&mut self, input: &Self::Input) {
-        self.update([KECCAK256_PREFIX_COMMON]);
         self.update(input);
     }
 
     fn squeeze(&mut self) -> Self::Output {
-        self.update([KECCAK256_PREFIX_CHALLENGE]);
-
-        // Keccak256 produces a 32-byte digest, which is not wide enough to
-        // safely sample a uniformly random scalar in a ~256-bit field via
-        // `from_uniform_bytes`. We therefore produce 64 bytes by running two
-        // domain-separated Keccak256 finalisations over the current state.
-        let mut h1 = self.clone();
-        h1.update([0u8]);
-        let out1 = h1.finalize();
-
-        let mut h2 = self.clone();
-        h2.update([1u8]);
-        let out2 = h2.finalize();
-
-        let mut out = Vec::with_capacity(64);
-        out.extend_from_slice(&out1);
-        out.extend_from_slice(&out2);
+        // Keccak256 produces a 32-byte digest. For Fiat-Shamir challenges we
+        // sample from that digest directly and let Sampleable zero-pad it to
+        // the 64-byte `from_uniform_bytes` input.
+        let out = self.clone().finalize().to_vec();
 
         // Re-seed the state with the squeezed challenge so that subsequent
         // absorb/squeeze calls depend on the challenge we just produced.
@@ -245,9 +228,9 @@ impl Hashable<Keccak256> for Fr {
 #[cfg(all(feature = "dev-curves", feature = "keccak-transcript"))]
 impl Sampleable<Keccak256> for Fr {
     fn sample(hash_output: Vec<u8>) -> Self {
-        assert!(hash_output.len() <= 64);
+        assert_eq!(hash_output.len(), 32);
         let mut bytes = [0u8; 64];
-        bytes[..hash_output.len()].copy_from_slice(&hash_output);
+        bytes[..32].copy_from_slice(&hash_output);
         Fr::from_uniform_bytes(&bytes)
     }
 }
@@ -295,10 +278,9 @@ impl Hashable<Keccak256> for midnight_curves::Fq {
 #[cfg(feature = "keccak-transcript")]
 impl Sampleable<Keccak256> for midnight_curves::Fq {
     fn sample(hash_output: Vec<u8>) -> Self {
-        assert!(hash_output.len() <= 64);
-        assert!(hash_output.len() >= (midnight_curves::Fq::NUM_BITS as usize / 8) + 12);
+        assert_eq!(hash_output.len(), 32);
         let mut bytes = [0u8; 64];
-        bytes[..hash_output.len()].copy_from_slice(&hash_output);
+        bytes[..32].copy_from_slice(&hash_output);
         midnight_curves::Fq::from_uniform_bytes(&bytes)
     }
 }
