@@ -35,7 +35,9 @@ use midnight_proofs::{
             KZGCommitmentScheme,
         },
     },
-    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash},
+    transcript::{
+        CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash, TranscriptInputBytes,
+    },
     utils::SerdeFormat,
 };
 use rand::{CryptoRng, RngCore};
@@ -95,6 +97,7 @@ macro_rules! plonk_api {
             ) -> Result<Vec<u8>, Error>
             where
                 H: TranscriptHash,
+                H::Input: TranscriptInputBytes,
                 $projective: Hashable<H>,
                 $native: Hashable<H> + Sampleable<H>,
             {
@@ -138,6 +141,7 @@ macro_rules! plonk_api {
             ) -> Result<(), Error>
             where
                 H: TranscriptHash,
+                H::Input: TranscriptInputBytes,
                 $projective: Hashable<H>,
                 $native: Hashable<H> + Sampleable<H>,
             {

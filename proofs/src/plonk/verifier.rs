@@ -12,7 +12,7 @@ use crate::{
         traces::VerifierTrace,
     },
     poly::{commitment::PolynomialCommitmentScheme, CommitmentLabel, VerifierQuery},
-    transcript::{read_n, Hashable, Sampleable, Transcript},
+    transcript::{read_n, Hashable, Sampleable, Transcript, TranscriptInputBytes},
     utils::arithmetic::compute_inner_product,
 };
 
@@ -39,6 +39,7 @@ where
         + FromUniformBytes<64>
         + Ord,
     CS::Commitment: Hashable<T::Hash>,
+    <T::Hash as crate::transcript::TranscriptHash>::Input: TranscriptInputBytes,
 {
     #[cfg(not(feature = "committed-instances"))]
     let committed_instances: Vec<Vec<CS::Commitment>> = vec![vec![]; instances.len()];
@@ -65,6 +66,24 @@ where
 
     // Hash verification key into transcript
     vk.hash_into(transcript)?;
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            1,
+            "vk_digest",
+            &vk.transcript_repr(),
+        );
+        let num_instances = instances
+            .first()
+            .and_then(|cols| cols.first())
+            .map(|values| values.len())
+            .unwrap_or_default();
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            2,
+            "num_instances",
+            &F::from_u128(num_instances as u128),
+        );
+    }
 
     for committed_instances in committed_instances.iter() {
         for commitment in committed_instances.iter() {
@@ -110,6 +129,8 @@ where
 
     // Sample theta challenge for keeping lookup columns linearly independent
     let theta: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(7, "theta", &theta);
 
     // Read multiplicities
     let lookup_multiplicities = (0..num_proofs)
@@ -125,9 +146,13 @@ where
 
     // Sample beta challenge
     let beta: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(8, "beta", &beta);
 
     // Sample gamma challenge
     let gamma: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(9, "gamma", &gamma);
 
     let permutations_committed = (0..num_proofs)
         .map(|_| {
@@ -161,6 +186,8 @@ where
 
     // Sample y challenge, which keeps the gates linearly independent.
     let y: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(10, "y", &y);
 
     Ok(VerifierTrace {
         advice_commitments,
@@ -201,6 +228,7 @@ where
         + Hash
         + Ord,
     CS::Commitment: Hashable<T::Hash>,
+    <T::Hash as crate::transcript::TranscriptHash>::Input: TranscriptInputBytes,
 {
     #[cfg(not(feature = "committed-instances"))]
     let committed_instances: Vec<Vec<CS::Commitment>> = vec![vec![]; instances.len()];
@@ -238,6 +266,26 @@ where
     // Sample x challenge, which is used to ensure the circuit is
     // satisfied with high probability.
     let x: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        crate::plonk::solidity_trace::record_u64(3, "k", vk.get_domain().k() as u64);
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            4,
+            "n_inv",
+            &F::from(vk.n()).invert().unwrap(),
+        );
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            5,
+            "omega",
+            &vk.get_domain().get_omega(),
+        );
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            6,
+            "omega_inv",
+            &vk.get_domain().get_omega_inv(),
+        );
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(11, "x", &x);
+    }
 
     let splitting_factor = x.pow_vartime([vk.n() - 1]);
     let xn = splitting_factor * x;
@@ -332,6 +380,40 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
 
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        let blinding_factors = vk.cs.blinding_factors();
+        let l_evals = vk.domain.l_i_range(x, xn, (-((blinding_factors + 1) as i32))..=0);
+        assert_eq!(l_evals.len(), 2 + blinding_factors);
+        let l_last = l_evals[0];
+        let l_blind =
+            l_evals[1..(1 + blinding_factors)].iter().fold(F::ZERO, |acc, eval| acc + eval);
+        let l_0 = l_evals[1 + blinding_factors];
+        let x_n_minus_1_inv = (xn - F::ONE).invert().unwrap();
+        let instance_eval = vk
+            .cs
+            .instance_queries
+            .iter()
+            .position(|(column, _)| column.index() >= nb_committed_instances)
+            .map(|idx| instance_evals[0][idx])
+            .unwrap_or(F::ZERO);
+
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(17, "x_n", &xn);
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            18,
+            "x_n_minus_1_inv",
+            &x_n_minus_1_inv,
+        );
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(19, "l_last", &l_last);
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(20, "l_blind", &l_blind);
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(21, "l_0", &l_0);
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            22,
+            "instance_eval",
+            &instance_eval,
+        );
+    }
+
     // Partially evaluate batched identities
     // (without fixed columns corresponding to simple, multiplicative selectors)
     let expressions = partially_evaluate_identities(
@@ -361,6 +443,24 @@ where
         &splitting_factor,
         &quotient_limb_coms,
     );
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            23,
+            "linearization_expected_eval",
+            &lin_com.eval,
+        );
+
+        let mut linearization_scalars = Vec::with_capacity(0x80);
+        linearization_scalars.extend_from_slice(&splitting_factor.to_input().into_trace_bytes());
+        linearization_scalars.extend_from_slice(&(F::ONE - xn).to_input().into_trace_bytes());
+        linearization_scalars.extend_from_slice(&[0u8; 0x40]);
+        crate::plonk::solidity_trace::record_bytes(
+            24,
+            "linearization_scalars",
+            linearization_scalars,
+        );
+    }
 
     // Collect queries that are checked in the multi-open argument
     //
@@ -464,6 +564,7 @@ where
         + Hash
         + Ord,
     CS::Commitment: Hashable<T::Hash>,
+    <T::Hash as crate::transcript::TranscriptHash>::Input: TranscriptInputBytes,
 {
     let trace = parse_trace(
         vk,

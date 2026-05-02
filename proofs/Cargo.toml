@@ -109,5 +109,12 @@ single-h-commitment = []
 # polynomials, which may slightly increase proof size.
 fewer-point-sets = []
 
+# Test/debug-only instrumentation used by the Solidity verifier generator to
+# differentially compare the native Rust verifier against generated Solidity
+# trace logs. The hooks record transcript-compatible scalar/G1 bytes and
+# selected verifier intermediate values, but are inert unless explicitly
+# started by the caller.
+solidity-verifier-trace = []
+
 [lib]
 bench = false

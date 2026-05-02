@@ -93,7 +93,9 @@ use midnight_proofs::{
             KZGCommitmentScheme,
         },
     },
-    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash},
+    transcript::{
+        CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash, TranscriptInputBytes,
+    },
     utils::SerdeFormat,
 };
 use num_bigint::BigUint;
@@ -1775,6 +1777,7 @@ pub fn prove<R: Relation, H: TranscriptHash>(
 where
     G1Projective: Hashable<H>,
     F: Hashable<H> + Sampleable<H>,
+    H::Input: TranscriptInputBytes,
 {
     let pi = R::format_instance(instance)?;
     let com_inst = R::format_committed_instances(&witness);
@@ -1808,6 +1811,7 @@ pub fn verify<R: Relation, H: TranscriptHash>(
 where
     G1Projective: Hashable<H>,
     F: Hashable<H> + Sampleable<H>,
+    H::Input: TranscriptInputBytes,
 {
     let pi = R::format_instance(instance)?;
     let committed_pi = committed_instance.unwrap_or(G1Affine::identity());
@@ -1839,6 +1843,7 @@ pub fn batch_verify<H: TranscriptHash + Send + Sync>(
 where
     G1Projective: Hashable<H>,
     F: Hashable<H> + Sampleable<H>,
+    H::Input: TranscriptInputBytes,
 {
     use rayon::prelude::*;
 
