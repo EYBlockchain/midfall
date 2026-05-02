@@ -322,6 +322,8 @@ where
     where
         E::Fr: Sampleable<T::Hash> + Ord + Hash + Hashable<T::Hash>,
         E::G1: 'com + Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         #[cfg(feature = "fewer-point-sets")]
         let queries_with_dummies;
@@ -351,6 +353,11 @@ where
         // https://zcash.github.io/halo2/design/proving-system/multipoint-opening.html
         let x1: E::Fr = transcript.squeeze_challenge();
         let x2: E::Fr = transcript.squeeze_challenge();
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(13, "x1", &x1);
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(14, "x2", &x2);
+        }
 
         let (commitment_map, point_sets) = construct_intermediate_sets(queries)?;
 
@@ -408,12 +415,16 @@ where
         };
 
         let f_com: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(25, "f_com", &f_com);
 
         // Sample a challenge x_3 for checking that f(X) was committed to
         // correctly.
         let x3: E::Fr = transcript.squeeze_challenge();
         #[cfg(feature = "truncated-challenges")]
         let x3 = truncate(x3);
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(15, "x3", &x3);
 
         let mut q_evals_on_x3 = Vec::<E::Fr>::with_capacity(q_eval_sets.len());
         for _ in 0..q_eval_sets.len() {
@@ -436,6 +447,8 @@ where
             );
 
         let x4: E::Fr = transcript.squeeze_challenge();
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(16, "x4", &x4);
 
         let final_com = {
             let size = q_coms.len() + 1;
@@ -458,6 +471,12 @@ where
 
             msm_inner_product(coms, &powers.take(size).collect::<Vec<_>>())
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            33,
+            "final_com",
+            &final_com.eval(),
+        );
 
         let v = {
             let mut evals = q_evals_on_x3;
@@ -471,8 +490,15 @@ where
 
             inner_product(&evals, powers)
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(31, "f_eval", &f_eval);
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(32, "v", &v);
+        }
 
         let pi: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(26, "pi", &pi);
 
         let mut pi_msm = MSMKZG::<E>::init();
         pi_msm.append_term(E::Fr::ONE, pi, CommitmentLabel::Custom("π".into()));
@@ -493,6 +519,19 @@ where
             right: final_com,
         };
         msm_accumulator.right.add_msm(&scaled_pi);
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                27,
+                "pairing_lhs",
+                &msm_accumulator.left.eval(),
+            );
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                28,
+                "pairing_rhs",
+                &msm_accumulator.right.eval(),
+            );
+        }
 
         Ok(msm_accumulator)
     }
