@@ -25,8 +25,15 @@ impl<F: PrimeField> Argument<F> {
     ) -> Result<Committed<F, CS>, Error>
     where
         CS::Commitment: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let trash_commitment = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+            "proof_trash_commitment",
+            &trash_commitment,
+        );
         Ok(Committed { trash_commitment })
     }
 }
@@ -38,8 +45,15 @@ impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Committed<F, CS> {
     ) -> Result<Evaluated<F, CS>, Error>
     where
         F: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let trash_eval = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+            "proof_trash_eval",
+            &trash_eval,
+        );
 
         Ok(Evaluated {
             committed: self,
