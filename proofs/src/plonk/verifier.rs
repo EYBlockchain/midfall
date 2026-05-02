@@ -114,6 +114,11 @@ where
                 {
                     if current_phase == *phase {
                         *commitment = transcript.read()?;
+                        #[cfg(feature = "solidity-verifier-trace")]
+                        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+                            "proof_advice_commitment",
+                            &*commitment,
+                        );
                     }
                 }
             }
@@ -262,6 +267,15 @@ where
     #[cfg(feature = "single-h-commitment")]
     let nb_quotient_coms = 1;
     let quotient_limb_coms = read_n(transcript, nb_quotient_coms)?;
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        for commitment in &quotient_limb_coms {
+            crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+                "proof_quotient_commitment",
+                commitment,
+            );
+        }
+    }
 
     // Sample x challenge, which is used to ensure the circuit is
     // satisfied with high probability.
@@ -319,7 +333,13 @@ where
                     .iter()
                     .map(|(column, rotation)| {
                         if column.index() < nb_committed_instances {
-                            transcript.read()
+                            let eval = transcript.read()?;
+                            #[cfg(feature = "solidity-verifier-trace")]
+                            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                                "proof_committed_instance_eval",
+                                &eval,
+                            );
+                            Ok::<F, Error>(eval)
                         } else {
                             let instances = instances[column.index() - nb_committed_instances];
                             let offset = (max_rotation - rotation.0) as usize;
@@ -335,7 +355,19 @@ where
     };
 
     let advice_evals = (0..num_proofs)
-        .map(|_| -> Result<Vec<_>, _> { read_n(transcript, vk.cs.advice_queries.len()) })
+        .map(|_| -> Result<Vec<_>, _> {
+            let evals = read_n(transcript, vk.cs.advice_queries.len())?;
+            #[cfg(feature = "solidity-verifier-trace")]
+            {
+                for eval in &evals {
+                    crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                        "proof_advice_eval",
+                        eval,
+                    );
+                }
+            }
+            Ok::<Vec<F>, Error>(evals)
+        })
         .collect::<Result<Vec<_>, _>>()?;
 
     // Read (num_fixed_columns - num_simple_selectors) evals and from the transcript
@@ -345,6 +377,12 @@ where
         transcript,
         vk.cs.num_fixed_columns() - vk.cs.num_simple_selectors(),
     )?;
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        for eval in &fixed_evals {
+            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>("proof_fixed_eval", eval);
+        }
+    }
     for (idx, (col, _)) in vk.cs.fixed_queries().iter().enumerate() {
         if vk.cs.has_simple_selector_col(col.index()) {
             fixed_evals.insert(idx, F::ONE)
@@ -431,6 +469,16 @@ where
         trash_challenge,
         &challenges,
     );
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        for (idx, (_, eval)) in expressions.iter().enumerate() {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                crate::plonk::solidity_trace::QUOTIENT_IDENTITY_TRACE_BASE + idx as u64,
+                "quotient_identity_eval",
+                eval,
+            );
+        }
+    }
 
     let lin_com = compute_linearization_commitment(
         expressions,
@@ -447,6 +495,19 @@ where
             23,
             "linearization_expected_eval",
             &lin_com.eval,
+        );
+
+        let linearization_commitment = lin_com
+            .commitment
+            .as_terms()
+            .into_iter()
+            .fold(CS::Commitment::default(), |acc, (scalar, commitment)| {
+                acc + commitment * scalar
+            });
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            crate::plonk::solidity_trace::LINEARIZATION_COMMITMENT_TRACE_ID,
+            "linearization_commitment",
+            &linearization_commitment,
         );
 
         let mut linearization_scalars = Vec::with_capacity(0x80);

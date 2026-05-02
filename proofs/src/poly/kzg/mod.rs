@@ -335,11 +335,17 @@ where
                 let pairs: Vec<_> =
                     queries.iter().map(|q| (q.commitment.clone(), q.point)).collect();
                 for (idx, point) in compute_dummy_queries(&pairs) {
+                    let eval = transcript.read().map_err(|_| Error::SamplingError)?;
+                    #[cfg(feature = "solidity-verifier-trace")]
+                    crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                        "proof_dummy_eval",
+                        &eval,
+                    );
                     queries.push(VerifierQuery {
                         point,
                         commitment_label: queries[idx].commitment_label.clone(),
                         commitment: queries[idx].commitment.clone(),
-                        eval: transcript.read().map_err(|_| Error::SamplingError)?,
+                        eval,
                     });
                 }
                 queries
@@ -413,8 +419,20 @@ where
             let point_sets: Vec<_> = order.iter().map(|&i| point_sets[i].clone()).collect();
             (q_coms, q_eval_sets, point_sets)
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for (idx, q_com) in q_coms.iter().enumerate() {
+                crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                    crate::plonk::solidity_trace::PCS_Q_COM_TRACE_BASE + idx as u64,
+                    "pcs_q_com",
+                    &q_com.eval(),
+                );
+            }
+        }
 
         let f_com: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>("proof_f_com", &f_com);
         #[cfg(feature = "solidity-verifier-trace")]
         crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(25, "f_com", &f_com);
 
@@ -428,7 +446,10 @@ where
 
         let mut q_evals_on_x3 = Vec::<E::Fr>::with_capacity(q_eval_sets.len());
         for _ in 0..q_eval_sets.len() {
-            q_evals_on_x3.push(transcript.read().map_err(|_| Error::SamplingError)?);
+            let eval = transcript.read().map_err(|_| Error::SamplingError)?;
+            #[cfg(feature = "solidity-verifier-trace")]
+            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>("proof_q_eval", &eval);
+            q_evals_on_x3.push(eval);
         }
 
         // We can compute the expected msm_eval at x_3 using the u provided
@@ -497,6 +518,8 @@ where
         }
 
         let pi: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>("proof_pi", &pi);
         #[cfg(feature = "solidity-verifier-trace")]
         crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(26, "pi", &pi);
 

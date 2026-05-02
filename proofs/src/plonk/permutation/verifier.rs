@@ -35,6 +35,8 @@ impl Argument {
     ) -> Result<Committed<F, CS>, Error>
     where
         CS::Commitment: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let chunk_len = vk.cs_degree - 2;
 
@@ -43,6 +45,15 @@ impl Argument {
             .chunks(chunk_len)
             .map(|_| transcript.read())
             .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for commitment in &permutation_product_commitments {
+                crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+                    "proof_permutation_product_commitment",
+                    commitment,
+                );
+            }
+        }
 
         Ok(Committed {
             permutation_product_commitments,
@@ -57,12 +68,23 @@ impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> VerifyingKey<F, CS> {
     ) -> Result<CommonEvaluated<F>, Error>
     where
         F: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let permutation_evals = self
             .commitments
             .iter()
             .map(|_| transcript.read())
             .collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for eval in &permutation_evals {
+                crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                    "proof_permutation_common_eval",
+                    eval,
+                );
+            }
+        }
 
         Ok(CommonEvaluated { permutation_evals })
     }
@@ -76,6 +98,8 @@ impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Committed<F, CS> {
     where
         CS::Commitment: Hashable<T::Hash>,
         F: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let mut sets = vec![];
 
@@ -83,9 +107,25 @@ impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Committed<F, CS> {
 
         while iter.next().is_some() {
             let permutation_product_eval = transcript.read()?;
+            #[cfg(feature = "solidity-verifier-trace")]
+            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                "proof_permutation_product_eval",
+                &permutation_product_eval,
+            );
             let permutation_product_next_eval = transcript.read()?;
+            #[cfg(feature = "solidity-verifier-trace")]
+            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                "proof_permutation_product_next_eval",
+                &permutation_product_next_eval,
+            );
             let permutation_product_last_eval = if iter.len() > 0 {
-                Some(transcript.read()?)
+                let eval = transcript.read()?;
+                #[cfg(feature = "solidity-verifier-trace")]
+                crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                    "proof_permutation_product_last_eval",
+                    &eval,
+                );
+                Some(eval)
             } else {
                 None
             };
