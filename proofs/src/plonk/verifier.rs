@@ -1,3 +1,5 @@
+#[cfg(feature = "solidity-verifier-trace")]
+use std::collections::BTreeMap;
 use std::{
     hash::Hash,
     iter::{self},
@@ -122,9 +124,21 @@ where
                     }
                 }
             }
-            for (phase, challenge) in vk.cs.challenge_phase.iter().zip(challenges.iter_mut()) {
+            for (challenge_idx, (phase, challenge)) in
+                vk.cs.challenge_phase.iter().zip(challenges.iter_mut()).enumerate()
+            {
+                #[cfg(not(feature = "solidity-verifier-trace"))]
+                let _ = challenge_idx;
+
                 if current_phase == *phase {
                     *challenge = transcript.squeeze_challenge();
+                    #[cfg(feature = "solidity-verifier-trace")]
+                    crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                        crate::plonk::solidity_trace::USER_CHALLENGE_TRACE_BASE
+                            + challenge_idx as u64,
+                        "user_challenge",
+                        &*challenge,
+                    );
                 }
             }
         }
@@ -178,6 +192,14 @@ where
         .collect::<Result<Vec<_>, _>>()?;
 
     let trash_challenge: F = transcript.squeeze_challenge();
+    #[cfg(feature = "solidity-verifier-trace")]
+    if !vk.cs.trashcans.is_empty() {
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            12,
+            "trash_challenge",
+            &trash_challenge,
+        );
+    }
 
     let trashcans_committed = (0..num_proofs)
         .map(|_| -> Result<Vec<_>, _> {
@@ -475,6 +497,36 @@ where
             crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
                 crate::plonk::solidity_trace::QUOTIENT_IDENTITY_TRACE_BASE + idx as u64,
                 "quotient_identity_eval",
+                eval,
+            );
+        }
+    }
+
+    #[cfg(feature = "solidity-verifier-trace")]
+    {
+        let mut selector_folds = BTreeMap::<usize, F>::new();
+        let mut quotient_numerator = F::ZERO;
+        let mut y_pow = F::ONE;
+        for (col_idx, eval) in expressions.iter().rev() {
+            match col_idx {
+                Some(col_idx) => {
+                    *selector_folds.entry(*col_idx).or_insert(F::ZERO) += y_pow * eval;
+                }
+                None => {
+                    quotient_numerator += y_pow * eval;
+                }
+            }
+            y_pow *= y;
+        }
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            crate::plonk::solidity_trace::QUOTIENT_NUMERATOR_TRACE_ID,
+            "quotient_numerator",
+            &quotient_numerator,
+        );
+        for (idx, (_, eval)) in selector_folds.iter().enumerate() {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                crate::plonk::solidity_trace::SELECTOR_FOLD_TRACE_BASE + idx as u64,
+                "selector_fold",
                 eval,
             );
         }

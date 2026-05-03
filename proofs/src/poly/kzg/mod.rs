@@ -104,6 +104,8 @@ pub fn scoped_fewer_point_sets(enabled: bool) -> ScopedFewerPointSets {
     }
 }
 
+#[cfg(feature = "solidity-verifier-trace")]
+use crate::transcript::TranscriptInputBytes;
 #[cfg(feature = "truncated-challenges")]
 use crate::utils::arithmetic::{truncate, truncated_powers};
 use crate::{
@@ -421,6 +423,17 @@ where
         };
         #[cfg(feature = "solidity-verifier-trace")]
         {
+            for (idx, points) in point_sets.iter().enumerate() {
+                let mut data = Vec::with_capacity(points.len() * 32);
+                for point in points {
+                    data.extend_from_slice(&point.to_input().into_trace_bytes());
+                }
+                crate::plonk::solidity_trace::record_bytes(
+                    crate::plonk::solidity_trace::PCS_POINT_SET_TRACE_BASE + idx as u64,
+                    "pcs_point_set",
+                    data,
+                );
+            }
             for (idx, q_com) in q_coms.iter().enumerate() {
                 crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
                     crate::plonk::solidity_trace::PCS_Q_COM_TRACE_BASE + idx as u64,
