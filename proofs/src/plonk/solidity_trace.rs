@@ -13,12 +13,22 @@ use crate::transcript::{Hashable, TranscriptHash, TranscriptInputBytes};
 pub const PROOF_COMMITMENT_TRACE_BASE: u64 = 10_000;
 /// First trace topic used for proof scalar evaluations, in proof-read order.
 pub const PROOF_EVAL_TRACE_BASE: u64 = 20_000;
+/// First trace topic used for user-phase transcript challenges.
+pub const USER_CHALLENGE_TRACE_BASE: u64 = 1_000;
 /// First trace topic used for raw quotient identity evaluations.
 pub const QUOTIENT_IDENTITY_TRACE_BASE: u64 = 30_000;
+/// Trace topic used for the fully grouped quotient numerator `nu_y(x)`.
+pub const QUOTIENT_NUMERATOR_TRACE_ID: u64 = 36;
 /// First trace topic used for per-point-set PCS `q_com` commitments.
 pub const PCS_Q_COM_TRACE_BASE: u64 = 40_000;
+/// First trace topic used for serialized PCS point sets.
+pub const PCS_POINT_SET_TRACE_BASE: u64 = 41_000;
 /// Trace topic used for the materialized linearization commitment.
 pub const LINEARIZATION_COMMITMENT_TRACE_ID: u64 = 34;
+/// Trace topic used for final selector-fold scalars.
+pub const SELECTOR_FOLD_TRACE_BASE: u64 = 60_000;
+/// Trace topic used for the final pairing result.
+pub const FINAL_RESULT_TRACE_ID: u64 = 35;
 
 #[derive(Debug, Default)]
 struct SolidityTraceState {
