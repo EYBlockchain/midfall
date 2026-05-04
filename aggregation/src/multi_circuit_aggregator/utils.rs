@@ -60,7 +60,7 @@ pub fn assign_and_hash_vk(
     cs: &ConstraintSystem<F>,
     vk: Value<&MidnightVK>,
 ) -> Result<VkHashAndBases, Error> {
-    let curve_chip = std_lib.bls12_381();
+    let curve_chip = std_lib.bls12_381_curve();
 
     let nb_fixed = cs.num_fixed_columns() + cs.num_selectors();
     let nb_perm = cs.permutation().columns.len();
@@ -73,7 +73,7 @@ pub fn assign_and_hash_vk(
 
     let assigned_bases = base_values
         .into_iter()
-        .map(|val| curve_chip.assign_without_subgroup_check(layouter, val))
+        .map(|val| curve_chip.assign(layouter, val))
         .collect::<Result<Vec<_>, _>>()?;
 
     // Compute the hash: Poseidon(transcript_repr || bases...).

@@ -30,7 +30,16 @@ impl ProofAggregation {
         aggregator_k: u32,
         inner_ctx: InnerCircuitsContext,
     ) -> (Aggregator, Verifier) {
-        ivc::setup::<ProofAggregation>(aggregator_srs, aggregator_k, inner_ctx)
+        let verifier_ctx = inner_ctx.clone();
+        let (aggregator, inner) =
+            ivc::setup::<ProofAggregation>(aggregator_srs, aggregator_k, inner_ctx);
+        (
+            aggregator,
+            Verifier {
+                inner,
+                ctx: verifier_ctx,
+            },
+        )
     }
 }
 
@@ -94,8 +103,13 @@ impl Aggregator {
 
 /// Verifier for multi-circuit proof aggregation.
 ///
-/// Internally an IVC verifier specialized for [`ProofAggregation`].
-pub type Verifier = ivc::IvcVerifier<ProofAggregation>;
+/// Internally wraps an IVC verifier and the inner-circuit context needed for
+/// the aggregation decider.
+#[derive(Clone, Debug)]
+pub struct Verifier {
+    inner: ivc::IvcVerifier,
+    ctx: InnerCircuitsContext,
+}
 
 impl Verifier {
     /// Verifies an aggregation proof against the given instance.
@@ -104,6 +118,6 @@ impl Verifier {
         instance: &IvcInstance<ProofAggregation>,
         proof: &[u8],
     ) -> Result<(), IvcError> {
-        self.verify(instance, proof)
+        self.inner.verify(&self.ctx, instance, proof)
     }
 }

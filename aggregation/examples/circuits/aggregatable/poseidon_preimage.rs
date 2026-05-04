@@ -30,7 +30,6 @@ impl AggregableRelation for PoseidonPreimageCircuit {}
 impl Relation for PoseidonPreimageCircuit {
     type Instance = F;
     type Witness = [F; 3];
-    type Error = Error;
 
     fn format_instance(instance: &Self::Instance) -> Result<Vec<F>, Error> {
         Ok(vec![*instance])

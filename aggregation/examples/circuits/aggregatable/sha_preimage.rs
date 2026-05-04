@@ -32,7 +32,6 @@ impl AggregableRelation for AggregatableShaPreimageCircuit {}
 impl Relation for AggregatableShaPreimageCircuit {
     type Instance = [u8; 32];
     type Witness = [u8; 24]; // 192 = 24 * 8
-    type Error = Error;
 
     fn format_instance(instance: &Self::Instance) -> Result<Vec<F>, Error> {
         let byte_pis: Vec<F> =

@@ -20,7 +20,7 @@ use group::Group;
 use midnight_circuits::{
     hash::poseidon::{PoseidonChip, PoseidonState},
     instructions::{hash::HashCPU, *},
-    types::{AssignedNative, Instantiable},
+    types::{AssignedBit, AssignedNative, Instantiable},
     verifier::{self, Accumulator, AssignedAccumulator},
 };
 use midnight_proofs::{
@@ -152,6 +152,14 @@ impl IvcState for ProofAggregation {
             claims_hash: F::ZERO,
             inner_acc: Accumulator::<S>::trivial(&[]),
         }
+    }
+
+    fn is_genesis(
+        &self,
+        layouter: &mut impl Layouter<F>,
+        state: &Self::AssignedState,
+    ) -> Result<AssignedBit<F>, Error> {
+        self.std_lib.is_zero(layouter, &state.claims_hash)
     }
 
     fn decider(ctx: &InnerCircuitsContext, state: &State) -> bool {
@@ -352,8 +360,8 @@ impl IvcTransition for ProofAggregation {
 
             acc.collapse(
                 layouter,
-                self.std_lib.bls12_381(),
-                self.std_lib.bls12_381().scalar_field_chip(),
+                self.std_lib.bls12_381_curve(),
+                self.std_lib.bls12_381_scalar(),
             )?;
             acc
         };

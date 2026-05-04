@@ -17,12 +17,12 @@ use midnight_circuits::{
 };
 use midnight_proofs::{
     circuit::{Layouter, Value},
-    plonk::ConstraintSystem,
+    plonk::{ConstraintSystem, Error},
     poly::EvaluationDomain,
 };
 use midnight_zk_stdlib::{Relation, ZkStdLib, ZkStdLibArch};
 
-use super::{Ivc, IvcError, C, F, S};
+use super::{Ivc, C, F, S};
 
 /// The public instance (statement) of an IVC proof.
 ///
@@ -122,7 +122,7 @@ impl<T: Ivc> Relation for IvcCircuit<T> {
         Self::arch()
     }
 
-    fn format_instance(instance: &Self::Instance) -> Result<Vec<F>, IvcError> {
+    fn format_instance(instance: &Self::Instance) -> Result<Vec<F>, Error> {
         Ok([
             vec![instance.vk_repr],
             T::format_public_input(&instance.state),
@@ -137,7 +137,7 @@ impl<T: Ivc> Relation for IvcCircuit<T> {
         layouter: &mut impl Layouter<F>,
         instance: Value<Self::Instance>,
         witness: Value<Self::Witness>,
-    ) -> Result<(), IvcError> {
+    ) -> Result<(), Error> {
         let verifier_gadget = std_lib.verifier();
         let ivc_gadget = T::new(std_lib.clone(), &self.ctx);
 
