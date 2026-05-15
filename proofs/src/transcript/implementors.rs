@@ -2,7 +2,7 @@ use std::{io, io::Read};
 
 use blake2b_simd::{Params, State as Blake2bState};
 use ff::{FromUniformBytes, PrimeField};
-use group::GroupEncoding;
+use group::{prime::PrimeCurveAffine, GroupEncoding, UncompressedEncoding};
 #[cfg(feature = "dev-curves")]
 use midnight_curves::bn256::{Fr, G1};
 #[cfg(feature = "keccak-transcript")]
@@ -262,8 +262,40 @@ impl Sampleable<Keccak256> for Fr {
 
 #[cfg(feature = "keccak-transcript")]
 impl Hashable<Keccak256> for midnight_curves::G1Projective {
+    /// Converts the point to the EIP-2537 padded uncompressed form for
+    /// Fiat-Shamir absorbtion: 128 bytes laid out as
+    ///
+    ///     x_hi (32) || x_lo (32) || y_hi (32) || y_lo (32)
+    ///
+    /// where each coord is 16 zero pad bytes followed by 48 big-endian
+    /// bytes of the BLS12-381 base-field element. The identity point
+    /// is encoded as 128 zero bytes (matches the EIP-2537 (0, 0)
+    /// convention rather than the BLS-spec 0x40-leading-byte form).
+    ///
+    /// This format lets the EVM verifier (`Halo2Verifier.sol::
+    /// common_g1_uncompressed`) skip the 384-bit sign-bit ladder it
+    /// would need if we were hashing the 48-byte compressed encoding;
+    /// the EVM can just memcpy the calldata words verbatim into the
+    /// keccak buffer (after masking the 16-byte zero pads to defeat
+    /// transcript malleability).
+    ///
+    /// The wire format (`to_bytes`) is unchanged — points are still
+    /// transmitted in the 48-byte compressed encoding.
     fn to_input(&self) -> Vec<u8> {
-        Hashable::<Keccak256>::to_bytes(self)
+        let aff = midnight_curves::G1Affine::from(self);
+        let mut out = vec![0u8; 128];
+        if !bool::from(aff.is_identity()) {
+            // `UncompressedEncoding::to_uncompressed` returns a wrapper
+            // around 96 bytes: x_be(48) || y_be(48). For non-identity
+            // points, the top 3 bits of byte 0 are zero (since
+            // x < p < 2^381), so we copy the bytes verbatim into the
+            // EIP-2537 64-byte slots.
+            let raw = <midnight_curves::G1Affine as UncompressedEncoding>::to_uncompressed(&aff);
+            let bytes: &[u8] = raw.as_ref();
+            out[16..64].copy_from_slice(&bytes[0..48]);
+            out[80..128].copy_from_slice(&bytes[48..96]);
+        }
+        out
     }
 
     fn to_bytes(&self) -> Vec<u8> {
