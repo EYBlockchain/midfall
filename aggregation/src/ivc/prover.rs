@@ -170,9 +170,8 @@ impl<T: Ivc> IvcProver<T> {
     ///   `PoseidonState<F>` (since prior steps emitted Poseidon-transcript
     ///   proofs).
     /// - The IVC circuit's *in-circuit* re-verification of the previous proof
-    ///   also still uses Poseidon (the IVC gadget hard-codes
-    ///   `PoseidonState`); this is what makes prior-proof verification cheap
-    ///   in-circuit.
+    ///   also still uses Poseidon (the IVC gadget hard-codes `PoseidonState`);
+    ///   this is what makes prior-proof verification cheap in-circuit.
     /// - Only the **outer** Fiat-Shamir transcript used to produce the new
     ///   final proof switches to Keccak.
     ///

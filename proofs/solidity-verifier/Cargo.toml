@@ -1,0 +1,94 @@
+[package]
+name = "halo2_solidity_verifier"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Depend on the Midfall proof stack from this workspace. This keeps generated
+# Solidity and the native verifier tests pinned to the branch under test.
+midnight-proofs = { path = "..", default-features = false, features = ["keccak-transcript", "committed-instances", "circuit-params"] }
+midnight-curves = { path = "../../curves" }
+ff = { workspace = true }
+group = { workspace = true }
+askama = { version = "0.12.0", features = ["config"], default-features = false }
+hex = "0.4.3"
+ruint = "1"
+sha3 = { workspace = true }
+itertools = "0.11.0"
+
+# For feature = "evm"
+#
+# revm 19+ ships a Prague handler with the EIP-2537 BLS12-381 precompiles
+# (G1ADD = 0x0b, G1MSM = 0x0c, G2ADD = 0x0d, G2MSM = 0x0e, PAIRING = 0x0f).
+# Because default features are disabled, enable `blst` explicitly; otherwise
+# Prague does not register those BLS precompiles and staticcalls hit empty
+# accounts instead of doing curve arithmetic.
+revm = { version = "19", default-features = false, features = ["std", "blst"], optional = true }
+
+[dev-dependencies]
+proptest = "1.6.0"
+rand = { workspace = true }
+revm = { version = "19", default-features = false, features = ["std", "blst"] }
+rand_chacha = { workspace = true }
+# Step 8: pull in midnight-circuits + midnight-zk-stdlib only as dev-deps so
+# the lib build stays minimal. These provide the PoseidonExample circuit
+# type the poseidon fixture (midfall/proofs/solidity-verifier/fixtures/
+# poseidon/{proof.bin, vk.bin, instance.be}) was generated against, which
+# we need to deserialize the VK and rebuild the SolidityGenerator.
+midnight-circuits = { path = "../../circuits", features = ["testing"] }
+midnight-zk-stdlib = { path = "../../zk_stdlib", features = ["testing"] }
+# IVC Poseidon-chain final-step Keccak proof end-to-end test
+# (tests/ivc_keccak_solidity.rs).
+midnight-aggregation = { path = "../../aggregation", features = [
+    "keccak-transcript",
+    "truncated-challenges",
+] }
+
+[features]
+default = []
+evm = ["dep:revm"]
+# Enables Askama trace/log branches in the default Solidity render path.
+# `RenderDiagnostics { trace: true, .. }` can still force trace output without
+# this feature.
+solidity-trace = []
+# Enables LOG1 gas() checkpoints at section boundaries in the default
+# Solidity render path. The host-side test parses the emitted logs into
+# per-section gas deltas. Adds ~12 kg measurement overhead (16 LOG1
+# events * ~750 gas each); off in production builds.
+solidity-gas-checkpoints = []
+# Mirrors midnight-proofs/truncated-challenges. When enabled, the
+# rendered verifier:
+#   1. Truncates `x3` (the f_com evaluation point) to its lower 128
+#      bits immediately after squeezing.
+#   2. Truncates each `x1` power (used as MSM scalars for q_com) and
+#      each `x4` power (used for the final commitment fold) to 128
+#      bits at the point of use; the internal full-precision
+#      accumulator is preserved so power i+1 keeps full entropy.
+# Required for proofs from a midnight-proofs prover compiled with
+# matching feature settings; using the wrong setting on either side
+# silently produces invalid pairings.
+truncated-challenges = [
+    "midnight-proofs/truncated-challenges",
+    "midnight-aggregation/truncated-challenges",
+]
+# Enables fewer-point-sets inside recursive verifier circuits and for the
+# leaf proofs they consume. The final Solidity-facing proof can still disable
+# proof-system dummy queries at runtime.
+in-circuit-fewer-point-sets = ["midnight-aggregation/in-circuit-fewer-point-sets"]
+# Enables fewer-point-sets for the final Solidity-facing proof layout.
+outer-fewer-point-sets = ["midnight-proofs/fewer-point-sets"]
+# Enables the Midnight single-H quotient commitment layout for the final
+# Solidity-facing proof only. Do not forward this to midnight-circuits,
+# midnight-zk-stdlib, or midnight-aggregation: recursive proofs verified
+# inside the decider circuit stay on their existing multi-limb layout.
+outer-single-h-commitment = ["midnight-proofs/single-h-commitment"]
+# Backwards-compatible aggregate feature: old commands that pass
+# `fewer-point-sets` retain the previous "everything on" behavior.
+fewer-point-sets = ["in-circuit-fewer-point-sets", "outer-fewer-point-sets"]
+# Enables native Midfall verifier trace hooks used by the Rust/Solidity
+# differential coverage tests.
+rust-verifier-trace = ["midnight-proofs/solidity-verifier-trace", "truncated-challenges"]
+
+[[example]]
+name = "ivc_replay"
+required-features = ["evm", "truncated-challenges", "fewer-point-sets"]

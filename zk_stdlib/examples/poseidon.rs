@@ -72,15 +72,12 @@ fn main() {
     )
     .expect("Proof generation should not fail");
 
-
-    assert!(
-        midnight_zk_stdlib::verify::<PoseidonExample, Keccak256>(
-            &srs.verifier_params(),
-            &vk,
-            &instance,
-            None,
-            &proof
-        )
-        .is_ok()
+    assert!(midnight_zk_stdlib::verify::<PoseidonExample, Keccak256>(
+        &srs.verifier_params(),
+        &vk,
+        &instance,
+        None,
+        &proof
     )
+    .is_ok())
 }

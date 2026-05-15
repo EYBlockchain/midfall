@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+* Add the `halo2_solidity_verifier` crate with Solidity verifier rendering,
+  EVM test harnesses, IVC/Moonlight bench tooling, and audit documentation.
 * changed `sha256` name in benches to account for the change of naming convention in `circuits` [#135](https://github.com/midnightntwrk/midnight-zk/pull/135)
 * optional names on VerifierQuery commitments [#205](https://github.com/midnightntwrk/midnight-zk/pull/205)
 * `padded_add` and `padded_sub` polynomial operations [#276](https://github.com/midnightntwrk/midnight-zk/pull/276)

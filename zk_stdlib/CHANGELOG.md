@@ -23,6 +23,8 @@ verification keys break backwards compatibility.
 * Fix cost model proof size check to account for committed instance columns [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 
 ### Changed
+* Update SRS-loading and verifier setup paths used by the Solidity verifier
+  integration tests.
 * Add `nb_arith_cols` field to `ZkStdLibArch` for configurable arithmetic columns (requires `ZKSTD_VERSION` bump before release) [#287](https://github.com/midnightntwrk/midnight-zk/pull/287)
 * Update goldenfiles and static VKs after logup blinding factor fix [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
 * bug patch in the credential property verification example, which was omitting some index computation in circuit [#240](https://github.com/midnightntwrk/midnight-zk/pull/240)

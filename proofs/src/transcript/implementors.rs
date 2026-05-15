@@ -263,9 +263,8 @@ impl Sampleable<Keccak256> for Fr {
 #[cfg(feature = "keccak-transcript")]
 impl Hashable<Keccak256> for midnight_curves::G1Projective {
     /// Converts the point to the EIP-2537 padded uncompressed form for
-    /// Fiat-Shamir absorbtion: 128 bytes laid out as
-    ///
-    ///     x_hi (32) || x_lo (32) || y_hi (32) || y_lo (32)
+    /// Fiat-Shamir absorbtion: 128 bytes laid out as `x_hi (32) ||
+    /// x_lo (32) || y_hi (32) || y_lo (32)`.
     ///
     /// where each coord is 16 zero pad bytes followed by 48 big-endian
     /// bytes of the BLS12-381 base-field element. The identity point

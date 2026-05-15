@@ -170,16 +170,18 @@ fn ivc_keccak_final_round_trip() {
     use std::time::Instant;
     const K: u32 = 18;
 
-    let srs = load_srs(SrsSource::Filecoin, K, IvcCircuit::<PoseidonChain>::cs_degree());
+    let srs = load_srs(
+        SrsSource::Filecoin,
+        K,
+        IvcCircuit::<PoseidonChain>::cs_degree(),
+    );
 
     let setup_t = Instant::now();
     let (mut prover, verifier) = ivc::setup::<PoseidonChain>(srs, K, ());
     println!("[ivc-keccak] setup completed in {:.2?}", setup_t.elapsed());
 
     let prove_t = Instant::now();
-    let proof = prover
-        .prove_final_step(())
-        .expect("prove_final_step should succeed at genesis");
+    let proof = prover.prove_final_step(()).expect("prove_final_step should succeed at genesis");
     println!(
         "[ivc-keccak] prove_final_step completed in {:.2?} ({} bytes)",
         prove_t.elapsed(),
@@ -193,7 +195,10 @@ fn ivc_keccak_final_round_trip() {
     verifier
         .verify_final::<PoseidonChain>(&(), &instance, &proof)
         .expect("verify_final should accept a prove_final_step output");
-    println!("[ivc-keccak] verify_final completed in {:.2?}", verify_t.elapsed());
+    println!(
+        "[ivc-keccak] verify_final completed in {:.2?}",
+        verify_t.elapsed()
+    );
 
     // Cross-check: regular verify (Poseidon transcript) must REJECT a
     // Keccak-transcript proof. This guards against accidental fall-back

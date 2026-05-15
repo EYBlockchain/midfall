@@ -1101,6 +1101,7 @@ impl<F: Field> Assignment<F> for WitnessCollection<'_, F> {
 #[test]
 #[cfg(feature = "dev-curves")]
 fn test_create_proof() {
+    use blake2b_simd::State;
     use midnight_curves::bn256::{Bn256, Fr};
     use rand_core::OsRng;
 
@@ -1139,7 +1140,7 @@ fn test_create_proof() {
     let params: ParamsKZG<Bn256> = ParamsKZG::unsafe_setup(K, OsRng);
     let vk = keygen_vk_with_k(&params, &MyCircuit, K).expect("keygen_vk should not fail");
     let pk = keygen_pk(vk, &MyCircuit).expect("keygen_pk should not fail");
-    let mut transcript = CircuitTranscript::<_>::init();
+    let mut transcript = CircuitTranscript::<State>::init();
 
     // Create proof with wrong number of instances
     let proof = create_proof::<Fr, KZGCommitmentScheme<Bn256>, _, _>(

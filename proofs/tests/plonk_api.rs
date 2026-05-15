@@ -20,7 +20,9 @@ use midnight_proofs::{
         kzg::{params::ParamsKZG, KZGCommitmentScheme},
         Rotation,
     },
-    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript},
+    transcript::{
+        CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash, TranscriptInputBytes,
+    },
     utils::{arithmetic::Field, rational::Rational},
 };
 use rand_core::{CryptoRng, OsRng, RngCore};
@@ -472,6 +474,7 @@ fn plonk_api() {
             + Hash
             + SerdeObject,
         Scheme::Commitment: Hashable<T::Hash>,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let (a, instance, lookup_table) = common!(F);
 
@@ -517,6 +520,7 @@ fn plonk_api() {
             + Hash
             + SerdeObject,
         Scheme::Commitment: Hashable<T::Hash>,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let (_, instance, _) = common!(F);
         let pubinputs = [instance];
@@ -541,7 +545,14 @@ fn plonk_api() {
     bad_keys!(Scalar, Scheme);
 
     let rng = OsRng;
-    let mut params = ParamsKZG::<Bls12>::unsafe_setup(K, rng);
+    let params_k = if cfg!(feature = "single-h-commitment") {
+        K + 1
+    } else {
+        K
+    };
+    let mut params = ParamsKZG::<Bls12>::unsafe_setup(params_k, rng);
+    #[cfg(feature = "single-h-commitment")]
+    params.downsize_lagrange(K);
 
     let pk = keygen::<Scalar, Scheme>(&mut params);
 
