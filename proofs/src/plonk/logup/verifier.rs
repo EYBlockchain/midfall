@@ -56,8 +56,15 @@ impl<F: WithSmallOrderMulGroup<3>> ChunkedArgument<F> {
     ) -> Result<CommittedMultiplicities<F, CS>, Error>
     where
         CS::Commitment: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let multiplicities = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+            "proof_lookup_multiplicity_commitment",
+            &multiplicities,
+        );
         Ok(CommittedMultiplicities { multiplicities })
     }
 }
@@ -74,10 +81,26 @@ impl<F: WithSmallOrderMulGroup<3>, CS: PolynomialCommitmentScheme<F>>
     ) -> Result<Committed<F, CS>, Error>
     where
         CS::Commitment: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let helper_polys =
             (0..nb_chunks).map(|_| transcript.read()).collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for commitment in &helper_polys {
+                crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+                    "proof_lookup_helper_commitment",
+                    commitment,
+                );
+            }
+        }
         let accumulator = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>(
+            "proof_lookup_accumulator_commitment",
+            &accumulator,
+        );
 
         Ok(Committed {
             multiplicities: self.multiplicities,
@@ -98,14 +121,40 @@ impl<F: PrimeField, CS: PolynomialCommitmentScheme<F>> Committed<F, CS> {
     ) -> Result<Evaluated<F, CS>, Error>
     where
         F: Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
         let nb_chunks = self.helper_polys.len();
 
         let multiplicities_eval = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+            "proof_lookup_multiplicity_eval",
+            &multiplicities_eval,
+        );
         let helper_evals =
             (0..nb_chunks).map(|_| transcript.read()).collect::<Result<Vec<_>, _>>()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for eval in &helper_evals {
+                crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                    "proof_lookup_helper_eval",
+                    eval,
+                );
+            }
+        }
         let accumulator_eval = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+            "proof_lookup_accumulator_eval",
+            &accumulator_eval,
+        );
         let accumulator_next_eval = transcript.read()?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+            "proof_lookup_accumulator_next_eval",
+            &accumulator_next_eval,
+        );
 
         Ok(Evaluated {
             committed: self,

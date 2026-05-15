@@ -68,7 +68,9 @@ pub trait PolynomialCommitmentScheme<F: PrimeField>: Clone + Debug {
     ) -> Result<Self::VerificationGuard, Error>
     where
         F: Sampleable<T::Hash> + Hash + Ord + Hashable<T::Hash>,
-        Self::Commitment: 'com + Hashable<T::Hash>;
+        Self::Commitment: 'com + Hashable<T::Hash>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes;
 }
 
 /// Interface for verifier finalizer

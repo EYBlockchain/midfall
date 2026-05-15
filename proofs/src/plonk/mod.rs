@@ -31,6 +31,8 @@ mod keygen;
 pub(crate) mod linearization;
 pub(crate) mod logup;
 pub mod permutation;
+#[cfg(feature = "solidity-verifier-trace")]
+pub mod solidity_trace;
 pub(crate) mod traces;
 pub(crate) mod trash;
 
