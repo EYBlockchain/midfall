@@ -10,8 +10,8 @@ RUN_SOLIDITY_BENCH=1
 SKIP_SRS_DOWNLOAD=0
 RUN_TRACE=0
 IN_CIRCUIT_FEWER_POINT_SETS=1
-OUTER_FEWER_POINT_SETS=0
-OUTER_SINGLE_H_COMMITMENT=0
+OUTER_FEWER_POINT_SETS=1
+OUTER_SINGLE_H_COMMITMENT=1
 
 SRS_DIR="${SRS_DIR:-"$ROOT_DIR/../../zk_stdlib/examples/assets"}"
 MIDFALL_DIR="${MIDFALL_DIR:-"$ROOT_DIR/../.."}"
@@ -208,8 +208,11 @@ cargo_features() {
   if [[ "$GAS_CHECKPOINTS" -eq 1 ]]; then
     features="$features,solidity-gas-checkpoints"
   fi
+  if [[ "$GAS_CHECKPOINTS" -eq 1 || "$RUN_TRACE" -eq 1 ]]; then
+    features="$features,solidity-trace"
+  fi
   if [[ "$RUN_TRACE" -eq 1 ]]; then
-    features="$features,rust-verifier-trace,solidity-trace"
+    features="$features,rust-verifier-trace"
   fi
   printf '%s\n' "$features"
 }
