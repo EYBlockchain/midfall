@@ -26,8 +26,83 @@ use ff::Field;
 use group::Group;
 use midnight_curves::pairing::MultiMillerLoop;
 use rand_core::OsRng;
-#[cfg(feature = "fewer-point-sets")]
 pub use utils::compute_dummy_queries;
+
+#[cfg(feature = "fewer-point-sets")]
+mod fewer_point_sets_runtime {
+    use std::cell::Cell;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(true) };
+    }
+
+    pub fn enabled() -> bool {
+        ENABLED.with(Cell::get)
+    }
+
+    /// Guard that restores the previous fewer-point-sets runtime setting when dropped.
+    #[derive(Debug)]
+    pub struct ScopedFewerPointSets {
+        previous: bool,
+    }
+
+    pub fn scoped(enabled: bool) -> ScopedFewerPointSets {
+        let previous = ENABLED.with(|cell| {
+            let previous = cell.get();
+            cell.set(enabled);
+            previous
+        });
+        ScopedFewerPointSets { previous }
+    }
+
+    impl Drop for ScopedFewerPointSets {
+        fn drop(&mut self) {
+            ENABLED.with(|cell| cell.set(self.previous));
+        }
+    }
+}
+
+#[cfg(feature = "fewer-point-sets")]
+pub use fewer_point_sets_runtime::ScopedFewerPointSets;
+
+/// No-op guard returned when the proof-system fewer-point-sets capability is
+/// not compiled in.
+#[cfg(not(feature = "fewer-point-sets"))]
+#[derive(Debug)]
+pub struct ScopedFewerPointSets;
+
+/// Returns whether KZG multi-open dummy queries are currently enabled.
+///
+/// With the `fewer-point-sets` feature compiled in, the default is `true` to
+/// preserve the historical feature behavior. Call [`scoped_fewer_point_sets`]
+/// to temporarily override it for a specific proof.
+pub fn fewer_point_sets_enabled() -> bool {
+    #[cfg(feature = "fewer-point-sets")]
+    {
+        fewer_point_sets_runtime::enabled()
+    }
+    #[cfg(not(feature = "fewer-point-sets"))]
+    {
+        false
+    }
+}
+
+/// Temporarily enables or disables KZG multi-open dummy queries on this thread.
+///
+/// This is intentionally scoped so recursive proving can use fewer point sets
+/// for proofs verified inside a circuit while an outer proof in the same process
+/// can be emitted without dummy query scalars.
+pub fn scoped_fewer_point_sets(enabled: bool) -> ScopedFewerPointSets {
+    #[cfg(feature = "fewer-point-sets")]
+    {
+        fewer_point_sets_runtime::scoped(enabled)
+    }
+    #[cfg(not(feature = "fewer-point-sets"))]
+    {
+        let _ = enabled;
+        ScopedFewerPointSets
+    }
+}
 
 #[cfg(feature = "truncated-challenges")]
 use crate::utils::arithmetic::{truncate, truncated_powers};
@@ -120,18 +195,25 @@ where
                 .unwrap()
         }
 
-        // Add dummy queries to reduce the number of distinct multi-open point sets.
         #[cfg(feature = "fewer-point-sets")]
-        let queries = &{
-            let mut queries = queries.to_vec();
-            let pairs: Vec<_> = queries.iter().map(|q| (q.get_commitment(), q.point)).collect();
-            for (idx, point) in compute_dummy_queries(&pairs) {
-                let poly = queries[idx].poly;
-                transcript
-                    .write(&eval_polynomial(poly, point))
-                    .map_err(|_| Error::OpeningError)?;
-                queries.push(ProverQuery::new(point, poly));
-            }
+        let queries_with_dummies;
+        #[cfg(feature = "fewer-point-sets")]
+        let queries = if fewer_point_sets_enabled() {
+            // Add dummy queries to reduce the number of distinct multi-open point sets.
+            queries_with_dummies = {
+                let mut queries = queries.to_vec();
+                let pairs: Vec<_> = queries.iter().map(|q| (q.get_commitment(), q.point)).collect();
+                for (idx, point) in compute_dummy_queries(&pairs) {
+                    let poly = queries[idx].poly;
+                    transcript
+                        .write(&eval_polynomial(poly, point))
+                        .map_err(|_| Error::OpeningError)?;
+                    queries.push(ProverQuery::new(point, poly));
+                }
+                queries
+            };
+            &queries_with_dummies
+        } else {
             queries
         };
 
@@ -241,19 +323,27 @@ where
         E::Fr: Sampleable<T::Hash> + Ord + Hash + Hashable<T::Hash>,
         E::G1: 'com + Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr>,
     {
-        // Add dummy queries to reduce the number of distinct multi-open point sets.
         #[cfg(feature = "fewer-point-sets")]
-        let queries = &{
-            let mut queries = queries.to_vec();
-            let pairs: Vec<_> = queries.iter().map(|q| (q.commitment.clone(), q.point)).collect();
-            for (idx, point) in compute_dummy_queries(&pairs) {
-                queries.push(VerifierQuery {
-                    point,
-                    commitment_label: queries[idx].commitment_label.clone(),
-                    commitment: queries[idx].commitment.clone(),
-                    eval: transcript.read().map_err(|_| Error::SamplingError)?,
-                });
-            }
+        let queries_with_dummies;
+        #[cfg(feature = "fewer-point-sets")]
+        let queries = if fewer_point_sets_enabled() {
+            // Add dummy queries to reduce the number of distinct multi-open point sets.
+            queries_with_dummies = {
+                let mut queries = queries.to_vec();
+                let pairs: Vec<_> =
+                    queries.iter().map(|q| (q.commitment.clone(), q.point)).collect();
+                for (idx, point) in compute_dummy_queries(&pairs) {
+                    queries.push(VerifierQuery {
+                        point,
+                        commitment_label: queries[idx].commitment_label.clone(),
+                        commitment: queries[idx].commitment.clone(),
+                        eval: transcript.read().map_err(|_| Error::SamplingError)?,
+                    });
+                }
+                queries
+            };
+            &queries_with_dummies
+        } else {
             queries
         };
 
