@@ -612,7 +612,10 @@ mod tests {
             query::{ProverQuery, VerifierQuery},
             CommitmentLabel, EvaluationDomain,
         },
-        transcript::{CircuitTranscript, Hashable, Sampleable, Transcript},
+        transcript::{
+            CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash,
+            TranscriptInputBytes,
+        },
         utils::arithmetic::eval_polynomial,
     };
 
@@ -639,6 +642,7 @@ mod tests {
         E::Fr: Hashable<T::Hash> + Sampleable<T::Hash> + Ord + Hash,
         E::G1: Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr, AffineExt = E::G1Affine>,
         E::G1Affine: CurveAffine<ScalarExt = E::Fr, CurveExt = E::G1> + SerdeObject,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let mut transcript = T::init_from_bytes(proof);
 
@@ -688,6 +692,7 @@ mod tests {
         E::Fr: WithSmallOrderMulGroup<3> + Hashable<T::Hash> + Hash + Sampleable<T::Hash> + Ord,
         E::G1: Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr, AffineExt = E::G1Affine>,
         E::G1Affine: SerdeObject + CurveAffine<ScalarExt = E::Fr, CurveExt = E::G1>,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let k = (kzg_params.g.len() - 1).ilog2() + 1;
         let domain = EvaluationDomain::new(1, k);
