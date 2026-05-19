@@ -8,23 +8,23 @@ chain.
 
 | Contract | Address |
 | --- | --- |
-| `Halo2VerifyingKey` | `0x2132E1C5f2aFE710E0F3fE01ec70E95000F99882` |
-| `Halo2Verifier` | `0x3d7f4A7BF9EB60EC7909880A68eaf41e4fB4B3b5` |
+| `Halo2VerifyingKey` | `0x2fE3dB07Cc00f6dFF002C37d5A17ebfAd7aA88D0` |
+| `Halo2Verifier` | `0x049510AfEC69eD54409dabB57195FfD38400F4D0` |
 
 ## Transactions
 
 | Action | Transaction |
 | --- | --- |
-| Deploy VK | `0x5283e8cfd54be98b752cfee8fda8c0f02b196f8b0053af33850e4b2cd20df80a` |
-| Deploy verifier | `0x69c4f9d0ac9098357346b3986c3fd48d062738124df91a73a89e314ecf044e0a` |
-| Verify fresh proof | `0x91bac90773f107016103be132b543af5ea4457527e3866484e62cbb6e01fdb97` |
+| Deploy VK | `0xd6e7c6180a57c424327df03fe5b4ed0a274c73a4e8f681913582db5cf9e809cf` |
+| Deploy verifier | `0x2236dc333064a88e7f23fc669570f72bf52163ca1cf637c29a6e77b743bfa60e` |
+| Verify fresh proof | `0xd536e9162bab92c71b7b9f1bb94f00def8b50e441144c6aebd7708a51400abfb` |
 
 ## Runtime Metadata
 
 | Contract | Runtime bytes | Runtime code hash |
 | --- | ---: | --- |
 | `Halo2VerifyingKey` | `17025` | `0x24430c63ec2017f12ec4004d66c66314f418dd77fe38dd4c2475c8f2b259e009` |
-| `Halo2Verifier` | `21368` | `0x21eafc97654cfecd897cd8957217254ce0570813e59a36bc835e8bc459ee9b55` |
+| `Halo2Verifier` | `21119` | `0x1422a1464cc070cd2d88cc9468edf6d88d99ead6cacbd942bfb0257e209f3b10` |
 
 ## Files
 
