@@ -507,8 +507,8 @@ pub(crate) struct Halo2Verifier {
     ///   - x1 / x4 powers are masked to 128 bits at use, with the internal
     ///     full-precision accumulator preserved
     ///
-    /// Driven by `cfg!(feature = "truncated-challenges")` in
-    /// `SolidityGenerator::generate_verifier`.
+    /// Driven by `midnight_proofs::poly::kzg::truncated_challenges_enabled()`
+    /// in `SolidityGenerator::generate_verifier`.
     pub(crate) truncated_challenges: bool,
     /// Accumulator metadata expected by this generated verifier. These
     /// constants mirror the generator-side `AccumulatorEncoding` and are

@@ -130,6 +130,112 @@ use crate::{
     },
 };
 
+#[cfg(feature = "truncated-challenges")]
+mod truncated_challenges_runtime {
+    use std::cell::Cell;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(true) };
+    }
+
+    pub fn enabled() -> bool {
+        ENABLED.with(Cell::get)
+    }
+
+    /// Guard that restores the previous truncated-challenges setting when
+    /// dropped.
+    #[derive(Debug)]
+    pub struct ScopedTruncatedChallenges {
+        previous: bool,
+    }
+
+    pub fn scoped(enabled: bool) -> ScopedTruncatedChallenges {
+        let previous = ENABLED.with(|cell| {
+            let previous = cell.get();
+            cell.set(enabled);
+            previous
+        });
+        ScopedTruncatedChallenges { previous }
+    }
+
+    impl Drop for ScopedTruncatedChallenges {
+        fn drop(&mut self) {
+            ENABLED.with(|cell| cell.set(self.previous));
+        }
+    }
+}
+
+#[cfg(feature = "truncated-challenges")]
+pub use truncated_challenges_runtime::ScopedTruncatedChallenges;
+
+/// No-op guard returned when the proof-system truncated-challenges capability
+/// is not compiled in.
+#[cfg(not(feature = "truncated-challenges"))]
+#[derive(Debug)]
+pub struct ScopedTruncatedChallenges;
+
+/// Returns whether KZG PCS challenge truncation is currently enabled.
+///
+/// With the `truncated-challenges` feature compiled in, the default is `true`
+/// to preserve the historical feature behavior. Call
+/// [`scoped_truncated_challenges`] to temporarily override it for a specific
+/// outer proof.
+pub fn truncated_challenges_enabled() -> bool {
+    #[cfg(feature = "truncated-challenges")]
+    {
+        truncated_challenges_runtime::enabled()
+    }
+    #[cfg(not(feature = "truncated-challenges"))]
+    {
+        false
+    }
+}
+
+/// Temporarily enables or disables KZG PCS challenge truncation on this thread.
+///
+/// This is intentionally scoped so recursive proving can keep truncated
+/// challenges for proofs verified inside a circuit while a final
+/// Solidity-facing proof in the same process can be emitted with full-width PCS
+/// challenges.
+pub fn scoped_truncated_challenges(enabled: bool) -> ScopedTruncatedChallenges {
+    #[cfg(feature = "truncated-challenges")]
+    {
+        truncated_challenges_runtime::scoped(enabled)
+    }
+    #[cfg(not(feature = "truncated-challenges"))]
+    {
+        let _ = enabled;
+        ScopedTruncatedChallenges
+    }
+}
+
+fn pcs_challenge<F: ff::PrimeField>(challenge: F) -> F {
+    #[cfg(feature = "truncated-challenges")]
+    {
+        if truncated_challenges_enabled() {
+            return truncate(challenge);
+        }
+    }
+    challenge
+}
+
+fn pcs_powers<F: ff::PrimeField>(base: F, len: usize) -> Vec<F> {
+    #[cfg(feature = "truncated-challenges")]
+    {
+        if truncated_challenges_enabled() {
+            return truncated_powers(base).take(len).collect();
+        }
+    }
+
+    let mut acc = F::ONE;
+    let mut out = Vec::with_capacity(len);
+    for _ in 0..len {
+        out.push(pcs_challenge(acc));
+        acc *= base;
+    }
+    out
+}
+
 #[derive(Clone, Debug)]
 /// KZG verifier
 pub struct KZGCommitmentScheme<E: Engine> {
@@ -235,15 +341,7 @@ where
 
         let q_polys = q_polys
             .iter()
-            .map(|polys| {
-                #[cfg(feature = "truncated-challenges")]
-                let x1 = truncated_powers(x1);
-
-                #[cfg(not(feature = "truncated-challenges"))]
-                let x1 = powers(x1);
-
-                poly_inner_product(polys, x1)
-            })
+            .map(|polys| poly_inner_product(polys, pcs_powers(x1, polys.len()).into_iter()))
             .collect::<Vec<_>>();
 
         // Sort point sets by ascending cardinality to ensure the first set is the one
@@ -283,8 +381,7 @@ where
         transcript.write(&f_com).map_err(|_| Error::OpeningError)?;
 
         let x3: E::Fr = transcript.squeeze_challenge();
-        #[cfg(feature = "truncated-challenges")]
-        let x3 = truncate(x3);
+        let x3 = pcs_challenge(x3);
 
         for q_poly in q_polys.iter() {
             transcript
@@ -297,13 +394,7 @@ where
         let final_poly = {
             let mut polys = q_polys;
             polys.push(f_poly);
-            #[cfg(feature = "truncated-challenges")]
-            let powers = truncated_powers(x4);
-
-            #[cfg(not(feature = "truncated-challenges"))]
-            let powers = powers(x4);
-
-            poly_inner_product(&polys, powers)
+            poly_inner_product(&polys, pcs_powers(x4, polys.len()).into_iter())
         };
         let v = eval_polynomial(&final_poly, x3);
 
@@ -390,11 +481,7 @@ where
         let nb_x1_powers = q_coms.iter().map(|v| v.len()).max().unwrap_or(0);
         assert!(nb_x1_powers >= q_eval_sets.iter().map(|v| v.len()).max().unwrap_or(0));
 
-        #[cfg(feature = "truncated-challenges")]
-        let powers_x1 = truncated_powers(x1).take(nb_x1_powers).collect::<Vec<_>>();
-
-        #[cfg(not(feature = "truncated-challenges"))]
-        let powers_x1 = powers(x1).take(nb_x1_powers).collect::<Vec<_>>();
+        let powers_x1 = pcs_powers(x1, nb_x1_powers);
 
         let q_coms = q_coms
             .into_iter()
@@ -453,8 +540,7 @@ where
         // Sample a challenge x_3 for checking that f(X) was committed to
         // correctly.
         let x3: E::Fr = transcript.squeeze_challenge();
-        #[cfg(feature = "truncated-challenges")]
-        let x3 = truncate(x3);
+        let x3 = pcs_challenge(x3);
         #[cfg(feature = "solidity-verifier-trace")]
         crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(15, "x3", &x3);
 
@@ -492,19 +578,15 @@ where
 
             f_com_as_msm.append_term(E::Fr::ONE, f_com, CommitmentLabel::NoLabel);
 
-            // Collapse all MSMs before combining with x4 powers, to match the
-            // in-circuit verifier. Skip the first one since its x4 power is 1.
-            #[cfg(feature = "truncated-challenges")]
-            coms.iter_mut().skip(1).for_each(MSMKZG::collapse);
+            // Collapse all MSMs before combining with truncated x4 powers, to
+            // match the in-circuit verifier. Skip the first one since its x4
+            // power is 1.
+            if truncated_challenges_enabled() {
+                coms.iter_mut().skip(1).for_each(MSMKZG::collapse);
+            }
             coms.push(f_com_as_msm);
 
-            #[cfg(feature = "truncated-challenges")]
-            let powers = truncated_powers(x4);
-
-            #[cfg(not(feature = "truncated-challenges"))]
-            let powers = powers(x4);
-
-            msm_inner_product(coms, &powers.take(size).collect::<Vec<_>>())
+            msm_inner_product(coms, &pcs_powers(x4, size))
         };
         #[cfg(feature = "solidity-verifier-trace")]
         crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
@@ -517,13 +599,7 @@ where
             let mut evals = q_evals_on_x3;
             evals.push(f_eval);
 
-            #[cfg(feature = "truncated-challenges")]
-            let powers = truncated_powers(x4);
-
-            #[cfg(not(feature = "truncated-challenges"))]
-            let powers = powers(x4);
-
-            inner_product(&evals, powers)
+            inner_product(&evals, pcs_powers(x4, evals.len()).into_iter())
         };
         #[cfg(feature = "solidity-verifier-trace")]
         {
@@ -599,6 +675,22 @@ mod tests {
         },
         utils::arithmetic::eval_polynomial,
     };
+
+    #[cfg(feature = "truncated-challenges")]
+    #[test]
+    fn scoped_truncated_challenges_overrides_pcs_challenge() {
+        use ff::Field;
+        use midnight_curves::Fq;
+
+        let high_bit = Fq::from(2).pow_vartime([200, 0, 0, 0]);
+
+        assert_eq!(super::pcs_challenge(high_bit), Fq::ZERO);
+        {
+            let _guard = super::scoped_truncated_challenges(false);
+            assert_eq!(super::pcs_challenge(high_bit), high_bit);
+        }
+        assert_eq!(super::pcs_challenge(high_bit), Fq::ZERO);
+    }
 
     #[test]
     fn test_roundtrip_gwc() {

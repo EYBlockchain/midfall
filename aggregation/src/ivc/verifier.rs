@@ -129,16 +129,22 @@ impl IvcVerifier {
         let pi =
             IvcCircuit::<T>::format_instance(instance).map_err(|_| IvcError::InvalidInstance)?;
 
-        let mut transcript = CircuitTranscript::<Keccak256>::init_from_bytes(proof);
-        let dual_msm = plonk::prepare::<F, KZGCommitmentScheme<E>, CircuitTranscript<Keccak256>>(
-            self.vk.vk(),
-            &[&[C::identity()]],
-            &[&[&pi]],
-            &mut transcript,
-        )
-        .map_err(|_| IvcError::InvalidProof)?;
+        let dual_msm = {
+            let _outer_challenge_layout =
+                midnight_proofs::poly::kzg::scoped_truncated_challenges(false);
+            let mut transcript = CircuitTranscript::<Keccak256>::init_from_bytes(proof);
+            let dual_msm =
+                plonk::prepare::<F, KZGCommitmentScheme<E>, CircuitTranscript<Keccak256>>(
+                    self.vk.vk(),
+                    &[&[C::identity()]],
+                    &[&[&pi]],
+                    &mut transcript,
+                )
+                .map_err(|_| IvcError::InvalidProof)?;
 
-        transcript.assert_empty().map_err(|_| IvcError::TranscriptNotEmpty)?;
+            transcript.assert_empty().map_err(|_| IvcError::TranscriptNotEmpty)?;
+            dual_msm
+        };
 
         let proof_acc = Accumulator::from_dual_msm(dual_msm, "self_vk", &fixed_bases);
 

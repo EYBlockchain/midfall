@@ -65,12 +65,17 @@ solidity-gas-checkpoints = []
 #      bits at the point of use; the internal full-precision
 #      accumulator is preserved so power i+1 keeps full entropy.
 # Required for proofs from a midnight-proofs prover compiled with
-# matching feature settings; using the wrong setting on either side
-# silently produces invalid pairings.
+# matching feature settings; callers can still scope the final outer proof to
+# full-width challenges with `scoped_truncated_challenges(false)`.
 truncated-challenges = [
     "midnight-proofs/truncated-challenges",
     "midnight-aggregation/truncated-challenges",
 ]
+# Enables truncated PCS challenges for the final Solidity-facing proof. Off by
+# default so Moonlight/IVC wrap proofs can use full-width challenges while
+# recursive proofs verified inside the circuit keep the dependency-level
+# `truncated-challenges` behavior.
+outer-truncated-challenges = []
 # Enables fewer-point-sets inside recursive verifier circuits and for the
 # leaf proofs they consume. The final Solidity-facing proof can still disable
 # proof-system dummy queries at runtime.

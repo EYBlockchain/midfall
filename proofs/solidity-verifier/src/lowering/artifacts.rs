@@ -113,7 +113,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             &plan.meta,
             &plan.data,
             &plan.memory,
-            cfg!(feature = "truncated-challenges"),
+            midnight_proofs::poly::kzg::truncated_challenges_enabled(),
             trace,
         );
 
@@ -266,7 +266,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_identity_trace_base: layout::trace::QUOTIENT_IDENTITY_BASE,
             selector_trace_base: layout::trace::SELECTOR_FOLD_BASE,
             fixed_comm_mptr: fixed_comm_mptr_byte,
-            truncated_challenges: cfg!(feature = "truncated-challenges"),
+            truncated_challenges: midnight_proofs::poly::kzg::truncated_challenges_enabled(),
             expected_has_accumulator,
             expected_has_accumulator_word: expected_has_accumulator as usize,
             expected_acc_offset,

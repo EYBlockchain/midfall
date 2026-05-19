@@ -78,7 +78,7 @@ use midnight_proofs::{
     poly::{
         kzg::{
             params::{ParamsKZG, ParamsVerifierKZG},
-            scoped_fewer_point_sets, KZGCommitmentScheme,
+            scoped_fewer_point_sets, scoped_truncated_challenges, KZGCommitmentScheme,
         },
         EvaluationDomain,
     },
@@ -1020,6 +1020,7 @@ fn ivc_final_keccak_solidity_e2e() {
         start.elapsed()
     );
     let outer_fewer_point_sets = halo2_solidity_verifier::OUTER_FEWER_POINT_SETS_ENABLED;
+    let outer_truncated_challenges = halo2_solidity_verifier::OUTER_TRUNCATED_CHALLENGES_ENABLED;
     if outer_single_h {
         println!(
             "[ivc-keccak-solidity] outer proof single-H commitment: enabled (one quotient commitment expected)"
@@ -1038,10 +1039,20 @@ fn ivc_final_keccak_solidity_e2e() {
             "[ivc-keccak-solidity] outer proof fewer-point-sets: disabled (in-circuit verifier still uses fewer-point-sets)"
         );
     }
+    if outer_truncated_challenges {
+        println!(
+            "[ivc-keccak-solidity] outer proof truncated challenges: enabled (128-bit PCS challenge powers expected)"
+        );
+    } else {
+        println!(
+            "[ivc-keccak-solidity] outer proof truncated challenges: disabled (in-circuit verifier still uses truncated challenges)"
+        );
+    }
 
     let t0 = Instant::now();
     let final_proof = {
         let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+        let _outer_challenge_layout = scoped_truncated_challenges(outer_truncated_challenges);
         midnight_zk_stdlib::prove::<IvcTreeDeciderCircuit, sha3::Keccak256>(
             &decider_srs,
             &decider_pk,
@@ -1066,6 +1077,7 @@ fn ivc_final_keccak_solidity_e2e() {
     let t0 = Instant::now();
     {
         let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+        let _outer_challenge_layout = scoped_truncated_challenges(outer_truncated_challenges);
         midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
             &decider_srs.verifier_params(),
             &decider_vk,
@@ -1082,6 +1094,7 @@ fn ivc_final_keccak_solidity_e2e() {
     #[cfg(feature = "rust-verifier-trace")]
     let rust_trace = {
         let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+        let _outer_challenge_layout = scoped_truncated_challenges(outer_truncated_challenges);
         collect_native_midfall_trace(
             &decider_srs.verifier_params(),
             &decider_vk,
@@ -1133,19 +1146,22 @@ fn ivc_final_keccak_solidity_e2e() {
     let quotient_pin_address = pin_evm.create(quotient_creation_code.clone());
     let quotient_runtime_size = pin_evm.code_size(quotient_pin_address);
     let quotient_codehash = pin_evm.code_hash(quotient_pin_address);
-    let artifacts = generator
-        .render(RenderOptions {
-            vk: RenderVk::Separate,
-            quotient: RenderQuotient::ExternalPinned {
-                runtime_len: quotient_runtime_size,
-                codehash: quotient_codehash,
-            },
-            diagnostics: RenderDiagnostics {
-                trace: quotient_trace_enabled,
-                gas_checkpoints: gas_checkpoints_enabled,
-            },
-        })
-        .expect("pinned quotient render should succeed");
+    let artifacts = {
+        let _outer_challenge_layout = scoped_truncated_challenges(outer_truncated_challenges);
+        generator
+            .render(RenderOptions {
+                vk: RenderVk::Separate,
+                quotient: RenderQuotient::ExternalPinned {
+                    runtime_len: quotient_runtime_size,
+                    codehash: quotient_codehash,
+                },
+                diagnostics: RenderDiagnostics {
+                    trace: quotient_trace_enabled,
+                    gas_checkpoints: gas_checkpoints_enabled,
+                },
+            })
+            .expect("pinned quotient render should succeed")
+    };
     let verifier_solidity = artifacts.verifier;
     let vk_solidity = artifacts.verifying_key.expect("separate render includes VK");
     let pinned_quotient_solidity =

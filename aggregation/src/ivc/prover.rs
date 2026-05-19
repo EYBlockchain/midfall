@@ -244,7 +244,12 @@ impl<T: Ivc> IvcProver<T> {
 
         // The ONLY difference from `prove_step`: emit the new proof under a
         // Keccak transcript. The IVC circuit's gates are unchanged - the
-        // outer Fiat-Shamir transcript is the only thing that switches.
+        // outer Fiat-Shamir transcript is the only thing that switches. The
+        // final Solidity-facing proof also uses full-width PCS challenges; the
+        // in-circuit verifier gadgets for the previous proof still use their
+        // compile-time truncated-challenge rules.
+        let _outer_challenge_layout =
+            midnight_proofs::poly::kzg::scoped_truncated_challenges(false);
         let proof = midnight_zk_stdlib::prove::<IvcCircuit<T>, Keccak256>(
             &self.params,
             &self.pk,

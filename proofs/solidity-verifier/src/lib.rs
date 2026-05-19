@@ -50,6 +50,14 @@ pub const SOLIDITY_GAS_CHECKPOINTS_ENABLED: bool = cfg!(feature = "solidity-gas-
 pub const OUTER_FEWER_POINT_SETS_ENABLED: bool = cfg!(feature = "outer-fewer-point-sets");
 
 /// Whether the generated Solidity verifier expects the outer proof to use
+/// truncated KZG PCS challenges.
+///
+/// This is intentionally separate from recursive/in-circuit verifier proofs:
+/// final Solidity-facing proofs can opt out while recursive proofs verified
+/// inside the decider circuit keep the `midnight-circuits` truncation rules.
+pub const OUTER_TRUNCATED_CHALLENGES_ENABLED: bool = cfg!(feature = "outer-truncated-challenges");
+
+/// Whether the generated Solidity verifier expects the outer proof to use
 /// Midnight's single-H quotient commitment layout.
 ///
 /// This is intentionally outer-only. Recursive proofs checked inside the IVC
