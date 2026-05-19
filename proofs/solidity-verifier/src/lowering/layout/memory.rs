@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 pub(crate) use crate::lowering::layout::{
     ACC_MSM_MIN_SCRATCH_BYTES, G1ADD_INPUT_BYTES, G1_BYTES, G1_MSM_PAIR_BYTES, G1_WORDS,
-    LOW_MEMORY_SCRATCH_START, MODEXP_FRAME_BYTES, MODEXP_SCRATCH_BYTES, PAIRING_PAIR_BYTES,
+    LOW_MEMORY_SCRATCH_START, MODEXP_FRAME_BYTES, MODEXP_SCRATCH_BYTES,
     PAIRING_STATIC_WORKING_WORDS, PAIRING_TWO_PAIR_BYTES, PCS_PAIRING_SCRATCH_START,
     PCS_STATIC_WORKING_WORDS, QUOTIENT_RETURN_BUFFER_START, SOLIDITY_FREE_MEMORY_POINTER_SLOT,
     SOLIDITY_RESERVED_MEMORY_BYTES, SOLIDITY_SCRATCH_SPACE_BYTES, SOLIDITY_ZERO_SLOT,
@@ -419,6 +419,10 @@ pub(crate) struct VerifierMemoryLayout {
     pub(crate) theta_windows: ThetaWindowLayout,
     /// Fixed low-memory scratch for constructor EIP-2537 smoke checks.
     pub(crate) constructor_smoke_scratch_mptr: usize,
+    /// Constructor-only scratch for the largest generated G1MSM smoke check.
+    pub(crate) constructor_g1msm_smoke_scratch_mptr: usize,
+    /// Byte length exercised by the constructor's largest G1MSM smoke check.
+    pub(crate) constructor_g1msm_smoke_input_bytes: usize,
     /// Base of the streaming transcript buffer.
     pub(crate) transcript_mptr: usize,
     /// Low-memory scratch used by the PCS pairing-preparation helper.
@@ -588,6 +592,17 @@ impl VerifierMemoryLayout {
         let q_com_trace_len = config.pcs.q_com_trace_msm.input_bytes;
         let final_msm_len = config.pcs.final_msm.input_bytes;
         let acc_msm_len = config.acc_msm_terms * G1_MSM_PAIR_BYTES;
+        let lin_trace_len = (meta.num_quotients + meta.num_simple_selectors) * G1_MSM_PAIR_BYTES;
+        let constructor_g1msm_smoke_len = [
+            G1_MSM_PAIR_BYTES,
+            q_com_trace_len,
+            final_msm_len,
+            acc_msm_len,
+            lin_trace_len,
+        ]
+        .into_iter()
+        .max()
+        .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
@@ -599,7 +614,7 @@ impl VerifierMemoryLayout {
         let constructor_smoke_scratch_mptr = arena.alloc_phase_scratch(
             "constructor_smoke_scratch",
             LOW_MEMORY_SCRATCH_START,
-            PAIRING_PAIR_BYTES,
+            PAIRING_TWO_PAIR_BYTES,
             MemoryPhase::ConstructorSmoke,
         );
         let transcript_mptr = arena.alloc_phase_scratch(
@@ -743,6 +758,12 @@ impl VerifierMemoryLayout {
         // Decompressed proof commitments are stored contiguously by category.
         // Everything after this point is either selector state or scratch.
         let after_comms = comms_mptr_base.value().as_usize() + committed_g1s * G1_BYTES;
+        let constructor_g1msm_smoke_scratch_mptr = arena.alloc_phase_scratch(
+            "constructor_g1msm_smoke_scratch",
+            after_comms.next_multiple_of(WORD_BYTES),
+            constructor_g1msm_smoke_len,
+            MemoryPhase::ConstructorSmoke,
+        );
         let selector_acc_mptr = arena.alloc_after(
             "selector_accumulators",
             comms_mptr_base.value().as_usize(),
@@ -813,7 +834,7 @@ impl VerifierMemoryLayout {
         // one-word scratch is placed after every registered region rather than
         // borrowing any phase-specific base.
         let trace_u256_mptr = [
-            constructor_smoke_scratch_mptr + PAIRING_PAIR_BYTES,
+            constructor_smoke_scratch_mptr + PAIRING_TWO_PAIR_BYTES,
             transcript_mptr + config.transcript_words * WORD_BYTES,
             pcs_pairing_scratch_mptr + PCS_STATIC_WORKING_WORDS * WORD_BYTES,
             verifier_return_mptr + WORD_BYTES,
@@ -832,6 +853,7 @@ impl VerifierMemoryLayout {
             pcs_q_eval_source_table_mptr + q_eval_source_len,
             pcs_q_com_trace_scratch_mptr + q_com_trace_len,
             pcs_final_msm_scratch_mptr + final_msm_len,
+            constructor_g1msm_smoke_scratch_mptr + constructor_g1msm_smoke_len,
             acc_msm_scratch + acc_msm_len,
             accumulator_pairing_batch_mptr + ACCUMULATOR_PAIRING_BATCH_BYTES,
         ]
@@ -850,6 +872,8 @@ impl VerifierMemoryLayout {
             map: arena.into_map(),
             theta_windows,
             constructor_smoke_scratch_mptr,
+            constructor_g1msm_smoke_scratch_mptr,
+            constructor_g1msm_smoke_input_bytes: constructor_g1msm_smoke_len,
             transcript_mptr,
             pcs_pairing_scratch_mptr,
             verifier_return_mptr,
@@ -1276,7 +1300,7 @@ mod tests {
                 "constructor_smoke_scratch",
                 layout.constructor_smoke_scratch_mptr,
                 LOW_MEMORY_SCRATCH_START,
-                PAIRING_PAIR_BYTES,
+                PAIRING_TWO_PAIR_BYTES,
             ),
             (
                 "transcript_buffer",
@@ -1322,6 +1346,23 @@ mod tests {
             assert_eq!(region.start, start, "{name} start drifted");
             assert_eq!(region.len, len, "{name} len drifted");
         }
+
+        let constructor_msm = layout
+            .map
+            .region("constructor_g1msm_smoke_scratch")
+            .expect("constructor G1MSM smoke scratch registered");
+        assert_eq!(
+            layout.constructor_g1msm_smoke_scratch_mptr,
+            constructor_msm.start
+        );
+        assert_eq!(
+            constructor_msm.len,
+            layout.constructor_g1msm_smoke_input_bytes
+        );
+        assert_eq!(
+            layout.constructor_g1msm_smoke_input_bytes,
+            meta.num_simple_selectors * G1_MSM_PAIR_BYTES
+        );
 
         let scalar_inv = layout
             .map

@@ -1154,18 +1154,18 @@ fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     for (name, needle, replacement) in [
         (
             "missing G1ADD precompile",
-            "staticcall(50000, 0x0b",
-            "staticcall(50000, 0x12",
+            "staticcall(gas(), 0x0b",
+            "staticcall(gas(), 0x12",
         ),
         (
             "G1MSM routed to G1ADD",
-            "staticcall(60000, 0x0c",
-            "staticcall(60000, 0x0b",
+            "staticcall(gas(), 0x0c",
+            "staticcall(gas(), 0x0b",
         ),
         (
             "pairing routed to G1MSM",
-            "staticcall(120000, 0x0f",
-            "staticcall(120000, 0x0c",
+            "staticcall(gas(), 0x0f",
+            "staticcall(gas(), 0x0c",
         ),
     ] {
         let verifier_solidity = replace_required_precompile_staticcall(

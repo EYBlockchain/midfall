@@ -205,20 +205,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             })
             .unwrap_or((false, 0, 0, 0, false));
 
-        let g1msm_single_gas_cap = layout::precompile::g1msm_gas_cap(layout::G1_MSM_PAIR_BYTES);
-        let lin_trace_g1msm_gas_cap = layout::precompile::g1msm_gas_cap(
-            (meta.num_quotients + sorted_simple.len()) * layout::G1_MSM_PAIR_BYTES,
-        );
-        // The accumulator RHS MSM always includes the carried RHS point and may
-        // append generated fixed bases whose public scalars are nonzero. A max
-        // cap is safe because unused precompile gas is returned, and it avoids
-        // rendering the EIP-2537 discount-table switch into runtime bytecode.
-        let acc_rhs_g1msm_gas_cap = layout::precompile::g1msm_gas_cap(
-            (1 + acc_fixed_bases.len()) * layout::G1_MSM_PAIR_BYTES,
-        );
-        let final_pairing_gas_cap =
-            layout::precompile::pairing_gas_cap(layout::PAIRING_TWO_PAIR_BYTES);
-
         let verifier = Halo2Verifier {
             template_constants: Default::default(),
             trace,
@@ -226,10 +212,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_pow5_helper: quotient_helper_flags.pow5,
             quotient_limb7_helper: quotient_helper_flags.limb7,
             quotient_wide_limb7_helper: quotient_helper_flags.wide_limb7,
-            g1msm_single_gas_cap,
-            lin_trace_g1msm_gas_cap,
-            acc_rhs_g1msm_gas_cap,
-            final_pairing_gas_cap,
+            constructor_g1msm_smoke_input_bytes: plan.memory.constructor_g1msm_smoke_input_bytes,
             limb7_yul_coeffs: LIMB7_YUL_COEFFS,
             wide_limb7_yul_coeffs: WIDE_LIMB7_YUL_COEFFS,
             fr_delta: fr_delta_literal(),

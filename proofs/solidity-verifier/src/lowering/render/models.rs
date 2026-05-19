@@ -35,8 +35,6 @@ pub(crate) struct TemplateConstants {
     pub(crate) g1_msm_pair_bytes: usize,
     /// G1ADD input byte width.
     pub(crate) g1add_input_bytes: usize,
-    /// Pairing input byte width for one pair.
-    pub(crate) pairing_pair_bytes: usize,
     /// Pairing input byte width for two pairs.
     pub(crate) pairing_two_pair_bytes: usize,
     /// EIP-2537 precompile constants.
@@ -49,15 +47,12 @@ pub(crate) struct TemplateConstants {
     pub(crate) quotient_vm: QuotientVmTemplateConstants,
 }
 
-/// EIP-2537 precompile addresses and gas formulas rendered into templates.
+/// EIP-2537 precompile addresses rendered into templates.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Eip2537TemplateConstants {
     pub(crate) g1add_address: usize,
     pub(crate) g1msm_address: usize,
     pub(crate) pairing_address: usize,
-    pub(crate) g1add_gas_cap: usize,
-    pub(crate) g1msm_smoke_gas_cap: usize,
-    pub(crate) pairing_smoke_gas_cap: usize,
     pub(crate) smoke_scratch_bytes: usize,
 }
 
@@ -157,16 +152,12 @@ impl Default for TemplateConstants {
             g1_bytes: layout::G1_BYTES,
             g1_msm_pair_bytes: layout::G1_MSM_PAIR_BYTES,
             g1add_input_bytes: layout::G1ADD_INPUT_BYTES,
-            pairing_pair_bytes: layout::PAIRING_PAIR_BYTES,
             pairing_two_pair_bytes: layout::PAIRING_TWO_PAIR_BYTES,
             eip2537: Eip2537TemplateConstants {
                 g1add_address: layout::precompile::G1ADD_ADDRESS,
                 g1msm_address: layout::precompile::G1MSM_ADDRESS,
                 pairing_address: layout::precompile::PAIRING_ADDRESS,
-                g1add_gas_cap: layout::precompile::G1ADD_GAS_CAP,
-                g1msm_smoke_gas_cap: layout::precompile::G1MSM_SMOKE_GAS_CAP,
-                pairing_smoke_gas_cap: layout::precompile::PAIRING_SMOKE_GAS_CAP,
-                smoke_scratch_bytes: layout::PAIRING_PAIR_BYTES,
+                smoke_scratch_bytes: layout::PAIRING_TWO_PAIR_BYTES,
             },
             modexp: ModexpTemplateConstants {
                 address: layout::precompile::MODEXP_ADDRESS,
@@ -431,14 +422,8 @@ pub(crate) struct Halo2Verifier {
     pub(crate) quotient_pow5_helper: bool,
     pub(crate) quotient_limb7_helper: bool,
     pub(crate) quotient_wide_limb7_helper: bool,
-    /// Generated gas cap for one-pair G1MSM calls.
-    pub(crate) g1msm_single_gas_cap: usize,
-    /// Generated gas cap for the trace-only linearization MSM.
-    pub(crate) lin_trace_g1msm_gas_cap: usize,
-    /// Generated max gas cap for the accumulator RHS MSM.
-    pub(crate) acc_rhs_g1msm_gas_cap: usize,
-    /// Generated gas cap for the final two-pair KZG pairing check.
-    pub(crate) final_pairing_gas_cap: usize,
+    /// Largest generated G1MSM input length, smoke-tested at deployment.
+    pub(crate) constructor_g1msm_smoke_input_bytes: usize,
     pub(crate) limb7_yul_coeffs: [&'static str; layout::quotient_limb::LIN_COEFFS],
     pub(crate) wide_limb7_yul_coeffs: [&'static str; layout::quotient_limb::LIN_COEFFS],
     pub(crate) fr_delta: String,
@@ -1085,18 +1070,7 @@ mod tests {
             quotient_pow5_helper: false,
             quotient_limb7_helper: false,
             quotient_wide_limb7_helper: false,
-            g1msm_single_gas_cap: crate::lowering::layout::precompile::g1msm_gas_cap(
-                crate::lowering::layout::G1_MSM_PAIR_BYTES,
-            ),
-            lin_trace_g1msm_gas_cap: crate::lowering::layout::precompile::g1msm_gas_cap(
-                crate::lowering::layout::G1_MSM_PAIR_BYTES,
-            ),
-            acc_rhs_g1msm_gas_cap: crate::lowering::layout::precompile::g1msm_gas_cap(
-                crate::lowering::layout::G1_MSM_PAIR_BYTES,
-            ),
-            final_pairing_gas_cap: crate::lowering::layout::precompile::pairing_gas_cap(
-                crate::lowering::layout::PAIRING_TWO_PAIR_BYTES,
-            ),
+            constructor_g1msm_smoke_input_bytes: crate::lowering::layout::G1_MSM_PAIR_BYTES,
             limb7_yul_coeffs: crate::lowering::quotient_numerator::vm::LIMB7_YUL_COEFFS,
             wide_limb7_yul_coeffs: crate::lowering::quotient_numerator::vm::WIDE_LIMB7_YUL_COEFFS,
             fr_delta: crate::lowering::quotient_numerator::vm::fr_delta_literal(),

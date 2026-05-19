@@ -66,10 +66,10 @@ proofs using:
 Supported execution target: an Ethereum-compatible Cancun-or-newer EVM with
 `MCOPY` and Prague/EIP-2537 BLS12-381 precompiles at exactly the addresses
 above, implementing the EIP-2537 input encodings, subgroup checks, return sizes,
-and gas schedule. The repository CI/dev runner exercises this target through
-Prague-spec `revm`; deployers on L2s, forks, or alt-EVMs must run the same
-precompile conformance tests against their target chain before treating the
-verifier as production-safe.
+and enough gas capacity for the generated full-size calls. The repository
+CI/dev runner exercises this target through Prague-spec `revm`; deployers on
+L2s, forks, or alt-EVMs must run the same precompile conformance tests against
+their target chain before treating the verifier as production-safe.
 
 The generated verifier is not a generic reusable verifier. It is
 circuit-specialized. Circuit metadata, proof read order, quotient identity
@@ -1551,14 +1551,15 @@ The generated verifier constructor runs smoke tests:
 
 - `MCOPY` one-word round trip in constructor scratch.
 - `G1ADD(identity, identity) -> identity`.
-- `G1MSM([(identity, 0)]) -> identity`.
-- `PAIRING_CHECK([(identity_g1, identity_g2)]) -> true`.
+- Largest generated `G1MSM` input with identity/zero terms -> identity.
+- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true.
 
 Deploy only on forks/chains where EIP-2537 and `MCOPY` are available with the
-exact addresses, encodings, subgroup checks, return-size behavior, and gas
-schedule above. The test runner uses Prague-spec `revm` and includes direct
-precompile conformance coverage for malformed G1 rejection, non-identity G1ADD,
-two-term and 78-term G1MSM, true and false pairings, and pairing bilinearity.
+exact addresses, encodings, subgroup checks, return-size behavior, and enough
+gas capacity for the generated full-size calls. The test runner uses
+Prague-spec `revm` and includes direct precompile conformance coverage for
+malformed G1 rejection, non-identity G1ADD, two-term and 78-term G1MSM, true
+and false pairings, and pairing bilinearity.
 
 Every EIP-2537 call checks:
 
@@ -1566,13 +1567,11 @@ Every EIP-2537 call checks:
 - Exact return-data size.
 - For pairing, returned word is 1.
 
-Gas caps are generated as literals instead of forwarding all remaining gas or
-carrying the EIP-2537 discount table in runtime bytecode:
-
-- G1ADD cap: `50000`.
-- G1MSM cap: `50000 + k * discount[k] * 12000 / 1000`, with the EIP-2537
-  discount table for `k <= 128`.
-- Pairing cap: `50000 + 60000 * num_pairs`.
+EIP-2537 calls forward `gas()` rather than rendering chain-specific gas caps.
+The constructor also smoke-tests the largest generated G1MSM input length and
+the runtime two-pair KZG pairing input size with identity data, so deployment
+fails early when the target chain/fork cannot execute the verifier's
+worst-case precompile shapes under the supplied deployment gas.
 
 ## 16. Codegen Configuration
 

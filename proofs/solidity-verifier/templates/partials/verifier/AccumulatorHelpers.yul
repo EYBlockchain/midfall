@@ -278,7 +278,7 @@
                         // Single-pair MSM output overwrites ACC_LHS_MPTR with
                         // lhs_scalar * decoded_lhs. If lhs_scalar is one, this
                         // is also a curve/subgroup validation round-trip.
-                        out := staticcall({{ g1msm_single_gas_cap }}, {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
+                        out := staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                     }
                 }
@@ -380,7 +380,7 @@
                         // The precompile also validates every nonzero fixed
                         // base embedded by codegen and the carried RHS point.
                         out := staticcall(
-                            {{ acc_rhs_g1msm_gas_cap }},
+                            gas(),
                             {{ template_constants.eip2537.g1msm_address|hex() }},
                             acc_scratch,
                             acc_msm_len,

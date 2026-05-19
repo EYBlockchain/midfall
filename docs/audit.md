@@ -17,7 +17,7 @@ The main findings are:
 | M-01 | Medium | Production verifier contains active `gas_checkpoint` `LOG1` instrumentation |
 | M-02 | Medium | Deployment smoke test does not prove MCOPY support or full EIP-2537 semantic compatibility |
 | M-03 | Medium / High on custom chains | Proof-point validation relies on generated "all absorbed points are later consumed by precompiles" invariant |
-| M-04 | Medium | Hard-coded precompile gas caps can brick verification on target chains with different gas schedules |
+| M-04 | Medium | Resolved: generated EIP-2537 calls forward `gas()` and constructor smoke covers full-size precompile shapes |
 | H-INT | High integration risk | Raw verifier does not bind proof meaning to an application, chain, contract, user, nullifier, or program domain |
 | L-01 | Low | Invalid public instances are range-checked but failure is deferred until after transcript work |
 | L-02 | Low | VK header values are not cross-checked against verifier constants after `extcodecopy` |
@@ -93,7 +93,12 @@ From a static pass, the current pasted plan appears to route proof G1 material i
 
 ### M-04: Hard-coded precompile gas caps are brittle
 
-The verifier uses fixed gas caps such as:
+Status: Fixed in the generator. EIP-2537 calls now forward `gas()` instead of
+rendering EIP-2537 gas-schedule literals, and the constructor smoke test
+exercises the largest generated G1MSM input and the runtime two-pair pairing
+shape with identity data.
+
+Previously, the verifier used fixed gas caps such as:
 
 ```solidity
 staticcall(575096, 0x0c, 0xa300, 0x30c0, FINAL_COM_MPTR, 0x80)
@@ -102,7 +107,9 @@ staticcall(62000, 0x0c, ..., 0xa0, ..., 0x80)
 staticcall(50000, 0x0b, ..., 0x0100, ..., 0x80)
 ```
 
-These are probably tuned for a specific EIP-2537 gas schedule. But if the verifier is deployed to a chain with a different gas schedule, modified precompile pricing, or less favorable implementation, valid proofs can revert.
+Those caps were tuned for a specific EIP-2537 gas schedule. If such verifier
+bytecode is deployed to a chain with a different gas schedule, modified
+precompile pricing, or less favorable implementation, valid proofs can revert.
 
 **Impact:** Availability failure for valid proofs on target chains/forks with different precompile gas costs.
 

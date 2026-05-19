@@ -21,25 +21,33 @@
             // G1ADD(identity, identity) -> identity, 128-byte return.
             // This catches chains where the precompile is missing or returns a
             // non-standard success shape.
-            if iszero(staticcall({{ template_constants.eip2537.g1add_gas_cap }}, {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
             }
 
-            // G1MSM([(identity, 0)]) -> identity, 128-byte return.
+            // Worst-case generated G1MSM with all identity/zero terms ->
+            // identity, 128-byte return. This exercises the largest MSM input
+            // length rendered by this verifier instead of only a one-pair
+            // smoke call.
+            let msm_scratch := {{ memory.constructor_g1msm_smoke_scratch_mptr|hex() }}
+            for { let off := 0 } lt(off, {{ constructor_g1msm_smoke_input_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
+                mstore(add(msm_scratch, off), 0)
+            }
             // The production verifier uses G1MSM both for commitments and as
             // the subgroup validator for absorbed proof points.
-            if iszero(staticcall({{ template_constants.eip2537.g1msm_smoke_gas_cap }}, {{ template_constants.eip2537.g1msm_address|hex() }}, scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, msm_scratch, {{ constructor_g1msm_smoke_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
             }
 
-            // PAIRING_CHECK([(identity_g1, identity_g2)]) -> true,
-            // 32-byte return. This catches absent pairing precompiles,
+            // PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])
+            // -> true, 32-byte return. This matches the runtime two-pair KZG
+            // pairing input size and catches absent pairing precompiles,
             // short return data, and obviously incompatible semantics.
-            if iszero(staticcall({{ template_constants.eip2537.pairing_smoke_gas_cap }}, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(mload(scratch), 1)) { revert(0, 0) }
         }

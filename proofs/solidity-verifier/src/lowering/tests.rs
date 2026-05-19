@@ -926,38 +926,34 @@ fn transcript_memory_bound_handles_wide_bls_advice_phase() {
 }
 
 #[test]
-fn eip2537_calls_use_bounded_gas_literals() {
+fn eip2537_calls_forward_remaining_gas() {
     let verifier_template = verifier_template_corpus();
     let pcs_codegen = include_str!("kzg/mod.rs");
 
+    assert!(
+        verifier_template
+            .contains("staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}")
+            && verifier_template
+                .contains("staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}")
+            && verifier_template.contains(
+                "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}"
+            ),
+        "main verifier template should forward remaining gas to EIP-2537 precompiles"
+    );
+    assert!(
+        pcs_codegen.contains("staticcall(gas(), 0x0c")
+            && pcs_codegen.contains("staticcall(gas(), 0x0b"),
+        "PCS emitter should forward remaining gas to EIP-2537 precompiles"
+    );
     for source in [verifier_template, pcs_codegen] {
         assert!(
-            !source.contains("staticcall(gas(), 0x0b"),
-            "G1ADD calls must use bounded gas caps"
-        );
-        assert!(
-            !source.contains("staticcall(gas(), 0x0c"),
-            "G1MSM calls must use bounded gas caps"
-        );
-        assert!(
-            !source.contains("staticcall(gas(), 0x0f"),
-            "pairing calls must use bounded gas caps"
+            !source.contains("g1msm_gas_cap")
+                && !source.contains("G1ADD_GAS_CAP")
+                && !source.contains("PAIRING_SMOKE_GAS_CAP")
+                && !source.contains("final_pairing_gas_cap"),
+            "EIP-2537 gas-cap literals must not be rendered or computed"
         );
     }
-
-    assert!(!verifier_template.contains("function g1add_gas_cap()"));
-    assert!(!verifier_template.contains("function g1msm_gas_cap(input_len)"));
-    assert!(!verifier_template.contains("function pairing_gas_cap(input_len)"));
-    assert!(
-        verifier_template.contains("{{ g1msm_single_gas_cap }}")
-            && verifier_template.contains("{{ final_pairing_gas_cap }}"),
-        "main verifier template should render generated gas-cap literals"
-    );
-    assert!(
-        pcs_codegen.contains("layout::precompile::g1msm_gas_cap")
-            && pcs_codegen.contains("layout::precompile::G1ADD_GAS_CAP"),
-        "PCS emitter should compute static EIP-2537 caps at codegen time"
-    );
 }
 
 #[test]
@@ -997,8 +993,8 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
         );
     assert!(
         pcs_codegen.contains("if success {")
-            && pcs_codegen.contains("success := staticcall({final_msm_gas_cap}")
-            && pcs_codegen.contains("success := staticcall({}, 0x0b"),
+            && pcs_codegen.contains("success := staticcall(gas(), 0x0c")
+            && pcs_codegen.contains("success := staticcall(gas(), 0x0b"),
         "PCS emitter should guard final MSM/add precompile calls with if success"
     );
 }
@@ -1017,11 +1013,12 @@ fn verifier_constructor_smoke_tests_runtime_prerequisites() {
         "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
         "non-Cancun fork fails during deployment",
         "G1ADD(identity, identity) -> identity",
-        "G1MSM([(identity, 0)]) -> identity",
-        "PAIRING_CHECK([(identity_g1, identity_g2)]) -> true",
-        "template_constants.eip2537.g1add_gas_cap",
-        "template_constants.eip2537.g1msm_smoke_gas_cap",
-        "template_constants.eip2537.pairing_smoke_gas_cap",
+        "Worst-case generated G1MSM with all identity/zero terms",
+        "constructor_g1msm_smoke_input_bytes",
+        "PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])",
+        "staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}",
+        "staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}",
+        "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}",
         "template_constants.eip2537.g1add_address",
         "template_constants.eip2537.g1msm_address",
         "template_constants.eip2537.pairing_address",

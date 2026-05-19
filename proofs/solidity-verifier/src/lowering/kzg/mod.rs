@@ -46,7 +46,6 @@ use crate::lowering::{
     abi::proof::ProofCalldataLayout,
     encoding::{ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word},
     layout::{
-        self,
         memory::{
             FinalMsmShape, PcsMemoryRequirements, VerifierMemoryLayout, G1ADD_INPUT_BYTES,
             G1_BYTES, G1_MSM_PAIR_BYTES, PCS_STATIC_WORKING_WORDS, WORD_BYTES,
@@ -1265,9 +1264,8 @@ pub(crate) fn computations(
                 "q_com trace MSM input term count changed during emission"
             );
             let msm_len = non_identity_terms * G1_MSM_PAIR_BYTES;
-            let msm_gas_cap = layout::precompile::g1msm_gas_cap(msm_len);
             lines.push(format!(
-                "let q_com_trace_ok_{set_idx} := staticcall({msm_gas_cap}, 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})"
+                "let q_com_trace_ok_{set_idx} := staticcall(gas(), 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})"
             ));
             lines.push(format!(
                 "q_com_trace_ok_{set_idx} := and(q_com_trace_ok_{set_idx}, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1675,10 +1673,9 @@ pub(crate) fn computations(
             "final MSM input term count changed during emission"
         );
 
-        let final_msm_gas_cap = layout::precompile::g1msm_gas_cap(final_msm_len);
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall({final_msm_gas_cap}, 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            "    success := staticcall(gas(), 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
             final_msm_len
         ));
         lines.push(format!(
@@ -1724,8 +1721,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall({}, 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})",
-            layout::precompile::g1msm_gas_cap(G1_MSM_PAIR_BYTES)
+            "    success := staticcall(gas(), 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1738,8 +1734,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall({}, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})",
-            layout::precompile::G1ADD_GAS_CAP
+            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1751,8 +1746,7 @@ pub(crate) fn computations(
         lines.push(format!("mstore({scratch_g1add_scalar:#x}, mload(X3_MPTR))"));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall({}, 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})",
-            layout::precompile::g1msm_gas_cap(G1_MSM_PAIR_BYTES)
+            "    success := staticcall(gas(), 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1760,8 +1754,7 @@ pub(crate) fn computations(
         lines.push("}".to_string());
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall({}, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})",
-            layout::precompile::G1ADD_GAS_CAP
+            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"

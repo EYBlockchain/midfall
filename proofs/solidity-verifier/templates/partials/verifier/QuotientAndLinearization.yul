@@ -118,7 +118,7 @@
                 mstore(add(lin_pair, 0x80), mload(add(SELECTOR_ACC_MPTR, {{ (loop.index0 * 0x20)|hex() }})))
                 lin_pair := add(lin_pair, 0xa0)
                 {%- endfor %}
-                let lin_trace_ok := staticcall({{ lin_trace_g1msm_gas_cap }}, {{ template_constants.eip2537.g1msm_address|hex() }}, lin_scratch, {{ ((num_quotients + simple_selector_cols.len()) * template_constants.g1_msm_pair_bytes)|hex() }}, lin_scratch, {{ template_constants.g1_bytes|hex() }})
+                let lin_trace_ok := staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, lin_scratch, {{ ((num_quotients + simple_selector_cols.len()) * template_constants.g1_msm_pair_bytes)|hex() }}, lin_scratch, {{ template_constants.g1_bytes|hex() }})
                 lin_trace_ok := and(lin_trace_ok, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                 if iszero(lin_trace_ok) {
                     mstore(TRACE_U256_MPTR, 34)
