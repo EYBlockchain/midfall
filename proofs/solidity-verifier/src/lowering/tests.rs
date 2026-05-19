@@ -1148,24 +1148,27 @@ fn accumulator_schema_is_checked_against_instance_count() {
 }
 
 #[test]
-fn accumulator_vk_header_is_specialized_at_codegen() {
+fn vk_header_is_cross_checked_against_generated_constants() {
     let verifier_template = verifier_template_corpus();
 
     for expected_check in [
-        "eq(mload(HAS_ACCUMULATOR_MPTR)",
-        "eq(mload(ACC_OFFSET_MPTR)",
-        "eq(mload(NUM_ACC_LIMBS_MPTR)",
-        "eq(mload(NUM_ACC_LIMB_BITS_MPTR)",
+        "eq(mload(NUM_INSTANCES_MPTR), {{ num_instances }})",
+        "eq(mload(K_MPTR), {{ k }})",
+        "eq(mload(HAS_ACCUMULATOR_MPTR), {{ expected_has_accumulator_word }})",
+        "eq(mload(ACC_OFFSET_MPTR), {{ expected_acc_offset }})",
+        "eq(mload(NUM_ACC_LIMBS_MPTR), {{ expected_num_acc_limbs }})",
+        "eq(mload(NUM_ACC_LIMB_BITS_MPTR), {{ expected_num_acc_limb_bits }})",
     ] {
         assert!(
-                !verifier_template.contains(expected_check),
-                "pinned verifier should not reread VK accumulator metadata at runtime: {expected_check}"
-            );
+            verifier_template.contains(expected_check),
+            "pinned verifier should cross-check generated VK header value: {expected_check}"
+        );
     }
     assert!(
-            verifier_template.contains("schema\n                // values such as instance count and accumulator layout are\n                // rendered as constants"),
-            "template should document why VK schema values are generated constants"
-        );
+        verifier_template.contains("Cross-check loaded VK header words")
+            && verifier_template.contains("generator drift before calldata parsing"),
+        "template should document the VK header generator-safety boundary"
+    );
     assert!(
         verifier_template.contains("{%- if self.expected_has_accumulator %}")
             && verifier_template.contains("let bits := {{ self.expected_num_acc_limb_bits }}")

@@ -268,6 +268,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             fixed_comm_mptr: fixed_comm_mptr_byte,
             truncated_challenges: cfg!(feature = "truncated-challenges"),
             expected_has_accumulator,
+            expected_has_accumulator_word: expected_has_accumulator as usize,
             expected_acc_offset,
             expected_num_acc_limbs,
             expected_num_acc_limb_bits,

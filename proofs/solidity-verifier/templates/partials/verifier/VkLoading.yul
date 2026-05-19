@@ -74,9 +74,18 @@
                 extcodecopy(vk, VK_MPTR, 0x01, EXPECTED_VK_PAYLOAD_LENGTH)
                 {%- endmatch %}
 
-                // This verifier is pinned to one generated VK, so schema
-                // values such as instance count and accumulator layout are
-                // rendered as constants instead of reread from the VK header.
+                // Cross-check loaded VK header words against the verifier
+                // constants used by later parser, domain, and accumulator
+                // paths. Codehash pinning protects the external VK address;
+                // these checks catch generator drift before calldata parsing
+                // chooses a stale schema.
+                success := and(success, eq(mload(NUM_INSTANCES_MPTR), {{ num_instances }}))
+                success := and(success, eq(mload(K_MPTR), {{ k }}))
+                success := and(success, eq(mload(HAS_ACCUMULATOR_MPTR), {{ expected_has_accumulator_word }}))
+                success := and(success, eq(mload(ACC_OFFSET_MPTR), {{ expected_acc_offset }}))
+                success := and(success, eq(mload(NUM_ACC_LIMBS_MPTR), {{ expected_num_acc_limbs }}))
+                success := and(success, eq(mload(NUM_ACC_LIMB_BITS_MPTR), {{ expected_num_acc_limb_bits }}))
+                if iszero(success) { revert(0, 0) }
                 //
                 // The checks below validate the dynamic ABI envelope before the
                 // transcript parser starts walking raw calldata:

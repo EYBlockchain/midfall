@@ -20,7 +20,7 @@ The main findings are:
 | M-04 | Medium | Resolved: generated EIP-2537 calls forward `gas()` and constructor smoke covers full-size precompile shapes |
 | H-INT | High integration risk | Raw verifier does not bind proof meaning to an application, chain, contract, user, nullifier, or program domain |
 | L-01 | Low | Resolved: non-canonical public instances now revert immediately after the instance loop |
-| L-02 | Low | VK header values are not cross-checked against verifier constants after `extcodecopy` |
+| L-02 | Low | Resolved: loaded VK header values are cross-checked against verifier constants |
 | L-03 | Low | Quotient VM does not assert `q_pc == q_end` after bytecode interpretation |
 | I-01 | Informational | VK codehash/length should be continuously tested from deployed bytecode |
 | I-02 | Informational | Accumulator encoding logic needs extensive negative tests |
@@ -164,6 +164,11 @@ if iszero(success) { revert(0, 0) }
 This does not change accepted proofs.
 
 ### L-02: VK header values are not cross-checked against verifier constants
+
+**Status:** Resolved. After the VK payload is embedded or copied with
+`extcodecopy`, the verifier now cross-checks the generated header words for
+instance count, domain `k`, and accumulator layout against the verifier's
+compiled-in constants before calldata parsing continues.
 
 The VK payload contains header values:
 

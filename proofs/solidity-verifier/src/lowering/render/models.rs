@@ -516,6 +516,7 @@ pub(crate) struct Halo2Verifier {
     /// materialization, so a stale or mismatched VK fails before public-input
     /// decoding chooses the wrong schema.
     pub(crate) expected_has_accumulator: bool,
+    pub(crate) expected_has_accumulator_word: usize,
     pub(crate) expected_acc_offset: usize,
     pub(crate) expected_num_acc_limbs: usize,
     pub(crate) expected_num_acc_limb_bits: usize,
@@ -1138,6 +1139,7 @@ mod tests {
             fixed_comm_mptr: 0,
             truncated_challenges: false,
             expected_has_accumulator: false,
+            expected_has_accumulator_word: 0,
             expected_acc_offset: 0,
             expected_num_acc_limbs: 0,
             expected_num_acc_limb_bits: 0,
