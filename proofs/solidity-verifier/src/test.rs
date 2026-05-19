@@ -2862,14 +2862,16 @@ fn proof_reader_sections_cover_exactly_once(
                 section.name, section.start, section.end, layout.proof_cptr, layout.proof_end
             ));
         }
-        for byte in section.start - layout.proof_cptr..section.end - layout.proof_cptr {
-            if let Some(previous_idx) = owners[byte] {
+        let section_start = section.start - layout.proof_cptr;
+        let section_end = section.end - layout.proof_cptr;
+        for (byte, owner) in owners.iter_mut().enumerate().take(section_end).skip(section_start) {
+            if let Some(previous_idx) = *owner {
                 return Err(format!(
                     "{} byte {byte:#x} overlaps {}",
                     section.name, sections[previous_idx].name
                 ));
             }
-            owners[byte] = Some(section_idx);
+            *owner = Some(section_idx);
         }
     }
     if let Some(byte) = owners.iter().position(Option::is_none) {
