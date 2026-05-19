@@ -499,7 +499,7 @@ checkpoint.
 | Empty/edge circuit shapes | Shape fuzz circuits with no advice in a phase, no lookups, one lookup, additive selectors, complex selectors, next rotations, second phase advice, permutation on/off, and wide advice counts that stress memory layout. |
 | PCS/KZG/quotient | Mutate every quotient commitment, proof eval, opening proof, batching scalar source, quotient evaluator output, and external quotient return length. Assert the final pairing result is semantically checked, not just precompile call success. |
 | Accumulator-specific | Check accumulator schema consumes exactly the expected public input words. Test unused high limb bits, malformed identity encoding, x/y limb swaps, scalar mutation, zero/identity accumulator cases, and any future fixed-base tail. |
-| Precompile/fail behavior | Constructor smoke tests for EIP-2537 are good; add tests for short return data, false pairing result, reverted precompile call, and stale return memory using generated-template mutations or a helper harness. |
+| Precompile/fail behavior | Constructor smoke tests cover MCOPY and EIP-2537 identity calls; add tests for short return data, false pairing result, reverted precompile call, and stale return memory using generated-template mutations or a helper harness. |
 | Memory/layout | Fast generator tests should assert no overlap between VK, challenge, transcript, quotient, PCS, accumulator, and scratch regions. Keep these as compile-time/layout tests in `src/codegen/mod.rs` and `src/codegen/template.rs`. |
 | Production artifact checks | `verifyProof` production renders stay `external view`, no `LOG1`, no gas checkpoints, Solidity pragma `^0.8.24`, Cancun/Prague target, runtime size below EIP-170 with margin. |
 | Wrapper/application binding | Add small mock wrapper contracts that bind expected state root, program ID, chain/domain, caller/action hash, nullifier/nonce. Same proof with wrong wrapper context must reject. |
@@ -586,7 +586,7 @@ Existing coverage already includes a healthy baseline:
 - Separate VK pinning and VK payload mutation.
 - Pinned quotient dependency checks.
 - Malformed calldata rejection.
-- EIP-2537 constructor smoke tests.
+- MCOPY/EIP-2537 constructor smoke tests.
 - Production render checks for `external view` and no gas logs.
 - Native/Solidity trace equivalence.
 - Scalar canonicality tests for proof scalars.
@@ -617,9 +617,11 @@ A verifier profile is considered covered when:
    forms that the hand-rolled parser is not intended to accept.
 5. EIP-2537 integration tests cover call failure, short return, semantic false
    return, and valid precompile behavior.
-6. Production artifacts compile with the pinned compiler/EVM target and stay
+6. Deployment CI exercises the exact destination chain or fork configuration,
+   including constructor-time MCOPY/EIP-2537 smoke tests.
+7. Production artifacts compile with the pinned compiler/EVM target and stay
    within size limits.
-7. Raw verifier NatSpec documents that application contracts must bind
+8. Raw verifier NatSpec documents that application contracts must bind
    protocol semantics, and wrapper tests prove those bindings reject replay or
    wrong-context proofs.
 

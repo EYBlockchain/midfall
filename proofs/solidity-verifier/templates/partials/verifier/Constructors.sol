@@ -3,12 +3,12 @@
     {%- match quotient_external %}
     {%- when Some with (_) %}
     /// @notice Create a verifier pinned to a verifying key and quotient evaluator.
-    /// @dev Checks EIP-2537 availability and verifies both dependency runtimes before storing their addresses.
+    /// @dev Checks MCOPY/EIP-2537 availability and verifies both dependency runtimes before storing their addresses.
     /// @param authorizedVk Address of the generated `Halo2VerifyingKey` runtime.
     /// @param authorizedQuotient Address of the generated `Halo2QuotientEvaluator` runtime.
     constructor(address authorizedVk, address authorizedQuotient) {
-        // Verifier correctness depends on chain support for the BLS12-381
-        // precompiles; fail deployment before pinning any dependency address.
+        // Verifier correctness depends on chain support for MCOPY and the
+        // BLS12-381 precompiles; fail deployment before pinning dependencies.
         require_eip2537_precompiles();
         // Pin the generated VK runtime exactly. The verifier later repeats the
         // codehash/length check before copying the VK payload for a proof.
@@ -39,11 +39,12 @@
     }
     {%- when None %}
     /// @notice Create a verifier pinned to a generated verifying key.
-    /// @dev Checks EIP-2537 availability and verifies the VK runtime before storing its address.
+    /// @dev Checks MCOPY/EIP-2537 availability and verifies the VK runtime before storing its address.
     /// @param authorizedVk Address of the generated `Halo2VerifyingKey` runtime.
     constructor(address authorizedVk) {
         // Embedded quotient path: only the external VK runtime needs to be
-        // pinned, but the curve precompiles are still mandatory.
+        // pinned, but the runtime opcode/precompile prerequisites are still
+        // mandatory.
         require_eip2537_precompiles();
         require(
             authorizedVk.code.length == EXPECTED_VK_LENGTH
@@ -61,7 +62,8 @@
     /// @param authorizedQuotient Address of the generated `Halo2QuotientEvaluator` runtime.
     constructor(address authorizedQuotient) {
         // Embedded VK path: the verifier bytecode carries the VK payload, but
-        // the external quotient evaluator remains a pinned dependency.
+        // the runtime prerequisites and external quotient evaluator still
+        // need to be checked before storing the dependency address.
         require_eip2537_precompiles();
         {%- match self.expected_quotient_codehash %}
         {%- when Some with (_) %}
@@ -80,10 +82,10 @@
     }
     {%- when None %}
     /// @notice Create a verifier with embedded verifier data.
-    /// @dev Checks EIP-2537 availability at deployment.
+    /// @dev Checks MCOPY/EIP-2537 availability at deployment.
     constructor() {
         // Fully embedded verifier: no external generated dependency exists,
-        // so deployment only checks precompile availability.
+        // so deployment only checks runtime opcode/precompile availability.
         require_eip2537_precompiles();
     }
     {%- endmatch %}

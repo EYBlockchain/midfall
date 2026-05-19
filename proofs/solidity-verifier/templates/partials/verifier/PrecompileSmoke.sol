@@ -1,10 +1,19 @@
-    /// @notice Smoke-check the BLS12-381 precompiles required by the verifier.
-    /// @dev Uses identity inputs to catch absent EIP-2537 implementations, short return data, and incompatible pairing semantics at deployment.
+    /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
+    /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
-            // Scratch is reused for every precompile probe. Start with the
-            // EIP-2537 identity encoding for G1/G2: all-zero padded words.
+            // Scratch is reused for every runtime-prerequisite probe.
             let scratch := {{ memory.constructor_smoke_scratch_mptr|hex() }}
+
+            // MCOPY must be available because the verifier uses it for
+            // proof-time point/scratch staging. Execute the opcode here so a
+            // non-Cancun fork fails during deployment instead of later proofs.
+            mstore(scratch, 0x1234)
+            mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})
+            if iszero(eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)) { revert(0, 0) }
+
+            // Start the EIP-2537 probes with the identity encoding for G1/G2:
+            // all-zero padded words.
             for { let off := 0 } lt(off, {{ template_constants.eip2537.smoke_scratch_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
                 mstore(add(scratch, off), 0)
             }

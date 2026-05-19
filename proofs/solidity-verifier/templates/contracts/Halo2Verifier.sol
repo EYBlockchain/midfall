@@ -30,7 +30,7 @@ pragma solidity ^0.8.24;
 ///   Keccak digest, resets the transcript buffer to that digest, then samples
 ///   by interpreting the digest as a big-endian integer modulo r.
 /// - Scalar inversion uses modexp(scalar, r-2, r).
-/// - Constructors run a deployment-time smoke test for the EIP-2537
+/// - Constructors run deployment-time smoke tests for MCOPY and the EIP-2537
 ///   precompiles using identity inputs. Compile with Solidity >=0.8.24 and
 ///   deploy only on chains/forks that support MCOPY and EIP-2537.
 contract Halo2Verifier {

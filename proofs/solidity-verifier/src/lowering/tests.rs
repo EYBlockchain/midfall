@@ -1004,14 +1004,18 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
 }
 
 #[test]
-fn verifier_constructor_smoke_tests_eip2537_precompiles() {
+fn verifier_constructor_smoke_tests_runtime_prerequisites() {
     let verifier_template = verifier_template_corpus();
 
     assert!(
         verifier_template.contains("function require_eip2537_precompiles() private view"),
-        "generated verifier should include a deployment-time EIP-2537 smoke test"
+        "generated verifier should include a deployment-time runtime prerequisite smoke test"
     );
     for required in [
+        "Smoke-check the Cancun/EIP-2537 runtime features",
+        "mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})",
+        "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
+        "non-Cancun fork fails during deployment",
         "G1ADD(identity, identity) -> identity",
         "G1MSM([(identity, 0)]) -> identity",
         "PAIRING_CHECK([(identity_g1, identity_g2)]) -> true",
@@ -1026,13 +1030,13 @@ fn verifier_constructor_smoke_tests_eip2537_precompiles() {
     ] {
         assert!(
             verifier_template.contains(required),
-            "constructor precompile smoke test missing expected check: {required}"
+            "constructor runtime-prerequisite smoke test missing expected check: {required}"
         );
     }
     assert_eq!(
         verifier_template.matches("require_eip2537_precompiles();").count(),
         4,
-        "every generated constructor shape should run the precompile smoke test"
+        "every generated constructor shape should run the runtime-prerequisite smoke test"
     );
     assert!(
         verifier_template.contains("support MCOPY and EIP-2537"),

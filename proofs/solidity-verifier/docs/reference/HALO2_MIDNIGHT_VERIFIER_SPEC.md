@@ -1549,6 +1549,7 @@ rules.
 
 The generated verifier constructor runs smoke tests:
 
+- `MCOPY` one-word round trip in constructor scratch.
 - `G1ADD(identity, identity) -> identity`.
 - `G1MSM([(identity, 0)]) -> identity`.
 - `PAIRING_CHECK([(identity_g1, identity_g2)]) -> true`.
