@@ -8,23 +8,31 @@ chain.
 
 | Contract | Address |
 | --- | --- |
-| `Halo2VerifyingKey` | `0x2fE3dB07Cc00f6dFF002C37d5A17ebfAd7aA88D0` |
-| `Halo2Verifier` | `0x049510AfEC69eD54409dabB57195FfD38400F4D0` |
+| `Halo2VerifyingKey` | [`0x0D2789bcDF4A0406Dc7383BD7D4b73A7f08CaC16`](https://sepolia.etherscan.io/address/0x0D2789bcDF4A0406Dc7383BD7D4b73A7f08CaC16) |
+| `Halo2Verifier` | [`0xA826f6e66567EAFCd618175041a8F9E79f4661a2`](https://sepolia.etherscan.io/address/0xA826f6e66567EAFCd618175041a8F9E79f4661a2) |
 
 ## Transactions
 
 | Action | Transaction |
 | --- | --- |
-| Deploy VK | `0xd6e7c6180a57c424327df03fe5b4ed0a274c73a4e8f681913582db5cf9e809cf` |
-| Deploy verifier | `0x2236dc333064a88e7f23fc669570f72bf52163ca1cf637c29a6e77b743bfa60e` |
-| Verify fresh proof | `0xd536e9162bab92c71b7b9f1bb94f00def8b50e441144c6aebd7708a51400abfb` |
+| Deploy VK | [`0x22db64c0b4a15460d93b3091359f7988123be59b945cec4bcb91b3498587f588`](https://sepolia.etherscan.io/tx/0x22db64c0b4a15460d93b3091359f7988123be59b945cec4bcb91b3498587f588) |
+| Deploy verifier | [`0x5bb4769deb461e2ca68a8ebaf1fbf44a0dbe9c526e4d7795b394a0292a853882`](https://sepolia.etherscan.io/tx/0x5bb4769deb461e2ca68a8ebaf1fbf44a0dbe9c526e4d7795b394a0292a853882) |
+| Verify fresh proof | [`0x696e5b99fbdfc31adc71046d2afd01897a20f05202a46c2f0e70614853e9ac90`](https://sepolia.etherscan.io/tx/0x696e5b99fbdfc31adc71046d2afd01897a20f05202a46c2f0e70614853e9ac90) |
+
+## Gas
+
+| Action | Gas used |
+| --- | ---: |
+| Deploy VK | `3,723,458` |
+| Deploy verifier | `5,349,137` |
+| Verify fresh proof | `1,310,991` |
 
 ## Runtime Metadata
 
 | Contract | Runtime bytes | Runtime code hash |
 | --- | ---: | --- |
 | `Halo2VerifyingKey` | `17025` | `0x24430c63ec2017f12ec4004d66c66314f418dd77fe38dd4c2475c8f2b259e009` |
-| `Halo2Verifier` | `21119` | `0x1422a1464cc070cd2d88cc9468edf6d88d99ead6cacbd942bfb0257e209f3b10` |
+| `Halo2Verifier` | `21410` | `0x2bebc2f2ae0446f93f97cda1a72c5b6b58b9aead3a3eaf3b12927ae1bd92d981` |
 
 ## Files
 
