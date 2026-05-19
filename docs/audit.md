@@ -21,7 +21,7 @@ The main findings are:
 | H-INT | High integration risk | Raw verifier does not bind proof meaning to an application, chain, contract, user, nullifier, or program domain |
 | L-01 | Low | Resolved: non-canonical public instances now revert immediately after the instance loop |
 | L-02 | Low | Resolved: loaded VK header values are cross-checked against verifier constants |
-| L-03 | Low | Quotient VM does not assert `q_pc == q_end` after bytecode interpretation |
+| L-03 | Low | Resolved: quotient VM asserts exact bytecode termination and empty final stack |
 | I-01 | Informational | VK codehash/length should be continuously tested from deployed bytecode |
 | I-02 | Informational | Accumulator encoding logic needs extensive negative tests |
 | I-03 | Informational | Terminal absolute-memory Yul strategy is acceptable but brittle |
@@ -197,6 +197,10 @@ if iszero(eq(mload(NUM_ACC_LIMB_BITS_MPTR), 56)) { revert(0, 0) }
 ```
 
 ### L-03: Quotient VM does not assert exact program termination
+
+**Status:** Resolved. The compact quotient VM now reverts unless `q_pc == q_end`
+after interpretation and `q_has_top == 0`, and generator tests assert the
+planned stack/scratch region covers the validated VM operand-stack bound.
 
 The quotient interpreter stops on:
 

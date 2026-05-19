@@ -362,6 +362,16 @@ fn lowering_plan_reuses_stable_layout_facts() {
     assert_eq!(plan.quotient.program.len, plan.quotient.build.bytes.len());
     assert!(plan.quotient.build.consts.len() <= plan.vk.quotient_const_words);
     assert_eq!(plan.quotient.program.stack_mptr, plan.quotient.stack_mptr);
+    let quotient_stack_region = plan
+        .memory
+        .map
+        .region("quotient_stack")
+        .expect("quotient stack region should be registered");
+    assert_eq!(quotient_stack_region.start, plan.quotient.stack_mptr);
+    assert!(
+        quotient_stack_region.len >= plan.quotient.build.max_stack * layout::WORD_BYTES,
+        "planned quotient stack/scratch region must cover the validated VM operand stack"
+    );
     assert_eq!(
         plan.quotient.program.eval_numer_mptr,
         plan.quotient.state_slots.eval_numer_mptr
@@ -1543,6 +1553,17 @@ fn quotient_vm_safety_validator_rejects_malformed_programs() {
 fn quotient_vm_safety_validator_accepts_byte_programs() {
     let bytes = [Q_OP_PUSH_CONST_U8, 0, Q_OP_POW5, Q_OP_FOLD_MAIN];
     assert_eq!(validate_quotient_program(&bytes).unwrap(), 1);
+}
+
+#[test]
+fn quotient_vm_runtime_asserts_exact_program_termination() {
+    let verifier_template = verifier_template_corpus();
+
+    assert!(
+        verifier_template.contains("if iszero(eq(q_pc, q_end)) { revert(0, 0) }")
+            && verifier_template.contains("if q_has_top { revert(0, 0) }"),
+        "quotient VM must fail closed when bytecode over-runs q_end or leaves a live stack value"
+    );
 }
 
 #[test]

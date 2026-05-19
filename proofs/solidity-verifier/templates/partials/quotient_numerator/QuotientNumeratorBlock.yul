@@ -1184,6 +1184,12 @@
                         revert(0, 0)
                     }
                 }
+                // The VK-pinned bytecode must end exactly at q_end and every
+                // identity must have been consumed by a fold/native callback.
+                // This catches malformed generator output whose final opcode
+                // over-reads operands or leaves a partial expression live.
+                if iszero(eq(q_pc, q_end)) { revert(0, 0) }
+                if q_has_top { revert(0, 0) }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled
