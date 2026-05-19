@@ -288,7 +288,7 @@ contract Halo2Verifier {
     function verifyProof(
         bytes calldata proof,
         uint256[] calldata instances
-    ) external returns (bool) {
+    ) external view returns (bool) {
         // Cheap ABI-shape guard before any generated memory work:
         //   - proof head must point at the bytes payload;
         //   - instances head must point at the generated instance array.
@@ -880,20 +880,11 @@ contract Halo2Verifier {
             }
 
 
-            // Section-boundary gas-attribution checkpoint. Emits a
-            // single LOG1 (no data) with topic = (id << 248) | gas().
-            // Cost: 375 (LOG base) + 375 (1 topic) = 750 gas/call.
-            // Host-side parses the topic into (id, gas_left) and prints
-            // pairwise deltas (see `dump_gas_checkpoints`).
-            function gas_checkpoint(id) {
-                log1(0, 0, or(shl(248, id), gas()))
-            }
 
             let r := FR_MODULUS
             let success := true
 
 
-            gas_checkpoint(1) // entry: before VK loading
 
             // ===============================================================
             // VK loading: either bake in the embedded VK bytes or fetch
@@ -982,7 +973,6 @@ contract Halo2Verifier {
             // where the verifier converts failure to a revert.
             success := validate_public_accumulator(success, r)
             if iszero(success) { revert(0, 0) }
-            gas_checkpoint(2) // after VK loading + accumulator public-input precheck
 
                 // ===============================================================
             // Transcript: VK digest + instances + proof.
@@ -1053,7 +1043,6 @@ contract Halo2Verifier {
                 }
                 if iszero(success) { revert(0, 0) }
             }
-            gas_checkpoint(3) // after VK digest + committed_pi + instance absorbs
 
             // ===============================================================
             // Per-user-phase reads + challenge squeezes.
@@ -1091,7 +1080,6 @@ contract Halo2Verifier {
                 advice_walk := add(advice_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(4) // after user-phase advice reads + user challenge squeezes
 
             // ---- theta ----
             // From this point onward the transcript alternates between
@@ -1111,7 +1099,6 @@ contract Halo2Verifier {
                 lookup_m_walk := add(lookup_m_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(5) // after theta squeeze + lookup multiplicities
 
             // ---- beta, gamma ----
             // beta and gamma are the permutation/lookup randomizers. They are
@@ -1131,7 +1118,6 @@ contract Halo2Verifier {
                 perm_z_walk := add(perm_z_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(6) // after beta/gamma + permutation Z products
             // ---- lookup helpers + accumulators (per-lookup) ----
             // Each lookup contributes zero or more helper commitments followed
             // by its lookup accumulator Z commitment. The generated layout keeps
@@ -1172,7 +1158,6 @@ contract Halo2Verifier {
             calldatacopy(lookup_z_walk, proof_cptr, 0x80)
             lookup_z_walk := add(lookup_z_walk, 0x80)
             proof_cptr := add(proof_cptr, 0x80)
-            gas_checkpoint(7) // after lookup helpers + Z accumulators
 
             // ---- trash_challenge ----
             // Midnight squeezes this challenge unconditionally, even when the
@@ -1192,7 +1177,6 @@ contract Halo2Verifier {
                 trashcan_walk := add(trashcan_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(8) // after trash_challenge + trashcans
 
             // ---- y ----
             // y batches all quotient identities. Quotient commitments are read
@@ -1216,7 +1200,6 @@ contract Halo2Verifier {
                 quotient_walk := add(quotient_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(9) // after y squeeze + quotient-limb reads
 
             // ---- x ----
             // x is the main evaluation point. Values read after this point are
@@ -1325,7 +1308,6 @@ contract Halo2Verifier {
             // `success` carries deferred canonicality failures from public
             // instance reads. G1/proof scalar helpers revert immediately.
             if iszero(success) { revert(0, 0) }
-            gas_checkpoint(10) // after evaluations + x1/x2 + f_com + x3 + q_evals + x4 + pi (transcript done)
 
                 // ===============================================================
             // Lagrange & instance-evaluation block (pure Fr arithmetic).
@@ -1405,7 +1387,6 @@ contract Halo2Verifier {
                 mstore(L_0_MPTR, l_0)
                 mstore(INSTANCE_EVAL_MPTR, instance_eval)
             }
-            gas_checkpoint(11) // after Lagrange + instance evaluation block
 
             if iszero(success) { revert(0, 0) }
 
@@ -2837,7 +2818,6 @@ contract Halo2Verifier {
                 mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)
                 pop(y)
             }
-            gas_checkpoint(12) // after batched identity numerator reconstruction
 
             // ===============================================================
             // Prepare linearization scalars for the final PCS MSM.
@@ -2879,7 +2859,6 @@ contract Halo2Verifier {
                 mstore(QUOTIENT_MPTR, x_split)
                 mstore(add(QUOTIENT_MPTR, 0x20), one_minus_x_n)
             }
-            gas_checkpoint(13) // after linearization scalar prep
 
                 // ===============================================================
             // PCS computation (multi-prepare emitter from Step 5).
@@ -2918,7 +2897,6 @@ contract Halo2Verifier {
                     x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, r)
                     mstore(add(ROT_POINTS_MPTR, 0x0), x_pow_of_omega)
                 }
-                gas_checkpoint(17) // after PCS sub-block 1
                 // Generated PCS sub-block 2. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -2934,7 +2912,6 @@ contract Halo2Verifier {
                         mstore(p, and(acc, 0xffffffffffffffffffffffffffffffff))
                     }
                 }
-                gas_checkpoint(18) // after PCS sub-block 2
                 // Generated PCS sub-block 3. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -2995,7 +2972,6 @@ contract Halo2Verifier {
                     }
                     mstore(add(Q_EVAL_SET_MPTR, 0x0), q_eval_set_0)
                 }
-                gas_checkpoint(19) // after PCS sub-block 3
                 // Generated PCS sub-block 4. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3010,7 +2986,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x20), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x40), q_eval_set_1)
                 }
-                gas_checkpoint(20) // after PCS sub-block 4
                 // Generated PCS sub-block 5. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3025,7 +3000,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x60), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x80), q_eval_set_1)
                 }
-                gas_checkpoint(21) // after PCS sub-block 5
                 // Generated PCS sub-block 6. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3082,7 +3056,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0xc0), q_eval_set_1)
                     mstore(add(Q_EVAL_SET_MPTR, 0xe0), q_eval_set_2)
                 }
-                gas_checkpoint(22) // after PCS sub-block 6
                 // Generated PCS sub-block 7. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3121,7 +3094,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x120), q_eval_set_1)
                     mstore(add(Q_EVAL_SET_MPTR, 0x140), q_eval_set_2)
                 }
-                gas_checkpoint(23) // after PCS sub-block 7
                 // Generated PCS sub-block 8. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3290,7 +3262,6 @@ contract Halo2Verifier {
                     }
                     mstore(F_EVAL_MPTR, f_eval)
                 }
-                gas_checkpoint(24) // after PCS sub-block 8
                 // Generated PCS sub-block 9. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3485,7 +3456,6 @@ contract Halo2Verifier {
                     }
                     mstore(V_MPTR, v)
                 }
-                gas_checkpoint(25) // after PCS sub-block 9
                 // Generated PCS sub-block 10. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -3517,7 +3487,6 @@ contract Halo2Verifier {
                     mcopy(PAIRING_RHS_MPTR, 0x80, 0x80)
                 }
             }
-            gas_checkpoint(14) // after PCS computation block (= sub-block 6)
 
                 // Batch the prevalidated public IVC accumulator pairing equation
             // into the final KZG pairing.
@@ -3576,7 +3545,6 @@ contract Halo2Verifier {
                     success := and(success, eq(returndatasize(), 0x80))
                 }
             }
-            gas_checkpoint(15) // after public accumulator pairing batch prep (omitted for no-accumulator VKs)
 
             // The Yul `ec_pairing` helper checks
             //   e(arg0, G2_BASE) * e(arg1, NEG_S_G2_BASE) == 1
@@ -3593,7 +3561,6 @@ contract Halo2Verifier {
             // pairing argument order. Pass them swapped to ec_pairing.
             if iszero(success) { revert(0, 0) }
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
-            gas_checkpoint(16) // after final ec_pairing
 
 
 

@@ -8,31 +8,34 @@ chain.
 
 | Contract | Address |
 | --- | --- |
-| `Halo2VerifyingKey` | [`0x0D2789bcDF4A0406Dc7383BD7D4b73A7f08CaC16`](https://sepolia.etherscan.io/address/0x0D2789bcDF4A0406Dc7383BD7D4b73A7f08CaC16) |
-| `Halo2Verifier` | [`0xA826f6e66567EAFCd618175041a8F9E79f4661a2`](https://sepolia.etherscan.io/address/0xA826f6e66567EAFCd618175041a8F9E79f4661a2) |
+| `Halo2VerifyingKey` | [`0x80b32f68A333dF55Da60BEc44C498477a8311eDe`](https://sepolia.etherscan.io/address/0x80b32f68A333dF55Da60BEc44C498477a8311eDe) |
+| `Halo2Verifier` | [`0x5CfEd44D16F994fc17f681A83FEdFEB9c3348c17`](https://sepolia.etherscan.io/address/0x5CfEd44D16F994fc17f681A83FEdFEB9c3348c17) |
 
 ## Transactions
 
 | Action | Transaction |
 | --- | --- |
-| Deploy VK | [`0x22db64c0b4a15460d93b3091359f7988123be59b945cec4bcb91b3498587f588`](https://sepolia.etherscan.io/tx/0x22db64c0b4a15460d93b3091359f7988123be59b945cec4bcb91b3498587f588) |
-| Deploy verifier | [`0x5bb4769deb461e2ca68a8ebaf1fbf44a0dbe9c526e4d7795b394a0292a853882`](https://sepolia.etherscan.io/tx/0x5bb4769deb461e2ca68a8ebaf1fbf44a0dbe9c526e4d7795b394a0292a853882) |
-| Verify fresh proof | [`0x696e5b99fbdfc31adc71046d2afd01897a20f05202a46c2f0e70614853e9ac90`](https://sepolia.etherscan.io/tx/0x696e5b99fbdfc31adc71046d2afd01897a20f05202a46c2f0e70614853e9ac90) |
+| Deploy VK | [`0xf96f25bd4f44b815a93b5d3a8f3c59d8f62afd4d6a10adf60139c73c5b7243dc`](https://sepolia.etherscan.io/tx/0xf96f25bd4f44b815a93b5d3a8f3c59d8f62afd4d6a10adf60139c73c5b7243dc) |
+| Deploy verifier | [`0x5b34c4f25cdd6a641150488b0dc5edb130d0e8fd160408789f8ecd09f99bf417`](https://sepolia.etherscan.io/tx/0x5b34c4f25cdd6a641150488b0dc5edb130d0e8fd160408789f8ecd09f99bf417) |
+| Verify fresh proof | [`0x013fb1a6323d51574c0c5b1c2e79ec4fb84706474c1c06601fa6e61737eb15a4`](https://sepolia.etherscan.io/tx/0x013fb1a6323d51574c0c5b1c2e79ec4fb84706474c1c06601fa6e61737eb15a4) |
 
 ## Gas
 
 | Action | Gas used |
 | --- | ---: |
 | Deploy VK | `3,723,458` |
-| Deploy verifier | `5,349,137` |
-| Verify fresh proof | `1,310,991` |
+| Deploy verifier | `5,295,315` |
+| Verify fresh proof | `1,291,730` |
+
+The verifier was rendered without gas checkpoints. The proof verification
+transaction emitted zero logs.
 
 ## Runtime Metadata
 
 | Contract | Runtime bytes | Runtime code hash |
 | --- | ---: | --- |
 | `Halo2VerifyingKey` | `17025` | `0x24430c63ec2017f12ec4004d66c66314f418dd77fe38dd4c2475c8f2b259e009` |
-| `Halo2Verifier` | `21410` | `0x2bebc2f2ae0446f93f97cda1a72c5b6b58b9aead3a3eaf3b12927ae1bd92d981` |
+| `Halo2Verifier` | `21161` | `0x2e1e46a83888a8989698b1f3ad87387db52408e015b11d7cff24a930b0baa776` |
 
 ## Files
 

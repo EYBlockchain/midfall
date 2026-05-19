@@ -4,8 +4,8 @@
   "deployer": "0x609A4Ff8347Bb82d65a12A597298F256Fd4DE493",
   "contracts": {
     "Halo2VerifyingKey": {
-      "address": "0x0D2789bcDF4A0406Dc7383BD7D4b73A7f08CaC16",
-      "deploymentTx": "0x22db64c0b4a15460d93b3091359f7988123be59b945cec4bcb91b3498587f588",
+      "address": "0x80b32f68A333dF55Da60BEc44C498477a8311eDe",
+      "deploymentTx": "0xf96f25bd4f44b815a93b5d3a8f3c59d8f62afd4d6a10adf60139c73c5b7243dc",
       "gasUsed": 3723458,
       "runtimeBytes": 17025,
       "runtimeCodeHash": "0x24430c63ec2017f12ec4004d66c66314f418dd77fe38dd4c2475c8f2b259e009",
@@ -13,19 +13,23 @@
       "sourceFile": "Halo2VerifyingKey.sol"
     },
     "Halo2Verifier": {
-      "address": "0xA826f6e66567EAFCd618175041a8F9E79f4661a2",
-      "deploymentTx": "0x5bb4769deb461e2ca68a8ebaf1fbf44a0dbe9c526e4d7795b394a0292a853882",
-      "gasUsed": 5349137,
-      "runtimeBytes": 21410,
-      "runtimeCodeHash": "0x2bebc2f2ae0446f93f97cda1a72c5b6b58b9aead3a3eaf3b12927ae1bd92d981",
+      "address": "0x5CfEd44D16F994fc17f681A83FEdFEB9c3348c17",
+      "deploymentTx": "0x5b34c4f25cdd6a641150488b0dc5edb130d0e8fd160408789f8ecd09f99bf417",
+      "gasUsed": 5295315,
+      "runtimeBytes": 21161,
+      "runtimeCodeHash": "0x2e1e46a83888a8989698b1f3ad87387db52408e015b11d7cff24a930b0baa776",
       "runtimeBytecodeFile": "Halo2Verifier.runtime.bytecode.hex",
       "sourceFile": "Halo2Verifier.sol"
     }
   },
   "proofVerificationTx": {
-    "transactionHash": "0x696e5b99fbdfc31adc71046d2afd01897a20f05202a46c2f0e70614853e9ac90",
-    "gasUsed": 1310991,
+    "transactionHash": "0x013fb1a6323d51574c0c5b1c2e79ec4fb84706474c1c06601fa6e61737eb15a4",
+    "gasUsed": 1291730,
     "status": 1
+  },
+  "diagnostics": {
+    "gasCheckpoints": false,
+    "proofVerificationLogs": 0
   },
   "compiler": {
     "solc": "0.8.30",
