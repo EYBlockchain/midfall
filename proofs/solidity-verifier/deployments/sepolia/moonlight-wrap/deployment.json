@@ -1,0 +1,36 @@
+{
+  "chain": "sepolia",
+  "chainId": 11155111,
+  "deployer": "0x609A4Ff8347Bb82d65a12A597298F256Fd4DE493",
+  "contracts": {
+    "Halo2VerifyingKey": {
+      "address": "0x2132E1C5f2aFE710E0F3fE01ec70E95000F99882",
+      "deploymentTx": "0x5283e8cfd54be98b752cfee8fda8c0f02b196f8b0053af33850e4b2cd20df80a",
+      "gasUsed": 3723458,
+      "runtimeBytes": 17025,
+      "runtimeCodeHash": "0x24430c63ec2017f12ec4004d66c66314f418dd77fe38dd4c2475c8f2b259e009",
+      "runtimeBytecodeFile": "Halo2VerifyingKey.runtime.bytecode.hex",
+      "sourceFile": "Halo2VerifyingKey.sol"
+    },
+    "Halo2Verifier": {
+      "address": "0x3d7f4A7BF9EB60EC7909880A68eaf41e4fB4B3b5",
+      "deploymentTx": "0x69c4f9d0ac9098357346b3986c3fd48d062738124df91a73a89e314ecf044e0a",
+      "gasUsed": 4763839,
+      "runtimeBytes": 21368,
+      "runtimeCodeHash": "0x21eafc97654cfecd897cd8957217254ce0570813e59a36bc835e8bc459ee9b55",
+      "runtimeBytecodeFile": "Halo2Verifier.runtime.bytecode.hex",
+      "sourceFile": "Halo2Verifier.sol"
+    }
+  },
+  "proofVerificationTx": {
+    "transactionHash": "0x91bac90773f107016103be132b543af5ea4457527e3866484e62cbb6e01fdb97",
+    "gasUsed": 1310889,
+    "status": 1
+  },
+  "compiler": {
+    "solc": "0.8.30",
+    "viaIr": true,
+    "optimizerRuns": 200,
+    "metadata": "none"
+  }
+}

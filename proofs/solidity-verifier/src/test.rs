@@ -62,6 +62,27 @@ type PoseidonVerifierParams =
 const POSEIDON_K: u32 = 6;
 /// Environment flag that opts into expensive EVM/Solidity integration tests.
 const RUN_EVM_TESTS_ENV: &str = "HALO2_SOLIDITY_RUN_EVM_TESTS";
+/// Minimal caller used to exercise the production verifier under STATICCALL.
+const STATICCALL_VERIFIER_HARNESS: &str = r#"
+// SPDX-License-Identifier: CC0-1.0
+pragma solidity ^0.8.24;
+
+contract StaticcallVerifierHarness {
+    address immutable verifier;
+
+    constructor(address verifier_) {
+        verifier = verifier_;
+    }
+
+    function check(bytes calldata verifyCalldata) external view returns (bool) {
+        (bool ok, bytes memory output) = verifier.staticcall(verifyCalldata);
+        if (!ok || output.length != 32) {
+            return false;
+        }
+        return abi.decode(output, (bool));
+    }
+}
+"#;
 
 #[test]
 fn function_signature() {
@@ -551,6 +572,22 @@ fn supported_shape_circuit_fuzz_e2e() {
     }
 }
 
+#[cfg(feature = "rust-verifier-trace")]
+#[test]
+fn pbt_transcript_differential_fuzzer_matches_solidity_trace() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+
+    let mut runner = new_property_test_runner();
+    runner
+        .run(&any::<u64>(), |seed| {
+            run_transcript_differential_shape_fuzz_case(seed);
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// Render, deploy, and exercise one supported shape-fuzz case end to end.
 fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
@@ -625,7 +662,7 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
 
     #[cfg(feature = "rust-verifier-trace")]
     let compared_selector_folds = assert_shape_fuzz_trace_matches_native_midfall(
-        case,
+        case.name,
         &params,
         pk.get_vk(),
         &generator,
@@ -657,6 +694,67 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     compared_selector_folds
 }
 
+/// Generate a random-ish supported circuit shape from a fuzz seed.
+#[cfg(feature = "rust-verifier-trace")]
+fn generated_shape_fuzz_spec(seed: u64) -> ShapeFuzzSpec {
+    ShapeFuzzSpec {
+        next_rotation: seed & 0x01 != 0,
+        second_phase: seed & 0x02 != 0,
+        permutation: seed & 0x04 != 0,
+        lookup: seed & 0x08 != 0,
+        additive_selector: seed & 0x10 != 0,
+        complex_selector: seed & 0x20 != 0,
+        fixed_scale: seed & 0x40 != 0,
+        tag: 100 + seed.rotate_left(17) % 10_000,
+    }
+}
+
+#[cfg(feature = "rust-verifier-trace")]
+fn run_transcript_differential_shape_fuzz_case(seed: u64) {
+    let spec = generated_shape_fuzz_spec(seed);
+    let context = format!("transcript differential seed={seed:#018x} spec={spec:?}");
+    let circuit = ShapeFuzzCircuit::new(spec, seed);
+    let mut setup_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7ace_f00d);
+    let params = PoseidonParams::unsafe_setup(5, &mut setup_rng);
+    let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 5)
+        .unwrap_or_else(|err| panic!("{context} vk generation failed: {err:?}"));
+    let pk = keygen_pk(vk, &circuit)
+        .unwrap_or_else(|err| panic!("{context} pk generation failed: {err:?}"));
+
+    let committed = [F::ZERO];
+    let public = [circuit.public_instance()];
+    let all_instance_columns: [&[F]; 2] = [&committed, &public];
+    let mut proof_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x51d1_f1ed);
+    let mut transcript = CircuitTranscript::<sha3::Keccak256>::init();
+    create_proof::<F, KZGCommitmentScheme<Bls12>, _, _>(
+        &params,
+        &pk,
+        std::slice::from_ref(&circuit),
+        1,
+        &[&all_instance_columns],
+        &mut proof_rng,
+        &mut transcript,
+    )
+    .unwrap_or_else(|err| panic!("{context} proof generation failed: {err:?}"));
+    let compressed_proof = transcript.finalize();
+
+    let generator =
+        SolidityGenerator::new(&params, pk.get_vk(), GeneratorConfig::new(public.len(), 1));
+    let repacked_proof = generator
+        .repack_proof(&compressed_proof)
+        .unwrap_or_else(|err| panic!("{context} repack failed: {err:?}"));
+
+    assert_shape_fuzz_trace_matches_native_midfall(
+        &context,
+        &params,
+        pk.get_vk(),
+        &generator,
+        &compressed_proof,
+        &repacked_proof,
+        &public,
+    );
+}
+
 /// Return whether expensive shape-fuzz EVM tests have their host prerequisites.
 fn shape_fuzz_inputs_available_for_evm() -> bool {
     if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
@@ -672,7 +770,7 @@ fn shape_fuzz_inputs_available_for_evm() -> bool {
 
 #[cfg(feature = "rust-verifier-trace")]
 fn assert_shape_fuzz_trace_matches_native_midfall(
-    case: &ShapeFuzzCase,
+    context: &str,
     params: &PoseidonParams,
     vk: &midnight_proofs::plonk::VerifyingKey<F, KZGCommitmentScheme<Bls12>>,
     generator: &SolidityGenerator<'_>,
@@ -692,24 +790,13 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
         &[&public_columns],
         &mut transcript,
     )
-    .unwrap_or_else(|err| {
-        panic!(
-            "shape fuzz `{}` native trace prepare failed: {err:?}",
-            case.name
-        )
-    });
-    transcript.assert_empty().unwrap_or_else(|_| {
-        panic!(
-            "shape fuzz `{}` native trace transcript had trailing bytes",
-            case.name
-        )
-    });
-    guard.verify(&params.verifier_params()).unwrap_or_else(|err| {
-        panic!(
-            "shape fuzz `{}` native trace guard failed: {err:?}",
-            case.name
-        )
-    });
+    .unwrap_or_else(|err| panic!("{context} native trace prepare failed: {err:?}"));
+    transcript
+        .assert_empty()
+        .unwrap_or_else(|_| panic!("{context} native trace transcript had trailing bytes"));
+    guard
+        .verify(&params.verifier_params())
+        .unwrap_or_else(|err| panic!("{context} native trace guard failed: {err:?}"));
     let rust_trace = solidity_trace::take();
 
     let trace_artifacts = generator
@@ -721,7 +808,7 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
             },
             ..RenderOptions::default()
         })
-        .unwrap_or_else(|err| panic!("shape fuzz `{}` trace render failed: {err:?}", case.name));
+        .unwrap_or_else(|err| panic!("{context} trace render failed: {err:?}"));
     let trace_verifier_solidity = trace_artifacts.verifier;
     let trace_vk_solidity =
         trace_artifacts.verifying_key.expect("trace separate render includes VK");
@@ -734,16 +821,13 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
     let expected_true = [vec![0u8; 31], vec![1]].concat();
     assert_eq!(
         output, expected_true,
-        "shape fuzz `{}` trace verifier should accept the proof",
-        case.name
+        "{context} trace verifier should accept the proof"
     );
-
     let mut rust_by_id = BTreeMap::new();
     for event in rust_trace {
         assert!(
             rust_by_id.insert(event.id, (event.name, event.data)).is_none(),
-            "shape fuzz `{}` duplicate Rust trace id {}",
-            case.name,
+            "{context} duplicate Rust trace id {}",
             event.id
         );
     }
@@ -753,7 +837,7 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
         .chain(solidity_trace.keys())
         .any(|id| (60_000..61_000).contains(id));
     assert_trace_equivalence_and_required_coverage(
-        case.name,
+        context,
         &rust_by_id,
         &solidity_trace,
         has_selector_folds,
@@ -889,6 +973,36 @@ fn pbt_separate_vk_digest_prefix_affects_verification() {
     runner
         .run(&any::<u64>(), |seed| {
             run_separate_vk_digest_prefix_affects_verification_case(seed);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn pbt_structured_proof_calldata_mutations_are_rejected() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let mut runner = new_property_test_runner();
+    runner
+        .run(&any::<u64>(), |seed| {
+            run_structured_proof_calldata_mutation_case(seed);
+            Ok(())
+        })
+        .unwrap();
+}
+
+#[test]
+fn pbt_proof_layout_repack_and_reader_stay_in_sync() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let mut runner = new_property_test_runner();
+    runner
+        .run(&any::<u64>(), |seed| {
+            run_proof_layout_repack_reader_case(seed);
             Ok(())
         })
         .unwrap();
@@ -1099,6 +1213,30 @@ fn production_renders_do_not_emit_gas_checkpoints() {
             "{name} production render should keep verifyProof external view"
         );
     }
+}
+
+#[test]
+fn production_separate_verifier_accepts_valid_proof_under_staticcall() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let mut deployed = deployed_separate_verifier(&fixture);
+    assert_deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof");
+
+    let harness_address = deployed.evm.create_with_address_arg(
+        compile_solidity(STATICCALL_VERIFIER_HARNESS),
+        deployed.verifier_address,
+    );
+    deployed.verifier_address = harness_address;
+
+    let verifier_calldata = encode_calldata(&fixture.proof, &fixture.instances);
+    let harness_calldata = encode_bytes_call("check(bytes)", &verifier_calldata);
+    assert_solidity_accepts(
+        call_deployed_verifier_raw(&mut deployed, harness_calldata),
+        "valid proof through STATICCALL harness",
+    );
 }
 
 #[test]
@@ -1478,6 +1616,7 @@ impl Relation for PoseidonExample {
 struct PropertyPoseidonFixture {
     compressed_proof: Vec<u8>,
     proof: Vec<u8>,
+    proof_layout: crate::lowering::abi::ProofCalldataLayout,
     scalar_layout: crate::lowering::RepackedProofScalarLayout,
     instances: Vec<F>,
     params_verifier: PoseidonVerifierParams,
@@ -1687,6 +1826,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
     let trace_verifier_solidity = trace_artifacts.verifier;
     let trace_vk_solidity =
         trace_artifacts.verifying_key.expect("trace separate render includes VK");
+    let proof_layout = generator.inputs().lowering_plan().proof_layout;
     let proof = generator.repack_proof(&compressed_proof).expect("proof repack");
     let scalar_layout = generator.repacked_proof_scalar_layout_for_test();
     let params_verifier = srs.verifier_params();
@@ -1694,6 +1834,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
     PropertyPoseidonFixture {
         compressed_proof,
         proof,
+        proof_layout,
         scalar_layout,
         instances: vec![instance],
         params_verifier,
@@ -1783,6 +1924,53 @@ fn every_proof_scalar_rejects_boundary_values() {
             if word == original_word {
                 continue;
             }
+            let mut bad_proof = fixture.proof.clone();
+            bad_proof[offset..offset + 0x20].copy_from_slice(&word);
+            assert_deployed_call_rejects(
+                &mut evm,
+                &fixture,
+                &bad_proof,
+                &format!("{name} scalar replaced with {variant} at proof offset {offset}"),
+            );
+        }
+    }
+}
+
+#[test]
+fn every_proof_scalar_rejects_high_bit_noncanonical_values() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let scalar_offsets = proof_scalar_offsets(&fixture);
+    assert!(
+        !scalar_offsets.is_empty(),
+        "fixture proof should expose scalar fields to mutate"
+    );
+
+    let mut evm = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut evm, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+
+    for (scalar_idx, (name, offset)) in scalar_offsets.into_iter().enumerate() {
+        let mut high_bit = [0u8; 32];
+        high_bit[0] = 0x80;
+
+        let mut deterministic_noncanonical = [0u8; 32];
+        for (byte_idx, byte) in deterministic_noncanonical.iter_mut().enumerate() {
+            *byte = (scalar_idx as u8)
+                .wrapping_mul(31)
+                .wrapping_add((byte_idx as u8).wrapping_mul(17))
+                .wrapping_add(0x42);
+        }
+        deterministic_noncanonical[0] |= 0x80;
+
+        for (variant, word) in [
+            ("high-bit-minimum", high_bit),
+            ("high-bit-pattern", deterministic_noncanonical),
+        ] {
             let mut bad_proof = fixture.proof.clone();
             bad_proof[offset..offset + 0x20].copy_from_slice(&word);
             assert_deployed_call_rejects(
@@ -1972,6 +2160,40 @@ fn every_proof_g1_rejects_noncanonical_coordinates() {
 }
 
 #[test]
+fn every_proof_g1_rejects_base_modulus_coordinates() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let layout = proof_g1_layout(&fixture);
+    let fq_modulus = bls_base_modulus_padded_coordinate();
+
+    let mut evm = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut evm, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+
+    for (idx, repacked_offset) in layout.repacked_offsets.iter().copied().enumerate() {
+        for (coordinate, coordinate_offset) in [("x", 0usize), ("y", 0x40usize)] {
+            let mut bad_proof = fixture.proof.clone();
+            bad_proof
+                [repacked_offset + coordinate_offset..repacked_offset + coordinate_offset + 64]
+                .copy_from_slice(&fq_modulus);
+            assert_deployed_call_rejects(
+                &mut evm,
+                &fixture,
+                &bad_proof,
+                &format!(
+                    "Solidity G1 {coordinate} coordinate equal to Fq modulus idx={idx} \
+                     repacked_offset={repacked_offset}"
+                ),
+            );
+        }
+    }
+}
+
+#[test]
 fn every_proof_g1_rejects_off_curve_coordinates() {
     if !poseidon_inputs_available_for_evm() {
         return;
@@ -2132,6 +2354,106 @@ fn run_separate_vk_digest_prefix_affects_verification_case(seed: u64) {
         &fixture.proof,
         &fixture.instances,
         &format!("digest-only mutated separate vk seed={seed}"),
+    );
+}
+
+/// Property case: start from valid calldata, then mutate one structured field
+/// at a time so parser/layout bugs are exercised beyond blind byte flips.
+fn run_structured_proof_calldata_mutation_case(seed: u64) {
+    let fixture = create_property_poseidon_fixture();
+    let valid = encode_calldata(&fixture.proof, &fixture.instances);
+    let mutations = structured_proof_calldata_mutations(&fixture, &valid, seed);
+    assert!(
+        !mutations.is_empty(),
+        "structured calldata fuzzer must emit at least one mutation"
+    );
+
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_raw_call_accepts(
+        &mut deployed,
+        valid.clone(),
+        &format!("valid calldata before structured mutation fuzz seed={seed}"),
+    ) {
+        return;
+    }
+
+    for mutation in mutations {
+        assert_solidity_rejects(
+            call_deployed_verifier_raw(&mut deployed, mutation.calldata),
+            &format!(
+                "structured calldata mutation seed={seed}: {}",
+                mutation.name
+            ),
+        );
+    }
+}
+
+/// Property case: compare the typed proof calldata layout, proof repacker, and
+/// rendered Yul reader so missing reads or offset drift fail before runtime.
+fn run_proof_layout_repack_reader_case(seed: u64) {
+    let fixture = create_property_poseidon_fixture();
+    let layout = &fixture.proof_layout;
+    let repack_plan =
+        crate::lowering::quotient_numerator::vm::RepackedProofLayoutPlan::from_proof_layout(layout);
+
+    assert_eq!(
+        layout.proof_cptr,
+        proof_payload_word_start(),
+        "layout proof pointer must match the ABI bytes payload start"
+    );
+    assert_eq!(
+        layout.proof_len,
+        fixture.proof.len(),
+        "layout proof length must match repacked proof bytes"
+    );
+    assert_eq!(
+        layout.proof_end,
+        instances_len_word_start(&fixture.proof),
+        "layout proof end must land on the instances length word"
+    );
+    assert_eq!(
+        repack_plan.repacked_len(),
+        fixture.proof.len(),
+        "repack proof length must match ProofCalldataLayout"
+    );
+    assert_eq!(
+        repack_plan.compressed_len(),
+        fixture.compressed_proof.len(),
+        "native compressed proof length must match repack plan"
+    );
+    assert_eq!(
+        fixture.scalar_layout.eval_offset,
+        layout.evals.start - layout.proof_cptr,
+        "eval scalar offset drift between repack plan and proof layout"
+    );
+    assert_eq!(
+        fixture.scalar_layout.num_evals, layout.evals.item_count,
+        "eval scalar count drift between repack plan and proof layout"
+    );
+    assert_eq!(
+        fixture.scalar_layout.q_eval_offset,
+        layout.q_evals.start - layout.proof_cptr,
+        "q_eval scalar offset drift between repack plan and proof layout"
+    );
+    assert_eq!(
+        fixture.scalar_layout.num_point_sets, layout.q_evals.item_count,
+        "q_eval scalar count drift between repack plan and proof layout"
+    );
+    assert_eq!(
+        proof_g1_layout(&fixture).repacked_offsets,
+        proof_layout_g1_offsets(layout),
+        "G1 proof offsets must be identical in the repacker and typed layout"
+    );
+
+    let sections = proof_layout_reader_sections(layout);
+    proof_reader_sections_cover_exactly_once(layout, &sections).unwrap_or_else(|err| {
+        panic!("ProofCalldataLayout sections must cover proof bytes exactly once: {err}")
+    });
+    assert_seeded_layout_drift_is_detected(seed, layout, &sections);
+    assert_rendered_reader_matches_proof_layout(
+        &fixture.separate_verifier_solidity,
+        layout,
+        fixture.instances.len(),
     );
 }
 
@@ -2421,21 +2743,442 @@ struct ProofG1Layout {
     repacked_offsets: Vec<usize>,
 }
 
-/// Return named scalar-word offsets in the Solidity-facing proof.
-fn proof_scalar_offsets(fixture: &PropertyPoseidonFixture) -> Vec<(String, usize)> {
-    let layout = fixture.scalar_layout;
-    let mut offsets = Vec::with_capacity(layout.num_evals + layout.num_point_sets);
-    offsets.extend(
-        (0..layout.num_evals).map(|idx| (format!("eval[{idx}]"), layout.eval_offset + idx * 0x20)),
+#[derive(Clone, Debug)]
+struct CalldataMutation {
+    name: String,
+    calldata: Vec<u8>,
+}
+
+#[derive(Clone, Debug)]
+struct ProofLayoutSection {
+    name: String,
+    start: usize,
+    end: usize,
+}
+
+/// Return named proof sections in the order the generated reader consumes them.
+fn proof_layout_reader_sections(
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+) -> Vec<ProofLayoutSection> {
+    let mut sections = Vec::new();
+    for (phase, section) in layout.advice_phases.iter().enumerate() {
+        push_proof_layout_section(
+            &mut sections,
+            format!("advice phase {phase}"),
+            section.start,
+            section.end(),
+        );
+    }
+    push_proof_layout_section(
+        &mut sections,
+        "lookup multiplicities",
+        layout.lookup_multiplicities.start,
+        layout.lookup_multiplicities.end(),
     );
-    offsets.extend(
-        (0..layout.num_point_sets)
-            .map(|idx| (format!("q_eval[{idx}]"), layout.q_eval_offset + idx * 0x20)),
+    push_proof_layout_section(
+        &mut sections,
+        "permutation products",
+        layout.permutation_products.start,
+        layout.permutation_products.end(),
+    );
+    for lookup in &layout.lookups {
+        push_proof_layout_section(
+            &mut sections,
+            format!("lookup {} helpers", lookup.lookup),
+            lookup.helpers.start,
+            lookup.helpers.end(),
+        );
+        push_proof_layout_section(
+            &mut sections,
+            format!("lookup {} accumulator", lookup.lookup),
+            lookup.accumulator.start,
+            lookup.accumulator.end(),
+        );
+    }
+    push_proof_layout_section(
+        &mut sections,
+        "trash",
+        layout.trash.start,
+        layout.trash.end(),
+    );
+    push_proof_layout_section(
+        &mut sections,
+        "quotient limbs",
+        layout.quotient_limbs.start,
+        layout.quotient_limbs.end(),
+    );
+    push_proof_layout_section(
+        &mut sections,
+        "evals",
+        layout.evals.start,
+        layout.evals.end(),
+    );
+    push_proof_layout_section(
+        &mut sections,
+        "f_com",
+        layout.f_com.start,
+        layout.f_com.end(),
+    );
+    push_proof_layout_section(
+        &mut sections,
+        "q_evals",
+        layout.q_evals.start,
+        layout.q_evals.end(),
+    );
+    push_proof_layout_section(&mut sections, "pi", layout.pi.start, layout.pi.end());
+    sections
+}
+
+/// Push one section range into a proof layout checker plan.
+fn push_proof_layout_section(
+    sections: &mut Vec<ProofLayoutSection>,
+    name: impl Into<String>,
+    start: usize,
+    end: usize,
+) {
+    sections.push(ProofLayoutSection {
+        name: name.into(),
+        start,
+        end,
+    });
+}
+
+/// Confirm the planned proof-reader sections cover each proof byte once.
+fn proof_reader_sections_cover_exactly_once(
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+    sections: &[ProofLayoutSection],
+) -> Result<(), String> {
+    let mut owners: Vec<Option<usize>> = vec![None; layout.proof_len];
+    for (section_idx, section) in sections.iter().enumerate() {
+        if section.start > section.end {
+            return Err(format!(
+                "{} has inverted range {}..{}",
+                section.name, section.start, section.end
+            ));
+        }
+        if section.start < layout.proof_cptr || section.end > layout.proof_end {
+            return Err(format!(
+                "{} escapes proof range: {}..{} outside {}..{}",
+                section.name, section.start, section.end, layout.proof_cptr, layout.proof_end
+            ));
+        }
+        for byte in section.start - layout.proof_cptr..section.end - layout.proof_cptr {
+            if let Some(previous_idx) = owners[byte] {
+                return Err(format!(
+                    "{} byte {byte:#x} overlaps {}",
+                    section.name, sections[previous_idx].name
+                ));
+            }
+            owners[byte] = Some(section_idx);
+        }
+    }
+    if let Some(byte) = owners.iter().position(Option::is_none) {
+        return Err(format!("proof byte {byte:#x} is not read by any section"));
+    }
+    Ok(())
+}
+
+/// Mutate one planned section boundary and assert the coverage checker notices.
+fn assert_seeded_layout_drift_is_detected(
+    seed: u64,
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+    sections: &[ProofLayoutSection],
+) {
+    let non_empty = sections
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, section)| (section.start < section.end).then_some(idx))
+        .collect::<Vec<_>>();
+    let drift_idx = non_empty[choose_index(seed.rotate_left(7), non_empty.len())];
+    let mut drifted = sections.to_vec();
+    if seed & 1 == 0 {
+        drifted[drift_idx].end -= 1;
+    } else {
+        drifted[drift_idx].end += 1;
+    }
+    assert!(
+        proof_reader_sections_cover_exactly_once(layout, &drifted).is_err(),
+        "seeded layout drift in {} was not detected",
+        sections[drift_idx].name
+    );
+}
+
+/// Return all G1 offsets in the Solidity-facing proof according to layout.
+fn proof_layout_g1_offsets(layout: &crate::lowering::abi::ProofCalldataLayout) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    for section in &layout.advice_phases {
+        append_section_item_offsets(
+            &mut offsets,
+            layout,
+            section.start,
+            section.item_count,
+            section.item_bytes,
+        );
+    }
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.lookup_multiplicities.start,
+        layout.lookup_multiplicities.item_count,
+        layout.lookup_multiplicities.item_bytes,
+    );
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.permutation_products.start,
+        layout.permutation_products.item_count,
+        layout.permutation_products.item_bytes,
+    );
+    for lookup in &layout.lookups {
+        append_section_item_offsets(
+            &mut offsets,
+            layout,
+            lookup.helpers.start,
+            lookup.helpers.item_count,
+            lookup.helpers.item_bytes,
+        );
+        append_section_item_offsets(
+            &mut offsets,
+            layout,
+            lookup.accumulator.start,
+            lookup.accumulator.item_count,
+            lookup.accumulator.item_bytes,
+        );
+    }
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.trash.start,
+        layout.trash.item_count,
+        layout.trash.item_bytes,
+    );
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.quotient_limbs.start,
+        layout.quotient_limbs.item_count,
+        layout.quotient_limbs.item_bytes,
+    );
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.f_com.start,
+        layout.f_com.item_count,
+        layout.f_com.item_bytes,
+    );
+    append_section_item_offsets(
+        &mut offsets,
+        layout,
+        layout.pi.start,
+        layout.pi.item_count,
+        layout.pi.item_bytes,
+    );
+    offsets
+}
+
+/// Append proof-relative offsets for homogeneous section items.
+fn append_section_item_offsets(
+    offsets: &mut Vec<usize>,
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+    start: usize,
+    item_count: usize,
+    item_bytes: usize,
+) {
+    offsets.extend((0..item_count).map(|idx| start - layout.proof_cptr + idx * item_bytes));
+}
+
+/// Confirm the generated Solidity reader literals agree with the layout.
+fn assert_rendered_reader_matches_proof_layout(
+    solidity: &str,
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+    num_instances: usize,
+) {
+    assert!(
+        solidity.contains(&format!(
+            "PROOF_LEN_CPTR = {};",
+            yul_hex(proof_len_word_start())
+        )),
+        "rendered constants must expose the proof length word pointer"
     );
     assert!(
-        offsets.iter().all(|(_, offset)| offset + 0x20 <= fixture.proof.len()),
-        "scalar offsets must be inside the Solidity proof"
+        solidity.contains(&format!("PROOF_CPTR = {};", yul_hex(layout.proof_cptr))),
+        "rendered constants must expose ProofCalldataLayout::proof_cptr"
     );
+    assert!(
+        solidity.contains(&format!(
+            "NUM_INSTANCE_CPTR = {};",
+            yul_hex(layout.proof_end)
+        )),
+        "rendered constants must expose ProofCalldataLayout::proof_end"
+    );
+    assert!(
+        solidity.contains(&format!(
+            "eq({}, calldataload(PROOF_LEN_CPTR))",
+            yul_hex(layout.proof_len)
+        )),
+        "rendered proof length guard must use ProofCalldataLayout::proof_len"
+    );
+    assert!(
+        solidity.contains(&format!(
+            "eq({}, calldataload(NUM_INSTANCE_CPTR))",
+            num_instances
+        )),
+        "rendered instance length guard must use fixture instance count"
+    );
+
+    let reader = rendered_proof_reader_block(solidity);
+    assert_eq!(
+        rendered_proof_reader_loop_lengths(reader),
+        expected_reader_loop_lengths(layout),
+        "generated proof reader loop lengths drifted from ProofCalldataLayout"
+    );
+    assert_eq!(
+        rendered_proof_reader_increment_lengths(reader),
+        expected_reader_increment_lengths(layout),
+        "generated proof reader proof_cptr increments drifted from ProofCalldataLayout"
+    );
+    assert!(
+        solidity.contains("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }"),
+        "generated proof reader must fail closed if proof_cptr drifts"
+    );
+}
+
+/// Slice the rendered source down to the proof parser block.
+fn rendered_proof_reader_block(solidity: &str) -> &str {
+    let start = solidity
+        .find("let proof_cptr := PROOF_CPTR")
+        .expect("rendered verifier contains proof parser start");
+    let end = solidity
+        .find("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR))")
+        .expect("rendered verifier contains proof parser end guard");
+    &solidity[start..end]
+}
+
+/// Extract `for { let end := add(proof_cptr, N) }` lengths from Yul.
+fn rendered_proof_reader_loop_lengths(reader: &str) -> Vec<usize> {
+    const NEEDLE: &str = "for { let end := add(proof_cptr, ";
+    let mut lengths = Vec::new();
+    let mut rest = reader;
+    while let Some(pos) = rest.find(NEEDLE) {
+        let after = &rest[pos + NEEDLE.len()..];
+        let close = after.find(')').expect("proof reader loop has a closing paren");
+        lengths.push(parse_yul_usize(after[..close].trim()));
+        rest = &after[close..];
+    }
+    lengths
+}
+
+/// Extract every rendered `proof_cptr` increment stride from the proof reader.
+fn rendered_proof_reader_increment_lengths(reader: &str) -> Vec<usize> {
+    const NEEDLE: &str = "proof_cptr := add(proof_cptr, ";
+    let mut lengths = Vec::new();
+    let mut rest = reader;
+    while let Some(pos) = rest.find(NEEDLE) {
+        let after = &rest[pos + NEEDLE.len()..];
+        let close = after.find(')').expect("proof reader increment has a closing paren");
+        lengths.push(parse_yul_usize(after[..close].trim()));
+        rest = &after[close..];
+    }
+    lengths
+}
+
+/// Expected loop byte lengths in the generated proof reader.
+fn expected_reader_loop_lengths(layout: &crate::lowering::abi::ProofCalldataLayout) -> Vec<usize> {
+    let mut lengths =
+        layout.advice_phases.iter().map(|section| section.byte_len).collect::<Vec<_>>();
+    if layout.lookup_multiplicities.item_count != 0 {
+        lengths.push(layout.lookup_multiplicities.byte_len);
+    }
+    if layout.permutation_products.item_count != 0 {
+        lengths.push(layout.permutation_products.byte_len);
+    }
+    if !layout.lookups.is_empty() {
+        lengths.extend(layout.lookups.iter().map(|lookup| lookup.helpers.byte_len));
+    }
+    if layout.trash.item_count != 0 {
+        lengths.push(layout.trash.byte_len);
+    }
+    lengths.push(layout.quotient_limbs.byte_len);
+    lengths.push(layout.evals.byte_len);
+    lengths.push(layout.q_evals.byte_len);
+    lengths
+}
+
+/// Expected `proof_cptr` increment strides in the generated proof reader.
+fn expected_reader_increment_lengths(
+    layout: &crate::lowering::abi::ProofCalldataLayout,
+) -> Vec<usize> {
+    let mut lengths = layout
+        .advice_phases
+        .iter()
+        .map(|section| section.item_bytes)
+        .collect::<Vec<_>>();
+    if layout.lookup_multiplicities.item_count != 0 {
+        lengths.push(layout.lookup_multiplicities.item_bytes);
+    }
+    if layout.permutation_products.item_count != 0 {
+        lengths.push(layout.permutation_products.item_bytes);
+    }
+    if !layout.lookups.is_empty() {
+        for lookup in &layout.lookups {
+            lengths.push(lookup.helpers.item_bytes);
+            lengths.push(lookup.accumulator.item_bytes);
+        }
+    }
+    if layout.trash.item_count != 0 {
+        lengths.push(layout.trash.item_bytes);
+    }
+    lengths.push(layout.quotient_limbs.item_bytes);
+    lengths.push(layout.evals.item_bytes);
+    lengths.push(layout.f_com.item_bytes);
+    lengths.push(layout.q_evals.item_bytes);
+    lengths.push(layout.pi.item_bytes);
+    lengths
+}
+
+/// Render a Yul/Solidity integer literal the way the templates do.
+fn yul_hex(value: usize) -> String {
+    format!("0x{value:x}")
+}
+
+/// Parse a simple Yul integer literal.
+fn parse_yul_usize(literal: &str) -> usize {
+    literal
+        .strip_prefix("0x")
+        .map(|hex| usize::from_str_radix(hex, 16).expect("valid hex literal"))
+        .unwrap_or_else(|| literal.parse().expect("valid decimal literal"))
+}
+
+/// Return ordinary evaluation scalar offsets in the Solidity-facing proof.
+fn proof_eval_offsets(fixture: &PropertyPoseidonFixture) -> Vec<(String, usize)> {
+    let layout = fixture.scalar_layout;
+    let offsets = (0..layout.num_evals)
+        .map(|idx| (format!("eval[{idx}]"), layout.eval_offset + idx * 0x20))
+        .collect::<Vec<_>>();
+    assert!(
+        offsets.iter().all(|(_, offset)| offset + 0x20 <= fixture.proof.len()),
+        "eval offsets must be inside the Solidity proof"
+    );
+    offsets
+}
+
+/// Return quotient-opening evaluation offsets in the Solidity-facing proof.
+fn proof_q_eval_offsets(fixture: &PropertyPoseidonFixture) -> Vec<(String, usize)> {
+    let layout = fixture.scalar_layout;
+    let offsets = (0..layout.num_point_sets)
+        .map(|idx| (format!("q_eval[{idx}]"), layout.q_eval_offset + idx * 0x20))
+        .collect::<Vec<_>>();
+    assert!(
+        offsets.iter().all(|(_, offset)| offset + 0x20 <= fixture.proof.len()),
+        "q_eval offsets must be inside the Solidity proof"
+    );
+    offsets
+}
+
+/// Return named scalar-word offsets in the Solidity-facing proof.
+fn proof_scalar_offsets(fixture: &PropertyPoseidonFixture) -> Vec<(String, usize)> {
+    let mut offsets = proof_eval_offsets(fixture);
+    offsets.extend(proof_q_eval_offsets(fixture));
     offsets
 }
 
@@ -2533,6 +3276,167 @@ fn assert_solidity_rejects(output: Result<Vec<u8>, ()>, context: &str) {
         output.is_err(),
         "invalid proof/calldata returned instead of reverting: {context}"
     );
+}
+
+/// Generate structured one-field mutations from a valid `verifyProof` calldata.
+fn structured_proof_calldata_mutations(
+    fixture: &PropertyPoseidonFixture,
+    valid: &[u8],
+    seed: u64,
+) -> Vec<CalldataMutation> {
+    let mut mutations = Vec::new();
+    let proof_start = proof_payload_word_start();
+
+    let g1_layout = proof_g1_layout(fixture);
+    let g1_idx = choose_index(seed, g1_layout.repacked_offsets.len());
+    let g1_offset = g1_layout.repacked_offsets[g1_idx];
+    mutations.push(mutate_calldata_byte(
+        valid,
+        format!("proof G1[{g1_idx}] byte flip"),
+        proof_start + g1_offset + choose_index(seed.rotate_left(7), 0x80),
+        seed,
+    ));
+
+    let eval_offsets = proof_eval_offsets(fixture);
+    let eval_idx = choose_index(seed.rotate_left(11), eval_offsets.len());
+    let (eval_name, eval_offset) = &eval_offsets[eval_idx];
+    mutations.push(mutate_calldata_byte(
+        valid,
+        format!("proof scalar {eval_name} byte flip"),
+        proof_start + *eval_offset + choose_index(seed.rotate_left(13), 0x20),
+        seed.rotate_left(17),
+    ));
+
+    let q_eval_offsets = proof_q_eval_offsets(fixture);
+    let q_eval_idx = choose_index(seed.rotate_left(19), q_eval_offsets.len());
+    let (q_eval_name, q_eval_offset) = &q_eval_offsets[q_eval_idx];
+    mutations.push(mutate_calldata_byte(
+        valid,
+        format!("proof q_eval {q_eval_name} byte flip"),
+        proof_start + *q_eval_offset + choose_index(seed.rotate_left(23), 0x20),
+        seed.rotate_left(29),
+    ));
+
+    let instance_word_start = first_instance_word_start(&fixture.proof)
+        + choose_index(seed.rotate_left(31), fixture.instances.len()) * 0x20;
+    mutations.push(mutate_calldata_byte(
+        valid,
+        "public instance word byte flip",
+        instance_word_start + choose_index(seed.rotate_left(37), 0x20),
+        seed.rotate_left(41),
+    ));
+
+    let mut dynamic_head = valid.to_vec();
+    if seed & 1 == 0 {
+        overwrite_u256_word(&mut dynamic_head, 0x04, 0x20);
+        mutations.push(CalldataMutation {
+            name: "proof dynamic ABI head overlaps static head".to_string(),
+            calldata: dynamic_head,
+        });
+    } else {
+        overwrite_u256_word(
+            &mut dynamic_head,
+            0x24,
+            canonical_instances_head(&fixture.proof) as u64 + 0x20,
+        );
+        mutations.push(CalldataMutation {
+            name: "instances dynamic ABI head shifted away from proof tail".to_string(),
+            calldata: dynamic_head,
+        });
+    }
+
+    let mut trailing = valid.to_vec();
+    let trailing_len = 1 + choose_index(seed.rotate_left(43), 0x20);
+    trailing.extend(
+        (0..trailing_len)
+            .map(|idx| (seed as u8).wrapping_add(idx as u8).wrapping_mul(17).wrapping_add(1)),
+    );
+    mutations.push(CalldataMutation {
+        name: format!("trailing bytes len={trailing_len}"),
+        calldata: trailing,
+    });
+
+    let mut length_mutation = valid.to_vec();
+    if seed & 2 == 0 {
+        let proof_len = fixture.proof.len();
+        let mutated_len = if seed & 4 == 0 {
+            proof_len.saturating_sub(1)
+        } else {
+            proof_len + 0x20
+        };
+        overwrite_u256_word(
+            &mut length_mutation,
+            proof_len_word_start(),
+            mutated_len as u64,
+        );
+        mutations.push(CalldataMutation {
+            name: format!("proof length word changed to {mutated_len}"),
+            calldata: length_mutation,
+        });
+    } else {
+        let mutated_len = if seed & 4 == 0 {
+            0
+        } else {
+            fixture.instances.len() + 1
+        };
+        overwrite_u256_word(
+            &mut length_mutation,
+            instances_len_word_start(&fixture.proof),
+            mutated_len as u64,
+        );
+        mutations.push(CalldataMutation {
+            name: format!("instances length word changed to {mutated_len}"),
+            calldata: length_mutation,
+        });
+    }
+
+    mutations.push(mutate_calldata_byte(
+        valid,
+        "function selector byte flip",
+        choose_index(seed.rotate_left(47), FN_SIG_VERIFY_PROOF.len()),
+        seed.rotate_left(53),
+    ));
+
+    let representative_offsets = representative_proof_section_offsets(fixture);
+    let mut shifted_proof = fixture.proof.clone();
+    let insertion_offset =
+        representative_offsets[choose_index(seed.rotate_left(59), representative_offsets.len())].1;
+    shifted_proof.splice(
+        insertion_offset..insertion_offset,
+        [0x80 | (seed as u8), seed.rotate_left(8) as u8],
+    );
+    mutations.push(CalldataMutation {
+        name: format!("proof field offsets shifted at proof offset {insertion_offset}"),
+        calldata: encode_calldata(&shifted_proof, &fixture.instances),
+    });
+
+    mutations
+}
+
+/// Pick a deterministic index from a fuzz seed.
+fn choose_index(seed: u64, len: usize) -> usize {
+    assert!(len != 0, "cannot choose from an empty set");
+    seed as usize % len
+}
+
+/// Flip one non-zero bit in a calldata byte.
+fn mutate_calldata_byte(
+    valid: &[u8],
+    name: impl Into<String>,
+    byte_offset: usize,
+    seed: u64,
+) -> CalldataMutation {
+    assert!(
+        byte_offset < valid.len(),
+        "calldata byte mutation offset {byte_offset} outside len {}",
+        valid.len()
+    );
+    let mut calldata = valid.to_vec();
+    calldata[byte_offset] ^= 1u8 << (seed as u8 & 7);
+    CalldataMutation {
+        name: name.into(),
+        calldata,
+    }
 }
 
 /// Flip one nibble in a large hex literal for broad source-mutation tests.
@@ -2668,6 +3572,32 @@ fn fr_modulus_u256() -> U256 {
     U256::from_be_bytes(fr_modulus_be_word())
 }
 
+/// Return the BLS12-381 base-field modulus in padded EIP-2537 coordinate form.
+fn bls_base_modulus_padded_coordinate() -> [u8; 64] {
+    let fq = hex::decode(
+        "1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f624\
+         1eabfffeb153ffffb9feffffffffaaab",
+    )
+    .expect("Fq modulus hex");
+    assert_eq!(fq.len(), 48, "BLS12-381 Fq modulus must be 48 bytes");
+
+    let mut out = [0u8; 64];
+    out[16..64].copy_from_slice(&fq);
+    out
+}
+
+/// ABI-encode a single `bytes` argument call.
+fn encode_bytes_call(signature: &str, payload: &[u8]) -> Vec<u8> {
+    let padding = (32 - payload.len() % 32) % 32;
+    let mut out = Vec::with_capacity(4 + 0x40 + payload.len() + padding);
+    out.extend_from_slice(&sha3::Keccak256::digest(signature)[..4]);
+    out.extend_from_slice(&u256_word(0x20));
+    out.extend_from_slice(&u256_word(payload.len() as u64));
+    out.extend_from_slice(payload);
+    out.resize(out.len() + padding, 0);
+    out
+}
+
 /// Append a named proof section offset if that offset is not already covered.
 fn push_unique_section(
     sections: &mut Vec<(String, usize)>,
@@ -2756,9 +3686,24 @@ fn canonical_instances_head(proof: &[u8]) -> usize {
     0x40 + 0x20 + proof.len()
 }
 
+/// Calldata byte offset of the proof length word.
+fn proof_len_word_start() -> usize {
+    4 + 0x40
+}
+
+/// Calldata byte offset of the first proof payload word.
+fn proof_payload_word_start() -> usize {
+    proof_len_word_start() + 0x20
+}
+
+/// Calldata byte offset of the instance array length word.
+fn instances_len_word_start(proof: &[u8]) -> usize {
+    4 + canonical_instances_head(proof)
+}
+
 /// Calldata byte offset of the first instance word.
 fn first_instance_word_start(proof: &[u8]) -> usize {
-    4 + canonical_instances_head(proof) + 0x20
+    instances_len_word_start(proof) + 0x20
 }
 
 /// Build malformed calldata with valid payloads but shifted dynamic heads.

@@ -307,6 +307,46 @@ proofs/solidity-verifier/target/moonlight-wrap-solidity-dump/
   instance.le
 ```
 
+Deploy the generated Moonlight contracts on Sepolia:
+
+```bash
+SEPOLIA_RPC_URL=https://... \
+scripts/deploy_moonlight_sepolia.sh \
+  --account sepolia-moonlight \
+  --skip-verify
+```
+
+The deploy script writes addresses to:
+
+```text
+target/moonlight-wrap-sepolia-deployment.env
+```
+
+Create a fresh Moonlight proof and verify the generated calldata against the
+deployed Sepolia verifier:
+
+```bash
+SEPOLIA_RPC_URL=https://... \
+scripts/prove_and_verify_moonlight_sepolia.sh \
+  --deployment-env target/moonlight-wrap-sepolia-deployment.env \
+  --account sepolia-moonlight
+```
+
+To reuse an already deployed verifier directly:
+
+```bash
+SEPOLIA_RPC_URL=https://... \
+scripts/prove_and_verify_moonlight_sepolia.sh --verifier 0x...
+```
+
+The verification script performs an `eth_call` by default, expecting
+`verifyProof(bytes,uint256[])` to return `true`. Add `--send` if you also want
+to broadcast a transaction after the successful call.
+
+The Sepolia deployment used during development is recorded under
+`deployments/sepolia/moonlight-wrap/`, including the generated Solidity sources
+and exact on-chain runtime bytecode for both the VK and verifier contracts.
+
 Moonlight wrap can look slightly cheaper than the local IVC Keccak bench even
 when both runs have the same verifier proof scale. In one representative run,
 both had `102` proof eval scalars, `0` dummy PCS evals, `4` PCS point sets, and
