@@ -971,6 +971,12 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
         );
     assert!(
         verifier_template.contains(
+            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { revert(0, 0) }"
+        ),
+        "non-canonical public instances should fail before proof transcript parsing"
+    );
+    assert!(
+        verifier_template.contains(
             "if iszero(success) { revert(0, 0) }\n\n            {%- match quotient_external %}"
         ),
         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"

@@ -65,6 +65,7 @@
                     // Keccak Fq transcript input.
                     buf_len := common_word(buf_len, inst_be)
                 }
+                if iszero(success) { revert(0, 0) }
             }
 
             {%- if self.gas_checkpoints %}
