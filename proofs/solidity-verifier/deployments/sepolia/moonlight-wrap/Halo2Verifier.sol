@@ -1252,16 +1252,6 @@ contract Halo2Verifier {
             // ---- x3 ----
             // x3 is the PCS evaluation point for f_com.
             buf_len := squeeze_to(buf_len, X3_MPTR)
-            // truncated-challenges mirrors midnight-proofs
-            // proofs/src/poly/kzg/mod.rs:
-            //   - x3 is the f_com evaluation point and is truncated
-            //     immediately after squeeze.
-            //   - x1 and x4 remain full squeezed Fr words, but later PCS
-            //     batching stores truncate(x1^i) and truncate(x4^i) while
-            //     keeping the internal power accumulators full precision.
-            // This direct x3 mask is therefore one part of the PCS truncation
-            // rule, not the only truncated value used by the verifier.
-            mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))
 
             // ---- q_evals (one Fq per point set) ----
             // q_evals are not spilled into REVERSED_EVALS_MPTR because the PCS
@@ -2909,7 +2899,7 @@ contract Halo2Verifier {
                     for { let i := 0 } lt(i, 0x2a) { i := add(i, 1) } {
                         p := add(p, 0x20)
                         acc := mulmod(acc, x1, r)
-                        mstore(p, and(acc, 0xffffffffffffffffffffffffffffffff))
+                        mstore(p, acc)
                     }
                 }
                 // Generated PCS sub-block 3. These lines are
@@ -3272,17 +3262,12 @@ contract Halo2Verifier {
                     let lin_x_split := mload(QUOTIENT_MPTR)
                     let lin_one_minus_x_n := mload(add(QUOTIENT_MPTR, 0x20))
                     let Q_EVAL_CPTR := mload(Q_EVAL_CPTR_MPTR)
-                    let x4_pow_full := 1
-                    x4_pow_full := mulmod(x4_pow_full, x4, r)
-                    let x4_pow_1 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
-                    x4_pow_full := mulmod(x4_pow_full, x4, r)
-                    let x4_pow_2 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
-                    x4_pow_full := mulmod(x4_pow_full, x4, r)
-                    let x4_pow_3 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
-                    x4_pow_full := mulmod(x4_pow_full, x4, r)
-                    let x4_pow_4 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
-                    x4_pow_full := mulmod(x4_pow_full, x4, r)
-                    let x4_pow_5 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
+                    let x4_pow_0 := 1
+                    let x4_pow_1 := mulmod(x4_pow_0, x4, r)
+                    let x4_pow_2 := mulmod(x4_pow_1, x4, r)
+                    let x4_pow_3 := mulmod(x4_pow_2, x4, r)
+                    let x4_pow_4 := mulmod(x4_pow_3, x4, r)
+                    let x4_pow_5 := mulmod(x4_pow_4, x4, r)
                     let v := calldataload(Q_EVAL_CPTR)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x20)), x4_pow_1, r), r)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x40)), x4_pow_2, r), r)
