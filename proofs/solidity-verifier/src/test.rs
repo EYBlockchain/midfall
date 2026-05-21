@@ -572,6 +572,75 @@ fn supported_shape_circuit_fuzz_e2e() {
     }
 }
 
+#[test]
+fn same_srs_distinct_shape_verifiers_are_not_interchangeable() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+
+    let case_a = ShapeFuzzCase {
+        name: "same-srs simple shape",
+        k: 5,
+        seed: 515,
+        spec: ShapeFuzzSpec {
+            fixed_scale: true,
+            tag: 11,
+            ..ShapeFuzzSpec::default()
+        },
+    };
+    let case_b = ShapeFuzzCase {
+        name: "same-srs lookup/permutation shape",
+        k: 5,
+        seed: 616,
+        spec: ShapeFuzzSpec {
+            next_rotation: true,
+            second_phase: true,
+            permutation: true,
+            lookup: true,
+            fixed_scale: true,
+            tag: 12,
+            ..ShapeFuzzSpec::default()
+        },
+    };
+
+    let mut setup_rng = ChaCha8Rng::seed_from_u64(0x5a5a_5151);
+    let params = PoseidonParams::unsafe_setup(case_a.k, &mut setup_rng);
+    let fixture_a = build_shape_solidity_case_with_params(&params, &case_a);
+    let fixture_b = build_shape_solidity_case_with_params(&params, &case_b);
+
+    assert_ne!(
+        fixture_a.verifier_solidity, fixture_b.verifier_solidity,
+        "different circuit shapes over the same SRS should not share verifier source"
+    );
+    assert_ne!(
+        fixture_a.vk_solidity, fixture_b.vk_solidity,
+        "different circuit shapes over the same SRS should not share VK source"
+    );
+
+    let mut deployed_a =
+        deploy_separate_verifier_from_sources(&fixture_a.verifier_solidity, &fixture_a.vk_solidity);
+    let mut deployed_b =
+        deploy_separate_verifier_from_sources(&fixture_b.verifier_solidity, &fixture_b.vk_solidity);
+
+    assert_solidity_accepts(
+        call_deployed_verifier(&mut deployed_a, &fixture_a.proof, &fixture_a.public),
+        "same-SRS shape A valid proof",
+    );
+    assert_solidity_accepts(
+        call_deployed_verifier(&mut deployed_b, &fixture_b.proof, &fixture_b.public),
+        "same-SRS shape B valid proof",
+    );
+
+    assert_solidity_rejects(
+        call_deployed_verifier(&mut deployed_a, &fixture_b.proof, &fixture_b.public),
+        "shape B proof under shape A verifier",
+    );
+    assert_solidity_rejects(
+        call_deployed_verifier(&mut deployed_b, &fixture_a.proof, &fixture_a.public),
+        "shape A proof under shape B verifier",
+    );
+}
+
 #[cfg(feature = "rust-verifier-trace")]
 #[test]
 fn pbt_transcript_differential_fuzzer_matches_solidity_trace() {
@@ -586,6 +655,86 @@ fn pbt_transcript_differential_fuzzer_matches_solidity_trace() {
             Ok(())
         })
         .unwrap();
+}
+
+#[derive(Debug)]
+struct ShapeSolidityCase {
+    verifier_solidity: String,
+    vk_solidity: String,
+    proof: Vec<u8>,
+    public: Vec<F>,
+}
+
+fn build_shape_solidity_case_with_params(
+    params: &PoseidonParams,
+    case: &ShapeFuzzCase,
+) -> ShapeSolidityCase {
+    let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
+    let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(params, &circuit, case.k)
+        .unwrap_or_else(|err| panic!("shape fuzz `{}` vk generation failed: {err:?}", case.name));
+    let pk = keygen_pk(vk, &circuit)
+        .unwrap_or_else(|err| panic!("shape fuzz `{}` pk generation failed: {err:?}", case.name));
+
+    let committed = [F::ZERO];
+    let public = [circuit.public_instance()];
+    let all_instance_columns: [&[F]; 2] = [&committed, &public];
+    let mut proof_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x0bad_f00d);
+    let mut transcript = CircuitTranscript::<sha3::Keccak256>::init();
+    create_proof::<F, KZGCommitmentScheme<Bls12>, _, _>(
+        params,
+        &pk,
+        std::slice::from_ref(&circuit),
+        1,
+        &[&all_instance_columns],
+        &mut proof_rng,
+        &mut transcript,
+    )
+    .unwrap_or_else(|err| {
+        panic!(
+            "shape fuzz `{}` proof generation failed: {err:?}",
+            case.name
+        )
+    });
+    let compressed_proof = transcript.finalize();
+
+    let committed_pi = [G1Projective::identity()];
+    let public_columns: [&[F]; 1] = [&public];
+    let mut transcript = CircuitTranscript::<sha3::Keccak256>::init_from_bytes(&compressed_proof);
+    let guard = prepare::<F, KZGCommitmentScheme<Bls12>, CircuitTranscript<sha3::Keccak256>>(
+        pk.get_vk(),
+        &[&committed_pi],
+        &[&public_columns],
+        &mut transcript,
+    )
+    .unwrap_or_else(|err| panic!("shape fuzz `{}` native prepare failed: {err:?}", case.name));
+    transcript.assert_empty().unwrap_or_else(|_| {
+        panic!(
+            "shape fuzz `{}` native transcript had trailing bytes",
+            case.name
+        )
+    });
+    guard
+        .verify(&params.verifier_params())
+        .unwrap_or_else(|err| panic!("shape fuzz `{}` native verify failed: {err:?}", case.name));
+
+    let generator =
+        SolidityGenerator::new(params, pk.get_vk(), GeneratorConfig::new(public.len(), 1));
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            ..RenderOptions::default()
+        })
+        .unwrap_or_else(|err| panic!("shape fuzz `{}` render failed: {err:?}", case.name));
+    let proof = generator
+        .repack_proof(&compressed_proof)
+        .unwrap_or_else(|err| panic!("shape fuzz `{}` repack failed: {err:?}", case.name));
+
+    ShapeSolidityCase {
+        verifier_solidity: artifacts.verifier,
+        vk_solidity: artifacts.verifying_key.expect("separate render includes VK"),
+        proof,
+        public: public.to_vec(),
+    }
 }
 
 /// Render, deploy, and exercise one supported shape-fuzz case end to end.
