@@ -1345,8 +1345,93 @@ fn ivc_final_keccak_solidity_e2e() {
                 "[ivc-keccak-solidity] PASS: IVC final Keccak proof accepted on-chain in {gas_used} gas"
             );
 
+            let proof_payload_start = 4 + 0x40 + 0x20;
+            let instances_len_word = proof_payload_start + repacked.len();
+            let first_instance_word = instances_len_word + 0x20;
+
+            let mut bad_proof_byte = calldata.clone();
+            let proof_mutation_idx = proof_payload_start + repacked.len() / 2;
+            bad_proof_byte[proof_mutation_idx] ^= 0x01;
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, bad_proof_byte, 5_000_000_000),
+                "mutated IVC proof byte",
+            );
+
+            let mut wrong_leaf_state_public_input = calldata.clone();
+            wrong_leaf_state_public_input[first_instance_word + 31] ^= 0x01;
+            assert_call_reverts(
+                evm.try_call_with_gas(
+                    verifier_address,
+                    wrong_leaf_state_public_input,
+                    5_000_000_000,
+                ),
+                "wrong IVC leaf-state public input",
+            );
+
+            let mut noncanonical_public_input = calldata.clone();
+            noncanonical_public_input[first_instance_word..first_instance_word + 0x20]
+                .copy_from_slice(&fr_modulus_be_word_for_test());
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, noncanonical_public_input, 5_000_000_000),
+                "non-canonical IVC public input scalar",
+            );
+
+            let mut wrong_instance_len = calldata.clone();
+            overwrite_u256_word_for_test(
+                &mut wrong_instance_len,
+                instances_len_word,
+                pi.len() as u64 + 1,
+            );
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, wrong_instance_len, 5_000_000_000),
+                "wrong IVC instance array length",
+            );
+
+            let mut trailing_calldata = calldata.clone();
+            trailing_calldata.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, trailing_calldata, 5_000_000_000),
+                "extra trailing IVC calldata",
+            );
+
+            let mut wrong_selector = calldata.clone();
+            wrong_selector[3] ^= 0x01;
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, wrong_selector, 5_000_000_000),
+                "wrong IVC function selector",
+            );
+
+            let mut truncated_calldata = calldata.clone();
+            truncated_calldata.pop();
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, truncated_calldata, 5_000_000_000),
+                "truncated IVC calldata",
+            );
+
+            let mut short_proof_len = calldata.clone();
+            overwrite_u256_word_for_test(
+                &mut short_proof_len,
+                proof_payload_start - 0x20,
+                repacked.len() as u64 - 0x20,
+            );
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, short_proof_len, 5_000_000_000),
+                "short IVC proof length",
+            );
+
+            let mut long_proof_len = calldata.clone();
+            overwrite_u256_word_for_test(
+                &mut long_proof_len,
+                proof_payload_start - 0x20,
+                repacked.len() as u64 + 0x20,
+            );
+            assert_call_reverts(
+                evm.try_call_with_gas(verifier_address, long_proof_len, 5_000_000_000),
+                "long IVC proof length",
+            );
+
             let mut bad_accumulator_packing = calldata.clone();
-            let first_acc_word = 4 + 0x40 + 0x20 + repacked.len() + 0x20 + final_acc_offset * 0x20;
+            let first_acc_word = instances_len_word + 0x20 + final_acc_offset * 0x20;
             // Accumulator limbs are packed into 56-bit chunks. The first
             // word uses 224 bits, so byte 3 is the lowest unused high byte
             // in the big-endian ABI word. Setting it keeps the value below
@@ -1432,6 +1517,13 @@ fn env_flag_enabled(name: &str) -> bool {
 fn overwrite_u256_word_for_test(bytes: &mut [u8], start: usize, value: u64) {
     bytes[start..start + 32].fill(0);
     bytes[start + 24..start + 32].copy_from_slice(&value.to_be_bytes());
+}
+
+fn fr_modulus_be_word_for_test() -> [u8; 32] {
+    hex::decode("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
+        .expect("fr modulus hex")
+        .try_into()
+        .expect("Fr modulus is one word")
 }
 
 #[cfg(feature = "rust-verifier-trace")]
