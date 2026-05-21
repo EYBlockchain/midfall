@@ -494,7 +494,39 @@ fn supported_shape_circuit_fuzz_e2e() {
         return;
     }
 
-    let cases = [
+    let cases = supported_shape_evm_cases();
+
+    let requested = env::var("SHAPE_FUZZ_CASES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(cases.len())
+        .min(cases.len());
+
+    #[cfg(feature = "rust-verifier-trace")]
+    let mut compared_selector_folds = false;
+    for case in cases.iter().take(requested) {
+        let case_compared_selector_folds = run_supported_shape_fuzz_case(case);
+        #[cfg(feature = "rust-verifier-trace")]
+        {
+            compared_selector_folds |= case_compared_selector_folds;
+        }
+        #[cfg(not(feature = "rust-verifier-trace"))]
+        {
+            let _ = case_compared_selector_folds;
+        }
+    }
+
+    #[cfg(feature = "rust-verifier-trace")]
+    if requested > 0 {
+        assert!(
+            compared_selector_folds,
+            "shape fuzz trace suite should include at least one selector-fold comparison"
+        );
+    }
+}
+
+fn supported_shape_evm_cases() -> [ShapeFuzzCase; 7] {
+    [
         ShapeFuzzCase {
             name: "simple-selector current-row fixed-scale",
             k: 5,
@@ -541,104 +573,132 @@ fn supported_shape_circuit_fuzz_e2e() {
                 ..ShapeFuzzSpec::default()
             },
         },
-    ];
-
-    let requested = env::var("SHAPE_FUZZ_CASES")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .unwrap_or(cases.len())
-        .min(cases.len());
-
-    #[cfg(feature = "rust-verifier-trace")]
-    let mut compared_selector_folds = false;
-    for case in cases.iter().take(requested) {
-        let case_compared_selector_folds = run_supported_shape_fuzz_case(case);
-        #[cfg(feature = "rust-verifier-trace")]
-        {
-            compared_selector_folds |= case_compared_selector_folds;
-        }
-        #[cfg(not(feature = "rust-verifier-trace"))]
-        {
-            let _ = case_compared_selector_folds;
-        }
-    }
-
-    #[cfg(feature = "rust-verifier-trace")]
-    if requested > 0 {
-        assert!(
-            compared_selector_folds,
-            "shape fuzz trace suite should include at least one selector-fold comparison"
-        );
-    }
+        ShapeFuzzCase {
+            name: "complex-selector second-phase permutation",
+            k: 5,
+            seed: 505,
+            spec: ShapeFuzzSpec {
+                second_phase: true,
+                permutation: true,
+                complex_selector: true,
+                fixed_scale: true,
+                tag: 5,
+                ..ShapeFuzzSpec::default()
+            },
+        },
+        ShapeFuzzCase {
+            name: "additive-selector phase2 permutation",
+            k: 5,
+            seed: 606,
+            spec: ShapeFuzzSpec {
+                second_phase: true,
+                permutation: true,
+                additive_selector: true,
+                tag: 6,
+                ..ShapeFuzzSpec::default()
+            },
+        },
+        ShapeFuzzCase {
+            name: "full mixed lookup permutation shape",
+            k: 5,
+            seed: 707,
+            spec: ShapeFuzzSpec {
+                next_rotation: true,
+                second_phase: true,
+                permutation: true,
+                lookup: true,
+                complex_selector: true,
+                fixed_scale: true,
+                tag: 7,
+                ..ShapeFuzzSpec::default()
+            },
+        },
+    ]
 }
 
 #[test]
-fn same_srs_distinct_shape_verifiers_are_not_interchangeable() {
+fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     if !shape_fuzz_inputs_available_for_evm() {
         return;
     }
 
-    let case_a = ShapeFuzzCase {
-        name: "same-srs simple shape",
-        k: 5,
-        seed: 515,
-        spec: ShapeFuzzSpec {
-            fixed_scale: true,
-            tag: 11,
-            ..ShapeFuzzSpec::default()
-        },
-    };
-    let case_b = ShapeFuzzCase {
-        name: "same-srs lookup/permutation shape",
-        k: 5,
-        seed: 616,
-        spec: ShapeFuzzSpec {
-            next_rotation: true,
-            second_phase: true,
-            permutation: true,
-            lookup: true,
-            fixed_scale: true,
-            tag: 12,
-            ..ShapeFuzzSpec::default()
-        },
-    };
+    let cases = [
+        supported_shape_evm_cases()[0],
+        supported_shape_evm_cases()[2],
+        supported_shape_evm_cases()[4],
+        supported_shape_evm_cases()[6],
+    ];
 
     let mut setup_rng = ChaCha8Rng::seed_from_u64(0x5a5a_5151);
-    let params = PoseidonParams::unsafe_setup(case_a.k, &mut setup_rng);
-    let fixture_a = build_shape_solidity_case_with_params(&params, &case_a);
-    let fixture_b = build_shape_solidity_case_with_params(&params, &case_b);
+    let params = PoseidonParams::unsafe_setup(cases[0].k, &mut setup_rng);
+    let fixtures: Vec<_> = cases
+        .iter()
+        .map(|case| build_shape_solidity_case_with_params(&params, case))
+        .collect();
 
-    assert_ne!(
-        fixture_a.verifier_solidity, fixture_b.verifier_solidity,
-        "different circuit shapes over the same SRS should not share verifier source"
-    );
-    assert_ne!(
-        fixture_a.vk_solidity, fixture_b.vk_solidity,
-        "different circuit shapes over the same SRS should not share VK source"
-    );
+    for left in 0..fixtures.len() {
+        for right in (left + 1)..fixtures.len() {
+            assert_ne!(
+                fixtures[left].verifier_solidity, fixtures[right].verifier_solidity,
+                "different circuit shapes over the same SRS should not share verifier source: {} vs {}",
+                fixtures[left].name, fixtures[right].name
+            );
+            assert_ne!(
+                fixtures[left].vk_solidity, fixtures[right].vk_solidity,
+                "different circuit shapes over the same SRS should not share VK source: {} vs {}",
+                fixtures[left].name, fixtures[right].name
+            );
+        }
+    }
 
-    let mut deployed_a =
-        deploy_separate_verifier_from_sources(&fixture_a.verifier_solidity, &fixture_a.vk_solidity);
-    let mut deployed_b =
-        deploy_separate_verifier_from_sources(&fixture_b.verifier_solidity, &fixture_b.vk_solidity);
+    for verifier_idx in 0..fixtures.len() {
+        for vk_idx in 0..fixtures.len() {
+            if verifier_idx == vk_idx {
+                continue;
+            }
+            assert_separate_verifier_rejects_vk_dependency(
+                &fixtures[verifier_idx].verifier_solidity,
+                &fixtures[vk_idx].vk_solidity,
+                &format!(
+                    "{} verifier with {} VK",
+                    fixtures[verifier_idx].name, fixtures[vk_idx].name
+                ),
+            );
+        }
+    }
 
-    assert_solidity_accepts(
-        call_deployed_verifier(&mut deployed_a, &fixture_a.proof, &fixture_a.public),
-        "same-SRS shape A valid proof",
-    );
-    assert_solidity_accepts(
-        call_deployed_verifier(&mut deployed_b, &fixture_b.proof, &fixture_b.public),
-        "same-SRS shape B valid proof",
-    );
+    let mut deployed: Vec<_> = fixtures
+        .iter()
+        .map(|fixture| {
+            deploy_separate_verifier_from_sources(&fixture.verifier_solidity, &fixture.vk_solidity)
+        })
+        .collect();
 
-    assert_solidity_rejects(
-        call_deployed_verifier(&mut deployed_a, &fixture_b.proof, &fixture_b.public),
-        "shape B proof under shape A verifier",
-    );
-    assert_solidity_rejects(
-        call_deployed_verifier(&mut deployed_b, &fixture_a.proof, &fixture_a.public),
-        "shape A proof under shape B verifier",
-    );
+    for (idx, fixture) in fixtures.iter().enumerate() {
+        assert_solidity_accepts(
+            call_deployed_verifier(&mut deployed[idx], &fixture.proof, &fixture.public),
+            &format!("same-SRS {} valid proof", fixture.name),
+        );
+    }
+
+    for verifier_idx in 0..deployed.len() {
+        for proof_idx in 0..fixtures.len() {
+            if verifier_idx == proof_idx {
+                continue;
+            }
+            assert_solidity_rejects(
+                call_deployed_verifier(
+                    &mut deployed[verifier_idx],
+                    &fixtures[proof_idx].proof,
+                    &fixtures[proof_idx].public,
+                ),
+                &format!(
+                    "{} proof under {} verifier",
+                    fixtures[proof_idx].name, fixtures[verifier_idx].name
+                ),
+            );
+        }
+    }
 }
 
 #[cfg(feature = "rust-verifier-trace")]
@@ -659,6 +719,7 @@ fn pbt_transcript_differential_fuzzer_matches_solidity_trace() {
 
 #[derive(Debug)]
 struct ShapeSolidityCase {
+    name: &'static str,
     verifier_solidity: String,
     vk_solidity: String,
     proof: Vec<u8>,
@@ -730,6 +791,7 @@ fn build_shape_solidity_case_with_params(
         .unwrap_or_else(|err| panic!("shape fuzz `{}` repack failed: {err:?}", case.name));
 
     ShapeSolidityCase {
+        name: case.name,
         verifier_solidity: artifacts.verifier,
         vk_solidity: artifacts.verifying_key.expect("separate render includes VK"),
         proof,
