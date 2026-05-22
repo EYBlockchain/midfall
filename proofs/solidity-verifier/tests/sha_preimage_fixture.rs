@@ -8,8 +8,8 @@ use std::{env, path::Path};
 
 use ff::{Field, PrimeField};
 use halo2_solidity_verifier::{
-    compile_solidity, pinned_solc_available, CallOutcome, Evm, GeneratorConfig, RenderOptions,
-    RenderVk, SolidityGenerator,
+    compile_solidity, pinned_solc_available, revm::primitives::Address, CallOutcome, Evm,
+    GeneratorConfig, RenderOptions, RenderVk, SolidityGenerator,
 };
 use midnight_circuits::{
     instructions::{AssignmentInstructions, PublicInputInstructions},
@@ -163,7 +163,7 @@ fn sha_preimage_renders_compiles_and_verifies() {
     let vk_address = evm.create(vk_creation_code);
     let verifier_address = evm.create_with_address_arg(verifier_creation_code, vk_address);
 
-    match evm.try_call_with_gas(verifier_address, calldata, 5_000_000_000) {
+    match evm.try_call_with_gas(verifier_address, calldata.clone(), 5_000_000_000) {
         CallOutcome::Success {
             gas_used, output, ..
         } => {
@@ -198,7 +198,7 @@ fn sha_preimage_renders_compiles_and_verifies() {
         "wrong SHA public byte",
     );
 
-    let mut bad_proof = repacked_proof;
+    let mut bad_proof = repacked_proof.clone();
     bad_proof[0] ^= 0x01;
     assert_rejects(
         evm.try_call_with_gas(
@@ -207,6 +207,15 @@ fn sha_preimage_renders_compiles_and_verifies() {
             5_000_000_000,
         ),
         "mutated SHA proof",
+    );
+
+    assert_adversarial_calldata_variants_rejected(
+        &mut evm,
+        verifier_address,
+        &repacked_proof,
+        &instances,
+        &calldata,
+        "SHA preimage",
     );
 }
 
@@ -229,6 +238,149 @@ fn assert_rejects(outcome: CallOutcome, context: &str) {
         }
         CallOutcome::Revert { .. } | CallOutcome::Halt { .. } => {}
     }
+}
+
+fn assert_adversarial_calldata_variants_rejected(
+    evm: &mut Evm,
+    verifier_address: Address,
+    proof: &[u8],
+    instances: &[F],
+    valid_calldata: &[u8],
+    context: &str,
+) {
+    let mut cases = Vec::<(String, Vec<u8>)>::new();
+
+    let mut wrong_selector = valid_calldata.to_vec();
+    wrong_selector[0] ^= 0x01;
+    cases.push(("wrong selector".to_string(), wrong_selector));
+
+    let mut trailing_bytes = valid_calldata.to_vec();
+    trailing_bytes.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    cases.push(("trailing bytes".to_string(), trailing_bytes));
+
+    cases.push((
+        "truncated calldata".to_string(),
+        valid_calldata[..valid_calldata.len() - 1].to_vec(),
+    ));
+    cases.push((
+        "empty proof".to_string(),
+        halo2_solidity_verifier::encode_calldata(&[], instances),
+    ));
+
+    let mut proof_length_too_long = valid_calldata.to_vec();
+    overwrite_u256_word(
+        &mut proof_length_too_long,
+        proof_len_word_start(),
+        proof.len() as u64 + 1,
+    );
+    cases.push(("proof length too long".to_string(), proof_length_too_long));
+
+    let mut proof_length_too_short = valid_calldata.to_vec();
+    overwrite_u256_word(
+        &mut proof_length_too_short,
+        proof_len_word_start(),
+        proof.len() as u64 - 1,
+    );
+    cases.push(("proof length too short".to_string(), proof_length_too_short));
+
+    let mut instance_length_too_long = valid_calldata.to_vec();
+    overwrite_u256_word(
+        &mut instance_length_too_long,
+        instances_len_word_start(proof),
+        instances.len() as u64 + 1,
+    );
+    cases.push((
+        "instance array length too long".to_string(),
+        instance_length_too_long,
+    ));
+
+    let mut instance_length_too_short = valid_calldata.to_vec();
+    overwrite_u256_word(
+        &mut instance_length_too_short,
+        instances_len_word_start(proof),
+        instances.len() as u64 - 1,
+    );
+    cases.push((
+        "instance array length too short".to_string(),
+        instance_length_too_short,
+    ));
+
+    let mut noncanonical_instance = valid_calldata.to_vec();
+    noncanonical_instance
+        [first_instance_word_start(proof)..first_instance_word_start(proof) + 0x20]
+        .copy_from_slice(&fr_modulus_be_word());
+    cases.push((
+        "public instance equal to Fr modulus".to_string(),
+        noncanonical_instance,
+    ));
+
+    let mut public_byte_256 = valid_calldata.to_vec();
+    overwrite_u256_word(&mut public_byte_256, first_instance_word_start(proof), 256);
+    cases.push(("public byte encoded as 256".to_string(), public_byte_256));
+
+    let mut proof_head_overlap = valid_calldata.to_vec();
+    overwrite_u256_word(&mut proof_head_overlap, 0x04, 0x20);
+    cases.push((
+        "proof head overlaps ABI head".to_string(),
+        proof_head_overlap,
+    ));
+
+    let mut proof_head_shifted_without_gap = valid_calldata.to_vec();
+    overwrite_u256_word(&mut proof_head_shifted_without_gap, 0x04, 0x60);
+    cases.push((
+        "proof head shifted without matching gap".to_string(),
+        proof_head_shifted_without_gap,
+    ));
+
+    let mut instances_head_overlap = valid_calldata.to_vec();
+    overwrite_u256_word(&mut instances_head_overlap, 0x24, 0x40);
+    cases.push((
+        "instances head overlaps proof".to_string(),
+        instances_head_overlap,
+    ));
+
+    let mut instances_head_shifted = valid_calldata.to_vec();
+    overwrite_u256_word(
+        &mut instances_head_shifted,
+        0x24,
+        canonical_instances_head(proof) as u64 + 0x20,
+    );
+    cases.push(("instances head shifted".to_string(), instances_head_shifted));
+
+    for (name, calldata) in cases {
+        assert_rejects(
+            evm.try_call_with_gas(verifier_address, calldata, 5_000_000_000),
+            &format!("{context} adversarial calldata: {name}"),
+        );
+    }
+}
+
+fn overwrite_u256_word(bytes: &mut [u8], start: usize, value: u64) {
+    bytes[start..start + 32].fill(0);
+    bytes[start + 24..start + 32].copy_from_slice(&value.to_be_bytes());
+}
+
+fn fr_modulus_be_word() -> [u8; 32] {
+    hex::decode("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
+        .expect("fr modulus hex")
+        .try_into()
+        .expect("Fr modulus is one word")
+}
+
+fn proof_len_word_start() -> usize {
+    4 + 0x40
+}
+
+fn canonical_instances_head(proof: &[u8]) -> usize {
+    0x40 + 0x20 + proof.len()
+}
+
+fn instances_len_word_start(proof: &[u8]) -> usize {
+    4 + canonical_instances_head(proof)
+}
+
+fn first_instance_word_start(proof: &[u8]) -> usize {
+    instances_len_word_start(proof) + 0x20
 }
 
 fn srs_dir() -> String {
