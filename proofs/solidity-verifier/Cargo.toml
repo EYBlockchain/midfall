@@ -30,6 +30,8 @@ proptest = "1.6.0"
 rand = { workspace = true }
 revm = { version = "19", default-features = false, features = ["std", "blst"] }
 rand_chacha = { workspace = true }
+num-bigint = { workspace = true }
+num-traits = "0.2"
 # Step 8: pull in midnight-circuits + midnight-zk-stdlib only as dev-deps so
 # the lib build stays minimal. These provide the PoseidonExample circuit
 # type the poseidon fixture (midfall/proofs/solidity-verifier/fixtures/
