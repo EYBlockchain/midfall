@@ -15,11 +15,13 @@ use midnight_proofs::{
         Rotation,
     },
 };
+use ruint::aliases::U256;
 
 use crate::{
     api::{
         AccumulatorEncoding, CommittedInstanceCommitmentKind, GeneratorConfig, GeneratorError,
-        ProofEvaluationCounts, QuotientIdentityManifest, RenderDiagnostics, RenderOptions,
+        ProofEvaluationCounts, QuotientCertificate, QuotientIdentityManifest,
+        ReleaseAssuranceEvidence, RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk,
         RenderedArtifacts, RepackError,
     },
     lowering::{encoding::ConstraintSystemMeta, VerifierBuildInputs},

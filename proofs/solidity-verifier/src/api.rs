@@ -201,6 +201,79 @@ pub struct QuotientIdentityManifest {
     pub simple_selector_cols: Vec<usize>,
 }
 
+/// Artifact-bound certificate for the quotient numerator lowering.
+///
+/// The certificate is a host-side diagnostic and release artifact. Its canonical
+/// hash is also stored in the generated VK header and checked by the verifier.
+/// Human-readable names remain in [`QuotientIdentitySource`] for review, but
+/// the hash intentionally ignores display-only names.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuotientCertificate {
+    /// Canonical certificate format version.
+    pub version: u32,
+    /// Identities in the exact global `y`-batch order used by the verifier.
+    pub entries: Vec<QuotientCertificateEntry>,
+    /// Number of normal custom-gate polynomial identities.
+    pub gate_identities: usize,
+    /// Number of permutation identities.
+    pub permutation_identities: usize,
+    /// Number of lookup identities.
+    pub lookup_identities: usize,
+    /// Number of trash argument identities.
+    pub trash_identities: usize,
+    /// Fixed-column indices for simple selector buckets, sorted by column.
+    pub simple_selector_cols: Vec<usize>,
+    /// Final selector-bucket tail exponents.
+    pub selector_tail_exponents: Vec<usize>,
+    /// Keccak256 over the quotient VM bytecode bytes.
+    pub vm_bytecode_hash: U256,
+    /// Keccak256 over the canonical quotient constant table encoding.
+    pub quotient_constants_hash: U256,
+    /// Keccak256 over the full canonical certificate encoding.
+    pub certificate_hash: U256,
+}
+
+/// One quotient identity as certified after representation choices have been
+/// applied.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuotientCertificateEntry {
+    /// Position in the global `y`-batch.
+    pub global_index: usize,
+    /// Source family and source-local metadata.
+    pub source: QuotientIdentitySource,
+    /// Accumulation target for this identity.
+    pub target: QuotientIdentityManifestTarget,
+    /// Gap used by selector-bucket forward folding for selector identities.
+    pub selector_gap: Option<usize>,
+    /// How this identity is executed in the generated quotient path.
+    pub execution: QuotientIdentityExecution,
+    /// Keccak256 over the canonical expression encoding.
+    pub expression_hash: U256,
+    /// Byte length of the canonical expression encoding.
+    pub expression_encoding_len: usize,
+}
+
+/// Execution surface used to fold one quotient identity in the generated
+/// verifier.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum QuotientIdentityExecution {
+    /// Direct Yul emitted before the compact VM loop.
+    Inline,
+    /// Compact VM bytecode expression followed by a fold opcode.
+    Interpreted,
+    /// Native callback replacing the full permutation identity range.
+    NativePermutation,
+    /// Native callback replacing the full lookup identity range.
+    NativeLookup,
+    /// Native callback replacing one selected heavy gate identity.
+    NativeIdentity {
+        /// Index into the generated native identity callback table.
+        native_index: usize,
+    },
+    /// Structured Yul emitted after the VM loop.
+    StructuredTail,
+}
+
 /// One identity in the quotient numerator manifest.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuotientIdentityManifestEntry {
@@ -366,6 +439,24 @@ pub struct RenderedArtifacts {
     pub quotient_evaluator: Option<String>,
 }
 
+/// Caller-supplied CI evidence required to emit a release assurance report.
+///
+/// The generator can hash artifacts and certify its quotient lowering, but it
+/// cannot know whether slow EVM/trace and mutation jobs actually ran. Release
+/// tooling must pass those gate results explicitly; skipped or empty evidence
+/// fails closed.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ReleaseAssuranceEvidence {
+    /// Heavy Rust/Solidity trace and EVM gates completed successfully.
+    pub heavy_evm_trace_gates_passed: bool,
+    /// Human-readable trace coverage summary from the CI job.
+    pub trace_coverage_summary: String,
+    /// Mutation-test gates completed successfully.
+    pub mutation_tests_passed: bool,
+    /// Human-readable mutation summary from the CI job.
+    pub mutation_test_summary: String,
+}
+
 /// Errors from native-proof to Solidity-proof repacking.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepackError {
@@ -460,6 +551,11 @@ pub enum GeneratorError {
     },
     /// Repacking a native proof into the Solidity ABI failed.
     Repack(RepackError),
+    /// Release assurance report was requested without required CI evidence.
+    ReleaseAssuranceGateMissing {
+        /// Missing or skipped gate.
+        gate: &'static str,
+    },
 }
 
 impl fmt::Display for GeneratorError {
@@ -503,6 +599,9 @@ impl fmt::Display for GeneratorError {
             }
             Self::Render { artifact } => write!(f, "failed to render {artifact}"),
             Self::Repack(err) => write!(f, "{err}"),
+            Self::ReleaseAssuranceGateMissing { gate } => {
+                write!(f, "release assurance gate missing or skipped: {gate}")
+            }
         }
     }
 }

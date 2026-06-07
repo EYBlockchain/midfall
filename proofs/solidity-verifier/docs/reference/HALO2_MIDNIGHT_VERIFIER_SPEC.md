@@ -497,19 +497,21 @@ word  7: has_accumulator, 0 or 1
 word  8: acc_offset
 word  9: num_acc_limbs
 word 10: num_acc_limb_bits
-word 11..14: G1_BASE
-word 15..22: G2_BASE
-word 23..30: NEG_S_G2_BASE = -[s]G2
+word 11    : quotient_manifest_hash
+word 12..15: G1_BASE
+word 16..23: G2_BASE
+word 24..31: NEG_S_G2_BASE = -[s]G2
 ```
 
-All scalar words are `Fr` values in big-endian EVM word form. `G1_BASE`,
-`G2_BASE`, and `NEG_S_G2_BASE` use EIP-2537 padded encodings.
+All scalar words are `Fr` values in big-endian EVM word form except
+`quotient_manifest_hash`, which is a canonical Keccak256 certificate hash.
+`G1_BASE`, `G2_BASE`, and `NEG_S_G2_BASE` use EIP-2537 padded encodings.
 
 After the header. The quotient sections may have zero length in experimental
 non-VM quotient modes, but are present in the default compact VM mode:
 
 ```text
-word 31..: quotient constant pool
+word 32..: quotient constant pool
 then:      quotient bytecode program, padded to whole words
 then:      fixed commitments, 4 words each
 then:      permutation commitments, 4 words each

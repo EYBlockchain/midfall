@@ -8,11 +8,14 @@
 
 use crate::lowering::{
     abi::ProofCalldataLayout,
+    diagnostics,
     encoding::{ConstraintSystemMeta, Data, Ptr},
     kzg, layout,
     layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
     quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
-    quotient_numerator::vm::{QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan},
+    quotient_numerator::vm::{
+        QuotientProgramBuild, QuotientProgramPlan, QuotientTarget, RepackedProofLayoutPlan,
+    },
     render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
     VerifierBuildInputs,
 };
@@ -290,6 +293,96 @@ impl LoweringPlan {
                 "quotient state pointer drifted: model={:#x} planned={:#x}",
                 self.quotient.program.eval_numer_mptr, self.quotient.state_slots.eval_numer_mptr
             ));
+        }
+        self.validate_quotient_selector_fold()?;
+        let expected_quotient_hash = diagnostics::quotient_certificate_hash_for_plan(self);
+        let header_quotient_hash =
+            self.vk.constants[layout::VkHeaderSlot::QuotientManifestHash.word()].1;
+        if header_quotient_hash != expected_quotient_hash {
+            return Err(format!(
+                "quotient certificate hash drifted: vk={header_quotient_hash:#x} plan={expected_quotient_hash:#x}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check that selector gaps and tails are usable by the generated y-power
+    /// table and agree with the certified identity stream.
+    fn validate_quotient_selector_fold(&self) -> Result<(), String> {
+        let selector_fold = &self.quotient.plan.selector_fold;
+        let manifest = self
+            .quotient
+            .plan
+            .execution_manifest()
+            .map_err(|err| format!("quotient execution manifest invariant failed: {err}"))?;
+        if selector_fold.gaps_by_identity.len() != manifest.len() {
+            return Err(format!(
+                "quotient selector gap table length mismatch: gaps={} identities={}",
+                selector_fold.gaps_by_identity.len(),
+                manifest.len()
+            ));
+        }
+        if selector_fold.tail_exponents.len() != self.quotient.sorted_simple.len() {
+            return Err(format!(
+                "quotient selector tail table length mismatch: tails={} selectors={}",
+                selector_fold.tail_exponents.len(),
+                self.quotient.sorted_simple.len()
+            ));
+        }
+
+        for entry in &manifest {
+            match entry.target {
+                QuotientTarget::Selector(selector_idx) => {
+                    if selector_idx >= selector_fold.tail_exponents.len() {
+                        return Err(format!(
+                            "quotient selector identity {} targets bucket {} but only {} selector buckets are planned",
+                            entry.global_index,
+                            selector_idx,
+                            selector_fold.tail_exponents.len()
+                        ));
+                    }
+                    let gap = selector_fold
+                        .gaps_by_identity
+                        .get(entry.global_index)
+                        .copied()
+                        .flatten()
+                        .ok_or_else(|| {
+                            format!(
+                                "quotient selector identity {} is missing a selector gap",
+                                entry.global_index
+                            )
+                        })?;
+                    if gap > selector_fold.max_power {
+                        return Err(format!(
+                            "quotient selector gap {gap} for identity {} exceeds y-power table max {}",
+                            entry.global_index, selector_fold.max_power
+                        ));
+                    }
+                }
+                QuotientTarget::Main => {
+                    if selector_fold
+                        .gaps_by_identity
+                        .get(entry.global_index)
+                        .copied()
+                        .flatten()
+                        .is_some()
+                    {
+                        return Err(format!(
+                            "main quotient identity {} unexpectedly has a selector gap",
+                            entry.global_index
+                        ));
+                    }
+                }
+            }
+        }
+
+        for (selector_idx, &tail) in selector_fold.tail_exponents.iter().enumerate() {
+            if tail > selector_fold.max_power {
+                return Err(format!(
+                    "quotient selector tail {tail} for bucket {selector_idx} exceeds y-power table max {}",
+                    selector_fold.max_power
+                ));
+            }
         }
         Ok(())
     }

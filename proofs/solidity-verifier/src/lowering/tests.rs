@@ -29,16 +29,18 @@ use super::{
         DEFAULT_HYBRID_QUOTIENT_INLINE_IDENTITIES, DEFAULT_QUOTIENT_LIMB_VM_OPS,
         DEFAULT_QUOTIENT_NATIVE_GATES,
     },
+    diagnostics,
     encoding::*,
     kzg,
     layout::{self, WORD_BYTES},
+    protocol,
     quotient_numerator::vm::*,
     VerifierBuildInputs,
 };
 use crate::{
     api::{
         AccumulatorEncoding, CommittedInstanceCommitmentKind, GeneratorConfig, GeneratorError,
-        QuotientIdentityManifestTarget, QuotientIdentitySource,
+        QuotientIdentityExecution, QuotientIdentityManifestTarget, QuotientIdentitySource,
     },
     SolidityGenerator,
 };
@@ -722,6 +724,213 @@ fn quotient_execution_manifest_rejects_bad_native_identity_index() {
 }
 
 #[test]
+fn quotient_certificate_hash_binds_identity_stream_execution_and_artifacts() {
+    let inline = test_quotient_identity_with_expr(
+        0,
+        QuotientTarget::Main,
+        QuotientExpr::Const(U256::from(3u64)),
+    );
+    let interpreted = test_quotient_identity_with_expr(
+        1,
+        QuotientTarget::Selector(0),
+        quotient_add_expr(
+            QuotientExpr::Const(U256::from(5u64)),
+            QuotientExpr::Const(U256::from(7u64)),
+        ),
+    );
+    let native = test_quotient_identity_with_expr(
+        2,
+        QuotientTarget::Main,
+        QuotientExpr::Const(U256::from(11u64)),
+    );
+    let tail = test_quotient_identity(
+        3,
+        QuotientIdentitySource::Trash {
+            trash_index: 0,
+            trash_name: "trash_tail".to_string(),
+        },
+        QuotientTarget::Main,
+    );
+    let expected = vec![
+        inline.clone(),
+        interpreted.clone(),
+        native.clone(),
+        tail.clone(),
+    ];
+    let plan = test_quotient_execution_plan(
+        expected.clone(),
+        vec![inline],
+        vec![
+            QuotientProgramItem::Identity(interpreted.clone()),
+            QuotientProgramItem::NativeIdentity(0),
+        ],
+        vec![native],
+        Vec::new(),
+        Vec::new(),
+        vec![tail],
+    );
+    let build = test_quotient_program_build(&plan);
+    let counts = test_quotient_identity_counts(&expected);
+    let hash_for = |plan: &QuotientProgramPlan, build: &QuotientProgramBuild| {
+        diagnostics::quotient_certificate_hash_from_parts(&counts, plan, build, &plan.sorted_simple)
+    };
+
+    let certificate =
+        diagnostics::quotient_certificate_from_parts(&counts, &plan, &build, &plan.sorted_simple);
+    let baseline = certificate.certificate_hash;
+
+    assert_eq!(certificate.entries.len(), expected.len());
+    assert_eq!(
+        certificate.entries[0].execution,
+        QuotientIdentityExecution::Inline
+    );
+    assert_eq!(
+        certificate.entries[1].execution,
+        QuotientIdentityExecution::Interpreted
+    );
+    assert_eq!(
+        certificate.entries[2].execution,
+        QuotientIdentityExecution::NativeIdentity { native_index: 0 }
+    );
+    assert_eq!(
+        certificate.entries[3].execution,
+        QuotientIdentityExecution::StructuredTail
+    );
+    assert_eq!(certificate.entries[1].selector_gap, Some(0));
+    assert_eq!(
+        certificate.entries[1].target,
+        QuotientIdentityManifestTarget::Selector {
+            selector_index: 0,
+            fixed_column: 0,
+        }
+    );
+
+    let mut reordered = plan.clone();
+    reordered.items.swap(0, 1);
+    assert_ne!(baseline, hash_for(&reordered, &build));
+
+    let mut retargeted = plan.clone();
+    if let QuotientProgramItem::Identity(identity) = &mut retargeted.items[0] {
+        identity.target = QuotientTarget::Main;
+    }
+    assert_ne!(baseline, hash_for(&retargeted, &build));
+
+    let mut reexpressed = plan.clone();
+    if let QuotientProgramItem::Identity(identity) = &mut reexpressed.items[0] {
+        identity.expr = QuotientExpr::Const(U256::from(13u64));
+    }
+    assert_ne!(baseline, hash_for(&reexpressed, &build));
+
+    let mut refolded = plan.clone();
+    refolded.selector_fold.tail_exponents[0] += 1;
+    assert_ne!(baseline, hash_for(&refolded, &build));
+
+    let mut reexecuted = plan.clone();
+    reexecuted.native_identities.push(interpreted);
+    reexecuted.items[0] = QuotientProgramItem::NativeIdentity(1);
+    assert_ne!(baseline, hash_for(&reexecuted, &build));
+
+    let mut changed_bytecode = build.clone();
+    changed_bytecode.bytes.push(0x42);
+    assert_ne!(baseline, hash_for(&plan, &changed_bytecode));
+
+    let mut changed_constants = build.clone();
+    changed_constants.consts.push(U256::from(17u64));
+    assert_ne!(baseline, hash_for(&plan, &changed_constants));
+}
+
+#[test]
+fn quotient_certificate_hash_excludes_display_only_names() {
+    let mut gate = test_quotient_identity_with_expr(
+        0,
+        QuotientTarget::Main,
+        QuotientExpr::Const(U256::from(17u64)),
+    );
+    if let QuotientIdentitySource::Gate {
+        gate_name,
+        constraint_name,
+        ..
+    } = &mut gate.meta.source
+    {
+        *gate_name = "human_gate_a".to_string();
+        *constraint_name = "human_constraint_a".to_string();
+    }
+    let lookup = test_quotient_identity(
+        1,
+        QuotientIdentitySource::Lookup {
+            identity_index: 0,
+            lookup_index: 0,
+            lookup_name: "lookup_a".to_string(),
+        },
+        QuotientTarget::Main,
+    );
+    let trash = test_quotient_identity(
+        2,
+        QuotientIdentitySource::Trash {
+            trash_index: 0,
+            trash_name: "trash_a".to_string(),
+        },
+        QuotientTarget::Main,
+    );
+    let identities_a = vec![gate, lookup, trash];
+    let mut identities_b = identities_a.clone();
+    if let QuotientIdentitySource::Gate {
+        gate_name,
+        constraint_name,
+        ..
+    } = &mut identities_b[0].meta.source
+    {
+        *gate_name = "human_gate_b".to_string();
+        *constraint_name = "human_constraint_b".to_string();
+    }
+    if let QuotientIdentitySource::Lookup { lookup_name, .. } = &mut identities_b[1].meta.source {
+        *lookup_name = "lookup_b".to_string();
+    }
+    if let QuotientIdentitySource::Trash { trash_name, .. } = &mut identities_b[2].meta.source {
+        *trash_name = "trash_b".to_string();
+    }
+
+    let plan_a = test_quotient_execution_plan(
+        identities_a.clone(),
+        identities_a.clone(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let plan_b = test_quotient_execution_plan(
+        identities_b.clone(),
+        identities_b.clone(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    );
+    let counts = test_quotient_identity_counts(&identities_a);
+    let build_a = test_quotient_program_build(&plan_a);
+    let build_b = test_quotient_program_build(&plan_b);
+    let cert_a = diagnostics::quotient_certificate_from_parts(
+        &counts,
+        &plan_a,
+        &build_a,
+        &plan_a.sorted_simple,
+    );
+    let cert_b = diagnostics::quotient_certificate_from_parts(
+        &counts,
+        &plan_b,
+        &build_b,
+        &plan_b.sorted_simple,
+    );
+
+    assert_ne!(cert_a.entries[0].source, cert_b.entries[0].source);
+    assert_ne!(cert_a.entries[1].source, cert_b.entries[1].source);
+    assert_ne!(cert_a.entries[2].source, cert_b.entries[2].source);
+    assert_eq!(cert_a.certificate_hash, cert_b.certificate_hash);
+}
+
+#[test]
 fn quotient_program_items_emit_bytecode_markers_in_manifest_order() {
     let interpreted = test_quotient_identity_with_expr(
         0,
@@ -1174,6 +1383,14 @@ fn vk_header_is_cross_checked_against_generated_constants() {
             "pinned verifier should cross-check generated VK header value: {expected_check}"
         );
     }
+    assert!(
+        verifier_template.contains("EXPECTED_QUOTIENT_CERTIFICATE_HASH_WORD")
+            && verifier_template.contains("QUOTIENT_CERTIFICATE_HASH_MPTR")
+            && verifier_template.contains(
+                "eq(mload(QUOTIENT_CERTIFICATE_HASH_MPTR), EXPECTED_QUOTIENT_CERTIFICATE_HASH_WORD)"
+            ),
+        "pinned verifier should bind the generated quotient certificate hash in the VK header"
+    );
     assert!(
         verifier_template.contains("Cross-check loaded VK header words")
             && verifier_template.contains("generator drift before calldata parsing"),
@@ -2852,6 +3069,51 @@ fn test_quotient_execution_plan(
         has_native_permutation,
         has_native_lookup,
         selector_fold: VerifierBuildInputs::selector_fold_plan(&expected, selector_count),
+    }
+}
+
+/// Count synthetic identities with the same source-family accounting as the
+/// protocol planner.
+fn test_quotient_identity_counts(
+    identities: &[QuotientIdentity],
+) -> protocol::QuotientIdentityPlan {
+    let mut counts = protocol::QuotientIdentityPlan::default();
+    for identity in identities {
+        match identity.meta.source {
+            QuotientIdentitySource::Gate { .. } => counts.gates += 1,
+            QuotientIdentitySource::Permutation { .. } => counts.permutation += 1,
+            QuotientIdentitySource::Lookup { .. } => counts.lookup += 1,
+            QuotientIdentitySource::Trash { .. } => counts.trash += 1,
+        }
+    }
+    counts
+}
+
+/// Build synthetic quotient VM artifacts from the physical stream items in a
+/// plan.
+fn test_quotient_program_build(plan: &QuotientProgramPlan) -> QuotientProgramBuild {
+    let mut builder = QuotientProgramBuilder::default();
+    for item in &plan.items {
+        match item {
+            QuotientProgramItem::Identity(identity) => builder.identity_expr(
+                &identity.expr,
+                identity.target,
+                plan.selector_fold.gap_for(identity),
+            ),
+            QuotientProgramItem::NativePermutation => builder.native_permutation(),
+            QuotientProgramItem::NativeLookup => builder.native_lookup(),
+            QuotientProgramItem::NativeIdentity(native_index) => {
+                builder.native_identity(*native_index)
+            }
+        }
+    }
+
+    QuotientProgramBuild {
+        bytes: builder.bytes,
+        consts: builder.consts,
+        max_stack: builder.max_stack,
+        used_ops: Vec::new(),
+        used_mem_tokens: Vec::new(),
     }
 }
 
