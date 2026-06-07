@@ -262,6 +262,21 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             vk.constants[quotient_program_offset_words + i] = ("quotient_program", value);
         }
 
+        let (_, final_meta, final_data, _) = self.meta_data_for_stable_static_layout(&vk);
+        let final_quotient_plan = self.quotient_program_plan(&final_meta, &final_data);
+        let final_quotient_build = self.build_quotient_program_items(
+            &final_quotient_plan.items,
+            &final_quotient_plan.selector_fold,
+        );
+        assert_eq!(
+            final_quotient_build.bytes, quotient_program_build.bytes,
+            "quotient bytecode changed after VK payload materialization"
+        );
+        assert_eq!(
+            final_quotient_build.consts, quotient_program_build.consts,
+            "quotient constants changed after VK payload materialization"
+        );
+
         vk.quotient_const_offset_words = Some(quotient_const_offset_words);
         vk.quotient_const_words = quotient_const_words;
         vk.quotient_program_offset_words = Some(quotient_program_offset_words);
