@@ -41,7 +41,7 @@ manifest:
 | Generated sources | Hashes of verifier, VK, and optional quotient evaluator sources |
 | Runtime bytecode | Runtime length and `keccak256` for each deployed artifact |
 | VK binding | VK digest plus external VK runtime length/codehash when split |
-| Quotient binding | Evaluator runtime length/codehash when split |
+| Quotient binding | Quotient certificate hash, VM bytecode hash, constants hash, and evaluator runtime length/codehash when split |
 | Proof ABI | `verifyProof(bytes proof, uint256[] instances)` |
 | SRS assumption | Midnight SRS asset names, sizes, and expected source |
 
@@ -58,7 +58,7 @@ line-for-line translation.
 | --- | --- | --- | --- |
 | Parser and proof reads | `plonk/verifier.rs::{parse_trace,verify_algebraic_constraints}` | `src/codegen/protocol.rs`, `src/codegen/proof_layout.rs`, `templates/contracts/Halo2Verifier.sol` | Exact proof length, ABI head checks, per-section offsets, canonical scalar and G1 checks |
 | Transcript challenges | `transcript/mod.rs`, `transcript/implementors.rs` | `src/transcript.rs`, `templates/contracts/Halo2Verifier.sol` | Rust/Solidity trace equality for VK, instances, commitments, and all challenges |
-| Quotient identities | `plonk/mod.rs::partially_evaluate_identities` | `src/codegen/evaluator.rs`, `src/codegen/quotient/mod.rs`, `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` | Identity order manifest, quotient trace ids, VM validator, selector-fold trace coverage |
+| Quotient identities | `plonk/mod.rs::partially_evaluate_identities` | `src/codegen/evaluator.rs`, `src/codegen/quotient/mod.rs`, `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` | Quotient certificate hash, identity order manifest, quotient trace ids, VM validator, selector-fold trace coverage |
 | Linearization | `plonk/linearization/verifier.rs::compute_linearization_commitment` | `src/codegen/generator.rs`, `src/codegen/pcs.rs` | Same `-nu_y(x)` scalar, selector buckets, quotient limb scalars, and commitment expansion |
 | KZG multi-open | `poly/kzg/mod.rs::multi_prepare` | `src/codegen/pcs.rs` | Same dummy queries, point-set sort, `x1..x4`, `f_com`, `q_evals`, `pi`, final MSM |
 | Final pairing | `poly/kzg/msm.rs::DualMSM::check` | `templates/contracts/Halo2Verifier.sol`, `src/codegen/pcs.rs` | Pairing precompile success, return size, and semantic result word checked |
@@ -89,6 +89,11 @@ Required controls:
 
 - Unsupported shapes fail in `SolidityGenerator::try_new` before rendering.
 - VK and quotient dependencies are pinned by bytecode length and codehash.
+- The VK header stores the canonical quotient certificate hash and the verifier
+  cross-checks it against the generated constant before proof parsing. The hash
+  binds identity order, selector gaps/tails, execution surface, typed quotient
+  expressions, VM bytecode, and constant table without changing the
+  Fiat-Shamir transcript.
 - The proof parser rejects malformed ABI heads, wrong proof length, trailing
   bytes, non-canonical scalars, and non-canonical/off-curve G1 coordinates.
 - The transcript absorbs VK digest, committed identity instance, public input
@@ -160,5 +165,8 @@ Release evidence should attach:
 - Test command logs and feature lists.
 - Rust/Solidity trace comparison summary.
 - Generated artifact hashes and runtime sizes.
+- Quotient certificate hash, VM bytecode hash, constants hash, render mode, and
+  a summary of heavy EVM/trace and mutation gates. A production release should
+  fail if this report is absent or if required heavy gates self-skipped.
 - Pinned solc identity and compile flags.
 - Any intentionally excluded debug-only or wrapper-only risk.

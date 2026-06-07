@@ -27,12 +27,13 @@ pragma solidity ^0.8.24;
 ///   word  8  : acc_offset                   (instance index of the accumulator)
 ///   word  9  : num_acc_limbs
 ///   word 10  : num_acc_limb_bits
-///   word 11..14 : G1_BASE                   (4 words, EIP-2537 padded)
-///   word 15..22 : G2_BASE                   (8 words, EIP-2537 padded)
-///   word 23..30 : NEG_S_G2_BASE             (8 words, EIP-2537 padded)
-///   word 31..30 + Q_PAYLOAD      : quotient VM constants + packed bytecode
-///   word 31 + Q_PAYLOAD ..       : fixed_comms (4 words each)
-///   word 31 + Q_PAYLOAD + 4*N_FIXED ..
+///   word 11  : quotient_manifest_hash       (canonical quotient certificate)
+///   word 12..15 : G1_BASE                   (4 words, EIP-2537 padded)
+///   word 16..23 : G2_BASE                   (8 words, EIP-2537 padded)
+///   word 24..31 : NEG_S_G2_BASE             (8 words, EIP-2537 padded)
+///   word 32..31 + Q_PAYLOAD      : quotient VM constants + packed bytecode
+///   word 32 + Q_PAYLOAD ..       : fixed_comms (4 words each)
+///   word 32 + Q_PAYLOAD + 4*N_FIXED ..
 ///                                : permutation_comms (4 words each)
 ///
 /// Notes:
@@ -41,7 +42,10 @@ pragma solidity ^0.8.24;
 /// - The quotient identity interpreter's static program is stored in this
 ///   pinned VK runtime. The verifier reads it from memory after `extcodecopy`,
 ///   avoiding verifier-side PUSH32/mstore immediates while keeping the program
-///   covered by `EXPECTED_VK_CODEHASH`.
+///   covered by `EXPECTED_VK_CODEHASH`. The header also stores the canonical
+///   quotient certificate hash so generator-side identity order, selector
+///   folds, execution choices, VM bytecode, and constant table are bound to the
+///   generated verifier without changing the Fiat-Shamir transcript.
 /// - The midnight-proofs migration bakes the per-lookup chunk counts, trashcan
 ///   structure, and `num_simple_selectors` into the generated verifier code.
 contract Halo2VerifyingKey {

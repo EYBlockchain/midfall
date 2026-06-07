@@ -13,6 +13,7 @@ use ruint::aliases::U256;
 
 use crate::lowering::{
     abi::{ProofCalldataLayout, TranscriptBufferLayout},
+    diagnostics,
     encoding::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
     kzg, layout,
     layout::{
@@ -89,6 +90,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             header.scalar(Slot::NumAccLimbs, "num_acc_limbs", num_acc_limbs).unwrap();
             header
                 .scalar(Slot::NumAccLimbBits, "num_acc_limb_bits", num_acc_limb_bits)
+                .unwrap();
+            header
+                .scalar(
+                    Slot::QuotientManifestHash,
+                    "quotient_manifest_hash",
+                    U256::ZERO,
+                )
                 .unwrap();
             header
                 .g1(
@@ -261,6 +269,29 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         for (i, value) in quotient_program_chunks.iter().copied().enumerate() {
             vk.constants[quotient_program_offset_words + i] = ("quotient_program", value);
         }
+
+        let (_, final_meta, final_data, _) = self.meta_data_for_stable_static_layout(&vk);
+        let final_quotient_plan = self.quotient_program_plan(&final_meta, &final_data);
+        let final_quotient_build = self.build_quotient_program_items(
+            &final_quotient_plan.items,
+            &final_quotient_plan.selector_fold,
+        );
+        assert_eq!(
+            final_quotient_build.bytes, quotient_program_build.bytes,
+            "quotient bytecode changed after VK payload materialization"
+        );
+        assert_eq!(
+            final_quotient_build.consts, quotient_program_build.consts,
+            "quotient constants changed after VK payload materialization"
+        );
+        let quotient_manifest_hash = diagnostics::quotient_certificate_hash_from_parts(
+            &final_meta.protocol.quotient,
+            &final_quotient_plan,
+            &final_quotient_build,
+            &final_quotient_plan.sorted_simple,
+        );
+        vk.constants[layout::VkHeaderSlot::QuotientManifestHash.word()] =
+            ("quotient_manifest_hash", quotient_manifest_hash);
 
         vk.quotient_const_offset_words = Some(quotient_const_offset_words);
         vk.quotient_const_words = quotient_const_words;

@@ -12,6 +12,10 @@
     bytes32 internal constant EXPECTED_VK_CODEHASH = bytes32(EXPECTED_VK_CODEHASH_WORD);
     {%- when None %}
     {%- endmatch %}
+
+    // Expected quotient certificate hash. The verifier checks this against the
+    // VK header after loading but never absorbs it into the transcript.
+    uint256 internal constant EXPECTED_QUOTIENT_CERTIFICATE_HASH_WORD = {{ expected_quotient_certificate_hash|hex_padded(64) }};
     {%- match quotient_external %}
     {%- when Some with (_) %}
     /// @notice Quotient evaluator contract authorized for split quotient reconstruction.
@@ -59,6 +63,7 @@
     uint256 internal constant        ACC_OFFSET_MPTR = {{ memory.vk_mptr + vk_header.acc_offset }};
     uint256 internal constant     NUM_ACC_LIMBS_MPTR = {{ memory.vk_mptr + vk_header.num_acc_limbs }};
     uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = {{ memory.vk_mptr + vk_header.num_acc_limb_bits }};
+    uint256 internal constant QUOTIENT_CERTIFICATE_HASH_MPTR = {{ memory.vk_mptr + vk_header.quotient_manifest_hash }};
     uint256 internal constant            G1_BASE_MPTR = {{ memory.vk_mptr + vk_header.g1_base }};
     uint256 internal constant            G2_BASE_MPTR = {{ memory.vk_mptr + vk_header.g2_base }};
     uint256 internal constant      NEG_S_G2_BASE_MPTR = {{ memory.vk_mptr + vk_header.neg_s_g2_base }};

@@ -382,6 +382,7 @@ pub(crate) struct VkHeaderTemplateSlots {
     pub(crate) acc_offset: usize,
     pub(crate) num_acc_limbs: usize,
     pub(crate) num_acc_limb_bits: usize,
+    pub(crate) quotient_manifest_hash: usize,
     pub(crate) g1_base: usize,
     pub(crate) g2_base: usize,
     pub(crate) neg_s_g2_base: usize,
@@ -404,6 +405,7 @@ impl Default for VkHeaderTemplateSlots {
             acc_offset: VkHeaderLayout::field(Slot::AccOffset).slot.word(),
             num_acc_limbs: VkHeaderLayout::field(Slot::NumAccLimbs).slot.word(),
             num_acc_limb_bits: VkHeaderLayout::field(Slot::NumAccLimbBits).slot.word(),
+            quotient_manifest_hash: VkHeaderLayout::field(Slot::QuotientManifestHash).slot.word(),
             g1_base: VkHeaderLayout::field(Slot::G1Base).slot.word(),
             g2_base: VkHeaderLayout::field(Slot::G2Base).slot.word(),
             neg_s_g2_base: VkHeaderLayout::field(Slot::NegSG2Base).slot.word(),
@@ -483,6 +485,7 @@ pub(crate) struct Halo2Verifier {
     pub(crate) quotient_external: Option<QuotientExternal>,
     pub(crate) expected_quotient_len: Option<usize>,
     pub(crate) expected_quotient_codehash: Option<U256>,
+    pub(crate) expected_quotient_certificate_hash: U256,
     pub(crate) quotient_inline_computations: Vec<Vec<String>>,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) quotient_post_vm_computations: Vec<Vec<String>>,
@@ -927,10 +930,9 @@ mod tests {
     /// Synthetic VK model with configurable fixed/permutation commitment
     /// counts.
     fn synthetic_vk(num_fixed: usize, num_perm: usize) -> Halo2VerifyingKey {
-        // 11 named scalars + 4 g1 + 8 g2 + 8 neg_s_g2 = 31 entries (the
-        // exact layout the verifier expects for the Step 6 named
-        // VK_DIGEST_MPTR / G1_BASE_MPTR / G2_BASE_MPTR / NEG_S_G2_BASE_MPTR
-        // slots).
+        // 12 scalar/header words + 4 g1 + 8 g2 + 8 neg_s_g2 = 32 entries
+        // (the exact layout the verifier expects for the named VK header and
+        // base-point slots).
         let mut constants: Vec<(&'static str, U256)> = vec![
             ("vk_digest", U256::from(0xde_u64)),
             ("num_instances", U256::from(1u64)),
@@ -943,6 +945,7 @@ mod tests {
             ("acc_offset", U256::from(0u64)),
             ("num_acc_limbs", U256::from(0u64)),
             ("num_acc_limb_bits", U256::from(0u64)),
+            ("quotient_manifest_hash", U256::from(0xfeedu64)),
         ];
         constants.extend([
             ("g1_x_hi", U256::from(0x10u64)),
@@ -1111,6 +1114,7 @@ mod tests {
             quotient_external: None,
             expected_quotient_len: None,
             expected_quotient_codehash: None,
+            expected_quotient_certificate_hash: U256::ZERO,
             quotient_inline_computations: vec![],
             quotient_eval_numer_computations: vec![],
             quotient_post_vm_computations: vec![],
@@ -1193,12 +1197,12 @@ mod tests {
 
     #[test]
     fn vk_layout_byte_consistency() {
-        // For a synthetic VK with 31 named scalars + N=2 fixed + M=3
+        // For a synthetic VK with 32 header words + N=2 fixed + M=3
         // permutation commitments, expect:
-        //   len() = 31*32 + (2+3)*4*32 = 31*32 + 20*32 = 51*32 = 1632 bytes
+        //   len() = 32*32 + (2+3)*4*32 = 32*32 + 20*32 = 52*32 = 1664 bytes
         //   bytes().len() == len()
         let vk = synthetic_vk(2, 3);
-        let expected_len = 31 * 32 + (2 + 3) * 4 * 32;
+        let expected_len = 32 * 32 + (2 + 3) * 4 * 32;
         assert_eq!(vk.len(), expected_len);
         assert_eq!(vk.bytes().len(), expected_len);
 
@@ -1209,22 +1213,22 @@ mod tests {
         let head_u256 = U256::from_be_bytes(buf);
         assert_eq!(head_u256, U256::from(0xde_u64));
 
-        // Word index of NEG_S_G2_BASE_MPTR = 23 (vk_mptr + 23).
+        // Word index of NEG_S_G2_BASE_MPTR = 24 (vk_mptr + 24).
         // Verify the corresponding bytes match the synthetic value 0x30.
-        let off = 23 * 32;
+        let off = 24 * 32;
         let mut buf = [0u8; 32];
         buf.copy_from_slice(&vk.bytes()[off..off + 32]);
         let neg_s_g2_x_c0_hi = U256::from_be_bytes(buf);
         assert_eq!(neg_s_g2_x_c0_hi, U256::from(0x30_u64));
 
-        // First fixed_comm starts at word 31.
-        let off = 31 * 32;
+        // First fixed_comm starts at word 32.
+        let off = 32 * 32;
         let mut buf = [0u8; 32];
         buf.copy_from_slice(&vk.bytes()[off..off + 32]);
         assert_eq!(U256::from_be_bytes(buf), U256::from(0x40_u64));
 
-        // First permutation_comm starts at word 31 + 4*N_FIXED = 39.
-        let off = 39 * 32;
+        // First permutation_comm starts at word 32 + 4*N_FIXED = 40.
+        let off = 40 * 32;
         let mut buf = [0u8; 32];
         buf.copy_from_slice(&vk.bytes()[off..off + 32]);
         assert_eq!(U256::from_be_bytes(buf), U256::from(0x80_u64));
@@ -1335,11 +1339,11 @@ mod tests {
             s.contains("mstore(add(payload, 0x0000),"),
             "vk_digest mstore at payload offset 0"
         );
-        // The first permutation commitment is at byte offset 0x4e0
-        // (39 * 32 = 1248 = 0x4e0).
+        // The first permutation commitment is at byte offset 0x500
+        // (40 * 32 = 1280 = 0x500).
         assert!(
-            s.contains("mstore(add(payload, 0x04e0),"),
-            "permutation_comms[0].x_hi at byte offset 0x4e0"
+            s.contains("mstore(add(payload, 0x0500),"),
+            "permutation_comms[0].x_hi at byte offset 0x500"
         );
     }
 }

@@ -9,6 +9,7 @@ use ruint::aliases::U256;
 use sha3::{Digest, Keccak256};
 
 use crate::lowering::{
+    diagnostics,
     encoding::Ptr,
     kzg, layout,
     layout::memory::{G1_BYTES, WORD_BYTES},
@@ -242,6 +243,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_external,
             expected_quotient_len,
             expected_quotient_codehash,
+            expected_quotient_certificate_hash: diagnostics::quotient_certificate_hash_for_plan(
+                plan,
+            ),
             proof_cptr,
             abi_selector_bytes: layout::abi::SELECTOR_BYTES,
             abi_proof_head_offset: layout::abi::VERIFY_PROOF_PROOF_HEAD_OFFSET,

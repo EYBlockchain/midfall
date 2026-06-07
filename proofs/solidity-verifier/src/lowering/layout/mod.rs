@@ -201,7 +201,7 @@ pub(crate) mod abi {
 }
 
 /// Number of scalar words before embedded SRS base points in the VK header.
-const VK_HEADER_SCALAR_WORDS: usize = 11;
+const VK_HEADER_SCALAR_WORDS: usize = 12;
 /// Header word where the padded G1 generator starts.
 const VK_HEADER_G1_BASE_WORD: usize = VK_HEADER_SCALAR_WORDS;
 /// Header word where the padded G2 generator starts.
@@ -235,6 +235,8 @@ pub(crate) enum VkHeaderSlot {
     NumAccLimbs = 9,
     /// Bits per accumulator limb.
     NumAccLimbBits = 10,
+    /// Canonical quotient certificate hash.
+    QuotientManifestHash = 11,
     /// Padded G1 generator.
     G1Base = VK_HEADER_G1_BASE_WORD,
     /// Padded G2 generator.
@@ -265,7 +267,7 @@ pub(crate) struct VkHeaderFieldSpec {
 }
 
 /// Ordered VK header schema.
-pub(crate) const VK_HEADER_FIELDS: [VkHeaderFieldSpec; 14] = [
+pub(crate) const VK_HEADER_FIELDS: [VkHeaderFieldSpec; 15] = [
     VkHeaderFieldSpec {
         slot: VkHeaderSlot::VkDigest,
         name: "vk_digest",
@@ -319,6 +321,11 @@ pub(crate) const VK_HEADER_FIELDS: [VkHeaderFieldSpec; 14] = [
     VkHeaderFieldSpec {
         slot: VkHeaderSlot::NumAccLimbBits,
         name: "num_acc_limb_bits",
+        width_words: 1,
+    },
+    VkHeaderFieldSpec {
+        slot: VkHeaderSlot::QuotientManifestHash,
+        name: "quotient_manifest_hash",
         width_words: 1,
     },
     VkHeaderFieldSpec {
@@ -625,13 +632,14 @@ mod tests {
     #[test]
     fn vk_header_slots_preserve_generated_payload_layout() {
         assert_eq!(VkHeaderSlot::VkDigest.word(), 0);
-        assert_eq!(VkHeaderSlot::G1Base.word(), 11);
-        assert_eq!(VkHeaderSlot::G2Base.word(), 15);
-        assert_eq!(VkHeaderSlot::NegSG2Base.word(), 23);
-        assert_eq!(VkHeaderLayout::header_words(), 31);
+        assert_eq!(VkHeaderSlot::QuotientManifestHash.word(), 11);
+        assert_eq!(VkHeaderSlot::G1Base.word(), 12);
+        assert_eq!(VkHeaderSlot::G2Base.word(), 16);
+        assert_eq!(VkHeaderSlot::NegSG2Base.word(), 24);
+        assert_eq!(VkHeaderLayout::header_words(), 32);
         assert_eq!(
             VkHeaderLayout::fields().iter().map(|field| field.width_words).sum::<usize>(),
-            31
+            32
         );
     }
 
