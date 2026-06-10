@@ -1,0 +1,45 @@
+[package]
+name = "halo2-solidity-verifier-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+halo2_solidity_verifier = { path = "..", features = ["evm"] }
+libfuzzer-sys = "0.4"
+midnight-curves = { path = "../../../curves" }
+midnight-proofs = { path = "../..", default-features = false, features = [
+    "keccak-transcript",
+    "committed-instances",
+    "circuit-params",
+] }
+rand_chacha = "0.3"
+sha3 = "0.10.8"
+
+[[bin]]
+name = "proof_repack"
+path = "fuzz_targets/proof_repack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "solidity_calldata"
+path = "fuzz_targets/solidity_calldata.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+[patch.crates-io]
+midnight-proofs = { path = "../.." }
+midnight-curves = { path = "../../../curves" }
+
+[patch."https://github.com/midnightntwrk/midnight-zk"]
+midnight-proofs = { path = "../.." }
+midnight-curves = { path = "../../../curves" }

@@ -3,6 +3,7 @@ extern crate criterion;
 
 use std::marker::PhantomData;
 
+use blake2b_simd::State;
 use criterion::{BenchmarkId, Criterion};
 use group::ff::Field;
 use midnight_curves::{Bls12, Fq as Scalar};
@@ -280,7 +281,7 @@ fn criterion_benchmark(c: &mut Criterion) {
             k,
         };
 
-        let mut transcript = CircuitTranscript::init();
+        let mut transcript = CircuitTranscript::<State>::init();
 
         create_proof::<Scalar, KZGCommitmentScheme<Bls12>, _, _>(
             params,
@@ -301,7 +302,7 @@ fn criterion_benchmark(c: &mut Criterion) {
         vk: &VerifyingKey<Scalar, KZGCommitmentScheme<Bls12>>,
         proof: &[u8],
     ) {
-        let mut transcript = CircuitTranscript::init_from_bytes(proof);
+        let mut transcript = CircuitTranscript::<State>::init_from_bytes(proof);
         assert!(prepare::<Scalar, KZGCommitmentScheme<Bls12>, _>(
             vk,
             #[cfg(feature = "committed-instances")]

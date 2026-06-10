@@ -135,13 +135,40 @@ impl<S: SelfEmulation> Accumulator<S> {
     /// Checks whether the accumulator, when evaluated with the provided
     /// fixed-bases, satisfies the pairing invariant w.r.t. the SRS verifier
     /// parameters.
+    #[cfg(not(feature = "solidity-verifier-trace"))]
     pub fn check(
         &self,
         params: &ParamsVerifierKZG<S::Engine>,
         fixed_bases: &BTreeMap<String, S::C>,
     ) -> bool {
-        let lhs = MSMKZG::<S::Engine>::from_base(&self.lhs.eval(fixed_bases));
-        let rhs = MSMKZG::<S::Engine>::from_base(&self.rhs.eval(fixed_bases));
+        let lhs_eval = self.lhs.eval(fixed_bases);
+        let rhs_eval = self.rhs.eval(fixed_bases);
+        let lhs = MSMKZG::<S::Engine>::from_base(&lhs_eval);
+        let rhs = MSMKZG::<S::Engine>::from_base(&rhs_eval);
+        DualMSM::new(lhs, rhs).check(params)
+    }
+
+    /// Checks whether the accumulator satisfies the pairing invariant and
+    /// records the evaluated sides for Solidity trace differentials.
+    #[cfg(feature = "solidity-verifier-trace")]
+    pub fn check(
+        &self,
+        params: &ParamsVerifierKZG<S::Engine>,
+        fixed_bases: &BTreeMap<String, S::C>,
+    ) -> bool
+    where
+        S::C: midnight_proofs::transcript::Hashable<sha3::Keccak256>,
+    {
+        let lhs_eval = self.lhs.eval(fixed_bases);
+        let rhs_eval = self.rhs.eval(fixed_bases);
+        midnight_proofs::plonk::solidity_trace::record_hashable::<sha3::Keccak256, _>(
+            29, "acc_lhs", &lhs_eval,
+        );
+        midnight_proofs::plonk::solidity_trace::record_hashable::<sha3::Keccak256, _>(
+            30, "acc_rhs", &rhs_eval,
+        );
+        let lhs = MSMKZG::<S::Engine>::from_base(&lhs_eval);
+        let rhs = MSMKZG::<S::Engine>::from_base(&rhs_eval);
         DualMSM::new(lhs, rhs).check(params)
     }
 

@@ -26,9 +26,87 @@ use ff::Field;
 use group::Group;
 use midnight_curves::pairing::MultiMillerLoop;
 use rand_core::OsRng;
-#[cfg(feature = "fewer-point-sets")]
 pub use utils::compute_dummy_queries;
 
+#[cfg(feature = "fewer-point-sets")]
+mod fewer_point_sets_runtime {
+    use std::cell::Cell;
+
+    thread_local! {
+        static ENABLED: Cell<bool> = const { Cell::new(true) };
+    }
+
+    pub fn enabled() -> bool {
+        ENABLED.with(Cell::get)
+    }
+
+    /// Guard that restores the previous fewer-point-sets runtime setting when
+    /// dropped.
+    #[derive(Debug)]
+    pub struct ScopedFewerPointSets {
+        previous: bool,
+    }
+
+    pub fn scoped(enabled: bool) -> ScopedFewerPointSets {
+        let previous = ENABLED.with(|cell| {
+            let previous = cell.get();
+            cell.set(enabled);
+            previous
+        });
+        ScopedFewerPointSets { previous }
+    }
+
+    impl Drop for ScopedFewerPointSets {
+        fn drop(&mut self) {
+            ENABLED.with(|cell| cell.set(self.previous));
+        }
+    }
+}
+
+#[cfg(feature = "fewer-point-sets")]
+pub use fewer_point_sets_runtime::ScopedFewerPointSets;
+
+/// No-op guard returned when the proof-system fewer-point-sets capability is
+/// not compiled in.
+#[cfg(not(feature = "fewer-point-sets"))]
+#[derive(Debug)]
+pub struct ScopedFewerPointSets;
+
+/// Returns whether KZG multi-open dummy queries are currently enabled.
+///
+/// With the `fewer-point-sets` feature compiled in, the default is `true` to
+/// preserve the historical feature behavior. Call [`scoped_fewer_point_sets`]
+/// to temporarily override it for a specific proof.
+pub fn fewer_point_sets_enabled() -> bool {
+    #[cfg(feature = "fewer-point-sets")]
+    {
+        fewer_point_sets_runtime::enabled()
+    }
+    #[cfg(not(feature = "fewer-point-sets"))]
+    {
+        false
+    }
+}
+
+/// Temporarily enables or disables KZG multi-open dummy queries on this thread.
+///
+/// This is intentionally scoped so recursive proving can use fewer point sets
+/// for proofs verified inside a circuit while an outer proof in the same
+/// process can be emitted without dummy query scalars.
+pub fn scoped_fewer_point_sets(enabled: bool) -> ScopedFewerPointSets {
+    #[cfg(feature = "fewer-point-sets")]
+    {
+        fewer_point_sets_runtime::scoped(enabled)
+    }
+    #[cfg(not(feature = "fewer-point-sets"))]
+    {
+        let _ = enabled;
+        ScopedFewerPointSets
+    }
+}
+
+#[cfg(feature = "solidity-verifier-trace")]
+use crate::transcript::TranscriptInputBytes;
 #[cfg(feature = "truncated-challenges")]
 use crate::utils::arithmetic::{truncate, truncated_powers};
 use crate::{
@@ -120,18 +198,25 @@ where
                 .unwrap()
         }
 
-        // Add dummy queries to reduce the number of distinct multi-open point sets.
         #[cfg(feature = "fewer-point-sets")]
-        let queries = &{
-            let mut queries = queries.to_vec();
-            let pairs: Vec<_> = queries.iter().map(|q| (q.get_commitment(), q.point)).collect();
-            for (idx, point) in compute_dummy_queries(&pairs) {
-                let poly = queries[idx].poly;
-                transcript
-                    .write(&eval_polynomial(poly, point))
-                    .map_err(|_| Error::OpeningError)?;
-                queries.push(ProverQuery::new(point, poly));
-            }
+        let queries_with_dummies;
+        #[cfg(feature = "fewer-point-sets")]
+        let queries = if fewer_point_sets_enabled() {
+            // Add dummy queries to reduce the number of distinct multi-open point sets.
+            queries_with_dummies = {
+                let mut queries = queries.to_vec();
+                let pairs: Vec<_> = queries.iter().map(|q| (q.get_commitment(), q.point)).collect();
+                for (idx, point) in compute_dummy_queries(&pairs) {
+                    let poly = queries[idx].poly;
+                    transcript
+                        .write(&eval_polynomial(poly, point))
+                        .map_err(|_| Error::OpeningError)?;
+                    queries.push(ProverQuery::new(point, poly));
+                }
+                queries
+            };
+            &queries_with_dummies
+        } else {
             queries
         };
 
@@ -240,20 +325,36 @@ where
     where
         E::Fr: Sampleable<T::Hash> + Ord + Hash + Hashable<T::Hash>,
         E::G1: 'com + Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr>,
+        <T::Hash as crate::transcript::TranscriptHash>::Input:
+            crate::transcript::TranscriptInputBytes,
     {
-        // Add dummy queries to reduce the number of distinct multi-open point sets.
         #[cfg(feature = "fewer-point-sets")]
-        let queries = &{
-            let mut queries = queries.to_vec();
-            let pairs: Vec<_> = queries.iter().map(|q| (q.commitment.clone(), q.point)).collect();
-            for (idx, point) in compute_dummy_queries(&pairs) {
-                queries.push(VerifierQuery {
-                    point,
-                    commitment_label: queries[idx].commitment_label.clone(),
-                    commitment: queries[idx].commitment.clone(),
-                    eval: transcript.read().map_err(|_| Error::SamplingError)?,
-                });
-            }
+        let queries_with_dummies;
+        #[cfg(feature = "fewer-point-sets")]
+        let queries = if fewer_point_sets_enabled() {
+            // Add dummy queries to reduce the number of distinct multi-open point sets.
+            queries_with_dummies = {
+                let mut queries = queries.to_vec();
+                let pairs: Vec<_> =
+                    queries.iter().map(|q| (q.commitment.clone(), q.point)).collect();
+                for (idx, point) in compute_dummy_queries(&pairs) {
+                    let eval = transcript.read().map_err(|_| Error::SamplingError)?;
+                    #[cfg(feature = "solidity-verifier-trace")]
+                    crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>(
+                        "proof_dummy_eval",
+                        &eval,
+                    );
+                    queries.push(VerifierQuery {
+                        point,
+                        commitment_label: queries[idx].commitment_label.clone(),
+                        commitment: queries[idx].commitment.clone(),
+                        eval,
+                    });
+                }
+                queries
+            };
+            &queries_with_dummies
+        } else {
             queries
         };
 
@@ -261,6 +362,11 @@ where
         // https://zcash.github.io/halo2/design/proving-system/multipoint-opening.html
         let x1: E::Fr = transcript.squeeze_challenge();
         let x2: E::Fr = transcript.squeeze_challenge();
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(13, "x1", &x1);
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(14, "x2", &x2);
+        }
 
         let (commitment_map, point_sets) = construct_intermediate_sets(queries)?;
 
@@ -316,18 +422,48 @@ where
             let point_sets: Vec<_> = order.iter().map(|&i| point_sets[i].clone()).collect();
             (q_coms, q_eval_sets, point_sets)
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            for (idx, points) in point_sets.iter().enumerate() {
+                let mut data = Vec::with_capacity(points.len() * 32);
+                for point in points {
+                    data.extend_from_slice(&point.to_input().into_trace_bytes());
+                }
+                crate::plonk::solidity_trace::record_bytes(
+                    crate::plonk::solidity_trace::PCS_POINT_SET_TRACE_BASE + idx as u64,
+                    "pcs_point_set",
+                    data,
+                );
+            }
+            for (idx, q_com) in q_coms.iter().enumerate() {
+                crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                    crate::plonk::solidity_trace::PCS_Q_COM_TRACE_BASE + idx as u64,
+                    "pcs_q_com",
+                    &q_com.eval(),
+                );
+            }
+        }
 
         let f_com: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>("proof_f_com", &f_com);
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(25, "f_com", &f_com);
 
         // Sample a challenge x_3 for checking that f(X) was committed to
         // correctly.
         let x3: E::Fr = transcript.squeeze_challenge();
         #[cfg(feature = "truncated-challenges")]
         let x3 = truncate(x3);
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(15, "x3", &x3);
 
         let mut q_evals_on_x3 = Vec::<E::Fr>::with_capacity(q_eval_sets.len());
         for _ in 0..q_eval_sets.len() {
-            q_evals_on_x3.push(transcript.read().map_err(|_| Error::SamplingError)?);
+            let eval = transcript.read().map_err(|_| Error::SamplingError)?;
+            #[cfg(feature = "solidity-verifier-trace")]
+            crate::plonk::solidity_trace::record_proof_eval::<T::Hash, _>("proof_q_eval", &eval);
+            q_evals_on_x3.push(eval);
         }
 
         // We can compute the expected msm_eval at x_3 using the u provided
@@ -346,6 +482,8 @@ where
             );
 
         let x4: E::Fr = transcript.squeeze_challenge();
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(16, "x4", &x4);
 
         let final_com = {
             let size = q_coms.len() + 1;
@@ -368,6 +506,12 @@ where
 
             msm_inner_product(coms, &powers.take(size).collect::<Vec<_>>())
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+            33,
+            "final_com",
+            &final_com.eval(),
+        );
 
         let v = {
             let mut evals = q_evals_on_x3;
@@ -381,8 +525,17 @@ where
 
             inner_product(&evals, powers)
         };
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(31, "f_eval", &f_eval);
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(32, "v", &v);
+        }
 
         let pi: E::G1 = transcript.read().map_err(|_| Error::SamplingError)?;
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_proof_commitment::<T::Hash, _>("proof_pi", &pi);
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(26, "pi", &pi);
 
         let mut pi_msm = MSMKZG::<E>::init();
         pi_msm.append_term(E::Fr::ONE, pi, CommitmentLabel::Custom("π".into()));
@@ -403,6 +556,19 @@ where
             right: final_com,
         };
         msm_accumulator.right.add_msm(&scaled_pi);
+        #[cfg(feature = "solidity-verifier-trace")]
+        {
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                27,
+                "pairing_lhs",
+                &msm_accumulator.left.eval(),
+            );
+            crate::plonk::solidity_trace::record_hashable::<T::Hash, _>(
+                28,
+                "pairing_rhs",
+                &msm_accumulator.right.eval(),
+            );
+        }
 
         Ok(msm_accumulator)
     }
@@ -427,7 +593,10 @@ mod tests {
             query::{ProverQuery, VerifierQuery},
             CommitmentLabel, EvaluationDomain,
         },
-        transcript::{CircuitTranscript, Hashable, Sampleable, Transcript},
+        transcript::{
+            CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash,
+            TranscriptInputBytes,
+        },
         utils::arithmetic::eval_polynomial,
     };
 
@@ -454,6 +623,7 @@ mod tests {
         E::Fr: Hashable<T::Hash> + Sampleable<T::Hash> + Ord + Hash,
         E::G1: Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr, AffineExt = E::G1Affine>,
         E::G1Affine: CurveAffine<ScalarExt = E::Fr, CurveExt = E::G1> + SerdeObject,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let mut transcript = T::init_from_bytes(proof);
 
@@ -503,6 +673,7 @@ mod tests {
         E::Fr: WithSmallOrderMulGroup<3> + Hashable<T::Hash> + Hash + Sampleable<T::Hash> + Ord,
         E::G1: Hashable<T::Hash> + CurveExt<ScalarExt = E::Fr, AffineExt = E::G1Affine>,
         E::G1Affine: SerdeObject + CurveAffine<ScalarExt = E::Fr, CurveExt = E::G1>,
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         let k = (kzg_params.g.len() - 1).ilog2() + 1;
         let domain = EvaluationDomain::new(1, k);

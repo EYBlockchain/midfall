@@ -147,7 +147,6 @@ pub fn construct_intermediate_sets<F: Field + Hash + Ord, Q: Query<F>>(
 ///
 /// The output order is deterministic (insertion order), so prover and verifier
 /// stay in sync.
-#[cfg(feature = "fewer-point-sets")]
 pub fn compute_dummy_queries<K: PartialEq, P: PartialEq + Clone>(
     pairs: &[(K, P)],
 ) -> Vec<(usize, P)> {

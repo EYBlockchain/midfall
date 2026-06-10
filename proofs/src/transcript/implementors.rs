@@ -2,13 +2,42 @@ use std::{io, io::Read};
 
 use blake2b_simd::{Params, State as Blake2bState};
 use ff::{FromUniformBytes, PrimeField};
-use group::GroupEncoding;
+use group::{prime::PrimeCurveAffine, GroupEncoding, UncompressedEncoding};
 #[cfg(feature = "dev-curves")]
 use midnight_curves::bn256::{Fr, G1};
+#[cfg(feature = "keccak-transcript")]
+use num_bigint::BigUint;
+#[cfg(feature = "keccak-transcript")]
+use sha3::{Digest, Keccak256};
 
+#[cfg(feature = "keccak-transcript")]
 use crate::transcript::{
     Hashable, Sampleable, TranscriptHash, BLAKE2B_PREFIX_CHALLENGE, BLAKE2B_PREFIX_COMMON,
 };
+
+#[cfg(feature = "keccak-transcript")]
+fn sample_keccak_digest_be_mod_r<F: PrimeField>(hash_output: Vec<u8>) -> F {
+    assert_eq!(hash_output.len(), 32);
+
+    let modulus = if let Some(hex) = F::MODULUS.strip_prefix("0x") {
+        BigUint::parse_bytes(hex.as_bytes(), 16)
+    } else {
+        BigUint::parse_bytes(F::MODULUS.as_bytes(), 10)
+    }
+    .expect("PrimeField::MODULUS must parse as an integer");
+
+    let reduced = BigUint::from_bytes_be(&hash_output) % modulus;
+    let reduced_le = reduced.to_bytes_le();
+
+    let mut repr = F::Repr::default();
+    assert!(
+        reduced_le.len() <= repr.as_ref().len(),
+        "reduced Keccak challenge does not fit in field repr"
+    );
+    repr.as_mut()[..reduced_le.len()].copy_from_slice(&reduced_le);
+
+    Option::from(F::from_repr(repr)).expect("reduced Keccak challenge must be canonical")
+}
 
 impl TranscriptHash for Blake2bState {
     type Input = Vec<u8>;
@@ -49,7 +78,7 @@ impl<T: TranscriptHash<Input = Vec<u8>>> Hashable<T> for u32 {
 impl Hashable<Blake2bState> for G1 {
     /// Converts it to compressed form in bytes
     fn to_input(&self) -> Vec<u8> {
-        Hashable::to_bytes(self)
+        Hashable::<Blake2bState>::to_bytes(self)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -103,7 +132,7 @@ impl Sampleable<Blake2bState> for Fr {
 impl Hashable<Blake2bState> for midnight_curves::G1Projective {
     /// Converts it to compressed form in bytes
     fn to_input(&self) -> Vec<u8> {
-        Hashable::to_bytes(self)
+        Hashable::<Blake2bState>::to_bytes(self)
     }
 
     fn to_bytes(&self) -> Vec<u8> {
@@ -146,5 +175,167 @@ impl Sampleable<Blake2bState> for midnight_curves::Fq {
         let mut bytes = [0u8; 64];
         bytes[..hash_output.len()].copy_from_slice(&hash_output);
         midnight_curves::Fq::from_uniform_bytes(&bytes)
+    }
+}
+
+// /////////////////////////////////////////////////////////////////////
+// /// Implementation of TranscriptHash for Keccak256                 //
+// /////////////////////////////////////////////////////////////////////
+
+#[cfg(feature = "keccak-transcript")]
+impl TranscriptHash for Keccak256 {
+    type Input = Vec<u8>;
+    type Output = Vec<u8>;
+
+    fn init() -> Self {
+        Keccak256::new()
+    }
+
+    fn absorb(&mut self, input: &Self::Input) {
+        self.update(input);
+    }
+
+    fn squeeze(&mut self) -> Self::Output {
+        // Keccak256 produces a 32-byte digest. For Fiat-Shamir challenges we
+        // sample from that digest directly as a big-endian integer modulo the
+        // scalar-field modulus.
+        let out = self.clone().finalize().to_vec();
+
+        // Re-seed the state with the squeezed challenge so that subsequent
+        // absorb/squeeze calls depend on the challenge we just produced.
+        let mut new_hasher = Keccak256::new();
+        new_hasher.update(&out);
+        *self = new_hasher;
+
+        out
+    }
+}
+
+#[cfg(all(feature = "dev-curves", feature = "keccak-transcript"))]
+impl Hashable<Keccak256> for G1 {
+    fn to_input(&self) -> Vec<u8> {
+        Hashable::<Keccak256>::to_bytes(self)
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        <Self as GroupEncoding>::to_bytes(self).as_ref().to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <Self as GroupEncoding>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(Self::from_bytes(&bytes))
+            .ok_or_else(|| io::Error::other("Invalid BN point encoding in proof"))
+    }
+}
+
+#[cfg(all(feature = "dev-curves", feature = "keccak-transcript"))]
+impl Hashable<Keccak256> for Fr {
+    fn to_input(&self) -> Vec<u8> {
+        let mut bytes = self.to_bytes().to_vec();
+        bytes.reverse();
+        bytes
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_bytes().to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <Self as PrimeField>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(Self::from_repr(bytes))
+            .ok_or_else(|| io::Error::other("Invalid BN scalar encoding in proof"))
+    }
+}
+
+#[cfg(all(feature = "dev-curves", feature = "keccak-transcript"))]
+impl Sampleable<Keccak256> for Fr {
+    fn sample(hash_output: Vec<u8>) -> Self {
+        sample_keccak_digest_be_mod_r(hash_output)
+    }
+}
+
+#[cfg(feature = "keccak-transcript")]
+impl Hashable<Keccak256> for midnight_curves::G1Projective {
+    /// Converts the point to the EIP-2537 padded uncompressed form for
+    /// Fiat-Shamir absorbtion: 128 bytes laid out as `x_hi (32) ||
+    /// x_lo (32) || y_hi (32) || y_lo (32)`.
+    ///
+    /// where each coord is 16 zero pad bytes followed by 48 big-endian
+    /// bytes of the BLS12-381 base-field element. The identity point
+    /// is encoded as 128 zero bytes (matches the EIP-2537 (0, 0)
+    /// convention rather than the BLS-spec 0x40-leading-byte form).
+    ///
+    /// This format lets the EVM verifier (`Halo2Verifier.sol::
+    /// common_g1_uncompressed`) skip the 384-bit sign-bit ladder it
+    /// would need if we were hashing the 48-byte compressed encoding;
+    /// the EVM can just memcpy the calldata words verbatim into the
+    /// keccak buffer (after masking the 16-byte zero pads to defeat
+    /// transcript malleability).
+    ///
+    /// The wire format (`to_bytes`) is unchanged — points are still
+    /// transmitted in the 48-byte compressed encoding.
+    fn to_input(&self) -> Vec<u8> {
+        let aff = midnight_curves::G1Affine::from(self);
+        let mut out = vec![0u8; 128];
+        if !bool::from(aff.is_identity()) {
+            // `UncompressedEncoding::to_uncompressed` returns a wrapper
+            // around 96 bytes: x_be(48) || y_be(48). For non-identity
+            // points, the top 3 bits of byte 0 are zero (since
+            // x < p < 2^381), so we copy the bytes verbatim into the
+            // EIP-2537 64-byte slots.
+            let raw = <midnight_curves::G1Affine as UncompressedEncoding>::to_uncompressed(&aff);
+            let bytes: &[u8] = raw.as_ref();
+            out[16..64].copy_from_slice(&bytes[0..48]);
+            out[80..128].copy_from_slice(&bytes[48..96]);
+        }
+        out
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        <Self as GroupEncoding>::to_bytes(self).as_ref().to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <Self as GroupEncoding>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(Self::from_bytes(&bytes))
+            .ok_or_else(|| io::Error::other("Invalid BLS12-381 point encoding in proof"))
+    }
+}
+
+#[cfg(feature = "keccak-transcript")]
+impl Hashable<Keccak256> for midnight_curves::Fq {
+    fn to_input(&self) -> Vec<u8> {
+        let mut bytes = self.to_repr().to_vec();
+        bytes.reverse();
+        bytes
+    }
+
+    fn to_bytes(&self) -> Vec<u8> {
+        self.to_repr().to_vec()
+    }
+
+    fn read(buffer: &mut impl Read) -> io::Result<Self> {
+        let mut bytes = <Self as PrimeField>::Repr::default();
+
+        buffer.read_exact(bytes.as_mut())?;
+
+        Option::from(Self::from_repr(bytes))
+            .ok_or_else(|| io::Error::other("Invalid BLS12-381 scalar encoding in proof"))
+    }
+}
+
+#[cfg(feature = "keccak-transcript")]
+impl Sampleable<Keccak256> for midnight_curves::Fq {
+    fn sample(hash_output: Vec<u8>) -> Self {
+        sample_keccak_digest_be_mod_r(hash_output)
     }
 }

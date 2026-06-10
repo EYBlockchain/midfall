@@ -296,6 +296,14 @@ where
         );
         let terms = &[term_1, term_2];
 
-        bool::from(E::multi_miller_loop(&terms[..]).final_exponentiation().is_identity())
+        let result =
+            bool::from(E::multi_miller_loop(&terms[..]).final_exponentiation().is_identity());
+        #[cfg(feature = "solidity-verifier-trace")]
+        crate::plonk::solidity_trace::record_u64(
+            crate::plonk::solidity_trace::FINAL_RESULT_TRACE_ID,
+            "final_result",
+            result as u64,
+        );
+        result
     }
 }

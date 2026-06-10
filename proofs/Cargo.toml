@@ -39,6 +39,7 @@ midnight-curves = "0.2.0"
 rand_core = { workspace = true, features = ["getrandom"] }
 tracing = { workspace = true }
 blake2b_simd = { workspace = true }
+sha3 = { workspace = true, optional = true }
 rand_chacha = { workspace = true }
 itertools = "0.14"
 serde = { workspace = true }
@@ -75,6 +76,11 @@ circuit-params = []
 derive_serde = ["midnight-curves/serde"]
 dev-curves = ["midnight-curves/serde"]
 
+# Enables a Keccak256-based `TranscriptHash` implementation (from the `sha3`
+# crate) along with the associated `Hashable`/`Sampleable` implementations
+# for BLS12-381 (and BN256 under `dev-curves`) curve types.
+keccak-transcript = ["dep:sha3"]
+
 # This feature truncates challenges to half the size of the scalar field.
 truncated-challenges = []
 
@@ -102,6 +108,13 @@ single-h-commitment = []
 # in-circuit verifiers. The heuristic works by adding dummy queries for some
 # polynomials, which may slightly increase proof size.
 fewer-point-sets = []
+
+# Test/debug-only instrumentation used by the Solidity verifier generator to
+# differentially compare the native Rust verifier against generated Solidity
+# trace logs. The hooks record transcript-compatible scalar/G1 bytes and
+# selected verifier intermediate values, but are inert unless explicitly
+# started by the caller.
+solidity-verifier-trace = []
 
 [lib]
 bench = false

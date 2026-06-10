@@ -28,6 +28,7 @@ midnight-zk-stdlib = { path = "../zk_stdlib", version = "1.0.0" }
 rand = { workspace = true }
 blake2b_simd = { workspace = true }
 sha2 = { workspace = true }
+sha3 = { workspace = true, optional = true }
 
 [dev-dependencies]
 rand_chacha = { workspace = true }
@@ -50,7 +51,21 @@ single-h-commitment = [
     "midnight-circuits/single-h-commitment",
     "midnight-zk-stdlib/single-h-commitment",
 ]
-fewer-point-sets = [
+proof-fewer-point-sets = ["midnight-proofs/fewer-point-sets"]
+in-circuit-fewer-point-sets = [
     "midnight-proofs/fewer-point-sets",
+    "midnight-circuits/in-circuit-fewer-point-sets",
+]
+fewer-point-sets = [
+    "proof-fewer-point-sets",
     "midnight-circuits/fewer-point-sets",
+]
+# Enables `IvcProver::prove_final_step` / `IvcVerifier::verify_final`,
+# which produce / consume the LAST IVC chain proof under a Keccak
+# transcript instead of Poseidon. Used when the final proof needs to
+# be verified by an EVM Solidity contract (Solidity Keccak is cheap;
+# Poseidon is not).
+keccak-transcript = [
+    "dep:sha3",
+    "midnight-proofs/keccak-transcript",
 ]

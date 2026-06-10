@@ -1,0 +1,124 @@
+// SPDX-License-Identifier: CC0-1.0
+//! Public and crate-local constructor/configuration methods for
+//! `SolidityGenerator`.
+//!
+//! This slice owns validation of the supported proof shape and exposes the
+//! stable caller-facing knobs before lower-level generation starts.
+
+use super::*;
+
+impl<'a> SolidityGenerator<'a> {
+    /// Number of committed instance columns supported by the generated ABI.
+    pub(super) const SUPPORTED_COMMITTED_INSTANCE_COLUMNS: usize = 1;
+    /// Number of non-committed instance columns supported by the generated ABI.
+    pub(super) const SUPPORTED_NON_COMMITTED_INSTANCE_COLUMNS: usize = 1;
+    /// Committed-instance commitment policy hard-coded by the generated
+    /// verifier ABI.
+    pub const SUPPORTED_COMMITTED_INSTANCE_COMMITMENT: CommittedInstanceCommitmentKind =
+        CommittedInstanceCommitmentKind::Identity;
+
+    /// Return a new `SolidityGenerator`.
+    pub fn new(
+        params: &'a ParamsKZG<Bls12>,
+        vk: &'a VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+        config: GeneratorConfig,
+    ) -> Self {
+        Self::try_new(params, vk, config)
+            .unwrap_or_else(|err| panic!("unsupported Solidity verifier shape: {err}"))
+    }
+
+    /// Try to construct a new `SolidityGenerator`, returning a typed error
+    /// when the supplied constraint system is outside the currently supported
+    /// Midfall verifier shape.
+    pub fn try_new(
+        params: &'a ParamsKZG<Bls12>,
+        vk: &'a VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+        config: GeneratorConfig,
+    ) -> Result<Self, GeneratorError> {
+        if vk.cs().num_advice_columns() == 0 {
+            return Err(GeneratorError::NoAdviceColumns);
+        }
+        // Midfall's Rust verifier receives instances in two arguments:
+        // committed instances and normal (non-committed) instances. The
+        // total number of instance columns is their sum, with committed
+        // columns first in verifier order (`plonk/verifier.rs::verify_proof`).
+        Self::validate_instance_column_shape(
+            vk.cs().num_instance_columns(),
+            config.num_committed_instances,
+        )?;
+        if let Some(acc_encoding) = config.accumulator {
+            acc_encoding.validate_for_num_instances(config.num_instances)?;
+        }
+        if let Some((column, rotation)) = vk
+            .cs()
+            .instance_queries()
+            .iter()
+            .find(|(_, rotation)| *rotation != Rotation::cur())
+        {
+            return Err(GeneratorError::RotatedInstanceQuery {
+                column: column.index(),
+                rotation: rotation.0,
+            });
+        }
+
+        let meta = ConstraintSystemMeta::new(vk.cs(), config.num_committed_instances);
+
+        Ok(Self {
+            params,
+            vk,
+            num_instances: config.num_instances,
+            acc_encoding: config.accumulator,
+            meta,
+        })
+    }
+
+    /// Return the committed-instance commitment policy for this generator.
+    pub fn committed_instance_commitment_kind(&self) -> CommittedInstanceCommitmentKind {
+        Self::SUPPORTED_COMMITTED_INSTANCE_COMMITMENT
+    }
+
+    /// Validate the currently supported committed/non-committed instance split.
+    pub(super) fn validate_instance_column_shape(
+        total_instance_columns: usize,
+        num_committed_instances: usize,
+    ) -> Result<(), GeneratorError> {
+        // The Rust verifier accepts committed and normal instance arguments
+        // separately, with committed instance columns first. The current
+        // Solidity calldata ABI supports exactly one identity-committed column
+        // and one direct public-input column, so every instance query can be
+        // classified without an extra column-routing table or supplied
+        // committed-instance commitment.
+        let supported_committed = Self::SUPPORTED_COMMITTED_INSTANCE_COLUMNS;
+        let supported_non_committed = Self::SUPPORTED_NON_COMMITTED_INSTANCE_COLUMNS;
+        let non_committed = total_instance_columns
+            .checked_sub(num_committed_instances)
+            .unwrap_or(usize::MAX);
+
+        if num_committed_instances != supported_committed
+            || non_committed != supported_non_committed
+        {
+            return Err(GeneratorError::UnsupportedInstanceColumnShape {
+                total: total_instance_columns,
+                committed: num_committed_instances,
+                expected_committed: supported_committed,
+                expected_non_committed: supported_non_committed,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Return the exact field-evaluation counts for the proof layout consumed
+    /// by the generated Solidity verifier.
+    pub fn proof_evaluation_counts(&self) -> ProofEvaluationCounts {
+        crate::lowering::diagnostics::proof_evaluation_counts(self.inputs())
+    }
+
+    /// Return a stable host-side manifest of quotient numerator identities.
+    ///
+    /// This diagnostic API follows the same source ordering as the generated
+    /// quotient evaluator: normal gates, permutation, lookup, then trash.
+    pub fn quotient_identity_manifest(&self) -> QuotientIdentityManifest {
+        crate::lowering::diagnostics::quotient_identity_manifest(self.inputs())
+    }
+}

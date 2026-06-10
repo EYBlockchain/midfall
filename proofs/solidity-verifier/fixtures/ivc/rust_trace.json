@@ -1,0 +1,1068 @@
+{
+  "entries": [
+    {
+      "kind": "Intermediate",
+      "data": {
+        "tag": "vk_repr",
+        "fe_be_hex": "51a3ad301c5292dcc208abbe14bae00feebc636408a4b2c54d5edd07ffc492a2"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[0]",
+        "eip2537_hex": "9324a75f7803c2fb7be84f8f8f92397fc38f438472414438972d85137fa1e884f7fde28c1f4b1d3555b721915e60a4d7"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[1]",
+        "eip2537_hex": "afabdc807327c5de8fc13495028900d83ac62f2a9533b780582fdd18bd68e5e20287c861c82923e6576330099dec584b"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[2]",
+        "eip2537_hex": "ab042a4727ee1f333d73706db25bd1f229cb608765128af1b9377b3e2b4795e85503deb7f086fdb781a3c4d190205a40"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[3]",
+        "eip2537_hex": "986d652bf616055fcb845f79e496bb94a6dcdc7e332a53d2c1d2370a637b0d2a4f2636551e681cf1eb70c561defa62c7"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[4]",
+        "eip2537_hex": "a24481617df262dbd06b5fddf658f9c32e49c6403bff43252ea10fb35c37d987af93346ecee6db2b794f8ea6b2b60286"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[5]",
+        "eip2537_hex": "955ddbc47fea8bf6280024d6b455ebb60462d79a19f49187443bcdcec9b16a84f41f41367805521eb89f876c13cc2880"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[6]",
+        "eip2537_hex": "872ba4345eb8cc6bc2fca678eae0455ed17ceca164901368a453b3826fde369e8cf63db2a87b14fc54073a369ccabfe2"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[7]",
+        "eip2537_hex": "8e14088f20db449b8f49695c3c84d8d873faedfdde1ebbe87c39c81765d149380c313b4242278b752177fd7b661d0554"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[8]",
+        "eip2537_hex": "b5e8f709e287c8a92bcfae306d20a15034f8f04e0cd8dee49059feaec3e99e002d4268f36f613598b68b55cc3b6ffaf6"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[9]",
+        "eip2537_hex": "93c8f3366eb85800f928116e3a177bb36a5baa5b698e70afc838e2e9eac2b35a5a0895da21f21f86b4dd5833447118ac"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[10]",
+        "eip2537_hex": "a23d93bcefea6c36837e348911ea299e8f478c5097f803c74c9aa0752a09c812749102e3a3321193452d710a95ed97fa"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[11]",
+        "eip2537_hex": "8c509b6d23069f785cdcac3319040d8b5dd155bac5e4a3b815891e6a571dedf99a2d46b4670dfdaa7c89cf43fc4f7df9"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[12]",
+        "eip2537_hex": "b642bfcd07db3fb367d968a923c87f6c0db808f812cd9014a01f36d8b1a33b20de6409ebd7db009104cdf07ce9ddd872"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[13]",
+        "eip2537_hex": "8980d60b9cfe2b6d5327ced4400e8ac611d292991c0abd3a2c7e692ff63b866ebf4c1a54f15c38603e60ec9247578c24"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "advice[14]",
+        "eip2537_hex": "b946984d70cd450a0f9def10b8f8694e58f74b5cfc521963170307df92baa7e8237fe25d9fe81c0421d909ad0f5a6b76"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "theta",
+        "fe_be_hex": "3ff9db99be64b81421248a42da80d4cd7ba4aa6bb94e8ca2dc7c04b5feaabccf"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_mult",
+        "eip2537_hex": "883447beb33d2cd632274e5745542ba9f827e3de62e2218a3139751cb8997abcbd90a1ca2dd9be5f6c861b06c2c9ebbc"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_mult",
+        "eip2537_hex": "a06266251c32ea2ac0f43fb5dcee056bb7e8002fd9ea8480c384085f1e788e542965d48ab07e31d0140987c4b566eca4"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "beta",
+        "fe_be_hex": "5e1004307780e019454167777748c63f1ceb0bfd8137c218f46a29d9fcd8997b"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "gamma",
+        "fe_be_hex": "0058d4bedb482ef6ec68cc4102d79d26a3e68c67a660554306766a08d0b4bae4"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "b992ef1d42c2f3db9b82a33465d87623c31772480224aceaa7bf46ab89cca003b1973ef7cb161a373cb00d968286aafd"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "b124921f1914ac76be4886f24155f31c4ec67e4bfd34b400eb9d1a282310d7c4e7577f80297f48c5e46e17247c9cc03c"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "9215d3b97960403604292c0e49b5560bda50f7de776039dd4792ddf1afcf4485e4036d4c6f3d84c6a730805f433432c8"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "89d2652251e8c6df970de2fc4b5090d192110de217fb3da3b11db3886c472d7b9d4f9b4eac8f599e90071394dc7efe0e"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "86302bed0abdb7528321e4170aaef2962c67c8926908dc990923971736f90f2173ea372b7110afe8d9e393cb73da0677"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "perm_product",
+        "eip2537_hex": "b36a8b2ee086077c3673c953aa45c68f947735789e2c386fe2c7bc768251bff3eea2ac6681d1ba9dbf24a774ffb41662"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_helper",
+        "eip2537_hex": "88451ae997148f4b0b042066e35fd50c3a39a24507945b0ea61d3a5557d39e45f01740cc16d469f688730cda358e55fa"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_acc",
+        "eip2537_hex": "b14d249dd6b8c44b4007503b116d26e684be9ff9d1e76c66b9a0182f4d4a5998bb0bbea3c807f2294543b0651afaaede"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_helper",
+        "eip2537_hex": "a2d3ee8eea5e7e755b69bb79d8fc18ca688ff7487afb894c3077ab6c68cb8d7151e96009cc5bea912ad2fcca23c63f26"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "lookup_acc",
+        "eip2537_hex": "84189193c82ea16ce40c6c3a7670c782d9ef22343531180d8f15aef0e3ac7714c6b4d2c3eb58485630260e95a094e50d"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "trash_challenge",
+        "fe_be_hex": "0de9348372df1d1e7432fcb24ef5ecbf1358ae5dbe88097c7df40bfcb8d7889d"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "trashcan",
+        "eip2537_hex": "a846009a66f994210618221e9d4c3b7dd2830290c5a316a1befb1cb3fa2fc5ef84b679e5e5766914673284cbf6a1f3f8"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "y",
+        "fe_be_hex": "717b58f00b4d3d2793757513329c2c1d50deb5b93956dfd2048548a4d7837d9f"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "quotient_limb",
+        "eip2537_hex": "b4a018c05d3d9fa4b36bf3f2ae2feca08a658412829a26fe41aec4134158fba7739358e125cea1a5914f72cf9b525e72"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "quotient_limb",
+        "eip2537_hex": "815a896114a233d654689dafd891428d126e7e620e30dee5a5f1c0d9ceabc0581fa23b37dbd0b7775aeabd9fccb1d3b1"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "quotient_limb",
+        "eip2537_hex": "b6b9678337e622f2d663b2293748d82b7102ac83213590b5813c5099481fa123f81cf582d5f7b4e81dd3ce024d79097d"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "quotient_limb",
+        "eip2537_hex": "a2c5f0060ffd5c4f8741b884ee6834a04366739fecb2bbef7f27b8e2d08065b4e979ede81b398a1ac6cad46664035ead"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "x",
+        "fe_be_hex": "25a95a70b527cd00441e66fc7716f297fce60d998bcc0158e816488a393e408c"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "committed_instance_eval",
+        "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[0]",
+        "fe_be_hex": "2aff2f04fce943e11f15b05b610d1006f7276184a3eb52764a9b162ef19b774b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[1]",
+        "fe_be_hex": "613ce970681657d1997019c85dd9e468b607ebeb81c81bf5b3e373afcf25e417"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[2]",
+        "fe_be_hex": "5ad602afd794d4ba4fa04d59b442983c446b7a1924f36a1c869b6fc2718f1b33"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[3]",
+        "fe_be_hex": "1b19d3101f528b398c5636f9af64ceb203941f5a69906344f6018dcdd93ec9f8"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[4]",
+        "fe_be_hex": "63f62d35bef1451fe363e8ae48f478aa78d3775c1df49470ed9b08acc8a582f1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[5]",
+        "fe_be_hex": "6120b59c0ef4b1422d808ba3bf08c4319da59fe04f3ed69e30cca0e30438fc02"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[6]",
+        "fe_be_hex": "04924d8799758ac570dbce5be1bccde9de9b44f64ba93506721bc8fd9b0bbaed"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[7]",
+        "fe_be_hex": "2cb4f7a76de56ef73523af97075a0498d7789853d23aad7fc12c7b7f7092a018"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[8]",
+        "fe_be_hex": "62b0bdacb806ca168215731c666c8d1b3d35241023674f4e8866119719dbfc3f"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[9]",
+        "fe_be_hex": "5d9ea3fb49590e6dbc8a42f662741fec9a7322411f948f8d3f54bd70191a6f3b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[10]",
+        "fe_be_hex": "28c0c553847c9c7c586fa0c979a308b2d4c0c87e3c7061d200f7aef29776f159"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[11]",
+        "fe_be_hex": "48a364fdc95646a925fe21aaf84ed1fc70e97483af6ce14452c251c4fd20ab8c"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[12]",
+        "fe_be_hex": "4e4e184924e843a78524088430f840c2734476144dd5adf53bb35071bb7b2d0e"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[13]",
+        "fe_be_hex": "1061413a5fd1787a3f0d54dad842be30a6097a89c52db89360ecd2bbdc98dca9"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[14]",
+        "fe_be_hex": "64da1115a5c5107dc2aa9304d6dc5b3d83195eb097c28fc05cd57a218fbef7c9"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[15]",
+        "fe_be_hex": "33ffd290974cedb43eb4e5e4cf9ae0a8c6b1c45b45654b5e960ab34df74efb2a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[16]",
+        "fe_be_hex": "5cfeb68e3f0b568eadbc559b3466c6d236161a3c8a040c0b4514b8145ce79238"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[17]",
+        "fe_be_hex": "18e676097fd27a394eecbfc4fc9e77b93bcec22fa31c8cb5df47148a24d61f5a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[18]",
+        "fe_be_hex": "188899add7daab3c574a1ea69dc2462b98f4784965414b67fe968533a5046841"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[19]",
+        "fe_be_hex": "678d9102966f8980e4ab679b0e8d89062a8a4b4287350de27b073897526af3d3"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[20]",
+        "fe_be_hex": "2c69fff1c50460ad0cb18d96216a250fdca786373030ea394cf3e08493085c3b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[21]",
+        "fe_be_hex": "69e0c4daf6c37e6c659ee977e0f911703782d74a535f30c757b45b83fc865da6"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[22]",
+        "fe_be_hex": "728344ed27b3ebaa17612c3ffb57a14efb120656258b47fa20c25ee225ef2171"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[23]",
+        "fe_be_hex": "4806c4286bf892869328dc209bc46314b2759765bdcbcb99744fa0f348545a75"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[24]",
+        "fe_be_hex": "0af784a7a802b57c08ffaea2b29653005cac85e3332f5cee2b754ab02b5e0bb3"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[25]",
+        "fe_be_hex": "15d0be507d1046854082c0ae8b1d4ff812a5b0f2899cccfb3d7877f355d5b83b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[26]",
+        "fe_be_hex": "27f5830c86931649356219918d1fe8ed97eb4600aa3e46b4b173778d7671d50c"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[27]",
+        "fe_be_hex": "6e3f6903d3dc1e0e195f673938a9edfdd6dd456dcdcd560ad4d9dbfaf85f39cc"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[28]",
+        "fe_be_hex": "22ca4cfa850bf7487c8d7eb1cf2ec2c86a633768d9b9e2f16919b0830d3fb844"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[29]",
+        "fe_be_hex": "5a9e3590a4f9be93687d68104c9b6cb2cc9ed410fc07d6162dbc9f64decd7ce1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[30]",
+        "fe_be_hex": "4b7d002e918dddcd4be4f0623d8f9c0a9533b24af17e5dc634df24e500729dba"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[31]",
+        "fe_be_hex": "5d3073c3a96253693c8df7ce25e52b38b8c78afd7950a60e21cda35c3e48b78b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[32]",
+        "fe_be_hex": "2f1400afb1e213b69d45580bf9a0054f90e54c4dfaf340510358368d7eb037fc"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[33]",
+        "fe_be_hex": "54f6ff91933cf536ecfe439e01b2103b02aff564ad64cc03322803101fba3812"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[34]",
+        "fe_be_hex": "6bc15393109fc72220322b2e100a293d9b4d7f43828783f18f226701900cb91c"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[35]",
+        "fe_be_hex": "1071a9bbef3816d70ebf4b92b9755e176e2a8558a3bbb3d16ebe2570ffb34f1b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[36]",
+        "fe_be_hex": "700c1d9c6e073b01b5c81986fb4df82a1ec87043972046372890ca3c7b5b0928"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[37]",
+        "fe_be_hex": "64a7cee5b982c3b7eecc70e2a7a96e53be8effb11d1040c9a73a9ebf334b1194"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[38]",
+        "fe_be_hex": "0175ebff5c51ed1bc0b0ac14b7193dafdf64b1c2cec0c23de2e781fa8394362e"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "advice_eval[39]",
+        "fe_be_hex": "6955a4c86380c065bd0c80036c3ab85fbdb52dcced432ecd68c48d9a1b274509"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[0]",
+        "fe_be_hex": "094662684cbadaf67132f94dfe2511cc8aee0f2519f2540b17314664295d2d49"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[1]",
+        "fe_be_hex": "6249297a890a17fbc31920e6f5b33e284b17b738d945b93af9ac63581f39e926"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[2]",
+        "fe_be_hex": "533aa4f8f4c2d59ee7d3ef836d846c08608c2c2a0f9322f6f6b269284401b569"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[3]",
+        "fe_be_hex": "0a7069537b5283f647e1a5fb4510e338d37915aadcab9cee9ac42474f027159e"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[4]",
+        "fe_be_hex": "036721bd95b1adffb069c6f37846d0949a2541fddded7dbef574c926ea067125"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[5]",
+        "fe_be_hex": "151dd83de8726f4907cad27fe7c01b6a38b780c9e36a92f2b14b334c6d43d323"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[6]",
+        "fe_be_hex": "0d8f561572fb44d01ce808d9b57f3dea1151b1c70af6170efd615597953aab90"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[7]",
+        "fe_be_hex": "388498775fc06d0cede26ab654db23b72fd6d2c693ee2fcebb0c3c8943544618"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[8]",
+        "fe_be_hex": "3f4cd7d8912aa56d301ccaabfff5b239f7d0b375dc7e59e70ac83d1df74cea7f"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[9]",
+        "fe_be_hex": "0d28bbe4bb3217c71d9f55cf4e629b6fcbb9cbaf3db566064f6c14d650c3518b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[10]",
+        "fe_be_hex": "6ee5a51f25ab89cecb00e84084a45fc4f644603406662d4ee5e8f8c93ab72c8e"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[11]",
+        "fe_be_hex": "6aabae683a739b717d4284d4ce090ca897bf16439d18a537381223febcacf0d1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[12]",
+        "fe_be_hex": "734189390c0049b73dd5622affb5e10138229f67c4fa0f70f3acc7ac5492da03"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[13]",
+        "fe_be_hex": "1be1180e1778d1802e467100378415b572888ae535042e01cb3539dd1059352f"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[14]",
+        "fe_be_hex": "5a8998c3bdc57c8c6bb4b209ce16f2e401655f094e065e08a1b42d14091d6c1b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[15]",
+        "fe_be_hex": "497165498e6280b15e3e3b2b3bb1be8fafb4880013a2860237039c2872fb5a1d"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "fixed_eval[16]",
+        "fe_be_hex": "3969731b9c485b627553a8d5c91fee63f06759560d441480d36ab2144c382294"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[0]",
+        "fe_be_hex": "17e99dd0f4b34d2795f0c82eed3b8081bb499b675d2ef634a8b2b399adf374c3"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[1]",
+        "fe_be_hex": "434e96f8f1801a73f63d1faf599d28f3c7c9eaa3112979564c2a59a955dd3cd2"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[2]",
+        "fe_be_hex": "6b5e6841b8101eaa53ccb8eefb7fa79e95275028679301c335ff66f216f41b93"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[3]",
+        "fe_be_hex": "43752a03cf17d3d0d64777af9a39d283e7859eaac4a2da400baf3af7359a127c"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[4]",
+        "fe_be_hex": "4ee605378c3ccaf4e48e82fa9f5c6ef2c9bd3a44f482ef00cb170f7901cc2b8b"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[5]",
+        "fe_be_hex": "0fc1c5e02cfbf5d9115b7137074f6f0f6f294d7777c54d75f5b7c6cca84c03f1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[6]",
+        "fe_be_hex": "5492e7d49f48fdb68ab634eaf30059712aa662ac23bc8d7bb269afee222f3d93"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[7]",
+        "fe_be_hex": "09ede7d5f304404ce3602f10ac6c48423349268c98a5e7512c42a85e54a4a8b5"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[8]",
+        "fe_be_hex": "25bae27aa445934670e7660234eb483b0855de75f8e0e5c25a8859d5b5f1697a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[9]",
+        "fe_be_hex": "10a09e888fe4fa67cc79bcce1fb2965b6e166238799d9772d47a07b947236493"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[10]",
+        "fe_be_hex": "22b7aea68284a218fc8a1c85c16f2674c1f9b76494e29be3d5d1d25879b2bfe4"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[11]",
+        "fe_be_hex": "421d73a8c0aaf6b421264b6ac308d0ba2dd267d3f3134b006b8e440d08e2a0cd"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[12]",
+        "fe_be_hex": "2fcb6e506ea4f6d5a73ff93256c62ef6c08ce5cb4dfa0834f80fcebabbcd98c0"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[13]",
+        "fe_be_hex": "2a8865c0d658cdc019c2bad26c10b388ab8138c474013d2618a4a7a9fd78a151"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[14]",
+        "fe_be_hex": "256e955fd4aca98fc22078c6b2ddfa4535dde657f14193bc91a10e81c6ac8637"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[15]",
+        "fe_be_hex": "3b36739c2dab05e8731283b6a33ae8a8f899a4dce36067d38876c5603e6d4dfa"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[16]",
+        "fe_be_hex": "71de8b575f2b8d2f97d31a3877fcaec1603135e3648dc8fa91ed9a159dc72026"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_common[17]",
+        "fe_be_hex": "2693d914e4ec4b414043dd7cd62baad35ef74a798d63641cbb89b9adaa44b2e5"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "6f5d99221a6baa6fdd4a86dccdaecda185b900e389abb4aebe6a78dae9986dd6"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "09e25e6e94f2d464bc6dfbdb00dec371465c9e63b351f030faa16f2fc9089729"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_last",
+        "fe_be_hex": "6d7e57bcc8a142e541bd48302d7d5f09ced322a30f7f46f5ebd3f068934ff3c5"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "09e6e9d001c1722bef8caaa1defa9016313d4ad09c6ab2a025c873fdf217a88a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "3c4fadc803f4d688529db1ab405f4b7c87d62b8312d06b82580e09f83509eaf8"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_last",
+        "fe_be_hex": "35a66b9743844178d52f221e577f21da84afa99357bd796ab5ea58a44000abaa"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "0a1d4b022e51379ad4fb5e3dd2ef2d85782787f64cdc57b69e4eefdea908c5be"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "04411e7377b1c6c426bfc47ff792dc95b65276cb44d3e3742944dadd2356ecd7"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_last",
+        "fe_be_hex": "3a8947962b0f02550c0eb3ca374c7dad62e6a93f6beac0b717f0ecd53ddc08db"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "530b29213aa759519d799bcfced039200fdc999b52b0a3a805fe5f17a87ec4f1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "610e49e355e2d7b519059f2a05cee82ba7af81ccc8521c00c05a299b43afad72"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_last",
+        "fe_be_hex": "4c4ae9b7ff00533557189e0d7e3d92968a22b735511793c9b1cfd24ddb481426"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "360e366879475eaf65c181ee1ec4f7cb7505e72c2cbbf909ba9501657943c7e6"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "6793d5eb4cab328ec774e8790d4fa5f7e2eb2fcb326aaad5da8d7902bfbb0cbb"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_last",
+        "fe_be_hex": "61bef43e11955c61a073955b26c7a5100c70f40cbc557d72efd31d37de08eb99"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_cur",
+        "fe_be_hex": "4f8352e3683141c181c8b3f2c36fb3c87d307f2ce83460476b2abc3e00e367ba"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "perm_next",
+        "fe_be_hex": "6a3393d0a58d7eff8d70efe2ca1651abea2810066637f38d47d3fe505e6a66b1"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_m_eval",
+        "fe_be_hex": "5db5037d269fe3b3163aee34efa1700b945b64eea07a169e05c1beec055879b3"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_helper_eval",
+        "fe_be_hex": "739afd93c5d8099da5c1a1a38c3b931c0b9d78ad5ac1b0cc8a5a02fd0b9b8290"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_acc_eval",
+        "fe_be_hex": "3c654f49671abd7b7d5e4a2dc444a8b59ba8be9a5422bfc776344bcda00f2575"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_acc_next_eval",
+        "fe_be_hex": "5c73faba39c84ccb0f0a9be5f7afad39553d992f22d65e43370137f7f1748ea8"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_m_eval",
+        "fe_be_hex": "37b288ce777b7ad710ca063faeca1c7e830994011132bee36592dab105910e30"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_helper_eval",
+        "fe_be_hex": "0b10469cb107cf10a1323b9a3488bcb5070d70e57cec1012a0d832cea8f50d5a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_acc_eval",
+        "fe_be_hex": "1f5f07b0f2b3157e0b593ffe0cd4c03602ebba3bce94a97d1416c12c0c04cb13"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "lookup_acc_next_eval",
+        "fe_be_hex": "19aea3331455c4d6a7d7e0396441b078d62d74d9b13021572a4bd8f9ac98353d"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "trash_eval",
+        "fe_be_hex": "2c5b5194dadc6558b5486ac297257d2f731ab83bf4a6de7f1adb44611ad985be"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "x1",
+        "fe_be_hex": "13f8c24186a7be1a397c7b2859ff227b2d0920d32d545885da542bbed0ae254f"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "x2",
+        "fe_be_hex": "29175d62cd5f3b273588fab38705600a7614b67768c291d31130891f1199a011"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "f_com",
+        "eip2537_hex": "a6812bc568c0e0aa3aafc20385685e504c2f36778180e78ca44ab76a64b6be3b77c87f80da055bbd519aba9d5122e459"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "x3",
+        "fe_be_hex": "58a0feaa98295060f65934374141b1b8720018a665345b485d2fc89de8704cde"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "q_eval",
+        "fe_be_hex": "15874d911e497a01d83006b38e4b7fd697d1cbc335f9119f085739db694a5a85"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "q_eval",
+        "fe_be_hex": "34d56361507e3fe5e2faf8f8289d4fb0b5a83072b4fe6b898b1fab754381561d"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "q_eval",
+        "fe_be_hex": "4928e1876a849e1c27ee7536482186bf9359d26c1d347cde0fcf83aa529f147a"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "q_eval",
+        "fe_be_hex": "48ac5842c24471f2d12739e9db0f841e972ee94549e5a16531e6b0972273c8a2"
+      }
+    },
+    {
+      "kind": "ReadScalar",
+      "data": {
+        "tag": "q_eval",
+        "fe_be_hex": "4ec3466b72d2b0ea1ab18978b23d2da7d01b8b040443598bbe13c6b04d404983"
+      }
+    },
+    {
+      "kind": "Challenge",
+      "data": {
+        "name": "x4",
+        "fe_be_hex": "0406be097ef26b66a1727792c8300aca3e81715664c38d1284b4d40ea47edc67"
+      }
+    },
+    {
+      "kind": "ReadPoint",
+      "data": {
+        "tag": "pi",
+        "eip2537_hex": "a9f4920b7a8364d6c85cfc71346be70f46dd9ecd7fd527f2593c83cb55359ae395f091c8c26289f663cbcc7bc945b923"
+      }
+    }
+  ]
+}

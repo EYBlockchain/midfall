@@ -4,11 +4,38 @@ mod implementors;
 
 use std::io::{self, Cursor, Read, Write};
 
+use ff::PrimeField;
+
 /// Prefix to a prover's message soliciting a challenge
 const BLAKE2B_PREFIX_CHALLENGE: u8 = 0;
 
 /// Prefix to a prover's message
 const BLAKE2B_PREFIX_COMMON: u8 = 1;
+
+/// A transcript hash input that can be rendered as bytes for diagnostics.
+///
+/// The byte representation is used only by verifier trace hooks; the
+/// transcript itself continues to absorb the native `Input` type.
+pub trait TranscriptInputBytes {
+    /// Convert the input into a deterministic diagnostic byte string.
+    fn into_trace_bytes(self) -> Vec<u8>;
+}
+
+impl TranscriptInputBytes for Vec<u8> {
+    fn into_trace_bytes(self) -> Vec<u8> {
+        self
+    }
+}
+
+impl TranscriptInputBytes for Vec<midnight_curves::Fq> {
+    fn into_trace_bytes(self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for value in self {
+            bytes.extend_from_slice(value.to_repr().as_ref());
+        }
+        bytes
+    }
+}
 
 /// Hash function that can be used for transcript
 pub trait TranscriptHash: Clone {

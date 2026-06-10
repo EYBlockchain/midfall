@@ -12,6 +12,7 @@ use midnight_proofs::{
 use midnight_zk_stdlib::{utils::plonk_api::srs_for_test, Relation, ZkStdLib, ZkStdLibArch};
 use rand::{rngs::OsRng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use sha3::Keccak256;
 
 type F = midnight_curves::Fq;
 
@@ -66,19 +67,17 @@ fn main() {
     let witness: [F; 3] = core::array::from_fn(|_| F::random(&mut rng));
     let instance = <PoseidonChip<F> as HashCPU<F, F>>::hash(&witness);
 
-    let proof = midnight_zk_stdlib::prove::<PoseidonExample, blake2b_simd::State>(
+    let proof = midnight_zk_stdlib::prove::<PoseidonExample, Keccak256>(
         &srs, &pk, &relation, &instance, witness, OsRng,
     )
     .expect("Proof generation should not fail");
 
-    assert!(
-        midnight_zk_stdlib::verify::<PoseidonExample, blake2b_simd::State>(
-            &srs.verifier_params(),
-            &vk,
-            &instance,
-            None,
-            &proof
-        )
-        .is_ok()
+    assert!(midnight_zk_stdlib::verify::<PoseidonExample, Keccak256>(
+        &srs.verifier_params(),
+        &vk,
+        &instance,
+        None,
+        &proof
     )
+    .is_ok())
 }
