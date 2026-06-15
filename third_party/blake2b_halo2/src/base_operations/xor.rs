@@ -181,12 +181,21 @@ impl XorConfig {
         let t_xor_out = meta.lookup_table_column();
 
         // We need to perform a lookup for each limb
-            meta.batched_lookup("xor lookup limbs_8_bits", Some(q_xor), |meta| {
-                let left = limbs_8_bits.iter().map(|limb_col| meta.query_advice(*limb_col, Rotation(0))).collect();
-                let right = limbs_8_bits.iter().map(|limb_col| meta.query_advice(*limb_col, Rotation(1))).collect();
-                let out = limbs_8_bits.iter().map(|limb_col| meta.query_advice(*limb_col, Rotation(2))).collect();
-                vec![(left, t_xor_left), (right, t_xor_right), (out, t_xor_out)]
-            });
+        meta.batched_lookup("xor lookup limbs_8_bits", Some(q_xor), |meta| {
+            let left = limbs_8_bits
+                .iter()
+                .map(|limb_col| meta.query_advice(*limb_col, Rotation(0)))
+                .collect();
+            let right = limbs_8_bits
+                .iter()
+                .map(|limb_col| meta.query_advice(*limb_col, Rotation(1)))
+                .collect();
+            let out = limbs_8_bits
+                .iter()
+                .map(|limb_col| meta.query_advice(*limb_col, Rotation(2)))
+                .collect();
+            vec![(left, t_xor_left), (right, t_xor_right), (out, t_xor_out)]
+        });
 
         Self {
             t_xor_left,
