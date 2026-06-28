@@ -249,7 +249,9 @@ pub(crate) struct Data {
     /// User challenge words.
     pub(crate) challenges: Vec<Word>,
 
-    /// Locally-computed non-committed instance evaluation.
+    /// Locally-computed non-committed instance evaluation at `Rotation::cur()`.
+    /// `SolidityGenerator::try_new` rejects rotated instance queries, so this
+    /// stays a single word instead of a `(column, rotation)` map.
     pub(crate) instance_eval: Word,
     /// Per-(committed-instance-column, rotation): the calldata word for
     /// that committed instance evaluation. Empty when
@@ -273,8 +275,7 @@ pub(crate) struct Data {
     pub(crate) computed_quotient_eval: Word,
 
     /// Word offset (in the verifier's static memory map) of the start of
-    /// the per-category EIP-2537-padded commitment region. See the
-    /// `KNOWN BUG` block in `Data::new` for the layout convention.
+    /// the per-category EIP-2537-padded commitment region.
     pub(crate) comms_mptr_base: Ptr,
     /// Memory base of the decoded-evals buffer (Optimisation H3). The
     /// transcript-side `evaluations` loop spills the decoded scalar value to
@@ -795,7 +796,7 @@ impl EcPoint {
     /// Infinite iterator of consecutive padded G1 points.
     pub(crate) fn range(base: impl Into<EcPoint>) -> impl Iterator<Item = EcPoint> {
         let base = base.into().base;
-        (0..).map(move |idx| EcPoint::new(base + 4 * idx))
+        (0..).map(move |idx| EcPoint::new(base + G1_WORDS * idx))
     }
 
     /// Return the pointer to the first word.

@@ -49,6 +49,9 @@ impl<'a> SolidityGenerator<'a> {
         if let Some(acc_encoding) = config.accumulator {
             acc_encoding.validate_for_num_instances(config.num_instances)?;
         }
+        // Non-committed instance evaluations are reconstructed once from the
+        // public-input polynomial at the current rotation. Reject rotated
+        // instance queries until that path is keyed by `(column, rotation)`.
         if let Some((column, rotation)) = vk
             .cs()
             .instance_queries()

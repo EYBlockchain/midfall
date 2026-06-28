@@ -291,6 +291,60 @@ fn lowering_plan_test_vk() -> (
     (params, vk)
 }
 
+#[derive(Clone, Debug)]
+struct RotatedPublicInstanceCircuit;
+
+impl Circuit<Fq> for RotatedPublicInstanceCircuit {
+    type Config = ();
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let advice = meta.advice_column();
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("rotated public instance", |meta| {
+            let advice = meta.query_advice(advice, Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public_next = meta.query_instance(public_instance, Rotation::next());
+            Constraints::without_selector(vec![(
+                "rotated public instance",
+                advice + committed + public_next,
+            )])
+        });
+    }
+
+    fn synthesize(
+        &self,
+        _config: Self::Config,
+        _layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn generator_rejects_rotated_non_committed_instance_queries() {
+    let mut rng = ChaCha8Rng::seed_from_u64(8);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(4, &mut rng);
+    let circuit = RotatedPublicInstanceCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 4)
+        .expect("test circuit VK should build");
+
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(1, 1)),
+        Err(GeneratorError::RotatedInstanceQuery {
+            column: 1,
+            rotation: 1,
+        })
+    ));
+}
+
 #[test]
 fn scalar_le_to_be_word_reverses_exactly_one_word() {
     let mut le = [0u8; 32];
@@ -1432,7 +1486,10 @@ fn differential_trace_hooks_cover_expected_categories() {
             "serialized PCS point sets",
             "trace::PCS_SERIALIZED_POINT_SET_BASE + set_idx as u64",
         ),
-        ("PCS q_com commitments", "40000 + set_idx"),
+        (
+            "PCS q_com commitments",
+            "trace::PCS_Q_COM_BASE + set_idx as u64",
+        ),
     ] {
         assert!(
             pcs_source.contains(needle),

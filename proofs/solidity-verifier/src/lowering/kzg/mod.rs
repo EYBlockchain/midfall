@@ -1189,7 +1189,7 @@ pub(crate) fn computations(
                 ));
                 lines.push(format!(
                     "trace_point({}, {trace_scratch:#x})",
-                    40000 + set_idx
+                    trace::PCS_Q_COM_BASE + set_idx as u64
                 ));
                 continue;
             }
@@ -1272,11 +1272,11 @@ pub(crate) fn computations(
             ));
             lines.push(format!(
                 "if iszero(q_com_trace_ok_{set_idx}) {{ mstore(TRACE_U256_MPTR, {}) revert(TRACE_U256_MPTR, {WORD_BYTES:#x}) }}",
-                40000 + set_idx
+                trace::PCS_Q_COM_BASE + set_idx as u64
             ));
             lines.push(format!(
                 "trace_point({}, {trace_scratch:#x})",
-                40000 + set_idx
+                trace::PCS_Q_COM_BASE + set_idx as u64
             ));
         }
         blocks.push(lines);

@@ -591,6 +591,7 @@ pub(crate) mod trace {
     pub(crate) const PROOF_COMMIT_BASE: usize = 10_000; // Proof G1 reads.
     pub(crate) const PROOF_EVAL_BASE: usize = 20_000; // Proof scalar eval reads.
     pub(crate) const QUOTIENT_IDENTITY_BASE: u64 = 30_000; // Quotient identities.
+    pub(crate) const PCS_Q_COM_BASE: u64 = 40_000; // PCS q_com points.
     pub(crate) const PCS_SERIALIZED_POINT_SET_BASE: u64 = 41_000; // PCS point sets.
     pub(crate) const SELECTOR_FOLD_BASE: usize = 60_000; // Selector accumulators.
 }
@@ -680,6 +681,7 @@ mod tests {
         assert_eq!(trace::PROOF_COMMIT_BASE, 10_000);
         assert_eq!(trace::PROOF_EVAL_BASE, 20_000);
         assert_eq!(trace::QUOTIENT_IDENTITY_BASE, 30_000);
+        assert_eq!(trace::PCS_Q_COM_BASE, 40_000);
         assert_eq!(trace::PCS_SERIALIZED_POINT_SET_BASE, 41_000);
         assert_eq!(trace::SELECTOR_FOLD_BASE, 60_000);
     }

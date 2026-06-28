@@ -2435,6 +2435,13 @@ impl QuotientExpressionEnv for DataQuotientExpressionEnv<'_> {
                     .expect("committed instance eval present"),
             )
         } else {
+            // The builder rejects rotated instance queries before lowering, so
+            // the direct public-input column always uses the one local
+            // Lagrange evaluation computed for `Rotation::cur()`.
+            debug_assert_eq!(
+                rotation, 0,
+                "rotated public instance query reached lowering"
+            );
             word_to_quotient_expr(self.data.instance_eval)
         }
     }
