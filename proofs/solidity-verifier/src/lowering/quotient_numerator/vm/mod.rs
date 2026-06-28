@@ -1363,6 +1363,7 @@ impl QuotientProgramBuilder {
         if !self.limb_shape_has_u8_const_slots(&shape) {
             return false;
         }
+        self.reserve_limb_shape_consts(&shape);
         self.emit_expr(&residue);
         self.emit_limb_shape(shape);
         self.op_binary(Q_OP_ADD);
@@ -1426,6 +1427,22 @@ impl QuotientProgramBuilder {
             QuotientLimbShape::Bilin7Pairwise { coeffs, .. } => coeffs.clone(),
         };
         self.peek_u8_const_slots(&coeffs).is_some()
+    }
+
+    /// Reserve coefficient slots before residue emission can grow the table.
+    fn reserve_limb_shape_consts(&mut self, shape: &QuotientLimbShape) {
+        match shape {
+            QuotientLimbShape::Lin7 { terms } | QuotientLimbShape::Bilin7Row { terms, .. } => {
+                for (coeff, _) in terms {
+                    self.const_slot(*coeff);
+                }
+            }
+            QuotientLimbShape::Bilin7Pairwise { coeffs, .. } => {
+                for coeff in coeffs {
+                    self.const_slot(*coeff);
+                }
+            }
+        }
     }
 
     /// Emit the byte-level representation of a pre-validated limb shape.

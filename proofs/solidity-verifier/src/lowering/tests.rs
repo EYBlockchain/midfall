@@ -2522,6 +2522,53 @@ fn quotient_vm_limb_subshape_matches_direct_expr_eval() {
 }
 
 #[test]
+fn quotient_vm_limb_decomposition_reserves_shape_coeffs_before_residue() {
+    let mut values = HashMap::new();
+    let mut expr = QuotientExpr::Const(U256::ZERO);
+
+    for i in 0..7u32 {
+        let ptr = 0xb00 + i * WORD_BYTES as u32;
+        values.insert(ptr, Fq::from(151 + i as u64));
+        expr = quotient_add_expr(
+            expr,
+            quotient_scale_expr(
+                Fq::from(19 + i as u64),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
+        );
+    }
+
+    for i in 0..256u32 {
+        let ptr = 0x2000 + i * 0x40;
+        values.insert(ptr, Fq::from(401 + i as u64));
+        expr = quotient_add_expr(
+            expr,
+            quotient_scale_expr(
+                Fq::from(1000 + i as u64),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
+        );
+    }
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.consts.len() > u8::MAX as usize,
+        "residue should grow the constant table past u8"
+    );
+    assert!(
+        builder.bytes.contains(&Q_OP_LIN7),
+        "larger affine sums should still extract LIN7 subshapes"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
 fn quotient_vm_limb_subshape_inside_conditional_product_matches_direct_expr_eval() {
     let mut values = HashMap::new();
     let cond_ptr = 0xd00;
