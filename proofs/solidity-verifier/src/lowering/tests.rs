@@ -2440,6 +2440,41 @@ fn quotient_vm_pow5_rejects_near_miss_product_shapes() {
 }
 
 #[test]
+fn quotient_vm_add_product_reserves_scalar_before_base_constants() {
+    let lhs = 0xaa0;
+    let rhs = 0xac0;
+    let mut values = HashMap::new();
+    values.insert(lhs, Fq::from(149u64));
+    values.insert(rhs, Fq::from(157u64));
+
+    let mut base = QuotientExpr::Const(U256::ZERO);
+    for value in 1..=255u64 {
+        base = quotient_add_expr(base, QuotientExpr::Const(U256::from(value)));
+    }
+    let product = quotient_mul_expr(
+        quotient_mul_expr(
+            QuotientExpr::Mem(QuotientMem::Literal(lhs)),
+            QuotientExpr::Mem(QuotientMem::Literal(rhs)),
+        ),
+        QuotientExpr::Const(U256::from(300u64)),
+    );
+    let expr = quotient_add_expr(base, product);
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::default();
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.bytes.contains(&Q_OP_ADD_MUL_MEM_MEM_CONST_U8),
+        "product should stay on the fused add-mul path"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
 fn quotient_vm_limb_subshape_matches_direct_expr_eval() {
     let mut values = HashMap::new();
     let mut expr = QuotientExpr::Const(U256::ZERO);

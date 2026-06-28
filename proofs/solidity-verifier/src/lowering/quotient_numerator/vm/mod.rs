@@ -1593,6 +1593,7 @@ impl QuotientProgramBuilder {
             return false;
         };
 
+        self.reserve_product_add_consts(product);
         self.emit_expr(base);
         self.emit_product_add(product);
         true
@@ -1638,6 +1639,17 @@ impl QuotientProgramBuilder {
                 rhs: *rhs,
             }),
             _ => None,
+        }
+    }
+
+    /// Reserve coefficient slots before another expression can grow the table.
+    fn reserve_product_add_consts(&mut self, product: QuotientProductAdd) {
+        match product {
+            QuotientProductAdd::MemMemConstU8 { scalar, .. }
+            | QuotientProductAdd::ConstU8Mem { scalar, .. } => {
+                self.const_slot(scalar);
+            }
+            QuotientProductAdd::MemMem { .. } => {}
         }
     }
 
