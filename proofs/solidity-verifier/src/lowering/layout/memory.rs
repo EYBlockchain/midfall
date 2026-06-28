@@ -875,6 +875,11 @@ impl VerifierMemoryLayout {
             vk_start + vk.len(),
             challenge_start + meta.challenge_indices.len() * WORD_BYTES,
             theta_start + theta_windows.rot_points_word * WORD_BYTES,
+            rot_points_mptr.value().as_usize() + config.pcs.rot_points_words * WORD_BYTES,
+            x1_powers_mptr.value().as_usize() + config.pcs.x1_powers_words * WORD_BYTES,
+            q_com_mptr.value().as_usize() + config.pcs.q_com_words * WORD_BYTES,
+            q_eval_set_mptr.value().as_usize() + config.pcs.q_eval_set_words * WORD_BYTES,
+            q_eval_cptr_mptr.value().as_usize() + WORD_BYTES,
             g1_identity_mptr.value().as_usize() + G1_BYTES,
             reversed_evals_mptr.value().as_usize() + meta.num_evals * WORD_BYTES,
             comms_mptr_base.value().as_usize() + commitments_len,
@@ -1520,6 +1525,52 @@ mod tests {
             layout.trace_u256_mptr >= layout.pcs_final_msm_scratch_mptr + 10 * G1_MSM_PAIR_BYTES
         );
         layout.validate().expect("trace log word must not overlap");
+    }
+
+    #[test]
+    fn trace_log_word_accounts_for_theta_window_region_ends() {
+        let meta = ConstraintSystemMeta::default();
+        let vk = synthetic_vk();
+        let window_words = 4096;
+        let config = VerifierMemoryLayoutConfig {
+            pcs: PcsMemoryRequirements {
+                rot_points_words: window_words,
+                x1_powers_words: window_words,
+                q_com_words: window_words,
+                q_eval_set_words: window_words,
+                ..PcsMemoryRequirements::default()
+            },
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+
+        for (name, end) in [
+            (
+                "rot_points",
+                layout.rot_points_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "x1_powers",
+                layout.x1_powers_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_com_fixed_window",
+                layout.q_com_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_eval_set",
+                layout.q_eval_set_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_eval_cptr_slot",
+                layout.q_eval_cptr_mptr.value().as_usize() + WORD_BYTES,
+            ),
+        ] {
+            assert!(
+                layout.trace_u256_mptr >= end,
+                "trace log word should be after {name}"
+            );
+        }
     }
 
     #[test]
