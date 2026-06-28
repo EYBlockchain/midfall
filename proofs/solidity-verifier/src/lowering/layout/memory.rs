@@ -132,8 +132,6 @@ pub(crate) enum MemoryPhase {
     LagrangeBatchInvert,
     /// Compact quotient VM temps and stack.
     QuotientVm,
-    /// Historical fixed PCS windows rooted at `ROT_POINTS_MPTR`.
-    PcsFixed,
     /// Source-address table used by the rolled q_eval fold.
     PcsQEvalSourceTable,
     /// Optional trace-only q_com MSM materialization.
@@ -695,29 +693,41 @@ impl VerifierMemoryLayout {
             + meta.num_lookups
             + meta.num_trashcans;
         let committed_g1s = non_quotient_g1s + meta.num_quotients;
+        // The rot_points / x1_powers / q_com / q_eval_set windows are NOT
+        // transient scratch even though they sit in the theta scratch band.
+        // They are written during PCS preparation and then read across several
+        // *later* phases: `x1_powers` feeds both the rolled q_eval fold
+        // (`PcsQEvalSourceTable`) and the fused final MSM (`PcsFinalMsm`),
+        // while `rot_points`/`q_eval_set` feed the f_eval interpolation. Because
+        // `MemoryLifetime::intersects` treats two different `Phase`s as never
+        // co-live, tagging these as a dedicated phase would make
+        // `validate()` blind to any overlap between them and the PCS scratch
+        // that consumes them. Nothing ever reuses these byte ranges, so they
+        // are `Permanent`: the planner must guarantee they never overlap any
+        // other live region.
         let rot_points_mptr = Ptr::memory(arena.alloc_fixed(
             "rot_points",
             at_theta(theta_windows.rot_points_word),
             config.pcs.rot_points_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let x1_powers_mptr = Ptr::memory(arena.alloc_fixed(
             "x1_powers",
             at_theta(theta_windows.x1_powers_word),
             config.pcs.x1_powers_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_com_mptr = Ptr::memory(arena.alloc_fixed(
             "q_com_fixed_window",
             at_theta(theta_windows.q_com_word),
             config.pcs.q_com_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_eval_set_mptr = Ptr::memory(arena.alloc_fixed(
             "q_eval_set",
             at_theta(theta_windows.q_eval_set_word),
             config.pcs.q_eval_set_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_eval_cptr_mptr = Ptr::memory(arena.alloc_fixed(
             "q_eval_cptr_slot",
