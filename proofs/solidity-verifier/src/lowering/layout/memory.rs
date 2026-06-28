@@ -11,7 +11,7 @@
 //! historical addresses in the generated verifier, gives each range a name and
 //! lifetime, and rejects accidental overlap when two live ranges can coexist.
 //! Intentional scratch reuse is modeled by assigning the same byte range to
-//! disjoint `MemoryPhase`s.
+//! disjoint `MemoryPhase`s or non-overlapping phase spans.
 //!
 //! This is not a packing allocator yet. The first version is deliberately
 //! conservative: it names the old layout, validates it, and centralizes all
@@ -160,6 +160,11 @@ pub(crate) enum MemoryLifetime {
     /// Region is live only during the named phase. Regions in different phases
     /// may reuse the same byte range.
     Phase(MemoryPhase),
+    /// Region is written in one phase and read through a later phase.
+    PhaseSpan {
+        start: MemoryPhase,
+        end: MemoryPhase,
+    },
 }
 
 impl MemoryLifetime {
@@ -168,6 +173,20 @@ impl MemoryLifetime {
         match (self, other) {
             (Self::Permanent, _) | (_, Self::Permanent) => true,
             (Self::Phase(lhs), Self::Phase(rhs)) => lhs == rhs,
+            (Self::Phase(phase), Self::PhaseSpan { start, end })
+            | (Self::PhaseSpan { start, end }, Self::Phase(phase)) => {
+                start <= phase && phase <= end
+            }
+            (
+                Self::PhaseSpan {
+                    start: lhs_start,
+                    end: lhs_end,
+                },
+                Self::PhaseSpan {
+                    start: rhs_start,
+                    end: rhs_end,
+                },
+            ) => lhs_start <= rhs_end && rhs_start <= lhs_end,
         }
     }
 }
@@ -479,7 +498,7 @@ pub(crate) struct VerifierMemoryLayout {
     pub(crate) trashcan_comms_mptr_base: Ptr,
     pub(crate) quotient_limb_comms_mptr_base: Ptr,
     /// First byte after all decompressed proof commitments. Selector
-    /// accumulators are live here during final linearization/final MSM.
+    /// accumulators are written by quotient evaluation and read by PCS MSMs.
     pub(crate) selector_acc_mptr: usize,
     /// Reuses selector-accumulator bytes during the earlier Lagrange batch
     /// inversion phase.
@@ -779,7 +798,10 @@ impl VerifierMemoryLayout {
             comms_mptr_base.value().as_usize(),
             commitments_len,
             selector_len,
-            MemoryLifetime::Phase(MemoryPhase::PcsFinalMsm),
+            MemoryLifetime::PhaseSpan {
+                start: MemoryPhase::QuotientVm,
+                end: MemoryPhase::PcsFinalMsm,
+            },
         );
         let batch_invert_scratch_mptr = {
             let mut scratch = arena.scratch_allocator(selector_acc_mptr);
@@ -1112,6 +1134,25 @@ mod tests {
     }
 
     #[test]
+    fn phase_spans_cover_each_phase_in_their_range() {
+        let lifetime = MemoryLifetime::PhaseSpan {
+            start: MemoryPhase::QuotientVm,
+            end: MemoryPhase::PcsFinalMsm,
+        };
+
+        for phase in [
+            MemoryPhase::QuotientVm,
+            MemoryPhase::PcsQEvalSourceTable,
+            MemoryPhase::PcsQComTrace,
+            MemoryPhase::PcsFinalMsm,
+        ] {
+            assert!(lifetime.intersects(&MemoryLifetime::Phase(phase)));
+        }
+        assert!(!lifetime.intersects(&MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert)));
+        assert!(!lifetime.intersects(&MemoryLifetime::Phase(MemoryPhase::PcsPairing)));
+    }
+
+    #[test]
     fn unaligned_regions_fail() {
         let mut map = MemoryMap::default();
         map.push(region("a", 0x101, WORD_BYTES, MemoryPhase::QuotientVm));
@@ -1421,6 +1462,35 @@ mod tests {
             layout.map.region("accumulator_msm").expect("accumulator MSM region registered");
 
         assert_eq!(region.len, 4 * G1_MSM_PAIR_BYTES);
+    }
+
+    #[test]
+    fn selector_accumulators_are_live_from_quotient_to_final_msm() {
+        let meta = ConstraintSystemMeta {
+            num_simple_selectors: 1,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let layout = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x1000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        let selector = layout
+            .map
+            .region("selector_accumulators")
+            .expect("selector accumulators registered");
+
+        assert_eq!(
+            selector.lifetime,
+            MemoryLifetime::PhaseSpan {
+                start: MemoryPhase::QuotientVm,
+                end: MemoryPhase::PcsFinalMsm,
+            }
+        );
+        assert_eq!(layout.batch_invert_scratch_mptr, layout.selector_acc_mptr);
+        layout.validate().expect("earlier batch inversion may reuse selector bytes");
     }
 
     #[test]
