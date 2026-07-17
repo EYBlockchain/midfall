@@ -1357,7 +1357,7 @@ impl QuotientProgramBuilder {
         if !self.limb_vm_ops {
             return false;
         }
-        let Some((shape, residue)) = quotient_limb_subshape(expr) else {
+        let Some((shape, residue, matched)) = quotient_limb_subshape(expr) else {
             return false;
         };
         if !self.limb_shape_has_u8_const_slots(&shape) {
@@ -1365,9 +1365,37 @@ impl QuotientProgramBuilder {
         }
         self.reserve_limb_shape_consts(&shape);
         self.emit_expr(&residue);
-        self.emit_limb_shape(shape);
+        // `limb_shape_has_u8_const_slots` was checked against the constant table
+        // before `emit_expr(&residue)`. Emitting the residue can insert new
+        // constants and push a shape coefficient past a one-byte constant slot,
+        // which would panic in `emit_limb_shape`'s `u8::try_from(...).expect(...)`.
+        // Re-check against the post-residue table: keep the fused limb opcode
+        // only while every coefficient still fits, otherwise emit the matched
+        // terms through the generic path (their sum equals the shape's value).
+        if self.limb_shape_has_u8_const_slots(&shape) {
+            self.emit_limb_shape(shape);
+        } else {
+            self.emit_affine_terms(&matched);
+        }
         self.op_binary(Q_OP_ADD);
         true
+    }
+
+    /// Emit `Σ terms[i]` with generic stack ops, leaving one value on the stack.
+    ///
+    /// Each entry is one recognized affine/bilinear term (a scaled memory load
+    /// or product), so emitting it cannot re-enter the limb-decomposition
+    /// peephole, and its coefficients use `emit_const`'s u16-capable slots. This
+    /// is the panic-free fallback for a recognized limb shape whose coefficients
+    /// no longer fit one-byte constant slots after intervening emission. The
+    /// slice is always non-empty (a recognized subshape uses at least one term).
+    fn emit_affine_terms(&mut self, terms: &[QuotientExpr]) {
+        for (idx, term) in terms.iter().enumerate() {
+            self.emit_expr(term);
+            if idx > 0 {
+                self.op_binary(Q_OP_ADD);
+            }
+        }
     }
 
     /// Try to replace a full expression with one limb-specialized opcode.
@@ -1606,14 +1634,37 @@ impl QuotientProgramBuilder {
         if !collect_product_leaves(product, &mut leaves) {
             return false;
         }
-        let Some(product) = self.product_add_macro(&leaves) else {
+        let Some(fused) = self.product_add_macro(&leaves) else {
             return false;
         };
 
-        self.reserve_product_add_consts(product);
+        self.reserve_product_add_consts(fused);
         self.emit_expr(base);
-        self.emit_product_add(product);
+        // `product_add_macro` checked the fused scalar against the constant
+        // table as it stood *before* `emit_expr(base)`. Emitting `base` can
+        // insert new constants and push that scalar past a one-byte constant
+        // slot, which would panic in `emit_product_add`'s
+        // `u8::try_from(...).expect(...)`. Re-check against the post-`base`
+        // table: keep the fused opcode only while the scalar still fits,
+        // otherwise add the product through the generic path (its lone scalar
+        // goes through `emit_const`, which falls back to a u16 slot).
+        if self.product_add_fits_u8_slot(&fused) {
+            self.emit_product_add(fused);
+        } else {
+            self.emit_expr(product);
+            self.op_binary(Q_OP_ADD);
+        }
         true
+    }
+
+    /// Whether the fused product-add scalar (if any) still lands in a one-byte
+    /// constant slot given the current constant table.
+    fn product_add_fits_u8_slot(&self, product: &QuotientProductAdd) -> bool {
+        match *product {
+            QuotientProductAdd::MemMemConstU8 { scalar, .. }
+            | QuotientProductAdd::ConstU8Mem { scalar, .. } => self.const_fits_u8_slot(scalar),
+            QuotientProductAdd::MemMem { .. } => true,
+        }
     }
 
     /// Recognize product leaves that can be encoded as one fused add-mul op.
@@ -2690,7 +2741,7 @@ pub(crate) fn quotient_pow5_base(expr: &QuotientExpr) -> Option<&QuotientExpr> {
 /// Extract one limb shape from a larger affine sum and return the residue.
 pub(crate) fn quotient_limb_subshape(
     expr: &QuotientExpr,
-) -> Option<(QuotientLimbShape, QuotientExpr)> {
+) -> Option<(QuotientLimbShape, QuotientExpr, Vec<QuotientExpr>)> {
     let mut terms = Vec::new();
     let mut constant = Fq::ZERO;
     if !collect_quotient_affine_terms(expr, Fq::ONE, &mut terms, &mut constant) {
@@ -2708,15 +2759,23 @@ pub(crate) fn quotient_limb_subshape(
         return None;
     }
 
+    // Split the affine terms into the residue (unused terms plus the constant)
+    // and the matched terms that reconstruct `shape` as a plain sum. The matched
+    // terms are the panic-free fallback for `emit_limb_shape`: their sum equals
+    // the fused opcode's value, but each is a single scaled load/product that
+    // uses u16-capable constant loads.
     let used = used.into_iter().collect::<HashSet<_>>();
     let mut residue = QuotientExpr::Const(quotient_fq_to_u256(constant));
+    let mut matched = Vec::with_capacity(used.len());
     for (idx, (coeff, term)) in terms.into_iter().enumerate() {
+        let scaled = quotient_scaled_term_expr(coeff, (*term).clone());
         if used.contains(&idx) {
-            continue;
+            matched.push(scaled);
+        } else {
+            residue = quotient_sum_expr(residue, scaled);
         }
-        residue = quotient_sum_expr(residue, quotient_scaled_term_expr(coeff, (*term).clone()));
     }
-    Some((shape, residue))
+    Some((shape, residue, matched))
 }
 
 /// Recognize a whole affine foreign-field/ECC identity that can be evaluated

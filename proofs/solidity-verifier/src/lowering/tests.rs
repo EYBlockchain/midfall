@@ -2446,6 +2446,46 @@ fn quotient_vm_bilin7_pairwise_matches_direct_expr_eval() {
 }
 
 #[test]
+fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
+    // A large affine sum over consecutive limb pointers is emitted as a chain of
+    // LIN7 opcodes whose coefficients land in the one-byte constant table. With
+    // more than 256 distinct coefficients the table overflows a `u8` slot
+    // partway through emission. Before the fix, `emit_limb_shape`'s
+    // `u8::try_from(slot).expect(...)` panicked once the shape being emitted was
+    // preceded by enough residue constants; the decomposition path now re-checks
+    // the post-residue table and falls back to generic ops for the overflowing
+    // shape. This exercises that fallback and confirms it still evaluates the
+    // expression correctly.
+    let term_count = 300u32;
+    let mut values = HashMap::new();
+    let mut expr = QuotientExpr::Const(U256::ZERO);
+    for k in 0..term_count {
+        let ptr = 0x1000 + k * 0x20;
+        values.insert(ptr, Fq::from(17 + k as u64));
+        expr = quotient_add_expr(
+            expr,
+            // Coefficient `k + 2` keeps every term scaled (coeff 1 would drop the
+            // constant) and distinct, so the table grows one slot per term.
+            quotient_scale_expr(Fq::from(k as u64 + 2), QuotientExpr::Mem(QuotientMem::Literal(ptr))),
+        );
+    }
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
+    // The pre-fix builder panics inside this call for this input.
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.consts.len() > u8::MAX as usize,
+        "test must overflow the one-byte constant table to exercise the fallback"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
 fn quotient_vm_pow5_matches_direct_expr_eval() {
     let ptr = 0xa20;
     let mut values = HashMap::new();

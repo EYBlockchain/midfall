@@ -307,18 +307,44 @@ pub(crate) struct TranscriptBufferLayout {
 
 impl TranscriptBufferLayout {
     /// Derive transcript-buffer bounds from proof calldata shape and instances.
-    pub(crate) fn from_proof_layout(proof: &ProofCalldataLayout, num_instances: usize) -> Self {
+    ///
+    /// `phase_challenge_counts[i]` is the number of Fiat-Shamir challenges the
+    /// native schedule squeezes for user phase `i` (i.e. `num_user_challenges`).
+    /// It selects which advice commitments share the pre-first-squeeze run: a
+    /// phase that owns no challenge does not trigger a squeeze, so its advices
+    /// accumulate into the same run as the following phase's. An empty slice is
+    /// treated as "no phase owns a challenge", which sums every advice phase as
+    /// a safe upper bound.
+    pub(crate) fn from_proof_layout(
+        proof: &ProofCalldataLayout,
+        num_instances: usize,
+        phase_challenge_counts: &[usize],
+    ) -> Self {
         let word_absorb = layout::transcript::WORD_ABSORB_BYTES;
         let g1_absorb = layout::transcript::G1_ABSORB_BYTES;
         let squeeze_cushion = layout::transcript::POST_SQUEEZE_CUSHION_WORDS * WORD_BYTES;
 
-        let phase_1_advices =
-            proof.advice_phases.first().map(|section| section.item_count).unwrap_or(0);
+        // Advices absorbed before the first challenge squeeze. The native
+        // verifier squeezes a challenge only for phases that own one, and the
+        // unconditional `theta` squeeze follows every user phase, so all advice
+        // phases up to and INCLUDING the first challenge-bearing phase are
+        // absorbed into a single streaming run before the first squeeze.
+        // Counting only the first phase under-sized the buffer for the valid
+        // "advice in an early phase, challenge in a later phase" shape
+        // (e.g. a SecondPhase RLC column) and let the G1 absorb loop overrun
+        // `VK_MPTR`; see `plan_allows_challenge_phase_beyond_advice_phases`.
+        let mut pre_squeeze_advices = 0usize;
+        for (phase, section) in proof.advice_phases.iter().enumerate() {
+            pre_squeeze_advices += section.item_count;
+            if phase_challenge_counts.get(phase).copied().unwrap_or(0) > 0 {
+                break;
+            }
+        }
         let initial_run_bytes = word_absorb
             + g1_absorb
             + word_absorb
             + num_instances * word_absorb
-            + phase_1_advices * g1_absorb
+            + pre_squeeze_advices * g1_absorb
             + squeeze_cushion;
 
         let eval_run_bytes = proof.quotient_limbs.byte_len
@@ -464,7 +490,7 @@ mod tests {
     fn transcript_layout_matches_current_conservative_bound() {
         let protocol = protocol_shape(vec![64], vec![], 0, 0, 2);
         let proof = ProofCalldataLayout::from_protocol(&protocol, 0, 10, 3);
-        let transcript = TranscriptBufferLayout::from_proof_layout(&proof, 0);
+        let transcript = TranscriptBufferLayout::from_proof_layout(&proof, 0, &[1]);
 
         let first_phase_run = 32 + 128 + 32 + 64 * 128 + 32 * 32;
         assert!(transcript.words * WORD_BYTES >= first_phase_run);
@@ -472,5 +498,40 @@ mod tests {
             transcript.eval_run_bytes,
             2 * G1_BYTES + (10 + 3) * WORD_BYTES + 32 * WORD_BYTES
         );
+    }
+
+    #[test]
+    fn transcript_layout_covers_multi_phase_advice_before_first_squeeze() {
+        // Valid shape (see `plan_allows_challenge_phase_beyond_advice_phases`):
+        // phase 0 has advice but no challenge, so both phases' advices land in
+        // the same pre-first-squeeze run alongside a large public-input block.
+        let protocol = protocol_shape(vec![1, 9], vec![], 0, 0, 1);
+        let proof = ProofCalldataLayout::from_protocol(&protocol, 0, 12, 2);
+        let num_instances = 86;
+        let transcript =
+            TranscriptBufferLayout::from_proof_layout(&proof, num_instances, &[0, 1]);
+
+        let word = layout::transcript::WORD_ABSORB_BYTES;
+        let g1 = layout::transcript::G1_ABSORB_BYTES;
+        let cushion = layout::transcript::POST_SQUEEZE_CUSHION_WORDS * WORD_BYTES;
+
+        // Bytes actually absorbed before the first squeeze: vk_digest,
+        // committed_pi, num_instances length word, instance words, then BOTH
+        // phases' advices (phase 0 owns no challenge).
+        let true_initial_run =
+            word + g1 + word + num_instances * word + (1 + 9) * g1;
+        assert!(
+            transcript.words * WORD_BYTES >= true_initial_run,
+            "reserved {} bytes < true pre-squeeze run {}",
+            transcript.words * WORD_BYTES,
+            true_initial_run
+        );
+        assert_eq!(transcript.initial_run_bytes, true_initial_run + cushion);
+
+        // The old bound counted only phase 0's advice and therefore under-sized
+        // the buffer below the true run — confirm the fix was load-bearing.
+        let phase0_only_run = word + g1 + word + num_instances * word + 1 * g1;
+        assert!(phase0_only_run < true_initial_run);
+        assert!(phase0_only_run + cushion < true_initial_run);
     }
 }

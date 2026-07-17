@@ -414,8 +414,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         // midnight-proofs verifiers the dominating run is whichever of the
         // following is largest:
         //   (a) initial absorbs (vk_digest + committed_pi + num_instances
-        //       + all instance scalars + all phase-1 advices) before the
-        //       first user-phase challenge squeeze (`theta`), or
+        //       + all instance scalars + every advice commitment up to and
+        //       including the first challenge-bearing phase) before the first
+        //       user-phase challenge squeeze (`theta` at the latest), or
         //   (b) the evaluation block (all `num_evals` scalars) absorbed
         //       after the `y` squeeze and before the next squeeze.
         //
@@ -438,6 +439,10 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             meta.num_evals,
             meta.num_point_sets,
         );
-        TranscriptBufferLayout::from_proof_layout(&proof_layout, num_instances)
+        TranscriptBufferLayout::from_proof_layout(
+            &proof_layout,
+            num_instances,
+            &meta.protocol.num_user_challenges,
+        )
     }
 }
