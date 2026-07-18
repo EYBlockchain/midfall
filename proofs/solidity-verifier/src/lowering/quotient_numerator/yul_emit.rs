@@ -1159,7 +1159,7 @@ fn u256_string(value: U256) -> String {
 /// Stable variable name for a column evaluation and rotation.
 fn column_eval_var(prefix: &'static str, column_index: usize, rotation: i32) -> String {
     match rotation.cmp(&0) {
-        Ordering::Less => format!("{prefix}_{column_index}_prev_{}", rotation.abs()),
+        Ordering::Less => format!("{prefix}_{column_index}_prev_{}", rotation.unsigned_abs()),
         Ordering::Equal => format!("{prefix}_{column_index}"),
         Ordering::Greater => format!("{prefix}_{column_index}_next_{rotation}"),
     }
