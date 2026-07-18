@@ -1435,11 +1435,27 @@ pub(crate) fn computations(
             // Soundness: requires every input to be non-zero. dx_j is
             // non-zero by Fiat-Shamir (x3 is uniform random; the
             // probability that x3 = p_j for a structured rotation point
-            // is ~2^-256). lbasis_j is non-zero because the points in a
-            // set are distinct by construction (`construct_intermediate_sets`
-            // de-duplicates rotations within each set). Defensive note:
-            // a malicious prover cannot influence either, so we don't
-            // need an explicit zero check.
+            // is ~2^-256). lbasis_j = prod_{k != j} (p_j - p_k) is non-zero
+            // as long as the rotation points p = x*omega^rot are pairwise
+            // distinct within the set. `construct_intermediate_sets`
+            // de-duplicates rotation *values* (i32) per set, and distinct
+            // values map to distinct points only because the domain order
+            // n = 2^k exceeds the rotation span for every supported circuit
+            // (rotations are bounded by the gate/lookup structure, k is
+            // large). A malicious prover cannot influence either value, so
+            // no explicit codegen zero check is added here.
+            //
+            // Note the failure mode is fail-closed, not silent: if a
+            // degenerate tiny-domain circuit ever aliased two rotations
+            // (rot_i == rot_j mod n), the corresponding p_j - p_k would be
+            // zero, so some lbasis_j and hence the batched product bp_{n-1}
+            // would be zero, and `scalar_inv` reverts on a zero input
+            // (AssemblyHelpers.yul). Such a verifier rejects all proofs
+            // rather than computing a wrong f_eval.
+            //
+            // TODO: to surface that misconfiguration at codegen time instead
+            // of at proof time, thread the domain order n into this emitter
+            // and assert every point set's rotation span is < n.
             //
             // The reference computes lagrange interpolation directly via
             // full polynomial construction; here we collapse the
