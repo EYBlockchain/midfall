@@ -175,7 +175,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         }))
                         .collect::<Vec<_>>()
                 };
-                debug_assert_eq!(
+                assert_eq!(
                     bases.len(),
                     fixed_scalar_count,
                     "accumulator fixed-base scalar tail must match generated bases"
