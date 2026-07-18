@@ -2673,11 +2673,25 @@ pub(crate) fn ptr_to_quotient_mem(ptr: Ptr) -> QuotientMem {
             // in this file (u16::try_from, u8::try_from).
             let offset = u32::try_from(offset)
                 .expect("quotient memory pointer must be a non-negative offset that fits in u32");
+            // Every address the quotient VM reads is a 32-byte word slot (the
+            // layout allocates in WORD_BYTES units and all eval/challenge/VK/
+            // scratch handles are word multiples). A non-word-aligned literal
+            // pointer signals a truncated/mis-encoded address that would make
+            // the VM mload a straddling window; reject it at the single
+            // construction choke point rather than emit a corrupt verifier.
+            assert!(
+                offset as usize % WORD_BYTES == 0,
+                "quotient memory pointer {offset:#x} is not 32-byte word aligned"
+            );
             QuotientMem::Literal(offset)
         }
         Value::Identifier(name, offset) => {
             let offset = u32::try_from(offset).expect(
                 "quotient memory token offset must be a non-negative offset that fits in u32",
+            );
+            assert!(
+                offset as usize % WORD_BYTES == 0,
+                "quotient memory token offset {offset:#x} is not 32-byte word aligned"
             );
             let token = quotient_mem_token_from_name(name)
                 .unwrap_or_else(|| panic!("unsupported quotient memory token: {name}"));
