@@ -887,6 +887,26 @@ pub(crate) fn computations(
         let max_rot = *distinct_rotations.iter().max().unwrap_or(&0);
         let min_rot = *distinct_rotations.iter().min().unwrap_or(&0);
 
+        // Fail closed on pathological rotation magnitudes. This block unrolls one
+        // `mulmod` per unit step across the entire rotation span (forward to
+        // max_rot, backward to min_rot), so the emitted line count scales with
+        // |max_rot| + |min_rot|, NOT with the (separately capped) number of
+        // distinct rotations. A circuit using a very large rotation would emit
+        // enough Yul to exceed the EIP-170 24KB runtime-code limit and produce an
+        // undeployable verifier with no diagnostic from our own validation. Bound
+        // the walk here; if this ever fires for a legitimate circuit, roll the
+        // walk into a Yul loop (as Block 2 does for x1 powers) rather than raising
+        // the cap. The cap is far above any realistic circuit's rotation range.
+        const MAX_ROTATION_WALK_STEPS: i64 = 4096;
+        let walk_steps = i64::from(max_rot).max(0) + (-i64::from(min_rot)).max(0);
+        assert!(
+            walk_steps <= MAX_ROTATION_WALK_STEPS,
+            "PCS rotation-point walk would unroll {walk_steps} mulmod steps \
+             (max_rot={max_rot}, min_rot={min_rot}), exceeding the \
+             {MAX_ROTATION_WALK_STEPS}-step cap; such a verifier would blow the \
+             EIP-170 runtime code-size limit (roll the walk into a Yul loop instead)"
+        );
+
         let store_rot = |rot: i32| -> Option<String> {
             distinct_rotations.iter().position(|r| *r == rot).map(|idx| {
                 format!(
