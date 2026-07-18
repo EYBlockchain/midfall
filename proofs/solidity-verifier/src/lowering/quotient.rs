@@ -253,7 +253,17 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         // `build.max_stack` only describes the interpreted operand stack. Some
         // native callbacks share `quotient_stack_mptr` as a scratch base, so
         // the registered memory region must cover both possible users.
-        build.max_stack.max(native_callback_scratch_words)
+        //
+        // Floor at one word: every inline/native direct_quotient_block writes
+        // one eval-scratch word at eval_scratch_slot == quotient_stack_mptr
+        // (see direct_quotient_block and compact_quotient_computation_blocks),
+        // so the region is always written even when the interpreted stack and
+        // native scratch are both empty (a degenerate-but-valid VK whose gates
+        // all fit the inline prefix with no permutation sets, lookups, or VM
+        // items). Accounting that word here keeps the in-bounds invariant with
+        // the code that emits the write, rather than relying on the unrelated
+        // MODEXP-frame clamp in layout/memory.rs.
+        build.max_stack.max(native_callback_scratch_words).max(1)
     }
 
     /// Number of persistent VM temp words needed for state plus selector
