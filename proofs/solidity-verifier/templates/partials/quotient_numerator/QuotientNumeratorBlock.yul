@@ -1190,6 +1190,12 @@
                 // over-reads operands or leaves a partial expression live.
                 if iszero(eq(q_pc, q_end)) { revert(0, 0) }
                 if q_has_top { revert(0, 0) }
+                // The spilled stack must also be balanced. A FOLD executed
+                // with more than one operand live consumes only the cached
+                // top, leaving abandoned words below q_sp with q_has_top
+                // clear -- so both checks above pass while an operand of the
+                // identity has been silently dropped from nu_y(x).
+                if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { revert(0, 0) }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled
