@@ -257,6 +257,10 @@ pub(crate) struct Halo2VerifyingKey {
 pub(crate) const VK_RUNTIME_PREFIX: u8 = 0xfe;
 /// Number of bytes skipped before copying the separate VK payload.
 pub(crate) const VK_RUNTIME_PREFIX_LEN: usize = 1;
+/// EIP-170 deployed-contract runtime code-size limit (24576 bytes). The VK is
+/// shipped as its own data contract whose runtime is `[INVALID, ...payload]`,
+/// so it must fit under this bound to be deployable on EIP-170 chains.
+pub(crate) const EIP_170_MAX_RUNTIME_BYTES: usize = 0x6000;
 
 impl Halo2VerifyingKey {
     /// Reconstruct and validate the typed VK payload layout.
@@ -306,7 +310,15 @@ impl Halo2VerifyingKey {
                 self.len()
             ));
         }
-        let constructor_memory = VkConstructorMemoryLayout::new(self.runtime_len());
+        let runtime_len = self.runtime_len();
+        if runtime_len > EIP_170_MAX_RUNTIME_BYTES {
+            return Err(format!(
+                "VK runtime code size {runtime_len} bytes exceeds the EIP-170 limit of \
+                 {EIP_170_MAX_RUNTIME_BYTES} bytes; the VK data contract would revert at \
+                 deployment. Reduce the circuit's constant/commitment count."
+            ));
+        }
+        let constructor_memory = VkConstructorMemoryLayout::new(runtime_len);
         constructor_memory.validate()?;
         if self.constructor_payload_mptr != constructor_memory.payload_mptr {
             return Err(format!(
