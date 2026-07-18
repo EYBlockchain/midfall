@@ -308,6 +308,16 @@ impl Data {
         // BLS12-381 G1 commitments occupy 4 words (EIP-2537 padded), so the
         // stride between consecutive points is 4 instead of the BN254-era 2.
         let fixed_comm_mptr = memory.vk_mptr + vk.constants.len();
+        // The fixed-commitment region is consumed as meta.num_fixeds slots
+        // (EcPoint::range(fixed_comm_mptr).take(meta.num_fixeds) below), but the
+        // permutation base is advanced past vk.fixed_comms.len() of them. If the
+        // two counts ever diverge, the fixed and permutation commitment regions
+        // would silently overlap or leave a gap, so require them equal here.
+        assert_eq!(
+            vk.fixed_comms.len(),
+            meta.num_fixeds,
+            "VK fixed commitment count must match constraint-system fixed count"
+        );
         let permutation_comm_mptr = fixed_comm_mptr + G1_WORDS * vk.fixed_comms.len();
         let challenge_mptr = memory.challenge_mptr;
         let theta_mptr = memory.theta_mptr;
