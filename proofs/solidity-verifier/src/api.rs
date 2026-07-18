@@ -389,6 +389,13 @@ pub enum RepackError {
         /// Hex encoding of the failing 48-byte compressed G1.
         bytes_hex: String,
     },
+    /// One proof scalar is not a canonical Fr element (`>= r`).
+    NonCanonicalScalar {
+        /// Byte offset of the failing scalar in the native proof.
+        offset: usize,
+        /// Big-endian hex encoding of the failing 32-byte scalar.
+        bytes_hex: String,
+    },
 }
 
 impl fmt::Display for RepackError {
@@ -409,6 +416,11 @@ impl fmt::Display for RepackError {
                 f,
                 "invalid compressed G1 at compressed[{offset}..{}]: bytes = 0x{bytes_hex}",
                 offset + layout::G1_COMPRESSED_BYTES
+            ),
+            Self::NonCanonicalScalar { offset, bytes_hex } => write!(
+                f,
+                "non-canonical Fr scalar at compressed[{offset}..{}]: bytes = 0x{bytes_hex}",
+                offset + layout::WORD_BYTES
             ),
         }
     }
