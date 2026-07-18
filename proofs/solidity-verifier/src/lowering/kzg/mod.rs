@@ -320,6 +320,23 @@ fn construct_intermediate_sets_impl(queries: &[Query]) -> IntermediateSets {
             // when their evals also agree; otherwise the proof claims the
             // same polynomial opens to two different values, which is a
             // protocol bug and must be rejected.
+            //
+            // TODO(structural): this dedup and the whole intermediate-set
+            // grouping compare EcPoint/Word handles by *memory pointer* (derived
+            // PartialEq), not by runtime value, whereas the midnight-proofs
+            // prover groups queries by polynomial identity and the verifier by
+            // commitment value. They agree today only because (a)
+            // SolidityGenerator supports a single committed-instance column (see
+            // validate_instance_column_shape in builder/api.rs), and (b) every
+            // downstream consumer depends only on first-appearance order and
+            // per-commitment point sets. The assert below also compares eval
+            // Words by pointer: with >= 2 committed-instance columns sharing
+            // G1_IDENTITY_MPTR at the same rotation it would panic at codegen
+            // (their eval Words are distinct memory handles) instead of
+            // collapsing them, and compute_dummy_queries would silently `skip`
+            // the same pair. Grouping by runtime value would lift both
+            // restrictions but is a structural change; the invariant is
+            // documented here rather than fixed.
             if let Some(existing_pos) = slot.1.iter().position(|pi| *pi == point_idx) {
                 assert_eq!(
                     slot.2[existing_pos], query.eval,
