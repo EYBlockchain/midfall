@@ -604,11 +604,17 @@ pub(crate) enum Location {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Value {
-    /// Byte offset stored as signed so that the BLS code-gen can compute
-    /// `ptr - N` even when `N` exceeds the original offset (the result
-    /// only ever appears as `ptr_end` in `lt(ptr_end, ptr)` style loops
-    /// where any value strictly less than the smallest visited address is
-    /// acceptable).
+    /// Byte offset. Stored as signed for historical reasons; concrete
+    /// offsets must be non-negative and `Display` panics otherwise.
+    ///
+    /// A negative offset has no correct rendering here. It used to be
+    /// emitted as `sub(0, N)`, which in EVM unsigned arithmetic is
+    /// `2^256 - N` -- the *largest* representable word. The previous
+    /// comment claimed such a value was safe because it "only ever appears
+    /// as `ptr_end` in `lt(ptr_end, ptr)` style loops where any value
+    /// strictly less than the smallest visited address is acceptable", but
+    /// `lt` is unsigned, so it is larger than every address and such a loop
+    /// runs zero iterations.
     Integer(isize),
     /// A symbolic Yul identifier `name`, with an optional byte-offset that
     /// will be rendered as `add(name, 0xNN)` (or just `name` when zero).
@@ -673,27 +679,15 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Value::Integer(int) if *int >= 0 => write!(f, "{}", fmt_hex(*int)),
-            Value::Integer(int) => write!(f, "sub(0, {})", fmt_hex(-*int)),
+            Value::Integer(int) => {
+                panic!("negative pointer offset {int} has no correct Yul rendering")
+            }
             Value::Identifier(ident, 0) => write!(f, "{ident}"),
             Value::Identifier(ident, off) if *off > 0 => {
                 write!(f, "add({ident}, {})", fmt_hex(*off))
             }
             Value::Identifier(ident, off) => {
                 write!(f, "sub({ident}, {})", fmt_hex(-*off))
-            }
-        }
-    }
-}
-
-impl Add<usize> for Value {
-    /// Pointer-expression value after word-wise addition.
-    type Output = Value;
-    /// Advance by `rhs` EVM words.
-    fn add(self, rhs: usize) -> Self::Output {
-        match self {
-            Value::Integer(int) => Value::Integer(int + (rhs as isize) * WORD_BYTES as isize),
-            Value::Identifier(name, off) => {
-                Value::Identifier(name, off + (rhs as isize) * WORD_BYTES as isize)
             }
         }
     }
@@ -708,6 +702,20 @@ impl Sub<usize> for Value {
             Value::Integer(int) => Value::Integer(int - (rhs as isize) * WORD_BYTES as isize),
             Value::Identifier(name, off) => {
                 Value::Identifier(name, off - (rhs as isize) * WORD_BYTES as isize)
+            }
+        }
+    }
+}
+
+impl Add<usize> for Value {
+    /// Pointer-expression value after word-wise addition.
+    type Output = Value;
+    /// Advance by `rhs` EVM words.
+    fn add(self, rhs: usize) -> Self::Output {
+        match self {
+            Value::Integer(int) => Value::Integer(int + (rhs as isize) * WORD_BYTES as isize),
+            Value::Identifier(name, off) => {
+                Value::Identifier(name, off + (rhs as isize) * WORD_BYTES as isize)
             }
         }
     }
@@ -756,22 +764,22 @@ impl Display for Ptr {
     }
 }
 
-impl Add<usize> for Ptr {
-    /// Pointer with the same location and advanced value.
-    type Output = Ptr;
-    /// Advance by `rhs` EVM words while preserving location.
-    fn add(mut self, rhs: usize) -> Self::Output {
-        self.value = self.value + rhs;
-        self
-    }
-}
-
 impl Sub<usize> for Ptr {
     /// Pointer with the same location and rewound value.
     type Output = Ptr;
     /// Move backward by `rhs` EVM words while preserving location.
     fn sub(mut self, rhs: usize) -> Self::Output {
         self.value = self.value - rhs;
+        self
+    }
+}
+
+impl Add<usize> for Ptr {
+    /// Pointer with the same location and advanced value.
+    type Output = Ptr;
+    /// Advance by `rhs` EVM words while preserving location.
+    fn add(mut self, rhs: usize) -> Self::Output {
+        self.value = self.value + rhs;
         self
     }
 }
