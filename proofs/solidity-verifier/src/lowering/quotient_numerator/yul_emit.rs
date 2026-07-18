@@ -456,6 +456,16 @@ impl<'a> Evaluator<'a> {
             // `(Vec<String>, String)` entries.
             let selector_expr = chunked.selector_expression();
 
+            // Fail closed on a chunk/helper-eval count mismatch: zip would
+            // otherwise silently drop the excess chunks, removing helper
+            // constraints from the numerator.
+            assert_eq!(
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+                "lookup {lookup_idx}: input chunk count {} != helper eval count {}",
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+            );
             for (input_chunk, h_eval) in
                 chunked.input_expression_chunks().iter().zip(h_evals.iter())
             {

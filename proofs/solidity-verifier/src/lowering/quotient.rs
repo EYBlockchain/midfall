@@ -1610,6 +1610,18 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             Self::push_structured_main_fold(&mut block, "q_lookup_eval", state_slots, trace);
             block.push("}".to_string());
 
+            // Fail closed on a chunk/helper-eval count mismatch: zip would
+            // otherwise silently drop the excess chunks, removing helper
+            // constraints from the y-batched numerator. Guarded indirectly today
+            // by the protocol lookup count check, but assert it directly at the
+            // zip site.
+            assert_eq!(
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+                "lookup {lookup_idx}: input chunk count {} != helper eval count {}",
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+            );
             for (input_chunk, h_eval) in
                 chunked.input_expression_chunks().iter().zip(h_evals.iter())
             {
