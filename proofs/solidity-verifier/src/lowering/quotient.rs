@@ -1262,15 +1262,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         yul_const_value(value, const_vars).as_deref() == Some(expected_coeff)
     }
 
-    /// Record `let name := const` bindings for later limb-chain matching.
+    /// Track constant variable bindings for later limb-chain matching.
+    ///
+    /// Records `name := const` (whether or not introduced with `let`), and,
+    /// crucially, forgets any variable that is reassigned to a non-constant
+    /// value. Ignoring non-`let` reassignments would leave a stale literal in
+    /// `const_vars`, so a later `mulmod(name, limb, r)` could be mis-recognized
+    /// as a fused limb7 coefficient and bake the wrong constant into the
+    /// generated quotient identity.
     fn record_yul_const_assignment(line: &str, const_vars: &mut HashMap<String, String>) {
-        let Some((dst, rhs)) = yul_let_assignment(line) else {
+        let Some(assignment) = yul_assignment(line) else {
             return;
         };
-        let Some(value) = yul_const_value(&rhs, const_vars) else {
-            return;
-        };
-        const_vars.insert(dst, value);
+        match yul_const_value(&assignment.expr, const_vars) {
+            Some(value) => {
+                const_vars.insert(assignment.dst, value);
+            }
+            None => {
+                const_vars.remove(&assignment.dst);
+            }
+        }
     }
 
     /// Trace, advance, and accumulate one main quotient identity value.
