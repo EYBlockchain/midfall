@@ -111,7 +111,9 @@ impl VkPayloadLayout {
             word_offset: self.cursor_words,
             word_len,
         };
-        self.cursor_words += word_len;
+        self.cursor_words = self.cursor_words.checked_add(word_len).ok_or_else(|| {
+            format!("VK payload word cursor overflow reserving {kind:?} ({word_len} words)")
+        })?;
         self.sections.push(section);
         Ok(section)
     }
@@ -122,7 +124,10 @@ impl VkPayloadLayout {
         kind: PayloadSectionKind,
         commitments: usize,
     ) -> Result<PayloadSection, String> {
-        self.reserve(kind, commitments * G1_WORDS)
+        let word_len = commitments.checked_mul(G1_WORDS).ok_or_else(|| {
+            format!("VK payload G1 word overflow for {kind:?}: {commitments} commitments")
+        })?;
+        self.reserve(kind, word_len)
     }
 
     /// Return the section for `kind`, if it has been reserved.
