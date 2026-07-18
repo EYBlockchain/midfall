@@ -54,5 +54,11 @@
 
             // Success path is terminal. Invalid inputs have already reverted,
             // so the Solidity ABI observes `true`.
+            //
+            // The guard is redundant today -- every failure path above reverts
+            // rather than clearing `success` -- but it keeps acceptance a local
+            // property of this file instead of an invariant split across
+            // FinalPairing.yul and ec_pairing.
+            if iszero(success) { revert(0, 0) }
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)

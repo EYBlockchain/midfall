@@ -218,7 +218,12 @@
             // 4-word G1 slots; G2 bases are loaded from the pinned VK payload.
             function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
                 ret := success
-                if iszero(ret) { leave }
+                // Every other exit from this function reverts, and the
+                // terminal `return(RETURN_MPTR, 0x20)` in TraceReturn.yul
+                // returns true without consulting `success`. Revert here too,
+                // so this helper has no path that hands control back to a
+                // caller that would report success for an unverified proof.
+                if iszero(ret) { revert(0, 0) }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
                 // Cancun MCOPY (3 + 3·words gas) replaces what used to
