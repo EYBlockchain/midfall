@@ -1274,6 +1274,26 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
 }
 
 #[test]
+fn accumulator_scalars_are_range_checked_where_they_are_read() {
+    let verifier_template = verifier_template_corpus();
+
+    // `validate_public_accumulator` runs before the transcript instance loop
+    // that rejects non-canonical instance words, and EIP-2537 G1MSM reduces
+    // scalars mod r implicitly. Canonicality must therefore be enforced at the
+    // read sites in this helper rather than inherited from a later template.
+    for required in [
+        "out := and(out, lt(lhs_scalar, r))",
+        "out := and(out, lt(rhs_scalar, r))",
+        "out := and(out, lt(fixed_scalar_{{ loop.index0 }}, r))",
+    ] {
+        assert!(
+            verifier_template.contains(required),
+            "accumulator scalars must be range-checked against r where they are read: {required}"
+        );
+    }
+}
+
+#[test]
 fn accumulator_decoder_rejects_noncanonical_infinity() {
     let verifier_template = verifier_template_corpus();
 

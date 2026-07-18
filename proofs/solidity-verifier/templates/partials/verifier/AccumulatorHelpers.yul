@@ -259,6 +259,11 @@
                     // Carried-scalar layout: the circuit exposes the scalar
                     // that multiplies the carried LHS point.
                     let lhs_scalar := calldataload(lhs_scalar_ptr)
+                    // Canonicality is enforced here rather than relying on the
+                    // later instance-absorption loop: G1MSM reduces scalars
+                    // mod r implicitly, so s and s+r would be indistinguishable
+                    // inside this helper.
+                    out := and(out, lt(lhs_scalar, r))
                     {%- else %}
                     // Already-collapsed point-pair layout: carried scalars are
                     // implicit one.
@@ -319,6 +324,7 @@
                     {%- if self.expected_acc_has_carried_scalars %}
                     // Explicit carried RHS scalar.
                     let rhs_scalar := calldataload(rhs_scalar_ptr)
+                    out := and(out, lt(rhs_scalar, r))
                     {%- else %}
                     // Implicit unit scalar for already-collapsed point pairs.
                     let rhs_scalar := 1
@@ -347,6 +353,9 @@
                 // corresponding base point is embedded in verifier memory at
                 // {{ base_mptr|hex() }}.
                 let fixed_scalar_{{ loop.index0 }} := calldataload(fixed_scalar_ptr)
+                // Reject non-canonical tail scalars before the negation below:
+                // for s >= r, `mod(sub(r, s), r)` is not -s mod r.
+                out := and(out, lt(fixed_scalar_{{ loop.index0 }}, r))
                 {%- if negate_scalar %}
                 // Some accumulator bases are represented with a negated scalar
                 // so the MSM can reuse the generated positive base point.
