@@ -1617,7 +1617,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 block.push("{".to_string());
 
                 if k == 0 {
-                    block.push("let q_lookup_eval := 0".to_string());
+                    // Unreachable today (chunks are never empty), but emit the
+                    // reference-faithful value (h_eval) rather than 0: the
+                    // native verifier (plonk/logup.rs) computes
+                    // helper_eval * (empty product = 1) - (empty sum = 0)
+                    // = helper_eval for an empty chunk, enforcing h == 0.
+                    // Emitting 0 leaves h unconstrained while the accumulator
+                    // still folds this h_eval into sum_h. Mirrors the fix in
+                    // quotient_numerator/yul_emit.rs.
+                    block.push(format!("let q_lookup_eval := {}", h_eval));
                     Self::push_structured_main_fold(
                         &mut block,
                         "q_lookup_eval",
