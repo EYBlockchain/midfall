@@ -117,16 +117,26 @@ impl ThetaWindowLayout {
     }
 }
 
+/// Verifier execution phases, in the order the generated code runs them.
+///
+/// The derived `Ord` is load-bearing: `MemoryLifetime::intersects` compares
+/// phases with `<=` to decide whether a `PhaseSpan` covers a `Phase`, so a
+/// variant declared out of runtime order makes the arena's overlap validation
+/// answer the wrong question. Keep this list in sync with the include order in
+/// `templates/contracts/Halo2Verifier.sol` and the call sites it renders.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum MemoryPhase {
     /// Generated verifying-key constructor return payload.
     VkConstructorPayload,
     /// Constructor-only precompile smoke tests.
     ConstructorSmoke,
+    /// Public-accumulator MSM input buffer.
+    ///
+    /// `validate_public_accumulator` runs from VkLoading.yul, immediately
+    /// after the VK payload is loaded and *before* the transcript starts.
+    AccumulatorMsm,
     /// Streaming Fiat-Shamir buffer before generated VK memory is live.
     Transcript,
-    /// Single scalar inversion scratch used by the modexp wrapper.
-    ScalarInv,
     /// Batch inversion for Lagrange denominator terms.
     LagrangeBatchInvert,
     /// Compact quotient VM temps and stack.
@@ -135,12 +145,16 @@ pub(crate) enum MemoryPhase {
     PcsQEvalSourceTable,
     /// Optional trace-only q_com MSM materialization.
     PcsQComTrace,
+    /// Single scalar inversion scratch used by the modexp wrapper.
+    ///
+    /// `scalar_inv` is called from the PCS f_eval interpolation, i.e. after
+    /// the q_eval source-table fold and before the fused final MSM -- not
+    /// during transcript absorption.
+    ScalarInv,
     /// Fused final PCS MSM input buffer.
     PcsFinalMsm,
     /// Low-memory PCS pairing input helpers.
     PcsPairing,
-    /// Public-accumulator MSM input buffer.
-    AccumulatorMsm,
     /// Public-accumulator pairing-batch hash and two G1 add/MSM frames.
     AccumulatorPairingBatch,
     /// Final two-pair KZG pairing frame.
