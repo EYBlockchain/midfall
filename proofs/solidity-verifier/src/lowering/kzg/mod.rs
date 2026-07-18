@@ -1760,7 +1760,12 @@ pub(crate) fn computations(
         lines.push("// Scale z*pi - vG before the final pairing check".to_string());
         lines.push("// pairing inputs (LHS = pi; RHS = final_com - v*G + x3*pi)".to_string());
 
-        // PAIRING_LHS = pi (paired against G2_BASE).
+        // PAIRING_LHS = pi. FinalPairing.yul calls
+        // ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR) with the
+        // slots swapped, and ec_pairing pairs its first argument against
+        // G2_BASE and its second against NEG_S_G2_BASE, so pi (PAIRING_LHS)
+        // is paired against NEG_S_G2_BASE (the [s]_2 side), matching the KZG
+        // identity e(final_com - v*G + x3*pi, [1]_2) = e(pi, [s]_2).
         lines.push(format!("mcopy(PAIRING_LHS_MPTR, PI_MPTR, {G1_BYTES:#x})"));
 
         // tmp = (-v) * G  =>  load G into planned scratch, scale by (r - v).
