@@ -788,6 +788,14 @@ impl<'a> Evaluator<'a> {
                         .get(&(column_index, query.rotation().0))
                         .copied()?
                 } else {
+                    // The non-committed public-input column only has its local
+                    // Rotation::cur() interpolation at INSTANCE_EVAL_MPTR.
+                    // Decline to treat a rotated query as a direct memory
+                    // pointer; the constructor rejects rotated instance queries
+                    // and instance_eval_at hard-asserts rotation == 0.
+                    if query.rotation().0 != 0 {
+                        return None;
+                    }
                     self.data.instance_eval
                 }
             }
@@ -1103,8 +1111,18 @@ impl<'a> Evaluator<'a> {
                 .to_string()
         } else {
             // The current public API supports one non-committed instance
-            // column, whose Lagrange-combined evaluation is computed by
-            // the template prologue and stored at INSTANCE_EVAL_MPTR.
+            // column, whose Lagrange-combined evaluation is computed by the
+            // template prologue and stored at INSTANCE_EVAL_MPTR for
+            // Rotation::cur() only. Hard-assert (not debug_assert) so a
+            // rotated query that ever bypasses the far-away constructor guard
+            // (builder/api.rs) fails closed in release builds too, instead of
+            // silently evaluating instance(x) in place of instance(x*omega^k)
+            // and generating a verifier that checks a different identity than
+            // the native Midfall verifier.
+            assert_eq!(
+                rotation, 0,
+                "rotated public instance query reached Yul quotient emission"
+            );
             self.data.instance_eval.to_string()
         }
     }
