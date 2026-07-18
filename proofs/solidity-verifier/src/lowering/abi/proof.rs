@@ -347,7 +347,13 @@ impl TranscriptBufferLayout {
             + pre_squeeze_advices * g1_absorb
             + squeeze_cushion;
 
-        let eval_run_bytes = proof.quotient_limbs.byte_len
+        // Absorb bytes, so the quotient limbs are counted at the transcript's
+        // G1 absorb width -- NOT `quotient_limbs.byte_len`, which is a
+        // calldata length. The two happen to be equal today, but they have
+        // diverged before (a compressed 48/49-byte transcript encoding against
+        // padded calldata), and that divergence is what overruns the keccak
+        // buffer into `VK_MPTR`.
+        let eval_run_bytes = proof.quotient_limbs.item_count * g1_absorb
             + proof.evals.byte_len
             + proof.q_evals.byte_len
             + squeeze_cushion;
