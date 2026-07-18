@@ -279,6 +279,37 @@ impl LoweringPlan {
                 self.vk.quotient_program_words
             ));
         }
+        // The VK payload embeds the const table and packed bytecode compiled
+        // inside `generate_vk`, but the interpreter is rendered from this
+        // independently recompiled `self.quotient.build`. Length checks alone
+        // let a nondeterministic/order-dependent compile ship a pinned VK whose
+        // bytecode disagrees with the rendered VM. Compare the embedded words
+        // against the plan build word-for-word so any divergence fails codegen.
+        if let Some(const_offset) = self.vk.quotient_const_offset_words {
+            let build_consts = &self.quotient.build.consts;
+            let embedded = &self.vk.constants[const_offset..const_offset + build_consts.len()];
+            if embedded.iter().map(|(_, value)| value).ne(build_consts.iter()) {
+                return Err(
+                    "quotient const table embedded in the VK payload does not match the \
+                     plan-rebuilt const table"
+                        .to_string(),
+                );
+            }
+        }
+        if let Some(program_offset) = self.vk.quotient_program_offset_words {
+            let build_words = layout::vk_payload::PackedProgramCodec::encode_words(
+                &self.quotient.build.bytes,
+            );
+            let embedded =
+                &self.vk.constants[program_offset..program_offset + build_words.len()];
+            if embedded.iter().map(|(_, value)| value).ne(build_words.iter()) {
+                return Err(
+                    "quotient program bytecode embedded in the VK payload does not match the \
+                     plan-rebuilt bytecode"
+                        .to_string(),
+                );
+            }
+        }
         if self.quotient.program.stack_mptr != self.quotient.stack_mptr {
             return Err(format!(
                 "quotient stack pointer drifted: model={:#x} planned={:#x}",
