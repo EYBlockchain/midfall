@@ -744,9 +744,17 @@ pub(crate) fn memory_requirements(
 ) -> PcsMemoryRequirements {
     let sets = intermediate_sets(meta, data);
     let n_sets = sets.point_sets.len();
-    if n_sets == 0 {
-        return PcsMemoryRequirements::default();
-    }
+    // Fail closed: zero point sets means the plan carries no PCS queries, which
+    // would size (and, in `computations`, emit) a verifier with no final
+    // pairing check. Since zero-initialized PAIRING_{LHS,RHS}_MPTR encode the
+    // point at infinity, such a verifier accepts any transcript-parseable proof.
+    // `ProtocolPlan::validate` guarantees at least the Linearization query, so
+    // this is unreachable; assert it rather than silently return a default.
+    assert!(
+        n_sets != 0,
+        "KZG intermediate-set construction produced zero point sets; refusing to \
+         size a verifier with no PCS/pairing check (would be accept-all)"
+    );
 
     let by_set = commitments_by_set(&sets, n_sets);
     let commitments_per_set = by_set.iter().map(Vec::len);
@@ -819,9 +827,17 @@ pub(crate) fn computations(
     const TRUNC_MASK_128: &str = "0xffffffffffffffffffffffffffffffff";
     let sets = intermediate_sets(meta, data);
     let n_sets = sets.point_sets.len();
-    if n_sets == 0 {
-        return Vec::new();
-    }
+    // Fail closed: an empty point-set list would emit a verifier with no Block 6,
+    // so PAIRING_{LHS,RHS}_MPTR stay zero-initialized. Zero memory is the EIP-2537
+    // encoding of the BLS12-381 point at infinity, so the final pairing evaluates
+    // to 1 and the verifier accepts ANY proof with no cryptographic checking.
+    // `ProtocolPlan::validate` requires the query schedule to end with the
+    // Linearization query (n_sets >= 1), so reaching here is a generator bug.
+    assert!(
+        n_sets != 0,
+        "KZG intermediate-set construction produced zero point sets; refusing to \
+         emit a verifier with no PCS/pairing check (would be accept-all)"
+    );
 
     // The emitted blocks below adapt the Rust `multi_prepare` flow:
     // construct/sort point sets, fold q_eval vectors, interpolate at x3,
