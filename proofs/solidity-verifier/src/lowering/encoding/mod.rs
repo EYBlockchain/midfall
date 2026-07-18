@@ -287,7 +287,9 @@ pub(crate) struct Data {
     /// fewer-point-sets path. Empty when the feature is disabled. The
     /// dummy buffer is laid out immediately after the main reversed-
     /// evals buffer; `dummy_eval_words[i]` points at
-    /// `REVERSED_EVALS_MPTR + (num_evals + i) * 0x20`. The transcript
+    /// `REVERSED_EVALS_MPTR + (num_main_evals + i) * 0x20`, where
+    /// `num_main_evals` is the eval count *before* dummies are appended
+    /// (not `meta.num_evals`, which already includes them). The transcript
     /// loop reads `num_dummy_evals` extra Fr scalars after the main
     /// eval block and spills them into this buffer the same way the
     /// main loop does.
