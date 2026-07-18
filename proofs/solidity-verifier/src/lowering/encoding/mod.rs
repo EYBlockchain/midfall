@@ -320,6 +320,17 @@ impl Data {
             meta.num_fixeds,
             "VK fixed commitment count must match constraint-system fixed count"
         );
+        // Same argument for the permutation region: `permutation_comms` below
+        // zips `meta.permutation_columns` against `EcPoint::range(...)`, and
+        // `izip!` silently truncates to the shorter side. A VK carrying fewer
+        // commitments than the constraint system has permutation columns would
+        // therefore drop columns from the permutation argument rather than
+        // fail.
+        assert_eq!(
+            vk.permutation_comms.len(),
+            meta.permutation_columns.len(),
+            "VK permutation commitment count must match constraint-system permutation column count"
+        );
         let permutation_comm_mptr = fixed_comm_mptr + G1_WORDS * vk.fixed_comms.len();
         let challenge_mptr = memory.challenge_mptr;
         let theta_mptr = memory.theta_mptr;
