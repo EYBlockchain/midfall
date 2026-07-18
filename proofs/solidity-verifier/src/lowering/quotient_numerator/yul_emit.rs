@@ -479,10 +479,17 @@ impl<'a> Evaluator<'a> {
 
                 let k = f_plus_beta_vars.len();
                 if k == 0 {
-                    // Empty chunk shouldn't happen but emit a no-op.
-                    let zero = self.fresh_var();
-                    lines.push(format!("let {zero} := 0"));
-                    out.push((lines, zero));
+                    // Unreachable today (BatchedArgument::new requires >= 1
+                    // parallel lookup and slice::chunks never yields an empty
+                    // chunk), but emit the reference-faithful value rather than
+                    // 0 so a future chunking change cannot silently drop the
+                    // constraint. For an empty chunk the native verifier
+                    // (plonk/logup.rs) computes helper_eval * (empty product = 1)
+                    // - (empty sum = 0) = helper_eval, enforcing h == 0. Emitting
+                    // 0 would leave h unconstrained while the accumulator still
+                    // folds this h_eval into sum_h, letting a prover forge lookup
+                    // balance.
+                    out.push((lines, h_eval.to_string()));
                     continue;
                 }
 
