@@ -578,11 +578,18 @@ impl<'a> Evaluator<'a> {
                 let beta = self.fresh_var();
                 lines.push(format!("let {beta} := mload(BETA_MPTR)"));
 
-                // Σ_h h_eval[c]
+                // Σ_h h_eval[c]. Empty for a lookup with no input expressions
+                // (zero helper chunks); the native verifier's sum_helpers folds
+                // over an empty set to 0, so mirror that instead of indexing
+                // h_evals[0] out of bounds and panicking at codegen.
                 let sum_h = self.fresh_var();
-                lines.push(format!("let {sum_h} := {}", h_evals[0]));
-                for h in &h_evals[1..] {
-                    lines.push(format!("{sum_h} := addmod({sum_h}, {h}, r)"));
+                if let Some((first, rest)) = h_evals.split_first() {
+                    lines.push(format!("let {sum_h} := {first}"));
+                    for h in rest {
+                        lines.push(format!("{sum_h} := addmod({sum_h}, {h}, r)"));
+                    }
+                } else {
+                    lines.push(format!("let {sum_h} := 0"));
                 }
 
                 // selector eval (full Expression; not necessarily a
