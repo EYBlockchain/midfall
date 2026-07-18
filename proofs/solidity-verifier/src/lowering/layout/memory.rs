@@ -502,6 +502,9 @@ pub(crate) struct VerifierMemoryLayout {
     /// Reuses selector-accumulator bytes during the earlier Lagrange batch
     /// inversion phase.
     pub(crate) batch_invert_scratch_mptr: usize,
+    /// Number of Fr words the generated Lagrange block writes in place at
+    /// `X_N_MPTR` as the batch-inversion input run.
+    pub(crate) batch_invert_input_words: usize,
     /// First quotient VM temporary. Also the canonical PCS scratch base once
     /// selector accumulators are accounted for.
     pub(crate) quotient_tmp_mptr: usize,
@@ -620,6 +623,7 @@ impl VerifierMemoryLayout {
         .max()
         .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
+        let batch_invert_input_words = batch_invert_input_words(meta, config.num_instances);
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
@@ -961,6 +965,7 @@ impl VerifierMemoryLayout {
             quotient_limb_comms_mptr_base,
             selector_acc_mptr,
             batch_invert_scratch_mptr,
+            batch_invert_input_words,
             quotient_tmp_mptr,
             quotient_stack_mptr,
             pcs_q_eval_source_table_mptr,
@@ -1056,6 +1061,29 @@ impl VerifierMemoryLayout {
             ));
         }
 
+        // The Lagrange block writes its batch-inversion input run in place at
+        // `X_N_MPTR` (theta word 26). The run intentionally spills past the
+        // theta band into the PCS fixed windows, which are written only after
+        // the Lagrange phase, so it cannot be registered as a region without
+        // fake overlaps; it is capacity-checked here instead. The first bytes
+        // that are already live at Lagrange time are the q_eval calldata
+        // cursor (written by the proof parser), the G1 identity slot (must
+        // stay virgin zero memory), and the decoded proof evaluations.
+        let lagrange_run_end = ThetaSlot::XN.word() + self.batch_invert_input_words;
+        let lagrange_run_cap = windows
+            .q_eval_cptr_word
+            .min(windows.g1_identity_word)
+            .min(windows.reversed_evals_word);
+        if lagrange_run_end > lagrange_run_cap {
+            return Err(format!(
+                "Lagrange batch-inversion input run overflows live verifier memory: \
+                 [X_N_MPTR, X_N_MPTR + {} word(s)) ends at theta word {lagrange_run_end}, \
+                 but Q_EVAL_CPTR_MPTR/G1_IDENTITY_MPTR/decoded evaluations are live from \
+                 theta word {lagrange_run_cap}; reduce the public instance count",
+                self.batch_invert_input_words
+            ));
+        }
+
         self.map.validate()?;
 
         Ok(())
@@ -1073,25 +1101,31 @@ pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
         + meta.num_quotients
 }
 
+/// Number of Fr words the generated Lagrange block writes in place starting at
+/// `X_N_MPTR` as the batch-inversion input run.
+///
+/// The input range covers:
+///   - num_instances public Lagrange denominators, or one fallback word when
+///     there are no public instances;
+///   - `abs(rotation_last)` negative-row denominators;
+///   - x_n - 1.
+fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
+    if num_instances == 0 {
+        meta.rotation_last.unsigned_abs() as usize + 2
+    } else {
+        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
+    }
+}
+
 /// Scratch size required by the batched scalar-inversion helper.
 fn batch_invert_scratch_bytes(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
     // The template calls:
     //   batch_invert(X_N_MPTR, mptr_end + WORD_BYTES, scratch, r)
     //
-    // The input range covers:
-    //   - num_instances public Lagrange denominators, or one fallback word when
-    //     there are no public instances;
-    //   - `abs(rotation_last)` negative-row denominators;
-    //   - x_n - 1.
-    //
     // For N inputs, the batched inversion stores N-2 prefix products and then
     // overlays one modexp frame at the current prefix pointer. Singletons use
     // only the frame.
-    let input_words = if num_instances == 0 {
-        meta.rotation_last.unsigned_abs() as usize + 2
-    } else {
-        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
-    };
+    let input_words = batch_invert_input_words(meta, num_instances);
 
     MODEXP_FRAME_BYTES + input_words.saturating_sub(2) * WORD_BYTES
 }
@@ -1593,6 +1627,43 @@ mod tests {
         assert_eq!(
             region.len,
             MODEXP_FRAME_BYTES + (5 + 3 + 1 - 2) * WORD_BYTES
+        );
+    }
+
+    #[test]
+    fn lagrange_batch_invert_input_run_is_bounded_by_live_memory() {
+        let meta = ConstraintSystemMeta {
+            rotation_last: -3,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let windows = ThetaWindowLayout::compatibility();
+        let cap_words = windows
+            .q_eval_cptr_word
+            .min(windows.g1_identity_word)
+            .min(windows.reversed_evals_word)
+            - ThetaSlot::XN.word();
+
+        // Largest instance count whose denominator run plus `x_n - 1` still
+        // fits below the q_eval calldata cursor: num + |rotation_last| + 1.
+        let max_instances = cap_words - 3 - 1;
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: max_instances,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        assert_eq!(layout.batch_invert_input_words, cap_words);
+        layout.validate().expect("run ending below Q_EVAL_CPTR_MPTR is valid");
+
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: max_instances + 1,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let err = layout.validate().unwrap_err();
+        assert!(
+            err.contains("Lagrange batch-inversion input run"),
+            "unexpected validation error: {err}"
         );
     }
 }
