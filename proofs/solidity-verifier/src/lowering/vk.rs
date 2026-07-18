@@ -6,7 +6,7 @@
 //! generated verifier contracts.
 
 use ff::Field;
-use group::{prime::PrimeCurveAffine, Curve};
+use group::{prime::PrimeCurveAffine, Curve, Group};
 use itertools::chain;
 use midnight_curves::{Fq, G1Affine, G1Projective, G2Affine};
 use ruint::aliases::U256;
@@ -69,6 +69,27 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             // (4 / 8 u256 words respectively). We cannot read `params.g[0]`
             // directly (the field is crate-private in midnight-proofs), so
             // we use the canonical BLS12-381 generator.
+            //
+            // The generated verifier subtracts `v * G1_BASE` in the final KZG
+            // linearization while every commitment in the proof/VK is over the
+            // SRS base `g[0]`. If a deployer-supplied `params` had `g[0] != G`,
+            // the contract would enforce a different pairing equation than the
+            // native verifier (bricking honest proofs, or accepting evaluation
+            // claims for a scaled statement). Validate consistency at build
+            // time: the commitment of the constant-1 polynomial equals `g[0]`,
+            // and in the Lagrange basis that commitment is `sum(g_lagrange)`.
+            let g_lagrange = self.params.g_lagrange();
+            let srs_g1_base = g_lagrange
+                .iter()
+                .copied()
+                .fold(G1Projective::identity(), |acc, g| acc + g)
+                .to_affine();
+            assert_eq!(
+                srs_g1_base,
+                G1Affine::generator(),
+                "SRS G1 base (sum of g_lagrange) is not the canonical BLS12-381 \
+                 generator; the emitted G1_BASE would diverge from the commitment base"
+            );
             let g1_pt: G1Affine = G1Affine::generator();
             let g2_pt: G2Affine = self.params.g2().to_affine();
             let neg_s_g2_pt: G2Affine = (-self.params.s_g2()).to_affine();
