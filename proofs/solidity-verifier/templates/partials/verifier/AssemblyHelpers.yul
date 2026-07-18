@@ -5,7 +5,13 @@
             // when the VK payload becomes smaller.
             function scalar_inv(x) -> inv {
                 // Zero has no multiplicative inverse in Fr; callers rely on a
-                // revert here rather than a bogus modexp result.
+                // revert here rather than a bogus modexp result. Check the
+                // full canonical range, not just the literal word 0: for any
+                // x congruent to 0 mod r (x = r, say) modexp returns 0, which
+                // downstream mulmod chains would silently absorb. Every
+                // current call site feeds addmod/mulmod output, so this only
+                // guards against a future emitter passing a raw scalar.
+                if iszero(lt(x, FR_MODULUS)) { revert(0, 0) }
                 if iszero(x) { revert(0, 0) }
                 let p := {{ memory.scalar_inv_scratch_mptr|hex() }}
                 // EIP-198 modexp frame:
@@ -142,6 +148,13 @@
                 // just run one modexp inverse in place.
                 if eq(count_bytes, 0x20) {
                     let x := mload(mptr_start)
+                    // Reject anything congruent to zero mod r, not just the
+                    // literal word 0: modexp would return 0 for those too, and
+                    // the caller would take it for a valid inverse.
+                    if iszero(lt(x, r)) {
+                        ret := 0
+                        leave
+                    }
                     if iszero(x) {
                         ret := 0
                         leave
