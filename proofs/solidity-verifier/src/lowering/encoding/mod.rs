@@ -13,6 +13,7 @@ use std::{
 };
 
 use ff::PrimeField;
+use group::prime::PrimeCurveAffine;
 use itertools::{izip, Itertools};
 use midnight_curves::{Coordinates, CurveAffine, Fq, G1Affine, G2Affine};
 use midnight_proofs::plonk::{Any, Column, ConstraintSystem};
@@ -833,8 +834,18 @@ fn fp48_be_to_hi_lo(be: &[u8]) -> (U256, U256) {
 /// big-endian and split (hi=top 16 bytes padded into u256, lo=bottom 32
 /// bytes).
 pub(crate) fn g1_to_u256s(ec_point: impl Borrow<G1Affine>) -> [U256; 4] {
-    let Some(coords) = Option::<Coordinates<G1Affine>>::from(ec_point.borrow().coordinates())
-    else {
+    let point = ec_point.borrow();
+    let Some(coords) = Option::<Coordinates<G1Affine>>::from(point.coordinates()) else {
+        // `coordinates()` returns None for the identity *and* for any off-curve
+        // point. The all-zero words below are the EIP-2537 encoding of the point
+        // at infinity, so silently returning them for an off-curve input would
+        // bake an identity commitment into the verifier. Only the identity may
+        // take this path; anything else is a malformed/corrupted point and must
+        // fail codegen rather than degrade a soundness-critical constant.
+        assert!(
+            bool::from(point.is_identity()),
+            "refusing to EIP-2537 encode an off-curve G1 point as the identity"
+        );
         return [U256::ZERO; 4];
     };
     let mut x_be = [0u8; BLS_FP_BYTES];
@@ -855,8 +866,16 @@ pub(crate) fn g1_to_u256s(ec_point: impl Borrow<G1Affine>) -> [U256; 4] {
 /// in big-endian per coord. The midnight-curves convention matches:
 /// each `Fp` coordinate read via `to_repr()` returns LE bytes.
 pub(crate) fn g2_to_u256s(ec_point: impl Borrow<G2Affine>) -> [U256; 8] {
-    let Some(coords) = Option::<Coordinates<G2Affine>>::from(ec_point.borrow().coordinates())
-    else {
+    let point = ec_point.borrow();
+    let Some(coords) = Option::<Coordinates<G2Affine>>::from(point.coordinates()) else {
+        // See `g1_to_u256s`: `coordinates()` also returns None for off-curve G2
+        // points, whose all-zero encoding would collapse to the identity (e.g.
+        // a corrupted `s_g2` degenerating the `e(w, -s*G2)` pairing term). Only
+        // the genuine identity may be encoded as zeros.
+        assert!(
+            bool::from(point.is_identity()),
+            "refusing to EIP-2537 encode an off-curve G2 point as the identity"
+        );
         return [U256::ZERO; 8];
     };
 
