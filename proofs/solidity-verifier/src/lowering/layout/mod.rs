@@ -142,7 +142,22 @@ pub(crate) mod accumulator {
     /// Low-memory hash frame for batching the accumulator pairing with KZG:
     /// domain tag word, KZG rhs/lhs G1s, then accumulator rhs/lhs G1s.
     pub(crate) const PAIRING_BATCH_PTR: usize = 0x100;
-    /// ASCII `"pairing-batch-acc-kzg"` right-padded to one EVM word.
+    /// Domain-separation word for the accumulator pairing batch.
+    ///
+    /// This is a 29-byte numeric literal: ASCII `"pairing-batch-acc-kzg"`
+    /// (21 bytes) followed by 8 zero bytes. FinalPairing.yul stores it with
+    /// `mstore`, which left-pads numeric literals to a full word, so the word
+    /// actually hashed into alpha is
+    ///
+    /// ```text
+    /// 00 00 00 || "pairing-batch-acc-kzg" || 00 * 8
+    /// ```
+    ///
+    /// i.e. NOT right-padded ASCII, as this comment previously claimed. The
+    /// value is still a fixed unique constant, so domain separation is
+    /// unaffected -- but any reimplementation or differential fixture that
+    /// derives alpha from the right-padded form will disagree with the
+    /// deployed verifier on accept/reject.
     pub(crate) const PAIRING_BATCH_DOMAIN_TAG_HEX: &str =
         "0x70616972696e672d62617463682d6163632d6b7a670000000000000000";
     /// KZG pairing RHS point offset inside the batch hash frame.
