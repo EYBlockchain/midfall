@@ -188,6 +188,12 @@
                 mstore(add(gp_mptr, {{ template_constants.modexp.mod_offset|hex() }}), r)
                 ret := staticcall(gas(), {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
+                // Leave before the backward pass on a failed modexp. A failed
+                // staticcall writes no output, so `mload(gp_mptr)` would read
+                // back the stale frame header and the pass below would
+                // overwrite every denominator in [mptr_start, mptr_end) with
+                // garbage products before returning ret = 0.
+                if iszero(ret) { leave }
                 let all_inv := mload(gp_mptr)
 
                 // Backward pass: derive each inverse from the inverted total
