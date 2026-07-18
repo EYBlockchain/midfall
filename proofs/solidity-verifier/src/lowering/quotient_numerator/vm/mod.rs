@@ -1210,6 +1210,8 @@ impl QuotientProgramBuilder {
         let bytes = compact_quotient_runs(&self.bytes);
         let validated_max_stack = validate_quotient_program(&bytes)
             .unwrap_or_else(|err| panic!("invalid finalized quotient VM program: {err}"));
+        validate_quotient_const_slots(&bytes, self.consts.len())
+            .unwrap_or_else(|err| panic!("invalid finalized quotient VM program: {err}"));
         assert_eq!(
             validated_max_stack, self.max_stack,
             "quotient VM physical program stack depth diverged from builder accounting"
@@ -2047,6 +2049,139 @@ pub(crate) fn validate_quotient_program(bytes: &[u8]) -> Result<usize, String> {
     }
 
     Ok(max_stack)
+}
+
+/// Bounds-check every constant-table slot referenced by a finalized program.
+///
+/// `validate_quotient_program` proves structural and stack safety but never
+/// checks that decoded const-table indices fall inside the emitted table. An
+/// encoder/planner regression that emits an out-of-range slot (this class has
+/// already produced one real bug) would otherwise make the deployed verifier
+/// load an arbitrary trailing VK word as a gate coefficient, silently flipping
+/// accept/reject. Run this after `validate_quotient_program`, whose byte-length
+/// validation guarantees the layout walked here is already in bounds.
+pub(crate) fn validate_quotient_const_slots(bytes: &[u8], const_len: usize) -> Result<(), String> {
+    let check = |slot: usize, idx: usize| -> Result<(), String> {
+        if slot >= const_len {
+            return Err(format!(
+                "quotient VM const slot {slot} at byte {idx} is outside the {const_len}-entry constant table"
+            ));
+        }
+        Ok(())
+    };
+    let limb_stride = 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+
+    for (idx, op, _len) in quotient_bytecode_ops(bytes) {
+        match op {
+            Q_OP_PUSH_CONST | Q_OP_ADD_CONST | Q_OP_MUL_CONST => {
+                check(read_u16(bytes, idx + 1) as usize, idx)?;
+            }
+            Q_OP_PUSH_CONST_U8 | Q_OP_ADD_CONST_U8 | Q_OP_MUL_CONST_U8 => {
+                check(bytes[idx + 1] as usize, idx)?;
+            }
+            Q_OP_ADD_MUL_CONST_U8_MEM_U16 => {
+                check(bytes[idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+            }
+            Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => {
+                check(bytes[idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+            }
+            Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16 => {
+                let count = read_u16(bytes, idx + 1) as usize;
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                let stride = QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                for k in 0..count {
+                    check(bytes[base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                }
+            }
+            Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8 => {
+                let count = read_u16(bytes, idx + 1) as usize;
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                let stride = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                for k in 0..count {
+                    check(bytes[base + k * stride + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                }
+            }
+            Q_OP_LIN7 => {
+                for k in 0..QUOTIENT_VM_LIMBS {
+                    check(bytes[idx + 1 + k * limb_stride] as usize, idx)?;
+                }
+            }
+            Q_OP_BILIN7_ROW => {
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                for k in 0..QUOTIENT_VM_LIMBS {
+                    check(bytes[base + k * limb_stride] as usize, idx)?;
+                }
+            }
+            Q_OP_BILIN7_PAIRWISE => {
+                let base = idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                for k in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                    check(bytes[base + k] as usize, idx)?;
+                }
+            }
+            Q_OP_AFFINE_SUM => {
+                let lin_count = read_u16(bytes, idx + 1) as usize;
+                let product_count = read_u16(bytes, idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES) as usize;
+                let mut cursor = idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                for _ in 0..lin_count {
+                    check(bytes[cursor + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                }
+                for _ in 0..product_count {
+                    check(bytes[cursor + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                }
+            }
+            Q_OP_MODARITH7 => {
+                let mut cursor = idx + 1;
+                let flags = bytes[cursor];
+                cursor += 1;
+                if flags & Q_MODARITH7_FLAG_COND != 0 {
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                }
+                if flags & Q_MODARITH7_FLAG_CONST != 0 {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += 1;
+                }
+                let lin_count = bytes[cursor] as usize;
+                let row_count = bytes[cursor + 1] as usize;
+                let pairwise_count = bytes[cursor + 2] as usize;
+                let mem_count = bytes[cursor + 3] as usize;
+                let product_count = bytes[cursor + 4] as usize;
+                cursor += 5;
+                for _ in 0..lin_count {
+                    for _ in 0..QUOTIENT_VM_LIMBS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += limb_stride;
+                    }
+                }
+                for _ in 0..row_count {
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                    for _ in 0..QUOTIENT_VM_LIMBS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += limb_stride;
+                    }
+                }
+                for _ in 0..pairwise_count {
+                    cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                    for _ in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += 1;
+                    }
+                }
+                for _ in 0..mem_count {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += limb_stride;
+                }
+                for _ in 0..product_count {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
 }
 
 /// Decode one instruction and validate token operands.
