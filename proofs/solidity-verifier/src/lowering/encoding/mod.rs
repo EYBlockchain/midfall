@@ -596,7 +596,19 @@ impl Value {
     /// Return the concrete offset, panicking for symbolic identifiers.
     pub(crate) fn as_usize(&self) -> usize {
         match self {
-            Value::Integer(int) => *int as usize,
+            Value::Integer(int) => {
+                // `Integer` is signed only so BLS pointer math can produce
+                // negative `ptr_end` sentinels for `lt(ptr_end, ptr)` loops. A
+                // concrete memory address is never negative; `*int as usize` on
+                // a negative value would wrap to a near-2^word offset and
+                // silently corrupt every derived mload/mstore, so fail closed.
+                assert!(
+                    *int >= 0,
+                    "Value::as_usize on negative offset {int}: signed offsets are \
+                     only valid as lt()-loop sentinels, not concrete addresses"
+                );
+                *int as usize
+            }
             Value::Identifier(..) => unreachable!(),
         }
     }
