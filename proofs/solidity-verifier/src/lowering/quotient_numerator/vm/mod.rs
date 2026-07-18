@@ -2624,7 +2624,15 @@ impl QuotientExpressionEnv for DataQuotientExpressionEnv<'_> {
             // The builder rejects rotated instance queries before lowering, so
             // the direct public-input column always uses the one local
             // Lagrange evaluation computed for `Rotation::cur()`.
-            debug_assert_eq!(
+            //
+            // Hard assert (not debug_assert): `debug_assert` compiles out in
+            // release, and this is the last line of defense far from the
+            // constructor guard (builder/api.rs). Substituting the Rotation::cur
+            // eval for a rotated query would silently emit a verifier that
+            // evaluates the gate with instance(x) instead of instance(x*w^k),
+            // enforcing a different quotient identity than the circuit. Fail
+            // closed, matching word_to_quotient_expr / ptr_to_quotient_mem.
+            assert_eq!(
                 rotation, 0,
                 "rotated public instance query reached lowering"
             );
