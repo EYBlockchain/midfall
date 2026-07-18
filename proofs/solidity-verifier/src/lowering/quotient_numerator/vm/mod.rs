@@ -2665,17 +2665,26 @@ pub(crate) fn ptr_to_quotient_mem(ptr: Ptr) -> QuotientMem {
     );
     match ptr.value() {
         Value::Integer(offset) => {
-            assert!(offset >= 0, "negative quotient memory pointer");
-            QuotientMem::Literal(offset as u32)
+            // Checked conversion: Value offsets are isize, so `offset as u32`
+            // would silently wrap for a negative or > u32::MAX offset and make
+            // the VM mload an unrelated address (a verifier computing the
+            // quotient numerator from the wrong memory word, with no build-time
+            // diagnostic). Fail loudly instead, like the other narrowing casts
+            // in this file (u16::try_from, u8::try_from).
+            let offset = u32::try_from(offset)
+                .expect("quotient memory pointer must be a non-negative offset that fits in u32");
+            QuotientMem::Literal(offset)
         }
         Value::Identifier(name, offset) => {
-            assert!(offset >= 0, "negative quotient memory token offset");
+            let offset = u32::try_from(offset).expect(
+                "quotient memory token offset must be a non-negative offset that fits in u32",
+            );
             let token = quotient_mem_token_from_name(name)
                 .unwrap_or_else(|| panic!("unsupported quotient memory token: {name}"));
             if offset == 0 {
                 QuotientMem::Token(token)
             } else {
-                QuotientMem::TokenOffset(token, offset as u32)
+                QuotientMem::TokenOffset(token, offset)
             }
         }
     }
