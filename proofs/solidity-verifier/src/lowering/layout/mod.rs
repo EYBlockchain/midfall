@@ -89,7 +89,16 @@ pub(crate) const PCS_STATIC_WORKING_WORDS: usize = 32;
 /// Static two-pair KZG pairing scratch plus one return word.
 pub(crate) const PAIRING_STATIC_WORKING_WORDS: usize = PAIRING_TWO_PAIR_BYTES / WORD_BYTES + 1;
 /// Low-memory frame used by the final two-pair KZG pairing helper.
-pub(crate) const FINAL_PAIRING_SCRATCH_START: usize = PAIRING_TWO_PAIR_BYTES;
+///
+/// Placed past the end of the accumulator pairing-batch hash frame, which
+/// occupies `[PAIRING_BATCH_PTR, PAIRING_BATCH_PTR + PAIRING_BATCH_HASH_BYTES)`
+/// = `[0x100, 0x320)`. Starting at `PAIRING_TWO_PAIR_BYTES` (0x300) instead
+/// would put the last word of the hashed ACC_LHS copy inside this scratch.
+/// The two regions carry different `MemoryPhase`s, and `MemoryLifetime::
+/// intersects` treats distinct phases as never co-live, so the planner cannot
+/// catch that overlap -- it has to be avoided by construction here.
+pub(crate) const FINAL_PAIRING_SCRATCH_START: usize =
+    accumulator::PAIRING_BATCH_PTR + accumulator::PAIRING_BATCH_HASH_BYTES;
 
 pub(crate) mod precompile {
     //! EVM precompile addresses used by the generated verifier. These values

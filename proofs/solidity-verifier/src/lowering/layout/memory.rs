@@ -1453,6 +1453,29 @@ mod tests {
             meta.num_simple_selectors * G1_MSM_PAIR_BYTES
         );
 
+        // These two regions carry different phases, and `MemoryLifetime::
+        // intersects` treats distinct phases as never co-live -- so the arena's
+        // own overlap validation is structurally blind to an overlap here and
+        // this assertion is the only thing that catches one.
+        let batch = layout
+            .map
+            .region("accumulator_pairing_batch")
+            .expect("accumulator pairing batch registered");
+        let final_pairing = layout
+            .map
+            .region("final_pairing_scratch")
+            .expect("final pairing scratch registered");
+        assert!(
+            batch.start + batch.len <= final_pairing.start,
+            "accumulator pairing batch [{:#x}, {:#x}) must not overlap final pairing scratch \
+             [{:#x}, {:#x}): the last word of the hashed ACC_LHS copy would share bytes with \
+             ec_pairing's input frame",
+            batch.start,
+            batch.start + batch.len,
+            final_pairing.start,
+            final_pairing.start + final_pairing.len,
+        );
+
         let scalar_inv = layout
             .map
             .region("scalar_inv_scratch")
