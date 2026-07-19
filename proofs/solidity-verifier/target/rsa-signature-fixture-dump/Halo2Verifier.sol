@@ -321,7 +321,13 @@ contract Halo2Verifier {
             // when the VK payload becomes smaller.
             function scalar_inv(x) -> inv {
                 // Zero has no multiplicative inverse in Fr; callers rely on a
-                // revert here rather than a bogus modexp result.
+                // revert here rather than a bogus modexp result. Check the
+                // full canonical range, not just the literal word 0: for any
+                // x congruent to 0 mod r (x = r, say) modexp returns 0, which
+                // downstream mulmod chains would silently absorb. Every
+                // current call site feeds addmod/mulmod output, so this only
+                // guards against a future emitter passing a raw scalar.
+                if iszero(lt(x, FR_MODULUS)) { revert(0, 0) }
                 if iszero(x) { revert(0, 0) }
                 let p := 0x15e0
                 // EIP-198 modexp frame:
@@ -458,6 +464,13 @@ contract Halo2Verifier {
                 // just run one modexp inverse in place.
                 if eq(count_bytes, 0x20) {
                     let x := mload(mptr_start)
+                    // Reject anything congruent to zero mod r, not just the
+                    // literal word 0: modexp would return 0 for those too, and
+                    // the caller would take it for a valid inverse.
+                    if iszero(lt(x, r)) {
+                        ret := 0
+                        leave
+                    }
                     if iszero(x) {
                         ret := 0
                         leave
@@ -504,6 +517,12 @@ contract Halo2Verifier {
                 mstore(add(gp_mptr, 0xa0), r)
                 ret := staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
+                // Leave before the backward pass on a failed modexp. A failed
+                // staticcall writes no output, so `mload(gp_mptr)` would read
+                // back the stale frame header and the pass below would
+                // overwrite every denominator in [mptr_start, mptr_end) with
+                // garbage products before returning ret = 0.
+                if iszero(ret) { leave }
                 let all_inv := mload(gp_mptr)
 
                 // Backward pass: derive each inverse from the inverted total
@@ -528,14 +547,19 @@ contract Halo2Verifier {
             // 4-word G1 slots; G2 bases are loaded from the pinned VK payload.
             function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
                 ret := success
-                if iszero(ret) { leave }
+                // Every other exit from this function reverts, and the
+                // terminal `return(RETURN_MPTR, 0x20)` in TraceReturn.yul
+                // returns true without consulting `success`. Revert here too,
+                // so this helper has no path that hands control back to a
+                // caller that would report success for an unverified proof.
+                if iszero(ret) { revert(0, 0) }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
                 // Cancun MCOPY (3 + 3·words gas) replaces what used to
                 // be a 4-step mstore chain for each G1 (~60 gas) and an
                 // 8-iter mstore loop for each G2 (~240 gas). Net saving
                 // here is ~500 gas per ec_pairing call.
-                let scratch := 0x0300
+                let scratch := 0x0320
                 mcopy(scratch,              lhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
@@ -1357,7 +1381,14 @@ contract Halo2Verifier {
                 {
                     // q_y_power holds y^i at the current loop index.
                     let q_y_power := 1
-                    // Start at i=1 because y^0 = 1 is implicit and never read.
+                    // Slot 0 holds y^0 = 1. Codegen never emits a read of it
+                    // (FOLD_SELECTOR guards on a nonzero gap, and
+                    // selector_tail_updates drops zero tails), but the tail
+                    // block multiplies by mload(selector_power_mptr + offset)
+                    // unconditionally -- so initialize the slot rather than
+                    // leaving correctness to two filters in another file.
+                    mstore(0x5060, 1)
+                    // Start at i=1 because y^0 = 1 is written above.
                     for { let q_y_power_i := 1 } lt(q_y_power_i, 15) { q_y_power_i := add(q_y_power_i, 1) } {
                         // Advance from y^(i-1) to y^i modulo Fr.
                         q_y_power := mulmod(q_y_power, y, r)
@@ -1761,6 +1792,12 @@ contract Halo2Verifier {
                 // over-reads operands or leaves a partial expression live.
                 if iszero(eq(q_pc, q_end)) { revert(0, 0) }
                 if q_has_top { revert(0, 0) }
+                // The spilled stack must also be balanced. A FOLD executed
+                // with more than one operand live consumes only the cached
+                // top, leaving abandoned words below q_sp with q_has_top
+                // clear -- so both checks above pass while an operand of the
+                // identity has been silently dropped from nu_y(x).
+                if iszero(eq(q_sp, 0x5240)) { revert(0, 0) }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled
@@ -2251,6 +2288,12 @@ contract Halo2Verifier {
 
             // Success path is terminal. Invalid inputs have already reverted,
             // so the Solidity ABI observes `true`.
+            //
+            // The guard is redundant today -- every failure path above reverts
+            // rather than clearing `success` -- but it keeps acceptance a local
+            // property of this file instead of an invariant split across
+            // FinalPairing.yul and ec_pairing.
+            if iszero(success) { revert(0, 0) }
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)
         }
