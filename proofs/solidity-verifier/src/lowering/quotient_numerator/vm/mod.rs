@@ -2083,14 +2083,20 @@ pub(crate) fn validate_quotient_const_slots(bytes: &[u8], const_len: usize) -> R
                 check(bytes[idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
             }
             Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => {
-                check(bytes[idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                check(
+                    bytes[idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                    idx,
+                )?;
             }
             Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16 => {
                 let count = read_u16(bytes, idx + 1) as usize;
                 let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
                 let stride = QUOTIENT_VM_BYTE_U16_BYTES + 1;
                 for k in 0..count {
-                    check(bytes[base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    check(
+                        bytes[base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                        idx,
+                    )?;
                 }
             }
             Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8 => {
@@ -2098,7 +2104,10 @@ pub(crate) fn validate_quotient_const_slots(bytes: &[u8], const_len: usize) -> R
                 let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
                 let stride = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
                 for k in 0..count {
-                    check(bytes[base + k * stride + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    check(
+                        bytes[base + k * stride + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                        idx,
+                    )?;
                 }
             }
             Q_OP_LIN7 => {

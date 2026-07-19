@@ -1664,10 +1664,7 @@ fn accumulator_verifier_variants_compile_with_pinned_solc() {
             (name, verifier.as_str()),
             (
                 "accumulator VK",
-                artifacts
-                    .verifying_key
-                    .as_deref()
-                    .expect("separate render includes VK"),
+                artifacts.verifying_key.as_deref().expect("separate render includes VK"),
             ),
         ] {
             let bytecode = std::panic::catch_unwind(AssertUnwindSafe(|| compile_solidity(source)))

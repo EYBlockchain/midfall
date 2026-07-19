@@ -93,7 +93,17 @@ impl<'a> SolidityGenerator<'a> {
             });
         }
 
-        let meta = ConstraintSystemMeta::new(vk.cs(), config.num_committed_instances);
+        // Fallible: `ProtocolPlan::validate` rejects a range of unsupported
+        // constraint-system shapes -- an advice column that is absorbed but
+        // never opened by a PCS query being the most reachable authoring
+        // mistake. Panicking here would break this constructor's contract of
+        // reporting such shapes as a typed error.
+        let meta = ConstraintSystemMeta::try_new(vk.cs(), config.num_committed_instances).map_err(
+            |message| GeneratorError::Planning {
+                stage: "constraint system",
+                message,
+            },
+        )?;
 
         Ok(Self {
             params,

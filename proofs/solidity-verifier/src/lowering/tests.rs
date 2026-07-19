@@ -345,6 +345,67 @@ fn generator_rejects_rotated_non_committed_instance_queries() {
     ));
 }
 
+/// Declares two advice columns but queries only one, so the second is absorbed
+/// into the transcript without ever being opened by a PCS query.
+struct UnopenedAdviceColumnCircuit;
+
+impl Circuit<Fq> for UnopenedAdviceColumnCircuit {
+    type Config = ();
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let advice = meta.advice_column();
+        // Declared and committed, but never queried: this is the shape
+        // `ProtocolPlan::validate` rejects.
+        let _unopened = meta.advice_column();
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("unopened advice", |meta| {
+            let advice = meta.query_advice(advice, Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public = meta.query_instance(public_instance, Rotation::cur());
+            Constraints::without_selector(vec![("unopened advice", advice + committed + public)])
+        });
+    }
+
+    fn synthesize(
+        &self,
+        _config: Self::Config,
+        _layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        Ok(())
+    }
+}
+
+/// `try_new` documents a typed error for unsupported constraint systems, so an
+/// unopened advice column must not reach the `panic!` inside
+/// `ProtocolPlan::from_constraint_system`.
+#[test]
+fn generator_reports_unopened_advice_column_as_typed_error() {
+    let mut rng = ChaCha8Rng::seed_from_u64(8);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(4, &mut rng);
+    let circuit = UnopenedAdviceColumnCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 4)
+        .expect("test circuit VK should build");
+
+    let err = SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(1, 1))
+        .expect_err("unopened advice column is outside the supported verifier shape");
+    let GeneratorError::Planning { stage, message } = err else {
+        panic!("expected a planning error, got {err:?}");
+    };
+    assert_eq!(stage, "constraint system");
+    assert!(
+        message.contains("absorbed but never opened"),
+        "error should name the unopened advice column, got {message}"
+    );
+}
+
 #[test]
 fn scalar_le_to_be_word_reverses_exactly_one_word() {
     let mut le = [0u8; 32];
@@ -2486,7 +2547,10 @@ fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
             expr,
             // Coefficient `k + 2` keeps every term scaled (coeff 1 would drop the
             // constant) and distinct, so the table grows one slot per term.
-            quotient_scale_expr(Fq::from(k as u64 + 2), QuotientExpr::Mem(QuotientMem::Literal(ptr))),
+            quotient_scale_expr(
+                Fq::from(k as u64 + 2),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
         );
     }
 

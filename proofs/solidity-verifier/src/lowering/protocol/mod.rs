@@ -324,10 +324,28 @@ impl ProtocolPlan {
     /// passed to `partially_evaluate_identities` and KZG `multi_prepare`.
     /// The plan preserves that order so the Solidity transcript and proof
     /// cursors stay byte-compatible with the Rust verifier.
+    ///
+    /// Panics if the resulting plan fails [`ProtocolPlan::validate`]. Callers on
+    /// a fallible path — notably [`SolidityGenerator::try_new`], which promises
+    /// a typed error for unsupported constraint systems — must use
+    /// [`ProtocolPlan::try_from_constraint_system`] instead.
     pub(crate) fn from_constraint_system(
         cs: &ConstraintSystem<Fq>,
         nb_committed_instances: usize,
     ) -> Self {
+        Self::try_from_constraint_system(cs, nb_committed_instances)
+            .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))
+    }
+
+    /// Fallible counterpart of [`ProtocolPlan::from_constraint_system`].
+    ///
+    /// Returns the validation failure rather than panicking, so constraint
+    /// systems outside the supported verifier shape can be surfaced as a typed
+    /// error at the public API boundary.
+    pub(crate) fn try_from_constraint_system(
+        cs: &ConstraintSystem<Fq>,
+        nb_committed_instances: usize,
+    ) -> Result<Self, String> {
         let cs_degree = cs.degree();
         let num_fixeds = cs.num_fixed_columns();
         let permutation_columns = cs.permutation().get_columns();
@@ -610,8 +628,8 @@ impl ProtocolPlan {
             common_polys,
             quotient,
         };
-        plan.validate().unwrap_or_else(|err| panic!("invalid protocol plan: {err}"));
-        plan
+        plan.validate()?;
+        Ok(plan)
     }
 
     /// Number of scalar evaluations in the proof's main eval block.

@@ -138,10 +138,22 @@ impl ConstraintSystemMeta {
     /// verifier *reads* from the proof transcript (vs. computes locally
     /// via Lagrange interpolation). For the poseidon example this is 0;
     /// for IVC-style fixtures with committed inputs it would be > 0.
+    ///
+    /// Panics if the constraint system is outside the supported verifier shape.
+    /// Use [`ConstraintSystemMeta::try_new`] on fallible paths.
     pub(crate) fn new(cs: &ConstraintSystem<Fq>, nb_committed_instances: usize) -> Self {
-        let protocol = ProtocolPlan::from_constraint_system(cs, nb_committed_instances);
+        Self::try_new(cs, nb_committed_instances)
+            .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))
+    }
 
-        Self {
+    /// Fallible counterpart of [`ConstraintSystemMeta::new`].
+    pub(crate) fn try_new(
+        cs: &ConstraintSystem<Fq>,
+        nb_committed_instances: usize,
+    ) -> Result<Self, String> {
+        let protocol = ProtocolPlan::try_from_constraint_system(cs, nb_committed_instances)?;
+
+        Ok(Self {
             protocol: protocol.clone(),
             num_fixeds: protocol.num_fixeds,
             permutation_columns: protocol.permutation_columns.clone(),
@@ -164,7 +176,7 @@ impl ConstraintSystemMeta {
             advice_indices: protocol.advice_indices.clone(),
             challenge_indices: protocol.challenge_indices.clone(),
             rotation_last: protocol.rotation_last,
-        }
+        })
     }
 
     /// Check legacy scalar fields against the typed protocol plan.

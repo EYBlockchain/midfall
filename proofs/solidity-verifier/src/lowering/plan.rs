@@ -297,11 +297,9 @@ impl LoweringPlan {
             }
         }
         if let Some(program_offset) = self.vk.quotient_program_offset_words {
-            let build_words = layout::vk_payload::PackedProgramCodec::encode_words(
-                &self.quotient.build.bytes,
-            );
-            let embedded =
-                &self.vk.constants[program_offset..program_offset + build_words.len()];
+            let build_words =
+                layout::vk_payload::PackedProgramCodec::encode_words(&self.quotient.build.bytes);
+            let embedded = &self.vk.constants[program_offset..program_offset + build_words.len()];
             if embedded.iter().map(|(_, value)| value).ne(build_words.iter()) {
                 return Err(
                     "quotient program bytecode embedded in the VK payload does not match the \
