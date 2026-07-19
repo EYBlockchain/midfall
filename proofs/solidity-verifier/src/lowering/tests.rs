@@ -448,6 +448,44 @@ fn external_quotient_output_uses_planned_return_buffer() {
         );
 }
 
+/// The Lagrange denominator run is deliberately allowed to spill out of the
+/// theta band into the rot_points / x1_powers / q_eval_set windows, so
+/// `VerifierMemoryLayout::validate` caps it against the *live* boundary
+/// (`Q_EVAL_CPTR_MPTR`) rather than against `ROT_POINTS_MPTR`. That is only
+/// sound while those three windows are written strictly after the Lagrange
+/// phase and never read before being rewritten.
+///
+/// Because the run is not registered as a `MemoryRegion` -- registering it
+/// would report overlaps that are correct by phase ordering -- the arena's
+/// overlap loop cannot enforce this. Pin the ordering here instead, so moving
+/// a rot_points write earlier fails a test rather than silently corrupting the
+/// denominators.
+#[test]
+fn rot_points_window_is_written_after_the_lagrange_denominator_run() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let source = generator
+        .render(crate::RenderOptions::default())
+        .expect("test verifier should render")
+        .verifier;
+
+    let lagrange_end = source
+        .find("batch_invert(success, X_N_MPTR")
+        .expect("Lagrange block must call batch_invert over the denominator run");
+    // Any access at all, read or write: the run leaves garbage in this window,
+    // so an early read is as wrong as an early write being clobbered.
+    let first_rot_points_access = source
+        .find("add(ROT_POINTS_MPTR")
+        .expect("verifier must access the rot_points window");
+
+    assert!(
+        first_rot_points_access > lagrange_end,
+        "ROT_POINTS_MPTR is accessed at byte {first_rot_points_access}, before the Lagrange \
+         batch_invert at byte {lagrange_end}; the denominator run spills into that window, so \
+         touching it earlier would either corrupt the denominators or read their leftovers"
+    );
+}
+
 /// The Lagrange denominator run grows with `num_instances`, so an oversized
 /// instance count must be rejected at construction with a typed error rather
 /// than surfacing later as a memory-layout failure.

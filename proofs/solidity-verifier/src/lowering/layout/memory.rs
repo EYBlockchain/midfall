@@ -1110,6 +1110,14 @@ impl VerifierMemoryLayout {
         // that are already live at Lagrange time are the q_eval calldata
         // cursor (written by the proof parser), the G1 identity slot (must
         // stay virgin zero memory), and the decoded proof evaluations.
+        //
+        // INVARIANT: this cap is sound only while rot_points, x1_powers and
+        // q_eval_set are first touched *after* the Lagrange phase. The arena's
+        // overlap loop cannot enforce that, because the run is not a
+        // registered region -- registering it would report overlaps that are
+        // correct by phase ordering. The ordering is pinned instead by
+        // `rot_points_window_is_written_after_the_lagrange_denominator_run`,
+        // which asserts it against rendered verifier source.
         let lagrange_run_end = ThetaSlot::XN.word() + self.batch_invert_input_words;
         let lagrange_run_cap = windows
             .q_eval_cptr_word
