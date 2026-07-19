@@ -45,9 +45,9 @@ use ruint::aliases::U256;
 use sha3::Digest;
 
 use crate::{
-    compile_solidity, encode_calldata, pinned_solc_available, CallOutcome, Evm, GeneratorConfig,
-    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
-    FN_SIG_VERIFY_PROOF,
+    compile_solidity, encode_calldata, pinned_solc_available, AccumulatorEncoding, CallOutcome,
+    Evm, GeneratorConfig, RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk,
+    SolidityGenerator, FN_SIG_VERIFY_PROOF,
 };
 
 /// Scalar field used by the BLS12-381 Poseidon fixtures.
@@ -1483,6 +1483,120 @@ fn compile_solidity_is_deterministic_for_same_source() {
     let bytecode_b = compile_solidity(&fixture.embedded_verifier_solidity);
 
     assert_eq!(bytecode_a, bytecode_b);
+}
+
+/// Compile the accumulator render arm.
+///
+/// No production fixture enables `with_accumulator`, so before this test the
+/// whole `{%- if self.expected_has_accumulator %}` branch of
+/// AccumulatorHelpers.yul -- the limb decoder, the pre-transcript
+/// public-accumulator MSM, and the fixed-base scalar tail -- was never handed
+/// to solc by the default gate. Only the opt-in `ivc_keccak_solidity` bench
+/// (k = 20, release, external SRS assets) rendered it, so a Yul syntax error
+/// or a solc stack-depth regression in that branch could reach a release
+/// unnoticed.
+///
+/// This does not execute the accumulator logic against a real recursive proof
+/// -- that still needs a decider circuit carrying a genuine accumulator in its
+/// public inputs. It does guarantee the branch compiles, and it pins the
+/// canonicality checks on the scalars the helper feeds to G1MSM.
+#[test]
+fn accumulator_verifier_variants_compile_with_pinned_solc() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+    let relation = PoseidonExample;
+    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let vk = setup_vk(&srs, &relation);
+
+    // A fully collapsed accumulator occupies FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
+    // public inputs and has no fixed-base scalar tail.
+    let collapsed_words = AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+    // The partially collapsed form appends one scalar per generated base:
+    // `-G`, then every fixed commitment, then every permutation commitment.
+    let num_fixed_comms = vk.vk().fixed_commitments().len();
+    let num_perm_comms = vk.vk().permutation().commitments().len();
+    let tail_words = 1 + num_fixed_comms + num_perm_comms;
+
+    let variants = [
+        (
+            "fully collapsed accumulator",
+            collapsed_words,
+            AccumulatorEncoding::new(0, 7, 56),
+            true,
+        ),
+        (
+            "accumulator with fixed-base scalar tail",
+            collapsed_words + tail_words,
+            AccumulatorEncoding::new(0, 7, 56),
+            true,
+        ),
+        // Point-pair encodings carry no explicit scalars -- both are implicit
+        // one -- so no calldata scalar is read and none is range-checked.
+        (
+            "point-pair accumulator",
+            AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS,
+            AccumulatorEncoding::point_pair(0, 7, 56),
+            false,
+        ),
+    ];
+
+    for (name, num_instances, acc, has_carried_scalars) in variants {
+        let generator = SolidityGenerator::new(
+            &srs,
+            vk.vk(),
+            GeneratorConfig::new(num_instances, 1).with_accumulator(acc),
+        );
+        let artifacts = generator
+            .render(RenderOptions {
+                vk: RenderVk::Separate,
+                ..RenderOptions::default()
+            })
+            .unwrap_or_else(|err| panic!("{name} should render: {err}"));
+
+        let verifier = artifacts.verifier;
+        assert!(
+            verifier.contains("function validate_public_accumulator"),
+            "{name} should render the accumulator helper"
+        );
+        // The helper runs before the transcript loop that rejects
+        // non-canonical instance words, and EIP-2537 G1MSM reduces scalars mod
+        // r implicitly, so it must reject `s >= r` itself.
+        if has_carried_scalars {
+            for required in ["lt(lhs_scalar, r)", "lt(rhs_scalar, r)"] {
+                assert!(
+                    verifier.contains(required),
+                    "{name} should range-check accumulator scalars: {required}"
+                );
+            }
+        } else {
+            assert!(
+                !verifier.contains("lt(lhs_scalar, r)"),
+                "{name} carries no explicit scalars, so none should be read or checked"
+            );
+        }
+
+        for (label, source) in [
+            (name, verifier.as_str()),
+            (
+                "accumulator VK",
+                artifacts
+                    .verifying_key
+                    .as_deref()
+                    .expect("separate render includes VK"),
+            ),
+        ] {
+            let bytecode = std::panic::catch_unwind(AssertUnwindSafe(|| compile_solidity(source)))
+                .unwrap_or_else(|_| panic!("{label} should compile under the pinned solc"));
+            assert!(
+                !bytecode.is_empty(),
+                "{label} should compile to non-empty bytecode"
+            );
+        }
+    }
 }
 
 #[test]
