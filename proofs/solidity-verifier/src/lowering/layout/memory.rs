@@ -1150,7 +1150,7 @@ pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
 ///     there are no public instances;
 ///   - `abs(rotation_last)` negative-row denominators;
 ///   - x_n - 1.
-fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
+pub(crate) fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
     if num_instances == 0 {
         meta.rotation_last.unsigned_abs() as usize + 2
     } else {
@@ -1707,6 +1707,10 @@ mod tests {
             .min(windows.g1_identity_word)
             .min(windows.reversed_evals_word)
             - ThetaSlot::XN.word();
+        // `SolidityGenerator::try_new` rejects oversized instance counts up
+        // front against the constant form of this cap. The two must agree, or
+        // the early bound and the layout check would disagree about what fits.
+        assert_eq!(cap_words, theta_window::LAGRANGE_RUN_CAP_WORDS);
 
         // Largest instance count whose denominator run plus `x_n - 1` still
         // fits below the q_eval calldata cursor: num + |rotation_last| + 1.

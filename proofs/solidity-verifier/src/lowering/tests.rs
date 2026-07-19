@@ -448,6 +448,35 @@ fn external_quotient_output_uses_planned_return_buffer() {
         );
 }
 
+/// The Lagrange denominator run grows with `num_instances`, so an oversized
+/// instance count must be rejected at construction with a typed error rather
+/// than surfacing later as a memory-layout failure.
+#[test]
+fn generator_rejects_instance_counts_that_overrun_the_lagrange_run() {
+    let (params, vk) = lowering_plan_test_vk();
+    let meta = ConstraintSystemMeta::new(vk.cs(), 1);
+    let rotation_last_words = meta.rotation_last.unsigned_abs() as usize;
+    let max_num_instances =
+        crate::lowering::layout::theta_window::LAGRANGE_RUN_CAP_WORDS - rotation_last_words - 1;
+
+    SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(max_num_instances, 1))
+        .expect("the largest fitting instance count must still be accepted");
+
+    let err =
+        SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(max_num_instances + 1, 1))
+            .expect_err("one instance past the cap must be rejected");
+    assert!(
+        matches!(
+            err,
+            GeneratorError::TooManyInstances {
+                max_num_instances: reported,
+                ..
+            } if reported == max_num_instances
+        ),
+        "unexpected error: {err:?}"
+    );
+}
+
 #[test]
 fn lowering_plan_reuses_stable_layout_facts() {
     let (params, vk) = lowering_plan_test_vk();

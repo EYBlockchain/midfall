@@ -477,6 +477,19 @@ pub enum GeneratorError {
         /// Permutation commitments in the verifying key.
         num_permutation_comms: usize,
     },
+    /// The public instance count pushes the Lagrange batch-inversion input run
+    /// past the verifier memory that is already live when Lagrange executes.
+    ///
+    /// The run is written in place from `X_N_MPTR` and is
+    /// `num_instances + abs(rotation_last) + 1` words long.
+    TooManyInstances {
+        /// Requested public instance count.
+        num_instances: usize,
+        /// Largest public instance count this constraint system can support.
+        max_num_instances: usize,
+        /// Negative-row denominators contributed by `rotation_last`.
+        rotation_last_words: usize,
+    },
     /// Internal render/layout planning failed before Solidity was emitted.
     Planning {
         /// Planning stage.
@@ -542,6 +555,17 @@ impl fmt::Display for GeneratorError {
                  commitments): expected 0 (fully collapsed) or \
                  {min_fixed_scalar_count}..={max_fixed_scalar_count}; adjust num_instances or the \
                  accumulator offset"
+            ),
+            Self::TooManyInstances {
+                num_instances,
+                max_num_instances,
+                rotation_last_words,
+            } => write!(
+                f,
+                "public instance count {num_instances} is too large: the Lagrange \
+                 batch-inversion run writes num_instances + {rotation_last_words} + 1 words from \
+                 X_N_MPTR and would overrun verifier memory that is live at that point; \
+                 the maximum for this constraint system is {max_num_instances}"
             ),
             Self::Planning { stage, message } => {
                 write!(f, "generator planning failed during {stage}: {message}")

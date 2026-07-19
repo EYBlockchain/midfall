@@ -602,6 +602,25 @@ pub(crate) mod theta_window {
     /// Word offset where reversed proof evaluations begin.
     pub(crate) const REVERSED_EVALS_WORD: usize =
         G1_IDENTITY_WORD + G1_WORDS + G1_IDENTITY_PADDING_WORDS;
+
+    /// Largest Lagrange batch-inversion input run that fits below live memory.
+    ///
+    /// The run starts in place at `X_N_MPTR` and deliberately spills past the
+    /// theta band into the rot_points / x1_powers / q_eval_set windows, which
+    /// are written only after the Lagrange phase. The first words that are
+    /// already live when Lagrange runs are the q_eval calldata cursor, the G1
+    /// identity slot (which must stay virgin zero memory), and the decoded
+    /// proof evaluations, so the run must end at or before the lowest of those.
+    pub(crate) const LAGRANGE_RUN_CAP_WORDS: usize = {
+        let mut cap = Q_EVAL_CPTR_WORD;
+        if G1_IDENTITY_WORD < cap {
+            cap = G1_IDENTITY_WORD;
+        }
+        if REVERSED_EVALS_WORD < cap {
+            cap = REVERSED_EVALS_WORD;
+        }
+        cap - ThetaSlot::XN.word()
+    };
 }
 
 pub(crate) mod trace {
