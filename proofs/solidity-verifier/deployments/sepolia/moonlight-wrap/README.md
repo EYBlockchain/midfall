@@ -4,6 +4,64 @@ This directory contains the generated Moonlight wrap verifier contracts that
 were deployed to Sepolia, plus the exact runtime bytecode fetched back from the
 chain.
 
+## Status: deployed code predates current codegen
+
+**The contracts at the addresses below are still the ones described here, but
+the generator has since moved on. They are not reproducible from current
+`main`.** Nothing in this directory has been regenerated -- the sources and
+bytecode remain exactly what was deployed, because they are the record of what
+is on chain.
+
+Re-rendering the same circuit at `e5300d4` produces a different verifier:
+
+| | Deployed | Current codegen |
+| --- | ---: | ---: |
+| `Halo2Verifier.sol` | 206,619 bytes | 212,419 bytes |
+| Verifier runtime | 21,161 bytes | 21,203 bytes |
+| `TRANSCRIPT_MPTR` | `0x80` | `0x1000` |
+
+The verifying key also differs, in its `quotient_program` section; the circuit
+itself is unchanged (`acc_offset = 11`, 19 public inputs, `point_pair`).
+
+Fixes made after this deployment that it therefore does **not** carry:
+
+- **Memory layout rebase.** The deployed verifier bases its layout at `0x80`,
+  inside the `[0x80, 0x8e0)` window solc reserves for via-IR stack-to-memory
+  spill slots -- see AUDIT.md TA-5. It has not misbehaved, but the separation
+  rests on spill placement rather than on anything enforced.
+- **Accumulator identity guard.** `load_acc_coord_shifted` used a bitwise `and`
+  against a radix base, making the guard false on every call; the identity
+  branch was dead and the canonicality barrier ineffective. Fail-closed, not a
+  forgery path.
+- **Pairing result check.** `ec_pairing` folded the precompile result with a
+  bitwise `and`, accepting any odd return word rather than exactly `1`.
+- **Constructor smoke test.** Probes used identity-only EIP-2537 vectors, which
+  a non-conformant precompile can satisfy without doing curve arithmetic.
+
+Redeploying is a deliberate on-chain action requiring a funded keystore and an
+RPC endpoint; see "Recreate The Deployment" below. Until then this record stays
+as-is and accurate.
+
+## Verifying the deployed bytecode
+
+The tracked source reproduces the on-chain runtime exactly, apart from the
+immutable address slots that are substituted at deployment:
+
+```bash
+solc --bin-runtime --optimize --optimize-runs 200 --via-ir \
+  --evm-version cancun --no-cbor-metadata Halo2Verifier.sol
+```
+
+That yields 21,161 bytes -- matching `runtimeBytes` -- with codehash
+`0x79432a36a98570db8c04b9c5cc23994477089eabd2501cfe0b0a78ae5f3c38f8`.
+
+It does **not** equal the recorded `runtimeCodeHash`, and should not: comparing
+compiled output byte-for-byte against on-chain code shows exactly 40 differing
+bytes, in two 20-byte runs at offsets `0x51` and `0x125`. Those are the two
+placeholder slots for `address public immutable AUTHORIZED_VK`, filled in by the
+constructor. Every other byte is identical. Verified at `e5300d4` with
+`solc 0.8.30+commit.73712a01`.
+
 ## Addresses
 
 | Contract | Address |
