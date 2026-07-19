@@ -1397,6 +1397,37 @@ fn compiled_memoryguard_does_not_overlap_generated_layout() {
     }
 }
 
+/// `Halo2VerifyingKey` is size-checked at render time by
+/// `validate_payload_layout`, because a data contract's runtime length is known
+/// before compilation. The verifier's is not -- it only exists once solc has
+/// run -- so nothing bounded it, and the revm harness deliberately sets
+/// `limit_contract_code_size = usize::MAX` (see `evm.rs`), meaning an oversized
+/// verifier would pass the whole suite and then fail to deploy on any EIP-170
+/// chain. Check the compiled artifact directly.
+#[test]
+fn compiled_verifier_runtime_fits_the_eip170_limit() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let limit = crate::lowering::render::EIP_170_MAX_RUNTIME_BYTES;
+    let fixture = create_property_poseidon_fixture();
+    for (name, source) in [
+        ("embedded", fixture.embedded_verifier_solidity.as_str()),
+        ("separate", fixture.separate_verifier_solidity.as_str()),
+        ("quotient", fixture.quotient_verifier_solidity.as_str()),
+        ("vk", fixture.vk_solidity.as_str()),
+    ] {
+        let runtime_len = compile_solidity_runtime(source).len();
+        assert!(
+            runtime_len <= limit,
+            "{name}: compiled runtime is {runtime_len} bytes, over the EIP-170 limit of \
+             {limit}; this contract cannot be deployed on mainnet or any \
+             EIP-170 chain. Note the revm harness lifts this cap, so no other test catches it."
+        );
+    }
+}
+
 #[test]
 fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     if !poseidon_inputs_available_for_evm() {
