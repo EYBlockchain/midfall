@@ -62,6 +62,9 @@ type PoseidonVerifierParams =
 const POSEIDON_K: u32 = 6;
 /// Environment flag that opts into expensive EVM/Solidity integration tests.
 const RUN_EVM_TESTS_ENV: &str = "HALO2_SOLIDITY_RUN_EVM_TESTS";
+/// Source for the test SRS, as documented by `zk_stdlib`'s own loader error.
+const SRS_DOWNLOAD_URL: &str =
+    "https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com/bls_filecoin_2p19";
 /// Minimal caller used to exercise the production verifier under STATICCALL.
 const STATICCALL_VERIFIER_HARNESS: &str = r#"
 // SPDX-License-Identifier: CC0-1.0
@@ -972,10 +975,9 @@ fn shape_fuzz_inputs_available_for_evm() -> bool {
         eprintln!("skipping supported-shape circuit fuzz: set {RUN_EVM_TESTS_ENV}=1 to run it");
         return false;
     }
-    if !solc_available() {
-        eprintln!("skipping supported-shape circuit fuzz: solc not found");
-        return false;
-    }
+    // Requested but unusable is a failure, not a skip. See
+    // `poseidon_inputs_available_for_evm`.
+    solc_available();
     true
 }
 
@@ -4131,13 +4133,13 @@ fn poseidon_inputs_available_for_evm() -> bool {
         eprintln!("skipping Poseidon Solidity property test: set {RUN_EVM_TESTS_ENV}=1 to run it");
         return false;
     }
-    if !poseidon_srs_available() {
-        return false;
-    }
-    if !solc_available() {
-        eprintln!("skipping Poseidon Solidity property test: solc not found");
-        return false;
-    }
+    // Past this point the gate was explicitly requested, so a missing
+    // prerequisite is a failure rather than a skip. Returning `false` here
+    // would report a green run that compiled no Solidity and executed no
+    // proof -- the failure mode that let the rendered fixture artifacts drift
+    // out of date across several commits without any test noticing.
+    poseidon_srs_available();
+    solc_available();
     true
 }
 
@@ -4153,25 +4155,36 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Return whether the Poseidon test SRS can be found on disk.
-fn poseidon_srs_available() -> bool {
+/// Require the Poseidon test SRS on disk.
+///
+/// Only called once the EVM gate has been explicitly requested, so a missing
+/// asset panics with fetch instructions instead of silently skipping.
+fn poseidon_srs_available() {
     let srs_dir = PathBuf::from(srs_dir());
     let exact_srs_path = srs_dir.join(format!("bls_filecoin_2p{POSEIDON_K}"));
     let fallback_srs_path = srs_dir.join("bls_filecoin_2p19");
-    if !exact_srs_path.exists() && !fallback_srs_path.exists() {
-        eprintln!(
-            "skipping Poseidon Solidity property test: SRS not found at {} or {}",
-            exact_srs_path.display(),
-            fallback_srs_path.display()
-        );
-        return false;
-    }
-    true
+    assert!(
+        exact_srs_path.exists() || fallback_srs_path.exists(),
+        "{RUN_EVM_TESTS_ENV}=1 requires the test SRS, but it was not found at {} or {}.\n\
+         Fetch it with:\n    curl -L -o {} {SRS_DOWNLOAD_URL}\n\
+         or point SRS_DIR at an existing copy.",
+        exact_srs_path.display(),
+        fallback_srs_path.display(),
+        fallback_srs_path.display(),
+    );
 }
 
-/// Return whether the configured pinned solc is available.
-fn solc_available() -> bool {
-    pinned_solc_available()
+/// Require the pinned solc.
+///
+/// Same contract as [`poseidon_srs_available`]: loud once the gate is on.
+fn solc_available() {
+    assert!(
+        pinned_solc_available(),
+        "{RUN_EVM_TESTS_ENV}=1 requires solc {}, which was not found or did not match.\n\
+         Install it, point SOLC at the binary, or set {}=1 to accept another version.",
+        crate::PINNED_SOLC_VERSION,
+        crate::ALLOW_UNPINNED_SOLC_ENV,
+    );
 }
 
 /// Resolve the SRS directory used by fixture setup.
