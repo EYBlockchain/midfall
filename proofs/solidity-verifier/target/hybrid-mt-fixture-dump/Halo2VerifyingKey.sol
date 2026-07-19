@@ -141,25 +141,25 @@ contract Halo2VerifyingKey {
             mstore(add(payload, 0x0980), 0x5e1d3dbecda6214343e24a47f45c5d033197ad01b65a730af95dc57e90c49140) // quotient_const
             mstore(add(payload, 0x09a0), 0x6bd72f9cfc53af9d931896e77ea5c61244cb6d5fae8954f37dc7b9002f5aa78a) // quotient_const
             mstore(add(payload, 0x09c0), 0x4997c5aa3a5fa07bcaf880a9054bef831effbd9cd58e46d9bb4fb88ef99de0db) // quotient_const
-            mstore(add(payload, 0x09e0), 0x055b80105ea0055c2008060d000b020001055ca0105cc0105ba00902115d0013) // quotient_program
-            mstore(add(payload, 0x0a00), 0x5b6001105c000902115ce0135b4001105be00d030608060d000b030000055ca0) // quotient_program
-            mstore(add(payload, 0x0a20), 0x105cc00902115d00135b6001105c000902115ce0135b4001105be00d03060806) // quotient_program
-            mstore(add(payload, 0x0a40), 0x0d000b040000055b80105ba0055bc008060d000b0400011b00001b0001210001) // quotient_program
-            mstore(add(payload, 0x0a60), 0x00000700045b40055b60065b80075ba0085bc0095be00a5c000b5c200c5ca00d) // quotient_program
-            mstore(add(payload, 0x0a80), 0x5cc00e5ce00f5d00105d20115d400b07000021000100000700045b40055b6012) // quotient_program
-            mstore(add(payload, 0x0aa0), 0x5b80135ba0145bc0095be00a5c00155c20165ca0175cc00e5ce00f5d00185d20) // quotient_program
-            mstore(add(payload, 0x0ac0), 0x195d400b080000091b115d60135c601a105d80055da008060d000b090000091e) // quotient_program
-            mstore(add(payload, 0x0ae0), 0x115d60135dc01d135c601c105c80055da008060d000b0a00000921115ce0135d) // quotient_program
-            mstore(add(payload, 0x0b00), 0x0020135b401f105b60055b8008060d000b0a00010924115d60135dc01d135c60) // quotient_program
-            mstore(add(payload, 0x0b20), 0x23135c8022105d80055da008060d000b0b00000926115ce0135d0020135b401e) // quotient_program
-            mstore(add(payload, 0x0b40), 0x135b6025105be0055b8008060d000b0b00011c275c40285c60295c80015d601a) // quotient_program
-            mstore(add(payload, 0x0b60), 0x5dc02a5de02b5e00105d80055da008060d000b0c0000090008105de0115de00d) // quotient_program
-            mstore(add(payload, 0x0b80), 0x000b0c0001090008105c40115c400d000b0c0001090008105e00115e000d000b) // quotient_program
-            mstore(add(payload, 0x0ba0), 0x0c00011c005ba0005bc0005c20005ca0005cc0005d20005d40055da0135e202c) // quotient_program
-            mstore(add(payload, 0x0bc0), 0x08060d000b0d0000055b40115b40115b40055ba008060d000b0e0000055b6011) // quotient_program
-            mstore(add(payload, 0x0be0), 0x5b60115b60055bc008060d000b0e0001055b80115b80115b80055c4008060d00) // quotient_program
-            mstore(add(payload, 0x0c00), 0x0b0e00011b00021b0003055c2008105f40055b40115b40115ba00d2d06055b60) // quotient_program
-            mstore(add(payload, 0x0c20), 0x115b60115bc00d2e06055b80115b80115c400d2f060d000b0e0001191f000000) // quotient_program
+            mstore(add(payload, 0x09e0), 0x056b00106e20056ba008060d000b020001056c20106c40106b200902116c8013) // quotient_program
+            mstore(add(payload, 0x0a00), 0x6ae001106b800902116c60136ac001106b600d030608060d000b030000056c20) // quotient_program
+            mstore(add(payload, 0x0a20), 0x106c400902116c80136ae001106b800902116c60136ac001106b600d03060806) // quotient_program
+            mstore(add(payload, 0x0a40), 0x0d000b040000056b00106b20056b4008060d000b0400011b00001b0001210001) // quotient_program
+            mstore(add(payload, 0x0a60), 0x00000700046ac0056ae0066b00076b20086b40096b600a6b800b6ba00c6c200d) // quotient_program
+            mstore(add(payload, 0x0a80), 0x6c400e6c600f6c80106ca0116cc00b07000021000100000700046ac0056ae012) // quotient_program
+            mstore(add(payload, 0x0aa0), 0x6b00136b20146b40096b600a6b80156ba0166c20176c400e6c600f6c80186ca0) // quotient_program
+            mstore(add(payload, 0x0ac0), 0x196cc00b080000091b116ce0136be01a106d00056d2008060d000b090000091e) // quotient_program
+            mstore(add(payload, 0x0ae0), 0x116ce0136d401d136be01c106c00056d2008060d000b0a00000921116c60136c) // quotient_program
+            mstore(add(payload, 0x0b00), 0x8020136ac01f106ae0056b0008060d000b0a00010924116ce0136d401d136be0) // quotient_program
+            mstore(add(payload, 0x0b20), 0x23136c0022106d00056d2008060d000b0b00000926116c60136c8020136ac01e) // quotient_program
+            mstore(add(payload, 0x0b40), 0x136ae025106b60056b0008060d000b0b00011c276bc0286be0296c00016ce01a) // quotient_program
+            mstore(add(payload, 0x0b60), 0x6d402a6d602b6d80106d00056d2008060d000b0c0000090008106d60116d600d) // quotient_program
+            mstore(add(payload, 0x0b80), 0x000b0c0001090008106bc0116bc00d000b0c0001090008106d80116d800d000b) // quotient_program
+            mstore(add(payload, 0x0ba0), 0x0c00011c006b20006b40006ba0006c20006c40006ca0006cc0056d20136da02c) // quotient_program
+            mstore(add(payload, 0x0bc0), 0x08060d000b0d0000056ac0116ac0116ac0056b2008060d000b0e0000056ae011) // quotient_program
+            mstore(add(payload, 0x0be0), 0x6ae0116ae0056b4008060d000b0e0001056b00116b00116b00056bc008060d00) // quotient_program
+            mstore(add(payload, 0x0c00), 0x0b0e00011b00021b0003056ba008106ec0056ac0116ac0116b200d2d06056ae0) // quotient_program
+            mstore(add(payload, 0x0c20), 0x116ae0116b400d2e06056b00116b00116bc00d2f060d000b0e0001191f000000) // quotient_program
             // Fixed-column commitment 0, stored as one
             // EIP-2537 padded uncompressed G1 slot.
             mstore(add(payload, 0x0c40), 0x0000000000000000000000000000000002586b66bd923976cc5f5c9ff774e3c2) // fixed_comms[0].x_hi

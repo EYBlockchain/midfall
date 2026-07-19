@@ -43,15 +43,15 @@ contract Halo2Verifier {
     // EXPECTED_VK_PAYLOAD_LENGTH.
     uint256 internal constant EXPECTED_VK_PAYLOAD_LENGTH = 17024;
     uint256 internal constant EXPECTED_VK_LENGTH = 17025;
-    uint256 internal constant EXPECTED_VK_CODEHASH_WORD = 0x0a489a96da94a3dde90d99d69bd4464d5d5731a89f202154559e68a17fac1c21;
+    uint256 internal constant EXPECTED_VK_CODEHASH_WORD = 0x67bac137fa7e479c25b63324812752e4b6e13d9841d5bf83c322170bf91c0f88;
     bytes32 internal constant EXPECTED_VK_CODEHASH = bytes32(EXPECTED_VK_CODEHASH_WORD);
     /// @notice Quotient evaluator contract authorized for split quotient reconstruction.
     /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime may be pinned by generated constants.
     address public immutable AUTHORIZED_QUOTIENT;
     // Expected split evaluator runtime metadata. It is checked at deployment
     // and again immediately before each external quotient reconstruction.
-    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = 9531;
-    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = 0x02f1ea00260a78e72dc51376f5e3053ae6c83deae7219acb89c6a0bca5dc8f1c;
+    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = 9552;
+    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = 0x6a7ec82a9b0683783c459f4b43e924f8ceba256731bf2b9782ab5747e801ea2c;
     bytes32 internal constant EXPECTED_QUOTIENT_CODEHASH = bytes32(EXPECTED_QUOTIENT_CODEHASH_WORD);
 
     // Solidity ABI calldata cursors. The generated verifier accepts exactly
@@ -63,8 +63,8 @@ contract Halo2Verifier {
     uint256 internal constant     INSTANCE_CPTR = 0x1ee4;
     // First general-purpose memory words reserved by the generated verifier.
     // RETURN_MPTR is a single word set to 1 on success.
-    uint256 internal constant    TRANSCRIPT_MPTR = 0x80;
-    uint256 internal constant        RETURN_MPTR = 0x80;
+    uint256 internal constant    TRANSCRIPT_MPTR = 0x1000;
+    uint256 internal constant        RETURN_MPTR = 0x1000;
 
     // ----------------------------------------------------------------------
     // Verifying-key memory map. The VK header lives at VK_MPTR, followed
@@ -72,84 +72,84 @@ contract Halo2Verifier {
     // runtime comes the challenge slots (challenge_mptr..) and the
     // per-stage scratch (theta_mptr..).
     // ----------------------------------------------------------------------
-    uint256 internal constant                VK_MPTR = 0x2700;
-    uint256 internal constant         VK_DIGEST_MPTR = 0x2700;
-    uint256 internal constant     NUM_INSTANCES_MPTR = 0x2720;
-    uint256 internal constant                 K_MPTR = 0x2740;
-    uint256 internal constant             N_INV_MPTR = 0x2760;
-    uint256 internal constant             OMEGA_MPTR = 0x2780;
-    uint256 internal constant         OMEGA_INV_MPTR = 0x27a0;
-    uint256 internal constant    OMEGA_INV_TO_L_MPTR = 0x27c0;
-    uint256 internal constant   HAS_ACCUMULATOR_MPTR = 0x27e0;
-    uint256 internal constant        ACC_OFFSET_MPTR = 0x2800;
-    uint256 internal constant     NUM_ACC_LIMBS_MPTR = 0x2820;
-    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = 0x2840;
-    uint256 internal constant            G1_BASE_MPTR = 0x2860;
-    uint256 internal constant            G2_BASE_MPTR = 0x28e0;
-    uint256 internal constant      NEG_S_G2_BASE_MPTR = 0x29e0;
+    uint256 internal constant                VK_MPTR = 0x3680;
+    uint256 internal constant         VK_DIGEST_MPTR = 0x3680;
+    uint256 internal constant     NUM_INSTANCES_MPTR = 0x36a0;
+    uint256 internal constant                 K_MPTR = 0x36c0;
+    uint256 internal constant             N_INV_MPTR = 0x36e0;
+    uint256 internal constant             OMEGA_MPTR = 0x3700;
+    uint256 internal constant         OMEGA_INV_MPTR = 0x3720;
+    uint256 internal constant    OMEGA_INV_TO_L_MPTR = 0x3740;
+    uint256 internal constant   HAS_ACCUMULATOR_MPTR = 0x3760;
+    uint256 internal constant        ACC_OFFSET_MPTR = 0x3780;
+    uint256 internal constant     NUM_ACC_LIMBS_MPTR = 0x37a0;
+    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = 0x37c0;
+    uint256 internal constant            G1_BASE_MPTR = 0x37e0;
+    uint256 internal constant            G2_BASE_MPTR = 0x3860;
+    uint256 internal constant      NEG_S_G2_BASE_MPTR = 0x3960;
 
-    uint256 internal constant CHALLENGE_MPTR = 0x6980;
+    uint256 internal constant CHALLENGE_MPTR = 0x7900;
 
     // Challenge layout. Squeeze order in midnight-proofs:
     //   user_phase challenges (variable count)
     //   theta -> beta, gamma -> trash_challenge -> y -> x ->
     //   x1, x2 -> x3 -> x4
-    uint256 internal constant            THETA_MPTR = 0x6980;
-    uint256 internal constant             BETA_MPTR = 0x69a0;
-    uint256 internal constant            GAMMA_MPTR = 0x69c0;
-    uint256 internal constant TRASH_CHALLENGE_MPTR = 0x69e0;
-    uint256 internal constant                Y_MPTR = 0x6a00;
-    uint256 internal constant                X_MPTR = 0x6a20;
-    uint256 internal constant               X1_MPTR = 0x6a40;
-    uint256 internal constant               X2_MPTR = 0x6a60;
-    uint256 internal constant               X3_MPTR = 0x6a80;
-    uint256 internal constant               X4_MPTR = 0x6aa0;
+    uint256 internal constant            THETA_MPTR = 0x7900;
+    uint256 internal constant             BETA_MPTR = 0x7920;
+    uint256 internal constant            GAMMA_MPTR = 0x7940;
+    uint256 internal constant TRASH_CHALLENGE_MPTR = 0x7960;
+    uint256 internal constant                Y_MPTR = 0x7980;
+    uint256 internal constant                X_MPTR = 0x79a0;
+    uint256 internal constant               X1_MPTR = 0x79c0;
+    uint256 internal constant               X2_MPTR = 0x79e0;
+    uint256 internal constant               X3_MPTR = 0x7a00;
+    uint256 internal constant               X4_MPTR = 0x7a20;
 
     // Batch-open commitments live in 4-word EIP-2537 padded slots.
-    uint256 internal constant             F_COM_MPTR = 0x6ac0;
-    uint256 internal constant                PI_MPTR = 0x6b40;
+    uint256 internal constant             F_COM_MPTR = 0x7a40;
+    uint256 internal constant                PI_MPTR = 0x7ac0;
 
     // Accumulator (KZG IVC).
-    uint256 internal constant          ACC_LHS_MPTR = 0x6bc0;
-    uint256 internal constant          ACC_RHS_MPTR = 0x6c40;
+    uint256 internal constant          ACC_LHS_MPTR = 0x7b40;
+    uint256 internal constant          ACC_RHS_MPTR = 0x7bc0;
 
     // Lagrange / linearization scratch.
-    uint256 internal constant              X_N_MPTR = 0x6cc0;
-    uint256 internal constant  X_N_MINUS_1_INV_MPTR = 0x6ce0;
-    uint256 internal constant           L_LAST_MPTR = 0x6d00;
-    uint256 internal constant          L_BLIND_MPTR = 0x6d20;
-    uint256 internal constant              L_0_MPTR = 0x6d40;
-    uint256 internal constant     INSTANCE_EVAL_MPTR = 0x6d60;
+    uint256 internal constant              X_N_MPTR = 0x7c40;
+    uint256 internal constant  X_N_MINUS_1_INV_MPTR = 0x7c60;
+    uint256 internal constant           L_LAST_MPTR = 0x7c80;
+    uint256 internal constant          L_BLIND_MPTR = 0x7ca0;
+    uint256 internal constant              L_0_MPTR = 0x7cc0;
+    uint256 internal constant     INSTANCE_EVAL_MPTR = 0x7ce0;
     // Legacy name: this is not h(x). It stores the expected opening
     // scalar for the linearized commitment, i.e. the negated y-batched
     // identity numerator reconstructed from the alleged evals at x.
-    uint256 internal constant     QUOTIENT_EVAL_MPTR = 0x6d80;
-    uint256 internal constant         QUOTIENT_MPTR = 0x6da0;   // 4 words
-    uint256 internal constant            F_EVAL_MPTR = 0x6e40;
-    uint256 internal constant                 V_MPTR = 0x6e60;
-    uint256 internal constant         FINAL_COM_MPTR = 0x6e80;   // 4 words
-    uint256 internal constant      PAIRING_LHS_MPTR = 0x6f00;   // 4 words
-    uint256 internal constant      PAIRING_RHS_MPTR = 0x6f80;   // 4 words
+    uint256 internal constant     QUOTIENT_EVAL_MPTR = 0x7d00;
+    uint256 internal constant         QUOTIENT_MPTR = 0x7d20;   // 4 words
+    uint256 internal constant            F_EVAL_MPTR = 0x7dc0;
+    uint256 internal constant                 V_MPTR = 0x7de0;
+    uint256 internal constant         FINAL_COM_MPTR = 0x7e00;   // 4 words
+    uint256 internal constant      PAIRING_LHS_MPTR = 0x7e80;   // 4 words
+    uint256 internal constant      PAIRING_RHS_MPTR = 0x7f00;   // 4 words
 
     // Multi-prepare scratch (sized at codegen time).
-    uint256 internal constant       ROT_POINTS_MPTR = 0x7000;
-    uint256 internal constant       X1_POWERS_MPTR = 0x7380;
+    uint256 internal constant       ROT_POINTS_MPTR = 0x7f80;
+    uint256 internal constant       X1_POWERS_MPTR = 0x8300;
     // Q_COM materialization is currently fused into the final MSM scratch,
     // so this marker intentionally aliases Q_EVAL_SET_MPTR and has zero
     // reserved capacity until a future emitter starts writing Q_COM_MPTR.
-    uint256 internal constant            Q_COM_MPTR = 0x7ba0;
-    uint256 internal constant      Q_EVAL_SET_MPTR = 0x7ba0;
+    uint256 internal constant            Q_COM_MPTR = 0x8b20;
+    uint256 internal constant      Q_EVAL_SET_MPTR = 0x8b20;
 
     // Q_EVAL_CPTR is set at runtime once the verifier reaches the q_evals
     // block of the proof; we keep it as a memory slot for symmetry.
-    uint256 internal constant         Q_EVAL_CPTR_MPTR = 0x82a0;
+    uint256 internal constant         Q_EVAL_CPTR_MPTR = 0x9220;
 
     // Reserved 4-word slot for the G1 identity (point at infinity) in
     // EIP-2537 padded form. EVM memory is zero-initialised, and we
     // never write to this region, so the four `mload`s below produce
     // 0,0,0,0 which is exactly the identity encoding the EIP-2537
     // ec_add / ec_mul precompiles accept.
-    uint256 internal constant       G1_IDENTITY_MPTR = 0x83a0;
+    uint256 internal constant       G1_IDENTITY_MPTR = 0x9320;
 
     // Decoded polynomial-eval buffer (Optimisation H3). The off-chain
     // Solidity proof shim rewrites proof scalars into canonical BE words,
@@ -157,11 +157,11 @@ contract Halo2Verifier {
     // side `evaluations` loop range-checks and spills that value here so
     // downstream eval references (gate evaluator + PCS q_eval Horner)
     // become 3-gas `mload(...)` instead of calldata reads.
-    uint256 internal constant     REVERSED_EVALS_MPTR = 0x8500;
-    uint256 internal constant      SELECTOR_ACC_MPTR = 0xa1c0;
-    uint256 internal constant   QUOTIENT_RETURN_MPTR = 0x80;
-    uint256 internal constant  BATCH_INV_SCRATCH_MPTR = 0xa1c0;
-    uint256 internal constant        TRACE_U256_MPTR = 0xd3c0;
+    uint256 internal constant     REVERSED_EVALS_MPTR = 0x9480;
+    uint256 internal constant      SELECTOR_ACC_MPTR = 0xb140;
+    uint256 internal constant   QUOTIENT_RETURN_MPTR = 0x1000;
+    uint256 internal constant  BATCH_INV_SCRATCH_MPTR = 0xb140;
+    uint256 internal constant        TRACE_U256_MPTR = 0xe340;
 
     // ----------------------------------------------------------------------
     // Per-category bases for EIP-2537 padded G1 commitments. The proof
@@ -178,13 +178,13 @@ contract Halo2Verifier {
     //   TRASHCAN_COMMS_MPTR_BASE        + ... + 4*num_lookups
     //   QUOTIENT_LIMB_COMMS_MPTR_BASE   + ... + 4*num_trashcans
     // ----------------------------------------------------------------------
-    uint256 internal constant         ADVICE_COMMS_MPTR_BASE = 0x91c0;
-    uint256 internal constant       LOOKUP_M_COMMS_MPTR_BASE = 0x9940;
-    uint256 internal constant         PERM_Z_COMMS_MPTR_BASE = 0x9a40;
-    uint256 internal constant  LOOKUP_HELPER_COMMS_MPTR_BASE = 0x9d40;
-    uint256 internal constant       LOOKUP_Z_COMMS_MPTR_BASE = 0x9e40;
-    uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = 0x9f40;
-    uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0x9fc0;
+    uint256 internal constant         ADVICE_COMMS_MPTR_BASE = 0xa140;
+    uint256 internal constant       LOOKUP_M_COMMS_MPTR_BASE = 0xa8c0;
+    uint256 internal constant         PERM_Z_COMMS_MPTR_BASE = 0xa9c0;
+    uint256 internal constant  LOOKUP_HELPER_COMMS_MPTR_BASE = 0xacc0;
+    uint256 internal constant       LOOKUP_Z_COMMS_MPTR_BASE = 0xadc0;
+    uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = 0xaec0;
+    uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0xaf40;
 
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.
@@ -206,7 +206,7 @@ contract Halo2Verifier {
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
             // Scratch is reused for every runtime-prerequisite probe.
-            let scratch := 0x80
+            let scratch := 0x1000
 
             // MCOPY must be available because the verifier uses it for
             // proof-time point/scratch staging. Execute the opcode here so a
@@ -230,11 +230,44 @@ contract Halo2Verifier {
                 revert(0, 0)
             }
 
+            // Known-answer probe: G1ADD(G, G) == 2G.
+            //
+            // Every probe above uses the point at infinity, which is exactly
+            // the input an implementation gets right without doing any curve
+            // arithmetic -- a precompile that returns its zero-filled input, or
+            // zeros for anything, satisfies them. The identity is also the one
+            // input on which an implementation that omits the EIP-2537 subgroup
+            // check still answers correctly, and the production verifier leans
+            // on G1MSM as its subgroup validator for absorbed commitments. So
+            // add one vector whose answer a stub cannot guess.
+            mstore(add(scratch, 0x00), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)
+            mstore(add(scratch, 0x20), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)
+            mstore(add(scratch, 0x40), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
+            mstore(add(scratch, 0x60), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
+            mcopy(add(scratch, 0x80), scratch, 0x80)
+            if iszero(staticcall(gas(), 0x0b, scratch, 0x0100, scratch, 0x80)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }
+            if iszero(and(
+                and(
+                    eq(mload(add(scratch, 0x00)), 0x000000000000000000000000000000000572cbea904d67468808c8eb50a9450c),
+                    eq(mload(add(scratch, 0x20)), 0x9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e)
+                ),
+                and(
+                    eq(mload(add(scratch, 0x40)), 0x00000000000000000000000000000000166a9d8cabc673a322fda673779d8e38),
+                    eq(mload(add(scratch, 0x60)), 0x22ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28)
+                )
+            )) { revert(0, 0) }
+
+            // Restore the identity encoding for the probes below.
+            for { let off := 0 } lt(off, 0x0300) { off := add(off, 0x20) } {
+                mstore(add(scratch, off), 0)
+            }
+
             // Worst-case generated G1MSM with all identity/zero terms ->
             // identity, 128-byte return. This exercises the largest MSM input
             // length rendered by this verifier instead of only a one-pair
             // smoke call.
-            let msm_scratch := 0xa1c0
+            let msm_scratch := 0xb140
             for { let off := 0 } lt(off, 0x30c0) { off := add(off, 0x20) } {
                 mstore(add(msm_scratch, off), 0)
             }
@@ -344,9 +377,15 @@ contract Halo2Verifier {
             // when the VK payload becomes smaller.
             function scalar_inv(x) -> inv {
                 // Zero has no multiplicative inverse in Fr; callers rely on a
-                // revert here rather than a bogus modexp result.
+                // revert here rather than a bogus modexp result. Check the
+                // full canonical range, not just the literal word 0: for any
+                // x congruent to 0 mod r (x = r, say) modexp returns 0, which
+                // downstream mulmod chains would silently absorb. Every
+                // current call site feeds addmod/mulmod output, so this only
+                // guards against a future emitter passing a raw scalar.
+                if iszero(lt(x, FR_MODULUS)) { revert(0, 0) }
                 if iszero(x) { revert(0, 0) }
-                let p := 0x2600
+                let p := 0x3580
                 // EIP-198 modexp frame:
                 //   [base_len, exp_len, mod_len, base, exponent, modulus]
                 mstore(add(p, 0x00), 0x20)        // base len
@@ -481,6 +520,13 @@ contract Halo2Verifier {
                 // just run one modexp inverse in place.
                 if eq(count_bytes, 0x20) {
                     let x := mload(mptr_start)
+                    // Reject anything congruent to zero mod r, not just the
+                    // literal word 0: modexp would return 0 for those too, and
+                    // the caller would take it for a valid inverse.
+                    if iszero(lt(x, r)) {
+                        ret := 0
+                        leave
+                    }
                     if iszero(x) {
                         ret := 0
                         leave
@@ -527,6 +573,12 @@ contract Halo2Verifier {
                 mstore(add(gp_mptr, 0xa0), r)
                 ret := staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
+                // Leave before the backward pass on a failed modexp. A failed
+                // staticcall writes no output, so `mload(gp_mptr)` would read
+                // back the stale frame header and the pass below would
+                // overwrite every denominator in [mptr_start, mptr_end) with
+                // garbage products before returning ret = 0.
+                if iszero(ret) { leave }
                 let all_inv := mload(gp_mptr)
 
                 // Backward pass: derive each inverse from the inverted total
@@ -551,21 +603,30 @@ contract Halo2Verifier {
             // 4-word G1 slots; G2 bases are loaded from the pinned VK payload.
             function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
                 ret := success
-                if iszero(ret) { leave }
+                // Every other exit from this function reverts, and the
+                // terminal `return(RETURN_MPTR, 0x20)` in TraceReturn.yul
+                // returns true without consulting `success`. Revert here too,
+                // so this helper has no path that hands control back to a
+                // caller that would report success for an unverified proof.
+                if iszero(ret) { revert(0, 0) }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
                 // Cancun MCOPY (3 + 3·words gas) replaces what used to
                 // be a 4-step mstore chain for each G1 (~60 gas) and an
                 // 8-iter mstore loop for each G2 (~240 gas). Net saving
                 // here is ~500 gas per ec_pairing call.
-                let scratch := 0x0300
+                let scratch := 0x0320
                 mcopy(scratch,              lhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
                 ret := staticcall(gas(), 0x0f, scratch, 0x0300, scratch, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
-                ret := and(ret, mload(scratch))
+                // Compare against 1 rather than truncating to the low bit:
+                // `and(ret, word)` would accept any odd result word. EIP-2537
+                // only ever returns 0 or 1, so this matches the strict form
+                // the constructor smoke test already uses.
+                ret := and(ret, eq(mload(scratch), 1))
                 if iszero(ret) { revert(0, 0) }
                 ret := 1
             }
@@ -597,7 +658,13 @@ contract Halo2Verifier {
                     // public input. `first_adjust` removes the identity flag
                     // base from the first x word when present.
                     let packed := calldataload(add(src, mul(div(i, limbs_per_word), 0x20)))
-                    if and(iszero(div(i, limbs_per_word)), first_adjust) {
+                    // `and` here is bitwise, so it must not be fed the raw
+                    // `first_adjust` (a radix base, i.e. a high power of two):
+                    // `iszero(...)` is 0 or 1 and shares no bit with it, which
+                    // would make the guard false for every call. Subtracting is
+                    // already a no-op when `first_adjust` is zero, so gate on
+                    // the word index alone.
+                    if iszero(div(i, limbs_per_word)) {
                         packed := sub(packed, first_adjust)
                     }
                     // Select limb i from its packed field word. The mod/div
@@ -823,11 +890,16 @@ contract Halo2Verifier {
                 out := and(out, lhs_ok)
                 // Shared scratch for one-pair LHS validation and the later
                 // variable-length RHS MSM.
-                let acc_scratch := 0xa1c0
+                let acc_scratch := 0xb140
                 {
                     // Carried-scalar layout: the circuit exposes the scalar
                     // that multiplies the carried LHS point.
                     let lhs_scalar := calldataload(lhs_scalar_ptr)
+                    // Canonicality is enforced here rather than relying on the
+                    // later instance-absorption loop: G1MSM reduces scalars
+                    // mod r implicitly, so s and s+r would be indistinguishable
+                    // inside this helper.
+                    out := and(out, lt(lhs_scalar, r))
                     // Identity status is useful for decoding checks above, but
                     // validation still goes through G1MSM for all points.
                     pop(lhs_is_id)
@@ -862,6 +934,7 @@ contract Halo2Verifier {
                 {
                     // Explicit carried RHS scalar.
                     let rhs_scalar := calldataload(rhs_scalar_ptr)
+                    out := and(out, lt(rhs_scalar, r))
                     pop(rhs_is_id)
                     // Keep the carried RHS point in the MSM input even when
                     // it is encoded as identity or has scalar 0/1, so EIP-2537
@@ -1275,6 +1348,16 @@ contract Halo2Verifier {
             // ---- x3 ----
             // x3 is the PCS evaluation point for f_com.
             buf_len := squeeze_to(buf_len, X3_MPTR)
+            // truncated-challenges mirrors midnight-proofs
+            // proofs/src/poly/kzg/mod.rs:
+            //   - x3 is the f_com evaluation point and is truncated
+            //     immediately after squeeze.
+            //   - x1 and x4 remain full squeezed Fr words, but later PCS
+            //     batching stores truncate(x1^i) and truncate(x4^i) while
+            //     keeping the internal power accumulators full precision.
+            // This direct x3 mask is therefore one part of the PCS truncation
+            // rule, not the only truncated value used by the verifier.
+            mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))
 
             // ---- q_evals (one Fq per point set) ----
             // q_evals are not spilled into REVERSED_EVALS_MPTR because the PCS
@@ -1424,7 +1507,7 @@ contract Halo2Verifier {
                     eq(extcodesize(quotientEvaluator), EXPECTED_QUOTIENT_LENGTH),
                     eq(extcodehash(quotientEvaluator), EXPECTED_QUOTIENT_CODEHASH_WORD)
                 )) { revert(0, 0) }
-                if iszero(staticcall(gas(), quotientEvaluator, 0x2700, 0x6ac0, q_out, 0x0180)) { revert(0, 0) }
+                if iszero(staticcall(gas(), quotientEvaluator, 0x3680, 0x6ac0, q_out, 0x0180)) { revert(0, 0) }
                 if iszero(eq(returndatasize(), 0x0180)) { revert(0, 0) }
                 if iszero(eq(mload(q_out), 0x00000000000000000000000000000000000000000000000051554556414c0001)) { revert(0, 0) }
                 // Word 1 is the negated y-batched identity numerator, stored
@@ -1529,7 +1612,7 @@ contract Halo2Verifier {
                     for { let i := 0 } lt(i, 0x2a) { i := add(i, 1) } {
                         p := add(p, 0x20)
                         acc := mulmod(acc, x1, r)
-                        mstore(p, acc)
+                        mstore(p, and(acc, 0xffffffffffffffffffffffffffffffff))
                     }
                 }
                 // Generated PCS sub-block 3. These lines are
@@ -1538,52 +1621,52 @@ contract Halo2Verifier {
                 {
                     // q_eval_set[0]: 43 commitment(s) (rolled, m>=4)
                     // stage per-(commit, rotation) eval source addresses
-                    mstore(0xa300, 0x8a00)
-                    mstore(0xa320, 0x8500)
-                    mstore(0xa340, 0x90a0)
-                    mstore(0xa360, 0x90c0)
-                    mstore(0xa380, 0x9120)
-                    mstore(0xa3a0, 0x9140)
-                    mstore(0xa3c0, 0x91a0)
-                    mstore(0xa3e0, 0x8a20)
-                    mstore(0xa400, 0x8a40)
-                    mstore(0xa420, 0x8a60)
-                    mstore(0xa440, 0x8a80)
-                    mstore(0xa460, 0x8aa0)
-                    mstore(0xa480, 0x8ac0)
-                    mstore(0xa4a0, 0x8ae0)
-                    mstore(0xa4c0, 0x8b00)
-                    mstore(0xa4e0, 0x8b20)
-                    mstore(0xa500, 0x8b40)
-                    mstore(0xa520, 0x8b60)
-                    mstore(0xa540, 0x8b80)
-                    mstore(0xa560, 0x8ba0)
-                    mstore(0xa580, 0x8bc0)
-                    mstore(0xa5a0, 0x8be0)
-                    mstore(0xa5c0, 0x8c00)
-                    mstore(0xa5e0, 0x8c20)
-                    mstore(0xa600, 0x8c40)
-                    mstore(0xa620, 0x8c60)
-                    mstore(0xa640, 0x8c80)
-                    mstore(0xa660, 0x8ca0)
-                    mstore(0xa680, 0x8cc0)
-                    mstore(0xa6a0, 0x8ce0)
-                    mstore(0xa6c0, 0x8d00)
-                    mstore(0xa6e0, 0x8d20)
-                    mstore(0xa700, 0x8d40)
-                    mstore(0xa720, 0x8d60)
-                    mstore(0xa740, 0x8d80)
-                    mstore(0xa760, 0x8da0)
-                    mstore(0xa780, 0x8dc0)
-                    mstore(0xa7a0, 0x8de0)
-                    mstore(0xa7c0, 0x8e00)
-                    mstore(0xa7e0, 0x8e20)
-                    mstore(0xa800, 0x8e40)
-                    mstore(0xa820, 0x8e60)
-                    mstore(0xa840, QUOTIENT_EVAL_MPTR)
-                    let q_eval_set_0 := mload(0x8a00)
+                    mstore(0xb280, 0x9980)
+                    mstore(0xb2a0, 0x9480)
+                    mstore(0xb2c0, 0xa020)
+                    mstore(0xb2e0, 0xa040)
+                    mstore(0xb300, 0xa0a0)
+                    mstore(0xb320, 0xa0c0)
+                    mstore(0xb340, 0xa120)
+                    mstore(0xb360, 0x99a0)
+                    mstore(0xb380, 0x99c0)
+                    mstore(0xb3a0, 0x99e0)
+                    mstore(0xb3c0, 0x9a00)
+                    mstore(0xb3e0, 0x9a20)
+                    mstore(0xb400, 0x9a40)
+                    mstore(0xb420, 0x9a60)
+                    mstore(0xb440, 0x9a80)
+                    mstore(0xb460, 0x9aa0)
+                    mstore(0xb480, 0x9ac0)
+                    mstore(0xb4a0, 0x9ae0)
+                    mstore(0xb4c0, 0x9b00)
+                    mstore(0xb4e0, 0x9b20)
+                    mstore(0xb500, 0x9b40)
+                    mstore(0xb520, 0x9b60)
+                    mstore(0xb540, 0x9b80)
+                    mstore(0xb560, 0x9ba0)
+                    mstore(0xb580, 0x9bc0)
+                    mstore(0xb5a0, 0x9be0)
+                    mstore(0xb5c0, 0x9c00)
+                    mstore(0xb5e0, 0x9c20)
+                    mstore(0xb600, 0x9c40)
+                    mstore(0xb620, 0x9c60)
+                    mstore(0xb640, 0x9c80)
+                    mstore(0xb660, 0x9ca0)
+                    mstore(0xb680, 0x9cc0)
+                    mstore(0xb6a0, 0x9ce0)
+                    mstore(0xb6c0, 0x9d00)
+                    mstore(0xb6e0, 0x9d20)
+                    mstore(0xb700, 0x9d40)
+                    mstore(0xb720, 0x9d60)
+                    mstore(0xb740, 0x9d80)
+                    mstore(0xb760, 0x9da0)
+                    mstore(0xb780, 0x9dc0)
+                    mstore(0xb7a0, 0x9de0)
+                    mstore(0xb7c0, QUOTIENT_EVAL_MPTR)
+                    let q_eval_set_0 := mload(0x9980)
                     let pow_p := add(X1_POWERS_MPTR, 0x20)
-                    let eval_p := add(0xa300, 0x20)
+                    let eval_p := add(0xb280, 0x20)
                     for { let i := 1 } lt(i, 0x2b) { i := add(i, 1) } {
                         let pow := mload(pow_p)
                         q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(mload(eval_p)), pow, r), r)
@@ -1597,12 +1680,12 @@ contract Halo2Verifier {
                 // grouped so gas checkpoints can attribute their cost.
                 {
                     // q_eval_set[1]: 3 commitment(s)
-                    let q_eval_set_0 := mload(0x86e0)
-                    let q_eval_set_1 := mload(0x89a0)
-                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x8700), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
-                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x89c0), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
-                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x8720), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
-                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x89e0), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
+                    let q_eval_set_0 := mload(0x9660)
+                    let q_eval_set_1 := mload(0x9920)
+                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x9680), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
+                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x9940), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
+                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x96a0), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
+                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x9960), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
                     mstore(add(Q_EVAL_SET_MPTR, 0x20), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x40), q_eval_set_1)
                 }
@@ -1611,12 +1694,12 @@ contract Halo2Verifier {
                 // grouped so gas checkpoints can attribute their cost.
                 {
                     // q_eval_set[2]: 3 commitment(s)
-                    let q_eval_set_0 := mload(0x9060)
-                    let q_eval_set_1 := mload(0x9080)
-                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x90e0), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
-                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x9100), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
-                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0x9160), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
-                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0x9180), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
+                    let q_eval_set_0 := mload(0x9fe0)
+                    let q_eval_set_1 := mload(0xa000)
+                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0xa060), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
+                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0xa080), mload(add(X1_POWERS_MPTR, 0x20)), r), r)
+                    q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(0xa0e0), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
+                    q_eval_set_1 := addmod(q_eval_set_1, mulmod(mload(0xa100), mload(add(X1_POWERS_MPTR, 0x40)), r), r)
                     mstore(add(Q_EVAL_SET_MPTR, 0x60), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x80), q_eval_set_1)
                 }
@@ -1626,44 +1709,44 @@ contract Halo2Verifier {
                 {
                     // q_eval_set[3]: 11 commitment(s) (rolled, m>=4)
                     // stage per-(commit, rotation) eval source addresses
-                    mstore(0xa300, 0x8520)
-                    mstore(0xa320, 0x85c0)
-                    mstore(0xa340, 0x8840)
-                    mstore(0xa360, 0x8540)
-                    mstore(0xa380, 0x85e0)
-                    mstore(0xa3a0, 0x8860)
-                    mstore(0xa3c0, 0x8560)
-                    mstore(0xa3e0, 0x8600)
-                    mstore(0xa400, 0x8880)
-                    mstore(0xa420, 0x8580)
-                    mstore(0xa440, 0x8740)
-                    mstore(0xa460, 0x88a0)
-                    mstore(0xa480, 0x85a0)
-                    mstore(0xa4a0, 0x8760)
-                    mstore(0xa4c0, 0x88c0)
-                    mstore(0xa4e0, 0x8620)
-                    mstore(0xa500, 0x8780)
-                    mstore(0xa520, 0x88e0)
-                    mstore(0xa540, 0x8640)
-                    mstore(0xa560, 0x87a0)
-                    mstore(0xa580, 0x8900)
-                    mstore(0xa5a0, 0x8660)
-                    mstore(0xa5c0, 0x87c0)
-                    mstore(0xa5e0, 0x8920)
-                    mstore(0xa600, 0x8680)
-                    mstore(0xa620, 0x87e0)
-                    mstore(0xa640, 0x8940)
-                    mstore(0xa660, 0x86a0)
-                    mstore(0xa680, 0x8800)
-                    mstore(0xa6a0, 0x8960)
-                    mstore(0xa6c0, 0x86c0)
-                    mstore(0xa6e0, 0x8820)
-                    mstore(0xa700, 0x8980)
-                    let q_eval_set_0 := mload(0x8520)
-                    let q_eval_set_1 := mload(0x85c0)
-                    let q_eval_set_2 := mload(0x8840)
+                    mstore(0xb280, 0x94a0)
+                    mstore(0xb2a0, 0x9540)
+                    mstore(0xb2c0, 0x97c0)
+                    mstore(0xb2e0, 0x94c0)
+                    mstore(0xb300, 0x9560)
+                    mstore(0xb320, 0x97e0)
+                    mstore(0xb340, 0x94e0)
+                    mstore(0xb360, 0x9580)
+                    mstore(0xb380, 0x9800)
+                    mstore(0xb3a0, 0x9500)
+                    mstore(0xb3c0, 0x96c0)
+                    mstore(0xb3e0, 0x9820)
+                    mstore(0xb400, 0x9520)
+                    mstore(0xb420, 0x96e0)
+                    mstore(0xb440, 0x9840)
+                    mstore(0xb460, 0x95a0)
+                    mstore(0xb480, 0x9700)
+                    mstore(0xb4a0, 0x9860)
+                    mstore(0xb4c0, 0x95c0)
+                    mstore(0xb4e0, 0x9720)
+                    mstore(0xb500, 0x9880)
+                    mstore(0xb520, 0x95e0)
+                    mstore(0xb540, 0x9740)
+                    mstore(0xb560, 0x98a0)
+                    mstore(0xb580, 0x9600)
+                    mstore(0xb5a0, 0x9760)
+                    mstore(0xb5c0, 0x98c0)
+                    mstore(0xb5e0, 0x9620)
+                    mstore(0xb600, 0x9780)
+                    mstore(0xb620, 0x98e0)
+                    mstore(0xb640, 0x9640)
+                    mstore(0xb660, 0x97a0)
+                    mstore(0xb680, 0x9900)
+                    let q_eval_set_0 := mload(0x94a0)
+                    let q_eval_set_1 := mload(0x9540)
+                    let q_eval_set_2 := mload(0x97c0)
                     let pow_p := add(X1_POWERS_MPTR, 0x20)
-                    let eval_p := add(0xa300, 0x60)
+                    let eval_p := add(0xb280, 0x60)
                     for { let i := 1 } lt(i, 0xb) { i := add(i, 1) } {
                         let pow := mload(pow_p)
                         q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(mload(eval_p)), pow, r), r)
@@ -1682,26 +1765,26 @@ contract Halo2Verifier {
                 {
                     // q_eval_set[4]: 5 commitment(s) (rolled, m>=4)
                     // stage per-(commit, rotation) eval source addresses
-                    mstore(0xa300, 0x8e80)
-                    mstore(0xa320, 0x8ea0)
-                    mstore(0xa340, 0x8ec0)
-                    mstore(0xa360, 0x8ee0)
-                    mstore(0xa380, 0x8f00)
-                    mstore(0xa3a0, 0x8f20)
-                    mstore(0xa3c0, 0x8f40)
-                    mstore(0xa3e0, 0x8f60)
-                    mstore(0xa400, 0x8f80)
-                    mstore(0xa420, 0x8fa0)
-                    mstore(0xa440, 0x8fc0)
-                    mstore(0xa460, 0x8fe0)
-                    mstore(0xa480, 0x9000)
-                    mstore(0xa4a0, 0x9020)
-                    mstore(0xa4c0, 0x9040)
-                    let q_eval_set_0 := mload(0x8e80)
-                    let q_eval_set_1 := mload(0x8ea0)
-                    let q_eval_set_2 := mload(0x8ec0)
+                    mstore(0xb280, 0x9e00)
+                    mstore(0xb2a0, 0x9e20)
+                    mstore(0xb2c0, 0x9e40)
+                    mstore(0xb2e0, 0x9e60)
+                    mstore(0xb300, 0x9e80)
+                    mstore(0xb320, 0x9ea0)
+                    mstore(0xb340, 0x9ec0)
+                    mstore(0xb360, 0x9ee0)
+                    mstore(0xb380, 0x9f00)
+                    mstore(0xb3a0, 0x9f20)
+                    mstore(0xb3c0, 0x9f40)
+                    mstore(0xb3e0, 0x9f60)
+                    mstore(0xb400, 0x9f80)
+                    mstore(0xb420, 0x9fa0)
+                    mstore(0xb440, 0x9fc0)
+                    let q_eval_set_0 := mload(0x9e00)
+                    let q_eval_set_1 := mload(0x9e20)
+                    let q_eval_set_2 := mload(0x9e40)
                     let pow_p := add(X1_POWERS_MPTR, 0x20)
-                    let eval_p := add(0xa300, 0x60)
+                    let eval_p := add(0xb280, 0x60)
                     for { let i := 1 } lt(i, 0x5) { i := add(i, 1) } {
                         let pow := mload(pow_p)
                         q_eval_set_0 := addmod(q_eval_set_0, mulmod(mload(mload(eval_p)), pow, r), r)
@@ -1892,181 +1975,186 @@ contract Halo2Verifier {
                     let lin_x_split := mload(QUOTIENT_MPTR)
                     let lin_one_minus_x_n := mload(add(QUOTIENT_MPTR, 0x20))
                     let Q_EVAL_CPTR := mload(Q_EVAL_CPTR_MPTR)
-                    let x4_pow_0 := 1
-                    let x4_pow_1 := mulmod(x4_pow_0, x4, r)
-                    let x4_pow_2 := mulmod(x4_pow_1, x4, r)
-                    let x4_pow_3 := mulmod(x4_pow_2, x4, r)
-                    let x4_pow_4 := mulmod(x4_pow_3, x4, r)
-                    let x4_pow_5 := mulmod(x4_pow_4, x4, r)
+                    let x4_pow_full := 1
+                    x4_pow_full := mulmod(x4_pow_full, x4, r)
+                    let x4_pow_1 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
+                    x4_pow_full := mulmod(x4_pow_full, x4, r)
+                    let x4_pow_2 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
+                    x4_pow_full := mulmod(x4_pow_full, x4, r)
+                    let x4_pow_3 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
+                    x4_pow_full := mulmod(x4_pow_full, x4, r)
+                    let x4_pow_4 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
+                    x4_pow_full := mulmod(x4_pow_full, x4, r)
+                    let x4_pow_5 := and(x4_pow_full, 0xffffffffffffffffffffffffffffffff)
                     let v := calldataload(Q_EVAL_CPTR)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x20)), x4_pow_1, r), r)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x40)), x4_pow_2, r), r)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x60)), x4_pow_3, r), r)
                     v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, 0x80)), x4_pow_4, r), r)
                     v := addmod(v, mulmod(mload(F_EVAL_MPTR), x4_pow_5, r), r)
-                    mcopy(0xa300, 0x98c0, 0x80)
-                    mstore(0xa380, 1)
-                    mcopy(0xa3a0, 0x9940, 0x80)
-                    mstore(0xa420, mload(add(X1_POWERS_MPTR, 0x40)))
-                    mcopy(0xa440, 0x9d40, 0x80)
-                    mstore(0xa4c0, mload(add(X1_POWERS_MPTR, 0x60)))
-                    mcopy(0xa4e0, 0x99c0, 0x80)
-                    mstore(0xa560, mload(add(X1_POWERS_MPTR, 0x80)))
-                    mcopy(0xa580, 0x9dc0, 0x80)
-                    mstore(0xa600, mload(add(X1_POWERS_MPTR, 0xa0)))
-                    mcopy(0xa620, 0x9f40, 0x80)
-                    mstore(0xa6a0, mload(add(X1_POWERS_MPTR, 0xc0)))
-                    mcopy(0xa6c0, 0x5780, 0x80)
-                    mstore(0xa740, mload(add(X1_POWERS_MPTR, 0xe0)))
-                    mcopy(0xa760, 0x5500, 0x80)
-                    mstore(0xa7e0, mload(add(X1_POWERS_MPTR, 0x100)))
-                    mcopy(0xa800, 0x5580, 0x80)
-                    mstore(0xa880, mload(add(X1_POWERS_MPTR, 0x120)))
-                    mcopy(0xa8a0, 0x5600, 0x80)
-                    mstore(0xa920, mload(add(X1_POWERS_MPTR, 0x140)))
-                    mcopy(0xa940, 0x5680, 0x80)
-                    mstore(0xa9c0, mload(add(X1_POWERS_MPTR, 0x160)))
-                    mcopy(0xa9e0, 0x5700, 0x80)
-                    mstore(0xaa60, mload(add(X1_POWERS_MPTR, 0x180)))
-                    mcopy(0xaa80, 0x5300, 0x80)
-                    mstore(0xab00, mload(add(X1_POWERS_MPTR, 0x1a0)))
-                    mcopy(0xab20, 0x5380, 0x80)
-                    mstore(0xaba0, mload(add(X1_POWERS_MPTR, 0x1c0)))
-                    mcopy(0xabc0, 0x5400, 0x80)
-                    mstore(0xac40, mload(add(X1_POWERS_MPTR, 0x1e0)))
-                    mcopy(0xac60, 0x5480, 0x80)
-                    mstore(0xace0, mload(add(X1_POWERS_MPTR, 0x200)))
-                    mcopy(0xad00, 0x5800, 0x80)
-                    mstore(0xad80, mload(add(X1_POWERS_MPTR, 0x220)))
-                    mcopy(0xada0, 0x5880, 0x80)
-                    mstore(0xae20, mload(add(X1_POWERS_MPTR, 0x240)))
-                    mcopy(0xae40, 0x5900, 0x80)
-                    mstore(0xaec0, mload(add(X1_POWERS_MPTR, 0x260)))
-                    mcopy(0xaee0, 0x5980, 0x80)
-                    mstore(0xaf60, mload(add(X1_POWERS_MPTR, 0x280)))
-                    mcopy(0xaf80, 0x5b80, 0x80)
-                    mstore(0xb000, mload(add(X1_POWERS_MPTR, 0x2a0)))
-                    mcopy(0xb020, 0x5c80, 0x80)
-                    mstore(0xb0a0, mload(add(X1_POWERS_MPTR, 0x2c0)))
-                    mcopy(0xb0c0, 0x6000, 0x80)
-                    mstore(0xb140, mload(add(X1_POWERS_MPTR, 0x2e0)))
-                    mcopy(0xb160, 0x6080, 0x80)
-                    mstore(0xb1e0, mload(add(X1_POWERS_MPTR, 0x300)))
-                    mcopy(0xb200, 0x6100, 0x80)
-                    mstore(0xb280, mload(add(X1_POWERS_MPTR, 0x320)))
-                    mcopy(0xb2a0, 0x6180, 0x80)
-                    mstore(0xb320, mload(add(X1_POWERS_MPTR, 0x340)))
-                    mcopy(0xb340, 0x6200, 0x80)
-                    mstore(0xb3c0, mload(add(X1_POWERS_MPTR, 0x360)))
-                    mcopy(0xb3e0, 0x6280, 0x80)
-                    mstore(0xb460, mload(add(X1_POWERS_MPTR, 0x380)))
-                    mcopy(0xb480, 0x6300, 0x80)
-                    mstore(0xb500, mload(add(X1_POWERS_MPTR, 0x3a0)))
-                    mcopy(0xb520, 0x6380, 0x80)
-                    mstore(0xb5a0, mload(add(X1_POWERS_MPTR, 0x3c0)))
-                    mcopy(0xb5c0, 0x6400, 0x80)
-                    mstore(0xb640, mload(add(X1_POWERS_MPTR, 0x3e0)))
-                    mcopy(0xb660, 0x6480, 0x80)
-                    mstore(0xb6e0, mload(add(X1_POWERS_MPTR, 0x400)))
-                    mcopy(0xb700, 0x6500, 0x80)
-                    mstore(0xb780, mload(add(X1_POWERS_MPTR, 0x420)))
-                    mcopy(0xb7a0, 0x6580, 0x80)
-                    mstore(0xb820, mload(add(X1_POWERS_MPTR, 0x440)))
-                    mcopy(0xb840, 0x6600, 0x80)
-                    mstore(0xb8c0, mload(add(X1_POWERS_MPTR, 0x460)))
-                    mcopy(0xb8e0, 0x6680, 0x80)
-                    mstore(0xb960, mload(add(X1_POWERS_MPTR, 0x480)))
-                    mcopy(0xb980, 0x6700, 0x80)
-                    mstore(0xba00, mload(add(X1_POWERS_MPTR, 0x4a0)))
-                    mcopy(0xba20, 0x6780, 0x80)
-                    mstore(0xbaa0, mload(add(X1_POWERS_MPTR, 0x4c0)))
-                    mcopy(0xbac0, 0x6800, 0x80)
-                    mstore(0xbb40, mload(add(X1_POWERS_MPTR, 0x4e0)))
-                    mcopy(0xbb60, 0x6880, 0x80)
-                    mstore(0xbbe0, mload(add(X1_POWERS_MPTR, 0x500)))
-                    mcopy(0xbc00, 0x6900, 0x80)
-                    mstore(0xbc80, mload(add(X1_POWERS_MPTR, 0x520)))
+                    mcopy(0xb280, 0xa840, 0x80)
+                    mstore(0xb300, 1)
+                    mcopy(0xb320, 0xa8c0, 0x80)
+                    mstore(0xb3a0, mload(add(X1_POWERS_MPTR, 0x40)))
+                    mcopy(0xb3c0, 0xacc0, 0x80)
+                    mstore(0xb440, mload(add(X1_POWERS_MPTR, 0x60)))
+                    mcopy(0xb460, 0xa940, 0x80)
+                    mstore(0xb4e0, mload(add(X1_POWERS_MPTR, 0x80)))
+                    mcopy(0xb500, 0xad40, 0x80)
+                    mstore(0xb580, mload(add(X1_POWERS_MPTR, 0xa0)))
+                    mcopy(0xb5a0, 0xaec0, 0x80)
+                    mstore(0xb620, mload(add(X1_POWERS_MPTR, 0xc0)))
+                    mcopy(0xb640, 0x6700, 0x80)
+                    mstore(0xb6c0, mload(add(X1_POWERS_MPTR, 0xe0)))
+                    mcopy(0xb6e0, 0x6480, 0x80)
+                    mstore(0xb760, mload(add(X1_POWERS_MPTR, 0x100)))
+                    mcopy(0xb780, 0x6500, 0x80)
+                    mstore(0xb800, mload(add(X1_POWERS_MPTR, 0x120)))
+                    mcopy(0xb820, 0x6580, 0x80)
+                    mstore(0xb8a0, mload(add(X1_POWERS_MPTR, 0x140)))
+                    mcopy(0xb8c0, 0x6600, 0x80)
+                    mstore(0xb940, mload(add(X1_POWERS_MPTR, 0x160)))
+                    mcopy(0xb960, 0x6680, 0x80)
+                    mstore(0xb9e0, mload(add(X1_POWERS_MPTR, 0x180)))
+                    mcopy(0xba00, 0x6280, 0x80)
+                    mstore(0xba80, mload(add(X1_POWERS_MPTR, 0x1a0)))
+                    mcopy(0xbaa0, 0x6300, 0x80)
+                    mstore(0xbb20, mload(add(X1_POWERS_MPTR, 0x1c0)))
+                    mcopy(0xbb40, 0x6380, 0x80)
+                    mstore(0xbbc0, mload(add(X1_POWERS_MPTR, 0x1e0)))
+                    mcopy(0xbbe0, 0x6400, 0x80)
+                    mstore(0xbc60, mload(add(X1_POWERS_MPTR, 0x200)))
+                    mcopy(0xbc80, 0x6780, 0x80)
+                    mstore(0xbd00, mload(add(X1_POWERS_MPTR, 0x220)))
+                    mcopy(0xbd20, 0x6800, 0x80)
+                    mstore(0xbda0, mload(add(X1_POWERS_MPTR, 0x240)))
+                    mcopy(0xbdc0, 0x6880, 0x80)
+                    mstore(0xbe40, mload(add(X1_POWERS_MPTR, 0x260)))
+                    mcopy(0xbe60, 0x6900, 0x80)
+                    mstore(0xbee0, mload(add(X1_POWERS_MPTR, 0x280)))
+                    mcopy(0xbf00, 0x6b00, 0x80)
+                    mstore(0xbf80, mload(add(X1_POWERS_MPTR, 0x2a0)))
+                    mcopy(0xbfa0, 0x6c00, 0x80)
+                    mstore(0xc020, mload(add(X1_POWERS_MPTR, 0x2c0)))
+                    mcopy(0xc040, 0x6f80, 0x80)
+                    mstore(0xc0c0, mload(add(X1_POWERS_MPTR, 0x2e0)))
+                    mcopy(0xc0e0, 0x7000, 0x80)
+                    mstore(0xc160, mload(add(X1_POWERS_MPTR, 0x300)))
+                    mcopy(0xc180, 0x7080, 0x80)
+                    mstore(0xc200, mload(add(X1_POWERS_MPTR, 0x320)))
+                    mcopy(0xc220, 0x7100, 0x80)
+                    mstore(0xc2a0, mload(add(X1_POWERS_MPTR, 0x340)))
+                    mcopy(0xc2c0, 0x7180, 0x80)
+                    mstore(0xc340, mload(add(X1_POWERS_MPTR, 0x360)))
+                    mcopy(0xc360, 0x7200, 0x80)
+                    mstore(0xc3e0, mload(add(X1_POWERS_MPTR, 0x380)))
+                    mcopy(0xc400, 0x7280, 0x80)
+                    mstore(0xc480, mload(add(X1_POWERS_MPTR, 0x3a0)))
+                    mcopy(0xc4a0, 0x7300, 0x80)
+                    mstore(0xc520, mload(add(X1_POWERS_MPTR, 0x3c0)))
+                    mcopy(0xc540, 0x7380, 0x80)
+                    mstore(0xc5c0, mload(add(X1_POWERS_MPTR, 0x3e0)))
+                    mcopy(0xc5e0, 0x7400, 0x80)
+                    mstore(0xc660, mload(add(X1_POWERS_MPTR, 0x400)))
+                    mcopy(0xc680, 0x7480, 0x80)
+                    mstore(0xc700, mload(add(X1_POWERS_MPTR, 0x420)))
+                    mcopy(0xc720, 0x7500, 0x80)
+                    mstore(0xc7a0, mload(add(X1_POWERS_MPTR, 0x440)))
+                    mcopy(0xc7c0, 0x7580, 0x80)
+                    mstore(0xc840, mload(add(X1_POWERS_MPTR, 0x460)))
+                    mcopy(0xc860, 0x7600, 0x80)
+                    mstore(0xc8e0, mload(add(X1_POWERS_MPTR, 0x480)))
+                    mcopy(0xc900, 0x7680, 0x80)
+                    mstore(0xc980, mload(add(X1_POWERS_MPTR, 0x4a0)))
+                    mcopy(0xc9a0, 0x7700, 0x80)
+                    mstore(0xca20, mload(add(X1_POWERS_MPTR, 0x4c0)))
+                    mcopy(0xca40, 0x7780, 0x80)
+                    mstore(0xcac0, mload(add(X1_POWERS_MPTR, 0x4e0)))
+                    mcopy(0xcae0, 0x7800, 0x80)
+                    mstore(0xcb60, mload(add(X1_POWERS_MPTR, 0x500)))
+                    mcopy(0xcb80, 0x7880, 0x80)
+                    mstore(0xcc00, mload(add(X1_POWERS_MPTR, 0x520)))
                     let lin_query_scalar_41 := mload(add(X1_POWERS_MPTR, 0x540))
                     let lin_cur_scalar_41 := mulmod(lin_query_scalar_41, lin_one_minus_x_n, r)
-                    mcopy(0xbca0, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x0), 0x80)
-                    mstore(0xbd20, lin_cur_scalar_41)
+                    mcopy(0xcc20, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x0), 0x80)
+                    mstore(0xcca0, lin_cur_scalar_41)
                     lin_cur_scalar_41 := mulmod(lin_cur_scalar_41, lin_x_split, r)
-                    mcopy(0xbd40, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x80), 0x80)
-                    mstore(0xbdc0, lin_cur_scalar_41)
+                    mcopy(0xccc0, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x80), 0x80)
+                    mstore(0xcd40, lin_cur_scalar_41)
                     lin_cur_scalar_41 := mulmod(lin_cur_scalar_41, lin_x_split, r)
-                    mcopy(0xbde0, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x100), 0x80)
-                    mstore(0xbe60, lin_cur_scalar_41)
+                    mcopy(0xcd60, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x100), 0x80)
+                    mstore(0xcde0, lin_cur_scalar_41)
                     lin_cur_scalar_41 := mulmod(lin_cur_scalar_41, lin_x_split, r)
-                    mcopy(0xbe80, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x180), 0x80)
-                    mstore(0xbf00, lin_cur_scalar_41)
-                    mcopy(0xbf20, 0x5a00, 0x80)
-                    mstore(0xbfa0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x0)), r))
-                    mcopy(0xbfc0, 0x5a80, 0x80)
-                    mstore(0xc040, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x20)), r))
-                    mcopy(0xc060, 0x5b00, 0x80)
-                    mstore(0xc0e0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x40)), r))
-                    mcopy(0xc100, 0x5c00, 0x80)
-                    mstore(0xc180, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x60)), r))
-                    mcopy(0xc1a0, 0x5d00, 0x80)
-                    mstore(0xc220, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x80)), r))
-                    mcopy(0xc240, 0x5d80, 0x80)
-                    mstore(0xc2c0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xa0)), r))
-                    mcopy(0xc2e0, 0x5e00, 0x80)
-                    mstore(0xc360, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xc0)), r))
-                    mcopy(0xc380, 0x5e80, 0x80)
-                    mstore(0xc400, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xe0)), r))
-                    mcopy(0xc420, 0x5f00, 0x80)
-                    mstore(0xc4a0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x100)), r))
-                    mcopy(0xc4c0, 0x5f80, 0x80)
-                    mstore(0xc540, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x120)), r))
-                    mcopy(0xc560, 0x9740, 0x80)
-                    mstore(0xc5e0, x4_pow_1)
-                    mcopy(0xc600, 0x97c0, 0x80)
-                    mstore(0xc680, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_1, r))
-                    mcopy(0xc6a0, 0x9840, 0x80)
-                    mstore(0xc720, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_1, r))
-                    mcopy(0xc740, 0x9cc0, 0x80)
-                    mstore(0xc7c0, x4_pow_2)
-                    mcopy(0xc7e0, 0x9e40, 0x80)
-                    mstore(0xc860, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_2, r))
-                    mcopy(0xc880, 0x9ec0, 0x80)
-                    mstore(0xc900, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_2, r))
-                    mcopy(0xc920, 0x91c0, 0x80)
-                    mstore(0xc9a0, x4_pow_3)
-                    mcopy(0xc9c0, 0x9240, 0x80)
-                    mstore(0xca40, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_3, r))
-                    mcopy(0xca60, 0x92c0, 0x80)
-                    mstore(0xcae0, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_3, r))
-                    mcopy(0xcb00, 0x9340, 0x80)
-                    mstore(0xcb80, mulmod(mload(add(X1_POWERS_MPTR, 0x60)), x4_pow_3, r))
-                    mcopy(0xcba0, 0x93c0, 0x80)
-                    mstore(0xcc20, mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_3, r))
-                    mcopy(0xcc40, 0x9440, 0x80)
-                    mstore(0xccc0, mulmod(mload(add(X1_POWERS_MPTR, 0xa0)), x4_pow_3, r))
-                    mcopy(0xcce0, 0x94c0, 0x80)
-                    mstore(0xcd60, mulmod(mload(add(X1_POWERS_MPTR, 0xc0)), x4_pow_3, r))
-                    mcopy(0xcd80, 0x9540, 0x80)
-                    mstore(0xce00, mulmod(mload(add(X1_POWERS_MPTR, 0xe0)), x4_pow_3, r))
-                    mcopy(0xce20, 0x95c0, 0x80)
-                    mstore(0xcea0, mulmod(mload(add(X1_POWERS_MPTR, 0x100)), x4_pow_3, r))
-                    mcopy(0xcec0, 0x9640, 0x80)
-                    mstore(0xcf40, mulmod(mload(add(X1_POWERS_MPTR, 0x120)), x4_pow_3, r))
-                    mcopy(0xcf60, 0x96c0, 0x80)
-                    mstore(0xcfe0, mulmod(mload(add(X1_POWERS_MPTR, 0x140)), x4_pow_3, r))
-                    mcopy(0xd000, 0x9a40, 0x80)
-                    mstore(0xd080, x4_pow_4)
-                    mcopy(0xd0a0, 0x9ac0, 0x80)
-                    mstore(0xd120, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_4, r))
-                    mcopy(0xd140, 0x9b40, 0x80)
-                    mstore(0xd1c0, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_4, r))
-                    mcopy(0xd1e0, 0x9bc0, 0x80)
-                    mstore(0xd260, mulmod(mload(add(X1_POWERS_MPTR, 0x60)), x4_pow_4, r))
-                    mcopy(0xd280, 0x9c40, 0x80)
-                    mstore(0xd300, mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_4, r))
-                    mcopy(0xd320, F_COM_MPTR, 0x80)
-                    mstore(0xd3a0, x4_pow_5)
+                    mcopy(0xce00, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, 0x180), 0x80)
+                    mstore(0xce80, lin_cur_scalar_41)
+                    mcopy(0xcea0, 0x6980, 0x80)
+                    mstore(0xcf20, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x0)), r))
+                    mcopy(0xcf40, 0x6a00, 0x80)
+                    mstore(0xcfc0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x20)), r))
+                    mcopy(0xcfe0, 0x6a80, 0x80)
+                    mstore(0xd060, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x40)), r))
+                    mcopy(0xd080, 0x6b80, 0x80)
+                    mstore(0xd100, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x60)), r))
+                    mcopy(0xd120, 0x6c80, 0x80)
+                    mstore(0xd1a0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x80)), r))
+                    mcopy(0xd1c0, 0x6d00, 0x80)
+                    mstore(0xd240, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xa0)), r))
+                    mcopy(0xd260, 0x6d80, 0x80)
+                    mstore(0xd2e0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xc0)), r))
+                    mcopy(0xd300, 0x6e00, 0x80)
+                    mstore(0xd380, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0xe0)), r))
+                    mcopy(0xd3a0, 0x6e80, 0x80)
+                    mstore(0xd420, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x100)), r))
+                    mcopy(0xd440, 0x6f00, 0x80)
+                    mstore(0xd4c0, mulmod(lin_query_scalar_41, mload(add(SELECTOR_ACC_MPTR, 0x120)), r))
+                    mcopy(0xd4e0, 0xa6c0, 0x80)
+                    mstore(0xd560, x4_pow_1)
+                    mcopy(0xd580, 0xa740, 0x80)
+                    mstore(0xd600, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_1, r))
+                    mcopy(0xd620, 0xa7c0, 0x80)
+                    mstore(0xd6a0, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_1, r))
+                    mcopy(0xd6c0, 0xac40, 0x80)
+                    mstore(0xd740, x4_pow_2)
+                    mcopy(0xd760, 0xadc0, 0x80)
+                    mstore(0xd7e0, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_2, r))
+                    mcopy(0xd800, 0xae40, 0x80)
+                    mstore(0xd880, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_2, r))
+                    mcopy(0xd8a0, 0xa140, 0x80)
+                    mstore(0xd920, x4_pow_3)
+                    mcopy(0xd940, 0xa1c0, 0x80)
+                    mstore(0xd9c0, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_3, r))
+                    mcopy(0xd9e0, 0xa240, 0x80)
+                    mstore(0xda60, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_3, r))
+                    mcopy(0xda80, 0xa2c0, 0x80)
+                    mstore(0xdb00, mulmod(mload(add(X1_POWERS_MPTR, 0x60)), x4_pow_3, r))
+                    mcopy(0xdb20, 0xa340, 0x80)
+                    mstore(0xdba0, mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_3, r))
+                    mcopy(0xdbc0, 0xa3c0, 0x80)
+                    mstore(0xdc40, mulmod(mload(add(X1_POWERS_MPTR, 0xa0)), x4_pow_3, r))
+                    mcopy(0xdc60, 0xa440, 0x80)
+                    mstore(0xdce0, mulmod(mload(add(X1_POWERS_MPTR, 0xc0)), x4_pow_3, r))
+                    mcopy(0xdd00, 0xa4c0, 0x80)
+                    mstore(0xdd80, mulmod(mload(add(X1_POWERS_MPTR, 0xe0)), x4_pow_3, r))
+                    mcopy(0xdda0, 0xa540, 0x80)
+                    mstore(0xde20, mulmod(mload(add(X1_POWERS_MPTR, 0x100)), x4_pow_3, r))
+                    mcopy(0xde40, 0xa5c0, 0x80)
+                    mstore(0xdec0, mulmod(mload(add(X1_POWERS_MPTR, 0x120)), x4_pow_3, r))
+                    mcopy(0xdee0, 0xa640, 0x80)
+                    mstore(0xdf60, mulmod(mload(add(X1_POWERS_MPTR, 0x140)), x4_pow_3, r))
+                    mcopy(0xdf80, 0xa9c0, 0x80)
+                    mstore(0xe000, x4_pow_4)
+                    mcopy(0xe020, 0xaa40, 0x80)
+                    mstore(0xe0a0, mulmod(mload(add(X1_POWERS_MPTR, 0x20)), x4_pow_4, r))
+                    mcopy(0xe0c0, 0xaac0, 0x80)
+                    mstore(0xe140, mulmod(mload(add(X1_POWERS_MPTR, 0x40)), x4_pow_4, r))
+                    mcopy(0xe160, 0xab40, 0x80)
+                    mstore(0xe1e0, mulmod(mload(add(X1_POWERS_MPTR, 0x60)), x4_pow_4, r))
+                    mcopy(0xe200, 0xabc0, 0x80)
+                    mstore(0xe280, mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_4, r))
+                    mcopy(0xe2a0, F_COM_MPTR, 0x80)
+                    mstore(0xe320, x4_pow_5)
                     if success {
-                        success := staticcall(gas(), 0x0c, 0xa300, 0x30c0, FINAL_COM_MPTR, 0x80)
+                        success := staticcall(gas(), 0x0c, 0xb280, 0x30c0, FINAL_COM_MPTR, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     mstore(V_MPTR, v)
@@ -2078,28 +2166,28 @@ contract Halo2Verifier {
                     // Scale z*pi - vG before the final pairing check
                     // pairing inputs (LHS = pi; RHS = final_com - v*G + x3*pi)
                     mcopy(PAIRING_LHS_MPTR, PI_MPTR, 0x80)
-                    mcopy(0x80, G1_BASE_MPTR, 0x80)
-                    mstore(0x100, addmod(0, sub(r, mload(V_MPTR)), r))
+                    mcopy(0x1000, G1_BASE_MPTR, 0x80)
+                    mstore(0x1080, addmod(0, sub(r, mload(V_MPTR)), r))
                     if success {
-                        success := staticcall(gas(), 0x0c, 0x80, 0xa0, 0x80, 0x80)
+                        success := staticcall(gas(), 0x0c, 0x1000, 0xa0, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
-                    mcopy(0x100, FINAL_COM_MPTR, 0x80)
+                    mcopy(0x1080, FINAL_COM_MPTR, 0x80)
                     if success {
-                        success := staticcall(gas(), 0x0b, 0x80, 0x100, 0x80, 0x80)
+                        success := staticcall(gas(), 0x0b, 0x1000, 0x100, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
-                    mcopy(0x100, PI_MPTR, 0x80)
-                    mstore(0x180, mload(X3_MPTR))
+                    mcopy(0x1080, PI_MPTR, 0x80)
+                    mstore(0x1100, mload(X3_MPTR))
                     if success {
-                        success := staticcall(gas(), 0x0c, 0x100, 0xa0, 0x100, 0x80)
+                        success := staticcall(gas(), 0x0c, 0x1080, 0xa0, 0x1080, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     if success {
-                        success := staticcall(gas(), 0x0b, 0x80, 0x100, 0x80, 0x80)
+                        success := staticcall(gas(), 0x0b, 0x1000, 0x100, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
-                    mcopy(PAIRING_RHS_MPTR, 0x80, 0x80)
+                    mcopy(PAIRING_RHS_MPTR, 0x1000, 0x80)
                 }
             }
 
@@ -2181,6 +2269,12 @@ contract Halo2Verifier {
 
             // Success path is terminal. Invalid inputs have already reverted,
             // so the Solidity ABI observes `true`.
+            //
+            // The guard is redundant today -- every failure path above reverts
+            // rather than clearing `success` -- but it keeps acceptance a local
+            // property of this file instead of an invariant split across
+            // FinalPairing.yul and ec_pairing.
+            if iszero(success) { revert(0, 0) }
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)
         }

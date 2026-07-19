@@ -94,9 +94,9 @@ contract Halo2VerifyingKey {
             mstore(add(payload, 0x03a0), 0x00000000000000000000000000000000006d57f79a18220d1e5ef04bd519e995) // neg_s_g2_y_c1_hi
             mstore(add(payload, 0x03c0), 0x9a9cc71553bb761b5422a6b6971b75c8d3695bfa07b861c4b1c958da426efc45) // neg_s_g2_y_c1_lo
             mstore(add(payload, 0x03e0), 0x0000000000000000000000000000000000000000000000000000000000000001) // quotient_const
-            mstore(add(payload, 0x0400), 0x0547401048c00547e008060d000b02000105470011470011470005476008060d) // quotient_program
-            mstore(add(payload, 0x0420), 0x000b03000005472011472011472005478008060d000b03000105474011474011) // quotient_program
-            mstore(add(payload, 0x0440), 0x474005480008060d000b0300011b00001b00011b0002191f0000000000000000) // quotient_program
+            mstore(add(payload, 0x0400), 0x0556c010584005576008060d000b0200010556801156801156800556e008060d) // quotient_program
+            mstore(add(payload, 0x0420), 0x000b0300000556a01156a01156a005570008060d000b0300010556c01156c011) // quotient_program
+            mstore(add(payload, 0x0440), 0x56c005578008060d000b0300011b00001b00011b0002191f0000000000000000) // quotient_program
             // Fixed-column commitment 0, stored as one
             // EIP-2537 padded uncompressed G1 slot.
             mstore(add(payload, 0x0460), 0x0000000000000000000000000000000016742a8c4f331d1be5bc8622ba92b271) // fixed_comms[0].x_hi
