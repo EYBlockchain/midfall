@@ -21,30 +21,27 @@
 //! from a VK without the full SRS (`SolidityGenerator` consumes
 //! `params.g_lagrange()`), which is what rules out a vk.bin-based replay.
 //!
-//! Regenerate the fixtures with:
+//! Two fixtures are replayed, covering both accumulator encodings:
 //!
-//! ```text
-//! HALO2_SOLIDITY_RUN_IVC_BENCH=1 \
-//!   SRS_DIR=/path/to/midfall/zk_stdlib/examples/assets \
-//!   cargo test --release \
-//!     --features evm,truncated-challenges,in-circuit-fewer-point-sets \
-//!     --test ivc_keccak_solidity -- --nocapture
-//! ```
+//! - `fixtures/ivc` -- the IVC Keccak decider, `AccumulatorEncoding::new`,
+//!   which carries explicit lhs/rhs scalars.
+//! - `fixtures/moonlight-wrap` -- the Moonlight wrap decider, `point_pair`,
+//!   which does not. Its `expected_acc_has_carried_scalars = false` arms were
+//!   previously only ever compiled, never executed against a proof.
 //!
-//! then copy `target/ivc-keccak-solidity-dump/{Halo2Verifier.sol,
-//! Halo2VerifyingKey.sol,Halo2QuotientEvaluator.sol,calldata.bin}` into
-//! `fixtures/ivc/` and update the commit stamp in `fixtures/ivc/README.md`.
+//! Each fixture's README records its provenance and regeneration command.
 //!
-//! The fixture describes its own accumulator placement: the offset, limb count
-//! and `has_accumulator` flag are parsed back out of the rendered verifying-key
-//! payload, and the infinity encoding out of the verifier's own constants, so
-//! this file carries no second copy that could drift.
+//! A fixture describes itself: the accumulator offset, limb count and
+//! `has_accumulator` flag are parsed back out of the rendered verifying-key
+//! payload, the encoding kind is recovered from the payload width, and the
+//! infinity encoding comes from the verifier's own constants. So this file
+//! carries no per-fixture constants that could drift from the artifacts.
 //!
-//! Staleness caveat: these are a snapshot of the codegen that produced them.
-//! The fixture is self-consistent, so it keeps passing after a codegen change
-//! -- it just stops testing current output. `fixtures/ivc/README.md` records
-//! the source commit so drift is auditable; detecting it automatically would
-//! require re-rendering, which needs the SRS again.
+//! Staleness caveat: these are snapshots of the codegen that produced them.
+//! A fixture is self-consistent, so the replay keeps passing after a codegen
+//! change -- it just stops testing current output. The commit stamp in each
+//! README makes drift auditable; detecting it automatically would require
+//! re-rendering, which needs the SRS again.
 
 #![cfg(feature = "evm")]
 
@@ -61,18 +58,24 @@ const GAS_CAP: u64 = 5_000_000_000;
 /// word. The proof payload starts immediately after.
 const PROOF_PAYLOAD_START: usize = 4 + 0x40 + 0x20;
 
-fn fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures/ivc")
+fn fixture_dir(fixture: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fixtures").join(fixture)
 }
 
-fn read_fixture(name: &str) -> Vec<u8> {
-    let path = fixture_dir().join(name);
-    std::fs::read(&path)
-        .unwrap_or_else(|err| panic!("missing IVC fixture {}: {err}", path.display()))
+fn read_fixture(fixture: &str, name: &str) -> Vec<u8> {
+    let path = fixture_dir(fixture).join(name);
+    std::fs::read(&path).unwrap_or_else(|err| panic!("missing fixture {}: {err}", path.display()))
 }
 
-fn read_fixture_string(name: &str) -> String {
-    String::from_utf8(read_fixture(name)).expect("fixture should be UTF-8")
+fn read_fixture_string(fixture: &str, name: &str) -> String {
+    String::from_utf8(read_fixture(fixture, name)).expect("fixture should be UTF-8")
+}
+
+/// Read an optional fixture file. Split renders ship a quotient evaluator;
+/// single-contract renders do not.
+fn read_optional_fixture_string(fixture: &str, name: &str) -> Option<String> {
+    let path = fixture_dir(fixture).join(name);
+    std::fs::read_to_string(path).ok()
 }
 
 /// Read a labelled VK payload word out of the rendered verifying-key source.
@@ -121,17 +124,30 @@ fn assert_reverts(outcome: CallOutcome, case: &str) {
     }
 }
 
-/// Replay the shipped IVC accumulator fixture, then mutate the accumulator
-/// public inputs and assert every mutation is rejected.
+/// The IVC decider carries explicit lhs/rhs scalars
+/// (`AccumulatorEncoding::new`).
+#[test]
+fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
+    replay_accumulator_fixture("ivc");
+}
+
+/// The Moonlight wrap decider uses the scalar-free `point_pair` encoding, whose
+/// `expected_acc_has_carried_scalars = false` arms were previously only ever
+/// compiled, never executed against a proof.
+#[test]
+fn wrap_point_pair_decoder_rejects_malformed_public_accumulator() {
+    replay_accumulator_fixture("moonlight-wrap");
+}
+
+/// Replay a rendered accumulator fixture, then mutate the proof and public
+/// inputs and assert every mutation is rejected.
 ///
 /// The accept baseline is what gives the rejections meaning: without it a
 /// "rejects" assertion could pass because the verifier rejects everything.
-#[test]
-fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
-    let verifier_solidity = read_fixture_string("Halo2Verifier.sol");
-    let vk_solidity = read_fixture_string("Halo2VerifyingKey.sol");
-    let quotient_solidity = read_fixture_string("Halo2QuotientEvaluator.sol");
-    let calldata = read_fixture("calldata.bin");
+fn replay_accumulator_fixture(fixture: &str) {
+    let verifier_solidity = read_fixture_string(fixture, "Halo2Verifier.sol");
+    let vk_solidity = read_fixture_string(fixture, "Halo2VerifyingKey.sol");
+    let calldata = read_fixture(fixture, "calldata.bin");
 
     assert_eq!(
         vk_payload_word(&vk_solidity, "has_accumulator"),
@@ -146,18 +162,34 @@ fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
     // fixture describes its own instance-space offset via the VK payload.
     let proof_len = read_u256_word(&calldata, PROOF_PAYLOAD_START - 0x20) as usize;
     let instances_len_word = PROOF_PAYLOAD_START + proof_len;
+    let instance_count = read_u256_word(&calldata, instances_len_word);
     let first_acc_word = instances_len_word + 0x20 + final_acc_offset * 0x20;
     // 7 limbs of 56 bits pack 4 to a field element, so each coordinate takes 2
-    // words and each point 4, with one scalar word following.
+    // words and each point 4.
     assert_eq!(
         num_acc_limbs, 7,
         "limb count changed; the word arithmetic below no longer holds"
     );
+
+    // Recover the encoding kind from the payload width rather than hardcoding
+    // it per fixture: the accumulator occupies the instance tail, so eight
+    // words is `point_pair` and ten is the scalar-carrying encoding.
+    let acc_words = instance_count as usize - final_acc_offset;
+    let has_carried_scalars = match acc_words {
+        8 => false,
+        10 => true,
+        other => panic!(
+            "unexpected accumulator payload of {other} words; expected 8 (point_pair) \
+             or 10 (point-and-scalar)"
+        ),
+    };
+    let scalar_stride = if has_carried_scalars { 0x20 } else { 0 };
     let lhs_scalar_word = first_acc_word + 4 * 0x20;
-    let rhs_first_word = lhs_scalar_word + 0x20;
+    let rhs_first_word = lhs_scalar_word + scalar_stride;
     let rhs_scalar_word = rhs_first_word + 4 * 0x20;
+    let acc_end_word = rhs_scalar_word + scalar_stride;
     assert!(
-        rhs_scalar_word + 0x20 <= calldata.len(),
+        acc_end_word <= calldata.len(),
         "accumulator words run past the fixture calldata; the fixture is inconsistent"
     );
 
@@ -183,15 +215,20 @@ fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
 
     let mut evm = Evm::default();
     let vk_address = evm.create(compile_solidity_with_runs(&vk_solidity, SOLC_OPTIMIZE_RUNS));
-    let quotient_address = evm.create(compile_solidity_with_runs(
-        &quotient_solidity,
-        SOLC_OPTIMIZE_RUNS,
-    ));
-    let verifier_address = evm.create_with_two_address_args(
-        compile_solidity_with_runs(&verifier_solidity, SOLC_OPTIMIZE_RUNS),
-        vk_address,
-        quotient_address,
-    );
+    let verifier_code = compile_solidity_with_runs(&verifier_solidity, SOLC_OPTIMIZE_RUNS);
+    // Split renders pin a separately deployed quotient evaluator; single
+    // contract renders take the verifying key alone.
+    let verifier_address = match read_optional_fixture_string(fixture, "Halo2QuotientEvaluator.sol")
+    {
+        Some(quotient_solidity) => {
+            let quotient_address = evm.create(compile_solidity_with_runs(
+                &quotient_solidity,
+                SOLC_OPTIMIZE_RUNS,
+            ));
+            evm.create_with_two_address_args(verifier_code, vk_address, quotient_address)
+        }
+        None => evm.create_with_address_arg(verifier_code, vk_address),
+    };
 
     match evm.try_call_with_gas(verifier_address, calldata.clone(), GAS_CAP) {
         CallOutcome::Success { output, .. } => {
@@ -238,7 +275,9 @@ fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
     ] {
         let mut malformed = calldata.clone();
         malformed[point_word + 31] ^= 0x01;
-        malformed[scalar_word..scalar_word + 0x20].fill(0);
+        if has_carried_scalars {
+            malformed[scalar_word..scalar_word + 0x20].fill(0);
+        }
         assert_reverts(
             evm.try_call_with_gas(verifier_address, malformed, GAS_CAP),
             case,
@@ -265,6 +304,171 @@ fn ivc_accumulator_decoder_rejects_malformed_public_accumulator() {
             case,
         );
     }
+
+    // ---------------------------------------------------------------------
+    // Calldata framing. These attacks need no layout knowledge at all.
+    // ---------------------------------------------------------------------
+    let instance_count = read_u256_word(&calldata, instances_len_word);
+    let mut framing_cases: Vec<(String, Vec<u8>)> = Vec::new();
+
+    let mut trailing = calldata.clone();
+    trailing.extend_from_slice(&[0xde, 0xad, 0xbe, 0xef]);
+    framing_cases.push(("extra trailing calldata".into(), trailing));
+
+    let mut truncated = calldata.clone();
+    truncated.pop();
+    framing_cases.push(("truncated calldata".into(), truncated));
+
+    let mut wrong_selector = calldata.clone();
+    wrong_selector[3] ^= 0x01;
+    framing_cases.push(("wrong function selector".into(), wrong_selector));
+
+    for (case, offset, value) in [
+        ("wrong proof ABI head", 0x04, 0x60),
+        ("wrong instances ABI head", 0x24, 0x20),
+        (
+            "short proof length",
+            PROOF_PAYLOAD_START - 0x20,
+            proof_len as u64 - 0x20,
+        ),
+        (
+            "long proof length",
+            PROOF_PAYLOAD_START - 0x20,
+            proof_len as u64 + 0x20,
+        ),
+        (
+            "wrong instance array length",
+            instances_len_word,
+            instance_count + 1,
+        ),
+    ] {
+        let mut mutated = calldata.clone();
+        write_u256_word(&mut mutated, offset, value);
+        framing_cases.push((case.into(), mutated));
+    }
+
+    for (case, mutated) in framing_cases {
+        assert_reverts(
+            evm.try_call_with_gas(verifier_address, mutated, GAS_CAP),
+            &case,
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // Curve-level attacks on every proof commitment.
+    //
+    // The repacked proof opens with a run of EIP-2537 padded G1 points, so the
+    // run length is discovered from the padding signature rather than
+    // hardcoded: a regenerated fixture with a different commitment count stays
+    // covered.
+    // ---------------------------------------------------------------------
+    let g1_count = padded_g1_block_count(&calldata, PROOF_PAYLOAD_START, proof_len);
+    assert!(
+        g1_count >= 8,
+        "expected a run of padded G1 commitments at the proof head, found {g1_count}; \
+         the fixture proof layout changed"
+    );
+
+    let p_hi = solidity_constant(&verifier_solidity, "BLS_P_HI");
+    let mut p_lo = solidity_constant(&verifier_solidity, "BLS_P_MINUS_ONE_LO");
+    // p - 1 ends in ...aaaa, so incrementing cannot carry out of the low byte.
+    p_lo[31] += 1;
+
+    for index in 0..g1_count {
+        let at = PROOF_PAYLOAD_START + index * G1_PADDED_BYTES;
+
+        // (0, 1) is field-canonical but off the curve: y^2 = x^3 + 4 gives
+        // 1 != 4, so the G1 precompiles must reject it.
+        let mut off_curve = calldata.clone();
+        off_curve[at..at + G1_PADDED_BYTES].fill(0);
+        off_curve[at + G1_PADDED_BYTES - 1] = 1;
+
+        // x = p exactly: one past the largest canonical coordinate.
+        let mut base_modulus = calldata.clone();
+        base_modulus[at..at + 0x20].copy_from_slice(&p_hi);
+        base_modulus[at + 0x20..at + 0x40].copy_from_slice(&p_lo);
+
+        // EIP-2537 pads each 48-byte coordinate with 16 leading zero bytes.
+        // Setting one is a non-canonical encoding of an otherwise valid point.
+        let mut bad_padding = calldata.clone();
+        bad_padding[at] ^= 0x01;
+
+        for (label, mutated) in [
+            ("off-curve", off_curve),
+            ("base-modulus", base_modulus),
+            ("non-canonical padding", bad_padding),
+        ] {
+            assert_reverts(
+                evm.try_call_with_gas(verifier_address, mutated, GAS_CAP),
+                &format!("{label} G1 at proof commitment {index}"),
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // Scalar canonicality across the evaluation block that follows the
+    // commitments, plus the non-accumulator public inputs.
+    // ---------------------------------------------------------------------
+    let fr_modulus = solidity_constant(&verifier_solidity, "FR_MODULUS");
+    let evals_start = PROOF_PAYLOAD_START + g1_count * G1_PADDED_BYTES;
+    let evals_end = PROOF_PAYLOAD_START + proof_len;
+    assert!(
+        evals_start < evals_end && (evals_end - evals_start) % 0x20 == 0,
+        "evaluation block is not a whole number of words"
+    );
+
+    for (index, at) in (evals_start..evals_end).step_by(0x20).enumerate() {
+        let mut noncanonical = calldata.clone();
+        noncanonical[at..at + 0x20].copy_from_slice(&fr_modulus);
+        assert_reverts(
+            evm.try_call_with_gas(verifier_address, noncanonical, GAS_CAP),
+            &format!("proof scalar {index} set to the Fr modulus"),
+        );
+    }
+
+    // The accumulator words are covered above; sweep the remaining public
+    // inputs for scalar canonicality.
+    let first_instance_word = instances_len_word + 0x20;
+    for index in 0..instance_count as usize {
+        let at = first_instance_word + index * 0x20;
+        if (first_acc_word..rhs_scalar_word + 0x20).contains(&at) {
+            continue;
+        }
+        let mut noncanonical = calldata.clone();
+        noncanonical[at..at + 0x20].copy_from_slice(&fr_modulus);
+        assert_reverts(
+            evm.try_call_with_gas(verifier_address, noncanonical, GAS_CAP),
+            &format!("public input {index} set to the Fr modulus"),
+        );
+    }
+}
+
+/// EIP-2537 padded G1: `x_hi, x_lo, y_hi, y_lo`.
+const G1_PADDED_BYTES: usize = 4 * 0x20;
+
+/// Count the leading run of EIP-2537 padded G1 points in the repacked proof.
+///
+/// Each coordinate is a 48-byte field element left-padded to 64 bytes, so the
+/// high word of `x` and of `y` both start with sixteen zero bytes. Evaluation
+/// scalars do not share that signature, which is what ends the run.
+fn padded_g1_block_count(calldata: &[u8], proof_start: usize, proof_len: usize) -> usize {
+    let mut count = 0;
+    while (count + 1) * G1_PADDED_BYTES <= proof_len {
+        let at = proof_start + count * G1_PADDED_BYTES;
+        let x_pad_zero = calldata[at..at + 16].iter().all(|b| *b == 0);
+        let y_pad_zero = calldata[at + 0x40..at + 0x50].iter().all(|b| *b == 0);
+        if !(x_pad_zero && y_pad_zero) {
+            break;
+        }
+        count += 1;
+    }
+    count
+}
+
+/// Write `value` as a big-endian EVM word at `offset`.
+fn write_u256_word(calldata: &mut [u8], offset: usize, value: u64) {
+    calldata[offset..offset + 0x20].fill(0);
+    calldata[offset + 0x18..offset + 0x20].copy_from_slice(&value.to_be_bytes());
 }
 
 /// Read a rendered `uint256 internal constant NAME = 0x...;` out of the
