@@ -25,7 +25,13 @@
                     // public input. `first_adjust` removes the identity flag
                     // base from the first x word when present.
                     let packed := calldataload(add(src, mul(div(i, limbs_per_word), 0x20)))
-                    if and(iszero(div(i, limbs_per_word)), first_adjust) {
+                    // `and` here is bitwise, so it must not be fed the raw
+                    // `first_adjust` (a radix base, i.e. a high power of two):
+                    // `iszero(...)` is 0 or 1 and shares no bit with it, which
+                    // would make the guard false for every call. Subtracting is
+                    // already a no-op when `first_adjust` is zero, so gate on
+                    // the word index alone.
+                    if iszero(div(i, limbs_per_word)) {
                         packed := sub(packed, first_adjust)
                     }
                     // Select limb i from its packed field word. The mod/div
