@@ -52,6 +52,9 @@
 //! underflow, and identity-boundary stack leaks before the bytes can be pinned
 //! into a VK runtime.
 
+pub(crate) mod certify;
+pub(crate) mod reference;
+
 use std::collections::{HashMap, HashSet};
 
 use ff::{Field, PrimeField};
@@ -1096,7 +1099,6 @@ impl Default for QuotientProgramBuilder {
 
 impl QuotientProgramBuilder {
     /// Create a builder, optionally enabling limb-specialized opcode emission.
-    #[cfg(test)]
     pub(crate) fn with_limb_vm_ops(enabled: bool) -> Self {
         Self {
             limb_vm_ops: enabled,

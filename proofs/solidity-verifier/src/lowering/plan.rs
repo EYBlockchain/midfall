@@ -12,7 +12,9 @@ use crate::lowering::{
     kzg, layout,
     layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
     quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
-    quotient_numerator::vm::{QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan},
+    quotient_numerator::vm::{
+        certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+    },
     render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
     VerifierBuildInputs,
 };
@@ -163,6 +165,22 @@ impl LoweringPlan {
         };
         plan.validate_generator_invariants()
             .unwrap_or_else(|err| panic!("generator invariant violation: {err}"));
+
+        // Certify the limb superinstructions against a generic-opcode build of
+        // the same identity stream. This needs `inputs`, so it runs here rather
+        // than inside `validate_generator_invariants`.
+        let baseline_build = inputs.build_quotient_program_items_with_limb_ops(
+            &plan.quotient.plan.items,
+            &plan.quotient.plan.selector_fold,
+            false,
+        );
+        certify::certify_quotient_builds_agree(
+            &plan.quotient.plan,
+            &plan.quotient.build,
+            &baseline_build,
+        )
+        .unwrap_or_else(|err| panic!("quotient dual-build certification failed: {err}"));
+
         plan
     }
 
@@ -320,6 +338,10 @@ impl LoweringPlan {
                 self.quotient.program.eval_numer_mptr, self.quotient.state_slots.eval_numer_mptr
             ));
         }
+        // Prove the emitted bytecode still evaluates the identities it was
+        // lowered from, before it can be pinned into a verifying key.
+        certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build)
+            .map_err(|err| format!("quotient program certification failed: {err}"))?;
         Ok(())
     }
 

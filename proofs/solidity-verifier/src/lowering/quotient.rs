@@ -1959,7 +1959,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         items: &[QuotientProgramItem],
         selector_fold: &SelectorFoldPlan,
     ) -> QuotientProgramBuild {
-        let mut builder = QuotientProgramBuilder::default();
+        self.build_quotient_program_items_with_limb_ops(
+            items,
+            selector_fold,
+            crate::lowering::config::DEFAULT_QUOTIENT_LIMB_VM_OPS,
+        )
+    }
+
+    /// Lower the same item stream under an explicit limb-opcode policy.
+    ///
+    /// Rendering always uses the crate default. The `false` build exists so the
+    /// generator can cross-check the limb superinstructions against a program
+    /// that uses only generic Fr opcodes; see
+    /// `quotient_numerator::vm::certify::certify_quotient_builds_agree`.
+    pub(super) fn build_quotient_program_items_with_limb_ops(
+        &self,
+        items: &[QuotientProgramItem],
+        selector_fold: &SelectorFoldPlan,
+        limb_vm_ops: bool,
+    ) -> QuotientProgramBuild {
+        let mut builder = QuotientProgramBuilder::with_limb_vm_ops(limb_vm_ops);
         // Lower the logical plan into bytecode in one pass. Repeated
         // subexpressions are emitted directly; native callbacks remain opaque
         // markers because their arithmetic is emitted as separate Yul kernels
