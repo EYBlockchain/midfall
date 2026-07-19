@@ -81,7 +81,9 @@ use midnight_proofs::{
         },
         EvaluationDomain,
     },
-    transcript::{CircuitTranscript, Hashable, Sampleable, Transcript},
+    transcript::{
+        CircuitTranscript, Hashable, Sampleable, Transcript, TranscriptHash, TranscriptInputBytes,
+    },
 };
 use rand::{CryptoRng, RngCore};
 
@@ -414,6 +416,11 @@ impl<const NB_PROOFS: usize> LightAggregator<NB_PROOFS> {
         C: Hashable<T::Hash>,
         F: Sampleable<T::Hash> + Hashable<T::Hash>,
         u32: Hashable<T::Hash>,
+        // Required by `plonk::prepare`, which this method delegates to. The
+        // bound is satisfied by both real transcript input types (`Vec<u8>`
+        // and `Vec<Fq>`); propagating it here mirrors the other `prepare`
+        // callers in `proofs/tests/plonk_api.rs`.
+        <T::Hash as TranscriptHash>::Input: TranscriptInputBytes,
     {
         // Read the LHS of the acc from the transcript.
         let acc_lhs: Msm<S> = {
