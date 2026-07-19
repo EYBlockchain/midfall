@@ -10,6 +10,8 @@
 use std::fmt;
 
 use askama::{Error, Template};
+use group::{prime::PrimeCurveAffine, Curve, Group};
+use midnight_curves::{G1Affine, G1Projective};
 use ruint::aliases::U256;
 
 use crate::lowering::{
@@ -54,6 +56,14 @@ pub(crate) struct Eip2537TemplateConstants {
     pub(crate) g1msm_address: usize,
     pub(crate) pairing_address: usize,
     pub(crate) smoke_scratch_bytes: usize,
+    /// BLS12-381 G1 generator in EIP-2537 padded encoding.
+    ///
+    /// Used with [`Self::g1_double_generator`] as a known-answer vector for the
+    /// constructor smoke test: identity-only probes are satisfied by
+    /// implementations that never do any real curve arithmetic.
+    pub(crate) g1_generator: G1Words,
+    /// Twice the BLS12-381 G1 generator, in EIP-2537 padded encoding.
+    pub(crate) g1_double_generator: G1Words,
 }
 
 /// EIP-198 modexp frame constants rendered into templates.
@@ -142,6 +152,12 @@ pub(crate) struct QuotientVmTemplateConstants {
     pub(crate) limb_pairwise_coeffs: usize,
 }
 
+/// Convert a G1 point into the tuple form the templates render.
+fn g1_words(point: G1Affine) -> G1Words {
+    let [x_hi, x_lo, y_hi, y_lo] = crate::lowering::encoding::g1_to_u256s(point);
+    (x_hi, x_lo, y_hi, y_lo)
+}
+
 impl Default for TemplateConstants {
     /// Build template constants from the Rust-side layout and VM specs.
     fn default() -> Self {
@@ -158,6 +174,11 @@ impl Default for TemplateConstants {
                 g1msm_address: layout::precompile::G1MSM_ADDRESS,
                 pairing_address: layout::precompile::PAIRING_ADDRESS,
                 smoke_scratch_bytes: layout::PAIRING_TWO_PAIR_BYTES,
+                g1_generator: g1_words(G1Affine::generator()),
+                g1_double_generator: {
+                    let g = G1Projective::generator();
+                    g1_words((g + g).to_affine())
+                },
             },
             modexp: ModexpTemplateConstants {
                 address: layout::precompile::MODEXP_ADDRESS,

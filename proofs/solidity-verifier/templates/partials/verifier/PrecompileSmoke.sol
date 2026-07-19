@@ -27,6 +27,39 @@
                 revert(0, 0)
             }
 
+            // Known-answer probe: G1ADD(G, G) == 2G.
+            //
+            // Every probe above uses the point at infinity, which is exactly
+            // the input an implementation gets right without doing any curve
+            // arithmetic -- a precompile that returns its zero-filled input, or
+            // zeros for anything, satisfies them. The identity is also the one
+            // input on which an implementation that omits the EIP-2537 subgroup
+            // check still answers correctly, and the production verifier leans
+            // on G1MSM as its subgroup validator for absorbed commitments. So
+            // add one vector whose answer a stub cannot guess.
+            mstore(add(scratch, 0x00), {{ template_constants.eip2537.g1_generator.0|hex_padded(64) }})
+            mstore(add(scratch, 0x20), {{ template_constants.eip2537.g1_generator.1|hex_padded(64) }})
+            mstore(add(scratch, 0x40), {{ template_constants.eip2537.g1_generator.2|hex_padded(64) }})
+            mstore(add(scratch, 0x60), {{ template_constants.eip2537.g1_generator.3|hex_padded(64) }})
+            mcopy(add(scratch, {{ template_constants.g1_bytes|hex() }}), scratch, {{ template_constants.g1_bytes|hex() }})
+            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(and(
+                and(
+                    eq(mload(add(scratch, 0x00)), {{ template_constants.eip2537.g1_double_generator.0|hex_padded(64) }}),
+                    eq(mload(add(scratch, 0x20)), {{ template_constants.eip2537.g1_double_generator.1|hex_padded(64) }})
+                ),
+                and(
+                    eq(mload(add(scratch, 0x40)), {{ template_constants.eip2537.g1_double_generator.2|hex_padded(64) }}),
+                    eq(mload(add(scratch, 0x60)), {{ template_constants.eip2537.g1_double_generator.3|hex_padded(64) }})
+                )
+            )) { revert(0, 0) }
+
+            // Restore the identity encoding for the probes below.
+            for { let off := 0 } lt(off, {{ template_constants.eip2537.smoke_scratch_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
+                mstore(add(scratch, off), 0)
+            }
+
             // Worst-case generated G1MSM with all identity/zero terms ->
             // identity, 128-byte return. This exercises the largest MSM input
             // length rendered by this verifier instead of only a one-pair

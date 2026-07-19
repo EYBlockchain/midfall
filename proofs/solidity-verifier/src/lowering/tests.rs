@@ -1197,6 +1197,39 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     );
 }
 
+/// The constructor's known-answer probe is only as good as its constants: a
+/// wrong 2G would brick every deployment, and a 2G that happened to equal the
+/// probe's own input would silently restore the identity-only weakness. Pin
+/// both against the curve library rather than against hardcoded literals.
+#[test]
+fn constructor_known_answer_vector_is_the_generator_and_its_double() {
+    use group::{prime::PrimeCurveAffine, Curve, Group};
+    use midnight_curves::{G1Affine, G1Projective};
+
+    let constants = crate::lowering::render::TemplateConstants::default().eip2537;
+    let expected_g = crate::lowering::encoding::g1_to_u256s(G1Affine::generator());
+    let g = G1Projective::generator();
+    let expected_2g = crate::lowering::encoding::g1_to_u256s((g + g).to_affine());
+
+    assert_eq!(
+        constants.g1_generator,
+        (expected_g[0], expected_g[1], expected_g[2], expected_g[3])
+    );
+    assert_eq!(
+        constants.g1_double_generator,
+        (
+            expected_2g[0],
+            expected_2g[1],
+            expected_2g[2],
+            expected_2g[3]
+        )
+    );
+    assert_ne!(
+        constants.g1_generator, constants.g1_double_generator,
+        "a known-answer probe whose expected output equals its input tests nothing"
+    );
+}
+
 #[test]
 fn verifier_constructor_smoke_tests_runtime_prerequisites() {
     let verifier_template = verifier_template_corpus();
@@ -1211,6 +1244,9 @@ fn verifier_constructor_smoke_tests_runtime_prerequisites() {
         "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
         "non-Cancun fork fails during deployment",
         "G1ADD(identity, identity) -> identity",
+        "Known-answer probe: G1ADD(G, G) == 2G",
+        "template_constants.eip2537.g1_generator",
+        "template_constants.eip2537.g1_double_generator",
         "Worst-case generated G1MSM with all identity/zero terms",
         "constructor_g1msm_smoke_input_bytes",
         "PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])",
