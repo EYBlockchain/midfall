@@ -1485,6 +1485,85 @@ fn compile_solidity_is_deterministic_for_same_source() {
     assert_eq!(bytecode_a, bytecode_b);
 }
 
+/// The accumulator fixed-base scalar tail must match the verifying key.
+///
+/// `fixed_scalar_count` is derived from `num_instances`, but the bases those
+/// scalars multiply are generated as `fixed_comm_mptr + i * 0x80` from the VK.
+/// A tail longer than the VK's fixed-commitment count used to render fine and
+/// silently emit base pointers past that region, aliasing permutation
+/// commitments -- and beyond them arbitrary VK payload words -- as accumulator
+/// G1 bases.
+#[test]
+fn accumulator_fixed_base_tail_must_match_verifying_key() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+    let relation = PoseidonExample;
+    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let vk = setup_vk(&srs, &relation);
+
+    let num_fixed_comms = vk.vk().fixed_commitments().len();
+    let num_permutation_comms = vk.vk().permutation().commitments().len();
+    let collapsed = AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+    // `-G` plus every permutation commitment, then up to one scalar per fixed
+    // commitment.
+    let min_tail = 1 + num_permutation_comms;
+    let max_tail = min_tail + num_fixed_comms;
+
+    // A tail three scalars longer than the VK can supply bases for. Before the
+    // guard this rendered a verifier whose last three "fixed bases" were
+    // permutation commitments.
+    let err = SolidityGenerator::try_new(
+        &srs,
+        vk.vk(),
+        GeneratorConfig::new(collapsed + max_tail + 3, 1)
+            .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+    )
+    .expect_err("oversized accumulator fixed-base tail should be rejected");
+    assert!(
+        matches!(
+            err,
+            crate::GeneratorError::AccumulatorFixedBaseTailMismatch {
+                fixed_scalar_count,
+                max_fixed_scalar_count,
+                ..
+            } if fixed_scalar_count == max_tail + 3 && max_fixed_scalar_count == max_tail
+        ),
+        "unexpected error for oversized tail: {err}"
+    );
+
+    // A tail too short to cover `-G` plus the permutation commitments would
+    // underflow the base count in the artifact emitter.
+    SolidityGenerator::try_new(
+        &srs,
+        vk.vk(),
+        GeneratorConfig::new(collapsed + min_tail - 1, 1)
+            .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+    )
+    .expect_err("undersized accumulator fixed-base tail should be rejected");
+
+    // Supported shapes still build: no tail at all, the full base set, and a
+    // prefix of the fixed commitments in between (every pointer stays inside
+    // the fixed-commitment region).
+    for num_instances in [
+        collapsed,
+        collapsed + min_tail,
+        collapsed + max_tail,
+        collapsed + (min_tail + max_tail) / 2,
+    ] {
+        SolidityGenerator::try_new(
+            &srs,
+            vk.vk(),
+            GeneratorConfig::new(num_instances, 1)
+                .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+        )
+        .unwrap_or_else(|err| panic!("supported accumulator tail should build: {err}"));
+    }
+}
+
 /// Compile the accumulator render arm.
 ///
 /// No production fixture enables `with_accumulator`, so before this test the

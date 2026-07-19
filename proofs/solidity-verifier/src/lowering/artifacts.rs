@@ -157,6 +157,19 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     let num_fixed_bases = fixed_scalar_count
                         .checked_sub(1 + num_perm_bases)
                         .expect("accumulator fixed scalar count is smaller than -G + permutations");
+                    // Each generated base below is `fixed_comm_mptr + i * 0x80`,
+                    // so more bases than the VK has fixed commitments would
+                    // point past the region into the permutation commitments
+                    // and then the rest of the VK payload. SolidityGenerator::
+                    // try_new rejects this shape with a typed error; fail
+                    // closed here too, since this is where the out-of-region
+                    // pointers would actually be emitted.
+                    assert!(
+                        num_fixed_bases <= plan.vk.fixed_comms.len(),
+                        "accumulator fixed-base count {num_fixed_bases} exceeds the VK \
+                         fixed-commitment region ({} commitments)",
+                        plan.vk.fixed_comms.len()
+                    );
 
                     std::iter::once(("-G".to_string(), g1_base_mptr_byte, true))
                         .chain((0..num_fixed_bases).map(|i| {
@@ -175,6 +188,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         }))
                         .collect::<Vec<_>>()
                 };
+                // Holds by construction of `bases` above; kept as a cheap
+                // guard on the one-to-one correspondence with the scalars the
+                // generated verifier reads from calldata.
                 assert_eq!(
                     bases.len(),
                     fixed_scalar_count,
