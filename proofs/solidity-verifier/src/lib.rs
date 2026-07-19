@@ -58,8 +58,9 @@ pub const OUTER_SINGLE_H_COMMITMENT_ENABLED: bool = cfg!(feature = "outer-single
 
 #[cfg(feature = "evm")]
 pub use evm::test::{
-    compile_solidity, compile_solidity_with_runs, pinned_solc_available, revm, solc_version,
-    CallOutcome, Evm, ALLOW_UNPINNED_SOLC_ENV, DEFAULT_OPTIMIZE_RUNS, PINNED_SOLC_VERSION,
+    compile_solidity, compile_solidity_runtime, compile_solidity_with_runs, pinned_solc_available,
+    revm, runtime_free_memory_pointer_init, solc_version, CallOutcome, Evm,
+    ALLOW_UNPINNED_SOLC_ENV, DEFAULT_OPTIMIZE_RUNS, PINNED_SOLC_VERSION,
 };
 
 /// Test-only helper that exposes the internal BLS12-381 G1 to EIP-2537

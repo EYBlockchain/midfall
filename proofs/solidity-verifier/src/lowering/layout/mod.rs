@@ -26,7 +26,22 @@ pub(crate) const SOLIDITY_ALLOCATABLE_MEMORY_START: usize = 0x80;
 /// The full reserved prefix: scratch, free-memory pointer, and zero slot.
 pub(crate) const SOLIDITY_RESERVED_MEMORY_BYTES: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Generated verifier transcript and low-memory precompile scratch base.
-pub(crate) const LOW_MEMORY_SCRATCH_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
+///
+/// Deliberately *above* [`SOLIDITY_ALLOCATABLE_MEMORY_START`]. The verifier
+/// body is wrapped in `assembly ("memory-safe")`, which is what lets solc's
+/// via-IR stack-to-memory mover run at all -- without it the block does not
+/// compile (stack too deep). That mover reserves spill slots from `0x80`
+/// upward and records the top in the runtime's `mstore(0x40, ...)` prologue.
+/// Observed reservations run from `0x80` (none) to `0x8e0`, varying with the
+/// circuit, the solc release, and the optimizer schedule.
+///
+/// Basing the generated layout at `0x80` therefore put solc's spill slots and
+/// the verifier's own transcript buffer in the same bytes, kept apart only by
+/// live ranges that nothing enforced. Starting above the largest observed
+/// reservation makes them disjoint by construction;
+/// `compiled_memoryguard_does_not_overlap_generated_layout` fails the build if
+/// a future circuit or compiler pushes the reservation past this base.
+pub(crate) const LOW_MEMORY_SCRATCH_START: usize = 0x1000;
 /// Start of the Keccak transcript buffer used by the assembly helpers.
 pub(crate) const TRANSCRIPT_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Shared low-memory scratch for PCS pairing serialization.
@@ -36,7 +51,12 @@ pub(crate) const VERIFIER_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Return buffer used by split quotient evaluator calls.
 pub(crate) const QUOTIENT_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Constructor-time memory base for the separate VK runtime payload.
-pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = LOW_MEMORY_SCRATCH_START;
+///
+/// Deliberately *not* derived from [`LOW_MEMORY_SCRATCH_START`]. This buffer
+/// belongs to `Halo2VerifyingKey`, a separate contract whose assembly is not
+/// annotated `memory-safe`, so solc reserves no via-IR spill window there and
+/// the payload can sit at Solidity's normal allocatable start.
+pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Number of EVM words in one Fr scalar.
 pub(crate) const FR_WORDS: usize = 1;
 /// EIP-2537 padded G1 encoding: x_hi, x_lo, y_hi, y_lo.
@@ -662,7 +682,13 @@ mod tests {
         assert_eq!(super::SOLIDITY_FREE_MEMORY_POINTER_SLOT, 0x40);
         assert_eq!(super::SOLIDITY_ZERO_SLOT, 0x60);
         assert_eq!(super::SOLIDITY_RESERVED_MEMORY_BYTES, 0x80);
-        assert_eq!(super::TRANSCRIPT_BUFFER_START, 0x80);
+        assert_eq!(
+            super::TRANSCRIPT_BUFFER_START,
+            super::LOW_MEMORY_SCRATCH_START
+        );
+        // Above Solidity's allocatable start on purpose: solc reserves
+        // via-IR spill slots upward from 0x80 in this contract.
+        assert!(super::LOW_MEMORY_SCRATCH_START > super::SOLIDITY_ALLOCATABLE_MEMORY_START);
         assert_eq!(super::VK_CONSTRUCTOR_PAYLOAD_START, 0x80);
     }
 

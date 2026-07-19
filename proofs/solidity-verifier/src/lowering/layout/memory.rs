@@ -1374,7 +1374,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
         let theta = layout.theta_mptr.value().as_usize();
@@ -1429,7 +1429,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
 
@@ -1531,7 +1531,7 @@ mod tests {
             .expect("scalar inversion scratch registered");
         assert_eq!(
             layout.scalar_inv_scratch_mptr,
-            0x1000 - MODEXP_SCRATCH_BYTES
+            0x2000 - MODEXP_SCRATCH_BYTES
         );
         assert_eq!(scalar_inv.start, layout.scalar_inv_scratch_mptr);
         assert_eq!(scalar_inv.len, MODEXP_FRAME_BYTES);
@@ -1545,17 +1545,17 @@ mod tests {
         let windows = ThetaWindowLayout::compatibility();
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.rot_points_words = windows.rot_points_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("ROT_POINTS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.x1_powers_words = windows.x1_powers_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("X1_POWERS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.q_eval_set_words = windows.q_eval_set_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("Q_EVAL_SET_MPTR"));
     }
 
@@ -1567,7 +1567,7 @@ mod tests {
             acc_msm_terms: 4,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("accumulator_msm").expect("accumulator MSM region registered");
 
@@ -1584,7 +1584,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
         let selector = layout
@@ -1621,7 +1621,7 @@ mod tests {
             },
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("trace_u256_log_word").expect("trace_u256 region registered");
 
@@ -1648,7 +1648,7 @@ mod tests {
             },
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
 
         for (name, end) in [
             (
@@ -1690,7 +1690,7 @@ mod tests {
             num_instances: 5,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region = layout
             .map
             .region("batch_invert_scratch")
@@ -1727,7 +1727,7 @@ mod tests {
             num_instances: max_instances,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert_eq!(layout.batch_invert_input_words, cap_words);
         layout.validate().expect("run ending below Q_EVAL_CPTR_MPTR is valid");
 
@@ -1735,7 +1735,7 @@ mod tests {
             num_instances: max_instances + 1,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let err = layout.validate().unwrap_err();
         assert!(
             err.contains("Lagrange batch-inversion input run"),

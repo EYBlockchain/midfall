@@ -27,10 +27,33 @@ Solidity reserves the first four words of memory for compiler conventions:
 
 The generated verifier intentionally does not follow Solidity allocation by
 reading and bumping `mload(0x40)`. Instead, every generated absolute memory
-region is planned at or above `0x80`. The streaming transcript buffer, the main
-verifier return word, the split quotient return frame, the VK constructor
-payload buffer, and low-memory precompile scratch all start from named
-Rust-side layout constants rooted at `SOLIDITY_ALLOCATABLE_MEMORY_START`.
+region is planned from named Rust-side layout constants.
+
+Those constants are **not** rooted at `0x80`. The verifier body is wrapped in
+`assembly ("memory-safe")`, which is load-bearing -- without it the block does
+not compile under `--via-ir` (stack too deep) -- but also factually untrue,
+since the block writes memory it never obtained from the free-memory pointer.
+The annotation is what enables solc's stack-to-memory mover, which reserves
+spill slots upward from `0x80` and records the top in the runtime's
+`mstore(0x40, ...)` prologue. Observed reservations range from `0x80` (none) to
+`0x8e0`, varying with the circuit, the solc release, and the optimizer
+schedule.
+
+Basing the layout at `0x80` therefore put solc's spill slots and the verifier's
+own transcript buffer in the same bytes, separated only by live ranges that
+nothing enforced -- a recompilation could silently place a live spill across a
+verifier write and corrupt a challenge or pairing input. So the streaming
+transcript buffer, the main verifier return word, the split quotient return
+frame, and low-memory precompile scratch are rooted at
+`LOW_MEMORY_SCRATCH_START` (`0x1000`), above the largest observed reservation.
+`compiled_memoryguard_does_not_overlap_generated_layout` compiles each rendered
+variant and fails the build if a future circuit or compiler pushes the
+reservation past that base.
+
+The VK constructor payload buffer is the exception: it lives in
+`Halo2VerifyingKey`, whose assembly carries no `memory-safe` annotation, so
+solc reserves nothing there and it stays at
+`SOLIDITY_ALLOCATABLE_MEMORY_START`.
 
 The code generator treats `[0x00..0x80)` as off limits for generated writes:
 `VerifierMemoryLayout::validate()` rejects any registered region inside that

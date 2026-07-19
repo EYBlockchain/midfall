@@ -45,9 +45,10 @@ use ruint::aliases::U256;
 use sha3::Digest;
 
 use crate::{
-    compile_solidity, encode_calldata, pinned_solc_available, AccumulatorEncoding, CallOutcome,
-    Evm, GeneratorConfig, RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk,
-    SolidityGenerator, FN_SIG_VERIFY_PROOF,
+    compile_solidity, compile_solidity_runtime, encode_calldata, pinned_solc_available,
+    runtime_free_memory_pointer_init, AccumulatorEncoding, CallOutcome, Evm, GeneratorConfig,
+    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
+    FN_SIG_VERIFY_PROOF,
 };
 
 /// Scalar field used by the BLS12-381 Poseidon fixtures.
@@ -1355,6 +1356,45 @@ fn pinned_quotient_verifier_rejects_wrong_vk_and_quotient_contracts() {
         &vk_creation_code,
         "VK supplied as quotient evaluator",
     );
+}
+
+/// The verifier body is wrapped in `assembly ("memory-safe")` while writing
+/// absolute addresses, which is a false promise: it never allocates through the
+/// free-memory pointer. That annotation is nonetheless load-bearing -- without
+/// it the block does not compile (stack too deep) -- and it is what lets solc's
+/// via-IR stack-to-memory mover reserve spill slots upward from `0x80`.
+///
+/// The generated layout is therefore based above that reservation rather than
+/// at `0x80`, so solc's spill slots and the verifier's own memory are disjoint
+/// by construction instead of by a liveness coincidence. The reservation size
+/// is not fixed -- observed values range from `0x80` to `0x8e0` depending on
+/// the circuit, the solc release, and the optimizer schedule -- so assert the
+/// property against real compiled bytecode rather than assuming it holds.
+#[test]
+fn compiled_memoryguard_does_not_overlap_generated_layout() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    for (name, source) in [
+        ("embedded", fixture.embedded_verifier_solidity.as_str()),
+        ("separate", fixture.separate_verifier_solidity.as_str()),
+        ("quotient", fixture.quotient_verifier_solidity.as_str()),
+    ] {
+        let runtime = compile_solidity_runtime(source);
+        let reserved_end = runtime_free_memory_pointer_init(&runtime).unwrap_or_else(|| {
+            panic!("{name}: could not read the free-memory-pointer prologue from runtime bytecode")
+        });
+        assert!(
+            reserved_end <= crate::lowering::layout::LOW_MEMORY_SCRATCH_START,
+            "{name}: solc reserved [0x80, {reserved_end:#x}) for via-IR spill slots, which \
+             overlaps the generated verifier layout based at {:#x}. A live spill slot can then \
+             sit across a verifier write, silently corrupting a challenge or pairing input. \
+             Raise LOW_MEMORY_SCRATCH_START above {reserved_end:#x}.",
+            crate::lowering::layout::LOW_MEMORY_SCRATCH_START
+        );
+    }
 }
 
 #[test]

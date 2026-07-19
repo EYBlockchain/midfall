@@ -1065,7 +1065,7 @@ mod tests {
         let memory = VerifierMemoryLayout::new(
             &ConstraintSystemMeta::default(),
             &synthetic_vk(0, 0),
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
         let mut proof = ProofReadPlan::default();
@@ -1119,9 +1119,9 @@ mod tests {
             },
             memory,
             vk_header: Default::default(),
-            vk_mptr: Ptr::memory(0x1000),
-            challenge_mptr: Ptr::memory(0x1200),
-            theta_mptr: Ptr::memory(0x1300),
+            vk_mptr: Ptr::memory(0x2000),
+            challenge_mptr: Ptr::memory(0x2200),
+            theta_mptr: Ptr::memory(0x2300),
             proof_cptr: Ptr::calldata(proof_cptr),
             abi_selector_bytes: crate::lowering::layout::abi::SELECTOR_BYTES,
             abi_proof_head_offset: crate::lowering::layout::abi::VERIFY_PROOF_PROOF_HEAD_OFFSET,
