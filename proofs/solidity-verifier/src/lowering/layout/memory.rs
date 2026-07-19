@@ -141,6 +141,9 @@ pub(crate) enum MemoryPhase {
     LagrangeBatchInvert,
     /// Compact quotient VM temps and stack.
     QuotientVm,
+    /// Trace-only linearization-commitment MSM, run after the quotient VM and
+    /// before the PCS blocks reuse the same scratch band.
+    LinearizationTrace,
     /// Source-address table used by the rolled q_eval fold.
     PcsQEvalSourceTable,
     /// Optional trace-only q_com MSM materialization.
@@ -843,6 +846,29 @@ impl VerifierMemoryLayout {
             );
             (quotient_tmp_mptr, quotient_stack_mptr)
         };
+        // Trace renders expand the linearization terms into their own G1MSM
+        // frame at `SELECTOR_ACC_MPTR + selector_len`, i.e. starting exactly at
+        // `quotient_tmp_base`. Register it so the write band is visible to the
+        // arena and to the trace-log-word placement below; without this the
+        // only thing keeping it in bounds is the incidental fact that the PCS
+        // scratch allocated from the same base happens to be at least as long.
+        let linearization_trace_msm_mptr = {
+            let mut scratch = arena.scratch_allocator(quotient_tmp_base);
+            scratch.alloc_phase_scratch(
+                "linearization_trace_msm",
+                lin_trace_len,
+                MemoryPhase::LinearizationTrace,
+            )
+        };
+        // QuotientAndLinearization.yul derives the frame base as
+        // `add(SELECTOR_ACC_MPTR, selector_len)`. Pin the equality so the
+        // registered region cannot drift away from the address the template
+        // actually writes.
+        assert_eq!(
+            linearization_trace_msm_mptr,
+            selector_acc_mptr + selector_len,
+            "linearization trace MSM region must start where the template computes lin_scratch"
+        );
         let pcs_scratch_mptr = quotient_tmp_mptr;
         let (
             pcs_q_eval_source_table_mptr,
@@ -904,6 +930,7 @@ impl VerifierMemoryLayout {
             selector_acc_mptr + selector_len,
             batch_invert_scratch_mptr + batch_invert_len,
             quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
+            linearization_trace_msm_mptr + lin_trace_len,
             pcs_q_eval_source_table_mptr + q_eval_source_len,
             pcs_q_com_trace_scratch_mptr + q_com_trace_len,
             pcs_final_msm_scratch_mptr + final_msm_len,
