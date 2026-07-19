@@ -1793,7 +1793,7 @@ fn production_verifier_documents_revert_or_true_policy() {
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
                 && verifier_template.contains(
-                    "ret := and(ret, mload(scratch))\n                if iszero(ret) { revert(0, 0) }\n                ret := 1",
+                    "ret := and(ret, eq(mload(scratch), 1))\n                if iszero(ret) { revert(0, 0) }\n                ret := 1",
                 ),
             "final pairing helper must revert on pairing failure and normalize success to one"
         );

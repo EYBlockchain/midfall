@@ -250,7 +250,11 @@
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
                 ret := staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
-                ret := and(ret, mload(scratch))
+                // Compare against 1 rather than truncating to the low bit:
+                // `and(ret, word)` would accept any odd result word. EIP-2537
+                // only ever returns 0 or 1, so this matches the strict form
+                // the constructor smoke test already uses.
+                ret := and(ret, eq(mload(scratch), 1))
                 if iszero(ret) { revert(0, 0) }
                 ret := 1
             }
