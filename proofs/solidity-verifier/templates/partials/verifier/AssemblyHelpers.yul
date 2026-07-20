@@ -175,16 +175,34 @@
 
                 // Forward pass: scratch stores prefix products up to, but not
                 // including, the final element. `gp` becomes the total product.
+                //
+                // Match the single-element path: reject non-canonical words
+                // (x >= r) instead of letting mulmod reduce them silently, so
+                // accept/reject semantics do not depend on batch length.
                 let gp_mptr := scratch_mptr
                 let gp := mload(mptr_start)
+                if iszero(lt(gp, r)) {
+                    ret := 0
+                    leave
+                }
                 let mptr := add(mptr_start, 0x20)
                 for {} lt(mptr, sub(mptr_end, 0x20)) {} {
-                    gp := mulmod(gp, mload(mptr), r)
+                    let x := mload(mptr)
+                    if iszero(lt(x, r)) {
+                        ret := 0
+                        leave
+                    }
+                    gp := mulmod(gp, x, r)
                     mstore(gp_mptr, gp)
                     mptr := add(mptr, 0x20)
                     gp_mptr := add(gp_mptr, 0x20)
                 }
-                gp := mulmod(gp, mload(mptr), r)
+                let x_last := mload(mptr)
+                if iszero(lt(x_last, r)) {
+                    ret := 0
+                    leave
+                }
+                gp := mulmod(gp, x_last, r)
                 // A zero total product means at least one denominator was
                 // zero, so no batch inverse exists.
                 if iszero(gp) {

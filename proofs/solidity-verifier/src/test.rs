@@ -1443,6 +1443,168 @@ fn compiled_verifier_runtime_fits_the_eip170_limit() {
     }
 }
 
+/// Extract one rendered Yul function (signature through matching close brace)
+/// from generated verifier source. The rendered helpers contain no string
+/// literals, so plain brace counting is sufficient.
+fn extract_yul_function<'a>(source: &'a str, signature_prefix: &str) -> &'a str {
+    let start = source
+        .find(signature_prefix)
+        .unwrap_or_else(|| panic!("rendered source should define {signature_prefix}"));
+    let tail = &source[start..];
+    let open = tail.find('{').expect("function definition must open a brace");
+    let mut depth = 0usize;
+    for (idx, byte) in tail.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &tail[..=idx];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unbalanced braces while extracting {signature_prefix}");
+}
+
+/// Test-only contract that runs the rendered `batch_invert` helper on
+/// caller-chosen memory words. Raw calldata is `n || r || n words`; raw
+/// returndata is `success flag || the n (possibly inverted) words`.
+fn batch_invert_harness_source(verifier_solidity: &str) -> String {
+    let batch_invert = extract_yul_function(
+        verifier_solidity,
+        "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret",
+    );
+    format!(
+        r#"// SPDX-License-Identifier: CC0-1.0
+pragma solidity ^0.8.24;
+
+contract BatchInvertHarness {{
+    fallback() external {{
+        assembly {{
+            {batch_invert}
+
+            let n := calldataload(0x00)
+            let r := calldataload(0x20)
+            let base := 0x1000
+            calldatacopy(base, 0x40, mul(n, 0x20))
+            let ok := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
+            mstore(0x80, ok)
+            mcopy(0xa0, base, mul(n, 0x20))
+            return(0x80, add(0x20, mul(n, 0x20)))
+        }}
+    }}
+}}
+"#
+    )
+}
+
+/// Execute the rendered `batch_invert` helper against adversarial words.
+///
+/// The template greps in `lowering/tests.rs` pin the guard text; this pins
+/// the behavior: the singleton and general paths must both fail closed on
+/// words outside the canonical range (`x >= r`, including invertible
+/// residues, `x = r`, and literal zero) without touching the input run,
+/// so accept/reject semantics never depend on batch length. Canonical
+/// batches must produce exactly the native inverses.
+#[test]
+fn batch_invert_fails_closed_on_noncanonical_words_in_all_paths() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let harness = batch_invert_harness_source(&fixture.embedded_verifier_solidity);
+    let mut evm = Evm::default();
+    let address = evm.create(compile_solidity(&harness));
+
+    let r = fr_modulus_u256();
+    let mut run = |elems: &[U256]| -> (bool, Vec<U256>) {
+        let mut calldata = Vec::with_capacity((2 + elems.len()) * 0x20);
+        calldata.extend_from_slice(&U256::from(elems.len()).to_be_bytes::<0x20>());
+        calldata.extend_from_slice(&r.to_be_bytes::<0x20>());
+        for elem in elems {
+            calldata.extend_from_slice(&elem.to_be_bytes::<0x20>());
+        }
+        match evm.try_call(address, calldata) {
+            CallOutcome::Success { output, .. } => {
+                assert_eq!(
+                    output.len(),
+                    (1 + elems.len()) * 0x20,
+                    "harness returndata shape"
+                );
+                let flag = U256::try_from_be_slice(&output[..0x20]).unwrap();
+                assert!(flag <= U256::from(1), "success flag must be boolean");
+                let words = output[0x20..]
+                    .chunks_exact(0x20)
+                    .map(|word| U256::try_from_be_slice(word).unwrap())
+                    .collect();
+                (flag == U256::from(1), words)
+            }
+            outcome => panic!("harness must not revert or halt: {outcome:?}"),
+        }
+    };
+
+    let word = |value: u64| U256::from(value);
+    let inv =
+        |value: u64| crate::lowering::encoding::fe_to_u256::<F>(F::from(value).invert().unwrap());
+
+    // Canonical batches succeed and invert every element in place; the
+    // lengths cover the empty, singleton, two-element, and looped general
+    // paths.
+    let (ok, out) = run(&[]);
+    assert!(ok, "empty batch must be a no-op success");
+    assert!(out.is_empty());
+    for elems in [vec![7u64], vec![2, 3], vec![1, 2, 3, 5, 7]] {
+        let input: Vec<U256> = elems.iter().copied().map(word).collect();
+        let (ok, out) = run(&input);
+        assert!(ok, "canonical batch of {} must succeed", elems.len());
+        let expected: Vec<U256> = elems.iter().copied().map(inv).collect();
+        assert_eq!(
+            out,
+            expected,
+            "batch of {} must produce native inverses",
+            elems.len()
+        );
+    }
+
+    // Every rejection leaves the input run untouched: zero and anything
+    // congruent to zero mod r has no inverse, and non-canonical words with
+    // invertible residues (x = r + 5, 2^256 - 1) must fail closed in both
+    // paths rather than being reduced by mulmod. The three r + 5 positions
+    // hit the general path's first-element, loop, and final-element guards.
+    let r_plus_5 = r + word(5);
+    for (name, elems) in [
+        ("singleton literal zero", vec![U256::ZERO]),
+        ("singleton x = r", vec![r]),
+        ("singleton x = r + 5", vec![r_plus_5]),
+        ("singleton x = 2^256 - 1", vec![U256::MAX]),
+        ("general literal zero", vec![word(2), U256::ZERO, word(3)]),
+        ("general x = r", vec![word(2), r, word(3)]),
+        (
+            "general first element x = r + 5",
+            vec![r_plus_5, word(2), word(3)],
+        ),
+        (
+            "general loop element x = r + 5",
+            vec![word(2), r_plus_5, word(3)],
+        ),
+        (
+            "general final element x = r + 5",
+            vec![word(2), word(3), r_plus_5],
+        ),
+        (
+            "general two-element x = 2^256 - 1",
+            vec![word(2), U256::MAX],
+        ),
+    ] {
+        let (ok, out) = run(&elems);
+        assert!(!ok, "{name} must fail closed");
+        assert_eq!(out, elems, "{name} must leave the input words untouched");
+    }
+}
+
 #[test]
 fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     if !poseidon_inputs_available_for_evm() {

@@ -387,8 +387,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             Self::transcript_buffer_layout_for_meta(meta, self.num_instances).words;
         let transcript_end = layout::TRANSCRIPT_BUFFER_START + transcript_words * WORD_BYTES;
         let pcs_end = layout::PCS_PAIRING_SCRATCH_START + pcs_computation * WORD_BYTES;
-        let pairing_batch_end = layout::accumulator::PAIRING_BATCH_PTR
-            + layout::accumulator::PAIRING_BATCH_HASH_BYTES;
+        let pairing_batch_end =
+            layout::accumulator::PAIRING_BATCH_PTR + layout::accumulator::PAIRING_BATCH_HASH_BYTES;
         let final_pairing_end =
             layout::FINAL_PAIRING_SCRATCH_START + layout::PAIRING_STATIC_WORKING_WORDS * WORD_BYTES;
         let verifier_return_end = layout::VERIFIER_RETURN_BUFFER_START + WORD_BYTES;

@@ -2071,6 +2071,26 @@ fn batch_invert_handles_empty_and_singleton_ranges() {
         verifier_template.contains("if ret { mstore(mptr_start, mload(single_scratch)) }"),
         "singleton batch inversion must store the single inverse in place"
     );
+    // The general path must reject non-canonical words (x >= r) like the
+    // singleton path, so accept/reject semantics do not depend on batch
+    // length: one guard on the first element, one inside the prefix-product
+    // loop, one on the final element.
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(gp, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the first element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x, r)) {").count(),
+        2,
+        "batch inversion must range-check the singleton element and every \
+         prefix-product loop element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x_last, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the final element"
+    );
 }
 
 #[test]
