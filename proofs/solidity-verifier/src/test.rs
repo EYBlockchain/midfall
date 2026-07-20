@@ -1370,18 +1370,20 @@ fn pinned_quotient_verifier_rejects_wrong_vk_and_quotient_contracts() {
 /// is not fixed -- observed values range from `0x80` to `0x8e0` depending on
 /// the circuit, the solc release, and the optimizer schedule -- so assert the
 /// property against real compiled bytecode rather than assuming it holds.
+///
+/// `VerifierMemoryLayout::validate()` enforces the complementary bound: every
+/// generated region starts at or above `LOW_MEMORY_SCRATCH_START`, so
+/// `reserved_end <= LOW_MEMORY_SCRATCH_START` here proves full disjointness.
+/// The accumulator-bearing variants are checked too, because their
+/// FinalPairing pairing-batch block adds frames and live values the property
+/// fixture never renders.
 #[test]
 fn compiled_memoryguard_does_not_overlap_generated_layout() {
     if !poseidon_inputs_available_for_evm() {
         return;
     }
 
-    let fixture = create_property_poseidon_fixture();
-    for (name, source) in [
-        ("embedded", fixture.embedded_verifier_solidity.as_str()),
-        ("separate", fixture.separate_verifier_solidity.as_str()),
-        ("quotient", fixture.quotient_verifier_solidity.as_str()),
-    ] {
+    fn assert_memoryguard_clears_generated_layout(name: &str, source: &str) {
         let runtime = compile_solidity_runtime(source);
         let reserved_end = runtime_free_memory_pointer_init(&runtime).unwrap_or_else(|| {
             panic!("{name}: could not read the free-memory-pointer prologue from runtime bytecode")
@@ -1394,6 +1396,19 @@ fn compiled_memoryguard_does_not_overlap_generated_layout() {
              Raise LOW_MEMORY_SCRATCH_START above {reserved_end:#x}.",
             crate::lowering::layout::LOW_MEMORY_SCRATCH_START
         );
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    for (name, source) in [
+        ("embedded", fixture.embedded_verifier_solidity.as_str()),
+        ("separate", fixture.separate_verifier_solidity.as_str()),
+        ("quotient", fixture.quotient_verifier_solidity.as_str()),
+    ] {
+        assert_memoryguard_clears_generated_layout(name, source);
+    }
+
+    for (name, _, artifacts) in render_accumulator_verifier_variants() {
+        assert_memoryguard_clears_generated_layout(name, &artifacts.verifier);
     }
 }
 
@@ -1637,27 +1652,10 @@ fn accumulator_fixed_base_tail_must_match_verifying_key() {
     }
 }
 
-/// Compile the accumulator render arm.
-///
-/// No production fixture enables `with_accumulator`, so before this test the
-/// whole `{%- if self.expected_has_accumulator %}` branch of
-/// AccumulatorHelpers.yul -- the limb decoder, the pre-transcript
-/// public-accumulator MSM, and the fixed-base scalar tail -- was never handed
-/// to solc by the default gate. Only the opt-in `ivc_keccak_solidity` bench
-/// (k = 20, release, external SRS assets) rendered it, so a Yul syntax error
-/// or a solc stack-depth regression in that branch could reach a release
-/// unnoticed.
-///
-/// This does not execute the accumulator logic against a real recursive proof
-/// -- that still needs a decider circuit carrying a genuine accumulator in its
-/// public inputs. It does guarantee the branch compiles, and it pins the
-/// canonicality checks on the scalars the helper feeds to G1MSM.
-#[test]
-fn accumulator_verifier_variants_compile_with_pinned_solc() {
-    if !poseidon_inputs_available_for_evm() {
-        return;
-    }
-
+/// Render the three accumulator-bearing verifier variants over the Poseidon
+/// fixture VK: fully collapsed, fixed-base scalar tail, and point-pair
+/// encodings. Returns `(name, has_carried_scalars, artifacts)` per variant.
+fn render_accumulator_verifier_variants() -> Vec<(&'static str, bool, crate::RenderedArtifacts)> {
     let srs_dir = srs_dir();
     env::set_var("SRS_DIR", &srs_dir);
     let relation = PoseidonExample;
@@ -1696,19 +1694,47 @@ fn accumulator_verifier_variants_compile_with_pinned_solc() {
         ),
     ];
 
-    for (name, num_instances, acc, has_carried_scalars) in variants {
-        let generator = SolidityGenerator::new(
-            &srs,
-            vk.vk(),
-            GeneratorConfig::new(num_instances, 1).with_accumulator(acc),
-        );
-        let artifacts = generator
-            .render(RenderOptions {
-                vk: RenderVk::Separate,
-                ..RenderOptions::default()
-            })
-            .unwrap_or_else(|err| panic!("{name} should render: {err}"));
+    variants
+        .into_iter()
+        .map(|(name, num_instances, acc, has_carried_scalars)| {
+            let generator = SolidityGenerator::new(
+                &srs,
+                vk.vk(),
+                GeneratorConfig::new(num_instances, 1).with_accumulator(acc),
+            );
+            let artifacts = generator
+                .render(RenderOptions {
+                    vk: RenderVk::Separate,
+                    ..RenderOptions::default()
+                })
+                .unwrap_or_else(|err| panic!("{name} should render: {err}"));
+            (name, has_carried_scalars, artifacts)
+        })
+        .collect()
+}
 
+/// Compile the accumulator render arm.
+///
+/// No production fixture enables `with_accumulator`, so before this test the
+/// whole `{%- if self.expected_has_accumulator %}` branch of
+/// AccumulatorHelpers.yul -- the limb decoder, the pre-transcript
+/// public-accumulator MSM, and the fixed-base scalar tail -- was never handed
+/// to solc by the default gate. Only the opt-in `ivc_keccak_solidity` bench
+/// (k = 20, release, external SRS assets) rendered it, so a Yul syntax error
+/// or a solc stack-depth regression in that branch could reach a release
+/// unnoticed.
+///
+/// This does not execute the accumulator logic against a real recursive proof
+/// -- that still needs a decider circuit carrying a genuine accumulator in its
+/// public inputs. It does guarantee the branch compiles, and it pins the
+/// canonicality checks on the scalars the helper feeds to G1MSM.
+#[test]
+fn accumulator_verifier_variants_compile_with_pinned_solc() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    for (name, has_carried_scalars, artifacts) in render_accumulator_verifier_variants() {
         let verifier = artifacts.verifier;
         assert!(
             verifier.contains("function validate_public_accumulator"),

@@ -44,11 +44,13 @@ own transcript buffer in the same bytes, separated only by live ranges that
 nothing enforced -- a recompilation could silently place a live spill across a
 verifier write and corrupt a challenge or pairing input. So the streaming
 transcript buffer, the main verifier return word, the split quotient return
-frame, and low-memory precompile scratch are rooted at
+frame, low-memory precompile scratch, the accumulator/KZG pairing-batch hash
+frame, and the final two-pair pairing frame are rooted at
 `LOW_MEMORY_SCRATCH_START` (`0x1000`), above the largest observed reservation.
-`compiled_memoryguard_does_not_overlap_generated_layout` compiles each rendered
-variant and fails the build if a future circuit or compiler pushes the
-reservation past that base.
+`VerifierMemoryLayout::validate()` rejects any generated region below that
+base, and `compiled_memoryguard_does_not_overlap_generated_layout` compiles
+each rendered variant -- including the accumulator-bearing ones -- and fails
+the build if a future circuit or compiler pushes the reservation past it.
 
 The VK constructor payload buffer is the exception: it lives in
 `Halo2VerifyingKey`, whose assembly carries no `memory-safe` annotation, so
@@ -163,6 +165,8 @@ which changes the transcript-buffer bound. The verifier reserves:
 
 - unaligned starts or lengths;
 - any generated region inside Solidity-reserved memory `[0x00..0x80)`;
+- any generated region below `LOW_MEMORY_SCRATCH_START` (`0x1000`), where a
+  live via-IR spill slot could share its bytes;
 - overlapping permanent regions;
 - overlapping scratch regions that are live in the same `MemoryPhase`;
 - PCS fixed-window overflows.
@@ -268,7 +272,7 @@ The planner validates by lifetime, not just by address.
 
 | Phase | Region examples | Notes |
 | --- | --- | --- |
-| `Transcript` | `[0, transcript_words * 0x20)` | Must stay below `VK_MPTR`. |
+| `Transcript` | `[0x1000, 0x1000 + transcript_words * 0x20)` | Must stay below `VK_MPTR`. |
 | `ScalarInv` | `VK_MPTR - 0x100` frame | Historical modexp scratch near the VK payload. |
 | `LagrangeBatchInvert` | `batch_invert_scratch_mptr` | Reuses selector bytes before selector accumulators are live. |
 | `QuotientVm` | quotient temps and stack | Used before PCS final MSM. |
@@ -276,8 +280,8 @@ The planner validates by lifetime, not just by address.
 | `PcsQComTrace` | optional q_com trace MSM | Aliases `pcs_scratch_mptr`; trace-only. |
 | `PcsFinalMsm` | final MSM input and selector accumulators | Selector accumulators and final MSM must not overlap in this phase. |
 | `AccumulatorMsm` | public accumulator MSM input | Length is derived from accumulator/VK shape. |
-| `AccumulatorPairingBatch` | `[0x100, 0x320)` | Hash domain plus four G1 points for accumulator pairing batching. |
-| `FinalPairing` | two-pair KZG pairing frame | Low-memory final precompile frame. |
+| `AccumulatorPairingBatch` | `[0x1000, 0x1220)` | Hash domain plus four G1 points for accumulator pairing batching. |
+| `FinalPairing` | `[0x1220, 0x1540)` two-pair KZG pairing frame | Final precompile frame, placed past the pairing-batch frame by construction. |
 
 ## Update Rules
 

@@ -112,8 +112,8 @@ pub(crate) const PAIRING_STATIC_WORKING_WORDS: usize = PAIRING_TWO_PAIR_BYTES / 
 ///
 /// Placed past the end of the accumulator pairing-batch hash frame, which
 /// occupies `[PAIRING_BATCH_PTR, PAIRING_BATCH_PTR + PAIRING_BATCH_HASH_BYTES)`
-/// = `[0x100, 0x320)`. Starting at `PAIRING_TWO_PAIR_BYTES` (0x300) instead
-/// would put the last word of the hashed ACC_LHS copy inside this scratch.
+/// = `[0x1000, 0x1220)`. Starting lower would put the last word of the hashed
+/// ACC_LHS copy inside this scratch.
 /// The two regions carry different `MemoryPhase`s, and `MemoryLifetime::
 /// intersects` treats distinct phases as never co-live, so the planner cannot
 /// catch that overlap -- it has to be avoided by construction here.
@@ -170,7 +170,13 @@ pub(crate) mod accumulator {
     pub(crate) const CARRIED_SCALARS: usize = 2;
     /// Low-memory hash frame for batching the accumulator pairing with KZG:
     /// domain tag word, KZG rhs/lhs G1s, then accumulator rhs/lhs G1s.
-    pub(crate) const PAIRING_BATCH_PTR: usize = 0x100;
+    ///
+    /// Rooted at [`super::LOW_MEMORY_SCRATCH_START`] like every other
+    /// low-memory scratch base: the frame historically sat at `0x100`, inside
+    /// the `[0x80, reserved_end)` window solc's via-IR stack-to-memory mover
+    /// reserves for spill slots, so a live spill could silently corrupt the
+    /// alpha Fiat-Shamir preimage or the pairing inputs built here.
+    pub(crate) const PAIRING_BATCH_PTR: usize = super::LOW_MEMORY_SCRATCH_START;
     /// Domain-separation word for the accumulator pairing batch.
     ///
     /// This is a 29-byte numeric literal: ASCII `"pairing-batch-acc-kzg"`
@@ -774,8 +780,16 @@ mod tests {
         assert_eq!(accumulator::LIMB_BITS, 56);
         assert_eq!(accumulator::LIMBS, 7);
         assert_eq!(accumulator::LIMBS_PER_WORD, 4);
-        assert_eq!(accumulator::PAIRING_BATCH_PTR, 0x100);
+        // Above solc's via-IR spill window like every other low-memory base.
+        assert_eq!(
+            accumulator::PAIRING_BATCH_PTR,
+            super::LOW_MEMORY_SCRATCH_START
+        );
         assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x220);
+        assert_eq!(
+            super::FINAL_PAIRING_SCRATCH_START,
+            super::LOW_MEMORY_SCRATCH_START + 0x220
+        );
         assert_eq!(quotient_limb::LIMBS, 7);
         assert_eq!(quotient_limb::PAIRWISE_TERMS, 49);
         assert_eq!(quotient_limb::PAIRWISE_COEFFS, 13);

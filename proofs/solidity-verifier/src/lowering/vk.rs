@@ -387,6 +387,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             Self::transcript_buffer_layout_for_meta(meta, self.num_instances).words;
         let transcript_end = layout::TRANSCRIPT_BUFFER_START + transcript_words * WORD_BYTES;
         let pcs_end = layout::PCS_PAIRING_SCRATCH_START + pcs_computation * WORD_BYTES;
+        let pairing_batch_end = layout::accumulator::PAIRING_BATCH_PTR
+            + layout::accumulator::PAIRING_BATCH_HASH_BYTES;
         let final_pairing_end =
             layout::FINAL_PAIRING_SCRATCH_START + layout::PAIRING_STATIC_WORKING_WORDS * WORD_BYTES;
         let verifier_return_end = layout::VERIFIER_RETURN_BUFFER_START + WORD_BYTES;
@@ -402,8 +404,12 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             transcript_end,
             // PCS computation scratch
             pcs_end,
+            // Accumulator/KZG pairing-batch hash frame. Currently ends where
+            // the final pairing frame starts, but list it explicitly so the
+            // bound survives if that derivation changes.
+            pairing_batch_end,
             // Pairing: two-pair input frame plus output word, rooted above
-            // Solidity's reserved memory prefix.
+            // solc's via-IR spill window.
             final_pairing_end,
             // Low-memory return frames. The quotient evaluator's output grows
             // with the number of simple selector buckets.

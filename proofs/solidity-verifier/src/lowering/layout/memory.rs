@@ -36,9 +36,10 @@ use crate::lowering::{
 };
 /// Accumulator pairing-batch hash frame.
 ///
-/// The template starts this frame at `0x100`, writes a one-word domain tag,
-/// then four G1 points: KZG rhs/lhs and accumulator rhs/lhs. The last copy ends
-/// at `0x320`, so the registered range is `[0x100, 0x320)`.
+/// The template starts this frame at `PAIRING_BATCH_PTR` (`0x1000`), writes a
+/// one-word domain tag, then four G1 points: KZG rhs/lhs and accumulator
+/// rhs/lhs. The last copy ends `0x220` bytes later, so the registered range is
+/// `[0x1000, 0x1220)`.
 const ACCUMULATOR_PAIRING_BATCH_BYTES: usize = PAIRING_BATCH_HASH_BYTES;
 
 // Fixed word offsets from `THETA_MPTR`.
@@ -1063,6 +1064,24 @@ impl VerifierMemoryLayout {
             if actual != expected {
                 return Err(format!(
                     "fixed memory pointer {name} drifted: got {actual:#x}, expected {expected:#x}"
+                ));
+            }
+        }
+
+        // The verifier body runs inside `assembly ("memory-safe")`, so solc's
+        // via-IR stack-to-memory mover reserves spill slots upward from 0x80.
+        // A generated region below `LOW_MEMORY_SCRATCH_START` could share
+        // bytes with a live spill slot, and the lifetime model cannot see
+        // solc's opaque spill liveness -- so enforce disjointness by address.
+        // `compiled_memoryguard_does_not_overlap_generated_layout` checks the
+        // complementary bound, `reserved_end <= LOW_MEMORY_SCRATCH_START`,
+        // against real compiled bytecode.
+        for region in &self.map.regions {
+            if region.len != 0 && region.start < LOW_MEMORY_SCRATCH_START {
+                return Err(format!(
+                    "memory region {} starts at {:#x}, below LOW_MEMORY_SCRATCH_START ({:#x}); \
+                     it can overlap solc's via-IR stack-to-memory spill window [0x80, reserved_end)",
+                    region.name, region.start, LOW_MEMORY_SCRATCH_START
                 ));
             }
         }
