@@ -9,12 +9,13 @@
 //! miscompiled an identity, and the render is rejected before any artifact is
 //! produced.
 //!
-//! Why a random-assignment check is sufficient: the quotient program is fixed
-//! per verifying key and never sees attacker input, and Fr arithmetic has no
-//! edge cases. Any miscompilation therefore yields a *value-independent* wrong
-//! polynomial, which disagrees with the correct one at a random assignment with
-//! probability `1 - deg/|Fr|`. One evaluation at a pseudorandom point is enough
-//! to catch it with overwhelming probability.
+//! Why a random-assignment check is sufficient: the certifier samples a
+//! deterministic challenge from the finalized quotient bytecode, constant
+//! table, oracle expression trees, and VK payload, then evaluates the fixed
+//! program at that assignment. Any miscompilation therefore yields a wrong
+//! polynomial that was fixed before the challenge was known, and it disagrees
+//! with the correct one with probability `1 - deg/|Fr|`. One challenge-derived
+//! evaluation is enough to catch it with overwhelming probability.
 //!
 //! Scope. This certifies the **emitter to reference-interpreter** leg, which is
 //! where the shape recognizers in the parent module live. The
@@ -55,13 +56,13 @@ use crate::lowering::layout::WORD_BYTES;
 /// missing map key.
 #[derive(Clone, Debug)]
 pub(crate) struct QuotientRefMemory {
-    seed: u64,
+    seed: [u8; 32],
     cache: HashMap<(u8, u32), Fq>,
 }
 
 impl QuotientRefMemory {
     /// Build an assignment for one certification run.
-    pub(crate) fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: [u8; 32]) -> Self {
         Self {
             seed,
             cache: HashMap::new(),
@@ -87,7 +88,7 @@ impl QuotientRefMemory {
         }
         let mut hasher = Keccak256::new();
         hasher.update(b"midfall/quotient-vm/reference-memory/v1");
-        hasher.update(self.seed.to_be_bytes());
+        hasher.update(self.seed);
         hasher.update([domain]);
         hasher.update(address.to_be_bytes());
         let lo = hasher.finalize();

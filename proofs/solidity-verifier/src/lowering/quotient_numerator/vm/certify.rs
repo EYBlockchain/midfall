@@ -19,20 +19,107 @@
 
 use ff::Field;
 use midnight_curves::Fq;
+use sha3::{Digest, Keccak256};
 
 use super::{
     quotient_op_len,
     reference::{eval_quotient_expr, eval_quotient_identity, QuotientRefMemory},
-    QuotientProgramBuild, QuotientProgramItem, QuotientProgramPlan, QuotientTarget, Q_OP_FOLD_MAIN,
-    Q_OP_FOLD_SELECTOR, Q_OP_NATIVE_IDENTITY, Q_OP_NATIVE_LOOKUP, Q_OP_NATIVE_PERMUTATION,
+    QuotientExpr, QuotientMem, QuotientProgramBuild, QuotientProgramItem, QuotientProgramPlan,
+    QuotientTarget, Q_OP_FOLD_MAIN, Q_OP_FOLD_SELECTOR, Q_OP_NATIVE_IDENTITY, Q_OP_NATIVE_LOOKUP,
+    Q_OP_NATIVE_PERMUTATION,
 };
+use crate::lowering::render::Halo2VerifyingKey;
 
 /// Seed for the certification assignment.
 ///
-/// Fixed rather than random so a failing render reproduces exactly. The check
-/// does not need unpredictability: the program is fixed at codegen time and
-/// cannot adapt to the seed.
-const QUOTIENT_CERTIFY_SEED: u64 = 0x6d69_6466_616c_6c01;
+/// The seed is deterministic so failing renders reproduce exactly, but it is
+/// derived from the finalized artifact rather than fixed globally. This keeps
+/// the sampled assignment independent of any circuit author's pre-render view
+/// of the quotient program while preserving reproducible diagnostics.
+const QUOTIENT_CERTIFY_SEED_DOMAIN: &[u8] = b"midfall/quotient-vm/certify-seed/v3";
+
+/// Derive the random-assignment seed from every compared artifact.
+///
+/// Binding the oracle expressions closes the case where a miscompile drops a
+/// tunable constant before it reaches the emitted constant table. Binding both
+/// builds makes the dual-build challenge depend on the optimized and baseline
+/// representations. The VK payload is included after generator invariants have
+/// checked that its quotient sections match the finalized build.
+pub(crate) fn derive_certify_seed(
+    builds: &[&QuotientProgramBuild],
+    exprs: &[&QuotientExpr],
+    vk_payload: &[u8],
+) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(QUOTIENT_CERTIFY_SEED_DOMAIN);
+
+    hasher.update((builds.len() as u64).to_be_bytes());
+    for build in builds {
+        hasher.update((build.bytes.len() as u64).to_be_bytes());
+        hasher.update(&build.bytes);
+
+        hasher.update((build.consts.len() as u64).to_be_bytes());
+        for value in &build.consts {
+            hasher.update(value.to_be_bytes::<32>());
+        }
+    }
+
+    hasher.update((exprs.len() as u64).to_be_bytes());
+    for expr in exprs {
+        hash_quotient_expr(&mut hasher, expr);
+    }
+
+    hasher.update((vk_payload.len() as u64).to_be_bytes());
+    hasher.update(vk_payload);
+
+    hasher.finalize().into()
+}
+
+/// Hash one expression with explicit node and memory-address tags.
+fn hash_quotient_expr(hasher: &mut Keccak256, expr: &QuotientExpr) {
+    match expr {
+        QuotientExpr::Const(value) => {
+            hasher.update([0]);
+            hasher.update(value.to_be_bytes::<32>());
+        }
+        QuotientExpr::Mem(QuotientMem::Literal(ptr)) => {
+            hasher.update([1]);
+            hasher.update(ptr.to_be_bytes());
+        }
+        QuotientExpr::Mem(QuotientMem::Token(token)) => {
+            hasher.update([2, *token]);
+        }
+        QuotientExpr::Mem(QuotientMem::TokenOffset(token, offset)) => {
+            hasher.update([3, *token]);
+            hasher.update(offset.to_be_bytes());
+        }
+        QuotientExpr::Add(lhs, rhs) => {
+            hasher.update([4]);
+            hash_quotient_expr(hasher, lhs);
+            hash_quotient_expr(hasher, rhs);
+        }
+        QuotientExpr::Mul(lhs, rhs) => {
+            hasher.update([5]);
+            hash_quotient_expr(hasher, lhs);
+            hash_quotient_expr(hasher, rhs);
+        }
+        QuotientExpr::Neg(inner) => {
+            hasher.update([6]);
+            hash_quotient_expr(hasher, inner);
+        }
+    }
+}
+
+/// Expressions evaluated by the compact quotient program.
+fn interpreted_exprs(plan: &QuotientProgramPlan) -> Vec<&QuotientExpr> {
+    plan.items
+        .iter()
+        .filter_map(|item| match item {
+            QuotientProgramItem::Identity(identity) => Some(&identity.expr),
+            _ => None,
+        })
+        .collect()
+}
 
 /// Certify that the emitted bytecode evaluates the planned identities.
 ///
@@ -42,8 +129,12 @@ const QUOTIENT_CERTIFY_SEED: u64 = 0x6d69_6466_616c_6c01;
 pub(crate) fn certify_quotient_program(
     plan: &QuotientProgramPlan,
     build: &QuotientProgramBuild,
+    vk: &Halo2VerifyingKey,
 ) -> Result<(), String> {
-    let mut mem = QuotientRefMemory::new(QUOTIENT_CERTIFY_SEED);
+    let exprs = interpreted_exprs(plan);
+    let vk_payload = vk.bytes();
+    let seed = derive_certify_seed(&[build], &exprs, &vk_payload);
+    let mut mem = QuotientRefMemory::new(seed);
     let bytes = &build.bytes;
     let mut cursor = 0usize;
 
@@ -209,8 +300,12 @@ pub(crate) fn certify_quotient_builds_agree(
     plan: &QuotientProgramPlan,
     optimized: &QuotientProgramBuild,
     baseline: &QuotientProgramBuild,
+    vk: &Halo2VerifyingKey,
 ) -> Result<(), String> {
-    let mut mem = QuotientRefMemory::new(QUOTIENT_CERTIFY_SEED);
+    let exprs = interpreted_exprs(plan);
+    let vk_payload = vk.bytes();
+    let seed = derive_certify_seed(&[optimized, baseline], &exprs, &vk_payload);
+    let mut mem = QuotientRefMemory::new(seed);
 
     let optimized_values = identity_values(plan, optimized, &mut mem)?;
     let baseline_values = identity_values(plan, baseline, &mut mem)?;

@@ -178,6 +178,7 @@ impl LoweringPlan {
             &plan.quotient.plan,
             &plan.quotient.build,
             &baseline_build,
+            &plan.vk,
         )
         .unwrap_or_else(|err| panic!("quotient dual-build certification failed: {err}"));
 
@@ -340,7 +341,7 @@ impl LoweringPlan {
         }
         // Prove the emitted bytecode still evaluates the identities it was
         // lowered from, before it can be pinned into a verifying key.
-        certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build)
+        certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build, &self.vk)
             .map_err(|err| format!("quotient program certification failed: {err}"))?;
         Ok(())
     }

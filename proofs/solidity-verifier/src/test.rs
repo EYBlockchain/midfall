@@ -1371,12 +1371,14 @@ fn pinned_quotient_verifier_rejects_wrong_vk_and_quotient_contracts() {
 /// the circuit, the solc release, and the optimizer schedule -- so assert the
 /// property against real compiled bytecode rather than assuming it holds.
 ///
-/// `VerifierMemoryLayout::validate()` enforces the complementary bound: every
-/// generated region starts at or above `LOW_MEMORY_SCRATCH_START`, so
-/// `reserved_end <= LOW_MEMORY_SCRATCH_START` here proves full disjointness.
-/// The accumulator-bearing variants are checked too, because their
-/// FinalPairing pairing-batch block adds frames and live values the property
-/// fixture never renders.
+/// `VerifierMemoryLayout::validate()` enforces the complementary bound for the
+/// generated layout: every generated region starts at or above
+/// `LOW_MEMORY_SCRATCH_START`, so `reserved_end <= LOW_MEMORY_SCRATCH_START`
+/// here proves full disjointness. Check both verifier and quotient evaluator
+/// runtimes, because each via-IR compilation unit receives its own independent
+/// spill reservation. The accumulator-bearing variants are checked too,
+/// because their FinalPairing pairing-batch block adds frames and live values
+/// the property fixture never renders.
 #[test]
 fn compiled_memoryguard_does_not_overlap_generated_layout() {
     if !poseidon_inputs_available_for_evm() {
@@ -1403,12 +1405,24 @@ fn compiled_memoryguard_does_not_overlap_generated_layout() {
         ("embedded", fixture.embedded_verifier_solidity.as_str()),
         ("separate", fixture.separate_verifier_solidity.as_str()),
         ("quotient", fixture.quotient_verifier_solidity.as_str()),
+        (
+            "quotient evaluator",
+            fixture.quotient_evaluator_solidity.as_str(),
+        ),
+        (
+            "trace quotient evaluator",
+            fixture.trace_quotient_evaluator_solidity.as_str(),
+        ),
     ] {
         assert_memoryguard_clears_generated_layout(name, source);
     }
 
-    for (name, _, artifacts) in render_accumulator_verifier_variants() {
+    for (name, _, artifacts, quotient_evaluator) in render_accumulator_verifier_variants() {
         assert_memoryguard_clears_generated_layout(name, &artifacts.verifier);
+        assert_memoryguard_clears_generated_layout(
+            &format!("{name} quotient evaluator"),
+            &quotient_evaluator,
+        );
     }
 }
 
@@ -1816,8 +1830,10 @@ fn accumulator_fixed_base_tail_must_match_verifying_key() {
 
 /// Render the three accumulator-bearing verifier variants over the Poseidon
 /// fixture VK: fully collapsed, fixed-base scalar tail, and point-pair
-/// encodings. Returns `(name, has_carried_scalars, artifacts)` per variant.
-fn render_accumulator_verifier_variants() -> Vec<(&'static str, bool, crate::RenderedArtifacts)> {
+/// encodings. Returns `(name, has_carried_scalars, artifacts, evaluator)` per
+/// variant.
+fn render_accumulator_verifier_variants(
+) -> Vec<(&'static str, bool, crate::RenderedArtifacts, String)> {
     let srs_dir = srs_dir();
     env::set_var("SRS_DIR", &srs_dir);
     let relation = PoseidonExample;
@@ -1870,7 +1886,10 @@ fn render_accumulator_verifier_variants() -> Vec<(&'static str, bool, crate::Ren
                     ..RenderOptions::default()
                 })
                 .unwrap_or_else(|err| panic!("{name} should render: {err}"));
-            (name, has_carried_scalars, artifacts)
+            let quotient_evaluator = generator
+                .render_quotient_evaluator(RenderDiagnostics::default())
+                .unwrap_or_else(|err| panic!("{name} quotient evaluator should render: {err}"));
+            (name, has_carried_scalars, artifacts, quotient_evaluator)
         })
         .collect()
 }
@@ -1896,7 +1915,7 @@ fn accumulator_verifier_variants_compile_with_pinned_solc() {
         return;
     }
 
-    for (name, has_carried_scalars, artifacts) in render_accumulator_verifier_variants() {
+    for (name, has_carried_scalars, artifacts, _) in render_accumulator_verifier_variants() {
         let verifier = artifacts.verifier;
         assert!(
             verifier.contains("function validate_public_accumulator"),

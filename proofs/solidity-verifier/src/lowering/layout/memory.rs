@@ -1075,7 +1075,7 @@ impl VerifierMemoryLayout {
         // solc's opaque spill liveness -- so enforce disjointness by address.
         // `compiled_memoryguard_does_not_overlap_generated_layout` checks the
         // complementary bound, `reserved_end <= LOW_MEMORY_SCRATCH_START`,
-        // against real compiled bytecode.
+        // against real compiled verifier and quotient-evaluator bytecode.
         for region in &self.map.regions {
             if region.len != 0 && region.start < LOW_MEMORY_SCRATCH_START {
                 return Err(format!(

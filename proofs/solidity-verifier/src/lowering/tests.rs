@@ -419,6 +419,90 @@ fn lowering_plan_certifies_emitted_quotient_bytecode() {
     );
 }
 
+#[test]
+fn quotient_certification_seed_binds_all_compared_artifacts() {
+    let build = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST_U8, 0],
+        consts: vec![U256::from(11u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST_U8],
+        used_mem_tokens: Vec::new(),
+    };
+    let baseline = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST, 0, 0],
+        consts: vec![U256::from(13u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST],
+        used_mem_tokens: Vec::new(),
+    };
+    let expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(17u64))),
+    );
+    let vk_payload = [0xabu8; 64];
+    let seed = super::quotient_numerator::vm::certify::derive_certify_seed(
+        &[&build, &baseline],
+        &[&expr],
+        &vk_payload,
+    );
+
+    let mut changed_bytecode = build.clone();
+    changed_bytecode.bytes[0] ^= 1;
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_bytecode, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_const = build.clone();
+    changed_const.consts[0] = U256::from(19u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_const, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_baseline = baseline.clone();
+    changed_baseline.consts[0] = U256::from(23u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &changed_baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(29u64))),
+    );
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&changed_expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_vk_payload = [0xcdu8; 64];
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&expr],
+            &changed_vk_payload,
+        )
+    );
+}
+
 /// Generate parameters and VK for lowering-plan integration tests.
 fn lowering_plan_test_vk() -> (
     ParamsKZG<Bls12>,
