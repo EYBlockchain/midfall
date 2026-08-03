@@ -30,9 +30,14 @@ use midnight_proofs::{
     poly::{commitment::Guard as _, kzg::KZGCommitmentScheme, Rotation},
     transcript::{CircuitTranscript, Transcript},
 };
+#[cfg(not(feature = "outer-single-h-commitment"))]
+use midnight_zk_stdlib::utils::plonk_api::srs_for_test;
+#[cfg(feature = "outer-single-h-commitment")]
 use midnight_zk_stdlib::{
-    setup_vk, utils::plonk_api::srs_for_test, MidnightVK, Relation, ZkStdLib, ZkStdLibArch,
+    cost_model,
+    utils::plonk_api::{load_srs, SrsSource},
 };
+use midnight_zk_stdlib::{setup_vk, MidnightVK, Relation, ZkStdLib, ZkStdLibArch};
 use proptest::{
     prelude::any,
     test_runner::{Config as ProptestConfig, TestRunner},
@@ -465,7 +470,7 @@ fn lookup_shape_verifier_compiles_with_native_lookup_callback() {
     };
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
-    let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
+    let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
         .unwrap_or_else(|err| panic!("shape fuzz `{}` vk generation failed: {err:?}", case.name));
 
@@ -634,7 +639,8 @@ fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     ];
 
     let mut setup_rng = ChaCha8Rng::seed_from_u64(0x5a5a_5151);
-    let params = PoseidonParams::unsafe_setup(cases[0].k, &mut setup_rng);
+    let shapes: Vec<_> = cases.iter().map(|case| (case.spec, case.k)).collect();
+    let params = shape_fuzz_params(&shapes, &mut setup_rng);
     let fixtures: Vec<_> = cases
         .iter()
         .map(|case| build_shape_solidity_case_with_params(&params, case))
@@ -807,7 +813,7 @@ fn build_shape_solidity_case_with_params(
 fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
-    let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
+    let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
         .unwrap_or_else(|err| panic!("shape fuzz `{}` vk generation failed: {err:?}", case.name));
     let pk = keygen_pk(vk, &circuit)
@@ -924,13 +930,65 @@ fn generated_shape_fuzz_spec(seed: u64) -> ShapeFuzzSpec {
     }
 }
 
+/// Circuit domain size used by the transcript differential shape fuzzer.
+#[cfg(feature = "rust-verifier-trace")]
+const SHAPE_FUZZ_K: u32 = 5;
+
+/// Build test parameters covering every supplied `(shape, k)` pair.
+///
+/// Under `outer-single-h-commitment` the prover commits to one unsplit quotient
+/// polynomial of degree `(n - 1) * quotient_poly_degree`, so a plain
+/// `unsafe_setup(k)` is too small and proof generation fails with a `SrsError`
+/// long after the VK builds cleanly at `k`. The monomial basis has to be larger
+/// than the circuit domain while the Lagrange basis stays at `2^k` -- exactly
+/// the recipe documented on `ParamsKZG::downsize_lagrange`.
+///
+/// Loading a real SRS is not an option for these circuits: they are generated
+/// per seed, so each fixture draws its own toxic secret. Callers that share one
+/// parameter set across several shapes pass them all here, and the monomial
+/// basis is sized for the most demanding one.
+fn shape_fuzz_params(shapes: &[(ShapeFuzzSpec, u32)], rng: &mut ChaCha8Rng) -> PoseidonParams {
+    let (_, lagrange_k) = shapes.first().copied().expect("at least one shape");
+    assert!(
+        shapes.iter().all(|(_, k)| *k == lagrange_k),
+        "one parameter set can only serve shapes that share a circuit domain size"
+    );
+
+    #[cfg(not(feature = "outer-single-h-commitment"))]
+    {
+        PoseidonParams::unsafe_setup(lagrange_k, rng)
+    }
+    #[cfg(feature = "outer-single-h-commitment")]
+    {
+        let extended_k = shapes
+            .iter()
+            .map(|(spec, k)| {
+                // Configure a throwaway constraint system to learn this shape's
+                // degree. keygen may compress selectors, which can only lower
+                // the degree, so the uncompressed value is a safe upper bound.
+                let mut cs = ConstraintSystem::<F>::default();
+                <ShapeFuzzCircuit as Circuit<F>>::configure_with_params(&mut cs, *spec);
+                // Same exponent `midnight_zk_stdlib::utils::plonk_api::load_srs`
+                // uses for the single-h monomial basis.
+                k + ((cs.degree() - 1) as f64).log2().ceil() as u32
+            })
+            .max()
+            .expect("at least one shape");
+        let mut params = PoseidonParams::unsafe_setup(extended_k, rng);
+        // Keep the monomial basis extended; shrink only the Lagrange basis back
+        // to the circuit domain so commitments stay at 2^k.
+        params.downsize_lagrange(lagrange_k);
+        params
+    }
+}
+
 #[cfg(feature = "rust-verifier-trace")]
 fn run_transcript_differential_shape_fuzz_case(seed: u64) {
     let spec = generated_shape_fuzz_spec(seed);
     let context = format!("transcript differential seed={seed:#018x} spec={spec:?}");
     let circuit = ShapeFuzzCircuit::new(spec, seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7ace_f00d);
-    let params = PoseidonParams::unsafe_setup(5, &mut setup_rng);
+    let params = shape_fuzz_params(&[(spec, SHAPE_FUZZ_K)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 5)
         .unwrap_or_else(|err| panic!("{context} vk generation failed: {err:?}"));
     let pk = keygen_pk(vk, &circuit)
@@ -1659,7 +1717,11 @@ fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
 
 #[test]
 fn production_renders_do_not_emit_gas_checkpoints() {
-    if crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED {
+    // The fixture's base variants follow `RenderDiagnostics::default()`, so a
+    // `solidity-trace` build makes them emit LOG1 and drop `view` for the same
+    // reason a gas-checkpoint build does. Both are intended diagnostic shapes,
+    // not production renders, so neither can satisfy the assertions below.
+    if crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED || crate::SOLIDITY_TRACE_ENABLED {
         return;
     }
     if !poseidon_inputs_available_for_evm() {
@@ -1692,6 +1754,14 @@ fn production_renders_do_not_emit_gas_checkpoints() {
 
 #[test]
 fn production_separate_verifier_accepts_valid_proof_under_staticcall() {
+    // The fixture renders its base variants with `RenderDiagnostics::default()`,
+    // which follows the crate's feature flags. A trace or gas-checkpoint build
+    // emits LOG1 and is deliberately not `view`, so it cannot be STATICCALL-ed
+    // -- that is the documented contract, not a regression. Skip on those
+    // builds, matching `production_renders_do_not_emit_gas_checkpoints`.
+    if crate::SOLIDITY_TRACE_ENABLED || crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED {
+        return;
+    }
     if !poseidon_inputs_available_for_evm() {
         return;
     }
@@ -1766,7 +1836,7 @@ fn accumulator_fixed_base_tail_must_match_verifying_key() {
     let srs_dir = srs_dir();
     env::set_var("SRS_DIR", &srs_dir);
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
 
     let num_fixed_comms = vk.vk().fixed_commitments().len();
@@ -1837,7 +1907,7 @@ fn render_accumulator_verifier_variants(
     let srs_dir = srs_dir();
     env::set_var("SRS_DIR", &srs_dir);
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
 
     // A fully collapsed accumulator occupies FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
@@ -2337,7 +2407,7 @@ fn load_poseidon_vk_sources_fixture() -> PoseidonVkSourcesFixture {
     env::set_var("SRS_DIR", &srs_dir);
 
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
     assert_eq!(vk.k() as u32, POSEIDON_K, "unexpected Poseidon VK k");
 
@@ -2369,7 +2439,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
     env::set_var("SRS_DIR", &srs_dir);
 
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
     assert_eq!(vk.k() as u32, POSEIDON_K, "unexpected Poseidon VK k");
 
@@ -4428,6 +4498,43 @@ fn env_flag_enabled(name: &str) -> bool {
             )
         })
         .unwrap_or(false)
+}
+
+/// Load the Poseidon test SRS for the feature set this crate was built with.
+///
+/// `outer-single-h-commitment` forwards `single-h-commitment` to
+/// `midnight-proofs` but deliberately *not* to `midnight-zk-stdlib` (see the
+/// feature comment in `Cargo.toml`: recursive proofs checked inside the decider
+/// circuit stay on the multi-limb layout). The consequence is that
+/// `srs_for_test` cannot be used under that feature: it calls `load_srs`, which
+/// decides whether to extend the monomial basis from *zk-stdlib's own*
+/// `single-h-commitment` setting. With the feature off there, `load_srs` returns
+/// a plain `2^k`-element SRS, while the prover -- compiled from `midnight-proofs`
+/// *with* the feature -- commits to one full-degree quotient polynomial and
+/// needs `k + ceil(log2(cs_degree - 1))` monomial powers. The mismatch surfaces
+/// as `SrsError(64, 252)` at proof generation, i.e. long after the VK builds
+/// cleanly at `k`.
+///
+/// Mirror `load_srs`'s single-h branch here instead, so `--all-features` is a
+/// working configuration rather than one that fails inside the prover.
+/// `tests/ivc_keccak_solidity.rs` already does the same thing for the decider
+/// proof (`outer_single_h_extended_srs_k`); this is that pattern applied to the
+/// Poseidon property fixtures.
+fn poseidon_srs_for_test(relation: &PoseidonExample) -> PoseidonParams {
+    #[cfg(not(feature = "outer-single-h-commitment"))]
+    {
+        srs_for_test(relation, Some(POSEIDON_K))
+    }
+    #[cfg(feature = "outer-single-h-commitment")]
+    {
+        let cs_degree = cost_model(relation, Some(POSEIDON_K)).max_deg;
+        // Same exponent `load_srs` uses: enough monomial powers to hold the
+        // unsplit quotient polynomial.
+        let extended_k = POSEIDON_K + ((cs_degree - 1) as f64).log2().ceil() as u32;
+        let base = load_srs(SrsSource::Filecoin, POSEIDON_K, cs_degree);
+        let extended = load_srs(SrsSource::Filecoin, extended_k, cs_degree);
+        base.with_extended_monomial(extended)
+    }
 }
 
 /// Require the Poseidon test SRS on disk.
