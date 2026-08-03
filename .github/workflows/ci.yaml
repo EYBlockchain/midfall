@@ -151,6 +151,125 @@ jobs:
           package: midnight-zkir
           args: --release --all-features
 
+  # ---------------------------------------------------------------------
+  # Solidity verifier generator (halo2_solidity_verifier).
+  #
+  # These three jobs are the per-PR gate. The heavy IVC proof benches and
+  # the release bytecode size/hash checks live in
+  # `.github/workflows/solidity_verifier_bench.yml`, which runs on pushes to
+  # `main`, on a weekly schedule, and on demand.
+  #
+  # Every job needs the pinned solc from
+  # `proofs/solidity-verifier/scripts/install_pinned_solc.sh`; the EVM jobs
+  # additionally need the Filecoin SRS that the rest of this workflow already
+  # caches at `zk_stdlib/examples/assets/bls_filecoin_2p19`, which is where
+  # the crate's `srs_dir()` looks by default.
+  # ---------------------------------------------------------------------
+  test-solidity-verifier:
+    if: github.event.pull_request.draft == false
+    name: Test Solidity verifier
+    runs-on: ubuntu-latest
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      # Codegen/layout tests compile Solidity; the heavy proof/EVM cases
+      # self-skip because HALO2_SOLIDITY_RUN_EVM_TESTS is unset here.
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/cargo-test
+        with:
+          package: halo2_solidity_verifier
+          args: --all-features --all-targets -- --nocapture
+
+  test-solidity-verifier-evm:
+    if: github.event.pull_request.draft == false
+    needs: download-srs
+    name: Test Solidity verifier real EVM
+    runs-on: ubuntu-latest
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+      HALO2_SOLIDITY_RUN_EVM_TESTS: 1
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Restore SRS from cache
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        with:
+          path: zk_stdlib/examples/assets/bls_filecoin_2p19
+          key: fixed-srs-cache
+
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - name: 'Install rust-toolchain.toml'
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci"
+
+      # Adversarial property tests: proof/VK/calldata mutations, non-canonical
+      # scalar and G1 rejection, EIP-170 runtime size, and the memoryguard
+      # overlap check against real compiled bytecode.
+      - name: Real EVM property tests
+        run: cargo test -p halo2_solidity_verifier --release --all-features pbt_ -- --nocapture
+
+      # End-to-end: real proof -> render -> solc -> Prague revm verification.
+      - name: Poseidon fixture
+        run: |
+          cargo test -p halo2_solidity_verifier --release \
+            --features evm,truncated-challenges --test poseidon_fixture -- --nocapture
+
+  test-solidity-verifier-trace:
+    if: github.event.pull_request.draft == false
+    needs: download-srs
+    name: Test Solidity verifier trace equivalence
+    runs-on: ubuntu-latest
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+      HALO2_SOLIDITY_RUN_EVM_TESTS: 1
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Restore SRS from cache
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        with:
+          path: zk_stdlib/examples/assets/bls_filecoin_2p19
+          key: fixed-srs-cache
+
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - name: 'Install rust-toolchain.toml'
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci"
+
+      # Per-identity differential between the native Midfall verifier and the
+      # generated Solidity verifier. This is the only check that compares
+      # quotient VM semantics against the Rust verifier end to end.
+      - name: Poseidon native/Solidity trace equivalence
+        run: |
+          cargo test -p halo2_solidity_verifier --release \
+            --features evm,truncated-challenges,rust-verifier-trace,solidity-trace \
+            --lib native_midfall_verifier_trace_matches_solidity_trace -- --nocapture
+
   doc-links:
     if: github.event.pull_request.draft == false
     name: Intra-doc links

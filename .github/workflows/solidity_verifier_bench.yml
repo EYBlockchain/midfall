@@ -1,0 +1,110 @@
+name: Solidity verifier IVC bench
+
+# The two IVC jobs below each generate a real recursive proof and take up to
+# ~90 minutes, so they are deliberately not part of the per-PR gate in
+# `ci.yaml`. The fast Solidity verifier jobs (codegen/layout tests, real EVM
+# property tests, Poseidon fixture, Poseidon trace equivalence) run there on
+# every pull request.
+#
+# Run these here on pushes to `main`, weekly, and on demand. Trigger a run
+# against a branch from the Actions tab (`workflow_dispatch`) before merging a
+# change to memory layout, proof layout, the quotient VM, or the templates.
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # Mondays 04:00 UTC.
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+jobs:
+  full-ivc-bench:
+    name: Full IVC bench and release bytecode sizes
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+      SRS_DIR: ${{ github.workspace }}/.srs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      # `ensure_srs_assets.sh` fetches bls_filecoin_2p19 plus the
+      # midnight-srs 2p19/2p20/2p22 powers the decider proof needs.
+      - name: Cache SRS assets
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        with:
+          path: .srs
+          key: srs-solidity-verifier-ivc-v1
+
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - name: 'Install rust-toolchain.toml'
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci"
+
+      - name: Ensure SRS assets
+        run: proofs/solidity-verifier/scripts/ensure_srs_assets.sh
+
+      - name: Full IVC bench
+        run: proofs/solidity-verifier/scripts/run_ivc_bench.sh --skip-srs-download
+
+      # Fails the run when a generated runtime crosses EIP-170 or when the
+      # published verifier/VK/quotient runtime hashes drift from the values
+      # recorded in docs/reference/REPRODUCIBLE_BUILDS.md.
+      - name: Release bytecode size/hash checks
+        run: proofs/solidity-verifier/scripts/check_release_bytecode_sizes.sh
+
+      - name: Upload IVC artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ivc-keccak-solidity-dump
+          path: proofs/solidity-verifier/target/ivc-keccak-solidity-dump
+
+  ivc-trace-equivalence:
+    name: IVC native/Solidity trace equivalence
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+      SRS_DIR: ${{ github.workspace }}/.srs
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Cache SRS assets
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        with:
+          path: .srs
+          key: srs-solidity-verifier-ivc-v1
+
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - name: 'Install rust-toolchain.toml'
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          shared-key: "ci"
+
+      - name: Ensure SRS assets
+        run: proofs/solidity-verifier/scripts/ensure_srs_assets.sh
+
+      # Compares the native Midfall verifier trace against the generated
+      # Solidity trace on the IVC decider proof, including quotient identity
+      # trace ids from the pinned external Halo2QuotientEvaluator.
+      - name: IVC trace equivalence
+        run: proofs/solidity-verifier/scripts/run_ivc_bench.sh --trace --skip-srs-download
