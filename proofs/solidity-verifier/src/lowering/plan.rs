@@ -13,7 +13,7 @@ use crate::lowering::{
     layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
     quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
     quotient_numerator::vm::{
-        certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+        self as vm, certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
     },
     render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
     VerifierBuildInputs,
@@ -339,11 +339,73 @@ impl LoweringPlan {
                 self.quotient.program.eval_numer_mptr, self.quotient.state_slots.eval_numer_mptr
             ));
         }
+        // Bounds-check every address the emitted bytecode loads from against
+        // the windows this layout actually populates before the VM runs.
+        // Certification cannot do this: it compares the bytecode against the
+        // expression tree, so a pointer that is wrong in both agrees with
+        // itself.
+        vm::validate_quotient_mem_ptrs(&self.quotient.build.bytes, &self.quotient_read_model())
+            .map_err(|err| format!("quotient memory pointer validation failed: {err}"))?;
         // Prove the emitted bytecode still evaluates the identities it was
         // lowered from, before it can be pinned into a verifying key.
         certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build, &self.vk)
             .map_err(|err| format!("quotient program certification failed: {err}"))?;
         Ok(())
+    }
+
+    /// Addresses the compact quotient VM is allowed to load from.
+    ///
+    /// These are exactly the ranges the verifier has populated by the time the
+    /// VM runs, and they are the same ranges
+    /// `Halo2QuotientEvaluator::validate_layout` requires the external frame to
+    /// contain -- a read outside them is either uninitialized memory in the
+    /// split path or live verifier state in the inline path.
+    pub(crate) fn quotient_read_model(&self) -> vm::QuotientReadModel {
+        let theta = self.data.theta_mptr.value().as_usize();
+        let instance_eval = self.memory.instance_eval_mptr.value().as_usize();
+        vm::QuotientReadModel {
+            windows: vec![
+                vm::QuotientReadWindow {
+                    name: "vk_payload",
+                    start: self.vk_mptr.value().as_usize(),
+                    len: self.vk.len(),
+                },
+                vm::QuotientReadWindow {
+                    name: "user_challenges",
+                    start: self.data.challenge_mptr.value().as_usize(),
+                    len: self.meta.num_user_challenges.iter().sum::<usize>()
+                        * layout::memory::WORD_BYTES,
+                },
+                vm::QuotientReadWindow {
+                    name: "challenge_and_common_slots",
+                    // Ends one word past `instance_eval`, matching the frame
+                    // window in `Halo2QuotientEvaluator::validate_layout`.
+                    // `quotient_eval` sits immediately above and is a write
+                    // target, not a VM input.
+                    start: theta,
+                    len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
+                },
+                vm::QuotientReadWindow {
+                    name: "decoded_proof_evals",
+                    start: self.memory.reversed_evals_mptr.value().as_usize(),
+                    len: self.meta.num_evals * layout::memory::WORD_BYTES,
+                },
+            ],
+            token_bases: vec![
+                (vm::Q_MEM_L0, self.memory.l_0_mptr.value().as_usize()),
+                (vm::Q_MEM_L_LAST, self.memory.l_last_mptr.value().as_usize()),
+                (vm::Q_MEM_L_BLIND, self.memory.l_blind_mptr.value().as_usize()),
+                (vm::Q_MEM_BETA, self.memory.beta_mptr.value().as_usize()),
+                (vm::Q_MEM_GAMMA, self.memory.gamma_mptr.value().as_usize()),
+                (vm::Q_MEM_X, self.memory.x_mptr.value().as_usize()),
+                (vm::Q_MEM_THETA, self.memory.theta_mptr.value().as_usize()),
+                (
+                    vm::Q_MEM_TRASH_CHALLENGE,
+                    self.memory.trash_challenge_mptr.value().as_usize(),
+                ),
+                (vm::Q_MEM_INSTANCE_EVAL, instance_eval),
+            ],
+        }
     }
 
     /// Number of `(G1, scalar)` terms required by the optional accumulator MSM.

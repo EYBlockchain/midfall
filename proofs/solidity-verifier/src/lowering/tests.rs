@@ -3901,3 +3901,108 @@ fn fq_from_u256(value: U256) -> Fq {
     let repr = <Fq as PrimeField>::Repr::from(bytes);
     Option::<Fq>::from(Fq::from_repr(repr)).expect("canonical field element")
 }
+
+
+/// The pointer walker must know every opcode's memory operands.
+///
+/// `quotient_read_pointers` fails closed on an unhandled opcode rather than
+/// skipping it, so this test is what makes the fallback arm reachable
+/// information: a new opcode added to `QUOTIENT_OPCODE_TABLE` without extending
+/// the walker fails here instead of silently shipping unchecked pointers.
+#[test]
+fn quotient_pointer_walker_covers_every_opcode() {
+    let model = QuotientReadModel::default();
+    for spec in QUOTIENT_VM_SPEC.opcodes {
+        // Zero operands keep every embedded count at zero, so the walk
+        // terminates for the dynamic opcodes without needing a hand-built
+        // program per shape.
+        let mut bytes = vec![spec.opcode];
+        bytes.extend(std::iter::repeat_n(0u8, 64));
+        let result = quotient_read_pointers(&bytes, 0, spec.opcode, &model, &mut |_, _| Ok(()));
+        if let Err(err) = result {
+            assert!(
+                !err.contains("pointer walker does not handle"),
+                "opcode {} ({:#x}) has no arm in quotient_read_pointers: {err}",
+                spec.name,
+                spec.opcode
+            );
+        }
+    }
+}
+
+/// Every pointer a real plan emits lands in a window the verifier populates.
+///
+/// The positive assertion alone could pass on a program with no memory
+/// operands at all, so this also pins that the fixture actually exercises the
+/// walker.
+#[test]
+fn quotient_program_pointers_stay_inside_populated_windows() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let model = plan.quotient_read_model();
+
+    let mut pointers = Vec::new();
+    for (idx, op, _len) in quotient_bytecode_ops(&plan.quotient.build.bytes) {
+        quotient_read_pointers(
+            &plan.quotient.build.bytes,
+            idx,
+            op,
+            &model,
+            &mut |_kind, ptr| {
+                pointers.push(ptr);
+                Ok(())
+            },
+        )
+        .expect("pointer walk should decode a validated program");
+    }
+    assert!(
+        !pointers.is_empty(),
+        "test circuit emits no VM memory operands, so the pointer validator is vacuous here"
+    );
+
+    // `LoweringPlan::new` already ran this; assert directly so the failure
+    // message points at this invariant rather than at plan construction.
+    validate_quotient_mem_ptrs(&plan.quotient.build.bytes, &model)
+        .expect("emitted pointers should all land in populated windows");
+}
+
+/// A pointer outside the populated windows is rejected.
+///
+/// Walks the real program, finds the first `LIN7` limb pointer, and rewrites it
+/// to an address inside the verifier's low-memory scratch -- readable at
+/// runtime, but holding transcript/pairing state rather than the proof
+/// evaluation the identity expects. This is the shape a `Data` or planner
+/// regression would take, and it is exactly what certification cannot see.
+#[test]
+fn quotient_pointer_validator_rejects_out_of_window_reads() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let model = plan.quotient_read_model();
+
+    let mut corrupted = plan.quotient.build.bytes.clone();
+    let limb_ptr_offset = quotient_bytecode_ops(&plan.quotient.build.bytes)
+        .find_map(|(idx, op, _)| (op == Q_OP_LIN7).then_some(idx + 2))
+        .expect("test circuit should emit a seven-limb linear form");
+    let stray = u16::try_from(layout::LOW_MEMORY_SCRATCH_START).expect("scratch base fits u16");
+    corrupted[limb_ptr_offset..limb_ptr_offset + 2].copy_from_slice(&stray.to_be_bytes());
+    assert_ne!(
+        corrupted, plan.quotient.build.bytes,
+        "corruption should change the program"
+    );
+
+    let err = validate_quotient_mem_ptrs(&corrupted, &model)
+        .expect_err("a pointer into low-memory scratch must be rejected");
+    assert!(
+        err.contains("outside every window"),
+        "unexpected rejection reason: {err}"
+    );
+
+    // The stack-safety and const-slot validators pass on the same bytes, so
+    // this really is coverage they do not provide.
+    validate_quotient_program(&corrupted)
+        .expect("corrupting a pointer must not change structural validity");
+    validate_quotient_const_slots(&corrupted, plan.quotient.build.consts.len())
+        .expect("corrupting a pointer must not change const-slot validity");
+}
