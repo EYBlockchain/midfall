@@ -21,7 +21,7 @@ templates, and provides helper APIs to repack native Halo2 proof bytes into the
 generated verifier ABI.
 
 For the audit-facing correctness and security argument, use
-[`CODEGEN_ASSURANCE_DOSSIER.md`](./CODEGEN_ASSURANCE_DOSSIER.md). This
+[`CODEGEN_ASSURANCE_DOSSIER.md`](../audit/CODEGEN_ASSURANCE_DOSSIER.md). This
 architecture document explains how the system is built; the dossier states the
 bounded claim, artifact manifest, threat model, and required evidence gates.
 
@@ -63,22 +63,30 @@ pipeline.
 | --- | --- |
 | `src/lib.rs` | Public exports, feature flags, calldata helpers, EVM helpers. |
 | `src/api.rs` | Public configuration and diagnostic types, supported-shape errors, accumulator encoding metadata. |
+| `src/evm.rs` | `verifyProof` calldata encoding, plus pinned-solc compilation and the `revm` harness behind the `evm` feature. |
 | `src/builder/` | Thin `SolidityGenerator` facade, constructor validation, public render/calldata/diagnostic wrappers. |
+| `src/lowering/plan.rs` | `LoweringPlan`: the converged, reusable fact set every render/repack path is built from, plus post-convergence invariant checks. |
 | `src/lowering/artifacts.rs` | Verifier, VK, and quotient evaluator artifact assembly. |
 | `src/lowering/vk.rs` | Metadata convergence, VK payload generation, and static memory layout entrypoints. |
 | `src/lowering/calldata.rs` | Proof repacking and Solidity calldata encoding plan. |
-| `src/lowering/quotient.rs` | Quotient identity planning, selector folds, and generated quotient blocks. |
+| `src/lowering/config.rs` | Constants pinning the single generated verifier shape (VM prefix size, native callbacks, structured trash suffix, limb opcodes). |
+| `src/lowering/diagnostics.rs` | Host-side diagnostics (evaluation counts, quotient identity manifest) derived from the same plan used for rendering. |
+| `src/lowering/quotient.rs` | Quotient identity planning, selector folds, native callback selection, and generated quotient blocks. |
 | `src/lowering/protocol/` | Typed protocol plan derived from the verifying key. |
 | `src/lowering/abi/` | Static proof calldata and transcript-buffer layout. |
 | `src/lowering/render/` | Askama template data models and Yul formatting boundary. |
 | `src/lowering/layout/` | Static Yul memory planner, VK payload layout, numeric layout facts, and overlap validation. |
 | `src/lowering/kzg/` | KZG multi-open verifier emitter and pairing-input construction. |
-| `src/lowering/quotient_numerator/yul_emit.rs` | Batched identity numerator reconstruction emitter. |
-| `src/lowering/quotient_numerator/vm/` | Compact quotient numerator VM compiler and metadata. |
+| `src/lowering/quotient_numerator/yul_emit.rs` | Batched identity numerator reconstruction emitter (inline Yul, not the VM). |
+| `src/lowering/quotient_numerator/vm/mod.rs` | Compact quotient numerator VM compiler, opcode table, packed codec, and the physical-program validators. |
+| `src/lowering/quotient_numerator/vm/reference.rs` | Independent interpreter for finalized VM bytecode, used only by certification. |
+| `src/lowering/quotient_numerator/vm/certify.rs` | Render-time certification of emitted VM bytecode against the identity expressions it was lowered from. |
 | `src/lowering/encoding/` | Pointer, word, field, curve, calldata, and Yul formatting helpers. |
 | `templates/contracts/` | Generated Solidity contract templates consumed by Askama. |
 | `templates/partials/` | Shared Solidity/Yul fragments included by contract templates. |
-| `tests/` | End-to-end rendering, EVM, trace, gas, and compatibility tests. |
+| `tests/` | End-to-end fixture, EVM, trace, and compatibility integration tests. |
+| `src/test.rs`, `src/lowering/tests.rs` | Gated Solidity/EVM verifier tests and codegen/layout unit tests. |
+| `fuzz/` | `cargo-fuzz` targets for proof repacking and Solidity calldata. |
 | `docs/` | Grouped architecture, audit, benchmark, plan, and reference material. |
 
 The public API deliberately hides most of the planning machinery. Users usually
@@ -337,18 +345,38 @@ Several generated sizes depend on earlier generated artifacts:
 - PCS dummy query count depends on protocol metadata and feature flags.
 - Template scratch requirements depend on finalized memory addresses.
 
-`generator.rs` handles these dependencies with bounded convergence loops. It
-builds provisional metadata, derives sizes, rebuilds with the new sizes, and
-checks that the stable static layout has converged. If section sizes do not
-settle within the allowed iteration count, generation fails instead of emitting
-ambiguous bytecode.
+`src/lowering/vk.rs` handles these dependencies with bounded convergence loops.
+`generate_vk` reserves zero-filled quotient sections, recompiles against the
+resulting layout, and repeats until the reserved sizes cover the compiled
+program; `meta_data_for_stable_static_layout` iterates the VK memory base until
+it matches the requirements derived from the resulting metadata. Both fail
+loudly if they do not settle within the allowed iteration count, rather than
+emitting ambiguous bytecode.
+
+`src/lowering/plan.rs` consumes the converged result. `LoweringPlan::new`
+assembles it into one value and then re-checks the cross-module invariants that
+convergence is supposed to establish: protocol/meta agreement, memory-region
+non-overlap, absorbed-G1 precompile coverage, PCS memory requirements, and a
+word-for-word comparison between the quotient constants and bytecode embedded in
+the VK payload and the tables rebuilt from the plan. Rendering, diagnostics, and
+proof repacking all read this same plan, so no call site can independently
+re-derive a slice of the verifier shape.
 
 ## 12. Quotient Numerator Codegen
 
-The quotient system in `src/lowering/quotient/` compiles Halo2 quotient numerator
-logic into a compact VM representation.
+The quotient system compiles Halo2 quotient numerator logic into a compact VM
+representation. It is split across three modules:
 
-The compiler:
+- `src/lowering/quotient.rs` plans the identity stream for the concrete
+  verifying key: identity order, selector folds, which identities become native
+  Yul callbacks, and the execution manifest.
+- `src/lowering/quotient_numerator/vm/mod.rs` is the producer. It lowers planned
+  identities into a compact byte-oriented program plus a constant table.
+- `src/lowering/quotient_numerator/yul_emit.rs` is the inline Yul emitter for
+  the identities that are not lowered to bytecode, and for linearization-related
+  scalar preparation.
+
+The compiler in `vm/mod.rs`:
 
 - Lowers gate, permutation, lookup, and trash identities.
 - Assigns constants.
@@ -358,19 +386,60 @@ The compiler:
 - Tracks memory tokens and native callback requirements.
 - Preserves the identity stream order expected by Midfall.
 
-At runtime, the Yul quotient VM reconstructs the batched identity numerator.
+At runtime, the Yul quotient VM in
+`templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` reconstructs
+the batched identity numerator. It is the only consumer of the emitted bytecode,
+so the opcode set, operand widths, and memory-token map are an ABI between the
+VK payload and that template rather than an implementation detail. Opcode and
+token numbers reach the template through `template_constants.quotient_vm`, so
+both sides read one Rust definition.
+
 The emitted verifier stores the negative numerator value as the expected opening
 scalar, while the commitment side carries the `(1 - x^n)` factor.
-
-The codebase uses two related but distinct pieces:
-
-- `quotient/`: compiler for compact numerator programs.
-- `evaluator.rs`: Yul emitter for batched identity numerator reconstruction and
-  linearization-related scalar preparation.
 
 The quotient evaluator is not an arbitrary Solidity subroutine. It is tied to a
 specific proof layout, VK layout, transcript schedule, and quotient program
 artifact.
+
+### 12.1 Emitted-Bytecode Certification
+
+The lowering runs a peephole optimizer: shape recognizers rewrite seven-limb
+foreign-field expressions into superinstructions, and a run-compaction pass
+rewrites adjacent affine terms into counted opcodes. Both are pure encoding
+choices that must preserve the evaluated polynomial exactly.
+
+Rather than trusting them, the generator proves it for the specific program each
+render is about to emit. Before any artifact is produced:
+
+1. `validate_quotient_program` proves the byte stream decodes, that every memory
+   token is known, and that the expression stack is balanced; it returns the
+   maximum stack depth the memory planner then reserves.
+2. `validate_quotient_const_slots` bounds-checks every constant-table index
+   against the emitted table, so a planner regression cannot make the deployed
+   verifier load a trailing VK word as a gate coefficient.
+3. `certify::certify_quotient_program` executes the finalized bytecode with the
+   independent interpreter in `vm/reference.rs` at a deterministic assignment
+   derived from the artifact itself, and compares each identity against direct
+   evaluation of the `QuotientExpr` tree it was lowered from.
+4. `certify::certify_quotient_builds_agree` rebuilds the same identity stream
+   with the limb superinstructions disabled — yielding a program of only
+   `PUSH`/`ADD`/`MUL`/`NEG` — and requires the two builds to agree
+   identity-by-identity. This turns every shape recognizer from trusted code
+   into a checked optimization.
+
+This is a generator-time gate, not a test. A recognizer bug on a previously
+unseen gate shape fails the render instead of shipping a wrong verifier.
+
+Scope, stated precisely because it bounds what the gate proves: certification
+covers the **emitter to reference-interpreter** leg. The
+**reference-interpreter to Yul** leg is covered by the opcode/token table
+conformance test in `src/lowering/tests.rs` — which checks that the template has
+a `case` for every opcode, not that the case body is correct — and by the
+per-identity native/Solidity trace differentials on fixture circuits. An opcode
+that no fixture circuit emits therefore has unverified runtime semantics.
+Identities executed as inline Yul, native callbacks, or the structured tail are
+not lowered to bytecode at all and are covered only by those trace
+differentials.
 
 ## 13. PCS Codegen
 
@@ -510,28 +579,39 @@ The repository tests the generator through several layers:
 - Gas checkpoint builds for section-level profiling.
 - IVC and Moonlight integration benches for realistic proof shapes.
 
-Representative local commands:
+Which of these run automatically is part of the design, not an afterthought.
+`.github/workflows/ci.yaml` gates every pull request on three jobs:
+`test-solidity-verifier` (codegen, layout, and template invariants, with the
+heavy proof/EVM cases self-skipping), `test-solidity-verifier-evm` (adversarial
+property tests plus the Poseidon end-to-end fixture), and
+`test-solidity-verifier-trace` (Poseidon native/Solidity trace equivalence).
+The two IVC proof benches and the release bytecode size/hash gate are too slow
+for a per-PR job and live in `.github/workflows/solidity_verifier_bench.yml`,
+which runs on pushes to `main`, weekly, and on demand. Trigger that workflow
+against a branch before merging changes to memory layout, proof layout, the
+quotient VM, or the templates.
+
+Representative local commands, run from the Midfall repository root:
 
 ```bash
-cargo test --lib
+cargo test -p halo2_solidity_verifier --all-features --all-targets -- --nocapture
 ```
 
 ```bash
-cargo test --features evm --test codegen
+HALO2_SOLIDITY_RUN_EVM_TESTS=1 \
+SRS_DIR=/path/to/midfall/zk_stdlib/examples/assets \
+cargo test -p halo2_solidity_verifier --release --all-features pbt_ -- --nocapture
 ```
 
 ```bash
-MOONLIGHT_RUN_WRAP_SOLIDITY_BENCH=1 \
-cargo test --manifest-path /Users/Julien.Coolen/Moonlight/aggregation/Cargo.toml \
-  wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release \
-  --lib -- --ignored --nocapture
+SRS_DIR=/path/to/midfall/zk_stdlib/examples/assets \
+proofs/solidity-verifier/scripts/run_ivc_bench.sh
 ```
 
-The Moonlight command runs from this repository's Solidity verifier integration
-when Moonlight has a local path dependency pointing back to this checkout. It
-generates Moonlight wrap proof material, repacks it for the Solidity verifier,
-deploys the generated verifier path, and checks the proof on-chain in the local
-EVM harness.
+Solidity-touching tests require `solc 0.8.30+commit.73712a01` on `PATH` or via
+`SOLC`; `scripts/install_pinned_solc.sh` fetches it. The full command inventory,
+including the Moonlight wrap-recursion bench against a sibling Moonlight
+checkout, is in the [README](../../README.md).
 
 ## 20. Extension Guidelines
 
@@ -557,11 +637,23 @@ For a new VK section:
 
 For new Yul scratch memory:
 
-1. Add a named range to `VerifierMemoryLayout`.
-2. Assign the correct `MemoryPhase`.
+1. Add a named range to `VerifierMemoryLayout` in
+   `src/lowering/layout/memory.rs`.
+2. Assign the correct `MemoryPhase`, keeping the enum in runtime order — its
+   derived `Ord` is what makes `MemoryLifetime::intersects` answer the right
+   question.
 3. Let the overlap checker validate reuse.
-4. Thread the address through `template.rs`.
+4. Thread the address through the Askama models in
+   `src/lowering/render/models.rs`.
 5. Avoid hard-coded addresses in templates.
+
+Note the limit of step 3: `MemoryMap::validate` proves that *registered* regions
+do not conflict when live. It cannot prove that the emitted Yul only touches
+registered regions. Ranges that intentionally spill outside the region model —
+notably the Lagrange batch-inversion input run, which is capacity-checked in
+`VerifierMemoryLayout::validate` instead — carry an explicit `INVARIANT` comment
+naming the test that pins the assumption. Add new scratch as a registered region
+unless there is a documented reason it cannot be one.
 
 For quotient VM changes:
 
@@ -602,9 +694,11 @@ proof order, memory addresses, transcript absorbs, or public input packing.
 
 This specification is the architectural overview. More focused details live in:
 
-- `docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md`
-- `docs/architecture/MEMORY_LAYOUT.md`
-- `docs/reference/ASKAMA_TEMPLATE_RUST_MAPPING.md`
-- `docs/reference/QUOTIENT_NUMERATOR_EVALUATOR.md`
-- `docs/reference/QUOTIENT_EVALUATOR_9KB_BYTECODE.md`
-- `docs/reference/TEAM_DEMO_SETUP.md`
+- [`HALO2_MIDNIGHT_VERIFIER_SPEC.md`](../reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md)
+- [`MEMORY_LAYOUT.md`](./MEMORY_LAYOUT.md)
+- [`ASKAMA_TEMPLATE_RUST_MAPPING.md`](../reference/ASKAMA_TEMPLATE_RUST_MAPPING.md)
+- [`QUOTIENT_NUMERATOR_EVALUATOR.md`](../reference/QUOTIENT_NUMERATOR_EVALUATOR.md)
+- [`QUOTIENT_EVALUATOR_9KB_BYTECODE.md`](../reference/QUOTIENT_EVALUATOR_9KB_BYTECODE.md)
+- [`TEAM_DEMO_SETUP.md`](../reference/TEAM_DEMO_SETUP.md)
+- [`CODEGEN_ASSURANCE_DOSSIER.md`](../audit/CODEGEN_ASSURANCE_DOSSIER.md)
+- [`REPRODUCIBLE_BUILDS.md`](../reference/REPRODUCIBLE_BUILDS.md)
