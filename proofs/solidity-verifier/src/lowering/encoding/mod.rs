@@ -140,7 +140,10 @@ impl ConstraintSystemMeta {
     /// for IVC-style fixtures with committed inputs it would be > 0.
     ///
     /// Panics if the constraint system is outside the supported verifier shape.
-    /// Use [`ConstraintSystemMeta::try_new`] on fallible paths.
+    /// Use [`ConstraintSystemMeta::try_new`] on fallible paths. Production
+    /// codegen goes through `SolidityGenerator::try_new`, which promises a typed
+    /// error, so this panicking form is test-only.
+    #[cfg(test)]
     pub(crate) fn new(cs: &ConstraintSystem<Fq>, nb_committed_instances: usize) -> Self {
         Self::try_new(cs, nb_committed_instances)
             .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))

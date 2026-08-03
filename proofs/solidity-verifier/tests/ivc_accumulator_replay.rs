@@ -413,7 +413,7 @@ fn replay_accumulator_fixture(fixture: &str) {
     let evals_start = PROOF_PAYLOAD_START + g1_count * G1_PADDED_BYTES;
     let evals_end = PROOF_PAYLOAD_START + proof_len;
     assert!(
-        evals_start < evals_end && (evals_end - evals_start) % 0x20 == 0,
+        evals_start < evals_end && (evals_end - evals_start).is_multiple_of(0x20),
         "evaluation block is not a whole number of words"
     );
 

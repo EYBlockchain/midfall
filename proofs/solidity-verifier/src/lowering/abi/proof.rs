@@ -534,7 +534,7 @@ mod tests {
 
         // The old bound counted only phase 0's advice and therefore under-sized
         // the buffer below the true run — confirm the fix was load-bearing.
-        let phase0_only_run = word + g1 + word + num_instances * word + 1 * g1;
+        let phase0_only_run = word + g1 + word + num_instances * word + g1;
         assert!(phase0_only_run < true_initial_run);
         assert!(phase0_only_run + cushion < true_initial_run);
     }

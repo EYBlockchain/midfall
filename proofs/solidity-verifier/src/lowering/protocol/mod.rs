@@ -328,7 +328,9 @@ impl ProtocolPlan {
     /// Panics if the resulting plan fails [`ProtocolPlan::validate`]. Callers on
     /// a fallible path — notably [`SolidityGenerator::try_new`], which promises
     /// a typed error for unsupported constraint systems — must use
-    /// [`ProtocolPlan::try_from_constraint_system`] instead.
+    /// [`ProtocolPlan::try_from_constraint_system`] instead. Every production
+    /// path is fallible, so this panicking form is test-only.
+    #[cfg(test)]
     pub(crate) fn from_constraint_system(
         cs: &ConstraintSystem<Fq>,
         nb_committed_instances: usize,

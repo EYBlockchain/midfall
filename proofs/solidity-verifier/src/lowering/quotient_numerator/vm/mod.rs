@@ -2991,7 +2991,7 @@ pub(crate) fn ptr_to_quotient_mem(ptr: Ptr) -> QuotientMem {
             // the VM mload a straddling window; reject it at the single
             // construction choke point rather than emit a corrupt verifier.
             assert!(
-                offset as usize % WORD_BYTES == 0,
+                (offset as usize).is_multiple_of(WORD_BYTES),
                 "quotient memory pointer {offset:#x} is not 32-byte word aligned"
             );
             QuotientMem::Literal(offset)
@@ -3001,7 +3001,7 @@ pub(crate) fn ptr_to_quotient_mem(ptr: Ptr) -> QuotientMem {
                 "quotient memory token offset must be a non-negative offset that fits in u32",
             );
             assert!(
-                offset as usize % WORD_BYTES == 0,
+                (offset as usize).is_multiple_of(WORD_BYTES),
                 "quotient memory token offset {offset:#x} is not 32-byte word aligned"
             );
             let token = quotient_mem_token_from_name(name)

@@ -694,7 +694,9 @@ mod tests {
         );
         // Above Solidity's allocatable start on purpose: solc reserves
         // via-IR spill slots upward from 0x80 in this contract.
-        assert!(super::LOW_MEMORY_SCRATCH_START > super::SOLIDITY_ALLOCATABLE_MEMORY_START);
+        const _: () = assert!(
+            super::LOW_MEMORY_SCRATCH_START > super::SOLIDITY_ALLOCATABLE_MEMORY_START
+        );
         assert_eq!(super::VK_CONSTRUCTOR_PAYLOAD_START, 0x80);
     }
 
