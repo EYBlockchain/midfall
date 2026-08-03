@@ -3902,7 +3902,6 @@ fn fq_from_u256(value: U256) -> Fq {
     Option::<Fq>::from(Fq::from_repr(repr)).expect("canonical field element")
 }
 
-
 /// The pointer walker must know every opcode's memory operands.
 ///
 /// `quotient_read_pointers` fails closed on an unhandled opcode rather than

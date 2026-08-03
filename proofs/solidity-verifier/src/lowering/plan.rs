@@ -394,7 +394,10 @@ impl LoweringPlan {
             token_bases: vec![
                 (vm::Q_MEM_L0, self.memory.l_0_mptr.value().as_usize()),
                 (vm::Q_MEM_L_LAST, self.memory.l_last_mptr.value().as_usize()),
-                (vm::Q_MEM_L_BLIND, self.memory.l_blind_mptr.value().as_usize()),
+                (
+                    vm::Q_MEM_L_BLIND,
+                    self.memory.l_blind_mptr.value().as_usize(),
+                ),
                 (vm::Q_MEM_BETA, self.memory.beta_mptr.value().as_usize()),
                 (vm::Q_MEM_GAMMA, self.memory.gamma_mptr.value().as_usize()),
                 (vm::Q_MEM_X, self.memory.x_mptr.value().as_usize()),

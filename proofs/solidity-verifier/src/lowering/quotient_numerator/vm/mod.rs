@@ -2237,7 +2237,10 @@ impl QuotientReadModel {
 
     /// Name the window covering a word-sized load, if any.
     fn window_for(&self, ptr: usize) -> Option<&'static str> {
-        self.windows.iter().find(|window| window.contains_word(ptr)).map(|window| window.name)
+        self.windows
+            .iter()
+            .find(|window| window.contains_word(ptr))
+            .map(|window| window.name)
     }
 }
 
@@ -2330,20 +2333,22 @@ pub(crate) fn quotient_read_pointers(
     // `const_slot, u16 ptr` -- the LIN7 limb operand and the MODARITH7 mem term.
     let limb_terms = |base: usize, check: &mut dyn FnMut(&str, usize) -> Result<(), String>| {
         for k in 0..QUOTIENT_VM_LIMBS {
-            check("limb", u16_at(base + k * (1 + QUOTIENT_VM_BYTE_U16_BYTES) + 1))?;
+            check(
+                "limb",
+                u16_at(base + k * (1 + QUOTIENT_VM_BYTE_U16_BYTES) + 1),
+            )?;
         }
         Ok::<(), String>(())
     };
     // Both pairwise bases are indexed `base + i * 0x20` for seven limbs, so the
     // whole span has to be in range, not just the base word.
-    let limb_span = |base_ptr: usize,
-                         kind: &str,
-                         check: &mut dyn FnMut(&str, usize) -> Result<(), String>| {
-        for k in 0..QUOTIENT_VM_LIMBS {
-            check(kind, base_ptr + k * WORD_BYTES)?;
-        }
-        Ok::<(), String>(())
-    };
+    let limb_span =
+        |base_ptr: usize, kind: &str, check: &mut dyn FnMut(&str, usize) -> Result<(), String>| {
+            for k in 0..QUOTIENT_VM_LIMBS {
+                check(kind, base_ptr + k * WORD_BYTES)?;
+            }
+            Ok::<(), String>(())
+        };
 
     match op {
         // No memory operands.
@@ -2374,8 +2379,11 @@ pub(crate) fn quotient_read_pointers(
                      address in this layout"
                 )
             })?;
-            let offset =
-                if op == Q_OP_PUSH_MEM_TOKEN_OFFSET { u32_at(idx + 2) } else { 0 };
+            let offset = if op == Q_OP_PUSH_MEM_TOKEN_OFFSET {
+                u32_at(idx + 2)
+            } else {
+                0
+            };
             check("token", base + offset)
         }
 
@@ -2395,7 +2403,10 @@ pub(crate) fn quotient_read_pointers(
             let stride = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
             for k in 0..count {
                 check("u16", u16_at(base + k * stride))?;
-                check("u16", u16_at(base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES))?;
+                check(
+                    "u16",
+                    u16_at(base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES),
+                )?;
             }
             Ok(())
         }
@@ -2431,7 +2442,11 @@ pub(crate) fn quotient_read_pointers(
         }
         Q_OP_BILIN7_PAIRWISE => {
             limb_span(u16_at(idx + 1), "pairwise_lhs", check)?;
-            limb_span(u16_at(idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES), "pairwise_rhs", check)
+            limb_span(
+                u16_at(idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES),
+                "pairwise_rhs",
+                check,
+            )
         }
         Q_OP_MODARITH7 => {
             let mut cursor = idx + 1;
