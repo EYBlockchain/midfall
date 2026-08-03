@@ -798,7 +798,7 @@ The current `templates/contracts/Halo2Verifier.sol` blocks this path via `AUTHOR
    F-9  │ Low           │ `if mload(HAS_ACCUMULATOR_MPTR)` is read from VK but it is not cross-checked against the codegen-side `acc_encoding`
    I-10 │ Informational │ Generator forces `vk.cs().num_instance_columns() <= 1` and `Rotation::cur()` only - silent "not yet implemented" panics if violated
    I-11 │ Informational │ `n_inv` and `omega_inv_to_l` are never re-derived from `k`/`omega` on chain - a malicious VK that bypasses the codehash pin can lie
-   I-12 │ Informational │ `mod(hash, r)` introduces ~2^-255 bias; standard practice, kept for completeness
+   I-12 │ Informational │ `mod(hash, r)` is measurably biased (1.5x max/min density, ~0.075 statistical distance), not ~2^-255; bounded soundness cost, no action
 
    The mitigations that have already landed (in particular the AUTHORIZED_VK + EXPECTED_VK_CODEHASH pinning at constructor time, commit 54b2943) close the original
    "caller-controlled VK" hole from AUDIT.md finding #1, and the EIP-2537 pairing precompile transitively covers G2 subgroup checks (BN254 audit finding #2).
@@ -1056,7 +1056,41 @@ The current `templates/contracts/Halo2Verifier.sol` blocks this path via `AUTHOR
 
    I-12 - Bias in `mod(hash, r)`
 
-   r = 0x73eda7…00000001 ≈ 2^254.86. With a 256-bit hash, the bias is ~2^256 / r - 1 ≈ 2^-254, completely negligible. Standard practice; no action.
+   Correction. An earlier revision of this item stated "the bias is ~2^256 / r - 1 ≈ 2^-254, completely negligible". That is wrong: 2^256 / r - 1 = 1.208, not 2^-254. The
+   arithmetic only yields a negligible quantity when r ≈ 2^256, and here r ≈ 2^254.86, so 2^256 / r ≈ 2.208. The conclusion (informational, no action) still holds, but for a
+   different reason and with a much larger constant than the original text implied. The numbers below are the actual ones.
+
+   Where. `sample_keccak_digest_be_mod_r` (midfall/proofs/src/transcript/implementors.rs:19) reduces one 256-bit Keccak digest mod r:
+   `BigUint::from_bytes_be(&hash_output) % modulus`. The generated Yul mirrors it exactly in `squeeze_to`
+   (templates/partials/verifier/AssemblyHelpers.yul, `mstore(mptr, mod(h0, r))`). The bias is therefore inherited from the native Midfall transcript, not introduced by this
+   codegen, and the two sides agree bit-for-bit. Removing it would be a transcript change on both sides, not a Solidity-only fix.
+
+   Magnitude. With r = 0x73eda753…00000001:
+
+     r / 2^256          = 0.452845
+     floor(2^256 / r)   = 2
+     R = 2^256 mod r    = 0.094310 * 2^256
+
+   So residues in [0, R) have 3 preimages under the reduction and residues in [R, r) have 2. That gives:
+
+     max/min density ratio       = exactly 1.5
+     statistical distance        ≈ 0.0747
+     max density / uniform       = 3r / 2^256 ≈ 1.3585   (0.442 bits)
+
+   The last line is the quantity that enters a soundness reduction: any event has probability at most 1.3585x its probability under a uniform challenge. The 1.5 figure is the
+   spread between the most and least likely residue, which is a valid but looser bound.
+
+   Impact. Ten challenges are squeezed. Three do not consume a full-width sample: `x3` is truncated to 128 bits at squeeze time, and `x1` / `x4` are consumed only through
+   truncated powers (see the `truncated-challenges` feature). The remaining seven - theta, beta, gamma, trash_challenge, y, x, x2 - are used at full width. Compounding the
+   per-challenge factor over those seven:
+
+     tight   1.3585^7 ≈ 8.5x    (3.09 bits)
+     loose   1.5^7    ≈ 17.1x   (4.09 bits)
+
+   Against a ~254.86-bit challenge space, that moves a 2^-254 soundness error to roughly 2^-251. Negligible in absolute terms, which is why this stays Informational.
+
+   Recommendation. No action for the current deployment. If the transcript is ever revised, sample challenges by rejection or by reducing a wider digest (e.g. 512 bits, giving
+   statistical distance < 2^-250), and change the Rust and Yul sides together. Do not "fix" only the Solidity side: the two must produce identical challenges.
 
    ──────────────────────────────────────────
 
