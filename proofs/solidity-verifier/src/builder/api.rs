@@ -6,7 +6,6 @@
 //! stable caller-facing knobs before lower-level generation starts.
 
 use super::*;
-use crate::lowering::layout::{memory::batch_invert_input_words, theta_window};
 
 impl<'a> SolidityGenerator<'a> {
     /// Number of committed instance columns supported by the generated ABI.
@@ -105,23 +104,6 @@ impl<'a> SolidityGenerator<'a> {
                 message,
             },
         )?;
-
-        // Bound the public instance count here rather than leaving it to
-        // `VerifierMemoryLayout::validate`. The Lagrange block writes its
-        // batch-inversion input run in place from `X_N_MPTR`, and that run
-        // grows with `num_instances`; the layout does catch an overrun, but
-        // only much later and phrased in theta-word offsets. `rotation_last`
-        // is only known once `meta` is built, hence the position of this check.
-        let run_words = batch_invert_input_words(&meta, config.num_instances);
-        if run_words > theta_window::LAGRANGE_RUN_CAP_WORDS {
-            let rotation_last_words = meta.rotation_last.unsigned_abs() as usize;
-            return Err(GeneratorError::TooManyInstances {
-                num_instances: config.num_instances,
-                max_num_instances: theta_window::LAGRANGE_RUN_CAP_WORDS
-                    .saturating_sub(rotation_last_words + 1),
-                rotation_last_words,
-            });
-        }
 
         Ok(Self {
             params,

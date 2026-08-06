@@ -153,6 +153,10 @@ contract Halo2Verifier {
     uint256 internal constant      SELECTOR_ACC_MPTR = 0x65e0;
     uint256 internal constant   QUOTIENT_RETURN_MPTR = 0x1000;
     uint256 internal constant  BATCH_INV_SCRATCH_MPTR = 0x65e0;
+    // Lagrange batch-inversion input run: denominators, in-place inverses,
+    // then Lagrange values, consumed and distilled into the named theta
+    // slots by the Lagrange block. Planner-registered phase scratch.
+    uint256 internal constant    LAGRANGE_DENOMS_MPTR = 0x67c0;
     uint256 internal constant        TRACE_U256_MPTR = 0x83c0;
 
     // ----------------------------------------------------------------------
@@ -1267,8 +1271,10 @@ contract Halo2Verifier {
                 // First pass writes denominators (x - omega_i) for every
                 // Lagrange value needed below, then appends x^n - 1. The
                 // batch inversion pass turns all of them into inverses in one
-                // modexp call.
-                let mptr := X_N_MPTR
+                // modexp call. The run lives in the dedicated planner-registered
+                // LAGRANGE_DENOMS_MPTR scratch region; only the distilled
+                // results below are persisted into the named theta slots.
+                let mptr := LAGRANGE_DENOMS_MPTR
                 let mptr_end := add(mptr, 0x0140)
                 for { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
                     lt(mptr, mptr_end)
@@ -1278,11 +1284,11 @@ contract Halo2Verifier {
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+                success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
 
                 // Convert inverted denominators into Lagrange evaluations:
                 // L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i).
-                mptr := X_N_MPTR
+                mptr := LAGRANGE_DENOMS_MPTR
                 let l_i_common := mulmod(x_n_minus_1, mload(N_INV_MPTR), r)
                 for { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
                     lt(mptr, mptr_end)
@@ -1293,9 +1299,9 @@ contract Halo2Verifier {
 
                 // l_blind is the sum of the negative-rotation Lagrange terms
                 // used by the midnight-proofs blinding identity.
-                let l_blind := mload(add(X_N_MPTR, 0x20))
-                let l_i_cptr := add(X_N_MPTR, 0x40)
-                for { let l_i_cptr_end := add(X_N_MPTR, 0x0120) }
+                let l_blind := mload(add(LAGRANGE_DENOMS_MPTR, 0x20))
+                let l_i_cptr := add(LAGRANGE_DENOMS_MPTR, 0x40)
+                for { let l_i_cptr_end := add(LAGRANGE_DENOMS_MPTR, 0x0120) }
                     lt(l_i_cptr, l_i_cptr_end)
                     { l_i_cptr := add(l_i_cptr, 0x20) } {
                     l_blind := addmod(l_blind, mload(l_i_cptr), r)
@@ -1318,8 +1324,8 @@ contract Halo2Verifier {
                 // Persist the derived values into named memory slots consumed
                 // by quotient reconstruction and PCS preparation.
                 let x_n_minus_1_inv := mload(mptr_end)
-                let l_last := mload(X_N_MPTR)
-                let l_0 := mload(add(X_N_MPTR, 0x0120))
+                let l_last := mload(LAGRANGE_DENOMS_MPTR)
+                let l_0 := mload(add(LAGRANGE_DENOMS_MPTR, 0x0120))
 
                 mstore(X_N_MPTR, x_n)
                 mstore(X_N_MINUS_1_INV_MPTR, x_n_minus_1_inv)

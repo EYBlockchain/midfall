@@ -172,9 +172,9 @@ which changes the transcript-buffer bound. The verifier reserves:
 - PCS fixed-window overflows.
 
 Intentional reuse is represented by giving the same byte range disjoint
-lifetimes. For example, `batch_invert_scratch`, quotient VM scratch, q_eval
-source tables, q_com trace scratch, and final MSM scratch can share bytes when
-their phases do not overlap.
+lifetimes. For example, `batch_invert_scratch`, `lagrange_denoms`, quotient VM
+scratch, q_eval source tables, q_com trace scratch, and final MSM scratch can
+share bytes when their phases do not overlap.
 
 The `trace_u256` log word is deliberately not a historical fixed constant.
 Trace hooks can run between reads from long-lived VK/eval/commitment memory, so
@@ -237,6 +237,12 @@ addresses. The offsets below are in 32-byte words from `THETA_MPTR`.
 The gaps between fixed windows are deliberate historical padding. Do not use
 them as scratch without registering a `MemoryRegion` and a phase.
 
+The Lagrange batch-inversion input run historically wrote its denominators in
+place starting at `x_n` (word 26), overlaying words 27..51 and spilling into
+`rot_points` for large instance counts. The run now lives in the registered
+`lagrange_denoms` phase region above the decompressed commitments; word 26 is
+a plain one-word permanent slot again.
+
 ## Dynamic Commitment Region
 
 The commitment region begins at:
@@ -274,7 +280,7 @@ The planner validates by lifetime, not just by address.
 | --- | --- | --- |
 | `Transcript` | `[0x1000, 0x1000 + transcript_words * 0x20)` | Must stay below `VK_MPTR`. |
 | `ScalarInv` | `VK_MPTR - 0x100` frame | Historical modexp scratch near the VK payload. |
-| `LagrangeBatchInvert` | `batch_invert_scratch_mptr` | Reuses selector bytes before selector accumulators are live. |
+| `LagrangeBatchInvert` | `batch_invert_scratch_mptr`, `lagrange_denoms_mptr` | Prefix-product scratch plus the batch-inversion input run; both reuse selector/quotient bytes before those phases are live. |
 | `QuotientVm` | quotient temps and stack | Used before PCS final MSM. |
 | `PcsQEvalSourceTable` | rolled q_eval address table | Aliases `pcs_scratch_mptr`. |
 | `PcsQComTrace` | optional q_com trace MSM | Aliases `pcs_scratch_mptr`; trace-only. |

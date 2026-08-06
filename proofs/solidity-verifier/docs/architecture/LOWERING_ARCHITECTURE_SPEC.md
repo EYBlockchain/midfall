@@ -649,11 +649,12 @@ For new Yul scratch memory:
 
 Note the limit of step 3: `MemoryMap::validate` proves that *registered* regions
 do not conflict when live. It cannot prove that the emitted Yul only touches
-registered regions. Ranges that intentionally spill outside the region model —
-notably the Lagrange batch-inversion input run, which is capacity-checked in
-`VerifierMemoryLayout::validate` instead — carry an explicit `INVARIANT` comment
-naming the test that pins the assumption. Add new scratch as a registered region
-unless there is a documented reason it cannot be one.
+registered regions — that agreement is pinned by rendered-source tests such as
+`lagrange_denominator_run_uses_registered_scratch_region`, which asserts the
+Lagrange block bases its batch-inversion input run at the registered
+`lagrange_denoms` region rather than a theta slot. All generated scratch is
+planner-registered; add new scratch as a registered region and pin its use
+with a rendered-source test.
 
 For quotient VM changes:
 

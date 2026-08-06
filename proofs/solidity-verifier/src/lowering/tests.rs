@@ -673,20 +673,14 @@ fn external_quotient_output_uses_planned_return_buffer() {
         );
 }
 
-/// The Lagrange denominator run is deliberately allowed to spill out of the
-/// theta band into the rot_points / x1_powers / q_eval_set windows, so
-/// `VerifierMemoryLayout::validate` caps it against the *live* boundary
-/// (`Q_EVAL_CPTR_MPTR`) rather than against `ROT_POINTS_MPTR`. That is only
-/// sound while those three windows are written strictly after the Lagrange
-/// phase and never read before being rewritten.
-///
-/// Because the run is not registered as a `MemoryRegion` -- registering it
-/// would report overlaps that are correct by phase ordering -- the arena's
-/// overlap loop cannot enforce this. Pin the ordering here instead, so moving
-/// a rot_points write earlier fails a test rather than silently corrupting the
-/// denominators.
+/// The Lagrange denominator run must live entirely in the planner-registered
+/// `lagrange_denoms` region. Historically it was written in place at
+/// `X_N_MPTR`, overlaying theta words 27..51 and spilling into the rot_points
+/// window for large instance counts -- safety then rested on write-ordering
+/// coincidence. Pin the rendered source so the run cannot silently move back
+/// onto the theta band.
 #[test]
-fn rot_points_window_is_written_after_the_lagrange_denominator_run() {
+fn lagrange_denominator_run_uses_registered_scratch_region() {
     let (params, vk) = lowering_plan_test_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let source = generator
@@ -694,50 +688,44 @@ fn rot_points_window_is_written_after_the_lagrange_denominator_run() {
         .expect("test verifier should render")
         .verifier;
 
-    let lagrange_end = source
-        .find("batch_invert(success, X_N_MPTR")
-        .expect("Lagrange block must call batch_invert over the denominator run");
-    // Any access at all, read or write: the run leaves garbage in this window,
-    // so an early read is as wrong as an early write being clobbered.
-    let first_rot_points_access = source
-        .find("add(ROT_POINTS_MPTR")
-        .expect("verifier must access the rot_points window");
-
     assert!(
-        first_rot_points_access > lagrange_end,
-        "ROT_POINTS_MPTR is accessed at byte {first_rot_points_access}, before the Lagrange \
-         batch_invert at byte {lagrange_end}; the denominator run spills into that window, so \
-         touching it earlier would either corrupt the denominators or read their leftovers"
+        source.contains("batch_invert(success, LAGRANGE_DENOMS_MPTR"),
+        "Lagrange batch inversion must run over the registered denominator region"
+    );
+    assert!(
+        source.contains("let mptr := LAGRANGE_DENOMS_MPTR"),
+        "the denominator write cursor must start at the registered region"
+    );
+    assert!(
+        source.contains("mstore(X_N_MPTR, x_n)"),
+        "the permanent x_n theta slot must still be written by the distill step"
+    );
+    assert!(
+        !source.contains("batch_invert(success, X_N_MPTR"),
+        "the denominator run must not be based at the X_N_MPTR theta slot"
+    );
+    assert!(
+        !source.contains("add(X_N_MPTR"),
+        "no offset-based access to the X_N_MPTR theta slot may survive; the \
+         run's offsets all belong to LAGRANGE_DENOMS_MPTR now"
     );
 }
 
-/// The Lagrange denominator run grows with `num_instances`, so an oversized
-/// instance count must be rejected at construction with a typed error rather
-/// than surfacing later as a memory-layout failure.
+/// The Lagrange denominator run lives in a registered scratch region that
+/// grows with `num_instances`, so counts far past the historical 165-instance
+/// live-memory cliff must build, validate, and render.
 #[test]
-fn generator_rejects_instance_counts_that_overrun_the_lagrange_run() {
+fn generator_accepts_instance_counts_beyond_the_old_lagrange_cliff() {
     let (params, vk) = lowering_plan_test_vk();
-    let meta = ConstraintSystemMeta::new(vk.cs(), 1);
-    let rotation_last_words = meta.rotation_last.unsigned_abs() as usize;
-    let max_num_instances =
-        crate::lowering::layout::theta_window::LAGRANGE_RUN_CAP_WORDS - rotation_last_words - 1;
+    let generator = SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(200, 1))
+        .expect("large instance counts are supported with a registered denominator region");
 
-    SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(max_num_instances, 1))
-        .expect("the largest fitting instance count must still be accepted");
+    let plan = generator.inputs().lowering_plan();
+    plan.memory.validate().expect("layout with a 200-instance denominator run is valid");
 
-    let err =
-        SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(max_num_instances + 1, 1))
-            .expect_err("one instance past the cap must be rejected");
-    assert!(
-        matches!(
-            err,
-            GeneratorError::TooManyInstances {
-                max_num_instances: reported,
-                ..
-            } if reported == max_num_instances
-        ),
-        "unexpected error: {err:?}"
-    );
+    generator
+        .render(crate::RenderOptions::default())
+        .expect("verifier with a 200-instance denominator run renders");
 }
 
 #[test]
