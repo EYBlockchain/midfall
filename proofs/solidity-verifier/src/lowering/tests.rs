@@ -721,7 +721,9 @@ fn generator_accepts_instance_counts_beyond_the_old_lagrange_cliff() {
         .expect("large instance counts are supported with a registered denominator region");
 
     let plan = generator.inputs().lowering_plan();
-    plan.memory.validate().expect("layout with a 200-instance denominator run is valid");
+    plan.memory
+        .validate()
+        .expect("layout with a 200-instance denominator run is valid");
 
     generator
         .render(crate::RenderOptions::default())

@@ -3,8 +3,8 @@
 //!
 //! The quotient lowering runs a peephole optimizer: shape recognizers rewrite
 //! seven-limb foreign-field expressions into superinstructions, and a
-//! run-compaction pass rewrites adjacent affine terms into counted opcodes. Both
-//! are pure encoding choices that must preserve the evaluated polynomial
+//! run-compaction pass rewrites adjacent affine terms into counted opcodes.
+//! Both are pure encoding choices that must preserve the evaluated polynomial
 //! exactly. This module proves that they did, for the specific program this
 //! render is about to emit, by executing the finalized bytecode with the
 //! independent interpreter in [`super::reference`] and comparing each identity
@@ -123,8 +123,8 @@ fn interpreted_exprs(plan: &QuotientProgramPlan) -> Vec<&QuotientExpr> {
 
 /// Certify that the emitted bytecode evaluates the planned identities.
 ///
-/// Runs after [`super::validate_quotient_program`], which has already proven the
-/// stream decodes and is stack-safe; this pass assumes well-formedness and
+/// Runs after [`super::validate_quotient_program`], which has already proven
+/// the stream decodes and is stack-safe; this pass assumes well-formedness and
 /// checks *meaning*.
 pub(crate) fn certify_quotient_program(
     plan: &QuotientProgramPlan,

@@ -1385,14 +1385,16 @@ impl QuotientProgramBuilder {
         true
     }
 
-    /// Emit `Σ terms[i]` with generic stack ops, leaving one value on the stack.
+    /// Emit `Σ terms[i]` with generic stack ops, leaving one value on the
+    /// stack.
     ///
     /// Each entry is one recognized affine/bilinear term (a scaled memory load
     /// or product), so emitting it cannot re-enter the limb-decomposition
-    /// peephole, and its coefficients use `emit_const`'s u16-capable slots. This
-    /// is the panic-free fallback for a recognized limb shape whose coefficients
-    /// no longer fit one-byte constant slots after intervening emission. The
-    /// slice is always non-empty (a recognized subshape uses at least one term).
+    /// peephole, and its coefficients use `emit_const`'s u16-capable slots.
+    /// This is the panic-free fallback for a recognized limb shape whose
+    /// coefficients no longer fit one-byte constant slots after intervening
+    /// emission. The slice is always non-empty (a recognized subshape uses
+    /// at least one term).
     fn emit_affine_terms(&mut self, terms: &[QuotientExpr]) {
         for (idx, term) in terms.iter().enumerate() {
             self.emit_expr(term);
@@ -2247,20 +2249,20 @@ impl QuotientReadModel {
 /// Bounds-check every memory pointer a finalized program loads from.
 ///
 /// `validate_quotient_const_slots` covers constant-table indices; this covers
-/// the other half of the operand space. The pointers baked into the bytecode are
-/// absolute generated addresses, so an emitter or planner regression that
+/// the other half of the operand space. The pointers baked into the bytecode
+/// are absolute generated addresses, so an emitter or planner regression that
 /// computes one incorrectly makes the deployed verifier read a live challenge,
 /// commitment word, or uninitialized scratch as a gate value -- silently
 /// flipping accept/reject rather than reverting.
 ///
-/// Note what the render-time certification in [`super::certify`] does *not*
+/// Note what the render-time certification in [`certify`] does *not*
 /// cover here. It compares the bytecode against the `QuotientExpr` tree it was
-/// lowered from, and [`super::reference::QuotientRefMemory`] derives a value
+/// lowered from, and [`reference::QuotientRefMemory`] derives a value
 /// from whatever address it is handed, so a pointer that disagrees between the
 /// two shows up as a value mismatch. A pointer that is already wrong *in the
-/// tree* -- a `Data` or planner bug upstream of the VM -- makes both sides agree
-/// on the wrong address and certifies cleanly. This check is what catches that
-/// class.
+/// tree* -- a `Data` or planner bug upstream of the VM -- makes both sides
+/// agree on the wrong address and certifies cleanly. This check is what catches
+/// that class.
 ///
 /// Run after [`validate_quotient_program`], whose byte-length validation
 /// guarantees the operand layout walked here is in bounds.
@@ -2309,11 +2311,11 @@ fn describe_read_windows(model: &QuotientReadModel) -> String {
 
 /// Visit every memory address one instruction loads from.
 ///
-/// Unlike [`validate_quotient_const_slots`], the fallback arm is an error rather
-/// than a no-op: a new opcode with pointer operands that forgets to extend this
-/// walker fails the render instead of silently losing its bounds check.
-/// `quotient_pointer_walker_covers_every_opcode` pins that the walker is total
-/// over `QUOTIENT_OPCODE_TABLE`.
+/// Unlike [`validate_quotient_const_slots`], the fallback arm is an error
+/// rather than a no-op: a new opcode with pointer operands that forgets to
+/// extend this walker fails the render instead of silently losing its bounds
+/// check. `quotient_pointer_walker_covers_every_opcode` pins that the walker is
+/// total over `QUOTIENT_OPCODE_TABLE`.
 pub(crate) fn quotient_read_pointers(
     bytes: &[u8],
     idx: usize,

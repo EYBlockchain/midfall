@@ -53,11 +53,11 @@ impl<'a> SolidityGenerator<'a> {
             // then `fixed_comm_mptr + i * G1_BYTES` per fixed base, then the
             // permutation commitments. Two tail lengths break that mapping:
             //
-            //   * Too long: the generated fixed-base pointers run past the end
-            //     of the fixed-commitment region, silently aliasing permutation
-            //     commitments and then arbitrary VK payload words as G1 bases.
-            //   * Shorter than `-G` plus the permutation commitments: the base
-            //     count underflows in the artifact emitter.
+            //   * Too long: the generated fixed-base pointers run past the end of the
+            //     fixed-commitment region, silently aliasing permutation commitments and
+            //     then arbitrary VK payload words as G1 bases.
+            //   * Shorter than `-G` plus the permutation commitments: the base count
+            //     underflows in the artifact emitter.
             //
             // A tail inside the range is left alone -- it covers a prefix of
             // the fixed commitments, which keeps every pointer in region.

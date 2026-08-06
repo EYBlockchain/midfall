@@ -4508,12 +4508,12 @@ fn env_flag_enabled(name: &str) -> bool {
 /// circuit stay on the multi-limb layout). The consequence is that
 /// `srs_for_test` cannot be used under that feature: it calls `load_srs`, which
 /// decides whether to extend the monomial basis from *zk-stdlib's own*
-/// `single-h-commitment` setting. With the feature off there, `load_srs` returns
-/// a plain `2^k`-element SRS, while the prover -- compiled from `midnight-proofs`
-/// *with* the feature -- commits to one full-degree quotient polynomial and
-/// needs `k + ceil(log2(cs_degree - 1))` monomial powers. The mismatch surfaces
-/// as `SrsError(64, 252)` at proof generation, i.e. long after the VK builds
-/// cleanly at `k`.
+/// `single-h-commitment` setting. With the feature off there, `load_srs`
+/// returns a plain `2^k`-element SRS, while the prover -- compiled from
+/// `midnight-proofs` *with* the feature -- commits to one full-degree quotient
+/// polynomial and needs `k + ceil(log2(cs_degree - 1))` monomial powers. The
+/// mismatch surfaces as `SrsError(64, 252)` at proof generation, i.e. long
+/// after the VK builds cleanly at `k`.
 ///
 /// Mirror `load_srs`'s single-h branch here instead, so `--all-features` is a
 /// working configuration rather than one that fails inside the prover.

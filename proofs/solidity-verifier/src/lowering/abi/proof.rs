@@ -309,12 +309,12 @@ impl TranscriptBufferLayout {
     /// Derive transcript-buffer bounds from proof calldata shape and instances.
     ///
     /// `phase_challenge_counts[i]` is the number of Fiat-Shamir challenges the
-    /// native schedule squeezes for user phase `i` (i.e. `num_user_challenges`).
-    /// It selects which advice commitments share the pre-first-squeeze run: a
-    /// phase that owns no challenge does not trigger a squeeze, so its advices
-    /// accumulate into the same run as the following phase's. An empty slice is
-    /// treated as "no phase owns a challenge", which sums every advice phase as
-    /// a safe upper bound.
+    /// native schedule squeezes for user phase `i` (i.e.
+    /// `num_user_challenges`). It selects which advice commitments share
+    /// the pre-first-squeeze run: a phase that owns no challenge does not
+    /// trigger a squeeze, so its advices accumulate into the same run as
+    /// the following phase's. An empty slice is treated as "no phase owns a
+    /// challenge", which sums every advice phase as a safe upper bound.
     pub(crate) fn from_proof_layout(
         proof: &ProofCalldataLayout,
         num_instances: usize,

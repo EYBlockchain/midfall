@@ -608,15 +608,16 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// This is a size/gas PROXY consumed only by the native-vs-VM gate
     /// selection heuristic (native_gate_candidates); it is never emitted. The
     /// real native blocks are produced by compact_quotient_computation_blocks
-    /// with `selector_fold.gap_for(identity)`, but that fold plan does not exist
-    /// yet at selection time (it is derived from the selection outcome), so we
-    /// use a fixed proxy gap: Some(1) for selector targets, None otherwise.
+    /// with `selector_fold.gap_for(identity)`, but that fold plan does not
+    /// exist yet at selection time (it is derived from the selection
+    /// outcome), so we use a fixed proxy gap: Some(1) for selector targets,
+    /// None otherwise.
     ///
     /// Any divergence between this proxy and the eventual `gap_for` only
     /// perturbs which gates get promoted to native callbacks; it can never
-    /// change the correctness of the generated verifier, because actual emission
-    /// always uses the real gap. Do not "fix" this to call `gap_for` here: the
-    /// plan is intentionally unavailable at this point.
+    /// change the correctness of the generated verifier, because actual
+    /// emission always uses the real gap. Do not "fix" this to call
+    /// `gap_for` here: the plan is intentionally unavailable at this point.
     fn native_identity_estimate_block(identity: &QuotientIdentity) -> Vec<String> {
         let state_slots = QuotientStateSlots {
             eval_numer_mptr: 0x2000,

@@ -642,8 +642,7 @@ impl VerifierMemoryLayout {
         .max()
         .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
-        let lagrange_denoms_len =
-            batch_invert_input_words(meta, config.num_instances) * WORD_BYTES;
+        let lagrange_denoms_len = batch_invert_input_words(meta, config.num_instances) * WORD_BYTES;
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
@@ -1736,7 +1735,10 @@ mod tests {
         // num_instances + |rotation_last| denominators plus the trailing
         // `x_n - 1` word.
         assert_eq!(region.len, (5 + 3 + 1) * WORD_BYTES);
-        assert_eq!(region.lifetime, MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert));
+        assert_eq!(
+            region.lifetime,
+            MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert)
+        );
         assert_eq!(layout.lagrange_denoms_mptr, region.start);
         // Sequential same-phase allocation: the run sits directly above the
         // prefix-product scratch, which itself stays pinned to the selector

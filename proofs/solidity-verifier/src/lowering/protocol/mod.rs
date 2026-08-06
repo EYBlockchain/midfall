@@ -325,9 +325,9 @@ impl ProtocolPlan {
     /// The plan preserves that order so the Solidity transcript and proof
     /// cursors stay byte-compatible with the Rust verifier.
     ///
-    /// Panics if the resulting plan fails [`ProtocolPlan::validate`]. Callers on
-    /// a fallible path — notably [`SolidityGenerator::try_new`], which promises
-    /// a typed error for unsupported constraint systems — must use
+    /// Panics if the resulting plan fails [`ProtocolPlan::validate`]. Callers
+    /// on a fallible path — notably [`SolidityGenerator::try_new`], which
+    /// promises a typed error for unsupported constraint systems — must use
     /// [`ProtocolPlan::try_from_constraint_system`] instead. Every production
     /// path is fallible, so this panicking form is test-only.
     #[cfg(test)]
@@ -339,7 +339,8 @@ impl ProtocolPlan {
             .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))
     }
 
-    /// Fallible counterpart of [`ProtocolPlan::from_constraint_system`].
+    /// Fallible counterpart of the test-only
+    /// `ProtocolPlan::from_constraint_system`.
     ///
     /// Returns the validation failure rather than panicking, so constraint
     /// systems outside the supported verifier shape can be surfaced as a typed

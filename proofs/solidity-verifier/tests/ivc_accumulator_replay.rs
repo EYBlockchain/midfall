@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: CC0-1.0
 //! CI-runnable adversarial replay of the public-accumulator decode path.
 //!
-//! The accumulator decoder in `templates/partials/verifier/AccumulatorHelpers.yul`
-//! had no executing test coverage. The tests that looked like they covered it
+//! The accumulator decoder in
+//! `templates/partials/verifier/AccumulatorHelpers.yul` had no executing test
+//! coverage. The tests that looked like they covered it
 //! -- `accumulator_decoder_rejects_noncanonical_infinity` and friends in
 //! `src/lowering/tests.rs` -- are `verifier_template.contains("...")` string
 //! greps over the raw template. They assert the guard *text* exists and never

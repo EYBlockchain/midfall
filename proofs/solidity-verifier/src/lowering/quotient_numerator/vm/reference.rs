@@ -358,7 +358,8 @@ fn affine_linear_term(
     Ok((const_at(consts, slot, idx)? * mem.literal(ptr), 3))
 }
 
-/// Decode one `mload(lhs) * mload(rhs) * const` term and return its byte length.
+/// Decode one `mload(lhs) * mload(rhs) * const` term and return its byte
+/// length.
 fn affine_product_term(
     bytes: &[u8],
     consts: &[U256],

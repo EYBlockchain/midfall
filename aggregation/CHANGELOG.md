@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://book.async.rs/overview
 * truncated_challenges feature to allow --all-features compilation [#146](https://github.com/midnightntwrk/midnight-zk/pull/146)
 * Rebase to new `circuits/` with `keccak` and `blake2b` [#135](https://github.com/midnightntwrk/midnight-zk/pull/135)
 ### Fixed
+* Restore the transcript input bound required by `LightAggregator::verify`.
 * Fix cost model to pass correct number of committed instances [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 
 ### Changed

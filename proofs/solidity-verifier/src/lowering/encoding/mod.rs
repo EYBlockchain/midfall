@@ -141,15 +141,15 @@ impl ConstraintSystemMeta {
     ///
     /// Panics if the constraint system is outside the supported verifier shape.
     /// Use [`ConstraintSystemMeta::try_new`] on fallible paths. Production
-    /// codegen goes through `SolidityGenerator::try_new`, which promises a typed
-    /// error, so this panicking form is test-only.
+    /// codegen goes through `SolidityGenerator::try_new`, which promises a
+    /// typed error, so this panicking form is test-only.
     #[cfg(test)]
     pub(crate) fn new(cs: &ConstraintSystem<Fq>, nb_committed_instances: usize) -> Self {
         Self::try_new(cs, nb_committed_instances)
             .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))
     }
 
-    /// Fallible counterpart of [`ConstraintSystemMeta::new`].
+    /// Fallible counterpart of the test-only `ConstraintSystemMeta::new`.
     pub(crate) fn try_new(
         cs: &ConstraintSystem<Fq>,
         nb_committed_instances: usize,
