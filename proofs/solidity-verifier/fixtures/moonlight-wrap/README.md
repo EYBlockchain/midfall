@@ -14,12 +14,12 @@ the replay deploys the verifier with the verifying key alone.
 
 | Field | Value |
 | --- | --- |
-| Source commit | `9bf8c51` |
+| Source commit | `3fb6d84` |
 | Rendered by | Moonlight `wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs` |
 | Moonlight revision | `origin/codex/wrap-bench-cherry-picks` |
 | Accumulator | `AccumulatorEncoding::point_pair(offset=11, num_limbs=7, num_limb_bits=56)` |
 | Public inputs | 19 (accumulator occupies the trailing 8 words) |
-| Verified on-chain | yes, 1,277,811 gas under revm Prague |
+| Verified on-chain | yes, 1,279,482 gas under revm Prague |
 | Native/Solidity trace | 244 trace points matched |
 
 ## Regenerating
