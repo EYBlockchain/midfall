@@ -112,9 +112,9 @@ fn read_u256_word(calldata: &[u8], offset: usize) -> u64 {
     u64::from_be_bytes(word[24..].try_into().unwrap())
 }
 
-fn assert_reverts(outcome: CallOutcome, case: &str) {
+fn assert_reverts(outcome: CallOutcome, case: &str) -> u64 {
     match outcome {
-        CallOutcome::Revert { .. } => {}
+        CallOutcome::Revert { gas_used, .. } => gas_used,
         CallOutcome::Success { output, .. } => panic!(
             "{case}: verifier accepted a proof it must reject (output = 0x{})",
             hex::encode(output)
@@ -123,6 +123,45 @@ fn assert_reverts(outcome: CallOutcome, case: &str) {
             panic!("{case}: expected a revert but the call halted ({reason})")
         }
     }
+}
+
+/// Assert a revert that happened *before* the transcript was built.
+///
+/// Every accumulator word is also absorbed into the Keccak transcript, so any
+/// mutation inside the instance region changes the challenges and would fail at
+/// the pairing even if its dedicated decoder guard were deleted. Anchoring on
+/// gas distinguishes the two: `validate_public_accumulator` runs before the
+/// transcript, so a guard that fires costs a small fraction of a full run.
+/// Without this, a deleted guard would leave the test passing for the wrong
+/// reason.
+fn assert_reverts_before_transcript(outcome: CallOutcome, accepted_gas: u64, case: &str) {
+    let gas_used = assert_reverts(outcome, case);
+    let ceiling = accepted_gas / 2;
+    assert!(
+        gas_used < ceiling,
+        "{case}: reverted after {gas_used} gas, but an accumulator decode guard should \
+         fire before the transcript (under {ceiling}, vs {accepted_gas} for a full \
+         accepted run). This revert came from a later stage, so the guard under test \
+         may no longer be reachable."
+    );
+}
+
+/// Assert a revert that happened only *after* the full verification ran.
+///
+/// This is the signature of a Fiat-Shamir binding failure: the input was
+/// structurally valid, so every range, packing, and framing check passed and
+/// the proof failed at the final pairing. A cheap revert here would mean some
+/// earlier check rejected the input instead, which proves nothing about
+/// binding.
+fn assert_reverts_at_pairing(outcome: CallOutcome, accepted_gas: u64, case: &str) {
+    let gas_used = assert_reverts(outcome, case);
+    let floor = accepted_gas / 4 * 3;
+    assert!(
+        gas_used > floor,
+        "{case}: reverted after only {gas_used} gas (expected over {floor}, near the \
+         {accepted_gas} of a full accepted run). An early check rejected this input, so \
+         it does not exercise instance binding."
+    );
 }
 
 /// The IVC decider carries explicit lhs/rhs scalars
@@ -231,13 +270,20 @@ fn replay_accumulator_fixture(fixture: &str) {
         None => evm.create_with_address_arg(verifier_code, vk_address),
     };
 
+    // Cost of a full accepted run, used below to attribute reverts to a stage:
+    // an accumulator decode guard fires long before this, a binding failure
+    // costs almost exactly this much.
+    let accepted_gas;
     match evm.try_call_with_gas(verifier_address, calldata.clone(), GAS_CAP) {
-        CallOutcome::Success { output, .. } => {
+        CallOutcome::Success {
+            output, gas_used, ..
+        } => {
             let expected: Vec<u8> = [vec![0u8; 31], vec![1]].concat();
             assert_eq!(
                 output, expected,
                 "fixture proof should verify; the fixture and calldata may be out of sync"
             );
+            accepted_gas = gas_used;
         }
         CallOutcome::Revert { gas_used, output } => panic!(
             "fixture proof was rejected (gas_used = {gas_used}, output = 0x{}); \
@@ -302,6 +348,65 @@ fn replay_accumulator_fixture(fixture: &str) {
         write_encoded_identity(&mut identity, point_word, &verifier_solidity);
         assert_reverts(
             evm.try_call_with_gas(verifier_address, identity, GAS_CAP),
+            case,
+        );
+    }
+
+    // The canonical infinity above short-circuits at `is_acc_encoded_identity`,
+    // so it never enters `load_acc_point`'s coordinate-decoding branch. The two
+    // cases below are the non-canonical routes to the same nulled operand, and
+    // each is caught by a different guard inside that branch.
+    //
+    // 1. Identity flag on `x`, honest `y`. `x` decodes to zero and sets
+    //    `x_is_id`, but `y` does not, so the malformed-infinity check
+    //    (`iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))`) must reject. Without
+    //    it, `load_acc_point` would still write EIP-2537 infinity into the
+    //    accumulator slot while `y` was arbitrary.
+    for (case, point_word) in [
+        (
+            "LHS accumulator identity flag with honest y",
+            first_acc_word,
+        ),
+        (
+            "RHS accumulator identity flag with honest y",
+            rhs_first_word,
+        ),
+    ] {
+        let mut flagged = calldata.clone();
+        // Only the two `x` words; `y` keeps its honest value.
+        write_encoded_coordinate(&mut flagged, point_word, true, &verifier_solidity);
+        assert_reverts_before_transcript(
+            evm.try_call_with_gas(verifier_address, flagged, GAS_CAP),
+            accepted_gas,
+            case,
+        );
+    }
+
+    // 2. Both coordinates carry the codec's zero sentinel (`p - 1`) with no
+    //    identity flag. Every packing and field check accepts this, so the
+    //    `decoded_zero` guard is the only thing separating "the codec's zero"
+    //    from "EIP-2537's point at infinity".
+    for (case, point_word) in [
+        (
+            "LHS accumulator decodes to zero without the identity flag",
+            first_acc_word,
+        ),
+        (
+            "RHS accumulator decodes to zero without the identity flag",
+            rhs_first_word,
+        ),
+    ] {
+        let mut decoded_zero = calldata.clone();
+        write_encoded_coordinate(&mut decoded_zero, point_word, false, &verifier_solidity);
+        write_encoded_coordinate(
+            &mut decoded_zero,
+            point_word + 2 * 0x20,
+            false,
+            &verifier_solidity,
+        );
+        assert_reverts_before_transcript(
+            evm.try_call_with_gas(verifier_address, decoded_zero, GAS_CAP),
+            accepted_gas,
             case,
         );
     }
@@ -442,6 +547,45 @@ fn replay_accumulator_fixture(fixture: &str) {
             &format!("public input {index} set to the Fr modulus"),
         );
     }
+
+    // ---------------------------------------------------------------------
+    // Instance binding: a valid proof must not verify against different public
+    // inputs.
+    //
+    // Every other mutation in this file is independently caught by a range,
+    // packing, or framing check, so all of them would still revert if instance
+    // absorption regressed -- wrong order, wrong count, wrong endianness, or
+    // instances simply never absorbed. This case is the only one that fails
+    // *because* the transcript binds the instances: the mutated word stays a
+    // canonical field element and well inside its slot, so nothing but the
+    // Fiat-Shamir challenges can distinguish it.
+    //
+    // The accumulator words are excluded because they have their own decode
+    // guards; a revert there would not be attributable to binding.
+    assert!(
+        final_acc_offset > 0,
+        "fixture has no non-accumulator public input to test instance binding with"
+    );
+    for index in 0..final_acc_offset {
+        let at = first_instance_word + index * 0x20;
+        let mut rebound = calldata.clone();
+        // Flip the low bit: the nearest possible value, still canonical.
+        rebound[at + 31] ^= 0x01;
+        assert!(
+            rebound[at..at + 0x20] < fr_modulus[..],
+            "public input {index} left non-canonical by the bit flip; pick another mutation"
+        );
+        assert_ne!(
+            &rebound[at..at + 0x20],
+            &calldata[at..at + 0x20],
+            "public input {index} was not actually modified"
+        );
+        assert_reverts_at_pairing(
+            evm.try_call_with_gas(verifier_address, rebound, GAS_CAP),
+            accepted_gas,
+            &format!("public input {index} changed to a different canonical value"),
+        );
+    }
 }
 
 /// EIP-2537 padded G1: `x_hi, x_lo, y_hi, y_lo`.
@@ -503,6 +647,31 @@ fn solidity_constant(source: &str, name: &str) -> [u8; 0x20] {
 /// This is the exact quadruple `is_acc_encoded_identity` accepts: `p - 1` in
 /// every packed word, with the identity flag (one radix base) folded into the
 /// first word of `x`.
+/// Overwrite the two packed words of one accumulator coordinate at
+/// `coord_word` with the codec's zero sentinel `p - 1`, optionally folding in
+/// the identity flag (one radix base) as the encoder does for `x`.
+///
+/// Unlike [`write_encoded_identity`] this touches a single coordinate, so the
+/// result is deliberately *not* the canonical infinity quadruple and does not
+/// short-circuit `is_acc_encoded_identity`.
+fn write_encoded_coordinate(
+    calldata: &mut [u8],
+    coord_word: usize,
+    with_identity_flag: bool,
+    verifier_solidity: &str,
+) {
+    let first = if with_identity_flag {
+        "BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG"
+    } else {
+        "BLS_P_MINUS_ONE_PACKED_0"
+    };
+    for (index, name) in [first, "BLS_P_MINUS_ONE_PACKED_1"].into_iter().enumerate() {
+        let word = solidity_constant(verifier_solidity, name);
+        let at = coord_word + index * 0x20;
+        calldata[at..at + 0x20].copy_from_slice(&word);
+    }
+}
+
 fn write_encoded_identity(calldata: &mut [u8], point_word: usize, verifier_solidity: &str) {
     for (index, name) in [
         "BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG",
