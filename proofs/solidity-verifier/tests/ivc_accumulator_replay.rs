@@ -357,11 +357,11 @@ fn replay_accumulator_fixture(fixture: &str) {
     // cases below are the non-canonical routes to the same nulled operand, and
     // each is caught by a different guard inside that branch.
     //
-    // 1. Identity flag on `x`, honest `y`. `x` decodes to zero and sets
-    //    `x_is_id`, but `y` does not, so the malformed-infinity check
-    //    (`iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))`) must reject. Without
-    //    it, `load_acc_point` would still write EIP-2537 infinity into the
-    //    accumulator slot while `y` was arbitrary.
+    // 1. Identity flag on `x`, honest `y`. `x` decodes to zero and sets `x_is_id`,
+    //    but `y` does not, so the malformed-infinity check (`iszero(or(or(x_hi,
+    //    x_lo), or(y_hi, y_lo)))`) must reject. Without it, `load_acc_point` would
+    //    still write EIP-2537 infinity into the accumulator slot while `y` was
+    //    arbitrary.
     for (case, point_word) in [
         (
             "LHS accumulator identity flag with honest y",
@@ -384,8 +384,8 @@ fn replay_accumulator_fixture(fixture: &str) {
 
     // 2. Both coordinates carry the codec's zero sentinel (`p - 1`) with no
     //    identity flag. Every packing and field check accepts this, so the
-    //    `decoded_zero` guard is the only thing separating "the codec's zero"
-    //    from "EIP-2537's point at infinity".
+    //    `decoded_zero` guard is the only thing separating "the codec's zero" from
+    //    "EIP-2537's point at infinity".
     for (case, point_word) in [
         (
             "LHS accumulator decodes to zero without the identity flag",
