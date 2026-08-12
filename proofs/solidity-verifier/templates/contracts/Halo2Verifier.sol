@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+// Pinned, not floating. Two properties of this artifact are compiler- and
+// optimiser-dependent, and neither is visible in the source:
+//   1. The generated layout writes absolute addresses from TRANSCRIPT_MPTR
+//      upward. That is only safe while solc's stack-spill reservation stays
+//      below it -- measured 0x8c0 on 0.8.24 and 0x8e0 on 0.8.26+, so it is not
+//      a constant this file controls. verifyProof now asserts the separation.
+//   2. Runtime size depends on --optimize-runs. Measured: 0.8.24 at runs=1
+//      emits 29,567 bytes and 0.8.30 at runs=100000 emits 29,836 -- both over
+//      the EIP-170 24,576-byte limit, so neither can be deployed. Only the
+//      pinned (version, runs) pair is known to produce a deployable contract.
+// A floating `^0.8.24` advertises compatibility this contract does not have.
+pragma solidity 0.8.30;
 
 /// @title Halo2 BLS12-381 KZG verifier.
 /// @notice Circuit-specialized verifier for Midfall/midnight-proofs Halo2
@@ -51,12 +62,14 @@ contract Halo2Verifier {
     /// precompiles, or mismatched pinned dependency code revert. Trace and gas
     /// renders keep the same failure policy.
     /// @dev The generated verifier uses absolute Yul memory addresses instead
-    /// of Solidity's free-memory pointer, but generated scratch starts at
-    /// `0x80` so Solidity's reserved memory prefix is preserved. The main
+    /// of Solidity's free-memory pointer. Generated scratch starts at
+    /// `TRANSCRIPT_MPTR`, which leaves Solidity's reserved prefix *and* solc's
+    /// stack-spill reservation below it untouched; the assembly block asserts
+    /// that separation on entry rather than assuming it. The main
     /// assembly block remains terminal: accepted proofs return from assembly
     /// and all rejected inputs revert. Do not inline this body into Solidity
     /// code that continues executing after verification without reviewing the
-    /// memory strategy; see `docs/MEMORY_LAYOUT.md`.
+    /// memory strategy; see `docs/architecture/MEMORY_LAYOUT.md`.
     /// @param proof Solidity-facing proof bytes, with G1 elements repacked into EIP-2537 padded uncompressed form.
     /// @param instances Public instance scalars encoded as canonical BLS12-381 scalar-field words.
     /// @return Always `true` for accepted proofs; invalid proofs revert instead of returning `false`.
@@ -93,10 +106,20 @@ contract Halo2Verifier {
         {%- when None %}
         {%- endmatch %}
         assembly ("memory-safe") {
+            // The `memory-safe` annotation above is what enables solc's
+            // stack-to-memory mover, which reserves spill slots upward from
+            // 0x80. The generated layout below writes absolute addresses from
+            // TRANSCRIPT_MPTR upward and never consults the free-memory
+            // pointer, so the two regions must not meet. The size of that
+            // reservation is compiler-version and optimiser dependent, so
+            // assert the invariant in the deployed bytecode instead of relying
+            // on a generator-side test the integrator never runs. ~6 gas.
+            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
+
             // This block owns the call-frame memory and remains terminal.
-            // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving
+            // Generated scratch starts at TRANSCRIPT_MPTR, preserving
             // Solidity's reserved scratch, free-memory-pointer, and zero-slot
-            // words. See docs/MEMORY_LAYOUT.md.
+            // words. See docs/architecture/MEMORY_LAYOUT.md.
             // ===============================================================
             // Helpers: modexp, transcript, EIP-2537 calls
             // ===============================================================

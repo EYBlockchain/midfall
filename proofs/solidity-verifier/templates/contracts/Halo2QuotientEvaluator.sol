@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+// Pinned to match the verifier, so both halves of a deployment are provably
+// built by one toolchain. (This contract's runtime is pure returned data, so
+// its codehash is compiler-independent -- the pin is for the pair, not for it.)
+pragma solidity 0.8.30;
 
 /// @title Split Halo2 quotient numerator evaluator.
 /// @notice Reconstructs the scalar side of the linearization query for a generated verifier.
