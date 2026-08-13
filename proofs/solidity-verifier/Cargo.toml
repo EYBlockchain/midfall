@@ -42,9 +42,19 @@ midnight-circuits = { path = "../../circuits", features = ["testing"] }
 midnight-zk-stdlib = { path = "../../zk_stdlib", features = ["testing"] }
 # IVC Poseidon-chain final-step Keccak proof end-to-end test
 # (tests/ivc_keccak_solidity.rs).
+#
+# Deliberately does NOT enable midnight-aggregation/truncated-challenges
+# here: a dependency-level feature is unconditional, and via feature
+# unification it forced midnight-proofs/truncated-challenges into EVERY
+# build of this crate — including `--features evm` builds whose generated
+# verifiers do not mirror the truncation. The prover then truncated while
+# the rendered Solidity did not, and every valid proof from the
+# `evm`-only fixture tests reverted mid-PCS ("using the wrong setting on
+# either side silently produces invalid pairings", as the feature comment
+# below puts it). Truncation is forwarded exclusively through this
+# crate's own `truncated-challenges` feature so both sides always agree.
 midnight-aggregation = { path = "../../aggregation", features = [
     "keccak-transcript",
-    "truncated-challenges",
 ] }
 
 [features]
