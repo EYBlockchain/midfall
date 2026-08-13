@@ -111,14 +111,29 @@ before and still verify against the native Rust verifier. Triage:
    re-render (the generator takes the maximum over live schedules) and
    migrate per the steps above. There is no wrapper-side mitigation.
 
-Worked example: EIP-7883 (Fusaka) removed the `/ 3` divisor from modexp
-pricing, taking the verifier's frame from 1360 to 4064 gas. Artifacts
-rendered before that fix carry `MODEXP_GAS = 1360` and revert every proof on
-any post-Fusaka chain — including the pre-fix `deployments/sepolia/`
-moonlight-wrap deployment, which should be assumed bricked and confirmed with
-a single `eth_call` before it is retired in the deployment record. Deployment
-of NEW artifacts now fails fast in the constructor probes for every
-precompile the runtime calls, modexp included.
+Worked example: EIP-7883 (Fusaka, mainnet 2025-12-03, testnets earlier)
+removed the `/ 3` divisor from modexp pricing, taking the verifier's frame
+from 1360 to 4064 gas. An artifact rendered with exact bounds but before the
+MF-1 fix carries `MODEXP_GAS = 1360` and reverts every proof on any
+post-Fusaka chain. Deployment of NEW artifacts now fails fast in the
+constructor probes for every precompile the runtime calls, modexp included.
+
+**The exposure is exactly the artifacts that carry exact bounds.** Note what
+that implies for `deployments/sepolia/moonlight-wrap`: it is NOT affected. It
+predates the exact-gas hardening entirely — all 17 of its `staticcall`s
+forward `gas()`, including its three modexp sites — so a repricing is simply
+absorbed from the caller's remaining gas. (Verified by reading the recorded
+source, whose recompiled runtime matches `runtimeCodeHash` in
+`deployment.json` byte-for-byte apart from the two immutable `AUTHORIZED_VK`
+slots, so the recorded source is genuinely what is deployed.)
+
+That is the trade-off worth stating plainly, because it is easy to get
+backwards: **exact-gas forwarding is what creates repricing fragility.** The
+older `gas()`-forwarding renders survive any upward repricing but are exposed
+to the DoS that exact bounds were introduced to close (M-2) — a malformed
+proof point burns 63/64 of the transaction budget instead of one scheduled
+call. Neither property is free; the constructor probes exist so the fragility
+the current design accepts is caught at deployment rather than in production.
 
 ## 5. Accepted risks (deployment owner sign-off)
 

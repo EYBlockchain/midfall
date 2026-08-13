@@ -1487,12 +1487,32 @@ compiler commit built to WASM (npm `solc` 0.8.30, reporting
 `0.8.30+commit.73712a01`) behind a shim exposing the native CLI surface. That
 is sound for exercising behaviour, but this repository's reproducibility claim
 pins the native binary's sha256 — so nothing produced that way may be deployed
-or used to pin a hash, and the code-size result should be re-confirmed with the
-pinned binary before release.
+or used to pin a hash.
 
-**Not closed by these commits:** the committed fixtures and the Sepolia
-deployment predate the MF-1 fix and are marked STALE; regenerating them needs
-the SRS asset (unreachable here) and, for moonlight-wrap, a Moonlight checkout.
+The two builds were then compared directly, which upgrades that caveat from an
+assumption to a measurement: recompiling `deployments/sepolia/moonlight-wrap/
+Halo2Verifier.sol` (a 21,161-byte via-IR runtime, at the `deployment.json`
+settings) through the WASM build reproduces the committed native-compiled
+runtime with exactly 40 differing bytes — the two 20-byte immutable
+`AUTHORIZED_VK` slots, which a fresh compile leaves zeroed. All 21,121 other
+bytes match. So the code-size result carries native weight; re-confirming it on
+a pinned-binary host remains good release hygiene rather than an open risk.
+
+**Correction to an earlier claim in this section's history.** The MF-1 commit
+message and an earlier revision of `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §4
+stated that the `deployments/sepolia/moonlight-wrap` deployment should be
+assumed bricked post-Fusaka. That is wrong, and the assumption behind it was
+wrong: that deployment predates the exact-gas hardening, so all 17 of its
+`staticcall`s — the three modexp sites included — forward `gas()`, and an
+upward repricing is absorbed rather than fatal. Only artifacts carrying exact
+bounds are exposed, which is the population MF-1 addresses. Verified by
+reading the recorded source (its recompiled runtime reproduces
+`deployment.json`'s `runtimeCodeHash` byte-for-byte apart from the two
+immutable `AUTHORIZED_VK` slots), so no `eth_call` is needed to settle it.
+
+**Not closed by these commits:** the committed fixtures predate the MF-1 fix
+and are marked STALE; regenerating them needs the SRS asset (unreachable here)
+and, for moonlight-wrap, a Moonlight checkout.
 The replay harness also cannot exercise EIP-7883 — the pinned revm 19 has an
 Osaka spec, but its modexp handler is still `berlin_run` — so real coverage
 awaits a revm bump; `src/evm.rs` records that gap at the `SpecId` pin.
