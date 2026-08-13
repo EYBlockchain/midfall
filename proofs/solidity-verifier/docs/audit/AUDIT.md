@@ -2508,11 +2508,13 @@ Recommendation:
 
 Severity: Integration risk.
 Status: Acknowledged / integration guidance. The raw verifier is stateless
-by design and cannot bind proof meaning itself; the NatSpec on `verifyProof`
-and the wrapper guidance in the testing strategy place replay/domain binding
-(nullifiers, chain/contract domain, program ID) on the application contract.
-Any deployment review must check the wrapper, not just this verifier.
-Triaged 2026-08-12.
+by design and cannot bind proof meaning itself; the wrapper obligations are
+now stated as REQUIREMENTS (replaceable verifier address, wrapper-held
+pause, chainid + wrapper-address + anti-replay binding) in
+`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §2, together with the
+incident-response and migration playbook. Any deployment review must check
+the wrapper against that document, not just this verifier. Triaged
+2026-08-12; requirements doc added 2026-08-13.
 
 The verifier correctly says application contracts must bind the meaning of
 public instances separately. That warning is important. This raw verifier

@@ -535,6 +535,16 @@ The VK codehash pins:
 
 The generated verifier implements the Midfall Keccak transcript.
 
+**No domain separation, by protocol (audit I-5, accepted gap).** The Keccak
+transcript hashes raw concatenated bytes with no personalisation string and
+no absorb/squeeze tags, exactly matching the midnight-proofs prover. This is
+safe here because every absorb is fixed-length with generated, re-checked
+counts (no two distinct valid inputs share a byte stream) and `vk_digest`
+separates circuits — but it is a missing defence-in-depth layer. It cannot
+be added verifier-side without rejecting every real proof; like M-4, it is
+an upstream transcript decision. Recorded in
+`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §5.2.
+
 ### 7.1 Transcript State
 
 The transcript state is a byte buffer.

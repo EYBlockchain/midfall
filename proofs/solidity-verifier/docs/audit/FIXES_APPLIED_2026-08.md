@@ -106,6 +106,58 @@ coverage — protocol change affecting the prover) and anything outside
 `proofs/solidity-verifier/`. Remaining open from the tables below: P4, P8,
 P9, P10, P12, P14, L-4, L-9, L-10, I-6, I-7.
 
+## 2026-08-13 follow-up: Low/Informational batch closed
+
+The remaining P-series patches and L/I findings were applied in a third pass
+(commits: planner asserts, runtime hardening, provenance/digest, docs):
+
+- **P9 (L-7)** — planner asserts tie the batch_invert scratch capacity and
+  the Lagrange run length to the template's own expression; overflow (which
+  corrupted silently) now refuses to plan. Region-shape tests included.
+- **P8 (L-5)** — the user-challenge window is asserted to cover the phase
+  sum of squeezed challenges and to end at or before THETA_MPTR; an
+  undersized window refuses to plan (positive + should-panic tests).
+- **L-2 (assert half)** — `queries()` asserts every identity-pinned
+  commitment originates from the committed-instance column, the exact
+  justification for the MSM omission.
+- **I-6** — both latent divergences are now plan-time assertions: the
+  permutation z ordering is re-derived under the upstream (Cur/Next then
+  reversed Last) order and the intermediate-set structures compared; the
+  column-based vs query-based fixed-eval counts are asserted equal.
+- **P12 (L-6)** — the runtime quotient VM clamps every decoded
+  memory-pointer operand against the coarse union of the planned read
+  windows (shared source of truth with the build-time validator), clamps
+  FOLD_SELECTOR's bucket index and y-power gap, and guards stack pops
+  against balanced underflow.
+- **P4 (L-3)** — seven declared custom errors cover the verify path
+  (constructor probes keep bare reverts by scoped decision); selectors
+  pinned against keccak of the signatures and decoded end-to-end in revm.
+- **L-4** — decision: keep the exact `calldatasize` pin; the ERC-2771 /
+  calldata-appending incompatibility is now documented in `verifyProof`'s
+  NatSpec (typed BadCalldataShape revert).
+- **I-7** — `vk_digest` joined the accumulator batching randomizer's
+  preimage (verifier-local; no prover interaction).
+- **P10 (L-8)** — every render carries `BUILD_ID` (feature profile,
+  vk_digest, VK codehash, SRS fingerprint keccak(n||G2||s_g2||[tau]G1),
+  optional deployment provenance tag via `RenderOptions::provenance`).
+- **P14 (L-1)** — `tests/template_digest.rs` pins a keccak of the sorted
+  `templates/` tree in default CI, closing the committed-fixture drift gap.
+  The deeper L-1 legs (expression front-end certification, native-kernel
+  differential) remain future work.
+- **L-9 / L-10 / I-5** — `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`
+  states the wrapper obligations as requirements, adds the incident/migration
+  playbook keyed on BUILD_ID, records the truncated-challenge ≈2^-107.6
+  bound as an accepted risk with a 2^100 target level and a sign-off line,
+  and records the transcript domain-separation gap (I-5) as accepted —
+  it cannot be fixed verifier-side without breaking prover compatibility.
+- **I-2 leftovers / I-3** — smoke-window comment corrected (creation-frame
+  memory cannot pre-expand the runtime frame), `validate_public_accumulator`'s
+  shape-dependent `r` parameter documented, the unreachable identity-flag
+  branch labeled unreachable-by-construction.
+
+Still open after this batch: the deeper L-1 certification legs, M-4
+(excluded by owner decision), and the outer single-H recorded-hash refresh.
+
 ## Short answer: no, this does not address all the findings
 
 Of the 23 findings, **4 are closed or substantially closed by the changes below.** The rest fall into three groups:

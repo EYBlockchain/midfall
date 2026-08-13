@@ -85,6 +85,10 @@ contract Halo2Verifier {
     /// bind the meaning of those instances separately: state roots, program
     /// identifiers, expected IVC outputs, chain/domain separation, and any
     /// protocol-specific authorization are outside this raw verifier ABI.
+    /// Wrapper obligations (replaceable verifier address, wrapper-held pause,
+    /// chainid/address/anti-replay binding) and the incident-response
+    /// playbook are REQUIREMENTS documented in
+    /// `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`.
     /// @dev Production renders are success-or-revert: accepted proofs return
     /// `true`; this function NEVER returns `false`. Every rejection reverts
     /// with one of the typed errors declared above (BadCalldataShape,
