@@ -1554,8 +1554,9 @@ fn batch_invert_harness_source(verifier_solidity: &str) -> String {
 pragma solidity ^0.8.24;
 
 contract BatchInvertHarness {{
-    // The extracted helper forwards the exact EIP-2565 modexp cost; mirror
-    // the generated constant it references.
+    // The extracted helper forwards the pinned modexp bound (the maximum over
+    // the EIP-2565 and EIP-7883 schedules, MF-1); mirror the generated
+    // constant it references.
     uint256 internal constant MODEXP_GAS = {modexp_gas};
 
     fallback() external {{
@@ -1566,8 +1567,14 @@ contract BatchInvertHarness {{
             let r := calldataload(0x20)
             let base := 0x1000
             calldatacopy(base, 0x40, mul(n, 0x20))
-            let ok := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
+            // MF-4: batch_invert now also reports WHY it failed (a failed
+            // modexp staticcall vs a rejected denominator). This harness only
+            // asserts fail-closed behaviour, so it keeps the boolean and
+            // discards the cause -- but it must still destructure both values
+            // or the extracted helper does not compile.
+            let ok, precompile_failed := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
             mstore(0x80, ok)
+            pop(precompile_failed)
             mcopy(0xa0, base, mul(n, 0x20))
             return(0x80, add(0x20, mul(n, 0x20)))
         }}
@@ -2868,6 +2875,30 @@ fn verifier_rejects_when_x_is_forced_to_domain_root() {
         call_deployed_verifier(&mut evm, &fixture.proof, &fixture.instances),
         "verifier with x forced to domain root should hit zero Lagrange denominator",
     );
+
+    // MF-4: pin WHICH rejection this is, not just that it rejects. A zero
+    // Lagrange denominator means the squeezed x coincided with a domain point
+    // -- a transcript event, so ProofRejected. It used to surface as
+    // PrecompileFailed, which sends an incident responder to inspect the node
+    // when the proof was the cause. This is the only live path that reaches
+    // that branch, so without this assertion the split is pinned in template
+    // text but never observed executing.
+    let selector = {
+        use sha3::{Digest, Keccak256};
+        let d = Keccak256::digest(b"ProofRejected()");
+        vec![d[0], d[1], d[2], d[3]]
+    };
+    match evm.evm.try_call_with_gas(
+        evm.verifier_address,
+        encode_calldata(&fixture.proof, &fixture.instances),
+        30_000_000,
+    ) {
+        CallOutcome::Revert { output, .. } => assert_eq!(
+            output, selector,
+            "a zero Lagrange denominator must report ProofRejected, not a precompile fault"
+        ),
+        outcome => panic!("forced-domain-root verifier did not revert: {outcome:?}"),
+    }
 }
 
 #[test]

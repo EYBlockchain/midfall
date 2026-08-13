@@ -7,8 +7,9 @@
 > inputs for the *replay* tests, which exercise verification logic rather than
 > the modexp bound, but they must be regenerated (and their provenance rows
 > below updated) on a host with the pinned solc before they are used as a
-> deployment source. Regeneration needs solc, which the environment that
-> applied the MF-1 fix did not have.
+> deployment source. Regeneration needs a Moonlight checkout on the branch named
+> below plus the SRS asset, neither of which the environment that applied the
+> MF-1 fix could reach.
 
 Pre-rendered artifacts for the `point_pair` accumulator arm of
 `tests/ivc_accumulator_replay.rs`. The IVC fixture next door covers

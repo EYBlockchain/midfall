@@ -1463,11 +1463,29 @@ such a test would assert `x == x`. The residual it was meant to close (that
 it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
 See §5.3 for the standing M-4 decision.
 
+**Verification.** The full EVM-gated suite runs green against these changes:
+217 passed / 0 failed under `--features evm,rust-verifier-trace`, including
+native-Rust-vs-Solidity trace equivalence, the constructor precompile-rejection
+tests, `typed_errors_identify_rejection_classes`, and
+`compiled_verifier_runtime_fits_the_eip170_limit` — so the added probe and
+guards do not breach the code-size limit. The MF-4 Lagrange re-route is
+observed executing rather than merely pinned in template text: the
+forced-domain-root verifier reverts with `ProofRejected()`.
+
+Caveat on the compiler: the pinned NATIVE solc binary was not reachable from
+the environment that applied these fixes, so the suite ran against the same
+compiler commit built to WASM (npm `solc` 0.8.30, reporting
+`0.8.30+commit.73712a01`) behind a shim exposing the native CLI surface. That
+is sound for exercising behaviour, but this repository's reproducibility claim
+pins the native binary's sha256 — so nothing produced that way may be deployed
+or used to pin a hash, and the code-size result should be re-confirmed with the
+pinned binary before release.
+
 **Not closed by these commits:** the committed fixtures and the Sepolia
-deployment predate the MF-1 fix and are marked STALE; regeneration needs the
-pinned solc. The replay harness also cannot exercise EIP-7883 — the pinned
-revm 19 has an Osaka spec, but its modexp handler is still `berlin_run` — so
-real coverage awaits a revm bump; `src/evm.rs` records that gap at the
-`SpecId` pin.
+deployment predate the MF-1 fix and are marked STALE; regenerating them needs
+the SRS asset (unreachable here) and, for moonlight-wrap, a Moonlight checkout.
+The replay harness also cannot exercise EIP-7883 — the pinned revm 19 has an
+Osaka spec, but its modexp handler is still `berlin_run` — so real coverage
+awaits a revm bump; `src/evm.rs` records that gap at the `SpecId` pin.
 
 [1]: https://eips.ethereum.org/EIPS/eip-2537 "EIP-2537: Precompile for BLS12-381 curve operations"
