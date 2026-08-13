@@ -1548,11 +1548,16 @@ fn batch_invert_harness_source(verifier_solidity: &str) -> String {
         verifier_solidity,
         "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret",
     );
+    let modexp_gas = crate::lowering::layout::gas::modexp_gas_word_frame();
     format!(
         r#"// SPDX-License-Identifier: CC0-1.0
 pragma solidity ^0.8.24;
 
 contract BatchInvertHarness {{
+    // The extracted helper forwards the exact EIP-2565 modexp cost; mirror
+    // the generated constant it references.
+    uint256 internal constant MODEXP_GAS = {modexp_gas};
+
     fallback() external {{
         assembly {{
             {batch_invert}
@@ -1687,18 +1692,18 @@ fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     for (name, needle, replacement) in [
         (
             "missing G1ADD precompile",
-            "staticcall(gas(), 0x0b",
-            "staticcall(gas(), 0x12",
+            "staticcall(G1ADD_GAS, 0x0b",
+            "staticcall(G1ADD_GAS, 0x12",
         ),
         (
             "G1MSM routed to G1ADD",
-            "staticcall(gas(), 0x0c",
-            "staticcall(gas(), 0x0b",
+            "staticcall(G1MSM_GAS_1PAIR, 0x0c",
+            "staticcall(G1MSM_GAS_1PAIR, 0x0b",
         ),
         (
             "pairing routed to G1MSM",
-            "staticcall(gas(), 0x0f",
-            "staticcall(gas(), 0x0c",
+            "staticcall(PAIRING_GAS_2PAIR, 0x0f",
+            "staticcall(PAIRING_GAS_2PAIR, 0x0c",
         ),
     ] {
         let verifier_solidity = replace_required_precompile_staticcall(
@@ -2978,6 +2983,114 @@ fn every_proof_g1_rejects_off_curve_coordinates() {
             &fixture,
             &bad_solidity,
             &format!("Solidity off-curve G1 idx={idx} repacked_offset={repacked_offset}"),
+        );
+    }
+}
+
+/// M-2 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): a rejecting EIP-2537
+/// precompile consumes ALL gas supplied to the STATICCALL, so before the
+/// generated exact gas bounds a canonical-but-off-curve proof point burned
+/// 63/64 of the transaction budget (measured 29.5M of a 30M limit). With the
+/// bounds in place, rejecting a malformed point must cost no more than an
+/// honest verification: the failing run is a prefix of the honest run plus
+/// one precompile call whose forwarded gas is capped at its scheduled cost.
+#[test]
+fn malformed_proof_point_rejects_with_bounded_gas() {
+    const GAS_LIMIT: u64 = 30_000_000;
+
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let layout = proof_g1_layout(&fixture);
+    let solidity_bad = eip2537_padded_off_curve_g1_bytes();
+
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+    let honest_gas = match deployed.evm.try_call_with_gas(
+        deployed.verifier_address,
+        encode_calldata(&fixture.proof, &fixture.instances),
+        GAS_LIMIT,
+    ) {
+        CallOutcome::Success { gas_used, .. } => gas_used,
+        outcome => panic!("baseline honest verification failed: {outcome:?}"),
+    };
+
+    for (idx, repacked_offset) in layout.repacked_offsets.iter().copied().enumerate() {
+        let mut bad_solidity = fixture.proof.clone();
+        bad_solidity[repacked_offset..repacked_offset + 128].copy_from_slice(&solidity_bad);
+        let gas_used = match deployed.evm.try_call_with_gas(
+            deployed.verifier_address,
+            encode_calldata(&bad_solidity, &fixture.instances),
+            GAS_LIMIT,
+        ) {
+            CallOutcome::Revert { gas_used, .. } | CallOutcome::Halt { gas_used, .. } => gas_used,
+            CallOutcome::Success { output, .. } => {
+                // Rejection-by-return-false also must not burn the budget.
+                assert_eq!(
+                    output.last().copied(),
+                    Some(0),
+                    "off-curve G1 idx={idx} unexpectedly verified"
+                );
+                continue;
+            }
+        };
+        assert!(
+            gas_used <= honest_gas,
+            "rejecting off-curve G1 idx={idx} repacked_offset={repacked_offset} burned \
+             {gas_used} gas, more than the honest verification's {honest_gas}: a \
+             precompile call site is forwarding more than its scheduled cost"
+        );
+    }
+}
+
+/// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+/// production Midnight SRS assets must bind their `s_g2` — the element the
+/// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau
+/// that generated their Lagrange basis. The build-time assert in
+/// `src/lowering/vk.rs` runs this check on whatever `params` a build was
+/// handed; this test runs it directly against the distributed asset files,
+/// so a corrupted or substituted download fails here even before any build.
+#[test]
+fn midnight_srs_assets_bind_s_g2_to_lagrange_tau() {
+    use ff::PrimeField;
+    use midnight_zk_stdlib::utils::plonk_api::{load_srs, SrsSource};
+
+    if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
+        eprintln!("skipping Midnight SRS tau-binding check: set {RUN_EVM_TESTS_ENV}=1 to run it");
+        return;
+    }
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+
+    let mut checked = 0usize;
+    for (asset, k) in [("midnight-srs-2p19", 19u32), ("midnight-srs-2p20", 20u32)] {
+        if !PathBuf::from(&srs_dir).join(asset).exists() {
+            eprintln!("skipping {asset}: not present under {srs_dir}");
+            continue;
+        }
+        let params = load_srs(SrsSource::Midnight, k, 2);
+        // omega for the 2^k evaluation domain the Lagrange basis is over.
+        let omega =
+            <F as PrimeField>::ROOT_OF_UNITY.pow_vartime([1u64 << (<F as PrimeField>::S - k)]);
+        assert!(
+            crate::lowering::vk::srs_tau_is_consistent(
+                params.g_lagrange(),
+                omega,
+                params.s_g2().to_affine(),
+            ),
+            "{asset}: s_g2 does not correspond to the tau underlying g_lagrange; \
+             the asset is corrupted or was substituted"
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!(
+            "no midnight-srs assets found under {srs_dir}; \
+             fetch them with scripts/run_ivc_bench.sh or record_srs_provenance.sh"
         );
     }
 }

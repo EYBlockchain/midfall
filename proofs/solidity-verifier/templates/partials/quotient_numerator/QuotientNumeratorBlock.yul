@@ -176,18 +176,103 @@
                 // q_has_top = 0 means the VM stack is empty.
                 let q_has_top := 0
 
-                // q_program opcode summary:
-                //   0x01/0x09 push const       0x02/0x05 push memory
-                //   0x03/0x04 push token ptr   0x06 add, 0x07 mul, 0x08 neg
-                //   0x0a fold main identity    0x0b fold selector identity
-                //   0x0c..0x11 add/mul const or memory into top
-                //   0x12..0x16 fused add-mul runs
-                //   0x17/0x18 reserved
-                //   0x19 native permutation    0x1b native heavy identity
-                //   0x1c LIN7                 0x1d BILIN7_ROW
-                //   0x1e BILIN7_PAIRWISE      0x1f native lookup
-                //   0x20 POW5                 0x21 MODARITH7
-                //   0x22 AFFINE_SUM
+                // q_program opcode summary. Rendered from the same
+                // program.op_usage predicates that gate the interpreter's
+                // case arms below, so this artifact documents exactly the
+                // opcodes its program can contain -- no more, no fewer.
+                {%- if program.op_usage.push_const %}
+                //   {{ template_constants.quotient_vm.op.push_const|hex() }} push_const
+                {%- endif %}
+                {%- if program.op_usage.push_mem_literal %}
+                //   {{ template_constants.quotient_vm.op.push_mem_literal|hex() }} push_mem_literal
+                {%- endif %}
+                {%- if program.op_usage.push_mem_token %}
+                //   {{ template_constants.quotient_vm.op.push_mem_token|hex() }} push_mem_token
+                {%- endif %}
+                {%- if program.op_usage.push_mem_token_offset %}
+                //   {{ template_constants.quotient_vm.op.push_mem_token_offset|hex() }} push_mem_token_offset
+                {%- endif %}
+                {%- if program.op_usage.push_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.push_mem_u16|hex() }} push_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add %}
+                //   {{ template_constants.quotient_vm.op.add|hex() }} add
+                {%- endif %}
+                {%- if program.op_usage.mul %}
+                //   {{ template_constants.quotient_vm.op.mul|hex() }} mul
+                {%- endif %}
+                {%- if program.op_usage.neg %}
+                //   {{ template_constants.quotient_vm.op.neg|hex() }} neg
+                {%- endif %}
+                {%- if program.op_usage.push_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.push_const_u8|hex() }} push_const_u8
+                {%- endif %}
+                {%- if program.op_usage.fold_main %}
+                //   {{ template_constants.quotient_vm.op.fold_main|hex() }} fold_main
+                {%- endif %}
+                {%- if program.op_usage.fold_selector %}
+                //   {{ template_constants.quotient_vm.op.fold_selector|hex() }} fold_selector
+                {%- endif %}
+                {%- if program.op_usage.add_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.add_const_u8|hex() }} add_const_u8
+                {%- endif %}
+                {%- if program.op_usage.mul_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.mul_const_u8|hex() }} mul_const_u8
+                {%- endif %}
+                {%- if program.op_usage.add_const %}
+                //   {{ template_constants.quotient_vm.op.add_const|hex() }} add_const
+                {%- endif %}
+                {%- if program.op_usage.mul_const %}
+                //   {{ template_constants.quotient_vm.op.mul_const|hex() }} mul_const
+                {%- endif %}
+                {%- if program.op_usage.add_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.add_mem_u16|hex() }} add_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.mul_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.mul_mem_u16|hex() }} mul_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add_mul_mem_mem_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.add_mul_mem_mem_const_u8|hex() }} add_mul_mem_mem_const_u8
+                {%- endif %}
+                {%- if program.op_usage.add_mul_const_u8_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.add_mul_const_u8_mem_u16|hex() }} add_mul_const_u8_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add_mul_mem_mem %}
+                //   {{ template_constants.quotient_vm.op.add_mul_mem_mem|hex() }} add_mul_mem_mem
+                {%- endif %}
+                {%- if program.op_usage.run_add_mul_mem_mem_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.run_add_mul_mem_mem_const_u8|hex() }} run_add_mul_mem_mem_const_u8
+                {%- endif %}
+                {%- if program.op_usage.run_add_mul_const_u8_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.run_add_mul_const_u8_mem_u16|hex() }} run_add_mul_const_u8_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.affine_sum %}
+                //   {{ template_constants.quotient_vm.op.affine_sum|hex() }} affine_sum
+                {%- endif %}
+                {%- if program.op_usage.native_permutation %}
+                //   {{ template_constants.quotient_vm.op.native_permutation|hex() }} native_permutation
+                {%- endif %}
+                {%- if program.op_usage.native_lookup %}
+                //   {{ template_constants.quotient_vm.op.native_lookup|hex() }} native_lookup
+                {%- endif %}
+                {%- if program.op_usage.native_identity %}
+                //   {{ template_constants.quotient_vm.op.native_identity|hex() }} native_identity
+                {%- endif %}
+                {%- if program.op_usage.lin7 %}
+                //   {{ template_constants.quotient_vm.op.lin7|hex() }} lin7
+                {%- endif %}
+                {%- if program.op_usage.bilin7_row %}
+                //   {{ template_constants.quotient_vm.op.bilin7_row|hex() }} bilin7_row
+                {%- endif %}
+                {%- if program.op_usage.bilin7_pairwise %}
+                //   {{ template_constants.quotient_vm.op.bilin7_pairwise|hex() }} bilin7_pairwise
+                {%- endif %}
+                {%- if program.op_usage.modarith7 %}
+                //   {{ template_constants.quotient_vm.op.modarith7|hex() }} modarith7
+                {%- endif %}
+                {%- if program.op_usage.pow5 %}
+                //   {{ template_constants.quotient_vm.op.pow5|hex() }} pow5
+                {%- endif %}
                 //
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
@@ -198,7 +283,7 @@
                 This comment documents the interpreter source without being
                 emitted into generated Solidity. Runtime behavior lives in the
                 switch blocks below; opcode numbers and operand layouts are
-                defined in src/codegen/quotient/mod.rs.
+                defined in src/lowering/quotient_numerator/vm/mod.rs.
 
                 Shared stack model:
                 - q_top caches the top stack value.

@@ -383,6 +383,52 @@ fn quotient_vm_test_vk() -> (
     (params, vk)
 }
 
+/// H-1 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): `NEG_S_G2_BASE` is the
+/// element the deployed verifier's soundness rests on, and the tau-binding
+/// pairing check in `vk.rs` is the only build-time control that ties it to
+/// the commitment basis. Exercise both directions: an honest SRS passes, and
+/// a G2 side taken from ANY other tau -- here the canonical generator, i.e.
+/// s = 1, and a doubled s_g2, i.e. s' = 2s -- is rejected.
+#[test]
+fn srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2() {
+    use group::{prime::PrimeCurveAffine, Curve};
+
+    let (params, vk) = quotient_vm_test_vk();
+    let omega = vk.get_domain().get_omega();
+    let honest_s_g2 = params.s_g2().to_affine();
+
+    assert!(
+        crate::lowering::vk::srs_tau_is_consistent(params.g_lagrange(), omega, honest_s_g2),
+        "an honestly generated SRS must pass the tau-binding pairing check"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            midnight_curves::G2Affine::generator(),
+        ),
+        "a G2 base substituted for s_g2 (s = 1) must fail the tau binding"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            (params.s_g2() + params.s_g2()).to_affine(),
+        ),
+        "a doubled s_g2 (s' = 2s) must fail the tau binding"
+    );
+    // A mismatched domain also fails: omega from a different-sized domain
+    // reconstructs a different tau commitment.
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega * omega,
+            honest_s_g2,
+        ),
+        "a wrong domain generator must fail the tau binding"
+    );
+}
+
 /// The generator certifies its own quotient bytecode on a real plan.
 ///
 /// `LoweringPlan::new` runs `certify_quotient_program` and the dual-build
@@ -1332,35 +1378,94 @@ fn transcript_memory_bound_handles_wide_bls_advice_phase() {
     );
 }
 
+/// A failing EIP-2537/modexp call consumes ALL forwarded gas, so every
+/// precompile call site must forward the exact scheduled cost instead of
+/// `gas()`: a malformed proof point then burns at most the scheduled cost of
+/// the single failing call (M-2, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md).
+///
+/// History: this is a deliberate reversal of `2b2bf49` ("Forward gas to
+/// EIP-2537 precompiles"), which removed HAND-TUNED gas literals because
+/// they could brick verification on repriced chains (audit finding M-04).
+/// The bounds asserted here are different in kind: they are the EIP-2537 /
+/// EIP-2565 schedule formulas evaluated at generation time (layout::gas),
+/// and the constructor smoke probes forward the same bounds so deployment
+/// onto a repriced chain fails fast instead of bricking at proof time.
 #[test]
-fn eip2537_calls_forward_remaining_gas() {
+fn eip2537_calls_forward_exact_schedule_gas() {
     let verifier_template = verifier_template_corpus();
     let pcs_codegen = include_str!("kzg/mod.rs");
 
+    // Every gas() forward left in the corpus must be one of the three
+    // intentional sites, all in QuotientAndLinearization.yul:
+    //   1. the pinned external quotient evaluator staticcall (regular-call refund
+    //      semantics: a failing callee returns unused gas; only precompile ERRORS
+    //      burn everything forwarded),
+    //   2. its trace-mode call() variant,
+    //   3. the trace-only linearization-commitment G1MSM (never rendered into
+    //      production artifacts).
+    for source in [verifier_template, pcs_codegen] {
+        for line in source.lines() {
+            if line.contains("(gas()") {
+                assert!(
+                    line.contains("quotientEvaluator") || line.contains("lin_trace_ok"),
+                    "precompile calls must forward exact EIP-2537/EIP-2565 \
+                     schedule gas, not gas(): {line}"
+                );
+            }
+        }
+    }
     assert!(
         verifier_template
-            .contains("staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}")
-            && verifier_template
-                .contains("staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}")
+            .contains("staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}")
             && verifier_template.contains(
-                "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}"
-            ),
-        "main verifier template should forward remaining gas to EIP-2537 precompiles"
+                "staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}"
+            )
+            && verifier_template.contains(
+                "staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}"
+            )
+            && verifier_template
+                .contains("staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}")
+            // The accumulator RHS MSM staticcall is formatted multi-line, so
+            // match its first argument rather than the call prefix.
+            && verifier_template.contains("ACC_RHS_MSM_GAS,")
+            && verifier_template.contains("staticcall(G1MSM_GAS_SMOKE"),
+        "main verifier template should forward the generated exact gas bounds"
     );
     assert!(
-        pcs_codegen.contains("staticcall(gas(), 0x0c")
-            && pcs_codegen.contains("staticcall(gas(), 0x0b"),
-        "PCS emitter should forward remaining gas to EIP-2537 precompiles"
+        pcs_codegen.contains("staticcall(G1MSM_GAS_1PAIR, 0x0c")
+            && pcs_codegen.contains("staticcall(G1ADD_GAS, 0x0b"),
+        "PCS emitter should forward the generated exact gas bounds"
     );
-    for source in [verifier_template, pcs_codegen] {
-        assert!(
-            !source.contains("g1msm_gas_cap")
-                && !source.contains("G1ADD_GAS_CAP")
-                && !source.contains("PAIRING_SMOKE_GAS_CAP")
-                && !source.contains("final_pairing_gas_cap"),
-            "EIP-2537 gas-cap literals must not be rendered or computed"
-        );
-    }
+    assert_eq!(
+        verifier_template.matches("(gas()").count(),
+        3,
+        "unexpected gas() forwarding site added to the verifier templates"
+    );
+}
+
+/// Pin the generated schedule values against EIP-2537/EIP-2565 by hand so a
+/// typo in the discount table or formulas cannot slip through rendering.
+#[test]
+fn eip2537_gas_schedule_matches_spec_vectors() {
+    use crate::lowering::layout::gas;
+
+    assert_eq!(gas::G1ADD_GAS, 375);
+    // (k * 12000 * discount(k)) // 1000 at the table's edge cases.
+    assert_eq!(gas::g1msm_gas(1), 12_000);
+    assert_eq!(gas::g1msm_gas(2), 22_776);
+    assert_eq!(gas::g1msm_gas(128), 797_184);
+    // k > 128 keeps max_discount = 519.
+    assert_eq!(gas::g1msm_gas(200), 200 * 12_000 * 519 / 1_000);
+    // 32600*k + 37700 for the verifier's two-pair check.
+    assert_eq!(gas::pairing_gas(2), 102_900);
+    // EIP-2565, 32-byte base/exp/mod: max(200, 16 * 255 / 3).
+    assert_eq!(gas::modexp_gas_word_frame(), 1_360);
+    // The rendered template constants come from the same module.
+    let constants = crate::lowering::render::TemplateConstants::default().gas;
+    assert_eq!(constants.g1add, 375);
+    assert_eq!(constants.g1msm_one_pair, 12_000);
+    assert_eq!(constants.pairing_two_pair, 102_900);
+    assert_eq!(constants.modexp, 1_360);
 }
 
 #[test]
@@ -1406,8 +1511,8 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
         );
     assert!(
         pcs_codegen.contains("if success {")
-            && pcs_codegen.contains("success := staticcall(gas(), 0x0c")
-            && pcs_codegen.contains("success := staticcall(gas(), 0x0b"),
+            && pcs_codegen.contains("success := staticcall(G1MSM_GAS_1PAIR, 0x0c")
+            && pcs_codegen.contains("success := staticcall(G1ADD_GAS, 0x0b"),
         "PCS emitter should guard final MSM/add precompile calls with if success"
     );
 }
@@ -1465,9 +1570,10 @@ fn verifier_constructor_smoke_tests_runtime_prerequisites() {
         "Worst-case generated G1MSM with all identity/zero terms",
         "constructor_g1msm_smoke_input_bytes",
         "PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])",
-        "staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}",
-        "staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}",
-        "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}",
+        "staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}",
+        "staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}",
+        "staticcall(G1MSM_GAS_SMOKE, {{ template_constants.eip2537.g1msm_address|hex() }}",
+        "staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}",
         "template_constants.eip2537.g1add_address",
         "template_constants.eip2537.g1msm_address",
         "template_constants.eip2537.pairing_address",
@@ -1749,9 +1855,13 @@ fn generated_solidity_pragmas_require_mcopy_capable_compiler() {
             include_str!("../../templates/contracts/Halo2QuotientEvaluator.sol"),
         ),
     ] {
+        // Pinned (not ^-ranged) since the M-1 fix: the artifact hashes in the
+        // review packet are only reproducible against one compiler version,
+        // and 0.8.30 is the version the deployment pipeline pins.
         assert!(
-            source.contains("pragma solidity ^0.8.24;"),
-            "{name} must require Solidity 0.8.24+ for Cancun Yul opcodes"
+            source.contains("pragma solidity 0.8.30;"),
+            "{name} must pin the Solidity version the build pipeline pins \
+             (0.8.30, MCOPY/Cancun-capable)"
         );
     }
 }

@@ -1,5 +1,9 @@
     /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
     /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
+    ///      uses (see the gas-bound constants block), so a chain whose
+    ///      precompile schedule was repriced upward fails here, at deployment,
+    ///      instead of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
             // Same free-memory-pointer guard as verifyProof. This body runs in
@@ -26,7 +30,7 @@
             // G1ADD(identity, identity) -> identity, 128-byte return.
             // This catches chains where the precompile is missing or returns a
             // non-standard success shape.
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
@@ -47,7 +51,7 @@
             mstore(add(scratch, 0x40), {{ template_constants.eip2537.g1_generator.2|hex_padded(64) }})
             mstore(add(scratch, 0x60), {{ template_constants.eip2537.g1_generator.3|hex_padded(64) }})
             mcopy(add(scratch, {{ template_constants.g1_bytes|hex() }}), scratch, {{ template_constants.g1_bytes|hex() }})
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}, scratch, {{ template_constants.g1add_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(and(
                 and(
@@ -81,7 +85,7 @@
             mstore(add(scratch, 0x40), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
             mstore(add(scratch, 0x60), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
             mstore(add(scratch, 0x80), 2)
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, scratch, 0xa0, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, scratch, 0xa0, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(and(
                 and(
@@ -133,14 +137,14 @@
             mcopy(add(scratch, 0x200), add(scratch, 0x80), 0x100)
 
             // (c) e(G, G2) * e(-G, G2) == 1.
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, add(scratch, 0x300), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, add(scratch, 0x300), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(mload(add(scratch, 0x300)), 1)) { revert(0, 0) }
 
             // (d) e(G, G2) * e(G, G2) != 1. Flip the second G1 back to +G.
             mstore(add(scratch, 0x1c0), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
             mstore(add(scratch, 0x1e0), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, add(scratch, 0x300), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, add(scratch, 0x300), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(iszero(mload(add(scratch, 0x300)))) { revert(0, 0) }
 
@@ -159,7 +163,7 @@
             }
             // The production verifier uses G1MSM both for commitments and as
             // the subgroup validator for absorbed proof points.
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, msm_scratch, {{ constructor_g1msm_smoke_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(G1MSM_GAS_SMOKE, {{ template_constants.eip2537.g1msm_address|hex() }}, msm_scratch, {{ constructor_g1msm_smoke_input_bytes|hex() }}, scratch, {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.g1_bytes|hex() }})) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
@@ -169,7 +173,7 @@
             // -> true, 32-byte return. This matches the runtime two-pair KZG
             // pairing input size and catches absent pairing precompiles,
             // short return data, and obviously incompatible semantics.
-            if iszero(staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
+            if iszero(staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(mload(scratch), 1)) { revert(0, 0) }
         }

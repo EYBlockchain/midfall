@@ -229,6 +229,23 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_limb7_helper: quotient_helper_flags.limb7,
             quotient_wide_limb7_helper: quotient_helper_flags.wide_limb7,
             constructor_g1msm_smoke_input_bytes: plan.memory.constructor_g1msm_smoke_input_bytes,
+            constructor_g1msm_smoke_gas: {
+                let smoke_bytes = plan.memory.constructor_g1msm_smoke_input_bytes;
+                assert_eq!(
+                    smoke_bytes % layout::G1_MSM_PAIR_BYTES,
+                    0,
+                    "constructor G1MSM smoke input is not a whole number of pairs"
+                );
+                layout::gas::g1msm_gas(smoke_bytes / layout::G1_MSM_PAIR_BYTES)
+            },
+            acc_rhs_msm_gas: if expected_has_accumulator {
+                // Worst case: carried RHS point plus every fixed-base tail
+                // scalar nonzero. Zero scalars are omitted at runtime, which
+                // only shrinks the MSM below this bound.
+                layout::gas::g1msm_gas(1 + acc_fixed_bases.len())
+            } else {
+                0
+            },
             limb7_yul_coeffs: LIMB7_YUL_COEFFS,
             wide_limb7_yul_coeffs: WIDE_LIMB7_YUL_COEFFS,
             fr_delta: fr_delta_literal(),

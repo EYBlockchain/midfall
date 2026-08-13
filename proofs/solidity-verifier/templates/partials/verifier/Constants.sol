@@ -120,10 +120,13 @@
     uint256 internal constant         Q_EVAL_CPTR_MPTR = {{ memory.q_eval_cptr_mptr }};
 
     // Reserved 4-word slot for the G1 identity (point at infinity) in
-    // EIP-2537 padded form. EVM memory is zero-initialised, and we
-    // never write to this region, so the four `mload`s below produce
-    // 0,0,0,0 which is exactly the identity encoding the EIP-2537
-    // ec_add / ec_mul precompiles accept.
+    // EIP-2537 padded form. EVM memory is zero-initialised, and the verifier
+    // never writes to this region, so any read of this slot (the PCS
+    // emitters `mcopy` from it when staging identity commitments) yields
+    // 0,0,0,0 -- exactly the identity encoding the EIP-2537 precompiles
+    // accept. Artifacts whose PCS plan never stages an identity commitment
+    // still emit the constant; it costs no runtime bytes beyond the
+    // declaration and keeps the emitters' pointer model uniform.
     uint256 internal constant       G1_IDENTITY_MPTR = {{ memory.g1_identity_mptr }};
 
     // Decoded polynomial-eval buffer (Optimisation H3). The off-chain
@@ -164,6 +167,35 @@
     uint256 internal constant       LOOKUP_Z_COMMS_MPTR_BASE = {{ memory.lookup_z_comms_mptr_base }};
     uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = {{ memory.trashcan_comms_mptr_base }};
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = {{ memory.quotient_limb_comms_mptr_base }};
+
+    // ----------------------------------------------------------------------
+    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
+    //
+    // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+    // STATICCALL, so every generated call site forwards the exact scheduled
+    // cost instead of gas(). A malformed proof point then burns at most the
+    // scheduled cost of the single failing call instead of 63/64 of the
+    // transaction budget. The schedule is the spec-guaranteed worst case
+    // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
+    // by construction on any conformant chain.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
+    // this verifier must be regenerated and redeployed. The constructor
+    // smoke probes forward the same bounds, so deployment onto an
+    // already-repriced chain fails fast instead of bricking at proof time.
+    // ----------------------------------------------------------------------
+    uint256 internal constant          G1ADD_GAS = {{ template_constants.gas.g1add }};
+    uint256 internal constant   G1MSM_GAS_1PAIR = {{ template_constants.gas.g1msm_one_pair }};
+    uint256 internal constant PAIRING_GAS_2PAIR = {{ template_constants.gas.pairing_two_pair }};
+    uint256 internal constant        MODEXP_GAS = {{ template_constants.gas.modexp }};
+    // Exact cost of the deployment-time worst-case G1MSM smoke probe.
+    uint256 internal constant G1MSM_GAS_SMOKE = {{ constructor_g1msm_smoke_gas }};
+    {%- if self.expected_has_accumulator %}
+    // Worst-case accumulator RHS MSM: carried RHS point plus every generated
+    // fixed-base tail scalar nonzero. Zero tail scalars are omitted at
+    // runtime, which only lowers the actual cost below this bound.
+    uint256 internal constant ACC_RHS_MSM_GAS = {{ acc_rhs_msm_gas }};
+    {%- endif %}
 
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.

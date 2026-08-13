@@ -33,12 +33,12 @@
                 mcopy(batch_ptr, ACC_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 mstore(add(batch_ptr, {{ template_constants.g1_bytes|hex() }}), acc_pair_alpha)
                 if success {
-                    success := staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, batch_ptr, {{ template_constants.g1_msm_pair_bytes|hex() }}, batch_ptr, {{ template_constants.g1_bytes|hex() }})
+                    success := staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, batch_ptr, {{ template_constants.g1_msm_pair_bytes|hex() }}, batch_ptr, {{ template_constants.g1_bytes|hex() }})
                     success := and(success, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                 }
                 mcopy(add(batch_ptr, {{ template_constants.g1_bytes|hex() }}), PAIRING_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 if success {
-                    success := staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, batch_ptr, {{ template_constants.g1add_input_bytes|hex() }}, PAIRING_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
+                    success := staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}, batch_ptr, {{ template_constants.g1add_input_bytes|hex() }}, PAIRING_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                     success := and(success, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                 }
 
@@ -47,12 +47,12 @@
                 mcopy(batch_ptr, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 mstore(add(batch_ptr, {{ template_constants.g1_bytes|hex() }}), acc_pair_alpha)
                 if success {
-                    success := staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, batch_ptr, {{ template_constants.g1_msm_pair_bytes|hex() }}, batch_ptr, {{ template_constants.g1_bytes|hex() }})
+                    success := staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, batch_ptr, {{ template_constants.g1_msm_pair_bytes|hex() }}, batch_ptr, {{ template_constants.g1_bytes|hex() }})
                     success := and(success, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                 }
                 mcopy(add(batch_ptr, {{ template_constants.g1_bytes|hex() }}), PAIRING_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 if success {
-                    success := staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}, batch_ptr, {{ template_constants.g1add_input_bytes|hex() }}, PAIRING_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
+                    success := staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}, batch_ptr, {{ template_constants.g1add_input_bytes|hex() }}, PAIRING_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                     success := and(success, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
                 }
             }

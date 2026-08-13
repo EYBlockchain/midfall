@@ -46,6 +46,7 @@ use crate::lowering::{
     abi::proof::ProofCalldataLayout,
     encoding::{ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word},
     layout::{
+        gas,
         memory::{
             FinalMsmShape, PcsMemoryRequirements, VerifierMemoryLayout, G1ADD_INPUT_BYTES,
             G1_BYTES, G1_MSM_PAIR_BYTES, PCS_STATIC_WORKING_WORDS, WORD_BYTES,
@@ -1082,10 +1083,18 @@ pub(crate) fn computations(
         // ------------------------------------------------------------------
         let eval_src_table_mptr: usize = memory.pcs_q_eval_source_table_mptr;
 
+        let comment_g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
         for (set_idx, commitments_in_set) in by_set.iter().enumerate() {
             let mut lines: Vec<String> = Vec::new();
             let q_eval_base = format!("add(Q_EVAL_SET_MPTR, {:#x})", set_idx * WORD_BYTES);
             let m = commitments_in_set.len();
+            // The MSM emission (blocks 3 and 5) skips commitments pinned to
+            // the G1 identity while their evaluation contribution stays in
+            // q_eval_set, so the two counts differ whenever a set carries an
+            // identity commitment. Report both, or the emitted comment
+            // contradicts the pair count of the MSM right below it (L-2/P7).
+            let commitment_terms =
+                commitments_in_set.iter().filter(|c| c.comm != comment_g1_identity).count();
 
             // q_eval_set[s] is itself a *vector* of |set| evaluations
             // (not a single scalar): one per rotation in the set's
@@ -1106,7 +1115,8 @@ pub(crate) fn computations(
             if q_eval_strategy(commitments_in_set) == QEvalStrategy::Rolled {
                 // -------- Rolled path (Opt I + Opt J merged) ----------
                 lines.push(format!(
-                    "// q_eval_set[{set_idx}]: {m} commitment(s) (rolled, m>={Q_EVAL_ROLL_THRESHOLD})"
+                    "// q_eval_set[{set_idx}]: {m} evaluation term(s), {commitment_terms} \
+                     commitment term(s) (rolled, m>={Q_EVAL_ROLL_THRESHOLD})"
                 ));
 
                 // 1. Pre-stage source-eval addresses at EVAL_SRC_TABLE_MPTR. Layout: row-major
@@ -1180,7 +1190,10 @@ pub(crate) fn computations(
                 }
             } else {
                 // -------- Unrolled path (preserved for non-rolled sets) --
-                lines.push(format!("// q_eval_set[{set_idx}]: {m} commitment(s)"));
+                lines.push(format!(
+                    "// q_eval_set[{set_idx}]: {m} evaluation term(s), {commitment_terms} \
+                     commitment term(s)"
+                ));
 
                 // Fr-only eval accumulation in stack locals.
                 for (k, ev) in first.evals.iter().enumerate() {
@@ -1318,7 +1331,11 @@ pub(crate) fn computations(
             );
             let msm_len = non_identity_terms * G1_MSM_PAIR_BYTES;
             lines.push(format!(
-                "let q_com_trace_ok_{set_idx} := staticcall(gas(), 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})"
+                "// exact EIP-2537 G1MSM cost for {non_identity_terms} pair(s)"
+            ));
+            lines.push(format!(
+                "let q_com_trace_ok_{set_idx} := staticcall({}, 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})",
+                gas::g1msm_gas(non_identity_terms)
             ));
             lines.push(format!(
                 "q_com_trace_ok_{set_idx} := and(q_com_trace_ok_{set_idx}, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1603,6 +1620,14 @@ pub(crate) fn computations(
         let final_msm_shape = final_msm_shape(meta, data, &by_set);
         let final_msm_terms = final_msm_shape.terms;
         let final_msm_len = final_msm_shape.input_bytes;
+        // The forwarded gas bound below is derived from the term count, so
+        // the byte length handed to the precompile must be exactly that many
+        // whole pairs -- a mismatch would under-fund the MSM.
+        assert_eq!(
+            final_msm_terms * G1_MSM_PAIR_BYTES,
+            final_msm_len,
+            "final MSM input byte length is not a whole number of MSM pairs"
+        );
         let final_msm_scratch = memory.pcs_final_msm_scratch_mptr;
 
         lines.push("// build final_com and v (KZG single-opening proof, fused MSM)".to_string());
@@ -1744,7 +1769,11 @@ pub(crate) fn computations(
 
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s)"
+        ));
+        lines.push(format!(
+            "    success := staticcall({}, 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            gas::g1msm_gas(final_msm_terms),
             final_msm_len
         ));
         lines.push(format!(
@@ -1795,7 +1824,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1MSM_GAS_1PAIR, 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1808,7 +1837,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1ADD_GAS, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1820,7 +1849,7 @@ pub(crate) fn computations(
         lines.push(format!("mstore({scratch_g1add_scalar:#x}, mload(X3_MPTR))"));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1MSM_GAS_1PAIR, 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1828,7 +1857,7 @@ pub(crate) fn computations(
         lines.push("}".to_string());
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1ADD_GAS, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"

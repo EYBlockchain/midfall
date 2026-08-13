@@ -22,7 +22,7 @@
                 mstore(add(p, {{ template_constants.modexp.base_offset|hex() }}), x)
                 mstore(add(p, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))
                 mstore(add(p, {{ template_constants.modexp.mod_offset|hex() }}), FR_MODULUS)
-                if iszero(staticcall(gas(), {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
+                if iszero(staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
                 if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
                 inv := mload(p)
             }
@@ -167,7 +167,7 @@
                     mstore(add(single_scratch, {{ template_constants.modexp.base_offset|hex() }}), x)
                     mstore(add(single_scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(r, 2))
                     mstore(add(single_scratch, {{ template_constants.modexp.mod_offset|hex() }}), r)
-                    ret := staticcall(gas(), {{ template_constants.modexp.address|hex() }}, single_scratch, {{ template_constants.modexp.frame_bytes|hex() }}, single_scratch, {{ template_constants.modexp.output_bytes|hex() }})
+                    ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, single_scratch, {{ template_constants.modexp.frame_bytes|hex() }}, single_scratch, {{ template_constants.modexp.output_bytes|hex() }})
                     ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
@@ -217,7 +217,7 @@
                 mstore(add(gp_mptr, {{ template_constants.modexp.base_offset|hex() }}), gp)
                 mstore(add(gp_mptr, {{ template_constants.modexp.exp_offset|hex() }}), sub(r, 2))
                 mstore(add(gp_mptr, {{ template_constants.modexp.mod_offset|hex() }}), r)
-                ret := staticcall(gas(), {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
+                ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
                 // Leave before the backward pass on a failed modexp. A failed
                 // staticcall writes no output, so `mload(gp_mptr)` would read
@@ -266,7 +266,7 @@
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
-                ret := staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
+                ret := staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
                 // Compare against 1 rather than truncating to the low bit:
                 // `and(ret, word)` would accept any odd result word. EIP-2537

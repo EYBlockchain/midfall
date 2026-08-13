@@ -41,6 +41,8 @@ pub(crate) struct TemplateConstants {
     pub(crate) pairing_two_pair_bytes: usize,
     /// EIP-2537 precompile constants.
     pub(crate) eip2537: Eip2537TemplateConstants,
+    /// Exact EIP-2537/EIP-2565 gas bounds forwarded to precompile calls.
+    pub(crate) gas: GasTemplateConstants,
     /// EIP-198 modexp constants.
     pub(crate) modexp: ModexpTemplateConstants,
     /// Public accumulator layout constants.
@@ -64,6 +66,24 @@ pub(crate) struct Eip2537TemplateConstants {
     pub(crate) g1_generator: G1Words,
     /// Twice the BLS12-381 G1 generator, in EIP-2537 padded encoding.
     pub(crate) g1_double_generator: G1Words,
+}
+
+/// Exact precompile gas bounds rendered into templates.
+///
+/// These are the EIP-2537/EIP-2565 scheduled costs, forwarded verbatim so a
+/// failing precompile call burns at most its scheduled cost instead of the
+/// full 63/64 of the transaction budget. See [`layout::gas`] for the model
+/// and the upward-repricing liveness caveat.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GasTemplateConstants {
+    /// EIP-2537 G1ADD flat cost.
+    pub(crate) g1add: u64,
+    /// EIP-2537 G1MSM cost for a single (point, scalar) pair.
+    pub(crate) g1msm_one_pair: u64,
+    /// EIP-2537 pairing cost for the verifier's two-pair check.
+    pub(crate) pairing_two_pair: u64,
+    /// EIP-2565 modexp cost for the 32-byte base/exp/mod frame.
+    pub(crate) modexp: u64,
 }
 
 /// EIP-198 modexp frame constants rendered into templates.
@@ -179,6 +199,12 @@ impl Default for TemplateConstants {
                     let g = G1Projective::generator();
                     g1_words((g + g).to_affine())
                 },
+            },
+            gas: GasTemplateConstants {
+                g1add: layout::gas::G1ADD_GAS,
+                g1msm_one_pair: layout::gas::g1msm_gas(1),
+                pairing_two_pair: layout::gas::pairing_gas(2),
+                modexp: layout::gas::modexp_gas_word_frame(),
             },
             modexp: ModexpTemplateConstants {
                 address: layout::precompile::MODEXP_ADDRESS,
@@ -457,6 +483,15 @@ pub(crate) struct Halo2Verifier {
     pub(crate) quotient_wide_limb7_helper: bool,
     /// Largest generated G1MSM input length, smoke-tested at deployment.
     pub(crate) constructor_g1msm_smoke_input_bytes: usize,
+    /// Exact EIP-2537 G1MSM cost for the deployment smoke probe over
+    /// [`Self::constructor_g1msm_smoke_input_bytes`].
+    pub(crate) constructor_g1msm_smoke_gas: u64,
+    /// Exact EIP-2537 G1MSM cost bound for the accumulator RHS MSM, sized
+    /// for its worst case: the carried RHS point plus every generated
+    /// fixed-base tail scalar nonzero. Zero tail scalars are omitted at
+    /// runtime, which only lowers the actual cost below this bound.
+    /// Zero when the verifier has no public accumulator.
+    pub(crate) acc_rhs_msm_gas: u64,
     pub(crate) limb7_yul_coeffs: [&'static str; layout::quotient_limb::LIN_COEFFS],
     pub(crate) wide_limb7_yul_coeffs: [&'static str; layout::quotient_limb::LIN_COEFFS],
     pub(crate) fr_delta: String,
@@ -1105,6 +1140,8 @@ mod tests {
             quotient_limb7_helper: false,
             quotient_wide_limb7_helper: false,
             constructor_g1msm_smoke_input_bytes: crate::lowering::layout::G1_MSM_PAIR_BYTES,
+            constructor_g1msm_smoke_gas: crate::lowering::layout::gas::g1msm_gas(1),
+            acc_rhs_msm_gas: 0,
             limb7_yul_coeffs: crate::lowering::quotient_numerator::vm::LIMB7_YUL_COEFFS,
             wide_limb7_yul_coeffs: crate::lowering::quotient_numerator::vm::WIDE_LIMB7_YUL_COEFFS,
             fr_delta: crate::lowering::quotient_numerator::vm::fr_delta_literal(),
