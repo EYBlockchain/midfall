@@ -138,7 +138,16 @@
             // The function returns a boolean instead of reverting so callers
             // can combine it with other `success` plumbing until a section
             // boundary decides whether to fail closed.
-            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
+            //
+            // MF-4: the second return value separates a FAILED PRECOMPILE
+            // (staticcall reverted / OOG'd / returned the wrong size -- a
+            // chain or gas-schedule fault) from a REJECTED INPUT (a zero or
+            // non-canonical denominator, which for the Lagrange batch means
+            // the squeezed x landed on a domain point). Both fail closed at
+            // the section boundary, but they are different incidents and used
+            // to surface under the same PrecompileFailed selector, pointing
+            // responders at the node when the transcript was the cause.
+            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
                 ret := success
                 if iszero(ret) { leave }
                 // Memory ranges must be forward and word-aligned by
@@ -177,6 +186,7 @@
                     mstore(add(single_scratch, {{ template_constants.modexp.mod_offset|hex() }}), r)
                     ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, single_scratch, {{ template_constants.modexp.frame_bytes|hex() }}, single_scratch, {{ template_constants.modexp.output_bytes|hex() }})
                     ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
+                    precompile_failed := iszero(ret)
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
                 }
@@ -227,6 +237,7 @@
                 mstore(add(gp_mptr, {{ template_constants.modexp.mod_offset|hex() }}), r)
                 ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
+                precompile_failed := iszero(ret)
                 // Leave before the backward pass on a failed modexp. A failed
                 // staticcall writes no output, so `mload(gp_mptr)` would read
                 // back the stale frame header and the pass below would
@@ -274,13 +285,20 @@
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
+                // MF-4: separate "the chain could not run the pairing" from
+                // "the pairing ran and rejected this proof". Both fail closed,
+                // but they are different incidents: the first points at the
+                // node/fork (a missing, repriced, or short-returning
+                // precompile), the second at the proof. Collapsing them into
+                // ProofRejected sent every responder looking at the wrong one.
                 ret := staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
+                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }
                 // Compare against 1 rather than truncating to the low bit:
                 // `and(ret, word)` would accept any odd result word. EIP-2537
                 // only ever returns 0 or 1, so this matches the strict form
                 // the constructor smoke test already uses.
-                ret := and(ret, eq(mload(scratch), 1))
+                ret := eq(mload(scratch), 1)
                 if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 ret := 1
             }

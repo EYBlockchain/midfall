@@ -248,7 +248,13 @@
             // carried-scalar and fixed-base-tail arms; renders whose
             // accumulator layout has neither (e.g. point_pair with no tail)
             // legally leave it unused.
-            function validate_public_accumulator(success, r) -> out {
+            // MF-4: `precompile_failed` separates a G1MSM staticcall that
+            // could not run (chain/gas fault) from a public-input point this
+            // verifier decoded and rejected (bad packing, out-of-field
+            // coordinate, non-canonical identity encoding, or a point the
+            // precompile found off-curve/out-of-subgroup). Both fail closed at
+            // the call site; only the second is a BadPointEncoding.
+            function validate_public_accumulator(success, r) -> out, precompile_failed {
                 out := success
                 let bits := {{ self.expected_num_acc_limb_bits }}
                 let n := {{ self.expected_num_acc_limbs }}
@@ -303,6 +309,7 @@
                         // is also a curve/subgroup validation round-trip.
                         out := staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
+                        precompile_failed := iszero(out)
                     }
                 }
 
@@ -418,6 +425,7 @@
                             {{ template_constants.g1_bytes|hex() }}
                         )
                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
+                        precompile_failed := iszero(out)
                     }
                 }
                 // The caller checks `out` and reverts before transcript work if

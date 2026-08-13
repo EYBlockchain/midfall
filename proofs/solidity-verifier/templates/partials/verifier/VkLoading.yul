@@ -126,8 +126,14 @@
             // validate_public_accumulator returns a boolean to share the same
             // success-plumbing style as other helper calls; this boundary is
             // where the verifier converts failure to a revert.
-            success := validate_public_accumulator(success, r)
-            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }
+            let acc_precompile_failed := 0
+            success, acc_precompile_failed := validate_public_accumulator(success, r)
+            if iszero(success) {
+                // MF-4: a G1MSM that could not run at all is a chain fault,
+                // not a malformed accumulator point.
+                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_BAD_POINT_ENCODING)
+            }
             {%- endif %}
 
             {%- if self.gas_checkpoints %}

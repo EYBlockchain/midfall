@@ -232,6 +232,7 @@
     uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
     uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
     uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;
 
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.

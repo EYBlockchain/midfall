@@ -1511,6 +1511,176 @@ fn modexp_gas_bound_covers_every_live_schedule() {
     assert!(gas::modexp_gas_word_frame() >= MULTIPLICATION_COMPLEXITY * 254);
 }
 
+/// MF-4: the typed taxonomy exists so an incident responder can tell a chain
+/// fault from a rejected proof. Three paths used to conflate them -- a failed
+/// precompile inside the accumulator precheck or the final pairing surfaced as
+/// an input rejection, and a zero Lagrange denominator (a transcript event)
+/// surfaced as `PrecompileFailed`. Pin the split so it cannot regress.
+#[test]
+fn precompile_faults_and_input_rejections_use_distinct_selectors() {
+    let corpus = verifier_template_corpus();
+
+    // (a) The pairing helper: staticcall/returndatasize failure is a chain
+    // fault; a pairing that ran and returned != 1 rejects the proof.
+    assert!(
+        corpus.contains(
+            "if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }\n                // Compare against 1 rather than truncating to the low bit:"
+        ),
+        "ec_pairing must report a failed pairing staticcall as PrecompileFailed"
+    );
+    assert!(
+        corpus.contains("ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }"),
+        "ec_pairing must report a pairing result of 0 as ProofRejected"
+    );
+
+    // (b) batch_invert and the accumulator validator both carry a cause flag
+    // rather than a bare boolean.
+    assert!(
+        corpus.contains(
+            "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed"
+        ),
+        "batch_invert must report whether its modexp call failed"
+    );
+    assert!(
+        corpus
+            .contains("function validate_public_accumulator(success, r) -> out, precompile_failed"),
+        "the accumulator validator must report whether its G1MSM call failed"
+    );
+
+    // (c) Both boundaries must branch on that flag.
+    for (guarded, fallback, what) in [
+        (
+            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
+            "fail(ERR_PROOF_REJECTED)",
+            "Lagrange",
+        ),
+        (
+            "if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
+            "fail(ERR_BAD_POINT_ENCODING)",
+            "accumulator",
+        ),
+    ] {
+        assert!(
+            corpus.contains(guarded) && corpus.contains(fallback),
+            "{what} boundary must split precompile faults from rejected input"
+        );
+    }
+
+    // A zero denominator means the squeezed x hit a domain point: an input
+    // rejection, not a broken chain.
+    assert!(
+        !corpus.contains(
+            "success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)"
+        ),
+        "the Lagrange batch inversion must thread its failure cause"
+    );
+}
+
+/// MF-3: the quotient VM's terminal checks (`q_pc == q_end`, `q_has_top == 0`,
+/// `q_sp == base`) cannot see three failure shapes, so the interpreter grew
+/// guards for each. The program is VK-codehash-pinned, so none of these are
+/// reachable on-chain with a well-formed artifact -- they are containment for
+/// a future generator bug, mirroring on the deployed side what the reference
+/// VM already enforces at build time (`stack.len() == 1` per identity,
+/// `const_at` bounds, and `identity_segment` rejecting a native marker inside
+/// an expression).
+#[test]
+fn quotient_vm_interpreter_fails_closed_on_malformed_programs() {
+    let vm = include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+
+    // (a) A fold with no live cached top would re-fold a STALE q_top, and
+    // both terminal checks would still pass.
+    assert_eq!(
+        vm.matches("{%- call q_top_guard() %}").count(),
+        2,
+        "both FOLD_MAIN and FOLD_SELECTOR must require a live cached top"
+    );
+    assert!(
+        vm.contains("if iszero(q_has_top) { q_program_fail() }"),
+        "q_top_guard must fail closed when the cached top is not live"
+    );
+
+    // (b) Native callbacks used to RESET q_sp, which silently discarded
+    // operands spilled by a preceding partial expression -- an identity would
+    // drop out of nu_y(x) with the program still ending balanced. Assert
+    // instead of reset.
+    // The only assignment of the stack base to q_sp may be its declaration.
+    assert_eq!(
+        vm.matches("q_sp := {{ program.stack_mptr|hex() }}").count(),
+        1,
+        "native callbacks must not reset q_sp; a reset hides dropped operands"
+    );
+    assert!(
+        vm.contains("let q_sp := {{ program.stack_mptr|hex() }}"),
+        "the surviving q_sp assignment must be its initial declaration"
+    );
+    assert_eq!(
+        vm.matches("{%- call q_stack_empty_guard() %}").count(),
+        3,
+        "each native callback boundary must assert an already-empty stack"
+    );
+
+    // (c) The spill pointer has no ceiling of its own.
+    assert_eq!(
+        vm.matches("if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }")
+            .count(),
+        10,
+        "every cached-top spill site must clamp q_sp to its registered region"
+    );
+
+    // (d) u16 constant-table indexes reach far outside the pinned payload, so
+    // unlike the u8 forms they cannot rely on bounded drift.
+    assert_eq!(
+        vm.matches("{%- call q_const_guard(\"qconst\") %}").count(),
+        3,
+        "u16 constant-table indexes must be clamped to the rendered table length"
+    );
+    assert!(
+        vm.contains("if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }"),
+        "q_const_guard must clamp against the generated constant-table length"
+    );
+}
+
+/// MF-2: the free-memory-pointer guard is the only on-chain check that solc's
+/// stack-spill reservation has not grown into the generated absolute layout.
+/// A fork that recompiles at a different (version, optimiser-runs) pair can
+/// still fit EIP-170, deploy, and then revert on every proof -- so the guard
+/// must say *why* rather than reverting bare, which is indistinguishable from
+/// every other empty revert.
+#[test]
+fn memory_layout_guard_reverts_with_a_typed_selector() {
+    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
+    let smoke_template = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
+
+    for (source, name) in [
+        (verifier_template, "verifyProof"),
+        (smoke_template, "constructor"),
+    ] {
+        assert!(
+            source.contains("mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))")
+                && source.contains("revert(0x00, 0x04)"),
+            "{name} memory-layout guard must revert with MemoryLayoutViolated()"
+        );
+    }
+    // The guard must still be the first thing each assembly block does: it
+    // protects the writes that follow, so a bare `revert(0, 0)` left behind
+    // on either path means the typed rewrite missed a site.
+    assert!(
+        verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) {"),
+        "runtime guard must still compare the FMP against TRANSCRIPT_MPTR"
+    );
+    assert!(
+        !verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }"),
+        "runtime memory-layout guard still reverts bare"
+    );
+    assert!(
+        !smoke_template.contains(
+            "if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) { revert(0, 0) }"
+        ),
+        "constructor memory-layout guard still reverts bare"
+    );
+}
+
 /// MF-1: modexp is the one precompile the runtime cannot do without -- the
 /// Lagrange batch inversion calls it on every proof -- and it was the one
 /// precompile the constructor never probed, so a stale bound deployed
@@ -1572,7 +1742,7 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
             "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
         );
     assert!(
-            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
+            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
             "accumulator precheck should fail before transcript parsing"
         );
     assert!(
@@ -1583,7 +1753,7 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     );
     assert!(
         verifier_template.contains(
-            "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n\n            {%- match quotient_external %}"
+            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_PROOF_REJECTED)\n            }\n\n            {%- match quotient_external %}"
         ),
         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
     );
@@ -1843,9 +2013,9 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
     let verifier_template = verifier_template_corpus();
 
     for required in [
-        "function validate_public_accumulator(success, r) -> out",
+        "function validate_public_accumulator(success, r) -> out, precompile_failed",
         "Fail malformed accumulator public inputs before transcript",
-        "success := validate_public_accumulator(success, r)",
+        "success, acc_precompile_failed := validate_public_accumulator(success, r)",
         "gas_checkpoint(2) // after VK loading + accumulator public-input precheck",
         "Batch the prevalidated public IVC accumulator pairing equation",
     ] {
@@ -2399,8 +2569,14 @@ fn production_verifier_documents_revert_or_true_policy() {
             verifier_template.contains("function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret")
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
+                // MF-4: a failed/short-returning pairing staticcall is a chain
+                // fault (PrecompileFailed); only a pairing that RAN and
+                // returned != 1 rejects the proof.
                 && verifier_template.contains(
-                    "ret := and(ret, eq(mload(scratch), 1))\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
+                    "ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))\n                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }",
+                )
+                && verifier_template.contains(
+                    "ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
                 ),
             "final pairing helper must revert on pairing failure and normalize success to one"
         );
@@ -2487,6 +2663,10 @@ fn p4_error_selectors_match_declared_errors() {
         ("PrecompileFailed()", "ERR_PRECOMPILE_FAILED"),
         ("ProofRejected()", "ERR_PROOF_REJECTED"),
         ("QuotientProgramInvalid()", "ERR_QUOTIENT_PROGRAM_INVALID"),
+        // MF-2: the memory-layout guard reports a build fault (a recompile
+        // whose spill region reaches the generated layout), so it must be
+        // decodable rather than an anonymous empty revert.
+        ("MemoryLayoutViolated()", "ERR_MEMORY_LAYOUT_VIOLATED"),
     ] {
         let digest = Keccak256::digest(signature.as_bytes());
         let selector = format!(

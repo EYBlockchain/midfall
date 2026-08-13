@@ -50,7 +50,10 @@ contract Halo2Verifier {
     // verifyProof is success-or-revert; these errors let integrators and
     // incident responders distinguish malformed calldata from a swapped VK,
     // a non-canonical scalar, a failed precompile, or a rejected proof.
-    // Constructor smoke probes intentionally keep bare reverts.
+    // Constructor smoke probes intentionally keep bare reverts -- they report
+    // a chain-capability failure, and the deployment transaction identifies
+    // itself. The one constructor exception is the memory-layout guard
+    // (MF-2), which reports a BUILD fault and is typed on both paths.
     // ----------------------------------------------------------------------
     /// @notice Calldata does not match the generated ABI shape (heads,
     ///         lengths, instance count, or exact calldatasize).
@@ -72,6 +75,12 @@ contract Halo2Verifier {
     ///         invariant (bad opcode, operand out of window, stack misuse,
     ///         or evaluator frame mismatch).
     error QuotientProgramInvalid();
+    /// @notice solc's stack-spill reservation overlaps the generated absolute
+    ///         memory layout. This is a BUILD fault, not a proof fault: the
+    ///         artifact was compiled with a (version, optimiser) pair whose
+    ///         free-memory pointer starts at or above TRANSCRIPT_MPTR, so no
+    ///         input can ever verify. Redeploy from the pinned toolchain.
+    error MemoryLayoutViolated();
 
     {% include "partials/verifier/Constants.sol" %}
 
@@ -159,7 +168,18 @@ contract Halo2Verifier {
             // reservation is compiler-version and optimiser dependent, so
             // assert the invariant in the deployed bytecode instead of relying
             // on a generator-side test the integrator never runs. ~6 gas.
-            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
+            //
+            // MF-2: this is the only on-chain guard against a recompile that
+            // silently moves the spill region, and the failure it catches is
+            // permanent (no input can verify). `fail()` is not in scope this
+            // early, so write the MemoryLayoutViolated() selector inline
+            // rather than reverting bare -- an empty revert here is
+            // indistinguishable from every other empty revert, which is
+            // exactly the wrong signal for a build fault.
+            if gt(mload(0x40), TRANSCRIPT_MPTR) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
             // This block owns the call-frame memory and remains terminal.
             // Generated scratch starts at TRANSCRIPT_MPTR, preserving

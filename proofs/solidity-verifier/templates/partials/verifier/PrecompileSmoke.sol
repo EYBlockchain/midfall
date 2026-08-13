@@ -10,7 +10,16 @@
             // Same free-memory-pointer guard as verifyProof. This body runs in
             // the *creation* frame, which the generator's memoryguard test does
             // not inspect (it parses the runtime prologue only).
-            if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) { revert(0, 0) }
+            //
+            // MF-2: typed like the runtime guard, and for a stronger reason.
+            // The runtime guard turns a bad recompile into a revert on every
+            // proof; this one turns it into a failed DEPLOYMENT, which is
+            // where a build fault belongs. The probes below keep bare reverts
+            // (a chain-capability failure, not a build fault).
+            if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
             // Scratch is reused for every runtime-prerequisite probe.
             let scratch := {{ memory.constructor_smoke_scratch_mptr|hex() }}

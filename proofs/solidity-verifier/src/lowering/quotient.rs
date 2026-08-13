@@ -187,6 +187,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             selector_max_power: selector_fold.max_power,
             selector_tail_updates: Self::selector_tail_updates(selector_fold),
             stack_mptr: quotient_stack_mptr,
+            stack_hi: memory.quotient_stack_hi,
+            num_consts: build.consts.len(),
             program_mptr,
             operand_lo: operand_bounds.0,
             operand_hi: operand_bounds.1,

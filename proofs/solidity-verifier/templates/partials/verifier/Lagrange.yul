@@ -1,6 +1,10 @@
             // ===============================================================
             // Lagrange & instance-evaluation block (pure Fr arithmetic).
             // ===============================================================
+            // MF-4: hoisted so the section boundary below can tell a failed
+            // modexp (chain fault) from a rejected denominator (x landed on a
+            // domain point) instead of reporting both as PrecompileFailed.
+            let lagrange_precompile_failed := 0
             {
                 let k := {{ k }}
                 let x := mload(X_MPTR)
@@ -33,7 +37,7 @@
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+                success, lagrange_precompile_failed := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
 
                 // Convert inverted denominators into Lagrange evaluations:
                 // L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i).
@@ -88,4 +92,10 @@
             gas_checkpoint(11) // after Lagrange + instance evaluation block
             {%- endif %}
 
-            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
+            if iszero(success) {
+                // A zero or non-canonical denominator is a rejected input,
+                // not a broken chain: the only way to reach it is a squeezed
+                // x that coincides with a domain point (probability ~n/r).
+                if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_PROOF_REJECTED)
+            }

@@ -706,6 +706,17 @@ pub(crate) struct QuotientProgram {
     pub(crate) selector_tail_updates: Vec<QuotientSelectorTail>,
     /// Operand stack / callback scratch base.
     pub(crate) stack_mptr: usize,
+    /// First address past the operand stack / callback scratch region.
+    ///
+    /// MF-3: spill sites clamp `q_sp` against this so a malformed program
+    /// cannot walk the stack pointer out of its registered region.
+    pub(crate) stack_hi: usize,
+    /// Number of Fr words in the generated quotient constant table.
+    ///
+    /// MF-3: constant-table indexes decoded from program bytes are clamped
+    /// against this so an out-of-range index cannot read program bytes (or
+    /// commitment words) as field constants.
+    pub(crate) num_consts: usize,
     /// Memory pointer to the first encoded program word.
     pub(crate) program_mptr: usize,
     /// Lowest word address a VM memory operand may load from (P12/L-6).
@@ -1218,6 +1229,8 @@ mod tests {
                 selector_max_power: 0,
                 selector_tail_updates: vec![],
                 stack_mptr: 0,
+                stack_hi: usize::MAX,
+                num_consts: usize::MAX,
                 program_mptr: 0,
                 // Synthetic model: a permissive clamp window keeps the
                 // rendered guards inert for layout-shape tests.
