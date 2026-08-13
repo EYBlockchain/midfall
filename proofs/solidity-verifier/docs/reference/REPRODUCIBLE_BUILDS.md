@@ -143,8 +143,10 @@ The proof repacked from `4,912` compressed bytes to `7,392` padded bytes, with
 
 ## Recorded Legacy Multi-Limb Runtime Hashes
 
-The concrete hashes below are the latest recorded default multi-limb profile in
-this repository. They were generated with the fixed default quotient codegen shape:
+The concrete hashes below are the latest recorded default multi-limb profile
+in this repository (recorded 2026-08-13, after the exact-precompile-gas-bound
+change; the tracked `target/ivc-keccak-solidity-dump/` sources match this
+run). They were generated with the fixed default quotient codegen shape:
 
 ```bash
 scripts/run_ivc_bench.sh \
@@ -163,15 +165,19 @@ Published deployed-runtime hashes:
 
 | Artifact | Runtime bytes | Runtime `keccak256` |
 | --- | ---: | --- |
-| `Halo2Verifier` | 12,061 | `0xf0d2433a3142294afb4d9a9434d623b8f00bbea212380777b5aee197e79b1454` |
-| `Halo2VerifyingKey` | 14,016 | `0x0f858e789c9d52f7e11beb96dd39fa30712c42f629c3505be9cceef3225119a0` |
-| `Halo2QuotientEvaluator` | 23,221 | `0x1f8acc8aa363e10d031e9e56dd4180a70c714330fa466d3423f9ce1d4e1f00b2` |
+| `Halo2Verifier` | 12,454 | `0xa74814afafa69cfcb69224aa3a68f0f461348439beec8f18450f334782159e10` |
+| `Halo2VerifyingKey` | 17,025 | `0x67bac137fa7e479c25b63324812752e4b6e13d9841d5bf83c322170bf91c0f88` |
+| `Halo2QuotientEvaluator` | 9,552 | `0x6a7ec82a9b0683783c459f4b43e924f8ceba256731bf2b9782ab5747e801ea2c` |
 
-Total deployed runtime bytes: `49,298`.
+Total deployed runtime bytes: `39,031`.
 
-The same run accepted the final IVC Keccak proof on-chain in `1,399,268` gas.
-The proof repacked from `5,056` compressed bytes to `7,776` padded bytes, with
-`8,356` bytes of calldata.
+The same run accepted the final IVC Keccak proof on-chain in `1,306,084` gas
+(gas-checkpoint diagnostic profile). The proof repacked from `5,056`
+compressed bytes to `7,776` padded bytes, with `8,356` bytes of calldata.
+
+Previous recording, for comparison (2026-07-era artifact set): verifier
+12,061 / VK 14,016 / evaluator 23,221 bytes (49,298 total), accepted in
+`1,399,268` gas.
 
 Compared with this multi-limb profile, outer single-H removes three quotient G1
 commitments: proof size drops by `144` compressed bytes and `384` padded bytes,

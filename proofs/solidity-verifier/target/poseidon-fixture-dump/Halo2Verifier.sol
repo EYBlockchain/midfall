@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+// Pinned, not floating. Two properties of this artifact are compiler- and
+// optimiser-dependent, and neither is visible in the source:
+//   1. The generated layout writes absolute addresses from TRANSCRIPT_MPTR
+//      upward. That is only safe while solc's stack-spill reservation stays
+//      below it -- measured 0x8c0 on 0.8.24 and 0x8e0 on 0.8.26+, so it is not
+//      a constant this file controls. verifyProof now asserts the separation.
+//   2. Runtime size depends on --optimize-runs. Measured: 0.8.24 at runs=1
+//      emits 29,567 bytes and 0.8.30 at runs=100000 emits 29,836 -- both over
+//      the EIP-170 24,576-byte limit, so neither can be deployed. Only the
+//      pinned (version, runs) pair is known to produce a deployable contract.
+// A floating `^0.8.24` advertises compatibility this contract does not have.
+pragma solidity 0.8.30;
 
 /// @title Halo2 BLS12-381 KZG verifier.
 /// @notice Circuit-specialized verifier for Midfall/midnight-proofs Halo2
@@ -137,10 +148,13 @@ contract Halo2Verifier {
     uint256 internal constant         Q_EVAL_CPTR_MPTR = 0x5400;
 
     // Reserved 4-word slot for the G1 identity (point at infinity) in
-    // EIP-2537 padded form. EVM memory is zero-initialised, and we
-    // never write to this region, so the four `mload`s below produce
-    // 0,0,0,0 which is exactly the identity encoding the EIP-2537
-    // ec_add / ec_mul precompiles accept.
+    // EIP-2537 padded form. EVM memory is zero-initialised, and the verifier
+    // never writes to this region, so any read of this slot (the PCS
+    // emitters `mcopy` from it when staging identity commitments) yields
+    // 0,0,0,0 -- exactly the identity encoding the EIP-2537 precompiles
+    // accept. Artifacts whose PCS plan never stages an identity commitment
+    // still emit the constant; it costs no runtime bytes beyond the
+    // declaration and keeps the emitters' pointer model uniform.
     uint256 internal constant       G1_IDENTITY_MPTR = 0x5500;
 
     // Decoded polynomial-eval buffer (Optimisation H3). The off-chain
@@ -182,6 +196,29 @@ contract Halo2Verifier {
     uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = 0x6360;
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0x63e0;
 
+    // ----------------------------------------------------------------------
+    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
+    //
+    // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+    // STATICCALL, so every generated call site forwards the exact scheduled
+    // cost instead of gas(). A malformed proof point then burns at most the
+    // scheduled cost of the single failing call instead of 63/64 of the
+    // transaction budget. The schedule is the spec-guaranteed worst case
+    // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
+    // by construction on any conformant chain.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
+    // this verifier must be regenerated and redeployed. The constructor
+    // smoke probes forward the same bounds, so deployment onto an
+    // already-repriced chain fails fast instead of bricking at proof time.
+    // ----------------------------------------------------------------------
+    uint256 internal constant          G1ADD_GAS = 375;
+    uint256 internal constant   G1MSM_GAS_1PAIR = 12000;
+    uint256 internal constant PAIRING_GAS_2PAIR = 102900;
+    uint256 internal constant        MODEXP_GAS = 1360;
+    // Exact cost of the deployment-time worst-case G1MSM smoke probe.
+    uint256 internal constant G1MSM_GAS_SMOKE = 337836;
+
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.
     uint256 internal constant FR_MODULUS        = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;
@@ -199,8 +236,17 @@ contract Halo2Verifier {
 
         /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
     /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
+    ///      uses (see the gas-bound constants block), so a chain whose
+    ///      precompile schedule was repriced upward fails here, at deployment,
+    ///      instead of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
+            // Same free-memory-pointer guard as verifyProof. This body runs in
+            // the *creation* frame, which the generator's memoryguard test does
+            // not inspect (it parses the runtime prologue only).
+            if gt(mload(0x40), 0x1000) { revert(0, 0) }
+
             // Scratch is reused for every runtime-prerequisite probe.
             let scratch := 0x1000
 
@@ -220,7 +266,7 @@ contract Halo2Verifier {
             // G1ADD(identity, identity) -> identity, 128-byte return.
             // This catches chains where the precompile is missing or returns a
             // non-standard success shape.
-            if iszero(staticcall(gas(), 0x0b, scratch, 0x0100, scratch, 0x80)) { revert(0, 0) }
+            if iszero(staticcall(G1ADD_GAS, 0x0b, scratch, 0x0100, scratch, 0x80)) { revert(0, 0) }
             if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
@@ -241,7 +287,7 @@ contract Halo2Verifier {
             mstore(add(scratch, 0x40), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
             mstore(add(scratch, 0x60), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
             mcopy(add(scratch, 0x80), scratch, 0x80)
-            if iszero(staticcall(gas(), 0x0b, scratch, 0x0100, scratch, 0x80)) { revert(0, 0) }
+            if iszero(staticcall(G1ADD_GAS, 0x0b, scratch, 0x0100, scratch, 0x80)) { revert(0, 0) }
             if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }
             if iszero(and(
                 and(
@@ -253,6 +299,90 @@ contract Halo2Verifier {
                     eq(mload(add(scratch, 0x60)), 0x22ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28)
                 )
             )) { revert(0, 0) }
+
+
+            // ----------------------------------------------------------------
+            // Known-answer probes for the two precompiles that actually decide
+            // acceptance.
+            //
+            // Every probe above this point uses the point at infinity or a
+            // G1ADD vector. That leaves the two precompiles the verifier's
+            // security actually rests on untested for *rejection* behaviour:
+            //   - 0x0c G1MSM is the curve/subgroup validator for every absorbed
+            //     proof commitment (common_uncompressed_g1 runs no curve check);
+            //   - 0x0f PAIRING_CHECK is the sole accept gate, so a chain whose
+            //     0x0f always returns 1 accepts every proof.
+            // These four probes cost deployment gas only.
+            // ----------------------------------------------------------------
+
+            // (a) G1MSM known answer: [2]*G == 2G.
+            mstore(add(scratch, 0x00), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)
+            mstore(add(scratch, 0x20), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)
+            mstore(add(scratch, 0x40), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
+            mstore(add(scratch, 0x60), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
+            mstore(add(scratch, 0x80), 2)
+            if iszero(staticcall(G1MSM_GAS_1PAIR, 0x0c, scratch, 0xa0, scratch, 0x80)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }
+            if iszero(and(
+                and(
+                    eq(mload(add(scratch, 0x00)), 0x000000000000000000000000000000000572cbea904d67468808c8eb50a9450c),
+                    eq(mload(add(scratch, 0x20)), 0x9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e)
+                ),
+                and(
+                    eq(mload(add(scratch, 0x40)), 0x00000000000000000000000000000000166a9d8cabc673a322fda673779d8e38),
+                    eq(mload(add(scratch, 0x60)), 0x22ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28)
+                )
+            )) { revert(0, 0) }
+
+            // (b) G1MSM negative probe. (4, y) satisfies y^2 = x^3 + 4 over Fp
+            // but is NOT in the r-order subgroup (checked off-chain: r*P != O).
+            // EIP-2537 requires G1MSM to reject it. This is the one property
+            // the verifier's deferred-validation strategy depends on and the
+            // one property no other probe exercises.
+            //
+            // Gas is bounded on purpose: a precompile that rejects its input
+            // consumes everything forwarded to it, so an unbounded `gas()` here
+            // would burn 63/64 of the deployment gas before the probes below.
+            mstore(add(scratch, 0x00), 0x0000000000000000000000000000000000000000000000000000000000000000)
+            mstore(add(scratch, 0x20), 0x0000000000000000000000000000000000000000000000000000000000000004)
+            mstore(add(scratch, 0x40), 0x000000000000000000000000000000000a989badd40d6212b33cffc3f3763e9b)
+            mstore(add(scratch, 0x60), 0xc760f988c9926b26da9dd85e928483446346b8ed00e1de5d5ea93e354abe706c)
+            mstore(add(scratch, 0x80), 1)
+            if staticcall(200000, 0x0c, scratch, 0xa0, scratch, 0x80) { revert(0, 0) }
+
+            // (c)+(d) Pairing known answers. Lay out [G1 | G2 | G1' | G2] once:
+            // with G1' = -G the product is 1, with G1' = +G it is not. G2 is
+            // written literally because the VK payload is not loaded during
+            // construction.
+            mstore(add(scratch, 0x000), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)
+            mstore(add(scratch, 0x020), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)
+            mstore(add(scratch, 0x040), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
+            mstore(add(scratch, 0x060), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
+            mstore(add(scratch, 0x080), 0x00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051)
+            mstore(add(scratch, 0x0a0), 0xc6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8)
+            mstore(add(scratch, 0x0c0), 0x0000000000000000000000000000000013e02b6052719f607dacd3a088274f65)
+            mstore(add(scratch, 0x0e0), 0x596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e)
+            mstore(add(scratch, 0x100), 0x000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351a)
+            mstore(add(scratch, 0x120), 0xadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801)
+            mstore(add(scratch, 0x140), 0x000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99)
+            mstore(add(scratch, 0x160), 0xcb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be)
+            mstore(add(scratch, 0x180), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)
+            mstore(add(scratch, 0x1a0), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)
+            mstore(add(scratch, 0x1c0), 0x00000000000000000000000000000000114d1d6855d545a8aa7d76c8cf2e21f2)
+            mstore(add(scratch, 0x1e0), 0x67816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca)
+            mcopy(add(scratch, 0x200), add(scratch, 0x80), 0x100)
+
+            // (c) e(G, G2) * e(-G, G2) == 1.
+            if iszero(staticcall(PAIRING_GAS_2PAIR, 0x0f, scratch, 0x0300, add(scratch, 0x300), 0x20)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+            if iszero(eq(mload(add(scratch, 0x300)), 1)) { revert(0, 0) }
+
+            // (d) e(G, G2) * e(G, G2) != 1. Flip the second G1 back to +G.
+            mstore(add(scratch, 0x1c0), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)
+            mstore(add(scratch, 0x1e0), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
+            if iszero(staticcall(PAIRING_GAS_2PAIR, 0x0f, scratch, 0x0300, add(scratch, 0x300), 0x20)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+            if iszero(iszero(mload(add(scratch, 0x300)))) { revert(0, 0) }
 
             // Restore the identity encoding for the probes below.
             for { let off := 0 } lt(off, 0x0300) { off := add(off, 0x20) } {
@@ -269,7 +399,7 @@ contract Halo2Verifier {
             }
             // The production verifier uses G1MSM both for commitments and as
             // the subgroup validator for absorbed proof points.
-            if iszero(staticcall(gas(), 0x0c, msm_scratch, 0x1d60, scratch, 0x80)) { revert(0, 0) }
+            if iszero(staticcall(G1MSM_GAS_SMOKE, 0x0c, msm_scratch, 0x1d60, scratch, 0x80)) { revert(0, 0) }
             if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }
             if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {
                 revert(0, 0)
@@ -279,7 +409,7 @@ contract Halo2Verifier {
             // -> true, 32-byte return. This matches the runtime two-pair KZG
             // pairing input size and catches absent pairing precompiles,
             // short return data, and obviously incompatible semantics.
-            if iszero(staticcall(gas(), 0x0f, scratch, 0x0300, scratch, 0x20)) { revert(0, 0) }
+            if iszero(staticcall(PAIRING_GAS_2PAIR, 0x0f, scratch, 0x0300, scratch, 0x20)) { revert(0, 0) }
             if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
             if iszero(eq(mload(scratch), 1)) { revert(0, 0) }
         }
@@ -313,12 +443,14 @@ contract Halo2Verifier {
     /// precompiles, or mismatched pinned dependency code revert. Trace and gas
     /// renders keep the same failure policy.
     /// @dev The generated verifier uses absolute Yul memory addresses instead
-    /// of Solidity's free-memory pointer, but generated scratch starts at
-    /// `0x80` so Solidity's reserved memory prefix is preserved. The main
+    /// of Solidity's free-memory pointer. Generated scratch starts at
+    /// `TRANSCRIPT_MPTR`, which leaves Solidity's reserved prefix *and* solc's
+    /// stack-spill reservation below it untouched; the assembly block asserts
+    /// that separation on entry rather than assuming it. The main
     /// assembly block remains terminal: accepted proofs return from assembly
     /// and all rejected inputs revert. Do not inline this body into Solidity
     /// code that continues executing after verification without reviewing the
-    /// memory strategy; see `docs/MEMORY_LAYOUT.md`.
+    /// memory strategy; see `docs/architecture/MEMORY_LAYOUT.md`.
     /// @param proof Solidity-facing proof bytes, with G1 elements repacked into EIP-2537 padded uncompressed form.
     /// @param instances Public instance scalars encoded as canonical BLS12-381 scalar-field words.
     /// @return Always `true` for accepted proofs; invalid proofs revert instead of returning `false`.
@@ -343,10 +475,20 @@ contract Halo2Verifier {
         // INVALID-prefixed payload into VK_MPTR.
         address vk = AUTHORIZED_VK;
         assembly ("memory-safe") {
+            // The `memory-safe` annotation above is what enables solc's
+            // stack-to-memory mover, which reserves spill slots upward from
+            // 0x80. The generated layout below writes absolute addresses from
+            // TRANSCRIPT_MPTR upward and never consults the free-memory
+            // pointer, so the two regions must not meet. The size of that
+            // reservation is compiler-version and optimiser dependent, so
+            // assert the invariant in the deployed bytecode instead of relying
+            // on a generator-side test the integrator never runs. ~6 gas.
+            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
+
             // This block owns the call-frame memory and remains terminal.
-            // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving
+            // Generated scratch starts at TRANSCRIPT_MPTR, preserving
             // Solidity's reserved scratch, free-memory-pointer, and zero-slot
-            // words. See docs/MEMORY_LAYOUT.md.
+            // words. See docs/architecture/MEMORY_LAYOUT.md.
             // ===============================================================
             // Helpers: modexp, transcript, EIP-2537 calls
             // ===============================================================
@@ -375,7 +517,7 @@ contract Halo2Verifier {
                 mstore(add(p, 0x60), x)
                 mstore(add(p, 0x80), sub(FR_MODULUS, 2))
                 mstore(add(p, 0xa0), FR_MODULUS)
-                if iszero(staticcall(gas(), 0x05, p, 0xc0, p, 0x20)) { revert(0, 0) }
+                if iszero(staticcall(MODEXP_GAS, 0x05, p, 0xc0, p, 0x20)) { revert(0, 0) }
                 if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
                 inv := mload(p)
             }
@@ -520,7 +662,7 @@ contract Halo2Verifier {
                     mstore(add(single_scratch, 0x60), x)
                     mstore(add(single_scratch, 0x80), sub(r, 2))
                     mstore(add(single_scratch, 0xa0), r)
-                    ret := staticcall(gas(), 0x05, single_scratch, 0xc0, single_scratch, 0x20)
+                    ret := staticcall(MODEXP_GAS, 0x05, single_scratch, 0xc0, single_scratch, 0x20)
                     ret := and(ret, eq(returndatasize(), 0x20))
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
@@ -570,7 +712,7 @@ contract Halo2Verifier {
                 mstore(add(gp_mptr, 0x60), gp)
                 mstore(add(gp_mptr, 0x80), sub(r, 2))
                 mstore(add(gp_mptr, 0xa0), r)
-                ret := staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
+                ret := staticcall(MODEXP_GAS, 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
                 // Leave before the backward pass on a failed modexp. A failed
                 // staticcall writes no output, so `mload(gp_mptr)` would read
@@ -619,7 +761,7 @@ contract Halo2Verifier {
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
-                ret := staticcall(gas(), 0x0f, scratch, 0x0300, scratch, 0x20)
+                ret := staticcall(PAIRING_GAS_2PAIR, 0x0f, scratch, 0x0300, scratch, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
                 // Compare against 1 rather than truncating to the low bit:
                 // `and(ret, word)` would accept any odd result word. EIP-2537
@@ -1618,18 +1760,20 @@ contract Halo2Verifier {
                 // q_has_top = 0 means the VM stack is empty.
                 let q_has_top := 0
 
-                // q_program opcode summary:
-                //   0x01/0x09 push const       0x02/0x05 push memory
-                //   0x03/0x04 push token ptr   0x06 add, 0x07 mul, 0x08 neg
-                //   0x0a fold main identity    0x0b fold selector identity
-                //   0x0c..0x11 add/mul const or memory into top
-                //   0x12..0x16 fused add-mul runs
-                //   0x17/0x18 reserved
-                //   0x19 native permutation    0x1b native heavy identity
-                //   0x1c LIN7                 0x1d BILIN7_ROW
-                //   0x1e BILIN7_PAIRWISE      0x1f native lookup
-                //   0x20 POW5                 0x21 MODARITH7
-                //   0x22 AFFINE_SUM
+                // q_program opcode summary. Rendered from the same
+                // program.op_usage predicates that gate the interpreter's
+                // case arms below, so this artifact documents exactly the
+                // opcodes its program can contain -- no more, no fewer.
+                //   0x05 push_mem_u16
+                //   0x06 add
+                //   0x08 neg
+                //   0x0b fold_selector
+                //   0x0d mul_const_u8
+                //   0x10 add_mem_u16
+                //   0x11 mul_mem_u16
+                //   0x19 native_permutation
+                //   0x1f native_lookup
+                //   0x1b native_identity
                 //
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
@@ -2375,7 +2519,7 @@ contract Halo2Verifier {
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
-                    // q_eval_set[0]: 33 commitment(s) (rolled, m>=4)
+                    // q_eval_set[0]: 33 evaluation term(s), 32 commitment term(s) (rolled, m>=4)
                     // stage per-(commit, rotation) eval source addresses
                     mstore(0x6660, 0x56e0)
                     mstore(0x6680, 0x5700)
@@ -2425,7 +2569,7 @@ contract Halo2Verifier {
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
-                    // q_eval_set[1]: 5 commitment(s) (rolled, m>=4)
+                    // q_eval_set[1]: 5 evaluation term(s), 5 commitment term(s) (rolled, m>=4)
                     // stage per-(commit, rotation) eval source addresses
                     mstore(0x6660, 0x5680)
                     mstore(0x6680, 0x5720)
@@ -2455,7 +2599,7 @@ contract Halo2Verifier {
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
-                    // q_eval_set[2]: 2 commitment(s)
+                    // q_eval_set[2]: 2 evaluation term(s), 2 commitment term(s)
                     let q_eval_set_0 := mload(0x5ac0)
                     let q_eval_set_1 := mload(0x5ae0)
                     let q_eval_set_2 := mload(0x5b00)
@@ -2681,7 +2825,8 @@ contract Halo2Verifier {
                     mcopy(0x8320, F_COM_MPTR, 0x80)
                     mstore(0x83a0, x4_pow_3)
                     if success {
-                        success := staticcall(gas(), 0x0c, 0x6660, 0x1d60, FINAL_COM_MPTR, 0x80)
+                        // exact EIP-2537 G1MSM cost for 47 pair(s)
+                        success := staticcall(337836, 0x0c, 0x6660, 0x1d60, FINAL_COM_MPTR, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     mstore(V_MPTR, v)
@@ -2696,22 +2841,22 @@ contract Halo2Verifier {
                     mcopy(0x1000, G1_BASE_MPTR, 0x80)
                     mstore(0x1080, addmod(0, sub(r, mload(V_MPTR)), r))
                     if success {
-                        success := staticcall(gas(), 0x0c, 0x1000, 0xa0, 0x1000, 0x80)
+                        success := staticcall(G1MSM_GAS_1PAIR, 0x0c, 0x1000, 0xa0, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     mcopy(0x1080, FINAL_COM_MPTR, 0x80)
                     if success {
-                        success := staticcall(gas(), 0x0b, 0x1000, 0x100, 0x1000, 0x80)
+                        success := staticcall(G1ADD_GAS, 0x0b, 0x1000, 0x100, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     mcopy(0x1080, PI_MPTR, 0x80)
                     mstore(0x1100, mload(X3_MPTR))
                     if success {
-                        success := staticcall(gas(), 0x0c, 0x1080, 0xa0, 0x1080, 0x80)
+                        success := staticcall(G1MSM_GAS_1PAIR, 0x0c, 0x1080, 0xa0, 0x1080, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     if success {
-                        success := staticcall(gas(), 0x0b, 0x1000, 0x100, 0x1000, 0x80)
+                        success := staticcall(G1ADD_GAS, 0x0b, 0x1000, 0x100, 0x1000, 0x80)
                         success := and(success, eq(returndatasize(), 0x80))
                     }
                     mcopy(PAIRING_RHS_MPTR, 0x1000, 0x80)

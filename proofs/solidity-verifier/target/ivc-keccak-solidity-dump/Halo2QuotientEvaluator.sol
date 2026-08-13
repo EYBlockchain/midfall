@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: CC0-1.0
-pragma solidity ^0.8.24;
+// Pinned to match the verifier, so both halves of a deployment are provably
+// built by one toolchain. (This contract's runtime is pure returned data, so
+// its codehash is compiler-independent -- the pin is for the pair, not for it.)
+pragma solidity 0.8.30;
 
 /// @title Split Halo2 quotient numerator evaluator.
 /// @notice Reconstructs the scalar side of the linearization query for a generated verifier.
@@ -416,18 +419,21 @@ contract Halo2QuotientEvaluator {
                 // q_has_top = 0 means the VM stack is empty.
                 let q_has_top := 0
 
-                // q_program opcode summary:
-                //   0x01/0x09 push const       0x02/0x05 push memory
-                //   0x03/0x04 push token ptr   0x06 add, 0x07 mul, 0x08 neg
-                //   0x0a fold main identity    0x0b fold selector identity
-                //   0x0c..0x11 add/mul const or memory into top
-                //   0x12..0x16 fused add-mul runs
-                //   0x17/0x18 reserved
-                //   0x19 native permutation    0x1b native heavy identity
-                //   0x1c LIN7                 0x1d BILIN7_ROW
-                //   0x1e BILIN7_PAIRWISE      0x1f native lookup
-                //   0x20 POW5                 0x21 MODARITH7
-                //   0x22 AFFINE_SUM
+                // q_program opcode summary. Rendered from the same
+                // program.op_usage predicates that gate the interpreter's
+                // case arms below, so this artifact documents exactly the
+                // opcodes its program can contain -- no more, no fewer.
+                //   0x05 push_mem_u16
+                //   0x06 add
+                //   0x08 neg
+                //   0x0b fold_selector
+                //   0x0d mul_const_u8
+                //   0x10 add_mem_u16
+                //   0x11 mul_mem_u16
+                //   0x19 native_permutation
+                //   0x1f native_lookup
+                //   0x1b native_identity
+                //   0x21 modarith7
                 //
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
