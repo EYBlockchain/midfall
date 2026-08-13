@@ -1474,22 +1474,22 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     let pcs_codegen = include_str!("kzg/mod.rs");
 
     assert!(
-            verifier_template.contains("if iszero(success) { revert(0, 0) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
+            verifier_template.contains("if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
             "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
         );
     assert!(
-            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { revert(0, 0) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
+            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
             "accumulator precheck should fail before transcript parsing"
         );
     assert!(
         verifier_template.contains(
-            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { revert(0, 0) }"
+            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }"
         ),
         "non-canonical public instances should fail before proof transcript parsing"
     );
     assert!(
         verifier_template.contains(
-            "if iszero(success) { revert(0, 0) }\n\n            {%- match quotient_external %}"
+            "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n\n            {%- match quotient_external %}"
         ),
         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
     );
@@ -1505,7 +1505,7 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     }
     assert!(
             verifier_template.contains(
-                "if iszero(success) { revert(0, 0) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
+                "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
             ),
             "final pairing block should revert before staging/calling the pairing precompile when success is already false"
         );
@@ -2126,8 +2126,8 @@ fn quotient_vm_runtime_asserts_exact_program_termination() {
     let verifier_template = verifier_template_corpus();
 
     assert!(
-        verifier_template.contains("if iszero(eq(q_pc, q_end)) { revert(0, 0) }")
-            && verifier_template.contains("if q_has_top { revert(0, 0) }"),
+        verifier_template.contains("if iszero(eq(q_pc, q_end)) { q_program_fail() }")
+            && verifier_template.contains("if q_has_top { q_program_fail() }"),
         "quotient VM must fail closed when bytecode over-runs q_end or leaves a live stack value"
     );
 }
@@ -2302,7 +2302,7 @@ fn production_verifier_documents_revert_or_true_policy() {
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
                 && verifier_template.contains(
-                    "ret := and(ret, eq(mload(scratch), 1))\n                if iszero(ret) { revert(0, 0) }\n                ret := 1",
+                    "ret := and(ret, eq(mload(scratch), 1))\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
                 ),
             "final pairing helper must revert on pairing failure and normalize success to one"
         );
@@ -2321,6 +2321,60 @@ fn production_verifier_documents_revert_or_true_policy() {
     );
 }
 
+/// P4 (L-3): the Yul revert sites carry hardcoded 4-byte selectors while the
+/// Solidity ABI carries the `error` declarations; pin the two against each
+/// other so neither can drift silently.
+#[test]
+fn p4_error_selectors_match_declared_errors() {
+    use sha3::{Digest, Keccak256};
+
+    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
+    let constants_template = include_str!("../../templates/partials/verifier/Constants.sol");
+    let helpers_template =
+        include_str!("../../templates/partials/quotient_numerator/QuotientHelpers.yul");
+
+    for (signature, constant_name) in [
+        ("BadCalldataShape()", "ERR_BAD_CALLDATA_SHAPE"),
+        ("VkMismatch()", "ERR_VK_MISMATCH"),
+        ("NonCanonicalScalar()", "ERR_NON_CANONICAL_SCALAR"),
+        ("BadPointEncoding()", "ERR_BAD_POINT_ENCODING"),
+        ("PrecompileFailed()", "ERR_PRECOMPILE_FAILED"),
+        ("ProofRejected()", "ERR_PROOF_REJECTED"),
+        ("QuotientProgramInvalid()", "ERR_QUOTIENT_PROGRAM_INVALID"),
+    ] {
+        let digest = Keccak256::digest(signature.as_bytes());
+        let selector = format!(
+            "0x{:02x}{:02x}{:02x}{:02x}",
+            digest[0], digest[1], digest[2], digest[3]
+        );
+        let error_name = signature.trim_end_matches("()");
+        assert!(
+            verifier_template.contains(&format!("error {error_name}();")),
+            "Halo2Verifier.sol must declare `error {error_name}();` so the ABI carries it"
+        );
+        assert!(
+            constants_template.contains(&selector),
+            "Constants.sol selector for {signature} must be {selector}"
+        );
+        assert!(
+            constants_template.contains(constant_name),
+            "Constants.sol must define {constant_name}"
+        );
+    }
+    // The quotient VM's dedicated helper hardcodes the QuotientProgramInvalid
+    // selector because it renders in both the verifier and the standalone
+    // evaluator assembly.
+    let digest = Keccak256::digest(b"QuotientProgramInvalid()");
+    let selector = format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    );
+    assert!(
+        helpers_template.contains(&format!("shl(224, {selector})")),
+        "q_program_fail must hardcode the QuotientProgramInvalid selector {selector}"
+    );
+}
+
 #[test]
 fn templates_do_not_write_solidity_reserved_memory_slots() {
     let verifier_template = verifier_template_corpus();
@@ -2336,6 +2390,13 @@ fn templates_do_not_write_solidity_reserved_memory_slots() {
         ("QuotientHelpers.yul", quotient_helpers),
         ("Halo2VerifyingKey.sol", vk_template),
     ] {
+        // The one sanctioned use of Solidity's 0x00 scratch word: the typed
+        // custom-error revert idiom (P4/L-3) writes a 4-byte selector there
+        // immediately before reverting. It is terminal and 0x00..0x3f is
+        // legal scratch, so exempt exactly that pattern and keep every other
+        // low-memory write forbidden.
+        let source = source.replace("mstore(0x00, shl(224, ", "");
+        let source = source.as_str();
         for needle in [
             "mstore(0,",
             "mstore(0x00,",

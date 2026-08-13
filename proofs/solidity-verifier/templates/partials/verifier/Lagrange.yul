@@ -88,4 +88,4 @@
             gas_checkpoint(11) // after Lagrange + instance evaluation block
             {%- endif %}
 
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }

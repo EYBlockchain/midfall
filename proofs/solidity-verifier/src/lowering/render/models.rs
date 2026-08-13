@@ -105,6 +105,7 @@ pub(crate) struct ModexpTemplateConstants {
 pub(crate) struct AccumulatorTemplateConstants {
     pub(crate) limbs_per_word: usize,
     pub(crate) pairing_batch_domain_tag_hex: &'static str,
+    pub(crate) pairing_batch_vk_digest_offset: usize,
     pub(crate) pairing_batch_rhs_offset: usize,
     pub(crate) pairing_batch_lhs_offset: usize,
     pub(crate) pairing_batch_acc_rhs_offset: usize,
@@ -220,6 +221,7 @@ impl Default for TemplateConstants {
             accumulator: AccumulatorTemplateConstants {
                 limbs_per_word: layout::accumulator::LIMBS_PER_WORD,
                 pairing_batch_domain_tag_hex: layout::accumulator::PAIRING_BATCH_DOMAIN_TAG_HEX,
+                pairing_batch_vk_digest_offset: layout::accumulator::PAIRING_BATCH_VK_DIGEST_OFFSET,
                 pairing_batch_rhs_offset: layout::accumulator::PAIRING_BATCH_RHS_OFFSET,
                 pairing_batch_lhs_offset: layout::accumulator::PAIRING_BATCH_LHS_OFFSET,
                 pairing_batch_acc_rhs_offset: layout::accumulator::PAIRING_BATCH_ACC_RHS_OFFSET,
@@ -702,6 +704,19 @@ pub(crate) struct QuotientProgram {
     pub(crate) stack_mptr: usize,
     /// Memory pointer to the first encoded program word.
     pub(crate) program_mptr: usize,
+    /// Lowest word address a VM memory operand may load from (P12/L-6).
+    ///
+    /// Coarse `[operand_lo, operand_hi]` clamp over the union of the plan's
+    /// quotient read windows, rendered into the interpreter's operand-decode
+    /// arms. Build-time `validate_quotient_mem_ptrs` still enforces exact
+    /// per-window membership; the runtime clamp is defence in depth for a
+    /// program trusted only through the VK codehash pin.
+    pub(crate) operand_lo: usize,
+    /// Highest word address a VM memory operand may load from (inclusive).
+    pub(crate) operand_hi: usize,
+    /// Number of simple-selector accumulator buckets addressable by
+    /// FOLD_SELECTOR's index operand (P12/L-6).
+    pub(crate) num_selector_buckets: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1199,6 +1214,11 @@ mod tests {
                 selector_tail_updates: vec![],
                 stack_mptr: 0,
                 program_mptr: 0,
+                // Synthetic model: a permissive clamp window keeps the
+                // rendered guards inert for layout-shape tests.
+                operand_lo: 0,
+                operand_hi: usize::MAX,
+                num_selector_buckets: 0,
             }),
             pcs_computations: vec![],
             simple_selector_cols: vec![],

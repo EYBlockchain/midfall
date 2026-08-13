@@ -1,3 +1,11 @@
+            // Revert with a 4-byte custom-error selector (P4/L-3). Writing at
+            // 0x00 is Solidity's legal scratch space and never touches the
+            // generated layout, which starts at TRANSCRIPT_MPTR.
+            function fail(sel) {
+                mstore(0x00, shl(224, sel))
+                revert(0x00, 0x04)
+            }
+
             // Inverse of a Fr scalar via modexp(x, r-2, r). The verifier
             // calls this only after transcript absorption is complete, so it
             // reuses the dead transcript buffer just below VK_MPTR instead of
@@ -11,8 +19,8 @@
                 // downstream mulmod chains would silently absorb. Every
                 // current call site feeds addmod/mulmod output, so this only
                 // guards against a future emitter passing a raw scalar.
-                if iszero(lt(x, FR_MODULUS)) { revert(0, 0) }
-                if iszero(x) { revert(0, 0) }
+                if iszero(lt(x, FR_MODULUS)) { fail(ERR_NON_CANONICAL_SCALAR) }
+                if iszero(x) { fail(ERR_NON_CANONICAL_SCALAR) }
                 let p := {{ memory.scalar_inv_scratch_mptr|hex() }}
                 // EIP-198 modexp frame:
                 //   [base_len, exp_len, mod_len, base, exponent, modulus]
@@ -22,8 +30,8 @@
                 mstore(add(p, {{ template_constants.modexp.base_offset|hex() }}), x)
                 mstore(add(p, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))
                 mstore(add(p, {{ template_constants.modexp.mod_offset|hex() }}), FR_MODULUS)
-                if iszero(staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
-                if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
+                if iszero(staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { fail(ERR_PRECOMPILE_FAILED) }
+                if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { fail(ERR_PRECOMPILE_FAILED) }
                 inv := mload(p)
             }
 
@@ -83,16 +91,16 @@
                 let x_lo := calldataload(add(cptr, 0x20))
                 let y_hi_word := calldataload(add(cptr, 0x40))
                 let y_lo := calldataload(add(cptr, 0x60))
-                if shr(128, x_hi_word) { revert(0, 0) }
-                if shr(128, y_hi_word) { revert(0, 0) }
+                if shr(128, x_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
+                if shr(128, y_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
 
                 let x_hi := and(x_hi_word, 0xffffffffffffffffffffffffffffffff)
                 let y_hi := and(y_hi_word, 0xffffffffffffffffffffffffffffffff)
                 if iszero(or(lt(x_hi, BLS_P_HI), and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
                 if iszero(or(lt(y_hi, BLS_P_HI), and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
 
                 // Memcpy the 4 calldata words (128 bytes) verbatim
@@ -254,7 +262,7 @@
                 // returns true without consulting `success`. Revert here too,
                 // so this helper has no path that hands control back to a
                 // caller that would report success for an unverified proof.
-                if iszero(ret) { revert(0, 0) }
+                if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
                 // Cancun MCOPY (3 + 3·words gas) replaces what used to
@@ -273,6 +281,6 @@
                 // only ever returns 0 or 1, so this matches the strict form
                 // the constructor smoke test already uses.
                 ret := and(ret, eq(mload(scratch), 1))
-                if iszero(ret) { revert(0, 0) }
+                if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 ret := 1
             }

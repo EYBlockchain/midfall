@@ -45,6 +45,34 @@ pragma solidity 0.8.30;
 ///   precompiles using identity inputs. Compile with Solidity >=0.8.24 and
 ///   deploy only on chains/forks that support MCOPY and EIP-2537.
 contract Halo2Verifier {
+    // ----------------------------------------------------------------------
+    // Typed failure taxonomy (P4/L-3, docs/audit/HALO2_VERIFIER_REVIEW).
+    // verifyProof is success-or-revert; these errors let integrators and
+    // incident responders distinguish malformed calldata from a swapped VK,
+    // a non-canonical scalar, a failed precompile, or a rejected proof.
+    // Constructor smoke probes intentionally keep bare reverts.
+    // ----------------------------------------------------------------------
+    /// @notice Calldata does not match the generated ABI shape (heads,
+    ///         lengths, instance count, or exact calldatasize).
+    error BadCalldataShape();
+    /// @notice The pinned verifying-key (or VK header cross-check) does not
+    ///         match the generated constants.
+    error VkMismatch();
+    /// @notice A public instance or proof scalar is >= the BLS12-381 scalar
+    ///         modulus.
+    error NonCanonicalScalar();
+    /// @notice A proof point violates the EIP-2537 padded encoding or its
+    ///         coordinates are >= the base-field modulus.
+    error BadPointEncoding();
+    /// @notice A precompile call failed or returned an unexpected size.
+    error PrecompileFailed();
+    /// @notice The final pairing (or its staging) rejected the proof.
+    error ProofRejected();
+    /// @notice The pinned quotient program or evaluator violated a structural
+    ///         invariant (bad opcode, operand out of window, stack misuse,
+    ///         or evaluator frame mismatch).
+    error QuotientProgramInvalid();
+
     {% include "partials/verifier/Constants.sol" %}
 
     {% include "partials/verifier/PrecompileSmoke.sol" %}
@@ -58,9 +86,19 @@ contract Halo2Verifier {
     /// identifiers, expected IVC outputs, chain/domain separation, and any
     /// protocol-specific authorization are outside this raw verifier ABI.
     /// @dev Production renders are success-or-revert: accepted proofs return
-    /// `true`, while malformed calldata, invalid proof material, failed
-    /// precompiles, or mismatched pinned dependency code revert. Trace and gas
-    /// renders keep the same failure policy.
+    /// `true`; this function NEVER returns `false`. Every rejection reverts
+    /// with one of the typed errors declared above (BadCalldataShape,
+    /// VkMismatch, NonCanonicalScalar, BadPointEncoding, PrecompileFailed,
+    /// ProofRejected, QuotientProgramInvalid), so callers using
+    /// `if (!verifier.verifyProof(...))` never take the false branch — wrap
+    /// the call or decode the revert data instead. Trace and gas renders keep
+    /// the same failure policy.
+    /// @dev Calldata must be EXACTLY the ABI selector, proof bytes, and
+    /// generated instance words — `calldatasize` is pinned and any trailing
+    /// bytes revert with BadCalldataShape. In particular, ERC-2771 forwarders
+    /// and other calldata-appending relayers (multicall wrappers, paymaster
+    /// contexts) CANNOT call this contract directly; route such traffic
+    /// through an application wrapper that reassembles exact calldata.
     /// @dev The generated verifier uses absolute Yul memory addresses instead
     /// of Solidity's free-memory pointer. Generated scratch starts at
     /// `TRANSCRIPT_MPTR`, which leaves Solidity's reserved prefix *and* solc's
@@ -86,7 +124,10 @@ contract Halo2Verifier {
         // valid Midfall proof stream.
         assembly ("memory-safe") {
             if iszero(and(eq(calldataload({{ abi_selector_bytes|hex() }}), {{ abi_proof_head_offset|hex() }}), eq(calldataload({{ abi_instances_head_cptr|hex() }}), sub(NUM_INSTANCE_CPTR, {{ abi_selector_bytes|hex() }})))) {
-                revert(0, 0)
+                // BadCalldataShape() -- fail() is not in scope in this early
+                // guard block, so write the selector inline.
+                mstore(0x00, shl(224, ERR_BAD_CALLDATA_SHAPE))
+                revert(0x00, 0x04)
             }
         }
 

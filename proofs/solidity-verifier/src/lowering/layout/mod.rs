@@ -112,8 +112,9 @@ pub(crate) const PAIRING_STATIC_WORKING_WORDS: usize = PAIRING_TWO_PAIR_BYTES / 
 ///
 /// Placed past the end of the accumulator pairing-batch hash frame, which
 /// occupies `[PAIRING_BATCH_PTR, PAIRING_BATCH_PTR + PAIRING_BATCH_HASH_BYTES)`
-/// = `[0x1000, 0x1220)`. Starting lower would put the last word of the hashed
-/// ACC_LHS copy inside this scratch.
+/// = `[0x1000, 0x1240)` (tag + vk_digest + four G1 points since audit I-7).
+/// Starting lower would put the last word of the hashed ACC_LHS copy inside
+/// this scratch.
 /// The two regions carry different `MemoryPhase`s, and `MemoryLifetime::
 /// intersects` treats distinct phases as never co-live, so the planner cannot
 /// catch that overlap -- it has to be avoided by construction here.
@@ -275,16 +276,23 @@ pub(crate) mod accumulator {
     /// deployed verifier on accept/reject.
     pub(crate) const PAIRING_BATCH_DOMAIN_TAG_HEX: &str =
         "0x70616972696e672d62617463682d6163632d6b7a670000000000000000";
+    /// VK digest offset inside the batch hash frame (I-7,
+    /// docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): alpha was previously a
+    /// function of the four G1 points alone, binding the verifying key only
+    /// transitively. Absorbing `vk_digest` makes the binding local at zero
+    /// marginal cost -- alpha is verifier-local batching randomness, so no
+    /// prover interaction changes.
+    pub(crate) const PAIRING_BATCH_VK_DIGEST_OFFSET: usize = WORD_BYTES;
     /// KZG pairing RHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_RHS_OFFSET: usize = WORD_BYTES;
+    pub(crate) const PAIRING_BATCH_RHS_OFFSET: usize = 2 * WORD_BYTES;
     /// KZG pairing LHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_LHS_OFFSET: usize = WORD_BYTES + G1_BYTES;
+    pub(crate) const PAIRING_BATCH_LHS_OFFSET: usize = 2 * WORD_BYTES + G1_BYTES;
     /// Accumulator RHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_ACC_RHS_OFFSET: usize = WORD_BYTES + 2 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_ACC_RHS_OFFSET: usize = 2 * WORD_BYTES + 2 * G1_BYTES;
     /// Accumulator LHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_ACC_LHS_OFFSET: usize = WORD_BYTES + 3 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_ACC_LHS_OFFSET: usize = 2 * WORD_BYTES + 3 * G1_BYTES;
     /// Number of frame bytes absorbed into the accumulator/KZG batch challenge.
-    pub(crate) const PAIRING_BATCH_HASH_BYTES: usize = WORD_BYTES + 4 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_HASH_BYTES: usize = 2 * WORD_BYTES + 4 * G1_BYTES;
 }
 
 pub(crate) mod quotient_limb {
@@ -847,10 +855,12 @@ mod tests {
             accumulator::PAIRING_BATCH_PTR,
             super::LOW_MEMORY_SCRATCH_START
         );
-        assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x220);
+        // One word longer since the vk_digest joined the alpha preimage
+        // (audit I-7): tag + vk_digest + four G1 points.
+        assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x240);
         assert_eq!(
             super::FINAL_PAIRING_SCRATCH_START,
-            super::LOW_MEMORY_SCRATCH_START + 0x220
+            super::LOW_MEMORY_SCRATCH_START + 0x240
         );
         assert_eq!(quotient_limb::LIMBS, 7);
         assert_eq!(quotient_limb::PAIRWISE_TERMS, 49);

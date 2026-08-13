@@ -197,6 +197,21 @@
     uint256 internal constant ACC_RHS_MSM_GAS = {{ acc_rhs_msm_gas }};
     {%- endif %}
 
+    // ----------------------------------------------------------------------
+    // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
+    // errors declared on the contract, as Yul-readable constants. The
+    // `fail(sel)` helper in AssemblyHelpers.yul writes the selector to
+    // scratch 0x00 and reverts with 4 bytes. Pinned by
+    // `p4_error_selectors_match_declared_errors` in src/lowering/tests.rs.
+    // ----------------------------------------------------------------------
+    uint256 internal constant ERR_BAD_CALLDATA_SHAPE      = 0x1b99e37c;
+    uint256 internal constant ERR_VK_MISMATCH             = 0xa447d73e;
+    uint256 internal constant ERR_NON_CANONICAL_SCALAR    = 0x77530042;
+    uint256 internal constant ERR_BAD_POINT_ENCODING      = 0xf27905ec;
+    uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
+    uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
+    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.
     uint256 internal constant FR_MODULUS        = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;

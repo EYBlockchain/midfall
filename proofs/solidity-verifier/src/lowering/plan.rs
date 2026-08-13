@@ -144,6 +144,8 @@ impl LoweringPlan {
                 vk_mptr,
                 &memory,
                 &quotient_plan.selector_fold,
+                quotient_operand_bounds(&meta, &data, &vk, vk_mptr, &memory),
+                meta.num_simple_selectors,
             );
 
         let plan = Self {
@@ -361,36 +363,14 @@ impl LoweringPlan {
     /// contain -- a read outside them is either uninitialized memory in the
     /// split path or live verifier state in the inline path.
     pub(crate) fn quotient_read_model(&self) -> vm::QuotientReadModel {
-        let theta = self.data.theta_mptr.value().as_usize();
-        let instance_eval = self.memory.instance_eval_mptr.value().as_usize();
         vm::QuotientReadModel {
-            windows: vec![
-                vm::QuotientReadWindow {
-                    name: "vk_payload",
-                    start: self.vk_mptr.value().as_usize(),
-                    len: self.vk.len(),
-                },
-                vm::QuotientReadWindow {
-                    name: "user_challenges",
-                    start: self.data.challenge_mptr.value().as_usize(),
-                    len: self.meta.num_user_challenges.iter().sum::<usize>()
-                        * layout::memory::WORD_BYTES,
-                },
-                vm::QuotientReadWindow {
-                    name: "challenge_and_common_slots",
-                    // Ends one word past `instance_eval`, matching the frame
-                    // window in `Halo2QuotientEvaluator::validate_layout`.
-                    // `quotient_eval` sits immediately above and is a write
-                    // target, not a VM input.
-                    start: theta,
-                    len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
-                },
-                vm::QuotientReadWindow {
-                    name: "decoded_proof_evals",
-                    start: self.memory.reversed_evals_mptr.value().as_usize(),
-                    len: self.meta.num_evals * layout::memory::WORD_BYTES,
-                },
-            ],
+            windows: quotient_read_windows(
+                &self.meta,
+                &self.data,
+                &self.vk,
+                self.vk_mptr,
+                &self.memory,
+            ),
             token_bases: vec![
                 (vm::Q_MEM_L0, self.memory.l_0_mptr.value().as_usize()),
                 (vm::Q_MEM_L_LAST, self.memory.l_last_mptr.value().as_usize()),
@@ -406,7 +386,10 @@ impl LoweringPlan {
                     vm::Q_MEM_TRASH_CHALLENGE,
                     self.memory.trash_challenge_mptr.value().as_usize(),
                 ),
-                (vm::Q_MEM_INSTANCE_EVAL, instance_eval),
+                (
+                    vm::Q_MEM_INSTANCE_EVAL,
+                    self.memory.instance_eval_mptr.value().as_usize(),
+                ),
             ],
         }
     }
@@ -423,4 +406,75 @@ impl LoweringPlan {
             })
             .unwrap_or(0)
     }
+}
+
+/// The memory windows the compact quotient VM is allowed to load from,
+/// shared by the build-time pointer validator
+/// ([`LoweringPlan::quotient_read_model`]) and the runtime operand clamps
+/// rendered into the interpreter (P12/L-6,
+/// docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md). One source of truth so the
+/// two layers cannot drift.
+pub(crate) fn quotient_read_windows(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+) -> Vec<vm::QuotientReadWindow> {
+    let theta = data.theta_mptr.value().as_usize();
+    let instance_eval = memory.instance_eval_mptr.value().as_usize();
+    vec![
+        vm::QuotientReadWindow {
+            name: "vk_payload",
+            start: vk_mptr.value().as_usize(),
+            len: vk.len(),
+        },
+        vm::QuotientReadWindow {
+            name: "user_challenges",
+            start: data.challenge_mptr.value().as_usize(),
+            len: meta.num_user_challenges.iter().sum::<usize>() * layout::memory::WORD_BYTES,
+        },
+        vm::QuotientReadWindow {
+            name: "challenge_and_common_slots",
+            // Ends one word past `instance_eval`, matching the frame
+            // window in `Halo2QuotientEvaluator::validate_layout`.
+            // `quotient_eval` sits immediately above and is a write
+            // target, not a VM input.
+            start: theta,
+            len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
+        },
+        vm::QuotientReadWindow {
+            name: "decoded_proof_evals",
+            start: memory.reversed_evals_mptr.value().as_usize(),
+            len: meta.num_evals * layout::memory::WORD_BYTES,
+        },
+    ]
+}
+
+/// The coarse `[lo, hi]` bound over every non-empty read window, rendered
+/// into the interpreter's operand clamps. `hi` is the last legally loadable
+/// word address (inclusive). Build-time validation still enforces exact
+/// per-window membership; the runtime clamp is defence in depth for a VM
+/// whose program bytes are trusted only through the VK codehash pin.
+pub(crate) fn quotient_operand_bounds(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+) -> (usize, usize) {
+    let windows = quotient_read_windows(meta, data, vk, vk_mptr, memory);
+    let lo = windows
+        .iter()
+        .filter(|w| w.len > 0)
+        .map(|w| w.start)
+        .min()
+        .expect("at least one non-empty quotient read window");
+    let hi = windows
+        .iter()
+        .filter(|w| w.len > 0)
+        .map(|w| w.start + w.len - layout::memory::WORD_BYTES)
+        .max()
+        .expect("at least one non-empty quotient read window");
+    (lo, hi)
 }

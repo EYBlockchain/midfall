@@ -3047,6 +3047,68 @@ fn malformed_proof_point_rejects_with_bounded_gas() {
     }
 }
 
+/// P4 (L-3, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): rejections revert
+/// with a typed 4-byte custom-error selector so integrators can distinguish
+/// failure classes. Decode three representative classes end-to-end.
+#[test]
+fn typed_errors_identify_rejection_classes() {
+    use sha3::{Digest, Keccak256};
+
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+    let selector = |sig: &str| {
+        let d = Keccak256::digest(sig.as_bytes());
+        vec![d[0], d[1], d[2], d[3]]
+    };
+
+    let fixture = create_property_poseidon_fixture();
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+
+    // (a) Trailing calldata byte -> BadCalldataShape (exact calldatasize pin;
+    // documented ERC-2771 incompatibility).
+    let mut trailing = encode_calldata(&fixture.proof, &fixture.instances);
+    trailing.push(0);
+    // (b) Non-canonical public instance (r) -> NonCanonicalScalar.
+    let mut bad_instance = encode_calldata(&fixture.proof, &fixture.instances);
+    let len = bad_instance.len();
+    bad_instance[len - 32..].copy_from_slice(
+        &hex::decode("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
+            .expect("BLS12-381 r"),
+    );
+    // (c) Off-curve proof point -> BadPointEncoding is checked only for pad /
+    // range violations; a canonical-but-off-curve point fails at the MSM, so
+    // expect PrecompileFailed or ProofRejected there instead. Use a pad-byte
+    // violation for the deterministic BadPointEncoding class.
+    let layout = proof_g1_layout(&fixture);
+    let mut bad_pad = fixture.proof.clone();
+    bad_pad[layout.repacked_offsets[0]] = 1;
+    let bad_pad = encode_calldata(&bad_pad, &fixture.instances);
+
+    for (name, calldata, expected_sig) in [
+        ("trailing calldata byte", trailing, "BadCalldataShape()"),
+        ("non-canonical instance", bad_instance, "NonCanonicalScalar()"),
+        ("pad-byte violation", bad_pad, "BadPointEncoding()"),
+    ] {
+        match deployed
+            .evm
+            .try_call_with_gas(deployed.verifier_address, calldata, 30_000_000)
+        {
+            CallOutcome::Revert { output, .. } => {
+                assert_eq!(
+                    output,
+                    selector(expected_sig),
+                    "{name} must revert with {expected_sig}"
+                );
+            }
+            outcome => panic!("{name} did not revert: {outcome:?}"),
+        }
+    }
+}
+
 /// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
 /// production Midnight SRS assets must bind their `s_g2` — the element the
 /// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau

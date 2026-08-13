@@ -149,6 +149,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         vk_mptr: Ptr,
         memory: &VerifierMemoryLayout,
         selector_fold: &SelectorFoldPlan,
+        operand_bounds: (usize, usize),
+        num_selector_buckets: usize,
     ) -> (QuotientProgram, usize, QuotientStateSlots) {
         let quotient_program_chunks = PackedProgramCodec::encode_words(&build.bytes);
         let quotient_const_words = vk.quotient_const_words;
@@ -185,6 +187,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             selector_tail_updates: Self::selector_tail_updates(selector_fold),
             stack_mptr: quotient_stack_mptr,
             program_mptr,
+            operand_lo: operand_bounds.0,
+            operand_hi: operand_bounds.1,
+            num_selector_buckets,
         };
 
         (program, quotient_stack_mptr, state_slots)
