@@ -1574,9 +1574,14 @@ rules.
 The generated verifier constructor runs smoke tests:
 
 - `MCOPY` one-word round trip in constructor scratch.
-- `G1ADD(identity, identity) -> identity`.
+- `modexp(2, r-2, r) == 2^-1`, checked as `mulmod(result, 2, r) == 1`, at the
+  pinned `MODEXP_GAS` bound (MF-1).
+- `G1ADD(identity, identity) -> identity`, and the known answer `G1ADD(G, G) == 2G`.
+- `G1MSM([2]*G) == 2G`, and a **negative** probe: a point on the curve but
+  outside the r-order subgroup must be rejected.
 - Largest generated `G1MSM` input with identity/zero terms -> identity.
-- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true.
+- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true, plus the known
+  answers `e(G,G2)e(-G,G2) == 1` and `e(G,G2)e(G,G2) != 1`.
 
 Deploy only on forks/chains where EIP-2537 and `MCOPY` are available with the
 exact addresses, encodings, subgroup checks, return-size behavior, and enough
@@ -1591,9 +1596,15 @@ Every EIP-2537 call checks:
 - Exact return-data size.
 - For pairing, returned word is 1.
 
-EIP-2537 and modexp calls forward the exact EIP-2537/EIP-2565 scheduled cost
-(generated constants `G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`,
-`MODEXP_GAS`; model in `src/lowering/layout/mod.rs::gas`), NOT `gas()`. A
+EIP-2537 and modexp calls forward exact scheduled costs (generated constants
+`G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`, `MODEXP_GAS`; model in
+`src/lowering/layout/mod.rs::gas`), NOT `gas()`. For modexp the rendered bound
+is the MAXIMUM over the live schedules -- EIP-2565 prices the verifier's
+32/32/32 frame at 1360, EIP-7883 (Osaka/Fusaka) removes the `/ 3` divisor and
+prices it at 4080 -- because a bound below the chain's price does not degrade
+gracefully: the fixed-gas `staticcall` runs the precompile out of gas and every
+proof reverts `PrecompileFailed` (MF-1). Over-forwarding on a pre-Osaka chain
+costs nothing on success; unused gas is returned. A
 rejecting precompile consumes everything forwarded to it, so exact bounds cap
 what a malformed proof point can burn at the scheduled cost of the single
 failing call instead of 63/64 of the transaction budget (M-2). The bounds are

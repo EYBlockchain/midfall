@@ -1423,4 +1423,51 @@ These should be fixed before treating the document as a conformance spec. The
 rest are mostly edge-case, interoperability, or validation issues, but several
 could still become soundness bugs in a generated verifier.
 
+
+## 2026-08-13 — independent external review (MF series)
+
+An independent review of the rendered `moonlight-wrap` artifacts (verifier
+sha256 `555ed976…6798`, VK `7ca78ec2…b7ec`; byte-identical to
+`fixtures/moonlight-wrap/`) run as three separate passes — cryptographic
+implementation, ZK/protocol soundness, and EVM/software security — plus a
+line-by-line equivalence pass against `midfall/proofs` and machine
+recomputation of every recomputable constant.
+
+**No soundness-relevant defect was found.** The transcript schedule is
+byte-exact against the Rust verifier, every absorbed proof point provably
+reaches a subgroup-enforcing precompile, the linearization/PCS algebra is
+exact, and the memory plan has no live overlaps. Findings are one liveness
+bug and a set of hardening/diagnostic items.
+
+| ID | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| MF-1 | High | `MODEXP_GAS = 1360` is the EIP-2565 price; EIP-7883 (Osaka/Fusaka) prices the same frame at 4064, so every proof reverts `PrecompileFailed` on a repriced chain — and the constructor never probed modexp, so deployment succeeded silently | **Fixed** (`modexp_gas_word_frame` takes the max over live schedules; constructor modexp known-answer probe added) |
+| MF-2 | Low | The memory-layout guard — the only on-chain check for a bad recompile — reverted bare | **Fixed** (`MemoryLayoutViolated()`, typed on the runtime and constructor paths) |
+| MF-3 | Low | Quotient VM: fold-on-empty re-folds a stale top; native callbacks reset `q_sp` instead of asserting it, hiding dropped operands; u16 const indexes unclamped; `q_sp` unbounded | **Fixed** (four guards; u8 indexes keep their documented exemption, u16 do not) |
+| MF-4 | Low | `PrecompileFailed` / `BadPointEncoding` / `ProofRejected` conflated chain faults with rejected input on three paths | **Fixed** (cause flags threaded through `batch_invert` and `validate_public_accumulator`; `ec_pairing` split; triage table in `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §6) |
+| MF-5 | Info | A low-level `staticcall` to an address with no code returns success — a mis-wired wrapper reads it as a valid proof | **Documented** (wrapper obligation W-4) |
+| MF-6 | Info | Single-reduction `mod r` sampling bias (max point mass ≈1.36× uniform) | **Accepted**, parity with the Rust reference; already covered by §5.1's ×1.3585 factor. Regenerate in lockstep if the reference moves to 512-bit reduction |
+| MF-7 | Info | 128-bit truncated challenges cap batching soundness | **Accepted**, already recorded and signed off as §5.1 (L-10) |
+| MF-8 | Info | Set-0 has 43 eval terms but 42 commitment terms (the committed-instance column's commitment is the identity), so its eval is forced ≈0 only indirectly via x1-batching | **Documented** in the PCS emitter |
+| MF-9 | Info | The canonical identity accumulator `(O, O)` is well-formed and passes the pairing layer | **Documented** (wrapper obligation W-5) |
+| MF-10 | Info | Native-identity selector folds appeared to hardcode a `y¹` gap | **WITHDRAWN — false positive.** All three emission sites already use `selector_fold.gap_for(identity)`; the fixed `Some(1)` is confined to `native_identity_estimate_block`, a size/gas proxy for gate-selection that is never emitted, and whose doc comment explicitly warns against "fixing" it to call `gap_for` (the fold plan is derived from the selection outcome, so it does not exist yet at that point). Recorded so the warning is not overridden by a future reviewer making the same mistake. |
+| MF-11 | Info | The transcript stream is positionally framed (a point and four scalars are byte-identical) | **Accepted**; identical to §5.2 (I-5). Any future variable-length section would need explicit length tags |
+| MF-12 | Info | `assembly ("memory-safe")` is unsound by the letter of the annotation | **Accepted**; safe here via the terminal block + FMP guard + pinned pragma, now noted at the annotation site |
+
+Also proposed by the review and **withdrawn on inspection**: a CI job
+recomputing `vk_digest` from the rendered VK payload. The payload word is
+written directly from `self.vk.transcript_repr()` in `lowering/vk.rs` — a
+single expression over a single in-memory VK, not two independent paths — so
+such a test would assert `x == x`. The residual it was meant to close (that
+`vk_digest` binds the *semantic* constraint system) is not reachable this way;
+it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
+See §5.3 for the standing M-4 decision.
+
+**Not closed by these commits:** the committed fixtures and the Sepolia
+deployment predate the MF-1 fix and are marked STALE; regeneration needs the
+pinned solc. The replay harness also cannot exercise EIP-7883 — the pinned
+revm 19 has an Osaka spec, but its modexp handler is still `berlin_run` — so
+real coverage awaits a revm bump; `src/evm.rs` records that gap at the
+`SpecId` pin.
+
 [1]: https://eips.ethereum.org/EIPS/eip-2537 "EIP-2537: Precompile for BLS12-381 curve operations"

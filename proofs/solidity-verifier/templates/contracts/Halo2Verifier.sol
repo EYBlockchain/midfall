@@ -169,6 +169,16 @@ contract Halo2Verifier {
             // assert the invariant in the deployed bytecode instead of relying
             // on a generator-side test the integrator never runs. ~6 gas.
             //
+            // MF-12: by the letter of Solidity's memory-safety contract this
+            // annotation is a lie -- the block writes memory it never
+            // allocated through the free-memory pointer. Three properties
+            // make it safe HERE, and all three must hold together: this
+            // block is terminal (no Solidity executes after it), the pragma
+            // is pinned so codegen cannot shift underneath it, and the guard
+            // below fails closed if the spill reservation ever reaches the
+            // generated layout. Lifting this body into a non-terminal
+            // context, or unpinning the pragma, invalidates the annotation.
+            //
             // MF-2: this is the only on-chain guard against a recompile that
             // silently moves the spill region, and the failure it catches is
             // permanent (no input can verify). `fail()` is not in scope this

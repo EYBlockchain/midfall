@@ -38,6 +38,24 @@ unconditional cross-chain replay**:
   root). Without this, any accepted proof can be replayed on every chain
   and against every deployment of the same bytecode.
 
+- **W-4 — Call it so a wrong address cannot read as success (MF-5).** A
+  low-level `verifier.staticcall(...)` returns `ok = true` with empty
+  returndata when the target has **no code** — a wrong address, a wrong
+  chain, or a wrapper configured before deployment reads as a valid proof.
+  Call through the typed interface (Solidity ≥0.8 inserts the `extcodesize`
+  check), or, on any low-level path, require `returndatasize() >= 32` AND a
+  decoded `true`. If the wrapper uses `try/catch`, every catch branch is a
+  rejection: the verifier's failures are custom errors, so `catch Error(string)`
+  and `catch Panic(uint)` will not match them — use `catch (bytes memory)` or a
+  bare `catch`.
+- **W-5 — Bind the accumulator's meaning, not just its validity (MF-9).** For
+  IVC renders, the verifier checks that the carried accumulator points decode
+  canonically, are in the subgroup, and satisfy the batched pairing equation.
+  It does NOT check that they are non-trivial or that they continue *your*
+  chain: the canonical identity encoding `(O, O)` is a well-formed accumulator
+  and passes by construction. Any "this accumulator continues the expected
+  fold" rule belongs to the circuit or the wrapper.
+
 `verifyProof`'s NatSpec states the same split: the raw verifier checks the
 proof against the pinned VK and nothing else.
 
@@ -80,11 +98,27 @@ affected codegen?" is answerable from chain state during an incident.
 6. **Retire** the old verifier in the deployment record (it cannot be
    destroyed on-chain); wrappers must never point back at it.
 
-**Upstream repricing note:** the verifier forwards exact EIP-2537/EIP-2565
-scheduled gas. A fork that reprices those precompiles upward bricks
-`verifyProof` (liveness, not soundness) and deployment of new artifacts
-fails fast in the constructor probes. The migration path is the same
-re-render + wrapper switch.
+**On a fork of the chain you are deployed to — check this first (MF-1).**
+The verifier forwards exact scheduled gas to every precompile, so an upward
+repricing does not degrade: it bricks `verifyProof` outright (liveness, never
+soundness). The canonical symptom is a **sudden, total `PrecompileFailed`
+rate immediately after a fork activation**, on proofs that verified the day
+before and still verify against the native Rust verifier. Triage:
+
+1. Compare the fork's precompile schedule against the deployed constants
+   (`G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`, `MODEXP_GAS`).
+2. If any scheduled cost now exceeds the deployed bound, that is the cause;
+   re-render (the generator takes the maximum over live schedules) and
+   migrate per the steps above. There is no wrapper-side mitigation.
+
+Worked example: EIP-7883 (Fusaka) removed the `/ 3` divisor from modexp
+pricing, taking the verifier's frame from 1360 to 4064 gas. Artifacts
+rendered before that fix carry `MODEXP_GAS = 1360` and revert every proof on
+any post-Fusaka chain — including the pre-fix `deployments/sepolia/`
+moonlight-wrap deployment, which should be assumed bricked and confirmed with
+a single `eth_call` before it is retired in the deployment record. Deployment
+of NEW artifacts now fails fast in the constructor probes for every
+precompile the runtime calls, modexp included.
 
 ## 5. Accepted risks (deployment owner sign-off)
 
@@ -139,3 +173,30 @@ binding, VK codehash pin, generated-constant cross-checks, and `BUILD_ID`
 (which does cover all of the above, off-transcript). Widening the digest is
 a prover-affecting protocol change, explicitly out of scope by owner
 decision (2026-08-13).
+
+## 6. Reading a revert (MF-4)
+
+`verifyProof` is success-or-revert: it returns `true` or reverts with one of
+the typed errors below. The taxonomy exists so the first question during an
+incident — *is this the chain, the build, or the proof?* — is answerable from
+the 4-byte selector alone, without a trace.
+
+| Error | Selector | Class | First thing to check |
+| --- | --- | --- | --- |
+| `BadCalldataShape()` | `0x1b99e37c` | Caller | Heads, lengths, and EXACT `calldatasize`. A calldata-appending relayer (ERC-2771, multicall, paymaster) cannot call this contract directly. |
+| `VkMismatch()` | `0xa447d73e` | Deployment | The pinned VK address no longer has the expected runtime length/codehash, or a VK header word disagrees with the generated constants. |
+| `NonCanonicalScalar()` | `0x77530042` | Proof | A public instance or proof scalar is `>= r`. Usually an off-chain repacking bug, not an attack. |
+| `BadPointEncoding()` | `0xf27905ec` | Proof | A proof point violates the EIP-2537 padding/field bounds, or an accumulator public input failed canonical decoding. |
+| `PrecompileFailed()` | `0x84e81692` | **Chain** | A precompile could not run: missing, repriced above the forwarded bound (see §4), or short-returning. Also raised when G1MSM *rejects* a proof point as off-curve/out-of-subgroup — the precompile is the validator, so that rejection surfaces here by design. |
+| `ProofRejected()` | `0xc3b0d8cd` | Proof | The pairing ran and returned != 1, or a Lagrange denominator was zero (the squeezed `x` hit a domain point, probability ~n/r). |
+| `QuotientProgramInvalid()` | `0x3cc81b89` | **Build** | The VK-pinned quotient program violated a structural invariant. Not reachable with a well-formed artifact; treat as a generator bug. |
+| `MemoryLayoutViolated()` | `0xc9888d23` | **Build** | solc's stack-spill reservation overlaps the generated layout. The artifact was compiled off the pinned toolchain and can never verify anything; redeploy from the pinned `(version, --optimize-runs)` pair. |
+
+Two rules of thumb:
+
+- **Chain/Build classes are total, not probabilistic.** They fail every call,
+  including calls that verified yesterday. A sudden all-or-nothing failure
+  rate points here; a per-proof failure rate points at the Proof class.
+- **A revert is never an accept.** Every path above fails closed. There is no
+  configuration in which `verifyProof` returns `false` — see W-4 for why a
+  wrapper must not treat a bare `staticcall` success as verification.

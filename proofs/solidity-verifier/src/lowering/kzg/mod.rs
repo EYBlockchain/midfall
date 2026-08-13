@@ -109,6 +109,17 @@ pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
     // as 128 zero bytes). Pin that justification here, where each query
     // still knows its provenance: any other query source acquiring the
     // identity pointer would make the emitters drop a real MSM term.
+    //
+    // MF-8: the visible consequence downstream is a set whose eval-term count
+    // exceeds its commitment-term count by one (e.g. `q_eval_set[0]: 43
+    // evaluation term(s), 42 commitment term(s)` in the IVC render). That is
+    // not an off-by-one. The omitted commitment is the identity, so the
+    // multi-open equation still holds exactly -- and the omission is what
+    // FORCES the committed-instance eval to zero: the eval stays in the
+    // batched claim with coefficient trunc(x1^i) while contributing nothing
+    // to the commitment side, so any nonzero value breaks the opening. The
+    // enforcement is therefore indirect (via batching, per-term error
+    // 2^-128), not an equality check anywhere in the verifier.
     let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
     for (source, query) in meta.protocol.pcs_queries.iter().zip(&queries) {
         assert!(
