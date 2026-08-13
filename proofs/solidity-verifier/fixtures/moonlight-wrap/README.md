@@ -14,13 +14,12 @@ the replay deploys the verifier with the verifying key alone.
 
 | Field | Value |
 | --- | --- |
-| Source commit | `3fb6d84` (**this repository**, solidity-verifier, at fixture-render time; not the Midfall dependency revision — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
-| Staleness | **Stale relative to the current templates** (exact gas bounds, typed errors, VM operand clamps, BUILD_ID, alpha vk-binding all postdate `3fb6d84`). The replay test intentionally pins this rendered state; regenerating needs the external Moonlight checkout described below. |
+| Source commit | `f894f75` (**this repository**, solidity-verifier, at fixture-render time; not the Midfall dependency revision — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
 | Rendered by | Moonlight `wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs` |
-| Moonlight revision | `origin/codex/wrap-bench-cherry-picks` |
+| Moonlight revision | `origin/codex/wrap-bench-cherry-picks` (`1940ea9`), rendered from a scratch worktree with the local-path Cargo unification below |
 | Accumulator | `AccumulatorEncoding::point_pair(offset=11, num_limbs=7, num_limb_bits=56)` |
 | Public inputs | 19 (accumulator occupies the trailing 8 words) |
-| Verified on-chain | yes, 1,279,482 gas under revm Prague |
+| Verified on-chain | yes, 1,338,272 gas under revm Prague (2026-08-13 render: exact precompile gas bounds, typed errors, VM operand clamps, BUILD_ID, alpha vk-binding) |
 | Native/Solidity trace | 244 trace points matched |
 
 ## Regenerating
