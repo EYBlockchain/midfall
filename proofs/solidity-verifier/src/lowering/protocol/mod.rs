@@ -486,7 +486,11 @@ impl ProtocolPlan {
              quer{} vs {} fixed columns minus {} simple selectors; the native verifier \
              reads the column-based count while this generator reads the query-based \
              count, so the proof scalar stream would desynchronize",
-            if non_simple_fixed_queries == 1 { "y" } else { "ies" },
+            if non_simple_fixed_queries == 1 {
+                "y"
+            } else {
+                "ies"
+            },
             num_fixeds,
             simple_selector_cols.len(),
         );

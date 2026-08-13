@@ -3090,13 +3090,14 @@ fn typed_errors_identify_rejection_classes() {
 
     for (name, calldata, expected_sig) in [
         ("trailing calldata byte", trailing, "BadCalldataShape()"),
-        ("non-canonical instance", bad_instance, "NonCanonicalScalar()"),
+        (
+            "non-canonical instance",
+            bad_instance,
+            "NonCanonicalScalar()",
+        ),
         ("pad-byte violation", bad_pad, "BadPointEncoding()"),
     ] {
-        match deployed
-            .evm
-            .try_call_with_gas(deployed.verifier_address, calldata, 30_000_000)
-        {
+        match deployed.evm.try_call_with_gas(deployed.verifier_address, calldata, 30_000_000) {
             CallOutcome::Revert { output, .. } => {
                 assert_eq!(
                     output,

@@ -39,6 +39,15 @@ pub(crate) fn srs_tau_is_consistent(
     omega: Fq,
     s_g2: G2Affine,
 ) -> bool {
+    let tau_g1 = srs_tau_commitment(g_lagrange, omega);
+    Bls12::pairing(&tau_g1, &G2Affine::generator()) == Bls12::pairing(&G1Affine::generator(), &s_g2)
+}
+
+/// Commit f(X) = X in the Lagrange basis: `[tau]G1 = sum_i omega^i * L_i`.
+///
+/// Used by the tau-binding pairing check above and as the tau component of
+/// the SRS fingerprint folded into `BUILD_ID` (P10/L-8).
+pub(crate) fn srs_tau_commitment(g_lagrange: &[G1Projective], omega: Fq) -> G1Affine {
     // Pippenger MSM: production SRS sizes reach 2^20 Lagrange points, so a
     // naive per-point scalar multiplication here would stall every build.
     let mut omega_pow = Fq::ONE;
@@ -49,11 +58,39 @@ pub(crate) fn srs_tau_is_consistent(
             current
         })
         .collect();
-    let tau_g1 = G1Projective::multi_exp(g_lagrange, &omega_powers).to_affine();
-    Bls12::pairing(&tau_g1, &G2Affine::generator()) == Bls12::pairing(&G1Affine::generator(), &s_g2)
+    G1Projective::multi_exp(g_lagrange, &omega_powers).to_affine()
 }
 
 impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
+    /// A 32-byte identity for the SRS this build trusts, for `BUILD_ID`
+    /// (P10/L-8, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md).
+    ///
+    /// An SRS over a fixed curve is fully determined by its size `n` and the
+    /// secret tau, so hash exactly the values that pin those: `n`, the G2
+    /// base, `s_g2 = [tau]G2`, and `[tau]G1` recomputed from the Lagrange
+    /// basis actually used for commitments. Two params values agree on this
+    /// fingerprint iff they present the same trusted setup to the verifier.
+    pub(crate) fn srs_fingerprint(&self) -> [u8; 32] {
+        use sha3::{Digest, Keccak256};
+
+        let g_lagrange = self.params.g_lagrange();
+        let omega = self.vk.get_domain().get_omega();
+        let tau_g1 = srs_tau_commitment(g_lagrange, omega);
+        let mut hasher = Keccak256::new();
+        hasher.update(b"halo2-solidity-verifier-srs-v1");
+        hasher.update((g_lagrange.len() as u64).to_be_bytes());
+        for word in g2_to_u256s(self.params.g2().to_affine()) {
+            hasher.update(word.to_be_bytes::<32>());
+        }
+        for word in g2_to_u256s(self.params.s_g2().to_affine()) {
+            hasher.update(word.to_be_bytes::<32>());
+        }
+        for word in g1_to_u256s(tau_g1) {
+            hasher.update(word.to_be_bytes::<32>());
+        }
+        hasher.finalize().into()
+    }
+
     /// Generate the VK payload before compact quotient constants/program data.
     fn generate_base_vk(&self) -> Halo2VerifyingKey {
         let constants: Vec<(&'static str, U256)>;

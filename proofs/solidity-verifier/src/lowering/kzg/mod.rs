@@ -112,8 +112,7 @@ pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
     let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
     for (source, query) in meta.protocol.pcs_queries.iter().zip(&queries) {
         assert!(
-            query.comm != g1_identity
-                || matches!(source, PcsQuerySource::CommittedInstance(_)),
+            query.comm != g1_identity || matches!(source, PcsQuerySource::CommittedInstance(_)),
             "query {source:?} resolves to the G1 identity commitment; only \
              committed-instance queries may be identity-pinned, since the MSM \
              emitters omit identity commitments while keeping their evals"
@@ -156,8 +155,7 @@ fn assert_permutation_query_order_is_upstream_equivalent(
 
     // Rebuild the z block in the upstream order: (Cur, Next) per set in
     // forward order, then Last per set in reverse order.
-    let z_sources: Vec<PcsQuerySource> =
-        z_positions.iter().map(|&i| sources[i]).collect();
+    let z_sources: Vec<PcsQuerySource> = z_positions.iter().map(|&i| sources[i]).collect();
     let mut upstream_block: Vec<PcsQuerySource> = z_sources
         .iter()
         .copied()

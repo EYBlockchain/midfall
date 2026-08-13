@@ -499,6 +499,10 @@ pub(crate) struct Halo2Verifier {
     pub(crate) fr_delta: String,
     pub(crate) embedded_vk: Option<Halo2VerifyingKey>,
     pub(crate) expected_vk_codehash: Option<U256>,
+    /// keccak over the build's identity components (P10/L-8): feature
+    /// profile, vk_digest, VK codehash-or-zero, SRS fingerprint, optional
+    /// deployment provenance tag. Emitted as the public BUILD_ID constant.
+    pub(crate) build_id: U256,
     pub(crate) vk_len: usize,
     /// Generated public-instance count for this pinned VK/proof layout.
     pub(crate) num_instances: usize,
@@ -1162,6 +1166,7 @@ mod tests {
             fr_delta: crate::lowering::quotient_numerator::vm::fr_delta_literal(),
             embedded_vk: None,
             expected_vk_codehash: Some(U256::from(1u64)),
+            build_id: U256::ZERO,
             vk_len: 0,
             num_instances: 1,
             k: 8,

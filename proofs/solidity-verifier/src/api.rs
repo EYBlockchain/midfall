@@ -352,6 +352,16 @@ pub struct RenderOptions {
     pub quotient: RenderQuotient,
     /// Trace/gas diagnostic knobs.
     pub diagnostics: RenderDiagnostics,
+    /// Optional 32-byte provenance tag folded into the emitted `BUILD_ID`
+    /// constant (P10/L-8) — typically a hash of the generator git commit and
+    /// build context, e.g. `keccak256("commit=<sha>,dirty=<bool>")`.
+    ///
+    /// `None` (the default) keeps `BUILD_ID` a pure function of the feature
+    /// profile, VK, and SRS, so repository fixtures stay byte-stable across
+    /// commits. Deployment builds SHOULD set it and publish the preimage in
+    /// the deployment record; see
+    /// `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`.
+    pub provenance: Option<[u8; 32]>,
 }
 
 /// Rendered Solidity artifacts.
