@@ -465,6 +465,31 @@ impl ProtocolPlan {
         // Read (num_fixed_columns - num_simple_selectors) fixed evaluations.
         // Simple selector columns are intentionally absent from the proof
         // scalar stream and are filled by the quotient/linearization path.
+        //
+        // I-6 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+        // midnight-proofs verifier sizes this proof section COLUMN-based
+        // (`num_fixed_columns - num_simple_selectors`) while this generator
+        // sizes it QUERY-based (non-simple fixed queries). The two agree
+        // only when every non-simple fixed column is queried exactly once:
+        // a rotated or repeated fixed query would make the native verifier
+        // under-read and the generated verifier over-read the same proof
+        // bytes, silently desynchronizing every later transcript offset.
+        // Reject the divergence at plan time instead of inheriting it.
+        let non_simple_fixed_queries = fixed_queries
+            .iter()
+            .filter(|q| !simple_selector_cols.contains(&q.column))
+            .count();
+        assert_eq!(
+            non_simple_fixed_queries,
+            num_fixeds - simple_selector_cols.len(),
+            "fixed-eval section mismatch: {non_simple_fixed_queries} non-simple fixed \
+             quer{} vs {} fixed columns minus {} simple selectors; the native verifier \
+             reads the column-based count while this generator reads the query-based \
+             count, so the proof scalar stream would desynchronize",
+            if non_simple_fixed_queries == 1 { "y" } else { "ies" },
+            num_fixeds,
+            simple_selector_cols.len(),
+        );
         proof.evals.extend(
             fixed_queries
                 .iter()

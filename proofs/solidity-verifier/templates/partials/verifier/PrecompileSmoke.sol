@@ -155,8 +155,12 @@
 
             // Worst-case generated G1MSM with all identity/zero terms ->
             // identity, 128-byte return. This exercises the largest MSM input
-            // length rendered by this verifier instead of only a one-pair
-            // smoke call.
+            // LENGTH rendered by this verifier instead of only a one-pair
+            // smoke call, proving the target chain's precompile accepts the
+            // full-size input. It runs in the creation frame at its own
+            // scratch base, so it does not (and cannot) pre-expand the
+            // runtime call frame's memory -- constructor memory is discarded;
+            // only the input size coverage carries over.
             let msm_scratch := {{ memory.constructor_g1msm_smoke_scratch_mptr|hex() }}
             for { let off := 0 } lt(off, {{ constructor_g1msm_smoke_input_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
                 mstore(add(msm_scratch, off), 0)

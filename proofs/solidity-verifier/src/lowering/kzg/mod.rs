@@ -94,12 +94,134 @@ impl Query {
 /// simple multiplicative selector queries are skipped because the custom
 /// linearization query carries their commitments and selector accumulators.
 pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
-    meta.protocol
+    let queries: Vec<Query> = meta
+        .protocol
         .pcs_queries
         .iter()
         .copied()
         .map(|source| query_from_plan(source, meta, data))
-        .collect()
+        .collect();
+    // L-2 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): downstream MSM
+    // emission silently omits commitments pinned to `G1_IDENTITY_MPTR` while
+    // keeping their evaluation terms. That omission is sound ONLY because
+    // the identity pointer is reserved for the committed-instance column
+    // (`SUPPORTED_COMMITTED_INSTANCE_COMMITMENT` is the identity, absorbed
+    // as 128 zero bytes). Pin that justification here, where each query
+    // still knows its provenance: any other query source acquiring the
+    // identity pointer would make the emitters drop a real MSM term.
+    let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
+    for (source, query) in meta.protocol.pcs_queries.iter().zip(&queries) {
+        assert!(
+            query.comm != g1_identity
+                || matches!(source, PcsQuerySource::CommittedInstance(_)),
+            "query {source:?} resolves to the G1 identity commitment; only \
+             committed-instance queries may be identity-pinned, since the MSM \
+             emitters omit identity commitments while keeping their evals"
+        );
+    }
+    assert_permutation_query_order_is_upstream_equivalent(meta, data, &queries);
+    queries
+}
+
+/// I-6 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the midnight-proofs
+/// verifier emits permutation z queries as all `(Cur, Next)` pairs in
+/// forward set order followed by the `Last` openings in REVERSE set order,
+/// while this generator interleaves `Cur/Next/Last` per set. For every
+/// supported shape the two orderings happen to produce identical
+/// intermediate point-set structure -- but that is a property of the
+/// concrete plan (no new rotation or commitment introduced between the
+/// placements), not an order-insensitive transformation. Re-derive the
+/// intermediate sets under the upstream ordering and refuse to plan a
+/// circuit where the structures diverge, since every x1-power index and MSM
+/// slot downstream depends on it.
+fn assert_permutation_query_order_is_upstream_equivalent(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    generator_order: &[Query],
+) {
+    let sources = &meta.protocol.pcs_queries;
+    let z_positions: Vec<usize> = sources
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, PcsQuerySource::PermutationZ { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    if z_positions.is_empty() {
+        return;
+    }
+    assert!(
+        z_positions.windows(2).all(|w| w[1] == w[0] + 1),
+        "permutation z queries are expected to form one contiguous block"
+    );
+
+    // Rebuild the z block in the upstream order: (Cur, Next) per set in
+    // forward order, then Last per set in reverse order.
+    let z_sources: Vec<PcsQuerySource> =
+        z_positions.iter().map(|&i| sources[i]).collect();
+    let mut upstream_block: Vec<PcsQuerySource> = z_sources
+        .iter()
+        .copied()
+        .filter(|s| {
+            matches!(
+                s,
+                PcsQuerySource::PermutationZ {
+                    kind: PermutationZEval::Cur | PermutationZEval::Next,
+                    ..
+                }
+            )
+        })
+        .collect();
+    let mut last_queries: Vec<PcsQuerySource> = z_sources
+        .iter()
+        .copied()
+        .filter(|s| {
+            matches!(
+                s,
+                PcsQuerySource::PermutationZ {
+                    kind: PermutationZEval::Last,
+                    ..
+                }
+            )
+        })
+        .collect();
+    last_queries.reverse();
+    upstream_block.extend(last_queries);
+
+    let mut upstream_sources = sources.clone();
+    for (slot, source) in z_positions.iter().zip(upstream_block) {
+        upstream_sources[*slot] = source;
+    }
+    let upstream_queries: Vec<Query> = upstream_sources
+        .iter()
+        .copied()
+        .map(|source| query_from_plan(source, meta, data))
+        .collect();
+
+    let generator_sets = construct_intermediate_sets_impl(generator_order);
+    let upstream_sets = construct_intermediate_sets_impl(&upstream_queries);
+    assert_eq!(
+        generator_sets.point_sets, upstream_sets.point_sets,
+        "permutation z query interleaving changes the KZG point-set structure \
+         relative to the upstream (Cur/Next then reversed Last) ordering; the \
+         generated x1-power indices would not match the native verifier"
+    );
+    assert_eq!(
+        generator_sets.commitments.len(),
+        upstream_sets.commitments.len(),
+        "permutation z query interleaving changes the deduplicated commitment \
+         count relative to the upstream ordering"
+    );
+    for (g, u) in generator_sets.commitments.iter().zip(&upstream_sets.commitments) {
+        assert!(
+            g.set_index == u.set_index && g.comm == u.comm && g.evals == u.evals,
+            "permutation z query interleaving reorders commitment {:?} relative \
+             to the upstream ordering (set {} vs {}); MSM slots and x1 powers \
+             would diverge from the native verifier",
+            g.comm,
+            g.set_index,
+            u.set_index,
+        );
+    }
 }
 
 /// Resolve a typed protocol query source to concrete commitment/eval handles.

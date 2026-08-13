@@ -199,6 +199,14 @@
                         // If x carried the identity flag, both decoded
                         // coordinates must be zero after shifting. Any other y
                         // value would be a malformed infinity encoding.
+                        //
+                        // Unreachable by construction (audit I-2/I-3): the
+                        // whole-point sentinel check above already accepted
+                        // every encoding in which x carries the identity flag
+                        // -- the packed codec is a bijection, so an x flagged
+                        // as identity with a sentinel mismatch cannot decode
+                        // here. Kept as defence in depth for future codec
+                        // changes rather than as a live branch.
                         ok := and(ok, iszero(or(or(x_hi, x_lo), or(y_hi, y_lo))))
                         mstore(dst, 0)
                         mstore(add(dst, 0x20), 0)
@@ -236,6 +244,10 @@
             //   3. folds the RHS carried point and fixed-base scalar tail into
             //      ACC_RHS_MPTR, leaving ACC_LHS_MPTR / ACC_RHS_MPTR ready for
             //      randomized batching in FinalPairing.yul.
+            // `r` is consumed only by the canonicality guards in the
+            // carried-scalar and fixed-base-tail arms; renders whose
+            // accumulator layout has neither (e.g. point_pair with no tail)
+            // legally leave it unused.
             function validate_public_accumulator(success, r) -> out {
                 out := success
                 let bits := {{ self.expected_num_acc_limb_bits }}

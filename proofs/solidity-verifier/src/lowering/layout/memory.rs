@@ -643,6 +643,44 @@ impl VerifierMemoryLayout {
         .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
         let lagrange_denoms_len = batch_invert_input_words(meta, config.num_instances) * WORD_BYTES;
+        // P9 (L-7, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+        // generated Lagrange block computes its batch-inversion run length
+        // INDEPENDENTLY of the planner, in the template (`Lagrange.yul`:
+        // one denominator per public instance -- or one fallback slot when
+        // there are none -- plus `abs(rotation_last)` negative-row
+        // denominators, plus x_n - 1). `batch_invert_scratch` sits
+        // immediately below `lagrange_denoms`, sized with ZERO slack, so if
+        // the two formulas ever drift the forward pass's modexp frame lands
+        // on denominator[0] and corrupts it SILENTLY: the modexp still
+        // succeeds, `ret` stays 1, and the backward pass returns wrong
+        // inverses without reverting. Mirror the template's expression here
+        // and refuse to plan a layout where they disagree or where the
+        // scratch cannot hold the run.
+        {
+            let n = batch_invert_input_words(meta, config.num_instances);
+            let neg_lagranges = meta.rotation_last.unsigned_abs() as usize;
+            let template_run_words = if config.num_instances == 0 {
+                // fallback denominator slot + negative-row denominators + (x_n - 1)
+                1 + neg_lagranges + 1
+            } else {
+                config.num_instances + neg_lagranges + 1
+            };
+            assert_eq!(
+                n, template_run_words,
+                "planner batch-inversion input count ({n} words) does not match the \
+                 run the generated Lagrange block writes ({template_run_words} words); \
+                 the scratch/denominator regions would be mis-sized"
+            );
+            let required = n.saturating_sub(2) * WORD_BYTES + MODEXP_FRAME_BYTES;
+            assert!(
+                batch_invert_len >= required,
+                "batch_invert scratch is {batch_invert_len} bytes but n={n} inputs need \
+                 {required} (n-2 prefix products plus one modexp frame); an overflow \
+                 lands in lagrange_denoms and silently corrupts denominator[0] -- the \
+                 modexp still succeeds and the backward pass returns wrong inverses \
+                 WITHOUT reverting"
+            );
+        }
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
@@ -721,6 +759,35 @@ impl VerifierMemoryLayout {
         let at_theta = |words: usize| theta_start + words * WORD_BYTES;
         let ptr_at_theta = |slot: ThetaSlot| Ptr::memory(at_theta(slot.word()));
         let theta_mptr = ptr_at_theta(ThetaSlot::Theta);
+        // P8 (L-5, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): with zero
+        // user-phase challenges CHALLENGE_MPTR and THETA_MPTR legitimately
+        // coincide (the challenge window is empty). The hazard is a circuit
+        // WITH user challenges whose window is under-sized: the transcript
+        // parser squeezes user challenge j to CHALLENGE_MPTR + 32*j, and the
+        // very next squeeze unconditionally targets THETA_MPTR -- an overlap
+        // silently replaces a user challenge with theta while the transcript
+        // still matches the prover (permanent liveness break, potential
+        // soundness break). The window is sized by `challenge_indices` while
+        // the runtime write count is the phase sum of `num_user_challenges`;
+        // tie the two and pin theta past the window.
+        {
+            let user_challenges_total: usize = meta.num_user_challenges.iter().sum();
+            assert_eq!(
+                meta.challenge_indices.len(),
+                user_challenges_total,
+                "user-phase challenge window is sized for {} challenge slot(s) but the \
+                 transcript parser squeezes {user_challenges_total}; the excess would \
+                 collide with the theta slots",
+                meta.challenge_indices.len(),
+            );
+            assert!(
+                challenge_start + user_challenges_total * WORD_BYTES <= theta_start,
+                "user-phase challenge window [{challenge_start:#x}, {:#x}) overlaps the \
+                 named challenge slots at THETA_MPTR = {theta_start:#x}; theta's squeeze \
+                 would silently overwrite a user challenge",
+                challenge_start + user_challenges_total * WORD_BYTES,
+            );
+        }
 
         let total_advices: usize = meta.num_user_advices.iter().sum();
         let lookup_helper_chunks_total: usize = meta.lookup_chunks.iter().sum();
@@ -1430,6 +1497,114 @@ mod tests {
             windows.reversed_evals_word,
             theta_window::REVERSED_EVALS_WORD
         );
+    }
+
+    /// P8 (L-5): a circuit with user-phase challenges must get a challenge
+    /// window that ends at or before THETA_MPTR, or theta's unconditional
+    /// squeeze silently overwrites user challenge 0.
+    #[test]
+    fn user_phase_challenge_window_precedes_theta() {
+        let meta = ConstraintSystemMeta {
+            num_user_advices: vec![1, 1],
+            num_user_challenges: vec![1, 2],
+            challenge_indices: vec![0, 1, 2],
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let layout = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        let challenge = layout.challenge_mptr.value().as_usize();
+        let theta = layout.theta_mptr.value().as_usize();
+        assert!(
+            challenge + 3 * WORD_BYTES <= theta,
+            "user challenge window [{challenge:#x}, {:#x}) must end before \
+             THETA_MPTR = {theta:#x}",
+            challenge + 3 * WORD_BYTES
+        );
+        // With zero user challenges the two legitimately coincide.
+        let empty_layout = VerifierMemoryLayout::new(
+            &ConstraintSystemMeta::default(),
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        assert_eq!(
+            empty_layout.challenge_mptr.value().as_usize(),
+            empty_layout.theta_mptr.value().as_usize(),
+        );
+    }
+
+    /// P8 (L-5): a window sized for fewer slots than the transcript parser
+    /// squeezes must refuse to plan.
+    #[test]
+    #[should_panic(expected = "user-phase challenge window is sized for")]
+    fn undersized_user_challenge_window_is_rejected() {
+        let meta = ConstraintSystemMeta {
+            num_user_advices: vec![1],
+            num_user_challenges: vec![2],
+            challenge_indices: vec![0],
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let _ = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+    }
+
+    /// P9 (L-7): across instance-count and rotation shapes, the
+    /// batch-inversion scratch must hold exactly the run the Lagrange block
+    /// writes, and the denominator region must match the input count -- the
+    /// two regions are adjacent with zero slack, and an overflow corrupts
+    /// denominator[0] without reverting.
+    #[test]
+    fn batch_invert_scratch_capacity_matches_lagrange_run() {
+        let vk = synthetic_vk();
+        for (num_instances, rotation_last) in
+            [(0usize, -1i32), (1, -1), (2, -3), (19, -6), (200, -6)]
+        {
+            let meta = ConstraintSystemMeta {
+                rotation_last,
+                ..ConstraintSystemMeta::default()
+            };
+            let layout = VerifierMemoryLayout::new(
+                &meta,
+                &vk,
+                Ptr::memory(0x2000),
+                VerifierMemoryLayoutConfig {
+                    num_instances,
+                    ..VerifierMemoryLayoutConfig::default()
+                },
+            );
+            let n = batch_invert_input_words(&meta, num_instances);
+            let scratch = layout
+                .map
+                .region("batch_invert_scratch")
+                .expect("batch_invert_scratch region is registered");
+            let denoms = layout
+                .map
+                .region("lagrange_denoms")
+                .expect("lagrange_denoms region is registered");
+            assert_eq!(denoms.len, n * WORD_BYTES);
+            assert_eq!(
+                scratch.len,
+                n.saturating_sub(2) * WORD_BYTES + MODEXP_FRAME_BYTES,
+                "scratch must hold n-2 prefix products plus one modexp frame \
+                 for n = {n} (num_instances = {num_instances})"
+            );
+            assert_eq!(
+                scratch.start + scratch.len,
+                denoms.start,
+                "regions are adjacent by construction; the capacity assert is \
+                 what keeps the adjacency safe"
+            );
+        }
     }
 
     #[test]
