@@ -346,6 +346,19 @@ pub(crate) mod test {
     /// are routed to revm's bundled implementations. The runner keeps an
     /// `InMemoryDB` across calls so tests can deploy once and call many
     /// times.
+    ///
+    /// MF-1 coverage gap, deliberately not papered over: this harness cannot
+    /// exercise a chain whose modexp is priced by EIP-7883. The pinned
+    /// revm 19 exposes `SpecId::OSAKA`, but that variant is Prague+EOF in this
+    /// version -- its `0x05` handler is `berlin_run`, i.e. EIP-2565 pricing
+    /// with the `/ 3` divisor -- so switching the spec here would produce
+    /// green tests that prove nothing about the repricing that bricked the
+    /// pre-fix bound. Raising real coverage needs a revm bump to a version
+    /// whose Osaka handler implements EIP-7883; until then, MF-1 is guarded
+    /// by `modexp_gas_bound_covers_every_live_schedule` (the bound is derived
+    /// from both EIP texts) and by the constructor's modexp known-answer
+    /// probe, which forwards the rendered bound and so fails at deployment on
+    /// any chain that prices modexp above it.
     #[derive(Default)]
     pub struct Evm {
         db: InMemoryDB,

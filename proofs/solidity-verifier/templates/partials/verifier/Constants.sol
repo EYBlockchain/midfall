@@ -169,7 +169,8 @@
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = {{ memory.quotient_limb_comms_mptr_base }};
 
     // ----------------------------------------------------------------------
-    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
+    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the
+    // maximum over the EIP-2565 and EIP-7883 schedules.
     //
     // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
     // STATICCALL, so every generated call site forwards the exact scheduled
@@ -179,9 +180,17 @@
     // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
     // by construction on any conformant chain.
     //
-    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
-    // this verifier must be regenerated and redeployed. The constructor
-    // smoke probes forward the same bounds, so deployment onto an
+    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this
+    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and
+    // prices it at 4080, so the larger bound is rendered. Forwarding the
+    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is
+    // returned -- while forwarding the EIP-2565 bound on a repriced chain
+    // reverts every proof.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles above the
+    // bounds below, this verifier must be regenerated and redeployed. The
+    // constructor smoke probes forward the same bounds for EVERY precompile
+    // the runtime calls, modexp included, so deployment onto an
     // already-repriced chain fails fast instead of bricking at proof time.
     // ----------------------------------------------------------------------
     uint256 internal constant          G1ADD_GAS = {{ template_constants.gas.g1add }};

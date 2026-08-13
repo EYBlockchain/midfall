@@ -139,7 +139,7 @@ pub(crate) mod precompile {
 
 pub(crate) mod gas {
     //! Exact gas schedule for the precompiles the generated verifier calls,
-    //! from EIP-2537 (BLS12-381) and EIP-2565 (modexp).
+    //! from EIP-2537 (BLS12-381) and EIP-2565/EIP-7883 (modexp).
     //!
     //! A failing EIP-2537 or modexp call consumes ALL gas supplied to the
     //! `STATICCALL`, so every generated call site forwards the exact scheduled
@@ -153,11 +153,19 @@ pub(crate) mod gas {
     //! amount succeeds by construction on any conformant implementation of
     //! the current schedule.
     //!
-    //! Liveness caveat: if a future fork reprices these precompiles UPWARD,
-    //! deployed verifiers start reverting on valid proofs and must be
-    //! regenerated and redeployed. The constructor smoke probes forward the
-    //! same bounds, so deployment onto an already-repriced chain fails fast
-    //! instead of bricking at proof time.
+    //! Multi-schedule bounds: where more than one schedule is live across the
+    //! chains this verifier targets, the bound is the MAXIMUM over those
+    //! schedules rather than the one for a single fork (see
+    //! [`modexp_gas_word_frame`]). Over-forwarding costs nothing on success --
+    //! unused gas is returned -- and only widens the burn of one *failing*
+    //! call by the difference, whereas under-forwarding bricks the verifier.
+    //!
+    //! Liveness caveat: if a future fork reprices these precompiles above the
+    //! bounds rendered here, deployed verifiers start reverting on valid
+    //! proofs and must be regenerated and redeployed. The constructor smoke
+    //! probes forward the same bounds for every precompile the runtime
+    //! depends on -- EIP-2537 *and* modexp (MF-1) -- so deployment onto an
+    //! already-repriced chain fails fast instead of bricking at proof time.
 
     /// EIP-2537 G1ADD flat cost.
     pub(crate) const G1ADD_GAS: u64 = 375;
@@ -196,23 +204,65 @@ pub(crate) mod gas {
         32_600 * pairs + 37_700
     }
 
-    /// EIP-2565 modexp cost for the only frame shape the verifier emits:
-    /// 32-byte base, 32-byte exponent, 32-byte modulus.
+    /// Modexp bound for the only frame shape the verifier emits: 32-byte
+    /// base, 32-byte exponent, 32-byte modulus.
     ///
-    /// `words = ceil(32/8) = 4`, `multiplication_complexity = words^2 = 16`,
-    /// `iteration_count <= 255` (32-byte exponent), so
-    /// `max(200, 16 * 255 / 3) = 1360`. EIP-7883 (scheduled for Osaka) keeps
-    /// the same result for these operand sizes: it raises the floor to 500
-    /// (< 1360) and only reprices operands wider than 32 bytes.
+    /// Two schedules are live across the chains this verifier targets, so the
+    /// rendered bound is the maximum of both:
+    ///
+    /// * **EIP-2565** (Berlin): `max(200, multiplication_complexity *
+    ///   iteration_count / 3)`. With `words = ceil(32/8) = 4` and
+    ///   `multiplication_complexity = words^2 = 16`, that is
+    ///   `max(200, 16 * 255 / 3) = 1360`.
+    /// * **EIP-7883** (Osaka/Fusaka): the `/ 3` divisor is **removed** and the
+    ///   floor is raised to 500, giving `max(500, 16 * 255) = 4080`.
+    ///
+    /// MF-1: this function previously returned only the EIP-2565 value and
+    /// asserted that EIP-7883 "only reprices operands wider than 32 bytes".
+    /// That reading was wrong. EIP-7883 changes two independent things: the
+    /// `multiplication_complexity` branch for `max_length > 32` (`2 * words^2`,
+    /// which indeed does not apply here), *and* the removal of the `/ 3`
+    /// divisor from the final `multiplication_complexity * iteration_count`
+    /// product, which applies to every operand size. A verifier rendered with
+    /// the 1360 bound deploys fine on a repriced chain and then reverts
+    /// `PrecompileFailed` on every proof, because `staticcall` forwards a
+    /// fixed amount and the precompile runs out of gas inside the mandatory
+    /// Lagrange batch inversion.
+    ///
+    /// `iteration_count` is the generic upper bound for any 32-byte exponent
+    /// (`exponent.bit_length() - 1 <= 255`). Both exponents the verifier
+    /// actually emits are `FR_MODULUS - 2`, whose 255-bit length gives 254
+    /// iterations and an exact EIP-7883 price of 4064; the extra 16 gas keeps
+    /// the bound valid for any 32-byte exponent a future emitter might use.
     pub(crate) const fn modexp_gas_word_frame() -> u64 {
         const WORDS: u64 = 4;
         const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
+        // Upper bound over every 32-byte exponent: `bit_length() - 1 <= 255`.
         const MAX_ITERATION_COUNT: u64 = 255;
-        let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
-        if cost < 200 {
-            200
+
+        // EIP-2565: divisor 3, floor 200.
+        let eip2565 = {
+            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
+            if cost < 200 {
+                200
+            } else {
+                cost
+            }
+        };
+        // EIP-7883: no divisor, floor 500.
+        let eip7883 = {
+            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT;
+            if cost < 500 {
+                500
+            } else {
+                cost
+            }
+        };
+
+        if eip2565 > eip7883 {
+            eip2565
         } else {
-            cost
+            eip7883
         }
     }
 }

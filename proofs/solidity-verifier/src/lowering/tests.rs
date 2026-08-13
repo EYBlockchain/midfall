@@ -1459,14 +1459,107 @@ fn eip2537_gas_schedule_matches_spec_vectors() {
     assert_eq!(gas::g1msm_gas(200), 200 * 12_000 * 519 / 1_000);
     // 32600*k + 37700 for the verifier's two-pair check.
     assert_eq!(gas::pairing_gas(2), 102_900);
-    // EIP-2565, 32-byte base/exp/mod: max(200, 16 * 255 / 3).
-    assert_eq!(gas::modexp_gas_word_frame(), 1_360);
     // The rendered template constants come from the same module.
     let constants = crate::lowering::render::TemplateConstants::default().gas;
     assert_eq!(constants.g1add, 375);
     assert_eq!(constants.g1msm_one_pair, 12_000);
     assert_eq!(constants.pairing_two_pair, 102_900);
-    assert_eq!(constants.modexp, 1_360);
+    assert_eq!(constants.modexp, gas::modexp_gas_word_frame());
+}
+
+/// MF-1: the modexp bound must cover EVERY live schedule, not just the one
+/// that happened to be current when the generator was written. Derive both
+/// prices here from their EIP texts instead of asserting one magic number, so
+/// the next repricing forces a conscious edit rather than a silent brick:
+/// `staticcall` forwards a fixed amount, so a bound below the chain's price
+/// makes the precompile OOG and every proof revert.
+#[test]
+fn modexp_gas_bound_covers_every_live_schedule() {
+    use crate::lowering::layout::gas;
+
+    // Shared inputs for the only frame the verifier emits (32-byte base,
+    // exponent, and modulus).
+    const WORDS: u64 = 32_u64.div_ceil(8);
+    const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
+    // `exponent.bit_length() - 1` for a 32-byte exponent, upper-bounded.
+    const ITERATION_COUNT: u64 = 255;
+
+    // EIP-2565: `max(200, multiplication_complexity * iteration_count / 3)`.
+    let eip2565 = std::cmp::max(200, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT / 3);
+    assert_eq!(eip2565, 1_360, "EIP-2565 price for the 32-byte frame");
+
+    // EIP-7883: the `/ 3` divisor is removed for EVERY operand size (only the
+    // `2 * words^2` complexity branch is width-specific) and the floor rises
+    // to 500: `max(500, multiplication_complexity * iteration_count)`.
+    let eip7883 = std::cmp::max(500, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT);
+    assert_eq!(eip7883, 4_080, "EIP-7883 price for the 32-byte frame");
+
+    assert_eq!(
+        gas::modexp_gas_word_frame(),
+        std::cmp::max(eip2565, eip7883),
+        "modexp bound must be the maximum over live schedules"
+    );
+    assert!(
+        gas::modexp_gas_word_frame() >= eip7883,
+        "a bound below the EIP-7883 price bricks every proof on Osaka/Fusaka \
+         chains: the fixed-gas staticcall OOGs inside the mandatory Lagrange \
+         batch inversion and verifyProof reverts PrecompileFailed"
+    );
+
+    // The exponent the verifier actually emits is FR_MODULUS - 2 (255 bits,
+    // so 254 iterations); the generic bound must cover its exact price too.
+    assert!(gas::modexp_gas_word_frame() >= MULTIPLICATION_COMPLEXITY * 254);
+}
+
+/// MF-1: modexp is the one precompile the runtime cannot do without -- the
+/// Lagrange batch inversion calls it on every proof -- and it was the one
+/// precompile the constructor never probed, so a stale bound deployed
+/// silently. Pin the probe's shape: right precompile, the pinned runtime
+/// bound (not `gas()`), a return-size check, and a known answer a stub
+/// cannot satisfy.
+#[test]
+fn constructor_probes_modexp_at_the_pinned_runtime_bound() {
+    let smoke = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
+
+    assert!(
+        smoke.contains("staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}"),
+        "constructor must probe modexp at the same bound the runtime forwards"
+    );
+    assert!(
+        smoke.contains(
+            "if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }"
+        ),
+        "modexp probe must check the returned size"
+    );
+    // 2^(r-2) == 2^-1, verified as mulmod(result, 2, r) == 1: a precompile
+    // that returns zeros, or echoes its input, fails this.
+    assert!(
+        smoke.contains("mstore(add(scratch, {{ template_constants.modexp.base_offset|hex() }}), 2)")
+            && smoke.contains(
+                "mstore(add(scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))"
+            )
+            && smoke.contains("if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }"),
+        "modexp probe must run the runtime's own Fermat inversion as a known-answer test"
+    );
+
+    // Every precompile the runtime calls is now probed at its pinned bound.
+    for (probe, gas_constant) in [
+        ("modexp.address", "MODEXP_GAS"),
+        ("eip2537.g1add_address", "G1ADD_GAS"),
+        ("eip2537.g1msm_address", "G1MSM_GAS_1PAIR"),
+        ("eip2537.pairing_address", "PAIRING_GAS_2PAIR"),
+    ] {
+        assert!(
+            smoke.contains(&format!(
+                "staticcall({gas_constant}, {{{{ template_constants.{probe}|hex() }}}}"
+            )),
+            "constructor smoke probe missing for {probe} at {gas_constant}"
+        );
+    }
+    assert!(
+        !smoke.contains("staticcall(gas()"),
+        "smoke probes must forward pinned bounds, not gas()"
+    );
 }
 
 #[test]
@@ -1560,10 +1653,14 @@ fn verifier_constructor_smoke_tests_runtime_prerequisites() {
         "generated verifier should include a deployment-time runtime prerequisite smoke test"
     );
     for required in [
-        "Smoke-check the Cancun/EIP-2537 runtime features",
+        "Smoke-check the Cancun/EIP-2537/modexp runtime features",
         "mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})",
         "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
         "non-Cancun fork fails during deployment",
+        // MF-1: modexp is a runtime prerequisite like any other precompile.
+        "modexp (0x05) known-answer probe at the pinned runtime bound",
+        "staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}",
+        "if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }",
         "G1ADD(identity, identity) -> identity",
         "Known-answer probe: G1ADD(G, G) == 2G",
         "template_constants.eip2537.g1_generator",

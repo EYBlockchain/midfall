@@ -1,9 +1,10 @@
-    /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
-    /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
-    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
-    ///      uses (see the gas-bound constants block), so a chain whose
-    ///      precompile schedule was repriced upward fails here, at deployment,
-    ///      instead of bricking verifyProof later.
+    /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features required by the verifier.
+    /// @dev Exercises MCOPY, modexp, and EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+    ///      The probes forward the same exact gas bounds the runtime uses, for
+    ///      every precompile it calls -- 0x05 modexp included (see the
+    ///      gas-bound constants block) -- so a chain whose precompile schedule
+    ///      was repriced above those bounds fails here, at deployment, instead
+    ///      of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
             // Same free-memory-pointer guard as verifyProof. This body runs in
@@ -21,8 +22,39 @@
             mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})
             if iszero(eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)) { revert(0, 0) }
 
+            // ----------------------------------------------------------------
+            // modexp (0x05) known-answer probe at the pinned runtime bound.
+            //
+            // MF-1: every other precompile the runtime calls was probed here,
+            // but modexp -- which the MANDATORY Lagrange batch inversion and
+            // every scalar_inv call depend on -- was not. Two live schedules
+            // price this frame differently (EIP-2565: 1360, EIP-7883: 4080),
+            // and a bound below the chain's price does not degrade: the
+            // staticcall forwards a fixed amount, the precompile OOGs, and
+            // EVERY proof reverts PrecompileFailed. Without this probe that
+            // failure is invisible until the first verifyProof call, on a
+            // contract that deployed cleanly.
+            //
+            // The vector is the runtime's own operation -- Fermat inversion
+            // in Fr -- so it exercises the exact frame shape, exponent width,
+            // and gas bound used at proof time: 2^(FR_MODULUS - 2) == 2^-1.
+            // Checking mulmod(result, 2, FR_MODULUS) == 1 rather than a
+            // rendered constant keeps the probe self-contained while still
+            // rejecting a stub: a precompile returning zeros (or its input)
+            // fails, since 0 * 2 != 1 mod r.
+            // ----------------------------------------------------------------
+            mstore(add(scratch, {{ template_constants.modexp.base_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // base len
+            mstore(add(scratch, {{ template_constants.modexp.exp_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // exp len
+            mstore(add(scratch, {{ template_constants.modexp.mod_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // mod len
+            mstore(add(scratch, {{ template_constants.modexp.base_offset|hex() }}), 2)
+            mstore(add(scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))
+            mstore(add(scratch, {{ template_constants.modexp.mod_offset|hex() }}), FR_MODULUS)
+            if iszero(staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, scratch, {{ template_constants.modexp.frame_bytes|hex() }}, scratch, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
+            if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
+            if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }
+
             // Start the EIP-2537 probes with the identity encoding for G1/G2:
-            // all-zero padded words.
+            // all-zero padded words. This also clears the modexp frame above.
             for { let off := 0 } lt(off, {{ template_constants.eip2537.smoke_scratch_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
                 mstore(add(scratch, off), 0)
             }

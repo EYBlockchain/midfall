@@ -1,5 +1,15 @@
 # IVC Public-Accumulator Replay Fixture
 
+> **STALE — regeneration required before any deployment.** These artifacts were
+> rendered before the MF-1 fix (`MODEXP_GAS` raised to the EIP-7883 bound and a
+> constructor modexp known-answer probe added), so the committed `.sol` files
+> here still carry the old 1360 bound and no modexp probe. They remain valid
+> inputs for the *replay* tests, which exercise verification logic rather than
+> the modexp bound, but they must be regenerated (and their provenance rows
+> below updated) on a host with the pinned solc before they are used as a
+> deployment source. Regeneration needs solc, which the environment that
+> applied the MF-1 fix did not have.
+
 Pre-rendered artifacts for `tests/ivc_accumulator_replay.rs`, which replays a
 real IVC final proof and then mutates the accumulator public inputs to check the
 decoder in `templates/partials/verifier/AccumulatorHelpers.yul` rejects them.
