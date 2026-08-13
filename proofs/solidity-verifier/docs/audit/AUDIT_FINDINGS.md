@@ -1464,13 +1464,22 @@ it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
 See §5.3 for the standing M-4 decision.
 
 **Verification.** The full EVM-gated suite runs green against these changes:
-217 passed / 0 failed under `--features evm,rust-verifier-trace`, including
+218 passed / 0 failed under `--features evm,rust-verifier-trace`, including
 native-Rust-vs-Solidity trace equivalence, the constructor precompile-rejection
 tests, `typed_errors_identify_rejection_classes`, and
 `compiled_verifier_runtime_fits_the_eip170_limit` — so the added probe and
 guards do not breach the code-size limit. The MF-4 Lagrange re-route is
 observed executing rather than merely pinned in template text: the
 forced-domain-root verifier reverts with `ProofRejected()`.
+
+MF-1's probe is likewise demonstrated rather than asserted.
+`constructor_rejects_a_modexp_bound_below_the_chain_price` renders the verifier,
+lowers `MODEXP_GAS` to one gas below what this harness's revm charges for the
+frame, and requires DEPLOYMENT to fail -- with a positive control deploying the
+same fixture unmutated, so the rejection cannot pass vacuously. That is the
+exact shape of the original bug (the shipped 1360 sat below EIP-7883's 4064),
+reproduced by moving the bound rather than the schedule, because the pinned
+revm 19 exposes `SpecId::OSAKA` but still prices modexp with `berlin_run`.
 
 Caveat on the compiler: the pinned NATIVE solc binary was not reachable from
 the environment that applied these fixes, so the suite ran against the same
