@@ -144,9 +144,11 @@ The proof repacked from `4,912` compressed bytes to `7,392` padded bytes, with
 ## Recorded Legacy Multi-Limb Runtime Hashes
 
 The concrete hashes below are the latest recorded default multi-limb profile
-in this repository (recorded 2026-08-13, after the exact-precompile-gas-bound
-change; the tracked `target/ivc-keccak-solidity-dump/` sources match this
-run). They were generated with the fixed default quotient codegen shape:
+in this repository (recorded 2026-08-13, after the exact precompile gas
+bounds, quotient-VM operand clamps (P12), typed errors (P4), BUILD_ID (P10),
+and the alpha vk-binding (I-7); the tracked
+`target/ivc-keccak-solidity-dump/` sources match this run). They were
+generated with the fixed default quotient codegen shape:
 
 ```bash
 scripts/run_ivc_bench.sh \
@@ -165,19 +167,25 @@ Published deployed-runtime hashes:
 
 | Artifact | Runtime bytes | Runtime `keccak256` |
 | --- | ---: | --- |
-| `Halo2Verifier` | 12,454 | `0xa74814afafa69cfcb69224aa3a68f0f461348439beec8f18450f334782159e10` |
+| `Halo2Verifier` | 12,637 | `0x6df65ec939553efef2dadffdab078bfb424d10307a32dddd84866cf94d29b215` |
 | `Halo2VerifyingKey` | 17,025 | `0x67bac137fa7e479c25b63324812752e4b6e13d9841d5bf83c322170bf91c0f88` |
-| `Halo2QuotientEvaluator` | 9,552 | `0x6a7ec82a9b0683783c459f4b43e924f8ceba256731bf2b9782ab5747e801ea2c` |
+| `Halo2QuotientEvaluator` | 9,790 | `0x7e72c7c5d6fe845370d9431aaa590ab2cd62ca703c3d5b2a862bdb9937195814` |
 
-Total deployed runtime bytes: `39,031`.
+Total deployed runtime bytes: `39,452`.
 
-The same run accepted the final IVC Keccak proof on-chain in `1,306,084` gas
+The same run accepted the final IVC Keccak proof on-chain in `1,365,883` gas
 (gas-checkpoint diagnostic profile). The proof repacked from `5,056`
 compressed bytes to `7,776` padded bytes, with `8,356` bytes of calldata.
 
-Previous recording, for comparison (2026-07-era artifact set): verifier
-12,061 / VK 14,016 / evaluator 23,221 bytes (49,298 total), accepted in
-`1,399,268` gas.
+Measured cost of the P12 runtime operand clamps: the quotient-VM section
+("batched identity numerator reconstruction") went from `314,530` to
+`374,481` gas (+59,951, +19.1% of that section, ~+4.6% of the transaction);
+every other section is unchanged (PCS block 5 stays at `533,488`).
+
+Previous recordings, for comparison: 2026-08-13 pre-hardening — verifier
+12,454 / VK 17,025 / evaluator 9,552 bytes (39,031 total), accepted in
+`1,306,084` gas; 2026-07-era artifact set — verifier 12,061 / VK 14,016 /
+evaluator 23,221 bytes (49,298 total), accepted in `1,399,268` gas.
 
 Compared with this multi-limb profile, outer single-H removes three quotient G1
 commitments: proof size drops by `144` compressed bytes and `384` padded bytes,

@@ -2544,6 +2544,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
                 trace: true,
                 ..RenderDiagnostics::default()
             },
+            provenance: None,
         })
         .expect("trace pinned render with quotient evaluator");
     let trace_quotient_verifier_solidity = trace_quotient_artifacts.verifier;
@@ -3967,7 +3968,8 @@ fn assert_rendered_reader_matches_proof_layout(
         "generated proof reader proof_cptr increments drifted from ProofCalldataLayout"
     );
     assert!(
-        solidity.contains("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }"),
+        solidity
+            .contains("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }"),
         "generated proof reader must fail closed if proof_cptr drifts"
     );
 }

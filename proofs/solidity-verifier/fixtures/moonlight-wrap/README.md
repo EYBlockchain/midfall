@@ -15,6 +15,7 @@ the replay deploys the verifier with the verifying key alone.
 | Field | Value |
 | --- | --- |
 | Source commit | `3fb6d84` (**this repository**, solidity-verifier, at fixture-render time; not the Midfall dependency revision — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
+| Staleness | **Stale relative to the current templates** (exact gas bounds, typed errors, VM operand clamps, BUILD_ID, alpha vk-binding all postdate `3fb6d84`). The replay test intentionally pins this rendered state; regenerating needs the external Moonlight checkout described below. |
 | Rendered by | Moonlight `wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs` |
 | Moonlight revision | `origin/codex/wrap-bench-cherry-picks` |
 | Accumulator | `AccumulatorEncoding::point_pair(offset=11, num_limbs=7, num_limb_bits=56)` |

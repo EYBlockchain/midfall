@@ -138,7 +138,17 @@ contract Halo2QuotientEvaluator {
             // block mirrors that rule by accumulating those identities into
             // SELECTOR_ACC_MPTR buckets for later multiplication by fixed
             // selector commitments, while fully evaluated identities contribute
-            // to the negated expected scalar.            // Optional quotient helper functions. Each one is rendered only
+            // to the negated expected scalar.            // Revert with the QuotientProgramInvalid() selector
+            // (bytes4(keccak256) = 0x3cc81b89; pinned by
+            // p4_error_selectors_match_declared_errors). Defined here rather
+            // than in AssemblyHelpers.yul because the quotient VM renders in
+            // BOTH the main verifier and the standalone evaluator assembly.
+            function q_program_fail() {
+                mstore(0x00, shl(224, 0x3cc81b89))
+                revert(0x00, 0x04)
+            }
+
+            // Optional quotient helper functions. Each one is rendered only
             // when the Rust lowering pass recognized the corresponding
             // expression shape in this generated verifier. They are pure Fr
             // helpers and share the same FR_MODULUS as the surrounding
@@ -158,7 +168,8 @@ contract Halo2QuotientEvaluator {
                 let q_r := FR_MODULUS
                 let x2 := mulmod(x, x, q_r)
                 z := mulmod(x, mulmod(x2, x2, q_r), q_r)
-            }            // ===============================================================
+            }
+            // ===============================================================
             // Batched identity numerator / linearization target.
             //
             // This block does not evaluate the quotient polynomial h(x), and
@@ -457,6 +468,7 @@ contract Halo2QuotientEvaluator {
                         // 64 KiB when this compact form is emitted.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                         if q_has_top {
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
@@ -468,6 +480,7 @@ contract Halo2QuotientEvaluator {
                     case 0x06 {
                         // The safety validator guarantees a spilled operand
                         // exists before ADD. q_top is the right operand.
+                        if eq(q_sp, 0xb8e0) { q_program_fail() }
                         q_sp := sub(q_sp, 0x20)
                         q_top := addmod(mload(q_sp), q_top, r)
                     }
@@ -491,6 +504,7 @@ contract Halo2QuotientEvaluator {
                         // already range-checked Fr scalar in verifier memory.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                         q_top := addmod(q_top, mload(q_ptr), r)
                     }
                     // VM 0x11 MUL_MEM_U16: multiply q_top by a short memory load.
@@ -498,6 +512,7 @@ contract Halo2QuotientEvaluator {
                         // In-place multiply by a planned memory word.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                         q_top := mulmod(q_top, mload(q_ptr), r)
                     }
                     // Limb-aware opcodes are opt-in compact forms for
@@ -544,6 +559,7 @@ contract Halo2QuotientEvaluator {
                             // whole identity is gated by mload(q_cond_ptr).
                             q_cond_ptr := shr(240, mload(q_pc))
                             q_pc := add(q_pc, 2)
+                        if gt(sub(q_cond_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                         }
 
                         let q_acc := 0
@@ -578,6 +594,7 @@ contract Halo2QuotientEvaluator {
                                 let qconst := byte(0, q_word)
                                 let q_ptr := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                        if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
                                     mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),
@@ -590,12 +607,14 @@ contract Halo2QuotientEvaluator {
                         for { let q_row_block := 0 } lt(q_row_block, q_row_count) { q_row_block := add(q_row_block, 1) } {
                             let q_lhs := shr(240, mload(q_pc))
                             q_pc := add(q_pc, 2)
+                        if gt(sub(q_lhs, 0x3680), 0x6aa0) { q_program_fail() }
                             let q_lhs_value := mload(q_lhs)
                             for { let q_i := 0 } lt(q_i, 7) { q_i := add(q_i, 1) } {
                                 let q_word := mload(q_pc)
                                 let qconst := byte(0, q_word)
                                 let q_rhs := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                        if gt(sub(q_rhs, 0x3680), 0x6aa0) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
                                     mulmod(
@@ -615,6 +634,8 @@ contract Halo2QuotientEvaluator {
                             let q_lhs_base := shr(240, q_pair_word)
                             let q_rhs_base := and(shr(224, q_pair_word), 0xffff)
                             q_pc := add(q_pc, 0x04)
+                            if gt(sub(q_lhs_base, 0x3680), 0x69e0) { q_program_fail() }
+                            if gt(sub(q_rhs_base, 0x3680), 0x69e0) { q_program_fail() }
                             let q_coeff_pc := q_pc
                             q_pc := add(q_pc, 13)
                             for { let q_i := 0 } lt(q_i, 7) { q_i := add(q_i, 1) } {
@@ -640,6 +661,7 @@ contract Halo2QuotientEvaluator {
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                        if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),
@@ -654,6 +676,8 @@ contract Halo2QuotientEvaluator {
                             let q_lhs := and(shr(232, q_word), 0xffff)
                             let q_rhs := and(shr(216, q_word), 0xffff)
                             q_pc := add(q_pc, 5)
+                        if gt(sub(q_lhs, 0x3680), 0x6aa0) { q_program_fail() }
+                        if gt(sub(q_rhs, 0x3680), 0x6aa0) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(
@@ -1277,7 +1301,7 @@ contract Halo2QuotientEvaluator {
                             mstore(q_selector_ptr, addmod(q_selector_acc, mload(0xb8e0), r))
                             }
                         }
-                        default { revert(0, 0) }
+                        default { q_program_fail() }
                     }
                     // VM 0x0b FOLD_SELECTOR: consume q_top into one simple-selector bucket.
                     case 0x0b {
@@ -1289,6 +1313,11 @@ contract Halo2QuotientEvaluator {
                         q_pc := add(q_pc, 3)
                         let q_sel_idx := shr(16, q_selector_payload)
                         let q_sel_gap := and(q_selector_payload, 0xffff)
+                        // P12: the bucket index addresses the SELECTOR_ACC
+                        // region and the gap indexes the y-power table; both
+                        // are codegen-known sizes, so clamp before the writes.
+                        if iszero(lt(q_sel_idx, 10)) { q_program_fail() }
+                        if gt(q_sel_gap, 0x30) { q_program_fail() }
                         let q_eval := q_top
                         q_has_top := 0
                         // Simple-selector identity: keep the same y-batch
@@ -1311,21 +1340,21 @@ contract Halo2QuotientEvaluator {
                     }
                     // Invalid generated bytecode should fail closed. 0x1a intentionally lands here.
                     default {
-                        revert(0, 0)
+                        q_program_fail()
                     }
                 }
                 // The VK-pinned bytecode must end exactly at q_end and every
                 // identity must have been consumed by a fold/native callback.
                 // This catches malformed generator output whose final opcode
                 // over-reads operands or leaves a partial expression live.
-                if iszero(eq(q_pc, q_end)) { revert(0, 0) }
-                if q_has_top { revert(0, 0) }
+                if iszero(eq(q_pc, q_end)) { q_program_fail() }
+                if q_has_top { q_program_fail() }
                 // The spilled stack must also be balanced. A FOLD executed
                 // with more than one operand live consumes only the cached
                 // top, leaving abandoned words below q_sp with q_has_top
                 // clear -- so both checks above pass while an operand of the
                 // identity has been silently dropped from nu_y(x).
-                if iszero(eq(q_sp, 0xb8e0)) { revert(0, 0) }
+                if iszero(eq(q_sp, 0xb8e0)) { q_program_fail() }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled
