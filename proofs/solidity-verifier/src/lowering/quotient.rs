@@ -142,6 +142,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// VK payload reservation, and the generated Yul interpreter. Keeping the
     /// bounds checks here prevents the standalone evaluator and in-verifier VM
     /// paths from drifting.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn quotient_template_program(
         &self,
         build: QuotientProgramBuild,

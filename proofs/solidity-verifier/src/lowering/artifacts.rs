@@ -69,6 +69,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
     /// Build the Askama model for the main Solidity verifier contract from an
     /// already-converged lowering plan.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn generate_verifier_from_plan(
         &self,
         plan: &LoweringPlan,
