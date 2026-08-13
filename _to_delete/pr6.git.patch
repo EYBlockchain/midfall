@@ -1,0 +1,82 @@
+diff --git a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+--- a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
++++ b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+@@ -1487,12 +1487,32 @@
+ `0.8.30+commit.73712a01`) behind a shim exposing the native CLI surface. That
+ is sound for exercising behaviour, but this repository's reproducibility claim
+ pins the native binary's sha256 — so nothing produced that way may be deployed
+-or used to pin a hash, and the code-size result should be re-confirmed with the
+-pinned binary before release.
++or used to pin a hash.
+ 
+-**Not closed by these commits:** the committed fixtures and the Sepolia
+-deployment predate the MF-1 fix and are marked STALE; regenerating them needs
+-the SRS asset (unreachable here) and, for moonlight-wrap, a Moonlight checkout.
++The two builds were then compared directly, which upgrades that caveat from an
++assumption to a measurement: recompiling `deployments/sepolia/moonlight-wrap/
++Halo2Verifier.sol` (a 21,161-byte via-IR runtime, at the `deployment.json`
++settings) through the WASM build reproduces the committed native-compiled
++runtime with exactly 40 differing bytes — the two 20-byte immutable
++`AUTHORIZED_VK` slots, which a fresh compile leaves zeroed. All 21,121 other
++bytes match. So the code-size result carries native weight; re-confirming it on
++a pinned-binary host remains good release hygiene rather than an open risk.
++
++**Correction to an earlier claim in this section's history.** The MF-1 commit
++message and an earlier revision of `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §4
++stated that the `deployments/sepolia/moonlight-wrap` deployment should be
++assumed bricked post-Fusaka. That is wrong, and the assumption behind it was
++wrong: that deployment predates the exact-gas hardening, so all 17 of its
++`staticcall`s — the three modexp sites included — forward `gas()`, and an
++upward repricing is absorbed rather than fatal. Only artifacts carrying exact
++bounds are exposed, which is the population MF-1 addresses. Verified by
++reading the recorded source (its recompiled runtime reproduces
++`deployment.json`'s `runtimeCodeHash` byte-for-byte apart from the two
++immutable `AUTHORIZED_VK` slots), so no `eth_call` is needed to settle it.
++
++**Not closed by these commits:** the committed fixtures predate the MF-1 fix
++and are marked STALE; regenerating them needs the SRS asset (unreachable here)
++and, for moonlight-wrap, a Moonlight checkout.
+ The replay harness also cannot exercise EIP-7883 — the pinned revm 19 has an
+ Osaka spec, but its modexp handler is still `berlin_run` — so real coverage
+ awaits a revm bump; `src/evm.rs` records that gap at the `SpecId` pin.
+diff --git a/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md b/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
+--- a/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
++++ b/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
+@@ -111,14 +111,29 @@
+    re-render (the generator takes the maximum over live schedules) and
+    migrate per the steps above. There is no wrapper-side mitigation.
+ 
+-Worked example: EIP-7883 (Fusaka) removed the `/ 3` divisor from modexp
+-pricing, taking the verifier's frame from 1360 to 4064 gas. Artifacts
+-rendered before that fix carry `MODEXP_GAS = 1360` and revert every proof on
+-any post-Fusaka chain — including the pre-fix `deployments/sepolia/`
+-moonlight-wrap deployment, which should be assumed bricked and confirmed with
+-a single `eth_call` before it is retired in the deployment record. Deployment
+-of NEW artifacts now fails fast in the constructor probes for every
+-precompile the runtime calls, modexp included.
++Worked example: EIP-7883 (Fusaka, mainnet 2025-12-03, testnets earlier)
++removed the `/ 3` divisor from modexp pricing, taking the verifier's frame
++from 1360 to 4064 gas. An artifact rendered with exact bounds but before the
++MF-1 fix carries `MODEXP_GAS = 1360` and reverts every proof on any
++post-Fusaka chain. Deployment of NEW artifacts now fails fast in the
++constructor probes for every precompile the runtime calls, modexp included.
++
++**The exposure is exactly the artifacts that carry exact bounds.** Note what
++that implies for `deployments/sepolia/moonlight-wrap`: it is NOT affected. It
++predates the exact-gas hardening entirely — all 17 of its `staticcall`s
++forward `gas()`, including its three modexp sites — so a repricing is simply
++absorbed from the caller's remaining gas. (Verified by reading the recorded
++source, whose recompiled runtime matches `runtimeCodeHash` in
++`deployment.json` byte-for-byte apart from the two immutable `AUTHORIZED_VK`
++slots, so the recorded source is genuinely what is deployed.)
++
++That is the trade-off worth stating plainly, because it is easy to get
++backwards: **exact-gas forwarding is what creates repricing fragility.** The
++older `gas()`-forwarding renders survive any upward repricing but are exposed
++to the DoS that exact bounds were introduced to close (M-2) — a malformed
++proof point burns 63/64 of the transaction budget instead of one scheduled
++call. Neither property is free; the constructor probes exist so the fragility
++the current design accepts is caught at deployment rather than in production.
+ 
+ ## 5. Accepted risks (deployment owner sign-off)
+ 

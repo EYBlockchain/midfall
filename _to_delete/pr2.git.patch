@@ -1,0 +1,739 @@
+diff --git a/proofs/solidity-verifier/src/lowering/layout/memory.rs b/proofs/solidity-verifier/src/lowering/layout/memory.rs
+--- a/proofs/solidity-verifier/src/lowering/layout/memory.rs
++++ b/proofs/solidity-verifier/src/lowering/layout/memory.rs
+@@ -528,6 +528,14 @@
+     /// selector accumulators are accounted for.
+     pub(crate) quotient_tmp_mptr: usize,
+     pub(crate) quotient_stack_mptr: usize,
++    /// First address past the quotient VM stack / callback scratch region.
++    ///
++    /// MF-3: the interpreter's spill pointer walks upward from
++    /// `quotient_stack_mptr` with no ceiling of its own, so the rendered VM
++    /// clamps `q_sp` against this bound. The region is sized for the larger
++    /// of the interpreted stack depth and the structured native-callback
++    /// scratch, which is exactly the ceiling both uses must respect.
++    pub(crate) quotient_stack_hi: usize,
+     pub(crate) pcs_q_eval_source_table_mptr: usize,
+     pub(crate) pcs_q_com_trace_scratch_mptr: usize,
+     pub(crate) pcs_final_msm_scratch_mptr: usize,
+@@ -1099,6 +1107,7 @@
+             lagrange_denoms_mptr,
+             quotient_tmp_mptr,
+             quotient_stack_mptr,
++            quotient_stack_hi: quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
+             pcs_q_eval_source_table_mptr,
+             pcs_q_com_trace_scratch_mptr,
+             pcs_final_msm_scratch_mptr,
+diff --git a/proofs/solidity-verifier/src/lowering/quotient.rs b/proofs/solidity-verifier/src/lowering/quotient.rs
+--- a/proofs/solidity-verifier/src/lowering/quotient.rs
++++ b/proofs/solidity-verifier/src/lowering/quotient.rs
+@@ -187,6 +187,8 @@
+             selector_max_power: selector_fold.max_power,
+             selector_tail_updates: Self::selector_tail_updates(selector_fold),
+             stack_mptr: quotient_stack_mptr,
++            stack_hi: memory.quotient_stack_hi,
++            num_consts: build.consts.len(),
+             program_mptr,
+             operand_lo: operand_bounds.0,
+             operand_hi: operand_bounds.1,
+diff --git a/proofs/solidity-verifier/src/lowering/render/models.rs b/proofs/solidity-verifier/src/lowering/render/models.rs
+--- a/proofs/solidity-verifier/src/lowering/render/models.rs
++++ b/proofs/solidity-verifier/src/lowering/render/models.rs
+@@ -706,6 +706,17 @@
+     pub(crate) selector_tail_updates: Vec<QuotientSelectorTail>,
+     /// Operand stack / callback scratch base.
+     pub(crate) stack_mptr: usize,
++    /// First address past the operand stack / callback scratch region.
++    ///
++    /// MF-3: spill sites clamp `q_sp` against this so a malformed program
++    /// cannot walk the stack pointer out of its registered region.
++    pub(crate) stack_hi: usize,
++    /// Number of Fr words in the generated quotient constant table.
++    ///
++    /// MF-3: constant-table indexes decoded from program bytes are clamped
++    /// against this so an out-of-range index cannot read program bytes (or
++    /// commitment words) as field constants.
++    pub(crate) num_consts: usize,
+     /// Memory pointer to the first encoded program word.
+     pub(crate) program_mptr: usize,
+     /// Lowest word address a VM memory operand may load from (P12/L-6).
+@@ -1218,6 +1229,8 @@
+                 selector_max_power: 0,
+                 selector_tail_updates: vec![],
+                 stack_mptr: 0,
++                stack_hi: usize::MAX,
++                num_consts: usize::MAX,
+                 program_mptr: 0,
+                 // Synthetic model: a permissive clamp window keeps the
+                 // rendered guards inert for layout-shape tests.
+diff --git a/proofs/solidity-verifier/src/lowering/tests.rs b/proofs/solidity-verifier/src/lowering/tests.rs
+--- a/proofs/solidity-verifier/src/lowering/tests.rs
++++ b/proofs/solidity-verifier/src/lowering/tests.rs
+@@ -1511,6 +1511,176 @@
+     assert!(gas::modexp_gas_word_frame() >= MULTIPLICATION_COMPLEXITY * 254);
+ }
+ 
++/// MF-4: the typed taxonomy exists so an incident responder can tell a chain
++/// fault from a rejected proof. Three paths used to conflate them -- a failed
++/// precompile inside the accumulator precheck or the final pairing surfaced as
++/// an input rejection, and a zero Lagrange denominator (a transcript event)
++/// surfaced as `PrecompileFailed`. Pin the split so it cannot regress.
++#[test]
++fn precompile_faults_and_input_rejections_use_distinct_selectors() {
++    let corpus = verifier_template_corpus();
++
++    // (a) The pairing helper: staticcall/returndatasize failure is a chain
++    // fault; a pairing that ran and returned != 1 rejects the proof.
++    assert!(
++        corpus.contains(
++            "if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }\n                // Compare against 1 rather than truncating to the low bit:"
++        ),
++        "ec_pairing must report a failed pairing staticcall as PrecompileFailed"
++    );
++    assert!(
++        corpus.contains("ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }"),
++        "ec_pairing must report a pairing result of 0 as ProofRejected"
++    );
++
++    // (b) batch_invert and the accumulator validator both carry a cause flag
++    // rather than a bare boolean.
++    assert!(
++        corpus.contains(
++            "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed"
++        ),
++        "batch_invert must report whether its modexp call failed"
++    );
++    assert!(
++        corpus
++            .contains("function validate_public_accumulator(success, r) -> out, precompile_failed"),
++        "the accumulator validator must report whether its G1MSM call failed"
++    );
++
++    // (c) Both boundaries must branch on that flag.
++    for (guarded, fallback, what) in [
++        (
++            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
++            "fail(ERR_PROOF_REJECTED)",
++            "Lagrange",
++        ),
++        (
++            "if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
++            "fail(ERR_BAD_POINT_ENCODING)",
++            "accumulator",
++        ),
++    ] {
++        assert!(
++            corpus.contains(guarded) && corpus.contains(fallback),
++            "{what} boundary must split precompile faults from rejected input"
++        );
++    }
++
++    // A zero denominator means the squeezed x hit a domain point: an input
++    // rejection, not a broken chain.
++    assert!(
++        !corpus.contains(
++            "success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)"
++        ),
++        "the Lagrange batch inversion must thread its failure cause"
++    );
++}
++
++/// MF-3: the quotient VM's terminal checks (`q_pc == q_end`, `q_has_top == 0`,
++/// `q_sp == base`) cannot see three failure shapes, so the interpreter grew
++/// guards for each. The program is VK-codehash-pinned, so none of these are
++/// reachable on-chain with a well-formed artifact -- they are containment for
++/// a future generator bug, mirroring on the deployed side what the reference
++/// VM already enforces at build time (`stack.len() == 1` per identity,
++/// `const_at` bounds, and `identity_segment` rejecting a native marker inside
++/// an expression).
++#[test]
++fn quotient_vm_interpreter_fails_closed_on_malformed_programs() {
++    let vm = include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
++
++    // (a) A fold with no live cached top would re-fold a STALE q_top, and
++    // both terminal checks would still pass.
++    assert_eq!(
++        vm.matches("{%- call q_top_guard() %}").count(),
++        2,
++        "both FOLD_MAIN and FOLD_SELECTOR must require a live cached top"
++    );
++    assert!(
++        vm.contains("if iszero(q_has_top) { q_program_fail() }"),
++        "q_top_guard must fail closed when the cached top is not live"
++    );
++
++    // (b) Native callbacks used to RESET q_sp, which silently discarded
++    // operands spilled by a preceding partial expression -- an identity would
++    // drop out of nu_y(x) with the program still ending balanced. Assert
++    // instead of reset.
++    // The only assignment of the stack base to q_sp may be its declaration.
++    assert_eq!(
++        vm.matches("q_sp := {{ program.stack_mptr|hex() }}").count(),
++        1,
++        "native callbacks must not reset q_sp; a reset hides dropped operands"
++    );
++    assert!(
++        vm.contains("let q_sp := {{ program.stack_mptr|hex() }}"),
++        "the surviving q_sp assignment must be its initial declaration"
++    );
++    assert_eq!(
++        vm.matches("{%- call q_stack_empty_guard() %}").count(),
++        3,
++        "each native callback boundary must assert an already-empty stack"
++    );
++
++    // (c) The spill pointer has no ceiling of its own.
++    assert_eq!(
++        vm.matches("if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }")
++            .count(),
++        10,
++        "every cached-top spill site must clamp q_sp to its registered region"
++    );
++
++    // (d) u16 constant-table indexes reach far outside the pinned payload, so
++    // unlike the u8 forms they cannot rely on bounded drift.
++    assert_eq!(
++        vm.matches("{%- call q_const_guard(\"qconst\") %}").count(),
++        3,
++        "u16 constant-table indexes must be clamped to the rendered table length"
++    );
++    assert!(
++        vm.contains("if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }"),
++        "q_const_guard must clamp against the generated constant-table length"
++    );
++}
++
++/// MF-2: the free-memory-pointer guard is the only on-chain check that solc's
++/// stack-spill reservation has not grown into the generated absolute layout.
++/// A fork that recompiles at a different (version, optimiser-runs) pair can
++/// still fit EIP-170, deploy, and then revert on every proof -- so the guard
++/// must say *why* rather than reverting bare, which is indistinguishable from
++/// every other empty revert.
++#[test]
++fn memory_layout_guard_reverts_with_a_typed_selector() {
++    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
++    let smoke_template = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
++
++    for (source, name) in [
++        (verifier_template, "verifyProof"),
++        (smoke_template, "constructor"),
++    ] {
++        assert!(
++            source.contains("mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))")
++                && source.contains("revert(0x00, 0x04)"),
++            "{name} memory-layout guard must revert with MemoryLayoutViolated()"
++        );
++    }
++    // The guard must still be the first thing each assembly block does: it
++    // protects the writes that follow, so a bare `revert(0, 0)` left behind
++    // on either path means the typed rewrite missed a site.
++    assert!(
++        verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) {"),
++        "runtime guard must still compare the FMP against TRANSCRIPT_MPTR"
++    );
++    assert!(
++        !verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }"),
++        "runtime memory-layout guard still reverts bare"
++    );
++    assert!(
++        !smoke_template.contains(
++            "if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) { revert(0, 0) }"
++        ),
++        "constructor memory-layout guard still reverts bare"
++    );
++}
++
+ /// MF-1: modexp is the one precompile the runtime cannot do without -- the
+ /// Lagrange batch inversion calls it on every proof -- and it was the one
+ /// precompile the constructor never probed, so a stale bound deployed
+@@ -1572,7 +1742,7 @@
+             "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
+         );
+     assert!(
+-            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
++            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
+             "accumulator precheck should fail before transcript parsing"
+         );
+     assert!(
+@@ -1583,7 +1753,7 @@
+     );
+     assert!(
+         verifier_template.contains(
+-            "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n\n            {%- match quotient_external %}"
++            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_PROOF_REJECTED)\n            }\n\n            {%- match quotient_external %}"
+         ),
+         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
+     );
+@@ -1843,9 +2013,9 @@
+     let verifier_template = verifier_template_corpus();
+ 
+     for required in [
+-        "function validate_public_accumulator(success, r) -> out",
++        "function validate_public_accumulator(success, r) -> out, precompile_failed",
+         "Fail malformed accumulator public inputs before transcript",
+-        "success := validate_public_accumulator(success, r)",
++        "success, acc_precompile_failed := validate_public_accumulator(success, r)",
+         "gas_checkpoint(2) // after VK loading + accumulator public-input precheck",
+         "Batch the prevalidated public IVC accumulator pairing equation",
+     ] {
+@@ -2399,8 +2569,14 @@
+             verifier_template.contains("function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret")
+                 && verifier_template
+                     .contains("ret := success\n                if iszero(ret) { leave }")
++                // MF-4: a failed/short-returning pairing staticcall is a chain
++                // fault (PrecompileFailed); only a pairing that RAN and
++                // returned != 1 rejects the proof.
++                && verifier_template.contains(
++                    "ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))\n                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }",
++                )
+                 && verifier_template.contains(
+-                    "ret := and(ret, eq(mload(scratch), 1))\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
++                    "ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
+                 ),
+             "final pairing helper must revert on pairing failure and normalize success to one"
+         );
+@@ -2487,6 +2663,10 @@
+         ("PrecompileFailed()", "ERR_PRECOMPILE_FAILED"),
+         ("ProofRejected()", "ERR_PROOF_REJECTED"),
+         ("QuotientProgramInvalid()", "ERR_QUOTIENT_PROGRAM_INVALID"),
++        // MF-2: the memory-layout guard reports a build fault (a recompile
++        // whose spill region reaches the generated layout), so it must be
++        // decodable rather than an anonymous empty revert.
++        ("MemoryLayoutViolated()", "ERR_MEMORY_LAYOUT_VIOLATED"),
+     ] {
+         let digest = Keccak256::digest(signature.as_bytes());
+         let selector = format!(
+diff --git a/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol b/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
+--- a/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
++++ b/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
+@@ -50,7 +50,10 @@
+     // verifyProof is success-or-revert; these errors let integrators and
+     // incident responders distinguish malformed calldata from a swapped VK,
+     // a non-canonical scalar, a failed precompile, or a rejected proof.
+-    // Constructor smoke probes intentionally keep bare reverts.
++    // Constructor smoke probes intentionally keep bare reverts -- they report
++    // a chain-capability failure, and the deployment transaction identifies
++    // itself. The one constructor exception is the memory-layout guard
++    // (MF-2), which reports a BUILD fault and is typed on both paths.
+     // ----------------------------------------------------------------------
+     /// @notice Calldata does not match the generated ABI shape (heads,
+     ///         lengths, instance count, or exact calldatasize).
+@@ -72,6 +75,12 @@
+     ///         invariant (bad opcode, operand out of window, stack misuse,
+     ///         or evaluator frame mismatch).
+     error QuotientProgramInvalid();
++    /// @notice solc's stack-spill reservation overlaps the generated absolute
++    ///         memory layout. This is a BUILD fault, not a proof fault: the
++    ///         artifact was compiled with a (version, optimiser) pair whose
++    ///         free-memory pointer starts at or above TRANSCRIPT_MPTR, so no
++    ///         input can ever verify. Redeploy from the pinned toolchain.
++    error MemoryLayoutViolated();
+ 
+     {% include "partials/verifier/Constants.sol" %}
+ 
+@@ -159,7 +168,18 @@
+             // reservation is compiler-version and optimiser dependent, so
+             // assert the invariant in the deployed bytecode instead of relying
+             // on a generator-side test the integrator never runs. ~6 gas.
+-            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
++            //
++            // MF-2: this is the only on-chain guard against a recompile that
++            // silently moves the spill region, and the failure it catches is
++            // permanent (no input can verify). `fail()` is not in scope this
++            // early, so write the MemoryLayoutViolated() selector inline
++            // rather than reverting bare -- an empty revert here is
++            // indistinguishable from every other empty revert, which is
++            // exactly the wrong signal for a build fault.
++            if gt(mload(0x40), TRANSCRIPT_MPTR) {
++                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
++                revert(0x00, 0x04)
++            }
+ 
+             // This block owns the call-frame memory and remains terminal.
+             // Generated scratch starts at TRANSCRIPT_MPTR, preserving
+diff --git a/proofs/solidity-verifier/templates/partials/quotient_numerator/QuotientNumeratorBlock.yul b/proofs/solidity-verifier/templates/partials/quotient_numerator/QuotientNumeratorBlock.yul
+--- a/proofs/solidity-verifier/templates/partials/quotient_numerator/QuotientNumeratorBlock.yul
++++ b/proofs/solidity-verifier/templates/partials/quotient_numerator/QuotientNumeratorBlock.yul
+@@ -9,7 +9,10 @@
+   sub(ptr, lo) > (hi - lo) cover both bounds (~6 gas per operand).
+   u8 constant-table indexes stay unguarded: their drift is bounded to
+   0x1FE0 bytes inside the VK-reserved region and covered by build-time
+-  validate_quotient_const_slots.
++  validate_quotient_const_slots. MF-3: the u16 forms do NOT share that
++  argument -- an out-of-range u16 index reaches 0x1FFFE0 bytes past the
++  table, well outside the pinned payload -- so those three sites are
++  clamped against the rendered table length.
+ -#}
+ {%- macro q_ptr_guard(ptr) %}
+                         if gt(sub({{ ptr }}, {{ program.operand_lo|hex() }}), {{ (program.operand_hi - program.operand_lo)|hex() }}) { q_program_fail() }
+@@ -23,6 +26,35 @@
+ {%- macro q_pop_guard() %}
+                         if eq(q_sp, {{ program.stack_mptr|hex() }}) { q_program_fail() }
+ {%- endmacro %}
++{#-
++  MF-3 interpreter fail-closed guards. The program is trusted through the VK
++  codehash pin, so none of these are reachable on-chain with a well-formed
++  artifact; they are containment for a future GENERATOR bug, in the same
++  spirit as the P12 operand clamps above. Each closes a hole the terminal
++  end-of-program checks provably cannot see:
++
++    - q_top_guard: FOLD_MAIN/FOLD_SELECTOR consume the cached top. With
++      q_has_top clear, the fold silently re-folds a STALE q_top and both
++      terminal checks (q_has_top == 0, q_sp == base) still pass.
++    - q_stack_empty_guard: native callbacks used to RESET q_sp to the base
++      rather than assert it, so operands spilled by a preceding partial
++      expression were discarded with no trace -- an identity would drop out
++      of nu_y(x) while the program still ended balanced.
++    - q_const_guard: constant-table indexes are decoded from program bytes
++      and were unclamped, so an out-of-range index reads whatever follows the
++      table (program bytes, commitments) as an Fr constant.
++    - the inlined spill-ceiling check at every push site: q_sp walks
++      upward with no ceiling of its own.
++-#}
++{%- macro q_top_guard() %}
++                        if iszero(q_has_top) { q_program_fail() }
++{%- endmacro %}
++{%- macro q_stack_empty_guard() %}
++                        if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { q_program_fail() }
++{%- endmacro %}
++{%- macro q_const_guard(idx) %}
++                        if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }
++{%- endmacro %}
+             // ===============================================================
+             // Batched identity numerator / linearization target.
+             //
+@@ -473,9 +505,11 @@
+                         // Fr words, so shl(5, const_idx) converts an index to
+                         // a byte offset.
+                         let qconst := shr(240, mload(q_pc))
++{%- call q_const_guard("qconst") %}
+                         // Push semantics: spill the old cached top, if any,
+                         // then install the loaded constant as the new q_top.
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -496,6 +530,7 @@
+                         // Load one canonical Fr word from generated memory and
+                         // push it through the cached-top stack discipline.
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -544,6 +579,7 @@
+                         // impossible for valid generated bytecode.
+                         default { q_program_fail() }
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -595,6 +631,7 @@
+                         default { q_program_fail() }
+                         {%- call q_ptr_guard("q_ptr") %}
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -612,6 +649,7 @@
+                         q_pc := add(q_pc, 2)
+                         {%- call q_ptr_guard("q_ptr") %}
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -662,6 +700,7 @@
+                         // constant table has fewer than 256 referenced slots.
+                         let qconst := byte(0, mload(q_pc))
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -697,6 +736,7 @@
+                         // constant tables.
+                         let qconst := shr(240, mload(q_pc))
+                         q_pc := add(q_pc, 2)
++{%- call q_const_guard("qconst") %}
+                         let q_const_ptr := add(q_const_mptr, shl(5, qconst))
+                         {%- call q_ptr_guard("q_const_ptr") %}
+                         q_top := addmod(q_top, mload(q_const_ptr), r)
+@@ -708,6 +748,7 @@
+                         // Two-byte constant-index multiply.
+                         let qconst := shr(240, mload(q_pc))
+                         q_pc := add(q_pc, 2)
++{%- call q_const_guard("qconst") %}
+                         let q_const_ptr := add(q_const_mptr, shl(5, qconst))
+                         {%- call q_ptr_guard("q_const_ptr") %}
+                         q_top := mulmod(q_top, mload(q_const_ptr), r)
+@@ -918,6 +959,7 @@
+                         // u16 ptr} pairs. The result is pushed as a fresh
+                         // stack value.
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -956,6 +998,7 @@
+                         {%- call q_ptr_guard("q_lhs") %}
+                         let q_lhs_value := mload(q_lhs)
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -1003,6 +1046,7 @@
+                         let q_coeff_pc := q_pc
+                         q_pc := add(q_pc, {{ template_constants.quotient_vm.limb_pairwise_coeffs }})
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -1081,6 +1125,7 @@
+                         q_pc := add(q_pc, 5)
+ 
+                         if q_has_top {
++                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
+                             mstore(q_sp, q_top)
+                             q_sp := add(q_sp, 0x20)
+                         }
+@@ -1214,7 +1259,7 @@
+                         // stack. The Rust memory planner must reserve enough
+                         // words for structured_permutation_scratch_words(meta)
+                         // whenever this opcode can appear.
+-                        q_sp := {{ program.stack_mptr|hex() }}
++{%- call q_stack_empty_guard() %}
+                         // The generated lines below call the same fold snippets
+                         // used by interpreted expressions, so trace IDs and
+                         // y-batch positions remain contiguous.
+@@ -1240,7 +1285,7 @@
+                         // f+beta/prefix/suffix scratch rather than as a
+                         // conventional VM stack. The Rust memory planner must
+                         // reserve structured_lookup_scratch_words(meta).
+-                        q_sp := {{ program.stack_mptr|hex() }}
++{%- call q_stack_empty_guard() %}
+                         // Generated LogUp code follows the same y-batch order
+                         // as the Rust identity stream.
+                         {%- for line in quotient_native_lookup_computation %}
+@@ -1265,7 +1310,7 @@
+                         // interpreter stack before dispatching.
+                         q_top := 0
+                         q_has_top := 0
+-                        q_sp := {{ program.stack_mptr|hex() }}
++{%- call q_stack_empty_guard() %}
+                         // Native identity sub-cases are generated from selected heavy gate identities.
+                         switch q_native_idx
+                         {%- for code_block in quotient_native_identity_computations %}
+@@ -1283,6 +1328,7 @@
+                     case {{ template_constants.quotient_vm.op.fold_main|hex() }} {
+                         // q_top is the complete value of one fully evaluated
+                         // identity at x. It leaves the expression stack here.
++{%- call q_top_guard() %}
+                         let q_eval := q_top
+                         q_has_top := 0
+                         {%- if self.trace %}
+@@ -1312,6 +1358,7 @@
+                         // are codegen-known sizes, so clamp before the writes.
+                         if iszero(lt(q_sel_idx, {{ program.num_selector_buckets }})) { q_program_fail() }
+                         if gt(q_sel_gap, {{ program.selector_max_power|hex() }}) { q_program_fail() }
++{%- call q_top_guard() %}
+                         let q_eval := q_top
+                         q_has_top := 0
+                         {%- if self.trace %}
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/AccumulatorHelpers.yul b/proofs/solidity-verifier/templates/partials/verifier/AccumulatorHelpers.yul
+--- a/proofs/solidity-verifier/templates/partials/verifier/AccumulatorHelpers.yul
++++ b/proofs/solidity-verifier/templates/partials/verifier/AccumulatorHelpers.yul
+@@ -248,7 +248,13 @@
+             // carried-scalar and fixed-base-tail arms; renders whose
+             // accumulator layout has neither (e.g. point_pair with no tail)
+             // legally leave it unused.
+-            function validate_public_accumulator(success, r) -> out {
++            // MF-4: `precompile_failed` separates a G1MSM staticcall that
++            // could not run (chain/gas fault) from a public-input point this
++            // verifier decoded and rejected (bad packing, out-of-field
++            // coordinate, non-canonical identity encoding, or a point the
++            // precompile found off-curve/out-of-subgroup). Both fail closed at
++            // the call site; only the second is a BadPointEncoding.
++            function validate_public_accumulator(success, r) -> out, precompile_failed {
+                 out := success
+                 let bits := {{ self.expected_num_acc_limb_bits }}
+                 let n := {{ self.expected_num_acc_limbs }}
+@@ -303,6 +309,7 @@
+                         // is also a curve/subgroup validation round-trip.
+                         out := staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
+                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
++                        precompile_failed := iszero(out)
+                     }
+                 }
+ 
+@@ -418,6 +425,7 @@
+                             {{ template_constants.g1_bytes|hex() }}
+                         )
+                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
++                        precompile_failed := iszero(out)
+                     }
+                 }
+                 // The caller checks `out` and reverts before transcript work if
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/AssemblyHelpers.yul b/proofs/solidity-verifier/templates/partials/verifier/AssemblyHelpers.yul
+--- a/proofs/solidity-verifier/templates/partials/verifier/AssemblyHelpers.yul
++++ b/proofs/solidity-verifier/templates/partials/verifier/AssemblyHelpers.yul
+@@ -138,7 +138,16 @@
+             // The function returns a boolean instead of reverting so callers
+             // can combine it with other `success` plumbing until a section
+             // boundary decides whether to fail closed.
+-            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
++            //
++            // MF-4: the second return value separates a FAILED PRECOMPILE
++            // (staticcall reverted / OOG'd / returned the wrong size -- a
++            // chain or gas-schedule fault) from a REJECTED INPUT (a zero or
++            // non-canonical denominator, which for the Lagrange batch means
++            // the squeezed x landed on a domain point). Both fail closed at
++            // the section boundary, but they are different incidents and used
++            // to surface under the same PrecompileFailed selector, pointing
++            // responders at the node when the transcript was the cause.
++            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
+                 ret := success
+                 if iszero(ret) { leave }
+                 // Memory ranges must be forward and word-aligned by
+@@ -177,6 +186,7 @@
+                     mstore(add(single_scratch, {{ template_constants.modexp.mod_offset|hex() }}), r)
+                     ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, single_scratch, {{ template_constants.modexp.frame_bytes|hex() }}, single_scratch, {{ template_constants.modexp.output_bytes|hex() }})
+                     ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
++                    precompile_failed := iszero(ret)
+                     if ret { mstore(mptr_start, mload(single_scratch)) }
+                     leave
+                 }
+@@ -227,6 +237,7 @@
+                 mstore(add(gp_mptr, {{ template_constants.modexp.mod_offset|hex() }}), r)
+                 ret := staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
+                 ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
++                precompile_failed := iszero(ret)
+                 // Leave before the backward pass on a failed modexp. A failed
+                 // staticcall writes no output, so `mload(gp_mptr)` would read
+                 // back the stale frame header and the pass below would
+@@ -274,13 +285,20 @@
+                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
+                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
+                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
++                // MF-4: separate "the chain could not run the pairing" from
++                // "the pairing ran and rejected this proof". Both fail closed,
++                // but they are different incidents: the first points at the
++                // node/fork (a missing, repriced, or short-returning
++                // precompile), the second at the proof. Collapsing them into
++                // ProofRejected sent every responder looking at the wrong one.
+                 ret := staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
+                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
++                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }
+                 // Compare against 1 rather than truncating to the low bit:
+                 // `and(ret, word)` would accept any odd result word. EIP-2537
+                 // only ever returns 0 or 1, so this matches the strict form
+                 // the constructor smoke test already uses.
+-                ret := and(ret, eq(mload(scratch), 1))
++                ret := eq(mload(scratch), 1)
+                 if iszero(ret) { fail(ERR_PROOF_REJECTED) }
+                 ret := 1
+             }
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/Constants.sol b/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
+--- a/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
++++ b/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
+@@ -232,6 +232,7 @@
+     uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
+     uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
+     uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
++    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;
+ 
+     // BLS12-381 scalar-field modulus, used for transcript challenges and all
+     // Halo2 verifier arithmetic.
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/Lagrange.yul b/proofs/solidity-verifier/templates/partials/verifier/Lagrange.yul
+--- a/proofs/solidity-verifier/templates/partials/verifier/Lagrange.yul
++++ b/proofs/solidity-verifier/templates/partials/verifier/Lagrange.yul
+@@ -1,6 +1,10 @@
+             // ===============================================================
+             // Lagrange & instance-evaluation block (pure Fr arithmetic).
+             // ===============================================================
++            // MF-4: hoisted so the section boundary below can tell a failed
++            // modexp (chain fault) from a rejected denominator (x landed on a
++            // domain point) instead of reporting both as PrecompileFailed.
++            let lagrange_precompile_failed := 0
+             {
+                 let k := {{ k }}
+                 let x := mload(X_MPTR)
+@@ -33,7 +37,7 @@
+                 }
+                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
+                 mstore(mptr_end, x_n_minus_1)
+-                success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
++                success, lagrange_precompile_failed := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+ 
+                 // Convert inverted denominators into Lagrange evaluations:
+                 // L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i).
+@@ -88,4 +92,10 @@
+             gas_checkpoint(11) // after Lagrange + instance evaluation block
+             {%- endif %}
+ 
+-            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
++            if iszero(success) {
++                // A zero or non-canonical denominator is a rejected input,
++                // not a broken chain: the only way to reach it is a squeezed
++                // x that coincides with a domain point (probability ~n/r).
++                if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
++                fail(ERR_PROOF_REJECTED)
++            }
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol b/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
+--- a/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
++++ b/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
+@@ -10,7 +10,16 @@
+             // Same free-memory-pointer guard as verifyProof. This body runs in
+             // the *creation* frame, which the generator's memoryguard test does
+             // not inspect (it parses the runtime prologue only).
+-            if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) { revert(0, 0) }
++            //
++            // MF-2: typed like the runtime guard, and for a stronger reason.
++            // The runtime guard turns a bad recompile into a revert on every
++            // proof; this one turns it into a failed DEPLOYMENT, which is
++            // where a build fault belongs. The probes below keep bare reverts
++            // (a chain-capability failure, not a build fault).
++            if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) {
++                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
++                revert(0x00, 0x04)
++            }
+ 
+             // Scratch is reused for every runtime-prerequisite probe.
+             let scratch := {{ memory.constructor_smoke_scratch_mptr|hex() }}
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/VkLoading.yul b/proofs/solidity-verifier/templates/partials/verifier/VkLoading.yul
+--- a/proofs/solidity-verifier/templates/partials/verifier/VkLoading.yul
++++ b/proofs/solidity-verifier/templates/partials/verifier/VkLoading.yul
+@@ -126,8 +126,14 @@
+             // validate_public_accumulator returns a boolean to share the same
+             // success-plumbing style as other helper calls; this boundary is
+             // where the verifier converts failure to a revert.
+-            success := validate_public_accumulator(success, r)
+-            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }
++            let acc_precompile_failed := 0
++            success, acc_precompile_failed := validate_public_accumulator(success, r)
++            if iszero(success) {
++                // MF-4: a G1MSM that could not run at all is a chain fault,
++                // not a malformed accumulator point.
++                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
++                fail(ERR_BAD_POINT_ENCODING)
++            }
+             {%- endif %}
+ 
+             {%- if self.gas_checkpoints %}
+diff --git a/proofs/solidity-verifier/tests/template_digest.rs b/proofs/solidity-verifier/tests/template_digest.rs
+--- a/proofs/solidity-verifier/tests/template_digest.rs
++++ b/proofs/solidity-verifier/tests/template_digest.rs
+@@ -13,7 +13,7 @@
+ 
+ /// keccak over the sorted (path, length, content) stream of `templates/`.
+ const EXPECTED_TEMPLATE_TREE_DIGEST: &str =
+-    "0xfe89267c0778787678b938eb6f56f5e79f4bc11578786da45f2aad82384349d9";
++    "0x063bb003b3f8eafacd300e1a20cb645db55832efa476689ddb83f6d781efb7dc";
+ 
+ fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+     for entry in fs::read_dir(dir).expect("template directory is readable") {

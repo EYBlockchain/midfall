@@ -1,0 +1,100 @@
+diff --git a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+--- a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
++++ b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+@@ -1464,7 +1464,7 @@
+ See §5.3 for the standing M-4 decision.
+ 
+ **Verification.** The full EVM-gated suite runs green against these changes:
+-217 passed / 0 failed under `--features evm,rust-verifier-trace`, including
++218 passed / 0 failed under `--features evm,rust-verifier-trace`, including
+ native-Rust-vs-Solidity trace equivalence, the constructor precompile-rejection
+ tests, `typed_errors_identify_rejection_classes`, and
+ `compiled_verifier_runtime_fits_the_eip170_limit` — so the added probe and
+@@ -1472,6 +1472,15 @@
+ observed executing rather than merely pinned in template text: the
+ forced-domain-root verifier reverts with `ProofRejected()`.
+ 
++MF-1's probe is likewise demonstrated rather than asserted.
++`constructor_rejects_a_modexp_bound_below_the_chain_price` renders the verifier,
++lowers `MODEXP_GAS` to one gas below what this harness's revm charges for the
++frame, and requires DEPLOYMENT to fail -- with a positive control deploying the
++same fixture unmutated, so the rejection cannot pass vacuously. That is the
++exact shape of the original bug (the shipped 1360 sat below EIP-7883's 4064),
++reproduced by moving the bound rather than the schedule, because the pinned
++revm 19 exposes `SpecId::OSAKA` but still prices modexp with `berlin_run`.
++
+ Caveat on the compiler: the pinned NATIVE solc binary was not reachable from
+ the environment that applied these fixes, so the suite ran against the same
+ compiler commit built to WASM (npm `solc` 0.8.30, reporting
+diff --git a/proofs/solidity-verifier/src/test.rs b/proofs/solidity-verifier/src/test.rs
+--- a/proofs/solidity-verifier/src/test.rs
++++ b/proofs/solidity-verifier/src/test.rs
+@@ -1727,6 +1727,68 @@
+     }
+ }
+ 
++/// MF-1: the constructor's modexp probe must actually REJECT a bound below the
++/// chain's price, not merely be present in the rendered source.
++///
++/// This is the property the whole MF-1 fix rests on. A `staticcall` forwards a
++/// fixed amount, so an under-priced `MODEXP_GAS` does not degrade -- the
++/// precompile runs out of gas and every proof reverts. Before the fix there was
++/// no modexp probe at all, so such an artifact DEPLOYED CLEANLY and only failed
++/// on first use; the probe exists to turn that into a failed deployment.
++///
++/// The mutation lowers the bound to one gas below the EIP-2565 price this
++/// harness's revm charges (1354), which is exactly the shape of the real bug:
++/// the shipped 1360 sat below the EIP-7883 price of 4064. It cannot be tested
++/// by repricing revm instead -- the pinned revm 19 exposes `SpecId::OSAKA` but
++/// still prices modexp with `berlin_run` -- so the bound is moved rather than
++/// the schedule. Positive control: every other EVM test in this file deploys
++/// the same fixture unmutated.
++#[test]
++fn constructor_rejects_a_modexp_bound_below_the_chain_price() {
++    if !poseidon_inputs_available_for_evm() {
++        return;
++    }
++
++    let rendered_bound = crate::lowering::layout::gas::modexp_gas_word_frame();
++    let needle = format!("MODEXP_GAS = {rendered_bound};");
++    // One gas below what revm's Berlin/EIP-2565 modexp charges for the
++    // verifier's 32/32/32 frame with a 255-bit exponent: max(200, 16*254/3).
++    let underpriced = (16 * 254 / 3) - 1;
++
++    let fixture = create_property_poseidon_fixture();
++    let verifier_solidity = {
++        assert!(
++            fixture.quotient_verifier_solidity.contains(&needle),
++            "rendered verifier should pin the generated modexp bound ({needle})"
++        );
++        fixture.quotient_verifier_solidity.replacen(
++            &needle,
++            &format!("MODEXP_GAS = {underpriced};"),
++            1,
++        )
++    };
++
++    assert_pinned_quotient_constructor_rejects(
++        &verifier_solidity,
++        &fixture.vk_solidity,
++        &fixture.quotient_evaluator_solidity,
++        "modexp bound below the chain's price",
++    );
++
++    // Positive control, so the assertion above cannot pass vacuously: the same
++    // fixture, same compiler, same EVM, differing ONLY in that constant must
++    // construct successfully. Without this, a rejection caused by anything
++    // else in the pipeline would read as the probe working.
++    let mut evm = Evm::default();
++    let vk_address = evm.create(compile_solidity(&fixture.vk_solidity));
++    let quotient_address = evm.create(compile_solidity(&fixture.quotient_evaluator_solidity));
++    evm.create_with_two_address_args(
++        compile_solidity(&fixture.quotient_verifier_solidity),
++        vk_address,
++        quotient_address,
++    );
++}
++
+ #[test]
+ fn production_renders_do_not_emit_gas_checkpoints() {
+     // The fixture's base variants follow `RenderDiagnostics::default()`, so a
