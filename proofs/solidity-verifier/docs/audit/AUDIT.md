@@ -1,5 +1,27 @@
 # CTF Vulnerability Analysis: Halo2 Solidity Verifier
 
+> **Path-migration note (2026-08-12).** The findings below were written
+> against the pre-rename source tree. `src/codegen/` no longer exists; it was
+> refactored into `src/lowering/`. The historical citations (including old
+> line numbers) are preserved verbatim as the audit record; to re-verify a
+> finding against the current tree, translate paths with this map:
+>
+> | Historical path | Current location |
+> | --- | --- |
+> | `src/codegen.rs`, `src/codegen/mod.rs` | `src/lowering/mod.rs` (pipeline root), `src/lowering/plan.rs` (planning), `src/lowering/artifacts.rs` (artifact assembly) |
+> | `src/codegen/generator.rs` | `src/lowering/plan.rs` + `src/lowering/artifacts.rs` + `src/lowering/render/` |
+> | `src/codegen/template.rs` | `src/lowering/render/models.rs` |
+> | `src/codegen/protocol.rs` | `src/lowering/protocol/mod.rs` |
+> | `src/codegen/proof_layout.rs` | `src/lowering/abi/proof.rs` |
+> | `src/codegen/evaluator.rs` | `src/lowering/quotient_numerator/{mod,yul_emit,vm/mod}.rs` |
+> | `src/codegen/quotient/mod.rs` | `src/lowering/quotient.rs` + `src/lowering/quotient_numerator/vm/mod.rs` |
+> | `src/codegen/pcs.rs` | `src/lowering/kzg/mod.rs` |
+> | `src/codegen/util.rs` | `src/lowering/encoding/mod.rs` + `src/lowering/layout/mod.rs` |
+> | `src/transcript.rs` | `templates/partials/verifier/TranscriptProofParser.yul` + `src/lowering/abi/` |
+>
+> `templates/contracts/Halo2Verifier.sol` still exists but is now assembled
+> from the partials in `templates/partials/verifier/`.
+
 ## 2026-05-02 audit addendum: PCS scratch layout and instance-column shape
 
 Scope: current dirty worktree for the Halo2/Midnight Solidity verifier
@@ -2154,6 +2176,13 @@ arithmetic assumes valid curve points.
 ### TA-1. Accumulator Points With Scalar Zero Bypass Curve/Subgroup Validation
 
 Severity: Medium/High, depending on circuit assumptions.
+Status: Fixed. The quoted `switch lhs_scalar` construct no longer exists;
+`templates/partials/verifier/AccumulatorHelpers.yul:277-293` (and the RHS
+mirror at `:339-347`) unconditionally routes every decoded accumulator point
+through EIP-2537 G1MSM — including identity encodings and zero/one scalars —
+with an explicit comment stating that the precompile is the curve/subgroup
+validator and that skipping it would let a malformed point hide behind
+scalar 0. Triaged 2026-08-12.
 
 In `load_acc_point`, accumulator coordinates are decoded from public instances
 into `ACC_LHS_MPTR` and `ACC_RHS_MPTR`. The decoded point is range/canonical
@@ -2229,6 +2258,13 @@ Recommendation:
 ### TA-2. Transcript Must Be Proven To Bind Every Verifier-Side Fixed Input
 
 Severity: Medium.
+Status: Open. `vk_digest` covers the native VK contents but not the SRS
+points, quotient VM program, accumulator schema constants, or feature
+profile; widening its coverage is a protocol change affecting the prover and
+is tracked as review item M-4 (out of scope for the 2026-08 fix set —
+explicitly deferred). Partially mitigated at build time by the SRS tau
+binding in `src/lowering/vk.rs` and on-chain by the VK codehash pin plus the
+generated-constant cross-checks after `extcodecopy`. Triaged 2026-08-12.
 
 The verifier absorbs `vk_digest` rather than the full VK payload:
 
@@ -2277,6 +2313,12 @@ Recommendation:
 ### TA-3. External Quotient Evaluator Is Pinned, But Not Transcript-Bound
 
 Severity: Low/Medium.
+Status: Open. Inert for single-contract renders (e.g. the moonlight-wrap
+fixture, which ships no `Halo2QuotientEvaluator.sol`), but LIVE for split
+renders: the IVC fixture (`target/ivc-keccak-solidity-dump/`) ships a
+`Halo2QuotientEvaluator.sol` and relies on the codehash pin alone. Folding
+the evaluator identity into the transcript is part of the same digest
+discussion as TA-2/M-4. Triaged 2026-08-12.
 
 `AUTHORIZED_QUOTIENT` is codehash-pinned, which is good. However, its output
 directly determines:
@@ -2300,6 +2342,13 @@ Recommendation:
 ### TA-4. Gas Checkpoint Logs Make This Unsuitable As A Production Verifier
 
 Severity: Low/Medium.
+Status: Resolved / diagnostic-only. Gas checkpoints are emitted only when
+the `solidity-gas-checkpoints` feature sets
+`SOLIDITY_GAS_CHECKPOINTS_ENABLED`; the feature is off by default and the
+`production_renders_do_not_emit_gas_checkpoints` test asserts production
+renders contain no LOG1 and stay `external view`. Bench profiles that enable
+it are documented as non-production in REPRODUCIBLE_BUILDS.md. Triaged
+2026-08-12.
 
 `verifyProof` can include gas checkpoint logging:
 
@@ -2337,6 +2386,12 @@ Recommendation:
 ### TA-5. Dangerous Reliance On `assembly ("memory-safe")` With Absolute Memory Ownership
 
 Severity: Low/Medium.
+Status: Fixed by P2 (commit `460a666`): the false `"memory-safe"` annotation
+was removed from the main verifier block and a free-memory-pointer guard
+(`if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }`,
+`templates/contracts/Halo2Verifier.sol:117`) now enforces the layout
+assumption at runtime instead of asserting it to the optimizer. Triaged
+2026-08-12.
 
 The main assembly block is marked `"memory-safe"` while it intentionally owns
 the entire call-frame memory, writes to low memory, uses fixed absolute
@@ -2389,6 +2444,12 @@ Recommendation:
 ### TA-6. Precompile Smoke Tests Are Too Weak For Deployment Confidence
 
 Severity: Low.
+Status: Fixed by P5 (commit `460a666`): the constructor probes now include
+known-answer vectors a stub cannot satisfy — G1ADD(G, G) == 2G, G1MSM
+[2]*G == 2G, a NEGATIVE G1MSM probe with an on-curve but out-of-subgroup
+point that must be rejected, and pairing probes with both a true and a false
+product (`templates/partials/verifier/PrecompileSmoke.sol`). Triaged
+2026-08-12.
 
 The constructor checks identity inputs for G1ADD, G1MSM, and pairing. That
 catches absent precompiles and gross return-size issues, but it does not catch:
@@ -2411,6 +2472,12 @@ Recommendation:
 ### TA-7. Root-Of-Unity / Zero-Denominator Cases Revert Rather Than Being Specified
 
 Severity: Informational/Low.
+Status: Open (documentation). Behavior is fail-closed by construction —
+`batch_invert` and `scalar_inv` return failure/revert on any denominator
+congruent to zero, and `verifier_rejects_when_x_is_forced_to_domain_root`
+covers the x-at-domain-root case — but the spec does not yet state this as
+the intended semantics. Needs a paragraph in
+`docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md`. Triaged 2026-08-12.
 
 The Lagrange and PCS blocks intentionally batch-invert values like:
 
@@ -2440,6 +2507,12 @@ Recommendation:
 ### TA-8. Raw Verifier Integration Can Still Be Replayed/Misused By Application Contracts
 
 Severity: Integration risk.
+Status: Acknowledged / integration guidance. The raw verifier is stateless
+by design and cannot bind proof meaning itself; the NatSpec on `verifyProof`
+and the wrapper guidance in the testing strategy place replay/domain binding
+(nullifiers, chain/contract domain, program ID) on the application contract.
+Any deployment review must check the wrapper, not just this verifier.
+Triaged 2026-08-12.
 
 The verifier correctly says application contracts must bind the meaning of
 public instances separately. That warning is important. This raw verifier

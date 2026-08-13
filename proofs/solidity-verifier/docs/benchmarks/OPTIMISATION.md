@@ -262,7 +262,9 @@ Files touched:
 - `vendor/.../midfall/proofs/src/transcript/implementors.rs` —
   `Hashable<Keccak256> for G1Projective::to_input` returns 128 bytes
   instead of `<G1Projective as GroupEncoding>::to_bytes` (compressed).
-- `src/transcript.rs::common_g1` — absorbs the same 128 bytes; the
+- `common_g1` (at the time in `src/transcript.rs`; the transcript helpers now
+  live in `templates/partials/verifier/TranscriptProofParser.yul` with offsets
+  in `src/lowering/abi/`) — absorbs the same 128 bytes; the
   `common_g1_then_squeeze_matches` round-trip test pins this to
   `CircuitTranscript<Keccak256>`'s output.
 - `templates/contracts/Halo2Verifier.sol::common_uncompressed_g1` — replaced a

@@ -398,7 +398,7 @@ comparison against the instrumented Rust verifier.
 | Fewer point sets / dummy queries | `pcs.rs::compute_dummy_queries` | Can reduce KZG point-set work for selected profiles | Proof layout and transcript must include matching dummy evals |
 | Truncated PCS challenges | `truncated-challenges` feature | Mirrors Midfall KZG challenge truncation where enabled | Only the specified challenges/powers are truncated |
 | Accumulator pairing batch | `Halo2Verifier.sol` accumulator section | Combines public accumulator pairing with final KZG pairing | Batch randomizer is derived after all four G1 inputs are fixed |
-| EIP-2537 gas forwarding and return-size checks | `TemplateConstants`, `layout::precompile` addresses | Forwards `gas()` to avoid chain-specific gas caps while checking call success and exact return sizes | Deployment smoke tests must pass on the target fork/chain |
+| EIP-2537 exact gas bounds and return-size checks | `layout::gas`, `GasTemplateConstants`, `layout::precompile` addresses | Forwards the exact EIP-2537/EIP-2565 scheduled cost so a rejecting precompile burns at most one call's scheduled gas (M-2) while checking call success and exact return sizes | Bounds are the spec schedule, not hand-tuned caps; an upward repricing fork requires regenerating; deployment smoke probes forward the same bounds and fail fast on repriced chains |
 | Gas checkpoints | `RenderDiagnostics { gas_checkpoints: true, .. }` | Gives stable section-level gas deltas | Not a `view` verifier; profiling only |
 
 ## Trace Coverage

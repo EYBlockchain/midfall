@@ -103,7 +103,7 @@ within the noise budget of solc's optimizer rearrangements.
 
 ## Files touched
 
-- `src/codegen.rs`
+- `src/lowering/mod.rs` (at the time the top-level `codegen` module)
   - `render_with_quotient_helpers()` -> thin wrapper over
     `render_with_quotient_helpers_n(2)`.
   - `render_with_quotient_helpers_n(N)` -> new public API.
@@ -112,7 +112,7 @@ within the noise budget of solc's optimizer rearrangements.
   - split quotient helper rendering with per-identity inline-asm spill
     (replaces `_vS`/`_vL` external calls).
   - `collect_named_refs()` helper.
-- `src/codegen/template.rs`
+- `src/lowering/render/models.rs` (at the time the template model module)
   - `Halo2Verifier.quotient_helpers_n: usize` field.
 - `src/evm.rs`
   - `Evm::create_with_address_and_address_array_arg(...)` to deploy

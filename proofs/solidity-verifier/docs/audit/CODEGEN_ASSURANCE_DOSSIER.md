@@ -37,7 +37,9 @@ manifest:
 | Rust toolchain | `rust-toolchain.toml` |
 | Cargo features | Exact feature list used to generate the verifier |
 | Solidity compiler | `solc 0.8.30+commit.73712a01` |
-| Solc flags | `--bin --optimize --via-ir --evm-version cancun --no-cbor-metadata` |
+| Solc flags | `--bin --optimize --optimize-runs <N> --via-ir --evm-version cancun --no-cbor-metadata` — `<N>` is bytecode- and deployability-affecting (0.8.30 at `runs=100000` exceeds EIP-170) and MUST be recorded per artifact; default `200` (`SOLC_OPTIMIZE_RUNS`), IVC bench uses `1` |
+| Solc binary | SHA-256-pinned by `scripts/install_pinned_solc.sh`; hashes recorded in `docs/reference/REPRODUCIBLE_BUILDS.md` |
+| SRS provenance | SHA-256 of the SRS asset(s) plus ceremony reference; produced by `scripts/record_srs_provenance.sh`, recorded in `docs/reference/REPRODUCIBLE_BUILDS.md` |
 | Generated sources | Hashes of verifier, VK, and optional quotient evaluator sources |
 | Runtime bytecode | Runtime length and `keccak256` for each deployed artifact |
 | VK binding | VK digest plus external VK runtime length/codehash when split |
@@ -56,12 +58,12 @@ line-for-line translation.
 
 | Checkpoint | Rust source of truth | Solidity/codegen owner | Evidence expected |
 | --- | --- | --- | --- |
-| Parser and proof reads | `plonk/verifier.rs::{parse_trace,verify_algebraic_constraints}` | `src/codegen/protocol.rs`, `src/codegen/proof_layout.rs`, `templates/contracts/Halo2Verifier.sol` | Exact proof length, ABI head checks, per-section offsets, canonical scalar and G1 checks |
-| Transcript challenges | `transcript/mod.rs`, `transcript/implementors.rs` | `src/transcript.rs`, `templates/contracts/Halo2Verifier.sol` | Rust/Solidity trace equality for VK, instances, commitments, and all challenges |
-| Quotient identities | `plonk/mod.rs::partially_evaluate_identities` | `src/codegen/evaluator.rs`, `src/codegen/quotient/mod.rs`, `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` | Identity order manifest, quotient trace ids, VM validator, selector-fold trace coverage |
-| Linearization | `plonk/linearization/verifier.rs::compute_linearization_commitment` | `src/codegen/generator.rs`, `src/codegen/pcs.rs` | Same `-nu_y(x)` scalar, selector buckets, quotient limb scalars, and commitment expansion |
-| KZG multi-open | `poly/kzg/mod.rs::multi_prepare` | `src/codegen/pcs.rs` | Same dummy queries, point-set sort, `x1..x4`, `f_com`, `q_evals`, `pi`, final MSM |
-| Final pairing | `poly/kzg/msm.rs::DualMSM::check` | `templates/contracts/Halo2Verifier.sol`, `src/codegen/pcs.rs` | Pairing precompile success, return size, and semantic result word checked |
+| Parser and proof reads | `plonk/verifier.rs::{parse_trace,verify_algebraic_constraints}` | `src/lowering/protocol/mod.rs`, `src/lowering/abi/proof.rs`, `templates/contracts/Halo2Verifier.sol` | Exact proof length, ABI head checks, per-section offsets, canonical scalar and G1 checks |
+| Transcript challenges | `transcript/mod.rs`, `transcript/implementors.rs` | `templates/partials/verifier/TranscriptProofParser.yul`, `src/lowering/abi/` (offsets), `templates/contracts/Halo2Verifier.sol` | Rust/Solidity trace equality for VK, instances, commitments, and all challenges |
+| Quotient identities | `plonk/mod.rs::partially_evaluate_identities` | `src/lowering/quotient_numerator/` (planning, Yul emitter, VM), `src/lowering/quotient.rs`, `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` | Identity order manifest, quotient trace ids, VM validator, selector-fold trace coverage |
+| Linearization | `plonk/linearization/verifier.rs::compute_linearization_commitment` | `src/lowering/quotient.rs`, `src/lowering/kzg/mod.rs` | Same `-nu_y(x)` scalar, selector buckets, quotient limb scalars, and commitment expansion |
+| KZG multi-open | `poly/kzg/mod.rs::multi_prepare` | `src/lowering/kzg/mod.rs` | Same dummy queries, point-set sort, `x1..x4`, `f_com`, `q_evals`, `pi`, final MSM |
+| Final pairing | `poly/kzg/msm.rs::DualMSM::check` | `templates/contracts/Halo2Verifier.sol`, `src/lowering/kzg/mod.rs` | Pairing precompile success, return size, and semantic result word checked |
 | Optional accumulator | Wrapper logic outside `plonk/verifier.rs` | `AccumulatorEncoding`, VK header, `templates/contracts/Halo2Verifier.sol` | Public-input schema validation and batched accumulator/KZG pairing equation |
 
 The bridge between Solidity calldata and Rust verifier objects is:

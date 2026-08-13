@@ -407,7 +407,7 @@ let prod_inv := scalar_inv(prod)
 Saves 13 modexp calls (~13 × 1.4 kg = ~18 kg) at the cost of ~28 muls
 (~280 gas). Net ~17 kg.
 
-**Files:** `src/codegen/pcs.rs` (the emitter that lays out the
+**Files:** `src/lowering/kzg/mod.rs` (the emitter that lays out the
 14 `let _ := scalar_inv(_)` lines in the PCS block). Probably a
 dedicated `batch_scalar_inv` helper in the Yul prelude.
 
@@ -419,12 +419,12 @@ the per-input zero check for defence in depth (revert if any is zero).
 ### C. Pre-fold `mulmod(_, 1)` / `addmod(_, 0)` in the evaluator codegen
 **Projection: 5–15 kg saved**
 
-The gate evaluator (`src/codegen/evaluator.rs`) emits `mulmod(x, 1, r)`
+The gate evaluator (`src/lowering/quotient_numerator/yul_emit.rs`) emits `mulmod(x, 1, r)`
 and `addmod(x, 0, r)` whenever a multiplicative or additive identity
 appears in the constraint. With `runs=1` solc cannot constant-fold
 these. Add a pass at codegen time that drops them.
 
-**Files:** `src/codegen/evaluator.rs` (the `evaluate` recursion that
+**Files:** `src/lowering/quotient_numerator/yul_emit.rs` (the recursion that
 emits per-expression Yul lines).
 
 **Risk:** must distinguish "literally constant `1`" (drop) from
@@ -441,9 +441,9 @@ The gate evaluator currently re-mloads `Y_MPTR`, `THETA_MPTR`,
 0.75 kg). Cheap to fix at codegen time — emit a `let y := mload(Y_MPTR)`
 at the top of the quotient block and reference `y` in each step.
 
-**Files:** `src/codegen.rs` (the `make_block` closure that emits each
-identity's Horner step), and `src/codegen/evaluator.rs` (the part that
-substitutes `Y_MPTR` → local `y`).
+**Files:** `src/lowering/quotient_numerator/` (`yul_emit.rs` emits each
+identity's Horner step; `vm/mod.rs` is the VM path), including the part that
+substitutes `Y_MPTR` → local `y`.
 
 **Risk:** none, mechanical.
 
@@ -455,8 +455,8 @@ each repeat a 4-line `mstore(0x180, mload(...))` chain to copy
 4-word points. Cancun ships MCOPY (`0x5e`); replace each chain with
 one `mcopy(dst, src, 0x80)`.
 
-**Files:** `templates/contracts/Halo2Verifier.sol` and the `pcs_computations`
-emitter in `src/codegen/pcs.rs`.
+**Files:** `templates/contracts/Halo2Verifier.sol` and the `computations`
+emitter in `src/lowering/kzg/mod.rs`.
 
 **Risk:** none. EVM target is already Cancun.
 
@@ -559,7 +559,8 @@ and bumps the on-chain transcript's domain-separator epoch. Not as
 cheap as it looks — cross-stack coordination.
 
 **Files:** `midfall/proofs/src/transcript/mod.rs`,
-`src/transcript.rs`, `templates/contracts/Halo2Verifier.sol`. Probably a
+`templates/partials/verifier/TranscriptProofParser.yul` (with offsets from
+`src/lowering/abi/`), `templates/contracts/Halo2Verifier.sol`. Probably a
 follow-up after A is shipped.
 
 ## Realistic projection after Step 6
@@ -621,6 +622,6 @@ the floor is dominated by EIP-2537 pricing and the cryptographic work.
   section (modulo the 750-gas overhead per checkpoint, which is
   subtracted by `dump_gas_checkpoints`).
 - For tighter attribution within the 631 kg PCS block, add additional
-  checkpoints inside `src/codegen/pcs.rs::computations()` at the
+  checkpoints inside `src/lowering/kzg/mod.rs::computations()` at the
   per-set boundaries. Currently every set's three sub-stages (point
   set group, batch invert, MSM) coalesce into the same 631 kg bucket.

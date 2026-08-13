@@ -239,7 +239,8 @@ structurally duplicates Block 5's final-MSM term enumeration (:1673-1731).
 
 **F15 — Audit-chain docs rot** *(Confirmed)*.
 `CODEGEN_ASSURANCE_DOSSIER.md:59-64`, `AUDIT.md`, and `AUDIT_FINDINGS.md`
-cite the vanished `src/codegen/` tree (REVIEW_PACKET.md is current — the
+cite the vanished pre-rename `codegen` tree, since renamed to
+`src/lowering/` (REVIEW_PACKET.md is current — the
 audit docs disagree with each other); README carries two stale,
 self-contradictory test counts (167+4 at line 49, 177 at line 389; actual at
 snapshot: 202 lib + 9 integration) and a broken `./TESTING_STRATEGY.md` link;
@@ -341,7 +342,8 @@ gated on it. Cheap, generation-time only.
 **P0.4 One documentation-refresh pass with drift guards** *(F6, F15, L6)*.
 Correct the `REPRODUCIBLE_BUILDS.md` pinning claim and record the workspace
 commit alongside published hashes (the bench script can emit it into
-`contract-sizes.txt`); update `src/codegen` paths in the dossier and audit
+`contract-sizes.txt`); update stale pre-rename `codegen` paths (now
+`src/lowering/`) in the dossier and audit
 docs; replace README test counts with the command that produces them; fix
 broken links; add status markers to ROADMAP; fix the 0x80 NatSpec ⚠; define a
 re-assessment trigger (any change under `src/lowering` or `templates/` bumps

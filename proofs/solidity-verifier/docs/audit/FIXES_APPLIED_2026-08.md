@@ -2,6 +2,110 @@
 
 Companion to `HALO2_VERIFIER_REVIEW.md`. This file records exactly what was changed, what was verified, and — importantly — **what the review found that these changes do not fix.**
 
+## 2026-08-12 follow-up: generator-side closures
+
+A second pass (with the workspace compilable) closed most of what the first
+pass could only specify. Newly applied and validated:
+
+- **P1 / M-2 — exact precompile gas bounds.** Gas model in
+  `src/lowering/layout/mod.rs::gas` (EIP-2537 discount table + pairing
+  formula, EIP-2565 modexp), threaded through `GasTemplateConstants` and
+  emitted as `G1ADD_GAS` / `G1MSM_GAS_1PAIR` / `G1MSM_GAS_SMOKE` /
+  `PAIRING_GAS_2PAIR` / `MODEXP_GAS` / `ACC_RHS_MSM_GAS` constants. Every
+  precompile call site — templates, PCS emitter, and constructor probes —
+  now forwards the exact scheduled cost instead of `gas()`; the two
+  `quotientEvaluator` calls keep `gas()` deliberately (regular-call refund
+  semantics, codehash-pinned callee) with a comment. Decision on cap style:
+  exact schedule, no margin, per EIP-2537's DDoS-protection guarantee;
+  liveness caveat (upward repricing ⇒ regenerate + redeploy) documented at
+  the constants and in the spec §15. This deliberately reverses commit
+  `2b2bf49` ("Forward gas to EIP-2537 precompiles", old finding M-04): those
+  were hand-tuned literals, these are generated spec formulas, and the
+  constructor probes now fail-fast on repriced chains, which is what M-04
+  actually needed. Verified: `eip2537_gas_schedule_matches_spec_vectors`,
+  `eip2537_calls_forward_exact_schedule_gas`, and the revm test
+  `malformed_proof_point_rejects_with_bounded_gas` — a malformed point now
+  costs no more than an honest verification (was 29.5M of a 30M limit).
+- **P11 / H-1 (code half) — applied and repaired.** The patch as shipped
+  could not compile: it shadowed the `omega: U256` binding with an `Fq` and
+  referenced an undefined `srs_tau_is_consistent`. Landed in
+  `src/lowering/vk.rs` with the helper implemented as a Pippenger-MSM
+  Lagrange commitment of f(X)=X plus the pairing check
+  `e([τ]G1, G2) == e(G1, s_g2)`. Verified:
+  `srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2` (honest
+  SRS passes; s=1, s'=2s, and wrong-domain omega all fail).
+- **H-1 (non-code half) — SRS provenance recorded.** Ceremony citation
+  (github.com/midnightntwrk/midnight-trusted-setup), asset SHA-256s hashed
+  by the new `scripts/record_srs_provenance.sh` and verified byte-identical
+  against the ceremony's official `MIDNIGHT_SRS_CATALOG.md`; the gated test
+  `midnight_srs_assets_bind_s_g2_to_lagrange_tau` pairing-checks the real
+  2p19/2p20 assets. All recorded in `REPRODUCIBLE_BUILDS.md` §"SRS
+  Provenance".
+- **P7 / L-2 — q_eval_set comments.** Emitter now reports
+  "{m} evaluation term(s), {n} commitment term(s)" (identity commitments
+  excluded from n), so the comment matches the MSM pair count below it. The
+  structural asserts (`pair_idx == non_identity_terms` /
+  `== final_msm_terms`) plus a new whole-pairs assert guard the counts.
+- **P13 / M-5 — solc hashes filled and script fixed.** Official sha256 for
+  linux-amd64 and macosx-amd64 recorded (see `REPRODUCIBLE_BUILDS.md`);
+  found and fixed a latent portability bug (`declare -A` fails on stock
+  macOS bash 3.2); end-to-end verified by a real download+hash+version run.
+  Rosetta mapping for Darwin-arm64 now documented in the script.
+- **M-5 (remainder) — manifest + flags + provenance stamps.** New
+  `scripts/generate_artifact_manifest.sh` produces the §4 manifest rows per
+  fixture dump; `--optimize-runs` added to every recorded flag list
+  (REVIEW_PACKET, dossier, REPRODUCIBLE_BUILDS) with the
+  `runs=100000`-undeployable warning; the three provenance stamps were not
+  contradictory but unlabeled — each is now labeled, with the canonical
+  table in `REPRODUCIBLE_BUILDS.md` §"Provenance Identities". Still open
+  from the original M-5 list: removing the `SOLC_OPTIMIZE_RUNS` env
+  override from the reproducible path (kept, as the bench profiles rely on
+  it; the manifest records the effective value instead).
+- **I-4 — stale `src/codegen/*` anchors.** All 58 references across 13
+  files fixed or covered: living reviewer docs (dossier §2 semantic map,
+  plans, benchmarks, template comment) rewritten to the current
+  `src/lowering/*` tree; the historical audit records (`AUDIT.md`,
+  `AUDIT_FINDINGS.md`) carry a path-migration map at the top instead of
+  rewritten history. `AUDIT_FINDINGS.md` 2026-05-11 #4's evidence cell now
+  cites validators/tests that actually exist
+  (`validate_quotient_program` / `quotient_vm_safety_validator_rejects_malformed_programs`);
+  the previously cited names never landed. One review-side correction: I-4
+  overreached on `QuotientNumeratorBlock.yul`, which does exist.
+- **TA-1…TA-8 triaged.** Every TA item in `AUDIT.md` now carries a
+  `Status:` line (TA-1 Fixed — the quoted scalar-0 skip no longer exists;
+  TA-4 resolved/diagnostic-only; TA-5/TA-6 fixed by `460a666`; TA-2/TA-3
+  open, cross-referenced to the deferred M-4 digest decision; TA-7
+  fail-closed semantics now specified in the spec §12.7; TA-8 integration
+  guidance).
+- **I-2 (partial).** The generated opcode-summary comment is now rendered
+  from the same `program.op_usage` predicates that gate the interpreter's
+  case arms, so each artifact documents exactly its own opcodes; the
+  `G1_IDENTITY_MPTR` comment no longer references nonexistent `mload`s.
+
+**New finding discovered and fixed during this pass — feature-unification
+challenge-truncation mismatch.** The `midnight-aggregation` dependency in
+`Cargo.toml` unconditionally enabled `truncated-challenges`, which Cargo
+feature unification forced onto `midnight-proofs` in EVERY build of this
+crate. Consequence: the prover always truncated challenges, but a verifier
+generated with `--features evm` (without this crate's own
+`truncated-challenges` feature) did not mirror it — exactly the "wrong
+setting on either side silently produces invalid pairings" hazard the
+feature's own doc comment warns about. Every `evm`-only fixture test
+(`rsa_signature`, `sha_preimage`, `hybrid_mt`) had been failing with valid
+proofs reverting mid-PCS; bisect showed the breakage entered with the
+workspace merge that introduced the aggregation dependency, long before the
+2026-08 review. Fixed by removing the dependency-level feature so truncation
+flows only through this crate's `truncated-challenges` feature; both
+`--features evm` and `--features evm,truncated-challenges` now agree
+end-to-end and all fixture tests pass in both modes. The committed
+`target/*-dump` artifacts are canonically rendered with
+`evm,truncated-challenges` (they contain the truncation code paths).
+
+Deliberately not addressed, by explicit decision: **M-4** (`vk_digest`
+coverage — protocol change affecting the prover) and anything outside
+`proofs/solidity-verifier/`. Remaining open from the tables below: P4, P8,
+P9, P10, P12, P14, L-4, L-9, L-10, I-6, I-7.
+
 ## Short answer: no, this does not address all the findings
 
 Of the 23 findings, **4 are closed or substantially closed by the changes below.** The rest fall into three groups:

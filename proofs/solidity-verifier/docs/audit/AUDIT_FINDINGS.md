@@ -1,5 +1,12 @@
 # Solidity Verifier Codegen Audit
 
+> **Path-migration note (2026-08-12).** These findings were written against
+> the pre-rename source tree; `src/codegen/` has since been refactored into
+> `src/lowering/`. Historical `**File:**` citations (including line numbers)
+> are preserved as the audit record; translate with the migration map at the
+> top of `AUDIT.md` when re-verifying. The release-facing status table below
+> has been updated to cite current code and test names.
+
 **Repository:** `halo2-solidity-verifier-exp`
 **Scope:** halo2 → midnight-proofs port of the on-chain KZG/BLS12-381 verifier
 codegen and emitted Yul.
@@ -47,7 +54,7 @@ the release-facing status snapshot as of 2026-05-11.
 | 2026-05-11 #1 lookup quotient identity count | Fixed | `lookup_chunks.iter().map(|chunks| chunks + 2).sum()` is used in planning and validation; `lookup_identity_source_handles_variable_chunk_counts` covers variable chunk counts. |
 | 2026-05-11 #2 fixed eval count | Fixed | `proof_evaluation_counts().fixed` counts `EvalRead::Fixed` entries from the protocol plan instead of fixed columns. |
 | 2026-05-11 #3 challenge phase remapping | Fixed | `ProtocolPlan::from_constraint_system` sizes phases by the max of advice and challenge phases; `plan_allows_challenge_phase_beyond_advice_phases` covers this case. |
-| 2026-05-11 #4 packed32 operand widths | Fixed | `validate_packed_quotient_operand` enforces logical `u8` and `u16` bounds; `packed32_validator_rejects_logical_operand_width_corruption` covers corrupted packed operands. |
+| 2026-05-11 #4 packed32 operand widths | Fixed | Operand decoding and width bounds are enforced by `validate_quotient_program` / `validate_quotient_const_slots` / `validate_quotient_mem_ptrs` in `src/lowering/quotient_numerator/vm/mod.rs`; `quotient_vm_safety_validator_rejects_malformed_programs` covers stack underflow, unknown memory tokens, and truncated operands, and `quotient_vm_lengths_are_derived_from_opcode_spec` pins operand widths to the opcode spec. (The names previously cited here — `validate_packed_quotient_operand` and `packed32_validator_rejects_logical_operand_width_corruption` — never landed under those identifiers; corrected 2026-08-12.) |
 | 2026-05-11 #5 reserved memory writes | Fixed | Trace and helper templates avoid Solidity-reserved memory writes; `templates_do_not_write_solidity_reserved_memory_slots` checks `mstore(0,`, `mstore(0x00,`, and related reserved forms. |
 | 2026-05-11 #6 external quotient return overlap | Fixed | External quotient output uses `QUOTIENT_RETURN_MPTR`; template validation checks output length and disjointness from the copied quotient frame. |
 | 2026-05-11 #7 structured selector-run trace | Fixed | Selector-run grouping is disabled when trace is enabled, preserving per-identity trace events through direct quotient blocks. |

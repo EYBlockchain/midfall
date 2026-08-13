@@ -29,7 +29,7 @@ I'll deliver the migration in N self-contained steps, committing each so we can 
 - Outcome: `cargo check` red until later steps; we get the type universe pinned.
 
 ### Step 2 - Transcript replacement
-- Throw away the current `src/transcript.rs` (writes uncompressed EIP-2537 G1, single-keccak squeeze).
+- Throw away the current transcript implementation (writes uncompressed EIP-2537 G1, single-keccak squeeze). (The transcript now lives in `templates/partials/verifier/TranscriptProofParser.yul`, with proof offsets computed in `src/lowering/abi/`; there is no standalone Rust transcript module.)
 - Implement a `Keccak256VerifierTranscript` matching `midnight_proofs::transcript::CircuitTranscript<Keccak256>` byte-for-byte:
   - init: `Keccak256::new().update("Domain separator for transcript")`
   - common(input): hasher.update([1u8]); hasher.update(input)
@@ -39,14 +39,14 @@ I'll deliver the migration in N self-contained steps, committing each so we can 
 - Mirror this in Yul (see Step 5).
 
 ### Step 3 - ConstraintSystemMeta rewrite
-- `src/codegen/util.rs::ConstraintSystemMeta::new` currently inspects halo2_proofs' lookups; replace its lookup section with midnight-proofs' `cs.lookups()` (BatchedArgument with chunks, helpers, multiplicities).
+- `src/lowering/encoding/mod.rs::ConstraintSystemMeta::new` currently inspects halo2_proofs' lookups; replace its lookup section with midnight-proofs' `cs.lookups()` (BatchedArgument with chunks, helpers, multiplicities).
 - Add a trashcan section: `cs.trashcans()` (Argument with selector + constraint expressions).
 - Track `num_committed_instances` (keep at 0 for poseidon); track `cs.num_simple_selectors()` (midnight-proofs filters fixed evals on this).
 - New per-row counts: `lookup_chunks_per_arg[]`, `trashcan_count`, `permutation_chunks` (=cols.div_ceil(degree-2)).
 - `proof_len` calculation now needs: advices, multiplicities, perm prod commitments, lookup helpers + accumulators, trashcans, quotient limbs, evals (committed-inst evals + advice + fixed-non-simple + perm-common + perm-set + lookup-evals + trash), f_com, q_evals (one per point set), pi.
 
 ### Step 4 - Evaluator rewrite (partial-eval)
-- `src/codegen/evaluator.rs` currently emits Yul for halo2 lookup constraints. Replace `lookup_computations` with a logup emitter that writes:
+- `src/lowering/quotient_numerator/yul_emit.rs` currently emits Yul for halo2 lookup constraints. Replace `lookup_computations` with a logup emitter that writes:
   - For each lookup (per proof): boundary `(l_0 + l_last)*Z`
   - Per chunk: `h(x) * prod_j(f_j(x)+beta) - sum_j prod_{k!=j}(f_k(x)+beta)` where each `f_j` is theta-compressed
   - Accumulator: `(Z_next - Z - selector*sum_h)*(t+beta) + m` times `(1 - l_last - l_blind)`
@@ -54,7 +54,7 @@ I'll deliver the migration in N self-contained steps, committing each so we can 
 - Gate emitter unchanged shape, but now reads through midnight-proofs `Expression`.
 
 ### Step 5 - PCS emitter rewrite
-- Replace `src/codegen/pcs.rs` with a `multi_prepare` emitter:
+- Replace `src/lowering/kzg/mod.rs` with a `multi_prepare` emitter:
   - `construct_intermediate_sets`: bucket queries by point sets (in order: advice rotations, perm cur/next/last, lookup x/x_next, trashcan x, fixed rotations, perm common at x, lin com at x).
   - `q_coms`: per set, MSM-fold commitments by `x1` powers
   - `q_eval_sets`: per set, eval_set inner product with `x1` powers

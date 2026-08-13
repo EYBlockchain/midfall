@@ -505,7 +505,15 @@ Three mutually unreconcilable provenance stamps exist for this artefact:
 | --- | --- |
 | `fixtures/moonlight-wrap/README.md:17` | solidity-verifier commit `3fb6d84` |
 | `REVIEW_PACKET.md:67` | repository commit `a096e71746e401404f250817ca4e857bac1eef56` |
-| `CODEGEN_ASSURANCE_DOSSIER.md:37` | Midfall revision `53dc872f495104046d96bdac0a690f903dc0c537` |
+| `CODEGEN_ASSURANCE_DOSSIER.md:36` | Midfall revision `53dc872f495104046d96bdac0a690f903dc0c537` |
+
+> Correction (2026-08-12): the three stamps are not actually contradictory —
+> they index different things (fixture-render commit of this repo, packet-time
+> commit of this repo, and the Midfall *dependency* revision). They were
+> merely unlabeled. Each source now says which identity it records; the
+> canonical table is "Provenance Identities" in
+> `docs/reference/REPRODUCIBLE_BUILDS.md`. (This row's dossier citation was
+> also off by one — `:37` → `:36`.)
 
 `REVIEW_PACKET.md` §4 "Artifact Manifest" — the table meant to pin *this* artefact — reads `fill per artifact` for all eleven hash rows. `docs/reference/REPRODUCIBLE_BUILDS.md`, cited from three places as where the hashes live, was not in scope.
 
@@ -681,7 +689,10 @@ The upstream docstring itself warns that "128 bits may not be enough entropy dep
 
 **I-3 — Unreachable defensive branch.** `load_acc_point` lines 830–839 handle "x carried the identity flag but the whole-point sentinel did not match". Given the packing check makes the codec a bijection, `x_is_id` implies x's words are exactly the canonical identity words, and requiring `y` to decode to zero implies y's words are too — so `is_acc_encoded_identity` would already have returned true. Harmless defensive dead code; worth a comment saying so rather than leaving a reader to derive it.
 
-**I-4 — The audit chain's evidence map points at a source tree that no longer exists.** `CODEGEN_ASSURANCE_DOSSIER.md:57-65` maps every checkpoint to `src/codegen/protocol.rs`, `src/codegen/evaluator.rs`, `src/codegen/pcs.rs`, `src/transcript.rs` and `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`. **None exist.** The tree is `src/lowering/*` and the template is `QuotientHelpers.yul`. `AUDIT_FINDINGS.md`'s "Files reviewed (deep read)" list is entirely `src/codegen/*`; finding M1 anchors at `src/codegen/util.rs:443-448`. `ARCHITECTURE_REVIEW_2026-08.md` §11 concedes the drift and defers to a companion assessment that was not in scope. Consequence: the ~20 findings marked "Fixed with named tests" in the 2026-05-11 addendum could not be re-verified against the current tree.
+**I-4 — The audit chain's evidence map points at a source tree that no longer exists.** `CODEGEN_ASSURANCE_DOSSIER.md:57-65` maps every checkpoint to `src/codegen/protocol.rs`, `src/codegen/evaluator.rs`, `src/codegen/pcs.rs`, `src/transcript.rs` and `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`. **None of the Rust paths exist.** The tree is `src/lowering/*`. (Correction
+2026-08-12: this finding itself overreached on one item —
+`templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` DOES exist,
+alongside `QuotientHelpers.yul`; the dossier row citing it was correct.) `AUDIT_FINDINGS.md`'s "Files reviewed (deep read)" list is entirely `src/codegen/*`; finding M1 anchors at `src/codegen/util.rs:443-448`. `ARCHITECTURE_REVIEW_2026-08.md` §11 concedes the drift and defers to a companion assessment that was not in scope. Consequence: the ~20 findings marked "Fixed with named tests" in the 2026-05-11 addendum could not be re-verified against the current tree.
 
 **I-5 — No transcript domain separation.** The Keccak transcript is a bare `keccak256` over concatenated raw bytes, matching Rust. This is weaker than the Blake2b transcript in the same file, which uses a personalisation string plus `COMMON`/`CHALLENGE` byte tags. Not exploitable here — every absorb is fixed-length and every count is pinned and re-checked, so no two distinct valid inputs produce the same byte stream, and `vk_digest` provides cross-circuit separation. A missing defence-in-depth layer, not a vulnerability.
 
