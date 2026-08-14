@@ -104,7 +104,7 @@ end-to-end and all fixture tests pass in both modes. The committed
 Deliberately not addressed, by explicit decision: **M-4** (`vk_digest`
 coverage — protocol change affecting the prover) and anything outside
 `proofs/solidity-verifier/`. Remaining open from the tables below: P4, P8,
-P9, P10, P12, P14, L-4, L-9, L-10, I-6, I-7.
+P9, P10, P12, P14, L-4, L-9, I-6, I-7.
 
 ## 2026-08-13 follow-up: Low/Informational batch closed
 
@@ -144,12 +144,11 @@ The remaining P-series patches and L/I findings were applied in a third pass
   `templates/` tree in default CI, closing the committed-fixture drift gap.
   The deeper L-1 legs (expression front-end certification, native-kernel
   differential) remain future work.
-- **L-9 / L-10 / I-5** — `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`
+- **L-9 / I-5** — `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`
   states the wrapper obligations as requirements, adds the incident/migration
-  playbook keyed on BUILD_ID, records the truncated-challenge ≈2^-107.6
-  bound as an accepted risk with a 2^100 target level and a sign-off line,
-  and records the transcript domain-separation gap (I-5) as accepted —
-  it cannot be fixed verifier-side without breaking prover compatibility.
+  playbook keyed on BUILD_ID, and records the transcript domain-separation gap
+  (I-5) as accepted — it cannot be fixed verifier-side without breaking prover
+  compatibility.
 - **I-2 leftovers / I-3** — smoke-window comment corrected (creation-frame
   memory cannot pre-expand the runtime frame), `validate_public_accumulator`'s
   shape-dependent `r` parameter documented, the unreachable identity-flag
@@ -264,7 +263,6 @@ Each is fully specified in Part V of the review, with the insertion point named.
 | **M-5** (remainder) | Fill the `REVIEW_PACKET.md` §4 manifest (currently `fill per artifact` in all 11 rows); reconcile the three conflicting provenance stamps (`3fb6d84` / `a096e71…` / `53dc872…`); add `--optimize-runs` to the recorded flag set and remove the `SOLC_OPTIMIZE_RUNS` env override from the reproducible path; ship `REPRODUCIBLE_BUILDS.md`. |
 | **L-4** | Decide: relax the `calldatasize` pin to `>=`, or document that ERC-2771 forwarders cannot call this verifier. Both are defensible; the other four pins already carry the security property. |
 | **L-9** | Write the incident-response and migration section, and state the wrapper obligations as requirements: replaceable verifier address, wrapper-held pause, and binding `block.chainid` + wrapper address into the statement. |
-| **L-10** | Sign off on ~2⁻¹⁰⁸ PCS soundness from `truncated-challenges`, or disable the feature. Record the target security level in the deployment record. |
 | **I-4** | Rewrite the `src/codegen/*` anchors in `CODEGEN_ASSURANCE_DOSSIER.md` and `AUDIT_FINDINGS.md` to the current `src/lowering/*` tree. Until then the ~20 findings marked "Fixed with named tests" in the 2026-05-11 addendum cannot be re-verified by a reviewer. |
 | **I-2, I-3, I-6, I-7** | Cleanup and assertions; low value, no urgency. |
 

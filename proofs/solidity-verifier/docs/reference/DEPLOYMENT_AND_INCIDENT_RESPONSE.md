@@ -1,7 +1,6 @@
 # Deployment, Incident Response, and Accepted Risks
 
-Closes review items **L-9** (no incident-response or migration story) and
-**L-10** (truncated-challenge soundness as a recorded accepted risk) from
+Closes review item **L-9** (no incident-response or migration story) from
 `docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md`, and records the wrapper
 obligations that `AUDIT.md` TA-8 places on integrators.
 
@@ -137,38 +136,7 @@ the current design accepts is caught at deployment rather than in production.
 
 ## 5. Accepted risks (deployment owner sign-off)
 
-### 5.1 Truncated challenges cap PCS soundness at ≈ 2⁻¹⁰⁸ per attempt (L-10)
-
-The `truncated-challenges` profile — which the canonical artifacts use, and
-which mirrors the midnight-proofs prover — truncates `x3` to its low 128
-bits after squeezing and truncates each `x1`/`x4` power to 128 bits at use.
-Consequences (full derivation: review §L-10):
-
-- Per-attempt false-acceptance probability of the isolated `x3` step is
-  `(n + 9) / 2¹²⁸ ≈ 2⁻¹⁰⁷·⁹⁹` at `n = 2²⁰`, and ≈ **2⁻¹⁰⁷·⁶** after the
-  ×1.3585 `mod r` sampling-bias factor. Untruncated sampling would give
-  ≈ 2⁻²³⁴; the mask costs ~127 bits.
-- The bound is essentially tight: an adversary can place all roots of the
-  lying polynomial inside `[0, 2¹²⁸)`, so the attack is grinding `f_com`
-  with expected work ≈ **2¹⁰⁸**.
-- Edge case: `truncate(x1^i) = 0` (probability 2⁻¹²⁸ per power) silently
-  drops query `i` from both the commitment and evaluation sides — a clean,
-  symmetric failure.
-- Assumptions: KZG binding fixes `f'` from `f_com`; `x3` avoids the poles of
-  the batched rational function (fails with probability `11/2¹²⁸`).
-
-**Decision (2026-08-13): ACCEPTED.** Rationale: the profile faithfully
-mirrors the prover (a verifier-side change alone is impossible), and 2¹⁰⁸
-expected grinding work per forgery attempt exceeds the target security
-level below. Disabling the feature is a prover-side protocol change tracked
-separately, not a verifier patch.
-
-- **Target security level:** ≥ 2¹⁰⁰ expected work per false acceptance.
-- **Sign-off:** deployment owner: ______________________ date: __________
-  *(recorded per deployment; this repository documents the analysis and the
-  default acceptance).*
-
-### 5.2 Keccak transcript has no domain separation (I-5)
+### 5.1 Keccak transcript has no domain separation (I-5)
 
 The Keccak transcript absorbs raw concatenated bytes with no
 personalisation string or `COMMON`/`CHALLENGE` tags (the Blake2b transcript
@@ -180,7 +148,7 @@ the midnight-proofs prover; this is the same class of upstream protocol
 change as M-4 (`vk_digest` coverage), and is **accepted as a documented
 defence-in-depth gap** until the transcript changes upstream.
 
-### 5.3 `vk_digest` coverage (M-4) — deferred upstream decision
+### 5.2 `vk_digest` coverage (M-4) — deferred upstream decision
 
 `vk_digest` does not cover the SRS points, quotient VM program, accumulator
 schema, or feature profile. Compensating controls: build-time SRS tau

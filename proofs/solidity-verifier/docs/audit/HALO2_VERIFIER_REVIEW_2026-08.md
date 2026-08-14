@@ -44,7 +44,6 @@ One new, empirically-demonstrated issue: **a single off-curve point in the proof
 | **L-7** | Low | Zero-slack memory adjacencies; `batch_invert` scratch ends exactly at `LAGRANGE_DENOMS_MPTR` and would corrupt silently, without reverting |
 | **L-8** | Low | No on-chain provenance: no build id, no feature profile, CBOR metadata stripped |
 | **L-9** | Low | No incident-response or migration story; no domain binding, so a valid proof replays across every chain and deployment |
-| **L-10** | Low | 128-bit truncated challenges cap PCS soundness at ≈2⁻¹⁰⁸ (intentional; should be a recorded accepted risk) |
 | **I-1…I-7** | Info | Comments contradicting constants, dead code and constants, unreachable defensive branch, stale audit-doc anchors, missing transcript domain separation, two latent codegen divergences, unbound batching randomiser |
 
 ---
@@ -647,38 +646,6 @@ Immutability is the right call here: no admin key means no admin-key compromise,
 
 ---
 
-## L-10 — Low — 128-bit truncated challenges cap PCS soundness at ≈2⁻¹⁰⁸
-
-**Where:** line 1353 (`x3`), 3010–3017 (`x1` powers), 3379–3389 (`x4` powers). Mirrors `truncated-challenges` in `src/poly/kzg/mod.rs` and `src/utils/arithmetic.rs:246-256`.
-
-**Derivation.** `x3` is the dominant term, so take it precisely. After `x1`/`x2` batching the prover commits `f_com`, and only then is `x3` squeezed. Let
-
-```
-g(X) = Σ_s x2^s · (q_s(X) − r_s(X)) / Z_s(X)
-```
-
-where `r_s` interpolates the *claimed* evaluations on point set `s`. If every claim is honest, each `(q_s − r_s)` vanishes on set `s` and `g` is a polynomial; if any claim is false, `g` acquires a pole and is not a polynomial at all. The prover must nevertheless commit `f_com` to some polynomial `f′` of degree `< n`. Clearing denominators with `B = Π_s Z_s`:
-
-```
-N(X) = f′(X)·B(X) − Σ_s x2^s · (q_s(X) − r_s(X)) · Π_{t≠s} Z_t(X)
-```
-
-`N ≢ 0` exactly when the prover is lying, and the verifier accepts iff `N(x3) = 0`.
-
-- **Degree.** `deg f′ ≤ n − 2`; `deg B = 1+2+2+3+3 = 11` (the five point-set cardinalities in this render); so `deg N ≤ n + 9 = 2²⁰ + 9`, i.e. `log₂ = 20.0000124`.
-- **Sampling set.** `and(x3, 2¹²⁸−1)` leaves `x3` essentially uniform on `2¹²⁸` values.
-- **Bound.** `(n+9)/2¹²⁸ = 2^−107.99999`. Untruncated it would be `2^−234.5`, so the mask costs ~127 bits.
-
-**The bound is essentially tight.** With `A` and `B` fixed, an adversary can choose `f′` to interpolate `A/B` at `2²⁰` values of their choosing inside `[0, 2¹²⁸)` — `2²⁰` constraints uniquely determine a degree-`<2²⁰` polynomial, and any such polynomial is committable with the SRS. So all roots of `N` really can be placed in range. `x3` is hashed after `f_com`, so the attack is grinding: perturb a free part of the proof and test whether `x3` lands on a root. **Expected work `2¹⁰⁸`.** Not a practical threat, but it is the real figure rather than a loose upper bound.
-
-The `x1`/`x4` truncations contribute less: the clean failure mode is `truncate(x1ⁱ) = 0`, which silently drops query *i* from **both** sides at probability `2⁻¹²⁸`. So `2⁻¹⁰⁸` dominates and is a fair statement of the PCS soundness level.
-
-**Assumptions:** this isolates the `x3` step and assumes KZG binding (so `f_com` fixes a unique `f′`); it assumes `x3` avoids the poles of `g`, which fails with probability `11/2¹²⁸`; and it is a per-attempt probability. The `mod r` sampling bias above multiplies it by 1.3585, giving `2^−107.6`.
-
-The upstream docstring itself warns that "128 bits may not be enough entropy depending on the application".
-
-**This is faithful, not a bug** — and importantly the truncated coefficient is used **identically on the commitment and evaluation sides** (verified: `mload(X1_POWERS_MPTR + 0x40)` at line 3399 vs the same slot in the `q_eval_set` Horner at 3072), so there is no asymmetry. Record it as an explicit accepted risk with a stated target security level, and note that `truncate(x1ⁱ) = 0` with probability 2⁻¹²⁸ would silently drop query *i* from both sides.
-
 ---
 
 ## Informational
@@ -755,7 +722,6 @@ Nothing found is wrong today. These are the places where correctness rests on so
 3. **Strengthen the deployment probe** with a false-pairing case and a wrong-subgroup rejection case. The current probe proves the precompiles *exist*; the accept decision needs them to be *correct*. **[P5]**
 4. **Bound the quotient-VM operands.** Defence in depth today; mandatory the moment the VK stops being immutable. **[P12]**
 5. **Assert the committed-instance identity invariant at codegen**, or plumb the commitment through calldata. **[P7]**
-6. **Record the truncated-challenge security level explicitly.** ~2⁻¹⁰⁸ is a decision, not an accident; it should appear in the deployment record next to the target security level, not only in an upstream docstring.
 
 ## 4.4 Robustness
 

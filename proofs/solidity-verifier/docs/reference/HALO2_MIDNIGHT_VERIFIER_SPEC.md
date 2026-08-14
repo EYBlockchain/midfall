@@ -543,7 +543,7 @@ counts (no two distinct valid inputs share a byte stream) and `vk_digest`
 separates circuits — but it is a missing defence-in-depth layer. It cannot
 be added verifier-side without rejecting every real proof; like M-4, it is
 an upstream transcript decision. Recorded in
-`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §5.2.
+`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §5.1.
 
 ### 7.1 Transcript State
 

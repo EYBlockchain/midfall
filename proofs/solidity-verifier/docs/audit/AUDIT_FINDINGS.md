@@ -1446,12 +1446,12 @@ bug and a set of hardening/diagnostic items.
 | MF-3 | Low | Quotient VM: fold-on-empty re-folds a stale top; native callbacks reset `q_sp` instead of asserting it, hiding dropped operands; u16 const indexes unclamped; `q_sp` unbounded | **Fixed** (four guards; u8 indexes keep their documented exemption, u16 do not) |
 | MF-4 | Low | `PrecompileFailed` / `BadPointEncoding` / `ProofRejected` conflated chain faults with rejected input on three paths | **Fixed** (cause flags threaded through `batch_invert` and `validate_public_accumulator`; `ec_pairing` split; triage table in `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §6) |
 | MF-5 | Info | A low-level `staticcall` to an address with no code returns success — a mis-wired wrapper reads it as a valid proof | **Documented** (wrapper obligation W-4) |
-| MF-6 | Info | Single-reduction `mod r` sampling bias (max point mass ≈1.36× uniform) | **Accepted**, parity with the Rust reference; already covered by §5.1's ×1.3585 factor. Regenerate in lockstep if the reference moves to 512-bit reduction |
-| MF-7 | Info | 128-bit truncated challenges cap batching soundness | **Accepted**, already recorded and signed off as §5.1 (L-10) |
+| MF-6 | Info | Single-reduction `mod r` sampling bias (max point mass ≈1.36× uniform) | **Accepted**, parity with the Rust reference; the sampling-bias factor is derived in `AUDIT.md`. Regenerate in lockstep if the reference moves to 512-bit reduction |
+| MF-7 | Info | 128-bit truncated challenges cap batching soundness | **Accepted**: the profile mirrors the midnight-proofs prover, so a verifier-side change alone is impossible |
 | MF-8 | Info | Set-0 has 43 eval terms but 42 commitment terms (the committed-instance column's commitment is the identity), so its eval is forced ≈0 only indirectly via x1-batching | **Documented** in the PCS emitter |
 | MF-9 | Info | The canonical identity accumulator `(O, O)` is well-formed and passes the pairing layer | **Documented** (wrapper obligation W-5) |
 | MF-10 | Info | Native-identity selector folds appeared to hardcode a `y¹` gap | **WITHDRAWN — false positive.** All three emission sites already use `selector_fold.gap_for(identity)`; the fixed `Some(1)` is confined to `native_identity_estimate_block`, a size/gas proxy for gate-selection that is never emitted, and whose doc comment explicitly warns against "fixing" it to call `gap_for` (the fold plan is derived from the selection outcome, so it does not exist yet at that point). Recorded so the warning is not overridden by a future reviewer making the same mistake. |
-| MF-11 | Info | The transcript stream is positionally framed (a point and four scalars are byte-identical) | **Accepted**; identical to §5.2 (I-5). Any future variable-length section would need explicit length tags |
+| MF-11 | Info | The transcript stream is positionally framed (a point and four scalars are byte-identical) | **Accepted**; identical to §5.1 (I-5). Any future variable-length section would need explicit length tags |
 | MF-12 | Info | `assembly ("memory-safe")` is unsound by the letter of the annotation | **Accepted**; safe here via the terminal block + FMP guard + pinned pragma, now noted at the annotation site |
 
 Also proposed by the review and **withdrawn on inspection**: a CI job
@@ -1461,7 +1461,7 @@ single expression over a single in-memory VK, not two independent paths — so
 such a test would assert `x == x`. The residual it was meant to close (that
 `vk_digest` binds the *semantic* constraint system) is not reachable this way;
 it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
-See §5.3 for the standing M-4 decision.
+See §5.2 for the standing M-4 decision.
 
 **Verification.** The full EVM-gated suite runs green against these changes:
 218 passed / 0 failed under `--features evm,rust-verifier-trace`, including
