@@ -64,11 +64,11 @@ Fill this table for the exact artifact under review. Use
 
 | Item | Value |
 | --- | --- |
-| Repository commit | `a096e71746e401404f250817ca4e857bac1eef56` |
+| Repository commit | `a096e71746e401404f250817ca4e857bac1eef56` (**this repository** at packet creation; the Midfall dependency revision is a separate stamp — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
 | Working tree status at packet creation | clean before this packet was added |
 | Rust toolchain | `rust-toolchain.toml` |
-| Solidity compiler | `solc 0.8.30+commit.73712a01` |
-| Solidity flags | `--bin --optimize --via-ir --evm-version cancun --no-cbor-metadata` |
+| Solidity compiler | `solc 0.8.30+commit.73712a01`, SHA-256-pinned by `scripts/install_pinned_solc.sh` |
+| Solidity flags | `--bin --optimize --optimize-runs <N> --via-ir --evm-version cancun --no-cbor-metadata` — record `<N>` per artifact; it changes both bytecode and deployability (0.8.30 at `runs=100000` exceeds EIP-170) |
 | Cargo features | fill per artifact |
 | Generated verifier source hash | fill per artifact |
 | Generated VK source hash | fill per artifact, if split |
@@ -80,7 +80,9 @@ Fill this table for the exact artifact under review. Use
 | Public input fixture hash | fill per artifact |
 | Calldata hash | fill per artifact |
 
-The currently recorded IVC benchmark manifests live in
+Generate the per-artifact rows with `scripts/generate_artifact_manifest.sh
+<artifact-dump-dir>`; it emits this table for each rendered fixture dump under
+`target/`. The currently recorded IVC benchmark manifests live in
 `docs/reference/REPRODUCIBLE_BUILDS.md`.
 
 ## 5. Reading Order

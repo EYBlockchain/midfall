@@ -25,7 +25,13 @@
                     // public input. `first_adjust` removes the identity flag
                     // base from the first x word when present.
                     let packed := calldataload(add(src, mul(div(i, limbs_per_word), 0x20)))
-                    if and(iszero(div(i, limbs_per_word)), first_adjust) {
+                    // `and` here is bitwise, so it must not be fed the raw
+                    // `first_adjust` (a radix base, i.e. a high power of two):
+                    // `iszero(...)` is 0 or 1 and shares no bit with it, which
+                    // would make the guard false for every call. Subtracting is
+                    // already a no-op when `first_adjust` is zero, so gate on
+                    // the word index alone.
+                    if iszero(div(i, limbs_per_word)) {
                         packed := sub(packed, first_adjust)
                     }
                     // Select limb i from its packed field word. The mod/div
@@ -193,6 +199,14 @@
                         // If x carried the identity flag, both decoded
                         // coordinates must be zero after shifting. Any other y
                         // value would be a malformed infinity encoding.
+                        //
+                        // Unreachable by construction (audit I-2/I-3): the
+                        // whole-point sentinel check above already accepted
+                        // every encoding in which x carries the identity flag
+                        // -- the packed codec is a bijection, so an x flagged
+                        // as identity with a sentinel mismatch cannot decode
+                        // here. Kept as defence in depth for future codec
+                        // changes rather than as a live branch.
                         ok := and(ok, iszero(or(or(x_hi, x_lo), or(y_hi, y_lo))))
                         mstore(dst, 0)
                         mstore(add(dst, 0x20), 0)
@@ -230,7 +244,17 @@
             //   3. folds the RHS carried point and fixed-base scalar tail into
             //      ACC_RHS_MPTR, leaving ACC_LHS_MPTR / ACC_RHS_MPTR ready for
             //      randomized batching in FinalPairing.yul.
-            function validate_public_accumulator(success, r) -> out {
+            // `r` is consumed only by the canonicality guards in the
+            // carried-scalar and fixed-base-tail arms; renders whose
+            // accumulator layout has neither (e.g. point_pair with no tail)
+            // legally leave it unused.
+            // MF-4: `precompile_failed` separates a G1MSM staticcall that
+            // could not run (chain/gas fault) from a public-input point this
+            // verifier decoded and rejected (bad packing, out-of-field
+            // coordinate, non-canonical identity encoding, or a point the
+            // precompile found off-curve/out-of-subgroup). Both fail closed at
+            // the call site; only the second is a BadPointEncoding.
+            function validate_public_accumulator(success, r) -> out, precompile_failed {
                 out := success
                 let bits := {{ self.expected_num_acc_limb_bits }}
                 let n := {{ self.expected_num_acc_limbs }}
@@ -259,6 +283,11 @@
                     // Carried-scalar layout: the circuit exposes the scalar
                     // that multiplies the carried LHS point.
                     let lhs_scalar := calldataload(lhs_scalar_ptr)
+                    // Canonicality is enforced here rather than relying on the
+                    // later instance-absorption loop: G1MSM reduces scalars
+                    // mod r implicitly, so s and s+r would be indistinguishable
+                    // inside this helper.
+                    out := and(out, lt(lhs_scalar, r))
                     {%- else %}
                     // Already-collapsed point-pair layout: carried scalars are
                     // implicit one.
@@ -278,8 +307,9 @@
                         // Single-pair MSM output overwrites ACC_LHS_MPTR with
                         // lhs_scalar * decoded_lhs. If lhs_scalar is one, this
                         // is also a curve/subgroup validation round-trip.
-                        out := staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
+                        out := staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}, acc_scratch, {{ template_constants.g1_msm_pair_bytes|hex() }}, ACC_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
+                        precompile_failed := iszero(out)
                     }
                 }
 
@@ -319,6 +349,7 @@
                     {%- if self.expected_acc_has_carried_scalars %}
                     // Explicit carried RHS scalar.
                     let rhs_scalar := calldataload(rhs_scalar_ptr)
+                    out := and(out, lt(rhs_scalar, r))
                     {%- else %}
                     // Implicit unit scalar for already-collapsed point pairs.
                     let rhs_scalar := 1
@@ -347,6 +378,9 @@
                 // corresponding base point is embedded in verifier memory at
                 // {{ base_mptr|hex() }}.
                 let fixed_scalar_{{ loop.index0 }} := calldataload(fixed_scalar_ptr)
+                // Reject non-canonical tail scalars before the negation below:
+                // for s >= r, `mod(sub(r, s), r)` is not -s mod r.
+                out := and(out, lt(fixed_scalar_{{ loop.index0 }}, r))
                 {%- if negate_scalar %}
                 // Some accumulator bases are represented with a negated scalar
                 // so the MSM can reuse the generated positive base point.
@@ -379,8 +413,11 @@
                         //
                         // The precompile also validates every nonzero fixed
                         // base embedded by codegen and the carried RHS point.
+                        // ACC_RHS_MSM_GAS is the compile-time worst case
+                        // (every tail scalar nonzero); acc_msm_len can only
+                        // select a same-size-or-smaller MSM at runtime.
                         out := staticcall(
-                            gas(),
+                            ACC_RHS_MSM_GAS,
                             {{ template_constants.eip2537.g1msm_address|hex() }},
                             acc_scratch,
                             acc_msm_len,
@@ -388,6 +425,7 @@
                             {{ template_constants.g1_bytes|hex() }}
                         )
                         out := and(out, eq(returndatasize(), {{ template_constants.g1_bytes|hex() }}))
+                        precompile_failed := iszero(out)
                     }
                 }
                 // The caller checks `out` and reverts before transcript work if

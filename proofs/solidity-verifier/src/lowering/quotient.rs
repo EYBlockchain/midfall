@@ -142,6 +142,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// VK payload reservation, and the generated Yul interpreter. Keeping the
     /// bounds checks here prevents the standalone evaluator and in-verifier VM
     /// paths from drifting.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn quotient_template_program(
         &self,
         build: QuotientProgramBuild,
@@ -149,6 +150,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         vk_mptr: Ptr,
         memory: &VerifierMemoryLayout,
         selector_fold: &SelectorFoldPlan,
+        operand_bounds: (usize, usize),
+        num_selector_buckets: usize,
     ) -> (QuotientProgram, usize, QuotientStateSlots) {
         let quotient_program_chunks = PackedProgramCodec::encode_words(&build.bytes);
         let quotient_const_words = vk.quotient_const_words;
@@ -184,7 +187,12 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             selector_max_power: selector_fold.max_power,
             selector_tail_updates: Self::selector_tail_updates(selector_fold),
             stack_mptr: quotient_stack_mptr,
+            stack_hi: memory.quotient_stack_hi,
+            num_consts: build.consts.len(),
             program_mptr,
+            operand_lo: operand_bounds.0,
+            operand_hi: operand_bounds.1,
+            num_selector_buckets,
         };
 
         (program, quotient_stack_mptr, state_slots)
@@ -253,7 +261,17 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         // `build.max_stack` only describes the interpreted operand stack. Some
         // native callbacks share `quotient_stack_mptr` as a scratch base, so
         // the registered memory region must cover both possible users.
-        build.max_stack.max(native_callback_scratch_words)
+        //
+        // Floor at one word: every inline/native direct_quotient_block writes
+        // one eval-scratch word at eval_scratch_slot == quotient_stack_mptr
+        // (see direct_quotient_block and compact_quotient_computation_blocks),
+        // so the region is always written even when the interpreted stack and
+        // native scratch are both empty (a degenerate-but-valid VK whose gates
+        // all fit the inline prefix with no permutation sets, lookups, or VM
+        // items). Accounting that word here keeps the in-bounds invariant with
+        // the code that emits the write, rather than relying on the unrelated
+        // MODEXP-frame clamp in layout/memory.rs.
+        build.max_stack.max(native_callback_scratch_words).max(1)
     }
 
     /// Number of persistent VM temp words needed for state plus selector
@@ -594,12 +612,28 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     }
 
     /// Estimate the generated native callback block for one identity.
+    ///
+    /// This is a size/gas PROXY consumed only by the native-vs-VM gate
+    /// selection heuristic (native_gate_candidates); it is never emitted. The
+    /// real native blocks are produced by compact_quotient_computation_blocks
+    /// with `selector_fold.gap_for(identity)`, but that fold plan does not
+    /// exist yet at selection time (it is derived from the selection
+    /// outcome), so we use a fixed proxy gap: Some(1) for selector targets,
+    /// None otherwise.
+    ///
+    /// Any divergence between this proxy and the eventual `gap_for` only
+    /// perturbs which gates get promoted to native callbacks; it can never
+    /// change the correctness of the generated verifier, because actual
+    /// emission always uses the real gap. Do not "fix" this to call
+    /// `gap_for` here: the plan is intentionally unavailable at this point.
     fn native_identity_estimate_block(identity: &QuotientIdentity) -> Vec<String> {
         let state_slots = QuotientStateSlots {
             eval_numer_mptr: 0x2000,
             trace_id_mptr: 0x2020,
             selector_power_mptr: 0x2040,
         };
+        // Proxy gap only; see the doc comment above. This deliberately differs
+        // from selector_fold.gap_for(identity) used at emission time.
         let selector_gap = matches!(identity.target, QuotientTarget::Selector(_)).then_some(1);
         Self::direct_quotient_block(
             &identity.lines,
@@ -1262,15 +1296,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         yul_const_value(value, const_vars).as_deref() == Some(expected_coeff)
     }
 
-    /// Record `let name := const` bindings for later limb-chain matching.
+    /// Track constant variable bindings for later limb-chain matching.
+    ///
+    /// Records `name := const` (whether or not introduced with `let`), and,
+    /// crucially, forgets any variable that is reassigned to a non-constant
+    /// value. Ignoring non-`let` reassignments would leave a stale literal in
+    /// `const_vars`, so a later `mulmod(name, limb, r)` could be mis-recognized
+    /// as a fused limb7 coefficient and bake the wrong constant into the
+    /// generated quotient identity.
     fn record_yul_const_assignment(line: &str, const_vars: &mut HashMap<String, String>) {
-        let Some((dst, rhs)) = yul_let_assignment(line) else {
+        let Some(assignment) = yul_assignment(line) else {
             return;
         };
-        let Some(value) = yul_const_value(&rhs, const_vars) else {
-            return;
-        };
-        const_vars.insert(dst, value);
+        match yul_const_value(&assignment.expr, const_vars) {
+            Some(value) => {
+                const_vars.insert(assignment.dst, value);
+            }
+            None => {
+                const_vars.remove(&assignment.dst);
+            }
+        }
     }
 
     /// Trace, advance, and accumulate one main quotient identity value.
@@ -1589,6 +1634,18 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             Self::push_structured_main_fold(&mut block, "q_lookup_eval", state_slots, trace);
             block.push("}".to_string());
 
+            // Fail closed on a chunk/helper-eval count mismatch: zip would
+            // otherwise silently drop the excess chunks, removing helper
+            // constraints from the y-batched numerator. Guarded indirectly today
+            // by the protocol lookup count check, but assert it directly at the
+            // zip site.
+            assert_eq!(
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+                "lookup {lookup_idx}: input chunk count {} != helper eval count {}",
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+            );
             for (input_chunk, h_eval) in
                 chunked.input_expression_chunks().iter().zip(h_evals.iter())
             {
@@ -1596,7 +1653,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 block.push("{".to_string());
 
                 if k == 0 {
-                    block.push("let q_lookup_eval := 0".to_string());
+                    // Unreachable today (chunks are never empty), but emit the
+                    // reference-faithful value (h_eval) rather than 0: the
+                    // native verifier (plonk/logup.rs) computes
+                    // helper_eval * (empty product = 1) - (empty sum = 0)
+                    // = helper_eval for an empty chunk, enforcing h == 0.
+                    // Emitting 0 leaves h unconstrained while the accumulator
+                    // still folds this h_eval into sum_h. Mirrors the fix in
+                    // quotient_numerator/yul_emit.rs.
+                    block.push(format!("let q_lookup_eval := {}", h_eval));
                     Self::push_structured_main_fold(
                         &mut block,
                         "q_lookup_eval",
@@ -1903,7 +1968,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         items: &[QuotientProgramItem],
         selector_fold: &SelectorFoldPlan,
     ) -> QuotientProgramBuild {
-        let mut builder = QuotientProgramBuilder::default();
+        self.build_quotient_program_items_with_limb_ops(
+            items,
+            selector_fold,
+            crate::lowering::config::DEFAULT_QUOTIENT_LIMB_VM_OPS,
+        )
+    }
+
+    /// Lower the same item stream under an explicit limb-opcode policy.
+    ///
+    /// Rendering always uses the crate default. The `false` build exists so the
+    /// generator can cross-check the limb superinstructions against a program
+    /// that uses only generic Fr opcodes; see
+    /// `quotient_numerator::vm::certify::certify_quotient_builds_agree`.
+    pub(super) fn build_quotient_program_items_with_limb_ops(
+        &self,
+        items: &[QuotientProgramItem],
+        selector_fold: &SelectorFoldPlan,
+        limb_vm_ops: bool,
+    ) -> QuotientProgramBuild {
+        let mut builder = QuotientProgramBuilder::with_limb_vm_ops(limb_vm_ops);
         // Lower the logical plan into bytecode in one pass. Repeated
         // subexpressions are emitted directly; native callbacks remain opaque
         // markers because their arithmetic is emitted as separate Yul kernels

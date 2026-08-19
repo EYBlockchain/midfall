@@ -1,5 +1,12 @@
 # Solidity Verifier Codegen Audit
 
+> **Path-migration note (2026-08-12).** These findings were written against
+> the pre-rename source tree; `src/codegen/` has since been refactored into
+> `src/lowering/`. Historical `**File:**` citations (including line numbers)
+> are preserved as the audit record; translate with the migration map at the
+> top of `AUDIT.md` when re-verifying. The release-facing status table below
+> has been updated to cite current code and test names.
+
 **Repository:** `halo2-solidity-verifier-exp`
 **Scope:** halo2 → midnight-proofs port of the on-chain KZG/BLS12-381 verifier
 codegen and emitted Yul.
@@ -47,7 +54,7 @@ the release-facing status snapshot as of 2026-05-11.
 | 2026-05-11 #1 lookup quotient identity count | Fixed | `lookup_chunks.iter().map(|chunks| chunks + 2).sum()` is used in planning and validation; `lookup_identity_source_handles_variable_chunk_counts` covers variable chunk counts. |
 | 2026-05-11 #2 fixed eval count | Fixed | `proof_evaluation_counts().fixed` counts `EvalRead::Fixed` entries from the protocol plan instead of fixed columns. |
 | 2026-05-11 #3 challenge phase remapping | Fixed | `ProtocolPlan::from_constraint_system` sizes phases by the max of advice and challenge phases; `plan_allows_challenge_phase_beyond_advice_phases` covers this case. |
-| 2026-05-11 #4 packed32 operand widths | Fixed | `validate_packed_quotient_operand` enforces logical `u8` and `u16` bounds; `packed32_validator_rejects_logical_operand_width_corruption` covers corrupted packed operands. |
+| 2026-05-11 #4 packed32 operand widths | Fixed | Operand decoding and width bounds are enforced by `validate_quotient_program` / `validate_quotient_const_slots` / `validate_quotient_mem_ptrs` in `src/lowering/quotient_numerator/vm/mod.rs`; `quotient_vm_safety_validator_rejects_malformed_programs` covers stack underflow, unknown memory tokens, and truncated operands, and `quotient_vm_lengths_are_derived_from_opcode_spec` pins operand widths to the opcode spec. (The names previously cited here — `validate_packed_quotient_operand` and `packed32_validator_rejects_logical_operand_width_corruption` — never landed under those identifiers; corrected 2026-08-12.) |
 | 2026-05-11 #5 reserved memory writes | Fixed | Trace and helper templates avoid Solidity-reserved memory writes; `templates_do_not_write_solidity_reserved_memory_slots` checks `mstore(0,`, `mstore(0x00,`, and related reserved forms. |
 | 2026-05-11 #6 external quotient return overlap | Fixed | External quotient output uses `QUOTIENT_RETURN_MPTR`; template validation checks output length and disjointness from the copied quotient frame. |
 | 2026-05-11 #7 structured selector-run trace | Fixed | Selector-run grouping is disabled when trace is enabled, preserving per-identity trace events through direct quotient blocks. |
@@ -1415,5 +1422,99 @@ The biggest correctness blockers are:
 These should be fixed before treating the document as a conformance spec. The
 rest are mostly edge-case, interoperability, or validation issues, but several
 could still become soundness bugs in a generated verifier.
+
+
+## 2026-08-13 — independent external review (MF series)
+
+An independent review of the rendered `moonlight-wrap` artifacts (verifier
+sha256 `555ed976…6798`, VK `7ca78ec2…b7ec`; byte-identical to
+`fixtures/moonlight-wrap/`) run as three separate passes — cryptographic
+implementation, ZK/protocol soundness, and EVM/software security — plus a
+line-by-line equivalence pass against `midfall/proofs` and machine
+recomputation of every recomputable constant.
+
+**No soundness-relevant defect was found.** The transcript schedule is
+byte-exact against the Rust verifier, every absorbed proof point provably
+reaches a subgroup-enforcing precompile, the linearization/PCS algebra is
+exact, and the memory plan has no live overlaps. Findings are one liveness
+bug and a set of hardening/diagnostic items.
+
+| ID | Sev | Finding | Disposition |
+| --- | --- | --- | --- |
+| MF-1 | High | `MODEXP_GAS = 1360` is the EIP-2565 price; EIP-7883 (Osaka/Fusaka) prices the same frame at 4064, so every proof reverts `PrecompileFailed` on a repriced chain — and the constructor never probed modexp, so deployment succeeded silently | **Fixed** (`modexp_gas_word_frame` takes the max over live schedules; constructor modexp known-answer probe added) |
+| MF-2 | Low | The memory-layout guard — the only on-chain check for a bad recompile — reverted bare | **Fixed** (`MemoryLayoutViolated()`, typed on the runtime and constructor paths) |
+| MF-3 | Low | Quotient VM: fold-on-empty re-folds a stale top; native callbacks reset `q_sp` instead of asserting it, hiding dropped operands; u16 const indexes unclamped; `q_sp` unbounded | **Fixed** (four guards; u8 indexes keep their documented exemption, u16 do not) |
+| MF-4 | Low | `PrecompileFailed` / `BadPointEncoding` / `ProofRejected` conflated chain faults with rejected input on three paths | **Fixed** (cause flags threaded through `batch_invert` and `validate_public_accumulator`; `ec_pairing` split; triage table in `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §6) |
+| MF-5 | Info | A low-level `staticcall` to an address with no code returns success — a mis-wired wrapper reads it as a valid proof | **Documented** (wrapper obligation W-4) |
+| MF-6 | Info | Single-reduction `mod r` sampling bias (max point mass ≈1.36× uniform) | **Accepted**, parity with the Rust reference; the sampling-bias factor is derived in `AUDIT.md`. Regenerate in lockstep if the reference moves to 512-bit reduction |
+| MF-7 | Info | 128-bit truncated challenges cap batching soundness | **Accepted**: the profile mirrors the midnight-proofs prover, so a verifier-side change alone is impossible |
+| MF-8 | Info | Set-0 has 43 eval terms but 42 commitment terms (the committed-instance column's commitment is the identity), so its eval is forced ≈0 only indirectly via x1-batching | **Documented** in the PCS emitter |
+| MF-9 | Info | The canonical identity accumulator `(O, O)` is well-formed and passes the pairing layer | **Documented** (wrapper obligation W-5) |
+| MF-10 | Info | Native-identity selector folds appeared to hardcode a `y¹` gap | **WITHDRAWN — false positive.** All three emission sites already use `selector_fold.gap_for(identity)`; the fixed `Some(1)` is confined to `native_identity_estimate_block`, a size/gas proxy for gate-selection that is never emitted, and whose doc comment explicitly warns against "fixing" it to call `gap_for` (the fold plan is derived from the selection outcome, so it does not exist yet at that point). Recorded so the warning is not overridden by a future reviewer making the same mistake. |
+| MF-11 | Info | The transcript stream is positionally framed (a point and four scalars are byte-identical) | **Accepted**; identical to §5.1 (I-5). Any future variable-length section would need explicit length tags |
+| MF-12 | Info | `assembly ("memory-safe")` is unsound by the letter of the annotation | **Accepted**; safe here via the terminal block + FMP guard + pinned pragma, now noted at the annotation site |
+
+Also proposed by the review and **withdrawn on inspection**: a CI job
+recomputing `vk_digest` from the rendered VK payload. The payload word is
+written directly from `self.vk.transcript_repr()` in `lowering/vk.rs` — a
+single expression over a single in-memory VK, not two independent paths — so
+such a test would assert `x == x`. The residual it was meant to close (that
+`vk_digest` binds the *semantic* constraint system) is not reachable this way;
+it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
+See §5.2 for the standing M-4 decision.
+
+**Verification.** The full EVM-gated suite runs green against these changes:
+218 passed / 0 failed under `--features evm,rust-verifier-trace`, including
+native-Rust-vs-Solidity trace equivalence, the constructor precompile-rejection
+tests, `typed_errors_identify_rejection_classes`, and
+`compiled_verifier_runtime_fits_the_eip170_limit` — so the added probe and
+guards do not breach the code-size limit. The MF-4 Lagrange re-route is
+observed executing rather than merely pinned in template text: the
+forced-domain-root verifier reverts with `ProofRejected()`.
+
+MF-1's probe is likewise demonstrated rather than asserted.
+`constructor_rejects_a_modexp_bound_below_the_chain_price` renders the verifier,
+lowers `MODEXP_GAS` to one gas below what this harness's revm charges for the
+frame, and requires DEPLOYMENT to fail -- with a positive control deploying the
+same fixture unmutated, so the rejection cannot pass vacuously. That is the
+exact shape of the original bug (the shipped 1360 sat below EIP-7883's 4064),
+reproduced by moving the bound rather than the schedule, because the pinned
+revm 19 exposes `SpecId::OSAKA` but still prices modexp with `berlin_run`.
+
+Caveat on the compiler: the pinned NATIVE solc binary was not reachable from
+the environment that applied these fixes, so the suite ran against the same
+compiler commit built to WASM (npm `solc` 0.8.30, reporting
+`0.8.30+commit.73712a01`) behind a shim exposing the native CLI surface. That
+is sound for exercising behaviour, but this repository's reproducibility claim
+pins the native binary's sha256 — so nothing produced that way may be deployed
+or used to pin a hash.
+
+The two builds were then compared directly, which upgrades that caveat from an
+assumption to a measurement: recompiling `deployments/sepolia/moonlight-wrap/
+Halo2Verifier.sol` (a 21,161-byte via-IR runtime, at the `deployment.json`
+settings) through the WASM build reproduces the committed native-compiled
+runtime with exactly 40 differing bytes — the two 20-byte immutable
+`AUTHORIZED_VK` slots, which a fresh compile leaves zeroed. All 21,121 other
+bytes match. So the code-size result carries native weight; re-confirming it on
+a pinned-binary host remains good release hygiene rather than an open risk.
+
+**Correction to an earlier claim in this section's history.** The MF-1 commit
+message and an earlier revision of `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §4
+stated that the `deployments/sepolia/moonlight-wrap` deployment should be
+assumed bricked post-Fusaka. That is wrong, and the assumption behind it was
+wrong: that deployment predates the exact-gas hardening, so all 17 of its
+`staticcall`s — the three modexp sites included — forward `gas()`, and an
+upward repricing is absorbed rather than fatal. Only artifacts carrying exact
+bounds are exposed, which is the population MF-1 addresses. Verified by
+reading the recorded source (its recompiled runtime reproduces
+`deployment.json`'s `runtimeCodeHash` byte-for-byte apart from the two
+immutable `AUTHORIZED_VK` slots), so no `eth_call` is needed to settle it.
+
+**Not closed by these commits:** the committed fixtures predate the MF-1 fix
+and are marked STALE; regenerating them needs the SRS asset (unreachable here)
+and, for moonlight-wrap, a Moonlight checkout.
+The replay harness also cannot exercise EIP-7883 — the pinned revm 19 has an
+Osaka spec, but its modexp handler is still `berlin_run` — so real coverage
+awaits a revm bump; `src/evm.rs` records that gap at the `SpecId` pin.
 
 [1]: https://eips.ethereum.org/EIPS/eip-2537 "EIP-2537: Precompile for BLS12-381 curve operations"

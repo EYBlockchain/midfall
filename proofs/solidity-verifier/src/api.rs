@@ -352,6 +352,16 @@ pub struct RenderOptions {
     pub quotient: RenderQuotient,
     /// Trace/gas diagnostic knobs.
     pub diagnostics: RenderDiagnostics,
+    /// Optional 32-byte provenance tag folded into the emitted `BUILD_ID`
+    /// constant (P10/L-8) — typically a hash of the generator git commit and
+    /// build context, e.g. `keccak256("commit=<sha>,dirty=<bool>")`.
+    ///
+    /// `None` (the default) keeps `BUILD_ID` a pure function of the feature
+    /// profile, VK, and SRS, so repository fixtures stay byte-stable across
+    /// commits. Deployment builds SHOULD set it and publish the preimage in
+    /// the deployment record; see
+    /// `docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md`.
+    pub provenance: Option<[u8; 32]>,
 }
 
 /// Rendered Solidity artifacts.
@@ -389,6 +399,13 @@ pub enum RepackError {
         /// Hex encoding of the failing 48-byte compressed G1.
         bytes_hex: String,
     },
+    /// One proof scalar is not a canonical Fr element (`>= r`).
+    NonCanonicalScalar {
+        /// Byte offset of the failing scalar in the native proof.
+        offset: usize,
+        /// Big-endian hex encoding of the failing 32-byte scalar.
+        bytes_hex: String,
+    },
 }
 
 impl fmt::Display for RepackError {
@@ -409,6 +426,11 @@ impl fmt::Display for RepackError {
                 f,
                 "invalid compressed G1 at compressed[{offset}..{}]: bytes = 0x{bytes_hex}",
                 offset + layout::G1_COMPRESSED_BYTES
+            ),
+            Self::NonCanonicalScalar { offset, bytes_hex } => write!(
+                f,
+                "non-canonical Fr scalar at compressed[{offset}..{}]: bytes = 0x{bytes_hex}",
+                offset + layout::WORD_BYTES
             ),
         }
     }
@@ -445,6 +467,25 @@ pub enum GeneratorError {
         num_limb_bits: usize,
         num_instances: usize,
         reason: &'static str,
+    },
+    /// The accumulator's fixed-base scalar tail asks for more bases than this
+    /// verifying key can supply.
+    ///
+    /// The tail must be empty (fully collapsed accumulator), or cover `-G` plus
+    /// every permutation commitment plus at most one scalar per fixed
+    /// commitment.
+    AccumulatorFixedBaseTailMismatch {
+        /// Tail scalars implied by `num_instances` and the encoding.
+        fixed_scalar_count: usize,
+        /// Smallest non-empty tail this verifying key supports (`-G` plus every
+        /// permutation commitment).
+        min_fixed_scalar_count: usize,
+        /// Largest tail this verifying key supports.
+        max_fixed_scalar_count: usize,
+        /// Fixed commitments in the verifying key.
+        num_fixed_comms: usize,
+        /// Permutation commitments in the verifying key.
+        num_permutation_comms: usize,
     },
     /// Internal render/layout planning failed before Solidity was emitted.
     Planning {
@@ -497,6 +538,20 @@ impl fmt::Display for GeneratorError {
             } => write!(
                 f,
                 "unsupported accumulator encoding: offset={offset}, num_limbs={num_limbs}, num_limb_bits={num_limb_bits}, num_instances={num_instances}; {reason}"
+            ),
+            Self::AccumulatorFixedBaseTailMismatch {
+                fixed_scalar_count,
+                min_fixed_scalar_count,
+                max_fixed_scalar_count,
+                num_fixed_comms,
+                num_permutation_comms,
+            } => write!(
+                f,
+                "accumulator fixed-base scalar tail of {fixed_scalar_count} is not supported by \
+                 this verifying key ({num_fixed_comms} fixed, {num_permutation_comms} permutation \
+                 commitments): expected 0 (fully collapsed) or \
+                 {min_fixed_scalar_count}..={max_fixed_scalar_count}; adjust num_instances or the \
+                 accumulator offset"
             ),
             Self::Planning { stage, message } => {
                 write!(f, "generator planning failed during {stage}: {message}")

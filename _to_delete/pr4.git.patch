@@ -1,0 +1,130 @@
+diff --git a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+--- a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
++++ b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+@@ -1463,11 +1463,29 @@
+ it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
+ See §5.3 for the standing M-4 decision.
+ 
++**Verification.** The full EVM-gated suite runs green against these changes:
++217 passed / 0 failed under `--features evm,rust-verifier-trace`, including
++native-Rust-vs-Solidity trace equivalence, the constructor precompile-rejection
++tests, `typed_errors_identify_rejection_classes`, and
++`compiled_verifier_runtime_fits_the_eip170_limit` — so the added probe and
++guards do not breach the code-size limit. The MF-4 Lagrange re-route is
++observed executing rather than merely pinned in template text: the
++forced-domain-root verifier reverts with `ProofRejected()`.
++
++Caveat on the compiler: the pinned NATIVE solc binary was not reachable from
++the environment that applied these fixes, so the suite ran against the same
++compiler commit built to WASM (npm `solc` 0.8.30, reporting
++`0.8.30+commit.73712a01`) behind a shim exposing the native CLI surface. That
++is sound for exercising behaviour, but this repository's reproducibility claim
++pins the native binary's sha256 — so nothing produced that way may be deployed
++or used to pin a hash, and the code-size result should be re-confirmed with the
++pinned binary before release.
++
+ **Not closed by these commits:** the committed fixtures and the Sepolia
+-deployment predate the MF-1 fix and are marked STALE; regeneration needs the
+-pinned solc. The replay harness also cannot exercise EIP-7883 — the pinned
+-revm 19 has an Osaka spec, but its modexp handler is still `berlin_run` — so
+-real coverage awaits a revm bump; `src/evm.rs` records that gap at the
+-`SpecId` pin.
++deployment predate the MF-1 fix and are marked STALE; regenerating them needs
++the SRS asset (unreachable here) and, for moonlight-wrap, a Moonlight checkout.
++The replay harness also cannot exercise EIP-7883 — the pinned revm 19 has an
++Osaka spec, but its modexp handler is still `berlin_run` — so real coverage
++awaits a revm bump; `src/evm.rs` records that gap at the `SpecId` pin.
+ 
+ [1]: https://eips.ethereum.org/EIPS/eip-2537 "EIP-2537: Precompile for BLS12-381 curve operations"
+diff --git a/proofs/solidity-verifier/fixtures/ivc/README.md b/proofs/solidity-verifier/fixtures/ivc/README.md
+--- a/proofs/solidity-verifier/fixtures/ivc/README.md
++++ b/proofs/solidity-verifier/fixtures/ivc/README.md
+@@ -7,8 +7,9 @@
+ > inputs for the *replay* tests, which exercise verification logic rather than
+ > the modexp bound, but they must be regenerated (and their provenance rows
+ > below updated) on a host with the pinned solc before they are used as a
+-> deployment source. Regeneration needs solc, which the environment that
+-> applied the MF-1 fix did not have.
++> deployment source. Regeneration needs the SRS asset
++> (`zk_stdlib/examples/assets/bls_filecoin_2p19`) and a full proving run, which
++> the environment that applied the MF-1 fix could not reach.
+ 
+ Pre-rendered artifacts for `tests/ivc_accumulator_replay.rs`, which replays a
+ real IVC final proof and then mutates the accumulator public inputs to check the
+diff --git a/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md b/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
+--- a/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
++++ b/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
+@@ -7,8 +7,9 @@
+ > inputs for the *replay* tests, which exercise verification logic rather than
+ > the modexp bound, but they must be regenerated (and their provenance rows
+ > below updated) on a host with the pinned solc before they are used as a
+-> deployment source. Regeneration needs solc, which the environment that
+-> applied the MF-1 fix did not have.
++> deployment source. Regeneration needs a Moonlight checkout on the branch named
++> below plus the SRS asset, neither of which the environment that applied the
++> MF-1 fix could reach.
+ 
+ Pre-rendered artifacts for the `point_pair` accumulator arm of
+ `tests/ivc_accumulator_replay.rs`. The IVC fixture next door covers
+diff --git a/proofs/solidity-verifier/src/test.rs b/proofs/solidity-verifier/src/test.rs
+--- a/proofs/solidity-verifier/src/test.rs
++++ b/proofs/solidity-verifier/src/test.rs
+@@ -1554,8 +1554,9 @@
+ pragma solidity ^0.8.24;
+ 
+ contract BatchInvertHarness {{
+-    // The extracted helper forwards the exact EIP-2565 modexp cost; mirror
+-    // the generated constant it references.
++    // The extracted helper forwards the pinned modexp bound (the maximum over
++    // the EIP-2565 and EIP-7883 schedules, MF-1); mirror the generated
++    // constant it references.
+     uint256 internal constant MODEXP_GAS = {modexp_gas};
+ 
+     fallback() external {{
+@@ -1566,8 +1567,14 @@
+             let r := calldataload(0x20)
+             let base := 0x1000
+             calldatacopy(base, 0x40, mul(n, 0x20))
+-            let ok := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
++            // MF-4: batch_invert now also reports WHY it failed (a failed
++            // modexp staticcall vs a rejected denominator). This harness only
++            // asserts fail-closed behaviour, so it keeps the boolean and
++            // discards the cause -- but it must still destructure both values
++            // or the extracted helper does not compile.
++            let ok, precompile_failed := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
+             mstore(0x80, ok)
++            pop(precompile_failed)
+             mcopy(0xa0, base, mul(n, 0x20))
+             return(0x80, add(0x20, mul(n, 0x20)))
+         }}
+@@ -2868,6 +2875,30 @@
+         call_deployed_verifier(&mut evm, &fixture.proof, &fixture.instances),
+         "verifier with x forced to domain root should hit zero Lagrange denominator",
+     );
++
++    // MF-4: pin WHICH rejection this is, not just that it rejects. A zero
++    // Lagrange denominator means the squeezed x coincided with a domain point
++    // -- a transcript event, so ProofRejected. It used to surface as
++    // PrecompileFailed, which sends an incident responder to inspect the node
++    // when the proof was the cause. This is the only live path that reaches
++    // that branch, so without this assertion the split is pinned in template
++    // text but never observed executing.
++    let selector = {
++        use sha3::{Digest, Keccak256};
++        let d = Keccak256::digest(b"ProofRejected()");
++        vec![d[0], d[1], d[2], d[3]]
++    };
++    match evm.evm.try_call_with_gas(
++        evm.verifier_address,
++        encode_calldata(&fixture.proof, &fixture.instances),
++        30_000_000,
++    ) {
++        CallOutcome::Revert { output, .. } => assert_eq!(
++            output, selector,
++            "a zero Lagrange denominator must report ProofRejected, not a precompile fault"
++        ),
++        outcome => panic!("forced-domain-root verifier did not revert: {outcome:?}"),
++    }
+ }
+ 
+ #[test]

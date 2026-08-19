@@ -231,6 +231,78 @@ pub(crate) mod test {
         }
     }
 
+    /// Read the free-memory-pointer initializer from a runtime bytecode prefix.
+    ///
+    /// solc opens every contract by storing the initial free-memory pointer to
+    /// slot `0x40`. With `memoryguard` active -- which the verifier's
+    /// `assembly ("memory-safe")` annotation enables -- that value is raised
+    /// above `0x80` to reserve via-IR stack-to-memory spill slots, so the
+    /// returned value is the top of the region solc has claimed for itself.
+    ///
+    /// Recognises the two prologue encodings solc emits:
+    /// `PUSH1 v` / `PUSH2 v` followed by `PUSH1 0x40 MSTORE`, allowing an
+    /// optional `DUP1` between them (used when the value is reused).
+    /// Returns `None` if the prefix does not match, so callers can distinguish
+    /// "no reservation found" from "reservation is 0x80".
+    #[must_use]
+    pub fn runtime_free_memory_pointer_init(runtime: &[u8]) -> Option<usize> {
+        // PUSH1 v | PUSH2 v_hi v_lo
+        let (value, mut i) = match *runtime.first()? {
+            0x60 => (usize::from(*runtime.get(1)?), 2),
+            0x61 => (
+                (usize::from(*runtime.get(1)?) << 8) | usize::from(*runtime.get(2)?),
+                3,
+            ),
+            _ => return None,
+        };
+        // Optional DUP1 when solc reuses the value.
+        if runtime.get(i) == Some(&0x80) {
+            i += 1;
+        }
+        // PUSH1 0x40 MSTORE
+        if runtime.get(i) == Some(&0x60)
+            && runtime.get(i + 1) == Some(&0x40)
+            && runtime.get(i + 2) == Some(&0x52)
+        {
+            return Some(value);
+        }
+        None
+    }
+
+    /// Compile `solidity` and return the deployed runtime bytecode.
+    ///
+    /// # Panics
+    /// Panics under the same conditions as [`compile_solidity`].
+    pub fn compile_solidity_runtime(solidity: impl AsRef<[u8]>) -> Vec<u8> {
+        let solc = require_pinned_solc();
+        let mut process = Command::new(&solc)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .arg("--bin-runtime")
+            .arg("--optimize")
+            .arg("--optimize-runs")
+            .arg(DEFAULT_OPTIMIZE_RUNS.to_string())
+            .arg("--via-ir")
+            .arg("--evm-version")
+            .arg("cancun")
+            .arg("--no-cbor-metadata")
+            .arg("-")
+            .spawn()
+            .unwrap_or_else(|err| panic!("Failed to spawn process with command '{solc}':\n{err}"));
+        process.stdin.take().unwrap().write_all(solidity.as_ref()).unwrap();
+        let output = process.wait_with_output().unwrap();
+        let stdout = str::from_utf8(&output.stdout).unwrap();
+        let marker = "Binary of the runtime part:";
+        let start = stdout.find(marker).unwrap_or_else(|| {
+            panic!(
+                "Runtime compilation fails:\n{}",
+                str::from_utf8(&output.stderr).unwrap()
+            )
+        }) + marker.len();
+        hex::decode(stdout[start..].trim()).expect("solc runtime output should be hex")
+    }
+
     /// Extract creation bytecode from solc's text `--bin` output.
     fn find_binary(stdout: &str) -> Option<Vec<u8>> {
         let start = stdout.find("Binary:")? + 8;
@@ -274,6 +346,19 @@ pub(crate) mod test {
     /// are routed to revm's bundled implementations. The runner keeps an
     /// `InMemoryDB` across calls so tests can deploy once and call many
     /// times.
+    ///
+    /// MF-1 coverage gap, deliberately not papered over: this harness cannot
+    /// exercise a chain whose modexp is priced by EIP-7883. The pinned
+    /// revm 19 exposes `SpecId::OSAKA`, but that variant is Prague+EOF in this
+    /// version -- its `0x05` handler is `berlin_run`, i.e. EIP-2565 pricing
+    /// with the `/ 3` divisor -- so switching the spec here would produce
+    /// green tests that prove nothing about the repricing that bricked the
+    /// pre-fix bound. Raising real coverage needs a revm bump to a version
+    /// whose Osaka handler implements EIP-7883; until then, MF-1 is guarded
+    /// by `modexp_gas_bound_covers_every_live_schedule` (the bound is derived
+    /// from both EIP texts) and by the constructor's modexp known-answer
+    /// probe, which forwards the rendered bound and so fails at deployment on
+    /// any chain that prices modexp above it.
     #[derive(Default)]
     pub struct Evm {
         db: InMemoryDB,

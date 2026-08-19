@@ -1,0 +1,239 @@
+diff --git a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+--- a/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
++++ b/proofs/solidity-verifier/docs/audit/AUDIT_FINDINGS.md
+@@ -1423,4 +1423,51 @@
+ rest are mostly edge-case, interoperability, or validation issues, but several
+ could still become soundness bugs in a generated verifier.
+ 
++
++## 2026-08-13 — independent external review (MF series)
++
++An independent review of the rendered `moonlight-wrap` artifacts (verifier
++sha256 `555ed976…6798`, VK `7ca78ec2…b7ec`; byte-identical to
++`fixtures/moonlight-wrap/`) run as three separate passes — cryptographic
++implementation, ZK/protocol soundness, and EVM/software security — plus a
++line-by-line equivalence pass against `midfall/proofs` and machine
++recomputation of every recomputable constant.
++
++**No soundness-relevant defect was found.** The transcript schedule is
++byte-exact against the Rust verifier, every absorbed proof point provably
++reaches a subgroup-enforcing precompile, the linearization/PCS algebra is
++exact, and the memory plan has no live overlaps. Findings are one liveness
++bug and a set of hardening/diagnostic items.
++
++| ID | Sev | Finding | Disposition |
++| --- | --- | --- | --- |
++| MF-1 | High | `MODEXP_GAS = 1360` is the EIP-2565 price; EIP-7883 (Osaka/Fusaka) prices the same frame at 4064, so every proof reverts `PrecompileFailed` on a repriced chain — and the constructor never probed modexp, so deployment succeeded silently | **Fixed** (`modexp_gas_word_frame` takes the max over live schedules; constructor modexp known-answer probe added) |
++| MF-2 | Low | The memory-layout guard — the only on-chain check for a bad recompile — reverted bare | **Fixed** (`MemoryLayoutViolated()`, typed on the runtime and constructor paths) |
++| MF-3 | Low | Quotient VM: fold-on-empty re-folds a stale top; native callbacks reset `q_sp` instead of asserting it, hiding dropped operands; u16 const indexes unclamped; `q_sp` unbounded | **Fixed** (four guards; u8 indexes keep their documented exemption, u16 do not) |
++| MF-4 | Low | `PrecompileFailed` / `BadPointEncoding` / `ProofRejected` conflated chain faults with rejected input on three paths | **Fixed** (cause flags threaded through `batch_invert` and `validate_public_accumulator`; `ec_pairing` split; triage table in `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §6) |
++| MF-5 | Info | A low-level `staticcall` to an address with no code returns success — a mis-wired wrapper reads it as a valid proof | **Documented** (wrapper obligation W-4) |
++| MF-6 | Info | Single-reduction `mod r` sampling bias (max point mass ≈1.36× uniform) | **Accepted**, parity with the Rust reference; already covered by §5.1's ×1.3585 factor. Regenerate in lockstep if the reference moves to 512-bit reduction |
++| MF-7 | Info | 128-bit truncated challenges cap batching soundness | **Accepted**, already recorded and signed off as §5.1 (L-10) |
++| MF-8 | Info | Set-0 has 43 eval terms but 42 commitment terms (the committed-instance column's commitment is the identity), so its eval is forced ≈0 only indirectly via x1-batching | **Documented** in the PCS emitter |
++| MF-9 | Info | The canonical identity accumulator `(O, O)` is well-formed and passes the pairing layer | **Documented** (wrapper obligation W-5) |
++| MF-10 | Info | Native-identity selector folds appeared to hardcode a `y¹` gap | **WITHDRAWN — false positive.** All three emission sites already use `selector_fold.gap_for(identity)`; the fixed `Some(1)` is confined to `native_identity_estimate_block`, a size/gas proxy for gate-selection that is never emitted, and whose doc comment explicitly warns against "fixing" it to call `gap_for` (the fold plan is derived from the selection outcome, so it does not exist yet at that point). Recorded so the warning is not overridden by a future reviewer making the same mistake. |
++| MF-11 | Info | The transcript stream is positionally framed (a point and four scalars are byte-identical) | **Accepted**; identical to §5.2 (I-5). Any future variable-length section would need explicit length tags |
++| MF-12 | Info | `assembly ("memory-safe")` is unsound by the letter of the annotation | **Accepted**; safe here via the terminal block + FMP guard + pinned pragma, now noted at the annotation site |
++
++Also proposed by the review and **withdrawn on inspection**: a CI job
++recomputing `vk_digest` from the rendered VK payload. The payload word is
++written directly from `self.vk.transcript_repr()` in `lowering/vk.rs` — a
++single expression over a single in-memory VK, not two independent paths — so
++such a test would assert `x == x`. The residual it was meant to close (that
++`vk_digest` binds the *semantic* constraint system) is not reachable this way;
++it is covered by the trace-replay tests and, off-transcript, by `BUILD_ID`.
++See §5.3 for the standing M-4 decision.
++
++**Not closed by these commits:** the committed fixtures and the Sepolia
++deployment predate the MF-1 fix and are marked STALE; regeneration needs the
++pinned solc. The replay harness also cannot exercise EIP-7883 — the pinned
++revm 19 has an Osaka spec, but its modexp handler is still `berlin_run` — so
++real coverage awaits a revm bump; `src/evm.rs` records that gap at the
++`SpecId` pin.
++
+ [1]: https://eips.ethereum.org/EIPS/eip-2537 "EIP-2537: Precompile for BLS12-381 curve operations"
+diff --git a/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md b/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
+--- a/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
++++ b/proofs/solidity-verifier/docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md
+@@ -38,6 +38,24 @@
+   root). Without this, any accepted proof can be replayed on every chain
+   and against every deployment of the same bytecode.
+ 
++- **W-4 — Call it so a wrong address cannot read as success (MF-5).** A
++  low-level `verifier.staticcall(...)` returns `ok = true` with empty
++  returndata when the target has **no code** — a wrong address, a wrong
++  chain, or a wrapper configured before deployment reads as a valid proof.
++  Call through the typed interface (Solidity ≥0.8 inserts the `extcodesize`
++  check), or, on any low-level path, require `returndatasize() >= 32` AND a
++  decoded `true`. If the wrapper uses `try/catch`, every catch branch is a
++  rejection: the verifier's failures are custom errors, so `catch Error(string)`
++  and `catch Panic(uint)` will not match them — use `catch (bytes memory)` or a
++  bare `catch`.
++- **W-5 — Bind the accumulator's meaning, not just its validity (MF-9).** For
++  IVC renders, the verifier checks that the carried accumulator points decode
++  canonically, are in the subgroup, and satisfy the batched pairing equation.
++  It does NOT check that they are non-trivial or that they continue *your*
++  chain: the canonical identity encoding `(O, O)` is a well-formed accumulator
++  and passes by construction. Any "this accumulator continues the expected
++  fold" rule belongs to the circuit or the wrapper.
++
+ `verifyProof`'s NatSpec states the same split: the raw verifier checks the
+ proof against the pinned VK and nothing else.
+ 
+@@ -80,11 +98,27 @@
+ 6. **Retire** the old verifier in the deployment record (it cannot be
+    destroyed on-chain); wrappers must never point back at it.
+ 
+-**Upstream repricing note:** the verifier forwards exact EIP-2537/EIP-2565
+-scheduled gas. A fork that reprices those precompiles upward bricks
+-`verifyProof` (liveness, not soundness) and deployment of new artifacts
+-fails fast in the constructor probes. The migration path is the same
+-re-render + wrapper switch.
++**On a fork of the chain you are deployed to — check this first (MF-1).**
++The verifier forwards exact scheduled gas to every precompile, so an upward
++repricing does not degrade: it bricks `verifyProof` outright (liveness, never
++soundness). The canonical symptom is a **sudden, total `PrecompileFailed`
++rate immediately after a fork activation**, on proofs that verified the day
++before and still verify against the native Rust verifier. Triage:
++
++1. Compare the fork's precompile schedule against the deployed constants
++   (`G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`, `MODEXP_GAS`).
++2. If any scheduled cost now exceeds the deployed bound, that is the cause;
++   re-render (the generator takes the maximum over live schedules) and
++   migrate per the steps above. There is no wrapper-side mitigation.
++
++Worked example: EIP-7883 (Fusaka) removed the `/ 3` divisor from modexp
++pricing, taking the verifier's frame from 1360 to 4064 gas. Artifacts
++rendered before that fix carry `MODEXP_GAS = 1360` and revert every proof on
++any post-Fusaka chain — including the pre-fix `deployments/sepolia/`
++moonlight-wrap deployment, which should be assumed bricked and confirmed with
++a single `eth_call` before it is retired in the deployment record. Deployment
++of NEW artifacts now fails fast in the constructor probes for every
++precompile the runtime calls, modexp included.
+ 
+ ## 5. Accepted risks (deployment owner sign-off)
+ 
+@@ -139,3 +173,30 @@
+ (which does cover all of the above, off-transcript). Widening the digest is
+ a prover-affecting protocol change, explicitly out of scope by owner
+ decision (2026-08-13).
++
++## 6. Reading a revert (MF-4)
++
++`verifyProof` is success-or-revert: it returns `true` or reverts with one of
++the typed errors below. The taxonomy exists so the first question during an
++incident — *is this the chain, the build, or the proof?* — is answerable from
++the 4-byte selector alone, without a trace.
++
++| Error | Selector | Class | First thing to check |
++| --- | --- | --- | --- |
++| `BadCalldataShape()` | `0x1b99e37c` | Caller | Heads, lengths, and EXACT `calldatasize`. A calldata-appending relayer (ERC-2771, multicall, paymaster) cannot call this contract directly. |
++| `VkMismatch()` | `0xa447d73e` | Deployment | The pinned VK address no longer has the expected runtime length/codehash, or a VK header word disagrees with the generated constants. |
++| `NonCanonicalScalar()` | `0x77530042` | Proof | A public instance or proof scalar is `>= r`. Usually an off-chain repacking bug, not an attack. |
++| `BadPointEncoding()` | `0xf27905ec` | Proof | A proof point violates the EIP-2537 padding/field bounds, or an accumulator public input failed canonical decoding. |
++| `PrecompileFailed()` | `0x84e81692` | **Chain** | A precompile could not run: missing, repriced above the forwarded bound (see §4), or short-returning. Also raised when G1MSM *rejects* a proof point as off-curve/out-of-subgroup — the precompile is the validator, so that rejection surfaces here by design. |
++| `ProofRejected()` | `0xc3b0d8cd` | Proof | The pairing ran and returned != 1, or a Lagrange denominator was zero (the squeezed `x` hit a domain point, probability ~n/r). |
++| `QuotientProgramInvalid()` | `0x3cc81b89` | **Build** | The VK-pinned quotient program violated a structural invariant. Not reachable with a well-formed artifact; treat as a generator bug. |
++| `MemoryLayoutViolated()` | `0xc9888d23` | **Build** | solc's stack-spill reservation overlaps the generated layout. The artifact was compiled off the pinned toolchain and can never verify anything; redeploy from the pinned `(version, --optimize-runs)` pair. |
++
++Two rules of thumb:
++
++- **Chain/Build classes are total, not probabilistic.** They fail every call,
++  including calls that verified yesterday. A sudden all-or-nothing failure
++  rate points here; a per-proof failure rate points at the Proof class.
++- **A revert is never an accept.** Every path above fails closed. There is no
++  configuration in which `verifyProof` returns `false` — see W-4 for why a
++  wrapper must not treat a bare `staticcall` success as verification.
+diff --git a/proofs/solidity-verifier/docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md b/proofs/solidity-verifier/docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md
+--- a/proofs/solidity-verifier/docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md
++++ b/proofs/solidity-verifier/docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md
+@@ -1574,9 +1574,14 @@
+ The generated verifier constructor runs smoke tests:
+ 
+ - `MCOPY` one-word round trip in constructor scratch.
+-- `G1ADD(identity, identity) -> identity`.
++- `modexp(2, r-2, r) == 2^-1`, checked as `mulmod(result, 2, r) == 1`, at the
++  pinned `MODEXP_GAS` bound (MF-1).
++- `G1ADD(identity, identity) -> identity`, and the known answer `G1ADD(G, G) == 2G`.
++- `G1MSM([2]*G) == 2G`, and a **negative** probe: a point on the curve but
++  outside the r-order subgroup must be rejected.
+ - Largest generated `G1MSM` input with identity/zero terms -> identity.
+-- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true.
++- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true, plus the known
++  answers `e(G,G2)e(-G,G2) == 1` and `e(G,G2)e(G,G2) != 1`.
+ 
+ Deploy only on forks/chains where EIP-2537 and `MCOPY` are available with the
+ exact addresses, encodings, subgroup checks, return-size behavior, and enough
+@@ -1591,9 +1596,15 @@
+ - Exact return-data size.
+ - For pairing, returned word is 1.
+ 
+-EIP-2537 and modexp calls forward the exact EIP-2537/EIP-2565 scheduled cost
+-(generated constants `G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`,
+-`MODEXP_GAS`; model in `src/lowering/layout/mod.rs::gas`), NOT `gas()`. A
++EIP-2537 and modexp calls forward exact scheduled costs (generated constants
++`G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`, `MODEXP_GAS`; model in
++`src/lowering/layout/mod.rs::gas`), NOT `gas()`. For modexp the rendered bound
++is the MAXIMUM over the live schedules -- EIP-2565 prices the verifier's
++32/32/32 frame at 1360, EIP-7883 (Osaka/Fusaka) removes the `/ 3` divisor and
++prices it at 4080 -- because a bound below the chain's price does not degrade
++gracefully: the fixed-gas `staticcall` runs the precompile out of gas and every
++proof reverts `PrecompileFailed` (MF-1). Over-forwarding on a pre-Osaka chain
++costs nothing on success; unused gas is returned. A
+ rejecting precompile consumes everything forwarded to it, so exact bounds cap
+ what a malformed proof point can burn at the scheduled cost of the single
+ failing call instead of 63/64 of the transaction budget (M-2). The bounds are
+diff --git a/proofs/solidity-verifier/src/lowering/kzg/mod.rs b/proofs/solidity-verifier/src/lowering/kzg/mod.rs
+--- a/proofs/solidity-verifier/src/lowering/kzg/mod.rs
++++ b/proofs/solidity-verifier/src/lowering/kzg/mod.rs
+@@ -109,6 +109,17 @@
+     // as 128 zero bytes). Pin that justification here, where each query
+     // still knows its provenance: any other query source acquiring the
+     // identity pointer would make the emitters drop a real MSM term.
++    //
++    // MF-8: the visible consequence downstream is a set whose eval-term count
++    // exceeds its commitment-term count by one (e.g. `q_eval_set[0]: 43
++    // evaluation term(s), 42 commitment term(s)` in the IVC render). That is
++    // not an off-by-one. The omitted commitment is the identity, so the
++    // multi-open equation still holds exactly -- and the omission is what
++    // FORCES the committed-instance eval to zero: the eval stays in the
++    // batched claim with coefficient trunc(x1^i) while contributing nothing
++    // to the commitment side, so any nonzero value breaks the opening. The
++    // enforcement is therefore indirect (via batching, per-term error
++    // 2^-128), not an equality check anywhere in the verifier.
+     let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
+     for (source, query) in meta.protocol.pcs_queries.iter().zip(&queries) {
+         assert!(
+diff --git a/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol b/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
+--- a/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
++++ b/proofs/solidity-verifier/templates/contracts/Halo2Verifier.sol
+@@ -169,6 +169,16 @@
+             // assert the invariant in the deployed bytecode instead of relying
+             // on a generator-side test the integrator never runs. ~6 gas.
+             //
++            // MF-12: by the letter of Solidity's memory-safety contract this
++            // annotation is a lie -- the block writes memory it never
++            // allocated through the free-memory pointer. Three properties
++            // make it safe HERE, and all three must hold together: this
++            // block is terminal (no Solidity executes after it), the pragma
++            // is pinned so codegen cannot shift underneath it, and the guard
++            // below fails closed if the spill reservation ever reaches the
++            // generated layout. Lifting this body into a non-terminal
++            // context, or unpinning the pragma, invalidates the annotation.
++            //
+             // MF-2: this is the only on-chain guard against a recompile that
+             // silently moves the spill region, and the failure it catches is
+             // permanent (no input can verify). `fail()` is not in scope this
+diff --git a/proofs/solidity-verifier/tests/template_digest.rs b/proofs/solidity-verifier/tests/template_digest.rs
+--- a/proofs/solidity-verifier/tests/template_digest.rs
++++ b/proofs/solidity-verifier/tests/template_digest.rs
+@@ -13,7 +13,7 @@
+ 
+ /// keccak over the sorted (path, length, content) stream of `templates/`.
+ const EXPECTED_TEMPLATE_TREE_DIGEST: &str =
+-    "0x063bb003b3f8eafacd300e1a20cb645db55832efa476689ddb83f6d781efb7dc";
++    "0x07b952304f2e76417023f215b63e13226ec63c14928e4cfee3312ee8fc3913f7";
+ 
+ fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+     for entry in fs::read_dir(dir).expect("template directory is readable") {

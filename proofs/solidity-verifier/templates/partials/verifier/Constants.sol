@@ -120,10 +120,13 @@
     uint256 internal constant         Q_EVAL_CPTR_MPTR = {{ memory.q_eval_cptr_mptr }};
 
     // Reserved 4-word slot for the G1 identity (point at infinity) in
-    // EIP-2537 padded form. EVM memory is zero-initialised, and we
-    // never write to this region, so the four `mload`s below produce
-    // 0,0,0,0 which is exactly the identity encoding the EIP-2537
-    // ec_add / ec_mul precompiles accept.
+    // EIP-2537 padded form. EVM memory is zero-initialised, and the verifier
+    // never writes to this region, so any read of this slot (the PCS
+    // emitters `mcopy` from it when staging identity commitments) yields
+    // 0,0,0,0 -- exactly the identity encoding the EIP-2537 precompiles
+    // accept. Artifacts whose PCS plan never stages an identity commitment
+    // still emit the constant; it costs no runtime bytes beyond the
+    // declaration and keeps the emitters' pointer model uniform.
     uint256 internal constant       G1_IDENTITY_MPTR = {{ memory.g1_identity_mptr }};
 
     // Decoded polynomial-eval buffer (Optimisation H3). The off-chain
@@ -136,6 +139,10 @@
     uint256 internal constant      SELECTOR_ACC_MPTR = {{ memory.selector_acc_mptr|hex() }};
     uint256 internal constant   QUOTIENT_RETURN_MPTR = {{ memory.quotient_return_mptr|hex() }};
     uint256 internal constant  BATCH_INV_SCRATCH_MPTR = {{ memory.batch_invert_scratch_mptr|hex() }};
+    // Lagrange batch-inversion input run: denominators, in-place inverses,
+    // then Lagrange values, consumed and distilled into the named theta
+    // slots by the Lagrange block. Planner-registered phase scratch.
+    uint256 internal constant    LAGRANGE_DENOMS_MPTR = {{ memory.lagrange_denoms_mptr|hex() }};
     uint256 internal constant        TRACE_U256_MPTR = {{ memory.trace_u256_mptr|hex() }};
 
     // ----------------------------------------------------------------------
@@ -160,6 +167,72 @@
     uint256 internal constant       LOOKUP_Z_COMMS_MPTR_BASE = {{ memory.lookup_z_comms_mptr_base }};
     uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = {{ memory.trashcan_comms_mptr_base }};
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = {{ memory.quotient_limb_comms_mptr_base }};
+
+    // ----------------------------------------------------------------------
+    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the
+    // maximum over the EIP-2565 and EIP-7883 schedules.
+    //
+    // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+    // STATICCALL, so every generated call site forwards the exact scheduled
+    // cost instead of gas(). A malformed proof point then burns at most the
+    // scheduled cost of the single failing call instead of 63/64 of the
+    // transaction budget. The schedule is the spec-guaranteed worst case
+    // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
+    // by construction on any conformant chain.
+    //
+    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this
+    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and
+    // prices it at 4080, so the larger bound is rendered. Forwarding the
+    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is
+    // returned -- while forwarding the EIP-2565 bound on a repriced chain
+    // reverts every proof.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles above the
+    // bounds below, this verifier must be regenerated and redeployed. The
+    // constructor smoke probes forward the same bounds for EVERY precompile
+    // the runtime calls, modexp included, so deployment onto an
+    // already-repriced chain fails fast instead of bricking at proof time.
+    // ----------------------------------------------------------------------
+    uint256 internal constant          G1ADD_GAS = {{ template_constants.gas.g1add }};
+    uint256 internal constant   G1MSM_GAS_1PAIR = {{ template_constants.gas.g1msm_one_pair }};
+    uint256 internal constant PAIRING_GAS_2PAIR = {{ template_constants.gas.pairing_two_pair }};
+    uint256 internal constant        MODEXP_GAS = {{ template_constants.gas.modexp }};
+    // Exact cost of the deployment-time worst-case G1MSM smoke probe.
+    uint256 internal constant G1MSM_GAS_SMOKE = {{ constructor_g1msm_smoke_gas }};
+    {%- if self.expected_has_accumulator %}
+    // Worst-case accumulator RHS MSM: carried RHS point plus every generated
+    // fixed-base tail scalar nonzero. Zero tail scalars are omitted at
+    // runtime, which only lowers the actual cost below this bound.
+    uint256 internal constant ACC_RHS_MSM_GAS = {{ acc_rhs_msm_gas }};
+    {%- endif %}
+
+    /// @notice Build identity for this generated artifact (P10/L-8).
+    /// @dev keccak256 over: the domain tag "halo2-solidity-verifier-build-v1",
+    ///      the u64-length-prefixed generator feature profile, the vk_digest,
+    ///      the expected VK runtime codehash (zero when the VK is embedded),
+    ///      the SRS fingerprint keccak("halo2-solidity-verifier-srs-v1" || n
+    ///      || G2 || s_g2 || [tau]G1), and an optional 32-byte deployment
+    ///      provenance tag (0x00 marker when absent, 0x01 || tag when set).
+    ///      The deployment record must publish these preimage components so
+    ///      third parties can recompute the id; see
+    ///      docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md.
+    bytes32 public constant BUILD_ID = {{ build_id|hex_padded(64) }};
+
+    // ----------------------------------------------------------------------
+    // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
+    // errors declared on the contract, as Yul-readable constants. The
+    // `fail(sel)` helper in AssemblyHelpers.yul writes the selector to
+    // scratch 0x00 and reverts with 4 bytes. Pinned by
+    // `p4_error_selectors_match_declared_errors` in src/lowering/tests.rs.
+    // ----------------------------------------------------------------------
+    uint256 internal constant ERR_BAD_CALLDATA_SHAPE      = 0x1b99e37c;
+    uint256 internal constant ERR_VK_MISMATCH             = 0xa447d73e;
+    uint256 internal constant ERR_NON_CANONICAL_SCALAR    = 0x77530042;
+    uint256 internal constant ERR_BAD_POINT_ENCODING      = 0xf27905ec;
+    uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
+    uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
+    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;
 
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.

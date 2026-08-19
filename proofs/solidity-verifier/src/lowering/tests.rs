@@ -38,7 +38,7 @@ use super::{
 use crate::{
     api::{
         AccumulatorEncoding, CommittedInstanceCommitmentKind, GeneratorConfig, GeneratorError,
-        QuotientIdentityManifestTarget, QuotientIdentitySource,
+        QuotientIdentityManifestTarget, QuotientIdentitySource, RenderOptions,
     },
     SolidityGenerator,
 };
@@ -278,6 +278,277 @@ impl Circuit<Fq> for LoweringPlanTestCircuit {
     }
 }
 
+/// Number of advice columns backing one seven-limb foreign-field shape.
+const QUOTIENT_VM_TEST_LIMBS: usize = 7;
+/// Gate count chosen to exceed the inline prefix plus the native-gate budget,
+/// so identities are left over for the compact VM.
+const QUOTIENT_VM_TEST_GATES: usize =
+    DEFAULT_HYBRID_QUOTIENT_INLINE_IDENTITIES + DEFAULT_QUOTIENT_NATIVE_GATES + 8;
+
+#[derive(Clone, Debug)]
+struct QuotientVmTestConfig {
+    limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS],
+    selector: Selector,
+}
+
+/// Circuit whose quotient identities are numerous enough to reach the VM.
+///
+/// `LoweringPlanTestCircuit` has a single gate, so its whole identity stream
+/// fits in the inline prefix and the compact VM never runs. This circuit exists
+/// so the fast test suite exercises the bytecode path — and therefore the
+/// generator's own program certification — on a real `LoweringPlan`.
+#[derive(Clone, Debug, Default)]
+struct QuotientVmTestCircuit;
+
+impl Circuit<Fq> for QuotientVmTestCircuit {
+    type Config = QuotientVmTestConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS] =
+            core::array::from_fn(|_| meta.advice_column());
+        let selector = meta.selector();
+        // The generator only supports one identity-committed plus one
+        // non-committed instance column, so mirror that shape here.
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("quotient vm instance balance", |meta| {
+            let advice = meta.query_advice(limbs[0], Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public = meta.query_instance(public_instance, Rotation::cur());
+            Constraints::without_selector(vec![advice + committed + public])
+        });
+
+        // Seven-limb linear forms: the shape the LIN7 recognizer is built for.
+        // Distinct per-gate coefficients keep the gates from deduplicating.
+        for gate in 0..QUOTIENT_VM_TEST_GATES {
+            meta.create_gate("quotient vm limb form", move |meta| {
+                let terms = limbs
+                    .iter()
+                    .enumerate()
+                    .map(|(limb, column)| {
+                        let coeff = Fq::from(((gate + 1) * 16 + limb + 1) as u64);
+                        meta.query_advice(*column, Rotation::cur()) * Expression::Constant(coeff)
+                    })
+                    .reduce(|acc, term| acc + term)
+                    .expect("limb count is nonzero");
+                Constraints::without_selector(vec![terms])
+            });
+        }
+
+        // One simple-selector gate so the selector fold path is covered too.
+        meta.create_gate("quotient vm selector form", |meta| {
+            let lhs = meta.query_advice(limbs[0], Rotation::cur());
+            let rhs = meta.query_advice(limbs[1], Rotation::cur());
+            Constraints::with_selector(selector, vec![("quotient vm selector form", lhs - rhs)])
+        });
+
+        QuotientVmTestConfig { limbs, selector }
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        layouter.assign_region(
+            || "quotient vm row",
+            |mut region| {
+                config.selector.enable(&mut region, 0)?;
+                for column in config.limbs {
+                    region.assign_advice(|| "limb", column, 0, || Value::known(Fq::ZERO))?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+/// Generate parameters and VK for the VM-exercising lowering-plan tests.
+fn quotient_vm_test_vk() -> (
+    ParamsKZG<Bls12>,
+    VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+) {
+    let mut rng = ChaCha8Rng::seed_from_u64(11);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(6, &mut rng);
+    let circuit = QuotientVmTestCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 6)
+        .expect("quotient VM test circuit VK should build");
+    (params, vk)
+}
+
+/// H-1 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): `NEG_S_G2_BASE` is the
+/// element the deployed verifier's soundness rests on, and the tau-binding
+/// pairing check in `vk.rs` is the only build-time control that ties it to
+/// the commitment basis. Exercise both directions: an honest SRS passes, and
+/// a G2 side taken from ANY other tau -- here the canonical generator, i.e.
+/// s = 1, and a doubled s_g2, i.e. s' = 2s -- is rejected.
+#[test]
+fn srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2() {
+    use group::{prime::PrimeCurveAffine, Curve};
+
+    let (params, vk) = quotient_vm_test_vk();
+    let omega = vk.get_domain().get_omega();
+    let honest_s_g2 = params.s_g2().to_affine();
+
+    assert!(
+        crate::lowering::vk::srs_tau_is_consistent(params.g_lagrange(), omega, honest_s_g2),
+        "an honestly generated SRS must pass the tau-binding pairing check"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            midnight_curves::G2Affine::generator(),
+        ),
+        "a G2 base substituted for s_g2 (s = 1) must fail the tau binding"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            (params.s_g2() + params.s_g2()).to_affine(),
+        ),
+        "a doubled s_g2 (s' = 2s) must fail the tau binding"
+    );
+    // A mismatched domain also fails: omega from a different-sized domain
+    // reconstructs a different tau commitment.
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega * omega,
+            honest_s_g2,
+        ),
+        "a wrong domain generator must fail the tau binding"
+    );
+}
+
+/// The generator certifies its own quotient bytecode on a real plan.
+///
+/// `LoweringPlan::new` runs `certify_quotient_program` and the dual-build
+/// agreement check, both of which panic on mismatch, so simply building the
+/// plan is the assertion. The explicit checks below guard against this test
+/// silently going vacuous if the planner ever stops routing these identities
+/// through the VM.
+#[test]
+fn lowering_plan_certifies_emitted_quotient_bytecode() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+
+    let interpreted = plan
+        .quotient
+        .plan
+        .items
+        .iter()
+        .filter(|item| matches!(item, QuotientProgramItem::Identity(_)))
+        .count();
+    assert!(
+        interpreted > 0,
+        "test circuit no longer routes any identity through the compact VM, so the \
+         certification path is untested"
+    );
+    assert!(
+        !plan.quotient.build.bytes.is_empty(),
+        "interpreted identities should emit bytecode"
+    );
+    assert!(
+        plan.quotient.build.used_ops.contains(&Q_OP_LIN7),
+        "test circuit should exercise the seven-limb linear recognizer; used ops: {:?}",
+        plan.quotient.build.used_ops
+    );
+}
+
+#[test]
+fn quotient_certification_seed_binds_all_compared_artifacts() {
+    let build = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST_U8, 0],
+        consts: vec![U256::from(11u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST_U8],
+        used_mem_tokens: Vec::new(),
+    };
+    let baseline = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST, 0, 0],
+        consts: vec![U256::from(13u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST],
+        used_mem_tokens: Vec::new(),
+    };
+    let expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(17u64))),
+    );
+    let vk_payload = [0xabu8; 64];
+    let seed = super::quotient_numerator::vm::certify::derive_certify_seed(
+        &[&build, &baseline],
+        &[&expr],
+        &vk_payload,
+    );
+
+    let mut changed_bytecode = build.clone();
+    changed_bytecode.bytes[0] ^= 1;
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_bytecode, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_const = build.clone();
+    changed_const.consts[0] = U256::from(19u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_const, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_baseline = baseline.clone();
+    changed_baseline.consts[0] = U256::from(23u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &changed_baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(29u64))),
+    );
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&changed_expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_vk_payload = [0xcdu8; 64];
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&expr],
+            &changed_vk_payload,
+        )
+    );
+}
+
 /// Generate parameters and VK for lowering-plan integration tests.
 fn lowering_plan_test_vk() -> (
     ParamsKZG<Bls12>,
@@ -289,6 +560,121 @@ fn lowering_plan_test_vk() -> (
     let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 4)
         .expect("test circuit VK should build");
     (params, vk)
+}
+
+#[derive(Clone, Debug)]
+struct RotatedPublicInstanceCircuit;
+
+impl Circuit<Fq> for RotatedPublicInstanceCircuit {
+    type Config = ();
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let advice = meta.advice_column();
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("rotated public instance", |meta| {
+            let advice = meta.query_advice(advice, Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public_next = meta.query_instance(public_instance, Rotation::next());
+            Constraints::without_selector(vec![(
+                "rotated public instance",
+                advice + committed + public_next,
+            )])
+        });
+    }
+
+    fn synthesize(
+        &self,
+        _config: Self::Config,
+        _layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn generator_rejects_rotated_non_committed_instance_queries() {
+    let mut rng = ChaCha8Rng::seed_from_u64(8);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(4, &mut rng);
+    let circuit = RotatedPublicInstanceCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 4)
+        .expect("test circuit VK should build");
+
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(1, 1)),
+        Err(GeneratorError::RotatedInstanceQuery {
+            column: 1,
+            rotation: 1,
+        })
+    ));
+}
+
+/// Declares two advice columns but queries only one, so the second is absorbed
+/// into the transcript without ever being opened by a PCS query.
+struct UnopenedAdviceColumnCircuit;
+
+impl Circuit<Fq> for UnopenedAdviceColumnCircuit {
+    type Config = ();
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let advice = meta.advice_column();
+        // Declared and committed, but never queried: this is the shape
+        // `ProtocolPlan::validate` rejects.
+        let _unopened = meta.advice_column();
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("unopened advice", |meta| {
+            let advice = meta.query_advice(advice, Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public = meta.query_instance(public_instance, Rotation::cur());
+            Constraints::without_selector(vec![("unopened advice", advice + committed + public)])
+        });
+    }
+
+    fn synthesize(
+        &self,
+        _config: Self::Config,
+        _layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        Ok(())
+    }
+}
+
+/// `try_new` documents a typed error for unsupported constraint systems, so an
+/// unopened advice column must not reach the `panic!` inside
+/// `ProtocolPlan::from_constraint_system`.
+#[test]
+fn generator_reports_unopened_advice_column_as_typed_error() {
+    let mut rng = ChaCha8Rng::seed_from_u64(8);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(4, &mut rng);
+    let circuit = UnopenedAdviceColumnCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 4)
+        .expect("test circuit VK should build");
+
+    let err = SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(1, 1))
+        .expect_err("unopened advice column is outside the supported verifier shape");
+    let GeneratorError::Planning { stage, message } = err else {
+        panic!("expected a planning error, got {err:?}");
+    };
+    assert_eq!(stage, "constraint system");
+    assert!(
+        message.contains("absorbed but never opened"),
+        "error should name the unopened advice column, got {message}"
+    );
 }
 
 #[test]
@@ -331,6 +717,63 @@ fn external_quotient_output_uses_planned_return_buffer() {
             !verifier_template.contains("let q_out := SELECTOR_ACC_MPTR"),
             "selector accumulators model only selector buckets, not the two-word quotient return header"
         );
+}
+
+/// The Lagrange denominator run must live entirely in the planner-registered
+/// `lagrange_denoms` region. Historically it was written in place at
+/// `X_N_MPTR`, overlaying theta words 27..51 and spilling into the rot_points
+/// window for large instance counts -- safety then rested on write-ordering
+/// coincidence. Pin the rendered source so the run cannot silently move back
+/// onto the theta band.
+#[test]
+fn lagrange_denominator_run_uses_registered_scratch_region() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let source = generator
+        .render(crate::RenderOptions::default())
+        .expect("test verifier should render")
+        .verifier;
+
+    assert!(
+        source.contains("batch_invert(success, LAGRANGE_DENOMS_MPTR"),
+        "Lagrange batch inversion must run over the registered denominator region"
+    );
+    assert!(
+        source.contains("let mptr := LAGRANGE_DENOMS_MPTR"),
+        "the denominator write cursor must start at the registered region"
+    );
+    assert!(
+        source.contains("mstore(X_N_MPTR, x_n)"),
+        "the permanent x_n theta slot must still be written by the distill step"
+    );
+    assert!(
+        !source.contains("batch_invert(success, X_N_MPTR"),
+        "the denominator run must not be based at the X_N_MPTR theta slot"
+    );
+    assert!(
+        !source.contains("add(X_N_MPTR"),
+        "no offset-based access to the X_N_MPTR theta slot may survive; the \
+         run's offsets all belong to LAGRANGE_DENOMS_MPTR now"
+    );
+}
+
+/// The Lagrange denominator run lives in a registered scratch region that
+/// grows with `num_instances`, so counts far past the historical 165-instance
+/// live-memory cliff must build, validate, and render.
+#[test]
+fn generator_accepts_instance_counts_beyond_the_old_lagrange_cliff() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(200, 1))
+        .expect("large instance counts are supported with a registered denominator region");
+
+    let plan = generator.inputs().lowering_plan();
+    plan.memory
+        .validate()
+        .expect("layout with a 200-instance denominator run is valid");
+
+    generator
+        .render(crate::RenderOptions::default())
+        .expect("verifier with a 200-instance denominator run renders");
 }
 
 #[test]
@@ -381,7 +824,8 @@ fn lowering_plan_reuses_stable_layout_facts() {
         plan.meta.num_simple_selectors
     );
 
-    let verifier = inputs.generate_verifier_from_plan(&plan, false, false, false, false, None);
+    let verifier =
+        inputs.generate_verifier_from_plan(&plan, false, false, false, false, None, None);
     assert_eq!(verifier.codegen_layout.proof, plan.proof_layout);
     assert_eq!(verifier.memory.vk_mptr, plan.vk_mptr);
     assert_eq!(verifier.proof_len, plan.proof_layout.proof_len);
@@ -935,35 +1379,357 @@ fn transcript_memory_bound_handles_wide_bls_advice_phase() {
     );
 }
 
+/// A failing EIP-2537/modexp call consumes ALL forwarded gas, so every
+/// precompile call site must forward the exact scheduled cost instead of
+/// `gas()`: a malformed proof point then burns at most the scheduled cost of
+/// the single failing call (M-2, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md).
+///
+/// History: this is a deliberate reversal of `2b2bf49` ("Forward gas to
+/// EIP-2537 precompiles"), which removed HAND-TUNED gas literals because
+/// they could brick verification on repriced chains (audit finding M-04).
+/// The bounds asserted here are different in kind: they are the EIP-2537 /
+/// EIP-2565 schedule formulas evaluated at generation time (layout::gas),
+/// and the constructor smoke probes forward the same bounds so deployment
+/// onto a repriced chain fails fast instead of bricking at proof time.
 #[test]
-fn eip2537_calls_forward_remaining_gas() {
+fn eip2537_calls_forward_exact_schedule_gas() {
     let verifier_template = verifier_template_corpus();
     let pcs_codegen = include_str!("kzg/mod.rs");
 
+    // Every gas() forward left in the corpus must be one of the three
+    // intentional sites, all in QuotientAndLinearization.yul:
+    //   1. the pinned external quotient evaluator staticcall (regular-call refund
+    //      semantics: a failing callee returns unused gas; only precompile ERRORS
+    //      burn everything forwarded),
+    //   2. its trace-mode call() variant,
+    //   3. the trace-only linearization-commitment G1MSM (never rendered into
+    //      production artifacts).
+    for source in [verifier_template, pcs_codegen] {
+        for line in source.lines() {
+            if line.contains("(gas()") {
+                assert!(
+                    line.contains("quotientEvaluator") || line.contains("lin_trace_ok"),
+                    "precompile calls must forward exact EIP-2537/EIP-2565 \
+                     schedule gas, not gas(): {line}"
+                );
+            }
+        }
+    }
     assert!(
         verifier_template
-            .contains("staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}")
-            && verifier_template
-                .contains("staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}")
+            .contains("staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}")
             && verifier_template.contains(
-                "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}"
-            ),
-        "main verifier template should forward remaining gas to EIP-2537 precompiles"
+                "staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}"
+            )
+            && verifier_template.contains(
+                "staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}"
+            )
+            && verifier_template
+                .contains("staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}")
+            // The accumulator RHS MSM staticcall is formatted multi-line, so
+            // match its first argument rather than the call prefix.
+            && verifier_template.contains("ACC_RHS_MSM_GAS,")
+            && verifier_template.contains("staticcall(G1MSM_GAS_SMOKE"),
+        "main verifier template should forward the generated exact gas bounds"
     );
     assert!(
-        pcs_codegen.contains("staticcall(gas(), 0x0c")
-            && pcs_codegen.contains("staticcall(gas(), 0x0b"),
-        "PCS emitter should forward remaining gas to EIP-2537 precompiles"
+        pcs_codegen.contains("staticcall(G1MSM_GAS_1PAIR, 0x0c")
+            && pcs_codegen.contains("staticcall(G1ADD_GAS, 0x0b"),
+        "PCS emitter should forward the generated exact gas bounds"
     );
-    for source in [verifier_template, pcs_codegen] {
+    assert_eq!(
+        verifier_template.matches("(gas()").count(),
+        3,
+        "unexpected gas() forwarding site added to the verifier templates"
+    );
+}
+
+/// Pin the generated schedule values against EIP-2537/EIP-2565 by hand so a
+/// typo in the discount table or formulas cannot slip through rendering.
+#[test]
+fn eip2537_gas_schedule_matches_spec_vectors() {
+    use crate::lowering::layout::gas;
+
+    assert_eq!(gas::G1ADD_GAS, 375);
+    // (k * 12000 * discount(k)) // 1000 at the table's edge cases.
+    assert_eq!(gas::g1msm_gas(1), 12_000);
+    assert_eq!(gas::g1msm_gas(2), 22_776);
+    assert_eq!(gas::g1msm_gas(128), 797_184);
+    // k > 128 keeps max_discount = 519.
+    assert_eq!(gas::g1msm_gas(200), 200 * 12_000 * 519 / 1_000);
+    // 32600*k + 37700 for the verifier's two-pair check.
+    assert_eq!(gas::pairing_gas(2), 102_900);
+    // The rendered template constants come from the same module.
+    let constants = crate::lowering::render::TemplateConstants::default().gas;
+    assert_eq!(constants.g1add, 375);
+    assert_eq!(constants.g1msm_one_pair, 12_000);
+    assert_eq!(constants.pairing_two_pair, 102_900);
+    assert_eq!(constants.modexp, gas::modexp_gas_word_frame());
+}
+
+/// MF-1: the modexp bound must cover EVERY live schedule, not just the one
+/// that happened to be current when the generator was written. Derive both
+/// prices here from their EIP texts instead of asserting one magic number, so
+/// the next repricing forces a conscious edit rather than a silent brick:
+/// `staticcall` forwards a fixed amount, so a bound below the chain's price
+/// makes the precompile OOG and every proof revert.
+#[test]
+fn modexp_gas_bound_covers_every_live_schedule() {
+    use crate::lowering::layout::gas;
+
+    // Shared inputs for the only frame the verifier emits (32-byte base,
+    // exponent, and modulus).
+    const WORDS: u64 = 32_u64.div_ceil(8);
+    const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
+    // `exponent.bit_length() - 1` for a 32-byte exponent, upper-bounded.
+    const ITERATION_COUNT: u64 = 255;
+
+    // EIP-2565: `max(200, multiplication_complexity * iteration_count / 3)`.
+    let eip2565 = std::cmp::max(200, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT / 3);
+    assert_eq!(eip2565, 1_360, "EIP-2565 price for the 32-byte frame");
+
+    // EIP-7883: the `/ 3` divisor is removed for EVERY operand size (only the
+    // `2 * words^2` complexity branch is width-specific) and the floor rises
+    // to 500: `max(500, multiplication_complexity * iteration_count)`.
+    let eip7883 = std::cmp::max(500, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT);
+    assert_eq!(eip7883, 4_080, "EIP-7883 price for the 32-byte frame");
+
+    assert_eq!(
+        gas::modexp_gas_word_frame(),
+        std::cmp::max(eip2565, eip7883),
+        "modexp bound must be the maximum over live schedules"
+    );
+    assert!(
+        gas::modexp_gas_word_frame() >= eip7883,
+        "a bound below the EIP-7883 price bricks every proof on Osaka/Fusaka \
+         chains: the fixed-gas staticcall OOGs inside the mandatory Lagrange \
+         batch inversion and verifyProof reverts PrecompileFailed"
+    );
+
+    // The exponent the verifier actually emits is FR_MODULUS - 2 (255 bits,
+    // so 254 iterations); the generic bound must cover its exact price too.
+    assert!(gas::modexp_gas_word_frame() >= MULTIPLICATION_COMPLEXITY * 254);
+}
+
+/// MF-4: the typed taxonomy exists so an incident responder can tell a chain
+/// fault from a rejected proof. Three paths used to conflate them -- a failed
+/// precompile inside the accumulator precheck or the final pairing surfaced as
+/// an input rejection, and a zero Lagrange denominator (a transcript event)
+/// surfaced as `PrecompileFailed`. Pin the split so it cannot regress.
+#[test]
+fn precompile_faults_and_input_rejections_use_distinct_selectors() {
+    let corpus = verifier_template_corpus();
+
+    // (a) The pairing helper: staticcall/returndatasize failure is a chain
+    // fault; a pairing that ran and returned != 1 rejects the proof.
+    assert!(
+        corpus.contains(
+            "if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }\n                // Compare against 1 rather than truncating to the low bit:"
+        ),
+        "ec_pairing must report a failed pairing staticcall as PrecompileFailed"
+    );
+    assert!(
+        corpus.contains("ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }"),
+        "ec_pairing must report a pairing result of 0 as ProofRejected"
+    );
+
+    // (b) batch_invert and the accumulator validator both carry a cause flag
+    // rather than a bare boolean.
+    assert!(
+        corpus.contains(
+            "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed"
+        ),
+        "batch_invert must report whether its modexp call failed"
+    );
+    assert!(
+        corpus
+            .contains("function validate_public_accumulator(success, r) -> out, precompile_failed"),
+        "the accumulator validator must report whether its G1MSM call failed"
+    );
+
+    // (c) Both boundaries must branch on that flag.
+    for (guarded, fallback, what) in [
+        (
+            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
+            "fail(ERR_PROOF_REJECTED)",
+            "Lagrange",
+        ),
+        (
+            "if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }",
+            "fail(ERR_BAD_POINT_ENCODING)",
+            "accumulator",
+        ),
+    ] {
         assert!(
-            !source.contains("g1msm_gas_cap")
-                && !source.contains("G1ADD_GAS_CAP")
-                && !source.contains("PAIRING_SMOKE_GAS_CAP")
-                && !source.contains("final_pairing_gas_cap"),
-            "EIP-2537 gas-cap literals must not be rendered or computed"
+            corpus.contains(guarded) && corpus.contains(fallback),
+            "{what} boundary must split precompile faults from rejected input"
         );
     }
+
+    // A zero denominator means the squeezed x hit a domain point: an input
+    // rejection, not a broken chain.
+    assert!(
+        !corpus.contains(
+            "success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)"
+        ),
+        "the Lagrange batch inversion must thread its failure cause"
+    );
+}
+
+/// MF-3: the quotient VM's terminal checks (`q_pc == q_end`, `q_has_top == 0`,
+/// `q_sp == base`) cannot see three failure shapes, so the interpreter grew
+/// guards for each. The program is VK-codehash-pinned, so none of these are
+/// reachable on-chain with a well-formed artifact -- they are containment for
+/// a future generator bug, mirroring on the deployed side what the reference
+/// VM already enforces at build time (`stack.len() == 1` per identity,
+/// `const_at` bounds, and `identity_segment` rejecting a native marker inside
+/// an expression).
+#[test]
+fn quotient_vm_interpreter_fails_closed_on_malformed_programs() {
+    let vm = include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+
+    // (a) A fold with no live cached top would re-fold a STALE q_top, and
+    // both terminal checks would still pass.
+    assert_eq!(
+        vm.matches("{%- call q_top_guard() %}").count(),
+        2,
+        "both FOLD_MAIN and FOLD_SELECTOR must require a live cached top"
+    );
+    assert!(
+        vm.contains("if iszero(q_has_top) { q_program_fail() }"),
+        "q_top_guard must fail closed when the cached top is not live"
+    );
+
+    // (b) Native callbacks used to RESET q_sp, which silently discarded
+    // operands spilled by a preceding partial expression -- an identity would
+    // drop out of nu_y(x) with the program still ending balanced. Assert
+    // instead of reset.
+    // The only assignment of the stack base to q_sp may be its declaration.
+    assert_eq!(
+        vm.matches("q_sp := {{ program.stack_mptr|hex() }}").count(),
+        1,
+        "native callbacks must not reset q_sp; a reset hides dropped operands"
+    );
+    assert!(
+        vm.contains("let q_sp := {{ program.stack_mptr|hex() }}"),
+        "the surviving q_sp assignment must be its initial declaration"
+    );
+    assert_eq!(
+        vm.matches("{%- call q_stack_empty_guard() %}").count(),
+        3,
+        "each native callback boundary must assert an already-empty stack"
+    );
+
+    // (c) The spill pointer has no ceiling of its own.
+    assert_eq!(
+        vm.matches("if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }")
+            .count(),
+        10,
+        "every cached-top spill site must clamp q_sp to its registered region"
+    );
+
+    // (d) u16 constant-table indexes reach far outside the pinned payload, so
+    // unlike the u8 forms they cannot rely on bounded drift.
+    assert_eq!(
+        vm.matches("{%- call q_const_guard(\"qconst\") %}").count(),
+        3,
+        "u16 constant-table indexes must be clamped to the rendered table length"
+    );
+    assert!(
+        vm.contains("if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }"),
+        "q_const_guard must clamp against the generated constant-table length"
+    );
+}
+
+/// MF-2: the free-memory-pointer guard is the only on-chain check that solc's
+/// stack-spill reservation has not grown into the generated absolute layout.
+/// A fork that recompiles at a different (version, optimiser-runs) pair can
+/// still fit EIP-170, deploy, and then revert on every proof -- so the guard
+/// must say *why* rather than reverting bare, which is indistinguishable from
+/// every other empty revert.
+#[test]
+fn memory_layout_guard_reverts_with_a_typed_selector() {
+    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
+    let smoke_template = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
+
+    for (source, name) in [
+        (verifier_template, "verifyProof"),
+        (smoke_template, "constructor"),
+    ] {
+        assert!(
+            source.contains("mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))")
+                && source.contains("revert(0x00, 0x04)"),
+            "{name} memory-layout guard must revert with MemoryLayoutViolated()"
+        );
+    }
+    // The guard must still be the first thing each assembly block does: it
+    // protects the writes that follow, so a bare `revert(0, 0)` left behind
+    // on either path means the typed rewrite missed a site.
+    assert!(
+        verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) {"),
+        "runtime guard must still compare the FMP against TRANSCRIPT_MPTR"
+    );
+    assert!(
+        !verifier_template.contains("if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }"),
+        "runtime memory-layout guard still reverts bare"
+    );
+    assert!(
+        !smoke_template.contains(
+            "if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) { revert(0, 0) }"
+        ),
+        "constructor memory-layout guard still reverts bare"
+    );
+}
+
+/// MF-1: modexp is the one precompile the runtime cannot do without -- the
+/// Lagrange batch inversion calls it on every proof -- and it was the one
+/// precompile the constructor never probed, so a stale bound deployed
+/// silently. Pin the probe's shape: right precompile, the pinned runtime
+/// bound (not `gas()`), a return-size check, and a known answer a stub
+/// cannot satisfy.
+#[test]
+fn constructor_probes_modexp_at_the_pinned_runtime_bound() {
+    let smoke = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
+
+    assert!(
+        smoke.contains("staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}"),
+        "constructor must probe modexp at the same bound the runtime forwards"
+    );
+    assert!(
+        smoke.contains(
+            "if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }"
+        ),
+        "modexp probe must check the returned size"
+    );
+    // 2^(r-2) == 2^-1, verified as mulmod(result, 2, r) == 1: a precompile
+    // that returns zeros, or echoes its input, fails this.
+    assert!(
+        smoke.contains("mstore(add(scratch, {{ template_constants.modexp.base_offset|hex() }}), 2)")
+            && smoke.contains(
+                "mstore(add(scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))"
+            )
+            && smoke.contains("if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }"),
+        "modexp probe must run the runtime's own Fermat inversion as a known-answer test"
+    );
+
+    // Every precompile the runtime calls is now probed at its pinned bound.
+    for (probe, gas_constant) in [
+        ("modexp.address", "MODEXP_GAS"),
+        ("eip2537.g1add_address", "G1ADD_GAS"),
+        ("eip2537.g1msm_address", "G1MSM_GAS_1PAIR"),
+        ("eip2537.pairing_address", "PAIRING_GAS_2PAIR"),
+    ] {
+        assert!(
+            smoke.contains(&format!(
+                "staticcall({gas_constant}, {{{{ template_constants.{probe}|hex() }}}}"
+            )),
+            "constructor smoke probe missing for {probe} at {gas_constant}"
+        );
+    }
+    assert!(
+        !smoke.contains("staticcall(gas()"),
+        "smoke probes must forward pinned bounds, not gas()"
+    );
 }
 
 #[test]
@@ -972,22 +1738,22 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     let pcs_codegen = include_str!("kzg/mod.rs");
 
     assert!(
-            verifier_template.contains("if iszero(success) { revert(0, 0) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
+            verifier_template.contains("if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
             "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
         );
     assert!(
-            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { revert(0, 0) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
+            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
             "accumulator precheck should fail before transcript parsing"
         );
     assert!(
         verifier_template.contains(
-            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { revert(0, 0) }"
+            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }"
         ),
         "non-canonical public instances should fail before proof transcript parsing"
     );
     assert!(
         verifier_template.contains(
-            "if iszero(success) { revert(0, 0) }\n\n            {%- match quotient_external %}"
+            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_PROOF_REJECTED)\n            }\n\n            {%- match quotient_external %}"
         ),
         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
     );
@@ -1003,15 +1769,48 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     }
     assert!(
             verifier_template.contains(
-                "if iszero(success) { revert(0, 0) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
+                "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
             ),
             "final pairing block should revert before staging/calling the pairing precompile when success is already false"
         );
     assert!(
         pcs_codegen.contains("if success {")
-            && pcs_codegen.contains("success := staticcall(gas(), 0x0c")
-            && pcs_codegen.contains("success := staticcall(gas(), 0x0b"),
+            && pcs_codegen.contains("success := staticcall(G1MSM_GAS_1PAIR, 0x0c")
+            && pcs_codegen.contains("success := staticcall(G1ADD_GAS, 0x0b"),
         "PCS emitter should guard final MSM/add precompile calls with if success"
+    );
+}
+
+/// The constructor's known-answer probe is only as good as its constants: a
+/// wrong 2G would brick every deployment, and a 2G that happened to equal the
+/// probe's own input would silently restore the identity-only weakness. Pin
+/// both against the curve library rather than against hardcoded literals.
+#[test]
+fn constructor_known_answer_vector_is_the_generator_and_its_double() {
+    use group::{prime::PrimeCurveAffine, Curve, Group};
+    use midnight_curves::{G1Affine, G1Projective};
+
+    let constants = crate::lowering::render::TemplateConstants::default().eip2537;
+    let expected_g = crate::lowering::encoding::g1_to_u256s(G1Affine::generator());
+    let g = G1Projective::generator();
+    let expected_2g = crate::lowering::encoding::g1_to_u256s((g + g).to_affine());
+
+    assert_eq!(
+        constants.g1_generator,
+        (expected_g[0], expected_g[1], expected_g[2], expected_g[3])
+    );
+    assert_eq!(
+        constants.g1_double_generator,
+        (
+            expected_2g[0],
+            expected_2g[1],
+            expected_2g[2],
+            expected_2g[3]
+        )
+    );
+    assert_ne!(
+        constants.g1_generator, constants.g1_double_generator,
+        "a known-answer probe whose expected output equals its input tests nothing"
     );
 }
 
@@ -1024,17 +1823,25 @@ fn verifier_constructor_smoke_tests_runtime_prerequisites() {
         "generated verifier should include a deployment-time runtime prerequisite smoke test"
     );
     for required in [
-        "Smoke-check the Cancun/EIP-2537 runtime features",
+        "Smoke-check the Cancun/EIP-2537/modexp runtime features",
         "mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})",
         "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
         "non-Cancun fork fails during deployment",
+        // MF-1: modexp is a runtime prerequisite like any other precompile.
+        "modexp (0x05) known-answer probe at the pinned runtime bound",
+        "staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}",
+        "if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }",
         "G1ADD(identity, identity) -> identity",
+        "Known-answer probe: G1ADD(G, G) == 2G",
+        "template_constants.eip2537.g1_generator",
+        "template_constants.eip2537.g1_double_generator",
         "Worst-case generated G1MSM with all identity/zero terms",
         "constructor_g1msm_smoke_input_bytes",
         "PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])",
-        "staticcall(gas(), {{ template_constants.eip2537.g1add_address|hex() }}",
-        "staticcall(gas(), {{ template_constants.eip2537.g1msm_address|hex() }}",
-        "staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}",
+        "staticcall(G1ADD_GAS, {{ template_constants.eip2537.g1add_address|hex() }}",
+        "staticcall(G1MSM_GAS_1PAIR, {{ template_constants.eip2537.g1msm_address|hex() }}",
+        "staticcall(G1MSM_GAS_SMOKE, {{ template_constants.eip2537.g1msm_address|hex() }}",
+        "staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}",
         "template_constants.eip2537.g1add_address",
         "template_constants.eip2537.g1msm_address",
         "template_constants.eip2537.pairing_address",
@@ -1206,9 +2013,9 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
     let verifier_template = verifier_template_corpus();
 
     for required in [
-        "function validate_public_accumulator(success, r) -> out",
+        "function validate_public_accumulator(success, r) -> out, precompile_failed",
         "Fail malformed accumulator public inputs before transcript",
-        "success := validate_public_accumulator(success, r)",
+        "success, acc_precompile_failed := validate_public_accumulator(success, r)",
         "gas_checkpoint(2) // after VK loading + accumulator public-input precheck",
         "Batch the prevalidated public IVC accumulator pairing equation",
     ] {
@@ -1216,6 +2023,26 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
                 verifier_template.contains(required),
                 "accumulator validation should be split into early precheck and late pairing batch: {required}"
             );
+    }
+}
+
+#[test]
+fn accumulator_scalars_are_range_checked_where_they_are_read() {
+    let verifier_template = verifier_template_corpus();
+
+    // `validate_public_accumulator` runs before the transcript instance loop
+    // that rejects non-canonical instance words, and EIP-2537 G1MSM reduces
+    // scalars mod r implicitly. Canonicality must therefore be enforced at the
+    // read sites in this helper rather than inherited from a later template.
+    for required in [
+        "out := and(out, lt(lhs_scalar, r))",
+        "out := and(out, lt(rhs_scalar, r))",
+        "out := and(out, lt(fixed_scalar_{{ loop.index0 }}, r))",
+    ] {
+        assert!(
+            verifier_template.contains(required),
+            "accumulator scalars must be range-checked against r where they are read: {required}"
+        );
     }
 }
 
@@ -1296,9 +2123,13 @@ fn generated_solidity_pragmas_require_mcopy_capable_compiler() {
             include_str!("../../templates/contracts/Halo2QuotientEvaluator.sol"),
         ),
     ] {
+        // Pinned (not ^-ranged) since the M-1 fix: the artifact hashes in the
+        // review packet are only reproducible against one compiler version,
+        // and 0.8.30 is the version the deployment pipeline pins.
         assert!(
-            source.contains("pragma solidity ^0.8.24;"),
-            "{name} must require Solidity 0.8.24+ for Cancun Yul opcodes"
+            source.contains("pragma solidity 0.8.30;"),
+            "{name} must pin the Solidity version the build pipeline pins \
+             (0.8.30, MCOPY/Cancun-capable)"
         );
     }
 }
@@ -1432,7 +2263,10 @@ fn differential_trace_hooks_cover_expected_categories() {
             "serialized PCS point sets",
             "trace::PCS_SERIALIZED_POINT_SET_BASE + set_idx as u64",
         ),
-        ("PCS q_com commitments", "40000 + set_idx"),
+        (
+            "PCS q_com commitments",
+            "trace::PCS_Q_COM_BASE + set_idx as u64",
+        ),
     ] {
         assert!(
             pcs_source.contains(needle),
@@ -1560,8 +2394,8 @@ fn quotient_vm_runtime_asserts_exact_program_termination() {
     let verifier_template = verifier_template_corpus();
 
     assert!(
-        verifier_template.contains("if iszero(eq(q_pc, q_end)) { revert(0, 0) }")
-            && verifier_template.contains("if q_has_top { revert(0, 0) }"),
+        verifier_template.contains("if iszero(eq(q_pc, q_end)) { q_program_fail() }")
+            && verifier_template.contains("if q_has_top { q_program_fail() }"),
         "quotient VM must fail closed when bytecode over-runs q_end or leaves a live stack value"
     );
 }
@@ -1689,6 +2523,26 @@ fn batch_invert_handles_empty_and_singleton_ranges() {
         verifier_template.contains("if ret { mstore(mptr_start, mload(single_scratch)) }"),
         "singleton batch inversion must store the single inverse in place"
     );
+    // The general path must reject non-canonical words (x >= r) like the
+    // singleton path, so accept/reject semantics do not depend on batch
+    // length: one guard on the first element, one inside the prefix-product
+    // loop, one on the final element.
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(gp, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the first element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x, r)) {").count(),
+        2,
+        "batch inversion must range-check the singleton element and every \
+         prefix-product loop element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x_last, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the final element"
+    );
 }
 
 #[test]
@@ -1715,8 +2569,14 @@ fn production_verifier_documents_revert_or_true_policy() {
             verifier_template.contains("function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret")
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
+                // MF-4: a failed/short-returning pairing staticcall is a chain
+                // fault (PrecompileFailed); only a pairing that RAN and
+                // returned != 1 rejects the proof.
                 && verifier_template.contains(
-                    "ret := and(ret, mload(scratch))\n                if iszero(ret) { revert(0, 0) }\n                ret := 1",
+                    "ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))\n                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }",
+                )
+                && verifier_template.contains(
+                    "ret := eq(mload(scratch), 1)\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1",
                 ),
             "final pairing helper must revert on pairing failure and normalize success to one"
         );
@@ -1735,6 +2595,112 @@ fn production_verifier_documents_revert_or_true_policy() {
     );
 }
 
+/// P10 (L-8): the emitted BUILD_ID must be a stable function of the build's
+/// identity components, and the optional deployment provenance tag must be
+/// the ONLY thing that changes when it is supplied.
+#[test]
+fn build_id_identifies_the_build_and_its_provenance() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let extract = |source: &str| {
+        source
+            .lines()
+            .find(|line| line.contains("BUILD_ID = 0x"))
+            .expect("rendered verifier carries a BUILD_ID constant")
+            .trim()
+            .to_string()
+    };
+
+    let base = generator
+        .render(RenderOptions::default())
+        .expect("default render succeeds")
+        .verifier;
+    let again = generator
+        .render(RenderOptions::default())
+        .expect("repeat render succeeds")
+        .verifier;
+    assert_eq!(
+        base, again,
+        "renders with equal options must be byte-identical"
+    );
+
+    let tagged = generator
+        .render(RenderOptions {
+            provenance: Some([0x42; 32]),
+            ..RenderOptions::default()
+        })
+        .expect("provenance render succeeds")
+        .verifier;
+    assert_ne!(
+        extract(&base),
+        extract(&tagged),
+        "the provenance tag must change BUILD_ID"
+    );
+    assert_eq!(
+        base.replace(&extract(&base), ""),
+        tagged.replace(&extract(&tagged), ""),
+        "the provenance tag must change ONLY the BUILD_ID constant"
+    );
+}
+
+/// P4 (L-3): the Yul revert sites carry hardcoded 4-byte selectors while the
+/// Solidity ABI carries the `error` declarations; pin the two against each
+/// other so neither can drift silently.
+#[test]
+fn p4_error_selectors_match_declared_errors() {
+    use sha3::{Digest, Keccak256};
+
+    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
+    let constants_template = include_str!("../../templates/partials/verifier/Constants.sol");
+    let helpers_template =
+        include_str!("../../templates/partials/quotient_numerator/QuotientHelpers.yul");
+
+    for (signature, constant_name) in [
+        ("BadCalldataShape()", "ERR_BAD_CALLDATA_SHAPE"),
+        ("VkMismatch()", "ERR_VK_MISMATCH"),
+        ("NonCanonicalScalar()", "ERR_NON_CANONICAL_SCALAR"),
+        ("BadPointEncoding()", "ERR_BAD_POINT_ENCODING"),
+        ("PrecompileFailed()", "ERR_PRECOMPILE_FAILED"),
+        ("ProofRejected()", "ERR_PROOF_REJECTED"),
+        ("QuotientProgramInvalid()", "ERR_QUOTIENT_PROGRAM_INVALID"),
+        // MF-2: the memory-layout guard reports a build fault (a recompile
+        // whose spill region reaches the generated layout), so it must be
+        // decodable rather than an anonymous empty revert.
+        ("MemoryLayoutViolated()", "ERR_MEMORY_LAYOUT_VIOLATED"),
+    ] {
+        let digest = Keccak256::digest(signature.as_bytes());
+        let selector = format!(
+            "0x{:02x}{:02x}{:02x}{:02x}",
+            digest[0], digest[1], digest[2], digest[3]
+        );
+        let error_name = signature.trim_end_matches("()");
+        assert!(
+            verifier_template.contains(&format!("error {error_name}();")),
+            "Halo2Verifier.sol must declare `error {error_name}();` so the ABI carries it"
+        );
+        assert!(
+            constants_template.contains(&selector),
+            "Constants.sol selector for {signature} must be {selector}"
+        );
+        assert!(
+            constants_template.contains(constant_name),
+            "Constants.sol must define {constant_name}"
+        );
+    }
+    // The quotient VM's dedicated helper hardcodes the QuotientProgramInvalid
+    // selector because it renders in both the verifier and the standalone
+    // evaluator assembly.
+    let digest = Keccak256::digest(b"QuotientProgramInvalid()");
+    let selector = format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    );
+    assert!(
+        helpers_template.contains(&format!("shl(224, {selector})")),
+        "q_program_fail must hardcode the QuotientProgramInvalid selector {selector}"
+    );
+}
+
 #[test]
 fn templates_do_not_write_solidity_reserved_memory_slots() {
     let verifier_template = verifier_template_corpus();
@@ -1750,6 +2716,13 @@ fn templates_do_not_write_solidity_reserved_memory_slots() {
         ("QuotientHelpers.yul", quotient_helpers),
         ("Halo2VerifyingKey.sol", vk_template),
     ] {
+        // The one sanctioned use of Solidity's 0x00 scratch word: the typed
+        // custom-error revert idiom (P4/L-3) writes a 4-byte selector there
+        // immediately before reverting. It is terminal and 0x00..0x3f is
+        // legal scratch, so exempt exactly that pattern and keep every other
+        // low-memory write forbidden.
+        let source = source.replace("mstore(0x00, shl(224, ", "");
+        let source = source.as_str();
         for needle in [
             "mstore(0,",
             "mstore(0x00,",
@@ -2389,6 +3362,49 @@ fn quotient_vm_bilin7_pairwise_matches_direct_expr_eval() {
 }
 
 #[test]
+fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
+    // A large affine sum over consecutive limb pointers is emitted as a chain of
+    // LIN7 opcodes whose coefficients land in the one-byte constant table. With
+    // more than 256 distinct coefficients the table overflows a `u8` slot
+    // partway through emission. Before the fix, `emit_limb_shape`'s
+    // `u8::try_from(slot).expect(...)` panicked once the shape being emitted was
+    // preceded by enough residue constants; the decomposition path now re-checks
+    // the post-residue table and falls back to generic ops for the overflowing
+    // shape. This exercises that fallback and confirms it still evaluates the
+    // expression correctly.
+    let term_count = 300u32;
+    let mut values = HashMap::new();
+    let mut expr = QuotientExpr::Const(U256::ZERO);
+    for k in 0..term_count {
+        let ptr = 0x1000 + k * 0x20;
+        values.insert(ptr, Fq::from(17 + k as u64));
+        expr = quotient_add_expr(
+            expr,
+            // Coefficient `k + 2` keeps every term scaled (coeff 1 would drop the
+            // constant) and distinct, so the table grows one slot per term.
+            quotient_scale_expr(
+                Fq::from(k as u64 + 2),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
+        );
+    }
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
+    // The pre-fix builder panics inside this call for this input.
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.consts.len() > u8::MAX as usize,
+        "test must overflow the one-byte constant table to exercise the fallback"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
 fn quotient_vm_pow5_matches_direct_expr_eval() {
     let ptr = 0xa20;
     let mut values = HashMap::new();
@@ -2440,6 +3456,41 @@ fn quotient_vm_pow5_rejects_near_miss_product_shapes() {
 }
 
 #[test]
+fn quotient_vm_add_product_reserves_scalar_before_base_constants() {
+    let lhs = 0xaa0;
+    let rhs = 0xac0;
+    let mut values = HashMap::new();
+    values.insert(lhs, Fq::from(149u64));
+    values.insert(rhs, Fq::from(157u64));
+
+    let mut base = QuotientExpr::Const(U256::ZERO);
+    for value in 1..=255u64 {
+        base = quotient_add_expr(base, QuotientExpr::Const(U256::from(value)));
+    }
+    let product = quotient_mul_expr(
+        quotient_mul_expr(
+            QuotientExpr::Mem(QuotientMem::Literal(lhs)),
+            QuotientExpr::Mem(QuotientMem::Literal(rhs)),
+        ),
+        QuotientExpr::Const(U256::from(300u64)),
+    );
+    let expr = quotient_add_expr(base, product);
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::default();
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.bytes.contains(&Q_OP_ADD_MUL_MEM_MEM_CONST_U8),
+        "product should stay on the fused add-mul path"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
 fn quotient_vm_limb_subshape_matches_direct_expr_eval() {
     let mut values = HashMap::new();
     let mut expr = QuotientExpr::Const(U256::ZERO);
@@ -2476,6 +3527,53 @@ fn quotient_vm_limb_subshape_matches_direct_expr_eval() {
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
+    assert!(
+        builder.bytes.contains(&Q_OP_LIN7),
+        "larger affine sums should still extract LIN7 subshapes"
+    );
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
+fn quotient_vm_limb_decomposition_reserves_shape_coeffs_before_residue() {
+    let mut values = HashMap::new();
+    let mut expr = QuotientExpr::Const(U256::ZERO);
+
+    for i in 0..7u32 {
+        let ptr = 0xb00 + i * WORD_BYTES as u32;
+        values.insert(ptr, Fq::from(151 + i as u64));
+        expr = quotient_add_expr(
+            expr,
+            quotient_scale_expr(
+                Fq::from(19 + i as u64),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
+        );
+    }
+
+    for i in 0..256u32 {
+        let ptr = 0x2000 + i * 0x40;
+        values.insert(ptr, Fq::from(401 + i as u64));
+        expr = quotient_add_expr(
+            expr,
+            quotient_scale_expr(
+                Fq::from(1000 + i as u64),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
+        );
+    }
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.consts.len() > u8::MAX as usize,
+        "residue should grow the constant table past u8"
+    );
     assert!(
         builder.bytes.contains(&Q_OP_LIN7),
         "larger affine sums should still extract LIN7 subshapes"
@@ -3289,4 +4387,108 @@ fn fq_from_u256(value: U256) -> Fq {
     let bytes = value.to_le_bytes::<32>();
     let repr = <Fq as PrimeField>::Repr::from(bytes);
     Option::<Fq>::from(Fq::from_repr(repr)).expect("canonical field element")
+}
+
+/// The pointer walker must know every opcode's memory operands.
+///
+/// `quotient_read_pointers` fails closed on an unhandled opcode rather than
+/// skipping it, so this test is what makes the fallback arm reachable
+/// information: a new opcode added to `QUOTIENT_OPCODE_TABLE` without extending
+/// the walker fails here instead of silently shipping unchecked pointers.
+#[test]
+fn quotient_pointer_walker_covers_every_opcode() {
+    let model = QuotientReadModel::default();
+    for spec in QUOTIENT_VM_SPEC.opcodes {
+        // Zero operands keep every embedded count at zero, so the walk
+        // terminates for the dynamic opcodes without needing a hand-built
+        // program per shape.
+        let mut bytes = vec![spec.opcode];
+        bytes.extend(std::iter::repeat_n(0u8, 64));
+        let result = quotient_read_pointers(&bytes, 0, spec.opcode, &model, &mut |_, _| Ok(()));
+        if let Err(err) = result {
+            assert!(
+                !err.contains("pointer walker does not handle"),
+                "opcode {} ({:#x}) has no arm in quotient_read_pointers: {err}",
+                spec.name,
+                spec.opcode
+            );
+        }
+    }
+}
+
+/// Every pointer a real plan emits lands in a window the verifier populates.
+///
+/// The positive assertion alone could pass on a program with no memory
+/// operands at all, so this also pins that the fixture actually exercises the
+/// walker.
+#[test]
+fn quotient_program_pointers_stay_inside_populated_windows() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let model = plan.quotient_read_model();
+
+    let mut pointers = Vec::new();
+    for (idx, op, _len) in quotient_bytecode_ops(&plan.quotient.build.bytes) {
+        quotient_read_pointers(
+            &plan.quotient.build.bytes,
+            idx,
+            op,
+            &model,
+            &mut |_kind, ptr| {
+                pointers.push(ptr);
+                Ok(())
+            },
+        )
+        .expect("pointer walk should decode a validated program");
+    }
+    assert!(
+        !pointers.is_empty(),
+        "test circuit emits no VM memory operands, so the pointer validator is vacuous here"
+    );
+
+    // `LoweringPlan::new` already ran this; assert directly so the failure
+    // message points at this invariant rather than at plan construction.
+    validate_quotient_mem_ptrs(&plan.quotient.build.bytes, &model)
+        .expect("emitted pointers should all land in populated windows");
+}
+
+/// A pointer outside the populated windows is rejected.
+///
+/// Walks the real program, finds the first `LIN7` limb pointer, and rewrites it
+/// to an address inside the verifier's low-memory scratch -- readable at
+/// runtime, but holding transcript/pairing state rather than the proof
+/// evaluation the identity expects. This is the shape a `Data` or planner
+/// regression would take, and it is exactly what certification cannot see.
+#[test]
+fn quotient_pointer_validator_rejects_out_of_window_reads() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let model = plan.quotient_read_model();
+
+    let mut corrupted = plan.quotient.build.bytes.clone();
+    let limb_ptr_offset = quotient_bytecode_ops(&plan.quotient.build.bytes)
+        .find_map(|(idx, op, _)| (op == Q_OP_LIN7).then_some(idx + 2))
+        .expect("test circuit should emit a seven-limb linear form");
+    let stray = u16::try_from(layout::LOW_MEMORY_SCRATCH_START).expect("scratch base fits u16");
+    corrupted[limb_ptr_offset..limb_ptr_offset + 2].copy_from_slice(&stray.to_be_bytes());
+    assert_ne!(
+        corrupted, plan.quotient.build.bytes,
+        "corruption should change the program"
+    );
+
+    let err = validate_quotient_mem_ptrs(&corrupted, &model)
+        .expect_err("a pointer into low-memory scratch must be rejected");
+    assert!(
+        err.contains("outside every window"),
+        "unexpected rejection reason: {err}"
+    );
+
+    // The stack-safety and const-slot validators pass on the same bytes, so
+    // this really is coverage they do not provide.
+    validate_quotient_program(&corrupted)
+        .expect("corrupting a pointer must not change structural validity");
+    validate_quotient_const_slots(&corrupted, plan.quotient.build.consts.len())
+        .expect("corrupting a pointer must not change const-slot validity");
 }

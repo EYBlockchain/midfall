@@ -1144,6 +1144,9 @@ fn ivc_final_keccak_solidity_e2e() {
                 trace: quotient_trace_enabled,
                 gas_checkpoints: gas_checkpoints_enabled,
             },
+            // Repository dumps stay provenance-free so they are byte-stable
+            // across commits; deployment builds set this (P10/L-8).
+            provenance: None,
         })
         .expect("pinned quotient render should succeed");
     let verifier_solidity = artifacts.verifier;

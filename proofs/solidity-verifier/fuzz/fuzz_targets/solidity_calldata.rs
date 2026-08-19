@@ -14,7 +14,10 @@ use midnight_proofs::{
         create_proof, keygen_pk, keygen_vk_with_k, Advice, Circuit, Column, ConstraintSystem,
         Constraints, Error, Selector,
     },
-    poly::{kzg::params::ParamsKZG, kzg::KZGCommitmentScheme, Rotation},
+    poly::{
+        kzg::{params::ParamsKZG, KZGCommitmentScheme},
+        Rotation,
+    },
     transcript::{CircuitTranscript, Transcript},
 };
 use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};

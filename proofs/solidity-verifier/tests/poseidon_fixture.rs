@@ -125,13 +125,17 @@ fn poseidon_renders_compiles_and_verifies() {
     let srs_dir = srs_dir();
     let srs_path = format!("{srs_dir}/bls_filecoin_2p{K}");
     let fallback_srs_path = format!("{srs_dir}/bls_filecoin_2p19");
-    if !Path::new(&srs_path).exists() && !Path::new(&fallback_srs_path).exists() {
-        eprintln!(
-            "skipping poseidon end-to-end smoke: SRS not found at {srs_path} or {fallback_srs_path}. \
-             Set SRS_DIR or fetch the asset under midfall/zk_stdlib."
-        );
-        return;
-    }
+    // The gate was explicitly requested, so a missing asset fails rather than
+    // silently reporting a pass that rendered and compiled nothing.
+    assert!(
+        Path::new(&srs_path).exists() || Path::new(&fallback_srs_path).exists(),
+        "{RUN_EVM_TESTS_ENV}=1 requires the test SRS, but it was not found at {srs_path} or \
+         {fallback_srs_path}.
+Fetch it with:
+    curl -L -o {fallback_srs_path} \
+         https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com/bls_filecoin_2p19
+or point SRS_DIR at an existing copy."
+    );
     env::set_var("SRS_DIR", &srs_dir);
 
     let relation = PoseidonExample;
@@ -200,11 +204,13 @@ fn poseidon_renders_compiles_and_verifies() {
         verifier_solidity.len()
     );
 
-    // Skip the EVM portion if the pinned solc is not available.
-    if !pinned_solc_available() {
-        eprintln!("skipping poseidon end-to-end smoke: pinned solc not available");
-        return;
-    }
+    assert!(
+        pinned_solc_available(),
+        "{RUN_EVM_TESTS_ENV}=1 requires the pinned solc, which was not found or did not match.
+\
+         Install it, point SOLC at the binary, or set \
+         HALO2_SOLIDITY_ALLOW_UNPINNED_SOLC=1 to accept another version."
+    );
 
     let vk_creation_code = compile_solidity(&vk_solidity);
     let verifier_creation_code = compile_solidity(&verifier_solidity);

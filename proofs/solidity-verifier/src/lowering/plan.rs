@@ -12,7 +12,9 @@ use crate::lowering::{
     kzg, layout,
     layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
     quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
-    quotient_numerator::vm::{QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan},
+    quotient_numerator::vm::{
+        self as vm, certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+    },
     render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
     VerifierBuildInputs,
 };
@@ -142,6 +144,8 @@ impl LoweringPlan {
                 vk_mptr,
                 &memory,
                 &quotient_plan.selector_fold,
+                quotient_operand_bounds(&meta, &data, &vk, vk_mptr, &memory),
+                meta.num_simple_selectors,
             );
 
         let plan = Self {
@@ -163,6 +167,23 @@ impl LoweringPlan {
         };
         plan.validate_generator_invariants()
             .unwrap_or_else(|err| panic!("generator invariant violation: {err}"));
+
+        // Certify the limb superinstructions against a generic-opcode build of
+        // the same identity stream. This needs `inputs`, so it runs here rather
+        // than inside `validate_generator_invariants`.
+        let baseline_build = inputs.build_quotient_program_items_with_limb_ops(
+            &plan.quotient.plan.items,
+            &plan.quotient.plan.selector_fold,
+            false,
+        );
+        certify::certify_quotient_builds_agree(
+            &plan.quotient.plan,
+            &plan.quotient.build,
+            &baseline_build,
+            &plan.vk,
+        )
+        .unwrap_or_else(|err| panic!("quotient dual-build certification failed: {err}"));
+
         plan
     }
 
@@ -279,6 +300,35 @@ impl LoweringPlan {
                 self.vk.quotient_program_words
             ));
         }
+        // The VK payload embeds the const table and packed bytecode compiled
+        // inside `generate_vk`, but the interpreter is rendered from this
+        // independently recompiled `self.quotient.build`. Length checks alone
+        // let a nondeterministic/order-dependent compile ship a pinned VK whose
+        // bytecode disagrees with the rendered VM. Compare the embedded words
+        // against the plan build word-for-word so any divergence fails codegen.
+        if let Some(const_offset) = self.vk.quotient_const_offset_words {
+            let build_consts = &self.quotient.build.consts;
+            let embedded = &self.vk.constants[const_offset..const_offset + build_consts.len()];
+            if embedded.iter().map(|(_, value)| value).ne(build_consts.iter()) {
+                return Err(
+                    "quotient const table embedded in the VK payload does not match the \
+                     plan-rebuilt const table"
+                        .to_string(),
+                );
+            }
+        }
+        if let Some(program_offset) = self.vk.quotient_program_offset_words {
+            let build_words =
+                layout::vk_payload::PackedProgramCodec::encode_words(&self.quotient.build.bytes);
+            let embedded = &self.vk.constants[program_offset..program_offset + build_words.len()];
+            if embedded.iter().map(|(_, value)| value).ne(build_words.iter()) {
+                return Err(
+                    "quotient program bytecode embedded in the VK payload does not match the \
+                     plan-rebuilt bytecode"
+                        .to_string(),
+                );
+            }
+        }
         if self.quotient.program.stack_mptr != self.quotient.stack_mptr {
             return Err(format!(
                 "quotient stack pointer drifted: model={:#x} planned={:#x}",
@@ -291,7 +341,57 @@ impl LoweringPlan {
                 self.quotient.program.eval_numer_mptr, self.quotient.state_slots.eval_numer_mptr
             ));
         }
+        // Bounds-check every address the emitted bytecode loads from against
+        // the windows this layout actually populates before the VM runs.
+        // Certification cannot do this: it compares the bytecode against the
+        // expression tree, so a pointer that is wrong in both agrees with
+        // itself.
+        vm::validate_quotient_mem_ptrs(&self.quotient.build.bytes, &self.quotient_read_model())
+            .map_err(|err| format!("quotient memory pointer validation failed: {err}"))?;
+        // Prove the emitted bytecode still evaluates the identities it was
+        // lowered from, before it can be pinned into a verifying key.
+        certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build, &self.vk)
+            .map_err(|err| format!("quotient program certification failed: {err}"))?;
         Ok(())
+    }
+
+    /// Addresses the compact quotient VM is allowed to load from.
+    ///
+    /// These are exactly the ranges the verifier has populated by the time the
+    /// VM runs, and they are the same ranges
+    /// `Halo2QuotientEvaluator::validate_layout` requires the external frame to
+    /// contain -- a read outside them is either uninitialized memory in the
+    /// split path or live verifier state in the inline path.
+    pub(crate) fn quotient_read_model(&self) -> vm::QuotientReadModel {
+        vm::QuotientReadModel {
+            windows: quotient_read_windows(
+                &self.meta,
+                &self.data,
+                &self.vk,
+                self.vk_mptr,
+                &self.memory,
+            ),
+            token_bases: vec![
+                (vm::Q_MEM_L0, self.memory.l_0_mptr.value().as_usize()),
+                (vm::Q_MEM_L_LAST, self.memory.l_last_mptr.value().as_usize()),
+                (
+                    vm::Q_MEM_L_BLIND,
+                    self.memory.l_blind_mptr.value().as_usize(),
+                ),
+                (vm::Q_MEM_BETA, self.memory.beta_mptr.value().as_usize()),
+                (vm::Q_MEM_GAMMA, self.memory.gamma_mptr.value().as_usize()),
+                (vm::Q_MEM_X, self.memory.x_mptr.value().as_usize()),
+                (vm::Q_MEM_THETA, self.memory.theta_mptr.value().as_usize()),
+                (
+                    vm::Q_MEM_TRASH_CHALLENGE,
+                    self.memory.trash_challenge_mptr.value().as_usize(),
+                ),
+                (
+                    vm::Q_MEM_INSTANCE_EVAL,
+                    self.memory.instance_eval_mptr.value().as_usize(),
+                ),
+            ],
+        }
     }
 
     /// Number of `(G1, scalar)` terms required by the optional accumulator MSM.
@@ -306,4 +406,75 @@ impl LoweringPlan {
             })
             .unwrap_or(0)
     }
+}
+
+/// The memory windows the compact quotient VM is allowed to load from,
+/// shared by the build-time pointer validator
+/// ([`LoweringPlan::quotient_read_model`]) and the runtime operand clamps
+/// rendered into the interpreter (P12/L-6,
+/// docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md). One source of truth so the
+/// two layers cannot drift.
+pub(crate) fn quotient_read_windows(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+) -> Vec<vm::QuotientReadWindow> {
+    let theta = data.theta_mptr.value().as_usize();
+    let instance_eval = memory.instance_eval_mptr.value().as_usize();
+    vec![
+        vm::QuotientReadWindow {
+            name: "vk_payload",
+            start: vk_mptr.value().as_usize(),
+            len: vk.len(),
+        },
+        vm::QuotientReadWindow {
+            name: "user_challenges",
+            start: data.challenge_mptr.value().as_usize(),
+            len: meta.num_user_challenges.iter().sum::<usize>() * layout::memory::WORD_BYTES,
+        },
+        vm::QuotientReadWindow {
+            name: "challenge_and_common_slots",
+            // Ends one word past `instance_eval`, matching the frame
+            // window in `Halo2QuotientEvaluator::validate_layout`.
+            // `quotient_eval` sits immediately above and is a write
+            // target, not a VM input.
+            start: theta,
+            len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
+        },
+        vm::QuotientReadWindow {
+            name: "decoded_proof_evals",
+            start: memory.reversed_evals_mptr.value().as_usize(),
+            len: meta.num_evals * layout::memory::WORD_BYTES,
+        },
+    ]
+}
+
+/// The coarse `[lo, hi]` bound over every non-empty read window, rendered
+/// into the interpreter's operand clamps. `hi` is the last legally loadable
+/// word address (inclusive). Build-time validation still enforces exact
+/// per-window membership; the runtime clamp is defence in depth for a VM
+/// whose program bytes are trusted only through the VK codehash pin.
+pub(crate) fn quotient_operand_bounds(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+) -> (usize, usize) {
+    let windows = quotient_read_windows(meta, data, vk, vk_mptr, memory);
+    let lo = windows
+        .iter()
+        .filter(|w| w.len > 0)
+        .map(|w| w.start)
+        .min()
+        .expect("at least one non-empty quotient read window");
+    let hi = windows
+        .iter()
+        .filter(|w| w.len > 0)
+        .map(|w| w.start + w.len - layout::memory::WORD_BYTES)
+        .max()
+        .expect("at least one non-empty quotient read window");
+    (lo, hi)
 }

@@ -46,6 +46,7 @@ use crate::lowering::{
     abi::proof::ProofCalldataLayout,
     encoding::{ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word},
     layout::{
+        gas,
         memory::{
             FinalMsmShape, PcsMemoryRequirements, VerifierMemoryLayout, G1ADD_INPUT_BYTES,
             G1_BYTES, G1_MSM_PAIR_BYTES, PCS_STATIC_WORKING_WORDS, WORD_BYTES,
@@ -93,12 +94,143 @@ impl Query {
 /// simple multiplicative selector queries are skipped because the custom
 /// linearization query carries their commitments and selector accumulators.
 pub(crate) fn queries(meta: &ConstraintSystemMeta, data: &Data) -> Vec<Query> {
-    meta.protocol
+    let queries: Vec<Query> = meta
+        .protocol
         .pcs_queries
         .iter()
         .copied()
         .map(|source| query_from_plan(source, meta, data))
-        .collect()
+        .collect();
+    // L-2 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): downstream MSM
+    // emission silently omits commitments pinned to `G1_IDENTITY_MPTR` while
+    // keeping their evaluation terms. That omission is sound ONLY because
+    // the identity pointer is reserved for the committed-instance column
+    // (`SUPPORTED_COMMITTED_INSTANCE_COMMITMENT` is the identity, absorbed
+    // as 128 zero bytes). Pin that justification here, where each query
+    // still knows its provenance: any other query source acquiring the
+    // identity pointer would make the emitters drop a real MSM term.
+    //
+    // MF-8: the visible consequence downstream is a set whose eval-term count
+    // exceeds its commitment-term count by one (e.g. `q_eval_set[0]: 43
+    // evaluation term(s), 42 commitment term(s)` in the IVC render). That is
+    // not an off-by-one. The omitted commitment is the identity, so the
+    // multi-open equation still holds exactly -- and the omission is what
+    // FORCES the committed-instance eval to zero: the eval stays in the
+    // batched claim with coefficient trunc(x1^i) while contributing nothing
+    // to the commitment side, so any nonzero value breaks the opening. The
+    // enforcement is therefore indirect (via batching, per-term error
+    // 2^-128), not an equality check anywhere in the verifier.
+    let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
+    for (source, query) in meta.protocol.pcs_queries.iter().zip(&queries) {
+        assert!(
+            query.comm != g1_identity || matches!(source, PcsQuerySource::CommittedInstance(_)),
+            "query {source:?} resolves to the G1 identity commitment; only \
+             committed-instance queries may be identity-pinned, since the MSM \
+             emitters omit identity commitments while keeping their evals"
+        );
+    }
+    assert_permutation_query_order_is_upstream_equivalent(meta, data, &queries);
+    queries
+}
+
+/// I-6 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the midnight-proofs
+/// verifier emits permutation z queries as all `(Cur, Next)` pairs in
+/// forward set order followed by the `Last` openings in REVERSE set order,
+/// while this generator interleaves `Cur/Next/Last` per set. For every
+/// supported shape the two orderings happen to produce identical
+/// intermediate point-set structure -- but that is a property of the
+/// concrete plan (no new rotation or commitment introduced between the
+/// placements), not an order-insensitive transformation. Re-derive the
+/// intermediate sets under the upstream ordering and refuse to plan a
+/// circuit where the structures diverge, since every x1-power index and MSM
+/// slot downstream depends on it.
+fn assert_permutation_query_order_is_upstream_equivalent(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    generator_order: &[Query],
+) {
+    let sources = &meta.protocol.pcs_queries;
+    let z_positions: Vec<usize> = sources
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| matches!(s, PcsQuerySource::PermutationZ { .. }))
+        .map(|(i, _)| i)
+        .collect();
+    if z_positions.is_empty() {
+        return;
+    }
+    assert!(
+        z_positions.windows(2).all(|w| w[1] == w[0] + 1),
+        "permutation z queries are expected to form one contiguous block"
+    );
+
+    // Rebuild the z block in the upstream order: (Cur, Next) per set in
+    // forward order, then Last per set in reverse order.
+    let z_sources: Vec<PcsQuerySource> = z_positions.iter().map(|&i| sources[i]).collect();
+    let mut upstream_block: Vec<PcsQuerySource> = z_sources
+        .iter()
+        .copied()
+        .filter(|s| {
+            matches!(
+                s,
+                PcsQuerySource::PermutationZ {
+                    kind: PermutationZEval::Cur | PermutationZEval::Next,
+                    ..
+                }
+            )
+        })
+        .collect();
+    let mut last_queries: Vec<PcsQuerySource> = z_sources
+        .iter()
+        .copied()
+        .filter(|s| {
+            matches!(
+                s,
+                PcsQuerySource::PermutationZ {
+                    kind: PermutationZEval::Last,
+                    ..
+                }
+            )
+        })
+        .collect();
+    last_queries.reverse();
+    upstream_block.extend(last_queries);
+
+    let mut upstream_sources = sources.clone();
+    for (slot, source) in z_positions.iter().zip(upstream_block) {
+        upstream_sources[*slot] = source;
+    }
+    let upstream_queries: Vec<Query> = upstream_sources
+        .iter()
+        .copied()
+        .map(|source| query_from_plan(source, meta, data))
+        .collect();
+
+    let generator_sets = construct_intermediate_sets_impl(generator_order);
+    let upstream_sets = construct_intermediate_sets_impl(&upstream_queries);
+    assert_eq!(
+        generator_sets.point_sets, upstream_sets.point_sets,
+        "permutation z query interleaving changes the KZG point-set structure \
+         relative to the upstream (Cur/Next then reversed Last) ordering; the \
+         generated x1-power indices would not match the native verifier"
+    );
+    assert_eq!(
+        generator_sets.commitments.len(),
+        upstream_sets.commitments.len(),
+        "permutation z query interleaving changes the deduplicated commitment \
+         count relative to the upstream ordering"
+    );
+    for (g, u) in generator_sets.commitments.iter().zip(&upstream_sets.commitments) {
+        assert!(
+            g.set_index == u.set_index && g.comm == u.comm && g.evals == u.evals,
+            "permutation z query interleaving reorders commitment {:?} relative \
+             to the upstream ordering (set {} vs {}); MSM slots and x1 powers \
+             would diverge from the native verifier",
+            g.comm,
+            g.set_index,
+            u.set_index,
+        );
+    }
 }
 
 /// Resolve a typed protocol query source to concrete commitment/eval handles.
@@ -320,6 +452,23 @@ fn construct_intermediate_sets_impl(queries: &[Query]) -> IntermediateSets {
             // when their evals also agree; otherwise the proof claims the
             // same polynomial opens to two different values, which is a
             // protocol bug and must be rejected.
+            //
+            // TODO(structural): this dedup and the whole intermediate-set
+            // grouping compare EcPoint/Word handles by *memory pointer* (derived
+            // PartialEq), not by runtime value, whereas the midnight-proofs
+            // prover groups queries by polynomial identity and the verifier by
+            // commitment value. They agree today only because (a)
+            // SolidityGenerator supports a single committed-instance column (see
+            // validate_instance_column_shape in builder/api.rs), and (b) every
+            // downstream consumer depends only on first-appearance order and
+            // per-commitment point sets. The assert below also compares eval
+            // Words by pointer: with >= 2 committed-instance columns sharing
+            // G1_IDENTITY_MPTR at the same rotation it would panic at codegen
+            // (their eval Words are distinct memory handles) instead of
+            // collapsing them, and compute_dummy_queries would silently `skip`
+            // the same pair. Grouping by runtime value would lift both
+            // restrictions but is a structural change; the invariant is
+            // documented here rather than fixed.
             if let Some(existing_pos) = slot.1.iter().position(|pi| *pi == point_idx) {
                 assert_eq!(
                     slot.2[existing_pos], query.eval,
@@ -744,9 +893,17 @@ pub(crate) fn memory_requirements(
 ) -> PcsMemoryRequirements {
     let sets = intermediate_sets(meta, data);
     let n_sets = sets.point_sets.len();
-    if n_sets == 0 {
-        return PcsMemoryRequirements::default();
-    }
+    // Fail closed: zero point sets means the plan carries no PCS queries, which
+    // would size (and, in `computations`, emit) a verifier with no final
+    // pairing check. Since zero-initialized PAIRING_{LHS,RHS}_MPTR encode the
+    // point at infinity, such a verifier accepts any transcript-parseable proof.
+    // `ProtocolPlan::validate` guarantees at least the Linearization query, so
+    // this is unreachable; assert it rather than silently return a default.
+    assert!(
+        n_sets != 0,
+        "KZG intermediate-set construction produced zero point sets; refusing to \
+         size a verifier with no PCS/pairing check (would be accept-all)"
+    );
 
     let by_set = commitments_by_set(&sets, n_sets);
     let commitments_per_set = by_set.iter().map(Vec::len);
@@ -819,9 +976,17 @@ pub(crate) fn computations(
     const TRUNC_MASK_128: &str = "0xffffffffffffffffffffffffffffffff";
     let sets = intermediate_sets(meta, data);
     let n_sets = sets.point_sets.len();
-    if n_sets == 0 {
-        return Vec::new();
-    }
+    // Fail closed: an empty point-set list would emit a verifier with no Block 6,
+    // so PAIRING_{LHS,RHS}_MPTR stay zero-initialized. Zero memory is the EIP-2537
+    // encoding of the BLS12-381 point at infinity, so the final pairing evaluates
+    // to 1 and the verifier accepts ANY proof with no cryptographic checking.
+    // `ProtocolPlan::validate` requires the query schedule to end with the
+    // Linearization query (n_sets >= 1), so reaching here is a generator bug.
+    assert!(
+        n_sets != 0,
+        "KZG intermediate-set construction produced zero point sets; refusing to \
+         emit a verifier with no PCS/pairing check (would be accept-all)"
+    );
 
     // The emitted blocks below adapt the Rust `multi_prepare` flow:
     // construct/sort point sets, fold q_eval vectors, interpolate at x3,
@@ -870,6 +1035,26 @@ pub(crate) fn computations(
         // multiplying by omega_inv.
         let max_rot = *distinct_rotations.iter().max().unwrap_or(&0);
         let min_rot = *distinct_rotations.iter().min().unwrap_or(&0);
+
+        // Fail closed on pathological rotation magnitudes. This block unrolls one
+        // `mulmod` per unit step across the entire rotation span (forward to
+        // max_rot, backward to min_rot), so the emitted line count scales with
+        // |max_rot| + |min_rot|, NOT with the (separately capped) number of
+        // distinct rotations. A circuit using a very large rotation would emit
+        // enough Yul to exceed the EIP-170 24KB runtime-code limit and produce an
+        // undeployable verifier with no diagnostic from our own validation. Bound
+        // the walk here; if this ever fires for a legitimate circuit, roll the
+        // walk into a Yul loop (as Block 2 does for x1 powers) rather than raising
+        // the cap. The cap is far above any realistic circuit's rotation range.
+        const MAX_ROTATION_WALK_STEPS: i64 = 4096;
+        let walk_steps = i64::from(max_rot).max(0) + (-i64::from(min_rot)).max(0);
+        assert!(
+            walk_steps <= MAX_ROTATION_WALK_STEPS,
+            "PCS rotation-point walk would unroll {walk_steps} mulmod steps \
+             (max_rot={max_rot}, min_rot={min_rot}), exceeding the \
+             {MAX_ROTATION_WALK_STEPS}-step cap; such a verifier would blow the \
+             EIP-170 runtime code-size limit (roll the walk into a Yul loop instead)"
+        );
 
         let store_rot = |rot: i32| -> Option<String> {
             distinct_rotations.iter().position(|r| *r == rot).map(|idx| {
@@ -1029,10 +1214,18 @@ pub(crate) fn computations(
         // ------------------------------------------------------------------
         let eval_src_table_mptr: usize = memory.pcs_q_eval_source_table_mptr;
 
+        let comment_g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
         for (set_idx, commitments_in_set) in by_set.iter().enumerate() {
             let mut lines: Vec<String> = Vec::new();
             let q_eval_base = format!("add(Q_EVAL_SET_MPTR, {:#x})", set_idx * WORD_BYTES);
             let m = commitments_in_set.len();
+            // The MSM emission (blocks 3 and 5) skips commitments pinned to
+            // the G1 identity while their evaluation contribution stays in
+            // q_eval_set, so the two counts differ whenever a set carries an
+            // identity commitment. Report both, or the emitted comment
+            // contradicts the pair count of the MSM right below it (L-2/P7).
+            let commitment_terms =
+                commitments_in_set.iter().filter(|c| c.comm != comment_g1_identity).count();
 
             // q_eval_set[s] is itself a *vector* of |set| evaluations
             // (not a single scalar): one per rotation in the set's
@@ -1053,7 +1246,8 @@ pub(crate) fn computations(
             if q_eval_strategy(commitments_in_set) == QEvalStrategy::Rolled {
                 // -------- Rolled path (Opt I + Opt J merged) ----------
                 lines.push(format!(
-                    "// q_eval_set[{set_idx}]: {m} commitment(s) (rolled, m>={Q_EVAL_ROLL_THRESHOLD})"
+                    "// q_eval_set[{set_idx}]: {m} evaluation term(s), {commitment_terms} \
+                     commitment term(s) (rolled, m>={Q_EVAL_ROLL_THRESHOLD})"
                 ));
 
                 // 1. Pre-stage source-eval addresses at EVAL_SRC_TABLE_MPTR. Layout: row-major
@@ -1127,7 +1321,10 @@ pub(crate) fn computations(
                 }
             } else {
                 // -------- Unrolled path (preserved for non-rolled sets) --
-                lines.push(format!("// q_eval_set[{set_idx}]: {m} commitment(s)"));
+                lines.push(format!(
+                    "// q_eval_set[{set_idx}]: {m} evaluation term(s), {commitment_terms} \
+                     commitment term(s)"
+                ));
 
                 // Fr-only eval accumulation in stack locals.
                 for (k, ev) in first.evals.iter().enumerate() {
@@ -1189,7 +1386,7 @@ pub(crate) fn computations(
                 ));
                 lines.push(format!(
                     "trace_point({}, {trace_scratch:#x})",
-                    40000 + set_idx
+                    trace::PCS_Q_COM_BASE + set_idx as u64
                 ));
                 continue;
             }
@@ -1265,18 +1462,22 @@ pub(crate) fn computations(
             );
             let msm_len = non_identity_terms * G1_MSM_PAIR_BYTES;
             lines.push(format!(
-                "let q_com_trace_ok_{set_idx} := staticcall(gas(), 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})"
+                "// exact EIP-2537 G1MSM cost for {non_identity_terms} pair(s)"
+            ));
+            lines.push(format!(
+                "let q_com_trace_ok_{set_idx} := staticcall({}, 0x0c, {trace_scratch:#x}, {msm_len:#x}, {trace_scratch:#x}, {G1_BYTES:#x})",
+                gas::g1msm_gas(non_identity_terms)
             ));
             lines.push(format!(
                 "q_com_trace_ok_{set_idx} := and(q_com_trace_ok_{set_idx}, eq(returndatasize(), {G1_BYTES:#x}))"
             ));
             lines.push(format!(
                 "if iszero(q_com_trace_ok_{set_idx}) {{ mstore(TRACE_U256_MPTR, {}) revert(TRACE_U256_MPTR, {WORD_BYTES:#x}) }}",
-                40000 + set_idx
+                trace::PCS_Q_COM_BASE + set_idx as u64
             ));
             lines.push(format!(
                 "trace_point({}, {trace_scratch:#x})",
-                40000 + set_idx
+                trace::PCS_Q_COM_BASE + set_idx as u64
             ));
         }
         blocks.push(lines);
@@ -1399,11 +1600,27 @@ pub(crate) fn computations(
             // Soundness: requires every input to be non-zero. dx_j is
             // non-zero by Fiat-Shamir (x3 is uniform random; the
             // probability that x3 = p_j for a structured rotation point
-            // is ~2^-256). lbasis_j is non-zero because the points in a
-            // set are distinct by construction (`construct_intermediate_sets`
-            // de-duplicates rotations within each set). Defensive note:
-            // a malicious prover cannot influence either, so we don't
-            // need an explicit zero check.
+            // is ~2^-256). lbasis_j = prod_{k != j} (p_j - p_k) is non-zero
+            // as long as the rotation points p = x*omega^rot are pairwise
+            // distinct within the set. `construct_intermediate_sets`
+            // de-duplicates rotation *values* (i32) per set, and distinct
+            // values map to distinct points only because the domain order
+            // n = 2^k exceeds the rotation span for every supported circuit
+            // (rotations are bounded by the gate/lookup structure, k is
+            // large). A malicious prover cannot influence either value, so
+            // no explicit codegen zero check is added here.
+            //
+            // Note the failure mode is fail-closed, not silent: if a
+            // degenerate tiny-domain circuit ever aliased two rotations
+            // (rot_i == rot_j mod n), the corresponding p_j - p_k would be
+            // zero, so some lbasis_j and hence the batched product bp_{n-1}
+            // would be zero, and `scalar_inv` reverts on a zero input
+            // (AssemblyHelpers.yul). Such a verifier rejects all proofs
+            // rather than computing a wrong f_eval.
+            //
+            // TODO: to surface that misconfiguration at codegen time instead
+            // of at proof time, thread the domain order n into this emitter
+            // and assert every point set's rotation span is < n.
             //
             // The reference computes lagrange interpolation directly via
             // full polynomial construction; here we collapse the
@@ -1534,6 +1751,14 @@ pub(crate) fn computations(
         let final_msm_shape = final_msm_shape(meta, data, &by_set);
         let final_msm_terms = final_msm_shape.terms;
         let final_msm_len = final_msm_shape.input_bytes;
+        // The forwarded gas bound below is derived from the term count, so
+        // the byte length handed to the precompile must be exactly that many
+        // whole pairs -- a mismatch would under-fund the MSM.
+        assert_eq!(
+            final_msm_terms * G1_MSM_PAIR_BYTES,
+            final_msm_len,
+            "final MSM input byte length is not a whole number of MSM pairs"
+        );
         let final_msm_scratch = memory.pcs_final_msm_scratch_mptr;
 
         lines.push("// build final_com and v (KZG single-opening proof, fused MSM)".to_string());
@@ -1675,7 +1900,11 @@ pub(crate) fn computations(
 
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s)"
+        ));
+        lines.push(format!(
+            "    success := staticcall({}, 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            gas::g1msm_gas(final_msm_terms),
             final_msm_len
         ));
         lines.push(format!(
@@ -1708,7 +1937,12 @@ pub(crate) fn computations(
         lines.push("// Scale z*pi - vG before the final pairing check".to_string());
         lines.push("// pairing inputs (LHS = pi; RHS = final_com - v*G + x3*pi)".to_string());
 
-        // PAIRING_LHS = pi (paired against G2_BASE).
+        // PAIRING_LHS = pi. FinalPairing.yul calls
+        // ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR) with the
+        // slots swapped, and ec_pairing pairs its first argument against
+        // G2_BASE and its second against NEG_S_G2_BASE, so pi (PAIRING_LHS)
+        // is paired against NEG_S_G2_BASE (the [s]_2 side), matching the KZG
+        // identity e(final_com - v*G + x3*pi, [1]_2) = e(pi, [s]_2).
         lines.push(format!("mcopy(PAIRING_LHS_MPTR, PI_MPTR, {G1_BYTES:#x})"));
 
         // tmp = (-v) * G  =>  load G into planned scratch, scale by (r - v).
@@ -1721,7 +1955,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1MSM_GAS_1PAIR, 0x0c, {scratch:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1734,7 +1968,7 @@ pub(crate) fn computations(
         ));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1ADD_GAS, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1746,7 +1980,7 @@ pub(crate) fn computations(
         lines.push(format!("mstore({scratch_g1add_scalar:#x}, mload(X3_MPTR))"));
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1MSM_GAS_1PAIR, 0x0c, {scratch_g1_b:#x}, {G1_MSM_PAIR_BYTES:#x}, {scratch_g1_b:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
@@ -1754,7 +1988,7 @@ pub(crate) fn computations(
         lines.push("}".to_string());
         lines.push("if success {".to_string());
         lines.push(format!(
-            "    success := staticcall(gas(), 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
+            "    success := staticcall(G1ADD_GAS, 0x0b, {scratch:#x}, {G1ADD_INPUT_BYTES:#x}, {scratch:#x}, {G1_BYTES:#x})"
         ));
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"

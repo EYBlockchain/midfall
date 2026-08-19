@@ -27,10 +27,35 @@ Solidity reserves the first four words of memory for compiler conventions:
 
 The generated verifier intentionally does not follow Solidity allocation by
 reading and bumping `mload(0x40)`. Instead, every generated absolute memory
-region is planned at or above `0x80`. The streaming transcript buffer, the main
-verifier return word, the split quotient return frame, the VK constructor
-payload buffer, and low-memory precompile scratch all start from named
-Rust-side layout constants rooted at `SOLIDITY_ALLOCATABLE_MEMORY_START`.
+region is planned from named Rust-side layout constants.
+
+Those constants are **not** rooted at `0x80`. The verifier body is wrapped in
+`assembly ("memory-safe")`, which is load-bearing -- without it the block does
+not compile under `--via-ir` (stack too deep) -- but also factually untrue,
+since the block writes memory it never obtained from the free-memory pointer.
+The annotation is what enables solc's stack-to-memory mover, which reserves
+spill slots upward from `0x80` and records the top in the runtime's
+`mstore(0x40, ...)` prologue. Observed reservations range from `0x80` (none) to
+`0x8e0`, varying with the circuit, the solc release, and the optimizer
+schedule.
+
+Basing the layout at `0x80` therefore put solc's spill slots and the verifier's
+own transcript buffer in the same bytes, separated only by live ranges that
+nothing enforced -- a recompilation could silently place a live spill across a
+verifier write and corrupt a challenge or pairing input. So the streaming
+transcript buffer, the main verifier return word, the split quotient return
+frame, low-memory precompile scratch, the accumulator/KZG pairing-batch hash
+frame, and the final two-pair pairing frame are rooted at
+`LOW_MEMORY_SCRATCH_START` (`0x1000`), above the largest observed reservation.
+`VerifierMemoryLayout::validate()` rejects any generated region below that
+base, and `compiled_memoryguard_does_not_overlap_generated_layout` compiles
+each rendered variant -- including the accumulator-bearing ones -- and fails
+the build if a future circuit or compiler pushes the reservation past it.
+
+The VK constructor payload buffer is the exception: it lives in
+`Halo2VerifyingKey`, whose assembly carries no `memory-safe` annotation, so
+solc reserves nothing there and it stays at
+`SOLIDITY_ALLOCATABLE_MEMORY_START`.
 
 The code generator treats `[0x00..0x80)` as off limits for generated writes:
 `VerifierMemoryLayout::validate()` rejects any registered region inside that
@@ -140,14 +165,16 @@ which changes the transcript-buffer bound. The verifier reserves:
 
 - unaligned starts or lengths;
 - any generated region inside Solidity-reserved memory `[0x00..0x80)`;
+- any generated region below `LOW_MEMORY_SCRATCH_START` (`0x1000`), where a
+  live via-IR spill slot could share its bytes;
 - overlapping permanent regions;
 - overlapping scratch regions that are live in the same `MemoryPhase`;
 - PCS fixed-window overflows.
 
 Intentional reuse is represented by giving the same byte range disjoint
-lifetimes. For example, `batch_invert_scratch`, quotient VM scratch, q_eval
-source tables, q_com trace scratch, and final MSM scratch can share bytes when
-their phases do not overlap.
+lifetimes. For example, `batch_invert_scratch`, `lagrange_denoms`, quotient VM
+scratch, q_eval source tables, q_com trace scratch, and final MSM scratch can
+share bytes when their phases do not overlap.
 
 The `trace_u256` log word is deliberately not a historical fixed constant.
 Trace hooks can run between reads from long-lived VK/eval/commitment memory, so
@@ -210,6 +237,12 @@ addresses. The offsets below are in 32-byte words from `THETA_MPTR`.
 The gaps between fixed windows are deliberate historical padding. Do not use
 them as scratch without registering a `MemoryRegion` and a phase.
 
+The Lagrange batch-inversion input run historically wrote its denominators in
+place starting at `x_n` (word 26), overlaying words 27..51 and spilling into
+`rot_points` for large instance counts. The run now lives in the registered
+`lagrange_denoms` phase region above the decompressed commitments; word 26 is
+a plain one-word permanent slot again.
+
 ## Dynamic Commitment Region
 
 The commitment region begins at:
@@ -245,16 +278,16 @@ The planner validates by lifetime, not just by address.
 
 | Phase | Region examples | Notes |
 | --- | --- | --- |
-| `Transcript` | `[0, transcript_words * 0x20)` | Must stay below `VK_MPTR`. |
+| `Transcript` | `[0x1000, 0x1000 + transcript_words * 0x20)` | Must stay below `VK_MPTR`. |
 | `ScalarInv` | `VK_MPTR - 0x100` frame | Historical modexp scratch near the VK payload. |
-| `LagrangeBatchInvert` | `batch_invert_scratch_mptr` | Reuses selector bytes before selector accumulators are live. |
+| `LagrangeBatchInvert` | `batch_invert_scratch_mptr`, `lagrange_denoms_mptr` | Prefix-product scratch plus the batch-inversion input run; both reuse selector/quotient bytes before those phases are live. |
 | `QuotientVm` | quotient temps and stack | Used before PCS final MSM. |
 | `PcsQEvalSourceTable` | rolled q_eval address table | Aliases `pcs_scratch_mptr`. |
 | `PcsQComTrace` | optional q_com trace MSM | Aliases `pcs_scratch_mptr`; trace-only. |
 | `PcsFinalMsm` | final MSM input and selector accumulators | Selector accumulators and final MSM must not overlap in this phase. |
 | `AccumulatorMsm` | public accumulator MSM input | Length is derived from accumulator/VK shape. |
-| `AccumulatorPairingBatch` | `[0x100, 0x320)` | Hash domain plus four G1 points for accumulator pairing batching. |
-| `FinalPairing` | two-pair KZG pairing frame | Low-memory final precompile frame. |
+| `AccumulatorPairingBatch` | `[0x1000, 0x1220)` | Hash domain plus four G1 points for accumulator pairing batching. |
+| `FinalPairing` | `[0x1220, 0x1540)` two-pair KZG pairing frame | Final precompile frame, placed past the pairing-batch frame by construction. |
 
 ## Update Rules
 

@@ -1,0 +1,63 @@
+--- a/src/lowering/vk.rs
++++ b/src/lowering/vk.rs
+@@ -93,6 +93,60 @@
+             let g1_pt: G1Affine = G1Affine::generator();
+             let g2_pt: G2Affine = self.params.g2().to_affine();
+             let neg_s_g2_pt: G2Affine = (-self.params.s_g2()).to_affine();
++
++            // The G1 base is validated above by reconstructing it from
++            // `g_lagrange`. Do the same work on the G2 side. Until now
++            // `g2` and `s_g2` were taken on trust from `params`, and
++            // `NEG_S_G2_BASE` is the element every soundness guarantee in the
++            // deployed verifier rests on: the final pairing is
++            //   e(final_com - v*G + x3*pi, G2_BASE) * e(pi, NEG_S_G2_BASE) == 1
++            // and anyone who knows the tau behind NEG_S_G2_BASE can forge an
++            // opening for any statement.
++            //
++            // Every other control in this repository -- quotient
++            // certification, the dual build, generator invariants, the VK
++            // codehash pin, the trace differential, the replay fixtures --
++            // checks SELF-CONSISTENCY. An SRS substituted at build time
++            // produces a perfectly self-consistent artifact, so all of them
++            // pass. This assertion is the only place that can catch it.
++
++            // 1. G2_BASE must be the canonical generator, for the same reason
++            //    G1_BASE must be: the emitted equation assumes it.
++            assert_eq!(
++                g2_pt,
++                G2Affine::generator(),
++                "SRS G2 base is not the canonical BLS12-381 G2 generator; the \
++                 emitted pairing equation would not be the KZG identity"
++            );
++
++            // 2. `s_g2` must correspond to the SAME tau that produced
++            //    `g_lagrange`. Commit f(X) = X in the Lagrange basis to obtain
++            //    [tau]G1 = sum_i omega^i * L_i, then check the pairing
++            //    e([tau]G1, G2) == e(G1, s_g2). This ties the G2 side of the
++            //    key to the commitment basis the prover actually uses.
++            let omega = self.vk.get_domain().get_omega();
++            let mut w = <Fq as ff::Field>::ONE;
++            let tau_g1 = g_lagrange
++                .iter()
++                .map(|g| {
++                    let term = *g * w;
++                    w *= omega;
++                    term
++                })
++                .fold(G1Projective::identity(), |acc, t| acc + t)
++                .to_affine();
++            assert!(
++                srs_tau_is_consistent(&tau_g1, &self.params.s_g2().to_affine()),
++                "SRS inconsistency: s_g2 does not correspond to the tau that \
++                 generated g_lagrange. NEG_S_G2_BASE would be emitted from an \
++                 SRS unrelated to the commitment basis -- i.e. from a key whose \
++                 toxic waste may be known to whoever supplied it."
++            );
++
++            // TODO(deployment): additionally pin the SRS asset by SHA-256 here
++            // and record it, plus the ceremony transcript reference, in the
++            // artifact manifest. CODEGEN_ASSURANCE_DOSSIER.md already lists
++            // this as a required record; nothing currently produces it.
+             let g1 = g1_to_u256s(g1_pt);
+             let g2 = g2_to_u256s(g2_pt);
+             let neg_s_g2 = g2_to_u256s(neg_s_g2_pt);

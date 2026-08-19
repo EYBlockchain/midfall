@@ -1,3 +1,60 @@
+{#-
+  P12 (L-6, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md) runtime operand
+  clamps. The VM program is trusted only through the VK codehash pin;
+  build-time validate_quotient_mem_ptrs proves exact window membership, but
+  the deployed interpreter re-checks every decoded memory-pointer operand
+  against the coarse [operand_lo, operand_hi] union of the planned read
+  windows so a substituted or corrupted VK payload cannot read arbitrary
+  verifier state. Single-comparison form: unsigned wrap makes
+  sub(ptr, lo) > (hi - lo) cover both bounds (~6 gas per operand).
+  u8 constant-table indexes stay unguarded: their drift is bounded to
+  0x1FE0 bytes inside the VK-reserved region and covered by build-time
+  validate_quotient_const_slots. MF-3: the u16 forms do NOT share that
+  argument -- an out-of-range u16 index reaches 0x1FFFE0 bytes past the
+  table, well outside the pinned payload -- so those three sites are
+  clamped against the rendered table length.
+-#}
+{%- macro q_ptr_guard(ptr) %}
+                        if gt(sub({{ ptr }}, {{ program.operand_lo|hex() }}), {{ (program.operand_hi - program.operand_lo)|hex() }}) { q_program_fail() }
+{%- endmacro %}
+{#- 7-word limb-vector bases must leave room for the whole vector. -#}
+{%- macro q_vec7_guard(ptr) %}
+                            if gt(sub({{ ptr }}, {{ program.operand_lo|hex() }}), {{ (program.operand_hi - program.operand_lo - 0xc0)|hex() }}) { q_program_fail() }
+{%- endmacro %}
+{#- Pops revert at the stack floor; the terminal eq(q_sp, base) check
+    cannot catch a BALANCED underflow, this can. -#}
+{%- macro q_pop_guard() %}
+                        if eq(q_sp, {{ program.stack_mptr|hex() }}) { q_program_fail() }
+{%- endmacro %}
+{#-
+  MF-3 interpreter fail-closed guards. The program is trusted through the VK
+  codehash pin, so none of these are reachable on-chain with a well-formed
+  artifact; they are containment for a future GENERATOR bug, in the same
+  spirit as the P12 operand clamps above. Each closes a hole the terminal
+  end-of-program checks provably cannot see:
+
+    - q_top_guard: FOLD_MAIN/FOLD_SELECTOR consume the cached top. With
+      q_has_top clear, the fold silently re-folds a STALE q_top and both
+      terminal checks (q_has_top == 0, q_sp == base) still pass.
+    - q_stack_empty_guard: native callbacks used to RESET q_sp to the base
+      rather than assert it, so operands spilled by a preceding partial
+      expression were discarded with no trace -- an identity would drop out
+      of nu_y(x) while the program still ended balanced.
+    - q_const_guard: constant-table indexes are decoded from program bytes
+      and were unclamped, so an out-of-range index reads whatever follows the
+      table (program bytes, commitments) as an Fr constant.
+    - the inlined spill-ceiling check at every push site: q_sp walks
+      upward with no ceiling of its own.
+-#}
+{%- macro q_top_guard() %}
+                        if iszero(q_has_top) { q_program_fail() }
+{%- endmacro %}
+{%- macro q_stack_empty_guard() %}
+                        if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { q_program_fail() }
+{%- endmacro %}
+{%- macro q_const_guard(idx) %}
+                        if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }
+{%- endmacro %}
             // ===============================================================
             // Batched identity numerator / linearization target.
             //
@@ -126,7 +183,14 @@
                 {
                     // q_y_power holds y^i at the current loop index.
                     let q_y_power := 1
-                    // Start at i=1 because y^0 = 1 is implicit and never read.
+                    // Slot 0 holds y^0 = 1. Codegen never emits a read of it
+                    // (FOLD_SELECTOR guards on a nonzero gap, and
+                    // selector_tail_updates drops zero tails), but the tail
+                    // block multiplies by mload(selector_power_mptr + offset)
+                    // unconditionally -- so initialize the slot rather than
+                    // leaving correctness to two filters in another file.
+                    mstore({{ program.selector_power_mptr|hex() }}, 1)
+                    // Start at i=1 because y^0 = 1 is written above.
                     for { let q_y_power_i := 1 } lt(q_y_power_i, {{ program.selector_max_power + 1 }}) { q_y_power_i := add(q_y_power_i, 1) } {
                         // Advance from y^(i-1) to y^i modulo Fr.
                         q_y_power := mulmod(q_y_power, y, r)
@@ -169,18 +233,103 @@
                 // q_has_top = 0 means the VM stack is empty.
                 let q_has_top := 0
 
-                // q_program opcode summary:
-                //   0x01/0x09 push const       0x02/0x05 push memory
-                //   0x03/0x04 push token ptr   0x06 add, 0x07 mul, 0x08 neg
-                //   0x0a fold main identity    0x0b fold selector identity
-                //   0x0c..0x11 add/mul const or memory into top
-                //   0x12..0x16 fused add-mul runs
-                //   0x17/0x18 reserved
-                //   0x19 native permutation    0x1b native heavy identity
-                //   0x1c LIN7                 0x1d BILIN7_ROW
-                //   0x1e BILIN7_PAIRWISE      0x1f native lookup
-                //   0x20 POW5                 0x21 MODARITH7
-                //   0x22 AFFINE_SUM
+                // q_program opcode summary. Rendered from the same
+                // program.op_usage predicates that gate the interpreter's
+                // case arms below, so this artifact documents exactly the
+                // opcodes its program can contain -- no more, no fewer.
+                {%- if program.op_usage.push_const %}
+                //   {{ template_constants.quotient_vm.op.push_const|hex() }} push_const
+                {%- endif %}
+                {%- if program.op_usage.push_mem_literal %}
+                //   {{ template_constants.quotient_vm.op.push_mem_literal|hex() }} push_mem_literal
+                {%- endif %}
+                {%- if program.op_usage.push_mem_token %}
+                //   {{ template_constants.quotient_vm.op.push_mem_token|hex() }} push_mem_token
+                {%- endif %}
+                {%- if program.op_usage.push_mem_token_offset %}
+                //   {{ template_constants.quotient_vm.op.push_mem_token_offset|hex() }} push_mem_token_offset
+                {%- endif %}
+                {%- if program.op_usage.push_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.push_mem_u16|hex() }} push_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add %}
+                //   {{ template_constants.quotient_vm.op.add|hex() }} add
+                {%- endif %}
+                {%- if program.op_usage.mul %}
+                //   {{ template_constants.quotient_vm.op.mul|hex() }} mul
+                {%- endif %}
+                {%- if program.op_usage.neg %}
+                //   {{ template_constants.quotient_vm.op.neg|hex() }} neg
+                {%- endif %}
+                {%- if program.op_usage.push_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.push_const_u8|hex() }} push_const_u8
+                {%- endif %}
+                {%- if program.op_usage.fold_main %}
+                //   {{ template_constants.quotient_vm.op.fold_main|hex() }} fold_main
+                {%- endif %}
+                {%- if program.op_usage.fold_selector %}
+                //   {{ template_constants.quotient_vm.op.fold_selector|hex() }} fold_selector
+                {%- endif %}
+                {%- if program.op_usage.add_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.add_const_u8|hex() }} add_const_u8
+                {%- endif %}
+                {%- if program.op_usage.mul_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.mul_const_u8|hex() }} mul_const_u8
+                {%- endif %}
+                {%- if program.op_usage.add_const %}
+                //   {{ template_constants.quotient_vm.op.add_const|hex() }} add_const
+                {%- endif %}
+                {%- if program.op_usage.mul_const %}
+                //   {{ template_constants.quotient_vm.op.mul_const|hex() }} mul_const
+                {%- endif %}
+                {%- if program.op_usage.add_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.add_mem_u16|hex() }} add_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.mul_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.mul_mem_u16|hex() }} mul_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add_mul_mem_mem_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.add_mul_mem_mem_const_u8|hex() }} add_mul_mem_mem_const_u8
+                {%- endif %}
+                {%- if program.op_usage.add_mul_const_u8_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.add_mul_const_u8_mem_u16|hex() }} add_mul_const_u8_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.add_mul_mem_mem %}
+                //   {{ template_constants.quotient_vm.op.add_mul_mem_mem|hex() }} add_mul_mem_mem
+                {%- endif %}
+                {%- if program.op_usage.run_add_mul_mem_mem_const_u8 %}
+                //   {{ template_constants.quotient_vm.op.run_add_mul_mem_mem_const_u8|hex() }} run_add_mul_mem_mem_const_u8
+                {%- endif %}
+                {%- if program.op_usage.run_add_mul_const_u8_mem_u16 %}
+                //   {{ template_constants.quotient_vm.op.run_add_mul_const_u8_mem_u16|hex() }} run_add_mul_const_u8_mem_u16
+                {%- endif %}
+                {%- if program.op_usage.affine_sum %}
+                //   {{ template_constants.quotient_vm.op.affine_sum|hex() }} affine_sum
+                {%- endif %}
+                {%- if program.op_usage.native_permutation %}
+                //   {{ template_constants.quotient_vm.op.native_permutation|hex() }} native_permutation
+                {%- endif %}
+                {%- if program.op_usage.native_lookup %}
+                //   {{ template_constants.quotient_vm.op.native_lookup|hex() }} native_lookup
+                {%- endif %}
+                {%- if program.op_usage.native_identity %}
+                //   {{ template_constants.quotient_vm.op.native_identity|hex() }} native_identity
+                {%- endif %}
+                {%- if program.op_usage.lin7 %}
+                //   {{ template_constants.quotient_vm.op.lin7|hex() }} lin7
+                {%- endif %}
+                {%- if program.op_usage.bilin7_row %}
+                //   {{ template_constants.quotient_vm.op.bilin7_row|hex() }} bilin7_row
+                {%- endif %}
+                {%- if program.op_usage.bilin7_pairwise %}
+                //   {{ template_constants.quotient_vm.op.bilin7_pairwise|hex() }} bilin7_pairwise
+                {%- endif %}
+                {%- if program.op_usage.modarith7 %}
+                //   {{ template_constants.quotient_vm.op.modarith7|hex() }} modarith7
+                {%- endif %}
+                {%- if program.op_usage.pow5 %}
+                //   {{ template_constants.quotient_vm.op.pow5|hex() }} pow5
+                {%- endif %}
                 //
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
@@ -191,7 +340,7 @@
                 This comment documents the interpreter source without being
                 emitted into generated Solidity. Runtime behavior lives in the
                 switch blocks below; opcode numbers and operand layouts are
-                defined in src/codegen/quotient/mod.rs.
+                defined in src/lowering/quotient_numerator/vm/mod.rs.
 
                 Shared stack model:
                 - q_top caches the top stack value.
@@ -356,9 +505,11 @@
                         // Fr words, so shl(5, const_idx) converts an index to
                         // a byte offset.
                         let qconst := shr(240, mload(q_pc))
+{%- call q_const_guard("qconst") %}
                         // Push semantics: spill the old cached top, if any,
                         // then install the loaded constant as the new q_top.
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -375,9 +526,11 @@
                         // the smaller u16 form or token map.
                         let q_ptr := shr(224, mload(q_pc))
                         q_pc := add(q_pc, {{ template_constants.quotient_vm.byte_u32_bytes|hex() }})
+                        {%- call q_ptr_guard("q_ptr") %}
                         // Load one canonical Fr word from generated memory and
                         // push it through the cached-top stack discipline.
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -424,8 +577,9 @@
                         {%- endif %}
                         // A token not advertised by the VM usage manifest is
                         // impossible for valid generated bytecode.
-                        default { revert(0, 0) }
+                        default { q_program_fail() }
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -474,8 +628,10 @@
                         {%- if program.mem_usage.instance_eval %}
                         case {{ template_constants.quotient_vm.mem.instance_eval|hex() }} { q_ptr := add(INSTANCE_EVAL_MPTR, q_off) }
                         {%- endif %}
-                        default { revert(0, 0) }
+                        default { q_program_fail() }
+                        {%- call q_ptr_guard("q_ptr") %}
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -491,7 +647,9 @@
                         // 64 KiB when this compact form is emitted.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_ptr") %}
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -504,6 +662,7 @@
                     case {{ template_constants.quotient_vm.op.add|hex() }} {
                         // The safety validator guarantees a spilled operand
                         // exists before ADD. q_top is the right operand.
+                        {%- call q_pop_guard() %}
                         q_sp := sub(q_sp, 0x20)
                         q_top := addmod(mload(q_sp), q_top, r)
                     }
@@ -513,6 +672,7 @@
                     case {{ template_constants.quotient_vm.op.mul|hex() }} {
                         // Same stack contract as ADD, with multiplication
                         // reduced directly modulo Fr.
+                        {%- call q_pop_guard() %}
                         q_sp := sub(q_sp, 0x20)
                         q_top := mulmod(mload(q_sp), q_top, r)
                     }
@@ -540,6 +700,7 @@
                         // constant table has fewer than 256 referenced slots.
                         let qconst := byte(0, mload(q_pc))
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -575,7 +736,10 @@
                         // constant tables.
                         let qconst := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
-                        q_top := addmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)
+{%- call q_const_guard("qconst") %}
+                        let q_const_ptr := add(q_const_mptr, shl(5, qconst))
+                        {%- call q_ptr_guard("q_const_ptr") %}
+                        q_top := addmod(q_top, mload(q_const_ptr), r)
                     }
                     {%- endif %}
                     {%- if program.op_usage.mul_const %}
@@ -584,7 +748,10 @@
                         // Two-byte constant-index multiply.
                         let qconst := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
-                        q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)
+{%- call q_const_guard("qconst") %}
+                        let q_const_ptr := add(q_const_mptr, shl(5, qconst))
+                        {%- call q_ptr_guard("q_const_ptr") %}
+                        q_top := mulmod(q_top, mload(q_const_ptr), r)
                     }
                     {%- endif %}
                     {%- if program.op_usage.add_mem_u16 %}
@@ -594,6 +761,7 @@
                         // already range-checked Fr scalar in verifier memory.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_ptr") %}
                         q_top := addmod(q_top, mload(q_ptr), r)
                     }
                     {%- endif %}
@@ -603,6 +771,7 @@
                         // In-place multiply by a planned memory word.
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_ptr") %}
                         q_top := mulmod(q_top, mload(q_ptr), r)
                     }
                     {%- endif %}
@@ -617,6 +786,8 @@
                         let q_rhs := and(shr(224, q_word), 0xffff)
                         let qconst := byte(4, q_word)
                         q_pc := add(q_pc, 5)
+                        {%- call q_ptr_guard("q_lhs") %}
+                        {%- call q_ptr_guard("q_rhs") %}
                         q_top := addmod(
                             q_top,
                             mulmod(
@@ -636,6 +807,7 @@
                         let q_ptr := shr(240, q_word)
                         let qconst := byte(2, q_word)
                         q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                         q_top := addmod(
                             q_top,
                             mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),
@@ -652,6 +824,8 @@
                         let q_lhs := shr(240, q_word)
                         let q_rhs := and(shr(224, q_word), 0xffff)
                         q_pc := add(q_pc, {{ template_constants.quotient_vm.byte_u32_bytes|hex() }})
+                        {%- call q_ptr_guard("q_lhs") %}
+                        {%- call q_ptr_guard("q_rhs") %}
                         q_top := addmod(q_top, mulmod(mload(q_lhs), mload(q_rhs), r), r)
                     }
                     {%- endif %}
@@ -670,6 +844,8 @@
                             let q_rhs := and(shr(224, q_word), 0xffff)
                             let qconst := byte(4, q_word)
                             q_pc := add(q_pc, 5)
+                        {%- call q_ptr_guard("q_lhs") %}
+                        {%- call q_ptr_guard("q_rhs") %}
                             q_top := addmod(
                                 q_top,
                                 mulmod(
@@ -695,6 +871,7 @@
                             let q_ptr := shr(240, q_word)
                             let qconst := byte(2, q_word)
                             q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                             q_top := addmod(
                                 q_top,
                                 mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),
@@ -723,6 +900,7 @@
                             let q_ptr := shr(240, q_word)
                             let qconst := byte(2, q_word)
                             q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                             q_top := addmod(
                                 q_top,
                                 mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),
@@ -737,6 +915,8 @@
                             let q_rhs := and(shr(224, q_word), 0xffff)
                             let qconst := byte(4, q_word)
                             q_pc := add(q_pc, 5)
+                        {%- call q_ptr_guard("q_lhs") %}
+                        {%- call q_ptr_guard("q_rhs") %}
                             q_top := addmod(
                                 q_top,
                                 mulmod(
@@ -779,6 +959,7 @@
                         // u16 ptr} pairs. The result is pushed as a fresh
                         // stack value.
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -790,6 +971,7 @@
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),
@@ -813,8 +995,10 @@
                         // loaded once and reused for all seven products.
                         let q_lhs := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_lhs") %}
                         let q_lhs_value := mload(q_lhs)
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -824,6 +1008,7 @@
                             let qconst := byte(0, q_word)
                             let q_rhs := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_rhs") %}
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(
@@ -856,9 +1041,12 @@
                         let q_lhs_base := shr(240, q_word)
                         let q_rhs_base := and(shr(224, q_word), 0xffff)
                         q_pc := add(q_pc, {{ template_constants.quotient_vm.byte_u32_bytes|hex() }})
+                        {%- call q_vec7_guard("q_lhs_base") %}
+                        {%- call q_vec7_guard("q_rhs_base") %}
                         let q_coeff_pc := q_pc
                         q_pc := add(q_pc, {{ template_constants.quotient_vm.limb_pairwise_coeffs }})
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -913,6 +1101,7 @@
                             // whole identity is gated by mload(q_cond_ptr).
                             q_cond_ptr := shr(240, mload(q_pc))
                             q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_cond_ptr") %}
                         }
 
                         let q_acc := 0
@@ -936,6 +1125,7 @@
                         q_pc := add(q_pc, 5)
 
                         if q_has_top {
+                            if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -947,6 +1137,7 @@
                                 let qconst := byte(0, q_word)
                                 let q_ptr := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                                 q_acc := addmod(
                                     q_acc,
                                     mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),
@@ -959,12 +1150,14 @@
                         for { let q_row_block := 0 } lt(q_row_block, q_row_count) { q_row_block := add(q_row_block, 1) } {
                             let q_lhs := shr(240, mload(q_pc))
                             q_pc := add(q_pc, 2)
+                        {%- call q_ptr_guard("q_lhs") %}
                             let q_lhs_value := mload(q_lhs)
                             for { let q_i := 0 } lt(q_i, {{ template_constants.quotient_vm.limb_count }}) { q_i := add(q_i, 1) } {
                                 let q_word := mload(q_pc)
                                 let qconst := byte(0, q_word)
                                 let q_rhs := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_rhs") %}
                                 q_acc := addmod(
                                     q_acc,
                                     mulmod(
@@ -984,6 +1177,8 @@
                             let q_lhs_base := shr(240, q_pair_word)
                             let q_rhs_base := and(shr(224, q_pair_word), 0xffff)
                             q_pc := add(q_pc, {{ template_constants.quotient_vm.byte_u32_bytes|hex() }})
+                        {%- call q_vec7_guard("q_lhs_base") %}
+                        {%- call q_vec7_guard("q_rhs_base") %}
                             let q_coeff_pc := q_pc
                             q_pc := add(q_pc, {{ template_constants.quotient_vm.limb_pairwise_coeffs }})
                             for { let q_i := 0 } lt(q_i, {{ template_constants.quotient_vm.limb_count }}) { q_i := add(q_i, 1) } {
@@ -1009,6 +1204,7 @@
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                        {%- call q_ptr_guard("q_ptr") %}
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),
@@ -1023,6 +1219,8 @@
                             let q_lhs := and(shr(232, q_word), 0xffff)
                             let q_rhs := and(shr(216, q_word), 0xffff)
                             q_pc := add(q_pc, 5)
+                        {%- call q_ptr_guard("q_lhs") %}
+                        {%- call q_ptr_guard("q_rhs") %}
                             q_acc := addmod(
                                 q_acc,
                                 mulmod(
@@ -1061,7 +1259,7 @@
                         // stack. The Rust memory planner must reserve enough
                         // words for structured_permutation_scratch_words(meta)
                         // whenever this opcode can appear.
-                        q_sp := {{ program.stack_mptr|hex() }}
+{%- call q_stack_empty_guard() %}
                         // The generated lines below call the same fold snippets
                         // used by interpreted expressions, so trace IDs and
                         // y-batch positions remain contiguous.
@@ -1087,7 +1285,7 @@
                         // f+beta/prefix/suffix scratch rather than as a
                         // conventional VM stack. The Rust memory planner must
                         // reserve structured_lookup_scratch_words(meta).
-                        q_sp := {{ program.stack_mptr|hex() }}
+{%- call q_stack_empty_guard() %}
                         // Generated LogUp code follows the same y-batch order
                         // as the Rust identity stream.
                         {%- for line in quotient_native_lookup_computation %}
@@ -1112,7 +1310,7 @@
                         // interpreter stack before dispatching.
                         q_top := 0
                         q_has_top := 0
-                        q_sp := {{ program.stack_mptr|hex() }}
+{%- call q_stack_empty_guard() %}
                         // Native identity sub-cases are generated from selected heavy gate identities.
                         switch q_native_idx
                         {%- for code_block in quotient_native_identity_computations %}
@@ -1122,7 +1320,7 @@
                             {%- endfor %}
                         }
                         {%- endfor %}
-                        default { revert(0, 0) }
+                        default { q_program_fail() }
                     }
                     {%- endif %}
                     {%- if program.op_usage.fold_main %}
@@ -1130,6 +1328,7 @@
                     case {{ template_constants.quotient_vm.op.fold_main|hex() }} {
                         // q_top is the complete value of one fully evaluated
                         // identity at x. It leaves the expression stack here.
+{%- call q_top_guard() %}
                         let q_eval := q_top
                         q_has_top := 0
                         {%- if self.trace %}
@@ -1154,6 +1353,12 @@
                         q_pc := add(q_pc, 3)
                         let q_sel_idx := shr(16, q_selector_payload)
                         let q_sel_gap := and(q_selector_payload, 0xffff)
+                        // P12: the bucket index addresses the SELECTOR_ACC
+                        // region and the gap indexes the y-power table; both
+                        // are codegen-known sizes, so clamp before the writes.
+                        if iszero(lt(q_sel_idx, {{ program.num_selector_buckets }})) { q_program_fail() }
+                        if gt(q_sel_gap, {{ program.selector_max_power|hex() }}) { q_program_fail() }
+{%- call q_top_guard() %}
                         let q_eval := q_top
                         q_has_top := 0
                         {%- if self.trace %}
@@ -1181,15 +1386,21 @@
                     {%- endif %}
                     // Invalid generated bytecode should fail closed. 0x1a intentionally lands here.
                     default {
-                        revert(0, 0)
+                        q_program_fail()
                     }
                 }
                 // The VK-pinned bytecode must end exactly at q_end and every
                 // identity must have been consumed by a fold/native callback.
                 // This catches malformed generator output whose final opcode
                 // over-reads operands or leaves a partial expression live.
-                if iszero(eq(q_pc, q_end)) { revert(0, 0) }
-                if q_has_top { revert(0, 0) }
+                if iszero(eq(q_pc, q_end)) { q_program_fail() }
+                if q_has_top { q_program_fail() }
+                // The spilled stack must also be balanced. A FOLD executed
+                // with more than one operand live consumes only the cached
+                // top, leaving abandoned words below q_sp with q_has_top
+                // clear -- so both checks above pass while an operand of the
+                // identity has been silently dropped from nu_y(x).
+                if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { q_program_fail() }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled

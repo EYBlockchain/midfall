@@ -52,6 +52,9 @@
 //! underflow, and identity-boundary stack leaks before the bytes can be pinned
 //! into a VK runtime.
 
+pub(crate) mod certify;
+pub(crate) mod reference;
+
 use std::collections::{HashMap, HashSet};
 
 use ff::{Field, PrimeField};
@@ -1096,7 +1099,6 @@ impl Default for QuotientProgramBuilder {
 
 impl QuotientProgramBuilder {
     /// Create a builder, optionally enabling limb-specialized opcode emission.
-    #[cfg(test)]
     pub(crate) fn with_limb_vm_ops(enabled: bool) -> Self {
         Self {
             limb_vm_ops: enabled,
@@ -1209,6 +1211,8 @@ impl QuotientProgramBuilder {
         // same base pointer.
         let bytes = compact_quotient_runs(&self.bytes);
         let validated_max_stack = validate_quotient_program(&bytes)
+            .unwrap_or_else(|err| panic!("invalid finalized quotient VM program: {err}"));
+        validate_quotient_const_slots(&bytes, self.consts.len())
             .unwrap_or_else(|err| panic!("invalid finalized quotient VM program: {err}"));
         assert_eq!(
             validated_max_stack, self.max_stack,
@@ -1357,16 +1361,47 @@ impl QuotientProgramBuilder {
         if !self.limb_vm_ops {
             return false;
         }
-        let Some((shape, residue)) = quotient_limb_subshape(expr) else {
+        let Some((shape, residue, matched)) = quotient_limb_subshape(expr) else {
             return false;
         };
         if !self.limb_shape_has_u8_const_slots(&shape) {
             return false;
         }
+        self.reserve_limb_shape_consts(&shape);
         self.emit_expr(&residue);
-        self.emit_limb_shape(shape);
+        // `limb_shape_has_u8_const_slots` was checked against the constant table
+        // before `emit_expr(&residue)`. Emitting the residue can insert new
+        // constants and push a shape coefficient past a one-byte constant slot,
+        // which would panic in `emit_limb_shape`'s `u8::try_from(...).expect(...)`.
+        // Re-check against the post-residue table: keep the fused limb opcode
+        // only while every coefficient still fits, otherwise emit the matched
+        // terms through the generic path (their sum equals the shape's value).
+        if self.limb_shape_has_u8_const_slots(&shape) {
+            self.emit_limb_shape(shape);
+        } else {
+            self.emit_affine_terms(&matched);
+        }
         self.op_binary(Q_OP_ADD);
         true
+    }
+
+    /// Emit `Σ terms[i]` with generic stack ops, leaving one value on the
+    /// stack.
+    ///
+    /// Each entry is one recognized affine/bilinear term (a scaled memory load
+    /// or product), so emitting it cannot re-enter the limb-decomposition
+    /// peephole, and its coefficients use `emit_const`'s u16-capable slots.
+    /// This is the panic-free fallback for a recognized limb shape whose
+    /// coefficients no longer fit one-byte constant slots after intervening
+    /// emission. The slice is always non-empty (a recognized subshape uses
+    /// at least one term).
+    fn emit_affine_terms(&mut self, terms: &[QuotientExpr]) {
+        for (idx, term) in terms.iter().enumerate() {
+            self.emit_expr(term);
+            if idx > 0 {
+                self.op_binary(Q_OP_ADD);
+            }
+        }
     }
 
     /// Try to replace a full expression with one limb-specialized opcode.
@@ -1426,6 +1461,22 @@ impl QuotientProgramBuilder {
             QuotientLimbShape::Bilin7Pairwise { coeffs, .. } => coeffs.clone(),
         };
         self.peek_u8_const_slots(&coeffs).is_some()
+    }
+
+    /// Reserve coefficient slots before residue emission can grow the table.
+    fn reserve_limb_shape_consts(&mut self, shape: &QuotientLimbShape) {
+        match shape {
+            QuotientLimbShape::Lin7 { terms } | QuotientLimbShape::Bilin7Row { terms, .. } => {
+                for (coeff, _) in terms {
+                    self.const_slot(*coeff);
+                }
+            }
+            QuotientLimbShape::Bilin7Pairwise { coeffs, .. } => {
+                for coeff in coeffs {
+                    self.const_slot(*coeff);
+                }
+            }
+        }
     }
 
     /// Emit the byte-level representation of a pre-validated limb shape.
@@ -1589,13 +1640,37 @@ impl QuotientProgramBuilder {
         if !collect_product_leaves(product, &mut leaves) {
             return false;
         }
-        let Some(product) = self.product_add_macro(&leaves) else {
+        let Some(fused) = self.product_add_macro(&leaves) else {
             return false;
         };
 
+        self.reserve_product_add_consts(fused);
         self.emit_expr(base);
-        self.emit_product_add(product);
+        // `product_add_macro` checked the fused scalar against the constant
+        // table as it stood *before* `emit_expr(base)`. Emitting `base` can
+        // insert new constants and push that scalar past a one-byte constant
+        // slot, which would panic in `emit_product_add`'s
+        // `u8::try_from(...).expect(...)`. Re-check against the post-`base`
+        // table: keep the fused opcode only while the scalar still fits,
+        // otherwise add the product through the generic path (its lone scalar
+        // goes through `emit_const`, which falls back to a u16 slot).
+        if self.product_add_fits_u8_slot(&fused) {
+            self.emit_product_add(fused);
+        } else {
+            self.emit_expr(product);
+            self.op_binary(Q_OP_ADD);
+        }
         true
+    }
+
+    /// Whether the fused product-add scalar (if any) still lands in a one-byte
+    /// constant slot given the current constant table.
+    fn product_add_fits_u8_slot(&self, product: &QuotientProductAdd) -> bool {
+        match *product {
+            QuotientProductAdd::MemMemConstU8 { scalar, .. }
+            | QuotientProductAdd::ConstU8Mem { scalar, .. } => self.const_fits_u8_slot(scalar),
+            QuotientProductAdd::MemMem { .. } => true,
+        }
     }
 
     /// Recognize product leaves that can be encoded as one fused add-mul op.
@@ -1638,6 +1713,17 @@ impl QuotientProgramBuilder {
                 rhs: *rhs,
             }),
             _ => None,
+        }
+    }
+
+    /// Reserve coefficient slots before another expression can grow the table.
+    fn reserve_product_add_consts(&mut self, product: QuotientProductAdd) {
+        match product {
+            QuotientProductAdd::MemMemConstU8 { scalar, .. }
+            | QuotientProductAdd::ConstU8Mem { scalar, .. } => {
+                self.const_slot(scalar);
+            }
+            QuotientProductAdd::MemMem { .. } => {}
         }
     }
 
@@ -1967,6 +2053,463 @@ pub(crate) fn validate_quotient_program(bytes: &[u8]) -> Result<usize, String> {
     }
 
     Ok(max_stack)
+}
+
+/// Bounds-check every constant-table slot referenced by a finalized program.
+///
+/// `validate_quotient_program` proves structural and stack safety but never
+/// checks that decoded const-table indices fall inside the emitted table. An
+/// encoder/planner regression that emits an out-of-range slot (this class has
+/// already produced one real bug) would otherwise make the deployed verifier
+/// load an arbitrary trailing VK word as a gate coefficient, silently flipping
+/// accept/reject. Run this after `validate_quotient_program`, whose byte-length
+/// validation guarantees the layout walked here is already in bounds.
+pub(crate) fn validate_quotient_const_slots(bytes: &[u8], const_len: usize) -> Result<(), String> {
+    let check = |slot: usize, idx: usize| -> Result<(), String> {
+        if slot >= const_len {
+            return Err(format!(
+                "quotient VM const slot {slot} at byte {idx} is outside the {const_len}-entry constant table"
+            ));
+        }
+        Ok(())
+    };
+    let limb_stride = 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+
+    for (idx, op, _len) in quotient_bytecode_ops(bytes) {
+        match op {
+            Q_OP_PUSH_CONST | Q_OP_ADD_CONST | Q_OP_MUL_CONST => {
+                check(read_u16(bytes, idx + 1) as usize, idx)?;
+            }
+            Q_OP_PUSH_CONST_U8 | Q_OP_ADD_CONST_U8 | Q_OP_MUL_CONST_U8 => {
+                check(bytes[idx + 1] as usize, idx)?;
+            }
+            Q_OP_ADD_MUL_CONST_U8_MEM_U16 => {
+                check(bytes[idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+            }
+            Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => {
+                check(
+                    bytes[idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                    idx,
+                )?;
+            }
+            Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16 => {
+                let count = read_u16(bytes, idx + 1) as usize;
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                let stride = QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                for k in 0..count {
+                    check(
+                        bytes[base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                        idx,
+                    )?;
+                }
+            }
+            Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8 => {
+                let count = read_u16(bytes, idx + 1) as usize;
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                let stride = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                for k in 0..count {
+                    check(
+                        bytes[base + k * stride + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize,
+                        idx,
+                    )?;
+                }
+            }
+            Q_OP_LIN7 => {
+                for k in 0..QUOTIENT_VM_LIMBS {
+                    check(bytes[idx + 1 + k * limb_stride] as usize, idx)?;
+                }
+            }
+            Q_OP_BILIN7_ROW => {
+                let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                for k in 0..QUOTIENT_VM_LIMBS {
+                    check(bytes[base + k * limb_stride] as usize, idx)?;
+                }
+            }
+            Q_OP_BILIN7_PAIRWISE => {
+                let base = idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                for k in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                    check(bytes[base + k] as usize, idx)?;
+                }
+            }
+            Q_OP_AFFINE_SUM => {
+                let lin_count = read_u16(bytes, idx + 1) as usize;
+                let product_count = read_u16(bytes, idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES) as usize;
+                let mut cursor = idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                for _ in 0..lin_count {
+                    check(bytes[cursor + QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                }
+                for _ in 0..product_count {
+                    check(bytes[cursor + 2 * QUOTIENT_VM_BYTE_U16_BYTES] as usize, idx)?;
+                    cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                }
+            }
+            Q_OP_MODARITH7 => {
+                let mut cursor = idx + 1;
+                let flags = bytes[cursor];
+                cursor += 1;
+                if flags & Q_MODARITH7_FLAG_COND != 0 {
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                }
+                if flags & Q_MODARITH7_FLAG_CONST != 0 {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += 1;
+                }
+                let lin_count = bytes[cursor] as usize;
+                let row_count = bytes[cursor + 1] as usize;
+                let pairwise_count = bytes[cursor + 2] as usize;
+                let mem_count = bytes[cursor + 3] as usize;
+                let product_count = bytes[cursor + 4] as usize;
+                cursor += 5;
+                for _ in 0..lin_count {
+                    for _ in 0..QUOTIENT_VM_LIMBS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += limb_stride;
+                    }
+                }
+                for _ in 0..row_count {
+                    cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                    for _ in 0..QUOTIENT_VM_LIMBS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += limb_stride;
+                    }
+                }
+                for _ in 0..pairwise_count {
+                    cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                    for _ in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                        check(bytes[cursor] as usize, idx)?;
+                        cursor += 1;
+                    }
+                }
+                for _ in 0..mem_count {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += limb_stride;
+                }
+                for _ in 0..product_count {
+                    check(bytes[cursor] as usize, idx)?;
+                    cursor += 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+/// One byte range the compact quotient VM is allowed to load from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct QuotientReadWindow {
+    /// Stable name used in validation errors.
+    pub(crate) name: &'static str,
+    /// Start byte offset in verifier memory.
+    pub(crate) start: usize,
+    /// Length in bytes. Zero-length windows never accept a pointer.
+    pub(crate) len: usize,
+}
+
+impl QuotientReadWindow {
+    /// Whether a full 32-byte `mload` at `ptr` stays inside this window.
+    fn contains_word(&self, ptr: usize) -> bool {
+        self.len != 0
+            && ptr >= self.start
+            && ptr.saturating_add(WORD_BYTES) <= self.start.saturating_add(self.len)
+    }
+}
+
+/// Legal read set for one finalized quotient program.
+///
+/// Built from the converged memory layout, so it describes the addresses this
+/// concrete verifier actually populates before the VM runs.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct QuotientReadModel {
+    /// Ranges the VM may load from.
+    pub(crate) windows: Vec<QuotientReadWindow>,
+    /// Resolved base address for each symbolic memory token.
+    pub(crate) token_bases: Vec<(u8, usize)>,
+}
+
+impl QuotientReadModel {
+    /// Resolve a symbolic memory token to its generated base address.
+    fn token_base(&self, token: u8) -> Option<usize> {
+        self.token_bases
+            .iter()
+            .find_map(|(candidate, base)| (*candidate == token).then_some(*base))
+    }
+
+    /// Name the window covering a word-sized load, if any.
+    fn window_for(&self, ptr: usize) -> Option<&'static str> {
+        self.windows
+            .iter()
+            .find(|window| window.contains_word(ptr))
+            .map(|window| window.name)
+    }
+}
+
+/// Bounds-check every memory pointer a finalized program loads from.
+///
+/// `validate_quotient_const_slots` covers constant-table indices; this covers
+/// the other half of the operand space. The pointers baked into the bytecode
+/// are absolute generated addresses, so an emitter or planner regression that
+/// computes one incorrectly makes the deployed verifier read a live challenge,
+/// commitment word, or uninitialized scratch as a gate value -- silently
+/// flipping accept/reject rather than reverting.
+///
+/// Note what the render-time certification in [`certify`] does *not*
+/// cover here. It compares the bytecode against the `QuotientExpr` tree it was
+/// lowered from, and [`reference::QuotientRefMemory`] derives a value
+/// from whatever address it is handed, so a pointer that disagrees between the
+/// two shows up as a value mismatch. A pointer that is already wrong *in the
+/// tree* -- a `Data` or planner bug upstream of the VM -- makes both sides
+/// agree on the wrong address and certifies cleanly. This check is what catches
+/// that class.
+///
+/// Run after [`validate_quotient_program`], whose byte-length validation
+/// guarantees the operand layout walked here is in bounds.
+pub(crate) fn validate_quotient_mem_ptrs(
+    bytes: &[u8],
+    model: &QuotientReadModel,
+) -> Result<(), String> {
+    for (idx, op, _len) in quotient_bytecode_ops(bytes) {
+        let mut check = |kind: &str, ptr: usize| -> Result<(), String> {
+            if !ptr.is_multiple_of(WORD_BYTES) {
+                return Err(format!(
+                    "quotient VM {kind} pointer {ptr:#x} at byte {idx} is not 32-byte aligned"
+                ));
+            }
+            if model.window_for(ptr).is_none() {
+                return Err(format!(
+                    "quotient VM {kind} pointer {ptr:#x} at byte {idx} is outside every window \
+                     the verifier populates before the quotient VM runs ({})",
+                    describe_read_windows(model)
+                ));
+            }
+            Ok(())
+        };
+        quotient_read_pointers(bytes, idx, op, model, &mut check)?;
+    }
+
+    Ok(())
+}
+
+/// Render the legal read set for a validation error message.
+fn describe_read_windows(model: &QuotientReadModel) -> String {
+    model
+        .windows
+        .iter()
+        .map(|window| {
+            format!(
+                "{}=[{:#x}..{:#x})",
+                window.name,
+                window.start,
+                window.start + window.len
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Visit every memory address one instruction loads from.
+///
+/// Unlike [`validate_quotient_const_slots`], the fallback arm is an error
+/// rather than a no-op: a new opcode with pointer operands that forgets to
+/// extend this walker fails the render instead of silently losing its bounds
+/// check. `quotient_pointer_walker_covers_every_opcode` pins that the walker is
+/// total over `QUOTIENT_OPCODE_TABLE`.
+pub(crate) fn quotient_read_pointers(
+    bytes: &[u8],
+    idx: usize,
+    op: u8,
+    model: &QuotientReadModel,
+    check: &mut impl FnMut(&str, usize) -> Result<(), String>,
+) -> Result<(), String> {
+    let u16_at = |offset: usize| read_u16(bytes, offset) as usize;
+    let u32_at = |offset: usize| {
+        u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize
+    };
+    // `const_slot, u16 ptr` -- the LIN7 limb operand and the MODARITH7 mem term.
+    let limb_terms = |base: usize, check: &mut dyn FnMut(&str, usize) -> Result<(), String>| {
+        for k in 0..QUOTIENT_VM_LIMBS {
+            check(
+                "limb",
+                u16_at(base + k * (1 + QUOTIENT_VM_BYTE_U16_BYTES) + 1),
+            )?;
+        }
+        Ok::<(), String>(())
+    };
+    // Both pairwise bases are indexed `base + i * 0x20` for seven limbs, so the
+    // whole span has to be in range, not just the base word.
+    let limb_span =
+        |base_ptr: usize, kind: &str, check: &mut dyn FnMut(&str, usize) -> Result<(), String>| {
+            for k in 0..QUOTIENT_VM_LIMBS {
+                check(kind, base_ptr + k * WORD_BYTES)?;
+            }
+            Ok::<(), String>(())
+        };
+
+    match op {
+        // No memory operands.
+        Q_OP_PUSH_CONST
+        | Q_OP_PUSH_CONST_U8
+        | Q_OP_ADD
+        | Q_OP_MUL
+        | Q_OP_NEG
+        | Q_OP_POW5
+        | Q_OP_ADD_CONST
+        | Q_OP_ADD_CONST_U8
+        | Q_OP_MUL_CONST
+        | Q_OP_MUL_CONST_U8
+        | Q_OP_FOLD_MAIN
+        | Q_OP_FOLD_SELECTOR
+        | Q_OP_NATIVE_PERMUTATION
+        | Q_OP_NATIVE_LOOKUP
+        | Q_OP_NATIVE_IDENTITY => Ok(()),
+
+        Q_OP_PUSH_MEM_LITERAL => check("literal", u32_at(idx + 1)),
+        Q_OP_PUSH_MEM_U16 | Q_OP_ADD_MEM_U16 | Q_OP_MUL_MEM_U16 => check("u16", u16_at(idx + 1)),
+
+        Q_OP_PUSH_MEM_TOKEN | Q_OP_PUSH_MEM_TOKEN_OFFSET => {
+            let token = bytes[idx + 1];
+            let base = model.token_base(token).ok_or_else(|| {
+                format!(
+                    "quotient VM memory token {token:#x} at byte {idx} has no generated base \
+                     address in this layout"
+                )
+            })?;
+            let offset = if op == Q_OP_PUSH_MEM_TOKEN_OFFSET {
+                u32_at(idx + 2)
+            } else {
+                0
+            };
+            check("token", base + offset)
+        }
+
+        Q_OP_ADD_MUL_MEM_MEM => {
+            check("u16", u16_at(idx + 1))?;
+            check("u16", u16_at(idx + 3))
+        }
+        Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => {
+            check("u16", u16_at(idx + 1))?;
+            check("u16", u16_at(idx + 3))
+        }
+        Q_OP_ADD_MUL_CONST_U8_MEM_U16 => check("u16", u16_at(idx + 1)),
+
+        Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8 => {
+            let count = u16_at(idx + 1);
+            let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+            let stride = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+            for k in 0..count {
+                check("u16", u16_at(base + k * stride))?;
+                check(
+                    "u16",
+                    u16_at(base + k * stride + QUOTIENT_VM_BYTE_U16_BYTES),
+                )?;
+            }
+            Ok(())
+        }
+        Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16 => {
+            let count = u16_at(idx + 1);
+            let base = idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+            let stride = QUOTIENT_VM_BYTE_U16_BYTES + 1;
+            for k in 0..count {
+                check("u16", u16_at(base + k * stride))?;
+            }
+            Ok(())
+        }
+        Q_OP_AFFINE_SUM => {
+            let lin_count = u16_at(idx + 1);
+            let product_count = u16_at(idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES);
+            let mut cursor = idx + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+            for _ in 0..lin_count {
+                check("u16", u16_at(cursor))?;
+                cursor += QUOTIENT_VM_BYTE_U16_BYTES + 1;
+            }
+            for _ in 0..product_count {
+                check("u16", u16_at(cursor))?;
+                check("u16", u16_at(cursor + QUOTIENT_VM_BYTE_U16_BYTES))?;
+                cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+            }
+            Ok(())
+        }
+
+        Q_OP_LIN7 => limb_terms(idx + 1, check),
+        Q_OP_BILIN7_ROW => {
+            check("u16", u16_at(idx + 1))?;
+            limb_terms(idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES, check)
+        }
+        Q_OP_BILIN7_PAIRWISE => {
+            limb_span(u16_at(idx + 1), "pairwise_lhs", check)?;
+            limb_span(
+                u16_at(idx + 1 + QUOTIENT_VM_BYTE_U16_BYTES),
+                "pairwise_rhs",
+                check,
+            )
+        }
+        Q_OP_MODARITH7 => {
+            let mut cursor = idx + 1;
+            let flags = bytes[cursor];
+            cursor += 1;
+            let cond = if flags & Q_MODARITH7_FLAG_COND != 0 {
+                let ptr = u16_at(cursor);
+                cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                Some(ptr)
+            } else {
+                None
+            };
+            if flags & Q_MODARITH7_FLAG_CONST != 0 {
+                cursor += 1;
+            }
+            let lin_count = bytes[cursor] as usize;
+            let row_count = bytes[cursor + 1] as usize;
+            let pairwise_count = bytes[cursor + 2] as usize;
+            let mem_count = bytes[cursor + 3] as usize;
+            let product_count = bytes[cursor + 4] as usize;
+            cursor += 5;
+            let limb_stride = QUOTIENT_VM_LIMBS * (1 + QUOTIENT_VM_BYTE_U16_BYTES);
+            for _ in 0..lin_count {
+                limb_terms(cursor, check)?;
+                cursor += limb_stride;
+            }
+            for _ in 0..row_count {
+                check("u16", u16_at(cursor))?;
+                cursor += QUOTIENT_VM_BYTE_U16_BYTES;
+                limb_terms(cursor, check)?;
+                cursor += limb_stride;
+            }
+            for _ in 0..pairwise_count {
+                limb_span(u16_at(cursor), "pairwise_lhs", check)?;
+                limb_span(
+                    u16_at(cursor + QUOTIENT_VM_BYTE_U16_BYTES),
+                    "pairwise_rhs",
+                    check,
+                )?;
+                cursor += 2 * QUOTIENT_VM_BYTE_U16_BYTES + QUOTIENT_VM_PAIRWISE_COEFFS;
+            }
+            for _ in 0..mem_count {
+                check("u16", u16_at(cursor + 1))?;
+                cursor += 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+            }
+            for _ in 0..product_count {
+                check("u16", u16_at(cursor + 1))?;
+                check("u16", u16_at(cursor + 1 + QUOTIENT_VM_BYTE_U16_BYTES))?;
+                cursor += 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+            }
+            if let Some(cond) = cond {
+                check("modarith_cond", cond)?;
+            }
+            Ok(())
+        }
+
+        _ => Err(format!(
+            "quotient VM pointer walker does not handle opcode {op:#x} at byte {idx}; extend \
+             `quotient_read_pointers` so the new opcode's memory operands stay bounds-checked"
+        )),
+    }
 }
 
 /// Decode one instruction and validate token operands.
@@ -2406,6 +2949,21 @@ impl QuotientExpressionEnv for DataQuotientExpressionEnv<'_> {
                     .expect("committed instance eval present"),
             )
         } else {
+            // The builder rejects rotated instance queries before lowering, so
+            // the direct public-input column always uses the one local
+            // Lagrange evaluation computed for `Rotation::cur()`.
+            //
+            // Hard assert (not debug_assert): `debug_assert` compiles out in
+            // release, and this is the last line of defense far from the
+            // constructor guard (builder/api.rs). Substituting the Rotation::cur
+            // eval for a rotated query would silently emit a verifier that
+            // evaluates the gate with instance(x) instead of instance(x*w^k),
+            // enforcing a different quotient identity than the circuit. Fail
+            // closed, matching word_to_quotient_expr / ptr_to_quotient_mem.
+            assert_eq!(
+                rotation, 0,
+                "rotated public instance query reached lowering"
+            );
             word_to_quotient_expr(self.data.instance_eval)
         }
     }
@@ -2435,17 +2993,40 @@ pub(crate) fn ptr_to_quotient_mem(ptr: Ptr) -> QuotientMem {
     );
     match ptr.value() {
         Value::Integer(offset) => {
-            assert!(offset >= 0, "negative quotient memory pointer");
-            QuotientMem::Literal(offset as u32)
+            // Checked conversion: Value offsets are isize, so `offset as u32`
+            // would silently wrap for a negative or > u32::MAX offset and make
+            // the VM mload an unrelated address (a verifier computing the
+            // quotient numerator from the wrong memory word, with no build-time
+            // diagnostic). Fail loudly instead, like the other narrowing casts
+            // in this file (u16::try_from, u8::try_from).
+            let offset = u32::try_from(offset)
+                .expect("quotient memory pointer must be a non-negative offset that fits in u32");
+            // Every address the quotient VM reads is a 32-byte word slot (the
+            // layout allocates in WORD_BYTES units and all eval/challenge/VK/
+            // scratch handles are word multiples). A non-word-aligned literal
+            // pointer signals a truncated/mis-encoded address that would make
+            // the VM mload a straddling window; reject it at the single
+            // construction choke point rather than emit a corrupt verifier.
+            assert!(
+                (offset as usize).is_multiple_of(WORD_BYTES),
+                "quotient memory pointer {offset:#x} is not 32-byte word aligned"
+            );
+            QuotientMem::Literal(offset)
         }
         Value::Identifier(name, offset) => {
-            assert!(offset >= 0, "negative quotient memory token offset");
+            let offset = u32::try_from(offset).expect(
+                "quotient memory token offset must be a non-negative offset that fits in u32",
+            );
+            assert!(
+                (offset as usize).is_multiple_of(WORD_BYTES),
+                "quotient memory token offset {offset:#x} is not 32-byte word aligned"
+            );
             let token = quotient_mem_token_from_name(name)
                 .unwrap_or_else(|| panic!("unsupported quotient memory token: {name}"));
             if offset == 0 {
                 QuotientMem::Token(token)
             } else {
-                QuotientMem::TokenOffset(token, offset as u32)
+                QuotientMem::TokenOffset(token, offset)
             }
         }
     }
@@ -2654,7 +3235,7 @@ pub(crate) fn quotient_pow5_base(expr: &QuotientExpr) -> Option<&QuotientExpr> {
 /// Extract one limb shape from a larger affine sum and return the residue.
 pub(crate) fn quotient_limb_subshape(
     expr: &QuotientExpr,
-) -> Option<(QuotientLimbShape, QuotientExpr)> {
+) -> Option<(QuotientLimbShape, QuotientExpr, Vec<QuotientExpr>)> {
     let mut terms = Vec::new();
     let mut constant = Fq::ZERO;
     if !collect_quotient_affine_terms(expr, Fq::ONE, &mut terms, &mut constant) {
@@ -2672,15 +3253,23 @@ pub(crate) fn quotient_limb_subshape(
         return None;
     }
 
+    // Split the affine terms into the residue (unused terms plus the constant)
+    // and the matched terms that reconstruct `shape` as a plain sum. The matched
+    // terms are the panic-free fallback for `emit_limb_shape`: their sum equals
+    // the fused opcode's value, but each is a single scaled load/product that
+    // uses u16-capable constant loads.
     let used = used.into_iter().collect::<HashSet<_>>();
     let mut residue = QuotientExpr::Const(quotient_fq_to_u256(constant));
+    let mut matched = Vec::with_capacity(used.len());
     for (idx, (coeff, term)) in terms.into_iter().enumerate() {
+        let scaled = quotient_scaled_term_expr(coeff, (*term).clone());
         if used.contains(&idx) {
-            continue;
+            matched.push(scaled);
+        } else {
+            residue = quotient_sum_expr(residue, scaled);
         }
-        residue = quotient_sum_expr(residue, quotient_scaled_term_expr(coeff, (*term).clone()));
     }
-    Some((shape, residue))
+    Some((shape, residue, matched))
 }
 
 /// Recognize a whole affine foreign-field/ECC identity that can be evaluated

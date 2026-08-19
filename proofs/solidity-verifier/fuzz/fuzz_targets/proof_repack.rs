@@ -12,7 +12,10 @@ use midnight_proofs::{
     plonk::{
         keygen_vk_with_k, Advice, Circuit, Column, ConstraintSystem, Constraints, Error, Selector,
     },
-    poly::{kzg::params::ParamsKZG, kzg::KZGCommitmentScheme, Rotation},
+    poly::{
+        kzg::{params::ParamsKZG, KZGCommitmentScheme},
+        Rotation,
+    },
 };
 use rand_chacha::{rand_core::SeedableRng, ChaCha8Rng};
 

@@ -65,11 +65,14 @@ proofs using:
 
 Supported execution target: an Ethereum-compatible Cancun-or-newer EVM with
 `MCOPY` and Prague/EIP-2537 BLS12-381 precompiles at exactly the addresses
-above, implementing the EIP-2537 input encodings, subgroup checks, return sizes,
-and enough gas capacity for the generated full-size calls. The repository
-CI/dev runner exercises this target through Prague-spec `revm`; deployers on
-L2s, forks, or alt-EVMs must run the same precompile conformance tests against
-their target chain before treating the verifier as production-safe.
+above, implementing the EIP-2537 input encodings, subgroup checks, return
+sizes, and the EIP-2537/EIP-2565 gas schedule (the generated call sites
+forward exactly the scheduled cost — see section 15). The repository CI/dev
+runner exercises this target through Prague-spec `revm`; deployers on L2s,
+forks, or alt-EVMs must run the same precompile conformance tests against
+their target chain before treating the verifier as production-safe. A chain
+that charges MORE than the EIP-2537 schedule fails the constructor smoke
+probes at deployment.
 
 The generated verifier is not a generic reusable verifier. It is
 circuit-specialized. Circuit metadata, proof read order, quotient identity
@@ -531,6 +534,16 @@ The VK codehash pins:
 ## 7. Fiat-Shamir Transcript
 
 The generated verifier implements the Midfall Keccak transcript.
+
+**No domain separation, by protocol (audit I-5, accepted gap).** The Keccak
+transcript hashes raw concatenated bytes with no personalisation string and
+no absorb/squeeze tags, exactly matching the midnight-proofs prover. This is
+safe here because every absorb is fixed-length with generated, re-checked
+counts (no two distinct valid inputs share a byte stream) and `vk_digest`
+separates circuits — but it is a missing defence-in-depth layer. It cannot
+be added verifier-side without rejecting every real proof; like M-4, it is
+an upstream transcript decision. Recorded in
+`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §5.1.
 
 ### 7.1 Transcript State
 
@@ -1200,6 +1213,17 @@ eval_s     = proof_q_eval[s] * den_inv
 All inversions are in `Fr`. The implementation batch-inverts the `dx_j` and
 `lbasis_j` values for each non-singleton set.
 
+**Zero-denominator semantics (intended, not incidental).** Every inversion
+path in the generated verifier — `scalar_inv`, `batch_invert`, and the
+Lagrange denominators — fails closed on a denominator congruent to zero
+mod `r`: the call either reverts or forces `success := 0`, which the next
+section boundary turns into a revert. In particular, a transcript challenge
+`x` landing on a domain root of unity (probability ~`n/r`, negligible) or
+`x3` colliding with a rotation point makes the proof REJECT with a revert
+rather than being accepted, retried, or specified around. This mirrors the
+native verifier, which would fail the same proofs, and is the specified
+behavior (audit item TA-7).
+
 Fold with `x2`:
 
 ```text
@@ -1550,9 +1574,14 @@ rules.
 The generated verifier constructor runs smoke tests:
 
 - `MCOPY` one-word round trip in constructor scratch.
-- `G1ADD(identity, identity) -> identity`.
+- `modexp(2, r-2, r) == 2^-1`, checked as `mulmod(result, 2, r) == 1`, at the
+  pinned `MODEXP_GAS` bound (MF-1).
+- `G1ADD(identity, identity) -> identity`, and the known answer `G1ADD(G, G) == 2G`.
+- `G1MSM([2]*G) == 2G`, and a **negative** probe: a point on the curve but
+  outside the r-order subgroup must be rejected.
 - Largest generated `G1MSM` input with identity/zero terms -> identity.
-- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true.
+- `PAIRING_CHECK` over two identity `(G1, G2)` pairs -> true, plus the known
+  answers `e(G,G2)e(-G,G2) == 1` and `e(G,G2)e(G,G2) != 1`.
 
 Deploy only on forks/chains where EIP-2537 and `MCOPY` are available with the
 exact addresses, encodings, subgroup checks, return-size behavior, and enough
@@ -1567,11 +1596,28 @@ Every EIP-2537 call checks:
 - Exact return-data size.
 - For pairing, returned word is 1.
 
-EIP-2537 calls forward `gas()` rather than rendering chain-specific gas caps.
+EIP-2537 and modexp calls forward exact scheduled costs (generated constants
+`G1ADD_GAS`, `G1MSM_GAS_*`, `PAIRING_GAS_2PAIR`, `MODEXP_GAS`; model in
+`src/lowering/layout/mod.rs::gas`), NOT `gas()`. For modexp the rendered bound
+is the MAXIMUM over the live schedules -- EIP-2565 prices the verifier's
+32/32/32 frame at 1360, EIP-7883 (Osaka/Fusaka) removes the `/ 3` divisor and
+prices it at 4080 -- because a bound below the chain's price does not degrade
+gracefully: the fixed-gas `staticcall` runs the precompile out of gas and every
+proof reverts `PrecompileFailed` (MF-1). Over-forwarding on a pre-Osaka chain
+costs nothing on success; unused gas is returned. A
+rejecting precompile consumes everything forwarded to it, so exact bounds cap
+what a malformed proof point can burn at the scheduled cost of the single
+failing call instead of 63/64 of the transaction budget (M-2). The bounds are
+the spec-guaranteed worst case per EIP-2537's DDoS-protection rationale, so
+they are sufficient on any conformant chain; a future fork that reprices
+these precompiles upward requires regenerating and redeploying the verifier.
+
 The constructor also smoke-tests the largest generated G1MSM input length and
-the runtime two-pair KZG pairing input size with identity data, so deployment
-fails early when the target chain/fork cannot execute the verifier's
-worst-case precompile shapes under the supplied deployment gas.
+the runtime two-pair KZG pairing input size with identity data — forwarding
+the same exact gas bounds — so deployment fails early when the target
+chain/fork cannot execute the verifier's worst-case precompile shapes at the
+generated schedule, including chains whose precompile gas schedule was
+repriced upward.
 
 ## 16. Codegen Configuration
 

@@ -456,6 +456,16 @@ impl<'a> Evaluator<'a> {
             // `(Vec<String>, String)` entries.
             let selector_expr = chunked.selector_expression();
 
+            // Fail closed on a chunk/helper-eval count mismatch: zip would
+            // otherwise silently drop the excess chunks, removing helper
+            // constraints from the numerator.
+            assert_eq!(
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+                "lookup {lookup_idx}: input chunk count {} != helper eval count {}",
+                chunked.input_expression_chunks().len(),
+                h_evals.len(),
+            );
             for (input_chunk, h_eval) in
                 chunked.input_expression_chunks().iter().zip(h_evals.iter())
             {
@@ -479,10 +489,17 @@ impl<'a> Evaluator<'a> {
 
                 let k = f_plus_beta_vars.len();
                 if k == 0 {
-                    // Empty chunk shouldn't happen but emit a no-op.
-                    let zero = self.fresh_var();
-                    lines.push(format!("let {zero} := 0"));
-                    out.push((lines, zero));
+                    // Unreachable today (BatchedArgument::new requires >= 1
+                    // parallel lookup and slice::chunks never yields an empty
+                    // chunk), but emit the reference-faithful value rather than
+                    // 0 so a future chunking change cannot silently drop the
+                    // constraint. For an empty chunk the native verifier
+                    // (plonk/logup.rs) computes helper_eval * (empty product = 1)
+                    // - (empty sum = 0) = helper_eval, enforcing h == 0. Emitting
+                    // 0 would leave h unconstrained while the accumulator still
+                    // folds this h_eval into sum_h, letting a prover forge lookup
+                    // balance.
+                    out.push((lines, h_eval.to_string()));
                     continue;
                 }
 
@@ -571,11 +588,18 @@ impl<'a> Evaluator<'a> {
                 let beta = self.fresh_var();
                 lines.push(format!("let {beta} := mload(BETA_MPTR)"));
 
-                // Σ_h h_eval[c]
+                // Σ_h h_eval[c]. Empty for a lookup with no input expressions
+                // (zero helper chunks); the native verifier's sum_helpers folds
+                // over an empty set to 0, so mirror that instead of indexing
+                // h_evals[0] out of bounds and panicking at codegen.
                 let sum_h = self.fresh_var();
-                lines.push(format!("let {sum_h} := {}", h_evals[0]));
-                for h in &h_evals[1..] {
-                    lines.push(format!("{sum_h} := addmod({sum_h}, {h}, r)"));
+                if let Some((first, rest)) = h_evals.split_first() {
+                    lines.push(format!("let {sum_h} := {first}"));
+                    for h in rest {
+                        lines.push(format!("{sum_h} := addmod({sum_h}, {h}, r)"));
+                    }
+                } else {
+                    lines.push(format!("let {sum_h} := 0"));
                 }
 
                 // selector eval (full Expression; not necessarily a
@@ -788,6 +812,14 @@ impl<'a> Evaluator<'a> {
                         .get(&(column_index, query.rotation().0))
                         .copied()?
                 } else {
+                    // The non-committed public-input column only has its local
+                    // Rotation::cur() interpolation at INSTANCE_EVAL_MPTR.
+                    // Decline to treat a rotated query as a direct memory
+                    // pointer; the constructor rejects rotated instance queries
+                    // and instance_eval_at hard-asserts rotation == 0.
+                    if query.rotation().0 != 0 {
+                        return None;
+                    }
                     self.data.instance_eval
                 }
             }
@@ -1103,8 +1135,18 @@ impl<'a> Evaluator<'a> {
                 .to_string()
         } else {
             // The current public API supports one non-committed instance
-            // column, whose Lagrange-combined evaluation is computed by
-            // the template prologue and stored at INSTANCE_EVAL_MPTR.
+            // column, whose Lagrange-combined evaluation is computed by the
+            // template prologue and stored at INSTANCE_EVAL_MPTR for
+            // Rotation::cur() only. Hard-assert (not debug_assert) so a
+            // rotated query that ever bypasses the far-away constructor guard
+            // (builder/api.rs) fails closed in release builds too, instead of
+            // silently evaluating instance(x) in place of instance(x*omega^k)
+            // and generating a verifier that checks a different identity than
+            // the native Midfall verifier.
+            assert_eq!(
+                rotation, 0,
+                "rotated public instance query reached Yul quotient emission"
+            );
             self.data.instance_eval.to_string()
         }
     }
@@ -1141,7 +1183,7 @@ fn u256_string(value: U256) -> String {
 /// Stable variable name for a column evaluation and rotation.
 fn column_eval_var(prefix: &'static str, column_index: usize, rotation: i32) -> String {
     match rotation.cmp(&0) {
-        Ordering::Less => format!("{prefix}_{column_index}_prev_{}", rotation.abs()),
+        Ordering::Less => format!("{prefix}_{column_index}_prev_{}", rotation.unsigned_abs()),
         Ordering::Equal => format!("{prefix}_{column_index}"),
         Ordering::Greater => format!("{prefix}_{column_index}_next_{rotation}"),
     }

@@ -30,9 +30,14 @@ use midnight_proofs::{
     poly::{commitment::Guard as _, kzg::KZGCommitmentScheme, Rotation},
     transcript::{CircuitTranscript, Transcript},
 };
+#[cfg(not(feature = "outer-single-h-commitment"))]
+use midnight_zk_stdlib::utils::plonk_api::srs_for_test;
+#[cfg(feature = "outer-single-h-commitment")]
 use midnight_zk_stdlib::{
-    setup_vk, utils::plonk_api::srs_for_test, MidnightVK, Relation, ZkStdLib, ZkStdLibArch,
+    cost_model,
+    utils::plonk_api::{load_srs, SrsSource},
 };
+use midnight_zk_stdlib::{setup_vk, MidnightVK, Relation, ZkStdLib, ZkStdLibArch};
 use proptest::{
     prelude::any,
     test_runner::{Config as ProptestConfig, TestRunner},
@@ -45,7 +50,8 @@ use ruint::aliases::U256;
 use sha3::Digest;
 
 use crate::{
-    compile_solidity, encode_calldata, pinned_solc_available, CallOutcome, Evm, GeneratorConfig,
+    compile_solidity, compile_solidity_runtime, encode_calldata, pinned_solc_available,
+    runtime_free_memory_pointer_init, AccumulatorEncoding, CallOutcome, Evm, GeneratorConfig,
     RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
     FN_SIG_VERIFY_PROOF,
 };
@@ -62,6 +68,9 @@ type PoseidonVerifierParams =
 const POSEIDON_K: u32 = 6;
 /// Environment flag that opts into expensive EVM/Solidity integration tests.
 const RUN_EVM_TESTS_ENV: &str = "HALO2_SOLIDITY_RUN_EVM_TESTS";
+/// Source for the test SRS, as documented by `zk_stdlib`'s own loader error.
+const SRS_DOWNLOAD_URL: &str =
+    "https://midnight-s3-fileshare-dev-eu-west-1.s3.eu-west-1.amazonaws.com/bls_filecoin_2p19";
 /// Minimal caller used to exercise the production verifier under STATICCALL.
 const STATICCALL_VERIFIER_HARNESS: &str = r#"
 // SPDX-License-Identifier: CC0-1.0
@@ -461,7 +470,7 @@ fn lookup_shape_verifier_compiles_with_native_lookup_callback() {
     };
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
-    let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
+    let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
         .unwrap_or_else(|err| panic!("shape fuzz `{}` vk generation failed: {err:?}", case.name));
 
@@ -630,7 +639,8 @@ fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     ];
 
     let mut setup_rng = ChaCha8Rng::seed_from_u64(0x5a5a_5151);
-    let params = PoseidonParams::unsafe_setup(cases[0].k, &mut setup_rng);
+    let shapes: Vec<_> = cases.iter().map(|case| (case.spec, case.k)).collect();
+    let params = shape_fuzz_params(&shapes, &mut setup_rng);
     let fixtures: Vec<_> = cases
         .iter()
         .map(|case| build_shape_solidity_case_with_params(&params, case))
@@ -803,7 +813,7 @@ fn build_shape_solidity_case_with_params(
 fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
-    let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
+    let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
         .unwrap_or_else(|err| panic!("shape fuzz `{}` vk generation failed: {err:?}", case.name));
     let pk = keygen_pk(vk, &circuit)
@@ -920,13 +930,65 @@ fn generated_shape_fuzz_spec(seed: u64) -> ShapeFuzzSpec {
     }
 }
 
+/// Circuit domain size used by the transcript differential shape fuzzer.
+#[cfg(feature = "rust-verifier-trace")]
+const SHAPE_FUZZ_K: u32 = 5;
+
+/// Build test parameters covering every supplied `(shape, k)` pair.
+///
+/// Under `outer-single-h-commitment` the prover commits to one unsplit quotient
+/// polynomial of degree `(n - 1) * quotient_poly_degree`, so a plain
+/// `unsafe_setup(k)` is too small and proof generation fails with a `SrsError`
+/// long after the VK builds cleanly at `k`. The monomial basis has to be larger
+/// than the circuit domain while the Lagrange basis stays at `2^k` -- exactly
+/// the recipe documented on `ParamsKZG::downsize_lagrange`.
+///
+/// Loading a real SRS is not an option for these circuits: they are generated
+/// per seed, so each fixture draws its own toxic secret. Callers that share one
+/// parameter set across several shapes pass them all here, and the monomial
+/// basis is sized for the most demanding one.
+fn shape_fuzz_params(shapes: &[(ShapeFuzzSpec, u32)], rng: &mut ChaCha8Rng) -> PoseidonParams {
+    let (_, lagrange_k) = shapes.first().copied().expect("at least one shape");
+    assert!(
+        shapes.iter().all(|(_, k)| *k == lagrange_k),
+        "one parameter set can only serve shapes that share a circuit domain size"
+    );
+
+    #[cfg(not(feature = "outer-single-h-commitment"))]
+    {
+        PoseidonParams::unsafe_setup(lagrange_k, rng)
+    }
+    #[cfg(feature = "outer-single-h-commitment")]
+    {
+        let extended_k = shapes
+            .iter()
+            .map(|(spec, k)| {
+                // Configure a throwaway constraint system to learn this shape's
+                // degree. keygen may compress selectors, which can only lower
+                // the degree, so the uncompressed value is a safe upper bound.
+                let mut cs = ConstraintSystem::<F>::default();
+                <ShapeFuzzCircuit as Circuit<F>>::configure_with_params(&mut cs, *spec);
+                // Same exponent `midnight_zk_stdlib::utils::plonk_api::load_srs`
+                // uses for the single-h monomial basis.
+                k + ((cs.degree() - 1) as f64).log2().ceil() as u32
+            })
+            .max()
+            .expect("at least one shape");
+        let mut params = PoseidonParams::unsafe_setup(extended_k, rng);
+        // Keep the monomial basis extended; shrink only the Lagrange basis back
+        // to the circuit domain so commitments stay at 2^k.
+        params.downsize_lagrange(lagrange_k);
+        params
+    }
+}
+
 #[cfg(feature = "rust-verifier-trace")]
 fn run_transcript_differential_shape_fuzz_case(seed: u64) {
     let spec = generated_shape_fuzz_spec(seed);
     let context = format!("transcript differential seed={seed:#018x} spec={spec:?}");
     let circuit = ShapeFuzzCircuit::new(spec, seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(seed ^ 0x7ace_f00d);
-    let params = PoseidonParams::unsafe_setup(5, &mut setup_rng);
+    let params = shape_fuzz_params(&[(spec, SHAPE_FUZZ_K)], &mut setup_rng);
     let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 5)
         .unwrap_or_else(|err| panic!("{context} vk generation failed: {err:?}"));
     let pk = keygen_pk(vk, &circuit)
@@ -972,10 +1034,9 @@ fn shape_fuzz_inputs_available_for_evm() -> bool {
         eprintln!("skipping supported-shape circuit fuzz: set {RUN_EVM_TESTS_ENV}=1 to run it");
         return false;
     }
-    if !solc_available() {
-        eprintln!("skipping supported-shape circuit fuzz: solc not found");
-        return false;
-    }
+    // Requested but unusable is a failure, not a skip. See
+    // `poseidon_inputs_available_for_evm`.
+    solc_available();
     true
 }
 
@@ -1355,6 +1416,279 @@ fn pinned_quotient_verifier_rejects_wrong_vk_and_quotient_contracts() {
     );
 }
 
+/// The verifier body is wrapped in `assembly ("memory-safe")` while writing
+/// absolute addresses, which is a false promise: it never allocates through the
+/// free-memory pointer. That annotation is nonetheless load-bearing -- without
+/// it the block does not compile (stack too deep) -- and it is what lets solc's
+/// via-IR stack-to-memory mover reserve spill slots upward from `0x80`.
+///
+/// The generated layout is therefore based above that reservation rather than
+/// at `0x80`, so solc's spill slots and the verifier's own memory are disjoint
+/// by construction instead of by a liveness coincidence. The reservation size
+/// is not fixed -- observed values range from `0x80` to `0x8e0` depending on
+/// the circuit, the solc release, and the optimizer schedule -- so assert the
+/// property against real compiled bytecode rather than assuming it holds.
+///
+/// `VerifierMemoryLayout::validate()` enforces the complementary bound for the
+/// generated layout: every generated region starts at or above
+/// `LOW_MEMORY_SCRATCH_START`, so `reserved_end <= LOW_MEMORY_SCRATCH_START`
+/// here proves full disjointness. Check both verifier and quotient evaluator
+/// runtimes, because each via-IR compilation unit receives its own independent
+/// spill reservation. The accumulator-bearing variants are checked too,
+/// because their FinalPairing pairing-batch block adds frames and live values
+/// the property fixture never renders.
+#[test]
+fn compiled_memoryguard_does_not_overlap_generated_layout() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    fn assert_memoryguard_clears_generated_layout(name: &str, source: &str) {
+        let runtime = compile_solidity_runtime(source);
+        let reserved_end = runtime_free_memory_pointer_init(&runtime).unwrap_or_else(|| {
+            panic!("{name}: could not read the free-memory-pointer prologue from runtime bytecode")
+        });
+        assert!(
+            reserved_end <= crate::lowering::layout::LOW_MEMORY_SCRATCH_START,
+            "{name}: solc reserved [0x80, {reserved_end:#x}) for via-IR spill slots, which \
+             overlaps the generated verifier layout based at {:#x}. A live spill slot can then \
+             sit across a verifier write, silently corrupting a challenge or pairing input. \
+             Raise LOW_MEMORY_SCRATCH_START above {reserved_end:#x}.",
+            crate::lowering::layout::LOW_MEMORY_SCRATCH_START
+        );
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    for (name, source) in [
+        ("embedded", fixture.embedded_verifier_solidity.as_str()),
+        ("separate", fixture.separate_verifier_solidity.as_str()),
+        ("quotient", fixture.quotient_verifier_solidity.as_str()),
+        (
+            "quotient evaluator",
+            fixture.quotient_evaluator_solidity.as_str(),
+        ),
+        (
+            "trace quotient evaluator",
+            fixture.trace_quotient_evaluator_solidity.as_str(),
+        ),
+    ] {
+        assert_memoryguard_clears_generated_layout(name, source);
+    }
+
+    for (name, _, artifacts, quotient_evaluator) in render_accumulator_verifier_variants() {
+        assert_memoryguard_clears_generated_layout(name, &artifacts.verifier);
+        assert_memoryguard_clears_generated_layout(
+            &format!("{name} quotient evaluator"),
+            &quotient_evaluator,
+        );
+    }
+}
+
+/// `Halo2VerifyingKey` is size-checked at render time by
+/// `validate_payload_layout`, because a data contract's runtime length is known
+/// before compilation. The verifier's is not -- it only exists once solc has
+/// run -- so nothing bounded it, and the revm harness deliberately sets
+/// `limit_contract_code_size = usize::MAX` (see `evm.rs`), meaning an oversized
+/// verifier would pass the whole suite and then fail to deploy on any EIP-170
+/// chain. Check the compiled artifact directly.
+#[test]
+fn compiled_verifier_runtime_fits_the_eip170_limit() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let limit = crate::lowering::render::EIP_170_MAX_RUNTIME_BYTES;
+    let fixture = create_property_poseidon_fixture();
+    for (name, source) in [
+        ("embedded", fixture.embedded_verifier_solidity.as_str()),
+        ("separate", fixture.separate_verifier_solidity.as_str()),
+        ("quotient", fixture.quotient_verifier_solidity.as_str()),
+        ("vk", fixture.vk_solidity.as_str()),
+    ] {
+        let runtime_len = compile_solidity_runtime(source).len();
+        assert!(
+            runtime_len <= limit,
+            "{name}: compiled runtime is {runtime_len} bytes, over the EIP-170 limit of \
+             {limit}; this contract cannot be deployed on mainnet or any \
+             EIP-170 chain. Note the revm harness lifts this cap, so no other test catches it."
+        );
+    }
+}
+
+/// Extract one rendered Yul function (signature through matching close brace)
+/// from generated verifier source. The rendered helpers contain no string
+/// literals, so plain brace counting is sufficient.
+fn extract_yul_function<'a>(source: &'a str, signature_prefix: &str) -> &'a str {
+    let start = source
+        .find(signature_prefix)
+        .unwrap_or_else(|| panic!("rendered source should define {signature_prefix}"));
+    let tail = &source[start..];
+    let open = tail.find('{').expect("function definition must open a brace");
+    let mut depth = 0usize;
+    for (idx, byte) in tail.bytes().enumerate().skip(open) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &tail[..=idx];
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unbalanced braces while extracting {signature_prefix}");
+}
+
+/// Test-only contract that runs the rendered `batch_invert` helper on
+/// caller-chosen memory words. Raw calldata is `n || r || n words`; raw
+/// returndata is `success flag || the n (possibly inverted) words`.
+fn batch_invert_harness_source(verifier_solidity: &str) -> String {
+    let batch_invert = extract_yul_function(
+        verifier_solidity,
+        "function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret",
+    );
+    let modexp_gas = crate::lowering::layout::gas::modexp_gas_word_frame();
+    format!(
+        r#"// SPDX-License-Identifier: CC0-1.0
+pragma solidity ^0.8.24;
+
+contract BatchInvertHarness {{
+    // The extracted helper forwards the pinned modexp bound (the maximum over
+    // the EIP-2565 and EIP-7883 schedules, MF-1); mirror the generated
+    // constant it references.
+    uint256 internal constant MODEXP_GAS = {modexp_gas};
+
+    fallback() external {{
+        assembly {{
+            {batch_invert}
+
+            let n := calldataload(0x00)
+            let r := calldataload(0x20)
+            let base := 0x1000
+            calldatacopy(base, 0x40, mul(n, 0x20))
+            // MF-4: batch_invert now also reports WHY it failed (a failed
+            // modexp staticcall vs a rejected denominator). This harness only
+            // asserts fail-closed behaviour, so it keeps the boolean and
+            // discards the cause -- but it must still destructure both values
+            // or the extracted helper does not compile.
+            let ok, precompile_failed := batch_invert(1, base, add(base, mul(n, 0x20)), 0x8000, r)
+            mstore(0x80, ok)
+            pop(precompile_failed)
+            mcopy(0xa0, base, mul(n, 0x20))
+            return(0x80, add(0x20, mul(n, 0x20)))
+        }}
+    }}
+}}
+"#
+    )
+}
+
+/// Execute the rendered `batch_invert` helper against adversarial words.
+///
+/// The template greps in `lowering/tests.rs` pin the guard text; this pins
+/// the behavior: the singleton and general paths must both fail closed on
+/// words outside the canonical range (`x >= r`, including invertible
+/// residues, `x = r`, and literal zero) without touching the input run,
+/// so accept/reject semantics never depend on batch length. Canonical
+/// batches must produce exactly the native inverses.
+#[test]
+fn batch_invert_fails_closed_on_noncanonical_words_in_all_paths() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let harness = batch_invert_harness_source(&fixture.embedded_verifier_solidity);
+    let mut evm = Evm::default();
+    let address = evm.create(compile_solidity(&harness));
+
+    let r = fr_modulus_u256();
+    let mut run = |elems: &[U256]| -> (bool, Vec<U256>) {
+        let mut calldata = Vec::with_capacity((2 + elems.len()) * 0x20);
+        calldata.extend_from_slice(&U256::from(elems.len()).to_be_bytes::<0x20>());
+        calldata.extend_from_slice(&r.to_be_bytes::<0x20>());
+        for elem in elems {
+            calldata.extend_from_slice(&elem.to_be_bytes::<0x20>());
+        }
+        match evm.try_call(address, calldata) {
+            CallOutcome::Success { output, .. } => {
+                assert_eq!(
+                    output.len(),
+                    (1 + elems.len()) * 0x20,
+                    "harness returndata shape"
+                );
+                let flag = U256::try_from_be_slice(&output[..0x20]).unwrap();
+                assert!(flag <= U256::from(1), "success flag must be boolean");
+                let words = output[0x20..]
+                    .chunks_exact(0x20)
+                    .map(|word| U256::try_from_be_slice(word).unwrap())
+                    .collect();
+                (flag == U256::from(1), words)
+            }
+            outcome => panic!("harness must not revert or halt: {outcome:?}"),
+        }
+    };
+
+    let word = |value: u64| U256::from(value);
+    let inv =
+        |value: u64| crate::lowering::encoding::fe_to_u256::<F>(F::from(value).invert().unwrap());
+
+    // Canonical batches succeed and invert every element in place; the
+    // lengths cover the empty, singleton, two-element, and looped general
+    // paths.
+    let (ok, out) = run(&[]);
+    assert!(ok, "empty batch must be a no-op success");
+    assert!(out.is_empty());
+    for elems in [vec![7u64], vec![2, 3], vec![1, 2, 3, 5, 7]] {
+        let input: Vec<U256> = elems.iter().copied().map(word).collect();
+        let (ok, out) = run(&input);
+        assert!(ok, "canonical batch of {} must succeed", elems.len());
+        let expected: Vec<U256> = elems.iter().copied().map(inv).collect();
+        assert_eq!(
+            out,
+            expected,
+            "batch of {} must produce native inverses",
+            elems.len()
+        );
+    }
+
+    // Every rejection leaves the input run untouched: zero and anything
+    // congruent to zero mod r has no inverse, and non-canonical words with
+    // invertible residues (x = r + 5, 2^256 - 1) must fail closed in both
+    // paths rather than being reduced by mulmod. The three r + 5 positions
+    // hit the general path's first-element, loop, and final-element guards.
+    let r_plus_5 = r + word(5);
+    for (name, elems) in [
+        ("singleton literal zero", vec![U256::ZERO]),
+        ("singleton x = r", vec![r]),
+        ("singleton x = r + 5", vec![r_plus_5]),
+        ("singleton x = 2^256 - 1", vec![U256::MAX]),
+        ("general literal zero", vec![word(2), U256::ZERO, word(3)]),
+        ("general x = r", vec![word(2), r, word(3)]),
+        (
+            "general first element x = r + 5",
+            vec![r_plus_5, word(2), word(3)],
+        ),
+        (
+            "general loop element x = r + 5",
+            vec![word(2), r_plus_5, word(3)],
+        ),
+        (
+            "general final element x = r + 5",
+            vec![word(2), word(3), r_plus_5],
+        ),
+        (
+            "general two-element x = 2^256 - 1",
+            vec![word(2), U256::MAX],
+        ),
+    ] {
+        let (ok, out) = run(&elems);
+        assert!(!ok, "{name} must fail closed");
+        assert_eq!(out, elems, "{name} must leave the input words untouched");
+    }
+}
+
 #[test]
 fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     if !poseidon_inputs_available_for_evm() {
@@ -1365,18 +1699,18 @@ fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     for (name, needle, replacement) in [
         (
             "missing G1ADD precompile",
-            "staticcall(gas(), 0x0b",
-            "staticcall(gas(), 0x12",
+            "staticcall(G1ADD_GAS, 0x0b",
+            "staticcall(G1ADD_GAS, 0x12",
         ),
         (
             "G1MSM routed to G1ADD",
-            "staticcall(gas(), 0x0c",
-            "staticcall(gas(), 0x0b",
+            "staticcall(G1MSM_GAS_1PAIR, 0x0c",
+            "staticcall(G1MSM_GAS_1PAIR, 0x0b",
         ),
         (
             "pairing routed to G1MSM",
-            "staticcall(gas(), 0x0f",
-            "staticcall(gas(), 0x0c",
+            "staticcall(PAIRING_GAS_2PAIR, 0x0f",
+            "staticcall(PAIRING_GAS_2PAIR, 0x0c",
         ),
     ] {
         let verifier_solidity = replace_required_precompile_staticcall(
@@ -1393,9 +1727,75 @@ fn verifier_constructor_rejects_missing_or_mismatched_eip2537_precompiles() {
     }
 }
 
+/// MF-1: the constructor's modexp probe must actually REJECT a bound below the
+/// chain's price, not merely be present in the rendered source.
+///
+/// This is the property the whole MF-1 fix rests on. A `staticcall` forwards a
+/// fixed amount, so an under-priced `MODEXP_GAS` does not degrade -- the
+/// precompile runs out of gas and every proof reverts. Before the fix there was
+/// no modexp probe at all, so such an artifact DEPLOYED CLEANLY and only failed
+/// on first use; the probe exists to turn that into a failed deployment.
+///
+/// The mutation lowers the bound to one gas below the EIP-2565 price this
+/// harness's revm charges (1354), which is exactly the shape of the real bug:
+/// the shipped 1360 sat below the EIP-7883 price of 4064. It cannot be tested
+/// by repricing revm instead -- the pinned revm 19 exposes `SpecId::OSAKA` but
+/// still prices modexp with `berlin_run` -- so the bound is moved rather than
+/// the schedule. Positive control: every other EVM test in this file deploys
+/// the same fixture unmutated.
+#[test]
+fn constructor_rejects_a_modexp_bound_below_the_chain_price() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let rendered_bound = crate::lowering::layout::gas::modexp_gas_word_frame();
+    let needle = format!("MODEXP_GAS = {rendered_bound};");
+    // One gas below what revm's Berlin/EIP-2565 modexp charges for the
+    // verifier's 32/32/32 frame with a 255-bit exponent: max(200, 16*254/3).
+    let underpriced = (16 * 254 / 3) - 1;
+
+    let fixture = create_property_poseidon_fixture();
+    let verifier_solidity = {
+        assert!(
+            fixture.quotient_verifier_solidity.contains(&needle),
+            "rendered verifier should pin the generated modexp bound ({needle})"
+        );
+        fixture.quotient_verifier_solidity.replacen(
+            &needle,
+            &format!("MODEXP_GAS = {underpriced};"),
+            1,
+        )
+    };
+
+    assert_pinned_quotient_constructor_rejects(
+        &verifier_solidity,
+        &fixture.vk_solidity,
+        &fixture.quotient_evaluator_solidity,
+        "modexp bound below the chain's price",
+    );
+
+    // Positive control, so the assertion above cannot pass vacuously: the same
+    // fixture, same compiler, same EVM, differing ONLY in that constant must
+    // construct successfully. Without this, a rejection caused by anything
+    // else in the pipeline would read as the probe working.
+    let mut evm = Evm::default();
+    let vk_address = evm.create(compile_solidity(&fixture.vk_solidity));
+    let quotient_address = evm.create(compile_solidity(&fixture.quotient_evaluator_solidity));
+    evm.create_with_two_address_args(
+        compile_solidity(&fixture.quotient_verifier_solidity),
+        vk_address,
+        quotient_address,
+    );
+}
+
 #[test]
 fn production_renders_do_not_emit_gas_checkpoints() {
-    if crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED {
+    // The fixture's base variants follow `RenderDiagnostics::default()`, so a
+    // `solidity-trace` build makes them emit LOG1 and drop `view` for the same
+    // reason a gas-checkpoint build does. Both are intended diagnostic shapes,
+    // not production renders, so neither can satisfy the assertions below.
+    if crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED || crate::SOLIDITY_TRACE_ENABLED {
         return;
     }
     if !poseidon_inputs_available_for_evm() {
@@ -1428,6 +1828,14 @@ fn production_renders_do_not_emit_gas_checkpoints() {
 
 #[test]
 fn production_separate_verifier_accepts_valid_proof_under_staticcall() {
+    // The fixture renders its base variants with `RenderDiagnostics::default()`,
+    // which follows the crate's feature flags. A trace or gas-checkpoint build
+    // emits LOG1 and is deliberately not `view`, so it cannot be STATICCALL-ed
+    // -- that is the documented contract, not a regression. Skip on those
+    // builds, matching `production_renders_do_not_emit_gas_checkpoints`.
+    if crate::SOLIDITY_TRACE_ENABLED || crate::SOLIDITY_GAS_CHECKPOINTS_ENABLED {
+        return;
+    }
     if !poseidon_inputs_available_for_evm() {
         return;
     }
@@ -1483,6 +1891,212 @@ fn compile_solidity_is_deterministic_for_same_source() {
     let bytecode_b = compile_solidity(&fixture.embedded_verifier_solidity);
 
     assert_eq!(bytecode_a, bytecode_b);
+}
+
+/// The accumulator fixed-base scalar tail must match the verifying key.
+///
+/// `fixed_scalar_count` is derived from `num_instances`, but the bases those
+/// scalars multiply are generated as `fixed_comm_mptr + i * 0x80` from the VK.
+/// A tail longer than the VK's fixed-commitment count used to render fine and
+/// silently emit base pointers past that region, aliasing permutation
+/// commitments -- and beyond them arbitrary VK payload words -- as accumulator
+/// G1 bases.
+#[test]
+fn accumulator_fixed_base_tail_must_match_verifying_key() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+    let relation = PoseidonExample;
+    let srs = poseidon_srs_for_test(&relation);
+    let vk = setup_vk(&srs, &relation);
+
+    let num_fixed_comms = vk.vk().fixed_commitments().len();
+    let num_permutation_comms = vk.vk().permutation().commitments().len();
+    let collapsed = AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+    // `-G` plus every permutation commitment, then up to one scalar per fixed
+    // commitment.
+    let min_tail = 1 + num_permutation_comms;
+    let max_tail = min_tail + num_fixed_comms;
+
+    // A tail three scalars longer than the VK can supply bases for. Before the
+    // guard this rendered a verifier whose last three "fixed bases" were
+    // permutation commitments.
+    let err = SolidityGenerator::try_new(
+        &srs,
+        vk.vk(),
+        GeneratorConfig::new(collapsed + max_tail + 3, 1)
+            .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+    )
+    .expect_err("oversized accumulator fixed-base tail should be rejected");
+    assert!(
+        matches!(
+            err,
+            crate::GeneratorError::AccumulatorFixedBaseTailMismatch {
+                fixed_scalar_count,
+                max_fixed_scalar_count,
+                ..
+            } if fixed_scalar_count == max_tail + 3 && max_fixed_scalar_count == max_tail
+        ),
+        "unexpected error for oversized tail: {err}"
+    );
+
+    // A tail too short to cover `-G` plus the permutation commitments would
+    // underflow the base count in the artifact emitter.
+    SolidityGenerator::try_new(
+        &srs,
+        vk.vk(),
+        GeneratorConfig::new(collapsed + min_tail - 1, 1)
+            .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+    )
+    .expect_err("undersized accumulator fixed-base tail should be rejected");
+
+    // Supported shapes still build: no tail at all, the full base set, and a
+    // prefix of the fixed commitments in between (every pointer stays inside
+    // the fixed-commitment region).
+    for num_instances in [
+        collapsed,
+        collapsed + min_tail,
+        collapsed + max_tail,
+        collapsed + (min_tail + max_tail) / 2,
+    ] {
+        SolidityGenerator::try_new(
+            &srs,
+            vk.vk(),
+            GeneratorConfig::new(num_instances, 1)
+                .with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+        )
+        .unwrap_or_else(|err| panic!("supported accumulator tail should build: {err}"));
+    }
+}
+
+/// Render the three accumulator-bearing verifier variants over the Poseidon
+/// fixture VK: fully collapsed, fixed-base scalar tail, and point-pair
+/// encodings. Returns `(name, has_carried_scalars, artifacts, evaluator)` per
+/// variant.
+fn render_accumulator_verifier_variants(
+) -> Vec<(&'static str, bool, crate::RenderedArtifacts, String)> {
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+    let relation = PoseidonExample;
+    let srs = poseidon_srs_for_test(&relation);
+    let vk = setup_vk(&srs, &relation);
+
+    // A fully collapsed accumulator occupies FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
+    // public inputs and has no fixed-base scalar tail.
+    let collapsed_words = AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+    // The partially collapsed form appends one scalar per generated base:
+    // `-G`, then every fixed commitment, then every permutation commitment.
+    let num_fixed_comms = vk.vk().fixed_commitments().len();
+    let num_perm_comms = vk.vk().permutation().commitments().len();
+    let tail_words = 1 + num_fixed_comms + num_perm_comms;
+
+    let variants = [
+        (
+            "fully collapsed accumulator",
+            collapsed_words,
+            AccumulatorEncoding::new(0, 7, 56),
+            true,
+        ),
+        (
+            "accumulator with fixed-base scalar tail",
+            collapsed_words + tail_words,
+            AccumulatorEncoding::new(0, 7, 56),
+            true,
+        ),
+        // Point-pair encodings carry no explicit scalars -- both are implicit
+        // one -- so no calldata scalar is read and none is range-checked.
+        (
+            "point-pair accumulator",
+            AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS,
+            AccumulatorEncoding::point_pair(0, 7, 56),
+            false,
+        ),
+    ];
+
+    variants
+        .into_iter()
+        .map(|(name, num_instances, acc, has_carried_scalars)| {
+            let generator = SolidityGenerator::new(
+                &srs,
+                vk.vk(),
+                GeneratorConfig::new(num_instances, 1).with_accumulator(acc),
+            );
+            let artifacts = generator
+                .render(RenderOptions {
+                    vk: RenderVk::Separate,
+                    ..RenderOptions::default()
+                })
+                .unwrap_or_else(|err| panic!("{name} should render: {err}"));
+            let quotient_evaluator = generator
+                .render_quotient_evaluator(RenderDiagnostics::default())
+                .unwrap_or_else(|err| panic!("{name} quotient evaluator should render: {err}"));
+            (name, has_carried_scalars, artifacts, quotient_evaluator)
+        })
+        .collect()
+}
+
+/// Compile the accumulator render arm.
+///
+/// No production fixture enables `with_accumulator`, so before this test the
+/// whole `{%- if self.expected_has_accumulator %}` branch of
+/// AccumulatorHelpers.yul -- the limb decoder, the pre-transcript
+/// public-accumulator MSM, and the fixed-base scalar tail -- was never handed
+/// to solc by the default gate. Only the opt-in `ivc_keccak_solidity` bench
+/// (k = 20, release, external SRS assets) rendered it, so a Yul syntax error
+/// or a solc stack-depth regression in that branch could reach a release
+/// unnoticed.
+///
+/// This does not execute the accumulator logic against a real recursive proof
+/// -- that still needs a decider circuit carrying a genuine accumulator in its
+/// public inputs. It does guarantee the branch compiles, and it pins the
+/// canonicality checks on the scalars the helper feeds to G1MSM.
+#[test]
+fn accumulator_verifier_variants_compile_with_pinned_solc() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    for (name, has_carried_scalars, artifacts, _) in render_accumulator_verifier_variants() {
+        let verifier = artifacts.verifier;
+        assert!(
+            verifier.contains("function validate_public_accumulator"),
+            "{name} should render the accumulator helper"
+        );
+        // The helper runs before the transcript loop that rejects
+        // non-canonical instance words, and EIP-2537 G1MSM reduces scalars mod
+        // r implicitly, so it must reject `s >= r` itself.
+        if has_carried_scalars {
+            for required in ["lt(lhs_scalar, r)", "lt(rhs_scalar, r)"] {
+                assert!(
+                    verifier.contains(required),
+                    "{name} should range-check accumulator scalars: {required}"
+                );
+            }
+        } else {
+            assert!(
+                !verifier.contains("lt(lhs_scalar, r)"),
+                "{name} carries no explicit scalars, so none should be read or checked"
+            );
+        }
+
+        for (label, source) in [
+            (name, verifier.as_str()),
+            (
+                "accumulator VK",
+                artifacts.verifying_key.as_deref().expect("separate render includes VK"),
+            ),
+        ] {
+            let bytecode = std::panic::catch_unwind(AssertUnwindSafe(|| compile_solidity(source)))
+                .unwrap_or_else(|_| panic!("{label} should compile under the pinned solc"));
+            assert!(
+                !bytecode.is_empty(),
+                "{label} should compile to non-empty bytecode"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1867,7 +2481,7 @@ fn load_poseidon_vk_sources_fixture() -> PoseidonVkSourcesFixture {
     env::set_var("SRS_DIR", &srs_dir);
 
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
     assert_eq!(vk.k() as u32, POSEIDON_K, "unexpected Poseidon VK k");
 
@@ -1899,7 +2513,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
     env::set_var("SRS_DIR", &srs_dir);
 
     let relation = PoseidonExample;
-    let srs = srs_for_test(&relation, Some(POSEIDON_K));
+    let srs = poseidon_srs_for_test(&relation);
     let vk = setup_vk(&srs, &relation);
     assert_eq!(vk.k() as u32, POSEIDON_K, "unexpected Poseidon VK k");
 
@@ -1999,6 +2613,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
                 trace: true,
                 ..RenderDiagnostics::default()
             },
+            provenance: None,
         })
         .expect("trace pinned render with quotient evaluator");
     let trace_quotient_verifier_solidity = trace_quotient_artifacts.verifier;
@@ -2322,6 +2937,30 @@ fn verifier_rejects_when_x_is_forced_to_domain_root() {
         call_deployed_verifier(&mut evm, &fixture.proof, &fixture.instances),
         "verifier with x forced to domain root should hit zero Lagrange denominator",
     );
+
+    // MF-4: pin WHICH rejection this is, not just that it rejects. A zero
+    // Lagrange denominator means the squeezed x coincided with a domain point
+    // -- a transcript event, so ProofRejected. It used to surface as
+    // PrecompileFailed, which sends an incident responder to inspect the node
+    // when the proof was the cause. This is the only live path that reaches
+    // that branch, so without this assertion the split is pinned in template
+    // text but never observed executing.
+    let selector = {
+        use sha3::{Digest, Keccak256};
+        let d = Keccak256::digest(b"ProofRejected()");
+        vec![d[0], d[1], d[2], d[3]]
+    };
+    match evm.evm.try_call_with_gas(
+        evm.verifier_address,
+        encode_calldata(&fixture.proof, &fixture.instances),
+        30_000_000,
+    ) {
+        CallOutcome::Revert { output, .. } => assert_eq!(
+            output, selector,
+            "a zero Lagrange denominator must report ProofRejected, not a precompile fault"
+        ),
+        outcome => panic!("forced-domain-root verifier did not revert: {outcome:?}"),
+    }
 }
 
 #[test]
@@ -2438,6 +3077,177 @@ fn every_proof_g1_rejects_off_curve_coordinates() {
             &fixture,
             &bad_solidity,
             &format!("Solidity off-curve G1 idx={idx} repacked_offset={repacked_offset}"),
+        );
+    }
+}
+
+/// M-2 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): a rejecting EIP-2537
+/// precompile consumes ALL gas supplied to the STATICCALL, so before the
+/// generated exact gas bounds a canonical-but-off-curve proof point burned
+/// 63/64 of the transaction budget (measured 29.5M of a 30M limit). With the
+/// bounds in place, rejecting a malformed point must cost no more than an
+/// honest verification: the failing run is a prefix of the honest run plus
+/// one precompile call whose forwarded gas is capped at its scheduled cost.
+#[test]
+fn malformed_proof_point_rejects_with_bounded_gas() {
+    const GAS_LIMIT: u64 = 30_000_000;
+
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+
+    let fixture = create_property_poseidon_fixture();
+    let layout = proof_g1_layout(&fixture);
+    let solidity_bad = eip2537_padded_off_curve_g1_bytes();
+
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+    let honest_gas = match deployed.evm.try_call_with_gas(
+        deployed.verifier_address,
+        encode_calldata(&fixture.proof, &fixture.instances),
+        GAS_LIMIT,
+    ) {
+        CallOutcome::Success { gas_used, .. } => gas_used,
+        outcome => panic!("baseline honest verification failed: {outcome:?}"),
+    };
+
+    for (idx, repacked_offset) in layout.repacked_offsets.iter().copied().enumerate() {
+        let mut bad_solidity = fixture.proof.clone();
+        bad_solidity[repacked_offset..repacked_offset + 128].copy_from_slice(&solidity_bad);
+        let gas_used = match deployed.evm.try_call_with_gas(
+            deployed.verifier_address,
+            encode_calldata(&bad_solidity, &fixture.instances),
+            GAS_LIMIT,
+        ) {
+            CallOutcome::Revert { gas_used, .. } | CallOutcome::Halt { gas_used, .. } => gas_used,
+            CallOutcome::Success { output, .. } => {
+                // Rejection-by-return-false also must not burn the budget.
+                assert_eq!(
+                    output.last().copied(),
+                    Some(0),
+                    "off-curve G1 idx={idx} unexpectedly verified"
+                );
+                continue;
+            }
+        };
+        assert!(
+            gas_used <= honest_gas,
+            "rejecting off-curve G1 idx={idx} repacked_offset={repacked_offset} burned \
+             {gas_used} gas, more than the honest verification's {honest_gas}: a \
+             precompile call site is forwarding more than its scheduled cost"
+        );
+    }
+}
+
+/// P4 (L-3, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): rejections revert
+/// with a typed 4-byte custom-error selector so integrators can distinguish
+/// failure classes. Decode three representative classes end-to-end.
+#[test]
+fn typed_errors_identify_rejection_classes() {
+    use sha3::{Digest, Keccak256};
+
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+    let selector = |sig: &str| {
+        let d = Keccak256::digest(sig.as_bytes());
+        vec![d[0], d[1], d[2], d[3]]
+    };
+
+    let fixture = create_property_poseidon_fixture();
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+
+    // (a) Trailing calldata byte -> BadCalldataShape (exact calldatasize pin;
+    // documented ERC-2771 incompatibility).
+    let mut trailing = encode_calldata(&fixture.proof, &fixture.instances);
+    trailing.push(0);
+    // (b) Non-canonical public instance (r) -> NonCanonicalScalar.
+    let mut bad_instance = encode_calldata(&fixture.proof, &fixture.instances);
+    let len = bad_instance.len();
+    bad_instance[len - 32..].copy_from_slice(
+        &hex::decode("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
+            .expect("BLS12-381 r"),
+    );
+    // (c) Off-curve proof point -> BadPointEncoding is checked only for pad /
+    // range violations; a canonical-but-off-curve point fails at the MSM, so
+    // expect PrecompileFailed or ProofRejected there instead. Use a pad-byte
+    // violation for the deterministic BadPointEncoding class.
+    let layout = proof_g1_layout(&fixture);
+    let mut bad_pad = fixture.proof.clone();
+    bad_pad[layout.repacked_offsets[0]] = 1;
+    let bad_pad = encode_calldata(&bad_pad, &fixture.instances);
+
+    for (name, calldata, expected_sig) in [
+        ("trailing calldata byte", trailing, "BadCalldataShape()"),
+        (
+            "non-canonical instance",
+            bad_instance,
+            "NonCanonicalScalar()",
+        ),
+        ("pad-byte violation", bad_pad, "BadPointEncoding()"),
+    ] {
+        match deployed.evm.try_call_with_gas(deployed.verifier_address, calldata, 30_000_000) {
+            CallOutcome::Revert { output, .. } => {
+                assert_eq!(
+                    output,
+                    selector(expected_sig),
+                    "{name} must revert with {expected_sig}"
+                );
+            }
+            outcome => panic!("{name} did not revert: {outcome:?}"),
+        }
+    }
+}
+
+/// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+/// production Midnight SRS assets must bind their `s_g2` — the element the
+/// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau
+/// that generated their Lagrange basis. The build-time assert in
+/// `src/lowering/vk.rs` runs this check on whatever `params` a build was
+/// handed; this test runs it directly against the distributed asset files,
+/// so a corrupted or substituted download fails here even before any build.
+#[test]
+fn midnight_srs_assets_bind_s_g2_to_lagrange_tau() {
+    use ff::PrimeField;
+    use midnight_zk_stdlib::utils::plonk_api::{load_srs, SrsSource};
+
+    if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
+        eprintln!("skipping Midnight SRS tau-binding check: set {RUN_EVM_TESTS_ENV}=1 to run it");
+        return;
+    }
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+
+    let mut checked = 0usize;
+    for (asset, k) in [("midnight-srs-2p19", 19u32), ("midnight-srs-2p20", 20u32)] {
+        if !PathBuf::from(&srs_dir).join(asset).exists() {
+            eprintln!("skipping {asset}: not present under {srs_dir}");
+            continue;
+        }
+        let params = load_srs(SrsSource::Midnight, k, 2);
+        // omega for the 2^k evaluation domain the Lagrange basis is over.
+        let omega =
+            <F as PrimeField>::ROOT_OF_UNITY.pow_vartime([1u64 << (<F as PrimeField>::S - k)]);
+        assert!(
+            crate::lowering::vk::srs_tau_is_consistent(
+                params.g_lagrange(),
+                omega,
+                params.s_g2().to_affine(),
+            ),
+            "{asset}: s_g2 does not correspond to the tau underlying g_lagrange; \
+             the asset is corrupted or was substituted"
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!(
+            "no midnight-srs assets found under {srs_dir}; \
+             fetch them with scripts/run_ivc_bench.sh or record_srs_provenance.sh"
         );
     }
 }
@@ -3251,7 +4061,9 @@ fn assert_rendered_reader_matches_proof_layout(
         "generated proof reader proof_cptr increments drifted from ProofCalldataLayout"
     );
     assert!(
-        solidity.contains("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }"),
+        solidity.contains(
+            "if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }"
+        ),
         "generated proof reader must fail closed if proof_cptr drifts"
     );
 }
@@ -3938,13 +4750,13 @@ fn poseidon_inputs_available_for_evm() -> bool {
         eprintln!("skipping Poseidon Solidity property test: set {RUN_EVM_TESTS_ENV}=1 to run it");
         return false;
     }
-    if !poseidon_srs_available() {
-        return false;
-    }
-    if !solc_available() {
-        eprintln!("skipping Poseidon Solidity property test: solc not found");
-        return false;
-    }
+    // Past this point the gate was explicitly requested, so a missing
+    // prerequisite is a failure rather than a skip. Returning `false` here
+    // would report a green run that compiled no Solidity and executed no
+    // proof -- the failure mode that let the rendered fixture artifacts drift
+    // out of date across several commits without any test noticing.
+    poseidon_srs_available();
+    solc_available();
     true
 }
 
@@ -3960,25 +4772,73 @@ fn env_flag_enabled(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Return whether the Poseidon test SRS can be found on disk.
-fn poseidon_srs_available() -> bool {
+/// Load the Poseidon test SRS for the feature set this crate was built with.
+///
+/// `outer-single-h-commitment` forwards `single-h-commitment` to
+/// `midnight-proofs` but deliberately *not* to `midnight-zk-stdlib` (see the
+/// feature comment in `Cargo.toml`: recursive proofs checked inside the decider
+/// circuit stay on the multi-limb layout). The consequence is that
+/// `srs_for_test` cannot be used under that feature: it calls `load_srs`, which
+/// decides whether to extend the monomial basis from *zk-stdlib's own*
+/// `single-h-commitment` setting. With the feature off there, `load_srs`
+/// returns a plain `2^k`-element SRS, while the prover -- compiled from
+/// `midnight-proofs` *with* the feature -- commits to one full-degree quotient
+/// polynomial and needs `k + ceil(log2(cs_degree - 1))` monomial powers. The
+/// mismatch surfaces as `SrsError(64, 252)` at proof generation, i.e. long
+/// after the VK builds cleanly at `k`.
+///
+/// Mirror `load_srs`'s single-h branch here instead, so `--all-features` is a
+/// working configuration rather than one that fails inside the prover.
+/// `tests/ivc_keccak_solidity.rs` already does the same thing for the decider
+/// proof (`outer_single_h_extended_srs_k`); this is that pattern applied to the
+/// Poseidon property fixtures.
+fn poseidon_srs_for_test(relation: &PoseidonExample) -> PoseidonParams {
+    #[cfg(not(feature = "outer-single-h-commitment"))]
+    {
+        srs_for_test(relation, Some(POSEIDON_K))
+    }
+    #[cfg(feature = "outer-single-h-commitment")]
+    {
+        let cs_degree = cost_model(relation, Some(POSEIDON_K)).max_deg;
+        // Same exponent `load_srs` uses: enough monomial powers to hold the
+        // unsplit quotient polynomial.
+        let extended_k = POSEIDON_K + ((cs_degree - 1) as f64).log2().ceil() as u32;
+        let base = load_srs(SrsSource::Filecoin, POSEIDON_K, cs_degree);
+        let extended = load_srs(SrsSource::Filecoin, extended_k, cs_degree);
+        base.with_extended_monomial(extended)
+    }
+}
+
+/// Require the Poseidon test SRS on disk.
+///
+/// Only called once the EVM gate has been explicitly requested, so a missing
+/// asset panics with fetch instructions instead of silently skipping.
+fn poseidon_srs_available() {
     let srs_dir = PathBuf::from(srs_dir());
     let exact_srs_path = srs_dir.join(format!("bls_filecoin_2p{POSEIDON_K}"));
     let fallback_srs_path = srs_dir.join("bls_filecoin_2p19");
-    if !exact_srs_path.exists() && !fallback_srs_path.exists() {
-        eprintln!(
-            "skipping Poseidon Solidity property test: SRS not found at {} or {}",
-            exact_srs_path.display(),
-            fallback_srs_path.display()
-        );
-        return false;
-    }
-    true
+    assert!(
+        exact_srs_path.exists() || fallback_srs_path.exists(),
+        "{RUN_EVM_TESTS_ENV}=1 requires the test SRS, but it was not found at {} or {}.\n\
+         Fetch it with:\n    curl -L -o {} {SRS_DOWNLOAD_URL}\n\
+         or point SRS_DIR at an existing copy.",
+        exact_srs_path.display(),
+        fallback_srs_path.display(),
+        fallback_srs_path.display(),
+    );
 }
 
-/// Return whether the configured pinned solc is available.
-fn solc_available() -> bool {
-    pinned_solc_available()
+/// Require the pinned solc.
+///
+/// Same contract as [`poseidon_srs_available`]: loud once the gate is on.
+fn solc_available() {
+    assert!(
+        pinned_solc_available(),
+        "{RUN_EVM_TESTS_ENV}=1 requires solc {}, which was not found or did not match.\n\
+         Install it, point SOLC at the binary, or set {}=1 to accept another version.",
+        crate::PINNED_SOLC_VERSION,
+        crate::ALLOW_UNPINNED_SOLC_ENV,
+    );
 }
 
 /// Resolve the SRS directory used by fixture setup.

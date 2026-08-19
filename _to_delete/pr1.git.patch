@@ -1,0 +1,412 @@
+diff --git a/proofs/solidity-verifier/fixtures/ivc/README.md b/proofs/solidity-verifier/fixtures/ivc/README.md
+--- a/proofs/solidity-verifier/fixtures/ivc/README.md
++++ b/proofs/solidity-verifier/fixtures/ivc/README.md
+@@ -1,5 +1,15 @@
+ # IVC Public-Accumulator Replay Fixture
+ 
++> **STALE — regeneration required before any deployment.** These artifacts were
++> rendered before the MF-1 fix (`MODEXP_GAS` raised to the EIP-7883 bound and a
++> constructor modexp known-answer probe added), so the committed `.sol` files
++> here still carry the old 1360 bound and no modexp probe. They remain valid
++> inputs for the *replay* tests, which exercise verification logic rather than
++> the modexp bound, but they must be regenerated (and their provenance rows
++> below updated) on a host with the pinned solc before they are used as a
++> deployment source. Regeneration needs solc, which the environment that
++> applied the MF-1 fix did not have.
++
+ Pre-rendered artifacts for `tests/ivc_accumulator_replay.rs`, which replays a
+ real IVC final proof and then mutates the accumulator public inputs to check the
+ decoder in `templates/partials/verifier/AccumulatorHelpers.yul` rejects them.
+diff --git a/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md b/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
+--- a/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
++++ b/proofs/solidity-verifier/fixtures/moonlight-wrap/README.md
+@@ -1,5 +1,15 @@
+ # Moonlight Wrap point_pair Replay Fixture
+ 
++> **STALE — regeneration required before any deployment.** These artifacts were
++> rendered before the MF-1 fix (`MODEXP_GAS` raised to the EIP-7883 bound and a
++> constructor modexp known-answer probe added), so the committed `.sol` files
++> here still carry the old 1360 bound and no modexp probe. They remain valid
++> inputs for the *replay* tests, which exercise verification logic rather than
++> the modexp bound, but they must be regenerated (and their provenance rows
++> below updated) on a host with the pinned solc before they are used as a
++> deployment source. Regeneration needs solc, which the environment that
++> applied the MF-1 fix did not have.
++
+ Pre-rendered artifacts for the `point_pair` accumulator arm of
+ `tests/ivc_accumulator_replay.rs`. The IVC fixture next door covers
+ `AccumulatorEncoding::new` (explicit lhs/rhs scalars); this one covers
+diff --git a/proofs/solidity-verifier/src/evm.rs b/proofs/solidity-verifier/src/evm.rs
+--- a/proofs/solidity-verifier/src/evm.rs
++++ b/proofs/solidity-verifier/src/evm.rs
+@@ -346,6 +346,19 @@
+     /// are routed to revm's bundled implementations. The runner keeps an
+     /// `InMemoryDB` across calls so tests can deploy once and call many
+     /// times.
++    ///
++    /// MF-1 coverage gap, deliberately not papered over: this harness cannot
++    /// exercise a chain whose modexp is priced by EIP-7883. The pinned
++    /// revm 19 exposes `SpecId::OSAKA`, but that variant is Prague+EOF in this
++    /// version -- its `0x05` handler is `berlin_run`, i.e. EIP-2565 pricing
++    /// with the `/ 3` divisor -- so switching the spec here would produce
++    /// green tests that prove nothing about the repricing that bricked the
++    /// pre-fix bound. Raising real coverage needs a revm bump to a version
++    /// whose Osaka handler implements EIP-7883; until then, MF-1 is guarded
++    /// by `modexp_gas_bound_covers_every_live_schedule` (the bound is derived
++    /// from both EIP texts) and by the constructor's modexp known-answer
++    /// probe, which forwards the rendered bound and so fails at deployment on
++    /// any chain that prices modexp above it.
+     #[derive(Default)]
+     pub struct Evm {
+         db: InMemoryDB,
+diff --git a/proofs/solidity-verifier/src/lowering/layout/mod.rs b/proofs/solidity-verifier/src/lowering/layout/mod.rs
+--- a/proofs/solidity-verifier/src/lowering/layout/mod.rs
++++ b/proofs/solidity-verifier/src/lowering/layout/mod.rs
+@@ -139,7 +139,7 @@
+ 
+ pub(crate) mod gas {
+     //! Exact gas schedule for the precompiles the generated verifier calls,
+-    //! from EIP-2537 (BLS12-381) and EIP-2565 (modexp).
++    //! from EIP-2537 (BLS12-381) and EIP-2565/EIP-7883 (modexp).
+     //!
+     //! A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+     //! `STATICCALL`, so every generated call site forwards the exact scheduled
+@@ -153,11 +153,19 @@
+     //! amount succeeds by construction on any conformant implementation of
+     //! the current schedule.
+     //!
+-    //! Liveness caveat: if a future fork reprices these precompiles UPWARD,
+-    //! deployed verifiers start reverting on valid proofs and must be
+-    //! regenerated and redeployed. The constructor smoke probes forward the
+-    //! same bounds, so deployment onto an already-repriced chain fails fast
+-    //! instead of bricking at proof time.
++    //! Multi-schedule bounds: where more than one schedule is live across the
++    //! chains this verifier targets, the bound is the MAXIMUM over those
++    //! schedules rather than the one for a single fork (see
++    //! [`modexp_gas_word_frame`]). Over-forwarding costs nothing on success --
++    //! unused gas is returned -- and only widens the burn of one *failing*
++    //! call by the difference, whereas under-forwarding bricks the verifier.
++    //!
++    //! Liveness caveat: if a future fork reprices these precompiles above the
++    //! bounds rendered here, deployed verifiers start reverting on valid
++    //! proofs and must be regenerated and redeployed. The constructor smoke
++    //! probes forward the same bounds for every precompile the runtime
++    //! depends on -- EIP-2537 *and* modexp (MF-1) -- so deployment onto an
++    //! already-repriced chain fails fast instead of bricking at proof time.
+ 
+     /// EIP-2537 G1ADD flat cost.
+     pub(crate) const G1ADD_GAS: u64 = 375;
+@@ -196,23 +204,65 @@
+         32_600 * pairs + 37_700
+     }
+ 
+-    /// EIP-2565 modexp cost for the only frame shape the verifier emits:
+-    /// 32-byte base, 32-byte exponent, 32-byte modulus.
++    /// Modexp bound for the only frame shape the verifier emits: 32-byte
++    /// base, 32-byte exponent, 32-byte modulus.
++    ///
++    /// Two schedules are live across the chains this verifier targets, so the
++    /// rendered bound is the maximum of both:
++    ///
++    /// * **EIP-2565** (Berlin): `max(200, multiplication_complexity *
++    ///   iteration_count / 3)`. With `words = ceil(32/8) = 4` and
++    ///   `multiplication_complexity = words^2 = 16`, that is
++    ///   `max(200, 16 * 255 / 3) = 1360`.
++    /// * **EIP-7883** (Osaka/Fusaka): the `/ 3` divisor is **removed** and the
++    ///   floor is raised to 500, giving `max(500, 16 * 255) = 4080`.
++    ///
++    /// MF-1: this function previously returned only the EIP-2565 value and
++    /// asserted that EIP-7883 "only reprices operands wider than 32 bytes".
++    /// That reading was wrong. EIP-7883 changes two independent things: the
++    /// `multiplication_complexity` branch for `max_length > 32` (`2 * words^2`,
++    /// which indeed does not apply here), *and* the removal of the `/ 3`
++    /// divisor from the final `multiplication_complexity * iteration_count`
++    /// product, which applies to every operand size. A verifier rendered with
++    /// the 1360 bound deploys fine on a repriced chain and then reverts
++    /// `PrecompileFailed` on every proof, because `staticcall` forwards a
++    /// fixed amount and the precompile runs out of gas inside the mandatory
++    /// Lagrange batch inversion.
+     ///
+-    /// `words = ceil(32/8) = 4`, `multiplication_complexity = words^2 = 16`,
+-    /// `iteration_count <= 255` (32-byte exponent), so
+-    /// `max(200, 16 * 255 / 3) = 1360`. EIP-7883 (scheduled for Osaka) keeps
+-    /// the same result for these operand sizes: it raises the floor to 500
+-    /// (< 1360) and only reprices operands wider than 32 bytes.
++    /// `iteration_count` is the generic upper bound for any 32-byte exponent
++    /// (`exponent.bit_length() - 1 <= 255`). Both exponents the verifier
++    /// actually emits are `FR_MODULUS - 2`, whose 255-bit length gives 254
++    /// iterations and an exact EIP-7883 price of 4064; the extra 16 gas keeps
++    /// the bound valid for any 32-byte exponent a future emitter might use.
+     pub(crate) const fn modexp_gas_word_frame() -> u64 {
+         const WORDS: u64 = 4;
+         const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
++        // Upper bound over every 32-byte exponent: `bit_length() - 1 <= 255`.
+         const MAX_ITERATION_COUNT: u64 = 255;
+-        let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
+-        if cost < 200 {
+-            200
++
++        // EIP-2565: divisor 3, floor 200.
++        let eip2565 = {
++            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
++            if cost < 200 {
++                200
++            } else {
++                cost
++            }
++        };
++        // EIP-7883: no divisor, floor 500.
++        let eip7883 = {
++            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT;
++            if cost < 500 {
++                500
++            } else {
++                cost
++            }
++        };
++
++        if eip2565 > eip7883 {
++            eip2565
+         } else {
+-            cost
++            eip7883
+         }
+     }
+ }
+diff --git a/proofs/solidity-verifier/src/lowering/tests.rs b/proofs/solidity-verifier/src/lowering/tests.rs
+--- a/proofs/solidity-verifier/src/lowering/tests.rs
++++ b/proofs/solidity-verifier/src/lowering/tests.rs
+@@ -1459,14 +1459,107 @@
+     assert_eq!(gas::g1msm_gas(200), 200 * 12_000 * 519 / 1_000);
+     // 32600*k + 37700 for the verifier's two-pair check.
+     assert_eq!(gas::pairing_gas(2), 102_900);
+-    // EIP-2565, 32-byte base/exp/mod: max(200, 16 * 255 / 3).
+-    assert_eq!(gas::modexp_gas_word_frame(), 1_360);
+     // The rendered template constants come from the same module.
+     let constants = crate::lowering::render::TemplateConstants::default().gas;
+     assert_eq!(constants.g1add, 375);
+     assert_eq!(constants.g1msm_one_pair, 12_000);
+     assert_eq!(constants.pairing_two_pair, 102_900);
+-    assert_eq!(constants.modexp, 1_360);
++    assert_eq!(constants.modexp, gas::modexp_gas_word_frame());
++}
++
++/// MF-1: the modexp bound must cover EVERY live schedule, not just the one
++/// that happened to be current when the generator was written. Derive both
++/// prices here from their EIP texts instead of asserting one magic number, so
++/// the next repricing forces a conscious edit rather than a silent brick:
++/// `staticcall` forwards a fixed amount, so a bound below the chain's price
++/// makes the precompile OOG and every proof revert.
++#[test]
++fn modexp_gas_bound_covers_every_live_schedule() {
++    use crate::lowering::layout::gas;
++
++    // Shared inputs for the only frame the verifier emits (32-byte base,
++    // exponent, and modulus).
++    const WORDS: u64 = 32_u64.div_ceil(8);
++    const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
++    // `exponent.bit_length() - 1` for a 32-byte exponent, upper-bounded.
++    const ITERATION_COUNT: u64 = 255;
++
++    // EIP-2565: `max(200, multiplication_complexity * iteration_count / 3)`.
++    let eip2565 = std::cmp::max(200, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT / 3);
++    assert_eq!(eip2565, 1_360, "EIP-2565 price for the 32-byte frame");
++
++    // EIP-7883: the `/ 3` divisor is removed for EVERY operand size (only the
++    // `2 * words^2` complexity branch is width-specific) and the floor rises
++    // to 500: `max(500, multiplication_complexity * iteration_count)`.
++    let eip7883 = std::cmp::max(500, MULTIPLICATION_COMPLEXITY * ITERATION_COUNT);
++    assert_eq!(eip7883, 4_080, "EIP-7883 price for the 32-byte frame");
++
++    assert_eq!(
++        gas::modexp_gas_word_frame(),
++        std::cmp::max(eip2565, eip7883),
++        "modexp bound must be the maximum over live schedules"
++    );
++    assert!(
++        gas::modexp_gas_word_frame() >= eip7883,
++        "a bound below the EIP-7883 price bricks every proof on Osaka/Fusaka \
++         chains: the fixed-gas staticcall OOGs inside the mandatory Lagrange \
++         batch inversion and verifyProof reverts PrecompileFailed"
++    );
++
++    // The exponent the verifier actually emits is FR_MODULUS - 2 (255 bits,
++    // so 254 iterations); the generic bound must cover its exact price too.
++    assert!(gas::modexp_gas_word_frame() >= MULTIPLICATION_COMPLEXITY * 254);
++}
++
++/// MF-1: modexp is the one precompile the runtime cannot do without -- the
++/// Lagrange batch inversion calls it on every proof -- and it was the one
++/// precompile the constructor never probed, so a stale bound deployed
++/// silently. Pin the probe's shape: right precompile, the pinned runtime
++/// bound (not `gas()`), a return-size check, and a known answer a stub
++/// cannot satisfy.
++#[test]
++fn constructor_probes_modexp_at_the_pinned_runtime_bound() {
++    let smoke = include_str!("../../templates/partials/verifier/PrecompileSmoke.sol");
++
++    assert!(
++        smoke.contains("staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}"),
++        "constructor must probe modexp at the same bound the runtime forwards"
++    );
++    assert!(
++        smoke.contains(
++            "if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }"
++        ),
++        "modexp probe must check the returned size"
++    );
++    // 2^(r-2) == 2^-1, verified as mulmod(result, 2, r) == 1: a precompile
++    // that returns zeros, or echoes its input, fails this.
++    assert!(
++        smoke.contains("mstore(add(scratch, {{ template_constants.modexp.base_offset|hex() }}), 2)")
++            && smoke.contains(
++                "mstore(add(scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))"
++            )
++            && smoke.contains("if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }"),
++        "modexp probe must run the runtime's own Fermat inversion as a known-answer test"
++    );
++
++    // Every precompile the runtime calls is now probed at its pinned bound.
++    for (probe, gas_constant) in [
++        ("modexp.address", "MODEXP_GAS"),
++        ("eip2537.g1add_address", "G1ADD_GAS"),
++        ("eip2537.g1msm_address", "G1MSM_GAS_1PAIR"),
++        ("eip2537.pairing_address", "PAIRING_GAS_2PAIR"),
++    ] {
++        assert!(
++            smoke.contains(&format!(
++                "staticcall({gas_constant}, {{{{ template_constants.{probe}|hex() }}}}"
++            )),
++            "constructor smoke probe missing for {probe} at {gas_constant}"
++        );
++    }
++    assert!(
++        !smoke.contains("staticcall(gas()"),
++        "smoke probes must forward pinned bounds, not gas()"
++    );
+ }
+ 
+ #[test]
+@@ -1560,10 +1653,14 @@
+         "generated verifier should include a deployment-time runtime prerequisite smoke test"
+     );
+     for required in [
+-        "Smoke-check the Cancun/EIP-2537 runtime features",
++        "Smoke-check the Cancun/EIP-2537/modexp runtime features",
+         "mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})",
+         "eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)",
+         "non-Cancun fork fails during deployment",
++        // MF-1: modexp is a runtime prerequisite like any other precompile.
++        "modexp (0x05) known-answer probe at the pinned runtime bound",
++        "staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}",
++        "if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }",
+         "G1ADD(identity, identity) -> identity",
+         "Known-answer probe: G1ADD(G, G) == 2G",
+         "template_constants.eip2537.g1_generator",
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/Constants.sol b/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
+--- a/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
++++ b/proofs/solidity-verifier/templates/partials/verifier/Constants.sol
+@@ -169,7 +169,8 @@
+     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = {{ memory.quotient_limb_comms_mptr_base }};
+ 
+     // ----------------------------------------------------------------------
+-    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
++    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the
++    // maximum over the EIP-2565 and EIP-7883 schedules.
+     //
+     // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+     // STATICCALL, so every generated call site forwards the exact scheduled
+@@ -179,9 +180,17 @@
+     // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
+     // by construction on any conformant chain.
+     //
+-    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
+-    // this verifier must be regenerated and redeployed. The constructor
+-    // smoke probes forward the same bounds, so deployment onto an
++    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this
++    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and
++    // prices it at 4080, so the larger bound is rendered. Forwarding the
++    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is
++    // returned -- while forwarding the EIP-2565 bound on a repriced chain
++    // reverts every proof.
++    //
++    // Liveness caveat: if a future fork reprices these precompiles above the
++    // bounds below, this verifier must be regenerated and redeployed. The
++    // constructor smoke probes forward the same bounds for EVERY precompile
++    // the runtime calls, modexp included, so deployment onto an
+     // already-repriced chain fails fast instead of bricking at proof time.
+     // ----------------------------------------------------------------------
+     uint256 internal constant          G1ADD_GAS = {{ template_constants.gas.g1add }};
+diff --git a/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol b/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
+--- a/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
++++ b/proofs/solidity-verifier/templates/partials/verifier/PrecompileSmoke.sol
+@@ -1,9 +1,10 @@
+-    /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
+-    /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+-    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
+-    ///      uses (see the gas-bound constants block), so a chain whose
+-    ///      precompile schedule was repriced upward fails here, at deployment,
+-    ///      instead of bricking verifyProof later.
++    /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features required by the verifier.
++    /// @dev Exercises MCOPY, modexp, and EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
++    ///      The probes forward the same exact gas bounds the runtime uses, for
++    ///      every precompile it calls -- 0x05 modexp included (see the
++    ///      gas-bound constants block) -- so a chain whose precompile schedule
++    ///      was repriced above those bounds fails here, at deployment, instead
++    ///      of bricking verifyProof later.
+     function require_eip2537_precompiles() private view {
+         assembly ("memory-safe") {
+             // Same free-memory-pointer guard as verifyProof. This body runs in
+@@ -21,8 +22,39 @@
+             mcopy(add(scratch, {{ template_constants.word_bytes|hex() }}), scratch, {{ template_constants.word_bytes|hex() }})
+             if iszero(eq(mload(add(scratch, {{ template_constants.word_bytes|hex() }})), 0x1234)) { revert(0, 0) }
+ 
++            // ----------------------------------------------------------------
++            // modexp (0x05) known-answer probe at the pinned runtime bound.
++            //
++            // MF-1: every other precompile the runtime calls was probed here,
++            // but modexp -- which the MANDATORY Lagrange batch inversion and
++            // every scalar_inv call depend on -- was not. Two live schedules
++            // price this frame differently (EIP-2565: 1360, EIP-7883: 4080),
++            // and a bound below the chain's price does not degrade: the
++            // staticcall forwards a fixed amount, the precompile OOGs, and
++            // EVERY proof reverts PrecompileFailed. Without this probe that
++            // failure is invisible until the first verifyProof call, on a
++            // contract that deployed cleanly.
++            //
++            // The vector is the runtime's own operation -- Fermat inversion
++            // in Fr -- so it exercises the exact frame shape, exponent width,
++            // and gas bound used at proof time: 2^(FR_MODULUS - 2) == 2^-1.
++            // Checking mulmod(result, 2, FR_MODULUS) == 1 rather than a
++            // rendered constant keeps the probe self-contained while still
++            // rejecting a stub: a precompile returning zeros (or its input)
++            // fails, since 0 * 2 != 1 mod r.
++            // ----------------------------------------------------------------
++            mstore(add(scratch, {{ template_constants.modexp.base_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // base len
++            mstore(add(scratch, {{ template_constants.modexp.exp_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // exp len
++            mstore(add(scratch, {{ template_constants.modexp.mod_len_offset|hex() }}), {{ template_constants.word_bytes|hex() }})        // mod len
++            mstore(add(scratch, {{ template_constants.modexp.base_offset|hex() }}), 2)
++            mstore(add(scratch, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))
++            mstore(add(scratch, {{ template_constants.modexp.mod_offset|hex() }}), FR_MODULUS)
++            if iszero(staticcall(MODEXP_GAS, {{ template_constants.modexp.address|hex() }}, scratch, {{ template_constants.modexp.frame_bytes|hex() }}, scratch, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
++            if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
++            if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }
++
+             // Start the EIP-2537 probes with the identity encoding for G1/G2:
+-            // all-zero padded words.
++            // all-zero padded words. This also clears the modexp frame above.
+             for { let off := 0 } lt(off, {{ template_constants.eip2537.smoke_scratch_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {
+                 mstore(add(scratch, off), 0)
+             }
+diff --git a/proofs/solidity-verifier/tests/template_digest.rs b/proofs/solidity-verifier/tests/template_digest.rs
+--- a/proofs/solidity-verifier/tests/template_digest.rs
++++ b/proofs/solidity-verifier/tests/template_digest.rs
+@@ -13,7 +13,7 @@
+ 
+ /// keccak over the sorted (path, length, content) stream of `templates/`.
+ const EXPECTED_TEMPLATE_TREE_DIGEST: &str =
+-    "0x0809729cd0ee884736704458fbc53a2afc62c0de675b3a749b3c22c9ac797671";
++    "0xfe89267c0778787678b938eb6f56f5e79f4bc11578786da45f2aad82384349d9";
+ 
+ fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+     for entry in fs::read_dir(dir).expect("template directory is readable") {

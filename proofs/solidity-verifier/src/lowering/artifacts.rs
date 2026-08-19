@@ -69,6 +69,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
     /// Build the Askama model for the main Solidity verifier contract from an
     /// already-converged lowering plan.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn generate_verifier_from_plan(
         &self,
         plan: &LoweringPlan,
@@ -77,6 +78,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         gas_checkpoints: bool,
         external_quotient: bool,
         expected_quotient: Option<(usize, U256)>,
+        provenance: Option<[u8; 32]>,
     ) -> Halo2Verifier {
         assert!(
             expected_quotient.is_none() || external_quotient,
@@ -101,6 +103,39 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             U256::from_be_bytes(digest)
         });
         let vk_len = plan.vk.len();
+        // BUILD_ID (P10/L-8): one on-chain constant that identifies the build.
+        // Preimage: domain tag, length-prefixed feature profile (from
+        // build.rs), vk_digest, expected VK codehash (zero when embedded),
+        // SRS fingerprint, and the optional deployment provenance tag.
+        // Deployment records must publish these components so third parties
+        // can recompute the id; see
+        // docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md.
+        let build_id = {
+            let vk_digest = plan
+                .vk
+                .constants
+                .iter()
+                .find(|(name, _)| *name == "vk_digest")
+                .expect("VK header always carries vk_digest")
+                .1;
+            let features = env!("SOLIDITY_VERIFIER_FEATURES");
+            let mut hasher = Keccak256::new();
+            hasher.update(b"halo2-solidity-verifier-build-v1");
+            hasher.update((features.len() as u64).to_be_bytes());
+            hasher.update(features.as_bytes());
+            hasher.update(vk_digest.to_be_bytes::<32>());
+            hasher.update(expected_vk_codehash.unwrap_or_default().to_be_bytes::<32>());
+            hasher.update(self.srs_fingerprint());
+            match provenance {
+                Some(tag) => {
+                    hasher.update([1u8]);
+                    hasher.update(tag);
+                }
+                None => hasher.update([0u8]),
+            }
+            let digest: [u8; 32] = hasher.finalize().into();
+            U256::from_be_bytes(digest)
+        };
         let (expected_quotient_len, expected_quotient_codehash) = expected_quotient
             .map(|(len, codehash)| (Some(len), Some(codehash)))
             .unwrap_or((None, None));
@@ -157,6 +192,19 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     let num_fixed_bases = fixed_scalar_count
                         .checked_sub(1 + num_perm_bases)
                         .expect("accumulator fixed scalar count is smaller than -G + permutations");
+                    // Each generated base below is `fixed_comm_mptr + i * 0x80`,
+                    // so more bases than the VK has fixed commitments would
+                    // point past the region into the permutation commitments
+                    // and then the rest of the VK payload. SolidityGenerator::
+                    // try_new rejects this shape with a typed error; fail
+                    // closed here too, since this is where the out-of-region
+                    // pointers would actually be emitted.
+                    assert!(
+                        num_fixed_bases <= plan.vk.fixed_comms.len(),
+                        "accumulator fixed-base count {num_fixed_bases} exceeds the VK \
+                         fixed-commitment region ({} commitments)",
+                        plan.vk.fixed_comms.len()
+                    );
 
                     std::iter::once(("-G".to_string(), g1_base_mptr_byte, true))
                         .chain((0..num_fixed_bases).map(|i| {
@@ -175,7 +223,10 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         }))
                         .collect::<Vec<_>>()
                 };
-                debug_assert_eq!(
+                // Holds by construction of `bases` above; kept as a cheap
+                // guard on the one-to-one correspondence with the scalars the
+                // generated verifier reads from calldata.
+                assert_eq!(
                     bases.len(),
                     fixed_scalar_count,
                     "accumulator fixed-base scalar tail must match generated bases"
@@ -213,11 +264,29 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_limb7_helper: quotient_helper_flags.limb7,
             quotient_wide_limb7_helper: quotient_helper_flags.wide_limb7,
             constructor_g1msm_smoke_input_bytes: plan.memory.constructor_g1msm_smoke_input_bytes,
+            constructor_g1msm_smoke_gas: {
+                let smoke_bytes = plan.memory.constructor_g1msm_smoke_input_bytes;
+                assert_eq!(
+                    smoke_bytes % layout::G1_MSM_PAIR_BYTES,
+                    0,
+                    "constructor G1MSM smoke input is not a whole number of pairs"
+                );
+                layout::gas::g1msm_gas(smoke_bytes / layout::G1_MSM_PAIR_BYTES)
+            },
+            acc_rhs_msm_gas: if expected_has_accumulator {
+                // Worst case: carried RHS point plus every fixed-base tail
+                // scalar nonzero. Zero scalars are omitted at runtime, which
+                // only shrinks the MSM below this bound.
+                layout::gas::g1msm_gas(1 + acc_fixed_bases.len())
+            } else {
+                0
+            },
             limb7_yul_coeffs: LIMB7_YUL_COEFFS,
             wide_limb7_yul_coeffs: WIDE_LIMB7_YUL_COEFFS,
             fr_delta: fr_delta_literal(),
             embedded_vk: (!separate).then(|| plan.vk.clone()),
             expected_vk_codehash,
+            build_id,
             vk_len,
             num_instances: self.num_instances,
             k: self.vk.get_domain().k() as usize,

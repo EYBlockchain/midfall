@@ -15,6 +15,7 @@ struct VerifierRenderPlan {
     gas_checkpoints: bool,
     external_quotient: bool,
     expected_quotient: Option<(usize, U256)>,
+    provenance: Option<[u8; 32]>,
 }
 
 impl<'a> SolidityGenerator<'a> {
@@ -39,6 +40,7 @@ impl<'a> SolidityGenerator<'a> {
             gas_checkpoints: options.diagnostics.gas_checkpoints,
             external_quotient,
             expected_quotient,
+            provenance: options.provenance,
         };
         let verifier = self.render_verifier_source_with_plan(&inputs, &plan, render_plan)?;
 
@@ -109,6 +111,7 @@ impl<'a> SolidityGenerator<'a> {
                 render_plan.gas_checkpoints,
                 render_plan.external_quotient,
                 render_plan.expected_quotient,
+                render_plan.provenance,
             )
             .render(&mut verifier_output)
             .map_err(|_| GeneratorError::Render {

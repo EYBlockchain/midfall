@@ -13,6 +13,7 @@ use std::{
 };
 
 use ff::PrimeField;
+use group::prime::PrimeCurveAffine;
 use itertools::{izip, Itertools};
 use midnight_curves::{Coordinates, CurveAffine, Fq, G1Affine, G2Affine};
 use midnight_proofs::plonk::{Any, Column, ConstraintSystem};
@@ -137,10 +138,25 @@ impl ConstraintSystemMeta {
     /// verifier *reads* from the proof transcript (vs. computes locally
     /// via Lagrange interpolation). For the poseidon example this is 0;
     /// for IVC-style fixtures with committed inputs it would be > 0.
+    ///
+    /// Panics if the constraint system is outside the supported verifier shape.
+    /// Use [`ConstraintSystemMeta::try_new`] on fallible paths. Production
+    /// codegen goes through `SolidityGenerator::try_new`, which promises a
+    /// typed error, so this panicking form is test-only.
+    #[cfg(test)]
     pub(crate) fn new(cs: &ConstraintSystem<Fq>, nb_committed_instances: usize) -> Self {
-        let protocol = ProtocolPlan::from_constraint_system(cs, nb_committed_instances);
+        Self::try_new(cs, nb_committed_instances)
+            .unwrap_or_else(|err| panic!("invalid protocol plan: {err}"))
+    }
 
-        Self {
+    /// Fallible counterpart of the test-only `ConstraintSystemMeta::new`.
+    pub(crate) fn try_new(
+        cs: &ConstraintSystem<Fq>,
+        nb_committed_instances: usize,
+    ) -> Result<Self, String> {
+        let protocol = ProtocolPlan::try_from_constraint_system(cs, nb_committed_instances)?;
+
+        Ok(Self {
             protocol: protocol.clone(),
             num_fixeds: protocol.num_fixeds,
             permutation_columns: protocol.permutation_columns.clone(),
@@ -163,7 +179,7 @@ impl ConstraintSystemMeta {
             advice_indices: protocol.advice_indices.clone(),
             challenge_indices: protocol.challenge_indices.clone(),
             rotation_last: protocol.rotation_last,
-        }
+        })
     }
 
     /// Check legacy scalar fields against the typed protocol plan.
@@ -249,7 +265,9 @@ pub(crate) struct Data {
     /// User challenge words.
     pub(crate) challenges: Vec<Word>,
 
-    /// Locally-computed non-committed instance evaluation.
+    /// Locally-computed non-committed instance evaluation at `Rotation::cur()`.
+    /// `SolidityGenerator::try_new` rejects rotated instance queries, so this
+    /// stays a single word instead of a `(column, rotation)` map.
     pub(crate) instance_eval: Word,
     /// Per-(committed-instance-column, rotation): the calldata word for
     /// that committed instance evaluation. Empty when
@@ -273,8 +291,7 @@ pub(crate) struct Data {
     pub(crate) computed_quotient_eval: Word,
 
     /// Word offset (in the verifier's static memory map) of the start of
-    /// the per-category EIP-2537-padded commitment region. See the
-    /// `KNOWN BUG` block in `Data::new` for the layout convention.
+    /// the per-category EIP-2537-padded commitment region.
     pub(crate) comms_mptr_base: Ptr,
     /// Memory base of the decoded-evals buffer (Optimisation H3). The
     /// transcript-side `evaluations` loop spills the decoded scalar value to
@@ -285,7 +302,9 @@ pub(crate) struct Data {
     /// fewer-point-sets path. Empty when the feature is disabled. The
     /// dummy buffer is laid out immediately after the main reversed-
     /// evals buffer; `dummy_eval_words[i]` points at
-    /// `REVERSED_EVALS_MPTR + (num_evals + i) * 0x20`. The transcript
+    /// `REVERSED_EVALS_MPTR + (num_main_evals + i) * 0x20`, where
+    /// `num_main_evals` is the eval count *before* dummies are appended
+    /// (not `meta.num_evals`, which already includes them). The transcript
     /// loop reads `num_dummy_evals` extra Fr scalars after the main
     /// eval block and spills them into this buffer the same way the
     /// main loop does.
@@ -306,6 +325,27 @@ impl Data {
         // BLS12-381 G1 commitments occupy 4 words (EIP-2537 padded), so the
         // stride between consecutive points is 4 instead of the BN254-era 2.
         let fixed_comm_mptr = memory.vk_mptr + vk.constants.len();
+        // The fixed-commitment region is consumed as meta.num_fixeds slots
+        // (EcPoint::range(fixed_comm_mptr).take(meta.num_fixeds) below), but the
+        // permutation base is advanced past vk.fixed_comms.len() of them. If the
+        // two counts ever diverge, the fixed and permutation commitment regions
+        // would silently overlap or leave a gap, so require them equal here.
+        assert_eq!(
+            vk.fixed_comms.len(),
+            meta.num_fixeds,
+            "VK fixed commitment count must match constraint-system fixed count"
+        );
+        // Same argument for the permutation region: `permutation_comms` below
+        // zips `meta.permutation_columns` against `EcPoint::range(...)`, and
+        // `izip!` silently truncates to the shorter side. A VK carrying fewer
+        // commitments than the constraint system has permutation columns would
+        // therefore drop columns from the permutation argument rather than
+        // fail.
+        assert_eq!(
+            vk.permutation_comms.len(),
+            meta.permutation_columns.len(),
+            "VK permutation commitment count must match constraint-system permutation column count"
+        );
         let permutation_comm_mptr = fixed_comm_mptr + G1_WORDS * vk.fixed_comms.len();
         let challenge_mptr = memory.challenge_mptr;
         let theta_mptr = memory.theta_mptr;
@@ -579,11 +619,17 @@ pub(crate) enum Location {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Value {
-    /// Byte offset stored as signed so that the BLS code-gen can compute
-    /// `ptr - N` even when `N` exceeds the original offset (the result
-    /// only ever appears as `ptr_end` in `lt(ptr_end, ptr)` style loops
-    /// where any value strictly less than the smallest visited address is
-    /// acceptable).
+    /// Byte offset. Stored as signed for historical reasons; concrete
+    /// offsets must be non-negative and `Display` panics otherwise.
+    ///
+    /// A negative offset has no correct rendering here. It used to be
+    /// emitted as `sub(0, N)`, which in EVM unsigned arithmetic is
+    /// `2^256 - N` -- the *largest* representable word. The previous
+    /// comment claimed such a value was safe because it "only ever appears
+    /// as `ptr_end` in `lt(ptr_end, ptr)` style loops where any value
+    /// strictly less than the smallest visited address is acceptable", but
+    /// `lt` is unsigned, so it is larger than every address and such a loop
+    /// runs zero iterations.
     Integer(isize),
     /// A symbolic Yul identifier `name`, with an optional byte-offset that
     /// will be rendered as `add(name, 0xNN)` (or just `name` when zero).
@@ -594,7 +640,19 @@ impl Value {
     /// Return the concrete offset, panicking for symbolic identifiers.
     pub(crate) fn as_usize(&self) -> usize {
         match self {
-            Value::Integer(int) => *int as usize,
+            Value::Integer(int) => {
+                // `Integer` is signed only so BLS pointer math can produce
+                // negative `ptr_end` sentinels for `lt(ptr_end, ptr)` loops. A
+                // concrete memory address is never negative; `*int as usize` on
+                // a negative value would wrap to a near-2^word offset and
+                // silently corrupt every derived mload/mstore, so fail closed.
+                assert!(
+                    *int >= 0,
+                    "Value::as_usize on negative offset {int}: signed offsets are \
+                     only valid as lt()-loop sentinels, not concrete addresses"
+                );
+                *int as usize
+            }
             Value::Identifier(..) => unreachable!(),
         }
     }
@@ -636,27 +694,15 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Value::Integer(int) if *int >= 0 => write!(f, "{}", fmt_hex(*int)),
-            Value::Integer(int) => write!(f, "sub(0, {})", fmt_hex(-*int)),
+            Value::Integer(int) => {
+                panic!("negative pointer offset {int} has no correct Yul rendering")
+            }
             Value::Identifier(ident, 0) => write!(f, "{ident}"),
             Value::Identifier(ident, off) if *off > 0 => {
                 write!(f, "add({ident}, {})", fmt_hex(*off))
             }
             Value::Identifier(ident, off) => {
                 write!(f, "sub({ident}, {})", fmt_hex(-*off))
-            }
-        }
-    }
-}
-
-impl Add<usize> for Value {
-    /// Pointer-expression value after word-wise addition.
-    type Output = Value;
-    /// Advance by `rhs` EVM words.
-    fn add(self, rhs: usize) -> Self::Output {
-        match self {
-            Value::Integer(int) => Value::Integer(int + (rhs as isize) * WORD_BYTES as isize),
-            Value::Identifier(name, off) => {
-                Value::Identifier(name, off + (rhs as isize) * WORD_BYTES as isize)
             }
         }
     }
@@ -671,6 +717,20 @@ impl Sub<usize> for Value {
             Value::Integer(int) => Value::Integer(int - (rhs as isize) * WORD_BYTES as isize),
             Value::Identifier(name, off) => {
                 Value::Identifier(name, off - (rhs as isize) * WORD_BYTES as isize)
+            }
+        }
+    }
+}
+
+impl Add<usize> for Value {
+    /// Pointer-expression value after word-wise addition.
+    type Output = Value;
+    /// Advance by `rhs` EVM words.
+    fn add(self, rhs: usize) -> Self::Output {
+        match self {
+            Value::Integer(int) => Value::Integer(int + (rhs as isize) * WORD_BYTES as isize),
+            Value::Identifier(name, off) => {
+                Value::Identifier(name, off + (rhs as isize) * WORD_BYTES as isize)
             }
         }
     }
@@ -719,22 +779,22 @@ impl Display for Ptr {
     }
 }
 
-impl Add<usize> for Ptr {
-    /// Pointer with the same location and advanced value.
-    type Output = Ptr;
-    /// Advance by `rhs` EVM words while preserving location.
-    fn add(mut self, rhs: usize) -> Self::Output {
-        self.value = self.value + rhs;
-        self
-    }
-}
-
 impl Sub<usize> for Ptr {
     /// Pointer with the same location and rewound value.
     type Output = Ptr;
     /// Move backward by `rhs` EVM words while preserving location.
     fn sub(mut self, rhs: usize) -> Self::Output {
         self.value = self.value - rhs;
+        self
+    }
+}
+
+impl Add<usize> for Ptr {
+    /// Pointer with the same location and advanced value.
+    type Output = Ptr;
+    /// Advance by `rhs` EVM words while preserving location.
+    fn add(mut self, rhs: usize) -> Self::Output {
+        self.value = self.value + rhs;
         self
     }
 }
@@ -795,7 +855,7 @@ impl EcPoint {
     /// Infinite iterator of consecutive padded G1 points.
     pub(crate) fn range(base: impl Into<EcPoint>) -> impl Iterator<Item = EcPoint> {
         let base = base.into().base;
-        (0..).map(move |idx| EcPoint::new(base + 4 * idx))
+        (0..).map(move |idx| EcPoint::new(base + G1_WORDS * idx))
     }
 
     /// Return the pointer to the first word.
@@ -832,8 +892,18 @@ fn fp48_be_to_hi_lo(be: &[u8]) -> (U256, U256) {
 /// big-endian and split (hi=top 16 bytes padded into u256, lo=bottom 32
 /// bytes).
 pub(crate) fn g1_to_u256s(ec_point: impl Borrow<G1Affine>) -> [U256; 4] {
-    let Some(coords) = Option::<Coordinates<G1Affine>>::from(ec_point.borrow().coordinates())
-    else {
+    let point = ec_point.borrow();
+    let Some(coords) = Option::<Coordinates<G1Affine>>::from(point.coordinates()) else {
+        // `coordinates()` returns None for the identity *and* for any off-curve
+        // point. The all-zero words below are the EIP-2537 encoding of the point
+        // at infinity, so silently returning them for an off-curve input would
+        // bake an identity commitment into the verifier. Only the identity may
+        // take this path; anything else is a malformed/corrupted point and must
+        // fail codegen rather than degrade a soundness-critical constant.
+        assert!(
+            bool::from(point.is_identity()),
+            "refusing to EIP-2537 encode an off-curve G1 point as the identity"
+        );
         return [U256::ZERO; 4];
     };
     let mut x_be = [0u8; BLS_FP_BYTES];
@@ -854,8 +924,16 @@ pub(crate) fn g1_to_u256s(ec_point: impl Borrow<G1Affine>) -> [U256; 4] {
 /// in big-endian per coord. The midnight-curves convention matches:
 /// each `Fp` coordinate read via `to_repr()` returns LE bytes.
 pub(crate) fn g2_to_u256s(ec_point: impl Borrow<G2Affine>) -> [U256; 8] {
-    let Some(coords) = Option::<Coordinates<G2Affine>>::from(ec_point.borrow().coordinates())
-    else {
+    let point = ec_point.borrow();
+    let Some(coords) = Option::<Coordinates<G2Affine>>::from(point.coordinates()) else {
+        // See `g1_to_u256s`: `coordinates()` also returns None for off-curve G2
+        // points, whose all-zero encoding would collapse to the identity (e.g.
+        // a corrupted `s_g2` degenerating the `e(w, -s*G2)` pairing term). Only
+        // the genuine identity may be encoded as zeros.
+        assert!(
+            bool::from(point.is_identity()),
+            "refusing to EIP-2537 encode an off-curve G2 point as the identity"
+        );
         return [U256::ZERO; 8];
     };
 

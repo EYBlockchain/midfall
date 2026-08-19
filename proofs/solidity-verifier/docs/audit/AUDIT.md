@@ -1,5 +1,27 @@
 # CTF Vulnerability Analysis: Halo2 Solidity Verifier
 
+> **Path-migration note (2026-08-12).** The findings below were written
+> against the pre-rename source tree. `src/codegen/` no longer exists; it was
+> refactored into `src/lowering/`. The historical citations (including old
+> line numbers) are preserved verbatim as the audit record; to re-verify a
+> finding against the current tree, translate paths with this map:
+>
+> | Historical path | Current location |
+> | --- | --- |
+> | `src/codegen.rs`, `src/codegen/mod.rs` | `src/lowering/mod.rs` (pipeline root), `src/lowering/plan.rs` (planning), `src/lowering/artifacts.rs` (artifact assembly) |
+> | `src/codegen/generator.rs` | `src/lowering/plan.rs` + `src/lowering/artifacts.rs` + `src/lowering/render/` |
+> | `src/codegen/template.rs` | `src/lowering/render/models.rs` |
+> | `src/codegen/protocol.rs` | `src/lowering/protocol/mod.rs` |
+> | `src/codegen/proof_layout.rs` | `src/lowering/abi/proof.rs` |
+> | `src/codegen/evaluator.rs` | `src/lowering/quotient_numerator/{mod,yul_emit,vm/mod}.rs` |
+> | `src/codegen/quotient/mod.rs` | `src/lowering/quotient.rs` + `src/lowering/quotient_numerator/vm/mod.rs` |
+> | `src/codegen/pcs.rs` | `src/lowering/kzg/mod.rs` |
+> | `src/codegen/util.rs` | `src/lowering/encoding/mod.rs` + `src/lowering/layout/mod.rs` |
+> | `src/transcript.rs` | `templates/partials/verifier/TranscriptProofParser.yul` + `src/lowering/abi/` |
+>
+> `templates/contracts/Halo2Verifier.sol` still exists but is now assembled
+> from the partials in `templates/partials/verifier/`.
+
 ## 2026-05-02 audit addendum: PCS scratch layout and instance-column shape
 
 Scope: current dirty worktree for the Halo2/Midnight Solidity verifier
@@ -798,7 +820,7 @@ The current `templates/contracts/Halo2Verifier.sol` blocks this path via `AUTHOR
    F-9  │ Low           │ `if mload(HAS_ACCUMULATOR_MPTR)` is read from VK but it is not cross-checked against the codegen-side `acc_encoding`
    I-10 │ Informational │ Generator forces `vk.cs().num_instance_columns() <= 1` and `Rotation::cur()` only - silent "not yet implemented" panics if violated
    I-11 │ Informational │ `n_inv` and `omega_inv_to_l` are never re-derived from `k`/`omega` on chain - a malicious VK that bypasses the codehash pin can lie
-   I-12 │ Informational │ `mod(hash, r)` introduces ~2^-255 bias; standard practice, kept for completeness
+   I-12 │ Informational │ `mod(hash, r)` is measurably biased (1.5x max/min density, ~0.075 statistical distance), not ~2^-255; bounded soundness cost, no action
 
    The mitigations that have already landed (in particular the AUTHORIZED_VK + EXPECTED_VK_CODEHASH pinning at constructor time, commit 54b2943) close the original
    "caller-controlled VK" hole from AUDIT.md finding #1, and the EIP-2537 pairing precompile transitively covers G2 subgroup checks (BN254 audit finding #2).
@@ -1056,7 +1078,41 @@ The current `templates/contracts/Halo2Verifier.sol` blocks this path via `AUTHOR
 
    I-12 - Bias in `mod(hash, r)`
 
-   r = 0x73eda7…00000001 ≈ 2^254.86. With a 256-bit hash, the bias is ~2^256 / r - 1 ≈ 2^-254, completely negligible. Standard practice; no action.
+   Correction. An earlier revision of this item stated "the bias is ~2^256 / r - 1 ≈ 2^-254, completely negligible". That is wrong: 2^256 / r - 1 = 1.208, not 2^-254. The
+   arithmetic only yields a negligible quantity when r ≈ 2^256, and here r ≈ 2^254.86, so 2^256 / r ≈ 2.208. The conclusion (informational, no action) still holds, but for a
+   different reason and with a much larger constant than the original text implied. The numbers below are the actual ones.
+
+   Where. `sample_keccak_digest_be_mod_r` (midfall/proofs/src/transcript/implementors.rs:19) reduces one 256-bit Keccak digest mod r:
+   `BigUint::from_bytes_be(&hash_output) % modulus`. The generated Yul mirrors it exactly in `squeeze_to`
+   (templates/partials/verifier/AssemblyHelpers.yul, `mstore(mptr, mod(h0, r))`). The bias is therefore inherited from the native Midfall transcript, not introduced by this
+   codegen, and the two sides agree bit-for-bit. Removing it would be a transcript change on both sides, not a Solidity-only fix.
+
+   Magnitude. With r = 0x73eda753…00000001:
+
+     r / 2^256          = 0.452845
+     floor(2^256 / r)   = 2
+     R = 2^256 mod r    = 0.094310 * 2^256
+
+   So residues in [0, R) have 3 preimages under the reduction and residues in [R, r) have 2. That gives:
+
+     max/min density ratio       = exactly 1.5
+     statistical distance        ≈ 0.0747
+     max density / uniform       = 3r / 2^256 ≈ 1.3585   (0.442 bits)
+
+   The last line is the quantity that enters a soundness reduction: any event has probability at most 1.3585x its probability under a uniform challenge. The 1.5 figure is the
+   spread between the most and least likely residue, which is a valid but looser bound.
+
+   Impact. Ten challenges are squeezed. Three do not consume a full-width sample: `x3` is truncated to 128 bits at squeeze time, and `x1` / `x4` are consumed only through
+   truncated powers (see the `truncated-challenges` feature). The remaining seven - theta, beta, gamma, trash_challenge, y, x, x2 - are used at full width. Compounding the
+   per-challenge factor over those seven:
+
+     tight   1.3585^7 ≈ 8.5x    (3.09 bits)
+     loose   1.5^7    ≈ 17.1x   (4.09 bits)
+
+   Against a ~254.86-bit challenge space, that moves a 2^-254 soundness error to roughly 2^-251. Negligible in absolute terms, which is why this stays Informational.
+
+   Recommendation. No action for the current deployment. If the transcript is ever revised, sample challenges by rejection or by reducing a wider digest (e.g. 512 bits, giving
+   statistical distance < 2^-250), and change the Rust and Yul sides together. Do not "fix" only the Solidity side: the two must produce identical challenges.
 
    ──────────────────────────────────────────
 
@@ -2120,6 +2176,13 @@ arithmetic assumes valid curve points.
 ### TA-1. Accumulator Points With Scalar Zero Bypass Curve/Subgroup Validation
 
 Severity: Medium/High, depending on circuit assumptions.
+Status: Fixed. The quoted `switch lhs_scalar` construct no longer exists;
+`templates/partials/verifier/AccumulatorHelpers.yul:277-293` (and the RHS
+mirror at `:339-347`) unconditionally routes every decoded accumulator point
+through EIP-2537 G1MSM — including identity encodings and zero/one scalars —
+with an explicit comment stating that the precompile is the curve/subgroup
+validator and that skipping it would let a malformed point hide behind
+scalar 0. Triaged 2026-08-12.
 
 In `load_acc_point`, accumulator coordinates are decoded from public instances
 into `ACC_LHS_MPTR` and `ACC_RHS_MPTR`. The decoded point is range/canonical
@@ -2195,6 +2258,13 @@ Recommendation:
 ### TA-2. Transcript Must Be Proven To Bind Every Verifier-Side Fixed Input
 
 Severity: Medium.
+Status: Open. `vk_digest` covers the native VK contents but not the SRS
+points, quotient VM program, accumulator schema constants, or feature
+profile; widening its coverage is a protocol change affecting the prover and
+is tracked as review item M-4 (out of scope for the 2026-08 fix set —
+explicitly deferred). Partially mitigated at build time by the SRS tau
+binding in `src/lowering/vk.rs` and on-chain by the VK codehash pin plus the
+generated-constant cross-checks after `extcodecopy`. Triaged 2026-08-12.
 
 The verifier absorbs `vk_digest` rather than the full VK payload:
 
@@ -2243,6 +2313,12 @@ Recommendation:
 ### TA-3. External Quotient Evaluator Is Pinned, But Not Transcript-Bound
 
 Severity: Low/Medium.
+Status: Open. Inert for single-contract renders (e.g. the moonlight-wrap
+fixture, which ships no `Halo2QuotientEvaluator.sol`), but LIVE for split
+renders: the IVC fixture (`target/ivc-keccak-solidity-dump/`) ships a
+`Halo2QuotientEvaluator.sol` and relies on the codehash pin alone. Folding
+the evaluator identity into the transcript is part of the same digest
+discussion as TA-2/M-4. Triaged 2026-08-12.
 
 `AUTHORIZED_QUOTIENT` is codehash-pinned, which is good. However, its output
 directly determines:
@@ -2266,6 +2342,13 @@ Recommendation:
 ### TA-4. Gas Checkpoint Logs Make This Unsuitable As A Production Verifier
 
 Severity: Low/Medium.
+Status: Resolved / diagnostic-only. Gas checkpoints are emitted only when
+the `solidity-gas-checkpoints` feature sets
+`SOLIDITY_GAS_CHECKPOINTS_ENABLED`; the feature is off by default and the
+`production_renders_do_not_emit_gas_checkpoints` test asserts production
+renders contain no LOG1 and stay `external view`. Bench profiles that enable
+it are documented as non-production in REPRODUCIBLE_BUILDS.md. Triaged
+2026-08-12.
 
 `verifyProof` can include gas checkpoint logging:
 
@@ -2303,6 +2386,12 @@ Recommendation:
 ### TA-5. Dangerous Reliance On `assembly ("memory-safe")` With Absolute Memory Ownership
 
 Severity: Low/Medium.
+Status: Fixed by P2 (commit `460a666`): the false `"memory-safe"` annotation
+was removed from the main verifier block and a free-memory-pointer guard
+(`if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }`,
+`templates/contracts/Halo2Verifier.sol:117`) now enforces the layout
+assumption at runtime instead of asserting it to the optimizer. Triaged
+2026-08-12.
 
 The main assembly block is marked `"memory-safe"` while it intentionally owns
 the entire call-frame memory, writes to low memory, uses fixed absolute
@@ -2314,10 +2403,33 @@ memory-safety rules. If future edits add Solidity code after the block, or if
 the compiler reasons across the block in an unexpected way, this becomes a
 miscompilation risk.
 
+**Status: addressed.** The risk was not hypothetical. `solc 0.8.30` with the
+pinned flags emits `mstore(0x40, 0x08e0)` for the moonlight-wrap render, i.e.
+it reserved `[0x80, 0x8e0)` for via-IR stack-to-memory spill slots -- directly
+on top of a generated layout that started at `0x80`. Reservations observed
+across renders: `0x80` (ivc-keccak, none), `0xe0` (rsa), `0x3c0` (poseidon),
+`0x8e0` (moonlight-wrap). At least one spill (`mstore(0x300, mload(0x6a00))`,
+the `y` challenge, re-read ~600 IR lines later) sits in that window.
+
+The recommendation below to remove the annotation was tested and does not work:
+the block then fails to compile with `Cannot swap Variable usr$f_4 ... too deep
+in the stack by 1 slots`, and solc itself suggests re-adding the annotation.
+The annotation is load-bearing.
+
+The fix instead moves the generated layout above the reservation
+(`LOW_MEMORY_SCRATCH_START = 0x1000`), making the two regions disjoint in space
+so their liveness no longer matters, and adds
+`compiled_memoryguard_does_not_overlap_generated_layout`, which compiles each
+rendered variant and fails if the reservation ever grows past that base. Note
+this removes the *consequence*, not the false annotation itself; making the
+annotation honest would require runtime `mload(0x40)`-based re-basing at the
+cost of an `ADD` per memory access.
+
 Recommendation:
 
-- Prefer removing `"memory-safe"` from the terminal verifier block unless there
-  is a compiler-specific proof that this pattern is accepted.
+- ~~Prefer removing `"memory-safe"` from the terminal verifier block unless
+  there is a compiler-specific proof that this pattern is accepted.~~
+  Superseded: removal does not compile. See status note above.
 - Pin the exact compiler and EVM version. The Renegade audit's recommendation
   to use fixed pragmas rather than floating `^0.8.x` is especially relevant for
   generated verifier code.
@@ -2332,6 +2444,12 @@ Recommendation:
 ### TA-6. Precompile Smoke Tests Are Too Weak For Deployment Confidence
 
 Severity: Low.
+Status: Fixed by P5 (commit `460a666`): the constructor probes now include
+known-answer vectors a stub cannot satisfy — G1ADD(G, G) == 2G, G1MSM
+[2]*G == 2G, a NEGATIVE G1MSM probe with an on-curve but out-of-subgroup
+point that must be rejected, and pairing probes with both a true and a false
+product (`templates/partials/verifier/PrecompileSmoke.sol`). Triaged
+2026-08-12.
 
 The constructor checks identity inputs for G1ADD, G1MSM, and pairing. That
 catches absent precompiles and gross return-size issues, but it does not catch:
@@ -2354,6 +2472,12 @@ Recommendation:
 ### TA-7. Root-Of-Unity / Zero-Denominator Cases Revert Rather Than Being Specified
 
 Severity: Informational/Low.
+Status: Open (documentation). Behavior is fail-closed by construction —
+`batch_invert` and `scalar_inv` return failure/revert on any denominator
+congruent to zero, and `verifier_rejects_when_x_is_forced_to_domain_root`
+covers the x-at-domain-root case — but the spec does not yet state this as
+the intended semantics. Needs a paragraph in
+`docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md`. Triaged 2026-08-12.
 
 The Lagrange and PCS blocks intentionally batch-invert values like:
 
@@ -2383,6 +2507,14 @@ Recommendation:
 ### TA-8. Raw Verifier Integration Can Still Be Replayed/Misused By Application Contracts
 
 Severity: Integration risk.
+Status: Acknowledged / integration guidance. The raw verifier is stateless
+by design and cannot bind proof meaning itself; the wrapper obligations are
+now stated as REQUIREMENTS (replaceable verifier address, wrapper-held
+pause, chainid + wrapper-address + anti-replay binding) in
+`docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §2, together with the
+incident-response and migration playbook. Any deployment review must check
+the wrapper against that document, not just this verifier. Triaged
+2026-08-12; requirements doc added 2026-08-13.
 
 The verifier correctly says application contracts must bind the meaning of
 public instances separately. That warning is important. This raw verifier

@@ -26,7 +26,22 @@ pub(crate) const SOLIDITY_ALLOCATABLE_MEMORY_START: usize = 0x80;
 /// The full reserved prefix: scratch, free-memory pointer, and zero slot.
 pub(crate) const SOLIDITY_RESERVED_MEMORY_BYTES: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Generated verifier transcript and low-memory precompile scratch base.
-pub(crate) const LOW_MEMORY_SCRATCH_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
+///
+/// Deliberately *above* [`SOLIDITY_ALLOCATABLE_MEMORY_START`]. The verifier
+/// body is wrapped in `assembly ("memory-safe")`, which is what lets solc's
+/// via-IR stack-to-memory mover run at all -- without it the block does not
+/// compile (stack too deep). That mover reserves spill slots from `0x80`
+/// upward and records the top in the runtime's `mstore(0x40, ...)` prologue.
+/// Observed reservations run from `0x80` (none) to `0x8e0`, varying with the
+/// circuit, the solc release, and the optimizer schedule.
+///
+/// Basing the generated layout at `0x80` therefore put solc's spill slots and
+/// the verifier's own transcript buffer in the same bytes, kept apart only by
+/// live ranges that nothing enforced. Starting above the largest observed
+/// reservation makes them disjoint by construction;
+/// `compiled_memoryguard_does_not_overlap_generated_layout` fails the build if
+/// a future circuit or compiler pushes the reservation past this base.
+pub(crate) const LOW_MEMORY_SCRATCH_START: usize = 0x1000;
 /// Start of the Keccak transcript buffer used by the assembly helpers.
 pub(crate) const TRANSCRIPT_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Shared low-memory scratch for PCS pairing serialization.
@@ -36,7 +51,12 @@ pub(crate) const VERIFIER_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Return buffer used by split quotient evaluator calls.
 pub(crate) const QUOTIENT_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Constructor-time memory base for the separate VK runtime payload.
-pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = LOW_MEMORY_SCRATCH_START;
+///
+/// Deliberately *not* derived from [`LOW_MEMORY_SCRATCH_START`]. This buffer
+/// belongs to `Halo2VerifyingKey`, a separate contract whose assembly is not
+/// annotated `memory-safe`, so solc reserves no via-IR spill window there and
+/// the payload can sit at Solidity's normal allocatable start.
+pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Number of EVM words in one Fr scalar.
 pub(crate) const FR_WORDS: usize = 1;
 /// EIP-2537 padded G1 encoding: x_hi, x_lo, y_hi, y_lo.
@@ -89,7 +109,17 @@ pub(crate) const PCS_STATIC_WORKING_WORDS: usize = 32;
 /// Static two-pair KZG pairing scratch plus one return word.
 pub(crate) const PAIRING_STATIC_WORKING_WORDS: usize = PAIRING_TWO_PAIR_BYTES / WORD_BYTES + 1;
 /// Low-memory frame used by the final two-pair KZG pairing helper.
-pub(crate) const FINAL_PAIRING_SCRATCH_START: usize = PAIRING_TWO_PAIR_BYTES;
+///
+/// Placed past the end of the accumulator pairing-batch hash frame, which
+/// occupies `[PAIRING_BATCH_PTR, PAIRING_BATCH_PTR + PAIRING_BATCH_HASH_BYTES)`
+/// = `[0x1000, 0x1240)` (tag + vk_digest + four G1 points since audit I-7).
+/// Starting lower would put the last word of the hashed ACC_LHS copy inside
+/// this scratch.
+/// The two regions carry different `MemoryPhase`s, and `MemoryLifetime::
+/// intersects` treats distinct phases as never co-live, so the planner cannot
+/// catch that overlap -- it has to be avoided by construction here.
+pub(crate) const FINAL_PAIRING_SCRATCH_START: usize =
+    accumulator::PAIRING_BATCH_PTR + accumulator::PAIRING_BATCH_HASH_BYTES;
 
 pub(crate) mod precompile {
     //! EVM precompile addresses used by the generated verifier. These values
@@ -105,6 +135,136 @@ pub(crate) mod precompile {
     pub(crate) const G1MSM_ADDRESS: usize = 0x0c;
     /// Prague/EIP-2537 BLS12-381 pairing precompile.
     pub(crate) const PAIRING_ADDRESS: usize = 0x0f;
+}
+
+pub(crate) mod gas {
+    //! Exact gas schedule for the precompiles the generated verifier calls,
+    //! from EIP-2537 (BLS12-381) and EIP-2565/EIP-7883 (modexp).
+    //!
+    //! A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+    //! `STATICCALL`, so every generated call site forwards the exact scheduled
+    //! cost instead of `gas()`: an attacker-supplied malformed point can then
+    //! burn at most the scheduled cost of the single failing call rather than
+    //! 63/64 of the transaction budget (measured 29.5M of a 30M limit before
+    //! this bound; see docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md, M-2).
+    //!
+    //! Sufficiency: EIP-2537's "DDoS protection" rationale guarantees the
+    //! schedule prices the worst case, so forwarding exactly the scheduled
+    //! amount succeeds by construction on any conformant implementation of
+    //! the current schedule.
+    //!
+    //! Multi-schedule bounds: where more than one schedule is live across the
+    //! chains this verifier targets, the bound is the MAXIMUM over those
+    //! schedules rather than the one for a single fork (see
+    //! [`modexp_gas_word_frame`]). Over-forwarding costs nothing on success --
+    //! unused gas is returned -- and only widens the burn of one *failing*
+    //! call by the difference, whereas under-forwarding bricks the verifier.
+    //!
+    //! Liveness caveat: if a future fork reprices these precompiles above the
+    //! bounds rendered here, deployed verifiers start reverting on valid
+    //! proofs and must be regenerated and redeployed. The constructor smoke
+    //! probes forward the same bounds for every precompile the runtime
+    //! depends on -- EIP-2537 *and* modexp (MF-1) -- so deployment onto an
+    //! already-repriced chain fails fast instead of bricking at proof time.
+
+    /// EIP-2537 G1ADD flat cost.
+    pub(crate) const G1ADD_GAS: u64 = 375;
+    /// EIP-2537 G1 per-pair base multiplication cost.
+    const G1_MSM_MULTIPLICATION_COST: u64 = 12_000;
+    /// EIP-2537 MSM discount denominator.
+    const MSM_MULTIPLIER: u64 = 1_000;
+    /// EIP-2537 G1 MSM discount table for k = 1..=128 pairs, in parts per
+    /// [`MSM_MULTIPLIER`]. Entry `[k - 1]` is the discount for `k` pairs;
+    /// `k > 128` uses the final entry (`max_discount = 519`).
+    const G1_MSM_DISCOUNT: [u64; 128] = [
+        1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669,
+        665, 661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619,
+        617, 615, 613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589,
+        588, 586, 585, 584, 582, 581, 580, 579, 577, 576, 575, 574, 573, 572, 570, 569, 568, 567,
+        566, 565, 564, 563, 562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 551, 550, 549,
+        548, 547, 547, 546, 545, 544, 543, 542, 541, 540, 540, 539, 538, 537, 536, 536, 535, 534,
+        533, 532, 532, 531, 530, 529, 528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520,
+        520, 519,
+    ];
+
+    /// EIP-2537 G1MSM cost for `k` (point, scalar) pairs:
+    /// `(k * 12000 * discount(k)) // 1000`.
+    pub(crate) fn g1msm_gas(pairs: usize) -> u64 {
+        assert!(pairs > 0, "G1MSM gas bound requested for an empty MSM");
+        let discount = if pairs <= G1_MSM_DISCOUNT.len() {
+            G1_MSM_DISCOUNT[pairs - 1]
+        } else {
+            G1_MSM_DISCOUNT[G1_MSM_DISCOUNT.len() - 1]
+        };
+        (pairs as u64) * G1_MSM_MULTIPLICATION_COST * discount / MSM_MULTIPLIER
+    }
+
+    /// EIP-2537 pairing cost for `k` (G1, G2) pairs: `32600*k + 37700`.
+    pub(crate) const fn pairing_gas(pairs: u64) -> u64 {
+        32_600 * pairs + 37_700
+    }
+
+    /// Modexp bound for the only frame shape the verifier emits: 32-byte
+    /// base, 32-byte exponent, 32-byte modulus.
+    ///
+    /// Two schedules are live across the chains this verifier targets, so the
+    /// rendered bound is the maximum of both:
+    ///
+    /// * **EIP-2565** (Berlin): `max(200, multiplication_complexity *
+    ///   iteration_count / 3)`. With `words = ceil(32/8) = 4` and
+    ///   `multiplication_complexity = words^2 = 16`, that is
+    ///   `max(200, 16 * 255 / 3) = 1360`.
+    /// * **EIP-7883** (Osaka/Fusaka): the `/ 3` divisor is **removed** and the
+    ///   floor is raised to 500, giving `max(500, 16 * 255) = 4080`.
+    ///
+    /// MF-1: this function previously returned only the EIP-2565 value and
+    /// asserted that EIP-7883 "only reprices operands wider than 32 bytes".
+    /// That reading was wrong. EIP-7883 changes two independent things: the
+    /// `multiplication_complexity` branch for `max_length > 32` (`2 * words^2`,
+    /// which indeed does not apply here), *and* the removal of the `/ 3`
+    /// divisor from the final `multiplication_complexity * iteration_count`
+    /// product, which applies to every operand size. A verifier rendered with
+    /// the 1360 bound deploys fine on a repriced chain and then reverts
+    /// `PrecompileFailed` on every proof, because `staticcall` forwards a
+    /// fixed amount and the precompile runs out of gas inside the mandatory
+    /// Lagrange batch inversion.
+    ///
+    /// `iteration_count` is the generic upper bound for any 32-byte exponent
+    /// (`exponent.bit_length() - 1 <= 255`). Both exponents the verifier
+    /// actually emits are `FR_MODULUS - 2`, whose 255-bit length gives 254
+    /// iterations and an exact EIP-7883 price of 4064; the extra 16 gas keeps
+    /// the bound valid for any 32-byte exponent a future emitter might use.
+    pub(crate) const fn modexp_gas_word_frame() -> u64 {
+        const WORDS: u64 = 4;
+        const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
+        // Upper bound over every 32-byte exponent: `bit_length() - 1 <= 255`.
+        const MAX_ITERATION_COUNT: u64 = 255;
+
+        // EIP-2565: divisor 3, floor 200.
+        let eip2565 = {
+            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
+            if cost < 200 {
+                200
+            } else {
+                cost
+            }
+        };
+        // EIP-7883: no divisor, floor 500.
+        let eip7883 = {
+            let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT;
+            if cost < 500 {
+                500
+            } else {
+                cost
+            }
+        };
+
+        if eip2565 > eip7883 {
+            eip2565
+        } else {
+            eip7883
+        }
+    }
 }
 
 pub(crate) mod modexp_frame {
@@ -141,20 +301,48 @@ pub(crate) mod accumulator {
     pub(crate) const CARRIED_SCALARS: usize = 2;
     /// Low-memory hash frame for batching the accumulator pairing with KZG:
     /// domain tag word, KZG rhs/lhs G1s, then accumulator rhs/lhs G1s.
-    pub(crate) const PAIRING_BATCH_PTR: usize = 0x100;
-    /// ASCII `"pairing-batch-acc-kzg"` right-padded to one EVM word.
+    ///
+    /// Rooted at [`super::LOW_MEMORY_SCRATCH_START`] like every other
+    /// low-memory scratch base: the frame historically sat at `0x100`, inside
+    /// the `[0x80, reserved_end)` window solc's via-IR stack-to-memory mover
+    /// reserves for spill slots, so a live spill could silently corrupt the
+    /// alpha Fiat-Shamir preimage or the pairing inputs built here.
+    pub(crate) const PAIRING_BATCH_PTR: usize = super::LOW_MEMORY_SCRATCH_START;
+    /// Domain-separation word for the accumulator pairing batch.
+    ///
+    /// This is a 29-byte numeric literal: ASCII `"pairing-batch-acc-kzg"`
+    /// (21 bytes) followed by 8 zero bytes. FinalPairing.yul stores it with
+    /// `mstore`, which left-pads numeric literals to a full word, so the word
+    /// actually hashed into alpha is
+    ///
+    /// ```text
+    /// 00 00 00 || "pairing-batch-acc-kzg" || 00 * 8
+    /// ```
+    ///
+    /// i.e. NOT right-padded ASCII, as this comment previously claimed. The
+    /// value is still a fixed unique constant, so domain separation is
+    /// unaffected -- but any reimplementation or differential fixture that
+    /// derives alpha from the right-padded form will disagree with the
+    /// deployed verifier on accept/reject.
     pub(crate) const PAIRING_BATCH_DOMAIN_TAG_HEX: &str =
         "0x70616972696e672d62617463682d6163632d6b7a670000000000000000";
+    /// VK digest offset inside the batch hash frame (I-7,
+    /// docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): alpha was previously a
+    /// function of the four G1 points alone, binding the verifying key only
+    /// transitively. Absorbing `vk_digest` makes the binding local at zero
+    /// marginal cost -- alpha is verifier-local batching randomness, so no
+    /// prover interaction changes.
+    pub(crate) const PAIRING_BATCH_VK_DIGEST_OFFSET: usize = WORD_BYTES;
     /// KZG pairing RHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_RHS_OFFSET: usize = WORD_BYTES;
+    pub(crate) const PAIRING_BATCH_RHS_OFFSET: usize = 2 * WORD_BYTES;
     /// KZG pairing LHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_LHS_OFFSET: usize = WORD_BYTES + G1_BYTES;
+    pub(crate) const PAIRING_BATCH_LHS_OFFSET: usize = 2 * WORD_BYTES + G1_BYTES;
     /// Accumulator RHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_ACC_RHS_OFFSET: usize = WORD_BYTES + 2 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_ACC_RHS_OFFSET: usize = 2 * WORD_BYTES + 2 * G1_BYTES;
     /// Accumulator LHS point offset inside the batch hash frame.
-    pub(crate) const PAIRING_BATCH_ACC_LHS_OFFSET: usize = WORD_BYTES + 3 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_ACC_LHS_OFFSET: usize = 2 * WORD_BYTES + 3 * G1_BYTES;
     /// Number of frame bytes absorbed into the accumulator/KZG batch challenge.
-    pub(crate) const PAIRING_BATCH_HASH_BYTES: usize = WORD_BYTES + 4 * G1_BYTES;
+    pub(crate) const PAIRING_BATCH_HASH_BYTES: usize = 2 * WORD_BYTES + 4 * G1_BYTES;
 }
 
 pub(crate) mod quotient_limb {
@@ -591,6 +779,7 @@ pub(crate) mod trace {
     pub(crate) const PROOF_COMMIT_BASE: usize = 10_000; // Proof G1 reads.
     pub(crate) const PROOF_EVAL_BASE: usize = 20_000; // Proof scalar eval reads.
     pub(crate) const QUOTIENT_IDENTITY_BASE: u64 = 30_000; // Quotient identities.
+    pub(crate) const PCS_Q_COM_BASE: u64 = 40_000; // PCS q_com points.
     pub(crate) const PCS_SERIALIZED_POINT_SET_BASE: u64 = 41_000; // PCS point sets.
     pub(crate) const SELECTOR_FOLD_BASE: usize = 60_000; // Selector accumulators.
 }
@@ -618,7 +807,14 @@ mod tests {
         assert_eq!(super::SOLIDITY_FREE_MEMORY_POINTER_SLOT, 0x40);
         assert_eq!(super::SOLIDITY_ZERO_SLOT, 0x60);
         assert_eq!(super::SOLIDITY_RESERVED_MEMORY_BYTES, 0x80);
-        assert_eq!(super::TRANSCRIPT_BUFFER_START, 0x80);
+        assert_eq!(
+            super::TRANSCRIPT_BUFFER_START,
+            super::LOW_MEMORY_SCRATCH_START
+        );
+        // Above Solidity's allocatable start on purpose: solc reserves
+        // via-IR spill slots upward from 0x80 in this contract.
+        const _: () =
+            assert!(super::LOW_MEMORY_SCRATCH_START > super::SOLIDITY_ALLOCATABLE_MEMORY_START);
         assert_eq!(super::VK_CONSTRUCTOR_PAYLOAD_START, 0x80);
     }
 
@@ -680,6 +876,7 @@ mod tests {
         assert_eq!(trace::PROOF_COMMIT_BASE, 10_000);
         assert_eq!(trace::PROOF_EVAL_BASE, 20_000);
         assert_eq!(trace::QUOTIENT_IDENTITY_BASE, 30_000);
+        assert_eq!(trace::PCS_Q_COM_BASE, 40_000);
         assert_eq!(trace::PCS_SERIALIZED_POINT_SET_BASE, 41_000);
         assert_eq!(trace::SELECTOR_FOLD_BASE, 60_000);
     }
@@ -703,8 +900,18 @@ mod tests {
         assert_eq!(accumulator::LIMB_BITS, 56);
         assert_eq!(accumulator::LIMBS, 7);
         assert_eq!(accumulator::LIMBS_PER_WORD, 4);
-        assert_eq!(accumulator::PAIRING_BATCH_PTR, 0x100);
-        assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x220);
+        // Above solc's via-IR spill window like every other low-memory base.
+        assert_eq!(
+            accumulator::PAIRING_BATCH_PTR,
+            super::LOW_MEMORY_SCRATCH_START
+        );
+        // One word longer since the vk_digest joined the alpha preimage
+        // (audit I-7): tag + vk_digest + four G1 points.
+        assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x240);
+        assert_eq!(
+            super::FINAL_PAIRING_SCRATCH_START,
+            super::LOW_MEMORY_SCRATCH_START + 0x240
+        );
         assert_eq!(quotient_limb::LIMBS, 7);
         assert_eq!(quotient_limb::PAIRWISE_TERMS, 49);
         assert_eq!(quotient_limb::PAIRWISE_COEFFS, 13);

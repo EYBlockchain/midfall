@@ -48,7 +48,39 @@ impl<'a> SolidityGenerator<'a> {
         )?;
         if let Some(acc_encoding) = config.accumulator {
             acc_encoding.validate_for_num_instances(config.num_instances)?;
+            // The fixed-base scalar tail is derived from the *instance* length,
+            // but the bases it multiplies come from this verifying key: `-G`,
+            // then `fixed_comm_mptr + i * G1_BYTES` per fixed base, then the
+            // permutation commitments. Two tail lengths break that mapping:
+            //
+            //   * Too long: the generated fixed-base pointers run past the end of the
+            //     fixed-commitment region, silently aliasing permutation commitments and
+            //     then arbitrary VK payload words as G1 bases.
+            //   * Shorter than `-G` plus the permutation commitments: the base count
+            //     underflows in the artifact emitter.
+            //
+            // A tail inside the range is left alone -- it covers a prefix of
+            // the fixed commitments, which keeps every pointer in region.
+            let fixed_scalar_count = acc_encoding.fixed_scalar_count(config.num_instances)?;
+            let num_fixed_comms = vk.fixed_commitments().len();
+            let num_permutation_comms = vk.permutation().commitments().len();
+            let min_fixed_scalar_count = 1 + num_permutation_comms;
+            let max_fixed_scalar_count = min_fixed_scalar_count + num_fixed_comms;
+            if fixed_scalar_count != 0
+                && !(min_fixed_scalar_count..=max_fixed_scalar_count).contains(&fixed_scalar_count)
+            {
+                return Err(GeneratorError::AccumulatorFixedBaseTailMismatch {
+                    fixed_scalar_count,
+                    min_fixed_scalar_count,
+                    max_fixed_scalar_count,
+                    num_fixed_comms,
+                    num_permutation_comms,
+                });
+            }
         }
+        // Non-committed instance evaluations are reconstructed once from the
+        // public-input polynomial at the current rotation. Reject rotated
+        // instance queries until that path is keyed by `(column, rotation)`.
         if let Some((column, rotation)) = vk
             .cs()
             .instance_queries()
@@ -61,7 +93,17 @@ impl<'a> SolidityGenerator<'a> {
             });
         }
 
-        let meta = ConstraintSystemMeta::new(vk.cs(), config.num_committed_instances);
+        // Fallible: `ProtocolPlan::validate` rejects a range of unsupported
+        // constraint-system shapes -- an advice column that is absorbed but
+        // never opened by a PCS query being the most reachable authoring
+        // mistake. Panicking here would break this constructor's contract of
+        // reporting such shapes as a typed error.
+        let meta = ConstraintSystemMeta::try_new(vk.cs(), config.num_committed_instances).map_err(
+            |message| GeneratorError::Planning {
+                stage: "constraint system",
+                message,
+            },
+        )?;
 
         Ok(Self {
             params,

@@ -1,0 +1,177 @@
+--- a/templates/contracts/Halo2Verifier.sol	2026-08-12 15:35:48.921338927 +0000
++++ b/templates/contracts/Halo2Verifier.sol	2026-08-12 15:36:19.199260815 +0000
+@@ -1,5 +1,19 @@
+ // SPDX-License-Identifier: CC0-1.0
+-pragma solidity ^0.8.24;
++// Pinned, not floating. Two properties of this artifact are compiler- and
++// optimiser-dependent, and neither is self-evident from the source:
++//   1. The generated layout writes absolute addresses from TRANSCRIPT_MPTR
++//      upward, which is only safe while solc's stack-spill reservation stays
++//      below it (observed 0x8c0 on 0.8.24, 0x8e0 on 0.8.26+).
++//   2. The runtime size depends on --optimize-runs. Measured: solc 0.8.24 at
++//      runs=1 emits a 29,567-byte runtime and solc 0.8.30 at runs=100000 emits
++//      29,836 -- both exceed the EIP-170 24,576-byte limit and cannot be
++//      deployed. Only the pinned (version, runs) pair is known to work.
++// A floating `^0.8.24` therefore advertises compatibility this contract does
++// not have.
++pragma solidity {{ pinned_solc_version }};
++// Built with: solc {{ pinned_solc_version }} --via-ir --optimize
++//   --optimize-runs {{ solc_optimize_runs }} --evm-version {{ solc_evm_version }}
++//   --no-cbor-metadata
+ 
+ /// @title Halo2 BLS12-381 KZG verifier.
+ /// @notice Circuit-specialized verifier for Midfall/midnight-proofs Halo2
+@@ -51,12 +65,14 @@
+     /// precompiles, or mismatched pinned dependency code revert. Trace and gas
+     /// renders keep the same failure policy.
+     /// @dev The generated verifier uses absolute Yul memory addresses instead
+-    /// of Solidity's free-memory pointer, but generated scratch starts at
+-    /// `0x80` so Solidity's reserved memory prefix is preserved. The main
++    /// of Solidity's free-memory pointer. Generated scratch starts at
++    /// `TRANSCRIPT_MPTR` ({{ memory.transcript_mptr|hex() }}), leaving
++    /// Solidity's reserved prefix AND solc's stack-spill reservation below it
++    /// untouched; the assembly block asserts that separation at entry. The main
+     /// assembly block remains terminal: accepted proofs return from assembly
+     /// and all rejected inputs revert. Do not inline this body into Solidity
+     /// code that continues executing after verification without reviewing the
+-    /// memory strategy; see `docs/MEMORY_LAYOUT.md`.
++    /// memory strategy; see `docs/architecture/MEMORY_LAYOUT.md`.
+     /// @param proof Solidity-facing proof bytes, with G1 elements repacked into EIP-2537 padded uncompressed form.
+     /// @param instances Public instance scalars encoded as canonical BLS12-381 scalar-field words.
+     /// @return Always `true` for accepted proofs; invalid proofs revert instead of returning `false`.
+@@ -93,10 +109,21 @@
+         {%- when None %}
+         {%- endmatch %}
+         assembly ("memory-safe") {
++            // The `memory-safe` annotation above is what enables solc's
++            // stack-to-memory mover, which reserves spill slots upward from
++            // 0x80. The generated layout below writes absolute addresses from
++            // TRANSCRIPT_MPTR upward and never consults the free-memory
++            // pointer, so the two regions must not meet. That reservation is
++            // compiler-version and optimiser dependent -- it is not a constant
++            // this file controls -- so assert the separation here rather than
++            // relying on a generator-side test the integrator does not run.
++            // ~6 gas, once per proof.
++            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
++
+             // This block owns the call-frame memory and remains terminal.
+-            // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving
++            // Generated scratch starts at TRANSCRIPT_MPTR, preserving
+             // Solidity's reserved scratch, free-memory-pointer, and zero-slot
+-            // words. See docs/MEMORY_LAYOUT.md.
++            // words. See docs/architecture/MEMORY_LAYOUT.md.
+             // ===============================================================
+             // Helpers: modexp, transcript, EIP-2537 calls
+             // ===============================================================
+--- a/templates/contracts/Halo2VerifyingKey.sol	2026-08-12 15:35:48.930600580 +0000
++++ b/templates/contracts/Halo2VerifyingKey.sol	2026-08-12 15:36:19.199534819 +0000
+@@ -1,6 +1,9 @@
+ // SPDX-License-Identifier: CC0-1.0
+ 
+-pragma solidity ^0.8.24;
++// Pinned to match the verifier. This contract's runtime is pure returned data,
++// so its codehash is compiler-independent -- but the pin keeps the two halves
++// of the deployment provably built by one toolchain.
++pragma solidity {{ pinned_solc_version }};
+ 
+ /// @title Halo2 BLS12-381 verifying-key payload.
+ /// @notice Contract whose deployed runtime is `INVALID || generated verifier-key payload`.
+--- a/src/lowering/vk.rs	2026-08-12 15:35:48.939496697 +0000
++++ b/src/lowering/vk.rs	2026-08-12 15:36:41.016340556 +0000
+@@ -93,6 +93,60 @@
+             let g1_pt: G1Affine = G1Affine::generator();
+             let g2_pt: G2Affine = self.params.g2().to_affine();
+             let neg_s_g2_pt: G2Affine = (-self.params.s_g2()).to_affine();
++
++            // The G1 base is validated above by reconstructing it from
++            // `g_lagrange`. Do the same work on the G2 side. Until now
++            // `g2` and `s_g2` were taken on trust from `params`, and
++            // `NEG_S_G2_BASE` is the element every soundness guarantee in the
++            // deployed verifier rests on: the final pairing is
++            //   e(final_com - v*G + x3*pi, G2_BASE) * e(pi, NEG_S_G2_BASE) == 1
++            // and anyone who knows the tau behind NEG_S_G2_BASE can forge an
++            // opening for any statement.
++            //
++            // Every other control in this repository -- quotient
++            // certification, the dual build, generator invariants, the VK
++            // codehash pin, the trace differential, the replay fixtures --
++            // checks SELF-CONSISTENCY. An SRS substituted at build time
++            // produces a perfectly self-consistent artifact, so all of them
++            // pass. This assertion is the only place that can catch it.
++
++            // 1. G2_BASE must be the canonical generator, for the same reason
++            //    G1_BASE must be: the emitted equation assumes it.
++            assert_eq!(
++                g2_pt,
++                G2Affine::generator(),
++                "SRS G2 base is not the canonical BLS12-381 G2 generator; the \
++                 emitted pairing equation would not be the KZG identity"
++            );
++
++            // 2. `s_g2` must correspond to the SAME tau that produced
++            //    `g_lagrange`. Commit f(X) = X in the Lagrange basis to obtain
++            //    [tau]G1 = sum_i omega^i * L_i, then check the pairing
++            //    e([tau]G1, G2) == e(G1, s_g2). This ties the G2 side of the
++            //    key to the commitment basis the prover actually uses.
++            let omega = self.vk.get_domain().get_omega();
++            let mut w = <Fq as ff::Field>::ONE;
++            let tau_g1 = g_lagrange
++                .iter()
++                .map(|g| {
++                    let term = *g * w;
++                    w *= omega;
++                    term
++                })
++                .fold(G1Projective::identity(), |acc, t| acc + t)
++                .to_affine();
++            assert!(
++                srs_tau_is_consistent(&tau_g1, &self.params.s_g2().to_affine()),
++                "SRS inconsistency: s_g2 does not correspond to the tau that \
++                 generated g_lagrange. NEG_S_G2_BASE would be emitted from an \
++                 SRS unrelated to the commitment basis -- i.e. from a key whose \
++                 toxic waste may be known to whoever supplied it."
++            );
++
++            // TODO(deployment): additionally pin the SRS asset by SHA-256 here
++            // and record it, plus the ceremony transcript reference, in the
++            // artifact manifest. CODEGEN_ASSURANCE_DOSSIER.md already lists
++            // this as a required record; nothing currently produces it.
+             let g1 = g1_to_u256s(g1_pt);
+             let g2 = g2_to_u256s(g2_pt);
+             let neg_s_g2 = g2_to_u256s(neg_s_g2_pt);
+--- a/scripts/install_pinned_solc.sh	2026-08-12 15:35:48.947553053 +0000
++++ b/scripts/install_pinned_solc.sh	2026-08-12 15:36:19.199639949 +0000
+@@ -26,10 +26,33 @@
+ mkdir -p "$INSTALL_DIR"
+ solc_path="$INSTALL_DIR/solc"
+ 
++# Content hash, not version string. `--version` output is trivially forged by a
++# substituted binary, and this project's entire reproducibility claim rests on
++# the compiler being exactly this one. Hashes are published per platform in
++# https://binaries.soliditylang.org/${platform}/list.json.
++declare -A PINNED_SOLC_SHA256=(
++  ["linux-amd64"]="<sha256 from list.json>"
++  ["macosx-amd64"]="<sha256 from list.json>"
++)
++
+ if [[ ! -x "$solc_path" ]] || ! "$solc_path" --version | grep -q "Version: ${PINNED_SOLC_VERSION}"; then
+   url="https://binaries.soliditylang.org/${platform}/${binary}"
+   echo "[install-solc] downloading $url"
+   curl -fsSL "$url" -o "$solc_path"
++  expected="${PINNED_SOLC_SHA256[$platform]:-}"
++  if [[ -z "$expected" || "$expected" == "<sha256 from list.json>" ]]; then
++    echo "[install-solc] no pinned SHA-256 recorded for platform '$platform'" >&2
++    rm -f "$solc_path"
++    exit 1
++  fi
++  actual="$(sha256sum "$solc_path" | cut -d' ' -f1)"
++  if [[ "$actual" != "$expected" ]]; then
++    echo "[install-solc] SHA-256 mismatch for $url" >&2
++    echo "[install-solc]   expected $expected" >&2
++    echo "[install-solc]   actual   $actual" >&2
++    rm -f "$solc_path"
++    exit 1
++  fi
+   chmod +x "$solc_path"
+ fi
+ 

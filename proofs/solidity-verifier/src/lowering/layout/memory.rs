@@ -11,7 +11,7 @@
 //! historical addresses in the generated verifier, gives each range a name and
 //! lifetime, and rejects accidental overlap when two live ranges can coexist.
 //! Intentional scratch reuse is modeled by assigning the same byte range to
-//! disjoint `MemoryPhase`s.
+//! disjoint `MemoryPhase`s or non-overlapping phase spans.
 //!
 //! This is not a packing allocator yet. The first version is deliberately
 //! conservative: it names the old layout, validates it, and centralizes all
@@ -21,13 +21,13 @@
 use std::collections::BTreeMap;
 
 pub(crate) use crate::lowering::layout::{
-    ACC_MSM_MIN_SCRATCH_BYTES, G1ADD_INPUT_BYTES, G1_BYTES, G1_MSM_PAIR_BYTES, G1_WORDS,
-    LOW_MEMORY_SCRATCH_START, MODEXP_FRAME_BYTES, MODEXP_SCRATCH_BYTES,
-    PAIRING_STATIC_WORKING_WORDS, PAIRING_TWO_PAIR_BYTES, PCS_PAIRING_SCRATCH_START,
-    PCS_STATIC_WORKING_WORDS, QUOTIENT_RETURN_BUFFER_START, SOLIDITY_FREE_MEMORY_POINTER_SLOT,
-    SOLIDITY_RESERVED_MEMORY_BYTES, SOLIDITY_SCRATCH_SPACE_BYTES, SOLIDITY_ZERO_SLOT,
-    TRANSCRIPT_BUFFER_START, VERIFIER_RETURN_BUFFER_START, VK_CONSTRUCTOR_PAYLOAD_START,
-    WORD_BYTES,
+    accumulator::PAIRING_BATCH_HASH_BYTES, ACC_MSM_MIN_SCRATCH_BYTES, G1ADD_INPUT_BYTES, G1_BYTES,
+    G1_MSM_PAIR_BYTES, G1_WORDS, LOW_MEMORY_SCRATCH_START, MODEXP_FRAME_BYTES,
+    MODEXP_SCRATCH_BYTES, PAIRING_STATIC_WORKING_WORDS, PAIRING_TWO_PAIR_BYTES,
+    PCS_PAIRING_SCRATCH_START, PCS_STATIC_WORKING_WORDS, QUOTIENT_RETURN_BUFFER_START,
+    SOLIDITY_FREE_MEMORY_POINTER_SLOT, SOLIDITY_RESERVED_MEMORY_BYTES,
+    SOLIDITY_SCRATCH_SPACE_BYTES, SOLIDITY_ZERO_SLOT, TRANSCRIPT_BUFFER_START,
+    VERIFIER_RETURN_BUFFER_START, VK_CONSTRUCTOR_PAYLOAD_START, WORD_BYTES,
 };
 use crate::lowering::{
     encoding::{ConstraintSystemMeta, Ptr},
@@ -36,11 +36,11 @@ use crate::lowering::{
 };
 /// Accumulator pairing-batch hash frame.
 ///
-/// The template starts this frame at `0x100`, writes a one-word domain tag,
-/// then four G1 points: KZG rhs/lhs and accumulator rhs/lhs. The last copy ends
-/// at `0x320`, so the registered range is `[0x100, 0x320)`.
-const ACCUMULATOR_PAIRING_BATCH_BYTES: usize =
-    PAIRING_TWO_PAIR_BYTES - G1ADD_INPUT_BYTES + WORD_BYTES;
+/// The template starts this frame at `PAIRING_BATCH_PTR` (`0x1000`), writes a
+/// one-word domain tag, then four G1 points: KZG rhs/lhs and accumulator
+/// rhs/lhs. The last copy ends `0x220` bytes later, so the registered range is
+/// `[0x1000, 0x1220)`.
+const ACCUMULATOR_PAIRING_BATCH_BYTES: usize = PAIRING_BATCH_HASH_BYTES;
 
 // Fixed word offsets from `THETA_MPTR`.
 //
@@ -118,32 +118,47 @@ impl ThetaWindowLayout {
     }
 }
 
+/// Verifier execution phases, in the order the generated code runs them.
+///
+/// The derived `Ord` is load-bearing: `MemoryLifetime::intersects` compares
+/// phases with `<=` to decide whether a `PhaseSpan` covers a `Phase`, so a
+/// variant declared out of runtime order makes the arena's overlap validation
+/// answer the wrong question. Keep this list in sync with the include order in
+/// `templates/contracts/Halo2Verifier.sol` and the call sites it renders.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) enum MemoryPhase {
     /// Generated verifying-key constructor return payload.
     VkConstructorPayload,
     /// Constructor-only precompile smoke tests.
     ConstructorSmoke,
+    /// Public-accumulator MSM input buffer.
+    ///
+    /// `validate_public_accumulator` runs from VkLoading.yul, immediately
+    /// after the VK payload is loaded and *before* the transcript starts.
+    AccumulatorMsm,
     /// Streaming Fiat-Shamir buffer before generated VK memory is live.
     Transcript,
-    /// Single scalar inversion scratch used by the modexp wrapper.
-    ScalarInv,
     /// Batch inversion for Lagrange denominator terms.
     LagrangeBatchInvert,
     /// Compact quotient VM temps and stack.
     QuotientVm,
-    /// Historical fixed PCS windows rooted at `ROT_POINTS_MPTR`.
-    PcsFixed,
+    /// Trace-only linearization-commitment MSM, run after the quotient VM and
+    /// before the PCS blocks reuse the same scratch band.
+    LinearizationTrace,
     /// Source-address table used by the rolled q_eval fold.
     PcsQEvalSourceTable,
     /// Optional trace-only q_com MSM materialization.
     PcsQComTrace,
+    /// Single scalar inversion scratch used by the modexp wrapper.
+    ///
+    /// `scalar_inv` is called from the PCS f_eval interpolation, i.e. after
+    /// the q_eval source-table fold and before the fused final MSM -- not
+    /// during transcript absorption.
+    ScalarInv,
     /// Fused final PCS MSM input buffer.
     PcsFinalMsm,
     /// Low-memory PCS pairing input helpers.
     PcsPairing,
-    /// Public-accumulator MSM input buffer.
-    AccumulatorMsm,
     /// Public-accumulator pairing-batch hash and two G1 add/MSM frames.
     AccumulatorPairingBatch,
     /// Final two-pair KZG pairing frame.
@@ -162,6 +177,11 @@ pub(crate) enum MemoryLifetime {
     /// Region is live only during the named phase. Regions in different phases
     /// may reuse the same byte range.
     Phase(MemoryPhase),
+    /// Region is written in one phase and read through a later phase.
+    PhaseSpan {
+        start: MemoryPhase,
+        end: MemoryPhase,
+    },
 }
 
 impl MemoryLifetime {
@@ -170,6 +190,20 @@ impl MemoryLifetime {
         match (self, other) {
             (Self::Permanent, _) | (_, Self::Permanent) => true,
             (Self::Phase(lhs), Self::Phase(rhs)) => lhs == rhs,
+            (Self::Phase(phase), Self::PhaseSpan { start, end })
+            | (Self::PhaseSpan { start, end }, Self::Phase(phase)) => {
+                start <= phase && phase <= end
+            }
+            (
+                Self::PhaseSpan {
+                    start: lhs_start,
+                    end: lhs_end,
+                },
+                Self::PhaseSpan {
+                    start: rhs_start,
+                    end: rhs_end,
+                },
+            ) => lhs_start <= rhs_end && rhs_start <= lhs_end,
         }
     }
 }
@@ -481,15 +515,27 @@ pub(crate) struct VerifierMemoryLayout {
     pub(crate) trashcan_comms_mptr_base: Ptr,
     pub(crate) quotient_limb_comms_mptr_base: Ptr,
     /// First byte after all decompressed proof commitments. Selector
-    /// accumulators are live here during final linearization/final MSM.
+    /// accumulators are written by quotient evaluation and read by PCS MSMs.
     pub(crate) selector_acc_mptr: usize,
     /// Reuses selector-accumulator bytes during the earlier Lagrange batch
     /// inversion phase.
     pub(crate) batch_invert_scratch_mptr: usize,
+    /// Batch-inversion input run: denominators, then their in-place inverses,
+    /// then Lagrange values, distilled into named theta slots at the end of
+    /// the Lagrange block.
+    pub(crate) lagrange_denoms_mptr: usize,
     /// First quotient VM temporary. Also the canonical PCS scratch base once
     /// selector accumulators are accounted for.
     pub(crate) quotient_tmp_mptr: usize,
     pub(crate) quotient_stack_mptr: usize,
+    /// First address past the quotient VM stack / callback scratch region.
+    ///
+    /// MF-3: the interpreter's spill pointer walks upward from
+    /// `quotient_stack_mptr` with no ceiling of its own, so the rendered VM
+    /// clamps `q_sp` against this bound. The region is sized for the larger
+    /// of the interpreted stack depth and the structured native-callback
+    /// scratch, which is exactly the ceiling both uses must respect.
+    pub(crate) quotient_stack_hi: usize,
     pub(crate) pcs_q_eval_source_table_mptr: usize,
     pub(crate) pcs_q_com_trace_scratch_mptr: usize,
     pub(crate) pcs_final_msm_scratch_mptr: usize,
@@ -604,6 +650,45 @@ impl VerifierMemoryLayout {
         .max()
         .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
+        let lagrange_denoms_len = batch_invert_input_words(meta, config.num_instances) * WORD_BYTES;
+        // P9 (L-7, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+        // generated Lagrange block computes its batch-inversion run length
+        // INDEPENDENTLY of the planner, in the template (`Lagrange.yul`:
+        // one denominator per public instance -- or one fallback slot when
+        // there are none -- plus `abs(rotation_last)` negative-row
+        // denominators, plus x_n - 1). `batch_invert_scratch` sits
+        // immediately below `lagrange_denoms`, sized with ZERO slack, so if
+        // the two formulas ever drift the forward pass's modexp frame lands
+        // on denominator[0] and corrupts it SILENTLY: the modexp still
+        // succeeds, `ret` stays 1, and the backward pass returns wrong
+        // inverses without reverting. Mirror the template's expression here
+        // and refuse to plan a layout where they disagree or where the
+        // scratch cannot hold the run.
+        {
+            let n = batch_invert_input_words(meta, config.num_instances);
+            let neg_lagranges = meta.rotation_last.unsigned_abs() as usize;
+            let template_run_words = if config.num_instances == 0 {
+                // fallback denominator slot + negative-row denominators + (x_n - 1)
+                1 + neg_lagranges + 1
+            } else {
+                config.num_instances + neg_lagranges + 1
+            };
+            assert_eq!(
+                n, template_run_words,
+                "planner batch-inversion input count ({n} words) does not match the \
+                 run the generated Lagrange block writes ({template_run_words} words); \
+                 the scratch/denominator regions would be mis-sized"
+            );
+            let required = n.saturating_sub(2) * WORD_BYTES + MODEXP_FRAME_BYTES;
+            assert!(
+                batch_invert_len >= required,
+                "batch_invert scratch is {batch_invert_len} bytes but n={n} inputs need \
+                 {required} (n-2 prefix products plus one modexp frame); an overflow \
+                 lands in lagrange_denoms and silently corrupts denominator[0] -- the \
+                 modexp still succeeds and the backward pass returns wrong inverses \
+                 WITHOUT reverting"
+            );
+        }
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
@@ -682,6 +767,35 @@ impl VerifierMemoryLayout {
         let at_theta = |words: usize| theta_start + words * WORD_BYTES;
         let ptr_at_theta = |slot: ThetaSlot| Ptr::memory(at_theta(slot.word()));
         let theta_mptr = ptr_at_theta(ThetaSlot::Theta);
+        // P8 (L-5, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): with zero
+        // user-phase challenges CHALLENGE_MPTR and THETA_MPTR legitimately
+        // coincide (the challenge window is empty). The hazard is a circuit
+        // WITH user challenges whose window is under-sized: the transcript
+        // parser squeezes user challenge j to CHALLENGE_MPTR + 32*j, and the
+        // very next squeeze unconditionally targets THETA_MPTR -- an overlap
+        // silently replaces a user challenge with theta while the transcript
+        // still matches the prover (permanent liveness break, potential
+        // soundness break). The window is sized by `challenge_indices` while
+        // the runtime write count is the phase sum of `num_user_challenges`;
+        // tie the two and pin theta past the window.
+        {
+            let user_challenges_total: usize = meta.num_user_challenges.iter().sum();
+            assert_eq!(
+                meta.challenge_indices.len(),
+                user_challenges_total,
+                "user-phase challenge window is sized for {} challenge slot(s) but the \
+                 transcript parser squeezes {user_challenges_total}; the excess would \
+                 collide with the theta slots",
+                meta.challenge_indices.len(),
+            );
+            assert!(
+                challenge_start + user_challenges_total * WORD_BYTES <= theta_start,
+                "user-phase challenge window [{challenge_start:#x}, {:#x}) overlaps the \
+                 named challenge slots at THETA_MPTR = {theta_start:#x}; theta's squeeze \
+                 would silently overwrite a user challenge",
+                challenge_start + user_challenges_total * WORD_BYTES,
+            );
+        }
 
         let total_advices: usize = meta.num_user_advices.iter().sum();
         let lookup_helper_chunks_total: usize = meta.lookup_chunks.iter().sum();
@@ -695,29 +809,41 @@ impl VerifierMemoryLayout {
             + meta.num_lookups
             + meta.num_trashcans;
         let committed_g1s = non_quotient_g1s + meta.num_quotients;
+        // The rot_points / x1_powers / q_com / q_eval_set windows are NOT
+        // transient scratch even though they sit in the theta scratch band.
+        // They are written during PCS preparation and then read across several
+        // *later* phases: `x1_powers` feeds both the rolled q_eval fold
+        // (`PcsQEvalSourceTable`) and the fused final MSM (`PcsFinalMsm`),
+        // while `rot_points`/`q_eval_set` feed the f_eval interpolation. Because
+        // `MemoryLifetime::intersects` treats two different `Phase`s as never
+        // co-live, tagging these as a dedicated phase would make
+        // `validate()` blind to any overlap between them and the PCS scratch
+        // that consumes them. Nothing ever reuses these byte ranges, so they
+        // are `Permanent`: the planner must guarantee they never overlap any
+        // other live region.
         let rot_points_mptr = Ptr::memory(arena.alloc_fixed(
             "rot_points",
             at_theta(theta_windows.rot_points_word),
             config.pcs.rot_points_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let x1_powers_mptr = Ptr::memory(arena.alloc_fixed(
             "x1_powers",
             at_theta(theta_windows.x1_powers_word),
             config.pcs.x1_powers_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_com_mptr = Ptr::memory(arena.alloc_fixed(
             "q_com_fixed_window",
             at_theta(theta_windows.q_com_word),
             config.pcs.q_com_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_eval_set_mptr = Ptr::memory(arena.alloc_fixed(
             "q_eval_set",
             at_theta(theta_windows.q_eval_set_word),
             config.pcs.q_eval_set_words * WORD_BYTES,
-            MemoryLifetime::Phase(MemoryPhase::PcsFixed),
+            MemoryLifetime::Permanent,
         ));
         let q_eval_cptr_mptr = Ptr::memory(arena.alloc_fixed(
             "q_eval_cptr_slot",
@@ -769,15 +895,38 @@ impl VerifierMemoryLayout {
             comms_mptr_base.value().as_usize(),
             commitments_len,
             selector_len,
-            MemoryLifetime::Phase(MemoryPhase::PcsFinalMsm),
+            MemoryLifetime::PhaseSpan {
+                start: MemoryPhase::QuotientVm,
+                end: MemoryPhase::PcsFinalMsm,
+            },
         );
-        let batch_invert_scratch_mptr = {
+        // Both Lagrange-phase regions come from ONE allocator so the second
+        // lands sequentially after the first: a fresh allocator would reset the
+        // per-phase cursor back to `selector_acc_mptr` and register a same-phase
+        // overlap, which `MemoryMap::validate` rejects. Order also matters:
+        // `batch_invert_scratch` is allocated first so its address stays pinned
+        // to `selector_acc_mptr` (asserted by
+        // `selector_accumulators_are_live_from_quotient_to_final_msm`).
+        //
+        // `lagrange_denoms` holds the batch-inversion input run (denominators,
+        // then in-place inverses, then Lagrange values). It was historically
+        // written in place at `X_N_MPTR`, overlaying theta words 27..51 and
+        // spilling into the PCS fixed windows for large instance counts; as a
+        // registered region the arena's overlap model enforces disjointness
+        // structurally instead of by write-ordering coincidence.
+        let (batch_invert_scratch_mptr, lagrange_denoms_mptr) = {
             let mut scratch = arena.scratch_allocator(selector_acc_mptr);
-            scratch.alloc_phase_scratch(
+            let batch_invert_scratch_mptr = scratch.alloc_phase_scratch(
                 "batch_invert_scratch",
                 batch_invert_len,
                 MemoryPhase::LagrangeBatchInvert,
-            )
+            );
+            let lagrange_denoms_mptr = scratch.alloc_phase_scratch(
+                "lagrange_denoms",
+                lagrange_denoms_len,
+                MemoryPhase::LagrangeBatchInvert,
+            );
+            (batch_invert_scratch_mptr, lagrange_denoms_mptr)
         };
         let quotient_tmp_base = (selector_acc_mptr + selector_len).next_multiple_of(WORD_BYTES);
         let (quotient_tmp_mptr, quotient_stack_mptr) = {
@@ -794,6 +943,29 @@ impl VerifierMemoryLayout {
             );
             (quotient_tmp_mptr, quotient_stack_mptr)
         };
+        // Trace renders expand the linearization terms into their own G1MSM
+        // frame at `SELECTOR_ACC_MPTR + selector_len`, i.e. starting exactly at
+        // `quotient_tmp_base`. Register it so the write band is visible to the
+        // arena and to the trace-log-word placement below; without this the
+        // only thing keeping it in bounds is the incidental fact that the PCS
+        // scratch allocated from the same base happens to be at least as long.
+        let linearization_trace_msm_mptr = {
+            let mut scratch = arena.scratch_allocator(quotient_tmp_base);
+            scratch.alloc_phase_scratch(
+                "linearization_trace_msm",
+                lin_trace_len,
+                MemoryPhase::LinearizationTrace,
+            )
+        };
+        // QuotientAndLinearization.yul derives the frame base as
+        // `add(SELECTOR_ACC_MPTR, selector_len)`. Pin the equality so the
+        // registered region cannot drift away from the address the template
+        // actually writes.
+        assert_eq!(
+            linearization_trace_msm_mptr,
+            selector_acc_mptr + selector_len,
+            "linearization trace MSM region must start where the template computes lin_scratch"
+        );
         let pcs_scratch_mptr = quotient_tmp_mptr;
         let (
             pcs_q_eval_source_table_mptr,
@@ -844,12 +1016,19 @@ impl VerifierMemoryLayout {
             vk_start + vk.len(),
             challenge_start + meta.challenge_indices.len() * WORD_BYTES,
             theta_start + theta_windows.rot_points_word * WORD_BYTES,
+            rot_points_mptr.value().as_usize() + config.pcs.rot_points_words * WORD_BYTES,
+            x1_powers_mptr.value().as_usize() + config.pcs.x1_powers_words * WORD_BYTES,
+            q_com_mptr.value().as_usize() + config.pcs.q_com_words * WORD_BYTES,
+            q_eval_set_mptr.value().as_usize() + config.pcs.q_eval_set_words * WORD_BYTES,
+            q_eval_cptr_mptr.value().as_usize() + WORD_BYTES,
             g1_identity_mptr.value().as_usize() + G1_BYTES,
             reversed_evals_mptr.value().as_usize() + meta.num_evals * WORD_BYTES,
             comms_mptr_base.value().as_usize() + commitments_len,
             selector_acc_mptr + selector_len,
             batch_invert_scratch_mptr + batch_invert_len,
+            lagrange_denoms_mptr + lagrange_denoms_len,
             quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
+            linearization_trace_msm_mptr + lin_trace_len,
             pcs_q_eval_source_table_mptr + q_eval_source_len,
             pcs_q_com_trace_scratch_mptr + q_com_trace_len,
             pcs_final_msm_scratch_mptr + final_msm_len,
@@ -925,8 +1104,10 @@ impl VerifierMemoryLayout {
             quotient_limb_comms_mptr_base,
             selector_acc_mptr,
             batch_invert_scratch_mptr,
+            lagrange_denoms_mptr,
             quotient_tmp_mptr,
             quotient_stack_mptr,
+            quotient_stack_hi: quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
             pcs_q_eval_source_table_mptr,
             pcs_q_com_trace_scratch_mptr,
             pcs_final_msm_scratch_mptr,
@@ -985,6 +1166,24 @@ impl VerifierMemoryLayout {
             }
         }
 
+        // The verifier body runs inside `assembly ("memory-safe")`, so solc's
+        // via-IR stack-to-memory mover reserves spill slots upward from 0x80.
+        // A generated region below `LOW_MEMORY_SCRATCH_START` could share
+        // bytes with a live spill slot, and the lifetime model cannot see
+        // solc's opaque spill liveness -- so enforce disjointness by address.
+        // `compiled_memoryguard_does_not_overlap_generated_layout` checks the
+        // complementary bound, `reserved_end <= LOW_MEMORY_SCRATCH_START`,
+        // against real compiled verifier and quotient-evaluator bytecode.
+        for region in &self.map.regions {
+            if region.len != 0 && region.start < LOW_MEMORY_SCRATCH_START {
+                return Err(format!(
+                    "memory region {} starts at {:#x}, below LOW_MEMORY_SCRATCH_START ({:#x}); \
+                     it can overlap solc's via-IR stack-to-memory spill window [0x80, reserved_end)",
+                    region.name, region.start, LOW_MEMORY_SCRATCH_START
+                ));
+            }
+        }
+
         let expected_scalar_inv =
             self.vk_mptr.value().as_usize().saturating_sub(MODEXP_SCRATCH_BYTES);
         if self.scalar_inv_scratch_mptr != expected_scalar_inv {
@@ -1020,6 +1219,9 @@ impl VerifierMemoryLayout {
             ));
         }
 
+        // The Lagrange batch-inversion input run lives in the registered
+        // `lagrange_denoms` phase region, so `map.validate()` below covers its
+        // disjointness structurally; no separate capacity check is needed.
         self.map.validate()?;
 
         Ok(())
@@ -1037,25 +1239,31 @@ pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
         + meta.num_quotients
 }
 
+/// Number of Fr words the generated Lagrange block writes into the
+/// `lagrange_denoms` region as the batch-inversion input run.
+///
+/// The input range covers:
+///   - num_instances public Lagrange denominators, or one fallback word when
+///     there are no public instances;
+///   - `abs(rotation_last)` negative-row denominators;
+///   - x_n - 1.
+pub(crate) fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
+    if num_instances == 0 {
+        meta.rotation_last.unsigned_abs() as usize + 2
+    } else {
+        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
+    }
+}
+
 /// Scratch size required by the batched scalar-inversion helper.
 fn batch_invert_scratch_bytes(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
     // The template calls:
     //   batch_invert(X_N_MPTR, mptr_end + WORD_BYTES, scratch, r)
     //
-    // The input range covers:
-    //   - num_instances public Lagrange denominators, or one fallback word when
-    //     there are no public instances;
-    //   - `abs(rotation_last)` negative-row denominators;
-    //   - x_n - 1.
-    //
     // For N inputs, the batched inversion stores N-2 prefix products and then
     // overlays one modexp frame at the current prefix pointer. Singletons use
     // only the frame.
-    let input_words = if num_instances == 0 {
-        meta.rotation_last.unsigned_abs() as usize + 2
-    } else {
-        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
-    };
+    let input_words = batch_invert_input_words(meta, num_instances);
 
     MODEXP_FRAME_BYTES + input_words.saturating_sub(2) * WORD_BYTES
 }
@@ -1099,6 +1307,25 @@ mod tests {
         map.push(region("b", 0x100, WORD_BYTES, MemoryPhase::PcsFinalMsm));
 
         map.validate().expect("disjoint scratch lifetimes");
+    }
+
+    #[test]
+    fn phase_spans_cover_each_phase_in_their_range() {
+        let lifetime = MemoryLifetime::PhaseSpan {
+            start: MemoryPhase::QuotientVm,
+            end: MemoryPhase::PcsFinalMsm,
+        };
+
+        for phase in [
+            MemoryPhase::QuotientVm,
+            MemoryPhase::PcsQEvalSourceTable,
+            MemoryPhase::PcsQComTrace,
+            MemoryPhase::PcsFinalMsm,
+        ] {
+            assert!(lifetime.intersects(&MemoryLifetime::Phase(phase)));
+        }
+        assert!(!lifetime.intersects(&MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert)));
+        assert!(!lifetime.intersects(&MemoryLifetime::Phase(MemoryPhase::PcsPairing)));
     }
 
     #[test]
@@ -1236,7 +1463,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
         let theta = layout.theta_mptr.value().as_usize();
@@ -1281,6 +1508,114 @@ mod tests {
         );
     }
 
+    /// P8 (L-5): a circuit with user-phase challenges must get a challenge
+    /// window that ends at or before THETA_MPTR, or theta's unconditional
+    /// squeeze silently overwrites user challenge 0.
+    #[test]
+    fn user_phase_challenge_window_precedes_theta() {
+        let meta = ConstraintSystemMeta {
+            num_user_advices: vec![1, 1],
+            num_user_challenges: vec![1, 2],
+            challenge_indices: vec![0, 1, 2],
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let layout = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        let challenge = layout.challenge_mptr.value().as_usize();
+        let theta = layout.theta_mptr.value().as_usize();
+        assert!(
+            challenge + 3 * WORD_BYTES <= theta,
+            "user challenge window [{challenge:#x}, {:#x}) must end before \
+             THETA_MPTR = {theta:#x}",
+            challenge + 3 * WORD_BYTES
+        );
+        // With zero user challenges the two legitimately coincide.
+        let empty_layout = VerifierMemoryLayout::new(
+            &ConstraintSystemMeta::default(),
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        assert_eq!(
+            empty_layout.challenge_mptr.value().as_usize(),
+            empty_layout.theta_mptr.value().as_usize(),
+        );
+    }
+
+    /// P8 (L-5): a window sized for fewer slots than the transcript parser
+    /// squeezes must refuse to plan.
+    #[test]
+    #[should_panic(expected = "user-phase challenge window is sized for")]
+    fn undersized_user_challenge_window_is_rejected() {
+        let meta = ConstraintSystemMeta {
+            num_user_advices: vec![1],
+            num_user_challenges: vec![2],
+            challenge_indices: vec![0],
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let _ = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+    }
+
+    /// P9 (L-7): across instance-count and rotation shapes, the
+    /// batch-inversion scratch must hold exactly the run the Lagrange block
+    /// writes, and the denominator region must match the input count -- the
+    /// two regions are adjacent with zero slack, and an overflow corrupts
+    /// denominator[0] without reverting.
+    #[test]
+    fn batch_invert_scratch_capacity_matches_lagrange_run() {
+        let vk = synthetic_vk();
+        for (num_instances, rotation_last) in
+            [(0usize, -1i32), (1, -1), (2, -3), (19, -6), (200, -6)]
+        {
+            let meta = ConstraintSystemMeta {
+                rotation_last,
+                ..ConstraintSystemMeta::default()
+            };
+            let layout = VerifierMemoryLayout::new(
+                &meta,
+                &vk,
+                Ptr::memory(0x2000),
+                VerifierMemoryLayoutConfig {
+                    num_instances,
+                    ..VerifierMemoryLayoutConfig::default()
+                },
+            );
+            let n = batch_invert_input_words(&meta, num_instances);
+            let scratch = layout
+                .map
+                .region("batch_invert_scratch")
+                .expect("batch_invert_scratch region is registered");
+            let denoms = layout
+                .map
+                .region("lagrange_denoms")
+                .expect("lagrange_denoms region is registered");
+            assert_eq!(denoms.len, n * WORD_BYTES);
+            assert_eq!(
+                scratch.len,
+                n.saturating_sub(2) * WORD_BYTES + MODEXP_FRAME_BYTES,
+                "scratch must hold n-2 prefix products plus one modexp frame \
+                 for n = {n} (num_instances = {num_instances})"
+            );
+            assert_eq!(
+                scratch.start + scratch.len,
+                denoms.start,
+                "regions are adjacent by construction; the capacity assert is \
+                 what keeps the adjacency safe"
+            );
+        }
+    }
+
     #[test]
     fn fixed_low_memory_regions_are_planner_registered() {
         let meta = ConstraintSystemMeta {
@@ -1291,7 +1626,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
 
@@ -1364,13 +1699,36 @@ mod tests {
             meta.num_simple_selectors * G1_MSM_PAIR_BYTES
         );
 
+        // These two regions carry different phases, and `MemoryLifetime::
+        // intersects` treats distinct phases as never co-live -- so the arena's
+        // own overlap validation is structurally blind to an overlap here and
+        // this assertion is the only thing that catches one.
+        let batch = layout
+            .map
+            .region("accumulator_pairing_batch")
+            .expect("accumulator pairing batch registered");
+        let final_pairing = layout
+            .map
+            .region("final_pairing_scratch")
+            .expect("final pairing scratch registered");
+        assert!(
+            batch.start + batch.len <= final_pairing.start,
+            "accumulator pairing batch [{:#x}, {:#x}) must not overlap final pairing scratch \
+             [{:#x}, {:#x}): the last word of the hashed ACC_LHS copy would share bytes with \
+             ec_pairing's input frame",
+            batch.start,
+            batch.start + batch.len,
+            final_pairing.start,
+            final_pairing.start + final_pairing.len,
+        );
+
         let scalar_inv = layout
             .map
             .region("scalar_inv_scratch")
             .expect("scalar inversion scratch registered");
         assert_eq!(
             layout.scalar_inv_scratch_mptr,
-            0x1000 - MODEXP_SCRATCH_BYTES
+            0x2000 - MODEXP_SCRATCH_BYTES
         );
         assert_eq!(scalar_inv.start, layout.scalar_inv_scratch_mptr);
         assert_eq!(scalar_inv.len, MODEXP_FRAME_BYTES);
@@ -1384,17 +1742,17 @@ mod tests {
         let windows = ThetaWindowLayout::compatibility();
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.rot_points_words = windows.rot_points_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("ROT_POINTS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.x1_powers_words = windows.x1_powers_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("X1_POWERS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.q_eval_set_words = windows.q_eval_set_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("Q_EVAL_SET_MPTR"));
     }
 
@@ -1406,11 +1764,40 @@ mod tests {
             acc_msm_terms: 4,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("accumulator_msm").expect("accumulator MSM region registered");
 
         assert_eq!(region.len, 4 * G1_MSM_PAIR_BYTES);
+    }
+
+    #[test]
+    fn selector_accumulators_are_live_from_quotient_to_final_msm() {
+        let meta = ConstraintSystemMeta {
+            num_simple_selectors: 1,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let layout = VerifierMemoryLayout::new(
+            &meta,
+            &vk,
+            Ptr::memory(0x2000),
+            VerifierMemoryLayoutConfig::default(),
+        );
+        let selector = layout
+            .map
+            .region("selector_accumulators")
+            .expect("selector accumulators registered");
+
+        assert_eq!(
+            selector.lifetime,
+            MemoryLifetime::PhaseSpan {
+                start: MemoryPhase::QuotientVm,
+                end: MemoryPhase::PcsFinalMsm,
+            }
+        );
+        assert_eq!(layout.batch_invert_scratch_mptr, layout.selector_acc_mptr);
+        layout.validate().expect("earlier batch inversion may reuse selector bytes");
     }
 
     #[test]
@@ -1431,7 +1818,7 @@ mod tests {
             },
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("trace_u256_log_word").expect("trace_u256 region registered");
 
@@ -1441,6 +1828,52 @@ mod tests {
             layout.trace_u256_mptr >= layout.pcs_final_msm_scratch_mptr + 10 * G1_MSM_PAIR_BYTES
         );
         layout.validate().expect("trace log word must not overlap");
+    }
+
+    #[test]
+    fn trace_log_word_accounts_for_theta_window_region_ends() {
+        let meta = ConstraintSystemMeta::default();
+        let vk = synthetic_vk();
+        let window_words = 4096;
+        let config = VerifierMemoryLayoutConfig {
+            pcs: PcsMemoryRequirements {
+                rot_points_words: window_words,
+                x1_powers_words: window_words,
+                q_com_words: window_words,
+                q_eval_set_words: window_words,
+                ..PcsMemoryRequirements::default()
+            },
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+
+        for (name, end) in [
+            (
+                "rot_points",
+                layout.rot_points_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "x1_powers",
+                layout.x1_powers_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_com_fixed_window",
+                layout.q_com_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_eval_set",
+                layout.q_eval_set_mptr.value().as_usize() + window_words * WORD_BYTES,
+            ),
+            (
+                "q_eval_cptr_slot",
+                layout.q_eval_cptr_mptr.value().as_usize() + WORD_BYTES,
+            ),
+        ] {
+            assert!(
+                layout.trace_u256_mptr >= end,
+                "trace log word should be after {name}"
+            );
+        }
     }
 
     #[test]
@@ -1454,7 +1887,7 @@ mod tests {
             num_instances: 5,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region = layout
             .map
             .region("batch_invert_scratch")
@@ -1464,5 +1897,80 @@ mod tests {
             region.len,
             MODEXP_FRAME_BYTES + (5 + 3 + 1 - 2) * WORD_BYTES
         );
+    }
+
+    #[test]
+    fn lagrange_denoms_region_tracks_instance_shape() {
+        let meta = ConstraintSystemMeta {
+            rotation_last: -3,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 5,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+
+        // num_instances + |rotation_last| denominators plus the trailing
+        // `x_n - 1` word.
+        assert_eq!(region.len, (5 + 3 + 1) * WORD_BYTES);
+        assert_eq!(
+            region.lifetime,
+            MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert)
+        );
+        assert_eq!(layout.lagrange_denoms_mptr, region.start);
+        // Sequential same-phase allocation: the run sits directly above the
+        // prefix-product scratch, which itself stays pinned to the selector
+        // accumulator base.
+        let scratch = layout
+            .map
+            .region("batch_invert_scratch")
+            .expect("batch invert scratch region registered");
+        assert_eq!(region.start, scratch.start + scratch.len);
+        layout.validate().expect("layout with registered denominator run is valid");
+
+        // Zero public instances still needs one denominator slot for L_0
+        // recovery: |rotation_last| + 2 words total.
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 0,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+        assert_eq!(region.len, (3 + 2) * WORD_BYTES);
+        layout.validate().expect("zero-instance layout is valid");
+    }
+
+    /// The registered denominator region removes the historical instance-count
+    /// cliff: a count far beyond the old 175-word live-memory cap now simply
+    /// grows the region, and the arena still validates.
+    #[test]
+    fn lagrange_denoms_region_scales_beyond_the_old_live_memory_cliff() {
+        let meta = ConstraintSystemMeta {
+            rotation_last: -3,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 500,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+        assert_eq!(region.len, (500 + 3 + 1) * WORD_BYTES);
+        layout
+            .validate()
+            .expect("large instance counts are structurally valid with a registered run");
     }
 }
