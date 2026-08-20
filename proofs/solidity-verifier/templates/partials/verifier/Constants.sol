@@ -33,7 +33,20 @@
     uint256 internal constant NUM_INSTANCE_CPTR = {{ num_instance_cptr|hex_padded(2) }};
     uint256 internal constant     INSTANCE_CPTR = {{ instance_cptr|hex_padded(2) }};
     // First general-purpose memory words reserved by the generated verifier.
-    // RETURN_MPTR is a single word set to 1 on success.
+    //
+    // TRANSCRIPT_MPTR, RETURN_MPTR and QUOTIENT_RETURN_MPTR below share one
+    // base address, and so do the constructor smoke-test and PCS pairing
+    // scratch windows that the assembly addresses inline. That is deliberate,
+    // not a collision: each is a distinct `MemoryPhase` whose lifetime ends
+    // before the next begins (Transcript -> QuotientReturn -> PcsPairing ->
+    // VerifierReturn, with ConstructorSmoke confined to deployment). The
+    // generator allocates them from one arena that rejects any two regions
+    // sharing an address while both are live, so the reuse is checked at
+    // generation time rather than argued in a comment.
+    //
+    // Practical consequence for a reader: seeing the same address on several
+    // constants here means "reused in sequence", never "written twice at
+    // once". RETURN_MPTR is a single word set to 1 on success.
     uint256 internal constant    TRANSCRIPT_MPTR = {{ memory.transcript_mptr|hex() }};
     uint256 internal constant        RETURN_MPTR = {{ memory.verifier_return_mptr|hex() }};
 
@@ -91,10 +104,12 @@
     uint256 internal constant          L_BLIND_MPTR = {{ memory.l_blind_mptr }};
     uint256 internal constant              L_0_MPTR = {{ memory.l_0_mptr }};
     uint256 internal constant     INSTANCE_EVAL_MPTR = {{ memory.instance_eval_mptr }};
-    // Legacy name: this is not h(x). It stores the expected opening
-    // scalar for the linearized commitment, i.e. the negated y-batched
-    // identity numerator reconstructed from the alleged evals at x.
-    uint256 internal constant     QUOTIENT_EVAL_MPTR = {{ memory.quotient_eval_mptr }};
+    // The expected opening scalar for the linearized commitment: the negated
+    // y-batched identity numerator reconstructed from the alleged evals at x.
+    // This is deliberately NOT h(x) -- the proof carries no h(x) scalar for
+    // the verifier to trust, and the commitment side is rebuilt from the
+    // quotient limb commitments instead. See QuotientAndLinearization.yul.
+    uint256 internal constant LINEARIZATION_EVAL_MPTR = {{ memory.linearization_eval_mptr }};
     uint256 internal constant         QUOTIENT_MPTR = {{ memory.quotient_mptr }};   // 4 words
     uint256 internal constant            F_EVAL_MPTR = {{ memory.f_eval_mptr }};
     uint256 internal constant                 V_MPTR = {{ memory.v_mptr }};
@@ -105,11 +120,19 @@
     // Multi-prepare scratch (sized at codegen time).
     uint256 internal constant       ROT_POINTS_MPTR = {{ memory.rot_points_mptr }};
     uint256 internal constant       X1_POWERS_MPTR = {{ memory.x1_powers_mptr }};
-    // Q_COM materialization is currently fused into the final MSM scratch,
-    // so this marker intentionally aliases Q_EVAL_SET_MPTR and has zero
-    // reserved capacity until a future emitter starts writing Q_COM_MPTR.
-    uint256 internal constant            Q_COM_MPTR = {{ memory.q_com_mptr }};
+    // Per-set q_com points are folded straight into the final MSM rather than
+    // materialized, so no q_com window is rendered. The generator still plans
+    // and bounds-checks one (`q_com_words`, currently 0); an emitter that
+    // starts materializing q_com must add the constant back here.
     uint256 internal constant      Q_EVAL_SET_MPTR = {{ memory.q_eval_set_mptr }};
+
+    // Staging buffer for the fused final G1MSM: `final_msm_terms` consecutive
+    // (point, scalar) pairs of 0xa0 bytes each, filled immediately before the
+    // single G1MSM call that produces FINAL_COM_MPTR. Every generated address
+    // in that block is written as an offset from this base so a reader can
+    // see which term a store belongs to; solc folds the addition away, so the
+    // symbolic form costs no runtime bytes.
+    uint256 internal constant     PCS_FINAL_MSM_MPTR = {{ memory.pcs_final_msm_scratch_mptr|hex() }};
 
     // Q_EVAL_CPTR is set at runtime once the verifier reaches the q_evals
     // block of the proof; we keep it as a memory slot for symmetry.
@@ -132,8 +155,14 @@
     // downstream eval references (gate evaluator + PCS q_eval Horner)
     // become 3-gas `mload(...)` instead of calldata reads.
     uint256 internal constant     REVERSED_EVALS_MPTR = {{ memory.reversed_evals_mptr }};
+    // SELECTOR_ACC_MPTR holds one accumulator per simple selector, live from
+    // the quotient VM through the final MSM.
     uint256 internal constant      SELECTOR_ACC_MPTR = {{ memory.selector_acc_mptr|hex() }};
     uint256 internal constant   QUOTIENT_RETURN_MPTR = {{ memory.quotient_return_mptr|hex() }};
+    // Shares SELECTOR_ACC_MPTR's base by construction: the Lagrange batch
+    // inversion runs to completion before the quotient VM writes the first
+    // selector accumulator, so the two never overlap in time. Pinned by
+    // `selector_accumulators_are_live_from_quotient_to_final_msm`.
     uint256 internal constant  BATCH_INV_SCRATCH_MPTR = {{ memory.batch_invert_scratch_mptr|hex() }};
     // Lagrange batch-inversion input run: denominators, in-place inverses,
     // then Lagrange values, consumed and distilled into the named theta

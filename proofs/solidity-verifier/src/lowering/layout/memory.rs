@@ -532,7 +532,7 @@ pub(crate) struct VerifierMemoryLayout {
     pub(crate) l_blind_mptr: Ptr,
     pub(crate) l_0_mptr: Ptr,
     pub(crate) instance_eval_mptr: Ptr,
-    pub(crate) quotient_eval_mptr: Ptr,
+    pub(crate) linearization_eval_mptr: Ptr,
     pub(crate) quotient_mptr: Ptr,
     pub(crate) f_eval_mptr: Ptr,
     pub(crate) v_mptr: Ptr,
@@ -541,7 +541,6 @@ pub(crate) struct VerifierMemoryLayout {
     pub(crate) pairing_rhs_mptr: Ptr,
     pub(crate) rot_points_mptr: Ptr,
     pub(crate) x1_powers_mptr: Ptr,
-    pub(crate) q_com_mptr: Ptr,
     pub(crate) q_eval_set_mptr: Ptr,
     pub(crate) q_eval_cptr_mptr: Ptr,
     pub(crate) g1_identity_mptr: Ptr,
@@ -878,6 +877,10 @@ impl VerifierMemoryLayout {
             config.pcs.x1_powers_words * WORD_BYTES,
             MemoryLifetime::Permanent,
         ));
+        // Zero-width today: q_com points are folded into the final MSM instead
+        // of being materialized, so no constant is rendered for this window.
+        // The allocation still runs so the arena registers the region and the
+        // `q_com_words` bound below stays meaningful for a future emitter.
         let q_com_mptr = Ptr::memory(arena.alloc_fixed(
             "q_com_fixed_window",
             at_theta(theta_windows.q_com_word),
@@ -1127,7 +1130,7 @@ impl VerifierMemoryLayout {
             l_blind_mptr: ptr_at_theta(ThetaSlot::LBlind),
             l_0_mptr: ptr_at_theta(ThetaSlot::L0),
             instance_eval_mptr: ptr_at_theta(ThetaSlot::InstanceEval),
-            quotient_eval_mptr: ptr_at_theta(ThetaSlot::QuotientEval),
+            linearization_eval_mptr: ptr_at_theta(ThetaSlot::QuotientEval),
             quotient_mptr: ptr_at_theta(ThetaSlot::Quotient),
             f_eval_mptr: ptr_at_theta(ThetaSlot::FEval),
             v_mptr: ptr_at_theta(ThetaSlot::V),
@@ -1136,7 +1139,6 @@ impl VerifierMemoryLayout {
             pairing_rhs_mptr: ptr_at_theta(ThetaSlot::PairingRhs),
             rot_points_mptr,
             x1_powers_mptr,
-            q_com_mptr,
             q_eval_set_mptr,
             q_eval_cptr_mptr,
             g1_identity_mptr,
@@ -1939,8 +1941,16 @@ mod tests {
                 layout.x1_powers_mptr.value().as_usize() + window_words * WORD_BYTES,
             ),
             (
+                // No `q_com_mptr` field: the window renders no constant, so it
+                // is reached through the arena's own registry instead.
                 "q_com_fixed_window",
-                layout.q_com_mptr.value().as_usize() + window_words * WORD_BYTES,
+                {
+                    let region = layout
+                        .map
+                        .region("q_com_fixed_window")
+                        .expect("q_com_fixed_window region is registered");
+                    region.start + window_words * WORD_BYTES
+                },
             ),
             (
                 "q_eval_set",

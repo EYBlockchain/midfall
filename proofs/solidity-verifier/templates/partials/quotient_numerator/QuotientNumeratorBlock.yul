@@ -50,7 +50,7 @@
             //     payload includes the quotient constant table and bytecode.
             //
             // Runtime outputs written by this block:
-            //   - QUOTIENT_EVAL_MPTR receives the scalar expected opening for
+            //   - LINEARIZATION_EVAL_MPTR receives the scalar expected opening for
             //     the linearized commitment, namely -nu_y(x).
             //   - SELECTOR_ACC_MPTR[0..num_simple_selectors) receives one
             //     linearization scalar per generated simple selector.
@@ -416,7 +416,7 @@
                 // of the linearization query. Rust subtracts that grouped
                 // scalar into expected_eval, so Solidity stores -nu_y(x).
                 let linearization_expected_eval := addmod(0, sub(r, mload({{ program.eval_numer_mptr|hex() }})), r)
-                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)
+                mstore(LINEARIZATION_EVAL_MPTR, linearization_expected_eval)
                 pop(y)
                 {%- when None %}
                 // Legacy/direct mode. This path emits the numerator
@@ -462,6 +462,6 @@
                 // factor (1 - x^n), so this scalar is -nu_y(x), not
                 // h(x) = nu_y(x) / (x^n - 1).
                 let linearization_expected_eval := addmod(0, sub(r, quotient_eval_numer), r)
-                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)
+                mstore(LINEARIZATION_EVAL_MPTR, linearization_expected_eval)
                 {%- endmatch %}
             }

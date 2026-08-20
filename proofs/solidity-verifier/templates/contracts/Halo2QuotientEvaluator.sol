@@ -75,7 +75,7 @@ contract Halo2QuotientEvaluator {
     uint256 internal constant          L_BLIND_MPTR = {{ memory.l_blind_mptr }};
     uint256 internal constant              L_0_MPTR = {{ memory.l_0_mptr }};
     uint256 internal constant     INSTANCE_EVAL_MPTR = {{ memory.instance_eval_mptr }};
-    uint256 internal constant     QUOTIENT_EVAL_MPTR = {{ memory.quotient_eval_mptr }};
+    uint256 internal constant     LINEARIZATION_EVAL_MPTR = {{ memory.linearization_eval_mptr }};
 
     // Proof evaluation table. Values are already decoded as canonical Fr words
     // by Halo2Verifier. The generated numerator code indexes this table by the
@@ -137,7 +137,7 @@ contract Halo2QuotientEvaluator {
             //      quotient_eval_numer;
             //   3. y-batches simple-selector identities into
             //      SELECTOR_ACC_MPTR buckets;
-            //   4. writes -quotient_eval_numer to QUOTIENT_EVAL_MPTR.
+            //   4. writes -quotient_eval_numer to LINEARIZATION_EVAL_MPTR.
             //
             // Depending on codegen settings, some identities are native Yul
             // callbacks and the rest are executed by the compact q_program VM
@@ -157,7 +157,7 @@ contract Halo2QuotientEvaluator {
             // selector buckets into the fused final PCS MSM.
             // __phase:quotient_return
             mstore(QUOTIENT_OUTPUT_MPTR, QUOTIENT_MAGIC)
-            mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(QUOTIENT_EVAL_MPTR))
+            mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(LINEARIZATION_EVAL_MPTR))
             {%- if simple_selector_cols.len() > 0 %}
             // Copy selector buckets from the generated absolute memory region
             // into the compact external-call return frame.

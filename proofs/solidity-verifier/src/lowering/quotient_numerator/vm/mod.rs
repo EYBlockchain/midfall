@@ -87,7 +87,7 @@ pub(crate) enum QuotientTarget {
     ///
     /// The value contributes to the reconstructed numerator scalar. After the
     /// whole stream has been consumed, the Yul runtime stores the negation in
-    /// `QUOTIENT_EVAL_MPTR`.
+    /// `LINEARIZATION_EVAL_MPTR`.
     Main,
     /// Simple-selector identity.
     ///

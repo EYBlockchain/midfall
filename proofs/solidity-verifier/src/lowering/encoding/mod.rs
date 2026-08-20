@@ -296,7 +296,7 @@ pub(crate) struct Data {
     pub(crate) trashcan_evals: Vec<Word>,
 
     pub(crate) computed_quotient_comm: EcPoint,
-    /// Historical name mirroring `QUOTIENT_EVAL_MPTR`. This is the
+    /// Historical name mirroring `LINEARIZATION_EVAL_MPTR`. This is the
     /// expected opening scalar for the linearized commitment (`-nu_y(x)`),
     /// not an alleged quotient-polynomial evaluation `h(x)`.
     pub(crate) computed_quotient_eval: Word,
@@ -573,7 +573,7 @@ impl Data {
             .map(|(index, word)| word.unwrap_or_else(|| panic!("missing trash eval[{index}]")))
             .collect();
 
-        let computed_quotient_eval = Ptr::memory("QUOTIENT_EVAL_MPTR").into();
+        let computed_quotient_eval = Ptr::memory("LINEARIZATION_EVAL_MPTR").into();
 
         Self {
             challenge_mptr,

@@ -31,10 +31,10 @@
             trace_u256(20, mload(L_BLIND_MPTR))
             trace_u256(21, mload(L_0_MPTR))
             trace_u256(22, mload(INSTANCE_EVAL_MPTR))
-            trace_u256(23, mload(QUOTIENT_EVAL_MPTR))
+            trace_u256(23, mload(LINEARIZATION_EVAL_MPTR))
             // Rust traces often print the positive numerator; the verifier
             // stores the negated expected scalar for the linearized opening.
-            trace_u256(36, addmod(0, sub(r, mload(QUOTIENT_EVAL_MPTR)), r))
+            trace_u256(36, addmod(0, sub(r, mload(LINEARIZATION_EVAL_MPTR)), r))
             // QUOTIENT_MPTR carries scalar metadata in the fused production
             // path. Zero the unused point words before tracing it as a G1 slot.
             mstore(add(QUOTIENT_MPTR, 0x40), 0)

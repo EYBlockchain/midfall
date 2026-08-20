@@ -250,7 +250,7 @@ impl QuotientOracleMemory for QuotientFrameMemory<'_> {
 /// honest proofs satisfy (chunk-boundary products, boundary constraints) and
 /// wrong-slot bugs cannot cancel. The VK subrange must be genuine — it carries
 /// the const table and packed bytecode the evaluator's VM executes.
-/// `QUOTIENT_EVAL_MPTR` is deliberately not special-cased: it is a write
+/// `LINEARIZATION_EVAL_MPTR` is deliberately not special-cased: it is a write
 /// target the oracle never reads, so leaving it random freely detects a
 /// missing write.
 pub(crate) fn build_quotient_frame(

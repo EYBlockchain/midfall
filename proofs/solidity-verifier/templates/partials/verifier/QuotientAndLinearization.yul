@@ -34,7 +34,7 @@
                 if iszero(eq(mload(q_out), {{ pinned.external.magic|hex_padded(64) }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 // Word 1 is the negated y-batched identity numerator, stored
                 // in the same memory slot used by the monolithic path.
-                mstore(QUOTIENT_EVAL_MPTR, mload(add(q_out, 0x20)))
+                mstore(LINEARIZATION_EVAL_MPTR, mload(add(q_out, 0x20)))
                 {%- if simple_selector_cols.len() > 0 %}
                 // Remaining return words are selector linearization buckets.
                 // Copy them back into the canonical selector accumulator region

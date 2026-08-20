@@ -1,16 +1,5 @@
 # Moonlight Wrap point_pair Replay Fixture
 
-> **STALE — regeneration required before any deployment.** These artifacts were
-> rendered before the MF-1 fix (`MODEXP_GAS` raised to the EIP-7883 bound and a
-> constructor modexp known-answer probe added), so the committed `.sol` files
-> here still carry the old 1360 bound and no modexp probe. They remain valid
-> inputs for the *replay* tests, which exercise verification logic rather than
-> the modexp bound, but they must be regenerated (and their provenance rows
-> below updated) on a host with the pinned solc before they are used as a
-> deployment source. Regeneration needs a Moonlight checkout on the branch named
-> below plus the SRS asset, neither of which the environment that applied the
-> MF-1 fix could reach.
-
 Pre-rendered artifacts for the `point_pair` accumulator arm of
 `tests/ivc_accumulator_replay.rs`. The IVC fixture next door covers
 `AccumulatorEncoding::new` (explicit lhs/rhs scalars); this one covers
@@ -25,12 +14,12 @@ the replay deploys the verifier with the verifying key alone.
 
 | Field | Value |
 | --- | --- |
-| Source commit | `f894f75` (**this repository**, solidity-verifier, at fixture-render time; not the Midfall dependency revision — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
+| Source commit | `6e83e8e4` (**this repository**, solidity-verifier, at fixture-render time; not the Midfall dependency revision — see the provenance-identities table in `docs/reference/REPRODUCIBLE_BUILDS.md`) |
 | Rendered by | Moonlight `wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs` |
-| Moonlight revision | `origin/codex/wrap-bench-cherry-picks` (`1940ea9`), rendered from a scratch worktree with the local-path Cargo unification below |
+| Moonlight revision | `origin/codex/wrap-bench-cherry-picks` (`1940ea9`), rendered from a scratch worktree. That branch predates two API changes on this side and needs a local patch to build against current `main`: `proof_evaluation_counts()` now returns `Result`, and `RenderOptions` gained `provenance` (set to `None` to keep `BUILD_ID` fixture-stable). Both are mechanical; the branch should be updated so regeneration stops needing a manual patch. |
 | Accumulator | `AccumulatorEncoding::point_pair(offset=11, num_limbs=7, num_limb_bits=56)` |
 | Public inputs | 19 (accumulator occupies the trailing 8 words) |
-| Verified on-chain | yes, 1,338,272 gas under revm Prague (2026-08-13 render: exact precompile gas bounds, typed errors, VM operand clamps, BUILD_ID, alpha vk-binding) |
+| Verified on-chain | yes, 1,336,972 gas under revm Prague (2026-08-20 render) |
 | Native/Solidity trace | 244 trace points matched |
 
 ## Regenerating

@@ -789,6 +789,24 @@ fn linearization_term_count(meta: &ConstraintSystemMeta) -> usize {
     meta.protocol.num_quotients + meta.protocol.simple_selector_cols.len()
 }
 
+/// Render an address inside the fused final-MSM staging buffer as an offset
+/// from the rendered `PCS_FINAL_MSM_MPTR` constant.
+///
+/// The buffer is a flat run of `(point, scalar)` pairs, so a bare address such
+/// as `0xc5e0` tells a reader nothing about which term it belongs to. solc
+/// folds `add(CONST, CONST)` during compilation, so the symbolic form is free:
+/// the emitted runtime bytecode is byte-identical to the literal form.
+fn final_msm_addr(scratch_base: usize, addr: usize) -> String {
+    debug_assert!(
+        addr >= scratch_base,
+        "final-MSM address {addr:#x} precedes the staging base {scratch_base:#x}"
+    );
+    match addr - scratch_base {
+        0 => "PCS_FINAL_MSM_MPTR".to_string(),
+        offset => format!("add(PCS_FINAL_MSM_MPTR, {offset:#x})"),
+    }
+}
+
 /// Number of non-identity q_com MSM terms needed for one point set.
 fn q_com_terms_for_set(
     meta: &ConstraintSystemMeta,
@@ -1859,8 +1877,8 @@ pub(crate) fn computations(
                             q_idx * G1_BYTES
                         ));
                         lines.push(format!(
-                            "mstore({:#x}, {lin_cur_var})",
-                            pair_base + G1_BYTES,
+                            "mstore({}, {lin_cur_var})",
+                            final_msm_addr(final_msm_scratch, pair_base + G1_BYTES)
                         ));
                         pair_idx += 1;
                         if q_idx + 1 != meta.protocol.num_quotients {
@@ -1875,12 +1893,13 @@ pub(crate) fn computations(
                         let selector_scalar =
                             format!("mload(add(SELECTOR_ACC_MPTR, {:#x}))", sel_idx * WORD_BYTES);
                         lines.push(format!(
-                            "mcopy({pair_base:#x}, {}, {G1_BYTES:#x})",
+                            "mcopy({}, {}, {G1_BYTES:#x})",
+                            final_msm_addr(final_msm_scratch, pair_base),
                             data.fixed_comms[col].ptr()
                         ));
                         lines.push(format!(
-                            "mstore({:#x}, mulmod({lin_query_var}, {}, r))",
-                            pair_base + G1_BYTES,
+                            "mstore({}, mulmod({lin_query_var}, {}, r))",
+                            final_msm_addr(final_msm_scratch, pair_base + G1_BYTES),
                             selector_scalar
                         ));
                         pair_idx += 1;
@@ -1888,20 +1907,27 @@ pub(crate) fn computations(
                 } else {
                     let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
                     lines.push(format!(
-                        "mcopy({pair_base:#x}, {}, {G1_BYTES:#x})",
+                        "mcopy({}, {}, {G1_BYTES:#x})",
+                        final_msm_addr(final_msm_scratch, pair_base),
                         c.comm.ptr()
                     ));
-                    lines.push(format!("mstore({:#x}, {scalar})", pair_base + G1_BYTES));
+                    lines.push(format!(
+                        "mstore({}, {scalar})",
+                        final_msm_addr(final_msm_scratch, pair_base + G1_BYTES)
+                    ));
                     pair_idx += 1;
                 }
             }
         }
 
         let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
-        lines.push(format!("mcopy({pair_base:#x}, F_COM_MPTR, {G1_BYTES:#x})"));
         lines.push(format!(
-            "mstore({:#x}, x4_pow_{n_sets})",
-            pair_base + G1_BYTES
+            "mcopy({}, F_COM_MPTR, {G1_BYTES:#x})",
+            final_msm_addr(final_msm_scratch, pair_base)
+        ));
+        lines.push(format!(
+            "mstore({}, x4_pow_{n_sets})",
+            final_msm_addr(final_msm_scratch, pair_base + G1_BYTES)
         ));
         pair_idx += 1;
         assert_eq!(
@@ -1914,7 +1940,7 @@ pub(crate) fn computations(
             "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s)"
         ));
         lines.push(format!(
-            "    success := staticcall({}, 0x0c, {final_msm_scratch:#x}, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+            "    success := staticcall({}, 0x0c, PCS_FINAL_MSM_MPTR, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
             gas::g1msm_gas(final_msm_terms),
             final_msm_len
         ));
