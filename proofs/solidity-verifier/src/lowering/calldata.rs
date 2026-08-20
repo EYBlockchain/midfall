@@ -10,8 +10,6 @@ use ff::PrimeField;
 use group::GroupEncoding;
 use midnight_curves::{Fq, G1Affine};
 
-#[cfg(all(test, feature = "evm"))]
-use crate::lowering::quotient_numerator::vm::RepackedProofScalarLayout;
 use crate::{
     api::{GeneratorError, RepackError},
     lowering::{
@@ -40,10 +38,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// multiplicities + chunked helpers + accumulators, perm Z
     /// products, trashcans, quotient limbs, eval block, dummy evals
     /// from `outer-fewer-point-sets`, f_com, q_evals per point set, pi).
-    pub(crate) fn repack_proof(&self, compressed: &[u8]) -> Result<Vec<u8>, RepackError> {
+    pub(crate) fn repack_proof(
+        &self,
+        plan: &RepackedProofLayoutPlan,
+        compressed: &[u8],
+    ) -> Result<Vec<u8>, RepackError> {
         use group::prime::PrimeCurveAffine;
 
-        let plan = self.repacked_proof_layout_plan();
         let prefix_g1_count = plan.prefix_g1_count();
         let expected_compressed_len = plan.compressed_len();
         if compressed.len() != expected_compressed_len {
@@ -53,6 +54,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 prefix_g1: prefix_g1_count,
                 num_evals: plan.num_evals,
                 num_point_sets: plan.num_point_sets,
+                feature_profile: crate::feature_profile(),
             });
         }
 
@@ -131,6 +133,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// Repack a native proof and encode verifier calldata for `verifyProof`.
     pub(crate) fn encode_calldata(
         &self,
+        plan: &RepackedProofLayoutPlan,
         compressed_proof: &[u8],
         instances: &[Fq],
     ) -> Result<Vec<u8>, GeneratorError> {
@@ -144,17 +147,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 ),
             });
         }
-        let proof = self.repack_proof(compressed_proof)?;
+        let proof = self.repack_proof(plan, compressed_proof)?;
         Ok(crate::evm::encode_calldata(&proof, instances))
-    }
-
-    #[cfg(all(test, feature = "evm"))]
-    pub(crate) fn repacked_proof_scalar_layout_for_test(&self) -> RepackedProofScalarLayout {
-        self.repacked_proof_layout_plan().scalar_layout()
-    }
-
-    /// Return the compressed/repacked proof layout used by the off-chain shim.
-    fn repacked_proof_layout_plan(&self) -> RepackedProofLayoutPlan {
-        self.lowering_plan().repacked_proof_layout_plan()
     }
 }

@@ -788,7 +788,7 @@ fn print_proof_evaluation_counts(counts: &ProofEvaluationCounts) {
 }
 
 fn assert_ivc_aggregation_quotient_manifest(generator: &SolidityGenerator<'_>) {
-    let manifest = generator.quotient_identity_manifest();
+    let manifest = generator.quotient_identity_manifest().expect("quotient identity manifest");
     let normal_gate_names = manifest
         .entries
         .iter()
@@ -1113,7 +1113,8 @@ fn ivc_final_keccak_solidity_e2e() {
         )),
     );
     assert_ivc_aggregation_quotient_manifest(&generator);
-    let proof_evaluation_counts = generator.proof_evaluation_counts();
+    let proof_evaluation_counts =
+        generator.proof_evaluation_counts().expect("proof evaluation counts");
     print_proof_evaluation_counts(&proof_evaluation_counts);
     let gas_checkpoints_enabled = halo2_solidity_verifier::SOLIDITY_GAS_CHECKPOINTS_ENABLED;
 

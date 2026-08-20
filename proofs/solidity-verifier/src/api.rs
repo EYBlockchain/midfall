@@ -374,6 +374,11 @@ pub struct RenderedArtifacts {
     /// Quotient evaluator source when [`RenderQuotient::ExternalPinned`] is
     /// selected.
     pub quotient_evaluator: Option<String>,
+    /// Cargo feature profile of the build that rendered these artifacts
+    /// (from `SOLIDITY_VERIFIER_FEATURES`). Features change the proof schema
+    /// and transcript shape, so artifact consumers need this to detect
+    /// build/prover mismatches.
+    pub feature_profile: &'static str,
 }
 
 /// Errors from native-proof to Solidity-proof repacking.
@@ -391,6 +396,15 @@ pub enum RepackError {
         num_evals: usize,
         /// Number of PCS point-set evaluation scalars.
         num_point_sets: usize,
+        /// Cargo feature profile of this build (features change the proof
+        /// schema, so a mismatch report must identify which schema rejected
+        /// the proof).
+        feature_profile: &'static str,
+    },
+    /// Building the converged lowering plan the repacker walks failed.
+    Planning {
+        /// Human-readable planning error.
+        message: String,
     },
     /// One compressed G1 commitment failed host-side decompression.
     InvalidCompressedG1 {
@@ -418,10 +432,14 @@ impl fmt::Display for RepackError {
                 prefix_g1,
                 num_evals,
                 num_point_sets,
+                feature_profile,
             } => write!(
                 f,
-                "compressed proof length mismatch: expected {expected} bytes (prefix_g1={prefix_g1}, num_evals={num_evals}, num_point_sets={num_point_sets}, +f_com+pi), got {actual}"
+                "compressed proof length mismatch: expected {expected} bytes (prefix_g1={prefix_g1}, num_evals={num_evals}, num_point_sets={num_point_sets}, +f_com+pi), got {actual}; build features: [{feature_profile}]"
             ),
+            Self::Planning { message } => {
+                write!(f, "proof repack planning failed: {message}")
+            }
             Self::InvalidCompressedG1 { offset, bytes_hex } => write!(
                 f,
                 "invalid compressed G1 at compressed[{offset}..{}]: bytes = 0x{bytes_hex}",
@@ -558,6 +576,22 @@ impl fmt::Display for GeneratorError {
             }
             Self::Render { artifact } => write!(f, "failed to render {artifact}"),
             Self::Repack(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl GeneratorError {
+    /// Build a [`GeneratorError::Planning`] with a stage tag.
+    ///
+    /// Stage tags used by the lowering pipeline: `vk-header`,
+    /// `vk-constructor-memory`, `vk-payload-reservation`, `vk-payload-layout`,
+    /// `static-layout`, `quotient-plan`, `invariants`, `certification`,
+    /// `render-model`, `transcript-schedule`, `calldata`,
+    /// `constraint system`.
+    pub(crate) fn planning(stage: &'static str, message: impl Into<String>) -> Self {
+        Self::Planning {
+            stage,
+            message: message.into(),
         }
     }
 }

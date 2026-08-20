@@ -5,7 +5,7 @@
 //! validation, and caller-facing wrappers. The actual lowering pipeline lives
 //! in `lowering`, which receives read-only verifier build inputs.
 
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::OnceLock};
 
 use midnight_curves::{Bls12, Fq};
 use midnight_proofs::{
@@ -22,7 +22,7 @@ use crate::{
         ProofEvaluationCounts, QuotientIdentityManifest, RenderDiagnostics, RenderOptions,
         RenderedArtifacts, RepackError,
     },
-    lowering::{encoding::ConstraintSystemMeta, VerifierBuildInputs},
+    lowering::{encoding::ConstraintSystemMeta, plan::LoweringPlan, VerifierBuildInputs},
 };
 
 mod api;
@@ -47,6 +47,24 @@ pub struct SolidityGenerator<'a> {
     /// Optional accumulator layout encoded at the tail of the public instances.
     acc_encoding: Option<AccumulatorEncoding>,
     meta: ConstraintSystemMeta,
+    /// One converged lowering plan per generator. Render, repack, and
+    /// diagnostics all share this cached build; `LoweringPlan::try_new` is
+    /// deterministic in the constructor inputs, so a failure is cached too.
+    plan: OnceLock<Result<Box<LoweringPlan>, GeneratorError>>,
+}
+
+impl<'a> SolidityGenerator<'a> {
+    /// The single converged lowering plan for this generator.
+    ///
+    /// Built lazily on first use (plan construction includes an O(2^k)
+    /// SRS tau-commitment MSM, so the constructor must stay cheap) and shared
+    /// by every render/repack/diagnostics call.
+    pub(crate) fn plan(&self) -> Result<&LoweringPlan, GeneratorError> {
+        match self.plan.get_or_init(|| LoweringPlan::try_new(&self.inputs()).map(Box::new)) {
+            Ok(plan) => Ok(plan),
+            Err(err) => Err(err.clone()),
+        }
+    }
 }
 
 impl<'a> SolidityGenerator<'a> {

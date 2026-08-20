@@ -335,11 +335,11 @@ fn srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2() {
 
 /// The generator certifies its own quotient bytecode on a real plan.
 ///
-/// `LoweringPlan::new` runs `certify_quotient_program` and the dual-build
-/// agreement check, both of which panic on mismatch, so simply building the
-/// plan is the assertion. The explicit checks below guard against this test
-/// silently going vacuous if the planner ever stops routing these identities
-/// through the VM.
+/// `LoweringPlan::try_new` runs `certify_quotient_program` and the dual-build
+/// agreement check, both of which fail the build on mismatch, so simply
+/// building the plan is the assertion. The explicit checks below guard against
+/// this test silently going vacuous if the planner ever stops routing these
+/// identities through the VM.
 #[test]
 fn lowering_plan_certifies_emitted_quotient_bytecode() {
     let (params, vk) = quotient_vm_test_vk();
@@ -366,6 +366,64 @@ fn lowering_plan_certifies_emitted_quotient_bytecode() {
         plan.quotient.build.used_ops.contains(&Q_OP_LIN7),
         "test circuit should exercise the seven-limb linear recognizer; used ops: {:?}",
         plan.quotient.build.used_ops
+    );
+}
+
+/// P1.1: every planning gate reports through `GeneratorError::Planning`
+/// instead of aborting the process. Pin the converted files against `panic!`
+/// reintroduction; deliberate self-consistency `assert!`s and `.expect`s are
+/// documented at their sites and remain allowed.
+#[test]
+fn lowering_pipeline_reports_errors_instead_of_panicking() {
+    for (name, source) in [
+        ("plan.rs", include_str!("plan.rs")),
+        ("vk.rs", include_str!("vk.rs")),
+        ("artifacts.rs", include_str!("artifacts.rs")),
+        ("calldata.rs", include_str!("calldata.rs")),
+        ("diagnostics.rs", include_str!("diagnostics.rs")),
+    ] {
+        assert!(
+            !source.contains("panic!("),
+            "{name} reintroduced panic!() into the fallible lowering pipeline; \
+             return GeneratorError::Planning instead"
+        );
+    }
+}
+
+/// P1.2: one converged plan per generator. Every render/diagnostics entry
+/// point must share the `SolidityGenerator` plan cache rather than rebuilding
+/// the plan (each rebuild repeats VK generation, an O(2^k) SRS MSM, VM
+/// compilation, and both certification passes).
+#[test]
+fn plan_is_built_once_per_generator() {
+    use crate::{api::RenderDiagnostics, lowering::plan::PLAN_BUILDS};
+
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+
+    let before = PLAN_BUILDS.with(|builds| builds.get());
+    let first = generator.render(RenderOptions::default()).expect("first render");
+    let second = generator.render(RenderOptions::default()).expect("second render");
+    generator
+        .render_quotient_evaluator(RenderDiagnostics::default())
+        .expect("quotient evaluator render");
+    generator.proof_evaluation_counts().expect("proof evaluation counts");
+    generator.quotient_identity_manifest().expect("quotient identity manifest");
+    let after = PLAN_BUILDS.with(|builds| builds.get());
+
+    assert_eq!(
+        after - before,
+        1,
+        "render/diagnostics entry points must share one cached lowering plan"
+    );
+    assert_eq!(
+        first, second,
+        "two renders of one cached plan must be byte-identical"
+    );
+    assert_eq!(
+        first.feature_profile,
+        crate::feature_profile(),
+        "rendered artifacts must record the build's feature profile"
     );
 }
 
@@ -728,8 +786,9 @@ fn lowering_plan_reuses_stable_layout_facts() {
         plan.meta.num_simple_selectors
     );
 
-    let verifier =
-        inputs.generate_verifier_from_plan(&plan, false, false, false, false, None, None);
+    let verifier = inputs
+        .generate_verifier_from_plan(&plan, false, false, false, false, None, None)
+        .expect("verifier model");
     assert_eq!(verifier.codegen_layout.proof, plan.proof_layout);
     assert_eq!(verifier.memory.vk_mptr, plan.vk_mptr);
     assert_eq!(verifier.proof_len, plan.proof_layout.proof_len);

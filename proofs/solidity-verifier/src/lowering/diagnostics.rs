@@ -7,19 +7,19 @@ use crate::{
         ProofEvaluationCounts, QuotientIdentityManifest, QuotientIdentityManifestEntry,
         QuotientIdentityManifestTarget, QuotientIdentitySource,
     },
-    lowering::{protocol, VerifierBuildInputs},
+    lowering::{plan::LoweringPlan, protocol, VerifierBuildInputs},
 };
 
 /// Count proof-evaluation scalars in the same categories used by calldata
 /// parsing and transcript absorption.
 pub(crate) fn proof_evaluation_counts(
     inputs: VerifierBuildInputs<'_, '_>,
+    plan: &LoweringPlan,
 ) -> ProofEvaluationCounts {
     debug_assert_eq!(
         inputs.num_committed_instances,
         inputs.meta.num_committed_instances
     );
-    let plan = inputs.lowering_plan();
     let meta = &plan.meta;
 
     let committed_instance = meta
@@ -73,8 +73,8 @@ pub(crate) fn proof_evaluation_counts(
 /// stream.
 pub(crate) fn quotient_identity_manifest(
     inputs: VerifierBuildInputs<'_, '_>,
+    plan: &LoweringPlan,
 ) -> QuotientIdentityManifest {
-    let plan = inputs.lowering_plan();
     let mut simple_selector_cols: Vec<usize> =
         plan.meta.simple_selector_cols.iter().copied().collect();
     simple_selector_cols.sort_unstable();

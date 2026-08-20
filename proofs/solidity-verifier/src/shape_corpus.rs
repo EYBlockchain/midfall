@@ -1355,7 +1355,8 @@ mod tests {
 
             // Public-API cross-check: the exported identity manifest and the
             // internal execution walk must agree on the identity count.
-            let manifest = generator.quotient_identity_manifest();
+            let manifest =
+                generator.quotient_identity_manifest().expect("quotient identity manifest");
             let execution_len = plan
                 .quotient
                 .plan

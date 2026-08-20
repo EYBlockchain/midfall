@@ -5289,18 +5289,16 @@ fn quotient_frame_differential_detects_injected_faults() {
         let mut harness =
             QuotientFaultHarness::new("fault injection (selector fold circuit)", &params, &vk);
 
-        // 5. The gap operand of the last FOLD_SELECTOR in the bytecode. The
-        //    last fold is chosen because its bucket accumulator is already
-        //    nonzero (earlier identities of the same bucket folded first), so
-        //    `bucket * y^gap + value` provably depends on the gap; on the
-        //    first identity of a bucket the accumulator is still zero and a
-        //    gap flip would be undetectable on a healthy build. The mutated
-        //    gap is written as `gap - 1` rather than a bit flip: the
-        //    interpreter clamps gaps to `selector_max_power` and this
-        //    fixture's live gaps sit exactly at that bound, so flipping a bit
-        //    upward would be caught by the operand clamp's revert instead of
-        //    exercising the y-power fold arithmetic this control exists to
-        //    pin down.
+        // 5. The gap operand of the last FOLD_SELECTOR in the bytecode. The last fold
+        //    is chosen because its bucket accumulator is already nonzero (earlier
+        //    identities of the same bucket folded first), so `bucket * y^gap + value`
+        //    provably depends on the gap; on the first identity of a bucket the
+        //    accumulator is still zero and a gap flip would be undetectable on a
+        //    healthy build. The mutated gap is written as `gap - 1` rather than a bit
+        //    flip: the interpreter clamps gaps to `selector_max_power` and this
+        //    fixture's live gaps sit exactly at that bound, so flipping a bit upward
+        //    would be caught by the operand clamp's revert instead of exercising the
+        //    y-power fold arithmetic this control exists to pin down.
         harness.assert_frame_fault_detected("selector fold gap operand", |frame, facts| {
             let fold_idx = facts
                 .last_selector_fold
@@ -5332,20 +5330,18 @@ fn quotient_frame_differential_detects_injected_faults() {
             .unwrap_or_else(|err| panic!("fault-injection case vk generation failed: {err:?}"));
         let mut harness = QuotientFaultHarness::new("fault injection (mixed shape)", &params, &vk);
 
-        // 6. A decoded proof eval word some identity expression provably
-        //    reads.
+        // 6. A decoded proof eval word some identity expression provably reads.
         harness.assert_frame_fault_detected("proof eval word", |frame, facts| {
             let ptr = first_eval_word_ptr(facts)
                 .expect("structured fixture references decoded proof evals");
             bump_frame_word(frame, &facts.external, ptr as usize);
         });
 
-        // 7. Source-side: corrupt the permutation delta-power seed. This
-        //    targets `beta * x` rather than the `let delta := ...` literal
-        //    because `delta` is a dead variable whenever every permutation
-        //    chunk holds a single column (the last per-column multiply is
-        //    unread), which would make the control fail on a healthy build;
-        //    the seed is read for every column of every set.
+        // 7. Source-side: corrupt the permutation delta-power seed. This targets `beta
+        //    * x` rather than the `let delta := ...` literal because `delta` is a dead
+        //    variable whenever every permutation chunk holds a single column (the last
+        //    per-column multiply is unread), which would make the control fail on a
+        //    healthy build; the seed is read for every column of every set.
         let delta_anchor =
             "mstore(q_perm_delta_base_ptr, mulmod(mload(BETA_MPTR), mload(X_MPTR), r))";
         harness.assert_source_fault_detected(
@@ -5360,12 +5356,11 @@ fn quotient_frame_differential_detects_injected_faults() {
             },
         );
 
-        // 8. Source-side: corrupt the lookup kernel's beta load. This stands
-        //    in for the theta line the plan sketched: with single-expression
-        //    lookup inputs the theta compression multiplies a zero
-        //    accumulator (`addmod(mulmod(0, theta, r), e, r)`), so theta is
-        //    dead on this corpus and mutating it would be undetectable on a
-        //    healthy build. Beta is live in both `f + beta` and
+        // 8. Source-side: corrupt the lookup kernel's beta load. This stands in for the
+        //    theta line the plan sketched: with single-expression lookup inputs the
+        //    theta compression multiplies a zero accumulator (`addmod(mulmod(0, theta,
+        //    r), e, r)`), so theta is dead on this corpus and mutating it would be
+        //    undetectable on a healthy build. Beta is live in both `f + beta` and
         //    `table + beta`.
         let beta_anchor = "let q_lookup_beta := mload(BETA_MPTR)";
         harness.assert_source_fault_detected("lookup beta load", beta_anchor, |source| {

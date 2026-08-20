@@ -11,19 +11,22 @@ use itertools::chain;
 use midnight_curves::{pairing::Engine, Bls12, Fq, G1Affine, G1Projective, G2Affine};
 use ruint::aliases::U256;
 
-use crate::lowering::{
-    abi::{ProofCalldataLayout, TranscriptBufferLayout},
-    encoding::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
-    kzg, layout,
-    layout::{
-        memory::{
-            VerifierMemoryLayout, VerifierMemoryLayoutConfig, VkConstructorMemoryLayout, G1_BYTES,
-            WORD_BYTES,
+use crate::{
+    api::GeneratorError,
+    lowering::{
+        abi::{ProofCalldataLayout, TranscriptBufferLayout},
+        encoding::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
+        kzg, layout,
+        layout::{
+            memory::{
+                VerifierMemoryLayout, VerifierMemoryLayoutConfig, VkConstructorMemoryLayout,
+                G1_BYTES, WORD_BYTES,
+            },
+            vk_payload::{PackedProgramCodec, PayloadSectionKind, VkPayloadLayout},
         },
-        vk_payload::{PackedProgramCodec, PayloadSectionKind, VkPayloadLayout},
+        render::{Halo2VerifyingKey, VK_RUNTIME_PREFIX_LEN},
+        VerifierBuildInputs,
     },
-    render::{Halo2VerifyingKey, VK_RUNTIME_PREFIX_LEN},
-    VerifierBuildInputs,
 };
 
 /// Return whether `s_g2` corresponds to the same tau that produced
@@ -92,7 +95,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     }
 
     /// Generate the VK payload before compact quotient constants/program data.
-    fn generate_base_vk(&self) -> Halo2VerifyingKey {
+    fn generate_base_vk(&self) -> Result<Halo2VerifyingKey, GeneratorError> {
         let constants: Vec<(&'static str, U256)>;
         {
             use layout::VkHeaderSlot as Slot;
@@ -261,7 +264,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 )
                 .unwrap();
             constants =
-                header.finish().unwrap_or_else(|err| panic!("invalid VK header layout: {err}"));
+                header.finish().map_err(|err| GeneratorError::planning("vk-header", err))?;
         }
 
         // Convert each commitment from G1Projective to G1Affine before
@@ -283,8 +286,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             VkConstructorMemoryLayout::new(constructor_payload_len + VK_RUNTIME_PREFIX_LEN);
         constructor_memory
             .validate()
-            .unwrap_or_else(|err| panic!("invalid VK constructor memory layout: {err}"));
-        Halo2VerifyingKey {
+            .map_err(|err| GeneratorError::planning("vk-constructor-memory", err))?;
+        Ok(Halo2VerifyingKey {
             constructor_payload_mptr: constructor_memory.payload_mptr,
             constants,
             fixed_comms,
@@ -293,7 +296,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_const_words: 0,
             quotient_program_offset_words: None,
             quotient_program_words: 0,
-        }
+        })
     }
 
     /// Generate the final VK payload, including compact quotient VM data.
@@ -302,8 +305,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// depend on the final VK length. This method reserves zero-filled quotient
     /// sections first, rebuilds against the final layout, and then fills the
     /// sections. Assertions catch any non-convergent program size change.
-    pub(crate) fn generate_vk(&self) -> Halo2VerifyingKey {
-        let mut vk = self.generate_base_vk();
+    pub(crate) fn generate_vk(&self) -> Result<Halo2VerifyingKey, GeneratorError> {
+        let mut vk = self.generate_base_vk()?;
 
         let header_words = vk.constants.len();
         let mut quotient_const_words = 0usize;
@@ -321,8 +324,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             vk.quotient_program_offset_words = None;
             vk.quotient_program_words = 0;
 
-            let (_, meta, data, _) = self.meta_data_for_stable_static_layout(&vk);
-            let (candidate, _) = self.compact_quotient_program_for(&meta, &data);
+            let (_, meta, data, _) = self.meta_data_for_stable_static_layout(&vk)?;
+            let (candidate, _) = self.compact_quotient_program_for(&meta, &data)?;
             let candidate_const_words = candidate.consts.len();
             let candidate_program_words =
                 PackedProgramCodec::word_len_for_bytes(candidate.bytes.len());
@@ -338,11 +341,14 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_program_words = quotient_program_words.max(candidate_program_words);
         }
 
-        let quotient_program_build = quotient_program_build.unwrap_or_else(|| {
-            panic!(
-                "quotient VK payload reservation did not converge after 8 iterations: const_words={quotient_const_words}, program_words={quotient_program_words}"
+        let quotient_program_build = quotient_program_build.ok_or_else(|| {
+            GeneratorError::planning(
+                "vk-payload-reservation",
+                format!(
+                    "quotient VK payload reservation did not converge after 8 iterations: const_words={quotient_const_words}, program_words={quotient_program_words}"
+                ),
             )
-        });
+        })?;
         let payload_layout = VkPayloadLayout::for_vk(
             header_words,
             quotient_const_words,
@@ -350,7 +356,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             vk.fixed_comms.len(),
             vk.permutation_comms.len(),
         )
-        .unwrap_or_else(|err| panic!("invalid VK payload layout reservation: {err}"));
+        .map_err(|err| GeneratorError::planning("vk-payload-layout", err))?;
         let quotient_const_offset_words = payload_layout
             .word_offset(PayloadSectionKind::QuotientConstants)
             .expect("quotient constants section");
@@ -398,8 +404,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         vk.quotient_program_offset_words = Some(quotient_program_offset_words);
         vk.quotient_program_words = quotient_program_words;
         vk.validate_payload_layout()
-            .unwrap_or_else(|err| panic!("invalid generated VK payload layout: {err}"));
-        vk
+            .map_err(|err| GeneratorError::planning("vk-payload-layout", err))?;
+        Ok(vk)
     }
 
     /// Build metadata, data handles, and memory layout for a candidate VK base.
@@ -462,19 +468,22 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     pub(super) fn meta_data_for_stable_static_layout(
         &self,
         vk: &Halo2VerifyingKey,
-    ) -> (Ptr, ConstraintSystemMeta, Data, VerifierMemoryLayout) {
+    ) -> Result<(Ptr, ConstraintSystemMeta, Data, VerifierMemoryLayout), GeneratorError> {
         let mut vk_mptr = Ptr::memory(self.static_working_memory_size_for_meta(self.meta));
 
         for _ in 0..3 {
             let (meta, data, memory) = self.meta_data_for_vk(vk, vk_mptr);
             let planned_mptr = self.static_working_memory_size_for_meta(&meta);
             if planned_mptr == vk_mptr.value().as_usize() {
-                return (vk_mptr, meta, data, memory);
+                return Ok((vk_mptr, meta, data, memory));
             }
             vk_mptr = Ptr::memory(planned_mptr);
         }
 
-        panic!("static verifier memory layout did not converge after proof-shape planning");
+        Err(GeneratorError::planning(
+            "static-layout",
+            "static verifier memory layout did not converge after proof-shape planning",
+        ))
     }
 
     /// Build a verifier memory layout after filling derived config fields.

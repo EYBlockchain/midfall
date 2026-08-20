@@ -212,8 +212,8 @@ pub(crate) mod gas {
     ///
     /// * **EIP-2565** (Berlin): `max(200, multiplication_complexity *
     ///   iteration_count / 3)`. With `words = ceil(32/8) = 4` and
-    ///   `multiplication_complexity = words^2 = 16`, that is
-    ///   `max(200, 16 * 255 / 3) = 1360`.
+    ///   `multiplication_complexity = words^2 = 16`, that is `max(200, 16 * 255
+    ///   / 3) = 1360`.
     /// * **EIP-7883** (Osaka/Fusaka): the `/ 3` divisor is **removed** and the
     ///   floor is raised to 500, giving `max(500, 16 * 255) = 4080`.
     ///

@@ -8,14 +8,17 @@
 use ruint::aliases::U256;
 use sha3::{Digest, Keccak256};
 
-use crate::lowering::{
-    encoding::Ptr,
-    kzg, layout,
-    layout::memory::{G1_BYTES, WORD_BYTES},
-    plan::LoweringPlan,
-    quotient_numerator::vm::{fr_delta_literal, LIMB7_YUL_COEFFS, WIDE_LIMB7_YUL_COEFFS},
-    render::{Halo2QuotientEvaluator, Halo2Verifier, UserPhase, VerifierCodegenLayout},
-    VerifierBuildInputs,
+use crate::{
+    api::GeneratorError,
+    lowering::{
+        encoding::Ptr,
+        kzg, layout,
+        layout::memory::{G1_BYTES, WORD_BYTES},
+        plan::LoweringPlan,
+        quotient_numerator::vm::{fr_delta_literal, LIMB7_YUL_COEFFS, WIDE_LIMB7_YUL_COEFFS},
+        render::{Halo2QuotientEvaluator, Halo2Verifier, UserPhase, VerifierCodegenLayout},
+        VerifierBuildInputs,
+    },
 };
 
 impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
@@ -25,7 +28,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         &self,
         plan: &LoweringPlan,
         trace: bool,
-    ) -> Halo2QuotientEvaluator {
+    ) -> Result<Halo2QuotientEvaluator, GeneratorError> {
         let quotient_rendering = plan.quotient_evaluator_rendering(self, trace);
         let quotient_helper_flags = quotient_rendering.blocks.helper_flags();
 
@@ -61,10 +64,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             simple_selector_cols: plan.quotient.sorted_simple.clone(),
             quotient_identity_trace_base: layout::trace::QUOTIENT_IDENTITY_BASE,
         };
-        quotient_evaluator
-            .validate_layout()
-            .unwrap_or_else(|err| panic!("invalid generated quotient evaluator layout: {err}"));
-        quotient_evaluator
+        quotient_evaluator.validate_layout().map_err(|err| {
+            GeneratorError::planning(
+                "render-model",
+                format!("invalid generated quotient evaluator layout: {err}"),
+            )
+        })?;
+        Ok(quotient_evaluator)
     }
 
     /// Build the Askama model for the main Solidity verifier contract from an
@@ -79,7 +85,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         external_quotient: bool,
         expected_quotient: Option<(usize, U256)>,
         provenance: Option<[u8; 32]>,
-    ) -> Halo2Verifier {
+    ) -> Result<Halo2Verifier, GeneratorError> {
         assert!(
             expected_quotient.is_none() || external_quotient,
             "quotient pinning requires an external quotient evaluator"
@@ -125,7 +131,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             hasher.update(features.as_bytes());
             hasher.update(vk_digest.to_be_bytes::<32>());
             hasher.update(expected_vk_codehash.unwrap_or_default().to_be_bytes::<32>());
-            hasher.update(self.srs_fingerprint());
+            hasher.update(plan.srs_fingerprint);
             match provenance {
                 Some(tag) => {
                     hasher.update([1u8]);
@@ -344,9 +350,12 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             expected_acc_has_carried_scalars,
             acc_fixed_bases,
         };
-        verifier
-            .validate_layout()
-            .unwrap_or_else(|err| panic!("invalid generated verifier layout: {err}"));
-        verifier
+        verifier.validate_layout().map_err(|err| {
+            GeneratorError::planning(
+                "render-model",
+                format!("invalid generated verifier layout: {err}"),
+            )
+        })?;
+        Ok(verifier)
     }
 }

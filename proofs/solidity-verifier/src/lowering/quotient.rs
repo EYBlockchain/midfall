@@ -12,7 +12,7 @@ use midnight_curves::Fq;
 use midnight_proofs::plonk::Expression;
 
 use crate::{
-    api::QuotientIdentitySource,
+    api::{GeneratorError, QuotientIdentitySource},
     lowering::{
         config,
         encoding::{fe_to_u256, ConstraintSystemMeta, Data, Ptr},
@@ -123,16 +123,16 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         &self,
         meta: &ConstraintSystemMeta,
         data: &Data,
-    ) -> (QuotientProgramBuild, Vec<usize>) {
+    ) -> Result<(QuotientProgramBuild, Vec<usize>), GeneratorError> {
         // Build the exact compact program carried by the VK. This helper is
         // also used during static-layout convergence, so its output must be
         // deterministic for a fixed VK base and proof shape.
-        let plan = self.quotient_program_plan(meta, data);
+        let plan = self.quotient_program_plan(meta, data)?;
         let sorted_simple = plan.sorted_simple.clone();
         let quotient_program_build =
             self.build_quotient_program_items(&plan.items, &plan.selector_fold);
         let _quotient_max_stack = quotient_program_build.max_stack;
-        (quotient_program_build, sorted_simple)
+        Ok((quotient_program_build, sorted_simple))
     }
 
     /// Convert a finalized VM build into the template's VK-backed program
@@ -380,7 +380,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         &self,
         meta: &ConstraintSystemMeta,
         data: &Data,
-    ) -> QuotientProgramPlan {
+    ) -> Result<QuotientProgramPlan, GeneratorError> {
         // Preserve the Rust identity order while choosing an execution form for
         // each identity:
         //   * a small gate prefix can stay inline,
@@ -473,9 +473,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             has_native_lookup: native_lookup,
             selector_fold,
         };
-        plan.validate_execution_manifest(&all_identities)
-            .expect("quotient execution plan must preserve the identity stream");
-        plan
+        plan.validate_execution_manifest(&all_identities).map_err(|err| {
+            GeneratorError::planning(
+                "quotient-plan",
+                format!("quotient execution plan must preserve the identity stream: {err}"),
+            )
+        })?;
+        Ok(plan)
     }
 
     /// Pick native gate callbacks by estimated gas saved under a byte budget.

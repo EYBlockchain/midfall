@@ -27,6 +27,14 @@ pub use api::{
 pub use builder::SolidityGenerator;
 pub use evm::{encode_calldata, FN_SIG_VERIFY_PROOF};
 
+/// The Cargo feature profile this build was compiled with, as recorded by
+/// `build.rs` (`SOLIDITY_VERIFIER_FEATURES`). Features change the proof
+/// schema and transcript shape; this is the value folded into `BUILD_ID` and
+/// reported on [`RenderedArtifacts`] and repack schema mismatches.
+pub fn feature_profile() -> &'static str {
+    env!("SOLIDITY_VERIFIER_FEATURES")
+}
+
 /// Whether the default Solidity renderer emits trace logs.
 ///
 /// Enable with `--features solidity-trace`. `RenderDiagnostics { trace: true,

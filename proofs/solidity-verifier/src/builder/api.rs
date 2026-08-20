@@ -111,6 +111,7 @@ impl<'a> SolidityGenerator<'a> {
             num_instances: config.num_instances,
             acc_encoding: config.accumulator,
             meta,
+            plan: std::sync::OnceLock::new(),
         })
     }
 
@@ -152,15 +153,23 @@ impl<'a> SolidityGenerator<'a> {
 
     /// Return the exact field-evaluation counts for the proof layout consumed
     /// by the generated Solidity verifier.
-    pub fn proof_evaluation_counts(&self) -> ProofEvaluationCounts {
-        crate::lowering::diagnostics::proof_evaluation_counts(self.inputs())
+    pub fn proof_evaluation_counts(&self) -> Result<ProofEvaluationCounts, GeneratorError> {
+        let plan = self.plan()?;
+        Ok(crate::lowering::diagnostics::proof_evaluation_counts(
+            self.inputs(),
+            plan,
+        ))
     }
 
     /// Return a stable host-side manifest of quotient numerator identities.
     ///
     /// This diagnostic API follows the same source ordering as the generated
     /// quotient evaluator: normal gates, permutation, lookup, then trash.
-    pub fn quotient_identity_manifest(&self) -> QuotientIdentityManifest {
-        crate::lowering::diagnostics::quotient_identity_manifest(self.inputs())
+    pub fn quotient_identity_manifest(&self) -> Result<QuotientIdentityManifest, GeneratorError> {
+        let plan = self.plan()?;
+        Ok(crate::lowering::diagnostics::quotient_identity_manifest(
+            self.inputs(),
+            plan,
+        ))
     }
 }

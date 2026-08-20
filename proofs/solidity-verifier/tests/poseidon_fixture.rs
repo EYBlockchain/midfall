@@ -270,7 +270,7 @@ or point SRS_DIR at an existing copy."
 }
 
 fn assert_poseidon_quotient_manifest(generator: &SolidityGenerator<'_>) {
-    let manifest = generator.quotient_identity_manifest();
+    let manifest = generator.quotient_identity_manifest().expect("quotient identity manifest");
     let gate_names = manifest
         .entries
         .iter()

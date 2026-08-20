@@ -6,18 +6,29 @@
 //! module makes that post-convergence state explicit so call sites do not
 //! independently rebuild small slices of the verifier shape.
 
-use crate::lowering::{
-    abi::ProofCalldataLayout,
-    encoding::{ConstraintSystemMeta, Data, Ptr},
-    kzg, layout,
-    layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
-    quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
-    quotient_numerator::vm::{
-        self as vm, certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+use crate::{
+    api::GeneratorError,
+    lowering::{
+        abi::ProofCalldataLayout,
+        encoding::{ConstraintSystemMeta, Data, Ptr},
+        kzg, layout,
+        layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
+        quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
+        quotient_numerator::vm::{
+            self as vm, certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+        },
+        render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
+        VerifierBuildInputs,
     },
-    render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
-    VerifierBuildInputs,
 };
+
+#[cfg(test)]
+thread_local! {
+    /// Number of converged plans built on this thread. Tests use the delta to
+    /// prove that render/repack/diagnostics share one cached plan per
+    /// generator instead of silently rebuilding it.
+    pub(crate) static PLAN_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// Finalized, reusable codegen facts for one verifier render/repack operation.
 #[derive(Debug)]
@@ -30,6 +41,9 @@ pub(crate) struct LoweringPlan {
     pub(crate) quotient: PlannedQuotient,
     pub(crate) pcs_memory_requirements: PcsMemoryRequirements,
     pub(crate) memory: VerifierMemoryLayout,
+    /// SRS identity folded into `BUILD_ID`; computed once here so per-render
+    /// artifact assembly does not repeat the O(2^k) tau-commitment MSM.
+    pub(crate) srs_fingerprint: [u8; 32],
 }
 
 /// Quotient VM and rendering metadata tied to the finalized memory layout.
@@ -91,20 +105,31 @@ pub(crate) struct QuotientEvaluatorRendering {
     pub(crate) program: QuotientProgram,
 }
 
+#[cfg(test)]
 impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
-    /// Build the finalized lowering plan for this concrete verifier.
+    /// Test convenience: build a finalized lowering plan, panicking on any
+    /// planning error. Production callers go through
+    /// `SolidityGenerator::plan()`, which caches one
+    /// [`LoweringPlan::try_new`] result per generator.
     pub(crate) fn lowering_plan(&self) -> LoweringPlan {
-        LoweringPlan::new(self)
+        LoweringPlan::try_new(self).expect("lowering plan")
     }
 }
 
 impl LoweringPlan {
     /// Build a finalized plan, preserving the existing bounded convergence
     /// process while exposing the resulting facts as one value.
-    pub(crate) fn new(inputs: &VerifierBuildInputs<'_, '_>) -> Self {
+    ///
+    /// Every render-time gate reports through [`GeneratorError::Planning`]
+    /// instead of panicking, so `Result`-returning public APIs are actually
+    /// fallible end-to-end.
+    pub(crate) fn try_new(inputs: &VerifierBuildInputs<'_, '_>) -> Result<Self, GeneratorError> {
+        #[cfg(test)]
+        PLAN_BUILDS.with(|builds| builds.set(builds.get() + 1));
+
         let proof_cptr = Ptr::calldata(layout::abi::VERIFY_PROOF_PROOF_CPTR);
-        let vk = inputs.generate_vk();
-        let (vk_mptr, meta, data, _) = inputs.meta_data_for_stable_static_layout(&vk);
+        let vk = inputs.generate_vk()?;
+        let (vk_mptr, meta, data, _) = inputs.meta_data_for_stable_static_layout(&vk)?;
         let proof_layout = ProofCalldataLayout::from_protocol(
             &meta.protocol,
             proof_cptr.value().as_usize(),
@@ -112,7 +137,7 @@ impl LoweringPlan {
             meta.num_point_sets,
         );
 
-        let quotient_plan = inputs.quotient_program_plan(&meta, &data);
+        let quotient_plan = inputs.quotient_program_plan(&meta, &data)?;
         let sorted_simple = quotient_plan.sorted_simple.clone();
         let quotient_program_build =
             inputs.build_quotient_program_items(&quotient_plan.items, &quotient_plan.selector_fold);
@@ -164,9 +189,14 @@ impl LoweringPlan {
             },
             pcs_memory_requirements,
             memory,
+            srs_fingerprint: inputs.srs_fingerprint(),
         };
-        plan.validate_generator_invariants()
-            .unwrap_or_else(|err| panic!("generator invariant violation: {err}"));
+        plan.validate_generator_invariants().map_err(|err| {
+            GeneratorError::planning(
+                "invariants",
+                format!("generator invariant violation: {err}"),
+            )
+        })?;
 
         // Certify the limb superinstructions against a generic-opcode build of
         // the same identity stream. This needs `inputs`, so it runs here rather
@@ -182,9 +212,14 @@ impl LoweringPlan {
             &baseline_build,
             &plan.vk,
         )
-        .unwrap_or_else(|err| panic!("quotient dual-build certification failed: {err}"));
+        .map_err(|err| {
+            GeneratorError::planning(
+                "certification",
+                format!("quotient dual-build certification failed: {err}"),
+            )
+        })?;
 
-        plan
+        Ok(plan)
     }
 
     /// Repacking plan derived from the same proof layout used for rendering.

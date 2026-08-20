@@ -32,7 +32,7 @@ impl<'a> SolidityGenerator<'a> {
         };
 
         let inputs = self.inputs();
-        let plan = inputs.lowering_plan();
+        let plan = self.plan()?;
 
         let render_plan = VerifierRenderPlan {
             separate,
@@ -42,17 +42,18 @@ impl<'a> SolidityGenerator<'a> {
             expected_quotient,
             provenance: options.provenance,
         };
-        let verifier = self.render_verifier_source_with_plan(&inputs, &plan, render_plan)?;
+        let verifier = self.render_verifier_source_with_plan(&inputs, plan, render_plan)?;
 
         let verifying_key = separate.then(|| Self::render_vk_model(&plan.vk)).transpose()?;
         let quotient_evaluator = external_quotient
-            .then(|| self.render_quotient_evaluator_with_plan(&inputs, &plan, options.diagnostics))
+            .then(|| self.render_quotient_evaluator_with_plan(&inputs, plan, options.diagnostics))
             .transpose()?;
 
         Ok(RenderedArtifacts {
             verifier,
             verifying_key,
             quotient_evaluator,
+            feature_profile: crate::feature_profile(),
         })
     }
 
@@ -66,8 +67,8 @@ impl<'a> SolidityGenerator<'a> {
         diagnostics: RenderDiagnostics,
     ) -> Result<String, GeneratorError> {
         let inputs = self.inputs();
-        let plan = inputs.lowering_plan();
-        self.render_quotient_evaluator_with_plan(&inputs, &plan, diagnostics)
+        let plan = self.plan()?;
+        self.render_quotient_evaluator_with_plan(&inputs, plan, diagnostics)
     }
 
     /// Render the split quotient evaluator from a caller-provided converged
@@ -84,7 +85,7 @@ impl<'a> SolidityGenerator<'a> {
     ) -> Result<String, GeneratorError> {
         let mut quotient_output = String::new();
         inputs
-            .generate_quotient_evaluator_from_plan(plan, diagnostics.trace)
+            .generate_quotient_evaluator_from_plan(plan, diagnostics.trace)?
             .render(&mut quotient_output)
             .map_err(|_| GeneratorError::Render {
                 artifact: "Halo2QuotientEvaluator.sol",
@@ -112,7 +113,7 @@ impl<'a> SolidityGenerator<'a> {
                 render_plan.external_quotient,
                 render_plan.expected_quotient,
                 render_plan.provenance,
-            )
+            )?
             .render(&mut verifier_output)
             .map_err(|_| GeneratorError::Render {
                 artifact: "Halo2Verifier.sol",
