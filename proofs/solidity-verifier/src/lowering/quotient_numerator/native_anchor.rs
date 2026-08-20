@@ -361,6 +361,91 @@ fn assert_anchor(
     );
 }
 
+/// Anchor the generator's hand-ported multi-open grouping against the native
+/// verifier's own.
+///
+/// `construct_intermediate_sets` is private in midnight-proofs, so the
+/// generator carries its own port (`kzg::construct_intermediate_sets_impl`)
+/// which groups by memory-handle identity rather than by commitment value,
+/// and re-implements the `(len, index)` set ordering. Until now that port was
+/// checked only against itself. The native verifier traces the point sets it
+/// actually built (after the same sort), so compare directly: every set's
+/// points must be `x * omega^rotation` for the rotations the generator
+/// planned, in the same order.
+fn assert_pcs_point_sets(
+    context: &str,
+    plan: &LoweringPlan,
+    domain: &midnight_proofs::poly::EvaluationDomain<Fq>,
+    events: &BTreeMap<u64, Vec<u8>>,
+) {
+    use midnight_proofs::poly::Rotation;
+
+    let x = trace_scalar(events, TRACE_X)
+        .unwrap_or_else(|| panic!("{context}: native trace carries no x challenge"));
+
+    let native_sets: Vec<Vec<Fq>> = (0..)
+        .map_while(|idx| events.get(&(trace::PCS_SERIALIZED_POINT_SET_BASE + idx)))
+        .map(|bytes| {
+            assert_eq!(
+                bytes.len() % WORD_BYTES,
+                0,
+                "{context}: traced point set is not a whole number of scalars"
+            );
+            bytes
+                .chunks(WORD_BYTES)
+                .map(|chunk| {
+                    let mut le = [0u8; WORD_BYTES];
+                    for (le_byte, be_byte) in le.iter_mut().zip(chunk.iter().rev()) {
+                        *le_byte = *be_byte;
+                    }
+                    Option::<Fq>::from(Fq::from_repr(<Fq as PrimeField>::Repr::from(le)))
+                        .unwrap_or_else(|| panic!("{context}: traced point is not canonical"))
+                })
+                .collect()
+        })
+        .collect();
+
+    let planned = crate::lowering::kzg::intermediate_sets(&plan.meta, &plan.data);
+    assert_eq!(
+        planned.point_sets.len(),
+        native_sets.len(),
+        "{context}: generator planned {} PCS point sets, native verifier built {}",
+        planned.point_sets.len(),
+        native_sets.len()
+    );
+
+    for (idx, (rotations, native_points)) in
+        planned.point_sets.iter().zip(native_sets.iter()).enumerate()
+    {
+        let expected: Vec<Fq> = rotations
+            .iter()
+            .map(|rotation| domain.rotate_omega(x, Rotation(*rotation)))
+            .collect();
+        assert_eq!(
+            expected, *native_points,
+            "{context}: PCS point set {idx} diverges from the native verifier \
+             (planned rotations {rotations:?})"
+        );
+    }
+
+    // One folded q_com per set: ties the count the Solidity side sizes its
+    // q_eval reads from to the native multi-open.
+    let native_q_coms = events
+        .keys()
+        .filter(|id| (trace::PCS_Q_COM_BASE..trace::PCS_SERIALIZED_POINT_SET_BASE).contains(id))
+        .count();
+    assert_eq!(
+        native_q_coms,
+        planned.point_sets.len(),
+        "{context}: native q_com count diverges from the planned point-set count"
+    );
+    assert_eq!(
+        plan.meta.num_point_sets(),
+        planned.point_sets.len(),
+        "{context}: the plan's recorded point-set count diverges from its own construction"
+    );
+}
+
 /// Corpus cases chosen for family diversity: permutation (incl. multi-set
 /// delta walk), LogUp (incl. helper chunk splits), trash, seven-limb
 /// recognizer shapes, and selector buckets with gaps.
@@ -412,6 +497,12 @@ fn native_anchor_matches_per_identity_trace() {
         );
         let generator = SolidityGenerator::new(&params, pk.get_vk(), GeneratorConfig::new(1, 1));
         assert_anchor(&context, &generator, &events);
+        assert_pcs_point_sets(
+            &context,
+            generator.plan().unwrap_or_else(|err| panic!("{context}: plan failed: {err}")),
+            pk.get_vk().get_domain(),
+            &events,
+        );
     }
 
     // Name-based selection degrades silently if a corpus case is renamed:
