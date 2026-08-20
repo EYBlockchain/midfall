@@ -309,6 +309,33 @@ audit; none change verifier semantics. Items marked ⚠ change rendered
 bytecode and require regenerating pinned fixtures and the
 `REPRODUCIBLE_BUILDS.md` hashes — batch them into one regeneration.
 
+> **Implementation status (2026-08-20).** A correct-by-construction work
+> stream landed most of P0–P3 on `misc-fixes`. Outcomes, by proposal:
+>
+> | Proposal | Outcome |
+> | --- | --- |
+> | P0.2 pragma pin + FMP guard | landed earlier (`ed9f455`) |
+> | P0.3 pairing-frame disjointness in `validate()` | **landed** `b899ed9a` — address-level check, since the two phases' lifetimes never compare |
+> | P1.1 `Result` threading | **landed** `6a8aa7ee` — `LoweringPlan::try_new`; eight panic sites became `GeneratorError::Planning{stage}`; a source lint pins the four files against `panic!` returning |
+> | P1.2 cache one converged plan | **landed** `6a8aa7ee` — `OnceLock` on `SolidityGenerator`; also removed the second per-render O(2^k) SRS MSM |
+> | P1.3 invalid render states unrepresentable | **landed** `b899ed9a` — `VerifierQuotient` enum (an external evaluator always carries its runtime length + codehash), validation moved inside `render()`, unpinned constructor arms deleted |
+> | P1.4 record the feature/build profile | **landed** `6a8aa7ee` — on `RenderedArtifacts` and `RepackError::LengthMismatch` |
+> | P1.5 plan-derived diagnostics | **landed** `f787a77c` — eval counts fold over `protocol.proof.evals`; the manifest derives from the single execution walk |
+> | P2.1 single operand-layout descriptor | **partial** `24cb28a7` — one `visit_quotient_operands` now backs both operand walkers and one bounds-checked length decoder; the `ValidatedProgram` newtype was not adopted |
+> | P2.2 mechanize `MemoryPhase` ↔ template order | **landed** `b899ed9a` — `IN_TEMPLATE_ORDER` + `__phase:` markers scanned on every render's own output |
+> | P2.3 split monoliths, move repack types | not done |
+> | P2.4 negative EIP-2537 subgroup probe | **deferred by decision** — recorded as an accepted risk in `DEPLOYMENT_AND_INCIDENT_RESPONSE.md` §5.3 |
+> | P2.5 render-time differential on revm | landed as the F1 frame differential (`d066e6a`) |
+> | P2.6 typed IR instead of the Yul round-trip | **partial** — the round-trip is gone for permutation/LogUp/trash (`90219d7e`, typed builders) and for staged table fills (`06844c93`, `TableFill`). The gate-side split is deliberately retained: gate Yul is a second *printer* of the circuit's own `Expression` AST, not a copy of verifier semantics, and the two lowerings cross-check each other every render (`certify_inline_prefix`). Replacing it would need metadata `QuotientExpr` deliberately discards (leaf symbol names; `Scaled` vs `Product`-by-constant) |
+> | P3 hygiene | L1, L2, L4, L8 **landed** `b899ed9a`; L3 partial (solc output parsing hardened, `code_size` doc fixed; `--combined-json` and path dedup not done); L7 not done |
+>
+> Beyond this register, the same work stream generated the quotient VM's Yul
+> interpreter arms from the ISA constants (`1aadb152`), added a
+> certificate-carrying run compaction and a re-encode gate (`21fd2769`),
+> hardened certification to all surfaces at three evaluation points
+> (`75bc3269`), and added a tier-1 native per-identity trace anchor
+> (`23070002`) that pins every identity expression to the real verifier.
+
 ### P0 — Assurance-process fixes (small, high leverage)
 
 **P0.1 Fix CI test selection and skip semantics** *(F1, F17)*.
