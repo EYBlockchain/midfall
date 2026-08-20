@@ -1353,6 +1353,37 @@ mod tests {
 
             assert_case_coverage(&case, &inputs, &plan);
 
+            // Certification-independence pairing (P4-Q5): every typed-lowering
+            // surface must carry a gate identity, kernels must carry their own
+            // family, and the structured tail must be all-trash -- on every
+            // real corpus circuit, not just by planner construction.
+            for (identity, kind) in plan
+                .quotient
+                .plan
+                .identities_in_execution_order()
+                .expect("finalized plan walks its execution stream")
+            {
+                use crate::{
+                    api::QuotientIdentitySource as Source,
+                    lowering::quotient_numerator::vm::QuotientExecutionKind as Kind,
+                };
+                let ok = match kind {
+                    Kind::Inline | Kind::Interpreted | Kind::NativeIdentity { .. } => {
+                        matches!(identity.meta.source, Source::Gate { .. })
+                    }
+                    Kind::NativePermutation => {
+                        matches!(identity.meta.source, Source::Permutation { .. })
+                    }
+                    Kind::NativeLookup => matches!(identity.meta.source, Source::Lookup { .. }),
+                    Kind::StructuredTail => matches!(identity.meta.source, Source::Trash { .. }),
+                };
+                assert!(
+                    ok,
+                    "case `{}`: identity {} pairs surface {kind:?} with source {:?}",
+                    case.name, identity.meta.global_index, identity.meta.source
+                );
+            }
+
             // Public-API cross-check, full-entry (E8/G2): the exported
             // manifest must be exactly the internal execution walk re-sorted
             // into global order -- same indices, same sources, same targets,

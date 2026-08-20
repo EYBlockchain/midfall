@@ -22,13 +22,13 @@ use midnight_curves::Fq;
 use sha3::{Digest, Keccak256};
 
 use super::{
-    quotient_op_len,
+    quotient_expr_from_yul, quotient_op_len,
     reference::{eval_quotient_expr, eval_quotient_identity, QuotientRefMemory},
     QuotientExpr, QuotientMem, QuotientProgramBuild, QuotientProgramItem, QuotientProgramPlan,
     QuotientTarget, Q_OP_FOLD_MAIN, Q_OP_FOLD_SELECTOR, Q_OP_NATIVE_IDENTITY, Q_OP_NATIVE_LOOKUP,
     Q_OP_NATIVE_PERMUTATION,
 };
-use crate::lowering::render::Halo2VerifyingKey;
+use crate::{api::QuotientIdentitySource, lowering::render::Halo2VerifyingKey};
 
 /// Seed for the certification assignment.
 ///
@@ -36,7 +36,35 @@ use crate::lowering::render::Halo2VerifyingKey;
 /// derived from the finalized artifact rather than fixed globally. This keeps
 /// the sampled assignment independent of any circuit author's pre-render view
 /// of the quotient program while preserving reproducible diagnostics.
-const QUOTIENT_CERTIFY_SEED_DOMAIN: &[u8] = b"midfall/quotient-vm/certify-seed/v3";
+/// v4: the seed binds EVERY execution surface's expression tree (inline,
+/// interpreted, native gate, native permutation, native lookup, structured
+/// trash tail), matching the frame differential's binding -- v3 bound only
+/// the interpreted exprs, so the challenge was fixed before some compared
+/// artifacts were.
+const QUOTIENT_CERTIFY_SEED_DOMAIN: &[u8] = b"midfall/quotient-vm/certify-seed/v4";
+
+/// Number of independent evaluation points each certification pass samples.
+///
+/// One point already bounds accidental-miscompile escape probability by
+/// roughly `deg/2^255` (Schwartz-Zippel); three points cost microseconds and
+/// cube it.
+pub(crate) const QUOTIENT_CERTIFY_POINTS: u64 = 3;
+
+/// Domain tag separating per-point certification assignments from the
+/// artifact-bound base seed and from the frame differential's per-iteration
+/// seeds (`oracle::frame_differential_seed` keeps its own domain on purpose:
+/// the empirical leg must not sample the same assignments the structural leg
+/// already passed).
+const QUOTIENT_CERTIFY_POINT_DOMAIN: &[u8] = b"midfall/quotient-vm/certify-point/v1";
+
+/// Derive one evaluation-point seed from the artifact-bound base seed.
+pub(crate) fn certify_point_seed(base: [u8; 32], point: u64) -> [u8; 32] {
+    let mut hasher = Keccak256::new();
+    hasher.update(QUOTIENT_CERTIFY_POINT_DOMAIN);
+    hasher.update(base);
+    hasher.update(point.to_be_bytes());
+    hasher.finalize().into()
+}
 
 /// Derive the random-assignment seed from every compared artifact.
 ///
@@ -110,15 +138,75 @@ fn hash_quotient_expr(hasher: &mut Keccak256, expr: &QuotientExpr) {
     }
 }
 
-/// Expressions evaluated by the compact quotient program.
-fn interpreted_exprs(plan: &QuotientProgramPlan) -> Vec<&QuotientExpr> {
-    plan.items
-        .iter()
-        .filter_map(|item| match item {
-            QuotientProgramItem::Identity(identity) => Some(&identity.expr),
-            _ => None,
-        })
-        .collect()
+/// Expression trees for EVERY execution surface, in execution order.
+///
+/// The certification challenge must be fixed only after every compared
+/// artifact is; binding all six surfaces (not just the interpreted ones)
+/// matches what the frame differential binds in `src/test.rs`.
+fn all_surface_exprs(plan: &QuotientProgramPlan) -> Result<Vec<&QuotientExpr>, String> {
+    Ok(plan
+        .identities_in_execution_order()
+        .map_err(|err| format!("certification could not walk the execution stream: {err}"))?
+        .into_iter()
+        .map(|(identity, _)| &identity.expr)
+        .collect())
+}
+
+/// Pin the property the whole certification independence argument rests on.
+///
+/// Gate expressions are lowered independently from `Expression<Fq>` by
+/// `quotient_expr_from_plonk_expr`, so comparing bytecode against them is a
+/// genuine N-version check. Permutation/lookup/trash expressions are
+/// re-parsed from the emitter's own Yul (roadmap gap G1) and would certify
+/// vacuously -- the planner must therefore never route them through the
+/// typed-lowering surfaces. This was previously true by construction of
+/// `quotient_program_plan` but asserted nowhere.
+fn check_certification_independence(plan: &QuotientProgramPlan) -> Result<(), String> {
+    let require_gate = |identity: &super::QuotientIdentity, surface: &str| {
+        if matches!(identity.meta.source, QuotientIdentitySource::Gate { .. }) {
+            Ok(())
+        } else {
+            Err(format!(
+                "identity {} on the {surface} surface has non-gate source {:?}; the                  certification independence argument requires gate-only typed-lowering                  surfaces (non-gate expressions are parsed from the emitter's own Yul                  and would certify vacuously)",
+                identity.meta.global_index, identity.meta.source
+            ))
+        }
+    };
+    for identity in &plan.inline_identities {
+        require_gate(identity, "inline")?;
+    }
+    for identity in &plan.native_identities {
+        require_gate(identity, "native-gate")?;
+    }
+    let mut permutation_markers = 0usize;
+    let mut lookup_markers = 0usize;
+    for item in &plan.items {
+        match item {
+            QuotientProgramItem::Identity(identity) => require_gate(identity, "interpreted")?,
+            QuotientProgramItem::NativePermutation => permutation_markers += 1,
+            QuotientProgramItem::NativeLookup => lookup_markers += 1,
+            QuotientProgramItem::NativeIdentity(_) => {}
+        }
+    }
+    if permutation_markers > 1 {
+        return Err(format!(
+            "quotient plan carries {permutation_markers} native permutation markers; at most one              is meaningful"
+        ));
+    }
+    if lookup_markers > 1 {
+        return Err(format!(
+            "quotient plan carries {lookup_markers} native lookup markers; at most one is              meaningful"
+        ));
+    }
+    for identity in &plan.structured_tail_identities {
+        if !matches!(identity.meta.source, QuotientIdentitySource::Trash { .. }) {
+            return Err(format!(
+                "structured-tail identity {} has non-trash source {:?}",
+                identity.meta.global_index, identity.meta.source
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Certify that the emitted bytecode evaluates the planned identities.
@@ -131,10 +219,25 @@ pub(crate) fn certify_quotient_program(
     build: &QuotientProgramBuild,
     vk: &Halo2VerifyingKey,
 ) -> Result<(), String> {
-    let exprs = interpreted_exprs(plan);
+    check_certification_independence(plan)?;
+    let exprs = all_surface_exprs(plan)?;
     let vk_payload = vk.bytes();
     let seed = derive_certify_seed(&[build], &exprs, &vk_payload);
-    let mut mem = QuotientRefMemory::new(seed);
+    for point in 0..QUOTIENT_CERTIFY_POINTS {
+        let mut mem = QuotientRefMemory::new(certify_point_seed(seed, point));
+        certify_program_at_point(plan, build, &mut mem)
+            .map_err(|err| format!("certification point {point}: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Value-check every interpreted identity and native marker at one sampled
+/// assignment.
+fn certify_program_at_point(
+    plan: &QuotientProgramPlan,
+    build: &QuotientProgramBuild,
+    mem: &mut QuotientRefMemory,
+) -> Result<(), String> {
     let bytes = &build.bytes;
     let mut cursor = 0usize;
 
@@ -144,15 +247,14 @@ pub(crate) fn certify_quotient_program(
                 let (expr_end, fold_op) = identity_segment(bytes, cursor)
                     .map_err(|err| format!("quotient item {item_idx}: {err}"))?;
 
-                let actual =
-                    eval_quotient_identity(&bytes[cursor..expr_end], &build.consts, &mut mem)
-                        .map_err(|err| {
-                            format!(
-                                "quotient identity {} ({:?}): {err}",
-                                identity.meta.global_index, identity.meta.source
-                            )
-                        })?;
-                let expected = eval_quotient_expr(&identity.expr, &mut mem);
+                let actual = eval_quotient_identity(&bytes[cursor..expr_end], &build.consts, mem)
+                    .map_err(|err| {
+                    format!(
+                        "quotient identity {} ({:?}): {err}",
+                        identity.meta.global_index, identity.meta.source
+                    )
+                })?;
+                let expected = eval_quotient_expr(&identity.expr, mem);
 
                 if actual != expected {
                     return Err(format!(
@@ -306,32 +408,90 @@ pub(crate) fn certify_quotient_builds_agree(
     baseline: &QuotientProgramBuild,
     vk: &Halo2VerifyingKey,
 ) -> Result<(), String> {
-    let exprs = interpreted_exprs(plan);
+    let exprs = all_surface_exprs(plan)?;
     let vk_payload = vk.bytes();
     let seed = derive_certify_seed(&[optimized, baseline], &exprs, &vk_payload);
-    let mut mem = QuotientRefMemory::new(seed);
 
-    let optimized_values = identity_values(plan, optimized, &mut mem)?;
-    let baseline_values = identity_values(plan, baseline, &mut mem)?;
+    for point in 0..QUOTIENT_CERTIFY_POINTS {
+        // One assignment per point, shared by both builds: `QuotientRefMemory`
+        // is a pure function of (seed, address), so sharing is a cache, not a
+        // sequencing dependency.
+        let mut mem = QuotientRefMemory::new(certify_point_seed(seed, point));
 
-    if optimized_values.len() != baseline_values.len() {
-        return Err(format!(
-            "quotient dual build disagrees on identity count: {} with limb opcodes, {} without",
-            optimized_values.len(),
-            baseline_values.len()
-        ));
-    }
+        let optimized_values = identity_values(plan, optimized, &mut mem)?;
+        let baseline_values = identity_values(plan, baseline, &mut mem)?;
 
-    for (position, (lhs, rhs)) in optimized_values.iter().zip(baseline_values.iter()).enumerate() {
-        if lhs != rhs {
+        if optimized_values.len() != baseline_values.len() {
             return Err(format!(
-                "quotient limb superinstructions changed the value of interpreted identity at \
-                 stream position {position}: {lhs:?} with limb opcodes, {rhs:?} without. One of \
-                 the shape recognizers is unsound for this gate shape."
+                "quotient dual build disagrees on identity count: {} with limb opcodes, {} without",
+                optimized_values.len(),
+                baseline_values.len()
             ));
+        }
+
+        for (position, (lhs, rhs)) in
+            optimized_values.iter().zip(baseline_values.iter()).enumerate()
+        {
+            if lhs != rhs {
+                return Err(format!(
+                    "quotient limb superinstructions changed the value of interpreted identity at \
+                     stream position {position} (certification point {point}): {lhs:?} with limb \
+                     opcodes, {rhs:?} without. One of the shape recognizers is unsound for this \
+                     gate shape."
+                ));
+            }
         }
     }
 
+    Ok(())
+}
+
+/// TRANSITIONAL (delete in roadmap phase P5): value-check the inline gate
+/// prefix.
+///
+/// The inline prefix renders `identity.lines` -- Yul from the string-based
+/// `Evaluator` -- while `identity.expr` is the independent typed lowering
+/// from `Expression<Fq>`. Nothing else value-checks that pair: the inline
+/// identities are absent from `plan.items`, so `certify_quotient_program`
+/// never sees them. Parse the rendered lines back to an expression with the
+/// same parser the structured families use and require value agreement at
+/// every certification point.
+///
+/// This check is genuine only while gate Yul comes from the string emitter;
+/// when phase P5 prints gate Yul from `.expr`, it becomes a tautology and
+/// must be deleted -- the native trace anchor (ids 30_000+i) is the formula
+/// oracle from then on. The `specialize_limb7_chains` string pass applied at
+/// render time is NOT covered here; the per-PR frame differential covers it
+/// empirically.
+pub(crate) fn certify_inline_prefix(
+    plan: &QuotientProgramPlan,
+    build: &QuotientProgramBuild,
+    vk: &Halo2VerifyingKey,
+) -> Result<(), String> {
+    if plan.inline_identities.is_empty() {
+        return Ok(());
+    }
+    let exprs = all_surface_exprs(plan)?;
+    let vk_payload = vk.bytes();
+    let seed = derive_certify_seed(&[build], &exprs, &vk_payload);
+
+    for point in 0..QUOTIENT_CERTIFY_POINTS {
+        let mut mem = QuotientRefMemory::new(certify_point_seed(seed, point));
+        for identity in &plan.inline_identities {
+            let parsed = quotient_expr_from_yul(&identity.lines, &identity.var);
+            let rendered = eval_quotient_expr(&parsed, &mut mem);
+            let typed = eval_quotient_expr(&identity.expr, &mut mem);
+            if rendered != typed {
+                return Err(format!(
+                    "inline gate identity {} ({:?}) diverges at certification point {point}: the \
+                     rendered Yul evaluates to {rendered:?} but the typed lowering evaluates to \
+                     {typed:?}. The string emitter and the typed gate lowering disagree on this \
+                     gate shape.",
+                    identity.meta.global_index, identity.meta.source
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

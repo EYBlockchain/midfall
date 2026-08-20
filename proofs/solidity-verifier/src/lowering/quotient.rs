@@ -949,11 +949,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// Parse an evaluator-emitted Yul identity into the quotient AST once at
     /// plan-construction time.
     fn quotient_yul_expr(lines: &[String], var: &str) -> QuotientExpr {
-        let mut parser = QuotientProgramBuilder::default();
-        for line in lines {
-            parser.assignment(line);
-        }
-        parser.parse_expr(var)
+        quotient_expr_from_yul(lines, var)
     }
 
     /// Lower a Halo2 expression into the quotient AST using generated data.
@@ -1890,7 +1886,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     ) -> QuotientComputationBlocks {
         let eval_scratch_slot = quotient_stack_mptr;
         let evaluator = Evaluator::new(self.vk.cs(), meta, data).with_pow5_helper(true);
-        QuotientComputationBlocks {
+        let blocks = QuotientComputationBlocks {
             inline_computations: quotient_plan
                 .inline_identities
                 .iter()
@@ -1963,7 +1959,18 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     )
                 })
                 .collect(),
-        }
+        };
+        // The structured trash tail renders as ONE post-VM loop block covering
+        // every tail identity (not one block per identity), so the structural
+        // tie is presence-equivalence: a non-empty tail must render exactly
+        // one post-VM block, and no block may render without tail identities.
+        // Per-identity values are covered per-PR by the frame differential.
+        assert_eq!(
+            blocks.post_vm_computations.is_empty(),
+            quotient_plan.structured_tail_identities.is_empty(),
+            "structured trash tail and rendered post-VM block must appear together"
+        );
+        blocks
     }
 
     /// Lower a logical quotient item stream into compact VM bytecode.

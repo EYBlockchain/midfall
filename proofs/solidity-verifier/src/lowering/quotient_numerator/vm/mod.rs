@@ -3733,6 +3733,21 @@ impl Iterator for QuotientBytecodeOps<'_> {
     }
 }
 
+/// Parse evaluator-emitted Yul assignment lines back into an expression tree.
+///
+/// Shared by the structured permutation/lookup/trash lowering in
+/// `lowering::quotient` and by the transitional inline-prefix certification
+/// (`certify::certify_inline_prefix`). Supports exactly the Fr forms the
+/// string `Evaluator` emits; anything else panics, which is the correct
+/// fail-closed behavior for generator-time parsing of generator-emitted text.
+pub(crate) fn quotient_expr_from_yul(lines: &[String], var: &str) -> QuotientExpr {
+    let mut parser = QuotientProgramBuilder::default();
+    for line in lines {
+        parser.assignment(line);
+    }
+    parser.parse_expr(var)
+}
+
 /// Return the leaf form of an expression, if it has no arithmetic children.
 pub(crate) fn quotient_leaf(expr: &QuotientExpr) -> Option<QuotientLeaf> {
     match expr {

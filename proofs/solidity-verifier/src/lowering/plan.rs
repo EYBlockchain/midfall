@@ -350,6 +350,10 @@ impl LoweringPlan {
         // lowered from, before it can be pinned into a verifying key.
         certify::certify_quotient_program(&self.quotient.plan, &self.quotient.build, &self.vk)
             .map_err(|err| format!("quotient program certification failed: {err}"))?;
+        // TRANSITIONAL (deleted in roadmap phase P5): value-check the inline
+        // gate prefix's rendered Yul against its independent typed lowering.
+        certify::certify_inline_prefix(&self.quotient.plan, &self.quotient.build, &self.vk)
+            .map_err(|err| format!("inline quotient prefix certification failed: {err}"))?;
         Ok(())
     }
 

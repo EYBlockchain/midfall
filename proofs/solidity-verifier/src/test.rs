@@ -4616,9 +4616,9 @@ impl QuotientFrameFacts {
         let all_exprs: Vec<&vm::QuotientExpr> =
             pairs.iter().map(|(identity, _)| &identity.expr).collect();
         let vk_bytes = plan.vk.bytes();
-        // Bind ALL surfaces' expression trees into the seed, not just the
-        // interpreted ones `certify_quotient_program` binds: the assignment
-        // must be fixed only after every compared artifact is.
+        // Bind ALL surfaces' expression trees into the seed -- the same
+        // all-surface binding `certify_quotient_program` uses since P4-Q5:
+        // the assignment must be fixed only after every compared artifact is.
         let base_seed =
             certify::derive_certify_seed(&[&plan.quotient.build], &all_exprs, &vk_bytes);
 
