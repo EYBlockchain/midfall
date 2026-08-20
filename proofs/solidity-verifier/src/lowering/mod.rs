@@ -29,6 +29,7 @@ pub(crate) mod quotient;
 pub(crate) mod quotient_numerator;
 pub(crate) mod render;
 pub(crate) mod vk;
+pub(crate) mod yul_ir;
 
 use encoding::ConstraintSystemMeta;
 

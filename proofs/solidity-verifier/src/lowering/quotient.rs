@@ -22,6 +22,7 @@ use crate::{
         },
         quotient_numerator::{identities, vm::*, Evaluator},
         render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail},
+        yul_ir::TableFill,
         VerifierBuildInputs,
     },
 };
@@ -1023,95 +1024,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         block.push("}".to_string());
     }
 
-    /// Compact runs of adjacent `mstore(dst+i, mload(src+i*stride))` lines.
-    ///
-    /// Native callbacks often stage contiguous eval tables. This helper emits a
-    /// small copy loop when the staged source and destination offsets form a
-    /// regular run, otherwise it leaves the original store shape intact.
-    fn push_mstore_mload_literal_runs(
-        block: &mut Vec<String>,
-        dst: &str,
-        entries: &[(usize, String)],
-        loop_prefix: &str,
-    ) {
-        let mut idx = 0usize;
-        while idx < entries.len() {
-            let (dst_base, expr) = &entries[idx];
-            let Some(src_base) = yul_mload_literal_expr(expr) else {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            };
-            let Some((next_dst, next_expr)) = entries.get(idx + 1) else {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            };
-            if *next_dst != *dst_base + 0x20 {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            }
-            let Some(next_src) = yul_mload_literal_expr(next_expr) else {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            };
-            let Some(src_stride) = next_src.checked_sub(src_base) else {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            };
-            if src_stride == 0 {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            }
-
-            let mut count = 2usize;
-            while let Some((candidate_dst, candidate_expr)) = entries.get(idx + count) {
-                let Some(candidate_src) = yul_mload_literal_expr(candidate_expr) else {
-                    break;
-                };
-                if *candidate_dst != *dst_base + count * 0x20
-                    || candidate_src != src_base + count * src_stride
-                {
-                    break;
-                }
-                count += 1;
-            }
-
-            if count < 3 {
-                block.push(format!("mstore(add({dst}, {dst_base:#x}), {expr})"));
-                idx += 1;
-                continue;
-            }
-
-            block.push("{".to_string());
-            block.push(format!(
-                "for {{ let {loop_prefix}_i := 0 }} lt({loop_prefix}_i, {count}) {{ {loop_prefix}_i := add({loop_prefix}_i, 1) }} {{"
-            ));
-            block.push(format!(
-                "let {loop_prefix}_dst_off := shl(5, {loop_prefix}_i)"
-            ));
-            if src_stride == 0x20 {
-                block.push(format!(
-                    "let {loop_prefix}_src_off := {loop_prefix}_dst_off"
-                ));
-            } else {
-                block.push(format!(
-                    "let {loop_prefix}_src_off := mul({loop_prefix}_i, {src_stride:#x})"
-                ));
-            }
-            block.push(format!(
-                "mstore(add(add({dst}, {dst_base:#x}), {loop_prefix}_dst_off), mload(add({src_base:#x}, {loop_prefix}_src_off)))"
-            ));
-            block.push("}".to_string());
-            block.push("}".to_string());
-            idx += count;
-        }
-    }
-
     /// Replace recognized seven-limb linear chains with helper calls.
     ///
     /// This operates on legacy/direct Yul text, not on the compact VM AST. The
@@ -1379,61 +1291,33 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         block.push(format!("let q_perm_chunk_len := {chunk_len}"));
         block.push(format!("let q_perm_delta_chunk := {delta_chunk}"));
 
-        let mut value_entries = Vec::with_capacity(num_cols);
-        let mut sigma_entries = Vec::with_capacity(num_cols);
+        let mut values = TableFill::new("q_perm_vals", "q_perm_val_load");
+        let mut sigmas = TableFill::new("q_perm_sigmas", "q_perm_sigma_load");
         for (idx, column) in meta.protocol.permutation_columns.iter().enumerate() {
             let offset = idx * 0x20;
-            let value = evaluator.eval_at(column, 0);
-            let sigma = data
-                .permutation_evals
-                .get(column)
-                .expect("permutation sigma eval present")
-                .to_string();
-            value_entries.push((offset, value));
-            sigma_entries.push((offset, sigma));
+            values.push(offset, evaluator.eval_source_at(column, 0));
+            sigmas.push(
+                offset,
+                *data.permutation_evals.get(column).expect("permutation sigma eval present"),
+            );
         }
-        Self::push_mstore_mload_literal_runs(
-            &mut block,
-            "q_perm_vals",
-            &value_entries,
-            "q_perm_val_load",
-        );
-        Self::push_mstore_mload_literal_runs(
-            &mut block,
-            "q_perm_sigmas",
-            &sigma_entries,
-            "q_perm_sigma_load",
-        );
+        values.render_into(&mut block);
+        sigmas.render_into(&mut block);
 
-        let mut z_cur_entries = Vec::with_capacity(data.permutation_z_evals.len());
-        let mut z_next_entries = Vec::with_capacity(data.permutation_z_evals.len());
-        let mut z_last_entries = Vec::with_capacity(data.permutation_z_evals.len());
+        let mut z_cur_table = TableFill::new("q_perm_z_cur", "q_perm_z_cur_load");
+        let mut z_next_table = TableFill::new("q_perm_z_next", "q_perm_z_next_load");
+        let mut z_last_table = TableFill::new("q_perm_z_last", "q_perm_z_last_load");
         for (idx, (z_cur, z_next, z_last)) in data.permutation_z_evals.iter().enumerate() {
             let offset = idx * 0x20;
-            z_cur_entries.push((offset, z_cur.to_string()));
-            z_next_entries.push((offset, z_next.to_string()));
+            z_cur_table.push(offset, *z_cur);
+            z_next_table.push(offset, *z_next);
             if let Some(z_last) = z_last {
-                z_last_entries.push((offset, z_last.to_string()));
+                z_last_table.push(offset, *z_last);
             }
         }
-        Self::push_mstore_mload_literal_runs(
-            &mut block,
-            "q_perm_z_cur",
-            &z_cur_entries,
-            "q_perm_z_cur_load",
-        );
-        Self::push_mstore_mload_literal_runs(
-            &mut block,
-            "q_perm_z_next",
-            &z_next_entries,
-            "q_perm_z_next_load",
-        );
-        Self::push_mstore_mload_literal_runs(
-            &mut block,
-            "q_perm_z_last",
-            &z_last_entries,
-            "q_perm_z_last_load",
-        );
+        z_cur_table.render_into(&mut block);
+        z_next_table.render_into(&mut block);
+        z_last_table.render_into(&mut block);
 
         let fold_eval = |block: &mut Vec<String>| {
             Self::push_quotient_trace(block, state_slots, "q_perm_eval", trace);

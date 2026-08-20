@@ -41,6 +41,7 @@ use midnight_proofs::plonk::{Any, Column, ConstraintSystem, Expression};
 use crate::lowering::{
     encoding::{fe_to_u256, ConstraintSystemMeta, Data, Location, Value, Word},
     quotient_numerator::vm::u256_string,
+    yul_ir::YulValue,
 };
 
 #[derive(Debug)]
@@ -350,30 +351,34 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Resolve a `Column<Any>` evaluation at a rotation. Used by the
-    /// permutation emitter (which works in `Column<Any>` form rather
-    /// than `Expression<F>`).
-    pub(crate) fn eval_at(&self, column: &Column<Any>, rotation: i32) -> String {
+    /// Typed counterpart of [`Self::eval_at`]: the generated word handle a
+    /// permutation column's evaluation loads from, or the constant a simple
+    /// selector synthesizes. Staged-table emission needs the handle rather
+    /// than its rendering so copy runs are found arithmetically.
+    pub(crate) fn eval_source_at(&self, column: &Column<Any>, rotation: i32) -> YulValue {
         let col_idx = column.index();
         match column.column_type() {
-            Any::Advice(_) => self
-                .data
-                .advice_evals
-                .get(&(col_idx, rotation))
-                .expect("advice eval present in permutation chunk")
-                .to_string(),
+            Any::Advice(_) => YulValue::Word(
+                *self
+                    .data
+                    .advice_evals
+                    .get(&(col_idx, rotation))
+                    .expect("advice eval present in permutation chunk"),
+            ),
             Any::Fixed => {
                 if self.meta.protocol.simple_selector_cols.contains(&col_idx) {
-                    "0x1".to_string()
+                    YulValue::Literal("0x1".to_string())
                 } else {
-                    self.data
-                        .fixed_evals
-                        .get(&(col_idx, rotation))
-                        .expect("fixed eval present in permutation chunk")
-                        .to_string()
+                    YulValue::Word(
+                        *self
+                            .data
+                            .fixed_evals
+                            .get(&(col_idx, rotation))
+                            .expect("fixed eval present in permutation chunk"),
+                    )
                 }
             }
-            Any::Instance => self.instance_eval_at(col_idx, rotation),
+            Any::Instance => YulValue::Literal(self.instance_eval_at(col_idx, rotation)),
         }
     }
 

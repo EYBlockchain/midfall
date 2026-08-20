@@ -4856,15 +4856,6 @@ pub(crate) fn parse_u32_literal(value: &str) -> Option<u32> {
     parsed.try_into().ok()
 }
 
-/// Parse a literal if it fits in `usize`.
-pub(crate) fn parse_usize_literal(value: &str) -> Option<usize> {
-    if !is_literal(value) {
-        return None;
-    }
-    let parsed = parse_u256(value);
-    parsed.try_into().ok()
-}
-
 /// Resolve a generated Yul memory symbol to a VM token.
 pub(crate) fn mem_token(name: &str) -> Option<u8> {
     quotient_mem_token_from_name(name)
@@ -4943,16 +4934,6 @@ pub(crate) fn yul_addmod_assignment(line: &str) -> Option<(String, String, Strin
     let args = call_args(&expr, "addmod")?;
     if args.len() == 3 && args[2].trim() == "r" {
         Some((dst, args[0].trim().to_string(), args[1].trim().to_string()))
-    } else {
-        None
-    }
-}
-
-/// Parse `mload(literal_ptr)`.
-pub(crate) fn yul_mload_literal_expr(expr: &str) -> Option<usize> {
-    let args = call_args(expr.trim(), "mload")?;
-    if args.len() == 1 {
-        parse_usize_literal(args[0].trim())
     } else {
         None
     }
