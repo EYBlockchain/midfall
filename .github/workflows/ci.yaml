@@ -200,6 +200,47 @@ jobs:
           package: halo2_solidity_verifier
           args: --all-features --all-targets -- --nocapture
 
+  # Feature-matrix tier-1 job (audit gap G4): `truncated-challenges`,
+  # `outer-fewer-point-sets`, and `outer-single-h-commitment` each change the
+  # proof layout, transcript shape, and quotient read windows, but every other
+  # job tests the single `--all-features` point. Each combo below runs the
+  # full tier-1 lib suite -- including the solc-gated quotient frame
+  # differential and (where `rust-verifier-trace` is present) the
+  # `trace_differential_smoke_fixed_shapes` native differential -- so every
+  # protocol-affecting feature combination gets semantic per-PR coverage.
+  #
+  # The plain `evm` combo is UNCUTTABLE: `rust-verifier-trace` transitively
+  # forces `truncated-challenges`, so this row is the only place the
+  # non-truncated transcript schedule is ever semantically tested.
+  test-solidity-verifier-features:
+    if: github.event.pull_request.draft == false
+    name: Test Solidity verifier feature matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features:
+          - "evm"
+          - "evm,truncated-challenges,rust-verifier-trace"
+          - "evm,outer-fewer-point-sets,truncated-challenges,rust-verifier-trace"
+          - "evm,outer-single-h-commitment,truncated-challenges,rust-verifier-trace"
+          - "evm,outer-fewer-point-sets,outer-single-h-commitment,truncated-challenges,rust-verifier-trace"
+
+    env:
+      SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install pinned solc
+        run: |
+          echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/cargo-test
+        with:
+          package: halo2_solidity_verifier
+          args: --no-default-features --features ${{ matrix.features }} --lib -- --nocapture
+
   test-solidity-verifier-evm:
     if: github.event.pull_request.draft == false
     needs: download-srs

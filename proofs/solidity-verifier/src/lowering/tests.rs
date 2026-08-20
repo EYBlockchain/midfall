@@ -47,7 +47,7 @@ use super::{
 use crate::{
     api::{
         AccumulatorEncoding, CommittedInstanceCommitmentKind, GeneratorConfig, GeneratorError,
-        QuotientIdentityManifestTarget, QuotientIdentitySource, RenderOptions,
+        QuotientIdentityManifestTarget, QuotientIdentitySource, RenderOptions, RenderQuotient,
     },
     SolidityGenerator,
 };
@@ -786,9 +786,14 @@ fn lowering_plan_reuses_stable_layout_facts() {
         plan.meta.num_simple_selectors
     );
 
-    let verifier = inputs
-        .generate_verifier_from_plan(&plan, false, false, false, false, None, None)
-        .expect("verifier model");
+    let verifier = inputs.generate_verifier_from_plan(
+        &plan,
+        false,
+        false,
+        false,
+        RenderQuotient::Inline,
+        None,
+    );
     assert_eq!(verifier.codegen_layout.proof, plan.proof_layout);
     assert_eq!(verifier.memory.vk_mptr, plan.vk_mptr);
     assert_eq!(verifier.proof_len, plan.proof_layout.proof_len);
@@ -1695,31 +1700,107 @@ fn constructor_probes_modexp_at_the_pinned_runtime_bound() {
     );
 }
 
+/// Assert each anchor occurs in the rendered contract strictly after the
+/// previous one (sequential scan, so helper-function definitions rendered
+/// earlier cannot satisfy a later section's anchor).
+fn assert_rendered_anchor_order(rendered: &str, anchors: &[&str]) {
+    let mut cursor = 0usize;
+    let mut previous = "<start of contract>";
+    for needle in anchors {
+        match rendered[cursor..].find(needle) {
+            Some(offset) => {
+                cursor += offset + needle.len();
+                previous = needle;
+            }
+            None => panic!(
+                "rendered fail-ordering violated: anchor `{needle}` not found after \
+                 `{previous}` (byte {cursor}); either the check no longer renders or \
+                 the section order changed"
+            ),
+        }
+    }
+}
+
+/// P2.c (E15/F11): fail-ordering is pinned on RENDERED verifier output, not
+/// on unrendered template text -- a dead template branch's text does not
+/// survive rendering, so an anchor here proves the check actually ships.
+/// The `__phase:` markers double as section anchors.
 #[test]
 fn failed_success_paths_do_not_enter_ec_precompiles() {
+    use crate::api::{RenderDiagnostics, RenderOptions, RenderVk};
+
+    let render = |vk: &VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+                  params: &ParamsKZG<Bls12>,
+                  options: RenderOptions| {
+        SolidityGenerator::new(params, vk, GeneratorConfig::new(1, 1))
+            .render(options)
+            .expect("render")
+            .verifier
+    };
+
+    let inline_order: &[&str] = &[
+        "fail(ERR_BAD_CALLDATA_SHAPE)",
+        "// __phase:transcript",
+        "fail(ERR_NON_CANONICAL_SCALAR)",
+        // Trailing-proof-bytes check: deliberately STRICTER than native
+        // midnight-proofs, whose `prepare` never calls
+        // `Transcript::assert_empty` despite its doc comment.
+        "if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }",
+        "// __phase:lagrange_batch_invert",
+        "fail(ERR_PROOF_REJECTED)",
+        "// __phase:quotient_vm",
+        "// __phase:pcs_final_msm",
+        "// __phase:final_pairing",
+        "ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)",
+    ];
+    let external_order: &[&str] = &[
+        "fail(ERR_BAD_CALLDATA_SHAPE)",
+        "// __phase:transcript",
+        "fail(ERR_NON_CANONICAL_SCALAR)",
+        "// __phase:lagrange_batch_invert",
+        "fail(ERR_PROOF_REJECTED)",
+        // External path re-pins the evaluator runtime before calling out.
+        "eq(extcodehash(quotientEvaluator), EXPECTED_QUOTIENT_CODEHASH_WORD)",
+        "// __phase:pcs_final_msm",
+        "// __phase:final_pairing",
+        "ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)",
+    ];
+
+    for (params, vk) in [quotient_vm_test_vk(), quotient_selector_fold_test_vk()] {
+        let modes: [(RenderOptions, &[&str]); 3] = [
+            (RenderOptions::default(), inline_order),
+            (
+                RenderOptions {
+                    diagnostics: RenderDiagnostics {
+                        trace: true,
+                        gas_checkpoints: false,
+                    },
+                    ..RenderOptions::default()
+                },
+                inline_order,
+            ),
+            (
+                RenderOptions {
+                    quotient: RenderQuotient::ExternalPinned {
+                        runtime_len: 0x1234,
+                        codehash: U256::from(0xabcdu64),
+                    },
+                    vk: RenderVk::Embedded,
+                    ..RenderOptions::default()
+                },
+                external_order,
+            ),
+        ];
+        for (options, order) in modes {
+            let rendered = render(&vk, &params, options);
+            assert_rendered_anchor_order(&rendered, order);
+        }
+    }
+
+    // Negative pins stay at template level: forbidden text must not exist in
+    // ANY branch, rendered or not.
     let verifier_template = verifier_template_corpus();
     let pcs_codegen = include_str!("kzg/mod.rs");
-
-    assert!(
-            verifier_template.contains("if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
-            "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
-        );
-    assert!(
-            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
-            "accumulator precheck should fail before transcript parsing"
-        );
-    assert!(
-        verifier_template.contains(
-            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }"
-        ),
-        "non-canonical public instances should fail before proof transcript parsing"
-    );
-    assert!(
-        verifier_template.contains(
-            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_PROOF_REJECTED)\n            }\n\n            {%- match quotient_external %}"
-        ),
-        "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
-    );
     for source in [verifier_template, pcs_codegen] {
         assert!(
                 !source.contains("and(success, staticcall"),
@@ -1731,16 +1812,96 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
             );
     }
     assert!(
-            verifier_template.contains(
-                "if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
-            ),
-            "final pairing block should revert before staging/calling the pairing precompile when success is already false"
-        );
-    assert!(
         pcs_codegen.contains("if success {")
             && pcs_codegen.contains("success := staticcall(G1MSM_GAS_1PAIR, 0x0c")
             && pcs_codegen.contains("success := staticcall(G1ADD_GAS, 0x0b"),
         "PCS emitter should guard final MSM/add precompile calls with if success"
+    );
+    // Accumulator fail-ordering: no tier-1 accumulator-shaped VK exists yet,
+    // so pin the template text (both anchors live in unconditional branches
+    // of the accumulator path).
+    assert!(
+            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}"),
+            "accumulator precheck should fail before transcript parsing"
+        );
+}
+
+/// P2.2: `MemoryLifetime::intersects` decides overlap from the phase enum's
+/// declaration order, and `validate_phase_markers` checks rendered marker
+/// order against `IN_TEMPLATE_ORDER`. Pin that the array is exactly the
+/// declaration order (strictly increasing under the derived `Ord`) and that
+/// no marker string is a prefix of another (the render scan matches raw
+/// substrings).
+#[test]
+fn memory_phase_template_order_is_declaration_order() {
+    use crate::lowering::layout::memory::MemoryPhase;
+
+    for pair in MemoryPhase::IN_TEMPLATE_ORDER.windows(2) {
+        assert!(
+            pair[0] < pair[1],
+            "MemoryPhase::IN_TEMPLATE_ORDER must list variants in declaration \
+             order: {:?} listed before {:?}",
+            pair[0],
+            pair[1]
+        );
+    }
+    for a in MemoryPhase::IN_TEMPLATE_ORDER {
+        for b in MemoryPhase::IN_TEMPLATE_ORDER {
+            if a != b {
+                assert!(
+                    !b.marker().starts_with(a.marker()),
+                    "phase marker `{}` is a prefix of `{}`; the rendered marker \
+                     scan would double-count it",
+                    a.marker(),
+                    b.marker()
+                );
+            }
+        }
+    }
+}
+
+/// P1.3: an external-quotient render always carries the runtime pin -- the
+/// unpinned constructor arms are unrepresentable, so the rendered output must
+/// check the codehash before storing the evaluator address.
+#[test]
+fn external_render_pins_quotient_codehash() {
+    use crate::api::RenderOptions;
+
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let rendered = generator
+        .render(RenderOptions {
+            quotient: RenderQuotient::ExternalPinned {
+                runtime_len: 0x1234,
+                codehash: U256::from(0xabcdu64),
+            },
+            ..RenderOptions::default()
+        })
+        .expect("external render")
+        .verifier;
+
+    let pin = rendered
+        .find("authorizedQuotient.code.length == EXPECTED_QUOTIENT_LENGTH")
+        .expect("constructor must pin the evaluator runtime length");
+    assert!(
+        rendered.contains("authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH"),
+        "constructor must pin the evaluator codehash"
+    );
+    let store = rendered
+        .find("AUTHORIZED_QUOTIENT = authorizedQuotient")
+        .expect("constructor must store the evaluator address");
+    assert_eq!(
+        rendered.matches("AUTHORIZED_QUOTIENT = authorizedQuotient").count(),
+        1,
+        "exactly one constructor arm may store the evaluator address"
+    );
+    assert!(
+        pin < store,
+        "the runtime pin must precede storing the evaluator address"
+    );
+    assert!(
+        rendered.contains("EXPECTED_QUOTIENT_CODEHASH_WORD = 0x000000000000000000000000000000000000000000000000000000000000abcd"),
+        "the pinned codehash constant must render from RenderQuotient::ExternalPinned"
     );
 }
 

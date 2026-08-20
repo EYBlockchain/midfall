@@ -1215,6 +1215,7 @@ pub(crate) fn computations(
         let eval_src_table_mptr: usize = memory.pcs_q_eval_source_table_mptr;
 
         let comment_g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
+        let mut staged_source_table_marker = false;
         for (set_idx, commitments_in_set) in by_set.iter().enumerate() {
             let mut lines: Vec<String> = Vec::new();
             let q_eval_base = format!("add(Q_EVAL_SET_MPTR, {:#x})", set_idx * WORD_BYTES);
@@ -1253,9 +1254,15 @@ pub(crate) fn computations(
                 // 1. Pre-stage source-eval addresses at EVAL_SRC_TABLE_MPTR. Layout: row-major
                 //    i over commits, k over rotations. Stride between commit rows = n_rot *
                 //    0x20.
+                if !staged_source_table_marker {
+                    lines.push("// __phase:pcs_q_eval_source_table".to_string());
+                    staged_source_table_marker = true;
+                }
                 lines.push("// stage per-(commit, rotation) eval source addresses".to_string());
                 for (i, c) in commitments_in_set.iter().enumerate() {
-                    debug_assert_eq!(c.evals.len(), n_rot);
+                    // Release check: a ragged eval row would mis-index the
+                    // staged source table in shipped codegen.
+                    assert_eq!(c.evals.len(), n_rot);
                     for (k, ev) in c.evals.iter().enumerate() {
                         debug_assert!(matches!(ev.loc(), Location::Memory));
                         lines.push(format!(
@@ -1506,6 +1513,7 @@ pub(crate) fn computations(
     // ------------------------------------------------------------------
     {
         let mut lines: Vec<String> = Vec::new();
+        lines.push("// __phase:scalar_inv".to_string());
         lines.push(format!(
             "// f_eval via Horner over {n_sets} reversed set(s)"
         ));
@@ -1745,6 +1753,7 @@ pub(crate) fn computations(
     // ------------------------------------------------------------------
     {
         let mut lines: Vec<String> = Vec::new();
+        lines.push("// __phase:pcs_final_msm".to_string());
         let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
         let linearization_comm = data.computed_quotient_comm;
         let simple_selector_cols: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
@@ -1934,6 +1943,7 @@ pub(crate) fn computations(
     // ------------------------------------------------------------------
     {
         let mut lines: Vec<String> = Vec::new();
+        lines.push("// __phase:pcs_pairing".to_string());
         lines.push("// Scale z*pi - vG before the final pairing check".to_string());
         lines.push("// pairing inputs (LHS = pi; RHS = final_com - v*G + x3*pi)".to_string());
 

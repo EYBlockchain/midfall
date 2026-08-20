@@ -38,6 +38,23 @@ impl<'a> SolidityGenerator<'a> {
         if vk.cs().num_advice_columns() == 0 {
             return Err(GeneratorError::NoAdviceColumns);
         }
+        // L2: bound `num_instances` on every path. Accumulator configs bound
+        // it transitively via the fixed-base tail check, but a plain config
+        // with an absurd value would render a verifier demanding
+        // `num_instances * 32` calldata bytes and size its transcript buffer
+        // to match. 2^16 instances is already ~2 MiB of calldata -- beyond
+        // any block's practical limit -- while keeping all downstream layout
+        // arithmetic far from overflow.
+        const MAX_NUM_INSTANCES: usize = 1 << 16;
+        if config.num_instances > MAX_NUM_INSTANCES {
+            return Err(GeneratorError::Planning {
+                stage: "generator-config",
+                message: format!(
+                    "num_instances {} exceeds the supported bound {MAX_NUM_INSTANCES}",
+                    config.num_instances
+                ),
+            });
+        }
         // Midfall's Rust verifier receives instances in two arguments:
         // committed instances and normal (non-committed) instances. The
         // total number of instance columns is their sum, with committed

@@ -6,6 +6,5 @@
 //! templates stay declarative.
 
 pub(crate) mod models;
-pub(crate) mod yul;
 
 pub(crate) use models::*;

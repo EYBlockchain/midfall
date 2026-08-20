@@ -587,7 +587,7 @@ impl GeneratorError {
     /// `vk-constructor-memory`, `vk-payload-reservation`, `vk-payload-layout`,
     /// `static-layout`, `quotient-plan`, `invariants`, `certification`,
     /// `render-model`, `transcript-schedule`, `calldata`,
-    /// `constraint system`.
+    /// `constraint system`, `generator-config`.
     pub(crate) fn planning(stage: &'static str, message: impl Into<String>) -> Self {
         Self::Planning {
             stage,

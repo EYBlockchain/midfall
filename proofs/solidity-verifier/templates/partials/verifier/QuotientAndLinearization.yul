@@ -1,5 +1,5 @@
-            {%- match quotient_external %}
-            {%- when Some with (qext) %}
+            {%- match self.external_pinned() %}
+            {%- when Some with (pinned) %}
             // ===============================================================
             // External batched identity numerator reconstruction.
             //
@@ -12,8 +12,6 @@
             // ===============================================================
             {
                 let q_out := QUOTIENT_RETURN_MPTR
-                {%- match self.expected_quotient_codehash %}
-                {%- when Some with (_) %}
                 // The quotient evaluator is as correctness-critical as the VK:
                 // it reconstructs the y-batched identity numerator and
                 // selector buckets. Re-check the pinned runtime before every
@@ -22,20 +20,18 @@
                     eq(extcodesize(quotientEvaluator), EXPECTED_QUOTIENT_LENGTH),
                     eq(extcodehash(quotientEvaluator), EXPECTED_QUOTIENT_CODEHASH_WORD)
                 )) { fail(ERR_VK_MISMATCH) }
-                {%- when None %}
-                {%- endmatch %}
                 {%- if self.trace %}
-                if iszero(call(gas(), quotientEvaluator, 0, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
+                if iszero(call(gas(), quotientEvaluator, 0, {{ pinned.external.frame_base|hex() }}, {{ pinned.external.frame_len|hex() }}, q_out, {{ pinned.external.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 {%- else %}
                 // gas() forwarding is deliberate here, unlike the precompile
                 // call sites: this is a regular contract call, so a reverting
                 // or failing callee refunds its unused gas -- only precompile
                 // ERRORS burn everything forwarded (EIP-2537). The callee is
                 // also pinned by codehash above, not attacker-supplied.
-                if iszero(staticcall(gas(), quotientEvaluator, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
+                if iszero(staticcall(gas(), quotientEvaluator, {{ pinned.external.frame_base|hex() }}, {{ pinned.external.frame_len|hex() }}, q_out, {{ pinned.external.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 {%- endif %}
-                if iszero(eq(returndatasize(), {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
-                if iszero(eq(mload(q_out), {{ qext.magic|hex_padded(64) }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
+                if iszero(eq(returndatasize(), {{ pinned.external.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
+                if iszero(eq(mload(q_out), {{ pinned.external.magic|hex_padded(64) }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 // Word 1 is the negated y-batched identity numerator, stored
                 // in the same memory slot used by the monolithic path.
                 mstore(QUOTIENT_EVAL_MPTR, mload(add(q_out, 0x20)))
@@ -100,6 +96,7 @@
             }
 
             {%- if self.trace %}
+            // __phase:linearization_trace
             // Materialize the linearization commitment for trace comparison.
             // The production path expands the same terms directly into the
             // fused final PCS MSM below.

@@ -169,6 +169,61 @@ pub(crate) enum MemoryPhase {
     QuotientReturn,
 }
 
+impl MemoryPhase {
+    /// Every phase, in declaration (== runtime/template) order.
+    ///
+    /// P2.2 (F5, docs/plans/REDESIGN_PROPOSALS_2026-08.md): the derived `Ord`
+    /// this array pins is what `MemoryLifetime::intersects` uses for overlap
+    /// detection, and the rendered `__phase:` markers checked by
+    /// `render::validate_phase_markers` prove the template execution order
+    /// matches it on every render. A tier-1 test asserts this array is
+    /// strictly increasing; `marker()`'s exhaustive match makes adding a
+    /// variant without extending both a compile error.
+    pub(crate) const IN_TEMPLATE_ORDER: [MemoryPhase; 16] = [
+        Self::VkConstructorPayload,
+        Self::ConstructorSmoke,
+        Self::AccumulatorMsm,
+        Self::Transcript,
+        Self::LagrangeBatchInvert,
+        Self::QuotientVm,
+        Self::LinearizationTrace,
+        Self::PcsQEvalSourceTable,
+        Self::PcsQComTrace,
+        Self::ScalarInv,
+        Self::PcsFinalMsm,
+        Self::PcsPairing,
+        Self::AccumulatorPairingBatch,
+        Self::FinalPairing,
+        Self::VerifierReturn,
+        Self::QuotientReturn,
+    ];
+
+    /// Stable `__phase:` marker comment rendered at this phase's section
+    /// boundary. Phases without a rendered marker (constructor payload of the
+    /// separate VK artifact; trace-only or helper-internal scratch) still get
+    /// a name here so the match stays exhaustive.
+    pub(crate) const fn marker(self) -> &'static str {
+        match self {
+            Self::VkConstructorPayload => "// __phase:vk_constructor_payload",
+            Self::ConstructorSmoke => "// __phase:constructor_smoke",
+            Self::AccumulatorMsm => "// __phase:accumulator_msm",
+            Self::Transcript => "// __phase:transcript",
+            Self::LagrangeBatchInvert => "// __phase:lagrange_batch_invert",
+            Self::QuotientVm => "// __phase:quotient_vm",
+            Self::LinearizationTrace => "// __phase:linearization_trace",
+            Self::PcsQEvalSourceTable => "// __phase:pcs_q_eval_source_table",
+            Self::PcsQComTrace => "// __phase:pcs_q_com_trace",
+            Self::ScalarInv => "// __phase:scalar_inv",
+            Self::PcsFinalMsm => "// __phase:pcs_final_msm",
+            Self::PcsPairing => "// __phase:pcs_pairing",
+            Self::AccumulatorPairingBatch => "// __phase:accumulator_pairing_batch",
+            Self::FinalPairing => "// __phase:final_pairing",
+            Self::VerifierReturn => "// __phase:verifier_return",
+            Self::QuotientReturn => "// __phase:quotient_return",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum MemoryLifetime {
     /// Region can be read after it is written and must never overlap another
@@ -258,8 +313,7 @@ impl MemoryMap {
         self.regions.push(region);
     }
 
-    /// Find a region by name for tests.
-    #[cfg(test)]
+    /// Find a region by name (used by validation and tests).
     pub(crate) fn region(&self, name: &str) -> Option<&MemoryRegion> {
         self.regions.iter().find(|region| region.name == name)
     }
@@ -743,10 +797,14 @@ impl VerifierMemoryLayout {
             vk.len(),
             MemoryLifetime::Permanent,
         );
+        // L1: register the FULL historical 0x100 window, not just the
+        // 0xc0 modexp frame -- the 0x40 tail is deliberate padding below
+        // VK_MPTR and must stay owned by this region so no future allocation
+        // can silently claim it.
         let scalar_inv_scratch_mptr = arena.alloc_phase_scratch(
             "scalar_inv_scratch",
             vk_start.saturating_sub(MODEXP_SCRATCH_BYTES),
-            MODEXP_FRAME_BYTES,
+            MODEXP_SCRATCH_BYTES,
             MemoryPhase::ScalarInv,
         );
         let challenge_start = arena.alloc_after(
@@ -1223,6 +1281,34 @@ impl VerifierMemoryLayout {
         // `lagrange_denoms` phase region, so `map.validate()` below covers its
         // disjointness structurally; no separate capacity check is needed.
         self.map.validate()?;
+
+        // P0.3 (F5, docs/plans/REDESIGN_PROPOSALS_2026-08.md): these pairs run
+        // in distinct `MemoryPhase`s, so the lifetime model above never
+        // compares their addresses -- yet the accumulator pairing batch's
+        // result must survive into the final pairing that consumes it, making
+        // this the one place phase disjointness is NOT sufficient. Enforce
+        // address-level disjointness explicitly so a future re-derivation of
+        // either base cannot silently alias them.
+        const ALWAYS_ADDRESS_DISJOINT: [(&str, &str); 1] =
+            [("accumulator_pairing_batch", "final_pairing_scratch")];
+        for (a_name, b_name) in ALWAYS_ADDRESS_DISJOINT {
+            let (Some(a), Some(b)) = (self.map.region(a_name), self.map.region(b_name)) else {
+                // A region is registered only when its feature is active
+                // (e.g. no accumulator => no pairing batch); nothing to check.
+                continue;
+            };
+            if a.len != 0 && b.len != 0 {
+                let a_end = a.start + a.len;
+                let b_end = b.start + b.len;
+                if a.start < b_end && b.start < a_end {
+                    return Err(format!(
+                        "always-disjoint regions overlap by address: {a_name} \
+                         [{:#x}, {a_end:#x}) intersects {b_name} [{:#x}, {b_end:#x})",
+                        a.start, b.start
+                    ));
+                }
+            }
+        }
 
         Ok(())
     }
@@ -1731,7 +1817,9 @@ mod tests {
             0x2000 - MODEXP_SCRATCH_BYTES
         );
         assert_eq!(scalar_inv.start, layout.scalar_inv_scratch_mptr);
-        assert_eq!(scalar_inv.len, MODEXP_FRAME_BYTES);
+        // L1: the registration covers the full historical window, including
+        // the 0x40 padding tail below VK_MPTR.
+        assert_eq!(scalar_inv.len, MODEXP_SCRATCH_BYTES);
         layout.validate().expect("fixed regions are phase-scoped");
     }
 

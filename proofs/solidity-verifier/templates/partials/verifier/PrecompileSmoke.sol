@@ -6,6 +6,7 @@
     ///      was repriced above those bounds fails here, at deployment, instead
     ///      of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
+        // __phase:constructor_smoke
         assembly ("memory-safe") {
             // Same free-memory-pointer guard as verifyProof. This body runs in
             // the *creation* frame, which the generator's memoryguard test does

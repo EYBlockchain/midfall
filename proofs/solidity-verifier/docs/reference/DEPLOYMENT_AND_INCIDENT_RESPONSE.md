@@ -157,6 +157,21 @@ binding, VK codehash pin, generated-constant cross-checks, and `BUILD_ID`
 a prover-affecting protocol change, explicitly out of scope by owner
 decision (2026-08-13).
 
+### 5.3 No negative EIP-2537 subgroup probe at deployment (L5/P2.4) — deferred
+
+The constructor smoke suite proves the BLS12-381 precompiles exist,
+answer known-answer vectors, and respect the forwarded gas bounds; it
+cannot prove that a chain's G1MSM implementation actually REJECTS
+non-subgroup points — the exact property the verifier's soundness
+delegates to the precompile. A negative-conformance probe needs a
+pinned non-subgroup test vector (a valid Fp pair on the curve but
+outside the r-torsion) plus deployment gas budget for one expected-fail
+MSM. Deferred by owner decision (2026-08-20, roadmap P2.e): revisit
+after the P7 executable-model phase, which introduces the point-codec
+machinery such a vector generator would share. Until then the risk is
+bounded by deploying only to chains running audited mainline clients,
+per §2's chain-support checklist.
+
 ## 6. Reading a revert (MF-4)
 
 `verifyProof` is success-or-revert: it returns `true` or reverts with one of

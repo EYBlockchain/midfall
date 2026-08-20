@@ -878,7 +878,8 @@ impl From<Ptr> for EcPoint {
 
 /// Split a 48-byte big-endian Fp coordinate into EIP-2537 hi/lo words.
 fn fp48_be_to_hi_lo(be: &[u8]) -> (U256, U256) {
-    debug_assert_eq!(be.len(), BLS_FP_BYTES);
+    // Release check: a short slice would silently zero-pad an Fp coordinate.
+    assert_eq!(be.len(), BLS_FP_BYTES);
     let mut hi_bytes = [0u8; 32];
     hi_bytes[EIP2537_FP_PAD_BYTES..].copy_from_slice(&be[..EIP2537_FP_PAD_BYTES]);
     let mut lo_bytes = [0u8; 32];
@@ -967,7 +968,7 @@ where
 {
     let repr = fe.borrow().to_repr();
     let bytes = repr.as_ref();
-    debug_assert_eq!(bytes.len(), 32, "fe_to_u256 expects 32-byte repr");
+    assert_eq!(bytes.len(), 32, "fe_to_u256 expects 32-byte repr");
     let mut le = [0u8; 32];
     le.copy_from_slice(bytes);
     U256::from_le_bytes(le)

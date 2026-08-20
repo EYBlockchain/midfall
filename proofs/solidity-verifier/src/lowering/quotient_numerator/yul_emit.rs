@@ -37,9 +37,11 @@ use std::{cell::RefCell, cmp::Ordering, collections::HashMap};
 use ff::{Field, PrimeField};
 use midnight_curves::Fq;
 use midnight_proofs::plonk::{Any, Column, ConstraintSystem, Expression};
-use ruint::aliases::U256;
 
-use crate::lowering::encoding::{fe_to_u256, ConstraintSystemMeta, Data, Location, Value, Word};
+use crate::lowering::{
+    encoding::{fe_to_u256, ConstraintSystemMeta, Data, Location, Value, Word},
+    quotient_numerator::vm::u256_string,
+};
 
 #[derive(Debug)]
 pub(crate) struct Evaluator<'a> {
@@ -1192,15 +1194,6 @@ impl<'a> Evaluator<'a> {
         let count = *self.var_counter.borrow();
         *self.var_counter.borrow_mut() += 1;
         format!("var{count}")
-    }
-}
-
-/// Render a `U256` as the shortest stable hexadecimal Yul literal.
-fn u256_string(value: U256) -> String {
-    if value.bit_len() < 64 {
-        format!("0x{:x}", value.as_limbs()[0])
-    } else {
-        format!("0x{value:x}")
     }
 }
 

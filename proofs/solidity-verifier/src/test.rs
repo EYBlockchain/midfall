@@ -395,6 +395,23 @@ fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     }
 }
 
+/// P2.d: a deterministic per-PR native-trace differential tying the
+/// permutation/lookup/trash formulas (and the transcript schedule) to
+/// midnight-proofs. Unlike the `pbt_` suites this is gated on the pinned
+/// solc ALONE (the F1 frame-differential pattern) -- no
+/// HALO2_SOLIDITY_RUN_EVM_TESTS opt-in -- so it runs in the tier-1 job and
+/// in every feature-matrix combo that carries `rust-verifier-trace`.
+#[cfg(feature = "rust-verifier-trace")]
+#[test]
+fn trace_differential_smoke_fixed_shapes() {
+    if !quotient_frame_differential_available() {
+        return;
+    }
+    for seed in [0x5eed_0001u64, 0x5eed_0002] {
+        run_transcript_differential_shape_fuzz_case(seed);
+    }
+}
+
 #[cfg(feature = "rust-verifier-trace")]
 #[test]
 fn pbt_transcript_differential_fuzzer_matches_solidity_trace() {
@@ -1971,6 +1988,15 @@ fn assert_required_diff_trace_coverage_with_options(
     if require_selector_folds {
         assert_trace_range_present(rust_trace, solidity_trace, 60_000..61_000, "selector folds");
     }
+    // Trash-challenge divergence surface (report-native section 3.9): both
+    // verifiers squeeze the challenge unconditionally, but the native trace
+    // records id 12 only when trashcans exist. Presence must agree, or one
+    // side's conditional recording drifted.
+    assert_eq!(
+        rust_trace.contains_key(&12),
+        solidity_trace.contains_key(&12),
+        "trash-challenge trace id 12 presence must agree between native and Solidity traces"
+    );
 }
 
 #[cfg(feature = "rust-verifier-trace")]

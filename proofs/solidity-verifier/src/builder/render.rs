@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: CC0-1.0
 //! Options-driven rendering entry points for `SolidityGenerator`.
 
-use ruint::aliases::U256;
-
 use super::*;
 use crate::{
     api::{RenderQuotient, RenderVk},
@@ -13,8 +11,7 @@ struct VerifierRenderPlan {
     separate: bool,
     trace: bool,
     gas_checkpoints: bool,
-    external_quotient: bool,
-    expected_quotient: Option<(usize, U256)>,
+    quotient: RenderQuotient,
     provenance: Option<[u8; 32]>,
 }
 
@@ -23,13 +20,7 @@ impl<'a> SolidityGenerator<'a> {
     /// value.
     pub fn render(&self, options: RenderOptions) -> Result<RenderedArtifacts, GeneratorError> {
         let separate = matches!(options.vk, RenderVk::Separate);
-        let (external_quotient, expected_quotient) = match options.quotient {
-            RenderQuotient::Inline => (false, None),
-            RenderQuotient::ExternalPinned {
-                runtime_len,
-                codehash,
-            } => (true, Some((runtime_len, codehash))),
-        };
+        let external_quotient = matches!(options.quotient, RenderQuotient::ExternalPinned { .. });
 
         let inputs = self.inputs();
         let plan = self.plan()?;
@@ -38,8 +29,7 @@ impl<'a> SolidityGenerator<'a> {
             separate,
             trace: options.diagnostics.trace,
             gas_checkpoints: options.diagnostics.gas_checkpoints,
-            external_quotient,
-            expected_quotient,
+            quotient: options.quotient,
             provenance: options.provenance,
         };
         let verifier = self.render_verifier_source_with_plan(&inputs, plan, render_plan)?;
@@ -85,18 +75,21 @@ impl<'a> SolidityGenerator<'a> {
     ) -> Result<String, GeneratorError> {
         let mut quotient_output = String::new();
         inputs
-            .generate_quotient_evaluator_from_plan(plan, diagnostics.trace)?
+            .generate_quotient_evaluator_from_plan(plan, diagnostics.trace)
             .render(&mut quotient_output)
-            .map_err(|_| GeneratorError::Render {
-                artifact: "Halo2QuotientEvaluator.sol",
+            .map_err(|err| {
+                GeneratorError::planning(
+                    "render-model",
+                    format!("Halo2QuotientEvaluator.sol: {err}"),
+                )
             })?;
         Ok(quotient_output)
     }
 
     /// Render the main verifier source from the same converged plan.
     ///
-    /// `expected_quotient` is present only after the external evaluator has
-    /// been compiled/deployed by the caller and its runtime hash is known.
+    /// [`RenderQuotient::ExternalPinned`] carries the runtime length/codehash
+    /// the caller obtained by compiling and deploying the evaluator first.
     fn render_verifier_source_with_plan(
         &self,
         inputs: &VerifierBuildInputs<'_, '_>,
@@ -110,13 +103,12 @@ impl<'a> SolidityGenerator<'a> {
                 render_plan.separate,
                 render_plan.trace,
                 render_plan.gas_checkpoints,
-                render_plan.external_quotient,
-                render_plan.expected_quotient,
+                render_plan.quotient,
                 render_plan.provenance,
-            )?
+            )
             .render(&mut verifier_output)
-            .map_err(|_| GeneratorError::Render {
-                artifact: "Halo2Verifier.sol",
+            .map_err(|err| {
+                GeneratorError::planning("render-model", format!("Halo2Verifier.sol: {err}"))
             })?;
         Ok(verifier_output)
     }
@@ -124,8 +116,8 @@ impl<'a> SolidityGenerator<'a> {
     /// Render the separate verifying-key payload contract.
     fn render_vk_model(vk: &Halo2VerifyingKey) -> Result<String, GeneratorError> {
         let mut vk_output = String::new();
-        vk.render(&mut vk_output).map_err(|_| GeneratorError::Render {
-            artifact: "Halo2VerifyingKey.sol",
+        vk.render(&mut vk_output).map_err(|err| {
+            GeneratorError::planning("render-model", format!("Halo2VerifyingKey.sol: {err}"))
         })?;
         Ok(vk_output)
     }

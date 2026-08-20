@@ -1,6 +1,6 @@
     {%- match self.expected_vk_codehash %}
     {%- when Some with (_) %}
-    {%- match quotient_external %}
+    {%- match self.external_pinned() %}
     {%- when Some with (_) %}
     /// @notice Create a verifier pinned to a verifying key and quotient evaluator.
     /// @dev Checks MCOPY/EIP-2537 availability and verifies both dependency runtimes before storing their addresses.
@@ -17,8 +17,6 @@
                 && authorizedVk.codehash == EXPECTED_VK_CODEHASH,
             "invalid vk"
         );
-        {%- match self.expected_quotient_codehash %}
-        {%- when Some with (_) %}
         // The split evaluator contains generated verifier logic, not a generic
         // library. Pin it with the same strictness as the verifying key.
         require(
@@ -26,16 +24,10 @@
                 && authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH,
             "invalid quotient"
         );
-        {%- when None %}
-        {%- endmatch %}
         // Store the already-validated dependency addresses for proof-time
         // memory loading and quotient reconstruction.
         AUTHORIZED_VK = authorizedVk;
         AUTHORIZED_QUOTIENT = authorizedQuotient;
-        {%- match self.expected_quotient_codehash %}
-        {%- when Some with (_) %}
-        {%- when None %}
-        {%- endmatch %}
     }
     {%- when None %}
     /// @notice Create a verifier pinned to a generated verifying key.
@@ -55,7 +47,7 @@
     }
     {%- endmatch %}
     {%- when None %}
-    {%- match quotient_external %}
+    {%- match self.external_pinned() %}
     {%- when Some with (_) %}
     /// @notice Create a verifier pinned to a quotient evaluator.
     /// @dev Used when the VK is embedded in the verifier but quotient reconstruction is split out.
@@ -65,20 +57,12 @@
         // the runtime prerequisites and external quotient evaluator still
         // need to be checked before storing the dependency address.
         require_eip2537_precompiles();
-        {%- match self.expected_quotient_codehash %}
-        {%- when Some with (_) %}
         require(
             authorizedQuotient.code.length == EXPECTED_QUOTIENT_LENGTH
                 && authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH,
             "invalid quotient"
         );
-        {%- when None %}
-        {%- endmatch %}
         AUTHORIZED_QUOTIENT = authorizedQuotient;
-        {%- match self.expected_quotient_codehash %}
-        {%- when Some with (_) %}
-        {%- when None %}
-        {%- endmatch %}
     }
     {%- when None %}
     /// @notice Create a verifier with embedded verifier data.

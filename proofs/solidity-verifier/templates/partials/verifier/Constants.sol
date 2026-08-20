@@ -12,20 +12,16 @@
     bytes32 internal constant EXPECTED_VK_CODEHASH = bytes32(EXPECTED_VK_CODEHASH_WORD);
     {%- when None %}
     {%- endmatch %}
-    {%- match quotient_external %}
-    {%- when Some with (_) %}
+    {%- match self.external_pinned() %}
+    {%- when Some with (pinned) %}
     /// @notice Quotient evaluator contract authorized for split quotient reconstruction.
-    /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime may be pinned by generated constants.
+    /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime is pinned by generated constants.
     address public immutable AUTHORIZED_QUOTIENT;
-    {%- match self.expected_quotient_codehash %}
-    {%- when Some with (expected_quotient_codehash) %}
     // Expected split evaluator runtime metadata. It is checked at deployment
     // and again immediately before each external quotient reconstruction.
-    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = {{ self.expected_quotient_len.unwrap() }};
-    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = {{ expected_quotient_codehash|hex_padded(64) }};
+    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = {{ pinned.runtime_len }};
+    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = {{ pinned.codehash|hex_padded(64) }};
     bytes32 internal constant EXPECTED_QUOTIENT_CODEHASH = bytes32(EXPECTED_QUOTIENT_CODEHASH_WORD);
-    {%- when None %}
-    {%- endmatch %}
     {%- when None %}
     {%- endmatch %}
 

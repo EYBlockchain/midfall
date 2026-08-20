@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-use askama::{Error, Template};
+use askama::Template;
 use group::{prime::PrimeCurveAffine, Curve, Group};
 use midnight_curves::{G1Affine, G1Projective};
 use ruint::aliases::U256;
@@ -19,10 +19,71 @@ use crate::lowering::{
     encoding::Ptr,
     layout,
     layout::{
-        memory::{VerifierMemoryLayout, VkConstructorMemoryLayout, G1_BYTES, WORD_BYTES},
+        memory::{
+            MemoryPhase, VerifierMemoryLayout, VkConstructorMemoryLayout, G1_BYTES, WORD_BYTES,
+        },
         vk_payload::{PayloadSectionKind, VkPayloadLayout},
     },
 };
+
+/// Check that a rendered contract carries exactly the required `__phase:`
+/// markers, each exactly once, in [`MemoryPhase`] declaration order.
+///
+/// P2.2 (F5): `MemoryLifetime::intersects` decides scratch-region overlap from
+/// the phase enum's declaration order, so a template section rendered out of
+/// that order silently disables overlap detection. Every render scans its own
+/// output; a marker that is missing, duplicated, unexpected, or mis-ordered
+/// fails the render instead of shipping a mis-modeled layout.
+pub(crate) fn validate_phase_markers(
+    rendered: &str,
+    required: &[MemoryPhase],
+) -> Result<(), String> {
+    let mut found: Vec<(usize, MemoryPhase)> = Vec::new();
+    for phase in MemoryPhase::IN_TEMPLATE_ORDER {
+        let marker = phase.marker();
+        let positions: Vec<usize> = rendered.match_indices(marker).map(|(pos, _)| pos).collect();
+        // Markers must be line-terminated so no marker string can be a prefix
+        // of another; a tier-1 test pins the no-prefix property directly.
+        if positions.len() > 1 {
+            return Err(format!(
+                "phase marker `{marker}` rendered {} times; expected at most once",
+                positions.len()
+            ));
+        }
+        let is_required = required.contains(&phase);
+        match (positions.first(), is_required) {
+            (Some(&pos), true) => found.push((pos, phase)),
+            (Some(_), false) => {
+                return Err(format!(
+                    "phase marker `{marker}` rendered but not required by this \
+                     contract's flags; the required-marker derivation drifted \
+                     from the template conditions"
+                ));
+            }
+            (None, true) => {
+                return Err(format!(
+                    "required phase marker `{marker}` missing from rendered output"
+                ));
+            }
+            (None, false) => {}
+        }
+    }
+    // `found` was collected in declaration order; rendered positions must
+    // increase in the same order.
+    for pair in found.windows(2) {
+        let ((pos_a, phase_a), (pos_b, phase_b)) = (pair[0], pair[1]);
+        if pos_a >= pos_b {
+            return Err(format!(
+                "phase markers out of declared order: `{}` (at byte {pos_a}) must \
+                 render before `{}` (at byte {pos_b}); MemoryPhase declaration \
+                 order no longer matches the template execution order",
+                phase_a.marker(),
+                phase_b.marker()
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// G1 point in EIP-2537 padded encoding: (x_hi, x_lo, y_hi, y_lo).
 pub(crate) type G1Words = (U256, U256, U256, U256);
@@ -554,9 +615,10 @@ pub(crate) struct Halo2Verifier {
     /// the linearization MSM, so the region may be reused by later PCS
     /// scratch tables.
     pub(crate) selector_acc_mptr: usize,
-    pub(crate) quotient_external: Option<QuotientExternal>,
-    pub(crate) expected_quotient_len: Option<usize>,
-    pub(crate) expected_quotient_codehash: Option<U256>,
+    /// Quotient reconstruction strategy. An external evaluator is always
+    /// pinned by runtime length and codehash -- an unpinned external render is
+    /// unrepresentable by construction (P1.3/F10).
+    pub(crate) quotient: VerifierQuotient,
     pub(crate) quotient_inline_computations: Vec<Vec<String>>,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) quotient_post_vm_computations: Vec<Vec<String>>,
@@ -606,6 +668,28 @@ pub(crate) struct Halo2Verifier {
     /// `(point_mptr, negate_scalar)`: `-G` is represented as the
     /// regular generator with the scalar negated modulo Fr.
     pub(crate) acc_fixed_bases: Vec<(usize, bool)>,
+}
+
+/// Quotient reconstruction strategy for the main verifier template.
+#[derive(Clone, Debug)]
+pub(crate) enum VerifierQuotient {
+    /// Quotient reconstruction is rendered inside the verifier (compact VM
+    /// plus native callbacks, carried by the flattened block fields).
+    Inline,
+    /// Quotient reconstruction is delegated to a separately deployed
+    /// generated evaluator, pinned by runtime length and codehash.
+    ExternalPinned(QuotientExternalPinned),
+}
+
+/// External quotient evaluator frame plus its mandatory runtime pin.
+#[derive(Clone, Debug)]
+pub(crate) struct QuotientExternalPinned {
+    /// Copied memory frame handed to the external evaluator.
+    pub(crate) external: QuotientExternal,
+    /// Expected deployed evaluator runtime byte length.
+    pub(crate) runtime_len: usize,
+    /// Expected deployed evaluator runtime codehash.
+    pub(crate) codehash: U256,
 }
 
 #[derive(Clone, Debug)]
@@ -791,16 +875,28 @@ pub(crate) struct QuotientVmMemUsage {
 }
 
 impl Halo2VerifyingKey {
-    /// Render the verifying-key contract.
-    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
-        self.render_into(writer).map_err(|err| match err {
-            Error::Fmt(err) => err,
-            _ => unreachable!(),
-        })
+    /// Validate, then render the verifying-key contract.
+    ///
+    /// Validation runs inside `render` so no model -- including one
+    /// constructed directly in tests -- can render unvalidated (P1.3).
+    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), String> {
+        self.validate_payload_layout()?;
+        self.render_into(writer)
+            .map_err(|err| format!("verifying-key template rendering failed: {err}"))
     }
 }
 
 impl Halo2Verifier {
+    /// The pinned external evaluator, when this render delegates quotient
+    /// reconstruction. Templates match on this accessor so the pinning
+    /// constants and the constructor `require` render together or not at all.
+    pub(crate) fn external_pinned(&self) -> Option<&QuotientExternalPinned> {
+        match &self.quotient {
+            VerifierQuotient::Inline => None,
+            VerifierQuotient::ExternalPinned(pinned) => Some(pinned),
+        }
+    }
+
     /// Validate template inputs against the typed proof and memory layouts.
     pub(crate) fn validate_layout(&self) -> Result<(), String> {
         self.memory.validate()?;
@@ -849,14 +945,6 @@ impl Halo2Verifier {
             ));
         }
 
-        let expected_proof_len = proof_layout.proof_len;
-        if self.proof_len != expected_proof_len {
-            return Err(format!(
-                "proof length mismatch: got {:#x}, expected {expected_proof_len:#x}",
-                self.proof_len
-            ));
-        }
-
         let comms_base = self.comms_mptr_base.value().as_usize();
         let committed_g1s = proof_layout.commitment_g1_count();
         let expected_selector_acc =
@@ -868,7 +956,7 @@ impl Halo2Verifier {
             ));
         }
 
-        if self.quotient_external.is_none()
+        if self.external_pinned().is_none()
             && self.quotient_program.is_none()
             && self.quotient_eval_numer_computations.is_empty()
         {
@@ -878,7 +966,8 @@ impl Halo2Verifier {
             );
         }
 
-        if let Some(qext) = &self.quotient_external {
+        if let Some(pinned) = self.external_pinned() {
+            let qext = &pinned.external;
             qext.validate_contains("VK payload", self.vk_mptr.value().as_usize(), self.vk_len)?;
             qext.validate_contains(
                 "user challenge block",
@@ -917,12 +1006,51 @@ impl Halo2Verifier {
         Ok(())
     }
 
-    /// Render the verifier contract.
-    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
-        self.render_into(writer).map_err(|err| match err {
-            Error::Fmt(err) => err,
-            _ => unreachable!(),
-        })
+    /// Phase markers this render must emit, mirroring the template
+    /// conditions exactly (a marker rendered without its flag, or vice
+    /// versa, fails `validate_phase_markers`).
+    fn required_phase_markers(&self) -> Vec<MemoryPhase> {
+        let mut phases = vec![MemoryPhase::ConstructorSmoke];
+        if self.expected_has_accumulator {
+            phases.push(MemoryPhase::AccumulatorMsm);
+        }
+        phases.push(MemoryPhase::Transcript);
+        phases.push(MemoryPhase::LagrangeBatchInvert);
+        if self.external_pinned().is_none() {
+            phases.push(MemoryPhase::QuotientVm);
+        }
+        if self.trace {
+            phases.push(MemoryPhase::LinearizationTrace);
+        }
+        if self.memory.pcs.q_eval_source_table_words > 0 {
+            phases.push(MemoryPhase::PcsQEvalSourceTable);
+        }
+        phases.push(MemoryPhase::ScalarInv);
+        phases.push(MemoryPhase::PcsFinalMsm);
+        phases.push(MemoryPhase::PcsPairing);
+        if self.expected_has_accumulator {
+            phases.push(MemoryPhase::AccumulatorPairingBatch);
+        }
+        phases.push(MemoryPhase::FinalPairing);
+        phases.push(MemoryPhase::VerifierReturn);
+        phases
+    }
+
+    /// Validate, render, then scan the output's phase markers.
+    ///
+    /// Validation and the marker scan run inside `render` so no model --
+    /// including one constructed directly in tests -- can render
+    /// unvalidated (P1.3), and no render can ship sections out of the
+    /// declared [`MemoryPhase`] order (P2.2).
+    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), String> {
+        self.validate_layout()?;
+        let mut rendered = String::new();
+        self.render_into(&mut rendered)
+            .map_err(|err| format!("verifier template rendering failed: {err}"))?;
+        validate_phase_markers(&rendered, &self.required_phase_markers())?;
+        writer
+            .write_str(&rendered)
+            .map_err(|err| format!("writing rendered verifier failed: {err}"))
     }
 }
 
@@ -970,12 +1098,21 @@ impl Halo2QuotientEvaluator {
         Ok(())
     }
 
-    /// Render the standalone quotient evaluator contract.
-    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), fmt::Error> {
-        self.render_into(writer).map_err(|err| match err {
-            Error::Fmt(err) => err,
-            _ => unreachable!(),
-        })
+    /// Phase markers the standalone evaluator render must emit.
+    fn required_phase_markers(&self) -> Vec<MemoryPhase> {
+        vec![MemoryPhase::QuotientVm, MemoryPhase::QuotientReturn]
+    }
+
+    /// Validate, render, then scan the output's phase markers.
+    pub(crate) fn render(&self, writer: &mut impl fmt::Write) -> Result<(), String> {
+        self.validate_layout()?;
+        let mut rendered = String::new();
+        self.render_into(&mut rendered)
+            .map_err(|err| format!("quotient evaluator template rendering failed: {err}"))?;
+        validate_phase_markers(&rendered, &self.required_phase_markers())?;
+        writer
+            .write_str(&rendered)
+            .map_err(|err| format!("writing rendered quotient evaluator failed: {err}"))
     }
 }
 
@@ -995,12 +1132,7 @@ mod filters {
 
     /// Askama filter that renders a lower-hex value padded to `pad` nibbles.
     pub fn hex_padded(value: impl LowerHex, pad: usize) -> ::askama::Result<String> {
-        let string = format!("0x{value:0pad$x}");
-        if string == "0x0" {
-            Ok(format!("0x{}", "0".repeat(pad)))
-        } else {
-            Ok(string)
-        }
+        Ok(format!("0x{value:0pad$x}"))
     }
 }
 
@@ -1008,7 +1140,10 @@ mod filters {
 mod tests {
     use ruint::aliases::U256;
 
-    use super::{G1Words, Halo2Verifier, Halo2VerifyingKey, QuotientProgram, VK_RUNTIME_PREFIX};
+    use super::{
+        G1Words, Halo2Verifier, Halo2VerifyingKey, QuotientProgram, VerifierQuotient,
+        VK_RUNTIME_PREFIX,
+    };
     use crate::lowering::{
         abi::proof::ProofCalldataLayout,
         encoding::{ConstraintSystemMeta, Ptr},
@@ -1209,9 +1344,7 @@ mod tests {
             comms_mptr_base: Ptr::memory(comms_mptr_base),
             reversed_evals_mptr: Ptr::memory(0x3000),
             selector_acc_mptr,
-            quotient_external: None,
-            expected_quotient_len: None,
-            expected_quotient_codehash: None,
+            quotient: VerifierQuotient::Inline,
             quotient_inline_computations: vec![],
             quotient_eval_numer_computations: vec![],
             quotient_post_vm_computations: vec![],

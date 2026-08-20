@@ -300,13 +300,27 @@ pub(crate) mod test {
                 str::from_utf8(&output.stderr).unwrap()
             )
         }) + marker.len();
-        hex::decode(stdout[start..].trim()).expect("solc runtime output should be hex")
+        // L3: take only the first hex line after the marker. Decoding to
+        // end-of-output silently assumed a single-contract source with a
+        // trailing newline; a second contract's section would corrupt the
+        // returned bytecode.
+        let hex_line = stdout[start..]
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .expect("solc runtime output should contain a hex line after the marker");
+        hex::decode(hex_line).expect("solc runtime output should be hex")
     }
 
     /// Extract creation bytecode from solc's text `--bin` output.
+    ///
+    /// L3: parses exactly the first hex line after the first `Binary:`
+    /// marker instead of assuming a single-contract source terminated by
+    /// one trailing newline.
     fn find_binary(stdout: &str) -> Option<Vec<u8>> {
-        let start = stdout.find("Binary:")? + 8;
-        Some(hex::decode(&stdout[start..stdout.len() - 1]).unwrap())
+        let start = stdout.find("Binary:")? + "Binary:".len();
+        let hex_line = stdout[start..].lines().map(str::trim).find(|line| !line.is_empty())?;
+        Some(hex::decode(hex_line).expect("solc binary output should be hex"))
     }
 
     /// Result of a non-panicking EVM call. Mirrors revm's
@@ -375,8 +389,10 @@ pub(crate) mod test {
     impl Evm {
         /// Return code_size of given address.
         ///
+        /// Returns 0 for an account with no bytecode.
+        ///
         /// # Panics
-        /// Panics if given address doesn't have bytecode.
+        /// Panics if the address was never created in this EVM instance.
         pub fn code_size(&mut self, address: Address) -> usize {
             self.db.accounts[&address].info.code.as_ref().map(|c| c.len()).unwrap_or(0)
         }

@@ -131,7 +131,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let sorted_simple = plan.sorted_simple.clone();
         let quotient_program_build =
             self.build_quotient_program_items(&plan.items, &plan.selector_fold);
-        let _quotient_max_stack = quotient_program_build.max_stack;
         Ok((quotient_program_build, sorted_simple))
     }
 

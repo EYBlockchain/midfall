@@ -13,7 +13,7 @@ use sha3::{Digest, Keccak256};
 
 /// keccak over the sorted (path, length, content) stream of `templates/`.
 const EXPECTED_TEMPLATE_TREE_DIGEST: &str =
-    "0x07b952304f2e76417023f215b63e13226ec63c14928e4cfee3312ee8fc3913f7";
+    "0x21babaaa89131dd93ca9d728471da55322453272bf6397d9ef4fab7657eccbc2";
 
 fn collect_files(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
     for entry in fs::read_dir(dir).expect("template directory is readable") {

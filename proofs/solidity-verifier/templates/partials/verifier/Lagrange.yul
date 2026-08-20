@@ -1,3 +1,4 @@
+            // __phase:lagrange_batch_invert
             // ===============================================================
             // Lagrange & instance-evaluation block (pure Fr arithmetic).
             // ===============================================================

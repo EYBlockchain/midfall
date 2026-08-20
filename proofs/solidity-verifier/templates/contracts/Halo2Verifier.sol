@@ -152,7 +152,7 @@ contract Halo2Verifier {
         address vk = AUTHORIZED_VK;
         {%- else %}
         {%- endmatch %}
-        {%- match quotient_external %}
+        {%- match self.external_pinned() %}
         {%- when Some with (_) %}
         // Split quotient renders delegate the scalar-side identity numerator
         // reconstruction to a separately deployed generated evaluator.

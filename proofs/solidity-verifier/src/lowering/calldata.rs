@@ -126,7 +126,14 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         }
         // pi
         push_g1(&mut cursor, &mut out)?;
-        debug_assert_eq!(cursor, compressed.len());
+        // Release check: a partial walk here means the layout plan and the
+        // length gate above disagree -- fail loudly instead of returning a
+        // truncated repack.
+        assert_eq!(
+            cursor,
+            compressed.len(),
+            "repack walk must consume the entire native proof"
+        );
         Ok(out)
     }
 

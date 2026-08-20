@@ -60,5 +60,6 @@
             // property of this file instead of an invariant split across
             // FinalPairing.yul and ec_pairing.
             if iszero(success) { fail(ERR_PROOF_REJECTED) }
+            // __phase:verifier_return
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)

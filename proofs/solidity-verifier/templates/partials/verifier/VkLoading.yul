@@ -113,6 +113,7 @@
             }
 
             {%- if self.expected_has_accumulator %}
+            // __phase:accumulator_msm
             // Fail malformed accumulator public inputs before transcript,
             // quotient, PCS, and final pairing work. The late accumulator block
             // only batches these already-validated G1 outputs into the final

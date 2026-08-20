@@ -55,6 +55,7 @@
 {%- macro q_const_guard(idx) %}
                         if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }
 {%- endmacro %}
+            // __phase:quotient_vm
             // ===============================================================
             // Batched identity numerator / linearization target.
             //

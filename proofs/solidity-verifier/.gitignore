@@ -20,3 +20,5 @@ generated/
 
 /cache/
 /out/
+.cargo-home/
+.rustup-home/

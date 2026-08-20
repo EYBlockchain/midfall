@@ -12,6 +12,7 @@
             // If either original equation is bad, this combined equation
             // holds for at most one alpha in Fr.
             {%- if self.expected_has_accumulator %}
+            // __phase:accumulator_pairing_batch
             {
                 let batch_ptr := {{ memory.accumulator_pairing_batch_mptr|hex() }}
 
@@ -78,6 +79,7 @@
             // -- the historical "LHS"/"RHS" naming follows the dual MSM
             // accumulator (left = pi, right = combined) and *not* the
             // pairing argument order. Pass them swapped to ec_pairing.
+            // __phase:final_pairing
             if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
 

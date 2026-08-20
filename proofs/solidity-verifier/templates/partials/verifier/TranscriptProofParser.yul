@@ -1,3 +1,4 @@
+            // __phase:transcript
             // ===============================================================
             // Transcript: VK digest + instances + proof.
             //

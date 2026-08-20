@@ -9,14 +9,18 @@ use ruint::aliases::U256;
 use sha3::{Digest, Keccak256};
 
 use crate::{
-    api::GeneratorError,
+    api::RenderQuotient,
     lowering::{
         encoding::Ptr,
         kzg, layout,
         layout::memory::{G1_BYTES, WORD_BYTES},
         plan::LoweringPlan,
+        quotient::QuotientComputationBlocks,
         quotient_numerator::vm::{fr_delta_literal, LIMB7_YUL_COEFFS, WIDE_LIMB7_YUL_COEFFS},
-        render::{Halo2QuotientEvaluator, Halo2Verifier, UserPhase, VerifierCodegenLayout},
+        render::{
+            Halo2QuotientEvaluator, Halo2Verifier, QuotientExternalPinned, UserPhase,
+            VerifierCodegenLayout, VerifierQuotient,
+        },
         VerifierBuildInputs,
     },
 };
@@ -28,7 +32,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         &self,
         plan: &LoweringPlan,
         trace: bool,
-    ) -> Result<Halo2QuotientEvaluator, GeneratorError> {
+    ) -> Halo2QuotientEvaluator {
         let quotient_rendering = plan.quotient_evaluator_rendering(self, trace);
         let quotient_helper_flags = quotient_rendering.blocks.helper_flags();
 
@@ -64,37 +68,27 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             simple_selector_cols: plan.quotient.sorted_simple.clone(),
             quotient_identity_trace_base: layout::trace::QUOTIENT_IDENTITY_BASE,
         };
-        quotient_evaluator.validate_layout().map_err(|err| {
-            GeneratorError::planning(
-                "render-model",
-                format!("invalid generated quotient evaluator layout: {err}"),
-            )
-        })?;
-        Ok(quotient_evaluator)
+        // Layout validation runs inside `render()` -- the single choke point
+        // no model construction can bypass (P1.3).
+        quotient_evaluator
     }
 
     /// Build the Askama model for the main Solidity verifier contract from an
     /// already-converged lowering plan.
-    #[allow(clippy::too_many_arguments)]
+    ///
+    /// The quotient strategy arrives as the public [`RenderQuotient`] value:
+    /// an external evaluator always carries its runtime length and codehash,
+    /// so the previously asserted "external implies pinned" invariant now
+    /// holds by construction.
     pub(crate) fn generate_verifier_from_plan(
         &self,
         plan: &LoweringPlan,
         separate: bool,
         trace: bool,
         gas_checkpoints: bool,
-        external_quotient: bool,
-        expected_quotient: Option<(usize, U256)>,
+        quotient: RenderQuotient,
         provenance: Option<[u8; 32]>,
-    ) -> Result<Halo2Verifier, GeneratorError> {
-        assert!(
-            expected_quotient.is_none() || external_quotient,
-            "quotient pinning requires an external quotient evaluator"
-        );
-        assert!(
-            !external_quotient || expected_quotient.is_some(),
-            "external quotient evaluator render requires a generated runtime length/codehash; \
-             render the quotient evaluator first and use the pinned quotient render API"
-        );
+    ) -> Halo2Verifier {
         let meta = &plan.meta;
         let data = &plan.data;
         let proof_layout = &plan.proof_layout;
@@ -142,13 +136,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             let digest: [u8; 32] = hasher.finalize().into();
             U256::from_be_bytes(digest)
         };
-        let (expected_quotient_len, expected_quotient_codehash) = expected_quotient
-            .map(|(len, codehash)| (Some(len), Some(codehash)))
-            .unwrap_or((None, None));
-        let quotient_rendering = plan.quotient_rendering(self, trace, external_quotient);
-        let quotient_helper_flags = quotient_rendering.helper_flags();
-        let (quotient_external, quotient_blocks, quotient_program) =
-            quotient_rendering.into_template_parts();
+        let (verifier_quotient, quotient_blocks, quotient_program) = match quotient {
+            RenderQuotient::Inline => (
+                VerifierQuotient::Inline,
+                plan.compact_quotient_blocks(self, trace),
+                Some(plan.quotient.program.clone()),
+            ),
+            RenderQuotient::ExternalPinned {
+                runtime_len,
+                codehash,
+            } => (
+                VerifierQuotient::ExternalPinned(QuotientExternalPinned {
+                    external: plan.quotient_external_frame(),
+                    runtime_len,
+                    codehash,
+                }),
+                QuotientComputationBlocks::default(),
+                None,
+            ),
+        };
+        let quotient_helper_flags = quotient_blocks.helper_flags();
 
         let pcs_computations = kzg::computations(
             &plan.meta,
@@ -314,9 +321,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             comms_mptr_base: data.comms_mptr_base,
             reversed_evals_mptr: data.reversed_evals_mptr,
             selector_acc_mptr,
-            quotient_external,
-            expected_quotient_len,
-            expected_quotient_codehash,
+            quotient: verifier_quotient,
             proof_cptr,
             abi_selector_bytes: layout::abi::SELECTOR_BYTES,
             abi_proof_head_offset: layout::abi::VERIFY_PROOF_PROOF_HEAD_OFFSET,
@@ -350,12 +355,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             expected_acc_has_carried_scalars,
             acc_fixed_bases,
         };
-        verifier.validate_layout().map_err(|err| {
-            GeneratorError::planning(
-                "render-model",
-                format!("invalid generated verifier layout: {err}"),
-            )
-        })?;
-        Ok(verifier)
+        // Layout validation runs inside `render()` -- the single choke point
+        // no model construction can bypass (P1.3).
+        verifier
     }
 }

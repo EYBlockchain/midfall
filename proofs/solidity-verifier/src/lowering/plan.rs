@@ -13,7 +13,7 @@ use crate::{
         encoding::{ConstraintSystemMeta, Data, Ptr},
         kzg, layout,
         layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
-        quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
+        quotient::{QuotientComputationBlocks, QuotientStateSlots},
         quotient_numerator::vm::{
             self as vm, certify, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
         },
@@ -57,46 +57,6 @@ pub(crate) struct PlannedQuotient {
     pub(crate) sorted_simple: Vec<usize>,
 }
 
-/// Quotient rendering mode for the main verifier.
-#[derive(Clone, Debug)]
-pub(crate) enum QuotientRendering {
-    /// The main verifier delegates quotient reconstruction to a pinned
-    /// evaluator and therefore renders no local quotient VM program.
-    External { external: QuotientExternal },
-    /// The main verifier runs the compact quotient VM and any native callbacks
-    /// locally.
-    Compact {
-        blocks: Box<QuotientComputationBlocks>,
-        program: QuotientProgram,
-    },
-}
-
-impl QuotientRendering {
-    /// Helper flags needed by the Solidity/Yul templates.
-    pub(crate) fn helper_flags(&self) -> QuotientHelperFlags {
-        match self {
-            Self::External { .. } => QuotientComputationBlocks::default().helper_flags(),
-            Self::Compact { blocks, .. } => blocks.helper_flags(),
-        }
-    }
-
-    /// Decompose into the legacy template fields from one coordinated value.
-    pub(crate) fn into_template_parts(
-        self,
-    ) -> (
-        Option<QuotientExternal>,
-        QuotientComputationBlocks,
-        Option<QuotientProgram>,
-    ) {
-        match self {
-            Self::External { external } => {
-                (Some(external), QuotientComputationBlocks::default(), None)
-            }
-            Self::Compact { blocks, program } => (None, *blocks, Some(program)),
-        }
-    }
-}
-
 /// Quotient rendering facts for the standalone evaluator artifact.
 #[derive(Clone, Debug)]
 pub(crate) struct QuotientEvaluatorRendering {
@@ -130,6 +90,27 @@ impl LoweringPlan {
         let proof_cptr = Ptr::calldata(layout::abi::VERIFY_PROOF_PROOF_CPTR);
         let vk = inputs.generate_vk()?;
         let (vk_mptr, meta, data, _) = inputs.meta_data_for_stable_static_layout(&vk)?;
+        // D1: the protocol planner derives the quotient-limb count from
+        // `cs_degree - 1`, while the native verifier reads
+        // `vk.domain.get_quotient_poly_degree()` commitments. The two agree
+        // today by construction of `EvaluationDomain::new`, but nothing in
+        // midnight-proofs guarantees that stays true -- pin the equality at
+        // the one place both values are in hand.
+        let native_quotients = if cfg!(feature = "outer-single-h-commitment") {
+            1
+        } else {
+            inputs.vk.get_domain().get_quotient_poly_degree()
+        };
+        if meta.num_quotients != native_quotients {
+            return Err(GeneratorError::planning(
+                "invariants",
+                format!(
+                    "planned quotient commitment count ({}) diverges from the native \
+                     domain's quotient polynomial degree ({native_quotients})",
+                    meta.num_quotients
+                ),
+            ));
+        }
         let proof_layout = ProofCalldataLayout::from_protocol(
             &meta.protocol,
             proof_cptr.value().as_usize(),
@@ -227,25 +208,6 @@ impl LoweringPlan {
         RepackedProofLayoutPlan::from_proof_layout(&self.proof_layout)
     }
 
-    /// Build quotient rendering for the main verifier.
-    pub(crate) fn quotient_rendering(
-        &self,
-        inputs: &VerifierBuildInputs<'_, '_>,
-        trace: bool,
-        external_quotient: bool,
-    ) -> QuotientRendering {
-        if external_quotient {
-            return QuotientRendering::External {
-                external: self.quotient_external_frame(),
-            };
-        }
-
-        QuotientRendering::Compact {
-            blocks: Box::new(self.compact_quotient_blocks(inputs, trace)),
-            program: self.quotient.program.clone(),
-        }
-    }
-
     /// Build quotient rendering for the standalone evaluator artifact.
     pub(crate) fn quotient_evaluator_rendering(
         &self,
@@ -271,7 +233,7 @@ impl LoweringPlan {
     }
 
     /// Generate local compact-VM/native-callback Yul blocks for inline renders.
-    fn compact_quotient_blocks(
+    pub(crate) fn compact_quotient_blocks(
         &self,
         inputs: &VerifierBuildInputs<'_, '_>,
         trace: bool,

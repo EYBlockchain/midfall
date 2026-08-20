@@ -155,6 +155,7 @@ contract Halo2QuotientEvaluator {
             // Return the compact output frame. Halo2Verifier checks the magic,
             // stores word 1 as the linearization expected eval, then expands
             // selector buckets into the fused final PCS MSM.
+            // __phase:quotient_return
             mstore(QUOTIENT_OUTPUT_MPTR, QUOTIENT_MAGIC)
             mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(QUOTIENT_EVAL_MPTR))
             {%- if simple_selector_cols.len() > 0 %}
