@@ -340,6 +340,90 @@ fn srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2() {
 /// building the plan is the assertion. The explicit checks below guard against
 /// this test silently going vacuous if the planner ever stops routing these
 /// identities through the VM.
+/// Q3: the run-compaction certificate is checked exhaustively -- every byte
+/// outside a certified span copied verbatim, every rewrite expanded term by
+/// term -- and a corrupted certificate is rejected.
+#[test]
+fn run_compaction_certificate_is_exhaustive_and_tamper_evident() {
+    // Homogeneous product run: min_len adjacent ADD_MUL_MEM_MEM_CONST_U8.
+    let mut bytes = vec![Q_OP_PUSH_MEM_TOKEN, Q_MEM_X];
+    let terms = QUOTIENT_VM_SPEC.run_compaction_min_len;
+    for i in 0..terms {
+        bytes.push(Q_OP_ADD_MUL_MEM_MEM_CONST_U8);
+        bytes.extend_from_slice(&(0x120u16 + 0x20 * i as u16).to_be_bytes());
+        bytes.extend_from_slice(&(0x140u16 + 0x20 * i as u16).to_be_bytes());
+        bytes.push(i as u8);
+    }
+    bytes.push(Q_OP_FOLD_MAIN);
+
+    let (compacted, cert) = compact_quotient_runs(&bytes);
+    assert_eq!(
+        cert.rewrites.len(),
+        1,
+        "one homogeneous run must be certified"
+    );
+    assert_eq!(cert.rewrites[0].kind, RunRewriteKind::RunMemMemConst);
+    check_run_compaction(&bytes, &compacted, &cert).expect("honest certificate passes");
+
+    // Corruption 1: shifted input span.
+    let mut shifted = cert.clone();
+    shifted.rewrites[0].input.start += 1;
+    assert!(
+        check_run_compaction(&bytes, &compacted, &shifted).is_err(),
+        "a shifted span must be rejected"
+    );
+
+    // Corruption 2: wrong rewrite kind.
+    let mut wrong_kind = cert.clone();
+    wrong_kind.rewrites[0].kind = RunRewriteKind::RunConstMem;
+    assert!(
+        check_run_compaction(&bytes, &compacted, &wrong_kind).is_err(),
+        "a mislabeled rewrite must be rejected"
+    );
+
+    // Corruption 3: dropped rewrite (the streams then differ outside spans).
+    let dropped = RunCompactionCert {
+        rewrites: Vec::new(),
+    };
+    assert!(
+        check_run_compaction(&bytes, &compacted, &dropped).is_err(),
+        "a dropped rewrite must be rejected"
+    );
+
+    // Non-rewrite streams need no certificate entries and must verify.
+    let plain = vec![Q_OP_PUSH_MEM_TOKEN, Q_MEM_X, Q_OP_FOLD_MAIN];
+    let (unchanged, empty_cert) = compact_quotient_runs(&plain);
+    assert_eq!(unchanged, plain);
+    assert!(empty_cert.rewrites.is_empty());
+    check_run_compaction(&plain, &unchanged, &empty_cert).expect("verbatim copy passes");
+}
+
+/// Q3: every instruction of both tier-1 VK programs round-trips through the
+/// operand visitor's re-encoder byte-identically (the gate `finish()` runs on
+/// every build; this pins the standalone API).
+#[test]
+fn finalized_vk_programs_reencode_byte_identically() {
+    for (name, (params, vk)) in [
+        ("vm", quotient_vm_test_vk()),
+        ("fold", quotient_selector_fold_test_vk()),
+    ] {
+        let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+        let plan = generator.inputs().lowering_plan();
+        let bytes = &plan.quotient.build.bytes;
+        validate_quotient_reencode(bytes)
+            .unwrap_or_else(|err| panic!("{name}: finalized program must round-trip: {err}"));
+        for (idx, _op, len) in quotient_bytecode_ops(bytes) {
+            let reencoded = reencode_quotient_instruction(bytes, idx)
+                .unwrap_or_else(|err| panic!("{name}: re-encode failed at byte {idx}: {err}"));
+            assert_eq!(
+                reencoded,
+                &bytes[idx..idx + len],
+                "{name}: instruction at byte {idx} must re-encode byte-identically"
+            );
+        }
+    }
+}
+
 #[test]
 fn lowering_plan_certifies_emitted_quotient_bytecode() {
     let (params, vk) = quotient_vm_test_vk();

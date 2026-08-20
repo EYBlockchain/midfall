@@ -1185,7 +1185,16 @@ impl QuotientProgramBuilder {
         // `max_stack` is the pure VM operand-stack high-water mark. The memory
         // planner adds callback scratch requirements when callbacks share the
         // same base pointer.
-        let bytes = compact_quotient_runs(&self.bytes);
+        // These gates panic by convention: the VM builder's Result boundary
+        // is future work (P1.1 threading stops at `LoweringPlan::try_new`).
+        let (bytes, compaction_cert) = compact_quotient_runs(&self.bytes);
+        check_run_compaction(&self.bytes, &bytes, &compaction_cert)
+            .unwrap_or_else(|err| panic!("quotient run-compaction certificate rejected: {err}"));
+        // Q3 round-trip gate: decode every finalized instruction through the
+        // single operand visitor and re-encode it byte-identically, so the
+        // emitters and the decode-side layout authority cannot drift.
+        validate_quotient_reencode(&bytes)
+            .unwrap_or_else(|err| panic!("quotient VM re-encode round-trip failed: {err}"));
         let validated_max_stack = validate_quotient_program(&bytes)
             .unwrap_or_else(|err| panic!("invalid finalized quotient VM program: {err}"));
         validate_quotient_const_slots(&bytes, self.consts.len())
@@ -1887,18 +1896,25 @@ impl QuotientProgramBuilder {
 }
 
 /// Compact long adjacent fused-op runs in byte-oriented VM encoding.
-pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> (Vec<u8>, RunCompactionCert) {
     // Run compaction is only a byte-encoding optimization. It preserves the
     // logical operation stream by replacing long adjacent fused add-mul ops
     // with one counted opcode followed by the same operands. Mixed linear and
     // bilinear affine runs use a larger superinstruction because addition is
     // commutative and each term only mutates the same accumulator.
+    //
+    // Q3 (certificate-carrying pass): every rewrite is recorded as an
+    // input-span -> output-span mapping, and `check_run_compaction` replays
+    // the certificate EXHAUSTIVELY (every byte, every term) in `finish()`.
+    // The pass is no longer trusted; only the checked property is.
     let mut out = Vec::with_capacity(bytes.len());
+    let mut rewrites = Vec::new();
     let mut idx = 0usize;
     while idx < bytes.len() {
         let op = bytes[idx];
         if is_affine_add_op(op) {
             let run_start = idx;
+            let out_start = out.len();
             let mut term_ops = Vec::new();
             let mut lin_count = 0usize;
             let mut product_count = 0usize;
@@ -1934,6 +1950,11 @@ pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> Vec<u8> {
                         out.extend_from_slice(&bytes[*term_start..*term_start + *term_len]);
                     }
                 }
+                rewrites.push(RunRewrite {
+                    input: run_start..idx,
+                    output: out_start..out.len(),
+                    kind: RunRewriteKind::AffineSum,
+                });
             } else if term_ops.len() >= QUOTIENT_VM_SPEC.run_compaction_min_len
                 && term_ops.iter().all(|(term_op, _, _)| *term_op == op)
                 && matches!(
@@ -1942,9 +1963,15 @@ pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> Vec<u8> {
                 )
             {
                 let run_operands_len = term_ops[0].2;
-                let run_op = match op {
-                    Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8,
-                    Q_OP_ADD_MUL_CONST_U8_MEM_U16 => Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16,
+                let (run_op, kind) = match op {
+                    Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => (
+                        Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8,
+                        RunRewriteKind::RunMemMemConst,
+                    ),
+                    Q_OP_ADD_MUL_CONST_U8_MEM_U16 => (
+                        Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16,
+                        RunRewriteKind::RunConstMem,
+                    ),
                     _ => unreachable!(),
                 };
                 out.push(run_op);
@@ -1952,6 +1979,11 @@ pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> Vec<u8> {
                 for (_, term_start, _) in &term_ops {
                     out.extend_from_slice(&bytes[*term_start..*term_start + run_operands_len]);
                 }
+                rewrites.push(RunRewrite {
+                    input: run_start..idx,
+                    output: out_start..out.len(),
+                    kind,
+                });
             } else {
                 out.extend_from_slice(&bytes[run_start..idx]);
             }
@@ -1961,7 +1993,225 @@ pub(crate) fn compact_quotient_runs(bytes: &[u8]) -> Vec<u8> {
             idx += len;
         }
     }
-    out
+    (out, RunCompactionCert { rewrites })
+}
+
+/// What a certified run-compaction rewrite claims to have done.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum RunRewriteKind {
+    /// Homogeneous `ADD_MUL_MEM_MEM_CONST_U8` run collapsed to `RUN_...`.
+    RunMemMemConst,
+    /// Homogeneous `ADD_MUL_CONST_U8_MEM_U16` run collapsed to `RUN_...`.
+    RunConstMem,
+    /// Mixed affine run collapsed to `AFFINE_SUM` (lin block, then products).
+    AffineSum,
+}
+
+/// One certified rewrite: which input bytes became which output bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct RunRewrite {
+    /// Byte range consumed from the pre-compaction stream.
+    pub(crate) input: std::ops::Range<usize>,
+    /// Byte range emitted into the post-compaction stream.
+    pub(crate) output: std::ops::Range<usize>,
+    /// Which rewrite the pass claims to have applied.
+    pub(crate) kind: RunRewriteKind,
+}
+
+/// Rewrite certificate returned by [`compact_quotient_runs`].
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct RunCompactionCert {
+    /// Rewrites in ascending input order.
+    pub(crate) rewrites: Vec<RunRewrite>,
+}
+
+/// One fused affine term decoded from either side of a rewrite.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AffineTermKind {
+    /// `const * mload(ptr)` (3 operand bytes).
+    Lin,
+    /// `mload(lhs) * mload(rhs) * const` (5 operand bytes).
+    Product,
+}
+
+/// Exhaustively verify a run-compaction certificate (Q3/Q5a).
+///
+/// Unlike the sampled Schwartz-Zippel certification, this checks EVERY byte:
+/// bytes outside the certified spans must be copied verbatim, and each
+/// rewrite's output must expand to exactly the input's term sequence (for the
+/// homogeneous runs) or its lin-then-product stable partition (for
+/// `AFFINE_SUM` -- the only reorder the pass performs, sound because every
+/// term is an addition into the same Fr accumulator).
+pub(crate) fn check_run_compaction(
+    input: &[u8],
+    output: &[u8],
+    cert: &RunCompactionCert,
+) -> Result<(), String> {
+    // Decode a pre-compaction span into fused-term (kind, operand-bytes).
+    fn input_terms<'a>(
+        input: &'a [u8],
+        range: &std::ops::Range<usize>,
+    ) -> Result<Vec<(AffineTermKind, &'a [u8])>, String> {
+        let mut terms = Vec::new();
+        let mut idx = range.start;
+        while idx < range.end {
+            let op = input[idx];
+            let kind = match op {
+                Q_OP_ADD_MUL_CONST_U8_MEM_U16 => AffineTermKind::Lin,
+                Q_OP_ADD_MUL_MEM_MEM_CONST_U8 => AffineTermKind::Product,
+                other => {
+                    return Err(format!(
+                        "rewrite input span contains non-affine opcode {other:#x} at byte {idx}"
+                    ))
+                }
+            };
+            let len = quotient_byte_instruction_len_checked(input, idx)?;
+            if idx + len > range.end {
+                return Err(format!(
+                    "rewrite input span truncates the instruction at byte {idx}"
+                ));
+            }
+            terms.push((kind, &input[idx + 1..idx + len]));
+            idx += len;
+        }
+        Ok(terms)
+    }
+
+    // Decode a post-compaction span into the single compacted instruction's
+    // term sequence.
+    fn output_terms<'a>(
+        output: &'a [u8],
+        rewrite: &RunRewrite,
+    ) -> Result<Vec<(AffineTermKind, &'a [u8])>, String> {
+        let range = &rewrite.output;
+        let start = range.start;
+        if range.is_empty() {
+            return Err("rewrite output span is empty".to_string());
+        }
+        let len = quotient_byte_instruction_len_checked(output, start)?;
+        if start + len != range.end {
+            return Err(format!(
+                "rewrite output span is not exactly one instruction: span {range:?}, instruction length {len}"
+            ));
+        }
+        let op = output[start];
+        let mut terms = Vec::new();
+        match rewrite.kind {
+            RunRewriteKind::RunMemMemConst | RunRewriteKind::RunConstMem => {
+                let (expected_op, kind, term_len) = match rewrite.kind {
+                    RunRewriteKind::RunMemMemConst => (
+                        Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8,
+                        AffineTermKind::Product,
+                        2 * QUOTIENT_VM_BYTE_U16_BYTES + 1,
+                    ),
+                    RunRewriteKind::RunConstMem => (
+                        Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16,
+                        AffineTermKind::Lin,
+                        QUOTIENT_VM_BYTE_U16_BYTES + 1,
+                    ),
+                    RunRewriteKind::AffineSum => unreachable!(),
+                };
+                if op != expected_op {
+                    return Err(format!(
+                        "rewrite kind {:?} but output opcode is {op:#x}",
+                        rewrite.kind
+                    ));
+                }
+                let count = read_u16(output, start + 1) as usize;
+                if count == 0 {
+                    return Err("compacted run has zero terms".to_string());
+                }
+                let mut cursor = start + 1 + QUOTIENT_VM_BYTE_U16_BYTES;
+                for _ in 0..count {
+                    terms.push((kind, &output[cursor..cursor + term_len]));
+                    cursor += term_len;
+                }
+            }
+            RunRewriteKind::AffineSum => {
+                if op != Q_OP_AFFINE_SUM {
+                    return Err(format!(
+                        "rewrite kind AffineSum but output opcode is {op:#x}"
+                    ));
+                }
+                let lin_count = read_u16(output, start + 1) as usize;
+                let product_count =
+                    read_u16(output, start + 1 + QUOTIENT_VM_BYTE_U16_BYTES) as usize;
+                if lin_count == 0 || product_count == 0 {
+                    return Err("AFFINE_SUM certificate has a zero term count".to_string());
+                }
+                let mut cursor = start + 1 + 2 * QUOTIENT_VM_BYTE_U16_BYTES;
+                for _ in 0..lin_count {
+                    let term_len = QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                    terms.push((AffineTermKind::Lin, &output[cursor..cursor + term_len]));
+                    cursor += term_len;
+                }
+                for _ in 0..product_count {
+                    let term_len = 2 * QUOTIENT_VM_BYTE_U16_BYTES + 1;
+                    terms.push((AffineTermKind::Product, &output[cursor..cursor + term_len]));
+                    cursor += term_len;
+                }
+            }
+        }
+        Ok(terms)
+    }
+
+    let mut prev_input_end = 0usize;
+    let mut prev_output_end = 0usize;
+    for rewrite in &cert.rewrites {
+        if rewrite.input.start < prev_input_end || rewrite.output.start < prev_output_end {
+            return Err(format!(
+                "rewrite spans out of order or overlapping: {rewrite:?}"
+            ));
+        }
+        if rewrite.input.end > input.len()
+            || rewrite.output.end > output.len()
+            || rewrite.input.start > rewrite.input.end
+            || rewrite.output.start > rewrite.output.end
+        {
+            return Err(format!("rewrite spans out of bounds: {rewrite:?}"));
+        }
+        // Bytes between rewrites must be copied verbatim at consistent
+        // cumulative offsets.
+        let gap_in = &input[prev_input_end..rewrite.input.start];
+        let gap_out = &output[prev_output_end..rewrite.output.start];
+        if gap_in != gap_out {
+            return Err(format!(
+                "bytes outside certified rewrites differ: input {}..{} vs output {}..{}",
+                prev_input_end, rewrite.input.start, prev_output_end, rewrite.output.start
+            ));
+        }
+
+        let before = input_terms(input, &rewrite.input)?;
+        let after = output_terms(output, rewrite)?;
+        match rewrite.kind {
+            RunRewriteKind::RunMemMemConst | RunRewriteKind::RunConstMem => {
+                if before != after {
+                    return Err(format!(
+                        "homogeneous run rewrite changed the term sequence: {rewrite:?}"
+                    ));
+                }
+            }
+            RunRewriteKind::AffineSum => {
+                // The pass's only transform is the stable lin/product
+                // partition; verify it term by term.
+                let mut expected: Vec<&(AffineTermKind, &[u8])> = Vec::with_capacity(before.len());
+                expected.extend(before.iter().filter(|(kind, _)| *kind == AffineTermKind::Lin));
+                expected.extend(before.iter().filter(|(kind, _)| *kind == AffineTermKind::Product));
+                if expected != after.iter().collect::<Vec<_>>() {
+                    return Err(format!(
+                        "AFFINE_SUM rewrite is not the stable lin/product partition of its input: {rewrite:?}"
+                    ));
+                }
+            }
+        }
+
+        prev_input_end = rewrite.input.end;
+        prev_output_end = rewrite.output.end;
+    }
+    if input[prev_input_end..] != output[prev_output_end..] {
+        return Err("bytes after the last certified rewrite differ".to_string());
+    }
+    Ok(())
 }
 
 /// Whether an opcode contributes a fused affine-add term to the current top.
@@ -2313,6 +2563,17 @@ pub(crate) fn visit_quotient_operands(
             let pairwise_count = bytes[cursor + 2] as usize;
             let mem_count = bytes[cursor + 3] as usize;
             let product_count = bytes[cursor + 4] as usize;
+            // Q3: counts are emitted so the re-encode round-trip gate can
+            // reconstruct the instruction from the operand stream alone.
+            for count in [
+                lin_count,
+                row_count,
+                pairwise_count,
+                mem_count,
+                product_count,
+            ] {
+                visit(QuotientOperand::RunCount { count })?;
+            }
             cursor += 5;
             for _ in 0..lin_count {
                 cursor = limb_terms(cursor, visit)?;
@@ -2410,6 +2671,297 @@ pub(crate) fn visit_quotient_operands(
             Ok(())
         }
     }
+}
+
+/// Re-encode the instruction at `idx` from its visited operand stream (Q3).
+///
+/// The operands come from [`visit_quotient_operands`] -- the decode-side
+/// layout authority -- and are re-serialized per encoding class here. A
+/// finalized stream where this does not reproduce the original bytes means
+/// the emitters and the visitor disagree about an operand's position, width,
+/// or value; `finish()` rejects such a program.
+pub(crate) fn reencode_quotient_instruction(bytes: &[u8], idx: usize) -> Result<Vec<u8>, String> {
+    let op = bytes[idx];
+    let spec = quotient_opcode_spec(op)
+        .ok_or_else(|| format!("unknown quotient VM opcode {op:#x} at byte {idx}"))?;
+    let mut operands = Vec::new();
+    visit_quotient_operands(bytes, idx, &mut |operand| {
+        operands.push(operand);
+        Ok(())
+    })?;
+
+    // The visitor defers MODARITH7's conditional pointer to LAST (preserving
+    // the pointer validator's historical order); its byte position is right
+    // after the flags, so split it off the operand tail before serializing.
+    let mut trailing_cond: Option<usize> = None;
+    if op == Q_OP_MODARITH7 {
+        if let Some(QuotientOperand::Flags { flags }) = operands.first().copied() {
+            if flags & Q_MODARITH7_FLAG_COND != 0 {
+                match operands.pop() {
+                    Some(QuotientOperand::MemPtr {
+                        role: QuotientOperandRole::ModarithCond,
+                        ptr,
+                    }) => trailing_cond = Some(ptr),
+                    other => {
+                        return Err(format!(
+                            "re-encode of MODARITH7 at byte {idx}: expected trailing cond \
+                             pointer, got {other:?}"
+                        ))
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = vec![op];
+    let mut cursor = operands.iter();
+    let mut next = |expected: &str| -> Result<QuotientOperand, String> {
+        cursor.next().copied().ok_or_else(|| {
+            format!("re-encode of opcode {op:#x} at byte {idx}: missing {expected} operand")
+        })
+    };
+    let unexpected = |expected: &str, got: QuotientOperand| -> String {
+        format!("re-encode of opcode {op:#x} at byte {idx}: expected {expected}, got {got:?}")
+    };
+
+    macro_rules! emit {
+        (const_u8) => {{
+            match next("const-u8")? {
+                QuotientOperand::ConstSlotU8 { slot } => out.push(slot),
+                other => return Err(unexpected("const-u8", other)),
+            }
+        }};
+        (const_u16) => {{
+            match next("const-u16")? {
+                QuotientOperand::ConstSlotU16 { slot } => {
+                    out.extend_from_slice(&slot.to_be_bytes())
+                }
+                other => return Err(unexpected("const-u16", other)),
+            }
+        }};
+        (ptr_u16) => {{
+            match next("mem-ptr")? {
+                QuotientOperand::MemPtr { ptr, .. } => {
+                    let ptr = u16::try_from(ptr).map_err(|_| {
+                        format!("re-encode of opcode {op:#x} at byte {idx}: pointer {ptr:#x} exceeds u16")
+                    })?;
+                    out.extend_from_slice(&ptr.to_be_bytes())
+                }
+                other => return Err(unexpected("mem-ptr", other)),
+            }
+        }};
+        (count_u16) => {{
+            match next("count")? {
+                QuotientOperand::RunCount { count } => {
+                    let count = u16::try_from(count).map_err(|_| {
+                        format!("re-encode of opcode {op:#x} at byte {idx}: count {count} exceeds u16")
+                    })?;
+                    out.extend_from_slice(&count.to_be_bytes());
+                    count as usize
+                }
+                other => return Err(unexpected("count", other)),
+            }
+        }};
+        (count_u8) => {{
+            match next("count")? {
+                QuotientOperand::RunCount { count } => {
+                    let count = u8::try_from(count).map_err(|_| {
+                        format!("re-encode of opcode {op:#x} at byte {idx}: count {count} exceeds u8")
+                    })?;
+                    out.push(count);
+                    count as usize
+                }
+                other => return Err(unexpected("count", other)),
+            }
+        }};
+    }
+
+    match spec.encoding {
+        QuotientOpcodeEncoding::None => {}
+        QuotientOpcodeEncoding::U8 => match next("u8 operand")? {
+            QuotientOperand::MemToken { token, offset: 0 } => out.push(token),
+            QuotientOperand::ConstSlotU8 { slot } => out.push(slot),
+            other => return Err(unexpected("token or const-u8", other)),
+        },
+        QuotientOpcodeEncoding::U16 => match next("u16 operand")? {
+            QuotientOperand::ConstSlotU16 { slot } => out.extend_from_slice(&slot.to_be_bytes()),
+            QuotientOperand::MemPtr { ptr, .. } => {
+                let ptr = u16::try_from(ptr)
+                    .map_err(|_| format!("pointer {ptr:#x} exceeds u16 at byte {idx}"))?;
+                out.extend_from_slice(&ptr.to_be_bytes());
+            }
+            QuotientOperand::NativeIndex { index } => {
+                let index = u16::try_from(index)
+                    .map_err(|_| format!("native index {index} exceeds u16 at byte {idx}"))?;
+                out.extend_from_slice(&index.to_be_bytes());
+            }
+            other => return Err(unexpected("const-u16, mem-ptr, or native index", other)),
+        },
+        QuotientOpcodeEncoding::U24 => match next("selector fold")? {
+            QuotientOperand::SelectorFold { selector, gap } => {
+                let selector = u8::try_from(selector)
+                    .map_err(|_| format!("selector {selector} exceeds u8 at byte {idx}"))?;
+                let gap = u16::try_from(gap)
+                    .map_err(|_| format!("gap {gap} exceeds u16 at byte {idx}"))?;
+                out.push(selector);
+                out.extend_from_slice(&gap.to_be_bytes());
+            }
+            other => return Err(unexpected("selector fold", other)),
+        },
+        QuotientOpcodeEncoding::U32 => match next("u32 pointer")? {
+            QuotientOperand::MemPtr { ptr, .. } => {
+                let ptr = u32::try_from(ptr)
+                    .map_err(|_| format!("pointer {ptr:#x} exceeds u32 at byte {idx}"))?;
+                out.extend_from_slice(&ptr.to_be_bytes());
+            }
+            other => return Err(unexpected("mem-ptr", other)),
+        },
+        QuotientOpcodeEncoding::TokenOffset => match next("token+offset")? {
+            QuotientOperand::MemToken { token, offset } => {
+                let offset = u32::try_from(offset)
+                    .map_err(|_| format!("token offset {offset:#x} exceeds u32 at byte {idx}"))?;
+                out.push(token);
+                out.extend_from_slice(&offset.to_be_bytes());
+            }
+            other => return Err(unexpected("token", other)),
+        },
+        QuotientOpcodeEncoding::AddMulMemMemConstU8 => {
+            emit!(ptr_u16);
+            emit!(ptr_u16);
+            emit!(const_u8);
+        }
+        QuotientOpcodeEncoding::AddMulConstU8MemU16 => {
+            emit!(ptr_u16);
+            emit!(const_u8);
+        }
+        QuotientOpcodeEncoding::AddMulMemMem => {
+            emit!(ptr_u16);
+            emit!(ptr_u16);
+        }
+        QuotientOpcodeEncoding::RunAddMulMemMemConstU8 => {
+            let count = emit!(count_u16);
+            for _ in 0..count {
+                emit!(ptr_u16);
+                emit!(ptr_u16);
+                emit!(const_u8);
+            }
+        }
+        QuotientOpcodeEncoding::RunAddMulConstU8MemU16 => {
+            let count = emit!(count_u16);
+            for _ in 0..count {
+                emit!(ptr_u16);
+                emit!(const_u8);
+            }
+        }
+        QuotientOpcodeEncoding::LimbLin => {
+            for _ in 0..QUOTIENT_VM_LIMBS {
+                emit!(const_u8);
+                emit!(ptr_u16);
+            }
+        }
+        QuotientOpcodeEncoding::LimbBilinRow => {
+            emit!(ptr_u16);
+            for _ in 0..QUOTIENT_VM_LIMBS {
+                emit!(const_u8);
+                emit!(ptr_u16);
+            }
+        }
+        QuotientOpcodeEncoding::LimbBilinPairwise => {
+            emit!(ptr_u16);
+            emit!(ptr_u16);
+            for _ in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                emit!(const_u8);
+            }
+        }
+        QuotientOpcodeEncoding::LimbModarith7 => {
+            let flags = match next("flags")? {
+                QuotientOperand::Flags { flags } => flags,
+                other => return Err(unexpected("flags", other)),
+            };
+            out.push(flags);
+            if flags & Q_MODARITH7_FLAG_COND != 0 {
+                let ptr = trailing_cond.ok_or_else(|| {
+                    format!("re-encode of MODARITH7 at byte {idx}: missing trailing cond pointer")
+                })?;
+                let ptr =
+                    u16::try_from(ptr).map_err(|_| format!("cond pointer {ptr:#x} exceeds u16"))?;
+                out.extend_from_slice(&ptr.to_be_bytes());
+            }
+            if flags & Q_MODARITH7_FLAG_CONST != 0 {
+                emit!(const_u8);
+            }
+            let lin_count = emit!(count_u8);
+            let row_count = emit!(count_u8);
+            let pairwise_count = emit!(count_u8);
+            let mem_count = emit!(count_u8);
+            let product_count = emit!(count_u8);
+            for _ in 0..lin_count {
+                for _ in 0..QUOTIENT_VM_LIMBS {
+                    emit!(const_u8);
+                    emit!(ptr_u16);
+                }
+            }
+            for _ in 0..row_count {
+                emit!(ptr_u16);
+                for _ in 0..QUOTIENT_VM_LIMBS {
+                    emit!(const_u8);
+                    emit!(ptr_u16);
+                }
+            }
+            for _ in 0..pairwise_count {
+                emit!(ptr_u16);
+                emit!(ptr_u16);
+                for _ in 0..QUOTIENT_VM_PAIRWISE_COEFFS {
+                    emit!(const_u8);
+                }
+            }
+            for _ in 0..mem_count {
+                emit!(const_u8);
+                emit!(ptr_u16);
+            }
+            for _ in 0..product_count {
+                emit!(const_u8);
+                emit!(ptr_u16);
+                emit!(ptr_u16);
+            }
+        }
+        QuotientOpcodeEncoding::AffineSum => {
+            let lin_count = emit!(count_u16);
+            let product_count = emit!(count_u16);
+            for _ in 0..lin_count {
+                emit!(ptr_u16);
+                emit!(const_u8);
+            }
+            for _ in 0..product_count {
+                emit!(ptr_u16);
+                emit!(ptr_u16);
+                emit!(const_u8);
+            }
+        }
+    }
+
+    if cursor.next().is_some() {
+        return Err(format!(
+            "re-encode of opcode {op:#x} at byte {idx}: unconsumed operands"
+        ));
+    }
+    Ok(out)
+}
+
+/// Round-trip every instruction of a finalized program through
+/// [`reencode_quotient_instruction`] and require byte identity (Q3 gate).
+pub(crate) fn validate_quotient_reencode(bytes: &[u8]) -> Result<(), String> {
+    for (idx, op, len) in quotient_bytecode_ops(bytes) {
+        let reencoded = reencode_quotient_instruction(bytes, idx)?;
+        if reencoded != bytes[idx..idx + len] {
+            return Err(format!(
+                "opcode {op:#x} at byte {idx} does not round-trip: {} original bytes vs {} re-encoded",
+                len,
+                reencoded.len()
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Bounds-check every constant-table slot referenced by a finalized program.
@@ -4391,7 +4943,10 @@ mod tests {
         bytes.push(4);
         bytes.push(Q_OP_FOLD_MAIN);
 
-        let compacted = compact_quotient_runs(&bytes);
+        let (compacted, cert) = compact_quotient_runs(&bytes);
+        check_run_compaction(&bytes, &compacted, &cert).expect("compaction certificate holds");
+        assert_eq!(cert.rewrites.len(), 1);
+        assert_eq!(cert.rewrites[0].kind, RunRewriteKind::AffineSum);
         assert_eq!(compacted[2], Q_OP_AFFINE_SUM);
         assert_eq!(read_u16(&compacted, 3), 2);
         assert_eq!(read_u16(&compacted, 5), 2);
