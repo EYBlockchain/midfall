@@ -58,6 +58,7 @@ pub(crate) mod oracle;
 #[cfg(test)]
 mod proptests;
 pub(crate) mod reference;
+pub(crate) mod yul_arms;
 
 use std::collections::{HashMap, HashSet};
 
@@ -883,6 +884,14 @@ pub(crate) const QUOTIENT_MEM_TOKEN_TABLE: &[QuotientMemTokenSpec] = &[
 ];
 
 /// Complete compact VM ABI description used by docs/tests/template rendering.
+///
+/// This constant remains the public authority on the VM ABI (opcode numbers,
+/// operand widths, limb geometry). The interpreter's Yul case arms are
+/// GENERATED from the same `Q_OP_*`/`Q_MEM_*` constants by
+/// `vm::yul_arms` (P4) and pinned by the committed
+/// `templates/partials/quotient_numerator/vm_arms.snapshot.yul`;
+/// `vm/reference.rs` deliberately stays a hand-written independent
+/// interpreter (the N-version certification leg).
 pub(crate) const QUOTIENT_VM_SPEC: QuotientVmSpec = QuotientVmSpec {
     opcodes: QUOTIENT_OPCODE_TABLE,
     mem_tokens: QUOTIENT_MEM_TOKEN_TABLE,

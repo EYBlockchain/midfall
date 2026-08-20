@@ -21,10 +21,7 @@ use crate::{
             vk_payload::PackedProgramCodec,
         },
         quotient_numerator::{vm::*, Evaluator},
-        render::{
-            Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail,
-            QuotientVmMemUsage, QuotientVmOpcodeUsage,
-        },
+        render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail},
         VerifierBuildInputs,
     },
 };
@@ -173,12 +170,14 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let program_mptr = (vk_mptr + quotient_program_offset_words).value().as_usize();
         let state_slots = QuotientStateSlots::new(memory.quotient_tmp_mptr);
         let len = build.bytes.len();
-        let op_usage = Self::quotient_opcode_usage(&build.used_ops);
-        let mem_usage = Self::quotient_mem_usage(&build.used_mem_tokens);
         let program = QuotientProgram {
             len,
-            op_usage,
-            mem_usage,
+            used_ops: build.used_ops.clone(),
+            used_mem_tokens: build.used_mem_tokens.clone(),
+            // Filled per render by `vm::yul_arms` (arms depend on the trace
+            // flag and the generated native callback bodies).
+            op_summary_lines: Vec::new(),
+            vm_switch_arms: Vec::new(),
             const_mptr,
             eval_numer_mptr: state_slots.eval_numer_mptr,
             trace_id_mptr: state_slots.trace_id_mptr,
@@ -195,60 +194,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         };
 
         (program, quotient_stack_mptr, state_slots)
-    }
-
-    /// Convert finalized bytecode usage into template switch-arm flags.
-    fn quotient_opcode_usage(used_ops: &[u8]) -> QuotientVmOpcodeUsage {
-        let has = |op| used_ops.contains(&op);
-        QuotientVmOpcodeUsage {
-            push_const: has(Q_OP_PUSH_CONST),
-            push_mem_literal: has(Q_OP_PUSH_MEM_LITERAL),
-            push_mem_token: has(Q_OP_PUSH_MEM_TOKEN),
-            push_mem_token_offset: has(Q_OP_PUSH_MEM_TOKEN_OFFSET),
-            push_mem_u16: has(Q_OP_PUSH_MEM_U16),
-            add: has(Q_OP_ADD),
-            mul: has(Q_OP_MUL),
-            neg: has(Q_OP_NEG),
-            push_const_u8: has(Q_OP_PUSH_CONST_U8),
-            fold_main: has(Q_OP_FOLD_MAIN),
-            fold_selector: has(Q_OP_FOLD_SELECTOR),
-            add_const_u8: has(Q_OP_ADD_CONST_U8),
-            mul_const_u8: has(Q_OP_MUL_CONST_U8),
-            add_const: has(Q_OP_ADD_CONST),
-            mul_const: has(Q_OP_MUL_CONST),
-            add_mem_u16: has(Q_OP_ADD_MEM_U16),
-            mul_mem_u16: has(Q_OP_MUL_MEM_U16),
-            add_mul_mem_mem_const_u8: has(Q_OP_ADD_MUL_MEM_MEM_CONST_U8),
-            add_mul_const_u8_mem_u16: has(Q_OP_ADD_MUL_CONST_U8_MEM_U16),
-            add_mul_mem_mem: has(Q_OP_ADD_MUL_MEM_MEM),
-            run_add_mul_mem_mem_const_u8: has(Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8),
-            run_add_mul_const_u8_mem_u16: has(Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16),
-            affine_sum: has(Q_OP_AFFINE_SUM),
-            native_permutation: has(Q_OP_NATIVE_PERMUTATION),
-            native_lookup: has(Q_OP_NATIVE_LOOKUP),
-            native_identity: has(Q_OP_NATIVE_IDENTITY),
-            lin7: has(Q_OP_LIN7),
-            bilin7_row: has(Q_OP_BILIN7_ROW),
-            bilin7_pairwise: has(Q_OP_BILIN7_PAIRWISE),
-            modarith7: has(Q_OP_MODARITH7),
-            pow5: has(Q_OP_POW5),
-        }
-    }
-
-    /// Convert finalized memory-token usage into template switch-arm flags.
-    fn quotient_mem_usage(used_tokens: &[u8]) -> QuotientVmMemUsage {
-        let has = |token| used_tokens.contains(&token);
-        QuotientVmMemUsage {
-            l0: has(Q_MEM_L0),
-            l_last: has(Q_MEM_L_LAST),
-            l_blind: has(Q_MEM_L_BLIND),
-            beta: has(Q_MEM_BETA),
-            gamma: has(Q_MEM_GAMMA),
-            x: has(Q_MEM_X),
-            theta: has(Q_MEM_THETA),
-            trash_challenge: has(Q_MEM_TRASH_CHALLENGE),
-            instance_eval: has(Q_MEM_INSTANCE_EVAL),
-        }
     }
 
     /// Return stack/scratch words needed by interpreted VM and native

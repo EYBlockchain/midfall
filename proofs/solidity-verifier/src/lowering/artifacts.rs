@@ -16,7 +16,9 @@ use crate::{
         layout::memory::{G1_BYTES, WORD_BYTES},
         plan::LoweringPlan,
         quotient::QuotientComputationBlocks,
-        quotient_numerator::vm::{fr_delta_literal, LIMB7_YUL_COEFFS, WIDE_LIMB7_YUL_COEFFS},
+        quotient_numerator::vm::{
+            fr_delta_literal, yul_arms, LIMB7_YUL_COEFFS, WIDE_LIMB7_YUL_COEFFS,
+        },
         render::{
             Halo2QuotientEvaluator, Halo2Verifier, QuotientExternalPinned, UserPhase,
             VerifierCodegenLayout, VerifierQuotient,
@@ -35,9 +37,25 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     ) -> Halo2QuotientEvaluator {
         let quotient_rendering = plan.quotient_evaluator_rendering(self, trace);
         let quotient_helper_flags = quotient_rendering.blocks.helper_flags();
+        // P4: the interpreter switch arms are generated from the same Q_OP_*
+        // constants the encoder and checked decoder use, per render (they
+        // depend on the trace flag and the native callback bodies).
+        let quotient_program = {
+            let mut program = quotient_rendering.program.clone();
+            let summary = yul_arms::quotient_vm_op_summary(&program);
+            let arms = yul_arms::quotient_vm_switch_arms(&yul_arms::YulArmInputs {
+                program: &program,
+                trace,
+                native_permutation: &quotient_rendering.blocks.native_permutation_computation,
+                native_lookup: &quotient_rendering.blocks.native_lookup_computation,
+                native_identities: &quotient_rendering.blocks.native_identity_computations,
+            });
+            program.op_summary_lines = summary;
+            program.vm_switch_arms = arms;
+            program
+        };
 
         let quotient_evaluator = Halo2QuotientEvaluator {
-            template_constants: Default::default(),
             trace,
             quotient_pow5_helper: quotient_helper_flags.pow5,
             quotient_limb7_helper: quotient_helper_flags.limb7,
@@ -57,14 +75,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_inline_computations: quotient_rendering.blocks.inline_computations,
             quotient_eval_numer_computations: quotient_rendering.blocks.eval_numer_computations,
             quotient_post_vm_computations: quotient_rendering.blocks.post_vm_computations,
-            quotient_native_permutation_computation: quotient_rendering
-                .blocks
-                .native_permutation_computation,
-            quotient_native_lookup_computation: quotient_rendering.blocks.native_lookup_computation,
-            quotient_native_identity_computations: quotient_rendering
-                .blocks
-                .native_identity_computations,
-            quotient_program: Some(quotient_rendering.program),
+            quotient_program: Some(quotient_program),
             simple_selector_cols: plan.quotient.sorted_simple.clone(),
             quotient_identity_trace_base: layout::trace::QUOTIENT_IDENTITY_BASE,
         };
@@ -156,6 +167,20 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             ),
         };
         let quotient_helper_flags = quotient_blocks.helper_flags();
+        // P4: per-render generated interpreter arms (see the evaluator path).
+        let quotient_program = quotient_program.map(|mut program| {
+            let summary = yul_arms::quotient_vm_op_summary(&program);
+            let arms = yul_arms::quotient_vm_switch_arms(&yul_arms::YulArmInputs {
+                program: &program,
+                trace,
+                native_permutation: &quotient_blocks.native_permutation_computation,
+                native_lookup: &quotient_blocks.native_lookup_computation,
+                native_identities: &quotient_blocks.native_identity_computations,
+            });
+            program.op_summary_lines = summary;
+            program.vm_switch_arms = arms;
+            program
+        });
 
         let pcs_computations = kzg::computations(
             &plan.meta,
@@ -337,9 +362,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_inline_computations: quotient_blocks.inline_computations,
             quotient_eval_numer_computations: quotient_blocks.eval_numer_computations,
             quotient_post_vm_computations: quotient_blocks.post_vm_computations,
-            quotient_native_permutation_computation: quotient_blocks.native_permutation_computation,
-            quotient_native_lookup_computation: quotient_blocks.native_lookup_computation,
-            quotient_native_identity_computations: quotient_blocks.native_identity_computations,
             quotient_program,
             pcs_computations,
             simple_selector_cols: sorted_simple.clone(),

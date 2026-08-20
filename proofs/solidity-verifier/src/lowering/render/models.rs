@@ -108,8 +108,6 @@ pub(crate) struct TemplateConstants {
     pub(crate) modexp: ModexpTemplateConstants,
     /// Public accumulator layout constants.
     pub(crate) accumulator: AccumulatorTemplateConstants,
-    /// Compact quotient VM constants.
-    pub(crate) quotient_vm: QuotientVmTemplateConstants,
 }
 
 /// EIP-2537 precompile addresses rendered into templates.
@@ -174,66 +172,6 @@ pub(crate) struct AccumulatorTemplateConstants {
     pub(crate) pairing_batch_hash_bytes: usize,
 }
 
-/// Compact quotient VM opcode constants rendered into Solidity/Yul.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct QuotientVmOpcodeTemplateConstants {
-    pub(crate) push_const: u8,
-    pub(crate) push_mem_literal: u8,
-    pub(crate) push_mem_token: u8,
-    pub(crate) push_mem_token_offset: u8,
-    pub(crate) push_mem_u16: u8,
-    pub(crate) add: u8,
-    pub(crate) mul: u8,
-    pub(crate) neg: u8,
-    pub(crate) push_const_u8: u8,
-    pub(crate) fold_main: u8,
-    pub(crate) fold_selector: u8,
-    pub(crate) add_const_u8: u8,
-    pub(crate) mul_const_u8: u8,
-    pub(crate) add_const: u8,
-    pub(crate) mul_const: u8,
-    pub(crate) add_mem_u16: u8,
-    pub(crate) mul_mem_u16: u8,
-    pub(crate) add_mul_mem_mem_const_u8: u8,
-    pub(crate) add_mul_const_u8_mem_u16: u8,
-    pub(crate) add_mul_mem_mem: u8,
-    pub(crate) run_add_mul_mem_mem_const_u8: u8,
-    pub(crate) run_add_mul_const_u8_mem_u16: u8,
-    pub(crate) affine_sum: u8,
-    pub(crate) native_permutation: u8,
-    pub(crate) native_lookup: u8,
-    pub(crate) native_identity: u8,
-    pub(crate) lin7: u8,
-    pub(crate) bilin7_row: u8,
-    pub(crate) bilin7_pairwise: u8,
-    pub(crate) modarith7: u8,
-    pub(crate) pow5: u8,
-}
-
-/// Compact quotient VM memory-token constants rendered into Solidity/Yul.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct QuotientVmMemTokenTemplateConstants {
-    pub(crate) l0: u8,
-    pub(crate) l_last: u8,
-    pub(crate) l_blind: u8,
-    pub(crate) beta: u8,
-    pub(crate) gamma: u8,
-    pub(crate) x: u8,
-    pub(crate) theta: u8,
-    pub(crate) trash_challenge: u8,
-    pub(crate) instance_eval: u8,
-}
-
-/// Compact quotient VM table-level constants rendered into templates.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct QuotientVmTemplateConstants {
-    pub(crate) op: QuotientVmOpcodeTemplateConstants,
-    pub(crate) mem: QuotientVmMemTokenTemplateConstants,
-    pub(crate) byte_u32_bytes: usize,
-    pub(crate) limb_count: usize,
-    pub(crate) limb_pairwise_coeffs: usize,
-}
-
 /// Convert a G1 point into the tuple form the templates render.
 fn g1_words(point: G1Affine) -> G1Words {
     let [x_hi, x_lo, y_hi, y_lo] = crate::lowering::encoding::g1_to_u256s(point);
@@ -243,8 +181,6 @@ fn g1_words(point: G1Affine) -> G1Words {
 impl Default for TemplateConstants {
     /// Build template constants from the Rust-side layout and VM specs.
     fn default() -> Self {
-        use crate::lowering::quotient_numerator::vm as q;
-
         Self {
             word_bytes: layout::WORD_BYTES,
             g1_bytes: layout::G1_BYTES,
@@ -288,55 +224,6 @@ impl Default for TemplateConstants {
                 pairing_batch_acc_rhs_offset: layout::accumulator::PAIRING_BATCH_ACC_RHS_OFFSET,
                 pairing_batch_acc_lhs_offset: layout::accumulator::PAIRING_BATCH_ACC_LHS_OFFSET,
                 pairing_batch_hash_bytes: layout::accumulator::PAIRING_BATCH_HASH_BYTES,
-            },
-            quotient_vm: QuotientVmTemplateConstants {
-                op: QuotientVmOpcodeTemplateConstants {
-                    push_const: q::Q_OP_PUSH_CONST,
-                    push_mem_literal: q::Q_OP_PUSH_MEM_LITERAL,
-                    push_mem_token: q::Q_OP_PUSH_MEM_TOKEN,
-                    push_mem_token_offset: q::Q_OP_PUSH_MEM_TOKEN_OFFSET,
-                    push_mem_u16: q::Q_OP_PUSH_MEM_U16,
-                    add: q::Q_OP_ADD,
-                    mul: q::Q_OP_MUL,
-                    neg: q::Q_OP_NEG,
-                    push_const_u8: q::Q_OP_PUSH_CONST_U8,
-                    fold_main: q::Q_OP_FOLD_MAIN,
-                    fold_selector: q::Q_OP_FOLD_SELECTOR,
-                    add_const_u8: q::Q_OP_ADD_CONST_U8,
-                    mul_const_u8: q::Q_OP_MUL_CONST_U8,
-                    add_const: q::Q_OP_ADD_CONST,
-                    mul_const: q::Q_OP_MUL_CONST,
-                    add_mem_u16: q::Q_OP_ADD_MEM_U16,
-                    mul_mem_u16: q::Q_OP_MUL_MEM_U16,
-                    add_mul_mem_mem_const_u8: q::Q_OP_ADD_MUL_MEM_MEM_CONST_U8,
-                    add_mul_const_u8_mem_u16: q::Q_OP_ADD_MUL_CONST_U8_MEM_U16,
-                    add_mul_mem_mem: q::Q_OP_ADD_MUL_MEM_MEM,
-                    run_add_mul_mem_mem_const_u8: q::Q_OP_RUN_ADD_MUL_MEM_MEM_CONST_U8,
-                    run_add_mul_const_u8_mem_u16: q::Q_OP_RUN_ADD_MUL_CONST_U8_MEM_U16,
-                    affine_sum: q::Q_OP_AFFINE_SUM,
-                    native_permutation: q::Q_OP_NATIVE_PERMUTATION,
-                    native_lookup: q::Q_OP_NATIVE_LOOKUP,
-                    native_identity: q::Q_OP_NATIVE_IDENTITY,
-                    lin7: q::Q_OP_LIN7,
-                    bilin7_row: q::Q_OP_BILIN7_ROW,
-                    bilin7_pairwise: q::Q_OP_BILIN7_PAIRWISE,
-                    modarith7: q::Q_OP_MODARITH7,
-                    pow5: q::Q_OP_POW5,
-                },
-                mem: QuotientVmMemTokenTemplateConstants {
-                    l0: q::Q_MEM_L0,
-                    l_last: q::Q_MEM_L_LAST,
-                    l_blind: q::Q_MEM_L_BLIND,
-                    beta: q::Q_MEM_BETA,
-                    gamma: q::Q_MEM_GAMMA,
-                    x: q::Q_MEM_X,
-                    theta: q::Q_MEM_THETA,
-                    trash_challenge: q::Q_MEM_TRASH_CHALLENGE,
-                    instance_eval: q::Q_MEM_INSTANCE_EVAL,
-                },
-                byte_u32_bytes: q::QUOTIENT_VM_BYTE_U32_BYTES,
-                limb_count: q::QUOTIENT_VM_LIMBS,
-                limb_pairwise_coeffs: q::QUOTIENT_VM_PAIRWISE_COEFFS,
             },
         }
     }
@@ -645,9 +532,6 @@ pub(crate) struct Halo2Verifier {
     pub(crate) quotient_inline_computations: Vec<Vec<String>>,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) quotient_post_vm_computations: Vec<Vec<String>>,
-    pub(crate) quotient_native_permutation_computation: Vec<String>,
-    pub(crate) quotient_native_lookup_computation: Vec<String>,
-    pub(crate) quotient_native_identity_computations: Vec<Vec<String>>,
     pub(crate) quotient_program: Option<QuotientProgram>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
     /// Sorted simple-selector fixed-column indices. Each is rendered
@@ -835,7 +719,6 @@ impl QuotientExternal {
 #[derive(Template)]
 #[template(path = "contracts/Halo2QuotientEvaluator.sol")]
 pub(crate) struct Halo2QuotientEvaluator {
-    pub(crate) template_constants: TemplateConstants,
     pub(crate) trace: bool,
     pub(crate) quotient_pow5_helper: bool,
     pub(crate) quotient_limb7_helper: bool,
@@ -855,9 +738,6 @@ pub(crate) struct Halo2QuotientEvaluator {
     pub(crate) quotient_inline_computations: Vec<Vec<String>>,
     pub(crate) quotient_eval_numer_computations: Vec<Vec<String>>,
     pub(crate) quotient_post_vm_computations: Vec<Vec<String>>,
-    pub(crate) quotient_native_permutation_computation: Vec<String>,
-    pub(crate) quotient_native_lookup_computation: Vec<String>,
-    pub(crate) quotient_native_identity_computations: Vec<Vec<String>>,
     pub(crate) quotient_program: Option<QuotientProgram>,
     pub(crate) simple_selector_cols: Vec<usize>,
     pub(crate) quotient_identity_trace_base: u64,
@@ -867,10 +747,18 @@ pub(crate) struct Halo2QuotientEvaluator {
 pub(crate) struct QuotientProgram {
     /// Program length in bytes before word padding.
     pub(crate) len: usize,
-    /// Opcode switch arms required by this generated program.
-    pub(crate) op_usage: QuotientVmOpcodeUsage,
-    /// Memory-token switch arms required by this generated program.
-    pub(crate) mem_usage: QuotientVmMemUsage,
+    /// Opcode bytes this program's bytecode actually uses; the generated
+    /// interpreter emits exactly these arms (P4: gating moved from 31
+    /// template predicates to the used-op set itself).
+    pub(crate) used_ops: Vec<u8>,
+    /// Memory-token bytes used by this program's bytecode.
+    pub(crate) used_mem_tokens: Vec<u8>,
+    /// Generated opcode-summary comment lines (filled per render by
+    /// `vm::yul_arms`; empty in the plan's canonical program value).
+    pub(crate) op_summary_lines: Vec<String>,
+    /// Generated interpreter switch arms (filled per render by
+    /// `vm::yul_arms`; empty in the plan's canonical program value).
+    pub(crate) vm_switch_arms: Vec<String>,
     /// Memory pointer to the first constant word.
     pub(crate) const_mptr: usize,
     /// Persistent quotient numerator accumulator word.
@@ -913,60 +801,24 @@ pub(crate) struct QuotientProgram {
     pub(crate) num_selector_buckets: usize,
 }
 
+impl QuotientProgram {
+    /// Whether this program's bytecode uses `op`.
+    pub(crate) fn uses_op(&self, op: u8) -> bool {
+        self.used_ops.contains(&op)
+    }
+
+    /// Whether this program's bytecode uses memory token `token`.
+    pub(crate) fn uses_token(&self, token: u8) -> bool {
+        self.used_mem_tokens.contains(&token)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct QuotientSelectorTail {
     /// Byte offset of the selector bucket under `SELECTOR_ACC_MPTR`.
     pub(crate) selector_offset: usize,
     /// Byte offset of the tail power under `selector_power_mptr`.
     pub(crate) power_offset: usize,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct QuotientVmOpcodeUsage {
-    pub(crate) push_const: bool,
-    pub(crate) push_mem_literal: bool,
-    pub(crate) push_mem_token: bool,
-    pub(crate) push_mem_token_offset: bool,
-    pub(crate) push_mem_u16: bool,
-    pub(crate) add: bool,
-    pub(crate) mul: bool,
-    pub(crate) neg: bool,
-    pub(crate) push_const_u8: bool,
-    pub(crate) fold_main: bool,
-    pub(crate) fold_selector: bool,
-    pub(crate) add_const_u8: bool,
-    pub(crate) mul_const_u8: bool,
-    pub(crate) add_const: bool,
-    pub(crate) mul_const: bool,
-    pub(crate) add_mem_u16: bool,
-    pub(crate) mul_mem_u16: bool,
-    pub(crate) add_mul_mem_mem_const_u8: bool,
-    pub(crate) add_mul_const_u8_mem_u16: bool,
-    pub(crate) add_mul_mem_mem: bool,
-    pub(crate) run_add_mul_mem_mem_const_u8: bool,
-    pub(crate) run_add_mul_const_u8_mem_u16: bool,
-    pub(crate) affine_sum: bool,
-    pub(crate) native_permutation: bool,
-    pub(crate) native_lookup: bool,
-    pub(crate) native_identity: bool,
-    pub(crate) lin7: bool,
-    pub(crate) bilin7_row: bool,
-    pub(crate) bilin7_pairwise: bool,
-    pub(crate) modarith7: bool,
-    pub(crate) pow5: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct QuotientVmMemUsage {
-    pub(crate) l0: bool,
-    pub(crate) l_last: bool,
-    pub(crate) l_blind: bool,
-    pub(crate) beta: bool,
-    pub(crate) gamma: bool,
-    pub(crate) x: bool,
-    pub(crate) theta: bool,
-    pub(crate) trash_challenge: bool,
-    pub(crate) instance_eval: bool,
 }
 
 impl Halo2VerifyingKey {
@@ -1401,13 +1253,12 @@ mod tests {
             quotient_inline_computations: vec![],
             quotient_eval_numer_computations: vec![],
             quotient_post_vm_computations: vec![],
-            quotient_native_permutation_computation: vec![],
-            quotient_native_lookup_computation: vec![],
-            quotient_native_identity_computations: vec![],
             quotient_program: Some(QuotientProgram {
                 len: 0,
-                op_usage: Default::default(),
-                mem_usage: Default::default(),
+                used_ops: vec![],
+                used_mem_tokens: vec![],
+                op_summary_lines: vec![],
+                vm_switch_arms: vec![],
                 const_mptr: 0,
                 eval_numer_mptr: 0,
                 trace_id_mptr: 0,

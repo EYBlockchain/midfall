@@ -1638,58 +1638,65 @@ fn precompile_faults_and_input_rejections_use_distinct_selectors() {
 /// an expression).
 #[test]
 fn quotient_vm_interpreter_fails_closed_on_malformed_programs() {
-    let vm = include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+    // P4: the arms are generated; assert the fail-closed guards on the
+    // committed all-ops snapshot (the template shell keeps only the
+    // dispatch loop, register declarations, and terminal checks).
+    let vm = include_str!("../../templates/partials/quotient_numerator/vm_arms.snapshot.yul");
+    let shell =
+        include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
 
     // (a) A fold with no live cached top would re-fold a STALE q_top, and
     // both terminal checks would still pass.
     assert_eq!(
-        vm.matches("{%- call q_top_guard() %}").count(),
+        vm.matches("if iszero(q_has_top) { q_program_fail() }").count(),
         2,
         "both FOLD_MAIN and FOLD_SELECTOR must require a live cached top"
-    );
-    assert!(
-        vm.contains("if iszero(q_has_top) { q_program_fail() }"),
-        "q_top_guard must fail closed when the cached top is not live"
     );
 
     // (b) Native callbacks used to RESET q_sp, which silently discarded
     // operands spilled by a preceding partial expression -- an identity would
     // drop out of nu_y(x) with the program still ending balanced. Assert
-    // instead of reset.
-    // The only assignment of the stack base to q_sp may be its declaration.
-    assert_eq!(
-        vm.matches("q_sp := {{ program.stack_mptr|hex() }}").count(),
-        1,
-        "native callbacks must not reset q_sp; a reset hides dropped operands"
-    );
+    // instead of reset: the generated arms may only move q_sp by one word
+    // (spill/pop); the base assignment lives solely in the shell declaration.
     assert!(
-        vm.contains("let q_sp := {{ program.stack_mptr|hex() }}"),
+        !vm.contains("q_sp := 0x9000"),
+        "native callbacks must not reset q_sp (0x9000 is the snapshot's stack \
+         base); a reset hides dropped operands"
+    );
+    for (idx, _) in vm.match_indices("q_sp :=") {
+        let line_end = vm[idx..].find('\n').map(|off| idx + off).unwrap_or(vm.len());
+        let assignment = &vm[idx..line_end];
+        assert!(
+            assignment == "q_sp := add(q_sp, 0x20)" || assignment == "q_sp := sub(q_sp, 0x20)",
+            "generated arms may only move q_sp by one word, found `{assignment}`"
+        );
+    }
+    assert!(
+        shell.contains("let q_sp := {{ program.stack_mptr|hex() }}"),
         "the surviving q_sp assignment must be its initial declaration"
     );
     assert_eq!(
-        vm.matches("{%- call q_stack_empty_guard() %}").count(),
+        vm.matches("if iszero(eq(q_sp, 0x9000)) { q_program_fail() }").count(),
         3,
-        "each native callback boundary must assert an already-empty stack"
+        "each native callback boundary must assert an already-empty stack \
+         (0x9000 is the snapshot's placeholder stack base)"
     );
 
     // (c) The spill pointer has no ceiling of its own.
     assert_eq!(
-        vm.matches("if iszero(lt(q_sp, {{ program.stack_hi|hex() }})) { q_program_fail() }")
-            .count(),
+        vm.matches("if iszero(lt(q_sp, 0x9200)) { q_program_fail() }").count(),
         10,
-        "every cached-top spill site must clamp q_sp to its registered region"
+        "every cached-top spill site must clamp q_sp to its registered region \
+         (0x9200 is the snapshot's placeholder stack ceiling)"
     );
 
     // (d) u16 constant-table indexes reach far outside the pinned payload, so
     // unlike the u8 forms they cannot rely on bounded drift.
     assert_eq!(
-        vm.matches("{%- call q_const_guard(\"qconst\") %}").count(),
+        vm.matches("if iszero(lt(qconst, 300)) { q_program_fail() }").count(),
         3,
-        "u16 constant-table indexes must be clamped to the rendered table length"
-    );
-    assert!(
-        vm.contains("if iszero(lt({{ idx }}, {{ program.num_consts }})) { q_program_fail() }"),
-        "q_const_guard must clamp against the generated constant-table length"
+        "u16 constant-table indexes must be clamped to the rendered table \
+         length (300 is the snapshot's placeholder table length)"
     );
 }
 
@@ -2483,53 +2490,60 @@ fn differential_trace_hooks_cover_expected_categories() {
     }
 }
 
+/// P4: the interpreter arms are GENERATED from the same `Q_OP_*`/`Q_MEM_*`
+/// constants the encoder and checked decoder use, so opcode/token/arm
+/// agreement holds by construction. The committed snapshot pins the
+/// generator's full output; regenerate with
+/// `HALO2_SOLIDITY_UPDATE_VM_ARMS_SNAPSHOT=1` and re-pin the template digest.
 #[test]
-fn quotient_vm_opcode_and_token_tables_match_template_cases() {
-    let quotient_template =
-        include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+fn vm_arms_snapshot_is_current() {
+    let rendered = super::quotient_numerator::vm::yul_arms::render_snapshot();
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/templates/partials/quotient_numerator/vm_arms.snapshot.yul"
+    );
+    if std::env::var("HALO2_SOLIDITY_UPDATE_VM_ARMS_SNAPSHOT").as_deref() == Ok("1") {
+        std::fs::write(path, &rendered).expect("snapshot written");
+        return;
+    }
+    let committed = std::fs::read_to_string(path).expect(
+        "vm_arms.snapshot.yul missing; regenerate with HALO2_SOLIDITY_UPDATE_VM_ARMS_SNAPSHOT=1",
+    );
+    assert_eq!(
+        committed, rendered,
+        "generated interpreter arms drifted from the committed snapshot; \
+         review the change, then regenerate with \
+         HALO2_SOLIDITY_UPDATE_VM_ARMS_SNAPSHOT=1 and re-pin the template digest"
+    );
+}
+
+/// The all-ops snapshot must carry one `case` arm per opcode, one per memory
+/// token, and no arm for the reserved byte (which the dispatch `default`
+/// rejects).
+#[test]
+fn vm_arms_snapshot_covers_every_opcode_and_token() {
+    let snapshot = include_str!("../../templates/partials/quotient_numerator/vm_arms.snapshot.yul");
 
     for spec in QUOTIENT_VM_SPEC.opcodes {
-        let name = spec.name;
-        let needle = [
-            "case {{ template_constants.quotient_vm.op.",
-            name,
-            "|hex() }}",
-        ]
-        .concat();
+        // Opcode literals render even-width (0x01, 0x1c, ...).
+        let needle = format!("case 0x{:02x} {{", spec.opcode);
         assert!(
-            quotient_template.contains(&needle),
-            "quotient VM template missing opcode {name} template constant"
+            snapshot.contains(&needle),
+            "snapshot missing arm for opcode {} ({:#x})",
+            spec.name,
+            spec.opcode
         );
     }
     assert!(
-        !quotient_template.contains("case 0x1a"),
-        "stale native-trash opcode must not remain in quotient VM template"
+        !snapshot.contains("case 0x1a"),
+        "reserved opcode 0x1a must have no interpreter arm"
     );
-
     for spec in QUOTIENT_VM_SPEC.mem_tokens {
-        let name = spec.name;
-        let field = match name {
-            "L_0_MPTR" => "l0",
-            "L_LAST_MPTR" => "l_last",
-            "L_BLIND_MPTR" => "l_blind",
-            "BETA_MPTR" => "beta",
-            "GAMMA_MPTR" => "gamma",
-            "X_MPTR" => "x",
-            "THETA_MPTR" => "theta",
-            "TRASH_CHALLENGE_MPTR" => "trash_challenge",
-            "INSTANCE_EVAL_MPTR" => "instance_eval",
-            _ => panic!("unmapped quotient VM memory token {name}"),
-        };
-        let needle = [
-            "case {{ template_constants.quotient_vm.mem.",
-            field,
-            "|hex() }} { q_ptr := ",
-            name,
-        ]
-        .concat();
+        let needle = format!("{{ q_ptr := {} }}", spec.name);
         assert!(
-            quotient_template.contains(&needle),
-            "quotient VM template missing memory token {name} template constant"
+            snapshot.contains(&needle),
+            "snapshot missing token arm for {}",
+            spec.name
         );
     }
     assert_eq!(QUOTIENT_VM_SPEC.limb_count, layout::quotient_limb::LIMBS);
@@ -2541,6 +2555,26 @@ fn quotient_vm_opcode_and_token_tables_match_template_cases() {
         QUOTIENT_VM_SPEC.limb_pairwise_coeffs,
         layout::quotient_limb::PAIRWISE_COEFFS
     );
+}
+
+/// N-version guard: `reference.rs` is the independent interpreter leg; it
+/// must not import the shared layout/arm machinery, or a wrong table row
+/// could produce mutually consistent encoder/interpreter/Yul and certify
+/// vacuously.
+#[test]
+fn reference_interpreter_stays_independent_of_generated_layout() {
+    let reference = include_str!("quotient_numerator/vm/reference.rs");
+    for forbidden in [
+        "visit_quotient_operands",
+        "reencode_quotient_instruction",
+        "yul_arms",
+        "quotient_vm_switch_arms",
+    ] {
+        assert!(
+            !reference.contains(forbidden),
+            "reference.rs must not use `{forbidden}`; it is the independent N-version leg"
+        );
+    }
 }
 
 #[test]
@@ -2632,13 +2666,16 @@ fn normalized_yul_assignment_parser_tolerates_formatting_variants() {
 fn field_negations_used_by_traces_are_canonical() {
     let quotient_template =
         include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+    // P4: the NEG arm is generated; pin it on the committed snapshot.
+    let vm_arms_snapshot =
+        include_str!("../../templates/partials/quotient_numerator/vm_arms.snapshot.yul");
     let evaluator_source = include_str!("quotient_numerator/yul_emit.rs");
     let pcs_source = include_str!("kzg/mod.rs");
 
     for (name, source, needle) in [
             (
                 "byte quotient VM negation",
-                quotient_template,
+                vm_arms_snapshot,
                 "q_top := addmod(0, sub(r, q_top), r)",
             ),
             (
