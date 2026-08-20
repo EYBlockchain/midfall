@@ -510,26 +510,49 @@ pub(crate) struct VkHeaderTemplateSlots {
 }
 
 impl Default for VkHeaderTemplateSlots {
-    /// Build slot offsets from the typed VK header schema.
+    /// Build slot offsets by iterating the typed VK header schema with an
+    /// exhaustive match (E12): adding a `VkHeaderSlot` variant without a
+    /// template constant fails compilation here instead of silently
+    /// rendering a header the templates cannot address.
     fn default() -> Self {
         use crate::lowering::layout::{VkHeaderLayout, VkHeaderSlot as Slot};
 
-        Self {
-            vk_digest: VkHeaderLayout::field(Slot::VkDigest).slot.word(),
-            num_instances: VkHeaderLayout::field(Slot::NumInstances).slot.word(),
-            k: VkHeaderLayout::field(Slot::K).slot.word(),
-            n_inv: VkHeaderLayout::field(Slot::NInv).slot.word(),
-            omega: VkHeaderLayout::field(Slot::Omega).slot.word(),
-            omega_inv: VkHeaderLayout::field(Slot::OmegaInv).slot.word(),
-            omega_inv_to_l: VkHeaderLayout::field(Slot::OmegaInvToL).slot.word(),
-            has_accumulator: VkHeaderLayout::field(Slot::HasAccumulator).slot.word(),
-            acc_offset: VkHeaderLayout::field(Slot::AccOffset).slot.word(),
-            num_acc_limbs: VkHeaderLayout::field(Slot::NumAccLimbs).slot.word(),
-            num_acc_limb_bits: VkHeaderLayout::field(Slot::NumAccLimbBits).slot.word(),
-            g1_base: VkHeaderLayout::field(Slot::G1Base).slot.word(),
-            g2_base: VkHeaderLayout::field(Slot::G2Base).slot.word(),
-            neg_s_g2_base: VkHeaderLayout::field(Slot::NegSG2Base).slot.word(),
+        let mut slots = Self {
+            vk_digest: 0,
+            num_instances: 0,
+            k: 0,
+            n_inv: 0,
+            omega: 0,
+            omega_inv: 0,
+            omega_inv_to_l: 0,
+            has_accumulator: 0,
+            acc_offset: 0,
+            num_acc_limbs: 0,
+            num_acc_limb_bits: 0,
+            g1_base: 0,
+            g2_base: 0,
+            neg_s_g2_base: 0,
+        };
+        for field in VkHeaderLayout::fields() {
+            let word = field.slot.word();
+            match field.slot {
+                Slot::VkDigest => slots.vk_digest = word,
+                Slot::NumInstances => slots.num_instances = word,
+                Slot::K => slots.k = word,
+                Slot::NInv => slots.n_inv = word,
+                Slot::Omega => slots.omega = word,
+                Slot::OmegaInv => slots.omega_inv = word,
+                Slot::OmegaInvToL => slots.omega_inv_to_l = word,
+                Slot::HasAccumulator => slots.has_accumulator = word,
+                Slot::AccOffset => slots.acc_offset = word,
+                Slot::NumAccLimbs => slots.num_acc_limbs = word,
+                Slot::NumAccLimbBits => slots.num_acc_limb_bits = word,
+                Slot::G1Base => slots.g1_base = word,
+                Slot::G2Base => slots.g2_base = word,
+                Slot::NegSG2Base => slots.neg_s_g2_base = word,
+            }
         }
+        slots
     }
 }
 
@@ -690,6 +713,78 @@ pub(crate) struct QuotientExternalPinned {
     pub(crate) runtime_len: usize,
     /// Expected deployed evaluator runtime codehash.
     pub(crate) codehash: U256,
+}
+
+/// E9/E10: THE single statement of the four memory ranges the compact
+/// quotient VM reads from -- consumed by both render models' external-frame
+/// containment checks and, via `plan::quotient_read_windows`, by the
+/// build-time VM pointer validator and the rendered operand clamps. One
+/// source so the three layers cannot drift.
+pub(crate) struct QuotientFrameInputs {
+    pub(crate) vk_mptr: usize,
+    pub(crate) vk_len: usize,
+    pub(crate) challenge_mptr: usize,
+    pub(crate) num_user_challenges: usize,
+    pub(crate) theta_mptr: usize,
+    pub(crate) instance_eval_mptr: usize,
+    pub(crate) reversed_evals_mptr: usize,
+    pub(crate) num_evals: usize,
+}
+
+pub(crate) fn quotient_frame_regions(
+    inputs: QuotientFrameInputs,
+) -> [(&'static str, usize, usize); 4] {
+    [
+        ("vk_payload", inputs.vk_mptr, inputs.vk_len),
+        (
+            "user_challenges",
+            inputs.challenge_mptr,
+            inputs.num_user_challenges * WORD_BYTES,
+        ),
+        // Ends one word past `instance_eval`. `quotient_eval` sits
+        // immediately above and is a write target, not a VM input.
+        (
+            "challenge_and_common_slots",
+            inputs.theta_mptr,
+            (inputs.instance_eval_mptr + WORD_BYTES).saturating_sub(inputs.theta_mptr),
+        ),
+        (
+            "decoded_proof_evals",
+            inputs.reversed_evals_mptr,
+            inputs.num_evals * WORD_BYTES,
+        ),
+    ]
+}
+
+/// Shared external-frame validation for the two render models (E9): every
+/// frame region must be copied into the external evaluator's input frame,
+/// the output frame must have the exact expected length, and the output must
+/// not alias the copied input.
+fn validate_external_frame(
+    qext: &QuotientExternal,
+    regions: [(&'static str, usize, usize); 4],
+    expected_output_len: usize,
+    quotient_return_mptr: usize,
+) -> Result<(), String> {
+    for (name, start, len) in regions {
+        qext.validate_contains(name, start, len)?;
+    }
+    if qext.output_len != expected_output_len {
+        return Err(format!(
+            "external quotient output length mismatch: got {:#x}, expected {expected_output_len:#x}",
+            qext.output_len
+        ));
+    }
+    if !qext.disjoint_range(quotient_return_mptr, expected_output_len) {
+        return Err(format!(
+            "external quotient output overlaps copied frame: output {:#x}..{:#x}, frame {:#x}..{:#x}",
+            quotient_return_mptr,
+            quotient_return_mptr + expected_output_len,
+            qext.frame_base,
+            qext.frame_end()
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -967,41 +1062,21 @@ impl Halo2Verifier {
         }
 
         if let Some(pinned) = self.external_pinned() {
-            let qext = &pinned.external;
-            qext.validate_contains("VK payload", self.vk_mptr.value().as_usize(), self.vk_len)?;
-            qext.validate_contains(
-                "user challenge block",
-                self.challenge_mptr.value().as_usize(),
-                self.num_user_challenges * WORD_BYTES,
+            validate_external_frame(
+                &pinned.external,
+                quotient_frame_regions(QuotientFrameInputs {
+                    vk_mptr: self.vk_mptr.value().as_usize(),
+                    vk_len: self.vk_len,
+                    challenge_mptr: self.challenge_mptr.value().as_usize(),
+                    num_user_challenges: self.num_user_challenges,
+                    theta_mptr: self.theta_mptr.value().as_usize(),
+                    instance_eval_mptr: self.memory.instance_eval_mptr.value().as_usize(),
+                    reversed_evals_mptr: self.reversed_evals_mptr.value().as_usize(),
+                    num_evals: self.num_evals,
+                }),
+                2 * WORD_BYTES + self.simple_selector_cols.len() * WORD_BYTES,
+                self.memory.quotient_return_mptr,
             )?;
-            let quotient_input_end = self.memory.instance_eval_mptr.value().as_usize() + WORD_BYTES;
-            qext.validate_contains(
-                "quotient challenge/common slots",
-                self.theta_mptr.value().as_usize(),
-                quotient_input_end.saturating_sub(self.theta_mptr.value().as_usize()),
-            )?;
-            qext.validate_contains(
-                "decoded proof evaluations",
-                self.reversed_evals_mptr.value().as_usize(),
-                self.num_evals * WORD_BYTES,
-            )?;
-
-            let expected_output_len = 2 * WORD_BYTES + self.simple_selector_cols.len() * WORD_BYTES;
-            if qext.output_len != expected_output_len {
-                return Err(format!(
-                    "external quotient output length mismatch: got {:#x}, expected {expected_output_len:#x}",
-                    qext.output_len
-                ));
-            }
-            if !qext.disjoint_range(self.memory.quotient_return_mptr, expected_output_len) {
-                return Err(format!(
-                    "external quotient output overlaps copied frame: output {:#x}..{:#x}, frame {:#x}..{:#x}",
-                    self.memory.quotient_return_mptr,
-                    self.memory.quotient_return_mptr + expected_output_len,
-                    qext.frame_base,
-                    qext.frame_end()
-                ));
-            }
         }
         Ok(())
     }
@@ -1059,43 +1134,21 @@ impl Halo2QuotientEvaluator {
     pub(crate) fn validate_layout(&self) -> Result<(), String> {
         self.memory.validate()?;
 
-        let qext = &self.quotient_external;
-        qext.validate_contains("VK payload", self.vk_mptr.value().as_usize(), self.vk_len)?;
-        qext.validate_contains(
-            "user challenge block",
-            self.challenge_mptr.value().as_usize(),
-            self.num_user_challenges * WORD_BYTES,
-        )?;
-        let quotient_input_end = self.memory.instance_eval_mptr.value().as_usize() + WORD_BYTES;
-        qext.validate_contains(
-            "quotient challenge/common slots",
-            self.theta_mptr.value().as_usize(),
-            quotient_input_end.saturating_sub(self.theta_mptr.value().as_usize()),
-        )?;
-        qext.validate_contains(
-            "decoded proof evaluations",
-            self.reversed_evals_mptr.value().as_usize(),
-            self.num_evals * WORD_BYTES,
-        )?;
-
-        let expected_output_len = 2 * WORD_BYTES + self.simple_selector_cols.len() * WORD_BYTES;
-        if qext.output_len != expected_output_len {
-            return Err(format!(
-                "external quotient output length mismatch: got {:#x}, expected {expected_output_len:#x}",
-                qext.output_len
-            ));
-        }
-        if !qext.disjoint_range(self.memory.quotient_return_mptr, expected_output_len) {
-            return Err(format!(
-                "external quotient output overlaps copied frame: output {:#x}..{:#x}, frame {:#x}..{:#x}",
-                self.memory.quotient_return_mptr,
-                self.memory.quotient_return_mptr + expected_output_len,
-                qext.frame_base,
-                qext.frame_end()
-            ));
-        }
-
-        Ok(())
+        validate_external_frame(
+            &self.quotient_external,
+            quotient_frame_regions(QuotientFrameInputs {
+                vk_mptr: self.vk_mptr.value().as_usize(),
+                vk_len: self.vk_len,
+                challenge_mptr: self.challenge_mptr.value().as_usize(),
+                num_user_challenges: self.num_user_challenges,
+                theta_mptr: self.theta_mptr.value().as_usize(),
+                instance_eval_mptr: self.memory.instance_eval_mptr.value().as_usize(),
+                reversed_evals_mptr: self.reversed_evals_mptr.value().as_usize(),
+                num_evals: self.num_evals,
+            }),
+            2 * WORD_BYTES + self.simple_selector_cols.len() * WORD_BYTES,
+            self.memory.quotient_return_mptr,
+        )
     }
 
     /// Phase markers the standalone evaluator render must emit.

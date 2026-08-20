@@ -78,7 +78,7 @@ impl<'a> SolidityGenerator<'a> {
             params: self.params,
             vk: self.vk,
             num_instances: self.num_instances,
-            num_committed_instances: self.meta.num_committed_instances,
+            num_committed_instances: self.meta.protocol.num_committed_instances,
             acc_encoding: self.acc_encoding,
             meta: &self.meta,
         }

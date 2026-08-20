@@ -85,31 +85,17 @@ impl ThetaWindowLayout {
     /// Debug assertions tie the derived offsets back to `layout::theta_window`
     /// so future edits cannot drift silently.
     pub(crate) fn compatibility() -> Self {
-        let rot_points_word = ThetaSlot::PairingRhs.word() + G1_WORDS;
-        let x1_powers_word = rot_points_word + theta_window::ROT_POINTS_CAP_WORDS;
-        let q_com_word = x1_powers_word + theta_window::X1_POWERS_CAP_WORDS;
-        let q_eval_set_word = q_com_word;
-        let q_eval_cptr_word = q_eval_set_word + theta_window::Q_EVAL_SET_CAP_WORDS;
-        let g1_identity_word = q_eval_cptr_word + 1 + theta_window::Q_EVAL_CPTR_PADDING_WORDS;
-        let reversed_evals_word =
-            g1_identity_word + G1_WORDS + theta_window::G1_IDENTITY_PADDING_WORDS;
-
-        debug_assert_eq!(rot_points_word, theta_window::ROT_POINTS_WORD);
-        debug_assert_eq!(x1_powers_word, theta_window::X1_POWERS_WORD);
-        debug_assert_eq!(q_com_word, theta_window::Q_COM_WORD);
-        debug_assert_eq!(q_eval_set_word, theta_window::Q_EVAL_SET_WORD);
-        debug_assert_eq!(q_eval_cptr_word, theta_window::Q_EVAL_CPTR_WORD);
-        debug_assert_eq!(g1_identity_word, theta_window::G1_IDENTITY_WORD);
-        debug_assert_eq!(reversed_evals_word, theta_window::REVERSED_EVALS_WORD);
-
+        // E11: a direct projection of the `theta_window` constants -- the
+        // derivation chain lives in `layout::theta_window` itself, so there
+        // is no second copy of the offset arithmetic to keep in sync.
         Self {
-            rot_points_word,
-            x1_powers_word,
-            q_com_word,
-            q_eval_set_word,
-            q_eval_cptr_word,
-            g1_identity_word,
-            reversed_evals_word,
+            rot_points_word: theta_window::ROT_POINTS_WORD,
+            x1_powers_word: theta_window::X1_POWERS_WORD,
+            q_com_word: theta_window::Q_COM_WORD,
+            q_eval_set_word: theta_window::Q_EVAL_SET_WORD,
+            q_eval_cptr_word: theta_window::Q_EVAL_CPTR_WORD,
+            g1_identity_word: theta_window::G1_IDENTITY_WORD,
+            reversed_evals_word: theta_window::REVERSED_EVALS_WORD,
             rot_points_cap_words: theta_window::ROT_POINTS_CAP_WORDS,
             x1_powers_cap_words: theta_window::X1_POWERS_CAP_WORDS,
             q_com_cap_words: theta_window::Q_COM_CAP_WORDS,
@@ -685,14 +671,15 @@ impl VerifierMemoryLayout {
         config: VerifierMemoryLayoutConfig,
     ) -> Self {
         let commitments_len = commitment_g1_count(meta) * G1_BYTES;
-        let selector_len = meta.num_simple_selectors * WORD_BYTES;
+        let selector_len = meta.protocol.num_simple_selectors * WORD_BYTES;
         let quotient_state_len = config.quotient_state_words * WORD_BYTES;
         let quotient_stack_len = config.quotient_stack_words * WORD_BYTES;
         let q_eval_source_len = config.pcs.q_eval_source_table_words * WORD_BYTES;
         let q_com_trace_len = config.pcs.q_com_trace_msm.input_bytes;
         let final_msm_len = config.pcs.final_msm.input_bytes;
         let acc_msm_len = config.acc_msm_terms * G1_MSM_PAIR_BYTES;
-        let lin_trace_len = (meta.num_quotients + meta.num_simple_selectors) * G1_MSM_PAIR_BYTES;
+        let lin_trace_len =
+            (meta.protocol.num_quotients + meta.protocol.num_simple_selectors) * G1_MSM_PAIR_BYTES;
         let constructor_g1msm_smoke_len = [
             G1_MSM_PAIR_BYTES,
             q_com_trace_len,
@@ -720,7 +707,7 @@ impl VerifierMemoryLayout {
         // scratch cannot hold the run.
         {
             let n = batch_invert_input_words(meta, config.num_instances);
-            let neg_lagranges = meta.rotation_last.unsigned_abs() as usize;
+            let neg_lagranges = meta.protocol.rotation_last.unsigned_abs() as usize;
             let template_run_words = if config.num_instances == 0 {
                 // fallback denominator slot + negative-row denominators + (x_n - 1)
                 1 + neg_lagranges + 1
@@ -743,7 +730,7 @@ impl VerifierMemoryLayout {
                  WITHOUT reverting"
             );
         }
-        let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
+        let quotient_return_len = (2 + meta.protocol.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
         let theta_windows = ThetaWindowLayout::compatibility();
@@ -811,13 +798,13 @@ impl VerifierMemoryLayout {
             "challenge_slots",
             vk_start,
             vk.len(),
-            meta.challenge_indices.len() * WORD_BYTES,
+            meta.protocol.challenge_indices.len() * WORD_BYTES,
             MemoryLifetime::Permanent,
         );
         let theta_start = arena.alloc_after(
             "theta_scalar_and_g1_slots",
             challenge_start,
-            meta.challenge_indices.len() * WORD_BYTES,
+            meta.protocol.challenge_indices.len() * WORD_BYTES,
             theta_windows.rot_points_word * WORD_BYTES,
             MemoryLifetime::Permanent,
         );
@@ -837,14 +824,14 @@ impl VerifierMemoryLayout {
         // the runtime write count is the phase sum of `num_user_challenges`;
         // tie the two and pin theta past the window.
         {
-            let user_challenges_total: usize = meta.num_user_challenges.iter().sum();
+            let user_challenges_total: usize = meta.protocol.num_user_challenges.iter().sum();
             assert_eq!(
-                meta.challenge_indices.len(),
+                meta.protocol.challenge_indices.len(),
                 user_challenges_total,
                 "user-phase challenge window is sized for {} challenge slot(s) but the \
                  transcript parser squeezes {user_challenges_total}; the excess would \
                  collide with the theta slots",
-                meta.challenge_indices.len(),
+                meta.protocol.challenge_indices.len(),
             );
             assert!(
                 challenge_start + user_challenges_total * WORD_BYTES <= theta_start,
@@ -855,18 +842,18 @@ impl VerifierMemoryLayout {
             );
         }
 
-        let total_advices: usize = meta.num_user_advices.iter().sum();
-        let lookup_helper_chunks_total: usize = meta.lookup_chunks.iter().sum();
+        let total_advices: usize = meta.protocol.num_user_advices.iter().sum();
+        let lookup_helper_chunks_total: usize = meta.protocol.lookup_chunks.iter().sum();
         // Commitment memory mirrors the proof read schedule but is stored by
         // category. PCS and quotient code take typed bases for each category so
         // these offsets are the single source of truth for all later mloads.
         let non_quotient_g1s = total_advices
-            + meta.num_lookups
-            + meta.num_permutation_zs
+            + meta.protocol.num_lookups
+            + meta.protocol.num_permutation_zs
             + lookup_helper_chunks_total
-            + meta.num_lookups
-            + meta.num_trashcans;
-        let committed_g1s = non_quotient_g1s + meta.num_quotients;
+            + meta.protocol.num_lookups
+            + meta.protocol.num_trashcans;
+        let committed_g1s = non_quotient_g1s + meta.protocol.num_quotients;
         // The rot_points / x1_powers / q_com / q_eval_set windows are NOT
         // transient scratch even though they sit in the theta scratch band.
         // They are written during PCS preparation and then read across several
@@ -918,26 +905,28 @@ impl VerifierMemoryLayout {
         let reversed_evals_mptr = Ptr::memory(arena.alloc_fixed(
             "decoded_evals",
             at_theta(theta_windows.reversed_evals_word),
-            meta.num_evals * WORD_BYTES,
+            meta.num_evals() * WORD_BYTES,
             MemoryLifetime::Permanent,
         ));
         let comms_mptr_base = Ptr::memory(arena.alloc_after(
             "decompressed_commitments",
             reversed_evals_mptr.value().as_usize(),
-            meta.num_evals * WORD_BYTES,
+            meta.num_evals() * WORD_BYTES,
             commitments_len,
             MemoryLifetime::Permanent,
         ));
         let advice_comms_mptr_base = comms_mptr_base;
         let lookup_m_comms_mptr_base = advice_comms_mptr_base + G1_WORDS * total_advices;
-        let perm_z_comms_mptr_base = lookup_m_comms_mptr_base + G1_WORDS * meta.num_lookups;
+        let perm_z_comms_mptr_base =
+            lookup_m_comms_mptr_base + G1_WORDS * meta.protocol.num_lookups;
         let lookup_helper_comms_mptr_base =
-            perm_z_comms_mptr_base + G1_WORDS * meta.num_permutation_zs;
+            perm_z_comms_mptr_base + G1_WORDS * meta.protocol.num_permutation_zs;
         let lookup_z_comms_mptr_base =
             lookup_helper_comms_mptr_base + G1_WORDS * lookup_helper_chunks_total;
-        let trashcan_comms_mptr_base = lookup_z_comms_mptr_base + G1_WORDS * meta.num_lookups;
+        let trashcan_comms_mptr_base =
+            lookup_z_comms_mptr_base + G1_WORDS * meta.protocol.num_lookups;
         let quotient_limb_comms_mptr_base =
-            trashcan_comms_mptr_base + G1_WORDS * meta.num_trashcans;
+            trashcan_comms_mptr_base + G1_WORDS * meta.protocol.num_trashcans;
 
         // Decompressed proof commitments are stored contiguously by category.
         // Everything after this point is either selector state or scratch.
@@ -1072,7 +1061,7 @@ impl VerifierMemoryLayout {
             final_pairing_scratch_mptr + PAIRING_STATIC_WORKING_WORDS * WORD_BYTES,
             scalar_inv_scratch_mptr + MODEXP_FRAME_BYTES,
             vk_start + vk.len(),
-            challenge_start + meta.challenge_indices.len() * WORD_BYTES,
+            challenge_start + meta.protocol.challenge_indices.len() * WORD_BYTES,
             theta_start + theta_windows.rot_points_word * WORD_BYTES,
             rot_points_mptr.value().as_usize() + config.pcs.rot_points_words * WORD_BYTES,
             x1_powers_mptr.value().as_usize() + config.pcs.x1_powers_words * WORD_BYTES,
@@ -1080,7 +1069,7 @@ impl VerifierMemoryLayout {
             q_eval_set_mptr.value().as_usize() + config.pcs.q_eval_set_words * WORD_BYTES,
             q_eval_cptr_mptr.value().as_usize() + WORD_BYTES,
             g1_identity_mptr.value().as_usize() + G1_BYTES,
-            reversed_evals_mptr.value().as_usize() + meta.num_evals * WORD_BYTES,
+            reversed_evals_mptr.value().as_usize() + meta.num_evals() * WORD_BYTES,
             comms_mptr_base.value().as_usize() + commitments_len,
             selector_acc_mptr + selector_len,
             batch_invert_scratch_mptr + batch_invert_len,
@@ -1315,14 +1304,12 @@ impl VerifierMemoryLayout {
 }
 
 /// Number of proof commitment G1 points materialized in verifier memory.
+///
+/// E1: derived from the protocol's commitment schedule -- the one place the
+/// count is defined. `ProtocolPlan::validate` keeps the single
+/// formula-vs-schedule cross-check.
 pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
-    meta.num_user_advices.iter().sum::<usize>()
-        + meta.num_lookups
-        + meta.num_permutation_zs
-        + meta.lookup_chunks.iter().sum::<usize>()
-        + meta.num_lookups
-        + meta.num_trashcans
-        + meta.num_quotients
+    meta.protocol.num_commitments()
 }
 
 /// Number of Fr words the generated Lagrange block writes into the
@@ -1335,9 +1322,9 @@ pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
 ///   - x_n - 1.
 pub(crate) fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
     if num_instances == 0 {
-        meta.rotation_last.unsigned_abs() as usize + 2
+        meta.protocol.rotation_last.unsigned_abs() as usize + 2
     } else {
-        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
+        num_instances + meta.protocol.rotation_last.unsigned_abs() as usize + 1
     }
 }
 
@@ -1359,7 +1346,7 @@ mod tests {
     use ruint::aliases::U256;
 
     use super::*;
-    use crate::lowering::render::G1Words;
+    use crate::lowering::{encoding::SyntheticMeta, render::G1Words};
 
     /// Test helper for phase-scoped memory-region fixtures.
     fn region(name: &'static str, start: usize, len: usize, phase: MemoryPhase) -> MemoryRegion {
@@ -1535,7 +1522,7 @@ mod tests {
 
     #[test]
     fn synthetic_layout_preserves_current_offsets() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_user_advices: vec![2],
             num_lookups: 1,
             num_permutation_zs: 1,
@@ -1543,8 +1530,9 @@ mod tests {
             num_trashcans: 1,
             num_quotients: 3,
             num_evals: 5,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let layout = VerifierMemoryLayout::new(
             &meta,
@@ -1581,7 +1569,7 @@ mod tests {
         );
         assert_eq!(
             layout.comms_mptr_base.value().as_usize(),
-            theta + (windows.reversed_evals_word + meta.num_evals) * WORD_BYTES
+            theta + (windows.reversed_evals_word + meta.num_evals()) * WORD_BYTES
         );
         assert_eq!(windows.rot_points_word, theta_window::ROT_POINTS_WORD);
         assert_eq!(windows.x1_powers_word, theta_window::X1_POWERS_WORD);
@@ -1599,12 +1587,13 @@ mod tests {
     /// squeeze silently overwrites user challenge 0.
     #[test]
     fn user_phase_challenge_window_precedes_theta() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_user_advices: vec![1, 1],
             num_user_challenges: vec![1, 2],
             challenge_indices: vec![0, 1, 2],
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let layout = VerifierMemoryLayout::new(
             &meta,
@@ -1638,12 +1627,13 @@ mod tests {
     #[test]
     #[should_panic(expected = "user-phase challenge window is sized for")]
     fn undersized_user_challenge_window_is_rejected() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_user_advices: vec![1],
             num_user_challenges: vec![2],
             challenge_indices: vec![0],
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let _ = VerifierMemoryLayout::new(
             &meta,
@@ -1664,10 +1654,11 @@ mod tests {
         for (num_instances, rotation_last) in
             [(0usize, -1i32), (1, -1), (2, -3), (19, -6), (200, -6)]
         {
-            let meta = ConstraintSystemMeta {
+            let meta = SyntheticMeta {
                 rotation_last,
-                ..ConstraintSystemMeta::default()
-            };
+                ..SyntheticMeta::default()
+            }
+            .build();
             let layout = VerifierMemoryLayout::new(
                 &meta,
                 &vk,
@@ -1704,10 +1695,11 @@ mod tests {
 
     #[test]
     fn fixed_low_memory_regions_are_planner_registered() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_simple_selectors: 3,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let layout = VerifierMemoryLayout::new(
             &meta,
@@ -1745,7 +1737,7 @@ mod tests {
                 "quotient_return",
                 layout.quotient_return_mptr,
                 QUOTIENT_RETURN_BUFFER_START,
-                (2 + meta.num_simple_selectors) * WORD_BYTES,
+                (2 + meta.protocol.num_simple_selectors) * WORD_BYTES,
             ),
             (
                 "accumulator_pairing_batch",
@@ -1782,7 +1774,7 @@ mod tests {
         );
         assert_eq!(
             layout.constructor_g1msm_smoke_input_bytes,
-            meta.num_simple_selectors * G1_MSM_PAIR_BYTES
+            meta.protocol.num_simple_selectors * G1_MSM_PAIR_BYTES
         );
 
         // These two regions carry different phases, and `MemoryLifetime::
@@ -1861,10 +1853,11 @@ mod tests {
 
     #[test]
     fn selector_accumulators_are_live_from_quotient_to_final_msm() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_simple_selectors: 1,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let layout = VerifierMemoryLayout::new(
             &meta,
@@ -1890,12 +1883,13 @@ mod tests {
 
     #[test]
     fn trace_log_word_is_registered_after_scratch_regions() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             num_user_advices: vec![8],
             num_quotients: 4,
             num_evals: 16,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let config = VerifierMemoryLayoutConfig {
             acc_msm_terms: 3,
@@ -1966,10 +1960,11 @@ mod tests {
 
     #[test]
     fn batch_invert_scratch_region_tracks_instance_shape() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             rotation_last: -3,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let config = VerifierMemoryLayoutConfig {
             num_instances: 5,
@@ -1989,10 +1984,11 @@ mod tests {
 
     #[test]
     fn lagrange_denoms_region_tracks_instance_shape() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             rotation_last: -3,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let config = VerifierMemoryLayoutConfig {
             num_instances: 5,
@@ -2042,10 +2038,11 @@ mod tests {
     /// grows the region, and the arena still validates.
     #[test]
     fn lagrange_denoms_region_scales_beyond_the_old_live_memory_cliff() {
-        let meta = ConstraintSystemMeta {
+        let meta = SyntheticMeta {
             rotation_last: -3,
-            ..ConstraintSystemMeta::default()
-        };
+            ..SyntheticMeta::default()
+        }
+        .build();
         let vk = synthetic_vk();
         let config = VerifierMemoryLayoutConfig {
             num_instances: 500,

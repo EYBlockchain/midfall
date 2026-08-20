@@ -15,7 +15,9 @@ use crate::{
     api::GeneratorError,
     lowering::{
         abi::{ProofCalldataLayout, TranscriptBufferLayout},
-        encoding::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
+        encoding::{
+            fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, PcsShape, Ptr,
+        },
         kzg, layout,
         layout::{
             memory::{
@@ -116,7 +118,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             let omega = fe_to_u256::<Fq>(&domain.get_omega());
             let omega_inv = fe_to_u256::<Fq>(&domain.get_omega_inv());
             let omega_inv_to_l = {
-                let l = self.meta.rotation_last.unsigned_abs() as u64;
+                let l = self.meta.protocol.rotation_last.unsigned_abs() as u64;
                 fe_to_u256::<Fq>(&domain.get_omega_inv().pow_vartime([l]))
             };
             let has_accumulator = U256::from(self.acc_encoding.is_some() as usize);
@@ -421,7 +423,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         //   This gives us the raw query list whose commitment identity
         //   structure feeds `compute_dummy_queries`.
         //
-        // Pass 2: bump meta.num_evals by the dummy count (so the
+        // Pass 2: bump meta.num_evals() by the dummy count (so the
         //   memory layout - REVERSED_EVALS_MPTR buffer + downstream
         //   comms_mptr_base - grows to fit the dummies), rebuild Data,
         //   and populate the dummy eval Words.
@@ -438,14 +440,22 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             VerifierMemoryLayoutConfig::default(),
         );
         let raw_data = Data::new(self.meta, vk, &raw_memory);
-        let mut meta = (*self.meta).clone();
         let n_dummy = if cfg!(feature = "outer-fewer-point-sets") {
-            kzg::num_dummy_queries(&meta, &raw_data)
+            kzg::num_dummy_queries(self.meta, &raw_data)
         } else {
             0
         };
-        let main_evals = meta.num_evals;
-        meta.set_num_dummy_evals(n_dummy);
+        let main_evals = self.meta.num_main_evals();
+        // E4: the PCS planning stage is an explicit second construction, not
+        // a post-hoc mutation -- `with_pcs` is the only way dummy-eval and
+        // point-set counts enter the metadata.
+        let meta = ConstraintSystemMeta::with_pcs(
+            self.meta.protocol.clone(),
+            PcsShape {
+                num_dummy_evals: n_dummy,
+                num_point_sets: 0,
+            },
+        );
         let memory =
             self.memory_layout_for(&meta, vk, vk_mptr, VerifierMemoryLayoutConfig::default());
         let mut data = Data::new(&meta, vk, &memory);
@@ -453,7 +463,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             data.set_dummy_eval_words(main_evals, n_dummy);
         }
 
-        meta.set_num_point_sets(kzg::num_point_sets(&meta, &data));
+        let meta = ConstraintSystemMeta::with_pcs(
+            meta.protocol.clone(),
+            PcsShape {
+                num_dummy_evals: n_dummy,
+                num_point_sets: kzg::num_point_sets(&meta, &data),
+            },
+        );
         let memory =
             self.memory_layout_for(&meta, vk, vk_mptr, VerifierMemoryLayoutConfig::default());
         (meta, data, memory)
@@ -511,8 +527,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let final_pairing_end =
             layout::FINAL_PAIRING_SCRATCH_START + layout::PAIRING_STATIC_WORKING_WORDS * WORD_BYTES;
         let verifier_return_end = layout::VERIFIER_RETURN_BUFFER_START + WORD_BYTES;
-        let quotient_return_end =
-            layout::QUOTIENT_RETURN_BUFFER_START + (2 + meta.num_simple_selectors) * WORD_BYTES;
+        let quotient_return_end = layout::QUOTIENT_RETURN_BUFFER_START
+            + (2 + meta.protocol.num_simple_selectors) * WORD_BYTES;
 
         itertools::max([
             // Transcript buffer (streaming Keccak256). The buffer must
@@ -582,8 +598,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let proof_layout = ProofCalldataLayout::from_protocol(
             &meta.protocol,
             0,
-            meta.num_evals,
-            meta.num_point_sets,
+            meta.num_evals(),
+            meta.num_point_sets(),
         );
         TranscriptBufferLayout::from_proof_layout(
             &proof_layout,

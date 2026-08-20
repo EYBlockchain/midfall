@@ -1219,9 +1219,9 @@ pub(crate) fn assert_case_coverage(
     }
     if let Some(expected) = expectation.permutation_sets {
         assert_eq!(
-            plan.meta.num_permutation_zs, expected,
+            plan.meta.protocol.num_permutation_zs, expected,
             "case `{name}`: permutation set count drifted (chunk_len {})",
-            plan.meta.permutation_chunk_len
+            plan.meta.protocol.permutation_chunk_len
         );
     }
 
@@ -1234,10 +1234,10 @@ pub(crate) fn assert_case_coverage(
     );
 
     assert!(
-        plan.meta.num_trashcans >= expectation.min_trash,
+        plan.meta.protocol.num_trashcans >= expectation.min_trash,
         "case `{name}`: expected at least {} trash identities, found {}",
         expectation.min_trash,
-        plan.meta.num_trashcans
+        plan.meta.protocol.num_trashcans
     );
 
     let surfaces = plan_surfaces(plan);
@@ -1353,20 +1353,46 @@ mod tests {
 
             assert_case_coverage(&case, &inputs, &plan);
 
-            // Public-API cross-check: the exported identity manifest and the
-            // internal execution walk must agree on the identity count.
+            // Public-API cross-check, full-entry (E8/G2): the exported
+            // manifest must be exactly the internal execution walk re-sorted
+            // into global order -- same indices, same sources, same targets,
+            // dense and complete.
             let manifest =
                 generator.quotient_identity_manifest().expect("quotient identity manifest");
-            let execution_len = plan
+            let mut execution = plan
                 .quotient
                 .plan
                 .identities_in_execution_order()
                 .expect("finalized plan walks its execution stream")
-                .len();
+                .into_iter()
+                .map(|(identity, _)| identity)
+                .collect::<Vec<_>>();
+            execution.sort_by_key(|identity| identity.meta.global_index);
             assert_eq!(
                 manifest.entries.len(),
-                execution_len,
+                execution.len(),
                 "case `{}`: public manifest and internal execution walk disagree",
+                case.name
+            );
+            for (entry, identity) in manifest.entries.iter().zip(&execution) {
+                assert_eq!(
+                    entry.global_index, identity.meta.global_index,
+                    "case `{}`: manifest global index drifted",
+                    case.name
+                );
+                assert_eq!(
+                    entry.source, identity.meta.source,
+                    "case `{}`: manifest source drifted at global index {}",
+                    case.name, entry.global_index
+                );
+            }
+            assert!(
+                manifest
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .all(|(idx, entry)| entry.global_index == idx),
+                "case `{}`: manifest global indices must be dense from zero",
                 case.name
             );
 

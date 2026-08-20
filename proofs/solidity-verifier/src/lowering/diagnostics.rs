@@ -5,7 +5,7 @@
 use crate::{
     api::{
         ProofEvaluationCounts, QuotientIdentityManifest, QuotientIdentityManifestEntry,
-        QuotientIdentityManifestTarget, QuotientIdentitySource,
+        QuotientIdentityManifestTarget,
     },
     lowering::{plan::LoweringPlan, protocol, VerifierBuildInputs},
 };
@@ -18,52 +18,40 @@ pub(crate) fn proof_evaluation_counts(
 ) -> ProofEvaluationCounts {
     debug_assert_eq!(
         inputs.num_committed_instances,
-        inputs.meta.num_committed_instances
+        inputs.meta.protocol.num_committed_instances
     );
     let meta = &plan.meta;
 
-    let committed_instance = meta
-        .instance_queries
-        .iter()
-        .filter(|(col, _)| *col < meta.num_committed_instances)
-        .count();
-    let computed_instance = meta.instance_queries.len() - committed_instance;
-    let permutation_product = if meta.num_permutation_zs == 0 {
-        0
-    } else {
-        3 * meta.num_permutation_zs - 1
-    };
-    let lookup_helper = meta.lookup_chunks.iter().sum();
-
-    let counts = ProofEvaluationCounts {
-        committed_instance,
-        computed_instance,
-        advice: meta.advice_queries.len(),
-        // Fixed evals are query-based proof reads. The Rust verifier
-        // reads the non-simple fixed queries that appear in
-        // `protocol.proof.evals`; simple selector columns are synthesized
-        // locally and feed selector buckets instead of proof scalars.
-        fixed: meta
-            .protocol
-            .proof
-            .evals
-            .iter()
-            .filter(|eval| matches!(eval, protocol::EvalRead::Fixed(_)))
-            .count(),
-        simple_selector_fixed: meta.num_simple_selectors,
-        permutation_common: meta.permutation_columns.len(),
-        permutation_product,
-        permutation_sets: meta.num_permutation_zs,
-        lookup_multiplicity: meta.num_lookups,
-        lookup_helper,
-        lookup_accumulator: 2 * meta.num_lookups,
-        trash: meta.num_trashcans,
-        dummy: meta.num_dummy_evals,
-    };
+    // E5/E6/E7: a single pass over the executed proof-read schedule, instead
+    // of twelve hand-maintained per-category formulas that could drift from
+    // it. Fixed evals are query-based proof reads: the Rust verifier reads
+    // the non-simple fixed queries that appear in `protocol.proof.evals`,
+    // while simple selector columns are synthesized locally and feed selector
+    // buckets instead of proof scalars. The categories not read from the
+    // proof (locally interpolated instances, synthesized simple selectors,
+    // set counts, dummy slots) come from the same protocol plan.
+    let mut counts = ProofEvaluationCounts::default();
+    for eval in &meta.protocol.proof.evals {
+        match eval {
+            protocol::EvalRead::CommittedInstance(_) => counts.committed_instance += 1,
+            protocol::EvalRead::Advice(_) => counts.advice += 1,
+            protocol::EvalRead::Fixed(_) => counts.fixed += 1,
+            protocol::EvalRead::PermutationCommon { .. } => counts.permutation_common += 1,
+            protocol::EvalRead::PermutationZ { .. } => counts.permutation_product += 1,
+            protocol::EvalRead::LookupMultiplicity { .. } => counts.lookup_multiplicity += 1,
+            protocol::EvalRead::LookupHelper { .. } => counts.lookup_helper += 1,
+            protocol::EvalRead::LookupAccumulator { .. } => counts.lookup_accumulator += 1,
+            protocol::EvalRead::Trash { .. } => counts.trash += 1,
+        }
+    }
+    counts.computed_instance = meta.protocol.instance_queries.len() - counts.committed_instance;
+    counts.simple_selector_fixed = meta.protocol.num_simple_selectors;
+    counts.permutation_sets = meta.protocol.num_permutation_zs;
+    counts.dummy = meta.num_dummy_evals();
 
     assert_eq!(
         counts.proof_total(),
-        meta.num_evals,
+        meta.num_evals(),
         "proof evaluation count accounting must match verifier proof layout"
     );
     counts
@@ -72,109 +60,44 @@ pub(crate) fn proof_evaluation_counts(
 /// Build a stable source-indexed manifest for the generated quotient identity
 /// stream.
 pub(crate) fn quotient_identity_manifest(
-    inputs: VerifierBuildInputs<'_, '_>,
+    _inputs: VerifierBuildInputs<'_, '_>,
     plan: &LoweringPlan,
 ) -> QuotientIdentityManifest {
     let mut simple_selector_cols: Vec<usize> =
-        plan.meta.simple_selector_cols.iter().copied().collect();
+        plan.meta.protocol.simple_selector_cols.iter().copied().collect();
     simple_selector_cols.sort_unstable();
 
-    let gate_entries = inputs
-        .vk
-        .cs()
-        .gates()
-        .iter()
-        .enumerate()
-        .flat_map(|(gate_index, gate)| {
-            let target = gate
-                .queried_selectors()
-                .iter()
-                .find(|selector| selector.is_simple())
-                .map(|selector| {
-                    let selector_index = simple_selector_cols
-                        .iter()
-                        .position(|fixed| *fixed == selector.index())
-                        .expect("simple selector fixed column present");
-                    QuotientIdentityManifestTarget::Selector {
-                        selector_index,
-                        fixed_column: selector.index(),
-                    }
-                })
-                .unwrap_or(QuotientIdentityManifestTarget::Main);
-
-            (0..gate.polynomials().len()).map(move |polynomial_index| {
-                (
-                    gate_index,
-                    gate.name().to_string(),
-                    polynomial_index,
-                    gate.constraint_name(polynomial_index).to_string(),
-                    target,
-                )
-            })
-        })
-        .enumerate()
-        .map(
-            |(global_index, (gate_index, gate_name, polynomial_index, constraint_name, target))| {
-                QuotientIdentityManifestEntry {
-                    global_index,
-                    source: QuotientIdentitySource::Gate {
-                        gate_index,
-                        gate_name,
-                        constraint_index: polynomial_index,
-                        constraint_name,
-                        polynomial_index,
-                    },
-                    target,
-                }
-            },
-        )
-        .collect::<Vec<_>>();
-    let permutation_base = gate_entries.len();
-    let lookup_base = permutation_base + plan.meta.protocol.quotient.permutation;
-    let trash_base = lookup_base + plan.meta.protocol.quotient.lookup;
-
-    let entries = gate_entries
+    // E8/G2: derived from the SAME execution walk that backs the frame
+    // differential and `validate_execution_manifest` (a mandatory render
+    // gate), instead of a second, independent re-walk of `vk.cs().gates()`
+    // that could silently drift from the executed stream. Entries are
+    // re-sorted into global (source) order for the public API.
+    let mut entries: Vec<QuotientIdentityManifestEntry> = plan
+        .quotient
+        .plan
+        .identities_in_execution_order()
+        .expect("finalized plan walks its execution stream")
         .into_iter()
-        .chain(
-            (0..plan.meta.protocol.quotient.permutation).map(|identity_index| {
-                QuotientIdentityManifestEntry {
-                    global_index: permutation_base + identity_index,
-                    source: QuotientIdentitySource::Permutation { identity_index },
-                    target: QuotientIdentityManifestTarget::Main,
+        .map(|(identity, _kind)| {
+            let target = match identity.target {
+                crate::lowering::quotient_numerator::vm::QuotientTarget::Main => {
+                    QuotientIdentityManifestTarget::Main
                 }
-            }),
-        )
-        .chain(
-            (0..plan.meta.protocol.quotient.lookup).map(|identity_index| {
-                let (lookup_index, _) = plan
-                    .meta
-                    .protocol
-                    .lookup_identity_source(identity_index)
-                    .expect("lookup identity index covered by protocol lookup chunks");
-                let lookup_name = format!("lookup_{lookup_index}");
-                QuotientIdentityManifestEntry {
-                    global_index: lookup_base + identity_index,
-                    source: QuotientIdentitySource::Lookup {
-                        identity_index,
-                        lookup_index,
-                        lookup_name,
-                    },
-                    target: QuotientIdentityManifestTarget::Main,
-                }
-            }),
-        )
-        .chain((0..plan.meta.protocol.quotient.trash).map(|trash_index| {
-            let trash_name = inputs.trash_manifest_name(trash_index);
-            QuotientIdentityManifestEntry {
-                global_index: trash_base + trash_index,
-                source: QuotientIdentitySource::Trash {
-                    trash_index,
-                    trash_name,
+                crate::lowering::quotient_numerator::vm::QuotientTarget::Selector(
+                    selector_index,
+                ) => QuotientIdentityManifestTarget::Selector {
+                    selector_index,
+                    fixed_column: simple_selector_cols[selector_index],
                 },
-                target: QuotientIdentityManifestTarget::Main,
+            };
+            QuotientIdentityManifestEntry {
+                global_index: identity.meta.global_index,
+                source: identity.meta.source.clone(),
+                target,
             }
-        }))
+        })
         .collect();
+    entries.sort_by_key(|entry| entry.global_index);
 
     QuotientIdentityManifest {
         entries,
@@ -187,7 +110,9 @@ pub(crate) fn quotient_identity_manifest(
 }
 
 impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
-    /// Best-effort human label for a trash identity.
+    /// Best-effort human label for a trash identity, consumed when
+    /// `quotient_identity_parts` builds each identity's source metadata (the
+    /// manifest inherits it from there).
     ///
     /// Empty-polynomial gates are the usual source because trash arguments are
     /// created from additive selectors. If the gate metadata is unavailable,

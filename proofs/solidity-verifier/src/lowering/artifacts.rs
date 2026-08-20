@@ -49,10 +49,10 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             vk_mptr: plan.vk_mptr,
             vk_len: plan.vk.len(),
             challenge_mptr: plan.data.challenge_mptr,
-            num_user_challenges: plan.meta.num_user_challenges.iter().sum(),
+            num_user_challenges: plan.meta.protocol.num_user_challenges.iter().sum(),
             theta_mptr: plan.data.theta_mptr,
             reversed_evals_mptr: plan.data.reversed_evals_mptr,
-            num_evals: plan.meta.num_evals,
+            num_evals: plan.meta.num_evals(),
             quotient_external: quotient_rendering.external,
             quotient_inline_computations: quotient_rendering.blocks.inline_computations,
             quotient_eval_numer_computations: quotient_rendering.blocks.eval_numer_computations,
@@ -167,18 +167,20 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
         // Per-user-phase breakdown (advices + user challenges).
         let user_phases: Vec<UserPhase> = meta
+            .protocol
             .num_user_advices
             .iter()
-            .zip(meta.num_user_challenges.iter())
+            .zip(meta.protocol.num_user_challenges.iter())
             .enumerate()
             .map(|(idx, (_, &n_c))| UserPhase {
                 advice_bytes: proof_layout.advice_phases[idx].byte_len,
                 num_challenges: n_c,
-                challenge_offset: meta.num_user_challenges.iter().take(idx).sum(),
+                challenge_offset: meta.protocol.num_user_challenges.iter().take(idx).sum(),
             })
             .collect();
-        let num_user_challenges: usize = meta.num_user_challenges.iter().sum();
-        let lookup_h_plus_acc: usize = meta.lookup_chunks.iter().sum::<usize>() + meta.num_lookups;
+        let num_user_challenges: usize = meta.protocol.num_user_challenges.iter().sum();
+        let lookup_h_plus_acc: usize =
+            meta.protocol.lookup_chunks.iter().sum::<usize>() + meta.protocol.num_lookups;
 
         // Compute VK / accumulator layout helpers before moving vk into
         // the template struct.
@@ -309,15 +311,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             memory,
             vk_header: Default::default(),
             vk_mptr,
-            num_neg_lagranges: meta.rotation_last.unsigned_abs() as usize,
+            num_neg_lagranges: meta.protocol.rotation_last.unsigned_abs() as usize,
             user_phases,
             num_user_challenges,
-            num_lookups: meta.num_lookups,
-            num_permutation_zs: meta.num_permutation_zs,
+            num_lookups: meta.protocol.num_lookups,
+            num_permutation_zs: meta.protocol.num_permutation_zs,
             lookup_h_plus_acc,
-            num_trashcans: meta.num_trashcans,
-            num_quotients: meta.num_quotients,
-            num_evals: meta.num_evals,
+            num_trashcans: meta.protocol.num_trashcans,
+            num_quotients: meta.protocol.num_quotients,
+            num_evals: meta.num_evals(),
             comms_mptr_base: data.comms_mptr_base,
             reversed_evals_mptr: data.reversed_evals_mptr,
             selector_acc_mptr,

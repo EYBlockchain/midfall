@@ -101,21 +101,21 @@ impl LoweringPlan {
         } else {
             inputs.vk.get_domain().get_quotient_poly_degree()
         };
-        if meta.num_quotients != native_quotients {
+        if meta.protocol.num_quotients != native_quotients {
             return Err(GeneratorError::planning(
                 "invariants",
                 format!(
                     "planned quotient commitment count ({}) diverges from the native \
                      domain's quotient polynomial degree ({native_quotients})",
-                    meta.num_quotients
+                    meta.protocol.num_quotients
                 ),
             ));
         }
         let proof_layout = ProofCalldataLayout::from_protocol(
             &meta.protocol,
             proof_cptr.value().as_usize(),
-            meta.num_evals,
-            meta.num_point_sets,
+            meta.num_evals(),
+            meta.num_point_sets(),
         );
 
         let quotient_plan = inputs.quotient_program_plan(&meta, &data)?;
@@ -151,7 +151,7 @@ impl LoweringPlan {
                 &memory,
                 &quotient_plan.selector_fold,
                 quotient_operand_bounds(&meta, &data, &vk, vk_mptr, &memory),
-                meta.num_simple_selectors,
+                meta.protocol.num_simple_selectors,
             );
 
         let plan = Self {
@@ -255,7 +255,8 @@ impl LoweringPlan {
     /// rendered.
     fn validate_generator_invariants(&self) -> Result<(), String> {
         self.meta
-            .validate_against_protocol()
+            .protocol
+            .validate()
             .map_err(|err| format!("protocol invariant failed: {err}"))?;
         self.memory
             .validate()
@@ -418,34 +419,24 @@ pub(crate) fn quotient_read_windows(
     vk_mptr: Ptr,
     memory: &VerifierMemoryLayout,
 ) -> Vec<vm::QuotientReadWindow> {
-    let theta = data.theta_mptr.value().as_usize();
-    let instance_eval = memory.instance_eval_mptr.value().as_usize();
-    vec![
-        vm::QuotientReadWindow {
-            name: "vk_payload",
-            start: vk_mptr.value().as_usize(),
-            len: vk.len(),
-        },
-        vm::QuotientReadWindow {
-            name: "user_challenges",
-            start: data.challenge_mptr.value().as_usize(),
-            len: meta.num_user_challenges.iter().sum::<usize>() * layout::memory::WORD_BYTES,
-        },
-        vm::QuotientReadWindow {
-            name: "challenge_and_common_slots",
-            // Ends one word past `instance_eval`, matching the frame
-            // window in `Halo2QuotientEvaluator::validate_layout`.
-            // `quotient_eval` sits immediately above and is a write
-            // target, not a VM input.
-            start: theta,
-            len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
-        },
-        vm::QuotientReadWindow {
-            name: "decoded_proof_evals",
-            start: memory.reversed_evals_mptr.value().as_usize(),
-            len: meta.num_evals * layout::memory::WORD_BYTES,
-        },
-    ]
+    // E9/E10: the region list itself lives in ONE place --
+    // `render::quotient_frame_regions` -- shared with both render models'
+    // external-frame containment checks, so the build-time pointer
+    // validator, the rendered operand clamps, and the frame validation
+    // cannot drift apart.
+    crate::lowering::render::quotient_frame_regions(crate::lowering::render::QuotientFrameInputs {
+        vk_mptr: vk_mptr.value().as_usize(),
+        vk_len: vk.len(),
+        challenge_mptr: data.challenge_mptr.value().as_usize(),
+        num_user_challenges: meta.protocol.num_user_challenges.iter().sum::<usize>(),
+        theta_mptr: data.theta_mptr.value().as_usize(),
+        instance_eval_mptr: memory.instance_eval_mptr.value().as_usize(),
+        reversed_evals_mptr: memory.reversed_evals_mptr.value().as_usize(),
+        num_evals: meta.num_evals(),
+    })
+    .into_iter()
+    .map(|(name, start, len)| vm::QuotientReadWindow { name, start, len })
+    .collect()
 }
 
 /// The coarse `[lo, hi]` bound over every non-empty read window, rendered

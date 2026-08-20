@@ -783,7 +783,7 @@ fn lowering_plan_reuses_stable_layout_facts() {
     );
     assert_eq!(
         plan.quotient.sorted_simple.len(),
-        plan.meta.num_simple_selectors
+        plan.meta.protocol.num_simple_selectors
     );
 
     let verifier = inputs.generate_verifier_from_plan(
@@ -1222,68 +1222,68 @@ fn selector_sparse_fold_exhaustive_matches_naive_global_y_powers() {
     }
 }
 
+/// Golden manifest for the selector-fold pigeonhole circuit (C4.f guardrail):
+/// the public manifest is now derived from the execution walk, so pin its
+/// full shape -- dense global indices, source families in gate -> permutation
+/// -> lookup -> trash order, and selector targets mapped through the sorted
+/// simple-selector columns -- against a real circuit rather than a synthetic
+/// `QuotientIdentityParts` fixture.
 #[test]
 fn quotient_identity_manifest_preserves_order_and_metadata() {
-    let gate_source = QuotientIdentitySource::Gate {
-        gate_index: 2,
-        gate_name: "custom_gate".to_string(),
-        constraint_index: 1,
-        constraint_name: "constraint_b".to_string(),
-        polynomial_index: 1,
-    };
-    let parts = QuotientIdentityParts {
-        gates: vec![test_quotient_identity(
-            0,
-            gate_source.clone(),
-            QuotientTarget::Selector(0),
-        )],
-        permutation: vec![test_quotient_identity(
-            1,
-            QuotientIdentitySource::Permutation { identity_index: 0 },
-            QuotientTarget::Main,
-        )],
-        lookup: vec![test_quotient_identity(
-            2,
-            QuotientIdentitySource::Lookup {
-                identity_index: 0,
-                lookup_index: 0,
-                lookup_name: "lookup_0".to_string(),
-            },
-            QuotientTarget::Main,
-        )],
-        trash: vec![test_quotient_identity(
-            3,
-            QuotientIdentitySource::Trash {
-                trash_index: 0,
-                trash_name: "partial_round_gate".to_string(),
-            },
-            QuotientTarget::Main,
-        )],
-        sorted_simple: vec![42],
-    };
+    let (params, vk) = quotient_selector_fold_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let manifest = generator.quotient_identity_manifest().expect("quotient identity manifest");
 
-    let manifest = parts.manifest();
-
-    assert_eq!(manifest.gate_identities, 1);
-    assert_eq!(manifest.permutation_identities, 1);
-    assert_eq!(manifest.lookup_identities, 1);
-    assert_eq!(manifest.trash_identities, 1);
     assert_eq!(
-        manifest.entries.iter().map(|entry| entry.global_index).collect::<Vec<_>>(),
-        vec![0, 1, 2, 3]
+        manifest.entries.len(),
+        manifest.gate_identities
+            + manifest.permutation_identities
+            + manifest.lookup_identities
+            + manifest.trash_identities,
+        "manifest family counts must cover every entry"
     );
-    assert_eq!(manifest.entries[0].source, gate_source);
-    assert_eq!(
-        manifest.entries[0].target,
-        QuotientIdentityManifestTarget::Selector {
-            selector_index: 0,
-            fixed_column: 42,
-        }
+    for (idx, entry) in manifest.entries.iter().enumerate() {
+        assert_eq!(
+            entry.global_index, idx,
+            "global indices must be dense from zero"
+        );
+    }
+    // Source families arrive in the native verifier's identity order.
+    let family = |source: &QuotientIdentitySource| match source {
+        QuotientIdentitySource::Gate { .. } => 0,
+        QuotientIdentitySource::Permutation { .. } => 1,
+        QuotientIdentitySource::Lookup { .. } => 2,
+        QuotientIdentitySource::Trash { .. } => 3,
+    };
+    assert!(
+        manifest
+            .entries
+            .windows(2)
+            .all(|pair| family(&pair[0].source) <= family(&pair[1].source)),
+        "manifest sources must follow gate -> permutation -> lookup -> trash order"
     );
-    assert!(matches!(
-        manifest.entries[3].source,
-        QuotientIdentitySource::Trash { ref trash_name, .. } if trash_name == "partial_round_gate"
-    ));
+    // The pigeonhole circuit guarantees selector-bucketed gate identities.
+    let selector_targets: Vec<_> = manifest
+        .entries
+        .iter()
+        .filter_map(|entry| match entry.target {
+            QuotientIdentityManifestTarget::Selector {
+                selector_index,
+                fixed_column,
+            } => Some((selector_index, fixed_column)),
+            QuotientIdentityManifestTarget::Main => None,
+        })
+        .collect();
+    assert!(
+        !selector_targets.is_empty(),
+        "selector-fold circuit must produce selector-bucketed identities"
+    );
+    for (selector_index, fixed_column) in selector_targets {
+        assert_eq!(
+            manifest.simple_selector_cols[selector_index], fixed_column,
+            "selector target must map through the sorted simple-selector columns"
+        );
+    }
 }
 
 #[test]

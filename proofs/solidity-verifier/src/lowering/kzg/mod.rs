@@ -258,7 +258,7 @@ fn query_from_plan(source: PcsQuerySource, meta: &ConstraintSystemMeta, data: &D
                 PermutationZEval::Cur => (0, z_cur),
                 PermutationZEval::Next => (1, z_next),
                 PermutationZEval::Last => (
-                    meta.rotation_last,
+                    meta.protocol.rotation_last,
                     z_last.expect("permutation last eval present for planned query"),
                 ),
             };
@@ -607,7 +607,7 @@ impl TrackedG1 {
 /// Return the planned memory handles for quotient limb commitments.
 fn quotient_limb_comms(meta: &ConstraintSystemMeta, memory: &VerifierMemoryLayout) -> Vec<EcPoint> {
     EcPoint::range(memory.quotient_limb_comms_mptr_base)
-        .take(meta.num_quotients)
+        .take(meta.protocol.num_quotients)
         .collect()
 }
 
@@ -786,7 +786,7 @@ fn linearization_term_count(meta: &ConstraintSystemMeta) -> usize {
     // so the scalar is just `(1 - x^n)`.
     // Fully evaluated identities are not included on the commitment side;
     // they are accumulated, negated, and used as the expected eval scalar.
-    meta.num_quotients + meta.simple_selector_cols.len()
+    meta.protocol.num_quotients + meta.protocol.simple_selector_cols.len()
 }
 
 /// Number of non-identity q_com MSM terms needed for one point set.
@@ -1370,7 +1370,8 @@ pub(crate) fn computations(
         let mut lines: Vec<String> = Vec::new();
         let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
         let linearization_comm = data.computed_quotient_comm;
-        let simple_selector_cols: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
+        let simple_selector_cols: Vec<usize> =
+            meta.protocol.simple_selector_cols.iter().copied().collect();
         let linearization_term_count = linearization_term_count(meta);
         let trace_scratch = memory.pcs_q_com_trace_scratch_mptr;
         lines.push("// materialize per-set q_com inputs for trace logging".to_string());
@@ -1420,7 +1421,7 @@ pub(crate) fn computations(
                         "let {lin_cur_var} := mulmod({lin_query_var}, mload(add(QUOTIENT_MPTR, {WORD_BYTES:#x})), r)"
                     ));
 
-                    for q_idx in 0..meta.num_quotients {
+                    for q_idx in 0..meta.protocol.num_quotients {
                         let pair_base = trace_scratch + pair_idx * G1_MSM_PAIR_BYTES;
                         lines.push(format!(
                             "mcopy({pair_base:#x}, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, {:#x}), {G1_BYTES:#x})",
@@ -1431,7 +1432,7 @@ pub(crate) fn computations(
                             pair_base + G1_BYTES
                         ));
                         pair_idx += 1;
-                        if q_idx + 1 != meta.num_quotients {
+                        if q_idx + 1 != meta.protocol.num_quotients {
                             lines.push(format!(
                                 "{lin_cur_var} := mulmod({lin_cur_var}, mload(QUOTIENT_MPTR), r)"
                             ));
@@ -1756,7 +1757,8 @@ pub(crate) fn computations(
         lines.push("// __phase:pcs_final_msm".to_string());
         let g1_identity = EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR"));
         let linearization_comm = data.computed_quotient_comm;
-        let simple_selector_cols: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
+        let simple_selector_cols: Vec<usize> =
+            meta.protocol.simple_selector_cols.iter().copied().collect();
         let final_msm_shape = final_msm_shape(meta, data, &by_set);
         let final_msm_terms = final_msm_shape.terms;
         let final_msm_len = final_msm_shape.input_bytes;
@@ -1850,7 +1852,7 @@ pub(crate) fn computations(
                         "let {lin_cur_var} := mulmod({lin_query_var}, lin_one_minus_x_n, r)"
                     ));
 
-                    for q_idx in 0..meta.num_quotients {
+                    for q_idx in 0..meta.protocol.num_quotients {
                         let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
                         lines.push(format!(
                             "mcopy({pair_base:#x}, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, {:#x}), {G1_BYTES:#x})",
@@ -1861,7 +1863,7 @@ pub(crate) fn computations(
                             pair_base + G1_BYTES,
                         ));
                         pair_idx += 1;
-                        if q_idx + 1 != meta.num_quotients {
+                        if q_idx + 1 != meta.protocol.num_quotients {
                             lines.push(format!(
                                 "{lin_cur_var} := mulmod({lin_cur_var}, lin_x_split, r)"
                             ));

@@ -7,7 +7,7 @@
 //! verifier memory addresses.
 use std::{
     borrow::Borrow,
-    collections::{BTreeSet, HashMap},
+    collections::HashMap,
     fmt::{self, Display, Formatter},
     ops::{Add, Sub},
 };
@@ -67,68 +67,32 @@ type LookupEvalSlots = (Option<Word>, Vec<Option<Word>>, Option<Word>, Option<Wo
 // `cargo check --lib` is green.
 // ----------------------------------------------------------------------------
 
+/// PCS planning facts discovered after the raw protocol plan: the
+/// fewer-point-sets dummy-eval count and the point-set count. Kept as an
+/// explicit second stage (E3/E4) instead of post-hoc mutation, so a
+/// `ConstraintSystemMeta` is either `unplanned` (both zero) or `with_pcs`
+/// (both final) -- never a half-mutated hybrid.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PcsShape {
+    /// Number of dummy `(commitment, point)` queries the
+    /// `fewer-point-sets` path appends to the raw query list. Each dummy is
+    /// read as one extra Fr at the end of the main eval block.
+    pub(crate) num_dummy_evals: usize,
+    /// Number of distinct point sets returned by the codegen-side
+    /// `construct_intermediate_sets` simulation.
+    pub(crate) num_point_sets: usize,
+}
+
+/// Protocol facts plus the PCS planning stage. Every scalar the pipeline
+/// consumes reads through `protocol` (one source of truth) or the accessor
+/// methods below; the 18 verbatim shadow copies this struct used to carry
+/// (E3) are gone.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ConstraintSystemMeta {
     /// Typed source plan for proof reads and PCS queries.
     pub(crate) protocol: ProtocolPlan,
-    /// Number of fixed columns.
-    pub(crate) num_fixeds: usize,
-    /// Columns participating in the permutation argument.
-    pub(crate) permutation_columns: Vec<Column<Any>>,
-    /// Maximum columns per permutation product chunk.
-    pub(crate) permutation_chunk_len: usize,
-    /// Number of lookup arguments.
-    pub(crate) num_lookups: usize,
-    /// Helper chunks per lookup.
-    pub(crate) lookup_chunks: Vec<usize>,
-    /// Number of trashcan arguments.
-    pub(crate) num_trashcans: usize,
-    /// Number of permutation product commitments.
-    pub(crate) num_permutation_zs: usize,
-    /// Number of quotient limb commitments.
-    pub(crate) num_quotients: usize,
-    /// Advice query tuples `(column, rotation)`.
-    pub(crate) advice_queries: Vec<(usize, i32)>,
-    /// Instance query tuples `(column, rotation)`.
-    pub(crate) instance_queries: Vec<(usize, i32)>,
-    pub(crate) num_simple_selectors: usize,
-    /// Set of fixed-column indices that are *simple selectors* (i.e.
-    /// multiplicative selectors that the prover sets to 0 or 1 only).
-    /// These columns have no eval slot in the proof transcript: the
-    /// verifier substitutes `F::ONE` at their fixed_query index after
-    /// reading the rest. Step 6 (Yul rewrite) keeps the same convention;
-    /// the codegen evaluator emits `0x1` directly for these queries.
-    pub(crate) simple_selector_cols: BTreeSet<usize>,
-    pub(crate) num_committed_instances: usize,
-    /// Number of Fr scalars in the main eval block of the proof
-    /// (committed-instance + advice + fixed + perm + lookup + trash
-    /// evals). When `fewer-point-sets` is on, the codegen bumps this
-    /// to include the dummy-query evals via `set_num_dummy_evals` so
-    /// that the memory layout (REVERSED_EVALS_MPTR buffer +
-    /// comms_mptr_base) and the transcript-loop count both grow by
-    /// the dummy count.
-    pub(crate) num_evals: usize,
-    /// Number of dummy `(commitment, point)` queries the
-    /// `fewer-point-sets` path appends to the raw query list. Each
-    /// dummy is read as one extra Fr at the end of the main eval
-    /// block. Populated lazily by `SolidityGenerator::generate_verifier`
-    /// after running the PCS dummy-query planner.
-    pub(crate) num_dummy_evals: usize,
-    /// Number of distinct point sets returned by the codegen-side
-    /// `construct_intermediate_sets` simulation. Populated lazily by
-    /// `SolidityGenerator::generate_verifier` once it has constructed the
-    /// `Data` and run `kzg::queries`.
-    pub(crate) num_point_sets: usize,
-    /// Advice commitment counts by user phase.
-    pub(crate) num_user_advices: Vec<usize>,
-    /// Challenge counts by user phase.
-    pub(crate) num_user_challenges: Vec<usize>,
-    /// Advice remapping into phase-packed verifier order.
-    pub(crate) advice_indices: Vec<usize>,
-    /// Challenge remapping into phase-packed memory order.
-    pub(crate) challenge_indices: Vec<usize>,
-    /// Last negative rotation used for row-boundary constraints.
-    pub(crate) rotation_last: i32,
+    /// PCS planning stage; private so no post-construction mutation exists.
+    pcs: PcsShape,
 }
 
 impl ConstraintSystemMeta {
@@ -150,86 +114,133 @@ impl ConstraintSystemMeta {
     }
 
     /// Fallible counterpart of the test-only `ConstraintSystemMeta::new`.
+    /// Returns the pre-PCS (`unplanned`) stage.
     pub(crate) fn try_new(
         cs: &ConstraintSystem<Fq>,
         nb_committed_instances: usize,
     ) -> Result<Self, String> {
         let protocol = ProtocolPlan::try_from_constraint_system(cs, nb_committed_instances)?;
-
-        Ok(Self {
-            protocol: protocol.clone(),
-            num_fixeds: protocol.num_fixeds,
-            permutation_columns: protocol.permutation_columns.clone(),
-            permutation_chunk_len: protocol.permutation_chunk_len,
-            num_lookups: protocol.num_lookups,
-            lookup_chunks: protocol.lookup_chunks.clone(),
-            num_trashcans: protocol.num_trashcans,
-            num_permutation_zs: protocol.num_permutation_zs,
-            num_quotients: protocol.num_quotients,
-            advice_queries: protocol.advice_queries.iter().map(|q| q.tuple()).collect(),
-            instance_queries: protocol.instance_queries.iter().map(|q| q.tuple()).collect(),
-            num_simple_selectors: protocol.num_simple_selectors,
-            simple_selector_cols: protocol.simple_selector_cols.clone(),
-            num_committed_instances: protocol.num_committed_instances,
-            num_evals: protocol.num_main_evals(),
-            num_dummy_evals: 0,
-            num_point_sets: 0,
-            num_user_advices: protocol.num_user_advices.clone(),
-            num_user_challenges: protocol.num_user_challenges.clone(),
-            advice_indices: protocol.advice_indices.clone(),
-            challenge_indices: protocol.challenge_indices.clone(),
-            rotation_last: protocol.rotation_last,
-        })
+        Ok(Self::unplanned(protocol))
     }
 
-    /// Check legacy scalar fields against the typed protocol plan.
-    pub(crate) fn validate_against_protocol(&self) -> Result<(), String> {
-        self.protocol.validate()?;
-        let planned_g1s = self.protocol.num_commitments();
-        let scheduled_g1s = self.num_user_advices.iter().sum::<usize>()
-            + self.num_lookups
-            + self.num_permutation_zs
-            + self.lookup_chunks.iter().sum::<usize>()
-            + self.num_lookups
-            + self.num_trashcans
-            + self.num_quotients;
-        if planned_g1s != scheduled_g1s {
-            return Err(format!(
-                "proof G1 read schedule mismatch: protocol={planned_g1s} metadata={scheduled_g1s}"
-            ));
+    /// Metadata before PCS planning: no dummy evals, no point-set count.
+    pub(crate) fn unplanned(protocol: ProtocolPlan) -> Self {
+        Self {
+            protocol,
+            pcs: PcsShape::default(),
         }
-        if self.protocol.num_main_evals() != self.num_main_evals() {
-            return Err(format!(
-                "proof eval read schedule mismatch: protocol={} metadata={}",
-                self.protocol.num_main_evals(),
-                self.num_main_evals()
-            ));
-        }
-        Ok(())
     }
 
-    /// Setter used by `SolidityGenerator` after running the codegen-side
-    /// `construct_intermediate_sets` simulation in `kzg::queries`.
-    pub(crate) fn set_num_point_sets(&mut self, n: usize) {
-        self.num_point_sets = n;
+    /// Metadata with the finalized PCS planning stage.
+    pub(crate) fn with_pcs(protocol: ProtocolPlan, pcs: PcsShape) -> Self {
+        Self { protocol, pcs }
     }
 
-    /// Setter used by `SolidityGenerator` after running
-    /// the PCS dummy-query planner over the raw query list.
-    /// Bumps `num_evals` by `n` so that the memory layout of `Data`
-    /// (REVERSED_EVALS_MPTR buffer + downstream `comms_mptr_base`) and
-    /// the transcript-loop iteration count in the rendered template
-    /// both grow to include the dummy slots.
-    pub(crate) fn set_num_dummy_evals(&mut self, n: usize) {
-        self.num_dummy_evals = n;
-        self.num_evals += n;
+    /// Number of Fr scalars in the proof's eval block, INCLUDING the dummy
+    /// slots appended by fewer-point-sets planning. Memory layout
+    /// (REVERSED_EVALS_MPTR buffer + `comms_mptr_base`) and the rendered
+    /// transcript loop both size from this.
+    pub(crate) fn num_evals(&self) -> usize {
+        self.protocol.num_main_evals() + self.pcs.num_dummy_evals
     }
 
-    /// Number of "main" eval Words (the slots used by the gate
-    /// evaluator, permutation Z, lookup, etc.); excludes the dummy
-    /// slots appended for fewer-point-sets.
+    /// Number of "main" eval Words (the slots used by the gate evaluator,
+    /// permutation Z, lookup, etc.); excludes the dummy slots.
     pub(crate) fn num_main_evals(&self) -> usize {
-        self.num_evals - self.num_dummy_evals
+        self.protocol.num_main_evals()
+    }
+
+    /// Number of dummy `(commitment, point)` eval slots.
+    pub(crate) fn num_dummy_evals(&self) -> usize {
+        self.pcs.num_dummy_evals
+    }
+
+    /// Number of distinct PCS point sets (zero before PCS planning).
+    pub(crate) fn num_point_sets(&self) -> usize {
+        self.pcs.num_point_sets
+    }
+}
+
+/// Test-only synthetic metadata builder replacing the deleted shadow-field
+/// literal ergonomics. Counts are fabricated into a `ProtocolPlan` whose
+/// proof schedule carries the right commitment-kind multiset and eval length;
+/// query identity is synthetic (layout tests consume counts only).
+#[cfg(test)]
+#[derive(Clone, Debug, Default)]
+pub(crate) struct SyntheticMeta {
+    pub(crate) num_user_advices: Vec<usize>,
+    pub(crate) num_user_challenges: Vec<usize>,
+    pub(crate) num_lookups: usize,
+    pub(crate) lookup_chunks: Vec<usize>,
+    pub(crate) num_permutation_zs: usize,
+    pub(crate) num_trashcans: usize,
+    pub(crate) num_quotients: usize,
+    pub(crate) num_simple_selectors: usize,
+    pub(crate) num_evals: usize,
+    pub(crate) num_dummy_evals: usize,
+    pub(crate) num_point_sets: usize,
+    pub(crate) challenge_indices: Vec<usize>,
+    pub(crate) rotation_last: i32,
+}
+
+#[cfg(test)]
+impl SyntheticMeta {
+    /// Build metadata whose protocol plan reproduces the requested counts.
+    pub(crate) fn build(self) -> ConstraintSystemMeta {
+        use crate::lowering::protocol::{CommitmentRead, EvalRead, QueryKey};
+
+        let mut commitments = Vec::new();
+        for &n in &self.num_user_advices {
+            commitments.extend(std::iter::repeat_n(CommitmentRead::Advice, n));
+        }
+        commitments.extend(std::iter::repeat_n(
+            CommitmentRead::LookupMultiplicity,
+            self.num_lookups,
+        ));
+        commitments.extend(std::iter::repeat_n(
+            CommitmentRead::PermutationProduct,
+            self.num_permutation_zs,
+        ));
+        for &chunks in &self.lookup_chunks {
+            commitments.extend(std::iter::repeat_n(CommitmentRead::LookupHelper, chunks));
+            commitments.push(CommitmentRead::LookupAccumulator);
+        }
+        commitments.extend(std::iter::repeat_n(
+            CommitmentRead::Trash,
+            self.num_trashcans,
+        ));
+        commitments.extend(std::iter::repeat_n(
+            CommitmentRead::Quotient,
+            self.num_quotients,
+        ));
+
+        let main_evals = self
+            .num_evals
+            .checked_sub(self.num_dummy_evals)
+            .expect("synthetic num_evals must cover the dummy slots");
+        let evals = (0..main_evals).map(|i| EvalRead::Advice(QueryKey::new(i, 0))).collect();
+
+        let protocol = ProtocolPlan {
+            num_lookups: self.num_lookups,
+            lookup_chunks: self.lookup_chunks,
+            num_permutation_zs: self.num_permutation_zs,
+            num_trashcans: self.num_trashcans,
+            num_quotients: self.num_quotients,
+            num_simple_selectors: self.num_simple_selectors,
+            num_user_advices: self.num_user_advices,
+            num_user_challenges: self.num_user_challenges,
+            challenge_indices: self.challenge_indices,
+            rotation_last: self.rotation_last,
+            proof: crate::lowering::protocol::ProofReadPlan { commitments, evals },
+            ..ProtocolPlan::default()
+        };
+        ConstraintSystemMeta::with_pcs(
+            protocol,
+            PcsShape {
+                num_dummy_evals: self.num_dummy_evals,
+                num_point_sets: self.num_point_sets,
+            },
+        )
     }
 }
 
@@ -304,7 +315,7 @@ pub(crate) struct Data {
     /// evals buffer; `dummy_eval_words[i]` points at
     /// `REVERSED_EVALS_MPTR + (num_main_evals + i) * 0x20`, where
     /// `num_main_evals` is the eval count *before* dummies are appended
-    /// (not `meta.num_evals`, which already includes them). The transcript
+    /// (not `meta.num_evals()`, which already includes them). The transcript
     /// loop reads `num_dummy_evals` extra Fr scalars after the main
     /// eval block and spills them into this buffer the same way the
     /// main loop does.
@@ -325,25 +336,26 @@ impl Data {
         // BLS12-381 G1 commitments occupy 4 words (EIP-2537 padded), so the
         // stride between consecutive points is 4 instead of the BN254-era 2.
         let fixed_comm_mptr = memory.vk_mptr + vk.constants.len();
-        // The fixed-commitment region is consumed as meta.num_fixeds slots
-        // (EcPoint::range(fixed_comm_mptr).take(meta.num_fixeds) below), but the
-        // permutation base is advanced past vk.fixed_comms.len() of them. If the
-        // two counts ever diverge, the fixed and permutation commitment regions
-        // would silently overlap or leave a gap, so require them equal here.
+        // The fixed-commitment region is consumed as meta.protocol.num_fixeds slots
+        // (EcPoint::range(fixed_comm_mptr).take(meta.protocol.num_fixeds) below), but
+        // the permutation base is advanced past vk.fixed_comms.len() of them.
+        // If the two counts ever diverge, the fixed and permutation commitment
+        // regions would silently overlap or leave a gap, so require them equal
+        // here.
         assert_eq!(
             vk.fixed_comms.len(),
-            meta.num_fixeds,
+            meta.protocol.num_fixeds,
             "VK fixed commitment count must match constraint-system fixed count"
         );
         // Same argument for the permutation region: `permutation_comms` below
-        // zips `meta.permutation_columns` against `EcPoint::range(...)`, and
+        // zips `meta.protocol.permutation_columns` against `EcPoint::range(...)`, and
         // `izip!` silently truncates to the shorter side. A VK carrying fewer
         // commitments than the constraint system has permutation columns would
         // therefore drop columns from the permutation argument rather than
         // fail.
         assert_eq!(
             vk.permutation_comms.len(),
-            meta.permutation_columns.len(),
+            meta.protocol.permutation_columns.len(),
             "VK permutation commitment count must match constraint-system permutation column count"
         );
         let permutation_comm_mptr = fixed_comm_mptr + G1_WORDS * vk.fixed_comms.len();
@@ -404,46 +416,51 @@ impl Data {
         let lookup_z_comm_mem_base = memory.lookup_z_comms_mptr_base;
         let trashcan_comm_mem_base = memory.trashcan_comms_mptr_base;
 
-        let fixed_comms = EcPoint::range(fixed_comm_mptr).take(meta.num_fixeds).collect();
+        let fixed_comms = EcPoint::range(fixed_comm_mptr).take(meta.protocol.num_fixeds).collect();
         // Committed instance commitments: all point at the same memory
         // slot (G1_IDENTITY_MPTR) since the zk_stdlib `verify` path
         // passes `committed_pi = G1::identity()`. The memory at that
         // slot is never written and EVM memory is zero-initialised, so
         // the four `mload` reads produce the identity encoding.
-        let committed_instance_comms: Vec<EcPoint> = (0..meta.num_committed_instances)
+        let committed_instance_comms: Vec<EcPoint> = (0..meta.protocol.num_committed_instances)
             .map(|_| EcPoint::new(Ptr::memory("G1_IDENTITY_MPTR")))
             .collect();
         let permutation_comms = izip!(
-            meta.permutation_columns.iter().cloned(),
+            meta.protocol.permutation_columns.iter().cloned(),
             EcPoint::range(permutation_comm_mptr)
         )
         .collect();
         let advice_comms = meta
+            .protocol
             .advice_indices
             .iter()
             .map(|idx| comms_mptr_base + G1_WORDS * idx)
             .map_into()
             .collect();
         let lookup_m_comms =
-            EcPoint::range(lookup_m_comm_mem_base).take(meta.num_lookups).collect();
-        let permutation_z_comms =
-            EcPoint::range(perm_z_comm_mem_base).take(meta.num_permutation_zs).collect();
+            EcPoint::range(lookup_m_comm_mem_base).take(meta.protocol.num_lookups).collect();
+        let permutation_z_comms = EcPoint::range(perm_z_comm_mem_base)
+            .take(meta.protocol.num_permutation_zs)
+            .collect();
 
         // Group helpers per lookup by lookup_chunks[i].
-        let mut lookup_helper_comms: Vec<Vec<EcPoint>> = Vec::with_capacity(meta.num_lookups);
+        let mut lookup_helper_comms: Vec<Vec<EcPoint>> =
+            Vec::with_capacity(meta.protocol.num_lookups);
         let mut helper_cursor = lookup_helper_comm_mem_base;
-        for &chunks in &meta.lookup_chunks {
+        for &chunks in &meta.protocol.lookup_chunks {
             let row: Vec<EcPoint> = EcPoint::range(helper_cursor).take(chunks).collect();
             helper_cursor = helper_cursor + G1_WORDS * chunks;
             lookup_helper_comms.push(row);
         }
         let lookup_z_comms =
-            EcPoint::range(lookup_z_comm_mem_base).take(meta.num_lookups).collect();
-        let trashcan_comms =
-            EcPoint::range(trashcan_comm_mem_base).take(meta.num_trashcans).collect();
+            EcPoint::range(lookup_z_comm_mem_base).take(meta.protocol.num_lookups).collect();
+        let trashcan_comms = EcPoint::range(trashcan_comm_mem_base)
+            .take(meta.protocol.num_trashcans)
+            .collect();
         let computed_quotient_comm = EcPoint::new(Ptr::memory("QUOTIENT_MPTR"));
 
         let challenges = meta
+            .protocol
             .challenge_indices
             .iter()
             .map(|idx| challenge_mptr + *idx)
@@ -459,13 +476,14 @@ impl Data {
         let mut fixed_evals: HashMap<(usize, i32), Word> = HashMap::new();
         let mut permutation_evals: HashMap<Column<Any>, Word> = HashMap::new();
         let mut permutation_z_slots: Vec<(Option<Word>, Option<Word>, Option<Word>)> =
-            vec![(None, None, None); meta.num_permutation_zs];
+            vec![(None, None, None); meta.protocol.num_permutation_zs];
         let mut lookup_slots: Vec<LookupEvalSlots> = meta
+            .protocol
             .lookup_chunks
             .iter()
             .map(|&chunks| (None, vec![None; chunks], None, None))
             .collect();
-        let mut trashcan_slots: Vec<Option<Word>> = vec![None; meta.num_trashcans];
+        let mut trashcan_slots: Vec<Option<Word>> = vec![None; meta.protocol.num_trashcans];
 
         assert_eq!(
             meta.protocol.proof.evals.len(),

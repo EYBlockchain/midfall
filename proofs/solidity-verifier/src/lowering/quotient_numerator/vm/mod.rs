@@ -64,10 +64,6 @@ use midnight_curves::Fq;
 use midnight_proofs::plonk::{Expression, Selector};
 use ruint::aliases::U256;
 
-#[cfg(test)]
-use crate::api::{
-    QuotientIdentityManifest, QuotientIdentityManifestEntry, QuotientIdentityManifestTarget,
-};
 use crate::{
     api::QuotientIdentitySource,
     lowering::{
@@ -254,46 +250,6 @@ impl QuotientIdentityParts {
             .chain(self.trash.iter())
             .cloned()
             .collect()
-    }
-
-    /// Return the host-side manifest for these identities.
-    #[cfg(test)]
-    pub(crate) fn manifest(&self) -> QuotientIdentityManifest {
-        let entries = self
-            .gates
-            .iter()
-            .chain(self.permutation.iter())
-            .chain(self.lookup.iter())
-            .chain(self.trash.iter())
-            .map(|identity| QuotientIdentityManifestEntry {
-                global_index: identity.meta.global_index,
-                source: identity.meta.source.clone(),
-                target: quotient_manifest_target(identity.target, &self.sorted_simple),
-            })
-            .collect();
-
-        QuotientIdentityManifest {
-            entries,
-            gate_identities: self.gates.len(),
-            permutation_identities: self.permutation.len(),
-            lookup_identities: self.lookup.len(),
-            trash_identities: self.trash.len(),
-            simple_selector_cols: self.sorted_simple.clone(),
-        }
-    }
-}
-
-#[cfg(test)]
-fn quotient_manifest_target(
-    target: QuotientTarget,
-    sorted_simple: &[usize],
-) -> QuotientIdentityManifestTarget {
-    match target {
-        QuotientTarget::Main => QuotientIdentityManifestTarget::Main,
-        QuotientTarget::Selector(selector_index) => QuotientIdentityManifestTarget::Selector {
-            selector_index,
-            fixed_column: sorted_simple[selector_index],
-        },
     }
 }
 
@@ -2934,7 +2890,7 @@ impl QuotientExpressionEnv for DataQuotientExpressionEnv<'_> {
 
     /// Lower a fixed query, synthesizing simple selectors as constant one.
     fn fixed(&self, column_index: usize, rotation: i32) -> QuotientExpr {
-        if self.meta.simple_selector_cols.contains(&column_index) {
+        if self.meta.protocol.simple_selector_cols.contains(&column_index) {
             QuotientExpr::Const(U256::from(1u64))
         } else {
             word_to_quotient_expr(
@@ -2960,7 +2916,7 @@ impl QuotientExpressionEnv for DataQuotientExpressionEnv<'_> {
 
     /// Lower an instance query from proof evals or local instance evaluation.
     fn instance(&self, column_index: usize, rotation: i32) -> QuotientExpr {
-        if column_index < self.meta.num_committed_instances {
+        if column_index < self.meta.protocol.num_committed_instances {
             word_to_quotient_expr(
                 *self
                     .data

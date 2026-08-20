@@ -275,12 +275,12 @@ impl<'a> Evaluator<'a> {
     /// chunks. The generator emits them one identity at a time so the quotient
     /// y-batch order matches `partially_evaluate_identities`.
     pub(crate) fn permutation_computations(&self) -> Vec<(Vec<String>, String)> {
-        if self.meta.num_permutation_zs == 0 {
+        if self.meta.protocol.num_permutation_zs == 0 {
             return Vec::new();
         }
 
-        let chunk_len = self.meta.permutation_chunk_len;
-        let columns = &self.meta.permutation_columns;
+        let chunk_len = self.meta.protocol.permutation_chunk_len;
+        let columns = &self.meta.protocol.permutation_columns;
         let z_evals = &self.data.permutation_z_evals;
 
         let mut out: Vec<(Vec<String>, String)> = Vec::new();
@@ -322,7 +322,7 @@ impl<'a> Evaluator<'a> {
         }
 
         // 3. Set-to-set continuity: l_0 * (z_i_cur - z_{i-1}_last)
-        for i in 1..self.meta.num_permutation_zs {
+        for i in 1..self.meta.protocol.num_permutation_zs {
             self.reset();
             let mut lines = Vec::new();
             let zi = z_evals[i].0.to_string();
@@ -450,7 +450,7 @@ impl<'a> Evaluator<'a> {
     /// `(Z_next - Z - selector * sum(h)) * (table + beta) + m = 0`, with the
     /// active-row gate applied as in the Rust verifier.
     pub(crate) fn lookup_computations(&self) -> Vec<(Vec<String>, String)> {
-        if self.meta.num_lookups == 0 {
+        if self.meta.protocol.num_lookups == 0 {
             return Vec::new();
         }
 
@@ -689,7 +689,7 @@ impl<'a> Evaluator<'a> {
     /// Trash uses a dedicated Fiat-Shamir challenge, not theta, to compress its
     /// constraint expressions before subtracting the inactive-row trash value.
     pub(crate) fn trashcan_computations(&self) -> Vec<(Vec<String>, String)> {
-        if self.meta.num_trashcans == 0 {
+        if self.meta.protocol.num_trashcans == 0 {
             return Vec::new();
         }
 
@@ -825,14 +825,14 @@ impl<'a> Evaluator<'a> {
                 .copied()?,
             Expression::Fixed(query) => {
                 let column_index = query.column_index();
-                if self.meta.simple_selector_cols.contains(&column_index) {
+                if self.meta.protocol.simple_selector_cols.contains(&column_index) {
                     return None;
                 }
                 self.data.fixed_evals.get(&(column_index, query.rotation().0)).copied()?
             }
             Expression::Instance(query) => {
                 let column_index = query.column_index();
-                if column_index < self.meta.num_committed_instances {
+                if column_index < self.meta.protocol.num_committed_instances {
                     self.data
                         .committed_instance_evals
                         .get(&(column_index, query.rotation().0))
@@ -895,7 +895,7 @@ impl<'a> Evaluator<'a> {
                 .expect("advice eval present in permutation chunk")
                 .to_string(),
             Any::Fixed => {
-                if self.meta.simple_selector_cols.contains(&col_idx) {
+                if self.meta.protocol.simple_selector_cols.contains(&col_idx) {
                     "0x1".to_string()
                 } else {
                     self.data
@@ -1085,7 +1085,7 @@ impl<'a> Evaluator<'a> {
             &|query| {
                 let column_index = query.column_index();
                 let rotation = query.rotation().0;
-                if self.meta.simple_selector_cols.contains(&column_index) {
+                if self.meta.protocol.simple_selector_cols.contains(&column_index) {
                     // Simple selectors have no eval slot; the verifier
                     // semantics insert F::ONE.
                     self.init_var("0x1".to_string(), None)
@@ -1153,7 +1153,7 @@ impl<'a> Evaluator<'a> {
     /// Resolve an instance query either from proof evals or local
     /// interpolation.
     fn instance_eval_at(&self, column_index: usize, rotation: i32) -> String {
-        if column_index < self.meta.num_committed_instances {
+        if column_index < self.meta.protocol.num_committed_instances {
             self.data
                 .committed_instance_evals
                 .get(&(column_index, rotation))

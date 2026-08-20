@@ -393,9 +393,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let inline_identities = parts.gates[..inline_count].to_vec();
         let remaining_gates = &parts.gates[inline_count..];
         let native_gate_indices = Self::native_gate_indices(remaining_gates);
-        let native_permutation = meta.num_permutation_zs > 0;
-        let native_lookup = meta.num_lookups > 0;
-        let structured_trash_tail = meta.num_trashcans > 0;
+        let native_permutation = meta.protocol.num_permutation_zs > 0;
+        let native_lookup = meta.protocol.num_lookups > 0;
+        let structured_trash_tail = meta.protocol.num_trashcans > 0;
 
         let native_identities = remaining_gates
             .iter()
@@ -741,7 +741,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             frame_base,
             vk_len,
             memory.reversed_evals_mptr.value().as_usize(),
-            meta.num_evals,
+            meta.num_evals(),
             simple_selector_count,
         )
     }
@@ -805,7 +805,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let lookup_items = evaluator.lookup_computations();
         let trash_items = evaluator.trashcan_computations();
 
-        let mut sorted_simple: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
+        let mut sorted_simple: Vec<usize> =
+            meta.protocol.simple_selector_cols.iter().copied().collect();
         sorted_simple.sort_unstable();
 
         let gate_count = gate_items.len();
@@ -1335,12 +1336,12 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
     /// Scratch table width used by the native permutation callback.
     fn structured_permutation_scratch_words(meta: &ConstraintSystemMeta) -> usize {
-        if meta.num_permutation_zs == 0 {
+        if meta.protocol.num_permutation_zs == 0 {
             return 0;
         }
 
-        let num_cols = meta.permutation_columns.len();
-        let num_sets = meta.num_permutation_zs;
+        let num_cols = meta.protocol.permutation_columns.len();
+        let num_sets = meta.protocol.num_permutation_zs;
         // Native permutation code materializes the terms for every permutation
         // set into a contiguous scratch table rooted at the callback scratch
         // pointer. This is separate from VM operand-stack depth even when both
@@ -1353,7 +1354,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
     /// Maximum parallel input width across LogUp lookup chunks.
     fn structured_lookup_max_parallel(&self, meta: &ConstraintSystemMeta) -> usize {
-        if meta.num_lookups == 0 {
+        if meta.protocol.num_lookups == 0 {
             return 0;
         }
 
@@ -1411,13 +1412,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         state_slots: QuotientStateSlots,
         trace: bool,
     ) -> Option<Vec<String>> {
-        if meta.num_permutation_zs == 0 {
+        if meta.protocol.num_permutation_zs == 0 {
             return None;
         }
 
-        let num_cols = meta.permutation_columns.len();
-        let num_sets = meta.num_permutation_zs;
-        let chunk_len = meta.permutation_chunk_len;
+        let num_cols = meta.protocol.permutation_columns.len();
+        let num_sets = meta.protocol.num_permutation_zs;
+        let chunk_len = meta.protocol.permutation_chunk_len;
         let vals_mptr = scratch_mptr;
         let sigmas_mptr = vals_mptr + num_cols * 0x20;
         let z_cur_mptr = sigmas_mptr + num_cols * 0x20;
@@ -1444,7 +1445,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
         let mut value_entries = Vec::with_capacity(num_cols);
         let mut sigma_entries = Vec::with_capacity(num_cols);
-        for (idx, column) in meta.permutation_columns.iter().enumerate() {
+        for (idx, column) in meta.protocol.permutation_columns.iter().enumerate() {
             let offset = idx * 0x20;
             let value = evaluator.eval_at(column, 0);
             let sigma = data
@@ -1596,7 +1597,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         state_slots: QuotientStateSlots,
         trace: bool,
     ) -> Option<Vec<String>> {
-        if meta.num_lookups == 0 {
+        if meta.protocol.num_lookups == 0 {
             return None;
         }
 
@@ -1835,7 +1836,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         state_slots: QuotientStateSlots,
         trace: bool,
     ) -> Option<Vec<String>> {
-        if meta.num_trashcans == 0 {
+        if meta.protocol.num_trashcans == 0 {
             return None;
         }
 
@@ -1906,7 +1907,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 })
                 .collect(),
             eval_numer_computations: Vec::new(),
-            post_vm_computations: (meta.num_trashcans > 0)
+            post_vm_computations: (meta.protocol.num_trashcans > 0)
                 .then(|| {
                     self.structured_trash_loop_block(
                         meta,

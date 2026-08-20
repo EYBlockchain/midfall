@@ -304,9 +304,7 @@ pub(crate) struct ProtocolPlan {
     /// PCS query schedule, ending with the synthetic linearization query.
     pub(crate) pcs_queries: Vec<PcsQuerySource>,
     /// Trace topic ids for quotient identities.
-    pub(crate) quotient_trace_ids: Vec<u64>,
     /// Trace topic ids for PCS queries.
-    pub(crate) pcs_query_trace_ids: Vec<u64>,
     /// Common polynomial values the generated verifier must materialize.
     pub(crate) common_polys: BTreeSet<CommonPoly>,
     /// Quotient identity counts by family.
@@ -627,13 +625,6 @@ impl ProtocolPlan {
             lookup: lookup_identity_count,
             trash: num_trashcans,
         };
-        let quotient_trace_ids = (0..quotient.total())
-            .map(|idx| TRACE_QUOTIENT_IDENTITY_BASE + idx as u64)
-            .collect::<Vec<_>>();
-        let pcs_query_trace_ids = (0..pcs_queries.len())
-            .map(|idx| TRACE_PCS_QUERY_BASE + idx as u64)
-            .collect::<Vec<_>>();
-
         let plan = Self {
             num_fixeds,
             permutation_columns,
@@ -655,8 +646,6 @@ impl ProtocolPlan {
             rotation_last,
             proof,
             pcs_queries,
-            quotient_trace_ids,
-            pcs_query_trace_ids,
             common_polys,
             quotient,
         };
@@ -681,33 +670,6 @@ impl ProtocolPlan {
             .iter()
             .filter(|commitment| !commitment.is_quotient())
             .count()
-    }
-
-    /// Commitment group sizes in the exact proof/transcript order used by
-    /// the generated verifier and the off-chain proof repacker.
-    pub(crate) fn commitment_read_groups(&self) -> Vec<usize> {
-        let mut groups = Vec::new();
-        groups.extend(self.num_user_advices.iter().copied().filter(|&n| n != 0));
-        if self.num_lookups != 0 {
-            groups.push(self.num_lookups);
-        }
-        if self.num_permutation_zs != 0 {
-            groups.push(self.num_permutation_zs);
-        }
-        for &chunks in &self.lookup_chunks {
-            groups.push(chunks);
-            groups.push(1);
-        }
-        if self.num_trashcans != 0 {
-            groups.push(self.num_trashcans);
-        }
-        groups.push(self.num_quotients);
-        debug_assert_eq!(
-            groups.iter().sum::<usize>(),
-            self.proof.commitments.len(),
-            "protocol commitment groups must cover the proof commitment plan"
-        );
-        groups
     }
 
     /// Map a source-local lookup identity index to `(lookup_index,
@@ -751,14 +713,6 @@ impl ProtocolPlan {
             return Err(format!(
                 "quotient commitment count mismatch: plan={quotient_count} meta={}",
                 self.num_quotients
-            ));
-        }
-
-        let grouped_commitments = self.commitment_read_groups().iter().sum::<usize>();
-        if grouped_commitments != self.proof.commitments.len() {
-            return Err(format!(
-                "commitment group schedule mismatch: groups={grouped_commitments} commitments={}",
-                self.proof.commitments.len()
             ));
         }
 
@@ -909,11 +863,26 @@ impl ProtocolPlan {
             ));
         }
 
-        if self.quotient_trace_ids.len() != self.quotient.total() {
+        // E14: the eagerly-materialized trace-id vectors were dead weight
+        // (validated but never consumed); keep only the namespace-headroom
+        // property they existed to prove. Identity ids live at
+        // QUOTIENT_IDENTITY_BASE + idx and must stay below the next base
+        // (PCS_Q_COM_BASE); PCS query ids live at PCS_QUERY_BASE + idx and
+        // must stay below the next base (PROOF_COMMIT_BASE).
+        let identity_headroom = (crate::lowering::layout::trace::PCS_Q_COM_BASE
+            - TRACE_QUOTIENT_IDENTITY_BASE) as usize;
+        if self.quotient.total() > identity_headroom {
             return Err(format!(
-                "quotient trace id count mismatch: ids={} identities={}",
-                self.quotient_trace_ids.len(),
+                "quotient identity count {} exceeds the trace-id namespace headroom {identity_headroom}",
                 self.quotient.total()
+            ));
+        }
+        let pcs_query_headroom =
+            crate::lowering::layout::trace::PROOF_COMMIT_BASE - TRACE_PCS_QUERY_BASE as usize;
+        if self.pcs_queries.len() > pcs_query_headroom {
+            return Err(format!(
+                "PCS query count {} exceeds the trace-id namespace headroom {pcs_query_headroom}",
+                self.pcs_queries.len()
             ));
         }
         let lookup_identity_count =
@@ -924,17 +893,6 @@ impl ProtocolPlan {
                 self.quotient.lookup
             ));
         }
-        if self.pcs_query_trace_ids.len() != self.pcs_queries.len() {
-            return Err(format!(
-                "PCS trace id count mismatch: ids={} queries={}",
-                self.pcs_query_trace_ids.len(),
-                self.pcs_queries.len()
-            ));
-        }
-        if self.quotient_trace_ids.iter().any(|id| self.pcs_query_trace_ids.contains(id)) {
-            return Err("quotient and PCS trace id spaces overlap".to_string());
-        }
-
         let pcs_without_linearization = self.pcs_queries.len().saturating_sub(1);
         let proof_query_evals = self.proof.evals.len();
         if pcs_without_linearization != proof_query_evals {
@@ -1042,14 +1000,6 @@ mod tests {
             ]
         );
         assert_eq!(plan.num_main_evals(), 4);
-        assert_eq!(plan.commitment_read_groups(), vec![2, plan.num_quotients]);
-        assert_eq!(plan.quotient_trace_ids, vec![TRACE_QUOTIENT_IDENTITY_BASE]);
-        assert_eq!(
-            plan.pcs_query_trace_ids,
-            (0..plan.pcs_queries.len())
-                .map(|idx| TRACE_PCS_QUERY_BASE + idx as u64)
-                .collect::<Vec<_>>()
-        );
         assert!(plan.validate().is_ok());
     }
 
@@ -1245,12 +1195,6 @@ mod tests {
             let plan = ProtocolPlan::from_constraint_system(&cs, committed);
             prop_assert!(plan.validate().is_ok());
             prop_assert_eq!(plan.pcs_queries.len(), plan.proof.evals.len() + 1);
-            prop_assert_eq!(
-                plan.commitment_read_groups().iter().sum::<usize>(),
-                plan.proof.commitments.len()
-            );
-            prop_assert_eq!(plan.quotient_trace_ids.len(), plan.quotient.total());
-            prop_assert_eq!(plan.pcs_query_trace_ids.len(), plan.pcs_queries.len());
             let simple_selector_eval = plan
                 .proof
                 .evals
