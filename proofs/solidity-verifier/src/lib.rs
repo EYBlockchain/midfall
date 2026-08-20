@@ -82,6 +82,14 @@ pub fn __test_only_g1_to_u256s(point: &midnight_curves::G1Affine) -> [ruint::ali
     crate::lowering::encoding::g1_to_u256s(point)
 }
 
+/// Fuzz-only helper driving the compact quotient VM's checked decoders and
+/// the reference interpreter over raw bytes (see
+/// `fuzz/fuzz_targets/quotient_vm_decode.rs`). Totality harness, not API.
+#[doc(hidden)]
+pub fn __fuzz_only_quotient_vm_decode(bytes: &[u8]) {
+    crate::lowering::quotient_numerator::vm::fuzz_quotient_vm_decode(bytes)
+}
+
 #[doc(hidden)]
 pub fn __test_only_g2_to_u256s(point: &midnight_curves::G2Affine) -> [ruint::aliases::U256; 8] {
     crate::lowering::encoding::g2_to_u256s(point)

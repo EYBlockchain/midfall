@@ -55,6 +55,8 @@
 pub(crate) mod certify;
 #[cfg(test)]
 pub(crate) mod oracle;
+#[cfg(test)]
+mod proptests;
 pub(crate) mod reference;
 
 use std::collections::{HashMap, HashSet};
@@ -3746,6 +3748,51 @@ pub(crate) fn quotient_expr_from_yul(lines: &[String], var: &str) -> QuotientExp
         parser.assignment(line);
     }
     parser.parse_expr(var)
+}
+
+/// Fuzz harness entry: run every checked decode/validation gate over raw
+/// bytes and, when they accept, evaluate each identity segment under the
+/// reference interpreter with a fixed-seed assignment.
+///
+/// The property is totality: checked entry points must never panic on
+/// adversarial bytes, and whatever they accept must survive reference
+/// evaluation. Exposed to the out-of-crate fuzz target through the
+/// `#[doc(hidden)]` wrapper in `lib.rs`.
+pub(crate) fn fuzz_quotient_vm_decode(bytes: &[u8]) {
+    // A generous synthetic constant table so const-bearing programs are
+    // exercised rather than rejected at the slot gate.
+    const FUZZ_CONST_SLOTS: usize = 300;
+
+    if validate_quotient_program(bytes).is_err() {
+        return;
+    }
+    if validate_quotient_const_slots(bytes, FUZZ_CONST_SLOTS).is_err() {
+        return;
+    }
+    if validate_quotient_reencode(bytes).is_err() {
+        return;
+    }
+
+    let consts: Vec<U256> = (0..FUZZ_CONST_SLOTS as u64).map(|i| U256::from(i * 2 + 1)).collect();
+    let mut mem = reference::QuotientRefMemory::new([0xf5u8; 32]);
+    let mut cursor = 0usize;
+    while cursor < bytes.len() {
+        match certify::identity_segment(bytes, cursor) {
+            Ok((expr_end, _fold_op)) => {
+                let _ =
+                    reference::eval_quotient_identity(&bytes[cursor..expr_end], &consts, &mut mem);
+                match quotient_byte_instruction_len_checked(bytes, expr_end) {
+                    Ok(fold_len) => cursor = expr_end + fold_len,
+                    Err(_) => return,
+                }
+            }
+            // Native markers or unterminated tails: skip one instruction.
+            Err(_) => match quotient_byte_instruction_len_checked(bytes, cursor) {
+                Ok(len) => cursor += len,
+                Err(_) => return,
+            },
+        }
+    }
 }
 
 /// Return the leaf form of an expression, if it has no arithmetic children.
