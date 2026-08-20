@@ -4788,3 +4788,249 @@ fn selector_fold_fixture_pigeonholes_folds_into_bytecode() {
          or its gap operand would be dead"
     );
 }
+
+/// Identifiers the generated Yul uses as booleans, i.e. values that are
+/// provably 0 or 1 at every use site.
+///
+/// Add a name here only after checking that every assignment to it is a
+/// comparison, an `iszero`, a `staticcall` result, or a literal 0/1. The lint
+/// below uses this list to decide whether an `and(..)` is a *logical* and; a
+/// name wrongly added here silently re-opens the bug class it guards.
+const YUL_BOOLEAN_IDENTIFIERS: &[&str] = &[
+    "success",
+    "ok",
+    "ret",
+    "out",
+    "yes",
+    "valid",
+    "is_id",
+    "allow_id",
+    "x_ok",
+    "y_ok",
+    "lhs_ok",
+    "rhs_ok",
+    "x_is_id",
+    "y_id",
+    "was_p_minus_one",
+    "decoded_zero",
+    "lin_trace_ok",
+    "0",
+    "1",
+    "true",
+    "false",
+];
+
+/// Blank out `//` line comments, preserving byte offsets and newlines so
+/// reported line numbers still point at the source.
+///
+/// Without this the lint reads prose about the bug -- the `ec_pairing` comment
+/// that explains why `and(ret, word)` is wrong contains the very pattern it
+/// warns against -- and reports the fix as the defect.
+fn blank_yul_comments(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    let mut in_comment = false;
+    let mut chars = source.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\n' {
+            in_comment = false;
+            out.push(ch);
+            continue;
+        }
+        if !in_comment && ch == '/' && chars.peek() == Some(&'/') {
+            in_comment = true;
+        }
+        out.push(if in_comment { ' ' } else { ch });
+    }
+    out
+}
+
+/// Split the argument list of a Yul call at top-level commas.
+fn split_yul_args(args: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut current = String::new();
+    for ch in args.chars() {
+        match ch {
+            '(' => {
+                depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                depth -= 1;
+                current.push(ch);
+            }
+            ',' if depth == 0 => {
+                out.push(current.trim().to_string());
+                current = String::new();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.trim().is_empty() {
+        out.push(current.trim().to_string());
+    }
+    out
+}
+
+/// Whether a Yul expression provably evaluates to 0 or 1.
+fn is_boolean_yul_expr(expr: &str) -> bool {
+    let expr = expr.trim();
+    const BOOLEAN_CALLS: &[&str] = &[
+        "eq(",
+        "lt(",
+        "gt(",
+        "slt(",
+        "sgt(",
+        "iszero(",
+        "and(",
+        "or(",
+        "staticcall(",
+        "call(",
+    ];
+    BOOLEAN_CALLS.iter().any(|c| expr.starts_with(c))
+        || YUL_BOOLEAN_IDENTIFIERS.contains(&expr)
+        // Askama-substituted booleans, e.g. `{{ some_flag }}`.
+        || (expr.starts_with("{{") && expr.ends_with("}}"))
+}
+
+/// Yul's `and` is bitwise. Two shipped verifier bugs came from feeding it one
+/// boolean and one non-boolean operand:
+///
+/// - `and(ret, mload(scratch))` accepted any *odd* pairing result rather than
+///   exactly 1;
+/// - `and(iszero(div(i, limbs_per_word)), first_adjust)` where `first_adjust`
+///   is a radix base (2^56) shares no bit with 1, so the guard was false on
+///   every call and the accumulator identity branch was dead code.
+///
+/// Both were found and fixed individually. This lint closes the class: if an
+/// `and(..)` has any boolean operand, every operand must be boolean, so a
+/// logical `and` can never silently become a bit test. Masking uses --
+/// `and(word, 0xffff..)` -- have no boolean operand and are left alone.
+/// Report every `and(a, b)` in `source` that mixes a boolean operand with a
+/// non-boolean one. Comments are blanked first so prose about the bug is not
+/// mistaken for the bug.
+fn mixed_boolean_and_sites(source: &str) -> Vec<String> {
+    let corpus = blank_yul_comments(source);
+    let corpus = corpus.as_str();
+    let mut offenders = Vec::new();
+
+    for (start, _) in corpus.match_indices("and(") {
+        // Skip identifier suffixes such as `rand(` or `operand(`.
+        if start > 0
+            && corpus[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
+            continue;
+        }
+        let open = start + "and(".len();
+        let mut depth = 1usize;
+        let mut close = None;
+        for (offset, ch) in corpus[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + offset);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close) = close else { continue };
+        let args = split_yul_args(&corpus[open..close]);
+        if args.len() != 2 {
+            continue;
+        }
+        let boolean: Vec<bool> = args.iter().map(|a| is_boolean_yul_expr(a)).collect();
+        if boolean.iter().any(|b| *b) && !boolean.iter().all(|b| *b) {
+            let line = corpus[..start].matches('\n').count() + 1;
+            offenders.push(format!(
+                "line {line}: and({}, {}) mixes a boolean and a non-boolean operand",
+                args[0], args[1]
+            ));
+        }
+    }
+    offenders
+}
+
+/// Yul's `and` is bitwise. Two shipped verifier bugs came from feeding it one
+/// boolean and one non-boolean operand:
+///
+/// - `and(ret, mload(scratch))` accepted any *odd* pairing result rather than
+///   exactly 1;
+/// - `and(iszero(div(i, limbs_per_word)), first_adjust)` where `first_adjust`
+///   is a radix base (2^56) shares no bit with 1, so the guard was false on
+///   every call and the accumulator identity branch was dead code.
+///
+/// Both were found and fixed individually. This lint closes the class: if an
+/// `and(..)` has any boolean operand, every operand must be boolean, so a
+/// logical `and` can never silently become a bit test. Masking uses --
+/// `and(word, 0xffff..)` -- have no boolean operand and are left alone.
+#[test]
+fn logical_and_never_mixes_boolean_and_non_boolean_operands() {
+    let offenders = mixed_boolean_and_sites(verifier_template_corpus());
+    assert!(
+        offenders.is_empty(),
+        "Yul `and` is bitwise, so a logical `and` must not take a non-boolean \
+         operand. Either make the operand boolean (wrap it in `iszero(iszero(..))` \
+         or compare it), or -- if it really is provably 0/1 -- add its name to \
+         YUL_BOOLEAN_IDENTIFIERS with a justification.\n{}",
+        offenders.join("\n")
+    );
+}
+
+/// A lint that cannot fail is not a lint. Replay both historical defects and
+/// a legitimate masking use, so a future refactor that guts the detector is
+/// caught here rather than by the next audit.
+#[test]
+fn logical_and_lint_catches_both_historical_defects() {
+    // The shipped `ec_pairing` fold: `ret` is 0/1, the pairing result word is
+    // not, so the accept condition collapsed to its low bit.
+    let pairing_bug = "ret := and(ret, mload(scratch))";
+    assert_eq!(
+        mixed_boolean_and_sites(pairing_bug).len(),
+        1,
+        "lint must flag the ec_pairing low-bit fold"
+    );
+
+    // The shipped accumulator guard: `first_adjust` is a radix base, and
+    // `1 & 2^56 == 0`, so the branch was dead on every call.
+    let accumulator_bug = "if and(iszero(div(i, limbs_per_word)), first_adjust) { x := 1 }";
+    assert_eq!(
+        mixed_boolean_and_sites(accumulator_bug).len(),
+        1,
+        "lint must flag the accumulator identity-flag guard"
+    );
+
+    // Both fixed forms must pass.
+    for fixed in [
+        "ret := and(ret, eq(mload(scratch), 1))",
+        "if iszero(div(i, limbs_per_word)) { packed := sub(packed, first_adjust) }",
+    ] {
+        assert!(
+            mixed_boolean_and_sites(fixed).is_empty(),
+            "lint must accept the fixed form: {fixed}"
+        );
+    }
+
+    // Masking has no boolean operand and must not be flagged.
+    for masking in [
+        "let x_hi := and(x_hi_word, 0xffffffffffffffffffffffffffffffff)",
+        "let limb := and(shr(mul(mod(i, limbs_per_word), bits), packed), mask)",
+    ] {
+        assert!(
+            mixed_boolean_and_sites(masking).is_empty(),
+            "lint must not flag masking: {masking}"
+        );
+    }
+
+    // Comments describing the defect must not be reported as the defect.
+    assert!(
+        mixed_boolean_and_sites("// `and(ret, word)` would accept any odd result word").is_empty(),
+        "lint must ignore prose about the bug"
+    );
+}
