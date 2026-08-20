@@ -5,6 +5,7 @@
 //! reconstructs the batched Halo2 identity numerator inside generated
 //! Solidity.
 
+pub(crate) mod identities;
 #[cfg(all(test, feature = "rust-verifier-trace"))]
 mod native_anchor;
 pub(crate) mod vm;

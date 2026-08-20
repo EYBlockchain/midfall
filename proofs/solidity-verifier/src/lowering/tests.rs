@@ -3179,7 +3179,11 @@ fn midfall_comment_ports_reference_rust_sources() {
     let numerator =
         include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
     let lowering = lowering_source_corpus();
-    let evaluator = include_str!("quotient_numerator/yul_emit.rs");
+    let evaluator = concat!(
+        include_str!("quotient_numerator/yul_emit.rs"),
+        "\n",
+        include_str!("quotient_numerator/identities.rs"),
+    );
     let protocol = include_str!("protocol/mod.rs");
     let pcs = include_str!("kzg/mod.rs");
     let spec = include_str!("../../docs/reference/HALO2_MIDNIGHT_VERIFIER_SPEC.md");
@@ -3238,9 +3242,12 @@ fn midfall_comment_ports_reference_rust_sources() {
     }
     for required in [
         "partially_evaluate_identities",
-        "LogUp emitter",
-        "Permutation emitter",
-        "Trashcan emitter",
+        "LogUp identities",
+        "Permutation identities",
+        "Trash identities",
+        "logup.rs::Evaluated::expressions",
+        "permutation.rs::expressions",
+        "trash.rs::Evaluated::expressions",
     ] {
         assert!(
             evaluator.contains(required),

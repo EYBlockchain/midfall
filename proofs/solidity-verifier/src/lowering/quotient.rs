@@ -20,7 +20,7 @@ use crate::{
             memory::{VerifierMemoryLayout, WORD_BYTES},
             vk_payload::PackedProgramCodec,
         },
-        quotient_numerator::{vm::*, Evaluator},
+        quotient_numerator::{identities, vm::*, Evaluator},
         render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail},
         VerifierBuildInputs,
     },
@@ -746,9 +746,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             gate_exprs.len(),
             "gate Yul expressions and typed expressions must stay aligned"
         );
-        let perm_items = evaluator.permutation_computations();
-        let lookup_items = evaluator.lookup_computations();
-        let trash_items = evaluator.trashcan_computations();
+        // P5.b: the non-gate families are built as typed expression trees by
+        // `identities` -- THE single in-crate statement of those formulas,
+        // pinned per-value against the native verifier by `native_anchor`.
+        // Their `lines`/`var` fields are gone: rendered perm/lookup/trash Yul
+        // comes from the structured loop emitters, never from per-identity
+        // flat Yul.
+        let perm_exprs = identities::permutation_identity_exprs(meta, data);
+        let lookup_exprs = identities::lookup_identity_exprs(self.vk.cs(), meta, data);
+        let trash_exprs = identities::trash_identity_exprs(self.vk.cs(), meta, data);
 
         let mut sorted_simple: Vec<usize> =
             meta.protocol.simple_selector_cols.iter().copied().collect();
@@ -756,8 +762,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
         let gate_count = gate_items.len();
         let permutation_base = gate_count;
-        let lookup_base = permutation_base + perm_items.len();
-        let trash_base = lookup_base + lookup_items.len();
+        let lookup_base = permutation_base + perm_exprs.len();
+        let trash_base = lookup_base + lookup_exprs.len();
 
         let selector_target = |col| {
             let idx = sorted_simple
@@ -791,28 +797,24 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 }
             })
             .collect::<Vec<_>>();
-        let permutation = perm_items
+        let permutation = perm_exprs
             .into_iter()
             .enumerate()
-            .map(|(identity_index, (lines, var))| {
-                let expr = Self::quotient_yul_expr(&lines, &var);
-                QuotientIdentity {
-                    meta: QuotientIdentityMetadata {
-                        global_index: permutation_base + identity_index,
-                        source: QuotientIdentitySource::Permutation { identity_index },
-                    },
-                    lines,
-                    var,
-                    target: QuotientTarget::Main,
-                    expr,
-                }
+            .map(|(identity_index, expr)| QuotientIdentity {
+                meta: QuotientIdentityMetadata {
+                    global_index: permutation_base + identity_index,
+                    source: QuotientIdentitySource::Permutation { identity_index },
+                },
+                lines: Vec::new(),
+                var: String::new(),
+                target: QuotientTarget::Main,
+                expr,
             })
             .collect::<Vec<_>>();
-        let lookup = lookup_items
+        let lookup = lookup_exprs
             .into_iter()
             .enumerate()
-            .map(|(identity_index, (lines, var))| {
-                let expr = Self::quotient_yul_expr(&lines, &var);
+            .map(|(identity_index, expr)| {
                 let (lookup_index, _) = meta
                     .protocol
                     .lookup_identity_source(identity_index)
@@ -827,18 +829,17 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                             lookup_name,
                         },
                     },
-                    lines,
-                    var,
+                    lines: Vec::new(),
+                    var: String::new(),
                     target: QuotientTarget::Main,
                     expr,
                 }
             })
             .collect::<Vec<_>>();
-        let trash = trash_items
+        let trash = trash_exprs
             .into_iter()
             .enumerate()
-            .map(|(trash_index, (lines, var))| {
-                let expr = Self::quotient_yul_expr(&lines, &var);
+            .map(|(trash_index, expr)| {
                 let trash_name = self.trash_manifest_name(trash_index);
                 QuotientIdentity {
                     meta: QuotientIdentityMetadata {
@@ -848,8 +849,8 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                             trash_name,
                         },
                     },
-                    lines,
-                    var,
+                    lines: Vec::new(),
+                    var: String::new(),
                     target: QuotientTarget::Main,
                     expr,
                 }
@@ -889,12 +890,6 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// Return the typed quotient expression.
     fn quotient_identity_expr(identity: &QuotientIdentity) -> QuotientExpr {
         identity.expr.clone()
-    }
-
-    /// Parse an evaluator-emitted Yul identity into the quotient AST once at
-    /// plan-construction time.
-    fn quotient_yul_expr(lines: &[String], var: &str) -> QuotientExpr {
-        quotient_expr_from_yul(lines, var)
     }
 
     /// Lower a Halo2 expression into the quotient AST using generated data.
