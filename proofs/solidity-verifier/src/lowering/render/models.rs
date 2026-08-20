@@ -38,6 +38,20 @@ pub(crate) fn validate_phase_markers(
     rendered: &str,
     required: &[MemoryPhase],
 ) -> Result<(), String> {
+    // `IN_TEMPLATE_ORDER` is a hand-written array the compiler cannot check
+    // against the enum's variant list, and the scan below only looks for
+    // phases it contains. A required phase missing from it would therefore be
+    // skipped in silence -- exactly the drift this gate exists to catch, so
+    // reject that first.
+    for phase in required {
+        if !MemoryPhase::IN_TEMPLATE_ORDER.contains(phase) {
+            return Err(format!(
+                "required phase {phase:?} is absent from MemoryPhase::IN_TEMPLATE_ORDER; \
+                 the marker scan would skip it without checking"
+            ));
+        }
+    }
+
     let mut found: Vec<(usize, MemoryPhase)> = Vec::new();
     for phase in MemoryPhase::IN_TEMPLATE_ORDER {
         let marker = phase.marker();

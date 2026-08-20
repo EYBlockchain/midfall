@@ -372,21 +372,31 @@ fn assert_anchor(
 /// fixed-column variants of the same recognizer/selector shapes -- the
 /// `seven-limb foreign-field vm overflow` and `selector bucket gaps
 /// interleaved pow5` cases below.
-const ANCHOR_CASES: [&str; 6] = [
+const ANCHOR_CASES: [&str; 8] = [
     "next-rotation permutation",
     "second-phase lookup",
     "trash-additive selector with lookup",
     "degree-6 wide-permutation delta walk",
+    // The LogUp helper identity is `h * PROD_j (f_j + beta) - SUM_j PROD_{k!=j}`;
+    // with a single parallel input it collapses to `h - 1`, which exercises
+    // none of the prefix/suffix product structure. These two carry a split
+    // chunk vector and a second argument respectively, so the general form is
+    // anchored against the native verifier rather than only its degenerate
+    // case.
+    "parallel-lookup chunk split",
+    "two lookup arguments",
     "seven-limb foreign-field vm overflow",
     "selector bucket gaps interleaved pow5",
 ];
 
 #[test]
 fn native_anchor_matches_per_identity_trace() {
+    let mut anchored = 0usize;
     for case in curated_cases() {
         if !ANCHOR_CASES.contains(&case.name) {
             continue;
         }
+        anchored += 1;
         let context = format!("native anchor `{}`", case.name);
         let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
         let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x7ace_f00d);
@@ -403,4 +413,15 @@ fn native_anchor_matches_per_identity_trace() {
         let generator = SolidityGenerator::new(&params, pk.get_vk(), GeneratorConfig::new(1, 1));
         assert_anchor(&context, &generator, &events);
     }
+
+    // Name-based selection degrades silently if a corpus case is renamed:
+    // every case would be skipped and the anchor would pass having compared
+    // nothing.
+    assert_eq!(
+        anchored,
+        ANCHOR_CASES.len(),
+        "native anchor matched {anchored} of {} named corpus cases; a case was \
+         renamed or removed and its coverage vanished silently",
+        ANCHOR_CASES.len()
+    );
 }

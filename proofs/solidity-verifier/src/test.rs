@@ -407,7 +407,18 @@ fn trace_differential_smoke_fixed_shapes() {
     if !quotient_frame_differential_available() {
         return;
     }
-    for seed in [0x5eed_0001u64, 0x5eed_0002] {
+    // Seed bits pick the circuit's shape (see `generated_shape_fuzz_spec`):
+    // bit 2 permutation, bit 3 lookup, bit 4 additive selector (which is what
+    // produces a trash argument). Both seeds set all three, because this test
+    // is the per-PR tie between the generator's permutation/LogUp/trash
+    // identity formulas and the native verifier -- seeds without those
+    // arguments would exercise gates only and the tie would be vacuous.
+    for seed in [0x5eed_001du64, 0x5eed_003e] {
+        let spec = generated_shape_fuzz_spec(seed);
+        assert!(
+            spec.permutation && spec.lookup && spec.additive_selector,
+            "smoke seed {seed:#x} must carry permutation, lookup and trash arguments; got {spec:?}"
+        );
         run_transcript_differential_shape_fuzz_case(seed);
     }
 }

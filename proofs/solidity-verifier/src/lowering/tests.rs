@@ -2525,8 +2525,13 @@ fn vm_arms_snapshot_covers_every_opcode_and_token() {
     let snapshot = include_str!("../../templates/partials/quotient_numerator/vm_arms.snapshot.yul");
 
     for spec in QUOTIENT_VM_SPEC.opcodes {
-        // Opcode literals render even-width (0x01, 0x1c, ...).
-        let needle = format!("case 0x{:02x} {{", spec.opcode);
+        // Match the opcode arm's own line shape: it opens a block and ends
+        // there. A bare `case 0xNN {` needle also matches the memory-token
+        // sub-switch arms (`case 0x01 { q_ptr := L_0_MPTR }`), which are
+        // rendered one level deeper and carry their body inline -- so for
+        // opcodes 0x01..=0x09 the assertion would pass on a token arm even
+        // with the opcode's own arm missing.
+        let needle = format!("\n                    case 0x{:02x} {{\n", spec.opcode);
         assert!(
             snapshot.contains(&needle),
             "snapshot missing arm for opcode {} ({:#x})",
