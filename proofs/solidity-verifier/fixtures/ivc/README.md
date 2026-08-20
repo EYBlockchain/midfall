@@ -1,16 +1,5 @@
 # IVC Public-Accumulator Replay Fixture
 
-> **STALE — regeneration required before any deployment.** These artifacts were
-> rendered before the MF-1 fix (`MODEXP_GAS` raised to the EIP-7883 bound and a
-> constructor modexp known-answer probe added), so the committed `.sol` files
-> here still carry the old 1360 bound and no modexp probe. They remain valid
-> inputs for the *replay* tests, which exercise verification logic rather than
-> the modexp bound, but they must be regenerated (and their provenance rows
-> below updated) on a host with the pinned solc before they are used as a
-> deployment source. Regeneration needs the SRS asset
-> (`zk_stdlib/examples/assets/bls_filecoin_2p19`) and a full proving run, which
-> the environment that applied the MF-1 fix could not reach.
-
 Pre-rendered artifacts for `tests/ivc_accumulator_replay.rs`, which replays a
 real IVC final proof and then mutates the accumulator public inputs to check the
 decoder in `templates/partials/verifier/AccumulatorHelpers.yul` rejects them.
@@ -25,11 +14,11 @@ is what makes a vk.bin-based replay unusable in CI.
 
 | Field | Value |
 | --- | --- |
-| Source commit | `f894f75` |
+| Source commit | `f787a77c` |
 | Rendered by | `tests/ivc_keccak_solidity.rs` (`ivc_final_keccak_solidity_e2e`) |
 | Circuit | IVC k=19 leaves, k=20 decider |
 | Accumulator | `AccumulatorEncoding::new(offset=4, num_limbs=7, num_limb_bits=56)` |
-| Verified on-chain | yes, 1,365,883 gas under revm Prague (2026-08-13 render: exact precompile gas bounds, typed errors, VM operand clamps, BUILD_ID, alpha vk-binding; gas-checkpoint bench profile) |
+| Verified on-chain | yes, 1,346,886 gas under revm Prague (2026-08-20 render: MF-1..MF-4 fixes, EIP-7883 modexp bound + constructor probe, fallible cached lowering plan, pinned-external quotient render type, `__phase:` section markers) |
 
 ## Regenerating
 

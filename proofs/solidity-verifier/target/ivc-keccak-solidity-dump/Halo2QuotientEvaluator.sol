@@ -169,6 +169,7 @@ contract Halo2QuotientEvaluator {
                 let x2 := mulmod(x, x, q_r)
                 z := mulmod(x, mulmod(x2, x2, q_r), q_r)
             }
+            // __phase:quotient_vm
             // ===============================================================
             // Batched identity numerator / linearization target.
             //
@@ -470,6 +471,7 @@ contract Halo2QuotientEvaluator {
                         q_pc := add(q_pc, 2)
                         if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                         if q_has_top {
+                            if iszero(lt(q_sp, 0xbfa0)) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -583,6 +585,7 @@ contract Halo2QuotientEvaluator {
                         q_pc := add(q_pc, 5)
 
                         if q_has_top {
+                            if iszero(lt(q_sp, 0xbfa0)) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -714,7 +717,7 @@ contract Halo2QuotientEvaluator {
                         // stack. The Rust memory planner must reserve enough
                         // words for structured_permutation_scratch_words(meta)
                         // whenever this opcode can appear.
-                        q_sp := 0xb8e0
+                        if iszero(eq(q_sp, 0xb8e0)) { q_program_fail() }
                         // The generated lines below call the same fold snippets
                         // used by interpreted expressions, so trace IDs and
                         // y-batch positions remain contiguous.
@@ -830,7 +833,7 @@ contract Halo2QuotientEvaluator {
                         // f+beta/prefix/suffix scratch rather than as a
                         // conventional VM stack. The Rust memory planner must
                         // reserve structured_lookup_scratch_words(meta).
-                        q_sp := 0xb8e0
+                        if iszero(eq(q_sp, 0xb8e0)) { q_program_fail() }
                         // Generated LogUp code follows the same y-batch order
                         // as the Rust identity stream.
                         {
@@ -1022,7 +1025,7 @@ contract Halo2QuotientEvaluator {
                         // interpreter stack before dispatching.
                         q_top := 0
                         q_has_top := 0
-                        q_sp := 0xb8e0
+                        if iszero(eq(q_sp, 0xb8e0)) { q_program_fail() }
                         // Native identity sub-cases are generated from selected heavy gate identities.
                         switch q_native_idx
                         case 0 {
@@ -1318,6 +1321,7 @@ contract Halo2QuotientEvaluator {
                         // are codegen-known sizes, so clamp before the writes.
                         if iszero(lt(q_sel_idx, 10)) { q_program_fail() }
                         if gt(q_sel_gap, 0x30) { q_program_fail() }
+                        if iszero(q_has_top) { q_program_fail() }
                         let q_eval := q_top
                         q_has_top := 0
                         // Simple-selector identity: keep the same y-batch
@@ -1615,6 +1619,7 @@ contract Halo2QuotientEvaluator {
             // Return the compact output frame. Halo2Verifier checks the magic,
             // stores word 1 as the linearization expected eval, then expands
             // selector buckets into the fused final PCS MSM.
+            // __phase:quotient_return
             mstore(QUOTIENT_OUTPUT_MPTR, QUOTIENT_MAGIC)
             mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(QUOTIENT_EVAL_MPTR))
             // Copy selector buckets from the generated absolute memory region

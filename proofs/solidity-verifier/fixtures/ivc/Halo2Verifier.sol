@@ -50,7 +50,10 @@ contract Halo2Verifier {
     // verifyProof is success-or-revert; these errors let integrators and
     // incident responders distinguish malformed calldata from a swapped VK,
     // a non-canonical scalar, a failed precompile, or a rejected proof.
-    // Constructor smoke probes intentionally keep bare reverts.
+    // Constructor smoke probes intentionally keep bare reverts -- they report
+    // a chain-capability failure, and the deployment transaction identifies
+    // itself. The one constructor exception is the memory-layout guard
+    // (MF-2), which reports a BUILD fault and is typed on both paths.
     // ----------------------------------------------------------------------
     /// @notice Calldata does not match the generated ABI shape (heads,
     ///         lengths, instance count, or exact calldatasize).
@@ -72,6 +75,12 @@ contract Halo2Verifier {
     ///         invariant (bad opcode, operand out of window, stack misuse,
     ///         or evaluator frame mismatch).
     error QuotientProgramInvalid();
+    /// @notice solc's stack-spill reservation overlaps the generated absolute
+    ///         memory layout. This is a BUILD fault, not a proof fault: the
+    ///         artifact was compiled with a (version, optimiser) pair whose
+    ///         free-memory pointer starts at or above TRANSCRIPT_MPTR, so no
+    ///         input can ever verify. Redeploy from the pinned toolchain.
+    error MemoryLayoutViolated();
 
     
     /// @notice Verifying-key contract address authorized for this verifier.
@@ -85,12 +94,12 @@ contract Halo2Verifier {
     uint256 internal constant EXPECTED_VK_CODEHASH_WORD = 0x67bac137fa7e479c25b63324812752e4b6e13d9841d5bf83c322170bf91c0f88;
     bytes32 internal constant EXPECTED_VK_CODEHASH = bytes32(EXPECTED_VK_CODEHASH_WORD);
     /// @notice Quotient evaluator contract authorized for split quotient reconstruction.
-    /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime may be pinned by generated constants.
+    /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime is pinned by generated constants.
     address public immutable AUTHORIZED_QUOTIENT;
     // Expected split evaluator runtime metadata. It is checked at deployment
     // and again immediately before each external quotient reconstruction.
-    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = 9790;
-    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = 0x7e72c7c5d6fe845370d9431aaa590ab2cd62ca703c3d5b2a862bdb9937195814;
+    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = 9848;
+    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = 0x38aa196503a12b7256a838dc03ea4ef1cae518f9c0ad5151c1c5b887de4d5ce3;
     bytes32 internal constant EXPECTED_QUOTIENT_CODEHASH = bytes32(EXPECTED_QUOTIENT_CODEHASH_WORD);
 
     // Solidity ABI calldata cursors. The generated verifier accepts exactly
@@ -233,7 +242,8 @@ contract Halo2Verifier {
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0xaf40;
 
     // ----------------------------------------------------------------------
-    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
+    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the
+    // maximum over the EIP-2565 and EIP-7883 schedules.
     //
     // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
     // STATICCALL, so every generated call site forwards the exact scheduled
@@ -243,15 +253,23 @@ contract Halo2Verifier {
     // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
     // by construction on any conformant chain.
     //
-    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
-    // this verifier must be regenerated and redeployed. The constructor
-    // smoke probes forward the same bounds, so deployment onto an
+    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this
+    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and
+    // prices it at 4080, so the larger bound is rendered. Forwarding the
+    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is
+    // returned -- while forwarding the EIP-2565 bound on a repriced chain
+    // reverts every proof.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles above the
+    // bounds below, this verifier must be regenerated and redeployed. The
+    // constructor smoke probes forward the same bounds for EVERY precompile
+    // the runtime calls, modexp included, so deployment onto an
     // already-repriced chain fails fast instead of bricking at proof time.
     // ----------------------------------------------------------------------
     uint256 internal constant          G1ADD_GAS = 375;
     uint256 internal constant   G1MSM_GAS_1PAIR = 12000;
     uint256 internal constant PAIRING_GAS_2PAIR = 102900;
-    uint256 internal constant        MODEXP_GAS = 1360;
+    uint256 internal constant        MODEXP_GAS = 4080;
     // Exact cost of the deployment-time worst-case G1MSM smoke probe.
     uint256 internal constant G1MSM_GAS_SMOKE = 525096;
     // Worst-case accumulator RHS MSM: carried RHS point plus every generated
@@ -269,7 +287,7 @@ contract Halo2Verifier {
     ///      The deployment record must publish these preimage components so
     ///      third parties can recompute the id; see
     ///      docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md.
-    bytes32 public constant BUILD_ID = 0x5c2e8be9a8dc4e220b823ce41569f6a757baefeed4df0a04ef5e67db74b36d27;
+    bytes32 public constant BUILD_ID = 0xcac63429fbd8833ae32ee2fa8d63109cdae7e99b8487af78c539f1cabf58cc22;
 
     // ----------------------------------------------------------------------
     // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
@@ -285,6 +303,7 @@ contract Halo2Verifier {
     uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
     uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
     uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;
 
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.
@@ -301,18 +320,29 @@ contract Halo2Verifier {
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffbafeffffffffaaaa;
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_1 = 0x0000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84;
 
-        /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
-    /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
-    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
-    ///      uses (see the gas-bound constants block), so a chain whose
-    ///      precompile schedule was repriced upward fails here, at deployment,
-    ///      instead of bricking verifyProof later.
+        /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features required by the verifier.
+    /// @dev Exercises MCOPY, modexp, and EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+    ///      The probes forward the same exact gas bounds the runtime uses, for
+    ///      every precompile it calls -- 0x05 modexp included (see the
+    ///      gas-bound constants block) -- so a chain whose precompile schedule
+    ///      was repriced above those bounds fails here, at deployment, instead
+    ///      of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
+        // __phase:constructor_smoke
         assembly ("memory-safe") {
             // Same free-memory-pointer guard as verifyProof. This body runs in
             // the *creation* frame, which the generator's memoryguard test does
             // not inspect (it parses the runtime prologue only).
-            if gt(mload(0x40), 0x1000) { revert(0, 0) }
+            //
+            // MF-2: typed like the runtime guard, and for a stronger reason.
+            // The runtime guard turns a bad recompile into a revert on every
+            // proof; this one turns it into a failed DEPLOYMENT, which is
+            // where a build fault belongs. The probes below keep bare reverts
+            // (a chain-capability failure, not a build fault).
+            if gt(mload(0x40), 0x1000) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
             // Scratch is reused for every runtime-prerequisite probe.
             let scratch := 0x1000
@@ -324,8 +354,39 @@ contract Halo2Verifier {
             mcopy(add(scratch, 0x20), scratch, 0x20)
             if iszero(eq(mload(add(scratch, 0x20)), 0x1234)) { revert(0, 0) }
 
+            // ----------------------------------------------------------------
+            // modexp (0x05) known-answer probe at the pinned runtime bound.
+            //
+            // MF-1: every other precompile the runtime calls was probed here,
+            // but modexp -- which the MANDATORY Lagrange batch inversion and
+            // every scalar_inv call depend on -- was not. Two live schedules
+            // price this frame differently (EIP-2565: 1360, EIP-7883: 4080),
+            // and a bound below the chain's price does not degrade: the
+            // staticcall forwards a fixed amount, the precompile OOGs, and
+            // EVERY proof reverts PrecompileFailed. Without this probe that
+            // failure is invisible until the first verifyProof call, on a
+            // contract that deployed cleanly.
+            //
+            // The vector is the runtime's own operation -- Fermat inversion
+            // in Fr -- so it exercises the exact frame shape, exponent width,
+            // and gas bound used at proof time: 2^(FR_MODULUS - 2) == 2^-1.
+            // Checking mulmod(result, 2, FR_MODULUS) == 1 rather than a
+            // rendered constant keeps the probe self-contained while still
+            // rejecting a stub: a precompile returning zeros (or its input)
+            // fails, since 0 * 2 != 1 mod r.
+            // ----------------------------------------------------------------
+            mstore(add(scratch, 0x00), 0x20)        // base len
+            mstore(add(scratch, 0x20), 0x20)        // exp len
+            mstore(add(scratch, 0x40), 0x20)        // mod len
+            mstore(add(scratch, 0x60), 2)
+            mstore(add(scratch, 0x80), sub(FR_MODULUS, 2))
+            mstore(add(scratch, 0xa0), FR_MODULUS)
+            if iszero(staticcall(MODEXP_GAS, 0x05, scratch, 0xc0, scratch, 0x20)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+            if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }
+
             // Start the EIP-2537 probes with the identity encoding for G1/G2:
-            // all-zero padded words.
+            // all-zero padded words. This also clears the modexp frame above.
             for { let off := 0 } lt(off, 0x0300) { off := add(off, 0x20) } {
                 mstore(add(scratch, off), 0)
             }
@@ -554,7 +615,7 @@ contract Halo2Verifier {
     function verifyProof(
         bytes calldata proof,
         uint256[] calldata instances
-    ) external returns (bool) {
+    ) external view returns (bool) {
         // Cheap ABI-shape guard before any generated memory work:
         //   - proof head must point at the bytes payload;
         //   - instances head must point at the generated instance array.
@@ -586,7 +647,28 @@ contract Halo2Verifier {
             // reservation is compiler-version and optimiser dependent, so
             // assert the invariant in the deployed bytecode instead of relying
             // on a generator-side test the integrator never runs. ~6 gas.
-            if gt(mload(0x40), TRANSCRIPT_MPTR) { revert(0, 0) }
+            //
+            // MF-12: by the letter of Solidity's memory-safety contract this
+            // annotation is a lie -- the block writes memory it never
+            // allocated through the free-memory pointer. Three properties
+            // make it safe HERE, and all three must hold together: this
+            // block is terminal (no Solidity executes after it), the pragma
+            // is pinned so codegen cannot shift underneath it, and the guard
+            // below fails closed if the spill reservation ever reaches the
+            // generated layout. Lifting this body into a non-terminal
+            // context, or unpinning the pragma, invalidates the annotation.
+            //
+            // MF-2: this is the only on-chain guard against a recompile that
+            // silently moves the spill region, and the failure it catches is
+            // permanent (no input can verify). `fail()` is not in scope this
+            // early, so write the MemoryLayoutViolated() selector inline
+            // rather than reverting bare -- an empty revert here is
+            // indistinguishable from every other empty revert, which is
+            // exactly the wrong signal for a build fault.
+            if gt(mload(0x40), TRANSCRIPT_MPTR) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
             // This block owns the call-frame memory and remains terminal.
             // Generated scratch starts at TRANSCRIPT_MPTR, preserving
@@ -736,7 +818,16 @@ contract Halo2Verifier {
             // The function returns a boolean instead of reverting so callers
             // can combine it with other `success` plumbing until a section
             // boundary decides whether to fail closed.
-            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
+            //
+            // MF-4: the second return value separates a FAILED PRECOMPILE
+            // (staticcall reverted / OOG'd / returned the wrong size -- a
+            // chain or gas-schedule fault) from a REJECTED INPUT (a zero or
+            // non-canonical denominator, which for the Lagrange batch means
+            // the squeezed x landed on a domain point). Both fail closed at
+            // the section boundary, but they are different incidents and used
+            // to surface under the same PrecompileFailed selector, pointing
+            // responders at the node when the transcript was the cause.
+            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
                 ret := success
                 if iszero(ret) { leave }
                 // Memory ranges must be forward and word-aligned by
@@ -775,6 +866,7 @@ contract Halo2Verifier {
                     mstore(add(single_scratch, 0xa0), r)
                     ret := staticcall(MODEXP_GAS, 0x05, single_scratch, 0xc0, single_scratch, 0x20)
                     ret := and(ret, eq(returndatasize(), 0x20))
+                    precompile_failed := iszero(ret)
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
                 }
@@ -825,6 +917,7 @@ contract Halo2Verifier {
                 mstore(add(gp_mptr, 0xa0), r)
                 ret := staticcall(MODEXP_GAS, 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
+                precompile_failed := iszero(ret)
                 // Leave before the backward pass on a failed modexp. A failed
                 // staticcall writes no output, so `mload(gp_mptr)` would read
                 // back the stale frame header and the pass below would
@@ -872,13 +965,20 @@ contract Halo2Verifier {
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
+                // MF-4: separate "the chain could not run the pairing" from
+                // "the pairing ran and rejected this proof". Both fail closed,
+                // but they are different incidents: the first points at the
+                // node/fork (a missing, repriced, or short-returning
+                // precompile), the second at the proof. Collapsing them into
+                // ProofRejected sent every responder looking at the wrong one.
                 ret := staticcall(PAIRING_GAS_2PAIR, 0x0f, scratch, 0x0300, scratch, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
+                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }
                 // Compare against 1 rather than truncating to the low bit:
                 // `and(ret, word)` would accept any odd result word. EIP-2537
                 // only ever returns 0 or 1, so this matches the strict form
                 // the constructor smoke test already uses.
-                ret := and(ret, eq(mload(scratch), 1))
+                ret := eq(mload(scratch), 1)
                 if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 ret := 1
             }
@@ -1131,7 +1231,13 @@ contract Halo2Verifier {
             // carried-scalar and fixed-base-tail arms; renders whose
             // accumulator layout has neither (e.g. point_pair with no tail)
             // legally leave it unused.
-            function validate_public_accumulator(success, r) -> out {
+            // MF-4: `precompile_failed` separates a G1MSM staticcall that
+            // could not run (chain/gas fault) from a public-input point this
+            // verifier decoded and rejected (bad packing, out-of-field
+            // coordinate, non-canonical identity encoding, or a point the
+            // precompile found off-curve/out-of-subgroup). Both fail closed at
+            // the call site; only the second is a BadPointEncoding.
+            function validate_public_accumulator(success, r) -> out, precompile_failed {
                 out := success
                 let bits := 56
                 let n := 7
@@ -1180,6 +1286,7 @@ contract Halo2Verifier {
                         // is also a curve/subgroup validation round-trip.
                         out := staticcall(G1MSM_GAS_1PAIR, 0x0c, acc_scratch, 0xa0, ACC_LHS_MPTR, 0x80)
                         out := and(out, eq(returndatasize(), 0x80))
+                        precompile_failed := iszero(out)
                     }
                 }
                 // RHS layout for this generated verifier is fully collapsed:
@@ -1236,6 +1343,7 @@ contract Halo2Verifier {
                             0x80
                         )
                         out := and(out, eq(returndatasize(), 0x80))
+                        precompile_failed := iszero(out)
                     }
                 }
                 // The caller checks `out` and reverts before transcript work if
@@ -1243,20 +1351,11 @@ contract Halo2Verifier {
             }
 
     
-            // Section-boundary gas-attribution checkpoint. Emits a
-            // single LOG1 (no data) with topic = (id << 248) | gas().
-            // Cost: 375 (LOG base) + 375 (1 topic) = 750 gas/call.
-            // Host-side parses the topic into (id, gas_left) and prints
-            // pairwise deltas (see `dump_gas_checkpoints`).
-            function gas_checkpoint(id) {
-                log1(0, 0, or(shl(248, id), gas()))
-            }
 
             let r := FR_MODULUS
             let success := true
 
     
-            gas_checkpoint(1) // entry: before VK loading
 
             // ===============================================================
             // VK loading: either bake in the embedded VK bytes or fetch
@@ -1330,6 +1429,7 @@ contract Halo2Verifier {
                 // is not exactly the generated one.
                 if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }
             }
+            // __phase:accumulator_msm
             // Fail malformed accumulator public inputs before transcript,
             // quotient, PCS, and final pairing work. The late accumulator block
             // only batches these already-validated G1 outputs into the final
@@ -1343,11 +1443,17 @@ contract Halo2Verifier {
             // validate_public_accumulator returns a boolean to share the same
             // success-plumbing style as other helper calls; this boundary is
             // where the verifier converts failure to a revert.
-            success := validate_public_accumulator(success, r)
-            if iszero(success) { fail(ERR_BAD_POINT_ENCODING) }
-            gas_checkpoint(2) // after VK loading + accumulator public-input precheck
+            let acc_precompile_failed := 0
+            success, acc_precompile_failed := validate_public_accumulator(success, r)
+            if iszero(success) {
+                // MF-4: a G1MSM that could not run at all is a chain fault,
+                // not a malformed accumulator point.
+                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_BAD_POINT_ENCODING)
+            }
 
-                // ===============================================================
+                // __phase:transcript
+            // ===============================================================
             // Transcript: VK digest + instances + proof.
             //
             // This block is the Solidity mirror of the native Midfall verifier
@@ -1416,7 +1522,6 @@ contract Halo2Verifier {
                 }
                 if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
             }
-            gas_checkpoint(3) // after VK digest + committed_pi + instance absorbs
 
             // ===============================================================
             // Per-user-phase reads + challenge squeezes.
@@ -1454,7 +1559,6 @@ contract Halo2Verifier {
                 advice_walk := add(advice_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(4) // after user-phase advice reads + user challenge squeezes
 
             // ---- theta ----
             // From this point onward the transcript alternates between
@@ -1474,7 +1578,6 @@ contract Halo2Verifier {
                 lookup_m_walk := add(lookup_m_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(5) // after theta squeeze + lookup multiplicities
 
             // ---- beta, gamma ----
             // beta and gamma are the permutation/lookup randomizers. They are
@@ -1494,7 +1597,6 @@ contract Halo2Verifier {
                 perm_z_walk := add(perm_z_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(6) // after beta/gamma + permutation Z products
             // ---- lookup helpers + accumulators (per-lookup) ----
             // Each lookup contributes zero or more helper commitments followed
             // by its lookup accumulator Z commitment. The generated layout keeps
@@ -1535,7 +1637,6 @@ contract Halo2Verifier {
             calldatacopy(lookup_z_walk, proof_cptr, 0x80)
             lookup_z_walk := add(lookup_z_walk, 0x80)
             proof_cptr := add(proof_cptr, 0x80)
-            gas_checkpoint(7) // after lookup helpers + Z accumulators
 
             // ---- trash_challenge ----
             // Midnight squeezes this challenge unconditionally, even when the
@@ -1555,7 +1656,6 @@ contract Halo2Verifier {
                 trashcan_walk := add(trashcan_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(8) // after trash_challenge + trashcans
 
             // ---- y ----
             // y batches all quotient identities. Quotient commitments are read
@@ -1579,7 +1679,6 @@ contract Halo2Verifier {
                 quotient_walk := add(quotient_walk, 0x80)
                 proof_cptr := add(proof_cptr, 0x80)
             }
-            gas_checkpoint(9) // after y squeeze + quotient-limb reads
 
             // ---- x ----
             // x is the main evaluation point. Values read after this point are
@@ -1688,11 +1787,15 @@ contract Halo2Verifier {
             // `success` carries deferred canonicality failures from public
             // instance reads. G1/proof scalar helpers revert immediately.
             if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
-            gas_checkpoint(10) // after evaluations + x1/x2 + f_com + x3 + q_evals + x4 + pi (transcript done)
 
-                // ===============================================================
+                // __phase:lagrange_batch_invert
+            // ===============================================================
             // Lagrange & instance-evaluation block (pure Fr arithmetic).
             // ===============================================================
+            // MF-4: hoisted so the section boundary below can tell a failed
+            // modexp (chain fault) from a rejected denominator (x landed on a
+            // domain point) instead of reporting both as PrecompileFailed.
+            let lagrange_precompile_failed := 0
             {
                 let k := 20
                 let x := mload(X_MPTR)
@@ -1720,7 +1823,7 @@ contract Halo2Verifier {
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+                success, lagrange_precompile_failed := batch_invert(success, LAGRANGE_DENOMS_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
 
                 // Convert inverted denominators into Lagrange evaluations:
                 // L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i).
@@ -1770,9 +1873,14 @@ contract Halo2Verifier {
                 mstore(L_0_MPTR, l_0)
                 mstore(INSTANCE_EVAL_MPTR, instance_eval)
             }
-            gas_checkpoint(11) // after Lagrange + instance evaluation block
 
-            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
+            if iszero(success) {
+                // A zero or non-canonical denominator is a rejected input,
+                // not a broken chain: the only way to reach it is a squeezed
+                // x that coincides with a domain point (probability ~n/r).
+                if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_PROOF_REJECTED)
+            }
 
     
             // ===============================================================
@@ -1814,7 +1922,6 @@ contract Halo2Verifier {
                     mstore(add(SELECTOR_ACC_MPTR, shl(5, q_i)), mload(add(q_out, add(0x40, shl(5, q_i)))))
                 }
             }
-            gas_checkpoint(12) // after batched identity numerator reconstruction
 
             // ===============================================================
             // Prepare linearization scalars for the final PCS MSM.
@@ -1856,7 +1963,6 @@ contract Halo2Verifier {
                 mstore(QUOTIENT_MPTR, x_split)
                 mstore(add(QUOTIENT_MPTR, 0x20), one_minus_x_n)
             }
-            gas_checkpoint(13) // after linearization scalar prep
 
                 // ===============================================================
             // PCS computation (multi-prepare emitter from Step 5).
@@ -1895,7 +2001,6 @@ contract Halo2Verifier {
                     x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, r)
                     mstore(add(ROT_POINTS_MPTR, 0x0), x_pow_of_omega)
                 }
-                gas_checkpoint(17) // after PCS sub-block 1
                 // Generated PCS sub-block 2. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -1911,12 +2016,12 @@ contract Halo2Verifier {
                         mstore(p, and(acc, 0xffffffffffffffffffffffffffffffff))
                     }
                 }
-                gas_checkpoint(18) // after PCS sub-block 2
                 // Generated PCS sub-block 3. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
                     // q_eval_set[0]: 43 evaluation term(s), 42 commitment term(s) (rolled, m>=4)
+                    // __phase:pcs_q_eval_source_table
                     // stage per-(commit, rotation) eval source addresses
                     mstore(0xb280, 0x9980)
                     mstore(0xb2a0, 0x9480)
@@ -1972,7 +2077,6 @@ contract Halo2Verifier {
                     }
                     mstore(add(Q_EVAL_SET_MPTR, 0x0), q_eval_set_0)
                 }
-                gas_checkpoint(19) // after PCS sub-block 3
                 // Generated PCS sub-block 4. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -1987,7 +2091,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x20), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x40), q_eval_set_1)
                 }
-                gas_checkpoint(20) // after PCS sub-block 4
                 // Generated PCS sub-block 5. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -2002,7 +2105,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x60), q_eval_set_0)
                     mstore(add(Q_EVAL_SET_MPTR, 0x80), q_eval_set_1)
                 }
-                gas_checkpoint(21) // after PCS sub-block 5
                 // Generated PCS sub-block 6. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -2059,7 +2161,6 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0xc0), q_eval_set_1)
                     mstore(add(Q_EVAL_SET_MPTR, 0xe0), q_eval_set_2)
                 }
-                gas_checkpoint(22) // after PCS sub-block 6
                 // Generated PCS sub-block 7. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
@@ -2098,11 +2199,11 @@ contract Halo2Verifier {
                     mstore(add(Q_EVAL_SET_MPTR, 0x120), q_eval_set_1)
                     mstore(add(Q_EVAL_SET_MPTR, 0x140), q_eval_set_2)
                 }
-                gas_checkpoint(23) // after PCS sub-block 7
                 // Generated PCS sub-block 8. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
+                    // __phase:scalar_inv
                     // f_eval via Horner over 5 reversed set(s)
                     let x2 := mload(X2_MPTR)
                     let x3 := mload(X3_MPTR)
@@ -2267,11 +2368,11 @@ contract Halo2Verifier {
                     }
                     mstore(F_EVAL_MPTR, f_eval)
                 }
-                gas_checkpoint(24) // after PCS sub-block 8
                 // Generated PCS sub-block 9. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
+                    // __phase:pcs_final_msm
                     // build final_com and v (KZG single-opening proof, fused MSM)
                     // final MSM input length from circuit/VK shape: 78 term(s)
                     let x4 := mload(X4_MPTR)
@@ -2463,11 +2564,11 @@ contract Halo2Verifier {
                     }
                     mstore(V_MPTR, v)
                 }
-                gas_checkpoint(25) // after PCS sub-block 9
                 // Generated PCS sub-block 10. These lines are
                 // emitted by the multi-prepare lowering pass and are kept
                 // grouped so gas checkpoints can attribute their cost.
                 {
+                    // __phase:pcs_pairing
                     // Scale z*pi - vG before the final pairing check
                     // pairing inputs (LHS = pi; RHS = final_com - v*G + x3*pi)
                     mcopy(PAIRING_LHS_MPTR, PI_MPTR, 0x80)
@@ -2495,7 +2596,6 @@ contract Halo2Verifier {
                     mcopy(PAIRING_RHS_MPTR, 0x1000, 0x80)
                 }
             }
-            gas_checkpoint(14) // after PCS computation block (= sub-block 6)
 
                 // Batch the prevalidated public IVC accumulator pairing equation
             // into the final KZG pairing.
@@ -2510,6 +2610,7 @@ contract Halo2Verifier {
             //
             // If either original equation is bad, this combined equation
             // holds for at most one alpha in Fr.
+            // __phase:accumulator_pairing_batch
             {
                 let batch_ptr := 0x1000
 
@@ -2557,7 +2658,6 @@ contract Halo2Verifier {
                     success := and(success, eq(returndatasize(), 0x80))
                 }
             }
-            gas_checkpoint(15) // after public accumulator pairing batch prep (omitted for no-accumulator VKs)
 
             // The Yul `ec_pairing` helper checks
             //   e(arg0, G2_BASE) * e(arg1, NEG_S_G2_BASE) == 1
@@ -2572,9 +2672,9 @@ contract Halo2Verifier {
             // -- the historical "LHS"/"RHS" naming follows the dual MSM
             // accumulator (left = pi, right = combined) and *not* the
             // pairing argument order. Pass them swapped to ec_pairing.
+            // __phase:final_pairing
             if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
-            gas_checkpoint(16) // after final ec_pairing
 
     
 
@@ -2586,6 +2686,7 @@ contract Halo2Verifier {
             // property of this file instead of an invariant split across
             // FinalPairing.yul and ec_pairing.
             if iszero(success) { fail(ERR_PROOF_REJECTED) }
+            // __phase:verifier_return
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)
         }
