@@ -50,4 +50,7 @@ pub(crate) use quotient_numerator::vm::RepackedProofScalarLayout;
 pub(crate) mod test_circuits;
 
 #[cfg(test)]
+mod transcript_anchor;
+
+#[cfg(test)]
 mod tests;
