@@ -12,6 +12,9 @@ mod builder;
 mod evm;
 mod lowering;
 
+#[cfg(test)]
+mod shape_corpus;
+
 #[cfg(all(test, feature = "evm"))]
 mod test;
 

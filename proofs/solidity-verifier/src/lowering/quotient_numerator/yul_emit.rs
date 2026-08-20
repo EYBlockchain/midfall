@@ -116,19 +116,14 @@ impl<'a> Evaluator<'a> {
         self.compress_expressions(expressions, challenge_var)
     }
 
-    /// Emit a shared-prefix optimization for parallel lookup inputs.
+    /// Whether the shared-prefix parallel-lookup optimization applies to one
+    /// chunk, returning the adjacent tail-eval base pointer when it does.
     ///
-    /// When every parallel input has the same prefix and its final limb is laid
-    /// out in adjacent memory words, the generated Yul evaluates the prefix
-    /// once and loops over the tails. This mirrors LogUp's θ-compression while
-    /// avoiding repeated arithmetic in wide range-check lookups.
-    pub(crate) fn lookup_shared_prefix_f_plus_beta(
-        &self,
-        input_chunk: &[Vec<Expression<Fq>>],
-        challenge_var: &str,
-        beta_var: &str,
-        f_plus_beta_mptr: &str,
-    ) -> Option<Vec<String>> {
+    /// This is the single dispatch rule shared by the emitter
+    /// ([`Self::lookup_shared_prefix_f_plus_beta`]) and the shape-corpus
+    /// lookup-arm census, so the census cannot drift from what the emitter
+    /// actually generates.
+    fn lookup_shared_prefix_base_ptr(&self, input_chunk: &[Vec<Expression<Fq>>]) -> Option<usize> {
         if input_chunk.len() < 3 {
             return None;
         }
@@ -155,6 +150,35 @@ impl<'a> Evaluator<'a> {
                 return None;
             }
         }
+        Some(base_ptr)
+    }
+
+    /// Whether [`Self::lookup_shared_prefix_f_plus_beta`] would emit the
+    /// shared-prefix loop for this chunk.
+    #[cfg(test)]
+    pub(crate) fn lookup_shared_prefix_applicable(
+        &self,
+        input_chunk: &[Vec<Expression<Fq>>],
+    ) -> bool {
+        self.lookup_shared_prefix_base_ptr(input_chunk).is_some()
+    }
+
+    /// Emit a shared-prefix optimization for parallel lookup inputs.
+    ///
+    /// When every parallel input has the same prefix and its final limb is laid
+    /// out in adjacent memory words, the generated Yul evaluates the prefix
+    /// once and loops over the tails. This mirrors LogUp's θ-compression while
+    /// avoiding repeated arithmetic in wide range-check lookups.
+    pub(crate) fn lookup_shared_prefix_f_plus_beta(
+        &self,
+        input_chunk: &[Vec<Expression<Fq>>],
+        challenge_var: &str,
+        beta_var: &str,
+        f_plus_beta_mptr: &str,
+    ) -> Option<Vec<String>> {
+        let base_ptr = self.lookup_shared_prefix_base_ptr(input_chunk)?;
+        let first = input_chunk.first()?;
+        let prefix_len = first.len().checked_sub(1)?;
 
         let mut lines = Vec::new();
         let (mut prefix_lines, prefix_var) =

@@ -178,6 +178,19 @@ jobs:
 
       # Codegen/layout tests compile Solidity; the heavy proof/EVM cases
       # self-skip because HALO2_SOLIDITY_RUN_EVM_TESTS is unset here.
+      #
+      # Two suites run unconditionally in this job (audit finding F1 — the
+      # env-gated suites silently never running was the finding):
+      #   * the quotient frame differential
+      #     (`quotient_frame_differential_*`, gated on the pinned solc
+      #     alone), which certifies the compiled production evaluator
+      #     against the expression oracle for every shape-corpus case; and
+      #   * the tier-1 shape-corpus certification (`shape_corpus_*`), which
+      #     needs no solc at all.
+      # Beware the cargo-test trap: a name filter that matches zero tests
+      # exits 0, so job health must never rest on a filtered invocation.
+      # Proving-tier corpus tests follow the `pbt_` naming convention and
+      # run in the release EVM job below.
       - name: Install pinned solc
         run: |
           echo "SOLC=$(proofs/solidity-verifier/scripts/install_pinned_solc.sh "$SOLC_INSTALL_DIR" | tail -1)" >> "$GITHUB_ENV"
@@ -196,6 +209,9 @@ jobs:
     env:
       SOLC_INSTALL_DIR: ${{ github.workspace }}/.solc
       HALO2_SOLIDITY_RUN_EVM_TESTS: 1
+      # Deeper frame sampling for the release-profile quotient differentials;
+      # the per-PR debug job keeps the default of 3 frames per case.
+      HALO2_SOLIDITY_QUOTIENT_FRAMES: "16"
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -218,9 +234,20 @@ jobs:
           cache-on-failure: true
           shared-key: "ci"
 
-      # Adversarial property tests: proof/VK/calldata mutations, non-canonical
-      # scalar and G1 rejection, EIP-170 runtime size, and the memoryguard
-      # overlap check against real compiled bytecode.
+      # Adversarial property tests over real compiled bytecode: structured
+      # proof/VK/calldata mutation suites, the full shape-corpus
+      # prove+deploy e2e (`pbt_supported_shape_circuit_fuzz_e2e`), the
+      # random-shape quotient frame differential
+      # (`pbt_quotient_frame_differential_random_shapes`), and the
+      # transcript differential fuzzer. The `pbt_` literal is the naming
+      # convention for env-gated corpus tests; ONLY tests carrying that
+      # prefix run here — the non-`pbt_` adversarial suites (non-canonical
+      # scalar/G1 rejection, EIP-170 runtime size, the memoryguard overlap
+      # check) are env-gated but not matched by this filter and currently
+      # run in no job (audit item F1/P0.1 in
+      # proofs/solidity-verifier/docs/plans/REDESIGN_PROPOSALS_2026-08.md).
+      # Beware the cargo-test trap: a filter matching zero tests exits 0, so
+      # renaming a `pbt_` test silently drops it from this job.
       - name: Real EVM property tests
         run: cargo test -p halo2_solidity_verifier --release --all-features pbt_ -- --nocapture
 

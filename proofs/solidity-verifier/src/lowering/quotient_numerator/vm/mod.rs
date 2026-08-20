@@ -53,6 +53,8 @@
 //! into a VK runtime.
 
 pub(crate) mod certify;
+#[cfg(test)]
+pub(crate) mod oracle;
 pub(crate) mod reference;
 
 use std::collections::{HashMap, HashSet};
@@ -377,49 +379,53 @@ pub(crate) struct QuotientExecutionManifestEntry {
 }
 
 impl QuotientProgramPlan {
-    /// Reconstruct the generated execution stream back into per-identity folds.
+    /// Walk every identity in generated execution order with the surface that
+    /// folds it.
     ///
     /// Native markers and structured tails are expanded to the exact identity
-    /// ranges they replace. This is the compiler-correctness bridge between the
-    /// source identity stream and the mixed VM/native/direct execution plan.
-    pub(crate) fn execution_manifest(&self) -> Result<Vec<QuotientExecutionManifestEntry>, String> {
+    /// ranges they replace. This single walk backs both the public execution
+    /// manifest and the frame-differential oracle, so the two cannot disagree
+    /// about which surface executes an identity.
+    pub(crate) fn identities_in_execution_order(
+        &self,
+    ) -> Result<Vec<(&QuotientIdentity, QuotientExecutionKind)>, String> {
         let mut out = Vec::new();
         for identity in &self.inline_identities {
-            out.push(quotient_execution_entry(
-                identity,
-                QuotientExecutionKind::Inline,
-            ));
+            out.push((identity, QuotientExecutionKind::Inline));
         }
 
         for item in &self.items {
             match item {
-                QuotientProgramItem::Identity(identity) => out.push(quotient_execution_entry(
-                    identity,
-                    QuotientExecutionKind::Interpreted,
-                )),
+                QuotientProgramItem::Identity(identity) => {
+                    out.push((identity, QuotientExecutionKind::Interpreted))
+                }
                 QuotientProgramItem::NativePermutation => {
                     if self.native_permutation_identities.is_empty() {
                         return Err(
                             "native permutation marker has empty identity range".to_string()
                         );
                     }
-                    out.extend(self.native_permutation_identities.iter().map(|identity| {
-                        quotient_execution_entry(identity, QuotientExecutionKind::NativePermutation)
-                    }));
+                    out.extend(
+                        self.native_permutation_identities
+                            .iter()
+                            .map(|identity| (identity, QuotientExecutionKind::NativePermutation)),
+                    );
                 }
                 QuotientProgramItem::NativeLookup => {
                     if self.native_lookup_identities.is_empty() {
                         return Err("native lookup marker has empty identity range".to_string());
                     }
-                    out.extend(self.native_lookup_identities.iter().map(|identity| {
-                        quotient_execution_entry(identity, QuotientExecutionKind::NativeLookup)
-                    }));
+                    out.extend(
+                        self.native_lookup_identities
+                            .iter()
+                            .map(|identity| (identity, QuotientExecutionKind::NativeLookup)),
+                    );
                 }
                 QuotientProgramItem::NativeIdentity(native_index) => {
                     let identity = self.native_identities.get(*native_index).ok_or_else(|| {
                         format!("native identity marker {native_index} has no callback body")
                     })?;
-                    out.push(quotient_execution_entry(
+                    out.push((
                         identity,
                         QuotientExecutionKind::NativeIdentity {
                             native_index: *native_index,
@@ -429,10 +435,24 @@ impl QuotientProgramPlan {
             }
         }
 
-        out.extend(self.structured_tail_identities.iter().map(|identity| {
-            quotient_execution_entry(identity, QuotientExecutionKind::StructuredTail)
-        }));
+        out.extend(
+            self.structured_tail_identities
+                .iter()
+                .map(|identity| (identity, QuotientExecutionKind::StructuredTail)),
+        );
         Ok(out)
+    }
+
+    /// Reconstruct the generated execution stream back into per-identity folds.
+    ///
+    /// This is the compiler-correctness bridge between the source identity
+    /// stream and the mixed VM/native/direct execution plan.
+    pub(crate) fn execution_manifest(&self) -> Result<Vec<QuotientExecutionManifestEntry>, String> {
+        Ok(self
+            .identities_in_execution_order()?
+            .into_iter()
+            .map(|(identity, execution)| quotient_execution_entry(identity, execution))
+            .collect())
     }
 
     /// Check that representation choices preserve the original identity stream.

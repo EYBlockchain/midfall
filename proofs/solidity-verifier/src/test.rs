@@ -22,12 +22,9 @@ use midnight_circuits::{
 };
 use midnight_curves::{Bls12, Fq, G1Projective, G2Projective};
 use midnight_proofs::{
-    circuit::{Layouter, SimpleFloorPlanner, Value},
-    plonk::{
-        create_proof, keygen_pk, keygen_vk_with_k, prepare, Advice, Circuit, Column,
-        ConstraintSystem, Constraints, Error, Expression, Fixed, SecondPhase, Selector,
-    },
-    poly::{commitment::Guard as _, kzg::KZGCommitmentScheme, Rotation},
+    circuit::{Layouter, Value},
+    plonk::{create_proof, keygen_pk, keygen_vk_with_k, prepare, Error},
+    poly::{commitment::Guard as _, kzg::KZGCommitmentScheme},
     transcript::{CircuitTranscript, Transcript},
 };
 #[cfg(not(feature = "outer-single-h-commitment"))]
@@ -51,9 +48,13 @@ use sha3::Digest;
 
 use crate::{
     compile_solidity, compile_solidity_runtime, encode_calldata, pinned_solc_available,
-    runtime_free_memory_pointer_init, AccumulatorEncoding, CallOutcome, Evm, GeneratorConfig,
-    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
-    FN_SIG_VERIFY_PROOF,
+    runtime_free_memory_pointer_init,
+    shape_corpus::{
+        curated_cases, generated_shape_fuzz_spec, shape_fuzz_params, ShapeFuzzCase,
+        ShapeFuzzCircuit, ShapeFuzzSpec, SurfaceKind, SHAPE_FUZZ_K,
+    },
+    AccumulatorEncoding, CallOutcome, Evm, GeneratorConfig, RenderDiagnostics, RenderOptions,
+    RenderQuotient, RenderVk, SolidityGenerator, FN_SIG_VERIFY_PROOF,
 };
 
 /// Scalar field used by the BLS12-381 Poseidon fixtures.
@@ -218,238 +219,6 @@ fn words_to_bytes<const N: usize>(words: [U256; N]) -> Vec<u8> {
     words.into_iter().flat_map(|word| word.to_be_bytes::<32>()).collect()
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-struct ShapeFuzzSpec {
-    next_rotation: bool,
-    second_phase: bool,
-    permutation: bool,
-    lookup: bool,
-    additive_selector: bool,
-    complex_selector: bool,
-    fixed_scale: bool,
-    tag: u64,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ShapeFuzzCase {
-    name: &'static str,
-    k: u32,
-    spec: ShapeFuzzSpec,
-    seed: u64,
-}
-
-#[derive(Clone, Debug)]
-struct ShapeFuzzConfig {
-    a: Column<Advice>,
-    b: Column<Advice>,
-    out: Column<Advice>,
-    phase2: Option<Column<Advice>>,
-    fixed_scale: Option<Column<Fixed>>,
-    lookup_table: Option<Column<Fixed>>,
-    selector: Selector,
-}
-
-#[derive(Clone, Debug)]
-struct ShapeFuzzCircuit {
-    spec: ShapeFuzzSpec,
-    a: F,
-    b: F,
-}
-
-impl ShapeFuzzCircuit {
-    /// Deterministically construct a shape-fuzz witness.
-    fn new(spec: ShapeFuzzSpec, seed: u64) -> Self {
-        let a = F::from(seed.wrapping_mul(17).wrapping_add(5));
-        let b = F::from(seed.wrapping_mul(29).wrapping_add(11));
-        Self { spec, a, b }
-    }
-
-    /// Advice output constrained by the synthetic circuit.
-    fn out(&self) -> F {
-        self.a + self.b + F::from(self.spec.tag + 19)
-    }
-
-    /// Public input derived from the output and advice values.
-    fn public_instance(&self) -> F {
-        self.out() - self.a - self.b
-    }
-
-    /// Next-row advice value used when the shape enables rotations.
-    fn next_a(&self) -> F {
-        self.a + F::from(self.spec.tag + 7)
-    }
-
-    /// Second-phase advice value used when the shape enables phase two.
-    fn phase2_value(&self) -> F {
-        self.out() + F::from(self.spec.tag + 23)
-    }
-}
-
-impl Circuit<F> for ShapeFuzzCircuit {
-    /// Config columns for the generated shape-fuzz circuit.
-    type Config = ShapeFuzzConfig;
-    /// Simple floor planner is enough for these synthetic fixtures.
-    type FloorPlanner = SimpleFloorPlanner;
-    /// Shape parameters are supplied through Halo2's parameterized configure.
-    type Params = ShapeFuzzSpec;
-
-    /// Return the circuit shape without witness values.
-    fn without_witnesses(&self) -> Self {
-        Self {
-            spec: self.spec,
-            a: F::ZERO,
-            b: F::ZERO,
-        }
-    }
-
-    /// Return the shape parameters used during configuration.
-    fn params(&self) -> Self::Params {
-        self.spec
-    }
-
-    /// The non-parameterized configure path is intentionally disabled.
-    fn configure(_meta: &mut ConstraintSystem<F>) -> Self::Config {
-        unreachable!("ShapeFuzzCircuit is always configured with explicit params")
-    }
-
-    /// Configure a synthetic circuit with optional features toggled by `spec`.
-    fn configure_with_params(meta: &mut ConstraintSystem<F>, spec: Self::Params) -> Self::Config {
-        let a = meta.advice_column();
-        let b = meta.advice_column();
-        let out = meta.advice_column();
-        let phase2 = spec.second_phase.then(|| meta.advice_column_in(SecondPhase));
-        let fixed_scale = spec.fixed_scale.then(|| meta.fixed_column());
-        let lookup_table = spec.lookup.then(|| meta.fixed_column());
-        let committed_instance = meta.instance_column();
-        let public_instance = meta.instance_column();
-
-        if spec.permutation {
-            for column in [a, b, out] {
-                meta.enable_equality(column);
-            }
-        }
-
-        let selector = if spec.additive_selector || spec.complex_selector || spec.lookup {
-            meta.complex_selector()
-        } else {
-            meta.selector()
-        };
-
-        meta.create_gate("shape-fuzz arithmetic", |meta| {
-            let a_cur = meta.query_advice(a, Rotation::cur());
-            let b_cur = meta.query_advice(b, Rotation::cur());
-            let out_cur = meta.query_advice(out, Rotation::cur());
-            let committed = meta.query_instance(committed_instance, Rotation::cur());
-            let public = meta.query_instance(public_instance, Rotation::cur());
-
-            let mut balance = a_cur.clone() + b_cur + public + committed - out_cur.clone();
-            if let Some(scale) = fixed_scale {
-                balance = meta.query_fixed(scale, Rotation::cur()) * balance;
-            }
-
-            let mut constraints = vec![("public balance", balance)];
-            if spec.next_rotation {
-                constraints.push((
-                    "next rotation",
-                    meta.query_advice(a, Rotation::next())
-                        - a_cur
-                        - Expression::Constant(F::from(spec.tag + 7)),
-                ));
-            }
-            if let Some(phase2) = phase2 {
-                constraints.push((
-                    "second phase",
-                    meta.query_advice(phase2, Rotation::cur())
-                        - out_cur
-                        - Expression::Constant(F::from(spec.tag + 23)),
-                ));
-            }
-
-            if spec.additive_selector {
-                Constraints::with_additive_selector(selector, constraints)
-            } else {
-                Constraints::with_selector(selector, constraints)
-            }
-        });
-
-        if let Some(table) = lookup_table {
-            meta.lookup_any("shape-fuzz lookup", Some(selector), |meta| {
-                vec![(
-                    meta.query_advice(a, Rotation::cur()),
-                    meta.query_fixed(table, Rotation::cur()),
-                )]
-            });
-        }
-
-        ShapeFuzzConfig {
-            a,
-            b,
-            out,
-            phase2,
-            fixed_scale,
-            lookup_table,
-            selector,
-        }
-    }
-
-    /// Assign witness rows and optional lookup/permutation/phase-two cells.
-    fn synthesize(
-        &self,
-        config: Self::Config,
-        mut layouter: impl Layouter<F>,
-    ) -> Result<(), Error> {
-        layouter.assign_region(
-            || "shape-fuzz witness",
-            |mut region| {
-                config.selector.enable(&mut region, 0)?;
-                region.assign_advice(|| "a", config.a, 0, || Value::known(self.a))?;
-                region.assign_advice(|| "b", config.b, 0, || Value::known(self.b))?;
-                region.assign_advice(|| "out", config.out, 0, || Value::known(self.out()))?;
-
-                if self.spec.next_rotation {
-                    region.assign_advice(
-                        || "a next",
-                        config.a,
-                        1,
-                        || Value::known(self.next_a()),
-                    )?;
-                }
-                if let Some(column) = config.phase2 {
-                    region.assign_advice(
-                        || "second phase value",
-                        column,
-                        0,
-                        || Value::known(self.phase2_value()),
-                    )?;
-                }
-                if let Some(column) = config.fixed_scale {
-                    region.assign_fixed(|| "fixed scale", column, 0, || Value::known(F::ONE))?;
-                }
-                if let Some(column) = config.lookup_table {
-                    region.assign_fixed(
-                        || "lookup table value",
-                        column,
-                        0,
-                        || Value::known(self.a),
-                    )?;
-                }
-
-                if self.spec.permutation {
-                    let copied = region.assign_advice(
-                        || "permutation source",
-                        config.a,
-                        2,
-                        || Value::known(self.b),
-                    )?;
-                    copied.copy_advice(|| "permutation target", &mut region, config.b, 3)?;
-                }
-
-                Ok(())
-            },
-        )
-    }
-}
-
 #[test]
 fn lookup_shape_verifier_compiles_with_native_lookup_callback() {
     if !shape_fuzz_inputs_available_for_evm() {
@@ -498,12 +267,12 @@ fn lookup_shape_verifier_compiles_with_native_lookup_callback() {
 }
 
 #[test]
-fn supported_shape_circuit_fuzz_e2e() {
+fn pbt_supported_shape_circuit_fuzz_e2e() {
     if !shape_fuzz_inputs_available_for_evm() {
         return;
     }
 
-    let cases = supported_shape_evm_cases();
+    let cases = curated_cases();
 
     let requested = env::var("SHAPE_FUZZ_CASES")
         .ok()
@@ -534,97 +303,6 @@ fn supported_shape_circuit_fuzz_e2e() {
     }
 }
 
-fn supported_shape_evm_cases() -> [ShapeFuzzCase; 7] {
-    [
-        ShapeFuzzCase {
-            name: "simple-selector current-row fixed-scale",
-            k: 5,
-            seed: 101,
-            spec: ShapeFuzzSpec {
-                fixed_scale: true,
-                tag: 1,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "next-rotation permutation",
-            k: 5,
-            seed: 202,
-            spec: ShapeFuzzSpec {
-                next_rotation: true,
-                permutation: true,
-                tag: 2,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "second-phase lookup",
-            k: 5,
-            seed: 303,
-            spec: ShapeFuzzSpec {
-                second_phase: true,
-                lookup: true,
-                fixed_scale: true,
-                tag: 3,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "trash-additive selector with lookup",
-            k: 5,
-            seed: 404,
-            spec: ShapeFuzzSpec {
-                next_rotation: true,
-                lookup: true,
-                additive_selector: true,
-                fixed_scale: true,
-                tag: 4,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "complex-selector second-phase permutation",
-            k: 5,
-            seed: 505,
-            spec: ShapeFuzzSpec {
-                second_phase: true,
-                permutation: true,
-                complex_selector: true,
-                fixed_scale: true,
-                tag: 5,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "additive-selector phase2 permutation",
-            k: 5,
-            seed: 606,
-            spec: ShapeFuzzSpec {
-                second_phase: true,
-                permutation: true,
-                additive_selector: true,
-                tag: 6,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-        ShapeFuzzCase {
-            name: "full mixed lookup permutation shape",
-            k: 5,
-            seed: 707,
-            spec: ShapeFuzzSpec {
-                next_rotation: true,
-                second_phase: true,
-                permutation: true,
-                lookup: true,
-                complex_selector: true,
-                fixed_scale: true,
-                tag: 7,
-                ..ShapeFuzzSpec::default()
-            },
-        },
-    ]
-}
-
 #[test]
 fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     if !shape_fuzz_inputs_available_for_evm() {
@@ -632,11 +310,17 @@ fn same_srs_distinct_shape_matrix_rejects_cross_wiring() {
     }
 
     let cases = [
-        supported_shape_evm_cases()[0],
-        supported_shape_evm_cases()[2],
-        supported_shape_evm_cases()[4],
-        supported_shape_evm_cases()[6],
-    ];
+        "simple-selector current-row fixed-scale",
+        "second-phase lookup",
+        "complex-selector second-phase permutation",
+        "full mixed lookup permutation shape",
+    ]
+    .map(|name| {
+        curated_cases()
+            .into_iter()
+            .find(|case| case.name == name)
+            .unwrap_or_else(|| panic!("curated corpus is missing case `{name}`"))
+    });
 
     let mut setup_rng = ChaCha8Rng::seed_from_u64(0x5a5a_5151);
     let shapes: Vec<_> = cases.iter().map(|case| (case.spec, case.k)).collect();
@@ -913,73 +597,6 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     );
 
     compared_selector_folds
-}
-
-/// Generate a random-ish supported circuit shape from a fuzz seed.
-#[cfg(feature = "rust-verifier-trace")]
-fn generated_shape_fuzz_spec(seed: u64) -> ShapeFuzzSpec {
-    ShapeFuzzSpec {
-        next_rotation: seed & 0x01 != 0,
-        second_phase: seed & 0x02 != 0,
-        permutation: seed & 0x04 != 0,
-        lookup: seed & 0x08 != 0,
-        additive_selector: seed & 0x10 != 0,
-        complex_selector: seed & 0x20 != 0,
-        fixed_scale: seed & 0x40 != 0,
-        tag: 100 + seed.rotate_left(17) % 10_000,
-    }
-}
-
-/// Circuit domain size used by the transcript differential shape fuzzer.
-#[cfg(feature = "rust-verifier-trace")]
-const SHAPE_FUZZ_K: u32 = 5;
-
-/// Build test parameters covering every supplied `(shape, k)` pair.
-///
-/// Under `outer-single-h-commitment` the prover commits to one unsplit quotient
-/// polynomial of degree `(n - 1) * quotient_poly_degree`, so a plain
-/// `unsafe_setup(k)` is too small and proof generation fails with a `SrsError`
-/// long after the VK builds cleanly at `k`. The monomial basis has to be larger
-/// than the circuit domain while the Lagrange basis stays at `2^k` -- exactly
-/// the recipe documented on `ParamsKZG::downsize_lagrange`.
-///
-/// Loading a real SRS is not an option for these circuits: they are generated
-/// per seed, so each fixture draws its own toxic secret. Callers that share one
-/// parameter set across several shapes pass them all here, and the monomial
-/// basis is sized for the most demanding one.
-fn shape_fuzz_params(shapes: &[(ShapeFuzzSpec, u32)], rng: &mut ChaCha8Rng) -> PoseidonParams {
-    let (_, lagrange_k) = shapes.first().copied().expect("at least one shape");
-    assert!(
-        shapes.iter().all(|(_, k)| *k == lagrange_k),
-        "one parameter set can only serve shapes that share a circuit domain size"
-    );
-
-    #[cfg(not(feature = "outer-single-h-commitment"))]
-    {
-        PoseidonParams::unsafe_setup(lagrange_k, rng)
-    }
-    #[cfg(feature = "outer-single-h-commitment")]
-    {
-        let extended_k = shapes
-            .iter()
-            .map(|(spec, k)| {
-                // Configure a throwaway constraint system to learn this shape's
-                // degree. keygen may compress selectors, which can only lower
-                // the degree, so the uncompressed value is a safe upper bound.
-                let mut cs = ConstraintSystem::<F>::default();
-                <ShapeFuzzCircuit as Circuit<F>>::configure_with_params(&mut cs, *spec);
-                // Same exponent `midnight_zk_stdlib::utils::plonk_api::load_srs`
-                // uses for the single-h monomial basis.
-                k + ((cs.degree() - 1) as f64).log2().ceil() as u32
-            })
-            .max()
-            .expect("at least one shape");
-        let mut params = PoseidonParams::unsafe_setup(extended_k, rng);
-        // Keep the monomial basis extended; shrink only the Lagrange basis back
-        // to the circuit domain so commitments stay at 2^k.
-        params.downsize_lagrange(lagrange_k);
-        params
-    }
 }
 
 #[cfg(feature = "rust-verifier-trace")]
@@ -4851,4 +4468,949 @@ fn srs_dir() -> String {
         .join("../../zk_stdlib/examples/assets")
         .to_string_lossy()
         .into_owned()
+}
+
+// ---------------------------------------------------------------------
+// Quotient frame differential (audit finding F1).
+//
+// `certify_quotient_program` proves bytecode <-> `QuotientExpr` agreement for
+// identities lowered to the compact VM, but stops at the bytecode boundary:
+// the inline gate prefix, native gate callbacks, the structured permutation
+// and LogUp kernels, and the trash tail are certified positionally only. The
+// tests below extend the same Schwartz-Zippel argument to the solc-compiled
+// artifact: they deploy the production `Halo2QuotientEvaluator` under revm,
+// call it with artifact-seeded pseudorandom memory frames, and compare
+// `[magic, -nu_y(x), selector_buckets..]` word-for-word against a Rust oracle
+// that folds every surface's identity expression tree over the same frame.
+// ---------------------------------------------------------------------
+
+/// Return whether the quotient frame differential can run.
+///
+/// Deliberately gated on the pinned solc alone, NOT on
+/// `HALO2_SOLIDITY_RUN_EVM_TESTS`: the per-PR `test-solidity-verifier` CI job
+/// installs the pinned solc with that env unset, so this differential runs on
+/// every PR. The env-gated suites silently never running is exactly the trap
+/// audit finding F1 calls out. When the env gate IS set, an unusable solc is
+/// a loud failure rather than a skip.
+fn quotient_frame_differential_available() -> bool {
+    if pinned_solc_available() {
+        return true;
+    }
+    if env_flag_enabled(RUN_EVM_TESTS_ENV) {
+        panic!(
+            "{RUN_EVM_TESTS_ENV}=1 requires solc {} for the quotient frame differential; \
+             install it or point SOLC at the binary",
+            crate::PINNED_SOLC_VERSION,
+        );
+    }
+    eprintln!(
+        "skipping quotient frame differential: pinned solc {} unavailable",
+        crate::PINNED_SOLC_VERSION,
+    );
+    false
+}
+
+/// Frames per differential case (`HALO2_SOLIDITY_QUOTIENT_FRAMES`, default 3).
+fn quotient_frame_differential_frames() -> u64 {
+    env::var("HALO2_SOLIDITY_QUOTIENT_FRAMES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(3)
+}
+
+/// Corpus-level coverage facts one differential case reports back.
+struct QuotientFrameOutcome {
+    /// Execution surfaces this case actually folded through.
+    surfaces: std::collections::BTreeSet<SurfaceKind>,
+    /// Simple-selector buckets in the compact return frame.
+    selector_buckets: usize,
+    /// Identities executed by the compact VM interpreter.
+    interpreted_identities: usize,
+}
+
+/// Everything one frame-differential case derives from a finalized plan.
+struct QuotientFrameFacts {
+    /// Every identity across all six surfaces, sorted by global y-batch index.
+    identities: Vec<crate::lowering::quotient_numerator::vm::QuotientIdentity>,
+    surfaces: std::collections::BTreeSet<SurfaceKind>,
+    interpreted_identities: usize,
+    external: crate::lowering::render::QuotientExternal,
+    token_bases: Vec<(u8, usize)>,
+    read_windows: Vec<crate::lowering::quotient_numerator::vm::QuotientReadWindow>,
+    vk_mptr: usize,
+    vk_bytes: Vec<u8>,
+    y_mptr: usize,
+    selector_count: usize,
+    /// Identities folded into the main numerator.
+    main_identities: usize,
+    /// Identities folded into each selector bucket.
+    bucket_identity_counts: Vec<usize>,
+    /// Artifact-bound base seed for the pseudorandom frame assignment.
+    base_seed: [u8; 32],
+    /// Finalized compact-VM bytecode (also embedded in the VK payload).
+    program_bytes: Vec<u8>,
+    const_offset_words: Option<usize>,
+    program_offset_words: Option<usize>,
+    /// Program byte range of the first interpreted identity's expression.
+    first_identity_segment: Option<(usize, usize)>,
+    /// Program byte offset of the last `FOLD_SELECTOR` opcode.
+    last_selector_fold: Option<usize>,
+}
+
+impl QuotientFrameFacts {
+    /// Extract the differential's inputs from one finalized lowering plan.
+    fn from_plan(name: &str, plan: &crate::lowering::plan::LoweringPlan) -> Self {
+        use crate::lowering::quotient_numerator::vm::{self as vm, certify, QuotientProgramItem};
+
+        let pairs = plan
+            .quotient
+            .plan
+            .identities_in_execution_order()
+            .unwrap_or_else(|err| panic!("{name}: execution-order walk failed: {err}"));
+
+        // The execution stream must cover the global y-batch 0..n exactly
+        // once; the oracle folds by global index, so a duplicate or gap would
+        // silently misalign the two sides.
+        let mut indices: Vec<usize> =
+            pairs.iter().map(|(identity, _)| identity.meta.global_index).collect();
+        indices.sort_unstable();
+        assert!(
+            indices.iter().copied().eq(0..pairs.len()),
+            "{name}: execution order must cover global indices 0..{} exactly once",
+            pairs.len()
+        );
+
+        let surfaces: std::collections::BTreeSet<SurfaceKind> =
+            pairs.iter().map(|(_, kind)| SurfaceKind::of(*kind)).collect();
+        let interpreted_identities = pairs
+            .iter()
+            .filter(|(_, kind)| SurfaceKind::of(*kind) == SurfaceKind::Interpreted)
+            .count();
+
+        let all_exprs: Vec<&vm::QuotientExpr> =
+            pairs.iter().map(|(identity, _)| &identity.expr).collect();
+        let vk_bytes = plan.vk.bytes();
+        // Bind ALL surfaces' expression trees into the seed, not just the
+        // interpreted ones `certify_quotient_program` binds: the assignment
+        // must be fixed only after every compared artifact is.
+        let base_seed =
+            certify::derive_certify_seed(&[&plan.quotient.build], &all_exprs, &vk_bytes);
+
+        let mut identities: Vec<vm::QuotientIdentity> =
+            pairs.iter().map(|(identity, _)| (*identity).clone()).collect();
+        identities.sort_by_key(|identity| identity.meta.global_index);
+
+        let external = plan.quotient_external_frame();
+        let selector_count = plan.quotient.sorted_simple.len();
+        assert_eq!(
+            external.output_len,
+            (2 + selector_count) * crate::lowering::layout::WORD_BYTES,
+            "{name}: evaluator output frame must be [magic, -nu_y(x), selector buckets..]"
+        );
+
+        let mut main_identities = 0usize;
+        let mut bucket_identity_counts = vec![0usize; selector_count];
+        for identity in &identities {
+            match identity.target {
+                vm::QuotientTarget::Main => main_identities += 1,
+                vm::QuotientTarget::Selector(idx) => bucket_identity_counts[idx] += 1,
+            }
+        }
+
+        let program_bytes = plan.quotient.build.bytes.clone();
+        let first_identity_segment = {
+            let mut cursor = 0usize;
+            let mut segment = None;
+            for item in &plan.quotient.plan.items {
+                match item {
+                    QuotientProgramItem::Identity(_) => {
+                        let (expr_end, _fold) = certify::identity_segment(&program_bytes, cursor)
+                            .unwrap_or_else(|err| panic!("{name}: {err}"));
+                        segment = Some((cursor, expr_end));
+                        break;
+                    }
+                    _ => cursor += vm::quotient_op_len(&program_bytes, cursor),
+                }
+            }
+            segment
+        };
+        let last_selector_fold = vm::quotient_bytecode_ops(&program_bytes)
+            .filter(|(_, op, _)| *op == vm::Q_OP_FOLD_SELECTOR)
+            .map(|(idx, _, _)| idx)
+            .last();
+
+        let read_model = plan.quotient_read_model();
+        Self {
+            identities,
+            surfaces,
+            interpreted_identities,
+            external,
+            token_bases: read_model.token_bases,
+            read_windows: read_model.windows,
+            vk_mptr: plan.vk_mptr.value().as_usize(),
+            vk_bytes,
+            y_mptr: plan.memory.y_mptr.value().as_usize(),
+            selector_count,
+            main_identities,
+            bucket_identity_counts,
+            base_seed,
+            program_bytes,
+            const_offset_words: plan.vk.quotient_const_offset_words,
+            program_offset_words: plan.vk.quotient_program_offset_words,
+            first_identity_segment,
+            last_selector_fold,
+        }
+    }
+
+    /// Build the pseudorandom frame for one differential iteration.
+    fn frame(&self, iteration: u64) -> Vec<u8> {
+        use crate::lowering::quotient_numerator::vm::oracle;
+        let seed = oracle::frame_differential_seed(self.base_seed, iteration);
+        oracle::build_quotient_frame(&self.external, self.vk_mptr, &self.vk_bytes, seed)
+    }
+
+    /// Fold every identity expression tree over one frame.
+    fn expected(
+        &self,
+        frame: &[u8],
+    ) -> crate::lowering::quotient_numerator::vm::oracle::QuotientLinearizationArtifacts {
+        use crate::lowering::quotient_numerator::vm::oracle::{
+            expected_linearization_artifacts, QuotientFrameMemory, QuotientOracleMemory,
+        };
+        let mut mem = QuotientFrameMemory::new(
+            frame,
+            self.external.frame_base,
+            self.vk_mptr..self.vk_mptr + self.vk_bytes.len(),
+            &self.token_bases,
+        );
+        let y = mem.load(u32::try_from(self.y_mptr).expect("y_mptr fits u32"));
+        expected_linearization_artifacts(&self.identities, &mut mem, y, self.selector_count)
+    }
+
+    /// Absolute frame address of one packed-program byte in the VK payload.
+    fn program_byte_frame_addr(&self, byte_idx: usize) -> usize {
+        let words = self
+            .program_offset_words
+            .expect("case must embed a packed quotient program in its VK payload");
+        let word_bytes = crate::lowering::layout::WORD_BYTES;
+        self.vk_mptr + (words + byte_idx / word_bytes) * word_bytes + byte_idx % word_bytes
+    }
+}
+
+/// Call the deployed evaluator with one frame and compare its full output
+/// frame against the oracle. `Err` covers reverts, halts, and any word-level
+/// mismatch, so negative controls can assert detection on the same path the
+/// positive differential uses.
+fn compare_quotient_frame_output(
+    evm: &mut Evm,
+    address: revm::primitives::Address,
+    external: &crate::lowering::render::QuotientExternal,
+    frame: &[u8],
+    expected: &crate::lowering::quotient_numerator::vm::oracle::QuotientLinearizationArtifacts,
+) -> Result<(), String> {
+    let fe = crate::lowering::encoding::fe_to_u256::<F>;
+    let output = match evm.try_call(address, frame.to_vec()) {
+        CallOutcome::Success { output, .. } => output,
+        CallOutcome::Revert { gas_used, output } => {
+            return Err(format!(
+                "evaluator reverted (gas {gas_used}, output 0x{})",
+                hex::encode(output)
+            ));
+        }
+        CallOutcome::Halt { gas_used, reason } => {
+            return Err(format!(
+                "evaluator halted (gas {gas_used}, reason {reason})"
+            ));
+        }
+    };
+    if output.len() != external.output_len {
+        return Err(format!(
+            "output length {} != declared QUOTIENT_OUTPUT_LEN {}",
+            output.len(),
+            external.output_len
+        ));
+    }
+    let words: Vec<U256> = output
+        .chunks_exact(crate::lowering::layout::WORD_BYTES)
+        .map(|word| U256::try_from_be_slice(word).expect("32-byte chunk"))
+        .collect();
+    if words[0] != U256::from(external.magic) {
+        return Err(format!(
+            "output word 0 {:#x} != QUOTIENT_MAGIC {:#x}",
+            words[0], external.magic
+        ));
+    }
+    let expected_eval = fe(&expected.quotient_expected_eval);
+    if words[1] != expected_eval {
+        return Err(format!(
+            "linearization expected eval mismatch: evaluator {:#x}, oracle -nu_y(x) {expected_eval:#x}",
+            words[1]
+        ));
+    }
+    assert_eq!(words.len(), 2 + expected.selector_buckets.len());
+    for (idx, bucket) in expected.selector_buckets.iter().enumerate() {
+        let expected_bucket = fe(bucket);
+        if words[2 + idx] != expected_bucket {
+            return Err(format!(
+                "selector bucket {idx} mismatch: evaluator {:#x}, oracle {expected_bucket:#x}",
+                words[2 + idx]
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Assert the diagnostic (trace) render logs every identity's value.
+///
+/// This proves each surface's per-identity hook executed and agreed with the
+/// oracle, on top of the production render's end-to-end output comparison.
+fn assert_quotient_trace_logs(
+    name: &str,
+    iteration: u64,
+    evm: &mut Evm,
+    trace_address: revm::primitives::Address,
+    frame: &[u8],
+    facts: &QuotientFrameFacts,
+    expected: &crate::lowering::quotient_numerator::vm::oracle::QuotientLinearizationArtifacts,
+) {
+    let base = crate::lowering::layout::trace::QUOTIENT_IDENTITY_BASE;
+    let logs = match evm.try_call(trace_address, frame.to_vec()) {
+        CallOutcome::Success { logs, .. } => logs,
+        outcome => panic!("{name} frame {iteration}: trace evaluator failed: {outcome:?}"),
+    };
+
+    let total = facts.identities.len();
+    let mut seen = vec![false; total];
+    let mut matched = 0usize;
+    for log in &logs {
+        let topics = log.data.topics();
+        assert_eq!(
+            topics.len(),
+            1,
+            "{name} frame {iteration}: trace log must have one topic"
+        );
+        let topic = U256::try_from_be_slice(topics[0].as_slice()).expect("32-byte topic");
+        if topic < U256::from(base) || topic >= U256::from(40_000u64) {
+            continue;
+        }
+        let global_index = usize::try_from(topic - U256::from(base)).expect("small trace id");
+        assert!(
+            global_index < total,
+            "{name} frame {iteration}: trace id {global_index} out of range 0..{total}"
+        );
+        assert!(
+            !seen[global_index],
+            "{name} frame {iteration}: duplicate trace log for identity {global_index}"
+        );
+        seen[global_index] = true;
+        matched += 1;
+
+        let entry = &expected.identity_trace[global_index];
+        assert_eq!(
+            entry.global_index, global_index,
+            "identity trace is sorted by global index"
+        );
+        let expected_value =
+            crate::lowering::encoding::fe_to_u256::<F>(&entry.value).to_be_bytes::<32>();
+        assert_eq!(
+            log.data.data.as_ref(),
+            expected_value,
+            "{name} frame {iteration}: identity {global_index} ({:?}) trace value diverged from \
+             the expression oracle",
+            facts.identities[global_index].meta.source,
+        );
+    }
+    assert_eq!(
+        matched, total,
+        "{name} frame {iteration}: expected one trace log per identity across all surfaces"
+    );
+}
+
+/// Deploy production + diagnostic evaluator renders for one case, then run
+/// `frames` pseudorandom frame differentials against the expression oracle.
+fn run_quotient_frame_differential_case(
+    name: &str,
+    params: &PoseidonParams,
+    vk: &midnight_proofs::plonk::VerifyingKey<F, KZGCommitmentScheme<Bls12>>,
+    num_instances: usize,
+    frames: u64,
+) -> QuotientFrameOutcome {
+    let generator = SolidityGenerator::new(params, vk, GeneratorConfig::new(num_instances, 1));
+    let inputs = generator.inputs();
+    let plan = inputs.lowering_plan();
+    let facts = QuotientFrameFacts::from_plan(name, &plan);
+
+    // Always construct `RenderDiagnostics` explicitly: `Default` is
+    // feature-dependent (`SOLIDITY_TRACE_ENABLED`), and CI runs
+    // `--all-features`, which would silently certify a trace render instead
+    // of the production artifact.
+    let production = generator
+        .render_quotient_evaluator(RenderDiagnostics {
+            trace: false,
+            gas_checkpoints: false,
+        })
+        .unwrap_or_else(|err| panic!("{name}: production evaluator render failed: {err:?}"));
+    let diagnostic = generator
+        .render_quotient_evaluator(RenderDiagnostics {
+            trace: true,
+            gas_checkpoints: false,
+        })
+        .unwrap_or_else(|err| panic!("{name}: diagnostic evaluator render failed: {err:?}"));
+
+    let mut evm = Evm::default();
+    let production_address = evm.create(compile_solidity(&production));
+    let trace_address = evm.create(compile_solidity(&diagnostic));
+
+    for iteration in 0..frames {
+        let frame = facts.frame(iteration);
+        let expected = facts.expected(&frame);
+        // Non-vacuity per fold target: any target with at least one identity
+        // must fold to a nonzero scalar on a pseudorandom frame (a case whose
+        // only identities are selector-targeted has a structurally zero main
+        // numerator, so the guard is per target, not global).
+        if facts.main_identities > 0 {
+            assert!(
+                expected.main_numerator != F::ZERO,
+                "{name} frame {iteration}: pseudorandom frame folded to a zero main numerator; \
+                 the comparison would be vacuous"
+            );
+        }
+        for (idx, count) in facts.bucket_identity_counts.iter().enumerate() {
+            if *count > 0 {
+                assert!(
+                    expected.selector_buckets[idx] != F::ZERO,
+                    "{name} frame {iteration}: pseudorandom frame folded selector bucket {idx} \
+                     to zero; the comparison would be vacuous"
+                );
+            }
+        }
+
+        compare_quotient_frame_output(
+            &mut evm,
+            production_address,
+            &facts.external,
+            &frame,
+            &expected,
+        )
+        .unwrap_or_else(|err| {
+            panic!(
+                "{name} frame {iteration}: compiled production evaluator diverged from the \
+                 expression oracle: {err}"
+            )
+        });
+
+        assert_quotient_trace_logs(
+            name,
+            iteration,
+            &mut evm,
+            trace_address,
+            &frame,
+            &facts,
+            &expected,
+        );
+
+        // The raw-frame ABI is only safe because the evaluator rejects
+        // anything but an exact-length frame.
+        let mut truncated = frame.clone();
+        truncated.truncate(frame.len() - crate::lowering::layout::WORD_BYTES);
+        match evm.try_call(production_address, truncated) {
+            CallOutcome::Revert { .. } => {}
+            outcome => {
+                panic!("{name} frame {iteration}: truncated calldata must revert, got {outcome:?}")
+            }
+        }
+    }
+
+    QuotientFrameOutcome {
+        surfaces: facts.surfaces,
+        selector_buckets: facts.selector_count,
+        interpreted_identities: facts.interpreted_identities,
+    }
+}
+
+/// Compiled-artifact half of audit finding F1: prove the production
+/// `Halo2QuotientEvaluator` — inline gate prefix, native gate callbacks,
+/// structured permutation and LogUp kernels, trash tail, and the compact VM —
+/// agrees with the typed `QuotientExpr` oracle on pseudorandom frames, for
+/// every case in the shape corpus.
+///
+/// Honest scope: for permutation/lookup/trash identities the oracle
+/// expressions are re-parsed from the emitter's own straight-line Yul
+/// (`quotient_yul_expr`), so this differential certifies the structural
+/// loop/table/chunking restructuring and the solc-compiled execution — not
+/// the per-identity formula, whose independent leg stays with the
+/// `rust-verifier-trace` proof differential against midnight-proofs. Gate
+/// identities have genuinely independent typed lowering from
+/// `vk.cs().gates()`, so for them this is a full independent check.
+#[test]
+fn quotient_frame_differential_matches_expr_oracle() {
+    if !quotient_frame_differential_available() {
+        return;
+    }
+    let frames = quotient_frame_differential_frames();
+
+    let mut surfaces = std::collections::BTreeSet::new();
+    let mut cases_with_selector_buckets = 0usize;
+    let mut cases_with_interpreted = 0usize;
+    let mut record = |outcome: &QuotientFrameOutcome| {
+        surfaces.extend(outcome.surfaces.iter().copied());
+        cases_with_selector_buckets += usize::from(outcome.selector_buckets > 0);
+        cases_with_interpreted += usize::from(outcome.interpreted_identities > 0);
+    };
+
+    let mut setup_rng = ChaCha8Rng::seed_from_u64(0xf1a3_0001);
+    for case in curated_cases() {
+        let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
+        let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
+        let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "frame differential `{}` vk generation failed: {err:?}",
+                    case.name
+                )
+            });
+        record(&run_quotient_frame_differential_case(
+            case.name, &params, &vk, 1, frames,
+        ));
+    }
+
+    // The VM-exercising fixture: enough seven-limb gates to overflow the
+    // inline prefix and the native-gate budget, guaranteeing Inline +
+    // NativeIdentity + Interpreted coverage in one case.
+    let (params, vk) = crate::lowering::test_circuits::quotient_vm_test_vk();
+    record(&run_quotient_frame_differential_case(
+        "quotient vm limb circuit",
+        &params,
+        &vk,
+        1,
+        frames,
+    ));
+
+    // The selector-fold fixture: enough simple-selector gates to pigeonhole
+    // FOLD_SELECTOR opcodes (with intra-bucket gaps) into the interpreted
+    // bytecode regardless of the knapsack's native-gate choices.
+    let (params, vk) = crate::lowering::test_circuits::quotient_selector_fold_test_vk();
+    record(&run_quotient_frame_differential_case(
+        "quotient selector fold circuit",
+        &params,
+        &vk,
+        1,
+        frames,
+    ));
+
+    // Corpus-level coverage: the union must reach every execution surface.
+    // Deliberately NOT asserting which gates went native — the knapsack
+    // selection is an intentionally divergent representation choice.
+    for kind in SurfaceKind::ALL {
+        assert!(
+            surfaces.contains(&kind),
+            "frame differential corpus never folded through the {kind:?} surface"
+        );
+    }
+    assert!(
+        cases_with_selector_buckets > 0,
+        "frame differential corpus never produced a selector bucket"
+    );
+    assert!(
+        cases_with_interpreted > 0,
+        "frame differential corpus never executed the compact VM"
+    );
+}
+
+/// One deployed production evaluator plus an honest frame/oracle pair, used
+/// to prove injected faults are detected.
+struct QuotientFaultHarness {
+    evm: Evm,
+    production_address: revm::primitives::Address,
+    production_source: String,
+    facts: QuotientFrameFacts,
+    frame: Vec<u8>,
+    expected: crate::lowering::quotient_numerator::vm::oracle::QuotientLinearizationArtifacts,
+}
+
+impl QuotientFaultHarness {
+    /// Build the harness and prove the honest frame passes before injecting
+    /// any fault.
+    fn new(
+        name: &str,
+        params: &PoseidonParams,
+        vk: &midnight_proofs::plonk::VerifyingKey<F, KZGCommitmentScheme<Bls12>>,
+    ) -> Self {
+        let generator = SolidityGenerator::new(params, vk, GeneratorConfig::new(1, 1));
+        let inputs = generator.inputs();
+        let plan = inputs.lowering_plan();
+        let facts = QuotientFrameFacts::from_plan(name, &plan);
+        // Explicit diagnostics for the same reason as the positive test:
+        // `Default` is feature-dependent and CI runs --all-features.
+        let production_source = generator
+            .render_quotient_evaluator(RenderDiagnostics {
+                trace: false,
+                gas_checkpoints: false,
+            })
+            .unwrap_or_else(|err| panic!("{name}: evaluator render failed: {err:?}"));
+        let mut evm = Evm::default();
+        let production_address = evm.create(compile_solidity(&production_source));
+        let frame = facts.frame(0);
+        let expected = facts.expected(&frame);
+        compare_quotient_frame_output(
+            &mut evm,
+            production_address,
+            &facts.external,
+            &frame,
+            &expected,
+        )
+        .unwrap_or_else(|err| {
+            panic!("{name}: honest frame must pass before fault injection: {err}")
+        });
+        Self {
+            evm,
+            production_address,
+            production_source,
+            facts,
+            frame,
+            expected,
+        }
+    }
+
+    /// Mutate a copy of the honest frame and assert the differential fails.
+    ///
+    /// The oracle keeps evaluating the honest frame, so any single-word
+    /// divergence the compiled evaluator observes must surface as `Err`.
+    fn assert_frame_fault_detected(
+        &mut self,
+        label: &str,
+        mutate: impl FnOnce(&mut Vec<u8>, &QuotientFrameFacts),
+    ) {
+        let mut mutated = self.frame.clone();
+        mutate(&mut mutated, &self.facts);
+        assert_ne!(
+            mutated, self.frame,
+            "{label}: mutation must change the frame"
+        );
+        let result = compare_quotient_frame_output(
+            &mut self.evm,
+            self.production_address,
+            &self.facts.external,
+            &mutated,
+            &self.expected,
+        );
+        assert!(
+            result.is_err(),
+            "{label}: mutated frame still matches the oracle"
+        );
+    }
+
+    /// Mutate the rendered evaluator source at a single-match anchor,
+    /// recompile, and assert the differential fails on the honest frame.
+    fn assert_source_fault_detected(
+        &mut self,
+        label: &str,
+        anchor: &str,
+        mutate: impl FnOnce(&str) -> String,
+    ) {
+        let occurrences = self.production_source.matches(anchor).count();
+        assert_eq!(
+            occurrences, 1,
+            "{label}: anchor {anchor:?} must match exactly once, found {occurrences}"
+        );
+        let mutated_source = mutate(&self.production_source);
+        assert_ne!(
+            mutated_source, self.production_source,
+            "{label}: mutation must change the source"
+        );
+        let address = self.evm.create(compile_solidity(&mutated_source));
+        let result = compare_quotient_frame_output(
+            &mut self.evm,
+            address,
+            &self.facts.external,
+            &self.frame,
+            &self.expected,
+        );
+        assert!(
+            result.is_err(),
+            "{label}: mutated evaluator still matches the oracle"
+        );
+    }
+}
+
+/// Replace the canonical Fr word at absolute address `addr` with
+/// `value + 1 (mod r)` — a distinct canonical value.
+fn bump_frame_word(
+    frame: &mut [u8],
+    external: &crate::lowering::render::QuotientExternal,
+    addr: usize,
+) {
+    let word_bytes = crate::lowering::layout::WORD_BYTES;
+    let offset = addr.checked_sub(external.frame_base).expect("mutation target inside frame");
+    let word = U256::try_from_be_slice(&frame[offset..offset + word_bytes]).expect("32-byte word");
+    let r = fr_modulus_u256();
+    assert!(
+        word < r,
+        "mutation target at {addr:#x} must hold a canonical Fr word"
+    );
+    let bumped = (word + U256::from(1u64)) % r;
+    frame[offset..offset + word_bytes].copy_from_slice(&bumped.to_be_bytes::<32>());
+}
+
+/// Flip bits of one frame byte at absolute address `addr`.
+fn xor_frame_byte(
+    frame: &mut [u8],
+    external: &crate::lowering::render::QuotientExternal,
+    addr: usize,
+    mask: u8,
+) {
+    frame[addr - external.frame_base] ^= mask;
+}
+
+/// First constant-table slot the finalized bytecode actually loads.
+fn first_const_slot_in_program(bytes: &[u8]) -> Option<usize> {
+    use crate::lowering::quotient_numerator::vm::{
+        self as vm, Q_OP_ADD_CONST, Q_OP_ADD_CONST_U8, Q_OP_LIN7, Q_OP_MUL_CONST,
+        Q_OP_MUL_CONST_U8, Q_OP_PUSH_CONST, Q_OP_PUSH_CONST_U8,
+    };
+    vm::quotient_bytecode_ops(bytes).find_map(|(idx, op, _len)| match op {
+        Q_OP_PUSH_CONST | Q_OP_ADD_CONST | Q_OP_MUL_CONST => {
+            Some(vm::read_u16(bytes, idx + 1) as usize)
+        }
+        Q_OP_PUSH_CONST_U8 | Q_OP_ADD_CONST_U8 | Q_OP_MUL_CONST_U8 | Q_OP_LIN7 => {
+            Some(bytes[idx + 1] as usize)
+        }
+        _ => None,
+    })
+}
+
+/// Recursively collect every literal memory pointer an expression loads.
+fn collect_expr_literal_ptrs(
+    expr: &crate::lowering::quotient_numerator::vm::QuotientExpr,
+    out: &mut std::collections::BTreeSet<u32>,
+) {
+    use crate::lowering::quotient_numerator::vm::{QuotientExpr, QuotientMem};
+    match expr {
+        QuotientExpr::Const(_) | QuotientExpr::Mem(QuotientMem::Token(_)) => {}
+        QuotientExpr::Mem(QuotientMem::TokenOffset(_, _)) => {}
+        QuotientExpr::Mem(QuotientMem::Literal(ptr)) => {
+            out.insert(*ptr);
+        }
+        QuotientExpr::Add(lhs, rhs) | QuotientExpr::Mul(lhs, rhs) => {
+            collect_expr_literal_ptrs(lhs, out);
+            collect_expr_literal_ptrs(rhs, out);
+        }
+        QuotientExpr::Neg(inner) => collect_expr_literal_ptrs(inner, out),
+    }
+}
+
+/// First identity-referenced literal pointer inside the decoded-proof-evals
+/// window — a mutation target the artifact provably reads.
+fn first_eval_word_ptr(facts: &QuotientFrameFacts) -> Option<u32> {
+    let word_bytes = crate::lowering::layout::WORD_BYTES;
+    let window = facts.read_windows.iter().find(|window| window.name == "decoded_proof_evals")?;
+    let mut ptrs = std::collections::BTreeSet::new();
+    for identity in &facts.identities {
+        collect_expr_literal_ptrs(&identity.expr, &mut ptrs);
+    }
+    ptrs.into_iter().find(|ptr| {
+        let addr = *ptr as usize;
+        window.len > 0 && addr >= window.start && addr + word_bytes <= window.start + window.len
+    })
+}
+
+/// Non-vacuity controls for the frame differential: eight injected faults —
+/// five frame-side (no recompile) and three source-side (recompiled rendered
+/// output) — each of which must be detected. Every mutation target is derived
+/// from the artifact (bytecode operands, expression trees, single-match Yul
+/// anchors), never from window geometry, so a control cannot pass by mutating
+/// a word nothing reads.
+#[test]
+fn quotient_frame_differential_detects_injected_faults() {
+    if !quotient_frame_differential_available() {
+        return;
+    }
+    let word_bytes = crate::lowering::layout::WORD_BYTES;
+
+    // --- VM-heavy fixture: const-table, bytecode, fold, and sign faults. ---
+    {
+        let (params, vk) = crate::lowering::test_circuits::quotient_vm_test_vk();
+        let mut harness = QuotientFaultHarness::new("fault injection (vm circuit)", &params, &vk);
+
+        // 1. A const-table word the bytecode provably loads.
+        harness.assert_frame_fault_detected("const-table slot load", |frame, facts| {
+            let slot = first_const_slot_in_program(&facts.program_bytes)
+                .expect("VM fixture must load at least one constant-table slot");
+            let words = facts
+                .const_offset_words
+                .expect("VM fixture embeds a const table in its VK payload");
+            bump_frame_word(
+                frame,
+                &facts.external,
+                facts.vk_mptr + (words + slot) * word_bytes,
+            );
+        });
+
+        // 2. A packed program byte inside a decoded identity expression.
+        harness.assert_frame_fault_detected("program byte in identity segment", |frame, facts| {
+            let (start, end) = facts
+                .first_identity_segment
+                .expect("VM fixture interprets at least one identity");
+            assert!(end > start, "identity segment must be non-empty");
+            xor_frame_byte(
+                frame,
+                &facts.external,
+                facts.program_byte_frame_addr(start),
+                0x01,
+            );
+        });
+
+        // 3. The y challenge that batches every identity.
+        harness.assert_frame_fault_detected("y challenge word", |frame, facts| {
+            bump_frame_word(frame, &facts.external, facts.y_mptr);
+        });
+
+        // 4. Source-side: drop the final negation, returning +nu_y(x).
+        let negation_anchor = "let linearization_expected_eval := addmod(0, sub(r, mload(";
+        harness.assert_source_fault_detected("final negation sign", negation_anchor, |source| {
+            let start = source.find(negation_anchor).expect("anchor presence checked");
+            let line_end = start + source[start..].find('\n').expect("anchored line ends");
+            let line = &source[start..line_end];
+            let mutated_line =
+                line.replacen("sub(r, mload(", "mload(", 1).replacen(")), r)", "), r)", 1);
+            assert_ne!(line, mutated_line, "negation line must change");
+            format!(
+                "{}{}{}",
+                &source[..start],
+                mutated_line,
+                &source[line_end..]
+            )
+        });
+    }
+
+    // --- Selector-fold fixture: bytecode selector-fold operand fault. ---
+    {
+        let (params, vk) = crate::lowering::test_circuits::quotient_selector_fold_test_vk();
+        let mut harness =
+            QuotientFaultHarness::new("fault injection (selector fold circuit)", &params, &vk);
+
+        // 5. The gap operand of the last FOLD_SELECTOR in the bytecode. The
+        //    last fold is chosen because its bucket accumulator is already
+        //    nonzero (earlier identities of the same bucket folded first), so
+        //    `bucket * y^gap + value` provably depends on the gap; on the
+        //    first identity of a bucket the accumulator is still zero and a
+        //    gap flip would be undetectable on a healthy build. The mutated
+        //    gap is written as `gap - 1` rather than a bit flip: the
+        //    interpreter clamps gaps to `selector_max_power` and this
+        //    fixture's live gaps sit exactly at that bound, so flipping a bit
+        //    upward would be caught by the operand clamp's revert instead of
+        //    exercising the y-power fold arithmetic this control exists to
+        //    pin down.
+        harness.assert_frame_fault_detected("selector fold gap operand", |frame, facts| {
+            let fold_idx = facts
+                .last_selector_fold
+                .expect("selector-fold fixture pigeonholes FOLD_SELECTOR into bytecode");
+            let hi = frame[facts.program_byte_frame_addr(fold_idx + 2) - facts.external.frame_base];
+            let lo = frame[facts.program_byte_frame_addr(fold_idx + 3) - facts.external.frame_base];
+            let gap = u16::from_be_bytes([hi, lo]);
+            // Nonzero by the pinned pigeonhole precondition (an earlier
+            // same-bucket identity exists), so `gap - 1` stays inside the
+            // rendered `selector_max_power` clamp while changing the y power.
+            assert!(gap >= 1, "last selector fold must carry a live gap");
+            let mutated = (gap - 1).to_be_bytes();
+            let base = facts.program_byte_frame_addr(fold_idx + 2) - facts.external.frame_base;
+            frame[base] = mutated[0];
+            frame[base + 1] = mutated[1];
+        });
+    }
+
+    // --- Structured-kernel fixture: permutation/lookup kernel faults. ---
+    {
+        let case = curated_cases()
+            .into_iter()
+            .find(|case| case.name == "full mixed lookup permutation shape")
+            .expect("mixed shape case present in the corpus");
+        let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
+        let mut setup_rng = ChaCha8Rng::seed_from_u64(0xf1a3_0002);
+        let params = shape_fuzz_params(&[(case.spec, case.k)], &mut setup_rng);
+        let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, case.k)
+            .unwrap_or_else(|err| panic!("fault-injection case vk generation failed: {err:?}"));
+        let mut harness = QuotientFaultHarness::new("fault injection (mixed shape)", &params, &vk);
+
+        // 6. A decoded proof eval word some identity expression provably
+        //    reads.
+        harness.assert_frame_fault_detected("proof eval word", |frame, facts| {
+            let ptr = first_eval_word_ptr(facts)
+                .expect("structured fixture references decoded proof evals");
+            bump_frame_word(frame, &facts.external, ptr as usize);
+        });
+
+        // 7. Source-side: corrupt the permutation delta-power seed. This
+        //    targets `beta * x` rather than the `let delta := ...` literal
+        //    because `delta` is a dead variable whenever every permutation
+        //    chunk holds a single column (the last per-column multiply is
+        //    unread), which would make the control fail on a healthy build;
+        //    the seed is read for every column of every set.
+        let delta_anchor =
+            "mstore(q_perm_delta_base_ptr, mulmod(mload(BETA_MPTR), mload(X_MPTR), r))";
+        harness.assert_source_fault_detected(
+            "permutation delta-power seed",
+            delta_anchor,
+            |source| {
+                source.replacen(
+                    delta_anchor,
+                    "mstore(q_perm_delta_base_ptr, mulmod(mload(BETA_MPTR), mload(BETA_MPTR), r))",
+                    1,
+                )
+            },
+        );
+
+        // 8. Source-side: corrupt the lookup kernel's beta load. This stands
+        //    in for the theta line the plan sketched: with single-expression
+        //    lookup inputs the theta compression multiplies a zero
+        //    accumulator (`addmod(mulmod(0, theta, r), e, r)`), so theta is
+        //    dead on this corpus and mutating it would be undetectable on a
+        //    healthy build. Beta is live in both `f + beta` and
+        //    `table + beta`.
+        let beta_anchor = "let q_lookup_beta := mload(BETA_MPTR)";
+        harness.assert_source_fault_detected("lookup beta load", beta_anchor, |source| {
+            source.replacen(beta_anchor, "let q_lookup_beta := mload(GAMMA_MPTR)", 1)
+        });
+    }
+}
+
+/// Frame differential over randomly generated supported shapes.
+///
+/// Same runner as `quotient_frame_differential_matches_expr_oracle`, driven
+/// by `generated_shape_fuzz_spec` over the safe additive axes (seed bits 7+).
+/// Proving-tier (`pbt_` + env gate): the per-PR job already runs the curated
+/// corpus, and this widens it under the release EVM job. Randomized seeds are
+/// safe because `new_property_test_runner` sets `failure_persistence: None`.
+#[test]
+fn pbt_quotient_frame_differential_random_shapes() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+
+    let mut runner = new_property_test_runner();
+    runner
+        .run(&any::<u64>(), |seed| {
+            let spec = generated_shape_fuzz_spec(seed);
+            let circuit = ShapeFuzzCircuit::new(spec, seed);
+            let mut setup_rng = ChaCha8Rng::seed_from_u64(seed ^ 0xf1a3_5eed);
+            let params = shape_fuzz_params(&[(spec, SHAPE_FUZZ_K)], &mut setup_rng);
+            let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(
+                &params,
+                &circuit,
+                SHAPE_FUZZ_K,
+            )
+            .unwrap_or_else(|err| {
+                panic!("random shape {seed:#018x} vk generation failed: {err:?}")
+            });
+            let name = format!("random shape {seed:#018x} {spec:?}");
+            run_quotient_frame_differential_case(
+                &name,
+                &params,
+                &vk,
+                1,
+                quotient_frame_differential_frames(),
+            );
+            Ok(())
+        })
+        .unwrap();
 }

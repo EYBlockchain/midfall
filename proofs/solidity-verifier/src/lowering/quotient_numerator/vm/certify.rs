@@ -225,7 +225,11 @@ pub(crate) fn certify_quotient_program(
 }
 
 /// Find the end of one identity expression and the fold opcode that closes it.
-fn identity_segment(bytes: &[u8], start: usize) -> Result<(usize, u8), String> {
+///
+/// `pub(crate)` so the quotient frame differential's negative controls can
+/// target a program byte that provably sits inside a decoded identity
+/// expression rather than guessing from window geometry.
+pub(crate) fn identity_segment(bytes: &[u8], start: usize) -> Result<(usize, u8), String> {
     let mut idx = start;
     while idx < bytes.len() {
         let op = bytes[idx];

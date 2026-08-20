@@ -454,6 +454,22 @@ the EVM harness inside generation (feature-gated); the memory image must
 respect the structural constraints native kernels assume — the read-model
 windows already describe them.*
 
+> **Status (2026-08): test-side differential + adversarial corpus landed.**
+> `quotient_frame_differential_matches_expr_oracle` (`src/test.rs`) deploys
+> the production `Halo2QuotientEvaluator` under revm and compares
+> `[magic, -nu_y(x), selector buckets..]` word-for-word against a
+> frame-backed expression oracle (`vm/oracle.rs`) over every case in the
+> shape corpus (`src/shape_corpus.rs`), gated on the pinned solc alone so it
+> runs in the per-PR job; eight injected-fault negative controls prove
+> non-vacuity. Honest scope: for permutation/lookup/trash identities the
+> oracle expressions are re-parsed from the emitter's own Yul, so the
+> differential certifies the structural loop/table/chunking restructuring
+> and the compiled execution — not the per-identity formula, whose
+> independent leg stays with the `rust-verifier-trace` proof differential.
+> The strict per-render gate remains open: P1.1 Result-threading is its
+> precondition (`render()` must never require solc), and `vm/oracle.rs` is
+> kept free of solc/revm imports so promoting it is a cfg-only change.
+
 **P2.6 Typed statement IR instead of the Yul-string round-trip** *(F7, F10)*
 ⚠ *(large; do last)*. Extend `QuotientExpr` into a small statement IR
 (let-bindings + expression), make `yul_emit::Evaluator` produce it once per

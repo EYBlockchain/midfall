@@ -2566,6 +2566,16 @@ If time is limited, prioritize these five:
 
 1. **Standalone quotient differential test:** `upstream Rust == typed IR == VM
    interpreter == EVM debug contract` over random frames.
+   > **Status (2026-08): landed as the quotient frame differential.**
+   > `quotient_frame_differential_matches_expr_oracle` plus the
+   > `quotient_frame_differential_detects_injected_faults` negative controls
+   > (`src/test.rs`) compare the compiled production evaluator against the
+   > `vm/oracle.rs` expression oracle over pseudorandom frames for every
+   > `src/shape_corpus.rs` case, per PR (solc-gated, not env-gated). The
+   > `upstream Rust ==` leg for permutation/lookup/trash formulas remains
+   > with the `rust-verifier-trace` proof differential — the frame oracle
+   > re-parses those expressions from the emitter's own Yul. The strict
+   > per-render EVM gate stays open pending P1.1 Result-threading.
 2. **Identity manifest test:** exact equality of identity order, source
    metadata, target, and native callback fold ranges.
 3. **Selector sparse-fold exhaustive test:** for all small target sequences,

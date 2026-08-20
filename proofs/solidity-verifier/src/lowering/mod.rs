@@ -46,4 +46,7 @@ pub(crate) struct VerifierBuildInputs<'params, 'meta> {
 pub(crate) use quotient_numerator::vm::RepackedProofScalarLayout;
 
 #[cfg(test)]
+pub(crate) mod test_circuits;
+
+#[cfg(test)]
 mod tests;

@@ -32,7 +32,16 @@ use super::{
     encoding::*,
     kzg,
     layout::{self, WORD_BYTES},
-    quotient_numerator::vm::*,
+    quotient_numerator::vm::{
+        oracle::{
+            build_quotient_frame, eval_quotient_expr_with, expected_linearization_artifacts,
+            fq_pow, frame_differential_seed, QuotientFrameMemory, QuotientIdentityTraceEntry,
+            QuotientLinearizationArtifacts, QuotientOracleMemory,
+        },
+        *,
+    },
+    render::QuotientExternal,
+    test_circuits::{quotient_selector_fold_test_vk, quotient_vm_test_vk},
     VerifierBuildInputs,
 };
 use crate::{
@@ -276,111 +285,6 @@ impl Circuit<Fq> for LoweringPlanTestCircuit {
             },
         )
     }
-}
-
-/// Number of advice columns backing one seven-limb foreign-field shape.
-const QUOTIENT_VM_TEST_LIMBS: usize = 7;
-/// Gate count chosen to exceed the inline prefix plus the native-gate budget,
-/// so identities are left over for the compact VM.
-const QUOTIENT_VM_TEST_GATES: usize =
-    DEFAULT_HYBRID_QUOTIENT_INLINE_IDENTITIES + DEFAULT_QUOTIENT_NATIVE_GATES + 8;
-
-#[derive(Clone, Debug)]
-struct QuotientVmTestConfig {
-    limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS],
-    selector: Selector,
-}
-
-/// Circuit whose quotient identities are numerous enough to reach the VM.
-///
-/// `LoweringPlanTestCircuit` has a single gate, so its whole identity stream
-/// fits in the inline prefix and the compact VM never runs. This circuit exists
-/// so the fast test suite exercises the bytecode path — and therefore the
-/// generator's own program certification — on a real `LoweringPlan`.
-#[derive(Clone, Debug, Default)]
-struct QuotientVmTestCircuit;
-
-impl Circuit<Fq> for QuotientVmTestCircuit {
-    type Config = QuotientVmTestConfig;
-    type FloorPlanner = SimpleFloorPlanner;
-    type Params = ();
-
-    fn without_witnesses(&self) -> Self {
-        Self
-    }
-
-    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
-        let limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS] =
-            core::array::from_fn(|_| meta.advice_column());
-        let selector = meta.selector();
-        // The generator only supports one identity-committed plus one
-        // non-committed instance column, so mirror that shape here.
-        let committed_instance = meta.instance_column();
-        let public_instance = meta.instance_column();
-
-        meta.create_gate("quotient vm instance balance", |meta| {
-            let advice = meta.query_advice(limbs[0], Rotation::cur());
-            let committed = meta.query_instance(committed_instance, Rotation::cur());
-            let public = meta.query_instance(public_instance, Rotation::cur());
-            Constraints::without_selector(vec![advice + committed + public])
-        });
-
-        // Seven-limb linear forms: the shape the LIN7 recognizer is built for.
-        // Distinct per-gate coefficients keep the gates from deduplicating.
-        for gate in 0..QUOTIENT_VM_TEST_GATES {
-            meta.create_gate("quotient vm limb form", move |meta| {
-                let terms = limbs
-                    .iter()
-                    .enumerate()
-                    .map(|(limb, column)| {
-                        let coeff = Fq::from(((gate + 1) * 16 + limb + 1) as u64);
-                        meta.query_advice(*column, Rotation::cur()) * Expression::Constant(coeff)
-                    })
-                    .reduce(|acc, term| acc + term)
-                    .expect("limb count is nonzero");
-                Constraints::without_selector(vec![terms])
-            });
-        }
-
-        // One simple-selector gate so the selector fold path is covered too.
-        meta.create_gate("quotient vm selector form", |meta| {
-            let lhs = meta.query_advice(limbs[0], Rotation::cur());
-            let rhs = meta.query_advice(limbs[1], Rotation::cur());
-            Constraints::with_selector(selector, vec![("quotient vm selector form", lhs - rhs)])
-        });
-
-        QuotientVmTestConfig { limbs, selector }
-    }
-
-    fn synthesize(
-        &self,
-        config: Self::Config,
-        mut layouter: impl Layouter<Fq>,
-    ) -> Result<(), PlonkError> {
-        layouter.assign_region(
-            || "quotient vm row",
-            |mut region| {
-                config.selector.enable(&mut region, 0)?;
-                for column in config.limbs {
-                    region.assign_advice(|| "limb", column, 0, || Value::known(Fq::ZERO))?;
-                }
-                Ok(())
-            },
-        )
-    }
-}
-
-/// Generate parameters and VK for the VM-exercising lowering-plan tests.
-fn quotient_vm_test_vk() -> (
-    ParamsKZG<Bls12>,
-    VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
-) {
-    let mut rng = ChaCha8Rng::seed_from_u64(11);
-    let params = ParamsKZG::<Bls12>::unsafe_setup(6, &mut rng);
-    let circuit = QuotientVmTestCircuit;
-    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 6)
-        .expect("quotient VM test circuit VK should build");
-    (params, vk)
 }
 
 /// H-1 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): `NEG_S_G2_BASE` is the
@@ -998,7 +902,7 @@ fn quotient_program_artifacts_match_typed_identity_stream() {
     }
     validate_quotient_program(&builder.bytes).expect("synthetic quotient program should validate");
 
-    let expected = expected_linearization_artifacts_for_test(&identities, &values, y, 2);
+    let expected = expected_linearization_artifacts(&identities, &mut values, y, 2);
     let actual = eval_quotient_program_artifacts_for_test(
         &builder.bytes,
         &builder.consts,
@@ -1221,13 +1125,13 @@ fn selector_sparse_fold_exhaustive_matches_naive_global_y_powers() {
             }
 
             let selector_fold = VerifierBuildInputs::selector_fold_plan(&identities, 2);
-            let values = HashMap::new();
-            let expected = expected_linearization_artifacts_for_test(&identities, &values, y, 2);
+            let mut values = HashMap::new();
+            let expected = expected_linearization_artifacts(&identities, &mut values, y, 2);
 
             let mut sparse_main = Fq::ZERO;
             let mut sparse_selectors = vec![Fq::ZERO; 2];
             for identity in &identities {
-                let value = eval_quotient_expr_for_test(&identity.expr, &values);
+                let value = eval_quotient_expr_with(&identity.expr, &mut values);
                 match identity.target {
                     QuotientTarget::Main => {
                         sparse_main = sparse_main * y + value;
@@ -3281,7 +3185,7 @@ fn quotient_vm_lin7_matches_direct_expr_eval() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3313,7 +3217,7 @@ fn quotient_vm_bilin7_row_matches_direct_expr_eval() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3350,7 +3254,7 @@ fn quotient_vm_bilin7_pairwise_matches_direct_expr_eval() {
         }
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3389,7 +3293,7 @@ fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     // The pre-fix builder panics inside this call for this input.
     builder.emit_expr(&expr);
@@ -3415,7 +3319,7 @@ fn quotient_vm_pow5_matches_direct_expr_eval() {
         quotient_mul_expr(base.clone(), quotient_mul_expr(base.clone(), base)),
     );
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::default();
     builder.emit_expr(&expr);
 
@@ -3441,7 +3345,7 @@ fn quotient_vm_pow5_rejects_near_miss_product_shapes() {
         quotient_mul_expr(a, b),
     );
 
-    let expected = eval_quotient_expr_for_test(&a4_times_b, &values);
+    let expected = eval_quotient_expr_with(&a4_times_b, &mut values);
     let mut builder = QuotientProgramBuilder::default();
     builder.emit_expr(&a4_times_b);
 
@@ -3476,7 +3380,7 @@ fn quotient_vm_add_product_reserves_scalar_before_base_constants() {
     );
     let expr = quotient_add_expr(base, product);
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::default();
     builder.emit_expr(&expr);
 
@@ -3523,7 +3427,7 @@ fn quotient_vm_limb_subshape_matches_direct_expr_eval() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3566,7 +3470,7 @@ fn quotient_vm_limb_decomposition_reserves_shape_coeffs_before_residue() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3606,7 +3510,7 @@ fn quotient_vm_limb_subshape_inside_conditional_product_matches_direct_expr_eval
     }
     let expr = quotient_mul_expr(QuotientExpr::Mem(QuotientMem::Literal(cond_ptr)), inner);
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3704,7 +3608,7 @@ fn quotient_vm_modarith7_mixed_affine_matches_direct_expr_eval() {
     );
     let expr = quotient_mul_expr(QuotientExpr::Mem(QuotientMem::Literal(cond)), inner);
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3789,7 +3693,7 @@ fn quotient_vm_modarith7_sparse_affine_product_matches_direct_expr_eval() {
     );
     let expr = quotient_mul_expr(QuotientExpr::Mem(QuotientMem::Literal(cond)), inner);
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -3820,7 +3724,7 @@ fn unmatched_limb_shape_falls_back_to_existing_vm_ops() {
         );
     }
 
-    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let expected = eval_quotient_expr_with(&expr, &mut values);
     let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
     builder.emit_expr(&expr);
 
@@ -4001,63 +3905,6 @@ fn quotient_bytecode_events_for_test(bytes: &[u8]) -> Vec<TestQuotientBytecodeEv
     events
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TestIdentityTraceEntry {
-    global_index: usize,
-    target: QuotientTarget,
-    value: Fq,
-    y_power: usize,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct TestLinearizationArtifacts {
-    identity_trace: Vec<TestIdentityTraceEntry>,
-    main_numerator: Fq,
-    selector_buckets: Vec<Fq>,
-    quotient_expected_eval: Fq,
-}
-
-/// Small exponentiation helper for expected linearization powers.
-fn fq_pow(base: Fq, exp: usize) -> Fq {
-    (0..exp).fold(Fq::ONE, |acc, _| acc * base)
-}
-
-/// Evaluate expected quotient linearization artifacts directly from identities.
-fn expected_linearization_artifacts_for_test(
-    identities: &[QuotientIdentity],
-    mem: &HashMap<u32, Fq>,
-    y: Fq,
-    selector_count: usize,
-) -> TestLinearizationArtifacts {
-    let mut identity_trace = Vec::with_capacity(identities.len());
-    let mut main_numerator = Fq::ZERO;
-    let mut selector_buckets = vec![Fq::ZERO; selector_count];
-    let total = identities.len();
-
-    for identity in identities {
-        let value = eval_quotient_expr_for_test(&identity.expr, mem);
-        let y_power = total - 1 - identity.meta.global_index;
-        let scaled = value * fq_pow(y, y_power);
-        match identity.target {
-            QuotientTarget::Main => main_numerator += scaled,
-            QuotientTarget::Selector(selector_idx) => selector_buckets[selector_idx] += scaled,
-        }
-        identity_trace.push(TestIdentityTraceEntry {
-            global_index: identity.meta.global_index,
-            target: identity.target,
-            value,
-            y_power,
-        });
-    }
-
-    TestLinearizationArtifacts {
-        identity_trace,
-        main_numerator,
-        selector_buckets,
-        quotient_expected_eval: -main_numerator,
-    }
-}
-
 /// Interpret folded quotient bytecode into the same artifacts the verifier
 /// uses.
 fn eval_quotient_program_artifacts_for_test(
@@ -4066,7 +3913,7 @@ fn eval_quotient_program_artifacts_for_test(
     mem: &HashMap<u32, Fq>,
     y: Fq,
     selector_tail_exponents: &[usize],
-) -> TestLinearizationArtifacts {
+) -> QuotientLinearizationArtifacts {
     let mut idx = 0usize;
     let mut identity_start = 0usize;
     let mut main_numerator = Fq::ZERO;
@@ -4078,7 +3925,7 @@ fn eval_quotient_program_artifacts_for_test(
             Q_OP_FOLD_MAIN => {
                 let value = eval_quotient_vm_for_test(&bytes[identity_start..idx], consts, mem);
                 main_numerator = main_numerator * y + value;
-                identity_trace.push(TestIdentityTraceEntry {
+                identity_trace.push(QuotientIdentityTraceEntry {
                     global_index: identity_trace.len(),
                     target: QuotientTarget::Main,
                     value,
@@ -4094,7 +3941,7 @@ fn eval_quotient_program_artifacts_for_test(
                 main_numerator *= y;
                 selector_buckets[selector_idx] =
                     selector_buckets[selector_idx] * fq_pow(y, gap) + value;
-                identity_trace.push(TestIdentityTraceEntry {
+                identity_trace.push(QuotientIdentityTraceEntry {
                     global_index: identity_trace.len(),
                     target: QuotientTarget::Selector(selector_idx),
                     value,
@@ -4120,30 +3967,11 @@ fn eval_quotient_program_artifacts_for_test(
         *bucket *= fq_pow(y, *tail);
     }
 
-    TestLinearizationArtifacts {
+    QuotientLinearizationArtifacts {
         identity_trace,
         main_numerator,
         selector_buckets,
         quotient_expected_eval: -main_numerator,
-    }
-}
-
-/// Evaluate the typed quotient expression tree for tests.
-fn eval_quotient_expr_for_test(expr: &QuotientExpr, mem: &HashMap<u32, Fq>) -> Fq {
-    match expr {
-        QuotientExpr::Const(value) => fq_from_u256(*value),
-        QuotientExpr::Mem(QuotientMem::Literal(ptr)) => mem[ptr],
-        QuotientExpr::Mem(QuotientMem::Token(_))
-        | QuotientExpr::Mem(QuotientMem::TokenOffset(_, _)) => {
-            panic!("test expressions use literal memory only")
-        }
-        QuotientExpr::Add(lhs, rhs) => {
-            eval_quotient_expr_for_test(lhs, mem) + eval_quotient_expr_for_test(rhs, mem)
-        }
-        QuotientExpr::Mul(lhs, rhs) => {
-            eval_quotient_expr_for_test(lhs, mem) * eval_quotient_expr_for_test(rhs, mem)
-        }
-        QuotientExpr::Neg(inner) => -eval_quotient_expr_for_test(inner, mem),
     }
 }
 
@@ -4491,4 +4319,119 @@ fn quotient_pointer_validator_rejects_out_of_window_reads() {
         .expect("corrupting a pointer must not change structural validity");
     validate_quotient_const_slots(&corrupted, plan.quotient.build.consts.len())
         .expect("corrupting a pointer must not change const-slot validity");
+}
+
+/// The frame builder and frame-backed oracle memory agree on layout: BE word
+/// encoding, canonical pseudorandom fill, verbatim VK overlay, and token
+/// resolution — the load semantics the EVM frame differential relies on.
+#[test]
+fn quotient_frame_oracle_roundtrips_built_frames() {
+    let external = QuotientExternal {
+        frame_base: 0x80,
+        frame_len: 0x100,
+        output_len: 0x40,
+        magic: 0x1234,
+    };
+    let vk_mptr = 0xc0usize;
+    // Deliberately non-canonical words: the VK payload is the one region
+    // allowed to hold them (packed program bytes, point encodings).
+    let vk_bytes = vec![0xffu8; 0x40];
+    let seed = frame_differential_seed([7u8; 32], 3);
+    let frame = build_quotient_frame(&external, vk_mptr, &vk_bytes, seed);
+    assert_eq!(frame.len(), external.frame_len);
+    assert_eq!(
+        &frame[0x40..0x80],
+        &vk_bytes[..],
+        "VK overlay must be verbatim"
+    );
+
+    let token_bases = [(Q_MEM_BETA, 0x80usize)];
+    let mut mem = QuotientFrameMemory::new(
+        &frame,
+        external.frame_base,
+        vk_mptr..vk_mptr + vk_bytes.len(),
+        &token_bases,
+    );
+
+    // A pseudorandom word reads back as the canonical Fr its BE bytes encode.
+    let value = mem.load(0x80);
+    assert_eq!(
+        fe_to_u256::<Fq>(&value).to_be_bytes::<32>().as_slice(),
+        &frame[..WORD_BYTES],
+        "frame words are big-endian canonical Fr"
+    );
+    // Token loads resolve through the token base table.
+    assert_eq!(mem.token(Q_MEM_BETA, 0x20), mem.load(0xa0));
+    // Non-canonical VK-window words reduce instead of panicking.
+    let _ = mem.load(vk_mptr as u32);
+    // Distinct iterations derive distinct assignments.
+    let other_seed = frame_differential_seed([7u8; 32], 4);
+    assert_ne!(
+        frame,
+        build_quotient_frame(&external, vk_mptr, &vk_bytes, other_seed)
+    );
+}
+
+/// The selector-fold fixture pigeonholes `FOLD_SELECTOR` into the compact-VM
+/// bytecode regardless of the knapsack's native-gate choices, and the LAST
+/// fold's bucket has an earlier identity — the precondition that makes the
+/// frame differential's gap-operand negative control detectable.
+#[test]
+fn selector_fold_fixture_pigeonholes_folds_into_bytecode() {
+    let (params, vk) = quotient_selector_fold_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let bytes = &plan.quotient.build.bytes;
+
+    let folds: Vec<usize> = quotient_bytecode_ops(bytes)
+        .filter(|(_, op, _)| *op == Q_OP_FOLD_SELECTOR)
+        .map(|(idx, _, _)| idx)
+        .collect();
+    assert!(
+        folds.len() >= 2,
+        "selector gates beyond the inline+native budgets must overflow into \
+         interpreted FOLD_SELECTOR folds, found {}",
+        folds.len()
+    );
+
+    // Interpreted selector identities appear in stream order, so the last
+    // FOLD_SELECTOR corresponds to the last interpreted selector identity.
+    let interpreted_selectors: Vec<_> = plan
+        .quotient
+        .plan
+        .identities_in_execution_order()
+        .expect("finalized plan walks its execution stream")
+        .into_iter()
+        .filter(|(identity, kind)| {
+            matches!(kind, QuotientExecutionKind::Interpreted)
+                && matches!(identity.target, QuotientTarget::Selector(_))
+        })
+        .map(|(identity, _)| identity.clone())
+        .collect();
+    assert_eq!(interpreted_selectors.len(), folds.len());
+
+    let last = interpreted_selectors.last().expect("at least two folds");
+    let QuotientTarget::Selector(last_bucket) = last.target else {
+        unreachable!("filtered to selector targets");
+    };
+    let encoded_bucket = bytes[folds.last().unwrap() + 1] as usize;
+    assert_eq!(
+        encoded_bucket, last_bucket,
+        "fold operand encodes the plan's bucket"
+    );
+    let earlier_same_bucket = plan
+        .quotient
+        .plan
+        .identities_in_execution_order()
+        .expect("finalized plan walks its execution stream")
+        .iter()
+        .any(|(identity, _)| {
+            identity.target == QuotientTarget::Selector(last_bucket)
+                && identity.meta.global_index < last.meta.global_index
+        });
+    assert!(
+        earlier_same_bucket,
+        "the last fold's bucket accumulator must be nonzero when it executes, \
+         or its gap operand would be dead"
+    );
 }
