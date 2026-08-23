@@ -44,7 +44,7 @@ use std::collections::BTreeMap;
 
 use crate::lowering::{
     abi::proof::ProofCalldataLayout,
-    encoding::{ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Word},
+    encoding::{ConstraintSystemMeta, Data, EcPoint, Location, Ptr, Value, Word},
     layout::{
         gas,
         memory::{
@@ -1521,7 +1521,7 @@ pub(crate) fn computations(
     //   for s in (n_sets - 1).. down to 0:
     //       points  := point_sets[s]
     //       evals   := q_eval_set[s][0..|points|]
-    //       proofE  := mload(Q_EVAL_CPTR + s * 0x20)   (= q_evals[s])
+    //       proofE  := mload(q_eval_cptr + s * 0x20)   (= q_evals[s])
     //       r_eval  := lagrange_interpolate(points, evals).eval(x3)
     //       den     := prod_{p in points} (x3 - p)
     //       eval    := (proofE - r_eval) * den.invert()
@@ -1540,7 +1540,7 @@ pub(crate) fn computations(
         lines.push("let x3 := mload(X3_MPTR)".to_string());
         lines.push("let f_eval := 0".to_string());
         // Resolve the calldata pointer to the q_evals block once.
-        lines.push("let Q_EVAL_CPTR := mload(Q_EVAL_CPTR_MPTR)".to_string());
+        lines.push("let q_eval_cptr := mload(Q_EVAL_CPTR_MPTR)".to_string());
         // Hoist all distinct rotation points to stack locals; each
         // gets read up to ~m^2 times across the set's dx_j and
         // lbasis_j chains, so a single mload at the top of the block
@@ -1568,7 +1568,7 @@ pub(crate) fn computations(
             // Solidity proof shim rewrites q_evals to canonical BE words, so
             // calldataload gives the field element directly.
             let proof_eval = format!(
-                "calldataload(add(Q_EVAL_CPTR, {:#x}))",
+                "calldataload(add(q_eval_cptr, {:#x}))",
                 set_idx * WORD_BYTES
             );
             // Reference to q_eval_set[set_idx][k]:
@@ -1800,7 +1800,7 @@ pub(crate) fn computations(
             "let lin_one_minus_x_n := mload(add(QUOTIENT_MPTR, {WORD_BYTES:#x}))"
         ));
         // Resolve the calldata pointer to the q_evals block once.
-        lines.push("let Q_EVAL_CPTR := mload(Q_EVAL_CPTR_MPTR)".to_string());
+        lines.push("let q_eval_cptr := mload(Q_EVAL_CPTR_MPTR)".to_string());
 
         // truncated-challenges: midnight-proofs
         // proofs/src/poly/kzg/mod.rs uses
@@ -1824,10 +1824,10 @@ pub(crate) fn computations(
         }
 
         // v = sum_s x4^s * q_evals[s] + x4^n_sets * f_eval.
-        lines.push("let v := calldataload(Q_EVAL_CPTR)".to_string());
+        lines.push("let v := calldataload(q_eval_cptr)".to_string());
         for s in 1..n_sets {
             lines.push(format!(
-                "v := addmod(v, mulmod(calldataload(add(Q_EVAL_CPTR, {:#x})), x4_pow_{s}, r), r)",
+                "v := addmod(v, mulmod(calldataload(add(q_eval_cptr, {:#x})), x4_pow_{s}, r), r)",
                 s * WORD_BYTES
             ));
         }
@@ -1837,6 +1837,53 @@ pub(crate) fn computations(
 
         // final_com = sum_{s,i} (x4^s * x1^i) * C[s][i]
         //             + x4^n_sets * f_com.
+        //
+        // Each staged term carries a source note naming the commitment
+        // region the point is copied from -- comment-only: the copies still
+        // read the planned numeric addresses, and mapping a raw literal back
+        // to its region by hand is exactly the audit chore the notes remove.
+        let comm_region_note = |comm: &EcPoint| -> Option<String> {
+            let addr = match comm.ptr().value() {
+                Value::Integer(v) if v >= 0 => v as usize,
+                _ => return None,
+            };
+            let base_of = |ptr: Ptr| -> Option<usize> {
+                match ptr.value() {
+                    Value::Integer(b) if b >= 0 => Some(b as usize),
+                    _ => None,
+                }
+            };
+            if base_of(memory.f_com_mptr) == Some(addr) {
+                return Some("F (batched-opening commitment)".to_string());
+            }
+            if base_of(memory.pi_mptr) == Some(addr) {
+                return Some("pi (KZG opening proof)".to_string());
+            }
+            // Proof-side commitment regions are contiguous 0x80-stride runs;
+            // every proof comm handle is built from one of these bases, so
+            // the greatest base at or below the address identifies it.
+            let regions = [
+                ("advice_comms", memory.advice_comms_mptr_base),
+                ("lookup_m_comms", memory.lookup_m_comms_mptr_base),
+                ("perm_z_comms", memory.perm_z_comms_mptr_base),
+                ("lookup_helper_comms", memory.lookup_helper_comms_mptr_base),
+                ("lookup_z_comms", memory.lookup_z_comms_mptr_base),
+                ("trashcan_comms", memory.trashcan_comms_mptr_base),
+                ("quotient_limb_comms", memory.quotient_limb_comms_mptr_base),
+            ];
+            let comms_base = base_of(memory.comms_mptr_base)?;
+            if addr < comms_base {
+                return Some("VK-resident (fixed/permutation) commitment".to_string());
+            }
+            regions
+                .iter()
+                .filter_map(|(name, ptr)| {
+                    let base = base_of(*ptr)?;
+                    (addr >= base).then_some((*name, base))
+                })
+                .max_by_key(|(_, base)| *base)
+                .map(|(name, base)| format!("{name}[{}]", (addr - base) / G1_BYTES))
+        };
         let mut pair_idx = 0usize;
         let scalar_expr = |set_idx: usize, commitment_idx: usize| -> String {
             let x1_pow = if commitment_idx == 0 {
@@ -1872,8 +1919,10 @@ pub(crate) fn computations(
 
                     for q_idx in 0..meta.protocol.num_quotients {
                         let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
+                        lines.push(format!("// term {pair_idx}: quotient limb Q_{q_idx}"));
                         lines.push(format!(
-                            "mcopy({pair_base:#x}, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, {:#x}), {G1_BYTES:#x})",
+                            "mcopy({}, add(QUOTIENT_LIMB_COMMS_MPTR_BASE, {:#x}), {G1_BYTES:#x})",
+                            final_msm_addr(final_msm_scratch, pair_base),
                             q_idx * G1_BYTES
                         ));
                         lines.push(format!(
@@ -1893,6 +1942,9 @@ pub(crate) fn computations(
                         let selector_scalar =
                             format!("mload(add(SELECTOR_ACC_MPTR, {:#x}))", sel_idx * WORD_BYTES);
                         lines.push(format!(
+                            "// term {pair_idx}: fixed_comms[{col}] (simple selector {sel_idx})"
+                        ));
+                        lines.push(format!(
                             "mcopy({}, {}, {G1_BYTES:#x})",
                             final_msm_addr(final_msm_scratch, pair_base),
                             data.fixed_comms[col].ptr()
@@ -1906,6 +1958,9 @@ pub(crate) fn computations(
                     }
                 } else {
                     let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
+                    if let Some(note) = comm_region_note(&c.comm) {
+                        lines.push(format!("// term {pair_idx}: {note}"));
+                    }
                     lines.push(format!(
                         "mcopy({}, {}, {G1_BYTES:#x})",
                         final_msm_addr(final_msm_scratch, pair_base),
@@ -1922,6 +1977,9 @@ pub(crate) fn computations(
 
         let pair_base = final_msm_scratch + pair_idx * G1_MSM_PAIR_BYTES;
         lines.push(format!(
+            "// term {pair_idx}: F (batched-opening commitment)"
+        ));
+        lines.push(format!(
             "mcopy({}, F_COM_MPTR, {G1_BYTES:#x})",
             final_msm_addr(final_msm_scratch, pair_base)
         ));
@@ -1936,14 +1994,40 @@ pub(crate) fn computations(
         );
 
         lines.push("if success {".to_string());
-        lines.push(format!(
-            "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s)"
-        ));
-        lines.push(format!(
-            "    success := staticcall({}, 0x0c, PCS_FINAL_MSM_MPTR, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
-            gas::g1msm_gas(final_msm_terms),
-            final_msm_len
-        ));
+        // The constructor's full-width smoke probe is sized as the maximum
+        // over every MSM this verifier stages, so its bound can exceed the
+        // final MSM's exact cost only when another MSM dominates. When the
+        // two coincide (every production render so far), forward the named
+        // constant so the probe and this call share one bound structurally
+        // instead of by value coincidence.
+        let final_msm_gas = gas::g1msm_gas(final_msm_terms);
+        let smoke_gas =
+            gas::g1msm_gas(memory.constructor_g1msm_smoke_input_bytes / G1_MSM_PAIR_BYTES);
+        assert!(
+            smoke_gas >= final_msm_gas,
+            "constructor G1MSM smoke probe is under-funded for the final MSM"
+        );
+        if smoke_gas == final_msm_gas {
+            lines.push(format!(
+                "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s), forwarded through"
+            ));
+            lines.push(
+                "    // G1MSM_GAS_SMOKE: the constructor smoke probe forwards this same".to_string(),
+            );
+            lines.push("    // constant, so deployment prices this exact call".to_string());
+            lines.push(format!(
+                "    success := staticcall(G1MSM_GAS_SMOKE, 0x0c, PCS_FINAL_MSM_MPTR, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+                final_msm_len
+            ));
+        } else {
+            lines.push(format!(
+                "    // exact EIP-2537 G1MSM cost for {final_msm_terms} pair(s)"
+            ));
+            lines.push(format!(
+                "    success := staticcall({final_msm_gas}, 0x0c, PCS_FINAL_MSM_MPTR, {:#x}, FINAL_COM_MPTR, {G1_BYTES:#x})",
+                final_msm_len
+            ));
+        }
         lines.push(format!(
             "    success := and(success, eq(returndatasize(), {G1_BYTES:#x}))"
         ));

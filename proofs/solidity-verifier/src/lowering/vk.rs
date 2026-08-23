@@ -98,7 +98,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
     /// Generate the VK payload before compact quotient constants/program data.
     fn generate_base_vk(&self) -> Result<Halo2VerifyingKey, GeneratorError> {
-        let constants: Vec<(&'static str, U256)>;
+        let constants: Vec<(String, U256)>;
         {
             use layout::VkHeaderSlot as Slot;
 
@@ -265,8 +265,12 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     neg_s_g2,
                 )
                 .unwrap();
-            constants =
-                header.finish().map_err(|err| GeneratorError::planning("vk-header", err))?;
+            constants = header
+                .finish()
+                .map_err(|err| GeneratorError::planning("vk-header", err))?
+                .into_iter()
+                .map(|(name, value)| (name.to_string(), value))
+                .collect();
         }
 
         // Convert each commitment from G1Projective to G1Affine before
@@ -317,10 +321,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
 
         for _ in 0..8 {
             vk.constants.truncate(header_words);
+            // Index the labels at the reserve sites too: reservation slack can
+            // leave tail words the fill loops below never rewrite, and every
+            // rendered word must carry its section-relative index.
             vk.constants
-                .extend((0..quotient_const_words).map(|_| ("quotient_const", U256::ZERO)));
+                .extend((0..quotient_const_words).map(|i| (format!("quotient_const[{i}]"), U256::ZERO)));
             vk.constants
-                .extend((0..quotient_program_words).map(|_| ("quotient_program", U256::ZERO)));
+                .extend((0..quotient_program_words).map(|i| (format!("quotient_program[{i}]"), U256::ZERO)));
             vk.quotient_const_offset_words = None;
             vk.quotient_const_words = 0;
             vk.quotient_program_offset_words = None;
@@ -395,10 +402,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         );
 
         for (i, value) in quotient_program_build.consts.iter().copied().enumerate() {
-            vk.constants[quotient_const_offset_words + i] = ("quotient_const", value);
+            vk.constants[quotient_const_offset_words + i] = (format!("quotient_const[{i}]"), value);
         }
         for (i, value) in quotient_program_chunks.iter().copied().enumerate() {
-            vk.constants[quotient_program_offset_words + i] = ("quotient_program", value);
+            vk.constants[quotient_program_offset_words + i] =
+                (format!("quotient_program[{i}]"), value);
         }
 
         vk.quotient_const_offset_words = Some(quotient_const_offset_words);

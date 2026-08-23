@@ -1511,7 +1511,7 @@ mod tests {
         Halo2VerifyingKey {
             constructor_payload_mptr: constructor_memory.payload_mptr,
             constants: (0..crate::lowering::layout::VK_HEADER_WORDS)
-                .map(|_| ("c", U256::ZERO))
+                .map(|_| ("c".to_string(), U256::ZERO))
                 .collect(),
             fixed_comms: fixed,
             permutation_comms: vec![],

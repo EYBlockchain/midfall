@@ -1,10 +1,11 @@
-            // Revert with the QuotientProgramInvalid() selector
-            // (bytes4(keccak256) = 0x3cc81b89; pinned by
-            // p4_error_selectors_match_declared_errors). Defined here rather
-            // than in AssemblyHelpers.yul because the quotient VM renders in
-            // BOTH the main verifier and the standalone evaluator assembly.
+            // Revert with the QuotientProgramInvalid() selector. Defined here
+            // rather than in AssemblyHelpers.yul because the quotient VM
+            // renders in BOTH the main verifier and the standalone evaluator
+            // assembly; both contracts declare ERR_QUOTIENT_PROGRAM_INVALID
+            // (bytes4(keccak256) = 0x3cc81b89, pinned by
+            // p4_error_selectors_match_declared_errors).
             function q_program_fail() {
-                mstore(0x00, shl(224, 0x3cc81b89))
+                mstore(0x00, shl(224, ERR_QUOTIENT_PROGRAM_INVALID))
                 revert(0x00, 0x04)
             }
 

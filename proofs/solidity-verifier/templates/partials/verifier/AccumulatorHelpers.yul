@@ -249,11 +249,15 @@
             // accumulator layout has neither (e.g. point_pair with no tail)
             // legally leave it unused.
             // MF-4: `precompile_failed` separates a G1MSM staticcall that
-            // could not run (chain/gas fault) from a public-input point this
-            // verifier decoded and rejected (bad packing, out-of-field
-            // coordinate, non-canonical identity encoding, or a point the
-            // precompile found off-curve/out-of-subgroup). Both fail closed at
-            // the call site; only the second is a BadPointEncoding.
+            // failed from a public-input point this verifier itself decoded
+            // and rejected (bad packing, out-of-field coordinate,
+            // non-canonical identity or zero encoding) -- only the latter
+            // surfaces as BadPointEncoding. A failed staticcall conflates two
+            // causes the EVM cannot distinguish: a chain/gas fault and a
+            // decoded point the precompile found off-curve or out-of-subgroup
+            // (EIP-2537 signals invalid input by failing the call); both fail
+            // closed and surface as PrecompileFailed at the boundary in
+            // VkLoading.yul.
             function validate_public_accumulator(success, r) -> out, precompile_failed {
                 out := success
                 let bits := {{ self.expected_num_acc_limb_bits }}
@@ -337,9 +341,14 @@
                 {%- else %}
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
+                {%- if self.expected_acc_has_carried_scalars || acc_fixed_bases.len() > 0 %}
                 // RHS scalar, when present, immediately follows the RHS point
-                // limbs. The fixed-base scalar tail starts after it.
+                // limbs. The fixed-base scalar tail starts after it. Renders
+                // with neither a carried scalar nor a fixed-base tail
+                // (point_pair without tail) have no reader and skip the
+                // pointer entirely.
                 let rhs_scalar_ptr := add(rhs_instance_ptr, mul(mul(2, coord_words), 0x20))
+                {%- endif %}
                 let rhs_ok, rhs_is_id := load_acc_point(ACC_RHS_MPTR, rhs_instance_ptr, bits, n, limb_base)
                 out := and(out, rhs_ok)
                 // acc_pair_ptr appends (G1, scalar) pairs into acc_scratch for

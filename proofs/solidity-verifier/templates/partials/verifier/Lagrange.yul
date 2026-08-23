@@ -24,6 +24,9 @@
                 // LAGRANGE_DENOMS_MPTR scratch region; only the distilled
                 // results below are persisted into the named theta slots.
                 let mptr := LAGRANGE_DENOMS_MPTR
+                // {{ num_instances }} instance + {{ num_neg_lagranges }} negative-rotation
+                // denominators, one 32-byte word each; x^n - 1 is appended
+                // at mptr_end below.
                 let mptr_end := add(mptr, {{ ((num_instances + num_neg_lagranges) * 32)|hex() }})
                 {%- if num_instances == 0 %}
                 // No public instances still need one denominator slot so
@@ -54,11 +57,11 @@
                 // l_blind is the sum of the negative-rotation Lagrange terms
                 // used by the midnight-proofs blinding identity.
                 let l_blind := mload(add(LAGRANGE_DENOMS_MPTR, 0x20))
-                let l_i_cptr := add(LAGRANGE_DENOMS_MPTR, 0x40)
-                for { let l_i_cptr_end := add(LAGRANGE_DENOMS_MPTR, {{ (num_neg_lagranges * 32)|hex() }}) }
-                    lt(l_i_cptr, l_i_cptr_end)
-                    { l_i_cptr := add(l_i_cptr, 0x20) } {
-                    l_blind := addmod(l_blind, mload(l_i_cptr), r)
+                let l_i_mptr := add(LAGRANGE_DENOMS_MPTR, 0x40)
+                for { let l_i_mptr_end := add(LAGRANGE_DENOMS_MPTR, {{ (num_neg_lagranges * 32)|hex() }}) }
+                    lt(l_i_mptr, l_i_mptr_end)
+                    { l_i_mptr := add(l_i_mptr, 0x20) } {
+                    l_blind := addmod(l_blind, mload(l_i_mptr), r)
                 }
 
                 // Public instance polynomial evaluation at x. Instance words
@@ -71,8 +74,8 @@
                     }
                     lt(instance_cptr, instance_cptr_end)
                     { instance_cptr := add(instance_cptr, 0x20)
-                      l_i_cptr := add(l_i_cptr, 0x20) } {
-                    instance_eval := addmod(instance_eval, mulmod(mload(l_i_cptr), calldataload(instance_cptr), r), r)
+                      l_i_mptr := add(l_i_mptr, 0x20) } {
+                    instance_eval := addmod(instance_eval, mulmod(mload(l_i_mptr), calldataload(instance_cptr), r), r)
                 }
 
                 // Persist the derived values into named memory slots consumed

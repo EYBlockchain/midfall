@@ -134,8 +134,9 @@
     // symbolic form costs no runtime bytes.
     uint256 internal constant     PCS_FINAL_MSM_MPTR = {{ memory.pcs_final_msm_scratch_mptr|hex() }};
 
-    // Q_EVAL_CPTR is set at runtime once the verifier reaches the q_evals
-    // block of the proof; we keep it as a memory slot for symmetry.
+    // Holds the calldata cursor to the proof's q_evals block, stored once
+    // the transcript parser reaches it; the PCS blocks rebind it as the Yul
+    // local `q_eval_cptr`. Kept as a memory slot for symmetry.
     uint256 internal constant         Q_EVAL_CPTR_MPTR = {{ memory.q_eval_cptr_mptr }};
 
     // Reserved 4-word slot for the G1 identity (point at infinity) in
@@ -158,6 +159,10 @@
     // SELECTOR_ACC_MPTR holds one accumulator per simple selector, live from
     // the quotient VM through the final MSM.
     uint256 internal constant      SELECTOR_ACC_MPTR = {{ memory.selector_acc_mptr|hex() }};
+    // Live only in split-quotient renders (external evaluator): the quotient
+    // block stages the evaluator's return frame here. Monolithic renders
+    // declare it unused so the arena-planned layout reads identically across
+    // render modes.
     uint256 internal constant   QUOTIENT_RETURN_MPTR = {{ memory.quotient_return_mptr|hex() }};
     // Shares SELECTOR_ACC_MPTR's base by construction: the Lagrange batch
     // inversion runs to completion before the quotient VM writes the first
@@ -168,6 +173,9 @@
     // then Lagrange values, consumed and distilled into the named theta
     // slots by the Lagrange block. Planner-registered phase scratch.
     uint256 internal constant    LAGRANGE_DENOMS_MPTR = {{ memory.lagrange_denoms_mptr|hex() }};
+    // Scratch word for trace hooks. Live only in trace renders: trace_u256
+    // in TraceAndGasHelpers.yul and the trace-only PCS/linearization probes
+    // log through it. Production renders declare it unused.
     uint256 internal constant        TRACE_U256_MPTR = {{ memory.trace_u256_mptr|hex() }};
 
     // ----------------------------------------------------------------------
@@ -222,8 +230,19 @@
     uint256 internal constant   G1MSM_GAS_1PAIR = {{ template_constants.gas.g1msm_one_pair }};
     uint256 internal constant PAIRING_GAS_2PAIR = {{ template_constants.gas.pairing_two_pair }};
     uint256 internal constant        MODEXP_GAS = {{ template_constants.gas.modexp }};
-    // Exact cost of the deployment-time worst-case G1MSM smoke probe.
+    // Exact cost of the deployment-time worst-case G1MSM smoke probe. The
+    // probe is sized as the largest MSM the runtime stages, so when the
+    // final PCS MSM is that largest call (every production render so far)
+    // the runtime forwards this same constant at that call site -- one
+    // bound shared structurally rather than by value coincidence.
     uint256 internal constant G1MSM_GAS_SMOKE = {{ constructor_g1msm_smoke_gas }};
+    // Gas forwarded to the constructor's NEGATIVE G1MSM probe. That probe
+    // sends a canonical but out-of-subgroup point and REQUIRES the call to
+    // fail; a failing EIP-2537 call consumes everything forwarded, so this
+    // caps the deliberate burn while staying an order of magnitude above the
+    // scheduled one-pair cost (G1MSM_GAS_1PAIR), so rejection cannot be an
+    // out-of-gas artifact of a repriced schedule.
+    uint256 internal constant G1MSM_GAS_NEGATIVE_PROBE = 200000;
     {%- if self.expected_has_accumulator %}
     // Worst-case accumulator RHS MSM: carried RHS point plus every generated
     // fixed-base tail scalar nonzero. Zero tail scalars are omitted at

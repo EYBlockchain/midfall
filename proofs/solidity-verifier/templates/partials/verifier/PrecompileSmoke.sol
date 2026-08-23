@@ -154,7 +154,7 @@
             mstore(add(scratch, 0x40), 0x000000000000000000000000000000000a989badd40d6212b33cffc3f3763e9b)
             mstore(add(scratch, 0x60), 0xc760f988c9926b26da9dd85e928483446346b8ed00e1de5d5ea93e354abe706c)
             mstore(add(scratch, 0x80), 1)
-            if staticcall(200000, {{ template_constants.eip2537.g1msm_address|hex() }}, scratch, 0xa0, scratch, {{ template_constants.g1_bytes|hex() }}) { revert(0, 0) }
+            if staticcall(G1MSM_GAS_NEGATIVE_PROBE, {{ template_constants.eip2537.g1msm_address|hex() }}, scratch, 0xa0, scratch, {{ template_constants.g1_bytes|hex() }}) { revert(0, 0) }
 
             // (c)+(d) Pairing known answers. Lay out [G1 | G2 | G1' | G2] once:
             // with G1' = -G the product is 1, with G1' = +G it is not. G2 is
@@ -188,7 +188,9 @@
             mstore(add(scratch, 0x1e0), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)
             if iszero(staticcall(PAIRING_GAS_2PAIR, {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, add(scratch, 0x300), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
             if iszero(eq(returndatasize(), {{ template_constants.word_bytes|hex() }})) { revert(0, 0) }
-            if iszero(iszero(mload(add(scratch, 0x300)))) { revert(0, 0) }
+            // The probe must report NOT-equal: any nonzero result word here
+            // is a broken pairing precompile.
+            if mload(add(scratch, 0x300)) { revert(0, 0) }
 
             // Restore the identity encoding for the probes below.
             for { let off := 0 } lt(off, {{ template_constants.eip2537.smoke_scratch_bytes|hex() }}) { off := add(off, {{ template_constants.word_bytes|hex() }}) } {

@@ -47,6 +47,12 @@ contract Halo2QuotientEvaluator {
     uint256 internal constant FR_MODULUS =
         0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;
 
+    // Selector of QuotientProgramInvalid() (bytes4(keccak256)). Mirrors the
+    // main verifier's Constants.sol declaration so the shared quotient-VM
+    // partial can revert with the same typed selector in both contracts.
+    // Pinned by `p4_error_selectors_match_declared_errors`.
+    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+
     // Start of the copied verifier-key payload in memory. The VK payload also
     // carries the compact quotient VM constant/program tables used by the
     // included numerator block.

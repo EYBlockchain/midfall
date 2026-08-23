@@ -20,13 +20,14 @@
 //! operand against the coarse `[operand_lo, operand_hi]` union of the
 //! planned read windows so a substituted or corrupted VK payload cannot read
 //! arbitrary verifier state. Single-comparison form: unsigned wrap makes
-//! `sub(ptr, lo) > (hi - lo)` cover both bounds (~6 gas per operand). u8
-//! constant-table indexes stay unguarded: their drift is bounded to 0x1FE0
-//! bytes inside the VK-reserved region and covered by build-time
-//! `validate_quotient_const_slots`. MF-3: the u16 forms do NOT share that
-//! argument -- an out-of-range u16 index reaches 0x1FFFE0 bytes past the
-//! table, well outside the pinned payload -- so those sites are clamped
-//! against the rendered table length.
+//! `sub(ptr, lo) > (hi - lo)` cover both bounds (~6 gas per operand). MF-3:
+//! every constant-table index -- u8 and u16 alike -- is clamped against the
+//! rendered table length. The u8 forms used to stay unguarded under a
+//! bounded-drift argument (at most 0x1FE0 bytes past the table, still inside
+//! the VK-reserved region, and covered by build-time
+//! `validate_quotient_const_slots`), but a drifted read there is silently
+//! wrong rather than loud, so they now fail closed like the u16 forms, whose
+//! drift (up to 0x1FFFE0 bytes) never had that excuse.
 //!
 //! MF-3 interpreter fail-closed guards: none are reachable on-chain with a
 //! well-formed artifact; they are containment for a future GENERATOR bug.
@@ -35,8 +36,11 @@
 //!     both terminal checks still pass.
 //!   - stack-empty guard: native callbacks must not inherit spilled operands
 //!     from a preceding partial expression.
+//!   - live-top guard: native callbacks are identity boundaries; entering one
+//!     with a live cached top would silently drop that value from the
+//!     numerator fold while every terminal check still passes.
 //!   - const guard: constant-table indexes are decoded from program bytes;
-//!     unclamped u16 forms would read past the table.
+//!     unclamped forms would read past the table.
 //!   - spill-ceiling check at every push site: `q_sp` walks upward with no
 //!     ceiling of its own.
 
@@ -234,6 +238,24 @@ impl<'a> Arms<'a> {
             "                        if iszero(lt({idx}, {})) {{ q_program_fail() }}",
             self.program().num_consts
         ));
+    }
+
+    /// MF-3 u8 constant-table clamp at a caller-supplied indent. Same
+    /// predicate as `const_guard`; the u8 decode sites inside run loops and
+    /// MODARITH7 blocks sit deeper than the 24-space arm body.
+    fn const_guard_at(&mut self, idx: &str, indent: &str) {
+        self.pushf(format!(
+            "{indent}if iszero(lt({idx}, {})) {{ q_program_fail() }}",
+            self.program().num_consts
+        ));
+    }
+
+    /// Native-callback live-top guard. A callback is an identity boundary; a
+    /// live cached top on entry means a mis-generated program left a value
+    /// that would be silently dropped from the numerator fold while every
+    /// terminal balance check still passed. Fail closed instead.
+    fn no_live_top_guard(&mut self) {
+        self.push("                        if q_has_top { q_program_fail() }");
     }
 
     /// Cached-top spill with the MF-3 stack ceiling clamp.
@@ -578,6 +600,7 @@ fn push_const_u8_arm(arms: &mut Arms<'_>) {
     arms.push("                        // One-byte variant for the common case where the");
     arms.push("                        // constant table has fewer than 256 referenced slots.");
     arms.push("                        let qconst := byte(0, mload(q_pc))");
+    arms.const_guard("qconst");
     arms.spill_top();
     arms.push("                        q_top := mload(add(q_const_mptr, shl(5, qconst)))");
     arms.push("                        q_has_top := 1");
@@ -597,6 +620,7 @@ fn add_const_u8_arm(arms: &mut Arms<'_>) {
     arms.push("                        // of pushing a new stack value.");
     arms.push("                        let qconst := byte(0, mload(q_pc))");
     arms.push("                        q_pc := add(q_pc, 1)");
+    arms.const_guard("qconst");
     arms.push("                        q_top := addmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)");
     arms.push("                    }");
 }
@@ -611,6 +635,7 @@ fn mul_const_u8_arm(arms: &mut Arms<'_>) {
     arms.push("                        // affine chains after an initial PUSH.");
     arms.push("                        let qconst := byte(0, mload(q_pc))");
     arms.push("                        q_pc := add(q_pc, 1)");
+    arms.const_guard("qconst");
     arms.push("                        q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)");
     arms.push("                    }");
 }
@@ -712,6 +737,7 @@ fn add_mul_mem_mem_const_u8_arm(arms: &mut Arms<'_>) {
     arms.push("                        let q_rhs := and(shr(224, q_word), 0xffff)");
     arms.push("                        let qconst := byte(4, q_word)");
     arms.push("                        q_pc := add(q_pc, 5)");
+    arms.const_guard("qconst");
     arms.ptr_guard("q_lhs");
     arms.ptr_guard("q_rhs");
     fused_product_add(arms, "                        ");
@@ -731,6 +757,7 @@ fn add_mul_const_u8_mem_u16_arm(arms: &mut Arms<'_>) {
     arms.push("                        let q_ptr := shr(240, q_word)");
     arms.push("                        let qconst := byte(2, q_word)");
     arms.push("                        q_pc := add(q_pc, 3)");
+    arms.const_guard("qconst");
     arms.ptr_guard("q_ptr");
     arms.push("                        q_top := addmod(");
     arms.push("                            q_top,");
@@ -781,6 +808,7 @@ fn run_add_mul_mem_mem_const_u8_arm(arms: &mut Arms<'_>) {
     arms.push("                            let q_rhs := and(shr(224, q_word), 0xffff)");
     arms.push("                            let qconst := byte(4, q_word)");
     arms.push("                            q_pc := add(q_pc, 5)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_lhs");
     arms.ptr_guard("q_rhs");
     fused_product_add(arms, "                            ");
@@ -804,6 +832,7 @@ fn run_add_mul_const_u8_mem_u16_arm(arms: &mut Arms<'_>) {
     arms.push("                            let q_ptr := shr(240, q_word)");
     arms.push("                            let qconst := byte(2, q_word)");
     arms.push("                            q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_ptr");
     arms.push("                            q_top := addmod(");
     arms.push("                                q_top,");
@@ -839,6 +868,7 @@ fn affine_sum_arm(arms: &mut Arms<'_>) {
     arms.push("                            let q_ptr := shr(240, q_word)");
     arms.push("                            let qconst := byte(2, q_word)");
     arms.push("                            q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_ptr");
     arms.push("                            q_top := addmod(");
     arms.push("                                q_top,");
@@ -856,6 +886,7 @@ fn affine_sum_arm(arms: &mut Arms<'_>) {
     arms.push("                            let q_rhs := and(shr(224, q_word), 0xffff)");
     arms.push("                            let qconst := byte(4, q_word)");
     arms.push("                            q_pc := add(q_pc, 5)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_lhs");
     arms.ptr_guard("q_rhs");
     fused_product_add(arms, "                            ");
@@ -909,6 +940,7 @@ fn lin7_arm(arms: &mut Arms<'_>) {
     arms.push("                            let qconst := byte(0, q_word)");
     arms.push("                            let q_ptr := and(shr(232, q_word), 0xffff)");
     arms.push("                            q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_ptr");
     arms.push("                            q_acc := addmod(");
     arms.push("                                q_acc,");
@@ -950,6 +982,7 @@ fn bilin7_row_arm(arms: &mut Arms<'_>) {
     arms.push("                            let qconst := byte(0, q_word)");
     arms.push("                            let q_rhs := and(shr(232, q_word), 0xffff)");
     arms.push("                            q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_rhs");
     arms.push("                            q_acc := addmod(");
     arms.push("                                q_acc,");
@@ -1010,6 +1043,7 @@ fn bilin7_pairwise_arm(arms: &mut Arms<'_>) {
         "                            for {{ let q_j := 0 }} lt(q_j, {QUOTIENT_VM_LIMBS}) {{ q_j := add(q_j, 1) }} {{"
     ));
     arms.push("                                let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))");
+    arms.const_guard_at("qconst", "                                ");
     arms.push("                                q_acc := addmod(");
     arms.push("                                    q_acc,");
     arms.push("                                    mulmod(");
@@ -1067,6 +1101,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
     arms.push("                            // with a standalone constant term.");
     arms.push("                            let qconst := byte(0, mload(q_pc))");
     arms.push("                            q_pc := add(q_pc, 1)");
+    arms.const_guard_at("qconst", "                            ");
     arms.push("                            q_acc := mload(add(q_const_mptr, shl(5, qconst)))");
     arms.push("                        }");
     arms.push("");
@@ -1092,6 +1127,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
     arms.push("                                let qconst := byte(0, q_word)");
     arms.push("                                let q_ptr := and(shr(232, q_word), 0xffff)");
     arms.push("                                q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                                ");
     arms.ptr_guard("q_ptr");
     arms.push("                                q_acc := addmod(");
     arms.push("                                    q_acc,");
@@ -1114,6 +1150,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
     arms.push("                                let qconst := byte(0, q_word)");
     arms.push("                                let q_rhs := and(shr(232, q_word), 0xffff)");
     arms.push("                                q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                                ");
     arms.ptr_guard("q_rhs");
     arms.push("                                q_acc := addmod(");
     arms.push("                                    q_acc,");
@@ -1153,6 +1190,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
         "                                for {{ let q_j := 0 }} lt(q_j, {QUOTIENT_VM_LIMBS}) {{ q_j := add(q_j, 1) }} {{"
     ));
     arms.push("                                    let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))");
+    arms.const_guard_at("qconst", "                                    ");
     arms.push("                                    q_acc := addmod(");
     arms.push("                                        q_acc,");
     arms.push("                                        mulmod(");
@@ -1174,6 +1212,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
     arms.push("                            let qconst := byte(0, q_word)");
     arms.push("                            let q_ptr := and(shr(232, q_word), 0xffff)");
     arms.push("                            q_pc := add(q_pc, 3)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_ptr");
     arms.push("                            q_acc := addmod(");
     arms.push("                                q_acc,");
@@ -1189,6 +1228,7 @@ fn modarith7_arm(arms: &mut Arms<'_>) {
     arms.push("                            let q_lhs := and(shr(232, q_word), 0xffff)");
     arms.push("                            let q_rhs := and(shr(216, q_word), 0xffff)");
     arms.push("                            q_pc := add(q_pc, 5)");
+    arms.const_guard_at("qconst", "                            ");
     arms.ptr_guard("q_lhs");
     arms.ptr_guard("q_rhs");
     fused_product_add_acc(arms);
@@ -1231,7 +1271,9 @@ fn native_permutation_arm(arms: &mut Arms<'_>) {
     ));
     arms.push("                        // Native callbacks are identity-boundary opcodes. They");
     arms.push("                        // must not inherit any partially evaluated VM stack");
-    arms.push("                        // state from the previous expression.");
+    arms.push("                        // state from the previous expression: a live cached top");
+    arms.push("                        // here would be silently dropped from the numerator.");
+    arms.no_live_top_guard();
     arms.push("                        q_top := 0");
     arms.push("                        q_has_top := 0");
     arms.push("                        // The generated loop below uses program.stack_mptr as");
@@ -1262,7 +1304,9 @@ fn native_lookup_arm(arms: &mut Arms<'_>) {
     ));
     arms.push("                        // Reset VM stack state before entering structured");
     arms.push("                        // lookup Yul. Lookup callbacks own their scratch");
-    arms.push("                        // layout and perform all needed folds internally.");
+    arms.push("                        // layout and perform all needed folds internally; a");
+    arms.push("                        // live cached top here would be silently dropped.");
+    arms.no_live_top_guard();
     arms.push("                        q_top := 0");
     arms.push("                        q_has_top := 0");
     arms.push("                        // The generated loop below uses program.stack_mptr as");
@@ -1294,8 +1338,10 @@ fn native_identity_arm(arms: &mut Arms<'_>) {
     arms.push("                        // generated order and target existing switch cases.");
     arms.push("                        let q_native_idx := shr(240, mload(q_pc))");
     arms.push("                        q_pc := add(q_pc, 2)");
-    arms.push("                        // Heavy identities are whole expressions, so clear the");
-    arms.push("                        // interpreter stack before dispatching.");
+    arms.push("                        // Heavy identities are whole expressions, so the");
+    arms.push("                        // interpreter stack must already be clear here; a live");
+    arms.push("                        // cached top would be silently dropped.");
+    arms.no_live_top_guard();
     arms.push("                        q_top := 0");
     arms.push("                        q_has_top := 0");
     arms.stack_empty_guard();

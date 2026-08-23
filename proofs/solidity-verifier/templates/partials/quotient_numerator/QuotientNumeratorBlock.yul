@@ -113,7 +113,10 @@
                 let q_program_mptr := {{ program.program_mptr|hex() }}
                 // Running Horner accumulator for fully evaluated identities.
                 // After all identities, this is nu_y(x) for the `None`
-                // identity group.
+                // identity group. The word deliberately aliases
+                // PCS_FINAL_MSM_MPTR: this phase distills its result into
+                // LINEARIZATION_EVAL_MPTR before the PCS staging phase begins,
+                // and the arena planner rejects overlapping live regions.
                 // Initialize A = 0 before scanning the identity stream.
                 mstore({{ program.eval_numer_mptr|hex() }}, 0)
                 {%- if self.trace %}
@@ -178,7 +181,9 @@
                 // writes a structured scratch table at program.stack_mptr.
                 // q_pc starts at the first encoded instruction.
                 let q_pc := q_program_mptr
-                // q_end is an exclusive byte pointer for the VM loop.
+                // q_end is an exclusive byte pointer for the VM loop; the
+                // added literal is the packed program byte length, part of
+                // the codehash-pinned VK payload.
                 let q_end := add(q_program_mptr, {{ program.len|hex() }})
                 // q_sp starts at the first free stack word.
                 let q_sp := {{ program.stack_mptr|hex() }}
@@ -198,6 +203,13 @@
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
                 // operands, dynamic runs, and limb-aware cases.
+                //
+                // Operand guards: every decoded memory pointer is checked with
+                // `gt(sub(ptr, BASE), SIZE)` -- one unsigned comparison whose
+                // wraparound covers both bounds -- against the contiguous
+                // planned window from the VK payload base through the decoded
+                // evaluation frame; every constant-table index is clamped
+                // against the rendered table length at its decode site.
                 {#
                 Template-only switch/case reference.
 
@@ -406,6 +418,7 @@
                 // selector commitment in the linearized MSM.
                 {%- for tail in program.selector_tail_updates %}
                 {
+                    // Bucket at selector offset {{ tail.selector_offset|hex() }}: multiply by y^{{ tail.power_offset / 32 }}.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, {{ tail.selector_offset|hex() }})
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add({{ program.selector_power_mptr|hex() }}, {{ tail.power_offset|hex() }})), r))
                 }
@@ -417,6 +430,8 @@
                 // scalar into expected_eval, so Solidity stores -nu_y(x).
                 let linearization_expected_eval := addmod(0, sub(r, mload({{ program.eval_numer_mptr|hex() }})), r)
                 mstore(LINEARIZATION_EVAL_MPTR, linearization_expected_eval)
+                // Silences Yul's unused-variable warning in renders whose
+                // program has no arm reading y directly; a no-op otherwise.
                 pop(y)
                 {%- when None %}
                 // Legacy/direct mode. This path emits the numerator

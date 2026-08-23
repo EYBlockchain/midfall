@@ -5,10 +5,12 @@
 //      upward. That is only safe while solc's stack-spill reservation stays
 //      below it -- measured 0x8c0 on 0.8.24 and 0x8e0 on 0.8.26+, so it is not
 //      a constant this file controls. verifyProof now asserts the separation.
-//   2. Runtime size depends on --optimize-runs. Measured: 0.8.24 at runs=1
+//   2. Runtime size depends on --optimize-runs. The pinned toolchain is
+//      solc 0.8.30+commit.73712a01 with --via-ir (PINNED_SOLC_VERSION in
+//      src/evm.rs). Measured working: runs=1 emits 21,286 bytes and runs=200
+//      emits 21,318 -- both deployable. Measured failing: 0.8.24 at runs=1
 //      emits 29,567 bytes and 0.8.30 at runs=100000 emits 29,836 -- both over
-//      the EIP-170 24,576-byte limit, so neither can be deployed. Only the
-//      pinned (version, runs) pair is known to produce a deployable contract.
+//      the EIP-170 24,576-byte limit, so neither can be deployed.
 // A floating `^0.8.24` advertises compatibility this contract does not have.
 pragma solidity 0.8.30;
 
@@ -26,7 +28,7 @@ pragma solidity 0.8.30;
 /// Halo2 KZG verifier for the BLS12-381 curve, midnight-proofs flavour.
 ///
 /// Differences vs the original BN254 / halo2 v0.4 template:
-//
+///
 /// - BLS12-381 base field Fp is 381 bits and does not fit in a uint256.
 ///   Each Fp coord is encoded EIP-2537 padded (16 zero bytes + 48 bytes).
 ///   A G1 point is 128 bytes (4 words); a G2 point is 256 bytes (8).
@@ -41,9 +43,13 @@ pragma solidity 0.8.30;
 ///   Keccak digest, resets the transcript buffer to that digest, then samples
 ///   by interpreting the digest as a big-endian integer modulo r.
 /// - Scalar inversion uses modexp(scalar, r-2, r).
+/// - Field naming: midnight-curves calls the BLS12-381 scalar field `Fq`;
+///   that type is this file's Fr (FR_MODULUS). Comments saying "Fq" below
+///   mean the scalar field, never the 381-bit base field Fp.
 /// - Constructors run deployment-time smoke tests for MCOPY and the EIP-2537
-///   precompiles using identity inputs. Compile with Solidity >=0.8.24 and
-///   deploy only on chains/forks that support MCOPY and EIP-2537.
+///   precompiles using identity inputs. Compile only with the pinned
+///   toolchain named in the header above (the pragma is exact) and deploy
+///   only on chains/forks that support MCOPY and EIP-2537.
 contract Halo2Verifier {
     // ----------------------------------------------------------------------
     // Typed failure taxonomy (P4/L-3, docs/audit/HALO2_VERIFIER_REVIEW).
@@ -82,11 +88,11 @@ contract Halo2Verifier {
     ///         input can ever verify. Redeploy from the pinned toolchain.
     error MemoryLayoutViolated();
 
-    {% include "partials/verifier/Constants.sol" %}
+{% include "partials/verifier/Constants.sol" %}
 
-    {% include "partials/verifier/PrecompileSmoke.sol" %}
+{% include "partials/verifier/PrecompileSmoke.sol" %}
 
-    {% include "partials/verifier/Constructors.sol" %}
+{% include "partials/verifier/Constructors.sol" %}
 
     /// @notice Verify a Halo2/Midfall proof for the generated verifying key.
     /// @dev This checks only that `proof` verifies for the supplied public
@@ -102,7 +108,9 @@ contract Halo2Verifier {
     /// `true`; this function NEVER returns `false`. Every rejection reverts
     /// with one of the typed errors declared above (BadCalldataShape,
     /// VkMismatch, NonCanonicalScalar, BadPointEncoding, PrecompileFailed,
-    /// ProofRejected, QuotientProgramInvalid), so callers using
+    /// ProofRejected, QuotientProgramInvalid, and -- for a mis-built artifact
+    /// whose spill reservation reaches the generated layout --
+    /// MemoryLayoutViolated), so callers using
     /// `if (!verifier.verifyProof(...))` never take the false branch — wrap
     /// the call or decode the revert data instead. Trace and gas renders keep
     /// the same failure policy.
@@ -199,28 +207,28 @@ contract Halo2Verifier {
             // Helpers: modexp, transcript, EIP-2537 calls
             // ===============================================================
 
-    {% include "partials/verifier/AssemblyHelpers.yul" %}
+{% include "partials/verifier/AssemblyHelpers.yul" %}
 
-    {% include "partials/verifier/AccumulatorHelpers.yul" %}
+{% include "partials/verifier/AccumulatorHelpers.yul" %}
 
-    {% include "partials/verifier/TraceAndGasHelpers.yul" %}
+{% include "partials/verifier/TraceAndGasHelpers.yul" %}
 
             let r := FR_MODULUS
             let success := true
 
-    {% include "partials/verifier/VkLoading.yul" %}
+{% include "partials/verifier/VkLoading.yul" %}
 
-    {% include "partials/verifier/TranscriptProofParser.yul" %}
+{% include "partials/verifier/TranscriptProofParser.yul" %}
 
-    {% include "partials/verifier/Lagrange.yul" %}
+{% include "partials/verifier/Lagrange.yul" %}
 
-    {% include "partials/verifier/QuotientAndLinearization.yul" %}
+{% include "partials/verifier/QuotientAndLinearization.yul" %}
 
-    {% include "partials/verifier/Pcs.yul" %}
+{% include "partials/verifier/Pcs.yul" %}
 
-    {% include "partials/verifier/FinalPairing.yul" %}
+{% include "partials/verifier/FinalPairing.yul" %}
 
-    {% include "partials/verifier/TraceReturn.yul" %}
+{% include "partials/verifier/TraceReturn.yul" %}
         }
     }
 }

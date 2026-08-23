@@ -192,7 +192,7 @@ Step 9. tests/: PBT + soundness tests against the rendered verifier.
   populated meta through evaluator + PCS emission + template fields.
 
 The emitted Yul references symbolic identifiers (`X1_MPTR`, `X2_MPTR`,
-`X3_MPTR`, `X4_MPTR`, `F_COM_MPTR`, `PI_MPTR`, `Q_EVAL_CPTR`, `Q_COM_MPTR`,
+`X3_MPTR`, `X4_MPTR`, `F_COM_MPTR`, `PI_MPTR`, `Q_EVAL_CPTR_MPTR`, `Q_COM_MPTR`,
 `Q_EVAL_SET_MPTR`, `ROT_POINTS_MPTR`, `X1_POWERS_MPTR`, `F_EVAL_MPTR`,
 `V_MPTR`, `FINAL_COM_MPTR`, `scalar_inv`) that Step 6 will define in the
 template.
@@ -238,7 +238,8 @@ tests still pass.
       read lookup helpers + accumulators -> trash_challenge ->
       read trashcans -> y -> read quotient limbs -> x ->
       read evals -> x1, x2 -> read f_com (decompressed at F_COM_MPTR) ->
-      x3 -> read q_evals (Q_EVAL_CPTR saved for the PCS emitter) ->
+      x3 -> read q_evals (the q_evals calldata cursor saved to
+      Q_EVAL_CPTR_MPTR for the PCS emitter) ->
       x4 -> read pi (decompressed at PI_MPTR)
 * The existing Lagrange / quotient / final-pairing blocks are
   preserved unchanged (pure Fr arithmetic).
@@ -333,9 +334,9 @@ The `cargo test --lib` suite now stands at 7/7 green:
   committed-instance setter.
 * `src/lowering/kzg/mod.rs` — fixed two emitter bugs surfaced by
   the first end-to-end render:
-    * Block 4 / Block 5 now bind `let Q_EVAL_CPTR :=
+    * Block 4 / Block 5 now bind `let q_eval_cptr :=
       mload(Q_EVAL_CPTR_MPTR)` at the top so the in-block
-      `calldataload(add(Q_EVAL_CPTR, ...))` references resolve.
+      `calldataload(add(q_eval_cptr, ...))` references resolve.
     * `scalar_inv(x, r)` calls collapsed to `scalar_inv(x)` to
       match the template's helper signature (the helper bakes the
       modulus internally).

@@ -19,7 +19,7 @@ pragma solidity 0.8.30;
 /// `extcodecopy(vk, VK_MPTR, 0x01, vk_payload_len)` and then references each
 /// slot by `VK_MPTR + i`.
 ///
-///   word  0  : vk_digest                    (Fq, transcript_repr of the CS)
+///   word  0  : vk_digest                    (Fr, transcript_repr of the CS)
 ///   word  1  : num_instances
 ///   word  2  : k                            (log2 of the domain size)
 ///   word  3  : n_inv                        (1/n in Fr)
@@ -33,14 +33,23 @@ pragma solidity 0.8.30;
 ///   word 11..14 : G1_BASE                   (4 words, EIP-2537 padded)
 ///   word 15..22 : G2_BASE                   (8 words, EIP-2537 padded)
 ///   word 23..30 : NEG_S_G2_BASE             (8 words, EIP-2537 padded)
-///   word 31..30 + Q_PAYLOAD      : quotient VM constants + packed bytecode
-///   word 31 + Q_PAYLOAD ..       : fixed_comms (4 words each)
-///   word 31 + Q_PAYLOAD + 4*N_FIXED ..
-///                                : permutation_comms (4 words each)
+{%- if quotient_const_words > 0 || quotient_program_words > 0 %}
+///   word {{ constants.len() - quotient_const_words - quotient_program_words }}..{{ constants.len() - quotient_program_words - 1 }} : quotient VM constant table ({{ quotient_const_words }} words)
+///   word {{ constants.len() - quotient_program_words }}..{{ constants.len() - 1 }} : packed quotient program ({{ quotient_program_words }} words)
+{%- endif %}
+///   word {{ constants.len() }}..{{ constants.len() + 4 * fixed_comms.len() - 1 }} : fixed_comms ({{ fixed_comms.len() }} x 4 words)
+///   word {{ constants.len() + 4 * fixed_comms.len() }}..{{ constants.len() + 4 * fixed_comms.len() + 4 * permutation_comms.len() - 1 }} : permutation_comms ({{ permutation_comms.len() }} x 4 words)
 ///
 /// Notes:
+/// - Field naming: midnight-curves `Fq` is the BLS12-381 scalar field --
+///   this file's Fr. word 0's vk_digest and every header scalar above are
+///   Fr words.
 /// - `extcodehash` of this contract is pinned by the linked verifier via
-///   `EXPECTED_VK_CODEHASH`, so any byte tweak is detected at deploy time.
+///   `EXPECTED_VK_CODEHASH`, so any byte tweak is detected at deploy time
+///   AND re-checked on every proof: the verifier repeats the extcodesize/
+///   extcodehash comparison and reverts with `VkMismatch()` before
+///   `extcodecopy`ing this payload, so post-deployment code substitution at
+///   the pinned address is also caught.
 /// - The quotient identity interpreter's static program is stored in this
 ///   pinned VK runtime. The verifier reads it from memory after `extcodecopy`,
 ///   avoiding verifier-side PUSH32/mstore immediates while keeping the program
@@ -87,8 +96,9 @@ contract Halo2VerifyingKey {
             mstore(add(payload, {{ (32 * (offset + 4 * loop.index0 + 3))|hex_padded(4) }}), {{ y_lo|hex_padded(64) }}) // permutation_comms[{{ loop.index0 }}].y_lo
             {%- endfor %}
 
-            // Return exactly the INVALID prefix plus the generated payload. The
-            // linked verifier pins this byte length and the resulting codehash.
+            // Return exactly the INVALID prefix plus the generated payload:
+            // {{ 1 + 32 * (constants.len() + 4 * fixed_comms.len() + 4 * permutation_comms.len()) }} bytes, which the linked verifier pins as
+            // EXPECTED_VK_LENGTH together with the resulting codehash.
             return(runtime, {{ (1 + 32 * (constants.len() + 4 * fixed_comms.len() + 4 * permutation_comms.len()))|hex() }})
         }
     }

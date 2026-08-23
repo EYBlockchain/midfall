@@ -188,6 +188,7 @@
                         // One-byte variant for the common case where the
                         // constant table has fewer than 256 referenced slots.
                         let qconst := byte(0, mload(q_pc))
+                        if iszero(lt(qconst, 300)) { q_program_fail() }
                         if q_has_top {
                             if iszero(lt(q_sp, 0x9200)) { q_program_fail() }
                             mstore(q_sp, q_top)
@@ -203,6 +204,7 @@
                         // of pushing a new stack value.
                         let qconst := byte(0, mload(q_pc))
                         q_pc := add(q_pc, 1)
+                        if iszero(lt(qconst, 300)) { q_program_fail() }
                         q_top := addmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)
                     }
                     // VM 0x0d MUL_CONST_U8: multiply q_top by a small constant-table slot.
@@ -211,6 +213,7 @@
                         // affine chains after an initial PUSH.
                         let qconst := byte(0, mload(q_pc))
                         q_pc := add(q_pc, 1)
+                        if iszero(lt(qconst, 300)) { q_program_fail() }
                         q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)
                     }
                     // VM 0x0e ADD_CONST: add a wider constant-table slot into q_top.
@@ -261,6 +264,7 @@
                         let q_rhs := and(shr(224, q_word), 0xffff)
                         let qconst := byte(4, q_word)
                         q_pc := add(q_pc, 5)
+                        if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_lhs, 0x1000), 0x01f000) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                         q_top := addmod(
@@ -280,6 +284,7 @@
                         let q_ptr := shr(240, q_word)
                         let qconst := byte(2, q_word)
                         q_pc := add(q_pc, 3)
+                        if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                         q_top := addmod(
                             q_top,
@@ -313,6 +318,7 @@
                             let q_rhs := and(shr(224, q_word), 0xffff)
                             let qconst := byte(4, q_word)
                             q_pc := add(q_pc, 5)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_lhs, 0x1000), 0x01f000) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                             q_top := addmod(
@@ -338,6 +344,7 @@
                             let q_ptr := shr(240, q_word)
                             let qconst := byte(2, q_word)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                             q_top := addmod(
                                 q_top,
@@ -365,6 +372,7 @@
                             let q_ptr := shr(240, q_word)
                             let qconst := byte(2, q_word)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                             q_top := addmod(
                                 q_top,
@@ -380,6 +388,7 @@
                             let q_rhs := and(shr(224, q_word), 0xffff)
                             let qconst := byte(4, q_word)
                             q_pc := add(q_pc, 5)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_lhs, 0x1000), 0x01f000) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                             q_top := addmod(
@@ -432,6 +441,7 @@
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
@@ -467,6 +477,7 @@
                             let qconst := byte(0, q_word)
                             let q_rhs := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
@@ -514,6 +525,7 @@
                             let q_lhs_value := mload(add(q_lhs_base, shl(5, q_i)))
                             for { let q_j := 0 } lt(q_j, 7) { q_j := add(q_j, 1) } {
                                 let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))
+                                if iszero(lt(qconst, 300)) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
                                     mulmod(
@@ -565,6 +577,7 @@
                             // with a standalone constant term.
                             let qconst := byte(0, mload(q_pc))
                             q_pc := add(q_pc, 1)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                             q_acc := mload(add(q_const_mptr, shl(5, qconst)))
                         }
 
@@ -592,6 +605,7 @@
                                 let qconst := byte(0, q_word)
                                 let q_ptr := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                                if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
@@ -612,6 +626,7 @@
                                 let qconst := byte(0, q_word)
                                 let q_rhs := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                                if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
@@ -640,6 +655,7 @@
                                 let q_lhs_value := mload(add(q_lhs_base, shl(5, q_i)))
                                 for { let q_j := 0 } lt(q_j, 7) { q_j := add(q_j, 1) } {
                                     let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))
+                                    if iszero(lt(qconst, 300)) { q_program_fail() }
                                     q_acc := addmod(
                                         q_acc,
                                         mulmod(
@@ -659,6 +675,7 @@
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x1000), 0x01f000) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
@@ -674,6 +691,7 @@
                             let q_lhs := and(shr(232, q_word), 0xffff)
                             let q_rhs := and(shr(216, q_word), 0xffff)
                             q_pc := add(q_pc, 5)
+                            if iszero(lt(qconst, 300)) { q_program_fail() }
                         if gt(sub(q_lhs, 0x1000), 0x01f000) { q_program_fail() }
                         if gt(sub(q_rhs, 0x1000), 0x01f000) { q_program_fail() }
                             q_acc := addmod(
@@ -704,7 +722,9 @@
                     case 0x19 {
                         // Native callbacks are identity-boundary opcodes. They
                         // must not inherit any partially evaluated VM stack
-                        // state from the previous expression.
+                        // state from the previous expression: a live cached top
+                        // here would be silently dropped from the numerator.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         // The generated loop below uses program.stack_mptr as
@@ -727,7 +747,9 @@
                     case 0x1f {
                         // Reset VM stack state before entering structured
                         // lookup Yul. Lookup callbacks own their scratch
-                        // layout and perform all needed folds internally.
+                        // layout and perform all needed folds internally; a
+                        // live cached top here would be silently dropped.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         // The generated loop below uses program.stack_mptr as
@@ -751,8 +773,10 @@
                         // generated order and target existing switch cases.
                         let q_native_idx := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
-                        // Heavy identities are whole expressions, so clear the
-                        // interpreter stack before dispatching.
+                        // Heavy identities are whole expressions, so the
+                        // interpreter stack must already be clear here; a live
+                        // cached top would be silently dropped.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         if iszero(eq(q_sp, 0x9000)) { q_program_fail() }

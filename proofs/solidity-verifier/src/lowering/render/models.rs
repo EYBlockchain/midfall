@@ -249,7 +249,7 @@ pub(crate) struct Halo2VerifyingKey {
     /// Constructor memory base used while returning VK bytes.
     pub(crate) constructor_payload_mptr: usize,
     /// Header constants followed by optional quotient constants/program words.
-    pub(crate) constants: Vec<(&'static str, U256)>,
+    pub(crate) constants: Vec<(String, U256)>,
     /// EIP-2537-padded fixed commitments.
     pub(crate) fixed_comms: Vec<G1Words>,
     /// EIP-2537-padded permutation commitments.
@@ -1150,7 +1150,7 @@ mod tests {
         );
         Halo2VerifyingKey {
             constructor_payload_mptr: constructor_memory.payload_mptr,
-            constants,
+            constants: constants.into_iter().map(|(name, value)| (name.to_string(), value)).collect(),
             fixed_comms,
             permutation_comms,
             quotient_const_offset_words: None,
@@ -1315,8 +1315,10 @@ mod tests {
         vk.quotient_const_words = 2;
         vk.quotient_program_offset_words = Some(header_words + 2);
         vk.quotient_program_words = 3;
-        vk.constants.extend((0..2).map(|_| ("quotient_const", U256::ZERO)));
-        vk.constants.extend((0..3).map(|_| ("quotient_program", U256::ZERO)));
+        vk.constants
+            .extend((0..2).map(|i| (format!("quotient_const[{i}]"), U256::ZERO)));
+        vk.constants
+            .extend((0..3).map(|i| (format!("quotient_program[{i}]"), U256::ZERO)));
 
         let layout = vk.payload_layout().unwrap();
 
@@ -1343,7 +1345,7 @@ mod tests {
         vk.quotient_const_words = 1;
         vk.quotient_program_offset_words = Some(vk.constants.len() + 1);
         vk.quotient_program_words = 0;
-        vk.constants.push(("quotient_const", U256::ZERO));
+        vk.constants.push(("quotient_const[0]".to_string(), U256::ZERO));
 
         let err = vk.validate_payload_layout().expect_err("stale quotient offset rejected");
 

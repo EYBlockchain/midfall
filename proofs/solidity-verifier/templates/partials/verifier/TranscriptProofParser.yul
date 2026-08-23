@@ -108,6 +108,7 @@
             // Advice commitments for this phase are absorbed before the phase's
             // challenge squeezes. The number of commitments and challenges is
             // generated from the protocol plan.
+            // {{ phase.advice_bytes / template_constants.g1_bytes }} advice commitment(s), {{ template_constants.g1_bytes|hex() }} bytes each.
             for { let end := add(proof_cptr, {{ phase.advice_bytes|hex() }}) }
                 lt(proof_cptr, end)
                 {} {
@@ -145,6 +146,7 @@
             // Lookup multiplicity commitments are absorbed after theta and
             // copied into their own contiguous G1 region.
             let lookup_m_walk := LOOKUP_M_COMMS_MPTR_BASE
+            // {{ codegen_layout.proof.lookup_multiplicities.item_count }} G1 commitment(s), one per lookup argument.
             for { let end := add(proof_cptr, {{ codegen_layout.proof.lookup_multiplicities.byte_len|hex() }}) }
                 lt(proof_cptr, end)
                 {} {
@@ -175,6 +177,7 @@
             // Permutation product commitments are used by the permutation
             // identities in the quotient numerator and later by PCS openings.
             let perm_z_walk := PERM_Z_COMMS_MPTR_BASE
+            // {{ codegen_layout.proof.permutation_products.item_count }} G1 commitment(s), one per permutation set.
             for { let end := add(proof_cptr, {{ codegen_layout.proof.permutation_products.byte_len|hex() }}) }
                 lt(proof_cptr, end)
                 {} {
@@ -245,6 +248,7 @@
             // Trashcan commitments are optional, but when present they are
             // absorbed before y so the quotient batching challenge binds them.
             let trashcan_walk := TRASHCAN_COMMS_MPTR_BASE
+            // {{ codegen_layout.proof.trash.item_count }} G1 commitment(s).
             for { let end := add(proof_cptr, {{ codegen_layout.proof.trash.byte_len|hex() }}) }
                 lt(proof_cptr, end)
                 {} {
@@ -277,6 +281,7 @@
             // Multi-limb quotient mode reads several Q_i commitments; single-H
             // mode renders this loop with one limb.
             let quotient_walk := QUOTIENT_LIMB_COMMS_MPTR_BASE
+            // {{ codegen_layout.proof.quotient_limbs.item_count }} G1 commitment(s), one per quotient limb.
             for { let end := add(proof_cptr, {{ codegen_layout.proof.quotient_limbs.byte_len|hex() }}) }
                 lt(proof_cptr, end)
                 {} {
@@ -310,6 +315,7 @@
             // by the quotient VM/direct evaluator, hence the generated name.
             {
                 let eval_buf := REVERSED_EVALS_MPTR
+                // {{ codegen_layout.proof.evals.item_count }} evaluation scalars, one 32-byte word each.
                 for { let end := add(proof_cptr, {{ codegen_layout.proof.evals.byte_len|hex() }}) }
                     lt(proof_cptr, end)
                     {} {
@@ -375,6 +381,7 @@
             // in the KZG multi-open reduction. They are still transcript
             // material and must be range-checked as Fr scalars.
             mstore(Q_EVAL_CPTR_MPTR, proof_cptr)
+            // {{ codegen_layout.proof.q_evals.item_count }} q_evals, one word per prepared point set.
             for { let end := add(proof_cptr, {{ codegen_layout.proof.q_evals.byte_len|hex() }}) }
                 lt(proof_cptr, end)
                 {} {

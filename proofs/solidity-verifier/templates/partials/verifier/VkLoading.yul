@@ -130,8 +130,10 @@
             let acc_precompile_failed := 0
             success, acc_precompile_failed := validate_public_accumulator(success, r)
             if iszero(success) {
-                // MF-4: a G1MSM that could not run at all is a chain fault,
-                // not a malformed accumulator point.
+                // MF-4: a failed G1MSM staticcall is reported as a chain
+                // fault even though EIP-2537 also fails the call for an
+                // off-curve/out-of-subgroup point -- the EVM cannot tell
+                // them apart; see validate_public_accumulator's contract.
                 if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
                 fail(ERR_BAD_POINT_ENCODING)
             }

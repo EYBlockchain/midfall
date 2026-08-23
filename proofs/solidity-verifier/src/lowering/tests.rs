@@ -1629,7 +1629,9 @@ fn precompile_faults_and_input_rejections_use_distinct_selectors() {
 }
 
 /// MF-3: the quotient VM's terminal checks (`q_pc == q_end`, `q_has_top == 0`,
-/// `q_sp == base`) cannot see three failure shapes, so the interpreter grew
+/// `q_sp == base`) cannot see several failure shapes -- a stale-top fold, a
+/// callback inheriting spilled operands or a live cached top, a spill past
+/// the ceiling, an over-range constant index -- so the interpreter grew
 /// guards for each. The program is VK-codehash-pinned, so none of these are
 /// reachable on-chain with a well-formed artifact -- they are containment for
 /// a future generator bug, mirroring on the deployed side what the reference
@@ -1690,13 +1692,26 @@ fn quotient_vm_interpreter_fails_closed_on_malformed_programs() {
          (0x9200 is the snapshot's placeholder stack ceiling)"
     );
 
-    // (d) u16 constant-table indexes reach far outside the pinned payload, so
-    // unlike the u8 forms they cannot rely on bounded drift.
+    // (d) Every constant-table index -- u8 and u16 alike -- is clamped to the
+    // rendered table length. The u16 forms reach far outside the pinned
+    // payload; the u8 forms drift at most 0x1FE0 bytes inside it, but a
+    // drifted read is silently wrong rather than loud, so they fail closed
+    // too: 3 u16 sites + 18 u8 sites.
     assert_eq!(
         vm.matches("if iszero(lt(qconst, 300)) { q_program_fail() }").count(),
-        3,
-        "u16 constant-table indexes must be clamped to the rendered table \
+        21,
+        "every constant-table index must be clamped to the rendered table \
          length (300 is the snapshot's placeholder table length)"
+    );
+
+    // (e) Native callbacks are identity boundaries. Entering one with a live
+    // cached top would silently drop that value from the numerator fold while
+    // every terminal balance check still passed, so all three callback arms
+    // fail closed on a live top before clearing it.
+    assert_eq!(
+        vm.matches("if q_has_top { q_program_fail() }").count(),
+        3,
+        "each native callback boundary must reject a live cached top"
     );
 }
 
@@ -1912,7 +1927,7 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     // so pin the template text (both anchors live in unconditional branches
     // of the accumulator path).
     assert!(
-            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}"),
+            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a failed G1MSM staticcall is reported as a chain\n                // fault even though EIP-2537 also fails the call for an\n                // off-curve/out-of-subgroup point -- the EVM cannot tell\n                // them apart; see validate_public_accumulator's contract.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}"),
             "accumulator precheck should fail before transcript parsing"
         );
 }
@@ -2937,18 +2952,29 @@ fn p4_error_selectors_match_declared_errors() {
             "Constants.sol must define {constant_name}"
         );
     }
-    // The quotient VM's dedicated helper hardcodes the QuotientProgramInvalid
-    // selector because it renders in both the verifier and the standalone
-    // evaluator assembly.
+    // The quotient VM's dedicated helper renders in both the verifier and
+    // the standalone evaluator assembly, so it reverts through the named
+    // ERR_QUOTIENT_PROGRAM_INVALID constant, and BOTH contracts must declare
+    // that constant with the same pinned selector value.
     let digest = Keccak256::digest(b"QuotientProgramInvalid()");
     let selector = format!(
         "0x{:02x}{:02x}{:02x}{:02x}",
         digest[0], digest[1], digest[2], digest[3]
     );
     assert!(
-        helpers_template.contains(&format!("shl(224, {selector})")),
-        "q_program_fail must hardcode the QuotientProgramInvalid selector {selector}"
+        helpers_template.contains("shl(224, ERR_QUOTIENT_PROGRAM_INVALID)"),
+        "q_program_fail must revert through the named QuotientProgramInvalid selector constant"
     );
+    let evaluator_template = include_str!("../../templates/contracts/Halo2QuotientEvaluator.sol");
+    for (file, template) in [
+        ("Constants.sol", constants_template),
+        ("Halo2QuotientEvaluator.sol", evaluator_template),
+    ] {
+        assert!(
+            template.contains(&format!("ERR_QUOTIENT_PROGRAM_INVALID = {selector};")),
+            "{file} must pin ERR_QUOTIENT_PROGRAM_INVALID to {selector}"
+        );
+    }
 }
 
 #[test]
