@@ -203,10 +203,10 @@ pub struct QuotientIdentityManifest {
 
 /// Artifact-bound certificate for the quotient numerator lowering.
 ///
-/// The certificate is a host-side diagnostic and release artifact. Its canonical
-/// hash is also stored in the generated VK header and checked by the verifier.
-/// Human-readable names remain in [`QuotientIdentitySource`] for review, but
-/// the hash intentionally ignores display-only names.
+/// The certificate is a host-side diagnostic and release artifact. Its
+/// canonical hash is also stored in the generated VK header and checked by the
+/// verifier. Human-readable names remain in [`QuotientIdentitySource`] for
+/// review, but the hash intentionally ignores display-only names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuotientCertificate {
     /// Canonical certificate format version.
