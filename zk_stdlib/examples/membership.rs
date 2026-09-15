@@ -100,7 +100,7 @@ impl Relation for MembershipExample {
 }
 
 fn main() {
-    const K: u32 = 13;
+    const K: u32 = 14;
     let relation = MembershipExample;
     let srs = srs_for_test(&relation, Some(K));
     let vk = midnight_zk_stdlib::setup_vk(&srs, &relation);

@@ -204,10 +204,15 @@ where
         let zero = self.native_gadget.assign_fixed(layouter, F::ZERO)?;
         let path = self.hash_chip.hash(layouter, &[key.clone(), zero])?;
         let path_as_bits = self.native_gadget.assigned_to_le_bits(layouter, &path, None, true)?;
+        assert_eq!(
+            path_as_bits.len(),
+            TREE_HEIGHT as usize,
+            "MapGadget requires a 255-bit field"
+        );
 
         let mut node: AssignedNative<F> = value.clone();
 
-        for (is_right, sibling) in path_as_bits[..TREE_HEIGHT as usize].iter().zip(proof.iter()) {
+        for (is_right, sibling) in path_as_bits.iter().zip(proof.iter()) {
             let (left_sibling, right_sibling) =
                 self.native_gadget.cond_swap(layouter, is_right, &node, sibling)?;
 
@@ -366,7 +371,7 @@ mod test {
         N: NativeInstructions<F> + FromScratch<F>,
         H: HashInstructions<F, AssignedNative<F>, AssignedNative<F>> + FromScratch<F>,
     {
-        let k: u32 = 15;
+        let k: u32 = 16;
         let mut rng = ChaCha8Rng::seed_from_u64(0xc0ffee);
 
         let mut mt = MapMt::<F, H>::new(&F::ZERO);

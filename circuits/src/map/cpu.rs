@@ -27,16 +27,62 @@ use crate::{
 /// This constant defines the height of the tree. This is a lower bound
 /// on the security parameter of the primitive, so it needs to be chosen
 /// carefully.
-pub(crate) const TREE_HEIGHT: u8 = 128;
+pub(crate) const TREE_HEIGHT: u8 = 255;
+
+const NODE_INDEX_BYTES: usize = 32;
+
+/// A node's position within a level of the tree.
+///
+/// The index is stored in little-endian order and is always a 255-bit value;
+/// the most significant bit of the final byte is unused. Keeping the index in
+/// bytes avoids the overflow-prone integer arithmetic that a 255-level tree
+/// would otherwise require.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct NodeIndex([u8; NODE_INDEX_BYTES]);
+
+impl NodeIndex {
+    fn from_canonical_le_bytes(bytes: &[u8]) -> Self {
+        assert_eq!(bytes.len(), NODE_INDEX_BYTES);
+
+        let mut index = [0; NODE_INDEX_BYTES];
+        index.copy_from_slice(bytes);
+        assert_eq!(index[NODE_INDEX_BYTES - 1] & 0x80, 0);
+
+        Self(index)
+    }
+
+    fn is_right(self) -> bool {
+        self.0[0] & 1 == 1
+    }
+
+    fn sibling(mut self) -> Self {
+        self.0[0] ^= 1;
+        self
+    }
+
+    fn move_to_parent(&mut self) {
+        for i in 0..NODE_INDEX_BYTES - 1 {
+            self.0[i] = (self.0[i] >> 1) | (self.0[i + 1] << 7);
+        }
+        self.0[NODE_INDEX_BYTES - 1] >>= 1;
+    }
+
+    fn bit_len(self) -> usize {
+        self.0.iter().rposition(|byte| *byte != 0).map_or(0, |i| {
+            i * 8 + (u8::BITS - self.0[i].leading_zeros()) as usize
+        })
+    }
+}
 
 /// A [MapMt] is a succinct key-value map representation using merkle trees. We
 /// do not store all nodes. Instead, we only store the default nodes for each
-/// level, and those that have been modified.
+/// level, and those that have been modified. The map requires a 255-bit field
+/// with a 32-byte canonical representation.
 #[derive(Clone, Debug)]
 pub struct MapMt<F: CircuitField, H: HashCPU<F, F>> {
     pub(crate) root: F,
     // We organise nodes by their height and their position in that level.
-    nodes: HashMap<(u8, u128), F>,
+    nodes: HashMap<(u8, NodeIndex), F>,
     // Map containing keys and values.
     map: HashMap<BigUint, F>,
     // Tree nodes, organised from leaves to root (though the root is treated separately)
@@ -61,6 +107,17 @@ where
     H: HashCPU<F, F>,
 {
     fn new(default: &F) -> Self {
+        assert_eq!(
+            F::NUM_BITS as usize,
+            TREE_HEIGHT as usize,
+            "MapMt requires a 255-bit field"
+        );
+        assert_eq!(
+            F::NUM_BYTES,
+            NODE_INDEX_BYTES,
+            "MapMt requires a 32-byte canonical field representation"
+        );
+
         // The set of 'modified' nodes is empty
         let nodes = HashMap::new();
         let map = HashMap::new();
@@ -72,7 +129,8 @@ where
                 <H as HashCPU<F, F>>::hash(&[default_nodes[i - 1], default_nodes[i - 1]]);
         }
 
-        let root = <H as HashCPU<F, F>>::hash(&[default_nodes[127], default_nodes[127]]);
+        let top_default = default_nodes[TREE_HEIGHT as usize - 1];
+        let root = <H as HashCPU<F, F>>::hash(&[top_default, top_default]);
 
         Self {
             root,
@@ -98,9 +156,9 @@ where
             self.nodes.insert((height, node_index), child);
 
             let sibling = self.get_sibling(node_index, height);
-            let (x, y) = conditional_swap(node_index & 1 == 1, &child, &sibling);
+            let (x, y) = conditional_swap(node_index.is_right(), &child, &sibling);
             child = <H as HashCPU<F, F>>::hash(&[x, y]);
-            node_index >>= 1;
+            node_index.move_to_parent();
         }
 
         self.root = child;
@@ -140,7 +198,7 @@ where
 
         for (i, val) in nodes.iter_mut().enumerate() {
             *val = self.get_sibling(node_index, i as u8);
-            node_index >>= 1;
+            node_index.move_to_parent();
         }
 
         nodes
@@ -155,21 +213,20 @@ where
         let mut child = value;
 
         for node in path {
-            let (x, y) = conditional_swap(node_index & 1 == 1, &child, node);
+            let (x, y) = conditional_swap(node_index.is_right(), &child, node);
             child = <H as HashCPU<F, F>>::hash(&[x, y]);
-            node_index >>= 1;
+            node_index.move_to_parent();
         }
 
         *root == child
     }
 
     /// Get the sibling of an indexed node at a given height
-    fn get_sibling(&self, node_index: u128, height: u8) -> F {
-        assert!(height == 0 || (node_index < 1 << (TREE_HEIGHT - height)));
+    fn get_sibling(&self, node_index: NodeIndex, height: u8) -> F {
+        debug_assert!(node_index.bit_len() <= usize::from(TREE_HEIGHT - height));
 
-        // If index is even, then we need the right sibling (height_index + 1), if
-        // it is odd, then we need the left sibling (height_index - 1).
-        let sibling_index = node_index + 1 - 2 * (node_index & 1);
+        // Flipping the least-significant bit selects the adjacent node at this level.
+        let sibling_index = node_index.sibling();
 
         // If the sibling does not exist, we use the default node for this height
         *self
@@ -179,12 +236,12 @@ where
     }
 
     /// Get the node index at the leaf level for a given element, represented by
-    /// the first 128 bits of the hash output.
-    fn compute_node_index(element: &F) -> u128 {
+    /// all 255 canonical little-endian bits of the hash output.
+    fn compute_node_index(element: &F) -> NodeIndex {
         let hashed_value = <H as HashCPU<F, F>>::hash(&[*element, F::ZERO]);
         let bytes = hashed_value.to_bytes_le();
 
-        u128::from_le_bytes(bytes[..TREE_HEIGHT as usize / 8].try_into().unwrap())
+        NodeIndex::from_canonical_le_bytes(bytes.as_ref())
     }
 }
 
@@ -199,11 +256,43 @@ fn conditional_swap<F: CircuitField>(cond: bool, left_input: &F, right_input: &F
 
 #[cfg(test)]
 mod tests {
+    use num_bigint::BigUint;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
     use crate::hash::poseidon::{constants::PoseidonField, PoseidonChip};
+
+    #[derive(Clone, Debug)]
+    struct FirstInputHash;
+
+    impl HashCPU<midnight_curves::Fq, midnight_curves::Fq> for FirstInputHash {
+        fn hash(inputs: &[midnight_curves::Fq]) -> midnight_curves::Fq {
+            inputs[0]
+        }
+    }
+
+    #[test]
+    fn node_index_uses_all_255_canonical_bits() {
+        type F = midnight_curves::Fq;
+
+        let key_as_biguint =
+            (BigUint::from(1u8) << 254) | (BigUint::from(1u8) << 128) | BigUint::from(1u8);
+        let key = F::from_biguint(&key_as_biguint).unwrap();
+        let mut index = MapMt::<F, FirstInputHash>::compute_node_index(&key);
+
+        assert!(index.is_right());
+        for _ in 0..128 {
+            index.move_to_parent();
+        }
+        assert!(index.is_right());
+        for _ in 128..254 {
+            index.move_to_parent();
+        }
+        assert!(index.is_right());
+        index.move_to_parent();
+        assert_eq!(index.bit_len(), 0);
+    }
 
     fn test_map<F, H>()
     where
