@@ -790,8 +790,8 @@ fn fixture_verifier_binds_its_verifying_key() {
         "vk_digest",
         "omega",
         "neg_s_g2_y_c1_lo",
-        "quotient_const",
-        "quotient_program",
+        "quotient_const[0]",
+        "quotient_program[0]",
     ] {
         let bad = tamper_vk_word(&vk_src, label);
         assert!(
@@ -1414,24 +1414,20 @@ fn fixture_verifier_rejects_foreign_calldata() {
 
 
 // ===========================================================================
-// 9. Taxonomy defect, pinned.
+// 9. Taxonomy limit, pinned.
 //
-//    `validate_public_accumulator` documents (MF-4, Halo2Verifier.sol:1240-1245)
-//    that `precompile_failed` separates "a G1MSM staticcall that could not run
-//    (chain/gas fault)" from "a public-input point this verifier decoded and
-//    rejected (bad packing, out-of-field coordinate, non-canonical identity
-//    encoding, OR A POINT THE PRECOMPILE FOUND OFF-CURVE/OUT-OF-SUBGROUP)",
-//    and says "only the second is a BadPointEncoding".
-//
-//    The code cannot make that distinction. Both cases surface as a reverted
-//    STATICCALL, so both set `precompile_failed`, and the call site
-//    (Halo2Verifier.sol:1447-1451) reports PrecompileFailed. A malformed
-//    accumulator point -- a proof fault, attacker-controlled -- is therefore
-//    reported to incident response as a chain fault.
+//    An off-curve/out-of-subgroup accumulator point surfaces as
+//    PrecompileFailed, not BadPointEncoding: EIP-2537 signals invalid input
+//    by failing the STATICCALL, which is indistinguishable from a chain/gas
+//    fault, so `validate_public_accumulator` sets `precompile_failed` for
+//    both and the call site reports PrecompileFailed. The MF-4 comments in
+//    AccumulatorHelpers.yul / VkLoading.yul now document exactly this. A
+//    malformed accumulator point -- a proof fault, attacker-controlled -- is
+//    therefore reported to incident response as a chain fault.
 //
 //    This is not a soundness break: every such input is still rejected. It is
-//    a monitoring/triage defect, and it is pinned here so that a fix (or a
-//    correction of the comment) is a deliberate change.
+//    an EVM-imposed triage limit, and it is pinned here so that any change to
+//    the classification is a deliberate one.
 // ===========================================================================
 
 #[test]

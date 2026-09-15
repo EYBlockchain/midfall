@@ -14,11 +14,11 @@ is what makes a vk.bin-based replay unusable in CI.
 
 | Field | Value |
 | --- | --- |
-| Source commit | `f787a77c` |
+| Source commit | `18c3c72a` |
 | Rendered by | `tests/ivc_keccak_solidity.rs` (`ivc_final_keccak_solidity_e2e`) |
 | Circuit | IVC k=19 leaves, k=20 decider |
 | Accumulator | `AccumulatorEncoding::new(offset=4, num_limbs=7, num_limb_bits=56)` |
-| Verified on-chain | yes, 1,346,886 gas under revm Prague (2026-08-20 render: MF-1..MF-4 fixes, EIP-7883 modexp bound + constructor probe, fallible cached lowering plan, pinned-external quotient render type, `__phase:` section markers) |
+| Verified on-chain | yes, 1,380,913 gas under revm Prague (2026-08-23 render: quotient-VM live-top guard at native callbacks, u8 constant-index clamps, shared G1MSM_GAS_SMOKE forward, indexed VK labels, emitter/comment fixes) |
 
 ## Regenerating
 

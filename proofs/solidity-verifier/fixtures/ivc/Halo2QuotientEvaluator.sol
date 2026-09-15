@@ -47,6 +47,12 @@ contract Halo2QuotientEvaluator {
     uint256 internal constant FR_MODULUS =
         0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;
 
+    // Selector of QuotientProgramInvalid() (bytes4(keccak256)). Mirrors the
+    // main verifier's Constants.sol declaration so the shared quotient-VM
+    // partial can revert with the same typed selector in both contracts.
+    // Pinned by `p4_error_selectors_match_declared_errors`.
+    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+
     // Start of the copied verifier-key payload in memory. The VK payload also
     // carries the compact quotient VM constant/program tables used by the
     // included numerator block.
@@ -75,7 +81,7 @@ contract Halo2QuotientEvaluator {
     uint256 internal constant          L_BLIND_MPTR = 0x7ca0;
     uint256 internal constant              L_0_MPTR = 0x7cc0;
     uint256 internal constant     INSTANCE_EVAL_MPTR = 0x7ce0;
-    uint256 internal constant     QUOTIENT_EVAL_MPTR = 0x7d00;
+    uint256 internal constant     LINEARIZATION_EVAL_MPTR = 0x7d00;
 
     // Proof evaluation table. Values are already decoded as canonical Fr words
     // by Halo2Verifier. The generated numerator code indexes this table by the
@@ -127,7 +133,7 @@ contract Halo2QuotientEvaluator {
             //      quotient_eval_numer;
             //   3. y-batches simple-selector identities into
             //      SELECTOR_ACC_MPTR buckets;
-            //   4. writes -quotient_eval_numer to QUOTIENT_EVAL_MPTR.
+            //   4. writes -quotient_eval_numer to LINEARIZATION_EVAL_MPTR.
             //
             // Depending on codegen settings, some identities are native Yul
             // callbacks and the rest are executed by the compact q_program VM
@@ -138,13 +144,14 @@ contract Halo2QuotientEvaluator {
             // block mirrors that rule by accumulating those identities into
             // SELECTOR_ACC_MPTR buckets for later multiplication by fixed
             // selector commitments, while fully evaluated identities contribute
-            // to the negated expected scalar.            // Revert with the QuotientProgramInvalid() selector
-            // (bytes4(keccak256) = 0x3cc81b89; pinned by
-            // p4_error_selectors_match_declared_errors). Defined here rather
-            // than in AssemblyHelpers.yul because the quotient VM renders in
-            // BOTH the main verifier and the standalone evaluator assembly.
+            // to the negated expected scalar.            // Revert with the QuotientProgramInvalid() selector. Defined here
+            // rather than in AssemblyHelpers.yul because the quotient VM
+            // renders in BOTH the main verifier and the standalone evaluator
+            // assembly; both contracts declare ERR_QUOTIENT_PROGRAM_INVALID
+            // (bytes4(keccak256) = 0x3cc81b89, pinned by
+            // p4_error_selectors_match_declared_errors).
             function q_program_fail() {
-                mstore(0x00, shl(224, 0x3cc81b89))
+                mstore(0x00, shl(224, ERR_QUOTIENT_PROGRAM_INVALID))
                 revert(0x00, 0x04)
             }
 
@@ -211,7 +218,7 @@ contract Halo2QuotientEvaluator {
             //     payload includes the quotient constant table and bytecode.
             //
             // Runtime outputs written by this block:
-            //   - QUOTIENT_EVAL_MPTR receives the scalar expected opening for
+            //   - LINEARIZATION_EVAL_MPTR receives the scalar expected opening for
             //     the linearized commitment, namely -nu_y(x).
             //   - SELECTOR_ACC_MPTR[0..num_simple_selectors) receives one
             //     linearization scalar per generated simple selector.
@@ -272,7 +279,10 @@ contract Halo2QuotientEvaluator {
                 let q_program_mptr := 0x50a0
                 // Running Horner accumulator for fully evaluated identities.
                 // After all identities, this is nu_y(x) for the `None`
-                // identity group.
+                // identity group. The word deliberately aliases
+                // PCS_FINAL_MSM_MPTR: this phase distills its result into
+                // LINEARIZATION_EVAL_MPTR before the PCS staging phase begins,
+                // and the arena planner rejects overlapping live regions.
                 // Initialize A = 0 before scanning the identity stream.
                 mstore(0xb280, 0)
                 // Simple selectors are grouped into separate linearization
@@ -422,7 +432,9 @@ contract Halo2QuotientEvaluator {
                 // writes a structured scratch table at program.stack_mptr.
                 // q_pc starts at the first encoded instruction.
                 let q_pc := q_program_mptr
-                // q_end is an exclusive byte pointer for the VM loop.
+                // q_end is an exclusive byte pointer for the VM loop; the
+                // added literal is the packed program byte length, part of
+                // the codehash-pinned VK payload.
                 let q_end := add(q_program_mptr, 0x11cf)
                 // q_sp starts at the first free stack word.
                 let q_sp := 0xb8e0
@@ -450,6 +462,13 @@ contract Halo2QuotientEvaluator {
                 // The default IVC verifier uses one physical encoding for the
                 // logical VM: compact byte-oriented opcodes with variable-width
                 // operands, dynamic runs, and limb-aware cases.
+                //
+                // Operand guards: every decoded memory pointer is checked with
+                // `gt(sub(ptr, BASE), SIZE)` -- one unsigned comparison whose
+                // wraparound covers both bounds -- against the contiguous
+                // planned window from the VK payload base through the decoded
+                // evaluation frame; every constant-table index is clamped
+                // against the rendered table length at its decode site.
                 
                 // Byte-oriented encoding: opcodes are one byte followed by
                 // variable-width operand bytes.
@@ -498,6 +517,7 @@ contract Halo2QuotientEvaluator {
                         // affine chains after an initial PUSH.
                         let qconst := byte(0, mload(q_pc))
                         q_pc := add(q_pc, 1)
+                        if iszero(lt(qconst, 178)) { q_program_fail() }
                         q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)
                     }
                     // VM 0x10 ADD_MEM_U16: add a short memory load into q_top.
@@ -570,6 +590,7 @@ contract Halo2QuotientEvaluator {
                             // with a standalone constant term.
                             let qconst := byte(0, mload(q_pc))
                             q_pc := add(q_pc, 1)
+                            if iszero(lt(qconst, 178)) { q_program_fail() }
                             q_acc := mload(add(q_const_mptr, shl(5, qconst)))
                         }
 
@@ -597,6 +618,7 @@ contract Halo2QuotientEvaluator {
                                 let qconst := byte(0, q_word)
                                 let q_ptr := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                                if iszero(lt(qconst, 178)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
@@ -617,6 +639,7 @@ contract Halo2QuotientEvaluator {
                                 let qconst := byte(0, q_word)
                                 let q_rhs := and(shr(232, q_word), 0xffff)
                                 q_pc := add(q_pc, 3)
+                                if iszero(lt(qconst, 178)) { q_program_fail() }
                         if gt(sub(q_rhs, 0x3680), 0x6aa0) { q_program_fail() }
                                 q_acc := addmod(
                                     q_acc,
@@ -645,6 +668,7 @@ contract Halo2QuotientEvaluator {
                                 let q_lhs_value := mload(add(q_lhs_base, shl(5, q_i)))
                                 for { let q_j := 0 } lt(q_j, 7) { q_j := add(q_j, 1) } {
                                     let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))
+                                    if iszero(lt(qconst, 178)) { q_program_fail() }
                                     q_acc := addmod(
                                         q_acc,
                                         mulmod(
@@ -664,6 +688,7 @@ contract Halo2QuotientEvaluator {
                             let qconst := byte(0, q_word)
                             let q_ptr := and(shr(232, q_word), 0xffff)
                             q_pc := add(q_pc, 3)
+                            if iszero(lt(qconst, 178)) { q_program_fail() }
                         if gt(sub(q_ptr, 0x3680), 0x6aa0) { q_program_fail() }
                             q_acc := addmod(
                                 q_acc,
@@ -679,6 +704,7 @@ contract Halo2QuotientEvaluator {
                             let q_lhs := and(shr(232, q_word), 0xffff)
                             let q_rhs := and(shr(216, q_word), 0xffff)
                             q_pc := add(q_pc, 5)
+                            if iszero(lt(qconst, 178)) { q_program_fail() }
                         if gt(sub(q_lhs, 0x3680), 0x6aa0) { q_program_fail() }
                         if gt(sub(q_rhs, 0x3680), 0x6aa0) { q_program_fail() }
                             q_acc := addmod(
@@ -709,7 +735,9 @@ contract Halo2QuotientEvaluator {
                     case 0x19 {
                         // Native callbacks are identity-boundary opcodes. They
                         // must not inherit any partially evaluated VM stack
-                        // state from the previous expression.
+                        // state from the previous expression: a live cached top
+                        // here would be silently dropped from the numerator.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         // The generated loop below uses program.stack_mptr as
@@ -826,7 +854,9 @@ contract Halo2QuotientEvaluator {
                     case 0x1f {
                         // Reset VM stack state before entering structured
                         // lookup Yul. Lookup callbacks own their scratch
-                        // layout and perform all needed folds internally.
+                        // layout and perform all needed folds internally; a
+                        // live cached top here would be silently dropped.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         // The generated loop below uses program.stack_mptr as
@@ -1021,8 +1051,10 @@ contract Halo2QuotientEvaluator {
                         // generated order and target existing switch cases.
                         let q_native_idx := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
-                        // Heavy identities are whole expressions, so clear the
-                        // interpreter stack before dispatching.
+                        // Heavy identities are whole expressions, so the
+                        // interpreter stack must already be clear here; a live
+                        // cached top would be silently dropped.
+                        if q_has_top { q_program_fail() }
                         q_top := 0
                         q_has_top := 0
                         if iszero(eq(q_sp, 0xb8e0)) { q_program_fail() }
@@ -1568,42 +1600,52 @@ contract Halo2QuotientEvaluator {
                 // final global y position and can be multiplied by its fixed
                 // selector commitment in the linearized MSM.
                 {
+                    // Bucket at selector offset 0x00: multiply by y^48.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x00)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0600)), r))
                 }
                 {
+                    // Bucket at selector offset 0x20: multiply by y^47.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x20)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x05e0)), r))
                 }
                 {
+                    // Bucket at selector offset 0x40: multiply by y^44.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x40)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0580)), r))
                 }
                 {
+                    // Bucket at selector offset 0x60: multiply by y^38.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x60)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x04c0)), r))
                 }
                 {
+                    // Bucket at selector offset 0x80: multiply by y^35.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x80)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0460)), r))
                 }
                 {
+                    // Bucket at selector offset 0xa0: multiply by y^32.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0xa0)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0400)), r))
                 }
                 {
+                    // Bucket at selector offset 0xc0: multiply by y^29.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0xc0)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x03a0)), r))
                 }
                 {
+                    // Bucket at selector offset 0xe0: multiply by y^26.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0xe0)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0340)), r))
                 }
                 {
+                    // Bucket at selector offset 0x0100: multiply by y^23.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x0100)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x02e0)), r))
                 }
                 {
+                    // Bucket at selector offset 0x0120: multiply by y^20.
                     let q_sel_ptr := add(SELECTOR_ACC_MPTR, 0x0120)
                     mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(0xb2c0, 0x0280)), r))
                 }
@@ -1612,7 +1654,9 @@ contract Halo2QuotientEvaluator {
                 // of the linearization query. Rust subtracts that grouped
                 // scalar into expected_eval, so Solidity stores -nu_y(x).
                 let linearization_expected_eval := addmod(0, sub(r, mload(0xb280)), r)
-                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)
+                mstore(LINEARIZATION_EVAL_MPTR, linearization_expected_eval)
+                // Silences Yul's unused-variable warning in renders whose
+                // program has no arm reading y directly; a no-op otherwise.
                 pop(y)
             }
 
@@ -1621,7 +1665,7 @@ contract Halo2QuotientEvaluator {
             // selector buckets into the fused final PCS MSM.
             // __phase:quotient_return
             mstore(QUOTIENT_OUTPUT_MPTR, QUOTIENT_MAGIC)
-            mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(QUOTIENT_EVAL_MPTR))
+            mstore(add(QUOTIENT_OUTPUT_MPTR, 0x20), mload(LINEARIZATION_EVAL_MPTR))
             // Copy selector buckets from the generated absolute memory region
             // into the compact external-call return frame.
             for { let q_i := 0 } lt(q_i, 10) { q_i := add(q_i, 1) } {
