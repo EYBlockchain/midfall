@@ -37,10 +37,11 @@
 //! node per level in memory to optimize space.
 //!
 //! When adding or updating a key-value pair, the hash of the key determines
-//! its path in the tree, leading to a specific leaf where the associated value
-//! is stored. This leaf’s value can be set or retrieved by the caller. Any
-//! updates propagate up the path to the root to reflect changes in the Merkle
-//! root.
+//! its path in the 255-level tree. The path uses all 255 canonical
+//! little-endian bits of `H(key, F::ZERO)`, with no additional hash or padding
+//! bit, leading to a specific leaf where the associated value is stored. This
+//! leaf’s value can be set or retrieved by the caller. Any updates propagate up
+//! the path to the root to reflect changes in the Merkle root.
 //!
 //! This structure enables succinct in-circuit proofs of inclusion or exclusion
 //! by updating the value at the relevant leaf. Verification requires only the
@@ -49,8 +50,8 @@
 //!
 //!
 //! A non-empty tree consists of the initial zero nodes plus the updated paths
-//! for added elements. For a tree of height 128, the storage size per element
-//! is approximately `n * 56 * 128`, or around 7KB. Verification of map
-//! or non-map only requires the root hash.
+//! for added elements. A tree of height 255 stores approximately 255 modified
+//! nodes per added element (shared paths reduce this number). Verification of
+//! map or non-map only requires the root hash.
 pub mod cpu;
 pub mod map_gadget;
