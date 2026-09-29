@@ -1,0 +1,261 @@
+% ============================================================================
+% Part 5 --- The generated Solidity / Yul
+% ============================================================================
+\chapter{The Generated Solidity and Yul}
+\label{ch:solidity}
+
+The generated artifact is a single Solidity contract, \sol{Halo2Verifier.sol},
+whose entry point is
+\begin{lstlisting}[style=yul]
+function verifyProof(bytes calldata proof, bytes[] calldata instances)
+    external view returns (bool)
+\end{lstlisting}
+with selector \cg{FN\_\allowbreak{}SIG\_\allowbreak{}VERIFY\_\allowbreak{}PROOF} $=$ \texttt{0x1e8e1e13}. The
+function body is one \texttt{assembly ("memory-safe")} block containing
+included Yul partials. It is \textbf{terminal}: every failure path is a
+\texttt{revert}; the only non-reverting exit is
+\texttt{mstore(RETURN\_\allowbreak{}MPTR,1); return(RETURN\_\allowbreak{}MPTR,0x20)}.
+
+\section{Contract structure}
+\label{sec:sol-structure}
+
+\begin{lstlisting}[style=plain]
+contract Halo2Verifier {
+    // Constants.sol: FR_MODULUS, BLS_P_HI/LO, EXPECTED_VK_*, ABI cursors,
+    //                VK memory map, challenge layout
+    // PrecompileSmoke.sol: MCOPY + G1ADD/G1MSM/PAIRING identity probes
+    // Constructors.sol: constructor runs smoke probes + VK pin check
+    function verifyProof(...) external view returns (bool) {
+        assembly ("memory-safe") {
+            // AssemblyHelpers.yul   (scalar_inv, transcript, batch_invert, ec_pairing)
+            // AccumulatorHelpers.yul (accumulator decode/validate)
+            // TraceAndGasHelpers.yul (trace hooks, gas checkpoints)
+            // VkLoading.yul         (embedded or external VK payload load)
+            // TranscriptProofParser.yul (the whole proof read + challenge schedule)
+            // Lagrange.yul          (x^n, Lagrange basis, instance_eval)
+            // QuotientAndLinearization.yul (VM run or external evaluator call)
+            // Pcs.yul               (rendered PCS computation blocks)
+            // FinalPairing.yul      (accumulator batching + final pairing)
+            // TraceReturn.yul       (trace dump + return 1)
+        }
+    }
+}
+\end{lstlisting}
+
+\section{ABI and shape guard}
+\label{sec:abi}
+
+The generated contract pins the ABI layout with compile-time cursor
+constants:
+\begin{lstlisting}[style=yul]
+uint256 internal constant PROOF_LEN_CPTR    = 0x44;
+uint256 internal constant PROOF_CPTR        = 0x64;
+uint256 internal constant NUM_INSTANCE_CPTR = 0x1144;
+\end{lstlisting}
+Before any memory work, a shape guard rejects malformed calls:
+\begin{lstlisting}[style=yul]
+if iszero(and(eq(calldataload(0x04), 0x40),
+              eq(calldataload(0x24), sub(NUM_INSTANCE_CPTR, 0x04)))) { revert(0,0) }
+\end{lstlisting}
+This checks the dynamic-array offset is \texttt{0x40} and the proof length
+matches the generated layout, so a truncated or shifted calldata never
+reaches the transcript.
+
+\section{Transcript helpers}
+\label{sec:sol-transcript}
+
+The Yul transcript helpers implement Definitions~\ref{def:common}--\ref{def:squeeze}
+literally:
+\begin{lstlisting}[style=yul]
+function common_word(buf_len, word) -> ret {
+    mstore(buf_len, word)
+    ret := add(buf_len, 32)
+}
+function squeeze_to(buf_len, mptr) -> ret {
+    let h0 := keccak256(TRANSCRIPT_MPTR, sub(buf_len, TRANSCRIPT_MPTR))
+    mstore(TRANSCRIPT_MPTR, h0)          // reseed  (eq:transcript-reseed)
+    mstore(mptr, mod(h0, r))            // sample  (eq:transcript-squeeze)
+    ret := add(TRANSCRIPT_MPTR, 32)
+}
+\end{lstlisting}
+The G1 absorption helper enforces Definition~\ref{def:g1-canonical}:
+\begin{lstlisting}[style=yul]
+function common_uncompressed_g1(buf_len, cptr) -> ret {
+    let x_hi_word := calldataload(cptr)
+    let x_lo      := calldataload(add(cptr, 0x20))
+    let y_hi_word := calldataload(add(cptr, 0x40))
+    let y_lo      := calldataload(add(cptr, 0x60))
+    if shr(128, x_hi_word) { revert(0, 0) }   // top 16 bytes must be zero
+    if shr(128, y_hi_word) { revert(0, 0) }
+    let x_hi := and(x_hi_word, 0xffff...)
+    let y_hi := and(y_hi_word, 0xffff...)
+    // coordinate < q checks (BLS_P_HI / BLS_P_MINUS_ONE_LO ladder)
+    if iszero(or(lt(x_hi, BLS_P_HI),
+        and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) { revert(0,0) }
+    if iszero(or(lt(y_hi, BLS_P_HI),
+        and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) { revert(0,0) }
+    calldatacopy(buf_len, cptr, 0x80)   // absorb 128 bytes verbatim
+    ret := add(buf_len, 0x80)
+}
+\end{lstlisting}
+The comment in the generated code records that the previous emitter hashed
+the 48-byte ZCash compressed encoding with a $384$-bit
+$\mathsf{lex}(y) > \mathsf{lex}(p-y)$ sign ladder; switching to the
+uncompressed form (matching the patched Rust \rust{to\_\allowbreak{}input}) drops the
+ladder entirely.
+
+\section{The proof parser}
+\label{sec:sol-parser}
+
+\sol{TranscriptProofParser.yul} walks the proof in the order of
+Table~\ref{tab:schedule}. A representative excerpt (advice phase, poseidon
+fixture, 8 commitments of 0x80 bytes each):
+\begin{lstlisting}[style=yul]
+let proof_cptr := PROOF_CPTR
+let advice_walk := ADVICE_COMMS_MPTR_BASE
+// ---- User phase 1 ----
+for { let end := add(proof_cptr, 0x0400) } lt(proof_cptr, end) {} {
+    buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+    calldatacopy(advice_walk, proof_cptr, 0x80)
+    advice_walk := add(advice_walk, 0x80)
+    proof_cptr  := add(proof_cptr, 0x80)
+}
+buf_len := squeeze_to(buf_len, THETA_MPTR)
+// multiplicities, beta, gamma, perm z, helpers+acc, trash_challenge,
+// trash, y, quotient limbs, x ...
+\end{lstlisting}
+The eval loop range-checks and spills each scalar:
+\begin{lstlisting}[style=yul]
+for { let end := add(proof_cptr, 0x0600) } lt(proof_cptr, end) {} {
+    let eval := calldataload(proof_cptr)
+    if iszero(lt(eval, r)) { revert(0, 0) }   // canonical Fr
+    mstore(eval_buf, eval)                    // spill for VM
+    buf_len := common_word(buf_len, eval)     // absorb
+    proof_cptr := add(proof_cptr, 0x20)
+}
+\end{lstlisting}
+The $x_3$ truncation is applied immediately after squeeze:
+\begin{lstlisting}[style=yul]
+buf_len := squeeze_to(buf_len, X3_MPTR)
+mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))
+\end{lstlisting}
+and the parser closes with the exact-consumption check:
+\begin{lstlisting}[style=yul]
+if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }
+if iszero(success) { revert(0, 0) }
+\end{lstlisting}
+The first line proves no section was under- or over-read; the second
+collects deferred canonicality failures from public-instance reads.
+
+\section{Lagrange and instance evaluation}
+\label{sec:sol-lagrange}
+
+\sol{Lagrange.yul} computes $x^n$ by $k$ repeated squarings
+(Eq.~\eqref{eq:zn}), batch-inverts the denominators $(x-\omega^i)$ with
+one modexp (EIP-198) via Montgomery's trick, then forms
+$L_i = (x^n-1)\cdot n^{-1}\cdot \omega_i / (x-\omega_i)$
+(Eq.~\eqref{eq:lagrange}), the blind-row sum \eqref{eq:lblind},
+$\ell_0$ \eqref{eq:l0}, and the linear combination
+$\widehat{\mathsf{inst}}(x)$ \eqref{eq:instance-eval}.
+
+\section{Quotient and linearization}
+\label{sec:quotient-render}
+
+In the \emph{compact} path, \sol{QuotientAndLinearization.yul} runs the
+quotient VM (Chapter~\ref{sec:quotient-vm}) inline: the program bytes
+live in the VK payload at \texttt{q\_\allowbreak{}const}/\texttt{q\_\allowbreak{}program}; the VM
+loop switches on opcodes and folds identities into the main numerator or
+selector buckets. It then stores
+\begin{lstlisting}[style=yul]
+// x_split = x^(n-1), one_minus_x_n at QUOTIENT_MPTR words 0/1
+// linearization_expected_eval = -quotient_eval_numer
+mstore(QUOTIENT_EVAL_MPTR, sub(r, mload(EVAL_NUMER_MPTR)))
+\end{lstlisting}
+In the \emph{external} path, the verifier \texttt{staticcall}s the pinned
+evaluator (codehash-checked), passing the raw memory frame; the evaluator
+returns a compact frame \texttt{[magic, expected\_\allowbreak{}eval, buckets...]} and
+the verifier copies the buckets back. The external evaluator's header
+comment states the contract explicitly:
+\begin{quote}\small
+``This contract reconstructs the Rust verifier's y-batched identity
+numerator $\nu_y(x)$ and returns the linearization expected scalar
+$-\nu_y(x)$. It does not evaluate or trust a quotient scalar $h(x)$. The
+quotient limb commitments are handled by Halo2Verifier on the commitment
+side as $(1-x^n)\cdot\sum_i x_{\mathsf{split}}^i Q_i$.''
+\end{quote}
+
+\section{PCS blocks}
+\label{sec:sol-pcs}
+
+\sol{Pcs.yul} renders the \cg{pcs\_\allowbreak{}computations} blocks from
+Section~\ref{sec:pcs-codegen}: rotation points, $x_1$ powers, per-set
+$q_{\mathsf{eval}}$ folds, the fused final G1MSM for the linearization
+commitment, and the $v$ computation. The generated sub-blocks are kept
+grouped so gas checkpoints can attribute cost. A representative final-MSM
+call:
+\begin{lstlisting}[style=yul]
+success := staticcall(gas(), 0x0c, 0x56e0, 0x1d60, FINAL_COM_MPTR, 0x80)
+success := and(success, eq(returndatasize(), 0x80))
+mstore(V_MPTR, v)
+\end{lstlisting}
+(where \texttt{0x0c} is the G1ADD/G1MSM precompile range per EIP-2537;
+the MSM uses \texttt{0x0d}).
+
+\section{Final pairing}
+\label{sec:pairing-codegen}
+
+The pairing block assembles the two pairing inputs and calls the helper:
+\begin{lstlisting}[style=yul]
+// PAIRING_LHS := pi ; PAIRING_RHS := final_com - v*G + x3*pi
+mcopy(PAIRING_LHS_MPTR, PI_MPTR, 0x80)
+// -v*G via G1ADD with negated scalar, then + final_com, + x3*pi
+mcopy(PAIRING_RHS_MPTR, 0x80, 0x80)
+...
+success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
+\end{lstlisting}
+The generated comment is explicit about the naming trap:
+\begin{quote}\small
+``The Yul \texttt{ec\_\allowbreak{}pairing} helper checks $e(\text{arg}_0,[1]_2)\cdot
+e(\text{arg}_1,-[s]_2)=1$, i.e.\ $e(\text{arg}_0,[1]_2)=e(\text{arg}_1,[s]_2)$.
+The KZG pairing identity is $e(\text{final\_\allowbreak{}com}-vG+x_3\pi,[1]_2) =
+e(\pi,[s]_2)$, so arg$_0$ must be the combined RHS and arg$_1$ must be
+$\pi$. The \texttt{PAIRING\_\allowbreak{}LHS/RHS} naming follows the dual MSM
+accumulator (left $=\pi$, right $=$ combined) and \emph{not} the pairing
+argument order. Pass them swapped to \texttt{ec\_\allowbreak{}pairing}.''
+\end{quote}
+This matches the Rust \rust{DualMSM} \texttt{check}
+(\texttt{multi\_\allowbreak{}miller\_\allowbreak{}loop} of $(\mathsf{left}, s\_\allowbreak{}g2)$ and
+$(\mathsf{right}, -g_2)$) --- Eq.~\eqref{eq:final-pairing-dual}.
+
+\section{Accumulator batching}
+\label{sec:sol-acc}
+
+When an outer IVC accumulator is present, \sol{FinalPairing.yul} derives
+$\alpha = \keccak(\text{domain}\,\|\,\text{points})\bmod r$ (zero mapped
+to $1$) and checks \eqref{eq:acc-batch} with the accumulator points
+batched into the same pairing, so a single pairing precompile call covers
+both equations. The accumulator scalars are decoded from the 7-limb
+56-bit encoding by \sol{AccumulatorHelpers.yul}
+(\texttt{load\_\allowbreak{}acc\_\allowbreak{}coord\_\allowbreak{}shifted}, \texttt{is\_\allowbreak{}bls\_\allowbreak{}p\_\allowbreak{}minus\_\allowbreak{}one},
+\texttt{validate\_\allowbreak{}public\_\allowbreak{}accumulator}).
+
+\section{Precompile smoke tests}
+\label{sec:sol-smoke}
+
+The constructor runs \sol{PrecompileSmoke.sol}: an MCOPY probe (Cancun+
+requirement) and identity-input probes of G1ADD (\texttt{0x0c}), G1MSM
+(\texttt{0x0d}), and PAIRING (\texttt{0x0f}). If any precompile is
+missing or misbehaves, deployment reverts --- the contract cannot be
+deployed on a chain where the verifier would be unsound.
+
+\section{Trace and return}
+\label{sec:sol-trace}
+
+Under the trace build, \sol{TraceReturn.yul} emits LOG1 events with the
+same trace ids as the Rust verifier (Chapter~\ref{sec:rust-trace}), so
+the differential test can compare them event-by-event. The success path
+is terminal:
+\begin{lstlisting}[style=yul]
+mstore(RETURN_MPTR, 1)
+return(RETURN_MPTR, 0x20)
+\end{lstlisting}

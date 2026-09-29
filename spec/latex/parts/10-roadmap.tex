@@ -1,0 +1,491 @@
+% =====================================================================
+\chapter{Consolidated improvement \& action roadmap}
+\label{ch:roadmap}
+
+This chapter aggregates every \textcolor{codegenblue}{\textbf{[IMPROVE]}}
+and \textcolor{rustorange}{\textbf{[RISK]}} finding logged across the
+deep audit (Ch.~\ref{ch:deep-audit}) and the codegen analysis
+(Ch.~\ref{ch:codegen}) into one prioritized, actionable list. It answers
+the question \emph{``can the generated Solidity be improved, made safer,
+more robust, easier to audit?''} in a single place. Each row cites the
+section where the finding is developed.
+
+\paragraph{Verification status.} Every item was re-checked against the
+generator on \texttt{main} at \texttt{6b3d2096} (2026-07-17) and the
+production artifact \texttt{Halo2VerifierFee12345B64.sol} (``B64'').
+The Status column reads \vstatus{ADDRESSED} (done, or the requested
+invariant is enforced), \vstatus{PARTIAL}, \vstatus{OPEN} (still to do),
+or \vstatus{CORRECTED} (the original premise was wrong; the row has been
+rewritten). Template paths are relative to
+\texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}templates/\allowbreak{}partials/\allowbreak{}}, \texttt{src/}
+paths to \texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}}, and ``B64 Lnnn'' is a line
+of the production artifact. B64 was \emph{not} rendered from
+\texttt{main}. Nightfall pins midfall rev \texttt{bd482567}, whose generator
+is identical to the M7 follow-up commit \texttt{e7f736c4} (2026-06-07,
+forked from \texttt{51f912c2}). B64 carries a quotient-certificate header
+check (B64 L940) that first appears in that commit. Relative to \texttt{main}, that line's templates differ
+only in this check (\texttt{VkLoading.yul}, \texttt{Constants.sol}) and in
+\texttt{Halo2VerifyingKey.sol}, so the template statuses below hold for
+both. It lacks the \texttt{6b3d2096} generator fixes, which do not affect
+B64's single-phase shape (\S\ref{sec:verification-pass}).
+
+\section{Priority 1 --- Security-relevant}
+\label{sec:roadmap-p1}
+
+These affect the soundness margin and should be confirmed against the
+project's security target before deployment.
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.19\linewidth}p{0.10\linewidth}p{0.45\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Grade} & \textbf{Action} & \textbf{Status} \\
+\midrule
+128-bit truncated challenges
+($x_3, x_1^i, x_4^i$) &
+\textcolor{rustorange}{HIGH} &
+The resulting soundness level is not established in this document;
+earlier bit-level figures are withdrawn. The library's doc comment
+warns that 128 bits ``may not be enough entropy depending on the
+application''. \textbf{Faithful to Rust} (\texttt{proofs/\allowbreak{}src/\allowbreak{}poly/\allowbreak{}kzg/\allowbreak{}mod.rs}
+L394, L457, L502 in \rust{multi\_prepare}, behind the non-default
+\texttt{truncated-challenges} feature, whose doc comment itself warns
+that 128 bits may not suffice for every application), so this is a
+\emph{policy} decision, not a bug. Confirm the 128-bit challenge budget
+is acceptable for the security target; if not, the change must be made
+in the Rust verifier first, then re-generated
+(\S\ref{sec:parser-audit}). &
+\vstatus{OPEN}\newline Policy decision pending. B64 truncates at
+L1270 ($x_3$), L2918 ($x_1^i$), L3283--3291 ($x_4^i$). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Priority 2 --- Defense-in-depth (load-bearing invariants)}
+\label{sec:roadmap-p2}
+
+These are correct today but rely on invariants that are guaranteed
+\emph{elsewhere} (by the codegen validator or the precompile coverage
+argument) rather than checked at the point of use. Adding a cheap runtime
+guard makes each self-evident to an auditor.
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.19\linewidth}p{0.10\linewidth}p{0.45\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Grade} & \textbf{Action} & \textbf{Status} \\
+\midrule
+No on-curve/subgroup check at G1 absorption &
+\textcolor{rustorange}{MED} &
+\texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} does not check the point is on-curve
+or in the subgroup. Sound only because every absorbed point is later
+consumed by a G1MSM/pairing (which \emph{do} subgroup-check).
+\textbf{Keep the coverage invariant} (\S\ref{sec:coverage-invariant})
+enforced at build time; do not add a per-absorb check (it would cost
+gas for no security gain given the invariant). &
+\vstatus{ADDRESSED}\newline Enforced by
+\cg{validate\_\allowbreak{}generator\_\allowbreak{}invariants} (\texttt{src/\allowbreak{}lowering/\allowbreak{}plan.rs}
+L238--251); off-curve mutation test \texttt{src/test.rs} L2408. No
+on-curve/off-subgroup vector yet. \\
+\addlinespace
+Native-callback empty-stack assumption &
+\textcolor{rustorange}{MED} &
+The native-callback reset silently drops a live \texttt{q\_top}.
+\textbf{Add} \texttt{if q\_\allowbreak{}has\_\allowbreak{}top \{ revert(0,0) \}} at each native
+callback entry ($\sim$5 gas) to turn the codegen guarantee into a
+checked invariant. B64 has three such entries: \texttt{0x19},
+\texttt{0x1f} \emph{and} \texttt{0x1b}. &
+\vstatus{OPEN}\newline Unconditional reset at
+\texttt{quotient\_\allowbreak{}numerator/\allowbreak{}QuotientNumerator\allowbreak{}Block.yul} L1057, L1084,
+L1113; B64 L1934, L2051, L2247. Build-time only:
+\texttt{src/\allowbreak{}lowering/\allowbreak{}quotient\_\allowbreak{}numerator/\allowbreak{}vm/\allowbreak{}mod.rs} L2241--2246. \\
+\addlinespace
+ADD/MUL unchecked stack underflow &
+\textcolor{rustorange}{MED} &
+\textbf{Add} \texttt{if lt(q\_\allowbreak{}sp, stack\_\allowbreak{}base+32) \{ revert(0,0) \}}
+before the pop ($\sim$10 gas/opcode). Belt-and-suspenders for
+auditability. B64 renders only ADD (\texttt{0x06}); MUL
+(\texttt{0x07}) is unused there. &
+\vstatus{OPEN}\newline Same template, L503--518; B64 L1716--1721.
+Build-time only: \texttt{vm/mod.rs} L2213--2216, test
+\texttt{src/\allowbreak{}lowering/\allowbreak{}tests.rs} L1520. \\
+\addlinespace
+Accumulator identity-flag decode intricacy &
+\textcolor{rustorange}{MED} &
+The \texttt{first\_\allowbreak{}adjust/\allowbreak{}is\_\allowbreak{}id} path is the most intricate logic in
+the contract. \textbf{Add dedicated unit tests} enumerating identity vs
+non-identity encodings; the \texttt{acc\_\allowbreak{}encoded\_\allowbreak{}identity} fast path
+(exact packed-word equality) is the primary guard. Still missing:
+behavioural vectors for the canonical identity, a flagged
+non-$(p{-}1)$ coordinate, and a non-canonical $(0,0)$. &
+\vstatus{PARTIAL}\newline E2E negatives for packing and malformed
+LHS/RHS points (\texttt{tests/\allowbreak{}ivc\_\allowbreak{}keccak\_\allowbreak{}solidity.rs} L1417--1447,
+since \texttt{cf89e5f3}). Identity path: string check only
+(\texttt{tests.rs} L1223). \\
+\addlinespace
+\texttt{batch\_invert} leaves memory dirty on failure &
+\textcolor{rustorange}{MED} &
+The Montgomery-trick path leaves scratch dirty on failure, and on a
+failed modexp it overwrites the \emph{whole} target range with garbage
+(no \texttt{leave}; \texttt{verifier/\allowbreak{}AssemblyHelpers.yul} L189--208).
+\textbf{Premise corrected:} the only caller does \emph{not} gate before
+reading --- \texttt{verifier/\allowbreak{}Lagrange.yul} reads the inverted range at
+L38--82 and gates at L89 (B64 L1350--1394, gate L1397). It is safe
+because \texttt{success} is sticky and every \texttt{success}$=0$ path
+reverts before \texttt{return}. \textbf{Document} that
+``check-before-return'' invariant at the helper header; a
+``gate-before-read'' codegen assertion would reject today's code. &
+\vstatus{OPEN}\newline Header comment still says only ``returns a
+boolean'' (\texttt{AssemblyHelpers.yul} L124--126). \\
+\addlinespace
+Unbounded transcript cursor &
+\textcolor{rustorange}{MED} &
+\texttt{common\_word}/\texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} write at
+\texttt{buf\_len} with no bound; the buffer is sized by
+\cg{TranscriptBufferLayout}. That sizing was \emph{wrong} for valid
+multi-phase shapes (advice in an early phase, first challenge later):
+the G1 absorb loop overran \texttt{VK\_MPTR}, writing proof-controlled
+bytes into the loaded VK, whose header words and G1/G2 bases are read
+after the transcript (\texttt{N\_INV}, \texttt{OMEGA},
+\texttt{G1\_BASE}, \ldots). That is potentially a soundness issue, not
+only a liveness one. \textbf{Add} \texttt{if gt(buf\_\allowbreak{}len, VK\_\allowbreak{}MPTR) \{ revert(0,0)
+\}} in \texttt{squeeze\_to} and after the final $\pi$ absorb (12
+checks in B64, $<$0.3k gas). A single end-of-absorption check
+(\S\ref{sec:transcript-helpers}) is not enough: every squeeze resets
+the cursor. &
+\vstatus{PARTIAL}\newline Sizing fixed in \texttt{6b3d2096}
+(\texttt{src/\allowbreak{}lowering/\allowbreak{}abi/\allowbreak{}proof.rs} L318--347, test L504); no runtime
+guard. B64 has one user phase and is unaffected. \\
+\addlinespace
+\texttt{memory-safe} vs.\ via-IR spill slots &
+\textcolor{rustorange}{MED} &
+Under the production build (solc 0.8.35, via-IR, 200 runs, Cancun),
+solc sets the free pointer to \texttt{0x8e0} and spills Yul variables into
+\texttt{[0x80,0x8e0)}. That range overlaps the absolute scratch (transcript
+buffer at \texttt{0x80}, \texttt{ec\_pairing} scratch at
+\texttt{0x300}--\texttt{0x600}). Correctness rests on unchecked
+live-range disjointness. \textbf{Add} a fixed scratch base above the
+compiler's reservation with an entry assert
+\texttt{if gt(mload(0x40), BASE) \{ revert(0,0) \}}, or a CI check on
+the compiled free-pointer initializer under the pinned solc and flags
+(\S\ref{sec:pr-memorysafe}). &
+\vstatus{OPEN}\newline Also in the Nightfall audit register (CF-0294); no corruption observed on
+honest proofs. \\
+\addlinespace
+Unbounded precompile gas &
+\textcolor{rustorange}{MED} &
+All 18 precompile \texttt{staticcall}s forward \texttt{gas()}. A
+rejecting EIP-2537 call burns everything it was given ($\approx$63/64 of
+the transaction). \textbf{Bound} each call at a margin above the
+scheduled cost, not at the exact cost: exact bounds turn any upward
+repricing into a permanent liveness failure of an immutable verifier
+(\S\ref{sec:vp-gas-bounds}). &
+\vstatus{OPEN}\newline PR~\#6 \texttt{f1840bdf} (exact bounds) and
+\texttt{8e65c962} (EIP-7883 modexp), unmerged. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Priority 3 --- Gas / contract-space optimizations}
+\label{sec:roadmap-p3}
+
+Concrete savings that do not change the accepted-proof set. Gas figures
+use the EIP-2537 G1MSM discount table ($k\cdot 12000\cdot d_k/1000$,
+$d_{78}=561$, $d_{80}=559$), G1ADD $=375$, and EIP-2565 modexp pricing.
+Under EIP-7883 (Osaka/Fusaka, live), a modexp with these operands costs
+$16\cdot254=4{,}064$ instead of 1{,}354, so modexp savings roughly triple.
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.19\linewidth}p{0.10\linewidth}p{0.45\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Grade} & \textbf{Action} & \textbf{Status} \\
+\midrule
+Rolled vs.\ unrolled $x_1$ powers &
+\textcolor{tracegreen}{DONE} &
+Already applied in \cg{computations()}: rolled loop saves
+$\sim$26\,kg vs the unrolled emission (\S\ref{sec:computations}).
+\textbf{Pattern to reuse} for any other long constant-power sequence. &
+\vstatus{ADDRESSED}\newline B64 L2910--2919 (43 powers, one loop). \\
+\addlinespace
+Fold $-vG$ and $x_3\pi$ into the fused final MSM
+(was: ``fold the two 1-pair G1MSMs'') &
+\textcolor{codegenblue}{IMPROVE} &
+\textbf{Premise corrected.} The two accumulator $\alpha$-scalings
+(\texttt{verifier/\allowbreak{}FinalPairing.yul}; B64 L3528--3553) cannot share a
+call: a G1MSM returns one point, and a 2-pair MSM (22{,}776) in place of
+``1-pair MSM + G1ADD'' (12{,}375) is dearer ---
+\S\ref{sec:finalpairing-audit} already rated them near-optimal.
+\textbf{The foldable pair} is $-vG$ and $x_3\pi$ in PCS sub-block 10
+(B64 L3469--3493): both scalars are known before the fused 78-pair MSM
+(B64 L3460), so appending $(G,\,r-v)$ and $(\pi,\,x_3)$ yields the
+pairing RHS directly. Cost $525{,}096\to536{,}640$ ($+11{,}544$)
+removes 2 one-pair MSMs and 2 G1ADDs ($24{,}750$): \textbf{net
+$\approx$13.2k gas/proof}. The generator comment
+(\texttt{src/\allowbreak{}lowering/\allowbreak{}kzg/\allowbreak{}mod.rs} L1701--1704) only weighed a
+standalone 3-pair MSM. &
+\vstatus{CORRECTED}\newline Replacement action is open. \\
+\addlinespace
+Batch the five $f_\text{eval}$ \texttt{scalar\_inv}s &
+\textcolor{codegenblue}{IMPROVE} &
+B64 L3136, L3180, L3216, L3245, L3265 each run one modexp
+($\lfloor 16\cdot254/3\rfloor=1{,}354$ gas for 32-byte operands and
+exponent $r-2$). One \texttt{batch\_invert} over the five products
+saves 4 modexps ($\approx$5.4k gas, $\approx$16.3k under EIP-7883) and leaves
+\texttt{scalar\_inv} dead, which also retires the P4 zero-policy item
+(\S\ref{sec:pr-gas}). &
+\vstatus{OPEN} \\
+\addlinespace
+\texttt{FOLD\_MAIN} redundant load/store &
+\textcolor{codegenblue}{IMPROVE} &
+Keep the accumulator in a register and store once at the end. B64 does
+not render VM case \texttt{0x0a} (\texttt{QuotientNumerator\allowbreak{}Block.yul}
+L1129--1144); the same
+\texttt{mload}/\texttt{mstore} pair is emitted by the native-callback
+fold snippets (\texttt{src/\allowbreak{}lowering/\allowbreak{}quotient.rs} L1018, L1035; e.g.\
+B64 L2005--2006). Saving is one \texttt{mload}+\texttt{mstore}
+($\sim$6 gas) per folded identity, so the earlier ``meaningful gas''
+estimate overstated it. &
+\vstatus{OPEN} \\
+\addlinespace
+\texttt{gp\_mptr} / \texttt{pow\_of\_omega} reuse &
+\textcolor{codegenblue}{IMPROVE} &
+\textbf{Not a gas item.} \S\ref{sec:lagrange-audit} shows the second
+$\omega$-walk is required (the first pass's slots are overwritten by
+their inverses) and \texttt{l\_i\_common} is already hoisted
+(\texttt{verifier/\allowbreak{}Lagrange.yul} L39). The \texttt{gp\_mptr} underflow
+(\texttt{AssemblyHelpers.yul} L197) is harmless and free; only a
+readability rewrite remains. &
+\vstatus{CORRECTED} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Priority 4 --- Audit-clarity / naming}
+\label{sec:roadmap-p4}
+
+No correctness or gas impact; these reduce reviewer confusion.
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.19\linewidth}p{0.10\linewidth}p{0.45\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Grade} & \textbf{Action} & \textbf{Status} \\
+\midrule
+\texttt{PAIRING\_LHS}/\texttt{RHS} naming inversion &
+\textcolor{codegenblue}{LOW} &
+\texttt{LHS}=\texttt{pi}, \texttt{RHS}=combined; the call is
+\texttt{ec\_\allowbreak{}pairing(success, PAIRING\_\allowbreak{}RHS, PAIRING\_\allowbreak{}LHS)}.
+\textbf{Rename} to \texttt{PAIRING\_PI}/\texttt{PAIRING\_COMBINED}
+or \texttt{ARG1}/\texttt{ARG2} to remove the trap. &
+\vstatus{OPEN}\newline B64 L128--129, call L3569. \\
+\addlinespace
+\texttt{QUOTIENT\_MPTR} repurposed as scalar metadata &
+\textcolor{codegenblue}{LOW} &
+The slot holds scalar metadata in the fused path, not a G1 point.
+\textbf{Rename} to \texttt{QUOTIENT\_\allowbreak{}META\_\allowbreak{}MPTR} or use a distinct
+slot to remove the ambiguity. &
+\vstatus{OPEN}\newline \texttt{QuotientAnd\allowbreak{}Linearization.yul} L93--94;
+B64 L3278--3279. \\
+\addlinespace
+Trace path uses \texttt{call} not \texttt{staticcall} &
+\textcolor{codegenblue}{LOW} &
+\textbf{Premise wrong; no action.} The trace-mode evaluator emits
+\texttt{log1} (\texttt{templates/\allowbreak{}contracts/\allowbreak{}Halo2QuotientEvaluator.sol}
+L120--127), and \texttt{LOG} reverts inside a \texttt{STATICCALL}
+frame, so the trace branch needs \texttt{call}. Production already
+uses \texttt{staticcall} (\texttt{QuotientAnd\allowbreak{}Linearization.yul} L30);
+B64 embeds the quotient evaluator and makes no external call. &
+\vstatus{CORRECTED} \\
+\addlinespace
+\texttt{scalar\_inv} vs \texttt{batch\_invert} zero-policy mismatch &
+\textcolor{codegenblue}{LOW} &
+\texttt{scalar\_inv} reverts on zero; \texttt{batch\_invert} returns
+0. \textbf{Unify} the convention (or document the deliberate
+difference). \texttt{scalar\_inv} is live, not dead code (five call
+sites in B64); batching them (P3) removes it. &
+\vstatus{OPEN}\newline \texttt{AssemblyHelpers.yul} L9 vs L145--148. \\
+\addlinespace
+\texttt{ec\_pairing} failure convention &
+\textcolor{codegenblue}{LOW} &
+\texttt{ec\_pairing} reverts on failure (no \texttt{is\_zero(ret)});
+\texttt{batch\_invert} returns a bool. \textbf{Pick one}
+success-plumbing convention and apply to both. &
+\vstatus{OPEN}\newline \texttt{AssemblyHelpers.yul} L230; B64 L551. \\
+\addlinespace
+G2ADD not smoked at deploy &
+\textcolor{codegenblue}{LOW} &
+Deliberate (verifier never calls G2ADD). \textbf{Add a comment}
+noting the omission so auditors don't wonder. &
+\vstatus{OPEN}\newline No G2ADD mention in
+\texttt{verifier/\allowbreak{}PrecompileSmoke.sol}. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Hardening already landed}
+\label{sec:roadmap-landed}
+
+These commits closed items that earlier reviews had raised; they need no
+further action and should not be re-raised:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \texttt{2b2bf494} --- the constructor smoke test probes
+        full-size shapes (largest G1MSM, two-pair pairing). The same
+        commit made every precompile \texttt{staticcall} forward
+        \texttt{gas()} (all 18 sites in B64). That is \emph{not} pure
+        hardening: it made B64 robust to repricing, but a rejecting call
+        now burns all forwarded gas. It is reopened as a P2 item
+        (\S\ref{sec:vp-gas-bounds}).
+  \item \texttt{b53e3ebe} --- the constructor smoke executes
+        \texttt{MCOPY} (\texttt{verifier/\allowbreak{}PrecompileSmoke.sol} L11--13;
+        B64 L211--213).
+  \item \texttt{1e21311c} --- a non-canonical public instance reverts
+        right after the instance loop
+        (\texttt{verifier/\allowbreak{}TranscriptProofParser.yul} L68; B64 L1050),
+        not after the whole transcript.
+  \item \texttt{e64f2891} --- loaded VK header words are cross-checked
+        against verifier constants (\texttt{verifier/\allowbreak{}VkLoading.yul}
+        L82--88; B64 L934--941).
+  \item \texttt{33f78d2b} --- the quotient VM asserts
+        \texttt{q\_pc == q\_end} and an empty stack after the loop
+        (\texttt{QuotientNumerator\allowbreak{}Block.yul} L1191--1192; B64
+        L2569--2570).
+  \item \texttt{6b3d2096} --- transcript-buffer sizing for multi-phase
+        shapes (P2 above) and a fallback when a fused VM opcode's
+        constant index no longer fits one byte, replacing a generator
+        panic.
+\end{itemize}
+
+\section{What is \emph{not} a deviation}
+\label{sec:roadmap-not-deviation}
+
+For completeness, the following were examined and found to be faithful
+(no action needed), and are listed here so a reviewer does not re-raise
+them:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Precompile addresses} (0x0b/0x0c/0x0f) --- verified
+        against EIP-2537; correct, not off-by-one.
+  \item \textbf{Negated-numerator} ($-\nu_y(x)$ stored, trace id 36
+        re-negates) --- matches Rust \texttt{expected\_\allowbreak{}eval -= eval};
+        the $(1-x^n)$ factor is on the commitment side.
+  \item \textbf{Modulo bias} in \texttt{squeeze\_to} ---
+        \vstatus{CORRECTED} the bias is \emph{not} $\le 2^{-128}$.
+        With $r\approx 2^{254.86}$, $2^{256}=2r+t$ with $t\approx0.21r$,
+        so residues below $t$ have three preimages and the rest two:
+        statistical distance $\approx0.075$, maximum probability
+        $\approx1.36/r$. It is still not exploitable (min-entropy
+        $\approx254.4$ bits; each Schwartz--Zippel bound grows by at most
+        $1.36\times$) and identical to Rust
+        (\rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r},
+        \texttt{transcript/\allowbreak{}implementors.rs} L19).
+  \item \textbf{Single-scalar-1 fast path} in \rust{DualMSM::check} ---
+        the generated \texttt{ec\_pairing} always runs the fused MSM;
+        identical result, Rust saves one MSM.
+  \item \textbf{Derived proof layout} --- the read order is computed
+        from the constraint system, so parser and verifier cannot drift.
+\end{itemize}
+
+\section{Suggested implementation order}
+\label{sec:roadmap-order}
+
+A pragmatic sequence for what remains open (the rolled $x_1$ powers and
+the hardening of \S\ref{sec:roadmap-landed} are done; the $\alpha$-MSM
+fold, the trace \texttt{staticcall} switch and the
+\texttt{pow\_of\_omega} ``gas'' item are dropped as mis-premised):
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Confirm P1} (truncation policy) with the security
+        owner --- this gates everything else.
+  \item \textbf{Add the P2 runtime guards}: the \texttt{memory-safe}
+        scratch base plus free-pointer entry assert (or its CI check) and
+        the transcript-cursor bound first (the compiler already spills
+        into the scratch range, and the codegen already mis-sized the
+        transcript buffer once), then
+        native-callback and ADD underflow --- cheap, high audit value,
+        no behavior change for correctly generated code.
+  \item \textbf{Add the P2 tests}: behavioural identity-encoding vectors
+        for the accumulator decoder, and an on-curve/off-subgroup proof
+        point.
+  \item \textbf{Apply P3 gas wins} ($-vG,x_3\pi$ into the fused MSM
+        $\approx$13.2k; batched \texttt{scalar\_inv} $\approx$16.3k under EIP-7883;
+        register fold, small) --- re-run the differential trace to
+        confirm no behavior change.
+  \item \textbf{Do P4 renames} last --- pure clarity, do after the
+        functional changes so the diff is clean.
+\end{enumerate}
+
+Every item above is a \emph{suggestion}; the generated verifier as it
+stands is a faithful translation of the Rust reference verifier
+(Ch.~\ref{ch:faithfulness}). None of the P2--P4 items change the
+accepted-proof set of a correctly generated verifier; only P1 could, and
+only if the security target demands a larger challenge budget than the
+Rust verifier already uses.
+
+\section{Consolidated deviation register}
+\label{sec:deviation-register}
+
+This is the single triage table for every finding raised across the deep
+audit (Ch.~\ref{ch:deep-audit}) and the production-artifact review
+(Ch.~\ref{ch:prod-review}). Each row is one finding with its severity,
+where it was raised, its disposition, and its verified status.
+\textbf{Sev:}
+\textcolor{rustorange}{R}=risk, \textcolor{codegenblue}{I}=improvement,
+\textcolor{mathpurple}{N}=note. \textbf{Disposition:} \emph{faithful} =
+matches Rust by design (no action unless policy changes); \emph{fix} =
+cheap defensive change; \emph{done} = already applied in the templates.
+\textbf{Status} as in the chapter introduction; ``---'' means no action
+is needed.
+
+\begin{small}
+\begin{longtable}{@{}llp{0.30\linewidth}p{5.0em}p{5.4em}p{7.6em}@{}}
+\toprule
+\textbf{ID} & \textbf{Sev} & \textbf{Finding} & \textbf{Where} & \textbf{Disposition} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{ID} & \textbf{Sev} & \textbf{Finding} & \textbf{Where} & \textbf{Disposition} & \textbf{Status} \\
+\midrule
+\endhead
+R1 & \textcolor{rustorange}{R} & 128-bit truncated challenges ($x_3,x_1^i,x_4^i$); soundness level unstated & \S\ref{sec:computations}, \S\ref{sec:pr-sound} & faithful (policy) & \vstatus{OPEN} \\
+R2 & \textcolor{rustorange}{R} & No on-curve/subgroup check at G1 absorption & \S\ref{sec:asm-helpers} & faithful (invariant) & \vstatus{ADDRESSED} \texttt{plan.rs} L245 \\
+R3 & \textcolor{rustorange}{R} & Native-callback silently drops live \texttt{q\_top} & \S\ref{sec:vm-audit}, \S\ref{sec:pr-robust} & fix ($\sim$5 gas) & \vstatus{OPEN} \\
+R4 & \textcolor{rustorange}{R} & ADD/MUL stack underflow unchecked & \S\ref{sec:vm-audit}, \S\ref{sec:pr-robust} & fix ($\sim$10 gas) & \vstatus{OPEN} \\
+R5 & \textcolor{rustorange}{R} & Intricate accumulator identity-flag decode & \S\ref{sec:acc-audit} & test coverage & \vstatus{PARTIAL} no identity vectors \\
+R6 & \textcolor{rustorange}{R} & \texttt{batch\_invert} leaves memory dirty on failure; caller reads before its gate & \S\ref{sec:asm-helpers} & check before return & \vstatus{OPEN} \\
+R7 & \textcolor{rustorange}{R} & Point/eval equality by layout index (pointer) & \S\ref{sec:parser-audit} & faithful (derived) & --- \\
+R8 & \textcolor{rustorange}{R} & \texttt{memory-safe} load-bearing on terminality; formally violated under via-IR (solc reserves \texttt{[0x80,0x8e0)} for spills) & \S\ref{sec:memory-safe}, \S\ref{sec:pr-memorysafe} & fix (base + FMP assert, or CI check) & \vstatus{OPEN} \\
+R9 & \textcolor{rustorange}{R} & Transcript cursor unbounded; codegen once under-sized the buffer & \S\ref{sec:transcript-helpers} & fix ($<$0.3k gas) & \vstatus{PARTIAL} \texttt{6b3d2096} \\
+I1 & \textcolor{codegenblue}{I} & Rolled (vs.\ unrolled) $x_1$ powers & \S\ref{sec:computations} & \textbf{done} & \vstatus{ADDRESSED} \\
+I2 & \textcolor{codegenblue}{I} & Five separate \texttt{scalar\_inv} modexps $\to$ one \texttt{batch\_invert} & \S\ref{sec:pr-gas} & fix ($\approx$16.3k gas under EIP-7883) & \vstatus{OPEN} \\
+I3 & \textcolor{codegenblue}{I} & Five near-identical $f_\text{eval}$ Horner blocks & \S\ref{sec:pr-gas} & parameterize & \vstatus{OPEN} \\
+I4 & \textcolor{codegenblue}{I} & Fold the two 1-pair accumulator MSMs & \S\ref{sec:finalpairing-audit}, \S\ref{sec:pr-gas} & near-optimal & \vstatus{CORRECTED} see I12 \\
+I5 & \textcolor{codegenblue}{I} & \texttt{FOLD\_MAIN}/native-fold redundant load/store & \S\ref{sec:vm-audit} & fix ($\sim$6 gas/fold) & \vstatus{OPEN} \\
+I6 & \textcolor{codegenblue}{I} & \texttt{gp\_mptr}/\texttt{pow\_of\_omega} reuse & \S\ref{sec:lagrange-audit} & readability only & \vstatus{CORRECTED} \\
+I7 & \textcolor{codegenblue}{I} & Trace path uses \texttt{call} not \texttt{staticcall} & \S\ref{sec:quotlin-audit} & none (\texttt{call} required) & \vstatus{CORRECTED} \\
+I8 & \textcolor{codegenblue}{I} & G2ADD not smoked at deploy & \S\ref{sec:smoke} & comment & \vstatus{OPEN} \\
+I9 & \textcolor{codegenblue}{I} & 246 distinct raw-hex scratch addresses, no legend & \S\ref{sec:pr-read}, \S\ref{sec:pr-legend-example} & emit legend & \vstatus{OPEN} \\
+I10 & \textcolor{codegenblue}{I} & Opaque SSA names (\texttt{var0}, \texttt{f\_3}) & \S\ref{sec:pr-read} & semantic names & \vstatus{OPEN} \\
+I11 & \textcolor{codegenblue}{I} & Index-suffixed scalars (\texttt{lin\_\allowbreak{}query\_\allowbreak{}scalar\_\allowbreak{}41}) & \S\ref{sec:pr-read} & named & \vstatus{OPEN} \\
+I12 & \textcolor{codegenblue}{I} & Fold $-vG$ and $x_3\pi$ into the fused final MSM & \S\ref{sec:roadmap-p3} & fix ($\approx$13.2k gas) & \vstatus{OPEN} \\
+N1 & \textcolor{mathpurple}{N} & Modulo bias in \texttt{squeeze\_to} (SD $\approx0.075$, max ratio $\approx1.36$) & \S\ref{sec:squeeze-to} & faithful & \vstatus{CORRECTED} \\
+N2 & \textcolor{mathpurple}{N} & Negated-numerator storage ($-\nu_y$) & \S\ref{sec:vm-final-neg} & faithful & --- \\
+N3 & \textcolor{mathpurple}{N} & Pairing LHS/RHS naming inversion & \S\ref{sec:ec-pairing}, \S\ref{sec:pr-read} & rename & \vstatus{OPEN} \\
+N4 & \textcolor{mathpurple}{N} & Deferred failure for non-canonical instances & \S\ref{sec:parser-audit} & fail fast & \vstatus{ADDRESSED} \texttt{1e21311c} \\
+\bottomrule
+\caption{Consolidated deviation register: every finding from the deep
+audit and production review, severity-ranked with disposition and
+verified status. 9 risks (1 policy decision, 3 open fixes/docs, 2
+partial, 1 enforced invariant, 2 no-action), 12 improvements (1 done,
+3 corrected, 8 open), 4 notes (1 corrected, 1 addressed, 1 open, 1
+no-action).}
+\label{tab:register}
+\end{longtable}
+\end{small}
+
+The register makes the triage explicit: the only \emph{policy} item
+(R1) is a faithful choice; the cheap defensive items are R3/R4
+(unchecked stack, $\sim$15 gas) and R9 (transcript bound, $<$0.3k gas),
+and R9 is the one with a demonstrated generator bug behind it. The
+largest remaining gas win is I12 ($\approx$13.2k). Everything else is
+either faithful-by-design or an audit-clarity improvement. No finding
+changes the accepted-proof set of a correctly generated verifier except
+R1 under a stricter security target.

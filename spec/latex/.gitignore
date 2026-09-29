@@ -1,0 +1,5 @@
+# tectonic cache, build logs and page screenshots
+.home/
+*.log
+shots/
+probe.*

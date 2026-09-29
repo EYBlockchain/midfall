@@ -1,0 +1,1402 @@
+\chapter{Deep Audit: Yul Helper Functions}
+\label{ch:deep-audit}
+
+This chapter performs a function-by-function deep read of the generated
+Yul helpers, logging for each one: (i)~the excerpt, (ii)~its Rust
+counterpart, (iii)~every deviation or slight difference in the
+translation, (iv)~any missing check, and (v)~any gas / contract-space /
+robustness / auditability improvement. Findings are graded
+\textcolor{tracegreen}{\textbf{[OK]}} (faithful, no action),
+\textcolor{mathpurple}{\textbf{[NOTE]}} (benign deviation, documented),
+\textcolor{codegenblue}{\textbf{[IMPROVE]}} (concrete optimisation or
+hardening opportunity), and
+\textcolor{rustorange}{\textbf{[RISK]}} (latent correctness/robustness
+concern).
+
+% ---------------------------------------------------------------------
+\section{\texttt{AssemblyHelpers.yul}}
+\label{sec:asm-helpers}
+
+This partial defines the scalar, transcript, and EC primitives that every
+other block calls. It is the highest-leverage file in the generated
+contract: a bug here breaks all checks at once.
+
+% ---------------------------------------------------------------------
+\subsection{\texttt{scalar\_inv}}
+\label{sec:scalar-inv}
+
+\begin{lstlisting}[style=yul]
+function scalar_inv(x) -> inv {
+    if iszero(x) { revert(0, 0) }
+    let p := <scalar_inv_scratch_mptr>
+    mstore(add(p, BASE_LEN_OFF), 32)   // base len
+    mstore(add(p, EXP_LEN_OFF), 32)    // exp len
+    mstore(add(p, MOD_LEN_OFF), 32)    // mod len
+    mstore(add(p, BASE_OFF), x)
+    mstore(add(p, EXP_OFF),  sub(FR_MODULUS, 2))
+    mstore(add(p, MOD_OFF),  FR_MODULUS)
+    if iszero(staticcall(gas(), 0x05, p, 0xc0, p, 0x20)) { revert(0, 0) }
+    if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+    inv := mload(p)
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{Field::invert} (via \rust{ff}'s
+\texttt{Invert} trait), which returns a \rust{CtOption}: zero maps to
+\texttt{None}, non-zero to the inverse.
+
+\begin{itemize}
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Zero handling differs.}}
+        Rust returns \texttt{None} on zero; the Yul \emph{reverts}.
+        For a verifier this is equivalent-or-stronger (fail-closed), but
+        it is a behavioural difference: a caller that in Rust would
+        branch on \texttt{CtOption} instead hard-reverts in Yul. No
+        accepted proof changes.
+  \item \textcolor{tracegreen}{\textbf{[OK] Precompile frame.}} The
+        EIP-198 layout (base/exp/mod lengths then operands) and the
+        \texttt{r-2} exponent are correct for BLS12-381 \texttt{Fr}.
+  \item \textcolor{tracegreen}{\textbf{[OK] Return-size guard.}} The
+        explicit \texttt{returndatasize()==32} check prevents reading
+        stale memory if the precompile returns short.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Dead-code check.}}
+        \texttt{scalar\_inv} duplicates the single-element fast path of
+        \texttt{batch\_invert} (\S\ref{sec:batch-invert}) but with a
+        \emph{different} zero policy (revert vs.\ return~0). It
+        \emph{is} emitted: B64 calls it five times in the
+        $f_\text{eval}$ Horner (L3136, L3180, L3216, L3245, L3265), so
+        the inconsistent zero policy is live. Batching those five
+        inverses into one \texttt{batch\_invert} (\S\ref{sec:roadmap-p3})
+        would make \texttt{scalar\_inv} dead and remove it; otherwise
+        make the two zero policies identical. \vstatus{OPEN}
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{Transcript helpers: \texttt{transcript\_init}, \texttt{common\_word}}
+\label{sec:transcript-helpers}
+
+\begin{lstlisting}[style=yul]
+function transcript_init() -> buf_len {
+    buf_len := TRANSCRIPT_MPTR
+}
+function common_word(buf_len, word) -> ret {
+    mstore(buf_len, word)
+    ret := add(buf_len, 32)
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{Keccak256::common\_\allowbreak{}bytes} appends raw
+bytes to the running buffer (\S\ref{sec:rust-transcript}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Faithful.}} \texttt{common\_word}
+        is the 32-byte specialisation of \texttt{common\_bytes}; the
+        cursor arithmetic matches the Rust \texttt{Vec} append exactly.
+  \item \textcolor{rustorange}{\textbf{[RISK] No bounds guard.}} The Yul
+        helper trusts the codegen-planned buffer size; there is no
+        runtime check that \texttt{buf\_len} stays inside the transcript
+        region. The Rust \texttt{Vec} grows dynamically and cannot
+        overflow. This is safe only if the codegen sizes the buffer
+        (\texttt{TranscriptBufferLayout}) correctly, and it once did
+        not: before \texttt{6b3d2096} the pre-first-squeeze run counted
+        only phase-0 advice, so a valid shape with advice in an early
+        phase and the first challenge in a later one overran
+        \texttt{VK\_MPTR} and overwrote loaded VK words with proof bytes
+        (fix: \texttt{src/\allowbreak{}lowering/\allowbreak{}abi/\allowbreak{}proof.rs} L318--347; B64 has one
+        user phase and is unaffected). \emph{Defense-in-depth:}
+        \texttt{if gt(buf\_\allowbreak{}len, VK\_\allowbreak{}MPTR) \{ revert(0,0) \}} inside
+        \texttt{squeeze\_to} and once after the final $\pi$ absorb
+        ($<$0.3k gas). A single end-of-absorption check, as first
+        suggested here, would miss that bug: every squeeze resets
+        \texttt{buf\_len}, so an earlier overrun is gone by the end.
+        \vstatus{PARTIAL} sizing fixed, runtime guard still absent
+        (\S\ref{sec:roadmap-p2}).
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{\texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1}}
+\label{sec:common-g1}
+
+\begin{lstlisting}[style=yul]
+function common_uncompressed_g1(buf_len, cptr) -> ret {
+    let x_hi_word := calldataload(cptr)
+    let x_lo      := calldataload(add(cptr, 0x20))
+    let y_hi_word := calldataload(add(cptr, 0x40))
+    let y_lo      := calldataload(add(cptr, 0x60))
+    if shr(128, x_hi_word) { revert(0, 0) }   // top 16 bytes must be 0
+    if shr(128, y_hi_word) { revert(0, 0) }
+    let x_hi := and(x_hi_word, 0xffff...ffff)  // low 128 bits
+    let y_hi := and(y_hi_word, 0xffff...ffff)
+    if iszero(or(lt(x_hi, BLS_P_HI),
+        and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) {
+        revert(0, 0)
+    }
+    if iszero(or(lt(y_hi, BLS_P_HI),
+        and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) {
+        revert(0, 0)
+    }
+    calldatacopy(buf_len, cptr, 0x80)
+    ret := add(buf_len, 0x80)
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{Hashable<Keccak256> for G1Projective}
+via \texttt{to\_input} (\texttt{transcript/\allowbreak{}implementors.rs}), which
+emits the 128-byte EIP-2537 padded uncompressed form.
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Canonicality check is correct.}}
+        The two-level comparison
+        $x < p \iff x_{hi} < p_{hi} \lor (x_{hi}=p_{hi} \land x_{lo} < p_{lo})$
+        is implemented as
+        \texttt{or(lt(x\_\allowbreak{}hi,P\_\allowbreak{}HI), and(eq(x\_\allowbreak{}hi,P\_\allowbreak{}HI), iszero(gt(x\_\allowbreak{}lo,P\_\allowbreak{}MINUS\_\allowbreak{}ONE\_\allowbreak{}LO))))}.
+        Since \texttt{P\_MINUS\_ONE\_LO} $= p_{lo}-1$, the term
+        \texttt{iszero(gt(x\_\allowbreak{}lo, P\_\allowbreak{}MINUS\_\allowbreak{}ONE\_\allowbreak{}LO))} is exactly
+        $x_{lo} \le p_{lo}-1 \iff x_{lo} < p_{lo}$. We verified the
+        boundary $x=p$ is correctly rejected.
+  \item \textcolor{tracegreen}{\textbf{[OK] Top-byte rejection.}}
+        \texttt{shr(128, x\_\allowbreak{}hi\_\allowbreak{}word)} rejects any non-zero in the 16
+        padding bytes, preventing transcript-aliasing from
+        non-normalised encodings.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Solidity is \emph{stricter}
+        than Rust at absorption.}} The Rust absorbs the raw 128 bytes
+        without a canonicality gate; a non-canonical encoding would
+        instead cause a downstream transcript mismatch. The Yul fails
+        fast. The set of \emph{accepted} proofs is identical (canonical
+        only), so this is a strengthening, not a divergence.
+  \item \textcolor{rustorange}{\textbf{[RISK] No curve / subgroup check
+        here.}} This helper validates the \emph{encoding}, not that the
+        point lies on BLS12-381 or in the prime-order subgroup. Safety
+        rests entirely on
+        \cg{validate\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage}
+        (\texttt{src/\allowbreak{}lowering/\allowbreak{}kzg/\allowbreak{}mod.rs} L569, run from
+        \cg{LoweringPlan::validate\_\allowbreak{}generator\_\allowbreak{}invariants},
+        \texttt{plan.rs} L238--251)
+        guaranteeing every absorbed point later reaches a
+        \textbf{G1MSM or pairing} (which \emph{do} subgroup-check per
+        EIP-2537). \textbf{G1ADD alone does NOT subgroup-check}, so a
+        future codegen change that routes an absorbed point only through
+        \texttt{G1ADD} would silently drop the subgroup check.
+        \emph{Defense-in-depth:} add an explicit on-curve check
+        ($y^2 \equiv x^3+4$ via \texttt{mulmod}) at absorption, or
+        assert in the codegen test that no absorbed point's only
+        consumer is \texttt{G1ADD}. The second option already holds:
+        the coverage list (\cg{precompile\_\allowbreak{}validated\_\allowbreak{}g1s}) admits only
+        G1MSM and pairing consumers, so a G1ADD-only point fails the
+        build. \vstatus{ADDRESSED} invariant enforced; off-curve
+        mutation test \texttt{src/test.rs} L2408. The list is derived
+        from the protocol plan, not parsed from the emitted Yul.
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{\texttt{squeeze\_to}}
+\label{sec:squeeze-to}
+
+\begin{lstlisting}[style=yul]
+function squeeze_to(buf_len, mptr) -> ret {
+    let h0 := keccak256(TRANSCRIPT_MPTR, sub(buf_len, TRANSCRIPT_MPTR))
+    mstore(TRANSCRIPT_MPTR, h0)        // reseed buffer with digest
+    let r := FR_MODULUS
+    mstore(mptr, mod(h0, r))          // sample Fq = uint256(digest) mod r
+    ret := add(TRANSCRIPT_MPTR, 32)
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{Keccak256::squeeze}
+(\texttt{implementors.rs} L186): digest, reseed, then
+\rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r} (\texttt{implementors.rs}
+L19), a big-endian digest mod $r$ (\S\ref{sec:rust-transcript},
+Def.~\ref{def:squeeze}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Faithful.}} Digest, reseed,
+        and reduction match the Rust exactly.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Modulo bias.}}
+        $\mod(h_0, r)$ with $h_0 \in [0,2^{256})$ and
+        $r \approx 2^{254.86}$ gives a non-uniform sample:
+        $2^{256}=2r+t$ with $t\approx0.21r$, so residues below $t$ have
+        three preimages and the rest two ($1.5\times$ more likely). The
+        Rust does the same. \vstatus{CORRECTED} The bias is \emph{not}
+        $\le 2^{-128}$: the statistical distance from uniform is
+        $\approx0.075$ and the maximum probability is $\approx1.36/r$.
+        It is still not exploitable: min-entropy is $\approx254.4$ bits,
+        so any Schwartz--Zippel bound grows by at most $1.36\times$.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Reseed is a full
+        32-byte overwrite.}} Correct, but the buffer length after reseed
+        is always \texttt{TRANSCRIPT\_\allowbreak{}MPTR+32}; the codegen could track
+        this as a constant rather than recomputing
+        \texttt{add(TRANSCRIPT\_\allowbreak{}MPTR,32)} at every squeeze. Negligible
+        gas; purely an audit-clarity note.
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{\texttt{batch\_invert}}
+\label{sec:batch-invert}
+
+\begin{lstlisting}[style=yul]
+function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
+    ret := success
+    if iszero(ret) { leave }
+    if lt(mptr_end, mptr_start) { ret := 0; leave }
+    let count_bytes := sub(mptr_end, mptr_start)
+    if iszero(count_bytes) { leave }                 // empty batch OK
+    if eq(count_bytes, 0x20) {                      // single-element fast path
+        let x := mload(mptr_start)
+        if iszero(x) { ret := 0; leave }
+        ... modexp(x, r-2, r) in place ...
+        ret := and(ret, eq(returndatasize(), 0x20))
+        if ret { mstore(mptr_start, mload(single_scratch)) }
+        leave
+    }
+    // Forward pass: prefix products (n-1 of them) into scratch; gp = total.
+    let gp_mptr := scratch_mptr
+    let gp := mload(mptr_start)
+    let mptr := add(mptr_start, 0x20)
+    for {} lt(mptr, sub(mptr_end, 0x20)) {} {
+        gp := mulmod(gp, mload(mptr), r)
+        mstore(gp_mptr, gp)
+        mptr := add(mptr, 0x20); gp_mptr := add(gp_mptr, 0x20)
+    }
+    gp := mulmod(gp, mload(mptr), r)
+    if iszero(gp) { ret := 0; leave }               // some denominator was 0
+    ... modexp(gp, r-2, r) -> all_inv ...
+    // Backward pass: recover each inverse from all_inv and prefix products.
+    ...
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{ff::batch\_invert} / the verifier's
+own Montgomery batch used for Lagrange denominators and the
+$1/(\text{eval}+\beta s+\gamma)$ family.
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Montgomery trick is correct.}}
+        We hand-traced $n=2$ and $n=3$: the forward pass stores
+        $n-1$ prefix products, the single modexp inverts the total, and
+        the backward pass recovers each $a_i^{-1}$ with two
+        \texttt{mulmod}s. The special-cased first/second elements at the
+        tail are correct.
+  \item \textcolor{tracegreen}{\textbf{[OK] Single-element fast path.}}
+        Avoids the prefix scratch entirely for one denominator --- a
+        real gas win (saves the forward/backward loop and the scratch
+        writes).
+  \item \textcolor{tracegreen}{\textbf{[OK] Zero-total detection.}} A
+        zero total product (any zero denominator) returns
+        \texttt{ret=0} rather than producing a bogus inverse. Matches
+        the Rust \texttt{CtOption} semantics.
+  \item \textcolor{rustorange}{\textbf{[RISK] Memory left dirty on
+        failure.}} On a zero total the function \texttt{leave}s with
+        only the scratch written; on a failed or short modexp it does
+        \emph{not} leave, and the backward pass overwrites the whole
+        target range with garbage (template
+        \texttt{AssemblyHelpers.yul} L189--208). \vstatus{CORRECTED}
+        The caller does \emph{not} gate before reading: the only call
+        site (\texttt{Lagrange.yul} L34) reads the inverted range at
+        L38--82 and gates at L89 (B64 L1350--1394, gate L1397). This is
+        safe because \texttt{success} is sticky and every
+        \texttt{success}$=0$ path reverts before \texttt{return}, so
+        garbage never reaches an accept decision. \emph{Hardening:}
+        document that ``check-before-return'' invariant at the function
+        header (L124--126 only says it returns a boolean). A
+        ``gate-before-read'' codegen assertion, as first proposed here,
+        would reject the current Lagrange block. \vstatus{OPEN}
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] \texttt{gp\_mptr}
+        underflow is benign but ugly.}} In the $n=2$ case the backward
+        pass sets \texttt{gp\_\allowbreak{}mptr := sub(scratch, 0x20)} (below the
+        scratch region) before a loop that never executes. It is
+        harmless (the pointer is only used inside the loop) but reads as
+        a bug to an auditor. \emph{Rewrite:} restructure the backward
+        loop so the pointer is only decremented when the loop body runs.
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{\texttt{ec\_pairing}}
+\label{sec:ec-pairing}
+
+\begin{lstlisting}[style=yul]
+function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
+    ret := success
+    if iszero(ret) { leave }
+    let scratch := <final_pairing_scratch_mptr>
+    mcopy(scratch,            lhs_mptr,           0x80)
+    mcopy(add(scratch, 0x80),  G2_BASE_MPTR,     0x100)
+    mcopy(add(scratch, 0x180), rhs_mptr,         0x80)
+    mcopy(add(scratch, 0x200), NEG_S_G2_BASE_MPTR, 0x100)
+    ret := staticcall(gas(), 0x0f, scratch, 0x300, scratch, 0x20)
+    ret := and(ret, eq(returndatasize(), 0x20))
+    ret := and(ret, mload(scratch))
+    if iszero(ret) { revert(0, 0) }
+    ret := 1
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{DualMSM::check}
+(\texttt{msm.rs} L284--300):
+\texttt{multi\_\allowbreak{}miller\_\allowbreak{}loop} of $(\text{left}, s\_g2)$ and
+$(\text{right}, -g_2)$, final exponentiation, compare to identity
+(\S\ref{sec:rust-dualmsm}, Eq.~\eqref{eq:final-pairing-dual}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Pairing identity correct.}}
+        Checks $e(\text{lhs},[1]_2)\cdot e(\text{rhs},-[s]_2)=1$,
+        i.e.\ $e(\text{lhs},[1]_2)=e(\text{rhs},[s]_2)$. The
+        \texttt{NEG\_S\_G2\_BASE} is the pre-negated $-[s]_2$ from the
+        VK.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Argument-order trap.}}
+        \texttt{lhs} is the pairing \emph{first} argument
+        ($e(\text{lhs},[1]_2)$) but in the dual-MSM accumulator
+        ``left'' historically means $\pi$. The generated comment warns
+        that the caller passes \texttt{(success, PAIRING\_\allowbreak{}RHS,
+        PAIRING\_\allowbreak{}LHS)} --- swapped relative to the accumulator naming.
+        This is a documented, deliberate inversion; it is the single
+        most confusing line in the contract and a prime audit target.
+  \item \textcolor{tracegreen}{\textbf{[OK] MCOPY layout.}} Cancun
+        \texttt{mcopy} replaces the old mstore chains; the comment
+        claims $\sim$500 gas saved per call. The 4-copy layout
+        (G1|G2|G1|G2) matches the EIP-2537 pairing input ABI.
+  \item \textcolor{tracegreen}{\textbf{[OK] G2 subgroup safety.}} The
+        pairing precompile checks G2 subgroup membership, so a malicious
+        VK \texttt{G2\_BASE} would fail the pairing (rejecting all
+        proofs --- a liveness, not soundness, issue). The VK is pinned
+        by \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH}, so the G2 is trusted.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Reverts, does not return
+        0.}} Unlike \texttt{batch\_invert} (returns bool),
+        \texttt{ec\_pairing} \texttt{revert}s on failure (line
+        \texttt{if iszero(ret) revert}). Both fail closed, but the two
+        helpers use inconsistent failure conventions. For uniform
+        \texttt{success}-plumbing and auditability, pick one convention
+        (return-bool and let the boundary revert) and apply it to both.
+\end{itemize}
+
+% ---------------------------------------------------------------------
+\subsection{Summary of \texttt{AssemblyHelpers.yul} findings}
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.20\linewidth}p{0.09\linewidth}p{0.45\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Function} & \textbf{Grade} & \textbf{Key finding} & \textbf{Status} \\
+\midrule
+\texttt{scalar\_inv} & \textcolor{codegenblue}{IMPROVE} &
+  Duplicates \texttt{batch\_invert} fast path with a different zero
+  policy (revert vs.\ return 0). Not dead code: five call sites in B64. &
+  \vstatus{OPEN} \\
+\texttt{transcript\_init} / \texttt{common\_word} & \textcolor{rustorange}{RISK} &
+  Faithful arithmetic, but the cursor is unbounded and the codegen once
+  under-sized the buffer; add a per-squeeze bound check. &
+  \vstatus{PARTIAL}\newline sizing fixed \texttt{6b3d2096} \\
+\texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} & \textcolor{rustorange}{RISK} &
+  Encoding canonicality correct; \textbf{no on-curve/subgroup check}
+  --- load-bearing on MSM/pairing coverage invariant. &
+  \vstatus{ADDRESSED}\newline invariant enforced at build \\
+\texttt{squeeze\_to} & \textcolor{tracegreen}{OK} &
+  Faithful; modulo bias is real (SD $\approx0.075$) but not exploitable
+  and identical to Rust. &
+  \vstatus{CORRECTED}\newline was ``$\le2^{-128}$'' \\
+\texttt{batch\_invert} & \textcolor{rustorange}{RISK} &
+  Correct Montgomery trick; leaves memory dirty on failure. The caller
+  reads before its gate; the load-bearing invariant is
+  check-before-return. &
+  \vstatus{OPEN}\newline premise corrected \\
+\texttt{ec\_pairing} & \textcolor{mathpurple}{NOTE} &
+  Correct identity; argument-order trap documented; failure convention
+  inconsistent with \texttt{batch\_invert}. &
+  \vstatus{OPEN} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% =====================================================================
+\section{\texttt{Lagrange.yul}}
+\label{sec:lagrange-audit}
+
+Computes $x^n$, the Lagrange basis $\{L_i(x)\}$, the blinding sum
+$l_{\mathsf{blind}}$, and the instance polynomial evaluation, using one
+batch inversion.
+
+\begin{lstlisting}[style=yul]
+// x^n by repeated squaring, n = 2^k
+let x_n := x
+for { let idx := 0 } lt(idx, k) { idx := add(idx, 1) } {
+    x_n := mulmod(x_n, x_n, r)
+}
+// Denominators (x - omega_i) and (x^n - 1) batch-inverted in one modexp
+for { let pow_of_omega := mload(OMEGA_INV_TO_L_MPTR) }
+    lt(mptr, mptr_end) { mptr := add(mptr, 0x20) } {
+    mstore(mptr, addmod(x, sub(r, pow_of_omega), r))
+    pow_of_omega := mulmod(pow_of_omega, omega, r)
+}
+mstore(mptr_end, addmod(x_n, sub(r, 1), r))
+success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+// L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i)
+let l_i_common := mulmod(x_n_minus_1, mload(N_INV_MPTR), r)
+...
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{lagrange\_\allowbreak{}interpolate} /
+\rust{lagrange\_\allowbreak{}base\_\allowbreak{}eval} and the instance-eval sum in
+\texttt{verifier.rs} (Eq.~\eqref{eq:lagrange}, \eqref{eq:instance-eval}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] $x^n$ by squaring.}} $k$
+        squarings give $x^{2^k}=x^n$; matches the Rust domain exponent.
+  \item \textcolor{tracegreen}{\textbf{[OK] Batched denominators.}} All
+        $(x-\omega_i)$ plus $(x^n-1)$ are inverted in a single
+        \texttt{batch\_invert} (one modexp), matching the Rust's batched
+        Lagrange denominators.
+  \item \textcolor{tracegreen}{\textbf{[OK] $L_i$ formula.}}
+        $L_i(x)=(x^n-1)\,n^{-1}\,\omega_i/(x-\omega_i)$ is exactly
+        \eqref{eq:lagrange}.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{num\_instances==0}
+        slot.}} When there are no public instances the code still reserves
+        one denominator slot so $L_0$ can be recovered for boundary
+        identities. Correct, but the conditional \texttt{mptr\_end} bump
+        is easy to misread; it is load-bearing for the
+        $l_0/l_{\mathsf{last}}$ reads at the end.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] \texttt{pow\_of\_omega}
+        recomputed twice.}} The first pass walks
+        $\omega_{\mathsf{inv}}^L \cdot \omega^i$ to build denominators;
+        the second pass re-walks the same sequence to form $L_i$. The
+        powers could be cached in the first pass (they are already
+        written as the denominator) --- but the second pass needs
+        $\omega_i$ not $x-\omega_i$, so a second walk is genuinely
+        required. The improvement is only to hoist
+        \texttt{l\_i\_common} (already done). Minor.
+  \item \textcolor{rustorange}{\textbf{[RISK] Layout-indexed reads.}}
+        $l_0$ is read at
+        \texttt{add(X\_\allowbreak{}N\_\allowbreak{}MPTR, num\_\allowbreak{}neg\_\allowbreak{}lagranges*32)} and
+        $l_{\mathsf{last}}$ at \texttt{X\_N\_MPTR}. These offsets are
+        codegen-computed; a mismatch between the Lagrange write layout and
+        these read offsets would silently swap $l_0$/$l_{\mathsf{last}}$.
+        The differential trace pins them, but the coupling is implicit.
+\end{itemize}
+
+% =====================================================================
+\section{\texttt{TranscriptProofParser.yul}}
+\label{sec:parser-audit}
+
+The full transcript schedule: VK digest, committed identity, instances,
+per-phase advice, $\theta$, multiplicities, $\beta,\gamma$, perm $Z$,
+lookup helpers/acc, trash, $y$, quotient limbs, $x$, evals, $x_1,x_2$,
+$f_{\mathsf{com}}$, $x_3$, $q$-evals, $x_4$, $\pi$.
+
+\begin{lstlisting}[style=yul]
+buf_len := common_word(buf_len, mload(VK_DIGEST_MPTR))
+// committed_pi = identity -> 128 zero bytes, BEFORE instance count
+mstore(buf_len, 0); mstore(add(buf_len,0x20), 0)
+mstore(add(buf_len,0x40), 0); mstore(add(buf_len,0x60), 0)
+buf_len := add(buf_len, 0x80)
+// instance count + values (canonical Fr)
+buf_len := common_word(buf_len, <num_instances>)
+for ... { let inst_be := calldataload(instance_cptr)
+    success := and(success, lt(inst_be, r))
+    buf_len := common_word(buf_len, inst_be) }
+if iszero(success) { revert(0, 0) }   // fail fast (1e21311c)
+...
+// final exact-consumption check
+if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }
+if iszero(success) { revert(0, 0) }
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{parse\_trace} +
+\rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints} transcript schedule
+(\S\ref{sec:parse-trace}, \S\ref{sec:rust-transcript}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Schedule fidelity.}} The
+        absorb/squeeze order matches the Rust exactly; the differential
+        trace (ids 1--36) pins every step.
+  \item \textcolor{tracegreen}{\textbf{[OK] Committed-identity absorb.}}
+        128 zero bytes before the instance count matches the patched
+        \texttt{Hashable} identity convention.
+  \item \textcolor{tracegreen}{\textbf{[OK] Exact-consumption check.}}
+        \texttt{eq(proof\_\allowbreak{}cptr, NUM\_\allowbreak{}INSTANCE\_\allowbreak{}CPTR)} makes any
+        under/over-read of the proof layout fail closed --- strong
+        defense-in-depth against future layout drift.
+  \item \textcolor{tracegreen}{\textbf{[OK] Eval canonicality.}} Every
+        proof eval scalar is range-checked \texttt{lt(eval, r)} before
+        absorption (lines 319, 382).
+  \item \textcolor{rustorange}{\textbf{[RISK] $x_3$ truncation
+        (128-bit).}} Under \texttt{truncated-challenges}, $x_3$ is
+        masked to 128 bits (line 365). As discussed in
+        \S\ref{sec:deviations-summary}, this reduces the
+        evaluation-point entropy of the $f$-polynomial check; the
+        resulting soundness level is not established here. Faithful to Rust,
+        but the single most security-relevant line in the parser.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Deferred \texttt{success}
+        for instances only.}} Instance canonicality is accumulated with
+        \texttt{success := and(...)} while G1/eval helpers revert
+        immediately. \vstatus{ADDRESSED} Since \texttt{1e21311c} the
+        parser reverts right after the instance loop (template L68,
+        B64 L1050), so a bad instance no longer pays for the whole
+        transcript; the final \texttt{if iszero(success) revert} is now
+        a backstop.
+\end{itemize}
+
+% =====================================================================
+\section{\texttt{QuotientAndLinearization.yul}}
+\label{sec:quotlin-audit}
+
+External quotient-evaluator call (pinned) plus the linearization scalar
+preparation ($x_{\mathsf{split}}$, $1-x^n$).
+
+\begin{lstlisting}[style=yul]
+// Pin the external quotient evaluator like the VK
+if iszero(and(
+    eq(extcodesize(quotientEvaluator), EXPECTED_QUOTIENT_LENGTH),
+    eq(extcodehash(quotientEvaluator), EXPECTED_QUOTIENT_CODEHASH_WORD)
+)) { revert(0, 0) }
+if iszero(staticcall(gas(), quotientEvaluator, frame_base, frame_len, q_out, out_len)) { revert(0,0) }
+if iszero(eq(mload(q_out), <magic>)) { revert(0, 0) }
+mstore(QUOTIENT_EVAL_MPTR, mload(add(q_out, 0x20)))   // -nu_y(x)
+// x_split = x^(n-1), one_minus_x_n = 1 - x^n, one squaring walk
+let x_pow_2i := x
+let x_pow_2i_minus1 := 1
+for { let idx := 0 } lt(idx, k) { idx := add(idx, 1) } {
+    x_pow_2i_minus1 := mulmod(mulmod(x_pow_2i_minus1, x_pow_2i_minus1, r), x, r)
+    x_pow_2i := mulmod(x_pow_2i, x_pow_2i, r)
+}
+mstore(QUOTIENT_MPTR, x_pow_2i_minus1)        // x_split
+mstore(add(QUOTIENT_MPTR, 0x20), one_minus_x_n)
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment}
+(\S\ref{sec:lin-com}); the external path is the split-contract variant
+of the same numerator.
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Evaluator pinned by
+        codehash.}} The external quotient contract is checked against
+        \texttt{EXPECTED\_\allowbreak{}QUOTIENT\_\allowbreak{}CODEHASH} before every call ---
+        same defense-in-depth as the VK. A swapped evaluator reverts.
+  \item \textcolor{tracegreen}{\textbf{[OK] Magic/version gate.}} The
+        return-word-0 magic check catches a wrong-callee or ABI drift.
+  \item \textcolor{tracegreen}{\textbf{[OK] $x_{\mathsf{split}}$ walk.}}
+        Computing $x^{n-1}$ and $x^n$ in one loop via
+        $x^{2^i-1}=(x^{2^{i-1}-1})^2\cdot x$ is correct and saves a
+        separate exponentiation.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{QUOTIENT\_MPTR}
+        repurposed as scalar metadata.}} In this path
+        \texttt{QUOTIENT\_MPTR} is \emph{not} a G1 point; its two words
+        carry $(x_{\mathsf{split}}, 1-x^n)$. The comment warns, but an
+        auditor expecting a point here could be misled. Consider a
+        distinct slot name (e.g.\ \texttt{LIN\_\allowbreak{}SCALARS\_\allowbreak{}MPTR}) to remove
+        the ambiguity.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Trace path uses
+        \texttt{call} not \texttt{staticcall}.}} When tracing, the
+        external quotient call is a \texttt{call} (line 28) rather than
+        \texttt{staticcall}. \vstatus{CORRECTED} This is required, not
+        an oversight: the trace-mode evaluator emits \texttt{log1}
+        trace events (\texttt{Halo2QuotientEvaluator.sol} L120--127),
+        and \texttt{LOG} reverts inside a \texttt{STATICCALL} frame.
+        Production renders use \texttt{staticcall} (line 30), and B64
+        embeds the evaluator, so it makes no external call at all. No
+        action.
+\end{itemize}
+
+% =====================================================================
+\section{\texttt{FinalPairing.yul}}
+\label{sec:finalpairing-audit}
+
+Randomized batching of the IVC accumulator equation into the KZG pairing,
+then the final \texttt{ec\_pairing}.
+
+\begin{lstlisting}[style=yul]
+// alpha = FS(domain || kzg_rhs || kzg_lhs || acc_rhs || acc_lhs)
+let acc_pair_alpha := mod(keccak256(batch_ptr, HASH_BYTES), r)
+if iszero(acc_pair_alpha) { acc_pair_alpha := 1 }
+// PAIRING_RHS += alpha * ACC_RHS   (1-pair G1MSM then G1ADD)
+mcopy(batch_ptr, ACC_RHS_MPTR, 0x80)
+mstore(add(batch_ptr, 0x80), acc_pair_alpha)
+success := staticcall(gas(), G1MSM, batch_ptr, 0xa0, batch_ptr, 0x80)
+mcopy(add(batch_ptr, 0x80), PAIRING_RHS_MPTR, 0x80)
+success := staticcall(gas(), G1ADD, batch_ptr, 0x100, PAIRING_RHS_MPTR, 0x80)
+// ... mirror for LHS ...
+success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
+\end{lstlisting}
+
+\textbf{Rust counterpart.} The accumulator randomizer in
+\texttt{verifier.rs} + \rust{DualMSM::check}
+(Eq.~\eqref{eq:acc-batch}, \eqref{eq:final-pairing-dual}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Randomized batching prevents
+        cancellation.}} Deriving $\alpha$ from the pairing inputs means
+        two independently-bad equations cannot be made to cancel: the
+        combined equation holds for at most one $\alpha$. This is the
+        correct construction (vs.\ naively multiplying equations).
+  \item \textcolor{tracegreen}{\textbf{[OK] Zero-$\alpha$ guard.}}
+        Mapping $\alpha=0\mapsto 1$ prevents the accumulator equation
+        from being silently dropped (which would happen if $\alpha=0$
+        zeroed the accumulator contribution).
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Fold the two 1-pair
+        G1MSMs.}} The RHS and LHS accumulator scalings are two separate
+        1-pair \texttt{G1MSM} calls. They cannot be merged into one MSM
+        (different output points), but each 1-pair MSM could instead be
+        a \texttt{G1ADD} of precomputed points if the accumulator
+        points were pre-scaled --- not applicable here since $\alpha$ is
+        runtime. The current form is near-optimal; the only saving is
+        the \texttt{G1ADD} after each MSM, which is unavoidable (a 2-pair
+        MSM costs 22{,}776 gas vs.\ 12{,}375 for MSM+ADD). The foldable
+        one-pair MSMs are $-vG$ and $x_3\pi$ in the PCS block, which can
+        join the fused final MSM (\S\ref{sec:roadmap-p3}, register
+        I12).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Argument-order trap
+        (again).}} \texttt{ec\_\allowbreak{}pairing(success, PAIRING\_\allowbreak{}RHS,
+        PAIRING\_\allowbreak{}LHS)} passes RHS as the pairing's first argument. The
+        comment explains the dual-MSM naming inversion. This is the
+        second place the LHS/RHS inversion bites (see
+        \S\ref{sec:ec-pairing}); a single consistent naming
+        (\texttt{PAIRING\_ARG0}/\texttt{ARG1}) would remove the trap.
+\end{itemize}
+
+% =====================================================================
+\section{\texttt{AccumulatorHelpers.yul}}
+\label{sec:acc-audit}
+
+Decodes the shifted radix-$2^{56}$ public-input encoding of the IVC
+accumulator's foreign G1 points into EIP-2537 padded form, with
+canonical packing checks and mandatory G1MSM validation.
+
+\begin{lstlisting}[style=yul]
+function load_acc_coord(src, allow_id, bits, n, base, limbs_per_word) -> ok, hi, lo, is_id {
+    ok := check_acc_coord_packing(src, bits, n, limbs_per_word)  // reject unused high bits
+    if and(allow_id, iszero(lt(calldataload(src), base))) {
+        let adj_hi, adj_lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, base)
+        is_id := is_bls_p_minus_one(adj_hi, adj_lo)
+    }
+    hi, lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, mul(is_id, base))
+    ok := and(ok, or(lt(hi, BLS_P_HI), and(eq(hi, BLS_P_HI), iszero(gt(lo, BLS_P_MINUS_ONE_LO)))))
+    if is_bls_p_minus_one(hi, lo) { hi := 0; lo := 0 }        // p-1 -> 0
+    else { let next_lo := add(lo, 1); hi := add(hi, lt(next_lo, lo)); lo := next_lo }  // +1 with carry
+    ok := and(ok, lt(hi, shl(128, 1)))                        // EIP-2537 48-byte pad
+}
+\end{lstlisting}
+
+\textbf{Rust counterpart.} \texttt{AssignedForeignPoint<BLS12-381>} /
+\texttt{AssignedField::as\_\allowbreak{}public\_\allowbreak{}input} shifted-limb codec.
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Packing canonicality.}}
+        \texttt{check\_\allowbreak{}acc\_\allowbreak{}coord\_\allowbreak{}packing} rejects any unused high bits
+        in the packed words, so each coordinate has a unique encoding
+        before it reaches curve validation.
+  \item \textcolor{tracegreen}{\textbf{[OK] Mandatory G1MSM validation.}}
+        Every decoded point (even identity, even scalar 0/1) is routed
+        through \texttt{G1MSM} so the precompile performs the
+        on-curve/subgroup check. The comment explicitly notes skipping
+        it would let a malformed non-identity point hide behind scalar 0
+        --- correct and important.
+  \item \textcolor{tracegreen}{\textbf{[OK] Decoded-zero rejection.}} A
+        decoded $(0,0)$ that is \emph{not} the canonical identity
+        encoding is rejected (line 208--209), since EIP-2537 reserves
+        $(0,0)$ for infinity.
+  \item \textcolor{tracegreen}{\textbf{[OK] $+1$ carry into high word.}}
+        The \texttt{hi := add(hi, lt(next\_\allowbreak{}lo, lo))} carry logic for the
+        coord$-1\to$coord reconstruction is correct across the 256-bit
+        boundary.
+  \item \textcolor{rustorange}{\textbf{[RISK] Intricate identity-flag
+        logic.}} The \texttt{first\_adjust}/\texttt{is\_id} path (only
+        $x$ carries the flag; the flag is one radix base added to the
+        first packed word) is the most intricate decoding in the
+        contract. It is correct for the current codec, but a change to
+        the circuit's public-input packing would require a matching
+        change here. The \texttt{is\_\allowbreak{}acc\_\allowbreak{}encoded\_\allowbreak{}identity} fast path
+        (exact packed-word equality) is the primary guard; the
+        coordinate-level flag probe is the fallback. High audit burden
+        --- recommend a dedicated unit test enumerating identity vs.\
+        non-identity encodings. \vstatus{PARTIAL} The IVC E2E covers
+        bad packing and malformed LHS/RHS points
+        (\texttt{tests/\allowbreak{}ivc\_\allowbreak{}keccak\_\allowbreak{}solidity.rs} L1417--1447); the
+        identity path has only a template-string check
+        (\texttt{src/\allowbreak{}lowering/\allowbreak{}tests.rs} L1223).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{y\_id} discarded.}}
+        \texttt{pop(y\_id)} is correct (allow\_id was false) but the
+        shared tuple shape is a minor readability wart.
+\end{itemize}
+
+\subsection{Accumulator final-pairing batching (verified on \texttt{ivc-keccak})}
+\label{sec:acc-pairing-verify}
+
+The poseidon fixture has no accumulator, so the accumulator pairing path
+was verified against the \texttt{ivc-keccak} dump, which exercises the
+full randomized batching. The accumulator contributes a second pairing
+equation that must be checked \emph{together with} the KZG equation
+without letting two bad equations cancel.
+
+\paragraph{The batching.} After all four G1 pairing inputs are
+materialized, a verifier-local randomizer $\alpha$ is drawn by
+Fiat--Shamir over the domain tag and all four points, and the pairing
+arguments are folded:
+\begin{lstlisting}[style=yul]
+// domain || KZG_rhs || KZG_lhs || ACC_rhs || ACC_lhs  (32 + 4*128 = 0x220)
+mstore(batch_ptr, "pairing-batch-acc-kzg\0...")
+mcopy(batch_ptr+0x20,  PAIRING_RHS_MPTR, 0x80)
+mcopy(batch_ptr+0xa0,  PAIRING_LHS_MPTR, 0x80)
+mcopy(batch_ptr+0x120, ACC_RHS_MPTR,     0x80)
+mcopy(batch_ptr+0x1a0, ACC_LHS_MPTR,     0x80)
+let acc_pair_alpha := mod(keccak256(batch_ptr, 0x0220), r)
+if iszero(acc_pair_alpha) { acc_pair_alpha := 1 }   // never drop the acc eq
+// PAIRING_RHS += alpha * ACC_RHS   (G1MSM then G1ADD)
+// PAIRING_LHS += alpha * ACC_LHS   (G1MSM then G1ADD)
+\end{lstlisting}
+
+\paragraph{The check.} The final \texttt{ec\_pairing} then verifies
+\begin{equation}
+e\!\big(\mathsf{KZG_{rhs}} + \alpha\,\mathsf{ACC_{rhs}},\,[1]_2\big)\cdot
+e\!\big(\mathsf{KZG_{lhs}} + \alpha\,\mathsf{ACC_{lhs}},\,-[s]_2\big) = 1 .
+\label{eq:acc-batch-check}
+\end{equation}
+By bilinearity this factors as
+\begin{equation}
+\underbrace{e(\mathsf{KZG_{rhs}},[1]_2)\,e(\mathsf{KZG_{lhs}},-[s]_2)}_{\text{KZG equation}}
+\cdot
+\underbrace{\big[e(\mathsf{ACC_{rhs}},[1]_2)\,e(\mathsf{ACC_{lhs}},-[s]_2)\big]^{\alpha}}_{\text{accumulator equation}}
+= 1 .
+\label{eq:acc-batch-factor}
+\end{equation}
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Cancellation is prevented.}}
+        If both the KZG and accumulator equations hold,
+        \eqref{eq:acc-batch-factor} is $1\cdot 1^{\alpha}=1$. If either
+        is \emph{false}, the product equals $1$ for \textbf{at most one}
+        value of $\alpha\in\mathbb{F}_r$ (a degree-1 polynomial in
+        $\alpha$ has $\le 1$ root). Since $\alpha$ is drawn
+        \emph{after} all four points are fixed, a prover cannot steer it
+        into the cancelling root except with probability $\le 1/r
+        \approx 2^{-255}$. This is the correct Schwartz--Zippel
+        randomization.
+  \item \textcolor{tracegreen}{\textbf{[OK] $\alpha$ drawn after inputs
+        are fixed.}} The hash covers the fully materialized
+        \texttt{PAIRING\_RHS/LHS} and \texttt{ACC\_RHS/LHS}, so the
+        prover commits to the points before $\alpha$ exists --- the
+        randomizer cannot be chosen adversarially.
+  \item \textcolor{tracegreen}{\textbf{[OK] Zero-$\alpha$ guard.}}
+        \texttt{if iszero(alpha) alpha := 1} ensures the accumulator
+        equation is never accidentally dropped (an $\alpha=0$ draw would
+        collapse \eqref{eq:acc-batch-check} to the KZG equation alone,
+        silently ignoring the accumulator).
+  \item \textcolor{tracegreen}{\textbf{[OK] Domain-separated $\alpha$.}}
+        The \texttt{"pairing-batch-acc-kzg"} tag prevents the $\alpha$
+        from being reused across protocols / other transcript contexts.
+  \item \textcolor{tracegreen}{\textbf{[OK] Points pre-validated.}}
+        \texttt{ACC\_RHS/LHS} were already forced through G1MSM in
+        \texttt{validate\_\allowbreak{}public\_\allowbreak{}accumulator} (every decoded point,
+        even identity/scalar-0), so the $\alpha$-fold MSMs operate on
+        validated points; a malformed accumulator reverts before the
+        pairing.
+\end{itemize}
+
+\paragraph{Encoding correctness (recap).} The accumulator point
+encoding was verified end-to-end: the shifted radix-$2^{56}$ little-endian
+limb reconstruction (including the limb straddling the 256-bit
+\texttt{hi}/\texttt{lo} split via \texttt{shr(sub(256,shift),limb)}),
+the canonical-packing rejection of unused high bits, the
+$p-1\!\to\!0$ / \texttt{coord-1}$\to$\texttt{coord} $+1$-with-carry
+round-trip, the base-field range check, and the EIP-2537
+\texttt{hi}$<2^{128}$ pad check all hold. The identity fast path
+(\texttt{is\_\allowbreak{}acc\_\allowbreak{}encoded\_\allowbreak{}identity}, exact packed-word equality) plus
+the coordinate-level flag probe cover the point-at-infinity encoding,
+and a decoded $(0,0)$ that is not the canonical identity is rejected.
+
+\paragraph{Verdict.} No issues with the accumulator \textbf{encoding}
+and no issues with the \textbf{final pairing check} in the generated
+Solidity. The only residual concern is the audit-burden of the
+identity-flag decode (already flagged [RISK] above), which is a
+test-coverage recommendation, not a correctness defect.
+
+% =====================================================================
+\section{Deviations summary}
+\label{sec:deviations-summary}
+
+Aggregating every deviation logged in this chapter, ranked by security
+relevance:
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.26\linewidth}p{0.09\linewidth}p{0.39\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Deviation} & \textbf{Severity} & \textbf{Assessment} & \textbf{Status} \\
+\midrule
+128-bit truncated challenges ($x_3$, $x_1^i$, $x_4^i$) &
+  \textcolor{rustorange}{HIGH} &
+  Soundness level not established; earlier bit-level figures are
+  withdrawn. Faithful to Rust; needs a written soundness argument and
+  confirmation against the security target. &
+  \vstatus{OPEN}\newline policy decision \\
+Unbounded transcript cursor &
+  \textcolor{rustorange}{MED} &
+  Buffer sized by codegen only; a mis-sizing for multi-phase shapes let
+  proof bytes overwrite the loaded VK. &
+  \vstatus{PARTIAL}\newline fixed in \texttt{6b3d2096}, no runtime
+  guard \\
+No on-curve/subgroup check at G1 absorption &
+  \textcolor{rustorange}{MED} &
+  Sound only via MSM/pairing coverage invariant; G1ADD alone does not
+  subgroup-check. &
+  \vstatus{ADDRESSED}\newline enforced at build \\
+\texttt{batch\_invert} leaves memory dirty on failure &
+  \textcolor{rustorange}{MED} &
+  The caller reads before its gate; the load-bearing invariant is
+  check-before-return (sticky \texttt{success}). &
+  \vstatus{OPEN}\newline premise corrected \\
+Accumulator identity-flag decode intricacy &
+  \textcolor{rustorange}{MED} &
+  Correct for current codec; high audit burden, needs dedicated tests. &
+  \vstatus{PARTIAL}\newline no identity vectors \\
+\texttt{QUOTIENT\_MPTR} repurposed as scalar metadata &
+  \textcolor{codegenblue}{LOW} &
+  Audit-clarity; rename to remove ambiguity. &
+  \vstatus{OPEN} \\
+Trace path uses \texttt{call} not \texttt{staticcall} &
+  \textcolor{codegenblue}{LOW} &
+  Not a deviation: trace-mode evaluator emits \texttt{LOG}, which
+  \texttt{STATICCALL} forbids; production already uses
+  \texttt{staticcall}. &
+  \vstatus{CORRECTED} \\
+\texttt{scalar\_inv} vs \texttt{batch\_invert} zero-policy mismatch &
+  \textcolor{codegenblue}{LOW} &
+  Live code (five call sites in B64); inconsistent failure convention. &
+  \vstatus{OPEN} \\
+PAIRING LHS/RHS naming inversion &
+  \textcolor{mathpurple}{LOW} &
+  Documented trap; rename to ARG0/ARG1. &
+  \vstatus{OPEN} \\
+Modulo bias in \texttt{squeeze\_to} &
+  \textcolor{mathpurple}{NEGL} &
+  Statistical distance $\approx0.075$ (not $\le2^{-128}$); same as
+  Rust, not exploitable. &
+  \vstatus{CORRECTED} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The first four are the ones a security reviewer should focus on. The
+remainder are audit-clarity and robustness improvements that do not
+change the accepted-proof set.
+
+% =====================================================================
+\section{\texttt{QuotientNumeratorBlock.yul} --- the compact quotient VM}
+\label{sec:vm-audit}
+
+This is the largest and most intricate generated component (1275 lines).
+It reconstructs the $y$-batched numerator $\nu_y(x)$ by interpreting a
+bytecode program (\texttt{q\_program}) stored in the \emph{VK payload},
+rather than unrolling every identity as Yul. The opcode stream is
+VK-pinned; no proof calldata can alter control flow.
+
+\subsection{Stack model}
+\begin{lstlisting}[style=yul]
+// q_pc: bytecode cursor   q_end: exclusive end
+// q_sp: spilled-stack word pointer
+// q_top: cached top-of-stack value   q_has_top: liveness flag
+let q_pc := q_program_mptr
+let q_end := add(q_program_mptr, <program.len>)
+let q_sp := <program.stack_mptr>
+let q_top := 0
+let q_has_top := 0
+for { } lt(q_pc, q_end) { } {
+    let q_op := byte(0, mload(q_pc))
+    q_pc := add(q_pc, 1)
+    switch q_op { ... default { revert(0, 0) } }
+}
+// end-of-program integrity:
+if iszero(eq(q_pc, q_end)) { revert(0, 0) }
+if q_has_top { revert(0, 0) }
+\end{lstlisting}
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Fail-closed default.}} Any
+        opcode not in the emitted switch (including the reserved
+        \texttt{0x1a}) hits \texttt{default \{ revert \}}.
+  \item \textcolor{tracegreen}{\textbf{[OK] End-of-program integrity.}}
+        The two post-loop checks --- \texttt{q\_pc == q\_end} (no
+        over/under-read) and \texttt{q\_has\_top == 0} (no dangling
+        partial expression) --- catch malformed generator output. Added
+        in \texttt{33f78d2b} (template L1191--1192; B64 L2569--2570).
+  \item \textcolor{tracegreen}{\textbf{[OK] All arithmetic reduced.}}
+        Every \texttt{addmod}/\texttt{mulmod} is modulo \texttt{r};
+        there is no unchecked \texttt{add}/\texttt{mul} on field values.
+  \item \textcolor{tracegreen}{\textbf{[OK] Coefficients are VK-pinned.}}
+        Constant-table reads come from \texttt{q\_const\_mptr} (VK
+        payload), never from proof calldata --- the bytecode cannot be
+        steered by the prover.
+\end{itemize}
+
+\subsection{\texttt{FOLD\_MAIN} (0x0a) --- the $y$-batch fold}
+\begin{lstlisting}[style=yul]
+case 0x0a {
+    let q_eval := q_top
+    q_has_top := 0
+    // qn = qn*y + eval   (reverse Horner, matches Rust)
+    mstore(qn, mulmod(mload(qn), y, r))
+    mstore(qn, addmod(mload(qn), q_eval, r))
+}
+\end{lstlisting}
+\textbf{Rust counterpart.} The reverse $y$-power fold in
+\rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment}
+(\texttt{expressions.iter().rev()}, \texttt{y\_pow *= y}).
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Horner fold correct.}}
+        \texttt{qn = qn*y + eval} accumulated over identities in order
+        yields $\sum_i y^{m-1-i} e_i = \nu_y(x)$, matching
+        \eqref{eq:nu-y}.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Redundant
+        load/store.}} The fold does \texttt{mstore(qn, mulmod(mload(qn),
+        y, r))} then \texttt{mstore(qn, addmod(mload(qn), eval, r))}
+        --- two \texttt{mstore} + two \texttt{mload} of the same slot per
+        identity. Keeping the accumulator in a register and storing once
+        at the end would save one \texttt{mload}+\texttt{mstore}
+        ($\sim$6 gas) per identity. Correctness is unaffected.
+        \vstatus{OPEN} B64 does not render case \texttt{0x0a}; the same
+        pair appears in the native-callback fold snippets
+        (\texttt{src/\allowbreak{}lowering/\allowbreak{}quotient.rs} L1018, L1035; e.g.\ B64
+        L2005--2006). The saving is small, not ``meaningful''.
+\end{itemize}
+
+\subsection{\texttt{FOLD\_SELECTOR} (0x0b) --- sparse selector buckets}
+\begin{lstlisting}[style=yul]
+case 0x0b {
+    let q_sel_idx := shr(16, payload)
+    let q_sel_gap := and(payload, 0xffff)
+    let q_eval := q_top; q_has_top := 0
+    // global accumulator still *y (keeps main identities aligned)
+    mstore(qn, mulmod(mload(qn), y, r))
+    let q_sel_acc := mload(SELECTOR_ACC_MPTR + 32*sel_idx)
+    if q_sel_gap {
+        q_sel_acc := mulmod(q_sel_acc, mload(selector_power_mptr + 32*gap), r)
+    }
+    mstore(q_target_ptr, addmod(q_sel_acc, q_eval, r))
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Global alignment preserved.}}
+        The global \texttt{qn} is still multiplied by $y$ even for
+        selector identities, so subsequent main identities land at the
+        same $y$-powers as Rust's reverse fold.
+  \item \textcolor{tracegreen}{\textbf{[OK] Precomputed \texttt{y\textasciicircum gap}.}}
+        Using a codegen-precomputed \texttt{y\textasciicircum gap} table
+        avoids a runtime \texttt{y\textasciicircum\{-1\}} modexp --- a
+        real gas win. The tail update (post-VM) applies the final
+        $y^{\text{tail}}$ to align each bucket with the global end.
+\end{itemize}
+
+\subsection{Native callbacks (0x19 perm, 0x1f lookup, 0x1b heavy)}
+\begin{lstlisting}[style=yul]
+case 0x19 {  // native permutation
+    q_top := 0; q_has_top := 0          // reset stack at identity boundary
+    q_sp := <program.stack_mptr>
+    // generated perm fold lines (same snippets as interpreted)
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Identity-boundary reset.}}
+        Each native callback clears \texttt{q\_top}/\texttt{q\_has\_top}
+        and resets \texttt{q\_sp} before running its generated fold, so
+        it never inherits a partial VM stack.
+  \item \textcolor{rustorange}{\textbf{[RISK] Empty-stack-boundary
+        assumption.}} The reset \emph{silently drops} any live
+        \texttt{q\_top}. This is safe only because the codegen emits
+        native callbacks exclusively at empty-stack boundaries. If a
+        future codegen change emitted one mid-expression, the partial
+        value would be lost without error.
+        \emph{Defense-in-depth:} add
+        \texttt{if q\_\allowbreak{}has\_\allowbreak{}top \{ revert(0,0) \}} at the top of each
+        native-callback case, turning the assumption into a checked
+        invariant. \vstatus{OPEN} The final-bytecode validator rejects a
+        callback on a non-empty stack
+        (\texttt{src/\allowbreak{}lowering/\allowbreak{}quotient\_\allowbreak{}numerator/\allowbreak{}vm/\allowbreak{}mod.rs}
+        L2241--2246), but the runtime reset is still unconditional
+        (template L1057, L1084, L1113; B64 L1934, L2051, L2247).
+\end{itemize}
+
+\subsection{ADD/MUL stack underflow}
+\begin{lstlisting}[style=yul]
+case 0x06 {  // ADD
+    q_sp := sub(q_sp, 0x20)
+    q_top := addmod(mload(q_sp), q_top, r)
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{rustorange}{\textbf{[RISK] Unchecked stack
+        underflow.}} \texttt{ADD}/\texttt{MUL} assume a spilled operand
+        exists (\texttt{q\_\allowbreak{}sp > stack\_\allowbreak{}mptr}). The comment says the
+        codegen safety validator guarantees this, but the runtime does
+        not check. A validator bug would make \texttt{q\_sp} underflow
+        below the stack region and read adjacent memory as an operand.
+        \emph{Defense-in-depth:}
+        \texttt{if lt(q\_\allowbreak{}sp, add(stack\_\allowbreak{}mptr, 0x20)) \{ revert(0,0) \}}
+        before the \texttt{sub}. Costs $\sim$10 gas per ADD/MUL; given
+        the validator already prevents it, this is belt-and-suspenders
+        for auditability. \vstatus{OPEN} The validator re-decodes the
+        final bytes and rejects underflow (\texttt{vm/mod.rs}
+        L2213--2216; test \texttt{src/\allowbreak{}lowering/\allowbreak{}tests.rs} L1520); no
+        runtime check (template L503--518; B64 renders only ADD,
+        L1716--1721).
+\end{itemize}
+
+\subsection{Final negation}
+\label{sec:vm-final-neg}
+\begin{lstlisting}[style=yul]
+// -nu_y(x) stored as the linearization expected eval
+let linearization_expected_eval := addmod(0, sub(r, mload(qn)), r)
+mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Matches Rust.}}
+        \texttt{expected\_\allowbreak{}eval -= eval} for \texttt{col\_idx == None}
+        produces $-\nu_y(x)$; the $(1-x^n)$ factor is on the commitment
+        side (Def.~\ref{def:neg-numer}).
+\end{itemize}
+
+% =====================================================================
+\section{\texttt{QuotientHelpers.yul}}
+\label{sec:qhelpers-audit}
+
+Optional codegen-recognized helper functions, emitted only when the
+lowering pass recognizes the corresponding expression shape.
+
+\begin{lstlisting}[style=yul]
+function q_pow5(x) -> z {                 // Poseidon S-box x^5
+    let x2 := mulmod(x, x, q_r)
+    z := mulmod(x, mulmod(x2, x2, q_r), q_r)
+}
+function q_limb7(x0,...,x6) -> z {       // sum_i base_powers[i]*limb_i
+    z := addmod(x0, mulmod(c1, x1, q_r), q_r)
+    ...
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] \texttt{q\_pow5} correct.}}
+        $x^5 = x\cdot(x^2)^2$ with two \texttt{mulmod}s --- the
+        minimal addition chain for 5.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Codegen shortcuts, not
+        verifier rules.}} These mirror the Rust \emph{Expression tree}
+        shapes (Poseidon S-box, foreign-field limb sums). They are a
+        rendering optimization; the verifier semantics are unchanged.
+        Coefficients come from the VK/program constant table, never
+        proof data.
+\end{itemize}
+
+% =====================================================================
+\section{VM-specific improvement summary}
+\label{sec:vm-improvements}
+
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.26\linewidth}p{0.10\linewidth}p{0.38\linewidth}p{0.18\linewidth}@{}}
+\toprule
+\textbf{Item} & \textbf{Grade} & \textbf{Recommendation} & \textbf{Status} \\
+\midrule
+Native-callback empty-stack assumption & \textcolor{rustorange}{RISK} &
+  Add \texttt{if q\_\allowbreak{}has\_\allowbreak{}top revert} at each native-callback entry
+  (\texttt{0x19}, \texttt{0x1f}, \texttt{0x1b}). &
+  \vstatus{OPEN}\newline build-time check only \\
+ADD/MUL unchecked stack underflow & \textcolor{rustorange}{RISK} &
+  Add \texttt{if lt(q\_\allowbreak{}sp, stack\_\allowbreak{}base+32) revert} before the pop. &
+  \vstatus{OPEN}\newline build-time check only \\
+FOLD\_MAIN redundant load/store & \textcolor{codegenblue}{IMPROVE} &
+  Keep accumulator in a register; store once at end ($\sim$6 gas per
+  folded identity; in B64 via native fold snippets). &
+  \vstatus{OPEN} \\
+Bytecode control-flow pinned by VK & \textcolor{tracegreen}{OK} &
+  Prover cannot alter opcode stream. &
+  --- \\
+End-of-program integrity checks & \textcolor{tracegreen}{OK} &
+  \texttt{q\_pc==q\_end} and \texttt{!q\_has\_top} catch malformed output. &
+  \vstatus{ADDRESSED}\newline \texttt{33f78d2b} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The two \textcolor{rustorange}{RISK} items are the VM's load-bearing
+codegen assumptions (empty-stack native callbacks, non-empty-stack
+ADD/MUL). Both are guaranteed at build time by
+\cg{validate\_\allowbreak{}quotient\_\allowbreak{}program}, which re-decodes the final bytecode
+(\texttt{vm/mod.rs} L2003), rather than checked at runtime; adding the
+one-line runtime guards would make them self-evident to an auditor at
+negligible cost.
+
+% =====================================================================
+\section{Contract templates and deployment-time checks}
+\label{sec:contract-templates}
+
+The generated verifier is assembled from three top-level contract
+templates plus the Yul partials audited above. This section audits the
+contract-level structure and the deployment-time defenses.
+
+\subsection{\texttt{Halo2Verifier.sol} --- the main contract}
+\label{sec:halo2-verifier-tpl}
+
+The contract is a thin shell: NatSpec, then includes, then one terminal
+assembly block. The \texttt{verifyProof} entry begins with a cheap
+ABI-shape guard \emph{before} any generated memory work:
+\begin{lstlisting}[style=plain]
+function verifyProof(bytes calldata proof, uint256[] calldata instances)
+    external view returns (bool) {
+    assembly ("memory-safe") {
+        if iszero(and(
+            eq(calldataload(SELECTOR_BYTES), PROOF_HEAD_OFFSET),
+            eq(calldataload(INSTANCES_HEAD_CPTR),
+               sub(NUM_INSTANCE_CPTR, SELECTOR_BYTES)))) {
+            revert(0, 0)
+        }
+    }
+    // ... VK pin, then the generated Yul pipeline ...
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] ABI-shape guard.}} The
+        hand-rolled calldata parser is protected by a pre-check that the
+        dynamic-argument heads point where the generator expects, so a
+        malformed ABI layout reverts before being misread as a proof
+        stream.
+  \item \textcolor{tracegreen}{\textbf{[OK] Terminal assembly block.}}
+        The generated block owns the call-frame memory and is terminal:
+        accepted proofs \texttt{return}, all rejects \texttt{revert}.
+        Scratch starts at \texttt{0x80}, preserving Solidity's reserved
+        prefix and free-memory pointer. (Starting at \texttt{0x80} is
+        not sufficient for \texttt{memory-safe} under via-IR; see
+        \S\ref{sec:memory-safe}.)
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Not a generic verifier.}}
+        The NatSpec is explicit that proof layout, VK payload, quotient
+        program, and memory layout are all generated for \emph{one}
+        \texttt{VerifyingKey}. Application contracts must bind instance
+        semantics (state roots, program ids, domain separation)
+        separately --- the raw verifier ABI guarantees nothing about them.
+\end{itemize}
+
+\subsection{The \texttt{"memory-safe"} annotation --- what it promises and what it relies on}
+\label{sec:memory-safe}
+
+Every generated assembly block is tagged \texttt{assembly("memory-safe")}.
+This is a \emph{promise to the compiler}: the block does not corrupt
+memory the rest of the program needs, so the compiler may trust that and
+optimize accordingly (e.g.\ skip defensive re-reads). It does \emph{not}
+mean ``the block used Solidity's allocator.''
+
+\paragraph{What the verifier actually does.} Solidity reserves the bottom
+128 bytes: scratch space (\texttt{0x00}--\texttt{0x3f}), the
+\textbf{free memory pointer} (\texttt{0x40}, normally initialized to
+\texttt{0x80}), and the zero slot (\texttt{0x60}); free memory begins at
+the free-pointer value and is handed out by bumping \texttt{0x40}. The generated verifier \textbf{bypasses
+that allocator entirely}: it uses hard-coded absolute addresses
+(\texttt{TRANSCRIPT\_\allowbreak{}MPTR = 0x80}, \texttt{PAIRING\_\allowbreak{}LHS\_\allowbreak{}MPTR =
+0x6f20} in B64, \ldots) and \textbf{never advances the free memory pointer}.
+(Every \texttt{0x40}/\texttt{0x60} in the emitted code is an
+\emph{offset inside a scratch buffer}, e.g.\ \texttt{add(scratch, 0x40)},
+not the free pointer itself.)
+
+\paragraph{Why the promise was believed to hold.} Two properties were
+taken to make \texttt{memory-safe} true here:
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item scratch starts at \texttt{0x80}, so the reserved prefix
+        (\texttt{0x00}--\texttt{0x7f}, including the free pointer and
+        zero slot) is never touched;
+  \item the block is \textbf{terminal} --- it ends in \texttt{return} or
+        \texttt{revert}, so no Solidity code runs \emph{after} it.
+\end{enumerate}
+
+\paragraph{The load-bearing coupling (the real issue).} The verifier is
+doing manual absolute-address memory management that ignores the free
+pointer. That is harmless \emph{only because nothing allocates memory
+after the block}. The \texttt{memory-safe} tag is a contract that holds
+under the terminal-block assumption:
+
+\begin{quote}
+If this body were ever inlined into a function that \textbf{keeps running
+Solidity after verification}, the verifier's scratch at \texttt{0x80}+
+would collide with memory the free pointer hands out next --- and because
+the compiler \emph{trusts} the \texttt{memory-safe} tag, it would
+\textbf{not} insert the defensive behavior needed to protect against
+that collision, yielding silent memory corruption.
+\end{quote}
+
+\paragraph{Correction: terminality is not enough under via-IR.}
+Solidity's rules for \texttt{memory-safe} blocks hold \emph{inside} the
+block too: a block may touch only scratch \texttt{0x00}--\texttt{0x3f},
+memory Solidity allocated, and memory at or above the free pointer's value
+on entry. The annotation is what lets via-IR's stack-limit evader spill Yul
+variables to memory, and it does so here. Compiled with the production
+settings (solc 0.8.35, via-IR, 200 runs, Cancun), B64's runtime begins
+\texttt{PUSH2 0x08e0 PUSH1 0x40 MSTORE}. The compiler reserved
+\texttt{[0x80, 0x8e0)} for spill slots, and that range overlaps the
+generator's absolute scratch (the transcript buffer at \texttt{0x80}, the
+\texttt{ec\_pairing} scratch at \texttt{0x300}--\texttt{0x600}, \ldots).
+Honest proofs verify today only because the live ranges happen to be
+disjoint. Nothing checks this (\S\ref{sec:pr-memorysafe}).
+
+In short: the safety does not come from the annotation itself. It comes
+from the terminal-block property the annotation is asserting, plus an
+unchecked disjointness between compiler spill slots and generator
+scratch. The contract's
+own NatSpec encodes exactly this warning --- \emph{``Do not inline this
+body into Solidity code that continues executing after verification
+without reviewing the memory strategy.''}
+
+\begin{itemize}
+  \item \textcolor{rustorange}{\textbf{[RISK] Annotation formally
+        violated under via-IR.}} \vstatus{CORRECTED} (previously graded
+        [OK]). The block writes below the entry free pointer
+        (\texttt{0x8e0}) into compiler-owned spill slots. Dropping the tag
+        is not an option, because via-IR needs it to evade stack-too-deep.
+        \vstatus{OPEN} The fix is to plan the absolute regions above a
+        fixed base and assert \texttt{mload(0x40)} $\le$ base on entry, or
+        to add a CI check on the compiled free-pointer initializer
+        (\S\ref{sec:pr-memorysafe}).
+  \item \textcolor{rustorange}{\textbf{[RISK] Annotation is load-bearing
+        on terminality.}} The correctness of the tag depends on the
+        block never returning to executing Solidity. Any future refactor
+        that makes the verifier body non-terminal must either bump the
+        free pointer to cover the scratch region or switch the tag to
+        \texttt{memory-unsafe} --- otherwise the compiler's trust is
+        misplaced. \emph{Audit note:} treat ``terminal'' as a hard
+        invariant of the generated body, not an incidental property.
+\end{itemize}
+
+\subsection{\texttt{PrecompileSmoke.sol} --- deployment-time fork check}
+\label{sec:smoke}
+
+The constructor calls \texttt{require\_\allowbreak{}eip2537\_\allowbreak{}precompiles()}, which
+exercises every runtime prerequisite with identity inputs so an
+incompatible fork fails \emph{at deployment}, not at first proof:
+\begin{lstlisting}[style=plain]
+// MCOPY must work (verifier uses it for staging).
+mstore(scratch, 0x1234)
+mcopy(add(scratch, 32), scratch, 32)
+if iszero(eq(mload(add(scratch, 32)), 0x1234)) { revert(0, 0) }
+// G1ADD(id,id) -> id, 128-byte return.
+staticcall(gas(), G1ADD, scratch, 256, scratch, 128) ...
+// Worst-case G1MSM (all identity/zero) -> id, 128-byte return.
+staticcall(gas(), G1MSM, msm_scratch, MSM_BYTES, scratch, 128) ...
+// PAIRING([(id,id),(id,id)]) -> true, 32-byte return.
+staticcall(gas(), PAIRING, scratch, TWO_PAIR_BYTES, scratch, 32) ...
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Worst-case MSM size.}} The
+        G1MSM smoke uses the \emph{largest} MSM input the verifier can
+        emit, not a one-pair call --- so a fork that chokes on the real
+        input length is caught at deploy.
+  \item \textcolor{tracegreen}{\textbf{[OK] Return-shape checks.}} Each
+        probe checks \texttt{returndatasize()} and the returned value,
+        catching missing precompiles, short returns, and wrong semantics.
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] G2ADD not smoked.}}
+        The smoke tests G1ADD/G1MSM/PAIRING but not G2ADD (0x0d). The
+        verifier never calls G2ADD (G2 points come from the pinned VK),
+        so this is fine --- but a comment noting the deliberate omission
+        would prevent an auditor wondering why. \vstatus{OPEN} No such
+        comment in \texttt{PrecompileSmoke.sol}; the MCOPY probe shown
+        above was added in \texttt{b53e3ebe}.
+\end{itemize}
+
+\subsection{\texttt{Constructors.sol} --- dependency pinning}
+\label{sec:constructors}
+
+Four constructor variants (embedded/external VK $\times$
+embedded/external quotient) all follow the same pattern:
+\begin{lstlisting}[style=plain]
+require_eip2537_precompiles();
+require(authorizedVk.code.length == EXPECTED_VK_LENGTH
+     && authorizedVk.codehash == EXPECTED_VK_CODEHASH, "invalid vk");
+require(authorizedQuotient.code.length == EXPECTED_QUOTIENT_LENGTH
+     && authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH,
+     "invalid quotient");
+AUTHORIZED_VK = authorizedVk;
+AUTHORIZED_QUOTIENT = authorizedQuotient;
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Strict codehash+length pin.}}
+        Both the VK and the split quotient evaluator are pinned by
+        \texttt{codehash} \emph{and} \texttt{length} at deploy, and the
+        verifier re-checks before every proof (Sec.~\ref{sec:vkpayload}).
+        The split evaluator is treated with the same strictness as the VK
+        because it contains generated verifier logic, not a library.
+\end{itemize}
+
+\subsection{\texttt{Halo2VerifyingKey.sol} --- INVALID-prefixed payload}
+\label{sec:vk-contract}
+
+The VK contract's runtime is \texttt{INVALID || payload}:
+\begin{lstlisting}[style=plain]
+// byte 0      : INVALID, so the payload cannot be executed
+// byte 1..end : generated VK payload copied by Halo2Verifier
+let runtime := PAYLOAD_MPTR
+let payload := add(runtime, 0x01)
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] INVALID opcode prefix.}}
+        Byte 0 is an unconditional \texttt{INVALID} so a direct call to
+        the VK contract cannot execute the payload as code. The verifier
+        copies the payload via
+        \texttt{extcodecopy(vk, VK\_\allowbreak{}MPTR, 0x01, len)} --- skipping the
+        INVALID byte --- and references slots by \texttt{VK\_MPTR + i}.
+  \item \textcolor{tracegreen}{\textbf{[OK] Quotient program pinned by
+        VK codehash.}} The quotient VM's static program lives in this
+        pinned runtime, so it is covered by \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH}
+        without verifier-side immediates.
+\end{itemize}
+
+\subsection{\texttt{Halo2QuotientEvaluator.sol} --- split evaluator}
+\label{sec:quotient-evaluator}
+
+In the split render, the verifier \texttt{staticcall}s this contract,
+passing its \emph{raw memory frame} as calldata:
+\begin{lstlisting}[style=plain]
+// calldata[0..FRAME_LEN) == memory[FRAME_BASE..FRAME_BASE+FRAME_LEN)
+// Output frame:
+//   word 0: QUOTIENT_MAGIC (version guard)
+//   word 1: linearization_expected_eval  (= -nu_y(x))
+//   word 2..: simple-selector accumulator scalars
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Magic-guarded frame.}} The
+        output carries a generated \texttt{QUOTIENT\_MAGIC} version word
+        so a mismatched evaluator version is detected, not silently
+        misread.
+  \item \textcolor{tracegreen}{\textbf{[OK] Returns $-\nu_y(x)$, not
+        $h(x)$.}} The NatSpec is explicit that the evaluator
+        reconstructs the $y$-batched numerator and returns the negated
+        expected scalar; the $(1-x^n)$ factor stays on the commitment
+        side (Def.~\ref{def:neg-numer}).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Frame-copy trust boundary.}}
+        The evaluator copies the verifier's memory frame by absolute
+        address; the two contracts must agree on the frame layout. This
+        coupling is pinned by the codehash pin, but a layout drift in a
+        future codegen change would be a silent correctness bug --- the
+        magic word is the only runtime guard.
+\end{itemize}
+
+\subsection{\texttt{Pcs.yul} and \texttt{TraceReturn.yul}}
+\label{sec:pcs-trace-return}
+
+\texttt{Pcs.yul} is a thin emitter that lays down the generated
+multi-prepare sub-blocks (grouped for gas-checkpoint attribution) and
+traces the pairing inputs. \texttt{TraceReturn.yul} is the terminal
+trace + return:
+\begin{lstlisting}[style=yul]
+// Rust prints the positive numerator; the verifier stores the negated
+// expected scalar, so trace id 36 re-negates:
+trace_u256(36, addmod(0, sub(r, mload(QUOTIENT_EVAL_MPTR)), r))
+// QUOTIENT_MPTR carries scalar metadata in the fused path; zero the
+// unused point words before tracing it as a G1 slot:
+mstore(add(QUOTIENT_MPTR, 0x40), 0)
+mstore(add(QUOTIENT_MPTR, 0x60), 0)
+trace_point(24, QUOTIENT_MPTR)
+...
+mstore(RETURN_MPTR, 1)
+return(RETURN_MPTR, 0x20)
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Stable trace ids.}} The
+        terminal trace uses fixed ids matching the Rust
+        \texttt{solidity\_\allowbreak{}trace.rs} labels, so fixture tooling can diff
+        Rust vs Solidity executions without circuit knowledge
+        (Sec.~\ref{sec:rust-trace}).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{trace\_id 36}
+        re-negation.}} The verifier stores $-\nu_y(x)$ but Rust traces
+        the positive $\nu_y(x)$; the trace path re-negates to match.
+        This is the same negated-numerator subtlety as
+        \S\ref{sec:vm-final-neg} --- correct, but a trap if the trace
+        consumer assumes the stored value.
+\end{itemize}

@@ -1,0 +1,419 @@
+% ============================================================================
+% Part 3 --- The Rust reference verifier
+% ============================================================================
+\chapter{The Rust Reference Verifier}
+\label{ch:rust}
+
+This chapter walks the Rust verifier that the code generator must reproduce.
+It is the \emph{source of truth}: if the generated Solidity disagrees with
+anything here, the Solidity is wrong. All line numbers refer to the checkout
+at the time of writing.
+
+\section{Module map}
+\label{sec:rust-modules}
+
+\begin{longtable}{@{}p{0.34\linewidth}p{0.60\linewidth}@{}}
+\toprule
+\textbf{Module} & \textbf{Role} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{Role} \\
+\midrule
+\endhead
+\rust{plonk/verifier.rs} (696 L) & Top-level: \rust{parse\_\allowbreak{}trace},
+  \rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints}, \rust{prepare}. Drives the whole
+  transcript schedule and assembles the PCS query list. \\
+\rust{plonk/mod.rs} & \rust{partially\_\allowbreak{}evaluate\_\allowbreak{}identities} (L488):
+  builds the ordered identity-evaluation list; \rust{hash\_\allowbreak{}into} (L283):
+  VK digest absorption. \\
+\rust{plonk/\allowbreak{}linearization/\allowbreak{}verifier.rs} (104 L) &
+  \rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment}: Eq.~\eqref{eq:linearization}. \\
+\rust{plonk/\allowbreak{}permutation.rs} & \rust{expressions} (L187): the four
+  permutation identity families \eqref{eq:perm1}--\eqref{eq:perm-right}. \\
+\rust{plonk/\allowbreak{}permutation/\allowbreak{}verifier.rs} (198 L) & Reads $z$ commitments,
+  evaluates $z$/$z_{\text{next}}$/$z_{\text{last}}$, emits PCS queries. \\
+\rust{plonk/logup.rs} & \rust{expressions} (L400): helper \eqref{eq:lookup-helper}
+  and accumulator \eqref{eq:lookup-acc} identities. \\
+\rust{plonk/\allowbreak{}logup/\allowbreak{}verifier.rs} (212 L) & Reads multiplicities, helpers,
+  accumulator; evaluates and emits PCS queries. \\
+\rust{plonk/trash.rs} & \rust{expressions} (L58): trash identity
+  \eqref{eq:trash}. \\
+\rust{plonk/\allowbreak{}trash/\allowbreak{}verifier.rs} (75 L) & Reads trash commitments, evaluates,
+  emits PCS queries. \\
+\rust{transcript/mod.rs} (184 L) & \rust{Transcript} trait:
+  \rust{common}/\rust{read}/\rust{squeeze\_\allowbreak{}challenge}/\rust{assert\_\allowbreak{}empty}. \\
+\rust{transcript/\allowbreak{}implementors.rs} (341 L) & Keccak256 hash;
+  \rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r} (L19); G1/Fq \rust{to\_\allowbreak{}input}. \\
+\rust{poly/kzg/mod.rs} (738 L) & \rust{multi\_\allowbreak{}prepare} (L321): the KZG
+  multi-open reduction (Sec.~\ref{sec:pcs-math}). \\
+\rust{poly/kzg/utils.rs} (187 L) & \rust{construct\_\allowbreak{}intermediate\_\allowbreak{}sets}
+  (L37), \rust{compute\_\allowbreak{}dummy\_\allowbreak{}queries} (L150). \\
+\rust{poly/kzg/msm.rs} & \rust{DualMSM}, final pairing check
+  \eqref{eq:final-pairing-dual}. \\
+\rust{poly/domain.rs} & \rust{rotate\_\allowbreak{}omega} (L410), \rust{l\_\allowbreak{}i\_\allowbreak{}range}
+  (L448), \rust{get\_\allowbreak{}quotient\_\allowbreak{}poly\_\allowbreak{}degree} (L476). \\
+\rust{utils/\allowbreak{}arithmetic.rs} & \rust{truncate} (L247),
+  \rust{truncated\_\allowbreak{}powers} (L255), \rust{powers}, \rust{inner\_\allowbreak{}product},
+  \rust{msm\_\allowbreak{}inner\_\allowbreak{}product}, \rust{lagrange\_\allowbreak{}interpolate} (L172),
+  \rust{eval\_\allowbreak{}polynomial} (L53). \\
+\rust{poly/query.rs} & \rust{VerifierQuery}, \rust{CommitmentReference},
+  \rust{CommitmentLabel}. \\
+\bottomrule
+\end{longtable}
+
+\section{\rust{parse\_\allowbreak{}trace} --- reading the proof into a trace}
+\label{sec:parse-trace}
+
+\rust{parse\_\allowbreak{}trace} (L24) consumes the proof byte stream and produces a
+\rust{VerifierTrace} struct holding every commitment and challenge in
+transcript order. This is the function whose schedule Table~\ref{tab:schedule}
+describes. Its shape (excerpt, L24--120):
+
+\begin{lstlisting}[style=rust]
+pub fn parse_trace<F, CS: PolynomialCommitmentScheme<F>, T: Transcript>(
+    vk: &VerifyingKey<F, CS>,
+    instances: &[&[&[F]]],
+    transcript: &mut T,
+) -> Result<VerifierTrace<F, CS>, Error> {
+    vk.hash_into(transcript);                       // (1) vk_digest absorb
+    // committed-instance identity absorb, num_instances + instance absorbs
+    // per-phase advice reads + challenge squeezes
+    // theta, multiplicities, beta, gamma, permutation product comms,
+    // lookup helpers + accumulator, trash_challenge, trash comms, y,
+    // quotient limbs, x, ...
+}
+\end{lstlisting}
+
+The trace struct (\rust{plonk/traces.rs}) carries:
+\begin{lstlisting}[style=rust]
+pub struct VerifierTrace<F, CS> {
+    pub advice_commitments: Vec<Vec<CS::Commitment>>, // per user phase
+    pub lookups: Vec<LookupTrace<CS>>,               // m, helpers, acc
+    pub trashcans: Vec<CS::Commitment>,
+    pub permutations: Vec<CS::Commitment>,           // z products
+    pub challenges: Vec<F>,                          // user challenges
+    pub beta: F, pub gamma: F, pub theta: F,
+    pub trash_challenge: F, pub y: F,
+}
+\end{lstlisting}
+
+\section{\rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints} --- the main body}
+\label{sec:verify-alg}
+
+This is the function the generated Solidity mirrors most directly. Its
+signature (L238) takes the VK, the parsed trace, the committed instances,
+the public instances, and the transcript, and returns a PCS verification
+guard. The body proceeds in the following stages.
+
+\subsection{Instance validation}
+\begin{lstlisting}[style=rust]
+if committed_instances.is_empty() {
+    return Err(Error::InvalidInstances);
+}
+let nb_committed_instances = committed_instances[0].len();
+let num_proofs = instances.len();
+\end{lstlisting}
+The supported profile additionally requires exactly one committed and one
+non-committed instance column; the codegen enforces this at build time
+(Section~\ref{sec:profile}) so the generated contract never has to branch
+on it.
+
+\subsection{Quotient limbs and the evaluation challenge}
+\begin{lstlisting}[style=rust]
+let nb_quotient_coms = vk.domain.get_quotient_poly_degree();
+let quotient_limb_coms = read_n(transcript, nb_quotient_coms)?;
+let x: F = transcript.squeeze_challenge();
+let splitting_factor = x.pow_vartime([vk.n() - 1]);
+let xn = splitting_factor * x;
+\end{lstlisting}
+This is rows 15--16 of Table~\ref{tab:schedule} and the splitting factor
+of Eq.~\eqref{eq:linearization}. \texttt{single-h-commitment} collapses
+the limbs to one commitment (the \texttt{outer-single-h-commitment}
+profile).
+
+\subsection{Instance evaluation}
+\begin{lstlisting}[style=rust]
+let l_i_s = &vk.domain.l_i_range(
+    x, xn,
+    -max_rotation..max_instance_len as i32 + min_rotation.abs(),
+);
+\end{lstlisting}
+Implements \eqref{eq:lagrange}--\eqref{eq:instance-eval}. The
+\texttt{l\_\allowbreak{}i\_\allowbreak{}range} helper uses the barycentric weight $1/n$
+(\rust{domain.rs} L448).
+
+\subsection{Partial identity evaluation}
+\begin{lstlisting}[style=rust]
+let expressions = partially_evaluate_identities(
+    vk, &fixed_evals, &instance_evals, &advice_evals,
+    permutations_evaluated.iter().map(|e| &e.sets),
+    lookups_evaluated.iter().map(|e| e.iter().map(|inner| &inner.evaluated)),
+    trashcans_evaluated.iter().map(|e| e.iter().map(|inner| &inner.evaluated)),
+    &permutations_common, x, xn, beta, gamma, theta, trash_challenge,
+    &challenges,
+);
+\end{lstlisting}
+Returns \rust{Vec<(Option<usize>, F)>}: each identity's evaluation tagged
+with its simple-selector column index (\texttt{None} = fully evaluated).
+This is the ordered list $\bigl(e_i(x)\bigr)$ of \eqref{eq:nu-y}.
+
+\subsection{Linearization and query assembly}
+\begin{lstlisting}[style=rust]
+let lin_com = compute_linearization_commitment(
+    expressions, vk, x, &y, &xn, &splitting_factor, &quotient_limb_coms);
+// ... queries = advice ++ committed-instance ++ perm-z ++ lookup ++ trash
+//     ++ fixed(non-simple) ++ perm-common ++ lin_com
+CS::multi_prepare(&queries, transcript).map_err(|_| Error::Opening)
+\end{lstlisting}
+The query list order (L577--652) is exactly the PCS query order the
+codegen's \cg{ProtocolPlan} reproduces (Section~\ref{sec:protocol-plan}).
+
+\section{\rust{partially\_\allowbreak{}evaluate\_\allowbreak{}identities}}
+\label{sec:partial-eval}
+
+In \rust{plonk/mod.rs} (L488), this function:
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item computes $\ell_{\mathsf{last}}, \ell_{\mathsf{blind}}, \ell_0$
+        from \eqref{eq:llast}--\eqref{eq:l0};
+  \item for each gate: evaluates the gate polynomial with the fixed/advice/
+        instance evals, and tags it with the simple-selector index via
+        \rust{gate.queried\_\allowbreak{}selectors().filter(is\_\allowbreak{}simple).next()};
+  \item appends permutation expressions (tagged \texttt{None}),
+        lookup expressions (\texttt{None}), trash expressions (\texttt{None}).
+\end{enumerate}
+The ordering gates $\to$ permutation $\to$ lookup $\to$ trash fixes the
+$y$-weights in \eqref{eq:nu-y}.
+
+\section{\rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment}}
+\label{sec:lin-com}
+
+The full function was quoted in Section~\ref{sec:linearization}; the key
+excerpt (L63--94):
+\begin{lstlisting}[style=rust]
+identities_points.extend(quotient_limb_commitments);
+let mut splitting_pow = F::ONE - *xn;
+for _ in 0..quotient_limb_commitments.len() {
+    identities_scalars.push(splitting_pow);
+    splitting_pow *= splitting_factor;
+}
+let mut grouped_points: BTreeMap<Option<usize>, F> = BTreeMap::new();
+let mut y_pow = F::ONE;
+expressions.iter().rev().for_each(|(col_idx, eval)| {
+    *grouped_points.entry(*col_idx).or_insert(F::ZERO) += y_pow * eval;
+    y_pow *= y;
+});
+let mut expected_eval = F::ZERO;
+grouped_points.into_iter().for_each(|(col_idx, eval)| {
+    match col_idx {
+        Some(col_idx) => { identities_points.push(&vk.fixed_commitments[col_idx]);
+                          identities_scalars.push(eval); }
+        None => { expected_eval -= eval; }
+    }
+});
+\end{lstlisting}
+This is literally \eqref{eq:linearization} and \eqref{eq:buckets}: the
+quotient limbs get scalars $(1-x^n)\cdot x_{\mathsf{split}}^i$; the
+reverse iteration with running $y^{\text{pow}}$ is the Horner form of
+\eqref{eq:nu-y}; \texttt{None} entries negate into the expected eval
+(Definition~\ref{def:neg-numer}).
+
+\section{Permutation identities}
+\label{sec:rust-perm}
+
+\rust{permutation.rs::expressions} (L187) builds the four families
+\eqref{eq:perm1}--\eqref{eq:perm-right}. The chunk running constant is
+\begin{lstlisting}[style=rust]
+let current_delta = beta * x * delta.pow_vartime([(chunk_index * chunk_len) as u64]);
+\end{lstlisting}
+with \rust{chunk\_\allowbreak{}len = cs\_\allowbreak{}degree - 2}. The verifier side
+(\rust{permutation/\allowbreak{}verifier.rs}) reads \rust{read\_\allowbreak{}product\_\allowbreak{}commitments}
+(one $z$ per set), evaluates $z_{\text{eval}}, z_{\text{next\_\allowbreak{}eval}}$ and
+$z_{\text{last\_\allowbreak{}eval}}$ (the latter only when more than one set exists),
+and emits PCS queries at $x$, $x_{\mathsf{next}} = \omega x$,
+$x_{\mathsf{last}} = \omega^{-(b+1)}x$.
+
+\section{Lookup (LogUp) identities}
+\label{sec:rust-lookup}
+
+\rust{logup.rs::expressions} (L400): compression
+$\mathsf{fold}(\mathsf{acc}\cdot\theta + \mathsf{eval})$; boundary
+$(\ell_0 + \ell_{\mathsf{last}})\cdot Z_{\mathsf{eval}}$; helper
+constraint \eqref{eq:lookup-helper} with partial products via
+$\bigl(\prod_k (f_k+\beta)\bigr)\cdot(f_j+\beta)^{-1}$; accumulator
+constraint \eqref{eq:lookup-acc} times the active-row mask
+$1-(\ell_{\mathsf{last}}+\ell_{\mathsf{blind}})$. The verifier
+(\rust{logup/verifier.rs}) reads multiplicities, then per lookup
+$\mathsf{nb\_\allowbreak{}chunks}$ helper commitments $+\,1$ accumulator, evaluates
+$m$, helpers, $z$, $z_{\text{next}}$, and emits PCS queries.
+
+\section{Trash identities}
+\label{sec:rust-trash}
+
+\rust{trash.rs::expressions} (L58): compressed $=$ fold of constraint
+evals with $\mathsf{acc}\cdot\mathsf{trash\_\allowbreak{}challenge} + \mathsf{eval}$;
+identity $=$ compressed $-\,(1-q)\cdot\mathsf{trash\_\allowbreak{}eval}$
+\eqref{eq:trash}. The verifier reads committed trash, evaluates, emits
+queries.
+
+\section{Transcript implementation}
+\label{sec:rust-transcript}
+
+\rust{transcript/\allowbreak{}implementors.rs} defines the Keccak256 hash (L186):
+\begin{lstlisting}[style=rust]
+fn squeeze(&mut self) -> [u8; 32] {
+    let digest = self.state.clone().finalize();   // clone, don't consume
+    self.state.reset();
+    self.state.update(digest.as_bytes());        // reseed with digest
+    *digest.as_ref()
+}
+\end{lstlisting}
+with sampling \rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r} (L19) interpreting
+the digest big-endian and reducing mod $r$. G1 \rust{to\_\allowbreak{}input} (L283)
+emits the 128-byte EIP-2537 uncompressed form \eqref{eq:g1-encoding};
+Fq \rust{to\_\allowbreak{}input} (L315) emits the reversed (big-endian) repr. These
+are the exact byte-level contracts the generated parser must match.
+
+\subsection{Production G1 \texttt{to\_input} (Keccak256)}
+\label{sec:rust-to-input}
+
+The verifier's G1 absorption uses
+\rust{Hashable<Keccak256> for midnight\_\allowbreak{}curves::G1Projective}
+(\texttt{implementors.rs} L264--297):
+\begin{lstlisting}[style=rust]
+fn to_input(&self) -> Vec<u8> {
+    let aff = G1Affine::from(self);
+    let mut out = vec![0u8; 128];
+    if !bool::from(aff.is_identity()) {
+        let raw = <G1Affine as UncompressedEncoding>::to_uncompressed(&aff);
+        let bytes: &[u8] = raw.as_ref();
+        out[16..64].copy_from_slice(&bytes[0..48]);    // x_be
+        out[80..128].copy_from_slice(&bytes[48..96]);  // y_be
+    }
+    out   // identity => 128 zero bytes
+}
+\end{lstlisting}
+This is the precise contract the generated
+\sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} mirrors: the identity
+encodes as 128 zero bytes (EIP-2537 convention, \emph{not} the BLS-spec
+\texttt{0x40}-leading form), and non-identity points place the 48-byte
+big-endian coordinates at offsets 16 and 80. The wire format
+(\rust{to\_\allowbreak{}bytes}) is unchanged --- 48-byte compressed --- so the
+uncompressed form is a transcript-only encoding.
+
+\section{Top-level entry: \rust{prepare}}
+\label{sec:rust-prepare}
+
+The public verifier entry point
+\rust{plonk/\allowbreak{}verifier.rs::prepare} (L659) is a thin composition of the
+two functions already covered:
+\begin{lstlisting}[style=rust]
+pub fn prepare<F, CS, T>(vk, committed_instances, instances, transcript)
+    -> Result<CS::VerificationGuard, Error>
+{
+    let trace = parse_trace(vk, committed_instances, instances, transcript)?;
+    verify_algebraic_constraints(vk, trace, committed_instances, instances, transcript)
+}
+\end{lstlisting}
+It returns the PCS \rust{VerificationGuard} (the \rust{DualMSM}) rather
+than a boolean; the caller invokes \rust{Guard::verify} to perform the
+final pairing. The generated Solidity collapses this three-step flow
+(\rust{parse\_trace} $\to$ \rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints} $\to$
+\rust{DualMSM::check}) into one \texttt{verifyProof} that returns
+\texttt{true} or reverts --- the guard is never materialized as a value.
+
+\section{The \rust{DualMSM} pairing accumulator}
+\label{sec:rust-dualmsm}
+
+The PCS guard is \rust{DualMSM<E>} (\texttt{poly/kzg/msm.rs}), a
+two-channel MSM accumulator. Its \rust{check} (L284) is the final
+pairing:
+\begin{lstlisting}[style=rust]
+pub fn check(self, params: &ParamsVerifierKZG<E>) -> bool {
+    let left = if self.left.scalars.len() == 1 && self.left.scalars[0] == F::ONE {
+        self.left.bases[0]            // single scalar-1 term: skip MSM
+    } else {
+        self.left.eval()
+    };
+    let right = self.right.eval();
+    let terms = &[(&left.into(), &params.s_g2_prepared),
+                 (&right.into(), &params.n_g2_prepared)];
+    bool::from(E::multi_miller_loop(&terms[..])
+        .final_exponentiation().is_identity())
+}
+\end{lstlisting}
+This is \eqref{eq:final-pairing-dual}:
+$e(\mathsf{left},[s]_2)\cdot e(\mathsf{right},-[1]_2)=1$ (with
+\texttt{n\_g2\_prepared} $=-[1]_2$). The \texttt{Guard::verify} trait
+impl (L228) wraps it as
+\texttt{self.check(params).then\_\allowbreak{}some(()).ok\_\allowbreak{}or(Error::OpeningError)}.
+
+\begin{itemize}
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Single-scalar-1 fast path.}}
+        When the left channel has exactly one term with scalar $1$, the
+        MSM is skipped and the base is used directly. The generated
+        \sol{ec\_pairing} does not replicate this micro-optimization
+        (it always runs the fused MSM); the result is identical, only
+        the Rust saves one MSM. No faithfulness impact.
+  \item \textcolor{tracegreen}{\textbf{[OK] Channel semantics.}}
+        \texttt{left} carries the $\pi$-side (paired with $[s]_2$) and
+        \texttt{right} the combined side (paired with $-[1]_2$),
+        matching the \texttt{PAIRING\_LHS}/\texttt{PAIRING\_RHS}
+        mapping documented in \S\ref{sec:ec-pairing}.
+\end{itemize}
+
+\section{KZG \rust{multi\_\allowbreak{}prepare}}
+\label{sec:rust-multiprep}
+
+Quoted in full in Section~\ref{sec:pcs-math}; the load-bearing excerpt is
+the $f_{\mathsf{eval}}$ fold (L471--482):
+\begin{lstlisting}[style=rust]
+let f_eval = point_sets.iter().zip(q_eval_sets.iter())
+    .zip(q_evals_on_x3.iter()).rev().fold(E::Fr::ZERO,
+    |acc_eval, ((points, evals), proof_eval)| {
+        let r_poly = lagrange_interpolate(points, evals);
+        let r_eval = eval_polynomial(&r_poly, x3);
+        let den = points.iter().fold(E::Fr::ONE, |acc, p| acc * &(x3 - p));
+        let eval = (*proof_eval - &r_eval) * den.invert().unwrap();
+        acc_eval * &(x2) + &eval
+    });
+\end{lstlisting}
+which is \eqref{eq:feval}. The final commitment and scalar (L488--527)
+are \eqref{eq:finalcom}--\eqref{eq:v}; the dual-MSM assembly (L540--558)
+is \eqref{eq:final-pairing-dual}.
+
+\section{Arithmetic helpers}
+\label{sec:rust-arith}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \rust{truncate} (L247): keeps the lower 16 little-endian bytes
+        ($=128$ bits).
+  \item \rust{truncated\_\allowbreak{}powers} (L255): $\mathsf{truncate}(x^i)$ with a
+        full-precision running accumulator.
+  \item \rust{lagrange\_\allowbreak{}interpolate} (L172): builds $r_s$ of
+        \eqref{eq:feval}.
+  \item \rust{eval\_\allowbreak{}polynomial} (L53): Horner evaluation.
+  \item \rust{inner\_\allowbreak{}product}/\rust{msm\_\allowbreak{}inner\_\allowbreak{}product} (L263/L275):
+        Eqs.~\eqref{eq:qcom}--\eqref{eq:v}.
+\end{itemize}
+
+\section{Trace instrumentation}
+\label{sec:rust-trace}
+
+Under the \texttt{solidity-verifier-trace} feature, every semantic value is
+recorded with a stable trace id (\rust{plonk/solidity\_\allowbreak{}trace.rs}):
+\boxid{1 vk\_\allowbreak{}digest}, \boxid{2 num\_\allowbreak{}instances}, \boxid{3 k},
+\boxid{4 n\_\allowbreak{}inv}, \boxid{5 omega}, \boxid{6 omega\_\allowbreak{}inv}, \boxid{7 theta},
+\boxid{8 beta}, \boxid{9 gamma}, \boxid{10 y}, \boxid{11 x},
+\boxid{12 trash\_\allowbreak{}challenge}, \boxid{13 x1}, \boxid{14 x2}, \boxid{15 x3},
+\boxid{16 x4}, \boxid{17 x\_\allowbreak{}n}, \boxid{18 x\_\allowbreak{}n\_\allowbreak{}minus\_\allowbreak{}1\_\allowbreak{}inv},
+\boxid{19 l\_\allowbreak{}last}, \boxid{20 l\_\allowbreak{}blind}, \boxid{21 l\_\allowbreak{}0},
+\boxid{22 instance\_\allowbreak{}eval}, \boxid{23 quotient\_\allowbreak{}eval}, \boxid{24 quotient},
+\boxid{25 f\_\allowbreak{}com}, \boxid{26 pi}, \boxid{29/30 acc lhs/rhs},
+\boxid{31 f\_\allowbreak{}eval}, \boxid{32 v}, \boxid{33 final\_\allowbreak{}com},
+\boxid{34 linearization com}, \boxid{35 final result}, \boxid{36 nu\_\allowbreak{}y(x)};
+bases: \boxid{1000} user challenges, \boxid{10000} proof commitments,
+\boxid{20000} proof evals, \boxid{30000} quotient identities,
+\boxid{40000} q\_\allowbreak{}com, \boxid{41000} point sets, \boxid{60000} selector
+folds. These ids are the backbone of the differential equivalence test
+(Chapter~\ref{ch:faithfulness}).

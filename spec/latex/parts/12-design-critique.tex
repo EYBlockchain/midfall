@@ -1,0 +1,954 @@
+% ============================================================================
+% Part 12: Design critique (harsh but constructive)
+% ============================================================================
+\chapter{Design critique: what is wrong here, and how to fix it}
+\label{ch:critique}
+
+The preceding chapters establish that the generated verifier is
+\emph{correct} --- no bug was found that breaks soundness on the
+reviewed artifacts. This chapter is not about correctness. It is
+about whether the \textbf{design} is sound, and it pulls no
+punches. The thesis: \emph{the architecture optimizes for the
+wrong axis (contract size) and pays for it in auditability,
+runtime cost, and unverified trust roots --- and it papers over
+each cost with a band-aid instead of fixing the cause.}
+
+A correct verifier that nobody can audit, that no tool can
+analyze, whose soundness level under truncated challenges is unstated, and whose
+trust root is a hand-written interpreter with no formal proof, is
+a liability even when it has no bug today. Each critique below is
+tagged \textcolor{rustorange}{\textbf{[CRITICAL]}} /
+\textcolor{mathpurple}{\textbf{[MAJOR]}} /
+\textcolor{codegenblue}{\textbf{[MINOR]}} and paired with a
+concrete, actionable fix.
+
+\paragraph{Status tags (re-verified).} Every item and fix also
+carries a status tag checked against generator \texttt{main} HEAD
+\texttt{6b3d2096} (2026-07-17) and the B64 render regenerated
+2026-07-28: \vstatus{ADDRESSED} (the current code already does
+it), \vstatus{PARTIAL}, \vstatus{OPEN}, or \vstatus{CORRECTED}
+(the critique's own factual premise was wrong and has been
+rewritten). B64 was rendered from the M7 follow-up line
+(\texttt{e7f736c4}), not from \texttt{main}; the mechanisms cited
+below exist in both, except the quotient-certificate-hash check
+(B64 L940), which only the render lineage has. \texttt{file:line}
+references are to \texttt{main} HEAD. Line numbers \texttt{L}$n$ refer to
+\texttt{Halo2VerifierFee12345B64.sol}: 3{,}579 lines (\texttt{wc -l}
+prints 3{,}578 because the closing brace has no trailing newline);
+\texttt{verifyProof} spans L293--L3578, i.e.\ \textbf{3{,}286 lines}.
+
+% ---------------------------------------------------------------------------
+\section{C1 --- The VM is the wrong abstraction}
+\label{sec:c1-vm}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL} \emph{(downgraded from
+CRITICAL --- see the severity reassessment below)}
+
+The ``generated verifier'' is not a verifier. It is a
+\textbf{bytecode interpreter} --- the VM dispatch loop is
+$\approx$873 lines of Yul (L1692--2564): $\approx$270 lines of
+fixed interpreter template (L1692--1929, L2531--2564) plus
+$\approx$600 lines of circuit-specific native-callback Yul emitted
+by the generator into the \texttt{0x19}/\texttt{0x1f}/\texttt{0x1b}
+arms (L1930--2530) --- plus an
+opaque \texttt{q\_program} blob of \textbf{4{,}559 bytes stored as
+143 hex words in the VK contract}. The actual verification logic
+is \textbf{invisible in the contract}: you cannot read what the
+verifier checks by reading the contract. You must disassemble
+4{,}559 bytes of bytecode against the VM ISA (31 opcodes defined,
+\texttt{vm/\allowbreak{}mod.rs:560--590}; only the 11 the program uses are
+rendered in B64) and mentally
+execute the VM to recover the semantics. \textbf{This is the
+real cost of the design, and it is large.}
+
+\paragraph{The runtime-cost half of the critique is FALSE (measured)} \vstatus{CORRECTED}
+My original framing claimed the VM is ``paid for at runtime.''
+Measurement refutes the significance of that claim, though the
+numbers first given here were wrong and are replaced:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item Decoding the VK's \texttt{q\_program} with the operand widths
+  of the rendered arms ends exactly at byte 4{,}559 and yields only
+  \textbf{101 instructions} (not 1{,}139): 16 \texttt{MODARITH7}
+  macro-instructions carry 4{,}331\,B (95\%) of limb-term operands
+  (1{,}151 terms), the rest are 85 short ops and native-callback
+  markers.
+\item Dispatch cost $\approx$ \texttt{mload} + \texttt{byte} + an
+  \textbf{11-arm} switch per instruction (not 31-way). Even if every
+  dispatch walked all 11 compare-and-branch steps
+  ($\approx$20 gas each), that is $\lesssim$225 gas per instruction,
+  i.e.\ $\lesssim$23k gas over 101 dispatches.
+\item Precompile gas $\approx$ \textbf{709.6k} (EIP-2537/EIP-2565
+  prices as in \texttt{revm-precompile} 16.2.0): 78-pair G1MSM
+  525{,}096 + six 1-pair G1MSMs (L827, 872, 3475, 3486, 3531, 3545)
+  72{,}000 + \textbf{one} 2-pair
+  pairing call 102{,}900 (the accumulator equation is folded into
+  it by a random $\alpha$, L3497--3553; the other \texttt{0x0f} call
+  is the constructor smoke test, L250) + four G1ADDs 1{,}500 + six
+  modexp inversions $\approx$8{,}124 (24{,}384 under EIP-7883, now live,
+  for a total of $\approx$725.9k).
+\item Measured \texttt{verifyProof} gas for B64 is $\approx$1.14M
+  (\texttt{nightfall\_\allowbreak{}4\_\allowbreak{}PV/\allowbreak{}audit/\allowbreak{}h2v-fee12345/\allowbreak{}evidence/\allowbreak{}bundle/\allowbreak{}logs-rerun/\allowbreak{}p1\_\allowbreak{}01\_\allowbreak{}abi.log}:
+  1{,}140{,}607). \textbf{Dispatch is $\lesssim$2\% of total}; precompiles
+  are $\approx$62\%, not ``40$\times$'' the rest.
+\end{itemize}
+So the \emph{dispatch} tax is negligible. The interpretive cost
+that remains is inside \texttt{MODARITH7}, which decodes its 1{,}151
+terms at run time (an \texttt{mload}/\texttt{byte}/\texttt{shr}
+per term); it is unmeasured for B64 but bounded well below the
+precompile floor. A critique that leans on ``the VM is slow'' is
+still wrong and should not be made.
+
+\paragraph{The generality-unused point} \vstatus{CORRECTED}
+The \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH\_\allowbreak{}WORD} anchor pins
+\textbf{one VK per verifier deployment} (\S\ref{sec:pr-vk-generic}),
+and the verifier also hard-codes circuit shape (e.g.\
+\texttt{let k := 21} at L1322 and L2846; the pruned 11-arm switch).
+But the VM was never meant to serve many circuits: the header
+says ``It is not a generic verifier'' (L11--13). Its justification
+is size, because the program lives in VK \emph{data} rather than
+verifier \emph{code}. So ``unused generality'' is not a design
+smell here. What remains is the cost below: the program is opaque.
+
+\paragraph{Steelman (stronger than I first credited).}
+The VM is justified by the 24\,KB EIP-170 limit: a fully
+specialized verifier for this 15-advice-column, degree-5 circuit
+with all constraints inlined would very likely not fit (B64's
+runtime is already 21{,}253\,B). Combined with the
+$\lesssim$2\% dispatch overhead, the VM is a
+\textbf{reasonable engineering choice on size and cost}. The
+failure is not the VM itself --- it is that \textbf{the size win
+was paid for in auditability and never bought back}: the program
+blob is not human-auditable. A size-driven VM is fine \emph{if} you
+then make the program legible --- which this design does not.
+
+\paragraph{Fix (refocused on the real cost: opacity, not speed).}
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{Emit an annotated disassembly appendix.} The
+  generator knows every opcode's meaning; emit the
+  \texttt{q\_program} as a commented block (in the VK or a
+  companion file), each instruction tagged with the circuit
+  constraint it enforces. This directly attacks the opacity at
+  zero runtime cost --- the single highest-value C1 fix.
+  \vstatus{PARTIAL}: the host-side
+  \texttt{quotient\_\allowbreak{}identity\_\allowbreak{}manifest()} API
+  (\texttt{builder/\allowbreak{}api.rs:121}) already maps every $y$-batch
+  position to its gate/constraint name, and the canonical
+  quotient-certificate hash (identity order, VM bytecode, constant
+  table) is checked on-chain against the VK header (L940); what is
+  missing is an opcode-level listing shipped with the artifact.
+\item \textbf{Formally verify the interpreter} --- it is the trust
+  root and the opcode set is bounded. Note the scope: the bounded
+  ISA is the $\approx$270-line template core; the $\approx$600
+  lines of native-callback Yul are regenerated per circuit and need
+  per-artifact checking (differential or translation validation),
+  not a one-off ISA proof. \vstatus{OPEN}
+\item \textbf{Differentially test the shipped program}
+  (\S\ref{sec:c-scorecard}): the VM is data-oblivious, so one passing
+  trace run of B64's own program shows its whole
+  disassembly is exercised. \vstatus{OPEN}
+\item \textbf{Document the size budget} in the contract header so
+  a reviewer understands the VM is a 24\,KB necessity, not
+  gratuitous indirection. \vstatus{OPEN}
+\item \textbf{Reconsider the per-VK pinning} if multi-VK reuse
+  was ever intended --- otherwise drop the pretense of generality
+  and document the verifier as single-VK. \vstatus{ADDRESSED}: the
+  NatSpec already says ``It is not a generic verifier \ldots\
+  generated for one \texttt{VerifyingKey}'' (L11--13).
+\end{itemize}
+
+\paragraph{Severity reassessment (why MAJOR, not CRITICAL).}
+A CRITICAL rating should mean \emph{a flaw that, left in place,
+accepts invalid proofs or loses funds}. C1 is not that. The
+verifier is \textbf{correct} --- the differential harness passes
+on the generator's fixtures and B64 passes Nightfall's own proof
+fixtures. The VM is \textbf{size-justified} (24\,KB limit) and
+\textbf{cheap} ($\lesssim$2\% dispatch). What C1 actually is: a
+\textbf{high auditability risk that amplifies the genuinely
+critical issues}. The opaque program blob and the 3{,}286-line
+\texttt{verifyProof} do not break soundness --- but they make
+the real soundness risks (C3 truncated challenges with an unstated level, C4
+unenforced invariants) \emph{harder for a human to spot}. A risk
+multiplier is serious, but it is not itself the fire. Rating it
+CRITICAL conflated ``hard to audit'' with ``broken,'' which is
+the kind of imprecision that erodes a critique's credibility.
+MAJOR is the honest grade: fix it because it makes everything
+else auditable, not because it is on fire.
+
+\paragraph{Remediation plan (prioritized, with effort and impact).}
+\begin{center}\small
+\begin{tabular}{@{}cp{4.3cm}cp{3.3cm}p{1.9cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Action} & \textbf{Effort} & \textbf{Buys} & \textbf{Status} \\
+\midrule
+R1 & Emit an \textbf{annotated disassembly} of \texttt{q\_program}
+  (opcode-by-opcode, each tagged with the circuit constraint) as
+  a companion file or VK comment block & M & Kills the opacity:
+  a reviewer reads constraints, not hex & \vstatus{PARTIAL} \\
+R2 & \textbf{Per-artifact differential run}: trace-compare each
+  shipped program (B64 included) against Rust in CI; a census of its
+  \texttt{used\_ops} (\texttt{vm/mod.rs:1217}; 11 in B64) shows what it
+  covers & S &
+  Turns ``tested some shapes'' into ``tested the program we ship'' & \vstatus{OPEN} \\
+R3 & \textbf{Split \texttt{verifyProof}} (3{,}286 lines) into
+  named sub-functions (transcript, quotient, pairing, acc) & M &
+  Auditable units; may \emph{reduce} (not remove) the via-IR
+  dependency, see C11 & \vstatus{OPEN} \\
+R4 & \textbf{Formal model of the VM ISA} ($\approx$270-line
+  template core, bounded opcode set) & L & Proves the trust root, not just
+  tests it & \vstatus{OPEN} \\
+R5 & \textbf{Document the size budget} + single-VK framing in
+  the header & S & Sets the reviewer's mental model right & \vstatus{PARTIAL} \\
+\bottomrule
+\end{tabular}
+\end{center}
+\textbf{Do R1 and R2 first} --- they are small, attack the real
+cost (opacity + unverified coverage), and together make the
+contract cross-checkable against the Rust verifier by human eyes.
+R3 is the structural fix; it helps, but does not by itself
+remove, the build fragility (C11).
+R4 is the gold-standard close for the trust root. None of these
+change the bytecode semantics --- they change what the generator
+\emph{emits}, which is the whole point: the artifact can be made
+legible without touching what it computes.
+
+% ---------------------------------------------------------------------------
+\section{C2 --- The trust root is differentially tested, but not formally verified}
+\label{sec:c2-trustroot}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL} \emph{(revised downward from
+CRITICAL after inspecting the CI)}
+
+Every proof this contract accepts is correct \emph{only if the
+Yul interpreter (template core plus generated callbacks) is correct}. The VM is the actual
+trust root. \textbf{Credit where due:} the generator's test
+harness, as wired in
+\texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}.github/\allowbreak{}workflows/\allowbreak{}ci.yml}, is
+genuinely rigorous --- it runs a property-based differential
+fuzzer (\texttt{pbt\_\allowbreak{}transcript\_\allowbreak{}differential\_\allowbreak{}fuzzer\_\allowbreak{}matches\_\allowbreak{}solidity\_\allowbreak{}trace})
+with \texttt{HALO2\_\allowbreak{}SOLIDITY\_\allowbreak{}RUN\_\allowbreak{}EVM\_\allowbreak{}TESTS=1}, plus dedicated
+\emph{native-vs-Solidity trace-equivalence} jobs for Poseidon and
+IVC compiled with
+\texttt{rust-verifier-trace,solidity-trace}. The comparison is
+bidirectional: every Rust trace id must appear in the Solidity
+trace, the Solidity trace must emit no id without a Rust
+oracle, and every shared id must carry equal bytes
+(\texttt{src/\allowbreak{}test.rs:1060--1103}). That is a high bar.
+\emph{Correction:} it does \emph{not} run on every PR. GitHub executes
+only workflows under the repository root's \texttt{.github/workflows},
+the nested \texttt{ci.yml} is inert in this monorepo, and the root
+\texttt{ci.yaml} has no solidity-verifier job. The harness exists and
+passes locally, but nothing gates PRs on it.
+
+\paragraph{The residual gap (why this is still a critique).}
+Differential testing proves equivalence \emph{on the shapes and
+traces exercised}, not a formal proof for all inputs. Two
+specific holes:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{Program-scoped coverage, not opcode-scoped.} The
+  generator renders only the switch arms a program uses
+  (\texttt{quotient.rs:194--229}), so B64 contains 11 of the
+  31 opcodes and every other byte hits the default revert (L2561);
+  an unrendered opcode cannot execute. The VM also has no jumps, and
+  every branch in the dispatch body depends only on program bytes,
+  so one honest run of a program executes \emph{all} of its rendered
+  arms and MODARITH7 sub-blocks. The question is therefore not
+  ``untested opcodes'' but ``has \emph{this} program been
+  differentially tested?''. The closest fixture, the IVC Keccak
+  decider (\texttt{tests/\allowbreak{}ivc\_\allowbreak{}keccak\_\allowbreak{}solidity.rs}, $k{=}20$), renders
+  a 4{,}559-byte program with the same 11-opcode histogram as B64
+  (checked against the local render in
+  \texttt{target/\allowbreak{}ivc-keccak-solidity-dump}). It is not byte-identical,
+  though: B64's $k{=}21$, 19-instance layout, embedded-quotient mode and
+  exact generator revision are never differentially tested, and the
+  other fixtures (Poseidon $k{=}6$, RSA/SHA/hybrid-MT $k{=}12$--13) are
+  far smaller.
+\item \textbf{Direct coverage is against a model, not the Yul.}
+  \texttt{vm/mod.rs} itself has 2 unit tests, but
+  \texttt{src/\allowbreak{}lowering/\allowbreak{}tests.rs} has over 20 VM tests,
+  including per-opcode encoder tests for LIN7, BILIN7\_ROW,
+  BILIN7\_PAIRWISE, POW5 and MODARITH7 (L2296--2750), validator
+  tests (L1521--1559) and a check that every opcode has a template
+  arm (L1445). They execute a Rust model interpreter
+  (\texttt{eval\_\allowbreak{}quotient\_\allowbreak{}vm\_\allowbreak{}for\_\allowbreak{}test}, L3093), so they pin the
+  encoder, not the Yul arms; the whole-program test interpreter
+  (\texttt{eval\_\allowbreak{}quotient\_\allowbreak{}program\_\allowbreak{}artifacts\_\allowbreak{}for\_\allowbreak{}test}, L3005)
+  panics on dynamic opcodes such as MODARITH7 (L3050), so it cannot
+  evaluate the production program. There is no EVM-level per-arm test.
+\end{itemize}
+
+\paragraph{Fix.}
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{Keep the differential harness and wire it into the
+  root CI} --- it is the right design, and today nothing gates on it.
+\item \textbf{Differentially test every shipped program}: render a
+  trace build of each production circuit (B64 included) and run the
+  bidirectional trace comparison. Because the VM is data-oblivious,
+  one passing run covers every rendered arm and sub-block. A
+  render-time census (\texttt{used\_ops}, \texttt{vm/mod.rs:1217},
+  plus MODARITH7 flag/block usage) makes it cheap to show which
+  fixture covers which artifact. This turns ``we tested some
+  shapes'' into ``we tested the program we ship.''
+\item \textbf{Run the existing Rust-model opcode tests against the
+  Yul arms} (same bytecode, executed in revm), so a Yul-arm bug is
+  caught directly rather than only through a fixture.
+\item For the residual gap, a \textbf{formal model of the VM
+  ISA} (the opcode set is small enough) would close it
+  definitively.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\section{C3 --- Truncated challenges: the soundness level is unstated}
+\label{sec:c3-soundness}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{OPEN}
+(arithmetic \vstatus{CORRECTED}: the bit-level figures of earlier drafts are withdrawn)
+
+The \texttt{truncated-challenges} feature masks \texttt{x3} to
+128 bits after squeeze (B64 L1270; Rust \texttt{poly/\allowbreak{}kzg/\allowbreak{}mod.rs:457})
+and the powers of \texttt{x1}/\texttt{x4} to 128 bits at use
+(\texttt{mod.rs:394, 502}); \texttt{x}, \texttt{y} and \texttt{x2}
+stay full width. The verifier is faithful to the Rust: the same
+truncation happens on both sides. The soundness level this leaves is not established here. The
+library's own doc comment (\texttt{proofs/\allowbreak{}src/\allowbreak{}utils/\allowbreak{}arithmetic.rs:242--245})
+warns that 128 bits ``may not be enough entropy depending on the
+application'' and cites a collision attack with $2^{64}$ memory and
+$\sim 2^{64}$ operations. Earlier drafts of this chapter derived a
+specific bit level from a Schwartz--Zippel bound; that derivation is
+withdrawn, and no replacement figure is given.
+
+\paragraph{The real problem: the silence.}
+The critique is about \emph{governance}. The contract ships with
+\textbf{no security-level statement}. The only trace in the artifact
+is a code comment at L1261--1269 saying the truncation ``mirrors
+midnight-proofs''. The header NatSpec, the generator docs and
+\texttt{docs/\allowbreak{}audit/\allowbreak{}CODEGEN\_\allowbreak{}ASSURANCE\_\allowbreak{}DOSSIER.md}
+state no security level. Truncation also buys no EVM gas: EIP-2537 prices
+an MSM independently of scalar width. It exists for in-circuit
+verification and is a global crate feature. A tradeoff that is
+\textbf{invisible to the consumer} is indistinguishable from an
+accident.
+
+\paragraph{Fix.}
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{Write down the soundness argument} for the truncated
+  multi-open challenges, and state the resulting level in the contract
+  header.
+\item \textbf{Record a security-team sign-off} that the level is
+  acceptable for this deployment's threat model. If it is not, the fix is
+  full-width challenges, which cost nothing on-chain for the outermost
+  wrap proof but need per-proof configuration in \texttt{midnight-proofs}.
+\item \textbf{Surface the truncation in the provenance header}
+  (C8) so a deployment audit can enumerate which verifiers are
+  truncated.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\section{C4 --- Load-bearing invariants are unenforced}
+\label{sec:c4-invariants}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL} \emph{(downgraded from
+CRITICAL --- the invariant holds today; the gap is that nothing
+keeps it holding)}
+
+The contract's safety rests on two invariants:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \emph{Every G1ADD operand is a G1MSM output, a VK constant,
+  or a proof point that an earlier G1MSM on the same
+  \texttt{success} chain has already validated}
+  (\S\ref{sec:pr-g1add-subgroup}) --- the thing that makes the
+  subgroup-cancellation attack unreachable. (The stricter wording
+  ``MSM output / VK constant'' is literally false for L3550: its
+  \texttt{PAIRING\_LHS} operand is $\pi$ copied raw at L3471; $\pi$
+  is safe because \texttt{G1MSM}$(x_3,\pi)$ at L3486 has already
+  subgroup-checked it.) \vstatus{OPEN}: nothing asserts this.
+\item \emph{Every transcript-absorbed point flows to a checking
+  precompile} --- the thing that makes the deferred transcript
+  check sound. \vstatus{ADDRESSED} at codegen time:
+  \texttt{validate\_\allowbreak{}generator\_\allowbreak{}invariants} (\texttt{plan.rs:238},
+  run at \texttt{plan.rs:164}) calls
+  \texttt{kzg::validate\_\allowbreak{}absorbed\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage}
+  (\texttt{kzg/mod.rs:602}), which fails the render if an absorbed
+  proof G1 is missing from the precompile-input set. Caveat: it
+  checks the generator's \emph{model} of those inputs, not the
+  emitted Yul (the model credits $\pi$ to ``final pairing input'',
+  \texttt{kzg/mod.rs:560}, although with the accumulator batch
+  $\pi$ reaches the pairing only through the L3550 G1ADD; its
+  actual subgroup gate is the L3486 G1MSM).
+\end{itemize}
+
+\paragraph{Why this is MAJOR, not CRITICAL (measured).}
+These invariants \textbf{hold today} --- the G1ADD cancellation
+attack was traced and shown \emph{unreachable}
+(\S\ref{sec:pr-g1add-subgroup}): every G1ADD operand is a
+point already in $G_1$ (a G1MSM output, or $\pi$ after its G1MSM
+check), so no operand carries a cofactor component. There is \textbf{no
+current vulnerability}. A CRITICAL rating requires a live flaw;
+this is a \emph{defense-in-depth gap} --- the safety is real but
+unprotected. The honest grade is MAJOR.
+
+\paragraph{The real risk: silent future breakage.}
+The danger is not today, it is the \textbf{next codegen
+refactor}. A future change that emits a G1ADD with a raw proof
+point that no earlier G1MSM has validated turns a mathematically-possible attack into a
+live one, and \textbf{no test or assertion catches it} because
+the G1ADD half of the invariant was never written down as a check. The safety is a
+property of the current emission, not an enforced contract on
+future emission. That is fragile, and fragility in a soundness
+boundary is worth fixing now.
+
+\paragraph{Fix.}
+\textbf{Codegen-time assertions that fail the build.} The absorbed-point
+half already exists (above); add the G1ADD half: the
+generator should statically verify, before rendering, that every
+G1ADD operand is an MSM output/constant or a point validated by an
+earlier MSM on the same success chain, and derive both checks from
+the emitted precompile calls rather than a parallel model. An invariant that
+isn't machine-checked is a comment, not a guarantee. This is
+cheap (a static pass over the emitted precompile graph) and converts
+``it happens to be safe'' into ``it cannot be emitted unsafe.''
+
+% ---------------------------------------------------------------------------
+\section{C5 --- The contract defeats stock automated tools}
+\label{sec:c5-tools}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL}
+
+Stock slither 0.11.6 \emph{crashes} in the IR$\to$SSA pass
+(\texttt{RecursionError} in \texttt{add\_phi\_origins}); aderyn
+false-positives on assembly patterns (its own L-3 note admits it
+cannot see assembly references); semgrep is blind. A contract
+that \textbf{stock linters cannot analyze} is a contract that can only
+be audited by expensive manual review --- which does not scale
+and is error-prone. ``Semgrep clean'' here is not assurance; it
+is the absence of a capable observer. The assembly-VM choice
+directly causes this.
+
+\paragraph{Correction (measured).} The crash is not caused by
+switch nesting. SSA construction recurses once per
+dominator-tree level, and a straight-line Yul body is a dominator
+\emph{chain}; \texttt{verifyProof} has 2{,}816 CFG nodes. With
+three small patches (iterative dominator walks, a deep-recursion
+worker thread, Yul \texttt{leave} CFG edges), slither analyses B64
+completely (\texttt{nightfall\_\allowbreak{}4\_\allowbreak{}PV/\allowbreak{}audit/\allowbreak{}slither-2026-09-29},
+\texttt{runs/\allowbreak{}generated\_\allowbreak{}B64\_\allowbreak{}final.txt}). Its
+\texttt{unused-state} detector then resolves the assembly
+references correctly and flags exactly the 5 pointer constants
+that really are unreferenced (\texttt{CHALLENGE\_MPTR},
+\texttt{Q\_COM\_MPTR}, \texttt{G1\_\allowbreak{}IDENTITY\_\allowbreak{}MPTR},
+\texttt{QUOTIENT\_\allowbreak{}RETURN\_\allowbreak{}MPTR}, \texttt{TRACE\_U256\_MPTR}); it
+also reports a dead store (L2003--2004), and the audit's
+Slither-API pass confirms that all 18 \texttt{staticcall}s check
+\texttt{returndatasize}. So aderyn's 76 L-3 hits are 71 false
+positives and 5 true ones, not all false. The residual critique
+stands: the tools see Yul arithmetic but nothing of the proof
+system, so ``tool-clean'' is still not assurance.
+
+\paragraph{Fix.}
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item Upstream the three slither patches, and shorten the
+  dominator chain at the source: splitting \texttt{verifyProof}
+  into functions (R3 / \S\ref{sec:read-decompose}) bounds each
+  CFG. Splitting only the VM \texttt{switch} would not help.
+\item Ship a \textbf{Solidity-level reference implementation}
+  alongside the assembly, used for tooling and differential
+  testing against the assembly hot loop.
+\item Do not let ``tools can't run'' become the accepted state ---
+  a contract that resists all tooling is a contract that resists
+  maintenance.
+\end{itemize}
+
+% ---------------------------------------------------------------------------
+\section{C6 --- Compiler-internal names leak into the audited artifact}
+\label{sec:c6-names}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{OPEN}
+
+The contract carries \textbf{163 distinct \texttt{varN} names}
+(980 uses; 442 \texttt{let varN} declarations, because numbering
+restarts per emitted block and the same name denotes different
+values in different blocks) and
+\textbf{31 \texttt{f\_N}/\texttt{a\_N} names} --- generator-internal
+identifiers emitted into the file a human must read. (The
+\texttt{f\_N}/\texttt{a\_N} names are the one place the generator
+already passes a semantic hint: fixed/advice column $N$,
+\texttt{yul\_emit.rs:1142}.) The
+generator \emph{knows} the semantic role of every variable (it
+assigned it) and still emits \texttt{var47}. This is the
+generator being lazy about the audit surface: it optimizes its own
+emission simplicity over the reviewer's comprehension.
+
+\paragraph{Fix.}
+Name variables semantically in the emitted code --- the generator
+has the mapping (for gate subexpressions, the gate and constraint
+names of the quotient identity manifest). \texttt{var47} $\to$
+\texttt{perm\_\allowbreak{}z\_\allowbreak{}numerator\_\allowbreak{}term}. This is a pure codegen change
+with zero runtime cost and a large readability win (\S\ref{sec:read-varnames}). The same
+applies to the anonymous VM scratch addresses
+(\S\ref{sec:pr-legend}, \S\ref{sec:read-named-addr}).
+
+% ---------------------------------------------------------------------------
+\section{C7 --- The pairing helper's parameter names invert the slot names}
+\label{sec:c7-naming}
+\textcolor{codegenblue}{\textbf{[MINOR]}} \vstatus{CORRECTED}
+
+\texttt{ec\_\allowbreak{}pairing(success, PAIRING\_\allowbreak{}RHS, PAIRING\_\allowbreak{}LHS)} (L3569)
+passes the slots in the opposite order to the helper's parameter
+names \texttt{lhs\_\allowbreak{}mptr, rhs\_\allowbreak{}mptr} (L534). The original critique
+called the slot names ``backwards'' and the rename ``never made''.
+That is wrong on both counts. The slot names follow the Rust
+\texttt{DualMSM}: \texttt{left} $=\pi$, \texttt{right} $=$
+\texttt{final\_com} $- vG + x_3\pi$ (\texttt{poly/\allowbreak{}kzg/\allowbreak{}mod.rs:554--558}),
+and the differential trace pins them as ids 27/28
+``pairing\_lhs''/``pairing\_rhs''. Rust checks
+$e(\text{left},[s]_2)\,e(\text{right},-[1]_2)=1$ (\texttt{msm.rs:284--300});
+Solidity checks the equivalent $e(\text{right},[1]_2)\,e(\text{left},-[s]_2)=1$.
+The swap is explained at the call site in a 12-line comment (L3555--3567,
+template \texttt{FinalPairing.yul:65--79}). A wrong argument order
+would reject every honest proof, which every positive test catches,
+so it is not a latent soundness hazard. Renaming the slots
+would break the name-level correspondence with Rust and the trace.
+
+\paragraph{Fix.}
+Rename the \emph{helper's parameters}, not the slots:
+\texttt{ec\_\allowbreak{}pairing(success, g2\_\allowbreak{}one\_\allowbreak{}side\_\allowbreak{}mptr, neg\_\allowbreak{}s\_\allowbreak{}side\_\allowbreak{}mptr)}
+(\texttt{AssemblyHelpers.yul:213}) removes the trap without breaking
+the correspondence. If semantic slot names are wanted, use
+\texttt{KZG\_PI} / \texttt{KZG\_\allowbreak{}COMBINED\_\allowbreak{}COMMITMENT}. The earlier
+suggestion \texttt{KZG\_EVAL\_POINT} was wrong: $\pi$ is the opening
+witness commitment, not an evaluation point.
+
+% ---------------------------------------------------------------------------
+\section{C8 --- No provenance metadata}
+\label{sec:c8-provenance}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{OPEN}
+
+The contract records \textbf{no generator version, no Rust commit
+hash, no generation timestamp}. It does carry content-derived
+identifiers: the VK's \texttt{vk\_digest} (the transcript
+representation of the constraint system), \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH\_\allowbreak{}WORD}
+(L46), and, in the B64 lineage, \texttt{EXPECTED\_\allowbreak{}QUOTIENT\_\allowbreak{}CERTIFICATE\_\allowbreak{}HASH\_\allowbreak{}WORD}
+(L51). These identify \emph{which circuit/VK} a verifier accepts,
+but not \emph{which generator build} produced it. For a generated
+artifact this is unmaintainable: you cannot tell whether a given
+deployed contract was produced by the current generator or a
+stale one. When a bug is found in the generator, you have
+no way to enumerate the affected deployments. The project's own
+\texttt{docs/\allowbreak{}audit/\allowbreak{}CODEGEN\_\allowbreak{}ASSURANCE\_\allowbreak{}DOSSIER.md} already lists the
+record a production claim needs (Midfall revision, toolchain, Cargo
+features, solc version and flags); the artifact just does not carry it.
+
+\paragraph{Fix.}
+Embed a provenance header as constants plus a comment:
+\texttt{GENERATOR\_\allowbreak{}VERSION}, \texttt{RUST\_COMMIT},
+\texttt{CARGO\_FEATURES} (e.g.\ \texttt{truncated-challenges}),
+\texttt{GENERATED\_AT}, and name the existing
+\texttt{vk\_digest}/codehash words as the circuit id. Unreferenced
+constants do not change the runtime bytecode, but any source edit
+changes the CBOR metadata hash unless metadata is omitted (the
+generator's builds pass \texttt{--no-cbor-metadata},
+\texttt{src/evm.rs:209}); keep volatile fields such as the timestamp
+in a sidecar manifest. Make the
+generator stamp every artifact. This is table stakes for
+generated code.
+
+% ---------------------------------------------------------------------------
+\section{C9 --- Magic constants hand-synced with no assertion}
+\label{sec:c9-magic}
+\textcolor{codegenblue}{\textbf{[MINOR]}} \vstatus{ADDRESSED}
+
+\emph{Original claim:} \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}PAYLOAD\_\allowbreak{}LENGTH = 17056}, the permutation
+$\delta$, \texttt{q\_\allowbreak{}perm\_\allowbreak{}chunk\_\allowbreak{}len} must be kept in
+sync with the VK by the generator, but nothing in the
+contract asserts they match the loaded VK.
+
+\emph{Re-verified:} the length \emph{is} asserted.
+\texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}LENGTH} $=$ payload $+1$ (the \texttt{INVALID}
+prefix) is checked together with the full-runtime codehash at
+construction (L266--267) and again on every proof (L921--922,
+template \texttt{VkLoading.yul:67--70}); the codehash covers every
+payload byte. After the copy, the VK header words
+\texttt{NUM\_INSTANCES}, \texttt{K}, \texttt{HAS\_ACCUMULATOR},
+\texttt{ACC\_OFFSET}, \texttt{NUM\_ACC\_LIMBS} and
+\texttt{NUM\_\allowbreak{}ACC\_\allowbreak{}LIMB\_\allowbreak{}BITS} are cross-checked against the
+generator's constants (L934--939, \texttt{VkLoading.yul:82--88},
+commit \texttt{e64f2891}); the B64 lineage also checks the
+quotient-certificate hash (L940). $\delta$ is not VK data: it is the
+field constant \texttt{Fq::DELTA} (\texttt{quotient.rs:1379}).
+\texttt{q\_\allowbreak{}perm\_\allowbreak{}chunk\_\allowbreak{}len} is shape metadata from the same
+constraint system that the pinned VK digests.
+
+\paragraph{Fix (residual).}
+None needed for soundness. Optionally derive
+\texttt{q\_\allowbreak{}perm\_\allowbreak{}chunk\_\allowbreak{}len} from a VK header word and cross-check it
+like the others.
+
+% ---------------------------------------------------------------------------
+\section{C10 --- The negated-numerator sign convention is a footgun}
+\label{sec:c10-sign}
+\textcolor{codegenblue}{\textbf{[MINOR]}} \vstatus{CORRECTED}
+
+The verifier stores $-\nu_y(x)$ at \texttt{QUOTIENT\_\allowbreak{}EVAL\_\allowbreak{}MPTR}
+(L2823--2824), not at \texttt{QUOTIENT\_MPTR}, which in this path
+holds \texttt{x\_split} and \texttt{one\_minus\_x\_n} (L2865--2866).
+The trace re-negates it for id 36 (\texttt{TraceReturn.yul:37}). The
+original critique said a dropped or doubled negation would
+``silently'' accept wrong proofs or reject right ones. It would not
+be silent. The negation is not a Solidity trick: it is Rust's
+\texttt{expected\_eval}, into which
+\texttt{compute\_\allowbreak{}linearization\_\allowbreak{}commitment} subtracts the fully
+evaluated identities. The value is pinned by the differential
+trace (id 36 against \texttt{verifier.rs:508--524}), and every
+positive end-to-end test fails if the sign flips. The convention is
+documented three times (L120--122, L1460--1461, L2820--2822). What
+remains is a naming problem: the constant's own comment calls
+\texttt{QUOTIENT\_\allowbreak{}EVAL\_\allowbreak{}MPTR} a ``legacy name''.
+
+\paragraph{Fix.}
+Rename the slot after what it holds
+(\texttt{LINEARIZATION\_\allowbreak{}EXPECTED\_\allowbreak{}EVAL\_\allowbreak{}MPTR}) and drop the legacy
+\texttt{QUOTIENT\_MPTR} name in the fused path. Keep the negation,
+since it matches the Rust oracle term for term.
+
+% ---------------------------------------------------------------------------
+\section{C11 --- Build fragility: \texttt{via-ir} is load-bearing}
+\label{sec:c11-build}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL}
+\emph{(upgraded from MINOR: see the spill-area paragraph)}
+
+The contract \textbf{will not compile with the default codegen}
+(re-verified with solc 0.8.30 without \texttt{--via-ir}:
+``Stack too deep \ldots\ Variable \texttt{src} is 1 slot(s) too
+deep''). A compiler flag is load-bearing for the build.
+If CI misconfigures, the contract fails to build --- which is
+fail-closed (good) --- but it signals the code is operating at
+the edge of the compiler's limits.
+
+\paragraph{Already pinned} \vstatus{ADDRESSED}. The generator
+compiles only with \texttt{--via-ir} (\texttt{src/evm.rs:206});
+the flag set is recorded in
+\texttt{docs/\allowbreak{}audit/\allowbreak{}REVIEW\_\allowbreak{}PACKET.md:71} and the assurance dossier;
+Nightfall's \texttt{foundry.toml} (L31--50) pins \texttt{via\_ir}
+per file for the B8/B64 verifiers through
+\texttt{compilation\_\allowbreak{}restrictions}, citing the stack-too-deep error.
+
+\paragraph{The spill area (new, measured).} Under
+\texttt{--via-ir} (solc 0.8.30 and 0.8.35, 200 runs) the deployed
+code starts with
+\texttt{PUSH2 0x08e0 PUSH1 0x40 MSTORE}: solc's stack-limit evader
+has reserved the 67-word area $[\texttt{0x80},\texttt{0x8e0})$ for Yul
+locals it moved to memory (for example \texttt{y} at \texttt{0x300} and the
+MODARITH7 pairwise inner-loop counter at \texttt{0x80}). The generated code writes
+the same range as \texttt{TRANSCRIPT\_MPTR} $=$
+\texttt{RETURN\_MPTR} $=$ \texttt{0x80}, the accumulator batch at
+\texttt{0x100}--\texttt{0x320}, and the \texttt{ec\_pairing} scratch
+at \texttt{0x300}--\texttt{0x600}. So the
+\texttt{assembly ("memory-safe")} promise, which the generator makes
+precisely so via-IR can spill (\texttt{tests.rs:2127}), is formally
+broken. It works today only because the spilled locals are live
+in the quotient phase alone, where no generated write goes below
+\texttt{0x8e0}. That is consistent with every fixture passing, but
+nothing checks it, and any Yul restructuring (e.g.\ R3) or solc
+upgrade reshuffles the spill set.
+
+\paragraph{Fix.}
+Keep \texttt{via-ir}; removing it is not realistic. The first legacy
+error is in the 6-parameter helper \texttt{load\_\allowbreak{}acc\_\allowbreak{}coord\_\allowbreak{}shifted}
+(L573), not in the VM dispatch, and the gas tuning assumes via-IR.
+Instead, close the spill hazard. Either
+start generated absolute scratch above a fixed margin and add a CI
+gate that parses the deployed \texttt{memoryguard} and fails if it
+exceeds that base, or make the planner reserve
+$[\texttt{0x80},\textit{memoryguard})$ from a first compilation pass.
+
+% ---------------------------------------------------------------------------
+\section{C12 --- ``Generated'' hides that the real artifact is the compiler}
+\label{sec:c12-framing}
+\textcolor{mathpurple}{\textbf{[MAJOR]}} \vstatus{PARTIAL}
+
+The framing ``we generate the verifier'' obscures where the
+complexity actually lives. The contract is small and opaque; the
+\textbf{semantic content is in the generator} --- the shape
+recognizer, the fusion decision, the run compactor, the offline
+validator (\S\ref{sec:pr-offline-validator} onward). Auditing the
+contract does not audit the system; \textbf{auditing the
+generator does}. The VM's auditability win is an illusion: the
+complexity was not removed, it was \textbf{relocated to a
+harder-to-audit place}. (The earlier claim that the generator gets
+the \emph{least} review discipline was too strong. It has
+$\approx$187 \texttt{\#[test]} functions, a pre-render invariant
+pass (\texttt{plan.rs:238}), proptest-based property tests, a
+pinned runtime hash for the IVC fixture
+(\texttt{scripts/\allowbreak{}check\_\allowbreak{}release\_\allowbreak{}bytecode\_\allowbreak{}sizes.sh}), and
+\texttt{docs/\allowbreak{}audit/\allowbreak{}CODEGEN\_\allowbreak{}ASSURANCE\_\allowbreak{}DOSSIER.md}. What it lacks is
+a CI that runs any of this on PRs (\S\ref{sec:c2-trustroot}) and
+the items below.)
+
+\paragraph{Fix.}
+Apply the same review rigor to the generator that you would to a
+hand-written verifier. Property-based tests over the lowering
+passes exist in part; still missing are a golden-program corpus
+with expected disassembly (one pinned hash per shipped artifact,
+not only the IVC fixture) and a formal model of the VM ISA. Treat
+the generator as the product and the contract as its output
+artifact.
+
+% ---------------------------------------------------------------------------
+\section{What the design actually gets right}
+\label{sec:c-balance}
+
+To be fair --- and a critique that only lists faults is not
+credible --- the design has genuine strengths that should be
+preserved:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item \textbf{The differential trace-equivalence harness} is the
+  standout. The crate's own workflow file defines a PBT differential
+  fuzzer and dedicated native-vs-Solidity trace-equivalence jobs
+  (Poseidon, IVC) with bidirectional id-and-value matching.
+  This is more assurance than most verifier projects ship, and it
+  is the reason the ``correct'' verdict in this review is
+  trustworthy --- once it actually gates PRs (it is not wired into
+  the monorepo's root CI; \S\ref{sec:c2-trustroot}).
+\item \textbf{The fail-closed dispatch chain}
+  (\S\ref{sec:pr-failclosed}) is exemplary: unknown opcodes,
+  unknown sub-cases, and non-terminal VM states all revert. This
+  is the right default and it is consistently applied.
+\item \textbf{The double codehash anchor}
+  (\S\ref{sec:pr-vk-generic}) --- checked at both the Solidity
+  and Yul levels --- is a clean, defense-in-depth trust binding.
+\item \textbf{The offline bytecode validator}
+  (\S\ref{sec:pr-offline-validator}) --- a static analyzer that
+  checks stack effects before rendering --- is a genuinely good
+  idea that most codegen projects lack. The same holds for the
+  pre-render invariant pass (\texttt{plan.rs:238}: memory
+  non-overlap, absorbed-G1 precompile coverage, PCS/quotient
+  drift), which fails the build rather than emitting.
+\item \textbf{The constant interning and run compaction} are real
+  engineering, not hand-waving.
+\end{itemize}
+These show the team \emph{can} do rigorous work. The critique
+above is that the rigor is applied unevenly: the generator's
+internal machinery and its differential harness are strong, while the
+artifact it produces is left opaque, the trust root is
+differentially tested but not formally verified, and the
+produced contract resists stock tooling.
+
+% ---------------------------------------------------------------------------
+\section{Measured auditability scorecard}
+\label{sec:c-scorecard}
+
+To keep the critique honest, the readability findings are
+quantified against the B64 artifact (3{,}579 lines). Numbers,
+not vibes. Counts are over code with \texttt{//} comments stripped.
+The memory-operand metric is the first argument of
+\texttt{mload}/\texttt{mstore}/\texttt{mcopy} (914 such ops) when
+that argument is a bare constant: 492 raw \texttt{0x}\ldots\
+literals (246 distinct addresses) against 64 named
+\texttt{*\_MPTR}/\texttt{*\_CPTR}. Counting \texttt{add(BASE, off)}
+forms too gives 514 raw against 176 named. The same metric is used
+in \S\ref{sec:read-measure}.
+
+\begin{center}\small
+\begin{tabular}{@{}p{5.6cm}rp{5.2cm}@{}}
+\toprule
+\textbf{Metric} & \textbf{Value} & \textbf{Reading} \\
+\midrule
+Comment : code lines & 47.2\% & \textcolor{tracegreen}{\textbf{Good}} --- 1{,}109 comment vs 2{,}350 code lines (120 blank) \\
+Named constants & 79 & \textcolor{tracegreen}{\textbf{Good}} --- 68 pointer constants (\texttt{*\_MPTR}/\texttt{*\_CPTR}/\texttt{*\_MPTR\_BASE}), 63 referenced, 5 dead \\
+\texttt{varN} SSA names & 163 distinct / 980 uses & \textcolor{rustorange}{\textbf{Bad}} --- generator names leak (C6) \\
+Raw-hex literals & 1{,}409 (573 distinct) & \textcolor{rustorange}{\textbf{Bad}} --- 0.60 per code line \\
+Memory-operand naming & 11.5\% named / 88.5\% raw hex & \textcolor{rustorange}{\textbf{Bad}} --- 64 named vs 492 raw (246 distinct) (I9) \\
+Memory ops & 914 (480 / 336 / 98) & \texttt{mload} / \texttt{mstore} / \texttt{mcopy}; scratch traffic is the bulk of the code \\
+\texttt{verifyProof} length & \textbf{3{,}286 lines} & \textcolor{rustorange}{\textbf{Bad}} --- god-function (C1) \\
+Nested Yul functions & 17 & helpers are named (mitigates C6) \\
+Branch points & 2 switch / 15 case / 73 if & VM dispatch + guards \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{What the numbers say.}
+The contract is \emph{heavily commented} (47\% --- genuinely
+helpful) and the \emph{high-level} memory map is named (68
+pointer constants). But the \emph{working} code is dominated by
+anonymous scratch: \textbf{88.5\% of bare-constant memory
+operands are raw hex}, 163 \texttt{varN} names carry the
+dataflow, and the whole verifier is one \textbf{3{,}286-line
+\texttt{verifyProof}}. The comments describe the code; they do
+not substitute for naming it. A reviewer reads 1{,}109 lines of
+prose and then still has to decode 492 raw-hex memory operands
+(246 distinct addresses: 183 in the final-MSM/quotient scratch
+from \texttt{0xa320}, 60 in the decoded-eval buffer from
+\texttt{0x8520}, 3 low) and 980 \texttt{varN} references by hand.
+
+\paragraph{The confirmed C2 coverage gap (measured, corrected).}
+The VM ISA defines \textbf{31 opcodes} (\texttt{Q\_\allowbreak{}OP\_\allowbreak{}PUSH\_\allowbreak{}CONST}
+\ldots \texttt{Q\_\allowbreak{}OP\_\allowbreak{}AFFINE\_\allowbreak{}SUM}, \texttt{vm/\allowbreak{}mod.rs:560--590}), but a
+render contains only the arms its program uses. B64 has 11
+(\texttt{0x05, 0x06, 0x08, 0x0b, 0x0d, 0x10, 0x11, 0x19, 0x1b,
+0x1f, 0x21}); \texttt{BILIN7\_PAIRWISE}, \texttt{POW5} and the
+other 18 are not rendered and would hit the default revert (L2561),
+so they cannot be ``untested code in production''. B64's MODARITH7
+instructions use the mem/product (``escape-hatch'') blocks heavily
+and never the pairwise block. The differential test's
+required-coverage check (\texttt{src/\allowbreak{}test.rs:1697--1743}) asserts
+\emph{semantic verifier stages} --- challenge ids 7--11 and 13--16,
+quotient numerator (36), f\_eval (31),
+final MSM (33), pairing lhs/rhs (27/28), final pairing (35),
+and trace ranges 30k--42k / 60k--61k --- and compares every
+per-identity value, but it records \textbf{no arm or sub-block
+coverage}. Since the VM is data-oblivious, that is enough for any
+program that is tested at all. The closest fixture, the IVC Keccak
+decider, renders the same 11-opcode histogram as B64, so B64's arms
+are exercised \emph{in shape}; B64's exact program, $k{=}21$ layout and
+embedded-quotient mode are not. None of it is gated by the monorepo's
+root CI. This is the precise, measurable form of C2's residual:
+\emph{a tested shape $\neq$ the tested shipped program}.
+
+\paragraph{Composite verdict.}
+Readability is \textbf{Fair}: strong comments and a named
+high-level map, undermined by anonymous scratch (88.5\% raw-hex
+bare memory operands), leaked generator names, a 3{,}286-line
+god-function, and a differential test that checks stages but not
+rendered arms. Every one of these is a codegen-emission choice, not a
+runtime necessity --- the same bytecode could be emitted with
+named slots, semantic variable names, split functions, and an
+arm-coverage assertion (split functions would need the spill-area
+re-check of C11). The gap between ``correct'' and
+``auditable'' is entirely a matter of what the generator chooses
+to emit.
+
+\section{Audit runbook: how to actually audit this contract}
+\label{sec:c-runbook}
+
+The critique says the contract is hard to audit. The constructive
+capstone is a concrete procedure that makes it auditable
+\emph{today}, working around the tooling gaps with the
+assurance the project already provides. A reviewer with a day
+and this list can reach a sound verdict.
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=4pt]
+\item \textbf{Build integrity.} Compile with
+  \texttt{solc --via-ir --optimize} (the contract will not build
+  without \texttt{via-ir} --- stack-too-deep). Confirm the
+  runtime is \texttt{<24\,KB} (measured 21{,}253\,B with CBOR
+  metadata, 21{,}200\,B without, solc 0.8.30, 200 runs). The
+  pragma is \emph{not} pinned (\texttt{\^{}0.8.24}), so record the
+  exact compiler (generator: 0.8.30, \texttt{src/evm.rs:78};
+  Nightfall: 0.8.35, \texttt{foundry.toml}). Read the deployed
+  prefix \texttt{PUSH2 }$g$\texttt{ PUSH1 0x40 MSTORE} and confirm
+  no spilled local is live across generated writes below $g$
+  (C11; $g=$\texttt{0x8e0} today). \emph{Evidence:} \texttt{solc} output,
+  \texttt{--bin-runtime} size and prefix.
+\item \textbf{VK binding (the trust anchor).} Verify
+  \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH\_\allowbreak{}WORD} matches the deployed
+  VK's \texttt{extcodehash} and length, at \emph{both} the Solidity level
+  (L266--267) and the Yul level (L921--922), and that the header
+  cross-checks (L934--940) match the VK words. A mismatch here breaks
+  everything downstream. \emph{Evidence:}
+  \texttt{getCode(vk)} vs the constant.
+\item \textbf{Read the named skeleton.} Walk the 68 named
+  pointer constants (63 referenced; VK header, challenges
+  \texttt{THETA/\allowbreak{}BETA/\allowbreak{}GAMMA/\allowbreak{}Y/\allowbreak{}X}, pairing inputs). This is the
+  readable high-level map --- understand the data flow here
+  before touching the VM.
+\item \textbf{Transcript schedule cross-check.} Compare the
+  Fiat--Shamir absorb order against the Rust verifier's
+  schedule (\S\ref{sec:rust-transcript} / \S\ref{sec:transcript-schedule}). The order is
+  soundness-critical; a reordering is silent. \emph{Evidence:}
+  the differential trace (step 7) also covers this.
+\item \textbf{Fail-closed dispatch.} Confirm the three-layer
+  revert chain: main opcode switch default (L2561), heavy-gate
+  u16 sub-dispatch default (L2528), and the terminal guards
+  (\texttt{q\_pc==q\_end} and \texttt{!q\_has\_top}, L2569--2570).
+  Check that the 11 rendered arms match the decoded program's
+  opcode census.
+  \emph{Evidence:} \S\ref{sec:pr-failclosed}.
+\item \textbf{G1ADD operand provenance.} For each of the 4
+  runtime G1ADDs (L3480, L3490, L3536, L3550), confirm each operand is a
+  G1MSM output, a VK constant, or a proof point already validated by an
+  earlier G1MSM on the same \texttt{success} chain (L3550's
+  \texttt{PAIRING\_LHS} is raw $\pi$, validated by the L3486 G1MSM;
+  \S\ref{sec:pr-g1add-subgroup}, \S\ref{sec:c4-invariants}). This is the one manual check
+  that must not be skipped --- it is what makes the
+  subgroup-cancellation attack unreachable.
+\item \textbf{Run the differential harness.} Execute the
+  native-vs-Solidity trace-equivalence jobs (Poseidon + IVC)
+  with \texttt{rust-verifier-trace,solidity-trace} and
+  \texttt{HALO2\_\allowbreak{}SOLIDITY\_\allowbreak{}RUN\_\allowbreak{}EVM\_\allowbreak{}TESTS=1}. This is the
+  strongest single assurance --- bidirectional trace matching
+  against the Rust oracle. \emph{Evidence:} the job definitions in
+  \texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}.github/\allowbreak{}workflows/\allowbreak{}ci.yml}, which
+  GitHub does not execute in this monorepo, so run them yourself. They
+  validate the \emph{generator} on its fixtures; for B64 itself,
+  render a trace build of the fee circuit and run the same
+  comparison, since nothing else does.
+\item \textbf{VM scratch legend.} Use the named-constant legend
+  (\S\ref{sec:pr-legend}) or the R1 disassembly to map the
+  $\approx$45 distinct raw-hex addresses in the VM body (L1692--2564)
+  to witness/permutation columns.
+  Without this, the VM body is unreadable.
+\item \textbf{Tooling triage.} Run aderyn/semgrep and clear the
+  \emph{known} false positives: shift-order (H-1),
+  return-in-Yul (H-2), unused-state-var (L-3, except the 5 genuinely
+  dead constants of C5). Run slither with the three patches of
+  \texttt{nightfall\_\allowbreak{}4\_\allowbreak{}PV/\allowbreak{}audit/\allowbreak{}slither-2026-09-29}. Do not treat
+  ``semgrep clean'' as assurance --- it cannot see the assembly
+  (\S\ref{sec:pr-tooling}).
+\item \textbf{Security level.} Confirm the truncation
+  (\S\ref{sec:c3-soundness}) has a written soundness argument, is
+  labeled, and is signed off for the deployment's threat model.
+\end{enumerate}
+
+\paragraph{Why this runbook works.}
+It substitutes the project's \emph{own} strong assurance (the
+differential harness, the codehash anchor, the fail-closed chain)
+for the tooling that cannot reach the assembly. The two checks
+that genuinely require human attention are \#2 (the trust
+anchor) and \#6 (the G1ADD provenance) --- everything else is
+either mechanical or covered by the harness. That is a tractable
+audit surface for a contract that stock linters cannot analyze.
+
+\section{Critique summary}
+\label{sec:c-summary}
+
+\begin{center}\small
+\begin{tabular}{@{}p{0.27\linewidth}ccp{0.40\linewidth}@{}}
+\toprule
+\textbf{Critique} & \textbf{Sev} & \textbf{Status} & \textbf{Concrete fix} \\
+\midrule
+C1 VM is the wrong abstraction & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & Annotated disassembly (R1) + arm-coverage assertion (R2); split \texttt{verifyProof} (R3). Runtime-cost claim corrected (101 instr., dispatch $\lesssim$2\%) \\
+C2 Trust root diff-tested, not formally verified & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & Wire the harness into root CI; differentially test each shipped program; run the Rust-model opcode tests against the Yul arms \\
+C3 Truncated challenges, level unstated & \textcolor{mathpurple}{MAJOR} & \vstatus{OPEN} & Write the soundness argument; state the level in the header + security sign-off \\
+C4 Invariants unenforced (hold today) & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & Absorbed-point check exists (\texttt{plan.rs:245}); add the G1ADD-provenance check \\
+C5 Defeats stock tooling & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & Upstream the slither patches; split \texttt{verifyProof} (not the switch); Solidity reference impl \\
+C6 Compiler names leak & \textcolor{mathpurple}{MAJOR} & \vstatus{OPEN} & Semantic variable naming in emitted code \\
+C7 Pairing helper parameter names & \textcolor{codegenblue}{MINOR} & \vstatus{CORRECTED} & Slot names follow Rust \texttt{DualMSM}; rename the helper's parameters only \\
+C8 No provenance & \textcolor{mathpurple}{MAJOR} & \vstatus{OPEN} & Stamp generator version, commit, features; sidecar manifest per the dossier \\
+C9 Magic constants unasserted & \textcolor{codegenblue}{MINOR} & \vstatus{ADDRESSED} & Length + codehash checked (L266, L921); header words cross-checked (L934--940) \\
+C10 Sign-convention footgun & \textcolor{codegenblue}{MINOR} & \vstatus{CORRECTED} & Mirrors Rust \texttt{expected\_eval}, pinned by trace id 36; rename \texttt{QUOTIENT\_\allowbreak{}EVAL\_\allowbreak{}MPTR} \\
+C11 via-ir load-bearing & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & via-IR already pinned; gate the \texttt{memoryguard} spill area against generated scratch \\
+C12 ``Generated'' hides the real artifact & \textcolor{mathpurple}{MAJOR} & \vstatus{PARTIAL} & Golden per-artifact corpus + formal ISA model on top of the existing tests \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Bottom line.}
+After measurement, \textbf{no critique survived as CRITICAL} ---
+and that is the most important finding of this chapter. The
+verifier is \textbf{correct} (the generator's differential harness
+passes against the Rust oracle, though no CI gates on it; B64 passes
+Nightfall's own fixtures), and its safety invariants
+\textbf{hold} (the G1ADD cancellation is unreachable). The
+design's problems are all \textbf{MAJOR auditability and
+governance concerns}, not soundness breaks: an opaque program
+blob, a 3{,}286-line god-function, leaked generator names, an
+unlabeled security level, a G1ADD invariant that holds by
+emission rather than by assertion (the absorbed-point half is now
+asserted), and a via-IR spill area that overlaps generated scratch
+with nothing checking the live ranges. None of these lose funds
+today. All of them make the next bug easier to hide and the
+security posture harder to verify.
+
+This is a favorable result delivered harshly: the team built a
+\emph{correct} verifier, and the fail-closed chain, the offline
+validator, and the differential harness prove they \emph{can} do
+rigorous work. The gap is one of \textbf{priority and
+communication} --- the rigor went into the generator's internals
+but not into making the produced artifact legible, the security
+level loud, or the safety invariants enforced. Almost every fix in this
+chapter changes only what the generator \emph{emits}, never what
+it computes (the C11 spill fix may move scratch addresses). Fix the priority, and the design becomes as
+auditable as it is correct.

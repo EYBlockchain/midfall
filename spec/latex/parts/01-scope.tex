@@ -1,0 +1,143 @@
+% ============================================================================
+% Part 1 --- Scope, supported profile, reading guide
+% ============================================================================
+\chapter{Scope and Supported Profile}
+\label{ch:scope}
+
+\section{What this document specifies}
+\label{sec:what}
+
+This document specifies the \emph{Solidity verifier code generator} located in
+\texttt{proofs/\allowbreak{}solidity-verifier}, and justifies that the Solidity/\allowbreak{}Yul program it
+emits is a \textbf{faithful translation} of the Rust reference verifier in
+\texttt{proofs/\allowbreak{}src/\allowbreak{}plonk/\allowbreak{}verifier.rs} (together with its KZG multi-open
+sub-protocol in \texttt{proofs/\allowbreak{}src/\allowbreak{}poly/\allowbreak{}kzg/\allowbreak{}mod.rs}).
+
+``Faithful'' is given a precise operational meaning in
+Section~\ref{sec:faithful-meaning}: every algebraic check, every transcript
+absorption, every range check, and every rejection path present in the Rust
+verifier has a corresponding, semantically equivalent operation in the
+generated Solidity, and the two implementations produce \emph{identical}
+intermediate values at every semantic checkpoint (verified by differential
+tracing, Chapter~\ref{ch:faithfulness}).
+
+\subsection*{Three layers}
+The specification tracks three layers throughout:
+\begin{enumerate}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Rust reference verifier} (\rust{proofs/\allowbreak{}src/\allowbreak{}\ldots}) --- the
+        source of truth: halo2-style plonk verification over BLS12-381 with a
+        KZG polynomial commitment scheme and a Keccak Fiat--Shamir transcript.
+  \item \textbf{Code generator} (\cg{proofs/\allowbreak{}solidity-verifier/\allowbreak{}src/\allowbreak{}\ldots}) ---
+        a Rust program that \emph{plans} every fact about the verifier
+        (memory layout, proof byte layout, transcript schedule, quotient
+        bytecode, PCS schedule) and then renders Solidity/\allowbreak{}Yul through Askama
+        templates.
+  \item \textbf{Generated Solidity} (\sol{Halo2Verifier.sol}) --- the
+        terminal EVM program: a single \texttt{verifyProof(bytes,bytes[])}
+        entry point that either returns \texttt{true} or reverts.
+\end{enumerate}
+
+\section{The supported profile}
+\label{sec:profile}
+
+The generator deliberately supports a \emph{narrow, pinned profile}. Faithfulness
+is claimed only inside this profile; outside it the generator refuses to emit
+(compile-time or plan-time errors), rather than emitting a subtly wrong verifier.
+The profile constraints, and where each is enforced, are:
+
+\begin{longtable}{@{}p{0.30\linewidth}p{0.34\linewidth}p{0.28\linewidth}@{}}
+\toprule
+\textbf{Constraint} & \textbf{Enforcement site} & \textbf{Rust counterpart} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Constraint} & \textbf{Enforcement site} & \textbf{Rust counterpart} \\
+\midrule
+\endhead
+Exactly one \emph{committed} instance column (the identity commitment) and
+exactly one non-committed instance column.
+&
+\cg{builder/\allowbreak{}api.rs::validate\_\allowbreak{}instance\_\allowbreak{}column\_\allowbreak{}shape} rejects any other shape.
+&
+\rust{verifier.rs::verify\_\allowbreak{}algebraic\_\allowbreak{}constraints} instance validation
+(committed non-empty, equal lengths, committed $+$ normal $=$
+\texttt{num\_\allowbreak{}instance\_\allowbreak{}columns}). \\
+\addlinespace
+No rotated queries against non-committed instance columns.
+&
+\cg{builder/\allowbreak{}api.rs} rejects \texttt{RotatedInstanceQuery}.
+&
+Rust reads non-committed instances only via Lagrange interpolation at
+rotation $0$; a rotated read would need a commitment the profile does not have. \\
+\addlinespace
+BLS12-381 scalar field $\Fr$ with EIP-2537 precompiles; Cancun+ (MCOPY).
+&
+\cg{evm.rs} pinned \texttt{solc 0.8.30}; \cg{PrecompileSmoke.sol} probes
+MCOPY/\allowbreak{}G1ADD/\allowbreak{}G1MSM/\allowbreak{}PAIRING at construction.
+&
+\rust{transcript/\allowbreak{}implementors.rs} Keccak + EIP-2537 uncompressed G1 encoding. \\
+\addlinespace
+Feature flags: \texttt{truncated\allowbreak{}challenges},
+\texttt{fewer\allowbreak{}point\allowbreak{}sets},
+\texttt{outer\allowbreak{}single\allowbreak{}h\allowbreak{}commitment},
+\texttt{committed\allowbreak{}instances},
+\texttt{keccak\allowbreak{}transcript}.
+&
+\cg{lib.rs} re-exports; lowering reads them to pick schedules.
+&
+\rust{poly/\allowbreak{}kzg/\allowbreak{}mod.rs} \texttt{\#[cfg(feature = \ldots)]} branches. \\
+\addlinespace
+Pinned verifying key: VK digest, payload length, and payload codehash are
+baked into the generated contract as constants.
+&
+\cg{lowering/\allowbreak{}vk.rs::generate\_\allowbreak{}base\_\allowbreak{}vk}; constants
+\texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH} etc.\ in \sol{Constants.sol}.
+&
+\rust{plonk/\allowbreak{}mod.rs::hash\_\allowbreak{}into} absorbs \texttt{transcript\_\allowbreak{}repr} first. \\
+\bottomrule
+\end{longtable}
+
+\begin{remark}[Why a narrow profile is a feature, not a limitation]
+Faithfulness of a general lowering of an arbitrary halo2 verifier to gas-costed
+Yul is an open-ended problem. By pinning the circuit family (one identity
+commitment column, one public-instance column, fixed feature flags, pinned VK),
+the space of generated programs becomes finite and fully inspectable: every
+generated contract in this repository is accompanied by a recorded
+\texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH} and a differential trace test that pins every
+intermediate scalar. The audit surface collapses from ``all circuits'' to
+``the lowering function itself''.
+\end{remark}
+
+\section{Reading guide}
+\label{sec:reading}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Chapter~\ref{ch:math}} states the verifier algorithm as
+        mathematics: transcript sampling, Lagrange evaluation, the four
+        identity families (gate, permutation, lookup, trash), the
+        $y$-batched quotient numerator, the linearization, the KZG multi-open
+        reduction, and the final pairing. Every later section refers back to
+        equation numbers here.
+  \item \textbf{Chapter~\ref{ch:rust}} walks the Rust reference verifier
+        function by function, with exact code excerpts.
+  \item \textbf{Chapter~\ref{ch:codegen}} walks the code generator: how it
+        plans the protocol, the memory map, the proof layout, the quotient
+        virtual machine, and the PCS schedule.
+  \item \textbf{Chapter~\ref{ch:solidity}} walks the generated Solidity/\allowbreak{}Yul.
+  \item \textbf{Chapter~\ref{ch:correspondence}} is the core deliverable:
+        per-stage tables mapping \rust{Rust} $\leftrightarrow$ \cg{codegen}
+        $\leftrightarrow$ \sol{Solidity} with equation references.
+  \item \textbf{Chapter~\ref{ch:faithfulness}} assembles the faithfulness
+        argument: semantic checkpoints, trace-equivalence testing, mutation
+        testing, and an explicit list of every check in the Rust verifier and
+        where it lives in the generated code.
+  \item \textbf{Chapter~\ref{ch:ledger}} is the coverage ledger: every module
+        and public function visited, with status.
+\end{itemize}
+
+\subsection*{Notation conventions}
+Throughout, \rust{orange text} denotes Rust reference-verifier identifiers,
+\cg{blue text} denotes code-generator identifiers, and \sol{slate text}
+denotes generated Solidity/\allowbreak{}Yul identifiers. Trace identifiers are written
+\boxid{id~N}. Memory pointers are written in hexadecimal, e.g.\
+\texttt{0x2b60}.

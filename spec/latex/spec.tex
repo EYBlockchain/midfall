@@ -1,0 +1,147 @@
+% ============================================================================
+% Specification of the Solidity Verifier Code Generator
+% midfall proofs: Halo2/plonk KZG verifier for BLS12-381, lowered to EVM Yul
+% Compile: tectonic spec.tex
+% ============================================================================
+\documentclass[11pt,a4paper]{report}
+
+\usepackage[margin=2.4cm]{geometry}
+% absorb residual overfull lines from long identifiers
+\emergencystretch=3em
+\sloppy
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+% breakable, ragged-right paragraph column for long identifiers
+\newcolumntype{L}[1]{>{\raggedright\scriptsize\arraybackslash}p{#1}}
+\usepackage{enumitem}
+\usepackage[colorlinks=true,linkcolor=blue!60!black,urlcolor=blue!50!black]{hyperref}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric}
+
+% ---------------------------------------------------------------- colors ---
+\definecolor{rustorange}{HTML}{B7410E}
+\definecolor{codegenblue}{HTML}{1F5FA8}
+\definecolor{soliditygray}{HTML}{3C5A66}
+\definecolor{mathpurple}{HTML}{5B2C87}
+\definecolor{lightgray}{HTML}{F2F2F2}
+\definecolor{tracegreen}{HTML}{1E7145}
+
+% ------------------------------------------------------------- listings ---
+\lstdefinestyle{rust}{
+  language={},
+  basicstyle=\ttfamily\scriptsize,
+  keywordstyle=\color{rustorange}\bfseries,
+  commentstyle=\color{black!45}\itshape,
+  stringstyle=\color{black!70},
+  numbers=none, frame=single, framesep=4pt, rulecolor=\color{black!25},
+  backgroundcolor=\color{rustorange!5}, breaklines=true, breakindent=10pt,
+  columns=fullflexible, keepspaces=true, showstringspaces=false,
+  tabsize=4, xleftmargin=6pt, xrightmargin=6pt, aboveskip=8pt, belowskip=8pt,
+}
+\lstdefinestyle{yul}{
+  language={},
+  basicstyle=\ttfamily\scriptsize,
+  commentstyle=\color{black!45}\itshape,
+  numbers=none, frame=single, framesep=4pt, rulecolor=\color{black!25},
+  backgroundcolor=\color{soliditygray!6}, breaklines=true, breakindent=10pt,
+  columns=fullflexible, keepspaces=true, showstringspaces=false,
+  tabsize=4, xleftmargin=6pt, xrightmargin=6pt, aboveskip=8pt, belowskip=8pt,
+}
+\lstdefinestyle{plain}{
+  language={}, basicstyle=\ttfamily\scriptsize, frame=single, framesep=4pt,
+  rulecolor=\color{black!25}, backgroundcolor=\color{lightgray},
+  breaklines=true, columns=fullflexible, keepspaces=true,
+  xleftmargin=6pt, xrightmargin=6pt, aboveskip=6pt, belowskip=6pt,
+}
+
+% ----------------------------------------------------------- macros ------
+\newcommand{\Fr}{\mathbb{F}_r}
+\newcommand{\Fq}{\mathbb{F}_q}
+\newcommand{\Gr}{\mathbb{G}_1}
+\newcommand{\GrT}{\mathbb{G}_2}
+\newcommand{\GT}{\mathbb{G}_T}
+\newcommand{\Z}{\mathbb{Z}}
+\newcommand{\cm}[1]{\widetilde{#1}}
+\newcommand{\Com}{\mathsf{Com}}
+\newcommand{\keccak}{\mathsf{keccak256}}
+\newcommand{\msm}{\mathsf{MSM}}
+\newcommand{\pair}[2]{e\!\left(#1,\,#2\right)}
+\newcommand{\legend}[1]{{\color{black!55}\footnotesize #1}}
+\newcommand{\rust}[1]{{\color{rustorange}\texttt{#1}}}
+\newcommand{\cg}[1]{{\color{codegenblue}\texttt{#1}}}
+\newcommand{\sol}[1]{{\color{soliditygray}\texttt{#1}}}
+\newcommand{\chk}[1]{\textcolor{tracegreen}{\checkmark}\;\text{#1}}
+\newcommand{\boxid}[1]{{\color{tracegreen}\texttt{#1}}}
+% verification-status tag for critique/roadmap items, e.g. \vstatus{ADDRESSED}
+\newcommand{\vstatus}[1]{\textcolor{tracegreen}{\textbf{[#1]}}}
+
+% custom theorem-like environments
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{remark}{Remark}[section]
+\newtheorem{protocol}{Protocol}[section]
+\theoremstyle{plain}
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{claim}{Faithfulness Claim}[section]
+
+% ---------------------------------------------------------------- header ---
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\footnotesize Solidity Verifier Codegen Specification --- midfall/proofs}
+\fancyhead[R]{\footnotesize \thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+\title{\bfseries Specification of the Solidity Verifier\\[2pt]
+\large Code-Generative Lowering of the Halo2/KZG Verifier to EVM Yul\\[6pt]
+\normalsize \textcolor{black!60}{\texttt{midfall/proofs/solidity-verifier}}}
+\author{Generated specification --- coverage-complete audit edition}
+\date{}
+
+\begin{document}
+\maketitle
+\vspace{-2.5em}
+\begin{center}
+\small\textcolor{black!60}{
+Target curve: BLS12-381 \quad $\cdot$ \quad PCS: KZG (multi-open) \quad $\cdot$ \quad
+Transcript: Keccak-256 Fiat--Shamir \quad $\cdot$ \quad Precompiles: EIP-2537, EIP-198}
+\end{center}
+
+\vfill
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{0.22\linewidth}p{0.72\linewidth}@{}}
+\toprule
+\textbf{Reference verifier} & \texttt{proofs/src/plonk/verifier.rs} (+ \texttt{poly/kzg}) \\
+\textbf{Code generator} & \texttt{proofs/solidity-verifier/src/} (Askama in \texttt{templates/}) \\
+\textbf{Generated artifact} & \texttt{Halo2Verifier.sol} (Yul-in-assembly); optional \texttt{Halo2VerifyingKey}, \texttt{Halo2QuotientEvaluator} \\
+\textbf{Equivalence evidence} & differential trace tests (Rust \texttt{solidity\_trace} vs.\ Solidity LOG1) \\
+\bottomrule
+\end{tabular}
+\end{center}
+\vfill
+
+\tableofcontents
+\newpage
+
+% ============================================================================
+\input{parts/01-scope}
+\input{parts/02-math}
+\input{parts/03-rust}
+\input{parts/04-codegen}
+\input{parts/05-solidity}
+\input{parts/06-correspondence}
+\input{parts/07-faithfulness}
+\input{parts/08-ledger}
+\input{parts/09-deep-audit}
+\input{parts/10-roadmap}
+\input{parts/11-production-review}
+\input{parts/12-design-critique}
+\input{parts/13-readability-plan}
+\input{parts/14-verification-pass}
+
+\end{document}

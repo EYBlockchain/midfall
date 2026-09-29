@@ -1,0 +1,402 @@
+% ============================================================================
+% Part 7 --- Faithfulness argument
+% ============================================================================
+\chapter{The Faithfulness Argument}
+\label{ch:faithfulness}
+
+\section{What ``faithful'' means}
+\label{sec:faithful-meaning}
+
+\begin{definition}[Faithful lowering]
+\label{def:faithful}
+The generated Solidity verifier $V_{\mathsf{sol}}$ is a \emph{faithful
+translation} of the Rust reference verifier $V_{\mathsf{rust}}$ on profile
+$P$ if, for every input $(\mathsf{vk}, \mathsf{proof}, \mathsf{instances})$
+in $P$:
+\begin{enumerate}[label=(\alph*)]
+  \item \textbf{Acceptance agreement:} $V_{\mathsf{rust}}$ accepts iff
+        $V_{\mathsf{sol}}$ returns \texttt{true} (otherwise reverts).
+  \item \textbf{Semantic checkpoint equality:} at every semantic checkpoint
+        (challenge, identity eval, PCS intermediate, pairing input), the
+        intermediate value in $V_{\mathsf{sol}}$ equals the corresponding
+        value in $V_{\mathsf{rust}}$.
+  \item \textbf{Check preservation:} every rejection condition in
+        $V_{\mathsf{rust}}$ has a corresponding rejection in
+        $V_{\mathsf{sol}}$ that fires on the same inputs.
+  \item \textbf{No extra acceptance:} $V_{\mathsf{sol}}$ accepts no input
+        that $V_{\mathsf{rust}}$ rejects.
+\end{enumerate}
+\end{definition}
+
+We cannot prove (a)--(d) for all inputs by testing alone. What we have is a
+\emph{layered} argument: a structural correspondence (Chapters
+\ref{ch:rust}--\ref{ch:correspondence}) that reduces the claim to a finite
+set of semantic checkpoints, plus differential testing that verifies those
+checkpoints on a large, adversarial input corpus, plus mutation testing
+that verifies the rejection paths.
+
+\section{Semantic checkpoints}
+\label{sec:checkpoints}
+
+The lowering is organized around six semantic checkpoints. Each is a point
+where the two implementations must agree on a concrete value, and each is
+backed by a trace id (or range) in the differential test.
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+  \item \textbf{Parser / proof reads.} The proof byte stream is consumed in
+        exactly the order of Table~\ref{tab:schedule}; the
+        \texttt{proof\_\allowbreak{}cptr == NUM\_\allowbreak{}INSTANCE\_\allowbreak{}CPTR} check pins total
+        consumption. Trace ids \boxid{10000+} (commitments) and
+        \boxid{20000+} (evals) pin every read value.
+  \item \textbf{Transcript challenges.} Every squeeze matches
+        Definition~\ref{def:squeeze}. Required ids: \boxid{7--16}.
+  \item \textbf{Quotient identities.} Each identity evaluation matches
+        \eqref{eq:gate-identity}--\eqref{eq:trash}; the batched numerator
+        matches \eqref{eq:nu-y}. Required range \boxid{30000--40000} and
+        id \boxid{36}.
+  \item \textbf{Linearization.} The expected eval
+        $-\nu_y(x)$ and the commitment-side scalars match
+        \eqref{eq:linearization}. Id \boxid{34}, selector folds
+        \boxid{60000+}.
+  \item \textbf{KZG multi-open.} Point sets, $q_{\mathsf{com}}$,
+        $f_{\mathsf{eval}}$, $v$, $C_{\mathsf{final}}$ match
+        \eqref{eq:qcom}--\eqref{eq:v}. Ranges \boxid{40000--42000},
+        ids \boxid{31--33}.
+  \item \textbf{Final pairing.} The pairing inputs and result match
+        \eqref{eq:final-pairing}. Ids \boxid{27,28,35}.
+\end{enumerate}
+
+\section{Differential trace testing}
+\label{sec:diff-testing}
+
+The test harness (\cg{test.rs}) runs the Rust verifier with the
+\texttt{solidity-verifier-trace} feature and the generated Solidity in a
+revm EVM with trace hooks, then calls
+\cg{assert\_\allowbreak{}trace\_\allowbreak{}equivalence\_\allowbreak{}and\_\allowbreak{}required\_\allowbreak{}coverage} (L1060):
+\begin{lstlisting}[style=rust]
+// 1. every Rust trace id present in Solidity
+// 2. every Solidity trace id has a Rust oracle
+// 3. required coverage: ids 7-16, 31-33, 36, 35,
+//    ranges 30000-40000, 40000-41000, 41000-42000, 60000-61000
+// 4. byte equality for every id
+for (id, solidity_data) in solidity_trace {
+    let (name, rust_data) = rust_trace.get(id).unwrap();
+    assert_eq!(rust_data, solidity_data,
+        "trace mismatch id={id} name={name}");
+}
+\end{lstlisting}
+This is run across the full fixture corpus: poseidon, ivc-keccak,
+moonlight-wrap, sha, rsa, hybrid-mt circuits, each with embedded and
+separate VK, with and without accumulators.
+
+\section{Mutation and rejection testing}
+\label{sec:mutation}
+
+Faithfulness of the \emph{rejection} paths is tested by mutation:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \cg{pbt\_\allowbreak{}solidity\_\allowbreak{}verifies\_\allowbreak{}standard\_\allowbreak{}plonk\_\allowbreak{}embedded\_\allowbreak{}vk\_\allowbreak{}proofs}
+        --- positive control.
+  \item \cg{pbt\_\allowbreak{}solidity\_\allowbreak{}rejects\_\allowbreak{}wrong\_\allowbreak{}instances} --- flipping an
+        instance value must revert (breaks \eqref{eq:instance-eval} and
+        the transcript).
+  \item \cg{pbt\_\allowbreak{}solidity\_\allowbreak{}rejects\_\allowbreak{}malleated\_\allowbreak{}proofs} --- flipping any
+        proof bit must revert (breaks a commitment, an eval, or the
+        transcript).
+  \item \cg{pbt\_\allowbreak{}solidity\_\allowbreak{}rejects\_\allowbreak{}wrong\_\allowbreak{}verifying\_\allowbreak{}keys} --- a VK
+        mismatch must revert (breaks \eqref{eq:vk-digest}).
+  \item \cg{pbt\_\allowbreak{}separate\_\allowbreak{}vk\_\allowbreak{}digest\_\allowbreak{}prefix\_\allowbreak{}affects\_\allowbreak{}verification} ---
+        the digest prefix binds the circuit.
+  \item \cg{pbt\_\allowbreak{}structured\_\allowbreak{}proof\_\allowbreak{}calldata\_\allowbreak{}mutations\_\allowbreak{}are\_\allowbreak{}rejected} ---
+        structured (not just bit-flip) mutations revert.
+  \item \cg{pbt\_\allowbreak{}proof\_\allowbreak{}layout\_\allowbreak{}repack\_\allowbreak{}and\_\allowbreak{}reader\_\allowbreak{}stay\_\allowbreak{}in\_\allowbreak{}sync} ---
+        the repacker and parser agree on layout; truncation reverts.
+  \item \cg{pbt\_\allowbreak{}transcript\_\allowbreak{}differential\_\allowbreak{}fuzzer\_\allowbreak{}matches\_\allowbreak{}solidity\_\allowbreak{}trace}
+        --- a transcript-level fuzzer matches the Solidity trace.
+\end{itemize}
+
+\section{Check-by-check preservation}
+\label{sec:check-preservation}
+
+Table~\ref{tab:checks} lists every rejection condition in the Rust
+verifier and where the generated Solidity enforces it.
+
+\begin{longtable}{@{}p{0.34\linewidth}p{0.34\linewidth}p{0.22\linewidth}@{}}
+\toprule
+\textbf{Rust rejection} & \textbf{Solidity enforcement} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust rejection} & \textbf{Solidity enforcement} & \textbf{Status} \\
+\midrule
+\endhead
+\texttt{InvalidInstances} (empty committed) &
+  profile-pinned at build time & \chk{pinned} \\
+transcript read failure (short proof) &
+  \texttt{proof\_\allowbreak{}cptr} exact check + shape guard & \chk{yes} \\
+non-canonical scalar ($\geq r$) &
+  \texttt{lt(eval, r)} in eval/q\_\allowbreak{}eval loops & \chk{yes} \\
+non-canonical G1 (pad bytes / $\geq q$) &
+  \sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} checks & \chk{yes} \\
+identity mismatch ($\nu_y \ne h\cdot Z_H$) &
+  pairing fails (linearization) & \chk{yes} \\
+PCS opening mismatch &
+  final pairing fails & \chk{yes} \\
+VK mismatch &
+  \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH} + digest & \chk{pinned} \\
+wrong instance values &
+  transcript divergence $\rightarrow$ pairing fails & \chk{yes} \\
+missing precompile &
+  constructor smoke test reverts deploy & \chk{yes} \\
+\bottomrule
+\caption{Every Rust rejection condition has a Solidity counterpart.
+``Pinned'' means the condition is excluded by the profile rather than
+checked at runtime --- the generated contract cannot be fed a violating
+input.}
+\label{tab:checks}
+\end{longtable}
+
+\subsection{Reverse inventory: every generated revert is justified}
+\label{sec:revert-inventory}
+
+Table~\ref{tab:checks} proves \emph{no missing checks} (Rust $\to$
+Solidity). The complementary question is whether the generated code
+contains any \emph{spurious} or unjustified rejection. The production
+\texttt{fee\_12345} verifier has exactly \textbf{34}
+\texttt{revert(0,0)} sites; Table~\ref{tab:reverts} groups them and
+gives each a Rust justification. Every revert traces to a real
+verifier condition or a deployment/VM-integrity guard --- none is
+unexplained.
+
+\begin{small}
+\begin{longtable}{@{}p{0.26\linewidth}p{3.2em}p{0.30\linewidth}p{0.28\linewidth}@{}}
+\toprule
+\textbf{Revert group} & \textbf{\#} & \textbf{Enforces} & \textbf{Rust counterpart} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Revert group} & \textbf{\#} & \textbf{Enforces} & \textbf{Rust counterpart} \\
+\midrule
+\endhead
+Deploy smoke (MCOPY\allowbreak/G1ADD\allowbreak/G1MSM\allowbreak/PAIRING) & 10 & runtime precompiles present \& well-shaped & deploy-time guard (no Rust equiv) \\
+ABI-shape head pointers & 1 & dynamic args well-formed & Solidity ABI (no Rust equiv) \\
+\texttt{scalar\_inv} zero & 1 & no inverse of $0$ & \texttt{inverse()$\to$None$\to$err} \\
+modexp precompile & 2 & \texttt{staticcall}+\texttt{returndatasize} & Rust field inverse (direct) \\
+G1 canonicality (pad, $<p$) & 4 & padded/uncompressed canonical & transcript canonicality \\
+\texttt{ec\_pairing} result & 1 & pairing equation holds & KZG final pairing \\
+VK pin (size+codehash) & 1 & pinned VK runtime & deployment pin (no Rust equiv) \\
+VK header cross-check & 1 & \texttt{num\_instances}/\texttt{k}/acc match & codegen consistency \\
+ABI envelope (proof/instance len) & 1 & layout matches generated & \texttt{Error::InvalidInstances} \\
+\texttt{eval}$<r$ (proof + q evals) & 2 & canonical $\mathbb{F}_r$ & transcript canonicality \\
+parser completeness & 1 & \texttt{proof\_cptr} consumed exactly & Rust reads exact layout \\
+VM unknown opcode & 1 & \texttt{default} case & VM integrity \\
+VM final state & 3 & \texttt{q\_pc==q\_end}, stack empty & VM integrity \\
+accumulated \texttt{success} folds & 5 & phase-level failure & (aggregated) \\
+\bottomrule
+\caption{Reverse inventory: all 34 generated reverts, grouped, each with
+a Rust justification. No spurious or unexplained rejection.}
+\label{tab:reverts}
+\end{longtable}
+\end{small}
+
+Together, Tables~\ref{tab:checks} and~\ref{tab:reverts} bracket the
+faithfulness claim from both directions: the generated verifier neither
+omits a Rust check nor invents an unjustified one.
+
+\section{Fiat--Shamir transcript schedule}
+\label{sec:transcript-schedule}
+
+Soundness rests on the transcript: every challenge must be squeezed in
+exactly the Rust order over exactly the Rust byte stream, or the
+challenges diverge and the pairing fails. Table~\ref{tab:fs-schedule}
+is the complete absorb/squeeze schedule, Rust $\leftrightarrow$
+generated, with the trace ID each challenge records under.
+
+\begin{small}
+\begin{longtable}{@{}clp{0.30\linewidth}p{0.30\linewidth}@{}}
+\toprule
+\textbf{\#} & \textbf{Op} & \textbf{Rust (\texttt{verifier.rs})} & \textbf{Generated (Yul)} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{\#} & \textbf{Op} & \textbf{Rust (\texttt{verifier.rs})} & \textbf{Generated (Yul)} \\
+\midrule
+\endhead
+1 & absorb & \texttt{common(vk\_\allowbreak{}digest)} & \texttt{common\_word\allowbreak(VK\_DIGEST\_MPTR)} \\
+2 & absorb & \texttt{common(instance.len())} & \texttt{common\_word(19)} \\
+3 & absorb & \texttt{common(instance[i])} $\times 19$ & \texttt{common\_\allowbreak{}word(inst\_\allowbreak{}be)} $\times 19$ \\
+4 & absorb & \texttt{common(advice\_\allowbreak{}com)} (user phase) & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+5 & squeeze & user challenge (per phase) & \texttt{squeeze\_\allowbreak{}to(USER\_\allowbreak{}CHAL)} \\
+6 & squeeze & $\theta$ \textbf{(id 7)} & \texttt{squeeze\_\allowbreak{}to(THETA\_\allowbreak{}MPTR)} \\
+7 & absorb & \texttt{common(lookup\_\allowbreak{}mult\_\allowbreak{}com)} & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+8 & squeeze & $\beta$ \textbf{(id 8)} & \texttt{squeeze\_\allowbreak{}to(BETA\_\allowbreak{}MPTR)} \\
+9 & squeeze & $\gamma$ \textbf{(id 9)} & \texttt{squeeze\_\allowbreak{}to(GAMMA\_\allowbreak{}MPTR)} \\
+10 & absorb & \texttt{common(perm\_com)} & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+11 & squeeze & trash \textbf{(id 12)} & \texttt{squeeze\_to\allowbreak(TRASH\_CHALLENGE\_MPTR)} \\
+12 & absorb & \texttt{common(trashcan\_\allowbreak{}com)} & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+13 & squeeze & $y$ \textbf{(id 10)} & \texttt{squeeze\_\allowbreak{}to(Y\_\allowbreak{}MPTR)} \\
+14 & absorb & \texttt{common(quotient\_\allowbreak{}com)} & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+15 & squeeze & $x$ \textbf{(id 11)} & \texttt{squeeze\_\allowbreak{}to(X\_\allowbreak{}MPTR)} \\
+16 & absorb & \texttt{common(evals)} & \texttt{common\_\allowbreak{}word(eval)} \\
+17 & squeeze & $x_1, x_2$ \textbf{(id 13, 14)} & \texttt{squeeze\_\allowbreak{}to(X1\_\allowbreak{}MPTR)}, \texttt{squeeze\_\allowbreak{}to(X2\_\allowbreak{}MPTR)} \\
+18 & absorb & \texttt{common(W\_com)} & \texttt{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} \\
+19 & squeeze & $x_3$ \textbf{(id 15)} & \texttt{squeeze\_\allowbreak{}to(X3\_\allowbreak{}MPTR)} \\
+20 & absorb & \texttt{common(evals)} & \texttt{common\_\allowbreak{}word(eval)} \\
+21 & squeeze & $x_4$ \textbf{(id 16)} & \texttt{squeeze\_\allowbreak{}to(X4\_\allowbreak{}MPTR)} \\
+\bottomrule
+\caption{Complete Fiat--Shamir schedule. The squeeze \emph{order}
+matches exactly; the trace \emph{IDs} do not follow it (see note).}
+\label{tab:fs-schedule}
+\end{longtable}
+\end{small}
+
+\paragraph{Audit trap: trace IDs $\neq$ squeeze order.} The challenges
+are squeezed in the order $\theta,\beta,\gamma,\text{trash},y,x$ but
+record under IDs $7,8,9,\mathbf{12},\mathbf{10},\mathbf{11}$ --- the
+trash challenge is squeezed \emph{fourth} yet carries ID 12, while $y$
+and $x$ (fifth, sixth) carry 10 and 11. The IDs are a fixed audit
+numbering tied to the memory layout, not the transcript order. A
+reviewer diffing the two implementations \emph{by trace ID} would see
+an apparent reordering; the correct invariant is the \emph{squeeze
+sequence} (steps 6--15), which matches exactly. This is worth a
+generator-side comment so the numbering is not mistaken for a bug.
+
+\paragraph{Why the schedule is the soundness core.} Every challenge is
+a Keccak digest of the transcript prefix (Def.~\ref{def:squeeze}); a
+single byte of divergence at any absorb step shifts every subsequent
+challenge, and the final pairing (Eq.~\eqref{eq:final-pairing}) fails.
+So verifying this 21-step schedule matches --- which the side-by-side
+lets a human do in one pass --- is sufficient to conclude the two
+implementations share the same Fiat--Shamir structure. The
+\texttt{squeeze\_to} reseed rule (digest $\to$ buffer,
+\S\ref{sec:transcript-helpers}) is what makes the schedule
+self-consistent across both sides.
+
+\section{Deliberate deviations and why they are sound}
+\label{sec:deviations}
+
+The lowering is not a line-by-line copy. The deviations are deliberate and
+each is justified:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+  \item \textbf{Negated numerator.} The verifier stores $-\nu_y(x)$
+        (Definition~\ref{def:neg-numer}) rather than $h(x)$. Sound
+        because the $(x^n-1)$ factor is carried on the commitment side as
+        $(1-x^n)$; the signs cancel in the pairing. Trace id~36
+        re-negates to match Rust's positive numerator.
+  \item \textbf{PAIRING LHS/RHS naming.} Historical dual-MSM naming
+        (left $=\pi$) is opposite the pairing argument order; the
+        generated code passes them swapped, matching
+        \eqref{eq:final-pairing-dual}. Documented in the generated
+        comment.
+  \item \textbf{No curve check at absorption.} The parser checks only the
+        EIP-2537 encoding canonicality (Definition~\ref{def:g1-canonical}),
+        not on-curve membership. Sound because
+        \cg{validate\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage} proves every absorbed
+        point is later consumed by a G1MSM or pairing, which \emph{do}
+        validate membership. A point off-curve makes the pairing fail.
+  \item \textbf{Truncated challenges.} $x_3$ (and truncated powers of
+        $x_1,x_4$) are masked to 128 bits, mirroring
+        \rust{truncated\_\allowbreak{}challenges}. The truncation is part of the
+        protocol, not a weakening: the Rust verifier does the same, and
+        the differential trace pins the truncated values.
+  \item \textbf{Dummy queries.} \texttt{fewer-point-sets} adds eval slots
+        to merge point sets, mirroring
+        \rust{compute\_\allowbreak{}dummy\_\allowbreak{}queries}. The added evals are transcript
+        material and range-checked.
+  \item \textbf{Selector buckets.} Simple selectors have no proof eval
+        slot; Rust inserts \rust{F::ONE} and the codegen emits a literal
+        1 and routes identities to buckets. Algebraically identical to
+        \eqref{eq:buckets}.
+  \item \textbf{Quotient VM vs.\ straight-line.} The VM is an
+        implementation choice for code size; the opcode semantics are
+        pinned by the identity-eval trace range \boxid{30000+}.
+\end{enumerate}
+
+\section{Residual risks and mitigations}
+\label{sec:residual}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Profile drift.} If a future circuit violates the profile,
+        the generator must refuse. Mitigation: \cg{validate\_\allowbreak{}instance\_\allowbreak{}column\_\allowbreak{}shape}
+        and \cg{RotatedInstanceQuery} rejection; the build fails loudly.
+  \item \textbf{Trace-id collision.} A new trace id could collide with an
+        existing range. Mitigation: the test asserts no unexpected ids.
+  \item \textbf{Precompile semantics change.} EIP-2537 edge cases (e.g.\
+        identity handling) could differ across forks. Mitigation: pinned
+        solc, constructor smoke tests, Prague-semantics documentation.
+  \item \textbf{Coverage gaps in fixtures.} A circuit shape not in the
+        fixture corpus could hide a bug. Mitigation: the structural
+        correspondence (Chapters \ref{ch:rust}--\ref{ch:correspondence})
+        is shape-independent; fixtures exercise the lowering, not the
+        protocol.
+\end{itemize}
+
+\section{Generated-artifact cross-check}
+\label{sec:artifact-crosscheck}
+
+Beyond reading the templates, the \emph{actual generated}
+\texttt{Halo2Verifier.sol} (poseidon fixture, 150\,KB) was inspected to
+confirm the generator emits what the spec claims. Spot-checks:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Precompile addresses.} The artifact uses
+        \texttt{0x0b} (G1ADD, 6 sites), \texttt{0x0c} (G1MSM, 5 sites),
+        \texttt{0x0f} (PAIRING, 2 sites) --- exactly the EIP-2537
+        addresses verified in \S\ref{sec:ec-pairing}, confirming the
+        addresses are correct (not off-by-one).
+  \item \textbf{Pairing layout.} The generated \texttt{ec\_pairing}
+        lays out \texttt{[lhs\_\allowbreak{}g1 | G2\_\allowbreak{}BASE | rhs\_\allowbreak{}g1 | NEG\_\allowbreak{}S\_\allowbreak{}G2\_\allowbreak{}BASE]}
+        and calls \texttt{staticcall(gas(), 0x0f, scratch, 0x300,
+        scratch, 0x20)}, then checks
+        \texttt{returndatasize()==0x20 \&\& mload(scratch)}. This is
+        $e(\mathsf{lhs},[1]_2)\cdot e(\mathsf{rhs},-[s]_2)=1$ ---
+        the \emph{opposite} channel assignment from the Rust
+        \rust{DualMSM::check} ($e(\mathsf{left},[s]_2)\cdot
+        e(\mathsf{right},-[1]_2)=1$), confirming the documented
+        \texttt{PAIRING\_LHS}/\texttt{RHS} naming inversion
+        (\S\ref{sec:ec-pairing}) is real in the emitted code, not a
+        doc artifact.
+  \item \textbf{Truncation mask.} The 128-bit mask
+        \texttt{0xffffffffffffffffffffffffffffffff} appears 7 times in
+        the artifact (the $x_1$-powers and challenge-truncation sites),
+        matching the truncated-challenge finding
+        (\S\ref{sec:computations}, \S\ref{sec:parser-audit}).
+  \item \textbf{MCOPY staging.} The \texttt{ec\_pairing} uses four
+        \texttt{mcopy} calls (Cancun) where the pre-Cancun template used
+        mstore chains --- the $\sim$500\,gas/call saving noted in
+        \S\ref{sec:ec-pairing} is present in the emitted code.
+\end{itemize}
+
+These cross-checks confirm the templates render to the expected
+artifact: the spec's claims about the generated code are verified
+against the generated code itself, not just the template source.
+
+\section{Summary of the argument}
+\label{sec:faith-summary}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.5cm and 0.9cm,
+  box/.style={draw=black!40, rounded corners=2pt, align=center,
+              inner sep=5pt, font=\scriptsize\sffamily},
+  arr/.style={-{Stealth[length=2mm]}, black!55, thick}]
+\node[box, fill=mathpurple!8] (math) {\textbf{Math spec}\\(Ch.~\ref{ch:math})};
+\node[box, fill=rustorange!8, right=of math] (rust) {\textbf{Rust ref}\\implements math};
+\node[box, fill=codegenblue!8, right=of rust] (cg) {\textbf{Codegen}\\plans math};
+\node[box, fill=soliditygray!8, right=of cg] (sol) {\textbf{Solidity}\\executes plan};
+\node[box, fill=tracegreen!10, below=of cg] (trace) {\textbf{Diff trace}\\rust == solidity};
+\draw[arr] (math) -- (rust);
+\draw[arr] (math) -- (cg);
+\draw[arr] (cg) -- (sol);
+\draw[arr] (rust) -- (trace);
+\draw[arr] (sol) -- (trace);
+\end{tikzpicture}
+\end{center}
+
+The Rust verifier and the code generator are independently shown to
+implement the same mathematics (Chapters \ref{ch:math}--\ref{ch:codegen});
+the generated Solidity is shown to execute the plan (Chapter
+\ref{ch:solidity}); and the differential trace closes the loop by showing
+the two executions agree on every semantic value. Mutation testing covers
+the rejection side. Together these constitute a practical, auditable
+faithfulness argument for the supported profile.

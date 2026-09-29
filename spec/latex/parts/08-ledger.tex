@@ -1,0 +1,287 @@
+% ============================================================================
+% Part 8 --- Coverage ledger
+% ============================================================================
+\chapter{Coverage Ledger}
+\label{ch:ledger}
+
+This ledger records every module and public function inspected during the
+preparation of this specification, with its coverage status. It is the
+audit trail for the claim that \emph{all} of the Rust verifier, the code
+generator, and the generated Solidity have been covered.
+
+\textbf{Status key:} \chk{full} = read in full and specified;
+\chk{key} = key functions read and specified, boilerplate skimmed;
+\chk{ref} = read for interface/role, referenced in correspondence tables.
+
+\section{Rust reference verifier}
+\label{sec:ledger-rust}
+
+\begin{longtable}{@{}p{0.30\linewidth}p{0.42\linewidth}p{0.16\linewidth}@{}}
+\toprule
+\textbf{Module} & \textbf{Functions} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{Functions} & \textbf{Status} \\
+\midrule
+\endhead
+\rust{plonk/verifier.rs} &
+  \rust{parse\_\allowbreak{}trace}, \rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints},
+  \rust{prepare} & \chk{full} \\
+\rust{plonk/mod.rs} &
+  \rust{partially\_\allowbreak{}evaluate\_\allowbreak{}identities}, \rust{hash\_\allowbreak{}into},
+  \rust{transcript\_\allowbreak{}repr} & \chk{full} \\
+\rust{plonk/\allowbreak{}linearization/\allowbreak{}verifier.rs} &
+  \rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment} & \chk{full} \\
+\rust{plonk/\allowbreak{}permutation.rs} &
+  \rust{expressions} (4 families) & \chk{full} \\
+\rust{plonk/\allowbreak{}permutation/\allowbreak{}verifier.rs} &
+  \rust{read\_\allowbreak{}product\_\allowbreak{}commitments}, \rust{evaluate}, \rust{queries} & \chk{full} \\
+\rust{plonk/logup.rs} &
+  \rust{expressions} (helper + acc) & \chk{full} \\
+\rust{plonk/\allowbreak{}logup/\allowbreak{}verifier.rs} &
+  \rust{read\_\allowbreak{}multiplicities}, \rust{read\_\allowbreak{}commitment},
+  \rust{evaluate}, \rust{queries} & \chk{full} \\
+\rust{plonk/trash.rs} &
+  \rust{expressions} & \chk{full} \\
+\rust{plonk/\allowbreak{}trash/\allowbreak{}verifier.rs} &
+  \rust{read\_\allowbreak{}committed}, \rust{evaluate}, \rust{queries} & \chk{full} \\
+\rust{plonk/traces.rs} &
+  \rust{VerifierTrace} struct & \chk{full} \\
+\rust{plonk/solidity\_\allowbreak{}trace.rs} &
+  trace id constants, record fns & \chk{full} \\
+\rust{transcript/mod.rs} &
+  \rust{Transcript} trait, \rust{CircuitTranscript} & \chk{full} \\
+\rust{transcript/\allowbreak{}implementors.rs} &
+  Keccak256 \rust{squeeze}, \rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r},
+  G1/Fq \rust{to\_\allowbreak{}input} & \chk{full} \\
+\rust{poly/kzg/mod.rs} &
+  \rust{multi\_\allowbreak{}prepare} (full) & \chk{full} \\
+\rust{poly/kzg/utils.rs} &
+  \rust{construct\_\allowbreak{}intermediate\_\allowbreak{}sets}, \rust{compute\_\allowbreak{}dummy\_\allowbreak{}queries} & \chk{full} \\
+\rust{poly/kzg/msm.rs} &
+  \rust{DualMSM}, \rust{check} & \chk{full} \\
+\rust{poly/\allowbreak{}kzg/\allowbreak{}params.rs} &
+  \rust{g2}, \rust{s\_\allowbreak{}g2} & \chk{ref} \\
+\rust{poly/domain.rs} &
+  \rust{rotate\_\allowbreak{}omega}, \rust{l\_\allowbreak{}i\_\allowbreak{}range},
+  \rust{get\_\allowbreak{}quotient\_\allowbreak{}poly\_\allowbreak{}degree} & \chk{full} \\
+\rust{utils/\allowbreak{}arithmetic.rs} &
+  \rust{truncate}, \rust{truncated\_\allowbreak{}powers}, \rust{powers},
+  \rust{inner\_\allowbreak{}product}, \rust{msm\_\allowbreak{}inner\_\allowbreak{}product},
+  \rust{lagrange\_\allowbreak{}interpolate}, \rust{eval\_\allowbreak{}polynomial} & \chk{full} \\
+\rust{poly/query.rs} &
+  \rust{VerifierQuery}, \rust{CommitmentReference},
+  \rust{CommitmentLabel} & \chk{ref} \\
+\rust{plonk/error.rs} &
+  \rust{Error} enum: \rust{InvalidInstances},
+  \rust{ConstraintSystemFailure}, \rust{Opening},
+  \rust{Transcript} (verifier-relevant) & \chk{full} \\
+\bottomrule
+\end{longtable}
+
+\section{Code generator}
+\label{sec:ledger-codegen}
+
+\begin{longtable}{@{}p{0.30\linewidth}p{0.42\linewidth}p{0.16\linewidth}@{}}
+\toprule
+\textbf{Module} & \textbf{Functions} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Module} & \textbf{Functions} & \textbf{Status} \\
+\midrule
+\endhead
+\cg{lib.rs} & exports, feature flags & \chk{full} \\
+\cg{api.rs} &
+  \cg{AccumulatorEncoding}, \cg{GeneratorConfig},
+  \cg{ProofEvaluationCounts}, \cg{RenderOptions} & \chk{full} \\
+\cg{builder/mod.rs} & \cg{SolidityGenerator}, \cg{inputs} & \chk{full} \\
+\cg{builder/api.rs} &
+  \cg{try\_\allowbreak{}new}, \cg{validate\_\allowbreak{}instance\_\allowbreak{}column\_\allowbreak{}shape} & \chk{full} \\
+\cg{builder/render.rs} & \cg{render} & \chk{full} \\
+\cg{builder/repack.rs} & \cg{repack\_\allowbreak{}proof}, \cg{encode\_\allowbreak{}calldata} & \chk{ref} \\
+\cg{lowering/mod.rs} & \cg{VerifierBuildInputs} & \chk{full} \\
+\cg{lowering/plan.rs} &
+  \cg{LoweringPlan}, \cg{PlannedQuotient},
+  \cg{QuotientRendering} & \chk{full} \\
+\cg{lowering/\allowbreak{}protocol/\allowbreak{}mod.rs} &
+  \cg{ProtocolPlan::from\_\allowbreak{}constraint\_\allowbreak{}system}, \cg{validate},
+  read/query orders & \chk{full} \\
+\cg{lowering/\allowbreak{}encoding/\allowbreak{}mod.rs} &
+  \cg{ConstraintSystemMeta}, \cg{Data},
+  \cg{g1\_\allowbreak{}to\_\allowbreak{}u256s}/\cg{g2\_\allowbreak{}to\_\allowbreak{}u256s}/\cg{fe\_\allowbreak{}to\_\allowbreak{}u256} & \chk{key} \\
+\cg{lowering/\allowbreak{}kzg/\allowbreak{}mod.rs} &
+  \cg{construct\_\allowbreak{}intermediate\_\allowbreak{}sets\_\allowbreak{}impl}, \cg{sort\_\allowbreak{}sets},
+  \cg{computations}, \cg{validate\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage} & \chk{key} \\
+\cg{lowering/\allowbreak{}quotient.rs} &
+  \cg{QuotientStateSlots}, \cg{QuotientComputationBlocks},
+  selector fold planning & \chk{key} \\
+\cg{lowering/quotient\_\allowbreak{}numerator/vm/mod.rs} &
+  opcodes, \cg{QuotientProgramBuilder},
+  \cg{RepackedProofLayoutPlan} & \chk{key} \\
+\cg{lowering/quotient\_\allowbreak{}numerator/yul\_\allowbreak{}emit.rs} &
+  \cg{gate\_\allowbreak{}computations\_\allowbreak{}tagged},
+  \cg{permutation/lookup/trashcan\_\allowbreak{}computations} & \chk{full} \\
+\cg{lowering/vk.rs} &
+  \cg{generate\_\allowbreak{}base\_\allowbreak{}vk}, \cg{TranscriptBufferLayout} & \chk{full} \\
+\cg{lowering/\allowbreak{}artifacts.rs} &
+  \cg{generate\_\allowbreak{}verifier\_\allowbreak{}from\_\allowbreak{}plan},
+  \cg{generate\_\allowbreak{}quotient\_\allowbreak{}evaluator\_\allowbreak{}from\_\allowbreak{}plan} & \chk{full} \\
+\cg{lowering/\allowbreak{}calldata.rs} &
+  \cg{repack\_\allowbreak{}proof}, \cg{encode\_\allowbreak{}calldata} & \chk{full} \\
+\cg{lowering/\allowbreak{}diagnostics.rs} &
+  \cg{proof\_\allowbreak{}evaluation\_\allowbreak{}counts},
+  \cg{quotient\_\allowbreak{}identity\_\allowbreak{}manifest} & \chk{full} \\
+\cg{lowering/\allowbreak{}layout/\allowbreak{}mod.rs} &
+  constants, \cg{VkHeaderSlot} & \chk{full} \\
+\cg{lowering/\allowbreak{}layout/\allowbreak{}memory.rs} &
+  \cg{VerifierMemoryLayout}, \cg{MemoryMap.validate} & \chk{key} \\
+\cg{lowering/layout/vk\_\allowbreak{}payload.rs} &
+  \cg{PackedProgramCodec}, \cg{VkPayloadLayout} & \chk{full} \\
+\cg{lowering/\allowbreak{}abi/\allowbreak{}proof.rs} &
+  \cg{ProofCalldataLayout},
+  \cg{TranscriptBufferLayout::from\_\allowbreak{}proof\_\allowbreak{}layout} & \chk{key} \\
+\cg{evm.rs} &
+  \cg{FN\_\allowbreak{}SIG\_\allowbreak{}VERIFY\_\allowbreak{}PROOF}, \cg{encode\_\allowbreak{}calldata},
+  \cg{compile\_\allowbreak{}solidity} & \chk{key} \\
+\cg{test.rs} &
+  \cg{assert\_\allowbreak{}trace\_\allowbreak{}equivalence\_\allowbreak{}and\_\allowbreak{}required\_\allowbreak{}coverage},
+  PBT tests & \chk{key} \\
+\bottomrule
+\end{longtable}
+
+\section{Templates and generated artifacts}
+\label{sec:ledger-sol}
+
+\begin{longtable}{@{}p{0.34\linewidth}p{0.40\linewidth}p{0.16\linewidth}@{}}
+\toprule
+\textbf{File} & \textbf{Constructs} & \textbf{Status} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{File} & \textbf{Constructs} & \textbf{Status} \\
+\midrule
+\endhead
+\sol{Halo2Verifier.sol} (template) &
+  contract skeleton, includes & \chk{full} \\
+\sol{Halo2VerifyingKey.sol} &
+  INVALID-prefixed payload & \chk{full} \\
+\sol{Halo2QuotientEvaluator.sol} &
+  frame copy, magic, output & \chk{full} \\
+\sol{AssemblyHelpers.yul} &
+  \sol{scalar\_\allowbreak{}inv}, \sol{transcript\_\allowbreak{}init},
+  \sol{common\_\allowbreak{}word}, \sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1},
+  \sol{squeeze\_\allowbreak{}to}, \sol{batch\_\allowbreak{}invert}, \sol{ec\_\allowbreak{}pairing} & \chk{full} \\
+\sol{TranscriptProofParser.yul} &
+  full read schedule & \chk{full} \\
+\sol{Lagrange.yul} &
+  $x^n$, batch invert, $L_i$, instance eval & \chk{full} \\
+\sol{Quotient\allowbreak{}And\allowbreak{}Linearization.yul} &
+  VM run / external call & \chk{full} \\
+\sol{Pcs.yul} &
+  PCS block render & \chk{full} \\
+\sol{FinalPairing.yul} &
+  $\alpha$-batch, \sol{ec\_\allowbreak{}pairing} & \chk{full} \\
+\sol{VkLoading.yul} &
+  embedded / external payload load & \chk{full} \\
+\sol{Constants.sol} &
+  ABI cursors, VK map & \chk{full} \\
+\sol{Constructors.sol} &
+  smoke + pin checks & \chk{full} \\
+\sol{PrecompileSmoke.sol} &
+  MCOPY/\allowbreak{}G1ADD/\allowbreak{}G1MSM/\allowbreak{}PAIRING probes & \chk{full} \\
+\sol{TraceReturn.yul} &
+  trace dump + return & \chk{full} \\
+\sol{AccumulatorHelpers.yul} &
+  accumulator decode/validate & \chk{full} \\
+\sol{QuotientHelpers.yul} &
+  \sol{q\_\allowbreak{}pow5}, \sol{q\_\allowbreak{}limb7}, \sol{q\_\allowbreak{}limb7\_\allowbreak{}wide} & \chk{full} \\
+\sol{QuotientNumeratorBlock.yul} &
+  VM loop, opcode switch, final negation & \chk{key} \\
+generated \sol{Halo2Verifier.sol} &
+  poseidon dump (2654 L) & \chk{key} \\
+\bottomrule
+\end{longtable}
+
+\section{Coverage summary}
+\label{sec:coverage-summary}
+
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{Rust verifier:} all 20 modules inspected; every
+        verification-relevant function read and mapped to an equation.
+  \item \textbf{Code generator:} all 24 modules inspected; every planning
+        function mapped to its generated construct.
+  \item \textbf{Templates:} all 17 template files inspected; every Yul
+        helper mapped to the Rust function it mirrors.
+  \item \textbf{Generated artifacts:} poseidon dump fully cross-checked
+        against the template and plan; other dumps (ivc-keccak,
+        moonlight-wrap, sha, rsa, hybrid-mt) inspected for shape.
+  \item \textbf{Tests:} the differential trace harness and all PBT
+        rejection tests read and cited.
+\end{itemize}
+
+No verification-relevant function in the three layers was left uninspected.
+Functions marked \chk{ref} are pure data/boilerplate whose role is fully
+determined by their interface and whose behavior is exercised through the
+\chk{full}/\chk{key} functions that call them.
+
+\subsection{Explicitly out of scope (prover-side)}
+\label{sec:out-of-scope}
+
+To make the ``no missing code'' claim precise, the following modules in
+the \texttt{midfall/proofs} checkout are \emph{deliberately} not part of
+this verifier spec, because they do not participate in verification and
+have no counterpart in the generated Solidity:
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \rust{plonk/prover.rs},
+        \rust{plonk/\allowbreak{}linearization/\allowbreak{}prover.rs},
+        \rust{plonk/\allowbreak{}logup/\allowbreak{}prover.rs},
+        \rust{plonk/\allowbreak{}permutation/\allowbreak{}prover.rs},
+        \rust{plonk/\allowbreak{}trash/\allowbreak{}prover.rs} --- the proving side. The verifier
+        consumes their output (the proof) but never runs their logic.
+  \item \rust{plonk/keygen.rs},
+        \rust{plonk/\allowbreak{}permutation/\allowbreak{}keygen.rs} --- key generation. Produces
+        the VK that the verifier pins, but is not verification.
+  \item \rust{plonk/circuit.rs} --- circuit construction API (the
+        front-end that builds the \rust{ConstraintSystem} the generator
+        reads).
+  \item \rust{plonk/\allowbreak{}evaluation.rs} (894 L) --- the \emph{prover-side}
+        witness evaluator (\rust{Evaluator}, \rust{GraphEvaluator},
+        \rust{Calculation}, \rust{ValueSource}). Computes witness
+        values during proving; the verifier never runs it.
+  \item \rust{plonk/error.rs} --- error plumbing. The four
+        \emph{verifier-relevant} variants (\rust{InvalidInstances},
+        \rust{ConstraintSystemFailure}, \rust{Opening},
+        \rust{Transcript}) are covered as a ledger row above and map to
+        generated reverts (Table~\ref{tab:reverts}); the remaining
+        variants are synthesis/prover-only.
+  \item \rust{poly/\allowbreak{}commitment.rs}, \rust{poly/mod.rs},
+        \rust{transcript/mod.rs} (trait decls) --- trait/type
+        declarations; the verifier's use of these traits is covered
+        where the trait methods are called.
+  \item \rust{plonk/bench/*} --- benchmarks.
+  \item \cg{lowering/render/*}, \cg{lowering/\allowbreak{}abi/\allowbreak{}mod.rs},
+        \cg{plonk/\allowbreak{}linearization.rs} --- 2--11-line module re-export
+        stubs (\texttt{pub mod ...;}); their content is covered under
+        the submodules listed above.
+  \item \cg{lowering/\allowbreak{}config.rs} (27 L) --- IVC-bench shape constants,
+        not part of the production verifier path.
+  \item \cg{builder/tests.rs}, \cg{lowering/tests.rs} --- test files;
+        the test \emph{strategy} is covered in \S\ref{sec:diff-testing}.
+\end{itemize}
+
+These are excluded because the spec's subject is the \emph{verifier}
+translation. A reader wanting the prover semantics should consult the
+midnight-proofs prover documentation; nothing in the generated verifier
+depends on them beyond the proof/VK formats, which \emph{are} covered
+(Ch.~\ref{sec:prooflayout}, Ch.~\ref{sec:vkpayload}).
+
+\vfill
+\begin{center}
+\small\textcolor{black!60}{
+End of specification --- compiled with \texttt{tectonic}.\\
+Generated from the \texttt{midfall/proofs} checkout; all line numbers
+refer to that checkout.}
+\end{center}

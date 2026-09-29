@@ -1,0 +1,329 @@
+% ============================================================================
+% Part 6 --- Rust <-> codegen <-> Solidity correspondence
+% ============================================================================
+\chapter{Three-Way Correspondence}
+\label{ch:correspondence}
+
+This chapter is the core deliverable: for every stage of the verifier, the
+tables below map the \rust{Rust reference} function, the \cg{code generator}
+that plans it, and the \sol{generated Solidity/\allowbreak{}Yul} that executes it, with
+the governing equation from Chapter~\ref{ch:math}. Read each row as: ``the
+thing the Rust verifier does is planned by this codegen function and executed
+by this generated construct, and both implement this equation.''
+
+\section{Transcript and challenges}
+\label{sec:corr-transcript}
+
+\begin{longtable}{@{}L{0.24\linewidth}L{0.26\linewidth}L{0.28\linewidth}L{0.14\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+\rust{Transcript::common} &
+  \cg{TranscriptBufferLayout} (buffer sizing) &
+  \sol{common\_\allowbreak{}word}, \sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} &
+  Def.~\ref{def:common} \\
+\rust{Keccak256::squeeze} (L186) &
+  \cg{lowering/vk.rs} buffer layout &
+  \sol{squeeze\_\allowbreak{}to} (keccak + reseed + mod) &
+  \eqref{eq:transcript-digest}--\eqref{eq:transcript-squeeze} \\
+\rust{sample\_\allowbreak{}keccak\_\allowbreak{}digest\_\allowbreak{}be\_\allowbreak{}mod\_\allowbreak{}r} (L19) &
+  (planned as mod op) &
+  \texttt{mod(h0, r)} in \sol{squeeze\_\allowbreak{}to} &
+  \eqref{eq:transcript-squeeze} \\
+\rust{G1Projective::to\_\allowbreak{}input} (L283) &
+  \cg{g1\_\allowbreak{}to\_\allowbreak{}u256s} &
+  \sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} 128-byte absorb &
+  \eqref{eq:g1-encoding} \\
+\rust{Fq::to\_\allowbreak{}input} (L315) &
+  \cg{fe\_\allowbreak{}to\_\allowbreak{}u256} &
+  \sol{common\_\allowbreak{}word} BE word &
+  Sec.~\ref{sec:transcript} \\
+\rust{vk.hash\_\allowbreak{}into} (L283) &
+  \cg{generate\_\allowbreak{}base\_\allowbreak{}vk::vk\_\allowbreak{}digest} &
+  VK digest absorb (parser step 1) &
+  \eqref{eq:vk-digest} \\
+\bottomrule
+\end{longtable}
+
+\section{Proof parsing and the challenge schedule}
+\label{sec:corr-parser}
+
+Each row of Table~\ref{tab:schedule} is implemented in three places. The
+representative rows:
+
+\begin{longtable}{@{}L{0.26\linewidth}L{0.26\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Row} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Row} \\
+\midrule
+\endhead
+\rust{read\_\allowbreak{}n(transcript, n)} &
+  \cg{ProofReadPlan} commitment reads &
+  generated \texttt{for} loop of \sol{common\_\allowbreak{}uncompressed\_\allowbreak{}g1} &
+  5--15 \\
+\rust{transcript.squeeze\_\allowbreak{}challenge()} &
+  \cg{ProtocolPlan} squeeze order &
+  \sol{squeeze\_\allowbreak{}to(buf\_\allowbreak{}len, X\_\allowbreak{}MPTR)} &
+  5--23 \\
+per-phase advice reads &
+  \cg{advice\_\allowbreak{}phases} cursors &
+  phase loop, \texttt{advice\_\allowbreak{}walk} &
+  $\ast$ \\
+committed-instance identity absorb &
+  \cg{Committed\allowbreak{}Instance\allowbreak{}Commitment\allowbreak{}Kind::\allowbreak{}Identity} &
+  128 zero bytes absorb &
+  2 \\
+instance length + value absorbs &
+  \cg{encode\_\allowbreak{}calldata} instances &
+  \texttt{inst\_\allowbreak{}be} canonical check \texttt{lt(inst\_\allowbreak{}be, r)} &
+  3--4 \\
+quotient limb reads &
+  \cg{quotient\_\allowbreak{}limbs} layout &
+  loop of G1 absorbs &
+  15 \\
+eval absorption loop &
+  \cg{num\_\allowbreak{}evals} / \cg{RepackedProofLayoutPlan} &
+  eval loop: range-check + spill + absorb &
+  17 \\
+q\_\allowbreak{}eval reads &
+  \cg{q\_\allowbreak{}evals} cursor &
+  \texttt{Q\_\allowbreak{}EVAL\_\allowbreak{}CPTR\_\allowbreak{}MPTR} loop &
+  22 \\
+exact-consumption check &
+  \cg{Transcript\allowbreak{}Buffer\allowbreak{}Layout::from\_\allowbreak{}proof\_\allowbreak{}layout} &
+  \texttt{eq(proof\_\allowbreak{}cptr, NUM\_\allowbreak{}INSTANCE\_\allowbreak{}CPTR)} &
+  end \\
+\bottomrule
+\end{longtable}
+
+\section{Lagrange and instance evaluation}
+\label{sec:corr-lagrange}
+
+\begin{longtable}{@{}L{0.26\linewidth}L{0.26\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+\rust{domain.l\_\allowbreak{}i\_\allowbreak{}range} (L448) &
+  \cg{Lagrange} model &
+  \sol{Lagrange.yul}: $x^n$ by $k$ squarings &
+  \eqref{eq:zn}--\eqref{eq:lagrange} \\
+barycentric weight $1/n$ &
+  \cg{n\_\allowbreak{}inv} VK slot &
+  \texttt{mulmod(..., N\_\allowbreak{}INV\_\allowbreak{}MPTR, r)} &
+  \eqref{eq:lagrange} \\
+$\ell_{\mathsf{last}},\ell_{\mathsf{blind}},\ell_0$ &
+  \cg{l\_\allowbreak{}last/l\_\allowbreak{}blind/l\_\allowbreak{}0} regions &
+  Lagrange block stores at MPTRs &
+  \eqref{eq:llast}--\eqref{eq:l0} \\
+instance eval sum &
+  \cg{instance\_\allowbreak{}eval} region &
+  linear combination loop &
+  \eqref{eq:instance-eval} \\
+\bottomrule
+\end{longtable}
+
+\section{Identity families}
+\label{sec:corr-identities}
+
+\begin{longtable}{@{}L{0.24\linewidth}L{0.28\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+gate identities (simple selector) &
+  \cg{gate\_\allowbreak{}computations\_\allowbreak{}tagged} (yul\_\allowbreak{}emit.rs) mirrors
+  \rust{queried\_\allowbreak{}selectors().filter(is\_\allowbreak{}simple)} &
+  VM \texttt{fold\_\allowbreak{}selector(idx)} $\rightarrow$ bucket $B_j$ &
+  \eqref{eq:gate-identity} \\
+permutation families &
+  \cg{permutation\_\allowbreak{}computations} (yul\_\allowbreak{}emit.rs) &
+  VM \texttt{native\_\allowbreak{}permutation} / inline &
+  \eqref{eq:perm1}--\eqref{eq:perm-right} \\
+lookup helper &
+  \cg{lookup\_\allowbreak{}computations} &
+  VM \texttt{native\_\allowbreak{}lookup} &
+  \eqref{eq:lookup-helper} \\
+lookup accumulator &
+  \cg{lookup\_\allowbreak{}computations} &
+  VM \texttt{native\_\allowbreak{}lookup} &
+  \eqref{eq:lookup-acc} \\
+trash &
+  \cg{trashcan\_\allowbreak{}computations} &
+  VM inline fold &
+  \eqref{eq:trash} \\
+$y$-batch fold &
+  \cg{fold\_\allowbreak{}identity} (Horner) &
+  VM \texttt{fold\_\allowbreak{}main} &
+  \eqref{eq:nu-y} \\
+\bottomrule
+\end{longtable}
+
+\section{Linearization}
+\label{sec:corr-lin}
+
+\begin{longtable}{@{}L{0.26\linewidth}L{0.26\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+\rust{compute\_\allowbreak{}linearization\_\allowbreak{}commitment} &
+  \cg{quotient.rs} + \cg{kzg/mod.rs} Block5 &
+  fused final G1MSM &
+  \eqref{eq:linearization} \\
+\rust{splitting\_\allowbreak{}factor} $=x^{n-1}$ (L326) &
+  \cg{QUOTIENT\_\allowbreak{}MPTR} word 0 &
+  \texttt{x\_\allowbreak{}split} stored &
+  \eqref{eq:linearization} \\
+\rust{1 - xn} scalar &
+  \cg{QUOTIENT\_\allowbreak{}MPTR} word 1 &
+  \texttt{one\_\allowbreak{}minus\_\allowbreak{}x\_\allowbreak{}n} &
+  \eqref{eq:linearization} \\
+\rust{expected\_\allowbreak{}eval -= eval} &
+  VM final negation &
+  \texttt{mstore(QUOTIENT\_\allowbreak{}EVAL, sub(r, numer))} &
+  \eqref{eq:expected-eval} \\
+selector buckets &
+  \cg{SELECTOR\_\allowbreak{}ACC\_\allowbreak{}MPTR} &
+  bucket copy into MSM scalars &
+  \eqref{eq:buckets} \\
+\bottomrule
+\end{longtable}
+
+\section{KZG multi-open}
+\label{sec:corr-pcs}
+
+\begin{longtable}{@{}L{0.26\linewidth}L{0.26\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+\rust{construct\_\allowbreak{}intermediate\_\allowbreak{}sets} (L37) &
+  \cg{construct\_\allowbreak{}intermediate\_\allowbreak{}sets\_\allowbreak{}impl} &
+  (planned set partition) &
+  Sec.~\ref{sec:pointsets} \\
+\rust{compute\_\allowbreak{}dummy\_\allowbreak{}queries} (L150) &
+  \cg{intermediate\_\allowbreak{}sets} dummy augmentation &
+  dummy eval reads &
+  Sec.~\ref{sec:pointsets} \\
+sort by $(|S_i|, i)$ (L419) &
+  \cg{sort\_\allowbreak{}sets} &
+  (planned order) &
+  Sec.~\ref{sec:pointsets} \\
+\rust{msm\_\allowbreak{}inner\_\allowbreak{}product} $q_{\mathsf{com}}$ &
+  \cg{kzg} Block3/Block5 &
+  G1MSM with $x_1$ powers &
+  \eqref{eq:qcom} \\
+\rust{evals\_\allowbreak{}inner\_\allowbreak{}product} $q_{\mathsf{eval}}$ &
+  \cg{kzg} Block3 &
+  \texttt{q\_\allowbreak{}eval\_\allowbreak{}set} folds &
+  \eqref{eq:qeval} \\
+\rust{lagrange\_\allowbreak{}interpolate} + fold (L471) &
+  \cg{kzg} f\_\allowbreak{}eval block &
+  interpolation + Horner in $x_2$ &
+  \eqref{eq:feval} \\
+\rust{final\_\allowbreak{}com} (L488) &
+  \cg{kzg} Block5 fused MSM &
+  single G1MSM &
+  \eqref{eq:finalcom} \\
+\rust{v} (L516) &
+  \cg{kzg} Block6 &
+  \texttt{v = $\Sigma$ x4\^{}s q\_\allowbreak{}eval + x4\^{}n f\_\allowbreak{}eval} &
+  \eqref{eq:v} \\
+\rust{DualMSM} assembly (L540) &
+  \cg{kzg} pairing inputs &
+  \texttt{PAIRING\_\allowbreak{}LHS/RHS} &
+  \eqref{eq:final-pairing-dual} \\
+\bottomrule
+\end{longtable}
+
+\section{Final pairing and accumulator}
+\label{sec:corr-pairing}
+
+\begin{longtable}{@{}L{0.26\linewidth}L{0.26\linewidth}L{0.30\linewidth}L{0.10\linewidth}@{}}
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Rust} & \textbf{Codegen} & \textbf{Solidity/Yul} & \textbf{Eq.} \\
+\midrule
+\endhead
+\rust{DualMSM::check} (msm.rs L284) &
+  \cg{FinalPairing} model &
+  \sol{ec\_\allowbreak{}pairing(success, RHS, LHS)} &
+  \eqref{eq:final-pairing} \\
+\rust{multi\_\allowbreak{}miller\_\allowbreak{}loop} &
+  (precompile) &
+  PAIRING precompile \texttt{0x0f} &
+  \eqref{eq:final-pairing-dual} \\
+accumulator batching &
+  \cg{AccumulatorEncoding} &
+  \sol{FinalPairing.yul} $\alpha$-batch &
+  \eqref{eq:acc-batch} \\
+\bottomrule
+\end{longtable}
+
+\section{Trace-id correspondence}
+\label{sec:corr-trace}
+
+The differential test pins these ids (required coverage from
+\cg{test.rs::assert\_\allowbreak{}required\_\allowbreak{}diff\_\allowbreak{}trace\_\allowbreak{}coverage\_\allowbreak{}with\_\allowbreak{}options}):
+
+\begin{longtable}{@{}clll@{}}
+\toprule
+\textbf{Id} & \textbf{Value} & \textbf{Rust site} & \textbf{Solidity site} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Id} & \textbf{Value} & \textbf{Rust site} & \textbf{Solidity site} \\
+\midrule
+\endhead
+7 & $\theta$ & \rust{parse\_\allowbreak{}trace} & \sol{squeeze\_\allowbreak{}to(THETA)} \\
+8 & $\beta$ & \rust{parse\_\allowbreak{}trace} & \sol{squeeze\_\allowbreak{}to(BETA)} \\
+9 & $\gamma$ & \rust{parse\_\allowbreak{}trace} & \sol{squeeze\_\allowbreak{}to(GAMMA)} \\
+10 & $y$ & \rust{parse\_\allowbreak{}trace} & \sol{squeeze\_\allowbreak{}to(Y)} \\
+11 & $x$ & \rust{parse\_\allowbreak{}trace} & \sol{squeeze\_\allowbreak{}to(X)} \\
+13,14 & $x_1,x_2$ & \rust{multi\_\allowbreak{}prepare} & \sol{squeeze\_\allowbreak{}to(X1/X2)} \\
+15 & $x_3$ (truncated) & \rust{multi\_\allowbreak{}prepare} L457 & \sol{and(X3, mask)} \\
+16 & $x_4$ & \rust{multi\_\allowbreak{}prepare} L484 & \sol{squeeze\_\allowbreak{}to(X4)} \\
+31 & $f_{\mathsf{eval}}$ & \rust{multi\_\allowbreak{}prepare} L471 & \sol{F\_\allowbreak{}EVAL\_\allowbreak{}MPTR} \\
+32 & $v$ & \rust{multi\_\allowbreak{}prepare} L516 & \sol{V\_\allowbreak{}MPTR} \\
+33 & $C_{\mathsf{final}}$ & \rust{multi\_\allowbreak{}prepare} L488 & \sol{FINAL\_\allowbreak{}COM\_\allowbreak{}MPTR} \\
+36 & $\nu_y(x)$ & \rust{verifier.rs} trace & \sol{re-negated numer} \\
+30000+ & identity evals & \rust{QUOTIENT\_\allowbreak{}IDENTITY\_\allowbreak{}BASE} & VM trace \\
+40000+ & $q_{\mathsf{com}}$ & \rust{PCS\_\allowbreak{}Q\_\allowbreak{}COM\_\allowbreak{}BASE} & PCS trace \\
+41000+ & point sets & \rust{PCS\_\allowbreak{}POINT\_\allowbreak{}SET\_\allowbreak{}BASE} & PCS trace \\
+60000+ & selector folds & \rust{SELECTOR\_\allowbreak{}FOLD\_\allowbreak{}BASE} & VM trace \\
+35 & final result & \rust{FINAL\_\allowbreak{}RESULT\_\allowbreak{}TRACE\_\allowbreak{}ID} & \sol{ec\_\allowbreak{}pairing} \\
+\bottomrule
+\end{longtable}
+
+The test asserts three things simultaneously: (1) no Rust id is missing in
+Solidity, (2) no Solidity id lacks a Rust oracle, and (3) the byte payloads
+are \emph{equal} for every id. This is the strongest form of semantic
+checkpoint equivalence available without formal verification.

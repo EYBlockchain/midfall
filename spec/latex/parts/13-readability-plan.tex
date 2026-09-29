@@ -1,0 +1,413 @@
+% ============================================================================
+% Part 13: Concrete readability improvement plan (source-grounded)
+% ============================================================================
+\chapter{Making the generated contract human-readable: a concrete plan}
+\label{ch:readability}
+
+Chapters~\ref{ch:prod-review} and~\ref{ch:critique} established that the
+artifact is \emph{correct} but hard for a human to audit. This chapter turns
+that diagnosis into a concrete, prioritized change plan. Every fix below is
+anchored to a specific line in the generator
+(\texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}src/\allowbreak{}}, \texttt{main} HEAD \texttt{6b3d2096})
+and shows the
+\emph{before} (what the renderer emits today) and the \emph{after} (what it
+should emit). Each fix carries a status tag as in Chapter~\ref{ch:critique}
+(\vstatus{ADDRESSED} / \vstatus{PARTIAL} / \vstatus{OPEN} /
+\vstatus{CORRECTED}); \texttt{L}$n$ refers to
+\texttt{Halo2VerifierFee12345B64.sol}. The central observation that makes
+this tractable:
+
+\begin{quote}
+\textbf{The generator already knows the semantic name of almost every
+address and value it emits --- it just throws the name away at the emit
+boundary.}
+\end{quote}
+
+\paragraph{Where the names are, and where the hex comes from}
+\vstatus{CORRECTED}. The names exist in the data model:
+\texttt{MemoryRegion.name} (\texttt{layout/\allowbreak{}memory.rs:179}) and the
+\texttt{fixed\_\allowbreak{}low\_\allowbreak{}memory} table (\texttt{memory.rs:943}) are used only for
+validation error strings, while \texttt{column\_eval\_var}
+(\texttt{yul\_emit.rs:1142}) is \emph{already} used at emit and produces the
+\texttt{f\_N}/\texttt{a\_N}/\texttt{i\_N} names. Contrary to an earlier
+draft, \texttt{u256\_string} (\texttt{yul\_emit.rs:1133}) renders
+\emph{field constants}, not addresses. Addresses reach the Yul through the
+\texttt{Ptr}/\texttt{Value} \texttt{Display} impl
+(\texttt{encoding/\allowbreak{}mod.rs:634--648}) and through
+\texttt{format!("\{:\#x\}")} sites (64 in \texttt{kzg/mod.rs}, 31 in
+\texttt{quotient.rs}). \texttt{Value} already has a symbolic variant,
+\texttt{Value::Identifier(name, off)} (\texttt{encoding/\allowbreak{}mod.rs:590}), which
+renders as \texttt{add(name, off)}; that is how
+\texttt{add(X1\_\allowbreak{}POWERS\_\allowbreak{}MPTR, 0x80)} appears in the output. Recovering
+readability is therefore mostly a matter of \emph{propagating names that
+already exist} to the emit site, not inventing new information.
+
+\section{The measured readability debt}
+\label{sec:read-measure}
+
+Before proposing fixes, the debt in the production
+\texttt{Halo2VerifierFee12345B64.sol} (3{,}579 lines; \texttt{wc -l} prints
+3{,}578). Address metrics use the definition of
+\S\ref{sec:c-scorecard}: the first argument of
+\texttt{mload}/\texttt{mstore}/\texttt{mcopy}, comments stripped.
+
+\begin{center}
+\begin{tabular}{@{}lrl@{}}
+\toprule
+\textbf{Metric} & \textbf{Count} & \textbf{Verdict} \\
+\midrule
+Raw-hex address operands (distinct addresses) & 492 (246) & unreadable \\
+Named pointer operands, bare / as \texttt{add(NAME, off)} & 64 / 112 & good, but minority \\
+Declared pointer constants (referenced) & 68 (63) & 5 are dead \\
+Opaque \texttt{varN} local names (uses) & 163 (980) & unreadable \\
+Lines in \texttt{verifyProof} (L293--L3578) & 3{,}286 & unreviewable as one unit \\
+Region names defined in \texttt{layout/memory.rs} & 30 & \emph{one per buffer, unused at emit} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The ratio is stark: for every bare named address operand the reader gets,
+they get $\sim$7.7 raw hex ones ($\sim$2.9 if \texttt{add(NAME, off)} forms
+count as named). The raw operands cluster in two buffers: 327 operands (183
+addresses) in the final-MSM/quotient scratch from \texttt{0xa320}, and 160
+(60) in the decoded-eval buffer from \texttt{REVERSED\_\allowbreak{}EVALS\_\allowbreak{}MPTR}
+$=$ \texttt{0x8520}; only 5 (3) are low scratch. The fix is to invert that
+ratio.
+
+\section{Fix 1 --- Named memory addresses (highest impact)}
+\label{sec:read-named-addr}
+\vstatus{OPEN} \emph{(prototyped on the unmerged branch \texttt{41b78eb9},
+2026-08-20, for the final-MSM block only; not in \texttt{main} or B64)}
+
+\paragraph{The problem.} A typical emitted block (L3455--3458):
+
+\begin{lstlisting}[style=yul]
+mcopy(0xd2a0, 0x9c60, 0x80)
+mstore(0xd320, mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_4, r))
+mcopy(0xd340, F_COM_MPTR, 0x80)
+mstore(0xd3c0, x4_pow_5)
+\end{lstlisting}
+
+The reader can see \texttt{X1\_POWERS\_MPTR} and \texttt{F\_COM\_MPTR}
+are named, but \texttt{0xd2a0}, \texttt{0x9c60}, \texttt{0xd320},
+\texttt{0xd340}, \texttt{0xd3c0} are opaque. They are pairs 76 and 77 of
+the 78-pair final MSM staged at \texttt{0xa320} (point at
+$\texttt{0xa320}+76\cdot\texttt{0xa0}$, scalar $+\texttt{0x80}$), and
+\texttt{0x9c60} is \texttt{PERM\_\allowbreak{}Z\_\allowbreak{}COMMS\_\allowbreak{}MPTR\_\allowbreak{}BASE}${}+\texttt{0x200}$,
+the fifth permutation-product commitment --- but nothing says so.
+
+\paragraph{What is half-built, and what is not.} \texttt{MemoryRegion}
+(\texttt{memory.rs:178}) carries a \texttt{name: \&'static str} field,
+and \texttt{MemoryMap} holds a \texttt{Vec<MemoryRegion>} (L217--218). Its
+doc comment scopes the name to errors: \emph{``Stable human-readable region
+name used in validation errors''}. An earlier draft proposed a reverse lookup
+\texttt{name\_\allowbreak{}for\_\allowbreak{}addr(addr)} matching \texttt{r.start == addr}. That does
+not work, for three reasons:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+\item Regions are one per \emph{buffer} (\texttt{"pcs\_final\_msm"},
+  \texttt{"decoded\_evals"}, \ldots), so an exact-start match names only the
+  base. Every interior slot above --- all five addresses --- still falls
+  back to hex. No per-slot \texttt{MSM\_IN\_$i$} regions exist.
+\item Region names are lowercase planner labels, not declared Solidity
+  identifiers, so emitting one would not compile without a matching constant.
+\item Addresses are phase-shared (\texttt{0x80} is \texttt{TRANSCRIPT\_MPTR},
+  \texttt{RETURN\_MPTR} and \texttt{QUOTIENT\_\allowbreak{}RETURN\_\allowbreak{}MPTR};
+  \texttt{0xa1e0} is \texttt{SELECTOR\_\allowbreak{}ACC\_\allowbreak{}MPTR} and
+  \texttt{BATCH\_\allowbreak{}INV\_\allowbreak{}SCRATCH\_\allowbreak{}MPTR}; \texttt{0xa320} is both the final-MSM
+  base and a quotient accumulator), so an address alone cannot pick the
+  right name. The \emph{emit site} knows the role; the reverse map does not.
+\end{itemize}
+
+\paragraph{Concrete change.} Name the pointer where it is created, using the
+symbolic pointer the encoder already supports, and declare the base once:
+
+\begin{lstlisting}[style=rust]
+// kzg/mod.rs (sketch): stage final-MSM pairs relative to a named base.
+// Value::Identifier(name, off) already renders as add(name, off)
+// (encoding/mod.rs:634); Constants.sol declares PCS_FINAL_MSM_MPTR.
+fn final_msm_slot(pair: usize, scalar: bool) -> Value {
+    let off = pair * 0xa0 + if scalar { 0x80 } else { 0 };
+    Value::Identifier("PCS_FINAL_MSM_MPTR", off as isize)
+}
+\end{lstlisting}
+
+Do the same for the decoded-eval reads (\texttt{REVERSED\_\allowbreak{}EVALS\_\allowbreak{}MPTR}
+${}+k\cdot\texttt{0x20}$). A containment lookup
+(\texttt{r.start <= addr \&\& addr < r.start + r.len}) is still useful, but
+only for the generated legend of Fix~5, where ambiguity can be shown rather
+than resolved.
+
+\paragraph{After.} The same block becomes:
+
+\begin{lstlisting}[style=yul]
+mcopy(add(PCS_FINAL_MSM_MPTR, 0x2f80), add(PERM_Z_COMMS_MPTR_BASE, 0x0200), 0x80) // pair 76: perm_z[4]
+mstore(add(PCS_FINAL_MSM_MPTR, 0x3000), mulmod(mload(add(X1_POWERS_MPTR, 0x80)), x4_pow_4, r))
+mcopy(add(PCS_FINAL_MSM_MPTR, 0x3020), F_COM_MPTR, 0x80)                          // pair 77: f_com
+mstore(add(PCS_FINAL_MSM_MPTR, 0x30a0), x4_pow_5)
+\end{lstlisting}
+
+Now the reader sees ``this is the final-MSM staging buffer, pair $i$''
+without a memory-map lookup. Converting every emitter that addresses the
+\texttt{0xa320} scratch (final-MSM staging in \texttt{kzg/mod.rs},
+quotient-VM state in \texttt{quotient.rs}) and the decoded-eval reads removes
+487 of the 492 raw-hex operands; the remaining handful are low scratch.
+
+\paragraph{Cost / risk.} Low. The emitted \emph{semantics} are unchanged
+(a \texttt{constant} is substituted at compile time and the via-IR optimizer
+folds \texttt{add(const, const)}). Byte-identical bytecode is expected but
+should be \emph{checked}, not asserted: the crate's release check already
+pins the IVC verifier's runtime keccak
+(\texttt{scripts/\allowbreak{}check\_\allowbreak{}release\_\allowbreak{}bytecode\_\allowbreak{}sizes.sh}), which turns ``only
+the source text changed'' into a test, and the trace-equivalence harness
+(\S\ref{sec:c2-trustroot}) must still pass unchanged. Neither is gated by
+the monorepo's root CI today, so run them explicitly.
+
+\paragraph{Evidence the mechanism already works.} The contract already
+declares 78 \texttt{uint256 internal constant} names (79 with the
+\texttt{bytes32} codehash; e.g.\
+\texttt{PROOF\_\allowbreak{}CPTR = 0x64}, \texttt{INSTANCE\_\allowbreak{}CPTR = 0x1ee4},
+\texttt{NUM\_\allowbreak{}INSTANCE\_\allowbreak{}CPTR = 0x1ec4}) that the Yul body
+references by name and that compile to the same literals. An earlier draft
+said the MSM scratch base \texttt{0xa320} was the \emph{only} kind of address
+still emitted raw; that is wrong --- the decoded-eval buffer accounts for a
+third of the raw operands (above). Extending the existing constant mechanism
+to the scratch regions is not a new capability --- it is using one the
+generator already has. A named \texttt{PCS\_\allowbreak{}FINAL\_\allowbreak{}MSM\_\allowbreak{}MPTR} resolves to
+\texttt{0xa320} at compile time, so the argument that bytecode is unchanged
+is a compile-time substitution argument, confirmed by the pinned hash, not an
+empirical one.
+
+\section{Fix 2 --- Semantic local names over \texttt{varN}}
+\label{sec:read-varnames}
+\vstatus{OPEN}
+
+\paragraph{The problem.} 163 distinct local names \texttt{var0}\ldots\texttt{var162}
+(\texttt{next\_var}, \texttt{yul\_\allowbreak{}emit.rs:1125--1129}), declared 442 times
+because the counter restarts per emitted block, so the same name denotes
+different values in different blocks. A reader cannot tell
+\texttt{var47} from \texttt{var48}.
+
+\paragraph{The fix is already half-built.} The generator already has
+\texttt{column\_eval\_var} (\texttt{yul\_emit.rs:1142}), which produces
+semantic names like \texttt{f\_3}, \texttt{a\_7\_next\_1}. The infrastructure
+for meaningful names exists; it is just not used for the generic
+\texttt{init\_var} path.
+
+\paragraph{Evidence the hint mechanism already works.} In
+\texttt{yul\_emit.rs}, \texttt{init\_var} (L1113) takes an
+\texttt{Option<String>} name and 23 call sites exercise it: \textbf{4 pass a
+real hint} (\texttt{Some(var\_name)} at L1041/L1053 for fixed/advice evals,
+\texttt{Some(column\_\allowbreak{}eval\_\allowbreak{}var("i", col, rot))} at L1059, and
+\texttt{Some(format!("c\_\allowbreak{}\{\}", \ldots))} for challenges at L1062--1065),
+while \textbf{19 pass \texttt{None}} and fall back to \texttt{varN} (L727,
+904, 917, 927, 966, 973, 976, 989, 993, 1003, 1005, 1014, 1025, 1033, 1068,
+1073, 1079, 1085, 1088). The hinted sites are exactly the leaf reads; the
+\texttt{None} sites are the generic arithmetic ---
+\texttt{mulmod}/\texttt{addmod}/negation/\texttt{q\_pow5}/constant
+materialization. So the mechanism is proven in production; the readability
+gap is precisely those 19 generic-arithmetic sites.
+
+\paragraph{Concrete change.} Thread a \emph{hint} through
+\texttt{init\_var} and fall back to \texttt{varN} only when no hint is
+available. The useful hints are not protocol-level names:
+\texttt{init\_var} only emits \emph{gate-expression subterms} (the
+vanishing, Lagrange and pairing values live in templates and
+\texttt{kzg/mod.rs} and are already named, e.g.\ \texttt{x\_n},
+\texttt{l\_0}, \texttt{x4\_pow\_5}). The hint should come from the gate and
+constraint names the generator already carries in the quotient identity
+manifest (\texttt{builder/\allowbreak{}api.rs:121}), plus the term's role, and must be
+uniquified, because Yul rejects a second \texttt{let} of a name visible in
+the same scope:
+
+\begin{lstlisting}[style=rust]
+// yul_emit.rs: init_var already takes Option<String> for the name.
+// Callers that know the gate/constraint should pass a unique hint:
+let hint = format!("g{gate}_c{constraint}_prod{}", self.next_suffix());
+let (lines, prod) = self.init_var(prod_expr, Some(hint));
+// next_var() stays as the last-resort fallback.
+\end{lstlisting}
+
+\paragraph{Cost / risk.} Low. \texttt{init\_var} already accepts an
+optional name; this is a call-site change. The var-cache keys on the
+\emph{value}, not the name (L1113--1122), so CSE behavior is unchanged.
+Uniqueness of hints is the one new obligation.
+
+\section{Fix 3 --- Decompose \texttt{verifyProof} into named functions}
+\label{sec:read-decompose}
+\vstatus{OPEN}
+
+\paragraph{The problem.} \texttt{verifyProof} is 3{,}286 lines of inline
+Yul. No reviewer holds that in working memory. The protocol has
+$\sim$12 named stages (parse, challenges, instance-eval, identity
+families, linearization, multi-open, final pairing, accumulator) but they
+are not visible as units.
+
+\paragraph{Concrete change.} The renderer already emits per-stage blocks
+(Ch.~\ref{ch:solidity} documents ``PCS blocks'', ``Final pairing'',
+etc.). Wrap each stage in a Yul \texttt{function} with the protocol name.
+Stages should communicate through the existing memory map
+(\texttt{THETA\_MPTR}\ldots\texttt{X4\_MPTR}, \texttt{FINAL\_COM\_MPTR},
+\ldots) and return only a success flag. Returning nine challenges from one
+function would add exactly the stack pressure the split is meant to remove.
+
+\begin{lstlisting}[style=yul]
+function verify_parse_proof(proof_cptr) -> ok { ... }
+function verify_challenges() -> ok { ... }        // writes THETA_MPTR..X4_MPTR
+function verify_instance_eval() -> ok { ... }     // writes INSTANCE_EVAL_MPTR
+function verify_identity_families() -> ok { ... } // writes QUOTIENT_EVAL_MPTR
+function verify_kzg_multiopen() -> ok { ... }     // writes FINAL_COM_MPTR, V_MPTR
+function verify_final_pairing() -> ok { ... }
+\end{lstlisting}
+
+The top-level \texttt{verifyProof} becomes a 15-line table of calls that
+\emph{reads like the protocol spec}. Each function is independently
+reviewable and independently testable against the Rust oracle. It also
+bounds each function's CFG, which is what stock slither's SSA pass needs
+(\S\ref{sec:c5-tools}).
+
+\paragraph{The seam already exists in the assembly pipeline.} The contract
+body is not one monolithic string --- it is assembled from a structured
+\texttt{QuotientComputationBlocks} collection
+(\texttt{plan.rs:68} \texttt{into\_\allowbreak{}template\_\allowbreak{}parts()}) plus
+\texttt{kzg::computations()} (\texttt{artifacts.rs:110--117}). The
+quotient stages are already separated into a typed block collection before
+they are concatenated into the single \texttt{assembly ("memory-safe")}
+body (the test \texttt{generated\_\allowbreak{}heavy\_\allowbreak{}assemblies\_\allowbreak{}keep\_\allowbreak{}memory\_\allowbreak{}safe\_\allowbreak{}for\_\allowbreak{}via\_\allowbreak{}ir},
+\texttt{tests.rs:2127}, asserts that annotation). So
+Fix~3 is a mechanical transformation at the assembly seam: wrap each
+element of the block collection in a named \texttt{function} and replace
+the inline concatenation with a call sequence. The decomposition does not
+require re-deriving the stages --- they are already discrete.
+
+\paragraph{Cost / risk.} Medium. Yul function calls add a small stack
+frame; via-IR's inliner will probably re-inline single-call functions, so gas
+should be close to neutral, but that is not guaranteed and the bytecode will
+change. Two further caveats. First, the restructure changes which locals
+solc spills into $[\texttt{0x80},\textit{memoryguard})$, an area the
+generated code also writes (\S\ref{sec:c11-build}), so re-check the spill
+area and live ranges after the change. Second, it does not by itself remove
+the via-IR requirement: the first legacy-codegen stack-too-deep error is in
+the helper \texttt{load\_\allowbreak{}acc\_\allowbreak{}coord\_\allowbreak{}shifted} (L573). This is the
+largest change but the single biggest auditability win.
+
+\section{Fix 4 --- Annotate the fused \texttt{q\_com} MSM pairs}
+\label{sec:read-qcom}
+\vstatus{PARTIAL}
+
+From \S\ref{sec:pr-qcom}: the quotient commitment is fused into the
+78-pair final MSM (63 multi-open terms, 14 linearization terms --- 4 quotient
+limbs and 10 simple selectors --- and \texttt{f\_com}), and
+\texttt{Q\_COM\_MPTR} is declared-but-unused. Two cheap fixes:
+
+\begin{enumerate}
+\item \textbf{Drop the dead constant.} \texttt{Q\_COM\_MPTR}
+(\texttt{L137}) is never written --- confirmed: \textbf{0}
+\texttt{mstore}/\texttt{mload}/\texttt{mcopy} operands reference it.
+\vstatus{ADDRESSED} for the comment half: L134--136 already say it
+``intentionally aliases \texttt{Q\_\allowbreak{}EVAL\_\allowbreak{}SET\_\allowbreak{}MPTR} and has zero reserved
+capacity until a future emitter starts writing \texttt{Q\_COM\_MPTR}''.
+Deleting it (as the unmerged \texttt{41b78eb9} does) remains optional. The
+same applies to the four other dead pointer constants
+(\texttt{CHALLENGE\_MPTR}, \texttt{G1\_\allowbreak{}IDENTITY\_\allowbreak{}MPTR},
+\texttt{QUOTIENT\_\allowbreak{}RETURN\_\allowbreak{}MPTR}, \texttt{TRACE\_U256\_MPTR};
+\S\ref{sec:c5-tools}). \texttt{G1\_\allowbreak{}IDENTITY\_\allowbreak{}MPTR}'s comment (L144--148)
+describes ``the four \texttt{mload}s below'', which this render does not
+emit.
+\item \textbf{Annotate the MSM pairs.} \vstatus{OPEN}: the staging block
+(L3298--3458) has no per-pair comments. In the final-MSM input build,
+emit a comment per pair: \texttt{/\allowbreak{}/\allowbreak{} pair 12: q\_\allowbreak{}com contribution
+(x4\_\allowbreak{}pow\_\allowbreak{}4)}. With Fix~1's named addresses this becomes self-documenting.
+\end{enumerate}
+
+\section{Fix 5 --- Emit a generated address-map appendix}
+\label{sec:read-addressmap}
+\vstatus{OPEN}
+
+Even with Fix~1, some addresses remain raw hex. The generator should emit
+a machine-generated legend as a comment block at the top of the contract
+(or a companion \texttt{.md} file):
+
+\begin{lstlisting}[style=plain]
+// MEMORY MAP (generated; do not hand-edit)
+//   0x0064  PROOF_CPTR          proof calldata base
+//   0x0080  TRANSCRIPT_MPTR     transcript buffer (phase: transcript;
+//           = RETURN_MPTR, QUOTIENT_RETURN_MPTR in later phases)
+//   0x0080..0x08e0              solc via-IR spill area (memoryguard)
+//   0x1ec4  NUM_INSTANCE_CPTR   instance count word
+//   0x1ee4  INSTANCE_CPTR       instance array base
+//   0x4140  q_program           VM bytecode blob (0x11cf bytes)
+//   0x6ea0  FINAL_COM_MPTR      KZG reduced commitment
+//   0xa320  PCS_FINAL_MSM_MPTR  final MSM input scratch (78 pairs;
+//           quotient-VM scratch in an earlier phase)
+//   ...
+\end{lstlisting}
+
+This is free to generate (the \texttt{MemoryMap} already has every
+\texttt{(name, start, len, lifetime)}, \texttt{memory.rs:178--186}; the
+production contract already declares 68 named pointer constants that could
+seed the legend) and gives a reviewer a single lookup table. It turns
+``what is 0xa320?'' from a grep hunt into a one-line answer. Two details
+matter: show each region's lifetime, because addresses are reused across
+phases, and include the compiler's spill area from the compiled
+\texttt{memoryguard}, which would make the C11 overlap
+(\S\ref{sec:c11-build}) visible at a glance.
+
+\section{Fix 6 --- Collapse the five near-identical Horner blocks}
+\label{sec:read-horner}
+\vstatus{OPEN}
+
+The \texttt{f\_eval} section (\S\ref{sec:pr-feval}) emits five
+reversed point-set blocks. In the production contract the
+\texttt{f\_eval} block spans L3107--3269 and contains five
+\texttt{f\_\allowbreak{}eval := addmod(mulmod(f\_\allowbreak{}eval, x2, r), eval, r)} steps
+(L3158, L3202, L3231, L3260, L3267). The Horner step itself is one line;
+what repeats is the per-set Lagrange interpolation that precedes it. Its
+size depends on the set's cardinality (3, 3, 2, 2, 1 at L3116, L3160, L3204,
+L3233, L3262), so a \texttt{horner(coeffs, x)} helper would remove almost
+nothing. The generator should instead emit one loop-based helper,
+parameterized by the set's point count and its \texttt{ROT\_POINTS}/\texttt{Q\_EVAL\_SET}
+offsets, and call it five times. This removes $\sim$150 lines of
+near-copy-paste and makes the ``five sets'' structure explicit rather than
+something the reviewer must pattern-match. It is not bytecode-neutral: a
+loop costs a little more than unrolled code. It also exposes a gas win:
+each block calls \texttt{scalar\_inv} (a modexp) once, and one batched
+inversion across the five sets would save four modexps ($\approx$5.4k gas under
+EIP-2565, $\approx$16.3k under EIP-7883).
+
+\section{Prioritized summary}
+\label{sec:read-priority}
+
+\begin{center}
+\begin{tabular}{@{}cp{7.0cm}llp{2.3cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Fix} & \textbf{Impact} & \textbf{Effort} & \textbf{Status} \\
+\midrule
+1 & Named memory addresses (symbolic \texttt{Value::Identifier} at the emit site) & High & Low & \vstatus{OPEN} \\
+2 & Semantic local names (reuse \texttt{init\_var} hint) & High & Low & \vstatus{OPEN} \\
+3 & Decompose \texttt{verifyProof} into named functions & High & Med & \vstatus{OPEN} \\
+4 & Annotate fused \texttt{q\_com} MSM pairs & Med & Low & \vstatus{PARTIAL} \\
+5 & Generated address-map appendix & Med & Trivial & \vstatus{OPEN} \\
+6 & Loop helper for the five per-set interpolation blocks & Med & Low & \vstatus{OPEN} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The unifying principle.} Fixes 1, 2, and 5 all share one
+property: \emph{the information is already in the generator; the renderer
+just discards it.} A single design change --- ``every emitted address and
+local carries its semantic name, with hex as fallback'' --- recovers most
+of the lost readability without touching a line of protocol logic. For
+these three, the compiled bytecode is expected to be unchanged and only the
+source text gains names. That is why they are low-risk: they cannot
+introduce a soundness bug, because they cannot change what the contract
+\emph{does} --- only what it \emph{looks like} to the human reading it. The
+pinned runtime hash makes that claim testable. Fixes 3 and 6 do change the
+code's structure: they need the full differential suite and the spill-area
+re-check of \S\ref{sec:c11-build}.
+
+\paragraph{What this does not fix.} The fuzz-coverage gap
+(\S\ref{sec:pr-fuzz-coverage}) and the hybrid VM+Yul model
+(\S\ref{sec:pr-vm-hybrid}) are not readability problems and are not
+addressed here. Readability makes the contract \emph{auditable}; it does
+not make the production shape \emph{tested}. Both matter, and they are
+orthogonal workstreams.

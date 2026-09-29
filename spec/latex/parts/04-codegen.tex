@@ -1,0 +1,645 @@
+% ============================================================================
+% Part 4 --- The code generator
+% ============================================================================
+\chapter{The Code Generator}
+\label{ch:codegen}
+
+The generator lives in \texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}src/\allowbreak{}}. Its design
+principle is: \textbf{plan everything in Rust, render nothing but strings}.
+By the time an Askama template runs, every memory address, byte offset,
+challenge order, quotient opcode, and PCS schedule entry is a finalized
+integer. The templates contain no arithmetic and no protocol logic --- they
+only interpolate planned facts. This is what makes the lowering auditable:
+the protocol lives in typed Rust data structures that can be unit-tested,
+not in template conditionals.
+
+\section{Pipeline overview}
+\label{sec:pipeline}
+
+\begin{center}
+\begin{tikzpicture}[
+  node distance=0.55cm and 1.1cm,
+  box/.style={draw=black!40, rounded corners=2pt, align=center,
+              inner sep=5pt, font=\scriptsize\sffamily},
+  arr/.style={-{Stealth[length=2mm]}, black!55, thick}]
+\node[box, fill=codegenblue!8] (api) {\textbf{api.rs}\\GeneratorConfig\\AccumulatorEncoding};
+\node[box, fill=codegenblue!8, right=of api] (inputs) {\textbf{builder/api.rs}\\try\_new()\\validation};
+\node[box, fill=codegenblue!12, right=of inputs] (proto) {\textbf{protocol/mod.rs}\\ProtocolPlan\\query+read order};
+\node[box, fill=codegenblue!12, below=of proto] (mem) {\textbf{layout/memory.rs}\\VerifierMemoryLayout\\60 regions};
+\node[box, fill=codegenblue!12, left=of mem] (vk) {\textbf{lowering/vk.rs}\\VK payload\\digest+points};
+\node[box, fill=codegenblue!12, right=of mem] (quot) {\textbf{quotient\_numerator/vm}\\bytecode program};
+\node[box, fill=codegenblue!12, below=of quot] (kzgp) {\textbf{lowering/kzg/mod.rs}\\PCS Yul blocks};
+\node[box, fill=codegenblue!8, below=of kzgp] (render) {\textbf{render + artifacts}\\Askama templates};
+\draw[arr] (api) -- (inputs);
+\draw[arr] (inputs) -- (proto);
+\draw[arr] (proto) -- (mem);
+\draw[arr] (mem) -- (vk);
+\draw[arr] (mem) -- (quot);
+\draw[arr] (quot) -- (kzgp);
+\draw[arr] (vk) -- (render);
+\draw[arr] (kzgp) -- (render);
+\end{tikzpicture}
+\end{center}
+
+The entry point is \cg{SolidityGenerator} (\cg{builder/mod.rs}):
+\begin{lstlisting}[style=rust]
+pub struct SolidityGenerator { params, vk, num_instances, acc_encoding, meta }
+impl SolidityGenerator {
+    fn inputs(&self) -> VerifierBuildInputs { ... }
+    pub fn render(&self, options: RenderOptions) -> RenderedArtifacts { ... }
+}
+\end{lstlisting}
+\cg{RenderOptions} selects which artifacts to emit: the verifier contract,
+optionally a separate VK contract, and optionally an external quotient
+evaluator contract (Section~\ref{sec:quotient-render}).
+
+\section{Validation: what the generator refuses}
+\label{sec:validation}
+
+\cg{builder/\allowbreak{}api.rs::try\_\allowbreak{}new} runs the profile checks of
+Section~\ref{sec:profile} before any planning:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \cg{NoAdviceColumns} --- a circuit with no advice cannot be verified.
+  \item \cg{validate\_\allowbreak{}instance\_\allowbreak{}column\_\allowbreak{}shape} --- exactly one committed
+        instance column (the identity commitment) and exactly one
+        non-committed instance column.
+  \item accumulator validation --- if an outer IVC accumulator is present,
+        its encoding (offset, 7 limbs of 56 bits, PointAndScalar/PointPair)
+        must be consistent.
+  \item \cg{RotatedInstanceQuery} rejection --- non-committed instance
+        columns may only be queried at rotation~0.
+\end{itemize}
+These mirror the Rust verifier's own instance validation
+(\rust{verifier.rs} L263--268) but are \emph{stricter}: the Rust verifier
+would accept shapes the generator deliberately excludes. This asymmetry is
+safe --- the generator only claims faithfulness inside its profile.
+
+\section{The protocol plan}
+\label{sec:protocol-plan}
+
+\cg{lowering/\allowbreak{}protocol/\allowbreak{}mod.rs::ProtocolPlan::from\_\allowbreak{}constraint\_\allowbreak{}system}
+(1223 L) is the heart of the lowering. It computes, from the constraint
+system alone, the exact order of every proof read and every PCS query. The
+key data types:
+
+\begin{lstlisting}[style=rust]
+enum CommitmentRead { Advice, LookupMultiplicity, PermutationProduct,
+                     LookupHelper, LookupAccumulator, Trash, Quotient }
+enum PermutationZEval { Cur, Next, Last }
+struct Query { rotation: Rotation, comm: ..., eval: ... }
+\end{lstlisting}
+
+\paragraph{Proof commitment order} (mirrors \rust{parse\_trace}):\\[2pt]
+{\centering\small advices per phase $\rightarrow$ multiplicities $\rightarrow$
+perm products $\rightarrow$ helpers+accumulators $\rightarrow$ trash
+$\rightarrow$ quotient limbs.\par}
+
+\paragraph{Proof eval order} (mirrors the eval-absorption loop):\\[2pt]
+{\centering\small committed\_instance $\rightarrow$ advice $\rightarrow$
+fixed (non-simple) $\rightarrow$ perm\_common $\rightarrow$
+perm z cur/next/last per set $\rightarrow$
+lookup m/helper/z(0)/z(1) $\rightarrow$ trash.\par}
+
+\paragraph{PCS query order} (mirrors \rust{verifier.rs} L577--652):\\[2pt]
+{\centering\small advice $\rightarrow$ committed instance $\rightarrow$
+perm z $\rightarrow$ lookup $\rightarrow$ trash $\rightarrow$
+fixed non-simple $\rightarrow$ perm common $\rightarrow$ linearization.\par}
+
+\subsection{The canonical read-order construction}
+\label{sec:read-order}
+
+The ordering above is not hand-written --- it is \emph{derived} from the
+constraint system by the plan builder, so the generated proof layout
+cannot drift from the circuit. The commitment stream:
+\begin{lstlisting}[style=rust]
+proof.commitments.extend((0..advice_indices.len())
+    .map(|_| CommitmentRead::Advice));                 // per phase
+proof.commitments.extend((0..num_lookups)
+    .map(|_| CommitmentRead::LookupMultiplicity));
+proof.commitments.extend((0..num_permutation_zs)
+    .map(|_| CommitmentRead::PermutationProduct));
+for &chunks in &lookup_chunks {
+    proof.commitments.extend((0..chunks)
+        .map(|_| CommitmentRead::LookupHelper));
+    proof.commitments.push(CommitmentRead::LookupAccumulator);
+}
+proof.commitments.extend((0..num_trashcans)
+    .map(|_| CommitmentRead::Trash));
+proof.commitments.extend((0..num_quotients)
+    .map(|_| CommitmentRead::Quotient));
+\end{lstlisting}
+and the eval stream (note the two deliberate exclusions):
+\begin{lstlisting}[style=rust]
+proof.evals.extend(instance_queries.iter().copied()
+    .filter(|q| q.column < nb_committed_instances)   // committed only
+    .map(EvalRead::CommittedInstance));
+proof.evals.extend(advice_queries.iter().copied().map(EvalRead::Advice));
+proof.evals.extend(fixed_queries.iter().copied()
+    .filter(|q| !simple_selector_cols.contains(&q.column))  // no simple sel.
+    .map(EvalRead::Fixed));
+// perm common, then per-set z cur/next/last (last skipped on final set)
+for set in 0..num_permutation_zs {
+    proof.evals.push(EvalRead::PermutationZ { set, kind: Cur });
+    proof.evals.push(EvalRead::PermutationZ { set, kind: Next });
+    if set + 1 != num_permutation_zs {
+        proof.evals.push(EvalRead::PermutationZ { set, kind: Last });
+    }
+}
+// lookup m / helper / z(0) / z(1), then trash
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Derived, not hand-written.}}
+        The order is computed from \rust{cs.advice\_\allowbreak{}queries()} etc., so
+        adding a column to the circuit automatically shifts the proof
+        layout --- the generated parser and the Rust verifier stay in
+        lockstep by construction.
+  \item \textcolor{tracegreen}{\textbf{[OK] Simple-selector exclusion.}}
+        Simple selector columns are filtered out of the eval stream
+        (filled by the linearization path, not read from the proof),
+        matching the Rust verifier's treatment.
+  \item \textcolor{tracegreen}{\textbf{[OK] Final-set \texttt{Last}
+        skip.}} The \texttt{Last} rotation is omitted on the final
+        permutation set --- the same boundary condition the Rust
+        permutation verifier applies (the last set's last-row term is
+        folded elsewhere).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Phase remapping.}} The
+        \cg{remapping} closure repacks declaration-order advice/challenge
+        columns into phase-packed order (\cg{nums}/\cg{index}), because
+        Midnight declares columns in source order but verifies them phase
+        by phase. This is the one place where the wire order differs from
+        the declaration order; the generated parser must use the
+        remapped indices.
+\end{itemize}
+
+\subsection{Lookup chunking: \cg{nb\_\allowbreak{}parallel\_\allowbreak{}lookups\_\allowbreak{}per\_\allowbreak{}chunk}}
+\label{sec:lookup-chunking}
+
+The \cg{lookup\_chunks} field (which sizes the helper commitments and
+evals in the proof layout) is derived from the LogUp degree budget:
+\begin{lstlisting}[style=rust]
+pub(crate) fn nb_parallel_lookups_per_chunk(&self, cs_degree: usize) -> usize {
+    let max_degree = (cs_degree - 1).next_power_of_two() + 1;
+    let lookup_degree = self.input_expressions.iter()
+        .flat_map(|e| e.iter().map(|e| e.degree()))
+        .max().unwrap_or(1);
+    // dominating factor: h(X) * prod_j (f_j(X) + beta)
+    //   has degree 1 + lookup_degree * nb_parallel_lookups
+    (max_degree - 1) / lookup_degree
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Degree-budget derivation.}}
+        The chunk size is the largest number of parallel LogUp inputs
+        whose dominating polynomial $h(X)\prod_j(f_j(X)+\beta)$ fits the
+        constraint-system degree budget. \cg{chunk\_by\_degree} then
+        splits \texttt{input\_\allowbreak{}expressions} into that many per chunk,
+        each becoming one committed helper $h_i(X)$.
+  \item \textcolor{tracegreen}{\textbf{[OK] Verifier-side consistency.}}
+        The generated verifier reads exactly \cg{num\_chunks} helper
+        commitments and their evals per lookup (the
+        \texttt{LookupHelper}/\texttt{LookupAccumulator} reads in
+        \S\ref{sec:read-order}), so the chunking formula is the single
+        source of truth for the lookup portion of the proof layout.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{next\_\allowbreak{}power\_\allowbreak{}of\_\allowbreak{}two}
+        rounding.}} \texttt{max\_degree} rounds \texttt{cs\_degree-1}
+        up to a power of two before adding 1, matching the Rust
+        verifier's degree handling. A circuit whose degree is not a
+        power of two gets a slightly larger budget --- faithful to
+        Rust, but worth noting when reasoning about chunk counts.
+\end{itemize}
+
+The plan's \cg{validate()} method asserts internal invariants: every
+commitment read is consumed by at least one PCS query (so the
+no-curve-check-at-absorption argument of Definition~\ref{def:g1-canonical}
+holds --- every absorbed point is later validated by a precompile), and the
+eval counts match \cg{ConstraintSystemMeta::num\_\allowbreak{}evals}.
+
+\begin{claim}[Query-order faithfulness]
+The \cg{ProtocolPlan} query order is identical to the order in which
+\rust{verify\_\allowbreak{}algebraic\_\allowbreak{}constraints} builds its \rust{queries} vector.
+This is verified by the differential trace: the PCS point-set trace ids
+\boxid{41000+s} and q\_com ids \boxid{40000+s} must match between Rust
+and Solidity, which pins both the set partition and the within-set order.
+\end{claim}
+
+\section{Memory layout}
+\label{sec:memlayout}
+
+\cg{layout/\allowbreak{}memory.rs::VerifierMemoryLayout} (1468 L) assigns ~60 named
+regions with a bump allocator and a \cg{MemoryMap.validate} pass. The
+regions (poseidon fixture addresses) are:
+
+\begin{longtable}{@{}llp{0.42\linewidth}@{}}
+\toprule
+\textbf{Region} & \textbf{Addr} & \textbf{Purpose} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Region} & \textbf{Addr} & \textbf{Purpose} \\
+\midrule
+\endhead
+\texttt{transcript\_mptr} & 0x1000 & Keccak buffer (Def.~\ref{def:squeeze}). \\
+\texttt{vk\_mptr} & 0x1980 & VK payload (digest, k, $\omega$, points). \\
+\texttt{challenge\_mptr} & 0x2b60 & base of challenge block. \\
+\texttt{theta/beta/gamma} & 0x2b60/80/a0 & randomizers. \\
+\texttt{trash\_\allowbreak{}challenge/\allowbreak{}y/\allowbreak{}x} & 0x2bc0/e0/00 & batching challenges. \\
+\texttt{x1/x2/x3/x4} & 0x2c20--0x2c80 & multi-open challenges. \\
+\texttt{f\_com / pi} & 0x2ca0 / 0x2d20 & PCS commitments. \\
+\texttt{x\_\allowbreak{}n, x\_\allowbreak{}n\_\allowbreak{}minus\_\allowbreak{}1\_\allowbreak{}inv} & 0x2ea0/0x2ec0 & $x^n$, $(x^n-1)^{-1}$. \\
+\texttt{l\_\allowbreak{}last/\allowbreak{}l\_\allowbreak{}blind/\allowbreak{}l\_\allowbreak{}0} & 0x2ee0/f0/2f20 & Lagrange specials. \\
+\texttt{instance\_eval} & 0x2f40 & Eq.~\eqref{eq:instance-eval}. \\
+\texttt{quotient\_eval} & 0x2f60 & $-\nu_y(x)$ (Def.~\ref{def:neg-numer}). \\
+\texttt{quotient} & 0x2f80 & $x_{\mathsf{split}}$, $1-x^n$ (2 words). \\
+\texttt{f\_\allowbreak{}eval /\allowbreak{} v /\allowbreak{} final\_\allowbreak{}com} & 0x3020/40/60 & Eqs.~\eqref{eq:feval},\eqref{eq:v}. \\
+\texttt{pairing\_lhs/rhs} & 0x30e0/0x3160 & pairing inputs. \\
+\texttt{rot\_points} & 0x31e0 & $x\cdot\omega^{\text{rot}}$ table. \\
+\texttt{x1\_powers} & 0x3560 & truncated $x_1^i$. \\
+\texttt{q\_\allowbreak{}com /\allowbreak{} q\_\allowbreak{}eval\_\allowbreak{}set} & 0x3d80 & per-set batched comms/evals. \\
+\texttt{g1\_identity} & 0x4580 & 128 zero bytes. \\
+\texttt{reversed\_evals} & 0x46e0 & eval spill for VM. \\
+\texttt{comms bases} & 0x4ce0+ & per-category commitment regions. \\
+\texttt{selector\_acc} & 0x5660 & simple-selector buckets $B_j$. \\
+\texttt{quotient\_\allowbreak{}tmp/\allowbreak{}stack} & 0x56e0+ & VM scratch. \\
+\bottomrule
+\end{longtable}
+
+The layout is computed \emph{before} rendering so that templates receive
+final addresses; \cg{plan.rs} checks for \cg{eval\_\allowbreak{}numer\_\allowbreak{}mptr drift}
+between planning and rendering passes.
+
+\section{VK payload}
+\label{sec:vkpayload}
+
+\cg{lowering/\allowbreak{}vk.rs::generate\_\allowbreak{}base\_\allowbreak{}vk} (448 L) produces the VK payload
+consumed by \sol{VkLoading.yul}:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \cg{vk\_digest} $= \texttt{fe\_to\_u256}(\texttt{vk.transcript\_\allowbreak{}repr()})$
+        --- Eq.~\eqref{eq:vk-digest}.
+  \item \texttt{k}, \texttt{n\_inv}, \texttt{omega}, \texttt{omega\_inv},
+        \texttt{omega\_inv\_to\_l} $= \omega_{\mathsf{inv}}^{|\text{rotation\_last}|}$.
+  \item accumulator metadata (offset, limb count, limb bits).
+  \item base points: \texttt{G1Base} $=G$, \texttt{G2Base} $=G_2$,
+        \texttt{NegSG2Base} $-[s]_2$, encoded via \cg{g1\_to\_u256s}/
+        \cg{g2\_to\_u256s}.
+\end{itemize}
+The \cg{TranscriptBufferLayout} sizes the transcript buffer at 128 bytes
+per G1 (a comment records a historical 49-byte bug that broke digest
+binding --- the fix is pinned by tests).
+
+\section{Proof layout and repacking}
+\label{sec:prooflayout}
+
+\cg{lowering/\allowbreak{}abi/\allowbreak{}proof.rs::ProofCalldataLayout} (537 L) defines the
+compressed proof byte layout: advice phases, lookup multiplicities,
+permutation products, lookups, trash, quotient limbs, evals, f\_com,
+q\_evals, pi, with byte cursors. \cg{lowering/\allowbreak{}calldata.rs::repack\_\allowbreak{}proof}
+(144 L) converts a native proof to the on-chain form:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item each 48-byte compressed G1 $\rightarrow$ 128-byte EIP-2537
+        uncompressed (16 zero pad $+\, x_{\mathsf{hi}}/x_{\mathsf{lo}} + 16$
+        zero pad $+\, y_{\mathsf{hi}}/y_{\mathsf{lo}}$); identity $\rightarrow$
+        128 zeros.
+  \item scalars little-endian $\rightarrow$ big-endian words.
+\end{itemize}
+The walk is driven by \cg{RepackedProofLayoutPlan} so the repacker and the
+generated parser cannot drift apart.
+
+\section{The quotient virtual machine}
+\label{sec:quotient-vm}
+
+The expensive part of the verifier is reconstructing $\nu_y(x)$ from the
+identity expressions. Rather than emitting straight-line Yul for every
+gate (which explodes code size), the generator compiles the identities
+into a compact \textbf{bytecode program} executed by a small VM embedded
+in the contract (\cg{quotient\_\allowbreak{}numerator/\allowbreak{}vm/\allowbreak{}mod.rs}, 3852 L).
+
+\paragraph{Opcodes} (Q\_OP\_*, 31 opcodes in 0x01--0x22;
+\cg{vm/mod.rs} L560--590; 0x17, 0x18, 0x1a unassigned):
+\begin{lstlisting}[style=plain]
+0x01 push_const         0x09 push_const_u8      0x13 add_mul_const_u8_mem_u16
+0x02 push_mem_literal   0x0a fold_main          0x14 add_mul_mem_mem
+0x03 push_mem_token     0x0b fold_selector      0x15 run of 0x12
+0x04 push_mem_token_off 0x0c add_const_u8       0x16 run of 0x13
+0x05 push_mem_u16       0x0d mul_const_u8       0x19 native_permutation
+0x06 add                0x0e add_const          0x1b native_identity
+0x07 mul                0x0f mul_const          0x1c LIN7   0x1d BILIN7_ROW
+0x08 neg                0x10 add_mem_u16        0x1e BILIN7_PAIRWISE
+                        0x11 mul_mem_u16        0x1f native_lookup  0x20 POW5
+                        0x12 add_mul_mem_mem_const_u8   0x21 MODARITH7  0x22 AFFINE_SUM
+\end{lstlisting}
+The rendered dispatch loop is pruned to the opcodes the program actually
+uses (\cg{quotient\_\allowbreak{}program\_\allowbreak{}usage}); an opcode that is not rendered falls
+into the \texttt{default} revert. The production B64 program uses 11 of
+the 31 (\S\ref{sec:pr-isa-dispatch}).
+\paragraph{Memory tokens} (Q\_MEM\_*, 0x01--0x09):
+\texttt{L0, L\_\allowbreak{}LAST, L\_\allowbreak{}BLIND, BETA, GAMMA, X, THETA, TRASH\_\allowbreak{}CHALLENGE,
+INSTANCE\_\allowbreak{}EVAL}.
+
+The VM registers are \texttt{q\_\allowbreak{}pc, q\_\allowbreak{}end, q\_\allowbreak{}sp, q\_\allowbreak{}top, q\_\allowbreak{}has\_\allowbreak{}top}
+(a one-element top-of-stack cache). \cg{QuotientProgramBuilder} folds
+each identity with the Horner $y$-weighting of \eqref{eq:nu-y}:
+\cg{fold\_identity} emits \texttt{fold\_main} (into the main numerator)
+or \texttt{fold\_\allowbreak{}selector(idx)} (into bucket $B_j$). The final VM
+instruction sequence ends with
+\begin{lstlisting}[style=yul]
+// linearization_expected_eval = -quotient_eval_numer
+mstore(QUOTIENT_EVAL_MPTR, sub(r, quotient_eval_numer))
+\end{lstlisting}
+which is Definition~\ref{def:neg-numer} / Eq.~\eqref{eq:expected-eval}.
+
+\paragraph{Native fast paths.} Common expression shapes are compiled to
+fused opcodes rather than generic push/add/mul sequences:
+\texttt{LIN7} (linear combination of 7 terms), \texttt{BILIN7\_ROW}
+(bilinear 7-term), \texttt{MODARITH7}, \texttt{POW5}, and the
+\texttt{native\_\allowbreak{}permutation}/\texttt{native\_lookup}/\texttt{native\_identity}
+callbacks that jump into hand-written Yul blocks for the permutation and
+lookup identity families. The \cg{QuotientProgramPlan} classifies each
+identity into \cg{inline\_\allowbreak{}identities}, \cg{native\_\allowbreak{}identities},
+\cg{native\_\allowbreak{}permutation\_\allowbreak{}identities}, \cg{native\_\allowbreak{}lookup\_\allowbreak{}identities}.
+
+\paragraph{Limb arithmetic.} Foreign-field (BLS12-381 base field) gadgets
+constrain values held as 7 limbs of 56 bits. The VM does not perform wide
+arithmetic: every operation is a native $\Fr$ \texttt{addmod}/\texttt{mulmod}.
+The limb helpers \cg{q\_limb7}/\cg{q\_limb7\_wide} in
+\sol{QuotientHelpers.yul} evaluate the fixed linear forms
+$\sum_i c_i\,\ell_i \bmod r$ with the base-power coefficients
+\cg{LIMB7\_\allowbreak{}YUL\_\allowbreak{}COEFFS}/\cg{WIDE\_\allowbreak{}LIMB7\_\allowbreak{}YUL\_\allowbreak{}COEFFS}, and \cg{q\_pow5}
+evaluates the Poseidon S-box term $x^5$. Each helper is rendered only when
+the lowering recognizes the matching expression shape.
+
+\section{PCS lowering}
+\label{sec:pcs-codegen}
+
+\cg{lowering/\allowbreak{}kzg/\allowbreak{}mod.rs} (2077 L) emits the Yul blocks that implement
+Eqs.~\eqref{eq:qcom}--\eqref{eq:finalcom}. Its \cg{computations()}
+method produces:
+\begin{enumerate}[leftmargin=1.4em,itemsep=1pt]
+  \item \textbf{Rotation points}: $x\cdot\omega^{\text{rot}}$ written to
+        \texttt{ROT\_POINTS\_MPTR} (mirrors \rust{rotate\_omega}).
+  \item \textbf{$x_1$ powers}: truncated $x_1^i$ to
+        \texttt{X1\_POWERS\_MPTR} (Eq.~\eqref{eq:qcom} scalars).
+  \item \textbf{q\_eval\_set folds}: per-set $\sum_k x_1^k v_{s,k}$
+        (Eq.~\eqref{eq:qeval}), with a roll threshold
+        \cg{Q\_\allowbreak{}EVAL\_\allowbreak{}ROLL\_\allowbreak{}THRESHOLD=4} for register pressure.
+  \item \textbf{q\_com} (trace-only): the per-set batched commitment.
+  \item \textbf{Fused final MSM}: the linearization expansion ---
+        quotient limbs $\times\,(1-x^n)\cdot x_{\mathsf{split}}^i$
+        $\times$ query scalar, plus selector buckets $\times$ fixed
+        commitments --- as one G1MSM (Eq.~\eqref{eq:linearization}
+        commitment side).
+  \item \textbf{v computation}: $v = \sum_s x_4^s q_{\mathsf{eval}}^{(s)}
+        + x_4^{n_{\text{sets}}} f_{\mathsf{eval}}$ (Eq.~\eqref{eq:v}).
+  \item \textbf{Final pairing inputs}.
+\end{enumerate}
+\cg{validate\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage} asserts every absorbed G1 point
+appears in a G1MSM or pairing input --- the formal counterpart of
+Definition~\ref{def:g1-canonical}'s ``validated by precompile'' claim.
+
+\subsection{\cg{construct\_\allowbreak{}intermediate\_\allowbreak{}sets\_\allowbreak{}impl} --- the point-set partition}
+\label{sec:construct-sets}
+
+This is the codegen core of the KZG multi-open (Sec.~\ref{sec:pointsets}).
+It mirrors the Rust \rust{construct\_\allowbreak{}intermediate\_\allowbreak{}sets} but is
+deterministic and side-effect-free so the generated schedule is auditable:
+\begin{lstlisting}[style=rust]
+fn construct_intermediate_sets_impl(queries: &[Query]) -> IntermediateSets {
+    // Step 1: one entry per unique commitment; one index per unique rotation.
+    let mut commitment_map: Vec<(EcPoint, Vec<usize>, Vec<Word>)> = Vec::new();
+    let mut point_index_of: Vec<i32> = Vec::new();
+    for query in queries {
+        let point_idx = /* intern query.rotation */;
+        if let Some(slot) = commitment_map.find(|c| *c == query.comm) {
+            if let Some(pos) = slot.1.position(|pi| *pi == point_idx) {
+                // Same (comm, rotation) twice: evals MUST agree, else the
+                // proof claims one poly opens to two values -> reject.
+                assert_eq!(slot.2[pos], query.eval,
+                    "duplicate (commitment, rotation) query with conflicting evals");
+                continue;
+            }
+            slot.1.push(point_idx); slot.2.push(query.eval);
+        } else {
+            commitment_map.push((query.comm, vec![point_idx], vec![query.eval]));
+        }
+    }
+    // Step 2: bucket by sorted point-index set (BTreeMap => deterministic).
+    let mut point_idx_sets: BTreeMap<Vec<usize>, usize> = BTreeMap::new();
+    for (_, point_indices, _) in &commitment_map {
+        let mut sorted = point_indices.clone(); sorted.sort_unstable(); sorted.dedup();
+        let n = point_idx_sets.len();
+        point_idx_sets.entry(sorted).or_insert(n);   // capture INSERTION order
+    }
+    // Step 3: align each commitment's evals to the sorted point order.
+    // Step 4: point_sets[set_idx] = rotations (set_idx = insertion order).
+    ...
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Conflict rejection.}} A
+        duplicate $(\text{comm},\text{rotation})$ with \emph{different}
+        evals is a protocol bug and is asserted against --- the codegen
+        refuses to emit a schedule for an inconsistent query set.
+  \item \textcolor{tracegreen}{\textbf{[OK] Deterministic insertion-order
+        capture.}} The comment warns that the \texttt{or\_insert(n)}
+        insertion order (not the BTreeMap iteration order) is the
+        set-index used downstream and as the \texttt{sort\_sets}
+        tiebreak. This is the same ordering the Rust verifier relies on
+        so the first point set holds the fixed commitments opened at
+        $x$ (Sec.~\ref{sec:pcs-math}).
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{HashMap} hazard.}}
+        The comment explicitly flags that swapping the \texttt{BTreeMap}
+        for a \texttt{HashMap} would break the insertion-order capture.
+        This is a latent maintenance trap; the invariant is documented
+        but not type-enforced.
+\end{itemize}
+
+\subsection{\cg{sort\_sets} --- ascending-cardinality ordering}
+\label{sec:sort-sets}
+
+After the partition, the sets are sorted so the generated schedule is
+deterministic and the first set holds the fixed commitments opened at
+$x$ only:
+\begin{lstlisting}[style=rust]
+fn sort_sets(input: IntermediateSets) -> IntermediateSets {
+    let mut order: Vec<usize> = (0..input.point_sets.len()).collect();
+    order.sort_by_key(|&i| (input.point_sets[i].len(), i));  // (|S|, idx)
+    // remap[old_idx] = new_idx
+    let mut remap = vec![0usize; input.point_sets.len()];
+    for (new_idx, &old_idx) in order.iter().enumerate() {
+        remap[old_idx] = new_idx;
+    }
+    let point_sets = order.iter().map(|&i| input.point_sets[i].clone()).collect();
+    let commitments = input.commitments.into_iter().map(|mut c| {
+        c.set_index = remap[c.set_index]; c
+    }).collect();
+    IntermediateSets { commitments, point_sets }
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] \texttt{(|S|, idx)} tiebreak.}}
+        Sorting by ascending cardinality then original index matches the
+        Rust \rust{sort\_\allowbreak{}by\_\allowbreak{}key($\vert i\vert$, i)} (Sec.~\ref{sec:pointsets}),
+        so the within-set eval order and the $x_1$-power assignment are
+        identical between Rust and the generated verifier.
+  \item \textcolor{tracegreen}{\textbf{[OK] \texttt{set\_index} rewrite.}}
+        Every commitment's \texttt{set\_index} is remapped through the
+        same permutation, so downstream \cg{commitments\_\allowbreak{}by\_\allowbreak{}set} and the
+        fused-MSM grouping see the sorted order consistently.
+\end{itemize}
+
+\subsection{\cg{used\_lagrange} --- required common polynomials}
+\label{sec:used-lagrange}
+
+The plan also records which Lagrange polynomials the verifier must
+materialize, so the generated \texttt{Lagrange.yul} block computes
+exactly what is needed:
+\begin{lstlisting}[style=rust]
+pub(crate) fn used_lagrange(
+    uses_permutation: bool, uses_lookup: bool, uses_trash: bool,
+) -> BTreeSet<CommonPoly> {
+    let mut out = BTreeSet::new();
+    if uses_permutation || uses_lookup {
+        out.insert(CommonPoly::L0);
+        out.insert(CommonPoly::LLast);
+        out.insert(CommonPoly::LBlind);
+    }
+    if uses_trash {
+        out.insert(CommonPoly::Rotation(0));
+    }
+    out
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Minimal materialization.}}
+        $l_0, l_{\text{last}}, l_{\text{blind}}$ are computed only when
+        a permutation or lookup argument is present; the trash argument
+        additionally needs the rotation-0 Lagrange. A circuit with no
+        perm/lookup/trash computes none of them --- a real gas saving
+        over always computing the full Lagrange basis.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] \texttt{CommonPoly} enum.}}
+        The \texttt{Rotation(i)} variant generalizes to arbitrary
+        rotations, though in the current verifier only rotation 0 is
+        requested by trash. The generated code handles the general case
+        but only the specific requests appear in practice.
+\end{itemize}
+
+\subsection{\cg{computations()} --- the Yul emitter}
+\label{sec:computations}
+
+\cg{computations()} is the function that actually emits the PCS Yul
+blocks (the \texttt{pcs\_computations} consumed by
+\texttt{Pcs.yul}). It mirrors the Rust \rust{multi\_prepare} flow as a
+sequence of emitted blocks. Block 1 pre-computes the rotation points
+$x\cdot\omega^{\text{rot}}$ by walking forward/backward from rotation 0:
+\begin{lstlisting}[style=rust]
+// Block 1: rotation points x*omega^rot at ROT_POINTS_MPTR + 32*idx
+let x_pow_of_omega := x;                       // rot 0 = x
+for rot in 1..=max_rot {
+    x_pow_of_omega := mulmod(x_pow_of_omega, omega, r);
+    store_rot(rot);                            // if rot is used
+}
+if min_rot < 0 {
+    x_pow_of_omega := x;
+    for rot in (min_rot..0).rev() {
+        x_pow_of_omega := mulmod(x_pow_of_omega, omega_inv, r);
+        store_rot(rot);
+    }
+}
+\end{lstlisting}
+Block 2 pre-computes the $x_1$ powers, with a deliberate
+\textbf{rolled-loop} optimization:
+\begin{lstlisting}[style=rust]
+// Block 2: x1^0..x1^(nb-1) at X1_POWERS_MPTR
+let acc := 1
+let p := X1_POWERS_MPTR
+for { let i := 0 } lt(i, {last}) { i := add(i, 1) } {
+    p := add(p, 32)
+    acc := mulmod(acc, x1, r)
+    mstore(p, and(acc, TRUNC_MASK_128))   // if truncated_challenges
+}
+\end{lstlisting}
+\begin{itemize}
+  \item \textcolor{codegenblue}{\textbf{[IMPROVE] Rolled vs.\ unrolled
+        (already applied).}} The codegen comment records that the
+        \emph{unrolled} emission (32 sequential \texttt{mulmod}+
+        \texttt{mstore} pairs) cost $\sim$26\,kg of gas --- far above
+        the $\sim$700 gas the arithmetic needs --- because
+        \texttt{solc --ir} cannot register-allocate 32 unrolled
+        \texttt{mulmods} sharing one accumulator, and the unrolled
+        \texttt{mstore}-\texttt{add} chain inflates each line to
+        $\sim$50--60 gas of dispatch overhead. The rolled loop restores
+        the basic-block heuristic ($\sim$20 gas/iter $\times$ 32 + 50
+        setup $\approx$ 700 gas). This is a concrete, measured
+        contract-space/gas win baked into the generator.
+  \item \textcolor{tracegreen}{\textbf{[OK] Truncated-challenge mask.}}
+        When \texttt{truncated\_\allowbreak{}challenges} is set, the emitted loop
+        stores \texttt{and(acc, mask)} while keeping \texttt{acc} at
+        full precision --- exactly mirroring the Rust
+        \rust{powers(x1).map(truncate)} (full-precision running
+        accumulator, truncated per element). The \texttt{+3} gas/iter
+        for the mask is negligible vs the loop body.
+  \item \textcolor{mathpurple}{\textbf{[NOTE] Trace-scratch borrowing.}}
+        In trace mode, Block 1 borrows \texttt{Q\_\allowbreak{}EVAL\_\allowbreak{}SET\_\allowbreak{}MPTR} as
+        scratch for the serialized point-set payload, relying on Block 3
+        to unconditionally overwrite it before any later read. The
+        comment flags that a future reader between Block 1 and Block 3
+        must move the scratch --- a latent coupling to watch.
+\end{itemize}
+
+\subsection{\cg{validate\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage} --- the safety invariant}
+\label{sec:coverage-invariant}
+
+The invariant that makes ``no curve check at absorption'' sound
+(cf.\ \S\ref{sec:common-g1}):
+\begin{lstlisting}[style=rust]
+fn validate_g1_precompile_coverage(
+    absorbed: &[TrackedG1], precompile_inputs: &[TrackedG1],
+) -> Result<(), String> {
+    let missing: Vec<&TrackedG1> = absorbed.iter()
+        .filter(|a| !precompile_inputs.iter().any(|c| c.point == a.point))
+        .collect();
+    if let Some(first) = missing.first() {
+        return Err(format!("{} absorbed proof G1(s) are not consumed by a later \
+            EIP-2537 G1MSM/pairing precompile; first missing: {} at {}",
+            missing.len(), first.label, first.point.ptr()));
+    }
+    Ok(())
+}
+\end{lstlisting}
+The wrapper
+\cg{validate\_\allowbreak{}absorbed\_\allowbreak{}g1\_\allowbreak{}precompile\_\allowbreak{}coverage} first checks the
+absorbed count equals the proof layout's \texttt{total\_\allowbreak{}g1\_\allowbreak{}count()}
+(so no absorbed point is untracked), then runs the coverage check
+against \cg{precompile\_\allowbreak{}validated\_\allowbreak{}g1s}.
+
+\begin{itemize}
+  \item \textcolor{tracegreen}{\textbf{[OK] Concrete-handle checking.}}
+        The check operates on the \emph{emitted memory handles}
+        (\texttt{TrackedG1.point.ptr()}), not just the logical PCS
+        queries --- so it catches quotient limbs hidden behind the
+        synthetic linearization commitment.
+  \item \textcolor{rustorange}{\textbf{[RISK] Point-equality by pointer.}}
+        Coverage is decided by \texttt{candidate.point == absorbed.point}
+        (memory-handle equality). If the same logical point is materialized
+        at two different addresses (e.g.\ a copy), the absorbed handle
+        would be reported as ``not covered'' even though an equal point
+        is MSM'd. This is conservative (fails closed, build error), but
+        could cause a false build failure if the codegen ever duplicates
+        a point's storage. \emph{Audit note:} the codegen must keep one
+        canonical address per absorbed point.
+\end{itemize}
+
+\section{Rendering}
+\label{sec:render}
+
+\cg{lowering/\allowbreak{}artifacts.rs::generate\_\allowbreak{}verifier\_\allowbreak{}from\_\allowbreak{}plan} assembles the
+Askama model (verifier template + included partials) and renders the
+Solidity source; \cg{validate\_layout} panics on any invalid plan so a
+broken lowering never produces a contract. \cg{render/models.rs} holds the
+template data models. The \cg{QuotientRendering} enum
+(Section~\ref{sec:quotient-vm}) selects between:
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item \cg{Compact} --- the VM is inlined in the main verifier.
+  \item \cg{External} --- the verifier \texttt{staticcall}s a pinned
+        \sol{Halo2QuotientEvaluator} (codehash-checked), passing the raw
+        verifier memory frame as calldata.
+\end{itemize}

@@ -1,0 +1,345 @@
+% ============================================================================
+% Part 14: Verification pass over the improvement and critique chapters
+% ============================================================================
+\chapter{Verification pass over the review chapters}
+\label{ch:verification-pass}
+
+Chapters~\ref{ch:deep-audit}--\ref{ch:readability} contain many
+checkable claims: line numbers, counts, gas figures, and statements of the
+form ``nothing checks $X$''. Each of those claims was re-checked against the
+code, and the chapters were corrected in place. This chapter records what the
+pass was checked against, the single set of measurements every chapter now
+uses, and the corrections that change a conclusion. Inline, a corrected or
+re-graded item carries a status tag: \vstatus{ADDRESSED} (implemented, or
+the requested invariant is enforced), \vstatus{PARTIAL}, \vstatus{OPEN}, or
+\vstatus{CORRECTED} (the original premise or figure was wrong and has been
+rewritten).
+
+\section{Baseline}
+\label{sec:verification-pass}
+
+\begin{center}\small
+\begin{tabular}{@{}p{0.27\linewidth}p{0.66\linewidth}@{}}
+\toprule
+\textbf{Object} & \textbf{Version checked} \\
+\midrule
+Generator (\texttt{main}) & \texttt{proofs/\allowbreak{}solidity-verifier} at
+  \texttt{6b3d2096} (2026-07-17) \\
+Production artifact (``B64'') &
+  \texttt{Halo2VerifierFee12345B64.sol} (3{,}579 lines) and
+  \texttt{Halo2VerifyingKeyFee12345B64.sol}, nightfall
+  \texttt{blockchain\_\allowbreak{}assets/\allowbreak{}contracts/\allowbreak{}proof\_\allowbreak{}verification/\allowbreak{}generated/\allowbreak{}fee\_\allowbreak{}12345/\allowbreak{}block\_\allowbreak{}size\_\allowbreak{}64/\allowbreak{}},
+  regenerated 2026-07-28 \\
+B64's generator & midfall rev \texttt{bd482567}, pinned in nightfall's
+  \texttt{Cargo.toml} with feature \texttt{truncated-challenges}. Its
+  generator sources and templates are identical to the M7 follow-up commit
+  \texttt{e7f736c4} (2026-06-07, forked from \texttt{51f912c2}).
+  \emph{Not} \texttt{main}: it contains the 2026-05-19 hardening commits
+  but not \texttt{6b3d2096}, and it adds a quotient-certificate VK-header
+  check (B64 L940). \\
+Rust reference & \texttt{proofs/\allowbreak{}src/\allowbreak{}plonk/\allowbreak{}verifier.rs},
+  \texttt{proofs/\allowbreak{}src/\allowbreak{}poly/\allowbreak{}kzg/\allowbreak{}} \\
+Production compile & solc 0.8.35, via-IR, optimizer 200 runs, Cancun
+  (nightfall \texttt{foundry.toml} verifier profile) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent The \texttt{6b3d2096} fixes (transcript-buffer sizing for
+multi-phase shapes; the quotient-VM constant-slot overflow fallback) cannot
+change B64. B64 has a single user phase, and its program renders without
+tripping the overflow path.
+
+\section{Reference measurements}
+\label{sec:vp-metrics}
+
+Earlier drafts of Chapters~\ref{ch:prod-review}--\ref{ch:readability}
+quoted mutually inconsistent figures. Examples: 3{,}578 vs.\ 3{,}579 lines (\texttt{wc -l} undercounts by one: the file has no trailing newline);
+69, 76 or 78 named constants; 246, 411 or 243 raw-hex operands; ``two
+pairings, 206k gas''. The chapters now use the following values.
+
+\begin{center}\small
+\begin{tabular}{@{}p{0.46\linewidth}p{0.47\linewidth}@{}}
+\toprule
+\textbf{Metric (B64)} & \textbf{Value} \\
+\midrule
+Lines; \texttt{verifyProof} span & 3{,}579; L293--L3578 (3{,}286 lines) \\
+Runtime bytecode (production compile) & 21{,}253 B (EIP-170 limit 24{,}576 B) \\
+Build without via-IR & fails: stack too deep \\
+\texttt{internal constant} declarations & 79, of which 68 are \texttt{*\_MPTR}/\texttt{*\_CPTR} \\
+\texttt{varN} locals & 163 distinct, 980 uses \\
+Raw-hex memory operands (first operand of \texttt{mload}/\texttt{mstore}/\texttt{mcopy} in \texttt{verifyProof}) & 246 distinct, 492 uses; 64 uses name a \texttt{*\_MPTR}/\texttt{*\_CPTR} directly, 112 via \texttt{add(NAME, off)} \\
+Comment lines & 1{,}109 \\
+\texttt{revert(} sites & 34 \\
+Yul \texttt{function}s; \texttt{switch}/\texttt{case}/\texttt{if} & 17; 2 / 15 / 73 \\
+\texttt{staticcall} sites (18) & constructor smoke test: 1 G1ADD, 1 G1MSM, 1 pairing.
+  \texttt{verifyProof}: 3 modexp sites, 4 G1ADD, 7 G1MSM (one fused 78-pair,
+  six 1-pair), 1 two-pair pairing \\
+Runtime precompile gas & $\approx$725.9k under EIP-7883 (live): fused MSM
+  525.1k, six 1-pair MSMs 72.0k, pairing 102.9k, six modexp executions
+  24.4k (8.1k under the earlier EIP-2565 pricing, total $\approx$709.6k),
+  G1ADD 1.5k. Every call forwards \texttt{gas()}. \\
+Fused final MSM (78 pairs) & 63 multi-open terms + 14 linearization terms
+  (4 quotient limbs, 10 selectors) + $f_\text{com}$ \\
+Quotient program & 4{,}559 B (\texttt{0x11cf}), 101 instructions,
+  178 constants \\
+VM opcodes & 31 defined in the generator; 11 used and rendered in B64
+  (0x05, 0x06, 0x08, 0x0b, 0x0d, 0x10, 0x11, 0x19, 0x1b, 0x1f, 0x21); no
+  \texttt{FOLD\_MAIN} (0x0a) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Corrections that change a conclusion}
+\label{sec:vp-corrections}
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+\item \textbf{Risk missing from earlier drafts: the \texttt{memory-safe} promise is broken under
+  via-IR.} The production compile sets the free pointer to \texttt{0x8e0}
+  and spills Yul variables into \texttt{[0x80,0x8e0)}. That range overlaps
+  the generator's absolute scratch. Honest proofs verify because the live
+  ranges happen to be disjoint, and nothing checks this
+  (\S\ref{sec:pr-memorysafe}, \S\ref{sec:memory-safe}). The Nightfall audit register already
+  records it (CF-0294); unmerged midfall PR~\#6 rebases the layout above the spill window.
+  \vstatus{OPEN}
+\item \textbf{The differential CI does not gate anything.} The trace and
+  fuzz jobs live in the crate's nested
+  \texttt{proofs/\allowbreak{}solidity-verifier/\allowbreak{}.github/\allowbreak{}workflows/\allowbreak{}ci.yml}. GitHub runs
+  only root workflows, and midfall's root \texttt{ci.yaml} has no
+  solidity-verifier job. The harness exists and passes locally, but
+  ``checked on every PR'' was false. \vstatus{OPEN}
+\item \textbf{Provenance had to be reverse-engineered.} B64 does not
+  come from \texttt{main} (\S\ref{sec:verification-pass}). This pass is
+  itself the evidence for C8 (\S\ref{sec:c8-provenance}).
+\item \textbf{The transcript-buffer bug fixed in \texttt{6b3d2096} was
+  potentially soundness-relevant.} For multi-phase shapes, proof bytes
+  overran into the loaded VK, whose words are read afterwards. It is fixed at
+  codegen time, but there is still no runtime cursor bound
+  (\S\ref{sec:roadmap-p2}). B64 is single-phase and unaffected.
+  \vstatus{PARTIAL}
+\item \textbf{The production shape is covered more closely than claimed.}
+  The IVC Keccak decider test has B64's permutation parameters, proof
+  layout, 78-pair MSM, commitment counts, constant table and opcode
+  histogram. It is not the same circuit: $k=20$ vs.\ 21, a different
+  instance count, and no embedded-quotient mode. Graded MAJOR, now MINOR
+  (\S\ref{sec:pr-fuzz-coverage}).
+\item \textbf{The VM is small and runs straight through.} The program has
+  101 instructions and uses 11 opcodes. Every branch in the dispatch body
+  depends only on program bytes or constants, so one honest verification
+  executes every instruction and every sub-branch of the pinned program.
+  ``Untested opcodes'' in the shipped artifact is therefore a non-issue:
+  unused opcodes are not rendered and fall into the \texttt{default}
+  revert. The real question is whether \emph{this exact program} has been
+  differentially tested (\S\ref{sec:pr-isa-dispatch}).
+\item \textbf{The gas figures were wrong in both directions.}
+  EIP-2537 MSMs have no fixed per-call cost. So merging 1-pair MSMs saves
+  $\approx$1.6k, not $\approx$18k, and the $\alpha$-fold MSMs cannot share
+  a call at all. The real wins are appending $(G, r-v)$ and $(\pi, x_3)$ to
+  the fused MSM ($\approx$13.2k) and batching the five
+  \texttt{scalar\_inv} calls ($\approx$16.3k under EIP-7883, which has
+  roughly tripled modexp cost). Separately, \texttt{gas()} forwarding
+  lets a rejected proof burn almost the whole transaction
+  (\S\ref{sec:vp-gas-bounds}).
+\item \textbf{Soundness-level figures are withdrawn.} The review
+  chapters quoted several bit levels for the truncated challenges.
+  None of them is retained, and no replacement figure is given; stating
+  the level needs a
+  written soundness argument (C3). The squeeze's mod-$r$
+  reduction is not bias-free: the maximum probability of any value is
+  $\approx 1.36/r$. That is negligible, and it matches Rust exactly.
+\item \textbf{Several ``unchecked'' items are checked.} On every proof the
+  verifier re-checks the VK's code size and codehash and six (B64: seven)
+  header words, fails fast on non-canonical instances, and asserts VM
+  termination (\texttt{e64f2891}, \texttt{1e21311c}, \texttt{33f78d2b}).
+  C9 is largely ADDRESSED.
+\item \textbf{Framing errors.} The verifier is not VK-generic: $k=21$ is
+  hard-coded. The pairing slot names follow Rust's \texttt{DualMSM}
+  exactly, and a swapped call would reject every honest proof. The patched
+  slither does run; it finds 5 dead constants and a dead store.
+\item \textbf{Specification errors outside the review chapters.}
+  \eqref{eq:lagrange} lacked the $\omega^i$ factor.
+  $\ell_\mathsf{last}$ is $L_{n-b-1}$, not $L_{n-1}$ (\eqref{eq:llast}).
+  The Chapter~\ref{ch:codegen} opcode table mislabelled seven opcodes.
+\end{enumerate}
+
+\section{Precompile gas limits}
+\label{sec:vp-gas-bounds}
+
+\paragraph{Today (B64).} All 18 precompile \texttt{staticcall}s forward
+\texttt{gas()}. Commit \texttt{2b2bf494} replaced earlier hand-tuned caps
+with this. A rejecting EIP-2537 call burns all gas it was given, and the
+EVM gives it about 63/64 of what remains. So one malformed proof point
+costs the caller nearly the whole transaction: midfall PR~\#6 measured
+29.5M of a 30M limit, against $\approx$1.1M for an honest verification.
+This is a griefing/cost issue, not a soundness one, and the register
+already tracks it (CF-0646, CF-1008, CF-0722). The upside of
+\texttt{gas()} is that B64 kept working through the EIP-7883 modexp
+repricing, which roughly tripled the cost of its six inversions.
+
+\paragraph{Proposed (unmerged midfall PR~\#6).} Commit \texttt{f1840bdf}
+forwards the exact scheduled cost at every site (generated constants
+\texttt{G1ADD\_GAS} $=375$, \texttt{G1MSM\_GAS\_1PAIR} $=12{,}000$,
+\texttt{PAIRING\_\allowbreak{}GAS\_\allowbreak{}2PAIR} $=102{,}900$, \texttt{MODEXP\_GAS},
+\ldots). Two pinned quotient-evaluator calls keep \texttt{gas()}, because
+a regular call refunds unused gas. The PR first priced modexp with
+EIP-2565 only. A later commit, \texttt{8e65c962} (MF-1), corrects that to
+$\max(\text{EIP-2565}, \text{EIP-7883}) = 4{,}064$ (+16). However, the
+committed \texttt{fixtures/\allowbreak{}moonlight-wrap/\allowbreak{}Halo2Verifier.sol}
+was regenerated \emph{before} MF-1 and still has \texttt{MODEXP\_\allowbreak{}GAS =
+1360}. Every modexp in that render would run out of gas on a post-Fusaka
+chain, so every proof would be rejected. The PR's tests do not catch
+this, because its pinned revm 19 prices modexp with EIP-2565 even under
+\texttt{SpecId::OSAKA}.
+
+\paragraph{Verdict.} Bounding the gas is right. Bounding it at the
+\emph{exact} schedule is not:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+\item The verifier is immutable. An exact bound turns any upward
+  repricing into a permanent liveness failure of every deployed
+  verifier. The constructor probes only catch repricing that happens
+  \emph{before} deployment. EIP-7883 is exactly such a repricing, and it
+  was mispriced once already within PR~\#6.
+\item A margin keeps the burn bounded at a small multiple of the honest
+  cost instead of $\approx$30M. For example, use $2$--$4\times$ the
+  largest known schedule per site, or a single transaction-level budget
+  checked before the precompile calls.
+\item Test pricing against the chains actually targeted: a fork test on
+  Sepolia/mainnet state, or a revm version whose Osaka handler implements
+  EIP-7883. Regenerate every committed render after a gas-model change.
+\end{itemize}
+The quotient-evaluator exception is sound: a regular call returns its
+unused gas on failure.
+
+\section{What still stands}
+\label{sec:vp-stands}
+
+No finding in this pass breaks the soundness of B64 as deployed. The
+correctness verdict of Chapter~\ref{ch:prod-review} stands, and so do these
+criticisms: the truncated-challenge security level is not stated in the
+artifact (C3); the G1ADD-operand invariant is not machine-checked (C4, the
+absorbed-point half is); the artifact carries no provenance (C8); every
+revert is silent; and the readability debt is real (163 \texttt{varN}
+names, mostly raw-hex scratch operands, a 3{,}286-line function).
+
+\section{Do the improvement and strengthening suggestions hold up?}
+\label{sec:vp-opinion}
+
+Fact-checking a suggestion is not the same as endorsing it. This section
+gives a verdict on each proposal in Chapters~\ref{ch:roadmap}--\ref{ch:readability}.
+One guiding observation: the quotient program is fixed, codehash-pinned
+and branch-free with respect to proof data. So any defect in the
+\emph{pinned} code shows up deterministically on the first honest proof, or
+in the first differential trace. The highest-value strengthening therefore
+makes sure the exact production artifact is differentially tested, in CI,
+from a known generator revision. Runtime guards against states a validated
+generator cannot emit are worth less.
+
+\begin{center}\footnotesize
+\begin{longtable}{@{}p{0.30\linewidth}p{0.14\linewidth}p{0.49\linewidth}@{}}
+\toprule
+\textbf{Suggestion} & \textbf{Verdict} & \textbf{Reason} \\
+\midrule
+\endhead
+\multicolumn{3}{@{}l}{\emph{Strengthening}} \\
+Wire the crate's trace/fuzz jobs into root CI & \textbf{Agree, first} &
+  Everything the review credits as assurance depends on it, and today it
+  gates nothing. \\
+Trace-test the exact production VK ($k=21$, 19 instances) & \textbf{Agree} &
+  The harness exists. Run it on the fee-12345 VK, and regenerate B64 in CI
+  from the pinned rev to diff against the committed file. \\
+Fix the \texttt{memory-safe}/via-IR overlap & \textbf{Agree, high} &
+  Plan scratch above a fixed base and assert \texttt{mload(0x40)} $\le$ base
+  on entry, failing closed. Add a CI check on the compiled free-pointer
+  initializer. Dropping the annotation is not viable. \\
+Provenance header (C8) & \textbf{Agree, reshaped} &
+  Stamp the generator rev, VK digest, feature flags and security level.
+  Put them in NatSpec, not constants, and \emph{no timestamp}: a timestamp
+  breaks reproducible renders. \\
+State the truncated-challenge soundness level (C3) & \textbf{Agree} &
+  Truncation buys no EVM gas: EIP-2537 prices an MSM independently of
+  scalar width. It exists for in-circuit verification and is a global
+  crate feature. Full width for the outermost wrap proof would cost nothing
+  on-chain, but needs per-proof configuration in \texttt{midnight-proofs}. \\
+Transcript cursor runtime bound & \textbf{Agree} &
+  $<$0.3k gas. The generator has already mis-sized this buffer once, and
+  an overrun corrupts VK memory. \\
+Codegen check on G1ADD operand provenance (C4) & \textbf{Agree} &
+  Cheap. It completes the absorbed-point check that already exists. \\
+Negative pairing probe at deploy & \textbf{Agree} &
+  Deploy-time only. It must read the G2 bases from the VK, not from
+  per-proof memory. \\
+Runtime VM stack guards (R3/R4) & \textbf{Low value} &
+  \texttt{validate\_\allowbreak{}quotient\_\allowbreak{}program} proves stack safety over the exact
+  pinned bytes, and a violation would fail every honest proof. Acceptable
+  as a few gas of belt and braces, not a priority. \\
+Formal model of the VM ISA (C2/R4) & \textbf{Disagree} &
+  For a fixed, branch-free program, \emph{translation validation} is
+  complete and far cheaper. Evaluate the pinned program and the Rust
+  gate expressions at random points (Schwartz--Zippel). The Rust test
+  interpreter (\texttt{tests.rs} L3005) already evaluates MODARITH7. It
+  still needs dynamic-length decoding in its fold scanner and models of the
+  three native callbacks (0x19, 0x1b, 0x1f). \\
+Cover all 31 opcodes / per-opcode tests (C2/R2) & \textbf{Reshape} &
+  Unused opcodes are not rendered. Coverage should be defined over the
+  rendered program, which one honest run already covers completely. \\
+Solidity reference implementation (C5) & \textbf{Disagree} &
+  A second implementation to keep in sync. The Rust verifier is the
+  reference; differential tests are the right tool. \\
+Remove the via-IR dependency (C11) & \textbf{Disagree} &
+  Unrealistic at this Yul size. Pin it; it is already pinned in
+  nightfall's \texttt{foundry.toml}. \\
+\addlinespace
+\multicolumn{3}{@{}l}{\emph{Code quality and readability}} \\
+q\_program disassembly (R1) & \textbf{Agree, high} &
+  101 instructions fit in a comment block. The decoder already exists in
+  the offline validator. \\
+Named addresses (Fix 1) and address map (Fix 5) & \textbf{Agree, reshaped} &
+  Render \texttt{add(REGION, off)} for interior offsets (an exact-start
+  lookup names almost nothing). Gate the change on a CI check that the
+  runtime bytecode is identical, ignoring metadata. \\
+Semantic local names (Fix 2, C6) & \textbf{Agree} &
+  A call-site change with no semantic effect, under the same bytecode
+  gate. \\
+Split \texttt{verifyProof} into Yul functions (Fix 3/R3) & \textbf{Disagree} &
+  Function frames add stack pressure, and so more via-IR spills: exactly the
+  mechanism behind the \texttt{memory-safe} overlap. Gas neutrality is
+  unproven. Prefer scoped blocks with banner comments and a generated
+  per-stage line index. \\
+Deduplicate the $f_\text{eval}$ blocks (Fix 6) & \textbf{Low value} &
+  The duplicated code is the per-set Lagrange/inversion block, and the sets
+  have different sizes (3,3,2,2,1). A loop saves source lines and costs
+  gas. \\
+Drop the negation (C10) & \textbf{Disagree} &
+  A sign error fails every honest proof deterministically. Rename the slot
+  (e.g.\ \texttt{NEG\_\allowbreak{}QUOTIENT\_\allowbreak{}EVAL\_\allowbreak{}MPTR}) instead. \\
+Rename the pairing slots (C7) & \textbf{Minor} &
+  The slots match Rust. Rename only the helper's parameters. \\
+Typed revert codes & \textbf{Agree, low} &
+  Use 4-byte custom errors for debuggability. The success-path cost is
+  unchanged and there is no soundness value. \\
+Delete the dead constants (Fix 4) & \textbf{Agree} &
+  Five are confirmed dead by slither. \texttt{Q\_COM\_MPTR} is already
+  commented as a marker. \\
+\addlinespace
+\multicolumn{3}{@{}l}{\emph{Gas}} \\
+Fold $(G, r-v)$, $(\pi, x_3)$ into the fused MSM & \textbf{Agree, after CI} &
+  $\approx$13.2k ($\approx$1.9\%), but it touches the terminal soundness
+  gate, so land it only once the differential tests gate PRs. \\
+Batch the five \texttt{scalar\_inv} calls & \textbf{Agree} &
+  $\approx$16.3k under EIP-7883, low risk, and it leaves
+  \texttt{scalar\_inv} dead. \\
+Bound precompile gas (PR~\#6 \texttt{f1840bdf}) & \textbf{Agree, reshaped} &
+  Bound every call, but at a margin above the schedule rather than the
+  exact cost (\S\ref{sec:vp-gas-bounds}). \\
+\bottomrule
+\end{longtable}
+\end{center}
+
+\paragraph{Recommended order.} (1) Run the crate's jobs in root CI and add
+the production-VK trace test plus regenerate-and-diff. (2) Fix the
+\texttt{memory-safe} base and add its CI check. (3) Add the provenance and
+security-level header. (4) Add the transcript cursor bound and the G1ADD
+codegen check. (5) Add translation validation of the pinned quotient
+program. (6) Do the readability work behind a bytecode-equivalence gate.
+(7) Take the gas wins last. Steps 1--3 are small, and without them every
+later change is unverified in practice.

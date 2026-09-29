@@ -1,0 +1,501 @@
+% ============================================================================
+% Part 2 --- The verifier algorithm as mathematics
+% ============================================================================
+\chapter{The Verifier Algorithm as Mathematics}
+\label{ch:math}
+
+This chapter states the verification algorithm in closed mathematical form.
+Every equation is tagged (e.g.\ \eqref{eq:transcript-squeeze}) and referenced
+by the correspondence chapters. The Rust reference, the code generator, and
+the generated Solidity are each shown to implement exactly these equations.
+
+\section{Fields, curves, and domain}
+\label{sec:fields}
+
+Let $\Fr$ be the BLS12-381 scalar field of prime order
+\[
+  r = \texttt{0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001},
+\]
+and let $(\Gr, \GrT)$ be the two source groups of a pairing
+$e : \Gr \times \GrT \to \GT$, both of order $r$, with generators
+$G \in \Gr$ and $G_2 \in \GrT$. All scalar arithmetic below is in $\Fr$
+unless stated otherwise. The circuit domain is the multiplicative subgroup
+$H = \{1, \omega, \omega^2, \ldots, \omega^{n-1}\} \subset \Fr^\times$ of
+order $n = 2^k$, where $\omega$ is a fixed primitive $n$-th root of unity
+and $\omega^{-1} = \omega^{n-1}$.
+
+\begin{itemize}[leftmargin=1.4em,itemsep=1pt]
+  \item $n = 2^k$ \hfill (from VK, \rust{domain.k()})
+  \item $n^{-1} \bmod r$ \hfill (\rust{EvaluationDomain::n\_\allowbreak{}inv}, VK slot 3)
+  \item $\omega$, $\omega^{-1}$ \hfill (VK slots 4, 5)
+  \item $\delta$ \hfill the coset separator, a fixed element of order~3
+        (\texttt{WithSmallOrderMulGroup<3>}), used by permutation chunks.
+\end{itemize}
+
+\section{The Fiat--Shamir transcript}
+\label{sec:transcript}
+
+The transcript is a streaming Keccak-256 sponge with a reseed rule. It is a
+byte buffer $B$ (initially empty) supporting two operations.
+
+\begin{definition}[Transcript absorption]
+\label{def:common}
+$\mathsf{common}(m)$ appends the raw byte string $m$ to $B$:
+$B \leftarrow B \,\|\, m$.
+\end{definition}
+
+\begin{definition}[Transcript squeeze]
+\label{def:squeeze}
+$\mathsf{squeeze}()$ computes one digest, reseeds the buffer with it, and
+samples a field element:
+\begin{align}
+  d &\;=\; \keccak(B), \label{eq:transcript-digest}\\
+  B &\;\leftarrow\; d, \label{eq:transcript-reseed}\\
+  c &\;=\; \bigl(\textstyle\sum_{j=0}^{31} 256^{\,31-j}\, d_j\bigr) \bmod r
+     \;=\; \mathrm{uint256}_{\mathsf{BE}}(d) \bmod r. \label{eq:transcript-squeeze}
+\end{align}
+\end{definition}
+
+\begin{remark}
+The reseed of \eqref{eq:transcript-reseed} means each squeeze depends on all
+prior material but the buffer never grows without bound: after the first
+squeeze, $|B| = 32$. The Solidity implementation is exactly this: the
+generated \sol{squeeze\_\allowbreak{}to} helper computes
+\texttt{keccak256(TRANSCRIPT\_\allowbreak{}MPTR, len)}, \texttt{mstore}s the digest back
+at \texttt{TRANSCRIPT\_\allowbreak{}MPTR}, and stores \texttt{mod(h, r)} at the target
+pointer. See \rust{transcript/\allowbreak{}implementors.rs} (Keccak256 \texttt{squeeze},
+L186) and \cg{templates/\allowbreak{}partials/\allowbreak{}verifier/\allowbreak{}AssemblyHelpers.yul}.
+\end{remark}
+
+\paragraph{Point and scalar encodings.}
+A field element is absorbed as its 32-byte big-endian canonical encoding
+(\rust{Fq::to\_\allowbreak{}input} = reversed little-endian repr). A $\Gr$ point is
+absorbed in the EIP-2537 \emph{padded uncompressed} form:
+\begin{equation}
+  \cm{P} \;=\; \underbrace{0^{16}}_{\text{pad}}\, \| \; x_{\mathsf{hi}} \;\|\;
+  \underbrace{0^{16}}_{\text{pad}}\, \| \; x_{\mathsf{lo}} \;\|\;
+  \underbrace{0^{16}}_{\text{pad}}\, \| \; y_{\mathsf{hi}} \;\|\;
+  \underbrace{0^{16}}_{\text{pad}}\, \| \; y_{\mathsf{lo}}
+  \quad\in\; \{0,1\}^{128},
+  \label{eq:g1-encoding}
+\end{equation}
+where $(x_{\mathsf{hi}}, x_{\mathsf{lo}}, y_{\mathsf{hi}}, y_{\mathsf{lo}})$
+are the four 32-byte big-endian halves of the affine coordinates
+($x = x_{\mathsf{hi}} \cdot 2^{128} + x_{\mathsf{lo}}$). The identity point
+is encoded as 128 zero bytes. This is the patched
+\rust{Hashable<Keccak256> for G1Projective::to\_\allowbreak{}input} in
+\rust{transcript/\allowbreak{}implementors.rs} (L283).
+
+\begin{definition}[Canonical G1 acceptance]
+\label{def:g1-canonical}
+The generated verifier accepts a 128-byte G1 word only if the top 16 bytes
+of each \texttt{\_\allowbreak{}hi} word are zero and each coordinate is $< q$ (the BLS12-381
+base field modulus). Normalizing instead of rejecting would let multiple
+calldata encodings share one transcript. Curve membership itself is not
+checked at absorption; it is enforced later by the EIP-2537 precompiles that
+consume every absorbed point (Section~\ref{sec:pcs-math}).
+\end{definition}
+
+\section{Verifying-key digest}
+\label{sec:vk-digest}
+
+The verifier first absorbs a binding hash of the circuit:
+\begin{equation}
+  \mathsf{vk\_\allowbreak{}digest} \;=\; \mathsf{tr\_\allowbreak{}repr} \;\in\; \Fr,
+  \qquad
+  \mathsf{tr\_\allowbreak{}repr} \;=\; \mathsf{Blake2b}\!\bigl(\texttt{format}(\mathsf{VK\;params})
+  \,\|\, \texttt{format}(\mathsf{CS})\bigr) \bmod r,
+  \label{eq:vk-digest}
+\end{equation}
+computed once off-chain by \rust{plonk/mod.rs::transcript\_\allowbreak{}repr} and stored
+in the VK payload. The generated contract loads it from
+\texttt{VK\_\allowbreak{}MPTR+0x00} (\cg{lowering/vk.rs::generate\_\allowbreak{}base\_\allowbreak{}vk}) and
+absorbs it as the very first transcript word, mirroring
+\rust{verifier.rs}: \rust{vk.hash\_\allowbreak{}into(transcript)}. The payload itself is
+pinned by \texttt{EXPECTED\_\allowbreak{}VK\_\allowbreak{}CODEHASH} so the contract cannot be fed a
+different circuit.
+
+\section{The proof stream and challenge schedule}
+\label{sec:schedule}
+
+The proof is a flat byte string read in a fixed order. Table~\ref{tab:schedule}
+gives the canonical order; each row is either an \emph{absorb} (Definition
+\ref{def:common}) or a \emph{squeeze} (Definition \ref{def:squeeze}).
+This order is the single most important invariant of the whole system: any
+permutation changes every subsequent challenge and the proof fails.
+
+\begin{longtable}{@{}clp{0.30\linewidth}p{0.30\linewidth}@{}}
+\toprule
+\# & \textbf{Op} & \textbf{Object} & \textbf{Notes} \\
+\midrule
+\endfirsthead
+\toprule
+\# & \textbf{Op} & \textbf{Object} & \textbf{Notes} \\
+\midrule
+\endhead
+1 & absorb & $\mathsf{vk\_\allowbreak{}digest}$ (Fr) & Eq.~\eqref{eq:vk-digest}. \\
+2 & absorb & committed instance $= \mathcal{O}$ (128 zero bytes) &
+   Identity-commitment placeholder (\texttt{committed-instances}). \\
+3 & absorb & $\mathsf{num\_\allowbreak{}instances}$ (Fr) & Public input count. \\
+4 & absorb & each public instance $\mathsf{inst}_i$ (Fr) &
+   Canonical check $\mathsf{inst}_i < r$. \\
+$\ast$ & absorb & advice commitments $\cm{a}_{j}$ (G1), phase by phase &
+   $n_{\text{adv},\phi}$ commitments per user phase $\phi$. \\
+$\ast$ & squeeze & user challenges $v_\phi$ & After each phase's advice. \\
+5 & squeeze & $\theta$ & Lookup input batching. \\
+6 & absorb & lookup multiplicity commitments $\cm{m}_\ell$ (G1) & One per lookup. \\
+7 & squeeze & $\beta$ & Permutation/lookup randomizer. \\
+8 & squeeze & $\gamma$ & Permutation/lookup randomizer. \\
+9 & absorb & permutation product commitments $\cm{z}_0, \cm{z}_1, \ldots$ (G1) &
+   One per permutation set. \\
+10 & absorb & lookup helper commitments $\cm{h}_{\ell,t}$ (G1) &
+   $\mathsf{chunks}_\ell$ per lookup. \\
+11 & absorb & lookup accumulator $\cm{Z}_\ell$ (G1) & After its helpers. \\
+12 & squeeze & $\mathsf{trash\_\allowbreak{}challenge}$ & Trash batching. \\
+13 & absorb & trash commitments $\cm{tr}_k$ (G1) & One per trashcan. \\
+14 & squeeze & $y$ & Identity batching. \\
+15 & absorb & quotient limbs $Q_0, \ldots, Q_{L-1}$ (G1) &
+   $L = $ \rust{get\_\allowbreak{}quotient\_\allowbreak{}poly\_\allowbreak{}degree}. \\
+16 & squeeze & $x$ & Evaluation point. \\
+17 & absorb & all evaluation scalars (Fr) &
+   Order fixed by the lowering plan (Sec.~\ref{sec:protocol-plan}). \\
+18 & squeeze & $x_1$ & Multi-open batching. \\
+19 & squeeze & $x_2$ & Multi-open batching. \\
+20 & absorb & $f_{\mathsf{com}}$ (G1) & Batched poly commitment. \\
+21 & squeeze & $x_3$ & Then truncated: $x_3 \leftarrow x_3 \bmod 2^{128}$
+   (\texttt{truncated-challenges}). \\
+22 & absorb & $q_{\mathsf{eval}}^{(s)}$ (Fr) & One per point set. \\
+23 & squeeze & $x_4$ & Final batching challenge. \\
+24 & absorb & $\pi$ (G1) & KZG opening proof. \\
+\bottomrule
+\caption{Canonical transcript schedule. Rows marked $\ast$ repeat per user
+phase. The generated \sol{TranscriptProofParser.yul} and
+\rust{verifier.rs} agree row-for-row; the differential trace pins this.}
+\label{tab:schedule}
+\end{longtable}
+
+\section{Lagrange basis and public-input evaluation}
+\label{sec:lagrange}
+
+For the evaluation point $x$ sampled in row~16, define the vanishing
+polynomial of $H$ and the Lagrange basis:
+\begin{align}
+  Z_H(x) &= x^n - 1, \label{eq:zn}\\
+  L_i(x) &= \frac{\omega^i\,Z_H(x)}{n\,(x - \omega^i)}
+         = \frac{\omega^i\,(x^n - 1)}{n\,(x - \omega^i)}, \qquad i = 0,\ldots,n-1.
+  \label{eq:lagrange}
+\end{align}
+The verifier needs three special basis elements and the public-input
+evaluation:
+\begin{align}
+  \ell_{\mathsf{last}} &= L_{n-b-1}(x) \quad (\text{rotation } -(b+1)), \label{eq:llast}\\
+  \ell_{\mathsf{blind}} &= \sum_{j=1}^{b} L_{n-j}(x)
+    \quad (b = \text{blinding factors}), \label{eq:lblind}\\
+  \ell_0 &= L_0(x), \label{eq:l0}\\
+  \widehat{\mathsf{inst}}(x) &= \sum_{i=0}^{\mathsf{num\_\allowbreak{}instances}-1}
+    L_i(x)\cdot \mathsf{inst}_i. \label{eq:instance-eval}
+\end{align}
+The barycentric weight of the full Lagrange basis is $1/n$
+(\rust{domain.rs::l\_\allowbreak{}i\_\allowbreak{}range}, L448). The generated \sol{Lagrange.yul}
+computes $x^n$ by $k$ repeated squarings, batch-inverts the denominators
+$(x - \omega^i)$ with one modexp (EIP-198) via Montgomery's trick, then
+forms each $L_i$ and the sums \eqref{eq:llast}--\eqref{eq:instance-eval}.
+
+\section{The identity families}
+\label{sec:identities}
+
+A satisfied circuit makes a family of polynomial identities vanish on $H$.
+The verifier checks each identity \emph{at the random point} $x$, using the
+prover-supplied evaluation scalars. There are four families.
+
+\subsection{Gate identities (custom constraints)}
+\label{sec:gate-ident}
+
+Each gate $g$ with simple selector $s_g$ contributes the identity
+\begin{equation}
+  e^{\mathsf{gate}}_{g}(x) \;=\; s_g(x)\cdot C_g\!\bigl(\{\text{advice},\text{fixed},
+  \text{instance evals at rotations}\}\bigr) \;=\; 0,
+  \label{eq:gate-identity}
+\end{equation}
+where $C_g$ is the gate's polynomial expression. In the supported profile
+every selector is \emph{simple and multiplicative}: its evaluation is the
+literal $1$ in the linearization and the gate's contribution is routed to a
+per-selector accumulator bucket $B_{s_g}$ (Section~\ref{sec:linearization})
+rather than the main numerator. This is why simple selectors have \emph{no}
+proof evaluation slot: the Rust verifier inserts \rust{F::ONE} at their
+\texttt{fixed\_\allowbreak{}query} index
+(\rust{verifier.rs}, fixed-eval loop), and the codegen emits a literal~1
+and a bucket copy.
+
+\subsection{Permutation identities}
+\label{sec:perm-ident}
+
+The permutation argument enforces copy constraints across columns using
+product polynomials $z_0, z_1, \ldots$ (one per ``set'' of chunked
+columns). With $\delta$ the order-3 coset separator, chunk length
+$\mathsf{cl} = \mathsf{cs\_\allowbreak{}degree}-2$, and per-chunk running constant
+$\Delta_{\mathsf{cur}} = \beta x\, \delta^{\mathsf{chunk}\cdot \mathsf{cl}}$,
+the four identity families of \rust{permutation.rs::expressions} (L187) are:
+\begin{align}
+  e^{\mathsf{perm}}_{1} &= \ell_0 \cdot \bigl(1 - z_0(x)\bigr), \label{eq:perm1}\\
+  e^{\mathsf{perm}}_{2} &= \ell_{\mathsf{last}} \cdot \bigl(z_{\mathsf{last}}(x)^2 - z_{\mathsf{last}}(x)\bigr), \label{eq:perm2}\\
+  e^{\mathsf{perm}}_{3,i} &= \ell_0 \cdot \bigl(z_i(x) - z_{i-1,\mathsf{last}}(x)\bigr)
+    \quad (i \geq 1), \label{eq:perm3}\\
+  e^{\mathsf{perm}}_{4} &= \bigl(1 - (\ell_{\mathsf{last}} + \ell_{\mathsf{blind}})\bigr)
+    \cdot \bigl(\mathsf{left}(x) - \mathsf{right}(x)\bigr), \label{eq:perm4}
+\end{align}
+where, for the current chunk,
+\begin{align}
+  \mathsf{left}(x)  &= z_{\mathsf{next}}(x) \cdot \prod_{c}
+     \bigl(\mathsf{eval}_c + \beta\, s_c(x) + \gamma\bigr), \label{eq:perm-left}\\
+  \mathsf{right}(x) &= z(x) \cdot \prod_{c}
+     \bigl(\mathsf{eval}_c + \delta^{\,c}\,\beta\, x + \gamma\bigr),
+     \label{eq:perm-right}
+\end{align}
+with $c$ ranging over the columns in the chunk, $s_c(x)$ the permutation
+polynomial evaluations (the ``perm common'' evals), and rotations
+$x_{\mathsf{next}} = \omega x$,
+$x_{\mathsf{last}} = \omega^{-(b+1)} x$
+(\rust{permutation/\allowbreak{}verifier.rs::queries}).
+
+\subsection{Lookup (LogUp) identities}
+\label{sec:lookup-ident}
+
+Each lookup argument $\ell$ compresses its input expressions with
+$\theta$: $\mathsf{f}(x) = \theta$-fold of the input evals, i.e.\
+$\mathsf{compress}_\theta(f_1,\ldots,f_t) = (\cdots((f_1\theta + f_2)\theta + f_3)\cdots)\theta + f_t$.
+The helper polynomial $h$ and accumulator $Z$ satisfy, per helper chunk:
+\begin{equation}
+  e^{\mathsf{lu}}_{\mathsf{helper}} = h(x)\cdot \prod_{j}\bigl(\mathsf{f}_j(x) + \beta\bigr)
+    \;-\; \sum_{j}\prod_{k \neq j}\bigl(\mathsf{f}_k(x) + \beta\bigr) = 0,
+  \label{eq:lookup-helper}
+\end{equation}
+(the partial products are formed as $\bigl(\prod_k (\mathsf{f}_k+\beta)\bigr)
+\cdot (\mathsf{f}_j+\beta)^{-1}$), and the accumulator identity
+\begin{equation}
+  e^{\mathsf{lu}}_{\mathsf{acc}} = \bigl(Z(\omega x) - Z(x) - q(x)\,\textstyle\sum h(x)\bigr)
+    \cdot \bigl(\mathsf{f}(x) + \beta\bigr) + m(x),
+  \label{eq:lookup-acc}
+\end{equation}
+multiplied by the active-row mask $1 - (\ell_{\mathsf{last}} + \ell_{\mathsf{blind}})$,
+with the boundary term $(\ell_0 + \ell_{\mathsf{last}})\cdot Z(x)$
+(\rust{logup.rs::expressions}, L400). Here $m(x)$ is the multiplicity
+polynomial evaluation and $q$ the lookup selector.
+
+\subsection{Trash identities}
+\label{sec:trash-ident}
+
+Unused constraint slots are ``trashed'': their constraint expressions are
+compressed with $\mathsf{trash\_\allowbreak{}challenge}$ and must equal the trash
+accumulator times the complement of the trash selector:
+\begin{equation}
+  e^{\mathsf{trash}} = \mathsf{compress}_{\mathsf{tc}}\bigl(\text{constraint evals}\bigr)
+    \;-\; \bigl(1 - q_{\mathsf{trash}}(x)\bigr)\cdot \mathsf{trash}(x) = 0.
+  \label{eq:trash}
+\end{equation}
+(\rust{trash.rs::expressions}, L58.)
+
+\section{The $y$-batched quotient numerator}
+\label{sec:numerator}
+
+All identities from Section~\ref{sec:identities}, in the fixed order
+(gates $\to$ permutation $\to$ lookup $\to$ trash), are batched with the
+challenge $y$ into a single numerator:
+\begin{equation}
+  \nu_y(x) \;=\; \sum_{i=0}^{m-1} y^{\,m-1-i}\, e_i(x),
+  \label{eq:nu-y}
+\end{equation}
+where $e_0, \ldots, e_{m-1}$ are the identity evaluations in order. The
+circuit-satisfaction claim is: $\nu_y(x) = h(x)\cdot (x^n - 1)$ for some
+quotient polynomial $h$, whose limbs $Q_0,\ldots,Q_{L-1}$ the prover
+commits to (row~15).
+
+\begin{definition}[Verifier stores the negated numerator]
+\label{def:neg-numer}
+The verifier never divides by $x^n - 1$. Instead it stores the
+\emph{negated} numerator as the linearization's expected evaluation:
+\begin{equation}
+  \mathsf{expected\_\allowbreak{}eval} \;=\; -\,\nu_y(x).
+  \label{eq:expected-eval}
+\end{equation}
+The $(x^n - 1)$ factor is carried on the \emph{commitment} side as
+$(1 - x^n)$ (Section~\ref{sec:linearization}). The two signs cancel in the
+pairing check. The generated verifier stores $-\nu_y(x)$ at
+\texttt{QUOTIENT\_\allowbreak{}EVAL\_\allowbreak{}MPTR}; trace id~36 re-negates it so the Solidity
+trace matches Rust's positive $\nu_y(x)$.
+\end{definition}
+
+\section{Linearization}
+\label{sec:linearization}
+
+The linearization polynomial is the object whose commitment is checked to
+open to \eqref{eq:expected-eval} at $x$. From
+\rust{linearization/verifier.rs::compute\_\allowbreak{}linearization\_\allowbreak{}commitment}:
+\begin{equation}
+  C_{\mathsf{lin}}(x) \;=\;
+     \underbrace{(1 - x^n)\sum_{i=0}^{L-1} x_{\mathsf{split}}^{\,i}\, Q_i}_{\text{quotient limbs}}
+   \;+\; \underbrace{\sum_{j} B_j \cdot F_j(x)}_{\text{selector buckets}}
+   \;+\; \underbrace{\nu_y(x)}_{\text{moved to expected side}},
+  \label{eq:linearization}
+\end{equation}
+where $x_{\mathsf{split}} = x^{\,n-1}$ (the \emph{splitting factor},
+\rust{verifier.rs} L326), $F_j$ is the fixed-column commitment of simple
+selector $j$, and the bucket scalars are
+\begin{equation}
+  B_j \;=\; \sum_{i:\,\mathrm{col}(i)=j} y^{\,m-1-i}\, e_i(x),
+  \qquad
+  \mathsf{expected\_\allowbreak{}eval} = -\!\!\sum_{i:\,\mathrm{col}(i)=\bot}\!\! y^{\,m-1-i}\, e_i(x),
+  \label{eq:buckets}
+\end{equation}
+where $\mathrm{col}(i)\in\{0,\ldots,f{-}1\}\cup\{\bot\}$ is the Rust
+\texttt{Option<usize>} column tag: $\mathrm{col}(i)=j$ (a
+\texttt{Some($j$)}) means identity $i$'s grouped scalar multiplies fixed
+commitment $F_j$, while $\mathrm{col}(i)=\bot$ (the Rust \texttt{None})
+marks a \emph{fully-evaluated} identity that has no column to attach to
+and therefore passes to the scalar expected-eval side. ($\bot$ denotes
+the \texttt{None} variant, not the empty set.)
+The Rust code groups expressions by column index with a running
+$y^{\text{pow}}$ while iterating the expression list in \emph{reverse}
+(\texttt{expressions.iter().rev()}, \texttt{y\_\allowbreak{}pow *= y}), which is exactly
+the Horner form of \eqref{eq:nu-y}: the last identity gets weight $y^0$,
+the first gets $y^{m-1}$. Identities tagged \texttt{None} (fully evaluated)
+contribute to $\mathsf{expected\_\allowbreak{}eval}$ with a negation
+(\texttt{expected\_\allowbreak{}eval -= eval}); identities tagged \texttt{Some(j)}
+multiply the fixed commitment $F_j$.
+
+\begin{remark}[Why the split $x_{\mathsf{split}} = x^{n-1}$]
+The quotient $h$ has degree up to $L\cdot n - 1$ and is committed as $L$
+limbs of degree $< n$. Evaluating $h(x) = \sum_i x^i h_i(x^n)$-style with
+the splitting factor $x^{n-1}$ lets the verifier combine limb commitments
+without knowing $h$; the $(1-x^n)$ scalar then supplies the
+$-(x^n-1)$ that cancels the denominator of \eqref{eq:expected-eval}.
+\end{remark}
+
+\section{KZG multi-open reduction}
+\label{sec:pcs-math}
+
+The verifier now holds a set of \emph{opening claims}
+$\{(C_k, z_k, v_k)\}$: commitment $C_k$ must open to value $v_k$ at point
+$z_k$. These come from advice, committed instance, permutation $z$,
+lookup, trash, fixed (non-simple), perm-common, and the linearization
+(Section~\ref{sec:protocol-plan}). The KZG multi-open
+(\rust{poly/kzg/mod.rs::multi\_\allowbreak{}prepare}, L321) reduces them to one pairing.
+
+\subsection{Point sets}
+\label{sec:pointsets}
+
+Group the claims by evaluation point into \emph{point sets}
+$S_1, \ldots, S_t$ (rows of \rust{construct\_\allowbreak{}intermediate\_\allowbreak{}sets},
+\texttt{utils.rs} L37). With the \texttt{fewer-point-sets} feature,
+\emph{dummy queries} (\rust{compute\_\allowbreak{}dummy\_\allowbreak{}queries}, L150) are added to
+merge sets, each dummy eval read from the transcript. The sets are then
+sorted by \textbf{ascending cardinality, tie-broken by original index}
+(\texttt{sort\_\allowbreak{}by\_\allowbreak{}key($\vert i\vert$, i)}, L419), so the first set contains
+the fixed commitments evaluated at $x$ only.
+
+\subsection{Batched commitments and evals per set}
+\label{sec:qcom}
+
+For each set $S_s$, let the claims in it be indexed $k = 0, \ldots, n_s-1$
+(each claim itself possibly a linear combination of commitments). Define
+\begin{align}
+  q_{\mathsf{com}}^{(s)} &= \sum_{k} x_1^{\,k}\, C_{s,k}, \label{eq:qcom}\\
+  q_{\mathsf{eval}}^{(s)} &= \sum_{k} x_1^{\,k}\, v_{s,k}, \label{eq:qeval}
+\end{align}
+with $x_1$ from row~18. Under \texttt{truncated-challenges} the powers are
+$\mathsf{truncate}(x_1^k)$ (lower 128 bits) while the internal power
+accumulator stays full precision.
+
+\subsection{The $f$ polynomial and its evaluation at $x_3$}
+\label{sec:feval}
+
+For each set, let $r_s(X)$ be the Lagrange interpolation of the claimed
+values over the set's points:
+$r_s(\zeta_{s,i}) = v_{s,i}$ for $\zeta_{s,i} \in S_i$. Then
+\begin{equation}
+  f_{\mathsf{eval}} \;=\; \sum_{s=0}^{t-1} x_2^{\,t-1-s}\cdot
+     \frac{q_{\mathsf{eval,proof}}^{(s)} - r_s(x_3)}
+          {\prod_{\zeta \in S_s} (x_3 - \zeta)},
+  \label{eq:feval}
+\end{equation}
+where $q_{\mathsf{eval,proof}}^{(s)}$ are the prover-supplied scalars read
+in row~22 and $x_3$ is the truncated point from row~21. The sum is folded
+in \emph{reverse} set order with Horner in $x_2$
+(\rust{multi\_\allowbreak{}prepare} L471--482). The prover's $f_{\mathsf{com}}$
+(row~20) commits to $f$; \eqref{eq:feval} checks the claimed $f$-values
+are consistent with the per-set interpolants.
+
+\subsection{Final commitment and scalar $v$}
+\label{sec:finalcom}
+
+With $x_4$ from row~23:
+\begin{align}
+  C_{\mathsf{final}} &= \sum_{s=0}^{t-1} x_4^{\,s}\, q_{\mathsf{com}}^{(s)}
+     \;+\; x_4^{\,t}\, f_{\mathsf{com}}, \label{eq:finalcom}\\
+  v &= \sum_{s=0}^{t-1} x_4^{\,s}\, q_{\mathsf{eval,proof}}^{(s)}
+     \;+\; x_4^{\,t}\, f_{\mathsf{eval}}. \label{eq:v}
+\end{align}
+(Again truncated powers under \texttt{truncated-challenges}.)
+
+\subsection{The final pairing}
+\label{sec:pairing}
+
+The KZG opening of $C_{\mathsf{final}}$ to $v$ at $x_3$ with proof $\pi$ is
+\begin{equation}
+  \pair{C_{\mathsf{final}} - v\,G + x_3\,\pi}{G_2}
+  \;=\; \pair{\pi}{[s]_2},
+  \label{eq:final-pairing}
+\end{equation}
+where $[s]_2$ is the VK's \texttt{s\_\allowbreak{}g2} point and $G_2$ the generator.
+Equivalently, with the Rust \texttt{DualMSM} naming
+(\texttt{left} $= \pi$, \texttt{right} $= C_{\mathsf{final}} - vG + x_3\pi$):
+\begin{equation}
+  \pair{\mathsf{left}}{[s]_2} \cdot \pair{\mathsf{right}}{-G_2} = 1.
+  \label{eq:final-pairing-dual}
+\end{equation}
+The generated contract calls
+\texttt{ec\_\allowbreak{}pairing(success, PAIRING\_\allowbreak{}RHS\_\allowbreak{}MPTR, PAIRING\_\allowbreak{}LHS\_\allowbreak{}MPTR)}
+which checks $\pair{\text{arg}_0}{[1]_2}\cdot\pair{\text{arg}_1}{-[s]_2}=1$,
+i.e.\ arg$_0$ = RHS (combined), arg$_1$ = $\pi$ --- the \emph{swapped}
+argument order of the historical LHS/RHS naming (left $= \pi$ in the dual
+MSM). See Section~\ref{sec:pairing-codegen}.
+
+\section{Accumulator (IVC) pairing batching}
+\label{sec:acc-batch}
+
+When the proof carries an outer IVC accumulator, a second pairing equation
+must hold. The two equations are combined with a verifier-local randomizer
+$\alpha$ derived from the already-fixed pairing inputs:
+\begin{equation}
+  \pair{\mathsf{kzg\_\allowbreak{}rhs} + \alpha\,\mathsf{acc\_\allowbreak{}rhs}}{G_2}
+  \;\cdot\;
+  \pair{\mathsf{kzg\_\allowbreak{}lhs} + \alpha\,\mathsf{acc\_\allowbreak{}lhs}}{-[s]_2}
+  \;=\; 1.
+  \label{eq:acc-batch}
+\end{equation}
+If either original equation is false, \eqref{eq:acc-batch} holds for at
+most one $\alpha \in \Fr$, so a cheating prover passes with probability
+$\le 1/r$. The randomizer is $\alpha = \keccak(\text{domain}\,\|\,\text{points})
+\bmod r$, with the zero case mapped to $1$ (\cg{FinalPairing.yul}).
+
+\section{Summary of the verification predicate}
+\label{sec:summary-predicate}
+
+The verifier accepts iff all of the following hold:
+\begin{enumerate}[leftmargin=1.6em,itemsep=2pt]
+  \item the proof parses exactly (byte-exact consumption,
+        Section~\ref{sec:schedule});
+  \item every absorbed scalar is canonical ($< r$) and every G1 word
+        satisfies Definition~\ref{def:g1-canonical};
+  \item the challenges are sampled per Definition~\ref{def:squeeze};
+  \item the identities \eqref{eq:gate-identity}, \eqref{eq:perm1}--\eqref{eq:perm-right},
+        \eqref{eq:lookup-helper}--\eqref{eq:lookup-acc}, \eqref{eq:trash}
+        batch to $\nu_y(x)$ \eqref{eq:nu-y} consistent with the committed
+        quotient limbs via \eqref{eq:linearization};
+  \item the multi-open reduction \eqref{eq:qcom}--\eqref{eq:v} is
+        self-consistent; and
+  \item the pairing \eqref{eq:final-pairing} (or \eqref{eq:acc-batch})
+        holds.
+\end{enumerate}
+Every one of these is enforced by the generated Solidity; the mapping is the
+subject of the next three chapters.
