@@ -26,12 +26,14 @@
 
 #![cfg(all(feature = "evm", feature = "truncated-challenges"))]
 
+mod common;
+
 use std::{env, path::Path};
 
 use ff::Field;
 use halo2_solidity_verifier::{
     compile_solidity, pinned_solc_available, Evm, GeneratorConfig, QuotientIdentitySource,
-    RenderOptions, RenderVk, SolidityGenerator,
+    QuotientLowering, RenderOptions, RenderVk, SolidityGenerator,
 };
 use midnight_circuits::{
     hash::poseidon::PoseidonChip,
@@ -261,6 +263,105 @@ fn poseidon_renders_compiles_and_verifies() {
             panic!("verifier halted with gas_used = {gas_used}, reason = {reason}");
         }
     }
+
+    // The same proof under the direct quotient lowering
+    // (QuotientLowering::Direct).
+    let direct_artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Direct,
+            ..RenderOptions::default()
+        })
+        .expect("direct-lowering render should succeed");
+    let direct_vk_solidity = direct_artifacts.verifying_key.expect("separate render includes VK");
+    std::fs::write(
+        format!("{dump_dir}/Halo2Verifier.direct.sol"),
+        &direct_artifacts.verifier,
+    )
+    .ok();
+    std::fs::write(
+        format!("{dump_dir}/Halo2VerifyingKey.direct.sol"),
+        &direct_vk_solidity,
+    )
+    .ok();
+    let direct_vk_address = evm.create(compile_solidity(&direct_vk_solidity));
+    let direct_verifier_address = evm.create_with_address_arg(
+        compile_solidity(&direct_artifacts.verifier),
+        direct_vk_address,
+    );
+    let direct_calldata = generator
+        .encode_calldata(&proof, &[instance])
+        .expect("calldata encoding should succeed");
+    match evm.try_call_with_gas(direct_verifier_address, direct_calldata, 5_000_000_000) {
+        CallOutcome::Success {
+            gas_used, output, ..
+        } => {
+            assert_eq!(
+                output,
+                [vec![0u8; 31], vec![1]].concat(),
+                "direct-lowering verifier should accept the proof; gas_used = {gas_used}"
+            );
+            println!(
+                "Poseidon proof verified on-chain (direct quotient lowering) in {gas_used} gas"
+            );
+        }
+        other => panic!("direct-lowering verifier rejected the proof: {other:?}"),
+    }
+    let repacked = generator.repack_proof(&proof).expect("proof repack should succeed");
+    for (label, calldata) in [
+        (
+            "wrong instance",
+            halo2_solidity_verifier::encode_calldata(&repacked, &[instance + F::ONE]),
+        ),
+        ("mutated proof", {
+            let mut bad = repacked.clone();
+            let idx = bad.len() / 2;
+            bad[idx] ^= 0x01;
+            halo2_solidity_verifier::encode_calldata(&bad, &[instance])
+        }),
+    ] {
+        match evm.try_call_with_gas(direct_verifier_address, calldata, 5_000_000_000) {
+            CallOutcome::Success { output, .. } => assert_eq!(
+                output,
+                vec![0u8; 32],
+                "direct-lowering verifier must reject: {label}"
+            ),
+            CallOutcome::Revert { .. } | CallOutcome::Halt { .. } => {}
+        }
+    }
+
+    // Rust/Solidity trace equivalence in direct mode, including the
+    // direct-lowering intermediates (helper calls, product tables, limb views).
+    #[cfg(feature = "rust-verifier-trace")]
+    common::direct_trace::assert_direct_trace_matches_native(
+        "Poseidon",
+        &generator,
+        || {
+            midnight_zk_stdlib::verify::<PoseidonExample, Keccak256>(
+                &srs.verifier_params(),
+                &vk,
+                &instance,
+                None,
+                &proof,
+            )
+            .expect("native verifier (trace)")
+        },
+        &generator.encode_calldata(&proof, &[instance]).expect("calldata"),
+    );
+
+    // Emitted quotient Yul (Direct and Vm) against a Rust reference on the
+    // honest proof, 8 random evaluation frames and one frame with
+    // changed challenges (tests/common::quotient_probe).
+    #[cfg(feature = "rust-verifier-trace")]
+    common::quotient_probe::assert_quotient_probe_matches_rust::<Keccak256>(
+        "Poseidon",
+        &generator,
+        vk.vk(),
+        &proof,
+        &[instance],
+        1,
+        0x7072_6f62_0000 + 1,
+    );
 }
 
 fn assert_poseidon_quotient_manifest(generator: &SolidityGenerator<'_>) {

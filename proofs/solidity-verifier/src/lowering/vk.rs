@@ -162,7 +162,61 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_const_words: 0,
             quotient_program_offset_words: None,
             quotient_program_words: 0,
+            quotient_const_labels: Vec::new(),
+            quotient_const_headers: Vec::new(),
         }
+    }
+
+    /// Generate the VK payload for the direct quotient lowering.
+    ///
+    /// The quotient-constants section holds the direct constant table
+    /// (coefficient runs with zeros kept, then the pooled scalar constants of
+    /// the identity trees); the quotient-program section is empty. The table
+    /// depends only on the constraint system, so no reservation loop is
+    /// needed. The runtime codehash pinning of the separate VK is unchanged.
+    pub(crate) fn generate_vk_direct(
+        &self,
+        program: &crate::lowering::quotient_numerator::direct::DirectQuotientProgram,
+    ) -> Halo2VerifyingKey {
+        let mut vk = self.generate_base_vk();
+        let header_words = vk.constants.len();
+        let words = program.table_words();
+        vk.constants.extend(words.iter().map(|word| ("quotient_const", word.value)));
+        let payload_layout = VkPayloadLayout::for_vk(
+            header_words,
+            words.len(),
+            0,
+            vk.fixed_comms.len(),
+            vk.permutation_comms.len(),
+        )
+        .unwrap_or_else(|err| panic!("invalid direct VK payload layout: {err}"));
+        vk.quotient_const_offset_words = Some(
+            payload_layout
+                .word_offset(PayloadSectionKind::QuotientConstants)
+                .expect("quotient constants section"),
+        );
+        vk.quotient_const_words = words.len();
+        vk.quotient_program_offset_words = Some(
+            payload_layout
+                .word_offset(PayloadSectionKind::QuotientProgram)
+                .expect("quotient program section"),
+        );
+        vk.quotient_program_words = 0;
+        vk.quotient_const_labels = words.iter().map(|word| word.label.clone()).collect();
+        vk.quotient_const_headers = words
+            .iter()
+            .enumerate()
+            .filter(|(_, word)| !word.headers.is_empty())
+            .map(|(idx, word)| (idx, word.headers.clone()))
+            .collect();
+        assert_eq!(
+            payload_layout.total_bytes(),
+            vk.len(),
+            "typed VK payload layout must preserve the emitted byte length"
+        );
+        vk.validate_payload_layout()
+            .unwrap_or_else(|err| panic!("invalid generated direct VK payload layout: {err}"));
+        vk
     }
 
     /// Generate the final VK payload, including compact quotient VM data.
@@ -414,8 +468,9 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         // midnight-proofs verifiers the dominating run is whichever of the
         // following is largest:
         //   (a) initial absorbs (vk_digest + committed_pi + num_instances
-        //       + all instance scalars + all phase-1 advices) before the
-        //       first user-phase challenge squeeze (`theta`), or
+        //       + all instance scalars + every advice commitment up to and
+        //       including the first challenge-bearing phase) before the first
+        //       user-phase challenge squeeze (`theta` at the latest), or
         //   (b) the evaluation block (all `num_evals` scalars) absorbed
         //       after the `y` squeeze and before the next squeeze.
         //
@@ -438,6 +493,10 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             meta.num_evals,
             meta.num_point_sets,
         );
-        TranscriptBufferLayout::from_proof_layout(&proof_layout, num_instances)
+        TranscriptBufferLayout::from_proof_layout(
+            &proof_layout,
+            num_instances,
+            &meta.protocol.num_user_challenges,
+        )
     }
 }

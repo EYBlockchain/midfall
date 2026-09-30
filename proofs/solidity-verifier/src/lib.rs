@@ -15,14 +15,31 @@ mod lowering;
 #[cfg(all(test, feature = "evm"))]
 mod test;
 
+#[cfg(feature = "evm")]
+#[doc(hidden)]
+pub use api::QuotientProbeArtifacts;
 pub use api::{
     AccumulatorEncoding, AccumulatorEncodingKind, GeneratorConfig, GeneratorError,
     ProofEvaluationCounts, QuotientIdentityManifest, QuotientIdentityManifestEntry,
-    QuotientIdentityManifestTarget, QuotientIdentitySource, RenderDiagnostics, RenderOptions,
-    RenderQuotient, RenderVk, RenderedArtifacts, RepackError,
+    QuotientIdentityManifestTarget, QuotientIdentitySource, QuotientLowering, RenderDiagnostics,
+    RenderOptions, RenderQuotient, RenderVk, RenderedArtifacts, RepackError,
 };
 pub use builder::SolidityGenerator;
 pub use evm::{encode_calldata, FN_SIG_VERIFY_PROOF};
+
+/// First trace id of the direct quotient lowering's helper-call results
+/// (`sum_exprs` / `sum_exprs_by_degree`), numbered in identity order,
+/// left-first inside an identity. See `docs/reference/TRACE_VARIABLES.md`.
+pub const DIRECT_TRACE_HELPER_BASE: u64 =
+    lowering::quotient_numerator::direct::trace::DIRECT_HELPER_TRACE_BASE;
+/// First trace id of the direct lowering's product-table entries `T[t]`.
+pub const DIRECT_TRACE_PRODUCT_TABLE_BASE: u64 =
+    lowering::quotient_numerator::direct::trace::DIRECT_PRODUCT_TABLE_TRACE_BASE;
+/// First trace id of the direct lowering's limb-view words.
+pub const DIRECT_TRACE_LIMB_VIEW_BASE: u64 =
+    lowering::quotient_numerator::direct::trace::DIRECT_LIMB_VIEW_TRACE_BASE;
+/// End (exclusive) of the direct lowering's trace id range.
+pub const DIRECT_TRACE_END: u64 = lowering::quotient_numerator::direct::trace::DIRECT_TRACE_END;
 
 /// Whether the default Solidity renderer emits trace logs.
 ///

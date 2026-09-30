@@ -26,6 +26,7 @@ pub(crate) mod layout;
 pub(crate) mod plan;
 pub(crate) mod protocol;
 pub(crate) mod quotient;
+pub(crate) mod quotient_direct;
 pub(crate) mod quotient_numerator;
 pub(crate) mod render;
 pub(crate) mod vk;

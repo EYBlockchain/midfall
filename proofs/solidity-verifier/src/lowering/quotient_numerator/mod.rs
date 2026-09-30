@@ -5,6 +5,7 @@
 //! reconstructs the batched Halo2 identity numerator inside generated
 //! Solidity.
 
+pub(crate) mod direct;
 pub(crate) mod vm;
 pub(crate) mod yul_emit;
 

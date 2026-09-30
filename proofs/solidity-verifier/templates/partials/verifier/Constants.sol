@@ -175,3 +175,11 @@
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_0 = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa;
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffbafeffffffffaaaa;
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_1 = 0x0000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84;
+    {%- match quotient_direct %}
+    {%- when Some with (qdirect) %}
+
+    {%- for line in qdirect.constants %}
+    {{ line }}
+    {%- endfor %}
+    {%- when None %}
+    {%- endmatch %}

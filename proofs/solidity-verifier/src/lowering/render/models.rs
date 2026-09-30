@@ -251,6 +251,12 @@ pub(crate) struct Halo2VerifyingKey {
     pub(crate) quotient_program_offset_words: Option<usize>,
     /// Number of quotient program words.
     pub(crate) quotient_program_words: usize,
+    /// Direct lowering: trailing comment of each quotient-constant word
+    /// (empty for the compact VM, whose words keep their section name).
+    pub(crate) quotient_const_labels: Vec<String>,
+    /// Direct lowering: comment lines before quotient-constant words,
+    /// `(word index inside the section, lines)` (coefficient run headers).
+    pub(crate) quotient_const_headers: Vec<(usize, Vec<String>)>,
 }
 
 /// INVALID byte that prefixes the separate VK runtime payload.
@@ -259,6 +265,30 @@ pub(crate) const VK_RUNTIME_PREFIX: u8 = 0xfe;
 pub(crate) const VK_RUNTIME_PREFIX_LEN: usize = 1;
 
 impl Halo2VerifyingKey {
+    /// Trailing comment of payload word `idx` in the VK contract.
+    pub(crate) fn word_comment(&self, idx: &usize) -> String {
+        let idx = *idx;
+        self.quotient_const_offset_words
+            .and_then(|offset| idx.checked_sub(offset))
+            .and_then(|rel| self.quotient_const_labels.get(rel))
+            .cloned()
+            .unwrap_or_else(|| self.constants[idx].0.to_string())
+    }
+
+    /// Comment lines emitted before payload word `idx` in the VK contract.
+    pub(crate) fn word_headers(&self, idx: &usize) -> Vec<String> {
+        let idx = *idx;
+        self.quotient_const_offset_words
+            .and_then(|offset| idx.checked_sub(offset))
+            .and_then(|rel| {
+                self.quotient_const_headers
+                    .iter()
+                    .find(|(word, _)| *word == rel)
+                    .map(|(_, lines)| lines.clone())
+            })
+            .unwrap_or_default()
+    }
+
     /// Reconstruct and validate the typed VK payload layout.
     pub(crate) fn payload_layout(&self) -> Result<VkPayloadLayout, String> {
         let quotient_words = self.quotient_const_words + self.quotient_program_words;
@@ -419,6 +449,10 @@ pub(crate) struct Halo2Verifier {
     /// When true, the rendered verifier emits LOG1 gas() checkpoints at
     /// section boundaries. See SOLIDITY_GAS_CHECKPOINTS_ENABLED.
     pub(crate) gas_checkpoints: bool,
+    /// Test-only quotient probe (`SolidityGenerator::render_quotient_probe`):
+    /// the contract returns `[expected_eval, selector_acc[0..n)]` right after
+    /// the quotient section instead of verifying. Never set by `render`.
+    pub(crate) quotient_probe: bool,
     pub(crate) quotient_pow5_helper: bool,
     pub(crate) quotient_limb7_helper: bool,
     pub(crate) quotient_wide_limb7_helper: bool,
@@ -490,6 +524,10 @@ pub(crate) struct Halo2Verifier {
     pub(crate) quotient_native_lookup_computation: Vec<String>,
     pub(crate) quotient_native_identity_computations: Vec<Vec<String>>,
     pub(crate) quotient_program: Option<QuotientProgram>,
+    /// Direct quotient lowering (`QuotientLowering::Direct`): Solidity
+    /// constants and the quotient block. Mutually exclusive with
+    /// `quotient_program` and `quotient_external`.
+    pub(crate) quotient_direct: Option<crate::lowering::quotient_direct::DirectQuotientRendering>,
     pub(crate) pcs_computations: Vec<Vec<String>>,
     /// Sorted simple-selector fixed-column indices. Each is rendered
     /// into a Yul snippet that adds `S_i_com * sel_acc_i` to the
@@ -770,8 +808,17 @@ impl Halo2Verifier {
             ));
         }
 
+        if self.quotient_direct.is_some()
+            && (self.quotient_program.is_some() || self.quotient_external.is_some())
+        {
+            return Err(
+                "direct quotient rendering is exclusive with the compact VM and external evaluator"
+                    .to_string(),
+            );
+        }
         if self.quotient_external.is_none()
             && self.quotient_program.is_none()
+            && self.quotient_direct.is_none()
             && self.quotient_eval_numer_computations.is_empty()
         {
             return Err(
@@ -1005,6 +1052,8 @@ mod tests {
             quotient_const_words: 0,
             quotient_program_offset_words: None,
             quotient_program_words: 0,
+            quotient_const_labels: Vec::new(),
+            quotient_const_headers: Vec::new(),
         }
     }
 
@@ -1068,6 +1117,7 @@ mod tests {
             template_constants: Default::default(),
             trace: false,
             gas_checkpoints: false,
+            quotient_probe: false,
             quotient_pow5_helper: false,
             quotient_limb7_helper: false,
             quotient_wide_limb7_helper: false,
@@ -1130,6 +1180,7 @@ mod tests {
                 stack_mptr: 0,
                 program_mptr: 0,
             }),
+            quotient_direct: None,
             pcs_computations: vec![],
             simple_selector_cols: vec![],
             proof_commit_trace_base: crate::lowering::layout::trace::PROOF_COMMIT_BASE,

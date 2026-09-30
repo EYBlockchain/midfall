@@ -75,7 +75,13 @@
             // -- the historical "LHS"/"RHS" naming follows the dual MSM
             // accumulator (left = pi, right = combined) and *not* the
             // pairing argument order. Pass them swapped to ec_pairing.
+            {%- if self.trace %}
+            // Trace renders do not revert on a failed final check: `success`
+            // (0 or 1) is traced and returned by TraceReturn, so the logs of
+            // a rejected proof remain observable. Production renders revert.
+            {%- else %}
             if iszero(success) { revert(0, 0) }
+            {%- endif %}
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
 
             {%- if self.gas_checkpoints %}

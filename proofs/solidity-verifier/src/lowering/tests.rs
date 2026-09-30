@@ -359,33 +359,127 @@ fn lowering_plan_reuses_stable_layout_facts() {
     assert_eq!(repack.num_evals, plan.proof_layout.evals.item_count);
     assert_eq!(repack.num_point_sets, plan.proof_layout.q_evals.item_count);
 
-    assert_eq!(plan.quotient.program.len, plan.quotient.build.bytes.len());
-    assert!(plan.quotient.build.consts.len() <= plan.vk.quotient_const_words);
-    assert_eq!(plan.quotient.program.stack_mptr, plan.quotient.stack_mptr);
+    assert_eq!(
+        plan.vm_quotient().program.len,
+        plan.vm_quotient().build.bytes.len()
+    );
+    assert!(plan.vm_quotient().build.consts.len() <= plan.vk.quotient_const_words);
+    assert_eq!(
+        plan.vm_quotient().program.stack_mptr,
+        plan.vm_quotient().stack_mptr
+    );
     let quotient_stack_region = plan
         .memory
         .map
         .region("quotient_stack")
         .expect("quotient stack region should be registered");
-    assert_eq!(quotient_stack_region.start, plan.quotient.stack_mptr);
+    assert_eq!(quotient_stack_region.start, plan.vm_quotient().stack_mptr);
     assert!(
-        quotient_stack_region.len >= plan.quotient.build.max_stack * layout::WORD_BYTES,
+        quotient_stack_region.len >= plan.vm_quotient().build.max_stack * layout::WORD_BYTES,
         "planned quotient stack/scratch region must cover the validated VM operand stack"
     );
     assert_eq!(
-        plan.quotient.program.eval_numer_mptr,
-        plan.quotient.state_slots.eval_numer_mptr
+        plan.vm_quotient().program.eval_numer_mptr,
+        plan.vm_quotient().state_slots.eval_numer_mptr
     );
-    assert_eq!(
-        plan.quotient.sorted_simple.len(),
-        plan.meta.num_simple_selectors
-    );
+    assert_eq!(plan.sorted_simple.len(), plan.meta.num_simple_selectors);
 
     let verifier = inputs.generate_verifier_from_plan(&plan, false, false, false, false, None);
     assert_eq!(verifier.codegen_layout.proof, plan.proof_layout);
     assert_eq!(verifier.memory.vk_mptr, plan.vk_mptr);
     assert_eq!(verifier.proof_len, plan.proof_layout.proof_len);
-    assert_eq!(verifier.simple_selector_cols, plan.quotient.sorted_simple);
+    assert_eq!(verifier.simple_selector_cols, plan.sorted_simple);
+}
+
+#[test]
+fn direct_lowering_plan_reserves_scratch_and_replaces_vm_payload() {
+    use crate::api::{QuotientLowering, RenderOptions, RenderQuotient, RenderVk};
+
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let inputs = generator.inputs();
+    let vm = inputs.lowering_plan();
+    let plan = inputs
+        .lowering_plan_for(QuotientLowering::Direct)
+        .expect("direct plan builds and validates");
+    let direct = plan.direct.as_ref().expect("direct plan");
+    assert!(
+        plan.quotient.is_none(),
+        "direct plan carries no compact VM program"
+    );
+
+    // VK payload: the direct constant table replaces the VM constants and
+    // program; the header and commitments are unchanged.
+    assert_eq!(plan.vk.quotient_program_words, 0);
+    assert_eq!(plan.vk.quotient_const_words, direct.table.len());
+    assert_eq!(
+        plan.vk.len(),
+        vm.vk.len()
+            - (vm.vk.quotient_const_words + vm.vk.quotient_program_words) * layout::WORD_BYTES
+            + direct.table.len() * layout::WORD_BYTES
+    );
+    plan.vk.validate_payload_layout().expect("direct VK payload layout");
+    assert_eq!(plan.vk.fixed_comms, vm.vk.fixed_comms);
+
+    // Memory: Y_POW / accumulator / r live in the registered quotient state
+    // region, views / tables / family scratch in the registered stack region.
+    plan.memory.validate().expect("direct memory map validates");
+    let state = plan.memory.map.region("quotient_state").expect("quotient state region");
+    assert_eq!(state.start, direct.layout.main_acc);
+    assert!(state.len >= (2 + direct.program.m) * layout::WORD_BYTES);
+    assert!(direct.layout.y_pow_addr(direct.program.m) <= state.start + state.len);
+    let stack = plan.memory.map.region("quotient_stack").expect("quotient stack region");
+    assert!(direct.layout.family_scratch_mptr >= stack.start);
+    assert!(direct.layout.family_scratch_mptr <= stack.start + stack.len);
+    assert_eq!(
+        direct.layout.buckets.first().copied(),
+        Some(plan.memory.selector_acc_mptr)
+    );
+
+    // Rendering: identity functions and named slots; the VM interpreter is gone.
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Direct,
+            ..RenderOptions::default()
+        })
+        .expect("direct render");
+    assert!(artifacts.verifier.contains("function q_identity_0(r) {"));
+    assert!(artifacts.verifier.contains("uint256 internal constant EV_A0 "));
+    assert!(!artifacts.verifier.contains("let q_pc := q_program_mptr"));
+    let vk_source = artifacts.verifying_key.expect("separate VK");
+    assert!(!vk_source.contains("// quotient_program"));
+
+    // The default stays the compact VM, byte for byte.
+    let default_render = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            ..RenderOptions::default()
+        })
+        .expect("default render");
+    let vm_render = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Vm,
+            ..RenderOptions::default()
+        })
+        .expect("vm render");
+    assert_eq!(default_render, vm_render);
+    assert!(default_render.verifier.contains("let q_pc := q_program_mptr"));
+
+    // The direct lowering renders the quotient inline only.
+    let err = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient: RenderQuotient::ExternalPinned {
+                runtime_len: 1,
+                codehash: U256::from(1u64),
+            },
+            quotient_lowering: QuotientLowering::Direct,
+            ..RenderOptions::default()
+        })
+        .expect_err("direct + external evaluator is rejected");
+    assert!(matches!(err, GeneratorError::Planning { .. }));
 }
 
 #[test]
@@ -1003,9 +1097,9 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     }
     assert!(
             verifier_template.contains(
-                "if iszero(success) { revert(0, 0) }\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
+                "{%- else %}\n            if iszero(success) { revert(0, 0) }\n            {%- endif %}\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
             ),
-            "final pairing block should revert before staging/calling the pairing precompile when success is already false"
+            "final pairing block should revert (production renders) before staging/calling the pairing precompile when success is already false"
         );
     assert!(
         pcs_codegen.contains("if success {")
@@ -1716,23 +1810,57 @@ fn production_verifier_documents_revert_or_true_policy() {
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
                 && verifier_template.contains(
-                    "ret := and(ret, mload(scratch))\n                if iszero(ret) { revert(0, 0) }\n                ret := 1",
+                    "{%- else %}\n                if iszero(ret) { revert(0, 0) }\n                ret := 1\n                {%- endif %}",
                 ),
-            "final pairing helper must revert on pairing failure and normalize success to one"
+            "final pairing helper must revert on pairing failure (production renders) and normalize success to one"
         );
     assert!(
         verifier_template
             .contains("success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"),
         "final epilogue must route the pairing check through the reverting helper"
     );
+    // Only trace renders return the final check result (so a rejected
+    // proof keeps its trace logs); production renders return literal true.
     assert!(
-        !verifier_template.contains("return(0x00, 0x20)\n            {%- else %}"),
-        "trace and production epilogues must not diverge into false-return semantics"
+        verifier_template.contains(
+            "{% if self.trace -%}\n            // Trace renders return the final check result"
+        ) && verifier_template.contains("mstore(RETURN_MPTR, iszero(iszero(success)))"),
+        "trace epilogue returns the final success flag"
     );
     assert!(
         verifier_template.contains("mstore(RETURN_MPTR, 1)\n            return(RETURN_MPTR, 0x20)"),
-        "generated verifier must only return literal true after the reverting pairing helper"
+        "production verifier must only return literal true after the reverting pairing helper"
     );
+
+    // Rendered: the production verifier keeps success-or-revert, the trace
+    // verifier returns the flag.
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    for lowering in [
+        crate::api::QuotientLowering::Vm,
+        crate::api::QuotientLowering::Direct,
+    ] {
+        let render = |trace| {
+            generator
+                .render(crate::api::RenderOptions {
+                    quotient_lowering: lowering,
+                    diagnostics: crate::api::RenderDiagnostics {
+                        trace,
+                        gas_checkpoints: false,
+                    },
+                    ..crate::api::RenderOptions::default()
+                })
+                .expect("render")
+                .verifier
+        };
+        let production = render(false);
+        assert!(!production.contains("iszero(iszero(success))"));
+        assert!(production.contains("if iszero(ret) { revert(0, 0) }"));
+        assert!(production.contains("mstore(RETURN_MPTR, 1)"));
+        let trace = render(true);
+        assert!(trace.contains("mstore(RETURN_MPTR, iszero(iszero(success)))"));
+        assert!(!trace.contains("if iszero(ret) { revert(0, 0) }"));
+    }
 }
 
 #[test]
@@ -2382,6 +2510,46 @@ fn quotient_vm_bilin7_pairwise_matches_direct_expr_eval() {
     builder.emit_expr(&expr);
 
     assert_eq!(builder.bytes[0], Q_OP_BILIN7_PAIRWISE);
+    assert_eq!(
+        eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
+        expected
+    );
+}
+
+#[test]
+fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
+    // A large affine sum over consecutive limb pointers is emitted as a chain of
+    // LIN7 opcodes whose coefficients land in the one-byte constant table. With
+    // more than 256 distinct coefficients the table overflows a `u8` slot
+    // partway through emission. Before the fix, `emit_limb_shape`'s
+    // `u8::try_from(slot).expect(...)` panicked once the shape being emitted was
+    // preceded by enough residue constants; the decomposition path now re-checks
+    // the post-residue table and falls back to generic ops for the overflowing
+    // shape. This exercises that fallback and confirms it still evaluates the
+    // expression correctly.
+    let term_count = 300u32;
+    let mut values = HashMap::new();
+    let mut expr = QuotientExpr::Const(U256::ZERO);
+    for k in 0..term_count {
+        let ptr = 0x1000 + k * 0x20;
+        values.insert(ptr, Fq::from(17 + k as u64));
+        expr = quotient_add_expr(
+            expr,
+            // Coefficient `k + 2` keeps every term scaled (coeff 1 would drop the
+            // constant) and distinct, so the table grows one slot per term.
+            quotient_scale_expr(Fq::from(k as u64 + 2), QuotientExpr::Mem(QuotientMem::Literal(ptr))),
+        );
+    }
+
+    let expected = eval_quotient_expr_for_test(&expr, &values);
+    let mut builder = QuotientProgramBuilder::with_limb_vm_ops(true);
+    // The pre-fix builder panics inside this call for this input.
+    builder.emit_expr(&expr);
+
+    assert!(
+        builder.consts.len() > u8::MAX as usize,
+        "test must overflow the one-byte constant table to exercise the fallback"
+    );
     assert_eq!(
         eval_quotient_vm_for_test(&builder.bytes, &builder.consts, &values),
         expected
@@ -3289,4 +3457,406 @@ fn fq_from_u256(value: U256) -> Fq {
     let bytes = value.to_le_bytes::<32>();
     let repr = <Fq as PrimeField>::Repr::from(bytes);
     Option::<Fq>::from(Fq::from_repr(repr)).expect("canonical field element")
+}
+
+// ---------------------------------------------------------------------------
+// Direct lowering: structural y-batch fold check (direct::folds).
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Debug)]
+struct FoldCheckTestConfig {
+    advice: [Column<Advice>; 8],
+    table: Column<midnight_proofs::plonk::Fixed>,
+    scale: Column<midnight_proofs::plonk::Fixed>,
+    simple_a: Selector,
+    simple_b: Selector,
+    complex: Selector,
+}
+
+/// Circuit with two simple-selector buckets, a fully evaluated gate, an
+/// additive-selector gate (trash argument), two lookups and eight permuted
+/// columns (several permutation sets), so every fold family is present.
+#[derive(Clone, Debug, Default)]
+struct FoldCheckTestCircuit;
+
+impl Circuit<Fq> for FoldCheckTestCircuit {
+    type Config = FoldCheckTestConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let advice: [Column<Advice>; 8] = std::array::from_fn(|_| meta.advice_column());
+        let _committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+        let table = meta.fixed_column();
+        let scale = meta.fixed_column();
+        for column in advice {
+            meta.enable_equality(column);
+        }
+        let simple_a = meta.selector();
+        let simple_b = meta.selector();
+        let complex = meta.complex_selector();
+        let q = |meta: &mut midnight_proofs::plonk::VirtualCells<'_, Fq>, i: usize| {
+            meta.query_advice(advice[i], Rotation::cur())
+        };
+        meta.create_gate("fold simple a", |meta| {
+            let (a0, a1, a2, a3, a4) = (q(meta, 0), q(meta, 1), q(meta, 2), q(meta, 3), q(meta, 4));
+            let public = meta.query_instance(public_instance, Rotation::cur());
+            Constraints::with_selector(
+                simple_a,
+                vec![("product", a0 * a1 - a2), ("difference", a3 - a4 + public)],
+            )
+        });
+        meta.create_gate("fold simple b", |meta| {
+            let (a5, a6, a7) = (q(meta, 5), q(meta, 6), q(meta, 7));
+            Constraints::with_selector(simple_b, vec![("sum", a5 + a6 - a7)])
+        });
+        meta.create_gate("fold main", |meta| {
+            let (a0, a1, a2, a3) = (q(meta, 0), q(meta, 1), q(meta, 2), q(meta, 3));
+            let scale = meta.query_fixed(scale, Rotation::cur());
+            Constraints::without_selector(vec![("scaled cubic", scale * (a0 - a1 * a2 * a3))])
+        });
+        meta.create_gate("fold additive", |meta| {
+            let (a0, a1) = (q(meta, 0), q(meta, 1));
+            let next = meta.query_advice(advice[0], Rotation::next());
+            Constraints::with_additive_selector(complex, vec![("step", next - a0 - a1)])
+        });
+        meta.lookup_any("fold lookup a", Some(complex), |meta| {
+            vec![(
+                meta.query_advice(advice[0], Rotation::cur()),
+                meta.query_fixed(table, Rotation::cur()),
+            )]
+        });
+        meta.lookup_any("fold lookup b", Some(complex), |meta| {
+            vec![(
+                meta.query_advice(advice[1], Rotation::cur())
+                    + meta.query_advice(advice[2], Rotation::cur()),
+                meta.query_fixed(table, Rotation::cur()),
+            )]
+        });
+        FoldCheckTestConfig {
+            advice,
+            table,
+            scale,
+            simple_a,
+            simple_b,
+            complex,
+        }
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        layouter.assign_region(
+            || "fold check rows",
+            |mut region| {
+                config.simple_a.enable(&mut region, 0)?;
+                config.simple_b.enable(&mut region, 1)?;
+                config.complex.enable(&mut region, 2)?;
+                region.assign_fixed(|| "table", config.table, 0, || Value::known(Fq::ONE))?;
+                region.assign_fixed(|| "scale", config.scale, 0, || Value::known(Fq::ONE))?;
+                for (i, column) in config.advice.iter().enumerate() {
+                    region.assign_advice(
+                        || "advice",
+                        *column,
+                        0,
+                        || Value::known(Fq::from(i as u64)),
+                    )?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+fn fold_check_test_vk() -> (
+    ParamsKZG<Bls12>,
+    VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+) {
+    let mut rng = ChaCha8Rng::seed_from_u64(11);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(6, &mut rng);
+    let vk =
+        keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &FoldCheckTestCircuit, 6)
+            .expect("fold check test circuit VK should build");
+    (params, vk)
+}
+
+/// Build the direct plan of the fold-check circuit and run `f` with the
+/// inputs, the plan and its production fold record.
+fn with_fold_check_plan<T>(
+    f: impl FnOnce(
+        &VerifierBuildInputs<'_, '_>,
+        &crate::lowering::plan::LoweringPlan,
+        &crate::lowering::quotient_numerator::direct::folds::FoldRecord,
+    ) -> T,
+) -> T {
+    use crate::api::QuotientLowering;
+    let (params, vk) = fold_check_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let inputs = generator.inputs();
+    let plan = inputs.lowering_plan_for(QuotientLowering::Direct).expect(
+        "direct plan of the fold-check circuit builds, validates and passes the fold check",
+    );
+    let direct = plan.direct.as_ref().expect("direct plan");
+    f(&inputs, &plan, &direct.folds)
+}
+
+/// Run the fold check on a mutated copy of the production record.
+fn fold_check_with(
+    mutate: impl FnOnce(&mut crate::lowering::quotient_numerator::direct::folds::FoldRecord),
+) -> Result<(), String> {
+    with_fold_check_plan(|inputs, plan, record| {
+        let direct = plan.direct.as_ref().expect("direct plan");
+        let mut record = record.clone();
+        mutate(&mut record);
+        inputs.direct_fold_check(
+            &direct.program,
+            &direct.layout,
+            direct.selector_acc_mptr,
+            &plan.meta,
+            &record,
+        )
+    })
+}
+
+fn gate_site_index(
+    record: &crate::lowering::quotient_numerator::direct::folds::FoldRecord,
+    pred: impl Fn(&crate::lowering::quotient_numerator::direct::folds::FoldSite) -> bool,
+) -> usize {
+    record.sites.iter().position(pred).expect("fold site present")
+}
+
+#[test]
+fn direct_fold_check_covers_gate_functions_and_family_loops() {
+    use crate::lowering::quotient_numerator::direct::folds::{FoldBucket, SiteLabel};
+    with_fold_check_plan(|inputs, plan, record| {
+        let direct = plan.direct.as_ref().expect("direct plan");
+        // Every family is present, the permutation has several sets (so both
+        // permutation loops are real loops), and there are two buckets.
+        assert!(
+            plan.meta.num_permutation_zs > 2,
+            "{} sets",
+            plan.meta.num_permutation_zs
+        );
+        assert_eq!(plan.meta.num_lookups, 2);
+        assert_eq!(plan.meta.num_trashcans, 1);
+        assert_eq!(direct.program.sorted_simple.len(), 2);
+        let loops = record
+            .sites
+            .iter()
+            .filter(|s| matches!(s.label, SiteLabel::Loop { .. }))
+            .count();
+        assert_eq!(loops, 2, "permutation continuity and product loops");
+        for bucket in [
+            FoldBucket::Main,
+            FoldBucket::Selector(0),
+            FoldBucket::Selector(1),
+        ] {
+            assert!(
+                record.sites.iter().any(|s| s.bucket == bucket),
+                "{bucket:?} used"
+            );
+        }
+        // Every call site of the section is recorded once.
+        assert!(record.calls.values().all(|n| *n == 1));
+        assert_eq!(
+            record.calls.len(),
+            direct.program.gates.len() + 3,
+            "one call per gate identity function plus the three families"
+        );
+        // The recorded sites are the emitted text: each fold statement and
+        // each loop header occurs in the rendered functions.
+        let functions = direct.rendering.functions.join("\n");
+        for site in &record.sites {
+            let value = match site.function.as_str() {
+                "q_permutation" => "q_perm_eval",
+                "q_lookups" => "q_lookup_eval",
+                "q_trash" => "q_trash_eval",
+                _ => "e",
+            };
+            assert!(
+                functions.contains(&site.statement(value)),
+                "fold statement of {} is not in the render: {}",
+                site.function,
+                site.statement(value)
+            );
+            if let SiteLabel::Loop { lp, .. } = site.label {
+                assert!(
+                    functions.contains(&lp.header()),
+                    "loop header {}",
+                    lp.header()
+                );
+            }
+        }
+        // The check passes on both renders.
+        inputs
+            .direct_fold_check(
+                &direct.program,
+                &direct.layout,
+                direct.selector_acc_mptr,
+                &plan.meta,
+                record,
+            )
+            .expect("production fold record");
+    });
+}
+
+#[test]
+fn direct_fold_check_rejects_a_duplicated_weight() {
+    use crate::lowering::quotient_numerator::direct::folds::FoldWeight;
+    let err = fold_check_with(|record| {
+        let a = gate_site_index(record, |s| s.function == "q_identity_0");
+        let b = gate_site_index(record, |s| s.function == "q_identity_1");
+        record.sites[b].weight = record.sites[a].weight;
+        assert!(matches!(record.sites[a].weight, FoldWeight::Fixed(_)));
+    })
+    .expect_err("duplicated weight must be rejected");
+    eprintln!("[fold-check] duplicated weight must be rejected: {err}");
+    assert!(err.contains("is used by 2 folds"), "{err}");
+    assert!(
+        err.contains("q_identity_0") && err.contains("q_identity_1"),
+        "{err}"
+    );
+}
+
+#[test]
+fn direct_fold_check_rejects_a_missing_identity() {
+    // A dropped fold site ...
+    let err = fold_check_with(|record| {
+        let t = gate_site_index(record, |s| s.function == "q_trash");
+        record.sites.remove(t);
+    })
+    .expect_err("missing identity must be rejected");
+    eprintln!("[fold-check] missing identity must be rejected: {err}");
+    assert!(
+        err.contains("is not folded by any emitted fold site"),
+        "{err}"
+    );
+    assert!(err.contains("trash 0"), "{err}");
+    // ... and a function the section never calls.
+    let err = fold_check_with(|record| {
+        record.calls.insert("q_identity_2".to_string(), 0);
+    })
+    .expect_err("uncalled identity function must be rejected");
+    eprintln!("[fold-check] uncalled identity function must be rejected: {err}");
+    assert!(
+        err.contains("identity 2 ") && err.contains("is not folded"),
+        "{err}"
+    );
+    // A function called twice folds its identities twice.
+    let err = fold_check_with(|record| {
+        record.calls.insert("q_lookups".to_string(), 2);
+    })
+    .expect_err("duplicated call must be rejected");
+    eprintln!("[fold-check] duplicated call must be rejected: {err}");
+    assert!(err.contains("is folded 2 times"), "{err}");
+}
+
+#[test]
+fn direct_fold_check_rejects_a_wrong_bucket() {
+    use crate::lowering::quotient_numerator::direct::folds::FoldBucket;
+    // Selector identity folded into the main accumulator.
+    let err = fold_check_with(|record| {
+        let i = gate_site_index(record, |s| s.bucket == FoldBucket::Selector(0));
+        record.sites[i].bucket = FoldBucket::Main;
+    })
+    .expect_err("wrong bucket must be rejected");
+    eprintln!("[fold-check] wrong bucket must be rejected: {err}");
+    assert!(err.contains("is folded into Q_MAIN_ACC"), "{err}");
+    assert!(err.contains("manifest target is Selector 0"), "{err}");
+    // Selector identity folded into the other selector's bucket.
+    let err = fold_check_with(|record| {
+        let i = gate_site_index(record, |s| s.bucket == FoldBucket::Selector(1));
+        record.sites[i].bucket = FoldBucket::Selector(0);
+    })
+    .expect_err("swapped selector bucket must be rejected");
+    eprintln!("[fold-check] swapped selector bucket must be rejected: {err}");
+    assert!(err.contains("is folded into Q_BUCKET_0"), "{err}");
+    // Fully evaluated identity folded into a selector bucket.
+    let err = fold_check_with(|record| {
+        let i = gate_site_index(record, |s| s.function == "q_trash");
+        record.sites[i].bucket = FoldBucket::Selector(1);
+    })
+    .expect_err("main identity in a selector bucket must be rejected");
+    eprintln!("[fold-check] main identity in a selector bucket must be rejected: {err}");
+    assert!(err.contains("manifest target is Main"), "{err}");
+}
+
+#[test]
+fn direct_fold_check_rejects_off_by_one_family_loops() {
+    use crate::lowering::quotient_numerator::direct::folds::{FoldWeight, SiteLabel};
+    let loop_site = |record: &crate::lowering::quotient_numerator::direct::folds::FoldRecord,
+                     var: &str| {
+        gate_site_index(
+            record,
+            |s| matches!(s.label, SiteLabel::Loop { lp, .. } if lp.var == var),
+        )
+    };
+    // FoldPos::Loop { base: base + 1 } written as base + 2: the weights of the
+    // continuity loop shift by one.
+    let err = fold_check_with(|record| {
+        let i = loop_site(record, "q_perm_i");
+        if let FoldWeight::LoopDown { k0, .. } = &mut record.sites[i].weight {
+            *k0 -= 1;
+        }
+    })
+    .expect_err("shifted loop weights must be rejected");
+    eprintln!("[fold-check] shifted loop weights must be rejected: {err}");
+    assert!(err.contains("q_permutation [q_perm_i = "), "{err}");
+    // The loop starts at set 0 instead of 1: set 0 has no continuity identity.
+    let err = fold_check_with(|record| {
+        let i = loop_site(record, "q_perm_i");
+        if let SiteLabel::Loop { lp, .. } = &mut record.sites[i].label {
+            lp.start = 0;
+        }
+    })
+    .expect_err("loop starting at set 0 must be rejected");
+    eprintln!("[fold-check] loop starting at set 0 must be rejected: {err}");
+    assert!(
+        err.contains("permutation continuity of set 0") && err.contains("not an identity"),
+        "{err}"
+    );
+    // The product loop runs one set too far.
+    let err = fold_check_with(|record| {
+        let i = loop_site(record, "q_perm_set");
+        if let SiteLabel::Loop { lp, .. } = &mut record.sites[i].label {
+            lp.end += 1;
+        }
+    })
+    .expect_err("loop running past the last set must be rejected");
+    eprintln!("[fold-check] loop running past the last set must be rejected: {err}");
+    assert!(err.contains("permutation product of set"), "{err}");
+    // The product loop stops one set early.
+    let err = fold_check_with(|record| {
+        let i = loop_site(record, "q_perm_set");
+        if let SiteLabel::Loop { lp, .. } = &mut record.sites[i].label {
+            lp.end -= 1;
+        }
+    })
+    .expect_err("loop stopping one set early must be rejected");
+    eprintln!("[fold-check] loop stopping one set early must be rejected: {err}");
+    assert!(
+        err.contains("is not folded by any emitted fold site"),
+        "{err}"
+    );
+    // The lookup identity counter skips one position.
+    let err = fold_check_with(|record| {
+        let first = gate_site_index(record, |s| s.function == "q_lookups");
+        for site in record.sites.iter_mut().skip(first + 1) {
+            if site.function == "q_lookups" {
+                if let FoldWeight::Fixed(k) = &mut site.weight {
+                    *k -= 1;
+                }
+            }
+        }
+    })
+    .expect_err("skewed lookup counter must be rejected");
+    eprintln!("[fold-check] skewed lookup counter must be rejected: {err}");
+    assert!(err.contains("q_lookups"), "{err}");
 }

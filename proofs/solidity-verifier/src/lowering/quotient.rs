@@ -5,7 +5,10 @@
 //! selector folds, and execution manifests for the concrete verifying key bound
 //! to the generator.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+};
 
 use ff::{Field, PrimeField};
 use midnight_curves::Fq;
@@ -20,7 +23,11 @@ use crate::{
             memory::{VerifierMemoryLayout, WORD_BYTES},
             vk_payload::PackedProgramCodec,
         },
-        quotient_numerator::{vm::*, Evaluator},
+        quotient_numerator::{
+            direct::folds::{FoldBucket, FoldLabel, FoldLoop, FoldSite, FoldWeight, SiteLabel},
+            vm::*,
+            Evaluator,
+        },
         render::{
             Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail,
             QuotientVmMemUsage, QuotientVmOpcodeUsage,
@@ -53,6 +60,43 @@ impl QuotientStateSlots {
             selector_power_mptr: state_mptr + 2 * WORD_BYTES,
         }
     }
+}
+
+/// How a structured family block (permutation / lookup / trash) folds each
+/// identity value into the batched numerator.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum StructuredFold<'a> {
+    /// Compact VM stream: optional trace, `acc := acc * y`, `acc += e`
+    /// (Horner over the global identity stream).
+    Horner {
+        state_slots: QuotientStateSlots,
+        trace: bool,
+    },
+    /// Direct lowering: `Q_MAIN_ACC += Y_POW[m-1-j] * e` with the named
+    /// `YP_k = &Y_POW[k]` constants (identity `j` of `m`). Every fold
+    /// statement is rendered from a `FoldSite`, recorded in `sites` for the
+    /// code-generation-time fold check (`direct::folds`).
+    Weighted {
+        m: usize,
+        trace: bool,
+        sites: &'a RefCell<Vec<FoldSite>>,
+    },
+}
+
+/// Global stream position of the identity folded at one fold site, and the
+/// identity the code at that site computes (`label`, checked against the
+/// position by `direct::folds`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum FoldPos {
+    /// Identity `j`.
+    Fixed { j: usize, label: FoldLabel },
+    /// Identity `base + v` in iteration `v` of the Yul loop `lp`, which
+    /// computes `label(v)`.
+    Loop {
+        base: usize,
+        lp: FoldLoop,
+        label: fn(usize) -> FoldLabel,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1285,8 +1329,56 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         Self::push_quotient_eval_numer_add(block, state_slots, value.as_ref());
     }
 
+    /// Fold one family identity value according to `fold`.
+    fn push_structured_fold(
+        block: &mut Vec<String>,
+        fold: StructuredFold<'_>,
+        value: &str,
+        pos: FoldPos,
+    ) {
+        match fold {
+            StructuredFold::Horner { state_slots, trace } => {
+                Self::push_structured_main_fold(block, value, state_slots, trace);
+            }
+            StructuredFold::Weighted { m, trace, sites } => {
+                let trace_base = crate::lowering::layout::trace::QUOTIENT_IDENTITY_BASE;
+                // An out-of-range position records an out-of-range weight,
+                // which the fold check rejects.
+                let weight_of = |j: usize| (m - 1).checked_sub(j).unwrap_or(usize::MAX);
+                let (site, trace_id) = match pos {
+                    FoldPos::Fixed { j, label } => (
+                        FoldSite {
+                            function: String::new(),
+                            label: SiteLabel::Fixed(label),
+                            weight: FoldWeight::Fixed(weight_of(j)),
+                            bucket: FoldBucket::Main,
+                        },
+                        format!("{}", trace_base + j as u64),
+                    ),
+                    FoldPos::Loop { base, lp, label } => (
+                        FoldSite {
+                            function: String::new(),
+                            label: SiteLabel::Loop { lp, label },
+                            weight: FoldWeight::LoopDown {
+                                k0: weight_of(base),
+                                var: lp.var,
+                            },
+                            bucket: FoldBucket::Main,
+                        },
+                        format!("add({}, {})", trace_base + base as u64, lp.var),
+                    ),
+                };
+                if trace {
+                    block.push(format!("trace_u256({trace_id}, {value})"));
+                }
+                block.push(site.statement(value));
+                sites.borrow_mut().push(site);
+            }
+        }
+    }
+
     /// Scratch table width used by the native permutation callback.
-    fn structured_permutation_scratch_words(meta: &ConstraintSystemMeta) -> usize {
+    pub(crate) fn structured_permutation_scratch_words(meta: &ConstraintSystemMeta) -> usize {
         if meta.num_permutation_zs == 0 {
             return 0;
         }
@@ -1326,7 +1418,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     }
 
     /// Scratch table width used by the native lookup callback.
-    fn structured_lookup_scratch_words(&self, meta: &ConstraintSystemMeta) -> usize {
+    pub(crate) fn structured_lookup_scratch_words(&self, meta: &ConstraintSystemMeta) -> usize {
         // Native lookup stages f+beta values plus prefix and suffix products.
         self.structured_lookup_max_parallel(meta) * 3
     }
@@ -1355,13 +1447,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// The formula follows the upstream permutation verifier/evaluator:
     /// first-set boundary, last-set booleanity, set-to-set continuity, and
     /// active-row product equality for each chunk.
-    fn structured_permutation_loop_block(
+    pub(crate) fn structured_permutation_loop_block(
         meta: &ConstraintSystemMeta,
         data: &Data,
         evaluator: &Evaluator<'_>,
         scratch_mptr: usize,
-        state_slots: QuotientStateSlots,
-        trace: bool,
+        fold: StructuredFold<'_>,
+        base: usize,
     ) -> Option<Vec<String>> {
         if meta.num_permutation_zs == 0 {
             return None;
@@ -1450,10 +1542,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             "q_perm_z_last_load",
         );
 
-        let fold_eval = |block: &mut Vec<String>| {
-            Self::push_quotient_trace(block, state_slots, "q_perm_eval", trace);
-            Self::push_structured_fold_advance(block, 1, "q_perm_fold_i", state_slots);
-            Self::push_quotient_eval_numer_add(block, state_slots, "q_perm_eval");
+        // Identity positions (permutation.rs::expressions order): first-set
+        // boundary, last-set boundary, set-to-set continuity for i >= 1, then
+        // one product identity per set.
+        let fold_eval = |block: &mut Vec<String>, pos: FoldPos| {
+            Self::push_structured_fold(block, fold, "q_perm_eval", pos);
         };
 
         block.push("let q_perm_eval := 0".to_string());
@@ -1462,7 +1555,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             "q_perm_eval := mulmod(mload(L_0_MPTR), addmod(1, sub(r, mload(q_perm_z_cur)), r), r)"
                 .to_string(),
         );
-        fold_eval(&mut block);
+        fold_eval(
+            &mut block,
+            FoldPos::Fixed {
+                j: base,
+                label: FoldLabel::PermutationFirstBoundary,
+            },
+        );
 
         let final_z_offset = (num_sets - 1) * 0x20;
         block.push(format!(
@@ -1472,12 +1571,21 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             "q_perm_eval := mulmod(mload(L_LAST_MPTR), addmod(mulmod(q_perm_zn, q_perm_zn, r), sub(r, q_perm_zn), r), r)"
                 .to_string(),
         );
-        fold_eval(&mut block);
+        fold_eval(
+            &mut block,
+            FoldPos::Fixed {
+                j: base + 1,
+                label: FoldLabel::PermutationLastBoundary,
+            },
+        );
 
         if num_sets > 1 {
-            block.push(format!(
-                "for {{ let q_perm_i := 1 }} lt(q_perm_i, {num_sets}) {{ q_perm_i := add(q_perm_i, 1) }} {{"
-            ));
+            let continuity = FoldLoop {
+                var: "q_perm_i",
+                start: 1,
+                end: num_sets,
+            };
+            block.push(continuity.header());
             block.push("let q_perm_cur := mload(add(q_perm_z_cur, shl(5, q_perm_i)))".to_string());
             block.push(
                 "let q_perm_prev := mload(add(q_perm_z_last, shl(5, sub(q_perm_i, 1))))"
@@ -1487,16 +1595,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 "q_perm_eval := mulmod(mload(L_0_MPTR), addmod(q_perm_cur, sub(r, q_perm_prev), r), r)"
                     .to_string(),
             );
-            fold_eval(&mut block);
+            fold_eval(
+                &mut block,
+                FoldPos::Loop {
+                    base: base + 1,
+                    lp: continuity,
+                    label: |set| FoldLabel::PermutationContinuity { set },
+                },
+            );
             block.push("}".to_string());
         }
 
         block.push(
             "mstore(q_perm_delta_base_ptr, mulmod(mload(BETA_MPTR), mload(X_MPTR), r))".to_string(),
         );
-        block.push(format!(
-            "for {{ let q_perm_set := 0 }} lt(q_perm_set, {num_sets}) {{ q_perm_set := add(q_perm_set, 1) }} {{"
-        ));
+        let products = FoldLoop {
+            var: "q_perm_set",
+            start: 0,
+            end: num_sets,
+        };
+        block.push(products.header());
         block.push("let q_perm_start := mul(q_perm_set, q_perm_chunk_len)".to_string());
         block.push("let q_perm_end := add(q_perm_start, q_perm_chunk_len)".to_string());
         block.push(
@@ -1523,7 +1641,14 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             "q_perm_eval := mulmod(addmod(1, sub(r, addmod(mload(L_LAST_MPTR), mload(L_BLIND_MPTR), r)), r), addmod(q_perm_left, sub(r, q_perm_right), r), r)"
                 .to_string(),
         );
-        fold_eval(&mut block);
+        fold_eval(
+            &mut block,
+            FoldPos::Loop {
+                base: base + 1 + num_sets,
+                lp: products,
+                label: |set| FoldLabel::PermutationProduct { set },
+            },
+        );
         block.push(
             "mstore(q_perm_delta_base_ptr, mulmod(mload(q_perm_delta_base_ptr), q_perm_delta_chunk, r))".to_string(),
         );
@@ -1539,20 +1664,23 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// This adapts the upstream LogUp helper and accumulator constraints while
     /// staging parallel lookup products in scratch to avoid repeated generated
     /// straight-line Yul.
-    fn structured_lookup_loop_block(
+    pub(crate) fn structured_lookup_loop_block(
         &self,
         meta: &ConstraintSystemMeta,
         data: &Data,
         evaluator: &Evaluator<'_>,
         scratch_mptr: usize,
-        state_slots: QuotientStateSlots,
-        trace: bool,
+        fold: StructuredFold<'_>,
+        base: usize,
     ) -> Option<Vec<String>> {
         if meta.num_lookups == 0 {
             return None;
         }
 
         let max_parallel = self.structured_lookup_max_parallel(meta);
+        // Global stream index of the next lookup identity (boundary, one
+        // helper identity per chunk, accumulator; lookup by lookup).
+        let mut j = base;
 
         let f_plus_beta_mptr = scratch_mptr;
         let prefix_mptr = f_plus_beta_mptr + max_parallel * 0x20;
@@ -1586,23 +1714,37 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 "let q_lookup_eval := mulmod(q_lookup_lsum, {}, r)",
                 z_eval
             ));
-            Self::push_structured_main_fold(&mut block, "q_lookup_eval", state_slots, trace);
+            Self::push_structured_fold(
+                &mut block,
+                fold,
+                "q_lookup_eval",
+                FoldPos::Fixed {
+                    j,
+                    label: FoldLabel::LookupBoundary { lookup: lookup_idx },
+                },
+            );
+            j += 1;
             block.push("}".to_string());
 
-            for (input_chunk, h_eval) in
-                chunked.input_expression_chunks().iter().zip(h_evals.iter())
+            for (chunk, (input_chunk, h_eval)) in
+                chunked.input_expression_chunks().iter().zip(h_evals.iter()).enumerate()
             {
+                let helper = FoldLabel::LookupHelper {
+                    lookup: lookup_idx,
+                    chunk,
+                };
                 let k = input_chunk.len();
                 block.push("{".to_string());
 
                 if k == 0 {
                     block.push("let q_lookup_eval := 0".to_string());
-                    Self::push_structured_main_fold(
+                    Self::push_structured_fold(
                         &mut block,
+                        fold,
                         "q_lookup_eval",
-                        state_slots,
-                        trace,
+                        FoldPos::Fixed { j, label: helper },
                     );
+                    j += 1;
                     block.push("}".to_string());
                     continue;
                 }
@@ -1616,12 +1758,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         "let q_lookup_eval := addmod(mulmod({}, addmod({compressed_var}, q_lookup_beta, r), r), sub(r, 1), r)",
                         h_eval
                     ));
-                    Self::push_structured_main_fold(
+                    Self::push_structured_fold(
                         &mut block,
+                        fold,
                         "q_lookup_eval",
-                        state_slots,
-                        trace,
+                        FoldPos::Fixed { j, label: helper },
                     );
+                    j += 1;
                     block.push("}".to_string());
                     continue;
                 }
@@ -1701,7 +1844,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     "let q_lookup_eval := addmod(mulmod({}, q_lookup_product, r), sub(r, q_lookup_sum), r)",
                     h_eval
                 ));
-                Self::push_structured_main_fold(&mut block, "q_lookup_eval", state_slots, trace);
+                Self::push_structured_fold(
+                    &mut block,
+                    fold,
+                    "q_lookup_eval",
+                    FoldPos::Fixed { j, label: helper },
+                );
+                j += 1;
                 block.push("}".to_string());
             }
 
@@ -1744,7 +1893,16 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             ));
             block
                 .push("let q_lookup_eval := mulmod(q_lookup_active, q_lookup_core, r)".to_string());
-            Self::push_structured_main_fold(&mut block, "q_lookup_eval", state_slots, trace);
+            Self::push_structured_fold(
+                &mut block,
+                fold,
+                "q_lookup_eval",
+                FoldPos::Fixed {
+                    j,
+                    label: FoldLabel::LookupAccumulator { lookup: lookup_idx },
+                },
+            );
+            j += 1;
             block.push("}".to_string());
 
             block.push("}".to_string());
@@ -1759,13 +1917,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     /// Trash constraints compress their expressions with `trash_challenge` and
     /// subtract `(1 - selector) * trash_eval`, matching the Rust trash
     /// verifier.
-    fn structured_trash_loop_block(
+    pub(crate) fn structured_trash_loop_block(
         &self,
         meta: &ConstraintSystemMeta,
         data: &Data,
         evaluator: &Evaluator<'_>,
-        state_slots: QuotientStateSlots,
-        trace: bool,
+        fold: StructuredFold<'_>,
+        base: usize,
     ) -> Option<Vec<String>> {
         if meta.num_trashcans == 0 {
             return None;
@@ -1797,7 +1955,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             block.push(format!(
                 "let q_trash_eval := addmod({compressed_var}, sub(r, q_trash_scaled), r)"
             ));
-            Self::push_structured_main_fold(&mut block, "q_trash_eval", state_slots, trace);
+            Self::push_structured_fold(
+                &mut block,
+                fold,
+                "q_trash_eval",
+                FoldPos::Fixed {
+                    j: base + idx,
+                    label: FoldLabel::Trash { index: idx },
+                },
+            );
             block.push("}".to_string());
         }
 
@@ -1821,6 +1987,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
     ) -> QuotientComputationBlocks {
         let eval_scratch_slot = quotient_stack_mptr;
         let evaluator = Evaluator::new(self.vk.cs(), meta, data).with_pow5_helper(true);
+        // Global stream bases of the structured families (Horner folds ignore
+        // them; they are threaded through for the direct lowering's weights).
+        let permutation_base = meta.protocol.quotient.gates;
+        let lookup_base = permutation_base + meta.protocol.quotient.permutation;
+        let trash_base = lookup_base + meta.protocol.quotient.lookup;
         QuotientComputationBlocks {
             inline_computations: quotient_plan
                 .inline_identities
@@ -1844,8 +2015,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         meta,
                         data,
                         &evaluator,
-                        quotient_state_slots,
-                        trace,
+                        StructuredFold::Horner {
+                            state_slots: quotient_state_slots,
+                            trace,
+                        },
+                        trash_base,
                     )
                 })
                 .flatten()
@@ -1859,8 +2033,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         data,
                         &evaluator,
                         quotient_stack_mptr,
-                        quotient_state_slots,
-                        trace,
+                        StructuredFold::Horner {
+                            state_slots: quotient_state_slots,
+                            trace,
+                        },
+                        permutation_base,
                     )
                 })
                 .flatten()
@@ -1873,8 +2050,11 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                         data,
                         &evaluator,
                         quotient_stack_mptr,
-                        quotient_state_slots,
-                        trace,
+                        StructuredFold::Horner {
+                            state_slots: quotient_state_slots,
+                            trace,
+                        },
+                        lookup_base,
                     )
                 })
                 .flatten()
