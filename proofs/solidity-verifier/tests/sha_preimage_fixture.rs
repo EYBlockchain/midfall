@@ -4,12 +4,14 @@
 
 #![cfg(feature = "evm")]
 
+mod common;
+
 use std::{env, path::Path};
 
 use ff::{Field, PrimeField};
 use halo2_solidity_verifier::{
     compile_solidity, pinned_solc_available, revm::primitives::Address, CallOutcome, Evm,
-    GeneratorConfig, RenderOptions, RenderVk, SolidityGenerator,
+    GeneratorConfig, QuotientLowering, RenderOptions, RenderVk, SolidityGenerator,
 };
 use midnight_circuits::{
     instructions::{AssignmentInstructions, PublicInputInstructions},
@@ -216,6 +218,113 @@ fn sha_preimage_renders_compiles_and_verifies() {
         &instances,
         &calldata,
         "SHA preimage",
+    );
+
+    // ------------------------------------------------------------------
+    // The same proof under the direct quotient lowering
+    // (QuotientLowering::Direct): one Yul function per gate identity with
+    // an explicit y^(m-1-j) fold, validated at codegen time.
+    // ------------------------------------------------------------------
+    let direct_artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Direct,
+            ..RenderOptions::default()
+        })
+        .expect("direct-lowering SHA preimage render should succeed");
+    let direct_vk_solidity =
+        direct_artifacts.verifying_key.expect("separate direct render includes VK");
+    std::fs::write(
+        format!("{dump_dir}/Halo2Verifier.direct.sol"),
+        &direct_artifacts.verifier,
+    )
+    .ok();
+    std::fs::write(
+        format!("{dump_dir}/Halo2VerifyingKey.direct.sol"),
+        &direct_vk_solidity,
+    )
+    .ok();
+    let direct_vk_address = evm.create(compile_solidity(&direct_vk_solidity));
+    let direct_verifier_address = evm.create_with_address_arg(
+        compile_solidity(&direct_artifacts.verifier),
+        direct_vk_address,
+    );
+    match evm.try_call_with_gas(direct_verifier_address, calldata.clone(), 5_000_000_000) {
+        CallOutcome::Success {
+            gas_used, output, ..
+        } => {
+            assert_eq!(
+                output,
+                [vec![0u8; 31], vec![1]].concat(),
+                "direct-lowering SHA preimage verifier should accept the proof; gas_used = {gas_used}"
+            );
+            eprintln!(
+                "SHA preimage proof verified on-chain (direct quotient lowering) in {gas_used} gas"
+            );
+        }
+        other => panic!("direct-lowering SHA preimage verifier rejected the proof: {other:?}"),
+    }
+    let mut direct_wrong_instances = instances.clone();
+    direct_wrong_instances[0] += F::ONE;
+    assert_rejects(
+        evm.try_call_with_gas(
+            direct_verifier_address,
+            halo2_solidity_verifier::encode_calldata(&repacked_proof, &direct_wrong_instances),
+            5_000_000_000,
+        ),
+        "direct-lowering SHA preimage: wrong instance",
+    );
+    let mut direct_bad_proof = repacked_proof.clone();
+    let direct_mutation = direct_bad_proof.len() / 2;
+    direct_bad_proof[direct_mutation] ^= 0x01;
+    assert_rejects(
+        evm.try_call_with_gas(
+            direct_verifier_address,
+            halo2_solidity_verifier::encode_calldata(&direct_bad_proof, &instances),
+            5_000_000_000,
+        ),
+        "direct-lowering SHA preimage: mutated proof",
+    );
+    assert_adversarial_calldata_variants_rejected(
+        &mut evm,
+        direct_verifier_address,
+        &repacked_proof,
+        &instances,
+        &calldata,
+        "SHA preimage (direct quotient lowering)",
+    );
+
+    // Rust/Solidity trace equivalence in direct mode, including the
+    // direct-lowering intermediates (helper calls, product tables, limb views).
+    #[cfg(feature = "rust-verifier-trace")]
+    common::direct_trace::assert_direct_trace_matches_native(
+        "SHA preimage",
+        &generator,
+        || {
+            midnight_zk_stdlib::verify::<ShaPreimageCircuit, Keccak256>(
+                &srs.verifier_params(),
+                &vk,
+                &instance,
+                None,
+                &proof,
+            )
+            .expect("native verifier (trace)")
+        },
+        &calldata,
+    );
+
+    // Emitted quotient Yul (Direct and Vm) against a Rust reference on the
+    // honest proof, 8 random evaluation frames and one frame with
+    // changed challenges (tests/common::quotient_probe).
+    #[cfg(feature = "rust-verifier-trace")]
+    common::quotient_probe::assert_quotient_probe_matches_rust::<Keccak256>(
+        "SHA preimage",
+        &generator,
+        vk.vk(),
+        &proof,
+        &instances,
+        1,
+        0x7072_6f62_0000 + 2,
     );
 }
 

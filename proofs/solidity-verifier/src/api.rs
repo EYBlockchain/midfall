@@ -180,6 +180,25 @@ impl AccumulatorEncoding {
     }
 }
 
+/// Test-only quotient probe render (`SolidityGenerator::render_quotient_probe`).
+///
+/// The probe contract is *not* a verifier: it returns the quotient section's
+/// outputs `[expected_eval, selector_acc[0..n)]` (32-byte words) for any
+/// well-formed calldata, so tests can compare the emitted quotient Yul with a
+/// Rust reference on arbitrary evaluation frames.
+#[cfg(feature = "evm")]
+#[doc(hidden)]
+#[derive(Clone, Debug)]
+pub struct QuotientProbeArtifacts {
+    /// Probe contract source (`Halo2Verifier` with the probe return).
+    pub verifier: String,
+    /// Separate verifying-key contract the probe is deployed against.
+    pub verifying_key: String,
+    /// Simple-selector fixed columns in output order: word `1 + s` is the
+    /// accumulator of `selector_columns[s]`.
+    pub selector_columns: Vec<usize>,
+}
+
 /// Stable diagnostic view of the identities folded into the quotient numerator.
 ///
 /// This is not part of the Solidity verifier ABI. It is a host-side inspection
@@ -323,6 +342,42 @@ pub enum RenderQuotient {
     },
 }
 
+/// How the quotient numerator (the `y`-batched identity sum) is lowered to
+/// Yul for an inline quotient render.
+///
+/// Both lowerings consume the same identity stream as
+/// `midnight_proofs::plonk::partially_evaluate_identities` (gates, then
+/// permutation, lookup and trash identities) and produce the same
+/// `expected_eval` and selector-bucket scalars.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum QuotientLowering {
+    /// Compact bytecode VM: the identity arithmetic is stored as a program in
+    /// the VK payload and interpreted by one Yul loop, with native callbacks
+    /// for selected heavy gates and structured permutation / lookup / trash
+    /// loops.
+    #[default]
+    Vm,
+    /// Direct Yul: one Yul function per gate identity, transliterated node by
+    /// node from the gate `Expression` tree, with two recognised
+    /// foreign-field sub-tree shapes (`sum_exprs` over a limb vector and
+    /// `sum_exprs` over a `pair_wise_prod` whose coefficients depend only on
+    /// `i + j`) lowered to shared helper calls. Every identity is folded
+    /// explicitly as `bucket += y^(m-1-j) * e`. The VK payload carries a
+    /// constant table (scalar constants and coefficient runs) instead of a
+    /// VM program.
+    ///
+    /// Two checks run at code generation and fail closed: translation
+    /// validation of the lowered gate-identity *IR* (not the emitted Yul)
+    /// against `Expression::evaluate` at pseudo-random points, and a
+    /// structural check that every identity `j` (gates and the permutation /
+    /// lookup / trash families) is folded exactly once with `Y_POW[m-1-j]`
+    /// into the bucket of its manifest target. The emitted Yul itself is
+    /// exercised by the EVM-tier probe tests against a Rust reference.
+    ///
+    /// Only supported with [`RenderQuotient::Inline`].
+    Direct,
+}
+
 /// Diagnostic render knobs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RenderDiagnostics {
@@ -350,6 +405,8 @@ pub struct RenderOptions {
     pub vk: RenderVk,
     /// Quotient numerator artifact mode.
     pub quotient: RenderQuotient,
+    /// Quotient numerator lowering (compact VM by default).
+    pub quotient_lowering: QuotientLowering,
     /// Trace/gas diagnostic knobs.
     pub diagnostics: RenderDiagnostics,
 }

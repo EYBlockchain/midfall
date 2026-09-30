@@ -32,7 +32,11 @@
 //! Names follow the generated-verifier memory convention, including
 //! `TRASH_CHALLENGE_MPTR` for the Midnight trash argument.
 
-use std::{cell::RefCell, cmp::Ordering, collections::HashMap};
+use std::{
+    cell::{Cell, RefCell},
+    cmp::Ordering,
+    collections::HashMap,
+};
 
 use ff::{Field, PrimeField};
 use midnight_curves::Fq;
@@ -51,6 +55,9 @@ pub(crate) struct Evaluator<'a> {
     data: &'a Data,
     /// Whether five repeated factors should be lowered through `q_pow5`.
     use_pow5_helper: bool,
+    /// Set once any emitted line calls `q_pow5`, so callers know whether the
+    /// helper definition is needed.
+    pow5_used: Cell<bool>,
     /// Local variable counter for the current emitted identity.
     var_counter: RefCell<usize>,
     /// Per-identity expression text to variable-name cache.
@@ -83,6 +90,7 @@ impl<'a> Evaluator<'a> {
             meta,
             data,
             use_pow5_helper: false,
+            pow5_used: Cell::new(false),
             var_counter: Default::default(),
             var_cache: Default::default(),
         }
@@ -92,6 +100,11 @@ impl<'a> Evaluator<'a> {
     pub(crate) fn with_pow5_helper(mut self, enabled: bool) -> Self {
         self.use_pow5_helper = enabled;
         self
+    }
+
+    /// Whether any emitted line so far calls the `q_pow5` helper.
+    pub(crate) fn pow5_used(&self) -> bool {
+        self.pow5_used.get()
     }
 
     /// Clear local variable and expression caches.
@@ -963,6 +976,7 @@ impl<'a> Evaluator<'a> {
 
         if let Some(base) = self.pow5_base_expr(expression) {
             let (mut lines, base_var) = self.evaluate_basic(base);
+            self.pow5_used.set(true);
             let (pow_lines, pow_var) = self.init_var(format!("q_pow5({base_var})"), None);
             lines.extend(pow_lines);
             if coeff_is_one {
@@ -1011,6 +1025,7 @@ impl<'a> Evaluator<'a> {
     fn evaluate_basic(&self, expression: &Expression<Fq>) -> (Vec<String>, String) {
         if let Some(base) = self.pow5_base_expr(expression) {
             let (mut lines, base_var) = self.evaluate_basic(base);
+            self.pow5_used.set(true);
             let (pow_lines, pow_var) = self.init_var(format!("q_pow5({base_var})"), None);
             lines.extend(pow_lines);
             return (lines, pow_var);

@@ -79,12 +79,51 @@ logs so gas checkpoints and differential trace events can coexist.
 `2_000 + i` is reserved in the codegen protocol for PCS query trace IDs, but
 the current Midfall/Solidity differential does not emit that range.
 
+## Direct Quotient Lowering Intermediates (`70_000..80_000`)
+
+Trace renders with `QuotientLowering::Direct` emit the identity values
+`30_000 + j` exactly like the compact VM (every `q_identity_<j>` function and
+every permutation / lookup / trash identity emits
+`trace_u256(30_000 + j, e_j)`), plus one event per intermediate value of the
+direct lowering. The range is reserved for the direct lowering only; VM renders
+never emit it.
+
+| ID range | Name (as returned by the generator) | Solidity source | Meaning |
+| ---: | --- | --- | --- |
+| `70_000 + k` | `q_identity_<j> (cs.gates()[g] "<gate>" polynomial[p]) call #n: sum_exprs(COEFF_RUN_r, <VECTOR>)` or `... sum_exprs_by_degree(COEFF_RUN_BY_DEGREE_r, <TABLE>)` | `trace_u256(70_000 + k, <helper call>)` at the top of `q_identity_<j>` | Result of the `k`-th recognised helper call. Calls are numbered in identity order (`j` ascending) and left-first inside an identity (the evaluation order of the lowered tree). |
+| `75_000 + k` | `<TABLE>[t] = sum_{i+j=t} <XS>[i]*<YS>[j] (cs.gates()[g])` | `trace_u256(..., mload(<TABLE> + 32 t))` after `pair_wise_prod_by_degree` | Product-table entry `T[t]`; tables are numbered in program order and `k` runs over their entries back to back. |
+| `77_500 + k` | `<VECTOR>[i] = a<col>[_next\|_prev] [+ shift]` | `trace_u256(..., mload(<VECTOR> + 32 i))` once the vector is materialised | Limb-view word `i` of a limb vector (base vectors after the preamble view copies, shifted views after their computation); vectors in program order, words back to back. |
+
+The ids are a pure function of the lowered program (itself a pure function of
+the constraint system), so they are stable across renders of the same VK. The
+public constants `DIRECT_TRACE_HELPER_BASE`, `DIRECT_TRACE_PRODUCT_TABLE_BASE`,
+`DIRECT_TRACE_LIMB_VIEW_BASE` and `DIRECT_TRACE_END` name the boundaries; plan
+construction fails if a sub-range would overflow.
+
+The native side is `SolidityGenerator::direct_quotient_trace_values(evals)`:
+given the proof's main evaluation scalars in proof read order (the native trace
+records them as `20_000 + i`), it returns `(id, name, value)` for every
+intermediate. Helper results are computed by `Expression::evaluate` of the
+*original* gate sub-expression the recogniser replaced (not the rewritten IR),
+table entries as `sum_{i+j=t} x_i y_j` of the limb evaluations, and view words
+as the limb evaluations (plus the shift for shifted views). A wrong coefficient
+run, product table, view copy, or helper therefore surfaces as a mismatch that
+names the identity, the helper call, and its operands.
+
+Trace renders do not revert on a failed final check: the final pairing and the
+accumulated `success` flag are traced (`35`) and `verifyProof` returns `false`,
+so the events of a rejected proof are still observable. Production renders are
+unchanged (success or revert).
+
 ## Comparison Rules
 
 The trace tests compare every native Midfall event against a Solidity log with
 the same ID and identical payload bytes. Solidity may additionally emit IDs 29
 and 30 when the generated verifier checks a public accumulator, because that
-check lives outside Midfall's native PLONK verifier.
+check lives outside Midfall's native PLONK verifier. Direct-lowering
+intermediates (`70_000..80_000`) are compared separately against
+`direct_quotient_trace_values`: every native value must be emitted with equal
+bytes, and every emitted id in the range must have a native value.
 
 The tests also require representative coverage for the challenge IDs, PCS
 folds, pairing inputs, final result, `q_com` point-set commitments, serialized

@@ -49,6 +49,8 @@
 
 #![cfg(all(feature = "evm", feature = "truncated-challenges",))]
 
+mod common;
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -62,8 +64,8 @@ use group::{Group, GroupEncoding};
 use halo2_solidity_verifier::{
     compile_solidity_with_runs, pinned_solc_available, solc_version, AccumulatorEncoding,
     CallOutcome, Evm, GeneratorConfig, ProofEvaluationCounts, QuotientIdentitySource,
-    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
-    PINNED_SOLC_VERSION,
+    QuotientLowering, RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk,
+    SolidityGenerator, PINNED_SOLC_VERSION,
 };
 use midnight_aggregation::ivc::{self, IvcCircuit, IvcContext, IvcIO, IvcState, IvcTransition};
 use midnight_circuits::{
@@ -1144,6 +1146,7 @@ fn ivc_final_keccak_solidity_e2e() {
                 trace: quotient_trace_enabled,
                 gas_checkpoints: gas_checkpoints_enabled,
             },
+            ..RenderOptions::default()
         })
         .expect("pinned quotient render should succeed");
     let verifier_solidity = artifacts.verifier;
@@ -1459,6 +1462,97 @@ fn ivc_final_keccak_solidity_e2e() {
                     name,
                 );
             }
+
+            // ------------------------------------------------------
+            // Same decider proof under the direct quotient lowering
+            // (QuotientLowering::Direct, inline quotient, separate VK).
+            // ------------------------------------------------------
+            let t0 = Instant::now();
+            let direct = generator
+                .render(RenderOptions {
+                    vk: RenderVk::Separate,
+                    quotient_lowering: QuotientLowering::Direct,
+                    ..RenderOptions::default()
+                })
+                .expect("direct-lowering IVC render should succeed");
+            let direct_vk_solidity =
+                direct.verifying_key.expect("separate direct render includes VK");
+            std::fs::write(
+                format!("{dump_dir}/Halo2Verifier.direct.sol"),
+                &direct.verifier,
+            )
+            .ok();
+            std::fs::write(
+                format!("{dump_dir}/Halo2VerifyingKey.direct.sol"),
+                &direct_vk_solidity,
+            )
+            .ok();
+            let direct_vk_address = evm.create(compile_solidity_with_runs(
+                &direct_vk_solidity,
+                SOLC_OPTIMIZE_RUNS,
+            ));
+            let direct_verifier_address = evm.create_with_address_arg(
+                compile_solidity_with_runs(&direct.verifier, SOLC_OPTIMIZE_RUNS),
+                direct_vk_address,
+            );
+            let direct_runtime_size = evm.code_size(direct_verifier_address);
+            let direct_vk_runtime_size = evm.code_size(direct_vk_address);
+            assert!(
+                direct_runtime_size <= EIP170_MAX_RUNTIME_SIZE,
+                "direct Halo2Verifier runtime {direct_runtime_size} exceeds EIP-170"
+            );
+            match evm.try_call_with_gas(direct_verifier_address, calldata.clone(), 5_000_000_000) {
+                CallOutcome::Success {
+                    gas_used, output, ..
+                } => {
+                    assert_eq!(
+                        output,
+                        [vec![0u8; 31], vec![1]].concat(),
+                        "direct-lowering IVC verifier returned 0x{}",
+                        hex::encode(&output)
+                    );
+                    println!(
+                        "[ivc-keccak-solidity] PASS (direct quotient lowering): accepted in {gas_used} gas; verifier runtime = {direct_runtime_size} bytes, vk runtime = {direct_vk_runtime_size} bytes ({:.2?})",
+                        t0.elapsed()
+                    );
+                }
+                other => panic!("direct-lowering IVC verifier rejected the proof: {other:?}"),
+            }
+            let mut direct_bad_proof = calldata.clone();
+            direct_bad_proof[proof_mutation_idx] ^= 0x01;
+            assert_call_reverts(
+                evm.try_call_with_gas(direct_verifier_address, direct_bad_proof, 5_000_000_000),
+                "direct-lowering mutated IVC proof byte",
+            );
+            #[cfg(feature = "rust-verifier-trace")]
+            common::direct_trace::assert_direct_trace_matches_native_events(
+                "IVC decider",
+                &generator,
+                rust_trace.clone(),
+                &calldata,
+            );
+            // Emitted quotient Yul (Direct and Vm) against the Rust reference
+            // on the honest proof, random evaluation frames and changed
+            // challenges (tests/common::quotient_probe).
+            #[cfg(feature = "rust-verifier-trace")]
+            {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                common::quotient_probe::assert_quotient_probe_matches_rust::<sha3::Keccak256>(
+                    "IVC decider",
+                    &generator,
+                    decider_vk.vk(),
+                    &final_proof,
+                    &pi,
+                    1,
+                    0x7072_6f62_0006,
+                );
+            }
+            let mut direct_wrong_public = calldata.clone();
+            direct_wrong_public[first_instance_word + 31] ^= 0x01;
+            assert_call_reverts(
+                evm.try_call_with_gas(direct_verifier_address, direct_wrong_public, 5_000_000_000),
+                "direct-lowering wrong IVC leaf-state public input",
+            );
         }
         CallOutcome::Revert { gas_used, output } => {
             panic!(
@@ -1475,6 +1569,11 @@ fn ivc_final_keccak_solidity_e2e() {
 fn assert_call_reverts(outcome: CallOutcome, context: &str) {
     match outcome {
         CallOutcome::Revert { .. } => {}
+        // Trace renders (solidity-trace / rust-verifier-trace builds) do not
+        // revert on a failed final check: they return `false` so the trace
+        // logs survive. Production renders still revert.
+        CallOutcome::Success { output, .. }
+            if trace_render_enabled() && output == vec![0u8; 32] => {}
         CallOutcome::Success { output, .. } => {
             panic!(
                 "invalid IVC verifier call returned instead of reverting ({context}): 0x{}",
@@ -1883,4 +1982,10 @@ fn format_u64(n: u64) -> String {
         out.push(*b as char);
     }
     out
+}
+
+/// Whether this build renders the IVC verifier with trace logs (see
+/// `quotient_trace_enabled` in the e2e test).
+fn trace_render_enabled() -> bool {
+    halo2_solidity_verifier::SOLIDITY_TRACE_ENABLED || cfg!(feature = "rust-verifier-trace")
 }

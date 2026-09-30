@@ -7,7 +7,7 @@ use crate::{
         ProofEvaluationCounts, QuotientIdentityManifest, QuotientIdentityManifestEntry,
         QuotientIdentityManifestTarget, QuotientIdentitySource,
     },
-    lowering::{protocol, VerifierBuildInputs},
+    lowering::{encoding::ConstraintSystemMeta, protocol, VerifierBuildInputs},
 };
 
 /// Count proof-evaluation scalars in the same categories used by calldata
@@ -74,9 +74,17 @@ pub(crate) fn proof_evaluation_counts(
 pub(crate) fn quotient_identity_manifest(
     inputs: VerifierBuildInputs<'_, '_>,
 ) -> QuotientIdentityManifest {
-    let plan = inputs.lowering_plan();
-    let mut simple_selector_cols: Vec<usize> =
-        plan.meta.simple_selector_cols.iter().copied().collect();
+    quotient_identity_manifest_for_meta(inputs, inputs.meta)
+}
+
+/// Build the identity manifest from the constraint system and protocol
+/// metadata alone (no lowering plan), so the direct quotient lowering can use
+/// it while the plan is being built.
+pub(crate) fn quotient_identity_manifest_for_meta(
+    inputs: VerifierBuildInputs<'_, '_>,
+    meta: &ConstraintSystemMeta,
+) -> QuotientIdentityManifest {
+    let mut simple_selector_cols: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
     simple_selector_cols.sort_unstable();
 
     let gate_entries = inputs
@@ -130,13 +138,13 @@ pub(crate) fn quotient_identity_manifest(
         )
         .collect::<Vec<_>>();
     let permutation_base = gate_entries.len();
-    let lookup_base = permutation_base + plan.meta.protocol.quotient.permutation;
-    let trash_base = lookup_base + plan.meta.protocol.quotient.lookup;
+    let lookup_base = permutation_base + meta.protocol.quotient.permutation;
+    let trash_base = lookup_base + meta.protocol.quotient.lookup;
 
     let entries = gate_entries
         .into_iter()
         .chain(
-            (0..plan.meta.protocol.quotient.permutation).map(|identity_index| {
+            (0..meta.protocol.quotient.permutation).map(|identity_index| {
                 QuotientIdentityManifestEntry {
                     global_index: permutation_base + identity_index,
                     source: QuotientIdentitySource::Permutation { identity_index },
@@ -144,26 +152,23 @@ pub(crate) fn quotient_identity_manifest(
                 }
             }),
         )
-        .chain(
-            (0..plan.meta.protocol.quotient.lookup).map(|identity_index| {
-                let (lookup_index, _) = plan
-                    .meta
-                    .protocol
-                    .lookup_identity_source(identity_index)
-                    .expect("lookup identity index covered by protocol lookup chunks");
-                let lookup_name = format!("lookup_{lookup_index}");
-                QuotientIdentityManifestEntry {
-                    global_index: lookup_base + identity_index,
-                    source: QuotientIdentitySource::Lookup {
-                        identity_index,
-                        lookup_index,
-                        lookup_name,
-                    },
-                    target: QuotientIdentityManifestTarget::Main,
-                }
-            }),
-        )
-        .chain((0..plan.meta.protocol.quotient.trash).map(|trash_index| {
+        .chain((0..meta.protocol.quotient.lookup).map(|identity_index| {
+            let (lookup_index, _) = meta
+                .protocol
+                .lookup_identity_source(identity_index)
+                .expect("lookup identity index covered by protocol lookup chunks");
+            let lookup_name = format!("lookup_{lookup_index}");
+            QuotientIdentityManifestEntry {
+                global_index: lookup_base + identity_index,
+                source: QuotientIdentitySource::Lookup {
+                    identity_index,
+                    lookup_index,
+                    lookup_name,
+                },
+                target: QuotientIdentityManifestTarget::Main,
+            }
+        }))
+        .chain((0..meta.protocol.quotient.trash).map(|trash_index| {
             let trash_name = inputs.trash_manifest_name(trash_index);
             QuotientIdentityManifestEntry {
                 global_index: trash_base + trash_index,
@@ -178,10 +183,10 @@ pub(crate) fn quotient_identity_manifest(
 
     QuotientIdentityManifest {
         entries,
-        gate_identities: plan.meta.protocol.quotient.gates,
-        permutation_identities: plan.meta.protocol.quotient.permutation,
-        lookup_identities: plan.meta.protocol.quotient.lookup,
-        trash_identities: plan.meta.protocol.quotient.trash,
+        gate_identities: meta.protocol.quotient.gates,
+        permutation_identities: meta.protocol.quotient.permutation,
+        lookup_identities: meta.protocol.quotient.lookup,
+        trash_identities: meta.protocol.quotient.trash,
         simple_selector_cols,
     }
 }

@@ -40,7 +40,14 @@ contract Halo2Verifier {
 
     {% include "partials/verifier/Constructors.sol" %}
 
+    {% if self.quotient_probe -%}
+    /// @notice TEST-ONLY QUOTIENT PROBE, NOT A VERIFIER: returns the quotient
+    /// section's outputs `[expected_eval, selector_acc[0..n)]` for any
+    /// well-formed calldata. Rendered only by
+    /// `SolidityGenerator::render_quotient_probe` for differential tests.
+    {%- else -%}
     /// @notice Verify a Halo2/Midfall proof for the generated verifying key.
+    {%- endif %}
     /// @dev This checks only that `proof` verifies for the supplied public
     /// `instances` under this pinned VK/protocol. Application contracts must
     /// bind the meaning of those instances separately: state roots, program
@@ -48,8 +55,14 @@ contract Halo2Verifier {
     /// protocol-specific authorization are outside this raw verifier ABI.
     /// @dev Production renders are success-or-revert: accepted proofs return
     /// `true`, while malformed calldata, invalid proof material, failed
-    /// precompiles, or mismatched pinned dependency code revert. Trace and gas
+    /// precompiles, or mismatched pinned dependency code revert.
+    {%- if self.trace %} This is a trace
+    /// render: a failed final pairing / accumulated check returns `false`
+    /// (keeping the trace logs) instead of reverting; early calldata and
+    /// encoding failures still revert.
+    {%- else %} Trace and gas
     /// renders keep the same failure policy.
+    {%- endif %}
     /// @dev The generated verifier uses absolute Yul memory addresses instead
     /// of Solidity's free-memory pointer, but generated scratch starts at
     /// `0x80` so Solidity's reserved memory prefix is preserved. The main
@@ -106,6 +119,13 @@ contract Halo2Verifier {
     {% include "partials/verifier/AccumulatorHelpers.yul" %}
 
     {% include "partials/verifier/TraceAndGasHelpers.yul" %}
+            {%- match quotient_direct %}
+            {%- when Some with (qdirect) %}
+            {%- for line in qdirect.functions %}
+            {{ line }}
+            {%- endfor %}
+            {%- when None %}
+            {%- endmatch %}
 
             let r := FR_MODULUS
             let success := true

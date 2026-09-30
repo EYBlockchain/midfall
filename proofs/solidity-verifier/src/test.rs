@@ -46,8 +46,8 @@ use sha3::Digest;
 
 use crate::{
     compile_solidity, encode_calldata, pinned_solc_available, CallOutcome, Evm, GeneratorConfig,
-    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
-    FN_SIG_VERIFY_PROOF,
+    QuotientLowering, RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk,
+    SolidityGenerator, FN_SIG_VERIFY_PROOF,
 };
 
 /// Scalar field used by the BLS12-381 Poseidon fixtures.
@@ -505,7 +505,8 @@ fn supported_shape_circuit_fuzz_e2e() {
     #[cfg(feature = "rust-verifier-trace")]
     let mut compared_selector_folds = false;
     for case in cases.iter().take(requested) {
-        let case_compared_selector_folds = run_supported_shape_fuzz_case(case);
+        let case_compared_selector_folds =
+            run_supported_shape_fuzz_case(case, QuotientLowering::Vm);
         #[cfg(feature = "rust-verifier-trace")]
         {
             compared_selector_folds |= case_compared_selector_folds;
@@ -523,6 +524,29 @@ fn supported_shape_circuit_fuzz_e2e() {
             "shape fuzz trace suite should include at least one selector-fold comparison"
         );
     }
+}
+
+/// Every supported shape (permutation, lookups, trash, second phase, fixed
+/// scaling, simple / complex / additive selectors) with the direct quotient
+/// lowering: valid proofs verify, wrong instances and mutated proofs revert,
+/// and (with `rust-verifier-trace`) every quotient identity value matches the
+/// native Midfall verifier trace.
+#[test]
+fn supported_shape_circuit_fuzz_e2e_direct_quotient() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+    let mut compared_selector_folds = false;
+    for case in supported_shape_evm_cases().iter() {
+        compared_selector_folds |= run_supported_shape_fuzz_case(case, QuotientLowering::Direct);
+    }
+    #[cfg(feature = "rust-verifier-trace")]
+    assert!(
+        compared_selector_folds,
+        "direct shape suite should compare selector folds"
+    );
+    #[cfg(not(feature = "rust-verifier-trace"))]
+    let _ = compared_selector_folds;
 }
 
 fn supported_shape_evm_cases() -> [ShapeFuzzCase; 7] {
@@ -800,7 +824,7 @@ fn build_shape_solidity_case_with_params(
 }
 
 /// Render, deploy, and exercise one supported shape-fuzz case end to end.
-fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
+fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase, lowering: QuotientLowering) -> bool {
     let circuit = ShapeFuzzCircuit::new(case.spec, case.seed);
     let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
     let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
@@ -856,6 +880,7 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
     let artifacts = generator
         .render(RenderOptions {
             vk: RenderVk::Separate,
+            quotient_lowering: lowering,
             ..RenderOptions::default()
         })
         .unwrap_or_else(|err| panic!("shape fuzz `{}` render failed: {err:?}", case.name));
@@ -868,7 +893,7 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
 
     assert_solidity_accepts(
         call_deployed_verifier(&mut deployed, &repacked_proof, &public),
-        &format!("shape fuzz `{}` valid proof", case.name),
+        &format!("shape fuzz `{}` ({lowering:?}) valid proof", case.name),
     );
 
     #[cfg(feature = "rust-verifier-trace")]
@@ -880,6 +905,7 @@ fn run_supported_shape_fuzz_case(case: &ShapeFuzzCase) -> bool {
         &compressed_proof,
         &repacked_proof,
         &public,
+        lowering,
     );
     #[cfg(not(feature = "rust-verifier-trace"))]
     let compared_selector_folds = false;
@@ -963,6 +989,7 @@ fn run_transcript_differential_shape_fuzz_case(seed: u64) {
         &compressed_proof,
         &repacked_proof,
         &public,
+        QuotientLowering::Vm,
     );
 }
 
@@ -980,6 +1007,7 @@ fn shape_fuzz_inputs_available_for_evm() -> bool {
 }
 
 #[cfg(feature = "rust-verifier-trace")]
+#[allow(clippy::too_many_arguments)]
 fn assert_shape_fuzz_trace_matches_native_midfall(
     context: &str,
     params: &PoseidonParams,
@@ -988,6 +1016,7 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
     compressed_proof: &[u8],
     repacked_proof: &[u8],
     public: &[F],
+    lowering: QuotientLowering,
 ) -> bool {
     use midnight_proofs::plonk::solidity_trace;
 
@@ -1013,6 +1042,7 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
     let trace_artifacts = generator
         .render(RenderOptions {
             vk: RenderVk::Separate,
+            quotient_lowering: lowering,
             diagnostics: RenderDiagnostics {
                 trace: true,
                 ..RenderDiagnostics::default()
@@ -1042,7 +1072,7 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
             event.id
         );
     }
-    let solidity_trace = parse_solidity_trace_logs(&logs);
+    let (direct_trace, solidity_trace) = split_direct_trace(&parse_solidity_trace_logs(&logs));
     let has_selector_folds = rust_by_id
         .keys()
         .chain(solidity_trace.keys())
@@ -1053,6 +1083,19 @@ fn assert_shape_fuzz_trace_matches_native_midfall(
         &solidity_trace,
         has_selector_folds,
     );
+    if lowering == QuotientLowering::Direct {
+        let (_, mismatches) = direct_intermediate_mismatches(generator, &rust_by_id, &direct_trace);
+        assert!(
+            mismatches.is_empty(),
+            "{context}: {}",
+            mismatches.join("\n")
+        );
+    } else {
+        assert!(
+            direct_trace.is_empty(),
+            "{context}: VM render emitted direct trace ids"
+        );
+    }
     has_selector_folds
 }
 
@@ -1628,7 +1671,7 @@ fn native_midfall_verifier_trace_matches_solidity_trace() {
 }
 
 #[test]
-fn trace_verifiers_revert_on_final_pairing_failure() {
+fn trace_verifiers_return_false_on_final_pairing_failure() {
     if !poseidon_inputs_available_for_evm() {
         return;
     }
@@ -1636,23 +1679,58 @@ fn trace_verifiers_revert_on_final_pairing_failure() {
     let fixture = create_property_poseidon_fixture();
     let mut bad_instances = fixture.instances.clone();
     bad_instances[0] += F::ONE;
+    let expected_false = vec![0u8; 32];
 
-    assert_solidity_rejects(
+    // Trace renders record the failed final check and return `false`
+    // (instead of reverting) so their LOG1 trace events stay observable.
+    assert_eq!(
         call_embedded_verifier(
             &fixture.embedded_trace_verifier_solidity,
             &fixture.proof,
             &bad_instances,
         ),
-        "embedded trace verifier wrong instance",
+        Ok(expected_false.clone()),
+        "embedded trace verifier wrong instance returns false"
     );
-    assert_solidity_rejects(
+    assert_eq!(
         call_separate_verifier(
             &fixture.trace_verifier_solidity,
             &fixture.trace_vk_solidity,
             &fixture.proof,
             &bad_instances,
         ),
-        "separate trace verifier wrong instance",
+        Ok(expected_false),
+        "separate trace verifier wrong instance returns false"
+    );
+    let mut evm = Evm::default();
+    let vk_address = evm.create(compile_solidity(&fixture.trace_vk_solidity));
+    let verifier_address = evm.create_with_address_arg(
+        compile_solidity(&fixture.trace_verifier_solidity),
+        vk_address,
+    );
+    let (_gas, _output, logs) = evm.call_with_logs(
+        verifier_address,
+        encode_calldata(&fixture.proof, &bad_instances),
+    );
+    assert!(!logs.is_empty(), "rejected trace call keeps its trace logs");
+
+    // Production renders keep the success-or-revert contract.
+    assert_solidity_rejects(
+        call_embedded_verifier(
+            &fixture.embedded_verifier_solidity,
+            &fixture.proof,
+            &bad_instances,
+        ),
+        "embedded production verifier wrong instance",
+    );
+    assert_solidity_rejects(
+        call_separate_verifier(
+            &fixture.separate_verifier_solidity,
+            &fixture.vk_solidity,
+            &fixture.proof,
+            &bad_instances,
+        ),
+        "separate production verifier wrong instance",
     );
 }
 
@@ -1999,6 +2077,7 @@ fn load_property_poseidon_fixture() -> PropertyPoseidonFixture {
                 trace: true,
                 ..RenderDiagnostics::default()
             },
+            ..RenderOptions::default()
         })
         .expect("trace pinned render with quotient evaluator");
     let trace_quotient_verifier_solidity = trace_quotient_artifacts.verifier;
@@ -3991,4 +4070,439 @@ fn srs_dir() -> String {
         .join("../../zk_stdlib/examples/assets")
         .to_string_lossy()
         .into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// Direct quotient lowering: trace equivalence including intermediates.
+// ---------------------------------------------------------------------------
+
+/// Split a Solidity trace into the direct-lowering intermediate range and the
+/// ids shared with the native Rust verifier trace.
+#[cfg(feature = "rust-verifier-trace")]
+fn split_direct_trace(
+    trace: &BTreeMap<u64, Vec<u8>>,
+) -> (BTreeMap<u64, Vec<u8>>, BTreeMap<u64, Vec<u8>>) {
+    let range = crate::DIRECT_TRACE_HELPER_BASE..crate::DIRECT_TRACE_END;
+    let direct = trace
+        .iter()
+        .filter(|(id, _)| range.contains(id))
+        .map(|(id, data)| (*id, data.clone()))
+        .collect();
+    let rest = trace
+        .iter()
+        .filter(|(id, _)| !range.contains(id))
+        .map(|(id, data)| (*id, data.clone()))
+        .collect();
+    (direct, rest)
+}
+
+/// Proof evaluation scalars (proof read order) from the native trace.
+#[cfg(feature = "rust-verifier-trace")]
+fn native_trace_evals(rust_trace: &BTreeMap<u64, (&'static str, Vec<u8>)>) -> Vec<F> {
+    let base = midnight_proofs::plonk::solidity_trace::PROOF_EVAL_TRACE_BASE;
+    (0u64..)
+        .map_while(|i| rust_trace.get(&(base + i)))
+        .map(|(_, data)| {
+            let word: [u8; 32] = data.as_slice().try_into().expect("32-byte eval trace");
+            Option::<F>::from(F::from_bytes_be(&word)).expect("canonical eval")
+        })
+        .collect()
+}
+
+/// Compare the direct-lowering intermediates of a Solidity trace against the
+/// generator's native expected values. Returns the number of compared values
+/// and one diagnostic line per mismatch (id, name, expected, observed).
+#[cfg(feature = "rust-verifier-trace")]
+fn direct_intermediate_mismatches(
+    generator: &SolidityGenerator<'_>,
+    rust_trace: &BTreeMap<u64, (&'static str, Vec<u8>)>,
+    solidity_direct: &BTreeMap<u64, Vec<u8>>,
+) -> (usize, Vec<String>) {
+    let evals = native_trace_evals(rust_trace);
+    let expected = generator
+        .direct_quotient_trace_values(&evals)
+        .expect("native direct trace values");
+    let mut mismatches = Vec::new();
+    for (id, name, value) in &expected {
+        let want = value.to_bytes_be().to_vec();
+        match solidity_direct.get(id) {
+            Some(got) if *got == want => {}
+            Some(got) => mismatches.push(format!(
+                "direct trace mismatch id={id} name={name}: native=0x{} solidity=0x{}",
+                hex::encode(&want),
+                hex::encode(got)
+            )),
+            None => mismatches.push(format!(
+                "direct trace id={id} name={name} missing in Solidity trace"
+            )),
+        }
+    }
+    let expected_ids: std::collections::BTreeSet<u64> =
+        expected.iter().map(|(id, _, _)| *id).collect();
+    for id in solidity_direct.keys().filter(|id| !expected_ids.contains(id)) {
+        mismatches.push(format!(
+            "direct trace id={id} emitted by Solidity without a native value"
+        ));
+    }
+    (expected.len(), mismatches)
+}
+
+/// Native trace + direct-lowering trace render of one proof, compared id by
+/// id (shared ids) and intermediate by intermediate. Returns
+/// `(shared ids compared, intermediates compared, solidity returned true)`.
+#[cfg(feature = "rust-verifier-trace")]
+fn assert_direct_trace_matches_native(
+    context: &str,
+    generator: &SolidityGenerator<'_>,
+    rust_trace: Vec<midnight_proofs::plonk::solidity_trace::SolidityTraceEvent>,
+    logs: &[revm::primitives::Log],
+) -> (usize, usize) {
+    let mut rust_by_id = BTreeMap::new();
+    for event in rust_trace {
+        assert!(
+            rust_by_id.insert(event.id, (event.name, event.data)).is_none(),
+            "{context}: duplicate Rust trace id {}",
+            event.id
+        );
+    }
+    let solidity_trace = parse_solidity_trace_logs(logs);
+    let (direct, rest) = split_direct_trace(&solidity_trace);
+    let has_selector_folds = rust_by_id.keys().any(|id| (60_000..61_000).contains(id));
+    assert_trace_equivalence_and_required_coverage(context, &rust_by_id, &rest, has_selector_folds);
+    let (compared, mismatches) = direct_intermediate_mismatches(generator, &rust_by_id, &direct);
+    assert!(
+        mismatches.is_empty(),
+        "{context}: {} direct intermediate mismatches:\n{}",
+        mismatches.len(),
+        mismatches.join("\n")
+    );
+    (rest.len(), compared)
+}
+
+/// Coefficients of the foreign-field-shaped test gate: products weighted by
+/// 2^(8(i+j)) mod 2^32 (a function of i+j with vanishing high degrees), base
+/// powers 2^(8i), a partial run with a trailing zero, and a shift.
+#[cfg(feature = "rust-verifier-trace")]
+fn foreign_shape_coefficients() -> (Vec<F>, [F; 4], [F; 4], F) {
+    let pow = |e: u64| if e >= 32 { F::ZERO } else { F::from(1u64 << e) };
+    let dbp = (0..16).map(|k| pow(8 * ((k / 4) + (k % 4)) as u64)).collect();
+    let bp = [pow(0), pow(8), pow(16), pow(24)];
+    let bpm = [pow(0), pow(8), pow(16), F::ZERO];
+    (dbp, bp, bpm, F::from(1u64 << 40))
+}
+
+#[cfg(feature = "rust-verifier-trace")]
+#[derive(Clone, Debug)]
+struct ForeignShapeConfig {
+    x: [Column<Advice>; 4],
+    z: [Column<Advice>; 4],
+    w: [Column<Advice>; 3],
+    q: Selector,
+}
+
+/// Circuit whose gate is built exactly like the foreign-field gates of
+/// midnight-circuits (`sum_exprs`, `pair_wise_prod`, shifted limbs), so the
+/// direct lowering recognises every helper shape.
+#[cfg(feature = "rust-verifier-trace")]
+#[derive(Clone, Debug, Default)]
+struct ForeignShapeCircuit {
+    x: [F; 4],
+    y: [F; 4],
+    z: [F; 4],
+    public: F,
+}
+
+#[cfg(feature = "rust-verifier-trace")]
+impl ForeignShapeCircuit {
+    fn new(seed: u64) -> Self {
+        let f =
+            |k: u64| F::from(seed.wrapping_mul(0x9e37_79b9).wrapping_add(k).wrapping_mul(k + 3));
+        Self {
+            x: [f(1), f(2), f(3), f(4)],
+            y: [f(5), f(6), f(7), f(8)],
+            z: [f(9), f(10), f(11), f(12)],
+            public: f(13),
+        }
+    }
+
+    /// Witness values `w0`, `w1` that satisfy the two polynomials.
+    fn w(&self) -> (F, F) {
+        let (dbp, bp, bpm, shift) = foreign_shape_coefficients();
+        let mut w0 = F::ZERO;
+        for i in 0..4 {
+            for j in 0..4 {
+                w0 += dbp[4 * i + j] * self.x[i] * self.y[j];
+            }
+            w0 += bp[i] * self.x[i] + bpm[i] * self.z[i];
+        }
+        let w1 = (0..4).map(|i| bp[i] * (self.x[i] + shift) + bp[i] * self.z[i]).sum();
+        (w0, w1)
+    }
+}
+
+#[cfg(feature = "rust-verifier-trace")]
+impl Circuit<F> for ForeignShapeCircuit {
+    type Config = ForeignShapeConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self::default()
+    }
+
+    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+        let x = [(); 4].map(|_| meta.advice_column());
+        let z = [(); 4].map(|_| meta.advice_column());
+        let w = [(); 3].map(|_| meta.advice_column());
+        let committed = meta.instance_column();
+        let public = meta.instance_column();
+        let q = meta.selector();
+        let sum_exprs = |coeffs: &[F], exprs: &[Expression<F>]| {
+            exprs
+                .iter()
+                .zip(coeffs)
+                .map(|(v, b)| Expression::Constant(*b) * v.clone())
+                .fold(Expression::Constant(F::ZERO), |acc, e| acc + e)
+        };
+        meta.create_gate("foreign shape", |meta| {
+            let (dbp, bp, bpm, shift) = foreign_shape_coefficients();
+            let xs: Vec<_> = x.iter().map(|c| meta.query_advice(*c, Rotation::cur())).collect();
+            let ys: Vec<_> = x.iter().map(|c| meta.query_advice(*c, Rotation::next())).collect();
+            let zs: Vec<_> = z.iter().map(|c| meta.query_advice(*c, Rotation::cur())).collect();
+            let xys: Vec<_> = xs
+                .iter()
+                .flat_map(|xi| ys.iter().map(|yj| xi.clone() * yj.clone()).collect::<Vec<_>>())
+                .collect();
+            let shift = Expression::Constant(shift);
+            let shifted: Vec<_> = xs.iter().map(|x| x + &shift).collect();
+            let w0 = meta.query_advice(w[0], Rotation::cur());
+            let w1 = meta.query_advice(w[1], Rotation::cur());
+            let p0 = sum_exprs(&dbp, &xys) + sum_exprs(&bp, &xs) + sum_exprs(&bpm, &zs) - w0;
+            let p1 = sum_exprs(&bp, &shifted) + sum_exprs(&bp, &zs) - w1;
+            Constraints::with_selector(q, vec![("p0", p0), ("p1", p1)])
+        });
+        meta.create_gate("instance tie", |meta| {
+            let a = meta.query_advice(w[2], Rotation::cur());
+            let c = meta.query_instance(committed, Rotation::cur());
+            let p = meta.query_instance(public, Rotation::cur());
+            Constraints::with_selector(q, vec![("tie", a - p - c)])
+        });
+        ForeignShapeConfig { x, z, w, q }
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<F>,
+    ) -> Result<(), Error> {
+        let (w0, w1) = self.w();
+        layouter.assign_region(
+            || "foreign shape",
+            |mut region| {
+                config.q.enable(&mut region, 0)?;
+                for i in 0..4 {
+                    region.assign_advice(|| "x", config.x[i], 0, || Value::known(self.x[i]))?;
+                    region.assign_advice(|| "y", config.x[i], 1, || Value::known(self.y[i]))?;
+                    region.assign_advice(|| "z", config.z[i], 0, || Value::known(self.z[i]))?;
+                }
+                region.assign_advice(|| "w0", config.w[0], 0, || Value::known(w0))?;
+                region.assign_advice(|| "w1", config.w[1], 0, || Value::known(w1))?;
+                region.assign_advice(|| "tie", config.w[2], 0, || Value::known(self.public))?;
+                Ok(())
+            },
+        )
+    }
+}
+
+/// Keygen, prove and natively verify the foreign-shape circuit with the
+/// Rust verifier trace on; returns params, VK, proof and the native trace.
+#[cfg(feature = "rust-verifier-trace")]
+#[allow(clippy::type_complexity)]
+fn foreign_shape_proof_with_trace(
+    seed: u64,
+) -> (
+    PoseidonParams,
+    midnight_proofs::plonk::VerifyingKey<F, KZGCommitmentScheme<Bls12>>,
+    Vec<u8>,
+    Vec<F>,
+    Vec<midnight_proofs::plonk::solidity_trace::SolidityTraceEvent>,
+) {
+    use midnight_proofs::plonk::solidity_trace;
+    let k = 5;
+    let circuit = ForeignShapeCircuit::new(seed);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x5eed);
+    let params = PoseidonParams::unsafe_setup(k, &mut rng);
+    let vk =
+        keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, k).expect("vk");
+    let pk = keygen_pk(vk.clone(), &circuit).expect("pk");
+    let committed = [F::ZERO];
+    let public = [circuit.public];
+    let columns: [&[F]; 2] = [&committed, &public];
+    let mut transcript = CircuitTranscript::<sha3::Keccak256>::init();
+    create_proof::<F, KZGCommitmentScheme<Bls12>, _, _>(
+        &params,
+        &pk,
+        std::slice::from_ref(&circuit),
+        1,
+        &[&columns],
+        &mut rng,
+        &mut transcript,
+    )
+    .expect("proof");
+    let proof = transcript.finalize();
+    solidity_trace::start();
+    let committed_pi = [G1Projective::identity()];
+    let public_columns: [&[F]; 1] = [&public];
+    let mut transcript = CircuitTranscript::<sha3::Keccak256>::init_from_bytes(&proof);
+    let guard = prepare::<F, KZGCommitmentScheme<Bls12>, CircuitTranscript<sha3::Keccak256>>(
+        &vk,
+        &[&committed_pi],
+        &[&public_columns],
+        &mut transcript,
+    )
+    .expect("native prepare");
+    transcript.assert_empty().expect("native transcript consumed");
+    guard.verify(&params.verifier_params()).expect("native verify");
+    let trace = solidity_trace::take();
+    (params, vk, proof, public.to_vec(), trace)
+}
+
+/// Render a direct-lowering trace verifier + VK.
+#[cfg(feature = "rust-verifier-trace")]
+fn direct_trace_render(generator: &SolidityGenerator<'_>) -> (String, String) {
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Direct,
+            diagnostics: RenderDiagnostics {
+                trace: true,
+                ..RenderDiagnostics::default()
+            },
+            ..RenderOptions::default()
+        })
+        .expect("direct trace render");
+    (
+        artifacts.verifier,
+        artifacts.verifying_key.expect("separate VK"),
+    )
+}
+
+#[cfg(feature = "rust-verifier-trace")]
+#[test]
+fn direct_trace_matches_native_including_intermediates() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+    let (params, vk, proof, public, rust_trace) = foreign_shape_proof_with_trace(7);
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let (verifier, vk_solidity) = direct_trace_render(&generator);
+    for needle in [
+        "sum_exprs_by_degree(",
+        "SHIFTED_LIMBS_",
+        "trace_u256(70000,",
+    ] {
+        assert!(
+            verifier.contains(needle),
+            "direct trace render lacks {needle}"
+        );
+    }
+    let mut deployed = deploy_separate_verifier_from_sources(&verifier, &vk_solidity);
+    let repacked = generator.repack_proof(&proof).expect("repack");
+    let (_gas, output, logs) = deployed.evm.call_with_logs(
+        deployed.verifier_address,
+        encode_calldata(&repacked, &public),
+    );
+    assert_eq!(
+        output,
+        [vec![0u8; 31], vec![1]].concat(),
+        "direct trace verifier accepts"
+    );
+    let (shared, intermediates) =
+        assert_direct_trace_matches_native("foreign shape (direct)", &generator, rust_trace, &logs);
+    // 1 by-degree call + 4 sum_exprs calls, 7 table entries, 4 vectors of 4 limbs.
+    assert_eq!(intermediates, 5 + 7 + 16);
+    eprintln!(
+        "[direct-trace] foreign shape: {shared} shared trace ids and {intermediates} direct intermediates compared, 0 mismatches"
+    );
+}
+
+/// A corrupted coefficient-run word in the VK (re-pinned by codehash) makes
+/// the trace comparison name the exact helper calls that read it; tables and
+/// limb views still match, and the trace render returns false instead of
+/// reverting.
+#[cfg(feature = "rust-verifier-trace")]
+#[test]
+fn direct_trace_reports_corrupted_coefficient_run_by_helper_call() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+    let (params, vk, proof, public, rust_trace) = foreign_shape_proof_with_trace(11);
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let (verifier, vk_solidity) = direct_trace_render(&generator);
+
+    // COEFF_RUN_1 is the partial run [1, 2^8, 2^16, 0] of sum_exprs(bpm, zs):
+    // corrupt its zero entry, which is absent from the Rust Expression tree.
+    let target = "// COEFF_RUN_1[3] = 0";
+    let line = vk_solidity
+        .lines()
+        .find(|l| l.trim_end().ends_with(target))
+        .expect("COEFF_RUN_1[3] word in the VK");
+    let bad_line = line.replace(
+        "0x0000000000000000000000000000000000000000000000000000000000000000)",
+        "0x0000000000000000000000000000000000000000000000000000000000000001)",
+    );
+    assert_ne!(line, bad_line);
+    let bad_vk = vk_solidity.replace(line, &bad_line);
+
+    let mut evm = Evm::default();
+    let vk_address = evm.create(compile_solidity(&bad_vk));
+    let codehash = evm.code_hash(vk_address);
+    let pin = verifier
+        .lines()
+        .find(|l| l.contains("EXPECTED_VK_CODEHASH_WORD ="))
+        .expect("codehash pin")
+        .to_string();
+    let bad_verifier = verifier.replace(
+        &pin,
+        &format!("    uint256 internal constant EXPECTED_VK_CODEHASH_WORD = 0x{codehash:064x};"),
+    );
+    let verifier_address = evm.create_with_address_arg(compile_solidity(&bad_verifier), vk_address);
+    let repacked = generator.repack_proof(&proof).expect("repack");
+    let (_gas, output, logs) =
+        evm.call_with_logs(verifier_address, encode_calldata(&repacked, &public));
+    assert_eq!(
+        output,
+        vec![0u8; 32],
+        "trace render returns false for the rejected proof"
+    );
+
+    let mut rust_by_id = BTreeMap::new();
+    for event in rust_trace {
+        rust_by_id.insert(event.id, (event.name, event.data));
+    }
+    let (direct, _) = split_direct_trace(&parse_solidity_trace_logs(&logs));
+    let (_, mismatches) = direct_intermediate_mismatches(&generator, &rust_by_id, &direct);
+    let expected: Vec<(u64, String)> = generator
+        .direct_quotient_trace_values(&native_trace_evals(&rust_by_id))
+        .unwrap()
+        .into_iter()
+        .filter(|(_, name, _)| name.contains("sum_exprs(COEFF_RUN_1,"))
+        .map(|(id, name, _)| (id, name))
+        .collect();
+    assert_eq!(expected.len(), 1, "one helper call reads COEFF_RUN_1");
+    assert_eq!(
+        mismatches.len(),
+        1,
+        "exactly the corrupted helper call mismatches: {mismatches:#?}"
+    );
+    assert!(
+        mismatches[0].contains(&format!("id={} ", expected[0].0))
+            && mismatches[0].contains(&expected[0].1),
+        "mismatch names the helper call: {}",
+        mismatches[0]
+    );
+    eprintln!(
+        "[direct-trace] corrupted run reported as: {}",
+        mismatches[0]
+    );
 }
