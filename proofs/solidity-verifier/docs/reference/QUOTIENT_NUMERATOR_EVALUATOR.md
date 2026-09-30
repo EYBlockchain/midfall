@@ -573,8 +573,9 @@ The interpreter is a small stack machine:
   combine that value with `q_top`.
 - Accumulator-style opcodes mutate `q_top` without changing stack depth.
 - `FOLD_*` opcodes consume `q_top` and advance the y-batched identity stream.
-- Native callbacks require the generated stream to be at an identity boundary,
-  reset `q_top`/`q_sp`, and perform their own fold operations.
+- Native callbacks require the generated stream to be at an identity boundary
+  (an empty stack: no live `q_top`, nothing spilled; checked at run time) and
+  perform their own fold operations.
 
 There is one physical encoding: `bytes`, a compact stream with one opcode byte
 followed by variable-width big-endian operands.
@@ -607,13 +608,13 @@ The logical cases are:
 | `0x16` | `run_add_mul_const_u8_mem_u16` | `u16 count`, then `count` copies of `u16 ptr, u8 const_idx` | Dynamic run form of repeated `0x13`; each item accumulates into `q_top`. |
 | `0x17` | `push_temp` | `u16 temp_idx` | Push `mload(q_tmp_mptr + 32 * temp_idx)`. Reserved for legacy temp payloads; current codegen does not emit it. |
 | `0x18` | `store_temp` | `u16 temp_idx` | Store `q_top` to `q_tmp_mptr + 32 * temp_idx`; `q_top` remains live. Reserved for legacy temp payloads; current codegen does not emit it. |
-| `0x19` | `native_permutation` | none | Reset the VM top/stack pointer and run the generated permutation callback at this identity position. The callback folds all permutation identities itself. |
+| `0x19` | `native_permutation` | none | Require an empty VM stack and run the generated permutation callback at this identity position. The callback folds all permutation identities itself. |
 | `0x1a` | reserved | none | No interpreter case. The default branch reverts if this opcode appears. |
-| `0x1b` | `native_identity` | `u16 native_idx` | Reset the VM top/stack pointer and dispatch to one generated heavy-gate callback. Invalid callback indexes revert. |
+| `0x1b` | `native_identity` | `u16 native_idx` | Require an empty VM stack and dispatch to one generated heavy-gate callback. Invalid callback indexes revert. |
 | `0x1c` | `lin7` | seven copies of `u8 const_idx, u16 ptr` | Push `sum_i const[const_idx_i] * mload(ptr_i)`. Used for recognized 7-limb linear combinations. |
 | `0x1d` | `bilin7_row` | `u16 lhs`, then seven copies of `u8 const_idx, u16 rhs` | Push `mload(lhs) * sum_i const[const_idx_i] * mload(rhs_i)`. |
 | `0x1e` | `bilin7_pairwise` | `u16 lhs_base, u16 rhs_base, 13 bytes const_idx[0..12]` | Push `sum_{i=0..6,j=0..6} const[const_idx[i+j]] * mload(lhs_base + 32*i) * mload(rhs_base + 32*j)`. |
-| `0x1f` | `native_lookup` | none | Reset the VM top/stack pointer and run the generated LogUp lookup callback at this identity position. The callback folds boundary, helper, and accumulator identities itself. |
+| `0x1f` | `native_lookup` | none | Require an empty VM stack and run the generated LogUp lookup callback at this identity position. The callback folds boundary, helper, and accumulator identities itself. |
 | `0x20` | `pow5` | none | Set `q_top = q_top^5`. |
 | `0x21` | `modarith7` | flags, optional condition/constant, count header, and fused 7-limb blocks | Push one fused affine 7-limb identity value. |
 | `0x22` | `affine_sum` | `u16 lin_count, u16 product_count`, then linear and product payloads | Mixed dynamic affine accumulator over memory and memory-products. |
@@ -637,7 +638,126 @@ The dynamic run opcodes, limb-aware opcodes, native callbacks, and structured
 trash suffix are all part of the default IVC lowering. The generator
 validates the finalized byte stream before embedding it in the VK payload: it
 rejects unknown opcodes, truncated operands, invalid memory tokens, stack
-underflow, and non-empty identity boundaries.
+underflow, and non-empty identity boundaries, and it checks every operand
+value (see the next section).
+
+### Interpreter Bounds Checks (QVM-01)
+
+Audit finding QVM-01 ("Quotient-VM operand fields are bound-checked neither at
+run time nor by the byte validator") is addressed by the byte validator, which
+now checks every operand value at build time, plus the interpreter's remaining
+runtime structural checks. Both read one model:
+`LoweringPlan::quotient_operand_model` (`src/lowering/plan.rs`) builds a
+`QuotientOperandModel` from the converged layout. It holds the read windows
+(VK payload, user-challenge block, theta-rooted challenge/common slots up to
+`INSTANCE_EVAL_MPTR`, decoded proof evaluations; the same ranges
+`Halo2QuotientEvaluator::validate_layout` requires the external frame to
+contain), the symbolic token bases, the constant-table length, the number of
+simple-selector buckets, the largest precomputed selector `y` power, and the
+size of the planned stack / callback scratch region. The runtime constants
+(`QuotientVmGuards`, `program.guards` in the template) are derived from the
+same model, and `validate_generator_invariants` fails generation if the two
+ever disagree.
+
+Build time (fail closed, before any verifier or VK is rendered):
+`vm::validate_quotient_program_operands`, run from
+`LoweringPlan::validate_generator_invariants`, first runs the structural byte
+validator and then walks every operand with `vm::visit_quotient_operands`:
+
+- every memory pointer (literal, `u16`, token and token+offset, fused/run/affine
+  terms, limb terms, row and pairwise bases with all seven words, MODARITH7
+  condition) is word-aligned and inside one populated window, checked per
+  window rather than against their union;
+- every constant slot (`u16` and `u8`) is below the table length;
+- every `FOLD_SELECTOR` bucket is below the simple-selector count and every gap
+  is at most the largest precomputed `y` power;
+- the program's stack high-water mark fits the planned stack region.
+
+The walker's fallback arm is an error, and
+`quotient_operand_walker_covers_every_opcode` pins that it is total over the
+opcode table, so a new opcode cannot ship without operand checks. The
+validated program is then pinned by the VK codehash, which the verifier checks
+before the VM runs.
+
+Run time: the interpreter keeps only the cheap structural checks. Every failed
+check is a plain `revert(0, 0)`; checks live inside the opcode arms, so only
+the checks of rendered arms are emitted.
+
+| Check | Where | Form |
+|---|---|---|
+| Fold needs a top | `FOLD_MAIN`, `FOLD_SELECTOR` | `q_has_top` and `q_sp == base` (depth exactly 1) |
+| Pop floor | `ADD`, `MUL` | `q_sp != base` |
+| Spill ceiling | every spill of the cached top | `q_sp <= stack_hi - 0x20` |
+| Native boundary | the three native callbacks | `q_has_top == 0` and `q_sp == base`, instead of resetting `q_top`/`q_sp` |
+| Selector bucket and gap | `FOLD_SELECTOR` | `lt(bucket, num_simple_selectors)`, `gap <= selector_max_power` |
+| MODARITH7 flags | `MODARITH7` | only bits `0x01` and `0x02` |
+| Epilogue | after the loop | `q_pc == q_end`, `q_has_top == 0`, `q_sp == base` |
+| `u16` constant slot | `PUSH_CONST`, `ADD_CONST`, `MUL_CONST` | `gt(slot, num_consts - 1)` |
+
+These stay because they are cheap and the byte validator alone does not make
+them redundant for a malformed program: a stack-discipline or boundary error
+would otherwise fold a stale top, drop a live operand at a native callback, or
+leave spilled words for the next identity, and a bad bucket or gap would write
+outside `SELECTOR_ACC` or read past the `y`-power table. With the pop, fold and
+native checks, `q_has_top == 0` implies `q_sp == base`, so an in-place opcode
+(`NEG`, `ADD_CONST`, ...) run on a dead top can only produce a value that is
+overwritten or rejected; it cannot reach a fold. The `u16` constant-slot check
+is rendered only in the wide arms, which exist only for constant tables of more
+than 256 words (none of the fixtures or the Moonlight wrap has one): an
+out-of-range `u16` slot reaches up to `0x1fffe0` bytes past the table, far
+outside the pinned VK data.
+
+Memory pointers and `u8` constant slots have no runtime clamp. A first version
+clamped every pointer to the coarse union of the read windows and every `u8`
+slot to the table; on the Moonlight wrap B64 that cost 55,705 gas and 177 bytes
+for the pointer clamps and 30,530 gas and 62 bytes for the `u8` clamps, of
+1,365,142 gas in total. In 400 random single-byte mutations of the Moonlight
+B64 program, those coarse clamps still let 261 wrong operands through (a
+constant slot inside the table, or a pointer inside the coarse window, which
+also covers words that are not VM inputs). The exact per-window,
+alignment-checked build-time validation is the stronger layer, so the runtime
+clamps were dropped. The `misc-fixes` branch kept the `u8` forms build-time-only
+for a related reason: an out-of-range `u8` slot drifts at most `0xff` words
+(`0x1fe0` bytes) past the table start, inside the VK-reserved payload, and the
+build-time slot check rejects it.
+
+Negative tests: `quotient_vm_bounds_checks_reject_corrupted_poseidon_programs`
+and `quotient_vm_bounds_checks_reject_corrupted_wide_constant_programs`
+(`src/test.rs`, `HALO2_SOLIDITY_RUN_EVM_TESTS=1`) corrupt a rendered fixture's
+program and check that `validate_quotient_program_operands` rejects it. For the
+checks kept at run time they also pin the corrupted program into the VK
+source, re-pin `EXPECTED_VK_CODEHASH_WORD` so the corruption reaches the
+interpreter, and check that the verifier reverts at that check (a test-only
+copy tags every `revert` with its source line). Pointer and `u8` slot
+corruptions are asserted at build time only. The build-time checks are also
+covered by `quotient_operand_validator_rejects_each_out_of_range_operand_class`,
+and the presence of every remaining runtime check site by
+`quotient_vm_interpreter_renders_operand_and_stack_guards`
+(`src/lowering/tests.rs`).
+
+Measured cost of the remaining runtime checks, main `6b3d2096` without and
+with them (same calldata for both; the VK contracts are byte-identical, only
+the verifier changes):
+
+| Verifier | Runtime bytes | `verifyProof` gas | Quotient section gas |
+|---|---|---|---|
+| Moonlight wrap B64 (`b64_full`) | 21,214 -> 21,302 | 1,277,190 -> 1,278,677 | 301,746 -> 303,233 |
+| Moonlight wrap B8 (`b8_full`) | 21,214 -> 21,302 | 1,277,262 -> 1,278,749 | 301,746 -> 303,233 |
+| Poseidon fixture | 12,674 -> 12,713 | 636,758 -> 636,300 | 30,389 -> 29,931 |
+| RSA signature fixture | 8,901 -> 8,894 | 593,499 -> 593,504 | 16,357 -> 16,362 |
+| SHA preimage fixture | 15,068 -> 15,171 | 829,405 -> 830,306 | 64,952 -> 65,853 |
+| Hybrid Merkle-tree fixture | 17,952 -> 18,055 | 852,406 -> 853,924 | 91,571 -> 93,089 |
+| IVC decider, external quotient evaluator (runs 1) | evaluator 10,251 -> 10,335; verifier 14,943 -> 14,943 | 2,284,779 -> 2,286,007 | not traced |
+
+Moonlight renders were compiled with Nightfall's settings (solc 0.8.35,
+via-IR, optimizer runs 200, evm cancun) and run on anvil (prague); the
+fixtures with the generator's pinned profile (solc 0.8.30, via-IR, runs 200,
+cancun). The Poseidon verifier is cheaper because the native callbacks no
+longer reset three VM registers. With these checks, 25 of the same 400
+Moonlight mutations revert (every opcode, count, flag, selector bucket and gap
+mutation) and 375 change the value; the build-time validator rejects the
+out-of-range, misaligned and out-of-window ones among them before a VK can be
+generated.
 
 ### Native Callbacks
 
@@ -884,13 +1004,17 @@ The evaluator reverts if:
 - `y` is zero when selector inverse batching is needed;
 - the modular exponentiation precompile used for `y^-1` fails;
 - the quotient VM sees an invalid opcode or malformed native callback index;
+- a quotient VM stack, boundary, selector, flag or `u16` constant-slot check
+  fails (QVM-01, see "Interpreter Bounds Checks");
 - a generated arithmetic path explicitly detects an impossible state.
 
 Generated quotient VM bytecode is also decoded during code generation before it
 is pinned into the VK payload. That offline pass rejects unknown opcodes,
 truncated operands, unknown memory tokens, stack underflow, native-callback stack
-leaks, and non-empty fold boundaries, so production Yul does not need those
-checks in the hot path.
+leaks, non-empty fold boundaries, and out-of-range, misaligned or
+out-of-window operand values. The interpreter re-checks stack discipline,
+identity boundaries, selector buckets and gaps, MODARITH7 flags and `u16`
+constant slots at run time (QVM-01).
 
 The main verifier reverts if:
 

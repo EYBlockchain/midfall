@@ -1561,9 +1561,296 @@ fn quotient_vm_runtime_asserts_exact_program_termination() {
 
     assert!(
         verifier_template.contains("if iszero(eq(q_pc, q_end)) { revert(0, 0) }")
-            && verifier_template.contains("if q_has_top { revert(0, 0) }"),
-        "quotient VM must fail closed when bytecode over-runs q_end or leaves a live stack value"
+            && verifier_template.contains("if q_has_top { revert(0, 0) }")
+            && verifier_template
+                .contains("if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { revert(0, 0) }"),
+        "quotient VM must fail closed when bytecode over-runs q_end, leaves a live stack value, \
+         or leaves spilled words below q_sp"
     );
+}
+
+/// QVM-01: every site of the interpreter's remaining runtime checks carries
+/// its guard. Counting call sites against the decode sites they protect means
+/// a regenerated or edited template that drops one fails here. Memory pointers
+/// and `u8` constant slots are range-checked at build time only
+/// (`quotient_operand_validator_rejects_each_out_of_range_operand_class`).
+#[test]
+fn quotient_vm_interpreter_renders_operand_and_stack_guards() {
+    let vm = include_str!("../../templates/partials/quotient_numerator/QuotientNumeratorBlock.yul");
+    let count = |needle: &str| vm.matches(needle).count();
+
+    // Stack: a ceiling at every spill site, a floor at both pops, a live top
+    // with nothing spilled below it at both folds, an empty stack at all three
+    // native callbacks, and no callback that resets q_sp.
+    assert_eq!(
+        count("{% call q_spill_guard() %}"),
+        count("mstore(q_sp, q_top)"),
+        "every cached-top spill site must clamp q_sp to its registered region"
+    );
+    assert_eq!(
+        count("{% call q_pop_guard() %}"),
+        2,
+        "ADD and MUL pops need a floor"
+    );
+    assert_eq!(
+        count("{% call q_fold_guard() %}"),
+        2,
+        "FOLD_MAIN/FOLD_SELECTOR need a top"
+    );
+    assert_eq!(
+        count("{% call q_native_guard() %}"),
+        3,
+        "native callbacks need an empty stack"
+    );
+    // The only assignment of the stack base to q_sp is its declaration.
+    assert_eq!(
+        count("q_sp := {{ program.stack_mptr|hex() }}"),
+        1,
+        "native callbacks must assert, not reset, the stack pointer"
+    );
+    assert_eq!(count("let q_sp := {{ program.stack_mptr|hex() }}"), 1);
+
+    // Every decoded u16 constant slot (the forms only emitted for tables of
+    // more than 256 words).
+    assert_eq!(
+        count("let qconst := shr(240, mload(q_pc))"),
+        count("{% call q_const_guard(\"qconst\") %}"),
+        "every u16 constant slot must be clamped to the table length"
+    );
+
+    // FOLD_SELECTOR bucket and gap, MODARITH7 flag bits.
+    for needle in [
+        "if iszero(lt(q_sel_idx, {{ program.guards.num_selector_buckets }})) { revert(0, 0) }",
+        "if gt(q_sel_gap, {{ program.selector_max_power|hex() }}) { revert(0, 0) }",
+        "if gt(q_flags, 0x03) { revert(0, 0) }",
+    ] {
+        assert!(vm.contains(needle), "missing interpreter guard `{needle}`");
+    }
+}
+
+/// QVM-01: the operand walker must know every opcode's operand fields.
+///
+/// `visit_quotient_operands` fails closed on an unhandled opcode rather than
+/// skipping it, so this test is what makes the fallback arm reachable
+/// information: a new opcode added to `QUOTIENT_OPCODE_TABLE` without
+/// extending the walker fails here instead of shipping unchecked operands.
+#[test]
+fn quotient_operand_walker_covers_every_opcode() {
+    for spec in QUOTIENT_VM_SPEC.opcodes {
+        // Zero operands keep every embedded count at zero, so the walk
+        // terminates for the dynamic opcodes without a hand-built program.
+        let mut bytes = vec![spec.opcode];
+        bytes.extend(std::iter::repeat_n(0u8, 64));
+        let result = visit_quotient_operands(&bytes, 0, spec.opcode, &mut |_| Ok(()));
+        if let Err(err) = result {
+            assert!(
+                !err.contains("operand walker does not handle"),
+                "opcode {} ({:#x}) has no arm in visit_quotient_operands: {err}",
+                spec.name,
+                spec.opcode
+            );
+        }
+    }
+    let err = visit_quotient_operands(&[0x1a], 0, 0x1a, &mut |_| Ok(()))
+        .expect_err("reserved opcode must fail closed");
+    assert!(err.contains("operand walker does not handle"), "{err}");
+}
+
+/// Synthetic program plus the operand model it was built for.
+fn qvm01_synthetic_program() -> (Vec<u8>, QuotientOperandModel) {
+    let mem = |ptr| QuotientExpr::Mem(QuotientMem::Literal(ptr));
+    let konst = |value: u64| QuotientExpr::Const(U256::from(value));
+    let identities = vec![
+        test_quotient_identity_with_expr(
+            0,
+            QuotientTarget::Main,
+            quotient_add_expr(
+                quotient_mul_expr(mem(0x100), konst(3)),
+                quotient_mul_expr(mem(0x120), mem(0x140)),
+            ),
+        ),
+        test_quotient_identity_with_expr(
+            1,
+            QuotientTarget::Selector(0),
+            quotient_add_expr(mem(0x160), konst(5)),
+        ),
+        test_quotient_identity_with_expr(
+            2,
+            QuotientTarget::Selector(1),
+            QuotientExpr::Neg(Box::new(mem(0x180))),
+        ),
+        test_quotient_identity_with_expr(
+            3,
+            QuotientTarget::Selector(0),
+            quotient_mul_expr(mem(0x1a0), konst(7)),
+        ),
+    ];
+    let selector_fold = VerifierBuildInputs::selector_fold_plan(&identities, 2);
+    let mut builder = QuotientProgramBuilder::default();
+    for identity in &identities {
+        builder.identity_expr(
+            &identity.expr,
+            identity.target,
+            selector_fold.gap_for(identity),
+        );
+    }
+    let build = builder.finish();
+    let model = QuotientOperandModel {
+        read: QuotientReadModel {
+            windows: vec![QuotientReadWindow {
+                name: "synthetic_evals",
+                start: 0x100,
+                len: 0xc0,
+            }],
+            token_bases: vec![],
+        },
+        num_consts: build.consts.len(),
+        num_selector_buckets: 2,
+        selector_max_power: selector_fold.max_power,
+        stack_words: build.max_stack,
+    };
+    (build.bytes, model)
+}
+
+/// Offset of the first instruction with opcode `op`.
+fn qvm01_first_op(bytes: &[u8], ops: &[u8]) -> usize {
+    quotient_bytecode_ops(bytes)
+        .find_map(|(idx, op, _)| ops.contains(&op).then_some(idx))
+        .unwrap_or_else(|| panic!("synthetic program has no opcode in {ops:#x?}"))
+}
+
+/// QVM-01: the build-time operand validator accepts the emitted program and
+/// rejects each class of out-of-range operand, fail closed. Every corruption
+/// keeps the program structurally valid, so the coverage is new: the byte
+/// validator (`validate_quotient_program`) accepts all of them.
+#[test]
+fn quotient_operand_validator_rejects_each_out_of_range_operand_class() {
+    let (bytes, model) = qvm01_synthetic_program();
+    validate_quotient_program_operands(&bytes, &model)
+        .expect("emitted program must satisfy its own operand model");
+    let num_consts = model.num_consts;
+    let read_model = model.read.clone();
+
+    let ptr_at = qvm01_first_op(&bytes, &[Q_OP_PUSH_MEM_U16]) + 1;
+    let const_at = qvm01_first_op(
+        &bytes,
+        &[Q_OP_MUL_CONST_U8, Q_OP_ADD_CONST_U8, Q_OP_PUSH_CONST_U8],
+    ) + 1;
+    let fold_at = qvm01_first_op(&bytes, &[Q_OP_FOLD_SELECTOR]);
+
+    let mut cases: Vec<(&str, Vec<u8>, QuotientOperandModel, &str)> = Vec::new();
+    let mut below = bytes.clone();
+    below[ptr_at..ptr_at + 2].copy_from_slice(&0x0020u16.to_be_bytes());
+    cases.push((
+        "pointer below the windows",
+        below,
+        model.clone(),
+        "outside every window",
+    ));
+    let mut above = bytes.clone();
+    above[ptr_at..ptr_at + 2].copy_from_slice(&0x01c0u16.to_be_bytes());
+    cases.push((
+        "pointer past the windows",
+        above,
+        model.clone(),
+        "outside every window",
+    ));
+    let mut misaligned = bytes.clone();
+    misaligned[ptr_at..ptr_at + 2].copy_from_slice(&0x0101u16.to_be_bytes());
+    cases.push((
+        "misaligned pointer",
+        misaligned,
+        model.clone(),
+        "not 32-byte aligned",
+    ));
+    let mut bad_const = bytes.clone();
+    bad_const[const_at] = u8::try_from(model.num_consts).unwrap();
+    cases.push((
+        "u8 const slot past the table",
+        bad_const,
+        model.clone(),
+        "u8 const slot",
+    ));
+    let mut bad_bucket = bytes.clone();
+    bad_bucket[fold_at + 1] = 2;
+    cases.push((
+        "selector bucket",
+        bad_bucket,
+        model.clone(),
+        "FOLD_SELECTOR bucket 2",
+    ));
+    let mut bad_gap = bytes.clone();
+    let gap = u16::try_from(model.selector_max_power + 1).unwrap();
+    bad_gap[fold_at + 2..fold_at + 4].copy_from_slice(&gap.to_be_bytes());
+    cases.push(("selector gap", bad_gap, model.clone(), "FOLD_SELECTOR gap"));
+    let mut small_stack = model.clone();
+    small_stack.stack_words -= 1;
+    cases.push((
+        "stack region",
+        bytes.clone(),
+        small_stack,
+        "planned stack region",
+    ));
+
+    for (name, corrupted, model, expected) in cases {
+        validate_quotient_program(&corrupted)
+            .unwrap_or_else(|err| panic!("{name}: corruption must stay structurally valid: {err}"));
+        let err = validate_quotient_program_operands(&corrupted, &model)
+            .expect_err(&format!("{name}: out-of-range operand must be rejected"));
+        assert!(
+            err.contains(expected),
+            "{name}: unexpected rejection reason: {err}"
+        );
+    }
+
+    // The u16 slot form is checked the same way.
+    let wide = [Q_OP_PUSH_CONST, 0x01, 0x00, Q_OP_FOLD_MAIN];
+    let wide_model = QuotientOperandModel {
+        num_consts: 0x100,
+        stack_words: 1,
+        ..QuotientOperandModel::default()
+    };
+    let err = validate_quotient_program_operands(&wide, &wide_model)
+        .expect_err("u16 const slot 256 is past a 256-entry table");
+    assert!(err.contains("u16 const slot 256"), "{err}");
+
+    // The narrower helpers see exactly their own operand class.
+    let mut ptr_only = bytes.clone();
+    ptr_only[ptr_at..ptr_at + 2].copy_from_slice(&0x0020u16.to_be_bytes());
+    validate_quotient_const_slots(&ptr_only, num_consts)
+        .expect("a pointer corruption is not a const-slot violation");
+    validate_quotient_mem_ptrs(&ptr_only, &read_model)
+        .expect_err("pointer corruption must fail the pointer pass");
+}
+
+/// QVM-01: the rendered runtime guard constants come from the same operand
+/// model the build-time validator uses.
+#[test]
+fn quotient_runtime_guards_share_the_build_time_operand_model() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let model = plan.quotient_operand_model();
+    assert_eq!(model.read.windows, plan.quotient_read_model().windows);
+
+    let guards = plan.quotient.program.guards;
+    assert_eq!(
+        guards,
+        VerifierBuildInputs::quotient_vm_guards(&model, &plan.memory)
+    );
+    assert_eq!(
+        guards.const_max + 1,
+        plan.quotient.build.consts.len().max(1)
+    );
+    assert_eq!(guards.num_selector_buckets, plan.meta.num_simple_selectors);
+    assert_eq!(
+        guards.stack_last + WORD_BYTES,
+        plan.memory.quotient_stack_hi
+    );
+    let stack = plan.memory.map.region("quotient_stack").expect("quotient stack region");
+    assert_eq!(stack.start + stack.len, plan.memory.quotient_stack_hi);
+    validate_quotient_program_operands(&plan.quotient.build.bytes, &model)
+        .expect("planned program must satisfy its operand model");
 }
 
 #[test]
