@@ -26,6 +26,7 @@ verification keys break backwards compatibility.
 * Add full accumulator/MSM collapse paths that also evaluate fixed-base terms in-circuit and off-circuit
 
 ### Fixed
+* Encode the foreign point `is_id` flag as a dedicated public input element instead of packing it into the first limb (cherry-picked from [#398](https://github.com/midnightntwrk/midnight-zk/pull/398))
 * Fix cost model to pass correct number of committed instances [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 
 ### Changed
