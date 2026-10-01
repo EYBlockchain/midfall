@@ -371,6 +371,8 @@ pub(crate) struct QuotientExecutionManifestEntry {
     pub(crate) target: QuotientTarget,
     /// How this identity is executed in the generated verifier.
     pub(crate) execution: QuotientExecutionKind,
+    /// Typed expression evaluated for this identity.
+    pub(crate) expr: QuotientExpr,
 }
 
 impl QuotientProgramPlan {
@@ -478,6 +480,7 @@ fn quotient_execution_entry(
         source: identity.meta.source.clone(),
         target: identity.target,
         execution,
+        expr: identity.expr.clone(),
     }
 }
 

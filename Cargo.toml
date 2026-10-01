@@ -9,6 +9,7 @@ members = [
     "aggregation",
     "zkir",
     "zk_stdlib",
+    "third_party/blake2b_halo2",
 ]
 
 package = { license-file = "LICENSE" }

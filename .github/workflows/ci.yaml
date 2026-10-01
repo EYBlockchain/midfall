@@ -175,9 +175,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-      - uses: dtolnay/rust-toolchain@nightly
-      - run: rustup component add rustfmt --toolchain nightly
-      - run: cargo +nightly fmt --all -- --check
+      # Pinned so a new nightly rustfmt cannot fail every PR on unchanged code.
+      # Bump the date together with a repo-wide `cargo fmt --all`.
+      - run: rustup toolchain install nightly-2026-04-08 --profile minimal --component rustfmt
+      - run: cargo +nightly-2026-04-08 fmt --all -- --check
 
   clippy:
     if: github.event.pull_request.draft == false

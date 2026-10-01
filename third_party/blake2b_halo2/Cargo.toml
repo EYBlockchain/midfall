@@ -26,9 +26,6 @@ num-bigint = "0.4"
 criterion = { version = "0.5.1", features = ["html_reports", "csv_output"] }
 blake2-rfc = "0.2.18"
 
-[profile.bench]
-lto = "fat"
-
 [[bench]]
 name = "mocked_proving"
 harness = false

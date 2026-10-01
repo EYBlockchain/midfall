@@ -17,7 +17,8 @@ mod test;
 
 pub use api::{
     AccumulatorEncoding, AccumulatorEncodingKind, GeneratorConfig, GeneratorError,
-    ProofEvaluationCounts, QuotientIdentityManifest, QuotientIdentityManifestEntry,
+    ProofEvaluationCounts, QuotientCertificate, QuotientCertificateEntry,
+    QuotientIdentityExecution, QuotientIdentityManifest, QuotientIdentityManifestEntry,
     QuotientIdentityManifestTarget, QuotientIdentitySource, RenderDiagnostics, RenderOptions,
     RenderQuotient, RenderVk, RenderedArtifacts, RepackError,
 };
