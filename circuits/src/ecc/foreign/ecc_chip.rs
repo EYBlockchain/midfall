@@ -231,12 +231,8 @@ where
         ]
         .concat();
 
-        // In order to involve the is_id flag, we leverage the fact that the
-        // limbs of x are in the range [0, B) and add the is_id flag (scaled by B) to
-        // the first limb.
-        if p.is_identity().into() {
-            pis[0] += F::from(2).pow_vartime([B::LOG2_BASE as u64]);
-        }
+        let is_id: bool = p.is_identity().into();
+        pis.push(F::from(is_id as u64));
 
         pis
     }
@@ -377,15 +373,7 @@ where
         ]
         .concat();
 
-        // In order to involve the is_id flag, we leverage the fact that the
-        // limbs of x are in the range [0, B) and add the is_id flag (scaled by B) to
-        // the first limb.
-        let base = F::from(2).pow_vartime([B::LOG2_BASE as u64]);
-        pis[0] = self.native_gadget.linear_combination(
-            layouter,
-            &[(F::ONE, pis[0].clone()), (base, p.is_id.clone().into())],
-            F::ZERO,
-        )?;
+        pis.push(p.is_id.clone().into());
 
         Ok(pis)
     }
@@ -2234,6 +2222,8 @@ where
 mod tests {
     use group::Group;
     use midnight_curves::{k256::K256, Fq as BlsScalar, G1Projective as BlsG1};
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     use super::*;
     use crate::{
@@ -2279,6 +2269,48 @@ mod tests {
     test!(assertions, test_assertions);
 
     test!(public_input, test_public_inputs);
+
+    fn assert_public_input_encoding<C>()
+    where
+        C: WeierstrassCurve,
+        MultiEmulationParams: FieldEmulationParams<BlsScalar, C::Base>,
+    {
+        let mut rng = ChaCha8Rng::seed_from_u64(0xc0ffee);
+        let points = [
+            C::CryptographicGroup::identity(),
+            C::CryptographicGroup::generator(),
+            C::CryptographicGroup::random(&mut rng),
+            C::CryptographicGroup::random(&mut rng),
+            C::CryptographicGroup::random(&mut rng),
+        ];
+
+        for (i, point) in points.iter().enumerate() {
+            let is_id: bool = point.is_identity().into();
+            assert_eq!(is_id, i == 0);
+
+            let (x, y) = (*point).into().coordinates().unwrap_or((C::Base::ZERO, C::Base::ZERO));
+            let coordinate_encoding = [
+                AssignedField::<BlsScalar, C::Base, MultiEmulationParams>::as_public_input(&x),
+                AssignedField::<BlsScalar, C::Base, MultiEmulationParams>::as_public_input(&y),
+            ]
+            .concat();
+            let point_encoding =
+                AssignedForeignPoint::<BlsScalar, C, MultiEmulationParams>::as_public_input(point);
+
+            assert_eq!(point_encoding.len(), coordinate_encoding.len() + 1);
+            assert_eq!(
+                &point_encoding[..coordinate_encoding.len()],
+                coordinate_encoding.as_slice()
+            );
+            assert_eq!(point_encoding.last(), Some(&BlsScalar::from(is_id as u64)));
+        }
+    }
+
+    #[test]
+    fn test_public_input_encoding_layout() {
+        assert_public_input_encoding::<K256>();
+        assert_public_input_encoding::<BlsG1>();
+    }
 
     test!(equality, test_is_equal);
 

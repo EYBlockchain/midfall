@@ -21,7 +21,7 @@
       "max_deg": "5",
       "permutations": "14",
       "point_sets": "3",
-      "rows": "2580",
+      "rows": "5120",
       "table_rows": "387"
     },
     "Insert": {
@@ -32,7 +32,7 @@
       "max_deg": "5",
       "permutations": "14",
       "point_sets": "3",
-      "rows": "5160",
+      "rows": "10240",
       "table_rows": "387"
     }
   },
@@ -1272,7 +1272,7 @@
       "max_deg": "5",
       "permutations": "29",
       "point_sets": "5",
-      "rows": "78",
+      "rows": "76",
       "table_rows": "385"
     },
     "select": {
@@ -1516,7 +1516,7 @@
       "max_deg": "5",
       "permutations": "31",
       "point_sets": "5",
-      "rows": "46",
+      "rows": "44",
       "table_rows": "449"
     },
     "select": {

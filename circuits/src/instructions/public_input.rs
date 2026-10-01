@@ -180,12 +180,12 @@ pub(crate) mod tests {
             };
 
             if self.must_pass {
-                chip.as_public_input(&mut layouter, &x)?
-                    .iter()
-                    .zip(Assigned::as_public_input(&x_val))
-                    .for_each(|(xi, ci)| {
-                        xi.value().map(|v| assert_eq!(*v, ci));
-                    });
+                let in_circuit = chip.as_public_input(&mut layouter, &x)?;
+                let off_circuit = Assigned::as_public_input(&x_val);
+                assert_eq!(in_circuit.len(), off_circuit.len());
+                in_circuit.iter().zip(off_circuit).for_each(|(xi, ci)| {
+                    xi.value().map(|v| assert_eq!(*v, ci));
+                });
             }
 
             chip.load_from_scratch(&mut layouter)
@@ -238,13 +238,14 @@ pub(crate) mod tests {
     {
         let mut rng = ChaCha8Rng::seed_from_u64(0xc0ffee);
         let mut cost_model = true;
-        [
+        let values = [
+            Assigned::sample_inner(&mut rng),
+            Assigned::sample_inner(&mut rng),
             Assigned::sample_inner(&mut rng),
             Assigned::inner_zero(),
             Assigned::inner_one(),
-        ]
-        .into_iter()
-        .for_each(|x| {
+        ];
+        values.into_iter().for_each(|x| {
             run::<F, Assigned, Chip>(&x, Operation::Constrain, true, cost_model, name);
             cost_model = false;
             run::<F, Assigned, Chip>(&x, Operation::Assign, true, cost_model, name);
