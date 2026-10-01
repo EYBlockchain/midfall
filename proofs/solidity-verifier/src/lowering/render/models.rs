@@ -634,6 +634,27 @@ pub(crate) struct QuotientProgram {
     pub(crate) stack_mptr: usize,
     /// Memory pointer to the first encoded program word.
     pub(crate) program_mptr: usize,
+    /// Runtime structural checks rendered into the interpreter (QVM-01).
+    pub(crate) guards: QuotientVmGuards,
+}
+
+/// Constants for the interpreter's runtime structural checks (QVM-01).
+///
+/// Every value is derived from the same `QuotientOperandModel` the build-time
+/// operand validator checks the program against
+/// (`LoweringPlan::quotient_operand_model`), so the runtime and build-time
+/// layers share one source of table sizes and stack bounds. Memory pointers
+/// and `u8` constant slots are range-checked at build time only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct QuotientVmGuards {
+    /// Largest valid constant-table slot (`num_consts - 1`), checked for the
+    /// `u16` slot forms.
+    pub(crate) const_max: usize,
+    /// Number of simple-selector accumulator buckets.
+    pub(crate) num_selector_buckets: usize,
+    /// Highest address a spill may write (`stack_hi - 0x20`), where
+    /// `stack_hi` is the end of the planned stack / callback scratch region.
+    pub(crate) stack_last: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -910,7 +931,10 @@ mod filters {
 mod tests {
     use ruint::aliases::U256;
 
-    use super::{G1Words, Halo2Verifier, Halo2VerifyingKey, QuotientProgram, VK_RUNTIME_PREFIX};
+    use super::{
+        G1Words, Halo2Verifier, Halo2VerifyingKey, QuotientProgram, QuotientVmGuards,
+        VK_RUNTIME_PREFIX,
+    };
     use crate::lowering::{
         abi::proof::ProofCalldataLayout,
         encoding::{ConstraintSystemMeta, Ptr},
@@ -1129,6 +1153,13 @@ mod tests {
                 selector_tail_updates: vec![],
                 stack_mptr: 0,
                 program_mptr: 0,
+                // Synthetic model: permissive guards keep the rendered checks
+                // inert for layout-shape tests.
+                guards: QuotientVmGuards {
+                    const_max: usize::MAX,
+                    num_selector_buckets: usize::MAX,
+                    stack_last: usize::MAX,
+                },
             }),
             pcs_computations: vec![],
             simple_selector_cols: vec![],

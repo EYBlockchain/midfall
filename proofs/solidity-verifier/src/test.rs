@@ -45,9 +45,16 @@ use ruint::aliases::U256;
 use sha3::Digest;
 
 use crate::{
-    compile_solidity, encode_calldata, pinned_solc_available, CallOutcome, Evm, GeneratorConfig,
-    RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
-    FN_SIG_VERIFY_PROOF,
+    compile_solidity, encode_calldata,
+    lowering::quotient_numerator::vm::{
+        quotient_bytecode_ops, validate_quotient_program_operands, QuotientOperandModel, Q_OP_ADD,
+        Q_OP_ADD_CONST, Q_OP_ADD_CONST_U8, Q_OP_ADD_MEM_U16, Q_OP_FOLD_MAIN, Q_OP_FOLD_SELECTOR,
+        Q_OP_MUL_CONST, Q_OP_MUL_CONST_U8, Q_OP_MUL_MEM_U16, Q_OP_NATIVE_IDENTITY,
+        Q_OP_NATIVE_LOOKUP, Q_OP_NATIVE_PERMUTATION, Q_OP_NEG, Q_OP_PUSH_CONST, Q_OP_PUSH_CONST_U8,
+        Q_OP_PUSH_MEM_U16,
+    },
+    pinned_solc_available, CallOutcome, Evm, GeneratorConfig, RenderDiagnostics, RenderOptions,
+    RenderQuotient, RenderVk, SolidityGenerator, FN_SIG_VERIFY_PROOF,
 };
 
 /// Scalar field used by the BLS12-381 Poseidon fixtures.
@@ -60,6 +67,11 @@ type PoseidonVerifierParams =
 
 /// Small fixture domain size for Poseidon verifier tests.
 const POSEIDON_K: u32 = 6;
+/// Distinct constants in the `many_constants` shape gate: past the 256 slots a
+/// `u8` constant operand can address.
+const SHAPE_FUZZ_MANY_CONSTANTS: u64 = 264;
+/// Witness row on which the `many_constants` selector is enabled.
+const SHAPE_FUZZ_MANY_CONSTANTS_ROW: usize = 5;
 /// Environment flag that opts into expensive EVM/Solidity integration tests.
 const RUN_EVM_TESTS_ENV: &str = "HALO2_SOLIDITY_RUN_EVM_TESTS";
 /// Minimal caller used to exercise the production verifier under STATICCALL.
@@ -218,6 +230,9 @@ struct ShapeFuzzSpec {
     additive_selector: bool,
     complex_selector: bool,
     fixed_scale: bool,
+    /// Add a simple-selector gate with more than 256 distinct constants, so
+    /// the compact quotient VM must emit `u16` constant-slot opcodes.
+    many_constants: bool,
     tag: u64,
 }
 
@@ -238,6 +253,7 @@ struct ShapeFuzzConfig {
     fixed_scale: Option<Column<Fixed>>,
     lookup_table: Option<Column<Fixed>>,
     selector: Selector,
+    many_constants: Option<Selector>,
 }
 
 #[derive(Clone, Debug)]
@@ -372,6 +388,18 @@ impl Circuit<F> for ShapeFuzzCircuit {
             });
         }
 
+        let many_constants = spec.many_constants.then(|| {
+            let selector = meta.selector();
+            meta.create_gate("shape-fuzz many constants", |meta| {
+                let a_cur = meta.query_advice(a, Rotation::cur());
+                let constraints = (0..SHAPE_FUZZ_MANY_CONSTANTS)
+                    .map(|i| Expression::Constant(F::from(1_000 + i)) * a_cur.clone())
+                    .collect::<Vec<_>>();
+                Constraints::with_selector(selector, constraints)
+            });
+            selector
+        });
+
         ShapeFuzzConfig {
             a,
             b,
@@ -380,6 +408,7 @@ impl Circuit<F> for ShapeFuzzCircuit {
             fixed_scale,
             lookup_table,
             selector,
+            many_constants,
         }
     }
 
@@ -422,6 +451,17 @@ impl Circuit<F> for ShapeFuzzCircuit {
                         column,
                         0,
                         || Value::known(self.a),
+                    )?;
+                }
+
+                if let Some(selector) = config.many_constants {
+                    // `c_i * a = 0` for every constant on the one enabled row.
+                    selector.enable(&mut region, SHAPE_FUZZ_MANY_CONSTANTS_ROW)?;
+                    region.assign_advice(
+                        || "many-constants zero",
+                        config.a,
+                        SHAPE_FUZZ_MANY_CONSTANTS_ROW,
+                        || Value::known(F::ZERO),
                     )?;
                 }
 
@@ -724,6 +764,10 @@ struct ShapeSolidityCase {
     vk_solidity: String,
     proof: Vec<u8>,
     public: Vec<F>,
+    /// Finalized quotient VM program pinned into `vk_solidity`.
+    quotient_program: Vec<u8>,
+    /// Operand bounds the program was validated against (QVM-01).
+    quotient_operand_model: QuotientOperandModel,
 }
 
 fn build_shape_solidity_case_with_params(
@@ -789,6 +833,7 @@ fn build_shape_solidity_case_with_params(
     let proof = generator
         .repack_proof(&compressed_proof)
         .unwrap_or_else(|err| panic!("shape fuzz `{}` repack failed: {err:?}", case.name));
+    let plan = generator.inputs().lowering_plan();
 
     ShapeSolidityCase {
         name: case.name,
@@ -796,6 +841,8 @@ fn build_shape_solidity_case_with_params(
         vk_solidity: artifacts.verifying_key.expect("separate render includes VK"),
         proof,
         public: public.to_vec(),
+        quotient_program: plan.quotient.build.bytes.clone(),
+        quotient_operand_model: plan.quotient_operand_model(),
     }
 }
 
@@ -916,6 +963,7 @@ fn generated_shape_fuzz_spec(seed: u64) -> ShapeFuzzSpec {
         additive_selector: seed & 0x10 != 0,
         complex_selector: seed & 0x20 != 0,
         fixed_scale: seed & 0x40 != 0,
+        many_constants: false,
         tag: 100 + seed.rotate_left(17) % 10_000,
     }
 }
@@ -3991,4 +4039,518 @@ fn srs_dir() -> String {
         .join("../../zk_stdlib/examples/assets")
         .to_string_lossy()
         .into_owned()
+}
+
+// ---------------------------------------------------------------------------
+// QVM-01: corrupted quotient programs are rejected at build time, and the
+// interpreter's remaining runtime structural checks revert on them.
+// ---------------------------------------------------------------------------
+
+/// One rendered verifier/VK pair plus the quotient program pinned into it.
+struct Qvm01Fixture {
+    name: &'static str,
+    verifier_solidity: String,
+    vk_solidity: String,
+    calldata: Vec<u8>,
+    program: Vec<u8>,
+    model: QuotientOperandModel,
+}
+
+/// One program corruption and what must catch it.
+struct Qvm01Corruption {
+    name: String,
+    bytes: Vec<u8>,
+    /// Substring of the build-time validator's rejection, if it is specific.
+    build_error: Option<&'static str>,
+    /// Substring of the rendered interpreter guard the revert must come from,
+    /// or `None` for operand ranges that are enforced at build time only
+    /// (memory pointers, `u8` constant slots).
+    runtime_guard: Option<&'static str>,
+}
+
+/// Payload-order positions of the `// quotient_program` value literals in a
+/// rendered VK source, as `(source offset of the 64 hex digits, payload
+/// offset)`.
+fn qvm01_program_word_literals(vk_solidity: &str) -> Vec<(usize, usize)> {
+    let mut words = Vec::new();
+    let mut line_start = 0usize;
+    for line in vk_solidity.split_inclusive('\n') {
+        if line.contains("// quotient_program") && line.contains("mstore(add(payload, ") {
+            let off_start = line.find("payload, 0x").expect("payload offset") + "payload, 0x".len();
+            let off_end = off_start + line[off_start..].find(')').expect("offset end");
+            let payload_offset = usize::from_str_radix(&line[off_start..off_end], 16).unwrap();
+            let value_start = off_end + line[off_end..].find("0x").expect("value literal") + 2;
+            assert!(line[value_start..value_start + 64].bytes().all(|b| b.is_ascii_hexdigit()));
+            words.push((line_start + value_start, payload_offset));
+        }
+        line_start += line.len();
+    }
+    words.sort_by_key(|(_, payload_offset)| *payload_offset);
+    words
+}
+
+/// Decode the first `len` quotient program bytes from a rendered VK source.
+fn qvm01_program_from_vk(vk_solidity: &str, len: usize) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for (value_start, _) in qvm01_program_word_literals(vk_solidity) {
+        bytes.extend(hex::decode(&vk_solidity[value_start..value_start + 64]).unwrap());
+    }
+    bytes.truncate(len);
+    bytes
+}
+
+/// Rewrite the VK source's quotient program words with `program`.
+fn qvm01_vk_with_program(vk_solidity: &str, program: &[u8]) -> String {
+    let literals = qvm01_program_word_literals(vk_solidity);
+    let mut padded = program.to_vec();
+    padded.resize(literals.len() * 32, 0);
+    let mut out = vk_solidity.to_string();
+    for ((value_start, _), word) in literals.iter().zip(padded.chunks(32)) {
+        out.replace_range(*value_start..*value_start + 64, &hex::encode(word));
+    }
+    out
+}
+
+/// Re-pin `EXPECTED_VK_CODEHASH_WORD` to the codehash of the deployed VK
+/// runtime, so a corrupted program passes the dependency pin and reaches the
+/// interpreter.
+fn qvm01_repin_vk_codehash(verifier_solidity: &str, vk_codehash: U256) -> String {
+    let needle = "uint256 internal constant EXPECTED_VK_CODEHASH_WORD = 0x";
+    let start = verifier_solidity.find(needle).expect("VK codehash pin") + needle.len();
+    let mut out = verifier_solidity.to_string();
+    out.replace_range(start..start + 64, &format!("{vk_codehash:064x}"));
+    out
+}
+
+/// Test-only instrumentation: make every `revert(0, 0)` return its 1-based
+/// source line, so a rejected call names the check that fired.
+fn qvm01_tag_reverts(verifier_solidity: &str) -> String {
+    verifier_solidity
+        .lines()
+        .enumerate()
+        .map(|(idx, line)| {
+            line.replace(
+                "revert(0, 0)",
+                &format!("mstore(0x00, {}) revert(0x00, 0x20)", idx + 1),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Deploy `vk_solidity` and a verifier re-pinned to it, then call it.
+fn qvm01_run(verifier_solidity: &str, vk_solidity: &str, calldata: &[u8]) -> CallOutcome {
+    let mut evm = Evm::default();
+    let vk_address = evm.create(compile_solidity(vk_solidity));
+    let verifier = qvm01_repin_vk_codehash(verifier_solidity, evm.code_hash(vk_address));
+    let verifier_address = evm.create_with_address_arg(compile_solidity(&verifier), vk_address);
+    evm.try_call_with_gas(verifier_address, calldata.to_vec(), 50_000_000)
+}
+
+/// Assert one corruption is rejected at build time and, for the checks kept at
+/// run time, reverts in the production interpreter at the expected guard once
+/// pinned into the VK.
+fn qvm01_assert_corruption_rejected(fixture: &Qvm01Fixture, corruption: &Qvm01Corruption) {
+    let context = format!("{} / {}", fixture.name, corruption.name);
+    assert_eq!(
+        corruption.bytes.len(),
+        fixture.program.len(),
+        "{context}: same length"
+    );
+    assert_ne!(
+        corruption.bytes, fixture.program,
+        "{context}: corruption changes the program"
+    );
+
+    // Build time: the operand validator run by LoweringPlan rejects the bytes
+    // before any verifier or VK could be rendered from them.
+    let build = validate_quotient_program_operands(&corruption.bytes, &fixture.model).expect_err(
+        &format!("{context}: build-time validator must reject the program"),
+    );
+    if let Some(expected) = corruption.build_error {
+        assert!(
+            build.contains(expected),
+            "{context}: unexpected build rejection: {build}"
+        );
+    }
+
+    let Some(runtime_guard) = corruption.runtime_guard else {
+        // Pointer and u8 constant-slot ranges have no runtime clamp: the
+        // byte validator above is the enforcement, and the VK codehash pins
+        // the validated program.
+        eprintln!("[qvm01] {context}: build-time rejected ({build}); build-time only");
+        return;
+    };
+
+    // Run time: pin the corrupted program into the VK and re-pin the codehash.
+    let corrupted_vk = qvm01_vk_with_program(&fixture.vk_solidity, &corruption.bytes);
+    assert_eq!(
+        qvm01_program_from_vk(&corrupted_vk, corruption.bytes.len()),
+        corruption.bytes,
+        "{context}: VK rewrite round-trips"
+    );
+    let production = qvm01_run(&fixture.verifier_solidity, &corrupted_vk, &fixture.calldata);
+    match production {
+        CallOutcome::Revert { ref output, .. } => {
+            assert!(output.is_empty(), "{context}: plain revert(0, 0) expected");
+        }
+        other => panic!("{context}: production verifier did not revert: {other:?}"),
+    }
+
+    let tagged_source = qvm01_tag_reverts(&fixture.verifier_solidity);
+    let line = match qvm01_run(&tagged_source, &corrupted_vk, &fixture.calldata) {
+        CallOutcome::Revert { output, .. } if output.len() == 32 => {
+            U256::from_be_slice(&output).to::<usize>()
+        }
+        other => panic!("{context}: tagged verifier did not revert with a tag: {other:?}"),
+    };
+    let guard = fixture.verifier_solidity.lines().nth(line - 1).expect("tagged line").trim();
+    assert!(
+        guard.contains(runtime_guard),
+        "{context}: reverted at line {line} `{guard}`, expected a `{runtime_guard}` guard"
+    );
+    eprintln!(
+        "[qvm01] {context}: build-time rejected ({build}); runtime reverted at `{guard}` \
+         (verifier line {line})"
+    );
+}
+
+/// Offsets and opcodes of every instruction in a finalized program.
+fn qvm01_ops(program: &[u8]) -> Vec<(usize, u8, usize)> {
+    quotient_bytecode_ops(program).collect()
+}
+
+/// First instruction whose opcode is in `ops`.
+fn qvm01_first(program: &[u8], ops: &[u8]) -> Option<(usize, u8, usize)> {
+    qvm01_ops(program).into_iter().find(|(_, op, _)| ops.contains(op))
+}
+
+/// Poseidon fixture: separate verifier and VK, a valid proof, and the plan.
+fn qvm01_poseidon_fixture() -> Qvm01Fixture {
+    let fixture = create_property_poseidon_fixture();
+    let srs = srs_for_test(&PoseidonExample, Some(POSEIDON_K));
+    let generator = SolidityGenerator::new(&srs, fixture.vk.vk(), GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+    let program = plan.quotient.build.bytes.clone();
+    assert_eq!(
+        qvm01_program_from_vk(&fixture.vk_solidity, program.len()),
+        program,
+        "the plan's program is the one pinned into the fixture VK"
+    );
+    Qvm01Fixture {
+        name: "poseidon",
+        verifier_solidity: fixture.separate_verifier_solidity.clone(),
+        vk_solidity: fixture.vk_solidity.clone(),
+        calldata: encode_calldata(&fixture.proof, &fixture.instances),
+        program,
+        model: plan.quotient_operand_model(),
+    }
+}
+
+/// Corruptions of a real program, one per interpreter check.
+fn qvm01_corruptions(fixture: &Qvm01Fixture) -> Vec<Qvm01Corruption> {
+    let program = &fixture.program;
+    let model = &fixture.model;
+    let ops = qvm01_ops(program);
+    let used = |op: u8| ops.iter().any(|(_, candidate, _)| *candidate == op);
+    let mut out = Vec::new();
+    let mut push = |name: &str, bytes: Vec<u8>, build_error, runtime_guard| {
+        out.push(Qvm01Corruption {
+            name: name.to_string(),
+            bytes,
+            build_error,
+            runtime_guard,
+        })
+    };
+
+    // Memory pointers below, above and misaligned inside the read windows
+    // (build time only).
+    let live = model.read.windows.iter().filter(|window| window.len > 0);
+    let lo = live.clone().map(|window| window.start).min().expect("read windows");
+    let end = live.map(|window| window.start + window.len).max().expect("read windows");
+    if let Some((idx, _, _)) = qvm01_first(
+        program,
+        &[Q_OP_PUSH_MEM_U16, Q_OP_ADD_MEM_U16, Q_OP_MUL_MEM_U16],
+    ) {
+        let original = u16::from_be_bytes([program[idx + 1], program[idx + 2]]) as usize;
+        for (name, ptr, build_error) in [
+            (
+                "u16 pointer below the read windows",
+                0x0020usize,
+                "outside every window",
+            ),
+            (
+                "u16 pointer above the read windows",
+                end,
+                "outside every window",
+            ),
+            (
+                "u16 pointer misaligned inside a window",
+                original + 1,
+                "not 32-byte aligned",
+            ),
+        ] {
+            assert!(ptr < lo || ptr >= end || ptr % 32 != 0);
+            let mut bytes = program.clone();
+            bytes[idx + 1..idx + 3].copy_from_slice(&u16::try_from(ptr).unwrap().to_be_bytes());
+            push(name, bytes, Some(build_error), None);
+        }
+    }
+
+    // Constant slots one past the table.
+    if let Some((idx, _, _)) = qvm01_first(
+        program,
+        &[Q_OP_PUSH_CONST_U8, Q_OP_ADD_CONST_U8, Q_OP_MUL_CONST_U8],
+    ) {
+        if let Ok(slot) = u8::try_from(model.num_consts) {
+            let mut bytes = program.clone();
+            bytes[idx + 1] = slot;
+            push(
+                "u8 constant slot past the table",
+                bytes,
+                Some("u8 const slot"),
+                None,
+            );
+        }
+    }
+    if let Some((idx, _, _)) =
+        qvm01_first(program, &[Q_OP_PUSH_CONST, Q_OP_ADD_CONST, Q_OP_MUL_CONST])
+    {
+        let mut bytes = program.clone();
+        let slot = u16::try_from(model.num_consts).unwrap();
+        bytes[idx + 1..idx + 3].copy_from_slice(&slot.to_be_bytes());
+        push(
+            "u16 constant slot past the table",
+            bytes,
+            Some("u16 const slot"),
+            Some("if gt(qconst, "),
+        );
+    }
+
+    // FOLD_SELECTOR bucket index and y-power gap.
+    if let Some((idx, _, _)) = qvm01_first(program, &[Q_OP_FOLD_SELECTOR]) {
+        let mut bytes = program.clone();
+        bytes[idx + 1] = u8::try_from(model.num_selector_buckets).unwrap();
+        push(
+            "FOLD_SELECTOR bucket index past the buckets",
+            bytes,
+            Some("FOLD_SELECTOR bucket"),
+            Some("if iszero(lt(q_sel_idx, "),
+        );
+        let mut bytes = program.clone();
+        let gap = u16::try_from(model.selector_max_power + 1).unwrap();
+        bytes[idx + 2..idx + 4].copy_from_slice(&gap.to_be_bytes());
+        push(
+            "FOLD_SELECTOR gap past the y-power table",
+            bytes,
+            Some("FOLD_SELECTOR gap"),
+            Some("if gt(q_sel_gap, "),
+        );
+    }
+
+    // Stack discipline. An in-place filler (NEG) keeps lengths aligned and is
+    // inert on a dead top.
+    let boundary = |op: u8| {
+        [
+            Q_OP_FOLD_MAIN,
+            Q_OP_FOLD_SELECTOR,
+            Q_OP_NATIVE_PERMUTATION,
+            Q_OP_NATIVE_LOOKUP,
+            Q_OP_NATIVE_IDENTITY,
+        ]
+        .contains(&op)
+    };
+    if used(Q_OP_NEG) {
+        if let Some(fold_pos) = ops
+            .iter()
+            .position(|(_, op, _)| *op == Q_OP_FOLD_SELECTOR || *op == Q_OP_FOLD_MAIN)
+        {
+            let fold = ops[fold_pos].0;
+            let start = ops[..fold_pos]
+                .iter()
+                .rev()
+                .find(|(_, op, _)| boundary(*op))
+                .map_or(0, |(idx, _, len)| idx + len);
+            // FOLD with no live top: the identity's expression is gone.
+            let mut bytes = program.clone();
+            bytes[start..fold].fill(Q_OP_NEG);
+            push(
+                "FOLD with no live top",
+                bytes,
+                Some("stack underflow"),
+                Some("if iszero(and(q_has_top, eq(q_sp, "),
+            );
+            // ADD with only the cached top live: pops below the stack floor.
+            let (first, first_op, first_len) = ops[..fold_pos]
+                .iter()
+                .copied()
+                .find(|(idx, _, _)| *idx == start)
+                .expect("identity starts at an instruction");
+            if used(Q_OP_ADD) && first_op == Q_OP_PUSH_MEM_U16 && first + first_len < fold {
+                let mut bytes = program.clone();
+                bytes[first + first_len] = Q_OP_ADD;
+                bytes[first + first_len + 1..fold].fill(Q_OP_NEG);
+                push(
+                    "ADD below the stack floor",
+                    bytes,
+                    Some("stack underflow"),
+                    Some("if eq(q_sp, "),
+                );
+            }
+        }
+
+        // Native marker reached with the previous identity still live.
+        if let Some(native_pos) = ops.iter().position(|(idx, op, _)| {
+            [
+                Q_OP_NATIVE_PERMUTATION,
+                Q_OP_NATIVE_LOOKUP,
+                Q_OP_NATIVE_IDENTITY,
+            ]
+            .contains(op)
+                && *idx > 0
+                && ops.iter().any(|(fold, fop, flen)| {
+                    (*fop == Q_OP_FOLD_SELECTOR || *fop == Q_OP_FOLD_MAIN) && fold + flen == *idx
+                })
+        }) {
+            let (fold, _, fold_len) = ops[native_pos - 1];
+            let mut bytes = program.clone();
+            bytes[fold..fold + fold_len].fill(Q_OP_NEG);
+            push(
+                "native marker with a live stack",
+                bytes,
+                Some("requires an empty stack"),
+                Some("if or(q_has_top, xor(q_sp, "),
+            );
+        }
+
+        // Stack overflow: more pushes than the planned region holds. The
+        // remaining bytes are inert fillers; the ceiling fires first.
+        if let Some((idx, _, len)) = qvm01_first(program, &[Q_OP_PUSH_MEM_U16]) {
+            let pushes = model.stack_words + 2;
+            if pushes * len <= program.len() {
+                let push_bytes = program[idx..idx + len].to_vec();
+                let mut bytes = vec![Q_OP_NEG; program.len()];
+                for k in 0..pushes {
+                    bytes[k * len..(k + 1) * len].copy_from_slice(&push_bytes);
+                }
+                push(
+                    "stack overflow past the planned region",
+                    bytes,
+                    None,
+                    Some("if gt(q_sp, "),
+                );
+            }
+        }
+    }
+    out
+}
+
+/// QVM-01 (Poseidon fixture): the build-time operand validator rejects every
+/// corrupted program before rendering. For the checks kept at run time (stack
+/// discipline, selector bucket and gap), the program corrupted after rendering
+/// and re-pinned into the VK also reverts at that check; pointer and `u8`
+/// constant-slot corruptions are enforced at build time only.
+#[test]
+fn quotient_vm_bounds_checks_reject_corrupted_poseidon_programs() {
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+    let fixture = qvm01_poseidon_fixture();
+
+    // Baseline: the re-pin plumbing and the revert tagging keep valid proofs
+    // accepted, so every rejection below is caused by the corruption.
+    for source in [
+        fixture.verifier_solidity.clone(),
+        qvm01_tag_reverts(&fixture.verifier_solidity),
+    ] {
+        let vk = qvm01_vk_with_program(&fixture.vk_solidity, &fixture.program);
+        assert_eq!(vk, fixture.vk_solidity);
+        match qvm01_run(&source, &vk, &fixture.calldata) {
+            CallOutcome::Success { output, .. } => {
+                assert_eq!(output, [vec![0; 31], vec![1]].concat())
+            }
+            other => panic!("baseline must accept: {other:?}"),
+        }
+    }
+
+    let corruptions = qvm01_corruptions(&fixture);
+    let names = corruptions.iter().map(|c| c.name.as_str()).collect::<Vec<_>>();
+    for expected in [
+        "u16 pointer below the read windows",
+        "u16 pointer above the read windows",
+        "u16 pointer misaligned inside a window",
+        "u8 constant slot past the table",
+        "FOLD_SELECTOR bucket index past the buckets",
+        "FOLD_SELECTOR gap past the y-power table",
+        "FOLD with no live top",
+        "ADD below the stack floor",
+        "native marker with a live stack",
+        "stack overflow past the planned region",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "Poseidon fixture cannot build `{expected}`: {names:?}"
+        );
+    }
+    for corruption in &corruptions {
+        qvm01_assert_corruption_rejected(&fixture, corruption);
+    }
+}
+
+/// QVM-01 (u16 constant slots): a shape with more than 256 distinct constants
+/// renders the wide constant-slot arms, whose runtime clamp is exercised here
+/// (pointer corruptions of the same program: build time only).
+#[test]
+fn quotient_vm_bounds_checks_reject_corrupted_wide_constant_programs() {
+    if !shape_fuzz_inputs_available_for_evm() {
+        return;
+    }
+    let case = ShapeFuzzCase {
+        name: "many constants",
+        k: 6,
+        seed: 0x0c01,
+        spec: ShapeFuzzSpec {
+            many_constants: true,
+            tag: 11,
+            ..ShapeFuzzSpec::default()
+        },
+    };
+    let mut setup_rng = ChaCha8Rng::seed_from_u64(case.seed ^ 0x5eed_5eed);
+    let params = PoseidonParams::unsafe_setup(case.k, &mut setup_rng);
+    let shape = build_shape_solidity_case_with_params(&params, &case);
+    assert!(
+        shape.quotient_operand_model.num_consts > 256,
+        "the shape must overflow u8 constant slots"
+    );
+    let fixture = Qvm01Fixture {
+        name: "many-constants shape",
+        calldata: encode_calldata(&shape.proof, &shape.public),
+        program: shape.quotient_program.clone(),
+        model: shape.quotient_operand_model.clone(),
+        verifier_solidity: shape.verifier_solidity,
+        vk_solidity: shape.vk_solidity,
+    };
+    assert_eq!(
+        qvm01_program_from_vk(&fixture.vk_solidity, fixture.program.len()),
+        fixture.program
+    );
+    match qvm01_run(
+        &fixture.verifier_solidity,
+        &fixture.vk_solidity,
+        &fixture.calldata,
+    ) {
+        CallOutcome::Success { output, .. } => assert_eq!(output, [vec![0; 31], vec![1]].concat()),
+        other => panic!("baseline must accept: {other:?}"),
+    }
+    let corruptions = qvm01_corruptions(&fixture)
+        .into_iter()
+        .filter(|c| c.name.contains("u16 constant") || c.name.contains("pointer"))
+        .collect::<Vec<_>>();
+    assert!(
+        corruptions.iter().any(|c| c.name == "u16 constant slot past the table"),
+        "the many-constants program must contain a u16 constant-slot opcode"
+    );
+    for corruption in &corruptions {
+        qvm01_assert_corruption_rejected(&fixture, corruption);
+    }
 }
