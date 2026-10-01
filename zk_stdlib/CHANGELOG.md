@@ -23,6 +23,7 @@ verification keys break backwards compatibility.
 * Fix cost model proof size check to account for committed instance columns [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 
 ### Changed
+* Bump `membership` example to `K = 14` for the 255-level map Merkle tree [#14](https://github.com/EYBlockchain/midfall/pull/14)
 * Update SRS-loading and verifier setup paths used by the Solidity verifier
   integration tests.
 * Add `nb_arith_cols` field to `ZkStdLibArch` for configurable arithmetic columns (requires `ZKSTD_VERSION` bump before release) [#287](https://github.com/midnightntwrk/midnight-zk/pull/287)
