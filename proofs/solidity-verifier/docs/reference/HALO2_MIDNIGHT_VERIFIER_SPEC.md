@@ -1358,8 +1358,10 @@ At `instances[offset]`, the decoded schema is:
 
 ```text
 lhs point coordinates
+lhs identity flag
 lhs scalar
 rhs point coordinates
+rhs identity flag
 rhs scalar
 optional RHS fixed-base scalar tail
 ```
@@ -1385,7 +1387,8 @@ With 7 limbs and 56-bit limbs:
 ```text
 limbs_per_word = 4
 coord_words    = ceil(7 / 4) = 2
-point_words    = 2 * coord_words = 4
+flag_words     = 1
+point_words    = 2 * coord_words + flag_words = 5
 ```
 
 So the collapsed no-tail layout is:
@@ -1393,11 +1396,16 @@ So the collapsed no-tail layout is:
 ```text
 lhs_x:      2 words
 lhs_y:      2 words
+lhs_is_id:  1 word
 lhs_scalar: 1 word
 rhs_x:      2 words
 rhs_y:      2 words
+rhs_is_id:  1 word
 rhs_scalar: 1 word
 ```
+
+for 12 words in total. The Moonlight point-pair layout is the same without the
+two scalar words, for 10 words in total.
 
 If a fixed-base scalar tail exists, it is consumed as RHS MSM scalars for:
 
@@ -1411,18 +1419,24 @@ Midfall's `BTreeMap` order.
 ### 13.2 Coordinate Reconstruction
 
 Coordinates are exposed by Midnight circuits as limbs of `coord - 1`, packed
-four limbs per native field element. The x coordinate's first packed word may
-carry an identity flag by adding one raw limb base.
+four limbs per native field element. Each point's coordinates are followed by
+a dedicated identity flag word, which the circuit constrains to be `0` or `1`.
+When the flag is set the circuit leaves x and y unconstrained, so their limbs
+carry no meaning.
 
 The verifier:
 
-1. Checks unused high bits in each packed word.
-2. Reconstructs the shifted coordinate from limbs.
-3. Detects identity encodings using the generated constants for `p - 1`.
-4. For non-`p - 1` values, adds 1 to undo the `coord - 1` representation.
-5. Checks the reconstructed coordinate is `< p`.
-6. Checks the high EIP-2537 word fits in 128 bits.
-7. Stores the point as a padded G1 tuple, or stores all zeros for identity.
+1. Reads the trailing identity flag word and rejects any value other than `0`
+   or `1`.
+2. If the flag is `1`, stores all zeros for the point without decoding x or y.
+3. Otherwise, for each coordinate, checks unused high bits in each packed word.
+4. Reconstructs the shifted coordinate from limbs.
+5. Adds 1 to undo the `coord - 1` representation, mapping the shifted value
+   `p - 1` back to a zero coordinate.
+6. Checks the reconstructed coordinate is `< p`.
+7. Checks the high EIP-2537 word fits in 128 bits.
+8. Rejects a decoded non-identity point whose coordinates are both zero.
+9. Stores the point as a padded G1 tuple.
 
 ### 13.3 Accumulator Pairing Batch
 

@@ -1437,7 +1437,6 @@ fn accumulator_decoder_rejects_noncanonical_infinity() {
         "EIP-2537 reserves affine (0,0) for the point",
         "let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))",
         "ok := and(ok, iszero(decoded_zero))",
-        "is_acc_encoded_identity(src)",
     ] {
         assert!(
             verifier_template.contains(required),
@@ -1447,25 +1446,99 @@ fn accumulator_decoder_rejects_noncanonical_infinity() {
 }
 
 #[test]
+fn accumulator_decoder_reads_trailing_identity_flag_word() {
+    let verifier_template = verifier_template_corpus();
+
+    for required in [
+        "let flag := calldataload(add(src, mul(mul(2, coord_words), 0x20)))",
+        "ok := lt(flag, 2)",
+        "is_id := eq(flag, 1)",
+        "let point_words := add(mul(2, coord_words), {{ template_constants.accumulator.identity_flag_words }})",
+        "let lhs_scalar_ptr := add(acc_instance_ptr, mul(point_words, 0x20))",
+        "let rhs_scalar_ptr := add(rhs_instance_ptr, mul(point_words, 0x20))",
+    ] {
+        assert!(
+            verifier_template.contains(required),
+            "accumulator decoder should read a 0/1 identity flag word after y: {required}"
+        );
+    }
+    // x/y must only be decoded for non-identity points: the circuit leaves
+    // them unconstrained when the flag is set.
+    let load_point = verifier_template
+        .split("function load_acc_point(")
+        .nth(1)
+        .and_then(|body| body.split("function validate_public_accumulator").next())
+        .expect("load_acc_point should be rendered before validate_public_accumulator");
+    let (id_branch, non_id_branch) =
+        load_point.split_once("if iszero(is_id) {").expect("non-identity branch");
+    assert!(
+        !id_branch.contains("load_acc_coord("),
+        "identity accumulator points must not decode x/y"
+    );
+    assert!(
+        non_id_branch.contains("load_acc_coord("),
+        "non-identity accumulator points must decode x/y"
+    );
+}
+
+/// The generator's accumulator word counts must match the circuit encoding
+/// produced by `AssignedAccumulator::as_public_input`, so a change to the
+/// foreign point public-input layout fails here rather than only in the gated
+/// IVC end-to-end bench.
+#[test]
+fn accumulator_word_counts_match_circuit_encoding() {
+    use std::collections::BTreeMap;
+
+    use group::Group;
+    use midnight_circuits::{
+        types::{AssignedForeignPoint, Instantiable},
+        verifier::{Accumulator, AssignedAccumulator, BlstrsEmulation, Msm},
+    };
+    use midnight_curves::G1Projective;
+
+    type S = BlstrsEmulation;
+    let words_per_point = |p: &G1Projective| {
+        AssignedForeignPoint::<Fq, G1Projective, G1Projective>::as_public_input(p).len()
+    };
+    let encoding = AccumulatorEncoding::new(0, 7, 56);
+    for point in [G1Projective::identity(), G1Projective::generator()] {
+        assert_eq!(words_per_point(&point), encoding.point_words());
+    }
+
+    let fully_collapsed = Accumulator::<S>::new(
+        Msm::new(&[G1Projective::generator()], &[Fq::ONE], &BTreeMap::new()),
+        Msm::new(&[G1Projective::identity()], &[Fq::ONE], &BTreeMap::new()),
+    );
+    assert_eq!(
+        AssignedAccumulator::<S>::as_public_input(&fully_collapsed).len(),
+        AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
+    );
+    assert_eq!(
+        2 * words_per_point(&G1Projective::generator()),
+        AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS
+    );
+}
+
+#[test]
 fn accumulator_encoding_validation_rejects_dead_configs() {
     let fully_collapsed = AccumulatorEncoding::new(4, 7, 56);
     assert_eq!(
         fully_collapsed.fully_collapsed_public_input_words(),
         Ok(AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS)
     );
-    assert!(fully_collapsed.validate_for_num_instances(14).is_ok());
-    assert_eq!(fully_collapsed.fixed_scalar_count(14), Ok(0));
-    assert_eq!(fully_collapsed.fixed_scalar_count(17), Ok(3));
+    assert!(fully_collapsed.validate_for_num_instances(16).is_ok());
+    assert_eq!(fully_collapsed.fixed_scalar_count(16), Ok(0));
+    assert_eq!(fully_collapsed.fixed_scalar_count(19), Ok(3));
 
     let point_pair = AccumulatorEncoding::point_pair(4, 7, 56);
     assert_eq!(
         point_pair.fully_collapsed_public_input_words(),
         Ok(AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS)
     );
-    assert!(point_pair.validate_for_num_instances(12).is_ok());
-    assert_eq!(point_pair.fixed_scalar_count(12), Ok(0));
+    assert!(point_pair.validate_for_num_instances(14).is_ok());
+    assert_eq!(point_pair.fixed_scalar_count(14), Ok(0));
     assert!(matches!(
-        point_pair.fixed_scalar_count(13),
+        point_pair.fixed_scalar_count(15),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
             reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
             ..
@@ -1474,7 +1547,7 @@ fn accumulator_encoding_validation_rejects_dead_configs() {
 
     let wrong_limb_shape = AccumulatorEncoding::new(4, 8, 32);
     assert!(matches!(
-        wrong_limb_shape.validate_for_num_instances(14),
+        wrong_limb_shape.validate_for_num_instances(16),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
             num_limbs: 8,
             num_limb_bits: 32,
@@ -1484,7 +1557,7 @@ fn accumulator_encoding_validation_rejects_dead_configs() {
 
     let out_of_bounds = AccumulatorEncoding::new(5, 7, 56);
     assert!(matches!(
-        out_of_bounds.validate_for_num_instances(14),
+        out_of_bounds.validate_for_num_instances(16),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
             offset: 5,
             reason: "accumulator public-input tail exceeds num_instances",

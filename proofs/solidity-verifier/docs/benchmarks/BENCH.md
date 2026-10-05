@@ -161,7 +161,7 @@ collapsed over the inner verifier's fixed bases: it exposes only
 `lhs point, lhs scalar = 1, rhs point, rhs scalar = 1`. The outer IVC
 self-accumulator still follows Midfall's variable-base-collapsed shape, because
 its fixed bases are the self VK; for the one-step final proof it is trivial, so
-the Solidity verifier detects the packed identity encoding and skips
+the Solidity verifier reads the points' identity flag words and skips
 identity/zero-scalar MSM precompile calls.
 
 ## Measured breakdown (Poseidon fixture, k=6, midfall HEAD)

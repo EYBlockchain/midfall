@@ -74,6 +74,7 @@ pub(crate) struct ModexpTemplateConstants {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AccumulatorTemplateConstants {
     pub(crate) limbs_per_word: usize,
+    pub(crate) identity_flag_words: usize,
     pub(crate) pairing_batch_domain_tag_hex: &'static str,
     pub(crate) pairing_batch_rhs_offset: usize,
     pub(crate) pairing_batch_lhs_offset: usize,
@@ -172,6 +173,7 @@ impl Default for TemplateConstants {
             },
             accumulator: AccumulatorTemplateConstants {
                 limbs_per_word: layout::accumulator::LIMBS_PER_WORD,
+                identity_flag_words: layout::accumulator::IDENTITY_FLAG_WORDS,
                 pairing_batch_domain_tag_hex: layout::accumulator::PAIRING_BATCH_DOMAIN_TAG_HEX,
                 pairing_batch_rhs_offset: layout::accumulator::PAIRING_BATCH_RHS_OFFSET,
                 pairing_batch_lhs_offset: layout::accumulator::PAIRING_BATCH_LHS_OFFSET,

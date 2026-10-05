@@ -137,6 +137,9 @@ pub(crate) mod accumulator {
     pub(crate) const LIMBS: usize = 7;
     /// Four 56-bit limbs fit in one scalar word with unused high bits.
     pub(crate) const LIMBS_PER_WORD: usize = 4;
+    /// `AssignedForeignPoint::as_public_input` appends one `0`/`1` identity
+    /// flag word after the x and y coordinate words.
+    pub(crate) const IDENTITY_FLAG_WORDS: usize = 1;
     /// Carried scalars in the point-and-scalar accumulator public input.
     pub(crate) const CARRIED_SCALARS: usize = 2;
     /// Low-memory hash frame for batching the accumulator pairing with KZG:
@@ -703,6 +706,7 @@ mod tests {
         assert_eq!(accumulator::LIMB_BITS, 56);
         assert_eq!(accumulator::LIMBS, 7);
         assert_eq!(accumulator::LIMBS_PER_WORD, 4);
+        assert_eq!(accumulator::IDENTITY_FLAG_WORDS, 1);
         assert_eq!(accumulator::PAIRING_BATCH_PTR, 0x100);
         assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x220);
         assert_eq!(quotient_limb::LIMBS, 7);

@@ -1426,9 +1426,31 @@ fn ivc_final_keccak_solidity_e2e() {
                 "non-canonical accumulator limb packing",
             );
 
-            let lhs_scalar_word = first_acc_word + 4 * 0x20;
+            // Each accumulator point is its x/y limb words followed by one
+            // identity flag word; take the width from the circuit encoding.
+            let acc_point_words =
+                <S as SelfEmulation>::AssignedPoint::as_public_input(&C::generator()).len();
+            let lhs_flag_word = first_acc_word + (acc_point_words - 1) * 0x20;
+            let lhs_scalar_word = first_acc_word + acc_point_words * 0x20;
             let rhs_first_word = lhs_scalar_word + 0x20;
-            let rhs_scalar_word = rhs_first_word + 4 * 0x20;
+            let rhs_flag_word = rhs_first_word + (acc_point_words - 1) * 0x20;
+            let rhs_scalar_word = rhs_first_word + acc_point_words * 0x20;
+
+            for (name, flag_word) in [("LHS", lhs_flag_word), ("RHS", rhs_flag_word)] {
+                let mut non_boolean_flag = calldata.clone();
+                overwrite_u256_word_for_test(&mut non_boolean_flag, flag_word, 2);
+                assert_call_reverts(
+                    evm.try_call_with_gas(verifier_address, non_boolean_flag, 5_000_000_000),
+                    &format!("non-boolean {name} accumulator identity flag"),
+                );
+
+                let mut flipped_flag = calldata.clone();
+                flipped_flag[flag_word + 31] ^= 0x01;
+                assert_call_reverts(
+                    evm.try_call_with_gas(verifier_address, flipped_flag, 5_000_000_000),
+                    &format!("flipped {name} accumulator identity flag"),
+                );
+            }
 
             let mut malformed_lhs_zero_scalar = calldata.clone();
             malformed_lhs_zero_scalar[first_acc_word + 31] ^= 0x01;
