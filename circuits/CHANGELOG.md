@@ -26,11 +26,11 @@ verification keys break backwards compatibility.
 * Add full accumulator/MSM collapse paths that also evaluate fixed-base terms in-circuit and off-circuit
 
 ### Fixed
-* Encode the foreign point `is_id` flag as a dedicated public input element instead of packing it into the first limb (cherry-picked from [#398](https://github.com/midnightntwrk/midnight-zk/pull/398))
 * Fix cost model to pass correct number of committed instances [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 
 ### Changed
 * BREAKING: Increase `MapMt` / `MapGadget` Merkle tree height from 128 to 255, using all 255 bits of the key hash as the leaf path (requires a 255-bit field) [#14](https://github.com/EYBlockchain/midfall/pull/14)
+* BREAKING: Encode the foreign point `is_id` flag as a dedicated public input element instead of packing it into the first limb; each foreign point now occupies one more public input, changing the VK of any circuit exposing one (cherry-picked from [#398](https://github.com/midnightntwrk/midnight-zk/pull/398))
 * Expose verifier accumulator helpers needed by the Solidity verifier bench.
 * Split linearization commitment into non-constant and constant parts, removing the generator point from the MSM [#313](https://github.com/midnightntwrk/midnight-zk/pull/313)
 * Make `NB_ARITH_COLS` configurable instead of a compile-time constant [#287](https://github.com/midnightntwrk/midnight-zk/pull/287)

@@ -24,6 +24,7 @@ verification keys break backwards compatibility.
 
 ### Changed
 * BREAKING: Increase the map gadget Merkle tree height from 128 to 255, changing the VK of every circuit using `ZkStdLib::map_gadget()`; bump `membership` example to `K = 14` and update its static VK and goldenfile [#14](https://github.com/EYBlockchain/midfall/pull/14)
+* BREAKING: Foreign point public inputs now carry the `is_id` flag as a dedicated element, changing the VK of every circuit exposing a foreign point as a public input; update static VKs and goldenfiles of the `bitcoin_ecdsa_threshold`, `bitcoin_signature`, `ethereum_signature`, `enrollment` and `full_credential` examples (cherry-picked from [#398](https://github.com/midnightntwrk/midnight-zk/pull/398))
 * Update SRS-loading and verifier setup paths used by the Solidity verifier
   integration tests.
 * Add `nb_arith_cols` field to `ZkStdLibArch` for configurable arithmetic columns (requires `ZKSTD_VERSION` bump before release) [#287](https://github.com/midnightntwrk/midnight-zk/pull/287)
