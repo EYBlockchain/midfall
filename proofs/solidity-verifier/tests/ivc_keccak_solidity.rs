@@ -1047,7 +1047,7 @@ fn ivc_final_keccak_solidity_e2e() {
             &decider_pk,
             &decider_relation,
             &decider_instance,
-            decider_witness,
+            decider_witness.clone(),
             OsRng,
         )
         .expect("tree decider proof generation should succeed")
@@ -1328,6 +1328,133 @@ fn ivc_final_keccak_solidity_e2e() {
             println!(
                 "[ivc-keccak-solidity] PASS: IVC final Keccak proof accepted on-chain in {gas_used} gas"
             );
+
+            // The identity pair passes the carried pairing in isolation, but
+            // cannot replace the non-neutral accumulator derived from these leaves.
+            let neutral = Accumulator::new(
+                Msm::from_terms(&[C::identity()], &[F::ONE]),
+                Msm::from_terms(&[C::identity()], &[F::ONE]),
+            );
+            assert!(neutral.check(&ivc_srs.verifier_params(), &no_fixed_bases));
+            assert_ne!(
+                decider_instance.final_acc.fully_collapse(&no_fixed_bases),
+                (C::identity(), C::identity()),
+                "recursive proof must carry a non-neutral accumulator"
+            );
+            let neutral_instance = TreeDeciderInstance {
+                final_acc: neutral,
+                ..decider_instance.clone()
+            };
+            let neutral_pi = IvcTreeDeciderCircuit::format_instance(&neutral_instance)
+                .expect("neutral accumulator public inputs");
+            assert_eq!(neutral_pi.len(), pi.len());
+            let point_words =
+                <S as SelfEmulation>::AssignedPoint::as_public_input(&C::identity()).len();
+            let lhs_start = final_acc_offset;
+            let rhs_start = lhs_start + point_words + 1;
+            assert_eq!(neutral_pi[lhs_start + point_words - 1], F::ONE);
+            assert_eq!(neutral_pi[rhs_start + point_words - 1], F::ONE);
+
+            let mut zero_point_without_flags = neutral_pi.clone();
+            zero_point_without_flags[lhs_start + point_words - 1] = F::ZERO;
+            zero_point_without_flags[rhs_start + point_words - 1] = F::ZERO;
+            let mut zero_words_with_flags = neutral_pi.clone();
+            for start in [lhs_start, rhs_start] {
+                zero_words_with_flags[start..start + point_words - 1].fill(F::ZERO);
+            }
+            let mut zero_words_without_flags = zero_words_with_flags.clone();
+            zero_words_without_flags[lhs_start + point_words - 1] = F::ZERO;
+            zero_words_without_flags[rhs_start + point_words - 1] = F::ZERO;
+
+            // All four variants reuse the honest outer proof. Neutral points
+            // satisfy the carried pairing, but changing its public inputs
+            // breaks the outer proof's transcript binding. Without the flags,
+            // encoded identity coordinates are invalid (0,0); raw zero words
+            // instead decode to off-curve (1,1) at the first G1MSM.
+            {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                assert!(
+                    midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                        &decider_srs.verifier_params(),
+                        &decider_vk,
+                        &neutral_instance,
+                        None,
+                        &final_proof,
+                    )
+                    .is_err(),
+                    "recursive proof must reject a neutral public accumulator"
+                );
+            }
+            for (name, instances) in [
+                ("neutral points with identity flags", &neutral_pi),
+                (
+                    "decoded zero points without identity flags",
+                    &zero_point_without_flags,
+                ),
+                (
+                    "all-zero coordinate words with identity flags",
+                    &zero_words_with_flags,
+                ),
+                (
+                    "all-zero coordinate words without identity flags",
+                    &zero_words_without_flags,
+                ),
+            ] {
+                assert_call_reverts(
+                    evm.try_call_with_gas(
+                        verifier_address,
+                        halo2_solidity_verifier::encode_calldata(&repacked, instances),
+                        5_000_000_000,
+                    ),
+                    name,
+                );
+            }
+
+            // Reproving against neutral public inputs must not legitimize a
+            // witness whose leaf accumulator is non-neutral: either synthesis
+            // fails, or native and on-chain verification reject the proof.
+            let neutral_proof = {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                midnight_zk_stdlib::prove::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                    &decider_srs,
+                    &decider_pk,
+                    &decider_relation,
+                    &neutral_instance,
+                    decider_witness,
+                    OsRng,
+                )
+            };
+            match neutral_proof {
+                Err(Error::ConstraintSystemFailure) => {}
+                Err(err) => panic!("neutral accumulator proving failed unexpectedly: {err:?}"),
+                Ok(neutral_proof) => {
+                    let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                    assert!(
+                        midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                            &decider_srs.verifier_params(),
+                            &decider_vk,
+                            &neutral_instance,
+                            None,
+                            &neutral_proof,
+                        )
+                        .is_err(),
+                        "neutral accumulator must not validate the recursive proof"
+                    );
+                    let neutral_repacked =
+                        generator.repack_proof(&neutral_proof).expect("neutral proof repack");
+                    assert_call_reverts(
+                        evm.try_call_with_gas(
+                            verifier_address,
+                            halo2_solidity_verifier::encode_calldata(
+                                &neutral_repacked,
+                                &neutral_pi,
+                            ),
+                            5_000_000_000,
+                        ),
+                        "reproved recursive proof with a neutral accumulator",
+                    );
+                }
+            }
 
             let proof_payload_start = 4 + 0x40 + 0x20;
             let instances_len_word = proof_payload_start + repacked.len();
