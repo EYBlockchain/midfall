@@ -1481,10 +1481,11 @@ fn accumulator_decoder_reads_trailing_identity_flag_word() {
     );
 }
 
-/// The generator's accumulator word counts must match the circuit encoding
-/// produced by `AssignedAccumulator::as_public_input`, so a change to the
-/// foreign point public-input layout fails here rather than only in the gated
-/// IVC end-to-end bench.
+/// Compare the generator's fully collapsed accumulator layout with the circuit
+/// encoding of an identity LHS and a non-identity RHS with distinct scalars.
+/// A mismatched identity flag, scalar offset, or word count fails at the
+/// corresponding assertion here, before the gated IVC end-to-end bench can
+/// misdecode those public inputs on-chain.
 #[test]
 fn accumulator_word_counts_match_circuit_encoding() {
     use std::collections::BTreeMap;
@@ -1504,15 +1505,38 @@ fn accumulator_word_counts_match_circuit_encoding() {
     for point in [G1Projective::identity(), G1Projective::generator()] {
         assert_eq!(words_per_point(&point), encoding.point_words());
     }
+    let identity_words = AssignedForeignPoint::<Fq, G1Projective, G1Projective>::as_public_input(
+        &G1Projective::identity(),
+    );
+    let generator_words = AssignedForeignPoint::<Fq, G1Projective, G1Projective>::as_public_input(
+        &G1Projective::generator(),
+    );
+    assert_eq!(identity_words[4], Fq::ONE);
+    assert_eq!(generator_words[4], Fq::ZERO);
 
     let fully_collapsed = Accumulator::<S>::new(
-        Msm::new(&[G1Projective::generator()], &[Fq::ONE], &BTreeMap::new()),
-        Msm::new(&[G1Projective::identity()], &[Fq::ONE], &BTreeMap::new()),
+        Msm::new(
+            &[G1Projective::identity()],
+            &[Fq::from(3)],
+            &BTreeMap::new(),
+        ),
+        Msm::new(
+            &[G1Projective::generator()],
+            &[Fq::from(5)],
+            &BTreeMap::new(),
+        ),
     );
+    // Each point occupies five words (x/y limbs and identity flag), followed
+    // by its scalar; distinct scalars expose accidental point/slot shifts.
+    let public = AssignedAccumulator::<S>::as_public_input(&fully_collapsed);
     assert_eq!(
-        AssignedAccumulator::<S>::as_public_input(&fully_collapsed).len(),
+        public.len(),
         AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
     );
+    assert_eq!(&public[..5], identity_words.as_slice());
+    assert_eq!(public[5], Fq::from(3));
+    assert_eq!(&public[6..11], generator_words.as_slice());
+    assert_eq!(public[11], Fq::from(5));
     assert_eq!(
         2 * words_per_point(&G1Projective::generator()),
         AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS
