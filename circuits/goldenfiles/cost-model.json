@@ -21,7 +21,7 @@
       "max_deg": "5",
       "permutations": "14",
       "point_sets": "3",
-      "rows": "2580",
+      "rows": "5120",
       "table_rows": "387"
     },
     "Insert": {
@@ -32,7 +32,7 @@
       "max_deg": "5",
       "permutations": "14",
       "point_sets": "3",
-      "rows": "5160",
+      "rows": "10240",
       "table_rows": "387"
     }
   },
