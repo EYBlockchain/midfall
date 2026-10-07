@@ -51,8 +51,10 @@ pub(crate) mod test {
     pub use revm;
     use revm::{
         db::InMemoryDB,
+        inspector_handle_register,
+        interpreter::{CallInputs, CallOutcome as RevmCallOutcome},
         primitives::{Address, ExecutionResult, Log, Output, SpecId, TxKind},
-        Evm as RevmEvm,
+        Evm as RevmEvm, EvmContext, Inspector,
     };
     use ruint::aliases::U256;
     use sha3::{Digest, Keccak256};
@@ -269,6 +271,43 @@ pub(crate) mod test {
         },
     }
 
+    /// A G1MSM or pairing precompile call observed during verification.
+    #[derive(Debug)]
+    pub struct PrecompileCall {
+        pub address: Address,
+        pub input: Vec<u8>,
+        pub succeeded: bool,
+        pub output: Vec<u8>,
+    }
+
+    #[derive(Default)]
+    struct PrecompileInspector {
+        calls: Vec<PrecompileCall>,
+    }
+
+    impl Inspector<InMemoryDB> for PrecompileInspector {
+        fn call_end(
+            &mut self,
+            _context: &mut EvmContext<InMemoryDB>,
+            inputs: &CallInputs,
+            outcome: RevmCallOutcome,
+        ) -> RevmCallOutcome {
+            if inputs.target_address == Address::with_last_byte(0x0c)
+                || inputs.target_address == Address::with_last_byte(0x0f)
+            {
+                // Preserve the precompile result even if the verifier later
+                // reverts: a successful pairing call can still return false.
+                self.calls.push(PrecompileCall {
+                    address: inputs.target_address,
+                    input: inputs.input.to_vec(),
+                    succeeded: (*outcome.instruction_result()).is_ok(),
+                    output: outcome.output().to_vec(),
+                });
+            }
+            outcome
+        }
+    }
+
     /// In-process EVM runner pinned to `SpecId::PRAGUE` so that the
     /// EIP-2537 BLS12-381 precompiles (`0x0b`/`0x0c`/`0x0d`/`0x0e`/`0x0f`)
     /// are routed to revm's bundled implementations. The runner keeps an
@@ -398,6 +437,38 @@ pub(crate) mod test {
                 .build();
             let result = evm.transact_commit().unwrap();
             self.db = std::mem::take(&mut evm.context.evm.db);
+            Self::call_outcome(result)
+        }
+
+        /// Return precompile calls even when the parent call reverts.
+        pub fn try_call_with_gas_tracing_precompiles(
+            &mut self,
+            address: Address,
+            calldata: Vec<u8>,
+            gas_limit: u64,
+        ) -> (CallOutcome, Vec<PrecompileCall>) {
+            let db = std::mem::take(&mut self.db);
+            let mut evm = RevmEvm::builder()
+                .with_db(db)
+                .with_external_context(PrecompileInspector::default())
+                .with_spec_id(SpecId::PRAGUE)
+                .modify_cfg_env(|cfg| {
+                    cfg.limit_contract_code_size = Some(usize::MAX);
+                })
+                .modify_tx_env(|tx| {
+                    tx.gas_limit = gas_limit;
+                    tx.transact_to = TxKind::Call(address);
+                    tx.data = calldata.into();
+                })
+                .append_handler_register(inspector_handle_register)
+                .build();
+            let result = evm.transact_commit().unwrap();
+            let calls = std::mem::take(&mut evm.context.external.calls);
+            self.db = std::mem::take(&mut evm.context.evm.db);
+            (Self::call_outcome(result), calls)
+        }
+
+        fn call_outcome(result: ExecutionResult) -> CallOutcome {
             match result {
                 ExecutionResult::Success {
                     gas_used,
