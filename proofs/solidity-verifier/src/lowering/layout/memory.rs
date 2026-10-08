@@ -490,6 +490,12 @@ pub(crate) struct VerifierMemoryLayout {
     /// selector accumulators are accounted for.
     pub(crate) quotient_tmp_mptr: usize,
     pub(crate) quotient_stack_mptr: usize,
+    /// First address past the quotient VM stack / callback scratch region.
+    ///
+    /// The region is sized for the larger of the interpreted stack depth and
+    /// the structured native-callback scratch, so it is exactly the ceiling
+    /// the interpreter's spill sites clamp `q_sp` against (QVM-01).
+    pub(crate) quotient_stack_hi: usize,
     pub(crate) pcs_q_eval_source_table_mptr: usize,
     pub(crate) pcs_q_com_trace_scratch_mptr: usize,
     pub(crate) pcs_final_msm_scratch_mptr: usize,
@@ -927,6 +933,7 @@ impl VerifierMemoryLayout {
             batch_invert_scratch_mptr,
             quotient_tmp_mptr,
             quotient_stack_mptr,
+            quotient_stack_hi: quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
             pcs_q_eval_source_table_mptr,
             pcs_q_com_trace_scratch_mptr,
             pcs_final_msm_scratch_mptr,

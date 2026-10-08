@@ -12,7 +12,10 @@ use crate::lowering::{
     kzg, layout,
     layout::memory::{PcsMemoryRequirements, VerifierMemoryLayout, VerifierMemoryLayoutConfig},
     quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
-    quotient_numerator::vm::{QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan},
+    quotient_numerator::vm::{
+        self as vm, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
+        SelectorFoldPlan,
+    },
     render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
     VerifierBuildInputs,
 };
@@ -135,6 +138,15 @@ impl LoweringPlan {
                 ..VerifierMemoryLayoutConfig::default()
             },
         );
+        let quotient_operand_model = quotient_operand_model(
+            &meta,
+            &data,
+            &vk,
+            vk_mptr,
+            &memory,
+            &quotient_program_build,
+            &quotient_plan.selector_fold,
+        );
         let (quotient_program, quotient_stack_mptr, quotient_state_slots) = inputs
             .quotient_template_program(
                 quotient_program_build.clone(),
@@ -142,6 +154,7 @@ impl LoweringPlan {
                 vk_mptr,
                 &memory,
                 &quotient_plan.selector_fold,
+                &quotient_operand_model,
             );
 
         let plan = Self {
@@ -291,7 +304,51 @@ impl LoweringPlan {
                 self.quotient.program.eval_numer_mptr, self.quotient.state_slots.eval_numer_mptr
             ));
         }
+        // QVM-01: check every operand value of the finalized program --
+        // pointers against the windows this layout populates before the VM
+        // runs, constant slots against the table, FOLD_SELECTOR buckets and
+        // gaps against the selector plan, and the stack high-water mark
+        // against the planned region -- before it can be pinned into a VK.
+        // The interpreter's runtime structural checks are rendered from the
+        // same model.
+        let operand_model = self.quotient_operand_model();
+        vm::validate_quotient_program_operands(&self.quotient.build.bytes, &operand_model)
+            .map_err(|err| format!("quotient VM operand validation failed: {err}"))?;
+        let rendered = self.quotient.program.guards;
+        let expected = VerifierBuildInputs::quotient_vm_guards(&operand_model, &self.memory);
+        if rendered != expected {
+            return Err(format!(
+                "quotient VM runtime guards drifted from the operand model: rendered {rendered:?}, \
+                 expected {expected:?}"
+            ));
+        }
         Ok(())
+    }
+
+    /// Addresses the compact quotient VM is allowed to load from.
+    ///
+    /// These are exactly the ranges the verifier has populated by the time the
+    /// VM runs, and they are the same ranges
+    /// `Halo2QuotientEvaluator::validate_layout` requires the external frame to
+    /// contain -- a read outside them is either uninitialized memory in the
+    /// split path or live verifier state in the inline path.
+    #[cfg(test)]
+    pub(crate) fn quotient_read_model(&self) -> vm::QuotientReadModel {
+        quotient_read_model(&self.meta, &self.data, &self.vk, self.vk_mptr, &self.memory)
+    }
+
+    /// Everything the finalized quotient program's operands are checked
+    /// against, at build time and (through `QuotientVmGuards`) at run time.
+    pub(crate) fn quotient_operand_model(&self) -> vm::QuotientOperandModel {
+        quotient_operand_model(
+            &self.meta,
+            &self.data,
+            &self.vk,
+            self.vk_mptr,
+            &self.memory,
+            &self.quotient.build,
+            &self.quotient.plan.selector_fold,
+        )
     }
 
     /// Number of `(G1, scalar)` terms required by the optional accumulator MSM.
@@ -305,5 +362,85 @@ impl LoweringPlan {
                 fixed_scalar_count + 1
             })
             .unwrap_or(0)
+    }
+}
+
+/// The memory windows the compact quotient VM may load from.
+///
+/// Checked exactly, per window and with word alignment, by the build-time
+/// operand validator (`vm::validate_quotient_program_operands`, QVM-01); the
+/// interpreter has no runtime pointer clamp.
+pub(crate) fn quotient_read_model(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+) -> vm::QuotientReadModel {
+    let theta = data.theta_mptr.value().as_usize();
+    let instance_eval = memory.instance_eval_mptr.value().as_usize();
+    vm::QuotientReadModel {
+        windows: vec![
+            vm::QuotientReadWindow {
+                name: "vk_payload",
+                start: vk_mptr.value().as_usize(),
+                len: vk.len(),
+            },
+            vm::QuotientReadWindow {
+                name: "user_challenges",
+                start: data.challenge_mptr.value().as_usize(),
+                len: meta.num_user_challenges.iter().sum::<usize>() * layout::memory::WORD_BYTES,
+            },
+            vm::QuotientReadWindow {
+                name: "challenge_and_common_slots",
+                // Ends one word past `instance_eval`, matching the frame
+                // window in `Halo2QuotientEvaluator::validate_layout`.
+                // `quotient_eval` sits immediately above and is a write
+                // target, not a VM input.
+                start: theta,
+                len: (instance_eval + layout::memory::WORD_BYTES).saturating_sub(theta),
+            },
+            vm::QuotientReadWindow {
+                name: "decoded_proof_evals",
+                start: memory.reversed_evals_mptr.value().as_usize(),
+                len: meta.num_evals * layout::memory::WORD_BYTES,
+            },
+        ],
+        token_bases: vec![
+            (vm::Q_MEM_L0, memory.l_0_mptr.value().as_usize()),
+            (vm::Q_MEM_L_LAST, memory.l_last_mptr.value().as_usize()),
+            (vm::Q_MEM_L_BLIND, memory.l_blind_mptr.value().as_usize()),
+            (vm::Q_MEM_BETA, memory.beta_mptr.value().as_usize()),
+            (vm::Q_MEM_GAMMA, memory.gamma_mptr.value().as_usize()),
+            (vm::Q_MEM_X, memory.x_mptr.value().as_usize()),
+            (vm::Q_MEM_THETA, memory.theta_mptr.value().as_usize()),
+            (
+                vm::Q_MEM_TRASH_CHALLENGE,
+                memory.trash_challenge_mptr.value().as_usize(),
+            ),
+            (vm::Q_MEM_INSTANCE_EVAL, instance_eval),
+        ],
+    }
+}
+
+/// Operand bounds for one finalized quotient program (QVM-01): read windows,
+/// constant-table length, selector bucket count, largest selector `y` power,
+/// and the planned stack region.
+pub(crate) fn quotient_operand_model(
+    meta: &ConstraintSystemMeta,
+    data: &Data,
+    vk: &Halo2VerifyingKey,
+    vk_mptr: Ptr,
+    memory: &VerifierMemoryLayout,
+    build: &QuotientProgramBuild,
+    selector_fold: &SelectorFoldPlan,
+) -> vm::QuotientOperandModel {
+    vm::QuotientOperandModel {
+        read: quotient_read_model(meta, data, vk, vk_mptr, memory),
+        num_consts: build.consts.len(),
+        num_selector_buckets: meta.num_simple_selectors,
+        selector_max_power: selector_fold.max_power,
+        stack_words: (memory.quotient_stack_hi - memory.quotient_stack_mptr)
+            / layout::memory::WORD_BYTES,
     }
 }
