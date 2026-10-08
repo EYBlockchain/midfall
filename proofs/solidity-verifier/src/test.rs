@@ -20,6 +20,11 @@ use midnight_circuits::{
     hash::poseidon::PoseidonChip,
     instructions::{hash::HashCPU, AssignmentInstructions, PublicInputInstructions},
 };
+#[cfg(feature = "truncated-challenges")]
+use midnight_circuits::{
+    types::Instantiable,
+    verifier::{Accumulator, AssignedAccumulator, BlstrsEmulation, Msm},
+};
 use midnight_curves::{Bls12, Fq, G1Projective, G2Projective};
 use midnight_proofs::{
     circuit::{Layouter, SimpleFloorPlanner, Value},
@@ -44,6 +49,8 @@ use revm::primitives::B256;
 use ruint::aliases::U256;
 use sha3::Digest;
 
+#[cfg(feature = "truncated-challenges")]
+use crate::AccumulatorEncoding;
 use crate::{
     compile_solidity, encode_calldata, pinned_solc_available, CallOutcome, Evm, GeneratorConfig,
     RenderDiagnostics, RenderOptions, RenderQuotient, RenderVk, SolidityGenerator,
@@ -207,6 +214,164 @@ fn u256_word(value: u64) -> [u8; 32] {
 /// Flatten U256 words into big-endian bytes.
 fn words_to_bytes<const N: usize>(words: [U256; N]) -> Vec<u8> {
     words.into_iter().flat_map(|word| word.to_be_bytes::<32>()).collect()
+}
+
+#[cfg(feature = "truncated-challenges")]
+#[derive(Clone, Debug)]
+struct IdentityAccumulatorCircuit {
+    instances: Vec<F>,
+}
+
+#[cfg(feature = "truncated-challenges")]
+impl Circuit<F> for IdentityAccumulatorCircuit {
+    type Config = (Column<Advice>, Selector);
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self {
+            instances: vec![F::ZERO; self.instances.len()],
+        }
+    }
+
+    fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
+        let advice = meta.advice_column();
+        let committed = meta.instance_column();
+        let public = meta.instance_column();
+        let selector = meta.selector();
+        meta.create_gate("bind public accumulator", |meta| {
+            Constraints::with_selector(
+                selector,
+                vec![(
+                    "accumulator word",
+                    meta.query_advice(advice, Rotation::cur())
+                        - meta.query_instance(public, Rotation::cur())
+                        - meta.query_instance(committed, Rotation::cur()),
+                )],
+            )
+        });
+        (advice, selector)
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<F>,
+    ) -> Result<(), Error> {
+        layouter.assign_region(
+            || "identity accumulator words",
+            |mut region| {
+                for (row, value) in self.instances.iter().enumerate() {
+                    config.1.enable(&mut region, row)?;
+                    region.assign_advice(
+                        || "accumulator word",
+                        config.0,
+                        row,
+                        || Value::known(*value),
+                    )?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+/// An identity-identity accumulator must verify on-chain with either canonical
+/// or arbitrary identity-coordinate limbs, provided each trailing flag is 1.
+/// The circuit does not constrain those limbs for identity points: rejecting
+/// the second proof would mean the Solidity decoder checked unused coordinates
+/// before honoring the flag, not that the outer KZG pairing failed.
+#[cfg(feature = "truncated-challenges")]
+#[test]
+fn identity_accumulator_proof_verifies_on_evm() {
+    if !pinned_solc_available() {
+        return;
+    }
+
+    let identity = G1Projective::identity();
+    let accumulator = Accumulator::<BlstrsEmulation>::new(
+        Msm::new(&[identity], &[F::ONE], &Default::default()),
+        Msm::new(&[identity], &[F::ONE], &Default::default()),
+    );
+    let public = AssignedAccumulator::<BlstrsEmulation>::as_public_input(&accumulator);
+    assert_eq!(
+        public.len(),
+        AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS
+    );
+    assert_eq!((public[4], public[10]), (F::ONE, F::ONE));
+    let circuit = IdentityAccumulatorCircuit {
+        instances: public.clone(),
+    };
+
+    let mut rng = ChaCha8Rng::seed_from_u64(0xc0ffee);
+    let params = PoseidonParams::unsafe_setup(6, &mut rng);
+    let vk = keygen_vk_with_k::<F, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 6)
+        .expect("identity accumulator VK");
+    let pk = keygen_pk(vk, &circuit).expect("identity accumulator PK");
+    let generator = SolidityGenerator::new(
+        &params,
+        pk.get_vk(),
+        GeneratorConfig::new(public.len(), 1).with_accumulator(AccumulatorEncoding::new(0, 7, 56)),
+    );
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            ..RenderOptions::default()
+        })
+        .expect("render identity accumulator verifier");
+    let mut deployed = deploy_separate_verifier_from_sources(
+        &artifacts.verifier,
+        &artifacts.verifying_key.expect("separate VK"),
+    );
+
+    let mut unused_high_bits = public.clone();
+    // This exceeds the packed limb width, but the identity flag makes x/y
+    // irrelevant; a fresh proof binds the changed word to the public input.
+    unused_high_bits[0] = F::from(2).pow([230]);
+    for (name, instances) in [
+        ("canonical identity coordinates", public),
+        ("unconstrained identity coordinates", unused_high_bits),
+    ] {
+        let circuit = IdentityAccumulatorCircuit {
+            instances: instances.clone(),
+        };
+        let committed = vec![F::ZERO; instances.len()];
+        let all_instance_columns: [&[F]; 2] = [&committed, &instances];
+        let mut transcript = CircuitTranscript::<sha3::Keccak256>::init();
+        create_proof::<F, KZGCommitmentScheme<Bls12>, _, _>(
+            &params,
+            &pk,
+            std::slice::from_ref(&circuit),
+            1,
+            &[&all_instance_columns],
+            &mut rng,
+            &mut transcript,
+        )
+        .expect("identity accumulator proof");
+        let compressed_proof = transcript.finalize();
+
+        let committed_pi = [identity];
+        let public_columns: [&[F]; 1] = [&instances];
+        let mut transcript =
+            CircuitTranscript::<sha3::Keccak256>::init_from_bytes(&compressed_proof);
+        let guard = prepare::<F, KZGCommitmentScheme<Bls12>, CircuitTranscript<sha3::Keccak256>>(
+            pk.get_vk(),
+            &[&committed_pi],
+            &[&public_columns],
+            &mut transcript,
+        )
+        .expect("native identity accumulator prepare");
+        transcript.assert_empty().expect("native proof consumed");
+        guard
+            .verify(&params.verifier_params())
+            .expect("native identity accumulator verify");
+
+        let proof = generator.repack_proof(&compressed_proof).expect("repack identity proof");
+        assert_solidity_accepts(
+            call_deployed_verifier(&mut deployed, &proof, &instances),
+            name,
+        );
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]

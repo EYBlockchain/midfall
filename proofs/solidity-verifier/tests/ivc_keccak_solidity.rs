@@ -339,6 +339,16 @@ impl TreeDeciderContext {
     }
 
     fn leaf_final_acc(&self, state: &State, proof: &[u8]) -> Accumulator<S> {
+        let acc = self.leaf_final_acc_unchecked(state, proof);
+        assert!(
+            acc.check(&self.ivc_params_verifier, &self.ivc_fixed_bases()),
+            "invalid IVC leaf proof"
+        );
+        acc
+    }
+
+    // Match the in-circuit verifier: prepare the leaf, but defer its pairing check.
+    fn leaf_final_acc_unchecked(&self, state: &State, proof: &[u8]) -> Accumulator<S> {
         let leaf_pi = self.leaf_public_input(state);
         let mut transcript = CircuitTranscript::<PoseidonState<F>>::init_from_bytes(proof);
         let dual_msm =
@@ -350,10 +360,6 @@ impl TreeDeciderContext {
             )
             .expect("off-circuit IVC leaf prepare should succeed");
         transcript.assert_empty().expect("IVC leaf transcript should be consumed");
-        assert!(
-            dual_msm.clone().check(&self.ivc_params_verifier),
-            "invalid IVC leaf proof"
-        );
 
         let proof_acc = Accumulator::from_dual_msm(dual_msm, "ivc_vk", &self.ivc_fixed_bases());
         Accumulator::accumulate(&[proof_acc, self.one_step_outer_acc()])
@@ -930,6 +936,14 @@ fn write_leaf_bundle_mode(ivc_k: u32, path: &Path) {
     );
 }
 
+/// Accept an honest IVC decider proof on-chain, then reject a parseable bad
+/// inner opening even though its outer PLONK proof verifies: the carried
+/// accumulator equation fails at the final EIP-2537 pairing, not at proof
+/// parsing or outer-proof verification. Reusing that honest proof with neutral
+/// public points also fails at the final pairing because the transcript binds
+/// the original public inputs. Clearing identity flags on encoded identity
+/// coordinates fails before G1MSM on forbidden (0,0); clearing them on raw
+/// zero words fails at the first G1MSM because those words decode to (1,1).
 #[test]
 fn ivc_final_keccak_solidity_e2e() {
     const IVC_K: u32 = 19;
@@ -1047,7 +1061,7 @@ fn ivc_final_keccak_solidity_e2e() {
             &decider_pk,
             &decider_relation,
             &decider_instance,
-            decider_witness,
+            decider_witness.clone(),
             OsRng,
         )
         .expect("tree decider proof generation should succeed")
@@ -1329,6 +1343,305 @@ fn ivc_final_keccak_solidity_e2e() {
                 "[ivc-keccak-solidity] PASS: IVC final Keccak proof accepted on-chain in {gas_used} gas"
             );
 
+            // The inner opening is public proof data read by the in-circuit
+            // verifier, not an instance-column input. The outer circuit takes
+            // those proof bytes as witness and exposes their computed accumulator.
+            // Replacing the opening with another valid G1 point passes preparation
+            // but breaks the deferred KZG pairing.
+            let mut bad_leaf_witness = decider_witness.clone();
+            let bad_leaf_proof = &mut bad_leaf_witness.leaves[0].proof;
+            let generator_bytes = C::generator().to_bytes();
+            assert_eq!(generator_bytes.as_ref().len(), G1_COMPRESSED_BYTES);
+            let opening_start = bad_leaf_proof.len() - G1_COMPRESSED_BYTES;
+            let replacement = if &bad_leaf_proof[opening_start..] == generator_bytes.as_ref() {
+                (C::generator() + C::generator()).to_bytes()
+            } else {
+                generator_bytes
+            };
+            bad_leaf_proof[opening_start..].copy_from_slice(replacement.as_ref());
+
+            let bad_leaf_acc = decider_ctx.leaf_final_acc_unchecked(
+                &bad_leaf_witness.leaves[0].state,
+                &bad_leaf_witness.leaves[0].proof,
+            );
+            let good_leaf_acc = decider_ctx.leaf_final_acc(
+                &bad_leaf_witness.leaves[1].state,
+                &bad_leaf_witness.leaves[1].proof,
+            );
+            let bad_final_acc = fully_collapsed_accumulator(
+                &Accumulator::accumulate(&[bad_leaf_acc, good_leaf_acc]),
+                &decider_ctx.ivc_fixed_bases(),
+            );
+            assert!(
+                !bad_final_acc.check(&ivc_srs.verifier_params(), &no_fixed_bases),
+                "changed inner opening must break the carried pairing equation"
+            );
+            // The outer public input is the accumulator computed from these
+            // altered witness bytes, so the decider proof remains valid.
+            let bad_instance = TreeDeciderInstance {
+                final_acc: bad_final_acc,
+                ..decider_instance.clone()
+            };
+            let bad_outer_proof = {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                midnight_zk_stdlib::prove::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                    &decider_srs,
+                    &decider_pk,
+                    &decider_relation,
+                    &bad_instance,
+                    bad_leaf_witness,
+                    OsRng,
+                )
+                .expect("outer proof should carry the invalid inner opening")
+            };
+            {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                    &decider_srs.verifier_params(),
+                    &decider_vk,
+                    &bad_instance,
+                    None,
+                    &bad_outer_proof,
+                )
+                .expect("outer PLONK proof must be valid before the accumulator check");
+            }
+            let bad_outer_pi = IvcTreeDeciderCircuit::format_instance(&bad_instance)
+                .expect("invalid accumulator public inputs");
+            let bad_outer_repacked =
+                generator.repack_proof(&bad_outer_proof).expect("repack outer proof");
+            // Inspect the existing on-chain path: the valid outer proof must
+            // reach EIP-2537 pairing, return false for the carried equation,
+            // and cause the Solidity verifier to revert.
+            let (bad_outcome, bad_precompile_calls) = evm.try_call_with_gas_tracing_precompiles(
+                verifier_address,
+                halo2_solidity_verifier::encode_calldata(&bad_outer_repacked, &bad_outer_pi),
+                5_000_000_000,
+            );
+            let pairing_outputs = bad_precompile_calls
+                .iter()
+                .filter(|call| {
+                    call.address
+                        == halo2_solidity_verifier::revm::primitives::Address::with_last_byte(0x0f)
+                })
+                .map(|call| {
+                    // The pairing precompile executes normally; its false
+                    // result is what makes the verifier revert afterwards.
+                    assert!(
+                        call.succeeded,
+                        "bad inner opening must reach a valid pairing call"
+                    );
+                    call.output.clone()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                pairing_outputs,
+                vec![vec![0u8; 32]],
+                "invalid carried accumulator must reach the final pairing and return false"
+            );
+            assert_call_reverts(
+                bad_outcome,
+                "valid outer proof carrying an invalid leaf opening accumulator",
+            );
+
+            // The identity pair passes the carried pairing in isolation, but
+            // cannot replace the non-neutral accumulator derived from these leaves.
+            let neutral = Accumulator::new(
+                Msm::from_terms(&[C::identity()], &[F::ONE]),
+                Msm::from_terms(&[C::identity()], &[F::ONE]),
+            );
+            assert!(neutral.check(&ivc_srs.verifier_params(), &no_fixed_bases));
+            assert_ne!(
+                decider_instance.final_acc.fully_collapse(&no_fixed_bases),
+                (C::identity(), C::identity()),
+                "recursive proof must carry a non-neutral accumulator"
+            );
+            let neutral_instance = TreeDeciderInstance {
+                final_acc: neutral,
+                ..decider_instance.clone()
+            };
+            let neutral_pi = IvcTreeDeciderCircuit::format_instance(&neutral_instance)
+                .expect("neutral accumulator public inputs");
+            assert_eq!(neutral_pi.len(), pi.len());
+            let point_words =
+                <S as SelfEmulation>::AssignedPoint::as_public_input(&C::identity()).len();
+            let lhs_start = final_acc_offset;
+            let rhs_start = lhs_start + point_words + 1;
+            assert_eq!(neutral_pi[lhs_start + point_words - 1], F::ONE);
+            assert_eq!(neutral_pi[rhs_start + point_words - 1], F::ONE);
+
+            let mut zero_point_without_flags = neutral_pi.clone();
+            zero_point_without_flags[lhs_start + point_words - 1] = F::ZERO;
+            zero_point_without_flags[rhs_start + point_words - 1] = F::ZERO;
+            let mut zero_words_with_flags = neutral_pi.clone();
+            for start in [lhs_start, rhs_start] {
+                zero_words_with_flags[start..start + point_words - 1].fill(F::ZERO);
+            }
+            let mut zero_words_without_flags = zero_words_with_flags.clone();
+            zero_words_without_flags[lhs_start + point_words - 1] = F::ZERO;
+            zero_words_without_flags[rhs_start + point_words - 1] = F::ZERO;
+
+            // All four variants reuse the honest outer proof. Neutral points
+            // satisfy the carried pairing, but changing its public inputs
+            // breaks the outer proof's transcript binding. Without the flags,
+            // encoded identity coordinates are invalid (0,0); raw zero words
+            // instead decode to off-curve (1,1) at the first G1MSM.
+            {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                assert!(
+                    midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                        &decider_srs.verifier_params(),
+                        &decider_vk,
+                        &neutral_instance,
+                        None,
+                        &final_proof,
+                    )
+                    .is_err(),
+                    "recursive proof must reject a neutral public accumulator"
+                );
+            }
+            enum ExpectedFailure {
+                FinalPairing,
+                NonCanonicalIdentity,
+                InvalidCurvePoint,
+            }
+            let msm_address =
+                halo2_solidity_verifier::revm::primitives::Address::with_last_byte(0x0c);
+            let pairing_address =
+                halo2_solidity_verifier::revm::primitives::Address::with_last_byte(0x0f);
+            for (name, instances, expected_failure) in [
+                (
+                    "neutral points with identity flags",
+                    &neutral_pi,
+                    ExpectedFailure::FinalPairing,
+                ),
+                (
+                    "decoded zero points without identity flags",
+                    &zero_point_without_flags,
+                    ExpectedFailure::NonCanonicalIdentity,
+                ),
+                (
+                    "all-zero coordinate words with identity flags",
+                    &zero_words_with_flags,
+                    ExpectedFailure::FinalPairing,
+                ),
+                (
+                    "all-zero coordinate words without identity flags",
+                    &zero_words_without_flags,
+                    ExpectedFailure::InvalidCurvePoint,
+                ),
+            ] {
+                let (outcome, calls) = evm.try_call_with_gas_tracing_precompiles(
+                    verifier_address,
+                    halo2_solidity_verifier::encode_calldata(&repacked, instances),
+                    5_000_000_000,
+                );
+                assert_call_reverts(outcome, name);
+                match expected_failure {
+                    ExpectedFailure::FinalPairing => {
+                        for call in calls.iter().take(2) {
+                            assert_eq!(
+                                call.address, msm_address,
+                                "{name}: accumulator points must reach G1MSM"
+                            );
+                            assert!(call.succeeded, "{name}: identity point G1MSM must succeed");
+                        }
+                        assert!(
+                            calls.len() >= 3,
+                            "{name}: expected two G1MSMs and final pairing"
+                        );
+                        let pairing = calls.last().expect("pairing call recorded");
+                        assert_eq!(
+                            pairing.address, pairing_address,
+                            "{name}: must reach final pairing"
+                        );
+                        assert!(
+                            pairing.succeeded,
+                            "{name}: pairing precompile call must succeed"
+                        );
+                        assert_eq!(
+                            pairing.output,
+                            vec![0u8; 32],
+                            "{name}: changed public inputs must make outer KZG pairing false"
+                        );
+                    }
+                    ExpectedFailure::NonCanonicalIdentity => {
+                        assert!(
+                            calls.is_empty(),
+                            "{name}: decoded (0,0) must fail before G1MSM"
+                        );
+                    }
+                    ExpectedFailure::InvalidCurvePoint => {
+                        assert_eq!(
+                            calls.len(),
+                            1,
+                            "{name}: first G1MSM must reject before transcript"
+                        );
+                        assert_eq!(
+                            calls[0].address, msm_address,
+                            "{name}: expected G1MSM validation"
+                        );
+                        assert!(
+                            !calls[0].succeeded,
+                            "{name}: decoded (1,1) must be off-curve"
+                        );
+                        let mut decoded_point = [0u8; 128];
+                        decoded_point[63] = 1;
+                        decoded_point[127] = 1;
+                        assert_eq!(
+                            &calls[0].input[..128],
+                            &decoded_point,
+                            "{name}: packed zeros decode to (1,1)"
+                        );
+                    }
+                }
+            }
+
+            // Reproving against neutral public inputs must not legitimize a
+            // witness whose leaf accumulator is non-neutral: either synthesis
+            // fails, or native and on-chain verification reject the proof.
+            let neutral_proof = {
+                let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                midnight_zk_stdlib::prove::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                    &decider_srs,
+                    &decider_pk,
+                    &decider_relation,
+                    &neutral_instance,
+                    decider_witness,
+                    OsRng,
+                )
+            };
+            match neutral_proof {
+                Err(Error::ConstraintSystemFailure) => {}
+                Err(err) => panic!("neutral accumulator proving failed unexpectedly: {err:?}"),
+                Ok(neutral_proof) => {
+                    let _outer_proof_layout = scoped_fewer_point_sets(outer_fewer_point_sets);
+                    assert!(
+                        midnight_zk_stdlib::verify::<IvcTreeDeciderCircuit, sha3::Keccak256>(
+                            &decider_srs.verifier_params(),
+                            &decider_vk,
+                            &neutral_instance,
+                            None,
+                            &neutral_proof,
+                        )
+                        .is_err(),
+                        "neutral accumulator must not validate the recursive proof"
+                    );
+                    let neutral_repacked =
+                        generator.repack_proof(&neutral_proof).expect("neutral proof repack");
+                    assert_call_reverts(
+                        evm.try_call_with_gas(
+                            verifier_address,
+                            halo2_solidity_verifier::encode_calldata(
+                                &neutral_repacked,
+                                &neutral_pi,
+                            ),
+                            5_000_000_000,
+                        ),
+                        "reproved recursive proof with a neutral accumulator",
+                    );
+                }
+            }
+
             let proof_payload_start = 4 + 0x40 + 0x20;
             let instances_len_word = proof_payload_start + repacked.len();
             let first_instance_word = instances_len_word + 0x20;
@@ -1426,9 +1739,31 @@ fn ivc_final_keccak_solidity_e2e() {
                 "non-canonical accumulator limb packing",
             );
 
-            let lhs_scalar_word = first_acc_word + 4 * 0x20;
+            // Each accumulator point is its x/y limb words followed by one
+            // identity flag word; take the width from the circuit encoding.
+            let acc_point_words =
+                <S as SelfEmulation>::AssignedPoint::as_public_input(&C::generator()).len();
+            let lhs_flag_word = first_acc_word + (acc_point_words - 1) * 0x20;
+            let lhs_scalar_word = first_acc_word + acc_point_words * 0x20;
             let rhs_first_word = lhs_scalar_word + 0x20;
-            let rhs_scalar_word = rhs_first_word + 4 * 0x20;
+            let rhs_flag_word = rhs_first_word + (acc_point_words - 1) * 0x20;
+            let rhs_scalar_word = rhs_first_word + acc_point_words * 0x20;
+
+            for (name, flag_word) in [("LHS", lhs_flag_word), ("RHS", rhs_flag_word)] {
+                let mut non_boolean_flag = calldata.clone();
+                overwrite_u256_word_for_test(&mut non_boolean_flag, flag_word, 2);
+                assert_call_reverts(
+                    evm.try_call_with_gas(verifier_address, non_boolean_flag, 5_000_000_000),
+                    &format!("non-boolean {name} accumulator identity flag"),
+                );
+
+                let mut flipped_flag = calldata.clone();
+                flipped_flag[flag_word + 31] ^= 0x01;
+                assert_call_reverts(
+                    evm.try_call_with_gas(verifier_address, flipped_flag, 5_000_000_000),
+                    &format!("flipped {name} accumulator identity flag"),
+                );
+            }
 
             let mut malformed_lhs_zero_scalar = calldata.clone();
             malformed_lhs_zero_scalar[first_acc_word + 31] ^= 0x01;

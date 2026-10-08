@@ -23,13 +23,15 @@ use crate::lowering::layout;
 /// Midnight's fully-collapsed BLS12-381 accumulator layout:
 ///
 /// ```text
-/// lhs point coordinates, lhs scalar, rhs point coordinates, rhs scalar
+/// lhs point coordinates, lhs identity flag, lhs scalar,
+/// rhs point coordinates, rhs identity flag, rhs scalar
 /// ```
 ///
 /// with each BLS12-381 base-field coordinate represented as seven radix-2^56
-/// limbs, packed four limbs per public-input field element. Any public-input
-/// words after the fixed accumulator payload are interpreted as the optional
-/// RHS fixed-base scalar tail for partially collapsed accumulators.
+/// limbs, packed four limbs per public-input field element, and each point
+/// followed by one `0`/`1` identity-flag word. Any public-input words after
+/// the fixed accumulator payload are interpreted as the optional RHS
+/// fixed-base scalar tail for partially collapsed accumulators.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AccumulatorEncoding {
     /// Offset of accumulator limbs in instances.
@@ -72,10 +74,10 @@ impl AccumulatorEncoding {
     /// Supported bits per accumulator limb.
     pub const SUPPORTED_NUM_LIMB_BITS: usize = layout::accumulator::LIMB_BITS;
     /// Public-input words required by the fully collapsed accumulator form.
-    pub const FULLY_COLLAPSED_PUBLIC_INPUT_WORDS: usize = 10;
+    pub const FULLY_COLLAPSED_PUBLIC_INPUT_WORDS: usize = 12;
     /// Public-input words required by an already collapsed `(lhs, rhs)` point
     /// pair.
-    pub const POINT_PAIR_PUBLIC_INPUT_WORDS: usize = 8;
+    pub const POINT_PAIR_PUBLIC_INPUT_WORDS: usize = 10;
 
     /// Return a new `AccumulatorEncoding`.
     pub fn new(offset: usize, num_limbs: usize, num_limb_bits: usize) -> Self {
@@ -103,9 +105,15 @@ impl AccumulatorEncoding {
         self.num_limbs.div_ceil(limbs_per_instance)
     }
 
-    /// Number of public-input words for two G1 coordinates.
+    /// Number of public-input words for one G1 point: x and y coordinates
+    /// followed by the identity flag.
+    pub(crate) fn point_words(self) -> usize {
+        2 * self.coordinate_words() + layout::accumulator::IDENTITY_FLAG_WORDS
+    }
+
+    /// Number of public-input words for the lhs and rhs G1 points.
     fn point_pair_words(self) -> usize {
-        4 * self.coordinate_words()
+        2 * self.point_words()
     }
 
     /// Whether this public-input layout carries explicit lhs/rhs scalars.

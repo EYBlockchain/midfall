@@ -3,31 +3,30 @@
             // `AssignedForeignPoint<BLS12-381>` exposes each base-field coordinate
             // through `AssignedField::as_public_input`: seven radix-2^56 limbs of
             // (coord - 1) are packed four-at-a-time into native field elements.
-            // The x coordinate's first packed word carries the identity flag by
-            // adding one raw radix base. Rebuild EIP-2537 padded
+            // The point's identity flag follows the y coordinate as its own
+            // public-input word. Rebuild EIP-2537 padded
             // (x_hi, x_lo, y_hi, y_lo) words from that encoding.
             //
             // Public-input layout for one coordinate:
             //   word 0: limb_0 | limb_1 << bits | ... up to limbs_per_word
             //   word 1: next limbs, if any
             //
+            // Public-input layout for one point:
+            //   x coordinate words, y coordinate words, identity flag word
+            //
             // The limbs are little-endian in the represented integer even
             // though calldata words are loaded as big 256-bit values. The loop
             // below extracts each limb by shifting inside the packed word and
             // reconstructs the full coordinate into the two-word EIP-2537
             // representation expected by the BLS12-381 precompiles.
-            function load_acc_coord_shifted(src, bits, n, base, limbs_per_word, first_adjust) -> hi, lo {
+            function load_acc_coord_shifted(src, bits, n, base, limbs_per_word) -> hi, lo {
                 // Mask for one radix limb, e.g. 2^56 - 1 for the current
                 // BLS12-381 self-emulation parameters.
                 let mask := sub(base, 1)
                 for { let i := 0 } lt(i, n) { i := add(i, 1) } {
                     // Limb words are little-endian packed inside each Fr
-                    // public input. `first_adjust` removes the identity flag
-                    // base from the first x word when present.
+                    // public input.
                     let packed := calldataload(add(src, mul(div(i, limbs_per_word), 0x20)))
-                    if and(iszero(div(i, limbs_per_word)), first_adjust) {
-                        packed := sub(packed, first_adjust)
-                    }
                     // Select limb i from its packed field word. The mod/div
                     // pair maps a limb index to an intra-word limb slot and
                     // the calldata word containing it.
@@ -57,27 +56,6 @@
                 yes := and(eq(hi, BLS_P_HI), eq(lo, BLS_P_MINUS_ONE_LO))
             }
 
-            // Canonical encoded accumulator identity:
-            //   x = p-1 plus the identity flag in the first packed word,
-            //   y = p-1 with no identity flag.
-            // It decodes to the EIP-2537 point-at-infinity slot (all zeros).
-            //
-            // This fast path is deliberately stricter than "decodes to zero":
-            // the point at infinity has exactly one accepted public-input
-            // encoding. Non-canonical zero-like encodings are rejected later.
-            function is_acc_encoded_identity(src) -> yes {
-                yes := and(
-                    and(
-                        eq(calldataload(src), BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG),
-                        eq(calldataload(add(src, 0x20)), BLS_P_MINUS_ONE_PACKED_1)
-                    ),
-                    and(
-                        eq(calldataload(add(src, 0x40)), BLS_P_MINUS_ONE_PACKED_0),
-                        eq(calldataload(add(src, 0x60)), BLS_P_MINUS_ONE_PACKED_1)
-                    )
-                )
-            }
-
             // Reject unused high bits in the packed public-input words. This
             // makes each accumulator point encoding canonical before it reaches
             // the precompile-based curve/subgroup validation.
@@ -104,24 +82,10 @@
                 }
             }
 
-            // Decode one shifted coordinate. `allow_id` is true only for x,
-            // because the identity flag lives in x's first packed word.
-            function load_acc_coord(src, allow_id, bits, n, base, limbs_per_word) -> ok, hi, lo, is_id {
+            // Decode one shifted coordinate of a non-identity point.
+            function load_acc_coord(src, bits, n, base, limbs_per_word) -> ok, hi, lo {
                 ok := check_acc_coord_packing(src, bits, n, limbs_per_word)
-                if and(allow_id, iszero(lt(calldataload(src), base))) {
-                    // Probe the x identity flag by removing one radix base and
-                    // checking whether the adjusted coordinate is p-1.
-                    //
-                    // `calldataload(src) >= base` is a cheap prefilter: only x
-                    // can carry this flag, and adding one radix base must make
-                    // the first packed word at least base.
-                    let adj_hi, adj_lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, base)
-                    is_id := is_bls_p_minus_one(adj_hi, adj_lo)
-                }
-
-                // Decode again with the identity adjustment applied only when
-                // the canonical identity flag was actually detected.
-                hi, lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, mul(is_id, base))
+                hi, lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word)
                 ok := and(
                     ok,
                     // Coordinate must be in the BLS12-381 base field, i.e.
@@ -153,67 +117,50 @@
             // slot. Non-identity points are curve/subgroup checked later by
             // routing them through G1MSM.
             function load_acc_point(dst, src, bits, n, base) -> ok, is_id {
-                // Prefer the canonical all-coordinate identity encoding before
-                // attempting coordinate-level shifted decoding. This accepts
-                // the point at infinity only in the exact form generated by the
-                // circuit's public-input codec.
-                is_id := is_acc_encoded_identity(src)
+                // x and y occupy coord_words packed public-input words each;
+                // the identity flag word immediately follows y.
+                let limbs_per_word := {{ template_constants.accumulator.limbs_per_word }}
+                let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
+                let flag := calldataload(add(src, mul(mul(2, coord_words), 0x20)))
+                // The circuit constrains the flag as a bit. Anything else is a
+                // malformed public input rather than a non-identity point.
+                ok := lt(flag, 2)
+                is_id := eq(flag, 1)
+
                 if is_id {
-                    ok := 1
-                    // EIP-2537 encodes G1 identity as four zero words:
-                    // x_hi = x_lo = y_hi = y_lo = 0.
+                    // When the flag is set the circuit leaves x and y
+                    // unconstrained ("can be anything"), so they carry no
+                    // meaning and must not be decoded or range-checked here.
+                    // The proof itself still binds whatever words were
+                    // supplied. EIP-2537 encodes G1 identity as four zero
+                    // words: x_hi = x_lo = y_hi = y_lo = 0.
                     mstore(dst, 0)
                     mstore(add(dst, 0x20), 0)
                     mstore(add(dst, 0x40), 0)
                     mstore(add(dst, 0x60), 0)
                 }
                 if iszero(is_id) {
-                    // x occupies coord_words packed public-input words; y
-                    // starts immediately after x.
-                    let limbs_per_word := {{ template_constants.accumulator.limbs_per_word }}
-                    let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
-                    // Only x may carry the identity flag. y must decode as a
-                    // normal shifted coordinate.
-                    let x_ok, x_hi, x_lo, x_is_id := load_acc_coord(src, 1, bits, n, base, limbs_per_word)
-                    let y_ok, y_hi, y_lo, y_id := load_acc_coord(
+                    let x_ok, x_hi, x_lo := load_acc_coord(src, bits, n, base, limbs_per_word)
+                    let y_ok, y_hi, y_lo := load_acc_coord(
                         add(src, mul(coord_words, 0x20)),
-                        0,
                         bits,
                         n,
                         base,
                         limbs_per_word
                     )
-                    // y_id is always zero because allow_id was false, but the
-                    // tuple shape is shared with x decoding.
-                    pop(y_id)
-                    ok := and(x_ok, y_ok)
-                    is_id := x_is_id
-
-                    if is_id {
-                        // If x carried the identity flag, both decoded
-                        // coordinates must be zero after shifting. Any other y
-                        // value would be a malformed infinity encoding.
-                        ok := and(ok, iszero(or(or(x_hi, x_lo), or(y_hi, y_lo))))
-                        mstore(dst, 0)
-                        mstore(add(dst, 0x20), 0)
-                        mstore(add(dst, 0x40), 0)
-                        mstore(add(dst, 0x60), 0)
-                    }
-                    if iszero(is_id) {
-                        // The coordinate codec maps encoded p-1 to decoded
-                        // zero. EIP-2537 reserves affine (0,0) for the point
-                        // at infinity, so a decoded infinity is only valid
-                        // when the canonical accumulator identity encoding
-                        // was used above.
-                        let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))
-                        ok := and(ok, iszero(decoded_zero))
-                        // Store the affine point in the exact precompile input
-                        // layout: x_hi, x_lo, y_hi, y_lo.
-                        mstore(dst, x_hi)
-                        mstore(add(dst, 0x20), x_lo)
-                        mstore(add(dst, 0x40), y_hi)
-                        mstore(add(dst, 0x60), y_lo)
-                    }
+                    ok := and(ok, and(x_ok, y_ok))
+                    // The coordinate codec maps encoded p-1 to decoded
+                    // zero. EIP-2537 reserves affine (0,0) for the point at
+                    // infinity, so a decoded infinity is only valid when the
+                    // identity flag word is set.
+                    let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))
+                    ok := and(ok, iszero(decoded_zero))
+                    // Store the affine point in the exact precompile input
+                    // layout: x_hi, x_lo, y_hi, y_lo.
+                    mstore(dst, x_hi)
+                    mstore(add(dst, 0x20), x_lo)
+                    mstore(add(dst, 0x40), y_hi)
+                    mstore(add(dst, 0x60), y_lo)
                 }
             }
 
@@ -239,16 +186,19 @@
                 let limb_base := shl(bits, 1)
                 let limbs_per_word := {{ template_constants.accumulator.limbs_per_word }}
                 let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
+                // One public point is its x and y coordinate words followed
+                // by the identity flag word.
+                let point_words := add(mul(2, coord_words), {{ template_constants.accumulator.identity_flag_words }})
                 // acc_offset is generated from the VK/protocol shape and
                 // points into the ABI `instances` array.
                 let acc_instance_ptr := add(INSTANCE_CPTR, {{ (self.expected_acc_offset * 32)|hex() }})
 
-                // LHS layout: point limbs (x,y), then either an explicit
-                // scalar word or an implicit unit scalar for already-collapsed
-                // point-pair public inputs.
+                // LHS layout: point limbs (x,y), identity flag, then either an
+                // explicit scalar word or an implicit unit scalar for
+                // already-collapsed point-pair public inputs.
                 // The scalar pointer is computed unconditionally; the rendered
                 // branch below decides whether to read it or use scalar 1.
-                let lhs_scalar_ptr := add(acc_instance_ptr, mul(mul(2, coord_words), 0x20))
+                let lhs_scalar_ptr := add(acc_instance_ptr, mul(point_words, 0x20))
                 let lhs_ok, lhs_is_id := load_acc_point(ACC_LHS_MPTR, acc_instance_ptr, bits, n, limb_base)
                 out := and(out, lhs_ok)
                 // Shared scratch for one-pair LHS validation and the later
@@ -286,9 +236,10 @@
                 {%- if acc_fixed_bases.len() == 0 %}
                     {%- if self.expected_acc_has_carried_scalars %}
                 // RHS layout for this generated verifier is fully collapsed:
-                // point limbs (x,y), scalar. There is no fixed-base scalar
-                // tail; fixed-base contributions were already folded into
-                // ACC_RHS by the circuit/native accumulator construction.
+                // point limbs (x,y), identity flag, scalar. There is no
+                // fixed-base scalar tail; fixed-base contributions were
+                // already folded into ACC_RHS by the circuit/native
+                // accumulator construction.
                     {%- else %}
                 // RHS layout for this generated verifier is an already
                 // collapsed point pair: lhs point, rhs point. Both carried
@@ -297,8 +248,8 @@
                     {%- endif %}
                 {%- else %}
                 // RHS layout for this generated verifier is partially
-                // collapsed: point limbs (x,y), scalar, then fixed-base
-                // scalars in BTreeMap key order (`-G`, fixed_i, perm_i
+                // collapsed: point limbs (x,y), identity flag, scalar, then
+                // fixed-base scalars in BTreeMap key order (`-G`, fixed_i, perm_i
                 // lexicographically by name). Each tail scalar is consumed
                 // below and appended to the RHS MSM with its generated base.
                 {%- endif %}
@@ -308,8 +259,9 @@
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
                 // RHS scalar, when present, immediately follows the RHS point
-                // limbs. The fixed-base scalar tail starts after it.
-                let rhs_scalar_ptr := add(rhs_instance_ptr, mul(mul(2, coord_words), 0x20))
+                // limbs and identity flag. The fixed-base scalar tail starts
+                // after it.
+                let rhs_scalar_ptr := add(rhs_instance_ptr, mul(point_words, 0x20))
                 let rhs_ok, rhs_is_id := load_acc_point(ACC_RHS_MPTR, rhs_instance_ptr, bits, n, limb_base)
                 out := and(out, rhs_ok)
                 // acc_pair_ptr appends (G1, scalar) pairs into acc_scratch for

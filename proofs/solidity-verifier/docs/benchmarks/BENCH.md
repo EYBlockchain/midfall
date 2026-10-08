@@ -152,7 +152,7 @@ Largest sections:
 | evaluations + transcript tail | 248,795 | eval reads, challenge squeezes, proof accumulator prep |
 | linearization-commitment MSM | 119,469 | verifier linearization commitment |
 | quotient evaluation | 107,966 | Fr arithmetic |
-| public accumulator pairing check | 105,329 | trivial one-step outer accumulator; skips identity/zero-scalar MSM calls |
+| public accumulator pairing check | 105,329 | trivial one-step outer accumulator; G1MSM still validates both carried points |
 | final proof ec_pairing | 103,168 | final proof/KZG accumulator pairing after PCS inputs are already prepared |
 | Lagrange + instance evaluation | 55,002 | public instance evaluation |
 
@@ -160,9 +160,10 @@ The application-level accumulator carried in the decider state is now fully
 collapsed over the inner verifier's fixed bases: it exposes only
 `lhs point, lhs scalar = 1, rhs point, rhs scalar = 1`. The outer IVC
 self-accumulator still follows Midfall's variable-base-collapsed shape, because
-its fixed bases are the self VK; for the one-step final proof it is trivial, so
-the Solidity verifier detects the packed identity encoding and skips
-identity/zero-scalar MSM precompile calls.
+its fixed bases are the self VK; for the one-step final proof it is trivial.
+The Solidity verifier reads the points' identity flag words and still sends
+both carried points through G1MSM, including identity and zero-scalar cases,
+to validate them before the final pairing.
 
 ## Measured breakdown (Poseidon fixture, k=6, midfall HEAD)
 

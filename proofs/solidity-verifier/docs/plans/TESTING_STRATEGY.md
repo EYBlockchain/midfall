@@ -498,7 +498,7 @@ checkpoint.
 | Transcript equivalence | Trace Rust and Solidity for all challenge stages: VK digest, committed instance, public instances, advice commitments, theta/beta/gamma/y/x/x1/x2/x3/x4, quotient eval, PCS inputs, final pairing inputs. Keep the native/Solidity trace comparison as a required EVM gate. |
 | Empty/edge circuit shapes | Shape fuzz circuits with no advice in a phase, no lookups, one lookup, additive selectors, complex selectors, next rotations, second phase advice, permutation on/off, and wide advice counts that stress memory layout. |
 | PCS/KZG/quotient | Mutate every quotient commitment, proof eval, opening proof, batching scalar source, quotient evaluator output, and external quotient return length. Assert the final pairing result is semantically checked, not just precompile call success. |
-| Accumulator-specific | Check accumulator schema consumes exactly the expected public input words. Test unused high limb bits, malformed identity encoding, x/y limb swaps, scalar mutation, zero/identity accumulator cases, and any future fixed-base tail. |
+| Accumulator-specific | Check accumulator schema consumes exactly the expected public input words. Test unused high limb bits, non-boolean or flipped identity flag words, x/y limb swaps, scalar mutation, zero/identity accumulator cases, and any future fixed-base tail. |
 | Precompile/fail behavior | Constructor smoke tests cover MCOPY, the largest generated G1MSM input, and the two-pair EIP-2537 pairing shape; add tests for short return data, false pairing result, reverted precompile call, and stale return memory using generated-template mutations or a helper harness. |
 | Memory/layout | Fast generator tests should assert no overlap between VK, challenge, transcript, quotient, PCS, accumulator, and scratch regions. Keep these as compile-time/layout tests in `src/codegen/mod.rs` and `src/codegen/template.rs`. |
 | Production artifact checks | `verifyProof` production renders stay `external view`, no `LOG1`, no gas checkpoints, Solidity pragma `^0.8.24`, Cancun/Prague target, runtime size below EIP-170 with margin. |
@@ -520,7 +520,7 @@ checkpoint.
 ### P1
 
 - Add accumulator malformation tests outside the slow IVC bench, especially
-  unused high limb bits and identity encoding variants.
+  unused high limb bits and identity flag word variants.
 - Add precompile-return semantic tests: short return, false pairing return,
   reverted call, stale memory, and bounded-gas failure.
 - Add quotient-evaluator adversarial tests for wrong output length, wrong

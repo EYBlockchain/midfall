@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Blind logup multiplicities polynomial on non-usable rows for ZK [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
 
 ### Changed
+* BREAKING: `halo2_solidity_verifier` decodes accumulator points with the dedicated foreign point `is_id` word: each point now occupies 5 public input words (12 for the fully collapsed accumulator, 10 for the Moonlight point pair), the flag must be 0 or 1, and x/y are not decoded for identity points; verifiers rendered before this change reject the new layout
 * Simplify `CommitmentReference` by removing unused `Chopped` variant [#314](https://github.com/midnightntwrk/midnight-zk/pull/314)
 * Split linearization polynomial into non-constant and constant parts, removing the generator point from the MSM [#313](https://github.com/midnightntwrk/midnight-zk/pull/313)
 * Remove unnecessary polynomial padding in KZG multi-open [#276](https://github.com/midnightntwrk/midnight-zk/pull/276)
