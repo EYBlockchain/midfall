@@ -11,6 +11,7 @@ mod api;
 mod builder;
 mod evm;
 mod lowering;
+pub mod quotient_listing;
 
 #[cfg(all(test, feature = "evm"))]
 mod test;

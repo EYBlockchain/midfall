@@ -49,6 +49,8 @@
 
 #![cfg(all(feature = "evm", feature = "truncated-challenges",))]
 
+mod common;
+
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -1160,6 +1162,7 @@ fn ivc_final_keccak_solidity_e2e() {
             },
         })
         .expect("pinned quotient render should succeed");
+    common::check_quotient_listing("ivc-decider", &artifacts);
     let verifier_solidity = artifacts.verifier;
     let vk_solidity = artifacts.verifying_key.expect("separate render includes VK");
     let pinned_quotient_solidity =
