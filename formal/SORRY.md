@@ -1,8 +1,9 @@
 # sorry register
 
 Every `sorry` in `formal/` is listed here with the work package that removes
-it. CI (.github/workflows/formal.yml) fails if a `sorry` appears that is not listed
-here, or if a listed one disappears without this file being updated.
+it. CI (formal/scripts/checks.sh, run by .github/workflows/formal.yml) fails if a
+`sorry` appears that is not listed here, or if a listed one disappears without this
+file being updated.
 
 A bare `sorry` outside this register is never allowed; a missing proof becomes a
 named hypothesis structure in `Midfall/Assumptions/` instead (plan Section 3, gap
@@ -15,13 +16,17 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Common/Codec.lean | 33 | `E1OfEip` | Phase 1 curve instance |
 | Midfall/Common/Codec.lean | 41 | `G1OfEip` | Phase 1 curve instance |
 | Midfall/Halo2/Exec/Native.lean | 42 | `DualMSM.check` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 50 | `TranscriptM (DualMSM (Fr p) G₁ G₂) := so` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 50 | `TranscriptM (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 64 | `Option (List (Msg (Fr p) G₁)) := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 69 | `Except Fault (DualMSM (Fr p) G₁ G₂) := s` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 69 | `Except Fault (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 74 | `Except Fault Unit := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := so` | Phase 4 (spec layer) |
-| Midfall/Statements.lean | 42 | `verifyMsgs keccak256 F params vk inst ms` | frozen statements (S1..S7 land later) |
-| Midfall/Statements.lean | 54 | `Spec.accepts H F params vk inst ms := by` | frozen statements (S1..S7 land later) |
+| Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 32 | `CircuitIndex.usable` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 44 | `(c : Cell) : Fr p := sorry` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 48 | `(side : Nat) (i : Nat) : Array (Fr p) := sor` | Phase 4 (spec layer) |
+| Midfall/Statements.lean | 42 | `verifyMsgs keccak256 F params vk inst ms = .` | frozen statements (S1..S7 land later) |
+| Midfall/Statements.lean | 54 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
 
 ## Upstream sorries we must not depend on
 

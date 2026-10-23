@@ -57,6 +57,8 @@ structure ConstraintSystem (F : Type) where
   numInstanceColumns : Nat
   numChallenges : Nat
   lookups : Array (Nat × Nat)
-  trashcans : Array (String × Array (Expression F))
+  /-- name, guard selector expression, then the constraints that must
+      vanish wherever the guard is 1 (plan 9.3 T.selector / T.constraints). -/
+  trashcans : Array (String × (Expression F) × Array (Expression F))
 
 end Midfall.Halo2
