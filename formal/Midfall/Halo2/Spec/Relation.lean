@@ -43,9 +43,12 @@ def evalRow (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
 def cell (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
     (c : Cell) : Fr p := sorry
 
-/-- The tuple of values a lookup input or table row takes. -/
+/-- The tuple of values a lookup input or table row takes: one entry per
+    expression in the row, evaluated at row i. Plan 9.3 writes this as
+    `rowTuple idx inst w inp i` where inp is an input vector and L.table the
+    table vector, so the argument is the expression list, not an index. -/
 def rowTuple (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
-    (side : Nat) (i : Nat) : Array (Fr p) := sorry
+    (exprs : Array (Expression (Fr p))) (i : Nat) : Array (Fr p) := sorry
 
 /-- Design-assessment F3, turned into a hypothesis of the relation: the
     committed-instance column's commitment is the identity, which is what makes
@@ -63,11 +66,11 @@ structure Satisfies (idx : CircuitIndex (Fr p)) (inst : Array (Fr p))
   permutes : ∀ c ∈ idx.perm.cycles, ∀ a ∈ c,
     ∀ b ∈ c, cell idx inst w a = cell idx inst w b
   lookupsContained : ∀ L ∈ idx.cs.lookups,
-    ∀ i ∈ idx.usable, ∃ j ∈ idx.usable,
-      rowTuple idx inst w L.1 i = rowTuple idx inst w L.2 j
+    ∀ inp ∈ L.inputExpressions, ∀ i ∈ idx.usable, ∃ j ∈ idx.usable,
+      rowTuple idx inst w inp i = rowTuple idx inst w L.tableExpressions j
   trashcansHold : ∀ T ∈ idx.cs.trashcans,
     ∀ i ∈ idx.usable,
-      evalRow idx inst w T.2.1 i = 1 → ∀ c ∈ T.2.2,
+      evalRow idx inst w T.selector i = 1 → ∀ c ∈ T.constraintExpressions,
         evalRow idx inst w c i = 0
 
 /-- The relation as a set of (instances, witness) pairs, as S1 and S6 state it. -/

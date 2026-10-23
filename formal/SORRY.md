@@ -19,7 +19,7 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Halo2/Spec/Relation.lean | 32 | `def CircuitIndex.usable (idx : CircuitIndex ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 44 | `(c : Cell) : Fr p := sorry` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 48 | `(side : Nat) (i : Nat) : Array (Fr p) := sor` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 51 | `(exprs : Array (Expression (Fr p))) (i : Nat` | Phase 4 (spec layer) |
 | Midfall/Statements.lean | 45 | `verifyMsgs keccak256 F params vk inst ms = .` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 57 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 72 | `verifyMsgs keccak256 Features.solidity param` | frozen statements (S1..S7 land later) |
