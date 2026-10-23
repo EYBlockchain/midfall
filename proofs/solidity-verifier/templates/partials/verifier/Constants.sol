@@ -136,6 +136,7 @@
     uint256 internal constant      SELECTOR_ACC_MPTR = {{ memory.selector_acc_mptr|hex() }};
     uint256 internal constant   QUOTIENT_RETURN_MPTR = {{ memory.quotient_return_mptr|hex() }};
     uint256 internal constant  BATCH_INV_SCRATCH_MPTR = {{ memory.batch_invert_scratch_mptr|hex() }};
+    uint256 internal constant   LAGRANGE_DENOMS_MPTR = {{ memory.lagrange_denoms_mptr|hex() }};
     uint256 internal constant        TRACE_U256_MPTR = {{ memory.trace_u256_mptr|hex() }};
 
     // ----------------------------------------------------------------------

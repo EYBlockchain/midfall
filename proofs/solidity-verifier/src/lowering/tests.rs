@@ -4564,3 +4564,59 @@ fn direct_fold_check_rejects_off_by_one_family_loops() {
     eprintln!("[fold-check] skewed lookup counter must be rejected: {err}");
     assert!(err.contains("q_lookups"), "{err}");
 }
+
+/// The Lagrange denominator run must live entirely in the planner-registered
+/// lagrange_denoms region. Historically it was written in place at X_N_MPTR,
+/// overlaying theta words and spilling into the rot_points window for large
+/// instance counts -- safety then rested on write-ordering coincidence. Pin the
+/// rendered source so the run cannot silently move back onto the theta band.
+#[test]
+fn lagrange_denominator_run_uses_registered_scratch_region() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let source = generator
+        .render(crate::RenderOptions::default())
+        .expect("test verifier should render")
+        .verifier;
+
+    assert!(
+        source.contains("batch_invert(success, LAGRANGE_DENOMS_MPTR"),
+        "Lagrange batch inversion must run over the registered denominator region"
+    );
+    assert!(
+        source.contains("let mptr := LAGRANGE_DENOMS_MPTR"),
+        "the denominator write cursor must start at the registered region"
+    );
+    assert!(
+        source.contains("mstore(X_N_MPTR, x_n)"),
+        "the permanent x_n theta slot must still be written by the distill step"
+    );
+    assert!(
+        !source.contains("batch_invert(success, X_N_MPTR"),
+        "the denominator run must not be based at the X_N_MPTR theta slot"
+    );
+    assert!(
+        !source.contains("add(X_N_MPTR"),
+        "no offset-based access to the X_N_MPTR theta slot may survive; the \
+         run's offsets all belong to LAGRANGE_DENOMS_MPTR now"
+    );
+}
+
+/// The Lagrange denominator run lives in a registered scratch region that grows
+/// with num_instances, so counts far past the historical live-memory cliff must
+/// build, validate, and render.
+#[test]
+fn generator_accepts_instance_counts_beyond_the_old_lagrange_cliff() {
+    let (params, vk) = lowering_plan_test_vk();
+    let generator = SolidityGenerator::try_new(&params, &vk, GeneratorConfig::new(200, 1))
+        .expect("large instance counts are supported with a registered denominator region");
+
+    let plan = generator.inputs().lowering_plan();
+    plan.memory
+        .validate()
+        .expect("layout with a 200-instance denominator run is valid");
+
+    generator
+        .render(crate::RenderOptions::default())
+        .expect("verifier with a 200-instance denominator run renders");
+}

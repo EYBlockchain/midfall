@@ -486,6 +486,10 @@ pub(crate) struct VerifierMemoryLayout {
     /// Reuses selector-accumulator bytes during the earlier Lagrange batch
     /// inversion phase.
     pub(crate) batch_invert_scratch_mptr: usize,
+    /// The Lagrange batch-inversion input run (denominators, then in-place
+    /// inverses, then Lagrange values), registered as its own phase-scratch
+    /// region instead of being written in place over the theta slots.
+    pub(crate) lagrange_denoms_mptr: usize,
     /// First quotient VM temporary. Also the canonical PCS scratch base once
     /// selector accumulators are accounted for.
     pub(crate) quotient_tmp_mptr: usize,
@@ -610,6 +614,7 @@ impl VerifierMemoryLayout {
         .max()
         .expect("constructor G1MSM smoke bounds are non-empty");
         let batch_invert_len = batch_invert_scratch_bytes(meta, config.num_instances);
+        let lagrange_denoms_len = batch_invert_input_words(meta, config.num_instances) * WORD_BYTES;
         let quotient_return_len = (2 + meta.num_simple_selectors) * WORD_BYTES;
 
         let mut arena = MemoryArena::default();
@@ -777,13 +782,31 @@ impl VerifierMemoryLayout {
             selector_len,
             MemoryLifetime::Phase(MemoryPhase::PcsFinalMsm),
         );
-        let batch_invert_scratch_mptr = {
+        // Both Lagrange-phase regions come from ONE allocator so the second
+        // lands sequentially after the first: a fresh allocator would reset the
+        // per-phase cursor back to selector_acc_mptr and register a same-phase
+        // overlap, which MemoryMap::validate rejects. Order also matters:
+        // batch_invert_scratch is allocated first so its address stays pinned
+        // to selector_acc_mptr.
+        //
+        // lagrange_denoms holds the batch-inversion input run. It was
+        // historically written in place at X_N_MPTR, overlaying theta words and
+        // spilling into the PCS fixed windows for large instance counts; as a
+        // registered region the arena overlap model enforces disjointness
+        // structurally instead of by write-ordering coincidence.
+        let (batch_invert_scratch_mptr, lagrange_denoms_mptr) = {
             let mut scratch = arena.scratch_allocator(selector_acc_mptr);
-            scratch.alloc_phase_scratch(
+            let batch_invert_scratch_mptr = scratch.alloc_phase_scratch(
                 "batch_invert_scratch",
                 batch_invert_len,
                 MemoryPhase::LagrangeBatchInvert,
-            )
+            );
+            let lagrange_denoms_mptr = scratch.alloc_phase_scratch(
+                "lagrange_denoms",
+                lagrange_denoms_len,
+                MemoryPhase::LagrangeBatchInvert,
+            );
+            (batch_invert_scratch_mptr, lagrange_denoms_mptr)
         };
         let quotient_tmp_base = (selector_acc_mptr + selector_len).next_multiple_of(WORD_BYTES);
         let (quotient_tmp_mptr, quotient_stack_mptr) = {
@@ -855,6 +878,7 @@ impl VerifierMemoryLayout {
             comms_mptr_base.value().as_usize() + commitments_len,
             selector_acc_mptr + selector_len,
             batch_invert_scratch_mptr + batch_invert_len,
+            lagrange_denoms_mptr + lagrange_denoms_len,
             quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
             pcs_q_eval_source_table_mptr + q_eval_source_len,
             pcs_q_com_trace_scratch_mptr + q_com_trace_len,
@@ -931,6 +955,7 @@ impl VerifierMemoryLayout {
             quotient_limb_comms_mptr_base,
             selector_acc_mptr,
             batch_invert_scratch_mptr,
+            lagrange_denoms_mptr,
             quotient_tmp_mptr,
             quotient_stack_mptr,
             quotient_stack_hi: quotient_stack_mptr + quotient_stack_len.max(MODEXP_FRAME_BYTES),
@@ -1063,24 +1088,30 @@ pub(crate) fn commitment_g1_count(meta: &ConstraintSystemMeta) -> usize {
 }
 
 /// Scratch size required by the batched scalar-inversion helper.
+/// Number of Fr words the generated Lagrange block writes into the
+/// `lagrange_denoms` region as the batch-inversion input run.
+///
+/// The input range covers:
+///   - num_instances public Lagrange denominators, or one fallback word when
+///     there are no public instances;
+///   - `abs(rotation_last)` negative-row denominators;
+///   - x_n - 1.
+pub(crate) fn batch_invert_input_words(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
+    if num_instances == 0 {
+        meta.rotation_last.unsigned_abs() as usize + 2
+    } else {
+        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
+    }
+}
+
 fn batch_invert_scratch_bytes(meta: &ConstraintSystemMeta, num_instances: usize) -> usize {
     // The template calls:
-    //   batch_invert(X_N_MPTR, mptr_end + WORD_BYTES, scratch, r)
-    //
-    // The input range covers:
-    //   - num_instances public Lagrange denominators, or one fallback word when
-    //     there are no public instances;
-    //   - `abs(rotation_last)` negative-row denominators;
-    //   - x_n - 1.
+    //   batch_invert(LAGRANGE_DENOMS_MPTR, mptr_end + WORD_BYTES, scratch, r)
     //
     // For N inputs, the batched inversion stores N-2 prefix products and then
     // overlays one modexp frame at the current prefix pointer. Singletons use
     // only the frame.
-    let input_words = if num_instances == 0 {
-        meta.rotation_last.unsigned_abs() as usize + 2
-    } else {
-        num_instances + meta.rotation_last.unsigned_abs() as usize + 1
-    };
+    let input_words = batch_invert_input_words(meta, num_instances);
 
     MODEXP_FRAME_BYTES + input_words.saturating_sub(2) * WORD_BYTES
 }
@@ -1491,5 +1522,82 @@ mod tests {
             region.len,
             MODEXP_FRAME_BYTES + (5 + 3 + 1 - 2) * WORD_BYTES
         );
+    }
+
+    /// The registered lagrange_denoms region tracks the instance shape:
+    /// num_instances + |rotation_last| denominators plus the trailing
+    /// x_n - 1 word, and one extra fallback word when there are no public
+    /// instances.
+    #[test]
+    fn lagrange_denoms_region_tracks_instance_shape() {
+        let meta = ConstraintSystemMeta {
+            rotation_last: -3,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 5,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+
+        assert_eq!(region.len, (5 + 3 + 1) * WORD_BYTES);
+        assert_eq!(
+            region.lifetime,
+            MemoryLifetime::Phase(MemoryPhase::LagrangeBatchInvert)
+        );
+        assert_eq!(layout.lagrange_denoms_mptr, region.start);
+        // Sequential same-phase allocation: the run sits directly above the
+        // prefix-product scratch, which itself stays pinned to the selector
+        // accumulator base.
+        let scratch = layout
+            .map
+            .region("batch_invert_scratch")
+            .expect("batch invert scratch region registered");
+        assert_eq!(region.start, scratch.start + scratch.len);
+        layout.validate().expect("layout with registered denominator run is valid");
+
+        // Zero public instances still needs one denominator slot for L_0
+        // recovery: |rotation_last| + 2 words total.
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 0,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+        assert_eq!(region.len, (3 + 2) * WORD_BYTES);
+        layout.validate().expect("zero-instance layout is valid");
+    }
+
+    /// The registered denominator region removes the historical instance-count
+    /// cliff: a count far beyond the old live-memory cap now simply grows the
+    /// region, and the arena still validates.
+    #[test]
+    fn lagrange_denoms_region_scales_beyond_the_old_live_memory_cliff() {
+        let meta = ConstraintSystemMeta {
+            rotation_last: -3,
+            ..ConstraintSystemMeta::default()
+        };
+        let vk = synthetic_vk();
+        let config = VerifierMemoryLayoutConfig {
+            num_instances: 500,
+            ..VerifierMemoryLayoutConfig::default()
+        };
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
+        let region = layout
+            .map
+            .region("lagrange_denoms")
+            .expect("lagrange denominator region registered");
+        assert_eq!(region.len, (500 + 3 + 1) * WORD_BYTES);
+        layout
+            .validate()
+            .expect("large instance counts are structurally valid with a registered run");
     }
 }
