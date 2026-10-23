@@ -280,6 +280,231 @@ impl Circuit<Fq> for LoweringPlanTestCircuit {
     }
 }
 
+/// Number of advice columns backing one seven-limb foreign-field shape.
+const QUOTIENT_VM_TEST_LIMBS: usize = 7;
+/// Gate count chosen to exceed the inline prefix plus the native-gate budget,
+/// so identities are left over for the compact VM.
+const QUOTIENT_VM_TEST_GATES: usize =
+    DEFAULT_HYBRID_QUOTIENT_INLINE_IDENTITIES + DEFAULT_QUOTIENT_NATIVE_GATES + 8;
+
+#[derive(Clone, Debug)]
+struct QuotientVmTestConfig {
+    limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS],
+    selector: Selector,
+}
+
+/// Circuit whose quotient identities are numerous enough to reach the VM.
+///
+/// `LoweringPlanTestCircuit` has a single gate, so its whole identity stream
+/// fits in the inline prefix and the compact VM never runs. This circuit exists
+/// so the fast test suite exercises the bytecode path — and therefore the
+/// generator's own program certification — on a real `LoweringPlan`.
+#[derive(Clone, Debug, Default)]
+struct QuotientVmTestCircuit;
+
+impl Circuit<Fq> for QuotientVmTestCircuit {
+    type Config = QuotientVmTestConfig;
+    type FloorPlanner = SimpleFloorPlanner;
+    type Params = ();
+
+    fn without_witnesses(&self) -> Self {
+        Self
+    }
+
+    fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+        let limbs: [Column<Advice>; QUOTIENT_VM_TEST_LIMBS] =
+            core::array::from_fn(|_| meta.advice_column());
+        let selector = meta.selector();
+        // The generator only supports one identity-committed plus one
+        // non-committed instance column, so mirror that shape here.
+        let committed_instance = meta.instance_column();
+        let public_instance = meta.instance_column();
+
+        meta.create_gate("quotient vm instance balance", |meta| {
+            let advice = meta.query_advice(limbs[0], Rotation::cur());
+            let committed = meta.query_instance(committed_instance, Rotation::cur());
+            let public = meta.query_instance(public_instance, Rotation::cur());
+            Constraints::without_selector(vec![advice + committed + public])
+        });
+
+        // Seven-limb linear forms: the shape the LIN7 recognizer is built for.
+        // Distinct per-gate coefficients keep the gates from deduplicating.
+        for gate in 0..QUOTIENT_VM_TEST_GATES {
+            meta.create_gate("quotient vm limb form", move |meta| {
+                let terms = limbs
+                    .iter()
+                    .enumerate()
+                    .map(|(limb, column)| {
+                        let coeff = Fq::from(((gate + 1) * 16 + limb + 1) as u64);
+                        meta.query_advice(*column, Rotation::cur()) * Expression::Constant(coeff)
+                    })
+                    .reduce(|acc, term| acc + term)
+                    .expect("limb count is nonzero");
+                Constraints::without_selector(vec![terms])
+            });
+        }
+
+        // One simple-selector gate so the selector fold path is covered too.
+        meta.create_gate("quotient vm selector form", |meta| {
+            let lhs = meta.query_advice(limbs[0], Rotation::cur());
+            let rhs = meta.query_advice(limbs[1], Rotation::cur());
+            Constraints::with_selector(selector, vec![("quotient vm selector form", lhs - rhs)])
+        });
+
+        QuotientVmTestConfig { limbs, selector }
+    }
+
+    fn synthesize(
+        &self,
+        config: Self::Config,
+        mut layouter: impl Layouter<Fq>,
+    ) -> Result<(), PlonkError> {
+        layouter.assign_region(
+            || "quotient vm row",
+            |mut region| {
+                config.selector.enable(&mut region, 0)?;
+                for column in config.limbs {
+                    region.assign_advice(|| "limb", column, 0, || Value::known(Fq::ZERO))?;
+                }
+                Ok(())
+            },
+        )
+    }
+}
+
+/// Generate parameters and VK for the VM-exercising lowering-plan tests.
+fn quotient_vm_test_vk() -> (
+    ParamsKZG<Bls12>,
+    VerifyingKey<Fq, KZGCommitmentScheme<Bls12>>,
+) {
+    let mut rng = ChaCha8Rng::seed_from_u64(11);
+    let params = ParamsKZG::<Bls12>::unsafe_setup(6, &mut rng);
+    let circuit = QuotientVmTestCircuit;
+    let vk = keygen_vk_with_k::<Fq, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, 6)
+        .expect("quotient VM test circuit VK should build");
+    (params, vk)
+}
+
+/// The generator certifies its own quotient bytecode on a real plan.
+///
+/// `LoweringPlan::new` runs `certify_quotient_program` and the dual-build
+/// agreement check, both of which panic on mismatch, so simply building the
+/// plan is the assertion. The explicit checks below guard against this test
+/// silently going vacuous if the planner ever stops routing these identities
+/// through the VM.
+#[test]
+fn lowering_plan_certifies_emitted_quotient_bytecode() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let plan = generator.inputs().lowering_plan();
+
+    let interpreted = plan
+        .vm_quotient()
+        .plan
+        .items
+        .iter()
+        .filter(|item| matches!(item, QuotientProgramItem::Identity(_)))
+        .count();
+    assert!(
+        interpreted > 0,
+        "test circuit no longer routes any identity through the compact VM, so the \
+         certification path is untested"
+    );
+    assert!(
+        !plan.vm_quotient().build.bytes.is_empty(),
+        "interpreted identities should emit bytecode"
+    );
+    assert!(
+        plan.vm_quotient().build.used_ops.contains(&Q_OP_LIN7),
+        "test circuit should exercise the seven-limb linear recognizer; used ops: {:?}",
+        plan.vm_quotient().build.used_ops
+    );
+}
+
+#[test]
+fn quotient_certification_seed_binds_all_compared_artifacts() {
+    let build = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST_U8, 0],
+        consts: vec![U256::from(11u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST_U8],
+        used_mem_tokens: Vec::new(),
+    };
+    let baseline = QuotientProgramBuild {
+        bytes: vec![Q_OP_PUSH_CONST, 0, 0],
+        consts: vec![U256::from(13u64)],
+        max_stack: 1,
+        used_ops: vec![Q_OP_PUSH_CONST],
+        used_mem_tokens: Vec::new(),
+    };
+    let expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(17u64))),
+    );
+    let vk_payload = [0xabu8; 64];
+    let seed = super::quotient_numerator::vm::certify::derive_certify_seed(
+        &[&build, &baseline],
+        &[&expr],
+        &vk_payload,
+    );
+
+    let mut changed_bytecode = build.clone();
+    changed_bytecode.bytes[0] ^= 1;
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_bytecode, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_const = build.clone();
+    changed_const.consts[0] = U256::from(19u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&changed_const, &baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let mut changed_baseline = baseline.clone();
+    changed_baseline.consts[0] = U256::from(23u64);
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &changed_baseline],
+            &[&expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_expr = QuotientExpr::Add(
+        Box::new(QuotientExpr::Mem(QuotientMem::Literal(0x120))),
+        Box::new(QuotientExpr::Const(U256::from(29u64))),
+    );
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&changed_expr],
+            &vk_payload,
+        )
+    );
+
+    let changed_vk_payload = [0xcdu8; 64];
+    assert_ne!(
+        seed,
+        super::quotient_numerator::vm::certify::derive_certify_seed(
+            &[&build, &baseline],
+            &[&expr],
+            &changed_vk_payload,
+        )
+    );
+}
+
 /// Generate parameters and VK for lowering-plan integration tests.
 fn lowering_plan_test_vk() -> (
     ParamsKZG<Bls12>,

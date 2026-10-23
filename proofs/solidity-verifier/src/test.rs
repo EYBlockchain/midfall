@@ -1625,12 +1625,14 @@ fn pinned_quotient_verifier_rejects_wrong_vk_and_quotient_contracts() {
 /// the circuit, the solc release, and the optimizer schedule -- so assert the
 /// property against real compiled bytecode rather than assuming it holds.
 ///
-/// `VerifierMemoryLayout::validate()` enforces the complementary bound: every
-/// generated region starts at or above `LOW_MEMORY_SCRATCH_START`, so
-/// `reserved_end <= LOW_MEMORY_SCRATCH_START` here proves full disjointness.
-/// The accumulator-bearing variants are checked too, because their
-/// FinalPairing pairing-batch block adds frames and live values the property
-/// fixture never renders.
+/// `VerifierMemoryLayout::validate()` enforces the complementary bound for the
+/// generated layout: every generated region starts at or above
+/// `LOW_MEMORY_SCRATCH_START`, so `reserved_end <= LOW_MEMORY_SCRATCH_START`
+/// here proves full disjointness. Check both verifier and quotient evaluator
+/// runtimes, because each via-IR compilation unit receives its own independent
+/// spill reservation. The accumulator-bearing variants are checked too,
+/// because their FinalPairing pairing-batch block adds frames and live values
+/// the property fixture never renders.
 #[test]
 fn compiled_memoryguard_does_not_overlap_generated_layout() {
     if !poseidon_inputs_available_for_evm() {
@@ -1657,6 +1659,14 @@ fn compiled_memoryguard_does_not_overlap_generated_layout() {
         ("embedded", fixture.embedded_verifier_solidity.as_str()),
         ("separate", fixture.separate_verifier_solidity.as_str()),
         ("quotient", fixture.quotient_verifier_solidity.as_str()),
+        (
+            "quotient evaluator",
+            fixture.quotient_evaluator_solidity.as_str(),
+        ),
+        (
+            "trace quotient evaluator",
+            fixture.trace_quotient_evaluator_solidity.as_str(),
+        ),
     ] {
         assert_memoryguard_clears_generated_layout(name, source);
     }

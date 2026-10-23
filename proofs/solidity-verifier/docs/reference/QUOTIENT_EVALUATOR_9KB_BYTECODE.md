@@ -104,8 +104,16 @@ normal ABI call.
 The largest win was the compact quotient VM.
 
 Instead of rendering most identities as Yul source, the generator lowers them to
-a small bytecode language in `src/lowering/quotient/mod.rs`. The runtime consumer
-is `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`.
+a small bytecode language in `src/lowering/quotient_numerator/vm/mod.rs`. The
+runtime consumer is
+`templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`.
+
+Every emitted program is certified before it can be pinned into a verifying key:
+`src/lowering/quotient_numerator/vm/certify.rs` re-executes the finalized
+bytecode with the independent interpreter in
+`src/lowering/quotient_numerator/vm/reference.rs` and compares each identity
+against direct evaluation of the expression tree it was lowered from, and
+against a second build with the limb superinstructions disabled.
 
 The VK payload carries:
 

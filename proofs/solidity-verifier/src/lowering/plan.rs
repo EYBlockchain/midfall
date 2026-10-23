@@ -16,8 +16,8 @@ use crate::{
         quotient::{QuotientComputationBlocks, QuotientHelperFlags, QuotientStateSlots},
         quotient_direct::{DirectQuotientPlanned, DirectQuotientRendering},
         quotient_numerator::vm::{
-            self as vm, QuotientProgramBuild, QuotientProgramPlan, RepackedProofLayoutPlan,
-            SelectorFoldPlan,
+            self as vm, certify, QuotientProgramBuild, QuotientProgramPlan,
+            RepackedProofLayoutPlan, SelectorFoldPlan,
         },
         render::{Halo2VerifyingKey, QuotientExternal, QuotientProgram},
         VerifierBuildInputs,
@@ -308,6 +308,23 @@ impl LoweringPlan {
         };
         plan.validate_generator_invariants()
             .unwrap_or_else(|err| panic!("generator invariant violation: {err}"));
+
+        // Certify the limb superinstructions against a generic-opcode build of
+        // the same identity stream. This needs `inputs`, so it runs here rather
+        // than inside `validate_generator_invariants`.
+        let baseline_build = inputs.build_quotient_program_items_with_limb_ops(
+            &plan.vm_quotient().plan.items,
+            &plan.vm_quotient().plan.selector_fold,
+            false,
+        );
+        certify::certify_quotient_builds_agree(
+            &plan.vm_quotient().plan,
+            &plan.vm_quotient().build,
+            &baseline_build,
+            &plan.vk,
+        )
+        .unwrap_or_else(|err| panic!("quotient dual-build certification failed: {err}"));
+
         plan
     }
 
@@ -494,6 +511,14 @@ impl LoweringPlan {
                  expected {expected:?}"
             ));
         }
+        // Prove the emitted bytecode still evaluates the identities it was
+        // lowered from, before it can be pinned into a verifying key.
+        certify::certify_quotient_program(
+            &self.vm_quotient().plan,
+            &self.vm_quotient().build,
+            &self.vk,
+        )
+        .map_err(|err| format!("quotient program certification failed: {err}"))?;
         Ok(())
     }
 
