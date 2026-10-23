@@ -839,6 +839,19 @@ q_sp == base_stack_pointer
 all memory operands are in approved ranges
 ```
 
+**Status (QVM-01):** Addressed through the byte validator plus the remaining
+runtime structural checks. At build time every operand is checked against the
+converged layout (pointers per read window and word-aligned, constant slots,
+`FOLD_SELECTOR` buckets and gaps, stack depth), fail closed, and the program is
+pinned by the VK codehash. At run time the interpreter asserts `q_pc == q_end`,
+`q_has_top == 0` and `q_sp == base` at the end, requires a live top with
+nothing spilled at folds and an empty stack at native callbacks, bounds the
+stack pointer at pops and spills, and checks selector buckets and gaps,
+MODARITH7 flag bits and `u16` constant slots. Runtime pointer and `u8`
+constant-slot clamps were measured (about 56k and 31k gas on the Moonlight
+wrap) and dropped in favour of the exact build-time check. See "Interpreter
+Bounds Checks (QVM-01)" in `docs/reference/QUOTIENT_NUMERATOR_EVALUATOR.md`.
+
 #### 7. Raw verifier does not bind application semantics
 
 The verifier proves only that a proof verifies under the pinned VK and supplied

@@ -23,7 +23,7 @@ use crate::{
         quotient_numerator::{vm::*, Evaluator},
         render::{
             Halo2VerifyingKey, QuotientExternal, QuotientProgram, QuotientSelectorTail,
-            QuotientVmMemUsage, QuotientVmOpcodeUsage,
+            QuotientVmGuards, QuotientVmMemUsage, QuotientVmOpcodeUsage,
         },
         VerifierBuildInputs,
     },
@@ -149,6 +149,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         vk_mptr: Ptr,
         memory: &VerifierMemoryLayout,
         selector_fold: &SelectorFoldPlan,
+        operand_model: &QuotientOperandModel,
     ) -> (QuotientProgram, usize, QuotientStateSlots) {
         let quotient_program_chunks = PackedProgramCodec::encode_words(&build.bytes);
         let quotient_const_words = vk.quotient_const_words;
@@ -173,6 +174,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let len = build.bytes.len();
         let op_usage = Self::quotient_opcode_usage(&build.used_ops);
         let mem_usage = Self::quotient_mem_usage(&build.used_mem_tokens);
+        let guards = Self::quotient_vm_guards(operand_model, memory);
         let program = QuotientProgram {
             len,
             op_usage,
@@ -185,9 +187,28 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             selector_tail_updates: Self::selector_tail_updates(selector_fold),
             stack_mptr: quotient_stack_mptr,
             program_mptr,
+            guards,
         };
 
         (program, quotient_stack_mptr, state_slots)
+    }
+
+    /// Runtime interpreter guard constants (QVM-01), derived from the same
+    /// operand model the build-time validator checks the program against.
+    pub(crate) fn quotient_vm_guards(
+        model: &QuotientOperandModel,
+        memory: &VerifierMemoryLayout,
+    ) -> QuotientVmGuards {
+        assert_eq!(
+            memory.quotient_stack_hi - memory.quotient_stack_mptr,
+            model.stack_words * WORD_BYTES,
+            "quotient VM stack guard and operand model disagree on the stack region"
+        );
+        QuotientVmGuards {
+            const_max: model.num_consts.saturating_sub(1),
+            num_selector_buckets: model.num_selector_buckets,
+            stack_last: memory.quotient_stack_hi - WORD_BYTES,
+        }
     }
 
     /// Convert finalized bytecode usage into template switch-arm flags.
