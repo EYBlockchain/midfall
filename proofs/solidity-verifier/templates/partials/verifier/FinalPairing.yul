@@ -15,8 +15,11 @@
             {
                 let batch_ptr := {{ memory.accumulator_pairing_batch_mptr|hex() }}
 
-                // Domain || KZG rhs/lhs || accumulator rhs/lhs.
+                // Domain || vk_digest || KZG rhs/lhs || accumulator rhs/lhs.
+                // vk_digest makes alpha's binding to the verifying key local
+                // instead of transitive-through-the-points (audit I-7).
                 mstore(batch_ptr, {{ template_constants.accumulator.pairing_batch_domain_tag_hex }})
+                mstore(add(batch_ptr, {{ template_constants.accumulator.pairing_batch_vk_digest_offset|hex() }}), mload(VK_DIGEST_MPTR))
                 mcopy(add(batch_ptr, {{ template_constants.accumulator.pairing_batch_rhs_offset|hex() }}),  PAIRING_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 mcopy(add(batch_ptr, {{ template_constants.accumulator.pairing_batch_lhs_offset|hex() }}),  PAIRING_LHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                 mcopy(add(batch_ptr, {{ template_constants.accumulator.pairing_batch_acc_rhs_offset|hex() }}), ACC_RHS_MPTR,     {{ template_constants.g1_bytes|hex() }})
