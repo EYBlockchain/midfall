@@ -41,6 +41,7 @@ use crate::{
     api::{
         AccumulatorEncoding, CommittedInstanceCommitmentKind, GeneratorConfig, GeneratorError,
         QuotientIdentityExecution, QuotientIdentityManifestTarget, QuotientIdentitySource,
+        RenderOptions,
     },
     SolidityGenerator,
 };
@@ -611,7 +612,8 @@ fn lowering_plan_reuses_stable_layout_facts() {
     );
     assert_eq!(plan.sorted_simple.len(), plan.meta.num_simple_selectors);
 
-    let verifier = inputs.generate_verifier_from_plan(&plan, false, false, false, false, None);
+    let verifier =
+        inputs.generate_verifier_from_plan(&plan, false, false, false, false, None, None);
     assert_eq!(verifier.codegen_layout.proof, plan.proof_layout);
     assert_eq!(verifier.memory.vk_mptr, plan.vk_mptr);
     assert_eq!(verifier.proof_len, plan.proof_layout.proof_len);
@@ -2894,6 +2896,54 @@ fn production_verifier_documents_revert_or_true_policy() {
         assert!(trace.contains("mstore(RETURN_MPTR, iszero(iszero(success)))"));
         assert!(!trace.contains("if iszero(ret) { fail(ERR_PROOF_REJECTED) }"));
     }
+}
+
+/// P10 (L-8): the emitted BUILD_ID must be a stable function of the build's
+/// identity components, and the optional deployment provenance tag must be
+/// the ONLY thing that changes when it is supplied.
+#[test]
+fn build_id_identifies_the_build_and_its_provenance() {
+    let (params, vk) = quotient_vm_test_vk();
+    let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
+    let extract = |source: &str| {
+        source
+            .lines()
+            .find(|line| line.contains("BUILD_ID = 0x"))
+            .expect("rendered verifier carries a BUILD_ID constant")
+            .trim()
+            .to_string()
+    };
+
+    let base = generator
+        .render(RenderOptions::default())
+        .expect("default render succeeds")
+        .verifier;
+    let again = generator
+        .render(RenderOptions::default())
+        .expect("repeat render succeeds")
+        .verifier;
+    assert_eq!(
+        base, again,
+        "renders with equal options must be byte-identical"
+    );
+
+    let tagged = generator
+        .render(RenderOptions {
+            provenance: Some([0x42; 32]),
+            ..RenderOptions::default()
+        })
+        .expect("provenance render succeeds")
+        .verifier;
+    assert_ne!(
+        extract(&base),
+        extract(&tagged),
+        "the provenance tag must change BUILD_ID"
+    );
+    assert_eq!(
+        base.replace(&extract(&base), ""),
+        tagged.replace(&extract(&tagged), ""),
+        "the provenance tag must change ONLY the BUILD_ID constant"
+    );
 }
 
 /// P4 (L-3): the Yul revert sites carry hardcoded 4-byte selectors while the

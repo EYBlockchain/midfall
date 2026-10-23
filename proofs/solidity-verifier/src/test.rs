@@ -3022,6 +3022,117 @@ fn malformed_proof_point_rejects_with_bounded_gas() {
     }
 }
 
+/// P4 (L-3, docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): rejections revert
+/// with a typed 4-byte custom-error selector so integrators can distinguish
+/// failure classes. Decode three representative classes end-to-end.
+#[test]
+fn typed_errors_identify_rejection_classes() {
+    use sha3::{Digest, Keccak256};
+
+    if !poseidon_inputs_available_for_evm() {
+        return;
+    }
+    let selector = |sig: &str| {
+        let d = Keccak256::digest(sig.as_bytes());
+        vec![d[0], d[1], d[2], d[3]]
+    };
+
+    let fixture = create_property_poseidon_fixture();
+    let mut deployed = deployed_separate_verifier(&fixture);
+    if !deployed_call_accepts(&mut deployed, &fixture, &fixture.proof, "valid proof") {
+        return;
+    }
+
+    // (a) Trailing calldata byte -> BadCalldataShape (exact calldatasize pin;
+    // documented ERC-2771 incompatibility).
+    let mut trailing = encode_calldata(&fixture.proof, &fixture.instances);
+    trailing.push(0);
+    // (b) Non-canonical public instance (r) -> NonCanonicalScalar.
+    let mut bad_instance = encode_calldata(&fixture.proof, &fixture.instances);
+    let len = bad_instance.len();
+    bad_instance[len - 32..].copy_from_slice(
+        &hex::decode("73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001")
+            .expect("BLS12-381 r"),
+    );
+    // (c) Off-curve proof point -> BadPointEncoding is checked only for pad /
+    // range violations; a canonical-but-off-curve point fails at the MSM, so
+    // expect PrecompileFailed or ProofRejected there instead. Use a pad-byte
+    // violation for the deterministic BadPointEncoding class.
+    let layout = proof_g1_layout(&fixture);
+    let mut bad_pad = fixture.proof.clone();
+    bad_pad[layout.repacked_offsets[0]] = 1;
+    let bad_pad = encode_calldata(&bad_pad, &fixture.instances);
+
+    for (name, calldata, expected_sig) in [
+        ("trailing calldata byte", trailing, "BadCalldataShape()"),
+        (
+            "non-canonical instance",
+            bad_instance,
+            "NonCanonicalScalar()",
+        ),
+        ("pad-byte violation", bad_pad, "BadPointEncoding()"),
+    ] {
+        match deployed.evm.try_call_with_gas(deployed.verifier_address, calldata, 30_000_000) {
+            CallOutcome::Revert { output, .. } => {
+                assert_eq!(
+                    output,
+                    selector(expected_sig),
+                    "{name} must revert with {expected_sig}"
+                );
+            }
+            outcome => panic!("{name} did not revert: {outcome:?}"),
+        }
+    }
+}
+
+/// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+/// production Midnight SRS assets must bind their `s_g2` — the element the
+/// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau
+/// that generated their Lagrange basis. The build-time assert in
+/// `src/lowering/vk.rs` runs this check on whatever `params` a build was
+/// handed; this test runs it directly against the distributed asset files,
+/// so a corrupted or substituted download fails here even before any build.
+#[test]
+fn midnight_srs_assets_bind_s_g2_to_lagrange_tau() {
+    use ff::PrimeField;
+    use midnight_zk_stdlib::utils::plonk_api::{load_srs, SrsSource};
+
+    if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
+        eprintln!("skipping Midnight SRS tau-binding check: set {RUN_EVM_TESTS_ENV}=1 to run it");
+        return;
+    }
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+
+    let mut checked = 0usize;
+    for (asset, k) in [("midnight-srs-2p19", 19u32), ("midnight-srs-2p20", 20u32)] {
+        if !PathBuf::from(&srs_dir).join(asset).exists() {
+            eprintln!("skipping {asset}: not present under {srs_dir}");
+            continue;
+        }
+        let params = load_srs(SrsSource::Midnight, k, 2);
+        // omega for the 2^k evaluation domain the Lagrange basis is over.
+        let omega =
+            <F as PrimeField>::ROOT_OF_UNITY.pow_vartime([1u64 << (<F as PrimeField>::S - k)]);
+        assert!(
+            crate::lowering::vk::srs_tau_is_consistent(
+                params.g_lagrange(),
+                omega,
+                params.s_g2().to_affine(),
+            ),
+            "{asset}: s_g2 does not correspond to the tau underlying g_lagrange; \
+             the asset is corrupted or was substituted"
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!(
+            "no midnight-srs assets found under {srs_dir}; \
+             fetch them with scripts/run_ivc_bench.sh or record_srs_provenance.sh"
+        );
+    }
+}
+
 /// Produce a native Poseidon proof and verify it before Solidity tests use it.
 fn generate_poseidon_proof(
     srs: &PoseidonParams,
@@ -5528,52 +5639,4 @@ fn direct_trace_reports_corrupted_coefficient_run_by_helper_call() {
         "[direct-trace] corrupted run reported as: {}",
         mismatches[0]
     );
-}
-
-/// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
-/// production Midnight SRS assets must bind their `s_g2` — the element the
-/// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau
-/// that generated their Lagrange basis. The build-time assert in
-/// `src/lowering/vk.rs` runs this check on whatever `params` a build was
-/// handed; this test runs it directly against the distributed asset files,
-/// so a corrupted or substituted download fails here even before any build.
-#[test]
-fn midnight_srs_assets_bind_s_g2_to_lagrange_tau() {
-    use ff::PrimeField;
-    use midnight_zk_stdlib::utils::plonk_api::{load_srs, SrsSource};
-
-    if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
-        eprintln!("skipping Midnight SRS tau-binding check: set {RUN_EVM_TESTS_ENV}=1 to run it");
-        return;
-    }
-    let srs_dir = srs_dir();
-    env::set_var("SRS_DIR", &srs_dir);
-
-    let mut checked = 0usize;
-    for (asset, k) in [("midnight-srs-2p19", 19u32), ("midnight-srs-2p20", 20u32)] {
-        if !PathBuf::from(&srs_dir).join(asset).exists() {
-            eprintln!("skipping {asset}: not present under {srs_dir}");
-            continue;
-        }
-        let params = load_srs(SrsSource::Midnight, k, 2);
-        // omega for the 2^k evaluation domain the Lagrange basis is over.
-        let omega =
-            <F as PrimeField>::ROOT_OF_UNITY.pow_vartime([1u64 << (<F as PrimeField>::S - k)]);
-        assert!(
-            crate::lowering::vk::srs_tau_is_consistent(
-                params.g_lagrange(),
-                omega,
-                params.s_g2().to_affine(),
-            ),
-            "{asset}: s_g2 does not correspond to the tau underlying g_lagrange; \
-             the asset is corrupted or was substituted"
-        );
-        checked += 1;
-    }
-    if checked == 0 {
-        eprintln!(
-            "no midnight-srs assets found under {srs_dir}; \
-             fetch them with scripts/run_ivc_bench.sh or record_srs_provenance.sh"
-        );
-    }
 }

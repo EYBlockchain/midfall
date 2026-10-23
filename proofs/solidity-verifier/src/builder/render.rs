@@ -20,6 +20,7 @@ struct VerifierRenderPlan {
     /// Test-only quotient probe (`render_quotient_probe`); `render` never
     /// sets it.
     quotient_probe: bool,
+    provenance: Option<[u8; 32]>,
 }
 
 impl<'a> SolidityGenerator<'a> {
@@ -70,6 +71,7 @@ impl<'a> SolidityGenerator<'a> {
             external_quotient,
             expected_quotient,
             quotient_probe: false,
+            provenance: options.provenance,
         };
         let verifier = self.render_verifier_source_with_plan(&inputs, &plan, render_plan)?;
 
@@ -163,6 +165,7 @@ impl<'a> SolidityGenerator<'a> {
             render_plan.gas_checkpoints,
             render_plan.external_quotient,
             render_plan.expected_quotient,
+            render_plan.provenance,
         );
         model.quotient_probe = render_plan.quotient_probe;
         model.render(&mut verifier_output).map_err(|_| GeneratorError::Render {
@@ -195,6 +198,7 @@ impl<'a> SolidityGenerator<'a> {
                 external_quotient: false,
                 expected_quotient: None,
                 quotient_probe: true,
+                provenance: None,
             },
         )?;
         let verifying_key = Self::render_vk_model(&plan.vk)?;

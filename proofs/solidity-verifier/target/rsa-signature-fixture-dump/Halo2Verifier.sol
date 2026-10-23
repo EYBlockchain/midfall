@@ -261,6 +261,20 @@ contract Halo2Verifier {
     uint256 internal constant        MODEXP_GAS = 4080;
     // Exact cost of the deployment-time worst-case G1MSM smoke probe.
     uint256 internal constant G1MSM_GAS_SMOKE = 299628;
+
+    /// @notice Build identity for this generated artifact (P10/L-8).
+    /// @dev keccak256 over: the domain tag "halo2-solidity-verifier-build-v1",
+    ///      the u64-length-prefixed generator feature profile, the vk_digest,
+    ///      the expected VK runtime codehash (zero when the VK is embedded),
+    ///      the SRS fingerprint keccak("halo2-solidity-verifier-srs-v1" || n
+    ///      || G2 || s_g2 || [tau]G1), and an optional 32-byte deployment
+    ///      provenance tag (0x00 marker when absent, 0x01 || tag when set).
+    ///      The deployment record must publish these preimage components so
+    ///      third parties can recompute the id; see
+    ///      docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md.
+    bytes32 public constant BUILD_ID = 0x96ea243ebb143afd78280aacf313704a2602cb65f194f7efa9b9ffb71db1cdc6;
+
+    // ----------------------------------------------------------------------
     // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
     // errors declared on the contract, as Yul-readable constants. The
     // `fail(sel)` helper in AssemblyHelpers.yul writes the selector to
