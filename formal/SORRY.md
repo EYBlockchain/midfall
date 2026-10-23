@@ -11,14 +11,11 @@ policy). The Phase 1 exit criterion is explicitly `Statements.lean compiles with
 sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
-| Midfall/Common/Codec.lean | 29 | `def G1OfCompressed? (_ : Bytes) : Option G₁ ` | Phase 1 curve instance |
-| Midfall/Common/Codec.lean | 33 | `def E1OfEip? (_ : Bytes) : Option (E1 (Fr p)` | Phase 1 curve instance |
-| Midfall/Common/Codec.lean | 41 | `def G1OfEip? (_ : Bytes) : Option G₁ := sorr` | Phase 1 curve instance |
-| Midfall/Halo2/Exec/Native.lean | 42 | `def DualMSM.check (g : DualMSM (Fr p) G₁ G₂)` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 50 | `TranscriptM (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 64 | `Option (List (Msg (Fr p) G₁)) := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 69 | `Except Fault (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 74 | `Except Fault Unit := sorry` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 37 | `def DualMSM.check (g : DualMSM (Fr p) G₁ G₂)` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 45 | `TranscriptM (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 59 | `Option (List (Msg (Fr p) G₁)) := sorry` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 64 | `Except Fault (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 69 | `Except Fault Unit := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 32 | `def CircuitIndex.usable (idx : CircuitIndex ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |

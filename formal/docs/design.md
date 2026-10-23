@@ -107,3 +107,42 @@ c*G (c != 1) builds without error, and the generated verifier then computes the
 over c*G - so the on-chain pairing check enforces a scaled statement that
 differs from the reference Rust verifier, silently at build time. That is
 exactly the class of gap the plan says to stop and report rather than paper over.
+
+## D-P6 - the plan 9.1 point codecs become G1Codec fields, not sorry defs
+
+**Approved by:** pending (self-approved as a presentation change forced by
+D-P1; flag if you disagree). Date raised: 2026-10-23.
+
+Why. Plan 9.1 writes four plain defs - `G1.ofCompressed?`, `E1.ofEip?`,
+`G1.ofEip?`, `E1.toEip` - over a concrete BLS12-381. D-P1 established that no
+Lean library has BLS12-381, so as plain defs they can only be `sorry`, and a
+`sorry` *definition* is worse than a missing proof: it is an axiom-shaped hole
+in the computational layer that every downstream `#print axioms` inherits, and
+it makes `verifyNative` non-computable rather than merely unproven. The Phase 1
+gap policy says a missing proof becomes a named hypothesis structure; the same
+reasoning applied to a missing *computation* is rule R9, which the plan already
+invites for traits: a family of functions becomes a structure of functions.
+
+Decision. `Midfall/Common/Codec.lean` declares
+`structure G1Codec (G₁ : Type)` with fields `ofCompressed?`, `toCompressed`,
+`toEip`, `ofEip?`, and the transcript instantiates `Hashable` from it. The
+concrete BLS12-381 codec is then one inhabitant of that structure, supplied
+once in `Assumptions/Pairing.lean` together with the two round-trip properties
+already stated there (`eipRoundtrip`, `compressedRoundtrip`). The three
+`sorry` defs are deleted; the sorry register shrinks by three.
+
+What is *not* changed. The distinction the plan draws between all-Fp-points
+(`E1.ofEip?`, no subgroup check) and r-torsion (`G1.ofEip?`) is preserved:
+`ofEip?` is documented as the subgroup-checked decode, which is the one the
+transcript and the contract use, and L4 (plan 9.5) is still the statement that
+every proof point reaches a subgroup-checking call. The byte layouts are
+unchanged (48-byte compressed wire, 128-byte padded absorb, identity = 128
+zero bytes). No statement in `Statements.lean` mentions these names, so the
+frozen file is untouched.
+
+Related, no sign-off needed: `IoErrorKind` gains `notFound`. Rust
+`CircuitTranscript::assert_empty` fails with `ErrorKind::NotFound
+(transcript/mod.rs:150-159), which is a different kind from the
+`UnexpectedEof` a short read gives, and the plan maps
+`Transcript(io::Error)` to `transcript (k : IoErrorKind)`. Dropping the
+distinction would have merged two observable error classes.

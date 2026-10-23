@@ -17,6 +17,7 @@ import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Features
 import Midfall.Halo2.Exec.Error
 import Midfall.Halo2.Exec.Types
+import Midfall.Halo2.Exec.Transcript
 
 namespace Midfall.Halo2
 
@@ -30,12 +31,6 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 /-- A hash: the concrete Keccak for execution, or a random oracle in the proofs
     (plan 9.1 `abbrev Hash`). -/
 abbrev Hash := Bytes → H256
-
-/-- rust: proofs/src/transcript/mod.rs CircuitTranscript::init_from_bytes. -/
-def Transcript.initFromBytes (_ : Bytes) : Transcript := {}
-
-/-- Consume-and-check that the proof stream was read exactly. -/
-def Transcript.assertEmpty (_ : Transcript) : Except Fault Unit := .ok ()
 
 /-- rust: proofs/src/poly/kzg/msm.rs:284 DualMSM::check, i.e.
     e(left, sG2) * e(right, -G2) = 1. -/

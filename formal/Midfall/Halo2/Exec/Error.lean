@@ -20,6 +20,11 @@ structure TableColumn where
     (plan Section 4 module map: Transcript(io::Error) -> transcript (k : IoErrorKind)). -/
 inductive IoErrorKind where
   | unexpectedEof
+  /-- rust: proofs/src/transcript/mod.rs:157 the trailing-bytes failure in
+      assert_empty is built with ErrorKind::NotFound, not UnexpectedEof. The
+      distinction is observable only in the error class, which the conformance
+      harness compares, so it is kept rather than merged into `other`. -/
+  | notFound
   | other
 
 /-- rust: proofs/src/plonk/error.rs:99-108 (TableError) -/

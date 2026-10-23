@@ -21,12 +21,6 @@ structure DualMSM (Fr G₁ G₂ : Type) where
 /-- rust: proofs/src/poly/kzg/params.rs ParamsVerifierKZG -/
 structure ParamsVerifierKZG (G₁ G₂ : Type) where
 
-/-- rust: proofs/src/transcript/mod.rs CircuitTranscript<Keccak256> -/
-structure Transcript where
-
-/-- The transcript state monad with the verifier failure type (plan 9.2). -/
-abbrev TranscriptM := StateT Transcript (Except Fault)
-
 /-- A decoded verifier message: an absorbed G1 point or a squeezed scalar. -/
 inductive Msg (Fr G₁ : Type) where
   | g1 (P : G₁)

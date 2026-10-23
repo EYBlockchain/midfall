@@ -5,6 +5,7 @@ import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Circuit
 import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Native
+import Midfall.Halo2.Exec.Transcript
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Relation
 import Midfall.Halo2.Spec.Piop

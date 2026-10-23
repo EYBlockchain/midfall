@@ -27,10 +27,10 @@ bad=$(python3 scripts/lean_grep.py '\bnative_decide\b' \
 if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
 
 echo '== known-answer tests =='
-printf 'import Midfall.Common.Keccak\n#eval Midfall.keccak256_kats_ok\n#eval Midfall.abiSelectors_ok\n' > /tmp/midfall-kats.lean
+printf 'import Midfall.Common.Keccak\nimport Midfall.Halo2.Exec.Transcript\n#eval Midfall.keccak256_kats_ok\n#eval Midfall.abiSelectors_ok\n#eval Midfall.Halo2.transcriptKats_ok\n' > /tmp/midfall-kats.lean
 out=$(lake env lean /tmp/midfall-kats.lean)
-[ "$out" = "$(printf 'true\ntrue')" ] || { echo "KAT failure: $out"; exit 1; }
-echo 'ok: keccak256 digest plus 8 ABI-selector cross-checks against the Rust-pinned constants'
+[ "$out" = "$(printf 'true\ntrue\ntrue')" ] || { echo "KAT failure: $out"; exit 1; }
+echo 'ok: keccak256 digest, 8 ABI-selector cross-checks, 8 transcript-structure checks'
 
 echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
