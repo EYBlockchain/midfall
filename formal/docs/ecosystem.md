@@ -329,3 +329,27 @@ expected `[propext, Classical.choice, Quot.sound]`, **not directly observed**.
 | 14 | **No executed `#print axioms` evidence for the KZG theorems.** | 0 KZG hits under `ArkLibTest/` | Run `lake build && lake exe axiomsweep --check` (or `#print axioms KZG.CommitmentScheme.function_binding`) once we have a working 4.35.0 build |
 | 15 | **ArkLib's URL in the brief is wrong** (`arkworks-rs/ArkLib` returns 404). | GitHub API 404; `Verified-zkEVM/ArkLib` works | Use `https://github.com/Verified-zkEVM/{ArkLib,VCVio,CompPoly}` in our `lakefile.toml` |
 | 16 | CompPoly expects **prebuilt release oleans** (`preferReleaseBuild := true`, `buildArchive := "CompPoly-oleans.tar.gz"`). | `comppoly/lakefile.lean` | Our build will download a release tarball instead of compiling CompPoly -- good for CI speed, but it means trusting a binary artifact unless we force a source build |
+
+
+## 9. Non-vacuity model for AdmissiblePairing (attempted, parked)
+
+D-P1 consequence 3 promised a constructed model of Midfall.AdmissiblePairing so
+the abstract layer is not vacuous. Attempted and parked after hitting a concrete
+ecosystem gap:
+
+* Multiplicative (ZMod p) gives a Group of order p, and PrimeOrderWith _ p is
+  easy (Nat.card_eq_fintype_card).
+* But the KZG shape also needs Module (ZMod p) (Additive (Multiplicative (ZMod p)))
+  - the exponentiation action - and mathlib provides NO such transport instance
+  for the Additive/Multiplicative type tags (greps for Module R (Additive,
+  Additive.instModule and Multiplicative.instModule across Mathlib return
+  nothing). It can be defined by hand, with smul spelled as
+  Additive.ofMul (Multiplicative.ofAdd (a * toAdd (toMul x))), and the module
+  axioms then reduce to ring facts; but the LinearMap fields need the same
+  unfolding through show, and it became instance plumbing rather than
+  mathematics.
+
+Action: revisit as its own work package (nice-to-have, not on the M1 or M0 path).
+The cheaper non-vacuity argument is that AdmissiblePairing is a *signature*
+constraint, not an existence claim: the statements are implications, and the
+concrete instance arrives with Assumptions/Pairing.lean.
