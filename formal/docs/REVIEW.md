@@ -48,7 +48,13 @@ squeezed challenge `x` misses the domain. That is an unstated hypothesis of
 every statement that touches the quotient identity. It belongs in
 `Spec/Piop` / the S1 proof as an explicit `x ∉ domain` side condition, and in
 `Supported` if the contract needs it. Pinned by a Domain KAT
-(`lIRange 13 1 [0,1] == #[0,0]` over `ZMod 17`). Owner: Phase 4.
+(`lIRange 13 1 [0,1] == #[0,0]` over `ZMod 17`). The same hypothesis reappears in multi_prepare as a crash rather than a wrong
+value: `den.invert().unwrap()` (kzg/mod.rs:479) aborts the process if the squeezed
+`x3` coincides with any point of a point set. One unstated assumption, two
+failure modes - silent zeros in the quotient identity, hard abort in the
+multi-open - and both must be discharged by the same side condition.
+
+Owner: Phase 4.
 
 ### R-3 `FieldConsts` is a trust boundary - two properties nothing checks
 
