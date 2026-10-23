@@ -349,6 +349,25 @@ ecosystem gap:
   unfolding through show, and it became instance plumbing rather than
   mathematics.
 
+Update (2026-10-23, while porting msm.rs): two facts narrow this work
+package considerably.
+
+* ArkLib's PrimeOrderWith G p carries only hCard : Nat.card G = p
+  (ArkLib/Data/GroupTheory/PrimeOrder.lean:47-50) and *derives* PrimeOrder G,
+  which provides IsCyclic G and CommGroup G (:29-31). So for
+  G := Multiplicative (ZMod p) the AddCommMonoid (Additive G) that the Module
+  superclass wants is already there - the ONLY missing piece is the scalar
+  action itself, not the whole additive structure. That is why
+  Midfall/Halo2/Exec/Kzg/Msm.lean can write gsmul as
+  Additive.toMul (s • Additive.ofMul Q) against a plain
+  [Module (ZMod p) (Additive G₁)] hypothesis.
+* AdmissiblePairing now takes Gₜ as an outParam and carries decEqG₁ / decEqGₜ
+  as fields (docs/design.md D-P7). A constructed model must supply both, which
+  for Multiplicative (ZMod p) is trivial (decidable equality transports along
+  Additive/Multiplicative).
+
+Neither removes the hand-written Module transport, so it stays parked; but it is
+now ~20 lines of instance plumbing plus a bilinear map, not an open question.
 Action: revisit as its own work package (nice-to-have, not on the M1 or M0 path).
 The cheaper non-vacuity argument is that AdmissiblePairing is a *signature*
 constraint, not an existence claim: the statements are implications, and the
