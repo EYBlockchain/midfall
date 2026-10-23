@@ -1809,6 +1809,26 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
 }
 
 #[test]
+fn accumulator_scalars_are_range_checked_where_they_are_read() {
+    let verifier_template = verifier_template_corpus();
+
+    // `validate_public_accumulator` runs before the transcript instance loop
+    // that rejects non-canonical instance words, and EIP-2537 G1MSM reduces
+    // scalars mod r implicitly. Canonicality must therefore be enforced at the
+    // read sites in this helper rather than inherited from a later template.
+    for required in [
+        "out := and(out, lt(lhs_scalar, r))",
+        "out := and(out, lt(rhs_scalar, r))",
+        "out := and(out, lt(fixed_scalar_{{ loop.index0 }}, r))",
+    ] {
+        assert!(
+            verifier_template.contains(required),
+            "accumulator scalars must be range-checked against r where they are read: {required}"
+        );
+    }
+}
+
+#[test]
 fn accumulator_decoder_rejects_noncanonical_infinity() {
     let verifier_template = verifier_template_corpus();
 
@@ -2642,6 +2662,26 @@ fn batch_invert_handles_empty_and_singleton_ranges() {
     assert!(
         verifier_template.contains("if ret { mstore(mptr_start, mload(single_scratch)) }"),
         "singleton batch inversion must store the single inverse in place"
+    );
+    // The general path must reject non-canonical words (x >= r) like the
+    // singleton path, so accept/reject semantics do not depend on batch
+    // length: one guard on the first element, one inside the prefix-product
+    // loop, one on the final element.
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(gp, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the first element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x, r)) {").count(),
+        2,
+        "batch inversion must range-check the singleton element and every \
+         prefix-product loop element"
+    );
+    assert_eq!(
+        verifier_template.matches("if iszero(lt(x_last, r)) {").count(),
+        1,
+        "general batch inversion path must range-check the final element"
     );
 }
 

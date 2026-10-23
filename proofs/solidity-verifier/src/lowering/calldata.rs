@@ -6,6 +6,7 @@
 //! big-endian scalar words. This module performs that deterministic boundary
 //! conversion.
 
+use ff::PrimeField;
 use group::GroupEncoding;
 use midnight_curves::{Fq, G1Affine};
 
@@ -84,11 +85,26 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             out.extend_from_slice(&y_be[16..48]);
             Ok(())
         };
-        let push_scalar_be = |cursor: &mut usize, out: &mut Vec<u8>| {
-            out.extend_from_slice(&scalar_le_to_be_word(
-                &compressed[*cursor..*cursor + layout::WORD_BYTES],
-            ));
+        let push_scalar_be = |cursor: &mut usize, out: &mut Vec<u8>| -> Result<(), RepackError> {
+            let le = &compressed[*cursor..*cursor + layout::WORD_BYTES];
+            // The generated verifier reverts on any eval or q_eval word that
+            // is not a canonical Fr element, so reject it here rather than
+            // handing the caller calldata that is guaranteed to revert
+            // on-chain. Mirrors the G1 validation in `push_g1`.
+            let mut arr = [0u8; layout::WORD_BYTES];
+            arr.copy_from_slice(le);
+            let repr = <Fq as PrimeField>::Repr::from(arr);
+            if Option::<Fq>::from(Fq::from_repr(repr)).is_none() {
+                let mut be = arr;
+                be.reverse();
+                return Err(RepackError::NonCanonicalScalar {
+                    offset: *cursor,
+                    bytes_hex: hex::encode(be),
+                });
+            }
+            out.extend_from_slice(&scalar_le_to_be_word(le));
             *cursor += layout::WORD_BYTES;
+            Ok(())
         };
         for &n in &plan.g1_groups {
             for _ in 0..n {
@@ -98,13 +114,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         // evals (Fr 32-byte LE in native proof) -> BE calldata words
         // (incl. dummy slots).
         for _ in 0..plan.num_evals {
-            push_scalar_be(&mut cursor, &mut out);
+            push_scalar_be(&mut cursor, &mut out)?;
         }
         // f_com
         push_g1(&mut cursor, &mut out)?;
         // q_evals (Fr 32-byte LE in native proof) -> BE calldata words.
         for _ in 0..plan.num_point_sets {
-            push_scalar_be(&mut cursor, &mut out);
+            push_scalar_be(&mut cursor, &mut out)?;
         }
         // pi
         push_g1(&mut cursor, &mut out)?;
