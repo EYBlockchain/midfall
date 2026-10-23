@@ -237,6 +237,38 @@ selector's fixed column, and a virtual selector has none. So the site belongs
 to Exec/Verifier, not Exec/Circuit, and `Exec/Circuit` deliberately does not
 carry a `Fault`-returning evaluate. Recorded so the panic is ported exactly
 once. Owner: Exec/Verifier.
+### R-13 two reachable panics before a single proof byte is read
+
+Found while porting circuit.rs, and both are on the *verifier* path, reached
+from `blinding_factors` / `degree` - i.e. during VK construction or challenge
+squeezing, not during proof checking:
+
+* `logup.rs:237` computes `(max_degree - 1) / lookup_degree` where
+  `lookup_degree` is the max input degree with `unwrap_or(1)`. The `unwrap_or`
+  only fires on an **empty** iterator, so a lookup whose input expressions are
+  all constants or challenges has max degree 0 and the division is by zero.
+* `logup.rs:318` and `:329` call `slice::chunks(nb)`, which **panics on nb = 0**,
+  reached whenever an input expression is as steep as the system degree (a
+  degree-3 input in a degree-3 system gives `(3-1)/3 = 0`).
+
+Both are `Fault.panic` in Exec/Circuit. Neither is a soundness problem, but both
+mean a malformed-but-parseable VK can abort the verifier, which matters for the
+contract: on-chain that is a revert, so the contract and the native verifier
+still agree on the outcome, but the conformance harness will see a panic where
+Rust sees a panic and Lean sees `Fault.panic` - fine - while a *third* path
+(the generator's plan-time degree arithmetic) may not. Owner: Exec/Verifier and
+the `Supported` predicate.
+
+### R-14 `verifier.rs:400-411` can index past the end of a Vec
+
+The verifier reads `num_fixed_columns - num_simple_selectors` fixed evaluations
+and then, while iterating `fixed_queries`, does `fixed_evals.insert(idx, ONE)` to
+fill the missing places. The two lengths need not agree: `fixed_queries` counts
+distinct (column, rotation) pairs, which is >= the number of columns, so `idx`
+can exceed `Vec::insert`'s bound and abort. This is a real reachable panic site
+for a circuit with a fixed column queried at two rotations. Exec/Verifier must
+port it as `Fault.panic` and the `Supported` predicate should say whether the
+deployed VKs avoid it. Owner: Exec/Verifier.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
