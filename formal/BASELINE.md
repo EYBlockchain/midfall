@@ -45,8 +45,8 @@ affa8a6). Its changes are re-applied as curated commits, each with its tests.
 |---|---|---|---|
 | 1 | typed errors + MemoryLayoutViolated guard | 86b262e, 580a912 (MF-2, MF-4) | DONE (16333b9). MF-3 was already in the baseline via quotient-vm-bounds. The two MemoryLayoutViolated guard sites were deferred to item 2, where they become true, and landed there. |
 | 2 | memory above solc's via-IR spill window | 6333673, 60f842b | DONE (2058d8e). LOW_MEMORY_SCRATCH_START 0x80 -> 0x1000, accumulator batch frame moved with it, compiled_memoryguard_does_not_overlap_generated_layout gate added. Three tests from those commits that depend on later findings were left out. |
-| 3 | Lagrange scratch owned by the planner | 6753679 | TODO - 11 conflict hunks over api.rs, builder/api.rs, layout/memory.rs, layout/mod.rs, lowering/tests.rs, Constants.sol, Lagrange.yul |
-| 4 | exact precompile gas + SRS tau binding | f1840bd | TODO - also brings G1ADD_GAS / MODEXP_GAS / PAIRING_GAS_2PAIR / ACC_RHS_MSM_GAS and the malformed-point bounded-gas test |
+| 3 | Lagrange scratch owned by the planner | 6753679 | DONE (960f51c), hand-ported: the two lineages had grown the memory planner apart (441 diff lines in layout/memory.rs), so the patch conflicted in 11 hunks and the *substance* was re-implemented instead - a lagrange_denoms phase-scratch region from the same allocator as batch_invert_scratch, LAGRANGE_DENOMS_MPTR rendered into the constants, Lagrange.yul rebased onto it, and the commit's 4 tests ported. The deletions that commit also made (capacity check, LAGRANGE_RUN_CAP_WORDS, TooManyInstances) were never in this lineage, so they do not apply. |
+| 4 | exact precompile gas + SRS tau binding | f1840bd | BLOCKED ON 9, probed and reverted (not attempted half-way). 6 of 13 files conflicted; the cleanly-applied test hunk calls vm::certify::derive_certify_seed, which only arrives with item 9, and the H-1 tau-binding hunk needs a g_lagrange binding that does not exist in this lineage's vk.rs. Plan: land item 9 first, then split item 4 into (4a) the gas model and (4b) the tau binding. |
 | 5 | EIP-7883 modexp | 8e65c96 | TODO - touches tests/template_digest.rs, which does not exist here yet (item 10) |
 | 6 | PrecompileSmoke | 896fd04 (+460a666) | TODO |
 | 7 | reject non-canonical scalars / off-curve points | b4319da, aa62d19, d870dd1, b24be9e, 68adb90 | TODO - partially present already from main (the every_proof_* rejection tests pass on the baseline) |
@@ -59,6 +59,38 @@ Skipped per the plan: a01b1ea (duplicate of 6b3d209) and _to_delete/.
 Each curated commit was verified with: cargo test -p halo2_solidity_verifier
 --features evm,rust-verifier-trace --all-targets under HALO2_SOLIDITY_RUN_EVM_TESTS=1,
 pinned solc 0.8.30 and the real SRS, plus cargo fmt --check and clippy.
+
+## Features.solidity (plan rule R8)
+
+Recorded production profile from docs/reference/REPRODUCIBLE_BUILDS.md and
+scripts/run_ivc_bench.sh:225-243: evm,truncated-challenges,in-circuit-fewer-point-sets
+(the Moonlight Sepolia artifact was rendered without gas checkpoints). Mapped to
+the four flags the verifier branches on:
+
+| flag | value |
+|---|---|
+| committedInstances | true (always forwarded) |
+| truncatedChallenges | true |
+| outerFewerPointSets | false |
+| outerSingleHCommitment | false |
+
+in-circuit-fewer-point-sets affects the recursive circuits, not the
+Solidity-facing layout, so it is not one of the four. The optional
+outer-single-h-commitment profile is a different Features value; the
+per-deployment statement (plan 9.6) must name which one it pins.
+TODO: confirm against the frozen deploy command line at the freeze.
+
+## Milestone status
+
+* **M1 (skeleton + inventory)**: Statements.lean compiles with sorry (2 theorems,
+  Section 9.2), ecosystem.md written, CI gates in .github/workflows/formal.yml
+  and formal/scripts/checks.sh all pass locally (hash, sorry register with 11
+  tracked entries, native_decide confinement, Keccak KATs, #print axioms).
+  Sections 9.1 (partly), 9.3-9.6 are still to be added to Statements.lean.
+* **M0 (baseline frozen)**: not yet - items 4-10 of step 5 remain, then step 6
+  (regenerate fixtures/gas/deployments), step 7 (re-run G0, including the
+  Moonlight wrap against the baseline rather than the git-pinned 2d52f24) and
+  step 8 (tag + finalize this file).
 
 ## Toolchain and build profile
 
