@@ -5058,3 +5058,49 @@ fn generator_accepts_instance_counts_beyond_the_old_lagrange_cliff() {
         .render(crate::RenderOptions::default())
         .expect("verifier with a 200-instance denominator run renders");
 }
+
+/// H-1 (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): `NEG_S_G2_BASE` is the
+/// element the deployed verifier's soundness rests on, and the tau-binding
+/// pairing check in `vk.rs` is the only build-time control that ties it to
+/// the commitment basis. Exercise both directions: an honest SRS passes, and
+/// a G2 side taken from ANY other tau -- here the canonical generator, i.e.
+/// s = 1, and a doubled s_g2, i.e. s' = 2s -- is rejected.
+#[test]
+fn srs_tau_binding_accepts_honest_params_and_rejects_foreign_s_g2() {
+    use group::{prime::PrimeCurveAffine, Curve};
+
+    let (params, vk) = quotient_vm_test_vk();
+    let omega = vk.get_domain().get_omega();
+    let honest_s_g2 = params.s_g2().to_affine();
+
+    assert!(
+        crate::lowering::vk::srs_tau_is_consistent(params.g_lagrange(), omega, honest_s_g2),
+        "an honestly generated SRS must pass the tau-binding pairing check"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            midnight_curves::G2Affine::generator(),
+        ),
+        "a G2 base substituted for s_g2 (s = 1) must fail the tau binding"
+    );
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega,
+            (params.s_g2() + params.s_g2()).to_affine(),
+        ),
+        "a doubled s_g2 (s' = 2s) must fail the tau binding"
+    );
+    // A mismatched domain also fails: omega from a different-sized domain
+    // reconstructs a different tau commitment.
+    assert!(
+        !crate::lowering::vk::srs_tau_is_consistent(
+            params.g_lagrange(),
+            omega * omega,
+            honest_s_g2,
+        ),
+        "a wrong domain generator must fail the tau binding"
+    );
+}

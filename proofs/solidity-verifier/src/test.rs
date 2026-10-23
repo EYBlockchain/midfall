@@ -5529,3 +5529,51 @@ fn direct_trace_reports_corrupted_coefficient_run_by_helper_call() {
         mismatches[0]
     );
 }
+
+/// H-1 provenance (docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md): the
+/// production Midnight SRS assets must bind their `s_g2` — the element the
+/// deployed verifier's `NEG_S_G2_BASE` is derived from — to the same tau
+/// that generated their Lagrange basis. The build-time assert in
+/// `src/lowering/vk.rs` runs this check on whatever `params` a build was
+/// handed; this test runs it directly against the distributed asset files,
+/// so a corrupted or substituted download fails here even before any build.
+#[test]
+fn midnight_srs_assets_bind_s_g2_to_lagrange_tau() {
+    use ff::PrimeField;
+    use midnight_zk_stdlib::utils::plonk_api::{load_srs, SrsSource};
+
+    if !env_flag_enabled(RUN_EVM_TESTS_ENV) {
+        eprintln!("skipping Midnight SRS tau-binding check: set {RUN_EVM_TESTS_ENV}=1 to run it");
+        return;
+    }
+    let srs_dir = srs_dir();
+    env::set_var("SRS_DIR", &srs_dir);
+
+    let mut checked = 0usize;
+    for (asset, k) in [("midnight-srs-2p19", 19u32), ("midnight-srs-2p20", 20u32)] {
+        if !PathBuf::from(&srs_dir).join(asset).exists() {
+            eprintln!("skipping {asset}: not present under {srs_dir}");
+            continue;
+        }
+        let params = load_srs(SrsSource::Midnight, k, 2);
+        // omega for the 2^k evaluation domain the Lagrange basis is over.
+        let omega =
+            <F as PrimeField>::ROOT_OF_UNITY.pow_vartime([1u64 << (<F as PrimeField>::S - k)]);
+        assert!(
+            crate::lowering::vk::srs_tau_is_consistent(
+                params.g_lagrange(),
+                omega,
+                params.s_g2().to_affine(),
+            ),
+            "{asset}: s_g2 does not correspond to the tau underlying g_lagrange; \
+             the asset is corrupted or was substituted"
+        );
+        checked += 1;
+    }
+    if checked == 0 {
+        eprintln!(
+            "no midnight-srs assets found under {srs_dir}; \
+             fetch them with scripts/run_ivc_bench.sh or record_srs_provenance.sh"
+        );
+    }
+}
