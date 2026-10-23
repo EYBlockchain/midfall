@@ -12,7 +12,7 @@ use crate::{
         QuotientIdentityManifestTarget, QuotientIdentitySource,
     },
     lowering::{
-        protocol,
+        encoding::ConstraintSystemMeta, protocol,
         quotient_numerator::vm::{
             QuotientExecutionKind, QuotientExecutionManifestEntry, QuotientExpr, QuotientMem,
             QuotientProgramBuild, QuotientProgramPlan, QuotientTarget,
@@ -85,22 +85,120 @@ pub(crate) fn proof_evaluation_counts(
 pub(crate) fn quotient_identity_manifest(
     inputs: VerifierBuildInputs<'_, '_>,
 ) -> QuotientIdentityManifest {
-    let certificate = quotient_certificate(inputs);
-    QuotientIdentityManifest {
-        entries: certificate
-            .entries
-            .iter()
-            .map(|entry| QuotientIdentityManifestEntry {
-                global_index: entry.global_index,
-                source: entry.source.clone(),
-                target: entry.target,
+    quotient_identity_manifest_for_meta(inputs, inputs.meta)
+}
+
+/// Build the identity manifest from the constraint system and protocol
+/// metadata alone (no lowering plan), so the direct quotient lowering can use
+/// it while the plan is being built.
+pub(crate) fn quotient_identity_manifest_for_meta(
+    inputs: VerifierBuildInputs<'_, '_>,
+    meta: &ConstraintSystemMeta,
+) -> QuotientIdentityManifest {
+    let mut simple_selector_cols: Vec<usize> = meta.simple_selector_cols.iter().copied().collect();
+    simple_selector_cols.sort_unstable();
+
+    let gate_entries = inputs
+        .vk
+        .cs()
+        .gates()
+        .iter()
+        .enumerate()
+        .flat_map(|(gate_index, gate)| {
+            let target = gate
+                .queried_selectors()
+                .iter()
+                .find(|selector| selector.is_simple())
+                .map(|selector| {
+                    let selector_index = simple_selector_cols
+                        .iter()
+                        .position(|fixed| *fixed == selector.index())
+                        .expect("simple selector fixed column present");
+                    QuotientIdentityManifestTarget::Selector {
+                        selector_index,
+                        fixed_column: selector.index(),
+                    }
+                })
+                .unwrap_or(QuotientIdentityManifestTarget::Main);
+
+            (0..gate.polynomials().len()).map(move |polynomial_index| {
+                (
+                    gate_index,
+                    gate.name().to_string(),
+                    polynomial_index,
+                    gate.constraint_name(polynomial_index).to_string(),
+                    target,
+                )
             })
-            .collect(),
-        gate_identities: certificate.gate_identities,
-        permutation_identities: certificate.permutation_identities,
-        lookup_identities: certificate.lookup_identities,
-        trash_identities: certificate.trash_identities,
-        simple_selector_cols: certificate.simple_selector_cols,
+        })
+        .enumerate()
+        .map(
+            |(global_index, (gate_index, gate_name, polynomial_index, constraint_name, target))| {
+                QuotientIdentityManifestEntry {
+                    global_index,
+                    source: QuotientIdentitySource::Gate {
+                        gate_index,
+                        gate_name,
+                        constraint_index: polynomial_index,
+                        constraint_name,
+                        polynomial_index,
+                    },
+                    target,
+                }
+            },
+        )
+        .collect::<Vec<_>>();
+    let permutation_base = gate_entries.len();
+    let lookup_base = permutation_base + meta.protocol.quotient.permutation;
+    let trash_base = lookup_base + meta.protocol.quotient.lookup;
+
+    let entries = gate_entries
+        .into_iter()
+        .chain(
+            (0..meta.protocol.quotient.permutation).map(|identity_index| {
+                QuotientIdentityManifestEntry {
+                    global_index: permutation_base + identity_index,
+                    source: QuotientIdentitySource::Permutation { identity_index },
+                    target: QuotientIdentityManifestTarget::Main,
+                }
+            }),
+        )
+        .chain((0..meta.protocol.quotient.lookup).map(|identity_index| {
+            let (lookup_index, _) = meta
+                .protocol
+                .lookup_identity_source(identity_index)
+                .expect("lookup identity index covered by protocol lookup chunks");
+            let lookup_name = format!("lookup_{lookup_index}");
+            QuotientIdentityManifestEntry {
+                global_index: lookup_base + identity_index,
+                source: QuotientIdentitySource::Lookup {
+                    identity_index,
+                    lookup_index,
+                    lookup_name,
+                },
+                target: QuotientIdentityManifestTarget::Main,
+            }
+        }))
+        .chain((0..meta.protocol.quotient.trash).map(|trash_index| {
+            let trash_name = inputs.trash_manifest_name(trash_index);
+            QuotientIdentityManifestEntry {
+                global_index: trash_base + trash_index,
+                source: QuotientIdentitySource::Trash {
+                    trash_index,
+                    trash_name,
+                },
+                target: QuotientIdentityManifestTarget::Main,
+            }
+        }))
+        .collect();
+
+    QuotientIdentityManifest {
+        entries,
+        gate_identities: meta.protocol.quotient.gates,
+        permutation_identities: meta.protocol.quotient.permutation,
+        lookup_identities: meta.protocol.quotient.lookup,
+        trash_identities: meta.protocol.quotient.trash,
+        simple_selector_cols,
     }
 }
 
@@ -109,11 +207,12 @@ pub(crate) fn quotient_identity_manifest(
 pub(crate) fn quotient_certificate(inputs: VerifierBuildInputs<'_, '_>) -> QuotientCertificate {
     let plan = inputs.lowering_plan();
 
+    let quotient = plan.vm_quotient();
     quotient_certificate_from_parts(
         &plan.meta.protocol.quotient,
-        &plan.quotient.plan,
-        &plan.quotient.build,
-        &plan.quotient.sorted_simple,
+        &quotient.plan,
+        &quotient.build,
+        &plan.sorted_simple,
     )
 }
 

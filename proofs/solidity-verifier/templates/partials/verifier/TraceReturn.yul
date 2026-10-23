@@ -52,7 +52,16 @@
             {%- endif %}
             {%- endif %}
 
+            {% if self.trace -%}
+            // Trace renders return the final check result (`true` for an
+            // accepted proof, `false` when the final pairing / accumulated
+            // checks failed) instead of reverting, so the LOG1 trace events
+            // above are kept. Early calldata / encoding failures still revert.
+            mstore(RETURN_MPTR, iszero(iszero(success)))
+            return(RETURN_MPTR, 0x20)
+            {%- else -%}
             // Success path is terminal. Invalid inputs have already reverted,
             // so the Solidity ABI observes `true`.
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)
+            {%- endif %}

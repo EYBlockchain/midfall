@@ -1224,6 +1224,8 @@ mod tests {
             quotient_const_words: 0,
             quotient_program_offset_words: None,
             quotient_program_words: 0,
+            quotient_const_labels: Vec::new(),
+            quotient_const_headers: Vec::new(),
         }
     }
 

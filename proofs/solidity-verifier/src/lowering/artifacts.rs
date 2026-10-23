@@ -58,7 +58,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                 .blocks
                 .native_identity_computations,
             quotient_program: Some(quotient_rendering.program),
-            simple_selector_cols: plan.quotient.sorted_simple.clone(),
+            simple_selector_cols: plan.sorted_simple.clone(),
             quotient_identity_trace_base: layout::trace::QUOTIENT_IDENTITY_BASE,
         };
         quotient_evaluator
@@ -93,7 +93,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         let proof_cptr = Ptr::calldata(proof_layout.proof_cptr);
         let memory = plan.memory.clone();
         let vk_mptr = plan.vk_mptr;
-        let sorted_simple = &plan.quotient.sorted_simple;
+        let sorted_simple = &plan.sorted_simple;
 
         let selector_acc_mptr = plan.memory.selector_acc_mptr;
         let expected_vk_codehash = separate.then(|| {
@@ -106,7 +106,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             .unwrap_or((None, None));
         let quotient_rendering = plan.quotient_rendering(self, trace, external_quotient);
         let quotient_helper_flags = quotient_rendering.helper_flags();
-        let (quotient_external, quotient_blocks, quotient_program) =
+        let (quotient_external, quotient_blocks, quotient_program, quotient_direct) =
             quotient_rendering.into_template_parts();
 
         let pcs_computations = kzg::computations(
@@ -209,6 +209,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             template_constants: Default::default(),
             trace,
             gas_checkpoints,
+            quotient_probe: false,
             quotient_pow5_helper: quotient_helper_flags.pow5,
             quotient_limb7_helper: quotient_helper_flags.limb7,
             quotient_wide_limb7_helper: quotient_helper_flags.wide_limb7,
@@ -259,6 +260,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             quotient_native_lookup_computation: quotient_blocks.native_lookup_computation,
             quotient_native_identity_computations: quotient_blocks.native_identity_computations,
             quotient_program,
+            quotient_direct,
             pcs_computations,
             simple_selector_cols: sorted_simple.clone(),
             proof_commit_trace_base: layout::trace::PROOF_COMMIT_BASE,

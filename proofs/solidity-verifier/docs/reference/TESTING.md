@@ -133,6 +133,47 @@ What each one covers:
 - `compile_solidity_is_deterministic_for_same_source` — same Solidity source
   must compile to identical bytecode (smoke test for `solc` reproducibility).
 
+### Direct quotient lowering: what is checked where
+
+`QuotientLowering::Direct` has two code-generation-time checks, both fail
+closed (the plan does not build):
+
+- IR translation validation (`direct/validate.rs`): the lowered gate-identity
+  IR, with its helper calls, limb views and product tables over the deployed
+  VK constant table, is executed on a simulated memory at pseudo-random slot
+  assignments and compared with `Expression::evaluate`. It does not execute
+  the emitted Yul.
+- Fold check (`direct/folds.rs`): every emitted fold statement is rendered
+  from a recorded fold site, and loops are expanded iteration by iteration.
+  Each identity `j` in `0..m` (gate functions and the permutation / lookup /
+  trash families) is folded exactly once, with `Y_POW[m-1-j]`, into the
+  bucket of its manifest target, and no weight is reused or left unused. Unit
+  tests: `direct_fold_check_*` in `src/lowering/tests.rs`.
+
+The emitted Yul is tested in the EVM tier (`rust-verifier-trace`) by the
+quotient probe (`tests/common/mod.rs::quotient_probe`). A test-only render
+(`SolidityGenerator::render_quotient_probe`, never produced by `render`)
+returns `[expected_eval, selector_acc[0..n)]` right after the quotient
+section. For Direct and Vm, on the honest proof, 8 random evaluation frames
+and one frame with a changed public input (new challenges), it is compared
+word by word with a Rust reference. The identity values come from
+midnight-proofs' `partially_evaluate_identities`, read from the native
+verifier trace. Gate identities are re-evaluated with `Expression::evaluate`,
+and the fold follows `compute_linearization_commitment`. The probe runs in the
+poseidon, rsa, sha_preimage, hybrid_mt and foreign_field fixtures and in the
+IVC bench:
+
+```bash
+HALO2_SOLIDITY_RUN_EVM_TESTS=1 SRS_DIR=... cargo test --release \
+    --features evm,rust-verifier-trace \
+    --test poseidon_fixture --test rsa_signature_fixture \
+    --test sha_preimage_fixture --test hybrid_mt_fixture \
+    --test foreign_field_fixture -- --nocapture
+```
+
+A mismatch names the bucket, the identities folded into it, and the identity
+values of a trace render of the same lowering that differ from midnight-proofs.
+
 ### IVC Keccak Solidity bench
 
 This slow ignored test proves two independent one-step IVC Poseidon hash-chain

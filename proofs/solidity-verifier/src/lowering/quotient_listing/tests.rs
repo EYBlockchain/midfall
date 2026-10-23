@@ -423,7 +423,7 @@ fn listing_after(
 /// the build (so the payload/build cross-check passes and the translation
 /// validation is what must catch the change).
 fn corrupt_program_byte(plan: &mut crate::lowering::plan::LoweringPlan, byte: usize, value: u8) {
-    plan.quotient.build.bytes[byte] = value;
+    plan.vm_quotient_mut().build.bytes[byte] = value;
     let offset = plan.vk.quotient_program_offset_words.expect("program") + byte / 32;
     let mut word = plan.vk.constants[offset].1.to_be_bytes::<32>();
     word[byte % 32] = value;
@@ -439,10 +439,10 @@ fn first_vm_item() -> (
     let (params, vk) = listing_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let plan = generator.inputs().lowering_plan();
-    let items = split_vm_items(&decode_vm_program(&plan.quotient.build.bytes).unwrap()).unwrap();
+    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
     let (item, planned) = items
         .into_iter()
-        .zip(&plan.quotient.plan.items)
+        .zip(&plan.vm_quotient().plan.items)
         .find(|(item, _)| item.kind == VmItemKind::Identity)
         .expect("test circuit has a VM identity");
     let j = match planned {
@@ -451,7 +451,7 @@ fn first_vm_item() -> (
         }
         _ => unreachable!(),
     };
-    (j, item, plan.quotient.build.consts.clone())
+    (j, item, plan.vm_quotient().build.consts.clone())
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn listing_validation_rejects_corrupted_program_byte_naming_the_identity() {
         .expect("VM identity with a u16 memory operand");
     let pos = instruction.offset + 2;
     let err = listing_after(|plan| {
-        let original = plan.quotient.build.bytes[pos];
+        let original = plan.vm_quotient().build.bytes[pos];
         corrupt_program_byte(plan, pos, original.wrapping_add(0x20));
     })
     .expect_err("corrupted program byte must fail validation");
@@ -487,13 +487,13 @@ fn listing_validation_rejects_corrupted_constant_naming_the_identity() {
     let (params, vk) = listing_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let plan = generator.inputs().lowering_plan();
-    let items = split_vm_items(&decode_vm_program(&plan.quotient.build.bytes).unwrap()).unwrap();
+    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
     // Pick a constant used by exactly the VM identities and not by
     // anything else checked earlier: the first constant referenced by the
     // first VM identity.
     let (j, item) = items
         .iter()
-        .zip(&plan.quotient.plan.items)
+        .zip(&plan.vm_quotient().plan.items)
         .find_map(|(item, planned)| match planned {
             crate::lowering::quotient_numerator::vm::QuotientProgramItem::Identity(identity)
                 if item.body().iter().any(|i| {
@@ -513,8 +513,8 @@ fn listing_validation_rejects_corrupted_constant_naming_the_identity() {
         .next()
         .unwrap() as usize;
     let err = listing_after(|plan| {
-        let bumped = plan.quotient.build.consts[slot] + U256::from(1u64);
-        plan.quotient.build.consts[slot] = bumped;
+        let bumped = plan.vm_quotient().build.consts[slot] + U256::from(1u64);
+        plan.vm_quotient_mut().build.consts[slot] = bumped;
         let offset = plan.vk.quotient_const_offset_words.expect("consts") + slot;
         plan.vk.constants[offset].1 = bumped;
     })
@@ -573,8 +573,8 @@ fn listing_blocks_match_standalone_regeneration() {
         slots: slots.iter().map(|s| (s.addr, s.name.clone())).collect(),
         tokens,
     };
-    let items = split_vm_items(&decode_vm_program(&plan.quotient.build.bytes).unwrap()).unwrap();
-    let qplan = &plan.quotient.plan;
+    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
+    let qplan = &plan.vm_quotient().plan;
     let item_identities = qplan
         .items
         .iter()
@@ -599,9 +599,9 @@ fn listing_blocks_match_standalone_regeneration() {
         .collect::<Vec<_>>();
     assert_eq!(items.len(), item_identities.len());
     let blocks = render_program_blocks(
-        &plan.quotient.build.bytes,
-        &plan.quotient.build.consts,
-        plan.quotient.program.program_mptr as u32,
+        &plan.vm_quotient().build.bytes,
+        &plan.vm_quotient().build.consts,
+        plan.vm_quotient().program.program_mptr as u32,
         &symbols,
         &item_identities,
     )
@@ -1040,7 +1040,7 @@ fn pointer_relocation_round_trips_and_preserves_structure() {
     let (params, vk) = listing_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let plan = generator.inputs().lowering_plan();
-    let program = &plan.quotient.build.bytes;
+    let program = &plan.vm_quotient().build.bytes;
     let (moved, count) = relocate_vm_pointers(program, 0x100, 0x20).unwrap();
     assert!(count > 0);
     assert_ne!(&moved, program);

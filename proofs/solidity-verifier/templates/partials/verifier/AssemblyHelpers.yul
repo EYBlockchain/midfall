@@ -227,6 +227,12 @@
                 ret := staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
                 ret := and(ret, mload(scratch))
+                {%- if self.trace %}
+                // Trace renders record the failure and return false from the
+                // verifier (see TraceReturn) so the trace logs survive.
+                ret := iszero(iszero(ret))
+                {%- else %}
                 if iszero(ret) { revert(0, 0) }
                 ret := 1
+                {%- endif %}
             }

@@ -114,6 +114,29 @@ impl<'a> SolidityGenerator<'a> {
         crate::lowering::diagnostics::proof_evaluation_counts(self.inputs())
     }
 
+    /// Expected values of the trace variables of the direct quotient lowering
+    /// (`QuotientLowering::Direct`), for trace comparison against a trace
+    /// render.
+    ///
+    /// `evals` are the proof's main evaluation scalars in proof read order
+    /// (the values the native verifier trace records under
+    /// `PROOF_EVAL_TRACE_BASE + i`). Returns `(trace id, name, value)` for
+    /// every helper-call result, product-table entry, and limb-view word; ids
+    /// are in `DIRECT_TRACE_HELPER_BASE..DIRECT_TRACE_END` (see
+    /// `docs/reference/TRACE_VARIABLES.md`). Values are computed from the
+    /// original gate sub-expressions, independently of the emitted Yul.
+    pub fn direct_quotient_trace_values(
+        &self,
+        evals: &[midnight_curves::Fq],
+    ) -> Result<Vec<(u64, String, midnight_curves::Fq)>, GeneratorError> {
+        self.inputs().direct_quotient_trace_values(evals).map_err(|message| {
+            GeneratorError::Planning {
+                stage: "direct quotient trace values",
+                message,
+            }
+        })
+    }
+
     /// Return a stable host-side manifest of quotient numerator identities.
     ///
     /// This diagnostic API follows the same source ordering as the generated

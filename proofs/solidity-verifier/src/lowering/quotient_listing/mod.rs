@@ -158,6 +158,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         plan: &LoweringPlan,
         ctx: QuotientListingContext,
     ) -> Result<QuotientListingArtifacts, String> {
+        // The listing certifies the compact quotient VM program byte by byte.
+        // `QuotientLowering::Direct` emits no VM program, so there is nothing
+        // to disassemble: the listing is flagged `uncertified` and the manifest
+        // carries the direct lowering's own identity stream.
+        if plan.quotient.is_none() {
+            return self.uncertified_direct_listing(plan);
+        }
         let model = ListingModel::build(self, plan, ctx)?;
         let listing = model.render_listing();
         // The regeneration tool compares these blocks one by one, so the
@@ -174,6 +181,64 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
         }
         let manifest = model.render_manifest(&listing);
         Ok(QuotientListingArtifacts { listing, manifest })
+    }
+
+    /// Listing and manifest for a lowering without a quotient VM program.
+    ///
+    /// No VM bytes exist, so nothing is certified. The identity entries are the
+    /// ones the direct renderer folds, taken from the constraint system and the
+    /// protocol metadata.
+    fn uncertified_direct_listing(
+        &self,
+        plan: &LoweringPlan,
+    ) -> Result<QuotientListingArtifacts, String> {
+        let manifest =
+            crate::lowering::diagnostics::quotient_identity_manifest_for_meta(*self, &plan.meta);
+        let listing = format!(
+            "; UNCERTIFIED quotient listing: QuotientLowering::Direct emits no compact VM\\n\\
+             ; program, so there are no program bytes to disassemble or certify.\\n\\
+             ; identities: m = {} (gates {}, permutation {}, lookup {}, trash {})\\n",
+            manifest.entries.len(),
+            manifest.gate_identities,
+            manifest.permutation_identities,
+            manifest.lookup_identities,
+            manifest.trash_identities
+        );
+        let entries = manifest
+            .entries
+            .iter()
+            .map(|entry| {
+                Json::obj([
+                    ("global_index", Json::num(entry.global_index)),
+                    ("source", Json::str(source_text(&entry.source))),
+                    ("target", Json::str(format!("{:?}", entry.target))),
+                ])
+            })
+            .collect();
+        let json = Json::obj([
+            ("version", Json::num(1)),
+            ("certified", Json::Bool(false)),
+            (
+                "reason",
+                Json::str("direct quotient lowering: no compact VM program to certify"),
+            ),
+            ("lowering", Json::str("direct")),
+            (
+                "identities",
+                Json::obj([
+                    ("m", Json::num(manifest.entries.len())),
+                    ("gates", Json::num(manifest.gate_identities)),
+                    ("permutation", Json::num(manifest.permutation_identities)),
+                    ("lookup", Json::num(manifest.lookup_identities)),
+                    ("trash", Json::num(manifest.trash_identities)),
+                ]),
+            ),
+            ("entries", Json::Arr(entries)),
+        ]);
+        Ok(QuotientListingArtifacts {
+            listing,
+            manifest: json.pretty(),
+        })
     }
 }
 
@@ -780,8 +845,8 @@ impl<'a> ListingModel<'a> {
             vk.quotient_program_offset_words.ok_or("VK carries no quotient program")?;
         let const_reserved_words = vk.quotient_const_words;
         let program_words = vk.quotient_program_words;
-        let program_len = plan.quotient.program.len;
-        let const_count = plan.quotient.build.consts.len();
+        let program_len = plan.vm_quotient().program.len;
+        let const_count = plan.vm_quotient().build.consts.len();
 
         // Constant table as embedded in the payload.
         let word_at = |word: usize| -> Result<U256, String> {
@@ -823,20 +888,20 @@ impl<'a> ListingModel<'a> {
             );
         }
         let program = packed[..program_len].to_vec();
-        if program != plan.quotient.build.bytes {
+        if program != plan.vm_quotient().build.bytes {
             return Err(
                 "quotient program bytes in the VK payload differ from the finalized build"
                     .to_string(),
             );
         }
-        if consts != plan.quotient.build.consts {
+        if consts != plan.vm_quotient().build.consts {
             return Err(
                 "quotient constant table in the VK payload differs from the finalized build"
                     .to_string(),
             );
         }
-        let program_mptr = plan.quotient.program.program_mptr;
-        let const_mptr = plan.quotient.program.const_mptr;
+        let program_mptr = plan.vm_quotient().program.program_mptr;
+        let const_mptr = plan.vm_quotient().program.const_mptr;
         if program_mptr != vk_mptr + program_start
             || const_mptr != vk_mptr + const_offset_words * WORD_BYTES
         {
@@ -847,7 +912,7 @@ impl<'a> ListingModel<'a> {
         let header_words = const_offset_words;
 
         // Identity stream from the existing execution manifest.
-        let qplan = &plan.quotient.plan;
+        let qplan = &plan.vm_quotient().plan;
         let execution = qplan.execution_manifest()?;
         let m = execution.len();
         for (pos, entry) in execution.iter().enumerate() {
@@ -963,7 +1028,7 @@ impl<'a> ListingModel<'a> {
         }
 
         // Expected selector gaps and tails from the identity order alone.
-        let sorted_simple = plan.quotient.sorted_simple.clone();
+        let sorted_simple = plan.sorted_simple.clone();
         let mut last_in_bucket: HashMap<usize, usize> = HashMap::new();
         let mut expected_gaps = vec![None; m];
         for entry in &execution {
@@ -1030,8 +1095,8 @@ impl<'a> ListingModel<'a> {
             &plan.meta,
             &plan.data,
             qplan,
-            plan.quotient.stack_mptr,
-            plan.quotient.state_slots,
+            plan.vm_quotient().stack_mptr,
+            plan.vm_quotient().state_slots,
             ctx.trace,
         );
 
@@ -1071,7 +1136,7 @@ impl<'a> ListingModel<'a> {
 
     /// Translation validation of every interpreted identity.
     fn validate_vm_identities(&mut self, items: &[VmItem]) -> Result<(), String> {
-        let qplan = &self.plan.quotient.plan;
+        let qplan = &self.plan.vm_quotient().plan;
         let env = ExprEnv {
             meta: &self.plan.meta,
             data: &self.plan.data,
@@ -2017,11 +2082,11 @@ impl ListingModel<'_> {
                     ("num_evals", Json::num(self.plan.meta.num_evals)),
                     ("CHALLENGE_MPTR", addr(memory.challenge_mptr)),
                     ("SELECTOR_ACC_MPTR", Json::hex(memory.selector_acc_mptr)),
-                    ("quotient_stack_mptr", Json::hex(self.plan.quotient.stack_mptr)),
-                    ("quotient_eval_numer_mptr", Json::hex(self.plan.quotient.state_slots.eval_numer_mptr)),
+                    ("quotient_stack_mptr", Json::hex(self.plan.vm_quotient().stack_mptr)),
+                    ("quotient_eval_numer_mptr", Json::hex(self.plan.vm_quotient().state_slots.eval_numer_mptr)),
                     (
                         "quotient_selector_power_mptr",
-                        Json::hex(self.plan.quotient.state_slots.selector_power_mptr),
+                        Json::hex(self.plan.vm_quotient().state_slots.selector_power_mptr),
                     ),
                 ]),
             ),

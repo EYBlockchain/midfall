@@ -63,7 +63,10 @@ contract Halo2VerifyingKey {
             // VkPayloadLayout. The inline names on each mstore identify the
             // exact slot in the rendered source.
             {%- for (name, chunk) in constants %}
-            mstore(add(payload, {{ (32 * loop.index0)|hex_padded(4) }}), {{ chunk|hex_padded(64) }}) // {{ name }}
+            {%- for header in self.word_headers(loop.index0) %}
+            // {{ header }}
+            {%- endfor %}
+            mstore(add(payload, {{ (32 * loop.index0)|hex_padded(4) }}), {{ chunk|hex_padded(64) }}) // {{ self.word_comment(loop.index0) }}
             {%- endfor %}
             {%- for (x_hi, x_lo, y_hi, y_lo) in fixed_comms %}
             {%- let offset = constants.len() %}

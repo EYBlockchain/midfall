@@ -45,9 +45,36 @@
                 {%- endif %}
             }
             {%- when None %}
+            {%- match quotient_direct %}
+            {%- when Some with (qdirect) %}
+            {%- for line in qdirect.block %}
+            {{ line }}
+            {%- endfor %}
+            {%- when None %}
             {%- include "partials/quotient_numerator/QuotientHelpers.yul" %}
             {%- include "partials/quotient_numerator/QuotientNumeratorBlock.yul" %}
             {%- endmatch %}
+            {%- endmatch %}
+
+            {%- if self.quotient_probe %}
+            // ===============================================================
+            // TEST-ONLY QUOTIENT PROBE (SolidityGenerator::render_quotient_probe;
+            // never produced by `render`). Returns the quotient section's
+            // outputs instead of verifying the proof:
+            //   word 0      expected_eval (QUOTIENT_EVAL_MPTR)
+            //   word 1 + s  selector accumulator s (SELECTOR_ACC_MPTR + 32 s)
+            // The output is staged at 0x80 (above Solidity's reserved words)
+            // with no stack variables, and the probe returns immediately; the
+            // selector words are moved with `mcopy` (overlap-safe).
+            // ===============================================================
+            {
+                mstore(0x80, mload(QUOTIENT_EVAL_MPTR))
+                {%- if simple_selector_cols.len() > 0 %}
+                mcopy(0xa0, SELECTOR_ACC_MPTR, {{ (simple_selector_cols.len() * 0x20)|hex() }})
+                {%- endif %}
+                return(0x80, {{ ((simple_selector_cols.len() + 1) * 0x20)|hex() }})
+            }
+            {%- endif %}
 
             {%- if self.gas_checkpoints %}
             gas_checkpoint(12) // after batched identity numerator reconstruction
