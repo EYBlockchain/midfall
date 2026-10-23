@@ -1,0 +1,17 @@
+name = "yul-semantics"
+version = "0.1.0"
+defaultTargets = ["YulSemantics"]
+
+# Vendored pinned fork of https://github.com/powdr-labs/yul-semantics
+# rev c9914c13df47efe026376723acd632bc33bc16e3 (upstream lean-toolchain:
+# v4.33.0). Changes here, and only here:
+#   * lean-toolchain bumped to v4.35.0 to match ArkLib (the library sources are
+#     unchanged: no module imports Batteries, so the bump is mechanical);
+#   * the Batteries lint driver and the placeholder exe are dropped, which
+#     removes the Batteries rev conflict with mathlib;
+#   * warningAsError is left off while the v4.35.0 linter surface settles.
+# All Midfall-specific additions live in ../../Midfall/Yul/ and are
+# upstreamable independently of this vendored copy.
+
+[[lean_lib]]
+name = "YulSemantics"

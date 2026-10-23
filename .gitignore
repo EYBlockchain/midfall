@@ -15,3 +15,7 @@ Cargo.lock
 
 # macOS metadata
 .DS_Store
+.cache/
+zk_stdlib/examples/assets/midnight-srs-*
+zk_stdlib/examples/assets/bls_filecoin_*
+proofs/solidity-verifier/.solc/

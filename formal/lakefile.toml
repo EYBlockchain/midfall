@@ -1,0 +1,39 @@
+name = "midfall-formal"
+version = "0.1.0"
+defaultTargets = ["Midfall"]
+
+[leanOptions]
+pp.unicode.fun = true
+autoImplicit = false
+
+# ArkLib brings VCVio, CompPoly and mathlib (see docs/ecosystem.md for the exact
+# revs each resolves to, and for what is and is not available: in particular
+# ArkLib has no concrete BLS12-381, so Midfall is formalised abstractly over an
+# admissible pairing -- see docs/design.md, decision D-P1).
+[[require]]
+name = "ArkLib"
+git = "https://github.com/Verified-zkEVM/ArkLib"
+rev = "d023c5d31d7611ad772588b2da3286a7f3f0628b"
+
+# Pinned fork of powdr-labs/yul-semantics @ c9914c1, vendored under vendor/ and
+# bumped to v4.35.0 (see vendor/yul-semantics/lakefile.toml for the diff).
+[[require]]
+name = "YulSemantics"
+path = "vendor/yul-semantics"
+
+# Last so that mathlib's own dependency revs (batteries, aesop, ...) win over the
+# ones the other pins resolve to; otherwise the prebuilt mathlib artifacts cannot
+# be fetched by "lake exe cache get".
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "56a005855ea17e0b0958f73ec801ae140b0a1679"
+
+[[lean_lib]]
+name = "Midfall"
+
+# Conformance runner (Phase 3): reads the exporter's JSON and replays it.
+[[lean_exe]]
+name = "midfall-conformance"
+root = "Conformance"
+globs = ["Conformance.**"]
