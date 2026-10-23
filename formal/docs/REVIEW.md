@@ -13,7 +13,8 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Transcript + Common/Codec (D-P6) | `b9b7ad5` | agent | - | needs a second pair of eyes |
 | Exec/Kzg/{Params,Msm}, Exec/Query (D-P7) | `b6bacf1` | agent | - | needs a second pair of eyes |
 | Exec/Arith + Exec/Domain | `05a199f` | sub-agent | agent | **signed off**: provenance on every def, reachability evidence at every skip, KATs hand-checked |
-| `msmInnerProduct` closes the deferred item | this commit | agent | - | - |
+| Exec/Query (CommitmentReference, VerifierQuery) | `b2c536c` | agent | - | see R-7 |
+| `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
 against the Rust: `g_coset_inv = g_coset.square()` (domain.rs:82 - correct,
@@ -90,6 +91,23 @@ Owner: none - documented divergence surface.
   MSM is dropped *un-scaled*, not scaled-and-ignored).
 - `trait MSM` is deliberately not a structure of functions; the reason is in
   Exec/Kzg/Msm.lean.
+
+
+### R-7 pointer equality in CommitmentReference - must be settled, not assumed
+
+`impl PartialEq for CommitmentReference` compares OnePiece with
+`std::ptr::eq` (query.rs:125), i.e. *address* identity, and compares Linear by
+points and scalars while explicitly ignoring the labels (query.rs:129). An
+owned-value port cannot reproduce address identity, so `CommitmentReference.beq`
+is value equality - a strictly coarser relation. If
+`construct_intermediate_sets` uses that comparison to group queries that share
+a commitment, then the Rust groups by allocation and the port groups by value:
+given two distinct allocations holding the same point, the point sets differ
+and the challenge structure (x1, x2, x3) differs with them. Either the Rust is
+relying on value equality and the pointer compare is an optimisation, or it is
+not. Decide when that function is ported and record it here; the conformance
+corpus should contain a query set with a repeated commitment so the answer is
+empirical rather than argued. Owner: Exec/Kzg/MultiOpen.
 
 ## Next work packages
 

@@ -92,14 +92,16 @@ TODO: confirm against the frozen deploy command line at the freeze.
 * **M2 (L0 port)**: IN PROGRESS. Landed so far: Exec/Transcript (the whole
   Keccak transcript: init_from_bytes, common, read, read_n, squeeze with the
   reseed, challenge = BE digest mod r, assert_empty), Exec/Kzg/Params,
-  Exec/Kzg/Msm (MSMKZG, msm_specific, DualMSM and DualMSM.check - so the final
-  pairing equation is now a definition, not a placeholder), Exec/Query
-  (CommitmentLabel), Exec/Arith and Exec/Domain, plus the byte and point codecs
-  in Common/{Bytes,Codec}. Still to port: Exec/Poly, Exec/Pcs, Exec/Verifier,
-  Exec/Permutation, Exec/Logup, Exec/Trash, Exec/Linearization, Exec/Kzg/Utils,
-  Exec/Kzg/MultiOpen, Exec/Native (prepare, decodeRust, prepareMsgs,
+  Exec/Kzg/Msm (MSMKZG, msm_specific, msmInnerProduct, DualMSM and
+  DualMSM.check - so the final pairing equation is now a definition, not a
+  placeholder), Exec/Query (CommitmentLabel, CommitmentReference,
+  VerifierQuery), Exec/Arith and Exec/Domain, plus the byte and point codecs in
+  Common/{Bytes,Codec}. Still to port: Exec/Poly, Exec/Pcs, Exec/Kzg/Utils,
+  Exec/Kzg/MultiOpen, Exec/Verifier, Exec/Permutation, Exec/Logup, Exec/Trash,
+  Exec/Linearization, Exec/Native (prepare, decodeRust, prepareMsgs,
   verifyMsgs), Exec/Accumulator and Exec/Msgs. Sorry register: 12 entries, all
-  in Native/Spec/Statements.
+  in Native/Spec/Statements. Port reviews and cross-module findings: docs/REVIEW.md.
+
 * **Plan location**: the normative plan is now in the repository as
   docs/PLAN.md, so a work package or review can cite it by section number.
 * **Phase 0 step 5: COMPLETE.** All ten curated items landed. Item 4 was split
