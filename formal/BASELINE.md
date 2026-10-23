@@ -83,11 +83,25 @@ TODO: confirm against the frozen deploy command line at the freeze.
 
 ## Milestone status
 
-* **M1 (skeleton + inventory)**: Statements.lean compiles with sorry (2 theorems,
-  Section 9.2), ecosystem.md written, CI gates in .github/workflows/formal.yml
-  and formal/scripts/checks.sh all pass locally (hash, sorry register with 11
-  tracked entries, native_decide confinement, Keccak KATs, #print axioms).
-  Sections 9.1 (partly), 9.3-9.6 are still to be added to Statements.lean.
+* **M1 (skeleton + inventory)**: DONE. Statements.lean compiles with sorry
+  (3 theorems, Sections 9.2 and 9.5-L6), ecosystem.md written, CI gates in
+  .github/workflows/formal.yml and formal/scripts/checks.sh all pass locally
+  (frozen hash, sorry register, native_decide confinement, Keccak + ABI-selector
+  + transcript KATs, #print axioms). Sections 9.1 (partly), 9.3-9.6 are still to
+  be added to Statements.lean as the declarations they name come into being.
+* **M2 (L0 port)**: IN PROGRESS. Landed so far: Exec/Transcript (the whole
+  Keccak transcript: init_from_bytes, common, read, read_n, squeeze with the
+  reseed, challenge = BE digest mod r, assert_empty), Exec/Kzg/Params,
+  Exec/Kzg/Msm (MSMKZG, msm_specific, DualMSM and DualMSM.check - so the final
+  pairing equation is now a definition, not a placeholder), Exec/Query
+  (CommitmentLabel), Exec/Arith and Exec/Domain, plus the byte and point codecs
+  in Common/{Bytes,Codec}. Still to port: Exec/Poly, Exec/Pcs, Exec/Verifier,
+  Exec/Permutation, Exec/Logup, Exec/Trash, Exec/Linearization, Exec/Kzg/Utils,
+  Exec/Kzg/MultiOpen, Exec/Native (prepare, decodeRust, prepareMsgs,
+  verifyMsgs), Exec/Accumulator and Exec/Msgs. Sorry register: 12 entries, all
+  in Native/Spec/Statements.
+* **Plan location**: the normative plan is now in the repository as
+  docs/PLAN.md, so a work package or review can cite it by section number.
 * **Phase 0 step 5: COMPLETE.** All ten curated items landed. Item 4 was split
   into 4a (gas model) and 4b (SRS tau binding), and one unlisted prerequisite
   (fc42518, SRS G1-base validation) was added with sign-off as D-P5 because both
