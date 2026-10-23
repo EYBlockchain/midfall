@@ -136,6 +136,86 @@ pub(crate) mod precompile {
     pub(crate) const PAIRING_ADDRESS: usize = 0x0f;
 }
 
+pub(crate) mod gas {
+    //! Exact gas schedule for the precompiles the generated verifier calls,
+    //! from EIP-2537 (BLS12-381) and EIP-2565 (modexp).
+    //!
+    //! A failing EIP-2537 or modexp call consumes ALL gas supplied to the
+    //! `STATICCALL`, so every generated call site forwards the exact scheduled
+    //! cost instead of `gas()`: an attacker-supplied malformed point can then
+    //! burn at most the scheduled cost of the single failing call rather than
+    //! 63/64 of the transaction budget (measured 29.5M of a 30M limit before
+    //! this bound; see docs/audit/HALO2_VERIFIER_REVIEW_2026-08.md, M-2).
+    //!
+    //! Sufficiency: EIP-2537's "DDoS protection" rationale guarantees the
+    //! schedule prices the worst case, so forwarding exactly the scheduled
+    //! amount succeeds by construction on any conformant implementation of
+    //! the current schedule.
+    //!
+    //! Liveness caveat: if a future fork reprices these precompiles UPWARD,
+    //! deployed verifiers start reverting on valid proofs and must be
+    //! regenerated and redeployed. The constructor smoke probes forward the
+    //! same bounds, so deployment onto an already-repriced chain fails fast
+    //! instead of bricking at proof time.
+
+    /// EIP-2537 G1ADD flat cost.
+    pub(crate) const G1ADD_GAS: u64 = 375;
+    /// EIP-2537 G1 per-pair base multiplication cost.
+    const G1_MSM_MULTIPLICATION_COST: u64 = 12_000;
+    /// EIP-2537 MSM discount denominator.
+    const MSM_MULTIPLIER: u64 = 1_000;
+    /// EIP-2537 G1 MSM discount table for k = 1..=128 pairs, in parts per
+    /// [`MSM_MULTIPLIER`]. Entry `[k - 1]` is the discount for `k` pairs;
+    /// `k > 128` uses the final entry (`max_discount = 519`).
+    const G1_MSM_DISCOUNT: [u64; 128] = [
+        1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669,
+        665, 661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619,
+        617, 615, 613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589,
+        588, 586, 585, 584, 582, 581, 580, 579, 577, 576, 575, 574, 573, 572, 570, 569, 568, 567,
+        566, 565, 564, 563, 562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 551, 550, 549,
+        548, 547, 547, 546, 545, 544, 543, 542, 541, 540, 540, 539, 538, 537, 536, 536, 535, 534,
+        533, 532, 532, 531, 530, 529, 528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520,
+        520, 519,
+    ];
+
+    /// EIP-2537 G1MSM cost for `k` (point, scalar) pairs:
+    /// `(k * 12000 * discount(k)) // 1000`.
+    pub(crate) fn g1msm_gas(pairs: usize) -> u64 {
+        assert!(pairs > 0, "G1MSM gas bound requested for an empty MSM");
+        let discount = if pairs <= G1_MSM_DISCOUNT.len() {
+            G1_MSM_DISCOUNT[pairs - 1]
+        } else {
+            G1_MSM_DISCOUNT[G1_MSM_DISCOUNT.len() - 1]
+        };
+        (pairs as u64) * G1_MSM_MULTIPLICATION_COST * discount / MSM_MULTIPLIER
+    }
+
+    /// EIP-2537 pairing cost for `k` (G1, G2) pairs: `32600*k + 37700`.
+    pub(crate) const fn pairing_gas(pairs: u64) -> u64 {
+        32_600 * pairs + 37_700
+    }
+
+    /// EIP-2565 modexp cost for the only frame shape the verifier emits:
+    /// 32-byte base, 32-byte exponent, 32-byte modulus.
+    ///
+    /// `words = ceil(32/8) = 4`, `multiplication_complexity = words^2 = 16`,
+    /// `iteration_count <= 255` (32-byte exponent), so
+    /// `max(200, 16 * 255 / 3) = 1360`. EIP-7883 (scheduled for Osaka) keeps
+    /// the same result for these operand sizes: it raises the floor to 500
+    /// (< 1360) and only reprices operands wider than 32 bytes.
+    pub(crate) const fn modexp_gas_word_frame() -> u64 {
+        const WORDS: u64 = 4;
+        const MULTIPLICATION_COMPLEXITY: u64 = WORDS * WORDS;
+        const MAX_ITERATION_COUNT: u64 = 255;
+        let cost = MULTIPLICATION_COMPLEXITY * MAX_ITERATION_COUNT / 3;
+        if cost < 200 {
+            200
+        } else {
+            cost
+        }
+    }
+}
+
 pub(crate) mod modexp_frame {
     //! 32-byte base/exponent/modulus EIP-198 frame offsets.
 
