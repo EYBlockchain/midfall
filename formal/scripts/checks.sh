@@ -8,9 +8,9 @@ echo '== frozen statements hash =='
 sha256sum -c Midfall/Statements.sha256
 
 echo '== sorry register =='
-found=$(grep -rn --include='*.lean' -w sorry Midfall \
-  | grep -v 'Midfall/Probe/' \
-  | sed -E 's/^([^:]+):([0-9]+):.*/\1:\2/' | sort)
+# The inventory comes from scripts/sorries.sh, which is also what generates the
+# register table (scripts/gen_sorry.sh), so gate and register cannot drift apart.
+found=$(bash scripts/sorries.sh)
 listed=$(sed -nE 's/^\| ([^ |]+) \| ([0-9]+) \|.*/\1:\2/p' SORRY.md | sort)
 if [ "$found" != "$listed" ]; then
   echo 'sorry register out of sync with the tree'
@@ -20,7 +20,10 @@ fi
 echo "ok: $(echo "$found" | wc -l | tr -d ' ') tracked sorries"
 
 echo '== native_decide confinement =='
-bad=$(grep -rn --include='*.lean' native_decide Midfall | grep -v 'Midfall/Instances/' || true)
+# scripts/lean_grep.py strips comments first, so prose that mentions the tactic
+# (there is such a doc string in Security/Challenges.lean) is not a use of it.
+bad=$(python3 scripts/lean_grep.py '\bnative_decide\b' \
+  $(find Midfall -name '*.lean' | sort) | grep -v 'Midfall/Instances/' || true)
 if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
 
 echo '== known-answer tests =='

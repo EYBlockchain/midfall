@@ -11,22 +11,22 @@ policy). The Phase 1 exit criterion is explicitly `Statements.lean compiles with
 sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
-|---|---|---|---|
-| Midfall/Common/Codec.lean | 29 | `G1OfCompressed` | Phase 1 curve instance |
-| Midfall/Common/Codec.lean | 33 | `E1OfEip` | Phase 1 curve instance |
-| Midfall/Common/Codec.lean | 41 | `G1OfEip` | Phase 1 curve instance |
-| Midfall/Halo2/Exec/Native.lean | 42 | `DualMSM.check` | Phase 2 (L0 port) |
+| Midfall/Common/Codec.lean | 29 | `def G1OfCompressed? (_ : Bytes) : Option G₁ ` | Phase 1 curve instance |
+| Midfall/Common/Codec.lean | 33 | `def E1OfEip? (_ : Bytes) : Option (E1 (Fr p)` | Phase 1 curve instance |
+| Midfall/Common/Codec.lean | 41 | `def G1OfEip? (_ : Bytes) : Option G₁ := sorr` | Phase 1 curve instance |
+| Midfall/Halo2/Exec/Native.lean | 42 | `def DualMSM.check (g : DualMSM (Fr p) G₁ G₂)` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 50 | `TranscriptM (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 64 | `Option (List (Msg (Fr p) G₁)) := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 69 | `Except Fault (DualMSM (Fr p) G₁ G₂) := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Exec/Native.lean | 74 | `Except Fault Unit := sorry` | Phase 2 (L0 port) |
 | Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 32 | `CircuitIndex.usable` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Relation.lean | 32 | `def CircuitIndex.usable (idx : CircuitIndex ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 44 | `(c : Cell) : Fr p := sorry` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 48 | `(side : Nat) (i : Nat) : Array (Fr p) := sor` | Phase 4 (spec layer) |
-| Midfall/Statements.lean | 42 | `verifyMsgs keccak256 F params vk inst ms = .` | frozen statements (S1..S7 land later) |
-| Midfall/Statements.lean | 54 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
+| Midfall/Statements.lean | 45 | `verifyMsgs keccak256 F params vk inst ms = .` | frozen statements (S1..S7 land later) |
+| Midfall/Statements.lean | 57 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
+| Midfall/Statements.lean | 72 | `verifyMsgs keccak256 Features.solidity param` | frozen statements (S1..S7 land later) |
 
 ## Upstream sorries we must not depend on
 

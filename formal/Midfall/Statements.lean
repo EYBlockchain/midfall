@@ -18,6 +18,9 @@ import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Piop
+import Midfall.Lowering.Types
+import Midfall.Security.SRS
+import Midfall.Security.Challenges
 
 namespace Midfall.Statements
 
@@ -52,6 +55,21 @@ variable (H : Hash) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
 theorem verifyMsgs_iff_spec (hwf : vk.WellFormed F) :
     (verifyMsgs H F params vk inst ms).isOk ↔
       Spec.accepts H F params vk inst ms := by sorry
+
+end
+
+section
+variable (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
+  (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁))
+
+/-- Plan 9.5 L6, the no-accumulator case: the contract-level reference predicate
+    agrees with the message-level Rust-faithful verifier. Stated now over the
+    placeholder ContractRefAccepts so the shape is frozen before the port exists;
+    the accumulator arm (contractRef_acc_complete) needs Exec/Accumulator and
+    lands with Phase 2. -/
+theorem contractRef_noAcc :
+    Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) keccak256 params vk inst ms ↔
+      verifyMsgs keccak256 Features.solidity params vk inst ms = .ok () := by sorry
 
 end
 
