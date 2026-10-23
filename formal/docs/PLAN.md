@@ -211,7 +211,7 @@ formal/
 - trash Horner;
 - linearization;
 - correctness of `construct_intermediate_sets`;
-- DualMSM scaling and the pairing-reorder lemma: Rust `e(left,sG2)·e(right,−G2)=1` ⇔ contract `e(right,G2)·e(left,−sG2)=1` (AssemblyHelpers.yul:213-232 lays out `[RHS|G2|LHS|NEG_S_G2]`).
+- DualMSM scaling and the pairing-reorder lemma: Rust `e(left,sG2)·e(right,−G2)=1` ⇔ contract `e(right,G2)·e(left,−sG2)=1` (the layout is AssemblyHelpers.yul:269-287, `ec_pairing`, and the RHS/LHS swap happens at the call site FinalPairing.yul:88 - see docs/REVIEW.md R-11).
 
 ## 7. Phase 5: Yul/EVM via yul-semantics, plus solc IR translation validation
 

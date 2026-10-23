@@ -189,6 +189,42 @@ Consequences, in order of importance:
 
 Owner of the follow-on decision (does any statement claim acc-mode agreement
 with Rust at all?): Phase 4 / whoever writes Spec/Piop.
+### R-11 the pairing orientation: the swap is at the CALL SITE, not in the layout
+
+The amended plan cited "AssemblyHelpers.yul:213-232 lays out
+`[RHS|G2|LHS|NEG_S_G2]`". Two corrections, and the second is the one that
+matters:
+
+1. That line range is the modexp batch-inversion helper. The pairing buffer is
+   built in `function ec_pairing(success, lhs_mptr, rhs_mptr)` at
+   **AssemblyHelpers.yul:269-287**, and it lays out
+   `[lhs_mptr | G2_BASE | rhs_mptr | NEG_S_G2_BASE]` - i.e. **lhs first**, the
+   opposite of what the citation said.
+2. The RHS-first order is produced at the **call site**:
+   `FinalPairing.yul:88` is `ec_pairing(success, PAIRING_RHS_MPTR,
+   PAIRING_LHS_MPTR)` - the DualMSM *right* is passed as the function's
+   `lhs_mptr`. So the equation the precompile actually evaluates is
+   `e(PAIRING_RHS, G2) * e(PAIRING_LHS, -sG2) = 1`.
+
+With `PAIRING_LHS = pi` and `PAIRING_RHS = final_com - v*G + x3*pi`
+(FinalPairing.yul:76-77) and the Rust `DualMSM::check` =
+`e(left, sG2) * e(right, -G2) = 1` with `left = pi`, `right = final_com`
+(plus the scaled_pi term), the two sides are mutual inverses: writing
+X = e(pi,G2)^s and Y = e(final,G2), the Rust checks `X / Y = 1` and the
+contract checks `Y / X = 1`. So the reorder lemma in §6 is TRUE, and the plan's
+form of it - contract `e(right,G2)·e(left,-sG2)=1` - is the right form. But it
+is true only because of a naming swap at a call site, which is exactly the kind
+of thing a proof gets backwards. Phase 4 should prove the lemma from the
+call-site line, and `pcs_spec`'s "PAIRING_LHS/RHS = DualMSM left/right" should
+cite FinalPairing.yul:88 as the place the orientation flips.
+
+Also noted while reading: `ec_pairing` compares the precompile output against
+1 rather than masking the low bit, because `and(ret, word)` would accept any
+odd word; EIP-2537 only returns 0 or 1. And a failed pairing staticcall
+*fails closed* with ERR_PRECOMPILE_FAILED, distinct from ProofRejected (MF-4)
+- relevant to the plan's §1 EIP-2537 assumption, since it means an unavailable
+precompile is a different observable event from a rejected proof, and the
+`Eip2537.Holds` hypothesis in L1 must say which one it rules out.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
