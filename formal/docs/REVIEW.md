@@ -14,6 +14,9 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Kzg/{Params,Msm}, Exec/Query (D-P7) | `b6bacf1` | agent | - | needs a second pair of eyes |
 | Exec/Arith + Exec/Domain | `05a199f` | sub-agent | agent | **signed off**: provenance on every def, reachability evidence at every skip, KATs hand-checked |
 | Exec/Query (CommitmentReference, VerifierQuery) | `b2c536c` | agent | - | see R-7 |
+| Exec/Kzg/Utils (construct_intermediate_sets) | `363d2cd` | agent | - | see R-7 |
+| Exec/Poly | `451a491` | sub-agent | agent | **signed off**: the reachability result is the deliverable; see R-8 |
+| Exec/Kzg/MultiOpen (multi_prepare) | `8df0e05` | agent | - | see R-8, R-9 |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -83,6 +86,54 @@ unreachable for real rotations but must be *argued*, not assumed, when
 release, so the port follows the release reading and says so at each site.
 Owner: none - documented divergence surface.
 
+### R-8 poly::Error is not collapsed uniformly, and the port currently flattens it
+
+Exec/Poly established that `poly/mod.rs` is the prover's polynomial layer: of
+526 lines only `enum Error` and `Rotation` are verifier-reachable (Rotation
+was already ported), so `Polynomial` is *not* part of L0 and the earlier
+planned "`Polynomial` as a record per R9" is withdrawn - porting it would put
+prover code in the verifier.
+
+What remains is the error taxonomy, and it is subtler than it looks:
+
+* A short proof gets a different error class depending on *who reads the
+  bytes*. `multi_prepare`'s reads are `transcript.read().map_err(|_|
+  SamplingError)` (kzg/mod.rs:447, :463, :534) - the `io::ErrorKind` is
+  discarded. The plonk verifier's own reads (plonk/verifier.rs:118, :358) go
+  through `From<io::Error>` and keep `Error::Transcript(UnexpectedEof)`. Same
+  physical failure, two observable classes.
+* `verifier.rs:651` collapses every `poly::Error` to `Error::Opening` - but
+  only on the `verify_algebraic_constraints` path. The two-phase `prepare()` +
+  `Guard::verify()` path that Exec/Native ports (solidity-verifier/src
+  /test.rs:370-380) does **not** collapse.
+* Our port currently flattens all three variants to `Fault.error
+  Error.opening` at Exec/Kzg/Msm.lean (`DualMSM.verify`) and Exec/Kzg/Utils.lean
+  (the DuplicatedQuery arm), and keeps the *richer* `Error.transcript ...` in
+  `multiPrepare`. So we are lossy at one boundary and too fine at another.
+
+Conformance compares error classes, so this will show up as a mismatch in
+Phase 3 rather than as a proof problem. The fix is a decision, not a patch:
+either `Fault` gains a `poly (e : PolyError)` constructor - which changes the
+plan 9.2 shape `inductive Fault | error | panic` and therefore needs sign-off
+(candidate D-P8) - or the port keeps `Error` flat and records the three
+variants in the panic-site string, which is ugly but touches no frozen shape.
+Recommendation: add the constructor, since the Rust genuinely distinguishes
+them and Statements.lean never pattern-matches on `Fault`. Owner: whoever ports
+Exec/Verifier, because that is where the collapse lives.
+
+### R-9 `rotate` is unbounded and panics - relevant to Exec/Verifier
+
+Recorded in Exec/Poly but it bites elsewhere: `Polynomial::rotate` (poly
+/mod.rs:452-466) uses `slice::rotate_left/right`, which **panic when the
+amount exceeds the length**, and nothing bounds `Rotation.0`. Meanwhile
+plonk/permutation/verifier.rs:152 constructs `Rotation(-((blinding_factors +
+1) as i32))` from caller-controlled blinding factors, and `-rotation.0` at
+:457 overflows at `i32::MIN` (release wraps, then `as usize` sign-extends).
+`rotate` itself is unreachable in the verifier, but the *rotations it would
+receive* are exactly the ones Exec/Verifier and Exec/Permutation must handle
+- `l_i_range` and `rotate_omega` take the same values and do not panic, they
+just compute large powers. Any `Supported`-style hypothesis that bounds
+rotations should cite this.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
@@ -107,14 +158,24 @@ and the challenge structure (x1, x2, x3) differs with them. Either the Rust is
 relying on value equality and the pointer compare is an optimisation, or it is
 not. Decide when that function is ported and record it here; the conformance
 corpus should contain a query set with a repeated commitment so the answer is
-empirical rather than argued. Owner: Exec/Kzg/MultiOpen.
+empirical rather than argued.
+  **Scope widened by Exec/Poly:** the same pointer identity also decides whether
+  `Error::DuplicatedQuery` fires at all (utils.rs:55-58 tests membership of the
+  same commitment), so R-7 is not only about grouping - it is on the error path
+  too, and a query set with two allocations holding one point changes the
+  accept/reject decision, not just the point-set layout. Exec/Kzg/MultiOpen
+  instantiates the relation with `kzgCommitBeq` (value equality, labels ignored
+  exactly as the Rust does); the corpus case is still owed.
 
 ## Next work packages
 
-1. `Exec/Poly` + `Exec/Pcs`: `poly/mod.rs` verifier-reachable subset
-   (`Polynomial` as a record per R9, `VerifierQuery`, `CommitmentReference`)
-   and `poly/kzg/mod.rs` `multi_prepare` + `construct_intermediate_sets`.
-   This is the last big leaf before `Exec/Verifier`.
+1. ~~`Exec/Poly`~~ done (`451a491`): only `poly::Error` and `Rotation` are
+   verifier-reachable; `Polynomial` is prover code and is NOT part of L0.
+   ~~`multi_prepare` + `construct_intermediate_sets`~~ done (`363d2cd`, `8df0e05`).
+   Remaining before `Exec/Verifier`: `Exec/Pcs` (`poly/commitment.rs` - the
+   `PolynomialCommitmentScheme` and `Guard` records per R9) and `Exec/Kzg/Utils`
+   is done, so next is `Exec/VerifyingKey` (where R-1 lives) and then
+   `Exec/Verifier` (where R-8 lives).
 2. `Exec/VerifyingKey`: the real `VerifyingKey` record, `hash_into`, and the
    `transcript_repr` decision (R-1).
 3. `Exec/Permutation`, `Exec/Logup`, `Exec/Trash`, `Exec/Linearization`:
