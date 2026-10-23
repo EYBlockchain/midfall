@@ -46,12 +46,13 @@ affa8a6). Its changes are re-applied as curated commits, each with its tests.
 | 1 | typed errors + MemoryLayoutViolated guard | 86b262e, 580a912 (MF-2, MF-4) | DONE (16333b9). MF-3 was already in the baseline via quotient-vm-bounds. The two MemoryLayoutViolated guard sites were deferred to item 2, where they become true, and landed there. |
 | 2 | memory above solc's via-IR spill window | 6333673, 60f842b | DONE (2058d8e). LOW_MEMORY_SCRATCH_START 0x80 -> 0x1000, accumulator batch frame moved with it, compiled_memoryguard_does_not_overlap_generated_layout gate added. Three tests from those commits that depend on later findings were left out. |
 | 3 | Lagrange scratch owned by the planner | 6753679 | DONE (960f51c), hand-ported: the two lineages had grown the memory planner apart (441 diff lines in layout/memory.rs), so the patch conflicted in 11 hunks and the *substance* was re-implemented instead - a lagrange_denoms phase-scratch region from the same allocator as batch_invert_scratch, LAGRANGE_DENOMS_MPTR rendered into the constants, Lagrange.yul rebased onto it, and the commit's 4 tests ported. The deletions that commit also made (capacity check, LAGRANGE_RUN_CAP_WORDS, TooManyInstances) were never in this lineage, so they do not apply. |
-| 4 | exact precompile gas + SRS tau binding | f1840bd | BLOCKED ON 9, probed and reverted (not attempted half-way). 6 of 13 files conflicted; the cleanly-applied test hunk calls vm::certify::derive_certify_seed, which only arrives with item 9, and the H-1 tau-binding hunk needs a g_lagrange binding that does not exist in this lineage's vk.rs. Plan: land item 9 first, then split item 4 into (4a) the gas model and (4b) the tau binding. |
-| 5 | EIP-7883 modexp | 8e65c96 | TODO - touches tests/template_digest.rs, which does not exist here yet (item 10) |
-| 6 | PrecompileSmoke | 896fd04 (+460a666) | TODO |
-| 7 | reject non-canonical scalars / off-curve points | b4319da, aa62d19, d870dd1, b24be9e, 68adb90 | TODO - partially present already from main (the every_proof_* rejection tests pass on the baseline) |
-| 8 | vk_digest in the alpha preimage | 86b262e (FinalPairing.yul part) | TODO - needs pairing_batch_vk_digest_offset and PAIRING_BATCH_HASH_BYTES 0x220 -> 0x240 |
-| 9 | vm/certify.rs, vm/reference.rs | 0b27485, 0cd1bdb | TODO |
+| 4a | exact precompile gas bounds | f1840bd (M-2/P1 half) | DONE (e0e77f0), after item 9 as planned. layout::gas model, G1ADD_GAS / G1MSM_GAS_1PAIR / G1MSM_GAS_SMOKE / PAIRING_GAS_2PAIR / MODEXP_GAS / ACC_RHS_MSM_GAS rendered as constants and forwarded at every precompile call site (the two pinned quotientEvaluator calls keep gas() deliberately: a contract call refunds unused gas). The constructor-probe needle in verifier_constructor_rejects_... had to be retargeted at the smoke call. |
+| 4b | SRS tau binding (H-1) | f1840bd (H-1 half) | NEEDS A DECISION, not applied. It calls srs_tau_is_consistent(g_lagrange, ...) in generate_base_vk, and g_lagrange only exists after fc42518 "Validate the SRS G1 base equals the canonical generator" - a misc-fixes commit the plan does not list among the ten items. Either add fc42518 to the curation list (recommended: it is the only build-time control against a substituted SRS) or drop the tau binding. Flagged rather than hacked around. |
+| 5 | EIP-7883 modexp | 8e65c96 | TODO - also touches tests/template_digest.rs, which arrives with item 10 |
+| 6 | PrecompileSmoke | 896fd04 (+460a666) | IN PROGRESS. The known-answer probe (G1ADD(G,G)=2G) needs eip2537.g1_generator / g1_double_generator template constants; the pragma pin (^0.8.24 -> 0.8.30) and its test were left out of item 4a and belong here. |
+| 7 | reject non-canonical scalars / off-curve points | b4319da, b24be9e, aa62d19, d870dd1, 68adb90 | DONE (13ef643). All five applied near-cleanly; the only conflict was scalar_inv, where this lineage already had the canonical-range check. The batch_invert harness needed adapting to MF-4's second return value and the gas model. |
+| 8 | vk_digest in the alpha preimage | 86b262e (audit I-7 half) | DONE (192f136). Offsets shift a word, PAIRING_BATCH_HASH_BYTES 0x220 -> 0x240, scratch start derived from the frame end. Its P12/L-6 operand-clamp half was NOT taken: QVM-01 is the stronger version of the same idea in this lineage. |
+| 9 | vm/certify.rs, vm/reference.rs | 0b27485, 0cd1bdb | DONE (decaf9f), pulled ahead of items 4 and 5 because they depend on it. reference.rs is the Rust reference interpreter the plan's QVM.run statement ports, so it feeds M6 directly. |
 | 10 | BUILD_ID and template digest | ed9f455 | TODO - adds tests/template_digest.rs |
 
 Skipped per the plan: a01b1ea (duplicate of 6b3d209) and _to_delete/.
@@ -87,10 +88,12 @@ TODO: confirm against the frozen deploy command line at the freeze.
   and formal/scripts/checks.sh all pass locally (hash, sorry register with 11
   tracked entries, native_decide confinement, Keccak KATs, #print axioms).
   Sections 9.1 (partly), 9.3-9.6 are still to be added to Statements.lean.
-* **M0 (baseline frozen)**: not yet - items 4-10 of step 5 remain, then step 6
-  (regenerate fixtures/gas/deployments), step 7 (re-run G0, including the
+* **M0 (baseline frozen)**: not yet - 7 of 10 curated items landed (1, 2, 3, 4a,
+  7, 8, 9). Remaining: 4b (needs the fc42518 decision above), 5, 6, 10. Then
+  step 6 (regenerate fixtures/gas/deployments), step 7 (re-run G0, including the
   Moonlight wrap against the baseline rather than the git-pinned 2d52f24) and
-  step 8 (tag + finalize this file).
+  step 8 (tag + finalize this file). Test count on the branch went 230 -> 241
+  lib tests across the curated items, all green under the EVM gate.
 
 ## Toolchain and build profile
 
