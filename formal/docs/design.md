@@ -84,3 +84,26 @@ Pinned rev d023c5d31d7611ad772588b2da3286a7f3f0628b (Lean v4.35.0).
 | VCVio keccak256 | executable pure-Lean Keccak-f[1600] (VCVio/Algorithms/Keccak.lean:127), never wired to an OracleSpec | wire it ourselves in Common/Keccak.lean plus known-answer tests |
 | yul-semantics precompiles | none (no gas, no precompiles); keccak256 is an opaque env oracle; gas() is nondeterministic | Midfall/Yul/Externals.lean defines the ExternalCalls relation for EIP-2537/modexp, as the plan says |
 | toolchain | ArkLib/VCVio/CompPoly/mathlib = v4.35.0, yul-semantics = v4.33.0 | v4.35.0 everywhere (D-P2) |
+
+## D-P5 - fc42518 is an implied dependency of listed item 4
+
+**Approved by:** Julian, 2026-10-23 ("use recommended choice for the question").
+
+Listed curated item 4 (f1840bd) contains two halves. Its H-1 SRS tau binding
+calls srs_tau_is_consistent(g_lagrange, ...), and g_lagrange only comes into
+scope in generate_base_vk via fc42518 "Validate the SRS G1 base equals the
+canonical generator" - a misc-fixes commit the plan does not enumerate. Listed
+item 10 (ed9f455) then reuses the same Pippenger helper for the BUILD_ID SRS
+fingerprint, so it is blocked on the same thing.
+
+Decision: treat fc42518 as an implied prerequisite of item 4 and land it, then
+4b, then 10, so all ten listed items complete. This adds a commit to the curation
+list rather than changing any statement's meaning, which is why it needed
+sign-off rather than being done silently.
+
+Independent reason to want it: without fc42518 a params file whose SRS base is
+c*G (c != 1) builds without error, and the generated verifier then computes the
+-v*G term of the KZG combination from G while every proof and VK commitment is
+over c*G - so the on-chain pairing check enforces a scaled statement that
+differs from the reference Rust verifier, silently at build time. That is
+exactly the class of gap the plan says to stop and report rather than paper over.
