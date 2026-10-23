@@ -231,7 +231,8 @@ contract Halo2Verifier {
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0x5d40;
 
     // ----------------------------------------------------------------------
-    // Precompile gas bounds: the exact EIP-2537 / EIP-2565 scheduled costs.
+    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the
+    // maximum over the EIP-2565 and EIP-7883 schedules.
     //
     // A failing EIP-2537 or modexp call consumes ALL gas supplied to the
     // STATICCALL, so every generated call site forwards the exact scheduled
@@ -241,15 +242,23 @@ contract Halo2Verifier {
     // (EIP-2537 "DDoS protection" rationale), so these bounds are sufficient
     // by construction on any conformant chain.
     //
-    // Liveness caveat: if a future fork reprices these precompiles UPWARD,
-    // this verifier must be regenerated and redeployed. The constructor
-    // smoke probes forward the same bounds, so deployment onto an
+    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this
+    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and
+    // prices it at 4080, so the larger bound is rendered. Forwarding the
+    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is
+    // returned -- while forwarding the EIP-2565 bound on a repriced chain
+    // reverts every proof.
+    //
+    // Liveness caveat: if a future fork reprices these precompiles above the
+    // bounds below, this verifier must be regenerated and redeployed. The
+    // constructor smoke probes forward the same bounds for EVERY precompile
+    // the runtime calls, modexp included, so deployment onto an
     // already-repriced chain fails fast instead of bricking at proof time.
     // ----------------------------------------------------------------------
     uint256 internal constant          G1ADD_GAS = 375;
     uint256 internal constant   G1MSM_GAS_1PAIR = 12000;
     uint256 internal constant PAIRING_GAS_2PAIR = 102900;
-    uint256 internal constant        MODEXP_GAS = 1360;
+    uint256 internal constant        MODEXP_GAS = 4080;
     // Exact cost of the deployment-time worst-case G1MSM smoke probe.
     uint256 internal constant G1MSM_GAS_SMOKE = 299628;
     // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
@@ -282,12 +291,13 @@ contract Halo2Verifier {
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffbafeffffffffaaaa;
     uint256 internal constant BLS_P_MINUS_ONE_PACKED_1 = 0x0000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84;
 
-        /// @notice Smoke-check the Cancun/EIP-2537 runtime features required by the verifier.
-    /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
-    ///      The probes forward the same exact EIP-2537 gas bounds the runtime
-    ///      uses (see the gas-bound constants block), so a chain whose
-    ///      precompile schedule was repriced upward fails here, at deployment,
-    ///      instead of bricking verifyProof later.
+        /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features required by the verifier.
+    /// @dev Exercises MCOPY, modexp, and EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
+    ///      The probes forward the same exact gas bounds the runtime uses, for
+    ///      every precompile it calls -- 0x05 modexp included (see the
+    ///      gas-bound constants block) -- so a chain whose precompile schedule
+    ///      was repriced above those bounds fails here, at deployment, instead
+    ///      of bricking verifyProof later.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
                // Same free-memory-pointer guard as verifyProof, typed for the
@@ -309,8 +319,39 @@ contract Halo2Verifier {
             mcopy(add(scratch, 0x20), scratch, 0x20)
             if iszero(eq(mload(add(scratch, 0x20)), 0x1234)) { revert(0, 0) }
 
+            // ----------------------------------------------------------------
+            // modexp (0x05) known-answer probe at the pinned runtime bound.
+            //
+            // MF-1: every other precompile the runtime calls was probed here,
+            // but modexp -- which the MANDATORY Lagrange batch inversion and
+            // every scalar_inv call depend on -- was not. Two live schedules
+            // price this frame differently (EIP-2565: 1360, EIP-7883: 4080),
+            // and a bound below the chain's price does not degrade: the
+            // staticcall forwards a fixed amount, the precompile OOGs, and
+            // EVERY proof reverts PrecompileFailed. Without this probe that
+            // failure is invisible until the first verifyProof call, on a
+            // contract that deployed cleanly.
+            //
+            // The vector is the runtime's own operation -- Fermat inversion
+            // in Fr -- so it exercises the exact frame shape, exponent width,
+            // and gas bound used at proof time: 2^(FR_MODULUS - 2) == 2^-1.
+            // Checking mulmod(result, 2, FR_MODULUS) == 1 rather than a
+            // rendered constant keeps the probe self-contained while still
+            // rejecting a stub: a precompile returning zeros (or its input)
+            // fails, since 0 * 2 != 1 mod r.
+            // ----------------------------------------------------------------
+            mstore(add(scratch, 0x00), 0x20)        // base len
+            mstore(add(scratch, 0x20), 0x20)        // exp len
+            mstore(add(scratch, 0x40), 0x20)        // mod len
+            mstore(add(scratch, 0x60), 2)
+            mstore(add(scratch, 0x80), sub(FR_MODULUS, 2))
+            mstore(add(scratch, 0xa0), FR_MODULUS)
+            if iszero(staticcall(MODEXP_GAS, 0x05, scratch, 0xc0, scratch, 0x20)) { revert(0, 0) }
+            if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+            if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }
+
             // Start the EIP-2537 probes with the identity encoding for G1/G2:
-            // all-zero padded words.
+            // all-zero padded words. This also clears the modexp frame above.
             for { let off := 0 } lt(off, 0x0300) { off := add(off, 0x20) } {
                 mstore(add(scratch, off), 0)
             }
