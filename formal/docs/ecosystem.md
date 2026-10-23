@@ -372,3 +372,83 @@ Action: revisit as its own work package (nice-to-have, not on the M1 or M0 path)
 The cheaper non-vacuity argument is that AdmissiblePairing is a *signature*
 constraint, not an existence claim: the statements are implications, and the
 concrete instance arrives with Assumptions/Pairing.lean.
+
+## 10. yul-semantics, measured against the vendored fork (Phase 5 groundwork)
+
+Sections 0-9 surveyed a fresh clone that was never built. This section reads the
+**actual vendored copy** at formal/vendor/yul-semantics (upstream rev c9914c1,
+bumped to v4.35.0 per D-P2), which is what Midfall compiles against: 3,948 lines
+across 15 modules. Six of the plan's Section 3 inventory items resolve, and five
+of the plan's Section 7 / 9.5 type-level assumptions do not. Every file:line was
+read from these files.
+
+| plan item | actual name | file:line |
+|---|---|---|
+| AST, Object | inductive Object (Op : Type) | Ast.lean:327 |
+| ExternalCalls | structure ExternalCalls where Call : CallRequest -> EvmState -> CallResponse -> Prop | Dialect/EVMExec.lean:472 |
+| EVM.evmWithExternal | def evmWithExternal (calls) (creates) (gasOracle) : Dialect | Dialect/EVMExec.lean:953 |
+| (two-arg shorthand) | def evmWithCalls (external) = evmWithExternal external ExternalCreates.none ExternalGas.any | Dialect/EVMExec.lean:964 |
+| RunContract | def RunContract (program) (pre : D.State -> Prop) (post : D.State -> VEnv D -> D.State -> Outcome -> Prop) | Contract.lean:21 |
+| RunCommitted | def RunCommitted (prog : Block EVM.Op) (st0) (V') (stObs) (o) : Prop | Observation.lean:39 |
+| determinism | theorem RunCommitted.det, EVM.run_det; Determinism.lean is 432 lines | Observation.lean:45 |
+| adequacy | Adequacy.lean, 791 lines; not yet read in detail | - |
+| object run | def runObject (fuel : Nat) (o : Object EVM.Op) (L : Layout) | ObjectRun.lean:64 |
+| printer | PrettyPrint.lean, 214 lines | - |
+
+### Finding Y-1: ExternalCalls is a structure, so the plan's union does not typecheck
+
+Plan 9.5 writes: def calls (L W) := Eip2537.rel union Modexp.rel union
+Evaluator.rel L W. There is no union on ExternalCalls - it bundles one ternary
+relation (CallRequest -> EvmState -> CallResponse -> Prop), with none and any
+defaults at :532 and :535. The port must build a single ExternalCalls.mk whose
+Call is a disjunction, and the three sub-relations must agree on any request two
+of them match, or the disjunction is nondeterministic where the Rust is not.
+Owner: Midfall/Yul/Bridge.
+
+### Finding Y-2: the hash is an environment field, not a dialect parameter
+
+keccak256 reads st.env.keccakOf (EVMExec.lean:731), where ExecEnv.keccakOf
+defaults to opaque keccakBytes (:88, :158-160). So "the keccak256 oracle is H"
+means installing an ExecEnv with keccakOf := H, not parameterising the dialect -
+and the fork ships no executable keccak at all, so VCVio's must be wired in via
+Common/Keccak.lean, exactly as plan Section 1 anticipates.
+
+The trap: extcodehash is defined as keccakOf (extCodeOf address) (:298).
+Installing H as the hash oracle therefore also defines extcodehash - which is
+what makes Deployment.vkHash a statement about H - but it couples the shell
+model to the hash. Any lowering_equivalence quantified over all H must define
+vkCodehash and quotientCodehash as H of the code too, or the quantification is
+vacuous for the hash-dependent parts. Owner: Phase 5, and a review of 9.5.
+
+### Finding Y-3: RunCommitted is fixed to the closed EVM.evm dialect - BLOCKS M4
+
+The plan writes EVM.RunCommitted (EVM.evmWithExternal (calls L W) noCreates)
+(keccak := H) ... The actual RunCommitted (Observation.lean:39) takes no dialect
+argument and no keccak named argument: it runs Run EVM.evm, the closed dialect.
+So RunVerifier and RunContractIR as written do not typecheck. Two ways out, and
+it is a decision: (a) define a Midfall-side open-dialect Run in Midfall/Yul/Bridge
+and restate 9.5 against it - mechanical, but RunCommitted.det's functionality
+argument leans on EVM.run_det, stated for the closed dialect, so it must be
+reproved; or (b) upstream a dialect-parameterised RunCommitted to
+powdr-labs/yul-semantics, which the plan already wants our additions to be.
+Recommendation: (b), because (a) silently loses determinism. Owner: Phase 5,
+before any verifier_sound work. This blocks M4.
+
+### Finding Y-4: the object-level interpreter is fuel-bounded
+
+runObject takes a fuel : Nat (ObjectRun.lean:64) and Interp.run too
+(Interp.lean:212). The plan never mentions fuel, and 9.5's qvm_yul_refines and
+RunContract (evaluatorObject L) statements are fuel-free. With a bound, "the
+evaluator returns the encoded output or reverts" holds only above some fuel, so
+either the theorems quantify over sufficient fuel or they use the unfuelled Run
+relation Contract.lean builds on. The second is cleaner. Owner: Phase 5 / M6.
+
+### Finding Y-5: gas can be pinned rather than left nondeterministic
+
+ExternalGas (EVMExec.lean:549) has any (every read possible, what evmWithCalls
+installs) and none (used at EVM.lean:263 to make gas() stuck). So the plan's
+"gas() stays nondeterministic" is a choice: we could install an ExternalGas
+returning exactly the scheduled constants curated item 4a made exact, turning
+L2's "sufficient gas" hypothesis into a checkable equality. Exact gas is out of
+scope by Section 1, so this is an option, not a task.
+
