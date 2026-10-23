@@ -36,6 +36,30 @@ Per the plan: keep both sides' meaning.
   `check_quotient_listing` (listing branch) and `direct_trace` +
   `quotient_probe` (hybrid).
 
+## Phase 0 step 5: misc-fixes curation status
+
+misc-fixes (4f03428) is NOT merged (it is stale and lacks id_point_fix and
+affa8a6). Its changes are re-applied as curated commits, each with its tests.
+
+| # | item | source commit(s) | status |
+|---|---|---|---|
+| 1 | typed errors + MemoryLayoutViolated guard | 86b262e, 580a912 (MF-2, MF-4) | DONE (16333b9). MF-3 was already in the baseline via quotient-vm-bounds. The two MemoryLayoutViolated guard sites were deferred to item 2, where they become true, and landed there. |
+| 2 | memory above solc's via-IR spill window | 6333673, 60f842b | DONE (2058d8e). LOW_MEMORY_SCRATCH_START 0x80 -> 0x1000, accumulator batch frame moved with it, compiled_memoryguard_does_not_overlap_generated_layout gate added. Three tests from those commits that depend on later findings were left out. |
+| 3 | Lagrange scratch owned by the planner | 6753679 | TODO - 11 conflict hunks over api.rs, builder/api.rs, layout/memory.rs, layout/mod.rs, lowering/tests.rs, Constants.sol, Lagrange.yul |
+| 4 | exact precompile gas + SRS tau binding | f1840bd | TODO - also brings G1ADD_GAS / MODEXP_GAS / PAIRING_GAS_2PAIR / ACC_RHS_MSM_GAS and the malformed-point bounded-gas test |
+| 5 | EIP-7883 modexp | 8e65c96 | TODO - touches tests/template_digest.rs, which does not exist here yet (item 10) |
+| 6 | PrecompileSmoke | 896fd04 (+460a666) | TODO |
+| 7 | reject non-canonical scalars / off-curve points | b4319da, aa62d19, d870dd1, b24be9e, 68adb90 | TODO - partially present already from main (the every_proof_* rejection tests pass on the baseline) |
+| 8 | vk_digest in the alpha preimage | 86b262e (FinalPairing.yul part) | TODO - needs pairing_batch_vk_digest_offset and PAIRING_BATCH_HASH_BYTES 0x220 -> 0x240 |
+| 9 | vm/certify.rs, vm/reference.rs | 0b27485, 0cd1bdb | TODO |
+| 10 | BUILD_ID and template digest | ed9f455 | TODO - adds tests/template_digest.rs |
+
+Skipped per the plan: a01b1ea (duplicate of 6b3d209) and _to_delete/.
+
+Each curated commit was verified with: cargo test -p halo2_solidity_verifier
+--features evm,rust-verifier-trace --all-targets under HALO2_SOLIDITY_RUN_EVM_TESTS=1,
+pinned solc 0.8.30 and the real SRS, plus cargo fmt --check and clippy.
+
 ## Toolchain and build profile
 
 | item | value |
@@ -56,7 +80,7 @@ Per the plan: keep both sides' meaning.
 | verifier suite, EVM gate on | `cargo test --release -p halo2_solidity_verifier --features evm,rust-verifier-trace --all-targets` with `HALO2_SOLIDITY_RUN_EVM_TESTS=1` | PASS: 230 lib tests (34s) + ivc / poseidon / rsa / sha / hybrid-mt / foreign-field fixtures, 0 failures |
 | both quotient lowerings | `foreign_field_renders_and_verifies_in_both_lowerings`, `supported_shape_circuit_fuzz_e2e_direct_quotient`, `direct_trace_matches_native_including_intermediates` | PASS |
 | Moonlight wrap end to end | `cargo test --manifest-path ../Moonlight/aggregation/Cargo.toml wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release -- --ignored` | PASS (210s) -- CAVEAT: Moonlight pins midfall at `2d52f24` via git deps, so this ran the pre-merge verifier; re-run with a path patch onto `formal/baseline` before the freeze. The `MOONLIGHT_WRAP_SOLIDITY_DUMP_DIR` render did not produce a dump and needs a look. |
-| misc-fixes re-application | Phase 0 step 5 | NOT STARTED |
+| misc-fixes re-application | Phase 0 step 5 | 2 of 10 curated commits landed; see the item table below |
 | fixture / gas-snapshot regeneration review | Phase 0 step 6 | NOT STARTED |
 | tag + this file finalized | Phase 0 step 8 | NOT STARTED |
 
