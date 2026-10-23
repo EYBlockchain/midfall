@@ -120,7 +120,7 @@ abbrev CD (F C : Type) : Type := CommitmentData F (CommitmentReference F C)
     twice at the same point), is reported as Error::opening: the only caller
     collapses every poly::Error to Error::Opening (plonk/verifier.rs:651), and
     poly::Error belongs to Exec/Poly, not here. -/
-def constructIntermediateSets {F C : Type} [Field F] [BEq F] [BEq C]
+def constructIntermediateSets {F C : Type} [Field F] [BEq F]
     (eqC : CommitmentReference F C → CommitmentReference F C → Bool)
     (queries : Array (VerifierQuery F C)) : Except Fault (IntermediateSets F C) := do
   let (points, cmap0) ← pass1 queries.toList [] []
@@ -213,7 +213,7 @@ where
     Panic sites: :158 panics outright on a duplicate (key, point) pair - the
     Rust does not return an error here, it aborts - and :166 asserts a group is
     non-empty (unreachable: groups are created with one element). -/
-def computeDummyQueries {K P : Type} [BEq K] [BEq P] (pairs : List (K × P)) :
+def computeDummyQueries {K P : Type} [BEq P] (eqK : K → K → Bool) (pairs : List (K × P)) :
     Except Fault (List (Nat × P)) := do
   let groups ← groupPass pairs [] 0
   let union ← unionPass groups []
@@ -229,7 +229,7 @@ where
       -- group's first index, not a stored copy. Kept that way (rule R1).
       match gs.findIdx? fun g =>
             match listAt pairs g.1 with
-            | some (k, _) => k == key
+            | some (k, _) => eqK k key
             | none => false with
       | some gi =>
         match listAt gs gi with
@@ -301,13 +301,15 @@ def cisDupKats_ok : Bool :=
 /-- Groups {5: [1,3], 7: [1]}; the union of the non-singleton sets is [1, 3],
     so the only dummy is (first index of group 7, 3) = (2, 3). -/
 def dummyKats_ok : Bool :=
-  match computeDummyQueries (K := Nat) (P := Nat) [(5, 1), (5, 3), (7, 1)] with
+  match computeDummyQueries (K := Nat) (P := Nat) (fun a b => a == b)
+      [(5, 1), (5, 3), (7, 1)] with
   | .ok ds => ds == [(2, 3)]
   | .error _ => false
 
 /-- A repeated (key, point) pair is a hard panic in the Rust (:158). -/
 def dummyPanicKats_ok : Bool :=
-  match computeDummyQueries (K := Nat) (P := Nat) [(5, 1), (5, 1)] with
+  match computeDummyQueries (K := Nat) (P := Nat) (fun a b => a == b)
+      [(5, 1), (5, 1)] with
   | .error (Fault.panic "proofs/src/poly/kzg/utils.rs:158") => true
   | _ => false
 end Kats
