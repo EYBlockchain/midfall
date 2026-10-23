@@ -7,6 +7,7 @@ import Midfall.Halo2.Exec.Arith
 import Midfall.Halo2.Exec.Domain
 import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Query
+import Midfall.Halo2.Exec.Pcs
 import Midfall.Halo2.Exec.Poly
 import Midfall.Halo2.Exec.Kzg.Params
 import Midfall.Halo2.Exec.Kzg.Msm
