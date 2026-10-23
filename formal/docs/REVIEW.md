@@ -18,6 +18,8 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Poly | `451a491` | sub-agent | agent | **signed off**: the reachability result is the deliverable; see R-8 |
 | Exec/Kzg/MultiOpen (multi_prepare) | `8df0e05` | agent | - | see R-8, R-9 |
 | Exec/Circuit (constraint system) | `95f5d88` | agent | - | see R-12 |
+| Exec/Circuit, superseded | `ec1d19e` | sub-agent | agent | **signed off**: fixes two soundness gaps in 95f5d88 (R-17) |
+| Exec/{Permutation,Logup,Trash} verifier paths | `b4ad69b` | sub-agent | agent | **signed off**: P1 and P3 re-verified against the Rust by hand |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -269,6 +271,112 @@ can exceed `Vec::insert`'s bound and abort. This is a real reachable panic site
 for a circuit with a fixed column queried at two rotations. Exec/Verifier must
 port it as `Fault.panic` and the `Supported` predicate should say whether the
 deployed VKs avoid it. Owner: Exec/Verifier.
+### R-2 now has THREE manifestations (was two)
+
+The single unstated hypothesis - the squeezed challenge misses a finite set of
+bad points - shows up three times, with three different failure modes:
+
+1. `l_i_range` (domain.rs:463): silently returns **all zeros** at a domain point
+   (`batch_invert` skips the zero denominator *and* `x^n - 1 = 0`).
+2. `multi_prepare` (kzg/mod.rs:479): `den.invert().unwrap()` **aborts the
+   process** if x3 coincides with a point of a point set.
+3. `logup.rs:460`: `product * f.invert().unwrap()` **aborts the process** when
+   any `f_j(x) + beta = 0`. The partial products are computed by inverting the
+   full product rather than by a zero-safe prefix/suffix recurrence, so one
+   zero factor kills the verifier instead of rejecting the proof.
+
+For (3), `beta` is squeezed *before* the helper polynomials are committed, so an
+honest prover is safe - but a malicious prover can aim at it, and on the native
+path that is a process abort rather than a rejection. On-chain an abort is a
+revert, so the observable outcome differs between the two implementations,
+which is exactly what §9.5's observational equivalence has to absorb. Phase 4
+must discharge all three from one side condition. Owner: Phase 4 / Spec/Piop.
+
+### R-9 widened: the rotation cast truncates *and* negates wrapping
+
+`permutation/verifier.rs:152` is `Rotation(-((blinding_factors + 1) as i32))`.
+That is a **truncating** `as i32` followed by a **wrapping** negation, not just
+the `i32::MIN` overflow first noted: `blinding_factors + 1 = 2^31` yields the
+rotation `-2^31` (and `rotate_omega` then computes `omega_inv^(2^31)`), and
+`2^32 + 5` yields `5`. The only thing bounding it is
+`ConstraintSystem::blinding_factors`' `i32::MAX` panic (circuit.rs:2510), now
+ported - so the truncation is unreachable *through that path* but live for any
+hand-built `Nat`. Exec/Permutation emulates it exactly (`wrapI32`, `asI32`,
+`negI32`) with a KAT. Any `Supported` bound on rotations should cite this.
+
+### R-15 lazy-zip asymmetry in the permutation expressions
+
+`permutation.rs:242-277`: the left product is `columns.map(..).zip(permutation
+_evals)`, so `get_any_query_index` runs for at most `min(columns,
+permutation_evals)` columns, while the right product maps over **all** columns.
+With 2 columns and 1 permutation eval the two sides have different factor
+counts, and a bogus second column panics on the right but is never looked up on
+the left. **This is the one place in the port where being eager instead of lazy
+changes the observable result.** Pinned by `expressionsLazy_kats_ok`. Related:
+`permutation.rs:236-240` zips sets x column-chunks x permutation-eval-chunks,
+so the shortest wins and whole identities are dropped silently, no error.
+
+### R-16 three ordering traps the QVM depends on
+
+Not style: these decide the order identities are batched into the quotient
+numerator, so the generated QVM and the reference verifier disagree if any is
+ported the other way.
+
+* `permutation/verifier.rs:173` is `.enumerate().rev().skip(1)` - **reverse
+  before dropping**. The `omega^last` openings come out in DESCENDING set
+  order and the set dropped is the last one, not the first. Re-verified
+  against the source. An ascending port is silently wrong: it changes the
+  point-set layout and therefore x1..x4.
+* `permutation.rs:203-281` chains `[first-set l0*(1-z), last-set (z^2-z)*l_last,
+  cross-set, per-set products]` - the last-set constraint comes **second**.
+* `trash.rs:84` is a **left** fold, so the first constraint carries the
+  **highest** power of the trash challenge (Horner).
+
+Also: `read_product_commitments` reads one commitment per **chunk** of columns
+(`chunk_len = cs_degree - 2`) and discards the chunk contents, and
+`Committed::evaluate` reads `3k - 2` scalars with the last set's
+`last_eval = None`; `k = 0` reads nothing. Re-verified against the Rust. Owner:
+M6 (QVM) must cite all of these.
+
+### R-3 extended: `delta` is a fourth unchecked constant, and FieldConsts lacks it
+
+`permutation.rs` uses `F::DELTA`, the coset shift for the sigma polynomials.
+Like `zeta` and `rootOfUnity`, nothing checks it: the argument needs `delta^i`
+distinct across the chunk range, i.e. `delta` of order at least the number of
+columns, and `delta != 0`. `Exec/Arith.FieldConsts` carries `numBits`, `s`,
+`rootOfUnity`, `zeta` but **not** `delta`, so `Permutation.expressions` takes it
+as an explicit parameter. Follow-up: add `delta` to `FieldConsts` or to
+`Assumptions/Pairing` with its order hypothesis, so no caller can pass a `delta`
+that collapses the sigma shifts. Owner: Assumptions/.
+
+### R-17 the Circuit re-review, and what it caught
+
+`95f5d88` (my Circuit) was superseded by `ec1d19e`. Two real defects, both
+soundness-shaped:
+
+* my `Any.advice` carried no payload, so `query_advice_index` would **merge
+  same-index advice columns from different phases** during query dedup - a
+  wrong query table, hence a wrong verifier.
+* my `nbParallelLookupsPerChunk` mapped an all-zero degree list to 1, which
+  **hid the R-13 division by zero** instead of exposing it.
+
+Recorded because it is evidence the R11 second-signer rule does work, and
+because it says what a reviewer should actually check: payload types that look
+cosmetic, and `unwrap_or` defaults that silently change a divisor.
+
+### Naming pin (fragile interface)
+
+Exec/{Permutation,Logup,Trash} are pinned to Circuit's names as of `ec1d19e`:
+`LogupBatchedArgument`, `LogupChunkedArgument`, `TrashArgument` (flattened into
+`Midfall.Halo2`, not nested namespaces), plus `ConstraintSystem.getAnyQueryIndex`,
+`Column.columnType`, `Expression.Callbacks`, `mapExceptArray`. Renaming any of
+those breaks three files. For Exec/Verifier: `ConstraintSystem.degree` and
+`blindingFactors` now return `Except Fault Nat`, so callers must thread them;
+`CommitmentLabel` has no `BEq` (Exec/Query), so label comparison needs a match;
+and `permutation::VerifyingKey::read/write/bytes_length` remain unported - the
+VK binary serde is reachable only from plonk/mod.rs:105/185/220, which nothing
+in the reachable set calls, so conformance must import the VK as JSON after all
+(which is what plan §5 says anyway). Owner: Exec/VerifyingKey.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
