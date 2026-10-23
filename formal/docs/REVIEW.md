@@ -17,6 +17,7 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Kzg/Utils (construct_intermediate_sets) | `363d2cd` | agent | - | see R-7 |
 | Exec/Poly | `451a491` | sub-agent | agent | **signed off**: the reachability result is the deliverable; see R-8 |
 | Exec/Kzg/MultiOpen (multi_prepare) | `8df0e05` | agent | - | see R-8, R-9 |
+| Exec/Circuit (constraint system) | `95f5d88` | agent | - | see R-12 |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -225,6 +226,17 @@ odd word; EIP-2537 only returns 0 or 1. And a failed pairing staticcall
 - relevant to the plan's §1 EIP-2537 assumption, since it means an unavailable
 precompile is a different observable event from a rejected proof, and the
 `Eip2537.Holds` hypothesis in L1 must say which one it rules out.
+### R-12 the virtual-selector panic is not where the plan says it is
+
+Plan §4's module map row for plonk/circuit.rs says "`evaluate` (a virtual
+selector panics)". `Expression::evaluate` (circuit.rs:907-1013) is a pure
+ten-way dispatch and cannot panic: it takes the selector reading as a
+parameter. The panic is in the *caller's* closure - plonk/verifier.rs and
+plonk/evaluation.rs pass a `selector_column` that unwraps the simple
+selector's fixed column, and a virtual selector has none. So the site belongs
+to Exec/Verifier, not Exec/Circuit, and `Exec/Circuit` deliberately does not
+carry a `Fault`-returning evaluate. Recorded so the panic is ported exactly
+once. Owner: Exec/Verifier.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
