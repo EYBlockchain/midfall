@@ -9,6 +9,7 @@ import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Query
 import Midfall.Halo2.Exec.Kzg.Params
 import Midfall.Halo2.Exec.Kzg.Msm
+import Midfall.Halo2.Exec.Kzg.Utils
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Transcript
 import Midfall.Halo2.Exec.VerifyingKey
