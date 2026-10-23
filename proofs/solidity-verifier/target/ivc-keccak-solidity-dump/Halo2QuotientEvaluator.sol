@@ -119,13 +119,6 @@ contract Halo2QuotientEvaluator {
             calldatacopy(QUOTIENT_FRAME_BASE, 0, QUOTIENT_FRAME_LEN)
 
             let r := FR_MODULUS
-            // Trace-only side channel used by fixture comparison. Production
-            // split evaluators are called via STATICCALL and render without
-            // this LOG helper.
-            function trace_u256(id, value) {
-                mstore(TRACE_U256_MPTR, value)
-                log1(TRACE_U256_MPTR, 0x20, id)
-            }
 
             // This included block is the main body of the evaluator. It:
             //   1. evaluates gate/permutation/lookup/trash identities in the
@@ -281,8 +274,6 @@ contract Halo2QuotientEvaluator {
                 // identity group.
                 // Initialize A = 0 before scanning the identity stream.
                 mstore(0xb280, 0)
-                // Trace builds label each emitted identity in y-batch order.
-                mstore(0xb2a0, 30000)
                 // Simple selectors are grouped into separate linearization
                 // buckets. They start at zero for every proof.
                 // q_sel_zero_off walks selector bucket byte offsets.
@@ -347,8 +338,6 @@ contract Halo2QuotientEvaluator {
                 let var19 := mulmod(var0, var18, r)
                 mstore(0xb8e0, var19)
                 }
-                trace_u256(mload(0xb2a0), mload(0xb8e0))
-                mstore(0xb2a0, add(mload(0xb2a0), 1))
                 mstore(0xb280, mulmod(mload(0xb280), y, r))
                 {
                 let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x0)
@@ -369,8 +358,6 @@ contract Halo2QuotientEvaluator {
                 let var6 := mulmod(var0, var5, r)
                 mstore(0xb8e0, var6)
                 }
-                trace_u256(mload(0xb2a0), mload(0xb8e0))
-                mstore(0xb2a0, add(mload(0xb2a0), 1))
                 mstore(0xb280, mulmod(mload(0xb280), y, r))
                 {
                 let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x20)
@@ -388,8 +375,6 @@ contract Halo2QuotientEvaluator {
                 let var4 := mulmod(var0, var3, r)
                 mstore(0xb8e0, var4)
                 }
-                trace_u256(mload(0xb2a0), mload(0xb8e0))
-                mstore(0xb2a0, add(mload(0xb2a0), 1))
                 mstore(0xb280, mulmod(mload(0xb280), y, r))
                 {
                 let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x40)
@@ -407,8 +392,6 @@ contract Halo2QuotientEvaluator {
                 let var4 := mulmod(var0, var3, r)
                 mstore(0xb8e0, var4)
                 }
-                trace_u256(mload(0xb2a0), mload(0xb8e0))
-                mstore(0xb2a0, add(mload(0xb2a0), 1))
                 mstore(0xb280, mulmod(mload(0xb280), y, r))
                 {
                 let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x40)
@@ -780,22 +763,16 @@ contract Halo2QuotientEvaluator {
                         }
                         let q_perm_eval := 0
                         q_perm_eval := mulmod(mload(L_0_MPTR), addmod(1, sub(r, mload(q_perm_z_cur)), r), r)
-                        trace_u256(mload(0xb2a0), q_perm_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_perm_eval, r))
                         let q_perm_zn := mload(add(q_perm_z_cur, 0xa0))
                         q_perm_eval := mulmod(mload(L_LAST_MPTR), addmod(mulmod(q_perm_zn, q_perm_zn, r), sub(r, q_perm_zn), r), r)
-                        trace_u256(mload(0xb2a0), q_perm_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_perm_eval, r))
                         for { let q_perm_i := 1 } lt(q_perm_i, 6) { q_perm_i := add(q_perm_i, 1) } {
                         let q_perm_cur := mload(add(q_perm_z_cur, shl(5, q_perm_i)))
                         let q_perm_prev := mload(add(q_perm_z_last, shl(5, sub(q_perm_i, 1))))
                         q_perm_eval := mulmod(mload(L_0_MPTR), addmod(q_perm_cur, sub(r, q_perm_prev), r), r)
-                        trace_u256(mload(0xb2a0), q_perm_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_perm_eval, r))
                         }
@@ -816,8 +793,6 @@ contract Halo2QuotientEvaluator {
                         q_perm_delta_pow := mulmod(q_perm_delta_pow, delta, r)
                         }
                         q_perm_eval := mulmod(addmod(1, sub(r, addmod(mload(L_LAST_MPTR), mload(L_BLIND_MPTR), r)), r), addmod(q_perm_left, sub(r, q_perm_right), r), r)
-                        trace_u256(mload(0xb2a0), q_perm_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_perm_eval, r))
                         mstore(q_perm_delta_base_ptr, mulmod(mload(q_perm_delta_base_ptr), q_perm_delta_chunk, r))
@@ -856,8 +831,6 @@ contract Halo2QuotientEvaluator {
                         {
                         {
                         let q_lookup_eval := mulmod(q_lookup_lsum, mload(0xa060), r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -890,8 +863,6 @@ contract Halo2QuotientEvaluator {
                         q_lookup_sum := addmod(q_lookup_sum, mulmod(mload(add(q_lookup_prefix, shl(5, q_lookup_sum_i))), mload(add(q_lookup_suffix, shl(5, q_lookup_sum_i))), r), r)
                         }
                         let q_lookup_eval := addmod(mulmod(mload(0xa040), q_lookup_product, r), sub(r, q_lookup_sum), r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -907,8 +878,6 @@ contract Halo2QuotientEvaluator {
                         let q_lookup_t_beta := addmod(var1, q_lookup_beta, r)
                         let q_lookup_core := addmod(mulmod(q_lookup_diff, q_lookup_t_beta, r), mload(0xa020), r)
                         let q_lookup_eval := mulmod(q_lookup_active, q_lookup_core, r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -916,8 +885,6 @@ contract Halo2QuotientEvaluator {
                         {
                         {
                         let q_lookup_eval := mulmod(q_lookup_lsum, mload(0xa0e0), r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -955,8 +922,6 @@ contract Halo2QuotientEvaluator {
                         let f_13 := mload(0x9b40)
                         let var15 := addmod(mulmod(var14, q_lookup_theta, r), f_13, r)
                         let q_lookup_eval := addmod(mulmod(mload(0xa0c0), addmod(var15, q_lookup_beta, r), r), sub(r, 1), r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -1019,8 +984,6 @@ contract Halo2QuotientEvaluator {
                         let q_lookup_t_beta := addmod(var34, q_lookup_beta, r)
                         let q_lookup_core := addmod(mulmod(q_lookup_diff, q_lookup_t_beta, r), mload(0xa0a0), r)
                         let q_lookup_eval := mulmod(q_lookup_active, q_lookup_core, r)
-                        trace_u256(mload(0xb2a0), q_lookup_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         mstore(0xb280, mulmod(mload(0xb280), y, r))
                         mstore(0xb280, addmod(mload(0xb280), q_lookup_eval, r))
                         }
@@ -1075,8 +1038,6 @@ contract Halo2QuotientEvaluator {
                             let var18 := mulmod(var0, var17, r)
                             mstore(0xb8e0, var18)
                             }
-                            trace_u256(mload(0xb2a0), mload(0xb8e0))
-                            mstore(0xb2a0, add(mload(0xb2a0), 1))
                             mstore(0xb280, mulmod(mload(0xb280), y, r))
                             {
                             let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x60)
@@ -1116,8 +1077,6 @@ contract Halo2QuotientEvaluator {
                             let var18 := mulmod(var0, var17, r)
                             mstore(0xb8e0, var18)
                             }
-                            trace_u256(mload(0xb2a0), mload(0xb8e0))
-                            mstore(0xb2a0, add(mload(0xb2a0), 1))
                             mstore(0xb280, mulmod(mload(0xb280), y, r))
                             {
                             let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x60)
@@ -1266,8 +1225,6 @@ contract Halo2QuotientEvaluator {
                             let var116 := mulmod(var0, var115, r)
                             mstore(0xb8e0, var116)
                             }
-                            trace_u256(mload(0xb2a0), mload(0xb8e0))
-                            mstore(0xb2a0, add(mload(0xb2a0), 1))
                             mstore(0xb280, mulmod(mload(0xb280), y, r))
                             {
                             let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0x80)
@@ -1319,8 +1276,6 @@ contract Halo2QuotientEvaluator {
                             let var31 := mulmod(var0, var30, r)
                             mstore(0xb8e0, var31)
                             }
-                            trace_u256(mload(0xb2a0), mload(0xb8e0))
-                            mstore(0xb2a0, add(mload(0xb2a0), 1))
                             mstore(0xb280, mulmod(mload(0xb280), y, r))
                             {
                             let q_selector_ptr := add(SELECTOR_ACC_MPTR, 0xa0)
@@ -1348,8 +1303,6 @@ contract Halo2QuotientEvaluator {
                         if iszero(and(q_has_top, eq(q_sp, 0xb8e0))) { q_program_fail() }
                         let q_eval := q_top
                         q_has_top := 0
-                        trace_u256(mload(0xb2a0), q_eval)
-                        mstore(0xb2a0, add(mload(0xb2a0), 1))
                         // Simple-selector identity: keep the same y-batch
                         // position as main identities, then advance only this
                         // selector bucket by its codegen-known gap.
@@ -1582,8 +1535,6 @@ contract Halo2QuotientEvaluator {
                 let q_trash_one_minus_selector := addmod(1, sub(r, f_19), r)
                 let q_trash_scaled := mulmod(q_trash_one_minus_selector, mload(0xa120), r)
                 let q_trash_eval := addmod(var162, sub(r, q_trash_scaled), r)
-                trace_u256(mload(0xb2a0), q_trash_eval)
-                mstore(0xb2a0, add(mload(0xb2a0), 1))
                 mstore(0xb280, mulmod(mload(0xb280), y, r))
                 mstore(0xb280, addmod(mload(0xb280), q_trash_eval, r))
                 }
