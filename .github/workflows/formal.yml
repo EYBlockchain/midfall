@@ -1,0 +1,39 @@
+# Phase 1 exit criteria for the formal project (plan Section 3).
+name: formal
+
+on:
+  pull_request:
+    paths: ['formal/**', '.github/workflows/formal.yml']
+  push:
+    branches: [main]
+    paths: ['formal/**', '.github/workflows/formal.yml']
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: formal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1
+        with:
+          use-github-cache: true
+      - name: lake build
+        run: lake build
+
+      - name: frozen statements hash
+        run: sha256sum Midfall/Statements.lean && test -f Statements.sha256 && sha256sum -c Statements.sha256
+
+      - name: no sorry outside the register
+        run: |
+          found=$(grep -rn --include='*.lean' -w 'sorry' Midfall | grep -v 'Midfall/Statements.lean' || true)
+          if [ -n "$found" ]; then echo 'unexpected sorry:'; echo "$found"; exit 1; fi
+
+      - name: native_decide is confined to Instances/
+        run: |
+          bad=$(grep -rn --include='*.lean' 'native_decide' Midfall | grep -v 'Midfall/Instances/' || true)
+          if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
+
+      - name: axioms gate
+        run: lake build && lake env bash scripts/check_axioms.sh
