@@ -4,6 +4,8 @@
 
 #![cfg(feature = "evm")]
 
+mod common;
+
 use std::{env, ops::Rem, path::Path};
 
 use ff::{Field, PrimeField};
@@ -145,6 +147,7 @@ fn rsa_signature_renders_compiles_and_verifies() {
             ..RenderOptions::default()
         })
         .expect("separate RSA render should succeed");
+    common::check_quotient_listing("rsa-signature", &artifacts);
     let verifier_solidity = artifacts.verifier;
     let vk_solidity = artifacts.verifying_key.expect("separate render includes VK");
     let repacked_proof = generator.repack_proof(&proof).expect("proof repack");

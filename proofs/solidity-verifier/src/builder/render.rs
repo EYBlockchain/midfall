@@ -6,7 +6,9 @@ use ruint::aliases::U256;
 use super::*;
 use crate::{
     api::{RenderQuotient, RenderVk},
-    lowering::{plan::LoweringPlan, render::Halo2VerifyingKey},
+    lowering::{
+        plan::LoweringPlan, quotient_listing::QuotientListingContext, render::Halo2VerifyingKey,
+    },
 };
 
 struct VerifierRenderPlan {
@@ -20,7 +22,23 @@ struct VerifierRenderPlan {
 impl<'a> SolidityGenerator<'a> {
     /// Render generated Solidity artifacts according to one immutable options
     /// value.
+    ///
+    /// Besides the Solidity sources, the result carries the quotient-VM
+    /// listing and identity manifest (`quotient_listing`,
+    /// `quotient_manifest`). They are built after, and independently of, the
+    /// Solidity sources from the same converged plan, and rendering fails if
+    /// their translation validation against the Rust gate polynomials fails.
     pub fn render(&self, options: RenderOptions) -> Result<RenderedArtifacts, GeneratorError> {
+        self.render_with_listing(options, true)
+    }
+
+    /// `render`, with the quotient listing/manifest optional (crate tests
+    /// use `false` to show the Solidity does not depend on the listing).
+    pub(crate) fn render_with_listing(
+        &self,
+        options: RenderOptions,
+        emit_listing: bool,
+    ) -> Result<RenderedArtifacts, GeneratorError> {
         let separate = matches!(options.vk, RenderVk::Separate);
         let (external_quotient, expected_quotient) = match options.quotient {
             RenderQuotient::Inline => (false, None),
@@ -47,10 +65,34 @@ impl<'a> SolidityGenerator<'a> {
             .then(|| self.render_quotient_evaluator_with_plan(&inputs, &plan, options.diagnostics))
             .transpose()?;
 
+        // The listing/manifest are read-only views of the same converged plan
+        // and rendered VK payload; they are produced after every Solidity
+        // artifact so they cannot influence it.
+        let (quotient_listing, quotient_manifest) = if emit_listing {
+            let artifacts = inputs
+                .quotient_listing_artifacts(
+                    &plan,
+                    QuotientListingContext {
+                        separate_vk: separate,
+                        external_quotient,
+                        trace: options.diagnostics.trace,
+                    },
+                )
+                .map_err(|message| GeneratorError::Planning {
+                    stage: "quotient listing",
+                    message,
+                })?;
+            (Some(artifacts.listing), Some(artifacts.manifest))
+        } else {
+            (None, None)
+        };
+
         Ok(RenderedArtifacts {
             verifier,
             verifying_key,
             quotient_evaluator,
+            quotient_listing,
+            quotient_manifest,
         })
     }
 

@@ -73,6 +73,7 @@ Fill this table for the exact artifact under review. Use
 | Generated verifier source hash | fill per artifact |
 | Generated VK source hash | fill per artifact, if split |
 | Generated quotient evaluator source hash | fill per artifact, if split |
+| Quotient listing / manifest hash | `listing.keccak256` in the manifest; see `docs/reference/QUOTIENT_LISTING.md` |
 | Verifier runtime length/hash | fill per artifact |
 | VK runtime length/hash | fill per artifact, if split |
 | Quotient evaluator runtime length/hash | fill per artifact, if split |
@@ -90,7 +91,10 @@ Start here:
 1. `docs/audit/CODEGEN_ASSURANCE_DOSSIER.md`
 2. `docs/reference/STATUS.md`
 3. `docs/architecture/LOWERING_ARCHITECTURE_SPEC.md`
-4. The generated Solidity artifact(s) under review.
+4. The generated Solidity artifact(s) under review, with the quotient-VM
+   listing and manifest rendered next to them
+   (`docs/reference/QUOTIENT_LISTING.md`): they map every byte of the
+   VK-resident quotient program to the gate polynomial it implements.
 5. The source files for the specific checkpoint being reviewed.
 
 Avoid starting with the large Yul templates. First understand the semantic
@@ -229,6 +233,16 @@ HALO2_SOLIDITY_RUN_EVM_TESTS=1 \
 SRS_DIR=/path/to/midfall/zk_stdlib/examples/assets \
 cargo test -p halo2_solidity_verifier --release \
   --features evm,truncated-challenges --test poseidon_fixture -- --nocapture
+```
+
+Regenerate the quotient-VM program listing from a deployed VK and check it
+against the shipped listing, manifest and verifier pins (exit 0: exact match;
+2: match after a reported VK header-length shift; 1: mismatch):
+
+```bash
+cargo run --release -p halo2_solidity_verifier --example quotient_listing -- \
+  Halo2VerifyingKey.sol QuotientManifest.json \
+  --listing QuotientListing.txt --verifier Halo2Verifier.sol
 ```
 
 Run the IVC Solidity benchmark and trace path:

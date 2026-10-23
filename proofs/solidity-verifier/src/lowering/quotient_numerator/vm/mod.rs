@@ -52,6 +52,8 @@
 //! underflow, and identity-boundary stack leaks before the bytes can be pinned
 //! into a VK runtime.
 
+pub(crate) mod disasm;
+
 use std::collections::{HashMap, HashSet};
 
 use ff::{Field, PrimeField};

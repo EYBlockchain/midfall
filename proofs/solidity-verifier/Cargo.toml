@@ -33,6 +33,8 @@ rand_chacha = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = "0.2"
 sha2 = { workspace = true }
+# Manifest parsing in the `quotient_listing` auditor example and its tests.
+serde_json = { workspace = true }
 # Step 8: pull in midnight-circuits + midnight-zk-stdlib only as dev-deps so
 # the lib build stays minimal. These provide the PoseidonExample circuit
 # type the poseidon fixture (midfall/proofs/solidity-verifier/fixtures/
@@ -91,6 +93,9 @@ fewer-point-sets = ["in-circuit-fewer-point-sets", "outer-fewer-point-sets"]
 # Enables native Midfall verifier trace hooks used by the Rust/Solidity
 # differential coverage tests.
 rust-verifier-trace = ["midnight-proofs/solidity-verifier-trace", "truncated-challenges"]
+
+[[example]]
+name = "quotient_listing"
 
 [[example]]
 name = "ivc_replay"

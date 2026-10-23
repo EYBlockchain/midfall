@@ -446,6 +446,18 @@ pub struct RenderedArtifacts {
     /// Quotient evaluator source when [`RenderQuotient::ExternalPinned`] is
     /// selected.
     pub quotient_evaluator: Option<String>,
+    /// Annotated disassembly of the compact quotient-VM program, organised by
+    /// identity `j`, decoded from the program bytes embedded in the rendered
+    /// VK payload. Always produced by
+    /// [`SolidityGenerator::render`](crate::SolidityGenerator::render); it is
+    /// a separate text artifact and never changes the rendered Solidity. See
+    /// `docs/reference/QUOTIENT_LISTING.md`.
+    pub quotient_listing: Option<String>,
+    /// JSON identity manifest matching `quotient_listing`: artifact hashes,
+    /// payload and memory offsets, the per-identity execution plan, the
+    /// constant table and the evaluation-slot map. Always produced by
+    /// [`SolidityGenerator::render`](crate::SolidityGenerator::render).
+    pub quotient_manifest: Option<String>,
 }
 
 /// Errors from native-proof to Solidity-proof repacking.

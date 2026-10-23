@@ -26,6 +26,8 @@
 
 #![cfg(all(feature = "evm", feature = "truncated-challenges"))]
 
+mod common;
+
 use std::{env, path::Path};
 
 use ff::Field;
@@ -175,6 +177,7 @@ fn poseidon_renders_compiles_and_verifies() {
             ..RenderOptions::default()
         })
         .expect("separate render should succeed");
+    common::check_quotient_listing("poseidon", &artifacts);
     let verifier_solidity = artifacts.verifier;
     let vk_solidity = artifacts.verifying_key.expect("separate render includes VK");
 
