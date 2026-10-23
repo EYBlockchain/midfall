@@ -2314,10 +2314,33 @@ memory-safety rules. If future edits add Solidity code after the block, or if
 the compiler reasons across the block in an unexpected way, this becomes a
 miscompilation risk.
 
+**Status: addressed.** The risk was not hypothetical. `solc 0.8.30` with the
+pinned flags emits `mstore(0x40, 0x08e0)` for the moonlight-wrap render, i.e.
+it reserved `[0x80, 0x8e0)` for via-IR stack-to-memory spill slots -- directly
+on top of a generated layout that started at `0x80`. Reservations observed
+across renders: `0x80` (ivc-keccak, none), `0xe0` (rsa), `0x3c0` (poseidon),
+`0x8e0` (moonlight-wrap). At least one spill (`mstore(0x300, mload(0x6a00))`,
+the `y` challenge, re-read ~600 IR lines later) sits in that window.
+
+The recommendation below to remove the annotation was tested and does not work:
+the block then fails to compile with `Cannot swap Variable usr$f_4 ... too deep
+in the stack by 1 slots`, and solc itself suggests re-adding the annotation.
+The annotation is load-bearing.
+
+The fix instead moves the generated layout above the reservation
+(`LOW_MEMORY_SCRATCH_START = 0x1000`), making the two regions disjoint in space
+so their liveness no longer matters, and adds
+`compiled_memoryguard_does_not_overlap_generated_layout`, which compiles each
+rendered variant and fails if the reservation ever grows past that base. Note
+this removes the *consequence*, not the false annotation itself; making the
+annotation honest would require runtime `mload(0x40)`-based re-basing at the
+cost of an `ADD` per memory access.
+
 Recommendation:
 
-- Prefer removing `"memory-safe"` from the terminal verifier block unless there
-  is a compiler-specific proof that this pattern is accepted.
+- ~~Prefer removing `"memory-safe"` from the terminal verifier block unless
+  there is a compiler-specific proof that this pattern is accepted.~~
+  Superseded: removal does not compile. See status note above.
 - Pin the exact compiler and EVM version. The Renegade audit's recommendation
   to use fixed pragmas rather than floating `^0.8.x` is especially relevant for
   generated verifier code.

@@ -26,7 +26,22 @@ pub(crate) const SOLIDITY_ALLOCATABLE_MEMORY_START: usize = 0x80;
 /// The full reserved prefix: scratch, free-memory pointer, and zero slot.
 pub(crate) const SOLIDITY_RESERVED_MEMORY_BYTES: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Generated verifier transcript and low-memory precompile scratch base.
-pub(crate) const LOW_MEMORY_SCRATCH_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
+///
+/// Deliberately *above* [`SOLIDITY_ALLOCATABLE_MEMORY_START`]. The verifier
+/// body is wrapped in `assembly ("memory-safe")`, which is what lets solc's
+/// via-IR stack-to-memory mover run at all -- without it the block does not
+/// compile (stack too deep). That mover reserves spill slots from `0x80`
+/// upward and records the top in the runtime's `mstore(0x40, ...)` prologue.
+/// Observed reservations run from `0x80` (none) to `0x8e0`, varying with the
+/// circuit, the solc release, and the optimizer schedule.
+///
+/// Basing the generated layout at `0x80` therefore put solc's spill slots and
+/// the verifier's own transcript buffer in the same bytes, kept apart only by
+/// live ranges that nothing enforced. Starting above the largest observed
+/// reservation makes them disjoint by construction;
+/// `compiled_memoryguard_does_not_overlap_generated_layout` fails the build if
+/// a future circuit or compiler pushes the reservation past this base.
+pub(crate) const LOW_MEMORY_SCRATCH_START: usize = 0x1000;
 /// Start of the Keccak transcript buffer used by the assembly helpers.
 pub(crate) const TRANSCRIPT_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Shared low-memory scratch for PCS pairing serialization.
@@ -36,7 +51,12 @@ pub(crate) const VERIFIER_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Return buffer used by split quotient evaluator calls.
 pub(crate) const QUOTIENT_RETURN_BUFFER_START: usize = LOW_MEMORY_SCRATCH_START;
 /// Constructor-time memory base for the separate VK runtime payload.
-pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = LOW_MEMORY_SCRATCH_START;
+///
+/// Deliberately *not* derived from [`LOW_MEMORY_SCRATCH_START`]. This buffer
+/// belongs to `Halo2VerifyingKey`, a separate contract whose assembly is not
+/// annotated `memory-safe`, so solc reserves no via-IR spill window there and
+/// the payload can sit at Solidity's normal allocatable start.
+pub(crate) const VK_CONSTRUCTOR_PAYLOAD_START: usize = SOLIDITY_ALLOCATABLE_MEMORY_START;
 /// Number of EVM words in one Fr scalar.
 pub(crate) const FR_WORDS: usize = 1;
 /// EIP-2537 padded G1 encoding: x_hi, x_lo, y_hi, y_lo.
@@ -89,7 +109,16 @@ pub(crate) const PCS_STATIC_WORKING_WORDS: usize = 32;
 /// Static two-pair KZG pairing scratch plus one return word.
 pub(crate) const PAIRING_STATIC_WORKING_WORDS: usize = PAIRING_TWO_PAIR_BYTES / WORD_BYTES + 1;
 /// Low-memory frame used by the final two-pair KZG pairing helper.
-pub(crate) const FINAL_PAIRING_SCRATCH_START: usize = PAIRING_TWO_PAIR_BYTES;
+///
+/// Placed past the end of the accumulator pairing-batch hash frame, which
+/// occupies `[PAIRING_BATCH_PTR, PAIRING_BATCH_PTR + PAIRING_BATCH_HASH_BYTES)`
+/// = `[0x1000, 0x1220)`. Starting lower would put the last word of the hashed
+/// ACC_LHS copy inside this scratch.
+/// The two regions carry different `MemoryPhase`s, and `MemoryLifetime::
+/// intersects` treats distinct phases as never co-live, so the planner cannot
+/// catch that overlap -- it has to be avoided by construction here.
+pub(crate) const FINAL_PAIRING_SCRATCH_START: usize =
+    accumulator::PAIRING_BATCH_PTR + accumulator::PAIRING_BATCH_HASH_BYTES;
 
 pub(crate) mod precompile {
     //! EVM precompile addresses used by the generated verifier. These values
@@ -144,8 +173,29 @@ pub(crate) mod accumulator {
     pub(crate) const CARRIED_SCALARS: usize = 2;
     /// Low-memory hash frame for batching the accumulator pairing with KZG:
     /// domain tag word, KZG rhs/lhs G1s, then accumulator rhs/lhs G1s.
-    pub(crate) const PAIRING_BATCH_PTR: usize = 0x100;
-    /// ASCII `"pairing-batch-acc-kzg"` right-padded to one EVM word.
+    ///
+    /// Rooted at [`super::LOW_MEMORY_SCRATCH_START`] like every other
+    /// low-memory scratch base: the frame historically sat at `0x100`, inside
+    /// the `[0x80, reserved_end)` window solc's via-IR stack-to-memory mover
+    /// reserves for spill slots, so a live spill could silently corrupt the
+    /// alpha Fiat-Shamir preimage or the pairing inputs built here.
+    pub(crate) const PAIRING_BATCH_PTR: usize = super::LOW_MEMORY_SCRATCH_START;
+    /// Domain-separation word for the accumulator pairing batch.
+    ///
+    /// This is a 29-byte numeric literal: ASCII `"pairing-batch-acc-kzg"`
+    /// (21 bytes) followed by 8 zero bytes. FinalPairing.yul stores it with
+    /// `mstore`, which left-pads numeric literals to a full word, so the word
+    /// actually hashed into alpha is
+    ///
+    /// ```text
+    /// 00 00 00 || "pairing-batch-acc-kzg" || 00 * 8
+    /// ```
+    ///
+    /// i.e. NOT right-padded ASCII, as this comment previously claimed. The
+    /// value is still a fixed unique constant, so domain separation is
+    /// unaffected -- but any reimplementation or differential fixture that
+    /// derives alpha from the right-padded form will disagree with the
+    /// deployed verifier on accept/reject.
     pub(crate) const PAIRING_BATCH_DOMAIN_TAG_HEX: &str =
         "0x70616972696e672d62617463682d6163632d6b7a670000000000000000";
     /// KZG pairing RHS point offset inside the batch hash frame.
@@ -621,7 +671,14 @@ mod tests {
         assert_eq!(super::SOLIDITY_FREE_MEMORY_POINTER_SLOT, 0x40);
         assert_eq!(super::SOLIDITY_ZERO_SLOT, 0x60);
         assert_eq!(super::SOLIDITY_RESERVED_MEMORY_BYTES, 0x80);
-        assert_eq!(super::TRANSCRIPT_BUFFER_START, 0x80);
+        assert_eq!(
+            super::TRANSCRIPT_BUFFER_START,
+            super::LOW_MEMORY_SCRATCH_START
+        );
+        // Above Solidity's allocatable start on purpose: solc reserves
+        // via-IR spill slots upward from 0x80 in this contract.
+        const _: () =
+            assert!(super::LOW_MEMORY_SCRATCH_START > super::SOLIDITY_ALLOCATABLE_MEMORY_START);
         assert_eq!(super::VK_CONSTRUCTOR_PAYLOAD_START, 0x80);
     }
 
@@ -706,9 +763,16 @@ mod tests {
         assert_eq!(accumulator::LIMB_BITS, 56);
         assert_eq!(accumulator::LIMBS, 7);
         assert_eq!(accumulator::LIMBS_PER_WORD, 4);
-        assert_eq!(accumulator::IDENTITY_FLAG_WORDS, 1);
-        assert_eq!(accumulator::PAIRING_BATCH_PTR, 0x100);
+        // Above solc's via-IR spill window like every other low-memory base.
+        assert_eq!(
+            accumulator::PAIRING_BATCH_PTR,
+            super::LOW_MEMORY_SCRATCH_START
+        );
         assert_eq!(accumulator::PAIRING_BATCH_HASH_BYTES, 0x220);
+        assert_eq!(
+            super::FINAL_PAIRING_SCRATCH_START,
+            super::LOW_MEMORY_SCRATCH_START + 0x220
+        );
         assert_eq!(quotient_limb::LIMBS, 7);
         assert_eq!(quotient_limb::PAIRWISE_TERMS, 49);
         assert_eq!(quotient_limb::PAIRWISE_COEFFS, 13);

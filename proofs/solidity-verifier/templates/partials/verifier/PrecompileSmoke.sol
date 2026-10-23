@@ -2,8 +2,14 @@
     /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
-               // NOTE: the typed constructor memory-layout guard (MF-2) lands
-            // with the spill-window layout move; see Halo2Verifier.sol.
+               // Same free-memory-pointer guard as verifyProof, typed for the
+            // same reason: a build fault must fail the DEPLOYMENT, not the
+            // first proof. The smoke probes below keep bare reverts (a
+            // chain-capability failure, which the transaction identifies).
+            if gt(mload(0x40), {{ memory.constructor_smoke_scratch_mptr|hex() }}) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
 // Scratch is reused for every runtime-prerequisite probe.
             let scratch := {{ memory.constructor_smoke_scratch_mptr|hex() }}

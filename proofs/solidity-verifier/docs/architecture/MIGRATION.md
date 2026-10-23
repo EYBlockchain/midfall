@@ -343,6 +343,10 @@ The `cargo test --lib` suite now stands at 7/7 green:
   `assembly ("memory-safe") { ... }` to silence the legacy
   stack-too-deep error path; with `--via-ir` solc 0.8.30 now
   compiles the full ~117 kB output cleanly.
+  Note the annotation is not merely cosmetic: it enables solc's
+  stack-to-memory mover, which reserves spill slots upward from
+  `0x80`. See AUDIT.md TA-5 and `docs/architecture/MEMORY_LAYOUT.md`
+  for why the generated layout is based at `0x1000` rather than `0x80`.
 * `tests/poseidon_fixture.rs` — new integration test (gated behind
   `feature = "evm"` and currently `#[ignore]`d, see below) that:
     1. Configures `SRS_DIR` to point at

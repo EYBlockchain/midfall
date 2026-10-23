@@ -156,11 +156,26 @@ contract Halo2Verifier {
         {%- when None %}
         {%- endmatch %}
         assembly ("memory-safe") {
-            // The `m            // NOTE: the on-chain memory-layout guard (MF-2) is added together
-            // with the layout move above solc's via-IR spill reservation; on
-            // the current absolute layout the free-memory pointer legitimately
-            // sits above TRANSCRIPT_MPTR and the check would reject every
-            // proof. MemoryLayoutViolated() is declared for that commit.
+            // The `m            // The 'memory-safe' annotation above is what enables solc's
+            // stack-to-memory mover, which reserves spill slots upward from
+            // 0x80. The generated layout below writes absolute addresses from
+            // TRANSCRIPT_MPTR upward and never consults the free-memory
+            // pointer, so the two regions must not meet. The size of that
+            // reservation is compiler-version and optimiser dependent, so
+            // assert the invariant in the deployed bytecode instead of relying
+            // on a generator-side test the integrator never runs. ~6 gas.
+            //
+            // MF-2: this is the only on-chain guard against a recompile that
+            // silently moves the spill region, and the failure it catches is
+            // permanent (no input can verify). 'fail()' is not in scope this
+            // early, so write the MemoryLayoutViolated() selector inline
+            // rather than reverting bare -- an empty revert here is
+            // indistinguishable from every other empty revert, which is
+            // exactly the wrong signal for a build fault.
+            if gt(mload(0x40), TRANSCRIPT_MPTR) {
+                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))
+                revert(0x00, 0x04)
+            }
 
 // This block owns the call-frame memory and remains terminal.
             // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving

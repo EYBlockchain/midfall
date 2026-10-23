@@ -36,11 +36,11 @@ use crate::lowering::{
 };
 /// Accumulator pairing-batch hash frame.
 ///
-/// The template starts this frame at `0x100`, writes a one-word domain tag,
-/// then four G1 points: KZG rhs/lhs and accumulator rhs/lhs. The last copy ends
-/// at `0x320`, so the registered range is `[0x100, 0x320)`.
-const ACCUMULATOR_PAIRING_BATCH_BYTES: usize =
-    PAIRING_TWO_PAIR_BYTES - G1ADD_INPUT_BYTES + WORD_BYTES;
+/// The template starts this frame at `PAIRING_BATCH_PTR` (`0x1000`), writes a
+/// one-word domain tag, then four G1 points: KZG rhs/lhs and accumulator
+/// rhs/lhs. The last copy ends `0x220` bytes later, so the registered range is
+/// `[0x1000, 0x1220)`.
+const ACCUMULATOR_PAIRING_BATCH_BYTES: usize = super::accumulator::PAIRING_BATCH_HASH_BYTES;
 
 // Fixed word offsets from `THETA_MPTR`.
 //
@@ -992,6 +992,24 @@ impl VerifierMemoryLayout {
             }
         }
 
+        // The verifier body runs inside `assembly ("memory-safe")`, so solc's
+        // via-IR stack-to-memory mover reserves spill slots upward from 0x80.
+        // A generated region below `LOW_MEMORY_SCRATCH_START` could share
+        // bytes with a live spill slot, and the lifetime model cannot see
+        // solc's opaque spill liveness -- so enforce disjointness by address.
+        // `compiled_memoryguard_does_not_overlap_generated_layout` checks the
+        // complementary bound, `reserved_end <= LOW_MEMORY_SCRATCH_START`,
+        // against real compiled bytecode.
+        for region in &self.map.regions {
+            if region.len != 0 && region.start < LOW_MEMORY_SCRATCH_START {
+                return Err(format!(
+                    "memory region {} starts at {:#x}, below LOW_MEMORY_SCRATCH_START ({:#x}); \
+                     it can overlap solc's via-IR stack-to-memory spill window [0x80, reserved_end)",
+                    region.name, region.start, LOW_MEMORY_SCRATCH_START
+                ));
+            }
+        }
+
         let expected_scalar_inv =
             self.vk_mptr.value().as_usize().saturating_sub(MODEXP_SCRATCH_BYTES);
         if self.scalar_inv_scratch_mptr != expected_scalar_inv {
@@ -1245,7 +1263,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
         let theta = layout.theta_mptr.value().as_usize();
@@ -1300,7 +1318,7 @@ mod tests {
         let layout = VerifierMemoryLayout::new(
             &meta,
             &vk,
-            Ptr::memory(0x1000),
+            Ptr::memory(0x2000),
             VerifierMemoryLayoutConfig::default(),
         );
 
@@ -1379,7 +1397,7 @@ mod tests {
             .expect("scalar inversion scratch registered");
         assert_eq!(
             layout.scalar_inv_scratch_mptr,
-            0x1000 - MODEXP_SCRATCH_BYTES
+            0x2000 - MODEXP_SCRATCH_BYTES
         );
         assert_eq!(scalar_inv.start, layout.scalar_inv_scratch_mptr);
         assert_eq!(scalar_inv.len, MODEXP_FRAME_BYTES);
@@ -1393,17 +1411,17 @@ mod tests {
         let windows = ThetaWindowLayout::compatibility();
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.rot_points_words = windows.rot_points_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("ROT_POINTS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.x1_powers_words = windows.x1_powers_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("X1_POWERS_MPTR"));
 
         let mut config = VerifierMemoryLayoutConfig::default();
         config.pcs.q_eval_set_words = windows.q_eval_set_cap_words + 1;
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         assert!(layout.validate().unwrap_err().contains("Q_EVAL_SET_MPTR"));
     }
 
@@ -1415,7 +1433,7 @@ mod tests {
             acc_msm_terms: 4,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("accumulator_msm").expect("accumulator MSM region registered");
 
@@ -1440,7 +1458,7 @@ mod tests {
             },
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region =
             layout.map.region("trace_u256_log_word").expect("trace_u256 region registered");
 
@@ -1463,7 +1481,7 @@ mod tests {
             num_instances: 5,
             ..VerifierMemoryLayoutConfig::default()
         };
-        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x1000), config);
+        let layout = VerifierMemoryLayout::new(&meta, &vk, Ptr::memory(0x2000), config);
         let region = layout
             .map
             .region("batch_invert_scratch")
