@@ -140,6 +140,55 @@ receive* are exactly the ones Exec/Verifier and Exec/Permutation must handle
 - `l_i_range` and `rotate_omega` take the same values and do not panic, they
 just compute large powers. Any `Supported`-style hypothesis that bounds
 rotations should cite this.
+### R-10 ANSWERED: `verify_final` does NOT batch with the same α as FinalPairing.yul
+
+The plan asked, under the Exec/Accumulator row: "determine whether `verify_final`
+batches the accumulator with the same α as FinalPairing.yul (this decides
+whether the acc-mode equivalence to Rust is exact)". It does not. Read off the
+source:
+
+`aggregation/src/ivc/verifier.rs:143-148` builds `proof_acc` from the DualMSM,
+then `Accumulator::accumulate(&[proof_acc, instance.acc])` and one `check`.
+`circuits/src/verifier/accumulator.rs:223-239` computes
+`r = SpongeChip::hash(as_public_input(acc0) ++ as_public_input(acc1))`,
+`rs = [r^0, r^1]`, skips the first, and `accumulate_with_r` (circuits/src
+/verifier/msm.rs:166-181) scales the second accumulator's scalars by `r`. So
+the *shape* is the same as the contract's: `e(rhs0 + r·rhs1, sG2) ·
+e(lhs0 + r·lhs1, −G2) = 1`. But `r` and α are different values:
+
+| | Rust `verify_final` | contract `FinalPairing.yul` |
+|---|---|---|
+| hash | `SpongeChip::hash` - the POW2 sponge over the native field | `keccak256` |
+| preimage | `as_public_input` of each accumulator, i.e. the foreign-point limb | `tag ++ vk_digest ++ kzg_rhs ++ kzg_lhs ++ acc_rhs ++ acc_lhs` |
+|  | encoding (lhs then rhs), no vk_digest | in EIP-2537 padded form, **with** vk_digest |
+| reduction | sponge output is already a field element, then `truncate_off_circuit` | `mod(keccak256(..), r)`, then `0 -> 1` |
+| scaling order | first accumulator un-scaled, second by r | kzg un-scaled, acc by alpha - same order |
+
+Consequences, in order of importance:
+
+1. The `h : g.cfg.accumulator = none` hypothesis on `lowering_equivalence_noAcc`
+   and `end_to_end_noAcc` is **necessary, not cosmetic**. In accumulator mode the
+   contract and the Rust verify different predicates. Each is individually
+   sound - a random α makes the bad pair a single-root event - but they are not
+   the same single root. Concretely, write X for the kzg pairing product and Y
+   for the acc one; the Rust accepts iff X·Y^r = 1 and the contract iff
+   X·Y^α = 1. Pick any Y ≠ 1 and set X := Y^{−r}: the Rust accepts and, since
+   α ≠ r, the contract rejects.
+2. `lowering_equivalence` as stated in §9.5 is still fine in acc mode, because
+   its right-hand side is `ContractRef.accepts`, which is defined with the
+   contract's own keccak-based `alphaOf`. The equivalence is contract-vs-Lean-
+   reference, not contract-vs-Rust. Do not strengthen it to the Rust.
+3. S5's `alphaOf` preimage must keep `vk_digest` (added by curated item 8,
+   audit I-7). The Rust has no vk_digest in its batch hash at all, so the
+   contract binds α to the verifying key and the Rust does not - a place where
+   the contract is *stronger* than the reference. Worth stating as a remark in
+   docs/security.tex rather than hiding.
+4. Conformance: for accumulator-mode fixtures the harness must compare the
+   contract against `ContractRef.accepts`, never against `verify_final`, or it
+   will report spurious mismatches. Owner: Phase 3.
+
+Owner of the follow-on decision (does any statement claim acc-mode agreement
+with Rust at all?): Phase 4 / whoever writes Spec/Piop.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
