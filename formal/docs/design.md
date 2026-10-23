@@ -146,3 +146,39 @@ Related, no sign-off needed: `IoErrorKind` gains `notFound`. Rust
 `UnexpectedEof` a short read gives, and the plan maps
 `Transcript(io::Error)` to `transcript (k : IoErrorKind)`. Dropping the
 distinction would have merged two observable error classes.
+
+## D-P7 - Gₜ is an outParam of AdmissiblePairing, and DualMSM carries it
+
+**Approved by:** pending (an elaboration consequence of D-P1 and D-P6, not a
+mathematical change). Date raised: 2026-10-23.
+
+Found while porting msm.rs, and recorded because it will bite every later
+declaration that touches the pairing:
+
+1. The pairing target group Gₜ appears in no data-carrying type: `MSMKZG`
+   holds scalars and G₁ points, `ParamsVerifierKZG G₁ G₂` holds G₂ points.
+   So `DualMSM.check : Bool` - which the plan fixes - cannot determine Gₜ from
+   its arguments, and type-class resolution refuses to even look for an
+   `AdmissiblePairing G₁ G₂ ?Gₜ` while ?Gₜ (and the parent instances that
+   depend on it) are metavariables.
+2. Fix, part one: `DualMSM (F G₁ G₂ Gₜ : Type)` carries G₂ and Gₜ as phantom
+   parameters. The Rust `DualMSM<E>` has no G₂ or Gₜ component, so these are
+   purely presentational, but without them nothing downstream can name the
+   pairing.
+3. Fix, part two: `Gₜ : outParam Type*` in the class header. Even with the
+   phantom parameter, a *use site* such as the frozen `Statements.lean`
+   writes `verifyNative F params vk inst π` and must still invent a Gₜ. With
+   Gₜ as an outParam the instance head is indexed on (G₁, G₂) alone, so
+   resolution proceeds and the local `[P : AdmissiblePairing G₁ G₂ Gₜ]
+   hypothesis pins it. Without the outParam the frozen file does not elaborate
+   at all - which is how this was caught.
+4. `AdmissiblePairing` also gained `decEqG₁` and `decEqGₜ` fields (see
+   Common/Curve.lean): plan 9.2 types the checks as `Bool`, and over an
+   abstract group the equation is a bare Prop. They are fields rather than
+   `[DecidableEq _]` variables precisely so that no use site - including the
+   frozen file - has to supply anything new.
+
+Consequence for the statements: none. No declaration in `Statements.lean`
+changed, its hash is unchanged, and the theorems still quantify over an
+arbitrary admissible pairing (now one with decidable equality on G₁ and Gₜ,
+which any concrete curve has).

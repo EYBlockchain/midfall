@@ -32,7 +32,8 @@ abbrev Fr (p : ℕ) := ZMod p
 /-- An asymmetric pairing with exactly the structure ArkLib's KZG theorems
     assume: three prime-order groups over `ZMod p`, a bilinear (by type) map,
     and non-degeneracy on the chosen generators. -/
-class AdmissiblePairing {p : outParam ℕ} [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type*)
+class AdmissiblePairing {p : outParam ℕ} [Fact (Nat.Prime p)] (G₁ G₂ : Type*)
+    (Gₜ : outParam Type*)
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
     [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
@@ -50,6 +51,19 @@ class AdmissiblePairing {p : outParam ℕ} [Fact (Nat.Prime p)] (G₁ G₂ Gₜ 
   /-- Non-degeneracy on the generators: `e(g₁, g₂) ≠ 1` (written `≠ 0` in the
       additive form of `Gₜ`). -/
   hNonDeg : e (Additive.ofMul g₁) (Additive.ofMul g₂) ≠ 0
+  /-- Decidable equality on `G₁` and `Gₜ`.
+
+      These are a *computability* requirement, not a mathematical one. Plan 9.2
+      fixes `DualMSM.check : Bool` and `MSMKZG::check : bool`, and over an
+      abstract group the equation `e(left,sG2)·e(right,−G2) = 1` is a bare Prop
+      with no decision procedure. Carrying the witnesses on the class - rather
+      than as extra `[DecidableEq _]` variables at each use site - is what keeps
+      the frozen `Statements.lean` elaborating unchanged: it already binds
+      `[P : AdmissiblePairing G₁ G₂ Gₜ]`, and a new field costs nothing at a use
+      site, while a new parent parameter would demand an instance the frozen
+      file does not supply. Any concrete curve has both. -/
+  decEqG₁ : DecidableEq G₁
+  decEqGₜ : DecidableEq Gₜ
 
 namespace AdmissiblePairing
 

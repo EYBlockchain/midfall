@@ -14,13 +14,6 @@ namespace Midfall.Halo2
     permutation, cs, cs_degree, transcript_repr}. Filled in by Phase 2. -/
 structure VerifyingKey (Fr G₁ : Type) where
 
-/-- rust: proofs/src/poly/kzg/msm.rs DualMSM. The check is
-    e(left, sG2) * e(right, -G2) = 1 (plan Section 9.2). -/
-structure DualMSM (Fr G₁ G₂ : Type) where
-
-/-- rust: proofs/src/poly/kzg/params.rs ParamsVerifierKZG -/
-structure ParamsVerifierKZG (G₁ G₂ : Type) where
-
 /-- A decoded verifier message: an absorbed G1 point or a squeezed scalar. -/
 inductive Msg (Fr G₁ : Type) where
   | g1 (P : G₁)

@@ -88,7 +88,9 @@ def ContractRefAccepts {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [AdmissiblePairing G₁ G₂ Gₜ]
     (H : Hash) (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Bool :=
-  match prepareMsgs H Features.solidity vk inst ms with
+  -- Gₜ is a phantom of DualMSM (see Exec/Kzg/Msm.lean), so it must be
+  -- named here: nothing in the arguments pins it.
+  match prepareMsgs (Gₜ := Gₜ) H Features.solidity vk inst ms with
   | .error _ => false
   | .ok d => DualMSM.check d params
 

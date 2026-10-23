@@ -17,6 +17,7 @@ import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Features
 import Midfall.Halo2.Exec.Error
 import Midfall.Halo2.Exec.Types
+import Midfall.Halo2.Exec.Kzg.Msm
 import Midfall.Halo2.Exec.Transcript
 
 namespace Midfall.Halo2
@@ -32,24 +33,25 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     (plan 9.1 `abbrev Hash`). -/
 abbrev Hash := Bytes → H256
 
-/-- rust: proofs/src/poly/kzg/msm.rs:284 DualMSM::check, i.e.
-    e(left, sG2) * e(right, -G2) = 1. -/
-def DualMSM.check (g : DualMSM (Fr p) G₁ G₂) (params : ParamsVerifierKZG G₁ G₂) : Bool := sorry
-
 /-- rust: proofs/src/plonk/verifier.rs Verifier::prepare. Absorbs the proof
     stream, squeezes the challenges, evaluates the quotient identity and builds
     the dual MSM. `committed` is the per-instance-column list of committed G1
     points and `inst` the per-column instance values. -/
 def prepare (F : Features) (vk : VerifyingKey (Fr p) G₁)
     (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
-    TranscriptM (DualMSM (Fr p) G₁ G₂) := sorry
+    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := sorry
 
 /-- rust: proofs/solidity-verifier/src/test.rs:340-367, the canonical
     composition (plan Section 4, Exec/Native). -/
-def verifyNative (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+def verifyNative {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (F : Features) (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (proof : Bytes) :
     Except Fault Unit := do
-  let (g, t) ← (prepare F vk [[1]] [[inst.toList]]).run (Transcript.initFromBytes proof)
+  -- Gₜ is a phantom of DualMSM, so it has to be named: nothing in the
+  -- arguments pins it.
+  let m := prepare (Gₜ := Gₜ) F vk [[1]] [[inst.toList]]
+  let (g, t) ← StateT.run m (Transcript.initFromBytes proof)
   t.assertEmpty
   unless DualMSM.check g params do throw (Fault.error Error.opening)
 
@@ -61,7 +63,7 @@ def decodeRust (F : Features) (vk : VerifyingKey (Fr p) G₁) (_ : Bytes) :
 /-- `prepare` driven by already-decoded messages instead of a byte stream. -/
 def prepareMsgs (H : Hash) (F : Features) (vk : VerifyingKey (Fr p) G₁)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
-    Except Fault (DualMSM (Fr p) G₁ G₂) := sorry
+    Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ) := sorry
 
 /-- `verifyNative` at the message level. -/
 def verifyMsgs (H : Hash) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
