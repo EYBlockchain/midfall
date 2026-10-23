@@ -52,4 +52,45 @@ where
     | 0, acc => acc
     | n+1, acc => go n (ByteArray.push acc 0)
 
+/-- Read exactly `n` bytes at offset `i`, or `none` if the buffer is
+    shorter. This is Rust's `Read::read_exact` on a `Cursor`: a short read is
+    `ErrorKind::UnexpectedEof`, and every caller in the transcript turns that
+    into `Error::Transcript`. -/
+def bytesTake (bs : Bytes) (i n : Nat) : Option Bytes :=
+  if i + n <= bs.size then
+    some (ByteArray.mk (bs.data.extract i (i + n)))
+  else none
+
+/-- The number of bytes still unread after offset `i`. -/
+def bytesRemaining (bs : Bytes) (i : Nat) : Nat :=
+  if i >= bs.size then 0 else bs.size - i
+
+/-- Big-endian bytes to a natural, without the 256-bit truncation of
+    `bytesToWordBE`. Used where the value must then be compared against a
+    modulus: a field repr is canonical only below it. -/
+def bytesToNatBE (bs : Bytes) : Nat :=
+  bs.data.foldl (fun (acc : Nat) (x : UInt8) => acc * 256 + x.toNat) 0
+
+/-- Little-endian bytes to a natural: the halo2 `PrimeField::from_repr` /
+    `GroupEncoding::to_bytes` order. -/
+def bytesToNatLE (bs : Bytes) : Nat :=
+  bytesToNatBE (ByteArray.mk bs.data.toList.reverse.toArray)
+
+/-- `len` big-endian bytes of `n`, high bytes dropped if `n` does not fit
+    (which is what a fixed-width Rust `to_bytes` does). -/
+def natToBytesBE (n : Nat) (len : Nat) : Bytes :=
+  go n len Bytes.empty
+where
+  go : Nat -> Nat -> Bytes -> Bytes
+    | _, 0, acc => acc
+    | n, k+1, acc => go (n / 256) k (ByteArray.push acc (Nat.toUInt8 (n % 256)))
+
+/-- `len` little-endian bytes of `n`. -/
+def natToBytesLE (n : Nat) (len : Nat) : Bytes :=
+  go n len Bytes.empty
+where
+  go : Nat -> Nat -> Bytes -> Bytes
+    | _, 0, acc => acc
+    | n, k+1, acc => go (n / 256) k (ByteArray.push acc (Nat.toUInt8 (n % 256)))
+
 end Midfall
