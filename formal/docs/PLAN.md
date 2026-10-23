@@ -1,13 +1,23 @@
 # Midfall formal: faithful Lean 4 port of the Halo2 verifier and verified Solidity/Yul lowering
 
-> Verbatim copy of the normative plan, kept in the repository so that a work
-> package, a review checklist or a sub-agent brief can cite it by section
-> number. The meaning of Section 9 is normative and is mirrored by the frozen
+> Copy of the normative plan, kept in the repository so that a work package, a
+> review checklist or a sub-agent brief can cite it by section number. The
+> meaning of §9 is normative and is mirrored by the frozen
 > `Midfall/Statements.lean` (D6), whose SHA-256 CI checks. What the plan called
 > "ecosystem identifiers" (ArkLib, VCVio, CompPoly, yul-semantics) were
 > placeholders until the Phase 1 inventory confirmed them: see
-> `docs/ecosystem.md` for what actually exists and `docs/design.md` for the
-> sign-off decisions (D-P1 ... D-P5) taken against it.
+> `docs/ecosystem.md` for what actually exists, `docs/design.md` for the
+> sign-off decisions (D-P1 ... D-P7) taken against it, and `docs/REVIEW.md` for
+> the port findings that cross module boundaries (R-1 ... R-10).
+>
+> Amended 2026-10-23: solc IR translation validation moved from stretch goal to
+> a required step (§7, M8); §9.5 now states the headline `lowering_equivalence`
+> as one observational-equivalence theorem over the *compiled-contract model*
+> rather than as separate L1/L2/L3 theorems; §9.6 becomes `deployed_equivalence`;
+> the trusted base splits solc into a checked Solidity→Yul-IR hop and a trusted
+> Yul-optimizer/bytecode hop (§1); and the accumulator-α question the plan added
+> under Exec/Accumulator is answered in the negative (R-10), which makes the
+> `accumulator = none` hypothesis on the exact equivalences necessary.
 
 The statements below are pseudo-Lean. Their **meaning is normative**. Ecosystem identifiers (ArkLib, VCVio, CompPoly, yul-semantics) are placeholders until the Phase 1 inventory confirms them. Implementers may fix names and syntax only. Any change in meaning needs sign-off.
 
@@ -20,19 +30,27 @@ flowchart TD
   L1 -->|rbrKS+KZG+FS| S1[halo2_ks]
   RG[Rust generator] -->|port + golden text| LG[Lean generator]
   LG --> YA[Yul ASTs]
+  SI[solc IR] -->|translation validation| YA
   YA -->|yul-semantics proofs| CR[ContractRef]
   CR -->|exact, no acc| L0
   CR -->|alpha batching| S7[contract_ks]
   S1 --> S7
 ```
 
+**Headline results**
+- **`lowering_equivalence`** (§9.5) is generic over every supported VK and config. It concerns the compiled-contract model, meaning solc's IR of the generated `.sol` file. That model returns ABI `true` **iff** the Lean verifier accepts the decoded calldata; otherwise it reverts or halts without changing state.
+- **`end_to_end_noAcc`**: the Lean `verifyNative` accepts a compressed Rust proof π **iff** the contract returns `true` on `encodeCalldata (repack π) inst`.
+- **`deployed_equivalence`**: the Lean generator reproduces the deployed Moonlight artifacts byte for byte, so both theorems apply to the deployed code.
+- **`contract_knowledgeSound`**: knowledge soundness of the deployed contract in AGM + ROM.
+
+**Deliverables**
 - **D0**: frozen Rust baseline `formal-baseline-v1` (main plus the 4 branches).
 - **D1**: `formal/` Lake project on Lean v4.35.0. It depends on ArkLib (which brings mathlib, VCVio and CompPoly) and on a pinned fork of powdr-labs/yul-semantics.
 - **D2**: `Midfall.Halo2.Exec`, an executable, line-faithful port of `proofs/src` @ 2d52f24 plus the accumulator pieces.
 - **D3**: `Midfall.Generator`, a line-faithful port of `halo2_solidity_verifier` at the baseline. It emits typed Yul ASTs whose printed text is byte-identical to the Rust output.
 - **D4**: a conformance harness (Rust exporter plus Lean runner) and differential validation of the Yul semantics against revm.
-- **D5**: proofs covering refinement, security (completeness and knowledge soundness in AGM + ROM), lowering equivalence (VM first, then Direct) and the end-to-end contract theorem.
-- **D6**: `formal/Midfall/Statements.lean`, holding the Section 9 statements. This file is frozen and CI checks its hash.
+- **D5**: proofs covering refinement, security, lowering equivalence (VM path first, then Direct), solc IR translation validation and the per-deployment theorem.
+- **D6**: `formal/Midfall/Statements.lean`, holding the §9 statements. This file is frozen and CI checks its hash.
 
 ## 1. Trusted base
 
@@ -41,11 +59,12 @@ flowchart TD
 | Lean kernel + propext/Classical.choice/Quot.sound | trusted; `#print axioms` gate in CI |
 | mathlib/ArkLib/VCVio/CompPoly/yul-semantics | trusted libraries; any `sorry` they contain that we depend on is listed as an explicit assumption (Phase 1 inventory) |
 | BLS12-381 Fp/Fp2/Fp12, G1/G2, pairing | reuse the ecosystem implementations; if bilinearity or non-degeneracy is unproven, it becomes a named hypothesis in `Assumptions/Pairing.lean` |
-| EIP-2537 (0x0b G1ADD, 0x0c G1MSM, 0x0f PAIRING_CHECK), modexp 0x05 (EIP-198/7883) | assumption (your decision), stated as a yul-semantics `ExternalCalls` relation and validated on revm |
-| Keccak-256 | concrete for execution; a random oracle in the security proofs; known-answer tests |
+| EIP-2537 (0x0b G1ADD, 0x0c G1MSM, 0x0f PAIRING_CHECK), modexp 0x05 (EIP-198/7883) | assumption, stated as a yul-semantics `ExternalCalls` relation; validated on revm |
+| Keccak-256 | concrete for execution; a random oracle in the security proofs; known-answer tests. The lowering proofs work for **any** hash `H` |
 | q-DLOG in AGM (and/or ArkLib ARSDH and KZG function binding) | assumption |
 | AGM | modelled as a restriction on adversaries: they must output representations |
-| solc 0.8.30 (via-IR, Cancun, runs 200) and the Solidity shell model | trusted, validated on revm; translation validation of the solc IR is a stretch goal |
+| solc 0.8.30, Solidity → Yul IR | **checked**: `solc --ir` output is translation-validated against the verified blocks and shell model (§7) |
+| solc Yul optimizer and Yul → EVM bytecode | trusted, validated by revm differential tests. Future work: a verified Yul→EVM compiler built on yul-semantics |
 | Lean port is faithful to Rust | validated rather than proven, through review, conformance, coverage and mutation tests (Rust is the reference) |
 
 Out of scope: exact gas, prover code (the honest prover exists only as a mathematical spec), keygen code (the VK is imported from Rust and `transcript_repr` is taken as given), trace and gas-checkpoint render modes, and transcripts other than Keccak.
@@ -93,8 +112,8 @@ formal/
                 Verifier,Native,Accumulator,Msgs}.lean      -- faithful, executable, no proofs
     Halo2/Spec/{Relation,Keygen,Degrees,Piop,Refinement}.lean
     Security/{ROM,AGM,Games,PIOP,KZG,FiatShamir,Batching,Completeness,Main}.lean
-    Generator/...            (Section 8)
-    Yul/{Bridge,Externals,ShellModel,Print,ImportSolcIR}.lean
+    Generator/...            (§8)
+    Yul/{Bridge,Externals,ShellModel,Print,ImportSolcIR,IRCheck}.lean
     Lowering/{Layout,Calldata,VkLoading,Transcript,Lagrange,Quotient/{QVM,VmYul,Direct},Pcs,FinalPairing,Main}.lean
     Instances/MoonlightWrap.lean       -- only place native_decide is allowed
     Statements.lean                    -- frozen
@@ -106,7 +125,7 @@ formal/
 - Fr, Fp, Fp2, Fp12, the curve E1 and its group law, the G1 r-torsion subgroup, G2, the pairing and its bilinearity and non-degeneracy, and any point codecs.
 - ArkLib: `KZG.*`, function binding, `Groups.arsdhAssumption`, AGM, `ProtocolSpec`, `OracleReduction`, `Verifier.knowledgeSoundness`, `rbrKnowledgeSoundness`, `Verifier.fiatShamir`.
 - VCVio: `OracleSpec`, `randomOracle`, `loggingOracle`, `simulateQ`, `QueryLog`, `Pr[...]`, `keccak256`.
-- yul-semantics: AST, `EVM.evmWithExternal`, `ExternalCalls`, `RunContract`, `RunCommitted`, `Object`, the interpreter and its adequacy proof.
+- yul-semantics: AST, `EVM.evmWithExternal`, `ExternalCalls`, `RunContract`, `RunCommitted`, `Object`/`ObjectRun`, the interpreter and its adequacy proof, determinism.
 
 **Gap policy**:
 - A missing executable piece is implemented in `Common/`, together with a proof that it equals the ecosystem definition.
@@ -131,7 +150,7 @@ formal/
   - `IndexMap` becomes a list in insertion order.
 - **R7 Fields and curve.** `invert` returns `Option`. `batch_invert` follows halo2 exactly (zeros are skipped). `from_repr` checks canonicity. Exponentiation uses explicit square-and-multiply. Identity handling for projective vs affine points is mirrored.
 - **R8 Features.** Each `#[cfg(feature)]` becomes `if F.x then ... else ...`, and both branches are ported. `Features.solidity` is fixed from BASELINE.md.
-- **R9 Generics.** Traits (`PolynomialCommitmentScheme`, `Transcript`, `Hashable`, `Guard`) become structures of functions, instantiated with KZG + Keccak.
+- **R9 Generics.** Traits (`PolynomialCommitmentScheme`, `Transcript`, `Hashable`, `Guard`) become structures of functions, instantiated with KZG + Keccak. The hash is a parameter `H : Hash` everywhere, defaulting to keccak256.
 - **R10.** Exec code is computable and never `partial` (use `termination_by`). Proofs live in `*/Lemmas.lean`.
 - **R11 Review.** Each module PR includes a checklist mapping Rust line ranges to Lean defs, signed off by a second agent.
 
@@ -151,7 +170,7 @@ formal/
 | utils/{arithmetic,helpers}.rs | Exec/Arith | `eval_polynomial`, inner product, powers, `batch_invert` |
 | curves/src/bls12_381/g1.rs, fq | Common/Curve, Codec | `from_compressed` = on-curve AND torsion-free (369-371), `to_compressed`, Fq repr LE |
 | solidity-verifier/src/test.rs:340-367 | Exec/Native | the canonical composition |
-| aggregation/src/ivc/verifier.rs:111, circuits/src/verifier/accumulator.rs:90, foreign-point public-input encoding | Exec/Accumulator | KzgAcc, `check`, `from_dual_msm`, `encodeAccInstances` |
+| aggregation/src/ivc/verifier.rs:111, circuits/src/verifier/accumulator.rs:90, foreign-point public-input encoding | Exec/Accumulator | KzgAcc, `check`, `from_dual_msm`, `encodeAccInstances`. **Determine whether `verify_final` batches the accumulator with the same α as FinalPairing.yul** (this decides whether the acc-mode equivalence to Rust is exact). ANSWERED: it does not - see docs/REVIEW.md R-10 |
 
 ## 5. Phase 3: conformance harness
 
@@ -161,6 +180,7 @@ formal/
   - `proof.bin` and `instances.json`.
   - `trace.json`: every absorb/squeeze, the challenges, all evaluations, MSM terms, the DualMSM left/right points, and the result.
   - Generator outputs: `.sol` for every `RenderOptions` used, `plan.json`, the QVM listing and certificate, and `calldata.bin`.
+  - solc outputs: `--ir-ast-json` for the verifier and the evaluator.
 - **Lean runner `midfall-conformance`**:
   - Parses the JSON and runs `verifyNative` and `render`.
   - Compares accept/reject, the error class, every trace value, and the text byte for byte.
@@ -191,19 +211,23 @@ formal/
 - trash Horner;
 - linearization;
 - correctness of `construct_intermediate_sets`;
-- DualMSM scaling and the pairing-reorder lemma: Rust `e(left,sG2)*e(right,-G2)=1` iff contract `e(right,G2)*e(left,-sG2)=1`.
+- DualMSM scaling and the pairing-reorder lemma: Rust `e(left,sG2)·e(right,−G2)=1` ⇔ contract `e(right,G2)·e(left,−sG2)=1` (AssemblyHelpers.yul:213-232 lays out `[RHS|G2|LHS|NEG_S_G2]`).
 
-## 7. Phase 5: Yul/EVM via yul-semantics
+## 7. Phase 5: Yul/EVM via yul-semantics, plus solc IR translation validation
 
 - Fork and pin c9914c1, bumping its toolchain to v4.35.0. It depends only on Batteries, so this is mechanical. Keep our additions in `Midfall/Yul/` (upstreamable).
-- Dialect: `EVM.evmWithExternal (calls L W) noCreates`. The `keccak256` oracle is `H`, and `gas()` stays nondeterministic. extcodehash and extcodecopy go through the environment maps.
+- Dialect: `EVM.evmWithExternal (calls L W) noCreates`. The `keccak256` oracle is `H`, and `gas()` stays nondeterministic. extcodehash and extcodecopy go through the environment maps. STATICCALL frames are static.
 - `Externals.lean`: EIP-2537 and modexp relations (byte-exact layouts, validity checks, outputs, gas cost functions), plus the quotient-evaluator call, which runs the evaluator's Yul object in a static frame.
 - `ShellModel.lean`: a Yul model of solc's dispatcher for `verifyProof(bytes,uint256[])`, covering selector 0x1e8e1e13, the callvalue check, ABI bounds checks, and binding the locals `vk` and `quotientEvaluator` from immutables.
+- **Required step: solc IR translation validation.**
+  - `ImportSolcIR.lean` imports `solc --ir-ast-json` (the unoptimized IR of the whole contract, with our inline assembly embedded) into the yul-semantics AST.
+  - `IRCheck.lean` is a verified checker: `irCheck ir L = true → ObsEquiv ir (ShellModel.wrap L)`.
+  - What it checks: the embedded assembly blocks are α-equivalent to `L.headGuard` and `L.main`; the dispatcher and ABI-decoding code has the recognised shape, with its semantics proven; immutables come from `loadimmutable`, which equals constructor-set values; the memoryguard and spill region are disjoint from `L.plan.memory`.
+  - The same applies to `Halo2QuotientEvaluator` (fallback).
 - revm differential:
   - Run solc bytecode on revm and the yul-semantics interpreter (concrete keccak) on the same inputs.
   - Precompile results are replayed from revm, and the Lean side checks it issues *identical* call inputs.
-  - Compare outcome, return data and the sequence of external calls, over fixtures, mutations and random calldata.
-- Stretch goal: import the solc `--ir-ast-json` output and prove it refines `ShellModel . blocks`, which removes the shell from the trusted base.
+  - Compare outcome, return data and the sequence of external calls, over fixtures, mutations and random calldata. This covers the trusted optimizer and bytecode step.
 
 ## 8. Phase 6: generator port
 
@@ -370,7 +394,10 @@ theorem contract_knowledgeSound (g o L) (hL : g.lower o = .ok L) (hsup : Support
 -- success event: verifier returns abiTrue ∧ reps valid ∧ ¬(decodes to (ms, inst) ∧ (inst, E…) ∈ Rel ∧ AccOK)
 ```
 
-### 9.5 Lowering (yul-semantics)
+### 9.5 Lowering correctness: semantic equivalence of the Lean verifier and the generated Solidity/Yul
+"Equivalence" is observational at the call boundary: the success/revert outcome, return
+data and world effects. Lean error classes all map to "revert".
+
 ```lean
 namespace Midfall.Lowering
 structure Lowered where
@@ -396,9 +423,14 @@ structure Deployment (L W) : Prop where
   qObj : L.evaluator.isSome → W.object L.quotientAddr = L.evaluator.get!
   qHash : L.evaluator.isSome → W.extcodehash L.quotientAddr = L.plan.quotientCodehash
 def calls (L W) : EVM.ExternalCalls := Eip2537.rel ∪ Modexp.rel ∪ Evaluator.rel L W
-def RunVerifier (H L W cd mem₀) (obs) : Prop :=           -- head guard; locals := immutables; main
-  EVM.RunCommitted (EVM.evmWithExternal (calls L W) noCreates) (keccak := H) (L.headGuard ++ bindLocals L ++ L.main)
-    (initState W cd mem₀) obs
+
+-- the assembly alone (head guard; locals := immutables; main), from an arbitrary initial memory
+def RunVerifier (H L W cd mem₀) (obs) : Prop :=
+  EVM.RunCommitted (EVM.evmWithExternal (calls L W) noCreates) (keccak := H)
+    (L.headGuard ++ bindLocals L ++ L.main) (initState W cd mem₀) obs
+-- the compiled-contract model: solc's IR object of the generated .sol, imported and checked
+def RunContractIR (H L W) (ir : Yul.Object) (cd) (c : EVM.ExternalCalls) (obs) : Prop :=
+  EVM.RunCommitted (EVM.evmWithExternal c noCreates) (keccak := H) ir.runtime (callState W cd) obs
 
 def ContractRef.accepts (H) (g) (ms) (inst) : Bool :=
   match prepareMsgs H .solidity g.vk inst ms with
@@ -407,68 +439,86 @@ def ContractRef.accepts (H) (g) (ms) (inst) : Bool :=
     | none => d.check g.params
     | some enc => match decodeAcc enc inst with
       | none => false | some a => batchedCheck g.params (alphaOf H g.vk.digest d a) d a
+def LeanAccepts (H g L cd) : Prop :=
+  ∃ ms inst, decodeCalldata L.plan cd = some (ms, inst) ∧ ContractRef.accepts H g ms inst
 
-/-- L1 SOUNDNESS, shell-independent: holds from ANY initial memory and for ANY H. -/
-theorem verifier_sound (H g o L) (hL : g.lower o = .ok L) (hsup : Supported g o)
-    (W) (hdep : Deployment L W) (hpc : Eip2537.Holds ∧ Modexp.Holds) (cd mem₀ obs)
-    (hrun : RunVerifier H L W cd mem₀ obs) (hret : obs.isReturn) :
-    obs.data = abiTrue ∧ ∃ ms inst, decodeCalldata L.plan cd = some (ms, inst) ∧ ContractRef.accepts H g ms inst
-/-- L2 COMPLETENESS: under the solc shell model, honest precompiles and sufficient gas. -/
-theorem verifier_complete (…) (hacc : ContractRef.accepts H g ms inst) :
-    (∃ obs, RunShell H L W (calldataOf L.plan ms inst) honestCalls obs) ∧
-    ∀ obs, RunShell H L W (calldataOf L.plan ms inst) honestCalls obs → obs = .return abiTrue
-/-- L3: only two outcomes, read-only. -/
-theorem verifier_outcomes : RunShell H L W cd c obs → obs = .return abiTrue ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged)
-/-- L4: every proof G1 point reaches a subgroup-checking precompile (G1MSM or PAIRING) or an explicit check. -/
-theorem points_subgroup_checked : verifier_sound-side lemma over the PCS/FinalPairing call inputs
-/-- L5: repack and calldata codecs. -/
+/-- HEADLINE: semantic equivalence. Generic over all supported VKs and configs, all
+    calldata, any H. -/
+theorem lowering_equivalence (g o L) (hL : g.lower o = .ok L) (hsup : Supported g o)
+    (W) (hdep : Deployment L W) (hpc : Eip2537.Holds ∧ Modexp.Holds)
+    (ir : Yul.Object) (hir : irCheck ir L = true) (H : Hash) (cd : ByteArray) :
+    -- soundness: any run that returns, returns true, and Lean accepts
+    (∀ obs, RunContractIR H L W ir cd (calls L W) obs → obs.isReturn →
+        obs.data = abiTrue ∧ LeanAccepts H g L cd)
+    -- completeness: Lean accepts ⇒ runs exist, and every run with honest precompiles
+    -- and enough gas returns true
+  ∧ (LeanAccepts H g L cd →
+        (∃ obs, RunContractIR H L W ir cd (honestCalls L W) obs) ∧
+        ∀ obs, RunContractIR H L W ir cd (honestCalls L W) obs → obs = .return abiTrue)
+    -- only two outcomes, read-only
+  ∧ (∀ obs, RunContractIR H L W ir cd (calls L W) obs →
+        obs = .return abiTrue ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged))
+
+/-- Exact equivalence to the Rust-faithful Lean verifier (no accumulator). -/
+theorem lowering_equivalence_noAcc (h : g.cfg.accumulator = none) :
+  LeanAccepts keccak256 g L cd ↔ ∃ ms inst, decodeCalldata L.plan cd = some (ms, inst) ∧
+      verifyMsgs keccak256 .solidity g.params g.vk inst ms = .ok ()
+theorem end_to_end_noAcc (h : g.cfg.accumulator = none) (hL hsup hdep hpc hir) :
+  verifyNative .solidity g.params g.vk inst π = .ok () ↔
+  ∃ cd, (repackProof L.plan π >>= (encodeCalldata L.plan · inst)) = .ok cd ∧
+        ∀ obs, RunContractIR keccak256 L W ir cd (honestCalls L W) obs → obs = .return abiTrue
+/-- Accumulator mode: exact w.r.t. ContractRef; against separate checks, exact one way,
+    S5 the other. -/
+theorem contractRef_acc_complete (h : g.cfg.accumulator = some enc) :
+  verifyMsgs … = .ok () → (∃ a, decodeAcc enc inst = some a ∧ a.check g.params) → ContractRef.accepts H g ms inst
+
+-- Building blocks the headline is proven from:
+theorem ir_refines (hir : irCheck ir L = true) : ObsEquiv (RunContractIR H L W ir) (RunShell H L W)   -- §7
+theorem verifier_sound (…) (hrun : RunVerifier H L W cd mem₀ obs) (hret : obs.isReturn) :   -- ANY mem₀
+  obs.data = abiTrue ∧ LeanAccepts H g L cd
+theorem verifier_complete (…) (hacc : LeanAccepts H g L cd) :
+  ∀ obs, RunShell H L W cd (honestCalls L W) obs → obs = .return abiTrue
+theorem points_subgroup_checked : every proof G1 point reaches G1MSM/PAIRING or an explicit check
 theorem repack_spec : repackProof L.plan π = .ok π' ↔ ∃ ms, decodeRust .solidity g.vk π = some ms ∧ π' = encodeContractProof L.plan ms
 theorem calldata_roundtrip : encodeCalldata L.plan (encodeContractProof L.plan ms) inst = .ok cd → decodeCalldata L.plan cd = some (ms, inst)
 theorem calldata_canonical : decodeCalldata L.plan cd = some (ms, inst) → cd = calldataOf L.plan ms inst
   -- if the contract accepts trailing bytes or instance words ≥ r, weaken to `≈` and document the malleability
-/-- L6: ContractRef against the Rust-faithful verifier. -/
-theorem contractRef_noAcc (h : g.cfg.accumulator = none) :
-  ContractRef.accepts keccak256 g ms inst ↔ verifyMsgs keccak256 .solidity g.params g.vk inst ms = .ok ()
-theorem contractRef_acc_complete (h : g.cfg.accumulator = some enc) :
-  verifyMsgs … = .ok () → (∃ a, decodeAcc enc inst = some a ∧ a.check g.params) → ContractRef.accepts H g ms inst
 theorem decodeAcc_encode : decodeAcc enc (encodeAccInstances enc a) = some a      -- 7×56 limbs, coord−1, sentinel, identity flag
 theorem decodeAcc_injective : decodeAcc enc i₁ = some a → decodeAcc enc i₂ = some a → accWords enc i₁ = accWords enc i₂
-/-- E1 END-TO-END (deterministic, no accumulator). -/
-theorem end_to_end_noAcc (h : g.cfg.accumulator = none) :
-  verifyNative .solidity g.params g.vk inst π = .ok () ↔
-  ∃ cd, (repackProof L.plan π >>= (encodeCalldata L.plan · inst)) = .ok cd ∧
-        ∀ obs, RunShell keccak256 L W cd honestCalls obs → obs = .return abiTrue
-/-- Quotient evaluator: VM first, then Direct. -/
+-- Quotient evaluator: VM first, then Direct
 def QVM.run (prog : QVM.Program) (f : QVM.Frame) : Except QVM.Fault QVM.Output   -- port of vm/reference.rs
 theorem qvm_compile_correct (hsup) : QVM.run L.plan.qprog (frameOf L.plan tr ev) = .ok (outputOf (quotientParts g.vk tr ev))
 theorem qvm_validated_noOOB : validateQuotientProgramOperands L.plan = .ok () → f.WellFormed L.plan → QVM.run L.plan.qprog f ≠ .error .oob
 theorem qvm_yul_refines : RunContract (evaluatorObject L) (calldata = f.bytes) (fun o => o = .return (QVM.run L.plan.qprog f).encode ∨ o.isRevert)
 theorem direct_correct (hD : o.quotient = .direct) : same post as qvm_yul_refines for the Direct block
-/-- Per-partial contracts: Inv k relates memory to the L0 state after phase k (layout/memory.rs). -/
-theorem vkLoading_spec      : RunContract (blk .vkLoading L) (Inv .start) (fun s => s.reverted ∨ Inv .vk s)
+-- Per-partial contracts: Inv k relates memory to the L0 state after phase k (layout/memory.rs)
+theorem vkLoading_spec        : RunContract (blk .vkLoading L) (Inv .start) (fun s => s.reverted ∨ Inv .vk s)
 theorem transcriptParser_spec : … ∨ Inv .transcript s   -- challenges = L0 hash chain; canonical-scalar and padding rejection
-theorem lagrange_spec       : … ∨ Inv .lagrange s
-theorem quotientLin_spec    : … ∨ Inv .quotient s       -- returns linearization_expected_eval and buckets
-theorem pcs_spec            : … ∨ Inv .pcs s            -- PAIRING_LHS/RHS = DualMSM left/right
-theorem finalPairing_spec   : … ∨ Inv .pairing s        -- batchedCheck if acc, else d.check
-theorem traceReturn_spec    : Inv .pairing → return(RETURN_MPTR, 0x20) with abiTrue
+theorem lagrange_spec         : … ∨ Inv .lagrange s
+theorem quotientLin_spec      : … ∨ Inv .quotient s       -- linearization_expected_eval and buckets
+theorem pcs_spec              : … ∨ Inv .pcs s            -- PAIRING_LHS/RHS = DualMSM left/right
+theorem finalPairing_spec     : … ∨ Inv .pairing s        -- batchedCheck if acc, else d.check
+theorem traceReturn_spec      : Inv .pairing → return(RETURN_MPTR, 0x20) with abiTrue
 ```
 
 ### 9.6 Per-deployment
 ```lean
-theorem moonlight_lowered :                         -- Instances/MoonlightWrap.lean
-  moonlightGen.render prodOpts = .ok moonlightDeployedArtifacts ∧ Supported moonlightGen prodOpts
+theorem deployed_equivalence :                      -- Instances/MoonlightWrap.lean
+  moonlightGen.render prodOpts = .ok moonlightDeployedArtifacts   -- byte-equal to deployments/sepolia/moonlight-wrap
+  ∧ Supported moonlightGen prodOpts ∧ irCheck moonlightSolcIR moonlightLowered = true
+-- with lowering_equivalence this gives the equivalence for the deployed contract itself
 ```
 
 ## 10. Proof work: order and method
 
 1. Write the paper proof first in `docs/security.tex`: PLONK, plookup/logUp, the Halo2 book, the foreign-field paper (for accumulator limbs), and ArkLib KZG function binding.
-2. Deterministic algebra lemmas (Phase 4) → L6 / L5 → per-partial contracts → L1, L2, L3 on the VM path → S5 → S2 (one sub-argument at a time: gates/vanishing, permutation, logUp, trash) → S3 → S4 → S1 → S7 → Direct → D1.
+2. Deterministic algebra lemmas (Phase 4) → codec lemmas (repack, calldata, accumulator) → per-partial contracts → `verifier_sound` / `verifier_complete` on the VM path → `ir_refines` → `lowering_equivalence` (VM) → S5 → S2 (one sub-argument at a time: gates/vanishing, permutation, logUp, trash) → S3 → S4 → S1 → S7 → Direct → `deployed_equivalence`.
 3. Proof style for the lowering:
    - `RunContract` composition, one contract per partial.
-   - Memory lemmas over `BitVec 256` words, with layout disjointness from `layout`.
+   - Memory lemmas over `BitVec 256` words, with layout disjointness from `Supported.layout`.
    - Inductions over the generator's unrolled lists.
    - The QVM proof splits into compiler correctness over the Expression AST plus an interpreter refinement proved once.
+   - All lowering proofs are hash-agnostic (∀ H), so they transfer to the ROM.
 
 ## 11. Milestones and acceptance
 
@@ -479,14 +529,15 @@ theorem moonlight_lowered :                         -- Instances/MoonlightWrap.l
 | M2 | L0 port | conformance 100%, coverage report |
 | M3 | Generator port | golden byte-equality on corpus + Moonlight |
 | M4 | yul-semantics integration | revm differential green |
-| M5 | Codecs and early phases | L5, L6, vkLoading, transcript, lagrange |
+| M5 | Codecs and early phases | repack, calldata, accumulator, vkLoading, transcript, lagrange |
 | M6 | QVM | qvm_* + evaluator frame theorem |
-| M7 | VM-path lowering | pcs, finalPairing, L1–L4, E1 |
-| M8 | Security | S1–S7 with no `sorry`; axioms limited to the trusted base |
-| M9 | Direct | `direct_correct` + L1/L2 for Direct |
-| M10 | Deployment | D1; stretch: solc IR translation validation |
+| M7 | VM-path lowering | pcs, finalPairing, `verifier_sound` / `verifier_complete`, `end_to_end_noAcc` |
+| M8 | solc IR translation validation (required) | `irCheck` verified; `ir_refines`; `lowering_equivalence` with no `sorry` |
+| M9 | Security | S1–S7 with no `sorry`; axioms limited to the trusted base |
+| M10 | Direct | `direct_correct` + `lowering_equivalence` for Direct |
+| M11 | Deployment | `deployed_equivalence` |
 
-Parallel tracks after M1: A (M2 → M8), B (M3), C (M4). M5–M7 need A, B and C.
+Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C.
 
 ## 12. Rules for implementing agents
 
@@ -495,20 +546,22 @@ Parallel tracks after M1: A (M2 → M8), B (M3), C (M4). M5–M7 need A, B and C
 - Every `sorry` is tracked in `formal/SORRY.md` with an owner.
 - Port PRs carry the R11 checklist.
 - Proof PRs must leave `#print axioms` on the target within the trusted base.
-- If a Rust behaviour makes a statement false (for example a subgroup-check gap, non-canonical acceptance, or an F-finding), stop and report a counterexample. Never weaken the statement silently.
+- If a Rust behaviour makes a statement false (for example a subgroup-check gap, non-canonical acceptance, an F-finding, or the accumulator composition), stop and report a counterexample. Never weaken the statement silently.
 
 ## 13. Risks and open items
 
 - **Toolchain:** yul-semantics needs a bump to v4.35.0 (low risk, Batteries only).
 - **Ecosystem pieces:** BLS12-381 pairing computability and the status of ArkLib's AGM and FS theorems (AGM `run` is currently `sorry`). Mitigation: our own `Security/AGM` plus specialised FS and PCS lemmas.
-- **solc spill window.** The via-IR spill window is a compile-time artifact. It is handled by the `layout` hypothesis plus a check against the compiled output, or by the `MemoryLayoutViolated` guard.
-- **Subgroup checks.** EIP-2537 G1ADD does not check subgroup membership (L4 must cover this).
-- **Calldata canonicity.** Instance words ≥ r and trailing bytes (L5) may be accepted.
+- **solc IR shape.** The via-IR output may vary (dispatcher shape, immutables, memoryguard, spill region). `irCheck` matches the shapes solc 0.8.30 emits under the pinned flags; if solc changes, re-validate.
+- **Last unverified hop.** The Yul optimizer and bytecode step stay trusted and covered only by revm tests. To close it later, use a verified Yul→EVM compiler built on yul-semantics.
+- **Subgroup checks.** EIP-2537 G1ADD does not check subgroup membership (`points_subgroup_checked`).
+- **Calldata canonicity.** Instance words ≥ r and trailing bytes (`calldata_canonical`) may be accepted.
+- **Accumulator mode.** Whether it matches Rust exactly depends on whether `verify_final` batches with the same α (checked in Phase 2). ANSWERED: it does not - see docs/REVIEW.md R-10, so the `accumulator = none` hypothesis on the exact equivalences is necessary.
 - **Design-assessment findings.**
   - F2 (truncation) is handled by `chalMass`.
   - F3 becomes `CommittedInstanceZero`.
   - F7 becomes `hLimbs`.
-  - F1 is closed by D5.
+  - F1 is closed by `lowering_equivalence` + `deployed_equivalence`.
 - **Lean performance on Moonlight (k=20)** may need a fast pow/MSM in `Common`.
 - **Multi-phase circuits** are excluded (`numChallenges = 0`). Supporting them is future work.
 - **Optional stretch:** Aeneas extraction of pure Rust helpers (`repack_proof`, codecs, the VM compiler) for machine-checked equivalence.
