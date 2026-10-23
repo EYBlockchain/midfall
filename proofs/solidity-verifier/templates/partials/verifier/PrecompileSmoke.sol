@@ -2,7 +2,10 @@
     /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
-            // Scratch is reused for every runtime-prerequisite probe.
+               // NOTE: the typed constructor memory-layout guard (MF-2) lands
+            // with the spill-window layout move; see Halo2Verifier.sol.
+
+// Scratch is reused for every runtime-prerequisite probe.
             let scratch := {{ memory.constructor_smoke_scratch_mptr|hex() }}
 
             // MCOPY must be available because the verifier uses it for

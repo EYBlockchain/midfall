@@ -65,7 +65,7 @@
                     // Keccak Fq transcript input.
                     buf_len := common_word(buf_len, inst_be)
                 }
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
             }
 
             {%- if self.gas_checkpoints %}
@@ -316,7 +316,7 @@
                     // Proof evaluation scalars must be canonical Fr elements
                     // before they are absorbed or made available to quotient
                     // reconstruction.
-                    if iszero(lt(eval, r)) { revert(0, 0) }
+                    if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
                     // Spill for quotient numerator and PCS codegen.
                     mstore(eval_buf, eval)
                     eval_buf := add(eval_buf, {{ template_constants.word_bytes|hex() }})
@@ -379,7 +379,7 @@
                 {} {
                 let eval := calldataload(proof_cptr)
                 // Canonical Fr check before transcript absorption.
-                if iszero(lt(eval, r)) { revert(0, 0) }
+                if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
                 buf_len := common_word(buf_len, eval)
                 {%- if self.trace %}
                 trace_u256(proof_eval_trace_id, eval)
@@ -413,11 +413,11 @@
             // NUM_INSTANCE_CPTR is the calldata word immediately after the
             // dynamic proof bytes payload. If proof_cptr lands anywhere else,
             // some section was under-read or over-read.
-            if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }
+            if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }
 
             // `success` carries deferred canonicality failures from public
             // instance reads. G1/proof scalar helpers revert immediately.
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
 
             {%- if self.gas_checkpoints %}
             gas_checkpoint(10) // after evaluations + x1/x2 + f_com + x3 + q_evals + x4 + pi (transcript done)

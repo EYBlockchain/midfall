@@ -3543,7 +3543,9 @@ fn assert_rendered_reader_matches_proof_layout(
         "generated proof reader proof_cptr increments drifted from ProofCalldataLayout"
     );
     assert!(
-        solidity.contains("if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }"),
+        solidity.contains(
+            "if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }"
+        ),
         "generated proof reader must fail closed if proof_cptr drifts"
     );
 }
@@ -4373,10 +4375,11 @@ fn qvm01_tag_reverts(verifier_solidity: &str) -> String {
         .lines()
         .enumerate()
         .map(|(idx, line)| {
-            line.replace(
-                "revert(0, 0)",
-                &format!("mstore(0x00, {}) revert(0x00, 0x20)", idx + 1),
-            )
+            if line.contains("function q_program_fail") {
+                return line.to_string();
+            }
+            let tag = format!("mstore(0x00, {}) revert(0x00, 0x20)", idx + 1);
+            line.replace("revert(0, 0)", &tag).replace("q_program_fail()", &tag)
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -4436,7 +4439,12 @@ fn qvm01_assert_corruption_rejected(fixture: &Qvm01Fixture, corruption: &Qvm01Co
     let production = qvm01_run(&fixture.verifier_solidity, &corrupted_vk, &fixture.calldata);
     match production {
         CallOutcome::Revert { ref output, .. } => {
-            assert!(output.is_empty(), "{context}: plain revert(0, 0) expected");
+            // QVM-01 guards revert the typed QuotientProgramInvalid() selector.
+            assert_eq!(
+                output.as_slice(),
+                [0x3c, 0xc8, 0x1b, 0x89].as_slice(),
+                "{context}: typed QuotientProgramInvalid revert expected"
+            );
         }
         other => panic!("{context}: production verifier did not revert: {other:?}"),
     }

@@ -150,9 +150,7 @@ impl LoweringPlan {
     /// finalized program before re-rendering it.
     #[cfg(test)]
     pub(crate) fn vm_quotient_mut(&mut self) -> &mut PlannedQuotient {
-        self.quotient
-            .as_mut()
-            .expect("compact quotient VM plan (QuotientLowering::Vm)")
+        self.quotient.as_mut().expect("compact quotient VM plan (QuotientLowering::Vm)")
     }
 
     /// Build a finalized plan for the direct quotient lowering.

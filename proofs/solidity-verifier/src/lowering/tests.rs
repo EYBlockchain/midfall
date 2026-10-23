@@ -1276,22 +1276,22 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     let pcs_codegen = include_str!("kzg/mod.rs");
 
     assert!(
-            verifier_template.contains("if iszero(success) { revert(0, 0) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
+            verifier_template.contains("if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }\n            }\n\n            {%- if self.expected_has_accumulator %}\n            // Fail malformed accumulator public inputs before transcript"),
             "ABI/proof length/instance shape checks should fail before accumulator or transcript parsing"
         );
     assert!(
-            verifier_template.contains("success := validate_public_accumulator(success, r)\n            if iszero(success) { revert(0, 0) }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
+            verifier_template.contains("success, acc_precompile_failed := validate_public_accumulator(success, r)\n            if iszero(success) {\n                // MF-4: a G1MSM that could not run at all is a chain fault,\n                // not a malformed accumulator point.\n                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_BAD_POINT_ENCODING)\n            }\n            {%- endif %}\n\n            {%- if self.gas_checkpoints %}\n            gas_checkpoint(2)"),
             "accumulator precheck should fail before transcript parsing"
         );
     assert!(
         verifier_template.contains(
-            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { revert(0, 0) }"
+            "success := and(success, lt(inst_be, r))\n                    // Instances are passed BE in calldata, matching the\n                    // Keccak Fq transcript input.\n                    buf_len := common_word(buf_len, inst_be)\n                }\n                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }"
         ),
         "non-canonical public instances should fail before proof transcript parsing"
     );
     assert!(
         verifier_template.contains(
-            "if iszero(success) { revert(0, 0) }\n\n            {%- match quotient_external %}"
+            "if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }\n                fail(ERR_PROOF_REJECTED)\n            }"
         ),
         "failed Lagrange/common-polynomial setup should fail before quotient reconstruction"
     );
@@ -1307,7 +1307,7 @@ fn failed_success_paths_do_not_enter_ec_precompiles() {
     }
     assert!(
             verifier_template.contains(
-                "{%- else %}\n            if iszero(success) { revert(0, 0) }\n            {%- endif %}\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
+                "{%- else %}\n            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }\n            {%- endif %}\n            success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)"
             ),
             "final pairing block should revert (production renders) before staging/calling the pairing precompile when success is already false"
         );
@@ -1512,7 +1512,7 @@ fn accumulator_points_are_prevalidated_before_transcript_work() {
     for required in [
         "function validate_public_accumulator(success, r) -> out",
         "Fail malformed accumulator public inputs before transcript",
-        "success := validate_public_accumulator(success, r)",
+        "success, acc_precompile_failed := validate_public_accumulator(success, r)",
         "gas_checkpoint(2) // after VK loading + accumulator public-input precheck",
         "Batch the prevalidated public IVC accumulator pairing equation",
     ] {
@@ -1961,10 +1961,11 @@ fn quotient_vm_runtime_asserts_exact_program_termination() {
     let verifier_template = verifier_template_corpus();
 
     assert!(
-        verifier_template.contains("if iszero(eq(q_pc, q_end)) { revert(0, 0) }")
-            && verifier_template.contains("if q_has_top { revert(0, 0) }")
-            && verifier_template
-                .contains("if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { revert(0, 0) }"),
+        verifier_template.contains("if iszero(eq(q_pc, q_end)) { q_program_fail() }")
+            && verifier_template.contains("if q_has_top { q_program_fail() }")
+            && verifier_template.contains(
+                "if iszero(eq(q_sp, {{ program.stack_mptr|hex() }})) { q_program_fail() }"
+            ),
         "quotient VM must fail closed when bytecode over-runs q_end, leaves a live stack value, \
          or leaves spilled words below q_sp"
     );
@@ -2021,9 +2022,9 @@ fn quotient_vm_interpreter_renders_operand_and_stack_guards() {
 
     // FOLD_SELECTOR bucket and gap, MODARITH7 flag bits.
     for needle in [
-        "if iszero(lt(q_sel_idx, {{ program.guards.num_selector_buckets }})) { revert(0, 0) }",
-        "if gt(q_sel_gap, {{ program.selector_max_power|hex() }}) { revert(0, 0) }",
-        "if gt(q_flags, 0x03) { revert(0, 0) }",
+        "if iszero(lt(q_sel_idx, {{ program.guards.num_selector_buckets }})) { q_program_fail() }",
+        "if gt(q_sel_gap, {{ program.selector_max_power|hex() }}) { q_program_fail() }",
+        "if gt(q_flags, 0x03) { q_program_fail() }",
     ] {
         assert!(vm.contains(needle), "missing interpreter guard `{needle}`");
     }
@@ -2404,7 +2405,7 @@ fn production_verifier_documents_revert_or_true_policy() {
                 && verifier_template
                     .contains("ret := success\n                if iszero(ret) { leave }")
                 && verifier_template.contains(
-                    "{%- else %}\n                if iszero(ret) { revert(0, 0) }\n                ret := 1\n                {%- endif %}",
+                    "{%- else %}\n                if iszero(ret) { fail(ERR_PROOF_REJECTED) }\n                ret := 1\n                {%- endif %}",
                 ),
             "final pairing helper must revert on pairing failure (production renders) and normalize success to one"
         );
@@ -2449,12 +2450,66 @@ fn production_verifier_documents_revert_or_true_policy() {
         };
         let production = render(false);
         assert!(!production.contains("iszero(iszero(success))"));
-        assert!(production.contains("if iszero(ret) { revert(0, 0) }"));
+        assert!(production.contains("if iszero(ret) { fail(ERR_PROOF_REJECTED) }"));
         assert!(production.contains("mstore(RETURN_MPTR, 1)"));
         let trace = render(true);
         assert!(trace.contains("mstore(RETURN_MPTR, iszero(iszero(success)))"));
-        assert!(!trace.contains("if iszero(ret) { revert(0, 0) }"));
+        assert!(!trace.contains("if iszero(ret) { fail(ERR_PROOF_REJECTED) }"));
     }
+}
+
+/// P4 (L-3): the Yul revert sites carry hardcoded 4-byte selectors while the
+/// Solidity ABI carries the `error` declarations; pin the two against each
+/// other so neither can drift silently.
+#[test]
+fn p4_error_selectors_match_declared_errors() {
+    use sha3::{Digest, Keccak256};
+
+    let verifier_template = include_str!("../../templates/contracts/Halo2Verifier.sol");
+    let constants_template = include_str!("../../templates/partials/verifier/Constants.sol");
+    let helpers_template =
+        include_str!("../../templates/partials/quotient_numerator/QuotientHelpers.yul");
+
+    for (signature, constant_name) in [
+        ("BadCalldataShape()", "ERR_BAD_CALLDATA_SHAPE"),
+        ("VkMismatch()", "ERR_VK_MISMATCH"),
+        ("NonCanonicalScalar()", "ERR_NON_CANONICAL_SCALAR"),
+        ("BadPointEncoding()", "ERR_BAD_POINT_ENCODING"),
+        ("PrecompileFailed()", "ERR_PRECOMPILE_FAILED"),
+        ("ProofRejected()", "ERR_PROOF_REJECTED"),
+        ("QuotientProgramInvalid()", "ERR_QUOTIENT_PROGRAM_INVALID"),
+    ] {
+        let digest = Keccak256::digest(signature.as_bytes());
+        let selector = format!(
+            "0x{:02x}{:02x}{:02x}{:02x}",
+            digest[0], digest[1], digest[2], digest[3]
+        );
+        let error_name = signature.trim_end_matches("()");
+        assert!(
+            verifier_template.contains(&format!("error {error_name}();")),
+            "Halo2Verifier.sol must declare `error {error_name}();` so the ABI carries it"
+        );
+        assert!(
+            constants_template.contains(&selector),
+            "Constants.sol selector for {signature} must be {selector}"
+        );
+        assert!(
+            constants_template.contains(constant_name),
+            "Constants.sol must define {constant_name}"
+        );
+    }
+    // The quotient VM's dedicated helper hardcodes the QuotientProgramInvalid
+    // selector because it renders in both the verifier and the standalone
+    // evaluator assembly.
+    let digest = Keccak256::digest(b"QuotientProgramInvalid()");
+    let selector = format!(
+        "0x{:02x}{:02x}{:02x}{:02x}",
+        digest[0], digest[1], digest[2], digest[3]
+    );
+    assert!(
+        helpers_template.contains(&format!("shl(224, {selector})")),
+        "q_program_fail must hardcode the QuotientProgramInvalid selector {selector}"
+    );
 }
 
 #[test]
@@ -2472,6 +2527,13 @@ fn templates_do_not_write_solidity_reserved_memory_slots() {
         ("QuotientHelpers.yul", quotient_helpers),
         ("Halo2VerifyingKey.sol", vk_template),
     ] {
+        // The one sanctioned use of Solidity's 0x00 scratch word: the typed
+        // custom-error revert idiom (P4/L-3) writes a 4-byte selector there
+        // immediately before reverting. It is terminal and 0x00..0x3f is
+        // legal scratch, so exempt exactly that pattern and keep every other
+        // low-memory write forbidden.
+        let source = source.replace("mstore(0x00, shl(224, ", "");
+        let source = source.as_str();
         for needle in [
             "mstore(0,",
             "mstore(0x00,",
@@ -3131,7 +3193,10 @@ fn quotient_vm_limb_decomposition_survives_const_table_overflow() {
             expr,
             // Coefficient `k + 2` keeps every term scaled (coeff 1 would drop the
             // constant) and distinct, so the table grows one slot per term.
-            quotient_scale_expr(Fq::from(k as u64 + 2), QuotientExpr::Mem(QuotientMem::Literal(ptr))),
+            quotient_scale_expr(
+                Fq::from(k as u64 + 2),
+                QuotientExpr::Mem(QuotientMem::Literal(ptr)),
+            ),
         );
     }
 

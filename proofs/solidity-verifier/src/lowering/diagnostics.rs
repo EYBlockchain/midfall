@@ -12,7 +12,8 @@ use crate::{
         QuotientIdentityManifestTarget, QuotientIdentitySource,
     },
     lowering::{
-        encoding::ConstraintSystemMeta, protocol,
+        encoding::ConstraintSystemMeta,
+        protocol,
         quotient_numerator::vm::{
             QuotientExecutionKind, QuotientExecutionManifestEntry, QuotientExpr, QuotientMem,
             QuotientProgramBuild, QuotientProgramPlan, QuotientTarget,

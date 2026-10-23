@@ -93,8 +93,6 @@ pub fn check_quotient_listing(name: &str, artifacts: &RenderedArtifacts) {
     );
 }
 
-
-
 #[cfg(feature = "rust-verifier-trace")]
 pub mod direct_trace {
     use std::collections::BTreeMap;

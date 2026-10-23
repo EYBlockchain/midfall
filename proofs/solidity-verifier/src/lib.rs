@@ -21,10 +21,10 @@ mod test;
 pub use api::QuotientProbeArtifacts;
 pub use api::{
     AccumulatorEncoding, AccumulatorEncodingKind, GeneratorConfig, GeneratorError,
-    ProofEvaluationCounts, QuotientCertificate, QuotientCertificateEntry, QuotientIdentityExecution,
-    QuotientIdentityManifest, QuotientIdentityManifestEntry, QuotientIdentityManifestTarget,
-    QuotientIdentitySource, QuotientLowering, RenderDiagnostics, RenderOptions, RenderQuotient,
-    RenderVk, RenderedArtifacts, RepackError,
+    ProofEvaluationCounts, QuotientCertificate, QuotientCertificateEntry,
+    QuotientIdentityExecution, QuotientIdentityManifest, QuotientIdentityManifestEntry,
+    QuotientIdentityManifestTarget, QuotientIdentitySource, QuotientLowering, RenderDiagnostics,
+    RenderOptions, RenderQuotient, RenderVk, RenderedArtifacts, RepackError,
 };
 pub use builder::SolidityGenerator;
 pub use evm::{encode_calldata, FN_SIG_VERIFY_PROOF};

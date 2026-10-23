@@ -67,7 +67,7 @@
                 if iszero(and(
                     eq(extcodesize(vk), EXPECTED_VK_LENGTH),
                     eq(extcodehash(vk), EXPECTED_VK_CODEHASH_WORD)
-                )) { revert(0, 0) }
+                )) { fail(ERR_VK_MISMATCH) }
                 // Runtime byte 0 is INVALID so direct calls cannot execute the
                 // payload. Copy from byte 1 into VK_MPTR to reconstruct the
                 // exact payload layout used by the embedded branch.
@@ -85,7 +85,7 @@
                 success := and(success, eq(mload(ACC_OFFSET_MPTR), {{ expected_acc_offset }}))
                 success := and(success, eq(mload(NUM_ACC_LIMBS_MPTR), {{ expected_num_acc_limbs }}))
                 success := and(success, eq(mload(NUM_ACC_LIMB_BITS_MPTR), {{ expected_num_acc_limb_bits }}))
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_VK_MISMATCH) }
                 //
                 // The checks below validate the dynamic ABI envelope before the
                 // transcript parser starts walking raw calldata:
@@ -109,7 +109,7 @@
                 )
                 // Stop before any transcript absorption if the ABI/proof shape
                 // is not exactly the generated one.
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }
             }
 
             {%- if self.expected_has_accumulator %}
@@ -126,8 +126,14 @@
             // validate_public_accumulator returns a boolean to share the same
             // success-plumbing style as other helper calls; this boundary is
             // where the verifier converts failure to a revert.
-            success := validate_public_accumulator(success, r)
-            if iszero(success) { revert(0, 0) }
+            let acc_precompile_failed := 0
+            success, acc_precompile_failed := validate_public_accumulator(success, r)
+            if iszero(success) {
+                // MF-4: a G1MSM that could not run at all is a chain fault,
+                // not a malformed accumulator point.
+                if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_BAD_POINT_ENCODING)
+            }
             {%- endif %}
 
             {%- if self.gas_checkpoints %}

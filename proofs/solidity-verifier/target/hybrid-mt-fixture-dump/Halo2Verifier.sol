@@ -34,6 +34,43 @@ pragma solidity ^0.8.24;
 ///   precompiles using identity inputs. Compile with Solidity >=0.8.24 and
 ///   deploy only on chains/forks that support MCOPY and EIP-2537.
 contract Halo2Verifier {
+    // ----------------------------------------------------------------------
+    // Typed failure taxonomy (P4/L-3, docs/audit/HALO2_VERIFIER_REVIEW).
+    // verifyProof is success-or-revert; these errors let integrators and
+    // incident responders distinguish malformed calldata from a swapped VK,
+    // a non-canonical scalar, a failed precompile, or a rejected proof.
+    // Constructor smoke probes intentionally keep bare reverts -- they report
+    // a chain-capability failure, and the deployment transaction identifies
+    // itself. The one constructor exception is the memory-layout guard
+    // (MF-2), which reports a BUILD fault and is typed on both paths.
+    // ----------------------------------------------------------------------
+    /// @notice Calldata does not match the generated ABI shape (heads,
+    ///         lengths, instance count, or exact calldatasize).
+    error BadCalldataShape();
+    /// @notice The pinned verifying-key (or VK header cross-check) does not
+    ///         match the generated constants.
+    error VkMismatch();
+    /// @notice A public instance or proof scalar is >= the BLS12-381 scalar
+    ///         modulus.
+    error NonCanonicalScalar();
+    /// @notice A proof point violates the EIP-2537 padded encoding or its
+    ///         coordinates are >= the base-field modulus.
+    error BadPointEncoding();
+    /// @notice A precompile call failed or returned an unexpected size.
+    error PrecompileFailed();
+    /// @notice The final pairing (or its staging) rejected the proof.
+    error ProofRejected();
+    /// @notice The pinned quotient program or evaluator violated a structural
+    ///         invariant (bad opcode, operand out of window, stack misuse,
+    ///         or evaluator frame mismatch).
+    error QuotientProgramInvalid();
+    /// @notice solc's stack-spill reservation overlaps the generated absolute
+    ///         memory layout. This is a BUILD fault, not a proof fault: the
+    ///         artifact was compiled with a (version, optimiser) pair whose
+    ///         free-memory pointer starts at or above TRANSCRIPT_MPTR, so no
+    ///         input can ever verify. Redeploy from the pinned toolchain.
+    error MemoryLayoutViolated();
+
     
     /// @notice Verifying-key contract address authorized for this verifier.
     /// @dev The runtime length and codehash are pinned by generated constants and checked at construction time.
@@ -178,6 +215,22 @@ contract Halo2Verifier {
     uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = 0x6c60;
     uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = 0x6ce0;
 
+    // ----------------------------------------------------------------------
+    // Typed-error selectors (P4/L-3): bytes4(keccak256("Name()")) of the
+    // errors declared on the contract, as Yul-readable constants. The
+    // `fail(sel)` helper in AssemblyHelpers.yul writes the selector to
+    // scratch 0x00 and reverts with 4 bytes. Pinned by
+    // `p4_error_selectors_match_declared_errors` in src/lowering/tests.rs.
+    // ----------------------------------------------------------------------
+    uint256 internal constant ERR_BAD_CALLDATA_SHAPE      = 0x1b99e37c;
+    uint256 internal constant ERR_VK_MISMATCH             = 0xa447d73e;
+    uint256 internal constant ERR_NON_CANONICAL_SCALAR    = 0x77530042;
+    uint256 internal constant ERR_BAD_POINT_ENCODING      = 0xf27905ec;
+    uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;
+    uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;
+    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;
+    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;
+
     // BLS12-381 scalar-field modulus, used for transcript challenges and all
     // Halo2 verifier arithmetic.
     uint256 internal constant FR_MODULUS        = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;
@@ -197,7 +250,10 @@ contract Halo2Verifier {
     /// @dev Exercises MCOPY and identity EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.
     function require_eip2537_precompiles() private view {
         assembly ("memory-safe") {
-            // Scratch is reused for every runtime-prerequisite probe.
+               // NOTE: the typed constructor memory-layout guard (MF-2) lands
+            // with the spill-window layout move; see Halo2Verifier.sol.
+
+// Scratch is reused for every runtime-prerequisite probe.
             let scratch := 0x80
 
             // MCOPY must be available because the verifier uses it for
@@ -272,9 +328,19 @@ contract Halo2Verifier {
     /// identifiers, expected IVC outputs, chain/domain separation, and any
     /// protocol-specific authorization are outside this raw verifier ABI.
     /// @dev Production renders are success-or-revert: accepted proofs return
-    /// `true`, while malformed calldata, invalid proof material, failed
-    /// precompiles, or mismatched pinned dependency code revert. Trace and gas
-    /// renders keep the same failure policy.
+    /// `true`; a production render NEVER returns `false`. Every rejection
+    /// reverts with one of the typed errors declared above
+    /// (BadCalldataShape, VkMismatch, NonCanonicalScalar, BadPointEncoding,
+    /// PrecompileFailed, ProofRejected, QuotientProgramInvalid), so callers
+    /// using `if (!verifier.verifyProof(...))` never take the false branch —
+    /// wrap the call or decode the revert data instead. Gas renders keep the
+    /// same failure policy.
+    /// @dev Calldata must be EXACTLY the ABI selector, proof bytes, and
+    /// generated instance words — `calldatasize` is pinned and any trailing
+    /// bytes revert with BadCalldataShape. In particular, ERC-2771 forwarders
+    /// and other calldata-appending relayers (multicall wrappers, paymaster
+    /// contexts) CANNOT call this contract directly; route such traffic
+    /// through an application wrapper that reassembles exact calldata.
     /// @dev The generated verifier uses absolute Yul memory addresses instead
     /// of Solidity's free-memory pointer, but generated scratch starts at
     /// `0x80` so Solidity's reserved memory prefix is preserved. The main
@@ -298,7 +364,10 @@ contract Halo2Verifier {
         // valid Midfall proof stream.
         assembly ("memory-safe") {
             if iszero(and(eq(calldataload(0x04), 0x40), eq(calldataload(0x24), sub(NUM_INSTANCE_CPTR, 0x04)))) {
-                revert(0, 0)
+                // BadCalldataShape() -- fail() is not in scope in this early
+                // guard block, so write the selector inline.
+                mstore(0x00, shl(224, ERR_BAD_CALLDATA_SHAPE))
+                revert(0x00, 0x04)
             }
         }
         // Non-embedded renders pin the VK by address and codehash. The Yul
@@ -306,7 +375,13 @@ contract Halo2Verifier {
         // INVALID-prefixed payload into VK_MPTR.
         address vk = AUTHORIZED_VK;
         assembly ("memory-safe") {
-            // This block owns the call-frame memory and remains terminal.
+            // The `m            // NOTE: the on-chain memory-layout guard (MF-2) is added together
+            // with the layout move above solc's via-IR spill reservation; on
+            // the current absolute layout the free-memory pointer legitimately
+            // sits above TRANSCRIPT_MPTR and the check would reject every
+            // proof. MemoryLayoutViolated() is declared for that commit.
+
+// This block owns the call-frame memory and remains terminal.
             // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving
             // Solidity's reserved scratch, free-memory-pointer, and zero-slot
             // words. See docs/MEMORY_LAYOUT.md.
@@ -314,15 +389,29 @@ contract Halo2Verifier {
             // Helpers: modexp, transcript, EIP-2537 calls
             // ===============================================================
 
-                // Inverse of a Fr scalar via modexp(x, r-2, r). The verifier
+                // Revert with a 4-byte custom-error selector (P4/L-3). Writing at
+            // 0x00 is Solidity's legal scratch space and never touches the
+            // generated layout, which starts at TRANSCRIPT_MPTR.
+            function fail(sel) {
+                mstore(0x00, shl(224, sel))
+                revert(0x00, 0x04)
+            }
+
+            // Inverse of a Fr scalar via modexp(x, r-2, r). The verifier
             // calls this only after transcript absorption is complete, so it
             // reuses the dead transcript buffer just below VK_MPTR instead of
             // a fixed post-VK address that can collide with live PCS scratch
             // when the VK payload becomes smaller.
             function scalar_inv(x) -> inv {
                 // Zero has no multiplicative inverse in Fr; callers rely on a
-                // revert here rather than a bogus modexp result.
-                if iszero(x) { revert(0, 0) }
+                // revert here rather than a bogus modexp result. Check the
+                // full canonical range, not just the literal word 0: for any
+                // x congruent to 0 mod r (x = r, say) modexp returns 0, which
+                // downstream mulmod chains would silently absorb. Every
+                // current call site feeds addmod/mulmod output, so this only
+                // guards against a future emitter passing a raw scalar.
+                if iszero(lt(x, FR_MODULUS)) { fail(ERR_NON_CANONICAL_SCALAR) }
+                if iszero(x) { fail(ERR_NON_CANONICAL_SCALAR) }
                 let p := 0x1ce0
                 // EIP-198 modexp frame:
                 //   [base_len, exp_len, mod_len, base, exponent, modulus]
@@ -332,8 +421,8 @@ contract Halo2Verifier {
                 mstore(add(p, 0x60), x)
                 mstore(add(p, 0x80), sub(FR_MODULUS, 2))
                 mstore(add(p, 0xa0), FR_MODULUS)
-                if iszero(staticcall(gas(), 0x05, p, 0xc0, p, 0x20)) { revert(0, 0) }
-                if iszero(eq(returndatasize(), 0x20)) { revert(0, 0) }
+                if iszero(staticcall(gas(), 0x05, p, 0xc0, p, 0x20)) { fail(ERR_PRECOMPILE_FAILED) }
+                if iszero(eq(returndatasize(), 0x20)) { fail(ERR_PRECOMPILE_FAILED) }
                 inv := mload(p)
             }
 
@@ -393,16 +482,16 @@ contract Halo2Verifier {
                 let x_lo := calldataload(add(cptr, 0x20))
                 let y_hi_word := calldataload(add(cptr, 0x40))
                 let y_lo := calldataload(add(cptr, 0x60))
-                if shr(128, x_hi_word) { revert(0, 0) }
-                if shr(128, y_hi_word) { revert(0, 0) }
+                if shr(128, x_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
+                if shr(128, y_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
 
                 let x_hi := and(x_hi_word, 0xffffffffffffffffffffffffffffffff)
                 let y_hi := and(y_hi_word, 0xffffffffffffffffffffffffffffffff)
                 if iszero(or(lt(x_hi, BLS_P_HI), and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
                 if iszero(or(lt(y_hi, BLS_P_HI), and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
 
                 // Memcpy the 4 calldata words (128 bytes) verbatim
@@ -440,7 +529,16 @@ contract Halo2Verifier {
             // The function returns a boolean instead of reverting so callers
             // can combine it with other `success` plumbing until a section
             // boundary decides whether to fail closed.
-            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
+            //
+            // MF-4: the second return value separates a FAILED PRECOMPILE
+            // (staticcall reverted / OOG'd / returned the wrong size -- a
+            // chain or gas-schedule fault) from a REJECTED INPUT (a zero or
+            // non-canonical denominator, which for the Lagrange batch means
+            // the squeezed x landed on a domain point). Both fail closed at
+            // the section boundary, but they are different incidents and used
+            // to surface under the same PrecompileFailed selector, pointing
+            // responders at the node when the transcript was the cause.
+            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
                 ret := success
                 if iszero(ret) { leave }
                 // Memory ranges must be forward and word-aligned by
@@ -472,6 +570,7 @@ contract Halo2Verifier {
                     mstore(add(single_scratch, 0xa0), r)
                     ret := staticcall(gas(), 0x05, single_scratch, 0xc0, single_scratch, 0x20)
                     ret := and(ret, eq(returndatasize(), 0x20))
+                    precompile_failed := iszero(ret)
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
                 }
@@ -504,6 +603,13 @@ contract Halo2Verifier {
                 mstore(add(gp_mptr, 0xa0), r)
                 ret := staticcall(gas(), 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
+                precompile_failed := iszero(ret)
+                // Leave before the backward pass on a failed modexp. A failed
+                // staticcall writes no output, so `mload(gp_mptr)` would read
+                // back the stale frame header and the pass below would
+                // overwrite every denominator in [mptr_start, mptr_end) with
+                // garbage products before returning ret = 0.
+                if iszero(ret) { leave }
                 let all_inv := mload(gp_mptr)
 
                 // Backward pass: derive each inverse from the inverted total
@@ -528,6 +634,11 @@ contract Halo2Verifier {
             // 4-word G1 slots; G2 bases are loaded from the pinned VK payload.
             function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
                 ret := success
+                // `leave` (not a revert) keeps the trace render able to return
+                // `false`; the terminal guard in TraceReturn.yul now reverts
+                // with ProofRejected in a production render, so no path hands
+                // control back to a caller that would report success for an
+                // unverified proof.
                 if iszero(ret) { leave }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
@@ -540,10 +651,21 @@ contract Halo2Verifier {
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
+                // MF-4: separate "the chain could not run the pairing" from
+                // "the pairing ran and rejected this proof". Both fail closed,
+                // but they are different incidents: the first points at the
+                // node/fork (a missing, repriced, or short-returning
+                // precompile), the second at the proof. Collapsing them into
+                // ProofRejected sent every responder looking at the wrong one.
                 ret := staticcall(gas(), 0x0f, scratch, 0x0300, scratch, 0x20)
                 ret := and(ret, eq(returndatasize(), 0x20))
-                ret := and(ret, mload(scratch))
-                if iszero(ret) { revert(0, 0) }
+                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }
+                // Compare against 1 rather than truncating to the low bit:
+                // `and(ret, word)` would accept any odd result word. EIP-2537
+                // only ever returns 0 or 1, so this matches the strict form
+                // the constructor smoke test already uses.
+                ret := and(ret, eq(mload(scratch), 1))
+                if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 ret := 1
             }
 
@@ -552,31 +674,30 @@ contract Halo2Verifier {
             // `AssignedForeignPoint<BLS12-381>` exposes each base-field coordinate
             // through `AssignedField::as_public_input`: seven radix-2^56 limbs of
             // (coord - 1) are packed four-at-a-time into native field elements.
-            // The x coordinate's first packed word carries the identity flag by
-            // adding one raw radix base. Rebuild EIP-2537 padded
+            // The point's identity flag follows the y coordinate as its own
+            // public-input word. Rebuild EIP-2537 padded
             // (x_hi, x_lo, y_hi, y_lo) words from that encoding.
             //
             // Public-input layout for one coordinate:
             //   word 0: limb_0 | limb_1 << bits | ... up to limbs_per_word
             //   word 1: next limbs, if any
             //
+            // Public-input layout for one point:
+            //   x coordinate words, y coordinate words, identity flag word
+            //
             // The limbs are little-endian in the represented integer even
             // though calldata words are loaded as big 256-bit values. The loop
             // below extracts each limb by shifting inside the packed word and
             // reconstructs the full coordinate into the two-word EIP-2537
             // representation expected by the BLS12-381 precompiles.
-            function load_acc_coord_shifted(src, bits, n, base, limbs_per_word, first_adjust) -> hi, lo {
+            function load_acc_coord_shifted(src, bits, n, base, limbs_per_word) -> hi, lo {
                 // Mask for one radix limb, e.g. 2^56 - 1 for the current
                 // BLS12-381 self-emulation parameters.
                 let mask := sub(base, 1)
                 for { let i := 0 } lt(i, n) { i := add(i, 1) } {
                     // Limb words are little-endian packed inside each Fr
-                    // public input. `first_adjust` removes the identity flag
-                    // base from the first x word when present.
+                    // public input.
                     let packed := calldataload(add(src, mul(div(i, limbs_per_word), 0x20)))
-                    if and(iszero(div(i, limbs_per_word)), first_adjust) {
-                        packed := sub(packed, first_adjust)
-                    }
                     // Select limb i from its packed field word. The mod/div
                     // pair maps a limb index to an intra-word limb slot and
                     // the calldata word containing it.
@@ -606,27 +727,6 @@ contract Halo2Verifier {
                 yes := and(eq(hi, BLS_P_HI), eq(lo, BLS_P_MINUS_ONE_LO))
             }
 
-            // Canonical encoded accumulator identity:
-            //   x = p-1 plus the identity flag in the first packed word,
-            //   y = p-1 with no identity flag.
-            // It decodes to the EIP-2537 point-at-infinity slot (all zeros).
-            //
-            // This fast path is deliberately stricter than "decodes to zero":
-            // the point at infinity has exactly one accepted public-input
-            // encoding. Non-canonical zero-like encodings are rejected later.
-            function is_acc_encoded_identity(src) -> yes {
-                yes := and(
-                    and(
-                        eq(calldataload(src), BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG),
-                        eq(calldataload(add(src, 0x20)), BLS_P_MINUS_ONE_PACKED_1)
-                    ),
-                    and(
-                        eq(calldataload(add(src, 0x40)), BLS_P_MINUS_ONE_PACKED_0),
-                        eq(calldataload(add(src, 0x60)), BLS_P_MINUS_ONE_PACKED_1)
-                    )
-                )
-            }
-
             // Reject unused high bits in the packed public-input words. This
             // makes each accumulator point encoding canonical before it reaches
             // the precompile-based curve/subgroup validation.
@@ -653,24 +753,10 @@ contract Halo2Verifier {
                 }
             }
 
-            // Decode one shifted coordinate. `allow_id` is true only for x,
-            // because the identity flag lives in x's first packed word.
-            function load_acc_coord(src, allow_id, bits, n, base, limbs_per_word) -> ok, hi, lo, is_id {
+            // Decode one shifted coordinate of a non-identity point.
+            function load_acc_coord(src, bits, n, base, limbs_per_word) -> ok, hi, lo {
                 ok := check_acc_coord_packing(src, bits, n, limbs_per_word)
-                if and(allow_id, iszero(lt(calldataload(src), base))) {
-                    // Probe the x identity flag by removing one radix base and
-                    // checking whether the adjusted coordinate is p-1.
-                    //
-                    // `calldataload(src) >= base` is a cheap prefilter: only x
-                    // can carry this flag, and adding one radix base must make
-                    // the first packed word at least base.
-                    let adj_hi, adj_lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, base)
-                    is_id := is_bls_p_minus_one(adj_hi, adj_lo)
-                }
-
-                // Decode again with the identity adjustment applied only when
-                // the canonical identity flag was actually detected.
-                hi, lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word, mul(is_id, base))
+                hi, lo := load_acc_coord_shifted(src, bits, n, base, limbs_per_word)
                 ok := and(
                     ok,
                     // Coordinate must be in the BLS12-381 base field, i.e.
@@ -702,67 +788,50 @@ contract Halo2Verifier {
             // slot. Non-identity points are curve/subgroup checked later by
             // routing them through G1MSM.
             function load_acc_point(dst, src, bits, n, base) -> ok, is_id {
-                // Prefer the canonical all-coordinate identity encoding before
-                // attempting coordinate-level shifted decoding. This accepts
-                // the point at infinity only in the exact form generated by the
-                // circuit's public-input codec.
-                is_id := is_acc_encoded_identity(src)
+                // x and y occupy coord_words packed public-input words each;
+                // the identity flag word immediately follows y.
+                let limbs_per_word := 4
+                let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
+                let flag := calldataload(add(src, mul(mul(2, coord_words), 0x20)))
+                // The circuit constrains the flag as a bit. Anything else is a
+                // malformed public input rather than a non-identity point.
+                ok := lt(flag, 2)
+                is_id := eq(flag, 1)
+
                 if is_id {
-                    ok := 1
-                    // EIP-2537 encodes G1 identity as four zero words:
-                    // x_hi = x_lo = y_hi = y_lo = 0.
+                    // When the flag is set the circuit leaves x and y
+                    // unconstrained ("can be anything"), so they carry no
+                    // meaning and must not be decoded or range-checked here.
+                    // The proof itself still binds whatever words were
+                    // supplied. EIP-2537 encodes G1 identity as four zero
+                    // words: x_hi = x_lo = y_hi = y_lo = 0.
                     mstore(dst, 0)
                     mstore(add(dst, 0x20), 0)
                     mstore(add(dst, 0x40), 0)
                     mstore(add(dst, 0x60), 0)
                 }
                 if iszero(is_id) {
-                    // x occupies coord_words packed public-input words; y
-                    // starts immediately after x.
-                    let limbs_per_word := 4
-                    let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
-                    // Only x may carry the identity flag. y must decode as a
-                    // normal shifted coordinate.
-                    let x_ok, x_hi, x_lo, x_is_id := load_acc_coord(src, 1, bits, n, base, limbs_per_word)
-                    let y_ok, y_hi, y_lo, y_id := load_acc_coord(
+                    let x_ok, x_hi, x_lo := load_acc_coord(src, bits, n, base, limbs_per_word)
+                    let y_ok, y_hi, y_lo := load_acc_coord(
                         add(src, mul(coord_words, 0x20)),
-                        0,
                         bits,
                         n,
                         base,
                         limbs_per_word
                     )
-                    // y_id is always zero because allow_id was false, but the
-                    // tuple shape is shared with x decoding.
-                    pop(y_id)
-                    ok := and(x_ok, y_ok)
-                    is_id := x_is_id
-
-                    if is_id {
-                        // If x carried the identity flag, both decoded
-                        // coordinates must be zero after shifting. Any other y
-                        // value would be a malformed infinity encoding.
-                        ok := and(ok, iszero(or(or(x_hi, x_lo), or(y_hi, y_lo))))
-                        mstore(dst, 0)
-                        mstore(add(dst, 0x20), 0)
-                        mstore(add(dst, 0x40), 0)
-                        mstore(add(dst, 0x60), 0)
-                    }
-                    if iszero(is_id) {
-                        // The coordinate codec maps encoded p-1 to decoded
-                        // zero. EIP-2537 reserves affine (0,0) for the point
-                        // at infinity, so a decoded infinity is only valid
-                        // when the canonical accumulator identity encoding
-                        // was used above.
-                        let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))
-                        ok := and(ok, iszero(decoded_zero))
-                        // Store the affine point in the exact precompile input
-                        // layout: x_hi, x_lo, y_hi, y_lo.
-                        mstore(dst, x_hi)
-                        mstore(add(dst, 0x20), x_lo)
-                        mstore(add(dst, 0x40), y_hi)
-                        mstore(add(dst, 0x60), y_lo)
-                    }
+                    ok := and(ok, and(x_ok, y_ok))
+                    // The coordinate codec maps encoded p-1 to decoded
+                    // zero. EIP-2537 reserves affine (0,0) for the point at
+                    // infinity, so a decoded infinity is only valid when the
+                    // identity flag word is set.
+                    let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))
+                    ok := and(ok, iszero(decoded_zero))
+                    // Store the affine point in the exact precompile input
+                    // layout: x_hi, x_lo, y_hi, y_lo.
+                    mstore(dst, x_hi)
+                    mstore(add(dst, 0x20), x_lo)
+                    mstore(add(dst, 0x40), y_hi)
+                    mstore(add(dst, 0x60), y_lo)
                 }
             }
 
@@ -802,7 +871,7 @@ contract Halo2Verifier {
                 if iszero(and(
                     eq(extcodesize(vk), EXPECTED_VK_LENGTH),
                     eq(extcodehash(vk), EXPECTED_VK_CODEHASH_WORD)
-                )) { revert(0, 0) }
+                )) { fail(ERR_VK_MISMATCH) }
                 // Runtime byte 0 is INVALID so direct calls cannot execute the
                 // payload. Copy from byte 1 into VK_MPTR to reconstruct the
                 // exact payload layout used by the embedded branch.
@@ -819,7 +888,7 @@ contract Halo2Verifier {
                 success := and(success, eq(mload(ACC_OFFSET_MPTR), 0))
                 success := and(success, eq(mload(NUM_ACC_LIMBS_MPTR), 0))
                 success := and(success, eq(mload(NUM_ACC_LIMB_BITS_MPTR), 0))
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_VK_MISMATCH) }
                 //
                 // The checks below validate the dynamic ABI envelope before the
                 // transcript parser starts walking raw calldata:
@@ -843,7 +912,7 @@ contract Halo2Verifier {
                 )
                 // Stop before any transcript absorption if the ABI/proof shape
                 // is not exactly the generated one.
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }
             }
 
                 // ===============================================================
@@ -913,7 +982,7 @@ contract Halo2Verifier {
                     // Keccak Fq transcript input.
                     buf_len := common_word(buf_len, inst_be)
                 }
-                if iszero(success) { revert(0, 0) }
+                if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
             }
 
             // ===============================================================
@@ -1096,7 +1165,7 @@ contract Halo2Verifier {
                     // Proof evaluation scalars must be canonical Fr elements
                     // before they are absorbed or made available to quotient
                     // reconstruction.
-                    if iszero(lt(eval, r)) { revert(0, 0) }
+                    if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
                     // Spill for quotient numerator and PCS codegen.
                     mstore(eval_buf, eval)
                     eval_buf := add(eval_buf, 0x20)
@@ -1149,7 +1218,7 @@ contract Halo2Verifier {
                 {} {
                 let eval := calldataload(proof_cptr)
                 // Canonical Fr check before transcript absorption.
-                if iszero(lt(eval, r)) { revert(0, 0) }
+                if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
                 buf_len := common_word(buf_len, eval)
                 proof_cptr := add(proof_cptr, 0x20)
             }
@@ -1175,15 +1244,19 @@ contract Halo2Verifier {
             // NUM_INSTANCE_CPTR is the calldata word immediately after the
             // dynamic proof bytes payload. If proof_cptr lands anywhere else,
             // some section was under-read or over-read.
-            if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { revert(0, 0) }
+            if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }
 
             // `success` carries deferred canonicality failures from public
             // instance reads. G1/proof scalar helpers revert immediately.
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
 
                 // ===============================================================
             // Lagrange & instance-evaluation block (pure Fr arithmetic).
             // ===============================================================
+            // MF-4: hoisted so the section boundary below can tell a failed
+            // modexp (chain fault) from a rejected denominator (x landed on a
+            // domain point) instead of reporting both as PrecompileFailed.
+            let lagrange_precompile_failed := 0
             {
                 let k := 13
                 let x := mload(X_MPTR)
@@ -1209,7 +1282,7 @@ contract Halo2Verifier {
                 }
                 let x_n_minus_1 := addmod(x_n, sub(r, 1), r)
                 mstore(mptr_end, x_n_minus_1)
-                success := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
+                success, lagrange_precompile_failed := batch_invert(success, X_N_MPTR, add(mptr_end, 0x20), BATCH_INV_SCRATCH_MPTR, r)
 
                 // Convert inverted denominators into Lagrange evaluations:
                 // L_i(x) = (x^n - 1) * n^-1 * omega_i / (x - omega_i).
@@ -1260,9 +1333,25 @@ contract Halo2Verifier {
                 mstore(INSTANCE_EVAL_MPTR, instance_eval)
             }
 
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) {
+                // A zero or non-canonical denominator is a rejected input,
+                // not a broken chain: the only way to reach it is a squeezed
+                // x that coincides with a domain point (probability ~n/r).
+                if lagrange_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+                fail(ERR_PROOF_REJECTED)
+            }
 
-                // Optional quotient helper functions. Each one is rendered only
+                // Revert with the QuotientProgramInvalid() selector
+            // (bytes4(keccak256) = 0x3cc81b89; pinned by
+            // p4_error_selectors_match_declared_errors). Defined here rather
+            // than in AssemblyHelpers.yul because the quotient VM renders in
+            // BOTH the main verifier and the standalone evaluator assembly.
+            function q_program_fail() {
+                mstore(0x00, shl(224, 0x3cc81b89))
+                revert(0x00, 0x04)
+            }
+
+            // Optional quotient helper functions. Each one is rendered only
             // when the Rust lowering pass recognized the corresponding
             // expression shape in this generated verifier. They are pure Fr
             // helpers and share the same FR_MODULUS as the surrounding
@@ -1282,7 +1371,8 @@ contract Halo2Verifier {
                 let q_r := FR_MODULUS
                 let x2 := mulmod(x, x, q_r)
                 z := mulmod(x, mulmod(x2, x2, q_r), q_r)
-            }            // ===============================================================
+            }
+            // ===============================================================
             // Batched identity numerator / linearization target.
             //
             // This block does not evaluate the quotient polynomial h(x), and
@@ -1572,6 +1662,7 @@ contract Halo2Verifier {
                         let q_ptr := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
                         if q_has_top {
+                            if gt(q_sp, 0x7980) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -1582,6 +1673,7 @@ contract Halo2Verifier {
                     case 0x06 {
                         // The safety validator guarantees a spilled operand
                         // exists before ADD. q_top is the right operand.
+                        if eq(q_sp, 0x7640) { q_program_fail() }
                         q_sp := sub(q_sp, 0x20)
                         q_top := addmod(mload(q_sp), q_top, r)
                     }
@@ -1597,6 +1689,7 @@ contract Halo2Verifier {
                         // constant table has fewer than 256 referenced slots.
                         let qconst := byte(0, mload(q_pc))
                         if q_has_top {
+                            if gt(q_sp, 0x7980) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -1667,6 +1760,7 @@ contract Halo2Verifier {
                         // u16 ptr} pairs. The result is pushed as a fresh
                         // stack value.
                         if q_has_top {
+                            if gt(q_sp, 0x7980) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -1709,6 +1803,9 @@ contract Halo2Verifier {
                         //          before reading the counted term blocks.
                         let q_flags := byte(0, mload(q_pc))
                         q_pc := add(q_pc, 1)
+                        // Only the COND (0x01) and CONST (0x02) flag bits are
+                        // defined; the byte validator rejects any other bit.
+                        if gt(q_flags, 0x03) { q_program_fail() }
                         let q_cond_ptr := 0
                         if and(q_flags, 0x01) {
                             // Optional condition pointer. When present, the
@@ -1738,6 +1835,7 @@ contract Halo2Verifier {
                         q_pc := add(q_pc, 5)
 
                         if q_has_top {
+                            if gt(q_sp, 0x7980) { q_program_fail() }
                             mstore(q_sp, q_top)
                             q_sp := add(q_sp, 0x20)
                         }
@@ -1853,15 +1951,14 @@ contract Halo2Verifier {
                     case 0x19 {
                         // Native callbacks are identity-boundary opcodes. They
                         // must not inherit any partially evaluated VM stack
-                        // state from the previous expression.
-                        q_top := 0
-                        q_has_top := 0
+                        // state from the previous expression, so the stack
+                        // must already be empty (no live top, nothing spilled).
+                        if or(q_has_top, xor(q_sp, 0x7640)) { q_program_fail() }
                         // The generated loop below uses program.stack_mptr as
                         // its scratch-table base, not as a conventional VM
                         // stack. The Rust memory planner must reserve enough
                         // words for structured_permutation_scratch_words(meta)
                         // whenever this opcode can appear.
-                        q_sp := 0x7640
                         // The generated lines below call the same fold snippets
                         // used by interpreted expressions, so trace IDs and
                         // y-batch positions remain contiguous.
@@ -1956,16 +2053,15 @@ contract Halo2Verifier {
                     // product-loop opcodes.
                     // VM 0x1f NATIVE_LOOKUP: marker for the generated LogUp lookup callback.
                     case 0x1f {
-                        // Reset VM stack state before entering structured
-                        // lookup Yul. Lookup callbacks own their scratch
-                        // layout and perform all needed folds internally.
-                        q_top := 0
-                        q_has_top := 0
+                        // The VM stack must be empty before entering
+                        // structured lookup Yul. Lookup callbacks own their
+                        // scratch layout and perform all needed folds
+                        // internally.
+                        if or(q_has_top, xor(q_sp, 0x7640)) { q_program_fail() }
                         // The generated loop below uses program.stack_mptr as
                         // f+beta/prefix/suffix scratch rather than as a
                         // conventional VM stack. The Rust memory planner must
                         // reserve structured_lookup_scratch_words(meta).
-                        q_sp := 0x7640
                         // Generated LogUp code follows the same y-batch order
                         // as the Rust identity stream.
                         {
@@ -2085,11 +2181,9 @@ contract Halo2Verifier {
                         // generated order and target existing switch cases.
                         let q_native_idx := shr(240, mload(q_pc))
                         q_pc := add(q_pc, 2)
-                        // Heavy identities are whole expressions, so clear the
-                        // interpreter stack before dispatching.
-                        q_top := 0
-                        q_has_top := 0
-                        q_sp := 0x7640
+                        // Heavy identities are whole expressions, so the
+                        // interpreter stack must be empty before dispatching.
+                        if or(q_has_top, xor(q_sp, 0x7640)) { q_program_fail() }
                         // Native identity sub-cases are generated from selected heavy gate identities.
                         switch q_native_idx
                         case 0 {
@@ -2310,7 +2404,7 @@ contract Halo2Verifier {
                             mstore(q_selector_ptr, addmod(q_selector_acc, mload(0x7640), r))
                             }
                         }
-                        default { revert(0, 0) }
+                        default { q_program_fail() }
                     }
                     // VM 0x0b FOLD_SELECTOR: consume q_top into one simple-selector bucket.
                     case 0x0b {
@@ -2322,6 +2416,12 @@ contract Halo2Verifier {
                         q_pc := add(q_pc, 3)
                         let q_sel_idx := shr(16, q_selector_payload)
                         let q_sel_gap := and(q_selector_payload, 0xffff)
+                        // The bucket index addresses SELECTOR_ACC and the gap
+                        // indexes the precomputed y-power table; both sizes
+                        // are codegen-known, so check them before any write.
+                        if iszero(lt(q_sel_idx, 15)) { q_program_fail() }
+                        if gt(q_sel_gap, 0x29) { q_program_fail() }
+                        if iszero(and(q_has_top, eq(q_sp, 0x7640))) { q_program_fail() }
                         let q_eval := q_top
                         q_has_top := 0
                         // Simple-selector identity: keep the same y-batch
@@ -2344,15 +2444,21 @@ contract Halo2Verifier {
                     }
                     // Invalid generated bytecode should fail closed. 0x1a intentionally lands here.
                     default {
-                        revert(0, 0)
+                        q_program_fail()
                     }
                 }
                 // The VK-pinned bytecode must end exactly at q_end and every
                 // identity must have been consumed by a fold/native callback.
                 // This catches malformed generator output whose final opcode
                 // over-reads operands or leaves a partial expression live.
-                if iszero(eq(q_pc, q_end)) { revert(0, 0) }
-                if q_has_top { revert(0, 0) }
+                if iszero(eq(q_pc, q_end)) { q_program_fail() }
+                if q_has_top { q_program_fail() }
+                // The spilled stack must also be balanced. A FOLD executed
+                // with more than one operand live consumes only the cached
+                // top, leaving abandoned words below q_sp with q_has_top
+                // clear -- so both checks above pass while an operand of the
+                // identity has been silently dropped from nu_y(x).
+                if iszero(eq(q_sp, 0x7640)) { q_program_fail() }
 
                 // Structured post-VM suffix. The current default uses this for
                 // regular trash constraints: it is smaller than fully unrolled
@@ -3216,13 +3322,19 @@ contract Halo2Verifier {
             // -- the historical "LHS"/"RHS" naming follows the dual MSM
             // accumulator (left = pi, right = combined) and *not* the
             // pairing argument order. Pass them swapped to ec_pairing.
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
 
     
 
             // Success path is terminal. Invalid inputs have already reverted,
             // so the Solidity ABI observes `true`.
+            //
+            // The guard is redundant today -- every failure path above reverts
+            // rather than clearing `success` -- but it keeps acceptance a local
+            // property of this file instead of an invariant split across
+            // FinalPairing.yul and ec_pairing.
+            if iszero(success) { fail(ERR_PROOF_REJECTED) }
             mstore(RETURN_MPTR, 1)
             return(RETURN_MPTR, 0x20)
         }

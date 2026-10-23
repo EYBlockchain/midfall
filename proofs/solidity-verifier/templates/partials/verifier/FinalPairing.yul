@@ -80,7 +80,7 @@
             // (0 or 1) is traced and returned by TraceReturn, so the logs of
             // a rejected proof remain observable. Production renders revert.
             {%- else %}
-            if iszero(success) { revert(0, 0) }
+            if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }
             {%- endif %}
             success := ec_pairing(success, PAIRING_RHS_MPTR, PAIRING_LHS_MPTR)
 

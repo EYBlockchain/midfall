@@ -34,6 +34,43 @@ pragma solidity ^0.8.24;
 ///   precompiles using identity inputs. Compile with Solidity >=0.8.24 and
 ///   deploy only on chains/forks that support MCOPY and EIP-2537.
 contract Halo2Verifier {
+    // ----------------------------------------------------------------------
+    // Typed failure taxonomy (P4/L-3, docs/audit/HALO2_VERIFIER_REVIEW).
+    // verifyProof is success-or-revert; these errors let integrators and
+    // incident responders distinguish malformed calldata from a swapped VK,
+    // a non-canonical scalar, a failed precompile, or a rejected proof.
+    // Constructor smoke probes intentionally keep bare reverts -- they report
+    // a chain-capability failure, and the deployment transaction identifies
+    // itself. The one constructor exception is the memory-layout guard
+    // (MF-2), which reports a BUILD fault and is typed on both paths.
+    // ----------------------------------------------------------------------
+    /// @notice Calldata does not match the generated ABI shape (heads,
+    ///         lengths, instance count, or exact calldatasize).
+    error BadCalldataShape();
+    /// @notice The pinned verifying-key (or VK header cross-check) does not
+    ///         match the generated constants.
+    error VkMismatch();
+    /// @notice A public instance or proof scalar is >= the BLS12-381 scalar
+    ///         modulus.
+    error NonCanonicalScalar();
+    /// @notice A proof point violates the EIP-2537 padded encoding or its
+    ///         coordinates are >= the base-field modulus.
+    error BadPointEncoding();
+    /// @notice A precompile call failed or returned an unexpected size.
+    error PrecompileFailed();
+    /// @notice The final pairing (or its staging) rejected the proof.
+    error ProofRejected();
+    /// @notice The pinned quotient program or evaluator violated a structural
+    ///         invariant (bad opcode, operand out of window, stack misuse,
+    ///         or evaluator frame mismatch).
+    error QuotientProgramInvalid();
+    /// @notice solc's stack-spill reservation overlaps the generated absolute
+    ///         memory layout. This is a BUILD fault, not a proof fault: the
+    ///         artifact was compiled with a (version, optimiser) pair whose
+    ///         free-memory pointer starts at or above TRANSCRIPT_MPTR, so no
+    ///         input can ever verify. Redeploy from the pinned toolchain.
+    error MemoryLayoutViolated();
+
     {% include "partials/verifier/Constants.sol" %}
 
     {% include "partials/verifier/PrecompileSmoke.sol" %}
@@ -54,15 +91,25 @@ contract Halo2Verifier {
     /// identifiers, expected IVC outputs, chain/domain separation, and any
     /// protocol-specific authorization are outside this raw verifier ABI.
     /// @dev Production renders are success-or-revert: accepted proofs return
-    /// `true`, while malformed calldata, invalid proof material, failed
-    /// precompiles, or mismatched pinned dependency code revert.
+    /// `true`; a production render NEVER returns `false`. Every rejection
+    /// reverts with one of the typed errors declared above
+    /// (BadCalldataShape, VkMismatch, NonCanonicalScalar, BadPointEncoding,
+    /// PrecompileFailed, ProofRejected, QuotientProgramInvalid), so callers
+    /// using `if (!verifier.verifyProof(...))` never take the false branch —
+    /// wrap the call or decode the revert data instead.
     {%- if self.trace %} This is a trace
     /// render: a failed final pairing / accumulated check returns `false`
     /// (keeping the trace logs) instead of reverting; early calldata and
     /// encoding failures still revert.
-    {%- else %} Trace and gas
-    /// renders keep the same failure policy.
+    {%- else %} Gas renders keep the
+    /// same failure policy.
     {%- endif %}
+    /// @dev Calldata must be EXACTLY the ABI selector, proof bytes, and
+    /// generated instance words — `calldatasize` is pinned and any trailing
+    /// bytes revert with BadCalldataShape. In particular, ERC-2771 forwarders
+    /// and other calldata-appending relayers (multicall wrappers, paymaster
+    /// contexts) CANNOT call this contract directly; route such traffic
+    /// through an application wrapper that reassembles exact calldata.
     /// @dev The generated verifier uses absolute Yul memory addresses instead
     /// of Solidity's free-memory pointer, but generated scratch starts at
     /// `0x80` so Solidity's reserved memory prefix is preserved. The main
@@ -86,7 +133,10 @@ contract Halo2Verifier {
         // valid Midfall proof stream.
         assembly ("memory-safe") {
             if iszero(and(eq(calldataload({{ abi_selector_bytes|hex() }}), {{ abi_proof_head_offset|hex() }}), eq(calldataload({{ abi_instances_head_cptr|hex() }}), sub(NUM_INSTANCE_CPTR, {{ abi_selector_bytes|hex() }})))) {
-                revert(0, 0)
+                // BadCalldataShape() -- fail() is not in scope in this early
+                // guard block, so write the selector inline.
+                mstore(0x00, shl(224, ERR_BAD_CALLDATA_SHAPE))
+                revert(0x00, 0x04)
             }
         }
 
@@ -106,7 +156,13 @@ contract Halo2Verifier {
         {%- when None %}
         {%- endmatch %}
         assembly ("memory-safe") {
-            // This block owns the call-frame memory and remains terminal.
+            // The `m            // NOTE: the on-chain memory-layout guard (MF-2) is added together
+            // with the layout move above solc's via-IR spill reservation; on
+            // the current absolute layout the free-memory pointer legitimately
+            // sits above TRANSCRIPT_MPTR and the check would reject every
+            // proof. MemoryLayoutViolated() is declared for that commit.
+
+// This block owns the call-frame memory and remains terminal.
             // Generated scratch starts at TRANSCRIPT_MPTR (0x80), preserving
             // Solidity's reserved scratch, free-memory-pointer, and zero-slot
             // words. See docs/MEMORY_LAYOUT.md.

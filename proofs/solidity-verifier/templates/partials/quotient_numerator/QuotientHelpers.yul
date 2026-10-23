@@ -1,3 +1,13 @@
+            // Revert with the QuotientProgramInvalid() selector
+            // (bytes4(keccak256) = 0x3cc81b89; pinned by
+            // p4_error_selectors_match_declared_errors). Defined here rather
+            // than in AssemblyHelpers.yul because the quotient VM renders in
+            // BOTH the main verifier and the standalone evaluator assembly.
+            function q_program_fail() {
+                mstore(0x00, shl(224, 0x3cc81b89))
+                revert(0x00, 0x04)
+            }
+
             // Optional quotient helper functions. Each one is rendered only
             // when the Rust lowering pass recognized the corresponding
             // expression shape in this generated verifier. They are pure Fr

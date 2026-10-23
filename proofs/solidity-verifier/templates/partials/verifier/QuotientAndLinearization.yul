@@ -21,16 +21,21 @@
                 if iszero(and(
                     eq(extcodesize(quotientEvaluator), EXPECTED_QUOTIENT_LENGTH),
                     eq(extcodehash(quotientEvaluator), EXPECTED_QUOTIENT_CODEHASH_WORD)
-                )) { revert(0, 0) }
+                )) { fail(ERR_VK_MISMATCH) }
                 {%- when None %}
                 {%- endmatch %}
                 {%- if self.trace %}
-                if iszero(call(gas(), quotientEvaluator, 0, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { revert(0, 0) }
+                if iszero(call(gas(), quotientEvaluator, 0, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 {%- else %}
-                if iszero(staticcall(gas(), quotientEvaluator, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { revert(0, 0) }
+                // gas() forwarding is deliberate here, unlike the precompile
+                // call sites: this is a regular contract call, so a reverting
+                // or failing callee refunds its unused gas -- only precompile
+                // ERRORS burn everything forwarded (EIP-2537). The callee is
+                // also pinned by codehash above, not attacker-supplied.
+                if iszero(staticcall(gas(), quotientEvaluator, {{ qext.frame_base|hex() }}, {{ qext.frame_len|hex() }}, q_out, {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 {%- endif %}
-                if iszero(eq(returndatasize(), {{ qext.output_len|hex() }})) { revert(0, 0) }
-                if iszero(eq(mload(q_out), {{ qext.magic|hex_padded(64) }})) { revert(0, 0) }
+                if iszero(eq(returndatasize(), {{ qext.output_len|hex() }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
+                if iszero(eq(mload(q_out), {{ qext.magic|hex_padded(64) }})) { fail(ERR_QUOTIENT_PROGRAM_INVALID) }
                 // Word 1 is the negated y-batched identity numerator, stored
                 // in the same memory slot used by the monolithic path.
                 mstore(QUOTIENT_EVAL_MPTR, mload(add(q_out, 0x20)))

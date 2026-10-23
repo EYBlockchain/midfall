@@ -1,3 +1,11 @@
+            // Revert with a 4-byte custom-error selector (P4/L-3). Writing at
+            // 0x00 is Solidity's legal scratch space and never touches the
+            // generated layout, which starts at TRANSCRIPT_MPTR.
+            function fail(sel) {
+                mstore(0x00, shl(224, sel))
+                revert(0x00, 0x04)
+            }
+
             // Inverse of a Fr scalar via modexp(x, r-2, r). The verifier
             // calls this only after transcript absorption is complete, so it
             // reuses the dead transcript buffer just below VK_MPTR instead of
@@ -5,8 +13,14 @@
             // when the VK payload becomes smaller.
             function scalar_inv(x) -> inv {
                 // Zero has no multiplicative inverse in Fr; callers rely on a
-                // revert here rather than a bogus modexp result.
-                if iszero(x) { revert(0, 0) }
+                // revert here rather than a bogus modexp result. Check the
+                // full canonical range, not just the literal word 0: for any
+                // x congruent to 0 mod r (x = r, say) modexp returns 0, which
+                // downstream mulmod chains would silently absorb. Every
+                // current call site feeds addmod/mulmod output, so this only
+                // guards against a future emitter passing a raw scalar.
+                if iszero(lt(x, FR_MODULUS)) { fail(ERR_NON_CANONICAL_SCALAR) }
+                if iszero(x) { fail(ERR_NON_CANONICAL_SCALAR) }
                 let p := {{ memory.scalar_inv_scratch_mptr|hex() }}
                 // EIP-198 modexp frame:
                 //   [base_len, exp_len, mod_len, base, exponent, modulus]
@@ -16,8 +30,8 @@
                 mstore(add(p, {{ template_constants.modexp.base_offset|hex() }}), x)
                 mstore(add(p, {{ template_constants.modexp.exp_offset|hex() }}), sub(FR_MODULUS, 2))
                 mstore(add(p, {{ template_constants.modexp.mod_offset|hex() }}), FR_MODULUS)
-                if iszero(staticcall(gas(), {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
-                if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { revert(0, 0) }
+                if iszero(staticcall(gas(), {{ template_constants.modexp.address|hex() }}, p, {{ template_constants.modexp.frame_bytes|hex() }}, p, {{ template_constants.modexp.output_bytes|hex() }})) { fail(ERR_PRECOMPILE_FAILED) }
+                if iszero(eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }})) { fail(ERR_PRECOMPILE_FAILED) }
                 inv := mload(p)
             }
 
@@ -77,16 +91,16 @@
                 let x_lo := calldataload(add(cptr, 0x20))
                 let y_hi_word := calldataload(add(cptr, 0x40))
                 let y_lo := calldataload(add(cptr, 0x60))
-                if shr(128, x_hi_word) { revert(0, 0) }
-                if shr(128, y_hi_word) { revert(0, 0) }
+                if shr(128, x_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
+                if shr(128, y_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
 
                 let x_hi := and(x_hi_word, 0xffffffffffffffffffffffffffffffff)
                 let y_hi := and(y_hi_word, 0xffffffffffffffffffffffffffffffff)
                 if iszero(or(lt(x_hi, BLS_P_HI), and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
                 if iszero(or(lt(y_hi, BLS_P_HI), and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) {
-                    revert(0, 0)
+                    fail(ERR_BAD_POINT_ENCODING)
                 }
 
                 // Memcpy the 4 calldata words (128 bytes) verbatim
@@ -124,7 +138,16 @@
             // The function returns a boolean instead of reverting so callers
             // can combine it with other `success` plumbing until a section
             // boundary decides whether to fail closed.
-            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret {
+            //
+            // MF-4: the second return value separates a FAILED PRECOMPILE
+            // (staticcall reverted / OOG'd / returned the wrong size -- a
+            // chain or gas-schedule fault) from a REJECTED INPUT (a zero or
+            // non-canonical denominator, which for the Lagrange batch means
+            // the squeezed x landed on a domain point). Both fail closed at
+            // the section boundary, but they are different incidents and used
+            // to surface under the same PrecompileFailed selector, pointing
+            // responders at the node when the transcript was the cause.
+            function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
                 ret := success
                 if iszero(ret) { leave }
                 // Memory ranges must be forward and word-aligned by
@@ -156,6 +179,7 @@
                     mstore(add(single_scratch, {{ template_constants.modexp.mod_offset|hex() }}), r)
                     ret := staticcall(gas(), {{ template_constants.modexp.address|hex() }}, single_scratch, {{ template_constants.modexp.frame_bytes|hex() }}, single_scratch, {{ template_constants.modexp.output_bytes|hex() }})
                     ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
+                    precompile_failed := iszero(ret)
                     if ret { mstore(mptr_start, mload(single_scratch)) }
                     leave
                 }
@@ -188,6 +212,13 @@
                 mstore(add(gp_mptr, {{ template_constants.modexp.mod_offset|hex() }}), r)
                 ret := staticcall(gas(), {{ template_constants.modexp.address|hex() }}, gp_mptr, {{ template_constants.modexp.frame_bytes|hex() }}, gp_mptr, {{ template_constants.modexp.output_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.modexp.output_bytes|hex() }}))
+                precompile_failed := iszero(ret)
+                // Leave before the backward pass on a failed modexp. A failed
+                // staticcall writes no output, so `mload(gp_mptr)` would read
+                // back the stale frame header and the pass below would
+                // overwrite every denominator in [mptr_start, mptr_end) with
+                // garbage products before returning ret = 0.
+                if iszero(ret) { leave }
                 let all_inv := mload(gp_mptr)
 
                 // Backward pass: derive each inverse from the inverted total
@@ -212,6 +243,11 @@
             // 4-word G1 slots; G2 bases are loaded from the pinned VK payload.
             function ec_pairing(success, lhs_mptr, rhs_mptr) -> ret {
                 ret := success
+                // `leave` (not a revert) keeps the trace render able to return
+                // `false`; the terminal guard in TraceReturn.yul now reverts
+                // with ProofRejected in a production render, so no path hands
+                // control back to a caller that would report success for an
+                // unverified proof.
                 if iszero(ret) { leave }
                 // Lay out two (G1, G2) pairs at scratch..scratch+0x300:
                 //   [lhs_g1 (0x80) | G2_BASE (0x100) | rhs_g1 (0x80) | NEG_S_G2_BASE (0x100)]
@@ -224,15 +260,26 @@
                 mcopy(add(scratch, 0x80),   G2_BASE_MPTR,             0x100)
                 mcopy(add(scratch, 0x180),  rhs_mptr,                 0x80)
                 mcopy(add(scratch, 0x200),  NEG_S_G2_BASE_MPTR,       0x100)
+                // MF-4: separate "the chain could not run the pairing" from
+                // "the pairing ran and rejected this proof". Both fail closed,
+                // but they are different incidents: the first points at the
+                // node/fork (a missing, repriced, or short-returning
+                // precompile), the second at the proof. Collapsing them into
+                // ProofRejected sent every responder looking at the wrong one.
                 ret := staticcall(gas(), {{ template_constants.eip2537.pairing_address|hex() }}, scratch, {{ template_constants.pairing_two_pair_bytes|hex() }}, scratch, {{ template_constants.word_bytes|hex() }})
                 ret := and(ret, eq(returndatasize(), {{ template_constants.word_bytes|hex() }}))
-                ret := and(ret, mload(scratch))
+                if iszero(ret) { fail(ERR_PRECOMPILE_FAILED) }
+                // Compare against 1 rather than truncating to the low bit:
+                // `and(ret, word)` would accept any odd result word. EIP-2537
+                // only ever returns 0 or 1, so this matches the strict form
+                // the constructor smoke test already uses.
+                ret := and(ret, eq(mload(scratch), 1))
                 {%- if self.trace %}
                 // Trace renders record the failure and return false from the
                 // verifier (see TraceReturn) so the trace logs survive.
                 ret := iszero(iszero(ret))
                 {%- else %}
-                if iszero(ret) { revert(0, 0) }
+                if iszero(ret) { fail(ERR_PROOF_REJECTED) }
                 ret := 1
                 {%- endif %}
             }

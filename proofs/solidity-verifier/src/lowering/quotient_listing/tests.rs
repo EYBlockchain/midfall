@@ -439,7 +439,8 @@ fn first_vm_item() -> (
     let (params, vk) = listing_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let plan = generator.inputs().lowering_plan();
-    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
+    let items =
+        split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
     let (item, planned) = items
         .into_iter()
         .zip(&plan.vm_quotient().plan.items)
@@ -487,7 +488,8 @@ fn listing_validation_rejects_corrupted_constant_naming_the_identity() {
     let (params, vk) = listing_vk();
     let generator = SolidityGenerator::new(&params, &vk, GeneratorConfig::new(1, 1));
     let plan = generator.inputs().lowering_plan();
-    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
+    let items =
+        split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
     // Pick a constant used by exactly the VM identities and not by
     // anything else checked earlier: the first constant referenced by the
     // first VM identity.
@@ -573,7 +575,8 @@ fn listing_blocks_match_standalone_regeneration() {
         slots: slots.iter().map(|s| (s.addr, s.name.clone())).collect(),
         tokens,
     };
-    let items = split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
+    let items =
+        split_vm_items(&decode_vm_program(&plan.vm_quotient().build.bytes).unwrap()).unwrap();
     let qplan = &plan.vm_quotient().plan;
     let item_identities = qplan
         .items

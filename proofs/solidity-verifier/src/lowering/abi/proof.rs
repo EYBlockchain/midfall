@@ -508,8 +508,7 @@ mod tests {
         let protocol = protocol_shape(vec![1, 9], vec![], 0, 0, 1);
         let proof = ProofCalldataLayout::from_protocol(&protocol, 0, 12, 2);
         let num_instances = 86;
-        let transcript =
-            TranscriptBufferLayout::from_proof_layout(&proof, num_instances, &[0, 1]);
+        let transcript = TranscriptBufferLayout::from_proof_layout(&proof, num_instances, &[0, 1]);
 
         let word = layout::transcript::WORD_ABSORB_BYTES;
         let g1 = layout::transcript::G1_ABSORB_BYTES;
@@ -518,8 +517,7 @@ mod tests {
         // Bytes actually absorbed before the first squeeze: vk_digest,
         // committed_pi, num_instances length word, instance words, then BOTH
         // phases' advices (phase 0 owns no challenge).
-        let true_initial_run =
-            word + g1 + word + num_instances * word + (1 + 9) * g1;
+        let true_initial_run = word + g1 + word + num_instances * word + (1 + 9) * g1;
         assert!(
             transcript.words * WORD_BYTES >= true_initial_run,
             "reserved {} bytes < true pre-squeeze run {}",
@@ -528,9 +526,11 @@ mod tests {
         );
         assert_eq!(transcript.initial_run_bytes, true_initial_run + cushion);
 
-        // The old bound counted only phase 0's advice and therefore under-sized
-        // the buffer below the true run — confirm the fix was load-bearing.
-        let phase0_only_run = word + g1 + word + num_instances * word + 1 * g1;
+        // The old bound counted only phase 0's advice and therefore
+        // under-sized the buffer below the true run — confirm the fix was
+        // load-bearing. The trailing bare g1 is that old single-point term,
+        // where the true run above adds (1 + 9) * g1.
+        let phase0_only_run = word + g1 + word + num_instances * word + g1;
         assert!(phase0_only_run < true_initial_run);
         assert!(phase0_only_run + cushion < true_initial_run);
     }
