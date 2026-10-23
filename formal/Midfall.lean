@@ -3,6 +3,8 @@ import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Circuit
+import Midfall.Halo2.Exec.Arith
+import Midfall.Halo2.Exec.Domain
 import Midfall.Halo2.Exec.Permutation
 import Midfall.Halo2.Exec.Query
 import Midfall.Halo2.Exec.Kzg.Params
