@@ -89,24 +89,29 @@ TODO: confirm against the frozen deploy command line at the freeze.
   (frozen hash, sorry register, native_decide confinement, Keccak + ABI-selector
   + transcript KATs, #print axioms). Sections 9.1 (partly), 9.3-9.6 are still to
   be added to Statements.lean as the declarations they name come into being.
-* **M2 (L0 port)**: IN PROGRESS, roughly two thirds of the leaves done.
-  Landed: Exec/Transcript (the whole Keccak transcript: init_from_bytes, common,
-  read, read_n, squeeze with the reseed, challenge = BE digest mod r,
-  assert_empty), Exec/Kzg/{Params,Msm,Utils,MultiOpen} (MSMKZG, msm_specific,
-  msmInnerProduct, DualMSM, DualMSM.check, construct_intermediate_sets,
-  compute_dummy_queries and the whole multi_prepare), Exec/Query
-  (CommitmentLabel, CommitmentReference, VerifierQuery), Exec/Pcs (the R9 Pcs and
-  Guard records), Exec/Arith, Exec/Domain, Exec/Circuit (the real
-  ConstraintSystem with all twenty fields, Expression.degree and evaluate,
-  degree, blinding_factors) and Exec/Poly - whose finding is that poly/mod.rs is
-  prover code, so Polynomial is NOT part of L0. Plus the byte and point codecs in
-  Common/{Bytes,Codec}. Still to port: Exec/VerifyingKey, Exec/Verifier,
-  Exec/Permutation, Exec/Logup, Exec/Trash (verifier paths), Exec/Native
-  (prepare, decodeRust, prepareMsgs, verifyMsgs), Exec/Accumulator and
-  Exec/Msgs. Sorry register: 12 entries, all in Native/Spec/Statements.
-  Port reviews and cross-module findings R-1..R-11: docs/REVIEW.md. Two of them
-  need a decision from you: R-8 (does Fault gain a poly variant - candidate
-  D-P8) and the M0 freeze itself.
+* **M2 (L0 port)**: IN PROGRESS, most leaves done. Landed: Exec/Transcript (the
+  whole Keccak transcript), Exec/Kzg/{Params,Msm,Utils,MultiOpen} (MSMKZG,
+  msm_specific, msmInnerProduct, DualMSM, DualMSM.check,
+  construct_intermediate_sets, compute_dummy_queries and the whole
+  multi_prepare), Exec/Query (CommitmentLabel, CommitmentReference,
+  VerifierQuery), Exec/Pcs (the R9 Pcs and Guard records), Exec/Arith,
+  Exec/Domain, Exec/Circuit (2171 lines: all 20 ConstraintSystem fields,
+  Expression.degree and evaluate with the caller-side callbacks, degree,
+  blinding_factors, the selector-conversion path), Exec/Poly (whose finding is
+  that poly/mod.rs is prover code, so Polynomial is NOT part of L0), and
+  Exec/{Permutation,Logup,Trash} verifier paths (read_product_commitments, the
+  three evaluate/queries triples, and the permutation/logUp/trash identity
+  expressions - i.e. everything Exec/Verifier needs except the linearization).
+  Plus Assumptions/Pairing (the named BLS12-381 hypothesis, no sorry) and the
+  byte and point codecs in Common/{Bytes,Codec}. Still to port:
+  Exec/Linearization, Exec/VerifyingKey, Exec/Verifier, Exec/Native (prepare,
+  decodeRust, prepareMsgs, verifyMsgs), Exec/Accumulator and Exec/Msgs.
+  Sorry register: 12 entries, all in Native/Spec/Statements.
+  Reviews and cross-module findings R-1..R-17: docs/REVIEW.md. Two need a
+  decision from you: R-8 (does Fault gain a poly variant - candidate D-P8) and
+  the M0 freeze. One blocks M4: Y-3 in docs/ecosystem.md section 10 -
+  RunCommitted is fixed to the closed EVM.evm dialect, so RunVerifier and
+  RunContractIR as written do not typecheck.
 * **Plan location**: the normative plan is now in the repository as
   docs/PLAN.md, so a work package or review can cite it by section number.
 * **Phase 0 step 5: COMPLETE.** All ten curated items landed. Item 4 was split
