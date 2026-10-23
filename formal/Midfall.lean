@@ -2,6 +2,7 @@ import Midfall.Common.Word
 import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Keccak
+import Midfall.Halo2.Exec.Circuit
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Piop
