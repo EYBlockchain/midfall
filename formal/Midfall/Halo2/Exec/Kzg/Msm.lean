@@ -134,6 +134,33 @@ def collapse {G₁ : Type} [Group G₁] [PrimeOrderWith G₁ p] [Module (ZMod p)
 
 end MSMKZG
 
+/-- rust: proofs/src/utils/arithmetic.rs:275-299 (msm_inner_product).
+    Verifier-reachable at poly/kzg/mod.rs:401 and :507, both inside
+    multi_prepare. It lives here rather than in Exec/Arith because its
+    domain and codomain are MSMKZG (plan Section 4 module map).
+
+    The Rust zips msms.iter_mut() against scalars.iter(), so a shorter
+    scalar slice silently drops the *tail of the MSMs* - and a dropped MSM
+    is never scaled and never contributes, rather than being an error. The
+    port keeps that truncation exactly (rule R3). Each retained MSM is
+    scaled in place and then concatenated, which is addMsm of scale. -/
+def msmInnerProduct {G₁ : Type} [Group G₁] [PrimeOrderWith G₁ p]
+    [Module (ZMod p) (Additive G₁)]
+    (msms : Array (MSMKZG (Fr p) G₁)) (scalars : Array (Fr p)) :
+    MSMKZG (Fr p) G₁ :=
+  (List.zip msms.toList scalars.toList).foldl
+    (fun acc (msm, s) => acc.addMsm (msm.scale s)) MSMKZG.init
+
+/-! rust: proofs/src/utils/arithmetic.rs:320-344 (trait MSM). NOT ported as a
+    structure of functions, and that is a decision rather than an omission:
+    rule R9 names PolynomialCommitmentScheme, Transcript, Hashable and Guard
+    - the traits with more than one instantiation in the verifier. MSM has
+    exactly one, MSMKZG, and its eight methods are the definitions above
+    (appendTerm, addMsm, scale, check, eval, init/fromMany, and the structure
+    projections for bases/scalars/labels). A record of function pointers
+    would be a second name for every call site, free to drift from the first.
+    If a second MSM ever appears - a batched or in-circuit one - that is the
+    moment to introduce it. -/
 /-- rust: msm.rs:194-198 (struct DualMSM): a left and a right channel.
 
     The Rust is DualMSM<E> with only G1 components; G₂ and Gₜ are phantom
