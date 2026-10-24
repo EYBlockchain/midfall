@@ -26,6 +26,7 @@ finding that needs an owner outside the module that surfaced it.
 | Spec/Degrees | `7da8cb9` | sub-agent | agent | **signed off** - and it found a soundness gap in §9.4 (R-22) |
 | Exec/Accumulator | `782b9a2` | sub-agent | agent | **signed off**: it found §9.5's decodeAcc_injective is false (R-25) |
 | Exec/Verifier (verify_algebraic_constraints, prepare) + Exec/Native | `389a0c4` | sub-agent | agent | **signed off**: the frozen §9.2 interface is not implementable (R-27) |
+| Exec/Verifier after external review | `1d32d34` | external reviewer + agent | agent | **two real bugs fixed** (R-30) |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -709,6 +710,39 @@ opener test now accepts \`/--\`, \`/-!\` and bare \`/-\` at depth 0 (all three o
 nested block comment in Lean 4), verified against a synthetic file with \`sorry\` in
 each comment form, and the real sorry register is unchanged at 12.
 
+### R-30 two faithfulness bugs found by review after sign-off, and the pattern behind them
+
+An external reviewer compared the port against the current Rust and found a real
+divergence in the Fiat-Shamir schedule. I confirmed it against the source and fixed
+it; while reviewing the fix I found a second bug of the same family in code I had
+landed earlier the same session.
+
+* **Phase interleaving.** `verifier.rs:108-144` nests the loops with *phase* as the
+  outermost axis: for each phase, all proofs' columns of that phase, then that
+  phase's challenges. `parseTrace` read every advice commitment and then squeezed
+  every challenge. The two agree only for a single phase, or a single proof with no
+  challenges - which is exactly the supported profile, so no theorem depends on it
+  and no KAT caught it. For a multi-phase key it is a different transcript, i.e. a
+  different language accepted.
+* **A `foldlM` that ignored its accumulator.** In `partiallyEvaluateIdentities` the
+  step returned one proof's terms without appending, so the fold silently became
+  "last one wins". Again invisible at `numProofs = 1`.
+
+The pattern is worth naming, because it generalises R-20: **both bugs were undetectable
+by any test on the supported profile.** A KAT built on the smallest well-formed input
+cannot distinguish "one" from "all". Where the Rust has a loop over a dimension that
+our supported configuration collapses to one - phases, proofs, chunks, columns - a
+test needs that dimension to have size at least two, and the port should say so
+explicitly. Both new KATs do: `phaseInterleave_kats_ok` uses two phases and two
+proofs; `multiProofPartiallyEvaluate_kats_ok` uses two proofs and, pointedly, needs
+*every* per-proof vector to have two rows because the progressive zip truncates to
+the shortest - which is itself R-3's iterator semantics showing up as a test fixture
+requirement.
+
+The reviewer's third finding - commitment deduplication by value where the Rust uses
+`std::ptr::eq` - is R-7, already known and deliberate (Lean has no allocation
+identity). No change; recorded so the review and the log agree on what is a finding
+versus a decision.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
