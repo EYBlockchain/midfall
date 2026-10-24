@@ -743,6 +743,50 @@ The reviewer's third finding - commitment deduplication by value where the Rust 
 `std::ptr::eq` - is R-7, already known and deliberate (Lean has no allocation
 identity). No change; recorded so the review and the log agree on what is a finding
 versus a decision.
+### R-31 The review process was one-sided: reviewed code had no bugs, unreviewed code had both
+
+Prompted by a direct question from the user: was every step of the translation
+reviewed by a fresh adversarial agent? No. The sign-off table shows a clean split:
+
+* Every package a sub-agent wrote was independently reviewed (by me): Arith/Domain,
+  Poly, Circuit \`ec1d19e\`, Permutation/Logup/Trash, Yul/Externals, Spec/Degrees,
+  Accumulator, Verifier \`389a0c4\`. Roughly 5,900 lines.
+* Every package I wrote was reviewed by nobody: \`reviewer | -\` or
+  \`agent (self)\` across Transcript, Bytes, Codec, Query, Kzg/{Utils,MultiOpen,Msm,
+  Params}, VerifyingKey, Linearization, Verifier (parse_trace), Pcs - **3,122 lines**.
+
+Both serious bugs that survived to late review are in the second set: R-20 in
+\`Common/Bytes.lean\` (marked self-reviewed) and R-30 in \`Exec/Verifier.lean\`
+(marked \`-\`). The sign-off row for the buggy \`parseTrace\` read "schedule KATs pin
+byte accounting" - true, and about the wrong property.
+
+Two structural causes, both fixable:
+
+1. **No agent was ever tasked with attacking a module.** Every cross-check that found
+   something (R-20, R-22, R-25, R-27) was incidental - an agent porting a *different*
+   module against an independent source of truth. Valuable, but luck-shaped: it only
+   catches what overlaps with whatever else is being ported. I wrote in R-20 that
+   cross-module porting "should be scheduled as a review mechanism rather than left to
+   parallelism" and then did not schedule it.
+2. **R11 as written is satisfiable by the author.** "Signed off by a second agent" is
+   technically satisfied when a different agent signs off - so it protected the
+   sub-agents' work and not mine. Proposed amendment, needing sign-off since the plan
+   is normative: *a sign-off is void if the reviewer is the author of the change*, and
+   every port PR names the independent reviewer.
+
+Concrete response, not just a concession: the next free sub-agent slot is an
+**adversarial review** of the 3,122 unreviewed lines, briefed to assume a divergence
+exists and to hunt for the specific failure shapes we have already been bitten by -
+flattened loop nesting, iterator semantics paraphrased rather than mirrored, folds
+that ignore their accumulator, direct indexes that default instead of faulting,
+endianness asserted rather than pinned, and comments that describe the Rust while the
+code does something else. Reviewers are told to report only what they verified, with
+both citations, and to separate confirmed divergence from suspicious-but-unsettled.
+
+Process note for future rounds: when a module is authored by whoever is coordinating,
+it is exactly the module that will not get reviewed. Budget review slots explicitly
+rather than letting authorship capacity absorb them.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
