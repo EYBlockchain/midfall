@@ -16,6 +16,7 @@ import Midfall.Halo2.Exec.Kzg.Params
 import Midfall.Halo2.Exec.Kzg.Msm
 import Midfall.Halo2.Exec.Kzg.Utils
 import Midfall.Halo2.Exec.Kzg.MultiOpen
+import Midfall.Halo2.Exec.Accumulator
 import Midfall.Halo2.Exec.Linearization
 import Midfall.Halo2.Exec.Verifier
 import Midfall.Halo2.Exec.Native
