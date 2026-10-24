@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 owner() {
   case "$1" in
     Midfall/Common/Codec.lean)        echo 'Phase 1 curve instance' ;;
-    Midfall/Halo2/Exec/Native.lean)   echo 'BLOCKED: plan 9.2 arity lacks G1Codec/FieldConsts/delta - needs the D-P9 re-pin (see Midfall/Halo2/Exec/Native.lean header)' ;;
+    Midfall/Halo2/Exec/Native.lean)   echo 'Phase 2: expose KZG read schedule and parameterise transcript hash (D-P9)' ;;
     Midfall/Halo2/Spec/Piop.lean)     echo 'Phase 4 (spec layer)' ;;
     Midfall/Halo2/Spec/Relation.lean) echo 'Phase 4 (spec layer)' ;;
     Midfall/Statements.lean)          echo 'frozen statements (S1..S7 land later)' ;;

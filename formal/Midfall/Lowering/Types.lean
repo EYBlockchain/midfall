@@ -86,11 +86,12 @@ def ContractRefAccepts {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
     [Module (ZMod p) (Additive Gₜ)]
     [AdmissiblePairing G₁ G₂ Gₜ]
-    (H : Hash) (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
+    (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
+    (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) : Bool :=
   -- Gₜ is a phantom of DualMSM (see Exec/Kzg/Msm.lean), so it must be
   -- named here: nothing in the arguments pins it.
-  match prepareMsgs (Gₜ := Gₜ) H Features.solidity vk inst ms with
+  match prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms with
   | .error _ => false
   | .ok d => DualMSM.check d params
 

@@ -34,32 +34,35 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [P : AdmissiblePairing G₁ G₂ Gₜ]
 
 section
-variable (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+variable (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+  (params : ParamsVerifierKZG G₁ G₂)
   (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes)
 
 /-- Plan 9.2: the byte-level verifier and the message-level verifier accept
     exactly the same proofs, and every accepted proof decodes. -/
 theorem verifyNative_iff_msgs :
-    verifyNative F params vk inst π = .ok () ↔
-      ∃ ms, decodeRust F vk π = some ms ∧
-        verifyMsgs keccak256 F params vk inst ms = .ok () := by sorry
+    verifyNative (Gₜ := Gₜ) E F params vk inst π = .ok () ↔
+      ∃ ms, decodeRust (Gₜ := Gₜ) E F vk inst π = some ms ∧
+        verifyMsgs (Gₜ := Gₜ) E keccak256 F params vk inst ms = .ok () := by sorry
 
 end
 
 section
-variable (H : Hash) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+variable (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
+  (params : ParamsVerifierKZG G₁ G₂)
   (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
   (ms : List (Msg (Fr p) G₁))
 
 /-- Plan 9.2: the compiled verifier and the mathematical spec agree. -/
 theorem verifyMsgs_iff_spec (hwf : vk.WellFormed F) :
-    (verifyMsgs H F params vk inst ms).isOk ↔
+    (verifyMsgs (Gₜ := Gₜ) E H F params vk inst ms).isOk ↔
       Spec.accepts H F params vk inst ms := by sorry
 
 end
 
 section
-variable (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
+variable (E : VerifierEnv p G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂)
+  (vk : VerifyingKey (Fr p) G₁)
   (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁))
 
 /-- Plan 9.5 L6, the no-accumulator case: the contract-level reference predicate
@@ -68,8 +71,8 @@ variable (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
     the accumulator arm (contractRef_acc_complete) needs Exec/Accumulator and
     lands with Phase 2. -/
 theorem contractRef_noAcc :
-    Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) keccak256 params vk inst ms ↔
-      verifyMsgs keccak256 Features.solidity params vk inst ms = .ok () := by sorry
+    Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) E keccak256 params vk inst ms ↔
+      verifyMsgs (Gₜ := Gₜ) E keccak256 Features.solidity params vk inst ms = .ok () := by sorry
 
 end
 
