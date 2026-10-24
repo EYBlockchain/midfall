@@ -2161,11 +2161,11 @@ def verifierEvaluate_kats_ok : Bool :=
 
 end Kats
 
-#eval columnAny_kats_ok
-#eval expression_kats_ok
-#eval csDegree_kats_ok
-#eval csAccessors_kats_ok
-#eval convertSelectors_kats_ok
-#eval verifierEvaluate_kats_ok
+#eval columnAny_kats_ok   -- expect true
+#eval expression_kats_ok   -- expect true
+#eval csDegree_kats_ok   -- expect true
+#eval csAccessors_kats_ok   -- expect true
+#eval convertSelectors_kats_ok   -- expect true
+#eval verifierEvaluate_kats_ok   -- expect true
 
 end Midfall.Halo2

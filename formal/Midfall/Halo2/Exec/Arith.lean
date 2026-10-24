@@ -485,9 +485,9 @@ def arithExtra_kats_ok : Bool :=
 
 end Kats
 
-#eval evalPolynomial_kats_ok
-#eval computeInnerProduct_kats_ok
-#eval batchInvert_kats_ok
-#eval arithExtra_kats_ok
+#eval evalPolynomial_kats_ok   -- expect true
+#eval computeInnerProduct_kats_ok   -- expect true
+#eval batchInvert_kats_ok   -- expect true
+#eval arithExtra_kats_ok   -- expect true
 
 end Midfall.Halo2

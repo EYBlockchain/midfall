@@ -366,8 +366,8 @@ def lIRange_kats_ok : Bool :=
 
 end DomainKats
 
-#eval domainNew_kats_ok
-#eval domainPanic_kats_ok
-#eval lIRange_kats_ok
+#eval domainNew_kats_ok   -- expect true
+#eval domainPanic_kats_ok   -- expect true
+#eval lIRange_kats_ok   -- expect true
 
 end Midfall.Halo2

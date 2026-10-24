@@ -1301,13 +1301,13 @@ def relationKats_ok : Bool :=
 
 end Kats
 
-#eval layoutKats_ok
-#eval coordKats_ok
-#eval g1AddKats_ok
-#eval g1MsmKats_ok
-#eval pairingKats_ok
-#eval modexpKats_ok
-#eval gasScheduleKats_ok
-#eval modexpGasKats_ok
-#eval subgroupKats_ok
-#eval relationKats_ok
+#eval layoutKats_ok   -- expect true
+#eval coordKats_ok   -- expect true
+#eval g1AddKats_ok   -- expect true
+#eval g1MsmKats_ok   -- expect true
+#eval pairingKats_ok   -- expect true
+#eval modexpKats_ok   -- expect true
+#eval gasScheduleKats_ok   -- expect true
+#eval modexpGasKats_ok   -- expect true
+#eval subgroupKats_ok   -- expect true
+#eval relationKats_ok   -- expect true

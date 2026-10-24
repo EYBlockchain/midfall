@@ -1033,10 +1033,10 @@ end Kats
 
 end Midfall.Halo2.Spec
 
-#eval Midfall.Halo2.Spec.degrees_kats_ok
-#eval Midfall.Halo2.Spec.logup_kats_ok
-#eval Midfall.Halo2.Spec.pointSet_kats_ok
-#eval Midfall.Halo2.Spec.badPointsX_kats_ok
-#eval Midfall.Halo2.Spec.roundErr_kats_ok
-#eval Midfall.Halo2.Spec.chalMass_kats_ok
-#eval Midfall.Halo2.Spec.wellFormed_kats_ok
+#eval Midfall.Halo2.Spec.degrees_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.logup_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.pointSet_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.badPointsX_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.roundErr_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.chalMass_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.wellFormed_kats_ok   -- expect true

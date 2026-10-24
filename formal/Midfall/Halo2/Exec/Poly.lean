@@ -446,7 +446,7 @@ def rotation_kats_ok : Bool :=
 
 end Kats
 
-#eval polyError_kats_ok
-#eval rotation_kats_ok
+#eval polyError_kats_ok   -- expect true
+#eval rotation_kats_ok   -- expect true
 
 end Midfall.Halo2
