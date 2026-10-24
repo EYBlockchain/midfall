@@ -3,6 +3,7 @@ import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Keccak
 import Midfall.Assumptions.Pairing
+import Midfall.Instances.ExponentModel
 import Midfall.Halo2.Exec.Circuit
 import Midfall.Halo2.Exec.Arith
 import Midfall.Halo2.Exec.Domain
