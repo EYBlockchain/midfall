@@ -87,6 +87,20 @@ structure Transcript where
   state : Bytes
   buffer : Bytes
   pos : Nat
+  /-- The hash the squeeze step uses. Rule R9 says the hash is a parameter
+      everywhere, defaulting to keccak256 - the default keeps every existing call
+      site and the frozen 9.2 statements unchanged, while prepareMsgs can honour an
+      arbitrary H. -/
+  hash : Bytes → H256 := keccak256
+  /-- Every read the verifier performed, as (wire width, raw bytes), in order.
+
+      This exists so that decodeRust is DERIVED from the schedule instead of being
+      a second copy of it. Duplicating a read schedule is the exact failure mode
+      of docs/REVIEW.md R-30 and R-32, where a paraphrased loop or a normalisation
+      applied in one of two places silently changed the transcript. Recording what
+      the pipeline actually consumed makes that class of bug impossible in the
+      decoder. -/
+  log : Array (Nat × Bytes) := #[]
 
 /-- The transcript state monad with the verifier failure type (plan 9.2). -/
 abbrev TranscriptM := StateT Transcript (Except Fault)
@@ -95,6 +109,11 @@ abbrev TranscriptM := StateT Transcript (Except Fault)
     A fresh Keccak256 has absorbed nothing, so state is empty. -/
 def Transcript.initFromBytes (bytes : Bytes) : Transcript :=
   { state := Bytes.empty, buffer := bytes, pos := 0 }
+
+/-- The same, with an explicit hash (rule R9). Used by prepareMsgs, which must
+    honour whatever H it is given rather than keccak256. -/
+def Transcript.initWithHash (H : Bytes -> H256) (bytes : Bytes) : Transcript :=
+  { state := Bytes.empty, buffer := bytes, pos := 0, hash := H }
 
 /-- rust: proofs/src/transcript/mod.rs:126-128 common + implementors.rs
     194-196 absorb = update. -/
@@ -106,7 +125,7 @@ def Transcript.common {T : Type} (h : Hashable T) (t : Transcript) (input : T) :
     so far, then the state is *replaced* by that digest (a new hasher seeded
     with out). Returns the digest bytes and the new state. -/
 def Transcript.squeeze (t : Transcript) : Bytes × Transcript :=
-  let d := wordToBytesBE (keccak256 t.state)
+  let d := wordToBytesBE (t.hash t.state)
   (d, { t with state := d })
 
 /-- rust: proofs/src/transcript/mod.rs:126 squeeze_challenge::<Fq> composed
@@ -130,7 +149,9 @@ def Transcript.read {T : Type} (h : Hashable T) (t : Transcript) :
   | some repr =>
       match h.readRepr? repr with
       | none => .error (Fault.error (Error.transcript IoErrorKind.other))
-      | some val => .ok (val, ({ t with pos := t.pos + h.width }).common h val)
+      | some val =>
+          let t2 := { t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }
+          .ok (val, t2.common h val)
 
 /-- rust: proofs/src/transcript/mod.rs:150-159 assert_empty. Note the kind is
     NotFound, and that the Rust compares length with position: a cursor that

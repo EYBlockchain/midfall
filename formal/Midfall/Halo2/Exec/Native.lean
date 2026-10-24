@@ -34,11 +34,29 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Module (ZMod p) (Additive Gₜ)]
   [P : AdmissiblePairing G₁ G₂ Gₜ]
 
+/-- Runtime data required by the §9.2 verifier path. -/
+structure VerifierEnv (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [AdmissiblePairing G₁ G₂ Gₜ] where
+  g1 : G1Codec G₁
+  field : FieldConsts (Fr p)
+  delta : Fr p
+  fewerPointSetsRuntime : Bool
+
 /-- A hash: the concrete Keccak for execution, or a random oracle in the proofs
     (plan 9.1 `abbrev Hash`). -/
 abbrev Hash := Bytes → H256
 
-/-! ## BLOCKED - the four plan-9.2 signatures below cannot be implemented
+/-! ## Historical blocker analysis (D-P9 adopted)
+
+D-P9 now bundles the codec, field constants, delta and runtime switch in
+`VerifierEnv`; `prepare` and `verifyNative` use it, and the §9.2 statements have
+been re-pinned. `decodeRust` additionally takes `inst`. The two remaining
+execution blockers are KZG read-schedule exposure and a hash-parameterised
+transcript for `prepareMsgs`; the historical analysis below explains why the
+original frozen signatures could not be implemented.
 
 Reported under plan Section 12 ("if a Rust behaviour makes a statement false,
 stop and report; never weaken the statement silently"). The port itself is
@@ -107,10 +125,10 @@ spelling it would register as a false proof hole.)
   transcript leaf, and §9.5's "all lowering proofs are hash-agnostic (forall H)"
   inherits that. Owner: Exec/Transcript.
 
-### The fix, needing sign-off (candidate D-P9)
+### D-P9 interface re-pin
 
-Re-pin `Statements.lean` with the environment threaded, bundled as one record so
-the arity stays small, e.g.
+`Statements.lean` is now re-pinned with the environment bundled in
+`VerifierEnv`; remaining decoder/hash limitations are implementation blockers.
 
     structure VerifierEnv (p : Nat) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
         [Group G₁] [Group G₂] [Group Gₜ]
@@ -126,17 +144,28 @@ the arity stays small, e.g.
 holes the moment that decision lands; they are complete, so the remaining work is
 a re-pin, not a port. -/
 
+/-- The wire encoding of one message: a G1 point is its 48-byte compressed form,
+    a scalar its little-endian repr - the same two widths Transcript.read logged. -/
+def msgWire {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [AdmissiblePairing G₁ G₂ Gₜ]
+    (E : VerifierEnv p G₁ G₂ Gₜ) : Msg (Fr p) G₁ → Bytes
+  | Msg.g1 P => E.g1.toCompressed P
+  | Msg.fr s => frToRepr (p := p) s
+
 /-- rust: proofs/src/plonk/verifier.rs:659-696 (Verifier::prepare), at the arity
     the port actually needs. `Midfall.Halo2.Verifier.prepare` is the faithful def;
     this is the plan-9.2 shape with the three missing environment parameters
     added (see the BLOCKED note). `committed` is the per-instance-column list of
     committed G1 points and `inst` the per-column instance values. -/
-def prepareWith (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (delta : Fr p)
-    (fewerPointSetsRuntime : Bool) (F : Features) (vk : VerifyingKey (Fr p) G₁)
+def prepareWith (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁)
     (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
     TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) :=
-  Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) g1 delta F
-    (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) g1 fc F fewerPointSetsRuntime) vk
+  Verifier.prepare (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.delta F
+    (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field F E.fewerPointSetsRuntime) vk
     (committed.map (fun r => r.toArray)).toArray
     (inst.map (fun row => (row.map (fun col => col.toArray)).toArray)).toArray
 
@@ -146,13 +175,13 @@ def prepareWith (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (delta : Fr p)
     is exactly one proof, which is what test.rs:366-367 passes. -/
 def verifyNativeWith {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
     [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
-    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (delta : Fr p)
-    (fewerPointSetsRuntime : Bool) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+    (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (proof : Bytes) :
     Except Fault Unit := do
   -- Gₜ is a phantom of DualMSM, so it has to be named: nothing in the
   -- arguments pins it.
-  let m := prepareWith (Gₜ := Gₜ) g1 fc delta fewerPointSetsRuntime F vk [[1]] [[inst.toList]]
+  let m := prepareWith (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]
   let (g, t) ← StateT.run m (Transcript.initFromBytes proof)
   t.assertEmpty
   unless DualMSM.check g params do throw (Fault.error Error.opening)
@@ -166,20 +195,23 @@ def verifyNativeWith {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
     `FieldConsts` or `delta`, so there is no faithful body for it. The body is
     `prepareWith` with those three supplied; filling this hole is a re-pin of
     `Statements.lean`, not a porting task. -/
-def prepare (F : Features) (vk : VerifyingKey (Fr p) G₁)
+def prepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁)
     (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
-    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := sorry
+    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) :=
+  prepareWith (Gₜ := Gₜ) E F vk committed inst
 
 /-- rust: proofs/solidity-verifier/src/test.rs:340-367, the canonical
     composition (plan Section 4, Exec/Native). -/
 def verifyNative {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
     [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
-    (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+    (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (proof : Bytes) :
     Except Fault Unit := do
   -- Gₜ is a phantom of DualMSM, so it has to be named: nothing in the
   -- arguments pins it.
-  let m := prepare (Gₜ := Gₜ) F vk [[1]] [[inst.toList]]
+  let m := prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]
   let (g, t) ← StateT.run m (Transcript.initFromBytes proof)
   t.assertEmpty
   unless DualMSM.check g params do throw (Fault.error Error.opening)
@@ -192,8 +224,25 @@ def verifyNative {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
     schedule is not a function of `(F, vk, pi)` alone - it depends on the number
     of proofs and committed instance columns, and on reads inside `multiPrepare`
     that the KZG leaf does not expose. -/
-def decodeRust (F : Features) (vk : VerifyingKey (Fr p) G₁) (_ : Bytes) :
-    Option (List (Msg (Fr p) G₁)) := sorry
+def decodeRust (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes) :
+    Option (List (Msg (Fr p) G₁)) := do
+  -- The messages are whatever the pipeline actually consumed, recorded by
+  -- Transcript.read. Deriving them this way is deliberate: a hand-written second
+  -- copy of the schedule is exactly what R-30 and R-32 got wrong, and it would
+  -- drift the moment the Rust changed. If the run faults, there is no message
+  -- stream; if it leaves trailing bytes, the proof is not exactly the schedule
+  -- either ("schedule-driven, exact length" in plan 9.2).
+  let t0 := Transcript.initFromBytes π
+  let (_, t) ← (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run t0 |>.toOption
+  if t.buffer.size ≠ t.pos then none
+  else
+    let wG1 := (hashableG1 E.g1).width
+    let wFr := (hashableFr (p := p)).width
+    t.log.toList.mapM fun rec =>
+      if rec.1 == wG1 then (E.g1.ofCompressed? rec.2).map Msg.g1
+      else if rec.1 == wFr then (frOfRepr? (p := p) rec.2).map Msg.fr
+      else none
 
 /-- `prepare` driven by already-decoded messages instead of a byte stream.
 
@@ -202,15 +251,30 @@ def decodeRust (F : Features) (vk : VerifyingKey (Fr p) G₁) (_ : Bytes) :
     `TranscriptM` has no hash parameter, so a `TranscriptM`-based body is
     keccak-only whatever `H` is passed (rule R9 is not satisfied by the existing
     transcript leaf). -/
-def prepareMsgs (H : Hash) (F : Features) (vk : VerifyingKey (Fr p) G₁)
+def prepareMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
-    Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ) := sorry
+    Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ) := do
+  -- Re-serialise the messages to the wire bytes the transcript would have read,
+  -- then run the SAME pipeline with the caller's hash. Going through the byte
+  -- level rather than a parallel message-driven interpreter is what keeps
+  -- verifyNative_iff_msgs close to a definitional unfolding: both sides execute
+  -- one schedule, not two that must be proved to agree.
+  let bytes := ms.foldl (init := Bytes.empty)
+    (fun acc m => ByteArray.append acc (msgWire E m))
+  let (g, t) ← (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+    (Transcript.initWithHash H bytes)
+  t.assertEmpty
+  pure g
 
 /-- `verifyNative` at the message level.
 
     BLOCKED: `prepareMsgs` above, and the same `H` limitation. -/
-def verifyMsgs (H : Hash) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+def verifyMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
-    Except Fault Unit := sorry
+    Except Fault Unit := do
+  let g ← prepareMsgs (Gₜ := Gₜ) E H F vk inst ms
+  unless DualMSM.check g params do throw (Fault.error Error.opening)
 
 end Midfall.Halo2
