@@ -17,6 +17,7 @@ import Midfall.Common.Keccak
 import Midfall.Halo2.Exec.Features
 import Midfall.Halo2.Exec.Error
 import Midfall.Halo2.Exec.Types
+import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Exec.Kzg.Msm
 import Midfall.Halo2.Exec.Transcript
 
