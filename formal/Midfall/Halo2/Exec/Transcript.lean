@@ -241,16 +241,42 @@ def transcriptKat_trailing : Bool :=
   | .error (Fault.error (Error.transcript IoErrorKind.notFound)) => true
   | _ => false
 
-/-- squeeze reseeds the state with its own digest, so the next digest is
-    keccak of the previous one and not of the old state. -/
-def transcriptKat_reseed : Bool :=
-  let (d, t) := (Transcript.initFromBytes Bytes.empty).squeeze
-  t.state == d && d.size == 32
+local instance factPrime17Here : Fact (Nat.Prime 17) := ⟨by decide⟩
 
+/-- squeeze must REPLACE the state with its own digest, not append to it.
+
+    The previous version of this check asserted `t.state == d` starting from the
+    EMPTY state, where replace and append coincide - it was true by definition and
+    could not fail. An adversarial review named this as R-20's failure mode still
+    being present. The fix is to absorb something first so the two semantics
+    disagree, then require the second digest to be keccak of the first digest ALONE
+    and explicitly NOT keccak of (old state ++ first digest). -/
+def transcriptKat_reseed : Bool :=
+  let t0 := (Transcript.initFromBytes Bytes.empty).common (hashableFr (p := 17)) 7
+  let (d1, t1) := t0.squeeze
+  let (d2, t2) := t1.squeeze
+  let appended := ByteArray.mk (List.toArray (t0.state.data.toList ++ d1.data.toList))
+  t1.state == d1 &&
+  d2 == wordToBytesBE (keccak256 d1) &&
+  d2 ≠ wordToBytesBE (keccak256 appended) &&
+  t2.state == d2 && d1.size == 32 && d2.size == 32
+
+/-- The reseed value is the RAW digest, not the reduced challenge.
+
+    This is the property the fixture replay depends on: rust_trace.json records the
+    reduced challenge (docs/ecosystem.md section 11), so if the port reseeded on the
+    challenge the chain would still be self-consistent internally and only a direct
+    comparison would catch it. Here the discriminator is that seeding on the reduced
+    value gives a different next digest than seeding on the raw one. -/
 def transcriptKat_chain : Bool :=
-  let (_, t) := (Transcript.initFromBytes Bytes.empty).squeeze
-  let (d2, _) := t.squeeze
-  d2 == wordToBytesBE (keccak256 t.state)
+  let t0 := (Transcript.initFromBytes Bytes.empty).common (hashableFr (p := 17)) 7
+  let (d1, t1) := t0.squeeze
+  let c1 : Fr 17 := (t1.squeezeChallenge).1
+  let seededOnChallenge := wordToBytesBE (keccak256 (frToInputBE (p := 17) c1.val))
+  let (d2, _) := t1.squeeze
+  d2 == wordToBytesBE (keccak256 d1) &&
+  d2 ≠ seededOnChallenge &&
+  c1.val < 17
 
 /-- read_n reads n values in order and leaves the cursor after them. -/
 def transcriptKat_readN : Bool :=
