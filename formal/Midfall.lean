@@ -27,6 +27,9 @@ import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Relation
 import Midfall.Halo2.Spec.Degrees
 import Midfall.Halo2.Spec.Piop
+import Midfall.Generator.Filters
+import Midfall.Generator.Render
+import Midfall.Generator.YulGolden
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
 import Midfall.Security.Challenges

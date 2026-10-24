@@ -553,3 +553,71 @@ alpha-equivalence. That is the right notion - dropping comments is correct for
 semantics - but it must not be conflated with byte-identity. The two checks are
 different and both are needed: alpha-equivalence for `ir_refines`, byte-identity for
 `deployed_equivalence`.
+
+### 12.1 Construct-by-construct measurement (Phase 6 package 1)
+
+Each row was produced by elaborating the committed bytes with the `yul%` DSL and
+printing with `YulSemantics.EVM.print`, checked in
+`Midfall/Generator/YulGolden.lean` (structural gates) and
+`Midfall/Generator/Render.lean` (renderer notes). `V` =
+`deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`, `VK` =
+`Halo2VerifyingKey.sol` at the line given, `QN` =
+`templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`.
+
+| construct | committed bytes | vendored `EVM.print` | agree? |
+|---|---|---|---|
+| hex literal | `let scratch := 0x80` (V:201) | `let scratch := 128` | no - formatting |
+| hex, zero | `add(p, 0x00)` (V:329) **and** `add(SELECTOR_ACC_MPTR, 0x0)` (V:1584) | `add(p, 0)` | no - see 12.2 |
+| hex, 256 | `0x0100` (V:219) **and** `0x100` (V:540) | `256` | no - see 12.2 |
+| `hex_padded(64)` word | `0x0000...0013` (VK:66) | `19` | no - formatting |
+| precompile address | `staticcall(gas(), 0x0b, ...)` (V:219) | `staticcall(gas(), 11, ...)` | no - formatting |
+| decimal literal | `shr(240, mload(q_pc))` (V:1700) | identical | **yes** |
+| call spacing | `mcopy(add(scratch, 0x20), scratch, 0x20)` (V:207) | identical shape | **yes** |
+| zero-arg call | `gas()`, `returndatasize()` (V:219-220) | identical | **yes** |
+| assignment | `inv := mload(p)` (V:337) | identical | **yes** |
+| multi-name `let` | `let x_ok, x_hi, x_lo, x_is_id := load_acc_coord(...)` (V:570) | identical | **yes** |
+| indent step | 4 spaces (V:3112, level 5) | `pad n = 4*n` | **yes** |
+| one-statement `if` | inline (V:325) **and** multiline (V:221-223, :300, :401) | always multiline | no - formatting |
+| empty block | `for {} ... {} {` (V:484) **and** `for { } ... { } {` (QN:483) | `for {` LF `}` | no - formatting |
+| `for` header | inline (V:1320) **and** wrapped (Lagrange.yul:30) | always wrapped | no - formatting |
+| spread call | one arg per line (V:618-627) | one line | no - formatting |
+| `switch` arm indent | arms at the switch's own level (V:1694-1696) | same | **yes** |
+| `case` label | `case 0x05 {` (V:1696) | `case 5 {` | no - formatting |
+| `leave` | bare (V:495) | bare | **yes** |
+| whole-line comment | 971 of them in V | **no AST node exists** | not representable |
+| trailing comment | `mstore(...)        // base len` (V:329) | not representable | not representable |
+| text after a closing brace | `}            // ===` (V:1413) | not representable | not representable |
+| blank lines | 99 in V | none emitted | not representable |
+
+### 12.2 Two findings that survive the D-P13 relaxation
+
+* **The literal-spelling collision is not a formatting choice.** The committed file
+  spells 0 as both `0x00` (V:329) and `0x0` (V:1584), and 256 as both `0x0100`
+  (V:219) and `0x100` (V:540). All four elaborate to the same `Literal.number`, so
+  **no function from the vendored AST can reproduce the bytes** - not because
+  formatting is excluded by D-P13, but because two distinct committed texts share
+  one AST. Harmless for correctness under D-P13; fatal for the original
+  "byte for byte" phrasing of `deployed_equivalence`, which now needs either a
+  spelling channel on `Literal` (upstream) or an explicit statement that
+  byte-identity is a property of the template output stream and not of the AST.
+  Owner: whoever restates plan 9.6.
+* **Identifier equality is string equality, so alpha-renaming is NOT quotiented.**
+  `SyntaxEq.stmtsBeq` compares binder and callee names with `==`, and
+  `YulGolden.discriminates_ident_ok` pins that `let scratch := 0x80` and
+  `let other := 0x80` are unequal. On the Rust side the positional names come from
+  a counter (`next_var`, `format!("var{count}")`, yul_emit.rs:1140-1143) and the
+  expression-to-name cache is only ever `contains_key` / index / insert, never
+  iterated (yul_emit.rs:64, 1130-1134), so no HashMap ordering can leak into a
+  name. The port must nevertheless reproduce the counter's *emission order*, which
+  is a real obligation - and structural equality catches a miss, loudly. Owner:
+  Phase 6 `QuotientNumerator/YulEmit`.
+
+### 12.3 What the M3 golden test is now
+
+`Midfall/Generator/YulGolden.lean`: seven slices transcribed from the committed
+bytes into `yul%` quotations and compared as **token streams** - comments dropped,
+whitespace dropped, every numeric literal reduced to its value. That is the D-P13
+relation, and it is the same structural equality Phase 5's `irCheck` will use, so
+M3 and Phase 5 now share one notion of "the same Yul" over one AST type.
+Discrimination gates show the check can fail on a renamed identifier, a swapped
+argument, a changed literal value, and a changed statement count.
