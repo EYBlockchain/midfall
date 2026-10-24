@@ -36,6 +36,3 @@ echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean
 
-echo '== axioms of the frozen statements =='
-printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
-lake env lean /tmp/midfall-ax.lean
