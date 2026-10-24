@@ -676,7 +676,7 @@ nothing to run against until §9.2 is re-pinned.** The port itself is complete -
 Rust line on the verifier path now has a Lean counterpart or a documented skip.
 Owner: you (candidate D-P9 in docs/design.md).
 
-### R-28 no model of `AdmissiblePairing` exists, so nothing on the pairing path runs
+### R-28 no model of `AdmissiblePairing` exists, so nothing on the pairing path runs - RESOLVED (`2d9a3b0`)
 
 A consequence of D-P1 that nobody had priced: the port is abstract over
 \`AdmissiblePairing G₁ G₂ Gₜ\` and there is **no instance anywhere in the tree**. So
@@ -832,6 +832,59 @@ takes as input, and under `Features.solidity` the divergence is unreachable for
 honest proofs because every commitment is read once from the transcript into its own
 slot. Recorded as an option under R-7 rather than implemented. Owner: whoever
 settles R-7.
+### R-33 The Lean verifier now EXECUTES end to end and discriminates valid from invalid
+
+The most consequential thing to land in this project so far, and the first time any of
+it has run. `Midfall/Instances/ExponentModel.lean` (578 lines) supplies a model of
+`AdmissiblePairing` by representing each group as its **exponent lattice**:
+`Exp p := Multiplicative (ZMod p)`, pairing = multiplication of exponents, generators
+= exponent 1. Bilinearity holds by construction, `e g₁ g₂ ≠ 0` holds, `DecidableEq` is
+available, and `DualMSM.check` becomes a decidable linear equation over `ZMod p`.
+
+I verified the headline claim independently rather than trusting the report:
+
+    accepted pi in 0..16 = [11]        -- exactly one accepted
+    every pi runs to completion, consuming exactly 304 bytes
+
+So `Verifier.prepare` - `parseTrace` → `verifyAlgebraicConstraints` →
+`partiallyEvaluateIdentities` → `computeLinearizationCommitment` → `multiPrepare` →
+`DualMSM` - executes on a hand-built proof and the final equation separates the one
+valid π from sixteen invalid ones. Both channels are non-identity points and the
+right channel is a 7-term sum that genuinely cancels, so this is not a degenerate
+fixture passing by accident.
+
+**What this does and does not certify.** It shows the `AdmissiblePairing` hypotheses
+are *satisfiable* - D-P1's abstraction is not vacuous - and it makes the Exec code
+runnable. It is a model of exponent arithmetic, NOT of BLS12-381: every element is
+its own discrete log, so it can say nothing about DL hardness, binding, or the
+subgroup checks G1ADD omits. The real curve instance is still owed by
+`Assumptions/Pairing.lean`, and no theorem depends on this file (the dependency runs
+one way, Instances → Exec). Plan Section 5 explicitly sanctions the strategy: "if
+the pairing is not executable in Lean, it compares the pairing inputs and the Rust
+check result" - this is that fallback, made concrete.
+
+**Two harness-relevant facts it discovered**, both of which the conformance exporter
+will have to respect: a gate containing `Expression.selector` panics at mod.rs:532
+(virtual selectors are gone by VK time, so an exported CS must use `Expression.fixed`
+with a simple-selector flag), and every field element read from a proof must be
+canonical, so a naive all-`0x01` buffer fails as a transcript error - rule R7
+working, not a bug.
+
+**A correction to my own brief, again (see R-29).** I told the agent to build the
+carrier as `Additive (ZMod p)`. That can never carry a `Group`: mathlib's `Additive`
+only transfers multiplicative structure *into* additive structure
+(`TypeTags/Basic.lean:16-19`), so the tag for "`ZMod p` with its addition as a
+multiplicative group" is `Multiplicative`. My probe had failed on exactly this and I
+passed the failure on as an instruction. Two rounds in a row that my briefs were the
+weakest link; they need to be treated as code.
+
+Three class improvements it reported rather than making (the class is boundary-frozen):
+`MSMKZG.check` needs only `decEqG₁` but must pin `G₂`/`Gₜ` at every call site, which a
+one-group decidable class would fix; there is no field saying the generators are
+*bases* (`∀ x, ∃ s, gsmul s g₁ = x`), which is precisely the assumption the exponent
+model satisfies by construction and the harness leans on implicitly; and no
+`DecidableEq G₂`. Owner: `Common/Curve.lean`, low urgency, but the second one should
+be stated before the conformance soundness argument is written down.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

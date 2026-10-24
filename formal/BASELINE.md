@@ -263,7 +263,9 @@ rather than work:
   omits `G1Codec`, `FieldConsts` and `delta`), so the four `Exec/Native` sorries are
   blocked and there is no `verifyNative` for the conformance harness to run.
   Candidate D-P9 in docs/design.md proposes the re-pin.
-* R-28 - no model of `AdmissiblePairing` exists anywhere in the tree, so nothing on
+* ~~R-28~~ **resolved** - `Instances/ExponentModel.lean` (`2d9a3b0`) supplies an executable
+  model, and `Verifier.prepare` now runs end to end on a hand-built proof, accepting exactly
+  one of 17 candidate values (independently re-verified). See R-33.
   the pairing path is executable even once the arity is fixed.
 
 Until both are resolved, `conformance-rs` has no Lean side to compare against.
