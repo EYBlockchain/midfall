@@ -11,11 +11,7 @@ policy). The Phase 1 exit criterion is explicitly `Statements.lean compiles with
 sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
-| Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 32 | `def CircuitIndex.usable (idx : CircuitIndex ` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 44 | `(c : Cell) : Fr p := sorry` | Phase 4 (spec layer) |
-| Midfall/Halo2/Spec/Relation.lean | 51 | `(exprs : Array (Expression (Fr p))) (i : Nat` | Phase 4 (spec layer) |
+| Midfall/Halo2/Spec/Piop.lean | 56 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
 | Midfall/Statements.lean | 46 | `verifyMsgs (Gₜ := Gₜ) E keccak256 F params v` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 59 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 75 | `verifyMsgs (Gₜ := Gₜ) E keccak256 Features.s` | frozen statements (S1..S7 land later) |
