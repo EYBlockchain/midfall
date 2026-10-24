@@ -61,8 +61,28 @@ def CircuitIndex.usable (idx : CircuitIndex (Fr p)) : Array Nat :=
 structure Witness (idx : CircuitIndex (Fr p)) where
   advice : Nat -> Nat -> Fr p
 
-/-- Evaluate one expression at one row.
+/-- Instance column layout, reconciling two representations.
 
+    The Rust verifier takes instances as proof x column x row (plonk/verifier.rs:33,
+    and the port's parseTrace mirrors that nesting), while plan 9.3 gives the spec
+    a flat Array Fr. Column c therefore occupies the n entries starting at
+    c * idx.n, in column order. Under Supported.instShape (one committed column
+    then one public column) that is exactly the concatenation the deployment passes
+    as public inputs.
+
+    Before this, evalRow read column 0 for EVERY instance query, so a circuit with
+    two instance columns was silently misread rather than rejected - the shape bug
+    an external review flagged as an interface defect, not a cosmetic mismatch.
+    instLen is the well-formedness condition that makes the layout total. -/
+def instanceAt (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (c r : Nat) : Fr p :=
+  inst.getD (c * idx.n + r) 0
+
+/-- The flat instance length a well-formed index expects: one block of n per
+    declared instance column. -/
+def instLen (idx : CircuitIndex (Fr p)) : Nat :=
+  idx.cs.numInstanceColumns * idx.n
+
+/-- Evaluate one expression at one row.
     Three cases are totalised rather than faulted, because this is a Prop-level
     definition and the reference's panics are the Exec layer's job:
 
@@ -71,12 +91,10 @@ structure Witness (idx : CircuitIndex (Fr p)) where
       well-formed index never reaches this branch.
     * `challenge` evaluates to 0. Plan Section 13 excludes multi-phase circuits
       and S1/S6 assume `numChallenges = 0`, so no challenge occurs.
-    * `instance` reads `inst` at the rotated row. NOTE a shape tension to resolve
-      before the refinement theorem: plan 9.3 types `inst : Array Fr`, one flat
-      column, while plan 9.5's `Supported.instShape` requires
-      `numInstanceColumns = 2`. With more than one instance column this reads
-      column 0 only. Flagged rather than silently widened, because the signature
-      is normative. -/
+    * `instance` reads through `instanceAt`, which states the (column, row)
+      mapping into the flat array the plan's signature provides. An earlier
+      revision read column 0 for every instance query, silently misreading the
+      two-column shape that plan 9.5's `Supported.instShape` requires. -/
 def evalRow (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
     (e : Expression (Fr p)) (i : Nat) : Fr p :=
   match e with
@@ -87,7 +105,7 @@ def evalRow (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
       | none => 0
   | .fixed q => idx.fixed q.columnIndex (idx.rowAt i q.rotation)
   | .advice q => w.advice q.columnIndex (idx.rowAt i q.rotation)
-  | .instance q => inst.getD (idx.rowAt i q.rotation) 0
+  | .instance q => instanceAt idx inst q.columnIndex (idx.rowAt i q.rotation)
   | .challenge _ => 0
   | .negated a => -evalRow idx inst w a i
   | .sum a b => evalRow idx inst w a i + evalRow idx inst w b i
@@ -103,7 +121,7 @@ def cell (idx : CircuitIndex (Fr p)) (inst : Array (Fr p)) (w : Witness idx)
   match c.column.columnType with
   | .advice _ => w.advice c.column.index c.row
   | .fixed => idx.fixed c.column.index c.row
-  | .instance => inst.getD c.row 0
+  | .instance => instanceAt idx inst c.column.index c.row
 
 /-- The tuple of values a lookup input or table row takes: one entry per
     expression in the row, evaluated at row i. Plan 9.3 writes this as
@@ -203,8 +221,54 @@ def relKats_ok : Bool :=
   -- usable is either empty (blinding_factors faulted) or a prefix of the domain
   (relIdx.usable.size ≤ relIdx.n)
 
+
+/-- Two instance columns over the same n = 4 domain, so the flat array is
+    [c0r0..c0r3, c1r0..c1r3]. This exists because an untested fix is an unfixed
+    bug: before instanceAt, both queries read column 0 and every conjunct below
+    that distinguishes the columns would have failed. -/
+-- Built as a full record, not an update of relIdx: CircuitIndex.perm has type
+-- PermutationAssembly cs k, so it DEPENDS on cs and a record update of cs alone is
+-- rejected. Worth knowing before anyone tries to derive one index from another.
+def relIdx2Cs : ConstraintSystem (Fr 17) :=
+  { ConstraintSystem.default (F := Fr 17) with
+    numAdviceColumns := 1, adviceColumnPhase := #[⟨0⟩],
+    numFixedColumns := 1, numInstanceColumns := 2,
+    selectorFlags := #[{ isSimple := true, colIdx := some 0 }],
+    adviceQueries := #[({ index := 0, columnType := Any.adviceFirst }, Rotation.cur)],
+    fixedQueries := #[({ index := 0, columnType := Any.fixed }, Rotation.cur)],
+    instanceQueries := #[({ index := 0, columnType := Any.instance }, Rotation.cur), ({ index := 1, columnType := Any.instance }, Rotation.cur)] }
+
+def relIdx2 : CircuitIndex (Fr 17) :=
+  { cs := relIdx2Cs, k := 2, fixed := relIdx.fixed, repr := 7,
+    perm := { cycles := #[], sigmaCommitments := #[] } }
+
+def instFlat : Array (Fr 17) := #[1, 2, 3, 4, 11, 12, 13, 14]
+
+def instW : Witness relIdx2 := ⟨fun _ _ => 0⟩
+
+def instQ0 : Expression (Fr 17) :=
+  Expression.instance { index := some 0, columnIndex := 0, rotation := .cur }
+
+def instQ1 : Expression (Fr 17) :=
+  Expression.instance { index := some 1, columnIndex := 1, rotation := .cur }
+
+def instColumns_kats_ok : Bool :=
+  instLen relIdx2 == 8 &&
+  -- column 0 row 1 is 2, column 1 row 1 is 12: the two must differ
+  (evalRow relIdx2 instFlat instW instQ0 1 == (2 : Fr 17)) &&
+  (evalRow relIdx2 instFlat instW instQ1 1 == (12 : Fr 17)) &&
+  -- a rotation wraps inside its own column, not across into the next one
+  (evalRow relIdx2 instFlat instW
+     (Expression.instance { index := some 2, columnIndex := 0, rotation := .next }) 3
+     == (1 : Fr 17)) &&
+  -- cell dispatch agrees with evalRow
+  (cell relIdx2 instFlat instW
+     { column := { index := 1, columnType := Any.instance }, row := 0 }
+     == (11 : Fr 17))
+
 end Kats
 
 #eval Midfall.Halo2.Spec.relKats_ok   -- expect true
+#eval Midfall.Halo2.Spec.instColumns_kats_ok   -- expect true
 
 end Midfall.Halo2.Spec
