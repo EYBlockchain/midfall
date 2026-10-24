@@ -28,7 +28,12 @@ structure CircuitIndex (Fr : Type) where
   perm : PermutationAssembly cs k
   repr : Fr
 
-/-- The domain size. rust: poly/domain.rs:39 (`n = 1 << k`). -/
+/-- The domain size. rust: plonk/mod.rs:122-124 (`VerifyingKey::n`, returning
+    `self.domain.n()`) and poly/domain.rs:42 (`n = 1 << k`), so `n = 2^k`. Plan
+    9.3 writes `Fin idx.n` for witness rows and 9.4 writes `idx.n` in the `x` and
+    `x3` round errors; `CircuitIndex` carries only `k`, so `n` is derived here
+    rather than stored. Spec/Degrees.lean imports this rather than redefining it -
+    an earlier revision had both, which the build caught. -/
 def CircuitIndex.n (idx : CircuitIndex (Fr p)) : Nat := 2 ^ idx.k
 
 /-- Row arithmetic wraps around the domain: `next` on the last row lands on row 0.

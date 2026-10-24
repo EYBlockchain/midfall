@@ -60,13 +60,11 @@ variable {p : ℕ} [Fact (Nat.Prime p)]
 
 /-! ### 1. The numbers a `CircuitIndex` owns -/
 
-/-- The domain size. rust: plonk/mod.rs:122-124 (`VerifyingKey::n`, returning
-    `self.domain.n()`) and poly/domain.rs:42 (`let n = 1 << k`), so `n = 2^k`.
-    Plan 9.3 writes `Fin idx.n` for the witness rows and 9.4 writes `idx.n` in
-    the `x` and `x3` round errors; Spec/Relation.lean's `CircuitIndex` carries
-    only `k`, so `n` is derived here rather than stored. Exec/VerifyingKey.lean's
-    `domainConsistent` is the same fact at the VK level (`domain.n = 2^domain.k`). -/
-def CircuitIndex.n (idx : CircuitIndex (Fr p)) : Nat := 2 ^ idx.k
+/-! `CircuitIndex.n` lives in Spec/Relation.lean (it is needed there by `rowAt`
+    and `usable`); this file imports it rather than redefining it. rust:
+    plonk/mod.rs:122-124 (`VerifyingKey::n`) and poly/domain.rs:42
+    (`n = 1 << k`), so `n = 2^k`; Exec/VerifyingKey's `domainConsistent` is the
+    same fact at VK level. -/
 
 /-- The constraint-system degree, made total. rust: plonk/circuit.rs:2443-2467
     (`ConstraintSystem::degree`), ported as `ConstraintSystem.degree`, which is
