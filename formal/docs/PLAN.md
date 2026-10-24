@@ -557,6 +557,7 @@ Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C
 - **Subgroup checks.** EIP-2537 G1ADD does not check subgroup membership (`points_subgroup_checked`).
 - **Calldata canonicity.** Instance words ≥ r and trailing bytes (`calldata_canonical`) may be accepted.
 - **Accumulator mode.** Whether it matches Rust exactly depends on whether `verify_final` batches with the same α (checked in Phase 2). ANSWERED: it does not - see docs/REVIEW.md R-10, so the `accumulator = none` hypothesis on the exact equivalences is necessary.
+- **Truncated batching coefficients (R-22, BLOCKS S1/S3).** Under `truncated-challenges` - which is the deployed profile - the x1 and x4 batching coefficients are `truncate(x^j)`, not `x^j`. The batching equation is then not a polynomial in the challenge, so the degree argument behind `roundErr .x1` and `roundErr .x4` does not apply. Needs a decision: drop the feature from the supported profile, re-derive those two rows, or state S1/S3 only for `truncatedChallenges = false`. See docs/REVIEW.md R-22.
 - **Design-assessment findings.**
   - F2 (truncation) is handled by `chalMass`.
   - F3 becomes `CommittedInstanceZero`.

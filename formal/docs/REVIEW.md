@@ -22,6 +22,8 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/{Permutation,Logup,Trash} verifier paths | `b4ad69b` | sub-agent | agent | **signed off**: P1 and P3 re-verified against the Rust by hand |
 | Yul/Externals (EIP-2537 / modexp layouts) | `3a8ded1` | sub-agent | agent | **signed off**: it found two real bugs in committed code (R-20) |
 | Exec/VerifyingKey, Exec/Linearization | `047b4fb`, `5c221c3` | agent | - | R-1 resolved; see R-18, R-19 |
+| Exec/Verifier (parse_trace) | `fbe7ce8` | agent | - | schedule KATs pin byte accounting |
+| Spec/Degrees | `7da8cb9` | sub-agent | agent | **signed off** - and it found a soundness gap in §9.4 (R-22) |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -454,6 +456,83 @@ emitted frame (EIP-7883 exact for exponent r-2 is 4064), and the pinned revm
 prices modexp with the berlin formula, so neither EIP-7883 nor EIP-7823 is
 reachable from the M4 revm differential at all. That is a real limitation on what
 M4 can certify. Owner: Phase 3/5.
+### R-22 BLOCKER for S1/S3: under `truncated-challenges` the x1 and x4 rows of §9.4 are not provable as stated
+
+**This is the most important entry in this file.** It was found by the Spec/Degrees
+agent while deriving the point-set counts from the ported code, and I re-verified
+every step against the Rust independently:
+
+1. `truncate` (utils/arithmetic.rs:247-252) takes the low `nb_bytes` of the
+   little-endian repr, reads it as an integer and re-embeds it in the field. For the
+   scalar field `nb_bytes = ceil(ceil(255/8)/2) = 16`, so `truncate(x)` is the low
+   128 bits of the canonical representative of x.
+2. `truncated_powers(base) = powers(base).map truncate` (arithmetic.rs:255-257) - so
+   the j-th coefficient is `truncate(base^j)`, i.e. `(x^j mod r) mod 2^128`.
+3. Those are the batching coefficients: `powers_x1 = truncated_powers(x1)`
+   (poly/kzg/mod.rs:393-394) and `powers = truncated_powers(x4)` (:501-502 and
+   :520-521).
+4. `plonk/verifier.rs` contains **no** `truncate` at all - theta, beta, gamma,
+   trash, y and x are full `digest mod r` values. The feature is applied per-round,
+   not globally.
+
+Consequence. The x1 batching equation the verifier checks is
+`sum_j truncate(x1^j) * C_j = 0` in Fr. That is **not a polynomial equation in
+x1**: the coefficients are not polynomials in x1, they are truncations of powers.
+So the Schwartz-Zippel step that justifies `roundErr .x1 = chalMass(maxPolysPerSet)`
+and `roundErr .x4 = chalMass(numPointSets + 1)` does not apply, and neither does
+any degree-count argument for those two rows. `Features.solidity` has
+`truncatedChallenges := true` (BASELINE.md), so this is the *deployed* profile,
+not an exotic one. S1 and S3 as written in §9.4 are therefore unproven for the
+configuration the project is about.
+
+This is not obviously unsound - a truncated challenge still looks like ~128 bits
+of randomness per test, so the real bound may well be about 2^-128 per round - but
+it is a *different* bound with a *different proof*, and `maxPolysPerSet` is not
+the right quantity in it. Per plan Section 12 I am reporting it rather than
+quietly restating §9.4.
+
+Options, needing a decision:
+  (a) drop `truncated-challenges` from the supported profile - cheapest for the
+      proof, but it is what the Moonlight deployment uses, so it would exclude D1;
+  (b) re-derive the x1 and x4 rows for truncated powers (paper proof, likely a
+      2^-128-per-test argument over the truncation image rather than a degree
+      bound);
+  (c) keep the degree rows only for `truncatedChallenges = false` and state S1/S3
+      with that hypothesis, leaving the deployed configuration unproven.
+Recommendation: (b), with (c) as the fallback if the paper proof resists. Owner:
+you + docs/security.tex (plan Section 10 step 1, which does not exist yet).
+
+### R-23 three smaller corrections to §9.4's error budget
+
+* `chalMass` is applied per *feature* but the Rust truncates per *round*. For the
+  six untruncated rounds (theta, beta, gamma, trash, y, x) the plan's `s / 2^128`
+  is about 2^127 looser than the truth - sound, but it throws away 127 bits of
+  budget for free. For `x3`, which IS truncated (kzg/mod.rs:456-457), the true
+  per-value mass is `3*ceil(r/2^128)/2^256 ~ 1.5/2^128`, so `s/2^128` is **short
+  by a factor of about 1.5** - i.e. not an upper bound. Fix: `2*s/2^128`, or state
+  the mass as `ceil(3*ceil(r/2^128))/2^256`.
+* `roundErr .x3 = chalMass(maxSetSize * n)` can be smaller than the honest bad
+  set. x3 must avoid both the n-th roots of unity (n points) and every distinct
+  opening point (the denominator factors at kzg/mod.rs:478). With all-singleton
+  point sets the plan gives `n` and the truth is `n + numPointSets`. Spec/Degrees
+  keeps the plan formula verbatim and defines `badPointsX3Count` beside it; the
+  two must be reconciled before S1 is stated.
+* `srsBound = 2^extended_k = nextPowerOfTwo(n*(cs_degree-1))` may be **too small**:
+  if the proof needs `N >= n*(cs_degree+1)` then for d=3, n=16 the plan's bound is
+  32 while 64 is needed, and S1's `hN : idx.srsBound <= N` would not guarantee
+  enough SRS. The Rust never states a verifier-side SRS requirement, so this is a
+  paper-proof decision, not a code one.
+
+### R-24 duplicated `Chal` / `chalMass`
+
+`Midfall.Security.Chal` and `chalMass` already existed in Security/Challenges.lean
+(over `ENNReal`); Spec/Degrees now defines `Midfall.Halo2.Spec.Chal` and `chalMass`
+per §9.4's namespace. Both exist with the same intent and different types.
+Statements.lean imports the Security one and mentions neither `roundErr` nor
+`chalMass`, so collapsing them is free - but it must happen before S1 is stated,
+or the two will drift. Also note §9.4 lists **ten** Chal variants, not eleven: the
+transcript has no eleventh squeeze once user challenges are excluded by
+singlePhase. Owner: Phase 4.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
