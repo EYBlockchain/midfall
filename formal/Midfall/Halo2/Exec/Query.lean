@@ -31,6 +31,7 @@ inductive CommitmentLabel where
   | custom (s : String)
   /-- No label. -/
   | noLabel
+  deriving BEq
 
 /-- rust: proofs/src/poly/query.rs:27-38 (impl Display for CommitmentLabel).
     The strings are what the verifier trace prints, so they are part of the
