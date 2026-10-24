@@ -30,6 +30,12 @@ import Midfall.Halo2.Exec.Query
 import Midfall.Halo2.Exec.Transcript
 import Midfall.Halo2.Exec.Trash
 import Midfall.Halo2.Exec.VerifyingKey
+import Midfall.Halo2.Exec.Domain
+import Midfall.Halo2.Exec.Linearization
+import Midfall.Halo2.Exec.Pcs
+import Midfall.Halo2.Exec.Kzg.Msm
+import Midfall.Halo2.Exec.Kzg.Params
+import Midfall.Halo2.Exec.Kzg.Utils
 
 namespace Midfall.Halo2
 
@@ -406,4 +412,643 @@ end Kats
 #eval Midfall.Halo2.parseTrace_kats_ok          -- expect true
 #eval Midfall.Halo2.parseTrace_short_kats_ok    -- expect true
 #eval Midfall.Halo2.parseTrace_shape_kats_ok    -- expect true
+
+/-! ## verify_algebraic_constraints and prepare (plonk/verifier.rs:238-696)
+
+The algebraic half of the verifier: everything after the trace has been parsed.
+It reads the quotient limbs and every evaluation opening, squeezes the opening
+challenge `x`, partially evaluates the batched identities, builds the
+linearization commitment, assembles the multi-open query vector and hands it to
+`CS::multi_prepare`.
+
+### Why these live in a `Verifier` namespace
+
+Plan 9.2 - and the frozen `Midfall/Statements.lean` - already own the name
+`Midfall.Halo2.prepare` for the *interface* entry point, whose arity is pinned by
+the frozen file. The Rust `plonk::verifier::prepare` needs three pieces of
+environment that the plan's signature does not carry (next block), so the faithful
+port cannot share the name. The namespace mirrors the Rust module path instead:
+`Midfall.Halo2.Verifier.prepare` *is* `plonk::verifier::prepare`, and
+`Midfall.Halo2.prepare` stays the plan-9.2 shape.
+
+### The environment the plan's signature omits (REPORTED, plan Section 12)
+
+* `G1Codec G₁` - D-P6. Every commitment read and every commitment absorb needs
+  it (`hashableG1`), and under D-P1 there is no concrete curve to read one from.
+* `FieldConsts (Fr p)` - D-P1/R-3. `multi_prepare` needs `NUM_BITS` for
+  `truncate`/`truncated_powers` (kzg/mod.rs:394,457,502,521), and the deployed
+  profile has truncated-challenges ON, so this is not optional (R-22).
+* `delta : Fr p` - R-3 extended. `permutation.rs` uses `F::DELTA`, which
+  `FieldConsts` does not carry, so `partiallyEvaluateIdentities` takes it as an
+  explicit parameter and every caller has to thread it.
+
+`Pcs` is a parameter too, not a local: the Rust calls `CS::multi_prepare` through
+the trait (:651), so rule R9 makes the record a parameter and `Pcs.kzg` the
+instantiation the caller supplies.
+
+### Why nothing here is exercised end to end
+
+There is no model of `AdmissiblePairing` anywhere in the tree: design.md D-P1
+consequence 3 asks for "at least one *constructed* model", and
+`Assumptions/Pairing.lean` currently supplies only the moduli and the
+`pBaseKats_ok` check. So `Pcs`, `DualMSM`, `multiPrepare` and therefore
+`verifyAlgebraicConstraints` and `Verifier.prepare` are type-correct but not yet
+runnable - no fixture can be fed to them. The KATs below therefore target the two
+pure sub-steps, `readFixedEvals` and `collectQueries`, which is exactly where the
+R-14 shift and the query-order hazards live. Closing this is an `Assumptions/`
+item, not an `Exec/Verifier` one.
+
+### Skipped, with evidence -/
+
+/-! rust: proofs/src/plonk/verifier.rs:292-300, 305-324, 359-363, 382-390,
+    402-407, 441-473, 494-533, 544-574 - the `solidity-verifier-trace` blocks.
+    Same evidence as Exec/Permutation, Exec/Logup and Exec/Trash: the feature is
+    proofs/Cargo.toml:117, it is not one of the four flags Exec/Features.lean
+    carries under rule R8, and every block is a `solidity_trace::record_*` call
+    over a value the surrounding code already has. Note :441-473 recomputes
+    `blinding_factors` and `l_i_range` purely to log them, and :450 adds an
+    `(xn - 1).invert().unwrap()` that exists only inside that logging block, so
+    R-2's third face is NOT reachable on the real path. Dropping the blocks changes
+    no value, no error class and no transcript byte. -/
+
+namespace Verifier
+
+/-- rust: proofs/src/plonk/verifier.rs:410 (`Vec::insert`). INSERT, not replace:
+    `Vec::insert(i, x)` shifts the tail right and GROWS the vector, and it panics
+    when `i > len` (it allows `i == len`, i.e. append). Exec/Kzg/Utils.lean has
+    `listReplaceAt`; this is the other operation, and the difference is the whole
+    of docs/REVIEW.md R-14. -/
+def listInsertAt {α : Type} (xs : List α) (i : Nat) (v : α) (site : String) :
+    Except Fault (List α) :=
+  if i > xs.length then
+    .error (Fault.panic site)
+  else
+    .ok (xs.take i ++ [v] ++ xs.drop i)
+
+/-- rust: `i32::abs` at proofs/src/plonk/verifier.rs:348 (`min_rotation.abs()`).
+    docs/REVIEW.md R-5 named this site: `i32::MIN.abs()` overflows, and because
+    the check is inside `abs` itself rather than in an arithmetic operator it
+    fires in the release profile too (BASELINE.md), so it is a `Fault.panic` and
+    not a wrap. The port's `Rotation.value` can hold any `Int`, so the guard is
+    genuinely reachable here and is kept rather than argued away. -/
+def i32Abs (x : Int) (site : String) : Except Fault Int :=
+  if x = -2147483648 then .error (Fault.panic site)
+  else if x < 0 then .ok (-x) else .ok x
+
+/-- rust: proofs/src/plonk/verifier.rs:395-412, the fixed-evaluation read and the
+    simple-selector back-fill. Split out of `verifyAlgebraicConstraints` so the
+    R-14 shift is testable without a whole proof.
+
+    THE R-14 BUG, PORTED AS WRITTEN. The Rust reads
+    `num_fixed_columns - num_simple_selectors` evaluations and then walks
+    `fixed_queries` - which counts distinct (column, rotation) PAIRS, not columns
+    - inserting `F::ONE` at the query index. Two consequences, both real and both
+    kept:
+
+    1. `Vec::insert` SHIFTS. Every insert moves the already-present elements
+       right and grows the vector past the number of evaluations that were read,
+       so a later `fixed_evals[query_index]` (:641) reads a shifted slot. The
+       port must use `listInsertAt`, not `listReplaceAt`, and the query assembly
+       must index the POST-INSERT position - which is exactly what :633's
+       `.enumerate()` over ALL fixed queries produces.
+    2. `Vec::insert` panics when the index exceeds the length. R-14: "a real
+       reachable panic site for a circuit with a fixed column queried at two
+       rotations". Kept as `Fault.panic` at :410.
+
+    The `num_fixed_columns - num_simple_selectors` at :400 is a `usize`
+    subtraction. In the reference release profile (BASELINE.md) it WRAPS when the
+    constraint system claims more simple selectors than fixed columns, and
+    `read_n` of a wrapped count is a guaranteed `UnexpectedEof` - no proof buffer
+    is 2^64 scalars long - so the port reproduces the observable outcome directly
+    instead of materialising the number (rule R5, and the same treatment
+    Exec/Permutation gives the `cs_degree - 2` wrap). -/
+def readFixedEvals {p : ℕ} [Fact (Nat.Prime p)] (cs : ConstraintSystem (Fr p)) :
+    TranscriptM (Array (Fr p)) := do
+  let nRead := cs.numFixedColumns
+  let nSimple := cs.numSimpleSelectors
+  -- :400, the wrapped usize subtraction described above
+  if nSimple > nRead then
+    throw (Fault.error (Error.transcript IoErrorKind.unexpectedEof))
+  let read ← tmReadN (hashableFr (p := p)) (nRead - nSimple)
+  let steps := List.zip (List.range cs.fixedQueries.size) cs.fixedQueries.toList
+  let out ← steps.foldlM (init := (read.toList : List (Fr p))) fun acc step => do
+    if cs.hasSimpleSelectorCol step.2.1.index then
+      StateT.lift (listInsertAt acc step.1 1 "proofs/src/plonk/verifier.rs:410")
+    else
+      pure acc
+  pure out.toArray
+
+/-- rust: proofs/src/plonk/verifier.rs:576-647 (the `queries` vector).
+
+    THE ORDER IS LOAD-BEARING. Six `.zip` calls nest left-associatively, so a
+    per-proof element is `((((((committed, instance_evals), advice_coms),
+    advice_evals), permutation), lookups), trash)` and the whole flat_map
+    truncates to the SHORTEST of the seven inputs (rule R3) - a proof that
+    produced fewer per-proof vectors silently drops whole proofs from the batch
+    rather than failing. Inside each proof the chains run advice, instance
+    (committed columns only), permutation, lookups, trash; AFTER the flat_map come
+    the fixed queries (non-simple-selector only, enumerated over ALL fixed queries
+    so the index is the post-insert position - see R-14), then the common sigma
+    openings, then the linearization polynomial last. `multi_prepare` groups by
+    commitment and point set in this order, so a reordering changes x1..x4 and
+    with them the whole Fiat-Shamir binding.
+
+    Panic sites, all of them Rust slice indexes kept as `Fault.panic` (rule R4):
+    :605 advice commitment by column index, :606 advice eval by query index,
+    :616 committed instance by column index, :617 instance eval by query index,
+    :640 fixed commitment by column index, :641 fixed eval by query index. The
+    last is where R-14 bites: after enough inserts the vector is longer than the
+    read, and a shifted index reads the wrong evaluation. -/
+def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (nbCommitted : Nat) (vk : VerifyingKey (Fr p) G₁) (x : Fr p)
+    (committedInstances adviceCommitments : Array (Array G₁))
+    (instanceEvals adviceEvals : Array (Array (Fr p)))
+    (permutationsEvaluated : Array (Permutation.Evaluated (Fr p) G₁))
+    (lookupsEvaluated : Array (Array (Logup.Evaluated (Fr p) G₁)))
+    (trashcansEvaluated : Array (Array (Trash.Evaluated (Fr p) G₁)))
+    (fixedEvals : Array (Fr p)) (permutationsCommon : Permutation.CommonEvaluated (Fr p))
+    (linCom : VerifierQuery (Fr p) G₁) :
+    Except Fault (Array (VerifierQuery (Fr p) G₁)) := do
+  -- :580-587 the six left-nested zips
+  let zipped := List.zip (List.zip (List.zip (List.zip (List.zip
+      (List.zip committedInstances.toList instanceEvals.toList)
+      adviceCommitments.toList) adviceEvals.toList)
+      permutationsEvaluated.toList) lookupsEvaluated.toList) trashcansEvaluated.toList
+  -- :588-628 the flat_map body, per proof
+  let perProof ← zipped.mapM fun e => do
+    let ci := e.1.1.1.1.1.1
+    let ie := e.1.1.1.1.1.2
+    let ac := e.1.1.1.1.2
+    let ae := e.1.1.1.2
+    let pe := e.1.1.2
+    let le := e.1.2
+    let te := e.2
+    -- :600-609 advice queries, enumerated so the eval index is the query index
+    let adv ← (List.zip (List.range vk.cs.adviceQueries.size)
+        vk.cs.adviceQueries.toList).mapM fun q => do
+      let com ← Permutation.atIndex ac q.2.1.index "proofs/src/plonk/verifier.rs:605"
+      let ev ← Permutation.atIndex ae q.1 "proofs/src/plonk/verifier.rs:606"
+      pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+        (CommitmentLabel.advice q.2.1.index) com ev]
+    -- :610-623 instance queries, filter_map keeps only the committed columns
+    let inst ← (List.zip (List.range vk.cs.instanceQueries.size)
+        vk.cs.instanceQueries.toList).mapM fun q => do
+      if q.2.1.index < nbCommitted then
+        let com ← Permutation.atIndex ci q.2.1.index "proofs/src/plonk/verifier.rs:616"
+        let ev ← Permutation.atIndex ie q.1 "proofs/src/plonk/verifier.rs:617"
+        pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+          (CommitmentLabel.instance_ q.2.1.index) com ev]
+      else
+        pure []
+    -- :624 permutation.queries(vk, x). blinding_factors is computed INSIDE the
+    -- Rust fn (:150), so the i32::MAX panic at circuit.rs:2510 is observed here,
+    -- after this proof's advice and instance queries have been built.
+    let bf ← vk.cs.blindingFactors
+    let perm ← pe.queries (p := p) vk.domain bf x
+    -- :625-626 lookups then trashcans, flat over the per-proof vectors
+    let lk := le.flatMap (fun lq => lq.queries (p := p) vk.domain x)
+    let tr := te.flatMap (fun tq => tq.queries (p := p) x)
+    pure (adv.flatten ++ inst.flatten ++ perm.toList ++ lk.toList ++ tr.toList)
+  -- :629-644 fixed queries, AFTER the per-proof block, filtered to non-simple
+  let fixed ← ((List.zip (List.range vk.cs.fixedQueries.size)
+      vk.cs.fixedQueries.toList).filter
+      fun q => !vk.cs.hasSimpleSelectorCol q.2.1.index).mapM fun q => do
+    let com ← Permutation.atIndex vk.fixedCommitments q.2.1.index
+      "proofs/src/plonk/verifier.rs:640"
+    let ev ← Permutation.atIndex fixedEvals q.1 "proofs/src/plonk/verifier.rs:641"
+    pure (VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
+      (CommitmentLabel.fixed q.2.1.index) com ev)
+  -- :645-646 the sigma openings, then the linearization polynomial, last
+  let common := permutationsCommon.queries (p := p) vk.permutation x
+  pure ((perProof.flatten ++ fixed ++ common.toList ++ [linCom]).toArray)
+
+/-- rust: proofs/src/plonk/verifier.rs:238-652 (verify_algebraic_constraints).
+
+    The Rust is generic in `CS: PolynomialCommitmentScheme` and calls
+    `CS::multi_prepare` through the trait (:651), so under rule R9 the port takes
+    the `Pcs` record as a parameter and `Pcs.kzg` is the instantiation the caller
+    supplies - which is also why `FieldConsts` and the fewer-point-sets runtime
+    switch are NOT parameters here: the Rust does not see them either, they are
+    baked into the record by `Verifier.prepare`. `feat` is needed separately for
+    the two `#[cfg]` branches at :260 and :287 (rule R8), and `delta` because
+    `partially_evaluate_identities` takes it (R-3 extended).
+
+    The error at :651 is COLLAPSED: `.map_err(|_| Error::Opening)`. docs/REVIEW.md
+    R-8 records that this collapse is local to this call site and must not be
+    "improved": a short proof fails as `Opening` here but as
+    `Transcript(UnexpectedEof)` at :291, and the two-phase `prepare` +
+    `Guard::verify` path that Exec/Native composes does not collapse at all. Only
+    the `Result::Err` arm is mapped - a Rust panic is not a `Result`, so
+    `Fault.panic` propagates untouched, which is also what rule R4 requires. -/
+def verifyAlgebraicConstraints {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)]
+    [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (delta : Fr p) (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p)))) :
+    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := do
+  -- :260-261 rule R8: without the committed-instances feature the Rust builds one
+  -- EMPTY row per proof, so nb_committed_instances is 0 and every instance column
+  -- is reconstructed by inner product rather than read from the transcript.
+  let committed := if feat.committedInstances then committedInstances
+                   else arrayReplicate instances.size (#[] : Array G₁)
+  -- :263-265. NOTE: this is the ONLY shape check on this path. The package brief
+  -- said "is_empty and uniform row length, two InvalidInstances exits", but the
+  -- baseline source has ONE check here (:263-265); the uniform-row check is
+  -- :54-58 and the column-count check is :61-65, both inside parse_trace. Adding
+  -- the second check here would be an improvement, which rule R1 forbids; the
+  -- discrepancy is reported rather than patched.
+  if committed.isEmpty then
+    throw (Fault.error Error.invalidInstances)
+  -- :267-268
+  let nbCommitted := (committed[0]?.map (fun r => r.size)).getD 0
+  let numProofs := instances.size
+  -- :270-281 destructure the trace
+  let adviceCommitments := trace.adviceCommitments
+  let lookups := trace.lookups
+  let trashcans := trace.trashcans
+  let permutations := trace.permutations
+  let challenges := trace.challenges
+  let beta := trace.beta
+  let gamma := trace.gamma
+  let theta := trace.theta
+  let trashChallenge := trace.trashChallenge
+  let y := trace.y
+  -- :283-291 the quotient limbs, one commitment per limb; rule R8, the
+  -- single-h-commitment feature pins the count to 1 instead.
+  let nbQuotientComs :=
+    if feat.outerSingleHCommitment then 1 else vk.domain.getQuotientPolyDegree
+  let quotientLimbComs ← tmReadN (hashableG1 g1) nbQuotientComs
+  -- :302-304 the opening challenge
+  let x ← tmSqueezeChallenge
+  -- :326-327. `vk.n() - 1` is a usize subtraction, but n = 1 << k with k >= 0 so
+  -- n >= 1 always and it cannot underflow (domain.rs:42).
+  let splittingFactor := powVartime x (vk.n - 1)
+  let xn := splittingFactor * x
+  -- :329-377 the instance evaluations.
+  -- :330-339 the (min,max) fold. It is if / ELSE IF, so a rotation that equals
+  -- neither bound updates nothing, and the seed is (0,0): an all-positive query
+  -- set therefore gets min = 0, not the smallest positive rotation. Kept.
+  let rotBounds := vk.cs.instanceQueries.toList.foldl (init := ((0 : Int), (0 : Int)))
+    fun st q =>
+      let r := q.2.int
+      if r < st.1 then (r, st.2) else if r > st.2 then (st.1, r) else st
+  let minRot := rotBounds.1
+  let maxRot := rotBounds.2
+  -- :340-344 max_by(Ord::cmp).unwrap_or_default() over the FLAT map of column
+  -- lengths. For usize, max_by and a `foldl max` agree on the value, and the
+  -- default of an empty iterator is 0.
+  let maxInstanceLen := (instances.toList.flatMap (fun row =>
+      (row.toList.map (fun col => col.size)))).foldl (init := 0) max
+  -- :345-349 l_i_range over `-max_rotation .. max_instance_len as i32 +
+  -- |min_rotation|`. The Rust range is EXCLUSIVE at the top, both bounds are i32,
+  -- the `as i32` widening truncates (R-9) and `abs` aborts at i32::MIN (R-5). An
+  -- empty range (end <= start) yields an empty vector, which is what makes the
+  -- slice check below reachable rather than merely theoretical.
+  let absMin ← StateT.lift (i32Abs minRot "proofs/src/plonk/verifier.rs:348")
+  let windowStart := Permutation.negI32 maxRot
+  let windowStop := Permutation.wrapI32 (Permutation.asI32 maxInstanceLen + absMin)
+  let rotations :=
+    if windowStop > windowStart then
+      (List.range ((windowStop - windowStart).toNat)).map (fun i => windowStart + (i : Int))
+    else
+      []
+  let lIS := vk.domain.lIRange x xn rotations
+  -- :350-377 per proof, per instance query, in order: the transcript reads
+  -- interleave with the inner products exactly as the Rust map does.
+  let oneInstanceQuery (row : Array (Array (Fr p))) (q : Column × Rotation) :
+      TranscriptM (Fr p) := do
+    if q.1.index < nbCommitted then
+      -- :358 transcript.read()
+      tmRead (hashableFr (p := p))
+    else
+      -- :366 instances[column.index() - nb_committed_instances] is a slice index.
+      -- PANIC SITE (rule R4), and reachable: verify_algebraic_constraints does NOT
+      -- re-check the column count (that check is parse_trace's, and it uses `zip`,
+      -- so a committed/inst length mismatch leaves the extra rows unchecked).
+      let colIdx := q.1.index - nbCommitted
+      match row[colIdx]? with
+      | none => throw (Fault.panic "proofs/src/plonk/verifier.rs:366")
+      | some col =>
+        -- :367 offset = (max_rotation - rotation.0) as usize. Non-negative
+        -- because the fold's max is >= every rotation, so the cast is lossless.
+        let offset := (maxRot - q.2.int).toNat
+        -- :370 &l_i_s[offset..offset + len] PANICS when it overruns the window -
+        -- docs/REVIEW.md R-5's second named site. Reported at the slice line,
+        -- which is where Rust aborts, before compute_inner_product's own length
+        -- assert at arithmetic.rs:83 could fire.
+        let slice := (lIS.toList.drop offset).take col.size
+        unless slice.length == col.size do
+          throw (Fault.panic "proofs/src/plonk/verifier.rs:370")
+        StateT.lift (computeInnerProduct col slice.toArray)
+  let instanceEvalsList ← instances.toList.mapM (fun row =>
+      vk.cs.instanceQueries.toList.mapM (oneInstanceQuery row))
+  let instanceEvals := (instanceEvalsList.map (fun l => l.toArray)).toArray
+  -- :379-393 advice evaluations, one block of advice_queries.len() per proof.
+  let adviceEvalsList ← (List.range numProofs).mapM (fun _ =>
+      tmReadN (hashableFr (p := p)) vk.cs.adviceQueries.size)
+  let adviceEvals := adviceEvalsList.toArray
+  -- :395-412 fixed evaluations, with the R-14 insert back-fill.
+  let fixedEvals ← readFixedEvals vk.cs
+  -- :414 the common permutation evaluations, read once for the VK
+  let permutationsCommon ← Permutation.VerifyingKey.evaluate (p := p) vk.permutation
+  -- :416-439 the per-proof evaluated vectors, in the Rust's order
+  let permutationsEvaluatedList ← permutations.toList.mapM (fun pc =>
+      Permutation.Committed.evaluate (p := p) pc)
+  let permutationsEvaluated := permutationsEvaluatedList.toArray
+  let lookupsEvaluatedList ← lookups.toList.mapM (fun row =>
+      row.toList.mapM (fun l => Logup.Committed.evaluate (p := p) l))
+  let lookupsEvaluated := (lookupsEvaluatedList.map (fun r => r.toArray)).toArray
+  let trashcansEvaluatedList ← trashcans.toList.mapM (fun row =>
+      row.toList.mapM (fun t => Trash.Committed.evaluate (p := p) t))
+  let trashcansEvaluated := (trashcansEvaluatedList.map (fun r => r.toArray)).toArray
+  -- :475-493 partially evaluate the batched identities
+  let expressions ← StateT.lift (partiallyEvaluateIdentities (p := p) (delta := delta)
+    (vk := vk) (fixedEvals := fixedEvals) (instanceEvals := instanceEvals)
+    (adviceEvals := adviceEvals)
+    (permutationEvals := permutationsEvaluated.map (fun e => e.sets))
+    (lookupEvals := lookupsEvaluated.map (fun row => row.map (fun e => e.evaluated)))
+    (trashcanEvals := trashcansEvaluated.map (fun row => row.map (fun e => e.evaluated)))
+    (permutationsCommon := permutationsCommon) (x := x) (xn := xn) (beta := beta)
+    (gamma := gamma) (theta := theta) (trashChallenge := trashChallenge)
+    (challenges := challenges))
+  -- :535-543 the linearization commitment query
+  let linCom ← StateT.lift (computeLinearizationCommitment (F := Fr p) (G₁ := G₁)
+    expressions vk x y xn splittingFactor quotientLimbComs)
+  -- :575-647 the multi-open query vector
+  let queries ← StateT.lift (collectQueries (p := p) nbCommitted vk x
+    (committedInstances := committed) (adviceCommitments := adviceCommitments)
+    (instanceEvals := instanceEvals) (adviceEvals := adviceEvals)
+    (permutationsEvaluated := permutationsEvaluated)
+    (lookupsEvaluated := lookupsEvaluated) (trashcansEvaluated := trashcansEvaluated)
+    (fixedEvals := fixedEvals) (permutationsCommon := permutationsCommon)
+    (linCom := linCom))
+  -- :649-651 CS::multi_prepare(&queries, transcript).map_err(|_| Error::Opening)
+  let t ← StateT.get
+  match (pcs.multiPrepare queries).run t with
+  | .ok (guard, t2) =>
+      StateT.set t2
+      pure guard
+  | .error (Fault.panic site) => throw (Fault.panic site)
+  | .error (Fault.error _) => throw (Fault.error Error.opening)
+
+/-- rust: proofs/src/plonk/verifier.rs:659-696 (prepare). Thin by design:
+    parse_trace, then verify_algebraic_constraints, with the same committed and
+    instance arguments threaded into both (:682-684 and :691-693). The
+    trailing-bytes check the doc comment promises is the caller's -
+    `Transcript::assert_empty` - and Exec/Native does it there, which is where the
+    two-phase Rust composition does it (test.rs:377). -/
+def prepare {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)]
+    [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (delta : Fr p) (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (committedInstances : Array (Array G₁))
+    (instances : Array (Array (Array (Fr p)))) :
+    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := do
+  let trace ← parseTrace g1 vk committedInstances instances
+  verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
+    committedInstances instances
+
+end Verifier
+
+/-! ### Known-answer checks for the algebraic half
+
+    Same style as the schedule KATs above: hand-computed booleans over `Fr 17`
+    with `G₁ := Nat`, so no curve is needed. The two the package brief asks for
+    are here: the R-14 INSERT-shift check on `fixed_evals`, and the query-vector
+    order check that pins the first and last `CommitmentLabel`. -/
+
+section AlgebraicKats
+
+local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- A fixed column, as the query tables want it. -/
+def vCol (i : Nat) (t : Any) : Column := { index := i, columnType := t }
+
+/-- R-14: the INSERT-shift KAT, two-element example.
+
+    `num_fixed_columns = 3`, one simple selector on column 0, so the transcript
+    carries only `3 - 1 = 2` evaluations - here `[7, 11]`. The fixed queries are
+    `[(col1, cur), (col0, cur), (col2, cur)]`, i.e. the simple selector is the
+    SECOND query. `Vec::insert(1, ONE)` shifts `11` right, so the vector becomes
+    `[7, 1, 11]`: length 3, and the value read second now sits at index 2. A
+    `listReplaceAt` port would give `[7, 1]` of length 2, and every later
+    `fixed_evals[query_index]` would read the wrong slot. Hand-computed over
+    `Fr 17`. -/
+def r14Insert_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) :=
+    { ConstraintSystem.default (F := Fr 17) with
+      numFixedColumns := 3,
+      selectorFlags := #[{ isSimple := true, colIdx := some 0 }],
+      fixedQueries := #[(vCol 1 Any.fixed, Rotation.cur),
+                         (vCol 0 Any.fixed, Rotation.cur),
+                         (vCol 2 Any.fixed, Rotation.cur)] }
+  let buf := natToBytesLE 7 32 ++ natToBytesLE 11 32
+  match (Verifier.readFixedEvals (p := 17) cs).run (Transcript.initFromBytes buf) with
+  | .ok (ev, t) =>
+      (ev.map ZMod.val).toList == [7, 1, 11] && ev.size == 3 && t.pos == 64
+  | .error _ => false
+
+/-- R-14's panic half: `Vec::insert` aborts when the index exceeds the length.
+    Column 0 (the simple selector) is queried at cur AND next, and only one
+    evaluation is read, so the second insert is asked for index 2 of a length-1
+    vector. This is exactly the "fixed column queried at two rotations" case
+    docs/REVIEW.md R-14 predicts. -/
+def r14Panic_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) :=
+    { ConstraintSystem.default (F := Fr 17) with
+      numFixedColumns := 2,
+      selectorFlags := #[{ isSimple := true, colIdx := some 0 }],
+      fixedQueries := #[(vCol 1 Any.fixed, Rotation.cur),
+                         (vCol 1 Any.fixed, Rotation.next),
+                         (vCol 0 Any.fixed, Rotation.cur)] }
+  match (Verifier.readFixedEvals (p := 17) cs).run
+      (Transcript.initFromBytes (natToBytesLE 7 32)) with
+  | .error (Fault.panic "proofs/src/plonk/verifier.rs:410") => true
+  | _ => false
+
+/-- The wrapped `usize` subtraction at :400: a constraint system claiming more
+    simple selectors than fixed columns makes Rust's `num_fixed_columns -
+    num_simple_selectors` wrap and `read_n` hit EOF. The port reports the same
+    observable class without materialising 2^64. -/
+def r14Wrap_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) :=
+    { ConstraintSystem.default (F := Fr 17) with
+      numFixedColumns := 1,
+      selectorFlags := #[{ isSimple := true, colIdx := some 0 },
+                          { isSimple := true, colIdx := some 0 }] }
+  match (Verifier.readFixedEvals (p := 17) cs).run (Transcript.initFromBytes Bytes.empty) with
+  | .error (Fault.error (Error.transcript IoErrorKind.unexpectedEof)) => true
+  | _ => false
+
+/-- `listInsertAt` itself, pinned against `listReplaceAt` semantics: insert at 1
+    of `[7, 11]` grows to `[7, 1, 11]`; insert at the length appends; insert past
+    it is the :410 panic. -/
+def listInsertAt_kats_ok : Bool :=
+  (match Verifier.listInsertAt ([7, 11] : List Nat) 1 1 "x" with
+   | .ok l => l == [7, 1, 11]
+   | .error _ => false) &&
+  (match Verifier.listInsertAt ([7] : List Nat) 1 1 "x" with
+   | .ok l => l == [7, 1]
+   | .error _ => false) &&
+  (match Verifier.listInsertAt ([] : List Nat) 0 1 "x" with
+   | .ok l => l == [1]
+   | .error _ => false) &&
+  (match Verifier.listInsertAt ([] : List Nat) 1 1 "x" with
+   | .error (Fault.panic "x") => true
+   | _ => false)
+
+/-- `i32::abs` at :348 (R-5): `i32::MIN` aborts, everything else is the plain
+    absolute value. -/
+def i32Abs_kats_ok : Bool :=
+  (match Verifier.i32Abs (-2147483648) "site" with
+   | .error (Fault.panic "site") => true
+   | _ => false) &&
+  (match Verifier.i32Abs (-5 : Int) "site" with
+   | .ok v => v == 5
+   | .error _ => false) &&
+  (match Verifier.i32Abs (7 : Int) "site" with
+   | .ok v => v == 7
+   | .error _ => false)
+
+/-- The smallest constraint system `collectQueries` can run on: one advice query,
+    one COMMITTED instance query (so it survives the filter), one non-simple fixed
+    query, no permutation columns, no lookups, no trashcans. Over `Fr 17` with the
+    size-4 domain (`omega = 13`) and `x = 5`.
+
+    Expected assembly, read off the Rust chain order:
+      1. `Advice 0` at `x`, eval `advice_evals[0] = 8`, commitment 60
+      2. `Instance 0` at `x`, eval `instance_evals[0] = 7`, commitment 50
+         (column 0 < nbCommitted = 1, so it is NOT filtered)
+      3. nothing from the permutation (empty sets), lookups or trashcans
+      4. `Fixed 0` at `x`, eval `fixed_evals[0] = 9`, commitment 70 - AFTER the
+         per-proof block, and indexed into the POST-INSERT fixed vector
+      5. nothing from the common sigma openings (no commitments)
+      6. the linearization query, LAST
+    So: length 4, first label `Advice 0`, last label
+    `Custom "linearization_poly"`. -/
+def cqCs : ConstraintSystem (Fr 17) :=
+  { ConstraintSystem.default (F := Fr 17) with
+    numAdviceColumns := 1, adviceColumnPhase := #[⟨0⟩],
+    numInstanceColumns := 1, numFixedColumns := 1,
+    adviceQueries := #[(vCol 0 (Any.adviceFirst), Rotation.cur)],
+    instanceQueries := #[(vCol 0 Any.instance, Rotation.cur)],
+    fixedQueries := #[(vCol 0 Any.fixed, Rotation.cur)] }
+
+def cqVk : VerifyingKey (Fr 17) Nat :=
+  { domain := peDom, fixedCommitments := #[70], permutation := ⟨#[]⟩,
+    cs := cqCs, csDegree := 3, transcriptRepr := 7 }
+
+def collectQueries_kats_ok : Bool :=
+  let lin : VerifierQuery (Fr 17) Nat :=
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+  match Verifier.collectQueries (p := 17) 1 cqVk 5
+      (#[#[50]] : Array (Array Nat)) (#[#[60]] : Array (Array Nat))
+      (#[#[7]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
+      (#[{ coms := ⟨#[]⟩, sets := #[] }] : Array (Permutation.Evaluated (Fr 17) Nat))
+      (#[#[]] : Array (Array (Logup.Evaluated (Fr 17) Nat)))
+      (#[#[]] : Array (Array (Trash.Evaluated (Fr 17) Nat)))
+      (#[9] : Array (Fr 17)) ⟨#[]⟩ lin with
+  | .error _ => false
+  | .ok qs =>
+      qs.size == 4 &&
+      (qs.map (fun q => q.commitmentLabel)).toList ==
+        [CommitmentLabel.advice 0, CommitmentLabel.instance_ 0,
+         CommitmentLabel.fixed 0, CommitmentLabel.custom "linearization_poly"] &&
+      (qs.map (fun q => ZMod.val q.eval)).toList == [8, 7, 9, 3] &&
+      (qs.map (fun q => ZMod.val q.point)).toList == [5, 5, 5, 5] &&
+      (qs.map (fun q => match q.commitment with
+        | .onePiece c => c
+        | .linear _ _ _ => 0)).toList == [60, 50, 70, 99]
+
+/-- The committed-instance filter and the R-14 index coupling in one check.
+    `nbCommitted = 0` drops the instance query from the batch (there is no
+    commitment to open it against). The fixed table is
+    `[(col0, cur), (col1, cur), (col1, next)]` with column 0 a simple selector, so
+    the filter keeps query INDICES 1 and 2 - the post-insert positions - and the
+    evaluations they must read are `fixed_evals[1] = 9` and `fixed_evals[2] = 10`.
+    A replace-semantics port would read `[0] = 1` and `[1] = 9` instead. The
+    `next` rotation opens at `omega * x = 5 * 13 = 65 = 14` in `Fr 17`. -/
+def collectQueriesOrder_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) :=
+    { cqCs with
+      numFixedColumns := 2,
+      selectorFlags := #[{ isSimple := true, colIdx := some 0 }],
+      fixedQueries := #[(vCol 0 Any.fixed, Rotation.cur),
+                         (vCol 1 Any.fixed, Rotation.cur),
+                         (vCol 1 Any.fixed, Rotation.next)] }
+  let vk : VerifyingKey (Fr 17) Nat :=
+    { cqVk with cs := cs, fixedCommitments := #[70, 71] }
+  let lin : VerifierQuery (Fr 17) Nat :=
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+  match Verifier.collectQueries (p := 17) 0 vk 5
+      (#[#[]] : Array (Array Nat)) (#[#[60]] : Array (Array Nat))
+      (#[#[]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
+      (#[{ coms := ⟨#[]⟩, sets := #[] }] : Array (Permutation.Evaluated (Fr 17) Nat))
+      (#[#[]] : Array (Array (Logup.Evaluated (Fr 17) Nat)))
+      (#[#[]] : Array (Array (Trash.Evaluated (Fr 17) Nat)))
+      (#[1, 9, 10] : Array (Fr 17)) ⟨#[]⟩ lin with
+  | .error _ => false
+  | .ok qs =>
+      (qs.map (fun q => q.commitmentLabel)).toList ==
+        [CommitmentLabel.advice 0, CommitmentLabel.fixed 1,
+         CommitmentLabel.fixed 1, CommitmentLabel.custom "linearization_poly"] &&
+      (qs.map (fun q => ZMod.val q.eval)).toList == [8, 9, 10, 3] &&
+      (qs.map (fun q => ZMod.val q.point)).toList == [5, 5, 14, 5]
+
+/-- The :641 panic: one proof, one advice query, but the advice COMMITMENTS vector
+    is empty, so `advice_commitments[column.index()]" is out of bounds. Reported at
+    the advice line, not the fixed one, because the advice chain runs first. -/
+def collectQueriesPanic_kats_ok : Bool :=
+  let lin : VerifierQuery (Fr 17) Nat :=
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+  match Verifier.collectQueries (p := 17) 0 cqVk 5
+      (#[#[]] : Array (Array Nat)) (#[#[]] : Array (Array Nat))
+      (#[#[]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
+      (#[{ coms := ⟨#[]⟩, sets := #[] }] : Array (Permutation.Evaluated (Fr 17) Nat))
+      (#[#[]] : Array (Array (Logup.Evaluated (Fr 17) Nat)))
+      (#[#[]] : Array (Array (Trash.Evaluated (Fr 17) Nat)))
+      (#[9] : Array (Fr 17)) ⟨#[]⟩ lin with
+  | .error (Fault.panic "proofs/src/plonk/verifier.rs:605") => true
+  | _ => false
+
+/-- The seven-way zip truncates to the shortest input (rule R3): with two proofs'
+    worth of advice commitments but only one proof's worth of lookups, the second
+    proof contributes NOTHING at all - no error, no partial row. -/
+def collectQueriesZip_kats_ok : Bool :=
+  let lin : VerifierQuery (Fr 17) Nat :=
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+  match Verifier.collectQueries (p := 17) 0 cqVk 5
+      (#[#[50], #[51]] : Array (Array Nat)) (#[#[60], #[61]] : Array (Array Nat))
+      (#[#[7], #[7]] : Array (Array (Fr 17))) (#[#[8], #[8]] : Array (Array (Fr 17)))
+      (#[{ coms := ⟨#[]⟩, sets := #[] },
+         { coms := ⟨#[]⟩, sets := #[] }] : Array (Permutation.Evaluated (Fr 17) Nat))
+      (#[#[]] : Array (Array (Logup.Evaluated (Fr 17) Nat)))
+      (#[#[]] : Array (Array (Trash.Evaluated (Fr 17) Nat)))
+      (#[9] : Array (Fr 17)) ⟨#[]⟩ lin with
+  | .error _ => false
+  | .ok qs =>
+      -- one advice query per proof would give 2; the zip keeps only the first
+      (qs.map (fun q => q.commitmentLabel)).toList ==
+        [CommitmentLabel.advice 0, CommitmentLabel.fixed 0,
+         CommitmentLabel.custom "linearization_poly"]
+
+end AlgebraicKats
+
+#eval Midfall.Halo2.r14Insert_kats_ok                -- expect true
+#eval Midfall.Halo2.r14Panic_kats_ok                 -- expect true
+#eval Midfall.Halo2.r14Wrap_kats_ok                  -- expect true
+#eval Midfall.Halo2.listInsertAt_kats_ok             -- expect true
+#eval Midfall.Halo2.i32Abs_kats_ok                   -- expect true
+#eval Midfall.Halo2.collectQueries_kats_ok           -- expect true
+#eval Midfall.Halo2.collectQueriesOrder_kats_ok      -- expect true
+#eval Midfall.Halo2.collectQueriesPanic_kats_ok      -- expect true
+#eval Midfall.Halo2.collectQueriesZip_kats_ok        -- expect true
+
 end Midfall.Halo2

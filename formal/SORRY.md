@@ -11,10 +11,10 @@ policy). The Phase 1 exit criterion is explicitly `Statements.lean compiles with
 sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
-| Midfall/Halo2/Exec/Native.lean | 43 | `TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := sor` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 62 | `Option (List (Msg (Fr p) G₁)) := sorry` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 67 | `Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ) := so` | Phase 2 (L0 port) |
-| Midfall/Halo2/Exec/Native.lean | 72 | `Except Fault Unit := sorry` | Phase 2 (L0 port) |
+| Midfall/Halo2/Exec/Native.lean | 171 | `TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := sor` | BLOCKED: plan 9.2 arity lacks G1Codec/FieldConsts/delta - needs the D-P9 re-pin (see Midfall/Halo2/Exec/Native.lean header) |
+| Midfall/Halo2/Exec/Native.lean | 196 | `Option (List (Msg (Fr p) G₁)) := sorry` | BLOCKED: plan 9.2 arity lacks G1Codec/FieldConsts/delta - needs the D-P9 re-pin (see Midfall/Halo2/Exec/Native.lean header) |
+| Midfall/Halo2/Exec/Native.lean | 207 | `Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ) := so` | BLOCKED: plan 9.2 arity lacks G1Codec/FieldConsts/delta - needs the D-P9 re-pin (see Midfall/Halo2/Exec/Native.lean header) |
+| Midfall/Halo2/Exec/Native.lean | 214 | `Except Fault Unit := sorry` | BLOCKED: plan 9.2 arity lacks G1Codec/FieldConsts/delta - needs the D-P9 re-pin (see Midfall/Halo2/Exec/Native.lean header) |
 | Midfall/Halo2/Spec/Piop.lean | 26 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 32 | `def CircuitIndex.usable (idx : CircuitIndex ` | Phase 4 (spec layer) |
 | Midfall/Halo2/Spec/Relation.lean | 40 | `(e : Expression (Fr p)) (i : Nat) : Fr p := ` | Phase 4 (spec layer) |
