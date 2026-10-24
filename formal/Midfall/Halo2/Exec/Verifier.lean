@@ -74,6 +74,22 @@ def adviceReadOrder {F : Type} (cs : ConstraintSystem F) : List Nat :=
     (List.range cs.numAdviceColumns).filterMap fun i =>
       if (cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val then some i else none
 
+/-- Place `(index, value)` pairs into a vector of length `n`, faulting on a hole.
+
+    This models the Rust writing into a matrix that was pre-filled with
+    `CS::Commitment::default()` (verifier.rs:106-107): every slot must be written
+    exactly once, and a hole would leave the default point in the transcript -- a
+    DIFFERENT point, absorbed into every later challenge -- so it is a fault, not a
+    silent default. A duplicate index overwrites, which is also what the Rust does.
+    -/
+def scatterIndexed {α : Type} (n : Nat) (pairs : List (Nat × α)) (site : String) :
+    Except Fault (Array α) :=
+  let placed : List (Option α) :=
+    pairs.foldl (init := List.replicate n none) fun acc e =>
+      if e.1 < n then acc.take e.1 ++ [some e.2] ++ acc.drop (e.1 + 1) else acc
+  match placed.mapM (fun x => x) with
+  | some xs => .ok xs.toArray
+  | none => .error (Fault.panic site)
 /-- rust: plonk/verifier.rs:24-232 (parse_trace). -/
 def parseTrace (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁)
     (committed : Array (Array G₁)) (inst : Array (Array (Array (Fr p)))) :
@@ -104,32 +120,46 @@ def parseTrace (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁)
       tmCommon (hashableFr (p := p)) (Nat.cast col.size)
       for v in col do
         tmCommon (hashableFr (p := p)) v
-  -- verifier.rs:105-146: the phase loop. Advice commitments first, then the
-  -- challenges of that phase - and the challenge loop is INSIDE the phase loop
-  -- but OUTSIDE the per-proof loop, so all proofs' commitments for a phase are
-  -- read before that phase's challenge is squeezed.
-  let order := adviceReadOrder vk.cs;
-  let nAdv := order.length;
-  let adviceCommitments ← (List.range numProofs).foldlM
-    (init := #[]) fun acc _ => do
-      let reads ← tmReadN (hashableG1 g1) nAdv
-      -- scatter the read sequence back into column order. A hole here would mean
-      -- adviceReadOrder and the phase loop disagreed, i.e. a column whose phase is
-      -- outside cs.phases() - impossible for a Rust-built CS, so it is a panic site
-      -- rather than a silent default (the Rust would have left Commitment::default()
-      -- in the slot, which is a DIFFERENT point and would change the transcript).
-      let base : List (Option G₁) := List.replicate vk.cs.numAdviceColumns none;
-      let placed := (List.zip order reads.toList).foldl
-        (init := base) fun acc e =>
-          acc.take e.1 ++ [some e.2] ++ acc.drop (e.1 + 1)
-      match placed.mapM (fun x => x) with
-      | none => throw (Fault.panic "proofs/src/plonk/verifier.rs:118")
-      | some cols => pure (acc.push cols.toArray)
-  let challenges ← (List.range vk.cs.numChallenges).foldlM
-    (init := #[]) fun acc _ => do
-      let c ← tmSqueezeChallenge
-      pure (acc.push c)
-
+  -- verifier.rs:105-146: the phase loop. The nesting is
+  --   for phase in cs.phases():
+  --     for proof in proofs:            read that proof's columns OF THIS PHASE
+  --     for idx, ch in challenge_phase: squeeze the challenges OF THIS PHASE
+  -- so phase is the OUTERMOST axis: all proofs' phase-0 columns, then the
+  -- phase-0 challenges, then all proofs' phase-1 columns, and so on.
+  --
+  -- Reading every commitment first and squeezing every challenge afterwards --
+  -- the obvious transcription, and what an earlier revision of this file did --
+  -- agrees only when there is one phase, or one proof and no challenges. That is
+  -- exactly the supported profile (WellFormed.singlePhase), so no theorem here
+  -- depends on it, but rule R1 asks for the loop the Rust has and the divergence
+  -- is a different transcript for any multi-phase key. Found by external review;
+  -- pinned by phaseInterleave_kats_ok below.
+  let (advPairs, chalPairs) ← vk.cs.phases.foldlM
+      (init := ((List.range numProofs).map (fun _ => ([] : List (Nat × G₁))),
+                ([] : List (Nat × Fr p))))
+      (fun st ph => do
+        let cols := (List.range vk.cs.numAdviceColumns).filterMap fun i =>
+          if (vk.cs.adviceColumnPhase[i]?.map (fun q => q.val)) == some ph.val
+          then some i else none;
+        let adv ← (List.range numProofs).foldlM (init := st.1) fun acc k => do
+          let reads ← tmReadN (hashableG1 g1) cols.length;
+          pure ((acc.take k) ++
+                [((acc[k]?.getD []) ++ (List.zip cols reads.toList))] ++
+                (acc.drop (k + 1)))
+        let chalIdxPhase := List.zip (List.range vk.cs.numChallenges)
+          vk.cs.challengePhase.toList
+        let chals ← chalIdxPhase.foldlM (init := st.2) fun acc e =>
+          if e.2.val == ph.val then do
+            let c ← tmSqueezeChallenge
+            pure (acc ++ [(e.1, c)])
+          else pure acc
+        pure (adv, chals))
+  let adviceCommitments ← advPairs.foldlM (init := #[]) fun acc pairs => do
+    let row ← StateT.lift (scatterIndexed vk.cs.numAdviceColumns pairs
+      "proofs/src/plonk/verifier.rs:118")
+    pure (acc.push row)
+  let challenges ← StateT.lift (scatterIndexed vk.cs.numChallenges chalPairs
+    "proofs/src/plonk/verifier.rs:134")
   -- verifier.rs:150: theta keeps the lookup columns linearly independent
   let theta ← tmSqueezeChallenge
   -- verifier.rs:155-162: read the lookup multiplicities, one per proof per
@@ -272,8 +302,14 @@ def partiallyEvaluateIdentities {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   let zipped := List.zip
     (List.zip (List.zip (List.zip adviceEvals.toList instanceEvals.toList)
                 permutationEvals.toList) lookupEvals.toList) trashcanEvals.toList
-  let rows ← zipped.foldlM (init := #[]) fun acc e =>
-    oneProof e.1.1.1.1 e.1.1.1.2 e.1.1.2 e.1.2 e.2
+  -- foldlM here MUST thread the accumulator: oneProof returns ONE proof's terms,
+  -- so a body that ignores the accumulator silently keeps only the LAST proof's
+  -- identities. With numProofs = 1 - every path the plan supports - that is
+  -- invisible, which is how it survived the single-proof KAT.
+  let rows ← (zipped.foldlM (init := (#[ ] : Array (Option Nat × Fr p)))
+    fun acc e => do
+      let row ← oneProof e.1.1.1.1 e.1.1.1.2 e.1.1.2 e.1.2 e.2
+      pure (acc ++ row))
   pure rows
 section Kats
 
@@ -406,6 +442,55 @@ def partiallyEvaluate_kats_ok : Bool :=
   | .error _ => false
 
 #eval Midfall.Halo2.partiallyEvaluate_kats_ok   -- expect true
+
+
+-- Regression for the phase-interleaving fix. Two advice columns in DIFFERENT
+-- phases and two proofs. The Rust order is: read proof0.col0, read proof1.col0,
+-- (squeeze phase-0 challenges), read proof0.col1, read proof1.col1. So with
+-- proof bytes 1,2,3,4 the matrices must be proof0 = [1,3] and proof1 = [2,4].
+-- The old code read 1,3 then 2,4 per proof, which gives proof0 = [1,3] by
+-- accident for the FIRST proof but proof1 = [3,4] - so the second row is what
+-- distinguishes the two orders.
+def phaseInterleave_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) :=
+    { ConstraintSystem.default (F := Fr 17) with
+      numAdviceColumns := 2, adviceColumnPhase := #[⟨0⟩, ⟨1⟩], numChallenges := 1,
+      challengePhase := #[⟨0⟩], numInstanceColumns := 0 };
+  match EvaluationDomain.new (F := Fr 17) fc17 3 2 with
+  | .error _ => false
+  | .ok dom =>
+      let vk : VerifyingKey (Fr 17) Nat :=
+        { domain := dom, fixedCommitments := #[], permutation := ⟨#[]⟩, cs := cs,
+          csDegree := 3, transcriptRepr := 7 };
+      let proof : Bytes := ByteArray.mk (((natToBytesBE 1 48).data.toList ++
+        (natToBytesBE 2 48).data.toList ++ (natToBytesBE 3 48).data.toList ++
+        (natToBytesBE 4 48).data.toList).toArray);
+      -- two proofs, each with no ordinary instance columns
+      let inst : Array (Array (Array (Fr 17))) := #[(#[] : Array (Array (Fr 17))), #[]];
+      match (parseTrace natG1Codec vk (#[#[], #[]]) inst)
+            (Transcript.initFromBytes proof) with
+      | .error _ => false
+      | .ok (tr, _) =>
+        (tr.adviceCommitments[0]?.map (fun r => r.toList)) == some [1, 3] &&
+        (tr.adviceCommitments[1]?.map (fun r => r.toList)) == some [2, 4] &&
+        tr.challenges.size == 1
+
+-- Regression for the dropped-accumulator bug: with two proofs the result must
+-- carry BOTH proofs' gate terms. Gate 1 is advice0*advice1 (tagged Some 1), gate
+-- 2 is advice0+advice1 (untagged); proof 0 has evals [3,4] giving 12 and 7,
+-- proof 1 has [5,6] giving 30 mod 17 = 13 and 11 mod 17 = 11.
+def multiProofPartiallyEvaluate_kats_ok : Bool :=
+  match partiallyEvaluateIdentities (p := 17) (delta := 2) peVk #[]
+      (#[#[], #[]]) (#[#[3, 4], #[5, 6]]) (#[#[], #[]]) (#[#[], #[]])
+      (#[#[], #[]]) ⟨#[]⟩
+      (x := 1) (xn := 1) (beta := 2) (gamma := 3) (theta := 4)
+      (trashChallenge := 5) #[] with
+  | .ok a => (a.toList.map (fun e => (e.1, ZMod.val e.2))) ==
+      [((some 1 : Option Nat), 12), (none, 7), ((some 1 : Option Nat), 13), (none, 11)]
+  | .error _ => false
+
+#eval Midfall.Halo2.phaseInterleave_kats_ok             -- expect true
+#eval Midfall.Halo2.multiProofPartiallyEvaluate_kats_ok -- expect true
 
 end Kats
 
