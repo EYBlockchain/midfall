@@ -452,3 +452,41 @@ returning exactly the scheduled constants curated item 4a made exact, turning
 L2's "sufficient gas" hypothesis into a checkable equality. Exact gas is out of
 scope by Section 1, so this is an option, not a task.
 
+## 11. What `rust_trace.json` can and cannot drive (Phase 3 finding)
+
+`proofs/solidity-verifier/fixtures/*/rust_trace.json` records, per event, the tag,
+the 48-byte compressed point or the 32-byte big-endian scalar, and for squeezes the
+**challenge value**. It is tempting to treat that as a replay script: absorb each
+recorded item, squeeze at each recorded challenge, compare. That does not work, for
+two independent reasons established by experiment on the poseidon fixture.
+
+1. **The recorded challenges are reduced, the transcript reseeds on the raw**
+   **digest.** `Transcript.squeeze` sets `state := digest`, while
+   `squeezeChallenge` returns `digest mod r`. The trace stores the latter. All 10
+   poseidon challenges are `< r`, where a raw digest would be below `r` with
+   probability about 0.34 — so 10/10 is conclusive. Reduction mod `r` is not
+   invertible, so the state cannot be reconstructed from the trace and no link in
+   the chain can be seeded from it, including links that look local (beta depends on
+   the raw digest behind theta, not on the recorded theta).
+2. **The absorb prefix is not recorded at all.** Between `vk_repr` and the first
+   read, `parse_trace` absorbs the committed instance commitments and, per instance
+   column, the column length and its values. None of that appears in the trace. For
+   poseidon the shape is known only from `zk_stdlib::verify`, which passes
+   `&[committed_pi]` with `committed_pi = identity` when the caller supplies
+   `None`, and `&[&pi]` with `pi = format_instance(instance)` whose length must
+   equal `vk.nb_public_inputs` — a VK field the trace does not carry.
+
+Consequence for the harness: a replay needs the digest stream, not the challenge
+stream. Either the exporter records the raw digest at every squeeze, or the Lean
+side must reproduce the whole chain from the VK and the instances — which is the
+point of `verifyNative` in the first place. So the minimal `vk.json` is required,
+but it is much smaller than plan Section 5's "full cs": to drive the transcript
+replay one needs `nb_public_inputs`, the committed-instance count and values, the
+instance column values, `cs_degree`, `k`, `omega`, and `transcript_repr`. The full
+constraint system is only needed to reproduce the *evaluation* reads, which come
+later and are already in the trace.
+
+This is worth recording because it changes the exporter's cost: `ConstraintSystem`
+has no serde derives, so emitting the "full cs" means hand-writing a serializer for
+about twenty fields plus `Expression` trees inside `proofs/src` — a baseline bump.
+The reduced schema above avoids that entirely.
