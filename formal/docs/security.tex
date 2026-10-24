@@ -1,0 +1,298 @@
+% | docs/security.tex
+%
+% The paper proof of the Midfall Halo2 verifier's knowledge soundness, and of the
+% deployed Solidity contract's. Plan Section 10 step 1 says write this BEFORE the
+% Lean proofs; it is also where the findings recorded in docs/REVIEW.md have to be
+% resolved, because several of them are statements about the protocol that the
+% Rust source cannot answer.
+%
+% STATUS: skeleton with the settled parts written out and every open question
+% named. Environments marked OPEN are not claims.
+
+\documentclass[11pt]{article}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage[margin=1in]{geometry}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{assumption}[theorem]{Assumption}
+\newtheorem{open}[theorem]{Open problem}
+\newcommand{\Fr}{\mathbb{F}_r}
+\newcommand{\Gone}{\mathbb{G}_1}
+\newcommand{\Gtwo}{\mathbb{G}_2}
+\newcommand{\GT}{\mathbb{G}_T}
+\newcommand{\Hash}{\mathsf{H}}
+\title{Knowledge soundness of the Midfall Halo2 verifier and of its deployed
+Solidity lowering \\ \large (working draft)}
+\author{Midfall formal project}
+\date{Baseline \texttt{formal-baseline-v1}, Lean port at \texttt{formal/}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We state and prove, in the algebraic group model with a random oracle, knowledge
+soundness for the verifier implemented in \texttt{proofs/src} and ported to Lean in
+\texttt{formal/Midfall/Halo2/Exec}, and for the Solidity/Yul contract generated from
+a verifying key by \texttt{proofs/solidity-verifier}. The security argument is a
+reduction to $q$-DLOG. The lowering argument is a semantic equivalence at the call
+boundary between the Lean verifier and the compiled contract, for \emph{every} hash
+function, which is what lets the same adversary bound transfer to the deployed
+bytecode. Five things are assumed rather than proved: bilinearity and non-degeneracy
+of the pairing as the ecosystem implements it, the EIP-2537 and EIP-198 precompile
+semantics, $q$-DLOG, that the imported verifying-key representative binds the key,
+and that the Lean port is faithful to the Rust. Section~\ref{sec:open} lists what is
+not yet established, including two findings that currently make statements in the
+project plan unprovable as written.
+\end{abstract}
+
+\section{The protocol}
+
+One round, single-phase. A constraint system $\mathcal{C}$ over $\Fr$ with $n=2^k$
+rows, advice columns, instance columns, fixed columns, a permutation argument,
+\texttt{logUp} arguments and trash arguments. The prover commits, the verifier
+squeezes challenges from a Keccak hash chain, and the final test is one pairing
+equation.
+
+\begin{definition}[transcript]\label{def:transcript}
+The transcript is a sponge over byte strings: absorb concatenates into a buffer,
+squeeze is $\Hash(\mathit{state})$, after which the state \emph{becomes} that
+digest (\texttt{transcript/mod.rs:139-141}). A challenge is the \emph{big-endian}
+digest reduced mod $r$ (\texttt{implementors.rs:20-39}). The wire encoding of a
+scalar is little-endian while its transcript encoding is big-endian, and a
+non-canonical repr is rejected (rule R7). Both are pinned by known-answer tests in
+the port, after finding R-20 showed that a self-consistent test cannot detect a
+byte-order error.
+\end{definition}
+
+\begin{definition}[rounds]\label{def:rounds}
+In order: $\theta$ after the advice commitments; $\beta,\gamma$ after the lookup
+multiplicities; $\mathit{trash}$ after the permutation and lookup commitments; $y$
+after the trash commitments; then the quotient limb commitments; then $x$. The
+multi-open challenges $x_1,x_2,x_3,x_4$ are squeezed inside
+\texttt{multi\_prepare}. This order is the ported \texttt{parse\_trace} plus
+\texttt{verify\_algebraic\_constraints}, and it is \emph{protocol}: reordering two
+squeezes changes the language the verifier accepts, not merely its output.
+\end{definition}
+
+\section{Assumptions}
+
+\begin{assumption}[$q$-DLOG]\label{as:qdlog}
+For the SRS size $N$ in use, $q$-DLOG is hard in $\Gone$: given
+$\{\tau^i G_1\}_{i<N}$, no ppt adversary outputs $\tau$ with non-negligible
+probability. ArkLib's \texttt{Groups.arsdhAssumption} is the closest library
+statement; whether we reduce to it or state our own is a Phase-4 choice.
+\end{assumption}
+
+\begin{assumption}[pairing]\label{as:pairing}
+$e : \Gone \times \Gtwo \to \GT$ is bilinear and non-degenerate. We do not prove
+this of the ecosystem implementation: \texttt{Assumptions/Pairing.lean} carries it
+as a named class \texttt{AdmissiblePairing} with the hypotheses as fields, and the
+concrete BLS12-381 instance is validated differentially rather than proved (D-P1).
+\end{assumption}
+
+\begin{assumption}[key binding]\label{as:vk}
+The verifying key's transcript representative $\mathit{repr}$ is the image of the
+key under a collision-resistant function of the constraint system and commitments.
+The port \emph{imports} this scalar: recomputing it requires byte-exact Rust
+debug formatting for two types, which the upstream code itself flags as provisional
+(finding R-1). Everything downstream is bound to it, so the binding is an assumption
+about the importer, checked by conformance rather than proved.
+\end{assumption}
+
+\begin{assumption}[precompiles]\label{as:precompiles}
+EIP-2537 \texttt{G1ADD}, \texttt{G1MSM}, \texttt{PAIRING\_CHECK} and EIP-198/7883
+\texttt{MODEXP} behave as the EIP texts specify, byte for byte.
+\texttt{Yul/Externals.lean} states the relations; they are validated against revm in
+Phase 5. Two EIP subtleties the port records: \texttt{G1ADD} performs no subgroup
+check, and \texttt{G1MSM} does not reduce scalars mod $r$.
+\end{assumption}
+
+\section{The per-round bad-point analysis}\label{sec:rounds}
+
+Each challenge $c$ is squeezed after the commitments that could depend on it, so
+$c$ is uniform in $\Fr$ given the transcript. For a batched identity
+$P(c) = \sum_i c^i P_i$, the standard step is: if the $P_i$ are not all zero as
+polynomials then $P$ has at most $\deg P$ roots, so
+$\Pr_c[P(c)=0] \le \deg P / r \le 3\deg P/2^{256}$. The factor $3$ is
+$\lceil 2^{256}/r\rceil$, which is \emph{proved} in \texttt{Spec/Degrees.lean}
+from CompPoly's primality certificate for $r$.
+
+\begin{open}[nonzeroness]\label{op:nonzero}
+For each round we must show the batched polynomial is not identically zero, given
+that the prover's commitments are not representations of a satisfying witness. This
+is the actual content of the proof and it is not a fact about the Rust code. The
+counts in \texttt{Spec/Degrees.lean} charge each identity its full degree and sum,
+which is sound \emph{if} this holds. Sources: PLONK for the gate and permutation
+parts, the logUp paper for the lookup part, and the trash argument, which is ours.
+\end{open}
+
+\subsection{Where the standard argument currently fails}\label{sec:truncation}
+
+Finding R-22. The deployed profile enables \texttt{truncated-challenges}, and the
+truncation is applied \emph{per round}, not globally: $\theta,\beta,\gamma$,
+$\mathit{trash}$, $y$ and $x$ are full $\Hash \bmod r$, while the multi-open
+batching coefficients are $\mathsf{trunc}(x_1^j)$ and $\mathsf{trunc}(x_4^j)$
+where $\mathsf{trunc}$ keeps the low 128 bits of the canonical representative
+(\texttt{arithmetic.rs:247-257}, \texttt{kzg/mod.rs:393,501,520}). The batching
+equation is then
+\[ \sum_j \mathsf{trunc}(x_1^j)\, C_j = 0 \quad\text{in } \Fr, \]
+which is \emph{not} a polynomial equation in $x_1$. No degree bound applies, so
+$\mathsf{roundErr}(x_1)$ and $\mathsf{roundErr}(x_4)$ as written in the plan are
+unproven for the configuration we deploy.
+
+\begin{open}[truncated batching]\label{op:trunc}
+Bound, for a fixed nonzero tuple $(C_j)$ with known representations, the number of
+$x_1 \in \Fr$ with $\sum_j \mathsf{trunc}(x_1^j) C_j = 0$. Heuristically the
+truncation leaves about $2^{128}$ bits of effective randomness per test, which
+would give a bound of shape $m/2^{128}$ for a different $m$ than the maximum number
+of polynomials in a point set; proving it needs to relate the integer map
+$x \mapsto x^j \bmod r \bmod 2^{128}$ to polynomial structure. Options: prove
+this; drop \texttt{truncated-challenges} from the supported profile; or state the
+theorems only for \texttt{truncatedChallenges = false}, which would exclude the
+deployment.
+\end{open}
+
+Two smaller corrections the same analysis forces (R-23): the mass for a truncated
+round is $\lceil 3\lceil r/2^{128}\rceil\rceil/2^{256} \approx 1.5/2^{128}$,
+so $s/2^{128}$ is \emph{not} an upper bound for $x_3$, being short by a factor of
+about $1.5$; and $x_3$ must avoid both the $n$-th roots of unity and every distinct
+opening point, so the honest count is $n + \sum_i |S_i|$, not
+$\max_i |S_i| \cdot n$.
+
+\section{The verifier's final test}
+
+Without an accumulator the verifier accepts iff
+$e(L, sG_2)\cdot e(R, -G_2) = 1$ for the DualMSM $(R,L)$ built by
+\texttt{multi\_prepare}. With one, the contract batches: accept iff
+$e(R+\alpha R', G_2)\cdot e(L+\alpha L', -sG_2) = 1$ where
+$\alpha = \Hash(\mathit{tag} \,\|\, \mathit{repr} \,\|\, R \,\|\, L
+\,\|\, R' \,\|\, L') \bmod r$ with $0 \mapsto 1$.
+
+\begin{lemma}[batching completeness]\label{le:batchcomp}
+If both pairing products are $1$, the batched equation holds for every $\alpha$.
+\end{lemma}
+\begin{proof}
+Bilinearity (Assumption~\ref{as:pairing}) gives
+$e(R+\alpha R',G_2)\,e(L+\alpha L',-sG_2) =
+[e(R,G_2)\,e(L,-sG_2)]\cdot[e(R',G_2)\,e(L',-sG_2)]^{\alpha} = 1$.
+\end{proof}
+
+\begin{lemma}[at most one bad $\alpha$]\label{le:batchroot}
+If the two separate checks do not both pass, the set of $\alpha$ for which the
+batched check passes has at most one element.
+\end{lemma}
+\begin{proof}
+Write $X = e(R,G_2)\,e(L,-sG_2)$ and $Y = e(R',G_2)\,e(L',-sG_2)$. The batched
+test is $X Y^{\alpha} = 1$. If $Y = 1$ then $X \ne 1$, else both checks pass, and
+there is no solution; if $Y \ne 1$ there is exactly one solution.
+\end{proof}
+
+\begin{theorem}[$\alpha$-batching soundness]\label{th:alpha}
+For an adversary making $q_{\Hash}$ oracle queries, the probability that the
+batched check passes while the two separate checks do not both pass is at most
+$6(q_{\Hash}+1)/2^{256}$.
+\end{theorem}
+\begin{proof}[Proof sketch]
+By Lemma~\ref{le:batchroot} success requires guessing the unique $\alpha$, and
+$\alpha$ is the image of a transcript containing the pair the adversary must commit
+to before $\alpha$ exists; each oracle query wins with probability at most
+$\lceil 2^{256}/r\rceil$ times the number of group elements whose relation to
+$\alpha$ must be consistent. Formalising the commit-before step is the lazy-sampling
+argument in \texttt{Security/ROM}.
+\end{proof}
+
+\begin{open}[Rust versus contract in accumulator mode]\label{op:acc}
+Findings R-10 and R-26: the Rust \texttt{verify\_final} batches with a scalar
+derived from a POW2 sponge over a different encoding, the contract uses Keccak with
+the key representative, the two order the four points differently, and the
+contract's decoder assumes a \emph{collapsed} accumulator shape that the Rust
+encoder does not guarantee. So the claim that the contract checks the same thing as
+Rust is true only relative to the contract's own reference predicate
+\texttt{ContractRef.accepts}, which is exactly how plan Section 9.5 states it. The
+exact-equivalence theorem is therefore the no-accumulator one.
+\end{open}
+
+\section{Main theorem}\label{sec:main}
+
+\begin{theorem}[S1, conditional]\label{th:s1}
+Assume \ref{as:qdlog}--\ref{as:precompiles} and that Open
+problems~\ref{op:nonzero} and~\ref{op:trunc} resolve with the bounds stated in
+\texttt{Spec/Degrees.lean}. Then for a single-phase well-formed key the verifier's
+knowledge error is at most $\mathsf{ksErr}(\mathcal{C}, q_{\Hash}) +
+\Pr[\mathsf{qdlog}\text{ game wins}]$, with a straight-line extractor reading the
+advice witness off the AGM representations of the advice commitments.
+\end{theorem}
+
+\section{The lowering}\label{sec:lowering}
+
+Section 9.5 of the plan states the headline: for every supported key and config,
+every calldata, and \emph{any} hash $\Hash$, the compiled contract returns ABI
+\texttt{true} iff the Lean verifier accepts the decoded calldata, and otherwise
+reverts or halts without changing state. Three properties make that the right
+statement.
+\begin{itemize}
+\item It is \emph{observational}: we do not claim memory equality, only the outcome
+at the call boundary. Lean error classes all map to revert.
+\item It is \emph{hash-agnostic}, which is what lets the security theorem reuse it
+with $\Hash$ instantiated as the random oracle.
+\item It concerns the \emph{compiled} contract, i.e.\ solc's IR of the generated
+Solidity file, translation-validated by \texttt{Yul/IRCheck.lean}, not merely the
+assembly blocks we wrote. The Yul optimiser and the bytecode step stay trusted and
+are covered by revm differential tests.
+\end{itemize}
+
+\begin{open}[public-input malleability]\label{op:mal}
+Finding R-25 and the \texttt{calldata\_canonical} risk: the contract's accumulator
+decoder ignores the coordinate words of an identity-flagged point
+(\texttt{AccumulatorHelpers.yul:130-141}), so distinct instance tails decode to the
+same accumulator. This is malleability, not forgery, since the decoded point is the
+identity either way, but it falsifies injectivity as stated, and the fix is to
+normalise in \texttt{accWords} rather than in the decoder.
+\end{open}
+
+\section{What is assumed about the port}\label{sec:port}
+
+The Lean L0 is \emph{validated} against the Rust, not proved equivalent: Rust is not
+a formal object. The validation is (i) line-faithful porting with provenance
+comments, (ii) a second-agent review of every module, (iii) a conformance harness
+replaying every absorb, squeeze, evaluation and MSM term, and (iv) a mutation
+corpus. Where the Rust can panic, the port returns a named fault at the same site,
+so a malformed key fails identically rather than diverging. Findings R-2 (three
+faces), R-7, R-13, R-14, R-16, R-19, R-20 and R-25 are all products of that process,
+and R-20 in particular shows that a test which compares a function against itself
+proves nothing about orientation.
+
+\section{Open problems, collected}\label{sec:open}
+\begin{enumerate}
+\item \ref{op:nonzero}: nonzeroness of each batched identity, the real content.
+\item \ref{op:trunc}: the truncated batching coefficients, currently a gap in S1/S3
+for the deployed profile (R-22).
+\item \ref{op:acc}: the Rust/contract accumulator divergence (R-10, R-26).
+\item \ref{op:mal}: public-input malleability and \texttt{calldata\_canonical}
+(R-25).
+\item The $\delta$ hypothesis: nothing checks that $\mathsf{DELTA}$ has order at
+least the number of permutation columns, so the two permutation products can
+coincide identically and the $\beta,\gamma$ degree argument collapses (R-3
+extended).
+\item \texttt{srsBound}: the plan's $2^{\mathit{extended\_k}}$ may be too small if
+the proof needs $n(c+1)$ (R-23).
+\item The Yul optimiser and bytecode hop stays trusted (plan Section 13).
+\end{enumerate}
+
+\begin{thebibliography}{9}
+\bibitem{plonk} Gabizon, Williamson, Ciobotaru. PLONK: Permutations over
+Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge. 2019.
+\bibitem{plookup} Gabizon, Williamson. plookup: Sub-linear Polynomial Commitment
+Scheme and its Application to Lookup Tables. 2020.
+\bibitem{logup} Gro\ss{}baek, Hansson, Triandopoulos et al. LogUp: for combining
+lookup arguments. 2022.
+\bibitem{halobook} The Halo 2 book: permutation argument, quotient splitting,
+multi-open.
+\bibitem{agm} Katz, Krenn, Thaler, Zaveri. On the Source of Statistical Parameters,
+or How to Rework Old Proofs in the Ideal Model with Minimal Effort.
+\bibitem{eip2537} EIP-2537: Precompile for BLS12-381 curve operations.
+\bibitem{eip7883} EIP-7883: Modexp gas cost repricing.
+\end{thebibliography}
+
+\end{document}
