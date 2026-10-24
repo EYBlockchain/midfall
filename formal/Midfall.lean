@@ -22,6 +22,7 @@ import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Transcript
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Relation
+import Midfall.Halo2.Spec.Degrees
 import Midfall.Halo2.Spec.Piop
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
