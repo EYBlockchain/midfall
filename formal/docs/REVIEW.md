@@ -24,6 +24,7 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/VerifyingKey, Exec/Linearization | `047b4fb`, `5c221c3` | agent | - | R-1 resolved; see R-18, R-19 |
 | Exec/Verifier (parse_trace) | `fbe7ce8` | agent | - | schedule KATs pin byte accounting |
 | Spec/Degrees | `7da8cb9` | sub-agent | agent | **signed off** - and it found a soundness gap in §9.4 (R-22) |
+| Exec/Accumulator | `782b9a2` | sub-agent | agent | **signed off**: it found §9.5's decodeAcc_injective is false (R-25) |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -533,6 +534,98 @@ Statements.lean imports the Security one and mentions neither `roundErr` nor
 or the two will drift. Also note §9.4 lists **ten** Chal variants, not eleven: the
 transcript has no eleventh squeeze once user challenges are excluded by
 singlePhase. Owner: Phase 4.
+### R-25 BLOCKER for §9.5: `decodeAcc_injective` is FALSE for the contract's decoder
+
+Plan §9.5 states, as a building block of `lowering_equivalence`:
+
+    theorem decodeAcc_injective : decodeAcc enc i₁ = some a → decodeAcc enc i₂ = some a →
+      accWords enc i₁ = accWords enc i₂
+
+It is not true, and the reason is in the deployed contract, not in the port. I
+verified the Yul directly: `AccumulatorHelpers.yul:130-141`, inside `load_acc_point`, reads
+
+    if is_id {
+        // When the flag is set the circuit leaves x and y unconstrained
+        // ("can be anything"), so they carry no meaning and must not be decoded
+        // or range-checked here.
+        mstore(dst, 0) ... four zero words ...
+    }
+
+So when the identity flag word is 1, the coordinate words are **neither decoded nor
+range-checked**: they are discarded and replaced by the EIP-2537 all-zero identity.
+Two instance tails that differ only in the coordinate words of an identity-flagged
+side decode to the same accumulator. The agent's `accIdentityKats_ok` exhibits a
+concrete pair (flag = 1 with coordinates 12345 / 54321 versus the canonical p-1 /
+p-1 encoding - both decode to 128 zero bytes).
+
+**This is malleability of the public input, not a soundness break in the proof
+system.** The point is that the circuit genuinely does not constrain those words,
+so accepting them cannot let an adversary forge: the decoded accumulator is the
+identity either way, and the pairing check sees the same group element. But it
+does falsify the statement as written, and §12 says report rather than weaken.
+
+**The fix.** `decodeAcc_injective` survives if `accWords` projects the coordinate
+words away for identity-flagged points - i.e. the normalisation is part of the
+equivalence rather than of the decoder. Concretely:
+
+    accWords enc i := for each point, if flag = 1 then (0, 0, 1) else (x, y, 0)
+
+with the flag kept. That makes injectivity true and also makes `calldata_canonical"
+statable for the accumulator part of the calldata, which §13 already worries about.
+Owner: §9.5 needs sign-off for this change of meaning; the port already supports it
+(`decodeAcc` returns the MSM-shaped accumulator with the carried scalars un-folded,
+so equality of accumulators is decidable at the right level).
+
+### R-26 nine further Rust-vs-contract divergences in the accumulator path
+
+Beyond R-10 (different batching scalar) and R-11 (left/right order), the
+Exec/Accumulator port found seven more. The first three change what a correct
+statement has to say:
+
+1. **Truncation reaches the accumulator too.** Under the deployed profile the Rust
+   truncates its powers (`accumulator.rs:229-230`, `truncate_off_circuit`) while the
+   contract's alpha is a plain `mod r` (`FinalPairing.yul:30`). So the two differ in
+   more than the hash function - relevant to R-22, since this is a third site where
+   truncation changes the algebra.
+2. **Shape assumption in the decoder.** The contract's decoder reads
+   point, scalar, point, scalar, tail - exactly one base and one scalar per side
+   (`yul:211-280`). The Rust's `as_public_input` emits ALL bases, then ALL scalars
+   (`msm.rs:213-215`). They agree only for a *collapsed* accumulator; a
+   non-collapsed one exported through that path would be read against the wrong
+   slots **silently**. `decodeAcc_encode` is therefore only statable for collapsed
+   shapes, and `fullyCollapsedPublicInputWords` exists to say when.
+3. **Negation is represented oppositely.** The circuit's fixed base for "-G" is the
+   negated generator (`verifier/mod.rs:119`); the contract embeds the POSITIVE base
+   from the VK header and negates the public scalar instead
+   (`artifacts.rs:200`, `yul:322-326`) - and rejects `s ≥ r` BEFORE negating,
+   because `mod(sub(r,s),r) ≠ -s` for a non-canonical `s` (`yul:319-321`). Same
+   group element, opposite representation; a proof that reasons about the fixed-base
+   tail must pick one and say so.
+4. The contract curve-AND-subgroup-checks every decoded accumulator point (G1MSM at
+   `yul:246`, `:357-365`); the Rust never validates accumulator points, since they
+   come from `DualMSM::split` over already-checked commitments. The contract is
+   strictly stronger here - same direction as R-10's consequence.
+5. Wrong-length instance arrays fail closed through three separate mechanisms, none
+   inside the decoder: generation-time `validFor`, call-time `VkLoading.yul:102-108",
+   and - if both were bypassed - reading zeros, which under the coord-minus-1
+   encoding decodes to coordinate 1, an off-curve point the precompile rejects.
+6. The contract separates a failed decode from a failed precompile (`precompile_failed`,
+   `yul:184-189`, MF-4) and skips the G1MSM calls once out is false. `Option`
+   collapses both to `none`: gas differs, the decision does not.
+7. Non-canonical instance words (≥ r) are rejected by the contract (`yul:226`, `:290`,
+   `:321`) but `Fr p = ZMod p` cannot represent such a word, so that rejection is
+   expressible only in the `Array Word256`-typed decoder. The port therefore types
+   `decodeAcc` over raw words and lifts `Array (Fr p)` through `frWord`, which loses
+   exactly that rejection - documented at `frWord`, and the same gap §13 records for
+   `calldata_canonical`.
+
+Also recorded: the pairing-batch domain tag is a 29-byte literal left-padded by
+`mstore` (`layout/mod.rs:330-331`), not right-padded ASCII - easy to get wrong when
+reimplementing `alphaOf`; and `decodeAcc` needs four arguments (encoding, codec,
+generated fixed-base list, instance words) where §9.5 writes two, the extras forced
+by D-P1/D-P6 and the per-VK generated base list. Whoever writes the real
+`ContractRef.accepts` must supply them - `Lowering/Types.lean` currently has only the
+no-accumulator arm.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

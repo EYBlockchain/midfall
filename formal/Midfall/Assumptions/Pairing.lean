@@ -57,7 +57,7 @@ def pBase : ℕ :=
     bits and congruent to 1 mod 4 - not BLS12-381's, which is 381 bits and
     congruent to 3 mod 4 (the value EIP-2537 states, and which the EIP relies on
     for square roots). The generator agrees with the EIP: Constants.sol renders
-    p-1 as BLS_P_HI || BLS_P_MINUS_ONE_LO, ending in ...ffffffffaaa8.
+    p-1 as BLS_P_HI || BLS_P_MINUS_ONE_LO, ending in ...ffffffffaaaa.
 
     The check below is what should have caught it at the time and is now a CI gate:
     a modulus is not just a big number, and the two BLS curves' moduli share a
