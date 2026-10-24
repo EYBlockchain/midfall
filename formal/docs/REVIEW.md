@@ -1014,6 +1014,59 @@ baseline Rust and `[[1]]` is correct — the identity-accumulator case passes
 `&[&committed_pi]` with one committed column holding the identity plus one public
 column, which is what forces `numInstanceColumns = 2`. In the exponent model `0`
 does not even typecheck at `List (List G₁)` for an abstract `Group`.
+### R-36 The deployed Moonlight artifact is five months behind the generator
+
+Verified independently, not taken on the agent's word:
+
+| fact | value |
+|---|---|
+| last commit touching deployments/sepolia/moonlight-wrap/ | 2026-05-19 (4bab29c) |
+| last commit touching solidity-verifier/templates/ | 2026-10-23 (5312cb7) |
+| fail(ERR...) typed-error sites in the deployed artifact | 0 |
+| fail(ERR...) sites in current AssemblyHelpers.yul | 10 |
+| pragma in the deployed artifact | ^0.8.24 |
+| pragma the templates emit | 0.8.30 |
+
+The artifact also contains a q_acc quotient-direct emitter and an
+is_acc_encoded_identity site that exist nowhere in src today. The deployed files
+were produced by a superseded generator.
+
+**Consequences.**
+
+1. Plan 9.6 cannot be tested as written. deployed_equivalence is stated against
+   deployments/sepolia/moonlight-wrap. Until Moonlight is regenerated, any package
+   citing those bytes cites a generator that no longer exists. This is stronger
+   than D-P12's 'regeneration deferred for environment reasons': regeneration is a
+   prerequisite for M11, and it was already overdue.
+2. The golden fixtures had to be re-anchored. Phase 6 package 1 initially built its
+   expected slices from moonlight-wrap and moved them to
+   proofs/solidity-verifier/target/poseidon-fixture-dump/*.sol, which is tracked and
+   produced by the current generator. Later packages must use the dump.
+3. The hex collision is not formatting. The committed text spells 0 as both 0x00
+   and 0x0, and 256 as both 0x0100 and 0x100. All four elaborate to the same
+   Literal.number, so no function from the vendored AST can reproduce the bytes -
+   two distinct committed texts share one AST. Harmless under D-P13; fatal for any
+   byte-identity phrasing of 9.6. If byte fidelity is ever needed the fix is a
+   spelling channel on Literal upstream, not a workaround here.
+
+**Owner:** the user, for the regeneration decision. It gates M0's honesty as much
+as M11.
+
+### R-37 Lean 4.35 cannot do structural recursion through Stmt.switch
+
+Recorded before Phase 5 walks into it. Stmt.switch carries
+List (Literal x Block Op), and the termination estimator cannot establish
+'sizeOf b <= sizeOf cs' for a Prod projection out of that list. Mutual definitions
+and where-clause variants fail identically, and a dispatch-sum wrapper fails with
+'does not have a .brecOn recursor'. Render.lean is therefore well-founded on an
+explicit fuel that emits a loud <fuel-exhausted> marker rather than truncating
+silently, so an under-budgeted run fails the gates instead of quietly producing
+short output.
+
+**Consequence for Phase 5:** irCheck and any per-partial contract that recurses over
+generated Yul will hit the same wall. Budget for it now; the fuel-with-loud-marker
+pattern is the workaround that keeps computability (rule R10) honest.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

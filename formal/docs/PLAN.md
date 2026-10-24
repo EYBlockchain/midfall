@@ -656,3 +656,11 @@ then:   M7 (verifier_sound / verifier_complete / end_to_end_noAcc)
    to the untruncated profile and marking deployed knowledge soundness unresolved.
 3. **M0.** Not tagged. Per D-P12, freeze over what is reproducible and record the
    Moonlight regeneration as deferred with a named blocker.
+4. **The deployed Moonlight artifact is stale (R-36).**
+   `deployments/sepolia/moonlight-wrap` was generated 2026-05-19; the templates last
+   changed 2026-10-23, and the artifact contains zero of the 10 typed-error sites the
+   current templates emit. So `deployed_equivalence` (§9.6) **cannot be tested
+   against it as written**, and Phase 6 golden fixtures must anchor on
+   `proofs/solidity-verifier/target/poseidon-fixture-dump/*.sol` (tracked, current
+   generator) until regeneration happens. Regeneration is a prerequisite for M11, not
+   merely a deferred M0 nicety.
