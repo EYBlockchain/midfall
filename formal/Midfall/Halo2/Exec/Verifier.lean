@@ -596,17 +596,20 @@ port cannot share the name. The namespace mirrors the Rust module path instead:
 the trait (:651), so rule R9 makes the record a parameter and `Pcs.kzg` the
 instantiation the caller supplies.
 
-### Why nothing here is exercised end to end
+### What is exercised end to end, and what is not
 
-There is no model of `AdmissiblePairing` anywhere in the tree: design.md D-P1
-consequence 3 asks for "at least one *constructed* model", and
-`Assumptions/Pairing.lean` currently supplies only the moduli and the
-`pBaseKats_ok` check. So `Pcs`, `DualMSM`, `multiPrepare` and therefore
-`verifyAlgebraicConstraints` and `Verifier.prepare` are type-correct but not yet
-runnable - no fixture can be fed to them. The KATs below therefore target the two
-pure sub-steps, `readFixedEvals` and `collectQueries`, which is exactly where the
-R-14 shift and the query-order hazards live. Closing this is an `Assumptions/`
-item, not an `Exec/Verifier` one.
+`Midfall/Instances/ExponentModel.lean` supplies a constructed model of
+`AdmissiblePairing` (R-28, resolved), so `Verifier.prepare` - this file's
+`parseTrace`, `verifyAlgebraicConstraints` and `collectQueries` plus
+`multiPrepare` and `DualMSM.check` - executes on a real byte fixture and
+accepts exactly one of seventeen candidate proofs. That is where the end-to-end
+evidence lives, not here.
+
+The KATs below stay focused on the two pure sub-steps, `readFixedEvals` and
+`collectQueries`, which is where the R-14 shift and the query-order hazards
+live and where a hand-computed expectation is still possible. The model is a
+model of exponent arithmetic, not of BLS12-381; see R-33 for what it does and
+does not certify.
 
 ### Skipped, with evidence -/
 

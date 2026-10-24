@@ -631,6 +631,13 @@ by D-P1/D-P6 and the per-VK generated base list. Whoever writes the real
 no-accumulator arm.
 ### R-27 BLOCKER for M2: the frozen §9.2 interface cannot be implemented
 
+**Status update:** D-P9 has been adopted. `VerifierEnv` now bundles the G1 codec,
+field constants, delta, and runtime switch; `Statements.lean` has been re-pinned
+and its digest updated. `prepare` and `verifyNative` are implemented through that
+environment. The historical blocker below is resolved at the interface level,
+but conformance remains blocked by the KZG read-schedule exposure needed by
+`decodeRust` and the hash-parameterised transcript needed by `prepareMsgs`.
+
 Plan D6 freezes `Midfall/Statements.lean` and CI checks its hash. The §9.2 signatures
 in it are not implementable against the port, so the four `Exec/Native` sorries cannot
 be removed without re-pinning that file. The agent verified this by trying both ways

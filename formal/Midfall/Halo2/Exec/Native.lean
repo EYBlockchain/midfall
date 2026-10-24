@@ -110,20 +110,21 @@ spelling it would register as a false proof hole.)
   hardcodes the solidity shape (`[[1]]` / `[[inst]]`), so the two agree only
   under that convention and the equivalence is only statable with the shape as an
   explicit hypothesis.
-* Even with the shape fixed, `decodeRust` cannot see the reads `multi_prepare`
-  performs internally (`f_com`, the `q_evals_on_x3` block, `pi` at
-  kzg/mod.rs:447,463,531): `multiPrepare` returns only the `DualMSM`, so a
-  schedule-driven decoder would have to re-implement the KZG leaf, which the
-  package rules forbid. Exec/Transcript.lean needs a read-recording hook (or
-  Exec/Kzg/MultiOpen needs to expose its read shape) before `decodeRust` is
-  statable at all.
-* `verifyMsgs_iff_spec` quantifies over an arbitrary `H : Hash`, but
-  `Transcript.squeeze` hard-codes `keccak256` (Exec/Transcript.lean:172) and
-  `TranscriptM` has no hash parameter, so no `TranscriptM`-based definition can
-  honour a non-keccak `H`. Rule R9 ("the hash is a parameter `H : Hash`
-  everywhere, defaulting to keccak256") is not satisfied by the existing
-  transcript leaf, and §9.5's "all lowering proofs are hash-agnostic (forall H)"
-  inherits that. Owner: Exec/Transcript.
+* Even with the shape fixed, a *hand-written* decoder could not see the reads
+  `multi_prepare` performs internally (`f_com`, the `q_evals_on_x3` block, `pi` at
+  kzg/mod.rs:447,463,531), because `multiPrepare` returns only the `DualMSM`.
+  RESOLVED differently than planned: rather than duplicate the schedule,
+  `Transcript` now carries a `log` of every read (`width`, raw bytes) and
+  `decodeRust` reports what the pipeline actually consumed. One schedule, not two
+  that must be proved to agree - duplicating it is what R-30 and R-32 got wrong.
+* `verifyMsgs_iff_spec` quantifies over an arbitrary `H : Hash`. RESOLVED:
+  `Transcript` now carries `hash : Bytes -> H256` defaulting to keccak256, with
+  `Transcript.initWithHash` for the general case, so rule R9 ("the hash is a
+  parameter everywhere, defaulting to keccak256") is satisfied and §9.5's
+  hash-agnostic lowering proofs have something to instantiate. Note what is
+  STILL out of scope: the Rust's Blake2b transcript (64-byte output, distinct
+  common/challenge prefixes, implementors.rs) is not modelled - plan Section 1
+  excludes transcripts other than Keccak.
 
 ### D-P9 interface re-pin
 
@@ -157,8 +158,8 @@ def msgWire {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-- rust: proofs/src/plonk/verifier.rs:659-696 (Verifier::prepare), at the arity
     the port actually needs. `Midfall.Halo2.Verifier.prepare` is the faithful def;
-    this is the plan-9.2 shape with the three missing environment parameters
-    added (see the BLOCKED note). `committed` is the per-instance-column list of
+    this is the plan-9.2 shape with the environment bundled in `VerifierEnv`.
+    `committed` is the per-instance-column list of
     committed G1 points and `inst` the per-column instance values. -/
 def prepareWith (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
     (vk : VerifyingKey (Fr p) G₁)
@@ -191,10 +192,10 @@ def verifyNativeWith {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
     the dual MSM. `committed` is the per-instance-column list of committed G1
     points and `inst` the per-column instance values.
 
-    BLOCKED (see the note above): this arity cannot carry the `G1Codec`, the
-    `FieldConsts` or `delta`, so there is no faithful body for it. The body is
-    `prepareWith` with those three supplied; filling this hole is a re-pin of
-    `Statements.lean`, not a porting task. -/
+    This is the plan-9.2 arity after the D-P9 re-pin: the environment the port
+    actually needs (`G1Codec`, `FieldConsts`, `delta`, the fewer-point-sets
+    runtime switch) arrives bundled in `VerifierEnv` rather than as three extra
+    arguments, so the statement keeps its shape. The body is `prepareWith`. -/
 def prepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
     (vk : VerifyingKey (Fr p) G₁)
     (committed : List (List G₁)) (inst : List (List (List (Fr p)))) :
@@ -219,11 +220,11 @@ def verifyNative {Gₜ : Type} [Group Gₜ] [PrimeOrderWith Gₜ p]
 /-- Schedule-driven decode of a proof stream into the messages the verifier
     absorbs (plan 9.2).
 
-    BLOCKED, for two independent reasons (see the note above): the frozen arity
-    cannot carry the `G1Codec` its `Msg.g1` payloads require, and the read
-    schedule is not a function of `(F, vk, pi)` alone - it depends on the number
-    of proofs and committed instance columns, and on reads inside `multiPrepare`
-    that the KZG leaf does not expose. -/
+    The schedule is not a function of `(F, vk, pi)` alone: it depends on the
+    number of proofs and committed instance columns, so `inst` is part of the
+    arity (the D-P9 re-pin) and the Solidity shape is the one `verifyNative`
+    hard-codes. The reads inside `multiPrepare` are captured by the transcript
+    log rather than re-derived. -/
 def decodeRust (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes) :
     Option (List (Msg (Fr p) G₁)) := do
@@ -246,11 +247,11 @@ def decodeRust (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
 
 /-- `prepare` driven by already-decoded messages instead of a byte stream.
 
-    BLOCKED: the same three missing parameters, plus the `H : Hash` parameter
-    cannot be honoured at all - `Transcript.squeeze` hard-codes keccak256 and
-    `TranscriptM` has no hash parameter, so a `TranscriptM`-based body is
-    keccak-only whatever `H` is passed (rule R9 is not satisfied by the existing
-    transcript leaf). -/
+    `H` is honoured through `Transcript.initWithHash`, so this is genuinely
+    hash-polymorphic as rule R9 requires - not keccak-only with an ignored
+    argument. Going through the byte level rather than a parallel message-driven
+    interpreter is what keeps `verifyNative_iff_msgs` near a definitional
+    unfolding: both sides execute one schedule. -/
 def prepareMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
     (vk : VerifyingKey (Fr p) G₁)
     (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
@@ -267,9 +268,8 @@ def prepareMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
   t.assertEmpty
   pure g
 
-/-- `verifyNative` at the message level.
-
-    BLOCKED: `prepareMsgs` above, and the same `H` limitation. -/
+/-- `verifyNative` at the message level: the same pipeline, with the messages
+    re-serialised to the wire bytes and the caller's hash honoured. -/
 def verifyMsgs (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
     (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
