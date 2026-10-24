@@ -152,18 +152,27 @@ def g1AffineCodec : G1Codec G1Affine where
     if b.size ≠ 128 then none
     else if bytesToNatBE b == 0 then
       -- EIP-2537 reserves the all-zero encoding for the point at infinity, and
-      -- toEip emits exactly that for it, so the round-trip property
+      -- toEip emits exactly that for it, so the canonicality property
       -- (G1Codec.eipRoundtrip) requires accepting it here. (0, 0) is NOT on
       -- y^2 = x^3 + 4, so a naive onCurve-first check rejects the identity and
-      -- the round-trip fails for the one point the verifier is most likely to
-      -- encode this way. rust: implementors.rs:283-299 has this branch first.
+      -- the property fails for the one point the verifier is most likely to
+      -- encode this way. NOTE the Rust has no reader for this form at all -
+      -- implementors.rs:283-299 is to_input, a WRITER - so this branch is a
+      -- Lean-side definition matching the writer, not a port.
       some { isInfinity := true, x := 0, y := 0 }
     else
       let xn := bytesToNatBE (ByteArray.mk (b.data.extract 16 64))
       let yn := bytesToNatBE (ByteArray.mk (b.data.extract 80 128))
+      -- The two 16-byte pads must be zero. toEip always emits zeros there, so
+      -- accepting arbitrary pad content would make the encoding non-injective:
+      -- two different 128-byte strings decoding to one point, which is the same
+      -- malleability the x < p and infinity-flag checks exist to rule out.
+      let padsOk := (b.data.extract 0 16).all (fun u => u.toNat == 0) &&
+        (b.data.extract 64 80).all (fun u => u.toNat == 0)
+      if !padsOk then none
       -- both coordinates must be canonical, for the same injectivity reason as
       -- in ofCompressed?.
-      if xn ≥ Midfall.Assumptions.pBase || yn ≥ Midfall.Assumptions.pBase then none
+      else if xn ≥ Midfall.Assumptions.pBase || yn ≥ Midfall.Assumptions.pBase then none
       else
         let P : G1Affine := { isInfinity := false, x := xn, y := yn };
         if P.onCurve then some P else none
@@ -314,7 +323,37 @@ def blsRejects2_kats_ok : Bool :=
    | some P => P.isInfinity
    | none => false)
 
+
+/-- G1Codec.eipRoundtrip in its decoder-first form, checked on real data:
+    whatever ofEip? accepts must re-encode to the SAME bytes. The conjunct that
+    makes this non-vacuous is the dirty-pad case - without the pad check a 128-byte
+    string with garbage in the leading pad decodes to a point whose toEip has zero
+    pads there, so the property fails. That is precisely the malleability the
+    statement exists to forbid, and removing the check turns this KAT red. -/
+def blsEipCanonical_kats_ok : Bool :=
+  (fixturePoints.all fun h =>
+    match G1Affine.ofCompressed? (hexToBytes h) with
+    | none => false
+    | some P => match g1AffineCodec.ofEip? (G1Affine.toEip P) with
+        | some Q => (G1Affine.toEip Q).data.toList == (G1Affine.toEip P).data.toList
+        | none => false) &&
+  (let id : G1Affine := { isInfinity := true, x := 0, y := 0 }
+   match g1AffineCodec.ofEip? (G1Affine.toEip id) with
+   | some Q => (G1Affine.toEip Q).data.toList == (G1Affine.toEip id).data.toList
+   | none => false) &&
+  (match G1Affine.ofCompressed? (hexToBytes fixturePoints.head!) with
+   | none => false
+   | some P =>
+       let e := G1Affine.toEip P;
+       -- byte 0 sits in the leading 16-byte pad and is zero for a real encoding
+       ((e.data[0]?.map (fun u => u.toNat)) == some 0) &&
+       (match g1AffineCodec.ofEip?
+             (ByteArray.mk (List.toArray (Nat.toUInt8 1 :: e.data.toList.drop 1))) with
+        | none => true
+        | some _ => false))
+
 end Kats
+#eval Midfall.Instances.blsEipCanonical_kats_ok  -- expect true
 #eval Midfall.Instances.blsGenerator_kats_ok    -- expect true
 #eval Midfall.Instances.blsRejects2_kats_ok     -- expect true
 

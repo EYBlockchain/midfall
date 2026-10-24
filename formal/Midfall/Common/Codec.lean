@@ -67,8 +67,17 @@ abbrev E1 (Fp : Type) : Type := Fp × Fp
       x_BE(48) ‖ 16 zero bytes ‖ y_BE(48), and 128 zero bytes for the identity
       (the EIP-2537 convention, not the BLS-spec 0x40-leading-byte form).
     * `ofEip?` — the decode of `toEip`, used by the contract side and by L4
-      (plan 9.5). It is the *subgroup-checked* decode: the plan's
-      `G1.ofEip? b = (E1.ofEip? b).bind toSubgroup?`. -/
+      (plan 9.5). Plan 9.1 specifies it as the SUBGROUP-CHECKED decode,
+      `G1.ofEip? b = (E1.ofEip? b).bind toSubgroup?`. No Lean instance can
+      satisfy that today: the r-torsion test needs the group law, which the
+      abstract setting does not provide and `Instances/Bls12_381.lean`
+      deliberately omits. So the concrete codec checks on-curve only, and that
+      gap is a live obligation against plan 9.1, not a completed requirement.
+      Note also that no Rust code ever decodes the 128-byte form — the transcript
+      READER uses the 48-byte compressed path (implementors.rs:304-311);
+      implementors.rs:283-299 is a WRITER. `ofEip?` is therefore a Lean-side
+      definition serving the contract model, and must not be cited as a port of a
+      Rust function. -/
 structure G1Codec (G₁ : Type) where
   ofCompressed? : Bytes → Option G₁
   toCompressed : G₁ → Bytes
@@ -80,12 +89,22 @@ structure G1Codec (G₁ : Type) where
 def g1CompressedWidth : Nat := 48
 def g1EipWidth : Nat := 128
 
-/-- `toEip` round-trips through `ofEip?` on the nose: the padded encoding is
-    injective and the decode is total on its image. Stated as a decidable
-    property of a `G1Codec`; the concrete instance proves it in
-    Assumptions/Pairing.lean. -/
+/-- The 128-byte encoding is canonical: whatever `ofEip?` accepts must
+    re-encode to the SAME bytes. This is the anti-malleability property, stated
+    decoder-first over accepted BYTE STRINGS rather than encoder-first over
+    values.
+
+    An earlier revision read `∀ P, ofEip? (toEip P) = some P`. That form is
+    unusable for any representation that carries redundant structure: with
+    `G1Affine := { isInfinity, x, y }` the value `⟨false, 0, 0⟩` is not a point
+    at all, yet `toEip` maps it to 128 zero bytes and the decoder (correctly)
+    returns the identity, so the property is false for junk rather than for a
+    real defect. An adversarial review found exactly that. The form below says
+    the thing that matters - two distinct 128-byte strings cannot decode to the
+    same point - and it is the exact mirror of `compressedRoundtrip`, which was
+    already stated this way. -/
 def G1Codec.eipRoundtrip {G₁ : Type} (c : G1Codec G₁) : Prop :=
-  ∀ P : G₁, c.ofEip? (c.toEip P) = some P
+  ∀ b : Bytes, ∀ P : G₁, c.ofEip? b = some P → c.toEip P = b
 
 /-- `ofCompressed?` only ever returns points whose compressed encoding is the
     one it was given, i.e. the 48-byte encoding is canonical. Without this the
