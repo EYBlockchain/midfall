@@ -177,6 +177,98 @@ def parseTrace (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁)
 -- number of bytes consumed and a different challenge stream. So the checks below
 -- pin the byte accounting exactly, which is what a reordering would break.
 
+
+/-- rust: proofs/src/plonk/mod.rs:481-608 (partially_evaluate_identities).
+
+    The batched identity, evaluated at x but PARTIALLY: each entry is a pair
+    `(Option Nat, F)` where the option is the fixed-column index of the first
+    simple queried selector of the gate that produced the term, and `none` means
+    the term is fully evaluated and belongs to the constant side. That pair is
+    exactly what `computeLinearizationCommitment` consumes, and its grouping by
+    selector column is what turns these into the linearization MSM's terms.
+
+    Order is reproduced exactly: gates first (gate order, then polynomial order
+    within a gate), then the permutation identities, then logUp, then trash - all
+    per proof, with the five per-proof vectors zipped pairwise so a shorter one
+    silently truncates the rest (rule R3). The five `.zip` calls nest
+    left-associatively in Rust; the port mirrors that with nested pairs rather
+    than a five-way zip, because a five-way zip would truncate on the MINIMUM of
+    all five where the Rust truncates progressively.
+
+    Panic sites: mod.rs:511 asserts the l_i_range length; the ten evaluation
+    closures are `Expression.verifierCallbacks` (Exec/Circuit), which carries the
+    virtual-selector panic at mod.rs:532 and the three
+    `evals[query.index.unwrap()]` double-aborts at :533-535; and
+    `Permutation.expressions` panics on chunk_len = 0 (permutation.rs:237).
+
+    `delta` is a parameter, not a field: `FieldConsts` carries zeta but not delta
+    (docs/REVIEW.md R-3 extended). -/
+def partiallyEvaluateIdentities {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
+    (fixedEvals : Array (Fr p))
+    (instanceEvals : Array (Array (Fr p)))
+    (adviceEvals : Array (Array (Fr p)))
+    (permutationEvals : Array (Array (Permutation.SetEvaluated (Fr p))))
+    (lookupEvals : Array (Array (Logup.Evals (Fr p))))
+    (trashcanEvals : Array (Array (Trash.Eval (Fr p))))
+    (permutationsCommon : Permutation.CommonEvaluated (Fr p))
+    (x xn beta gamma theta trashChallenge : Fr p) (challenges : Array (Fr p)) :
+    Except Fault (Array (Option Nat × Fr p)) := do
+  -- mod.rs:509-515: the Lagrange prelude. The rotation range is
+  -- (-(blinding_factors+1)) ..= 0, i.e. blinding_factors + 2 entries, and the
+  -- assert at :511 is what pins that l_i_range did not silently drop any.
+  let bf ← vk.cs.blindingFactors
+  let rotations : List Int :=
+    (List.range (bf + 2)).map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
+  let lEvals := vk.domain.lIRange x xn rotations
+  unless lEvals.size == bf + 2 do
+    throw (Fault.panic "proofs/src/plonk/mod.rs:511")
+  let lLast := lEvals[0]!
+  let lBlind := ((lEvals.toList.drop 1).take bf).foldl (init := 0) (· + ·)
+  let l0 := lEvals[bf + 1]!
+  -- mod.rs:525-541: one proof's gate terms. The selector attached to a gate's
+  -- polynomial is the FIRST simple queried selector (filter, then next), and the
+  -- same index is attached to every polynomial of that gate.
+  let oneProof (ae ie : Array (Fr p))
+      (pe : Array (Permutation.SetEvaluated (Fr p)))
+      (le : Array (Logup.Evals (Fr p))) (te : Array (Trash.Eval (Fr p))) :
+      Except Fault (Array (Option Nat × Fr p)) := do
+    let cb := Expression.verifierCallbacks (F := Fr p) ae fixedEvals ie challenges;
+    let gateTerms ← vk.cs.gates.toList.foldlM (init := #[]) fun acc g => do
+      let es ← mapExceptArray (fun poly => Expression.evaluate cb poly) g.polynomials
+      let sels := g.queriedSelectors.toList.filter (fun s => s.isSimple)
+      let simples := sels.map (fun s => s.index)
+      let selIdx := match simples with | x :: _ => some x | [] => none
+      pure (acc ++ (es.map fun e => (selIdx, e)))
+    -- mod.rs:542-560: the permutation identities, all tagged None (they are
+    -- fully evaluated in the selector sense - no gate selector multiplies them).
+    let permEs ← Permutation.expressions (p := p) vk.cs vk.csDegree pe
+      permutationsCommon ae fixedEvals ie l0 lLast lBlind beta gamma x delta
+    -- mod.rs:561-585: logUp. chunk_by_degree is recomputed here from the CS, and
+    -- the Rust zips it against the per-proof evals, so a length mismatch
+    -- truncates rather than erroring (rule R3).
+    let chunked ← mapExceptArray
+      (fun l => l.chunkByDegree vk.csDegree) vk.cs.lookups
+    let lookupTerms ← (List.zip le.toList chunked.toList).foldlM (init := #[])
+      fun acc pair => do
+        let es ← Logup.expressions (p := p) pair.1 l0 lLast lBlind theta beta
+          pair.2 ae fixedEvals ie challenges
+        pure (acc ++ (es.map fun e => (none, e)))
+    -- mod.rs:586-600: trash.
+    let trashTerms ← (List.zip te.toList vk.cs.trashcans.toList).foldlM
+      (init := #[]) fun acc pair => do
+        let es ← Trash.expressions (p := p) pair.1 pair.2 trashChallenge
+          ae fixedEvals ie challenges
+        pure (acc ++ (es.map fun e => (none, e)))
+    pure (gateTerms ++ (permEs.map fun e => (none, e)) ++ lookupTerms ++ trashTerms)
+  -- mod.rs:516-524 + :601: the five per-proof vectors, zipped left-associatively
+  -- so the element type is ((((advice, instance), permutation), lookup), trash).
+  let zipped := List.zip
+    (List.zip (List.zip (List.zip adviceEvals.toList instanceEvals.toList)
+                permutationEvals.toList) lookupEvals.toList) trashcanEvals.toList
+  let rows ← zipped.foldlM (init := #[]) fun acc e =>
+    oneProof e.1.1.1.1 e.1.1.1.2 e.1.1.2 e.1.2 e.2
+  pure rows
 section Kats
 
 local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
@@ -260,6 +352,54 @@ def parseTrace_shape_kats_ok : Bool :=
             (Transcript.initFromBytes traceProof) with
        | .error (Fault.error Error.invalidInstances) => true
        | _ => false)
+
+
+-- partially_evaluate_identities: two gates over one proof. Gate 1 is
+-- advice0 * advice1 with a SIMPLE queried selector (index 1); gate 2 is
+-- advice0 + advice1 whose only queried selector is VIRTUAL (is_simple = false).
+-- Expected, hand-computed over Fr 17 with advice evals [3, 4]:
+--   [(Some 1, 12), (None, 7)]
+-- i.e. the gate order is preserved, a simple selector tags its gate's terms with
+-- its column index, a virtual one tags them None (the Rust takes the FIRST
+-- simple selector via filter-then-next, mod.rs:543-547), and the empty
+-- permutation / logUp / trash inputs contribute nothing.
+def advx (i : Nat) : Expression (Fr 17) :=
+  .advice { index := some i, columnIndex := i, rotation := .cur, phase := ⟨0⟩ }
+
+def peGate1 : Gate (Fr 17) :=
+  { name := "g1", constraintNames := #["c"],
+    polys := #[Expression.product (advx 0) (advx 1)],
+    queriedSelectors := #[{ index := 1, isSimple := true }], queriedCells := #[] }
+
+def peGate2 : Gate (Fr 17) :=
+  { name := "g2", constraintNames := #["c"],
+    polys := #[Expression.sum (advx 0) (advx 1)],
+    queriedSelectors := #[{ index := 0, isSimple := false }], queriedCells := #[] }
+
+def peCs : ConstraintSystem (Fr 17) :=
+  { ConstraintSystem.default (F := Fr 17) with
+    numAdviceColumns := 2, adviceColumnPhase := #[⟨0⟩, ⟨0⟩],
+    numInstanceColumns := 1, gates := #[peGate1, peGate2] }
+
+def peDom : EvaluationDomain (Fr 17) :=
+  { n := 4, k := 2, extendedK := 2, omega := 13, omegaInv := 4, extendedOmega := 13,
+    extendedOmegaInv := 4, gCoset := 2, gCosetInv := 4, quotientPolyDegree := 2,
+    ifftDivisor := 13, extendedIfftDivisor := 13, tEvaluations := #[8],
+    barycentricWeight := 13 }
+
+def peVk : VerifyingKey (Fr 17) Nat :=
+  { domain := peDom, fixedCommitments := #[], permutation := ⟨#[]⟩, cs := peCs,
+    csDegree := 3, transcriptRepr := 7 }
+
+def partiallyEvaluate_kats_ok : Bool :=
+  match partiallyEvaluateIdentities (p := 17) (delta := 2) peVk #[] (#[#[]])
+      (#[#[3, 4]]) (#[#[]]) (#[#[]]) (#[#[]]) ⟨#[]⟩ (x := 1) (xn := 1) (beta := 2)
+      (gamma := 3) (theta := 4) (trashChallenge := 5) #[] with
+  | .ok a => (a.toList.map (fun e => (e.1, ZMod.val e.2))) ==
+      [((some 1 : Option Nat), 12), (none, 7)]
+  | .error _ => false
+
+#eval Midfall.Halo2.partiallyEvaluate_kats_ok   -- expect true
 
 end Kats
 
