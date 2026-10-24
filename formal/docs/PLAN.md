@@ -572,3 +572,87 @@ Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C
 - **Lean performance on Moonlight (k=20)** may need a fast pow/MSM in `Common`.
 - **Multi-phase circuits** are excluded (`numChallenges = 0`). Supporting them is future work.
 - **Optional stretch:** Aeneas extraction of pure Rust helpers (`repack_proof`, codecs, the VM compiler) for machine-checked equivalence.
+
+---
+
+## 14. Execution order (round 8 addendum)
+
+Recorded after D-P10..D-P13 so the operational plan lives next to the normative one.
+Section 11's milestone table stays authoritative for *acceptance*; this section records
+*sequencing*, dependencies and blockers as currently understood.
+
+### 14.1 Conformance checking after D-P13
+
+D-P13 relaxed the generator's identity criterion to structural AST equality. That
+initially looked like giving up a blunt-but-broad tripwire for nothing, so
+`scripts/normalise_sol.py` restores it cheaply: strip comments and blank lines,
+collapse whitespace, compare bytes. Verified idempotent, self-equal, and it catches a
+one-token perturbation at the exact canonical line.
+
+It is **stricter** than `YulSemantics.Ast.stmtsBeq`, because the AST discards tokens
+the normaliser still sees. So the relaxation costs nothing: **`stmtsBeq` is the
+statement of record in the theorems; normalised-byte equality is the CI tripwire.**
+Both run; a disagreement between them is a finding, not noise.
+
+### 14.2 Milestones, needs, blockers
+
+| # | milestone | needs | blocked by |
+|---|---|---|---|
+| M3 | generator port | vendored AST (done), canonical renderer (in flight), structural + normalised golden tests | - |
+| M4 | yul-semantics integration | D-P10 internal `Run` (decided); revm differential needs solc **0.8.30** | solc version (validation only) |
+| M5 | codec + early partial theorems | M3, M4-Lean, Phase 4a algebra | - |
+| M6 | QVM | M3, Phase 4a | - |
+| M7 | `verifier_sound` / `verifier_complete` / `end_to_end_noAcc` | M5, M6 | - |
+| M8 | solc IR validation (`irCheck`, `ir_refines`, full `lowering_equivalence`) | M7 + solc 0.8.30 IR | **solc version** |
+| M9 | security S1-S7 | M7 + the paper proof | **R-22** |
+| M10/M11 | Direct, deployment | M7/M8 | - |
+
+Phase 4a algebra lemmas run **in parallel** with M3: they are prerequisites for
+M5-M7, not for M3.
+
+### 14.3 The semantic-equivalence theorem does not need the toolchain
+
+**M7 requires neither solc nor revm.** The lowering proofs are pure Lean over the
+vendored interpreter. Only M8 (IR translation validation) and M4's revm *differential*
+need the toolchain, and those are validation and translation-check, not the equivalence
+itself. The environment blocker is therefore not on the critical path to the theorem.
+
+### 14.4 Adopted: pull `finalPairing_spec` forward
+
+`finalPairing_spec` is moved out of M7 and scheduled immediately after M3. It is the
+narrowest genuine semantic equivalence available:
+
+> the emitted `ec_pairing` call frame in the generated Yul is equivalent to
+> `DualMSM.check` in the Lean verifier
+
+It needs no QVM, no Lagrange machinery and no calldata repacking - only the pairing
+block AST, the EIP-2537 relation already in `Yul/Externals.lean`, and
+`DualMSM.check`. Two reasons to do it early: it is a first real theorem linking the
+Lean verifier to generated Yul, and it exercises the entire proof architecture
+(`Run` over the vendored interpreter, memory disjointness, the observation relation)
+on a small target before that architecture is load-bearing for M7.
+
+### 14.5 Sequence
+
+```
+now:    M3 package 1 (renderer + golden tests)
+then:   M3 packages 2-4 (templates, models/layout)   || Phase 4a algebra lemmas
+then:   M4-Lean (Bridge.Run + determinism conditions)
+then:   * finalPairing_spec - first semantic equivalence, small
+then:   M5 (repack, calldata, accumulator, vkLoading, transcript, lagrange)
+then:   M6 (QVM)
+then:   M7 (verifier_sound / verifier_complete / end_to_end_noAcc)
+```
+
+### 14.6 Hard blockers, named
+
+1. **solc version.** PATH has 0.8.35; the baseline pins 0.8.30. Gates M8 and the M4
+   revm differential. Not resolvable from inside the Lean work.
+2. **R-22.** Under the deployed `truncated-challenges` profile the x1/x4 batching
+   coefficients are `truncate(x^j)`, which is not a polynomial in the challenge, so no
+   degree argument bounds its roots. Gates M9's deployed-profile claim regardless of
+   schedule. Per D-P13's sibling constraint, truncation is preserved for output
+   compatibility: the fix is a proof for the deployed coefficients, or scoping S1/S3
+   to the untruncated profile and marking deployed knowledge soundness unresolved.
+3. **M0.** Not tagged. Per D-P12, freeze over what is reproducible and record the
+   Moonlight regeneration as deferred with a named blocker.
