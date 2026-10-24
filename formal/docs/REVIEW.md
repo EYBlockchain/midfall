@@ -923,6 +923,64 @@ one-group decidable class would fix; there is no field saying the generators are
 model satisfies by construction and the harness leans on implicitly; and no
 `DecidableEq G₂`. Owner: `Common/Curve.lean`, low urgency, but the second one should
 be stated before the conformance soundness argument is written down.
+### R-34 The blst differential review: five codec defects and a gate that could not fail
+
+An adversarial review compiled **blst 0.3.17 against the repo's own `libblst.a`** —
+the exact code `g1.rs:369-372` delegates to — and differential-tested the Lean G1
+codec over 66 targeted plus 1,784 randomised inputs, diffing verdicts *and* decoded
+coordinates. Five defects, four of them in code I had committed within the previous
+two hours, including one that re-opened a bug I had declared fixed.
+
+* **Infinity arm was not canonical** (fixed `8ba4f05`). blst requires the sort bit
+  *and* the low six bits of byte 0 to be zero (`e1.c:269-274`), not just bytes 1..47.
+  So `e0`, `c1`, `ff`, `df`, `f0` each followed by 47 zeros all decoded to the
+  identity — same absorbed bytes, same challenges, same decision. The KAT written to
+  catch this put the dirty byte in **byte 1**, which both sides already rejected, so
+  it passed while the hole was open.
+* **`x = 0` was accepted** (fixed `8ba4f05`). Gives `(0, ±2)`, the order-3 points —
+  the textbook small-subgroup input. blst rejects them inside `blst_p1_uncompress`
+  (`e1.c:288-289`) *before* any torsion test, so the file's "torsion needs the group
+  law, out of scope" disclaimer did not cover it: this is a zero test.
+* **The sign-convention KATs were vacuous** (fixed `8ba4f05`). Decode-with-C then
+  recompress-with-C is the identity for *any* C; the reviewer proved it by swapping
+  largest-root for odd-root and watching all six KATs stay green. Replaced with a
+  KAT anchored to the **published generator**, whose `y` is the smallest root and is
+  odd while the largest root is even — the conventions disagree on it. Verified
+  non-vacuous by execution. The convention itself was independently confirmed correct
+  via `e1.c:208` and 21/21 agreement with blst on the real trace points.
+* **`ofEip?` ignored the two 16-byte pads** (fixed `447e4d4`), so the 128-byte form
+  was non-injective — the same malleability class as the two items above.
+* **`eipRoundtrip` was stated in the wrong direction** (fixed `447e4d4`).
+  `∀ P, ofEip? (toEip P) = some P` is false for any representation with redundant
+  structure: `⟨isInfinity := false, x := 0, y := 0⟩` is not a point, yet `toEip`
+  maps it to 128 zeros and the decoder correctly returns the identity. Restated
+  decoder-first, `∀ b P, ofEip? b = some P → toEip P = b`, mirroring
+  `compressedRoundtrip`, which was already stated that way.
+
+Two documentation obligations surfaced here, still open: no Lean instance can satisfy
+plan 9.1's `ofEip? = (E1.ofEip? b).bind toSubgroup?` because the torsion test needs
+the group law, and **no Rust code ever decodes the 128-byte form** —
+`implementors.rs:283-299` is `to_input`, a writer; the reader is the 48-byte path at
+`:304-311`. So `ofEip?` is a Lean-side definition serving the contract model and
+must not be cited as a port.
+
+**The meta-finding, and the one to keep.** The review also proved that
+`kat_gate.py` — written an hour earlier to stop KATs from silently not running —
+itself had two ways to report success while a check was broken: an annotation with
+trailing prose (`-- expect true, and checks.sh asserts it`) parsed as *unannotated*
+and was skipped, which left `pBaseKats_ok`, the modulus guard, ungated; and the
+subprocess exit status was ignored, so a KAT file that did not compile could pass.
+Both fixed in `7a059b4`, then `3481f9b` annotated the 32 remaining bare `#eval`s.
+**112 checks now gate CI, up from 70, with zero unannotated lines.** The lesson is
+not "use blst" — it is that a gate needs its own falsification test, and that
+reporting "N checks pass" as a success metric hides "M checks were never looked at".
+
+Also found and fixed: **HEAD did not build** (`bfbfbe2`). The D-P9 re-pin existed
+only as uncommitted working-tree edits, so every commit since `972c6b2` was red on a
+fresh checkout while looking green locally — and the commit message claimed the
+re-pin had landed. Waiting for permission to commit someone else's decided change was
+the wrong call when HEAD was broken.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
