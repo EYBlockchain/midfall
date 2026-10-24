@@ -672,14 +672,27 @@ Three further §9.2 problems that a re-pin must also fix, independent of the ari
   block, \`π\` at kzg/mod.rs:447,463,531) because \`multiPrepare\` returns only the
   DualMSM. Either Exec/Transcript gains a read-recording hook or MultiOpen exposes
   its read shape.
-* \`verifyMsgs_iff_spec\` quantifies over an arbitrary \`H : Hash\`, but
-  \`Transcript.squeeze\` hard-codes keccak256 (Exec/Transcript.lean:172) and
-  \`TranscriptM\` has no hash parameter. Rule R9 says the hash is a parameter
-  \emph{everywhere}, and §9.5's "all lowering proofs are hash-agnostic" inherits this
-  gap. Owner: Exec/Transcript.
+* ~~\`verifyMsgs_iff_spec\` quantifies over an arbitrary \`H : Hash\` while
+  \`Transcript.squeeze\` hard-codes keccak256~~ **RESOLVED** (\`972c6b2\`):
+  \`Transcript\` now carries \`hash : Bytes → H256\` defaulting to keccak256, with
+  \`Transcript.initWithHash\`, so rule R9's "hash is a parameter everywhere" holds
+  and §9.5's hash-agnostic lowering proofs have something to instantiate. What
+  remains is a boundary, not a gap: the Rust's Blake2b transcript (64-byte output,
+  distinct common/challenge prefixes) is unmodelled, and plan Section 1 excludes
+  transcripts other than Keccak.
+* ~~\`decodeRust\` cannot see \`multi_prepare\`'s own reads because \`multiPrepare\`
+  returns only the DualMSM~~ **RESOLVED** (\`972c6b2\`): rather than expose the KZG
+  read shape, \`Transcript\` now logs every read as \`(width, raw bytes)\` and
+  \`decodeRust\` reports what the pipeline actually consumed. One schedule, not two
+  that must be proved to agree - duplicating it is the R-30 / R-32 failure mode.
 
-Consequence for the milestone: **M2's acceptance is "conformance 100%", and there is
-nothing to run against until §9.2 is re-pinned.** The port itself is complete - every
+**STATUS: the arity blocker is resolved.** D-P9 was adopted and §9.2 re-pinned with
+a bundled \`VerifierEnv\` (codec, field constants, \`delta\`, runtime switch), and
+\`decodeRust\` gained the \`inst\` argument the schedule actually depends on. All four
+\`Exec/Native\` definitions are executable and \`Exec/\` has zero sorries; what remains
+of M2's acceptance is the conformance harness itself (Phase 3), not the port.
+
+The port itself is complete - every
 Rust line on the verifier path now has a Lean counterpart or a documented skip.
 Owner: you (candidate D-P9 in docs/design.md).
 
