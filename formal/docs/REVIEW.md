@@ -981,6 +981,39 @@ fresh checkout while looking green locally — and the commit message claimed th
 re-pin had landed. Waiting for permission to commit someone else's decided change was
 the wrong call when HEAD was broken.
 
+### R-35 R-2's second face is reachable from a proof byte, demonstrated end to end
+
+`docs/REVIEW.md` R-2 recorded three manifestations of the "squeezed challenge lands
+on a bad point" hazard, the second being `poly/kzg/mod.rs:479` —
+`den.invert().unwrap()` in the multi-open `v` computation. It was documented from
+reading the Rust, with no demonstration that a real proof could provoke it.
+
+`Instances/NativeE2E.lean` KAT 14 now demonstrates it. Setting the
+**committed-instance evaluation byte to 13** makes the squeezed `x3` coincide with a
+point of the open set, the denominator vanishes, and `verifyNative` propagates
+`Fault.panic "proofs/src/poly/kzg/mod.rs:479"` rather than collapsing it to
+`Error::Opening`. The other sixteen values at the same `pi` all run to completion
+(two accept, fourteen reject with opening), so the panic is a property of that input,
+not of the fixture.
+
+Why it matters: the panic is reachable from a byte the prover controls, in the path
+that runs after the transcript is fully consumed. The reference aborts there, so the
+port is faithful — but any statement of the form "the verifier rejects bad proofs
+with `Error::Opening`" is false as written, and a caller treating a panic as an
+infrastructure error rather than a rejection would diverge between Lean and Rust.
+The port keeps the distinction (rule R4) precisely so this stays visible.
+
+Also from the same package, for the conformance harness: a truncated proof faults
+`Error::Opening`, **not** a transcript error, whenever the short read lands inside
+`multiPrepare` — the deliberate collapse at `Exec/Verifier.lean:948-949`. So a test
+phrased as "rejects a mutated proof with opening" passes vacuously on a truncated
+proof. Every rejection KAT in `NativeE2E` names its fault for that reason.
+
+Finally: the plan's `[[0]]` committed-instance placeholder was checked against the
+baseline Rust and `[[1]]` is correct — the identity-accumulator case passes
+`&[&committed_pi]` with one committed column holding the identity plus one public
+column, which is what forces `numInstanceColumns = 2`. In the exponent model `0`
+does not even typecheck at `List (List G₁)` for an abstract `Group`.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

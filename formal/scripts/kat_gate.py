@@ -26,10 +26,13 @@ import subprocess
 import sys
 import pathlib
 
-# expression, then an optional "-- expect <value>" plus any prose after it
+# expression, then an optional "-- expect <value>" plus any prose after it.
+# The expectation stops at whitespace OR a comma, so "-- expect true, and ..."
+# reads as true and "-- expect [8]" reads as [8]; an expectation value itself must
+# not contain a comma.
 EVAL = re.compile(
     r"^#eval\s+(?P<expr>.+?)"
-    r"(?:\s+--\s*expect\s+(?P<exp>\S+)\b.*)?\s*$"
+    r"(?:\s+--\s*expect\s+(?P<exp>[^\s,]+).*)?\s*$"
 )
 
 # only these shapes count as #eval output
@@ -64,7 +67,14 @@ def main() -> int:
             if m is None:
                 problems.append("%s: unparsable #eval line: %r" % (path, stripped[:70]))
                 continue
-            specs.append((m.group("expr"), m.group("exp")))
+            exp = m.group("exp")
+            # An expectation is a single token, but prose may follow it with
+            # no separator other than a colon or comma ("-- expect true: g1 is
+            # not the identity"). Strip trailing punctuation so the value is
+            # 'true' there and '[8]' in '-- expect [8]'.
+            if exp is not None:
+                exp = exp.rstrip(".,:;")
+            specs.append((m.group("expr"), exp))
         if not specs:
             continue
 
