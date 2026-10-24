@@ -4,3 +4,4 @@ build/
 *.ilean
 *.c
 vendor/*/.lake/
+__pycache__/

@@ -248,3 +248,22 @@ Total tracked fixture/dump files: 67.
 
 
 (filled in at the freeze)
+
+### M2 status update (round 7)
+
+The **port is complete**: every Rust line on the verifier path now has a Lean
+counterpart or a documented skip with grep evidence (Exec/{Verifier,Native} at
+`389a0c4` closes the last of it: verify_algebraic_constraints, prepare, and the
+query-vector assembly).
+
+M2's **acceptance criterion cannot be met yet**, for two reasons that need decisions
+rather than work:
+
+* R-27 - the frozen §9.2 interface in `Statements.lean` is not implementable (it
+  omits `G1Codec`, `FieldConsts` and `delta`), so the four `Exec/Native` sorries are
+  blocked and there is no `verifyNative` for the conformance harness to run.
+  Candidate D-P9 in docs/design.md proposes the re-pin.
+* R-28 - no model of `AdmissiblePairing` exists anywhere in the tree, so nothing on
+  the pairing path is executable even once the arity is fixed.
+
+Until both are resolved, `conformance-rs` has no Lean side to compare against.
