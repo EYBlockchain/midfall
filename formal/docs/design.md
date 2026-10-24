@@ -293,3 +293,42 @@ vendored types.
 runtime text parser, so it cannot parse a committed `.sol` at build time. Round-trip
 gates must therefore take their expected bytes from the committed artifact and their
 AST from hand-written `yul%` quotations - never from a printer feeding itself.
+
+## D-P13 (ADOPTED, round 8): generator identity is structural, not textual
+
+**Decision (user).** The generator port's equality criterion excludes formatting
+**and comments**. The obligation is structural equality of Yul ASTs, decided by the
+vendored `YulSemantics.Ast.stmtsBeq` / `exprBeq` / `casesBeq`, not byte equality of
+rendered text.
+
+**What this removes.** The comment/layout channel that Phase 6 package 1 had to
+invent (`Line.text` alongside `Line.code`) is no longer part of the correctness
+claim, because `Stmt Op` has no comment constructor and `Halo2Verifier.sol` carries
+971 comment lines. The pasted committed-text oracle blocks become a source for
+building expected ASTs, not an equality target. Four divergence findings the agent
+had to document as blockers (hex literal casing, brace policy, empty braces, spread
+formatting) are no longer blockers - they are formatting.
+
+**What it aligns.** Plan Section 7 already requires `irCheck` to establish that the
+embedded assembly blocks are **alpha-equivalent** to `L.headGuard` and `L.main`. So
+M3's criterion and Phase 5's central relation become the same decidable structural
+equality over one AST type. One relation, one proof obligation, and the generator
+output feeds the semantics directly instead of through a text round-trip.
+
+**What it costs, and the mitigation.** Byte equality was a blunt but very broad
+tripwire: it would have caught any divergence at all, including ones that are
+semantically irrelevant. Structural equality is precise but narrower, so the
+conformance signal must be compensated elsewhere - widen semantic coverage instead:
+more fixtures, the mutation corpus, and the revm differential (M4) which checks
+behaviour rather than text.
+
+**M11 is NOT weakened.** `deployed_equivalence` keeps its force because two of its
+three conjuncts were already AST-level (`Supported`, `irCheck`), and the link from
+the deployed artifact to its *bytecode* is established by the revm differential
+(M4), not by text equality. What changes is that we no longer claim to reproduce the
+deployed file's bytes - only its semantics, which is what the theorems need anyway.
+
+**Still required: a canonical renderer.** Not for equality, but because solc takes
+text. `render` must emit well-formed, compilable Yul for any AST the generator
+produces; its formatting is now free. This keeps `render g o = (lower g o).map print
+by construction` meaningful as a structural statement.

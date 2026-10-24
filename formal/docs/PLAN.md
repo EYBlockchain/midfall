@@ -40,14 +40,14 @@ flowchart TD
 **Headline results**
 - **`lowering_equivalence`** (§9.5) is generic over every supported VK and config. It concerns the compiled-contract model, meaning solc's IR of the generated `.sol` file. That model returns ABI `true` **iff** the Lean verifier accepts the decoded calldata; otherwise it reverts or halts without changing state.
 - **`end_to_end_noAcc`**: the Lean `verifyNative` accepts a compressed Rust proof π **iff** the contract returns `true` on `encodeCalldata (repack π) inst`.
-- **`deployed_equivalence`**: the Lean generator reproduces the deployed Moonlight artifacts byte for byte, so both theorems apply to the deployed code.
+- **`deployed_equivalence`**: the Lean generator reproduces the deployed Moonlight artifacts **as Yul ASTs** (structural equality, formatting and comments ignored), so both theorems apply to the deployed code. The link from the deployed artifact to its bytecode is the revm differential (M4), not text equality.
 - **`contract_knowledgeSound`**: knowledge soundness of the deployed contract in AGM + ROM.
 
 **Deliverables**
 - **D0**: frozen Rust baseline `formal-baseline-v1` (main plus the 4 branches).
 - **D1**: `formal/` Lake project on Lean v4.35.0. It depends on ArkLib (which brings mathlib, VCVio and CompPoly) and on a pinned fork of powdr-labs/yul-semantics.
 - **D2**: `Midfall.Halo2.Exec`, an executable, line-faithful port of `proofs/src` @ 2d52f24 plus the accumulator pieces.
-- **D3**: `Midfall.Generator`, a line-faithful port of `halo2_solidity_verifier` at the baseline. It emits typed Yul ASTs whose printed text is byte-identical to the Rust output.
+- **D3**: `Midfall.Generator`, a line-faithful port of `halo2_solidity_verifier` at the baseline. It emits typed Yul ASTs that are structurally equal to the ASTs the Rust emits; printed text must be *compilable and semantically equivalent*, not byte-identical (D-P13).
 - **D4**: a conformance harness (Rust exporter plus Lean runner) and differential validation of the Yul semantics against revm.
 - **D5**: proofs covering refinement, security, lowering equivalence (VM path first, then Direct), solc IR translation validation and the per-deployment theorem.
 - **D6**: `formal/Midfall/Statements.lean`, holding the §9 statements. This file is frozen and CI checks its hash.
@@ -183,7 +183,7 @@ formal/
   - solc outputs: `--ir-ast-json` for the verifier and the evaluator.
 - **Lean runner `midfall-conformance`**:
   - Parses the JSON and runs `verifyNative` and `render`.
-  - Compares accept/reject, the error class, every trace value, and the text byte for byte.
+  - Compares accept/reject, the error class, every trace value, and the generated text **modulo formatting and comments** (D-P13).
   - If the pairing is not executable in Lean, it compares the pairing *inputs* and the Rust check result.
 - **Corpus**:
   - The ivc, poseidon and rsa_signature fixtures and Moonlight wrap (k=20).
@@ -246,7 +246,7 @@ The same rules R1-R11 apply. The baseline layout is shown; `vm/certify.rs`, `vm/
 | lowering/render/{mod,models,yul}.rs + templates/** | Render/*, Templates/* (one Lean fn per template/partial producing a `Yul.Block`; Jinja filters such as `hex()` ported exactly) |
 | evm.rs (`encode_calldata`, `FN_SIG_VERIFY_PROOF`) | Evm |
 
-Required equation: `render g o = (lower g o).map print` holds by construction. Golden test: Lean text is byte-identical to Rust output for every corpus VK x option set, and to the deployed Moonlight artifacts.
+Required equation: `render g o = (lower g o).map print` holds by construction. Golden test: the Lean AST is structurally equal (`YulSemantics.Ast.stmtsBeq`) to the AST parsed from the Rust output for every corpus VK x option set and for the deployed Moonlight artifacts. Formatting and comments are NOT part of the equality (D-P13); a canonical renderer is still required so the AST can be handed to solc.
 
 ## 9. Normative statements (pseudo-Lean)
 
@@ -509,7 +509,7 @@ theorem traceReturn_spec      : Inv .pairing → return(RETURN_MPTR, 0x20) with 
 ### 9.6 Per-deployment
 ```lean
 theorem deployed_equivalence :                      -- Instances/MoonlightWrap.lean
-  moonlightGen.render prodOpts = .ok moonlightDeployedArtifacts   -- byte-equal to deployments/sepolia/moonlight-wrap
+  moonlightGen.lower prodOpts = .ok L   -- L's ASTs are stmtsBeq-equal to the assembly in deployments/sepolia/moonlight-wrap
   ∧ Supported moonlightGen prodOpts ∧ irCheck moonlightSolcIR moonlightLowered = true
 -- with lowering_equivalence this gives the equivalence for the deployed contract itself
 ```
@@ -532,7 +532,7 @@ theorem deployed_equivalence :                      -- Instances/MoonlightWrap.l
 | M0 | Baseline frozen | G0 green; tag + BASELINE.md |
 | M1 | Skeleton + inventory | Statements.lean compiles with `sorry`; ecosystem.md |
 | M2 | L0 port | conformance 100%, coverage report |
-| M3 | Generator port | golden byte-equality on corpus + Moonlight |
+| M3 | Generator port | golden **AST** equality (formatting-insensitive, D-P13) on corpus + Moonlight |
 | M4 | yul-semantics integration | revm differential green |
 | M5 | Codecs and early phases | repack, calldata, accumulator, vkLoading, transcript, lagrange |
 | M6 | QVM | qvm_* + evaluator frame theorem |
