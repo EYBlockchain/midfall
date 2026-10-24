@@ -30,7 +30,7 @@ barycentric_weight, extended_omega_inv, omega_inv; correct).
 
 ## Findings that need an owner outside their module
 
-### R-1 `transcript_repr` needs byte-exact Rust `{:?}` output - UNOWNED
+### R-1 `transcript_repr` needs byte-exact Rust `{:?}` output - RESOLVED (047b4fb)
 
 `EvaluationDomain::pinned` is on the VK construction path (plonk/mod.rs:271,
 inside `from_parts`), but only through `Debug` formatting whose bytes feed the
@@ -377,6 +377,28 @@ and `permutation::VerifyingKey::read/write/bytes_length` remain unported - the
 VK binary serde is reachable only from plonk/mod.rs:105/185/220, which nothing
 in the reachable set calls, so conformance must import the VK as JSON after all
 (which is what plan §5 says anyway). Owner: Exec/VerifyingKey.
+### R-18 `CommitmentLabel` now derives BEq, which is more faithful than before
+
+Exec/Query declared CommitmentLabel without an equality instance on the grounds that
+the port needs only equality "which an inductive has" - but Lean does not auto-derive
+BEq, so label comparison needed a match everywhere (the Permutation/Logup/Trash
+package hit this as its note N4). The Rust derives `PartialEq, Eq, Hash` at
+query.rs:11, so `deriving BEq` is the faithful reading, not an improvement. Added in
+5c221c3.
+
+### R-19 the linearization MSM's term order comes from a BTreeMap, not insertion order
+
+`linearization/verifier.rs:73-94` groups the identity multiples into a
+`BTreeMap<Option<usize>, F>` and then **iterates** it, so the point/scalar/label
+vectors are emitted in key order: `None` first, then `Some` ascending. Two
+consequences. (1) The `None` bucket - fully evaluated identities - is visited first
+and folds into `expected_eval` rather than contributing a point, so the surviving
+terms are ordered by column index regardless of the order the identities came in.
+(2) The y powers are accumulated while walking `expressions` in **reverse**
+(:75), so the last identity gets y^0 and the first gets y^m. Both are invisible on
+a one-identity circuit and wrong in general; both are pinned by a KAT. This is the
+same class as R-16 and should be cited alongside it when the QVM batching order is
+proved. Owner: none - handled, but Phase 4's linearization lemma must reproduce it.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

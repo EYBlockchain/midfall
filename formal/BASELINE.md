@@ -104,7 +104,7 @@ TODO: confirm against the frozen deploy command line at the freeze.
   expressions - i.e. everything Exec/Verifier needs except the linearization).
   Plus Assumptions/Pairing (the named BLS12-381 hypothesis, no sorry) and the
   byte and point codecs in Common/{Bytes,Codec}. Still to port:
-  Exec/Linearization, Exec/VerifyingKey, Exec/Verifier, Exec/Native (prepare,
+  Exec/Verifier, Exec/Native (prepare,
   decodeRust, prepareMsgs, verifyMsgs), Exec/Accumulator and Exec/Msgs.
   Sorry register: 12 entries, all in Native/Spec/Statements.
   Reviews and cross-module findings R-1..R-17: docs/REVIEW.md. Two need a
