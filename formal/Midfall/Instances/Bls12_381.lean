@@ -85,8 +85,22 @@ def G1Affine.ofCompressed? (b : Bytes) : Option G1Affine :=
     else
       let xbytes := ByteArray.mk
         (List.toArray (Nat.toUInt8 (b0 &&& 0x1f) :: b.data.toList.drop 1))
-      let x : Fp := bytesToNatBE xbytes;
-      pure { isInfinity := false, x := x, y := rootFor x (flags &&& 1 == 1) }
+      let xn := bytesToNatBE xbytes
+      -- x must be the canonical representative. Without this the decoder is not
+      -- injective on wire bytes: x and x+p are two different 48-byte strings that
+      -- reduce to the same field element, absorb the same 128 bytes and therefore
+      -- produce identical challenges from distinct proofs. rust: blst rejects this
+      -- in blst_p1_uncompress before any curve test runs.
+      if xn ≥ Midfall.Assumptions.pBase then none
+      else
+        let x : Fp := xn;
+        let P : G1Affine :=
+          { isInfinity := false, x := x, y := rootFor x (flags &&& 1 == 1) };
+        -- the derived y is a square root of x^3+4 only when that value IS a square;
+        -- otherwise fpSqrt returns a non-root and onCurve fails. rust: g1.rs:369-371
+        -- is_on_curve() && is_torsion_free() after blst_p1_uncompress. The torsion
+        -- half is still omitted (see g1AffineCodec); the curve half is not optional.
+        if P.onCurve then some P else none
 
 /-- Compress back to the same 48 bytes. -/
 def G1Affine.toCompressed (P : G1Affine) : Bytes :=
@@ -122,11 +136,23 @@ def g1AffineCodec : G1Codec G1Affine where
   toEip := G1Affine.toEip
   ofEip? b :=
     if b.size ≠ 128 then none
+    else if bytesToNatBE b == 0 then
+      -- EIP-2537 reserves the all-zero encoding for the point at infinity, and
+      -- toEip emits exactly that for it, so the round-trip property
+      -- (G1Codec.eipRoundtrip) requires accepting it here. (0, 0) is NOT on
+      -- y^2 = x^3 + 4, so a naive onCurve-first check rejects the identity and
+      -- the round-trip fails for the one point the verifier is most likely to
+      -- encode this way. rust: implementors.rs:283-299 has this branch first.
+      some { isInfinity := true, x := 0, y := 0 }
     else
-      let x : Fp := bytesToNatBE (ByteArray.mk (b.data.extract 16 64));
-      let y : Fp := bytesToNatBE (ByteArray.mk (b.data.extract 80 128));
-      let P : G1Affine := { isInfinity := false, x := x, y := y };
-      if P.onCurve then some P else none
+      let xn := bytesToNatBE (ByteArray.mk (b.data.extract 16 64))
+      let yn := bytesToNatBE (ByteArray.mk (b.data.extract 80 128))
+      -- both coordinates must be canonical, for the same injectivity reason as
+      -- in ofCompressed?.
+      if xn ≥ Midfall.Assumptions.pBase || yn ≥ Midfall.Assumptions.pBase then none
+      else
+        let P : G1Affine := { isInfinity := false, x := xn, y := yn };
+        if P.onCurve then some P else none
 
 /-! ## Checks against real Rust output
 
@@ -156,6 +182,15 @@ where
     | [], acc => acc
     | a :: b :: rest, acc => go rest (acc.push (Nat.toUInt8 (a * 16 + b)))
     | [_], acc => acc
+
+/-- Build a compressed encoding for a chosen x, so the rejection tests can name
+    their input directly. -/
+def mkCompX (x : Nat) (sign : Bool) : Bytes :=
+  let xb := natToBytesBE x 48
+  let b0 := (xb.data[0]?.map (fun u => u.toNat)).getD 0
+  ByteArray.mk (List.toArray
+    (Nat.toUInt8 ((b0 &&& 0x1f) ||| 0b1000_0000 ||| (if sign then 0x20 else 0))
+      :: xb.data.toList.drop 1))
 
 def blsDecompress_kats_ok : Bool :=
   fixturePoints.all fun h =>
@@ -192,6 +227,36 @@ def blsWidth_kats_ok : Bool :=
   G1Affine.ofCompressed? (natToBytesBE 1 47) == none &&
   G1Affine.ofCompressed? (natToBytesBE 1 49) == none &&
   g1AffineCodec.ofEip? (natToBytesBE 1 127) == none
+
+
+/-- The rejections an earlier revision got wrong (adversarial review, findings 1
+    and 2). Each conjunct is an input that USED to be accepted or USED to fail, so
+    this is the regression guard for the soundness hole, not a restatement of the
+    happy path. -/
+def blsRejects_kats_ok : Bool :=
+  -- x = 1 gives x^3 + 4 = 5, a non-residue: no point exists, so decode must
+  -- refuse rather than absorb a made-up y.
+  (match G1Affine.ofCompressed? (mkCompX 1 false) with
+   | none => true
+   | some P => false) &&
+  -- x and x + p are distinct wire strings for the same field element. Accepting
+  -- both makes the transcript malleable: two proofs, identical challenges,
+  -- identical decision. Only the canonical one may decode.
+  (G1Affine.ofCompressed? (mkCompX 4 false)).isSome &&
+  (G1Affine.ofCompressed? (mkCompX (4 + Midfall.Assumptions.pBase) false)) == none &&
+  -- the identity must survive the EIP round-trip: toEip emits 128 zeros for it,
+  -- and (0, 0) is not on the curve, so ofEip? needs the explicit branch.
+  (match g1AffineCodec.ofEip?
+      (ByteArray.mk (List.toArray (List.replicate 128 (0 : UInt8)))) with
+   | some P => P.isInfinity
+   | none => false)
+-- a real fixture point still decodes after the tightening (guards against the
+-- checks being too strict and silently rejecting every honest proof)
+def blsStillAccepts_kats_ok : Bool :=
+  fixturePoints.all fun h => (G1Affine.ofCompressed? (hexToBytes h)).isSome
+
+#eval Midfall.Instances.blsRejects_kats_ok      -- expect true
+#eval Midfall.Instances.blsStillAccepts_kats_ok -- expect true
 
 end Kats
 
