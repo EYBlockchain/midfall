@@ -1,68 +1,111 @@
 #!/usr/bin/env python3
 """Gate every known-answer check in the tree.
 
-Each '#eval <expr>  -- expect <value>' line in Midfall/ is a gate, not
-documentation. Before this script, checks.sh asserted six hand-picked booleans,
-so the R-30 and R-32 regression tests - written precisely because those bugs
-survived sign-off - would not have failed CI if they regressed: a false #eval
-prints as an 'info:' line and 'lake build' still exits 0.
+Each "#eval <expr>  -- expect <value>" line is a gate. Files are evaluated in
+place so their own opens, local instances and helper definitions are in scope.
+Negative controls are first-class: "-- expect false" passes by returning false.
 
-Files are evaluated in place so their own opens, local instances and helper
-definitions are in scope; harvesting the bare expressions into one file breaks on
-the unqualified ones (e.g. 'DualMSM.check dualOk expPrm').
+Hardened after an adversarial review showed this script could pass while a KAT
+was broken:
 
-Negative controls are first-class: '-- expect false' is a PASS. That matters -
-a verifier KAT that only ever returns true proves nothing, and the exponent
-model's dualBad check is exactly the control that shows the decision discriminates.
+* The expected value used to be a non-space run, so an annotation with trailing
+  prose ("-- expect true, and checks.sh asserts it") swallowed the tail into the
+  expression and the check became silently UNGATED. pBaseKats_ok was in exactly
+  that state, and corrupting pBase - the R-20 bug class - left the gate reporting
+  success. Now the whole tail is captured and the first token is the expectation.
+* The subprocess exit status was ignored, so a KAT file that does not compile
+  could pass. A non-zero exit is now a hard failure for that file.
+* Output lines are matched against a narrow set of shapes, so wrapped
+  diagnostics cannot be harvested as values, and the count must match exactly:
+  a gate that realigns its own expectations is not a gate.
+* One bad file used to abort the whole run, hiding every later KAT. Failures
+  are now collected and reported together.
 """
-import re, subprocess, sys, pathlib
+import re
+import subprocess
+import sys
+import pathlib
 
-EVAL = re.compile(r"^#eval\s+(?P<expr>.+?)\s*(?:--\s*expect\s+(?P<exp>\S+))?\s*$")
+# expression, then an optional "-- expect <value>" plus any prose after it
+EVAL = re.compile(
+    r"^#eval\s+(?P<expr>.+?)"
+    r"(?:\s+--\s*expect\s+(?P<exp>\S+)\b.*)?\s*$"
+)
+
+# only these shapes count as #eval output
+VALUE = re.compile(r"^(true|false|-?\d+|\"[^\"]*\"|\[.*\])$")
+
 
 def main() -> int:
     root = pathlib.Path("Midfall")
-    files = sorted(p for p in root.rglob("*.lean") if any(
-        l.startswith("#eval ") for l in p.read_text(encoding="utf-8").splitlines()))
-    total = checked = failures = uncommented = 0
+    if not root.is_dir():
+        print("kat_gate: run from the formal/ directory", file=sys.stderr)
+        return 2
+
+    files = sorted(
+        p for p in root.rglob("*.lean")
+        if any(l.startswith("#eval ") for l in p.read_text(encoding="utf-8").splitlines())
+    )
+    if not files:
+        print("kat_gate: no KAT files found - that is itself a failure", file=sys.stderr)
+        return 2
+
+    checked = 0
+    uncommented = 0
+    problems = []
+
     for path in files:
         specs = []
         for line in path.read_text(encoding="utf-8").splitlines():
-            m = EVAL.match(line.strip())
-            if m:
-                specs.append((m.group("expr"), m.group("exp")))
+            stripped = line.strip()
+            if not stripped.startswith("#eval "):
+                continue
+            m = EVAL.match(stripped)
+            if m is None:
+                problems.append("%s: unparsable #eval line: %r" % (path, stripped[:70]))
+                continue
+            specs.append((m.group("expr"), m.group("exp")))
         if not specs:
             continue
+
         proc = subprocess.run(["lake", "env", "lean", str(path)],
                               capture_output=True, text=True)
-        got = [l.strip() for l in proc.stdout.splitlines()
-               if l.strip() and not l.startswith(("info", "warning", "error", "trace"))]
-        # only the value lines count; #eval prints one line per eval
-        values = [g for g in got if re.fullmatch(r"[A-Za-z0-9_()+\-\s=#.,]*", g)]
-        if len(values) < len(specs):
-            print("KAT GATE: %s printed %d values for %d #eval lines"
-                  % (path, len(values), len(specs)))
-            print(proc.stdout[-800:])
-            return 1
-        offset = len(values) - len(specs)
-        for (expr, exp), actual in zip(specs, values[offset:]):
-            total += 1
+        if proc.returncode != 0:
+            blob = (proc.stdout + proc.stderr).strip().splitlines()
+            detail = blob[0] if blob else "no output"
+            problems.append("%s: does not elaborate (exit %d): %s"
+                            % (path, proc.returncode, detail[:120]))
+            continue
+
+        values = [l.strip() for l in proc.stdout.splitlines()
+                  if VALUE.match(l.strip())]
+        if len(values) != len(specs):
+            problems.append("%s: printed %d value(s) for %d #eval line(s)"
+                            % (path, len(values), len(specs)))
+            continue
+
+        for (expr, exp), actual in zip(specs, values):
             if exp is None:
                 uncommented += 1
                 continue
             checked += 1
-            if actual.strip() != exp.strip():
-                failures += 1
-                print("KAT FAILURE %s:%s  expected %r, got %r"
-                      % (path, expr[:60], exp, actual))
-    if failures:
-        print("KAT GATE: %d/%d annotated checks failed" % (failures, checked))
+            if actual != exp:
+                problems.append("%s: %s expected %r, got %r"
+                                % (path, expr[:60], exp, actual))
+
+    if problems:
+        print("KAT GATE FAILED (%d problem(s)):" % len(problems))
+        for pr in problems:
+            print("  " + pr)
         return 1
-    print("ok: %d annotated known-answer checks pass across %d files "
-          "(%d unannotated #evals skipped)" % (checked, len(files), uncommented))
+
+    print("ok: %d annotated known-answer checks pass across %d files"
+          % (checked, len(files)))
     if uncommented:
-        print("note: add '-- expect <value>' to the %d unannotated #eval lines "
-              "to gate them too" % uncommented)
+        print("note: %d unannotated #eval line(s) are NOT gated; add" % uncommented)
+        print("      \"-- expect <value>\" to gate them")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
