@@ -238,10 +238,55 @@ def transcriptKat_readN : Bool :=
   | .ok (vs, t) => vs.size == 3 && t.pos == 12
   | .error _ => false
 
+/-- A NON-CIRCULAR known-answer test for the whole squeeze path. Earlier checks
+    compared wordToBytesBE against itself, so when that function was emitting
+    little-endian bytes (docs/REVIEW.md R-20) they still passed. This one pins the
+    digest of the empty state against the keccak256 of the empty input, byte for
+    byte, in the order the transcript actually uses. -/
+def transcriptKat_keccak : Bool :=
+  let (d, t2) := (Transcript.initFromBytes Bytes.empty).squeeze
+  -- keccak256("") = c5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470
+  (d.data.toList.map (fun x => x.toNat)) ==
+    [0xc5, 0xd2, 0x46, 0x01, 0x86, 0xf7, 0x23, 0x3c, 0x92, 0x7e, 0x7d, 0xb2,
+     0xdc, 0xc7, 0x03, 0xc0, 0xe5, 0x00, 0xb6, 0x53, 0xca, 0x82, 0x27, 0x3b,
+     0x7b, 0xfa, 0xd8, 0x04, 0x5d, 0x85, 0xa4, 0x70] &&
+  t2.state == d
+
+local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- The challenge reduces the big-endian digest mod the field order
+    undefined
+    a low-byte truncation would give 254. Deliberately cheap - reducing the
+    real 256-bit digest in the kernel blows the recursion limit, which is itself
+    worth knowing before Phase 3 tries to run a Moonlight fixture natively
+    (plan Section 13 flags exactly this performance risk). -/
+def transcriptKat_challenge : Bool :=
+  ZMod.val (frOfDigest (p := 17) (0xfe : H256)) == 16 &&
+  ZMod.val (frOfDigest (p := 17) (0x11 : H256)) == 0
+
+/-- frToInputBE absorbs the big-endian repr, i.e. the reverse of the wire repr
+    (implementors.rs:316-324). If these two ever agree byte-for-byte the
+    endianness bug (docs/REVIEW.md R-20) is back. 5 is used because it is
+    canonical mod 17. -/
+def codecKat_endianness : Bool :=
+  let be := (frToInputBE (p := 17) 5).data.toList.map (fun x => x.toNat);
+  let le := (frToRepr (p := 17) 5).data.toList.map (fun x => x.toNat);
+  be ≠ le &&
+  be.drop 31 == [5] &&
+  le.take 1 == [5] &&
+  (match frOfRepr? (p := 17) (frToRepr (p := 17) 5) with
+   | some (x : Fr 17) => ZMod.val x == 5
+   | none => false) &&
+  -- non-canonical reprs are rejected (rule R7): 17 is congruent to 0, so the
+  -- canonical repr of 0 is all-zeros and [17] must be refused
+  (match frOfRepr? (p := 17) (natToBytesLE 17 32) with
+   | none => true
+   | some _ => false)
 def transcriptKats_ok : Bool :=
   [ transcriptKat_eof, transcriptKat_decode, transcriptKat_read,
     transcriptKat_empty, transcriptKat_trailing, transcriptKat_reseed,
-    transcriptKat_chain, transcriptKat_readN ].all id
+    transcriptKat_chain, transcriptKat_readN,
+    transcriptKat_keccak, transcriptKat_challenge ].all id
 
 #eval transcriptKats_ok   -- expect true
 

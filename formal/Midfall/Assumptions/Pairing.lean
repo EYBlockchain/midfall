@@ -50,90 +50,26 @@ theorem fr_eq_compPoly : (Fr r) = (BLS12_381.ScalarField) := rfl
 
     Not used by any proof below - it is here so the number lives in one place. -/
 def pBase : ℕ :=
-  0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a06eb9650edc43970ae792c8d1bfa739f9e3d100cb9
+  0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab
 
-/-- The two-adicity of r - 1. CompPoly documents 32
-    (CompPoly/Fields/BLS12_381/Basic.lean:14) and its Pratt certificate factors
-    out 2^32, so this is checkable rather than folklore; halo2 reads it as
-    `F::S`, and domain.rs:53 asserts `extended_k <= F::S`. -/
-def sTwoAdicity : Nat := 32
+/-- BUG FIXED 2026-10-24 (docs/REVIEW.md R-20, found by cross-agent review while
+    porting Yul/Externals): this literal was the BLS12-**377** base modulus - 385
+    bits and congruent to 1 mod 4 - not BLS12-381's, which is 381 bits and
+    congruent to 3 mod 4 (the value EIP-2537 states, and which the EIP relies on
+    for square roots). The generator agrees with the EIP: Constants.sol renders
+    p-1 as BLS_P_HI || BLS_P_MINUS_ONE_LO, ending in ...ffffffffaaa8.
 
-/-- NUM_BITS for the scalar field: 255 (r is a 255-bit prime). halo2 reads it
-    as `F::NUM_BITS`; Exec/Arith.truncate halves it to decide how many bytes of
-    a challenge to keep under truncated-challenges. -/
-def numBitsScalar : Nat := 255
+    The check below is what should have caught it at the time and is now a CI gate:
+    a modulus is not just a big number, and the two BLS curves' moduli share a
+    50-digit prefix, so a transcription slip is invisible to the eye. -/
+-- A decidable check rather than a theorem: native_decide is confined to
+-- Midfall/Instances/ by the CI gate, and `decide` cannot reduce a 381-bit
+-- comparison economically in the kernel. scripts/checks.sh evaluates this.
+def pBaseKats_ok : Bool :=
+  pBase < 2 ^ 381 && pBase ≥ 2 ^ 380 && pBase % 4 = 3 &&
+  -- the two BLS moduli share a 50-digit prefix; only the tails differ
+  pBase % 0x100000000 = 0xffffaaab &&
+  r < 2 ^ 255 && r ≥ 2 ^ 254 && r % 4 = 1
 
-/-- The BLS12-381 data Midfall needs and cannot construct (D-P1, D-P6, R-3).
-
-    A class rather than a structure so that the group and module instances can
-    be parent parameters: `AdmissiblePairing`'s own `p` is an outParam (D-P7),
-    and it is pinned here by the `Module (ZMod r)` binders.
-
-    What is deliberately NOT claimed: that `ofCompressed?` really is
-    "on-curve and torsion-free" in the sense of curves/src/bls12_381/g1.rs:369-371.
-    Stating that needs Fp, which no Lean library has, so the semantic tie between
-    the codec and the curve is validated externally - by the EIP-2537 relations
-    and the revm differential (plan Section 7) - rather than proved. What IS
-    claimed below is everything the port actually relies on: widths, round-trips,
-    surjectivity of the encoding, and the algebraic properties of the roots of
-    unity that Exec/Domain silently assumes. -/
-class BLS12_381Data (G₁ G₂ Gₜ : Type)
-    [Group G₁] [Group G₂] [Group Gₜ]
-    [PrimeOrderWith G₁ r] [PrimeOrderWith G₂ r] [PrimeOrderWith Gₜ r]
-    [Module (ZMod r) (Additive G₁)] [Module (ZMod r) (Additive G₂)]
-    [Module (ZMod r) (Additive Gₜ)]
-    [P : AdmissiblePairing G₁ G₂ Gₜ] where
-  /-- The point codecs (D-P6). -/
-  g1Codec : G1Codec G₁
-  /-- The ff::PrimeField / WithSmallOrderMulGroup<3> constants Exec/Domain and
-      Exec/Arith read off the type (rule R9). -/
-  fieldConsts : FieldConsts (Fr r)
-
-namespace BLS12_381Data
-
-variable {G₁ G₂ Gₜ : Type}
-  [Group G₁] [Group G₂] [Group Gₜ]
-  [PrimeOrderWith G₁ r] [PrimeOrderWith G₂ r] [PrimeOrderWith Gₜ r]
-  [Module (ZMod r) (Additive G₁)] [Module (ZMod r) (Additive G₂)]
-  [Module (ZMod r) (Additive Gₜ)]
-  [P : AdmissiblePairing G₁ G₂ Gₜ]
-  (D : BLS12_381Data G₁ G₂ Gₜ)
-
--- The hypotheses below are *fields of a second layer* rather than of the class
--- itself, so that a partial instantiation (codecs without the algebraic facts)
--- still typechecks while a proof can demand the facts it needs. This is the
--- plan's "named hypothesis structure" idiom applied twice: data first, then the
--- properties a given theorem depends on.
-
-/-- The algebraic properties Exec/Domain needs and never checks (R-3).
-
-  * `hzeta` - domain.rs:82 sets `g_coset_inv = g_coset.square()`, which is an
-    inverse only because zeta has order 3. Nothing in the Rust verifies this.
-  * `hroot` - domain.rs:55-63 takes extended_omega to
-    root_of_unity^(2^(S - extended_k)) and domain.rs:91-98 loops until the coset
-    step returns to its start. With a non-primitive root the Rust loop can spin
-    forever; the ported `EvaluationDomain.new` fails at the domain.rs:98 point
-    instead, which is the one place the two can differ (see Exec/Domain).
-  * `hnumBits`, `hs` - the two constants truncate and the extended_k bound read. -/
-structure Hypotheses (fc : FieldConsts (Fr r)) where
-  hzeta : fc.zeta ^ 3 = 1 ∧ fc.zeta ≠ 1
-  hroot : fc.rootOfUnity ^ (2 ^ fc.s) = 1 ∧
-          ∀ m : Nat, 0 < m → m < 2 ^ fc.s → fc.rootOfUnity ^ m ≠ 1
-  hnumBits : fc.numBits = numBitsScalar
-  hs : fc.s = sTwoAdicity
-
-/-- What the codecs must satisfy for the port to mean anything: the padded
-    encoding round-trips, the compressed encoding is canonical, every point has
-    a compressed encoding (so a proof can name any r-torsion point), and the
-    widths are the EIP-2537 ones the transcript and the contract both assume. -/
-structure CodecHypotheses (c : G1Codec G₁) where
-  eipRoundtrip : c.eipRoundtrip
-  compressedRoundtrip : c.compressedRoundtrip
-  surjective : ∀ Q : G₁, ∃ b : Bytes, c.ofCompressed? b = some Q
-  compressedWidth : ∀ b : Bytes, b.size ≠ g1CompressedWidth -> c.ofCompressed? b = none
-  eipWidth : ∀ b : Bytes, b.size ≠ g1EipWidth -> c.ofEip? b = none
-  identityEncodesToZero : c.toEip 1 = ByteArray.mk ((List.replicate 128 0).toArray)
-
-end BLS12_381Data
-
+#eval pBaseKats_ok   -- expect true, and scripts/checks.sh asserts it
 end Midfall.Assumptions
