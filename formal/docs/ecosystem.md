@@ -520,3 +520,36 @@ a row - first comparing a raw digest against a reduced challenge, then calling t
 probe 'prefix-independent' when it was not. Both were caught only by trying a check
 whose expected outcome was uncertain enough to be informative. When a hypothesis
 fails, verify the test can pass at all before believing the failure.
+
+## 12. The vendored Yul AST cannot round-trip the generated Solidity (Phase 6 finding)
+
+Measured directly against `deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`
+lines 199-220 and `vendor/yul-semantics/YulSemantics/{Ast,PrettyPrint}.lean`.
+
+The vendored AST and printer are the right basis for **semantics** and must be
+reused (D-P2 amendment). They cannot reproduce the **bytes** of the generated
+contract, for two independent structural reasons:
+
+1. **`Stmt Op` has no comment constructor.** The committed assembly is interleaved
+   with `//` comments (lines 200, 203-205, 210-211, 216-218). The AST cannot
+   represent the file, so no printer over it can round-trip it.
+2. **`ppStmt` always breaks blocks onto separate lines**:
+   `.block body => "{" ++ nl ++ ... ++ pad ind ++ ""}` and
+   `.cond c body => "if ... {" ++ nl ++ ...`. The committed file uses single-line
+   ifs such as `if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }`.
+
+Comma spacing (", ") and the 4-space indent step do match.
+
+**Consequence for plan Section 8.** Byte-identity of the generated Solidity is not a
+property of the Yul AST alone. Comments and whitespace come from the Jinja
+templates, so `render g o = (lower g o).map print` requires `lower` to emit an AST
+**plus** a literal-text/comment stream, or `print` to be parameterised by the
+template layout. Recording this before the printer was written, because the obvious
+gate - parse the committed file, print it, compare - is not achievable and would have
+been debugged for days.
+
+**Consequence for plan Section 7.** `irCheck` compares embedded assembly blocks for
+alpha-equivalence. That is the right notion - dropping comments is correct for
+semantics - but it must not be conflated with byte-identity. The two checks are
+different and both are needed: alpha-equivalence for `ir_refines`, byte-identity for
+`deployed_equivalence`.
