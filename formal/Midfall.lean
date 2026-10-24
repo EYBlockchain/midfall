@@ -25,5 +25,6 @@ import Midfall.Halo2.Spec.Piop
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
+import Midfall.Yul.Externals
 import Midfall.Statements
 import Midfall.Probe.ArkLibProbe
