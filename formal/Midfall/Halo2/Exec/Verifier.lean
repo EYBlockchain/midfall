@@ -91,9 +91,20 @@ def scatterIndexed {α : Type} (n : Nat) (pairs : List (Nat × α)) (site : Stri
   | some xs => .ok xs.toArray
   | none => .error (Fault.panic site)
 /-- rust: plonk/verifier.rs:24-232 (parse_trace). -/
-def parseTrace (g1 : G1Codec G₁) (vk : VerifyingKey (Fr p) G₁)
-    (committed : Array (Array G₁)) (inst : Array (Array (Array (Fr p)))) :
+def parseTrace (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (committed₀ : Array (Array G₁)) (inst : Array (Array (Array (Fr p)))) :
     TranscriptM (VerifierTrace (Fr p) G₁) := do
+  -- verifier.rs:46-47, rule R8: WITHOUT the committed-instances feature the Rust
+  -- REPLACES the caller's argument with one empty row per proof, and it does so
+  -- BEFORE the is_empty check at :49. Porting that only inside
+  -- verify_algebraic_constraints - which an earlier revision did - makes the
+  -- feature-off profile diverge twice: an empty committed argument is rejected
+  -- where the Rust accepts it, and a non-empty one is absorbed into the transcript
+  -- where the Rust would never have seen it, i.e. a different challenge stream.
+  -- Found by external audit; recorded as docs/REVIEW.md R-32.
+  let committed :=
+    if feat.committedInstances then committed₀
+    else (List.range inst.size).toArray.map fun _ => #[]
   -- verifier.rs:49-67: instance shape checks. Three distinct
   -- Error::InvalidInstances exits, and the third uses zip, so a committed/inst
   -- length mismatch leaves the extra rows UNCHECKED (rule R3).
@@ -351,7 +362,7 @@ def traceVk : VerifyingKey (Fr 17) Nat :=
 def traceProof : Bytes := natToBytesBE 42 48
 
 def parseTrace_kats_ok : Bool :=
-  match (parseTrace natG1Codec traceVk #[#[]] (#[#[#[0, 1]]])).run
+  match (parseTrace natG1Codec Features.solidity traceVk #[#[]] (#[#[#[0, 1]]])).run
         (Transcript.initFromBytes traceProof) with
   | .error _ => false
   | .ok (tr, t) =>
@@ -372,7 +383,7 @@ def parseTrace_kats_ok : Bool :=
 
 -- a one-byte-short proof must fail as a transcript error, not silently read less
 def parseTrace_short_kats_ok : Bool :=
-  match (parseTrace natG1Codec traceVk #[#[]] (#[#[#[0, 1]]])).run
+  match (parseTrace natG1Codec Features.solidity traceVk #[#[]] (#[#[#[0, 1]]])).run
         (Transcript.initFromBytes (natToBytesBE 42 47)) with
   | .error (Fault.error (Error.transcript IoErrorKind.unexpectedEof)) => true
   | _ => false
@@ -380,17 +391,17 @@ def parseTrace_short_kats_ok : Bool :=
 -- the instance shape checks fire before anything is absorbed
 def parseTrace_shape_kats_ok : Bool :=
   -- no proofs at all
-  (match (parseTrace natG1Codec traceVk #[] #[]).run
+  (match (parseTrace natG1Codec Features.solidity traceVk #[] #[]).run
         (Transcript.initFromBytes traceProof) with
    | .error (Fault.error Error.invalidInstances) => true
    | _ => false) &&
       -- two instance columns where the CS declares one
-      (match (parseTrace natG1Codec traceVk #[#[]] (#[#[#[0], #[0]]])).run
+      (match (parseTrace natG1Codec Features.solidity traceVk #[#[]] (#[#[#[0], #[0]]])).run
             (Transcript.initFromBytes traceProof) with
        | .error (Fault.error Error.invalidInstances) => true
        | _ => false) &&
       -- committed rows of differing lengths
-      (match (parseTrace natG1Codec traceVk (#[#[], #[1]] : Array (Array Nat)) (#[#[], #[]])).run
+      (match (parseTrace natG1Codec Features.solidity traceVk (#[#[], #[1]] : Array (Array Nat)) (#[#[], #[]])).run
             (Transcript.initFromBytes traceProof) with
        | .error (Fault.error Error.invalidInstances) => true
        | _ => false)
@@ -467,7 +478,7 @@ def phaseInterleave_kats_ok : Bool :=
         (natToBytesBE 4 48).data.toList).toArray);
       -- two proofs, each with no ordinary instance columns
       let inst : Array (Array (Array (Fr 17))) := #[(#[] : Array (Array (Fr 17))), #[]];
-      match (parseTrace natG1Codec vk (#[#[], #[]]) inst)
+      match (parseTrace natG1Codec Features.solidity vk (#[#[], #[]]) inst)
             (Transcript.initFromBytes proof) with
       | .error _ => false
       | .ok (tr, _) =>
@@ -491,6 +502,60 @@ def multiProofPartiallyEvaluate_kats_ok : Bool :=
 
 #eval Midfall.Halo2.phaseInterleave_kats_ok             -- expect true
 #eval Midfall.Halo2.multiProofPartiallyEvaluate_kats_ok -- expect true
+
+
+-- Rule R8 regression, found by external audit (docs/REVIEW.md R-32). With the
+-- committed-instances feature OFF the Rust replaces the caller's committed
+-- argument with one empty row per proof BEFORE its is_empty check
+-- (verifier.rs:46-49). Every conjunct below was probed individually - the first
+-- draft of this test passed on a conjunct that was vacuously true, which is the
+-- R-20 lesson again.
+
+def offFeatures : Features := { Features.solidity with committedInstances := false }
+
+-- A key whose CS expects TWO instance columns, so a supplied committed column is
+-- shape-legal only when the feature is on.
+def traceVk2 : VerifyingKey (Fr 17) Nat :=
+  match EvaluationDomain.new (F := Fr 17) fc17 3 2 with
+  | .ok dom =>
+      { domain := dom, fixedCommitments := #[], permutation := ⟨#[]⟩,
+        cs := { traceCs with numInstanceColumns := 2 }, csDegree := 3,
+        transcriptRepr := 7 }
+  | .error _ => traceVk
+
+def inst1 : Array (Array (Array (Fr 17))) := #[#[#[0, 1]]]
+def instOne : Array (Array (Array (Fr 17))) := #[#[#[0]]]
+def oneCommitted : Array (Array Nat) := #[#[7]]
+
+/-- The observable transcript effect of a run: what was read, and how far the
+    cursor got. `none` means the run failed. -/
+def traceOutcome (feat : Features) (vk : VerifyingKey (Fr 17) Nat)
+    (c : Array (Array Nat)) (inst : Array (Array (Array (Fr 17)))) :
+    Option (Array (Array Nat) × Nat) :=
+  match (parseTrace natG1Codec feat vk c inst)
+        (Transcript.initFromBytes traceProof) with
+  | .ok (tr, t) => some (tr.adviceCommitments, t.pos)
+  | .error _ => none
+
+def committedInstancesOff_kats_ok : Bool :=
+  -- 1. feature off, empty committed: ACCEPTED. Before the fix this was
+  --    InvalidInstances, because the is_empty check ran on the raw [].
+  (traceOutcome offFeatures traceVk #[] inst1) ≠ none &&
+  -- 2. feature off, a NON-empty committed argument is ignored entirely: the
+  --    outcome is identical to the empty case, so nothing was absorbed.
+  traceOutcome offFeatures traceVk oneCommitted inst1 ==
+    traceOutcome offFeatures traceVk #[] inst1 &&
+  -- 3. feature ON with an empty committed argument: still rejected, so the fix
+  --    did not loosen the supported profile.
+  traceOutcome Features.solidity traceVk #[] inst1 == none &&
+  -- 4. the discriminator. With two instance columns expected, one committed plus
+  --    one normal is legal ONLY with the feature on; with it off the committed
+  --    row is replaced by an empty one and the shape check fails. Without this
+  --    conjunct the fix could have been 'accept anything' and still looked green.
+  (traceOutcome Features.solidity traceVk2 oneCommitted instOne) ≠ none &&
+  traceOutcome offFeatures traceVk2 oneCommitted instOne == none
+#eval Midfall.Halo2.committedInstancesOff_kats_ok  -- expect true
+#eval Midfall.Halo2.committedInstancesOff_kats_ok  -- expect true
 
 end Kats
 
@@ -896,7 +961,7 @@ def prepare {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     (vk : VerifyingKey (Fr p) G₁) (committedInstances : Array (Array G₁))
     (instances : Array (Array (Array (Fr p)))) :
     TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := do
-  let trace ← parseTrace g1 vk committedInstances instances
+  let trace ← parseTrace g1 feat vk committedInstances instances
   verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
     committedInstances instances
 

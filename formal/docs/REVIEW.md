@@ -27,6 +27,7 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Accumulator | `782b9a2` | sub-agent | agent | **signed off**: it found §9.5's decodeAcc_injective is false (R-25) |
 | Exec/Verifier (verify_algebraic_constraints, prepare) + Exec/Native | `389a0c4` | sub-agent | agent | **signed off**: the frozen §9.2 interface is not implementable (R-27) |
 | Exec/Verifier after external review | `1d32d34` | external reviewer + agent | agent | **two real bugs fixed** (R-30) |
+| Exec/Verifier after a second audit | (this commit) | external auditor + agent | agent | **one new R8 bug fixed** (R-32); two of its four findings were already logged |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -787,6 +788,50 @@ Process note for future rounds: when a module is authored by whoever is coordina
 it is exactly the module that will not get reviewed. Budget review slots explicitly
 rather than letting authorship capacity absorb them.
 
+### R-32 rule R8 violation: the committed-instances feature was normalised in only one of the two places
+
+Second external audit. Of its four findings, two were already logged (R-7 pointer-vs-
+value commitment equality; R-27 the frozen §9.2 arity) and one is a documented scope
+exclusion (plan Section 1 puts transcripts other than Keccak out of scope, so the
+Lean port being Keccak-only is intended). The remaining one is a real bug and it was
+mine to miss.
+
+`verifier.rs` shadows the caller's `committed_instances` with `vec![vec![];
+instances.len()]` under `cfg(not(feature = "committed-instances"))` in TWO places -
+`parse_trace` at :46-47 and `verify_algebraic_constraints` at :260-261 - and in
+`parse_trace` the shadow happens **before** the `is_empty` check at :49. The port
+normalised only inside `verifyAlgebraicConstraints`, so with the feature off:
+
+* an empty committed argument was rejected as `InvalidInstances` where the Rust
+  accepts it (the synthesised rows are non-empty whenever there is a proof), and
+* a non-empty committed argument was absorbed into the transcript where the Rust
+  would never have seen it - a **different challenge stream**, i.e. a different
+  language accepted, not merely a different error.
+
+Rule R8 says every `#[cfg(feature)]` becomes an `if F.x then ... else ...` and both
+branches are ported. The feature was ported once instead of twice, which is exactly
+the kind of thing a line-range checklist passes: both sites cite the same Rust
+construct, so one looks like coverage of the pair.
+
+`committedInstancesOff_kats_ok` pins four separately probed facts: feature off with
+an empty argument is accepted; feature off ignores a non-empty argument entirely
+(identical outcome to the empty case); feature on still rejects an empty argument;
+and a discriminator where one committed plus one normal instance column is legal
+only with the feature on. The first draft of that KAT had a conjunct that was
+vacuously true - the case I picked was rejected by the shape check for an unrelated
+reason - so each conjunct is now evaluated on its own, which is how the problem was
+caught.
+
+**On the audit's proposal to model allocation identity explicitly** (a token on
+`CommitmentReference::OnePiece`, same token for reuses of one Rust commitment,
+different tokens for equal-valued distinct allocations, and not via
+`CommitmentLabel`): it is the right fix if we ever want the feature-off or
+duplicate-commitment behaviour to match Rust exactly, and it is cheap. But it is a
+design decision, not a mechanical one - it changes what `constructIntermediateSets`
+takes as input, and under `Features.solidity` the divergence is unreachable for
+honest proofs because every commitment is read once from the transcript into its own
+slot. Recorded as an option under R-7 rather than implemented. Owner: whoever
+settles R-7.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
