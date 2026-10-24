@@ -197,3 +197,70 @@ harness by itself. `decodeRust` still needs the KZG leaf's internal reads expose
 and `prepareMsgs` needs a hash-parameterised transcript to honour arbitrary `H`.
 Those remain tracked implementation work. In particular, no claim is made that
 actual Rust proofs can yet be fed through all four APIs.
+
+## D-P10 (ADOPTED, round 8): Y-3 resolved by an internal open-dialect Run, not by upstreaming
+
+**Decision.** Do not wait on powdr-labs/yul-semantics accepting a
+dialect-parameterised `RunCommitted`. Define `Midfall.Yul.Bridge.Run` ourselves: a
+committed-run predicate parameterised by the external-call relation and the keccak
+oracle, with the functionality and determinism lemmas we actually need proved in
+`Midfall/Yul/`. Upstream it later as a contribution once it is stable and named.
+
+**Why.** An external review's constraint is the operative one: a generic
+external-call relation is NOT automatically deterministic, so the run layer needs
+explicit conditions that preserve determinism rather than a bare parameterisation.
+That is a design task we own regardless of whose repo it lands in, and gating M4 on
+an upstream acceptance puts a third-party review queue on our critical path. The
+vendored fork already exists, so the cost is ours either way.
+
+**Consequences.** (1) `lowering_equivalence` is stated over `Midfall.Yul.Bridge.Run`,
+with `EVM.RunCommitted` used only inside the lemmas connecting it to the vendored
+interpreter. (2) The determinism conditions become named fields of a hypothesis
+structure in `Assumptions/`, per the gap policy, not an implicit assumption.
+(3) Phase 5's generic shell/IR work can start now; only the concrete deployment
+integration waits on Phase 6.
+
+## D-P11 (ADOPTED, round 8): the instance model is flat-with-explicit-view
+
+**Decision.** Keep plan 9.3's `inst : Array Fr` unchanged. The two instance columns
+required by 9.5's `Supported.instShape` are expressed by a stated mapping, not a
+type change: column `c` occupies the `n` entries starting at `c * n`, in column
+order, so the supported shape is [committed column, public column] concatenated -
+exactly what the deployment passes as public inputs. `instanceAt` implements the
+mapping, `instLen` states the well-formedness condition, and `evalRow` and `cell`
+both route through it.
+
+**Why.** The plan's signature is normative, and the reviewer's diagnosis was that the
+old code read column 0 for every query - a silent misread, not a type error. Widening
+the type would churn the frozen statements and the spec for no gain; the defect was a
+missing mapping, and that is what was added.
+
+**Open, flagged rather than assumed.** Whether `format_instance` for a given relation
+actually emits `[committed..., public...]` in that order is a fact about the Rust,
+and it is what the poseidon replay is currently blocked on. If the order differs,
+`instanceAt` must take the column layout as data. Owner: the exporter (D-P12).
+
+## D-P12 (ADOPTED, round 8): M0 freezes what is reproducible; the exporter never touches proofs/src
+
+**Decision, two parts.**
+
+1. **Freeze now, scope honestly.** Tag `formal-baseline-v1` over the current commits
+   with the committed fixtures and their SHA-256s, and record the Moonlight
+   regeneration as an explicitly deferred item with a named blocker (the SRS asset
+   and the pinned solc), rather than holding M0 open indefinitely. A freeze that
+   waits for an unavailable asset is not a freeze, it is a stall, and every
+   downstream phase is currently paying for it.
+
+2. **`conformance-rs` is a NEW workspace member that depends on `proofs` and
+   `zk_stdlib` and modifies neither.** This dissolves the conflict escalated earlier:
+   the exporter needs data FROM the verifier, not edits TO it. A separate crate can
+   call the public API and serialise whatever it needs, so no baseline bump is
+   required and the frozen-hash discipline is untouched. The one exception is
+   raw-digest recording at each squeeze: if `solidity_trace` cannot already emit it,
+   that IS a change to `proofs/src`, so prefer deriving digests on the Lean side from
+   a complete absorb stream instead.
+
+**Consequence for the replay.** The poseidon blocker is the instance shape, which the
+exporter can answer by dumping `nb_public_inputs` and `pi` directly from the harness
+it already sits next to. That is cheaper than reverse-engineering `format_instance`
+from fixture bytes, and it is the same code we need anyway.
