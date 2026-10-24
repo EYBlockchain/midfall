@@ -264,3 +264,32 @@ and it is what the poseidon replay is currently blocked on. If the order differs
 exporter can answer by dumping `nb_public_inputs` and `pi` directly from the harness
 it already sits next to. That is cheaper than reverse-engineering `format_instance`
 from fixture bytes, and it is the same code we need anyway.
+
+## D-P2 amendment (round 8): the Yul AST is the vendored one, not a new one
+
+**Rule.** `YulSemantics.Ast` is the AST of record for the whole project: `Literal`,
+`Expr Op`, `Stmt Op`, `Block Op`, `Object Op`, `Data`, dialect-parameterised by
+`Op : Type` with `YulSemantics.Dialect.EVM` supplying `EVM.Op` and `opName`.
+`Midfall/Generator/**` emits those types. It does not define a parallel AST.
+
+**Why this needed stating.** A Phase 6 package brief asked an agent to create
+`Midfall/Generator/YulAst.lean`, and it did, before anyone noticed the conflict. The
+plan already mandates reuse in two places: D-P2 (yul-semantics is vendored) and
+Section 7, which says `ImportSolcIR.lean` imports solc IR "into the yul-semantics
+AST". A second AST would fork the dialect silently and force every later proof -
+`irCheck`, `ObsEquiv`, the per-partial contracts - to state a translation in both
+directions, which is where drift and unsound coercions live.
+
+**What is legitimately ours.** A byte-exact renderer, if one is needed. The vendored
+`YulSemantics.PrettyPrint` is a semantic pretty-printer (4-space pad, its own spacing
+and casing choices); the Rust renderer's bytes are determined by Jinja templates and
+literal text, so they will probably not agree. The rule is to MEASURE FIRST: build the
+AST for a real slice of the committed `Halo2Verifier.sol` via the `yul%` DSL, print
+with the vendored printer, and diff against the committed bytes. Only a demonstrated
+mismatch justifies `Midfall/Generator/Render.lean`, and it must operate on the
+vendored types.
+
+**Also note** `YulSemantics.Syntax` is an elaborator DSL (`yul% { ... }`), not a
+runtime text parser, so it cannot parse a committed `.sol` at build time. Round-trip
+gates must therefore take their expected bytes from the committed artifact and their
+AST from hand-written `yul%` quotations - never from a printer feeding itself.
