@@ -274,21 +274,26 @@ structure Features where committedInstances truncatedChallenges outerFewerPointS
 def Features.solidity : Features := …                        -- from BASELINE.md
 inductive Fault | error (e : Error) | panic (site : String)
 abbrev TranscriptM := StateT Transcript (Except Fault)
-def prepare (F) (vk : VerifyingKey) (committed : List (List G1)) (inst : List (List (List Fr))) : TranscriptM DualMSM
+structure VerifierEnv where g1 : G1Codec G1; field : FieldConsts Fr; delta : Fr; fewerPointSetsRuntime : Bool
+def prepare (E : VerifierEnv) (F) (vk : VerifyingKey) (committed : List (List G1)) (inst : List (List (List Fr))) : TranscriptM DualMSM
 def DualMSM.check (g : DualMSM) (p : ParamsVerifierKZG) : Bool   -- e(left,sG2)·e(right,−G2)=1
-def verifyNative (F) (p) (vk) (inst : Array Fr) (proof : ByteArray) : Except Fault Unit := do
-  let (g, t) ← (prepare F vk [[0]] [[inst.toList]]).run (Transcript.initFromBytes proof)
+def verifyNative (E : VerifierEnv) (F) (p) (vk) (inst : Array Fr) (proof : ByteArray) : Except Fault Unit := do
+  let (g, t) ← (prepare E F vk [[0]] [[inst.toList]]).run (Transcript.initFromBytes proof)
   t.assertEmpty
   unless g.check p do throw (.error .opening)
 inductive Msg | g1 (P : G1) | fr (s : Fr)
-def decodeRust (F) (vk) : ByteArray → Option (List Msg)       -- schedule-driven, exact length
-def prepareMsgs (H : Hash) (F) (vk) (inst) (ms : List Msg) : Except Fault DualMSM
-def verifyMsgs (H : Hash := keccak256) (F) (p) (vk) (inst) (ms) : Except Fault Unit
+def decodeRust (E : VerifierEnv) (F) (vk) (inst : Array Fr) : ByteArray → Option (List Msg)
+def prepareMsgs (E : VerifierEnv) (H : Hash) (F) (vk) (inst) (ms : List Msg) : Except Fault DualMSM
+def verifyMsgs (E : VerifierEnv) (H : Hash := keccak256) (F) (p) (vk) (inst) (ms) : Except Fault Unit
 theorem verifyNative_iff_msgs : verifyNative F p vk inst π = .ok () ↔
-  ∃ ms, decodeRust F vk π = some ms ∧ verifyMsgs keccak256 F p vk inst ms = .ok ()
+  ∃ ms, decodeRust E F vk inst π = some ms ∧ verifyMsgs E keccak256 F p vk inst ms = .ok ()
 theorem verifyMsgs_iff_spec (hwf : vk.WellFormed F) :
-  (verifyMsgs H F p vk inst ms).isOk ↔ Spec.accepts H F p vk inst ms
+  (verifyMsgs E H F p vk inst ms).isOk ↔ Spec.accepts H F p vk inst ms
 ```
+
+The interface re-pin bundles the verifier runtime inputs. It does not yet
+complete `decodeRust`'s read-schedule implementation or parameterise the
+transcript over `H`; see D-P9 in `docs/design.md`.
 
 ### 9.3 Relation
 ```lean
@@ -546,6 +551,7 @@ Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C
 - Every `sorry` is tracked in `formal/SORRY.md` with an owner.
 - Port PRs carry the R11 checklist.
 - Proof PRs must leave `#print axioms` on the target within the trusted base.
+- **Review independence (user-directed amendment, round 7).** A fresh agent session must perform adversarial review and independent verification after every completed task within a milestone. The reviewer must not be the author, must not inherit the author's reasoning, and must be briefed to *find* a divergence rather than confirm correctness. This closes the gap R-31 recorded: R11's "signed off by a second agent" was satisfiable by the author, so every author-written module went unchecked and both surviving bugs (R-20, R-30) were in that half.
 - If a Rust behaviour makes a statement false (for example a subgroup-check gap, non-canonical acceptance, an F-finding, or the accumulator composition), stop and report a counterexample. Never weaken the statement silently.
 
 ## 13. Risks and open items
@@ -566,4 +572,3 @@ Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C
 - **Lean performance on Moonlight (k=20)** may need a fast pow/MSM in `Common`.
 - **Multi-phase circuits** are excluded (`numChallenges = 0`). Supporting them is future work.
 - **Optional stretch:** Aeneas extraction of pure Rust helpers (`repack_proof`, codecs, the VM compiler) for machine-checked equivalence.
-

@@ -5,6 +5,24 @@ Lean defs, signed off by a second agent. The checklists live in the commit
 bodies; this file records *who reviewed what*, and - more usefully - every
 finding that needs an owner outside the module that surfaced it.
 
+## Standing rule: independent adversarial review per task
+
+User-directed, round 7. **After every completed task within a milestone, a fresh
+agent session performs adversarial review and independent verification.** Not a
+confirmation pass: the brief must say assume a divergence exists and find it.
+
+This exists because R-31 showed the process was one-sided - every sub-agent package
+got reviewed (by the coordinator) and none of the coordinator's own work did, and
+both surviving bugs were in the unreviewed half. It has already paid for itself:
+the review that followed R-31 found the G1 codec accepting off-curve points and
+non-canonical x (proof malleability, falsifying two stated round-trip lemmas), and
+found that 31 of the tree's KATs were not CI gates at all.
+
+Practical constraints in this project: one sub-agent at a time, so review competes
+with authoring for the same slot and must be budgeted deliberately; and reviewers
+must rebuild before evaluating, because a stale .olean made one reviewer about to
+report a failing KAT that was actually green.
+
 ## Sign-offs
 
 | package | commit | author | reviewer | verdict |
