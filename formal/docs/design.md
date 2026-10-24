@@ -182,3 +182,48 @@ Consequence for the statements: none. No declaration in `Statements.lean`
 changed, its hash is unchanged, and the theorems still quantify over an
 arbitrary admissible pairing (now one with decidable equality on G₁ and Gₜ,
 which any concrete curve has).
+
+## D-P9 (CANDIDATE, needs sign-off): re-pin the §9.2 interface with a bundled environment
+
+**Status: proposed, not adopted.** Plan D6 freezes `Midfall/Statements.lean` and CI
+checks its hash, so this changes a normative deliverable and needs the user's
+decision. Evidence: docs/REVIEW.md R-27.
+
+**Problem.** The §9.2 signatures omit three pieces of environment that every leaf on
+the verifier path requires: `G1Codec G₁` (D-P6), `FieldConsts (Fr p)` (R-3, needed
+for `truncate` under the deployed profile), and `delta : Fr p` (R-3 extended).
+Neither adding them as explicit parameters nor as instance-implicits type-checks
+against the frozen file. The four `Exec/Native` sorries are blocked on this, and
+through them so is M2's acceptance criterion.
+
+**The trap to avoid.** A degenerate codec for an abstract group compiles and makes the
+theorems elaborate while the verifier rejects every proof. Any re-pin must be checked
+by running something, not only by elaborating.
+
+**Proposed fix.** One bundled record, threaded through the §9.2 definitions:
+
+```lean
+structure VerifierEnv (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
+    [Group G₁] [Group G₂] [Group Gₜ] [AdmissiblePairing G₁ G₂ Gₜ] where
+  g1 : G1Codec G₁
+  field : FieldConsts (Fr p)
+  delta : Fr p
+
+def prepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features) (vk : VerifyingKey (Fr p) G₁)
+    ... : TranscriptM (DualMSM Fr G₁ G₂ Gₜ)
+```
+
+One extra argument instead of three, so future environment additions (a hash
+parameter per R9, a read-recording hook per R-27) extend the record rather than every
+signature. `prepareWith`/`verifyNativeWith` in `Exec/Native.lean` already take this
+shape and hold complete bodies, so the re-pin is mechanical once approved.
+
+**Also required in the same re-pin**, or §9.2 stays unimplementable:
+give `decodeRust` the instance arguments the schedule actually depends on; expose
+`multi_prepare`'s reads; parameterise `Transcript` over `H : Hash` (rule R9); and
+decide the executable instantiation (R-28), since a frozen interface nobody can run
+cannot satisfy "conformance 100%".
+
+**Alternative.** Keep §9.2 frozen and state the theorems over `prepareWith` instead,
+adding new statements to a second file. That preserves D6 literally but splits the
+normative surface across two files, which is worse for the reader than one re-pin.

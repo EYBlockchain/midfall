@@ -25,6 +25,7 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Verifier (parse_trace) | `fbe7ce8` | agent | - | schedule KATs pin byte accounting |
 | Spec/Degrees | `7da8cb9` | sub-agent | agent | **signed off** - and it found a soundness gap in §9.4 (R-22) |
 | Exec/Accumulator | `782b9a2` | sub-agent | agent | **signed off**: it found §9.5's decodeAcc_injective is false (R-25) |
+| Exec/Verifier (verify_algebraic_constraints, prepare) + Exec/Native | `389a0c4` | sub-agent | agent | **signed off**: the frozen §9.2 interface is not implementable (R-27) |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -626,6 +627,88 @@ generated fixed-base list, instance words) where §9.5 writes two, the extras fo
 by D-P1/D-P6 and the per-VK generated base list. Whoever writes the real
 `ContractRef.accepts` must supply them - `Lowering/Types.lean` currently has only the
 no-accumulator arm.
+### R-27 BLOCKER for M2: the frozen §9.2 interface cannot be implemented
+
+Plan D6 freezes `Midfall/Statements.lean` and CI checks its hash. The §9.2 signatures
+in it are not implementable against the port, so the four `Exec/Native` sorries cannot
+be removed without re-pinning that file. The agent verified this by trying both ways
+against the real file, not by reasoning about it:
+
+| missing from §9.2 | why every leaf needs it |
+|---|---|
+| \`G1Codec G₁\` (D-P6) | every commitment read or absorb needs \`ofCompressed?\` and \`toEip\`; \`parseTrace\`, \`hashableG1\`, \`multiPrepare\`, \`Pcs.kzg\` and Exec/Accumulator all take it explicitly |
+| \`FieldConsts (Fr p)\` (R-3) | \`multi_prepare\` needs \`NUM_BITS\` for \`truncate\`/\`truncated_powers\` (kzg/mod.rs:394,457,502,521), and truncation is ON in the deployed profile (R-22) |
+| \`delta : Fr p\` (R-3 extended) | \`FieldConsts\` has no delta, so \`partiallyEvaluateIdentities\` takes it and every caller must thread it |
+
+Explicit parameters fail at \`Statements.lean:43\` with "the argument F has type
+\`Features\` but is expected to have type \`G1Codec ?m\`"; instance-implicits fail
+because \`G1Codec\` is a structure, not a class, and \`Statements\` binds only
+\`AdmissiblePairing\` anyway.
+
+**The trap the agent correctly refused.** A degenerate \`G1Codec\` for an abstract group
+(every read returns \`none\`, every absorb the empty input) *is* writable and *does*
+compile, so \`verifyNative_iff_msgs\` would elaborate while the verifier rejects every
+proof. That is precisely the failure mode plan §12 exists to prevent, and it would
+have looked like progress. The sorries stay, registered as blocked, with the complete
+bodies in \`prepareWith\`/\`verifyNativeWith\` waiting on a re-pin.
+
+Three further §9.2 problems that a re-pin must also fix, independent of the arity:
+
+* \`decodeRust F vk π\` **cannot be schedule-driven**: the schedule depends on
+  \`committed_instances\` and \`instances\` (one eval per committed instance column at
+  verifier.rs:357-358, one advice block per proof at :379-381), neither of which it
+  takes. \`verifyNative\` hard-codes the solidity shape, so the iff is only statable
+  with that shape as an explicit hypothesis.
+* It also cannot see \`multi_prepare\`'s own reads (\`f_com\`, the \`q_evals_on_x3\`
+  block, \`π\` at kzg/mod.rs:447,463,531) because \`multiPrepare\` returns only the
+  DualMSM. Either Exec/Transcript gains a read-recording hook or MultiOpen exposes
+  its read shape.
+* \`verifyMsgs_iff_spec\` quantifies over an arbitrary \`H : Hash\`, but
+  \`Transcript.squeeze\` hard-codes keccak256 (Exec/Transcript.lean:172) and
+  \`TranscriptM\` has no hash parameter. Rule R9 says the hash is a parameter
+  \emph{everywhere}, and §9.5's "all lowering proofs are hash-agnostic" inherits this
+  gap. Owner: Exec/Transcript.
+
+Consequence for the milestone: **M2's acceptance is "conformance 100%", and there is
+nothing to run against until §9.2 is re-pinned.** The port itself is complete - every
+Rust line on the verifier path now has a Lean counterpart or a documented skip.
+Owner: you (candidate D-P9 in docs/design.md).
+
+### R-28 no model of `AdmissiblePairing` exists, so nothing on the pairing path runs
+
+A consequence of D-P1 that nobody had priced: the port is abstract over
+\`AdmissiblePairing G₁ G₂ Gₜ\` and there is **no instance anywhere in the tree**. So
+\`verifyAlgebraicConstraints\` and \`prepare\` are type-correct but not runnable, and
+no fixture can be fed to them. That blocks not only conformance (M2) but the revm
+differential (M4) and every KAT that would want to evaluate a real pairing.
+
+This is not an argument against D-P1 - abstraction is what lets the theorems state
+cleanly - but it means the plan needs a fourth track: a concrete BLS12-381 instance,
+or at least a small abstract model good enough to execute on, before M2 can close.
+Owner: Assumptions/. Worth deciding alongside R-27, since a re-pin of §9.2 is the
+natural moment to say what the executable instantiation looks like.
+
+### R-29 two corrections to my own brief, and a tooling bug
+
+The agent followed the source over its instructions in two places where **I was wrong
+in the brief** (recording this because the briefs are load-bearing):
+
+* I wrote that verifier.rs:260-268 re-checks \`is_empty\` \emph{and} uniform row
+  length. It re-checks only \`is_empty\` (:263-265); the uniform-row check is :54-58
+  and the column-count check :61-65, both in \`parse_trace\`. So
+  \`verify_algebraic_constraints\` does **not** re-validate the instance column count,
+  which is what makes the :366 index panic reachable.
+* I wrote "the seven \`.zip\` calls"; there are six \`.zip\` calls producing seven
+  components.
+
+Tooling: \`scripts/lean_grep.py\` opened a block comment only on \`/--\`, never on
+\`/-!\`, so prose inside a \`/-! ... -/\` note that spelled the word \`sorry\`
+registered as a **false proof hole** - it did, at Native.lean:75, and the agent
+worked around it by not spelling the word rather than by hiding a hole. Fixed: the
+opener test now accepts \`/--\`, \`/-!\` and bare \`/-\` at depth 0 (all three open a
+nested block comment in Lean 4), verified against a synthetic file with \`sorry\` in
+each comment form, and the real sorry register is unchanged at 12.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as

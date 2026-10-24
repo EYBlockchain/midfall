@@ -41,12 +41,16 @@ def code_only(text: str) -> str:
                 in_char = False
             i += 1
             continue
+        # /-- /-! and bare /- all open a NESTED block comment in Lean 4. The
+        # opener used to be tested only for "/--" and only inside the depth>0
+        # branch, so a /-! note was never stripped and prose inside it was
+        # scanned as code (it reported a false proof hole; see docs/REVIEW.md).
+        if text.startswith("/-", i):
+            depth += 1
+            out.append("  ")
+            i += 2
+            continue
         if depth:
-            if text.startswith("/-", i):
-                depth += 1
-                out.append("  ")
-                i += 2
-                continue
             if text.startswith("-/", i):
                 depth -= 1
                 out.append("  ")
@@ -64,11 +68,6 @@ def code_only(text: str) -> str:
             in_char = True
             out.append(c)
             i += 1
-            continue
-        if text.startswith("/--", i):
-            depth = 1
-            out.append("   ")
-            i += 3
             continue
         if text.startswith("--", i):
             j = text.find("\n", i)
