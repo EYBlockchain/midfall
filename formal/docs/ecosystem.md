@@ -490,3 +490,33 @@ This is worth recording because it changes the exporter's cost: `ConstraintSyste
 has no serde derives, so emitting the "full cs" means hand-writing a serializer for
 about twenty fields plus `Expression` trees inside `proofs/src` — a baseline bump.
 The reduced schema above avoids that entirely.
+
+### Status of the replay attempt (not yet achieved)
+
+Correcting the reduction error above and re-running with `(keccak state) mod r`
+compared against the recorded challenge, four candidate prefixes still fail to
+reproduce poseidon's `theta`:
+
+| prefix after `vk_repr` | result |
+|---|---|
+| nothing | no match |
+| one instance column of length 1 | no match |
+| committed identity (128 zero bytes) only | no match |
+| committed identity + one instance column of length 1 | no match |
+
+What is ruled out: the transcript primitives are not in question. The absorb
+encoding, the decompression (blst-agreed on 21/21 points) and the squeeze reseed
+were each validated independently earlier. What is NOT known is the instance shape:
+`pi = format_instance(instance)` and `vk.nb_public_inputs` are not in the trace and
+`instance.be` holds a single `to_repr`, which need not equal `pi`.
+
+So the conclusion stands but is narrower than stated: the missing piece is the
+instance/committed-instance shape, i.e. exactly the minimal `vk.json` fields. The
+next step is to read `PoseidonExample::format_instance` (or dump `nb_public_inputs`
+from the existing test) rather than to guess prefixes.
+
+Process note worth keeping: this session produced two self-inflicted misdiagnoses in
+a row - first comparing a raw digest against a reduced challenge, then calling that
+probe 'prefix-independent' when it was not. Both were caught only by trying a check
+whose expected outcome was uncertain enough to be informative. When a hypothesis
+fails, verify the test can pass at all before believing the failure.
