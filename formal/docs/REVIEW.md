@@ -20,6 +20,8 @@ finding that needs an owner outside the module that surfaced it.
 | Exec/Circuit (constraint system) | `95f5d88` | agent | - | see R-12 |
 | Exec/Circuit, superseded | `ec1d19e` | sub-agent | agent | **signed off**: fixes two soundness gaps in 95f5d88 (R-17) |
 | Exec/{Permutation,Logup,Trash} verifier paths | `b4ad69b` | sub-agent | agent | **signed off**: P1 and P3 re-verified against the Rust by hand |
+| Yul/Externals (EIP-2537 / modexp layouts) | `3a8ded1` | sub-agent | agent | **signed off**: it found two real bugs in committed code (R-20) |
+| Exec/VerifyingKey, Exec/Linearization | `047b4fb`, `5c221c3` | agent | - | R-1 resolved; see R-18, R-19 |
 | `msmInnerProduct` closes the deferred item | `a8cf7f2` | agent | - | - |
 
 The Arith/Domain review spot-checked the two claims most likely to be wrong
@@ -399,6 +401,59 @@ terms are ordered by column index regardless of the order the identities came in
 a one-identity circuit and wrong in general; both are pinned by a KAT. This is the
 same class as R-16 and should be cited alongside it when the QVM batching order is
 proved. Owner: none - handled, but Phase 4's linearization lemma must reproduce it.
+### R-20 two bugs in committed code, both found by a downstream port cross-checking the source of truth
+
+This is the most important entry in this file, and not because of the bugs.
+
+**The bugs.**
+
+* `Common/Bytes`: `wordToBytesBE` and `natToBytesBE` shared the little-endian
+  accumulator, so the BE pair was identical to the LE pair. Consequences:
+  `Transcript.squeeze` returned the digest bytes **reversed**, so every squeezed
+  challenge in the port was wrong, and `Codec.frToInputBE` absorbed scalars
+  little-endian instead of big-endian. Verified before the fix:
+  `natToBytesBE 0x01020304 4 = [4,3,2,1]` and `bytesToWordBE (wordToBytesBE 1) = 2^248`.
+* `Assumptions/Pairing`: `pBase` was the BLS12-**377** base modulus (385 bits,
+  congruent to 1 mod 4), not BLS12-381's (381 bits, congruent to 3 mod 4 - the
+  value EIP-2537 states and relies on for square roots). The two moduli share a
+  50-digit prefix, so the slip is invisible to the eye.
+
+**Why the gates did not catch them.** Every existing check compared
+`wordToBytesBE` against itself: `transcriptKat_reseed` asserts
+`t.state == d` and `transcriptKat_chain` asserts
+`d2 == wordToBytesBE (keccak256 t.state)`. Both are self-consistent under any
+permutation of the byte order, so both stayed green while the transcript was
+wrong. That is the general failure mode of round-tripping a function against its
+own definition: it proves nothing about orientation. The fix is a check against a
+constant the implementation did not produce - `keccak256("")` as 32 named bytes,
+`0xfe mod 17 = 16`, the EIP's own modulus - and those are now in
+`scripts/checks.sh`, not just in a file nobody runs.
+
+**The process lesson.** Neither bug was found by a reviewer reading the port. Both
+were found by an agent porting a *different* module (Yul/Externals) against the
+EIP texts and the generator's rendered constants, which forced an independent
+derivation of the same numbers. Cross-module porting is a review mechanism; it
+should be treated as one deliberately rather than as a side effect of parallelism.
+
+### R-21 three corrections to the Phase 5 brief, from the EIP and the generator
+
+The agent implemented the sources of truth over its instructions, correctly:
+
+* G1MSM frames **interleave** `(point, scalar)` pairs of 160 bytes
+  (`AccumulatorHelpers.yul:300-303`, EIP-2537 "160*k ... k slices"); they are not
+  `0x80k` points followed by `0x20k` scalars. The two have the same total length,
+  so a length-only validity check passes while decoding to different pairs.
+* G1ADD input is `0x100` (two padded points), not `0x80`.
+* modexp output is exactly `modsize` bytes (EIP-198 plus revm's
+  `left_pad_vec(&output, mod_len)`), not padded up to a multiple of 32. All
+  generated frames use modsize 32, so the verifier is unaffected - but a
+  differential test against a non-32 modulus would diverge.
+
+Also recorded: `MODEXP_GAS = 4080` is a deliberate **bound**, not the price of the
+emitted frame (EIP-7883 exact for exponent r-2 is 4064), and the pinned revm
+prices modexp with the berlin formula, so neither EIP-7883 nor EIP-7823 is
+reachable from the M4 revm differential at all. That is a real limitation on what
+M4 can certify. Owner: Phase 3/5.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
