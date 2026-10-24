@@ -80,7 +80,15 @@ def G1Affine.ofCompressed? (b : Bytes) : Option G1Affine :=
     let flags := b0 >>> 5;
     if flags >>> 2 == 0 then none
     else if (flags >>> 1) &&& 1 == 1 then
-      if bytesToNatBE (ByteArray.mk (b.data.extract 1 48)) == 0 then
+      -- blst requires the SORT bit and the low SIX bits of byte 0 to be zero as
+      -- well, not just bytes 1..47 (e1.c:269-274: byte_is_zero(in0 & 0x3f) &&
+      -- bytes_are_zero(in+1, 47)). Without this, 0xe0, 0xc1, 0xff, 0xdf and 0xf0
+      -- followed by 47 zero bytes all decode to the identity, absorb the same 128
+      -- zero bytes, and yield identical challenges from distinct proofs - verbatim
+      -- the malleability the x < p check exists to prevent, and it falsified
+      -- compressedRoundtrip for the infinity case.
+      if (b0 &&& 0x3f) == 0 &&
+         bytesToNatBE (ByteArray.mk (b.data.extract 1 48)) == 0 then
         some { isInfinity := true, x := 0, y := 0 } else none
     else
       let xbytes := ByteArray.mk
@@ -92,6 +100,12 @@ def G1Affine.ofCompressed? (b : Bytes) : Option G1Affine :=
       -- produce identical challenges from distinct proofs. rust: blst rejects this
       -- in blst_p1_uncompress before any curve test runs.
       if xn ≥ Midfall.Assumptions.pBase then none
+      -- x = 0 gives y^2 = 4, i.e. (0, +/-2), which blst rejects inside
+      -- blst_p1_uncompress with BLST_POINT_NOT_IN_GROUP (e1.c:288-289) BEFORE the
+      -- torsion test at g1.rs:369-371 is reached. Not covered by the "torsion needs
+      -- the group law, out of scope" disclaimer: this is a zero test. (0, +/-2) are
+      -- the order-3 points - the textbook small-subgroup input.
+      else if xn == 0 then none
       else
         let x : Fp := xn;
         let P : G1Affine :=
@@ -258,7 +272,51 @@ def blsStillAccepts_kats_ok : Bool :=
 #eval Midfall.Instances.blsRejects_kats_ok      -- expect true
 #eval Midfall.Instances.blsStillAccepts_kats_ok -- expect true
 
+
+-- The BLS12-381 G1 generator: compressed form and published y, taken from the
+-- standard rather than computed here. This is the NON-VACUOUS sign-convention
+-- test. Every other KAT here decodes with a convention and recompresses with the
+-- same one, which is the identity for ANY convention - an external review proved
+-- the vacuity by swapping largest-root for odd-root and watching all six KATs
+-- stay green. The generator separates them: its y is the SMALLEST root and is
+-- ODD while the largest root is even, so a parity convention decodes this input
+-- to the wrong point.
+def blsGenerator_kats_ok : Bool :=
+  let compHex := "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
+  let yHex := "08b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1"
+  match G1Affine.ofCompressed? (hexToBytes compHex) with
+  | none => false
+  | some P =>
+      !P.isInfinity && P.onCurve &&
+      (natToBytesBE P.y.val 48).data.toList == (hexToBytes yHex).data.toList &&
+      (G1Affine.toCompressed P).data.toList == (hexToBytes compHex).data.toList
+
+-- The malleability and small-subgroup inputs an external review found STILL
+-- accepted after the first round of fixes, each verified against blst itself
+-- (e1.c:269-274 and e1.c:288-289).
+def infVariants : List String :=
+  (["e0", "c1", "ff", "df", "f0"] : List String)
+    |>.map (fun pre => pre ++ String.mk (List.replicate 94 '0'))
+
+def blsRejects2_kats_ok : Bool :=
+  -- blst requires the sort bit AND the low six bits of byte 0 to be zero in the
+  -- infinity arm, not just bytes 1..47, so all five are BAD_ENCODING there.
+  (infVariants.all fun h => G1Affine.ofCompressed? (hexToBytes h) == none) &&
+  -- x = 0 gives (0, +/-2), the order-3 points: rejected by blst with
+  -- BLST_POINT_NOT_IN_GROUP before any torsion test, and a zero test rather than
+  -- a group-law test, so not covered by the torsion disclaimer.
+  (G1Affine.ofCompressed? (mkCompX 0 false)) == none &&
+  (G1Affine.ofCompressed? (mkCompX 0 true)) == none &&
+  -- the canonical infinity encoding must still be accepted, so the tightening
+  -- cannot over-reject without this failing
+  (match G1Affine.ofCompressed?
+        (hexToBytes ("c0" ++ String.mk (List.replicate 94 '0'))) with
+   | some P => P.isInfinity
+   | none => false)
+
 end Kats
+#eval Midfall.Instances.blsGenerator_kats_ok    -- expect true
+#eval Midfall.Instances.blsRejects2_kats_ok     -- expect true
 
 #eval Midfall.Instances.blsDecompress_kats_ok   -- expect true
 #eval Midfall.Instances.blsEip_kats_ok         -- expect true
