@@ -135,6 +135,11 @@ def n2Proof (pi : Nat) : Bytes := n2Bytes (n2Slots ++ [(48, pi)])
 /-- The accepted π, found by the search reported at the bottom of this file. -/
 def n2Pi : Nat := 8
 
+/-- The same stream with a different value in the committed-instance-evaluation
+    slot: the knob the sensitivity and panic-site checks turn. -/
+def n2ProofSlot (ie pi : Nat) : Bytes :=
+  n2Bytes [(48, 3), (48, 1), (48, 2), (32, ie), (32, 5), (48, 6), (32, 4), (48, pi)]
+
 /-- Same stream with a NON-CANONICAL scalar (17 ≡ 0) in the advice-evaluation slot:
     rule R7 says the read must fail, so this is the negative control that separates
     "the decoder refused a bad repr" from "the decoder refused a bad length". -/
@@ -254,8 +259,7 @@ def n2AcceptingMsgs (H : Hash) : List Nat :=
 def n2AcceptingWithInstEval (ie : Nat) : List Nat :=
   (List.range 17).filter fun pi =>
     match (prepare (Gₜ := Exp 17) n2Env Features.solidity n2Vk [[1]] [[n2Inst.toList]]).run
-        (Transcript.initFromBytes
-          (n2Bytes [(48, 3), (48, 1), (48, 2), (32, ie), (32, 5), (48, 6), (32, 4), (48, pi)])) with
+        (Transcript.initFromBytes (n2ProofSlot ie pi)) with
     | .ok (d, t) => DualMSM.check d expPrm && t.pos == t.buffer.size
     | .error _ => false
 
@@ -506,6 +510,27 @@ def n2OldShapeRejected_ok : Bool :=
   n2FaultKindOn n2Vk (n2Proof n2Pi) == "ok" &&
   n2FaultKindOn n2Vk (e2eProof 11) == "notFound"
 
+/-- (14) A documented Rust panic site is reachable from a PROOF BYTE on this
+    fixture. With the committed-instance evaluation set to 13, `x3` coincides with a
+    point of the open set, `den.invert().unwrap()` fires (kzg/mod.rs:479, recorded as an
+    availability hazard at Exec/Kzg/MultiOpen.lean:145-149) and `verifyNative` propagates
+    `Fault.panic` rather than turning it into a rejection - only the `Error` arm is
+    collapsed to `Opening` (Exec/Verifier.lean:948-949, rule R4). The other sixteen slot
+    values all run to completion at `π = 8`: two of them (0 and 9) accept, fourteen reject
+    with `opening` - so the panic is one byte among seventeen, not a property of the
+    fixture as a whole.
+
+    Rules out: a port that maps a Rust panic to `Error::Opening` (the hazard would then look
+    like an ordinary rejection and the availability question would disappear from
+    the executable record), and a claim that the panic arm is unreachable. The
+    second conjunct is what makes "the panic is reachable" mean `exactly this byte
+    value` rather than `something about this fixture is broken`. -/
+def n2PanicSite_ok : Bool :=
+  n2FaultKind (n2ProofSlot 13 8) == "panic:proofs/src/poly/kzg/mod.rs:479" &&
+  (List.range 17).filter
+    (fun ie => ! (["ok", "opening"].contains (n2FaultKind (n2ProofSlot ie 8)))) == [13] &&
+  (List.range 17).filter (fun ie => n2FaultKind (n2ProofSlot ie 8) == "ok") == [0, 9]
+
 #eval n2Decode_ok              -- expect true
 #eval n2DecodeTrunc_ok         -- expect true
 #eval n2DecodeTrailing_ok      -- expect true
@@ -519,6 +544,7 @@ def n2OldShapeRejected_ok : Bool :=
 #eval n2NonVacuous_ok          -- expect true
 #eval n2WithVariants_ok        -- expect true
 #eval n2OldShapeRejected_ok      -- expect true
+#eval n2PanicSite_ok           -- expect true
 
 -- The search results themselves, as data: exactly one pi in 0..16 is accepted by
 -- `verifyNative` (8), the same set comes out of the message-level path at keccak,
@@ -534,7 +560,7 @@ def n2OldShapeRejected_ok : Bool :=
 #eval n2FaultKind ((n2Proof n2Pi).extract 0 100) == "eof"    -- expect true
 #eval n2FaultKind (ByteArray.append (n2Proof n2Pi) (natToBytesBE 0 4)) == "notFound" -- expect true
 
--- The same thirteen checks compiled rather than interpreted, for the same reason the
+-- The same fourteen checks compiled rather than interpreted, for the same reason the
 -- first fixture does it: the pipeline is built out of `Array` operations that do not
 -- reduce in the kernel, and the transcript squeezes keccak. `native_decide` is
 -- confined to this directory by scripts/checks.sh and is used only inside
@@ -552,6 +578,7 @@ example : n2InstMatters_ok = true := by native_decide
 example : n2NonVacuous_ok = true := by native_decide
 example : n2WithVariants_ok = true := by native_decide
 example : n2OldShapeRejected_ok = true := by native_decide
+example : n2PanicSite_ok = true := by native_decide
 
 end Kats
 
