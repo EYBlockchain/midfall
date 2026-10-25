@@ -1398,6 +1398,56 @@ already lists as future work. Note this does **not** gate M7: the lowering proof
 pure Lean over the vendored interpreter, and only M8 and the revm differential touch
 solc.
 
+### R-43 Phase 6 package 4 (Protocol): one defect in the reference, two interface debts
+
+Ported protocol/mod.rs (1252 lines) to Midfall/Generator/Protocol.lean (1580 lines, 68
+declarations, 18 gates) in 8ae201f. Three things came out of it that need an owner
+outside the module.
+
+**F1 - a test in the Rust reference cannot fail for the reason it claims.**
+validation_rejects_simple_selector_eval_reads (protocol/mod.rs:1153-1160) does
+plan.simple_selector_cols.insert(0) on a plan built from simple_cs(), which declares no
+selector columns at all. So num_simple_selectors is 0 while simple_selector_cols.len()
+is 1, and validate() returns from its FIRST check with "simple selector count mismatch:
+count=0 cols=1". The test asserts err.contains("simple selector"), which that message
+satisfies, so the eval-read check at protocol/mod.rs:757-764 that the test is named for
+is never reached. Independently confirmed by the orchestrator from the Rust source
+before this was recorded. This is the R-38 / R-40 defect class, and it is in the
+reference, not the port - which matters because plan Section 1 makes Rust the reference
+for conformance: a green cargo test suite is weaker evidence than it looks. The port
+reproduces the Rust assertion verbatim (faithfulness is not optional) and adds a second
+gate, validate_rejectsSimpleSelectorEval_readCheck_ok, that makes the counts agree so
+the intended check is the one that fires. Removing that check from validate() reddens
+only the new gate. Fixing the upstream test is a baseline bump and nobody has
+authorised one, so it is recorded here as owed work.
+
+**F2 - Fault.panic cannot carry a payload, so two Rust abort messages are lost.**
+The I-6 fixed-eval-section assert (protocol/mod.rs:461-470) and "invalid protocol
+plan: {err}" (protocol/mod.rs:642) both format rich messages that the port can only
+represent as a site string. Nothing in the ported scope reads a panic payload, so no
+gate notices. The consequence is specific: if a later package needs to distinguish WHICH
+validate() invariant aborted a plan - which the Direct/VM divergence work may want - the
+site string will not do it. Recorded now because the fix (widening Fault.panic to carry
+an optional message) touches Exec/Error and therefore the frozen statement surface, and
+should be a deliberate decision rather than a surprise.
+
+**F5 - PLAN rule R6 and the Generator row disagree about Vec.**
+R6 says "Vec becomes Array". Exec/ follows that (EvaluationDomain.lIRange returns
+Array F). The whole Generator row - Models.lean, Layout.lean, now Protocol.lean - uses
+List, and Protocol.lean follows the row rather than the rule. So the project currently
+has two collection conventions split along a phase boundary, and the seam is already
+crossed. This is not a correctness problem today - both are faithful to Rust order - but
+it is exactly the divergence a literal R6 review will flag, and it gets more expensive
+the deeper Phase 6 goes. Needs a decision: amend R6 to record the row precedence, or
+convert the Generator row to Array in one pass. Protocol.lean's header states the
+divergence rather than hiding it.
+
+Also worth keeping visible because it is the pattern that keeps paying: the author's
+first CommonPoly.cmp collapsed the LLast row to a catch-all .lt, which also matched
+(lLast, l0) and sorted LLast below L0 - a one-arm bug in a comparator every BTreeSet in
+the plan depends on. Three gates caught it. The gates were written before the comparator
+was believed, which is the only reason they were able to.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
