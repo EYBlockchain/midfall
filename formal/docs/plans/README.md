@@ -30,3 +30,34 @@ See PLAN 14.7 for the dependency-correct order. Current board:
 | P-06 | [P-06-api.md](P-06-api.md) | READY |
 | P-07 | kzg | DRAFT |
 | P-08 | vk | DRAFT |
+| P-08 | vk | DRAFT |
+| P-09 | quotient_numerator vm + direct | BLOCKED on P-06, P-07 |
+
+## Standing notes for agents (each cost someone an hour)
+
+- **`lake env lean FILE` does not apply lakefile options** such as
+  `autoImplicit = false`. It accepts code `lake build` rejects. Two agents have been
+  bitten. Every number you report must come from `lake build` and
+  `scripts/checks.sh`.
+- **Lean is order-sensitive.** Types must be declared before use, so a Rust item order
+  that reads naturally top-to-bottom may need moving; when you move one, say so at the
+  site (Encoding.lean moved `LookupEvalSlots` below `Word` and recorded it).
+- **Some Rust identifiers are Lean reserved words.** `meta` cannot even be a `let`
+  binder in Lean 4.35; the convention is a trailing underscore (`meta_`, `instance_`).
+  Record every such deviation - it is an R2 exception and a reviewer will look.
+- **`Vec` -> `List` in the Generator row**, despite PLAN R6 literally saying `Array`.
+  The divergence is recorded in PLAN 14.7 and Protocol.lean's header; follow the row.
+- **Do not edit a file another package owns** to fix something you noticed. Report it as
+  a finding (F5: `Location`/`Value`/`Ptr` carry no `BEq`; F8: two const blocks landed in
+  Abi.lean that belong in Layout.lean). Both are queued below.
+
+## Cross-package work owed (not any single agent's task)
+
+| item | source | why |
+|---|---|---|
+| Add `deriving BEq` to `Location`, `Value`, `Ptr` in Filters.lean / Models.lean | P-05 F5 | every later package that tests a pointer re-invents a comparator |
+| Move the LM:365-377 and LM:379-393 const blocks from Abi.lean to Layout.lean | P-05 F8 | they are the Layout row's content; the move is mechanical because gates cite by name |
+| Add `memoryguard` and `setimmutable` to the vendored EVM dialect | D-P15 | prerequisite for M8's IR import; `Op` is a closed enum so it cannot be done from Midfall/Yul |
+| Re-run the full `scripts/gate_negctl.py` including its kat half | R-41 | the kat half was run ad-hoc, not as the committed script |
+| Decide the `Vec`/`Array` question in PLAN R6 | P-04 F5 | two conventions split along a phase boundary |
+
