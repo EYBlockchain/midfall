@@ -1517,8 +1517,46 @@ HEAD and the tree is clean - but a reader trusting those two messages would have
 for the plan files in the wrong commits. The history is left unrewritten on purpose:
 amending non-HEAD commits to fix a message is a riskier operation than the confusion it
 cures, and the confusion is now documented at the place a reader would look.
-
 ## Closed
+
+### R-46 A stale comment in committed code claimed a fixed bug was still live
+
+Package 5 found this while doing the hazard-4 byte-layout cross-check, and it is the
+most interesting kind of finding this project has produced: not a bug in a port, but a
+**bug in the record about a bug**.
+
+Midfall/Yul/Externals.lean:174-186 justified the local definition bytesNatBE by
+asserting, in the present tense, that Midfall.natToBytesBE "is *little*-endian despite
+its name", that "natToBytesBE 0x01020304 4 evaluates to [4, 3, 2, 1]", that
+wordToBytesBE "has the same defect", and that "the LE one is right and the BE one is
+wrong". That was accurate when written - it is the first of the two bugs recorded in
+R-20 - and it had since been fixed: Common/Bytes.lean:59-60 now reverses the low-first
+accumulator. Measured on this tree by the orchestrator, independently of the author's
+measurement: natToBytesBE 0x01020304 4 = [1, 2, 3, 4] and natToBytesLE 0x01020304 4 =
+[4, 3, 2, 1].
+
+Why it matters more than a stale comment usually does. The claim was load-bearing in
+the wrong direction: it told a reader that the transcript's big-endian absorb and the
+byte-layout gates lean on a broken helper. Anyone trusting it would either distrust
+correct gates or, worse, "fix" a function that was already right and invert the
+endianness of the whole transcript path - the exact R-20 bug, reintroduced by someone
+acting on documentation. A false warning about a real bug is not a conservative error.
+
+Fixed in ae9e8d8 (docs-only; build green at 3377 jobs). The comment now states the
+history, says plainly that it no longer holds, and gives the real reason bytesNatBE is
+kept: two independent big-endian encoders that must agree is worth more than one
+shared one. R-20 keeps the historical record and is not edited - it was true when
+written - which is the general rule this suggests: when a finding is fixed, the finding
+stays and the *live prose* must be corrected, because the failure mode is a later
+reader meeting the claim without the context.
+
+Meta-observation for the review process: every finding from R-38 to R-41 was a gate
+whose prose claimed more than the artifact did. This is the mirror case - prose claiming
+*less* than the artifact does - and it survived a build, a gate suite and two reviews
+because nothing executes a comment. Worth adding to the reviewer's checklist: when a
+comment asserts a fact about another file's behaviour, go measure that file.
+
+
   compiler and the recorded flags. That is the strongest external-tool evidence in the
   project so far.
 * M4's revm differential gets a real oracle, with a named caveat: the program to load is
