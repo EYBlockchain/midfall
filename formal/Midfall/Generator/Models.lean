@@ -1198,19 +1198,60 @@ def vkLen_matchesRustTest_ok : Bool :=
   let vk := syntheticVk 2 3
   vk.len == 31 * 32 + (2 + 3) * 4 * 32 && vk.len == 1632 && vk.bytes.size == vk.len
 
+/-- The payload of `syntheticVk 2 3` word by word, written out here rather than
+    derived from `Halo2VerifyingKey.bytes`: 31 scalar words in
+    `syntheticVkConstants` order, then the two fixed commitments at words
+    31..38 (0x40..0x47), then the three permutation commitments at words
+    39..50 (0x80..0x8b). Every one of the four slots of every G1 is named -
+    x_hi, x_lo, y_hi, y_lo - which is exactly what the four x_hi samples of the
+    Rust test cannot see. -/
+def vkExpectedPayloadWords : List Nat :=
+  [0xde, 1, 8, 0x1234, 0x5678, 0x9abc, 0xdef0, 0, 0, 0, 0,
+   0x10, 0x11, 0x12, 0x13,
+   0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+   0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+   0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47,
+   0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b]
+
+/-- The 32-byte big-endian word at payload index `w` equals `want`. A slice that
+    does not exist is false and never a zero, so a short payload cannot satisfy
+    one of the four zero-valued expected words by being absent. -/
+def bytesWordEq (bs : Bytes) (w want : Nat) : Bool :=
+  match bytesTake bs (w * 32) 32 with
+  | some slice => bytesToNatBE slice == want
+  | none => false
+
 /-- rust: M:1354-1379, the byte-order half of the same test: word 0 is
     `vk_digest` = 0xde, word 23 is `neg_s_g2_x_c0_hi` = 0x30, word 31 the first
     fixed commitment = 0x40, word 39 the first permutation commitment = 0x80.
-    This is the only thing that pins the payload return order, and the verifier
-    copies these bytes by offset, so a reordering is a deployment fault, not a
-    cosmetic one. Rules out the two appends being swapped, or a G1 four words
-    being flattened in a different order. -/
+    Those four are the Rust's own samples and all four are x_hi positions,
+    which is why stopping there made R-40 F5b a real finding: swapping `xLo`
+    and `yHi` in both `flatMap`s of `bytes` left every one of the four exactly
+    where it was. The gate now pins EVERY word of the payload - all 51 of them,
+    listed in `vkExpectedPayloadWords` - so the Rust's four samples are a
+    subset of what is checked rather than the whole of it. This is the only
+    thing that pins the payload return order, and the verifier copies these
+    bytes by offset, so a reordering is a deployment fault, not a cosmetic one.
+    Concretely it rules out, and each of the first three was measured reddening
+    this gate: the two appends being swapped; a G1's four words flattened as
+    x_hi, y_hi, x_lo, y_lo, which is the `xLo`/`yHi` exchange the finding asked
+    about; and a commitment word dropped, which the length guard turns into a
+    red gate rather than a misaligned slice. It also reddens on a scalar
+    constant being reordered in `syntheticVkConstants`: exchanging the last
+    two entries of that table reddened this gate and `wordComment_ok`. What it
+    CANNOT see: the byte order INSIDE one word - that is `wordToBytesBE`, whose
+    input none of these perturbations touches - and the constant NAMES, which
+    are not part of the payload. -/
 def vkBytes_order_matchesRustTest_ok : Bool :=
   let bs := (syntheticVk 2 3).bytes
-  [(0, 0xde), (23, 0x30), (31, 0x40), (39, 0x80)].all fun (w, want) =>
-    match bytesTake bs (w * 32) 32 with
-    | some slice => bytesToNatBE slice == want
-    | none => false
+  [(0, 0xde), (23, 0x30), (31, 0x40), (39, 0x80)].all
+    (fun (w, want) => bytesWordEq bs w want)
+    && vkExpectedPayloadWords.length == 51
+    && bs.size == 51 * 32
+    && (List.range 51).all fun i =>
+         match listNth vkExpectedPayloadWords i with
+         | some want => bytesWordEq bs i want
+         | none => false
 
 /-- The header slot numbering and the constant table agree: slot 11 is the first
     g1 word, slot 15 the first g2 word, slot 23 the first neg_s_g2 word. Ties
@@ -1339,16 +1380,48 @@ def quotientExternal_validateContains_ok : Bool :=
     && qext.validateContains "VK payload" 0x200 0x20
         == .error "external quotient frame does not contain VK payload: range 0x200..0x220, frame 0x100..0x140"
 
+/-- The 31 opcode-usage flags in declaration order. The anonymous-constructor
+    pattern is what makes the coverage exhaustive rather than sampled: add a
+    field to `QuotientVmOpcodeUsage` and this definition stops compiling until
+    the new field is named here, so a new field cannot slip past the gate below
+    the way it did past the four-field version R-40 F5a was filed against. -/
+def quotientVmOpcodeUsageFlags (u : QuotientVmOpcodeUsage) : List Bool :=
+  match u with
+  | ⟨pushConst, pushMemLiteral, pushMemToken, pushMemTokenOffset, pushMemU16,
+     add, mul, neg, pushConstU8, foldMain, foldSelector, addConstU8, mulConstU8,
+     addConst, mulConst, addMemU16, mulMemU16, addMulMemMemConstU8,
+     addMulConstU8MemU16, addMulMemMem, runAddMulMemMemConstU8,
+     runAddMulConstU8MemU16, affineSum, nativePermutation, nativeLookup,
+     nativeIdentity, lin7, bilin7Row, bilin7Pairwise, modarith7, pow5⟩ =>
+    [pushConst, pushMemLiteral, pushMemToken, pushMemTokenOffset, pushMemU16,
+     add, mul, neg, pushConstU8, foldMain, foldSelector, addConstU8, mulConstU8,
+     addConst, mulConst, addMemU16, mulMemU16, addMulMemMemConstU8,
+     addMulConstU8MemU16, addMulMemMem, runAddMulMemMemConstU8,
+     runAddMulConstU8MemU16, affineSum, nativePermutation, nativeLookup,
+     nativeIdentity, lin7, bilin7Row, bilin7Pairwise, modarith7, pow5]
+
+/-- The 9 memory-usage flags in declaration order, destructured the same way. -/
+def quotientVmMemUsageFlags (u : QuotientVmMemUsage) : List Bool :=
+  match u with
+  | ⟨l0, lLast, lBlind, beta, gamma, x, theta, trashChallenge, instanceEval⟩ =>
+    [l0, lLast, lBlind, beta, gamma, x, theta, trashChallenge, instanceEval]
+
 /-- rust: the `#[derive(Default)]`s on M:770 and M:805. A usage record with any
     arm set emits a switch arm the program never reaches; the Rust default is
     all-false by construction, and the Lean port has no derive, so the literal
     written out here is the contract. Rules out a field being added to the
-    record with a `true` default, which is what a derive would silently do. -/
+    record with a `true` default, which is what a derive would silently do -
+    and it now covers EVERY default in both records, all 31 + 9 = 40 bools, with
+    the two lengths pinned too, so the claim and the coverage agree. The gate
+    used to inspect 4 of the 40 (R-40 F5a), which is why the lengths are
+    asserted here rather than left to the reader. Measured, not assumed:
+    `foldSelector := false` -> `true` in `quotientVmOpcodeUsageDefault` - a
+    field the old gate never looked at - reddens this gate and nothing else. -/
 def usageDefaults_ok : Bool :=
-  quotientVmOpcodeUsageDefault.add == false
-    && quotientVmOpcodeUsageDefault.pow5 == false
-    && quotientVmMemUsageDefault.x == false
-    && quotientVmMemUsageDefault.instanceEval == false
+  let o := quotientVmOpcodeUsageFlags quotientVmOpcodeUsageDefault
+  let m := quotientVmMemUsageFlags quotientVmMemUsageDefault
+  o.length == 31 && m.length == 9
+    && o.all (fun b => ! b) && m.all (fun b => ! b)
 
 /-- `Ptr.loc` as a boolean, without needing a `BEq Location` the Rust never
     derives for the Lean port: the `Location` in Filters.lean derives nothing,
