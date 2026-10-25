@@ -1228,6 +1228,37 @@ word_comment totalisation is unobservable because the panic is unreachable on bo
 sides, so rule R4 did not bite. as_usize deferral holds: all 18 call sites are
 inside the two deferred validate_layout functions.
 
+**PARTIALLY RESOLVED** — F1, F2, F3, F4 fixed in `955ef49`, `0e2594b`, `422353c`,
+`0276d29`. Gate count 217 -> 219. **F5, F6 and F7 remain open.**
+
+F1 added `vkConstructor_commitments_matchesExpectedAst_ok`, which renders a VK with 2
+fixed and 1 permutation commitment and proves `stmtsBeq` over the 12 commitment
+statements, length-guarded so a change in statement count reddens rather than
+misaligning the slice. All six perturbations the original doc claimed to rule out now
+redden exactly this gate and nothing else — reproducing the blindness and then closing
+it. The expected AST is **hand-written, and labelled as such**: a tracked artifact does
+contain a VK with non-empty commitments (`DVK:103` onward), but no pinned Lean fixture
+covers that region and adding a pin was outside the fixer's file scope. Upgrading it to
+artifact-backed needs a `vkComms` pin in `YulGolden.lean` — tracked as follow-up.
+
+F2 made the provenance claim true by moving the check into the script: it now parses
+`fixtureAnchors` and `verifierIncludes` out of `Templates.lean` and asserts each anchor
+is the start of a real pinned slice. The honest limit is stated in both places and is
+itself a finding: **the dump is rendered Askama output, and only 2 of the 5 slices
+begin with a line that appears in the named partial**, so the line half is
+machine-checked and the partial half is human attribution constrained only by the
+registry. Any later package that treats an anchor as proof of file provenance is
+misreading it.
+
+F3 wrote the gate rather than deleting the claim, and generating the coefficient tables
+programmatically from the Rust source caught a 5-vs-6 entry error before it shipped.
+
+The fixer also reported a near-miss worth recording: a perturbation run was killed by a
+tool deadline **mid-edit**, leaving a swap applied in the source. It was caught because
+the next run's pattern failed to match, and a "file must be clean before each
+perturbation" guard was added. That is the seventh instance of this defect class and
+the first caused by infrastructure rather than by reasoning — a half-applied edit is
+indistinguishable from a passing test if the harness does not check the baseline.
 **The meta-point, now six reviews running.** In every case the overclaim was in a
 comment, never in the gate's behaviour - the gate did what it did, and did it
 correctly for its actual scope. What failed was the prose, and the prose is what
