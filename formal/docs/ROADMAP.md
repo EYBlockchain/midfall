@@ -30,8 +30,10 @@ at a time.
 |---|---|---|
 | M0 baseline frozen | **open** | not tagged; see blockers |
 | M1 skeleton + inventory | done | Statements.lean compiles with 4 tracked sorries |
+| M0 baseline frozen | **open** | not tagged; see blockers |
+| M1 skeleton + inventory | done | Statements.lean compiles with 4 tracked sorries |
 | M2 L0 port | port done, **conformance not started** | the exporter does not exist |
-| M3 generator port | P-01..P-04 done, P-05 in flight | ~24,000 Rust lines remain after P-05 |
+| M3 generator port | P-01..P-05 done (~5,900 Lean lines), P-05 under review | ~24,000 Rust lines remain |
 | M4 yul-semantics | D-P10 decided; dialect gap found (D-P15) | needs `memoryguard`, `setimmutable` |
 | M5-M7 lowering | not started | gated on M3 |
 | M8 IR validation | **decision taken** (D-P15) | gated on the dialect addition |
@@ -39,10 +41,25 @@ at a time.
 | M10 Direct | not started | `direct/` now sits inside M3 (PLAN 14.7) |
 | M11 deployment | R-44 gives a bytecode oracle | R-36 staleness still open |
 
-## Port ETAs, with the arithmetic shown
+## Package log
 
-Remaining Rust lines are from PLAN 14.7. Cost = lines / 1,000 per hour, plus 1.5 h of
-review per package (reinstated round 10).
+| pkg | commit | Rust lines | Lean lines | gates | reviewed |
+|---|---|---:|---:|---:|---|
+| P-01 AST + printer + harness | 2648973, d7b788e | ~1,500 | ~1,224 | 37 | yes (R-38, R-39, R-40) |
+| P-02 Models + Templates | 18d7c28 | 1,505 | 2,511 | 45 | yes (R-40, 7 findings) |
+| P-03 Layout a-d | 0346390..4abe3f1 | 2,852 | 1,949 | 46 | yes (3c was the fix round) |
+| P-04 Protocol | 8ae201f | 1,252 | 1,580 | 18 | **owed** (deferral window) |
+| P-05 Abi + Encoding | d15f1c5 | 1,486 | 3,023 | 46 | **in flight** |
+| P-06 api | - | 818 | - | - | planned |
+| P-07 kzg | - | 2,226 | - | - | planned |
+
+Two patterns worth noticing in that table. Lean lines per Rust line rose from ~0.8
+(P-01) to ~2.0 (P-05), because the later modules carry more gate surface per ported
+line - which is the review discipline being paid for in the port rather than after it.
+And P-04 is the only substantial package with **no independent review**, because it
+landed inside the deferral window; it is queued behind P-05 for a review pass and that
+is a real debt, not a formality - R-31's evidence is that both surviving bugs lived in
+exactly that situation.
 
 | pkg | lines | port h | +review h |
 |---|---:|---:|---:|
