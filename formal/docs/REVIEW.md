@@ -1120,6 +1120,27 @@ gates are genuinely non-vacuous under 13 independent perturbations, and all 25+
 Rust and vendor citations land. Note the trap it recorded: 'git check-ignore' without
 --no-index reports tracked-but-ignored files as not ignored.
 
+**RESOLVED** in `d7b788e` (all five, plus four further stale claims the fixer found:
+a phantom `Target` dispatch, two wrong `section 11` cross-references, `V:570` wrong
+even against the deployed artifact, and a false "no trailing whitespace" claim).
+Gate count 160 -> 175. `stmtsBeq` is now authoritative with 9 new AST-to-AST gates,
+and `discriminates_builtinVsCall_ok` pins the builtin/call gap the token relation
+quotients away.
+
+The drift protection was **re-verified independently** rather than taken on the report:
+perturbing one token inside `smoke_committed` makes
+`check_golden_provenance.py` exit 1 with "re-derived token stream differs from the
+pinned string at token 10 (artifact gives '32', pin says '33')", and restoring it
+passes. Note the trap in that verification: the pins store literals **reduced to**
+**values**, so a naive edit of `0x20` finds nothing and the test silently proves
+nothing - which is how the first attempt at this check failed to fail.
+
+Two limitations the fixer reported and that stand as accepted, not overlooked:
+provenance covers only the 8 cited slices (a byte changed elsewhere in the `.sol`
+passes), because pinning a whole-file hash of a cargo-regenerated artifact without
+evidence it is byte-stable would be a false gate; and the `_direct` trees share their
+transcription with the `yul%` quotations, so only the provenance script ever touches
+bytes.
 **The pattern, stated plainly.** Four independent reviews have now each found a
 check that could not fail. Three of them were in code I had written or signed off
 within the previous day, and in every case the accompanying comment asserted the
