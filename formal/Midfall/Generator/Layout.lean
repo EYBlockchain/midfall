@@ -36,6 +36,7 @@
 
 import Midfall.Common.Bytes
 import Midfall.Generator.Models
+import Midfall.Halo2.Exec.Error
 
 namespace Midfall.Generator
 
@@ -693,6 +694,371 @@ def Halo2VerifyingKey.validatePayloadLayout (self : Halo2VerifyingKey) :
       ++ hashHex self.constructorPayloadMptr ++ ", expected "
       ++ hashHex constructorMemory.payloadMptr)
 
+/-! ## Verifier memory layout
+
+`VerifierMemoryLayout` is the record `Halo2Verifier` and `Halo2QuotientEvaluator`
+carry as their `Memory` parameter, and `VerifierMemoryLayout::validate` is the
+first thing both deferred `validate_layout` methods call.
+
+`VerifierMemoryLayout::new` (MEM:591-973) is deliberately NOT ported here. It is
+383 lines of arena planning whose arguments come from `ConstraintSystemMeta` and
+from a `VerifierMemoryLayoutConfig` derived from a circuit, neither of which
+exists in this tree yet; porting it would mean inventing their shapes. What is
+ported is the record, its config, and the validator, which is the part M:830 and
+M:965 need and which can be tested against the reference's own fixed addresses. -/
+
+/-- rust: LM:46 (`TRANSCRIPT_BUFFER_START`) @formal-baseline. -/
+def transcriptBufferStart : Nat := lowMemoryScratchStart
+
+/-- rust: LM:48 (`PCS_PAIRING_SCRATCH_START`) @formal-baseline. -/
+def pcsPairingScratchStart : Nat := lowMemoryScratchStart
+
+/-- rust: LM:50 (`VERIFIER_RETURN_BUFFER_START`) @formal-baseline. -/
+def verifierReturnBufferStart : Nat := lowMemoryScratchStart
+
+/-- rust: LM:52 (`QUOTIENT_RETURN_BUFFER_START`) @formal-baseline. -/
+def quotientReturnBufferStart : Nat := lowMemoryScratchStart
+
+/-- rust: LM:313 (`accumulator::PAIRING_BATCH_PTR`) @formal-baseline. -/
+def accumulatorPairingBatchPtr : Nat := lowMemoryScratchStart
+
+/-- rust: LM:348 (`accumulator::PAIRING_BATCH_HASH_BYTES`) @formal-baseline.
+    Tag word, `vk_digest` word, then four G1 points, which is why the frame ends
+    at `0x1240` rather than `0x1220` (LM:113-115). -/
+def accumulatorPairingBatchHashBytes : Nat := 2 * wordBytes + 4 * g1Bytes
+
+/-- rust: LM:121-122 (`FINAL_PAIRING_SCRATCH_START`) @formal-baseline. -/
+def finalPairingScratchStart : Nat := accumulatorPairingBatchPtr
+  + accumulatorPairingBatchHashBytes
+
+/-- rust: LM:668-725 (`enum ThetaSlot`, `#[repr(usize)]`) @formal-baseline. The
+    discriminants are explicit in the Rust, so they are ported as an explicit
+    table in `ThetaSlot.word` rather than as Lean's implicit constructor order;
+    the jumps (33 to 38, 40 to 44) and the gaps between the G1 slots are the
+    historical padding LM:45-66 describes. -/
+inductive ThetaSlot where
+  | theta | beta | gamma | trashChallenge | y | x | x1 | x2 | x3 | x4
+  | fCom | pi | accLhs | accRhs | xN | xNMinus1Inv | lLast | lBlind | l0
+  | instanceEval | quotientEval | quotient | fEval | v | finalCom
+  | pairingLhs | pairingRhs
+
+/-- rust: LM:729-731 (`ThetaSlot::word`, `self as usize`) @formal-baseline, read
+    against the discriminants of LM:672-724. -/
+def ThetaSlot.word : ThetaSlot → Nat
+  | .theta => 0
+  | .beta => 1
+  | .gamma => 2
+  | .trashChallenge => 3
+  | .y => 4
+  | .x => 5
+  | .x1 => 6
+  | .x2 => 7
+  | .x3 => 8
+  | .x4 => 9
+  | .fCom => 10
+  | .pi => 14
+  | .accLhs => 18
+  | .accRhs => 22
+  | .xN => 26
+  | .xNMinus1Inv => 27
+  | .lLast => 28
+  | .lBlind => 29
+  | .l0 => 30
+  | .instanceEval => 31
+  | .quotientEval => 32
+  | .quotient => 33
+  | .fEval => 38
+  | .v => 39
+  | .finalCom => 40
+  | .pairingLhs => 44
+  | .pairingRhs => 48
+
+/-- rust: LM:745 (`theta_window::ROT_POINTS_CAP_WORDS`) @formal-baseline. -/
+def thetaRotPointsCapWords : Nat := 28
+
+/-- rust: LM:747 (`theta_window::X1_POWERS_CAP_WORDS`) @formal-baseline. -/
+def thetaX1PowersCapWords : Nat := 65
+
+/-- rust: LM:749 (`theta_window::Q_EVAL_SET_CAP_WORDS`) @formal-baseline. -/
+def thetaQEvalSetCapWords : Nat := 56
+
+/-- rust: LM:751 (`theta_window::Q_EVAL_CPTR_PADDING_WORDS`) @formal-baseline. -/
+def thetaQEvalCptrPaddingWords : Nat := 7
+
+/-- rust: LM:753 (`theta_window::G1_IDENTITY_PADDING_WORDS`) @formal-baseline. -/
+def thetaG1IdentityPaddingWords : Nat := 7
+
+/-- rust: LM:756 (`theta_window::ROT_POINTS_WORD`) @formal-baseline. -/
+def thetaRotPointsWord : Nat := ThetaSlot.pairingRhs.word + g1WordsCount
+
+/-- rust: LM:758 (`theta_window::X1_POWERS_WORD`) @formal-baseline. -/
+def thetaX1PowersWord : Nat := thetaRotPointsWord + thetaRotPointsCapWords
+
+/-- rust: LM:760 (`theta_window::Q_COM_WORD`) @formal-baseline. -/
+def thetaQComWord : Nat := thetaX1PowersWord + thetaX1PowersCapWords
+
+/-- rust: LM:762 (`theta_window::Q_EVAL_SET_WORD`) @formal-baseline. -/
+def thetaQEvalSetWord : Nat := thetaQComWord
+
+/-- rust: LM:764 (`theta_window::Q_COM_CAP_WORDS`) @formal-baseline. The window
+    aliases q_eval_set, so this is definitionally zero. -/
+def thetaQComCapWords : Nat := thetaQEvalSetWord - thetaQComWord
+
+/-- rust: LM:766 (`theta_window::Q_EVAL_CPTR_WORD`) @formal-baseline. -/
+def thetaQEvalCptrWord : Nat := thetaQEvalSetWord + thetaQEvalSetCapWords
+
+/-- rust: LM:768 (`theta_window::G1_IDENTITY_WORD`) @formal-baseline. -/
+def thetaG1IdentityWord : Nat := thetaQEvalCptrWord + 1 + thetaQEvalCptrPaddingWords
+
+/-- rust: LM:770-771 (`theta_window::REVERSED_EVALS_WORD`) @formal-baseline. -/
+def thetaReversedEvalsWord : Nat :=
+  thetaG1IdentityWord + g1WordsCount + thetaG1IdentityPaddingWords
+
+/-- rust: MEM:67-80 (`struct ThetaWindowLayout`) @formal-baseline. Field order is
+    the Rust's, field for field. -/
+structure ThetaWindowLayout where
+  rotPointsWord : Nat
+  x1PowersWord : Nat
+  qComWord : Nat
+  qEvalSetWord : Nat
+  qEvalCptrWord : Nat
+  g1IdentityWord : Nat
+  reversedEvalsWord : Nat
+  rotPointsCapWords : Nat
+  x1PowersCapWords : Nat
+  qComCapWords : Nat
+  qEvalSetCapWords : Nat
+
+/-- rust: MEM:87-118 (`ThetaWindowLayout::compatibility`) @formal-baseline, in
+    the Rust's own let-then-construct shape. The seven `debug_assert_eq!` of
+    MEM:97-103 are compiled out in the reference profile (docs/REVIEW.md R-6),
+    so they are not enforced inside the definition; the gate
+    `thetaWindow_compatibility_ok` asserts the same seven equalities from
+    outside, which is what makes recording them worth the space. -/
+def ThetaWindowLayout.compatibility : ThetaWindowLayout := 
+  let rotPointsWord := ThetaSlot.pairingRhs.word + g1WordsCount
+  let x1PowersWord := rotPointsWord + thetaRotPointsCapWords
+  let qComWord := x1PowersWord + thetaX1PowersCapWords
+  let qEvalSetWord := qComWord
+  let qEvalCptrWord := qEvalSetWord + thetaQEvalSetCapWords
+  let g1IdentityWord := qEvalCptrWord + 1 + thetaQEvalCptrPaddingWords
+  let reversedEvalsWord := g1IdentityWord + g1WordsCount + thetaG1IdentityPaddingWords
+  { rotPointsWord := rotPointsWord, x1PowersWord := x1PowersWord,
+    qComWord := qComWord, qEvalSetWord := qEvalSetWord,
+    qEvalCptrWord := qEvalCptrWord, g1IdentityWord := g1IdentityWord,
+    reversedEvalsWord := reversedEvalsWord,
+    rotPointsCapWords := thetaRotPointsCapWords,
+    x1PowersCapWords := thetaX1PowersCapWords, qComCapWords := thetaQComCapWords,
+    qEvalSetCapWords := thetaQEvalSetCapWords }
+
+/-- rust: MEM:379-385 (`struct FinalMsmShape`) @formal-baseline. -/
+structure FinalMsmShape where
+  terms : Nat
+  inputBytes : Nat
+
+/-- The `#[derive(Default)]` of MEM:379, for `FinalMsmShape`. -/
+def finalMsmShapeDefault : FinalMsmShape := { terms := 0, inputBytes := 0 }
+
+/-- rust: MEM:389-394 (`FinalMsmShape::from_terms`) @formal-baseline. -/
+def FinalMsmShape.fromTerms (terms : Nat) : FinalMsmShape :=
+  { terms := terms, inputBytes := terms * g1MsmPairBytes }
+
+/-- rust: MEM:397-414 (`struct PcsMemoryRequirements`) @formal-baseline. Field
+    order is the Rust's, field for field. -/
+structure PcsMemoryRequirements where
+  rotPointsWords : Nat
+  x1PowersWords : Nat
+  qComWords : Nat
+  qEvalSetWords : Nat
+  qEvalSourceTableWords : Nat
+  qComTraceMsm : FinalMsmShape
+  finalMsm : FinalMsmShape
+
+/-- The `#[derive(Default)]` of MEM:397, for `PcsMemoryRequirements`. -/
+def pcsMemoryRequirementsDefault : PcsMemoryRequirements :=
+  { rotPointsWords := 0, x1PowersWords := 0, qComWords := 0, qEvalSetWords := 0,
+    qEvalSourceTableWords := 0, qComTraceMsm := finalMsmShapeDefault,
+    finalMsm := finalMsmShapeDefault }
+/-- rust: MEM:416-519 (`struct VerifierMemoryLayout`) @formal-baseline. Field
+    order is the Rust's, field for field. The `Ptr`-typed fields stay `Ptr`
+    because the Rust fields are `Ptr`, not `usize`, and `validate` reads them
+    through `Ptr::value` and `Value::as_usize`. -/
+structure VerifierMemoryLayout where
+  map : MemoryMap
+  thetaWindows : ThetaWindowLayout
+  constructorSmokeScratchMptr : Nat
+  constructorG1msmSmokeScratchMptr : Nat
+  constructorG1msmSmokeInputBytes : Nat
+  transcriptMptr : Nat
+  pcsPairingScratchMptr : Nat
+  verifierReturnMptr : Nat
+  quotientReturnMptr : Nat
+  vkMptr : Ptr
+  scalarInvScratchMptr : Nat
+  challengeMptr : Ptr
+  thetaMptr : Ptr
+  betaMptr : Ptr
+  gammaMptr : Ptr
+  trashChallengeMptr : Ptr
+  yMptr : Ptr
+  xMptr : Ptr
+  x1Mptr : Ptr
+  x2Mptr : Ptr
+  x3Mptr : Ptr
+  x4Mptr : Ptr
+  fComMptr : Ptr
+  piMptr : Ptr
+  accLhsMptr : Ptr
+  accRhsMptr : Ptr
+  xNMptr : Ptr
+  xNMinus1InvMptr : Ptr
+  lLastMptr : Ptr
+  lBlindMptr : Ptr
+  l0Mptr : Ptr
+  instanceEvalMptr : Ptr
+  quotientEvalMptr : Ptr
+  quotientMptr : Ptr
+  fEvalMptr : Ptr
+  vMptr : Ptr
+  finalComMptr : Ptr
+  pairingLhsMptr : Ptr
+  pairingRhsMptr : Ptr
+  rotPointsMptr : Ptr
+  x1PowersMptr : Ptr
+  qComMptr : Ptr
+  qEvalSetMptr : Ptr
+  qEvalCptrMptr : Ptr
+  g1IdentityMptr : Ptr
+  reversedEvalsMptr : Ptr
+  commsMptrBase : Ptr
+  adviceCommsMptrBase : Ptr
+  lookupMCommsMptrBase : Ptr
+  permZCommsMptrBase : Ptr
+  lookupHelperCommsMptrBase : Ptr
+  lookupZCommsMptrBase : Ptr
+  trashcanCommsMptrBase : Ptr
+  quotientLimbCommsMptrBase : Ptr
+  selectorAccMptr : Nat
+  batchInvertScratchMptr : Nat
+  lagrangeDenomsMptr : Nat
+  quotientTmpMptr : Nat
+  quotientStackMptr : Nat
+  quotientStackHi : Nat
+  pcsQEvalSourceTableMptr : Nat
+  pcsQComTraceScratchMptr : Nat
+  pcsFinalMsmScratchMptr : Nat
+  accMsmScratch : Nat
+  accumulatorPairingBatchMptr : Nat
+  finalPairingScratchMptr : Nat
+  traceU256Mptr : Nat
+  pcs : PcsMemoryRequirements
+
+/-- rust: MEM:564-583 (`struct VerifierMemoryLayoutConfig`) @formal-baseline. -/
+structure VerifierMemoryLayoutConfig where
+  transcriptWords : Nat
+  numInstances : Nat
+  quotientStateWords : Nat
+  quotientStackWords : Nat
+  accMsmTerms : Nat
+  pcs : PcsMemoryRequirements
+
+/-- The `#[derive(Default)]` of MEM:564, for `VerifierMemoryLayoutConfig`. -/
+def verifierMemoryLayoutConfigDefault : VerifierMemoryLayoutConfig :=
+  { transcriptWords := 0, numInstances := 0, quotientStateWords := 0,
+    quotientStackWords := 0, accMsmTerms := 0, pcs := pcsMemoryRequirementsDefault }
+
+/-- rust: ENC:594-601 (`Value::as_usize`) @formal-baseline. `*int as usize` is a
+    wrapping cast, so a negative offset becomes its 2^64 two's complement rather
+    than clamping; `Nat` cannot hold an `isize` directly, so the wrap is spelled
+    out the way `fmtHex` (F:65-66) spells out the same cast. The
+    `Value::Identifier` arm is `unreachable!()`, which rule R4 renders as a
+    `Fault.panic` rather than a silent total. It is reachable as a TYPE:
+    `Ptr::new` (ENC:688-693) takes `impl Into<Value>` and
+    `From<&'static str> for Value` (ENC:611) makes a symbolic pointer
+    well-typed, so the arm is modelled rather than assumed away. No current call
+    path reaches it - every one of the 49 `Ptr::memory`/`Ptr::calldata` sites in
+    the reference passes a `usize` - which is why this returns `Except` and why
+    `value_asUsize_panic_ok` feeds it an identifier directly. -/
+def Value.asUsize (v : Value) : Except Midfall.Halo2.Fault Nat :=
+  match v with
+  | .integer i => pure (if i >= 0 then i.toNat else (i + (2 : Int) ^ 64).toNat)
+  | .identifier _ _ => throw (Midfall.Halo2.Fault.panic
+      "proofs/solidity-verifier/src/lowering/encoding/mod.rs:599")
+
+/-- `Value::as_usize` at the one site that cannot carry an `Except`: MEM:1039,
+    where the reference does not handle the panic and would abort the process.
+    `Nat` has no failure case to return, so the symbolic arm maps to a value no
+    caller can observe; `asUsizeNat_agrees_ok` pins it to `Value.asUsize` on
+    every concrete offset, which is the whole domain the reference can reach. -/
+def Value.asUsizeNat (v : Value) : Nat :=
+  match v with
+  | .integer i => if i >= 0 then i.toNat else (i + (2 : Int) ^ 64).toNat
+  | .identifier _ _ => 0
+
+/-- rust: MEM:974-1076 (`VerifierMemoryLayout::validate`) @formal-baseline. Four
+    checks in the source order that decides which error a bad layout reports:
+    the seven fixed low-memory pointers against their constants, every registered
+    region against `LOW_MEMORY_SCRATCH_START`, the scalar-inversion scratch
+    against `VK_MPTR - MODEXP_SCRATCH_BYTES` (`saturating_sub`, which is `Nat`
+    subtraction), and the four PCS window capacities. The first three message
+    formats are hex (`{:#x}`); the four capacity messages are DECIMAL (`{}`),
+    which the gate expectations show. -/
+def VerifierMemoryLayout.validate (self : VerifierMemoryLayout) :
+    Except String Unit := do
+  let failErr (msg : String) : Except String Unit := Except.error msg
+  let fixedLowMemory : List (String × Nat × Nat) :=
+    [("constructor_smoke_scratch_mptr", self.constructorSmokeScratchMptr,
+       lowMemoryScratchStart),
+     ("transcript_mptr", self.transcriptMptr, transcriptBufferStart),
+     ("pcs_pairing_scratch_mptr", self.pcsPairingScratchMptr, pcsPairingScratchStart),
+     ("verifier_return_mptr", self.verifierReturnMptr, verifierReturnBufferStart),
+     ("quotient_return_mptr", self.quotientReturnMptr, quotientReturnBufferStart),
+     ("accumulator_pairing_batch_mptr", self.accumulatorPairingBatchMptr,
+       accumulatorPairingBatchPtr),
+     ("final_pairing_scratch_mptr", self.finalPairingScratchMptr,
+       finalPairingScratchStart)]
+  for (name, actual, expected) in fixedLowMemory do
+    if actual != expected then
+      failErr ("fixed memory pointer " ++ name ++ " drifted: got "
+        ++ hashHex actual ++ ", expected " ++ hashHex expected)
+    else pure ()
+  for region in self.map.regions do
+    if region.len != 0 && region.start < lowMemoryScratchStart then
+      failErr ("memory region " ++ region.name ++ " starts at "
+        ++ hashHex region.start
+        ++ ", below LOW_MEMORY_SCRATCH_START (" ++ hashHex lowMemoryScratchStart
+        ++ "); it can overlap solc's via-IR stack-to-memory spill window"
+        ++ " [0x80, reserved_end)")
+    else pure ()
+  let expectedScalarInv := (ptrValue self.vkMptr).asUsizeNat - modexpScratchBytes
+  if self.scalarInvScratchMptr != expectedScalarInv then
+    failErr ("scalar inversion scratch drifted: got "
+      ++ hashHex self.scalarInvScratchMptr
+      ++ ", expected " ++ hashHex expectedScalarInv)
+  else pure ()
+  let windows := self.thetaWindows
+  if self.pcs.rotPointsWords > windows.rotPointsCapWords then
+    failErr ("PCS scratch layout mismatch: ROT_POINTS_MPTR needs "
+      ++ toString self.pcs.rotPointsWords ++ " word(s), capacity is "
+      ++ toString windows.rotPointsCapWords)
+  else pure ()
+  if self.pcs.x1PowersWords > windows.x1PowersCapWords then
+    failErr ("PCS scratch layout mismatch: X1_POWERS_MPTR needs "
+      ++ toString self.pcs.x1PowersWords ++ " word(s), capacity is "
+      ++ toString windows.x1PowersCapWords)
+  else pure ()
+  if self.pcs.qComWords > windows.qComCapWords then
+    failErr ("PCS scratch layout mismatch: Q_COM_MPTR needs "
+      ++ toString self.pcs.qComWords ++ " word(s), capacity is "
+      ++ toString windows.qComCapWords)
+  else pure ()
+  if self.pcs.qEvalSetWords > windows.qEvalSetCapWords then
+    failErr ("PCS scratch layout mismatch: Q_EVAL_SET_MPTR needs "
+      ++ toString self.pcs.qEvalSetWords ++ " word(s), capacity is "
+      ++ toString windows.qEvalSetCapWords)
+  else pure ()
+  MemoryMap.validate self.map
+
 end Midfall.Generator
 
 
@@ -706,6 +1072,8 @@ they are evidence rather than transcription. The rest are cross-checks against
 `Midfall/Yul/Externals.lean`, which derives the same numbers from EIP-2537 and
 the EVM memory model rather than from this Rust. Where a Rust error arm cannot be
 reached at all, that is said at the site and no gate is claimed for it. -/
+
+
 
 namespace Midfall.Generator.LayoutKats
 
@@ -1121,4 +1489,245 @@ def memoryPhase_order_ok : Bool := memoryPhaseOrdered memoryPhaseOrder
 #eval vkHeaderWords_ok -- expect true
 #eval memoryPhase_order_ok -- expect true
 
+/-- A layout whose seven fixed low-memory pointers, scalar-inversion anchor,
+    and PCS capacities all sit exactly where `VerifierMemoryLayout::validate`
+    expects them, so every error arm below is a one-field perturbation of this.
+    The `Ptr` fields are inert except `vkMptr`, which MEM:1039 reads through
+    `Value::as_usize`; the remaining slots are zero because `validate` never
+    looks at them. -/
+def verifierLayoutFixture : VerifierMemoryLayout :=
+  { map := { regions := [] },
+    thetaWindows := ThetaWindowLayout.compatibility,
+    constructorSmokeScratchMptr := lowMemoryScratchStart,
+    constructorG1msmSmokeScratchMptr := 0,
+    constructorG1msmSmokeInputBytes := 0,
+    transcriptMptr := transcriptBufferStart,
+    pcsPairingScratchMptr := pcsPairingScratchStart,
+    verifierReturnMptr := verifierReturnBufferStart,
+    quotientReturnMptr := quotientReturnBufferStart,
+    vkMptr := ptrMemory (valueFromNat 0x4000),
+    scalarInvScratchMptr := 0x4000 - modexpScratchBytes,
+    challengeMptr := ptrMemory (valueFromNat 0),
+    thetaMptr := ptrMemory (valueFromNat 0),
+    betaMptr := ptrMemory (valueFromNat 0),
+    gammaMptr := ptrMemory (valueFromNat 0),
+    trashChallengeMptr := ptrMemory (valueFromNat 0),
+    yMptr := ptrMemory (valueFromNat 0),
+    xMptr := ptrMemory (valueFromNat 0),
+    x1Mptr := ptrMemory (valueFromNat 0),
+    x2Mptr := ptrMemory (valueFromNat 0),
+    x3Mptr := ptrMemory (valueFromNat 0),
+    x4Mptr := ptrMemory (valueFromNat 0),
+    fComMptr := ptrMemory (valueFromNat 0),
+    piMptr := ptrMemory (valueFromNat 0),
+    accLhsMptr := ptrMemory (valueFromNat 0),
+    accRhsMptr := ptrMemory (valueFromNat 0),
+    xNMptr := ptrMemory (valueFromNat 0),
+    xNMinus1InvMptr := ptrMemory (valueFromNat 0),
+    lLastMptr := ptrMemory (valueFromNat 0),
+    lBlindMptr := ptrMemory (valueFromNat 0),
+    l0Mptr := ptrMemory (valueFromNat 0),
+    instanceEvalMptr := ptrMemory (valueFromNat 0),
+    quotientEvalMptr := ptrMemory (valueFromNat 0),
+    quotientMptr := ptrMemory (valueFromNat 0),
+    fEvalMptr := ptrMemory (valueFromNat 0),
+    vMptr := ptrMemory (valueFromNat 0),
+    finalComMptr := ptrMemory (valueFromNat 0),
+    pairingLhsMptr := ptrMemory (valueFromNat 0),
+    pairingRhsMptr := ptrMemory (valueFromNat 0),
+    rotPointsMptr := ptrMemory (valueFromNat 0),
+    x1PowersMptr := ptrMemory (valueFromNat 0),
+    qComMptr := ptrMemory (valueFromNat 0),
+    qEvalSetMptr := ptrMemory (valueFromNat 0),
+    qEvalCptrMptr := ptrMemory (valueFromNat 0),
+    g1IdentityMptr := ptrMemory (valueFromNat 0),
+    reversedEvalsMptr := ptrMemory (valueFromNat 0),
+    commsMptrBase := ptrMemory (valueFromNat 0),
+    adviceCommsMptrBase := ptrMemory (valueFromNat 0),
+    lookupMCommsMptrBase := ptrMemory (valueFromNat 0),
+    permZCommsMptrBase := ptrMemory (valueFromNat 0),
+    lookupHelperCommsMptrBase := ptrMemory (valueFromNat 0),
+    lookupZCommsMptrBase := ptrMemory (valueFromNat 0),
+    trashcanCommsMptrBase := ptrMemory (valueFromNat 0),
+    quotientLimbCommsMptrBase := ptrMemory (valueFromNat 0),
+    selectorAccMptr := 0,
+    batchInvertScratchMptr := 0,
+    lagrangeDenomsMptr := 0,
+    quotientTmpMptr := 0,
+    quotientStackMptr := 0,
+    quotientStackHi := 0,
+    pcsQEvalSourceTableMptr := 0,
+    pcsQComTraceScratchMptr := 0,
+    pcsFinalMsmScratchMptr := 0,
+    accMsmScratch := 0,
+    accumulatorPairingBatchMptr := accumulatorPairingBatchPtr,
+    finalPairingScratchMptr := finalPairingScratchStart,
+    traceU256Mptr := 0,
+    pcs := pcsMemoryRequirementsDefault }
+
+/-- The reference's own `ThetaSlot` discriminants, LM:672-724, as data. -/
+def thetaSlotExpected : List (ThetaSlot × Nat) :=
+  [(ThetaSlot.theta, 0), (ThetaSlot.beta, 1), (ThetaSlot.gamma, 2),
+   (ThetaSlot.trashChallenge, 3), (ThetaSlot.y, 4), (ThetaSlot.x, 5),
+   (ThetaSlot.x1, 6), (ThetaSlot.x2, 7), (ThetaSlot.x3, 8), (ThetaSlot.x4, 9),
+   (ThetaSlot.fCom, 10), (ThetaSlot.pi, 14), (ThetaSlot.accLhs, 18),
+   (ThetaSlot.accRhs, 22), (ThetaSlot.xN, 26), (ThetaSlot.xNMinus1Inv, 27),
+   (ThetaSlot.lLast, 28), (ThetaSlot.lBlind, 29), (ThetaSlot.l0, 30),
+   (ThetaSlot.instanceEval, 31), (ThetaSlot.quotientEval, 32),
+   (ThetaSlot.quotient, 33), (ThetaSlot.fEval, 38), (ThetaSlot.v, 39),
+   (ThetaSlot.finalCom, 40), (ThetaSlot.pairingLhs, 44),
+   (ThetaSlot.pairingRhs, 48)]
+
+/-- `ThetaSlot.word` against the `#[repr(usize)]` discriminants of LM:672-724,
+    plus that no two slots share a word. It rules out the word table drifting, or
+    two slots colliding on one offset; it does NOT rule out the CONSTRUCTOR order
+    of the inductive, because `word` is an explicit table rather than a derived
+    `Ord` - which is exactly why the discriminants are ported that way. -/
+def thetaSlot_word_ok : Bool :=
+  thetaSlotExpected.all fun (s, n) => s.word == n
+    && (thetaSlotExpected.map Prod.snd).eraseDups.length == thetaSlotExpected.length
+    && thetaSlotExpected.length == 27
+
+/-- `ThetaWindowLayout::compatibility` (MEM:87-118) at the seven offsets the
+    reference pins with `debug_assert_eq!` (MEM:97-103), which the release profile
+    compiles out (docs/REVIEW.md R-6). Asserting them here from the outside is
+    what keeps the drift the debug asserts were written to catch from being
+    invisible in the port. Numbers derive from LM:745-771: 48+4, +28, +65, alias,
+    +56, +1+7, +4+7. -/
+def thetaWindow_compatibility_ok : Bool :=
+  let w := ThetaWindowLayout.compatibility
+  w.rotPointsWord == 52 && w.x1PowersWord == 80 && w.qComWord == 145
+    && w.qEvalSetWord == 145 && w.qEvalCptrWord == 201
+    && w.g1IdentityWord == 209 && w.reversedEvalsWord == 220
+
+/-- The five `theta_window` capacities and paddings, LM:745-753, including that
+    `Q_COM_CAP_WORDS` is zero because the q_com window aliases q_eval_set
+    (LM:762-764). That zero is what makes the Q_COM capacity arm of
+    `VerifierMemoryLayout::validate` fire on any nonzero request at all. -/
+def thetaWindow_caps_ok : Bool :=
+  thetaRotPointsCapWords == 28 && thetaX1PowersCapWords == 65
+    && thetaQEvalSetCapWords == 56 && thetaQEvalCptrPaddingWords == 7
+    && thetaG1IdentityPaddingWords == 7 && thetaQComCapWords == 0
+
+/-- `FinalMsmShape::from_terms` (MEM:389-394): input_bytes is terms times the
+    160-byte G1MSM pair (LM:80), not terms times 128 or 192. -/
+def finalMsmShape_fromTerms_ok : Bool :=
+  (FinalMsmShape.fromTerms 0).inputBytes == 0
+    && (FinalMsmShape.fromTerms 3).inputBytes == 480
+    && (FinalMsmShape.fromTerms 17).inputBytes == 2720
+    && (FinalMsmShape.fromTerms 17).terms == 17
+
+/-- The baseline: the fixture satisfies all four checks of
+    `VerifierMemoryLayout::validate` (MEM:974-1076). Every gate below is a
+    one-field perturbation of it, so this is what makes them comparisons rather
+    than assertions about an arbitrary record. -/
+def verifierLayout_validate_ok : Bool := isOk verifierLayoutFixture.validate
+
+/-- MEM:1012-1018. A fixed low-memory pointer that has moved off its constant.
+    Rules out the drift table being read as a no-op, and rules out the message
+    losing the got/expected pair. -/
+def verifierLayout_fixedDrift_err_ok : Bool :=
+  errIs (({ verifierLayoutFixture with transcriptMptr := 0x1020 } : VerifierMemoryLayout).validate)
+    "fixed memory pointer transcript_mptr drifted: got 0x1020, expected 0x1000"
+
+/-- MEM:1028-1036. A registered region below `LOW_MEMORY_SCRATCH_START`, which is
+    the solc via-IR spill-window guard. It is a check on the MAP, not on the
+    seven pointers, so it is exercised with the pointers untouched; the zero-length
+    exemption at MEM:1029 is the other half of the same arm. -/
+def lowRegion : MemoryRegion :=
+  { name := "low", start := 0x100, len := 0x20,
+    lifetime := MemoryLifetime.permanent }
+
+def zeroLenLowRegion : MemoryRegion :=
+  { name := "low", start := 0x100, len := 0x0,
+    lifetime := MemoryLifetime.permanent }
+
+def lowRegionMap : MemoryMap := { regions := [lowRegion] }
+
+def zeroLenLowMap : MemoryMap := { regions := [zeroLenLowRegion] }
+
+def verifierLayout_lowRegion_err_ok : Bool :=
+  errIs (({ verifierLayoutFixture with map := lowRegionMap } : VerifierMemoryLayout).validate)
+    ("memory region low starts at 0x100, below LOW_MEMORY_SCRATCH_START"
+      ++ " (0x1000); it can overlap solc's via-IR stack-to-memory spill window"
+      ++ " [0x80, reserved_end)")
+    && isOk (({ verifierLayoutFixture with map := zeroLenLowMap } : VerifierMemoryLayout).validate)
+
+/-- MEM:1038-1045: the scalar-inversion scratch must sit exactly
+    `VK_MPTR - MODEXP_SCRATCH_BYTES` below the VK. The expected side is computed,
+    not copied, so this also pins `Value::as_usize` on the `Ptr` read at MEM:1039. -/
+def verifierLayout_scalarInv_err_ok : Bool :=
+  errIs (({ verifierLayoutFixture with scalarInvScratchMptr := 0x3e00 } : VerifierMemoryLayout).validate)
+    "scalar inversion scratch drifted: got 0x3e00, expected 0x3f00"
+
+/-- MEM:1048-1071, all four capacity arms. The messages are DECIMAL (`{}` in the
+    Rust), unlike the three hex arms above, and Q_COM's capacity is 0, so a
+    one-word request already fails there. Rules out the four arms sharing one
+    message, and rules out hex formatting leaking into them. -/
+def pcsRotPoints : PcsMemoryRequirements :=
+  { pcsMemoryRequirementsDefault with rotPointsWords := 29 }
+
+def pcsX1Powers : PcsMemoryRequirements :=
+  { pcsMemoryRequirementsDefault with x1PowersWords := 66 }
+
+def pcsQCom : PcsMemoryRequirements :=
+  { pcsMemoryRequirementsDefault with qComWords := 1 }
+
+def pcsQEvalSet : PcsMemoryRequirements :=
+  { pcsMemoryRequirementsDefault with qEvalSetWords := 57 }
+
+def pcsWithinCaps : PcsMemoryRequirements :=
+  { rotPointsWords := 28, x1PowersWords := 65, qComWords := 0, qEvalSetWords := 56,
+    qEvalSourceTableWords := 0, qComTraceMsm := finalMsmShapeDefault,
+    finalMsm := finalMsmShapeDefault }
+
+def verifierLayout_pcsCapacity_err_ok : Bool :=
+  errIs (({ verifierLayoutFixture with pcs := pcsRotPoints } : VerifierMemoryLayout).validate)
+    "PCS scratch layout mismatch: ROT_POINTS_MPTR needs 29 word(s), capacity is 28"
+    && errIs (({ verifierLayoutFixture with pcs := pcsX1Powers } : VerifierMemoryLayout).validate)
+      "PCS scratch layout mismatch: X1_POWERS_MPTR needs 66 word(s), capacity is 65"
+    && errIs (({ verifierLayoutFixture with pcs := pcsQCom } : VerifierMemoryLayout).validate)
+      "PCS scratch layout mismatch: Q_COM_MPTR needs 1 word(s), capacity is 0"
+    && errIs (({ verifierLayoutFixture with pcs := pcsQEvalSet } : VerifierMemoryLayout).validate)
+      "PCS scratch layout mismatch: Q_EVAL_SET_MPTR needs 57 word(s), capacity is 56"
+    && isOk (({ verifierLayoutFixture with pcs := pcsWithinCaps } : VerifierMemoryLayout).validate)
+
+/-- ENC:596-601. The concrete arm is the wrapping `*int as usize`, so -1 becomes
+    2^64-1 rather than 0; the symbolic arm is the `unreachable!()` rendered as a
+    `Fault.panic` under rule R4. Rules out clamping the negative case and rules
+    out the panic arm being dropped. -/
+def value_asUsize_ok : Bool :=
+  (match Value.asUsize (Value.integer 0x1000) with
+   | .ok n => n == 0x1000
+   | .error _ => false)
+    && (match Value.asUsize (Value.integer (-1 : Int)) with
+        | .ok n => n == (2 : Nat) ^ 64 - 1
+        | .error _ => false)
+    && (match Value.asUsize (Value.identifier "x" 4) with
+        | .error (Midfall.Halo2.Fault.panic site) =>
+          site == "proofs/solidity-verifier/src/lowering/encoding/mod.rs:599"
+        | _ => false)
+
+/-- `Value.asUsizeNat` is the total adapter MEM:1039 uses; this pins it to
+    `Value.asUsize` on every concrete offset the reference can actually reach,
+    including the wrapped negatives, so the adapter cannot drift from the port. -/
+def asUsizeNat_agrees_ok : Bool :=
+  [0, 1, 0x20, 0x1000, 0x1240, (2 : Int) ^ 63, (-1 : Int), (-0x100 : Int)].all
+    fun i =>
+      Value.asUsizeNat (Value.integer i)
+        == match Value.asUsize (Value.integer i) with
+           | .ok n => n
+           | .error _ => 0
+
+#eval thetaSlot_word_ok -- expect true
+#eval thetaWindow_compatibility_ok -- expect true
+#eval thetaWindow_caps_ok -- expect true
+#eval finalMsmShape_fromTerms_ok -- expect true
+#eval verifierLayout_validate_ok -- expect true
+#eval verifierLayout_fixedDrift_err_ok -- expect true
+#eval verifierLayout_lowRegion_err_ok -- expect true
+#eval verifierLayout_scalarInv_err_ok -- expect true
+#eval verifierLayout_pcsCapacity_err_ok -- expect true
+#eval value_asUsize_ok -- expect true
+#eval asUsizeNat_agrees_ok -- expect true
 end Midfall.Generator.LayoutKats
