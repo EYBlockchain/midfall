@@ -174,15 +174,20 @@ def bytesZero (n : Nat) : Bytes := bytesReplicate n 0
     bytesToNatBE already implements, and the round-trip
     bytesToNatBE (bytesNatBE v n) == v (for v < 256^n) pins it.
 
-    This exists because Midfall.natToBytesBE - the Common/Bytes.lean helper this
-    file would otherwise use - is *little*-endian despite its name and its doc
-    string ("32 big-endian bytes, most significant first"): its accumulator
-    pushes n % 256 first. Check: natToBytesBE 0x01020304 4 evaluates to
-    [4, 3, 2, 1]. wordToBytesBE has the same defect, and natToBytesLE is the
-    same code as natToBytesBE, i.e. the LE one is right and the BE one is wrong.
-    That is a Phase 1 finding outside this file's boundary (it also feeds
-    Common/Codec.lean frToInputBE, the transcript's big-endian absorb); it is
-    reported rather than patched here. -/
+    HISTORY, corrected by package 5 (docs/REVIEW.md R-46): an earlier revision of
+    this comment stated that Midfall.natToBytesBE was *little*-endian despite its
+    name, that natToBytesBE 0x01020304 4 evaluated to [4, 3, 2, 1], and that
+    wordToBytesBE shared the defect. That was true when it was written - it is the
+    first bug recorded in R-20 - and it is no longer true. Measured on this tree:
+    natToBytesBE 0x01020304 4 = [1, 2, 3, 4] and natToBytesLE 0x01020304 4 =
+    [4, 3, 2, 1]; Common/Bytes.lean:59-60 now reverses the low-first accumulator.
+    Leaving the warning in place was itself a hazard: a reader would conclude the
+    byte-layout gates lean on a broken function and might "fix" working code.
+    R-20 keeps the historical record; this comment no longer contradicts it.
+
+    bytesNatBE is retained rather than folded into natToBytesBE: it is the local
+    definition this file's own round-trip gate pins, and two independent big-endian
+    encoders that must agree is worth more than one shared one. -/
 def bytesNatBE (v len : Nat) : Bytes :=
   ByteArray.mk (((List.range len).reverse.map
     (fun (i : Nat) => Nat.toUInt8 ((v / (256 ^ i)) % 256))).toArray)
