@@ -1228,8 +1228,34 @@ word_comment totalisation is unobservable because the panic is unreachable on bo
 sides, so rule R4 did not bite. as_usize deferral holds: all 18 call sites are
 inside the two deferred validate_layout functions.
 
-**PARTIALLY RESOLVED** — F1, F2, F3, F4 fixed in `955ef49`, `0e2594b`, `422353c`,
-`0276d29`. Gate count 217 -> 219. **F5, F6 and F7 remain open.**
+**FULLY RESOLVED** across `955ef49`, `0e2594b`, `422353c`, `0276d29`, `15d68e3`,
+`5e013ad`, `4346a0c`, `1ff550d`. Gate count 217 -> 222; the provenance script now
+re-derives **9** golden pins, validates **5** fixture anchors and checks **15** include
+orders against the real template files.
+
+F5a now destructures both usage records field-by-field and asserts all 40 defaults,
+with both lengths pinned, so **a new field stops compilation rather than slipping past**
+— the strongest possible fix, because it makes the gap structural instead of testable.
+F5b pins all 51 payload words with a length guard, so a dropped word fires the guard
+instead of misaligning the slice. F7 chose to extend rather than narrow: the script
+re-reads the `{% include %}` lines from the templates and requires the Lean lists to
+match exactly, and fails loudly if a list or doc comment cannot be parsed — so the
+check cannot be disabled by a rewording. That last property matters more than it looks:
+a gate that can be silently switched off is worse than no gate.
+
+F1's upgrade is partial **by judgement, and the judgement is documented**: the fixed-
+commitment loop is now artifact-backed (a ninth golden fixture, `DVK:103-132`, generated
+from the artifact by script rather than typed), but the permutation loop stays
+hand-written because reaching it at real offsets requires transcribing all 19 fixed
+commitments — 76 more 256-bit literals — for no additional coverage of the permutation
+code itself. The doc says so rather than claiming full artifact backing.
+
+One correction to the review itself: **F6's first half was already fixed before the
+review was written** — `ENC:716-721` landed in `3c3e8db`. The reviewer read a stale
+line. Worth recording because it is the first false positive in six reviews, and the
+fixer verified it rather than accepting it: both Lean cites and `Filters.lean:95`
+already read the correct range.
+
 
 F1 added `vkConstructor_commitments_matchesExpectedAst_ok`, which renders a VK with 2
 fixed and 1 permutation commitment and proves `stmtsBeq` over the 12 commitment
