@@ -1448,50 +1448,62 @@ first CommonPoly.cmp collapsed the LLast row to a catch-all .lt, which also matc
 the plan depends on. Three gates caught it. The gates were written before the comparator
 was believed, which is the only reason they were able to.
 
-### R-44 The committed Moonlight runtime bytecode does not reproduce from the committed source
+### R-44 The deployed Moonlight bytecode reproduces exactly - and the toolchain row of the trusted base now has evidence
 
-First, a path correction several documents need: the deployed artifacts live at
+Start with a path correction several documents need: the deployed artifacts live at
 **proofs/solidity-verifier/deployments/sepolia/moonlight-wrap/**, not at repo-root
 deployments/. PLAN Section 2 step 6, Section 9.6 and the headers of Render.lean and
 Templates.lean all write the short form, which reads as root-relative and is not.
-Nothing is missing; the citations are ambiguous.
 
-The directory holds more than the plan assumes. Besides Halo2Verifier.sol (3572 lines)
+That directory holds more than the plan assumes. Besides Halo2Verifier.sol (3572 lines)
 and Halo2VerifyingKey.sol it commits **Halo2Verifier.runtime.bytecode.hex** and
-**Halo2VerifyingKey.runtime.bytecode.hex**, plus a deployment.json with addresses, tx
-hashes, runtimeBytes, runtimeCodeHash and the compiler block:
+**Halo2VerifyingKey.runtime.bytecode.hex**, plus deployment.json with addresses, tx
+hashes, runtimeBytes, runtimeCodeHash and compiler: { solc: 0.8.30, viaIr: true,
+optimizerRuns: 200, metadata: none }. That is the best ground truth in the repo for M4's
+revm differential and for M11, so it was worth trying to reproduce.
 
-    compiler: { solc: 0.8.30, viaIr: true, optimizerRuns: 200, metadata: none }
+**It reproduces exactly.** With the pinned compiler
+(proofs/solidity-verifier/.solc/solc, sha256 verified against the official binary) driven
+through foundry 1.8.4 with solc = <pinned>, via_ir = true, optimizer = true,
+optimizer_runs = 200, evm_version = cancun (the deploy script default,
+scripts/deploy_moonlight_sepolia.sh:12), bytecode_hash = none, the freshly compiled
+Halo2Verifier runtime is 42,346 hex chars against 42,322 committed. The whole difference
+is two known, accounted-for things and nothing else:
 
-That is the best ground truth available for M4's revm differential and for M11, so it
-was worth trying to reproduce. It does not reproduce. With the pinned solc
-(proofs/solidity-verifier/.solc/solc, sha256 verified) through --standard-json using
-exactly those settings - viaIR true, optimizer enabled runs 200, metadata bytecodeHash
-none, evmVersion cancun, which is the deploy script default at
-scripts/deploy_moonlight_sepolia.sh:12 - the rebuilt Halo2Verifier runtime is 42,346
-hex chars against 42,322 committed, and the two **diverge at char 162**, i.e. 81 bytes
-in, inside the dispatcher preamble. Not a trailing-CBOR artefact: dropping the last 24
-chars does not equalise them. evmVersion prague gives the identical 42,346 and the same
-first divergence; shanghai and london do not compile the file at all. Halo2VerifyingKey
-rebuilt to 32 chars because the deployable contract in that source is not the one
-selected, so that half went untested.
+1. **A 12-byte trailing CBOR** - a164736f6c634300081e000a - which the deployment stripped
+   with --no-metadata. len(forge) - 24 == len(committed).
+2. **The vk immutable, linked.** The committed on-chain code carries the deployed
+   Halo2VerifyingKey address 80b32f68a333df55da60bec44c498477a8311ede at bytes 81 and
+   293; a plain compile leaves those two 20-byte slots zeroed, because immutables are
+   written by the constructor. Masking exactly those two slots in both sides makes the
+   deployed runtime and the freshly compiled runtime **byte-identical over all 42,322
+   chars**.
 
-What this does and does not establish. It does not show the deployment was tampered
-with, and it does not contradict R-36 (source five months behind the generator). The
-likeliest explanation is that foundry does not pass deployment.json's settings verbatim
-- it has its own optimizer details, yulDetails and debug-info defaults, and codegen is
-sensitive to all three - so 'solc 0.8.30 via-ir runs=200' is not a complete description
-of the build. What IS established is narrower and load-bearing: **the committed bytecode
-is not currently a verified oracle for the committed source**. So M4's differential
-cannot treat 'solc bytecode on revm' and 'our model' as the same program until the exact
-flag set is recovered, and M11's deployed_equivalence stays anchored on .sol text only.
+Two things this buys, and one it does not.
 
-Owed, small and well-defined: replay the build through foundry itself (forge build
---via-ir --optimize --optimizer-runs 200 --no-metadata --use .solc/solc --evm-version
-cancun) against a scratch copy and see whether the committed hex comes back. If it does,
-the trusted-solc row of plan Section 1 gains hard evidence and M4 gets a real oracle. If
-it does not, the committed pair is inconsistent and M11 needs a regenerated deployment
-before it can be stated. Deferred: the port is the critical path and this is validation.
+* The trusted-solc row of plan Section 1 is no longer bare assertion for this contract:
+  the committed deployed code is reproducible from the committed source with the pinned
+  compiler and the recorded flags. That is the strongest external-tool evidence in the
+  project so far.
+* M4's revm differential gets a real oracle, with a named caveat: the program to load is
+  the **linked** runtime, so the harness must link the vk address (and, for the
+  evaluator path, whatever immutables the quotient evaluator carries) rather than feed
+  solc's unlinked output. Getting this wrong is silent - the unlinked code is a valid
+  byte stream that will revert for a reason that has nothing to do with the proof.
+* What it does NOT buy: R-36 stands untouched. The source that reproduces is the
+  five-months-stale source. This says the toolchain is trustworthy, not that the
+  deployment is current.
+
+Half-finished, stated so nobody re-does it and misreads the result:
+Halo2VerifyingKey.sol was not reproduced. forge resolves the deployable contract in that
+file differently and produced a 32-char runtime, so that half is untested, not failing.
+
+Method note, because the first reading of this was wrong in the alarming direction: the
+initial direct-solc comparison diverged at byte 81 and was written up here as 'the
+committed pair is inconsistent'. It was not - byte 81 is the immutable slot. A mismatch
+at a round offset inside the first 100 bytes of a deployed runtime is much more likely to
+be a link placeholder than a build discrepancy, and the check that distinguishes them is
+to look up whether the bytes there are an address from deployment.json.
 
 ## Closed
 
