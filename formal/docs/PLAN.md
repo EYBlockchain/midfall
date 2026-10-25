@@ -672,3 +672,36 @@ then:   M7 (verifier_sound / verifier_complete / end_to_end_noAcc)
    `proofs/solidity-verifier/target/poseidon-fixture-dump/*.sol` (tracked, current
    generator) until regeneration happens. Regeneration is a prerequisite for M11, not
    merely a deferred M0 nicety.
+### 14.7 Port order, dependency-corrected (round 9)
+
+The order in 14.5 was written before anyone checked what each remaining Rust module
+imports. Checking it found a real error: **`api.rs` was scheduled last and must be
+sixth.** `api.rs` depends only on `std::fmt`, `ruint::U256` and `lowering::layout` (all
+settled), and it is imported by `calldata.rs`, `diagnostics.rs`, `quotient.rs`,
+`plan.rs`, `quotient_listing/mod.rs` and `quotient_numerator/vm/mod.rs`. Porting it last
+would have forced six modules to stub or re-derive its types. Second correction:
+`quotient.rs` imports `quotient_numerator::{direct::folds, vm::*}` and `Evaluator`, so
+the VM and the Direct fold types precede it - **port order is not proof order**, and
+M10 (Direct) does not get to defer the `direct/` port out of M3.
+
+Dependency-correct remaining order, with the gate each item unblocks:
+
+| # | module | Rust lines | needs | unblocks |
+|---|---|---:|---|---|
+| 5 | `abi/proof` + `encoding` | 1,486 | protocol, layout, models | kzg, vk, plan |
+| 6 | `api` | 818 | layout | vm, quotient, plan, calldata, listing |
+| 7 | `kzg` | 2,226 | encoding, protocol | vk, plan, `construct_intermediate_sets` lemma |
+| 8 | `vk` | 654 | abi, encoding, kzg | plan, `srs_tau_is_consistent` |
+| 9 | `quotient_numerator/{mod,vm/*}` + `direct/{mod,folds,layout,validate,trace}` | ~10,000 | api, encoding | quotient, plan |
+| 10 | `quotient` | 2,147 | 9 | plan |
+| 11 | `plan` + `config` + `mod` | 721 | 5-10 | calldata, builder, Lowered/Supported |
+| 12 | `calldata` + `builder/*` + `evm` | 1,316 | 6, 9, 11 | render parity, `repack_spec` |
+| 13 | templates -> Lean fns (13 verifier + 2 evaluator partials) | 4,324 Askama | 5-12 | M3 acceptance, finalPairing_spec |
+| 14 | Tier-2: `diagnostics`, `artifacts`, `quotient_listing/*`, `disasm` | ~5,800 | 6, 9, 11 | M10, listing/certification |
+
+Two things this table makes visible that the prose hid. Item 9 is by far the largest
+single block (~10,000 lines, `vm/mod.rs` alone is 4,336 with 130 items) and it sits on
+the critical path to everything after it, so it is where the port estimate is weakest.
+And item 13, the templates, is the only block with no Rust-side counterpart to diff
+against line by line - it is where D-P13's structural-equality decision is finally
+tested.
