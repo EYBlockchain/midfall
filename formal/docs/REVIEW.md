@@ -1292,6 +1292,43 @@ the next reader relies on. My own report last turn repeated package 2's claim
 without testing it and so passed on an overstatement. Rule to add: a gate's stated
 scope must be justified by a perturbation *inside* that scope, not by a control
 outside it.
+### R-41 The KAT gate is now proven able to fail (four controls, all red)
+
+R-40's rule - a gate's stated scope must be justified by a perturbation *inside*
+that scope - had not been applied to scripts/kat_gate.py itself, even though that
+script is the only thing that turns the tree's ~300 '#eval ... -- expect' lines
+into CI obligations. Before this, 'the KAT gate is green' carried no evidence that
+it could go red. Four controls were run against
+Midfall/Generator/Filters.lean:212-217, each followed by a byte-identical restore
+verified with cmp and 'git status --porcelain' (clean each time):
+
+* **A - flipped annotation.** '-- expect true' -> '-- expect false' on
+  hexFilter_kats_ok. Exit 1, one problem, naming the check.
+* **B - prose glued after the annotation.** '-- expect false, and this prose used
+  to swallow the tail'. Exit 1. This is the historical defect: the expectation used
+  to be a non-space run, so trailing prose was absorbed into the *expression*, the
+  line stopped being a gate, and a corrupted pBase (the R-20 class) still reported
+  success. B is the regression test for that failure mode.
+* **C - file that does not elaborate.** Exit 1, reported as 'does not elaborate'.
+  Previously the subprocess exit status was ignored, so a KAT file that failed to
+  compile could pass.
+* **D - the control that matters: an implementation perturbation.** A one-token edit
+  to hexFilter itself - the odd-nibble pad '"0x0"' -> '"0x"', a change *inside* the
+  scope the gate claims to cover, not to its annotation - reddened **three** gates:
+  hexFilter_kats_ok, fmtHex_kats_ok and printValue_kats_ok, each named with expected
+  and actual value. That propagation is correct behaviour, not noise: fmtHex and
+  Value's Display both route through hexFilter, so the gate detects a defect in a
+  shared helper at every consumer of it.
+
+A and B test the annotation side of the comparison; D tests the implementation side.
+A green kat_gate.py run therefore now has a demonstrated failure mode on both sides.
+
+What is still NOT covered, stated so the next reader does not over-read this entry: a
+KAT whose expression returns a value the annotation matches for the wrong reason (a
+vacuous 'true'). That is the R-30/R-32 pattern and it is caught only by the
+non-vacuity discipline at each site - a gate over a boolean that is constant true
+passes control D only if the perturbation can reach the constant.
+
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
