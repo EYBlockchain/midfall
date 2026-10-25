@@ -38,6 +38,22 @@ of the eight hashes: sed appends a newline after the last selected line, and the
 slice as pinned has none. The slice is lines A..B joined by LF with NO trailing
 LF, hashed as UTF-8; the byte counts in the doc comments are of that same slice.
 
+THE SECOND JOB (docs/REVIEW.md R-40 F2): the five `fixtureAnchors` in
+Midfall/Generator/Templates.lean are hand-typed (partial, artifact line) pairs,
+and the Lean gate `includeOrder_matchesFixtureAnchors_ok` claims they are
+provenance-checked here. Before R-40 they were not - replacing all five line
+numbers with 1,2,3,4,5 reddened nothing. So this script also parses
+`fixtureAnchors` and `verifierIncludes` out of Templates.lean and asserts, for
+each anchor, that (i) the partial is in the include registry, (ii) the partial
+file exists on disk, and (iii) the line number is the START of a real pinned
+fixture slice in the dump that the partial expands into. What it still cannot
+check, and does not claim to: that the named partial is the file that actually
+generated that dump region. The dump is rendered Askama output, so the partial's
+source lines do not appear verbatim in it (measured: 2 of 5 anchors have their
+slice's first line present in the named partial), and no Lean or Python term
+expands the templates. The anchor therefore pins WHERE a fixture starts and THAT
+the partial is a real registry entry - not WHICH partial wrote it.
+
 WHAT MAKES THIS FAIL, concretely: a regenerated or hand-edited .sol (one byte
 inside a cited range changes the hash and usually the token stream); a deleted or
 untracked artifact; a pin edited in YulGolden.lean with no matching change to the
@@ -59,6 +75,31 @@ REPO = FORMAL.parent
 GOLDEN = FORMAL / "Midfall" / "Generator" / "YulGolden.lean"
 
 EXPECTED_FIXTURES = 8
+EXPECTED_ANCHORS = 5
+
+TEMPLATES = FORMAL / "Midfall" / "Generator" / "Templates.lean"
+TEMPLATE_DIR = REPO / "proofs" / "solidity-verifier" / "templates"
+
+# Which rendered contract a partial expands into, by its directory. The dump is
+# the only artifact any fixture cites, so this is how an anchor's line number is
+# resolved against the right file.
+DIR_TO_DUMP = {
+    "verifier": "Halo2Verifier.sol",
+    "quotient_numerator": "Halo2QuotientEvaluator.sol",
+}
+
+# 'def fixtureAnchors : List (String x Nat) := [ ... ]' - the x is U+00D7, matched
+# as '.' so the pattern does not depend on the source encoding.
+ANCHORS_DEF = re.compile(
+    r"^def fixtureAnchors : List \(String . Nat\) :=\n(?P<body>.*?)\]",
+    re.M | re.S,
+)
+ANCHOR_ITEM = re.compile(r'\(\s*"(?P<path>[^"]+)"\s*,\s*(?P<line>\d+)\s*\)')
+INCLUDES_DEF = re.compile(
+    r"^def verifierIncludes : List String :=\n(?P<body>.*?)\]",
+    re.M | re.S,
+)
+INCLUDE_ITEM = re.compile(r'"(?P<path>[^"]+)"')
 
 # The provenance line inside each fixture's doc comment.
 PROV = re.compile(
@@ -192,6 +233,73 @@ class Report(object):
         self.problems.append(msg)
 
 
+def parse_anchors():
+    """(anchors, includes) read out of Templates.lean; (None, None) if absent."""
+    if not TEMPLATES.is_file():
+        return None, None
+    src = TEMPLATES.read_text(encoding="utf-8")
+    am = ANCHORS_DEF.search(src)
+    im = INCLUDES_DEF.search(src)
+    if am is None or im is None:
+        return None, None
+    anchors = [(m.group("path"), int(m.group("line")))
+               for m in ANCHOR_ITEM.finditer(am.group("body"))]
+    includes = [m.group("path") for m in INCLUDE_ITEM.finditer(im.group("body"))]
+    return anchors, includes
+
+
+def check_fixture_anchors(rep, slices):
+    """The R-40 F2 cross-check: the hand-typed anchors vs the real slice starts.
+
+    `slices` is [(fixture base, cited artifact path, first line, last line)] as
+    re-read from the provenance lines of YulGolden.lean, i.e. the same data this
+    script just verified against the bytes on disk. An anchor is only as good as
+    a fixture slice starting at that line in the dump its partial expands into.
+    """
+    anchors, includes = parse_anchors()
+    if anchors is None:
+        rep.bad("could not parse 'def fixtureAnchors' and 'def verifierIncludes' "
+                "out of %s, so the anchors the Lean gate cites are not checked at "
+                "all" % TEMPLATES)
+        return 0
+    if len(anchors) != EXPECTED_ANCHORS:
+        rep.bad("found %d fixtureAnchors in %s, expected %d - an anchor was added "
+                "or dropped without updating this script"
+                % (len(anchors), TEMPLATES.name, EXPECTED_ANCHORS))
+    if not includes:
+        rep.bad("no verifierIncludes entries parsed from %s" % TEMPLATES.name)
+        return 0
+    seen = set()
+    checked = 0
+    for path, line in anchors:
+        where = "fixtureAnchors entry (%s, %d)" % (path, line)
+        if (path, line) in seen:
+            rep.bad("%s: duplicated anchor" % where)
+        seen.add((path, line))
+        if path not in includes:
+            rep.bad("%s: the partial is not in verifierIncludes, so the anchor "
+                    "names a file the contract does not include" % where)
+        if not (TEMPLATE_DIR / path).is_file():
+            rep.bad("%s: no such template file under %s" % (where, TEMPLATE_DIR))
+        parts = path.split("/")
+        dump = DIR_TO_DUMP.get(parts[-2]) if len(parts) >= 2 else None
+        if dump is None:
+            rep.bad("%s: cannot tell which rendered contract %s expands into"
+                    % (where, path))
+            continue
+        hits = sorted(base for base, rel, a, _b in slices
+                      if pathlib.PurePath(rel).name == dump and a == line)
+        if not hits:
+            rep.bad("%s: no pinned golden fixture slice starts at line %d of %s, "
+                    "so this anchor is a hand-typed number that nothing re-reads "
+                    "(R-40 F2)" % (where, line, dump))
+            continue
+        checked += 1
+        print("  ok  %-12s anchor %s:%d -> %s"
+              % ("|".join(hits), path, line, dump))
+    return checked
+
+
 def check_fixture(rep, base, prov, pin):
     rel = prov["path"]
     path = REPO / rel
@@ -274,6 +382,7 @@ def main():
         return 1
 
     rep = Report()
+    slices = []
     for m in asts:
         base = m.group("base")
         # The provenance lives in the doc comment that ends immediately before
@@ -295,6 +404,10 @@ def main():
                     % (base, base))
             continue
         check_fixture(rep, base, pm.groupdict(), pins[base])
+        slices.append((base, pm.group("path"), int(pm.group("a")),
+                       int(pm.group("b"))))
+
+    anchor_count = check_fixture_anchors(rep, slices)
 
     bases = set(m.group("base") for m in asts)
     for orphan in sorted(set(pins) - bases):
@@ -309,8 +422,9 @@ def main():
             print("  " + p, file=sys.stderr)
         return 1
 
-    print("ok: %d golden pins re-derived from the tracked .sol artifacts"
-          % len(asts))
+    print("ok: %d golden pins re-derived from the tracked .sol artifacts, and "
+          "%d fixtureAnchors matched to real slice starts"
+          % (len(asts), anchor_count))
     return 0
 
 

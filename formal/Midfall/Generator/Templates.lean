@@ -106,9 +106,20 @@ def evaluatorIncludes : List String :=
     "partials/quotient_numerator/QuotientNumeratorBlock.yul" ]
 
 /-- Which artifact region each pinned golden fixture came from, as
-    (partial, first line of the slice). The line numbers are the ones
-    scripts/check_golden_provenance.py re-reads from the committed file, so this
-    is the one ordering fact about the include graph that is not a paste. -/
+    (partial, first line of the slice). R-40 F2: these five line numbers used to
+    be hand-typed and compared to nothing, while the comment below claimed the
+    provenance script re-read them. It now does - scripts/check_golden_provenance.py
+    parses this list and asserts, per entry, that the partial appears in
+    `verifierIncludes`, that the partial file exists under
+    proofs/solidity-verifier/templates/, and that the line number is the START of
+    a real pinned fixture slice in the dump that the partial's directory expands
+    into. What that script still cannot check, and does not claim to: that the
+    named partial is the file that generated that region. The dump is rendered
+    Askama output, so a partial's own source lines mostly do not appear in it
+    verbatim (measured: 2 of these 5 slices begin with a line found in the named
+    partial), and nothing in this tree expands the templates. So the LINE half of
+    each pair is machine-checked against the artifact and the PARTIAL half is a
+    human attribution that only the include registry constrains. -/
 def fixtureAnchors : List (String × Nat) :=
   [ ("partials/verifier/PrecompileSmoke.sol", 357),
     ("partials/verifier/AssemblyHelpers.yul", 640),
@@ -489,14 +500,21 @@ def blsPackedSentinels_ok : Bool :=
     && blsPMinusOnePacked1 == (Midfall.Yul.blsP - 1) / 2 ^ 224
     && blsPMinusOnePacked0WithIdFlag - blsPMinusOnePacked0 == 2 ^ 56
 
-/-- THE INCLUDE ORDER MATCHES THE ARTIFACT. Every pinned fixture slice is
-    annotated with the artifact lines it came from, and each belongs to one
-    partial; the order those line numbers appear in must be the order the
-    contract template includes its partials in. Rules out the include list being
-    transcribed in the wrong order, and rules out a fixture being re-anchored to
-    a different region without the registry following. The expected side is
-    provenance-checked by scripts/check_golden_provenance.py, so this is a real
-    cross-check and not two pastes. -/
+/-- THE INCLUDE ORDER MATCHES THE ANCHORS - and this gate alone sees only the
+    SHAPE of the anchor list. Every pinned fixture slice is annotated with the
+    artifact lines it came from, and each belongs to one partial; the order those
+    line numbers appear in must be the order the contract template includes its
+    partials in. What reddens THIS gate: swapping two entries of
+    `fixtureAnchors`, re-anchoring one fixture to a line that breaks the
+    increasing order, naming a partial that is not in `verifierIncludes`, or
+    changing the number of anchors away from five. What does NOT redden it, and
+    is the reason R-40 F2 was filed: an anchor line number that is not the real
+    start of any fixture slice - 1,2,3,4,5 satisfies every clause here. That
+    half of the claim is checked by scripts/check_golden_provenance.py, which
+    parses `fixtureAnchors` out of this file and matches each line against the
+    slice starts it re-reads from the committed dump. Together the gate and the
+    script make the cross-check real; on its own this gate is an ordering check on
+    five numbers, nothing more. -/
 def includeOrder_matchesFixtureAnchors_ok : Bool :=
   fixtureAnchors.length == 5
     && fixtureAnchors.all (fun (p, _) => verifierIncludes.contains p)
