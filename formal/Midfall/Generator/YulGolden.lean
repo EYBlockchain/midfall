@@ -42,10 +42,10 @@
 -- into a check that an AST matches a string somebody typed - the R-38 failure.
 --
 -- RE-DERIVING A HASH. The recipe the original commit gave -
--- 'sed -n A,Bp FILE | shasum -a 256' - reproduces NONE of the eight hashes,
+-- 'sed -n A,Bp FILE | shasum -a 256' - reproduces NONE of the nine hashes,
 -- because sed appends a newline after the last selected line and the pinned slice
 -- has none. The hash is of lines A..B joined by LF with NO trailing LF, as UTF-8.
--- Run 'python3 scripts/check_golden_provenance.py' to re-derive all eight at once.
+-- Run 'python3 scripts/check_golden_provenance.py' to re-derive all nine at once.
 --
 -- WHY THIS IS NOT VACUOUS. The expected side is a token stream that
 -- scripts/check_golden_provenance.py re-derives from the committed bytes; the
@@ -515,6 +515,85 @@ def vkHead_direct : Block EVM.Op :=
       litN 31519469946562159605140591558550197856588417350474800936898404023113662197331])
   ]
 
+/-- proofs/solidity-verifier/target/poseidon-fixture-dump/Halo2VerifyingKey.sol:103-132 - 30 lines, 3184 bytes, 220 tokens,
+    sha256 3c5b0d9129f29f1a2c82483985646efcfbdedc31cf0b45bb730116c104fa20c9.
+    The first five fixed commitments of the poseidon fixture VK: the region the
+    fixed loop at T:contracts/Halo2VerifyingKey.sol:74-82 expands, at the offsets
+    that VK's 35 constant words put them at (0x0460 onward). Transcribed from the
+    committed bytes with the trailing comments removed - the comment text is what
+    D-P13 puts outside the equality - and re-derived by
+    scripts/check_golden_provenance.py. -/
+def vkComms_ast : Block EVM.Op := yul% {
+  mstore(add(payload, 0x0460), 0x0000000000000000000000000000000016742a8c4f331d1be5bc8622ba92b271)
+  mstore(add(payload, 0x0480), 0xc798f706f7ed359adb5f2ac650537c84623ab7834d56f8e1d36c8442aea29c13)
+  mstore(add(payload, 0x04a0), 0x0000000000000000000000000000000013ca2f8530986bc11083da96e5763226)
+  mstore(add(payload, 0x04c0), 0x07cd6bdb82f308cb42878beaa2f5a0f3d5c62c6c7701d58ee27020e08e9cb8b7)
+  mstore(add(payload, 0x04e0), 0x0000000000000000000000000000000013c538f85ca3091a013ab6a943c394cf)
+  mstore(add(payload, 0x0500), 0xdb4a55805d283af633abd3c03f5a700ee60f921c63dfd268120f7a13cd3bc355)
+  mstore(add(payload, 0x0520), 0x00000000000000000000000000000000049ef841da32566f73dc39ba90d1386d)
+  mstore(add(payload, 0x0540), 0x95c92b7204a5400036f4c40eebdbe4ba0642fa2654789f20340038a10835648a)
+  mstore(add(payload, 0x0560), 0x000000000000000000000000000000000d084585756dbb5703f9c5f156a63cf4)
+  mstore(add(payload, 0x0580), 0xbec7b8323b6470c1cd0410237136761a3d52ebccab70f8a5cc8c0f78548953ba)
+  mstore(add(payload, 0x05a0), 0x0000000000000000000000000000000008edfd70c65c5d312c37dc754a862cf1)
+  mstore(add(payload, 0x05c0), 0x069893b6151b30977eebb406338f37bf47a30e510912b183020a88ea275e9355)
+  mstore(add(payload, 0x05e0), 0x000000000000000000000000000000000a3146faad4b6dfd10526e417494857f)
+  mstore(add(payload, 0x0600), 0x555d39dd09f58f44b4a94034477f00169abf04dc7a1abb92cb06c9fb2abe2e2f)
+  mstore(add(payload, 0x0620), 0x00000000000000000000000000000000107769de5e57b32ad1bc2f5ed22aa2ee)
+  mstore(add(payload, 0x0640), 0x0eeba5d4e7c2105b7d872d80d7bcbd0ac018f2ae0aa25084cc205ecb36d584f6)
+  mstore(add(payload, 0x0660), 0x00000000000000000000000000000000199220c5e9f1f7f71c66c6abebf6b6eb)
+  mstore(add(payload, 0x0680), 0xa4f8a76ac55dbc2c9b6321a883612aeeee9c6100a0947235b90d4a128b0581ed)
+  mstore(add(payload, 0x06a0), 0x000000000000000000000000000000000a88a4f6e4302c60014fe494699e83ee)
+  mstore(add(payload, 0x06c0), 0x36f38f5739eb100abaedf297069e9678848ca55ff0f7e03c9c875f6a41ddb1d9)
+}
+
+/-- The same slice as a token stream, wrapped in the braces EVM.print adds. -/
+def vkComms_committed : String :=
+  "{ mstore ( add ( payload , 1120 ) , 29846185320515403031889315322125267569 ) mstore ( add ( payload , 1152 ) , 90280522541133381303471403370446589167421029109621162264107011607888805403667 ) mstore ( add ( payload , 1184 ) , 26305139710973968842433615145496621606 ) mstore ( add ( payload , 1216 ) , 3529137993240436652650217624422248044544680043564701206101126453718343792823 ) mstore ( add ( payload , 1248 ) , 26279369893236589452255512769356600527 ) mstore ( add ( payload , 1280 ) , 99187850631652183005940579251101569107467009600314004772526621364547055502165 ) mstore ( add ( payload , 1312 ) , 6142330141729021909858815854494431341 ) mstore ( add ( payload , 1344 ) , 67750050547943208242333420082357234632799462073092380696128057275147533771914 ) mstore ( add ( payload , 1376 ) , 17322912380022855082314764404836941044 ) mstore ( add ( payload , 1408 ) , 86292315072291399109734015006019022928237793285587413028537072618765426447290 ) mstore ( add ( payload , 1440 ) , 11869538706325699808605746881825746161 ) mstore ( add ( payload , 1472 ) , 2983457310991927747411994149826303096944802217409348975136835198535390368597 ) mstore ( add ( payload , 1504 ) , 13548142133262345007562940813952714111 ) mstore ( add ( payload , 1536 ) , 38611308265340841259377062441989668482084155439816689001144052019491006983727 ) mstore ( add ( payload , 1568 ) , 21887678529582373609323102750275969774 ) mstore ( add ( payload , 1600 ) , 6748733468451536265408869581418165858059673764946018637539993010007461692662 ) mstore ( add ( payload , 1632 ) , 33989439953426843213702824386266314475 ) mstore ( add ( payload , 1664 ) , 74618640709900069573100504608017908234965236279851512267797920961755223523821 ) mstore ( add ( payload , 1696 ) , 14001778206533692903210194118018761710 ) mstore ( add ( payload , 1728 ) , 24855226961579983253189114827028336227160691780319141955347162497652824584665 ) }"
+
+/-- The same slice as a constructor tree. -/
+def vkComms_direct : Block EVM.Op :=
+  [ stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1120],
+      litN 29846185320515403031889315322125267569])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1152],
+      litN 90280522541133381303471403370446589167421029109621162264107011607888805403667])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1184],
+      litN 26305139710973968842433615145496621606])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1216],
+      litN 3529137993240436652650217624422248044544680043564701206101126453718343792823])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1248],
+      litN 26279369893236589452255512769356600527])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1280],
+      litN 99187850631652183005940579251101569107467009600314004772526621364547055502165])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1312],
+      litN 6142330141729021909858815854494431341])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1344],
+      litN 67750050547943208242333420082357234632799462073092380696128057275147533771914])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1376],
+      litN 17322912380022855082314764404836941044])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1408],
+      litN 86292315072291399109734015006019022928237793285587413028537072618765426447290])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1440],
+      litN 11869538706325699808605746881825746161])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1472],
+      litN 2983457310991927747411994149826303096944802217409348975136835198535390368597])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1504],
+      litN 13548142133262345007562940813952714111])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1536],
+      litN 38611308265340841259377062441989668482084155439816689001144052019491006983727])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1568],
+      litN 21887678529582373609323102750275969774])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1600],
+      litN 6748733468451536265408869581418165858059673764946018637539993010007461692662])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1632],
+      litN 33989439953426843213702824386266314475])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1664],
+      litN 74618640709900069573100504608017908234965236279851512267797920961755223523821])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1696],
+      litN 14001778206533692903210194118018761710])
+  , stmtE (binOp EVM.Op.mstore [binOp EVM.Op.add [varX "payload", litN 1728],
+      litN 24855226961579983253189114827028336227160691780319141955347162497652824584665])
+  ]
+
 /-! ## Secondary golden gates: printed AST equals the pinned token stream
 
 These compare 'EVM.print' of the DSL AST against the pinned string. They are the
@@ -546,7 +625,10 @@ def spread_golden_ok : Bool :=
 def vkHead_golden_ok : Bool :=
   yulTokens (YulSemantics.EVM.print vkHead_ast) == yulTokens vkHead_committed
 
-/-- All eight slices at once. Each side goes through yulTokens: the pinned string
+def vkComms_golden_ok : Bool :=
+  yulTokens (YulSemantics.EVM.print vkComms_ast) == yulTokens vkComms_committed
+
+/-- All nine slices at once. Each side goes through yulTokens: the pinned string
     is the artifact token stream as the extraction script wrote it (with the pair
     ':=' kept whole), and the printed side is the vendored printer's output.
     Re-tokenising the pinned string makes the comparison about the program rather
@@ -559,7 +641,8 @@ def golden_all_ok : Bool :=
   vmSwitch_golden_ok &&
   pcsBasis_golden_ok &&
   spread_golden_ok &&
-  vkHead_golden_ok
+  vkHead_golden_ok &&
+  vkComms_golden_ok
 
 /-! ## Authoritative golden gates: stmtsBeq, AST against AST
 
@@ -587,11 +670,13 @@ def vmSwitch_beq_ok : Bool := YulSemantics.SyntaxEq.stmtsBeq vmSwitch_ast vmSwit
 def pcsBasis_beq_ok : Bool := YulSemantics.SyntaxEq.stmtsBeq pcsBasis_ast pcsBasis_direct
 def spread_beq_ok : Bool := YulSemantics.SyntaxEq.stmtsBeq spread_ast spread_direct
 def vkHead_beq_ok : Bool := YulSemantics.SyntaxEq.stmtsBeq vkHead_ast vkHead_direct
+def vkComms_beq_ok : Bool := YulSemantics.SyntaxEq.stmtsBeq vkComms_ast vkComms_direct
 
-/-- All eight under the authoritative relation. -/
+/-- All nine under the authoritative relation. -/
 def golden_beq_all_ok : Bool :=
   smoke_beq_ok && scalarInv_beq_ok && batchInv_beq_ok && lagrangeFor_beq_ok &&
-  vmSwitch_beq_ok && pcsBasis_beq_ok && spread_beq_ok && vkHead_beq_ok
+  vmSwitch_beq_ok && pcsBasis_beq_ok && spread_beq_ok && vkHead_beq_ok &&
+  vkComms_beq_ok
 
 /-! ## Discrimination: the relations can fail
 
@@ -618,7 +703,7 @@ def discriminates_literal_ok : Bool :=
 
 /-- The DSL elaborates a multi-name 'let' as ONE 'letDecl' carrying a list of
     names, and likewise for a multi-name assignment. No fixture slice contains
-    either (the corpus sites are D:1074 and D:1019, outside the eight slices), so
+    either (the corpus sites are D:1074 and D:1019, outside the nine slices), so
     nothing else in this file would notice the vendored elaborator splitting a
     multi-name declaration into several single-name ones, or dropping a name. -/
 def discriminates_multiNameLet_ok : Bool :=
@@ -712,6 +797,7 @@ end Midfall.Generator.Golden
 #eval Midfall.Generator.Golden.pcsBasis_golden_ok -- expect true
 #eval Midfall.Generator.Golden.spread_golden_ok -- expect true
 #eval Midfall.Generator.Golden.vkHead_golden_ok -- expect true
+#eval Midfall.Generator.Golden.vkComms_golden_ok -- expect true
 #eval Midfall.Generator.Golden.golden_all_ok -- expect true
 #eval Midfall.Generator.Golden.smoke_beq_ok -- expect true
 #eval Midfall.Generator.Golden.scalarInv_beq_ok -- expect true
@@ -721,6 +807,7 @@ end Midfall.Generator.Golden
 #eval Midfall.Generator.Golden.pcsBasis_beq_ok -- expect true
 #eval Midfall.Generator.Golden.spread_beq_ok -- expect true
 #eval Midfall.Generator.Golden.vkHead_beq_ok -- expect true
+#eval Midfall.Generator.Golden.vkComms_beq_ok -- expect true
 #eval Midfall.Generator.Golden.golden_beq_all_ok -- expect true
 #eval Midfall.Generator.Golden.discriminates_ident_ok -- expect true
 #eval Midfall.Generator.Golden.discriminates_argOrder_ok -- expect true

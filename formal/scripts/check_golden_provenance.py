@@ -34,7 +34,7 @@ THE TOKENISATION, exactly as YulGolden.lean documents it:
 
 THE HASH RECIPE, corrected. The commit that introduced these pins told the reader
 to re-derive them with "sed -n 'A,Bp' FILE | shasum -a 256". That reproduces NONE
-of the eight hashes: sed appends a newline after the last selected line, and the
+of the nine hashes: sed appends a newline after the last selected line, and the
 slice as pinned has none. The slice is lines A..B joined by LF with NO trailing
 LF, hashed as UTF-8; the byte counts in the doc comments are of that same slice.
 
@@ -85,7 +85,7 @@ FORMAL = HERE.parent
 REPO = FORMAL.parent
 GOLDEN = FORMAL / "Midfall" / "Generator" / "YulGolden.lean"
 
-EXPECTED_FIXTURES = 8
+EXPECTED_FIXTURES = 9
 EXPECTED_ANCHORS = 5
 EXPECTED_VERIFIER_INCLUDES = 13
 EXPECTED_EVALUATOR_INCLUDES = 2

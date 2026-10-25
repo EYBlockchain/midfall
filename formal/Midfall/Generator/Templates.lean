@@ -24,7 +24,7 @@
 -- transcription with nothing checking it, which is exactly R-38 finding 1: a
 -- golden gate that compares a pasted string against a pasted string cannot fail
 -- when the artifact changes. The only drift protection in this tree for
--- committed bytes is scripts/check_golden_provenance.py, and it checks the eight
+-- committed bytes is scripts/check_golden_provenance.py, and it checks the nine
 -- pinned slices in YulGolden.lean. So the discipline here is: port as DATA only
 -- what can be checked against something this file does not control, and let the
 -- rest arrive with the renderers that consume it (plan Section 8: one Lean fn
@@ -616,7 +616,8 @@ def containsStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
     perturbing the stride in `vkCommStmts` (`4 * j` -> `5 * j`) and swapping
     `xLo`/`yHi` there reddened nothing in this tree until
     `vkConstructor_commitments_matchesExpectedAst_ok` was added, which is the
-    gate that covers them. (ii) The hex filters: the AST channel records the
+    gate that covers them, and the fixed loop is now tied to the committed bytes
+    as well by `vkConstructor_fixedComms_matchesArtifact_ok`. (ii) The hex filters: the AST channel records the
     numeric value only, so a filter that spells a word differently but elaborates
     to the same number passes here - loss class 2 of Render.lean. Spelling is
     checked on the text channel by `vkConstructor_tokens_matchPinnedStream_ok`
@@ -668,11 +669,13 @@ def vkCommsRegion : Block EVM.Op :=
     HAND-WRITTEN, NOT ARTIFACT-DERIVED, and the distinction is stated because it
     matters. The tracked artifact DVK does contain a VK with non-empty
     commitments (fixed_comms from DVK:103, permutation_comms later in the same
-    file), but no pinned Lean fixture covers that region - YulGolden.lean pins
-    only DVK:62-72 for this template - so there is nothing within this file's
-    reach that the file does not itself control. Pinning that region means
-    editing YulGolden.lean and adding a provenance entry, which is outside the
-    scope of this fix. So this is a hand-written specification of the template:
+    file) and the fixed half of that region is now pinned: Golden.vkComms_ast is
+    DVK:103-132, the first five fixed commitments, and
+    vkConstructor_fixedComms_matchesArtifact_ok compares the rendered fixed loop
+    against it. The permutation section is still unreachable from a contiguous
+    slice - the artifact emits all 19 fixed commitments before the first
+    permutation one - so THIS expectation stays hand-written, and it is a
+    hand-written specification of the template:
     its value is that the specification and the code disagree when the code is
     wrong, which is what the perturbations recorded in the gate below document,
     and not that either side is tied to committed bytes. -/
@@ -733,6 +736,101 @@ def vkCommsExpectedAst : Block EVM.Op :=
     side is hand-written (`vkCommsExpectedAst`). -/
 def vkConstructor_commitments_matchesExpectedAst_ok : Bool :=
   YulSemantics.SyntaxEq.stmtsBeq vkCommsRegion vkCommsExpectedAst
+
+/-- The poseidon fixture VK's WHOLE constant table: the 35 words at DVK:68-102,
+    names taken from the artifact's own trailing comments. `poseidonVkHead` is
+    the first five of these; this is all of them, because the commitment offsets
+    in the artifact are `32 * (constants.len() + 4*j + k)` with constants.len()
+    equal to 35, and a model with five constants puts the same commitment at
+    0x00a0 instead of 0x0460. -/
+def poseidonVkFullConstants : List (String × Word256) :=
+  [ ("vk_digest", 0x4cc2e5ac0d3a524691c3723a18e826d6ed01cbf767fdec83fcf3a8f9e7640494),
+    ("num_instances", 0x0000000000000000000000000000000000000000000000000000000000000001),
+    ("k", 0x0000000000000000000000000000000000000000000000000000000000000006),
+    ("n_inv", 0x721df0b5dcf70753126cf0a7e97b50a53e6ead72f3fe628f03ffffff04000001),
+    ("omega", 0x45af6345ec055e4d14a1e27164d8fdbd2d967f4be2f951558140d032f0a9ee53),
+    ("omega_inv", 0x640d097461a2eeaf4e84b3cd7dc75b61db872ef3dce28e788d28c143168bba2c),
+    ("omega_inv_to_l", 0x68f0ba2461933c32412d801131c542d24eb73f5d9958580573ea3fa3e6fe310f),
+    ("has_accumulator", 0x0000000000000000000000000000000000000000000000000000000000000000),
+    ("acc_offset", 0x0000000000000000000000000000000000000000000000000000000000000000),
+    ("num_acc_limbs", 0x0000000000000000000000000000000000000000000000000000000000000000),
+    ("num_acc_limb_bits", 0x0000000000000000000000000000000000000000000000000000000000000000),
+    ("g1_x_hi", 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f),
+    ("g1_x_lo", 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb),
+    ("g1_y_hi", 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4),
+    ("g1_y_lo", 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1),
+    ("g2_x_c0_hi", 0x00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051),
+    ("g2_x_c0_lo", 0xc6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8),
+    ("g2_x_c1_hi", 0x0000000000000000000000000000000013e02b6052719f607dacd3a088274f65),
+    ("g2_x_c1_lo", 0x596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e),
+    ("g2_y_c0_hi", 0x000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351a),
+    ("g2_y_c0_lo", 0xadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801),
+    ("g2_y_c1_hi", 0x000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99),
+    ("g2_y_c1_lo", 0xcb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be),
+    ("neg_s_g2_x_c0_hi", 0x00000000000000000000000000000000050ac27c3527072b81af0fa9a683e226),
+    ("neg_s_g2_x_c0_lo", 0xda79275f2985c9e89a0db969b76e0b6be94fee874c48586737ad5588cf1e1041),
+    ("neg_s_g2_x_c1_hi", 0x00000000000000000000000000000000116010f1b3d33aa5f3f608c385400979),
+    ("neg_s_g2_x_c1_lo", 0xed36dc3fab53d3626f519c74d7e1ebef62c9ad35796404ce2fc3ebb42167b5a1),
+    ("neg_s_g2_y_c0_hi", 0x0000000000000000000000000000000015b237e8c830b11d92578cb44ab0a93f),
+    ("neg_s_g2_y_c0_lo", 0x5176b4898e3a759bb6fba9e6c9375340a8a87557a3943686097db68d914e268e),
+    ("neg_s_g2_y_c1_hi", 0x00000000000000000000000000000000006d57f79a18220d1e5ef04bd519e995),
+    ("neg_s_g2_y_c1_lo", 0x9a9cc71553bb761b5422a6b6971b75c8d3695bfa07b861c4b1c958da426efc45),
+    ("quotient_const", 0x0000000000000000000000000000000000000000000000000000000000000001),
+    ("quotient_program", 0x0556c010584005576008060d000b0200010556801156801156800556e008060d),
+    ("quotient_program", 0x000b0300000556a01156a01156a005570008060d000b0300010556c01156c011),
+    ("quotient_program", 0x56c005578008060d000b0300011b00001b00011b0002191f0000000000000000) ]
+
+/-- The first five fixed commitments of the same VK, DVK:105-132, i.e. the
+    `fixed_comms` the pinned `Golden.vkComms_ast` slice carries. Values are the
+    artifact's, not placeholders: that is the point of the gate below. -/
+def poseidonVkFullComms : List G1Words :=
+  [ { xHi := 0x0000000000000000000000000000000016742a8c4f331d1be5bc8622ba92b271, xLo := 0xc798f706f7ed359adb5f2ac650537c84623ab7834d56f8e1d36c8442aea29c13,
+      yHi := 0x0000000000000000000000000000000013ca2f8530986bc11083da96e5763226, yLo := 0x07cd6bdb82f308cb42878beaa2f5a0f3d5c62c6c7701d58ee27020e08e9cb8b7 },
+    { xHi := 0x0000000000000000000000000000000013c538f85ca3091a013ab6a943c394cf, xLo := 0xdb4a55805d283af633abd3c03f5a700ee60f921c63dfd268120f7a13cd3bc355,
+      yHi := 0x00000000000000000000000000000000049ef841da32566f73dc39ba90d1386d, yLo := 0x95c92b7204a5400036f4c40eebdbe4ba0642fa2654789f20340038a10835648a },
+    { xHi := 0x000000000000000000000000000000000d084585756dbb5703f9c5f156a63cf4, xLo := 0xbec7b8323b6470c1cd0410237136761a3d52ebccab70f8a5cc8c0f78548953ba,
+      yHi := 0x0000000000000000000000000000000008edfd70c65c5d312c37dc754a862cf1, yLo := 0x069893b6151b30977eebb406338f37bf47a30e510912b183020a88ea275e9355 },
+    { xHi := 0x000000000000000000000000000000000a3146faad4b6dfd10526e417494857f, xLo := 0x555d39dd09f58f44b4a94034477f00169abf04dc7a1abb92cb06c9fb2abe2e2f,
+      yHi := 0x00000000000000000000000000000000107769de5e57b32ad1bc2f5ed22aa2ee, yLo := 0x0eeba5d4e7c2105b7d872d80d7bcbd0ac018f2ae0aa25084cc205ecb36d584f6 },
+    { xHi := 0x00000000000000000000000000000000199220c5e9f1f7f71c66c6abebf6b6eb, xLo := 0xa4f8a76ac55dbc2c9b6321a883612aeeee9c6100a0947235b90d4a128b0581ed,
+      yHi := 0x000000000000000000000000000000000a88a4f6e4302c60014fe494699e83ee, yLo := 0x36f38f5739eb100abaedf297069e9678848ca55ff0f7e03c9c875f6a41ddb1d9 } ]
+
+/-- The poseidon fixture VK as the artifact actually renders it. The permutation
+    list is empty, and that is a limit of the pin rather than of the model: the
+    artifact emits all 19 fixed commitments before the first permutation one,
+    so no contiguous slice of DVK contains fixed-then-permutation unless every
+    fixed commitment is transcribed too. The permutation loop stays gated by
+    `vkConstructor_commitments_matchesExpectedAst_ok`, against the hand-written
+    expectation. -/
+def poseidonVkFull : Halo2VerifyingKey :=
+  { poseidonVkHead with
+    constants := poseidonVkFullConstants,
+    fixedComms := poseidonVkFullComms }
+
+/-- The twenty commitment statements of `poseidonVkFull.constructorStmts`: three
+    setup, then the 35 constants, then the twenty, then the return, so the
+    length guard is what makes the drop/take honest - without it a perturbation
+    that changed the statement count would misalign the slice instead of
+    reddening it. -/
+def vkCommsArtifactRegion : Block EVM.Op :=
+  let s := poseidonVkFull.constructorStmts
+  if s.length == 59 then (s.drop 38).take 20 else []
+
+/-- THE FIXED COMMITMENT LOOP AGAINST THE COMMITTED BYTES. This is the artifact-
+    backed upgrade R-40 F1 asked for, scoped to what the artifact can actually
+    back: the rendered fixed-commitment statements are compared under `stmtsBeq`
+    to `Golden.vkComms_ast`, the DVK:103-132 slice that
+    scripts/check_golden_provenance.py re-derives from the tracked file, so
+    unlike `vkCommsExpectedAst` neither side is typed by hand. Concretely it
+    rules out, and was measured reddening on: the stride inside a slot being
+    `4 * j` -> `5 * j`; `xLo` and `yHi` exchanged within a slot; the fixed
+    section base being anything other than `constants.len()`; and a commitment
+    value differing from the one the generator wrote into the artifact. What it
+    CANNOT see: the permutation loop, whose artifact offsets are unreachable
+    without transcribing all 19 fixed commitments (see `poseidonVkFull`), and
+    the section header comments, which are text-channel only. -/
+def vkConstructor_fixedComms_matchesArtifact_ok : Bool :=
+  YulSemantics.SyntaxEq.stmtsBeq vkCommsArtifactRegion Golden.vkComms_ast
 
 /-- THE SAME SLICE ON THE TEXT CHANNEL, against the pinned token stream: the
     text is built from `hexFilter` and `hexPaddedFilter` over the
@@ -889,6 +987,7 @@ end Midfall.Generator.TemplateKats
 #eval Midfall.Generator.TemplateKats.includeGraph_disjoint_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_matchesGolden_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_commitments_matchesExpectedAst_ok -- expect true
+#eval Midfall.Generator.TemplateKats.vkConstructor_fixedComms_matchesArtifact_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_tokens_matchPinnedStream_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_prefixConstants_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkRender_matchesRustTestAssertions_ok -- expect true
