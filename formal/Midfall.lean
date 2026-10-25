@@ -33,6 +33,7 @@ import Midfall.Generator.YulGolden
 import Midfall.Generator.Models
 import Midfall.Generator.Layout
 import Midfall.Generator.Templates
+import Midfall.Generator.Protocol
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
 import Midfall.Security.Challenges

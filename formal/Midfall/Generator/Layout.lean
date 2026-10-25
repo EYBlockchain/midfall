@@ -7,6 +7,11 @@
 -- `validate_payload_layout` - which `Models.lean` deferred precisely because
 -- these types did not exist yet.
 --
+-- It also carries the `pub(crate) mod trace` block of
+-- `lowering/layout/mod.rs:774-786` - six LOG topic namespaces - because that
+-- block is Layout-row material; `Midfall/Generator/Protocol.lean` re-exports two
+-- of the six and cites `PM:` for the re-export only.
+--
 -- Citation prefixes this file introduces. Review R-40 F6 was a phantom citation
 -- found in a file that used a bare prefix, so every cite below names the file it
 -- came from as well:
@@ -1121,6 +1126,56 @@ def MemoryMap.WellFormed (self : MemoryMap) : Prop := self.wellFormedBool = true
 instance (self : MemoryMap) : Decidable self.WellFormed :=
   instDecidableEqBool self.wellFormedBool true
 
+/-! ## `lowering/layout/mod.rs:774-786` - the `trace` topic namespaces
+
+This section is the `pub(crate) mod trace` block. It lives here, and not in
+`Protocol.lean` where two of its constants are re-exported, because the block
+belongs to the Layout row of plan Section 8's module map and every cite in it is
+an `LM:` cite. `Midfall/Generator/Protocol.lean` re-exports
+`TRACE_QUOTIENT_IDENTITY_BASE` and `TRACE_PCS_QUERY_BASE`, citing `PM:` for the
+re-export and `LM:` for the value.
+
+All six are `u64` or `usize` in Rust and `Nat` here (rule R5). No wrapping can
+occur: they are LOG topic namespaces, the reference's own test LM:877-882 pins
+each to a literal below 100000, and the only arithmetic done on them in the
+ported scope is `base + index` with `index` a count of queries or identities.
+
+The Rust doc comment (LM:775-779) is worth carrying verbatim: "The gaps are
+intentional: they keep broad event families visually separated in traces and
+preserve historical IDs consumed by tests and external comparison scripts." That
+is why the six are transcribed as independent literals and not derived from one
+another. -/
+
+/-- rust: LM:781 (`PCS_QUERY_BASE: u64 = 2_000`) @formal-baseline. KZG query
+    trace IDs; re-exported by `Protocol.lean` at PM:180 and consumed there by
+    `from_constraint_system` for `pcs_query_trace_ids`. -/
+def Trace.pcsQueryBase : Nat := 2_000
+
+/-- rust: LM:782 (`PROOF_COMMIT_BASE: usize = 10_000`) @formal-baseline. Proof
+    G1 reads. Reached from this file only through M:1284, which puts it in
+    `TemplateConstants.proofCommitTraceBase`. -/
+def Trace.proofCommitBase : Nat := 10_000
+
+/-- rust: LM:783 (`PROOF_EVAL_BASE: usize = 20_000`) @formal-baseline. Proof
+    scalar eval reads; same M:1285 consumer note. -/
+def Trace.proofEvalBase : Nat := 20_000
+
+/-- rust: LM:784 (`QUOTIENT_IDENTITY_BASE: u64 = 30_000`) @formal-baseline.
+    Quotient identities; re-exported by `Protocol.lean` at PM:178 and also read
+    at M:1286 and quotient.rs:1365. -/
+def Trace.quotientIdentityBase : Nat := 30_000
+
+/-- rust: LM:785 (`PCS_SERIALIZED_POINT_SET_BASE: u64 = 41_000`)
+    @formal-baseline. PCS point sets. Not used by the protocol plan; ported
+    because rule R1 ports the whole block, and the gaps are load-bearing per the
+    module doc comment above. -/
+def Trace.pcsSerializedPointSetBase : Nat := 41_000
+
+/-- rust: LM:786 (`SELECTOR_FOLD_BASE: usize = 60_000`) @formal-baseline.
+    Selector accumulators; read at M:1287. -/
+def Trace.selectorFoldBase : Nat := 60_000
+
+
 end Midfall.Generator
 
 
@@ -1946,4 +2001,22 @@ def memoryMap_overlapLifetime_asymmetry_ok : Bool :=
 #eval memoryMap_spillWindow_false_ok -- expect true
 #eval memoryMap_unaligned_false_ok -- expect true
 #eval memoryMap_overlapLifetime_asymmetry_ok -- expect true
+
+/-- THE SIX TRACE TOPIC BASES ARE THE LITERALS THE REFERENCE ASSERTS. LM:877-882 is
+    the reference's own test of this block, and it pins all six with
+    debug-free assert_eq! - so this is a transcription checked against an outside
+    source rather than against itself. The gaps (2000, 10000, 20000, 30000, 41000,
+    60000) are the load-bearing part: 41000 rather than 40000 and 60000 rather than
+    50000 are what LM:776-779 says external comparison scripts consume, so a
+    "rounding" edit is a real divergence and this is the only thing in the tree
+    that would notice. Transcribing all six to 1..6 reddens it. -/
+def traceBases_ok : Bool :=
+  Trace.pcsQueryBase == 2_000
+    && Trace.proofCommitBase == 10_000
+    && Trace.proofEvalBase == 20_000
+    && Trace.quotientIdentityBase == 30_000
+    && Trace.pcsSerializedPointSetBase == 41_000
+    && Trace.selectorFoldBase == 60_000
+
+#eval traceBases_ok -- expect true
 end Midfall.Generator.LayoutKats
