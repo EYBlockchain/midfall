@@ -1067,6 +1067,66 @@ short output.
 generated Yul will hit the same wall. Budget for it now; the fuel-with-loud-marker
 pattern is the workaround that keeps computability (rule R10) honest.
 
+### R-38 The Phase 6 golden test never read the fixture it claims to check
+
+A fresh review session found five confirmed defects in 2648973. The first is the
+vacuity failure mode this log has now recorded four times.
+
+1. **The golden gates compare an AST against a pasted string literal, not against
+   the file.** 'poseidon-fixture-dump' appears in YulGolden.lean only inside
+   comments; no Lean term reads it. Running the file from /tmp leaves all 14 gates
+   true with the repo path unresolvable, so deleting or regenerating the artifact
+   cannot turn a gate red. The doc comments asserted the opposite ('computed from
+   the committed bytes'). Mitigation the reviewer verified: the transcription IS
+   faithful today - all 8 pinned strings re-derive, and line/byte/token counts
+   match - so nothing is currently wrong, but there is zero drift protection. The
+   commit's own 'sed -n ... | shasum' recipe reproduces none of the 8 hashes
+   (sed adds a trailing newline).
+
+2. **Token-stream equality is strictly weaker than stmtsBeq, so the two are not the
+   same relation as D-P13 claimed.** PrettyPrint.lean:44-45 prints Expr.builtin and
+   Expr.call identically while Ast.lean:109-113 keeps them distinct, so
+   'add(1,2)' as a builtin and as a user call have equal tokens and unequal
+   stmtsBeq. A port emitting .call where the Rust means .builtin passes every golden
+   gate and would then be rejected by Phase 5's irCheck. The claim that M3 and
+   Phase 5 'share one notion of the same Yul' was false as written.
+
+3. **Every .sol citation in Render.lean and Filters.lean points at the stale
+   deployed artifact**, not the dump the commit claimed to re-anchor on - two of
+   them past the end of the 3024-line dump (they exist only in the 3573-line
+   deployed file). The R11 checklist is precisely what a reviewer uses to confirm a
+   rule was read off real output, so a silently mis-anchored checklist defeats it.
+
+4. **discriminates_fixture_ok was vacuous**: it compared a 1-statement block to a
+   24-statement fixture, so it was true with the perturbation removed. It was also
+   the gate the commit message offered as evidence of falsification.
+
+5. **The fuel documentation describes code that was not written.** The cited gate
+   renderFuel_exhausted_ok does not exist; the claimed 'sizeOf s + 1' budget is a
+   constant 512; and the claim that a too-small fuel reddens the golden gates is
+   false because renderStmt is never called outside Render.lean (setting fuel to 1
+   reddened 1 of 6 renderer notes and 0 golden gates).
+
+Plus a fourth unrepresentable-text divergence the author had missed: comments *inside
+a single statement* (dump:1902-1904, a switch with a comment between header and
+case) cannot be carried by the AST or by the Line stream; and the fixtures contain
+free identifiers (FR_MODULUS, ERR_*, 90 Solidity internal constants) that stmtsBeq
+compares as unbound names whose spelling is decided outside the Yul. Both bite
+Phase 5.
+
+What the reviewer verified clean: the fixture provenance claim is true (both .sol
+files are tracked and present in a fresh git worktree, byte-identical), the 8 golden
+gates are genuinely non-vacuous under 13 independent perturbations, and all 25+
+Rust and vendor citations land. Note the trap it recorded: 'git check-ignore' without
+--no-index reports tracked-but-ignored files as not ignored.
+
+**The pattern, stated plainly.** Four independent reviews have now each found a
+check that could not fail. Three of them were in code I had written or signed off
+within the previous day, and in every case the accompanying comment asserted the
+check did what it did not do. The comments are the dangerous part: they are what a
+later reader trusts without testing. Rule adopted: a KAT's doc comment must name the
+concrete wrong implementation it rules out, and if that cannot be stated, the KAT
+should be deleted rather than kept as decoration.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
