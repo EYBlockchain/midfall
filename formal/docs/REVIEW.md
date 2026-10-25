@@ -1148,6 +1148,37 @@ check did what it did not do. The comments are the dangerous part: they are what
 later reader trusts without testing. Rule adopted: a KAT's doc comment must name the
 concrete wrong implementation it rules out, and if that cannot be stated, the KAT
 should be deleted rather than kept as decoration.
+### R-39 PLAN.md:412 render_eq_print is false as written
+
+Plan rule 12 says: if a Rust behaviour makes a statement false, stop and report a
+counterexample; never weaken it silently. This is that report.
+
+`render_eq_print : g.render o = (g.lower o).map Lowered.print` asserts a **text-level**
+equality from an AST. R-38 finding 7 established that comments *inside* a single
+statement (dump:1902-1904, a `switch` with a comment between header and `case`;
+dump:1020-1025, comments between the arguments of a call) and the 91 free Solidity
+`internal constant` identifiers are **not representable in the Yul AST**. No function
+from `Lowered`'s AST fields can reproduce those bytes, so the theorem cannot hold for
+any nontrivial contract.
+
+D-P13 relaxed the *equality obligation* - byte identity is no longer required - but it
+did not repair this theorem, which still asserts the text equation. It is normative
+(Section 9.5), so fixing it needs sign-off rather than a silent edit.
+
+Two coherent resolutions, both architectural-neutral and neither requiring the
+generator redesign that was declined:
+
+1. **Restate structurally.** Make the equation about the AST:
+   `stmtsBeq (astOf (g.render o)) ((g.lower o).main)`. `print` becomes a canonical
+   text emitter whose formatting is explicitly outside the obligation. This matches
+   what D-P13 already decided and what the golden gates now check.
+2. **Add a layout channel to `Lowered`.** If reproducible solc input is ever needed
+   byte-for-byte, `Lowered` must carry the comment/layout stream alongside the AST -
+   which is the `Line` type package 1 invented and D-P13 demoted.
+
+Resolution 1 is recommended: it is a restatement, not new machinery, and the plan's
+semantic theorems attach to the AST either way. Owner: the user, since Section 9 is
+frozen pending sign-off.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
