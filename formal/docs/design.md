@@ -332,3 +332,69 @@ deployed file's bytes - only its semantics, which is what the theorems need anyw
 text. `render` must emit well-formed, compilable Yul for any AST the generator
 produces; its formatting is now free. This keeps `render g o = (lower g o).map print
 by construction` meaningful as a structural statement.
+## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
+
+**Decision.** The supported profile keeps `truncatedChallenges = true`. R-22 option (b):
+the x1 and x4 rows of plan 9.4's `roundErr` are re-derived for truncated powers rather
+than dropped, and the deployed configuration stays inside the scope of S1 and S3.
+
+**What was decided against.** Option (a), dropping the feature from the supported
+profile, would have been the cheapest proof but would exclude the Moonlight deployment -
+i.e. it would make D1 and M11 provable only about a configuration nobody runs. Option
+(c), stating S1/S3 only under `truncatedChallenges = false`, is retained as the
+*fallback*, not the plan: if the re-derivation resists, S1/S3 get the hypothesis and
+deployed knowledge soundness is marked unresolved in writing. Neither option changes the
+generator or the deployment: truncation is preserved for output compatibility, which was
+the binding constraint.
+
+**Consequences, all of them costs.** (1) `docs/security.tex` does not exist yet and now
+has a mandatory section it was not written for: a soundness bound for
+`sum_j truncate(x^j) * C_j = 0` where `truncate` is the low-128-bit re-embedding of
+arithmetic.rs:247-252. This is not a degree argument; the expected shape is a per-test
+bound over the truncation image, and `maxPolysPerSet` / `numPointSets` are the wrong
+quantities in it. (2) `Spec/Degrees.lean` currently defines `degX1`-shaped counts that
+the new argument will not use; they stay (they are faithful to the code) but the rows
+that feed `roundErr .x1` and `roundErr .x4` must be redefined, not reused. (3) M9 cannot
+start until that paper section exists, so this decision does not unblock M9 - it fixes
+which proof M9 needs. (4) Nothing in M2-M8 changes: the port, the lowering proofs and
+the byte-conformance work are indifferent to this.
+
+**Owner:** the paper proof, before any Lean formalisation of S1/S3.
+
+## D-P15 (ADOPTED, round 9): R-42 - import the textual via-ir IR via generated yul% quotes
+
+**Decision.** R-42 option A. `Midfall/Yul/ImportSolcIR.lean` does not read
+`solc --ir-ast-json` (which is the legacy pipeline's artifact and describes a program
+that cannot be compiled to bytecode at all - see R-42). Instead a script extracts the
+`ir` artifact from `--standard-json` with `viaIR: true` and the deployment's optimizer
+settings, emits it as a Lean source file of `yul%` quotations, and lets the **elaborator
+be the checker**: if the generated file elaborates, the IR is in the vendored AST; if it
+does not, the import fails loudly rather than silently mis-parsing. A runtime Yul parser
+is not written.
+
+**Measured feasibility, against the tracked poseidon dump** (via-ir `ir` artifact:
+140,357 chars, 2,245 lines; extracted with the pinned solc through standard-json,
+viaIR true, evmVersion cancun, optimizer runs 200, metadata bytecodeHash none):
+
+* the DSL's two documented gaps barely occur: **zero** `: u256` annotations, **zero**
+  `-> u256` return annotations, **zero** typed function parameters, and exactly **one**
+  `hex"..."` data literal.
+* 76 user-defined functions and 40 dialect builtins resolve cleanly; the dialect already
+  knows `mcopy` (59 sites), `datasize` (25), `loadimmutable` (2), `dataoffset` (1).
+* **exactly two names do not resolve: `memoryguard` (2 sites) and `setimmutable` (1
+  site).** Everything else my first scan flagged was solc's own embedded `//` source
+  comments, not calls.
+
+**So the decision carries one prerequisite:** the vendored EVM dialect must gain
+`memoryguard` and `setimmutable`. That is not incidental work - plan 7's IRCheck is
+required to reason about exactly those two things ("the memoryguard and spill region are
+disjoint from L.plan.memory"; "immutables come from `loadimmutable`, which equals
+constructor-set values", whose constructor side *is* `setimmutable`). Adding them to the
+dialect is small and upstreamable, which is what plan 7 anticipated for our additions.
+
+**Also settled by this:** the IR of record is the **via-ir** IR, and it is
+optimizer-setting sensitive (the `ir` artifact differs between `optimizer.enabled` false
+and true: `e3f04cfc1c05d699` vs `e9465b3433265c3f`). So the import must pin the full
+setting triple - viaIR, optimizer enabled, runs 200 - not just the compiler version.
+BASELINE.md's toolchain table carries the measurements.
+
