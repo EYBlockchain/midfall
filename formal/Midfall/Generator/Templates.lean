@@ -550,21 +550,146 @@ def vkForRender : Halo2VerifyingKey :=
 /-- `needle` occurs in `hay`. -/
 def containsStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
 
-/-- THE RENDERED VK CONSTRUCTOR IS THE COMMITTED CONSTRUCTOR, under the
+/-- THE RENDERED VK CONSTRUCTOR HEAD IS THE COMMITTED CONSTRUCTOR HEAD, under the
     authoritative relation. The expected side is `Golden.vkHead_ast`, the
     `yul%` quotation of DVK:62-72 that scripts/check_golden_provenance.py
     re-derives from the committed bytes, so this is a model-to-artifact check and
     not a paste-to-paste one. It is the first place in the tree where a ported
     template is rendered and compared to the generator output under `stmtsBeq`.
-    Concretely it rules out: the payload offset being `32*i` vs `32*(i+1)`;
-    the INVALID byte being stored after the payload pointer is taken; the
-    `mstore8` and the two `let`s being emitted in a different order; a
-    commitment word being emitted with the wrong stride; and the hex filters
-    producing a value that elaborates to a different number. The `.take 8` is
-    because the fixture is a slice: the ninth statement, the `return`, is
-    checked by `vkRender_matchesRustTestAssertions_ok` instead. -/
+
+    SCOPE - eight statements, and the name oversells it if that is not said.
+    `poseidonVkHead` has `fixedComms := []` and `permutationComms := []`, and
+    the comparison is `List.take 8`, so what is compared is exactly the three
+    setup statements and the five constant words. Concretely it rules out: the
+    payload offset being `32*i` vs `32*(i+1)` in `vkPayloadWordStmt`; the
+    INVALID byte being stored after the payload pointer is taken; the `mstore8`
+    and the two `let`s being emitted in a different order; and a wrong VALUE in
+    one of the five header words.
+
+    WHAT IT CANNOT SEE, measured rather than asserted (R-40 F1). (i) The
+    commitment loops at T:contracts/Halo2VerifyingKey.sol:74-91 - 18 of the
+    template's 43 body lines. With both commitment lists empty the template
+    emits no commitment statement, and `.take 8` would drop one even if it did:
+    perturbing the stride in `vkCommStmts` (`4 * j` -> `5 * j`) and swapping
+    `xLo`/`yHi` there reddened nothing in this tree until
+    `vkConstructor_commitments_matchesExpectedAst_ok` was added, which is the
+    gate that covers them. (ii) The hex filters: the AST channel records the
+    numeric value only, so a filter that spells a word differently but elaborates
+    to the same number passes here - loss class 2 of Render.lean. Spelling is
+    checked on the text channel by `vkConstructor_tokens_matchPinnedStream_ok`
+    and `vkRender_matchesRustTestAssertions_ok`. The `.take 8` is because the
+    fixture is a slice: the ninth statement, the `return`, is checked by
+    `vkRender_matchesRustTestAssertions_ok` instead. -/
 def vkConstructor_matchesGolden_ok : Bool :=
   YulSemantics.SyntaxEq.stmtsBeq (List.take 8 poseidonVkHead.constructorStmts) Golden.vkHead_ast
+
+/-- Two fixed and one permutation commitment with pairwise distinct coordinate
+    words, so a word-order error inside a G1 slot changes the payload instead of
+    silently re-writing the same value into the next slot. The values are
+    placeholders chosen for distinguishability; they are NOT the poseidon VK's
+    commitments (DVK:103 carries those) and nothing here claims they are. -/
+def vkTestComms : List G1Words :=
+  [ { xHi := 0x0100, xLo := 0x0101, yHi := 0x0102, yLo := 0x0103 },
+    { xHi := 0x0104, xLo := 0x0105, yHi := 0x0106, yLo := 0x0107 } ]
+
+/-- See `vkTestComms`; one commitment, based at word 13 because two fixed
+    commitments occupy words 5..12. -/
+def vkTestPermComms : List G1Words :=
+  [ { xHi := 0x0200, xLo := 0x0201, yHi := 0x0202, yLo := 0x0203 } ]
+
+/-- `poseidonVkHead` with non-empty commitment lists: the same five header words
+    at words 0..4, two fixed commitments at words 5..12 and one permutation
+    commitment at words 13..16, so the two loops at
+    T:contracts/Halo2VerifyingKey.sol:74-91 emit something. -/
+def poseidonVkWithComms : Halo2VerifyingKey :=
+  { poseidonVkHead with
+    fixedComms := vkTestComms,
+    permutationComms := vkTestPermComms }
+
+/-- The commitment region of `poseidonVkWithComms.constructorStmts`: the twelve
+    `mstore`s between the five constant words and the `return`. The length
+    guard is what makes the slice honest - without it a perturbation that changed
+    the NUMBER of statements would misalign the slice rather than redden it, and
+    a misaligned slice compared against a twelve-statement expectation is exactly
+    the kind of gate that cannot fail. -/
+def vkCommsRegion : Block EVM.Op :=
+  let s := poseidonVkWithComms.constructorStmts
+  if s.length == 21 then (s.drop 8).take 12 else []
+
+/-- THE EXPECTED COMMITMENT WORDS, written out by hand from the template: two G1
+    slots of four words each starting at word 5 (`fixedComms`,
+    T:contracts/Halo2VerifyingKey.sol:74-82) then one slot at word 13
+    (`permutationComms`, :83-91), each slot in x_hi, x_lo, y_hi, y_lo order at
+    byte offset `32 * word`, with the permutation base being
+    `constants.len() + 4 * fixed.len()` rather than `4 * fixed.len()`.
+    HAND-WRITTEN, NOT ARTIFACT-DERIVED, and the distinction is stated because it
+    matters. The tracked artifact DVK does contain a VK with non-empty
+    commitments (fixed_comms from DVK:103, permutation_comms later in the same
+    file), but no pinned Lean fixture covers that region - YulGolden.lean pins
+    only DVK:62-72 for this template - so there is nothing within this file's
+    reach that the file does not itself control. Pinning that region means
+    editing YulGolden.lean and adding a provenance entry, which is outside the
+    scope of this fix. So this is a hand-written specification of the template:
+    its value is that the specification and the code disagree when the code is
+    wrong, which is what the perturbations recorded in the gate below document,
+    and not that either side is tied to committed bytes. -/
+def vkCommsExpectedAst : Block EVM.Op :=
+  [ .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x00a0)]
+      , .lit (Literal.number 0x0100) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x00c0)]
+      , .lit (Literal.number 0x0101) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x00e0)]
+      , .lit (Literal.number 0x0102) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0100)]
+      , .lit (Literal.number 0x0103) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0120)]
+      , .lit (Literal.number 0x0104) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0140)]
+      , .lit (Literal.number 0x0105) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0160)]
+      , .lit (Literal.number 0x0106) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0180)]
+      , .lit (Literal.number 0x0107) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x01a0)]
+      , .lit (Literal.number 0x0200) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x01c0)]
+      , .lit (Literal.number 0x0201) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x01e0)]
+      , .lit (Literal.number 0x0202) ]),
+    .exprStmt (.builtin EVM.Op.mstore
+      [ .builtin EVM.Op.add [.var "payload", .lit (Literal.number 0x0200)]
+      , .lit (Literal.number 0x0203) ]) ]
+
+/-- THE COMMITMENT LOOPS ARE GATED. Renders a VK whose fixed and permutation
+    commitment lists are non-empty and compares the twelve commitment statements
+    to `vkCommsExpectedAst` under `stmtsBeq`. This is the gate R-40 F1 asked
+    for: before it, the two loops at T:contracts/Halo2VerifyingKey.sol:74-91 were
+    entirely ungated, because every other VK model in this package has empty
+    commitment lists or compares only the head slice.
+    Concretely it rules out, and was measured reddening on each of: the stride
+    inside a slot being `4 * j` -> `5 * j`; the permutation section base being
+    `4 * fixed.len()` instead of `constants.len() + 4 * fixed.len()`; the
+    permutation loop being emitted at the fixed base so the two sections
+    collide; `xLo` and `yHi` swapped within a slot; the slot order being
+    x_hi, y_hi, x_lo, y_lo; and a commitment list being dropped so the region is
+    no longer twelve statements. What it CANNOT see: the trailing comment text
+    and the two-line section headers - those are `vkCommLines` on the text
+    channel, and the AST carries no comments - the hex spelling of a word, and
+    whether the VALUES are the real poseidon commitments, since the expected
+    side is hand-written (`vkCommsExpectedAst`). -/
+def vkConstructor_commitments_matchesExpectedAst_ok : Bool :=
+  YulSemantics.SyntaxEq.stmtsBeq vkCommsRegion vkCommsExpectedAst
 
 /-- THE SAME SLICE ON THE TEXT CHANNEL, against the pinned token stream: the
     text is built from `hexFilter` and `hexPaddedFilter` over the
@@ -720,6 +845,7 @@ end Midfall.Generator.TemplateKats
 #eval Midfall.Generator.TemplateKats.includeOrder_matchesFixtureAnchors_ok -- expect true
 #eval Midfall.Generator.TemplateKats.includeGraph_disjoint_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_matchesGolden_ok -- expect true
+#eval Midfall.Generator.TemplateKats.vkConstructor_commitments_matchesExpectedAst_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_tokens_matchPinnedStream_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkConstructor_prefixConstants_ok -- expect true
 #eval Midfall.Generator.TemplateKats.vkRender_matchesRustTestAssertions_ok -- expect true
