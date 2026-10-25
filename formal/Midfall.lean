@@ -30,6 +30,8 @@ import Midfall.Halo2.Spec.Piop
 import Midfall.Generator.Filters
 import Midfall.Generator.Render
 import Midfall.Generator.YulGolden
+import Midfall.Generator.Models
+import Midfall.Generator.Templates
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
