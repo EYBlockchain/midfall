@@ -575,6 +575,7 @@ structure QuotientVmGuards where
   numSelectorBuckets : Nat
   /-- M:759: highest address a spill may write, `stack_hi - 0x20`. -/
   stackLast : Nat
+deriving BEq
 
 /-- rust: M:763-768 (`struct QuotientSelectorTail`) @formal-baseline. -/
 structure QuotientSelectorTail where
