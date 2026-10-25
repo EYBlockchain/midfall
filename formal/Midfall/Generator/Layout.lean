@@ -1067,6 +1067,60 @@ def VerifierMemoryLayout.validate (self : VerifierMemoryLayout) :
   else pure ()
   MemoryMap.validate self.map
 
+/-! ## Layout well-formedness: the `Supported.layout` side condition of PLAN 9.5 -/
+
+/-- A modelling helper rather than a Rust item: the pair loop of
+    `MemoryMap::validate` (MEM:272-286) read as a Bool.
+    `memoryMapValidateAgainst` and `memoryMapValidatePairs` are the same
+    strict-upper-triangle traversal in `Except` form, which stops at the first
+    offending pair in order to name it; this one only answers. The body mirrors
+    MEM:274 exactly - a pair is a problem when the regions overlap AND their
+    lifetimes intersect - so two regions that share bytes under two different
+    phases are not a problem at all. -/
+def memoryRegionsPairwiseDisjoint : List MemoryRegion → Bool
+  | [] => true
+  | lhs :: rest =>
+    rest.all (fun rhs =>
+      ! (lhs.overlaps rhs && memoryLifetimeIntersects lhs.lifetime rhs.lifetime))
+      && memoryRegionsPairwiseDisjoint rest
+
+/-- A modelling helper rather than a Rust item: the three conditions
+    `MemoryMap::validate` (MEM:234-289) enforces, as one Bool.
+
+    * word alignment is the `region.start % WORD_BYTES != 0` arm of the first
+      loop (MEM:256-261);
+    * the spill-window bound is the
+      `region.start < SOLIDITY_RESERVED_MEMORY_BYTES` arm of the same loop
+      (MEM:239-255), read as "at or above" because the Rust rejects
+      strictly-below starts;
+    * disjointness is `memoryRegionsPairwiseDisjoint` above (MEM:272-286).
+
+    Two divergences from `validate` are recorded rather than hidden. The
+    `len == 0` exemptions follow MEM:239 and the two `len != 0` conjuncts of
+    `MemoryRegion::overlaps` (MEM:212), which makes this predicate WEAKER than
+    `validate`: a zero-length region at an unaligned start is rejected there and
+    accepted here. And the `region.len % WORD_BYTES != 0` arm (MEM:262-267) is
+    not part of this predicate at all, so nothing here says a length is a whole
+    number of words. -/
+def MemoryMap.wellFormedBool (self : MemoryMap) : Bool :=
+  self.regions.all (fun region =>
+    region.len == 0 || region.start % wordBytes == 0)
+    && self.regions.all (fun region =>
+      region.len == 0 || solidityReservedMemoryBytes <= region.start)
+    && memoryRegionsPairwiseDisjoint self.regions
+
+/-- `WellFormed` is decidable BY CONSTRUCTION, and that is the whole claim: the
+    Prop is the Bool equality `wellFormedBool = true`, so the instance below is
+    `instDecidableEqBool` applied to that one value - no search and no proof
+    component. Nothing further is claimed: it is not proved equivalent to
+    `MemoryMap.validate = .ok ()`, and the two divergences listed on
+    `wellFormedBool` make it strictly weaker than `validate`. -/
+def MemoryMap.WellFormed (self : MemoryMap) : Prop := self.wellFormedBool = true
+
+/-- Decidable by construction, for the reason stated on `MemoryMap.WellFormed`. -/
+instance (self : MemoryMap) : Decidable self.WellFormed :=
+  instDecidableEqBool self.wellFormedBool true
+
 end Midfall.Generator
 
 
@@ -1795,6 +1849,88 @@ def asUsizeNat_agrees_ok : Bool :=
            | .ok n => n
            | .error _ => 0
 
+/-- Two permanent regions, both word-aligned and at or above the spill window,
+    the first starting exactly AT `solidityReservedMemoryBytes`. -/
+def permanentAtWindowEnd : MemoryRegion :=
+  { name := "at_window_end", start := solidityReservedMemoryBytes,
+    len := 2 * wordBytes, lifetime := MemoryLifetime.permanent }
+
+def permanentAbove : MemoryRegion :=
+  { name := "above", start := solidityReservedMemoryBytes + 2 * wordBytes,
+    len := wordBytes, lifetime := MemoryLifetime.permanent }
+
+def wellFormedMap : MemoryMap :=
+  { regions := [permanentAtWindowEnd, permanentAbove] }
+
+/-- A WELL-FORMED MAP SATISFIES `WellFormed`; the `Decidable` instance is what
+    lets a gate read that Prop as a Bool at all. The scope is the three
+    conditions of `wellFormedBool` together: tightening the spill-window bound
+    from `solidityReservedMemoryBytes <= start` to a strict `<` reddens this
+    gate, because the first region starts exactly on that bound. -/
+def memoryMap_wellFormed_true_ok : Bool := decide wellFormedMap.WellFormed
+
+/-- A word-aligned region inside the solc spill window: 0x40 is the free-memory
+    pointer slot. -/
+def spillWindowRegion : MemoryRegion :=
+  { name := "spill", start := solidityFreeMemoryPointerSlot, len := wordBytes,
+    lifetime := MemoryLifetime.permanent }
+
+def spillWindowMap : MemoryMap := { regions := [spillWindowRegion] }
+
+/-- A REGION BELOW THE SPILL WINDOW IS NOT WELL-FORMED. The region is aligned and
+    alone in its map, so of the three conditions only the spill-window bound can
+    answer here: replacing `solidityReservedMemoryBytes <= region.start` with
+    `true` reddens this gate. -/
+def memoryMap_spillWindow_false_ok : Bool := decide (! spillWindowMap.WellFormed)
+
+/-- A region one byte past a word boundary, well above the spill window. -/
+def unalignedRegion : MemoryRegion :=
+  { name := "unaligned", start := 0x101, len := wordBytes,
+    lifetime := MemoryLifetime.permanent }
+
+def unalignedMap : MemoryMap := { regions := [unalignedRegion] }
+
+/-- AN UNALIGNED START IS NOT WELL-FORMED. 0x101 is above the spill window and
+    the length is a whole word, so only the alignment condition can answer here:
+    replacing `region.start % wordBytes == 0` with `true` - or with a test on
+    `region.len`, which is the same shape of bug in a different place - reddens
+    this gate. -/
+def memoryMap_unaligned_false_ok : Bool := decide (! unalignedMap.WellFormed)
+
+/-- The two overlapping permanent ranges [0x100..0x140) and [0x120..0x160). -/
+def overlapFirst : MemoryRegion :=
+  { name := "first", start := 0x100, len := 0x40,
+    lifetime := MemoryLifetime.permanent }
+
+def overlapSecond : MemoryRegion :=
+  { name := "second", start := 0x120, len := 0x40,
+    lifetime := MemoryLifetime.permanent }
+
+def overlappingPermanentMap : MemoryMap :=
+  { regions := [overlapFirst, overlapSecond] }
+
+/-- The same two byte ranges, live in two different phases. -/
+def phaseTranscriptRegion : MemoryRegion :=
+  { name := "first", start := 0x100, len := 0x40,
+    lifetime := MemoryLifetime.phase MemoryPhase.transcript }
+
+def phaseFinalMsmRegion : MemoryRegion :=
+  { name := "second", start := 0x120, len := 0x40,
+    lifetime := MemoryLifetime.phase MemoryPhase.pcsFinalMsm }
+
+def overlappingPhasesMap : MemoryMap :=
+  { regions := [phaseTranscriptRegion, phaseFinalMsmRegion] }
+
+/-- OVERLAP IS A FUNCTION OF LIFETIME, NOT OF BYTES - the asymmetry MEM:274
+    draws, and the reason a disjointness condition that ignores lifetimes is
+    wrong in both directions rather than one. The same [0x100..0x140) and
+    [0x120..0x160) pair is rejected when both lifetimes are permanent and
+    accepted when the two are live in different phases. Dropping the
+    `memoryLifetimeIntersects` conjunct reddens the second half; making the pair
+    condition never fire reddens the first. -/
+def memoryMap_overlapLifetime_asymmetry_ok : Bool :=
+  (decide (! overlappingPermanentMap.WellFormed)) && decide overlappingPhasesMap.WellFormed
+
 #eval thetaSlot_word_ok -- expect true
 #eval thetaWindow_compatibility_ok -- expect true
 #eval thetaWindow_caps_ok -- expect true
@@ -1806,4 +1942,8 @@ def asUsizeNat_agrees_ok : Bool :=
 #eval verifierLayout_pcsCapacity_err_ok -- expect true
 #eval value_asUsize_ok -- expect true
 #eval asUsizeNat_agrees_ok -- expect true
+#eval memoryMap_wellFormed_true_ok -- expect true
+#eval memoryMap_spillWindow_false_ok -- expect true
+#eval memoryMap_unaligned_false_ok -- expect true
+#eval memoryMap_overlapLifetime_asymmetry_ok -- expect true
 end Midfall.Generator.LayoutKats
