@@ -81,6 +81,55 @@ theorem zH_vanishes {F : Type*} [Field F] (ω : F) (n i : ℕ) (h : ω ^ n = 1) 
 theorem rotate_omega_eq {F : Type*} [Field F] (ω : F) (i rot : ℕ) :
     ω ^ (i + rot) = ω ^ i * ω ^ rot := pow_add ω i rot
 
+/-! ## DualMSM scaling
+
+Plan Section 6 lists "DualMSM scaling and the pairing-reorder lemma" together.
+multi_prepare scales both channels of the DualMSM by a challenge before the final
+check, so the check must be invariant under that scaling or the verifier would
+reject honest proofs. In exponents, scaling both channels by c scales the whole
+equation by c, which preserves zero exactly when c is nonzero.
+-/
+
+/-- **The scaling lemma.** With a NONZERO factor the check is invariant. The
+    nonzero side condition is not decoration: with c = 0 the scaled equation
+    (c*xL)*s - (c*xR) = 0 holds trivially for every xL xR s, so an unscaled check
+    can fail while the scaled one passes. A first draft of this lemma was stated
+    without hc and was simply false; the example below is the counterexample that
+    killed it. The hypothesis is exactly what the challenge squeeze must guarantee.
+-/
+theorem dualMsm_scale_check {R : Type*} [Field R] (xL xR s c : R) (hc : c ≠ 0) :
+    rustEq (c * xL) (c * xR) s ↔ rustEq xL xR s := by
+  have key : c * (xL * s - xR) = (c * xL) * s - (c * xR) := by ring
+  constructor
+  · intro h
+    unfold rustEq at h ⊢
+    apply mul_left_cancel₀ hc
+    rw [mul_zero, key]
+    exact h
+  · intro h
+    unfold rustEq at h ⊢
+    rw [← key, h, mul_zero]
+
+/-- The same invariance on the contract side, so scaling and the reorder lemma
+    compose without re-deriving anything. -/
+theorem contractEq_scale {R : Type*} [Field R] (xL xR s c : R) (hc : c ≠ 0) :
+    contractEq (c * xL) (c * xR) s ↔ contractEq xL xR s := by
+  have key : c * (xR - s * xL) = c * xR - s * (c * xL) := by ring
+  constructor
+  · intro h
+    unfold contractEq at h ⊢
+    apply mul_left_cancel₀ hc
+    rw [mul_zero, key]
+    exact h
+  · intro h
+    unfold contractEq at h ⊢
+    rw [← key, h, mul_zero]
+
+/-- The counterexample that makes hc necessary: unscaled check fails, scaled by
+    zero it passes. Without this the two lemmas above could hold for a degenerate
+    reason and look fine. -/
+example : ¬ rustEq (R := ZMod 17) 1 2 1 := by unfold rustEq; decide
+example : rustEq (R := ZMod 17) (0 * 1) (0 * 2) 1 := by unfold rustEq; decide
 /-- Non-vacuity: the reorder relation holds for some triples and fails for others,
     over a concrete field. Without this the two sides could both be constants. -/
 example : rustEq (R := ZMod 17) 1 1 1 := by unfold rustEq; decide
