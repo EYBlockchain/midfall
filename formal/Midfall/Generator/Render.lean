@@ -18,34 +18,51 @@
 -- 'Object EVM.Op' from vendor/yul-semantics). This module defines NO Yul node
 -- types of its own: the dialect has exactly one AST in this repository, per plan
 -- Section 7 ('ImportSolcIR imports solc IR into the yul-semantics AST') and
--- design decision D-P2. 'Line' below is an output-stream element and 'Target' a
--- rendering dispatch, not syntax.
+-- design decision D-P2. 'Line' below is an output-stream element, not syntax.
+-- An earlier revision of this header also advertised a 'Target' rendering
+-- dispatch; this module has never defined one, and R-38 found the same class of
+-- phantom reference in the fuel comments. The rule this file now follows is that
+-- a header may only name what the file contains.
 --
 -- WHY A SECOND PRINTER AT ALL. 'YulSemantics.PrettyPrint' exists, and it does not
 -- produce these bytes. It is a debugging dump for optimizer output - its own
 -- module header says so ("Untrusted utility... numbers print in decimal"). The
 -- committed artifacts come from Askama templates plus Rust emitters, and their
 -- bytes are determined by things the AST does not record. The gap is measured and
--- gated at the bottom of this file; docs/ecosystem.md section 11 carries the
--- construct-by-construct table.
+-- gated at the bottom of this file; docs/ecosystem.md 12.1 carries the
+-- construct-by-construct table (an earlier revision of this header pointed at
+-- section 11, which is about rust_trace.json instead).
 --
--- THE TWO LOSS CLASSES, and how each is handled.
+-- WHICH FILE EVERY ':NNNN' BELOW MEANS. 'D:' is the TRACKED DUMP that the golden
+-- test is anchored on:
+-- proofs/solidity-verifier/target/poseidon-fixture-dump/Halo2Verifier.sol, 3024
+-- lines, no trailing newline. 'P:' is the DEPLOYED artifact,
+-- deployments/sepolia/moonlight-wrap/Halo2Verifier.sol, 3573 lines, generated five
+-- months earlier by superseded templates. They are different files with different
+-- line numbers: D:3112 does not exist. R-38 found that every citation in this file
+-- was silently a P: citation, so each one below has been re-anchored and checked
+-- against the file it now names; where a construct exists only in the deployed
+-- artifact that is said out loud instead of the citation being moved.
+--
+-- THE FOUR LOSS CLASSES, and how each is handled.
 --
 --   1. COMMENT AND LAYOUT TEXT. 'Stmt Op' has no comment constructor, and the
---      committed assembly is interleaved with comment lines (971 of them in
---      Halo2Verifier.sol), blank lines, trailing comments, and indentation a
---      template author typed by hand. No AST of any shape recovers those bytes,
---      so they are NOT modelled as statements: they travel beside the AST as
---      'Line.text', and 'Line.code' carries the Yul. This is the finding the plan
---      has to absorb: byte-identity of generated Solidity is not a property of
---      the Yul AST alone, so 'render g o = (lower g o).map print' can only hold
---      if 'lower' produces an AST PLUS a text stream. Alpha-equivalence over the
---      comment-free AST is the right relation for Phase 5's irCheck and must not
---      be confused with byte-identity.
+--      committed assembly is interleaved with comment lines - 1194 of the 3024
+--      lines of D begin with a '//' (recipe: grep -cE '^[[:space:]]*//') and 1204
+--      contain one (grep -cF '//'), plus 122 blank lines, trailing comments, and
+--      indentation a template author typed by hand.
+--      No AST of any shape recovers those bytes, so they are NOT modelled as
+--      statements: they travel beside the AST as 'Line.text', and 'Line.code'
+--      carries the Yul. This is the finding the plan has to absorb: byte-identity
+--      of generated Solidity is not a property of the Yul AST alone, so
+--      'render g o = (lower g o).map print' can only hold if 'lower' produces an
+--      AST PLUS a text stream. Structural equality over the comment-free AST is
+--      the right relation for Phase 5's irCheck and must not be confused with
+--      byte-identity.
 --   2. LITERAL SPELLING. 'Literal.number (n : Nat)' stores a value, not the text
 --      that wrote it. The committed file spells the same value several ways -
---      '0x00' (Halo2Verifier.sol:329) and '0x0' (:1584) are both zero; '0x0100'
---      (:219) and '0x100' (:540) are both 256 - and the Rust's 'hex()' filter,
+--      '0x00' (D:357) and '0x0' (D:1790) are both zero; '0x0100' (D:376) and
+--      '0x100' (D:472) are both 256 - and the Rust's 'hex()' filter,
 --      'hex_padded(pad)' and '{:#x}' are three different formatters (ported in
 --      Filters.lean). Therefore NO function from the vendored AST can be
 --      byte-exact on the corpus: two committed texts share one AST. This renderer
@@ -53,33 +70,65 @@
 --      diverges wherever it emitted hex. 'hexCollision_ok' below proves the
 --      collision rather than hiding it. Closing the gap needs a spelling channel
 --      on 'Literal' (an upstream change) or a text-annotated literal.
+--   3. TEXT THAT IS NOT A STATEMENT. A comment can sit INSIDE one statement: D:1902
+--      is 'switch q_op', D:1903 a comment, D:1904 'case 0x05 {' - all one
+--      'Stmt.switch'. D:1020-1025 is 'ok := and(' with two comment lines between
+--      its arguments. Neither the AST (no comment constructor) nor the 'Line'
+--      stream below (which can only extend the current line or start a new one,
+--      never interrupt a statement that is still open) can carry it. Recorded as
+--      the fourth divergence in docs/ecosystem.md 12.1; it bites Phase 5, which
+--      has to reproduce these bytes from an AST.
+--   4. FREE IDENTIFIERS. The fixtures reference names that the Yul does not define:
+--      FR_MODULUS, MODEXP_GAS, ERR_NON_CANONICAL_SCALAR and 91 'uint256 internal
+--      constant' declarations in D. 'stmtsBeq' compares those as unbound strings,
+--      so their spelling is decided outside the Yul and outside this relation.
+--      docs/ecosystem.md 12.1 records it; Phase 5 owes the mapping.
 --
--- FORMAT RULES THIS RENDERER IMPLEMENTS, each pinned to committed bytes by a gate
--- at the bottom of the file:
+-- FORMAT RULES THIS RENDERER IMPLEMENTS, each pinned by a gate at the bottom of
+-- the file and each re-anchored to the dump it was actually read off (R-38):
 --
---   * 4 spaces per level, no tabs (Halo2Verifier.sol:3112, level 5).
---   * 'let a := e' / 'let a, b := e' / 'a := e' / 'a, b := e', one space either
---     side of ':=' (:3112, :3116, :673).
+--   * 4 spaces per level, no tabs: D:834 is a level-5 statement at 20 spaces.
+--     Zero tab characters in D. NOT a total law: D:1987-1993 puts a 'for' body at
+--     the same indentation as its 'for' (the emitter does not re-indent that
+--     block), so indentation is a template property, not a function of AST depth.
+--   * 'let a := e' / 'let a, b, c := e' / 'a := e' / 'a, b := e', one space either
+--     side of ':=': D:834, D:1074, D:661, D:1019.
 --   * calls 'f(a, b)': comma plus space, nothing inside the parens, no space
---     before '()' when empty (:219 'gas()').
+--     before '()' when empty: D:364 'returndatasize()', D:1911 'q_program_fail()'.
+--     The zero-arg 'gas()' cited before is DEPLOYED-ONLY (P:219): the dump passes
+--     named gas constants and contains no 'gas(' at all.
 --   * brace policy: 0 statements '{}', 1 statement '{ s }', 2 or more one per
---     line with the closing brace back at the opening level (:2016 vs :448-451).
---     'function' bodies and 'for' bodies are always multiline (:322, :1320).
---   * 'for { init } cond { post } {' + body + '}' (:1320).
---   * 'switch e' then 'case L {' / 'default {' at the SWITCH's own level (:2245).
---   * 'leave' / 'break' / 'continue' bare on their line (:495).
---   * blank lines are empty, not indented (no trailing whitespace anywhere in
---     either artifact).
+--     line with the closing brace back at the opening level: D:334 (one statement
+--     inline) vs D:835-838 (two statements multiline). Both spellings of a
+--     ONE-statement body occur: inline at D:334, multiline at D:378-380 - so this
+--     rule is not derivable from the AST, which is what 'bracePolicy_note_ok'
+--     records.
+--   * 'function' bodies and 'for' bodies are always multiline: D:640, D:1509.
+--   * 'for { init } cond { post } {' + body + '}': D:1509. Empty init/post are
+--     written both ways: 'for {}' at D:833 and 'for { }' at D:1894.
+--   * 'switch e' then 'case L {' at the SWITCH's own level: D:1902 and D:1904,
+--     both at 20 spaces. 'default' is not exercised by the dump.
+--   * 'leave' bare on its line: D:783. 'break' and 'continue' do not occur
+--     anywhere in D, so their rendering is a choice, not a measurement.
+--   * blank lines: 122 of the 3024 lines of D are blank, and SIX of them carry
+--     indentation (D:85, 525, 1098, 1103, 1891, 3010 - 'grep -nE '^[[:space:]]+$'').
+--     The earlier claim that neither artifact has trailing whitespace was false:
+--     the deployed artifact has none, the dump has those six.
 --
 -- WHY THE FUEL PARAMETER. Lean 4.35's structural estimator cannot drive
 -- recursion through 'Stmt.switch', whose case list is a 'List (Literal ×
 -- Block Op)': the goal 'sizeOf b ≤ sizeOf cs' for 'b ∈ Prod.snd '' cs' is out of
--- its reach, and the mutual variants all fail the same way. Rather than a
+-- its reach, and the mutual variants all fail the same way (R-37). Rather than a
 -- 'partial' def (rule R10) or a parallel AST, the renderer is well-founded on an
--- explicit fuel that the public entry point sets to 'sizeOf s + 1'. Every
--- recursive call goes to a strict subterm, whose 'sizeOf' is smaller, so the fuel
--- is never exhausted and the '0' case is unreachable; it is kept total rather than
--- 'partial'.
+-- explicit fuel. THE BUDGET IS A CONSTANT 512 ('renderFuel'), not 'sizeOf s + 1'
+-- as an earlier version of this header claimed: 'renderStmt' passes the constant,
+-- every recursive call descends one level, and the deepest statement nest
+-- measured in the dump is 7 (D:1987-1993), so 512 is never approached. The '0'
+-- case is therefore unreachable in practice but kept total rather than 'partial'.
+-- What protects it is 'renderFuel_exhausted_ok' and 'renderFuel_deep_ok' below:
+-- they show a too-small budget emits the marker and that 512 is enough for a
+-- corpus-deep nest. They do NOT show the golden gates would notice - see
+-- 'golden_detectsFuelExhaustion_ok' in YulGolden.lean for the honest version.
 
 import YulSemantics.Syntax
 import YulSemantics.PrettyPrint
@@ -99,7 +148,8 @@ def indentAt (lvl : Nat) : String := "".pushn ' ' (indentWidth * lvl)
 /-- A literal, in the only spelling the vendored AST can express: decimal. See
     loss class 2. rust: the absence of a spelling field at
     vendor/yul-semantics/YulSemantics/Ast.lean:38-42, against
-    proofs/solidity-verifier/src/lowering/render/models.rs:1019-1038. -/
+    proofs/solidity-verifier/src/lowering/render/models.rs:1019-1038. The two
+    spellings that collide are D:357 ('0x00') and D:1790 ('0x0'). -/
 def renderLit : Literal → String
   | .number n => toString n
   | .bool true => "true"
@@ -108,7 +158,7 @@ def renderLit : Literal → String
 
 /-- rust: proofs/solidity-verifier/src/lowering/render/models.rs (template text
     around '{{ ... }}' interpolations); call shape pinned by
-    Halo2Verifier.sol:207 'mcopy(add(scratch, 0x20), scratch, 0x20)'. -/
+    dump:333 'mcopy(add(scratch, 0x20), scratch, 0x20)'. -/
 def renderExpr : Expr EVM.Op → String
   | .lit l => renderLit l
   | .var x => x
@@ -124,8 +174,12 @@ inductive Line where
   | code (lvl : Nat) (s : Stmt EVM.Op)
   | text (raw : String)
   /-- Template text appended to the PREVIOUS line: a trailing comment
-      ('mstore(..)        // base len', Halo2Verifier.sol:329) or a comment that
-      shares a line with a closing brace ('}            // ===', :1413). -/
+      ('mstore(add(scratch, 0x00), 0x20)        // base len', dump:357) or a
+      comment that shares a line with a closing brace ('}            // ===',
+      deployed P:1413 - that one exists ONLY in the deployed artifact; no line of
+      the dump has a '}' followed by a comment). Note what 'tail' cannot do: it
+      extends the CURRENT line, so a comment inside a statement that is still
+      open (loss class 3, dump:1902-1904) has nowhere to go. -/
   | tail (raw : String)
 
 /-- '{' then one statement per line at 'lvl + 1' then '}' at 'lvl'. Non-recursive:
@@ -144,16 +198,30 @@ def bracesAt (one : Nat → Stmt EVM.Op → String) (alwaysMultiline : Bool) (lv
   | [s] => if alwaysMultiline then multilineBody one lvl b else "{ " ++ one lvl s ++ " }"
   | _ => multilineBody one lvl b
 
-/-- How much fuel the public entry points start with. Every recursive call
-    descends to a strict subterm, so the fuel only has to exceed the deepest
-    nesting in the corpus; the committed verifier nests six levels at most
-    (Halo2Verifier.sol:1868-1874), and 'renderFuel_exhausted_ok' below proves the
-    budget is not being consumed silently. -/
+/-- How much fuel the public entry points start with: a constant, not a function
+    of the input. Every recursive call descends to a strict subterm, so the fuel
+    only has to exceed the deepest statement nesting in the corpus. Measured
+    depth of the tracked dump is SEVEN, first reached at dump:1987-1993 (a 'for'
+    inside a bare '{' block inside a 'function' inside the assembly block); the
+    deployed artifact nests eight. 512 is comfortably above both.
+    'renderFuel_exhausted_ok' and 'renderFuel_deep_ok' below prove the budget is
+    both sufficient and observable - not that the golden gates would notice. -/
 def renderFuel : Nat := 512
 
 /-- The fuel-parameterised statement renderer. Running out of fuel emits a loud
-    marker rather than an empty string, so a too-small 'renderFuel' turns the
-    golden gates red instead of truncating output. -/
+    '<fuel-exhausted>' marker rather than an empty string, so a too-small budget
+    is visible in the output instead of silently truncating it. Be precise about
+    what protects that, because an earlier revision of this comment claimed a
+    protection the code did not have. The golden gates print with
+    'YulSemantics.EVM.print' and never call this function, so setting 'renderFuel'
+    to 1 reddens ZERO golden gates (measured). What reddens is
+    'renderFuel_deep_ok' below - the gate R-38 finding 5 asked for - together with
+    'bracePolicy_note_ok', which renders through 'renderStmt' (measured: 1 of the
+    6 pre-existing renderer notes, 0 golden gates).
+    'golden_detectsFuelExhaustion_ok' in YulGolden.lean establishes only the
+    weaker, honest claim: the token relation can SEE the marker, so if a golden
+    comparison is ever routed through this renderer, exhaustion will not pass
+    silently. -/
 def renderStmtFuel : Nat → Nat → Stmt EVM.Op → String
   | 0, _, _ => "<fuel-exhausted>"
   | fuel + 1, lvl, s => match s with
@@ -293,6 +361,38 @@ def hexCollision_ok : Bool :=
 def bracePolicy_note_ok : Bool :=
   renderStmt 2 (yul% { if c { revert(0, 0) } }).head! == "        if c { revert(0, 0) }"
 
+/-- 'needle' occurs in 'hay'. Lean core at this toolchain has no
+    String.isInfixOf, and 'splitOn' gives it for free. -/
+def containsStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+/-- Three statement levels: 'if' / 'if' / call. Needs fuel 3 to render fully. -/
+def fuelProbe : Stmt EVM.Op := (yul% { if c { if d { revert(0, 0) } } }).head!
+
+/-- Seven statement levels, matching the deepest statement nest measured in the
+    tracked dump (dump:1987-1993). Needs fuel 8 to render fully. -/
+def deepProbe : Block EVM.Op :=
+  yul% { if a { if b { if c { if d { if e { if f { if g { revert(0, 0) } } } } } } } }
+
+/-- THE FUEL CAN RUN OUT, AND SAYS SO. Fuel 0 emits the marker immediately; fuel 2
+    is one short of what 'fuelProbe' needs and emits it one level down; fuel 3 is
+    enough and emits nothing. The wrong implementation this rules out is a renderer
+    that silently returns the empty string when it cannot recurse further -
+    truncation that looks like a short program instead of a failure. Change the
+    '0' arm of 'renderStmtFuel' to return "" and the first conjunct goes red. -/
+def renderFuel_exhausted_ok : Bool :=
+  renderStmtFuel 0 0 fuelProbe == "<fuel-exhausted>"
+    && containsStr (renderStmtFuel 2 0 fuelProbe) "<fuel-exhausted>"
+    && ! containsStr (renderStmtFuel 3 0 fuelProbe) "<fuel-exhausted>"
+
+/-- THE CONSTANT IS BIG ENOUGH, AND THAT IS CHECKABLE. A nest as deep as the
+    deepest thing in the tracked dump renders with no marker at 'renderFuel', and
+    one fuel short of its requirement it does not - so the budget is doing work
+    rather than being decoration. Set 'renderFuel' to 1 and the first conjunct
+    goes red; that is the experiment that makes this a gate and not a comment. -/
+def renderFuel_deep_ok : Bool :=
+  ! containsStr (multilineBody (renderStmtFuel renderFuel) 0 deepProbe) "<fuel-exhausted>"
+    && containsStr (multilineBody (renderStmtFuel 7) 0 deepProbe) "<fuel-exhausted>"
+
 end Midfall.Generator.Notes
 
 #eval Midfall.Generator.Notes.note_indent_ok -- expect true
@@ -301,3 +401,5 @@ end Midfall.Generator.Notes
 #eval Midfall.Generator.Notes.note_lines_ok -- expect true
 #eval Midfall.Generator.Notes.hexCollision_ok -- expect true
 #eval Midfall.Generator.Notes.bracePolicy_note_ok -- expect true
+#eval Midfall.Generator.Notes.renderFuel_exhausted_ok -- expect true
+#eval Midfall.Generator.Notes.renderFuel_deep_ok -- expect true

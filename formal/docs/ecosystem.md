@@ -523,20 +523,32 @@ fails, verify the test can pass at all before believing the failure.
 
 ## 12. The vendored Yul AST cannot round-trip the generated Solidity (Phase 6 finding)
 
-Measured directly against `deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`
-lines 199-220 and `vendor/yul-semantics/YulSemantics/{Ast,PrettyPrint}.lean`.
+First measured against `deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`
+lines 199-220 and `vendor/yul-semantics/YulSemantics/{Ast,PrettyPrint}.lean`. The
+construct table in 12.1 has since been re-anchored on the tracked fixture dump
+(see the legend); the two structural reasons below hold for both files.
 
 The vendored AST and printer are the right basis for **semantics** and must be
 reused (D-P2 amendment). They cannot reproduce the **bytes** of the generated
 contract, for two independent structural reasons:
 
 1. **`Stmt Op` has no comment constructor.** The committed assembly is interleaved
-   with `//` comments (lines 200, 203-205, 210-211, 216-218). The AST cannot
-   represent the file, so no printer over it can round-trip it.
-2. **`ppStmt` always breaks blocks onto separate lines**:
-   `.block body => "{" ++ nl ++ ... ++ pad ind ++ ""}` and
-   `.cond c body => "if ... {" ++ nl ++ ...`. The committed file uses single-line
-   ifs such as `if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }`.
+   with `//` comments (deployed lines 200, 203-205, 210-211, 216-218; 1194 of the
+   3024 lines of the dump begin with `//`). The AST cannot represent the file, so
+   no printer over it can round-trip it.
+2. **`ppStmt` always breaks blocks onto separate lines**
+   (`PrettyPrint.lean:60-61`):
+
+   ```lean
+   | .block body =>
+       "{\n" ++ ppStmts pOp (ind + 1) body ++ pad ind ++ "}"
+   ```
+
+   and likewise `.cond c body => "if " ++ ppExpr pOp c ++ " {\n" ++ ... `. An
+   earlier revision of this section misquoted that line as
+   `"{" ++ nl ++ ... ++ pad ind ++ ""}`, which is not what the vendored source
+   says. The committed file uses single-line ifs such as
+   `if iszero(eq(returndatasize(), 0x80)) { revert(0, 0) }`.
 
 Comma spacing (", ") and the 4-space indent step do match.
 
@@ -558,42 +570,63 @@ different and both are needed: alpha-equivalence for `ir_refines`, byte-identity
 
 Each row was produced by elaborating the committed bytes with the `yul%` DSL and
 printing with `YulSemantics.EVM.print`, checked in
-`Midfall/Generator/YulGolden.lean` (structural gates) and
-`Midfall/Generator/Render.lean` (renderer notes). `V` =
-`deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`, `VK` =
-`Halo2VerifyingKey.sol` at the line given, `QN` =
+`Midfall/Generator/YulGolden.lean` (golden gates) and
+`Midfall/Generator/Render.lean` (renderer notes).
+
+**Legend.** `D:` = `proofs/solidity-verifier/target/poseidon-fixture-dump/Halo2Verifier.sol`
+- the TRACKED DUMP produced by the current generator, 3024 lines, no trailing
+newline. `DVK:` = `Halo2VerifyingKey.sol` in the same directory, 271 lines.
+`P:` = `deployments/sepolia/moonlight-wrap/Halo2Verifier.sol`, the DEPLOYED
+artifact, 3573 lines, generated 2026-05-19 by superseded templates. `QN` =
 `templates/partials/quotient_numerator/QuotientNumeratorBlock.yul`.
+
+R-38 found that this table used to say `V` while meaning `P`, and that
+`Midfall/Generator/{Render,Filters}.lean` did the same: every `:NNNN` citation
+pointed at the deployed artifact although the text claimed the dump, two of them
+at lines past the end of the dump. Every row below has been re-read from the file
+it now names. Where a construct exists only in the deployed artifact, the row says
+so instead of citing a dump line that does not hold it.
 
 | construct | committed bytes | vendored `EVM.print` | agree? |
 |---|---|---|---|
-| hex literal | `let scratch := 0x80` (V:201) | `let scratch := 128` | no - formatting |
-| hex, zero | `add(p, 0x00)` (V:329) **and** `add(SELECTOR_ACC_MPTR, 0x0)` (V:1584) | `add(p, 0)` | no - see 12.2 |
-| hex, 256 | `0x0100` (V:219) **and** `0x100` (V:540) | `256` | no - see 12.2 |
-| `hex_padded(64)` word | `0x0000...0013` (VK:66) | `19` | no - formatting |
-| precompile address | `staticcall(gas(), 0x0b, ...)` (V:219) | `staticcall(gas(), 11, ...)` | no - formatting |
-| decimal literal | `shr(240, mload(q_pc))` (V:1700) | identical | **yes** |
-| call spacing | `mcopy(add(scratch, 0x20), scratch, 0x20)` (V:207) | identical shape | **yes** |
-| zero-arg call | `gas()`, `returndatasize()` (V:219-220) | identical | **yes** |
-| assignment | `inv := mload(p)` (V:337) | identical | **yes** |
-| multi-name `let` | `let x_ok, x_hi, x_lo, x_is_id := load_acc_coord(...)` (V:570) | identical | **yes** |
-| indent step | 4 spaces (V:3112, level 5) | `pad n = 4*n` | **yes** |
-| one-statement `if` | inline (V:325) **and** multiline (V:221-223, :300, :401) | always multiline | no - formatting |
-| empty block | `for {} ... {} {` (V:484) **and** `for { } ... { } {` (QN:483) | `for {` LF `}` | no - formatting |
-| `for` header | inline (V:1320) **and** wrapped (Lagrange.yul:30) | always wrapped | no - formatting |
-| spread call | one arg per line (V:618-627) | one line | no - formatting |
-| `switch` arm indent | arms at the switch's own level (V:1694-1696) | same | **yes** |
-| `case` label | `case 0x05 {` (V:1696) | `case 5 {` | no - formatting |
-| `leave` | bare (V:495) | bare | **yes** |
-| whole-line comment | 971 of them in V | **no AST node exists** | not representable |
-| trailing comment | `mstore(...)        // base len` (V:329) | not representable | not representable |
-| text after a closing brace | `}            // ===` (V:1413) | not representable | not representable |
-| blank lines | 99 in V | none emitted | not representable |
+| hex literal | `let scratch := 0x1000` (D:327) | `let scratch := 4096` | no - formatting |
+| hex, zero | `add(p, 0x00)` (D:653) **and** `add(SELECTOR_ACC_MPTR, 0x0)` (D:1790) | `add(p, 0)` | no - see 12.2 |
+| hex, 256 | `0x0100` (D:376) **and** `0x100` (D:472) | `256` | no - see 12.2 |
+| `hex_padded(64)` word | `0x0000...0001` (DVK:69) | `1` | no - formatting |
+| precompile address | `staticcall(G1ADD_GAS, 0x0b, ...)` (D:376) | `staticcall(G1ADD_GAS, 11, ...)` | no - formatting. The dump passes a NAMED gas constant; `gas()` occurs only in the deployed artifact (P:219) and nowhere in D |
+| decimal literal | `shr(240, mload(q_pc))` (D:1905) | identical | **yes** |
+| call spacing | `mcopy(add(scratch, 0x20), scratch, 0x20)` (D:333) | identical shape | **yes** |
+| zero-arg call | `returndatasize()` (D:364), `q_program_fail()` (D:1911) | identical | **yes** |
+| assignment | `inv := mload(p)` (D:661) | identical | **yes** |
+| multi-name `let` | `let x_ok, x_hi, x_lo := load_acc_coord(...)` (D:1074) | identical | **yes** |
+| multi-name assign | `hi, lo := load_acc_coord_shifted(...)` (D:1019) | identical | **yes** |
+| indent step | 4 spaces (D:834 is level 5 at 20 spaces); zero tab characters in D | `pad n = 4*n` | **yes**, with the next row as the exception |
+| indent is not a function of depth | D:1987-1993 puts a `for` body at the same indentation as its own `for` | always indents one level deeper | no - template layout, and it breaks the "4 spaces per level" rule as stated |
+| one-statement `if` | inline (D:334) **and** multiline (D:378-380) | always multiline | no - formatting |
+| empty block | `for {} ... {} {` (D:833) **and** `for { } ... { } {` (D:1894) | `for {` LF `}` | no - formatting |
+| `for` header | inline (D:1509); the wrapped spelling is in the template (Lagrange.yul:30), not in D | always wrapped | no - formatting |
+| spread call | one arg per line (D:399-408) | one line | no - formatting |
+| `switch` arm indent | arms at the switch's own level (D:1902, D:1904) | same | **yes** |
+| `case` label | `case 0x05 {` (D:1904) | `case 5 {` | no - formatting |
+| `leave` | bare (D:783) | bare | **yes** |
+| `break` / `continue` | do not occur anywhere in D | bare | untested by the corpus; the renderer's spelling is a choice, not a measurement |
+| whole-line comment | 1194 of D's 3024 lines (`grep -cE '^[[:space:]]*//'`); 1204 lines contain `//` | **no AST node exists** | not representable |
+| trailing comment | `mstore(add(scratch, 0x00), 0x20)        // base len` (D:357) | not representable | not representable |
+| text after a closing brace | `}            // ===` - **deployed only** (P:1413). No line of D has `}` followed by a comment | not representable | not representable |
+| blank lines | 122 in D, SIX of which carry indentation (D:85, 525, 1098, 1103, 1891, 3010) | none emitted | not representable |
+| comment INSIDE one statement | D:1902-1904 is `switch q_op` / comment / `case 0x05 {` - all one `Stmt.switch`; D:1020-1025 is a statement `ok := and(` whose comment lines (D:1022-1023) sit between its arguments | no AST node, and `Render.lean`'s `Line.tail` can only extend the CURRENT line or start a new one, never interrupt a statement that is still open | not representable - the fourth divergence, found by the R-38 review |
+| free identifiers | `FR_MODULUS`, `MODEXP_GAS`, `ERR_NON_CANONICAL_SCALAR` and 91 `uint256 internal constant` declarations in D | compared as unbound name strings | representable, but the spelling is decided OUTSIDE the Yul - see 12.4 |
+
+The two figures an earlier revision of this table gave - "971 comment lines" and
+"99 blank lines" in `V` - are not reproducible against either artifact and have
+been replaced with the measured counts and the commands that produce them.
+
 
 ### 12.2 Two findings that survive the D-P13 relaxation
 
 * **The literal-spelling collision is not a formatting choice.** The committed file
-  spells 0 as both `0x00` (V:329) and `0x0` (V:1584), and 256 as both `0x0100`
-  (V:219) and `0x100` (V:540). All four elaborate to the same `Literal.number`, so
+  spells 0 as both `0x00` (D:653) and `0x0` (D:1790), and 256 as both `0x0100`
+  (D:376) and `0x100` (D:472). All four elaborate to the same `Literal.number`, so
   **no function from the vendored AST can reproduce the bytes** - not because
   formatting is excluded by D-P13, but because two distinct committed texts share
   one AST. Harmless for correctness under D-P13; fatal for the original
@@ -614,10 +647,67 @@ printing with `YulSemantics.EVM.print`, checked in
 
 ### 12.3 What the M3 golden test is now
 
-`Midfall/Generator/YulGolden.lean`: seven slices transcribed from the committed
-bytes into `yul%` quotations and compared as **token streams** - comments dropped,
-whitespace dropped, every numeric literal reduced to its value. That is the D-P13
-relation, and it is the same structural equality Phase 5's `irCheck` will use, so
-M3 and Phase 5 now share one notion of "the same Yul" over one AST type.
-Discrimination gates show the check can fail on a renamed identifier, a swapped
-argument, a changed literal value, and a changed statement count.
+`Midfall/Generator/YulGolden.lean`: **eight** slices transcribed from the
+committed bytes into `yul%` quotations. Each slice now carries three
+independently-checked sides.
+
+1. **Authoritative (D-P13).** `<base>_ast` is compared with `<base>_direct`,
+   the same slice written with raw AST constructors, using
+   `YulSemantics.SyntaxEq.stmtsBeq` - the relation Phase 5's `irCheck` will
+   use. Eight `<base>_beq_ok` gates plus `golden_beq_all_ok`.
+2. **Secondary.** `EVM.print` of the AST is compared as a **token stream** with
+   the pinned string: comments dropped, whitespace dropped, every numeric literal
+   reduced to its value. Eight `<base>_golden_ok` gates plus `golden_all_ok`.
+3. **Provenance.** `scripts/check_golden_provenance.py` re-reads each cited line
+   range from the tracked `.sol`, re-tokenises it with the same rules, and
+   asserts the pinned string, the line/byte/token counts and the sha256. It runs
+   from `scripts/checks.sh`.
+
+**The claim an earlier revision made is false and is withdrawn.** The token relation
+is NOT the D-P13 equality and is NOT "the same structural equality Phase 5's
+`irCheck` will use": it is strictly weaker. `PrettyPrint.lean:44-45` prints
+`Expr.builtin` and `Expr.call` identically while `Ast.lean:109-113` keeps
+the constructors distinct, so a port that emits `.call "add"` where the Rust
+means the built-in passes every token gate and is rejected by `irCheck`.
+`YulGolden.discriminates_builtinVsCall_ok` pins that asymmetry: the two trees are
+unequal under `stmtsBeq` and equal under the token relation. M3 and Phase 5 share
+one AST type; they now share one equality only via the `_beq_ok` gates, not via
+the token gates.
+
+Discrimination gates show both relations can fail on a minimal perturbation of a
+REAL fixture: one literal value changed (`discriminates_fixture_ok`), one
+identifier renamed (`discriminates_fixtureIdent_ok`), a built-in collapsed to a
+user call (`discriminates_builtinVsCall_ok`), plus the toy-shape gates for
+identifier spelling, argument order, literal value, statement shape and multi-name
+`let`.
+Each was falsified by removing the perturbation and watching exactly one gate go
+red; the previous `discriminates_fixture_ok` compared a one-statement block
+against a twenty-four-statement fixture and was true with no perturbation at all
+(R-38 finding 4).
+
+### 12.4 Two divergences the R-38 review added, both of which bite Phase 5
+
+* **A comment can sit inside a single statement.** D:1902-1904 is `switch q_op`
+  on one line, a `//` comment on the next, and `case 0x05 {` on the third -
+  all of it ONE `Stmt.switch`, because the case list is part of that statement.
+  the statement D:1020-1025 is the same shape inside an expression: `ok := and(`
+  spread over six lines, with two comment lines (D:1022-1023) sitting between its
+  two arguments. Neither the AST (no
+  comment constructor) nor `Render.lean`'s `Line` stream can carry it:
+  `Line.tail` extends the CURRENT line and `Line.text` starts a new one, so
+  there is no way to say "emit this text in the middle of a statement that is
+  still open". A renderer that must reproduce D byte-for-byte needs either a
+  pre-opened-statement text channel or a statement printer that takes an
+  interleaved comment list. Phase 6 owes that decision before `deployed_equivalence`
+  can be stated at all.
+* **The fixtures contain free identifiers.** `FR_MODULUS`, `MODEXP_GAS`,
+  `G1ADD_GAS`, `ERR_NON_CANONICAL_SCALAR` and the rest are not defined in
+  the Yul: they are 91 `uint256 internal constant` declarations in the enclosing
+  Solidity (measured: `grep -c 'internal constant'` over D). `stmtsBeq`
+  compares them as unbound name strings, so two generators can agree on every
+  `Stmt` and still disagree on the emitted file if they bind the name to a
+  different value or spell it differently - and the equality relation has no way
+  to see it. Phase 5's `irCheck` therefore cannot be the only check on the
+  constant table: the Solidity-level constants need their own known-answer test
+  against the artifact. Owner: Phase 5, with Phase 6's `Filters.lean` as the
+  model for how a spelling decision gets pinned.
