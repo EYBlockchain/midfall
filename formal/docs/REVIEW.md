@@ -1179,6 +1179,62 @@ generator redesign that was declined:
 Resolution 1 is recommended: it is a restatement, not new machinery, and the plan's
 semantic theorems attach to the AST either way. Owner: the user, since Section 9 is
 frozen pending sign-off.
+### R-40 Package 2's headline gate covers less than its doc comment claims
+
+A fresh review found four confirmed instances of the project's recurring defect
+class - a check that cannot fail, plus a comment asserting it can. The method was
+sound: perturbations ran on an APFS clonefile copy, each edit sha256-verified as
+actually changing the file, with a guard that aborts on a no-op edit. That guard
+fired once, which is why these results can be trusted.
+
+**F1 (HIGH) - the headline.** `vkConstructor_matchesGolden_ok` was reported as the
+first model-to-committed-bytes chain in the tree, and its doc claimed it rules out
+"a commitment word being emitted with the wrong stride" and "the hex filters
+producing a value that elaborates to a different number". **Neither is true.** The
+test VK has `fixedComms := []` and `permutationComms := []`, and the gate compares
+only the first 8 statements, so no commitment statement is ever compared; the
+payload path builds `.lit` directly with no filter on the AST. Perturbing the
+commitment stride (4*j -> 5*j), swapping xLo/yHi, and changing the pad width all
+reddened **0 of 42 gates**. Consequence: the fixed/permutation commitment loops -
+18 of the template's 43 body lines - are entirely ungated, and a stride or
+word-order error there changes the AST under D-P13 with nothing observing it.
+Controls confirm the gate is live for what it *does* cover (offset, mstore8 order,
+a model nibble, the constructor base all redden).
+
+**F2 (HIGH)** - `includeOrder_matchesFixtureAnchors_ok` claims its anchors are
+"provenance-checked by scripts/check_golden_provenance.py, so this is a real
+cross-check and not two pastes". Nothing compares the five hand-typed anchors to
+the provenance lines; replacing all five with 1,2,3,4,5 reddens nothing. Same shape
+as R-38 finding 1, one level down the chain.
+
+**F3 (MED-HIGH)** - phantom citation: `limbCoeffArrays_length_ok` is named in a
+Models.lean comment as the mitigation for an unenforced Rust array length. No such
+declaration exists. The commit message said the phantom reference was removed - it
+was removed from the message, not from the source.
+
+**F4 (MED)** - `QuotientVmGuards` doc claims `BEq` is derived; `#synth BEq` fails.
+The Rust half is true, the Lean half was never written.
+
+**F5 (MED)** - two more gates narrower than stated: `usageDefaults_ok` inspects 4 of
+40 bool fields while claiming to catch any added field; `vkBytes_order` samples only
+xHi positions while claiming to catch word-order flattening.
+
+Clean and worth recording: the parameterised-record claim is **fully verified** -
+Halo2Verifier 71/71 fields in Rust order with correct type mapping, plus 14 other
+records all exact, no missing/reordered/extra field anywhere. 264 citations
+machine-range-checked with zero out of range and none resolving to the stale
+deployed artifact. The three hex formatters are ported at the right sites. The
+word_comment totalisation is unobservable because the panic is unreachable on both
+sides, so rule R4 did not bite. as_usize deferral holds: all 18 call sites are
+inside the two deferred validate_layout functions.
+
+**The meta-point, now six reviews running.** In every case the overclaim was in a
+comment, never in the gate's behaviour - the gate did what it did, and did it
+correctly for its actual scope. What failed was the prose, and the prose is what
+the next reader relies on. My own report last turn repeated package 2's claim
+without testing it and so passed on an overstatement. Rule to add: a gate's stated
+scope must be justified by a perturbation *inside* that scope, not by a control
+outside it.
 ## Closed
 
 - `msm_inner_product` was deferred by the Arith/Domain package as
