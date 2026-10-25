@@ -63,6 +63,39 @@ exactly that situation.
 
 | pkg | lines | port h | +review h |
 |---|---:|---:|---:|
+## Review boundary, as of round 12
+
+Per-task adversarial review is off until the generator's **semantic-equivalence results**
+are finished - not merely until the port completes. So the unreviewed span now covers
+P-04 through P-14 and, on the current reading, M5-M8's theorems as well.
+
+What that actually costs, stated plainly rather than glossed: a wrong *port* is caught
+eventually by a golden diff or a conformance mismatch, and the project has demonstrated
+that (R-20, R-30, R-32 were all found by cross-checks). A wrong *lemma* has no such
+net - `lowering_equivalence` proved against a mis-stated `Inv k` contract will sit green
+forever, because nothing outside it disagrees with it. The only mitigation available
+while reviews are off is the one PLAN 12 names: author-run perturbation evidence on
+every gate, and `#print axioms` on every theorem, with anything that cannot be evidenced
+that way flagged rather than asserted.
+
+This raises the value of the pulled-forward `finalPairing_spec`: it is the first
+semantic-equivalence result, it is small, and it is the earliest point at which the proof
+architecture can be shown to be capable of failing. It should be treated as the gate
+that the review batch is waiting for, not as a convenience.
+
+## P-09 split (round 12)
+
+The QVM block is ~10,000 Rust lines and was the weakest estimate in the port table. It
+is now five packages (P-09a reference interpreter, P-09b compiler, P-09c
+certify+disasm, P-09d yul_emit, P-09e direct), planned in
+`plans/P-09-quotient-vm.md`. The reason for the split is a finding, not caution:
+`vm/reference.rs` is a **probabilistic certifier** - it samples a deterministic
+challenge and compares the emitter against the reference evaluator with a
+Schwartz-Zippel argument - and its own doc says the reference-interpreter-to-Yul leg is
+covered only by conformance tests and a trace differential. So PLAN 9.5's
+`qvm_yul_refines` has no counterpart in the Rust to mirror: it is a theorem we originate.
+Planning M6 by analogy to "what the Rust does" would plan the wrong thing.
+
 | P-06 api | 818 | 0.8 | 2.3 |
 | P-07 kzg | 2,226 | 2.2 | 3.7 |
 | P-08 vk | 654 | 0.7 | 2.2 |
