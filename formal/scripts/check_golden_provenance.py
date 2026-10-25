@@ -54,6 +54,17 @@ slice's first line present in the named partial), and no Lean or Python term
 expands the templates. The anchor therefore pins WHERE a fixture starts and THAT
 the partial is a real registry entry - not WHICH partial wrote it.
 
+THE THIRD JOB (docs/REVIEW.md R-40 F7): the Lean gate 'includeOrder_matches-
+FixtureAnchors_ok' orders only the five partials that own a pinned slice, so the
+other eight verifier partials and both evaluator partials could be listed in any
+order and nothing noticed. So this script also re-reads the include lines of
+contracts/Halo2Verifier.sol and contracts/Halo2QuotientEvaluator.sol and asserts
+that 'verifierIncludes' and 'evaluatorIncludes' are those lists, in that order,
+and that the line numbers the two doc comments state are the real ones. What it
+still cannot check is the same limit as the anchors: nothing here runs Askama, so
+the templates are the source of the ORDER, not proof of which partial wrote
+which dump region.
+
 WHAT MAKES THIS FAIL, concretely: a regenerated or hand-edited .sol (one byte
 inside a cited range changes the hash and usually the token stream); a deleted or
 untracked artifact; a pin edited in YulGolden.lean with no matching change to the
@@ -76,6 +87,8 @@ GOLDEN = FORMAL / "Midfall" / "Generator" / "YulGolden.lean"
 
 EXPECTED_FIXTURES = 8
 EXPECTED_ANCHORS = 5
+EXPECTED_VERIFIER_INCLUDES = 13
+EXPECTED_EVALUATOR_INCLUDES = 2
 
 TEMPLATES = FORMAL / "Midfall" / "Generator" / "Templates.lean"
 TEMPLATE_DIR = REPO / "proofs" / "solidity-verifier" / "templates"
@@ -95,11 +108,23 @@ ANCHORS_DEF = re.compile(
     re.M | re.S,
 )
 ANCHOR_ITEM = re.compile(r'\(\s*"(?P<path>[^"]+)"\s*,\s*(?P<line>\d+)\s*\)')
-INCLUDES_DEF = re.compile(
-    r"^def verifierIncludes : List String :=\n(?P<body>.*?)\]",
-    re.M | re.S,
-)
 INCLUDE_ITEM = re.compile(r'"(?P<path>[^"]+)"')
+
+
+def includes_def_body(src, name):
+    # The list body of 'def <name> : List String := [ ... ]', or None.
+    m = re.search(r"^def " + name + r" : List String :=\n(?P<body>.*?)\]",
+                  src, re.M | re.S)
+    return m.group("body") if m else None
+
+
+# One include line of a contract template, with or without Askama's
+# whitespace-trim dash on either side.
+TEMPLATE_INCLUDE = re.compile(r'\{%-?\s*include\s+"(?P<path>[^"]+)"\s*-?%\}')
+
+# '... in template order: lines 85, 87, 89, ...' in the doc comment above a
+# registry list, so the line numbers that comment states are re-read too.
+DOC_INCLUDE_LINES = re.compile(r"lines ([\d,\s]+)\.")
 
 # The provenance line inside each fixture's doc comment.
 PROV = re.compile(
@@ -239,13 +264,93 @@ def parse_anchors():
         return None, None
     src = TEMPLATES.read_text(encoding="utf-8")
     am = ANCHORS_DEF.search(src)
-    im = INCLUDES_DEF.search(src)
-    if am is None or im is None:
+    body = includes_def_body(src, "verifierIncludes")
+    if am is None or body is None:
         return None, None
     anchors = [(m.group("path"), int(m.group("line")))
                for m in ANCHOR_ITEM.finditer(am.group("body"))]
-    includes = [m.group("path") for m in INCLUDE_ITEM.finditer(im.group("body"))]
+    includes = [m.group("path") for m in INCLUDE_ITEM.finditer(body)]
     return anchors, includes
+
+
+def template_includes(path):
+    # [(line number, included path)] for every include line of a contract
+    # template, in the order the template text has them.
+    out = []
+    for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        m = TEMPLATE_INCLUDE.search(line)
+        if m is not None:
+            out.append((i, m.group("path")))
+    return out
+
+
+def doc_above(src, idx):
+    # The doc comment that ends immediately before position idx.
+    head = src[:idx]
+    end = head.rfind("-/")
+    start = head.rfind("/--", 0, end) if end != -1 else -1
+    return head[start:end] if start != -1 and end != -1 else ""
+
+
+def check_include_registry(rep):
+    # THE R-40 F7 CROSS-CHECK: the full include order of both contracts.
+    #
+    # 'fixtureAnchors' pins the relative order of only the five partials that
+    # own a pinned slice, so swapping two unanchored entries of
+    # 'verifierIncludes', or the two of 'evaluatorIncludes', reddened nothing.
+    # This closes that: each registry list is compared element by element, in
+    # order, against the include lines of the contract template it claims to
+    # transcribe, and the line numbers the Lean doc comment states are compared
+    # against the same read. What it still cannot check is unchanged: that a
+    # partial's own text is what produced the dump region attributed to it.
+    if not TEMPLATES.is_file():
+        rep.bad("cannot find %s, so the include registry is not checked at all"
+                % TEMPLATES)
+        return 0
+    src = TEMPLATES.read_text(encoding="utf-8")
+    pinned = 0
+    for name, tmpl, expect in (
+            ("verifierIncludes",
+             TEMPLATE_DIR / "contracts" / "Halo2Verifier.sol",
+             EXPECTED_VERIFIER_INCLUDES),
+            ("evaluatorIncludes",
+             TEMPLATE_DIR / "contracts" / "Halo2QuotientEvaluator.sol",
+             EXPECTED_EVALUATOR_INCLUDES)):
+        body = includes_def_body(src, name)
+        if body is None:
+            rep.bad("could not parse 'def %s' out of %s" % (name, TEMPLATES.name))
+            continue
+        lean = [m.group("path") for m in INCLUDE_ITEM.finditer(body)]
+        if not tmpl.is_file():
+            rep.bad("%s: the contract template %s does not exist, so nothing "
+                    "checks the order 'def %s' claims" % (name, tmpl, name))
+            continue
+        real = template_includes(tmpl)
+        if len(real) != expect:
+            rep.bad("%s: %s has %d include lines but this script expects %d - "
+                    "the template moved and this script was not told"
+                    % (name, tmpl.name, len(real), expect))
+        if lean != [path for _l, path in real]:
+            rep.bad("%s: the registry is not the template's include order - %s "
+                    "includes %s, the registry lists %s"
+                    % (name, tmpl.name, [path for _l, path in real], lean))
+            continue
+        m = DOC_INCLUDE_LINES.search(doc_above(src, src.index("def " + name)))
+        if m is None:
+            rep.bad("%s: the doc comment above 'def %s' no longer states its "
+                    "include line numbers as 'lines A, B, ...', so that claim is "
+                    "back to being unchecked prose" % (name, name))
+            continue
+        stated = [int(x) for x in re.findall(r"\d+", m.group(1))]
+        if stated != [line for line, _p in real]:
+            rep.bad("%s: the doc comment states include lines %s but %s has them "
+                    "at %s"
+                    % (name, stated, tmpl.name, [line for line, _p in real]))
+            continue
+        pinned += len(real)
+        print("  ok  %-18s %d includes: registry order and stated lines agree (%s)"
+              % (name, len(real), tmpl.name))
+    return pinned
 
 
 def check_fixture_anchors(rep, slices):
@@ -408,6 +513,7 @@ def main():
                        int(pm.group("b"))))
 
     anchor_count = check_fixture_anchors(rep, slices)
+    include_count = check_include_registry(rep)
 
     bases = set(m.group("base") for m in asts)
     for orphan in sorted(set(pins) - bases):
@@ -422,9 +528,10 @@ def main():
             print("  " + p, file=sys.stderr)
         return 1
 
-    print("ok: %d golden pins re-derived from the tracked .sol artifacts, and "
-          "%d fixtureAnchors matched to real slice starts"
-          % (len(asts), anchor_count))
+    print("ok: %d golden pins re-derived from the tracked .sol artifacts, %d "
+          "fixtureAnchors matched to real slice starts, and %d include orders "
+          "pinned against the contract templates"
+          % (len(asts), anchor_count, include_count))
     return 0
 
 

@@ -32,9 +32,20 @@
 --
 -- What that leaves, and what checks it:
 --
---   * The template paths and the include graph. The include ORDER is checked
---     against the line positions of the provenance-pinned fixtures, which is
---     the only order evidence in the tree that is not a paste.
+--   * The template paths, the include graph, and the include ORDER of every
+--     partial in both registries. Two channels pin that order and neither is a
+--     paste: scripts/check_golden_provenance.py re-reads the include lines of
+--     the two contract templates and requires `verifierIncludes` and
+--     `evaluatorIncludes` to be exactly those paths, in that order, at the line
+--     numbers the two doc comments state; and, separately, the five
+--     provenance-pinned fixture slices must start in the dump in the same
+--     relative order as the partials that own them, which is what
+--     `includeOrder_matchesFixtureAnchors_ok` checks. The second channel sees
+--     five of the thirteen verifier partials and none of the evaluator side;
+--     the first sees all fifteen. R-40 F7 was this bullet claiming more than
+--     the gate alone covers. Measured: swapping two unanchored entries of
+--     `verifierIncludes`, or the two of `evaluatorIncludes`, reddens the script
+--     and not the gate.
 --   * The fixed literals the templates contribute (typed-error selectors,
 --     FR_MODULUS, the BLS_P words). Each is checked against a computation -
 --     keccak of the error name via `Midfall.abiSelector`, or the base-field
@@ -83,7 +94,10 @@ def templatePathHalo2QuotientEvaluator : String := "contracts/Halo2QuotientEvalu
     The three `.sol` partials expand at contract level and the ten
     `.yul` partials inside the main assembly block; the interleaved
     `{%- if -%}` / `{%- match -%}` control flow between them belongs to the
-    renderers, not to this list. -/
+    renderers, not to this list. The order and these line numbers are not taken
+    on trust: scripts/check_golden_provenance.py re-reads the include lines of
+    the template and fails unless this list is those paths, in that order, at
+    those lines. -/
 def verifierIncludes : List String :=
   [ "partials/verifier/Constants.sol",
     "partials/verifier/PrecompileSmoke.sol",
@@ -99,8 +113,10 @@ def verifierIncludes : List String :=
     "partials/verifier/FinalPairing.yul",
     "partials/verifier/TraceReturn.yul" ]
 
-/-- The `{% include %}` list of T:contracts/Halo2QuotientEvaluator.sol, lines
-    152-153. -/
+/-- The `{% include %}` list of T:contracts/Halo2QuotientEvaluator.sol, in
+    template order: lines 152, 153. Same deal as `verifierIncludes`: the
+    provenance script re-reads the paths and these line numbers from the
+    template, so this order is checked and not merely asserted. -/
 def evaluatorIncludes : List String :=
   [ "partials/quotient_numerator/QuotientHelpers.yul",
     "partials/quotient_numerator/QuotientNumeratorBlock.yul" ]
@@ -514,7 +530,16 @@ def blsPackedSentinels_ok : Bool :=
     parses `fixtureAnchors` out of this file and matches each line against the
     slice starts it re-reads from the committed dump. Together the gate and the
     script make the cross-check real; on its own this gate is an ordering check on
-    five numbers, nothing more. -/
+    five numbers, nothing more.
+
+    COVERAGE, stated because the module header used to claim more than this
+    (R-40 F7): the five anchors are five of the thirteen verifier partials and
+    none of the two evaluator partials, so the relative order of the other eight
+    is invisible here. Swapping `AccumulatorHelpers.yul` and
+    `TraceAndGasHelpers.yul` in `verifierIncludes`, or the two entries of
+    `evaluatorIncludes`, reddens nothing in this file - it reddens
+    scripts/check_golden_provenance.py, which now compares both registries, in
+    order, against the include lines of the two contract templates. -/
 def includeOrder_matchesFixtureAnchors_ok : Bool :=
   fixtureAnchors.length == 5
     && fixtureAnchors.all (fun (p, _) => verifierIncludes.contains p)
