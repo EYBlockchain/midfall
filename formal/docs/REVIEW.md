@@ -1491,12 +1491,34 @@ is two known, accounted-for things and nothing else:
    293; a plain compile leaves those two 20-byte slots zeroed, because immutables are
    written by the constructor. Masking exactly those two slots in both sides makes the
    deployed runtime and the freshly compiled runtime **byte-identical over all 42,322
-   chars**.
 
-Two things this buys, and one it does not.
+### R-45 The orchestrator committed the defect class it polices
 
-* The trusted-solc row of plan Section 1 is no longer bare assertion for this contract:
-  the committed deployed code is reproducible from the committed source with the pinned
+Two commits this round have messages that do not describe their contents:
+
+* `c9dec56` is titled "planning artifacts - ROADMAP with measured velocity, plans/P-06-api
+  and plans/P-07-kzg handover briefs" and contains **one line of PLAN.md**. The ROADMAP
+  and the plan files were not in it; they went in later as `3f35935`.
+* `7c8b61a` is titled "PROOF-PLAN - S1..S7 mapped to ArkLib/VCVio theorems" and contains
+  **only security.tex** (the bibliography fix). PROOF-PLAN.md went in with `3f35935`.
+
+Mechanism, identical in both cases: `git add A && git commit -m "..." -- B`. The pathspec
+on `git commit` restricts the commit to B and silently ignores what was staged, so the
+message describes A while the diff is B. Rule adopted: **never mix staging with a
+commit pathspec** - either `git add A && git commit` or `git commit -- A`, one form, and
+then `git show --stat` to confirm the message matches the file list before moving on.
+
+Why this is worth an entry rather than a muttered fix. Every finding from R-38 to R-41
+was a gate or a claim whose prose asserted more than the artifact did, and the diagnosis
+repeatedly recorded was that the behaviour was fine while the description was wrong.
+This is that shape, produced by the agent whose job is to catch it, in the metadata of
+the record itself. Nothing was lost - all five planning files and both doc edits are in
+HEAD and the tree is clean - but a reader trusting those two messages would have looked
+for the plan files in the wrong commits. The history is left unrewritten on purpose:
+amending non-HEAD commits to fix a message is a riskier operation than the confusion it
+cures, and the confusion is now documented at the place a reader would look.
+
+## Closed
   compiler and the recorded flags. That is the strongest external-tool evidence in the
   project so far.
 * M4's revm differential gets a real oracle, with a named caveat: the program to load is
