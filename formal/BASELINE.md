@@ -143,6 +143,34 @@ TODO: confirm against the frozen deploy command line at the freeze.
 | **reference profile for the port** | **release** - it is what produces the deployed artifacts and what the heavy fixture benches run under. Consequences for the port rules: R4 arithmetic overflow is NOT a panic site in the reference profile, so R5 applies (emulate wrapping only where it can actually occur, prove noOverflow elsewhere), and debug_assert! is compiled out |
 | secondary profile exercised | debug (cargo test default) - the 248-test lib suite runs here, so the checked path is exercised too; any Lean def whose behaviour differs between the two must say so in its R1 comment |
 
+### solc 0.8.30: measured behaviour of the pinned compiler (round 9)
+
+The pinned compiler is present and verified: `proofs/solidity-verifier/.solc/solc`,
+sha256 `738dcdc6afddeb505ee4e4ef24f1c1fdba2b8c924e614cbbf5801a5b062dd683`, byte-identical
+to the official `solc-macosx-amd64-v0.8.30+commit.73712a01`, produced by the committed
+`proofs/solidity-verifier/scripts/install_pinned_solc.sh`. `solc` on PATH is 0.8.35 and
+must not be used: every gate names the pinned path or sets `SOLC=`. This closes the item
+recorded at docs/PLAN.md 14.6 as an unresolvable environment blocker - it was resolvable,
+and had in fact been resolved on 2026-10-23, three days before it was reported as open.
+
+Measured against `target/poseidon-fixture-dump/Halo2Verifier.sol` (175,918 bytes):
+
+| invocation | result |
+|---|---|
+| `--bin` (legacy pipeline) | **fails**: `Stack too deep ... Variable r is 3 slot(s) too deep inside the stack` |
+| `--via-ir --optimize --bin-runtime` | ok, 26,533 hex chars of runtime code |
+| `--via-ir --bin-runtime` (no optimizer) | ok, 52,129 hex chars |
+| `--ir` / `--ir-ast-json` | ok, and **identical with and without `--via-ir`** (sha `d899f215d775bdb8` both ways) |
+| `--ir-ast-json --optimize` | different (sha `12750f5f54cfd0eb`): the artifact tracks the optimizer setting, not the pipeline |
+| `--standard-json` with `viaIR:false` | no `contracts` entry at all - the legacy pipeline cannot build this file |
+| `--standard-json` with `viaIR:true`, `ir` | 140,439 chars; differs between `optimizer.enabled` false/true (`e3f04cfc1c05d699` vs `e9465b3433265c3f`) |
+| `--standard-json` with `viaIR:true`, `ir-ast-json` | **not produced** - the JSON IR AST is a source-level CLI artifact only |
+
+The consequence for plan Section 7 is recorded as docs/REVIEW.md R-42 and needs a
+decision: the JSON AST that `ImportSolcIR.lean` is told to import comes from the legacy
+pipeline, which cannot compile the generated contract to bytecode at all. The via-ir IR
+exists only as text. Options are in that entry.
+
 ## G0 status
 
 | gate | command | result |

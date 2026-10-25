@@ -646,8 +646,14 @@ then:   M7 (verifier_sound / verifier_complete / end_to_end_noAcc)
 
 ### 14.6 Hard blockers, named
 
-1. **solc version.** PATH has 0.8.35; the baseline pins 0.8.30. Gates M8 and the M4
-   revm differential. Not resolvable from inside the Lean work.
+1. ~~**solc version.** PATH has 0.8.35; the baseline pins 0.8.30. Gates M8 and the M4
+   revm differential. Not resolvable from inside the Lean work.~~ **CLOSED, round 9.**
+   The pinned compiler has been installed since 2026-10-23 at
+   `proofs/solidity-verifier/.solc/solc` (sha256 verified against the official binary)
+   by the committed `install_pinned_solc.sh`; BASELINE.md already said so and nobody
+   checked. Measurements in BASELINE.md. **Superseded by a real finding:** the IR
+   artifact this section told us to import is from a pipeline that cannot compile the
+   generated contract - see docs/REVIEW.md R-42, which needs a decision.
 2. **R-22.** Under the deployed `truncated-challenges` profile the x1/x4 batching
    coefficients are `truncate(x^j)`, which is not a polynomial in the challenge, so no
    degree argument bounds its roots. Gates M9's deployed-profile claim regardless of

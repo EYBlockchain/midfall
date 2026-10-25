@@ -1328,6 +1328,75 @@ KAT whose expression returns a value the annotation matches for the wrong reason
 vacuous 'true'). That is the R-30/R-32 pattern and it is caught only by the
 non-vacuity discipline at each site - a gate over a boolean that is constant true
 passes control D only if the perturbation can reach the constant.
+### R-42 The solc blocker was not a blocker - and the IR artifact Section 7 names cannot be the deployed program
+
+Two findings, one of process and one of substance. Both came from checking a claim
+inherited from an earlier turn instead of inspecting the tree.
+
+**The process finding.** docs/PLAN.md 14.6 lists as hard blocker 1: "PATH has 0.8.35;
+the baseline pins 0.8.30 ... Not resolvable from inside the Lean work." That is false
+twice over. The repo has shipped
+`proofs/solidity-verifier/scripts/install_pinned_solc.sh` since before the baseline
+work started, it installs to `proofs/solidity-verifier/.solc/solc`, and that binary has
+been sitting there since 2026-10-23 - sha256
+`738dcdc6afddeb505ee4e4ef24f1c1fdba2b8c924e614cbbf5801a5b062dd683`, byte-identical to the
+official `solc-macosx-amd64-v0.8.30+commit.73712a01`. BASELINE.md's own toolchain table
+already said so. The blocker was reported, re-reported, and accepted into a milestone
+table without anyone running `ls`. It is closed as of this entry; the measurements are
+in BASELINE.md.
+
+**The substantive finding, and it needs a decision.** Plan Section 7 says
+`ImportSolcIR.lean` imports `solc --ir-ast-json`, "the unoptimized IR of the whole
+contract, with our inline assembly embedded", and Section 9.5 defines the
+compiled-contract model as "solc's IR of the generated `.sol` file". Measured against
+the tracked poseidon dump:
+
+1. The **legacy pipeline cannot compile the generated contract at all**:
+   `solc --bin Halo2Verifier.sol` fails with `Stack too deep ... Variable r is 3 slot(s)
+   too deep inside the stack`. Only `--via-ir` builds it (26,533 hex chars of runtime
+   code with `--optimize`, 52,129 without).
+2. `solc --ir-ast-json` is **insensitive to `--via-ir`**: identical sha256
+   (`d899f215d775bdb8`) with and without the flag, while `--optimize` does change it
+   (`12750f5f54cfd0eb`). So the JSON AST the plan names is the **legacy** IR - the IR of
+   a pipeline that cannot produce the deployed bytecode.
+3. `ir-ast-json` is **not available through `--standard-json`** at all: requesting it
+   per contract yields nothing, while `ir` under `viaIR:true` yields 140,439 chars of
+   text (and that text also differs by optimizer setting: `e3f04cfc1c05d699` vs
+   `e9465b3433265c3f`).
+
+Put together: the only IR that describes the program actually deployed is **textual
+via-ir Yul**, and the only JSON IR available describes a program that cannot be
+deployed. `irCheck ir L = true -> ObsEquiv ir (ShellModel.wrap L)` can therefore be
+stated over one or the other, but not over both, and Section 9.5's headline says the
+theorem is about "the compiled-contract model, meaning solc's IR of the generated `.sol`
+file" for the **deployed** code. As written, M8 would validate the wrong program.
+
+Options, with the cost of each:
+
+* **A. Import the textual via-ir IR.** Needs Yul text -> vendored AST. The vendored
+  `yul%` DSL is elaboration-time only - `PrettyPrint.lean:13` says so outright: "the
+  `yul%` DSL is an elaboration-time macro, not a runtime parser". So either write a
+  runtime parser (and then `parse (print p) = some p` is the verification story the
+  upstream file already anticipates), or generate a Lean source file of `yul%`
+  quotations from solc's text and let the elaborator be the checker. The second is
+  cheaper and gives a checked import for free, but the DSL does not yet support `:
+  u256` annotations or `hex"..."` data literals, both of which solc's IR emits.
+* **B. Keep `--ir-ast-json` and narrow the claim.** `irCheck` then validates the legacy
+  IR, and `lowering_equivalence` must stop saying it applies to the deployed contract
+  via the IR. That is a weakening of a headline statement, so per plan Section 12 it
+  needs sign-off, not a silent edit.
+* **C. Make the legacy pipeline compile.** Would mean restructuring the generated
+  contract's locals to dodge stack-too-deep - a generator change, i.e. a baseline bump,
+  for a proof convenience. Rejected on those grounds unless someone argues otherwise.
+* **D. Drop IR validation and lean on the revm differential.** Contradicts Section 7's
+  "Required step", so also needs sign-off.
+
+Recommendation: **A via generated `yul%` quotations**, because it is the only option
+that keeps the headline statement true, and because the gap it exposes (no runtime
+parser) has to be faced eventually anyway for the Yul -> bytecode hop that Section 13
+already lists as future work. Note this does **not** gate M7: the lowering proofs are
+pure Lean over the vendored interpreter, and only M8 and the revm differential touch
+solc.
 
 ## Closed
 
