@@ -711,3 +711,35 @@ against a twenty-four-statement fixture and was true with no perturbation at all
   constant table: the Solidity-level constants need their own known-answer test
   against the artifact. Owner: Phase 5, with Phase 6's `Filters.lean` as the
   model for how a spelling decision gets pinned.
+
+## 13. Is the fixture dump current with this branch's sources? (Phase 6 provenance)
+
+Asked directly while porting the template layer, because R-36 had just shown the
+deployed artifact was five months stale. Answer: **yes, verified three ways** - with
+one residual hole worth closing.
+
+1. `target/poseidon-fixture-dump/Halo2Verifier.sol` was last committed at `5312cb7`
+   (2026-10-23), which is an ancestor of HEAD, and **zero commits touch `src/` or
+   `templates/` after it**. So the dump is not stale relative to committed sources.
+2. `cargo test -p halo2_solidity_verifier --test template_digest` **passes**. That
+   test exists precisely for this hazard - its header says committed replay fixtures
+   compile pre-rendered `.sol`, so "a template edit whose fixtures were not
+   regenerated keeps every replay test green while the deployable artifacts silently
+   drift" - and it pins a keccak over the whole `templates/` tree.
+3. The only uncommitted Rust change on the branch is `api.rs` adding
+   `RenderedArtifacts::named_bytes()`, a getter returning the renderer's existing
+   output under stable filenames. It does not change rendering.
+
+**Residual hole.** The digest covers `templates/` only, not `src/`, so a change to the
+renderer logic in `src/lowering/render/*.rs` is not caught by it - leg 1 covers that
+for committed history but not for working-tree edits. More importantly the guarantee
+is weaker than it looks: the pin and the dump are updated by hand independently. If
+someone edits a template, regenerates the dump, and forgets to re-pin, the test fails
+(good). If they edit a template, re-pin, and do **not** regenerate the dump, the test
+passes while the dump is stale (bad). The claim "the dumps were regenerated before
+this value was recorded" lives in a comment, not in a check.
+
+**Cheap fix, not yet done.** Have the fixture tests write a sidecar (or a header line)
+recording the template-tree digest they used, so dump-to-templates is machine-checked
+rather than asserted. That closes the loop for the price of a few lines in the test
+harness and no change to `proofs/src`.
