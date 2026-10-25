@@ -760,9 +760,14 @@ structure Halo2Verifier (Memory Proof : Type) where
   /-- M:515-520: worst-case G1MSM bound for the accumulator RHS MSM; 0 with no
       public accumulator. -/
   accRhsMsmGas : Nat
-  /-- M:521: `[&str; LIN_COEFFS]` (LM:357 - six coefficients); a Lean list
-      here, and `limbCoeffArrays_length_ok` pins the length the array type
-      guarantees in Rust. -/
+  /-- M:521: `[&str; LIN_COEFFS]` (LM:357 - six coefficients). Ported as a Lean
+      list, which drops the length guarantee the Rust array type carried: a list
+      here can be any length and nothing in the port would notice. The ported
+      tables `limb7YulCoeffsTable` / `wideLimb7YulCoeffsTable` and the gate
+      `limbCoeffArrays_length_ok` are what put that guarantee back. Note the
+      guarantee is on the TABLES, not on this field: no Lean code fills this
+      field from them (the renderer that would is a later package), so the field
+      is still free. -/
   limb7YulCoeffs : List String
   wideLimb7YulCoeffs : List String
   /-- M:523. -/
@@ -881,6 +886,34 @@ structure Halo2QuotientEvaluator (Memory : Type) where
   quotientProgram : Option QuotientProgram
   simpleSelectorCols : List Nat
   quotientIdentityTraceBase : Nat
+
+/-- rust: `LIMB7_YUL_COEFFS` at
+    src/lowering/quotient_numerator/vm/mod.rs:521-528 @formal-baseline, typed
+    `[&'static str; LIN_COEFFS]` where `LIN_COEFFS = LIMBS - 1` and
+    `LIMBS = 7` (LM:355-357), i.e. six entries. Transcribed as a Lean list, so
+    the length the Rust type enforced is now a fact this tree has to assert:
+    `limbCoeffArrays_length_ok`. The VALUES are a transcription and nothing here
+    re-derives them - they appear in no pinned artifact slice - so the gate is
+    about length and shape, not about nibbles. -/
+def limb7YulCoeffsTable : List String :=
+  [ "0x100000000000000",
+    "0x10000000000000000000000000000",
+    "0x400000000",
+    "0x40000000000000000000000",
+    "0x1000",
+    "0x100000000000000000" ]
+
+/-- rust: `WIDE_LIMB7_YUL_COEFFS` at
+    src/lowering/quotient_numerator/vm/mod.rs:530-537 @formal-baseline, the same
+    `[&str; LIN_COEFFS]` type and so the same length as
+    `limb7YulCoeffsTable`. -/
+def wideLimb7YulCoeffsTable : List String :=
+  [ "0x100000000000000",
+    "0x10000000000000000000000000000",
+    "0x1000000000000000000000000000000000000000000",
+    "0x100000000000000000000000000000000000000000000000000000000",
+    "0x6bc66e553973f396854f5626172ba135587d41e37a68209402355093fdcaaf6c",
+    "0x63f31e3f446953960c9d6964474300df43ab29179970f642a28e39d6c883c74b" ]
 
 end Midfall.Generator
 
@@ -1345,6 +1378,30 @@ def ptr_locations_differ_ok : Bool :=
     && printPtr (ptrValue (ptrCalldata (valueFromNat 0x64))) == "0x64"
     && printPtr (ptrValue (ptrMemory (Value.identifier "p" 32))) == "add(p, 0x20)"
 
+/-- THE COEFFICIENT ARRAYS HAVE THE LENGTH THE RUST TYPE GUARANTEES. The Rust
+    declares both tables as `[&str; LIN_COEFFS]` (M:521-522, M:692-693), so the
+    compiler there enforces six; the Lean port uses `List String`, which
+    enforces nothing, and R-40 F3 found that the comment naming this gate was
+    citing a declaration that did not exist. It exists now, and it asserts the
+    length against `quotientVm.limbCount` - ported independently from LM:355 -
+    rather than against the literal 6 alone, so the two sources have to agree.
+    Concretely it rules out: a coefficient dropped or duplicated while
+    transcribing either table (both reddened: deleting one entry from either list
+    fails it); the two tables disagreeing about length; a limb count changing
+    without the coefficient tables following; and an entry that is not a hex
+    literal at all. What it CANNOT see: the VALUES of the coefficients - they are
+    transcribed from vm/mod.rs and no artifact slice in this tree re-derives them
+    - and the `limb7YulCoeffs` field of `Halo2Verifier`, which is still a free
+    list that nothing here fills from these tables. -/
+def limbCoeffArrays_length_ok : Bool :=
+  let q := templateConstantsDefault.quotientVm
+  limb7YulCoeffsTable.length == q.limbCount - 1
+    && wideLimb7YulCoeffsTable.length == q.limbCount - 1
+    && limb7YulCoeffsTable.length == 6
+    && limb7YulCoeffsTable.Nodup && wideLimb7YulCoeffsTable.Nodup
+    && (limb7YulCoeffsTable ++ wideLimb7YulCoeffsTable).all
+         (fun c => c.startsWith "0x" && c.length > 3)
+
 end Midfall.Generator.ModelKats
 
 #eval Midfall.Generator.ModelKats.g1Generator_onCurve_ok -- expect true
@@ -1372,3 +1429,4 @@ end Midfall.Generator.ModelKats
 #eval Midfall.Generator.ModelKats.quotientExternal_validateContains_ok -- expect true
 #eval Midfall.Generator.ModelKats.usageDefaults_ok -- expect true
 #eval Midfall.Generator.ModelKats.ptr_locations_differ_ok -- expect true
+#eval Midfall.Generator.ModelKats.limbCoeffArrays_length_ok -- expect true
