@@ -280,13 +280,26 @@ the proof needs $n(c+1)$ (R-23).
 \item The Yul optimiser and bytecode hop stays trusted (plan Section 13).
 \end{enumerate}
 
+% Each entry below was checked against the primary source page, not recalled. Two
+% entries were wrong before: plookup's title was invented, and the logUp attribution
+% named a paper that is not findable under that title. See docs/plans/PROOF-PLAN.md,
+% section "Bibliography corrections", for what each was corrected to and why.
 \begin{thebibliography}{9}
 \bibitem{plonk} Gabizon, Williamson, Ciobotaru. PLONK: Permutations over
-Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge. 2019.
-\bibitem{plookup} Gabizon, Williamson. plookup: Sub-linear Polynomial Commitment
-Scheme and its Application to Lookup Tables. 2020.
-\bibitem{logup} Gro\ss{}baek, Hansson, Triandopoulos et al. LogUp: for combining
-lookup arguments. 2022.
+Lagrange-bases for Oecumenical Noninteractive arguments of Knowledge.
+Cryptology ePrint Archive 2019/953, 2019.
+\bibitem{plookup} Gabizon, Williamson. plookup: A simplified polynomial protocol
+for lookup tables. Cryptology ePrint Archive 2020/315, 2020.
+\bibitem{logup} Hab\"ock. Multivariate lookups based on logarithmic derivatives.
+Cryptology ePrint Archive 2022/1530, 2022. This is the formal reference for the
+logarithmic-derivative (logUp) argument used by this codebase.
+\bibitem{logupchar} Eagen and Hab\"ock. Bypassing the characteristic bound in
+logUp. Cryptology ePrint Archive 2024/2067, 2024. Directly relevant to the
+$\operatorname{char} > n$ hypothesis carried in Section~\ref{sec:rounds}: they
+remove that bound by abstracting pole multiplicity. Whether their construction
+applies to the trash/logUp variant implemented here is not yet established.
+\bibitem{logupstar} Soukhanov. Logup*: faster, cheaper logup argument for
+small-table indexed lookups. Cryptology ePrint Archive 2025/946, 2025.
 \bibitem{halobook} The Halo 2 book: permutation argument, quotient splitting,
 multi-open.
 \bibitem{agm} Katz, Krenn, Thaler, Zaveri. On the Source of Statistical Parameters,
