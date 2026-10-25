@@ -524,6 +524,12 @@ Options, needing a decision:
 Recommendation: (b), with (c) as the fallback if the paper proof resists. Owner:
 you + docs/security.tex (plan Section 10 step 1, which does not exist yet).
 
+**DECIDED, round 9: option (b).** Truncated challenges stay in the supported profile and
+the x1/x4 rows are re-derived for truncated powers. (c) survives only as the fallback if
+the paper proof resists, in which case deployed knowledge soundness is marked unresolved
+in writing. Recorded as D-P14 in docs/design.md with its four consequences. M9 stays
+gated until security.tex carries that section.
+
 ### R-23 three smaller corrections to §9.4's error budget
 
 * `chalMass` is applied per *feature* but the Rust truncates per *round*. For the
@@ -1397,6 +1403,14 @@ parser) has to be faced eventually anyway for the Yul -> bytecode hop that Secti
 already lists as future work. Note this does **not** gate M7: the lowering proofs are
 pure Lean over the vendored interpreter, and only M8 and the revm differential touch
 solc.
+
+**DECIDED, round 9: option A.** Import the textual via-ir IR by generating a Lean file of
+`yul%` quotations and letting the elaborator be the checker; no runtime Yul parser is
+written. Measured feasibility and the one prerequisite - the vendored dialect must gain
+`memoryguard` (2 sites) and `setimmutable` (1 site), both of which IRCheck has to reason
+about anyway - are recorded as D-P15 in docs/design.md. The IR of record is also
+optimizer-setting sensitive, so the import pins viaIR + optimizer enabled + runs 200, not
+just the compiler version.
 
 ### R-43 Phase 6 package 4 (Protocol): one defect in the reference, two interface debts
 
