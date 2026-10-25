@@ -489,23 +489,23 @@ structure UserPhase where
 
 /-- rust: ENC:680-684 (`struct Ptr { loc, value }`) @formal-baseline.
     Filters.lean already ports the Display side (`printPtr`, which drops the
-    location exactly as the Rust Display at ENC:714-720 does) but not the
+    location exactly as the Rust Display at ENC:716-721 does) but not the
     record, and M:539-542, M:555, M:570, M:575 carry it as a field type, so the
     record lives here. -/
 structure Ptr where
   loc : Location
   value : Value
 
-/-- rust: ENC:696-699 (`Ptr::memory`) @formal-baseline. -/
+/-- rust: ENC:696-698 (`Ptr::memory`) @formal-baseline. -/
 def ptrMemory (v : Value) : Ptr := { loc := Location.memory, value := v }
 
-/-- rust: ENC:701-704 (`Ptr::calldata`) @formal-baseline. -/
+/-- rust: ENC:701-703 (`Ptr::calldata`) @formal-baseline. -/
 def ptrCalldata (v : Value) : Ptr := { loc := Location.calldata, value := v }
 
 /-- rust: ENC:706-708 (`Ptr::loc`) @formal-baseline. -/
 def ptrLoc (p : Ptr) : Location := p.loc
 
-/-- rust: ENC:710-712 (`Ptr::value`) @formal-baseline. The Rust also has
+/-- rust: ENC:711-713 (`Ptr::value`) @formal-baseline. The Rust also has
     `Value::as_usize` (ENC:596-601), which `unreachable!()`s on a symbolic
     identifier; its only callers in models.rs are inside `validate_layout`, so
     it is deferred with them rather than ported with a panic nothing reaches. -/
@@ -1332,7 +1332,7 @@ def ptrValueIsInt (v : Value) (n : Int) : Bool :=
 
 /-- `Ptr` carries a location and a value and the two constructors must not
     collapse them: `printPtr` ignores the location exactly as the Rust Display
-    does (ENC:714-720), so the ONLY thing distinguishing a calldata pointer from
+    does (ENC:716-721), so the ONLY thing distinguishing a calldata pointer from
     a memory pointer is this field, and no printer gate can see it. Rules out
     `ptrCalldata` being a copy of `ptrMemory` - a mistake that would survive
     every text comparison in this tree and only surface when Phase 5 asks whether
