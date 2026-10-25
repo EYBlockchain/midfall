@@ -26,13 +26,17 @@
 --   release (docs/REVIEW.md R-6), where `+` and `*` wrap rather than panic, so
 --   a wrapped `usize` and a `Nat` differ only past `2^64 - 1`; every value that
 --   flows through this layer is a word or byte count of a few kilobytes. The
---   three places the Rust spells the overflow out with `checked_*` or
---   `ok_or_else` are ported as written and their unreachability is stated at the
---   site, not assumed.
--- * `#[cfg(test)]` items are ported where a ported test needs them
---   (`PayloadSection.byte_offset`, `PayloadSection.byte_len`,
---   `MemoryMap.region`, `PackedProgramCodec.decode_words`) and are marked as
---   test-only at the site, which is the convention `Exec/Circuit.lean` sets.
+--   Exactly one `checked_*` exists in the ported scope, the `checked_sub` at
+--   M:346, and it is ported as written. The only `ok_or_else` in
+--   `vk_payload.rs` (VP:139) is the missing-section error, not an overflow
+--   check: every product in that file is a plain `*`. Unreachability is stated
+--   at the site where it matters, not assumed.
+-- * `#[cfg(test)]` items are ported where a ported test needs them - six of
+--   them: `PayloadSection.byte_offset` (VP:44), `PayloadSection.byte_len`
+--   (VP:50), `VkPayloadLayout.byte_offset` (VP:153), `VkPayloadLayout.byte_len`
+--   (VP:159), `MemoryMap.region` (MEM:229) and
+--   `PackedProgramCodec.decode_words` (VP:213) - and are marked as test-only at
+--   the site, which is the convention `Exec/Circuit.lean` sets.
 
 import Midfall.Common.Bytes
 import Midfall.Generator.Models
@@ -274,16 +278,16 @@ def VkPayloadLayout.wordLen (self : VkPayloadLayout)
   Except.map PayloadSection.wordLen (self.requireSection kind)
 
 /-- rust: VP:153-156 (`VkPayloadLayout::byte_offset`, `#[cfg(test)]`)
-    @formal-baseline. The Rust wraps the product in `.ok_or_else` because
-    `checked_mul` can fail on `usize`; on `Nat` it cannot, so the arm is
-    unreachable here and is not ported as a branch. -/
+    @formal-baseline. The `Result` is `require_section`'s missing-section error
+    (VP:139) propagated through `?`; the `word_offset * WORD_BYTES` underneath
+    it (VP:46) is a plain `*`, with no overflow arm in the Rust to port. -/
 def VkPayloadLayout.byteOffset (self : VkPayloadLayout)
     (kind : PayloadSectionKind) : Except String Nat :=
   Except.map PayloadSection.byteOffset (self.requireSection kind)
 
 /-- rust: VP:159-162 (`VkPayloadLayout::byte_len`, `#[cfg(test)]`)
-    @formal-baseline; same unreachable-overflow note as
-    `VkPayloadLayout.byteOffset`. -/
+    @formal-baseline; same shape as `VkPayloadLayout.byteOffset` - the `Result`
+    is `require_section`'s, the product at VP:52 is a plain `*`. -/
 def VkPayloadLayout.byteLen (self : VkPayloadLayout)
     (kind : PayloadSectionKind) : Except String Nat :=
   Except.map PayloadSection.byteLen (self.requireSection kind)
@@ -315,7 +319,10 @@ where
       else
         validateSections rest sec.wordEnd
 
-/-- rust: VP:76-94 (`VkPayloadLayout::for_vk`) @formal-baseline. -/
+/-- rust: VP:76-94 (`VkPayloadLayout::for_vk`) @formal-baseline. Placed after
+    `validate` rather than in its Rust position directly after `new`, because it
+    calls `reserve`, `reserve_g1` and `validate`: those three come after
+    `for_vk` in the Rust and must come before their caller in Lean. -/
 def VkPayloadLayout.forVk
     (headerWords quotientConstWords quotientProgramWords
       fixedCommitments permutationCommitments : Nat) :
@@ -378,8 +385,9 @@ def PackedProgramCodec.decodeWords
     else
       Except.ok (ByteArray.mk ((all.take byteLen).map Nat.toUInt8).toArray)
 
-/-- rust: VP:84-91 via `VkPayloadLayout::for_vk` @formal-baseline: the section
-    offsets in reservation order, used to reproduce the reference regression test. -/
+/-- A modelling helper rather than a Rust item: the five section offsets in the
+    order `for_vk` reserves them (VP:84-91), which is the accessor shape the
+    reference tests at M:1313-1324 and M:1282-1340 use through `word_offset`. -/
 def vkPayloadSectionOffsets (layout : VkPayloadLayout) : List Nat :=
   [PayloadSectionKind.header, .quotientConstants, .quotientProgram,
     .fixedCommitments, .permutationCommitments].filterMap
@@ -1065,13 +1073,24 @@ end Midfall.Generator
 /-! # Known-answer tests for the ported layout layer
 
 Every gate names the wrong implementation it rules out, in the sense docs/REVIEW.md
-R-38 states at the end of its entry. The expected sides here are of two kinds.
-Most are the assertions of the reference's own test modules - `vk_payload.rs`
-VP:242-321 and `memory.rs` MEM:1131-1257 - which this file does not control, so
-they are evidence rather than transcription. The rest are cross-checks against
-`Midfall/Yul/Externals.lean`, which derives the same numbers from EIP-2537 and
-the EVM memory model rather than from this Rust. Where a Rust error arm cannot be
-reached at all, that is said at the site and no gate is claimed for it. -/
+R-38 states at the end of its entry. The expected sides come in three kinds, and
+the kinds are not equally strong.
+
+The strongest are the assertions of the reference's own test modules, which this
+file does not control: `vk_payload.rs` VP:242-321, `memory.rs` MEM:1131-1257,
+and `models.rs` M:1300-1327 and M:1329-1341 for the payload layout. Gates built
+on those are evidence rather than transcription.
+
+The second kind is arithmetic derived here from the ported definitions - the
+`payload_layout` and `theta_window` offsets, chiefly. Those are checked against
+the port, not against an outside source, and each says so.
+
+The third is the cross-check against `Midfall/Yul/Externals.lean`. That file
+documents its constants as transcriptions of `layout/mod.rs`, the same Rust this
+file transcribes, so agreement there is a drift check between two copies rather
+than an independent derivation; EIP-2537 and the EVM memory model corroborate the
+numbers but are not what Externals cites. Where a Rust error arm cannot be reached
+at all, that is said at the site and no gate is claimed for it. -/
 
 
 
@@ -1100,9 +1119,10 @@ def isOk {α : Type} (e : Except String α) : Bool :=
   | .ok _ => true
   | .error _ => false
 
-/-- The fixture of VP:244, `VkPayloadLayout::for_vk(31, 3, 5, 7, 2)`. A failure
-    here degrades to the empty layout, which makes every gate below fail loudly
-    rather than quietly. -/
+/-- The fixture of VP:244, `VkPayloadLayout::for_vk(31, 3, 5, 7, 2)`. Read by
+    `forVk_offsets_ok`, `forVk_totalWords_ok` and `forVk_bytes_ok`; if the
+    construction fails it degrades to the empty layout, which makes those three
+    fail loudly rather than quietly. The other gates do not read it. -/
 def forVkFixture : VkPayloadLayout :=
   match VkPayloadLayout.forVk vkHeaderWords 3 5 7 2 with
   | .ok layout => layout
@@ -1186,8 +1206,12 @@ def packed_wordLenForBytes_ok : Bool :=
 
 /-- THE PACKER KEEPS THE PARTIAL FINAL WORD. VP:206-210 with the VP:291-300
      assertions: 37 bytes become 2 words and decode back exactly. Rules out
-     `chunks_exact` semantics, which would silently drop bytes 32..37 - a
-     truncated quotient program that still passes every length check upstream. -/
+     dropping the resize padding at VP:208, which would leave 5 bytes unrouted and
+     decode back 32 - a truncated quotient program that still passes every length
+     check upstream. It does NOT rule out `chunks_exact` in place of
+     `chunks`: the port pads to a whole number of words first, exactly as the
+     Rust does, so the two iteration idioms coincide on every input this function
+     can receive. -/
 def packed_roundTrip_ok : Bool :=
   let bytes := ByteArray.mk ((List.range 37).map Nat.toUInt8).toArray
   let words := PackedProgramCodec.encodeWords bytes
@@ -1340,14 +1364,52 @@ def syntheticVk : Halo2VerifyingKey where
   quotientConstLabels := []
   quotientConstHeaders := []
 
+/-- A commitment word with no content; the reference test fixtures do not read
+    the coordinates, only the count. -/
+def g1Zero : G1Words :=
+  { xHi := 0, xLo := 0, yHi := 0, yLo := 0 }
+
+/-- The VK of M:1300-1327: `synthetic_vk(2, 1)` has 31 + 2 + 1 = 34 constants,
+    the test sets the quotient offsets to 34 and 36, then extends the table by
+    2 + 3 words to 39. -/
+def referenceTestVk : Halo2VerifyingKey :=
+  { constructorPayloadMptr := vkConstructorPayloadStart,
+    constants := (List.range 39).map fun _ => ("c", 0),
+    fixedComms := [g1Zero, g1Zero],
+    permutationComms := [g1Zero],
+    quotientConstOffsetWords := some 34,
+    quotientConstWords := 2,
+    quotientProgramOffsetWords := some 36,
+    quotientProgramWords := 3,
+    quotientConstLabels := [],
+    quotientConstHeaders := [] }
 /-- `payload_layout` ON THE REFERENCE VK. With no quotient sections the header
      is the whole constant table, so the sections are 0, 31, 31, 31 and 35 - the
-     three zero-width sections collapse onto the cursor. Rules out `checked_sub`
-     being read as saturating subtraction, and out the commitment widths being
-     dropped. -/
+     three zero-width sections collapse onto the cursor. Rules out the commitment
+     widths being dropped, and out the header width being read as something other
+     than `constants - quotient_words`. The checked-vs-saturating distinction
+     belongs to `vk_payloadLayout_tooShort_err_ok`, where the two differ; with
+     zero quotient words this fixture cannot see it. -/
 def vk_payloadLayout_offsets_ok : Bool :=
   match syntheticVk.payloadLayout with
   | .ok layout => vkPayloadSectionOffsets layout == [0, 31, 31, 31, 35]
+  | .error _ => false
+
+/-- THE REFERENCE TEST ITSELF, ported as a gate: M:1300-1327,
+    `verifying_key_payload_layout_matches_rendered_byte_order`. Its four
+    assertions are the quotient-constant offset (34), the quotient-program offset
+    (36), the fixed-commitment offset (39, the extended table length), and
+    `total_bytes == len()`; M:1326 then requires `validate_payload_layout` to
+    succeed. Unlike the derived gates above, every expected number here is copied
+    from a reference assertion. Rules out the header being read as the extended
+    table length rather than the table length minus the quotient words - the two
+    differ by exactly 5 here, where the zero-quotient fixture above cannot see it. -/
+def vk_payloadLayout_referenceTest_ok : Bool :=
+  match referenceTestVk.payloadLayout with
+  | .ok layout =>
+      vkPayloadSectionOffsets layout == [0, 34, 36, 39, 47]
+        && layout.totalBytes == referenceTestVk.len
+        && isOk referenceTestVk.validatePayloadLayout
   | .error _ => false
 
 /-- THE HEADER IS THE CONSTANT TABLE `MINUS` THE QUOTIENT SECTIONS. With
@@ -1368,9 +1430,12 @@ def vk_payloadLayout_quotientOffsets_ok : Bool :=
      minus the quotient words, so the total is always
      `constants + 4 * commitments` words, which is exactly `len`. The Rust's
      `VK payload byte length mismatch` arm is therefore unreachable after a
-     successful `payload_layout`, and no gate here claims otherwise; what is
-     reachable, and what this gate covers, is the constructor-pointer check that
-     follows it. -/
+     successful `payload_layout`, and no gate here claims otherwise. What this
+     gate can fail on is therefore the constructor path: `VkConstructorMemoryLayout
+     ::new`/validate and the pointer agreement. Perturbing the constructor
+     alignment reddens it; deleting the pointer check alone does not, because
+     through this fixture both sides are the same `new` call - that arm is
+     covered by `vk_validatePayloadLayout_ptr_err_ok`, not here. -/
 def vk_validatePayloadLayout_ok : Bool := isOk syntheticVk.validatePayloadLayout
 
 /-- A CONSTANT TABLE SHORTER THAN ITS OWN QUOTIENT SECTIONS IS AN ERROR, NOT A
@@ -1382,9 +1447,10 @@ def vk_payloadLayout_tooShort_err_ok : Bool :=
     : Halo2VerifyingKey).payloadLayout
     "VK constant table too short: constants=31 quotient_words=34"
 
-/-- A STALE QUOTIENT-CONSTANT OFFSET IS CAUGHT. M:360-367. The offset is a
-     separate field from the layout, so it can drift when the header changes;
-     rules out the field being trusted. -/
+/-- A STALE QUOTIENT-CONSTANT OFFSET IS CAUGHT. M:360-367, the arm the reference
+     test M:1329-1341 (`..._rejects_stale_quotient_offsets`) exercises. The
+     offset is a separate field from the layout, so it can drift when the header
+     changes; rules out the field being trusted. -/
 def vk_payloadLayout_qcOffset_err_ok : Bool :=
   errIs ({ syntheticVk with quotientConstOffsetWords := some 30 }
     : Halo2VerifyingKey).payloadLayout
@@ -1418,13 +1484,15 @@ def layoutConstants_matchYul_ok : Bool :=
     && modexpFrameBytes == Midfall.Yul.modexpFrameBytes
     && pairingTwoPairBytes == Midfall.Yul.pairingTwoPairBytes
 
-/-- THE HEADER SCHEMA IS THE WIDTH `for_vk` IS CALLED WITH. LM:395-445 builds
-     11 + 4 + 8 + 8 = 31 words, and 31 is the `header_words` the reference
-     layout tests pass. Rules out the header schema and the payload layout
-     disagreeing about where the commitments start. -/
+/-- THE DERIVED HEADER WIDTHS. LM:399 and LM:401 place the g2 and neg_s_g2
+     bases at 11 + 4 and 11 + 4 + 8, and LM:445 totals the schema at 31. The two
+     base constants that are literally `vkHeaderScalarWords` and
+     `vkHeaderScalarWords + g1WordsCount` are not re-asserted - that would
+     restate the definitions without being falsifiable by anything the definitions
+     do not already fix. The header-to-payload link is carried by
+     `forVk_offsets_ok`, which feeds this total into `for_vk`. -/
 def vkHeaderWords_ok : Bool :=
-  vkHeaderScalarWords == 11 && vkHeaderG1BaseWord == 11
-    && vkHeaderG2BaseWord == 15 && vkHeaderNegSG2BaseWord == 23
+  vkHeaderG2BaseWord == 15 && vkHeaderNegSG2BaseWord == 23
     && vkHeaderWords == 31
 
 /-- The declaration order of MEM:121-155. -/
@@ -1452,11 +1520,18 @@ def memoryPhaseOrdered : List MemoryPhase → Bool
   | a :: b :: rest => compare a b == Ordering.lt && memoryPhaseOrdered (b :: rest)
   | _ => true
 
-/-- THE PHASE ORDER IS THE `BTreeMap` ORDER. MEM:121-155 derives `Ord` in
-     declaration order, and R6 turns the cursor map into a list kept in that same
-     order. Rules out `Ord` deriving to any other permutation: the gate walks
-     the sixteen phases and requires each to compare strictly below the next. -/
-def memoryPhase_order_ok : Bool := memoryPhaseOrdered memoryPhaseOrder
+/-- THE CURSOR LIST IS SORTED BY THE DERIVED `Ord`. MEM:121-155 derives `Ord`
+     in declaration order, and R6 turns the cursor `BTreeMap` into a list kept in
+     that order. The gate requires the transcription of MEM:121-155 to be strictly
+     increasing under the derived `Ord`, with sixteen entries and no duplicates.
+     That reddens on a transposition, a dropped variant, or a repeated one.
+     Scope, stated honestly: it cannot redden on the derived `Ord` itself
+     drifting from MEM:121-155, because reordering the inductive moves both sides
+     together. That link is carried by the citation on the inductive, not here. -/
+def memoryPhase_order_ok : Bool :=
+  memoryPhaseOrdered memoryPhaseOrder
+    && memoryPhaseOrder.length == 16
+    && memoryPhaseOrder.eraseDups.length == 16
 
 #eval forVk_offsets_ok -- expect true
 #eval forVk_totalWords_ok -- expect true
@@ -1479,6 +1554,7 @@ def memoryPhase_order_ok : Bool := memoryPhaseOrdered memoryPhaseOrder
 #eval vkConstructor_roundsUp_ok -- expect true
 #eval vkConstructor_drift_err_ok -- expect true
 #eval vk_payloadLayout_offsets_ok -- expect true
+#eval vk_payloadLayout_referenceTest_ok -- expect true
 #eval vk_payloadLayout_quotientOffsets_ok -- expect true
 #eval vk_validatePayloadLayout_ok -- expect true
 #eval vk_payloadLayout_tooShort_err_ok -- expect true
