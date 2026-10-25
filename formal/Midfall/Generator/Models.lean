@@ -490,8 +490,15 @@ structure UserPhase where
 /-- rust: ENC:680-684 (`struct Ptr { loc, value }`) @formal-baseline.
     Filters.lean already ports the Display side (`printPtr`, which drops the
     location exactly as the Rust Display at ENC:716-721 does) but not the
-    record, and M:539-542, M:555, M:570, M:575 carry it as a field type, so the
-    record lives here. -/
+    record, and eleven models.rs fields carry it as their type - which is why
+    the record lives here. ELEVEN, not the seven an earlier draft of this
+    comment enumerated (R-40 F6: it listed only the `Halo2Verifier` sites).
+    All of them, by struct: seven in `Halo2Verifier` - vk_mptr, challenge_mptr,
+    theta_mptr and proof_cptr at M:539-542, quotient_comm_cptr at M:555,
+    comms_mptr_base at M:570, reversed_evals_mptr at M:575 - and four in
+    `Halo2QuotientEvaluator` - vk_mptr at M:696, challenge_mptr at M:698,
+    theta_mptr at M:700, reversed_evals_mptr at M:701. The two Lean records
+    below carry the same seven and the same four. -/
 structure Ptr where
   loc : Location
   value : Value
