@@ -220,7 +220,8 @@ formal/
 - `Externals.lean`: EIP-2537 and modexp relations (byte-exact layouts, validity checks, outputs, gas cost functions), plus the quotient-evaluator call, which runs the evaluator's Yul object in a static frame.
 - `ShellModel.lean`: a Yul model of solc's dispatcher for `verifyProof(bytes,uint256[])`, covering selector 0x1e8e1e13, the callvalue check, ABI bounds checks, and binding the locals `vk` and `quotientEvaluator` from immutables.
 - **Required step: solc IR translation validation.**
-  - `ImportSolcIR.lean` imports `solc --ir-ast-json` (the unoptimized IR of the whole contract, with our inline assembly embedded) into the yul-semantics AST.
+  - `ImportSolcIR.lean` imports the **textual `viaIR` IR** — `--standard-json` with `viaIR: true` and the deployment's optimizer settings, artifact `ir` — into the yul-semantics AST, by generating a Lean file of `yul%` quotations and letting the elaborator be the checker.
+    **CORRECTED round 25 (review F2).** This line previously said `solc --ir-ast-json`, and Section 5's exporter bullet still does. That was superseded by D-P15 / R-42: `--ir-ast-json` is the **legacy** pipeline's artifact, byte-identical with and without `--via-ir`, and the legacy pipeline cannot compile the generated contract at all (`Stack too deep`). Importing it would validate a program that is not the deployed one. `ir-ast-json` is also not exposed per-contract through `--standard-json`.
   - `IRCheck.lean` is a verified checker: `irCheck ir L = true → ObsEquiv ir (ShellModel.wrap L)`.
   - What it checks: the embedded assembly blocks are α-equivalent to `L.headGuard` and `L.main`; the dispatcher and ABI-decoding code has the recognised shape, with its semantics proven; immutables come from `loadimmutable`, which equals constructor-set values; the memoryguard and spill region are disjoint from `L.plan.memory`.
   - The same applies to `Halo2QuotientEvaluator` (fallback).
@@ -420,7 +421,12 @@ structure Supported (g o) : Prop where          -- mirrors try_new plus what the
   hLimbs : g.plan.numQuotientLimbs = g.vk.cs.degree - 1          -- assessment F7
   vkPoints : ∀ C ∈ g.vk.allCommitments, C.isValidG1
   layout : g.plan.memory.WellFormed     -- disjoint, aligned, above solc spill window
-  qvm : validateQuotientProgramOperands g.plan = .ok ()           -- QVM-01
+  -- REPAIRED round 25 (review F3): QVM-01 only applies to the VM lowering. Rust
+  -- stores `quotient: None` for a Direct plan (plan.rs:224), so an unconditional QVM
+  -- clause is not merely over-strict, it is ill-formed for Direct. Mode-specific now.
+  qvm : match g.plan.lowering with
+        | .Vm => validateQuotientProgramOperands g.plan = .ok ()   -- QVM-01
+        | .Direct => true   -- Direct has no QVM program; see direct_correct at M10
   production : o.diagnostics.trace = false ∧ o.diagnostics.gasCheckpoints = false
 
 structure Deployment (L W) : Prop where
@@ -471,7 +477,13 @@ theorem lowering_equivalence_noAcc (h : g.cfg.accumulator = none) :
 theorem end_to_end_noAcc (h : g.cfg.accumulator = none) (hL hsup hdep hpc hir) :
   verifyNative .solidity g.params g.vk inst π = .ok () ↔
   ∃ cd, (repackProof L.plan π >>= (encodeCalldata L.plan · inst)) = .ok cd ∧
+        (∃ obs, RunContractIR keccak256 L W ir cd (honestCalls L W) obs) ∧   -- ADDED: run existence
         ∀ obs, RunContractIR keccak256 L W ir cd (honestCalls L W) obs → obs = .return abiTrue
+-- REPAIRED round 25 (review F1): as written the right-hand side was satisfied VACUOUSLY
+-- when no run exists at all - a `∀` over an empty set of runs is true. Run existence is
+-- now required explicitly, and `honestCalls` plus the gas hypothesis must be stated as
+-- preconditions of this theorem, not left implicit: the Yul model's gas oracle affects
+-- whether execution proceeds at all (vendor EVMExec.lean:539).
 /-- Accumulator mode: exact w.r.t. ContractRef; against separate checks, exact one way,
     S5 the other. -/
 theorem contractRef_acc_complete (h : g.cfg.accumulator = some enc) :
