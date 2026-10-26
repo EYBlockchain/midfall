@@ -41,6 +41,21 @@ at a time.
 | M10 Direct | not started | `direct/` now sits inside M3 (PLAN 14.7) |
 | M11 deployment | R-44 gives a bytecode oracle | R-36 staleness still open |
 
+| M5-M7 lowering | **new blocker found (R-47)** | Lagrange lemmas need a primitive-root hypothesis the tree does not carry |
+
+## Interruptions
+
+P-07 (kzg) was stopped mid-write at 01:35 with 1,493 lines, 59 decls and **zero gates**,
+truncated inside `computations` - a single ~1,000-line Rust function (kzg/mod.rs:930-1927)
+- at about KZ:1576. It was never registered, so the tree stayed green. Recovery is scoped
+in `plans/P-07R-kzg-recover.md` and running: finish `computations`, reproduce the tests
+module as gates, and **audit the inherited lines rather than trusting them**, since their
+author died before evidencing any of it and its header's completeness claim is false.
+
+R-47 is the more important item of the two. `FieldConsts` carries no hypothesis that
+`rootOfUnity` has order 2^s, so the Lagrange and telescoping lemmas M5-M7 are built on
+have nothing to stand on; `Spec/Lemmas.lean` already had to defer the reduced-index
+`rotate_omega` form for exactly this reason. Planned as `P-4a-roots.md`.
 ## Package log
 
 | pkg | commit | Rust lines | Lean lines | gates | reviewed |

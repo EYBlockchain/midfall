@@ -1550,9 +1550,44 @@ written - which is the general rule this suggests: when a finding is fixed, the 
 stays and the *live prose* must be corrected, because the failure mode is a later
 reader meeting the claim without the context.
 
-Meta-observation for the review process: every finding from R-38 to R-41 was a gate
-whose prose claimed more than the artifact did. This is the mirror case - prose claiming
-*less* than the artifact does - and it survived a build, a gate suite and two reviews
+### R-47 The Lagrange lemmas have no root-of-unity hypothesis to stand on
+
+Found while planning Phase 4a, not while proving it, which is the point: nobody had
+noticed because nobody had tried to *state* the lemmas yet.
+
+`Midfall/Halo2/Exec/Arith.lean:64-72` defines `FieldConsts F` as four bare data fields -
+`numBits`, `s`, `rootOfUnity`, `zeta`. There is no hypothesis that `rootOfUnity` is a
+primitive 2^s-th root of unity, and none that `zeta` has order 3. `grep -rn orderOf
+Midfall/` returns nothing. `Assumptions/Pairing.lean:12` already says so in prose -
+"nothing checks that `rootOfUnity` is a primitive 2^S-th root" - but the gap policy
+requires a missing proof to become a named hypothesis structure in `Assumptions/`, and
+no such structure was ever written. `Assumptions/` contains one file, about pairings.
+
+This is not a porting defect. The Rust does not check it either, and R1 forbids
+inventing a check the reference lacks. It is a defect in what the **proofs** may assume,
+and the damage is already visible in the tree: `Spec/Lemmas.lean` states `zH_vanishes`
+with an ad-hoc `(h : omega ^ n = 1)` bolted on per call, and its `rotate_omega_eq` entry
+openly defers the reduced-index form `omega^((i+rot) % n) = omega^i * omega^rot`
+because that one needs order *exactly* n, not merely dividing n. The deferral note is
+honest and was written by the agent who could not prove it - but the reason it could not
+be proved is not a hard proof, it is a missing hypothesis at the layer below.
+
+Why it matters now: `lagrange_spec` (M5), the permutation grand-product telescoping and
+the logUp rational identity (M9/S2) all quantify over the domain and all need omega to
+be a primitive n-th root. PLAN 6 lists them as deterministic algebra lemmas, which
+suggests they are routine. They are routine *given the hypothesis*, and the hypothesis
+does not exist in the tree. So M5-M7 were scheduled as if unblocked when the first thing
+they need is an assumption file.
+
+Planned fix: `plans/P-4a-roots.md` - add `FieldConsts.IsWellFormed` in
+`Assumptions/TwoAdicity.lean`, discharge it for `fc17` (the only decidable instance, so
+the only one that can show the structure is satisfiable rather than inconsistent), then
+state the five blocked lemmas. Every lemma must ship non-vacuity evidence in the style
+`dualMsm_scale_check` already sets, which carries a counterexample proving its own
+`hc : c <> 0` is necessary. A hypothesis nobody uses is the R-30 pattern in `Prop`
+clothing, so the plan forbids decorative fields.
+
+## Closed
 because nothing executes a comment. Worth adding to the reviewer's checklist: when a
 comment asserts a fact about another file's behaviour, go measure that file.
 
