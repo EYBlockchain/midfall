@@ -132,6 +132,7 @@ reference (read them before writing each file):
 | D12 | `worldUnchanged` route | fuel-based `NoWriters` on generated blocks (Supported.production) rather than assuming a STATICCALL entry |
 | D13 | P-4a `zeta_order` | out of this package; note it cannot be discharged for `fc17` (ZMod 17 has no order-3 element) |
 | D14 | Eip2537.Holds shape | 2-pair `pairing2` (P2) with the `G2Enc` wrapper (P1); `Modexp.Holds` is a THEOREM (`modexpInv_correct`), not an assumption |
+| D15 | Accumulator arm reaches the deployment | kind-aware `encodeAccPublicInput` + point-pair round trip; `EnvAgrees` pins the accumulator header words and the fixed-base table to the VK payload; snapshots carry `accOf S instW`; one-way `end_to_end_acc_complete`; still no acc-mode `↔` with Rust (R-10) |
 
 ## Architecture
 
@@ -212,6 +213,7 @@ built module and must be `#check`ed first.
 - `accWords enc inst` **def** (D4).
 - `decodeAcc_injective (hrt : eipRoundtrip) (hone : toEip 1 = zeros128) (hnodup : names Nodup)` **thm-hole**.
 - `negateByTable`, `decodeAcc_encode (hp : p < 2^256) (hkind = .pointAndScalar) (hshape) (hc : G1CodecLaws) (hsorted) (hnames) (hpre : prefix.size = enc.offset) : decodeAcc … (prefix ++ encodeAccInstances …) = some (negateByTable fb a)`, `decodeAcc_encode_noNeg` **thm-hole**.
+- `encodeAccPublicInput` (kind-aware: no scalar words for `.pointPair`, the deployed Moonlight shape) **def**; `decodeAcc_encode_pointPair` (scalars implicitly 1) **thm-hole** (adjustment 1).
 - `decideBool_eq_true_iff` **rfl**; `MSMKZG.eval_fromBase` **rfl**; `eval_scale` (no Wf), `eval_addMsm (hm hn : lockstep)` **thm-hole**.
 - `batched_complete (hWf) (hd) (ha) (α)`, `batched_atMostOneRoot (hWf) (hbad) (hα hβ) : α = β` **thm-hole**.
 - `contractPairingHolds g2 negSG2 lhs rhs`, `dualMsm_check_iff_contract (hn : nG2Prepared = g2⁻¹) (hs : sG2Prepared = negSG2⁻¹)` **thm-hole** (check-level; linearity in G₂ slot, no cyclic lemma). Keep `exists_zmod_smul_generator` (prime order ⇒ cyclic, `hG₁`) as a **thm-hole** for Spec-level use.
@@ -249,7 +251,7 @@ built module and must be `#check`ed first.
 ### 12. `Midfall/Lowering/Inv.lean` — M5
 - `PlanView` (`vk : Halo2VerifyingKey`, `vkMptr`, `memory : VerifierMemoryLayout`, `proofLayout`, `numInstances k numNegLagranges`, `hasAccumulator`, `consts : TemplateConstants`) **def**.
 - `ptrAddr/wordAt/bytesAt/holdsFr/holdsG1/holdsG1s/holdsFrs`, `LocalsOk V` (`r = p`, `success ∈ {0,1}`) **def**.
-- `EnvAgrees E vk PV params sG2gen encG2 : Prop`: `modulus : p = frModulusConstant`, `truncWidth : divCeil (divCeil numBits 8) 2 = 16`, `delta : E.delta = blsDeltaLiteral` (new constant from `quotient.rs:1492`), `domainN`, `baryWeight`, `omegaInvMul`, `omegaOrder`, `negLagranges` (over Nat), `nG2 : nG2Prepared = P.g₂⁻¹`, `sG2 : sG2Prepared = sG2gen`, `vkDigestWord : (PV.vk.constants.getD 0 ("",0)).2 = frWord vk.transcriptRepr`, `g1BaseWords/g2BaseWords/negSG2Words`.
+- `EnvAgrees E vk PV params sG2gen encG2 fb : Prop`: `modulus : p = frModulusConstant`, `truncWidth : divCeil (divCeil numBits 8) 2 = 16`, `delta : E.delta = blsDeltaLiteral` (new constant from `quotient.rs:1492`), `domainN`, `baryWeight`, `omegaInvMul`, `omegaOrder`, `negLagranges` (over Nat), `nG2 : nG2Prepared = P.g₂⁻¹`, `sG2 : sG2Prepared = sG2gen`, `vkDigestWord : (PV.vk.constants.getD 0 ("",0)).2 = frWord vk.transcriptRepr`, `g1BaseWords/g2BaseWords/negSG2Words`, and (adjustment 2) `accHeader/accNoHeader/accConsistent` (the four accumulator header words cross-checked at `VkLoading.yul:84-87` equal `PV.accEncoding`'s fields) and `accBasesInVk` (every fixed-base table entry is the point its VK slot encodes). `PlanView` gains `accEncoding : Option Generator.AccumulatorEncoding`.
 - `ChallengesGood vk S : Prop` := `xNotRoot : S.alg.x ^ vk.domain.n ≠ 1` only (logupNoPanic moves to `verifier_sound`'s hypothesis list; inside PartialSpecs it was decorative).
 - `Inv E params k PV S V st : Prop` **def**, clauses per `design0.md` with the attack fixes: `st.halted = none`; `LocalsOk`; `bytesAt st (ptrAddr M.g1IdentityMptr) 128 = natToBytesBE 0 128` at EVERY checkpoint; `.vk` payload image + exact calldata shape + acc points; `.transcript` challenges/commitments/evals/`qEvalCptr`; `.lagrange` xn/lLast/lBlind/l0/instanceEval (X_N_MINUS_1_INV unconstrained); `.quotient` quotientEval = `linCom.eval`, selector buckets, `QUOTIENT_MPTR` words; `.pcs` fEval/v/finalCom/`PAIRING_LHS = d.left.eval`/`PAIRING_RHS = d.right.eval` (at `.pcs` only); `.pairing` success = 1 ∧ (no acc → `DualMSM.check`). `Inv_mono` **thm-hole**.
 
@@ -259,7 +261,7 @@ built module and must be `#check`ed first.
 - `DeploymentW W H vkAddr quotientAddr vkRuntime expectedVkCodehash quotientRuntime expectedQuotientCodehash : Prop`: `keccak`, `wf`, `vkCode`, `vkNonEmpty`, `vkHash : H vkRuntime = h`, `qCode/qHash/qNonEmpty`, `disjoint` (accountKeys), `static = false`, **plus attack fixes** `callvalue : W.callvalue = 0`, `vkImm : shellLayout.immutable "AUTHORIZED_VK" = vkAddr` (+ quotient twin), `memguard ≤ 0x1000`, `vkRuntime = 0xfe ‖ hvk.bytes` link. `extcodehash_of_deployment {hsh}` **thm-hole**.
 - `initState W Lyt H cd mem₀`, `callState`, `Surface.calls`, `RunVerifier`, `RunContractIR` (via `Object.subObject`), `RunShell`, `ObsEquiv` (view-level) **def**.
 - `LeanAccepts S H cd := ∃ ms instW, S.decodeCalldata cd = some (ms, instW) ∧ ContractRefAcceptsAcc … instW ms = true` **def**.
-- `GenericX S H ms inst := ∀ Snap, snapshotOf … = .ok Snap → ChallengesGood vk Snap` (snapshot form, not replay); `NoLogupPanic S H ms inst := prepareMsgs … ≠ .error (Fault.panic "proofs/src/plonk/logup.rs:460")` **def**.
+- `accOf S instW := S.cfg.accumulator.bind (decodeAcc (toExec ·) S.E.g1 S.accFixedBases instW)` (adjustment 3: snapshots in accumulator renders carry the decoded accumulator); `GenericX S H ms instW inst := ∀ Snap, snapshotOf … (accOf S instW) = .ok Snap → ChallengesGood vk Snap` (snapshot form, not replay); `NoLogupPanic S H ms inst := prepareMsgs … ≠ .error (Fault.panic "proofs/src/plonk/logup.rs:460")` **def**.
 - `EvaluatorFrame`, `tokenBase`, `frameValuation`, `FrameWellFormed` (pins VK window: the frame contains the program) **def**.
 
 ### 14. `Midfall/Lowering/Partials.lean` — M5/M7, finalPairing pulled forward
@@ -287,7 +289,7 @@ built module and must be `#check`ed first.
   - `end_to_end_noAcc (cfg.accumulator = none) (hn : inst.size = cfg.numInstances) (hp : p ≤ 2^256) (compressedRoundtrip) (GenericX ∧ NoLogupPanic)`: `verifyNative … = .ok () ↔ ∃ cd, (S.repackProof π |>.mapError fromRepackError >>= encodeCalldata · inst) = .ok cd ∧ (∃ obs, RunContractIR …) ∧ ∀ obs, … view = returnView`.
   - `partials : PartialSpecs S …`.
   - `qvm_yul_refines` (FrameWellFormed; static; output = `outputBytes magic (quotientFold …)` ∨ revert); `qvm_validated_noBoundsFault`, `qvm_validated_windows` (validator abstract, P-09e); `points_subgroup_checked` (semantic, call trace); `vkDigest_slot0`; `repackProof_faithful`, `encodeCalldata_faithful` (P-12 equalities); `accFixedBases_producer`; `readScheduleAgrees`.
-- Theorems: `lowering_equivalence` (3 conjuncts derived via `ir_refines` + `shell_unfolds`) **thm-hole (provable-now)**; `lowering_equivalence_noAcc` **thm-hole (provable-now)**; `contractRef_noAcc_of_semanticEquivalence` **rfl** (reuses the untracked lemma — commit `SemanticEquivalence.lean` first); `verifyNative_iff_msgs_codec (hc : compressedRoundtrip)` **thm-hole**.
+- Theorems: `lowering_equivalence` (3 conjuncts derived via `ir_refines` + `shell_unfolds`) **thm-hole (provable-now)**; `lowering_equivalence_noAcc` **thm-hole (provable-now)**; `end_to_end_acc_complete` (adjustment 4: the one-way accumulator-mode corollary Moonlight needs, from `contractRef_acc_complete` + `verifier_complete` + `ir_refines` + the calldata lemmas) **thm-hole**; `contractRef_noAcc_of_semanticEquivalence` **rfl** (reuses the untracked lemma — commit `SemanticEquivalence.lean` first); `verifyNative_iff_msgs_codec (hc : compressedRoundtrip)` **thm-hole**.
 - Non-vacuity gates next to the structure: `example : realSurface.Supported realSurface.o₀` (fixture Surface built from YulGolden ASTs), `#eval (realSurface.astOfMain o₀).isSome -- expect true`, trace-render refutation KAT for `only_two_outcomes`.
 
 ### 18. Edits
@@ -322,11 +324,11 @@ full sketches; the attack file's FIX lines override them.
 | P3 | Phase 4a | S5 + lift: `batched_complete`, `batched_atMostOneRoot`, `exists_zmod_smul_generator`, `prepareMsgs_wf` (lockstep channels), `modexpInv_correct` | P0 | `msmSpecific_append`, `smul_left_injective` | 3 d | mathlib names to `#check` (`Int.cast_smul_eq_zsmul`, `smul_eq_zero`); `[1]` shortcut case split |
 | P4 | M5 | Exec refactor gate + `snapshotOf_prepareMsgs`; `Inv_mono`; `ptrAddr_new_theta`; Inv satisfiability/perturbation gates | stage 3 | — | 3 d | all KAT tokens unchanged; conformance replay identical |
 | P5 | pulled-forward | `finalPairing_sound_noAcc/_progress/_acc`, `traceReturn_spec` for the concrete blocks | **P-BR** (Bridge is this plan), **P-13 first two partials** (`AssemblyHelpers.yul`, `FinalPairing.yul` as `Block EVM.Op`), P1-P3 | `ec_pairing_contract`, `mcopy_frame_bytes`, `staticcall_pairing_inv`, `fail_reverts`, `alpha_preimage_bytes`, `keccak_mod_r_eq_alphaOf`, `g1msm_then_g1add_slot` | 6-10 d | ~10 memory lemmas (copyWithin/loadWord disjointness) not in vendor; MF-4 both failure classes map to revert. Evidence: swapping the call-site args breaks the proof at `pairing2`; constant-true `product` contradicts `hNonDeg` |
-| P6 | M5 | Codec/accumulator: `decodeAcc_injective`, `decodeAcc_encode`, `contractRef_acc_complete`, `verifyNative_iff_msgs_codec`; calldata: `proofLen_eq_repackedLen`, `calldata_roundtrip`, `calldata_canonical`, `repack_spec_wire`, `repack_spec_of_decodeRust`, `points_subgroup_checked_generator` | P0, P3, **P-12** for `repackProof_faithful`/`encodeCalldata_faithful` | `transcript_log_concat` (largest single item; shared with `verifyNative_iff_msgs_codec`), `decodeSlots_encode`, `loadAccPoint_flag0/1`, `accMapInsert_fold_*` | 10 d | `fromProtocol` tiling induction over 10 cursor steps; `decodeAcc` `-s` elaboration. Evidence: R-20 rule, pins against the poseidon dump (4484 B, 0x10e0, 0x1140) and `keccak256("")`, never self-round-trips |
+| P6 | M5 | Codec/accumulator: `decodeAcc_injective`, `decodeAcc_encode`, `decodeAcc_encode_pointPair` (deployed shape), `contractRef_acc_complete`, `verifyNative_iff_msgs_codec`; calldata: `proofLen_eq_repackedLen`, `calldata_roundtrip`, `calldata_canonical`, `repack_spec_wire`, `repack_spec_of_decodeRust`, `points_subgroup_checked_generator` | P0, P3, **P-12** for `repackProof_faithful`/`encodeCalldata_faithful` | `transcript_log_concat` (largest single item; shared with `verifyNative_iff_msgs_codec`), `decodeSlots_encode`, `loadAccPoint_flag0/1`, `accMapInsert_fold_*` | 10 d | `fromProtocol` tiling induction over 10 cursor steps; `decodeAcc` `-s` elaboration. Evidence: R-20 rule, pins against the poseidon dump (4484 B, 0x10e0, 0x1140) and `keccak256("")`, never self-round-trips |
 | P7 | M5 | Early partials: `vkLoading`, `transcriptParser`, `lagrange` (sound + progress) | **P-13** ASTs, **P-4a** domain facts, P2, P4 | `mstore_sequence_image`, `calldata_shape_exact`, `squeeze_to_eq_squeezeChallenge`, `common_uncompressed_g1_eq_common`, `x3_mask_eq_truncate`, `parser_consumes_exactly`, `xn_by_squaring`, `denoms_window`, `batch_invert_contract`, `lIRange_eq_contract`, `instance_eval_eq` | 3-4 w | ~12 parser loops, each via `countdown_or_halt` with the `ProofReadPlan` order; index bijection between Lean's two `lIRange` calls and the fused denominator array |
 | P8 | M6 | QVM: `evalQuotientExpr_memOfρ`, shape denotation ↔ byte decoders, `emitExpr_correct` (fuel induction, 4 peepholes under `RecognizersSound`), compaction lemmas, `qvm_compile_correct_identity/_certifier/_program`, `builder_segments_total`, `quotientFold_matches_linearization` | stage 5, **P-09f** (recognizer soundness instances), **P-10** (`SelectorFoldConsistent` discharge) | `foldRangeIdxM_induction`, `identityExpr_bytes_append`, `emitFuel_adequate`, `compactQuotientRuns_segments/_value`, `horner_reverse`, `bucket_horner_with_gaps` | 3 w | 40 builder panic sites; (slot,ptr) operand order; `Selector.index = fixed column index` is an unpinned Rust invariant (potential review item). KATs: ≥2 main and ≥2 selector identities interleaved (R-30 rule) |
 | P9 | M6/M7 | `quotientLin_*` (needs **P-09h** emitter + evaluator partials), `pcs_*` (needs an AST-producing PCS emitter or yul% quotes of `Kzg.computations` text — R-42 option A; flagged) | P7, P8, P-13 | `linearization_prep`, `quotientEval_eq_linCom_eval` (R-16/R-19), `buckets_eq_groupedAdd`, truncated-powers lemmas, block-6 slot equations via `Holds.g1Msm1/g1Add` | unestimated (ROADMAP policy) | pcs scratch at 0x1000 is phase-scoped: `Inv .pcs` must not mention it |
-| P10 | M7 | Composition: `verifier_sound/complete/only_two_outcomes` via `StmtsContractAll.append` over the seven slices; `snapshot_exists_of_nopanic`; `lowering_equivalence_noAcc`; `end_to_end_noAcc` | P5-P9, **P-11/P-12** | `main_block_is_concat`, `Inv_start_of_initState` | ≥3 w | R-5/R-12 latent Exec panics must be unreachable under Supported or matched by a revert; R-15 lazy zips pinned by Supported sizes |
+| P10 | M7 | Composition: `verifier_sound/complete/only_two_outcomes` via `StmtsContractAll.append` over the seven slices; `snapshot_exists_of_nopanic`; `lowering_equivalence_noAcc`; `end_to_end_noAcc`; `end_to_end_acc_complete` (one direction) | P5-P9, **P-11/P-12** | `main_block_is_concat`, `Inv_start_of_initState` | ≥3 w | R-5/R-12 latent Exec panics must be unreachable under Supported or matched by a revert; R-15 lazy zips pinned by Supported sizes |
 | P11 | M8 | `memoryguard` (and `setimmutable` for creation code) in the vendored dialect; `ImportSolcIR` yul% generation; `ShellModel`; `irCheck` (α-equivalence modulo constant substitution and solc renames, fuel-based); `ir_refines` as view-level simulation; `lowering_equivalence` | P10, D-P15 | `irCheck_sound`, `shell_unfolds` | unestimated | only one `hex"…"` literal, 76 user functions; planted rename must fail `irCheck` |
 | P12 | M9 | S5 `alpha_batching_sound`, then S2-S4, S1, S7 (uses `lowering_equivalence`) | P3, P11, `security.tex` (D-P14 x1/x4 rows) | — | unestimated | `Pr{…}[…]` VCVio notation; ArkLib sorries excluded from closures |
 | P13 | M10/M11 | `direct_correct`; `deployed_equivalence` (needs regenerated Moonlight artifact, R-36) | P10 | — | unestimated | — |
@@ -358,7 +360,8 @@ ROADMAP policy: P7-P13 numbers are lower bounds; the first calibration point is 
 
 - Frozen trio re-pin (findings 1-3): user sign-off; D-P9-style.
 - `Midfall.Halo2.fixedBases` "-G" identity (finding 7): separate Exec patch with KAT.
-- `.pointPair` accumulator encoder: separate port (kind-aware `encodeAccInstances`).
+- `.pointPair` accumulator encoder: now IN scope as `encodeAccPublicInput` (adjustment 1); its Rust source
+  (`circuits/src/ecc/foreign/ecc_chip.rs:226-239`) must be read before the definition is written.
 - `Spec.accepts` needs `E` (finding 2): Phase 4.
 - P-4a `zeta_order` undischargeable for `fc17`: P-4a owner.
 - `Selector.index = fixed-column index` at `linearization/verifier.rs:84`: pin as a Rust
@@ -946,6 +949,21 @@ theorem decodeAcc_encode_noNeg /- same binders -/ (hneg : ∀ b ∈ fb.toList, b
     decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) codec fb
         (prefix ++ encodeAccInstances (toExec enc) codec a) = some a := by sorry
 
+/-- Adjustment 1: kind-aware public-input encoder. The point-pair layout carries no scalar words
+    (Models.lean:863-865: Moonlight wraps do not carry scalars); `encodeAccInstances` always emits them,
+    which is why the PLAN round trip is false for .pointPair. Rust source to confirm against:
+    circuits/src/ecc/foreign/ecc_chip.rs:226-239 `as_public_input` on fully collapsed points. -/
+def encodeAccPublicInput {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type} [Group G₁]
+    (enc : Midfall.Halo2.AccumulatorEncoding) (codec : G1Codec G₁) (a : KzgAcc (Fr p) G₁ G₂ Gₜ) : Array Word256 :=
+  if enc.hasCarriedScalars then encodeAccInstances enc codec a
+  else dropCarriedScalarWords enc (encodeAccInstances enc codec a)   -- SKETCH: drop the two scalar slots (lhs at pointWords, rhs after)
+
+/-- The round trip for the DEPLOYED point-pair shape: carried scalars are implicitly 1. -/
+theorem decodeAcc_encode_pointPair /- same binders as decodeAcc_encode -/
+    (hkind : enc.kind = Midfall.Generator.AccumulatorEncodingKind.pointPair) (hsL : sL = 1) (hsR : sR = 1) :
+    decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) codec fb
+        (prefix ++ encodeAccPublicInput (toExec enc) codec a) = some (negateByTable fb a) := by sorry
+
 theorem decideBool_eq_true_iff {α : Type} {a b : α} (d : Decidable (a = b)) :
     decideBool d = true ↔ a = b := by cases d <;> simp [decideBool, *]
 
@@ -1448,6 +1466,7 @@ structure PlanView where
   proofLayout : ProofCalldataLayout
   numInstances k numNegLagranges : Nat
   hasAccumulator : Bool
+  accEncoding : Option Midfall.Generator.AccumulatorEncoding   -- adjustment 2: = cfg.accumulator; hasAccumulator = accEncoding.isSome
   consts : TemplateConstants
   qplan : QuotientProgramPlan
   qbuild : QuotientProgramBuild
@@ -1476,7 +1495,8 @@ def LocalsOk {calls gas} (V : VEnv (Midfall.Yul.Bridge.Dialect calls gas)) : Pro
 
 /-- Literals the contract hard-codes, tied to the abstract environment. -/
 structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁) (PV : PlanView)
-    (params : ParamsVerifierKZG G₁ G₂) (sG2gen : G₂) (encG2 : G₂ → Bytes) : Prop where
+    (params : ParamsVerifierKZG G₁ G₂) (sG2gen : G₂) (encG2 : G₂ → Bytes)
+    (fb : Array (AccFixedBase G₁)) : Prop where
   modulus : p = frModulusConstant                                   -- FR_MODULUS in every addmod/mulmod/lt
   truncWidth : divCeil (divCeil E.field.numBits 8) 2 = 16           -- x3 mask 128 bits; truncate keeps 16 bytes
   delta : E.delta = (Nat.cast blsDeltaLiteral : Fr p)               -- SKETCH: new constant from quotient.rs:1492
@@ -1491,6 +1511,20 @@ structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p)
   g1BaseWords : vkG1Words PV 11 = E.g1.toEip P.g₁                   -- SKETCH: header word indices
   g2BaseWords : vkG2Words PV 15 = encG2 P.g₂
   negSG2Words : vkG2Words PV 23 = encG2 sG2gen⁻¹
+  /-- Adjustment 2: VkLoading.yul:84-87 cross-checks HAS_ACCUMULATOR, ACC_OFFSET, NUM_ACC_LIMBS and
+      NUM_ACC_LIMB_BITS against the generated config; without these clauses vkLoading_spec is
+      unprovable in accumulator renders. -/
+  accHeader : ∀ enc, PV.accEncoding = some enc →
+    (PV.vk.constants.getD hasAccumulatorSlot ("", 0)).2 = 1 ∧                      -- SKETCH: slot indices from vkHeaderTemplateSlotsDefault
+    (PV.vk.constants.getD accOffsetSlot ("", 0)).2 = BitVec.ofNat 256 enc.offset ∧
+    (PV.vk.constants.getD numAccLimbsSlot ("", 0)).2 = BitVec.ofNat 256 enc.numLimbs ∧
+    (PV.vk.constants.getD numAccLimbBitsSlot ("", 0)).2 = BitVec.ofNat 256 enc.numLimbBits
+  accNoHeader : PV.accEncoding = none → (PV.vk.constants.getD hasAccumulatorSlot ("", 0)).2 = 0
+  accConsistent : PV.hasAccumulator = PV.accEncoding.isSome
+  /-- Adjustment 2: the fixed-base tail folds VK points read from memory (AccumulatorHelpers.yul:314-337):
+      each table entry's base is the point its VK slot encodes (artifacts.rs:181-227 maps names to VK point
+      mptrs), so finalPairing_sound_acc can relate the folded point to `a.fullyCollapse (tblOf PV fb)`. -/
+  accBasesInVk : ∀ b ∈ fb.toList, ∃ slot, vkG1Words PV slot = E.g1.toEip b.base   -- SKETCH: slot from the name → mptr map
 
 /-- Completeness side condition (R-2 first face). Soundness's NoLogupPanic is stated in
     Surface.lean operationally; inside a snapshot hypothesis it would be decorative (attack). -/
@@ -1702,9 +1736,15 @@ def LeanAccepts (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∃ ms instW, decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = some (ms, instW) ∧
     ContractRefAcceptsAcc S.E H S.params S.vk S.cfg.accumulator S.vkDigest S.accFixedBases instW ms = true
 
+/-- Adjustment 3: the decoded public accumulator of a calldata, so snapshots in accumulator renders
+    carry it (`none` would silently state every acc-mode per-partial spec about a no-acc snapshot). -/
+def accOf (S : Surface p G₁ G₂ Gₜ) (instW : Array Word256) : Option (KzgAcc (Fr p) G₁ G₂ Gₜ) :=
+  S.cfg.accumulator.bind fun enc => decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) S.E.g1 S.accFixedBases instW
+
 /-- Completeness side condition (R-2 first face), via the snapshot (no schedule replay). -/
-def GenericX (S : Surface p G₁ G₂ Gₜ) (H : Hash) (ms : List (Msg (Fr p) G₁)) (inst : Array (Fr p)) : Prop :=
-  ∀ Snap, snapshotOf S.E H S.vk inst ms none = .ok Snap → ChallengesGood S.vk Snap
+def GenericX (S : Surface p G₁ G₂ Gₜ) (H : Hash) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
+    (inst : Array (Fr p)) : Prop :=
+  ∀ Snap, snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap → ChallengesGood S.vk Snap
 
 /-- Soundness side condition (finding 5), operational: the Lean pipeline does not hit the logup inversion panic. -/
 def NoLogupPanic (S : Surface p G₁ G₂ Gₜ) (H : Hash) (ms : List (Msg (Fr p) G₁)) (inst : Array (Fr p)) : Prop :=
@@ -1771,7 +1811,8 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (calls gas) (pre
 
 /-- The per-partial obligations. Common hypotheses (abbreviated H*): SupportedS S S.o₀; EnvAgrees;
     PermissiveFor for *_sound; decodeCalldata cd = some (ms, instW) ∧ instOfWords? instW = some inst
-    with st.env.calldata = cd.data.toList; snapshotOf S.E H S.vk inst ms acc = .ok Snap. -/
+    with st.env.calldata = cd.data.toList; snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap
+    (adjustment 3: the snapshot carries the decoded public accumulator in accumulator renders). -/
 structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct) : Prop where
   vkLoading_sound : ∀ H W qAddr calls gas cd ms instW inst Snap, /- H* -/
     PartialSound S .vkLoading Snap calls gas (fun _ _ => True)
@@ -1796,7 +1837,7 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = none →
     PartialRejects S .transcriptParser calls gas (fun V st => ∃ Snap, Inv S.E S.params S.accFixedBases .vk S.plan Snap V st)
   pcs_rejects : ∀ H W qAddr calls gas cd ms instW inst f, /- H* without the snapshot -/
-    snapshotOf S.E H S.vk inst ms none = .error (.pcs, f) →
+    snapshotOf S.E H S.vk inst ms (accOf S instW) = .error (.pcs, f) →
     PartialRejects S .pcs calls gas (fun V st => ∃ Snap, Inv S.E S.params S.accFixedBases .quotient S.plan Snap V st)
   -- progress twins (honest calls, ofFun gas), each with its side condition
   vkLoading_progress : ∀ H W qAddr cd ms instW inst Snap, /- H* -/ PartialProgress S W product qAddr .vkLoading Snap (ExternalGas.ofFun fun _ => 0)
@@ -1818,7 +1859,7 @@ theorem finalPairing_sound_noAcc (S : Surface p G₁ G₂ Gₜ) (product : Pairi
     (H : Hash) (Snap : Snapshot p G₁ G₂ Gₜ) (calls : ExternalCalls) (gas : ExternalGas)
     (hsup : SupportedS S S.o₀) (hperm : PermissiveFor S W product qAddr calls)
     (hH : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
-    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2) (hacc : S.plan.hasAccumulator = false) :
+    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 S.accFixedBases) (hacc : S.plan.hasAccumulator = false) :
     ∀ outer, StmtsContractAll (D := Dialect calls gas) (mainScope S calls gas outer) (S.blk .finalPairing)
       (fun V st => Inv S.E S.params S.accFixedBases .pcs S.plan Snap V st)
       (fun _ _ V' st' o =>
@@ -2118,13 +2159,13 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 /-- Both bad-set side conditions for a calldata (finding 4 completeness, finding 5 soundness). -/
 def SideConditions (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∀ ms instW inst, decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = some (ms, instW) →
-    instOfWords? (p := p) instW = some inst → GenericX S H ms inst ∧ NoLogupPanic S H ms inst
+    instOfWords? (p := p) instW = some inst → GenericX S H ms instW inst ∧ NoLogupPanic S H ms inst
 def SoundSide (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∀ ms instW inst, decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = some (ms, instW) →
     instOfWords? (p := p) instW = some inst → NoLogupPanic S H ms inst
 def CompleteSide (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
   ∀ ms instW inst, decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = some (ms, instW) →
-    instOfWords? (p := p) instW = some inst → GenericX S H ms inst
+    instOfWords? (p := p) instW = some inst → GenericX S H ms instW inst
 
 /-- The headline obligations over a Surface. Every field assumes `SupportedS S S.o₀` (D2: the options the
     lowered program came from, so a trace-render L cannot pass with a production o) and quantifies over
@@ -2147,7 +2188,7 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   verifier_complete : ∀ (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (cd : Bytes),
     SupportedS S S.o₀ → DeploymentW S W H vkAddr qAddr →
     Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
-    EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 → Midfall.Assumptions.G1CodecLaws S.E.g1 →
+    EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 S.accFixedBases → Midfall.Assumptions.G1CodecLaws S.E.g1 →
     LeanAccepts S H cd → CompleteSide S H cd →
     (∃ obs, RunShell S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs) ∧
     (∀ obs, RunShell S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
@@ -2176,10 +2217,10 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       (inst : Array (Fr p)) (π : Bytes),
     SupportedS S S.o₀ → DeploymentW S W keccak256 vkAddr qAddr →
     Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product → Midfall.Assumptions.G1CodecLaws S.E.g1 →
-    EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 →
+    EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 S.accFixedBases →
     S.irCheck ir = true → inst.size = S.cfg.numInstances → p ≤ 2 ^ 256 →
     (∀ ms, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
-       GenericX S keccak256 ms inst ∧ NoLogupPanic S keccak256 ms inst) →
+       GenericX S keccak256 ms (inst.map frWord) inst ∧ NoLogupPanic S keccak256 ms inst) →
     (verifyNative (Gₜ := Gₜ) S.E Features.solidity S.params S.vk inst π = .ok () ↔
       ∃ cd, ((S.repackProof π).mapError Midfall.Generator.GeneratorError.fromRepackError >>=
                fun π' => S.encodeCalldata π' inst) = .ok cd ∧
@@ -2238,7 +2279,7 @@ theorem lowering_equivalence (S : Surface p G₁ G₂ Gₜ) (product : PairingPr
     (hc : LoweringCorrect S product) (hsup : SupportedS S S.o₀)
     (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (hdep : DeploymentW S W H vkAddr qAddr)
     (hpc : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
-    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2) (hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1)
+    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 S.accFixedBases) (hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1)
     (ir : YulObject) (irLyt : EVM.Layout) (hir : S.irCheck ir = true)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hside : SideConditions S H cd) (g₀ : U256) :
     -- soundness: any run that returns, returns true, and Lean accepts
@@ -2263,6 +2304,35 @@ theorem lowering_equivalence_noAcc (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd
         instOfWords? (p := p) instW = some inst ∧
         verifyMsgs (Gₜ := Gₜ) S.E H Features.solidity S.params S.vk inst ms = .ok () := by
   sorry -- unfold; rw [h]; cases prepareMsgs …; simp [verifyMsgs, bind, Except.bind]  (mirrors SemanticEquivalence.lean)
+
+/-- Adjustment 4: the accumulator-mode corollary Moonlight needs, one direction only (R-10, R-26.4): an
+    honest compressed proof that verifyNative accepts, with a public accumulator that decodes and passes its
+    own check, yields calldata on which every honest IR run returns abiTrue. Derived from
+    contractRef_acc_complete + verifier_complete + ir_refines + the calldata lemmas. There is deliberately
+    no acc-mode `↔`: the contract batches with keccak-alpha, Rust with the sponge r. -/
+theorem end_to_end_acc_complete (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hc : LoweringCorrect S product) (enc : Midfall.Generator.AccumulatorEncoding)
+    (henc : S.cfg.accumulator = some enc)
+    (W : ExecEnv) (vkAddr qAddr : U256) (ir : YulObject) (irLyt : EVM.Layout)
+    (inst : Array (Fr p)) (π : Bytes) (a : KzgAcc (Fr p) G₁ G₂ Gₜ)
+    (hsup : SupportedS S S.o₀) (hdep : DeploymentW S W keccak256 vkAddr qAddr)
+    (hpc : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product) (hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1)
+    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen S.encG2 S.accFixedBases)
+    (hir : S.irCheck ir = true) (hn : inst.size = S.cfg.numInstances) (hp : p ≤ 2 ^ 256)
+    (hv : verifyNative (Gₜ := Gₜ) S.E Features.solidity S.params S.vk inst π = .ok ())
+    (hdec : decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) S.E.g1 S.accFixedBases (inst.map frWord) = some a)
+    (hchk : KzgAcc.check a S.params (tblOf S.plan S.accFixedBases) = true)
+    (hWf : ∀ ms d, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
+      prepareMsgs (Gₜ := Gₜ) S.E keccak256 Features.solidity S.vk inst ms = .ok d →
+      d.left.scalars.size = d.left.bases.size ∧ d.right.scalars.size = d.right.bases.size)
+    (hside : ∀ ms, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
+      GenericX S keccak256 ms (inst.map frWord) inst) :
+    ∃ cd, ((S.repackProof π).mapError Midfall.Generator.GeneratorError.fromRepackError >>=
+             fun π' => S.encodeCalldata π' inst) = .ok cd ∧
+      (∃ obs, RunContractIR S W keccak256 ir irLyt cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs) ∧
+      ∀ obs, RunContractIR S W keccak256 ir irLyt cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
+        obs.view = returnView (callState W irLyt keccak256 cd) := by
+  sorry -- verifyNative_iff_msgs_codec; contractRef_acc_complete; calldata_roundtrip; hc.verifier_complete; hc.ir_refines
 
 /-- Finding 3: the frozen Statements.contractRef_noAcc, under a new name (filling it needs a re-pin). -/
 theorem contractRef_noAcc_of_semanticEquivalence (E : VerifierEnv p G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂)
