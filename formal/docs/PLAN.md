@@ -502,6 +502,13 @@ theorem calldata_canonical : decodeCalldata L.plan cd = some (ms, inst) → cd =
   -- if the contract accepts trailing bytes or instance words ≥ r, weaken to `≈` and document the malleability
 theorem decodeAcc_encode : decodeAcc enc (encodeAccInstances enc a) = some a      -- 7×56 limbs, coord−1, sentinel, identity flag
 theorem decodeAcc_injective : decodeAcc enc i₁ = some a → decodeAcc enc i₂ = some a → accWords enc i₁ = accWords enc i₂
+-- KNOWN FALSE as written (review F4; counterexample already recorded as R-25): the
+-- accumulator decoder IGNORES the coordinate words of an identity-flagged point
+-- (AccumulatorHelpers.yul:130-141), so distinct instance tails decode to the same
+-- accumulator. What is true is injectivity of NORMALISED accumulator words, and the
+-- round-trip should be restricted to the collapsed shape the decoder expects. Left in
+-- place with this note rather than silently deleted, so the normative record shows that
+-- the naive form is refuted rather than pretending it was always qualified.
 -- Quotient evaluator: VM first, then Direct
 def QVM.run (prog : QVM.Program) (f : QVM.Frame) : Except QVM.Fault QVM.Output   -- port of vm/reference.rs
 theorem qvm_compile_correct (hsup) : QVM.run L.plan.qprog (frameOf L.plan tr ev) = .ok (outputOf (quotientParts g.vk tr ev))

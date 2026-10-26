@@ -37,7 +37,7 @@ UNVERIFIED is a lead, not a citation - do not put it in `security.tex` as writte
 
 ## The three conclusions that follow
 
-1. **S3 is largely a freebie, S4 is not.** ArkLib already proves KZG function binding
+1. **S3 is largely an *instantiation*, S4 is not — and "instantiation" is not "free".** ArkLib already proves KZG function binding
    under ARSDH, so the multi-open binding statement can be *instantiated* rather than
    proved - but there is no Fiat-Shamir soundness theorem anywhere in ArkLib, so the
    step that turns an interactive-protocol statement into the noninteractive verifier is
