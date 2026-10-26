@@ -505,9 +505,17 @@ The plan asserts that a validated program with a well-formed frame never faults
 out-of-bounds. But verifier memory in the certifier is a **PRNG over the whole u32
 address space** - every address read succeeds by construction. The only out-of-range
 faults that exist are reads past the end of the *program* and constant slots past the end
-of the *table*. So the theorem as worded is either vacuously true or about a different
-memory model than the one ported. It needs restating over those two real fault classes,
-or over the Yul-side memory model if the intent was the deployed contract's bounds.
+of the *table*.
+
+**RESOLVED by P-09e - a reconciliation, not a reversal.** Both readings were correct
+about **different memories**. The validator bounds the program against the *deployed*
+`VerifierMemoryLayout` (plan.rs:570-643, which states plainly that "the interpreter has
+no runtime pointer clamp"), and there an out-of-window read is silent corruption rather
+than a revert. So `qvm_validated_noOOB` IS about this layer, but as a **layout
+property** - *validated program + layout model implies no pointer the program loads lies
+outside the populated windows* - quantified over the layout model, not over a memory
+object and not as an interpreter fault. **Item 2 is closed on this basis.** Items 1 and 3
+remain open, as does D-P18.
 
 ### 3. `qvm_compile_correct` cannot be *stated* until the compiler lands
 
