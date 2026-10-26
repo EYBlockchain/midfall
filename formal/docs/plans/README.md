@@ -15,14 +15,22 @@ was written before its dependencies landed is a guess, so the sections marked
   creates, the packages it depends on, and the packages it unblocks.
 - Hazards are numbered and each one must be answered in the agent's report. A hazard is
   only allowed in a plan if the planner actually looked at the source and found it.
-- Acceptance always includes: `lake build` green, `bash scripts/checks.sh` green, a
-  per-gate perturbation actually run (PLAN 12, R-41's rule), and non-vacuity evidence.
-- Plans do not repeat PLAN section 4's R1-R11 rules; they point at them and record only
-  the file-specific application.
-
 ## Queue
 
-See PLAN 14.7 for the dependency-correct order. Current board:
+See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board:
+
+| pkg | plan | status |
+|---|---|---|
+| P-05..P-09d | abi, encoding, api, kzg, vk, memory, vm types/interp/builder/certify | DONE |
+| P-09e | [validator](P-09e-validator.md) | in flight |
+| P-09f | shape recognizers (vm/mod.rs 3156-3227, 3649-3813) | DRAFT |
+| P-09h | `yul_emit.rs` | DRAFT |
+| P-10 | `quotient.rs` + `direct/folds.rs` | DRAFT |
+| P-11 | `plan` + `config` + `mod` | DRAFT - needed for `L.plan.qprog` and `Supported` |
+| P-12 | `calldata` + `builder/*` + `evm` | DRAFT |
+| P-13 | [templates](P-13-templates.md) | DRAFT - widest error bar |
+| ~~P-14~~ | ~~listing, disasm, diagnostics~~ | **CUT** (PLAN 14.8) |
+| ~~P-09g~~ | ~~direct/{mod,emit,layout,validate}~~ | **DEFERRED to M10** |
 
 | pkg | plan | status |
 |---|---|---|

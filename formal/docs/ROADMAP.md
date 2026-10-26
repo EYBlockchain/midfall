@@ -57,6 +57,29 @@ Rust-left counts `vm/mod.rs` whole, but roughly 2,000 of its 4,336 lines are now
 4,324 Askama templates**. At the measured ~1,000 lines/agent-hour that is **~19-20 hours
 of chained agent time** for the rest of M3, before any of M4-M11.
 
+## Port ETAs, with the arithmetic shown
+
+**Superseded by PLAN 14.8 for scope.** After the M3 cut (disasm, quotient_listing,
+direct/trace, diagnostics out; direct/{mod,emit,layout,validate} deferred to M10 with
+`folds.rs` staying because `quotient.rs` imports its fold types), the remaining work is
+~7,500 Rust lines plus 4,324 Askama template lines.
+
+| pkg | Rust lines | est. h |
+|---|---:|---:|
+| P-09e validator *(in flight)* | ~1,050 | 2 |
+| P-09f shape recognizers | ~600 | 1.2 |
+| P-10 `quotient.rs` + `direct/folds.rs` (split x2) | 2,644 | 4.5 |
+| P-09h `yul_emit.rs` | 1,176 | 2.3 |
+| P-11 `plan` + `config` + `mod` | 721 | 1.5 |
+| P-12 `calldata` + `builder` + `evm` | 1,316 | 2.6 |
+| P-13 templates | 4,324 Askama | 6-12 |
+| | | **~21-27** |
+
+Plus ~4 h of orchestration overhead across 9 packages. **Working number: ~25 h of
+chained agent time**, down from ~38 h. The wide band on P-13 is honest: it is the only
+block with no line-by-line Rust counterpart, and 6 h is judgement rather than measurement.
+
+### Superseded table (pre-cut)
 The QVM block (P-09a..e) is the part that moved fastest per line, because each package
 could reuse the last one's fixtures and gates rather than build them. It is also where
 the most valuable findings came from: a real zero-guard bug in committed code (F-1,
