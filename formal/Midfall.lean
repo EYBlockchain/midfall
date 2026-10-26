@@ -43,6 +43,7 @@ import Midfall.Generator.Quotient.VmTypes
 import Midfall.Generator.Quotient.VmReference
 import Midfall.Generator.Quotient.VmBuilder
 import Midfall.Generator.Quotient.VmCertify
+import Midfall.Generator.Quotient.VmValidator
 import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
