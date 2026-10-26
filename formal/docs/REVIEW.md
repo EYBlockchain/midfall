@@ -1763,8 +1763,52 @@ scaffold being honestly described.
 
 ## Closed
   instantiates the relation with `kzgCommitBeq` (value equality, labels ignored
-  exactly as the Rust does); the corpus case is still owed.
+### R-52 P-09f found that a landed package's evidence was weaker than recorded
 
+Three findings from the recognizers package deserve their own entry because they are
+about **already-committed work**, not the package in hand.
+
+**F-c (the important one).** P-09c's `rowHooks` gate supplied a hand-written recognizer:
+`limbShape := fun e => if e == rowExpr then some rowShape else none`
+([VmBuilder.lean:1702](../Midfall/Generator/Quotient/VmBuilder.lean#L1702), confirmed by
+the orchestrator by grep). P-09f then showed the **real** flat `BILIN7_ROW` matcher does
+not recognise `rowExpr` at all - `quotientLimbShape rowExpr = none`. The factored row
+shape `lhs * sum c_i m_i` only fires inside MODARITH7, where the repeated limb becomes
+the condition pointer and the sum becomes a lin block. So P-09c's row-hook evidence was
+about a shape the reference's own recognizer never produces from that tree. It is not a
+wrong result - the hook was honest about being a hook, and P-09c flagged the placeholder
+status - but any later reader treating gate 8 as evidence about real recognition would
+be misled. Now pinned by `rowSpellingMatters_ok`.
+
+**F-b: five guards in the reference cannot bind.** The three subshape matchers'
+`used.len() >= N` conjuncts (QVM:3848, 3897, 3968), the lin7-subshape arity conjunct, and
+QVM:3199's nothing-left guard are all implied by their own loop structure - each found
+limb pushes one grouped entry and at least one used index. Dropping any of them reddens
+nothing. Good news for the safety argument (matched-non-emptiness follows from the arity
+structure, not from a conjunct), but it means those conjuncts are documentation dressed as
+enforcement, and a reviewer counting guards would over-count them.
+
+**F-a: the port is weaker than the reference in one respect.** The four `unreachable!`
+sites at QVM:3286/3298/3310/3322 are inside a function whose Lean return type is
+`Option`, so an internal impossibility renders as "not recognised" rather than aborting
+the build. A future recognizer returning the wrong variant would silently fall back
+instead of failing loudly. Gated as `portBoundsNeverBind_ok` and stated in the header -
+recorded rather than fixed, because fixing it means changing the return type, which is a
+design decision about this module's contract.
+
+**Also: package-label drift.** VmBuilder and VmCertify comments call the recognizers
+"P-09e"; the queue says P-09e is the validator and P-09f the recognizers. Cosmetic, but
+it is the kind of stale cross-reference that makes a reader look in the wrong file - the
+same class as R-46 and R-49. Retirement list from P-09f is recorded in the plans queue.
+
+**Meta-point.** This is the second time in three packages that a newly landed package
+found a defect in a *previously committed* one (P-09c found the VmTypes zero-guard, now
+fixed; P-09f found P-09c's synthetic hook). That is the audit-inheritance instruction
+working - each package is told not to trust what it inherits. It is also evidence that
+the deferred reviews are accumulating real debt: these were caught by luck of sequencing,
+not by a review pass.
+
+## Closed
 ## Next work packages
 
 1. ~~`Exec/Poly`~~ done (`451a491`): only `poly::Error` and `Rotation` are
