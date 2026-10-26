@@ -48,6 +48,7 @@ import Midfall.Generator.Quotient.VmRecognizers
 import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
+import Midfall.Lowering.SemanticEquivalence
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
