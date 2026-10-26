@@ -474,6 +474,64 @@ directions.
 4. New packages should prefer this pattern by default. Recorded in
    `docs/plans/README.md` standing notes.
 
+## D-P20 (OPEN - needs sign-off): two PLAN 9.5 statements are not statable as written
+
+**Not adopted.** P-09b landed the interpreter that PLAN 9.5's `QVM.run` names, and found
+that the named function does not exist in the reference. This is a statement-surface
+problem, so per PLAN 12 it is reported rather than fixed by choosing a convenient reading.
+
+### 1. `QVM.run (prog) (f) : Except QVM.Fault QVM.Output` - no such granularity
+
+The reference's entry point is `eval_quotient_identity`, called on
+`&bytes[cursor..expr_end]` - **one identity's expression subprogram**, up to but excluding
+its fold. There is no whole-stream entry point, no `Frame`, and no `Output` object. Only
+`QuotientProgramItem::Identity` reaches the interpreter. `plan.inlineIdentities`,
+`plan.structuredTailIdentities` and the three native markers never enter it - they are
+checked positionally and `identity_values` pushes `Fq::ZERO` for them. **The fold is not
+modelled at all**: `FOLD_MAIN`/`FOLD_SELECTOR`/`NATIVE_*` are hard errors inside an
+identity expression, and the y-batch accumulation and the negation written to
+`QUOTIENT_EVAL_MPTR` are Yul-side.
+
+Consequence: `qvm_compile_correct`, as written (`QVM.run L.plan.qprog (frameOf ...) =
+.ok (outputOf (quotientParts ...))`), quantifies over a program/frame/output triple that
+the reference never assembles. The honest options are (a) restate it per identity plus a
+separately ported segment walker, or (b) state the whole-stream version as our own
+definition and prove it decomposes to the per-identity one. (b) is more useful for M7 but
+is a larger commitment.
+
+### 2. `qvm_validated_noOOB`'s `.oob` fault cannot arise
+
+The plan asserts that a validated program with a well-formed frame never faults
+out-of-bounds. But verifier memory in the certifier is a **PRNG over the whole u32
+address space** - every address read succeeds by construction. The only out-of-range
+faults that exist are reads past the end of the *program* and constant slots past the end
+of the *table*. So the theorem as worded is either vacuously true or about a different
+memory model than the one ported. It needs restating over those two real fault classes,
+or over the Yul-side memory model if the intent was the deployed contract's bounds.
+
+### 3. `qvm_compile_correct` cannot be *stated* until the compiler lands
+
+The certifier's seed is `derive_certify_seed(&[build], &exprs, &vk_payload)` - Keccak over
+the **finalized bytecode**, the constant table, the hashed expression trees and the VK
+payload. The finalized bytecode is exactly what the builder emits, so the theorem's
+hypothesis quantifies over an artifact nothing currently in the tree can regenerate. This
+blocks the *statement*, not just the proof, and it makes P-09c (the VM compiler) the
+critical path for M6 rather than a later convenience.
+
+What is now reproducible and byte-exactly gated is the half the soundness argument turns
+on: **given a seed, the assignment is identical to the Rust's.**
+
+### 4. `qvm_yul_refines` and `direct_correct` have no Rust proof structure
+
+`reference.rs`'s own doc assigns the reference-interpreter-to-Yul leg to the opcode and
+memory-token conformance tests plus a per-identity trace differential. So these are
+theorems we originate. That was already suspected in `plans/P-09-quotient-vm.md`; it is
+now confirmed from the source, and no Rust-side argument should be invented to hang them
+on.
+
+**Owner:** you, for items 1-2 (they change normative text). Item 3 is a scheduling
+consequence I have applied: P-09c moves ahead of P-10.
+
 
 
 ## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
