@@ -36,6 +36,7 @@ import Midfall.Generator.Templates
 import Midfall.Generator.Protocol
 import Midfall.Generator.Encoding
 import Midfall.Generator.Abi
+import Midfall.Generator.Api
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
