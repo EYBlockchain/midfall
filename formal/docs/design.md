@@ -499,7 +499,7 @@ separately ported segment walker, or (b) state the whole-stream version as our o
 definition and prove it decomposes to the per-identity one. (b) is more useful for M7 but
 is a larger commitment.
 
-### 2. `qvm_validated_noOOB`'s `.oob` fault cannot arise
+### 2. `qvm_validated_noOOB`'s `.oob` fault cannot arise — RESTATED by P-09e (see below)
 
 The plan asserts that a validated program with a well-formed frame never faults
 out-of-bounds. But verifier memory in the certifier is a **PRNG over the whole u32
