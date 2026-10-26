@@ -1732,8 +1732,36 @@ empirical rather than argued.
   **Scope widened by Exec/Poly:** the same pointer identity also decides whether
   `Error::DuplicatedQuery` fires at all (utils.rs:55-58 tests membership of the
   same commitment), so R-7 is not only about grouping - it is on the error path
-  too, and a query set with two allocations holding one point changes the
-  accept/reject decision, not just the point-set layout. Exec/Kzg/MultiOpen
+### R-51 External statement review: six findings, all verified, four applied
+
+A read-only review of the normative plan against the current Lean interfaces produced six
+findings. **I checked each against the cited lines before recording any of it** - all six
+hold. Four are applied; two are open and named below.
+
+| # | finding | verified against | status |
+|---|---|---|---|
+| F1 | `end_to_end_noAcc`'s right-hand side holds **vacuously** when no contract run exists - a `∀` over an empty set of runs is true | PLAN.md:471-474 | **applied** `1f4fba5` - run existence is now an explicit conjunct, and the honest-precompile and gas preconditions must be stated rather than implicit (the Yul gas oracle affects whether execution proceeds: vendor `EVMExec.lean:539`) |
+| F2 | PLAN still told `ImportSolcIR` to read `--ir-ast-json`, contradicting the adopted D-P15 | PLAN.md:183, :223 | **applied** `1f4fba5` for §7; §5's exporter bullet still names it, left for the exporter package |
+| F3 | `Supported.qvm` demanded QVM validation unconditionally, but a Direct plan has `quotient: None` - so the clause is **ill-formed** for Direct, not merely over-strict | PLAN.md:423 vs `plan.rs:224` | **applied** `1f4fba5` - mode-specific now, which also resolves the M8/M10 scheduling contradiction: M8's `lowering_equivalence` is a VM statement until M10 |
+| F4 | `decodeAcc_injective` is false as listed; R-25 already had the counterexample | PLAN.md:504 | **applied** `986dd8e` - annotated in place, not deleted |
+| F5 | The x3 row of the error budget is **too small**, not merely loose. `chalMass` applies `s / 2^128` uniformly to every round under `truncatedChallenges`, but truncation is per-round (R-22), and x3 is reduced into the field *before* truncation (`squeeze_challenge` then `truncate`), so the mass is not uniform over 2^128 | `Security/Challenges.lean:31-33`, `Spec/Degrees.lean:241-243`, R-23 | **OPEN** - a proof-level correction belonging with the paper (D-P14). Note the direction: for the six untruncated rounds the uniform `s/2^128` is *pessimistic but sound*; for x3 it is unsound. A single `chalMass` cannot be both |
+| F6 | My own PROOF-PLAN called S3 "largely a freebie", obscuring that ArkLib's `function_binding` assumes **ARSDH** while PLAN 9.4 states S1/S3 against a **q-DLOG** game | PROOF-PLAN.md:40 vs `ecosystem.md:106` | **applied** `986dd8e` for the wording; the assumption choice is **OPEN** and belongs with the paper |
+
+**What this review is evidence for.** Every one of the six is a *statement* defect, not a
+code defect - a theorem that would have been formally provable while establishing
+something other than the intended contract behaviour. F1 is the sharpest: the vacuity
+would have survived a Lean check, and only a reader asking "can the right-hand side be
+true for the wrong reason?" would catch it. That is precisely the failure mode I wrote
+about when deferring reviews - a wrong lemma is not caught later by a golden diff - and
+here it arrived from outside the port pipeline entirely.
+
+**Also worth recording:** the reviewer independently confirmed two things this project had
+already found and fixed - the stale BLS12-381 modulus comment (R-46 class, not an active
+blocker) and the fact that the frozen `Statements.lean` contains only three admitted
+bridge statements, not the headline theorem. Neither is a new defect; both are the
+scaffold being honestly described.
+
+## Closed
   instantiates the relation with `kzgCommitBeq` (value equality, labels ignored
   exactly as the Rust does); the corpus case is still owed.
 
