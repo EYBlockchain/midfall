@@ -4,20 +4,28 @@ Status: DRAFT. BLOCKED on P-06 (api: QuotientIdentitySource, the manifest types)
 P-07 (kzg) and P-08 (vk). This is the largest block in the port (~10,000 Rust lines) and
 the one PLAN 14.7 names as the weakest estimate, so it is split here rather than fired
 as one task.
-
 | pkg | Rust | lines | Lean target | what it gives M6 |
 |---|---|---:|---|---|
-| P-09a | `quotient_numerator/mod.rs` + `vm/reference.rs` | 561 | `Generator.Quotient.Vm.Reference` | the second implementation: `QVM.run` of PLAN 9.5 |
-| P-09b | `vm/mod.rs` | 4,336 | `Generator.Quotient.Vm` | the compiler: program plan, opcode model, shape recognizers |
-| P-09c | `vm/certify.rs` + `vm/disasm.rs` | 1,653 | `Generator.Quotient.Vm.{Certify,Disasm}` | the certification and listing leg (Tier-2 by PLAN 14.7) |
-| P-09d | `quotient_numerator/yul_emit.rs` | 1,176 | `Generator.Quotient.Vm.YulEmit` | emitting the VM's Yul |
-| P-09e | `quotient_numerator/direct/{mod,folds,layout,validate,trace}` + `quotient_direct.rs` | 3,869 | `Generator.Quotient.Direct` | the Direct lowering (M10) |
+| P-09a | `vm/mod.rs` **types only**: `QuotientExpr` (953), `QuotientMem` (1038), the 31 `Q_OP_*` constants (548-572...), `QuotientTarget`, `QuotientIdentity`, `QuotientIdentityMetadata`, `QuotientProgramPlan`, `QuotientProgramItem`, `QuotientProgramBuild`, `RepackedProofLayoutPlan`, `SelectorFoldPlan`, `QuotientExecutionKind` | ~700 | `Generator.Quotient.Vm.Types` | the vocabulary everything else shares |
+| P-09b | `vm/reference.rs` - the certifier / interpreter | 549 | `Generator.Quotient.Vm.Reference` | **`QVM.run` of PLAN 9.5** - the M6 anchor |
+| P-09c | `vm/mod.rs` compiler proper: program building, shape recognizers, `validate_quotient_program_operands` (2184), the QVM-01 operand model | ~3,600 | `Generator.Quotient.Vm` | `qvm_compile_correct`, `qvm_validated_noOOB` |
+| P-09d | `quotient.rs` | 2,147 | `Generator.Quotient` | quotient state slots, computation blocks, helper flags |
+| P-09e | `yul_emit.rs` | 1,176 | `Generator.Quotient.Vm.YulEmit` | `qvm_yul_refines` |
+| P-09f | `quotient_numerator/direct/*` + `quotient_direct.rs` | 3,869 | `Generator.Quotient.Direct` | M10 |
+| P-09g | `vm/certify.rs` + `vm/disasm.rs` | 1,653 | `Generator.Quotient.Vm.{Certify,Disasm}` | listing/certification, Tier-2 |
 
-## The finding that reshapes this block
+**Correction made round 13.** The first version of this table put `reference.rs` ahead
+of `vm/mod.rs`, on the assumption that the interpreter was the smaller independent
+piece. It is not: `reference.rs` imports `QuotientExpr`, `QuotientMem` and all 31
+`Q_OP_*` constants from `super::`, and those are defined at `vm/mod.rs:953`, `:1038` and
+`:548-572`. So the dependency runs reference -> mod, not mod -> reference, and the
+4,336-line file has to be split rather than deferred whole. The split above is by
+*kind* (types before consumers), which is what makes the interpreter reachable after
+roughly 700 lines of `vm/mod.rs` instead of all 4,336 - and getting `QVM.run` landed
+early matters because it is the object every M6 theorem is stated against, and because
+it is the piece with a clear independent oracle (the certifier's own Schwartz-Zippel
+check gives a second implementation to compare the Lean port against).
 
-`vm/reference.rs`'s own module doc says what it is, and it is **not** what PLAN 9.5
-assumes when it writes `def QVM.run ... -- port of vm/reference.rs`. It is a
-*certifier*: a second, independent implementation of the quotient VM ABI whose purpose
 is to let the generator reject its own output before any artifact is produced. The
 mechanism is probabilistic, and the doc says so explicitly:
 
