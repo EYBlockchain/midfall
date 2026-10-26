@@ -691,7 +691,7 @@ Dependency-correct remaining order, with the gate each item unblocks:
 | # | module | Rust lines | needs | unblocks |
 |---|---|---:|---|---|
 | 5 | `abi/proof` + `encoding` | 1,486 | protocol, layout, models | kzg, vk, plan |
-| 6 | `api` | 818 | layout | vm, quotient, plan, calldata, listing |
+| 6 | `api` | 761 at HEAD (818 in the dirty working copy; see plans/P-06 correction) | layout | vm, quotient, plan, calldata, listing |
 | 7 | `kzg` | 2,226 | encoding, protocol | vk, plan, `construct_intermediate_sets` lemma |
 | 8 | `vk` | 654 | abi, encoding, kzg | plan, `srs_tau_is_consistent` |
 | 9 | `quotient_numerator/{mod,vm/*}` + `direct/{mod,folds,layout,validate,trace}` | ~10,000 | api, encoding | quotient, plan |

@@ -332,6 +332,40 @@ deployed file's bytes - only its semantics, which is what the theorems need anyw
 text. `render` must emit well-formed, compilable Yul for any AST the generator
 produces; its formatting is now free. This keeps `render g o = (lower g o).map print
 by construction` meaningful as a structural statement.
+## D-P16 (ADOPTED, round 12): two AccumulatorEncoding types - which one 9.5 means
+
+**Problem (P-06 finding F-5).** `Midfall/Halo2/Exec/Accumulator.lean:167-261` already
+ported api.rs:35-188 as a deliberate working stand-in: it masks the api.rs:104 panic
+behind a `max 1`, returns `Bool` from `validFor` instead of carrying the five-field
+payload and three reason strings, returns `Option` with truncated `Nat` subtraction
+where the reference wraps, and skips the length check in
+`fullyCollapsedPublicInputWords`. P-06 landed the faithful port as
+`Midfall.Generator.AccumulatorEncoding`. So the tree has two types for one Rust type,
+and `Statements.lean` and `Lowering/Types.lean` see the **Exec** one while PLAN 9.5's
+`Supported.acc` quantifies over `g.cfg.accumulator`, a **generator** field.
+
+**Decision.**
+1. PLAN 9.5's `Supported.acc`, `decodeAcc` and `encodeAccInstances` refer to the
+   **Generator** type. It is the faithful port, and the field it construes is a generator
+   config field. Any statement written against the Exec stand-in is about a different
+   object and must be re-pointed.
+2. The Exec copy stays, because the obvious fix is the wrong one: Exec is L0 and
+   Generator imports Exec, so Exec cannot import the faithful type without inverting the
+   layering.
+3. **Owed obligation, named so it cannot be forgotten:** a lemma that the two agree on
+   the domain the theorems quantify over - for every encoding the generator actually
+   accepts, `validFor` (Bool) is true exactly when `validateForNumInstances` returns
+   `ok`, and the word counts agree. Until that lemma exists, no §9.5 statement may be
+   proved against the Exec type and cited as being about the deployment.
+4. The Exec stand-in's masked panic is an **R-30-class defect in our own tree**, not just
+   a simplification: where the reference aborts, it answers. Not on a reachable path
+   today, but the same shape as the bug R-30 recorded. Fix it when the reconciliation
+   lemma is done.
+
+**Owner:** the orchestrator, before `Spec.accepts` or any §9.5 accumulator statement is
+written. Recorded here because P-06 was the package meant to unblock exactly this
+question, and it correctly refused to pick silently.
+
 ## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
 
 **Decision.** The supported profile keeps `truncatedChallenges = true`. R-22 option (b):

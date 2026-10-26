@@ -5,12 +5,20 @@ Depends on: layout (done), abi + encoding (P-05). Blocks: vm, quotient, plan, ca
 diagnostics, quotient_listing - six modules import `crate::api`, so nothing after this
 one can proceed without it. See PLAN 14.7.
 
-## Reference hygiene - read this before opening the file
+The Rust reference is **git HEAD**, not the working tree. **Correction after the fact
+(this plan was wrong about its own numbers and the implementing agent caught it):** HEAD
+is **761 lines**, not 818; the working copy is 818, not 875. The 57-line uncommitted
+addition is `RenderedArtifacts::named_bytes` plus a test module, and it is NOT part of
+the baseline. Because the item table below was written from the working copy, every
+range after 527 is 57 lines high and the `RenderedArtifacts + impl` row straddles the
+uncommitted item. The port was done against HEAD and its R11 table is the authoritative
+one. Rule extracted for all future plans: **derive line numbers from
+`git show HEAD:<path>`, never from `wc -l` on a dirty working tree**, and state which
+one a table uses.**
 
-The Rust reference is **git HEAD**, not the working tree. The working copy of
-`proofs/solidity-verifier/src/api.rs` carries an uncommitted 57-line addition
-(`RenderedArtifacts::named_bytes` plus a test module) that is NOT part of the baseline
-and must NOT be ported. Read the file with:
+Read the reference with:
+
+    git show HEAD:proofs/solidity-verifier/src/api.rs
 
     git show HEAD:proofs/solidity-verifier/src/api.rs
 
