@@ -530,6 +530,25 @@ now confirmed from the source, and no Rust-side argument should be invented to h
 on.
 
 **Owner:** you, for items 1-2 (they change normative text). Item 3 is a scheduling
+**Addendum after P-09d (round 19).** Two of item 3's named blockers are gone: a
+**per-identity** `qvm_compile_correct` over a real multi-identity program is now statable
+- every object it quantifies over exists. The literal PLAN 9.5 form still is not, and the
+remaining gaps are now precisely named:
+
+* `QVM.Program` / `Frame` / `Output` - no reference counterpart at all. Either the
+  statement is per-identity, or these three are invented and the reference gives no
+  warrant for them.
+* `L.plan.qprog` - needs `LoweringPlan`, which is P-11.
+* **The fold.** P-09d's F-6 is the sharpest statement of this: three packages now touch
+  `FOLD_MAIN`/`FOLD_SELECTOR` - the builder emits them, the reference interpreter rejects
+  them inside an identity expression, the certifier inspects their bytes positionally -
+  and **none of them executes a fold.** The y-batch accumulation and the negation written
+  to `QUOTIENT_EVAL_MPTR` are Yul-side. So the fold must either enter the statement via
+  the Yul emitter (P-09e) or be explicitly excluded from `qvm_compile_correct`'s scope,
+  with the exclusion named rather than implied. This is now the largest single gap in
+  M6's statement, and it is not in any file ported so far.
+* `Supported.qvm` names `validateQuotientProgramOperands` - the validator, next package.
+
 consequence I have applied: P-09c moves ahead of P-10.
 
 
