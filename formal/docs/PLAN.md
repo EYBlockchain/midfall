@@ -693,6 +693,49 @@ Dependency-correct remaining order, with the gate each item unblocks:
 | 5 | `abi/proof` + `encoding` | 1,486 | protocol, layout, models | kzg, vk, plan |
 | 6 | `api` | 761 at HEAD (818 in the dirty working copy; see plans/P-06 correction) | layout | vm, quotient, plan, calldata, listing |
 | 7 | `kzg` | 2,226 | encoding, protocol | vk, plan, `construct_intermediate_sets` lemma |
+### 14.8 M3 scope cut (round 23, user-directed): port only what generates Solidity/Yul or serves a proof
+
+14.7 listed every row of Section 8. This section removes rows that produce neither
+verifier output nor a proof object, after tracing the actual dependencies rather than
+assuming them.
+
+| module | lines | decision | basis |
+|---|---:|---|---|
+| `quotient_numerator/vm/disasm.rs` | 1,288 | **cut from M3** | imported only by `quotient_listing/*` and `vm/mod.rs`. Pure disassembly for the listing. |
+| `quotient_listing/{mod,blocks,poly,json}.rs` | 3,680 | **cut from M3** | emits the listing and manifest artifacts, not `Halo2Verifier.sol`. `plan.rs` has no listing dependency. |
+| `quotient_numerator/direct/trace.rs` | 217 | **cut** | trace render mode, out of scope per Section 1. |
+| `lowering/diagnostics.rs` | 530 | **cut, pending a 10-line check** | trace and gas-checkpoint plumbing, out of scope per Section 1. `plan.rs` imports it, so confirm what it takes before deleting - likely only `RenderDiagnostics`, already ported in `Api.lean`. |
+| `quotient_numerator/direct/{mod,emit,layout,validate}.rs` | ~2,530 | **deferred to M10** | VM is the default lowering and M3's golden target is a VM-path fixture. `target/poseidon-fixture-dump/Halo2Verifier.direct.sol` exists, so M10 still has an oracle - it is deferred, not dropped. |
+| `quotient_numerator/direct/folds.rs` | 497 | **stays in M3** | `quotient.rs` imports `direct::folds::{FoldBucket, FoldLabel, FoldLoop, FoldSite, FoldWeight, SiteLabel}`, so it is a hard dependency of the VM path. |
+
+**Evidence that the cut is safe for M11 as well as M3.** Neither artifact set contains a
+listing or manifest file:
+
+* `deployments/sepolia/moonlight-wrap/` - `Halo2Verifier.sol`, `Halo2VerifyingKey.sol`,
+  two `.runtime.bytecode.hex`, `README.md`, `deployment.json`.
+* `target/poseidon-fixture-dump/` - four `.sol`, `calldata.bin`, `instance.be`,
+  `proof.bin`.
+
+So `deployed_equivalence` compares `.sol` text and, per R-44, reproducible runtime
+bytecode. It never had a listing to compare.
+
+**Effect on the estimate.** ~8,250 lines removed from M3. Remaining: ~7,500 Rust lines
+plus 4,324 Askama template lines. Because the measured per-package floor is ~1.3 h
+regardless of size, the saving is ~13 h rather than proportional: **~38 h becomes ~25 h**
+of chained agent time.
+
+**Consequence to record honestly.** `Api.lean` ports `QuotientIdentityManifest`,
+`QuotientCertificate`, `QuotientCertificateEntry`, `QuotientIdentityManifestEntry`,
+`QuotientIdentityExecution`, `QuotientIdentitySource`, `QuotientIdentityManifestTarget`
+and `ProofEvaluationCounts`, and an audit found **none of them is referenced outside
+`Api.lean` itself**. They were ported under R1 (one Lean def per Rust item) and that is
+still the right call - deleting them would make the port smaller than the reference, the
+same argument P-06 used to keep `QuotientProbeArtifacts`. But their dead status is now
+caused by *our* cut rather than by the port being incomplete, so it must be revisited if
+the listing is ever ported: at that point they gain consumers. Same for the six
+`layout::trace` constants ported in P-04 - inert under `Supported.production`, kept for
+faithfulness.
+
 | 8 | `vk` | 654 | abi, encoding, kzg | plan, `srs_tau_is_consistent` |
 | 9 | `quotient_numerator/{mod,vm/*}` + `direct/{mod,folds,layout,validate,trace}` | ~10,000 | api, encoding | quotient, plan |
 | 10 | `quotient` | 2,147 | 9 | plan |
