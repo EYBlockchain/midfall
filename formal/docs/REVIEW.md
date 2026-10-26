@@ -1648,8 +1648,41 @@ I treated as a signal rather than a success. The fix was to revert and rewrite, 
 before trusting the new gate to plant a violation and confirm it reddens.
 
 ## Closed
+### R-50 Two modules were being built by nobody, and the gate suite could not tell
 
-  compiler and the recorded flags. That is the strongest external-tool evidence in the
+`kat_gate.py` walks the **filesystem**: it globs `Midfall/**/*.lean`, runs each file that
+contains `#eval`, and counts the annotated checks. It never asks whether `lake build`
+compiles those files. So a module that nothing imports contributes passing gates and a
+green `checks.sh` while the library never builds it and no later package can use it.
+
+Two had slipped through, found within minutes of each other:
+
+* `Midfall/Generator/LayoutMemory.lean` - the P-03e package that just landed. 1,148
+  lines, 21 gates, never registered in `Midfall.lean`. Its own report was accurate about
+  every number and still described the state wrongly, because "lake build green" and
+  "checks.sh green" are both satisfiable without the file being compiled. The only thing
+  that had ever elaborated it was `lake env lean` - the exact command the standing notes
+  say does not apply lakefile options and accepts code the build rejects.
+* `Midfall/Instances/Bls12_381.lean` - the concrete G1 codec that R-28 and R-33 recorded
+  as owed and that Phase 3 conformance is supposed to replay real proof bytes with. 23
+  declarations, 9 gates, **not imported by anything**. This is the more serious of the
+  two: the transcript is described in this file as the most safety-critical leaf, the one
+  R-20 found broken, and the codec that checks it against real Rust output has not been
+  part of the build.
+
+Both are now registered; `lake build` is green at 3382 jobs and all 56 modules are
+reachable. The structural fix is `scripts/check_orphans.py`, wired into `checks.sh`: it
+builds the import graph from the sources and fails if any `.lean` is unreachable from
+the `Midfall` root, so "gates pass" and "code is built" stop being different claims. The
+gate was tested before being trusted - a planted orphan reddens it and names the file.
+
+**The general lesson, which is the same one R-40 and R-41 taught:** a check is only as
+good as the failure mode it can see. `checks.sh` had a KAT count that went up by 21 and
+looked like progress; the number that would have told the truth was "modules compiled",
+and nothing was counting it. When adding evidence to this project, ask what would have
+made it go red - if the answer is nothing, it is decoration.
+
+## Closed
   project so far.
 * M4's revm differential gets a real oracle, with a named caveat: the program to load is
   the **linked** runtime, so the harness must link the vk address (and, for the

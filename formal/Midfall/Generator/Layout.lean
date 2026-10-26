@@ -713,17 +713,17 @@ def Halo2VerifyingKey.validatePayloadLayout (self : Halo2VerifyingKey) :
 carry as their `Memory` parameter, and `VerifierMemoryLayout::validate` is the
 first thing both deferred `validate_layout` methods call.
 
-`VerifierMemoryLayout::new` (MEM:591-973) is still NOT ported here, but the reason
-first recorded here is now false and was corrected by package 8 (docs/REVIEW.md
-R-49): it said the arguments `ConstraintSystemMeta` and
-`VerifierMemoryLayoutConfig` "do not exist in this tree yet". Both do exist -
-`ConstraintSystemMeta` at Encoding.lean:364 and `VerifierMemoryLayoutConfig` at
-Layout.lean:970. So the remaining obstacle is only the 383 lines of arena planning
-themselves, not missing types, and `memory_layout_for` had to be threaded through a
-`VkBuildEnv` shim in Vk.lean as a workaround. Porting MEM:591-973 is the real unblock
-for `Supported.layout` in PLAN 9.5. What is ported here is the record, its config,
-and the validator, which is the part M:830 and M:965 need and which can be tested
-against the reference's own fixed addresses. -/
+`VerifierMemoryLayout::new` (MEM:591-973) IS now ported - in `LayoutMemory.lean`,
+not here, and not because of file size. Its first parameter is `ConstraintSystemMeta`,
+declared at Encoding.lean:364, and Encoding.lean imports THIS file directly
+(Encoding.lean:158, and again through Abi.lean:99 and Protocol.lean:93), so `new`
+right that the two argument types exist and incomplete about where: they exist
+downstream of this file, not beside it. What is ported here remains the record, its
+config and the validator - the part M:830 and M:965 need, and the part testable
+against the reference's own fixed addresses without a meta in scope.
+`LayoutMemory.lean` adds the constructor, `commitment_g1_count` (MEM:1080-1088)
+and the two batch-inversion helpers (MEM:1099-1117), which is what lets Vk.lean's
+`VkBuildEnv.newVerifierMemoryLayout` shim be retired. -/
 
 def transcriptBufferStart : Nat := lowMemoryScratchStart
 

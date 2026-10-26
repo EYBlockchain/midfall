@@ -24,6 +24,12 @@ echo '== native_decide confinement =='
 # (there is such a doc string in Security/Challenges.lean) is not a use of it.
 bad=$(python3 scripts/lean_grep.py '\bnative_decide\b' \
   $(find Midfall -name '*.lean' | sort) | grep -v 'Midfall/Instances/' || true)
+echo '== module reachability =='
+# kat_gate.py walks the filesystem, so an unimported module can pass its #eval gates
+# while lake build never compiles it. Two had slipped through (R-50). This makes an
+# orphan a hard failure.
+python3 scripts/check_orphans.py || exit 1
+
 if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
 
 echo '== golden fixture provenance =='

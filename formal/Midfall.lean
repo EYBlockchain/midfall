@@ -32,12 +32,14 @@ import Midfall.Generator.Render
 import Midfall.Generator.YulGolden
 import Midfall.Generator.Models
 import Midfall.Generator.Layout
+import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Templates
 import Midfall.Generator.Protocol
 import Midfall.Generator.Encoding
 import Midfall.Generator.Abi
 import Midfall.Generator.Api
 import Midfall.Generator.Kzg
+import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Security.SRS
