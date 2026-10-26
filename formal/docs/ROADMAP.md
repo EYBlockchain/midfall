@@ -43,7 +43,25 @@ at a time.
 
 | M5-M7 lowering | **new blocker found (R-47)** | Lagrange lemmas need a primitive-root hypothesis the tree does not carry |
 
-## Interruptions
+## Generator port progress, measured
+
+| as of | Lean lines | gates | modules | Rust ported | Rust left |
+|---|---:|---:|---:|---:|---:|
+| after P-04 (Protocol) | ~19,000 | ~330 | 51 | ~6,300 | ~25,200 |
+| after P-06 (Api) | ~24,000 | ~400 | 55 | ~8,600 | ~22,900 |
+| after P-08 (Vk) | ~38,000 | ~511 | 58 | ~10,800 | ~20,700 |
+| **now (after P-09d)** | **42,691** | **597** | **60** | **~13,100** | **~17,500** |
+
+Rust-left counts `vm/mod.rs` whole, but roughly 2,000 of its 4,336 lines are now ported
+(vocabulary, builder, certifier), so the true remainder is nearer **15,000 lines plus the
+4,324 Askama templates**. At the measured ~1,000 lines/agent-hour that is **~19-20 hours
+of chained agent time** for the rest of M3, before any of M4-M11.
+
+The QVM block (P-09a..e) is the part that moved fastest per line, because each package
+could reuse the last one's fixtures and gates rather than build them. It is also where
+the most valuable findings came from: a real zero-guard bug in committed code (F-1,
+now fixed), the `v3` seed tag being unpinned in the Rust, and D-P20's discovery that
+`QVM.run`'s stated granularity does not exist in the reference.
 
 P-07 (kzg) was stopped mid-write at 01:35 with 1,493 lines, 59 decls and **zero gates**,
 truncated inside `computations` - a single ~1,000-line Rust function (kzg/mod.rs:930-1927)
