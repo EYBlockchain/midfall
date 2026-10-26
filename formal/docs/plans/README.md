@@ -29,6 +29,7 @@ See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board
 | P-11 | `plan` + `config` + `mod` | DRAFT - needed for `L.plan.qprog` and `Supported` |
 | P-12 | `calldata` + `builder/*` + `evm` | DRAFT |
 | P-13 | [templates](P-13-templates.md) | DRAFT - widest error bar |
+| P-SE | [semantic-equivalence statements](P-SE-semantic-equivalence.md) | APPROVED - full statement surface + proof plan; evidence in P-SE-evidence/ |
 | ~~P-14~~ | ~~listing, disasm, diagnostics~~ | **CUT** (PLAN 14.8) |
 | ~~P-09g~~ | ~~direct/{mod,emit,layout,validate}~~ | **DEFERRED to M10** |
 
