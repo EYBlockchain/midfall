@@ -575,16 +575,21 @@ def QuotientModarith7Shape.pointerOperands (shape : QuotientModarith7Shape) : Li
         shape.productTerms.map (fun (_, _, rhs) => rhs))
 
 /-- The constant-table values a MODARITH7 shape references: what QVM:3533-3552
-    (`modarith7_coeffs`) collects. Modelling helper. -/
+    (`modarith7_coeffs`) collects. Modelling helper.
+
+    The `constant` is pushed ONLY when non-zero, matching QVM:3535-3537. That guard is
+    also the condition under which `emit_modarith7_shape` reserves a slot (QVM:1535-1539),
+    so dropping it predicts one slot too many for a zero-constant shape and could
+    spuriously reject a near-full table at the 255/256 boundary. P-09c finding F-1.
+    Pinned by `modarith7ZeroConstantSkipsSlot_ok` at the end of this file. -/
 def QuotientModarith7Shape.coefficientOperands
     (shape : QuotientModarith7Shape) : List Word256 :=
-  shape.constant
-    :: (shape.lin.flatMap fun block => block.map (fun (coeff, _) => coeff))
+  (if shape.constant != 0 then [shape.constant] else [])
+    ++ (shape.lin.flatMap fun block => block.map (fun (coeff, _) => coeff))
     ++ (shape.rows.flatMap fun (_, terms) => terms.map (fun (coeff, _) => coeff))
     ++ (shape.pairwise.flatMap fun (_, _, coeffs) => coeffs)
     ++ (shape.memTerms.map (fun (coeff, _) => coeff))
     ++ (shape.productTerms.map (fun (coeff, _, _) => coeff))
-
 
 /-! ## Identity and plan records (rust: QVM:79-552) -/
 
@@ -2153,4 +2158,30 @@ end Midfall.Generator.QuotientVmKats
 #eval Midfall.Generator.QuotientVmKats.repackedProofLayout_fromProofLayout_ok -- expect true
 #eval Midfall.Generator.QuotientVmKats.selectorFoldPlan_gapFor_ok -- expect true
 #eval Midfall.Generator.QuotientVmKats.opcodeNames_pinned_ok -- expect true
+
+namespace Midfall.Generator.QuotientVmKats
+
+/-- The zero-guard on MODARITH7's constant (QVM:3535-3537), which this helper
+    originally dropped - found by P-09c, finding F-1. A zero constant must NOT
+    contribute a constant-table operand, because `emit_modarith7_shape` reserves a slot
+    under exactly the same condition (QVM:1535-1539); counting it would predict one slot
+    too many and could spuriously reject a near-full table at the 255/256 boundary.
+
+    PERTURBATION RUN: restoring the unconditional `shape.constant :: ...` form reddens
+    this gate and ONLY this gate - `modarith7Fixture`'s constant is non-zero, so the
+    existing length-6 conjunct cannot see the difference. That is why the fixture alone
+    was not coverage. -/
+def modarith7ZeroConstantSkipsSlot_ok : Bool :=
+  let withConst := modarith7Fixture
+  let zeroConst := { modarith7Fixture with constant := 0 }
+  withConst.coefficientOperands.length == 6
+    && zeroConst.coefficientOperands.length == 5
+    && (withConst.coefficientOperands.length - zeroConst.coefficientOperands.length == 1)
+    && (!(zeroConst.coefficientOperands.contains 0))
+    && (zeroConst.pointerOperands.length == withConst.pointerOperands.length)
+
+end Midfall.Generator.QuotientVmKats
+
+#eval Midfall.Generator.QuotientVmKats.modarith7ZeroConstantSkipsSlot_ok -- expect true
+
 
