@@ -1589,8 +1589,36 @@ clothing, so the plan forbids decorative fields.
 
 ## Closed
 because nothing executes a comment. Worth adding to the reviewer's checklist: when a
-comment asserts a fact about another file's behaviour, go measure that file.
+### R-48 A shared test fixture makes point-comparison gates pass vacuously
 
+`LayoutKats.verifierLayoutFixture` sets every PCS memory base to 0. Consequence: the
+commitments the fixture hands to `f_com`, `pi` and `quotient_limb[0]` are the **same
+pointer**, so any gate that compares points, counts distinct commitments, or checks
+that every absorbed point reaches a validating precompile is satisfied trivially - not
+because the property holds, but because there is only one distinct value to check.
+
+Found by the P-07R agent while gating `validate_absorbed_g1_precompile_coverage`, which
+is the exact function PLAN 13 names as the place the `points_subgroup_checked` risk
+lives. Had it used the shared fixture, the coverage gate would have gone green while
+proving nothing about coverage, and the risk would have been recorded as closed.
+Its fix was to define a local `memF` overriding seven bases and to assert all 17
+absorbed points are pairwise distinct *before* the coverage claim is made.
+
+This is the R-30/R-40 defect class - a check that cannot fail - arriving not through a
+bad assertion but through a **fixture that is too degenerate for the assertions built
+on it**. It is worse than the usual case because the fixture is shared: three packages
+have already written gates against it, and a later reader has no signal that the
+comparisons are vacuous.
+
+Deliberate non-fix: the shared fixture is NOT changed. Gates in Layout.lean,
+Encoding.lean and Kzg.lean were written against its all-zero bases, and silently
+altering a fixture under existing gates makes those gates mean something other than
+what their recorded perturbation evidence showed. The rule adopted instead, written
+into plans/P-08-vk.md: any package whose gates compare pointers must either build its
+own fixture with distinct bases or assert pairwise distinctness before relying on a
+comparison, and must say which.
+
+## Closed
 
   compiler and the recorded flags. That is the strongest external-tool evidence in the
   project so far.

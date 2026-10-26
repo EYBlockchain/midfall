@@ -83,3 +83,22 @@ check cannot see a swap.
 | 563-601 | `static_working_memory_size_for_meta` | private |
 | 603-609 | `transcript_buffer_words_bound` | |
 | 611-654 | `transcript_buffer_layout_for_meta` | pub(super) |
+## Added after P-07R (round 13) - two landmines you inherit
+
+1. **`LayoutKats.verifierLayoutFixture` has every PCS base at 0**, so `f_com`, `pi` and
+   `quotient_limb[0]` are the *same pointer*. Any gate that compares points, counts
+   distinct commitments, or checks coverage will pass **vacuously** on it. The Kzg
+   package hit this and worked around it by defining `memF` with seven overridden bases,
+   then asserting all 17 absorbed points are pairwise distinct before using the
+   fixture at all. **Do the same: build your own fixture with distinct pointers, or
+   assert distinctness before relying on any comparison.** Do not edit the shared
+   fixture - existing gates in Layout.lean, Encoding.lean and Kzg.lean were written
+   against its all-zero bases and a silent change would make them mean something else.
+2. **`valueBeq` / `locationBeq` / `ptrBeq` / `wordBeq` now exist twice** -
+   Encoding.lean:1083-1094 and Kzg.lean - because `Location`, `Value` and `Ptr` still
+   carry no `BEq` (P-05 finding F5). You are the third package to need them. If you add
+   a fourth copy, stop and instead add `deriving BEq` to the three types in their owning
+   files (Filters.lean:70,78 and Models.lean:503) and delete the local copies, recording
+   it as a cross-package fix. Three copies of a comparator is how a port ends up with
+   two meanings for `equal`.
+
