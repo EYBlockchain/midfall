@@ -39,6 +39,7 @@ import Midfall.Generator.Encoding
 import Midfall.Generator.Abi
 import Midfall.Generator.Api
 import Midfall.Generator.Kzg
+import Midfall.Generator.Quotient.VmTypes
 import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
