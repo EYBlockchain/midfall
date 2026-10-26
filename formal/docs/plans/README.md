@@ -54,6 +54,16 @@ See PLAN 14.7 for the dependency-correct order. Current board:
 ## Cross-package work owed (not any single agent's task)
 
 | item | source | why |
+| `vm/disasm.rs:41-50` hand-copies VM_LIMBS, PAIRWISE_COEFFS, LIMB_STRIDE and both MODARITH7 flags as literals; nothing ties them to the constants (P-09a F-2) | P-09g | a limb-count change silently desyncs the disassembler |
+| `QuotientExecutionKind` and `QuotientIdentityExecution` are isomorphic enums cargo cannot tell apart (P-09a F-3) | P-09b | gate 28 ties them in Lean only |
+| `Vk.lean:379-387` says its `VkQuotientBuild` projection should become an alias once the full record lands - it has (P-09a F-4) | P-09b | stale note, and a projection that should be an alias |
+| Retire the `VkBuildEnv` shim: five precise edits listed in the P-03e report, including a gate that only passes because the stub copies config fields into unrelated ones | next Vk touch | `memoryLayoutFor_config_ok` is currently testing the stub, not the real constructor |
+| Upgrade `YulGolden.lean`'s nine pasted pins to reading the dump directly (D-P19) | after M3 | retires a drift class the provenance script polices by hand |
+
+Also from D-P19, as a standing rule: **gates should read the artifact at `#eval` time**
+rather than comparing a pasted string, and a KAT section that reads files must put its
+reachability gate first so a wrong path is diagnosed rather than silently matched.
+
 |---|---|---|
 | Add `deriving BEq` to `Location`, `Value`, `Ptr` in Filters.lean / Models.lean | P-05 F5 | every later package that tests a pointer re-invents a comparator |
 | Move the LM:365-377 and LM:379-393 const blocks from Abi.lean to Layout.lean | P-05 F8 | they are the Layout row's content; the move is mechanical because gates cite by name |

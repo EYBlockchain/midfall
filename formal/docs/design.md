@@ -434,6 +434,46 @@ M7 would be expensive.
 
 **Owner:** you. Until it is decided, P-03e's `WellFormed` stands as ported and no
 downstream package should quietly pick a reading.
+## D-P19 (ADOPTED, round 16): gates should read the artifact at #eval time, not compare pasted strings
+
+**Decision.** Where a gate's expectation lives in a build artifact - a `.yul` template,
+a `.sol` dump, a fixture - the gate opens the file with `IO.FS.readFile` at `#eval` time
+and derives its expectation from the bytes. Pasting the expected text into a Lean string
+literal is a last resort, and when used it must be paired with an external script that
+re-derives the paste from the artifact.
+
+**Why.** This is the direct fix for R-38 finding 1, the defect that `YulGolden.lean`
+compares an AST against a hand-typed string and nothing in Lean ever opens the `.sol`.
+The mitigation there is `scripts/check_golden_provenance.py`, which re-reads the cited
+line ranges and asserts the pinned string - a second program doing the checking that the
+gate should have done. It works, and it is fragile in a way the direct approach is not:
+the pins, the script's parse of them, and the Lean gate are three artefacts that must
+agree, and the script has to be kept in step with the file by hand.
+
+P-09a landed the better pattern first: six gates that parse
+`templates/partials/quotient_numerator/QuotientNumeratorBlock.yul` at `#eval` time and
+assert the opcode table against the template's own `case 0x..` arms, plus a dedicated
+`templateArtifactReachable_ok` so a missing file fails loudly instead of reading as an
+empty match. It also went beyond the reference: the Rust test iterates only the table, so
+it cannot see a template arm with no table entry; the Lean gate checks coverage in both
+directions.
+
+**Consequences.**
+1. `kat_gate.py` runs each KAT file standalone, so `IO.FS.readFile` resolves relative to
+   the `formal/` directory - the same cwd `checks.sh` uses. Paths must be written that
+   way, and the reachability gate must be the first `#eval` in the section so a wrong
+   path is diagnosed rather than silently matched.
+2. `lake build` caches, so a template edit does not re-trigger a dependent gate during a
+   warm build. `checks.sh` re-runs every KAT file every time, which is what makes the
+   pattern load-bearing in CI rather than only after a clean build. Say this in the
+   header, as P-09a did.
+3. **Owed upgrade:** `YulGolden.lean`'s nine pinned slices should move to reading the
+   dump directly. That retires a class of drift `check_golden_provenance.py` currently
+   has to police by hand. Not free - the tokenisation rules would have to move into
+   Lean - so it is queued, not scheduled.
+4. New packages should prefer this pattern by default. Recorded in
+   `docs/plans/README.md` standing notes.
+
 
 
 ## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
