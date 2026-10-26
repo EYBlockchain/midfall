@@ -713,14 +713,18 @@ def Halo2VerifyingKey.validatePayloadLayout (self : Halo2VerifyingKey) :
 carry as their `Memory` parameter, and `VerifierMemoryLayout::validate` is the
 first thing both deferred `validate_layout` methods call.
 
-`VerifierMemoryLayout::new` (MEM:591-973) is deliberately NOT ported here. It is
-383 lines of arena planning whose arguments come from `ConstraintSystemMeta` and
-from a `VerifierMemoryLayoutConfig` derived from a circuit, neither of which
-exists in this tree yet; porting it would mean inventing their shapes. What is
-ported is the record, its config, and the validator, which is the part M:830 and
-M:965 need and which can be tested against the reference's own fixed addresses. -/
+`VerifierMemoryLayout::new` (MEM:591-973) is still NOT ported here, but the reason
+first recorded here is now false and was corrected by package 8 (docs/REVIEW.md
+R-49): it said the arguments `ConstraintSystemMeta` and
+`VerifierMemoryLayoutConfig` "do not exist in this tree yet". Both do exist -
+`ConstraintSystemMeta` at Encoding.lean:364 and `VerifierMemoryLayoutConfig` at
+Layout.lean:970. So the remaining obstacle is only the 383 lines of arena planning
+themselves, not missing types, and `memory_layout_for` had to be threaded through a
+`VkBuildEnv` shim in Vk.lean as a workaround. Porting MEM:591-973 is the real unblock
+for `Supported.layout` in PLAN 9.5. What is ported here is the record, its config,
+and the validator, which is the part M:830 and M:965 need and which can be tested
+against the reference's own fixed addresses. -/
 
-/-- rust: LM:46 (`TRANSCRIPT_BUFFER_START`) @formal-baseline. -/
 def transcriptBufferStart : Nat := lowMemoryScratchStart
 
 /-- rust: LM:48 (`PCS_PAIRING_SCRATCH_START`) @formal-baseline. -/

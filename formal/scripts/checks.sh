@@ -33,6 +33,26 @@ echo '== golden fixture provenance =='
 # not, CI fails. See docs/REVIEW.md R-38.
 python3 scripts/check_golden_provenance.py || exit 1
 
+echo '== Instances/ import confinement =='
+# A Generator or Exec file may import a model from Midfall/Instances/ to run a #eval
+# gate (Vk.lean does, for the only runnable AdmissiblePairing). What must never happen
+# is a THEOREM living in a file that imports a concrete model: the import cannot pollute
+# axioms by itself, but a proof stated next to the KATs would silently acquire a
+# dependence on the model. The rule is therefore scoped to files that state proofs, not
+# to files that compute. See docs/design.md D-P17.
+bad=""
+for f in $(find Midfall -name '*.lean' -not -path 'Midfall/Instances/*'); do
+  if grep -q '^import Midfall\.Instances\.' "$f" && grep -qE '^(theorem|lemma) ' "$f"; then
+    bad="$bad $f"
+  fi
+done
+if [ -n "$bad" ]; then
+  echo 'files stating theorems while importing Instances/:'
+  for f in $bad; do echo "  $f"; done
+  exit 1
+fi
+echo 'ok: no theorem-bearing file imports Midfall/Instances/'
+
 echo '== known-answer tests =='
 # Every '#eval ... -- expect <value>' in the tree is a gate. See
 # scripts/kat_gate.py for why: before this, checks.sh asserted six hand-picked

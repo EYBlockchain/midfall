@@ -1619,6 +1619,35 @@ own fixture with distinct bases or assert pairwise distinctness before relying o
 comparison, and must say which.
 
 ## Closed
+### R-49 Two deferral notes outlived their reason, and I broke the gate script writing a third
+
+P-08 found two stale deferrals in landed files, both verified by the orchestrator
+before being recorded:
+
+* `Layout.lean:716-721` declined to port `VerifierMemoryLayout::new` (MEM:591-973)
+  because its argument types "do not exist in this tree yet". Both do:
+  `ConstraintSystemMeta` at Encoding.lean:364, `VerifierMemoryLayoutConfig` at
+  Layout.lean:970. The obstacle is 383 lines of arena planning, not missing types - and
+  because the note said otherwise, P-08 had to thread `memory_layout_for` through a
+  `VkBuildEnv` shim. Porting MEM:591-973 is the real unblock for `Supported.layout`.
+* `Models.lean:40-42` still listed `payload_layout` and `validate_payload_layout` as not
+  ported. P-03 landed them at Layout.lean:665-692 and :696-709 with 8 gates.
+
+Both corrected in place (docs-only; build green at 3380 jobs). This is the R-46 shape
+again - a comment asserting a fact about another file that has since stopped being true
+- and the cost is concrete: a package that trusts a deferral note either skips work that
+is already done or re-ports it. Rule for reviewers: when a header says something does not
+exist, go look.
+
+**And a note on my own work, because it is the same class.** Writing the D-P17 gate I
+produced a `checks.sh` with a stray `",` that made `bash -n` exit 2 - i.e. the entire
+gate script was broken and would have reported nothing while looking like it ran. That
+is the seventh-plus instance of this defect in this project and the second caused by the
+orchestrator rather than an agent. Caught only because the edit produced no output, which
+I treated as a signal rather than a success. The fix was to revert and rewrite, then
+before trusting the new gate to plant a violation and confirm it reddens.
+
+## Closed
 
   compiler and the recorded flags. That is the strongest external-tool evidence in the
   project so far.

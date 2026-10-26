@@ -34,14 +34,18 @@
 --         cite.
 --
 -- WHAT THIS PACKAGE DOES NOT PORT, AND WHY. Eight Rust fns take or return a type
--- that plan Section 8 assigns to a DIFFERENT row of the module map, and rule R1
 -- forbids inventing a parallel copy of it here:
 --
---   * M:344-378 `payload_layout` and M:381-399 `validate_payload_layout` need
---     `VkPayloadLayout` / `PayloadSectionKind` (layout/vk_payload.rs) and
---     `VkConstructorMemoryLayout` (layout/memory.rs) - the `Layout/*` row.
+--   * CORRECTED by package 8 (docs/REVIEW.md R-49): this bullet used to list
+--     M:344-378 `payload_layout` and M:381-399 `validate_payload_layout` as not
+--     ported because they need `VkPayloadLayout` / `PayloadSectionKind` and
+--     `VkConstructorMemoryLayout`. P-03 landed all of those, and both functions are
+--     in fact at Layout.lean:665-692 and Layout.lean:696-709 with 8 gates. They are
+--     NOT deferred; a stale deferral note here would make a later package skip work
+--     that is already done, or re-port it. The genuinely deferred items are the two
+--     below.
 --   * M:830-952 `Halo2Verifier::validate_layout` and M:965-1005
---     `Halo2QuotientEvaluator::validate_layout` need `VerifierMemoryLayout`
+
 --     (layout/memory.rs) and `ProofCalldataLayout` (abi/proof.rs) - the
 --     `Layout/*` and `Abi` rows. Their `QuotientExternal` helpers, which are
 --     self-contained, ARE ported, so the deferred part is the field access, not

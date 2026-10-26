@@ -366,6 +366,33 @@ and `Statements.lean` and `Lowering/Types.lean` see the **Exec** one while PLAN 
 written. Recorded here because P-06 was the package meant to unblock exactly this
 question, and it correctly refused to pick silently.
 
+## D-P17 (ADOPTED, round 14): a port file may import Instances/ for KATs, never for proofs
+
+**Question (raised by P-08).** `Vk.lean` imports `Midfall.Instances.ExponentModel`
+because that is the only runnable `AdmissiblePairing` in the tree (R-28), and the
+SRS-binding gates need to actually compute a pairing. Is a Generator file allowed to
+depend on a model?
+
+**Decision: yes for computation, no for proof.** An import cannot pollute axioms by
+itself, and forbidding it would force either hand-built toy groups in every package that
+touches a pairing check, or no gates at all on the τ-binding path. The real hazard is
+different and narrower: a *theorem* stated in a file that imports a concrete model
+silently acquires a dependence on that model, and the boundary PLAN 3 draws (Instances/
+is where the model lives, `native_decide` is confined there) would erode one import at a
+time.
+
+**Enforcement, not prose.** `scripts/checks.sh` now has an "Instances/ import
+confinement" gate: any `.lean` outside `Midfall/Instances/` that both imports
+`Midfall.Instances.*` and contains a top-level `theorem` or `lemma` fails CI. Files that
+only `#eval` are allowed through. The gate was tested before being trusted: a planted
+violation reddens it (exit 1, naming the file) and removing it goes green again.
+
+**Consequence for later packages.** If a package needs to state a theorem about
+`generateBaseVk` or `srsTauIsConsistent`, the statement must live in a file that does
+not import `Instances/` - which is also what `plans/P-4a-roots.md` assumes, since the
+root-of-unity lemmas are stated over a general field. This makes the boundary explicit
+instead of leaving it to be discovered by a reviewer.
+
 ## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
 
 **Decision.** The supported profile keeps `truncatedChallenges = true`. R-22 option (b):
