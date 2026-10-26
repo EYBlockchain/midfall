@@ -392,6 +392,49 @@ violation reddens it (exit 1, naming the file) and removing it goes green again.
 not import `Instances/` - which is also what `plans/P-4a-roots.md` assumes, since the
 root-of-unity lemmas are stated over a general field. This makes the boundary explicit
 instead of leaving it to be discovered by a reviewer.
+## D-P18 (OPEN - needs sign-off): PLAN 9.5's `Supported.layout` claims more than the predicate delivers
+
+**Not adopted.** Recorded because P-03e proved the plan text is wrong and PLAN 12 forbids
+weakening a statement silently - but here the honest fix is a *strengthening*, which still
+changes a normative sentence.
+
+PLAN 9.5 writes:
+
+    layout : g.plan.memory.WellFormed     -- disjoint, aligned, above solc spill window
+
+Measured (P-03e, gates 13-15 of LayoutMemory.lean):
+
+* **disjoint** - true, but only read lifetime-relatively. `WellFormed` conjoins
+  `memoryLifetimeIntersects` exactly as MEM:274 does, and that is correct: the Rust
+  phase-scopes low-memory regions, and the poseidon-shaped layout has **54 same-byte,
+  different-phase region pairs**. A naive global byte-disjointness predicate is FALSE on
+  the real layout. So the word is fine only if the reader understands it as per-lifetime.
+* **above solc spill window** - NOT delivered by `WellFormed`. It bounds starts by
+  `SOLIDITY_RESERVED_MEMORY_BYTES` (0x80), because that is what `MemoryMap::validate`
+  checks (MEM:239). The 0x1000 via-IR guard lives one level up, in
+  `VerifierMemoryLayout::validate` (MEM:1028-1036). Demonstrated directly: a layout at
+  `vk_mptr = 0x180` is `WellFormed` **and** rejected by `validate`, simultaneously.
+* **aligned** - also NOT delivered. `WellFormed` omits the length-alignment arm
+  (MEM:262-267), and `new` can violate it through the public `FinalMsmShape.input_bytes`
+  field. Gated with a real 0x21 length: `WellFormed` accepts, `validate` rejects.
+
+**Options.**
+1. `layout : g.plan.memory.WellFormed ∧ g.plan.memory.validate = .ok ()` - matches what
+   the reference actually treats as a legal layout, keeps all three clauses of the
+   comment true, and costs nothing since `validate` is already ported. **Recommended.**
+2. Keep `WellFormed` alone and delete "aligned, above solc spill window" from the
+   comment. Weaker, and it would make `Supported` easier to satisfy than the Rust itself
+   is, which is the direction PLAN 12 says not to go.
+
+**Why it must be decided now rather than at M5:** `Supported` is a hypothesis of
+`lowering_equivalence`, so every theorem downstream inherits whichever reading is
+chosen. Choosing option 2 later would mean the headline theorem was proved about a
+strictly larger set of layouts than the contract is safe for, and discovering that after
+M7 would be expensive.
+
+**Owner:** you. Until it is decided, P-03e's `WellFormed` stands as ported and no
+downstream package should quietly pick a reading.
+
 
 ## D-P14 (ADOPTED, round 9): R-22 - keep truncated challenges; re-derive the x1/x4 rows
 
