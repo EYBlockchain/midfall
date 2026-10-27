@@ -34,6 +34,7 @@ import Midfall.Generator.Models
 import Midfall.Generator.Layout
 import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Templates
+import Midfall.Generator.VerifierPartials
 import Midfall.Generator.Protocol
 import Midfall.Generator.Encoding
 import Midfall.Generator.Abi
