@@ -124,6 +124,7 @@ import Midfall.Generator.Layout
 import Midfall.Generator.Abi
 import Midfall.Generator.Evm
 import Midfall.Generator.YulGolden
+import Midfall.Generator.Quotient.Evaluator
 
 namespace Midfall.Generator
 open YulSemantics
@@ -254,6 +255,48 @@ structure PartialCtx where
       memory.* slot T:AccumulatorHelpers.yul:216 interpolates. It sits inside the
       expected_has_accumulator arm, so the deployed profile never renders it. -/
   accMsmScratch : Nat
+  /-- P-13c. M:590 quotient_program, the match at T:QuotientNumeratorBlock.yul:133.
+    Some selects the compact-VM arm (:134-1395); None selects the legacy/direct arm
+    (:1396-1440). The deployed dump takes the Some arm. -/
+  quotientProgram : Option QuotientProgram
+  /-- P-13c. M:584 quotient_inline_computations, the double for at
+      T:QuotientNumeratorBlock.yul:198-202 (the direct inline prefix before the VM). -/
+  quotientInlineComputations : List (List String)
+  /-- P-13c. M:585 quotient_eval_numer_computations, the double for at :1417-1421, inside
+      the 'when None' arm the deployed profile does not take. -/
+  quotientEvalNumerComputations : List (List String)
+  /-- P-13c. M:586 quotient_post_vm_computations, the double for at :1368-1372. -/
+  quotientPostVmComputations : List (List String)
+  /-- P-13c. M:587 quotient_native_permutation_computation, the for at :1225-1227. -/
+  quotientNativePermutationComputation : List String
+  /-- P-13c. M:588 quotient_native_lookup_computation, the for at :1249-1251. -/
+  quotientNativeLookupComputation : List String
+  /-- P-13c. M:589 quotient_native_identity_computations, the outer for at :1272-1278.
+      This is the ONE generated list whose block partition is observable: each block
+      becomes its own 'case N { ... }' arm, so the number of blocks is rendered. The
+      four flat lists above render their blocks back to back with no separator, so a
+      render cannot distinguish [[a,b]] from [[a],[b]] - stated here because the
+      extraction in this file hands those back as a single block. -/
+  quotientNativeIdentityComputations : List (List String)
+  /-- P-13c. M:602 quotient_identity_trace_base, read only by the trace arms
+      (T:QuotientNumeratorBlock.yul:165 and :1412). Inert while trace = false. -/
+  quotientIdentityTraceBase : Nat
+  /-- P-13c. M:507-509: the three shape-recognition flags that gate the optional helpers
+      at T:QuotientHelpers.yul:16, :35 and :59. The deployed fixture recognises pow5 only. -/
+  quotientPow5Helper : Bool
+  quotientLimb7Helper : Bool
+  quotientWideLimb7Helper : Bool
+  /-- P-13c. M:521-522: the two coefficient tables the limb7 helpers iterate
+      (T:QuotientHelpers.yul:49 and :72). Both loops are inside ifs the deployed profile
+      does not take, so both tables are inert here; Models.lean's limbCoeffArrays_length_ok
+      is what pins their length. -/
+  limb7YulCoeffs : List String
+  wideLimb7YulCoeffs : List String
+  /-- P-13c. M:523 fr_delta (rust: QVM:4131-4133 fr_delta_literal), interpolated only at
+      T:QuotientNumeratorBlock.yul:1407 - inside the 'when None' arm. Inert for the byte
+      gate, but NOT unobservable: the same literal is emitted by the generated permutation
+      callback at D:1975, which quotientFrDelta_derivedFromArtifact_ok reads. -/
+  frDelta : String
 
 /-- The poseidon fixture's proof calldata layout (P-13b). Every number here is a
     byte length the DEPLOYED artifact interpolates, and
@@ -334,6 +377,22 @@ def poseidonCtx : PartialCtx := {
   expectedAccHasCarriedScalars := false
   accFixedBases := []
   accMsmScratch := 0
+  -- P-13c. The inert defaults that keep poseidonCtx a complete record; the deployed
+  -- quotient profile lives in quotientCtx, which extends this one.
+  quotientProgram := none
+  quotientInlineComputations := []
+  quotientEvalNumerComputations := []
+  quotientPostVmComputations := []
+  quotientNativePermutationComputation := []
+  quotientNativeLookupComputation := []
+  quotientNativeIdentityComputations := []
+  quotientIdentityTraceBase := 0
+  quotientPow5Helper := false
+  quotientLimb7Helper := false
+  quotientWideLimb7Helper := false
+  limb7YulCoeffs := []
+  wideLimb7YulCoeffs := []
+  frDelta := ""
 }
 
 /-! ## The five render functions
@@ -856,6 +915,907 @@ invisible typo. -/
          "))\n                        precompile_failed := iszero(out)\n                    }\n                }\n                // The caller checks `out` and reverts before transcript work if\n                // any decode, canonicality, or precompile validation failed.\n            }"
          else
          "")
+
+/-- The compact quotient program of the deployed poseidon fixture. Every number is read
+    off the artifact by quotientProgram_derivedFromArtifact_ok except traceIdMptr, which
+    the dump cannot show (trace = false) and which is therefore DERIVED instead:
+    quotient.rs:59 sets trace_id_mptr = state_mptr + WORD_BYTES, i.e. evalNumerMptr + 0x20,
+    and quotientProgram_traceIdDerived_ok pins that equation. guards.constMax is the third
+    case: it is num_consts - 1 (quotient.rs:252) and the single '// quotient_const' word in
+    the VK dump (DVK:99) makes num_consts = 1, so constMax = 0 - pinned by
+    quotientConstMax_derivedFromVkDump_ok rather than assumed. -/
+def quotientDeployedProgram : QuotientProgram :=
+  { len := 0x58
+    opUsage := { quotientVmOpcodeUsageDefault with
+      pushMemU16 := true, add := true, neg := true, foldSelector := true,
+      mulConstU8 := true, addMemU16 := true, mulMemU16 := true,
+      nativePermutation := true, nativeLookup := true, nativeIdentity := true }
+    memUsage := quotientVmMemUsageDefault
+    constMptr := 0x2ce0
+    evalNumerMptr := 0x6660
+    traceIdMptr := 0x6680
+    selectorPowerMptr := 0x66a0
+    selectorMaxPower := 21
+    selectorTailUpdates :=
+      [ { selectorOffset := 0x00, powerOffset := 0x02a0 }
+      , { selectorOffset := 0x20, powerOffset := 0x0280 }
+      , { selectorOffset := 0x40, powerOffset := 0x0220 }
+      , { selectorOffset := 0x60, powerOffset := 0x0160 } ]
+    stackMptr := 0x6960
+    programMptr := 0x2d00
+    guards := { constMax := 0, numSelectorBuckets := 4, stackLast := 0x6c60 } }
+
+/-- The deployed profile for the two quotient_numerator partials: P-13b's poseidonCtx plus
+    the 14 fields P-13c adds. The five generated-code lists are EMPTY here - they are the
+    Rust emitter's output, not this template's, and quotientDeployedCtx fills them from the
+    artifact at gate time rather than pasting them. -/
+def quotientCtx : PartialCtx :=
+  { poseidonCtx with
+    quotientProgram := some quotientDeployedProgram
+    quotientInlineComputations := []
+    quotientEvalNumerComputations := []
+    quotientPostVmComputations := []
+    quotientNativePermutationComputation := []
+    quotientNativeLookupComputation := []
+    quotientNativeIdentityComputations := []
+    quotientIdentityTraceBase := 0
+    quotientPow5Helper := true
+    quotientLimb7Helper := false
+    quotientWideLimb7Helper := false
+    limb7YulCoeffs := limb7YulCoeffsTable
+    wideLimb7YulCoeffs := wideLimb7YulCoeffsTable
+    frDelta := "0x8634d0aa021aaf843cab354fabb0062f6502437c6a09c006c083479590189d7" }
+
+/-! ### Reading the generated-code regions out of the artifact
+
+The five for-sites over Rust-emitted Yul are the only part of these two templates whose
+content this package does not own. D-P19 says a gate should read the artifact rather than
+compare a pasted string, so the lists are SLICED from the dump at #eval time between anchors
+that belong to the template's own fixed text. Each anchor below occurs exactly once in the
+artifact (qnb_anchorsUnique_ok), so the slice is determined, not chosen. -/
+
+def qAnchorInlineBefore : String := "// VM/native identities, so they occupy the same y-batch order."
+def qAnchorInlineAfter : String := "\n\n                // VM registers:"
+def qAnchorPermBefore : String := "// y-batch positions remain contiguous."
+def qAnchorPermAfter : String := "\n                    }\n                    // Native lookup callback."
+def qAnchorLookupBefore : String := "// as the Rust identity stream."
+def qAnchorLookupAfter : String := "\n                    }\n                    // Native callbacks are generated only"
+def qAnchorNiBefore : String := "switch q_native_idx"
+def qAnchorNiAfter : String := "\n                        default { q_program_fail() }"
+def qAnchorPostBefore : String := "// into the same numerator / selector accumulators."
+def qAnchorPostAfter : String :=
+  "\n                // Finish selector buckets by applying the codegen-known tail"
+
+/-- The artifact text strictly between two anchors, each of which must occur exactly once. -/
+def sliceBetween (sol before after : String) : Option String :=
+  match sol.splitOn before with
+  | [_, r] => match r.splitOn after with
+              | [mid, _] => some mid
+              | _ => none
+  | _ => none
+
+def spaces (n : Nat) : String := String.mk (List.replicate n ' ')
+
+/-- The generated lines of one flat region: the template puts LF + ind spaces in front of
+    every line interpolation, so the region text is that prefix repeated once per line. -/
+def genLines (ind : Nat) (t : String) : List String :=
+  let pre := "\n" ++ spaces ind
+  if ! t.startsWith pre then [] else ((t.drop pre.length).toString).splitOn pre
+
+/-- The native-identity region: 'case N {' per block, '}' closing it, and LF + 28 spaces per
+    line. Unlike the flat regions the block partition is rendered, so it is recovered here. -/
+def genBlocks (t : String) : List (List String) :=
+  let openP := "\n" ++ spaces 24 ++ "case "
+  let closeP := "\n" ++ spaces 24 ++ "}"
+  let pre := "\n" ++ spaces 28
+  match t.splitOn openP with
+  | "" :: arms => arms.map fun a =>
+      let afterKw := ((a.dropWhile (fun c => c != '{')).drop 1)
+      let body := if afterKw.endsWith closeP then afterKw.dropEnd closeP.length else afterKw
+      if body.startsWith pre then ((body.drop pre.length).toString).splitOn pre else []
+  | _ => []
+
+/-- The deployed ctx with the five generated-code regions filled from the artifact. None if
+    any anchor is missing or duplicated, so a drifted artifact reddens the gates rather than
+    silently rendering a shorter program. -/
+def quotientDeployedCtx (sol : String) : Option PartialCtx := do
+  let inline ← sliceBetween sol qAnchorInlineBefore qAnchorInlineAfter
+  let perm ← sliceBetween sol qAnchorPermBefore qAnchorPermAfter
+  let lookup ← sliceBetween sol qAnchorLookupBefore qAnchorLookupAfter
+  let nident ← sliceBetween sol qAnchorNiBefore qAnchorNiAfter
+  let postvm ← sliceBetween sol qAnchorPostBefore qAnchorPostAfter
+  pure { quotientCtx with
+    quotientInlineComputations := [genLines 16 inline]
+    quotientNativePermutationComputation := genLines 24 perm
+    quotientNativeLookupComputation := genLines 24 lookup
+    quotientNativeIdentityComputations := genBlocks nident
+    quotientPostVmComputations := [genLines 16 postvm] }
+
+  /-- T:partials/quotient_numerator/QuotientHelpers.yul:1-81 (81 lines at HEAD). The
+      deployed render is D:1588-1618 (1,621 bytes, 31 lines): the q_program_fail helper
+      plus the q_pow5 block, because the profile sets quotient_pow5_helper and clears the
+      other two. The two limb7 ifs and BOTH of their coefficient loops render zero times,
+      so limb7YulCoeffs / wideLimb7YulCoeffs are inert here (inertFields13c_ok). The file
+      ends with an endif, so the last thing it emits is the helper closing brace and
+      Askama drops the file final newline - which is what makes the concatenation with
+      the next include land on the following line at all. -/
+  def renderQuotientHelpers (ctx : PartialCtx) : String :=
+  "            // Revert with the QuotientProgramInvalid() selector\n            // (bytes4(keccak256) = 0x3cc81b89; pinned by\n            // p4_error_selectors_match_declared_errors). Defined here rather\n            // than in AssemblyHelpers.yul because the quotient VM renders in\n            // BOTH the main verifier and the standalone evaluator assembly.\n            function q_program_fail() {\n                mstore(0x00, shl(224, 0x3cc81b89))\n                revert(0x00, 0x04)\n            }\n\n            // Optional quotient helper functions. Each one is rendered only\n            // when the Rust lowering pass recognized the corresponding\n            // expression shape in this generated verifier. They are pure Fr\n            // helpers and share the same FR_MODULUS as the surrounding\n            // numerator block." ++
+  (if ctx.quotientPow5Helper then
+   "\n            // VK-specialized identity helper for Poseidon S-box terms.\n            //\n            // Rust source shape:\n            //   circuits/src/hash/poseidon/poseidon_chip.rs::sbox\n            //   full_round_gate / partial_round_gate\n            //   circuits/src/hash/poseidon/round_skips.rs::RoundId\n            //\n            // The Rust verifier only sees this as an Expression tree from\n            // `vk.cs.gates`; the generator emits q_pow5 after recognizing five\n            // equal multiplicative factors. It is a codegen shortcut for x^5,\n            // not a separate verifier rule.\n            function q_pow5(x) -> z {\n                let q_r := FR_MODULUS\n                let x2 := mulmod(x, x, q_r)\n                z := mulmod(x, mulmod(x2, x2, q_r), q_r)\n            }"
+  else
+  "") ++
+  (if ctx.quotientLimb7Helper then
+   "\n            // Compact evaluator for a recurring 7-limb foreign-field linear\n            // combination.\n            //\n            // Rust source shape:\n            //   circuits/src/field/foreign/params.rs::base_powers\n            //   foreign/gates/norm.rs::Foreign-field normalization\n            //   foreign/gates/mul.rs::Foreign-field multiplication\n            //\n            // This evaluates sum_i base_powers[i] * limb_i over Fr for this\n            // generated 7-limb basis. It is used for normalization and the\n            // sum_x/sum_y/sum_z pieces of multiplication.\n            function q_limb7(x0, x1, x2, x3, x4, x5, x6) -> z {\n                let q_r := FR_MODULUS" ++
+   (jinjaFor ctx.limb7YulCoeffs (fun coeff loop =>
+    (if loop.first then
+     "\n                z := addmod(x0, mulmod(" ++
+     coeff ++
+     ", x" ++
+     toString (loop.index) ++
+     ", q_r), q_r)"
+    else
+    "\n                z := addmod(z, mulmod(" ++
+     coeff ++
+     ", x" ++
+     toString (loop.index) ++
+     ", q_r), q_r)"))) ++
+   "\n            }"
+  else
+  "") ++
+  (if ctx.quotientWideLimb7Helper then
+   "\n            // Wide helper for the pairwise-product side of foreign-field\n            // multiplication.\n            //\n            // Rust source shape:\n            //   foreign/gates/mul.rs::Foreign-field multiplication\n            //   xys = pair_wise_prod(xs, ys)\n            //   sum_exprs(double_base_powers, xys)\n            //\n            // Native multiplication callbacks group repeated 7-term slices of\n            // the double-base product-convolution basis into q_limb7_wide.\n            function q_limb7_wide(x0, x1, x2, x3, x4, x5, x6) -> z {\n                let q_r := FR_MODULUS" ++
+   (jinjaFor ctx.wideLimb7YulCoeffs (fun coeff loop =>
+    (if loop.first then
+     "\n                z := addmod(x0, mulmod(" ++
+     coeff ++
+     ", x" ++
+     toString (loop.index) ++
+     ", q_r), q_r)"
+    else
+    "\n                z := addmod(z, mulmod(" ++
+     coeff ++
+     ", x" ++
+     toString (loop.index) ++
+     ", q_r), q_r)"))) ++
+   "\n            }"
+  else
+  "")
+
+  /-- The five QVM-01 guard macros of T:QuotientNumeratorBlock.yul:41-55.
+      Each is defined with a right-trim, so its body renders as ONE inline statement
+      with no leading indent of its own; the call sites keep their own indentation in the
+      surrounding text. They take program explicitly because in the template they are
+      called from inside the match arm that binds it. -/
+  def qConstGuard (program : QuotientProgram) (idx : String) : String :=
+    "if gt(" ++
+    idx ++
+    ", " ++
+    hexFilter (program.guards.constMax) ++
+    ") { q_program_fail() }"
+
+  def qSpillGuard (program : QuotientProgram) : String :=
+    "if gt(q_sp, " ++
+    hexFilter (program.guards.stackLast) ++
+    ") { q_program_fail() }"
+
+  def qPopGuard (program : QuotientProgram) : String :=
+    "if eq(q_sp, " ++
+    hexFilter (program.stackMptr) ++
+    ") { q_program_fail() }"
+
+  def qFoldGuard (program : QuotientProgram) : String :=
+    "if iszero(and(q_has_top, eq(q_sp, " ++
+    hexFilter (program.stackMptr) ++
+    "))) { q_program_fail() }"
+
+  def qNativeGuard (program : QuotientProgram) : String :=
+    "if or(q_has_top, xor(q_sp, " ++
+    hexFilter (program.stackMptr) ++
+    ")) { q_program_fail() }"
+
+  /-- T:partials/quotient_numerator/QuotientNumeratorBlock.yul:1-1442 (1,442 lines at
+      HEAD) - the largest template in the tree. The deployed render is D:1619-2539
+      (55,597 bytes, 921 lines) and takes the match arm at :134 (Some program), so the
+      legacy arm at :1396-1440 - including the :1439 negation line the brief names -
+      renders zero times. Of the 88 conditional sites only 68 are reached and 23 are
+      true; 21 of the 31 opcode arms and all 9 token arms render zero times. The five
+      generated-code for-sites contribute 528 of the 921 lines. See the P-13c gate
+      header for the full exercised-region counts. -/
+  def renderQuotientNumeratorBlock (ctx : PartialCtx) : String :=
+  "\n            // ===============================================================\n            // Batched identity numerator / linearization target.\n            //\n            // This block does not evaluate the quotient polynomial h(x), and\n            // the proof does not provide an h(x) scalar to trust. Instead it:\n            //\n            //   1. Reconstructs the y-batched constraint numerator nu_y(x)\n            //      from the alleged polynomial evaluations read after the\n            //      transcript sampled x.\n            //   2. Stores -nu_y(x) as the expected opening scalar for the\n            //      linearized commitment.\n            //\n            // The commitment side is built in the next block from the quotient\n            // limb commitments as (1 - x^n) * Σ_i x_split^i * Q_i, plus any\n            // simple-selector commitments. The PCS check later binds that\n            // linearized commitment to this expected scalar at x.\n            //\n            // Rust source-of-truth:\n            //   - verifier.rs reads quotient commitments, samples x, then\n            //     reads/computes all evaluations used below.\n            //   - mod.rs::partially_evaluate_identities returns identities in\n            //     gate, permutation, lookup, trash order.\n            //   - linearization/verifier.rs::compute_linearization_commitment\n            //     reverse-folds those identities by powers of y, sends\n            //     simple-selector identities to selector commitment scalars,\n            //     and subtracts fully-evaluated identities into expected_eval.\n            //\n            // This template is shared by the monolithic and external quotient\n            // paths. In the external path, Halo2QuotientEvaluator first copies\n            // the verifier memory frame into the same generated addresses.\n            //\n            // Runtime inputs expected to exist before this block starts:\n            //   - `r` is the BLS12-381 scalar-field modulus.\n            //   - Y_MPTR holds the quotient batching challenge y.\n            //   - X_MPTR, L_*_MPTR, INSTANCE_EVAL_MPTR, and\n            //     REVERSED_EVALS_MPTR hold values parsed or derived by the\n            //     main verifier after the transcript sampled x.\n            //   - VK_MPTR holds the pinned VK payload; in compact mode that\n            //     payload includes the quotient constant table and bytecode.\n            //\n            // Runtime outputs written by this block:\n            //   - QUOTIENT_EVAL_MPTR receives the scalar expected opening for\n            //     the linearized commitment, namely -nu_y(x).\n            //   - SELECTOR_ACC_MPTR[0..num_simple_selectors) receives one\n            //     linearization scalar per generated simple selector.\n            //\n            // Line-by-line reading conventions used below:\n            //\n            //   * Every runtime value is one canonical Fr element stored in a\n            //     256-bit EVM memory word. The small integer operands decoded\n            //     from q_program are never field values; they are pointers,\n            //     constant-table slots, selector indexes, offsets, or counts.\n            //\n            //   * `mload(ptr)` is the only way the VM turns a small pointer\n            //     operand into a real 255-bit field element. The value loaded\n            //     from memory is then combined with `addmod(..., r)` or\n            //     `mulmod(..., r)`, so every arithmetic line is reduced modulo\n            //     the BLS12-381 scalar-field order.\n            //\n            //   * `q_top` is the cached top of the VM operand stack. When an\n            //     opcode needs to push while `q_top` is already live, the old\n            //     value is written to `q_sp` and `q_sp` is advanced by one\n            //     word. Binary `ADD`/`MUL` move `q_sp` back by one word and\n            //     combine that spilled value with `q_top`.\n            //\n            //   * Identity boundaries are explicit. Expression opcodes leave\n            //     one value in `q_top`; `FOLD_MAIN` or `FOLD_SELECTOR` consumes\n            //     it and advances the global y-batch position. Native callback\n            //     opcodes are only emitted at empty-stack boundaries and run\n            //     generated Yul that performs the same fold side effects.\n            //\n            //   * The generated Solidity source intentionally emits comments\n            //     before opcode cases. Those comments are documentation only:\n            //     they do not affect bytecode, but they make rendered verifier\n            //     assembly readable without jumping back to Rust codegen.\n            // ===============================================================\n            {" ++
+  (match ctx.quotientProgram with
+   | some program =>
+   "\n                // Compact quotient-program mode.\n                //\n                // The largest identity expressions are not all emitted as\n                // unrolled Yul. Instead, most arithmetic is encoded as a small\n                // q_program bytecode stored in the VK payload. This block\n                // interprets that program, while selected heavy identities may\n                // still be emitted as native callbacks for gas.\n                //\n                // Compact mode is a code-size trade: short bytecode operands\n                // name already-planned memory slots, and the interpreter turns\n                // those names into Fr arithmetic. The opcode stream is fully\n                // generated and pinned by the VK/runtime codehash; no proof\n                // calldata can alter control flow.\n                // Load the quotient batching challenge used by every fold.\n                let y := mload(Y_MPTR)\n\n                // q_const_mptr points to Fr constants used by the VM.\n                // q_program_mptr points to the bytecode stream.\n                // Constants are stored as consecutive 32-byte Fr words.\n                let q_const_mptr := " ++
+   hexFilter (program.constMptr) ++
+   "\n                // Program bytes are also stored in the VK payload, packed into\n                // 32-byte words by PackedProgramCodec.\n                let q_program_mptr := " ++
+   hexFilter (program.programMptr) ++
+   "\n                // Running Horner accumulator for fully evaluated identities.\n                // After all identities, this is nu_y(x) for the `None`\n                // identity group.\n                // Initialize A = 0 before scanning the identity stream.\n                mstore(" ++
+   hexFilter (program.evalNumerMptr) ++
+   ", 0)" ++
+   (if ctx.trace then
+    "\n                // Trace builds label each emitted identity in y-batch order.\n                mstore(" ++
+    hexFilter (program.traceIdMptr) ++
+    ", " ++
+    toString (ctx.quotientIdentityTraceBase) ++
+    ")"
+   else
+   "") ++
+   (if (ctx.simpleSelectorCols).length > 0 then
+    "\n                // Simple selectors are grouped into separate linearization\n                // buckets. They start at zero for every proof.\n                // q_sel_zero_off walks selector bucket byte offsets.\n                for { let q_sel_zero_off := 0 } lt(q_sel_zero_off, " ++
+    hexFilter (((ctx.simpleSelectorCols).length * 0x20)) ++
+    ") { q_sel_zero_off := add(q_sel_zero_off, 0x20) } {\n                    // B_s = 0 for each simple selector bucket.\n                    mstore(add(SELECTOR_ACC_MPTR, q_sel_zero_off), 0)\n                }" ++
+    (if program.selectorMaxPower > 0 then
+     "\n                // Codegen knows the selector identity positions. Precompute\n                // the y^k powers needed for selector gap and tail updates,\n                // avoiding a runtime y^-1 modexp and per-identity selector\n                // scale maintenance.\n                {\n                    // q_y_power holds y^i at the current loop index.\n                    let q_y_power := 1\n                    // Start at i=1 because y^0 = 1 is implicit and never read.\n                    for { let q_y_power_i := 1 } lt(q_y_power_i, " ++
+     toString (program.selectorMaxPower + 1) ++
+     ") { q_y_power_i := add(q_y_power_i, 1) } {\n                        // Advance from y^(i-1) to y^i modulo Fr.\n                        q_y_power := mulmod(q_y_power, y, r)\n                        // Store y^i at selector_power_mptr + 32*i.\n                        mstore(add(" ++
+     hexFilter (program.selectorPowerMptr) ++
+     ", shl(5, q_y_power_i)), q_y_power)\n                    }\n                }"
+    else
+    "")
+   else
+   "") ++
+   "\n\n                // Direct inline prefix. These identities are generated as Yul\n                // before entering the VM. They use the same fold snippets as\n                // VM/native identities, so they occupy the same y-batch order." ++
+   (jinjaFor ctx.quotientInlineComputations (fun code_block loop =>
+    (jinjaFor code_block (fun line loop =>
+     "\n                " ++
+     line)))) ++
+   "\n\n                // VM registers:\n                //   q_pc      current bytecode pointer\n                //   q_end     end of bytecode stream\n                //   q_sp      memory stack pointer for non-top stack values\n                //   q_top     cached top-of-stack value\n                //   q_has_top whether q_top currently holds a stack value\n                //\n                // The cached top reduces memory traffic in the interpreter.\n                // q_sp's registered range must cover the interpreted operand\n                // stack plus any native callback scratch that reuses this base\n                // pointer. In particular, the native permutation callback\n                // writes a structured scratch table at program.stack_mptr.\n                // q_pc starts at the first encoded instruction.\n                let q_pc := q_program_mptr\n                // q_end is an exclusive byte pointer for the VM loop.\n                let q_end := add(q_program_mptr, " ++
+   hexFilter (program.len) ++
+   ")\n                // q_sp starts at the first free stack word.\n                let q_sp := " ++
+   hexFilter (program.stackMptr) ++
+   "\n                // q_top is meaningless until q_has_top is set.\n                let q_top := 0\n                // q_has_top = 0 means the VM stack is empty.\n                let q_has_top := 0\n\n                // q_program opcode summary. Rendered from the same\n                // program.op_usage predicates that gate the interpreter's\n                // case arms below, so this artifact documents exactly the\n                // opcodes its program can contain -- no more, no fewer." ++
+   (if program.opUsage.pushConst then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushConst) ++
+    " push_const"
+   else
+   "") ++
+   (if program.opUsage.pushMemLiteral then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemLiteral) ++
+    " push_mem_literal"
+   else
+   "") ++
+   (if program.opUsage.pushMemToken then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemToken) ++
+    " push_mem_token"
+   else
+   "") ++
+   (if program.opUsage.pushMemTokenOffset then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemTokenOffset) ++
+    " push_mem_token_offset"
+   else
+   "") ++
+   (if program.opUsage.pushMemU16 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemU16) ++
+    " push_mem_u16"
+   else
+   "") ++
+   (if program.opUsage.add then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.add) ++
+    " add"
+   else
+   "") ++
+   (if program.opUsage.mul then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mul) ++
+    " mul"
+   else
+   "") ++
+   (if program.opUsage.neg then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.neg) ++
+    " neg"
+   else
+   "") ++
+   (if program.opUsage.pushConstU8 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushConstU8) ++
+    " push_const_u8"
+   else
+   "") ++
+   (if program.opUsage.foldMain then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.foldMain) ++
+    " fold_main"
+   else
+   "") ++
+   (if program.opUsage.foldSelector then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.foldSelector) ++
+    " fold_selector"
+   else
+   "") ++
+   (if program.opUsage.addConstU8 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addConstU8) ++
+    " add_const_u8"
+   else
+   "") ++
+   (if program.opUsage.mulConstU8 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulConstU8) ++
+    " mul_const_u8"
+   else
+   "") ++
+   (if program.opUsage.addConst then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addConst) ++
+    " add_const"
+   else
+   "") ++
+   (if program.opUsage.mulConst then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulConst) ++
+    " mul_const"
+   else
+   "") ++
+   (if program.opUsage.addMemU16 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMemU16) ++
+    " add_mem_u16"
+   else
+   "") ++
+   (if program.opUsage.mulMemU16 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulMemU16) ++
+    " mul_mem_u16"
+   else
+   "") ++
+   (if program.opUsage.addMulMemMemConstU8 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulMemMemConstU8) ++
+    " add_mul_mem_mem_const_u8"
+   else
+   "") ++
+   (if program.opUsage.addMulConstU8MemU16 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulConstU8MemU16) ++
+    " add_mul_const_u8_mem_u16"
+   else
+   "") ++
+   (if program.opUsage.addMulMemMem then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulMemMem) ++
+    " add_mul_mem_mem"
+   else
+   "") ++
+   (if program.opUsage.runAddMulMemMemConstU8 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.runAddMulMemMemConstU8) ++
+    " run_add_mul_mem_mem_const_u8"
+   else
+   "") ++
+   (if program.opUsage.runAddMulConstU8MemU16 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.runAddMulConstU8MemU16) ++
+    " run_add_mul_const_u8_mem_u16"
+   else
+   "") ++
+   (if program.opUsage.affineSum then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.affineSum) ++
+    " affine_sum"
+   else
+   "") ++
+   (if program.opUsage.nativePermutation then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativePermutation) ++
+    " native_permutation"
+   else
+   "") ++
+   (if program.opUsage.nativeLookup then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativeLookup) ++
+    " native_lookup"
+   else
+   "") ++
+   (if program.opUsage.nativeIdentity then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativeIdentity) ++
+    " native_identity"
+   else
+   "") ++
+   (if program.opUsage.lin7 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.lin7) ++
+    " lin7"
+   else
+   "") ++
+   (if program.opUsage.bilin7Row then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.bilin7Row) ++
+    " bilin7_row"
+   else
+   "") ++
+   (if program.opUsage.bilin7Pairwise then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.bilin7Pairwise) ++
+    " bilin7_pairwise"
+   else
+   "") ++
+   (if program.opUsage.modarith7 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.modarith7) ++
+    " modarith7"
+   else
+   "") ++
+   (if program.opUsage.pow5 then
+    "\n                //   " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pow5) ++
+    " pow5"
+   else
+   "") ++
+   "\n                //\n                // The default IVC verifier uses one physical encoding for the\n                // logical VM: compact byte-oriented opcodes with variable-width\n                // operands, dynamic runs, and limb-aware cases.\n                " ++
+   "\n                // Byte-oriented encoding: opcodes are one byte followed by\n                // variable-width operand bytes.\n                for { } lt(q_pc, q_end) { } {\n                    // The bytecode table is byte-addressed, but EVM memory\n                    // loads whole words. `byte(0, mload(q_pc))` extracts the\n                    // opcode at the current byte cursor; each case advances\n                    // q_pc by exactly its operand width.\n                    let q_op := byte(0, mload(q_pc))\n                    q_pc := add(q_pc, 1)\n\n                    switch q_op" ++
+   (if program.opUsage.pushConst then
+    "\n                    // VM 0x01 PUSH_CONST (bytes): next two bytes are a constant-table slot.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushConst) ++
+    " {\n                        // Operand layout: u16 const_idx. Constants are 32-byte\n                        // Fr words, so shl(5, const_idx) converts an index to\n                        // a byte offset.\n                        let qconst := shr(240, mload(q_pc))\n                        " ++
+    qConstGuard program "qconst" ++
+    "\n                        // Push semantics: spill the old cached top, if any,\n                        // then install the loaded constant as the new q_top.\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(add(q_const_mptr, shl(5, qconst)))\n                        q_has_top := 1\n                        q_pc := add(q_pc, 2)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pushMemLiteral then
+    "\n                    // VM 0x02 PUSH_MEM_LITERAL (bytes): next four bytes are a memory pointer.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemLiteral) ++
+    " {\n                        // Operand layout: u32 absolute memory pointer. This is\n                        // emitted only for planned addresses that do not fit in\n                        // the smaller u16 form or token map.\n                        let q_ptr := shr(224, mload(q_pc))\n                        q_pc := add(q_pc, " ++
+    hexFilter (ctx.templateConstants.quotientVm.byteU32Bytes) ++
+    ")\n                        // Load one canonical Fr word from generated memory and\n                        // push it through the cached-top stack discipline.\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(q_ptr)\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pushMemToken then
+    "\n                    // VM 0x03 PUSH_MEM_TOKEN (bytes): next byte selects a symbolic memory pointer.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemToken) ++
+    " {\n                        // Operand layout: u8 token. Tokens cover the hot\n                        // global verifier scalars used in many identities.\n                        let q_token := byte(0, mload(q_pc))\n                        q_pc := add(q_pc, 1)\n                        let q_ptr := 0\n                        // Token cases decode generated symbolic memory addresses.\n                        switch q_token" ++
+    (if program.memUsage.l0 then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.l0) ++
+     " { q_ptr := L_0_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.lLast then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.lLast) ++
+     " { q_ptr := L_LAST_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.lBlind then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.lBlind) ++
+     " { q_ptr := L_BLIND_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.beta then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.beta) ++
+     " { q_ptr := BETA_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.gamma then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.gamma) ++
+     " { q_ptr := GAMMA_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.x then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.x) ++
+     " { q_ptr := X_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.theta then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.theta) ++
+     " { q_ptr := THETA_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.trashChallenge then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.trashChallenge) ++
+     " { q_ptr := TRASH_CHALLENGE_MPTR }"
+    else
+    "") ++
+    (if program.memUsage.instanceEval then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.instanceEval) ++
+     " { q_ptr := INSTANCE_EVAL_MPTR }"
+    else
+    "") ++
+    "\n                        // A token not advertised by the VM usage manifest is\n                        // impossible for valid generated bytecode.\n                        default { q_program_fail() }\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(q_ptr)\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pushMemTokenOffset then
+    "\n                    // VM 0x04 PUSH_MEM_TOKEN_OFFSET (bytes): token byte plus u32 byte offset.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemTokenOffset) ++
+    " {\n                        // Operand layout: u8 token, u32 byte offset. This is\n                        // used when a symbolic base such as REVERSED_EVALS_MPTR\n                        // is known, but the expression needs a specific word\n                        // inside that generated region.\n                        let q_word := mload(q_pc)\n                        let q_token := byte(0, q_word)\n                        let q_off := and(shr(216, q_word), 0xffffffff)\n                        q_pc := add(q_pc, 5)\n                        let q_ptr := 0\n                        // Token-offset cases reuse the same token table, then add q_off.\n                        switch q_token" ++
+    (if program.memUsage.l0 then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.l0) ++
+     " { q_ptr := add(L_0_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.lLast then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.lLast) ++
+     " { q_ptr := add(L_LAST_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.lBlind then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.lBlind) ++
+     " { q_ptr := add(L_BLIND_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.beta then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.beta) ++
+     " { q_ptr := add(BETA_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.gamma then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.gamma) ++
+     " { q_ptr := add(GAMMA_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.x then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.x) ++
+     " { q_ptr := add(X_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.theta then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.theta) ++
+     " { q_ptr := add(THETA_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.trashChallenge then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.trashChallenge) ++
+     " { q_ptr := add(TRASH_CHALLENGE_MPTR, q_off) }"
+    else
+    "") ++
+    (if program.memUsage.instanceEval then
+     "\n                        case " ++
+     hexFilter (ctx.templateConstants.quotientVm.mem.instanceEval) ++
+     " { q_ptr := add(INSTANCE_EVAL_MPTR, q_off) }"
+    else
+    "") ++
+    "\n                        default { q_program_fail() }\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(q_ptr)\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pushMemU16 then
+    "\n                    // VM 0x05 PUSH_MEM_U16 (bytes): next two bytes are a short memory pointer.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushMemU16) ++
+    " {\n                        // Operand layout: u16 absolute memory pointer. The\n                        // memory planner keeps the hot quotient frame below\n                        // 64 KiB when this compact form is emitted.\n                        let q_ptr := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(q_ptr)\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.add then
+    "\n                    // VM 0x06 ADD: pop one spilled stack word and add it to q_top.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.add) ++
+    " {\n                        // The safety validator guarantees a spilled operand\n                        // exists before ADD. q_top is the right operand.\n                        " ++
+    qPopGuard program ++
+    "\n                        q_sp := sub(q_sp, 0x20)\n                        q_top := addmod(mload(q_sp), q_top, r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.mul then
+    "\n                    // VM 0x07 MUL: pop one spilled stack word and multiply it by q_top.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mul) ++
+    " {\n                        // Same stack contract as ADD, with multiplication\n                        // reduced directly modulo Fr.\n                        " ++
+    qPopGuard program ++
+    "\n                        q_sp := sub(q_sp, 0x20)\n                        q_top := mulmod(mload(q_sp), q_top, r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.neg then
+    "\n                    // VM 0x08 NEG: replace q_top with its Fr negation.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.neg) ++
+    " {\n                        // addmod(0, r - x, r) maps zero back to zero and every\n                        // nonzero scalar to its canonical additive inverse.\n                        q_top := addmod(0, sub(r, q_top), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pow5 then
+    "\n                    // VM 0x20 POW5: replace q_top with q_top^5.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pow5) ++
+    " {\n                        // Poseidon S-box shortcut: x^5 = x * (x^2)^2.\n                        let q2 := mulmod(q_top, q_top, r)\n                        q_top := mulmod(q_top, mulmod(q2, q2, r), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.pushConstU8 then
+    "\n                    // VM 0x09 PUSH_CONST_U8 (bytes): next byte is a constant-table slot.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.pushConstU8) ++
+    " {\n                        // One-byte variant for the common case where the\n                        // constant table has fewer than 256 referenced slots.\n                        let qconst := byte(0, mload(q_pc))\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        q_top := mload(add(q_const_mptr, shl(5, qconst)))\n                        q_has_top := 1\n                        q_pc := add(q_pc, 1)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addConstU8 then
+    "\n                    // VM 0x0c ADD_CONST_U8: add a small constant-table slot into q_top.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addConstU8) ++
+    " {\n                        // Accumulator opcode: mutates q_top in place instead\n                        // of pushing a new stack value.\n                        let qconst := byte(0, mload(q_pc))\n                        q_pc := add(q_pc, 1)\n                        q_top := addmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.mulConstU8 then
+    "\n                    // VM 0x0d MUL_CONST_U8: multiply q_top by a small constant-table slot.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulConstU8) ++
+    " {\n                        // One-byte constant-index multiply, used by short\n                        // affine chains after an initial PUSH.\n                        let qconst := byte(0, mload(q_pc))\n                        q_pc := add(q_pc, 1)\n                        q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addConst then
+    "\n                    // VM 0x0e ADD_CONST: add a wider constant-table slot into q_top.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addConst) ++
+    " {\n                        // Two-byte constant-index form for larger generated\n                        // constant tables.\n                        let qconst := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        " ++
+    qConstGuard program "qconst" ++
+    "\n                        q_top := addmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.mulConst then
+    "\n                    // VM 0x0f MUL_CONST: multiply q_top by a wider constant-table slot.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulConst) ++
+    " {\n                        // Two-byte constant-index multiply.\n                        let qconst := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        " ++
+    qConstGuard program "qconst" ++
+    "\n                        q_top := mulmod(q_top, mload(add(q_const_mptr, shl(5, qconst))), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addMemU16 then
+    "\n                    // VM 0x10 ADD_MEM_U16: add a short memory load into q_top.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMemU16) ++
+    " {\n                        // Operand layout: u16 pointer. The pointed word is an\n                        // already range-checked Fr scalar in verifier memory.\n                        let q_ptr := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        q_top := addmod(q_top, mload(q_ptr), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.mulMemU16 then
+    "\n                    // VM 0x11 MUL_MEM_U16: multiply q_top by a short memory load.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.mulMemU16) ++
+    " {\n                        // In-place multiply by a planned memory word.\n                        let q_ptr := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        q_top := mulmod(q_top, mload(q_ptr), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addMulMemMemConstU8 then
+    "\n                    // VM 0x12 ADD_MUL_MEM_MEM_CONST_U8: fused q_top += lhs * rhs * const.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulMemMemConstU8) ++
+    " {\n                        // Operand layout: u16 lhs_ptr, u16 rhs_ptr,\n                        // u8 const_idx. This fuses a frequent affine-product\n                        // term without spending opcodes on PUSH/MUL/MUL/ADD.\n                        let q_word := mload(q_pc)\n                        let q_lhs := shr(240, q_word)\n                        let q_rhs := and(shr(224, q_word), 0xffff)\n                        let qconst := byte(4, q_word)\n                        q_pc := add(q_pc, 5)\n                        q_top := addmod(\n                            q_top,\n                            mulmod(\n                                mulmod(mload(q_lhs), mload(q_rhs), r),\n                                mload(add(q_const_mptr, shl(5, qconst))),\n                                r\n                            ),\n                            r\n                        )\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addMulConstU8MemU16 then
+    "\n                    // VM 0x13 ADD_MUL_CONST_U8_MEM_U16: fused q_top += mem * const.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulConstU8MemU16) ++
+    " {\n                        // Operand layout: u16 ptr, u8 const_idx.\n                        let q_word := mload(q_pc)\n                        let q_ptr := shr(240, q_word)\n                        let qconst := byte(2, q_word)\n                        q_pc := add(q_pc, 3)\n                        q_top := addmod(\n                            q_top,\n                            mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),\n                            r\n                        )\n                    }"
+   else
+   "") ++
+   (if program.opUsage.addMulMemMem then
+    "\n                    // VM 0x14 ADD_MUL_MEM_MEM: fused q_top += lhs * rhs.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.addMulMemMem) ++
+    " {\n                        // Operand layout: u16 lhs_ptr, u16 rhs_ptr. This is\n                        // the unit-coefficient sibling of opcode 0x12.\n                        let q_word := mload(q_pc)\n                        let q_lhs := shr(240, q_word)\n                        let q_rhs := and(shr(224, q_word), 0xffff)\n                        q_pc := add(q_pc, " ++
+    hexFilter (ctx.templateConstants.quotientVm.byteU32Bytes) ++
+    ")\n                        q_top := addmod(q_top, mulmod(mload(q_lhs), mload(q_rhs), r), r)\n                    }"
+   else
+   "") ++
+   (if program.opUsage.runAddMulMemMemConstU8 then
+    "\n                    // VM 0x15 RUN_ADD_MUL_MEM_MEM_CONST_U8: byte-only loop over fused 0x12 payloads.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.runAddMulMemMemConstU8) ++
+    " {\n                        // Operand layout: u16 count followed by `count`\n                        // packed 0x12-style payloads. The run header saves a\n                        // dispatch per term in long affine product chains.\n                        let q_count := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        let q_run_end := add(q_pc, mul(q_count, 5))\n                        for { } lt(q_pc, q_run_end) { } {\n                            let q_word := mload(q_pc)\n                            let q_lhs := shr(240, q_word)\n                            let q_rhs := and(shr(224, q_word), 0xffff)\n                            let qconst := byte(4, q_word)\n                            q_pc := add(q_pc, 5)\n                            q_top := addmod(\n                                q_top,\n                                mulmod(\n                                    mulmod(mload(q_lhs), mload(q_rhs), r),\n                                    mload(add(q_const_mptr, shl(5, qconst))),\n                                    r\n                                ),\n                                r\n                            )\n                        }\n                    }"
+   else
+   "") ++
+   (if program.opUsage.runAddMulConstU8MemU16 then
+    "\n                    // VM 0x16 RUN_ADD_MUL_CONST_U8_MEM_U16: byte-only loop over fused 0x13 payloads.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.runAddMulConstU8MemU16) ++
+    " {\n                        // Operand layout: u16 count followed by `count`\n                        // packed 0x13-style payloads.\n                        let q_count := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        let q_run_end := add(q_pc, mul(q_count, 3))\n                        for { } lt(q_pc, q_run_end) { } {\n                            let q_word := mload(q_pc)\n                            let q_ptr := shr(240, q_word)\n                            let qconst := byte(2, q_word)\n                            q_pc := add(q_pc, 3)\n                            q_top := addmod(\n                                q_top,\n                                mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),\n                                r\n                            )\n                        }\n                    }"
+   else
+   "") ++
+   (if program.opUsage.affineSum then
+    "\n                    // VM 0x22 AFFINE_SUM: mixed byte-only affine linear/product loop.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.affineSum) ++
+    " {\n                        // Operand layout:\n                        //   u16 lin_count, u16 product_count,\n                        //   lin_count * {u16 ptr, u8 const_idx},\n                        //   product_count * {u16 lhs, u16 rhs, u8 const_idx}.\n                        // The opcode appends all terms into the existing\n                        // q_top accumulator.\n                        let q_lin_count := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        let q_product_count := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        // Linear part: q_top += c_i * mload(ptr_i).\n                        let q_lin_end := add(q_pc, mul(q_lin_count, 3))\n                        for { } lt(q_pc, q_lin_end) { } {\n                            let q_word := mload(q_pc)\n                            let q_ptr := shr(240, q_word)\n                            let qconst := byte(2, q_word)\n                            q_pc := add(q_pc, 3)\n                            q_top := addmod(\n                                q_top,\n                                mulmod(mload(q_ptr), mload(add(q_const_mptr, shl(5, qconst))), r),\n                                r\n                            )\n                        }\n                        // Product part: q_top += c_i * mload(lhs_i) * mload(rhs_i).\n                        let q_product_end := add(q_pc, mul(q_product_count, 5))\n                        for { } lt(q_pc, q_product_end) { } {\n                            let q_word := mload(q_pc)\n                            let q_lhs := shr(240, q_word)\n                            let q_rhs := and(shr(224, q_word), 0xffff)\n                            let qconst := byte(4, q_word)\n                            q_pc := add(q_pc, 5)\n                            q_top := addmod(\n                                q_top,\n                                mulmod(\n                                    mulmod(mload(q_lhs), mload(q_rhs), r),\n                                    mload(add(q_const_mptr, shl(5, qconst))),\n                                    r\n                                ),\n                                r\n                            )\n                        }\n                    }"
+   else
+   "") ++
+   (if program.opUsage.lin7 || program.opUsage.bilin7Row || program.opUsage.bilin7Pairwise || program.opUsage.modarith7 then
+    "\n                    // Limb-aware opcodes are opt-in compact forms for\n                    // structurally recognized non-SHA foreign-field shapes.\n                    // Coefficients are indexes into q_const_mptr, which is\n                    // generated from VK/program data, never from proof\n                    // calldata.\n                    //\n                    // Rust source shape:\n                    //   proofs/src/plonk/mod.rs::partially_evaluate_identities\n                    //   circuits/src/field/foreign/util.rs::{sum_exprs,pair_wise_prod}\n                    //   circuits/src/field/foreign/params.rs::{base_powers,double_base_powers}\n                    //\n                    // \"Foreign field\" means the circuit represents elements\n                    // modulo another modulus m as 7 limbs in base\n                    // 2^LOG2_BASE. The verifier does not switch fields; it\n                    // evaluates the lowered identity over BLS12-381 Fr, using\n                    // Fr coefficients equal to base^i mod m or base^(i+j) mod m."
+   else
+   "") ++
+   (if program.opUsage.lin7 then
+    "\n                    // VM 0x1c LIN7: byte-only 7-term foreign-field linear form.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.lin7) ++
+    " {\n                        // LIN7: sum_i coeff[i] * value[i] over Fr.\n                        // Typical Rust origin: foreign/gates/norm.rs\n                        // normalization and foreign/gates/mul.rs base-power\n                        // sums for x/y/z limbs.\n                        //\n                        // Operand layout: seven repeated {u8 const_idx,\n                        // u16 ptr} pairs. The result is pushed as a fresh\n                        // stack value.\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        let q_acc := 0\n                        // Accumulate exactly seven limbs, matching the\n                        // generated foreign-field limb width.\n                        for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                            let q_word := mload(q_pc)\n                            let qconst := byte(0, q_word)\n                            let q_ptr := and(shr(232, q_word), 0xffff)\n                            q_pc := add(q_pc, 3)\n                            q_acc := addmod(\n                                q_acc,\n                                mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),\n                                r\n                            )\n                        }\n                        q_top := q_acc\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.bilin7Row then
+    "\n                    // VM 0x1d BILIN7_ROW: byte-only lhs times a 7-term weighted row.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.bilin7Row) ++
+    " {\n                        // BILIN7_ROW: lhs * sum_i coeff[i] * rhs[i].\n                        // Typical Rust origin: one row/slice of\n                        // pair_wise_prod in foreign multiplication and EC\n                        // on_curve/slope/tangent/lambda_squared gates.\n                        //\n                        // Operand layout: u16 lhs_ptr, then seven repeated\n                        // {u8 const_idx, u16 rhs_ptr} pairs. The lhs value is\n                        // loaded once and reused for all seven products.\n                        let q_lhs := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        let q_lhs_value := mload(q_lhs)\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        let q_acc := 0\n                        for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                            let q_word := mload(q_pc)\n                            let qconst := byte(0, q_word)\n                            let q_rhs := and(shr(232, q_word), 0xffff)\n                            q_pc := add(q_pc, 3)\n                            q_acc := addmod(\n                                q_acc,\n                                mulmod(\n                                    mulmod(q_lhs_value, mload(q_rhs), r),\n                                    mload(add(q_const_mptr, shl(5, qconst))),\n                                    r\n                                ),\n                                r\n                            )\n                        }\n                        q_top := q_acc\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.bilin7Pairwise then
+    "\n                    // VM 0x1e BILIN7_PAIRWISE: byte-only 7-by-7 weighted convolution.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.bilin7Pairwise) ++
+    " {\n                        // BILIN7_PAIRWISE:\n                        //   sum_{i=0..6,j=0..6} coeff[i+j] * lhs[i] * rhs[j].\n                        // Bases point to contiguous 7-word limb vectors.\n                        // Typical Rust origin:\n                        //   sum_exprs(double_base_powers,\n                        //             pair_wise_prod(lhs, rhs))\n                        // where double_base_powers[k] = base^k mod m.\n                        //\n                        // Operand layout: u16 lhs_base, u16 rhs_base, then 13\n                        // one-byte coefficient indexes. Coefficients are\n                        // addressed by i+j, so 7-by-7 products need 13 slots.\n                        let q_word := mload(q_pc)\n                        let q_lhs_base := shr(240, q_word)\n                        let q_rhs_base := and(shr(224, q_word), 0xffff)\n                        q_pc := add(q_pc, " ++
+    hexFilter (ctx.templateConstants.quotientVm.byteU32Bytes) ++
+    ")\n                        let q_coeff_pc := q_pc\n                        q_pc := add(q_pc, " ++
+    toString (ctx.templateConstants.quotientVm.limbPairwiseCoeffs) ++
+    ")\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n                        let q_acc := 0\n                        // Nested limb convolution over two contiguous\n                        // 7-word vectors.\n                        for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                            let q_lhs_value := mload(add(q_lhs_base, shl(5, q_i)))\n                            for { let q_j := 0 } lt(q_j, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_j := add(q_j, 1) } {\n                                let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))\n                                q_acc := addmod(\n                                    q_acc,\n                                    mulmod(\n                                        mulmod(q_lhs_value, mload(add(q_rhs_base, shl(5, q_j))), r),\n                                        mload(add(q_const_mptr, shl(5, qconst))),\n                                        r\n                                    ),\n                                    r\n                                )\n                            }\n                        }\n                        q_top := q_acc\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.modarith7 then
+    "\n                    // VM 0x21 MODARITH7: byte-only fused affine 7-limb foreign-field/ECC identity.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.modarith7) ++
+    " {\n                        // MODARITH7:\n                        //   maybe_cond * (\n                        //       c\n                        //     + sum LIN7 blocks\n                        //     + sum BILIN7_ROW blocks\n                        //     + sum BILIN7_PAIRWISE blocks\n                        //     + sum coeff[k] * mload(ptr[k])\n                        //     + sum coeff[k] * mload(lhs[k]) * mload(rhs[k])\n                        //   )\n                        // It is a dispatch/operand-load optimization only;\n                        // all coefficients still come from the generated\n                        // quotient constant table.\n                        //\n                        // Flags:\n                        //   bit 0: multiply the final affine sum by a memory\n                        //          condition word.\n                        //   bit 1: seed q_acc from a constant-table word\n                        //          before reading the counted term blocks.\n                        let q_flags := byte(0, mload(q_pc))\n                        q_pc := add(q_pc, 1)\n                        // Only the COND (0x01) and CONST (0x02) flag bits are\n                        // defined; the byte validator rejects any other bit.\n                        if gt(q_flags, 0x03) { q_program_fail() }\n                        let q_cond_ptr := 0\n                        if and(q_flags, 0x01) {\n                            // Optional condition pointer. When present, the\n                            // whole identity is gated by mload(q_cond_ptr).\n                            q_cond_ptr := shr(240, mload(q_pc))\n                            q_pc := add(q_pc, 2)\n                        }\n\n                        let q_acc := 0\n                        if and(q_flags, 0x02) {\n                            // Optional constant seed for affine identities\n                            // with a standalone constant term.\n                            let qconst := byte(0, mload(q_pc))\n                            q_pc := add(q_pc, 1)\n                            q_acc := mload(add(q_const_mptr, shl(5, qconst)))\n                        }\n\n                        // Five one-byte counters describe the blocks that\n                        // follow. Each block has a fixed-width internal layout,\n                        // so q_pc can advance without per-term tags.\n                        let q_counts_word := mload(q_pc)\n                        let q_lin_count := byte(0, q_counts_word)\n                        let q_row_count := byte(1, q_counts_word)\n                        let q_pairwise_count := byte(2, q_counts_word)\n                        let q_mem_count := byte(3, q_counts_word)\n                        let q_product_count := byte(4, q_counts_word)\n                        q_pc := add(q_pc, 5)\n\n                        if q_has_top {\n                            " ++
+    qSpillGuard program ++
+    "\n                            mstore(q_sp, q_top)\n                            q_sp := add(q_sp, 0x20)\n                        }\n\n                        // LIN7 blocks: q_acc += sum_i c_i * limb_i.\n                        for { let q_lin_block := 0 } lt(q_lin_block, q_lin_count) { q_lin_block := add(q_lin_block, 1) } {\n                            for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                                let q_word := mload(q_pc)\n                                let qconst := byte(0, q_word)\n                                let q_ptr := and(shr(232, q_word), 0xffff)\n                                q_pc := add(q_pc, 3)\n                                q_acc := addmod(\n                                    q_acc,\n                                    mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),\n                                    r\n                                )\n                            }\n                        }\n\n                        // BILIN7_ROW blocks: q_acc += lhs * sum_i c_i * rhs_i.\n                        for { let q_row_block := 0 } lt(q_row_block, q_row_count) { q_row_block := add(q_row_block, 1) } {\n                            let q_lhs := shr(240, mload(q_pc))\n                            q_pc := add(q_pc, 2)\n                            let q_lhs_value := mload(q_lhs)\n                            for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                                let q_word := mload(q_pc)\n                                let qconst := byte(0, q_word)\n                                let q_rhs := and(shr(232, q_word), 0xffff)\n                                q_pc := add(q_pc, 3)\n                                q_acc := addmod(\n                                    q_acc,\n                                    mulmod(\n                                        mulmod(q_lhs_value, mload(q_rhs), r),\n                                        mload(add(q_const_mptr, shl(5, qconst))),\n                                        r\n                                    ),\n                                    r\n                                )\n                            }\n                        }\n\n                        // BILIN7_PAIRWISE blocks: q_acc += weighted 7-by-7\n                        // product convolution.\n                        for { let q_pair_block := 0 } lt(q_pair_block, q_pairwise_count) { q_pair_block := add(q_pair_block, 1) } {\n                            let q_pair_word := mload(q_pc)\n                            let q_lhs_base := shr(240, q_pair_word)\n                            let q_rhs_base := and(shr(224, q_pair_word), 0xffff)\n                            q_pc := add(q_pc, " ++
+    hexFilter (ctx.templateConstants.quotientVm.byteU32Bytes) ++
+    ")\n                            let q_coeff_pc := q_pc\n                            q_pc := add(q_pc, " ++
+    toString (ctx.templateConstants.quotientVm.limbPairwiseCoeffs) ++
+    ")\n                            for { let q_i := 0 } lt(q_i, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_i := add(q_i, 1) } {\n                                let q_lhs_value := mload(add(q_lhs_base, shl(5, q_i)))\n                                for { let q_j := 0 } lt(q_j, " ++
+    toString (ctx.templateConstants.quotientVm.limbCount) ++
+    ") { q_j := add(q_j, 1) } {\n                                    let qconst := byte(0, mload(add(q_coeff_pc, add(q_i, q_j))))\n                                    q_acc := addmod(\n                                        q_acc,\n                                        mulmod(\n                                            mulmod(q_lhs_value, mload(add(q_rhs_base, shl(5, q_j))), r),\n                                            mload(add(q_const_mptr, shl(5, qconst))),\n                                            r\n                                        ),\n                                        r\n                                    )\n                                }\n                            }\n                        }\n\n                        // Extra linear memory terms outside the 7-limb shapes.\n                        for { let q_mem_block := 0 } lt(q_mem_block, q_mem_count) { q_mem_block := add(q_mem_block, 1) } {\n                            let q_word := mload(q_pc)\n                            let qconst := byte(0, q_word)\n                            let q_ptr := and(shr(232, q_word), 0xffff)\n                            q_pc := add(q_pc, 3)\n                            q_acc := addmod(\n                                q_acc,\n                                mulmod(mload(add(q_const_mptr, shl(5, qconst))), mload(q_ptr), r),\n                                r\n                            )\n                        }\n\n                        // Extra binary product terms outside the 7-limb shapes.\n                        for { let q_product_block := 0 } lt(q_product_block, q_product_count) { q_product_block := add(q_product_block, 1) } {\n                            let q_word := mload(q_pc)\n                            let qconst := byte(0, q_word)\n                            let q_lhs := and(shr(232, q_word), 0xffff)\n                            let q_rhs := and(shr(216, q_word), 0xffff)\n                            q_pc := add(q_pc, 5)\n                            q_acc := addmod(\n                                q_acc,\n                                mulmod(\n                                    mulmod(mload(q_lhs), mload(q_rhs), r),\n                                    mload(add(q_const_mptr, shl(5, qconst))),\n                                    r\n                                ),\n                                r\n                            )\n                        }\n\n                        if and(q_flags, 0x01) {\n                            // Apply the optional gate condition last so every\n                            // subterm shares the same selector/condition.\n                            q_acc := mulmod(mload(q_cond_ptr), q_acc, r)\n                        }\n                        // MODARITH7 pushes its fused identity value.\n                        q_top := q_acc\n                        q_has_top := 1\n                    }"
+   else
+   "") ++
+   (if program.opUsage.nativePermutation && (ctx.quotientNativePermutationComputation).length > 0 then
+    "\n                    // Native permutation callback. It evaluates the\n                    // permutation identities from permutation.rs at this exact\n                    // VM position, preserving the Rust identity order while\n                    // avoiding a large interpreted product loop.\n                    // VM 0x19 NATIVE_PERMUTATION: marker for the generated permutation callback.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativePermutation) ++
+    " {\n                        // Native callbacks are identity-boundary opcodes. They\n                        // must not inherit any partially evaluated VM stack\n                        // state from the previous expression, so the stack\n                        // must already be empty (no live top, nothing spilled).\n                        " ++
+    qNativeGuard program ++
+    "\n                        // The generated loop below uses program.stack_mptr as\n                        // its scratch-table base, not as a conventional VM\n                        // stack. The Rust memory planner must reserve enough\n                        // words for structured_permutation_scratch_words(meta)\n                        // whenever this opcode can appear.\n                        // The generated lines below call the same fold snippets\n                        // used by interpreted expressions, so trace IDs and\n                        // y-batch positions remain contiguous." ++
+    (jinjaFor ctx.quotientNativePermutationComputation (fun line loop =>
+     "\n                        " ++
+     line)) ++
+    "\n                    }"
+   else
+   "") ++
+   (if program.opUsage.nativeLookup && (ctx.quotientNativeLookupComputation).length > 0 then
+    "\n                    // Native lookup callback. This whole-family opcode\n                    // evaluates the LogUp boundary, helper-chunk, and\n                    // accumulator identities at this VM position, preserving\n                    // the Rust y-batch order while avoiding many interpreted\n                    // product-loop opcodes.\n                    // VM 0x1f NATIVE_LOOKUP: marker for the generated LogUp lookup callback.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativeLookup) ++
+    " {\n                        // The VM stack must be empty before entering\n                        // structured lookup Yul. Lookup callbacks own their\n                        // scratch layout and perform all needed folds\n                        // internally.\n                        " ++
+    qNativeGuard program ++
+    "\n                        // The generated loop below uses program.stack_mptr as\n                        // f+beta/prefix/suffix scratch rather than as a\n                        // conventional VM stack. The Rust memory planner must\n                        // reserve structured_lookup_scratch_words(meta).\n                        // Generated LogUp code follows the same y-batch order\n                        // as the Rust identity stream." ++
+    (jinjaFor ctx.quotientNativeLookupComputation (fun line loop =>
+     "\n                        " ++
+     line)) ++
+    "\n                    }"
+   else
+   "") ++
+   (if program.opUsage.nativeIdentity && (ctx.quotientNativeIdentityComputations).length > 0 then
+    "\n                    // Native callbacks are generated only for the heaviest\n                    // recognized Midfall gate identities. All other gate and\n                    // non-native identity arithmetic remains in\n                    // the compact q_program VM above, preserving the Rust\n                    // `partially_evaluate_identities` order.\n                    // VM 0x1b NATIVE_IDENTITY: marker for generated heavy-gate callbacks.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.nativeIdentity) ++
+    " {\n                        // Operand layout: u16 native callback index. The\n                        // manifest validates that callback indexes appear in\n                        // generated order and target existing switch cases.\n                        let q_native_idx := shr(240, mload(q_pc))\n                        q_pc := add(q_pc, 2)\n                        // Heavy identities are whole expressions, so the\n                        // interpreter stack must be empty before dispatching.\n                        " ++
+    qNativeGuard program ++
+    "\n                        // Native identity sub-cases are generated from selected heavy gate identities.\n                        switch q_native_idx" ++
+    (jinjaFor ctx.quotientNativeIdentityComputations (fun code_block loop =>
+     "\n                        case " ++
+     toString (loop.index0) ++
+     " {" ++
+     (jinjaFor code_block (fun line loop =>
+      "\n                            " ++
+      line)) ++
+     "\n                        }")) ++
+    "\n                        default { q_program_fail() }\n                    }"
+   else
+   "") ++
+   (if program.opUsage.foldMain then
+    "\n                    // VM 0x0a FOLD_MAIN: consume q_top into the fully evaluated numerator fold.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.foldMain) ++
+    " {\n                        // q_top is the complete value of one fully evaluated\n                        // identity at x. It leaves the expression stack here.\n                        " ++
+    qFoldGuard program ++
+    "\n                        let q_eval := q_top\n                        q_has_top := 0" ++
+    (if ctx.trace then
+     "\n                        trace_u256(mload(" ++
+     hexFilter (program.traceIdMptr) ++
+     "), q_eval)\n                        mstore(" ++
+     hexFilter (program.traceIdMptr) ++
+     ", add(mload(" ++
+     hexFilter (program.traceIdMptr) ++
+     "), 1))"
+    else
+    "") ++
+    "\n                        // Fully-evaluated identity: qn = qn*y + eval.\n                        // This matches the reverse y-power fold in Rust\n                        // linearization once all identities have been read.\n                        mstore(" ++
+    hexFilter (program.evalNumerMptr) ++
+    ", mulmod(mload(" ++
+    hexFilter (program.evalNumerMptr) ++
+    "), y, r))\n                        mstore(" ++
+    hexFilter (program.evalNumerMptr) ++
+    ", addmod(mload(" ++
+    hexFilter (program.evalNumerMptr) ++
+    "), q_eval, r))\n                    }"
+   else
+   "") ++
+   (if program.opUsage.foldSelector then
+    "\n                    // VM 0x0b FOLD_SELECTOR: consume q_top into one simple-selector bucket.\n                    case " ++
+    hexFilter (ctx.templateConstants.quotientVm.op.foldSelector) ++
+    " {\n                        // Operand layout packed into three bytes:\n                        //   high byte: selector bucket index;\n                        //   low u16 : y-power gap since this selector's\n                        //             previous contribution.\n                        let q_selector_payload := shr(232, mload(q_pc))\n                        q_pc := add(q_pc, 3)\n                        let q_sel_idx := shr(16, q_selector_payload)\n                        let q_sel_gap := and(q_selector_payload, 0xffff)\n                        // The bucket index addresses SELECTOR_ACC and the gap\n                        // indexes the precomputed y-power table; both sizes\n                        // are codegen-known, so check them before any write.\n                        if iszero(lt(q_sel_idx, " ++
+    toString (program.guards.numSelectorBuckets) ++
+    ")) { q_program_fail() }\n                        if gt(q_sel_gap, " ++
+    hexFilter (program.selectorMaxPower) ++
+    ") { q_program_fail() }\n                        " ++
+    qFoldGuard program ++
+    "\n                        let q_eval := q_top\n                        q_has_top := 0" ++
+    (if ctx.trace then
+     "\n                        trace_u256(mload(" ++
+     hexFilter (program.traceIdMptr) ++
+     "), q_eval)\n                        mstore(" ++
+     hexFilter (program.traceIdMptr) ++
+     ", add(mload(" ++
+     hexFilter (program.traceIdMptr) ++
+     "), 1))"
+    else
+    "") ++
+    "\n                        // Simple-selector identity: keep the same y-batch\n                        // position as main identities, then advance only this\n                        // selector bucket by its codegen-known gap.\n                        //\n                        // The global fully-evaluated accumulator is still\n                        // multiplied by y so later main identities land at the\n                        // same y powers as Rust's reverse fold.\n                        mstore(" ++
+    hexFilter (program.evalNumerMptr) ++
+    ", mulmod(mload(" ++
+    hexFilter (program.evalNumerMptr) ++
+    "), y, r))\n                        let q_target_ptr := add(SELECTOR_ACC_MPTR, shl(5, q_sel_idx))\n                        let q_sel_acc := mload(q_target_ptr)\n                        if q_sel_gap {\n                            // Selector buckets are sparse in the global\n                            // identity stream. Precomputed y^gap advances only\n                            // this selector's local accumulator.\n                            q_sel_acc := mulmod(q_sel_acc, mload(add(" ++
+    hexFilter (program.selectorPowerMptr) ++
+    ", shl(5, q_sel_gap))), r)\n                        }\n                        mstore(q_target_ptr, addmod(q_sel_acc, q_eval, r))\n                    }"
+   else
+   "") ++
+   "\n                    // Invalid generated bytecode should fail closed. 0x1a intentionally lands here.\n                    default {\n                        q_program_fail()\n                    }\n                }\n                // The VK-pinned bytecode must end exactly at q_end and every\n                // identity must have been consumed by a fold/native callback.\n                // This catches malformed generator output whose final opcode\n                // over-reads operands or leaves a partial expression live.\n                if iszero(eq(q_pc, q_end)) { q_program_fail() }\n                if q_has_top { q_program_fail() }\n                // The spilled stack must also be balanced. A FOLD executed\n                // with more than one operand live consumes only the cached\n                // top, leaving abandoned words below q_sp with q_has_top\n                // clear -- so both checks above pass while an operand of the\n                // identity has been silently dropped from nu_y(x).\n                if iszero(eq(q_sp, " ++
+   hexFilter (program.stackMptr) ++
+   ")) { q_program_fail() }\n\n                // Structured post-VM suffix. The current default uses this for\n                // regular trash constraints: it is smaller than fully unrolled\n                // Yul and cheaper than interpreting every trash operation.\n                //\n                // These generated blocks run after q_pc reaches q_end, but\n                // they still participate in the same identity order and write\n                // into the same numerator / selector accumulators." ++
+   (jinjaFor ctx.quotientPostVmComputations (fun code_block loop =>
+    (jinjaFor code_block (fun line loop =>
+     "\n                " ++
+     line)))) ++
+   (if (ctx.simpleSelectorCols).length > 0 then
+    "\n                // Finish selector buckets by applying the codegen-known tail\n                // from each selector's last identity to the end of the global\n                // y-batch.\n                //\n                // After this step, every selector bucket is aligned with the\n                // final global y position and can be multiplied by its fixed\n                // selector commitment in the linearized MSM." ++
+    (jinjaFor program.selectorTailUpdates (fun tail loop =>
+     "\n                {\n                    let q_sel_ptr := add(SELECTOR_ACC_MPTR, " ++
+     hexFilter (tail.selectorOffset) ++
+     ")\n                    mstore(q_sel_ptr, mulmod(mload(q_sel_ptr), mload(add(" ++
+     hexFilter (program.selectorPowerMptr) ++
+     ", " ++
+     hexFilter (tail.powerOffset) ++
+     ")), r))\n                }"))
+   else
+   "") ++
+   "\n\n                // Fully evaluated identities are the constant-polynomial side\n                // of the linearization query. Rust subtracts that grouped\n                // scalar into expected_eval, so Solidity stores -nu_y(x).\n                let linearization_expected_eval := addmod(0, sub(r, mload(" ++
+   hexFilter (program.evalNumerMptr) ++
+   ")), r)\n                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)\n                pop(y)"
+   | none =>
+   "\n                // Legacy/direct mode. This path emits the numerator\n                // reconstruction directly instead of interpreting q_program.\n                // It is used by older monolithic/experimental generation\n                // modes and remains available as a fallback for models that do\n                // not carry compact quotient bytecode.\n                //\n                // The generated statements in quotient_eval_numer_computations\n                // are already ordered and folded by the Rust renderer. They\n                // must leave `quotient_eval_numer` as nu_y(x), matching the\n                // compact VM accumulator in program.eval_numer_mptr.\n                let delta := " ++
+   ctx.frDelta ++
+   " // BLS12-381 Fr::DELTA\n                let y := mload(Y_MPTR)" ++
+   (if ctx.trace then
+    "\n                // Direct mode increments q_trace_id inside generated fold\n                // snippets, mirroring compact-mode trace_id_mptr.\n                let q_trace_id := " ++
+    toString (ctx.quotientIdentityTraceBase)
+   else
+   "") ++
+   "\n\n                // Direct/generated numerator body. This may contain unrolled\n                // gate, permutation, lookup, trash, and selector-fold code." ++
+   (jinjaFor ctx.quotientEvalNumerComputations (fun code_block loop =>
+    (jinjaFor code_block (fun line loop =>
+     "\n                " ++
+     line)))) ++
+   "\n\n                // Silence Yul unused-variable warnings in renders where the\n                // direct body did not need one of these common constants.\n                pop(y)\n                pop(delta)\n\n                // Store the expected opening scalar for the linearized\n                // commitment at x: the negated sum of fully-evaluated\n                // identities. See\n                // `compute_linearization_commitment` in\n                // midfall/proofs/src/plonk/linearization/verifier.rs:\n                //\n                //   expected_eval -= eval     (for col_idx == None)\n                //\n                // The commitment side already includes the quotient-limb\n                // factor (1 - x^n), so this scalar is -nu_y(x), not\n                // h(x) = nu_y(x) / (x^n - 1).\n                let linearization_expected_eval := addmod(0, sub(r, quotient_eval_numer), r)\n                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)") ++
+  "\n            }"
 
 /-! ## Gates
 
@@ -1868,6 +2828,664 @@ def parserTail_astAgrees_ok : Bool :=
   yulTokens ("{" ++ parserTail_region ++ "}") == yulTokens (EVM.print parserTail_ast)
     && SyntaxEq.stmtsBeq parserTail_ast parserTail_direct
 
+/-! ## P-13c gates: QuotientHelpers.yul and QuotientNumeratorBlock.yul
+
+Twenty-two gates (47-68). The two templates' deployed bytes are D:1588-2539 of the tracked
+artifact - 57,218 bytes, 952 lines - and gate 50 is the free end-to-end check the earlier
+packages left: the two renders are exactly the two arguments
+renderQuotientAndLinearization already takes, so feeding them in and re-running gate 6's
+boundary checks the whole chain from these templates to the contract template's include.
+
+HAZARD 3, ANSWERED WITH NUMBERS (gates 58, 59, 60). The QNB template has 88 conditional
+sites and 11 for-sites. In the deployed profile only 68 of the 88 ifs are even REACHED (20
+sit inside arms the profile does not take, including the whole legacy 'when None' arm), 23
+of those 68 are true and 45 false, and all 11 for-sites run (537 iterations, none of them
+zero). Of the 31 opcode switch arms, 10 render and 21 render ZERO times; the 9 memory-token
+arms render zero times because their only host arm (push_mem_token) is off, so mem_usage is
+wholly unobservable. 528 of the 921 rendered lines are Rust-emitted text sliced from the
+artifact, not this template's own bytes; 393 are the template's. A byte gate over the whole
+region therefore pins 393 template lines and the PLACEMENT of 528 it cannot own - and gate
+65 shows those 528 are load-bearing rather than decorative by perturbing one of them. The
+dead arms are gated structurally and synthetically (gates 59-60) with a label saying they
+pin that the arm EXISTS and DISCRIMINATES, never that the Rust would ship those bytes. -/
+
+/-- The quotient_numerator template directory (a sibling of P-13a's verifier directory). -/
+def quotientTemplateDirCandidates : List String :=
+  ["../proofs/solidity-verifier/templates/partials/quotient_numerator/",
+   "proofs/solidity-verifier/templates/partials/quotient_numerator/"]
+
+def readQuotientTemplate (name : String) : IO String :=
+  EvmKats.readFirst (quotientTemplateDirCandidates.map fun d => d ++ name)
+
+/-- GATE 47 (reachability, first). The dump and BOTH template sources must open, so a wrong
+    path is a named red rather than a needle miss that matches nothing. -/
+def quotient13c_artifactsReachable_ok : IO Bool :=
+  readDump >>= fun sol =>
+  readQuotientTemplate "QuotientHelpers.yul" >>= fun qh =>
+  readQuotientTemplate "QuotientNumeratorBlock.yul" >>= fun qnb =>
+  pure (EvmKats.generatedReadOk sol && qh.length > 1500 && qnb.length > 50000)
+
+def qIsHexDigit (c : Char) : Bool :=
+  (c ≥ '0' && c ≤ '9') || (c ≥ 'a' && c ≤ 'f') || (c ≥ 'A' && c ≤ 'F')
+
+def qHexDigitVal (c : Char) : Nat :=
+  if c ≥ '0' && c ≤ '9' then c.toNat - '0'.toNat
+  else if c ≥ 'a' && c ≤ 'f' then c.toNat - 'a'.toNat + 10
+  else c.toNat - 'A'.toNat + 10
+
+def qTakeHex (s : String) : String := String.mk (s.toList.takeWhile qIsHexDigit)
+
+def qHexValue? (s : String) : Option Nat :=
+  let ds := qTakeHex s
+  if ds.isEmpty then none else some (ds.foldl (fun acc c => acc * 16 + qHexDigitVal c) 0)
+
+/-- Every 0x.. literal in every line of sol containing needle, in document order. -/
+def qHexesInLinesWith (sol needle : String) : List Nat :=
+  (sol.splitOn "\n").flatMap fun l =>
+    if ! l.contains needle then []
+    else match (l.splitOn "0x").tail? with
+         | some ps => ps.filterMap fun h => qHexValue? (qTakeHex h)
+         | none => []
+
+/-- The decimal integer immediately after the unique occurrence of needle. -/
+def qNatAfter (sol needle : String) : Option Nat :=
+  match sol.splitOn needle with
+  | [_, r] =>
+      let ds := r.toList.takeWhile (fun c => c ≥ '0' && c ≤ '9')
+      if ds.isEmpty then none
+      else some (ds.foldl (fun acc c => acc * 10 + (c.toNat - '0'.toNat)) 0)
+  | _ => none
+
+/-- The hex literal that begins the text right after the unique occurrence of needle. -/
+def qHexHere (sol needle : String) : Option Nat :=
+  match sol.splitOn needle with
+  | [_, r] => qHexValue? (qTakeHex r)
+  | _ => none
+
+/-- The next 0x literal after the unique occurrence of needle. -/
+def qHexAfter (sol needle : String) : Option Nat :=
+  match sol.splitOn needle with
+  | [_, r] => match (r.splitOn "0x").tail? with
+              | some hs => qHexValue? (qTakeHex (hs.head?.getD ""))
+              | none => none
+  | _ => none
+
+/-- Every second element of a list, starting from the second. -/
+def qOddIdx (xs : List Nat) : List Nat :=
+  xs.zipIdx.filterMap fun hn => if hn.snd % 2 == 1 then some hn.fst else none
+
+/-- Leading and trailing spaces removed (String.trim is not in scope in this build). -/
+def qTrim (s : String) : String :=
+  String.mk (((s.toList.dropWhile (fun c => c == ' ')).reverse.dropWhile (fun c => c == ' ')).reverse)
+
+/-- GATE 48 (TEXTUAL). QuotientHelpers.yul renders byte-identically to D:1588-1618
+    (1,621 bytes, 31 lines) and occurs nowhere else. Its include boundary is the BEFORE
+    half only: the four spaces of the contract template's include line land on its first
+    line (P-13a rule 3), and what follows it is P-13c's own second template, not the
+    parent's LF LF four-space. That is why this gate checks the prefix and gate 49 the
+    suffix, and why neither can stand in for the other. -/
+def quotientHelpers_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            -- Length asserted explicitly (orchestrator, round 40). `occursOnce` plus the
+            -- prefix boundary is satisfied by a TRUNCATED render: a strict prefix still
+            -- occurs exactly once with the same text before it. P-13c flagged this as
+            -- gate 48's known weakness (perturbation N11 showed the composite gates catch
+            -- it but 48 alone could not). 1621 bytes / 31 lines, measured from the render
+            -- against the tracked artifact rather than copied from a report.
+            qh.length == 1621 && (qh.splitOn "\n").length == 31
+              && occursOnce sol qh
+              && match sol.splitOn qh with
+                 | [before, _] => before.endsWith "\n    "
+                 | _ => false
+        | none => false)
+
+/-- GATE 49 (TEXTUAL). QuotientNumeratorBlock.yul renders byte-identically to D:1619-2539
+    (55,597 bytes, 921 lines) and occurs nowhere else. Its boundary is the AFTER half only:
+    its predecessor is QuotientHelpers' render - the two includes are concatenated with no
+    separator because QAL:59-60 both open with a left-trimming brace-dash - and its
+    successor is the contract template's LF LF four-space. -/
+def quotientNumeratorBlock_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx => artifactMatch sol (renderQuotientNumeratorBlock ctx)
+        | none => false)
+
+/-- GATE 50 (THE FREE GATE P-13a left). The two renders are exactly the two arguments
+    renderQuotientAndLinearization already takes, so feeding them in reproduces the whole
+    partial and re-runs quotientAndLinearization_ownBytes_ok's boundary: the result occurs
+    exactly once and is followed by LF LF + four spaces (the handoff to Pcs.yul). End to
+    end from these two templates to the contract template's include, and the gate that dies
+    if either render gains or loses a byte at either end. -/
+def quotientAndLinearization_withPartials_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            let full := renderQuotientAndLinearization ctx qh
+              (renderQuotientNumeratorBlock ctx)
+            full.startsWith qh && artifactMatch sol full
+        | none => false)
+
+/-- GATE 51 (hazard 1, the brief's numbers re-measured). The two renders occupy D:1588
+    through D:2539 INCLUSIVE. The brief said 1588-2538 and called 2539
+    QuotientAndLinearization's own tail, but the closing brace at D:2539 is
+    QuotientNumeratorBlock.yul:1442; QAL's own bytes begin at the newline that terminates
+    it, which is why gate 6's render starts with LF LF. 57,218 bytes, 952 lines, once. -/
+def quotientRegion_span_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            let qnb := renderQuotientNumeratorBlock ctx
+            let comb := qh ++ qnb
+            sol.contains ("\n    " ++ comb)
+              && comb.length == 57218 && lineCount comb == 952
+              && qh.length == 1621 && lineCount qh == 31
+              && qnb.length == 55597
+              && occ sol comb == 1
+              && match sol.splitOn comb with
+                 | [before, _] => (before.splitOn "\n").length == 1588
+                 | _ => false
+        | none => false)
+
+/-- GATE 52 (anti-self-fulfilment). Every scalar of quotientDeployedProgram the dump can
+    show is re-read from the dump's own lines: the five base pointers, the program length,
+    the spill ceiling, the selector bucket count, the selector max power (rendered as the
+    loop bound, i.e. max_power + 1) and all four (selector_offset, power_offset) tail pairs.
+    Nothing here is copied from the brief. -/
+def quotientProgram_derivedFromArtifact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let p := quotientDeployedProgram
+  pure (qHexHere sol "let q_const_mptr := 0x" == some p.constMptr
+    && qHexHere sol "let q_program_mptr := 0x" == some p.programMptr
+    && qHexHere sol "let q_sp := 0x" == some p.stackMptr
+    && qHexHere sol "let q_end := add(q_program_mptr, 0x" == some p.len
+    && qHexHere sol "addmod(0, sub(r, mload(0x" == some p.evalNumerMptr
+    && qHexHere sol "if gt(q_sp, 0x" == some p.guards.stackLast
+    && qNatAfter sol "if iszero(lt(q_sel_idx, " == some p.guards.numSelectorBuckets
+    && qNatAfter sol "lt(q_y_power_i, " == some (p.selectorMaxPower + 1)
+    && qHexesInLinesWith sol "shl(5, q_y_power_i)), q_y_power)" == [p.selectorPowerMptr]
+    && qHexesInLinesWith sol "let q_sel_ptr := add(SELECTOR_ACC_MPTR,"
+         == p.selectorTailUpdates.map (fun t => t.selectorOffset)
+    && qOddIdx (qHexesInLinesWith sol "mstore(q_sel_ptr, mulmod")
+         == p.selectorTailUpdates.map (fun t => t.powerOffset)
+    && p.selectorTailUpdates.length == 4)
+
+/-- GATE 53 (hazard 2, the two fields the dump cannot show). trace_id_mptr and
+    guards.const_max are rendered by no arm the deployed profile takes, so they are DERIVED
+    from their Rust rules instead: quotient.rs:59 (trace_id_mptr = state_mptr + WORD_BYTES)
+    and quotient.rs:252 (const_max = num_consts - 1, with num_consts the count of
+    'quotient_const' words in the VK dump - exactly one, DVK:99). If either derivation
+    stops holding, the port's claim to have derived rather than invented them fails here. -/
+def quotientProgram_inertFieldsDerived_ok : IO Bool :=
+  readVkDump >>= fun dvk =>
+  let p := quotientDeployedProgram
+  pure (p.traceIdMptr == p.evalNumerMptr + 0x20
+    && occ dvk "// quotient_const" == 1
+    && p.guards.constMax == occ dvk "// quotient_const" - 1)
+
+/-- The one rendered line that binds linearization_expected_eval, read out of the render. -/
+def qnbNegationLine (ctx : PartialCtx) : Option String :=
+  match ((renderQuotientNumeratorBlock ctx).splitOn "\n").filterMap
+          fun l => if (qTrim l).startsWith "let linearization_expected_eval"
+                   then some (qTrim l) else none with
+  | [l] => some l
+  | _ => none
+
+/-- GATE 54 (hazard 2, the required finding's first half). The DEPLOYED arm's negation is
+    the compact form at T:QuotientNumeratorBlock.yul:1393 - addmod(0, sub(r, mload(E)), r)
+    with E = eval_numer_mptr - NOT the :1439 line the brief names, which lives in the
+    legacy arm. Exactly one rendered line binds the scalar, it is that form, it occurs once
+    in the artifact, and the store into QUOTIENT_EVAL_MPTR follows it. -/
+def qnb_negation_deployedLine_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            match qnbNegationLine ctx with
+            | some line =>
+                line == "let linearization_expected_eval := addmod(0, sub(r, mload("
+                  ++ hexFilter quotientDeployedProgram.evalNumerMptr ++ ")), r)"
+                  && occ sol line == 1
+                  && occ sol "mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)" == 1
+            | none => false
+        | none => false)
+
+/-- GATE 55 (hazard 2 + hazard 4, THE REQUIRED FINDING AS AN EXECUTABLE CLAIM). The
+    rendered negation line - taken from the render, not pasted - is handed to the Yul TEXT
+    READER P-09h built in Evaluator.lean (yulRun / yulValue, which predates this package
+    and is an independent implementation of the addmod / sub / mload subset). It must
+    evaluate the rendered bytes to qvmFrNeg of the same memory word: the arithmetic
+    FoldCompute already models as quotientExpectedEval (FoldCompute.lean:860, :891, :952).
+    The negative control is the same line with sub(r, .) removed: it must return the value
+    UNNEGATED, so it agrees with the reader and disagrees with the model. That asymmetry is
+    what makes this a modelling check rather than a text match. -/
+def qnb_negation_isModelled_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            match qnbNegationLine ctx with
+            | some line =>
+                let p := quotientDeployedProgram
+                let st : QuotientEvaluatorKats.YSt :=
+                  { mem := QuotientEvaluatorKats.xMem, vars := [] }
+                let (v, _) := QuotientEvaluatorKats.xMem.literal p.evalNumerMptr
+                let plain := "let linearization_expected_eval := addmod(mload("
+                  ++ hexFilter p.evalNumerMptr ++ "), 0, r)"
+                match QuotientEvaluatorKats.yulRun [line] "linearization_expected_eval" st,
+                      QuotientEvaluatorKats.yulRun [plain] "linearization_expected_eval" st with
+                | .ok (r, _), .ok (bad, _) =>
+                    v != 0 && r == qvmFrNeg v && bad == v && bad != qvmFrNeg v
+                | _, _ => false
+            | none => false
+        | none => false)
+
+/-- The rendered negation statement as the vendored AST. -/
+def qnbNegation_ast : Block EVM.Op := yul% {
+  let linearization_expected_eval := addmod(0, sub(r, mload(0x6660)), r)
+}
+
+/-- The same statement with raw constructors: letDecl of one identifier over a builtin
+    addmod whose second argument is builtin sub applied to (var r, builtin mload literal).
+    This is the relation irCheck will use, so it is stated with constructors and not only
+    with the quotation parser. -/
+def qnbNegation_direct : Block EVM.Op :=
+  [ Stmt.letDecl ["linearization_expected_eval"]
+      (some (binOp EVM.Op.addmod
+        [ Expr.lit (Literal.number 0)
+        , binOp EVM.Op.sub [ varX "r"
+                           , binOp EVM.Op.mload [Expr.lit (Literal.number 0x6660)] ]
+        , varX "r" ])) ]
+
+/-- GATE 56 (STRUCTURAL, D-P13). The rendered negation line tokenises to the vendored AST
+    of the same statement, and that AST equals the raw-constructor one under stmtsBeq. A
+    DIFFERENT relation from gate 55's: 55 says the bytes denote the modelled arithmetic,
+    56 says the bytes parse as the structure the AST printer emits. Neither substitutes for
+    the other, and neither substitutes for the byte gates. -/
+def qnb_negation_astAgrees_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            match qnbNegationLine ctx with
+            | some line =>
+                yulTokens ("{" ++ line ++ "}") == yulTokens (EVM.print qnbNegation_ast)
+                  && SyntaxEq.stmtsBeq qnbNegation_ast qnbNegation_direct
+            | none => false
+        | none => false)
+
+/-- The 31 opcode summary names paired with the template_constants byte and the op_usage
+    flag each one gates, in template order (T:QuotientNumeratorBlock.yul:231-322). -/
+def deployedOpUsageTable (sol : String) : List (String × Bool × Bool) :=
+  let tc := templateConstantsDefault.quotientVm.op
+  let u := quotientDeployedProgram.opUsage
+  let rows : List (String × Nat × Bool) :=
+    [ ("push_const", tc.pushConst, u.pushConst)
+    , ("push_mem_literal", tc.pushMemLiteral, u.pushMemLiteral)
+    , ("push_mem_token", tc.pushMemToken, u.pushMemToken)
+    , ("push_mem_token_offset", tc.pushMemTokenOffset, u.pushMemTokenOffset)
+    , ("push_mem_u16", tc.pushMemU16, u.pushMemU16)
+    , ("add", tc.add, u.add)
+    , ("mul", tc.mul, u.mul)
+    , ("neg", tc.neg, u.neg)
+    , ("push_const_u8", tc.pushConstU8, u.pushConstU8)
+    , ("fold_main", tc.foldMain, u.foldMain)
+    , ("fold_selector", tc.foldSelector, u.foldSelector)
+    , ("add_const_u8", tc.addConstU8, u.addConstU8)
+    , ("mul_const_u8", tc.mulConstU8, u.mulConstU8)
+    , ("add_const", tc.addConst, u.addConst)
+    , ("mul_const", tc.mulConst, u.mulConst)
+    , ("add_mem_u16", tc.addMemU16, u.addMemU16)
+    , ("mul_mem_u16", tc.mulMemU16, u.mulMemU16)
+    , ("add_mul_mem_mem_const_u8", tc.addMulMemMemConstU8, u.addMulMemMemConstU8)
+    , ("add_mul_const_u8_mem_u16", tc.addMulConstU8MemU16, u.addMulConstU8MemU16)
+    , ("add_mul_mem_mem", tc.addMulMemMem, u.addMulMemMem)
+    , ("run_add_mul_mem_mem_const_u8", tc.runAddMulMemMemConstU8, u.runAddMulMemMemConstU8)
+    , ("run_add_mul_const_u8_mem_u16", tc.runAddMulConstU8MemU16, u.runAddMulConstU8MemU16)
+    , ("affine_sum", tc.affineSum, u.affineSum)
+    , ("native_permutation", tc.nativePermutation, u.nativePermutation)
+    , ("native_lookup", tc.nativeLookup, u.nativeLookup)
+    , ("native_identity", tc.nativeIdentity, u.nativeIdentity)
+    , ("lin7", tc.lin7, u.lin7)
+    , ("bilin7_row", tc.bilin7Row, u.bilin7Row)
+    , ("bilin7_pairwise", tc.bilin7Pairwise, u.bilin7Pairwise)
+    , ("modarith7", tc.modarith7, u.modarith7)
+    , ("pow5", tc.pow5, u.pow5) ]
+  rows.map fun row =>
+    (row.1, sol.contains ("//   " ++ hexFilter row.2.1 ++ " " ++ row.1), row.2.2)
+
+/-- GATE 57 (hazard 2, the flag set). The artifact's own opcode-summary block is the
+    generator's statement of which arms it emitted: for all 31 opcodes, the presence of its
+    summary line agrees with the flag the port carries. Plus the three counts the template
+    comment at :227-230 claims are equal: 10 summary lines, 10 rendered case arms, 10 true
+    flags. (No BEq on QuotientVmOpcodeUsage - Models.lean derives it only on
+    QuotientVmGuards - so the flag set is checked through the table, not by record equality.) -/
+def opUsage_derivedFromArtifact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let tbl := deployedOpUsageTable sol
+            let observed := tbl.filterMap fun row => if row.2.1 then some row.1 else none
+            let ported := tbl.filterMap fun row => if row.2.2 then some row.1 else none
+            (tbl.all fun row => row.2.1 == row.2.2)
+              && tbl.length == 31
+              && observed.length == 10
+              && ported.length == 10
+              && observed == ported
+              && occ sol "//   0x" == 10
+              && occ (renderQuotientNumeratorBlock ctx) "case 0x" == 10
+        | none => false)
+
+/-- GATE 58 (hazard 3, THE COUNTS). What the deployed profile actually exercises, as
+    numbers the render is measured against rather than as prose: the five generated regions
+    (99 / 82 / 43 / 3x37 / 193 lines = 528 of the 921 rendered), the dead opcode arms
+    leaving no trace, and the four guard macros appearing exactly as often as the arms that
+    call them render. -/
+def qnb_deployedExercisedRegions_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let r := renderQuotientNumeratorBlock ctx
+            (ctx.quotientInlineComputations.map List.length) == [99]
+              && ctx.quotientNativePermutationComputation.length == 82
+              && ctx.quotientNativeLookupComputation.length == 43
+              && (ctx.quotientNativeIdentityComputations.map List.length) == [37, 37, 37]
+              && (ctx.quotientPostVmComputations.map List.length) == [193]
+              && lineCount r == 922
+              && ! r.contains "PUSH_CONST (bytes)"
+              && ! r.contains "MODARITH7"
+              && ! r.contains "AFFINE_SUM"
+              && ! r.contains "Fully-evaluated identity: qn = qn*y + eval."
+              && ! r.contains "PUSH_MEM_TOKEN"
+              && ! r.contains "q_ptr := L_0_MPTR"
+              && ! r.contains "trace_u256(mload("
+              && ! r.contains "let q_trace_id :="
+              && occ r "if gt(q_sp, " == 1
+              && occ r "if eq(q_sp, " == 1
+              && occ r "if iszero(and(q_has_top, eq(q_sp, " == 1
+              && occ r "if or(q_has_top, xor(q_sp, " == 3
+        | none => false)
+
+/-- All 31 op_usage flags on, for the synthetic arm-coverage gate. -/
+def qnbAllOnUsage : QuotientVmOpcodeUsage :=
+  { pushConst := true, pushMemLiteral := true, pushMemToken := true,
+    pushMemTokenOffset := true, pushMemU16 := true, add := true, mul := true, neg := true,
+    pushConstU8 := true, foldMain := true, foldSelector := true, addConstU8 := true,
+    mulConstU8 := true, addConst := true, mulConst := true, addMemU16 := true,
+    mulMemU16 := true, addMulMemMemConstU8 := true, addMulConstU8MemU16 := true,
+    addMulMemMem := true, runAddMulMemMemConstU8 := true, runAddMulConstU8MemU16 := true,
+    affineSum := true, nativePermutation := true, nativeLookup := true,
+    nativeIdentity := true, lin7 := true, bilin7Row := true, bilin7Pairwise := true,
+    modarith7 := true, pow5 := true }
+
+/-- All 9 memory-token flags on, for the same gate. -/
+def qnbAllOnMemUsage : QuotientVmMemUsage :=
+  { l0 := true, lLast := true, lBlind := true, beta := true, gamma := true, x := true,
+    theta := true, trashChallenge := true, instanceEval := true }
+
+/-- GATE 59 (hazard 3, the dead arms, SYNTHETIC CONTEXT). With every op_usage and every
+    mem_usage flag forced on, all 31 opcode arms and both 9-arm token tables appear (49
+    'case 0x' sites in total), the guards the deployed profile never renders appear, and the
+    render grows from 55,597 to 88,850 bytes.
+    LABEL: this pins that the arms EXIST in the port and that the flags DISCRIMINATE. It
+    does NOT pin that the Rust would ever ship these bytes - no tracked artifact covers
+    them, and the operand layouts inside them are verified by nothing here. -/
+def qnb_allArms_synthetic_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let p := quotientDeployedProgram
+  let pAll := { p with opUsage := qnbAllOnUsage, memUsage := qnbAllOnMemUsage }
+  pure (match quotientDeployedCtx sol with
+        | none => false
+        | some base =>
+            let ctx : PartialCtx := { base with quotientProgram := some pAll }
+            let r := renderQuotientNumeratorBlock ctx
+            occ r "case 0x" == 49
+              && occ r "q_ptr := " == 30
+              && r.contains "if gt(qconst, "
+              && r.contains "q_ptr := L_BLIND_MPTR"
+              && r.contains "q_ptr := add(INSTANCE_EVAL_MPTR, q_off)"
+              && r.contains "Limb-aware opcodes are opt-in"
+              && r.contains "MODARITH7: byte-only fused affine"
+              && r.contains "AFFINE_SUM: mixed byte-only"
+              && r.length == 88850)
+/-- GATE 60 (hazard 2, the OTHER arm, SYNTHETIC CONTEXT). The line the brief names -
+    QuotientNumeratorBlock.yul:1439, addmod(0, sub(r, quotient_eval_numer), r) - is in the
+    'when None' legacy arm, which the deployed profile does not take; the deployed negation
+    is the mload form at :1393. With quotient_program := None the port renders the :1439
+    line verbatim, the fr_delta literal appears, and the compact VM text disappears.
+    LABEL: this pins that the legacy arm exists and discriminates. It is NOT evidence that
+    the shipped verifier takes it, and it is NOT what the required finding rests on - gate
+    55 is, and gate 55 reads the DEPLOYED arm's line. -/
+def qnb_directArm_synthetic_ok : Bool :=
+  let ctx : PartialCtx := { quotientCtx with
+    quotientProgram := none
+    quotientEvalNumerComputations := [["let quotient_eval_numer := 0"]]
+    frDelta := "0xDEADBEEF" }
+  let r := renderQuotientNumeratorBlock ctx
+  r.contains "let linearization_expected_eval := addmod(0, sub(r, quotient_eval_numer), r)"
+    && r.contains "let delta := 0xDEADBEEF"
+    && r.contains "Legacy/direct mode"
+    && ! r.contains "switch q_op"
+    && ! r.contains "Compact quotient-program mode"
+    && occ r "let linearization_expected_eval" == 1
+
+/-- GATE 61 (hazard 1, the anchors). Every slice anchor occurs exactly once in the
+    artifact, so the generated-code regions are determined rather than chosen. -/
+def qnb_anchorsUnique_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let anchors := [qAnchorInlineBefore, qAnchorInlineAfter, qAnchorPermBefore, qAnchorPermAfter,
+                  qAnchorLookupBefore, qAnchorLookupAfter, qAnchorNiBefore, qAnchorNiAfter,
+                  qAnchorPostBefore, qAnchorPostAfter]
+  pure (anchors.all fun a => occ sol a == 1 && anchors.length == 10)
+
+/-- GATE 62 (R-41). Every artifact-derivable scalar of the program record perturbed by one,
+    each in its own scope: the render must stop matching the artifact. Twelve edits, all
+    run; any that failed to redden is reported in the package report. -/
+def perturb_quotientProgramScalars_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let p := quotientDeployedProgram
+  let edits : List (QuotientProgram -> QuotientProgram) :=
+    [ fun p => { p with constMptr := p.constMptr + 0x20 }
+    , fun p => { p with programMptr := p.programMptr + 0x20 }
+    , fun p => { p with evalNumerMptr := p.evalNumerMptr + 0x20 }
+    , fun p => { p with stackMptr := p.stackMptr + 0x20 }
+    , fun p => { p with selectorPowerMptr := p.selectorPowerMptr + 0x20 }
+    , fun p => { p with len := p.len + 1 }
+    , fun p => { p with selectorMaxPower := p.selectorMaxPower + 1 }
+    , fun p => { p with guards := { p.guards with stackLast := p.guards.stackLast + 0x20 } }
+    , fun p => { p with guards := { p.guards with numSelectorBuckets := 5 } }
+    , fun p => { p with selectorTailUpdates :=
+        [ { selectorOffset := 0x00, powerOffset := 0x0000 }
+        , { selectorOffset := 0x20, powerOffset := 0x0280 }
+        , { selectorOffset := 0x40, powerOffset := 0x0220 }
+        , { selectorOffset := 0x60, powerOffset := 0x0160 } ] }
+    , fun p => { p with selectorTailUpdates := p.selectorTailUpdates.drop 1 }
+    , fun p => { p with selectorTailUpdates := [] } ]
+  pure (match quotientDeployedCtx sol with
+        | some ctx => edits.all fun f =>
+            let fp := f p
+            let c : PartialCtx := { ctx with quotientProgram := some fp }
+            ! artifactMatch sol (renderQuotientNumeratorBlock c)
+        | none => false)
+
+/-- GATE 63 (R-41). All 31 op_usage flags flipped, each in its own scope: the render
+    changes and stops matching. The 10 true ones remove an arm, the 21 false ones add one -
+    so this is also the discrimination proof for the dead arms, run one flag at a time. -/
+def perturb_quotientOpUsageFlags_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let p := quotientDeployedProgram
+  let u := p.opUsage
+  let flips : List (QuotientVmOpcodeUsage -> QuotientVmOpcodeUsage) :=
+    [ fun u => { u with pushConst := ! u.pushConst }
+    , fun u => { u with pushMemLiteral := ! u.pushMemLiteral }
+    , fun u => { u with pushMemToken := ! u.pushMemToken }
+    , fun u => { u with pushMemTokenOffset := ! u.pushMemTokenOffset }
+    , fun u => { u with pushMemU16 := ! u.pushMemU16 }
+    , fun u => { u with add := ! u.add }
+    , fun u => { u with mul := ! u.mul }
+    , fun u => { u with neg := ! u.neg }
+    , fun u => { u with pushConstU8 := ! u.pushConstU8 }
+    , fun u => { u with foldMain := ! u.foldMain }
+    , fun u => { u with foldSelector := ! u.foldSelector }
+    , fun u => { u with addConstU8 := ! u.addConstU8 }
+    , fun u => { u with mulConstU8 := ! u.mulConstU8 }
+    , fun u => { u with addConst := ! u.addConst }
+    , fun u => { u with mulConst := ! u.mulConst }
+    , fun u => { u with addMemU16 := ! u.addMemU16 }
+    , fun u => { u with mulMemU16 := ! u.mulMemU16 }
+    , fun u => { u with addMulMemMemConstU8 := ! u.addMulMemMemConstU8 }
+    , fun u => { u with addMulConstU8MemU16 := ! u.addMulConstU8MemU16 }
+    , fun u => { u with addMulMemMem := ! u.addMulMemMem }
+    , fun u => { u with runAddMulMemMemConstU8 := ! u.runAddMulMemMemConstU8 }
+    , fun u => { u with runAddMulConstU8MemU16 := ! u.runAddMulConstU8MemU16 }
+    , fun u => { u with affineSum := ! u.affineSum }
+    , fun u => { u with nativePermutation := ! u.nativePermutation }
+    , fun u => { u with nativeLookup := ! u.nativeLookup }
+    , fun u => { u with nativeIdentity := ! u.nativeIdentity }
+    , fun u => { u with lin7 := ! u.lin7 }
+    , fun u => { u with bilin7Row := ! u.bilin7Row }
+    , fun u => { u with bilin7Pairwise := ! u.bilin7Pairwise }
+    , fun u => { u with modarith7 := ! u.modarith7 }
+    , fun u => { u with pow5 := ! u.pow5 } ]
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let dep := renderQuotientNumeratorBlock ctx
+            flips.all fun f =>
+              let pf := { p with opUsage := f u }
+              let c : PartialCtx := { ctx with quotientProgram := some pf }
+              renderQuotientNumeratorBlock c != dep && ! artifactMatch sol
+                (renderQuotientNumeratorBlock c)
+        | none => false)
+
+/-- GATE 64 (R-41). The three QuotientHelpers flags and the profile flags the new templates
+    read: each flip changes the render and breaks the artifact match. -/
+def perturb_quotientHelperFlags_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            let qnb := renderQuotientNumeratorBlock ctx
+            let p := quotientDeployedProgram
+            let noPow5 := renderQuotientHelpers { ctx with quotientPow5Helper := false }
+            let withLimb7 := renderQuotientHelpers { ctx with quotientLimb7Helper := true }
+            let withWide := renderQuotientHelpers { ctx with quotientWideLimb7Helper := true }
+            let traced := renderQuotientNumeratorBlock { ctx with trace := true }
+            let noSels := renderQuotientNumeratorBlock { ctx with simpleSelectorCols := [] }
+            let pZero := { p with selectorMaxPower := 0 }
+            let zeroCtx := { ctx with quotientProgram := some pZero }
+            let zeroPow := renderQuotientNumeratorBlock zeroCtx
+            noPow5 != qh && noPow5.isPrefixOf qh
+              && occ sol noPow5 == 1
+              && ! noPow5.contains "VK-specialized"
+              && match sol.splitOn noPow5 with
+                 | [_, after] => after.startsWith "\n            // VK-specialized"
+                 | _ => false
+              && ! occursOnce sol withLimb7 && withLimb7 != qh
+              && ! occursOnce sol withWide && withWide != qh
+              && traced != qnb && ! artifactMatch sol traced
+              && noSels != qnb && ! artifactMatch sol noSels
+              && zeroPow != qnb && ! artifactMatch sol zeroPow
+        | none => false)
+
+/-- GATE 65 (R-41, the generated inputs are load-bearing). Change ONE sliced generated line
+    and the render stops matching; drop one native-identity block and it stops matching.
+    Without this the five regions could be any text at all and the byte gate would still
+    pass - this is what makes them arguments rather than decoration. -/
+def perturb_quotientGeneratedInput_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let tamper (i : Nat) (xs : List String) : List String :=
+              xs.zipIdx.map fun xj => if xj.snd == i then "let tampered := 1" else xj.fst
+            let c1 : PartialCtx := { ctx with quotientInlineComputations :=
+              [tamper 0 ctx.quotientInlineComputations.flatten] }
+            let c2 : PartialCtx := { ctx with
+              quotientNativePermutationComputation := tamper 3 ctx.quotientNativePermutationComputation }
+            let c3 : PartialCtx := { ctx with
+              quotientNativeLookupComputation := tamper 7 ctx.quotientNativeLookupComputation }
+            let niTampered := ctx.quotientNativeIdentityComputations.zipIdx.map
+              fun bj => if bj.snd == 1 then tamper 0 bj.fst else bj.fst
+            let c4 : PartialCtx := { ctx with quotientNativeIdentityComputations := niTampered }
+            let c5 : PartialCtx := { ctx with quotientPostVmComputations :=
+              [tamper 11 ctx.quotientPostVmComputations.flatten] }
+            let c6 : PartialCtx := { ctx with
+              quotientNativeIdentityComputations := ctx.quotientNativeIdentityComputations.drop 1 }
+            artifactMatch sol (renderQuotientNumeratorBlock ctx)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c1)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c2)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c3)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c4)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c5)
+              && ! artifactMatch sol (renderQuotientNumeratorBlock c6)
+        | none => false)
+
+/-- GATE 66 (R-41, the honest non-bites). Fields no deployed gate can see, asserted as
+    inertness rather than hidden as a passing test: the nine mem_usage flags (their only
+    host arm is off), guards.constMax (every const-guard arm is off), traceIdMptr (trace is
+    off), quotientEvalNumerComputations (the legacy arm is not taken), frDelta (same arm),
+    the two limb7 coefficient tables (their ifs are off) and quotientIdentityTraceBase
+    (trace is off). Perturbing any of them leaves BOTH deployed renders byte identical. -/
+def inertFields13c_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            let qnb := renderQuotientNumeratorBlock ctx
+            let p := quotientDeployedProgram
+            let memu := { p.memUsage with l0 := true, instanceEval := true, lBlind := true }
+            let pMem := { p with memUsage := memu }
+            let cMem : PartialCtx := { ctx with quotientProgram := some pMem }
+            let pConst := { p with guards := { p.guards with constMax := 999 } }
+            let cConst : PartialCtx := { ctx with quotientProgram := some pConst }
+            let pTrace := { p with traceIdMptr := 0xdead }
+            let cTrace : PartialCtx := { ctx with quotientProgram := some pTrace }
+            let cEval : PartialCtx := { ctx with quotientEvalNumerComputations := [["let a := 1"]] }
+            let cDelta : PartialCtx := { ctx with frDelta := "0x1" }
+            let cLimb : PartialCtx := { ctx with limb7YulCoeffs := ["0x1"] }
+            let cWide : PartialCtx := { ctx with wideLimb7YulCoeffs := ["0x2"] }
+            let cBase : PartialCtx := { ctx with quotientIdentityTraceBase := 77 }
+            renderQuotientNumeratorBlock cMem == qnb
+              && renderQuotientNumeratorBlock cConst == qnb
+              && renderQuotientNumeratorBlock cTrace == qnb
+              && renderQuotientNumeratorBlock cEval == qnb
+              && renderQuotientNumeratorBlock cDelta == qnb
+              && renderQuotientHelpers cLimb == qh
+              && renderQuotientHelpers cWide == qh
+              && renderQuotientHelpers cBase == qh
+        | none => false)
+
+/-- GATE 67 (hazard 6, the trailing-newline rule pinned for these two files). Askama drops
+    each included file's final newline: QuotientHelpers' render ends at '}' with none, and
+    QuotientNumeratorBlock's ends at '}' with none. QNB's render OPENS with LF, because its
+    leading block comment and its five macro definitions trim everything up to the last
+    endmacro and the newline after it survives - which is what keeps QH's last line and
+    QNB's first line separate in the artifact even though the two includes are concatenated
+    with no separator. Exactly one whitespace-only line sits inside the region (D:1891), the
+    residue of the NON-trimming template comment at :328-480. -/
+def qnb13c_newlineLaw_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match quotientDeployedCtx sol with
+        | some ctx =>
+            let qh := renderQuotientHelpers ctx
+            let qnb := renderQuotientNumeratorBlock ctx
+            let wsLines := ((qh ++ qnb).splitOn "\n").filter
+              fun l => l.length > 0 && l.toList.all (fun c => c == ' ')
+            ! qh.endsWith "\n" && ! qnb.endsWith "\n"
+              && qnb.startsWith "\n"
+              && qh.endsWith "            }"
+              && wsLines.length == 1
+        | none => false)
+
+/-- GATE 68 (hazard 6, the right-trim count, read from the TEMPLATE SOURCES). QNB uses a
+    right-trim exactly five times - once per macro definition, which is what makes each
+    guard render as one inline statement with no leading indent of its own - and QH uses it
+    zero times. No other right-trim exists in either file, so P-13d inherits the rule
+    unchanged and can pin it from the sources rather than from a render. -/
+def qnb13c_rightTrimCount_ok : IO Bool :=
+  readQuotientTemplate "QuotientHelpers.yul" >>= fun qh =>
+  readQuotientTemplate "QuotientNumeratorBlock.yul" >>= fun qnb =>
+  pure (occ qh "-%}" == 0 && occ qnb "-%}" == 5)
 
 end VerifierPartialKats
 
@@ -1917,3 +3535,25 @@ end VerifierPartialKats
 #eval Midfall.Generator.VerifierPartialKats.perturb_accFlagFlip_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.inertFields13b_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.parserTail_astAgrees_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotient13c_artifactsReachable_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientHelpers_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientNumeratorBlock_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientAndLinearization_withPartials_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientRegion_span_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientProgram_derivedFromArtifact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.quotientProgram_inertFieldsDerived_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_negation_deployedLine_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_negation_isModelled_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_negation_astAgrees_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.opUsage_derivedFromArtifact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_deployedExercisedRegions_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_allArms_synthetic_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_directArm_synthetic_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb_anchorsUnique_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_quotientProgramScalars_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_quotientOpUsageFlags_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_quotientHelperFlags_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_quotientGeneratedInput_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.inertFields13c_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb13c_newlineLaw_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.qnb13c_rightTrimCount_ok -- expect true
