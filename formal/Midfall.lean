@@ -47,6 +47,7 @@ import Midfall.Generator.Quotient.VmValidator
 import Midfall.Generator.Quotient.VmRecognizers
 import Midfall.Generator.Quotient.FoldTypes
 import Midfall.Generator.Quotient.FoldCompute
+import Midfall.Generator.Quotient.Evaluator
 import Midfall.Generator.LoweringPlan
 import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
