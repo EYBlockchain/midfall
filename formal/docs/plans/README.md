@@ -40,7 +40,20 @@ See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board
 | P-07 | kzg | DRAFT |
 | P-08 | vk | DRAFT |
 | P-08 | vk | DRAFT |
-| P-09 | quotient_numerator vm + direct | BLOCKED on P-06, P-07 |
+| P-09 | quotient_numerator vm + direct | BLOCKED on P-06, P-07 |- **`List.range' start n` takes a COUNT, not an inclusive end.** `List.range' 0 3 = [0,1,2]`
+  and `List.range' 5 3 = [5,6,7]`, so `List.range' a (b - a)` is exactly Rust's `a..b`.
+  A P-09h report claimed `FoldTypes.lean:504` mis-ported `lp.start..lp.end` on the
+  grounds that `range'` is inclusive, and stated a verification (`range' 0 3 = [0,1,2,3]`)
+  that does not reproduce - the orchestrator measured `[0,1,2]`. **The port was correct
+  and was not changed.** Applying the proposed "fix" would have introduced an off-by-one
+  into working code. Lesson, aimed at both author and reviewer: a claimed defect in
+  inherited code needs the measurement re-run by whoever acts on it, especially when the
+  remedy is to edit a file the finder does not own.
+- **`List.zipIdx xs` yields `(element, index)`**, the reverse of Rust's `.enumerate()`
+  which yields `(index, element)`. Verified: `zipIdx [10,20,30] = [(10,0),(20,1),(30,2)]`.
+  Every `a..b.map(|(i, x)| ...)` port has to swap. This part of the same P-09h report was
+  correct and cost seven sites in that file alone.
+
 
 ## Standing notes for agents (each cost someone an hour)
 
