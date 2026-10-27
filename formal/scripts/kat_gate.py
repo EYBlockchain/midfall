@@ -39,6 +39,35 @@ EVAL = re.compile(
 VALUE = re.compile(r"^(true|false|-?\d+|\"[^\"]*\"|\[.*\])$")
 
 
+def gate_lines(text):
+    """Return the real `#eval` gate lines of a file.
+
+    A gate must start the line AND be at block-comment depth zero. Lean block
+    comments nest (`/--` opens, `-/-` nests, `-/` closes), and prose inside one
+    can wrap so that a line begins with `#eval time.` - which the previous
+    `startswith` test counted as a gate, producing a bogus "printed N values for
+    N+1 #eval lines" failure. Recorded as R-53.
+    """
+    depth = 0
+    out = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        is_gate = depth == 0 and stripped.startswith("#eval ")
+        i = 0
+        while i < len(line):
+            if line.startswith("/-", i) and i + 2 < len(line) and line[i + 2] == "-":
+                depth += 1          # `/--` open, or `-/-` nested open
+                i += 3
+            elif line.startswith("-/", i) and depth > 0:
+                depth -= 1
+                i += 2
+            else:
+                i += 1
+        if is_gate:
+            out.append(stripped)
+    return out
+
+
 def main() -> int:
     root = pathlib.Path("Midfall")
     if not root.is_dir():
@@ -47,7 +76,7 @@ def main() -> int:
 
     files = sorted(
         p for p in root.rglob("*.lean")
-        if any(l.startswith("#eval ") for l in p.read_text(encoding="utf-8").splitlines())
+        if gate_lines(p.read_text(encoding="utf-8"))
     )
     if not files:
         print("kat_gate: no KAT files found - that is itself a failure", file=sys.stderr)
@@ -59,10 +88,7 @@ def main() -> int:
 
     for path in files:
         specs = []
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if not stripped.startswith("#eval "):
-                continue
+        for stripped in gate_lines(path.read_text(encoding="utf-8")):
             m = EVAL.match(stripped)
             if m is None:
                 problems.append("%s: unparsable #eval line: %r" % (path, stripped[:70]))
