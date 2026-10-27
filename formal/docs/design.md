@@ -491,13 +491,58 @@ checked positionally and `identity_values` pushes `Fq::ZERO` for them. **The fol
 modelled at all**: `FOLD_MAIN`/`FOLD_SELECTOR`/`NATIVE_*` are hard errors inside an
 identity expression, and the y-batch accumulation and the negation written to
 `QUOTIENT_EVAL_MPTR` are Yul-side.
+### 1. `QVM.run (prog) (f) : Except QVM.Fault QVM.Output` - no such granularity
 
-Consequence: `qvm_compile_correct`, as written (`QVM.run L.plan.qprog (frameOf ...) =
-.ok (outputOf (quotientParts ...))`), quantifies over a program/frame/output triple that
-the reference never assembles. The honest options are (a) restate it per identity plus a
-separately ported segment walker, or (b) state the whole-stream version as our own
-definition and prove it decomposes to the per-identity one. (b) is more useful for M7 but
-is a larger commitment.
+**PARTLY RETRACTED by P-10 (round 31), and the retraction matters more than the original.**
+The claim that the fold is "modelled NOWHERE" was **wrong as stated**. P-10 established
+from the source that the fold is portable in three distinct senses, two of them in
+shipped Rust and one in the reference's test module:
+
+* **structurally** - `direct/folds.rs::check` (FD:336-497) expands every fold site and
+  proves each identity is folded exactly once, with the right weight, into the bucket its
+  manifest names, no weight reused, none unused. Its own doc scopes it precisely: it
+  checks *where and how* a value is folded, not how the value is computed.
+* **as emitted text** - `direct_quotient_block`, `push_quotient_trace`,
+  `push_quotient_eval_numer_add`, `push_structured_fold_advance`, `push_structured_fold`
+  are pure functions from identity lines and state slots to lines of Yul.
+* **as arithmetic** - `lowering/tests.rs:4288` states `main_numerator = sum_j value_j *
+  y^(m-1-j)` with `quotient_expected_eval = -main_numerator` (the negation this item
+  called "Yul-side"), and `tests.rs:4325` is a **whole-stream fold executor over the
+  physical bytecode** that actually runs `FOLD_MAIN` and `FOLD_SELECTOR`. `tests.rs:1289`
+  is the reference's own exhaustive proof that the sparse gap form equals the naive
+  global-power form.
+
+What **is** correct in the original: no shipped Rust function *evaluates* the fold, and
+`QVM.Program`/`Frame`/`Output` still have no reference counterpart at any granularity.
+So the honest position, which P-10 states and I adopt, is that PLAN 9.5's
+`qvm_compile_correct` should be **two claims**, not one:
+
+1. a **per-stream fold-agreement** claim over `evalQuotientProgramArtifacts` vs
+   `expectedLinearizationArtifacts` - statable today modulo `L.plan.qprog`;
+2. a **per-identity compile-correctness** claim over `evalQuotientIdentity` - statable
+   since P-09d.
+
+The gap between them is named, not papered: the segment-evaluator seam (the test module's
+third interpreter uses a `HashMap` memory where P-09b's uses a PRNG - a real mismatch,
+not plumbing), and the native markers plus inline prefix, which enter no Lean fold at all
+and are covered only by the certifier's positional check.
+
+**Ruling on the two scope errors P-10 reported.**
+
+* **Five unowned `vm/mod.rs` Yul-text helpers** (QVM:4122-4244: `u256_string`,
+  `parse_usize_literal`, `yul_let_assignment`, `yul_const_value`, `yul_mulmod_assignment`,
+  `yul_addmod_assignment`, `yul_mload_literal_expr`) fell between packages - P-09c stopped
+  at 4120, P-09f at 4081 - and `quotient.rs` depends on them. P-10 ported them with their
+  `QVM:` cites rather than importing around the cut, which was right. **Ruling: they stay
+  where they are.** Moving them back to a Quotient module is churn with no gain, and the
+  alternative - leaving `quotient.rs` unbuildable - is worse. Recorded as a hole in the
+  P-09 split, not as a defect in P-10.
+* **`folds.rs::check` has no shipped producer of a non-degenerate `FoldRecord`** until
+  `direct/emit.rs` lands in M10, because `push_structured_fold` creates every `Weighted`
+  site with an empty function name and `emit.rs` fills in the names and call counts. P-10
+  hand-built the record the way `emit.rs` would and said so plainly. **Ruling: accepted**,
+  and it is a genuine limit on what M6 can claim about the `Weighted` arm until M10 - it
+  must be restated when `direct/emit.rs` lands, not quietly dropped.
 
 ### 2. `qvm_validated_noOOB`'s `.oob` fault cannot arise — RESTATED by P-09e (see below)
 
