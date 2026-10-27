@@ -1808,6 +1808,42 @@ working - each package is told not to trust what it inherits. It is also evidenc
 the deferred reviews are accumulating real debt: these were caught by luck of sequencing,
 not by a review pass.
 
+### R-54 A killed perturbation harness left a real behaviour change in the tree
+
+D6 ran source-level perturbations by editing the file, building, recording which gates
+reddened, then restoring. One harness was killed mid-flight and left `.reverse` **deleted**
+from `MultiPrepare.fEval` - a change to the `kzg/mod.rs:472` fold order, i.e. a semantic
+edit to the verifier, sitting in the working tree.
+
+**Why the usual checks did not catch it.** `lake build` succeeded: the expression still
+elaborates, still has the right type, still computes *something*. The KAT suite passed too,
+because the surviving gates did not discriminate that fold order. It surfaced only when an
+unrelated perturbation made two `fEval` gates redden and the agent asked why they were
+already in an unexpected state.
+
+**Why this matters beyond one incident.** This is the failure mode of mutation testing
+against a live tree: harness and artefact are the same file, so an interrupted harness
+corrupts the artefact silently. Every package running R-41 perturbations by editing source
+is exposed. The repair was verified by the orchestrator (`.reverse` present at
+`MultiOpen.lean:153`) and D6's harnesses now restore on SIGTERM.
+
+**Standing rule adopted:** perturb a **copy** outside the working tree, or verify with
+`git diff --numstat` after every harness run. Stage 2's agent already used `/tmp` copies
+for exactly this reason; D6 edited in place and got bitten.
+
+### R-55 Two holes in the orchestrator's own CI gates, found by an agent
+
+* **`Instances/` confinement greps DIRECT imports only.** Putting a concrete pairing model
+  in `Native.lean` would place it in `Statements.lean`'s *transitive* cone and the gate
+  would stay green. D6 found this while placing its gates and put them in `Instances/`
+  instead, where the tree already keeps every runnable Exec fixture. The check should
+  follow the transitive closure, not the import line.
+* **A gate can be unredable for a reason the brief never named.** Truncation is the
+  **identity at `Fr 17`**: `truncate` keeps one byte and every element is below 256, so a
+  `truncatedChallenges` gate written there cannot fail. D6 caught this and moved to a
+  `Fr 1009` fixture. Any `Fr 17` gate depending on magnitude, width or truncation deserves
+  the same suspicion.
+
 ## Closed
 ## Next work packages
 

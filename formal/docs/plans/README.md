@@ -38,6 +38,7 @@ See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board
 | P-05 | abi + encoding | in flight |
 | P-06 | [P-06-api.md](P-06-api.md) | READY |
 | P-07 | kzg | DRAFT |
+- **Never perturb the working tree in place.** Apply R-41 source mutations to a copy outside the repo, or verify with `git diff --numstat` after every harness run. A killed D6 harness left `.reverse` deleted from `MultiPrepare.fEval` - a semantic change that built clean and passed KATs (R-54).
 | P-08 | vk | DRAFT |
 | P-08 | vk | DRAFT |
 | P-09 | quotient_numerator vm + direct | BLOCKED on P-06, P-07 |- **`List.range' start n` takes a COUNT, not an inclusive end.** `List.range' 0 3 = [0,1,2]`
