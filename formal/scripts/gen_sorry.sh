@@ -14,6 +14,9 @@ owner() {
     Midfall/Halo2/Spec/Piop.lean)     echo 'Phase 4 (spec layer)' ;;
     Midfall/Halo2/Spec/Relation.lean) echo 'Phase 4 (spec layer)' ;;
     Midfall/Statements.lean)          echo 'frozen statements (S1..S7 land later)' ;;
+    Midfall/Yul/*)                echo 'P-SE stage 1-2: Yul run/contracts layer (semantic equivalence)' ;;
+    Midfall/Lowering/*)           echo 'P-SE: semantic equivalence obligations' ;;
+    Midfall/Assumptions/*)        echo 'P-SE: named holes in assumption files' ;;
     *)                                echo 'UNOWNED - assign a work package' ;;
   esac
 }

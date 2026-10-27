@@ -11,7 +11,7 @@ echo '== sorry register =='
 # The inventory comes from scripts/sorries.sh, which is also what generates the
 # register table (scripts/gen_sorry.sh), so gate and register cannot drift apart.
 found=$(bash scripts/sorries.sh)
-listed=$(sed -nE 's/^\| ([^ |]+) \| ([0-9]+) \|.*/\1:\2/p' SORRY.md | sort)
+listed=$(sed -nE 's/^\| ([^ |]+) \| ([0-9]+) \|.*/\1:\2/p' SORRY.md | sort -t: -k1,1 -k2,2n)
 if [ "$found" != "$listed" ]; then
   echo 'sorry register out of sync with the tree'
   diff <(echo "$listed") <(echo "$found") || true
