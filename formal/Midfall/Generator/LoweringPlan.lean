@@ -53,21 +53,23 @@
 -- NOT PORTED, WITH THE BLOCKERS NAMED (hazard 6; context for required finding (c)).
 -- * PL:124-137 `lowering_plan` / `lowering_plan_for`, PL:235-329 `LoweringPlan::new` and
 --   PL:165-231 `LoweringPlan::new_direct`. These are the CONSTRUCTORS: they run the whole
---   pipeline. Blockers, corrected by the orchestrator after this header was written:
---   an earlier draft of this note said `VerifierMemoryLayout::new` (MEM:591-973) was
---   LayoutMemory.lean:140 and Layout.lean:716 says so outright; the note was read as
---   history rather than conclusion. `ConstraintSystemMeta` and `Data` are also both
---   ported (Encoding.lean:364, :551). What genuinely still blocks these constructors is
---   narrower: `quotient_program_plan` (QRS:426) and `build_quotient_program_items`
---   (QRS:2102) need the Evaluator and the halo2 ConstraintSystem, `compact_quotient_
---   computation_blocks` (QRS:2000) needs the Evaluator, `quotient_template_program`
---   (QRS:189) is unported, and the Direct row is M10. Porting `new` is therefore worth a
---   dedicated attempt rather than impossible - recorded here so nobody re-derives the
---   wrong reason and stops.
---   deferred to M10. Porting `new` on top of the stub would produce a plan whose `memory`
---   field is a stub artifact - the exact vacuity class the P-SE attack pass is about. So the
---   record, the accessors and the validators are ported; the pipeline is not, and no gate
---   pretends otherwise.
+--   pipeline, so they are the real gap between this module and a produced plan.
+--
+--   CORRECTION (orchestrator, after this header was first written). An earlier draft
+--   claimed `VerifierMemoryLayout::new` (MEM:591-973) was DECLINED and existed only as
+--   the `VkBuildEnv` stub. That was FALSE: it is ported at LayoutMemory.lean:140, and
+--   Layout.lean:716 says "IS now ported" outright - the note was read as history rather
+--   than conclusion. `ConstraintSystemMeta` and `Data` are ported too (Encoding.lean:364,
+--   :551). What genuinely blocks these constructors is narrower: `quotient_program_plan`
+--   (QRS:426) and `build_quotient_program_items` (QRS:2102) need the Evaluator and the
+--   halo2 ConstraintSystem; `compact_quotient_computation_blocks` (QRS:2000) needs the
+--   Evaluator; `quotient_template_program` (QRS:189) is unported; and the Direct row is
+--   deferred to M10. Porting `new` on top of the `VkBuildEnv` stub would still be wrong -
+--   it would yield a plan whose `memory` field is a stub artifact, the exact vacuity class
+--   the P-SE attack pass is about - so the record, accessors and validators are ported
+--   and the pipeline is not, with no gate pretending otherwise. But porting `new`
+--   properly is worth a dedicated attempt rather than impossible, and nobody should
+--   re-derive the wrong reason and stop.
 -- * PL:151-154 `vm_quotient_mut`: a `&mut self` test accessor with no Lean analogue (its
 --   only Rust callers corrupt a finalized program before re-rendering it).
 -- * PL:392-406 `compact_quotient_blocks`: needs QRS:2000 (above). It is the one hole in
