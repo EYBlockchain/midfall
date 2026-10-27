@@ -66,6 +66,10 @@ import Midfall.Lowering.Accumulator
 import Midfall.Lowering.VkDigest
 import Midfall.Lowering.Calldata
 import Midfall.Lowering.SemanticEquivalence
+import Midfall.Lowering.Checkpoint
+import Midfall.Lowering.Snapshot
+import Midfall.Lowering.Inv
+import Midfall.Instances.InvFixture
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
