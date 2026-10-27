@@ -11,10 +11,20 @@ policy). The Phase 1 exit criterion is explicitly `Statements.lean compiles with
 sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
+| Midfall/Assumptions/Codec.lean | 100 | `sorry` | P-SE: named holes in assumption files |
+| Midfall/Assumptions/Eip2537.lean | 160 | `sorry` | P-SE: named holes in assumption files |
 | Midfall/Halo2/Spec/Piop.lean | 56 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
 | Midfall/Statements.lean | 46 | `verifyMsgs (Gₜ := Gₜ) E keccak256 F params v` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 59 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 75 | `verifyMsgs (Gₜ := Gₜ) E keccak256 Features.s` | frozen statements (S1..S7 land later) |
+| Midfall/Yul/Bridge.lean | 159 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 199 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 242 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 249 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 477 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 551 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 575 | `def noWritersFuel : Nat -> Block Op -> Bool ` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
+| Midfall/Yul/Bridge.lean | 588 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
 
 ## Upstream sorries we must not depend on
 

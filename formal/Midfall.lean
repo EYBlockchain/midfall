@@ -64,6 +64,10 @@ import Midfall.Lowering.SemanticEquivalence
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
+import Midfall.Yul.Contracts
+import Midfall.Yul.Bridge
+import Midfall.Assumptions.Codec
+import Midfall.Assumptions.Eip2537
 import Midfall.Statements
 import Midfall.Probe.ArkLibProbe
 import Midfall.Common.Json
