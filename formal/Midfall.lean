@@ -50,6 +50,9 @@ import Midfall.Generator.Quotient.FoldCompute
 import Midfall.Generator.Quotient.Evaluator
 import Midfall.Generator.Quotient.QuotientBlocks
 import Midfall.Generator.LoweringPlan
+import Midfall.Generator.Evm
+import Midfall.Generator.Calldata
+import Midfall.Generator.Builder
 import Midfall.Instances.Bls12_381
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
