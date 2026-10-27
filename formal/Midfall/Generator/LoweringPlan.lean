@@ -50,16 +50,20 @@
 --    `compact_quotient_computation_blocks` (QRS:2000, renders Yul through the Evaluator) and
 --    everything in `direct/` (M10).
 --
--- NOT PORTED, WITH THE BLOCKER NAMED (hazard 6; context for required finding (b)).
+-- NOT PORTED, WITH THE BLOCKERS NAMED (hazard 6; context for required finding (c)).
 -- * PL:124-137 `lowering_plan` / `lowering_plan_for`, PL:235-329 `LoweringPlan::new` and
 --   PL:165-231 `LoweringPlan::new_direct`. These are the CONSTRUCTORS: they run the whole
---   pipeline. Three blockers, all already named in the tree:
---   `VerifierMemoryLayout::new` (MEM:591-973) is declined by Layout.lean:716-721 and exists
---   only as the `VkBuildEnv.newVerifierMemoryLayout` stub (Vk.lean:405-421 - and the plans
---   README already rules that `memoryLayoutFor_config_ok` tests the stub, not the real
---   constructor); `quotient_program_plan` (QRS:426) and `build_quotient_program_items`
---   (QRS:2102) are unported (survey:2083-2084); and the direct row
---   (`direct_quotient_program`, `plan_direct_quotient`, `direct_scratch_requirements`) is
+--   pipeline. Blockers, corrected by the orchestrator after this header was written:
+--   an earlier draft of this note said `VerifierMemoryLayout::new` (MEM:591-973) was
+--   LayoutMemory.lean:140 and Layout.lean:716 says so outright; the note was read as
+--   history rather than conclusion. `ConstraintSystemMeta` and `Data` are also both
+--   ported (Encoding.lean:364, :551). What genuinely still blocks these constructors is
+--   narrower: `quotient_program_plan` (QRS:426) and `build_quotient_program_items`
+--   (QRS:2102) need the Evaluator and the halo2 ConstraintSystem, `compact_quotient_
+--   computation_blocks` (QRS:2000) needs the Evaluator, `quotient_template_program`
+--   (QRS:189) is unported, and the Direct row is M10. Porting `new` is therefore worth a
+--   dedicated attempt rather than impossible - recorded here so nobody re-derives the
+--   wrong reason and stops.
 --   deferred to M10. Porting `new` on top of the stub would produce a plan whose `memory`
 --   field is a stub artifact - the exact vacuity class the P-SE attack pass is about. So the
 --   record, the accessors and the validators are ported; the pipeline is not, and no gate
