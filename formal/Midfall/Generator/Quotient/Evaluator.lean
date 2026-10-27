@@ -747,7 +747,7 @@ def lookupSharedPrefixFPlusBeta {F : Type} [BEq F] (inputChunk : List (List (Exp
                       freshLet ("mulmod(" ++ prefixVar ++ ", " ++ challengeVar ++ ", r)")
                     let header := "for { let q_lookup_shared_i := 0 } lt(q_lookup_shared_i, "
                       ++ toString inputChunk.length
-                      ++ ") { q_lookup_shared_i := add(q_lookup_shared_i, 1) }} {"
+                      ++ ") { q_lookup_shared_i := add(q_lookup_shared_i, 1) } {"
                     let body : List String :=
                       [ "let q_lookup_shared_off := shl(5, q_lookup_shared_i)",
                         "let q_lookup_shared_tail := mload(add(0x" ++ hexDigits basePtr
@@ -1563,7 +1563,7 @@ def lookupSharedPrefix_ok : Bool :=
             ls == [ "let a_0 := mload(0x2000)",
               "let var0 := addmod(mulmod(0, tau, r), a_0, r)",
               "let var1 := mulmod(var0, tau, r)",
-              "for { let q_lookup_shared_i := 0 } lt(q_lookup_shared_i, 3) { q_lookup_shared_i := add(q_lookup_shared_i, 1) }} {",
+              "for { let q_lookup_shared_i := 0 } lt(q_lookup_shared_i, 3) { q_lookup_shared_i := add(q_lookup_shared_i, 1) } {",
               "let q_lookup_shared_off := shl(5, q_lookup_shared_i)",
               "let q_lookup_shared_tail := mload(add(0x2020, q_lookup_shared_off))",
               "let q_lookup_shared_compressed := addmod(var1, q_lookup_shared_tail, r)",
