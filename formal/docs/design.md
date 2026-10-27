@@ -504,12 +504,26 @@ shipped Rust and one in the reference's test module:
   checks *where and how* a value is folded, not how the value is computed.
 * **as emitted text** - `direct_quotient_block`, `push_quotient_trace`,
   `push_quotient_eval_numer_add`, `push_structured_fold_advance`, `push_structured_fold`
-  are pure functions from identity lines and state slots to lines of Yul.
-* **as arithmetic** - `lowering/tests.rs:4288` states `main_numerator = sum_j value_j *
   y^(m-1-j)` with `quotient_expected_eval = -main_numerator` (the negation this item
   called "Yul-side"), and `tests.rs:4325` is a **whole-stream fold executor over the
   physical bytecode** that actually runs `FOLD_MAIN` and `FOLD_SELECTOR`. `tests.rs:1289`
   is the reference's own exhaustive proof that the sparse gap form equals the naive
+  global-power form.
+
+  **The negation specifically, closed by P-13c (round 40).** It is emitted at
+  `QuotientNumeratorBlock.yul:1393` in the compact arm the deployed profile takes (the
+  `:1439` form lives in the untaken `when None` legacy arm - an earlier framing of this
+  note called `:1439` "the" deployed negation and was wrong). It is **modelled** as Fr
+  arithmetic independently of any template: `qvmFrNeg` at `VmReference.lean:266`, used as
+  `quotientExpectedEval := qvmFrNeg mainAcc` at `FoldCompute.lean:860`, `:891`, `:952`.
+  What did not exist until P-13c was any **link** between that arithmetic and the shipped
+  bytes; `VerifierPartials` gate 55 now takes the statement out of the render, feeds it to
+  P-09h's independent Yul text reader, and requires the reader's value to equal
+  `qvmFrNeg v` for the same memory word, with a negative control. **Still open, and named
+  so nobody over-reads that gate:** it is a `#eval` over one concrete memory, not a
+  theorem; there is no `forall x` tying the rendered statement to `qvmFrNeg`; and there is
+  still no `Frame`/`Output` object to state such a theorem against.
+
   global-power form.
 
 What **is** correct in the original: no shipped Rust function *evaluates* the fold, and
