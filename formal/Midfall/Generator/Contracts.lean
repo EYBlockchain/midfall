@@ -26,24 +26,21 @@
 -- place in the tree where a rendered ROOT template is byte-equal to a committed
 -- artifact.
 --
--- WHY THERE IS NO WHOLE-FILE GATE FOR Halo2Verifier.sol, and what replaced it.
--- The verifier contract includes thirteen partials and only SEVEN of them have
--- been ported: P-13a did five, P-13b two more, P-13c the two quotient_numerator
--- ones. Six verifier partials have no render function anywhere in the tree -
--- Constants.sol (255 template lines), PrecompileSmoke.sol (216),
--- Constructors.sol (92), TraceAndGasHelpers.yul (23), Pcs.yul (39) and
--- TraceReturn.yul (73): 698 lines of Askama. The full file therefore cannot be
--- produced, and this file does not pretend otherwise. What it does instead is
--- gate the shell TEXT and the GLUE completely: gate 10 walks every shell-owned
--- byte run and every ported partial render through the artifact in order,
--- requires each to occur exactly once, requires the first to start at byte 0 and
--- the last to end at the last byte, and requires the leftover gaps to be exactly
--- the unported regions. That is an accounting, not a sample: a wrong byte
--- anywhere in the shell, a glue that is not the include boundary, or a ported
--- partial that has grown a byte the artifact does not carry, reddens it. Gate 9
--- goes further on one of the six: TraceAndGasHelpers' deployed render is PROVED
--- to be the empty string, because the gap where it should be is exactly the
--- include glue and nothing more.
+-- THE WHOLE-FILE GATE, which P-13d could not write and P-13e can. The verifier
+-- contract includes thirteen partials. P-13d had seven of them: P-13a did five,
+-- P-13b two more, P-13c the two quotient_numerator ones. Six had no render
+-- function anywhere - Constants.sol (255 template lines), PrecompileSmoke.sol
+-- (216), Constructors.sol (92), TraceAndGasHelpers.yul (23), Pcs.yul (39) and
+-- TraceReturn.yul (73): 698 lines of Askama, 52,894 bytes of the artifact.
+-- P-13e ported all six, so gate 29 is now the whole-file equality: the shell
+-- text plus the thirteen include renders IS the tracked artifact, byte for byte.
+-- Gate 10 remains, and it is what found the gap: it walks every byte run through
+-- the artifact in order and reports the leftover gaps, which is an accounting
+-- rather than a sample and cannot silently shrink. Its vector went from
+-- [0, 29032, 0, 6, 6, 0, 6, 6, 6, 23323, 569, 0] to seventeen gaps that are each
+-- either empty or the six-byte include glue. Gate 9 proves TraceAndGasHelpers's
+-- deployed render is the empty string - the gap where it should be is exactly the
+-- include glue and nothing more - which is why it is not a piece of gate 10's tiling.
 --
 -- HAZARD 3, SAID PLAINLY. Halo2QuotientEvaluator.sol is NOT exercised by the
 -- deployed profile at all. The dump directory contains Halo2Verifier.sol and
@@ -107,22 +104,23 @@ argument, not something to paste. The field order below is verifierIncludes'
 order and gate 2 checks it against it. -/
 
 /-- The thirteen include renders of T:contracts/Halo2Verifier.sol, in template
-    order. Seven are produced by render functions that already exist; the six
-    marked NOT PORTED stay parameters until a later package ports them. -/
+    order. Since P-13e all thirteen are produced by render functions; they stay
+    PARAMETERS of the render, because a hole whose bytes another package owns is
+    an argument, not something to paste. -/
 structure VerifierParts where
-  /-- T:partials/verifier/Constants.sol - NOT PORTED (255 template lines). -/
+  /-- T:partials/verifier/Constants.sol - renderConstants (P-13e). -/
   constants : String
-  /-- T:partials/verifier/PrecompileSmoke.sol - NOT PORTED (216 lines). -/
+  /-- T:partials/verifier/PrecompileSmoke.sol - renderPrecompileSmoke (P-13e). -/
   precompileSmoke : String
-  /-- T:partials/verifier/Constructors.sol - NOT PORTED (92 lines). -/
+  /-- T:partials/verifier/Constructors.sol - renderConstructors (P-13e). -/
   constructors : String
   /-- T:partials/verifier/AssemblyHelpers.yul - renderAssemblyHelpers. -/
   assemblyHelpers : String
   /-- T:partials/verifier/AccumulatorHelpers.yul - renderAccumulatorHelpers. -/
   accumulatorHelpers : String
-  /-- T:partials/verifier/TraceAndGasHelpers.yul - NOT PORTED (23 lines), and its
-      deployed render is the empty string, which gate 9 proves rather than
-      assumes. -/
+  /-- T:partials/verifier/TraceAndGasHelpers.yul - renderTraceAndGasHelpers
+      (P-13e), whose deployed render IS the empty string, which gate 9 proves
+      rather than assumes. -/
   traceAndGasHelpers : String
   /-- T:partials/verifier/VkLoading.yul - renderVkLoading. -/
   vkLoading : String
@@ -133,11 +131,12 @@ structure VerifierParts where
   /-- T:partials/verifier/QuotientAndLinearization.yul -
       renderQuotientAndLinearization fed the two quotient_numerator renders. -/
   quotientAndLinearization : String
-  /-- T:partials/verifier/Pcs.yul - NOT PORTED (39 lines). -/
+  /-- T:partials/verifier/Pcs.yul - renderPcs fed the generated multi-prepare
+      blocks (P-13e). -/
   pcs : String
   /-- T:partials/verifier/FinalPairing.yul - renderFinalPairing. -/
   finalPairing : String
-  /-- T:partials/verifier/TraceReturn.yul - NOT PORTED (73 lines). -/
+  /-- T:partials/verifier/TraceReturn.yul - renderTraceReturn (P-13e). -/
   traceReturn : String
 
 /-- The include paths in the order VerifierParts declares its fields, so gate 2
@@ -588,6 +587,40 @@ def deployedShellPieces (sol : String) : Option (List String) := do
           (renderQuotientNumeratorBlock qctx),
         renderFinalPairing b, vhFooter]
 
+/-- The thirteen deployed include renders, in registry order. Every field is now
+    produced by a render function: P-13a five, P-13b two, P-13c the two
+    quotient_numerator ones, and P-13e the remaining six. -/
+def poseidonParts (sol : String) : Option VerifierParts := do
+  let qctx ← quotientDeployedCtx sol
+  let b := poseidonRootCtx.base
+  pure { constants := renderConstants b
+         precompileSmoke := renderPrecompileSmoke b
+         constructors := renderConstructors b
+         assemblyHelpers := renderAssemblyHelpers b
+         accumulatorHelpers := renderAccumulatorHelpers b
+         traceAndGasHelpers := renderTraceAndGasHelpers b
+         vkLoading := renderVkLoading b
+         transcriptProofParser := renderTranscriptProofParser b
+         lagrange := renderLagrange b
+         quotientAndLinearization := renderQuotientAndLinearization qctx
+           (renderQuotientHelpers qctx) (renderQuotientNumeratorBlock qctx)
+         pcs := renderPcs b (pcsDeployedComputations sol)
+         finalPairing := renderFinalPairing b
+         traceReturn := renderTraceReturn b }
+
+/-- The sixteen non-empty byte runs the deployed artifact is tiled by since P-13e:
+    the nine shell-owned runs and the twelve partial renders minus
+    renderTraceAndGasHelpers, whose deployed render is the empty string and which
+    gate 9 therefore proves rather than tiles (gapsGo rejects an empty piece on
+    purpose - a hole claimed with no bytes is not evidence). -/
+def deployedPieces13e (sol : String) : Option (List String) := do
+  let p ← poseidonParts sol
+  pure [vhPrologue, p.constants, p.precompileSmoke, p.constructors,
+        verifierNoticeSection poseidonRootCtx, p.assemblyHelpers, p.accumulatorHelpers,
+        vhAfterTraceAndGas, p.vkLoading, p.transcriptProofParser, p.lagrange,
+        p.quotientAndLinearization, p.pcs, p.finalPairing, p.traceReturn, vhFooter]
+
+
 /-- GATE 1 (reachability, first: D-P19). The two tracked artifacts and all three
     contract templates must open, so a wrong path is a named red and not a needle
     that matches nothing. -/
@@ -719,35 +752,31 @@ def verifierTraceAndGasRendersEmpty_ok : IO Bool :=
     && occ sol "function trace_u256" == 0
     && occ sol "function trace_point" == 0)
 
-/-- GATE 10 (THE ACCOUNTING - the closest this package can come to a whole-file
-    gate, and the honest substitute for one). Every shell-owned byte run and every
-    ported partial render is walked through the artifact in template order. Each
-    must occur EXACTLY ONCE; the first must start at byte 0 and the last must end
-    at the last byte; the glue gaps between ported neighbours must be exactly the
-    include glue; and the three remaining gaps must be the unported regions. The
-    final clause is the length accounting hazard 6 asks for: the pieces and the
-    gaps tile the artifact exactly, so no byte is unaccounted and no piece can
-    have silently grown or shrunk. What it does NOT do: it does not say what the
-    three gaps contain. Constants.sol, PrecompileSmoke.sol, Constructors.sol,
-    Pcs.yul and TraceReturn.yul are still unported and their bytes are read from
-    the artifact, not produced by this port. -/
+/-- GATE 10 (THE ACCOUNTING - and since P-13e a CLOSED one). Every shell-owned byte
+    run and every partial render is walked through the artifact in template order.
+    Each must occur EXACTLY ONCE; the first must start at byte 0 and the last must end
+    at the last byte; and the gaps must tile the rest. P-13d left the vector
+    [0, 29032, 0, 6, 6, 0, 6, 6, 6, 23323, 569, 0]: three gaps that were not the
+    include glue, holding 52,894 bytes of six partials with no render function
+    anywhere. P-13e ported all six, and the vector is now
+    [0, 0, 6, 6, 0, 0, 6, 6, 0, 6, 6, 6, 6, 6, 6, 0, 0] - seventeen gaps, every one
+    of them either empty or exactly the six-byte include glue, sixty glue bytes in
+    total and nothing else unaccounted. That is the completeness statement the
+    tiling was built to make, and it is what gate 29 now also makes as a single
+    whole-file equality. The empty render of TraceAndGasHelpers is not a piece
+    (gapsGo rejects an empty piece on purpose); gate 9 is what proves it empty. -/
 def verifierShell_accountsForArtifact_ok : IO Bool :=
   readDump >>= fun sol =>
-  pure (match deployedShellPieces sol with
+  pure (match deployedPieces13e sol with
     | none => false
     | some pieces => match gapsOf sol pieces with
     | some gaps =>
-        [gaps.getD 0 "", gaps.getD 2 "", gaps.getD 5 ""].all (· == "")
-          && gaps.getD 11 "" == ""
-          && [3, 4, 6, 7, 8].all (fun i => gaps.getD i "" == includeGlue)
-          && (gaps.getD 1 "").length == 29032
-          && (gaps.getD 9 "").startsWith includeGlue
-          && (gaps.getD 9 "").endsWith includeGlue
-          && (gaps.getD 9 "").length == 23323
-          && (gaps.getD 10 "").startsWith includeGlue
-          && (gaps.getD 10 "").length == 569
-          && gaps.length == 12
-          && gaps.map String.length == [0, 29032, 0, 6, 6, 0, 6, 6, 6, 23323, 569, 0]
+        pieces.length == 16 && gaps.length == 17
+          && gaps.map String.length
+             == [0, 0, 6, 6, 0, 0, 6, 6, 0, 6, 6, 6, 6, 6, 6, 0, 0]
+          && gaps.all (fun g => g == "" || g == includeGlue)
+          && (gaps.filter (fun g => g == includeGlue)).length == 10
+          && (gaps.map String.length).sum == 60
           && sol.length == (gaps.map (·.length)).sum + (pieces.map (·.length)).sum
     | none => false)
 
@@ -1148,9 +1177,9 @@ def perturb_shellText_ok : IO Bool :=
     vhTraceFailure, vhReturnsBool and vhSplitQuotient are ported text that no
     tracked artifact contains, so a typo in any of them reddens NOTHING in this
     tree; the same is true of the Some arm of the embedded_vk match, which is
-    empty in the template and so cannot even be typo'd. And the six unported
-    partials' bytes are read from the artifact by gate 10 rather than produced,
-    so nothing here checks them at all.
+    empty in the template and so cannot even be typo'd. The six partials
+    P-13d left unported are now rendered and gated in VerifierPartials.lean
+    gates 69-88, and gate 29 here folds them into a whole-file equality.
 
     MEASURED, not asserted (R-41). Four source mutations reddened NOTHING and the
     causes are these: a same-length typo inside vhSplitQuotient ('delegate' ->
@@ -1170,6 +1199,69 @@ def inertFields13d_ok : IO Bool :=
     && occ sol (vhNatSpecB ++ vhReturnsBool ++ " {") == 0
     && vhNonEmbeddedVk.length == 235
     && occ sol "when Some" == 0)
+
+
+
+
+/-- GATE 29 (TEXTUAL, WHOLE FILE - the gate P-13d could not write, and the reason
+    gap A is now closed). The deployed verifier contract, every byte of it, is the
+    shell text plus the thirteen include renders: 175,908 bytes, 3,024 lines, no
+    trailing newline, asserted alongside the equality (hazard 1). P-13d's header
+    explained why this was impossible - six of the thirteen partials had no render
+    function anywhere - and gate 10 was the accounting substitute. Both now hold.
+    What this does NOT prove: that the model behind the bytes is the Rust's model.
+    The generated regions (the PCS blocks, the quotient program) are read back out
+    of the artifact, and the memory layout is a transcription re-tied by
+    constants_memoryMatches_ok; what gate 29 proves is that the TEMPLATE half of
+    every one of the thirteen partials, and all of the shell, is reproduced exactly. -/
+def verifierContract_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match poseidonParts sol with
+    | none => false
+    | some parts =>
+        let r := renderHalo2Verifier poseidonRootCtx parts
+        r == sol && r.length == sol.length && r.length == 175908
+          && lineCount r == 3024 && ! r.endsWith "\n")
+
+/-- GATE 30 (R-41, every hole is load-bearing). Substituting a marker for any ONE of
+    the thirteen include renders breaks the whole-file equality: so no hole in
+    gate 29 is vacuous and no field of VerifierParts is dead. All thirteen are run. -/
+def perturb_partsLoadBearing_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (match poseidonParts sol with
+    | none => false
+    | some parts =>
+        let dep := renderHalo2Verifier poseidonRootCtx parts
+        let set (i : Nat) (v : String) : VerifierParts :=
+          { constants := if i == 0 then v else parts.constants
+            precompileSmoke := if i == 1 then v else parts.precompileSmoke
+            constructors := if i == 2 then v else parts.constructors
+            assemblyHelpers := if i == 3 then v else parts.assemblyHelpers
+            accumulatorHelpers := if i == 4 then v else parts.accumulatorHelpers
+            traceAndGasHelpers := if i == 5 then v else parts.traceAndGasHelpers
+            vkLoading := if i == 6 then v else parts.vkLoading
+            transcriptProofParser := if i == 7 then v else parts.transcriptProofParser
+            lagrange := if i == 8 then v else parts.lagrange
+            quotientAndLinearization := if i == 9 then v else parts.quotientAndLinearization
+            pcs := if i == 10 then v else parts.pcs
+            finalPairing := if i == 11 then v else parts.finalPairing
+            traceReturn := if i == 12 then v else parts.traceReturn }
+        dep == sol && (List.range' 0 13).all (fun i =>
+          let r := renderHalo2Verifier poseidonRootCtx (set i (partMarker (i + 1)))
+          r != sol && occ sol r == 0))
+
+/-- GATE 31. The registry paths' basenames are exactly the thirteen template files
+    VerifierPartials.lean enumerates, in the same order - so the orphan-template
+    gate there (P-13e gate 70) and the registry gate here (gate 2) together pin that
+    every file on disk has a render and every render has a file. -/
+def verifierPartPaths_matchTemplateFiles_ok : Bool :=
+  verifierPartPaths.map (fun q => (q.splitOn "/").getLastD "")
+    == VerifierPartialKats.verifierTemplateFiles
+    && verifierPartPaths.length == 13
+
+#eval Midfall.Generator.ContractKats.verifierContract_bytesExact_ok -- expect true
+#eval Midfall.Generator.ContractKats.perturb_partsLoadBearing_ok -- expect true
+#eval Midfall.Generator.ContractKats.verifierPartPaths_matchTemplateFiles_ok -- expect true
 
 end Midfall.Generator.ContractKats
 

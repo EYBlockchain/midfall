@@ -297,6 +297,48 @@ structure PartialCtx where
       gate, but NOT unobservable: the same literal is emitted by the generated permutation
       callback at D:1975, which quotientFrDelta_derivedFromArtifact_ok reads. -/
   frDelta : String
+  /-- P-13e. M:537 memory: the whole VerifierMemoryLayout the deployed artifact
+      declares. Constants.sol interpolates 50 of its slots and PrecompileSmoke.sol
+      three more; poseidonMemoryLayout below is the transcription and
+      constants_memoryMatchesArtifact_ok re-reads every one of them out of the
+      artifact's own constant block, so a transcribed digit that disagrees with the
+      dump is a red gate rather than a silently wrong render. -/
+  memory : VerifierMemoryLayout
+  /-- P-13e. M:538 vk_header: the VK header WORD offsets, rendered as
+      `memory.vk_mptr + vk_header.X` at T:Constants.sol:51-64. The values are
+      Models.lean's port of LM:406-435's discriminants, not the artifact's. -/
+  vkHeader : VkHeaderTemplateSlots
+  /-- P-13e. M:530 vk_len: EXPECTED_VK_PAYLOAD_LENGTH, rendered DECIMAL at
+      T:Constants.sol:9-10 (and +1 for EXPECTED_VK_LENGTH, the INVALID byte). -/
+  vkLen : Nat
+  /-- P-13e. M:525 expected_vk_codehash: the outer match of T:Constants.sol:1 and
+      T:Constructors.sol:1, and the hex_padded(64) word at T:Constants.sol:11. -/
+  expectedVkCodehash : Option Word256
+  /-- P-13e. M:529 build_id: the BUILD_ID constant at T:Constants.sol:216. -/
+  buildId : Word256
+  /-- P-13e. M:514 constructor_g1msm_smoke_gas: G1MSM_GAS_SMOKE at
+      T:Constants.sol:198, and the bound the smoke probe forwards at
+      T:PrecompileSmoke.sol:202. -/
+  constructorG1msmSmokeGas : Nat
+  /-- P-13e. M:511 constructor_g1msm_smoke_input_bytes: the loop bound and
+      staticcall length at T:PrecompileSmoke.sol:197-202. -/
+  constructorG1msmSmokeInputBytes : Nat
+  /-- P-13e. M:520 acc_rhs_msm_gas, read only inside the expected_has_accumulator
+      arm at T:Constants.sol:199-204, which the deployed profile does not take. -/
+  accRhsMsmGas : Nat
+  /-- P-13e. M:582 expected_quotient_len, read only by T:Constants.sol:24 inside
+      the Some arm of the expected_quotient_codehash match. -/
+  expectedQuotientLen : Option Nat
+  /-- P-13e. M:542 proof_cptr. A Ptr, so `proof_cptr - 1` at T:Constants.sol:35 is
+      WORD-wise (ENC:733-741): 0x64 - 1 renders 0x44, not 0x63. -/
+  proofCptr : Ptr
+  /-- P-13e. M:551 num_instance_cptr and M:554 instance_cptr, both through
+      hex_padded(2) at T:Constants.sol:37-38. -/
+  numInstanceCptr : Nat
+  instanceCptr : Nat
+  /-- P-13e. M:603 selector_trace_base, read only by the trace arm at
+      T:Pcs.yul:36-37. Inert while trace = false. -/
+  selectorTraceBase : Nat
 
 /-- The poseidon fixture's proof calldata layout (P-13b). Every number here is a
     byte length the DEPLOYED artifact interpolates, and
@@ -326,6 +368,87 @@ def poseidonProofLayout : ProofCalldataLayout :=
     proofEnd := 0x1144                        -- D:102 NUM_INSTANCE_CPTR
     proofLen := 0x10e0 }                      -- D:1164
 
+/-- The deployed fixture's VerifierMemoryLayout, transcribed from the artifact's
+    own constant block (D:104-166). This is the generator's INPUT record, not a
+    re-derivation: the Rust builds it in `VerifierMemoryLayout::new` (MEM:591-973,
+    ported in LayoutMemory.lean) from a plan the tree does not port yet (P-11), so
+    the numbers cannot be recomputed here and are transcribed instead. What makes
+    the transcription evidence rather than a copy is constants_memoryMatches_ok:
+    the seven fixed low-memory pointers and the scalar-inversion anchor are
+    checked against Layout.lean's OWN ported constants and against MEM:1039's
+    rule, i.e. against a channel the artifact does not control. The slots no
+    deployed partial renders (quotientTmp/quotientStack/pcs scratch windows,
+    comms_mptr_base) are set to their validate-legal anchors and are labelled
+    INERT at the gate. -/
+def poseidonMemoryLayout : VerifierMemoryLayout :=
+  { map := { regions := [] }
+    thetaWindows := ThetaWindowLayout.compatibility
+    pcs := pcsMemoryRequirementsDefault
+    constructorSmokeScratchMptr := lowMemoryScratchStart
+    constructorG1msmSmokeScratchMptr := 0x65e0
+    constructorG1msmSmokeInputBytes := 0x1d60
+    transcriptMptr := transcriptBufferStart
+    pcsPairingScratchMptr := pcsPairingScratchStart
+    verifierReturnMptr := verifierReturnBufferStart
+    quotientReturnMptr := quotientReturnBufferStart
+    vkMptr := ptrMemory (valueFromNat 0x2900)
+    scalarInvScratchMptr := 0x2900 - modexpScratchBytes
+    challengeMptr := ptrMemory (valueFromNat 0x3ae0)
+    thetaMptr := ptrMemory (valueFromNat 0x3ae0)
+    betaMptr := ptrMemory (valueFromNat 0x3b00)
+    gammaMptr := ptrMemory (valueFromNat 0x3b20)
+    trashChallengeMptr := ptrMemory (valueFromNat 0x3b40)
+    yMptr := ptrMemory (valueFromNat 0x3b60)
+    xMptr := ptrMemory (valueFromNat 0x3b80)
+    x1Mptr := ptrMemory (valueFromNat 0x3ba0)
+    x2Mptr := ptrMemory (valueFromNat 0x3bc0)
+    x3Mptr := ptrMemory (valueFromNat 0x3be0)
+    x4Mptr := ptrMemory (valueFromNat 0x3c00)
+    fComMptr := ptrMemory (valueFromNat 0x3c20)
+    piMptr := ptrMemory (valueFromNat 0x3ca0)
+    accLhsMptr := ptrMemory (valueFromNat 0x3d20)
+    accRhsMptr := ptrMemory (valueFromNat 0x3da0)
+    xNMptr := ptrMemory (valueFromNat 0x3e20)
+    xNMinus1InvMptr := ptrMemory (valueFromNat 0x3e40)
+    lLastMptr := ptrMemory (valueFromNat 0x3e60)
+    lBlindMptr := ptrMemory (valueFromNat 0x3e80)
+    l0Mptr := ptrMemory (valueFromNat 0x3ea0)
+    instanceEvalMptr := ptrMemory (valueFromNat 0x3ec0)
+    quotientEvalMptr := ptrMemory (valueFromNat 0x3ee0)
+    quotientMptr := ptrMemory (valueFromNat 0x3f00)
+    fEvalMptr := ptrMemory (valueFromNat 0x3fa0)
+    vMptr := ptrMemory (valueFromNat 0x3fc0)
+    finalComMptr := ptrMemory (valueFromNat 0x3fe0)
+    pairingLhsMptr := ptrMemory (valueFromNat 0x4060)
+    pairingRhsMptr := ptrMemory (valueFromNat 0x40e0)
+    rotPointsMptr := ptrMemory (valueFromNat 0x4160)
+    x1PowersMptr := ptrMemory (valueFromNat 0x44e0)
+    qComMptr := ptrMemory (valueFromNat 0x4d00)
+    qEvalSetMptr := ptrMemory (valueFromNat 0x4d00)
+    qEvalCptrMptr := ptrMemory (valueFromNat 0x5400)
+    g1IdentityMptr := ptrMemory (valueFromNat 0x5500)
+    reversedEvalsMptr := ptrMemory (valueFromNat 0x5660)
+    commsMptrBase := ptrMemory (valueFromNat 0x5c60)
+    adviceCommsMptrBase := ptrMemory (valueFromNat 0x5c60)
+    lookupMCommsMptrBase := ptrMemory (valueFromNat 0x6060)
+    permZCommsMptrBase := ptrMemory (valueFromNat 0x60e0)
+    lookupHelperCommsMptrBase := ptrMemory (valueFromNat 0x6260)
+    lookupZCommsMptrBase := ptrMemory (valueFromNat 0x62e0)
+    trashcanCommsMptrBase := ptrMemory (valueFromNat 0x6360)
+    quotientLimbCommsMptrBase := ptrMemory (valueFromNat 0x63e0)
+    selectorAccMptr := 0x65e0
+    batchInvertScratchMptr := 0x65e0
+    lagrangeDenomsMptr := 0x67c0
+    quotientTmpMptr := lowMemoryScratchStart
+    quotientStackMptr := lowMemoryScratchStart
+    quotientStackHi := lowMemoryScratchStart
+    pcsQEvalSourceTableMptr := lowMemoryScratchStart
+    pcsQComTraceScratchMptr := lowMemoryScratchStart
+    pcsFinalMsmScratchMptr := lowMemoryScratchStart
+    accMsmScratch := lowMemoryScratchStart
+    accumulatorPairingBatchMptr := accumulatorPairingBatchPtr
+    finalPairingScratchMptr := finalPairingScratchStart
+    traceU256Mptr := 0x83c0 }
 /-- The poseidon fixture profile: the configuration the tracked dump was generated
     with. templateConstants is Lean's own port of the Rust defaults and
     finalPairingScratchMptr / accumulatorPairingBatchMptr are Lean's own port of
@@ -393,7 +516,25 @@ def poseidonCtx : PartialCtx := {
   limb7YulCoeffs := []
   wideLimb7YulCoeffs := []
   frDelta := ""
+  -- P-13e. The deployed memory layout, the VK header offsets and the Constants.sol
+  -- inputs. Every number is transcribed from the artifact's own constant block and
+  -- re-read by constants_memoryMatches_ok; the header offsets and the template
+  -- constants come from Lean's own ports of the Rust, not from the dump.
+  memory := poseidonMemoryLayout
+  vkHeader := vkHeaderTemplateSlotsDefault
+  vkLen := 4576
+  expectedVkCodehash := some 0x233a1a8063ef1a9bfd30983d3034d3d90ab75ff6ac95c0e72d770bf08dcff51b
+  buildId := 0xf352d2670376fa01229e35428d69c1d623c4b3edf42f15a78622888a9b4285fd
+  constructorG1msmSmokeGas := 337836
+  constructorG1msmSmokeInputBytes := 0x1d60
+  accRhsMsmGas := 0
+  expectedQuotientLen := none
+  proofCptr := ptrCalldata (valueFromNat 0x64)
+  numInstanceCptr := 0x1144
+  instanceCptr := 0x1164
+  selectorTraceBase := 27
 }
+
 
 /-! ## The five render functions
 
@@ -1816,6 +1957,497 @@ def quotientDeployedCtx (sol : String) : Option PartialCtx := do
      line)))) ++
    "\n\n                // Silence Yul unused-variable warnings in renders where the\n                // direct body did not need one of these common constants.\n                pop(y)\n                pop(delta)\n\n                // Store the expected opening scalar for the linearized\n                // commitment at x: the negated sum of fully-evaluated\n                // identities. See\n                // `compute_linearization_commitment` in\n                // midfall/proofs/src/plonk/linearization/verifier.rs:\n                //\n                //   expected_eval -= eval     (for col_idx == None)\n                //\n                // The commitment side already includes the quotient-limb\n                // factor (1 - x^n), so this scalar is -nu_y(x), not\n                // h(x) = nu_y(x) / (x^n - 1).\n                let linearization_expected_eval := addmod(0, sub(r, quotient_eval_numer), r)\n                mstore(QUOTIENT_EVAL_MPTR, linearization_expected_eval)") ++
   "\n            }"
+
+/-- rust: the Askama expansion of T:partials/verifier/Constants.sol (255 template
+    lines at HEAD), the FIRST of the thirteen includes of
+    T:contracts/Halo2Verifier.sol. Deployed render: D:85-306, 13,873 bytes, 222
+    lines - the render opens with the newline that turns D:85 into one of the
+    dump's six whitespace-only lines, because the template's first line is a
+    `{%- match %}` whose arm body starts on the line after it. Control flow: the
+    expected_vk_codehash match at :1-14 takes its SOME arm (this artifact pins the
+    VK by codehash), the quotient_external match at :15-30 takes None, the
+    expected_has_accumulator if at :199-204 zero-renders, and the quotient_direct
+    match at :248-255 takes None, so the partial ends on the
+    BLS_P_MINUS_ONE_PACKED_1 literal with no trailing newline (rule 4).
+
+    THE FILTER SPLIT, which is the whole risk of this partial: `{{ vk_len }}` and
+    the four `template_constants.gas.*` sites render DECIMAL (D:92 '4576',
+    D:259 '375'), `|hex()` renders byte-padded hex, `|hex_padded(64)` renders a
+    64-nibble word, and a bare `{{ memory.vk_mptr }}` renders through Ptr's
+    Display, i.e. MINIMAL-width hex with no byte pad. Gate 71 pins all four
+    spellings against the same artifact. `proof_cptr - 1` is WORD-wise: 0x64 - 1
+    renders 0x44 (ENC:733-741), which is PROOF_LEN_CPTR at D:101. -/
+def renderConstants (ctx : PartialCtx) : String :=   (match ctx.expectedVkCodehash with 
+    | some expectedVkCodehash =>
+      "\n    /// @notice Verifying-key contract address authorized for this verifier.\n    /// @dev The runtime length and codehash are pinned by generated constants and checked at construction time.\n    address public immutable AUTHORIZED_VK;\n    // Expected VK runtime metadata. The deployed VK runtime is\n    // INVALID || payload, hence EXPECTED_VK_LENGTH is one byte longer than\n    // EXPECTED_VK_PAYLOAD_LENGTH.\n    uint256 internal constant EXPECTED_VK_PAYLOAD_LENGTH = " ++
+      toString (ctx.vkLen) ++
+      ";\n    uint256 internal constant EXPECTED_VK_LENGTH = " ++
+      toString (ctx.vkLen + 1) ++
+      ";\n    uint256 internal constant EXPECTED_VK_CODEHASH_WORD = " ++
+      hexPaddedFilter 64 (expectedVkCodehash.toNat) ++
+      ";\n    bytes32 internal constant EXPECTED_VK_CODEHASH = bytes32(EXPECTED_VK_CODEHASH_WORD);"
+    | none =>
+      "") ++
+    (match ctx.quotientExternal with 
+    | some _ =>
+      "\n    /// @notice Quotient evaluator contract authorized for split quotient reconstruction.\n    /// @dev The evaluator returns the linearization expected scalar and selector buckets; its runtime may be pinned by generated constants.\n    address public immutable AUTHORIZED_QUOTIENT;" ++
+      (match ctx.expectedQuotientCodehash with 
+      | some expectedQuotientCodehash =>
+        "\n    // Expected split evaluator runtime metadata. It is checked at deployment\n    // and again immediately before each external quotient reconstruction.\n    uint256 internal constant EXPECTED_QUOTIENT_LENGTH = " ++
+        toString (ctx.expectedQuotientLen.getD 0) ++
+        ";\n    uint256 internal constant EXPECTED_QUOTIENT_CODEHASH_WORD = " ++
+        hexPaddedFilter 64 (expectedQuotientCodehash.toNat) ++
+        ";\n    bytes32 internal constant EXPECTED_QUOTIENT_CODEHASH = bytes32(EXPECTED_QUOTIENT_CODEHASH_WORD);"
+      | none =>
+        "")
+    | none =>
+      "") ++
+    "\n\n    // Solidity ABI calldata cursors. The generated verifier accepts exactly\n    // verifyProof(bytes proof, uint256[] instances), then parses the `proof`\n    // bytes itself in the same order as the Rust verifier transcript.\n    uint256 internal constant    PROOF_LEN_CPTR = " ++
+    printPtr ((Ptr.sub ctx.proofCptr 1).value) ++
+    ";\n    uint256 internal constant        PROOF_CPTR = " ++
+    printPtr (ctx.proofCptr.value) ++
+    ";\n    uint256 internal constant NUM_INSTANCE_CPTR = " ++
+    hexPaddedFilter 2 (ctx.numInstanceCptr) ++
+    ";\n    uint256 internal constant     INSTANCE_CPTR = " ++
+    hexPaddedFilter 2 (ctx.instanceCptr) ++
+    ";\n    // First general-purpose memory words reserved by the generated verifier.\n    // RETURN_MPTR is a single word set to 1 on success.\n    uint256 internal constant    TRANSCRIPT_MPTR = " ++
+    hexFilter (ctx.memory.transcriptMptr) ++
+    ";\n    uint256 internal constant        RETURN_MPTR = " ++
+    hexFilter (ctx.memory.verifierReturnMptr) ++
+    ";\n\n    // ----------------------------------------------------------------------\n    // Verifying-key memory map. The VK header lives at VK_MPTR, followed\n    // by the quotient VM payload and commitments. After the full VK\n    // runtime comes the challenge slots (challenge_mptr..) and the\n    // per-stage scratch (theta_mptr..).\n    // ----------------------------------------------------------------------\n    uint256 internal constant                VK_MPTR = " ++
+    printPtr (ctx.memory.vkMptr.value) ++
+    ";\n    uint256 internal constant         VK_DIGEST_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.vkDigest).value) ++
+    ";\n    uint256 internal constant     NUM_INSTANCES_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.numInstances).value) ++
+    ";\n    uint256 internal constant                 K_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.k).value) ++
+    ";\n    uint256 internal constant             N_INV_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.nInv).value) ++
+    ";\n    uint256 internal constant             OMEGA_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.omega).value) ++
+    ";\n    uint256 internal constant         OMEGA_INV_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.omegaInv).value) ++
+    ";\n    uint256 internal constant    OMEGA_INV_TO_L_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.omegaInvToL).value) ++
+    ";\n    uint256 internal constant   HAS_ACCUMULATOR_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.hasAccumulator).value) ++
+    ";\n    uint256 internal constant        ACC_OFFSET_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.accOffset).value) ++
+    ";\n    uint256 internal constant     NUM_ACC_LIMBS_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.numAccLimbs).value) ++
+    ";\n    uint256 internal constant NUM_ACC_LIMB_BITS_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.numAccLimbBits).value) ++
+    ";\n    uint256 internal constant            G1_BASE_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.g1Base).value) ++
+    ";\n    uint256 internal constant            G2_BASE_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.g2Base).value) ++
+    ";\n    uint256 internal constant      NEG_S_G2_BASE_MPTR = " ++
+    printPtr ((Ptr.add ctx.memory.vkMptr ctx.vkHeader.negSG2Base).value) ++
+    ";\n\n    uint256 internal constant CHALLENGE_MPTR = " ++
+    printPtr (ctx.memory.challengeMptr.value) ++
+    ";\n\n    // Challenge layout. Squeeze order in midnight-proofs:\n    //   user_phase challenges (variable count)\n    //   theta -> beta, gamma -> trash_challenge -> y -> x ->\n    //   x1, x2 -> x3 -> x4\n    uint256 internal constant            THETA_MPTR = " ++
+    printPtr (ctx.memory.thetaMptr.value) ++
+    ";\n    uint256 internal constant             BETA_MPTR = " ++
+    printPtr (ctx.memory.betaMptr.value) ++
+    ";\n    uint256 internal constant            GAMMA_MPTR = " ++
+    printPtr (ctx.memory.gammaMptr.value) ++
+    ";\n    uint256 internal constant TRASH_CHALLENGE_MPTR = " ++
+    printPtr (ctx.memory.trashChallengeMptr.value) ++
+    ";\n    uint256 internal constant                Y_MPTR = " ++
+    printPtr (ctx.memory.yMptr.value) ++
+    ";\n    uint256 internal constant                X_MPTR = " ++
+    printPtr (ctx.memory.xMptr.value) ++
+    ";\n    uint256 internal constant               X1_MPTR = " ++
+    printPtr (ctx.memory.x1Mptr.value) ++
+    ";\n    uint256 internal constant               X2_MPTR = " ++
+    printPtr (ctx.memory.x2Mptr.value) ++
+    ";\n    uint256 internal constant               X3_MPTR = " ++
+    printPtr (ctx.memory.x3Mptr.value) ++
+    ";\n    uint256 internal constant               X4_MPTR = " ++
+    printPtr (ctx.memory.x4Mptr.value) ++
+    ";\n\n    // Batch-open commitments live in 4-word EIP-2537 padded slots.\n    uint256 internal constant             F_COM_MPTR = " ++
+    printPtr (ctx.memory.fComMptr.value) ++
+    ";\n    uint256 internal constant                PI_MPTR = " ++
+    printPtr (ctx.memory.piMptr.value) ++
+    ";\n\n    // Accumulator (KZG IVC).\n    uint256 internal constant          ACC_LHS_MPTR = " ++
+    printPtr (ctx.memory.accLhsMptr.value) ++
+    ";\n    uint256 internal constant          ACC_RHS_MPTR = " ++
+    printPtr (ctx.memory.accRhsMptr.value) ++
+    ";\n\n    // Lagrange / linearization scratch.\n    uint256 internal constant              X_N_MPTR = " ++
+    printPtr (ctx.memory.xNMptr.value) ++
+    ";\n    uint256 internal constant  X_N_MINUS_1_INV_MPTR = " ++
+    printPtr (ctx.memory.xNMinus1InvMptr.value) ++
+    ";\n    uint256 internal constant           L_LAST_MPTR = " ++
+    printPtr (ctx.memory.lLastMptr.value) ++
+    ";\n    uint256 internal constant          L_BLIND_MPTR = " ++
+    printPtr (ctx.memory.lBlindMptr.value) ++
+    ";\n    uint256 internal constant              L_0_MPTR = " ++
+    printPtr (ctx.memory.l0Mptr.value) ++
+    ";\n    uint256 internal constant     INSTANCE_EVAL_MPTR = " ++
+    printPtr (ctx.memory.instanceEvalMptr.value) ++
+    ";\n    // Legacy name: this is not h(x). It stores the expected opening\n    // scalar for the linearized commitment, i.e. the negated y-batched\n    // identity numerator reconstructed from the alleged evals at x.\n    uint256 internal constant     QUOTIENT_EVAL_MPTR = " ++
+    printPtr (ctx.memory.quotientEvalMptr.value) ++
+    ";\n    uint256 internal constant         QUOTIENT_MPTR = " ++
+    printPtr (ctx.memory.quotientMptr.value) ++
+    ";   // 4 words\n    uint256 internal constant            F_EVAL_MPTR = " ++
+    printPtr (ctx.memory.fEvalMptr.value) ++
+    ";\n    uint256 internal constant                 V_MPTR = " ++
+    printPtr (ctx.memory.vMptr.value) ++
+    ";\n    uint256 internal constant         FINAL_COM_MPTR = " ++
+    printPtr (ctx.memory.finalComMptr.value) ++
+    ";   // 4 words\n    uint256 internal constant      PAIRING_LHS_MPTR = " ++
+    printPtr (ctx.memory.pairingLhsMptr.value) ++
+    ";   // 4 words\n    uint256 internal constant      PAIRING_RHS_MPTR = " ++
+    printPtr (ctx.memory.pairingRhsMptr.value) ++
+    ";   // 4 words\n\n    // Multi-prepare scratch (sized at codegen time).\n    uint256 internal constant       ROT_POINTS_MPTR = " ++
+    printPtr (ctx.memory.rotPointsMptr.value) ++
+    ";\n    uint256 internal constant       X1_POWERS_MPTR = " ++
+    printPtr (ctx.memory.x1PowersMptr.value) ++
+    ";\n    // Q_COM materialization is currently fused into the final MSM scratch,\n    // so this marker intentionally aliases Q_EVAL_SET_MPTR and has zero\n    // reserved capacity until a future emitter starts writing Q_COM_MPTR.\n    uint256 internal constant            Q_COM_MPTR = " ++
+    printPtr (ctx.memory.qComMptr.value) ++
+    ";\n    uint256 internal constant      Q_EVAL_SET_MPTR = " ++
+    printPtr (ctx.memory.qEvalSetMptr.value) ++
+    ";\n\n    // Q_EVAL_CPTR is set at runtime once the verifier reaches the q_evals\n    // block of the proof; we keep it as a memory slot for symmetry.\n    uint256 internal constant         Q_EVAL_CPTR_MPTR = " ++
+    printPtr (ctx.memory.qEvalCptrMptr.value) ++
+    ";\n\n    // Reserved 4-word slot for the G1 identity (point at infinity) in\n    // EIP-2537 padded form. EVM memory is zero-initialised, and the verifier\n    // never writes to this region, so any read of this slot (the PCS\n    // emitters `mcopy` from it when staging identity commitments) yields\n    // 0,0,0,0 -- exactly the identity encoding the EIP-2537 precompiles\n    // accept. Artifacts whose PCS plan never stages an identity commitment\n    // still emit the constant; it costs no runtime bytes beyond the\n    // declaration and keeps the emitters' pointer model uniform.\n    uint256 internal constant       G1_IDENTITY_MPTR = " ++
+    printPtr (ctx.memory.g1IdentityMptr.value) ++
+    ";\n\n    // Decoded polynomial-eval buffer (Optimisation H3). The off-chain\n    // Solidity proof shim rewrites proof scalars into canonical BE words,\n    // so `calldataload` gives the field element directly. The transcript-\n    // side `evaluations` loop range-checks and spills that value here so\n    // downstream eval references (gate evaluator + PCS q_eval Horner)\n    // become 3-gas `mload(...)` instead of calldata reads.\n    uint256 internal constant     REVERSED_EVALS_MPTR = " ++
+    printPtr (ctx.memory.reversedEvalsMptr.value) ++
+    ";\n    uint256 internal constant      SELECTOR_ACC_MPTR = " ++
+    hexFilter (ctx.memory.selectorAccMptr) ++
+    ";\n    uint256 internal constant   QUOTIENT_RETURN_MPTR = " ++
+    hexFilter (ctx.memory.quotientReturnMptr) ++
+    ";\n    uint256 internal constant  BATCH_INV_SCRATCH_MPTR = " ++
+    hexFilter (ctx.memory.batchInvertScratchMptr) ++
+    ";\n    uint256 internal constant   LAGRANGE_DENOMS_MPTR = " ++
+    hexFilter (ctx.memory.lagrangeDenomsMptr) ++
+    ";\n    uint256 internal constant        TRACE_U256_MPTR = " ++
+    hexFilter (ctx.memory.traceU256Mptr) ++
+    ";\n\n    // ----------------------------------------------------------------------\n    // Per-category bases for EIP-2537 padded G1 commitments. The proof\n    // calldata carries 128-byte uncompressed/padded G1s after the off-chain\n    // proof shim repacks midnight-proofs' native compressed stream; this\n    // region stores the 4-word slots used by PCS / quotient-fold sections.\n    //\n    // Cumulative offsets (in words from `comms_mptr_base`):\n    //   ADVICE_COMMS_MPTR_BASE          + 0\n    //   LOOKUP_M_COMMS_MPTR_BASE        + 4*total_advices\n    //   PERM_Z_COMMS_MPTR_BASE          + 4*total_advices + 4*num_lookups\n    //   LOOKUP_HELPER_COMMS_MPTR_BASE   + ... + 4*num_permutation_zs\n    //   LOOKUP_Z_COMMS_MPTR_BASE        + ... + 4*lookup_helper_chunks_total\n    //   TRASHCAN_COMMS_MPTR_BASE        + ... + 4*num_lookups\n    //   QUOTIENT_LIMB_COMMS_MPTR_BASE   + ... + 4*num_trashcans\n    // ----------------------------------------------------------------------\n    uint256 internal constant         ADVICE_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.adviceCommsMptrBase.value) ++
+    ";\n    uint256 internal constant       LOOKUP_M_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.lookupMCommsMptrBase.value) ++
+    ";\n    uint256 internal constant         PERM_Z_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.permZCommsMptrBase.value) ++
+    ";\n    uint256 internal constant  LOOKUP_HELPER_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.lookupHelperCommsMptrBase.value) ++
+    ";\n    uint256 internal constant       LOOKUP_Z_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.lookupZCommsMptrBase.value) ++
+    ";\n    uint256 internal constant     TRASHCAN_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.trashcanCommsMptrBase.value) ++
+    ";\n    uint256 internal constant QUOTIENT_LIMB_COMMS_MPTR_BASE = " ++
+    printPtr (ctx.memory.quotientLimbCommsMptrBase.value) ++
+    ";\n\n    // ----------------------------------------------------------------------\n    // Precompile gas bounds: the scheduled EIP-2537 costs, and for modexp the\n    // maximum over the EIP-2565 and EIP-7883 schedules.\n    //\n    // A failing EIP-2537 or modexp call consumes ALL gas supplied to the\n    // STATICCALL, so every generated call site forwards the exact scheduled\n    // cost instead of gas(). A malformed proof point then burns at most the\n    // scheduled cost of the single failing call instead of 63/64 of the\n    // transaction budget. The schedule is the spec-guaranteed worst case\n    // (EIP-2537 \"DDoS protection\" rationale), so these bounds are sufficient\n    // by construction on any conformant chain.\n    //\n    // MODEXP_GAS covers both live modexp schedules: EIP-2565 prices this\n    // frame at 1360, EIP-7883 (Osaka/Fusaka) removes the /3 divisor and\n    // prices it at 4080, so the larger bound is rendered. Forwarding the\n    // EIP-7883 bound on a pre-Osaka chain is free on success -- unused gas is\n    // returned -- while forwarding the EIP-2565 bound on a repriced chain\n    // reverts every proof.\n    //\n    // Liveness caveat: if a future fork reprices these precompiles above the\n    // bounds below, this verifier must be regenerated and redeployed. The\n    // constructor smoke probes forward the same bounds for EVERY precompile\n    // the runtime calls, modexp included, so deployment onto an\n    // already-repriced chain fails fast instead of bricking at proof time.\n    // ----------------------------------------------------------------------\n    uint256 internal constant          G1ADD_GAS = " ++
+    toString (ctx.templateConstants.gas.g1add) ++
+    ";\n    uint256 internal constant   G1MSM_GAS_1PAIR = " ++
+    toString (ctx.templateConstants.gas.g1msmOnePair) ++
+    ";\n    uint256 internal constant PAIRING_GAS_2PAIR = " ++
+    toString (ctx.templateConstants.gas.pairingTwoPair) ++
+    ";\n    uint256 internal constant        MODEXP_GAS = " ++
+    toString (ctx.templateConstants.gas.modexp) ++
+    ";\n    // Exact cost of the deployment-time worst-case G1MSM smoke probe.\n    uint256 internal constant G1MSM_GAS_SMOKE = " ++
+    toString (ctx.constructorG1msmSmokeGas) ++
+    ";" ++
+    (if ctx.expectedHasAccumulator then "\n    // Worst-case accumulator RHS MSM: carried RHS point plus every generated\n    // fixed-base tail scalar nonzero. Zero tail scalars are omitted at\n    // runtime, which only lowers the actual cost below this bound.\n    uint256 internal constant ACC_RHS_MSM_GAS = " ++
+      toString (ctx.accRhsMsmGas) ++
+      ";" else "") ++
+    "\n\n    /// @notice Build identity for this generated artifact (P10/L-8).\n    /// @dev keccak256 over: the domain tag \"halo2-solidity-verifier-build-v1\",\n    ///      the u64-length-prefixed generator feature profile, the vk_digest,\n    ///      the expected VK runtime codehash (zero when the VK is embedded),\n    ///      the SRS fingerprint keccak(\"halo2-solidity-verifier-srs-v1\" || n\n    ///      || G2 || s_g2 || [tau]G1), and an optional 32-byte deployment\n    ///      provenance tag (0x00 marker when absent, 0x01 || tag when set).\n    ///      The deployment record must publish these preimage components so\n    ///      third parties can recompute the id; see\n    ///      docs/reference/DEPLOYMENT_AND_INCIDENT_RESPONSE.md.\n    bytes32 public constant BUILD_ID = " ++
+    hexPaddedFilter 64 (ctx.buildId.toNat) ++
+    ";\n\n    // ----------------------------------------------------------------------\n    // Typed-error selectors (P4/L-3): bytes4(keccak256(\"Name()\")) of the\n    // errors declared on the contract, as Yul-readable constants. The\n    // `fail(sel)` helper in AssemblyHelpers.yul writes the selector to\n    // scratch 0x00 and reverts with 4 bytes. Pinned by\n    // `p4_error_selectors_match_declared_errors` in src/lowering/tests.rs.\n    // ----------------------------------------------------------------------\n    uint256 internal constant ERR_BAD_CALLDATA_SHAPE      = 0x1b99e37c;\n    uint256 internal constant ERR_VK_MISMATCH             = 0xa447d73e;\n    uint256 internal constant ERR_NON_CANONICAL_SCALAR    = 0x77530042;\n    uint256 internal constant ERR_BAD_POINT_ENCODING      = 0xf27905ec;\n    uint256 internal constant ERR_PRECOMPILE_FAILED       = 0x84e81692;\n    uint256 internal constant ERR_PROOF_REJECTED          = 0xc3b0d8cd;\n    uint256 internal constant ERR_QUOTIENT_PROGRAM_INVALID = 0x3cc81b89;\n    uint256 internal constant ERR_MEMORY_LAYOUT_VIOLATED   = 0xc9888d23;\n\n    // BLS12-381 scalar-field modulus, used for transcript challenges and all\n    // Halo2 verifier arithmetic.\n    uint256 internal constant FR_MODULUS        = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001;\n\n    // BLS12-381 Fp modulus minus one, split like an EIP-2537 coordinate:\n    // high word = 16 zero bytes || top 16 coordinate bytes, low word =\n    // bottom 32 coordinate bytes.\n    uint256 internal constant BLS_P_HI             = 0x000000000000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd7;\n    uint256 internal constant BLS_P_MINUS_ONE_LO   = 0x64774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa;\n    // Packed public-accumulator sentinels for the shifted coordinate codec.\n    // The `_WITH_ID_FLAG` variant is used only for the first x-coordinate word.\n    uint256 internal constant BLS_P_MINUS_ONE_PACKED_0 = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa;\n    uint256 internal constant BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG = 0x00000000f38512bf6730d2a0f6b0f6241eabfffeb153ffffbafeffffffffaaaa;\n    uint256 internal constant BLS_P_MINUS_ONE_PACKED_1 = 0x0000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84;" ++
+    (match ctx.quotientDirect with 
+    | some qdirect =>
+      (jinjaFor qdirect.constants (fun line loop => "\n    " ++
+        line))
+    | none =>
+      "")
+
+/-- rust: the Askama expansion of T:partials/verifier/PrecompileSmoke.sol (216
+    template lines at HEAD). Deployed render: D:308-523, 14,414 bytes, 216 lines
+    - the ONLY one of the six with no control-flow tag at all, so every template
+    line survives and the render is 216 lines of text with 27 interpolations.
+    scripts/check_golden_provenance.py already anchors its :357 slice into the
+    artifact as the `smoke` golden fixture; constants_smokeProbesPresent_ok is
+    the render-side half of that. The two memory slots it reads
+    (constructor_smoke_scratch_mptr, constructor_g1msm_smoke_scratch_mptr) and
+    constructor_g1msm_smoke_input_bytes are the ones no earlier partial touches,
+    so this is the only place in the tree where they are gated. -/
+def renderPrecompileSmoke (ctx : PartialCtx) : String :=   "    /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features required by the verifier.\n    /// @dev Exercises MCOPY, modexp, and EIP-2537 inputs to catch incompatible chain/fork configurations at deployment.\n    ///      The probes forward the same exact gas bounds the runtime uses, for\n    ///      every precompile it calls -- 0x05 modexp included (see the\n    ///      gas-bound constants block) -- so a chain whose precompile schedule\n    ///      was repriced above those bounds fails here, at deployment, instead\n    ///      of bricking verifyProof later.\n    function require_eip2537_precompiles() private view {\n        assembly (\"memory-safe\") {\n               // Same free-memory-pointer guard as verifyProof, typed for the\n            // same reason: a build fault must fail the DEPLOYMENT, not the\n            // first proof. The smoke probes below keep bare reverts (a\n            // chain-capability failure, which the transaction identifies).\n            if gt(mload(0x40), " ++
+    hexFilter (ctx.memory.constructorSmokeScratchMptr) ++
+    ") {\n                mstore(0x00, shl(224, ERR_MEMORY_LAYOUT_VIOLATED))\n                revert(0x00, 0x04)\n            }\n\n            // Scratch is reused for every runtime-prerequisite probe.\n            let scratch := " ++
+    hexFilter (ctx.memory.constructorSmokeScratchMptr) ++
+    "\n\n            // MCOPY must be available because the verifier uses it for\n            // proof-time point/scratch staging. Execute the opcode here so a\n            // non-Cancun fork fails during deployment instead of later proofs.\n            mstore(scratch, 0x1234)\n            mcopy(add(scratch, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    "), scratch, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")\n            if iszero(eq(mload(add(scratch, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")), 0x1234)) { revert(0, 0) }\n\n            // ----------------------------------------------------------------\n            // modexp (0x05) known-answer probe at the pinned runtime bound.\n            //\n            // MF-1: every other precompile the runtime calls was probed here,\n            // but modexp -- which the MANDATORY Lagrange batch inversion and\n            // every scalar_inv call depend on -- was not. Two live schedules\n            // price this frame differently (EIP-2565: 1360, EIP-7883: 4080),\n            // and a bound below the chain's price does not degrade: the\n            // staticcall forwards a fixed amount, the precompile OOGs, and\n            // EVERY proof reverts PrecompileFailed. Without this probe that\n            // failure is invisible until the first verifyProof call, on a\n            // contract that deployed cleanly.\n            //\n            // The vector is the runtime's own operation -- Fermat inversion\n            // in Fr -- so it exercises the exact frame shape, exponent width,\n            // and gas bound used at proof time: 2^(FR_MODULUS - 2) == 2^-1.\n            // Checking mulmod(result, 2, FR_MODULUS) == 1 rather than a\n            // rendered constant keeps the probe self-contained while still\n            // rejecting a stub: a precompile returning zeros (or its input)\n            // fails, since 0 * 2 != 1 mod r.\n            // ----------------------------------------------------------------\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.baseLenOffset) ++
+    "), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")        // base len\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.expLenOffset) ++
+    "), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")        // exp len\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.modLenOffset) ++
+    "), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")        // mod len\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.baseOffset) ++
+    "), 2)\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.expOffset) ++
+    "), sub(FR_MODULUS, 2))\n            mstore(add(scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.modOffset) ++
+    "), FR_MODULUS)\n            if iszero(staticcall(MODEXP_GAS, " ++
+    hexFilter (ctx.templateConstants.modexp.address) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.frameBytes) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.modexp.outputBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.modexp.outputBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(mulmod(mload(scratch), 2, FR_MODULUS), 1)) { revert(0, 0) }\n\n            // Start the EIP-2537 probes with the identity encoding for G1/G2:\n            // all-zero padded words. This also clears the modexp frame above.\n            for { let off := 0 } lt(off, " ++
+    hexFilter (ctx.templateConstants.eip2537.smokeScratchBytes) ++
+    ") { off := add(off, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ") } {\n                mstore(add(scratch, off), 0)\n            }\n\n            // G1ADD(identity, identity) -> identity, 128-byte return.\n            // This catches chains where the precompile is missing or returns a\n            // non-standard success shape.\n            if iszero(staticcall(G1ADD_GAS, " ++
+    hexFilter (ctx.templateConstants.eip2537.g1addAddress) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.g1addInputBytes) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {\n                revert(0, 0)\n            }\n\n            // Known-answer probe: G1ADD(G, G) == 2G.\n            //\n            // Every probe above uses the point at infinity, which is exactly\n            // the input an implementation gets right without doing any curve\n            // arithmetic -- a precompile that returns its zero-filled input, or\n            // zeros for anything, satisfies them. The identity is also the one\n            // input on which an implementation that omits the EIP-2537 subgroup\n            // check still answers correctly, and the production verifier leans\n            // on G1MSM as its subgroup validator for absorbed commitments. So\n            // add one vector whose answer a stub cannot guess.\n            mstore(add(scratch, 0x00), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1Generator.xHi.toNat) ++
+    ")\n            mstore(add(scratch, 0x20), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1Generator.xLo.toNat) ++
+    ")\n            mstore(add(scratch, 0x40), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1Generator.yHi.toNat) ++
+    ")\n            mstore(add(scratch, 0x60), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1Generator.yLo.toNat) ++
+    ")\n            mcopy(add(scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    "), scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")\n            if iszero(staticcall(G1ADD_GAS, " ++
+    hexFilter (ctx.templateConstants.eip2537.g1addAddress) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.g1addInputBytes) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(and(\n                and(\n                    eq(mload(add(scratch, 0x00)), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1DoubleGenerator.xHi.toNat) ++
+    "),\n                    eq(mload(add(scratch, 0x20)), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1DoubleGenerator.xLo.toNat) ++
+    ")\n                ),\n                and(\n                    eq(mload(add(scratch, 0x40)), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1DoubleGenerator.yHi.toNat) ++
+    "),\n                    eq(mload(add(scratch, 0x60)), " ++
+    hexPaddedFilter 64 (ctx.templateConstants.eip2537.g1DoubleGenerator.yLo.toNat) ++
+    ")\n                )\n            )) { revert(0, 0) }\n\n\n            // ----------------------------------------------------------------\n            // Known-answer probes for the two precompiles that actually decide\n            // acceptance.\n            //\n            // Every probe above this point uses the point at infinity or a\n            // G1ADD vector. That leaves the two precompiles the verifier's\n            // security actually rests on untested for *rejection* behaviour:\n            //   - 0x0c G1MSM is the curve/subgroup validator for every absorbed\n            //     proof commitment (common_uncompressed_g1 runs no curve check);\n            //   - 0x0f PAIRING_CHECK is the sole accept gate, so a chain whose\n            //     0x0f always returns 1 accepts every proof.\n            // These four probes cost deployment gas only.\n            // ----------------------------------------------------------------\n\n            // (a) G1MSM known answer: [2]*G == 2G.\n            mstore(add(scratch, 0x00), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)\n            mstore(add(scratch, 0x20), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)\n            mstore(add(scratch, 0x40), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)\n            mstore(add(scratch, 0x60), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)\n            mstore(add(scratch, 0x80), 2)\n            if iszero(staticcall(G1MSM_GAS_1PAIR, " ++
+    hexFilter (ctx.templateConstants.eip2537.g1msmAddress) ++
+    ", scratch, 0xa0, scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(and(\n                and(\n                    eq(mload(add(scratch, 0x00)), 0x000000000000000000000000000000000572cbea904d67468808c8eb50a9450c),\n                    eq(mload(add(scratch, 0x20)), 0x9721db309128012543902d0ac358a62ae28f75bb8f1c7c42c39a8c5529bf0f4e)\n                ),\n                and(\n                    eq(mload(add(scratch, 0x40)), 0x00000000000000000000000000000000166a9d8cabc673a322fda673779d8e38),\n                    eq(mload(add(scratch, 0x60)), 0x22ba3ecb8670e461f73bb9021d5fd76a4c56d9d4cd16bd1bba86881979749d28)\n                )\n            )) { revert(0, 0) }\n\n            // (b) G1MSM negative probe. (4, y) satisfies y^2 = x^3 + 4 over Fp\n            // but is NOT in the r-order subgroup (checked off-chain: r*P != O).\n            // EIP-2537 requires G1MSM to reject it. This is the one property\n            // the verifier's deferred-validation strategy depends on and the\n            // one property no other probe exercises.\n            //\n            // Gas is bounded on purpose: a precompile that rejects its input\n            // consumes everything forwarded to it, so an unbounded `gas()` here\n            // would burn 63/64 of the deployment gas before the probes below.\n            mstore(add(scratch, 0x00), 0x0000000000000000000000000000000000000000000000000000000000000000)\n            mstore(add(scratch, 0x20), 0x0000000000000000000000000000000000000000000000000000000000000004)\n            mstore(add(scratch, 0x40), 0x000000000000000000000000000000000a989badd40d6212b33cffc3f3763e9b)\n            mstore(add(scratch, 0x60), 0xc760f988c9926b26da9dd85e928483446346b8ed00e1de5d5ea93e354abe706c)\n            mstore(add(scratch, 0x80), 1)\n            if staticcall(200000, " ++
+    hexFilter (ctx.templateConstants.eip2537.g1msmAddress) ++
+    ", scratch, 0xa0, scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ") { revert(0, 0) }\n\n            // (c)+(d) Pairing known answers. Lay out [G1 | G2 | G1' | G2] once:\n            // with G1' = -G the product is 1, with G1' = +G it is not. G2 is\n            // written literally because the VK payload is not loaded during\n            // construction.\n            mstore(add(scratch, 0x000), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)\n            mstore(add(scratch, 0x020), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)\n            mstore(add(scratch, 0x040), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)\n            mstore(add(scratch, 0x060), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)\n            mstore(add(scratch, 0x080), 0x00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051)\n            mstore(add(scratch, 0x0a0), 0xc6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8)\n            mstore(add(scratch, 0x0c0), 0x0000000000000000000000000000000013e02b6052719f607dacd3a088274f65)\n            mstore(add(scratch, 0x0e0), 0x596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e)\n            mstore(add(scratch, 0x100), 0x000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351a)\n            mstore(add(scratch, 0x120), 0xadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801)\n            mstore(add(scratch, 0x140), 0x000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99)\n            mstore(add(scratch, 0x160), 0xcb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be)\n            mstore(add(scratch, 0x180), 0x0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0f)\n            mstore(add(scratch, 0x1a0), 0xc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb)\n            mstore(add(scratch, 0x1c0), 0x00000000000000000000000000000000114d1d6855d545a8aa7d76c8cf2e21f2)\n            mstore(add(scratch, 0x1e0), 0x67816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca)\n            mcopy(add(scratch, 0x200), add(scratch, 0x80), 0x100)\n\n            // (c) e(G, G2) * e(-G, G2) == 1.\n            if iszero(staticcall(PAIRING_GAS_2PAIR, " ++
+    hexFilter (ctx.templateConstants.eip2537.pairingAddress) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.pairingTwoPairBytes) ++
+    ", add(scratch, 0x300), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(mload(add(scratch, 0x300)), 1)) { revert(0, 0) }\n\n            // (d) e(G, G2) * e(G, G2) != 1. Flip the second G1 back to +G.\n            mstore(add(scratch, 0x1c0), 0x0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4)\n            mstore(add(scratch, 0x1e0), 0xfcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1)\n            if iszero(staticcall(PAIRING_GAS_2PAIR, " ++
+    hexFilter (ctx.templateConstants.eip2537.pairingAddress) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.pairingTwoPairBytes) ++
+    ", add(scratch, 0x300), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(iszero(mload(add(scratch, 0x300)))) { revert(0, 0) }\n\n            // Restore the identity encoding for the probes below.\n            for { let off := 0 } lt(off, " ++
+    hexFilter (ctx.templateConstants.eip2537.smokeScratchBytes) ++
+    ") { off := add(off, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ") } {\n                mstore(add(scratch, off), 0)\n            }\n\n            // Worst-case generated G1MSM with all identity/zero terms ->\n            // identity, 128-byte return. This exercises the largest MSM input\n            // length rendered by this verifier instead of only a one-pair\n            // smoke call.\n            let msm_scratch := " ++
+    hexFilter (ctx.memory.constructorG1msmSmokeScratchMptr) ++
+    "\n            for { let off := 0 } lt(off, " ++
+    hexFilter (ctx.constructorG1msmSmokeInputBytes) ++
+    ") { off := add(off, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ") } {\n                mstore(add(msm_scratch, off), 0)\n            }\n            // The production verifier uses G1MSM both for commitments and as\n            // the subgroup validator for absorbed proof points.\n            if iszero(staticcall(G1MSM_GAS_SMOKE, " ++
+    hexFilter (ctx.templateConstants.eip2537.g1msmAddress) ++
+    ", msm_scratch, " ++
+    hexFilter (ctx.constructorG1msmSmokeInputBytes) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.g1Bytes) ++
+    ")) { revert(0, 0) }\n            if or(or(mload(scratch), mload(add(scratch, 0x20))), or(mload(add(scratch, 0x40)), mload(add(scratch, 0x60)))) {\n                revert(0, 0)\n            }\n\n            // PAIRING_CHECK([(identity_g1, identity_g2), (identity_g1, identity_g2)])\n            // -> true, 32-byte return. This matches the runtime two-pair KZG\n            // pairing input size and catches absent pairing precompiles,\n            // short return data, and obviously incompatible semantics.\n            if iszero(staticcall(PAIRING_GAS_2PAIR, " ++
+    hexFilter (ctx.templateConstants.eip2537.pairingAddress) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.pairingTwoPairBytes) ++
+    ", scratch, " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(returndatasize(), " ++
+    hexFilter (ctx.templateConstants.wordBytes) ++
+    ")) { revert(0, 0) }\n            if iszero(eq(mload(scratch), 1)) { revert(0, 0) }\n        }\n    }"
+
+/-- rust: the Askama expansion of T:partials/verifier/Constructors.sol (92 template
+    lines at HEAD). Deployed render: D:525-540, 733 bytes, 16 lines. Four nested
+    matches give four shapes; the deployed profile takes expected_vk_codehash =
+    Some, quotient_external = None, so it emits the single-address constructor at
+    :41-55 and NOTHING else - the two `when Some with (_)` arms of the inner
+    expected_quotient_codehash matches at :35-38 and :78-81 are EMPTY arms in the
+    template, ported as empty strings so the arm structure is visible. The render
+    opens with a newline, which is what makes D:525 whitespace-only. -/
+def renderConstructors (ctx : PartialCtx) : String :=   (match ctx.expectedVkCodehash with 
+    | some _ =>
+      (match ctx.quotientExternal with 
+      | some _ =>
+        "\n    /// @notice Create a verifier pinned to a verifying key and quotient evaluator.\n    /// @dev Checks MCOPY/EIP-2537 availability and verifies both dependency runtimes before storing their addresses.\n    /// @param authorizedVk Address of the generated `Halo2VerifyingKey` runtime.\n    /// @param authorizedQuotient Address of the generated `Halo2QuotientEvaluator` runtime.\n    constructor(address authorizedVk, address authorizedQuotient) {\n        // Verifier correctness depends on chain support for MCOPY and the\n        // BLS12-381 precompiles; fail deployment before pinning dependencies.\n        require_eip2537_precompiles();\n        // Pin the generated VK runtime exactly. The verifier later repeats the\n        // codehash/length check before copying the VK payload for a proof.\n        require(\n            authorizedVk.code.length == EXPECTED_VK_LENGTH\n                && authorizedVk.codehash == EXPECTED_VK_CODEHASH,\n            \"invalid vk\"\n        );" ++
+        (match ctx.expectedQuotientCodehash with 
+        | some _ =>
+          "\n        // The split evaluator contains generated verifier logic, not a generic\n        // library. Pin it with the same strictness as the verifying key.\n        require(\n            authorizedQuotient.code.length == EXPECTED_QUOTIENT_LENGTH\n                && authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH,\n            \"invalid quotient\"\n        );"
+        | none =>
+          "") ++
+        "\n        // Store the already-validated dependency addresses for proof-time\n        // memory loading and quotient reconstruction.\n        AUTHORIZED_VK = authorizedVk;\n        AUTHORIZED_QUOTIENT = authorizedQuotient;" ++
+        (match ctx.expectedQuotientCodehash with 
+        | some _ =>
+          ""
+        | none =>
+          "") ++
+        "\n    }"
+      | none =>
+        "\n    /// @notice Create a verifier pinned to a generated verifying key.\n    /// @dev Checks MCOPY/EIP-2537 availability and verifies the VK runtime before storing its address.\n    /// @param authorizedVk Address of the generated `Halo2VerifyingKey` runtime.\n    constructor(address authorizedVk) {\n        // Embedded quotient path: only the external VK runtime needs to be\n        // pinned, but the runtime opcode/precompile prerequisites are still\n        // mandatory.\n        require_eip2537_precompiles();\n        require(\n            authorizedVk.code.length == EXPECTED_VK_LENGTH\n                && authorizedVk.codehash == EXPECTED_VK_CODEHASH,\n            \"invalid vk\"\n        );\n        AUTHORIZED_VK = authorizedVk;\n    }")
+    | none =>
+      (match ctx.quotientExternal with 
+      | some _ =>
+        "\n    /// @notice Create a verifier pinned to a quotient evaluator.\n    /// @dev Used when the VK is embedded in the verifier but quotient reconstruction is split out.\n    /// @param authorizedQuotient Address of the generated `Halo2QuotientEvaluator` runtime.\n    constructor(address authorizedQuotient) {\n        // Embedded VK path: the verifier bytecode carries the VK payload, but\n        // the runtime prerequisites and external quotient evaluator still\n        // need to be checked before storing the dependency address.\n        require_eip2537_precompiles();" ++
+        (match ctx.expectedQuotientCodehash with 
+        | some _ =>
+          "\n        require(\n            authorizedQuotient.code.length == EXPECTED_QUOTIENT_LENGTH\n                && authorizedQuotient.codehash == EXPECTED_QUOTIENT_CODEHASH,\n            \"invalid quotient\"\n        );"
+        | none =>
+          "") ++
+        "\n        AUTHORIZED_QUOTIENT = authorizedQuotient;" ++
+        (match ctx.expectedQuotientCodehash with 
+        | some _ =>
+          ""
+        | none =>
+          "") ++
+        "\n    }"
+      | none =>
+        "\n    /// @notice Create a verifier with embedded verifier data.\n    /// @dev Checks MCOPY/EIP-2537 availability at deployment.\n    constructor() {\n        // Fully embedded verifier: no external generated dependency exists,\n        // so deployment only checks runtime opcode/precompile availability.\n        require_eip2537_precompiles();\n    }"))
+
+/-- rust: the Askama expansion of T:partials/verifier/TraceAndGasHelpers.yul (23
+    template lines at HEAD). THE DEPLOYED RENDER IS THE EMPTY STRING: both of its
+    ifs (`self.trace` at :1-13, `self.gas_checkpoints` at :14-23) are false in the
+    release profile and every byte of the file is inside one of them. Contracts.lean
+    gate 9 already PROVES that from the artifact - the run between the
+    AccumulatorHelpers render and the two hoisted locals is exactly the include
+    glue, so there is no room for a byte of this partial. A byte gate on an empty
+    string would pin nothing (hazard 2), so gate 74 is STRUCTURAL and SYNTHETIC and
+    says so: it pins that the two arms exist, that each flag selects its own arm,
+    and that the deployed render is zero-length. -/
+def renderTraceAndGasHelpers (ctx : PartialCtx) : String :=   (if ctx.trace then "\n            // Trace builds emit u256 values through a planned scratch slot.\n            // The topic is the stable trace ID used by Rust/Solidity fixture\n            // comparison; the data word is the observed scalar.\n            function trace_u256(id, value) {\n                mstore(TRACE_U256_MPTR, value)\n                log1(TRACE_U256_MPTR, 0x20, id)\n            }\n            // Trace G1 points as their 128-byte EIP-2537 memory slot.\n            function trace_point(id, mptr) {\n                log1(mptr, 0x80, id)\n            }" else "") ++
+    (if ctx.gasCheckpoints then "\n            // Section-boundary gas-attribution checkpoint. Emits a\n            // single LOG1 (no data) with topic = (id << 248) | gas().\n            // Cost: 375 (LOG base) + 375 (1 topic) = 750 gas/call.\n            // Host-side parses the topic into (id, gas_left) and prints\n            // pairwise deltas (see `dump_gas_checkpoints`).\n            function gas_checkpoint(id) {\n                log1(0, 0, or(shl(248, id), gas()))\n            }" else "")
+
+/-- rust: the Askama expansion of T:partials/verifier/Pcs.yul (39 template lines at
+    HEAD). Deployed render: D:2583-2980, 23,311 bytes, 398 lines - the largest of
+    the six, and the only one whose bytes are mostly NOT the template's: the outer
+    for at :12-24 emits `pcs_computations`, the multi-prepare lowering pass's
+    output (M:595, `Vec&lt;Vec&lt;String&gt;`), which is P-09/P-10's territory and is not
+    ported. So the blocks are a PARAMETER, exactly as P-13c made the two
+    quotient_numerator includes parameters of renderQuotientAndLinearization:
+    generated bytes are an argument, never a paste. Unlike the quotient's four
+    FLAT lists, the block partition here IS observable - each block gets its own
+    `{ ... }` wrapper and its own numbered comment - so the byte gate pins that
+    there are eight blocks and which lines belong to which.
+
+    HAZARD 3, the regions a later `pcs_spec` would induct over: (1) the banner
+    :1-10, fixed text; (2) the outer block `{` ... `}` :11-25, one generated
+    sub-block per iteration of the for at :12; (3) inside each sub-block, the
+    generated lines themselves, which are opaque strings to this port; (4) the
+    gas-checkpoint interleave at :21-23, which is where a per-block induction
+    hypothesis would live; (5) the trace tail :27-39. The DEPLOYED render is NOT
+    expressible as a single `Yul.Block` under D-P13's structural identity: the
+    generated lines are Strings, not parsed statements, and the region is a
+    sequence of eight sibling blocks inside one enclosing `{ }` with no bindings
+    declared at the outer level - so the honest structural statement is per
+    sub-block, not per partial. Gate 75 therefore gates the TEMPLATE's structure
+    (banner, brace nesting, block count) against the artifact and leaves the
+    contents opaque; a `pcs_spec` proof would induct over the parameter list.
+    scripts/check_golden_provenance.py's `pcsBasis` fixture already pins 30 lines
+    of the generated region (D:2744-2773) as a golden slice, so the parameter is
+    not unconstrained either. -/
+def renderPcs (ctx : PartialCtx) (pcsComputations : List (List String)) : String :=   "            // ===============================================================\n            // PCS computation (multi-prepare emitter from Step 5).\n            //\n            // The Rust lowering stage has already expanded the KZG multi-open\n            // equation into a sequence of generated Yul sub-blocks. Those\n            // blocks populate:\n            //   - F_EVAL_MPTR / V_MPTR scalar batching values;\n            //   - FINAL_COM_MPTR for the fused commitment MSM;\n            //   - PAIRING_LHS_MPTR and PAIRING_RHS_MPTR for the final pairing.\n            // ===============================================================\n            {" ++
+    (jinjaFor pcsComputations (fun codeBlock loop => "\n                // Generated PCS sub-block " ++
+      toString (loop.index) ++
+      ". These lines are\n                // emitted by the multi-prepare lowering pass and are kept\n                // grouped so gas checkpoints can attribute their cost.\n                {" ++
+      (jinjaFor codeBlock (fun line loop => "\n                    " ++
+        line)) ++
+      "\n                }" ++
+      (if ctx.gasCheckpoints && ! loop.last then "\n                gas_checkpoint(" ++
+        toString (17 + loop.index0) ++
+        ") // after PCS sub-block " ++
+        toString (loop.index) else ""))) ++
+    "\n            }" ++
+    (if ctx.gasCheckpoints then "\n            gas_checkpoint(14) // after PCS computation block (= sub-block 6)" else "") ++
+    (if ctx.trace then "\n            // Trace the final pairing inputs and selector accumulator buckets\n            // after PCS expansion, matching the Rust verifier trace labels.\n            trace_point(27, PAIRING_LHS_MPTR)\n            trace_point(28, PAIRING_RHS_MPTR)" ++
+      (jinjaFor ctx.simpleSelectorCols (fun _ loop => "\n            trace_u256(" ++
+        toString (ctx.selectorTraceBase + loop.index0) ++
+        ", mload(add(SELECTOR_ACC_MPTR, " ++
+        hexFilter (loop.index0 * 32) ++
+        ")))")) else "")
+
+/-- rust: the Askama expansion of T:partials/verifier/TraceReturn.yul (73 template
+    lines at HEAD). Deployed render: D:3010-3021, 563 bytes, 12 lines - the whole
+    of template :55-73's else arm plus the two newlines the `{% if %}` at :55
+    leaves behind, which is what makes D:3010 whitespace-only. The trace block at
+    :1-53 zero-renders, so 53 of the 73 template lines are absent from the
+    artifact.
+
+    HAZARD 3, the regions a later `traceReturn_spec` would induct over: (1) the
+    trace-emission block :1-53, itself split into the fixed header (:5-10), the
+    user-phase challenge loop (:11-15, a nested for over user_phases x
+    0..num_challenges), the fixed challenge tail (:16-21), the num_trashcans
+    guard (:21-23), the fixed scratch tail (:24-48) and the accumulator guard
+    (:49-52); and (2) the TERMINAL ARM CHOICE at :55-73, which is the whole
+    semantic content of this partial for the deployed profile: trace renders
+    `return(RETURN_MPTR, 0x20)` with `iszero(iszero success)`, production renders
+    `if iszero(success) { fail(ERR_PROOF_REJECTED) }` and then return 1. That is
+    expressible as a Yul.Block under D-P13's structural identity for the DEPLOYED
+    arm - three statements, no bindings, all identifiers in scope from the
+    enclosing block - and gate 76 says so by tokenising the render against a
+    hand-written `yul%` block. The trace arm is NOT: it references `success`,
+    `r` and the MPTR constants from the enclosing frame and its content depends on
+    the phase loop, so a spec for it would state a relation over the emission
+    sequence rather than a standalone block. -/
+def renderTraceReturn (ctx : PartialCtx) : String :=   (if ctx.trace then "\n            // Terminal trace emission. IDs are intentionally stable across\n            // generated verifiers so fixture tooling can diff Rust and\n            // Solidity executions without understanding a particular circuit.\n            trace_u256(1,  mload(VK_DIGEST_MPTR))\n            trace_u256(2,  " ++
+      toString (ctx.numInstances) ++
+      ")\n            trace_u256(3,  " ++
+      toString (ctx.k) ++
+      ")\n            trace_u256(4,  mload(N_INV_MPTR))\n            trace_u256(5,  mload(OMEGA_MPTR))\n            trace_u256(6,  mload(OMEGA_INV_MPTR))" ++
+      (jinjaFor ctx.userPhases (fun phase loop => (jinjaFor (List.range phase.numChallenges) (fun j loop => "\n            trace_u256(" ++
+          toString (1000 + phase.challengeOffset + j) ++
+          ", mload(add(CHALLENGE_MPTR, " ++
+          hexFilter ((phase.challengeOffset + j) * 32) ++
+          ")))")))) ++
+      "\n            trace_u256(7,  mload(THETA_MPTR))\n            trace_u256(8,  mload(BETA_MPTR))\n            trace_u256(9,  mload(GAMMA_MPTR))\n            trace_u256(10, mload(Y_MPTR))\n            trace_u256(11, mload(X_MPTR))" ++
+      (if ctx.numTrashcans != 0 then "\n            trace_u256(12, mload(TRASH_CHALLENGE_MPTR))" else "") ++
+      "\n            trace_u256(13, mload(X1_MPTR))\n            trace_u256(14, mload(X2_MPTR))\n            trace_u256(15, mload(X3_MPTR))\n            trace_u256(16, mload(X4_MPTR))\n            trace_u256(17, mload(X_N_MPTR))\n            trace_u256(18, mload(X_N_MINUS_1_INV_MPTR))\n            trace_u256(19, mload(L_LAST_MPTR))\n            trace_u256(20, mload(L_BLIND_MPTR))\n            trace_u256(21, mload(L_0_MPTR))\n            trace_u256(22, mload(INSTANCE_EVAL_MPTR))\n            trace_u256(23, mload(QUOTIENT_EVAL_MPTR))\n            // Rust traces often print the positive numerator; the verifier\n            // stores the negated expected scalar for the linearized opening.\n            trace_u256(36, addmod(0, sub(r, mload(QUOTIENT_EVAL_MPTR)), r))\n            // QUOTIENT_MPTR carries scalar metadata in the fused production\n            // path. Zero the unused point words before tracing it as a G1 slot.\n            mstore(add(QUOTIENT_MPTR, 0x40), 0)\n            mstore(add(QUOTIENT_MPTR, 0x60), 0)\n            trace_point(24, QUOTIENT_MPTR)\n            trace_point(25, F_COM_MPTR)\n            trace_point(26, PI_MPTR)\n            trace_u256(31, mload(F_EVAL_MPTR))\n            trace_u256(32, mload(V_MPTR))\n            trace_point(33, FINAL_COM_MPTR)\n            trace_u256(35, success)" ++
+      (if ctx.expectedHasAccumulator then "\n            trace_point(29, ACC_LHS_MPTR)\n            trace_point(30, ACC_RHS_MPTR)" else "") else "") ++
+    "\n\n            " ++
+    (if ctx.trace then "// Trace renders return the final check result (`true` for an\n            // accepted proof, `false` when the final pairing / accumulated\n            // checks failed) instead of reverting, so the LOG1 trace events\n            // above are kept. Early calldata / encoding failures still revert.\n            mstore(RETURN_MPTR, iszero(iszero(success)))\n            return(RETURN_MPTR, 0x20)" else "// Success path is terminal. Invalid inputs have already reverted,\n            // so the Solidity ABI observes `true`.\n            //\n            // The guard is redundant today -- every failure path above reverts\n            // rather than clearing `success` -- but it keeps acceptance a local\n            // property of this file instead of an invariant split across\n            // FinalPairing.yul and ec_pairing.\n            if iszero(success) { fail(ERR_PROOF_REJECTED) }\n            mstore(RETURN_MPTR, 1)\n            return(RETURN_MPTR, 0x20)")
 
 /-! ## Gates
 
@@ -3487,7 +4119,651 @@ def qnb13c_rightTrimCount_ok : IO Bool :=
   readQuotientTemplate "QuotientNumeratorBlock.yul" >>= fun qnb =>
   pure (occ qh "-%}" == 0 && occ qnb "-%}" == 5)
 
+/-! ## P-13e gates: the six partials the P-13 split never assigned
+
+Twenty gates (69-88). This section exists because the P-13 split enumerated seven
+verifier templates when the directory holds thirteen: Constants.sol, 
+PrecompileSmoke.sol, Constructors.sol, TraceAndGasHelpers.yul, Pcs.yul and
+TraceReturn.yul had no render function anywhere, and their bytes - 52,894 of the
+deployed artifact s 175,908, 30.1% - were read out of the dump by Contracts.lean
+gate 10 rather than produced. Gate 79 pins that 52,894 as a number this tree now
+produces; Contracts.lean gate 10 is the tiling that goes to zero as a result, and
+Contracts gate 29 is the WHOLE-FILE render that was impossible before this package.
+
+Gate 69 is the reachability gate D-P19 demands first. Gates 71-76 are the TEXTUAL
+byte gates, each with its length asserted (hazard 1). Gate 74 is LABELLED
+structural/synthetic because the deployed render it describes is the empty string
+(hazard 2). Gates 77-78 are the anti-self-fulfilment pair: the memory layout and
+the profile inputs are re-read out of the artifact and tied to Layout.lean's own
+ported constants and to `VerifierMemoryLayout.validate`. Gates 80-81 are
+STRUCTURAL (D-P13) and are not byte gates. Gates 82-87 are the R-41 perturbations,
+each run inside the scope of the gate it attacks. Gate 88 names what no gate here
+can see.
+-/
+
+/-- The six templates this package ports. -/
+def partials13e : List String :=
+  ["Constants.sol", "PrecompileSmoke.sol", "Constructors.sol",
+   "TraceAndGasHelpers.yul", "Pcs.yul", "TraceReturn.yul"]
+
+/-- All thirteen verifier template files as the FILESYSTEM sees them, so gate 70
+    compares against a directory listing and not against a list someone typed. -/
+def listVerifierTemplates : IO (List String) := go templateDirCandidates
+where
+  go : List String -> IO (List String)
+  | [] => pure []
+  | d :: rest => do
+      try
+        let es ← System.FilePath.readDir d
+        let names := es.toList.map fun x => x.path.fileName.getD ""
+        pure (names.filter fun n => n.endsWith ".yul" || n.endsWith ".sol")
+      catch _e => go rest
+
+/-- GATE 69 (reachability, first: D-P19). The artifact and all six template files
+    must open, so a wrong path is a named red and not a needle that matches
+    nothing. -/
+def p13e_artifactsReachable_ok : IO Bool :=
+  readDump >>= fun sol =>
+  listVerifierTemplates >>= fun files =>
+  partials13e.mapM (fun n => readTemplate n) >>= fun ts =>
+  pure (EvmKats.generatedReadOk sol && sol.length == 175908 && files.length == 13
+    && ts.length == 6 && ts.all (fun t => t.length > 500))
+
+/-- The thirteen registry basenames, in registry order. Contracts.lean gate 30 ties
+    this list to verifierPartPaths, which gate 2 ties to the template. -/
+def verifierTemplateFiles : List String :=
+  ["Constants.sol", "PrecompileSmoke.sol", "Constructors.sol", "AssemblyHelpers.yul",
+   "AccumulatorHelpers.yul", "TraceAndGasHelpers.yul", "VkLoading.yul",
+   "TranscriptProofParser.yul", "Lagrange.yul", "QuotientAndLinearization.yul",
+   "Pcs.yul", "FinalPairing.yul", "TraceReturn.yul"]
+
+/-- GATE 70 (THE SEVENTH FILE - the finding the brief asks for, made permanent).
+    The directory holds exactly the thirteen files the include registry names, so
+    there is no FOURTEENTH template nobody owns and no file on disk that the
+    registry does not include. This is the gate that would have caught the P-13
+    split: it compares a listing against the registry rather than a listing against
+    a plan document. Contracts.lean gate 2 is the half that ties the registry to the
+    template file itself. -/
+def p13e_noOrphanTemplate_ok : IO Bool :=
+  listVerifierTemplates >>= fun files =>
+  pure (files.length == 13 && verifierTemplateFiles.length == 13
+    && verifierTemplateFiles.all (fun n => files.contains n)
+    && files.all (fun n => verifierTemplateFiles.contains n)
+    && partials13e.all (fun n => verifierTemplateFiles.contains n)
+    && files.eraseDups.length == 13)
+
+
+
+/-- GATE 71 (TEXTUAL, byte-exact; hazard 1: LENGTH asserted). Constants.sol renders
+    D:85-306, 13,873 bytes, 222 lines, once, with the include boundary on both
+    sides. The four interpolation spellings are pinned separately because they are
+    the risk in this partial: DECIMAL for vk_len and the gas bounds, byte-padded hex
+    for the |hex() slots, 64-nibble hex_padded for the codehash, and Ptr Display
+    for the bare memory pointers. PROOF_LEN_CPTR = 0x44 is the word-wise-subtraction
+    pin: a port that read `proof_cptr - 1` as a byte subtraction renders 0x63 and
+    dies here. -/
+def constants_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderConstants poseidonCtx
+  pure (occ sol r == 1 && r.length == 13873 && lineCount r == 222
+    && includeBoundary sol r
+    && r.startsWith "\n    /// @notice Verifying-key contract address authorized"
+    && r.endsWith "BLS_P_MINUS_ONE_PACKED_1 = 0x0000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84;"
+    && occ sol ("EXPECTED_VK_PAYLOAD_LENGTH = " ++ toString poseidonCtx.vkLen) == 1
+    && occ sol " constant                VK_MPTR = 0x2900" == 1
+    && occ sol "PROOF_LEN_CPTR = 0x44" == 1
+    && occ sol "NUM_INSTANCE_CPTR = 0x1144" == 1
+    && occ sol "          G1ADD_GAS = 375" == 1
+    && occ sol "G1MSM_GAS_SMOKE = 337836" == 1
+    && occ sol "EXPECTED_VK_CODEHASH_WORD = 0x233a1a8063ef1a9bfd30983d3034d3d90ab75ff6ac95c0e72d770bf08dcff51b" == 1)
+/-- GATE 72 (TEXTUAL, byte-exact, length asserted). PrecompileSmoke.sol renders
+    D:308-523, 14,414 bytes, 216 lines - one output line per template line,
+    because the file has NO control-flow tag at all. Its 27 interpolations are the
+    modexp frame offsets, the four precompile addresses, the EIP-2537 generator and
+    double-generator words, and three memory slots no other partial reads. -/
+def precompileSmoke_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderPrecompileSmoke poseidonCtx
+  pure (occ sol r == 1 && r.length == 14414 && lineCount r == 216
+    && includeBoundary sol r
+    && r.startsWith "    /// @notice Smoke-check the Cancun/EIP-2537/modexp runtime features"
+    && r.endsWith "        }\n    }"
+    && occ sol "let scratch := 0x1000" == 1
+    && occ sol "let msm_scratch := 0x65e0" == 1
+    && occ sol "lt(off, 0x1d60)" == 1
+    && occ sol "staticcall(MODEXP_GAS, 0x05, scratch, 0xc0, scratch, 0x20)" == 1)
+
+/-- GATE 73 (TEXTUAL, byte-exact, length asserted). Constructors.sol renders
+    D:525-540, 733 bytes, 16 lines: the Some/None arm of the two nested matches.
+    The AUTHORIZED_QUOTIENT assignment is asserted ABSENT, not merely unrendered -
+    the None arm does not emit it, and neither does anything else in the artifact. -/
+def constructors_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderConstructors poseidonCtx
+  pure (occ sol r == 1 && r.length == 733 && lineCount r == 16
+    && includeBoundary sol r
+    && r.startsWith "\n    /// @notice Create a verifier pinned to a generated verifying key."
+    && r.endsWith "        AUTHORIZED_VK = authorizedVk;\n    }"
+    && occ sol "AUTHORIZED_QUOTIENT = authorizedQuotient;" == 0
+    && occ sol "constructor(address authorizedVk, address authorizedQuotient)" == 0)
+
+/-- GATE 74 (hazard 2 - LABEL: STRUCTURAL and SYNTHETIC, NOT a byte gate, and it
+    would be vacuous if it were one). The deployed render of TraceAndGasHelpers.yul
+    is the EMPTY STRING: both ifs are false in the release profile and every byte of
+    the file is inside one of them. Contracts.lean gate 9 proves that from the
+    artifact - the run between the AccumulatorHelpers render and the two hoisted
+    locals is exactly the include glue, so there is no room for a byte of this
+    partial. A byte gate here would compare "" against "" and pin nothing, so this
+    gate is structural instead: it pins that the two arms EXIST, that each flag
+    selects its own arm and only its own arm, that the arms are additive, and that
+    neither arm's text occurs in the artifact (i.e. no artifact covers their
+    CONTENT - that is the honest limit, stated not hidden). -/
+def traceAndGasHelpers_structuralEmpty_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let dep := renderTraceAndGasHelpers poseidonCtx
+  let traced := renderTraceAndGasHelpers { poseidonCtx with trace := true }
+  let gassed := renderTraceAndGasHelpers { poseidonCtx with gasCheckpoints := true }
+  let both := renderTraceAndGasHelpers { poseidonCtx with trace := true, gasCheckpoints := true }
+  pure (dep == "" && dep.length == 0 && lineCount dep == 1
+    && traced.length == 541 && lineCount traced == 12
+    && gassed.length == 449 && lineCount gassed == 9
+    && both.length == traced.length + gassed.length
+    && both == traced ++ gassed
+    && traced.contains "function trace_u256(id, value)" && traced.contains "function trace_point(id, mptr)"
+    && ! traced.contains "function gas_checkpoint"
+    && gassed.contains "function gas_checkpoint(id)" && ! gassed.contains "function trace_u256"
+    && occ sol "function trace_u256(id, value)" == 0 && occ sol "function gas_checkpoint(id)" == 0
+    && occ sol traced == 0 && occ sol gassed == 0)
+
+/-- The per-block preamble the template writes before each generated sub-block, and
+    the brace that closes it. These are the anchors pcsDeployedComputations reads
+    the parameter back out with, so they are part of the port and not a hack: the
+    template text at T:Pcs.yul:13-16 and :20 is exactly this. -/
+def pcsBlockMarker : String := "                // Generated PCS sub-block "
+def pcsBlockOpen : String :=
+  ". These lines are\n                // emitted by the multi-prepare lowering pass and are kept"
+  ++ "\n                // grouped so gas checkpoints can attribute their cost.\n                {\n"
+def pcsBlockClose : String := "\n                }"
+def pcsLineIndent : Nat := 20
+
+/-- The generated multi-prepare sub-blocks, read back out of the artifact. rust:
+    M:595 pcs_computations, `Vec<Vec<String>>`, emitted by the lowering pass that
+    P-09/P-10 own and that this tree does not port. They are a PARAMETER of the
+    render (P-13c's rule for generated bytes), and the block partition is observable
+    here - each block gets its own numbered comment and its own braces - so the byte
+    gate pins how many blocks there are and which lines belong to which. -/
+def pcsDeployedComputations (sol : String) : List (List String) :=
+  (sol.splitOn pcsBlockMarker).drop 1 |>.filterMap fun piece =>
+    match piece.splitOn pcsBlockOpen with
+    | [_, rest] =>
+        match rest.splitOn pcsBlockClose with
+        | body :: _ => some ((body.splitOn "\n").map fun l => (l.drop pcsLineIndent).toString)
+        | _ => none
+    | _ => none
+
+/-- GATE 75 (TEXTUAL, byte-exact, length asserted). Pcs.yul renders D:2583-2980,
+    23,311 bytes, 398 lines, of which the template owns the 10-line banner, the
+    outer braces and eight 4-line block preambles/closers - 42 lines - and the
+    other 356 are the generated parameter. The extraction round-trips: eight blocks,
+    345 generated lines, and the render of what was extracted is the artifact's own
+    bytes. That round trip is the honest form of a gate on content this port does
+    not compute: it pins the TEMPLATE half exactly and says out loud that the other
+    half is a transcription. -/
+def pcs_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let blocks := pcsDeployedComputations sol
+  let r := renderPcs poseidonCtx blocks
+  pure (occ sol r == 1 && r.length == 23311 && lineCount r == 397
+    && includeBoundary sol r
+    && blocks.length == 8
+    && (blocks.map (fun b => b.length)).sum == 345
+    && r.startsWith "            // ===============================================================\n            // PCS computation"
+    && r.endsWith "\n                }\n            }"
+    && occ r "// Generated PCS sub-block " == 8
+    && occ sol "gas_checkpoint" == 0)
+
+/-- GATE 76 (TEXTUAL, byte-exact, length asserted). TraceReturn.yul renders
+    D:3010-3021, 563 bytes, 12 lines - the else arm of the terminal if, plus the
+    two newlines the untrimmed `{% if self.trace -%}` leaves behind, which is what
+    makes D:3010 whitespace-only. Its right boundary is NOT the include glue: this
+    is the LAST partial in the file, so what follows is the shell footer, and the
+    gate says so by requiring the suffix to be exactly vhFooter's text. -/
+def traceReturn_bytesExact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderTraceReturn poseidonCtx
+  pure (occ sol r == 1 && r.length == 563 && lineCount r == 12
+    && (match sol.splitOn r with
+        | [before, after] => before.endsWith "\n\n    " && after == "\n        }\n    }\n}"
+        | _ => false)
+    && r.startsWith "\n\n            // Success path is terminal."
+    && r.endsWith "mstore(RETURN_MPTR, 1)\n            return(RETURN_MPTR, 0x20)"
+    && occ sol "trace_u256" == 0 && occ sol "trace_point" == 0)
+
+/-- The fourteen VK-header slots Constants.sol derives as `memory.vk_mptr +
+    vk_header.X`, paired with the header WORD offset the template adds. The gate
+    below re-reads each derived address from the artifact and requires it to be
+    VK_MPTR plus that offset in BYTES, i.e. it pins the word-wise reading of Ptr +
+    usize (ENC:723-731) against the dump rather than trusting the render. -/
+def constantsVkHeaderDecls : List (String × Nat) :=
+  [("VK_DIGEST_MPTR", poseidonCtx.vkHeader.vkDigest),
+   ("NUM_INSTANCES_MPTR", poseidonCtx.vkHeader.numInstances),
+   ("K_MPTR", poseidonCtx.vkHeader.k),
+   ("N_INV_MPTR", poseidonCtx.vkHeader.nInv),
+   ("OMEGA_MPTR", poseidonCtx.vkHeader.omega),
+   ("OMEGA_INV_MPTR", poseidonCtx.vkHeader.omegaInv),
+   ("OMEGA_INV_TO_L_MPTR", poseidonCtx.vkHeader.omegaInvToL),
+   ("HAS_ACCUMULATOR_MPTR", poseidonCtx.vkHeader.hasAccumulator),
+   ("ACC_OFFSET_MPTR", poseidonCtx.vkHeader.accOffset),
+   ("NUM_ACC_LIMBS_MPTR", poseidonCtx.vkHeader.numAccLimbs),
+   ("NUM_ACC_LIMB_BITS_MPTR", poseidonCtx.vkHeader.numAccLimbBits),
+   ("G1_BASE_MPTR", poseidonCtx.vkHeader.g1Base),
+   ("G2_BASE_MPTR", poseidonCtx.vkHeader.g2Base),
+   ("NEG_S_G2_BASE_MPTR", poseidonCtx.vkHeader.negSG2Base)]
+
+/-- Every memory slot Constants.sol declares, paired with the field of
+    poseidonMemoryLayout that must hold the same number. Built from the record, not
+    copied from the dump: the gate below asks the DUMP what it declares for each
+    name and requires the record to agree. -/
+def constantsMemoryDecls : List (String × Nat) :=
+  [ ("TRANSCRIPT_MPTR", poseidonMemoryLayout.transcriptMptr),
+    ("RETURN_MPTR", poseidonMemoryLayout.verifierReturnMptr),
+    ("VK_MPTR", poseidonMemoryLayout.vkMptr.value.asUsizeNat),
+    ("CHALLENGE_MPTR", poseidonMemoryLayout.challengeMptr.value.asUsizeNat),
+    ("THETA_MPTR", poseidonMemoryLayout.thetaMptr.value.asUsizeNat),
+    ("BETA_MPTR", poseidonMemoryLayout.betaMptr.value.asUsizeNat),
+    ("GAMMA_MPTR", poseidonMemoryLayout.gammaMptr.value.asUsizeNat),
+    ("TRASH_CHALLENGE_MPTR", poseidonMemoryLayout.trashChallengeMptr.value.asUsizeNat),
+    ("Y_MPTR", poseidonMemoryLayout.yMptr.value.asUsizeNat),
+    ("X_MPTR", poseidonMemoryLayout.xMptr.value.asUsizeNat),
+    ("X1_MPTR", poseidonMemoryLayout.x1Mptr.value.asUsizeNat),
+    ("X2_MPTR", poseidonMemoryLayout.x2Mptr.value.asUsizeNat),
+    ("X3_MPTR", poseidonMemoryLayout.x3Mptr.value.asUsizeNat),
+    ("X4_MPTR", poseidonMemoryLayout.x4Mptr.value.asUsizeNat),
+    ("F_COM_MPTR", poseidonMemoryLayout.fComMptr.value.asUsizeNat),
+    ("PI_MPTR", poseidonMemoryLayout.piMptr.value.asUsizeNat),
+    ("ACC_LHS_MPTR", poseidonMemoryLayout.accLhsMptr.value.asUsizeNat),
+    ("ACC_RHS_MPTR", poseidonMemoryLayout.accRhsMptr.value.asUsizeNat),
+    ("X_N_MPTR", poseidonMemoryLayout.xNMptr.value.asUsizeNat),
+    ("X_N_MINUS_1_INV_MPTR", poseidonMemoryLayout.xNMinus1InvMptr.value.asUsizeNat),
+    ("L_LAST_MPTR", poseidonMemoryLayout.lLastMptr.value.asUsizeNat),
+    ("L_BLIND_MPTR", poseidonMemoryLayout.lBlindMptr.value.asUsizeNat),
+    ("L_0_MPTR", poseidonMemoryLayout.l0Mptr.value.asUsizeNat),
+    ("INSTANCE_EVAL_MPTR", poseidonMemoryLayout.instanceEvalMptr.value.asUsizeNat),
+    ("QUOTIENT_EVAL_MPTR", poseidonMemoryLayout.quotientEvalMptr.value.asUsizeNat),
+    ("QUOTIENT_MPTR", poseidonMemoryLayout.quotientMptr.value.asUsizeNat),
+    ("F_EVAL_MPTR", poseidonMemoryLayout.fEvalMptr.value.asUsizeNat),
+    ("V_MPTR", poseidonMemoryLayout.vMptr.value.asUsizeNat),
+    ("FINAL_COM_MPTR", poseidonMemoryLayout.finalComMptr.value.asUsizeNat),
+    ("PAIRING_LHS_MPTR", poseidonMemoryLayout.pairingLhsMptr.value.asUsizeNat),
+    ("PAIRING_RHS_MPTR", poseidonMemoryLayout.pairingRhsMptr.value.asUsizeNat),
+    ("ROT_POINTS_MPTR", poseidonMemoryLayout.rotPointsMptr.value.asUsizeNat),
+    ("X1_POWERS_MPTR", poseidonMemoryLayout.x1PowersMptr.value.asUsizeNat),
+    ("Q_COM_MPTR", poseidonMemoryLayout.qComMptr.value.asUsizeNat),
+    ("Q_EVAL_SET_MPTR", poseidonMemoryLayout.qEvalSetMptr.value.asUsizeNat),
+    ("Q_EVAL_CPTR_MPTR", poseidonMemoryLayout.qEvalCptrMptr.value.asUsizeNat),
+    ("G1_IDENTITY_MPTR", poseidonMemoryLayout.g1IdentityMptr.value.asUsizeNat),
+    ("REVERSED_EVALS_MPTR", poseidonMemoryLayout.reversedEvalsMptr.value.asUsizeNat),
+    ("SELECTOR_ACC_MPTR", poseidonMemoryLayout.selectorAccMptr),
+    ("QUOTIENT_RETURN_MPTR", poseidonMemoryLayout.quotientReturnMptr),
+    ("BATCH_INV_SCRATCH_MPTR", poseidonMemoryLayout.batchInvertScratchMptr),
+    ("LAGRANGE_DENOMS_MPTR", poseidonMemoryLayout.lagrangeDenomsMptr),
+    ("TRACE_U256_MPTR", poseidonMemoryLayout.traceU256Mptr),
+    ("ADVICE_COMMS_MPTR_BASE", poseidonMemoryLayout.adviceCommsMptrBase.value.asUsizeNat),
+    ("LOOKUP_M_COMMS_MPTR_BASE", poseidonMemoryLayout.lookupMCommsMptrBase.value.asUsizeNat),
+    ("PERM_Z_COMMS_MPTR_BASE", poseidonMemoryLayout.permZCommsMptrBase.value.asUsizeNat),
+    ("LOOKUP_HELPER_COMMS_MPTR_BASE", poseidonMemoryLayout.lookupHelperCommsMptrBase.value.asUsizeNat),
+    ("LOOKUP_Z_COMMS_MPTR_BASE", poseidonMemoryLayout.lookupZCommsMptrBase.value.asUsizeNat),
+    ("TRASHCAN_COMMS_MPTR_BASE", poseidonMemoryLayout.trashcanCommsMptrBase.value.asUsizeNat),
+    ("QUOTIENT_LIMB_COMMS_MPTR_BASE", poseidonMemoryLayout.quotientLimbCommsMptrBase.value.asUsizeNat)
+  ]
+
+/-- GATE 77 (anti-self-fulfilment, hazard 4 adjacent). The transcribed memory layout
+    is checked three ways: (a) every slot above equals what the artifact declares for
+    that name, so a mistyped digit in the transcription is a red; (b) the seven fixed
+    low-memory pointers and the scalar-inversion anchor equal Layout.lean's OWN
+    ported constants and MEM:1039's rule - a channel the artifact does not control,
+    which is what makes this more than a copy; and (c)] the whole record passes the
+    ported `VerifierMemoryLayout.validate`. The VK-header offsets are checked the
+    same way against the derived *_MPTR lines, and the four decimal gas bounds
+    against templateConstantsDefault, which is Models.lean's port of the Rust
+    Default impl and reaches the render through a channel the dump cannot touch. -/
+def constants_memoryMatches_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (constantsMemoryDecls.length == 50
+    && constantsMemoryDecls.all (fun (n, v) => qHexHere sol (" " ++ n ++ " = 0x") == some v)
+    && poseidonMemoryLayout.transcriptMptr == transcriptBufferStart
+    && poseidonMemoryLayout.verifierReturnMptr == verifierReturnBufferStart
+    && poseidonMemoryLayout.quotientReturnMptr == quotientReturnBufferStart
+    && poseidonMemoryLayout.constructorSmokeScratchMptr == lowMemoryScratchStart
+    && poseidonMemoryLayout.pcsPairingScratchMptr == pcsPairingScratchStart
+    && poseidonMemoryLayout.accumulatorPairingBatchMptr == accumulatorPairingBatchPtr
+    && poseidonMemoryLayout.finalPairingScratchMptr == finalPairingScratchStart
+    && poseidonMemoryLayout.scalarInvScratchMptr == poseidonCtx.vkMptr - modexpScratchBytes
+    && poseidonMemoryLayout.vkMptr.value.asUsizeNat == poseidonCtx.vkMptr
+    && poseidonMemoryLayout.scalarInvScratchMptr == poseidonCtx.scalarInvScratchMptr
+    && poseidonMemoryLayout.finalPairingScratchMptr == poseidonCtx.finalPairingScratchMptr
+    && poseidonMemoryLayout.accumulatorPairingBatchMptr == poseidonCtx.accumulatorPairingBatchMptr
+    && poseidonMemoryLayout.validate.isOk
+    && qHexHere sol "        RETURN_MPTR = 0x" == some poseidonMemoryLayout.verifierReturnMptr
+    && qHexHere sol "    TRANSCRIPT_MPTR = 0x" == some poseidonMemoryLayout.transcriptMptr
+    && constantsVkHeaderDecls.all (fun (n, w) =>
+         qHexHere sol (" " ++ n ++ " = 0x") == some (poseidonCtx.vkMptr + w * 32))
+    && constantsVkHeaderDecls.length == 14)
+
+/-- GATE 78 (anti-self-fulfilment on the profile inputs). vk_len, the VK codehash,
+    BUILD_ID, the two ABI cursors and the smoke gas bound are re-read out of the
+    artifact and required to equal the fields of poseidonCtx the render puts there.
+    The four DECIMAL gas bounds are pinned against templateConstantsDefault, i.e.
+    against Models.lean's port of the Rust Default impl rather than against the
+    dump, which is the only direction in this file that is not self-fulfilling. -/
+def constants_derivedFromArtifact_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (qNatAfter sol "EXPECTED_VK_PAYLOAD_LENGTH = " == some poseidonCtx.vkLen
+    && qNatAfter sol "EXPECTED_VK_LENGTH = " == some (poseidonCtx.vkLen + 1)
+    && qHexHere sol "EXPECTED_VK_CODEHASH_WORD = 0x" == poseidonCtx.expectedVkCodehash.map (·.toNat)
+    && qHexHere sol "BUILD_ID = 0x" == some poseidonCtx.buildId.toNat
+    && qHexHere sol "    PROOF_CPTR = 0x" == some poseidonCtx.proofCptr.value.asUsizeNat
+    && qHexHere sol "NUM_INSTANCE_CPTR = 0x" == some poseidonCtx.numInstanceCptr
+    && qHexHere sol "     INSTANCE_CPTR = 0x" == some poseidonCtx.instanceCptr
+    && qNatAfter sol "G1MSM_GAS_SMOKE = " == some poseidonCtx.constructorG1msmSmokeGas
+    && qNatAfter sol "G1ADD_GAS = " == some templateConstantsDefault.gas.g1add
+    && qNatAfter sol "G1MSM_GAS_1PAIR = " == some templateConstantsDefault.gas.g1msmOnePair
+    && qNatAfter sol "PAIRING_GAS_2PAIR = " == some templateConstantsDefault.gas.pairingTwoPair
+    && qNatAfter sol "MODEXP_GAS = " == some templateConstantsDefault.gas.modexp
+    && occ sol "ACC_RHS_MSM_GAS" == 0 && occ sol "AUTHORIZED_QUOTIENT" == 0
+    && poseidonCtx.expectedQuotientLen == none
+    && (match poseidonCtx.quotientExternal with | none => true | _ => false)
+    && (match poseidonCtx.quotientDirect with | none => true | _ => false)
+    && poseidonCtx.expectedHasAccumulator == false)
+/-- GATE 79 (THE HEADLINE NUMBER). The six partials together account for 52,894
+    bytes of the deployed artifact - 30.1% of its 175,908 - and until this package
+    not one of them was produced by a Lean function. This gate adds the six
+    deployed renders up and requires the total, which is the quantity the P-13
+    split left unassigned and the quantity Contracts.lean gate 10 reports as gaps. -/
+def p13e_bytesNowRendered_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let rs := [renderConstants poseidonCtx, renderPrecompileSmoke poseidonCtx,
+             renderConstructors poseidonCtx, renderTraceAndGasHelpers poseidonCtx,
+             renderPcs poseidonCtx (pcsDeployedComputations sol),
+             renderTraceReturn poseidonCtx]
+  pure (rs.length == 6 && (rs.map String.length).sum == 52894
+    && (rs.map String.length) == [13873, 14414, 733, 0, 23311, 563]
+    && 52894 * 100 < 175908 * 31 && 52894 * 100 > 175908 * 30)
+
+/-- The deployed TraceReturn arm as the vendored AST, and the same three statements
+    built with raw constructors. `fail` is a user function (AssemblyHelpers.yul:4);
+    mstore and ret are dialect builtins, and `ret` is the dialect name for the
+    `return` opcode (EVMOp.lean:26, :53, :169). -/
+def traceReturn_deployedRegion : String := renderTraceReturn poseidonCtx
+
+def traceReturn_ast : Block EVM.Op := yul% {
+  if iszero(success) { fail(ERR_PROOF_REJECTED) }
+  mstore(RETURN_MPTR, 1)
+  return(RETURN_MPTR, 0x20)
+}
+
+def traceReturn_direct : Block EVM.Op :=
+  [ Stmt.cond (binOp EVM.Op.iszero [varX "success"])
+      [stmtE (usrFn "fail" [varX "ERR_PROOF_REJECTED"])]
+  , stmtE (binOp EVM.Op.mstore [varX "RETURN_MPTR", Expr.lit (Literal.number 1)])
+  , stmtE (binOp EVM.Op.ret [varX "RETURN_MPTR", Expr.lit (Literal.number 0x20)]) ]
+
+/-- GATE 80 (STRUCTURAL, D-P13 - hazard 3 answered for TraceReturn). The deployed
+    render IS expressible as a Yul.Block: three statements, no bindings, every
+    identifier supplied by the enclosing frame. This gate tokenises the rendered
+    bytes and requires the same token stream as EVM.print of the quotation, and then
+    requires the quotation to equal the raw-constructor AST under stmtsBeq - the
+    relation Phase 5's irCheck will use. It is NOT a byte gate and does not
+    substitute for gate 76: the token relation cannot see the four-space include
+    boundary or the leading blank line, and stmtsBeq cannot see a wrong hex
+    spelling. What a later traceReturn_spec would induct over is named on the render:
+    the terminal arm choice here, and the six regions of the trace block that the
+    deployed profile does not render. -/
+def traceReturn_astAgrees_ok : Bool :=
+  yulTokens ("{" ++ traceReturn_deployedRegion ++ "}") == yulTokens (EVM.print traceReturn_ast)
+    && SyntaxEq.stmtsBeq traceReturn_ast traceReturn_direct
+
+/-- A one-block synthetic render, for the structural check: the template's own brace
+    nesting with the generated parameter replaced by two readable lines. -/
+def pcsSynthRender : String := renderPcs poseidonCtx [["let x := 1", "mstore(0x80, x)"]]
+
+def pcsSynth_ast : Block EVM.Op := yul% {
+  {
+    {
+      let x := 1
+      mstore(0x80, x)
+    }
+  }
+}
+
+/-- GATE 81 (STRUCTURAL, D-P13 - hazard 3 answered for Pcs). What IS expressible as
+    a Yul.Block is the template's SKELETON: one outer block containing one sibling
+    block per generated sub-block. With a synthetic one-block parameter the render
+    tokenises to exactly that AST, which is the structural content of the partial.
+    What is NOT expressible is the deployed render as a whole: its 345 generated
+    lines are opaque Strings to this port (the multi-prepare lowering pass is P-09/
+    P-10 territory), so a pcs_spec would state a theorem over the parameter list -
+    for every block b, the frame after emitting b equals the frame the lowering pass
+    computes - and induct over `pcsComputations`, not over the rendered text. The
+    brace-count clauses below are the same claim at byte level: eight blocks, eight
+    closers, one outer pair, and the nesting is well formed. -/
+def pcs_structure_ok : Bool :=
+  yulTokens ("{" ++ pcsSynthRender ++ "}") == yulTokens (EVM.print pcsSynth_ast)
+    && occ pcsSynthRender "\n            {" == 1 && occ pcsSynthRender "\n            }" == 1
+    && occ pcsSynthRender "\n                {" == 1 && occ pcsSynthRender "\n                }" == 1
+    && (pcsSynthRender.toList.filter (fun c => c == '{')).length
+       == (pcsSynthRender.toList.filter (fun c => c == '}')).length
+    && lineCount pcsSynthRender == 19
+
+/-- GATE 82 (R-41). Nine profile inputs Constants.sol interpolates, perturbed one at
+    a time inside this gate's own scope: the render changes and stops occurring in
+    the artifact. -/
+def perturb_constantsValues_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let dep := renderConstants poseidonCtx
+  let edits : List (PartialCtx -> PartialCtx) :=
+    [ fun c => { c with vkLen := c.vkLen + 1 },
+      fun c => { c with expectedVkCodehash := some 1 },
+      fun c => { c with buildId := 1 },
+      fun c => { c with constructorG1msmSmokeGas := c.constructorG1msmSmokeGas + 1 },
+      fun c => { c with numInstanceCptr := c.numInstanceCptr + 0x20 },
+      fun c => { c with instanceCptr := c.instanceCptr + 0x20 },
+      fun c => { c with proofCptr := Ptr.add c.proofCptr 1 },
+      fun c => { c with vkHeader := { c.vkHeader with k := c.vkHeader.k + 1 } } ]
+  let truncated := renderConstants { poseidonCtx with expectedVkCodehash := none }
+  pure (occ sol dep == 1 && dep.length == 13873
+    && edits.all (fun f => let r := renderConstants (f poseidonCtx); r != dep && occ sol r == 0)
+    && edits.length == 8
+    && truncated != dep && truncated.length < dep.length && occ sol truncated == 1)
+
+/-- GATE 83 (R-41). Eight memory slots, perturbed one at a time: the render changes
+    and disappears. These are the slots a transcription typo would hit, and the
+    reason gate 77 exists: a slot perturbation that still produced artifact bytes
+    would mean the render was not reading the record at all. -/
+def perturb_constantsMemory_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let dep := renderConstants poseidonCtx
+  let edits : List (PartialCtx -> PartialCtx) :=
+    [ fun c => { c with memory := { c.memory with thetaMptr := ptrMemory (valueFromNat 0x3ae1) } },
+      fun c => { c with memory := { c.memory with xMptr := ptrMemory (valueFromNat 0x0000) } },
+      fun c => { c with memory := { c.memory with traceU256Mptr := 0x83c1 } },
+      fun c => { c with memory := { c.memory with selectorAccMptr := 0x65e1 } },
+      fun c => { c with memory := { c.memory with adviceCommsMptrBase := ptrMemory (valueFromNat 0x5c61) } },
+      fun c => { c with memory := { c.memory with qEvalCptrMptr := ptrMemory (valueFromNat 0x5401) } },
+      fun c => { c with memory := { c.memory with quotientMptr := ptrMemory (valueFromNat 0x3f01) } },
+      fun c => { c with memory := { c.memory with vkMptr := ptrMemory (valueFromNat 0x2901) } } ]
+  pure (occ sol dep == 1
+    && edits.all (fun f => let r := renderConstants (f poseidonCtx); r != dep && occ sol r == 0)
+    && edits.length == 8)
+
+/-- GATE 84 (R-41). The generated PCS parameter, perturbed six ways. The fifth and
+    sixth clauses are the point: the BLOCK PARTITION is observable here, because each
+    block gets its own numbered comment and its own braces, so [[a,b]] and [[a],[b]]
+    render differently - the property P-13c had to say out loud that its four flat
+    quotient lists do NOT have. -/
+def perturb_pcsBlocks_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let blocks := pcsDeployedComputations sol
+  let dep := renderPcs poseidonCtx blocks
+  let swap := match blocks with
+    | a :: b :: rest => b :: a :: rest
+    | _ => blocks
+  let edited := blocks.map (fun l => l ++ ["// extra"])
+  let prepended := blocks.map (fun l => ["// extra"] ++ l)
+  let reddening := [blocks.reverse, swap, edited, prepended,
+    blocks.take 7, blocks.drop 1]
+  pure (occ sol dep == 1 && dep.length == 23311 && blocks.length == 8
+    && reddening.all (fun v => let r := renderPcs poseidonCtx v; r != dep && occ sol r == 0)
+    && reddening.length == 6
+    && (renderPcs poseidonCtx []).length == 662 && lineCount (renderPcs poseidonCtx []) == 12
+    && occ sol (renderPcs poseidonCtx []) == 0
+    && renderPcs poseidonCtx [["a", "b"]] != renderPcs poseidonCtx [["a"], ["b"]]
+    && (renderPcs poseidonCtx [["a", "b"]]).length + 245
+       == (renderPcs poseidonCtx [["a"], ["b"]]).length)
+
+/-- GATE 85 (R-41). TraceReturn's flag-driven arms. The deployed profile takes the
+    else arm; flipping trace swaps in the 48-line emission block, which is absent
+    from the artifact, and the two guards inside it (num_trashcans,
+    expected_has_accumulator) and the nested user-phase loop each change the bytes.
+    The last clause is the zero-iteration law: a phase with two challenges adds two
+    lines, a phase with none adds none. -/
+def perturb_traceReturnFlags_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let dep := renderTraceReturn poseidonCtx
+  let traced := renderTraceReturn { poseidonCtx with trace := true }
+  let noTrash := renderTraceReturn { poseidonCtx with trace := true, numTrashcans := 0 }
+  let withAcc := renderTraceReturn { poseidonCtx with trace := true, expectedHasAccumulator := true }
+  let twoChal := renderTraceReturn { poseidonCtx with trace := true, userPhases := [{ adviceBytes := 0x400, numChallenges := 2, challengeOffset := 0 }] }
+  pure (occ sol dep == 1 && dep.length == 563
+    && traced != dep && occ sol traced == 0 && traced.length == 2451
+    && traced.contains "trace_u256(1,  mload(VK_DIGEST_MPTR))"
+    && ! noTrash.contains "TRASH_CHALLENGE_MPTR" && noTrash.length == traced.length - 56
+    && withAcc.contains "trace_point(29, ACC_LHS_MPTR)" && withAcc.length == traced.length + 84
+    && (twoChal.splitOn "\n").length == (traced.splitOn "\n").length + 2
+    && twoChal.contains "trace_u256(1000, mload(add(CHALLENGE_MPTR, 0x00)))")
+
+/-- GATE 86 (R-41). The four arms of Constructors.sol, selected by flipping the two
+    matches: each arm is distinct text, and only the deployed one occurs in the
+    artifact. The two empty `when Some with (_)` arms of the inner
+    expected_quotient_codehash matches are asserted to be empty, which is the
+    template's own shape at :35-38 and :78-81 and the reason the None-arm render
+    ends with a bare closing brace. -/
+def perturb_constructorsArms_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let dep := renderConstructors poseidonCtx
+  let qext : QuotientExternal :=
+    { frameBase := 0x4000, frameLen := 0x2000, outputLen := 0xc0, magic := quotientExternalMagic }
+  let embedded := renderConstructors { poseidonCtx with expectedVkCodehash := none }
+  let split := renderConstructors { poseidonCtx with quotientExternal := some qext }
+  let both := renderConstructors { poseidonCtx with quotientExternal := some qext, expectedQuotientCodehash := some 1, expectedQuotientLen := some 4096 }
+  pure (occ sol dep == 1 && dep.length == 733
+    && embedded != dep && occ sol embedded == 0 && embedded.contains "constructor() {"
+    && split != dep && occ sol split == 0 && split.contains "constructor(address authorizedVk, address authorizedQuotient)"
+    && both != split && occ sol both == 0 && both.contains "EXPECTED_QUOTIENT_CODEHASH"
+    && renderConstructors { poseidonCtx with expectedQuotientCodehash := some 1 } == dep)
+
+/-- GATE 87 (hazard 1, demonstrated rather than hidden). For each of the six
+    renders, a strict prefix still occurs exactly once in the artifact: occursOnce
+    plus a prefix boundary is satisfied by a TRUNCATED render, which is the hole
+    P-13c found in its own gate and P-13d showed in gate 20. Every byte gate above
+    therefore asserts a length alongside the occurrence, and gate 79 asserts the
+    six lengths sum to 52,894. -/
+def perturb_truncation13e_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let rs := [renderConstants poseidonCtx, renderPrecompileSmoke poseidonCtx,
+             renderConstructors poseidonCtx, renderPcs poseidonCtx (pcsDeployedComputations sol),
+             renderTraceReturn poseidonCtx]
+  pure (rs.length == 5 && rs.all (fun r => occ sol r == 1
+    && occ sol ((r.drop 1).toString) == 1 && ((r.drop 1).toString).length < r.length
+    && occ sol ((r.take (r.length / 2)).toString) == 1)
+    && occ sol (renderTraceAndGasHelpers poseidonCtx) != 1)
+
+/-- GATE 88 (R-41, the honest non-bites). What no gate in this section can see,
+    asserted as absence rather than hidden as a passing test:
+
+    * The trace arm of TraceReturn (2,451 bytes) and of Pcs, and the gas-checkpoint
+      arms of both: no tracked artifact renders them, so a typo inside them reddens
+      nothing. Measured: a same-length typo inside the trace-only line
+      `trace_u256(35, success)` reddened NO gate, because gate 76 pins only the
+      else arm and gate 85 only checks that the trace arm differs and is absent.
+    * The Some arm of the Constants quotient_external match and the
+      expected_has_accumulator if: AUTHORIZED_QUOTIENT and ACC_RHS_MSM_GAS do not
+      occur in the artifact at all, so poseidonCtx.expectedQuotientLen and
+      accRhsMsmGas are unconstrained by any byte gate. Gate 78 asserts their
+      ABSENCE rather than their values.
+    * The 345 generated PCS lines: they are read out of the artifact and rendered
+      back, so a change to the lowering pass cannot redden gate 75 - only the
+      template's own 42 lines are pinned. This is stated on the render.
+    * The inert VerifierMemoryLayout slots (quotientTmp, quotientStack, the PCS
+      window scratch, commsMptrBase): no deployed partial renders them; they are
+      set to validate-legal anchors and gate 77 only proves the record passes
+      validate, not that those numbers are the generator's.
+
+    What DID bite is recorded in the package report: 34 source mutations were run
+    across gates 82-86 and gate 77, and the count that failed to redden is the
+    four-item list above. -/
+def inertFields13e_ok : IO Bool :=
+  readDump >>= fun sol =>
+  pure (occ sol "AUTHORIZED_QUOTIENT" == 0 && occ sol "ACC_RHS_MSM_GAS" == 0
+    && occ sol "EXPECTED_QUOTIENT_LENGTH" == 0 && occ sol "trace_u256" == 0
+    && occ sol "gas_checkpoint" == 0 && occ sol "trace_point" == 0
+    && poseidonCtx.expectedQuotientLen == none && poseidonCtx.accRhsMsmGas == 0
+    && poseidonCtx.trace == false && poseidonCtx.gasCheckpoints == false
+    && ! ((renderTraceReturn poseidonCtx).contains "trace_u256(35, success)"))
+
+
+
+/-- GATE 89 (FINDING, and the reason a later pcs_spec need not read the artifact).
+    The eight generated sub-blocks are not opaque: their HEAD lines are the
+    landmarks of the ported emitter. Kzg.lean:1320 `computations` (rust:
+    kzg/mod.rs:930, `Except Fault (List (List String))` - the SAME type as this
+    render's parameter) is already in the tree, and the deployed block sequence is
+    exactly its documented shape: one rotation-walk block, one x1-powers block
+    (present because nbX1Powers > 0), one q_eval_set block per intermediate set
+    (three here), the f_eval Horner, the fused final MSM, and the pairing staging.
+    So the 23,311-byte region this gate reads back out of the artifact is not
+    unported - it is ported, and what is missing is only the deployed
+    ConstraintSystemMeta and Data to feed it. That is the concrete next step for
+    P-SE step P5 (survey.md:741 and :1040 ask for exactly this), and it is why the
+    parameter is a List (List String) and not a String blob. -/
+def pcs_blocksMatchEmitterShape_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let blocks := pcsDeployedComputations sol
+  let firstOf (xs : List String) : String := match xs with | x :: _ => x | [] => ""
+  let nth (i : Nat) : String := match (blocks.drop i).head? with
+    | some b => firstOf b
+    | none => ""
+  pure (blocks.length == 8
+    && nth 0 == "// 3 distinct rotation(s)"
+    && nth 1 == "// pre-compute 33 x1 power(s)"
+    && (blocks.filter fun b => (firstOf b).startsWith "// q_eval_set[").length == 3
+    && nth 5 == "// f_eval via Horner over 3 reversed set(s)"
+    && nth 6 == "// build final_com and v (KZG single-opening proof, fused MSM)"
+    && nth 7 == "// Scale z*pi - vG before the final pairing check")
+
 end VerifierPartialKats
+
+#eval Midfall.Generator.VerifierPartialKats.pcs_blocksMatchEmitterShape_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.p13e_artifactsReachable_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.p13e_noOrphanTemplate_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.constants_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.precompileSmoke_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.constructors_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.traceAndGasHelpers_structuralEmpty_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.pcs_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.traceReturn_bytesExact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.constants_memoryMatches_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.constants_derivedFromArtifact_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.p13e_bytesNowRendered_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.traceReturn_astAgrees_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.pcs_structure_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_constantsValues_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_constantsMemory_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_pcsBlocks_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_traceReturnFlags_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_constructorsArms_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.perturb_truncation13e_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.inertFields13e_ok -- expect true
 
 #eval Midfall.Generator.VerifierPartialKats.artifactsReachable_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.assemblyHelpers_bytesExact_ok -- expect true
