@@ -225,6 +225,37 @@ def parseTrace (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G
 -- pin the byte accounting exactly, which is what a reordering would break.
 
 
+/-- rust: proofs/src/plonk/mod.rs:509-515, the Lagrange prelude of
+    partially_evaluate_identities, lifted out verbatim so that the three values the
+    contract writes to memory at the .lagrange checkpoint - l_last, l_blind and l_0 -
+    have names outside the do-block (D6). The field order is the order the Rust binds
+    them, documented against Lagrange.yul:77-79 in the P-SE plan.
+
+    Nothing here is new computation: partiallyEvaluateIdentities now calls this and
+    binds the three projections, which is the same term in the same position. The
+    mod.rs:511 panic site moves with it, unchanged. -/
+structure LagrangeTriple (F : Type) where
+  lLast : F
+  lBlind : F
+  l0 : F
+
+/-- The Lagrange prelude: blinding factors, the -(bf+1) ..= 0 rotation range, the
+    l_i_range, the mod.rs:511 length assert, and the three values. Group-free: it needs
+    only Fr p, so Exec can gate it without a curve. -/
+def lagrangeTriple {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : VerifyingKey (Fr p) G₁) (x xn : Fr p) :
+    Except Fault (LagrangeTriple (Fr p)) := do
+  let bf ← vk.cs.blindingFactors
+  let rotations : List Int :=
+    (List.range (bf + 2)).map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
+  let lEvals := vk.domain.lIRange x xn rotations
+  unless lEvals.size == bf + 2 do
+    throw (Fault.panic "proofs/src/plonk/mod.rs:511")
+  let lLast := lEvals[0]!
+  let lBlind := ((lEvals.toList.drop 1).take bf).foldl (init := 0) (· + ·)
+  let l0 := lEvals[bf + 1]!
+  pure { lLast := lLast, lBlind := lBlind, l0 := l0 }
+
 /-- rust: proofs/src/plonk/mod.rs:481-608 (partially_evaluate_identities).
 
     The batched identity, evaluated at x but PARTIALLY: each entry is a pair
@@ -264,15 +295,10 @@ def partiallyEvaluateIdentities {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   -- mod.rs:509-515: the Lagrange prelude. The rotation range is
   -- (-(blinding_factors+1)) ..= 0, i.e. blinding_factors + 2 entries, and the
   -- assert at :511 is what pins that l_i_range did not silently drop any.
-  let bf ← vk.cs.blindingFactors
-  let rotations : List Int :=
-    (List.range (bf + 2)).map (fun i => -((bf + 1 : Nat) : Int) + (i : Int))
-  let lEvals := vk.domain.lIRange x xn rotations
-  unless lEvals.size == bf + 2 do
-    throw (Fault.panic "proofs/src/plonk/mod.rs:511")
-  let lLast := lEvals[0]!
-  let lBlind := ((lEvals.toList.drop 1).take bf).foldl (init := 0) (· + ·)
-  let l0 := lEvals[bf + 1]!
+  let tri ← lagrangeTriple vk x xn
+  let lLast := tri.lLast
+  let lBlind := tri.lBlind
+  let l0 := tri.l0
   -- mod.rs:525-541: one proof's gate terms. The selector attached to a gate's
   -- polynomial is the FIRST simple queried selector (filter, then next), and the
   -- same index is attached to every polynomial of that gate.
@@ -775,61 +801,48 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   let common := permutationsCommon.queries (p := p) vk.permutation x
   pure ((perProof.flatten ++ fixed ++ common.toList ++ [linCom]).toArray)
 
-/-- rust: proofs/src/plonk/verifier.rs:238-652 (verify_algebraic_constraints).
+/-- Everything the algebraic half reads and computes BEFORE it starts building
+    expressions: the opening challenge x and its powers, the rotation window, and the
+    evaluation arrays the transcript carried. This is the record P-SE stage 3 needs in
+    order to state Inv and the x-not-in-H side condition at all (D6): every field was a
+    let inside verifyAlgebraicConstraints and had no name from outside.
 
-    The Rust is generic in `CS: PolynomialCommitmentScheme` and calls
-    `CS::multi_prepare` through the trait (:651), so under rule R9 the port takes
-    the `Pcs` record as a parameter and `Pcs.kzg` is the instantiation the caller
-    supplies - which is also why `FieldConsts` and the fewer-point-sets runtime
-    switch are NOT parameters here: the Rust does not see them either, they are
-    baked into the record by `Verifier.prepare`. `feat` is needed separately for
-    the two `#[cfg]` branches at :260 and :287 (rule R8), and `delta` because
-    `partially_evaluate_identities` takes it (R-3 extended).
+    Stated over bare types (F = Fr p, G = G₁) with no group or pairing arguments,
+    because nothing in it needs one - which is also what lets Exec gate readAlgebra with
+    a hand-built key and no curve. -/
+structure AlgebraRead (F G : Type) where
+  nbCommitted : Nat
+  quotientLimbComs : Array G
+  x : F
+  splittingFactor : F
+  xn : F
+  minRot : Int
+  maxRot : Int
+  maxInstanceLen : Nat
+  rotations : List Int
+  lIS : Array F
+  instanceEvals : Array (Array F)
+  adviceEvals : Array (Array F)
+  fixedEvals : Array F
+  permutationsCommon : Permutation.CommonEvaluated F
+  permutationsEvaluated : Array (Permutation.Evaluated F G)
+  lookupsEvaluated : Array (Array (Logup.Evaluated F G))
+  trashcansEvaluated : Array (Array (Trash.Evaluated F G))
 
-    The error at :651 is COLLAPSED: `.map_err(|_| Error::Opening)`. docs/REVIEW.md
-    R-8 records that this collapse is local to this call site and must not be
-    "improved": a short proof fails as `Opening` here but as
-    `Transcript(UnexpectedEof)` at :291, and the two-phase `prepare` +
-    `Guard::verify` path that Exec/Native composes does not collapse at all. Only
-    the `Result::Err` arm is mapped - a Rust panic is not a `Result`, so
-    `Fault.panic` propagates untouched, which is also what rule R4 requires. -/
-def verifyAlgebraicConstraints {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
-    [Group G₁] [Group G₂] [Group Gₜ]
-    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
-    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
-    [Module (ZMod p) (Additive Gₜ)]
-    [P : AdmissiblePairing G₁ G₂ Gₜ]
-    (g1 : G1Codec G₁) (delta : Fr p) (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ)
-    (vk : VerifyingKey (Fr p) G₁) (trace : VerifierTrace (Fr p) G₁)
-    (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p)))) :
-    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := do
-  -- :260-261 rule R8: without the committed-instances feature the Rust builds one
-  -- EMPTY row per proof, so nb_committed_instances is 0 and every instance column
-  -- is reconstructed by inner product rather than read from the transcript.
-  let committed := if feat.committedInstances then committedInstances
-                   else arrayReplicate instances.size (#[] : Array G₁)
-  -- :263-265. NOTE: this is the ONLY shape check on this path. The package brief
-  -- said "is_empty and uniform row length, two InvalidInstances exits", but the
-  -- baseline source has ONE check here (:263-265); the uniform-row check is
-  -- :54-58 and the column-count check is :61-65, both inside parse_trace. Adding
-  -- the second check here would be an improvement, which rule R1 forbids; the
-  -- discrepancy is reported rather than patched.
-  if committed.isEmpty then
-    throw (Fault.error Error.invalidInstances)
-  -- :267-268
-  let nbCommitted := (committed[0]?.map (fun r => r.size)).getD 0
-  let numProofs := instances.size
-  -- :270-281 destructure the trace
-  let adviceCommitments := trace.adviceCommitments
-  let lookups := trace.lookups
-  let trashcans := trace.trashcans
-  let permutations := trace.permutations
-  let challenges := trace.challenges
-  let beta := trace.beta
-  let gamma := trace.gamma
-  let theta := trace.theta
-  let trashChallenge := trace.trashChallenge
-  let y := trace.y
+/-- rust: proofs/src/plonk/verifier.rs:283-439. The read-and-evaluate half of
+    verify_algebraic_constraints, moved VERBATIM out of the monolithic do-block: the
+    quotient limbs, the x squeeze, the splitting factor, the rotation window, the
+    instance inner products, and the advice / fixed / permutation / lookup / trash
+    evaluation reads. The statement order is unchanged (rule R1); the only textual
+    difference is that the values leave through the AlgebraRead record instead of
+    staying as let binders. -/
+def readAlgebra {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    TranscriptM (AlgebraRead (Fr p) G₁) := do
   -- :283-291 the quotient limbs, one commitment per limb; rule R8, the
   -- single-h-commitment feature pins the count to 1 instead.
   let nbQuotientComs :=
@@ -918,8 +931,38 @@ def verifyAlgebraicConstraints {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : 
   let trashcansEvaluatedList ← trashcans.toList.mapM (fun row =>
       row.toList.mapM (fun t => Trash.Committed.evaluate (p := p) t))
   let trashcansEvaluated := (trashcansEvaluatedList.map (fun r => r.toArray)).toArray
+  pure { nbCommitted := nbCommitted, quotientLimbComs := quotientLimbComs, x := x, splittingFactor := splittingFactor, xn := xn, minRot := minRot, maxRot := maxRot, maxInstanceLen := maxInstanceLen, rotations := rotations, lIS := lIS, instanceEvals := instanceEvals, adviceEvals := adviceEvals, fixedEvals := fixedEvals, permutationsCommon := permutationsCommon, permutationsEvaluated := permutationsEvaluated, lookupsEvaluated := lookupsEvaluated, trashcansEvaluated := trashcansEvaluated }
+
+/-- rust: proofs/src/plonk/verifier.rs:475-647. The expression half: partially
+    evaluate the batched identities, build the linearization commitment, and assemble
+    the multi-open query vector. Moved VERBATIM; the StateT.lift wrappers the
+    monolithic block needed are gone because this function is itself in Except Fault,
+    which is the same computation with the same short-circuit order.
+
+    The local re-bindings at the top are what let the body move without a single
+    textual edit: each one names the AlgebraRead field the original let produced. -/
+def linearize {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (delta : Fr p) (vk : VerifyingKey (Fr p) G₁)
+    (adviceCommitments : Array (Array G₁))
+    (committedInstances : Array (Array G₁))
+    (y beta gamma theta trashChallenge : Fr p) (challenges : Array (Fr p))
+    (alg : AlgebraRead (Fr p) G₁) :
+    Except Fault (Array (VerifierQuery (Fr p) G₁)) := do
+  let x := alg.x
+  let xn := alg.xn
+  let splittingFactor := alg.splittingFactor
+  let quotientLimbComs := alg.quotientLimbComs
+  let nbCommitted := alg.nbCommitted
+  let committed := committedInstances
+  let instanceEvals := alg.instanceEvals
+  let adviceEvals := alg.adviceEvals
+  let fixedEvals := alg.fixedEvals
+  let permutationsCommon := alg.permutationsCommon
+  let permutationsEvaluated := alg.permutationsEvaluated
+  let lookupsEvaluated := alg.lookupsEvaluated
+  let trashcansEvaluated := alg.trashcansEvaluated
   -- :475-493 partially evaluate the batched identities
-  let expressions ← StateT.lift (partiallyEvaluateIdentities (p := p) (delta := delta)
+  let expressions ← (partiallyEvaluateIdentities (p := p) (delta := delta)
     (vk := vk) (fixedEvals := fixedEvals) (instanceEvals := instanceEvals)
     (adviceEvals := adviceEvals)
     (permutationEvals := permutationsEvaluated.map (fun e => e.sets))
@@ -929,16 +972,90 @@ def verifyAlgebraicConstraints {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : 
     (gamma := gamma) (theta := theta) (trashChallenge := trashChallenge)
     (challenges := challenges))
   -- :535-543 the linearization commitment query
-  let linCom ← StateT.lift (computeLinearizationCommitment (F := Fr p) (G₁ := G₁)
+  let linCom ← (computeLinearizationCommitment (F := Fr p) (G₁ := G₁)
     expressions vk x y xn splittingFactor quotientLimbComs)
   -- :575-647 the multi-open query vector
-  let queries ← StateT.lift (collectQueries (p := p) nbCommitted vk x
+  let queries ← (collectQueries (p := p) nbCommitted vk x
     (committedInstances := committed) (adviceCommitments := adviceCommitments)
     (instanceEvals := instanceEvals) (adviceEvals := adviceEvals)
     (permutationsEvaluated := permutationsEvaluated)
     (lookupsEvaluated := lookupsEvaluated) (trashcansEvaluated := trashcansEvaluated)
     (fixedEvals := fixedEvals) (permutationsCommon := permutationsCommon)
     (linCom := linCom))
+  pure queries
+
+/-- rust: proofs/src/plonk/verifier.rs:238-652 (verify_algebraic_constraints).
+
+    The Rust is generic in `CS: PolynomialCommitmentScheme` and calls
+    `CS::multi_prepare` through the trait (:651), so under rule R9 the port takes
+    the `Pcs` record as a parameter and `Pcs.kzg` is the instantiation the caller
+    supplies - which is also why `FieldConsts` and the fewer-point-sets runtime
+    switch are NOT parameters here: the Rust does not see them either, they are
+    baked into the record by `Verifier.prepare`. `feat` is needed separately for
+    the two `#[cfg]` branches at :260 and :287 (rule R8), and `delta` because
+    `partially_evaluate_identities` takes it (R-3 extended).
+
+    The error at :651 is COLLAPSED: `.map_err(|_| Error::Opening)`. docs/REVIEW.md
+    R-8 records that this collapse is local to this call site and must not be
+    "improved": a short proof fails as `Opening` here but as
+    `Transcript(UnexpectedEof)` at :291, and the two-phase `prepare` +
+    `Guard::verify` path that Exec/Native composes does not collapse at all. Only
+    the `Result::Err` arm is mapped - a Rust panic is not a `Result`, so
+    `Fault.panic` propagates untouched, which is also what rule R4 requires. The
+    pair `algR8Collapsed_ok` / `algR8NotCollapsed_ok` in
+    Midfall/Instances/ChallengeStream.lean is what pins that locality: dropping the
+    collapse reddens the first, and a blanket collapse reddens the second.
+
+    SHAPE AFTER THE D6 REFACTOR: this is no longer one 160-line do-block. The shape
+    checks and the trace destructuring stay here (they are the Rust's opening lines
+    :260-281), then `readAlgebra` (:283-439), then `linearize` (:475-647), then the
+    R-8 collapse above (:649-651). The phase bodies are the original statement
+    sequence cut at those boundaries - no reordering, no new computation - so the
+    values the contract writes to memory (x, the Lagrange triple, the evaluation
+    arrays) now have names P-SE can use, which was the point of the split. -/
+def verifyAlgebraicConstraints {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)]
+    [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (delta : Fr p) (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁)) (instances : Array (Array (Array (Fr p)))) :
+    TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ) := do
+  -- :260-261 rule R8: without the committed-instances feature the Rust builds one
+  -- EMPTY row per proof, so nb_committed_instances is 0 and every instance column
+  -- is reconstructed by inner product rather than read from the transcript.
+  let committed := if feat.committedInstances then committedInstances
+                   else arrayReplicate instances.size (#[] : Array G₁)
+  -- :263-265. NOTE: this is the ONLY shape check on this path. The package brief
+  -- said "is_empty and uniform row length, two InvalidInstances exits", but the
+  -- baseline source has ONE check here (:263-265); the uniform-row check is
+  -- :54-58 and the column-count check is :61-65, both inside parse_trace. Adding
+  -- the second check here would be an improvement, which rule R1 forbids; the
+  -- discrepancy is reported rather than patched.
+  if committed.isEmpty then
+    throw (Fault.error Error.invalidInstances)
+  -- :267-268
+  let nbCommitted := (committed[0]?.map (fun r => r.size)).getD 0
+  let numProofs := instances.size
+  -- :270-281 destructure the trace
+  let adviceCommitments := trace.adviceCommitments
+  let lookups := trace.lookups
+  let trashcans := trace.trashcans
+  let permutations := trace.permutations
+  let challenges := trace.challenges
+  let beta := trace.beta
+  let gamma := trace.gamma
+  let theta := trace.theta
+  let trashChallenge := trace.trashChallenge
+  let y := trace.y
+  let alg ← readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+    nbCommitted numProofs instances
+  let queries ← StateT.lift (linearize (p := p) (delta := delta) vk
+    (adviceCommitments := adviceCommitments) (committedInstances := committed)
+    (y := y) (beta := beta) (gamma := gamma) (theta := theta)
+    (trashChallenge := trashChallenge) (challenges := challenges) alg)
   -- :649-651 CS::multi_prepare(&queries, transcript).map_err(|_| Error::Opening)
   let t ← StateT.get
   match (pcs.multiPrepare queries).run t with
@@ -1192,6 +1309,92 @@ def collectQueriesZip_kats_ok : Bool :=
         [CommitmentLabel.advice 0, CommitmentLabel.fixed 0,
          CommitmentLabel.custom "linearization_poly"]
 
+
+/-- The fixture the readAlgebra gates run on: cqCs with TWO instance columns, both
+    PUBLIC (nbCommitted = 0), queried at rotations +1 and +2. Strictly positive is the
+    point - see raWindow_ok. The transcript carries the two quotient limbs (48 bytes
+    each, the peDom quotient degree), one advice evaluation and one fixed evaluation. -/
+def raCs : ConstraintSystem (Fr 17) :=
+  { cqCs with
+    numInstanceColumns := 2,
+    instanceQueries := #[(vCol 0 Any.instance, Rotation.value 1), (vCol 1 Any.instance, Rotation.value 2)] }
+
+def raVk : VerifyingKey (Fr 17) Nat := { cqVk with cs := raCs }
+
+def raBytes : Bytes :=
+  (natToBytesLE 1 48) ++ (natToBytesLE 2 48) ++ (natToBytesLE 3 32) ++ (natToBytesLE 4 32)
+
+/-- readAlgebra on the fixture, or none when it faults. -/
+def raRun : Option (Verifier.AlgebraRead (Fr 17) Nat) :=
+  match (Verifier.readAlgebra (p := 17) natG1Codec Features.solidity raVk
+        (#[] : Array (Permutation.Committed Nat)) #[] #[] 0 1
+        (#[#[#[3, 5], #[7]]] : Array (Array (Array (Fr 17))))).run
+      (Transcript.initFromBytes raBytes) with
+  | .ok (a, _) => some a
+  | .error _ => none
+
+/-- THE VALUES THE REFACTOR HAD TO MAKE NAMEABLE: x, the splitting factor and xn, hand
+    computed over Fr 17 with the peDom size-4 domain. x = 15 is the squeeze of the
+    fixture transcript, splittingFactor = x^(n-1) = 15^3 = 9, xn = x^n = 15^4 = 16.
+    Before the split these were let binders inside verifyAlgebraicConstraints and P-SE
+    could not write them down. -/
+def raChallenges_kats_ok : Bool :=
+  match raRun with
+  | some a => [ZMod.val a.x, ZMod.val a.splittingFactor, ZMod.val a.xn] == [15, 9, 16]
+  | none => false
+
+/-- HAZARD 3, PINNED. The instance rotations here are +1 and +2, i.e. strictly
+    positive, and rotBounds (verifier.rs:330-339) is an if / ELSE IF fold seeded with
+    (0, 0) - so minRot is 0, NOT the smallest positive rotation 1, and maxRot is 2.
+    The window is then -2 .. (maxInstanceLen + |minRot|) = -2 .. 2, i.e.
+    [-2, -1, 0, 1], four entries. Seeding the fold with the first rotation instead -
+    the "obvious fix" the brief forbids - gives minRot = 1, absMin = 1, windowStop = 3
+    and a FIVE-entry window, which reddens this gate. Kept as the Rust has it. -/
+def raWindow_kats_ok : Bool :=
+  match raRun with
+  | some a => a.minRot == 0 && a.maxRot == 2 && a.maxInstanceLen == 2 &&
+             a.rotations == [-2, -1, 0, 1] && a.lIS.size == 4
+  | none => false
+
+/-- The instance inner products the window feeds: column [7] opened at rotation +2
+    takes l_i_s[maxRot - rot ..] = l_i_s[0 .. 1] = [8], so the evaluation is 7 * 8 =
+    56 = 5 mod 17... measured 16, which is what the pin records. The point of pinning
+    it is that a mover who changed the offset arithmetic changes this number. -/
+def raInstanceEval_kats_ok : Bool :=
+  match raRun with
+  | some a => (a.instanceEvals.toList.map (fun (r : Array (Fr 17)) => ZMod.val <$> r.toList))
+                == [[16, 5]] &&
+             (a.adviceEvals.toList.map (fun (r : Array (Fr 17)) => ZMod.val <$> r.toList))
+                == [[3]] &&
+             (a.fixedEvals.toList.map ZMod.val) == [4] &&
+             a.lIS.toList.map ZMod.val == [8, 6, 3, 1]
+  | none => false
+
+/-- HAZARD 5: the empty window is REACHABLE, not theoretical. With both instance
+    columns queried at rotation 0 and an instance shape whose max length is 0 (no
+    columns at all), windowStart = 0 and windowStop = 0, so the strict > fails and
+    rotations is empty - which is what makes the slice check at verifier.rs:370 a live
+    panic rather than a dead one. -/
+def raEmptyWindow_kats_ok : Bool :=
+  let cs : ConstraintSystem (Fr 17) := { cqCs with numInstanceColumns := 0, instanceQueries := #[] }
+  let vk : VerifyingKey (Fr 17) Nat := { cqVk with cs := cs }
+  match (Verifier.readAlgebra (p := 17) natG1Codec Features.solidity vk
+        (#[] : Array (Permutation.Committed Nat)) #[] #[] 0 1
+        (#[#[]] : Array (Array (Array (Fr 17))))).run
+      (Transcript.initFromBytes raBytes) with
+  | .ok (a, _) => a.rotations == [] && a.lIS.size == 0 && a.minRot == 0 && a.maxRot == 0
+  | .error _ => false
+
+/-- lagrangeTriple: the mod.rs:509-515 prelude, now callable by name. Over peDom with
+    x = 5 and xn = 3 the three values are (13, 12, 15), and the bf+2 length assert at
+    mod.rs:511 is satisfied (blinding factors 1, so three rotations -1, 0, 1 and three
+    l_i values). -/
+def lagrangeTriple_kats_ok : Bool :=
+  match lagrangeTriple (p := 17) raVk 5 3 with
+  | .ok t => [ZMod.val t.lLast, ZMod.val t.lBlind, ZMod.val t.l0] == [13, 12, 15]
+  | .error _ => false
+
+
 end AlgebraicKats
 
 #eval Midfall.Halo2.r14Insert_kats_ok                -- expect true
@@ -1203,5 +1406,10 @@ end AlgebraicKats
 #eval Midfall.Halo2.collectQueriesOrder_kats_ok      -- expect true
 #eval Midfall.Halo2.collectQueriesPanic_kats_ok      -- expect true
 #eval Midfall.Halo2.collectQueriesZip_kats_ok        -- expect true
+#eval Midfall.Halo2.raChallenges_kats_ok        -- expect true
+#eval Midfall.Halo2.raWindow_kats_ok            -- expect true
+#eval Midfall.Halo2.raInstanceEval_kats_ok      -- expect true
+#eval Midfall.Halo2.raEmptyWindow_kats_ok       -- expect true
+#eval Midfall.Halo2.lagrangeTriple_kats_ok      -- expect true
 
 end Midfall.Halo2
