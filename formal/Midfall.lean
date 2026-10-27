@@ -36,6 +36,7 @@ import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Templates
 import Midfall.Generator.VerifierPartials
 import Midfall.Generator.Contracts
+import Midfall.Generator.Artifacts
 import Midfall.Generator.Protocol
 import Midfall.Generator.Encoding
 import Midfall.Generator.Abi
@@ -56,6 +57,7 @@ import Midfall.Generator.Evm
 import Midfall.Generator.Calldata
 import Midfall.Generator.Builder
 import Midfall.Instances.Bls12_381
+import Midfall.Instances.DeployedProfile
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Lowering.SemanticEquivalence
