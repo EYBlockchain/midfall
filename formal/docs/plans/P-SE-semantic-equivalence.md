@@ -299,9 +299,33 @@ built module and must be `#check`ed first.
 - `docs/REVIEW.md`: R-51 logup soundness twin; R-52 `fixedBases` "-G" identity; R-53 frozen trio (findings 1-3); R-54 `repack_spec` iff false + `.pointPair` round trip false; R-55 attack findings (BUILD_ID getter, callvalue, immutable link, g1_identity window, WorldLocal).
 - `docs/design.md`: D-P21 (statement architecture D1/D2), record D3/D4/D5/D7/D8/D11 readings as adopted-pending-sign-off.
 - `docs/plans/README.md`: standing note on `checks.sh` sort fix and the Vk transitive-import rule.
-- Commit `Lowering/SemanticEquivalence.lean` (currently untracked, unbuilt).
-
 ## Staging (each stage ends with `lake build` + `bash scripts/checks.sh` green)
+
+> **Status, round 30.** Stage 0 is partly done: `Lowering/SemanticEquivalence.lean` is
+> committed (`8e80ca1`) and imported, and already carries one real proved theorem
+> (`contractRefAccepts_iff_verifyMsgs`) - the first genuine proof in the Lowering layer.
+> The two script edits are done (`fix(formal): checks.sh sorry sort ...`): the
+> `checks.sh:14` numeric-sort fix and the `gen_sorry.sh` owner arms for
+> `Yul/`, `Lowering/`, `Assumptions/`. **The D6 Exec refactor is NOT done** and blocks
+> stage 3, so P4 in the proof plan cannot start until it lands.
+>
+> **D6 scope as agreed (recorded here so it is not re-litigated by whoever executes it):**
+> one real refactor plus nothing else. `Exec/Verifier.lean`'s `verifyAlgebraicConstraints`
+> splits into shape checks -> `readAlgebra` (returning an `AlgebraRead` record) ->
+> `lagrangeTriple` -> `linearize` -> the existing R-8 error collapse; `Exec/Kzg/
+> MultiOpen.lean`'s `multiPrepare` splits into `phaseA`/`phaseB`/`phaseC`. Bodies move
+> verbatim, statement order unchanged (R1), ~200 lines relocated, no new computation.
+> The gate is that every existing `#eval ... -- expect` token in `Verifier.lean`,
+> `MultiOpen.lean` and `Native.lean` stays identical and the conformance replay is
+> unchanged; no theorem is needed because the old functions become the composition by
+> definition. **Deliberately not refactored:** `Statements.lean` (frozen - the three
+> findings about it are reported for a re-pin, not edited), `Lowering/Types.lean`
+> placeholders (real versions live in `Surface.lean` under new names so the frozen file
+> keeps elaborating), `vendor/yul-semantics` (pinned fork; the run layer goes under
+> `Midfall/Yul/`), and `Midfall.Halo2.fixedBases` (a real defect - "-G" is the identity -
+> fixed in a separate Exec patch with its own KAT; statements take the table as a
+> parameter meanwhile).
+
 
 0. Baseline: `lake build` whole project; `#check @Midfall.Halo2.decodeAcc`; commit `SemanticEquivalence.lean`; CI script edits (checks.sh sort, gen_sorry arms).
 1. `Yul/Contracts.lean`, `Yul/Bridge.lean`, `Assumptions/{Codec,Eip2537}.lean`.
