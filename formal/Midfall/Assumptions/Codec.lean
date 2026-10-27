@@ -81,6 +81,69 @@ structure G1CodecLaws {G₁ : Type} [Group G₁] (c : G1Codec G₁) : Prop where
   compressedWidth : ∀ Q : G₁, (c.toCompressed Q).size = g1CompressedWidth
   eipWidth : ∀ Q : G₁, (c.toEip Q).size = g1EipWidth
 
+/-! ### Byte lemmas (design1 M5-2)
+
+design1 M5-2 assigns this stage the byte lemmas the VkDigest, Calldata and
+Accumulator statements share. They are stated here, in the assumption layer,
+because this is the first file that needs them and because their natural home -
+Midfall/Common/Bytes.lean - is the P-05 row's file, which stage 2 may not edit
+(the standing rule against touching another package's Lean file). Only the half
+that lands is here; the reason the other half does not is recorded at
+frOfRepr_frToRepr and again at Lowering/VkDigest.lean. -/
+
+/-- The digits natToBytesLowFirst emits, least significant first, as a list. This
+    is the shape the emitter's accumulator builds, and naming it is what makes the
+    induction go through without reasoning about ByteArray internals. -/
+def lowDigits : Nat → Nat → List UInt8
+  | _, 0 => []
+  | n, k+1 => Nat.toUInt8 (n % 256) :: lowDigits (n / 256) k
+
+/-- The emitter's accumulator step, as a list equation. -/
+theorem lowDigits_go : ∀ (len : Nat) (n : Nat) (acc : Bytes),
+    (Midfall.natToBytesLowFirst.go n len acc).data.toList =
+      acc.data.toList ++ lowDigits n len := by
+  intro len
+  induction len with
+  | zero => intro n acc; simp [Midfall.natToBytesLowFirst.go, lowDigits]
+  | succ k ih =>
+      intro n acc
+      show (Midfall.natToBytesLowFirst.go (n/256) k
+            (acc.push (Nat.toUInt8 (n % 256)))).data.toList = _
+      rw [ih (n := n/256) (acc := acc.push (Nat.toUInt8 (n % 256)))]
+      have hpush : (acc.push (Nat.toUInt8 (n % 256))).data.toList =
+          acc.data.toList ++ [Nat.toUInt8 (n % 256)] := by
+        cases acc with
+        | mk arr => simp [ByteArray.push, Array.toList_push]
+      rw [hpush, List.append_assoc]
+      rfl
+
+/-- The emitter always produces exactly len bytes - which is the half of
+    frOfRepr_frToRepr that is about the SHAPE of a repr rather than its value, and
+    the half that makes feToU256's length guard unreachable for frToRepr. -/
+theorem natToBytesLowFirst_size (n len : Nat) :
+    (natToBytesLowFirst n len).size = len := by
+  show (Midfall.natToBytesLowFirst.go n len Bytes.empty).size = len
+  have h : ∀ (len : Nat) (n : Nat) (acc : Bytes),
+      (Midfall.natToBytesLowFirst.go n len acc).size = acc.size + len := by
+    intro len
+    induction len with
+    | zero => intro n acc; simp [Midfall.natToBytesLowFirst.go]
+    | succ k ih =>
+        intro n acc
+        show (Midfall.natToBytesLowFirst.go (n/256) k
+              (acc.push (Nat.toUInt8 (n % 256)))).size = _
+        rw [ih (n := n/256) (acc := acc.push (Nat.toUInt8 (n % 256)))]
+        rw [ByteArray.size_push]
+        omega
+  rw [h]
+  have h0 : Bytes.empty.size = 0 := rfl
+  omega
+
+/-- The same fact for the two public spellings, so a caller never has to know that
+    natToBytesLE is natToBytesLowFirst. -/
+theorem frToRepr_size {p : ℕ} [Fact (Nat.Prime p)] (x : Fr p) :
+    (frToRepr x).size = 32 := natToBytesLowFirst_size x.val 32
+
 /-! ### The scalar repr round trip -/
 
 /-- A canonical scalar round-trips through its 32-byte little-endian repr
@@ -91,10 +154,18 @@ structure G1CodecLaws {G₁ : Type} [Group G₁] (c : G1Codec G₁) : Prop where
     encoder-first direction) while dropping it from verifyNative_iff_msgs_codec,
     which is decoder-first and does not need it.
 
-    PROOF OBLIGATION, registered in SORRY.md: the two byte lemmas it needs
-    (natToBytesLowFirst_size and bytesToNatLE_natToBytesLE for n < 256^len) are
-    listed as stage-2 work in design1 M5-2, so this is the first file that wants
-    them, not the first that owns them. -/
+    PROOF OBLIGATION, registered in SORRY.md. design1 M5-2 assigns the two byte
+    lemmas it needs to stage 2. The SHAPE half landed above (natToBytesLowFirst_size,
+    frToRepr_size): the repr is always 32 bytes, so frOfRepr?'s width test passes.
+    The VALUE half - bytesToNatLE (natToBytesLE n len) = n % 256^len - did not, and
+    the reason is mechanical: Midfall.bytesToNatBE (Common/Bytes.lean:92) folds with
+    Array.foldl, which in Lean 4.35 is the index-loop over the opaque Array
+    representation and is not definitionally List.foldl on toList, and core exports
+    no Array.foldl_eq_foldl_data. Closing it needs either an Array-index induction
+    over loop bounds or a lemma inside Common/Bytes.lean, which is the P-05 row's
+    file and outside this package's edit rights. The statement is unchanged and the
+    gate frReprKats_ok below computes the round trip at p = 17, so the claim is
+    checked where it can be checked. -/
 theorem frOfRepr_frToRepr {p : ℕ} [Fact (Nat.Prime p)] (hp : p ≤ 2 ^ 256) (x : Fr p) :
     frOfRepr? (p := p) (frToRepr x) = some x := by
   sorry

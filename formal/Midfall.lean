@@ -60,6 +60,10 @@ import Midfall.Instances.Bls12_381
 import Midfall.Instances.DeployedProfile
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
+import Midfall.Lowering.AccEncoding
+import Midfall.Lowering.Accumulator
+import Midfall.Lowering.VkDigest
+import Midfall.Lowering.Calldata
 import Midfall.Lowering.SemanticEquivalence
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
