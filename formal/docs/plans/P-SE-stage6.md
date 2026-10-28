@@ -78,3 +78,33 @@ Do NOT git add or commit.
 - **Required finding**: per field, one of {copied verbatim, defined new (name it),
   deferred with blocker}. Plus whether `lowering_equivalence` can be STATED at all today,
   and if not, precisely what the vendored dialect must gain.
+## UPDATE - P-IR landed (`f40424b`), which changes your scope
+
+**`RunContractIR` is now INHABITED.** `Midfall/Yul/ImportSolcIR.lean` imports the whole
+solc `ir` object of both deployed sources as `yulObject%` quotations (no `sorryAx`), and
+`Midfall/Instances/ImportedIR.lean` proves a committed run for **every** `ExternalCalls`
+and **every** `ExternalGas`, non-vacuity shown three ways. The statement forms are already
+type-checked there as `example : Prop` carrying attack.md's `WorldLocal` hypothesis.
+**So you may state `ir_refines` and `lowering_equivalence` without shipping a vacuously
+satisfiable theorem** - that was the whole point of P-VEND and P-IR.
+
+Two decisions are taken; do not relitigate: **`ir` is pinned, not `irOptimized`** (the
+`memoryguard(128)` vs `0x08e0` divergence is a stated consequence of the trusted
+Yul-optimizer hop, and switching artifacts is a build failure); and **alpha-renames happen
+at emit time** with the `solc_` prefix, injectivity gated by an independent Lean lexer.
+
+**`stmtsBeq` DOES exist** (`vendor/.../Ast.lean:147`) - the earlier claim was my own
+truncated grep - so `render_eq_print`'s structural conjunct is writable. The genuinely
+absent names in section Q are now: `EvaluatorFrame`, `FrameWellFormed`, `S.plan.qext`,
+`perIdentityValues`, `segmentsOf`, `IsAlignedSubslice`, `List.Sorted`.
+
+**What you cannot prove and must not promise:** a Surface whose shell is the real
+dispatcher (the fixture's `blk`/`shell` are placeholders, so `shell_unfolds` has nothing
+to unfold); `irCheck` as alpha-equivalence modulo constant substitution (nameable now -
+the `setimmutable` and two `loadimmutable` sites are in the import and gated - but not
+checked); and the stage-1 sorries `dialect_deterministic`, `noWritersFuel`,
+`Run_worldEq_of_noWriters`, `Evaluator.rel_worldLocal`, `honestCalls_functional`.
+**Stating is the deliverable; proving is M7/M8.** Say per field which you are doing. Also
+do not promise `qvm_yul_refines` (needs `QuotientNumeratorBlock.yul` as a `Block Op` - P-13
+gave text, not ASTs), the semantic layer of `points_subgroup_checked`, `readScheduleAgrees`,
+or `direct_correct` (M10).
