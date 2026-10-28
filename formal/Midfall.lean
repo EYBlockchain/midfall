@@ -73,9 +73,11 @@ import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
+import Midfall.Lowering.Obligations
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
 import Midfall.Instances.ImportedIR
+import Midfall.Instances.ObligationsGates
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals

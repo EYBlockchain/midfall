@@ -36,6 +36,10 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/Calldata.lean | 444 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 466 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 483 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 381 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 392 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 427 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 445 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 398 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 418 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 439 | `sorry` | P-SE: semantic equivalence obligations |
