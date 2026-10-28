@@ -44,11 +44,16 @@ about. The string↔`Op` correspondence (`opName`, `parse`) is confined to the f
     `JUMP*`, `PC`) — Yul has no stack; these are bytecode-level and belong to the EVM repo and the
     compiler backend;
   - `pc()` (disallowed in modern Yul) and `difficulty()` (pre-Paris alias of `prevrandao`);
-  - solc extensions (`verbatim*`, `memoryguard`, `linkersymbol`, `setimmutable`). `linkersymbol`
-    and `setimmutable` are *eliminable* at compile time — a link map turns the former into a
-    literal address, and the latter into ordinary `mstore`s at the placeholder offsets a compiler
-    already knows — so neither needs an operation here. `loadimmutable` is not eliminable (its
-    value is only fixed once the deploying constructor has run) and is modeled below.
+  - solc extensions (`verbatim*`, `linkersymbol`). `linkersymbol` is *eliminable* at compile
+    time — a link map turns it into a literal address — so it needs no operation here.
+  - **MIDFALL FORK — no longer absent**: `memoryguard` and `setimmutable` were added (fork note in
+    `YulSemantics.Dialect.EVMOp`). Upstream's ground for excluding them was that both are eliminable
+    at compile time, and that remains true of the *bytecode*; it is not true of the artifact Midfall
+    imports. solc's textual via-IR keeps `memoryguard` in the runtime object's first statement and
+    `setimmutable` in the creation object even after optimization, so importing that artifact
+    verbatim (design decision D-P15) requires both names to resolve, or every run of the imported
+    program is stuck. Their rules are the trivial ones — the identity, and a write into the
+    immutable map that already exists — so no layout choice moves to the semantics side.
 
 ## Object data (`dataoffset`/`datasize`/`datacopy`)
 
@@ -70,10 +75,15 @@ it was fixed before this frame started and is baked into the bytecode. So it is 
 modeling caveat about name aliasing. A compiler must install the map consistently with the bytes it
 emitted — the same obligation `Layout.Consistent` states for data segments.
 
-The companion `setimmutable(base, name, value)` is deliberately *not* an operation: it writes into
-the in-memory copy of the deployed code that the constructor is about to return, at offsets the
-compiler chose, so it is fully expressible as ordinary `mstore`s once those offsets are known.
-Keeping it out of `Op` keeps the code-layout choice on the compiler's side of the boundary.
+The companion `setimmutable(base, name, value)` writes into the in-memory copy of the deployed code
+that the constructor is about to return, at offsets the compiler chose. Upstream kept it out of
+`Op` on the ground that it is therefore expressible as ordinary `mstore`s once those offsets are
+known; **the Midfall fork models it** (fork note in `YulSemantics.Dialect.EVMOp`) because the via-IR
+artifact of record calls it by name. Its rule is the dual of the read above rather than a memory
+patch: it updates `env.immutable` at the name's string-literal encoding with the supplied value and
+ignores `base` — the same layout-abstracted choice that `dataoffset`/`datasize`/`loadimmutable`
+already make, in the same direction. A frame that runs `setimmutable(k, v)` and then
+`loadimmutable(k)` reads back `v`; the compiler still owns the byte offsets the real patch uses.
 
 Spec abstractions (documented): `blockhash`'s 256-block window and `blobhash`'s index bound are
 abstracted into the environment maps. Gas is not modeled anywhere (`DESIGN.md` §1).
@@ -185,7 +195,9 @@ structure ExecEnv where
   immutable's value is fixed while the deploying constructor runs and is then baked into the
   deployed code, so from the deployed frame's point of view it is a constant supplied with the
   code. The compiler installs it consistently with the bytes it emitted, exactly as it does for
-  `dataOffset`/`dataSize`. -/
+  `dataOffset`/`dataSize`. It is the one map the *deployed* frame reads and the *constructor* frame
+  writes: `setimmutable` (Midfall fork) updates exactly this field, so a constructor that sets an
+  immutable and the deployed frame that loads it agree by construction. -/
   immutable     : U256 → U256 := fun _ => 0
   deriving Inhabited
 
@@ -751,6 +763,17 @@ def stepOp (op : Op) (args : List U256) (st : EvmState) : Option (BuiltinResult 
             memory := copyWithin st.memory dst.toNat src.toNat n.toNat })
       | _ => none
   | .msize      => rd0 (memorySize st) args st
+  -- `memoryguard(n)` is solc's compile-time free-memory-pointer reservation. The Solidity docs
+  -- specify it as "equivalent to the identity function": the argument is the reservation the
+  -- optimizer is allowed to use for stack spill, and the emitted prologue is
+  -- `mstore(64, memoryguard(n))`, i.e. the free pointer is set to `n`. Measured on the pinned
+  -- compiler: in the pre-optimisation `ir` artifact the argument is a lower bound (128 for the
+  -- deployed verifier runtime), and the optimizer may raise it - in `irOptimized` and in the
+  -- deployed bytes the stored value equals the argument exactly (0x08e0 there, PUSH2 0x08e0
+  -- PUSH1 0x40 MSTORE). So the identity reading is the semantics of the artifact, and the
+  -- reservation itself is a layout fact the compiler owns, not state this semantics tracks.
+  -- It is a *pure* operation: no state is read or written, and it never halts.
+  | .memoryguard => un (fun a => a) args st
   -- storage
   | .sload      => match args with | [k]    => some (.ok [st.storage k] st) | _ => none
   | .sstore     => match args with
@@ -791,6 +814,20 @@ def stepOp (op : Op) (args : List U256) (st : EvmState) : Option (BuiltinResult 
   | .datasize   => rd1 (fun k => st.env.dataSize k) args st
   | .dataoffset => rd1 (fun k => st.env.dataOffset k) args st
   | .loadimmutable => rd1 (fun k => st.env.immutable k) args st
+  -- `setimmutable(base, name, value)` is the constructor-side dual of `loadimmutable`: solc emits
+  -- it in *creation* code, where it patches the in-memory copy of the deployed code at the
+  -- placeholder offset the compiler chose for `name`, just before the `return` of those bytes.
+  -- This semantics keeps code layout on the compiler's side of the boundary, exactly as it does for
+  -- `dataoffset`/`datasize`/`loadimmutable`: the observable content of an immutable is the word
+  -- `loadimmutable(name)` returns, so the write goes to `env.immutable`, keyed like the read by the
+  -- name's string-literal encoding. `base` - the memory offset of the code copy - is a layout
+  -- detail this model does not interpret; a compiler must install the map consistently with the
+  -- bytes it emitted, the same obligation `Layout.Consistent` states for data segments. Wrong
+  -- arity is stuck, like every other built-in.
+  | .setimmutable => match args with
+      | [_base, k, v] => some (.ok []
+          { st with env := { st.env with immutable := upd st.env.immutable k v } })
+      | _ => none
   | .datacopy   => match args with
       | [dst, off, n] =>
           some (.ok [] { touchMemory st dst.toNat n.toNat with

@@ -80,6 +80,7 @@ import Midfall.Security.Challenges
 import Midfall.Yul.Externals
 import Midfall.Yul.Contracts
 import Midfall.Yul.Bridge
+import Midfall.Yul.Builtins
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements

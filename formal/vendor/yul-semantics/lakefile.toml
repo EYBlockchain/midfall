@@ -9,7 +9,15 @@ defaultTargets = ["YulSemantics"]
 #     unchanged: no module imports Batteries, so the bump is mechanical);
 #   * the Batteries lint driver and the placeholder exe are dropped, which
 #     removes the Batteries rev conflict with mathlib;
-#   * warningAsError is left off while the v4.35.0 linter surface settles.
+#   * warningAsError is left off while the v4.35.0 linter surface settles;
+#   * the EVM dialect gained two built-ins, `memoryguard` and `setimmutable`, so that
+#     solc's textual via-IR can be imported verbatim (formal/docs/design.md D-P15). They
+#     are additive: `Op`/`opName`/`parse`/`effects` in YulSemantics/Dialect/EVMOp.lean
+#     and two `stepOp` arms in YulSemantics/Dialect/EVMExec.lean, each documented at the
+#     site with the measurement that motivated it. Upstream excludes both on the ground
+#     that they are eliminable in the *bytecode*; that argument does not reach the IR
+#     artifact, which still calls both by name after optimization. Gates and the run
+#     derivations that depend on them live outside the fork, in Midfall/Yul/Builtins.lean.
 # All Midfall-specific additions live in ../../Midfall/Yul/ and are
 # upstreamable independently of this vendored copy.
 

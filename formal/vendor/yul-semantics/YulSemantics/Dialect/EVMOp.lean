@@ -13,6 +13,20 @@ The operational semantics (`EvmState`, `stepOp`, `Step`, the `Dialect` instance,
 `YulSemantics.Dialect.EVM`, which imports this module and Mathlib. Splitting the frontend out keeps
 Mathlib off the import path of code that only needs the opcode/AST layer, so a compiler executable
 built from that code does not statically link Mathlib. See `DESIGN.md` §4.
+
+MIDFALL FORK DELTA (this file). Vendored fork of powdr-labs/yul-semantics @
+c9914c13df47efe026376723acd632bc33bc16e3; the full delta list is in `vendor/yul-semantics/lakefile.toml`.
+Two built-ins were added to `Op`/`opName`/`parse`/`effects` here, and to `stepOp` in `EVMExec`:
+`memoryguard` and `setimmutable`. Upstream deliberately excludes both (see the "Deliberately absent
+from `Op`" bullet in `YulSemantics.Dialect.EVMExec`). Midfall needs them because its artifact of
+record is solc's *textual via-IR*, imported verbatim as generated `yul%` quotations
+(`formal/docs/design.md` D-P15), and both names occur in that artifact — measured on the deployed
+`proofs/solidity-verifier/deployments/sepolia/moonlight-wrap/Halo2Verifier.sol` with the pinned triple
+(solc 0.8.30, `viaIR: true`, optimizer enabled, runs 200): `memoryguard` twice (once in the creation
+object, once as the FIRST statement of the runtime object) and `setimmutable` once (creation object).
+Without them `parse` answers `none`, `mkCall` elaborates the call as a *user-function* call, no `Step`
+rule derives from it, and every run of the imported IR is stuck at its first statement. The change is
+purely additive - no existing constructor, name, or arm was altered - so it stays upstreamable.
 -/
 
 namespace YulSemantics.EVM
@@ -40,6 +54,10 @@ inductive Op
   | returndatasize | returndatacopy
   -- object data (layout-abstracted; see `YulSemantics.Object`)
   | datasize | dataoffset | datacopy | loadimmutable
+  -- solc extensions the imported via-IR artifact calls (see the module docstring):
+  -- `memoryguard` is the compile-time free-memory-pointer reservation, `setimmutable` the
+  -- constructor-side write that pairs with `loadimmutable`.
+  | memoryguard | setimmutable
   -- execution environment
   | address | origin | caller | callvalue | gasprice | selfbalance
   | coinbase | timestamp | number | prevrandao | gaslimit | chainid | basefee | blobbasefee
@@ -100,6 +118,13 @@ def effects : Op → Effects
   | .balance | .extcodesize | .extcodehash | .blockhash | .blobhash
   | .datasize | .dataoffset | .loadimmutable =>
       { deterministic := true, reads := true, writes := false, halts := false }
+  -- `memoryguard(n)` is the identity on `n` (see `stepOp`): no state at all.
+  | .memoryguard =>
+      { deterministic := true, reads := false, writes := false, halts := false }
+  -- `setimmutable` is a *blind* write of its `value` argument into the immutable map: the stored
+  -- word comes from the arguments, the prior contents are never observed, and it never halts.
+  | .setimmutable =>
+      { deterministic := true, reads := false, writes := true, halts := false }
   -- deterministic *blind* memory writes: the stored bytes come from the arguments, the prior
   -- contents are never observed → reads := false even though writes := true (see the doc comment
   -- above). Memory writes are permitted in a static frame, so they never halt.
@@ -155,6 +180,7 @@ def opName : Op → String
   | .returndatasize => "returndatasize" | .returndatacopy => "returndatacopy"
   | .datasize => "datasize" | .dataoffset => "dataoffset" | .datacopy => "datacopy"
   | .loadimmutable => "loadimmutable"
+  | .memoryguard => "memoryguard" | .setimmutable => "setimmutable"
   | .address => "address" | .origin => "origin" | .caller => "caller"
   | .callvalue => "callvalue" | .gasprice => "gasprice" | .selfbalance => "selfbalance"
   | .coinbase => "coinbase" | .timestamp => "timestamp" | .number => "number"
@@ -190,6 +216,7 @@ def parse : Ident → Option Op
   | "returndatacopy" => some .returndatacopy
   | "datasize" => some .datasize | "dataoffset" => some .dataoffset | "datacopy" => some .datacopy
   | "loadimmutable" => some .loadimmutable
+  | "memoryguard" => some .memoryguard | "setimmutable" => some .setimmutable
   | "address" => some .address | "origin" => some .origin | "caller" => some .caller
   | "callvalue" => some .callvalue | "gasprice" => some .gasprice
   | "selfbalance" => some .selfbalance | "coinbase" => some .coinbase
