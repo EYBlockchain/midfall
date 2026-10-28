@@ -2123,6 +2123,69 @@ from it, so the pairing clause holds by construction.
 (truncated) against q-DLOG while `D-P22` says untruncated and ARSDH; sections 13 and 14.6
 still say R-22 "needs a decision". Section 0 promises a theorem generic over every supported
 key while the code targets one instance on a toy pairing model. **Decide explicitly: generic
-theorem, or per-deployment translation validation over a real-curve Surface.** The latter is
-far more tractable and is where the code is already heading.
+### R-62 Measured proof status, a new statement defect, and findings that never reached the human
+
+A second external pass built the lowering modules and had Lean compute every axiom. Verified
+by the orchestrator where marked.
+
+**Measured proof status** - of 134 handwritten theorems in `Yul/`, `Lowering/`,
+`Assumptions/`, `Spec/Lemmas`: **73 fully proved, 58 end in `sorry`, and 3 look proved but
+inherit one** - `Run.det`, `RunCommitted.det`, and `decodeAcc_injective_gen`. **That third
+category is the important one**: `decodeAcc_injective_gen` was reported as proved in an
+earlier round. It is not; it depends on a `sorry`. A count of "proved" that ignores
+inherited `sorry` overstates progress, which is why `#print axioms` per theorem, not
+declaration counting, is the metric.
+
+**A NEW STATEMENT DEFECT, and it makes ten theorems false as stated.** The `*_spec` theorems
+in `Partials.lean` are quantified over *every* Surface, but `Surface.blk`
+(`Surface.lean:227`) is a free field whose only constraint is `main_concat` - and `L.main`
+itself comes from the free `lower`. So a Surface with `blk .finalPairing := return(0, 0)`
+satisfies every hypothesis and refutes the conclusion. **This is the seventh false-as-written
+finding, and unlike the others it was introduced by the statements being correct-looking.**
+The fix is structural: once the generator emits ASTs, `blk` must *be* the generator function
+or be pinned to it, with that equation as a hypothesis of each spec theorem.
+
+**The real critical path is AST emission, not the curve model.** Verified: `fxPartialBlocks`
+(`SurfaceFixture.lean:155`) gives every block a **single dummy `mstore` statement**, so
+every block of the only Surface is a placeholder. That blocks P5 (the calibration point
+PLAN 14.4 pulled forward), P7, P9 and P10. `VerifierPartials.lean` states plainly it is a
+*TEXT* port returning bytes, and treats byte equality as M3 acceptance - **which
+contradicts PLAN section 11, where AST equality is the check of record.** The design was
+always right; the implementation drifted and the docs did not catch it.
+
+**Two tooling facts that decide the approach:** `yul%` cannot splice Lean values - only
+literal numbers, strings and identifiers - so a generator must build ASTs with constructor
+helpers, extend the vendored DSL, or substitute after templating (`substConsts`, already in
+P2). And **comparing printed text fails on identical code**: `normalise_sol.py` reports
+Lagrange differing 73 vs 60 lines and FinalPairing 6 vs 3, purely from line breaks and
+decimal-vs-hex number spelling, while the token comparator calls both equal. So the
+comparison must be token-level for Yul and line-level only for the Solidity wrapper.
+
+**Findings P-SE explicitly said to report never reached the human.**
+* The frozen `verifyNative_iff_msgs` is false for a degenerate codec, and
+  `verifyMsgs_iff_spec` cannot hold for every verifier environment. They appear only in
+  comments in `Obligations.lean`, with no REVIEW entry and no place on the open-decisions
+  list. **So the SHA-256 freeze on `Statements.lean` currently protects a statement known to
+  be false, hidden behind its own `sorry`.**
+* `fixedBases` still stores the identity as the "-G" entry (finding 7). Unfixed.
+
+**The two plans have no owner for their link.** P-SE is the lowering proof plan; it gives the
+security track one unestimated row pointing at `security.tex`. If `PROOF-PLAN` is treated as
+retired, **the security track has no maintained plan.** Worse, S7 needs `lowering_equivalence`
+*composed with* the refinement `verifyMsgs_iff_spec` - which P-SE's own finding 2 says is
+unprovable as written, and `Spec.accepts` is still `sorry`. Nothing schedules that bridge.
+
+**Also:** the ArkLib `Interaction` audit is now done - `#print axioms` on
+`stateRestoration_knowledge_soundness`, its `_nonuniform` variant,
+`restored_extraction_round_bound`, `native_badChallenge_bound` and Sumcheck's
+`roundByRound_soundness` shows **only `propext`, `Classical.choice`, `Quot.sound`**. R-61's
+correction stands and the security plan should move to that framework.
+
+**Corrections to the review itself, in fairness:** "nothing states `p = r`" is wrong for the
+*lowering* side - `EnvAgrees.modulus` and `truncWidth` pin it; the gap is only in `Spec/` and
+`Security/`. And "P0-P10 essentially unstarted" was too strong: P2 is complete (all 10
+proved, inside stage 1) and P0 is 11 of 19. **P2's four-day estimate was pessimistic by
+roughly a factor of two**, which is the only calibration data we have.
+
+## Closed
 
