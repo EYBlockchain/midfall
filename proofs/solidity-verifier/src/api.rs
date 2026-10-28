@@ -527,6 +527,63 @@ pub struct RenderedArtifacts {
     pub quotient_manifest: Option<String>,
 }
 
+impl RenderedArtifacts {
+    /// Return the complete rendered artifact set in stable filename order.
+    ///
+    /// The byte slices are the renderer's exact output; callers comparing
+    /// generators should not normalize line endings or whitespace.
+    pub fn named_bytes(&self) -> impl Iterator<Item = (&'static str, &[u8])> {
+        [
+            ("Halo2Verifier.sol", Some(self.verifier.as_bytes())),
+            (
+                "Halo2VerifyingKey.sol",
+                self.verifying_key.as_deref().map(str::as_bytes),
+            ),
+            (
+                "Halo2QuotientEvaluator.sol",
+                self.quotient_evaluator.as_deref().map(str::as_bytes),
+            ),
+            (
+                "QuotientListing.txt",
+                self.quotient_listing.as_deref().map(str::as_bytes),
+            ),
+            (
+                "QuotientManifest.json",
+                self.quotient_manifest.as_deref().map(str::as_bytes),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(name, bytes)| bytes.map(|bytes| (name, bytes)))
+    }
+}
+
+#[cfg(test)]
+mod rendered_artifacts_tests {
+    use super::RenderedArtifacts;
+
+    #[test]
+    fn named_bytes_preserves_exact_content_and_optional_artifact_set() {
+        let artifacts = RenderedArtifacts {
+            verifier: "contract V {}\r\n".to_owned(),
+            verifying_key: Some("contract VK {}".to_owned()),
+            quotient_evaluator: None,
+            quotient_listing: Some("listing\n".to_owned()),
+            quotient_manifest: Some("{\"version\":1}\n".to_owned()),
+        };
+
+        let files: Vec<_> = artifacts.named_bytes().collect();
+        assert_eq!(
+            files,
+            vec![
+                ("Halo2Verifier.sol", b"contract V {}\r\n".as_slice()),
+                ("Halo2VerifyingKey.sol", b"contract VK {}".as_slice()),
+                ("QuotientListing.txt", b"listing\n".as_slice()),
+                ("QuotientManifest.json", b"{\"version\":1}\n".as_slice()),
+            ]
+        );
+    }
+}
+
 /// Errors from native-proof to Solidity-proof repacking.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum RepackError {
