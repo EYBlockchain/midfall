@@ -10,8 +10,7 @@ of its ~15 fields reference identifiers that do not exist in the tree.** They ar
 in my transcription; I read the sketch directly:
 
 | identifier | used by | state |
-|---|---|---|
-| `YulSemantics.SyntaxEq.stmtsBeq` | `render_eq_print` | **no declaration anywhere** |
+| ~~`YulSemantics.SyntaxEq.stmtsBeq`~~ | `render_eq_print` | **EXISTS** - `vendor/yul-semantics/YulSemantics/Ast.lean:147`, `#check` resolves, six passing gates use it. The earlier "no declaration anywhere" was a `head -5` truncation error in the orchestrator's own grep | copy the field verbatim |
 | `EvaluatorFrame` | `qvm_yul_refines` | 0 occurrences (stage 4 reported) |
 | `FrameWellFormed` | `qvm_yul_refines` | 0 occurrences |
 | `S.plan.qext` | `qvm_yul_refines` | stage 3's `PlanView` has no `qext` field |

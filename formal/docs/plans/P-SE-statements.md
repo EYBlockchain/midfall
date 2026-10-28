@@ -27,8 +27,7 @@ as an addendum. That is the failure this map prevents.
 | L | 1471-1617 | `Lowering/Inv.lean` | 3 | done - satisfiable at all 7 checkpoints |
 | M | 1618-1793 | `Lowering/Surface.lean` | 4 | done `04adea7` - 1 hole |
 | N | 1794-1931 | `Lowering/Partials.lean` | 4 | done - 12 holes, all 7 specs STATED |
-| O | 1932-2077 | `Lowering/Qvm.lean` | 5 | running |
-| P | 2078-2163 | `Lowering/QvmFold.lean` | 5 | running |
+| ~~`stmtsBeq`~~ | Q (`render_eq_print`) | **EXISTS - earlier claim was wrong.** Declared at `vendor/yul-semantics/YulSemantics/Ast.lean:147`; `#check @YulSemantics.SyntaxEq.stmtsBeq` resolves and six passing gates in `YulGolden.lean` already use it | nothing needed; D-P13 is sound and `render_eq_print`'s conjunct IS writable |
 | Q | 2164-2378 | `Lowering/Obligations.lean` | 6 | queued - the headline |
 | R | 2379-end | (diff vs PLAN 9.5, not code) | all | read before deviating from any sketch |
 

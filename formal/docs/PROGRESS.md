@@ -52,11 +52,13 @@ Landed in this stretch, in order: `VmValidator` (P-09e), `VmRecognizers` (P-09f)
 ## P-SE proof programme: stages 0-4 complete, stage 5 running
 
 | stage | content | state |
-|---|---|---|
-| 0 | baseline, `#check decodeAcc`, `SemanticEquivalence.lean`, CI script edits | **done** |
-| 1 | `Yul/{Bridge,Contracts}`, `Assumptions/{Codec,Eip2537}` | **done** - `Contracts.lean` has **zero holes**, all 10 lemmas proved |
-| 2 | `Lowering/{AccEncoding,Accumulator,VkDigest,Calldata}` | **done** - 1,977 lines, 23 holes registered |
-| 3 | D6 Exec refactor + `Lowering/{Checkpoint,Snapshot,Inv}` | **done** - `Inv` satisfiable at all 7 checkpoints by computation |
+3. **~~`YulSemantics.SyntaxEq.stmtsBeq` does not exist~~ - WITHDRAWN.** An earlier
+   grep truncated by `head -5` missed `vendor/`. It IS declared at
+   `vendor/yul-semantics/YulSemantics/Ast.lean:147`, `#check` resolves it, and six passing
+   gates in `YulGolden.lean` already use it. D-P13 is sound and `render_eq_print`'s
+   conjunct is writable. The other seven dead identifiers in section Q stand, verified by
+   `#check`: `EvaluatorFrame`, `FrameWellFormed`, `perIdentityValues`, `IsAlignedSubslice`,
+   `segmentsOf`, `blsDeltaLiteral`, `memLeaves`, `List.Sorted`.
 | 4 | `Lowering/{Surface,Partials}` | **done** - **all seven `*_spec` theorems STATED**; fixture has 4 theorems proved, zero holes |
 | 5 | `Lowering/{Qvm,QvmFold}` | **running** |
 | 6 | `Lowering/Obligations.lean`, SORRY regen, axioms sweep | queued |
