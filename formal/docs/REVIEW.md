@@ -1974,7 +1974,71 @@ carry `halted`, so `returnData` is recoverable - contrary to the worry at
 trio's reasons, `VEnv` arity handling at every site, `readScheduleAgrees`, and
 `contractRef_noAcc_of_semanticEquivalence`.
 
-## Closed
+### R-60 Second statement pass: the repairs introduced a blocking defect, and both new gates are beatable
+
+D-P23 required a review pass after the repair round. It found **nine findings**, and it
+contradicts a claim the orchestrator made to the human twice.
+
+**S1 (HIGH, blocking) - `lowering_equivalence`'s IR hypothesis is NOT inhabited after all.**
+`fixtureIrCheck` (`SurfaceFixture.lean:250-253`) hard-codes `fxRuntimeName ir.name` instead
+of reading the Surface's own `runtimeName`. `fxRuntimeName n = n ++ "_1_deployed"`, but the
+imported object is `"Halo2Verifier_292"` with runtime sub-object
+`"Halo2Verifier_292_deployed"` - so the lookup asks for `Halo2Verifier_292_1_deployed`,
+which does not exist, and `irCheck` returns `false`. **Verified by the orchestrator from the
+two name strings, not taken on trust.** Consequence: `ir_refines`, `end_to_end_noAcc` and
+`lowering_equivalence` all take `S.irCheck ir = true`, and no Surface in the tree satisfies
+that for the real artifact - while `runContractIR_inhabited` proves a run of exactly that
+artifact. The conjunction is uninhabited. `Obligations.lean:36-41` currently asserts the
+opposite, and so did the orchestrator, twice, in good faith.
+
+**Why no gate caught it:** gate 6 checks `RunContractIR` alone and never the conjunction
+with `irCheck`. A hypothesis bundle can be individually inhabited and jointly empty.
+
+**S2 (HIGH) - the duplicate-fact gate built an hour ago is beatable six ways, and the
+fingerprint gate two ways.** All demonstrated on copies. The most damning:
+* **Block-comment bodies are not stripped**, contradicting the gate's own docstring. Deleting
+  a pin and leaving its text inside `/-- ... -/` keeps the gate green. **Live symptom in the
+  tree today:** the parser invents a phantom 11th `SupportedS` field named `rust`, harvested
+  from an `-- rust: ...` R1 provenance comment. The gate that exists to stop prose masquerading
+  as a field was defeated by the project's own provenance convention.
+* Self-equality is defeated by any earlier colon in the type; a conjunction of self-equalities
+  passes; tokens match as **substrings**, so `encG2` is satisfied by `encG2IsEip`.
+* **New copies are invisible** - adding `hasAccumulator2 : Bool` leaves it green. It is a
+  regression check on a hand-written list, not a discovery check, and the arrival of a *new*
+  copy is the root cause it was written for.
+* `enforced_at` greps raw text, so deleting the real `quotient`/`direct` constructor
+  validation stays green because the same English sentences survive in a KAT string.
+* The fingerprint gate accepts `render_eq_print : True := trivial -- <real text here>`,
+  because `field_text` reads raw lines including trailing comments.
+
+**S3-S5 - three of the five new pins are defeated.** `evaluator_agrees` pins only `isSome`
+(and the content half *is* nameable today via `Object.codeBlock`); `encG2_eip` is satisfied
+by a **constant** function, which is exactly what the fixture uses; `render_eq_print`, as
+restated, is satisfied by `rfl` because the fixture *defines* `astOfMain` from `lower` - the
+original defect in different clothing, which is what this pass was told to suspect.
+**Not defeated:** `shell_unfolds`, `plan_hasAccumulator`, `plan_numInstances` - the three
+that matter most.
+
+**S6 - the repair report's gap list was wrong in both directions.** `verifier_sound +
+shell_unfolds` really is a derivation (proved). But `ObsEquiv` view transport does **not**
+need `dialect_deterministic` - `ObsView.halted` carries `returnData`, and four three-line
+lemmas suffice. What the view genuinely does **not** carry is `WorldEq`'s `selfBalance` and
+`extCodeHashOf`, so the *third* conjunct of `lowering_equivalence` is the real blocker, for
+a reason the report never named.
+
+**S7** `shell.codeBlock` vs `shellLayout.code` is a new unpinned copy, and `memguard` is
+satisfiable by shipping **no prologue at all** (`memoryguardValue [] = none`). **S9** stale
+orphans: the fixture comment still says eleven fields and `qvm`; `Types.lean`'s frozen
+placeholder still carries the deleted `qvm` field; and `qvm_validated_noBoundsFault` does
+not mention the Surface at all, so the QVM leg is a claim about *some* plan, not this
+deployment - the F3 class one level up.
+
+**What this says about the process.** The repair round closed F2, F3, F7, F9, F10 genuinely
+- three pins could not be defeated - but it shipped a blocking regression in S1 and two
+gates that look like checks and are not. **A gate that cannot fail is worse than no gate,**
+and I praised both gates an hour ago on the strength of them reddening when I asked them to.
+Statement reviews repeat for exactly this reason.
+
 ## Closed
 | | bytes | reads | shape |
 |---|---:|---:|---|
