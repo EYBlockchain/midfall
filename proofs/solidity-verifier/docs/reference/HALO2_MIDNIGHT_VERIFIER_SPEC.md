@@ -1313,8 +1313,11 @@ let generator = SolidityGenerator::new(
 );
 ```
 
-The point-pair layout is `lhs point, rhs point`; the generated verifier uses
-implicit unit scalars for both sides and rejects fixed-base scalar tails.
+The point-pair layout is `lhs.x, lhs.y, rhs.x, rhs.y`; the generated verifier
+uses implicit unit scalars for both sides and rejects fixed-base scalar tails.
+The Moonlight wrap circuit constrains both points to be non-identity, so
+neither point carries an identity flag word and the verifier rejects any point
+that decodes to the identity.
 
 Use `SolidityGenerator::try_new` when the public-input layout comes from
 caller-controlled metadata and should return a typed `GeneratorError` instead
@@ -1404,8 +1407,20 @@ rhs_is_id:  1 word
 rhs_scalar: 1 word
 ```
 
-for 12 words in total. The Moonlight point-pair layout is the same without the
-two scalar words, for 10 words in total.
+for 12 words in total. The Moonlight point-pair layout has neither scalar words
+nor identity flag words, because the wrap circuit constrains both points to be
+non-identity:
+
+```text
+point_words = 2 * coord_words = 4
+
+lhs_x: 2 words
+lhs_y: 2 words
+rhs_x: 2 words
+rhs_y: 2 words
+```
+
+for 8 words in total.
 
 If a fixed-base scalar tail exists, it is consumed as RHS MSM scalars for:
 
@@ -1419,10 +1434,10 @@ Midfall's `BTreeMap` order.
 ### 13.2 Coordinate Reconstruction
 
 Coordinates are exposed by Midnight circuits as limbs of `coord - 1`, packed
-four limbs per native field element. Each point's coordinates are followed by
-a dedicated identity flag word, which the circuit constrains to be `0` or `1`.
-When the flag is set the circuit leaves x and y unconstrained, so their limbs
-carry no meaning.
+four limbs per native field element. In the point-and-scalar layout, each
+point's coordinates are followed by a dedicated identity flag word, which the
+circuit constrains to be `0` or `1`. When the flag is set the circuit leaves x
+and y unconstrained, so their limbs carry no meaning.
 
 The verifier:
 
@@ -1437,6 +1452,10 @@ The verifier:
 7. Checks the high EIP-2537 word fits in 128 bits.
 8. Rejects a decoded non-identity point whose coordinates are both zero.
 9. Stores the point as a padded G1 tuple.
+
+The point-pair layout has no identity flag word, so the verifier skips steps 1
+and 2 and always runs steps 3 to 9 for both points. A point whose coordinates
+decode to `(0, 0)`, the EIP-2537 identity encoding, is therefore rejected.
 
 ### 13.3 Accumulator Pairing Batch
 

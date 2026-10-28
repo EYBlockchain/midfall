@@ -1465,10 +1465,10 @@ fn accumulator_decoder_reads_trailing_identity_flag_word() {
     // x/y must only be decoded for non-identity points: the circuit leaves
     // them unconstrained when the flag is set.
     let load_point = verifier_template
-        .split("function load_acc_point(")
+        .split("function load_acc_point(dst, src, bits, n, base) -> ok, is_id {")
         .nth(1)
         .and_then(|body| body.split("function validate_public_accumulator").next())
-        .expect("load_acc_point should be rendered before validate_public_accumulator");
+        .expect("flagged load_acc_point should be rendered before validate_public_accumulator");
     let (id_branch, non_id_branch) =
         load_point.split_once("if iszero(is_id) {").expect("non-identity branch");
     assert!(
@@ -1537,10 +1537,110 @@ fn accumulator_word_counts_match_circuit_encoding() {
     assert_eq!(public[5], Fq::from(3));
     assert_eq!(&public[6..11], generator_words.as_slice());
     assert_eq!(public[11], Fq::from(5));
+}
+
+/// Compare the point-pair layout with the Moonlight wrap circuit encoding:
+/// each non-identity point exposes only its x and y coordinates through
+/// `AssignedField::as_public_input`, i.e. the foreign point encoding without
+/// its trailing identity-flag word.
+#[test]
+fn point_pair_word_counts_match_coordinate_encoding() {
+    use group::Group;
+    use midnight_circuits::{
+        ecc::curves::CircuitCurve,
+        types::{AssignedField, AssignedForeignPoint, Instantiable},
+    };
+    use midnight_curves::{Fp, G1Projective};
+
+    let encoding = AccumulatorEncoding::point_pair(0, 7, 56);
+    let coordinate_words = |point: &G1Projective| {
+        let (x, y) = point.coordinates().expect("non-identity point");
+        [
+            AssignedField::<Fq, Fp, G1Projective>::as_public_input(&x),
+            AssignedField::<Fq, Fp, G1Projective>::as_public_input(&y),
+        ]
+        .concat()
+    };
+
+    let lhs = G1Projective::generator();
+    let rhs = lhs.double();
+    for point in [lhs, rhs] {
+        let words = coordinate_words(&point);
+        assert_eq!(words.len(), encoding.point_words());
+        let flagged =
+            AssignedForeignPoint::<Fq, G1Projective, G1Projective>::as_public_input(&point);
+        assert_eq!(flagged.split_last(), Some((&Fq::ZERO, words.as_slice())));
+    }
+
+    let public = [coordinate_words(&lhs), coordinate_words(&rhs)].concat();
     assert_eq!(
-        2 * words_per_point(&G1Projective::generator()),
+        public.len(),
         AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS
     );
+    assert_eq!(
+        encoding.fully_collapsed_public_input_words(),
+        Ok(public.len())
+    );
+}
+
+/// Render a point-pair verifier and check that its decoder never reads an
+/// identity flag, always decodes both coordinates, and rejects the EIP-2537
+/// infinity encoding.
+#[test]
+fn point_pair_verifier_decodes_non_identity_coordinates_only() {
+    let (params, vk) = lowering_plan_test_vk();
+    let render = |config| {
+        SolidityGenerator::new(&params, &vk, config)
+            .render(crate::RenderOptions::default())
+            .expect("render accumulator verifier")
+            .verifier
+    };
+    let point_pair = render(
+        GeneratorConfig::new(11, 1).with_accumulator(AccumulatorEncoding::point_pair(3, 7, 56)),
+    );
+    let point_and_scalar =
+        render(GeneratorConfig::new(12, 1).with_accumulator(AccumulatorEncoding::new(0, 7, 56)));
+
+    assert_eq!(point_pair.matches("function load_acc_point(").count(), 1);
+    let load_point = point_pair
+        .split("function load_acc_point(dst, src, bits, n, base) -> ok {")
+        .nth(1)
+        .and_then(|body| body.split("function validate_public_accumulator").next())
+        .expect("point-pair load_acc_point should return only ok");
+    assert_eq!(load_point.matches("load_acc_coord(").count(), 2);
+    assert!(load_point.contains("ok := and(ok, iszero(decoded_zero))"));
+
+    let validate = point_pair
+        .split("function validate_public_accumulator")
+        .nth(1)
+        .and_then(|body| body.split("// The caller checks `out`").next())
+        .expect("point-pair verifier should validate its accumulator");
+    for required in [
+        "let point_words := mul(2, coord_words)",
+        "let lhs_ok := load_acc_point(",
+        "let rhs_ok := load_acc_point(",
+    ] {
+        assert!(
+            validate.contains(required),
+            "point-pair accumulator layout: {required}"
+        );
+    }
+    let code_only = |source: &str| {
+        source
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for forbidden in ["flag", "is_id"] {
+        assert!(
+            !code_only(load_point).contains(forbidden) && !code_only(validate).contains(forbidden),
+            "point-pair accumulator decoding must not reference `{forbidden}`"
+        );
+    }
+
+    assert!(point_and_scalar.contains("is_id := eq(flag, 1)"));
+    assert!(point_and_scalar.contains("pop(lhs_is_id)"));
 }
 
 #[test]
@@ -1559,10 +1659,18 @@ fn accumulator_encoding_validation_rejects_dead_configs() {
         point_pair.fully_collapsed_public_input_words(),
         Ok(AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS)
     );
-    assert!(point_pair.validate_for_num_instances(14).is_ok());
-    assert_eq!(point_pair.fixed_scalar_count(14), Ok(0));
+    assert!(point_pair.validate_for_num_instances(12).is_ok());
+    assert_eq!(point_pair.fixed_scalar_count(12), Ok(0));
     assert!(matches!(
-        point_pair.fixed_scalar_count(15),
+        point_pair.validate_for_num_instances(11),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "accumulator public-input tail exceeds num_instances",
+            ..
+        })
+    ));
+    // The flagged 10-word point pair would leave two trailing words.
+    assert!(matches!(
+        point_pair.fixed_scalar_count(14),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
             reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
             ..

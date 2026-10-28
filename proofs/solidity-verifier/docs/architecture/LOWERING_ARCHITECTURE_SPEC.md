@@ -453,7 +453,8 @@ Two public-input accumulator layouts are supported:
   encoded as `lhs point, lhs scalar, rhs point, rhs scalar`, with an optional
   fixed-base scalar tail.
 - `AccumulatorEncoding::point_pair(...)`: already-collapsed Moonlight wrap
-  input, encoded as `lhs point, rhs point`; the generated verifier treats both
+  input, encoded as `lhs.x, lhs.y, rhs.x, rhs.y` with no identity flag words;
+  both points must be non-identity. The generated verifier treats both
   carried scalars as one and rejects fixed-base scalar tails for this layout.
 
 The accumulator layout is intentionally explicit because public input packing is
