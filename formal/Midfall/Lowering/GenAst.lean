@@ -31,10 +31,11 @@
 -- WHAT IS EMITTED, and what is a placeholder. Scope is per-deployment first (D-P24). P-AST
 -- took ONE partial completely - FinalPairing plus the two AssemblyHelpers definitions it
 -- calls (fail, ec_pairing). P-AST2 (docs/plans/P-AST2-lagrange-traceReturn.md) adds two
--- more under D-P30, so the real emission is now Lagrange, FinalPairing and TraceReturn;
--- FOUR partials still return emitPlaceholder - vkLoading, transcriptParser, quotientLin and
--- pcs - and emittedPartials names the difference as data while
--- emitPlaceholderIsTotal_ok pins it as a computation: three emitted, four placeholders, and
+-- more under D-P30 and P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth, so the real
+-- emission is now Lagrange, QuotientLin, FinalPairing and TraceReturn; THREE partials still
+-- return emitPlaceholder - vkLoading, transcriptParser and pcs - and emittedPartials names
+-- the difference as data while
+-- emitPlaceholderIsTotal_ok pins it as a computation: four emitted, three placeholders, and
 -- no placeholder equal to the real slice it stands for. A
 -- spec theorem whose partial is not in emittedPartials is pinned to a placeholder: the pin
 -- turns it into a claim about ONE program instead of about every program, which is what
@@ -45,10 +46,11 @@
 -- builds Block/Stmt/Expr EVM.Op from the vendored package; no raw string expression is
 -- emitted anywhere, and the renderX functions of VerifierPartials.lean are kept only as the
 -- independent second source each gate compares against. PLAN section 8's equation
--- render g o = (lower g o).map print holds BY CONSTRUCTION for the three slices here, and
+-- render g o = (lower g o).map print holds BY CONSTRUCTION for the four slices here, and
 -- the checks that say so are the stmtsBeq gates, not the token gates: P-AST measured that
 -- spelling every mcopy as a USER call leaves all four token gates green and reddens only
--- stmtsBeq, so emitLagrange_beq_ok, emitTraceReturn_beq_ok and the two
+-- stmtsBeq, and P-AST2 and P-AST3a each re-reproduced the blindness on their own slice, so
+-- emitLagrange_beq_ok, emitTraceReturn_beq_ok, emitQuotientLin_beq_ok and the three
 -- emit*_DetectsBuiltinVsCall_ok gates are the records and yulTokens is the tripwire.
 --
 -- NUMERIC SPELLING IS A DOCUMENTED DIVERGENCE, NOT A FAILURE (D-P30 clause 3). The AST
@@ -455,16 +457,96 @@ def emitTraceReturnBlock : Block Op :=
 /-- The TraceReturn slice of one plan. Constant in the plan, by the measurement above. -/
 def emitTraceReturn (_pv : PlanView) : Block Op := emitTraceReturnBlock
 
+/-! ### QuotientLin -/
+
+/-- The linearization block of QuotientAndLinearization.yul - the deployed arm, artifact
+    D:2539-2580, 1,898 bytes / 42 lines by the text port's own note at
+    VerifierPartials.lean:617-623 - as an AST, parameterised by the ONE plan value this arm
+    interpolates: the domain exponent k. It is interpolated as an INTEGER and not through the
+    hex filter, so the render says 'let k := 6' and the AST prints 'let k := 6' - the same
+    spelling on both sides, unlike the 0x20 offset below.
+
+    SCOPE, DECIDED ON MEASUREMENT AND NOT ON TASTE. 'blk .quotientLin' is THIS TEMPLATE'S OWN
+    BODY - the linearization block - and NOT the artifact's whole quotient region. Three
+    numbers, all re-measured in this package against the tracked dump; the first two are pinned
+    by gate 29 below and the third by VerifierPartials' own gates 48-51:
+      * 'renderQuotientAndLinearization poseidonCtx "" ""' - the empty-parameter render - is
+        1,898 bytes / 42 lines and occurs EXACTLY ONCE in the artifact. That is this slice.
+      * the same call fed poseidonCtx's OWN includes ('renderQuotientHelpers' 826 B plus
+        'renderQuotientNumeratorBlock' 6,682 B) is 9,406 bytes and occurs ZERO times:
+        poseidonCtx carries the inert quotient defaults (line 503's note), so its includes are
+        not the deployed ones and the composite render matches nothing.
+      * with the DEPLOYED includes - 'quotientDeployedCtx sol', which is what gates 48-51 use
+        - the two renders are 1,621 B / 31 lines and 55,597 B, 57,218 B / 952 lines combined,
+        occurring once, and the whole region including this slice's body is 59,116 B.
+    So the text port already treats the two includes as a SEPARATE region with its own byte
+    gates, and the region is not this partial's body. Adopting that decomposition here is being
+    consistent with the port, not taking a shortcut around it. Converting the two includes is the separate
+    Quotient/Evaluator.lean string-machinery job - D-P30 counts 18 sites - and is OUT OF SCOPE
+    here. Stated so a later package does not silently redefine the boundary: widening
+    'blk .quotientLin' to the whole region means moving BOTH include renders to AST emission in
+    the same change, not quietly folding them into this function.
+
+    NOTE, measured in this package rather than inherited: main's helper prefix defines 'fail'
+    and 'ec_pairing' ONLY - 'lookupFun' over the hoist of the emitted main finds no
+    'batch_invert', which the already-real Lagrange slice calls. That gap is P-AST2's and this
+    slice neither widens nor repairs it (quotientLin adds no new callee), but it is the same
+    hole transcriptParser would widen fourfold, so it is recorded where a later package reads
+    the helper boundary.
+
+    Every call in this block is a dialect built-in - mload, lt, add, mulmod, sub, addmod,
+    mstore - and there is NO user call anywhere in it. That is what makes it the cheapest of
+    the seven slices: unlike FinalPairing and Lagrange it needs no helper definition in main,
+    no 'fail' arm and no 'batch_invert', so 'emitHelpers' does not grow. The nested scope is
+    not decoration either: it is the template's own brace, and it is why the emitted slice has
+    the SAME top-level length as the placeholder it replaces - one statement each - which is
+    exactly why mainConcatKats_ok cannot see this conversion by length and does it structurally
+    instead. -/
+def emitQuotientLinAt (k : Nat) : Block Op :=
+  [ yblock
+    [ ylet "x" (yop Op.mload [yvar "X_MPTR"])
+    , ylet "k" (ylit k)
+      -- x^n and x^(n-1) in ONE squaring walk: x_pow_2i tracks x^(2^i) while
+      -- x_pow_2i_minus1 tracks x^(2^i - 1), and the body's first assignment reads the OLD
+      -- x_pow_2i, so the two statements are ordered and not interchangeable. Swapping them
+      -- leaves the token stream a permutation of itself only at a glance - it does change the
+      -- token stream here (the operands differ), and it always changes stmtsBeq.
+    , ylet "x_pow_2i" (yvar "x")
+    , ylet "x_pow_2i_minus1" (ylit 1)
+    , yfor [ylet "idx" (ylit 0)] (yop Op.lt [yvar "idx", yvar "k"])
+        [yset "idx" (yop Op.add [yvar "idx", ylit 1])]
+        [ yset "x_pow_2i_minus1" (yop Op.mulmod
+            [yop Op.mulmod [yvar "x_pow_2i_minus1", yvar "x_pow_2i_minus1", yvar "r"],
+              yvar "x", yvar "r"])
+        , yset "x_pow_2i" (yop Op.mulmod [yvar "x_pow_2i", yvar "x_pow_2i", yvar "r"]) ]
+    , ylet "x_split" (yvar "x_pow_2i_minus1")
+    , ylet "one_minus_x_n" (yop Op.addmod [ylit 1, yop Op.sub [yvar "r", yvar "x_pow_2i"],
+        yvar "r"])
+      -- The 2-word payload PCS block 5 reads: word 0 x_split, word 1 one_minus_x_n. The
+      -- 0x20 is the render's hex offset printed decimal here - the divergence gate 21 pins.
+    , yexpr (yop Op.mstore [yvar "QUOTIENT_MPTR", yvar "x_split"])
+    , yexpr (yop Op.mstore [yop Op.add [yvar "QUOTIENT_MPTR", ylit 0x20],
+        yvar "one_minus_x_n"]) ] ]
+
+/-- The QuotientLin slice of one plan: the domain exponent k, the same PlanView field
+    emitLagrange reads, so the two slices cannot disagree about the domain size. -/
+def emitQuotientLin (pv : PlanView) : Block Op := emitQuotientLinAt pv.k
+
 /-! ### The emitter, total over Partial -/
 
-/-- The partials this file emits for real. Everything else is a placeholder: after P-AST2
-    those are vkLoading, transcriptParser, quotientLin and pcs - the four named by
-    placeholderPartials below, three of which need a text-emitting source converted first
-    (Kzg.computations for pcs, the Quotient/Evaluator.lean line builders for quotientLin,
-    the parser render for transcriptParser). -/
-def emittedPartials : List Partial := [.lagrange, .finalPairing, .traceReturn]
+/-- The partials this file emits for real. Everything else is a placeholder: after P-AST3a
+    those are vkLoading, transcriptParser and pcs - the three named by placeholderPartials
+    below - and each of the three is blocked for a DIFFERENT measured reason, not the same
+    reason: pcs needs Kzg.computations converted from text first (P-AST2's finding: the
+    deployed blocks are read back out of the .sol dump), transcriptParser needs four
+    AssemblyHelpers definitions the emitter does not have (transcript_init, common_word,
+    common_uncompressed_g1, squeeze_to) plus plan values PlanView does not carry, and vkLoading
+    needs four accumulator words PlanView does not carry. See the required finding in the
+    P-AST3a report; none of the three is blocked on this template. -/
+def emittedPartials : List Partial :=
+  [.lagrange, .quotientLin, .finalPairing, .traceReturn]
 
-/-- The four partials still emitted as placeholders, as data rather than as a paragraph:
+/-- The three partials still emitted as placeholders, as data rather than as a paragraph:
     derived from emittedPartials, so the two lists cannot disagree. -/
 def placeholderPartials : List Partial :=
   Midfall.Lowering.partials.filter (fun q => !emittedPartials.contains q)
@@ -477,7 +559,7 @@ def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
     distinct literal per partial so two slices are never interchangeable. These are the
     blocks the fixture carried before P-AST; they moved here so the emitter is the ONLY
     source of blk in the tree, which is what the pin needs in order to mean anything. P-13
-    owes the real AST for the four in placeholderPartials - and D-P30 clause 4 is the rule
+    owes the real AST for the three in placeholderPartials - and D-P30 clause 4 is the rule
     that they end up unreachable, not merely well-documented. -/
 def emitPlaceholder : Partial → Block Op
   | .vkLoading => [yexpr (yop Op.mstore [ylit 0x2000, ylit 1])]
@@ -494,6 +576,7 @@ def emitPlaceholder : Partial → Block Op
 def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
   match q with
   | .lagrange => emitLagrange pv
+  | .quotientLin => emitQuotientLin pv
   | .finalPairing => emitFinalPairing pv
   | .traceReturn => emitTraceReturn pv
   | q => emitPlaceholder q
@@ -587,6 +670,13 @@ def emitDependsOnPlan_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 7 1 9) &&
     ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 6 2 9) &&
     ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 6 1 8) &&
+    -- P-AST3a: and QuotientLin, where the ONE interpolated value is the domain exponent, so
+    -- a gate on k alone is a gate on the whole slice. The second conjunct says the same
+    -- thing through emitQuotientLin, i.e. through the PlanView field and not only the
+    -- Nat parameter, so the dispatch cannot ignore pv.k and stay green.
+    ! SyntaxEq.stmtsBeq (emitQuotientLinAt 6) (emitQuotientLinAt 7) &&
+    ! SyntaxEq.stmtsBeq (emitQuotientLin Midfall.Lowering.witnessPlanView)
+      (emitQuotientLin { Midfall.Lowering.witnessPlanView with k := 3 }) &&
     -- and TraceReturn is CONSTANT in the plan, which is the template's own shape and not a
     -- hole: stated as a computation so a later package that parameterises it has to notice
     -- it changed this gate.
@@ -594,29 +684,40 @@ def emitDependsOnPlan_ok : Bool :=
       SyntaxEq.stmtsBeq (emitTraceReturn Midfall.Lowering.witnessPlanView)
         emitTraceReturnBlock)
 
-/-- GATE 8 (what is real and what is a placeholder, as a computation). THREE partials are
-    emitted for real after P-AST2 - lagrange, finalPairing, traceReturn - and the remaining
-    FOUR are one-statement placeholders named by placeholderPartials. The last three
-    conjuncts are the R-62 clause: for each of the three real slices, the placeholder that
-    used to stand for it is NOT what the emitter returns, so the pin cannot be satisfied by
-    a dummy for a partial that has a real body. Before P-AST2 the lagrange and traceReturn
-    conjuncts were unfalsifiable in exactly this way - the placeholder WAS the emitter's
-    answer - which is what "emitPlaceholder must shrink toward unreachable" (D-P30 clause 4)
-    is measuring. -/
+/-- GATE 8 (what is real and what is a placeholder, as a computation). FOUR partials are
+    emitted for real after P-AST3a - lagrange, quotientLin, finalPairing, traceReturn - and
+    the remaining THREE are one-statement placeholders named by placeholderPartials. The
+    last conjuncts are the R-62 clause: for each real slice, the placeholder that used to
+    stand for it is NOT what the emitter returns, so the pin cannot be satisfied by a dummy
+    for a partial that has a real body. Before P-AST2 the lagrange and traceReturn conjuncts
+    were unfalsifiable in exactly this way, and before this package the quotientLin one was -
+    the placeholder WAS the emitter's answer - which is what "emitPlaceholder must shrink
+    toward unreachable" (D-P30 clause 4) is measuring. The quotientLin conjunct earns its
+    place in a way the others do not: placeholder and real slice are BOTH one statement, so
+    the two tail conjuncts below are the only way this gate can tell them apart - a length
+    check cannot, and it says so rather than pretending otherwise. -/
 def emitPlaceholderIsTotal_ok : Bool :=
-  emittedPartials.length == 3 && emittedPartials.contains .finalPairing &&
+  emittedPartials.length == 4 && emittedPartials.contains .finalPairing &&
     emittedPartials.contains .lagrange && emittedPartials.contains .traceReturn &&
-    placeholderPartials.length == 4 &&
-    placeholderPartials == [.vkLoading, .transcriptParser, .quotientLin, .pcs] &&
+    emittedPartials.contains .quotientLin &&
+    placeholderPartials.length == 3 &&
+    placeholderPartials == [.vkLoading, .transcriptParser, .pcs] &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q ==
-        (q == .finalPairing || q == .lagrange || q == .traceReturn)) &&
+        (q == .finalPairing || q == .lagrange || q == .traceReturn || q == .quotientLin)) &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q || (emitPlaceholder q).length == 1) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .finalPairing)
       (emitFinalPairingArms false 0x1000) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .lagrange) (emitLagrangeAt 6 1 9) &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .traceReturn) emitTraceReturnBlock
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .traceReturn) emitTraceReturnBlock &&
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .quotientLin) (emitQuotientLinAt 6) &&
+    -- the shape fact that makes the previous line load-bearing: same top-level length, so
+    -- nothing but stmtsBeq separates the dummy from the real scope.
+    (emitPlaceholder .quotientLin).length == 1 && (emitQuotientLinAt 6).length == 1 &&
+    (match emitQuotientLinAt 6 with
+     | [Stmt.block body] => body.length == 9
+     | _ => false)
 
 /-- GATE 9 (perturbation). One literal of the emitted block changed - the scratch pointer of
     the ec_pairing frame - turns BOTH relations red: the token stream and stmtsBeq. This is
@@ -865,7 +966,20 @@ def numericSpellingDivergence_ok : Bool :=
     hexLiteral "0x20" == 32 &&
     -- and the same mapping on the TraceReturn arm: the render's 0x20 is the AST's 32.
     (renderTraceReturn poseidonCtx).contains "return(RETURN_MPTR, 0x20)" &&
-    (EVM.print emitTraceReturnBlock).contains "return(RETURN_MPTR, 32)"
+    (EVM.print emitTraceReturnBlock).contains "return(RETURN_MPTR, 32)" &&
+    -- P-AST3a, and the QuotientLin slice, where BOTH spellings occur in one 42-line region:
+    -- the QUOTIENT_MPTR word offset is a hex filter in the render and a decimal 32 in the
+    -- printed AST, while the one interpolated value (k) is decimal on both sides because the
+    -- template interpolates it as an integer. A slice can mix the two, which is precisely why
+    -- no AST relation can be the record for numeric notation.
+    (renderQuotientAndLinearization poseidonCtx "" "").contains
+      "mstore(add(QUOTIENT_MPTR, 0x20), one_minus_x_n)" &&
+    (EVM.print (emitQuotientLinAt poseidonCtx.k)).contains
+      "mstore(add(QUOTIENT_MPTR, 32), one_minus_x_n)" &&
+    ! (EVM.print (emitQuotientLinAt poseidonCtx.k)).contains "0x" &&
+    (renderQuotientAndLinearization poseidonCtx "" "").contains "let k := 6" &&
+    (EVM.print (emitQuotientLinAt poseidonCtx.k)).contains "let k := 6" &&
+    yulTokens "add(QUOTIENT_MPTR, 32)" == yulTokens "add(QUOTIENT_MPTR, 0x20)"
 
 /-- Does a statement begin a 'for' loop? Top level only; gate 22 counts the five Lagrange
     loops, which are all siblings inside one block. -/
@@ -891,26 +1005,133 @@ def emitLagrangeIsReal_ok : Bool :=
           | _ => false)
   | _ => false
 
-/-- GATE 23 (the dispatch, not just the list). emittedPartials CLAIMS three partials are
-    real; gates 14-22 check the emitters themselves. Without this gate the file could grow a
+/-- GATE 23 (the dispatch, not just the list). emittedPartials CLAIMS four partials are
+    real; gates 14-28 check the emitters themselves. Without this gate the file could grow a
     real emitLagrange, list it in emittedPartials, and still have emitPartial fall through to
     emitPlaceholder - the pin would then pin a placeholder while every other gate stayed
     green. That is the R-62 class one level up, so it is checked as a computation: the
-    dispatch reaches the real body for all three, and the placeholder is NOT what the
+    dispatch reaches the real body for all four, and the placeholder is NOT what the
     dispatcher returns for any of them. -/
 def emitPartialRoutesRealSlices_ok : Bool :=
   SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
     (emitLagrange Midfall.Lowering.witnessPlanView) &&
     SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
-      emitTraceReturnBlock &&
+    emitTraceReturnBlock &&
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
+      (emitQuotientLin Midfall.Lowering.witnessPlanView) &&
     SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
       (emitFinalPairing Midfall.Lowering.witnessPlanView) &&
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
       (emitPlaceholder .lagrange) &&
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
       (emitPlaceholder .traceReturn) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
+      (emitPlaceholder .quotientLin) &&
+    -- and the dispatch reads pv.k rather than a hard-coded 6: the fixture plan's k is 2,
+    -- so routing to the deployed constant would still satisfy the line above and this one
+    -- would catch it.
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
+      (emitQuotientLinAt Midfall.Lowering.witnessPlanView.k) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
+      (emitQuotientLinAt 6) &&
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
       (emitPlaceholder .finalPairing)
+
+/-! ### The P-AST3a gates: quotientLin -/
+
+/-- GATE 24 (the D-P25 tripwire, QuotientLin). The emitted AST prints to the same token
+    stream as the TEXT PORT's render of the same partial under the same profile - the
+    empty-parameter render, i.e. the template's own body and not the artifact's whole
+    quotient region, for the measured reason in the emitQuotientLinAt header and pinned as a
+    computation by gate 29. Secondary relation on purpose: see gate 25 for the record. -/
+def emitQuotientLin_tokens_ok : Bool :=
+  yulTokens ("{" ++ renderQuotientAndLinearization poseidonCtx "" "" ++ "}") ==
+    yulTokens (EVM.print (emitQuotientLinAt poseidonCtx.k))
+
+/-- GATE 25 (authoritative, QuotientLin). The emitted AST equals the 'yul%' quotation that
+    already existed in VerifierPartials as a fixed snapshot - VerifierPartialKats.
+    qalLinearization_ast, gated there against the render by their gate 19 - under stmtsBeq.
+    This is the check of record for this slice and the one the brief calls non-negotiable: it
+    separates Expr.builtin from Expr.call, it separates the for-loop's three sub-blocks from
+    a flat sequence, and it separates the two QUOTIENT_MPTR stores from each other. The
+    quotation is an independent elaboration path (a parser, not these constructors), so the
+    gate is not self-fulfilling - the same argument P-AST2 made for gates 15 and 17. -/
+def emitQuotientLin_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq (emitQuotientLinAt poseidonCtx.k) VerifierPartialKats.qalLinearization_ast
+
+/-- GATE 26 (perturbation, QuotientLin; D-P23 falsifiability of gates 24-25). The one
+    interpolated plan value, changed by one, turns BOTH relations red. There is only one
+    parameter in this slice, so a gate on it is a gate on the whole slice: if k were
+    decorative the emitted block could not differ at all, and it differs in the loop bound,
+    the loop condition and the printed bytes at once. -/
+def emitQuotientLinDetectsPerturbation_ok : Bool :=
+  let good := emitQuotientLinAt 6
+  yulTokens (EVM.print good) != yulTokens (EVM.print (emitQuotientLinAt 7)) &&
+    ! SyntaxEq.stmtsBeq good (emitQuotientLinAt 7) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (emitQuotientLinAt 5)) &&
+    ! SyntaxEq.stmtsBeq good (emitQuotientLinAt 5)
+
+/-- GATE 27 (the relation gap, at the QuotientLin slice). Every mstore of the emitted block
+    spelled as a USER call named 'mstore' keeps the token stream and breaks stmtsBeq - the
+    class P-AST measured on ec_pairing and P-AST2 re-measured on Lagrange and TraceReturn,
+    now reproduced on a slice with NO user call in it at all. That makes the blindness
+    sharpest here: the whole slice is dialect built-ins, so a converter that reached for
+    'ycall' out of habit would be caught by stmtsBeq and by nothing else. The mis-spelling
+    goes through mapStmtExprs because both stores sit inside the nested scope, where a
+    shallow map would not reach them. -/
+def emitQuotientLinDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitQuotientLinAt poseidonCtx.k
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.mstore args => Expr.call "mstore" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad
+
+/-- GATE 28 (the slice is a program, not a shape). Structural pattern match on the emitted
+    QuotientLin: ONE statement, a scope of NINE statements, containing exactly one for-loop
+    and the two QUOTIENT_MPTR stores in the order the template writes them (x_split at the
+    base, one_minus_x_n at +32). The placeholder is also one statement, which is exactly why
+    this matches on the SHAPE inside it: no permutation of 'mstore(0x2300, 4)' has a scope,
+    a loop or two stores. -/
+def emitQuotientLinIsReal_ok : Bool :=
+  match emitQuotientLinAt poseidonCtx.k with
+  | [Stmt.block body] =>
+      body.length == 9 && (body.filter stmtIsFor).length == 1 &&
+      (match body[7]? with
+       | some (Stmt.exprStmt (Expr.builtin Op.mstore
+           [Expr.var "QUOTIENT_MPTR", Expr.var "x_split"])) => true
+       | _ => false) &&
+      (match body[8]? with
+       | some (Stmt.exprStmt (Expr.builtin Op.mstore
+           [Expr.builtin Op.add [Expr.var "QUOTIENT_MPTR", Expr.lit (Literal.number 32)],
+             Expr.var "one_minus_x_n"])) => true
+       | _ => false)
+  | _ => false
+
+/-- GATE 29 (THE REGION BOUNDARY, pinned as a computation rather than left as a paragraph).
+    The scope decision in the emitQuotientLinAt header is a measurement, and this is the
+    measurement: the empty-parameter render of QuotientAndLinearization is 1,898 bytes / 42
+    lines and occurs EXACTLY ONCE in the tracked artifact; the same call fed poseidonCtx's
+    own quotient_numerator includes is 9,406 bytes and occurs ZERO times; the emitted slice
+    defines no function, so it is the template body and not the region (the includes are
+    what carry the helper definitions); and the emitted slice is the quotation, not the
+    region. If a later package widens 'blk .quotientLin' to the whole quotient region it has
+    to convert both include renders in the same change and re-number this gate - the gate
+    goes red on the boundary being moved, which is the point of writing the boundary down as
+    a Bool instead of only as prose. -/
+def emitQuotientLinRegionBoundary_ok : IO Bool :=
+  VerifierPartialKats.readDump >>= fun sol =>
+  let q := renderQuotientAndLinearization poseidonCtx "" ""
+  let full := renderQuotientAndLinearization poseidonCtx (renderQuotientHelpers poseidonCtx)
+    (renderQuotientNumeratorBlock poseidonCtx)
+  let printed := EVM.print (emitQuotientLinAt poseidonCtx.k)
+  pure (q.length == 1898 && VerifierPartialKats.lineCount q == 42 &&
+    VerifierPartialKats.occ sol q == 1 &&
+    full.length == 9406 && VerifierPartialKats.occ sol full == 0 &&
+    ! printed.contains "function" &&
+    ! printed.contains (renderQuotientHelpers poseidonCtx) &&
+    SyntaxEq.stmtsBeq (emitQuotientLinAt poseidonCtx.k)
+      VerifierPartialKats.qalLinearization_ast)
 
 end Midfall.Lowering.GenAst
 
@@ -937,3 +1158,9 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.numericSpellingDivergence_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitLagrangeIsReal_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitPartialRoutesRealSlices_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLin_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLin_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLinDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLinDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLinIsReal_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientLinRegionBoundary_ok -- expect true

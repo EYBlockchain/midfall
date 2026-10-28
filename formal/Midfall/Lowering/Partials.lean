@@ -235,18 +235,22 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
 
     WHAT IT BUYS, and what it does not. It buys: the theorems are now claims about ONE
     program per plan rather than about every program, so the R-62 counterexample is
-    outside the quantifier. It does not buy a proof: for the FOUR partials GenAst emits a
-    placeholder (GenAst.emittedPartials is [lagrange, finalPairing, traceReturn] since
-    P-AST2; the four are vkLoading, transcriptParser, quotientLin and pcs), so those four
-    theorems are
+    outside the quantifier. It does not buy a proof: for the THREE partials GenAst still
+    emits a placeholder (GenAst.emittedPartials is [lagrange, quotientLin, finalPairing,
+    traceReturn] since P-AST3a; the three are vkLoading, transcriptParser and pcs), so those
+    three theorems are
     pinned to a placeholder and their registered hole is now "the emitter does not
-    implement this partial yet" instead of "blk is free". The six theorems whose partial is
+    implement this partial yet" instead of "blk is free". The eight theorems whose partial is
     emitted for real - finalPairing_spec, finalPairing_progress_spec and
     finalPairing_acc_spec, plus lagrange_spec, lagrange_progress_spec and traceReturn_spec
-    from P-AST2 - are the ones
-    whose pinned block is the real emitted program, the acc theorem at a plan view with
+    from P-AST2, plus quotientLin_spec and quotientLin_progress_spec from P-AST3a - are the
+    ones whose pinned block is the real emitted program, the acc theorem at a plan view with
     hasAccumulator = true, which GenAst emits for real even though the deployed artifact
-    does not exercise that arm.
+    does not exercise that arm. Note what the quotientLin conversion does NOT settle: the
+    pinned block is the linearization SCOPE, i.e. the template's own body, and the two
+    quotient_numerator includes that sit in front of it in the artifact are still text - see
+    the measured boundary in GenAst.emitQuotientLinAt and the gate that pins it,
+    GenAst.emitQuotientLinRegionBoundary_ok.
 
     NON-VACUITY (D-P23). Satisfied by Instances/SurfaceFixture.blkPinInhabited, at the
     only Surface in the tree, as a kernel-checked term. Refuted by
@@ -456,11 +460,12 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
 
     Each carries hblk : BlkIsEmitter S (R-62, P-AST). For finalPairing_spec,
     finalPairing_progress_spec and finalPairing_acc_spec, and since P-AST2 also for
-    lagrange_spec, lagrange_progress_spec and traceReturn_spec, the pinned block is the real
-    emitted program. For the other four the pinned block is GenAst.emitPlaceholder, so
+    lagrange_spec, lagrange_progress_spec and traceReturn_spec, and since P-AST3a also for
+    quotientLin_spec and quotientLin_progress_spec, the pinned block is the real
+    emitted program. For the other three the pinned block is GenAst.emitPlaceholder, so
     those theorems are now claims about ONE named program instead of about every program
     - the false-as-stated quantifier is gone - and their hole is the emitter, which
-    GenAst.emittedPartials records as covering three partials of seven. -/
+    GenAst.emittedPartials records as covering four partials of seven. -/
 
 /-- VkLoading: the payload copy and the calldata envelope. PROOF HOLE: needs the
     VkLoading.yul AST as a Block Op (P-13), the memory-copy lemmas for mcopy over
@@ -555,7 +560,12 @@ theorem lagrange_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : Pairing
     cannot be established for a render that writes those slots until either linearize
     widens or the buckets become nameable another way. Hazard 4 decision: the
     positional pin (queries.back? at Verifier.lean:802) was NOT taken, so this hole
-    stays where the widening belongs. -/
+    stays where the widening belongs. P-AST3a CHANGED ONE HALF of it: the emitter is now
+    real for this partial (GenAst.emitQuotientLin, the linearization scope), so the pinned
+    block is no longer a placeholder and the hole is the Snapshot.lin widening named above
+    and nothing else. The two quotient_numerator includes that precede the scope in the
+    artifact are still text and are NOT part of blk .quotientLin - measured boundary, see
+    GenAst.emitQuotientLinAt. -/
 theorem quotientLin_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)

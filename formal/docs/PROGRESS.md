@@ -167,10 +167,18 @@ recorded, and D-P25 confirms the plan rather than changing it.
 
 Refreshed round 72 - the previous list predated P-AST, P-4a2 and P-ENV entirely.
 
-1. **D-P30 conversion, split per partial** (the current critical path): six remaining
-   `Partial`s get real AST emitters, then `Quotient/Evaluator.lean` (18 string sites), then
-   `VerifierPartials`/`Contracts`. Each slice gated by `stmtsBeq` against the text port, not
-   token comparison alone. Gates P7, P9, P10.
+1. **D-P30 conversion, split per partial** (the current critical path): THREE `Partial`s
+   still emit placeholders - `vkLoading`, `transcriptParser`, `pcs` (P-AST took
+   `finalPairing`, P-AST2 `lagrange` + `traceReturn`, P-AST3a `quotientLin`). Then
+   `Quotient/Evaluator.lean` (18 string sites), then `VerifierPartials`/`Contracts`.
+   Each slice gated by `stmtsBeq` against the text port AND the token comparator - not
+   token comparison alone - plus a placeholder plant per conversion. Gates P7, P9, P10.
+   The three remaining are blocked for three DIFFERENT measured reasons (P-AST3a report):
+   `pcs` needs `Kzg.computations` converted from text; `transcriptParser` needs four
+   AssemblyHelpers definitions the emitter does not have (`transcript_init`, `common_word`,
+   `common_uncompressed_g1`, `squeeze_to`) plus plan values `PlanView` does not carry;
+   `vkLoading` needs four accumulator words `PlanView` does not carry, and calls only
+   `fail`, which is already emitted - so it is the cheapest of the three.
 2. **P-CURVE** - real-curve G1 model. Now the *only* remaining blocker to P5
    (`finalPairing_spec`), since P-4a2 closed the `EnvAgrees` blocker and P-ENV made the
    structure strong enough to reject a degenerate generator.

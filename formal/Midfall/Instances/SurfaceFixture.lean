@@ -69,23 +69,27 @@
 --      `fxOmegaOrderExactly` is GONE because the structure now carries the fact, and
 --      `fxDomDegenerate` is the object the old clause accepted and the new one refutes
 --      (`fxEnvAgreesRejectsDegeneratePair`).
---   4. P-AST CHANGED THIS ONE, P-AST2 EXTENDED IT. blk no longer returns what the fixture
---      declares: it is Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's
---      emitMain, so main_concat and the new BlkIsEmitter pin are rfl here by construction
---      rather than by assertion. THREE slices are real: finalPairing (the deployed arm of
---      FinalPairing.yul, with fail and ec_pairing defined in main's helper prefix so the
---      slice can actually run), lagrange (the three-statement Lagrange.yul block, whose
---      inner scope carries the five Fr loops and the MF-4 two-value batch_invert) and
---      traceReturn (the production terminal arm: guard, mstore 1, return 32 bytes). The
---      other FOUR are still one-statement placeholders - vkLoading, transcriptParser,
---      quotientLin and pcs - because GenAst.emittedPartials is
---      [lagrange, finalPairing, traceReturn]. The placeholders moved out of
+--   4. P-AST CHANGED THIS ONE, P-AST2 AND P-AST3a EXTENDED IT. blk no longer returns what
+--      the fixture declares: it is Midfall/Lowering/GenAst.lean's emitPartial, and main is
+--      that file's emitMain, so main_concat and the new BlkIsEmitter pin are rfl here by
+--      construction rather than by assertion. FOUR slices are real: finalPairing (the
+--      deployed arm of FinalPairing.yul, with fail and ec_pairing defined in main's helper
+--      prefix so the slice can actually run), lagrange (the three-statement Lagrange.yul
+--      block, whose inner scope carries the five Fr loops and the MF-4 two-value
+--      batch_invert), quotientLin (the linearization scope: nine statements, one squaring
+--      walk, the two-word QUOTIENT_MPTR payload - and, note this, ONE top-level statement,
+--      the same length as the placeholder it replaced, so nothing in main's LENGTH can see
+--      the conversion) and traceReturn (the production terminal arm: guard, mstore 1,
+--      return 32 bytes). The other THREE are still one-statement placeholders - vkLoading,
+--      transcriptParser and pcs - because GenAst.emittedPartials is
+--      [lagrange, quotientLin, finalPairing, traceReturn]. The placeholders moved out of
 --      this file into the emitter so that the emitter is the only source of blk in the
 --      tree; a pin against a blk the fixture still declared by hand would pin nothing.
---      What P-AST2 adds to THIS file is the plant class the change makes possible: before
---      it, a Surface whose blk .lagrange was the placeholder satisfied BlkIsEmitter,
---      because the placeholder WAS the emitter's answer. blkPinBitesLagrangePlaceholder and
---      blkPinBitesTraceReturnPlaceholder are the two theorems that say it no longer does.
+--      What P-AST2 and P-AST3a add to THIS file is the plant class each conversion makes
+--      possible: before it, a Surface whose blk .lagrange was the placeholder satisfied
+--      BlkIsEmitter, because the placeholder WAS the emitter's answer.
+--      blkPinBitesLagrangePlaceholder, blkPinBitesTraceReturnPlaceholder and
+--      blkPinBitesQuotientLinPlaceholder are the three theorems that say it no longer does.
 --   7. Eip2537.Holds is still NOT exhibited, and P-4a2 did not change that: the
 --      blocker is the missing BLS12-381 curve model (D-P1, R-28), not the field
 --      arithmetic. See ObligationsGates.gap_holds_unexhibited and encG2AtFixture_ok.
@@ -609,10 +613,14 @@ def mainConcatKats_ok : Bool :=
   -- no BEq on Stmt at this dialect (Ast.lean derives Repr only), so the checks are
   -- structural: lengths and the literal each slice stores, not an equality of blocks.
   -- main is the two emitted AssemblyHelpers definitions followed by the seven slices:
-  -- FOURTEEN statements since P-AST2 (two helpers, four one-statement placeholders, the
-  -- three-statement Lagrange, the two-statement FinalPairing arm and the three-statement
-  -- TraceReturn arm), where the pre-P-AST fixture carried seven dummies and no helpers at
-  -- all, so a real finalPairing slice could not have resolved fail or ec_pairing.
+  -- FOURTEEN statements, and P-AST3a did NOT change that number - measured, not assumed:
+  -- the quotientLin slice is ONE statement before (the placeholder mstore) and ONE statement
+  -- after (the linearization SCOPE), so the conversion is invisible to any length count and
+  -- the structural clause below is the only thing in this gate that can see it. The
+  -- composition is two helpers, three one-statement placeholders, the one-statement
+  -- quotientLin scope, the three-statement Lagrange, the two-statement FinalPairing arm and
+  -- the three-statement TraceReturn arm; the pre-P-AST fixture carried seven dummies and no
+  -- helpers at all, so a real finalPairing slice could not have resolved fail or ec_pairing.
   realSurface.L.main.length == 14 &&
     -- and the first two statements really are those definitions, i.e. mainScope - which
     -- hoists main - can see them. This is the pin's second conjunct as a computation.
@@ -620,13 +628,32 @@ def mainConcatKats_ok : Bool :=
      | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
      | _ => false) &&
     (realSurface.blk Partial.vkLoading realSurface.plan).length == 1 &&
-    -- the three partials the emitter implements are NOT one-statement dummies: the deployed
+    -- the four partials the emitter implements are NOT one-statement dummies: the deployed
     -- FinalPairing arm is the precompile guard and the swapped ec_pairing call, the Lagrange
     -- slice is the MF-4 flag, the 28-statement computation scope and the section boundary,
-    -- and TraceReturn is the guard, the ABI-true store and the terminal return.
+    -- the quotientLin slice is a nine-statement scope, and TraceReturn is the guard, the
+    -- ABI-true store and the terminal return.
     (realSurface.blk Partial.finalPairing realSurface.plan).length == 2 &&
     (realSurface.blk Partial.lagrange realSurface.plan).length == 3 &&
+    (realSurface.blk Partial.quotientLin realSurface.plan).length == 1 &&
     (realSurface.blk Partial.traceReturn realSurface.plan).length == 3 &&
+    -- THE QUOTIENTLIN CLAUSE, and the reason it is structural and not a count: one
+    -- statement that is a scope of NINE, holding exactly one for-loop and the two-word
+    -- QUOTIENT_MPTR payload in the template's order, at the FIXTURE's own k (2, not the
+    -- deployed 6 - so a slice hard-coded to the artifact's constant would pass gate 25 and
+    -- fail here). The placeholder is one statement too; it is a flat mstore and matches none
+    -- of this.
+    (match realSurface.blk Partial.quotientLin realSurface.plan with
+     | [Stmt.block body] =>
+         body.length == 9 && (body.filter GenAst.stmtIsFor).length == 1 &&
+         (match body[1]? with
+          | some (Stmt.letDecl ["k"] (some (Expr.lit (Literal.number 2)))) => true
+          | _ => false) &&
+         (match body[7]? with
+          | some (Stmt.exprStmt (Expr.builtin Op.mstore
+              [Expr.var "QUOTIENT_MPTR", Expr.var "x_split"])) => true
+          | _ => false)
+     | _ => false) &&
     -- and the Lagrange scope really is a scope with loops in it, not three flat statements:
     -- the fixture's own plan (k = 2, seven negative rotations) is what this measures, so a
     -- placeholder that merely had three statements would still fail here.
@@ -651,7 +678,13 @@ def mainConcatKats_ok : Bool :=
 
 /-- The lower pin bites: production options give the program, a trace render is
     refused. A lower that returned .ok for every option would satisfy lower_ok while o0
-    pinned nothing about L. -/
+    pinned nothing about L. The 14 is UNCHANGED by P-AST3a and that is a measurement and not an
+    oversight: the quotientLin slice is one statement before the conversion (a flat mstore) and
+    one statement after (a scope), so main's LENGTH cannot see this conversion at all -
+    mainConcatKats_ok's structural clause is what can, and it is the gate that reddens when the
+    emitter ignores its plan (measured: hard-coding k = 6 in emitQuotientLinAt flips
+    mainConcatKats_ok and blkPinKats_ok to false while this gate stays green, because 14 is
+    still 14). -/
 def lowerPinKats_ok : Bool :=
   (match fxLower fxOptions with | .ok l => l.main.length == 14 | .error _ => false) &&
     (match fxLower fxOptionsTrace with | .ok _ => false | .error _ => true) &&
@@ -938,19 +971,24 @@ theorem blkPinBitesBoundary : ¬ BlkIsEmitter plantBoundarySurface := by
   rw [h4] at h5
   exact Bool.noConfusion h5
 
-/-! #### The P-AST2 plants: a real slice put back to its placeholder
+/-! #### The placeholder plants: a real slice put back to its own placeholder
 
-    WHY THESE TWO EXIST. Every plant above this section attacks a pin that was already
+    WHY THESE THREE EXIST. Every plant above this section attacks a pin that was already
     carrying weight: finalPairing was real when P-AST planted a 'return(0, 0)' over it, and
-    quotientLin is STILL a placeholder, which is what makes the boundary plant work - it
-    moves a join between two one-statement dummies. P-AST2 makes lagrange and traceReturn
-    real, and that creates a NEW plant class the older exhibits cannot express: a blk whose
-    lagrange slice is the emitter's OWN placeholder. Before P-AST2 that plant satisfied
-    BlkIsEmitter, because the placeholder was the emitter's answer for those two partials -
-    the pin was true of it by accident, not by design. D-P30 clause 6 is the instruction to
-    re-check exactly this, and the two theorems below are the re-check: the same plant, now
-    excluded, with main replanted so that main_concat, lower_ok and shell_unfolds all still
-    discharge and the pin remains the only thing that refuses it. -/
+    the boundary plant works because it moves a join whose two sides are DIFFERENT from
+    what blk claims - since P-AST3a the quotientLin side is a nine-statement scope and not a
+    dummy, which makes that plant bite harder and not less. P-AST2 made lagrange and
+    traceReturn real and P-AST3a made quotientLin real, and each conversion creates a NEW
+    plant class the older exhibits cannot express: a blk whose slice for a now-real partial
+    is the emitter's OWN placeholder. Before the conversion that plant satisfied BlkIsEmitter,
+    because the placeholder was the emitter's answer for that partial - the pin was true of
+    it by accident, not by design. D-P30 clause 6 is the instruction to re-check exactly
+    this at every conversion, and the three theorems below are the re-check: the same plant,
+    now excluded, with main replanted so that main_concat, lower_ok and shell_unfolds all
+    still discharge and the pin remains the only thing that refuses it. The quotientLin one
+    is the sharpest of the three: placeholder and real slice are both ONE statement, so the
+    replanted main has the same LENGTH as the emitted main and only the statement inside it
+    differs. -/
 
 /-- The replanted main for an arbitrary planted blk: the emitted helpers, then the planted
     slices in include order. This is what keeps a plant a genuine Surface - main is free, it
@@ -1035,9 +1073,59 @@ theorem blkPinBitesTraceReturnPlaceholder :
   rw [h4] at h5
   exact Bool.noConfusion h5
 
-/-- EVERY OTHER HYPOTHESIS STILL HOLDS OF THE TWO NEW PLANTS, so the pin is again the only
-    thing that refuses them. Stated as two exhibits rather than transported from
-    plantedStillSupported: that transport was TRIED and FAILS to typecheck (measured -
+/-- The plant P-AST3a makes possible: quotientLin back to its placeholder, everything else
+    the emitter's. -/
+def plantBlkQuotientLinPlaceholder : Partial → PlanView → YulBlock
+  | .quotientLin, _pv => GenAst.emitPlaceholder .quotientLin
+  | q, pv => GenAst.emitPartial pv q
+
+def plantQuotientLinPlaceholderSurface : Surface rp RP RP RP :=
+  plantSurfaceWith plantBlkQuotientLinPlaceholder
+
+/-- THE PIN BITES THE PLACEHOLDER PLANT, QUOTIENTLIN (D-P23, second half for the new slice).
+    WHAT MAKES THIS PLANT DIFFERENT FROM THE OTHER TWO, and why it needed its own theorem
+    rather than a third conjunct: the placeholder and the real slice are BOTH one statement,
+    so plantMainWith of this plant has the SAME LENGTH as GenAst.emitMain fxPlan - 14
+    statements either way - and every length-based argument in this file is blind to it. The
+    second conjunct below is the witness that the replanted main is length-identical and still
+    not the emitted main, i.e. that the pin is refusing this plant on CONTENT alone. Before
+    P-AST3a the plant passed BlkIsEmitter outright: 'mstore(0x2300, 4)' WAS the emitter's
+    answer for quotientLin. -/
+theorem blkPinBitesQuotientLinPlaceholder :
+    ¬ BlkIsEmitter plantQuotientLinPlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.quotientLin fxPlan
+  have h4 : SyntaxEq.stmtsBeq
+      (plantQuotientLinPlaceholderSurface.blk Partial.quotientLin fxPlan)
+      (GenAst.emitPlaceholder .quotientLin) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.quotientLin)
+      (GenAst.emitPlaceholder .quotientLin) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- THE LENGTH BLINDNESS, as a computation next to the theorem above: the plant's main and
+    the emitted main have the same number of statements, differ under stmtsBeq, and differ in
+    exactly one slice. This is the falsifiability of the plant class - a pin that only looked
+    at main's shape or length would let the plant through, and these three lines are what
+    says so. -/
+def plantQuotientLinLengthBlind_ok : Bool :=
+  (plantMainWith plantBlkQuotientLinPlaceholder).length =
+    (GenAst.emitMain fxPlan).length &&
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkQuotientLinPlaceholder)
+      (GenAst.emitMain fxPlan) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != Partial.quotientLin)) &&
+    -- and the two one-statement shapes are distinguishable only from the inside:
+    (plantBlkQuotientLinPlaceholder Partial.quotientLin fxPlan).length == 1 &&
+    (GenAst.emitPartial fxPlan Partial.quotientLin).length == 1
+
+#eval plantQuotientLinLengthBlind_ok      -- expect true
+
+/-- EVERY OTHER HYPOTHESIS STILL HOLDS OF THE THREE PLACEHOLDER PLANTS, so the pin is
+    again the only thing that refuses them. Stated as three exhibits rather than transported
+    from plantedStillSupported: that transport was TRIED and FAILS to typecheck (measured -
     'Type mismatch' at both 'exact plantedStillSupported' sites), for the reason
     plantedStillSupported's own comment gives: SupportedS carries the section's nine instance
     arguments and the statements do not unify up to them. So each plant gets the direct ten-
@@ -1088,10 +1176,37 @@ theorem plantedTraceReturnPlaceholderStillSupported :
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
       ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
 
-/-- Both placeholder plants keep their replanted main DISTINCT from the emitted main, which
-    is the price of being a Surface at all: main_concat is existential over the helper
+/-- P-AST3a: the third plant, same ten bullets, same reason for being written out
+    directly rather than transported. Nothing SupportedS reads mentions blk, L, lower, shell
+    or astOfMain, and this plant changes only those five. -/
+theorem plantedQuotientLinPlaceholderStillSupported :
+    SupportedS plantQuotientLinPlaceholderSurface plantQuotientLinPlaceholderSurface.o₀ := by
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantQuotientLinPlaceholderSurface, plantSurfaceWith, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantQuotientLinPlaceholderSurface, plantSurfaceWith, realSurface, fxVk,
+        List.mem_append, List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+
+/-- All three placeholder plants keep their replanted main DISTINCT from the emitted main,
+    which is the price of being a Surface at all: main_concat is existential over the helper
     prefix only, so a blk change that left main alone would not be a Surface whose slices
-    tile the tail of its program. -/
+    tile the tail of its program. The quotientLin line is the one that matters most, because
+    for that plant the two mains have the same LENGTH and only stmtsBeq can tell them apart. -/
 def plantPlaceholderMainsDiffer_ok : Bool :=
   ! SyntaxEq.stmtsBeq (plantMainWith plantBlkLagrangePlaceholder) (GenAst.emitMain fxPlan) &&
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkTraceReturnPlaceholder)
@@ -1103,7 +1218,17 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
         (q != .lagrange)) &&
     (Midfall.Lowering.partials.all fun q =>
       SyntaxEq.stmtsBeq (plantBlkTraceReturnPlaceholder q fxPlan)
-        (GenAst.emitPartial fxPlan q) == (q != .traceReturn))
+        (GenAst.emitPartial fxPlan q) == (q != .traceReturn)) &&
+    -- P-AST3a: the third plant, and the extra line that says what is special about it - the
+    -- replanted main has the SAME LENGTH as the emitted main, so this is the only plant in
+    -- the file whose difference stmtsBeq can see and a length count cannot.
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkQuotientLinPlaceholder)
+      (GenAst.emitMain fxPlan) &&
+    (plantMainWith plantBlkQuotientLinPlaceholder).length =
+      (GenAst.emitMain fxPlan).length &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != .quotientLin))
 
 #eval plantPlaceholderMainsDiffer_ok      -- expect true
 
@@ -1120,7 +1245,10 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
     alone does not, which is the pin's second conjunct doing the work it was added for.
     Lines 8-10 are P-AST2: the Lagrange slice is a program and not a length, the TraceReturn
     slice equals the artifact's quotation, and the two placeholder plants differ from the
-    emitter on exactly the slice they plant. -/
+    emitter on exactly the slice they plant. Lines 11-12 are P-AST3a: the quotientLin slice
+    equals the artifact's own quotation at the FIXTURE's k, and its placeholder plant
+    differs from the emitter on exactly that slice while keeping main's LENGTH - the
+    length-blindness the pin alone has to overcome. -/
 def blkPinKats_ok : Bool :=
   (Midfall.Lowering.partials.all fun q =>
     SyntaxEq.stmtsBeq (realSurface.blk q realSurface.plan)
@@ -1163,7 +1291,35 @@ def blkPinKats_ok : Bool :=
       (GenAst.emitPartial fxPlan Partial.traceReturn) &&
     (Midfall.Lowering.partials.all fun q =>
       SyntaxEq.stmtsBeq (plantBlkLagrangePlaceholder q fxPlan) (GenAst.emitPartial fxPlan q) ==
-        (q != .lagrange))
+        (q != .lagrange)) &&
+    -- Line 11 (P-AST3a): the quotientLin slice the fixture runs is the artifact's own
+    -- quotation (VerifierPartialKats.qalLinearization_ast) EXCEPT for k - the fixture plan is
+    -- k = 2 and the snapshot is the deployed k = 6, so the cross-check here is that the SHAPE
+    -- is the snapshot's and the NUMBER is the plan's. Both halves are asserted: the emitted
+    -- slice at k = 6 IS the snapshot, and at the fixture's own plan it is the snapshot with
+    -- the loop bound replaced and nothing else changed. That is the converter not controlling
+    -- its own comparison, which is what D-P30 clause 2 asks for.
+    (match GenAst.emitQuotientLinAt 6 with
+     | [Stmt.block body] =>
+         body.length == 9 &&
+         (match (realSurface.blk Partial.quotientLin realSurface.plan)[0]?, body[1]? with
+          | some (Stmt.block fxB), some (Stmt.letDecl ["k"]
+              (some (Expr.lit (Literal.number 6)))) =>
+              fxB.length == 9 &&
+                (match fxB[1]? with
+                 | some (Stmt.letDecl ["k"] (some (Expr.lit (Literal.number 2)))) => true
+                 | _ => false)
+          | _, _ => false)
+     | _ => false) &&
+    -- Line 12 (P-AST3a): the decidable shadow of the third theorem, and the length-blindness
+    -- the pin alone has to overcome.
+    ! SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder Partial.quotientLin fxPlan)
+      (GenAst.emitPartial fxPlan Partial.quotientLin) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != .quotientLin)) &&
+    (plantMainWith plantBlkQuotientLinPlaceholder).length =
+      (GenAst.emitMain fxPlan).length
 
 #eval blkPinKats_ok                       -- expect true
 /-! ### 7. EnvAgrees: the hypothesis P-4a2 closes (note 3: this used to be unexhibited) -/
