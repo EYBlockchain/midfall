@@ -51,6 +51,7 @@ flowchart TD
 - **D4**: a conformance harness (Rust exporter plus Lean runner) and differential validation of the Yul semantics against revm.
 - **D5**: proofs covering refinement, security, lowering equivalence (VM path first, then Direct), solc IR translation validation and the per-deployment theorem.
 - **D6**: `formal/Midfall/Statements.lean`, holding the §9 statements. This file is frozen and CI checks its hash.
+  **AMENDED round 62.** The full section-9 statement set now lives in `formal/Midfall/Lowering/Obligations.lean` (`LoweringCorrect` plus the derived headline theorems), staged in by P-SE stages 1-6 from the sketches in `docs/plans/P-SE-semantic-equivalence.md` sections A-R. `Statements.lean` remains frozen at its original three `sorry` placeholders and its hash is unchanged - it is the Phase 1 exit artefact (M1), not the live statement file. **The two must not be conflated:** a reader looking for `lowering_equivalence` will find it in `Obligations.lean`, and `Statements.lean`'s `contractRef_noAcc` is superseded by the *proved* `contractRef_noAcc_of_semanticEquivalence`. Reconciling this was raised by the human asking whether the statements had been brought in at all - they had, but the plan still named the wrong file.
 
 ## 1. Trusted base
 
