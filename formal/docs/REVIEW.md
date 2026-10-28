@@ -1920,8 +1920,61 @@ re-pin `BASELINE.md:211-228`; reconcile the recorded profile (`outerFewerPointSe
 corresponds to the 2,640-byte proof, not 4,848); decide the fate of 12 of the 18 files in
 `fixtures/poseidon/` that have **zero code references** and no generator in this tree
 (verified: `pairing_fixture` appears only in `BASELINE.md`); and note that R-56's wording
-needed the correction above. **This is a fixture regeneration, not a code change.**
+### R-58 Statement review found ten defects in the headline structure; six demonstrated in Lean
 
+P-REV reviewed stages 1-6 read-only. **This is the most productive review of the session,**
+and it vindicates the decision to run a statement review rather than more code reviews:
+every finding is about what a theorem *means*, and none was findable by a port package.
+
+**Two claims I verified myself before recording:**
+* **F3** - `S.shell.codeBlock` occurs at exactly **one** site in the tree
+  (`Surface.lean:492`, inside `RunShell`). Everything else matching `.shell` is
+  `shellLayout`. So nothing pins the shell to the lowered program, and the three run
+  relations - `RunVerifier`, `RunShell`, `RunContractIR` - are about three unrelated
+  programs.
+* **F2** - `hasAccumulator` appears only as a *hypothesis* `hacc : S.plan.hasAccumulator =
+  false` (`Partials.lean:524`, `:547`). **Nothing anywhere compares it to
+  `S.cfg.accumulator`**, though in Rust `expected_has_accumulator` *is*
+  `accEncoding.isSome`. So it is a free Bool.
+
+**The findings, by severity.**
+
+| # | defect | class |
+|---|---|---|
+| F1 | `points_subgroup_checked`'s conclusion holds **unconditionally** - the witness call is not tied to the run, and `permissive` admits any failed call to any target | vacuity, demonstrated |
+| F2 | `PlanView.hasAccumulator` is a free Bool, so **11 of 13 `PartialSpecs` fields discharge on a one-Bool lie** | Lean admits states Rust cannot, demonstrated |
+| F3 | nothing pins `Surface.shell`; consequently **`lowering_equivalence`'s sketch proof hint is false as written** - no field links shell to verifier | missing pin, demonstrated |
+| F4 | `SupportedS.qvm` is the free `Prop` the header claims was eliminated, and nothing consumes it - both trivially satisfiable and decorative | decorative field |
+| F5 | `vkDigest_slot0` is derivable from two other stated pins | decorative field, demonstrated |
+| F6 | two more free pairs of the same class as F2: `PlanView.numInstances` vs `cfg.numInstances`, and dead `Lowered.evaluator` vs live `Surface.evaluatorRuntime` | missing pins |
+| F7 | `accFixedBases_producer` **cannot fail** for any table lacking a `-G` row - including the empty table | vacuity, demonstrated |
+| F8 | `irCheck`/`lower`/`astOfMain` are free functions, so a Surface with `irCheck := fun _ => false` satisfies `ir_refines` trivially, and `render_eq_print` reduces to `stmtsBeq fxMain fxMain` | self-vacuating, demonstrated |
+| F9 | decorative bits: `memoryZeroAbove`, `PlanView.consts`, one `finalPairing_sound` conjunct, a binder that appears only in its own hypothesis | decorative |
+| F10 | `verifier_sound`/`only_two_outcomes` carry no `EnvAgrees`, so they quantify over Surfaces where contract and Lean work in **different fields** | missing hypothesis |
+
+**The generalisation matters more than any single finding.** The recurring root cause is
+that `PlanView`, `Surface` and `LoweringPlan` each carry a **copy** of a fact the Rust
+derives once - `hasAccumulator`, `numInstances`, `evaluator`, `encG2`, the
+`quotient`/`direct` pair. Every copy without a pin is a vacuity.
+
+**And it exposes the limit of the gate I built an hour ago.**
+`check_statement_fingerprints.py` pins 42 *fragments* of text. It cannot see a dependency
+vacuity: F1 passes the fingerprint gate, F7 passes it, F8 passes it. I presented that gate
+as closing the paraphrase gap - it does, and only that. A gate over fragments is not a gate
+over meaning. Worth recording so nobody over-trusts it.
+
+**Also found (G2):** the landed 5-arg `EnvAgrees` pins neither `encG2` nor `accFixedBases`,
+and the fixture sets `encG2 := fun _ => Bytes.empty` - meaning **no `Eip2537.Holds` is
+satisfiable at that Surface**, so every field carrying `Holds` is unexhibited.
+
+**What the review found clean, recorded so it is not re-examined:** `Contracts.lean`'s
+forall-runs layer, `ObsEquiv`/`Obs.view`/`WorldEq`/`returnView`/`abiTrue` (the view *does*
+carry `halted`, so `returnData` is recoverable - contrary to the worry at
+`Obligations.lean:356`), `SideConditions`/`SoundSide`/`CompleteSide` arity, the deferred
+trio's reasons, `VEnv` arity handling at every site, `readScheduleAgrees`, and
+`contractRef_noAcc_of_semanticEquivalence`.
+
+## Closed
 ## Closed
 | | bytes | reads | shape |
 |---|---:|---:|---|
