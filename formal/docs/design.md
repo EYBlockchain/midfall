@@ -884,3 +884,106 @@ Note also, so nobody re-derives it: `rbrKnowledgeSoundness_implies_knowledgeSoun
 `sorry` in ArkLib, and **no Fiat-Shamir soundness or knowledge-soundness theorem exists
 there at all** - S4 is entirely ours.
 
+## D-P24 (ADOPTED, round 68): scope is per-deployment first; generic is a stated follow-on
+
+**Decision (human: recommended option taken).** PLAN section 0 promised
+`lowering_equivalence` generic over every supported VK and config. **Adopted: per-deployment
+translation validation over a real-curve Surface first**, with the generic theorem recorded
+as a follow-on rather than the deliverable.
+
+* **Why:** the code already points this way, and a generic proof requires induction over the
+  generator AST-building functions - a different order of work. AST emission (D-P25) makes
+  the generic form reachable, so this is a deferral with a route, not an abandonment.
+* **Consequence for the `blk` defect (R-62):** `blk` is pinned to the generator AST function
+  as a hypothesis of each `*_spec` theorem. That is what makes the ten currently
+  false-as-stated theorems true.
+* **PLAN section 0 must be amended** so the promise matches the deliverable.
+
+## D-P25 (ADOPTED, round 68): the generator emits Yul ASTs; text is the reference, not the deliverable
+
+**Decision (human).** Three-part design, now explicit in PLAN and D-P13:
+
+1. **Emission.** The generator builds the vendored Yul AST (D-P2).
+2. **Comparison.** Structural AST equality via `YulSemantics.SyntaxEq.stmtsBeq` is the
+   **check of record** for M3. It is insensitive to comments and formatting.
+3. **Tripwire.** Token-level comparison (comments dropped, hex reduced to values) is the CI
+   tripwire for the Yul blocks; **line-based normalisation is used only for the Solidity
+   wrapper**, which is not Yul.
+
+**Why the naive version fails, measured:** comparing printed text reports differences on
+code known to be identical - `normalise_sol.py` calls Lagrange different (73 vs 60 lines)
+and FinalPairing different (6 vs 3), purely from line breaks and decimal-vs-hex number
+spelling, while the token comparator calls both equal. **A tripwire that fires on identical
+input is worse than none**, because it trains people to ignore it.
+
+**Status correction this decision settles:** `VerifierPartials.lean` is a TEXT port and
+treated byte equality as M3 acceptance, contradicting PLAN section 11. The design was right;
+the implementation drifted and no document caught it. The text port stays as a Lean-side
+reference - each converted part is checked against it without re-running Rust.
+
+## D-P26 (ADOPTED, round 68): AST construction uses constructor helpers first; no DSL extension yet
+
+**Decision (human).** `yul%` cannot splice Lean values - only literal numbers, strings and
+identifiers - so a generator cannot inject computed constants or loop-generated statements.
+**Adopted: build ASTs with constructor helpers**, starting with `FinalPairing` and its
+`ec_pairing`/`fail` helpers. **Extend the vendored DSL for splicing only if the helper route
+proves painful**, and only as a separately authorised fork edit like `memoryguard`.
+
+* **Why:** keeps the fork minimal and produces a real data point before committing to a DSL
+  change that every later package would depend on.
+* **Third option on record:** write templates with named placeholders and substitute after
+  (`substConsts`, already in P-SE step P2). Not chosen first.
+
+## D-P27 (ADOPTED, round 68): re-pin `Statements.lean`; a freeze must not protect a false statement
+
+**Decision (human).** The frozen file currently holds `verifyNative_iff_msgs`, which is
+**known false** for a degenerate codec, and `verifyMsgs_iff_spec`, which cannot hold for
+every verifier environment. Both facts existed only as comments elsewhere and never reached
+the open-decisions list - a reporting failure by the orchestrator, since P-SE instructed that
+they be reported.
+
+* **Action:** re-pin the SHA-256 with (a) the codec-law hypothesis added to
+  `verifyNative_iff_msgs`, (b) `verifyMsgs_iff_spec` made environment-dependent or scoped,
+  and (c) `contractRef_noAcc` marked superseded by the proved
+  `contractRef_noAcc_of_semanticEquivalence`.
+* **Principle recorded:** a hash freeze protects against silent drift. It is not a licence to
+  leave a known falsehood frozen.
+
+## D-P28 (ADOPTED, round 68): M0 baseline - regenerate, re-pin, and delete the unread fixtures
+
+**Decision (human).** Per R-57 the committed poseidon fixture was stale on arrival and fails
+the current verifier.
+
+1. Regenerate the six live poseidon artefacts under the profile `BASELINE.md` already records
+   - `outerFewerPointSets = false`, the 2,640-byte proof.
+2. Re-pin the SHA-256 rows at `BASELINE.md:211-228`.
+3. **Delete the 12 of 18 files in `fixtures/poseidon/` that have zero code references**
+   (verified: `pairing_fixture` and friends appear only in `BASELINE.md`), with a commit
+   message recording that they had no generator in this tree.
+4. Reconcile the recorded profile so G0 and `BASELINE.md` name the same one.
+
+* **Principle:** keeping unverifiable artefacts in a frozen baseline is worse than removing
+  them. A SHA-256 table that pins files nothing reads implies coverage that does not exist.
+
+## D-P29 (ADOPTED, round 68): security moves to the ArkLib Interaction framework; PROOF-PLAN stays alive
+
+**Decision (human).** Supersedes parts of **D-P22**, which was signed on a false premise.
+
+* **Verified:** the pinned ArkLib `Interaction` layer (39 files, 0 `sorry`, 0 `admit`, 0
+  `native_decide`) proves `stateRestoration_knowledge_soundness` and a per-round-error
+  variant whose shape matches `roundErr`, with a tighter `Q*max + Sum` bound, plus sequential
+  composition in `KnowledgeComposition.lean`. `#print axioms` on the five key theorems shows
+  only `propext, Classical.choice, Quot.sound`.
+* **Therefore:** S4 is NOT entirely ours - it reduces to showing the Keccak hash chain
+  simulates the Interaction layer oracle up to collisions. S1-S5 are restated in that
+  framework. **D-P21 is implemented at last** (per-round `chalMass`; the x3 row is currently
+  unsound).
+* **`PROOF-PLAN.md` is NOT retired.** It is re-pointed at `Interaction`, and an explicit owner
+  is assigned to the S7 bridge - composing `lowering_equivalence` with the
+  `verifyMsgs_iff_spec` refinement, which P-SE finding 2 says is unprovable as written and
+  which nothing currently schedules.
+* **Deployed-profile knowledge soundness stays explicitly unresolved** (the second half of
+  D-P22 stands): truncated powers are not low-degree in the challenge. Adopted shape: state
+  the truncation bound as a **named, parameterised assumption**, so deployed KS becomes a
+  theorem conditional on one precise conjecture, with the non-vacuity checks recorded
+  (`B = r` satisfies it; `c = (1,-1)` refutes any `B` below about 2^126).
