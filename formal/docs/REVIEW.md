@@ -1865,9 +1865,64 @@ from the file sizes. This is a **baseline** finding, not a harness one.
 **What matches.** The regenerated `transcript_repr` equals the committed
 `rust_trace.json` `vk_repr` (`4cc2e5ac…494`), and the 10 challenge names and the 21
 point reads match exactly. The VK is the same circuit.
+**Correction to this entry (R-57):** the committed `rust_trace.json` is **not a native
+verifier trace**. Its tag vocabulary (`advice[i]`, `lookup_mult`, `perm_product`,
+`dummy_eval`, `q_eval`) comes from `trace_replay.rs::replay_trace_from_vk`, a hand-written
+CS-driven replay **deleted at `cf89e5f`**, whose `q_eval` count came from a length
+heuristic and which was driven with `nb_committed_instances = 0`. So the "138 reads / 69
+dummies" figures above describe a reconstruction by code that no longer exists, not a
+verifier run.
 
-**What does not.** The proof differs:
+### R-57 Poseidon fixture provenance: stale on arrival, not a regression
 
+P-FIX resolved R-56. **Verdict: a stale artefact. The Lean port is not wrong, and no
+feature profile in this tree reproduces the committed fixture.**
+
+**The dates settle it** (verified by the orchestrator against git):
+
+| commit | date | what |
+|---|---|---|
+| `b6a97ac` | 2026-04-29 | `proof.bin` published on `origin/next2`; byte-identical at import and at HEAD, never regenerated |
+| `af622c1` | 2026-05-01 | single-keccak Fiat-Shamir squeeze (was two-fork, 64-byte) |
+| `389dd75` | 2026-05-01 | Keccak scalars hashed big-endian (was LE) |
+| `bf62cef` | 2026-05-02 | challenges sampled as BE mod r |
+
+The fixture was **two days out of date the moment it was imported.** `git diff bf62cef HEAD
+-- proofs/src/transcript/` is a doc-comment reflow, so this tree already carries the
+post-change transcript. Independently confirmed: a Python Keccak-256 + transcript model,
+first validated by reproducing all 10 live Rust digests exactly, yields `theta = 21a553b8…`
+on the committed bytes where the record says `5da79f08…` - **all ten challenges differ**.
+`Error::Opening` is forced by the Fiat-Shamir binding, not by a defect. The fixture was a
+*passing* artefact of its own branch: its `solidity_trace.json` ends
+`final_pairing_result = 1`.
+
+**No profile reproduces it, proven by shape arithmetic.** Committed 4,752 B = 21x48 +
+117x32; `rust-verifier-trace` gives 2,640 = 21x48 + 51x32; adding
+`outer-fewer-point-sets` gives 4,848 = 21x48 + 120x32. The delta to committed is exactly
+`-1 proof_committed_instance_eval` and `-2 proof_dummy_eval`, and it closes: the
+committed-instance column is opened only at `x`, the unified point set measures 3 points,
+so `compute_dummy_queries` gives that singleton group 3-1 = 2 dummies. Ruled out
+individually: a fourth flag, a different `k` (`k` is hashed into `transcript_repr`, which
+matches), `single-h` (4 quotient limbs present; it cannot even prove at k=6 -
+`SrsError(64,252)`), and `truncated-challenges` (changes values, not shape).
+
+**`instance.be` resolved, and the safe answer is to change nothing.** The committed file is
+genuinely big-endian (LE decode fails, BE succeeds) - correct for its name and for
+transcript replay. The generator writes LE `to_repr` but to a *different* path
+(`target/poseidon-fixture-dump/instance.be`), which the Lean port already reads as LE
+(`Calldata.lean:469`, `:835`, `Evm.lean:330`). So the committed file is right and the
+generator's *filename* is the misnomer. Converting it to BE would need a coordinated Lean
+change and must not be done unilaterally.
+
+**Consequence for M0 - and it needs the human.** Four things must change first: replace the
+six live poseidon artefacts with ones rendered by this tree under one named profile and
+re-pin `BASELINE.md:211-228`; reconcile the recorded profile (`outerFewerPointSets = false`
+corresponds to the 2,640-byte proof, not 4,848); decide the fate of 12 of the 18 files in
+`fixtures/poseidon/` that have **zero code references** and no generator in this tree
+(verified: `pairing_fixture` appears only in `BASELINE.md`); and note that R-56's wording
+needed the correction above. **This is a fixture regeneration, not a code change.**
+
+## Closed
 | | bytes | reads | shape |
 |---|---:|---:|---|
 | committed `fixtures/poseidon/proof.bin` | 4,752 | 138 | 69 `dummy_eval` reads, 1 `q_eval` |
