@@ -1,4 +1,4 @@
--- |
+--      factorisation of p - 1 and a reduce_mod_char proof per prime factor at 381 bits,
 -- Midfall.Instances.Bls12_381G1
 --
 -- P-CURVE (docs/plans/P-CURVE-real-g1.md): the real-curve G1 type and codec, and the
@@ -17,15 +17,16 @@
 --
 -- WHAT THIS FILE IS NOT. Three findings, in order of how much they cost.
 --
---   1. THE CLAUSE THAT BLOCKS FIRST IS NOT A CURVE CLAUSE AT ALL. g1Decodes as written is
---      unsatisfiable for every codec on every prime-order group, curve model included;
---      Midfall/Assumptions/Eip2537.lean proves it (g1Decodes_unsatisfiable,
---      holds_unsatisfiable, not_exists_holds). So the four-way bundle
---      BlkIsEmitter /\ SupportedS /\ EnvAgrees /\ Eip2537.Holds is REFUTED, not merely
---      unpopulated, and no declaration naming all four can be written until the orchestrator
---      repairs the clause. The repair is stated there as g1DecodesWidth and is discharged by
---      this file (g1FrameCodec_decodesWidth), so it is known-good rather than a guess - but
---      repairing it unblocks the clause, not the exhibit, for the two reasons below.
+--   1. THE CLAUSE THAT BLOCKED FIRST WAS NOT A CURVE CLAUSE AT ALL, AND IT IS NOW REPAIRED.
+--      g1Decodes as written was unsatisfiable for every codec on every prime-order group, curve
+--      model included; Midfall/Assumptions/Eip2537.lean proves it of the pinned old text
+--      (g1DecodesOld_unsatisfiable, holdsOld_unsatisfiable, not_exists_holdsOld) and the width
+--      condition b.size == g1Bytes is now the live field (R-63 level 1, applied by P-HOLDS). So
+--      the four-way bundle BlkIsEmitter /\ SupportedS /\ EnvAgrees /\ Eip2537.Holds is no longer
+--      refuted BY THE CLAUSE: this file discharges the repaired clause outright
+--      (g1FrameCodec_decodesWidth) and refutes the pinned old text (g1FrameCodec_not_g1DecodesOld).
+--      What the repair does NOT buy is the exhibit: repairing g1Decodes unblocks the clause,
+--      not the exhibit, for the two reasons below.
 --   2. G1Frame IS NOT A GROUP, AND CANNOT BE MADE INTO ONE HERE. The obstruction is not the
 --      codec and not the byte model: affineAdd and affineSmul in Externals.lean are integer
 --      arithmetic on decoded bytes, and the facts that would make them a group law - the sum
@@ -33,15 +34,16 @@
 --      for every valid P - are statements about the FIELD Fp. Stating them in mathlib's terms
 --      (AlgebraicGeometry/EllipticCurve, whose affine group law is proved at
 --      Affine/Point.lean:805) needs a Field instance on ZMod pBase, i.e. Fact (Nat.Prime
---      pBase): a 381-bit primality proof. The tree does not have one. CompPoly proves its
---      255-bit scalar modulus prime with a Pratt certificate
---      (CompPoly/Fields/BLS12_381/Basic.lean:27); the same route at pBase needs the
---      factorisation of p - 1 and a reduce_mod_char proof per prime factor at 381 bits.
---      Without the field, g1Add and g1Msm1 cannot be stated for all points at all: they are
---      equations between affineAdd/affineSmul and a group law that does not exist yet. What
---      is demonstrated below is the concrete instances of those equations on real points, as
---      gates - the clause shape is right and the arithmetic is right; the generalisation is
---      what is missing.
+--      pBase): a 381-bit primality proof. THE TREE NOW HAS ONE: Assumptions/BasePrime.lean
+--      proves Nat.Prime pBase by a Lucas/Pratt certificate (CompPoly's pattern for r, extended
+--      to the base modulus), so ZMod pBase is a Field and the blocker below is construction,
+--      not a missing fact: the group law on the frame type still has to be BUILT, and the
+--      agreement of affineAdd with mathlib's AffinePoint.add still has to be proved. Until
+--      that construction exists g1Add and g1Msm1 cannot be stated for all points at all: they
+--      are equations between affineAdd/affineSmul and a group law that does not exist yet.
+--      What is demonstrated below is the concrete instances of those equations on real
+--      points, as gates - the clause shape is right and the arithmetic is right; the
+--      generalisation is what is missing.
 --   3. G1Frame DOES NOT HAVE PRIME ORDER, AND THAT IS A POINT-COUNTING THEOREM.
 --      PrimeOrderWith G1Frame r is Nat.card G1Frame = r: the r-torsion of E(Fp) has exactly r
 --      elements. For BLS12-381's G1 that is true, but proving it needs either a point count of
@@ -187,14 +189,14 @@ theorem g1FrameCodec_ofEip_toEip :
   rw [dif_pos Q.prop]
   exact congrArg some (Subtype.eq rfl)
 
-/-- AND THE WRITTEN CLAUSE STILL FAILS HERE - for the byte reason, not a curve reason. The
-    codec is not at fault; the quantifier is. Proved directly rather than by citing
-    g1Decodes_unsatisfiable, because that theorem needs a Group and a PrimeOrderWith instance
-    on G1Frame, which is exactly what note 2 and note 3 say is missing: the failure of the
-    written clause does not depend on the missing group law at all. -/
-theorem g1FrameCodec_not_g1Decodes :
-    ¬ (∀ b : Bytes, (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
-        ∃ Q, g1FrameCodec.ofEip? b = some Q ∧ g1FrameCodec.toEip Q = b) := by
+/-- AND THE PINNED OLD CLAUSE STILL FAILS HERE - for the byte reason, not a curve reason. The
+    codec is not at fault; the quantifier was. Proved directly rather than by citing
+    g1DecodesOld_unsatisfiable, because that theorem needs a Group and a PrimeOrderWith instance
+    on G1Frame, which is exactly what note 2 and note 3 say is missing: the failure of the old
+    clause does not depend on the missing group law at all. The LIVE clause is the one this
+    codec satisfies (g1FrameCodec_decodesWidth), so this is a regression pin and not an open
+    obligation: it reddens the day the width condition is dropped from the structure again. -/
+theorem g1FrameCodec_not_g1DecodesOld : ¬ g1DecodesOld g1FrameCodec := by
   intro h
   obtain ⟨Q, _, hQ⟩ := h (garbageFrame 1) (garbageFrame_accepted 1)
   have h2 : Q.val = garbageFrame 1 := hQ
@@ -294,9 +296,12 @@ def gap_g1_no_group_law : String :=
   "blocker: G1Frame has no Group instance. affineAdd/affineSmul are integer arithmetic on "
     ++ "decoded bytes; the group-law facts (closure of the on-curve set, associativity, "
     ++ "agreement with mathlib's AffinePoint.add at Affine/Point.lean:805) are field "
-    ++ "statements and need Fact (Nat.Prime pBase), a 381-bit primality proof the tree does "
-    ++ "not have (CompPoly has a Pratt certificate for r only). Without it g1Add and g1Msm1 "
-    ++ "cannot be stated for all points, only for the ones a gate can name."
+    ++ "statements and need Fact (Nat.Prime pBase). That 381-bit primality proof NOW EXISTS "
+    ++ "(Assumptions/BasePrime.lean, pBase_prime: Nat.Prime pBase by a Lucas/Pratt "
+    ++ "certificate, no native_decide), so ZMod pBase is a Field and the remaining work is "
+    ++ "construction, not a missing fact: build the group law on the frame type and prove "
+    ++ "affineAdd agrees with mathlib's. Without it g1Add and g1Msm1 cannot be stated for "
+    ++ "all points, only for the ones a gate can name."
 
 def gap_g1_prime_order : String :=
   "blocker: PrimeOrderWith G1Frame r is Nat.card G1Frame = r, i.e. the r-torsion of E(Fp) "
@@ -306,11 +311,12 @@ def gap_g1_prime_order : String :=
     ++ "surjective onto the accepted frames."
 
 /-- THE HONEST SUMMARY OF THIS PACKAGE, as a computation. Two of the six clauses hold at real
-    curve points by theorem (g1FrameCodec_g1Valid, g1FrameCodec_decodesWidth); the WRITTEN
-    g1Decodes is refuted at this codec by theorem (g1FrameCodec_not_g1Decodes), so the codec is
-    not what makes Holds unsatisfiable; and the three clauses that need a group law are
-    demonstrated only pointwise, by the gates above. Nothing here claims Holds, and this gate
-    is the statement of that: it reddens the day someone weakens a clause to make it pass. -/
+    curve points by theorem (g1FrameCodec_g1Valid, g1FrameCodec_decodesWidth); the PINNED OLD
+    g1DecodesOld is refuted at this codec by theorem (g1FrameCodec_not_g1DecodesOld), so the codec is
+    not what made Holds unsatisfiable as written; and the three clauses that need a group
+    law are demonstrated only pointwise, by the gates above. Nothing here claims Holds, and
+    this gate is the statement of that: it reddens the day someone weakens a clause to make
+    it pass. -/
 def g1ModelStatus_ok : Bool :=
   -- g1Valid holds at the generator, which is a non-identity point
   (match g1Of? (g1FrameCodec.toEip g1GenFrame) with

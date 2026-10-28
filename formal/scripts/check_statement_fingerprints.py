@@ -145,6 +145,81 @@ ENV_CLAUSES = [
      ["vk.domain.omega ^ vk.domain.n = 1"]),
 ]
 
+# P-HOLDS (docs/REVIEW.md R-63): the six Eip2537.Holds clause types in
+# Midfall/Assumptions/Eip2537.lean. P-CURVE reported that no text gate read them at all, so
+# weakening g1Decodes - the defect R-63 found, and the one the repair fixes - reddened nothing
+# and the build was the only defence. A hypothesis structure is a STATEMENT, and the only thing
+# that notices a clause being relaxed to True or to a one-directional implication is this file.
+#
+# Each entry is (structure, field, must, must_not), read with the SAME structure parser the
+# duplicate-fact gate uses so a fragment is matched against the field of THAT structure and not
+# against a doc string that quotes it (comments are stripped first). The must_not half makes
+# the g1Decodes entry a two-sided pin: the live clause must carry the frame-width condition and
+# must not be the pre-repair quantifier, while g1DecodesOld must be exactly the pre-repair
+# quantifier and must NOT acquire the width condition. Repair one and forget the other and the
+# gate reddens.
+HOLDS_FILE = "Midfall/Assumptions/Eip2537.lean"
+HOLDS_CLAUSES = [
+    # G1VALID: every encoding the codec produces must be a point the byte validators accept.
+    # g1PointAddValid is the WEAKER validator (it skips the r-torsion check, which is why
+    # EIP-2537's G1ADD accepts off-subgroup points), so naming it here would silently drop the
+    # subgroup half of the clause - the distinction g1FrameCodecKats_ok line 7 pins.
+    ("Eip2537.Holds", "g1Valid",
+     ["\u2200 Q : G\u2081", "\u2203 pt, g1Of? (c.toEip Q) = some pt",
+      "g1PointMsmValid pt = true"],
+     ["g1PointAddValid", "= True"]),
+    ("Eip2537.Holds", "g2Valid",
+     ["\u2200 R : G\u2082", "\u2203 pt, g2Of? (c\u2082.toEip R) = some pt",
+      "g2PointValid pt = true"],
+     ["g2PointAddValid", "= True"]),
+    # PAIRING2: an IFF, not an implication. One direction is all a soundness proof needs and
+    # is the shape a package under pressure would write; the additive identity 0 and the two
+    # pairs are what make it the precompile's answer.
+    ("Eip2537.Holds", "pairing2",
+     ["product (pairingFrame [", "= true \u2194",
+      "P.e (Additive.ofMul P\u2081) (Additive.ofMul Q\u2081) +",
+      "P.e (Additive.ofMul P\u2082) (Additive.ofMul Q\u2082) = 0"],
+     ["msmSpecific", "pairing_iff"]),
+    # G1ADD / G1MSM1: the frame the precompile runs, the codec's own bytes on both sides, and
+    # the group law / scalar action it must agree with. g1AddValidInput and g1MsmValidInput are
+    # the LENGTH validators - true of far more frames than the outputs - so a clause that names
+    # one instead of g1AddOutput/g1MsmOutput has stopped saying anything about arithmetic.
+    ("Eip2537.Holds", "g1Add",
+     ["\u2200 P\u2081 P\u2082 : G\u2081",
+      "g1AddOutput (g1AddFrame (c.toEip P\u2081) (c.toEip P\u2082)) =",
+      "some (c.toEip (P\u2081 * P\u2082))"],
+     ["g1AddValidInput", "= True"]),
+    ("Eip2537.Holds", "g1Msm1",
+     ["g1MsmOutput (g1MsmFrame [(c.toEip Q, frToInputBE s)]) =",
+      "some (c.toEip (gsmul s Q))"],
+     ["g1MsmValidInput", "= True"]),
+    # G1DECODES, the repaired clause: the frame-width condition is REQUIRED and the pre-repair
+    # quantifier is FORBIDDEN. R-63 proved the forbidden text unsatisfiable for every codec on
+    # every prime-order group; the pinned old text below is where it lives now.
+    ("Eip2537.Holds", "g1Decodes",
+     ["\u2200 b : Bytes, b.size == g1Bytes \u2192",
+      "(\u2203 pt, g1Of? b = some pt \u2227 g1PointMsmValid pt = true) \u2192",
+      "\u2203 Q, c.ofEip? b = some Q \u2227 c.toEip Q = b"],
+     ["\u2200 b : Bytes, (\u2203 pt, g1Of? b = some pt"]),
+]
+
+# The two named decode propositions and the pinned old structure, as DEFINITIONS: for a def the
+# BODY is the statement, so these are matched against the whole declaration (whole=True), the
+# same way Surface.irCheck is.
+HOLDS_DEFS = [
+    ("g1DecodesWidth",
+     ["\u2200 b : Bytes, b.size == g1Bytes \u2192",
+      "\u2203 Q, c.ofEip? b = some Q \u2227 c.toEip Q = b"],
+     ["\u2200 b : Bytes, (\u2203 pt, g1Of? b = some pt"]),
+    ("g1DecodesOld",
+     ["\u2200 b : Bytes, (\u2203 pt, g1Of? b = some pt \u2227 g1PointMsmValid pt = true) \u2192",
+      "\u2203 Q, c.ofEip? b = some Q \u2227 c.toEip Q = b"],
+     ["b.size == g1Bytes"]),
+    ("Eip2537.HoldsOld",
+     ["Eip2537.Holds c c\u2082 product \u2227 g1DecodesOld c"],
+     []),
+]
+
 DECL = re.compile(r"^\s*(?:theorem |lemma |def |example )?")
 WORD_START = re.compile(r"^[A-Za-z_]")
 
@@ -326,17 +401,58 @@ def main():
                 if norm(fr) in text:
                     problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type contains the "
                                     "pre-P-ENV text %s" % (struct, field, repr(fr)))
+    # P-HOLDS: the six Eip2537.Holds clause types, and the named decode propositions the
+    # repair pins. A weakened clause elaborates, builds, and keeps every KAT true - the
+    # unsatisfiable demand simply stops being refutable - so this is the only text gate that
+    # can see the R-63 regression coming back.
+    holds = root / HOLDS_FILE
+    if not holds.exists():
+        problems.append("Eip2537.lean missing: %s" % holds)
+    else:
+        hbody = strip_comments(holds.read_text(encoding="utf-8"))
+        for struct, field, must, must_not in HOLDS_CLAUSES:
+            text = env_clause_text(hbody, struct, field)
+            if not text:
+                problems.append("Holds.%s.%s: CLAUSE NOT FOUND - the field is no longer "
+                                "declared, so nothing pins its type" % (struct, field))
+                continue
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("Holds.%s.%s: CLAUSE WEAKENED - the type no longer "
+                                    "says %s (P-HOLDS: the six Holds clauses are statements "
+                                    "and no other gate reads them)"
+                                    % (struct, field, repr(fr)))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("Holds.%s.%s: CLAUSE WEAKENED - the type contains %s"
+                                    % (struct, field, repr(fr)))
+        for dname, must, must_not in HOLDS_DEFS:
+            text = field_text(hbody, dname, whole=True)
+            if not text:
+                problems.append("Eip2537." + dname + ": DECLARATION NOT FOUND - the "
+                                "regression pin has been deleted")
+                continue
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("Eip2537." + dname + ": no longer says " + repr(fr))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("Eip2537." + dname + ": must stay the pinned OLD text "
+                                    "and now contains " + repr(fr))
     if problems:
         print("STATEMENT FINGERPRINTS BROKEN (%d):" % len(problems))
         for pr in problems:
             print("  " + pr)
         return 1
     print("ok: %d statement fragments present in the TYPE across %d LoweringCorrect "
-          "fields, %d Surface pins, %d derived checks, %d blk-pin declarations and "
-          "%d EnvAgrees clause types (comments stripped first)"
+          "fields, %d Surface pins, %d derived checks, %d blk-pin declarations, "
+          "%d EnvAgrees clause types and %d Holds clause types plus %d Holds decode pins "
+          "(comments stripped first)"
           % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
-             len(PARTIAL_SPEC_PINS), len(ENV_CLAUSES)))
-    return 0
+             len(PARTIAL_SPEC_PINS), len(ENV_CLAUSES), len(HOLDS_CLAUSES),
+             len(HOLDS_DEFS)))
 
 
 if __name__ == "__main__":

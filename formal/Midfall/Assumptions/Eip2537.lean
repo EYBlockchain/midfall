@@ -135,9 +135,20 @@ structure Eip2537.Holds (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : Pairin
       r, and a non-canonical word would alias to a different field element. -/
   g1Msm1 : ∀ (Q : G₁) (s : Fr p),
     g1MsmOutput (g1MsmFrame [(c.toEip Q, frToInputBE s)]) = some (c.toEip (gsmul s Q))
-  /-- Soundness side: a frame the precompile accepts decodes through the codec. -/
-  g1Decodes : ∀ b : Bytes, (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
-    ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
+  /-- Soundness side: a frame the precompile accepts decodes through the codec.
+
+      THE WIDTH HYPOTHESIS IS PART OF THE CLAUSE (R-63, repaired by P-HOLDS). g1Of? is a
+      COORDINATE reader: bytesSlice clamps and never checks the length, so without
+      `b.size == g1Bytes` the antecedent is satisfied by every extension of a valid frame
+      by trailing bytes, and the clause demands that toEip hit infinitely many distinct
+      strings - impossible on a type with `Nat.card G₁ = p`. That is proved below of the old
+      text (g1DecodesOld_unsatisfiable), which is pinned there so the regression cannot come
+      back unnoticed. With the width condition the clause says what its docstring always
+      said, and Midfall/Instances/Bls12_381G1.lean discharges it at real curve points
+      (g1FrameCodec_decodesWidth). -/
+  g1Decodes : ∀ b : Bytes, b.size == g1Bytes →
+    (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+      ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
 
 /-! ### Modexp is arithmetic, not an assumption -/
 
@@ -196,7 +207,7 @@ def msmScalarWordKats_ok : Bool :=
 
 #eval msmScalarWordKats_ok   -- expect true
 
-/-! ### THE SATISFIABILITY DEFECT: g1Decodes IS UNSATISFIABLE AS WRITTEN
+/-! ### THE SATISFIABILITY DEFECT: g1Decodes WAS UNSATISFIABLE AS WRITTEN (R-63, REPAIRED)
 
 P-CURVE (docs/plans/P-CURVE-real-g1.md) was fired to make Eip2537.Holds satisfiable by
 building a real-curve G1 model, on R-61's reading that the only thing between the exponent
@@ -232,16 +243,28 @@ so nothing in the byte model can see the difference; the clause's own docstring 
 the precompile accepts", and the precompile does NOT accept a 0x81-byte point. The defect is
 that the clause says g1Of?-accepts where the doc says frame-accepts.
 
-THE REPAIR, stated below as g1DecodesWidth and NOT substituted into the structure. Adding the
-frame-width condition to the antecedent - b.size == g1Bytes, which is what the docstring
-already means - removes the obstruction: Holds.g1Decodes implies the repaired clause (proved
-below, so the repair is a genuine relaxation of an unsatisfiable demand and not a rewording),
-and the real-curve frame type in Midfall/Instances/Bls12_381G1.lean satisfies the repaired
-clause outright. Swapping it into the structure is a HEADLINE STATEMENT CHANGE and is
-deliberately left to the orchestrator: this package's rule is that a hypothesis is repaired by
-a decision and a review, not by the agent who is graded on satisfying it. What is NOT closed
-by the repair is recorded there: the remaining clauses still need a group law over Fp and a
-count of the r-torsion, so repairing g1Decodes unblocks the clause but not the exhibit. -/
+THE REPAIR, APPLIED (P-HOLDS, on R-63's level 1). The frame-width condition
+b.size == g1Bytes - which is what the clause's docstring always meant and what every real frame
+validator pins - is now part of the structure field, and the same proposition is kept as the
+named def g1DecodesWidth so the clause can be cited by name. The repair is a genuine
+RELAXATION and not a rewording: g1DecodesOld_implies_width below proves the old text entails
+the new one, and the real-curve frame type in Midfall/Instances/Bls12_381G1.lean satisfies the
+new clause outright (g1FrameCodec_decodesWidth) while REFUTING the old one
+(g1FrameCodec_not_g1DecodesOld) for the byte reason and not a curve reason.
+
+THE OLD TEXT IS PINNED, NOT DELETED. g1DecodesOld names the written clause as it stood before
+R-63, Eip2537.HoldsOld is the structure with that clause conjoined, and the three refutations
+below are restated against them (g1DecodesOld_unsatisfiable, holdsOld_unsatisfiable,
+not_exists_holdsOld). This project keeps its fixed defects as failing terms for exactly this
+reason - see s1_defect_refutes_the_conjunction from R-60 S1 - and the fingerprint entries in
+scripts/check_statement_fingerprints.py for the six Holds clause types are what stop the live
+clause being weakened back into the pinned old one while the refutations still build.
+
+WHAT THE REPAIR DOES NOT CLOSE. g1Decodes was the clause that blocked FIRST, and it blocked
+for a reason that had nothing to do with curves. With it repaired the remaining blockers are
+the two curve facts recorded in Midfall/Instances/Bls12_381G1.lean: a group law over Fp, which
+needs Fact (Nat.Prime pBase), and the r-torsion point count Nat.card G1Frame = r that
+PrimeOrderWith demands. Repairing g1Decodes unblocks the clause, not the exhibit. -/
 
 /-- A valid 128-byte G1 frame with k extra bytes appended. g1Of? accepts every one of them as
     the point of infinity, because it slices rather than checks the length. -/
@@ -285,14 +308,22 @@ theorem garbageFrame_accepted (k : ℕ) :
     bytesSlice_bytesZero _ _ _ (by unfold g1Bytes; omega)
   simp [g1Of?, e1, e2, fpCoordOf?_bytesZero64]
 
-/-- THE DEFECT, AS A THEOREM. The g1Decodes clause cannot be discharged by any codec on any
-    prime-order group. The proof is the pigeonhole: the clause makes toEip hit every
+/-- THE OLD TEXT OF THE CLAUSE, PINNED. This is exactly what the g1Decodes field said
+    before R-63: no width condition, so the quantifier runs over every byte string the
+    COORDINATE reader accepts. It is kept as a named proposition rather than deleted because
+    the three refutations below are true OF IT and are the regression pin: weakening the live
+    clause back to this text is what the fingerprint gate reddens, and the refutation stays
+    available either way. -/
+def g1DecodesOld (c : G1Codec G₁) : Prop :=
+  ∀ b : Bytes, (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+    ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
+
+/-- THE DEFECT, AS A THEOREM OF THE PINNED OLD TEXT. No codec on any prime-order group can
+    discharge it. The proof is the pigeonhole: the clause makes toEip hit every
     garbageFrame k, the family is infinite, and Nat.card G1 = p makes the range finite -
-    formally, an injection (Nat → G1) makes G1 infinite, so its Nat.card is 0, not p. -/
-theorem g1Decodes_unsatisfiable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
-    [PrimeOrderWith G₁ p] (c : G1Codec G₁) :
-    ¬ (∀ b : Bytes, (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
-        ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b) := by
+    formally, an injection (Nat → G₁) makes G₁ infinite, so its Nat.card is 0, not p. -/
+theorem g1DecodesOld_unsatisfiable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    [PrimeOrderWith G₁ p] (c : G1Codec G₁) : ¬ g1DecodesOld c := by
   intro h
   have key : ∀ k : ℕ, ∃ Q, c.ofEip? (garbageFrame k) = some Q ∧ c.toEip Q = garbageFrame k :=
     fun k => h _ (garbageFrame_accepted k)
@@ -306,48 +337,63 @@ theorem g1Decodes_unsatisfiable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Gr
   rw [Nat.card_eq_zero_of_infinite] at hc
   exact absurd hc.symm (Nat.Prime.ne_zero (Fact.out : Nat.Prime p))
 
-/-- THE HEADLINE CONSEQUENCE: Eip2537.Holds has no model at all, at any curve, over any group,
-    with any G2 encoder and any pairing product. This is what makes the four-way bundle
-    (BlkIsEmitter ∧ SupportedS ∧ EnvAgrees ∧ Eip2537.Holds) empty rather than merely
-    unexhibited, and it is the eighth false-as-written finding of the class R-60 S1 named
-    and R-62 counted to seven - except that this time the conjunction is REFUTED, not merely
-    unpopulated. -/
-theorem holds_unsatisfiable (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct) :
-    ¬ (Eip2537.Holds c c₂ product) :=
-  fun h => g1Decodes_unsatisfiable c h.g1Decodes
+/-- THE STRUCTURE AS IT STOOD BEFORE R-63: the repaired Holds with the pinned old decode
+    clause conjoined. A def and not a second structure, so the five clauses that did not change
+    are the SAME fields and cannot drift apart from the live structure. -/
+def Eip2537.HoldsOld (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct) : Prop :=
+  Eip2537.Holds c c₂ product ∧ g1DecodesOld c
 
-/-- The non-existence form, which is the shape the bundle gate cares about: there is no triple
-    of codec, encoder and oracle making the hypothesis true, so no field of LoweringCorrect
-    that takes Eip2537.Holds can ever be discharged by exhibit until the clause is repaired. -/
-theorem not_exists_holds :
+/-- THE HEADLINE CONSEQUENCE OF THE OLD TEXT: Eip2537.Holds as WRITTEN had no model at all,
+    at any curve, over any group, with any G2 encoder and any pairing product. That is what
+    made the four-way bundle (BlkIsEmitter ∧ SupportedS ∧ EnvAgrees ∧ Eip2537.Holds) empty
+    rather than merely unexhibited, and it is the eighth false-as-written finding of the class
+    R-60 S1 named and R-62 counted to seven - except that this time the conjunction was
+    REFUTED, not merely unpopulated. Stated now of HoldsOld: the live structure is no longer
+    refuted (that was the defect, and it is repaired), so the refutation travels with the text
+    it was proved of. -/
+theorem holdsOld_unsatisfiable (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct) :
+    ¬ (Eip2537.HoldsOld c c₂ product) :=
+  fun h => g1DecodesOld_unsatisfiable c h.2
+
+/-- The non-existence form of the same fact, which is the shape the bundle gate cares about:
+    there was no triple of codec, encoder and oracle making the OLD hypothesis true, so no field
+    of LoweringCorrect that takes it could ever be discharged by exhibit. After the repair the
+    live structure is not refutable this way - that is the whole point of the repair - and what
+    is left is a per-codec question, answered for the fixture codec in
+    Midfall/Instances/ObligationsGates.lean. -/
+theorem not_exists_holdsOld :
     ¬ (∃ (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct),
-        Eip2537.Holds c c₂ product) := by
+        Eip2537.HoldsOld c c₂ product) := by
   rintro ⟨c, c₂, product, h⟩
-  exact holds_unsatisfiable c c₂ product h
+  exact holdsOld_unsatisfiable c c₂ product h
 
-/-- THE REPAIR. b.size == g1Bytes is the frame-width condition the clause's docstring already
-    states ("a frame the precompile accepts") and that every real frame validator pins: G1ADD
-    at 0x100 (g1AddValidInput), G1MSM at a whole number of 0xa0 pairs (g1MsmPairs?),
-    PAIRING_CHECK at a whole number of 0x180 pairs (pairingPairs?). It is stated here as a
-    named proposition, NOT substituted into Eip2537.Holds, because changing a headline
-    hypothesis is a decision for the orchestrator and not for the package that wants to
-    satisfy it (D-P23). -/
+/-- THE REPAIR, AS A NAMED PROPOSITION: b.size == g1Bytes is the frame-width condition the
+    clause's docstring always stated ("a frame the precompile accepts") and that every real
+    frame validator pins: G1ADD at 0x100 (g1AddValidInput), G1MSM at a whole number of 0xa0
+    pairs (g1MsmPairs?), PAIRING_CHECK at a whole number of 0x180 pairs (pairingPairs?). This
+    is now the text of the live field, and it is kept named so the clause can be cited - and
+    discharged at the real curve codec - by name. -/
 def g1DecodesWidth (c : G1Codec G₁) : Prop :=
   ∀ b : Bytes, b.size == g1Bytes → (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
     ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
 
-/-- The repair is a relaxation of the written clause and nothing more: every Holds satisfies
-    it. Stated as an implication rather than as a replacement so the direction is on the
-    record - the written clause is strictly stronger, and strictly stronger than
-    satisfiable. -/
+omit [Group G₁] in
+/-- THE REPAIR IS A RELAXATION AND NOT A REWORDING: the old text entails the new one, by
+    discarding the width hypothesis. So every codec that satisfied the old clause satisfies the
+    new one, and the new clause is strictly weaker - the old one was unsatisfiable, this one is
+    discharged at real curve points. -/
+theorem g1DecodesOld_implies_width (c : G1Codec G₁) : g1DecodesOld c → g1DecodesWidth c :=
+  fun h b _hs => h b
+
+/-- Every Holds satisfies the repaired clause: the projection, restated for the live field. -/
 theorem holds_g1DecodesWidth (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct)
     (h : Eip2537.Holds c c₂ product) : g1DecodesWidth c :=
-  fun b _hs ⟨pt, hpt, hv⟩ => h.g1Decodes b ⟨pt, hpt, hv⟩
+  fun b hs ⟨pt, hpt, hv⟩ => h.g1Decodes b hs ⟨pt, hpt, hv⟩
 
-/-- THE FAILURE MODE OF THE DEFECT, as a computation (R-41: a demonstrated failure mode, not a
-    narrative). Lines 1-2: the coordinate decoder accepts a 0x81- and a 0xa0-byte frame as the
-    point of infinity, which is what makes the antecedent infinite. Line 3: the frames are
-    pairwise distinct, so they need pairwise distinct preimages. Lines 4-6: the PRECOMPILE
+/-- THE FAILURE MODE OF THE OLD CLAUSE, as a computation (R-41: a demonstrated failure mode,
+    not a narrative). Lines 1-2: the coordinate decoder accepts a 0x81- and a 0xa0-byte frame
+    as the point of infinity, which is what makes the antecedent infinite. Line 3: the frames
+    are pairwise distinct, so they need pairwise distinct preimages. Lines 4-6: the PRECOMPILE
     itself refuses those lengths, so the tolerance is an artefact of g1Of? being a coordinate
     reader and not a statement about what EIP-2537 accepts - which is why the repair is a
     width condition and not a change to the precompile model. -/

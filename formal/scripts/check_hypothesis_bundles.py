@@ -59,14 +59,14 @@ REGISTRY = [
         "field": "verifier_sound",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
                  ("gap_runLeg_unexhibited", ["RunVerifier"])],
     },
     {
         "field": "verifier_complete",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
                  ("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
@@ -80,7 +80,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
     {
         "field": "qvm_validated_noBoundsFault",
@@ -93,7 +93,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -103,20 +103,30 @@ REGISTRY = [
         "field": "lowering_equivalence",
         "kind": "theorem",
         "exhibit": ("bundle_envAgrees", ["SupportedS", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
 ]
 
 # A bundle that is provably EMPTY must be refuted by ONE declaration naming every conjunct,
 # for the same reason an inhabited bundle must be exhibited by one: halves certify nothing.
-# P-CURVE found the fourth headline conjunct unsatisfiable as written (g1Decodes needs
-# infinitely many preimages of a finite group), so the four-way bundle's certification is
-# Instances/ObligationsGates.lean:bundle_holds_empty. If the clause is ever repaired and a
-# real exhibit lands, this refutation stops being provable and the entry must be deleted -
-# which is the point: the gate reddens if the gap silently returns OR if the refutation goes
-# stale without the exhibit replacing it.
+#
+# P-CURVE found the fourth headline conjunct unsatisfiable AS WRITTEN (g1Decodes needed
+# infinitely many preimages of a finite group). P-HOLDS repaired that clause (R-63 level 1),
+# so the refutation of the LIVE bundle had to move from the clause to the codec:
+# Instances/ObligationsGates.lean:bundle_holds_empty is now proved through g1Valid, because
+# the fixture's codec is the exponent model and its bytes are not curve points. The pinned
+# OLD text keeps its own joint refutation, bundle_holdsOld_empty, so the regression stays
+# certified: if the width condition is dropped from the live clause again the first entry goes
+# stale (its proof no longer typechecks) and the fingerprint gate reddens the same edit.
+#
+# If a real curve codec is ever installed at the fixture, bundle_holds_empty stops being
+# provable and the entry must be DELETED and replaced by an exhibit - which is the point: the
+# gate reddens if the gap silently returns OR if a refutation goes stale without an exhibit
+# replacing it.
 REFUTATIONS = [
     ("bundle_holds_empty", ["BlkIsEmitter", "SupportedS", "EnvAgrees", "Eip2537.Holds"]),
+    ("bundle_holdsOld_empty",
+     ["BlkIsEmitter", "SupportedS", "EnvAgrees", "Eip2537.HoldsOld"]),
 ]
 
 

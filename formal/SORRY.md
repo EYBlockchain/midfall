@@ -12,7 +12,7 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 
 | file | line | declaration | removed by |
 | Midfall/Assumptions/Codec.lean | 171 | `sorry` | P-SE: named holes in assumption files |
-| Midfall/Assumptions/Eip2537.lean | 160 | `sorry` | P-SE: named holes in assumption files |
+| Midfall/Assumptions/Eip2537.lean | 171 | `sorry` | P-SE: named holes in assumption files |
 | Midfall/Halo2/Spec/Piop.lean | 56 | `(ms : List (Msg (Fr p) G₁)) : Prop := sorry` | Phase 4 (spec layer) |
 | Midfall/Lowering/AccEncoding.lean | 194 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/AccEncoding.lean | 254 | `sorry` | P-SE: semantic equivalence obligations |

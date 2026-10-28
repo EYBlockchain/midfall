@@ -3,6 +3,7 @@ import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Keccak
 import Midfall.Assumptions.Pairing
+import Midfall.Assumptions.BasePrime
 import Midfall.Assumptions.TwoAdicity
 import Midfall.Instances.ExponentModel
 import Midfall.Instances.NativeE2E
