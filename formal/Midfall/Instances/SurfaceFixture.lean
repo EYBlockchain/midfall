@@ -31,14 +31,26 @@
 --      which quantifies over a real LoweringPlan and LoweringPlan.supportedQvm.
 --
 --   6. R-58 added five pin fields to Surface - shell_unfolds, plan_hasAccumulator,
---      plan_numInstances, evaluator_agrees, encG2_eip - and this fixture meets all
+--      plan_numInstances, evaluator_agrees, encG2_shape (named encG2_eip until R-60 S4
+--      renamed it for overclaiming) - and this fixture meets all
 --      five. Four are rfl, because the fixture was built so that the shell, the
---      plan, the render and the deployment agree by construction; encG2_eip needed
+--      plan, the render and the deployment agree by construction; encG2_shape needed
 --      the encoder itself changed, from `fun _ => Bytes.empty` to the EIP-2537
 --      infinity encoding, and THAT is the pin doing its job: the old fixture could
 --      not be written. shellPinsKats_ok, planPinsKats_ok, encG2AtFixture_ok and
 --      accFixedBasesKats_ok below give each pin its refutation, because a pin that
 --      only ever meets one fixture is how we got here (R-41).
+--      R-60 S4, stated rather than glossed: encG2_shape is met by a CONSTANT function,
+--      which is exactly what this fixture uses. That is not a defect in the fixture, it
+--      is the pin's ceiling - it constrains the output bytes, not the map. The
+--      strengthening it does not make is `Function.Injective encG2`, and this fixture
+--      cannot meet it, so it is a named gap at Surface.encG2_shape and in
+--      scripts/check_hypothesis_bundles.py rather than a satisfied claim.
+--      R-60 S3 strengthened evaluator_agrees from the isSome agreement to the runtime
+--      BLOCK equation (L.evaluator.map Object.codeBlock = evaluatorRuntime.map
+--      Prod.fst); it is still rfl HERE because both sides are none, and
+--      planPinsKats_ok now refutes it with a block mismatch rather than with an
+--      isSome mismatch.
 --   2. cfg.accumulator is none, so SupportedS.acc is vacuous in the exhibit. The
 --      accumulator arm needs a Generator AccumulatorEncoding whose validate passes,
 --      which is D-P16 territory and is exercised in Lowering/AccEncoding.lean.
@@ -189,23 +201,10 @@ def fxHeadGuard : YulBlock :=
 
 /-! ### irCheck -/
 
-/-- The names a block declares at its top level. -/
-def declaredTops : YulBlock → List Ident :=
-  fun b => b.foldl (init := []) fun ns s =>
-    match s with
-    | Stmt.funDef n _ _ _ => n :: ns
-    | _ => ns
-
-/-- A top-level statement that calls a user function the block does not declare. This
-    is the decidable fragment of the import check: it sees a call in statement position
-    and a call that initialises a let, which between them cover the two shapes a solc
-    prologue and a planted rename produce. -/
-def unresolvedTop (b : YulBlock) : Bool :=
-  let declared := declaredTops b
-  b.any fun s => match s with
-    | Stmt.exprStmt (Expr.call f _) => ! declared.contains f
-    | Stmt.letDecl _ (some (Expr.call f _)) => ! declared.contains f
-    | _ => false
+-- R-60 S1: `declaredTops` and `unresolvedTop` used to live here and were moved to
+-- Midfall/Lowering/Surface.lean, where `Surface.irCheck` is now a PROJECTION of
+-- `S.runtimeName` rather than a free field that could hard-code a different naming
+-- convention. Everything below is the fixture data that projection is exercised on.
 
 /-- The fixture runtime: one declared helper, one call to it, and a terminating stop.
     Everything resolves. -/
@@ -235,22 +234,6 @@ def fxRuntimeMemoryguard : YulBlock :=
 
 /-- The solc naming convention: the runtime is a sub-object called name_id_deployed. -/
 def fxRuntimeName (n : String) : String := n ++ "_1_deployed"
-
-/-- The import sanity check the plan calls irCheck, in the form this stage can state:
-    the deployed sub-object exists and has no unresolved top-level call.
-
-    WHY THIS IS THE RIGHT CHECK FOR NOW. attack.md FIX (Evaluator.rel entry) says the
-    importer must rewrite memoryguard(x) to x and that irCheck should state it, because
-    a memoryguard call in a yul% quote elaborates to a call to a user function named
-    memoryguard (mkCall, EVMOp.lean:216) that nothing declares and no Step rule derives.
-    That is exactly what this check rejects: it fails on an unresolved name, and
-    memoryguard is one. So the D-P15 vendor gap is not hidden behind a green gate - it
-    is what the gate detects. A planted rename fails it too, which is the non-vacuity the
-    plan asks for (P11: a planted rename must fail irCheck). -/
-def fixtureIrCheck (ir : YulObject) : Bool :=
-  match ir.subObject (fxRuntimeName ir.name) with
-  | some rt => ! unresolvedTop rt.codeBlock
-  | none => false
 
 /-- The fixture IR object: empty constructor code, the runtime as the deployed
     sub-object. -/
@@ -381,7 +364,6 @@ def realSurface : Surface rp RP RP RP :=
     o₀ := fxOptions, L := fxLowered, lower := fxLower, lower_ok := rfl,
     bindLocals := [], shell := fxShell, shellLayout := fxShellLayout,
     evaluatorRuntime := none, runtimeName := fxRuntimeName,
-    irCheck := fixtureIrCheck,
     -- R-58 F8: astOfMain is now DEFINED as the main block of what the render
     -- produces, which is exactly the equation render_eq_print states, so the
     -- field discharges by rfl and the pin says something about the pair of
@@ -403,15 +385,23 @@ def realSurface : Surface rp RP RP RP :=
     shell_unfolds := rfl,
     plan_hasAccumulator := rfl, plan_numInstances := rfl,
     evaluator_agrees := rfl,
-    encG2_eip := fun _ => by native_decide }
+    encG2_shape := fun _ => by native_decide }
 
 /-! ### 1. Supported is INHABITED -/
 
 /-- THE HEADLINE EXHIBIT: SupportedS realSurface.o0 holds, as a kernel-checked term.
-    Every one of the eleven fields is discharged from the fixture data above; the two
-    that are trivial by construction (qvm, from qvmValidated := True, and acc, from
-    accumulator := none) are named in the file header rather than left for a reader to
-    find.
+    Every one of the TEN fields is discharged from the fixture data above - advice,
+    instShape, noRotInst, acc, singlePhase, hLimbs, vkPoints, layout, production, wf,
+    which is what `#check @SupportedS.mk` reports and what R-60 S9 corrects this
+    comment from: it used to say "eleven fields" and to name `qvm` among them, and
+    R-58 F4 deleted that field, so the count and the list were both stale. Only ONE
+    field is trivial by construction here: `acc`, discharged from
+    `cfg.accumulator = none`; the file header says so rather than leaving a reader to
+    find it. R-60 S9 also records that the frozen placeholder in Lowering/Types.lean
+    STILL carries the deleted `qvm` field (Types.lean:63, `qvm : qvmValidated`): it is
+    frozen because Statements.lean elaborates against it, so the placeholder and the
+    live SupportedS disagree by design, and that is a note in the code now rather than
+    a surprise for the next reader.
 
     This is the gate the stage-4 brief asks for. A Surface whose Supported could not be
     inhabited would make all seven per-partial theorems vacuous, which is the F1 class
@@ -533,7 +523,17 @@ def deploymentMemguardKats_ok : Bool :=
     (({ code := []
         dataOffset := fun _ => 0
         dataSize := fun _ => 0 } : EVM.Layout).immutable
-        (litValue (.string "AUTHORIZED_VK")) == 0)
+        (litValue (.string "AUTHORIZED_VK")) == 0) &&
+    -- R-60 S7: the byte-level bound and the AST-level guard are pinned to ONE number.
+    -- The shell's head guard reverts above transcriptMptr and the shell's deployed
+    -- bytes install 0x80, which is under it; a prologue that ships nothing (none) or
+    -- that installs a pointer above the guard's own threshold fails here, which is the
+    -- hole the old `memoryguardOk []  =  true` left open.
+    (headGuardThreshold realSurface.shell.codeBlock == some transcriptMptr) &&
+    (memoryguardValue realSurface.shellLayout.code == some 0x80) &&
+    memoryguardOk realSurface.shellLayout.code &&
+    -- and a shell whose guard tests a different number is not this shell
+    (headGuardThreshold fxHeadGuard == some transcriptMptr)
 
 #eval deploymentMemguardKats_ok           -- expect true
 
@@ -621,6 +621,14 @@ def shellPinsKats_ok : Bool :=
 
 #eval shellPinsKats_ok                    -- expect true
 
+/-- The evaluator the render says it produced: an object whose code block is fxRuntime. -/
+def evRendered : Option YulObject := some (Object.mk "ev" fxRuntime [] [])
+
+/-- The evaluator the deployment would answer staticcalls with: the SAME presence, a
+    DIFFERENT block (the planted-rename runtime). R-60 S3: agreeing on isSome while
+    disagreeing here is the defeat the strengthened pin closes. -/
+def evDeployed : Option (YulBlock × EVM.Layout) := some (fxRuntimeRenamed, fxShellLayout)
+
 /-- R-58 F2 and F6. Each of the three plan/render pins is an equation between two
     fields, and each line pair shows both halves: the two sides agree at the fixture,
     and the value one side COULD have had refutes it. The second line of each pair is
@@ -633,9 +641,20 @@ def planPinsKats_ok : Bool :=
     ! (true == realSurface.cfg.accumulator.isSome) &&
     realSurface.plan.numInstances == realSurface.cfg.numInstances &&
     ! (realSurface.plan.numInstances == 2) &&
-    realSurface.L.evaluator.isSome == realSurface.evaluatorRuntime.isSome &&
-    ! (realSurface.L.evaluator.isSome ==
-      (some (fxRuntime, fxShellLayout) : Option (YulBlock × EVM.Layout)).isSome)
+    -- R-60 S3: the evaluator pin is an equation between RUNTIME BLOCKS now, so its
+    -- refutation is a block mismatch and not an isSome mismatch. evRendered and
+    -- evDeployed below are the pair the OLD pin let through: an evaluator the render
+    -- produced and a DIFFERENT one the deployment answers staticcalls with. Both are
+    -- present, so isSome agreed and the blocks did not. The last line is the fixture
+    -- itself: both sides none, so the pin is rfl and the two really are the same
+    -- (non-)evaluator.
+    (evRendered.isSome == evDeployed.isSome) &&
+    ! (SyntaxEq.stmtsBeq ((evRendered.map Object.codeBlock).getD [])
+      ((evDeployed.map Prod.fst).getD [])) &&
+    (match realSurface.L.evaluator.map Object.codeBlock,
+        realSurface.evaluatorRuntime.map Prod.fst with
+      | none, none => true
+      | _, _ => false)
 
 #eval planPinsKats_ok                     -- expect true
 
@@ -650,10 +669,15 @@ def planPinsKats_ok : Bool :=
     the same fact vkPointsKats_ok uses to show the clause bites), and D-P1/R-28 say
     there is no BLS12-381 model in the tree to replace it with. So every field that
     carries Holds is still unexhibited, for a named reason that is a model, not a
-    missing pin. encG2_eip removed ONE cause of that; it did not remove the only
+    missing pin. encG2_shape removed ONE cause of that; it did not remove the only
     cause. -/
 def encG2AtFixture_ok : Bool :=
   encG2IsEip (realSurface.encG2 (fx 5)) && encG2IsEip (realSurface.encG2 (fx 0)) &&
+    -- R-60 S4, the limitation as a computation: the pin is met by a CONSTANT encoder,
+    -- which is what this fixture uses, so encG2_shape constrains the bytes and not the
+    -- map. Function.Injective encG2 is the strengthening this pin does not make and
+    -- this fixture cannot meet - a named gap, not a satisfied claim.
+    (realSurface.encG2 (fx 5) == realSurface.encG2 (fx 0)) &&
     ! (encG2IsEip Midfall.Bytes.empty) &&
     -- the remaining blocker: a non-identity exponent is not a curve point
     (match Midfall.Yul.g1Of? (fxToEip (fx 3)) with

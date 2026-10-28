@@ -75,9 +75,34 @@
 --      gate against the class: it asserts each copied fact is either single or has a
 --      named pin mentioning both sides.
 --
+--   5. R-60 (docs/REVIEW.md, the second statement pass) changed four more things in
+--      this record, and the header says so because each one is a field a reader would
+--      otherwise take on trust:
+--        * irCheck is GONE AS A FIELD and is now a PROJECTION of runtimeName
+--          (Surface.irCheck). The free field let the fixture's check hard-code its own
+--          naming convention, so the gate on the headline hypothesis disagreed with the
+--          run relation - S1, the blocking defect of that pass. Deleting the copy is
+--          stronger than pinning it: there is now one naming function on the record.
+--        * evaluator_agrees was strengthened from the isSome agreement to the runtime
+--          BLOCK equation (S3), because Object.codeBlock has been in the vendored API
+--          all along and the comment claiming otherwise was false.
+--        * encG2_eip is renamed encG2_shape (S4). The statement is unchanged; the name
+--          was overclaiming, since a constant encoder satisfies it and the fixture uses
+--          one. What it does NOT claim - Function.Injective encG2 - is a named gap the
+--          fixture cannot meet, recorded at the field and in ObligationsGates.
+--        * memoryguardOk now FAILS on a runtime that installs no free-memory pointer
+--          (S7). The old def answered true for the empty prologue, which made
+--          DeploymentW.memguard satisfiable by shipping nothing; transcriptMptr and
+--          headGuardThreshold are the single threshold the byte bound and the AST guard
+--          are both compared against, and gap_shell_code_vs_layout_code records the
+--          copy that still cannot be pinned (no Yul-to-bytecode compiler in the tree).
+--
 -- THE BLOCKER, DECIDED RATHER THAN WORKED AROUND: memguard. attack FIX 32 requires
--- DeploymentW to bound the free-memory pointer, and D-P15 records that memoryguard
--- and setimmutable are absent from the vendored dialect - re-measured for this stage,
+-- DeploymentW to bound the free-memory pointer, and D-P15 recorded that memoryguard
+-- and setimmutable were absent from the vendored dialect - measured at the time, and
+-- since closed by P-VEND (9fe74f9), which added the ops and the memoryguard Step rule;
+-- the historical re-measurement is kept because it is what the stage-4 decision turned
+-- on. At the time it was:
 -- zero occurrences of either word in
 -- vendor/yul-semantics/YulSemantics/Dialect/EVMOp.lean, whose parse (EVMOp.lean:173)
 -- maps names to the closed Op enum and falls through to none, so a memoryguard call
@@ -206,7 +231,11 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       QuotientAndLinearization.yul:35 makes. -/
   evaluatorRuntime : Option (YulBlock × EVM.Layout)
   /-- solc names a runtime sub-object "name_id_deployed"; which one is a deployment
-      fact rather than a property of the AST, so the naming function is a field. -/
+      fact rather than a property of the AST, so the naming function is a field.
+
+      R-60 S1: this is the ONLY place the runtime's name is carried. `Surface.irRuntime`
+      and `Surface.irCheck` are both projections of it, so the check cannot drift away
+      from the run relation the way a second copy did before the repair. -/
   runtimeName : String → String
   -- the per-partial API
   /-- The AST of the rendered main block, for the D-P15 re-quote gate: the plan sketch
@@ -215,11 +244,6 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       render emits, so only the AST accessor survives. A Surface whose astOfMain returns
       none for every option is refuted by the fixture gate, not by a doc comment. -/
   astOfMain : RenderOptions → Option YulBlock
-  /-- The import sanity check on a solc object (M8). Abstract because the real one needs
-      the via-ir import that D-P15 blocks; the fixture supplies a decidable check that
-      accepts a well-formed object and rejects a planted rename and a memoryguard call,
-      so the field is exercised rather than decorative. -/
-  irCheck : YulObject → Bool
   /-- THE FIELD STAGE 3 COULD NOT NAME. The Yul block of one partial under one plan
       view. It takes the PlanView because the partials are generated FROM the plan:
       the same partial at two different layouts is two different blocks, and a blk
@@ -306,22 +330,44 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       render's Option YulObject and Surface.evaluatorRuntime is the deployment's
       Option (YulBlock x EVM.Layout) that Surface.calls actually answers with; nothing
       read L.evaluator at all, so a render that externalised no evaluator could still
-      deploy one (and the reverse). The types differ - the layout is a deployment fact,
-      not part of the object - so this is stated as the isSome agreement, which is the
-      half that is nameable today. The full derivation of the block and the layout from
-      the object waits on the P-13 AST emitter. -/
-  evaluator_agrees : L.evaluator.isSome = evaluatorRuntime.isSome
+      deploy one (and the reverse).
 
-  /-- R-58 G2: encG2 is an abstract G2 -> Bytes function, and Eip2537.Holds is stated
-      over it (its g2Valid clause is exactly this claim, one forall higher), so an
-      unconstrained encoder makes every Holds hypothesis unsatisfiable and every field
-      that carries one vacuous. The fixture had encG2 := fun _ => Bytes.empty, which
-      fails encG2IsEip, so NO Holds was satisfiable at the only Surface in the tree.
-      This pin is the half that is nameable without a G2 codec in Common: the encoder
-      must return EIP-2537-shaped, precompile-valid bytes for every point. The stronger
-      form - that encG2 P.g₂ is the 256 bytes the render embeds at the G2_BASE slot -
-      needs the header slot layout from the P-11 plan, which PlanView does not carry. -/
-  encG2_eip : ∀ R : G₂, encG2IsEip (encG2 R) = true
+      R-60 S3: THIS IS NOW THE CONTENT EQUATION, NOT THE isSome HALF. The previous form
+      (`L.evaluator.isSome = evaluatorRuntime.isSome`) was defeated because the types
+      differ only in the LAYOUT, and `Object.codeBlock` has been in the vendored API
+      all along - `Surface.irRuntime` two paragraphs below already uses it, so the
+      comment claiming the block half was "not nameable today" was false. The layout is
+      still not derivable from the object (that is the P-13 AST emitter), so what is
+      pinned is the RUNTIME BLOCK: the block the render's evaluator object carries is
+      the block the deployment answers staticcalls with. A render that externalised one
+      evaluator and deployed another now fails here instead of agreeing on isSome. -/
+  evaluator_agrees : L.evaluator.map YulSemantics.Object.codeBlock =
+    evaluatorRuntime.map Prod.fst
+
+  /-- R-58 G2, RENAMED encG2_eip -> encG2_shape BY R-60 S4, and the rename is the
+      honest part of the repair: the statement is UNCHANGED, the name was overclaiming.
+      encG2 is an abstract G2 -> Bytes function, and Eip2537.Holds is stated over it
+      (its g2Valid clause is exactly this claim, one forall higher), so an unconstrained
+      encoder makes every Holds hypothesis unsatisfiable and every field that carries
+      one vacuous. The fixture had encG2 := fun _ => Bytes.empty, which fails
+      encG2IsEip, so NO Holds was satisfiable at the only Surface in the tree. This pin
+      forces the encoder's OUTPUT to be EIP-2537-shaped and precompile-valid for every
+      point, which is what the old fixture could not do.
+
+      WHAT IT DOES NOT CLAIM, stated because the review found a constant function
+      satisfies it and the fixture USES one (`fun _ => bytesZero g2Bytes`, the EIP
+      infinity encoding): it does not say encG2 is a codec. The strengthening it does
+      not make is `Function.Injective encG2` - distinct points, distinct encodings -
+      and the fixture CANNOT meet it, so it is not added here: adding a pin the only
+      Surface in the tree fails would either force a fake encoder or break the exhibit,
+      and pretending the pin is satisfied is how R-58 G2 got oversold. It is recorded as
+      a NAMED GAP with that blocker instead. A second gap behind it: even an injective
+      encoder is not the contract's encoder until encG2 P.g₂ is pinned to the 256 bytes
+      the render embeds at the G2_BASE slot, which needs the header slot layout from the
+      P-11 plan that PlanView does not carry (D-P17). SurfaceFixture.encG2AtFixture_ok
+      exhibits the constant that satisfies this pin, so the limitation is a computation
+      in the tree and not a paragraph. -/
+  encG2_shape : ∀ R : G₂, encG2IsEip (encG2 R) = true
 
 /-! ### Supported -/
 
@@ -402,21 +448,63 @@ structure SupportedS (S : Surface p G₁ G₂ Gₜ) (o : RenderOptions) : Prop w
     value the pointer is set to is a fact about the deployment rather than about the
     dialect.
 
-    none - no recognised initialiser - satisfies the bound. That is the conservative
-    direction and it is deliberate: the clause exists to rule out a memoryguard that
-    raises the pointer above TRANSCRIPT_MPTR, and a runtime that writes nothing at
-    0x40 raises nothing. -/
+    none - no recognised initialiser - is a FAILURE as of R-60 S7. The old def
+    answered true and the comment called it "the conservative direction"; the review
+    pointed out what that made the field: a deployment that ships NO prologue at all
+    satisfied it, since `memoryguardValue [] = none`, so `DeploymentW.memguard` was
+    satisfiable by an artifact that is not a solc deployment. A bound no artifact can
+    fail is decoration, and the honest reading of "no recognised initialiser" is "this
+    runtime does not install the free-memory pointer the head guard then reads", which
+    is exactly what the clause exists to rule out. -/
 def memoryguardValue (code : List UInt8) : Option Nat :=
   runtimeFreeMemoryPointerInit (ByteArray.mk code.toArray)
 
-/-- The bound itself: the free-memory pointer the shell runtime installs must not
-    exceed TRANSCRIPT_MPTR = 0x1000, the first address the verifier uses. Above it
-    the head guard reverts an honest proof, which is the completeness counterexample
-    attack.md records against verifier_complete. -/
+/-- THE THRESHOLD, in one place: TRANSCRIPT_MPTR = 0x1000, the first address the
+    verifier writes and the value the assembly head guard compares `mload 0x40`
+    against before reverting. R-60 S7: the bound and the guard must be stated against
+    the same literal or the byte-level clause and the AST-level guard are two copies
+    of a threshold with nothing relating them - `memguardThresholdKats_ok` is the pin. -/
+def transcriptMptr : Nat := 0x1000
+
+/-- The bound itself: the shell runtime must install a free-memory pointer, and the
+    pointer it installs must not exceed `transcriptMptr`, the first address the
+    verifier uses. Above it the head guard reverts an honest proof, which is the
+    completeness counterexample attack.md records against verifier_complete. Below it
+    by enough is also a fact worth having: a runtime that installs no pointer at all
+    answers `none` and now FAILS the bound (R-60 S7). -/
 def memoryguardOk (code : List UInt8) : Bool :=
   match memoryguardValue code with
-  | none => true
-  | some v => v ≤ 0x1000
+  | none => false
+  | some v => v ≤ transcriptMptr
+
+/-- The threshold the AST head guard tests, read back out of the guard block: the
+    guard is `if gt (mload 0x40) THRESHOLD then revert`, so the number the running
+    program compares the free-memory pointer against is a fact about the block, not
+    about a comment. R-60 S7 asked for `memguard` to be pinned to the threshold the
+    head guard tests instead of being satisfiable by shipping nothing; this is the
+    reader that makes that comparison possible, and `memguardThresholdKats_ok` in the
+    fixture is the comparison. -/
+def headGuardThreshold : YulBlock -> Option Nat
+  | Stmt.cond (Expr.builtin Op.gt [Expr.builtin Op.mload [Expr.lit (.number 0x40)],
+      Expr.lit (.number v)]) _ :: _ => some v
+  | _ :: rest => headGuardThreshold rest
+  | [] => none
+
+/-- R-60 S7 NAMED GAP, declared in code so a gate can point at it rather than at a
+    paragraph. `shell.codeBlock` (the Yul AST `RunShell` runs) and
+    `shellLayout.code` (the bytecode the deployment installs) are two copies of "the
+    shell program" in two representations, and nothing in the tree relates them: there
+    is no Yul-to-bytecode compiler here, because P-13 ported the templates as TEXT
+    renders and no Lean function emits bytecode from a `Block Op`. `shell_unfolds`
+    pins the AST side to the assembly and `DeploymentW.memguard` pins the byte side to
+    the free-memory bound; the missing link is the compiler, not a field someone forgot
+    to write. The decidable fragment that IS nameable today is the threshold agreement
+    below - the guard in the AST and the store in the bytes are compared against the
+    same literal - which is what makes this a gap with a partial pin rather than a
+    blank. -/
+def gap_shell_code_vs_layout_code : String :=
+  "unpinned copy: shell.codeBlock vs shellLayout.code; blocker: there is no "
+    ++ "Yul-to-bytecode compiler in the tree (P-13 AST emitter)"
 
 /-! ### The deployment -/
 
@@ -551,6 +639,56 @@ def Surface.calls (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv)
 def Surface.irRuntime (S : Surface p G₁ G₂ Gₜ) (ir : YulObject) : Option YulBlock :=
   (ir.subObject (S.runtimeName ir.name)).map YulSemantics.Object.codeBlock
 
+/-- The names a block declares at its top level. -/
+def declaredTops : YulBlock → List Ident :=
+  fun b => b.foldl (init := []) fun ns s =>
+    match s with
+    | Stmt.funDef n _ _ _ => n :: ns
+    | _ => ns
+
+/-- A top-level statement that calls a user function the block does not declare. This
+    is the decidable fragment of the import check: it sees a call in statement position
+    and a call that initialises a let, which between them cover the two shapes a solc
+    prologue and a planted rename produce. -/
+def unresolvedTop (b : YulBlock) : Bool :=
+  let declared := declaredTops b
+  b.any fun s => match s with
+    | Stmt.exprStmt (Expr.call f _) => ! declared.contains f
+    | Stmt.letDecl _ (some (Expr.call f _)) => ! declared.contains f
+    | _ => false
+
+/-- THE IMPORT SANITY CHECK ON A SOLC OBJECT (M8), R-60 S1.
+
+    IT IS A PROJECTION, NOT A FIELD. This used to be a free Surface field
+    `irCheck : YulObject → Bool`, and the fixture filled it with a function that
+    hard-coded its OWN naming convention (`n ++ "_1_deployed"`) instead of reading
+    `S.runtimeName`. The imported runtime sub-object is `Halo2Verifier_292_deployed`,
+    so the lookup asked for `Halo2Verifier_292_1_deployed`, missed, and `irCheck`
+    returned FALSE on the real artifact - while `RunContractIR), which reads
+    `S.runtimeName`, had a committed run of exactly that object. Two fields carried
+    the same fact and only one of them was read by the check that gated the theorem:
+    the R-58 copy class again, in the place where it does the most damage, because
+    every headline field takes `S.irCheck ir = true` as a hypothesis and none of them
+    was satisfiable at the artifact the package exists to talk about.
+
+    The repair deletes the copy rather than pinning it: there is now exactly ONE
+    naming function on the record, `runtimeName`, and the check reads it through
+    `Surface.irRuntime`. A Surface can no longer disagree with itself about which
+    sub-object is the runtime, because it cannot name a runtime twice.
+
+    WHAT IT CHECKS stays the decidable fragment: the deployed sub-object exists and has
+    no unresolved top-level call. attack.md FIX (Evaluator.rel entry) requires the
+    importer to rewrite memoryguard(x) to x, and a memoryguard call in a yul% quote
+    elaborates to a call to a user function named memoryguard (mkCall, EVMOp.lean:216)
+    that nothing declares - so the D-P15 vendor gap is what this gate detects rather
+    than something it hides. A planted rename fails it too (P11 non-vacuity). A full
+    alpha-equivalence check modulo constant substitution is M8 work and is recorded as
+    a gap at `LoweringCorrect.ir_refines`. -/
+def Surface.irCheck (S : Surface p G₁ G₂ Gₜ) (ir : YulObject) : Bool :=
+  match S.irRuntime ir with
+  | some rt => ! unresolvedTop rt
+  | none => false
+
 /-- PLAN 9.5 RunVerifier: headGuard ++ bindLocals ++ main, from an arbitrary memory,
     observed at the frame boundary. -/
 def RunVerifier (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (cd : Bytes)
@@ -673,17 +811,41 @@ def memoryguardKats_ok : Bool :=
     memoryguardOk (bytesNats [0x61, 0x01, 0x00, 0x60, 0x40, 0x52]) &&
     -- PUSH2 0x2000: above TRANSCRIPT_MPTR, so the head guard reverts an honest proof
     ! memoryguardOk (bytesNats [0x61, 0x20, 0x00, 0x60, 0x40, 0x52]) &&
-    -- and no initialiser at all
-    memoryguardOk [] && memoryguardValue [] = none &&
+    -- R-60 S7: no prologue at all is now a FAILURE, not the conservative direction.
+    -- This is the line that used to read `memoryguardOk []`, i.e. the field was
+    -- satisfiable by shipping nothing.
+    memoryguardValue [] = none && ! memoryguardOk [] &&
     -- the boundary itself: exactly 0x1000 is allowed, 0x1001 is not. PUSH2 only:
     -- the reader recognises PUSH1 and PUSH2 (Evm.lean:132-138) and a PUSH3 prologue
-    -- would answer none, which satisfies the bound for the wrong reason.
+    -- would answer none, which now fails the bound for the right reason.
     memoryguardOk (bytesNats [0x61, 0x10, 0x00, 0x60, 0x40, 0x52]) &&
     ! memoryguardOk (bytesNats [0x61, 0x10, 0x01, 0x60, 0x40, 0x52]) &&
     -- and a PUSH3 store is NOT recognised, which is the none case again
     memoryguardValue (bytesNats [0x62, 0x00, 0x10, 0x00, 0x60, 0x40, 0x52]) = none
 
 #eval memoryguardKats_ok                  -- expect true
+
+/-- THE THRESHOLD IS ONE NUMBER, not two. `memoryguardOk` bounds the pointer the
+    deployed BYTES install; the head guard in the AST reverts when `mload 0x40` is
+    above the transcript pointer. R-60 S7: those are two copies of a threshold in two
+    representations, and if they drift the byte-level clause stops meaning anything
+    about the guard that actually runs. The fixture's head guard literal and the bound
+    are compared here, so a drift is a red gate rather than a silent one. Refuted by
+    changing either number. -/
+def memguardThresholdKats_ok : Bool :=
+  transcriptMptr == 0x1000 &&
+    -- the bound bites exactly at the threshold: at it, allowed; one above, not
+    (memoryguardOk (bytesNats [0x61, 0x10, 0x00, 0x60, 0x40, 0x52]) &&
+      ! memoryguardOk (bytesNats [0x61, 0x10, 0x01, 0x60, 0x40, 0x52])) &&
+    -- the reader is a reader and not a constant: a guard that tests a different
+    -- number reports that number, and a block with no such guard reports none
+    (headGuardThreshold [Stmt.cond (Expr.builtin Op.gt
+        [Expr.builtin Op.mload [Expr.lit (.number 0x40)], Expr.lit (.number 0x999)])
+        [Stmt.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 0)])]]
+      == some 0x999) &&
+    headGuardThreshold ([] : YulBlock) = none
+
+#eval memguardThresholdKats_ok            -- expect true
 
 /-- initState installs exactly the fields the comment claims and nothing else: the
     calldata, code, data maps, immutable map and keccak oracle come from the layout

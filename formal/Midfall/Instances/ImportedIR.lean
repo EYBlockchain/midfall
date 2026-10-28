@@ -262,6 +262,57 @@ theorem runContractIR_inhabited (c : ExternalCalls) (g : ExternalGas) :
   ⟨⟨committedState irSt0 irSt2, .halt⟩, verifierRuntime, [], irRuntime_of_import,
     ⟨irSt2, importedRuntime_runs c g, rfl⟩⟩
 
+/-! ### R-60 S1: the JOINT exhibit, which is what the headline fields actually take -/
+
+/-- THE CHECK READS THE FIELD IT BELONGS TO. `Surface.irCheck` is now a projection of
+    `Surface.runtimeName` (Surface.lean, R-60 S1), so on the Surface whose runtimeName names
+    the imported sub-object, the check accepts the imported object. Kernel-checked, not
+    argued: this is the term that makes `S.irCheck ir = true` satisfiable at the artifact
+    the package exists to talk about. -/
+theorem irCheck_holds_at_imported : irSurface.irCheck verifierIr = true := by
+  rfl
+
+/-- The same decision on the WRONG Surface: the fixture's own naming convention does not
+    name the imported sub-object, so the projection says false - which is the point of
+    making it a projection. Under the old free field this pair was inverted on the
+    imported object: the check said false while the run said true. -/
+theorem irCheck_false_at_fixture_naming : realSurface.irCheck verifierIr = false := by
+  rfl
+
+/-- THE CONJUNCTION, NOT THE HALVES. Every headline field takes BOTH `S.irCheck ir = true`
+    and a `RunContractIR` of that same `ir`; gate 6 above checked the run alone, which is
+    exactly how the S1 defect survived a green build: the two halves were individually
+    inhabited and jointly empty. This is the exhibit the repair brief asks for - one object,
+    one layout, one observation, both conjuncts, for every call relation and gas oracle. -/
+theorem irHypothesis_jointlyInhabited (c : ExternalCalls) (g : ExternalGas) :
+    ∃ (ir : YulObject) (irLyt : EVM.Layout) (obs : Obs),
+      irSurface.irCheck ir = true ∧
+        RunContractIR irSurface irW keccak256 ir irLyt irCd c g obs := by
+  obtain ⟨obs, hrun⟩ := runContractIR_inhabited c g
+  exact ⟨verifierIr, irLyt, obs, irCheck_holds_at_imported, hrun⟩
+
+/-- The check the fixture used to hard-code: the naming function baked into the body
+    instead of read off the Surface. Kept ONLY as the refutation below - nothing in the
+    tree uses it to state an obligation, and `Surface.irCheck` no longer exists as a
+    free field that could be filled with it. -/
+def irCheckPreR60 (ir : YulObject) : Bool :=
+  match ir.subObject (fxRuntimeName ir.name) with
+  | some rt => ! unresolvedTop rt.codeBlock
+  | none => false
+
+/-- THE S1 DEFECT, EXHIBITED AS A FAILING CONJUNCTION rather than described. The old check
+    rejects the imported object - `irCheckPreR60 verifierIr = false` - while the run
+    relation accepts it, so a Surface carrying the old check satisfies `RunContractIR` and
+    satisfies the negation of its own gate, and every field of the shape
+    `irCheck ir = true -> ...` was vacuous at the real artifact. This is the demonstration
+    (R-41) that the joint exhibit can fail: perturb `Surface.irCheck` back to a hard-coded
+    name and `irHypothesis_jointlyInhabited` stops applying to the imported object while
+    `runContractIR_inhabited` still does. -/
+theorem s1_defect_refutes_the_conjunction (c : ExternalCalls) (g : ExternalGas) :
+    irCheckPreR60 verifierIr = false ∧
+      (∃ obs, RunContractIR irSurface irW keccak256 verifierIr irLyt irCd c g obs) :=
+  ⟨by native_decide, runContractIR_inhabited c g⟩
+
 /-- And the observation is a REVERT, not a stop and not a normal return: the run ends where the
     contract ends on an unroutable call. Without this the witness could be satisfied by a run
     that never reached the contract at all. -/
@@ -333,6 +384,24 @@ def importedIrWitness_ok : Bool :=
     freePtr irSt2 == 128 && freePtr irSt0 == 0
 
 #eval importedIrWitness_ok                -- expect true
+
+/-- THE GATE THAT WOULD HAVE CAUGHT S1. Not "irCheck is sometimes true" - the broken
+    version was true on the fixture object - and not "a run exists" (gate 6, also true
+    throughout). The two halves have to agree about the SAME object: line 1 is the check
+    at the imported artifact, line 2 is the run relation reading the same runtime block
+    out of the same naming field, line 3 is the pre-R-60 check REFUTING that object while
+    the run accepted it, and line 4 is a name that names nothing failing BOTH halves
+    together, which is what a projection guarantees and what a free field did not. -/
+def irCheckAgreesWithRun_ok : Bool :=
+  irSurface.irCheck verifierIr &&
+    (match irSurface.irRuntime verifierIr with
+      | some rt => SyntaxEq.stmtsBeq rt verifierRuntime
+      | none => false) &&
+    ! irCheckPreR60 verifierIr &&
+    ! { irSurface with runtimeName := fun _ => "nope" }.irCheck verifierIr &&
+    irSurface.runtimeName verifierIr.name == verifierRuntimeName
+
+#eval irCheckAgreesWithRun_ok             -- expect true
 
 /-! ### Axiom audit -/
 

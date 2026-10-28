@@ -84,6 +84,15 @@ echo '== duplicated-fact pins =='
 # through, and neither gate is a meaning check - only a proof is one.
 python3 scripts/check_duplicate_facts.py || exit 1
 
+echo '== headline hypothesis bundles =='
+# R-60 S1: a hypothesis bundle can be individually inhabited and JOINTLY empty. Gate 6
+# checked RunContractIR alone and stayed green while the fixture's irCheck was false of
+# the very object the run was about, so every multi-hypothesis headline conjunction now
+# needs either a JOINT exhibit - one Lean declaration naming every conjunct - or a named
+# gap def saying which conjunct blocks it. A new multi-hypothesis field that nobody
+# registered reddens this gate, which is the discovery half.
+python3 scripts/check_hypothesis_bundles.py || exit 1
+
 echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean

@@ -257,11 +257,26 @@ structure Obs where
   state : EvmState
   outcome : Outcome
 
-/-- The caller-visible projection. Memory, activeWords, returndata and the
-    variable environment are deliberately NOT part of it: an IR whose memory
-    layout differs from the shell model must still be ObsEquiv to it, which is the
-    whole point of comparing at view level (PLAN 10.3, design2 disagreement on
-    obs = .return abiTrue not being a state equality). -/
+/-- The caller-visible projection. Memory, activeWords and the variable environment
+    are deliberately NOT part of it: an IR whose memory layout differs from the shell
+    model must still be ObsEquiv to it, which is the whole point of comparing at view
+    level (PLAN 10.3, design2 disagreement on obs = .return abiTrue not being a state
+    equality).
+
+    R-60 S6 ADDED `selfBalance` AND `extCodeHashOf`. The view used to carry nine of
+    the eleven components `WorldEq` compares, so `worldUnchanged` - the third
+    conjunct of `lowering_equivalence` and of `only_two_outcomes` - was NOT
+    determined by the view, and an `ObsEquiv` could not transport it. That was the
+    real blocker for that conjunct, and it was never named before R-60: the previous
+    report blamed `dialect_deterministic`, which the four view-transport lemmas below
+    show is not needed. With these two fields the view carries every `WorldEq`
+    component and `worldEq_of_view_eq` proves the transport outright.
+
+    Note the view carries `halted`, so returnData, isReturn and isRevertOrHalt were
+    ALREADY view-determined; the repair brief's "returndata is excluded" reading of
+    the old docstring was stale - the exclusion is of the frame's RETURNDATA buffer
+    (state.returndata), not of the halt payload, and `Obs.returnData` reads the halt
+    payload. -/
 structure ObsView where
   outcome : Outcome
   halted : Option (HaltKind × List UInt8)
@@ -270,7 +285,14 @@ structure ObsView where
   logs : List LogEntry
   selfdestructs : List (U256 × Bool)
   balanceOf : U256 -> U256
+  /-- R-60 S6: `WorldEq` compares it, so the view has to carry it or
+      `worldUnchanged` is not view-determined. -/
+  selfBalance : U256
   extCodeOf : U256 -> List UInt8
+  /-- R-60 S6: the second `WorldEq` component the view was missing. An IR that
+      deploys different code has a different hash map, and a view that could not see
+      that could not be used to transport "the world is unchanged". -/
+  extCodeHashOf : U256 -> U256
   nonceOf : U256 -> U256
   storageOf : U256 -> U256 -> U256
   transientOf : U256 -> U256 -> U256
@@ -279,7 +301,9 @@ def Obs.view (o : Obs) : ObsView :=
   { outcome := o.outcome, halted := o.state.halted, storage := o.state.storage,
     transient := o.state.transient, logs := o.state.logs,
     selfdestructs := o.state.selfdestructs, balanceOf := o.state.env.balanceOf,
-    extCodeOf := o.state.env.extCodeOf, nonceOf := o.state.env.nonceOf,
+    selfBalance := o.state.env.selfBalance,
+    extCodeOf := o.state.env.extCodeOf,
+    extCodeHashOf := o.state.env.extCodeHashOf, nonceOf := o.state.env.nonceOf,
     storageOf := o.state.env.storageOf, transientOf := o.state.env.transientOf }
 
 /-- return(p, n) fired (EVMExec.lean:840-843). -/
@@ -308,6 +332,95 @@ def WorldEq (a b : EvmState) : Prop :=
   a.env.storageOf = b.env.storageOf ∧ a.env.transientOf = b.env.transientOf
 
 def Obs.worldUnchanged (st0 : EvmState) (o : Obs) : Prop := WorldEq st0 o.state
+
+/-! #### R-60 S6: the view determines the outcome and the world
+
+`ObsEquiv` is a biconditional over VIEW existence: from a run on one side it gives a
+run on the other with the same `Obs.view`. Every headline conclusion is a statement
+about the observation, so what transporting it needs is precisely "these properties are
+functions of the view" - four three-line lemmas, and NOT `dialect_deterministic`. The
+previous repair report claimed the view transport was blocked on that stage-1 hole;
+R-60 S6 says so and it is wrong, and the lemmas below are the correction. They are
+proved, not stated: a gap list that names a blocker that is not needed is as misleading
+as a blocker that is needed and not named. -/
+
+/-- The halt payload is a view component, so view equality carries it. -/
+theorem halted_of_view_eq {o₁ o₂ : Obs} (h : o₁.view = o₂.view) :
+    o₁.state.halted = o₂.state.halted := congrArg ObsView.halted h
+
+/-- The bytes a returning frame exposes are view-determined. -/
+theorem returnData_of_view_eq {o₁ o₂ : Obs} (h : o₁.view = o₂.view) :
+    o₁.returnData = o₂.returnData := by
+  have hh := halted_of_view_eq h
+  unfold Obs.returnData
+  rw [hh]
+
+/-- Returning is view-determined, so `obs.isReturn` transports across an `ObsEquiv`. -/
+theorem isReturn_of_view_eq {o₁ o₂ : Obs} (h : o₁.view = o₂.view) :
+    o₁.isReturn ↔ o₂.isReturn := by
+  have hh := halted_of_view_eq h
+  constructor <;> intro ⟨d, hd⟩ <;> exact ⟨d, hh ▸ hd⟩
+
+/-- Reverting-or-halting is view-determined, and so is the non-committing half of the
+    only-two-outcomes conjunct. -/
+theorem isRevertOrHalt_of_view_eq {o₁ o₂ : Obs} (h : o₁.view = o₂.view) :
+    o₁.isRevertOrHalt ↔ o₂.isRevertOrHalt := by
+  have hh := halted_of_view_eq h
+  constructor <;> intro ⟨k, d, hd, hk⟩ <;> exact ⟨k, d, hh ▸ hd, hk⟩
+
+/-- THE POINT OF ADDING selfBalance AND extCodeHashOf TO THE VIEW: with all eleven
+    `WorldEq` components carried, "the world is unchanged" is a statement about the
+    view, so the third conjunct of `lowering_equivalence` and `only_two_outcomes` is
+    transportable across an `ObsEquiv` with no determinism hypothesis at all. Before
+    R-60 S6 this was FALSE, and the reason was never named: the view had nine of the
+    eleven components, so the two states could agree on the view and disagree on the
+    self balance or on an account's code hash. -/
+theorem worldEq_of_view_eq {o₁ o₂ : Obs} (h : o₁.view = o₂.view) :
+    WorldEq o₁.state o₂.state :=
+  ⟨congrArg ObsView.storage h, congrArg ObsView.transient h, congrArg ObsView.logs h,
+    congrArg ObsView.selfdestructs h, congrArg ObsView.selfBalance h,
+    congrArg ObsView.balanceOf h, congrArg ObsView.extCodeOf h,
+    congrArg ObsView.extCodeHashOf h, congrArg ObsView.nonceOf h,
+    congrArg ObsView.storageOf h, congrArg ObsView.transientOf h⟩
+
+/-- And the converse direction, so the view is EXACTLY the world plus the halt payload
+    plus the outcome: nothing a headline conclusion reads is missing from it, and
+    nothing it carries is more than `WorldEq` and the halt carry. -/
+theorem view_eq_of_worldEq_and_halt {o₁ o₂ : Obs}
+    (hw : WorldEq o₁.state o₂.state) (hh : o₁.state.halted = o₂.state.halted)
+    (ho : o₁.outcome = o₂.outcome) : o₁.view = o₂.view := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := hw
+  simp [Obs.view, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, hh, ho]
+
+/-- THE REFUTATION THAT MAKES S6 A FIX AND NOT A CLAIM. Two states that agreed on the
+    eleven components the old view carried EXCEPT `selfBalance` had EQUAL views, so an
+    `ObsEquiv` could not tell them apart and `worldUnchanged` was not transportable -
+    that was the hole, and here it is exhibited as a term: a pair of states that differ
+    in the self balance and now have DIFFERENT views. Delete `selfBalance` from
+    `ObsView` and the second conjunct stops holding, which is the demonstration (R-41)
+    that this can fail. -/
+theorem view_sees_selfBalance :
+    ∃ a b : EvmState, a.env.selfBalance ≠ b.env.selfBalance ∧
+      Obs.view ⟨a, .halt⟩ ≠ Obs.view ⟨b, .halt⟩ :=
+  ⟨{ EvmState.init with env.selfBalance := 1 }, { EvmState.init with env.selfBalance := 2 },
+    by decide, fun h =>
+      have h' : (1 : U256) = 2 := congrArg ObsView.selfBalance h
+      absurd h' (by decide)⟩
+
+/-- The same for the code-hash map, the other `WorldEq` component the view used to
+    drop: an account whose code hash differs while its code agrees - exactly what a
+    pasted codehash constant in a deployment is - is now visible at the view. -/
+theorem view_sees_extCodeHashOf :
+    ∃ a b : EvmState, a.env.extCodeHashOf ≠ b.env.extCodeHashOf ∧
+      Obs.view ⟨a, .halt⟩ ≠ Obs.view ⟨b, .halt⟩ :=
+  ⟨{ EvmState.init with env.extCodeHashOf := fun _ => 1 },
+    { EvmState.init with env.extCodeHashOf := fun _ => 2 },
+    (fun h => by
+      have := congrFun h 0
+      exact absurd this (by decide)), fun h =>
+      have h' : (1 : U256) = 2 := by
+        exact congrFun (congrArg ObsView.extCodeHashOf h) 0
+      absurd h' (by decide)⟩
 
 /-- The ABI encoding of true: the 32-byte big-endian word 1. TraceReturn.yul:70-72
     does mstore(RETURN_MPTR, 1) then return(RETURN_MPTR, 0x20), and the return

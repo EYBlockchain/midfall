@@ -41,6 +41,7 @@ import Midfall.Instances.ImportedIR
 namespace Midfall.Instances.ObligationsGates
 open Midfall Midfall.Halo2 Midfall.Lowering Midfall.Generator Midfall.Yul
 open Midfall.Instances.SurfaceFixture Midfall.Instances.ImportedIR
+open Midfall.Yul.Bridge
 open Midfall.Yul.Ir
 open YulSemantics YulSemantics.EVM
 
@@ -84,7 +85,7 @@ example : ¬ SupportedS realSurface fxOptionsTrace := supportedRefutedForTraceRe
     the day any of them stops applying - a `SupportedS` that only held for a
     different render, or a `DeploymentW` whose memguard field stopped
     discharging, reddens here. -/
-example : SupportedS realSurface realSurface.o₀ ∧
+theorem bundle_deployment : SupportedS realSurface realSurface.o₀ ∧
     DeploymentW realSurface fxW keccak256 fxVkAddr fxQuotientAddr :=
   ⟨supportedInhabited, deploymentInhabited⟩
 
@@ -171,12 +172,189 @@ example : realSurface.plan.hasAccumulator = realSurface.cfg.accumulator.isSome :
   realSurface.plan_hasAccumulator
 example : realSurface.plan.numInstances = realSurface.cfg.numInstances :=
   realSurface.plan_numInstances
-example : realSurface.L.evaluator.isSome = realSurface.evaluatorRuntime.isSome :=
+example : realSurface.L.evaluator.map Object.codeBlock =
+    realSurface.evaluatorRuntime.map Prod.fst :=
   realSurface.evaluator_agrees
 example : ∀ R : RP, encG2IsEip (realSurface.encG2 R) = true :=
-  realSurface.encG2_eip
-example : ∀ o : Midfall.Generator.RenderOptions, realSurface.astOfMain o =
-    match realSurface.lower o with
+  realSurface.encG2_shape
+
+/-- GATE 10b, R-60 S5. `render_eq_print` is a CONJUNCTION now: the astOfMain/lower
+    equation (which the fixture satisfies by rfl, because it defines one from the
+    other - the review was right that the equation alone proves nothing) AND the
+    trace-refusal half, which is not rfl: it needs `fxLower` to actually refuse a
+    trace render. The refutation is `renderEqPrintTraceRefusalKats_ok`. -/
+example : (∀ o : Midfall.Generator.RenderOptions, realSurface.astOfMain o =
+      match realSurface.lower o with
+      | .ok l => some l.main
+      | .error _ => none) ∧
+      (∀ o : Midfall.Generator.RenderOptions, o.diagnostics.trace = true →
+        realSurface.astOfMain o = none) :=
+  ⟨fun _ => rfl, fun o h => by simp [realSurface, fxLower, h]⟩
+
+/-- The counterexample render and accessor the review's defeat describes: a render that
+    never refuses and an accessor defined from it. The equation half holds for this pair
+    BY DEFINITION - which is exactly why the equation alone proves nothing - and the
+    trace-refusal conjunct is what rules it out. R-60 S5. -/
+def traceCounterLower : Midfall.Generator.RenderOptions →
+    Except Midfall.Generator.GeneratorError Lowered := fun _ => .ok fxLowered
+
+def traceCounterAst : Midfall.Generator.RenderOptions → Option YulBlock :=
+  fun o => match traceCounterLower o with
     | .ok l => some l.main
-    | .error _ => none := fun _ => rfl
+    | .error _ => none
+
+/-- The counterexample satisfies the first conjunct, so the first conjunct alone cannot
+    be what makes render_eq_print say something. -/
+theorem traceCounter_satisfies_the_equation :
+    ∀ o : Midfall.Generator.RenderOptions, traceCounterAst o =
+      match traceCounterLower o with
+      | .ok l => some l.main
+      | .error _ => none := fun _ => rfl
+
+/-- ...and it refutes the second, which is the half that does the work. -/
+theorem traceCounter_refutes_the_trace_half :
+    ∃ o : Midfall.Generator.RenderOptions, o.diagnostics.trace = true ∧
+      traceCounterAst o ≠ none :=
+  ⟨fxOptionsTrace, by simp [fxOptionsTrace], by simp [traceCounterAst, traceCounterLower]⟩
+
+/-- R-60 S5 REFUTATION, as a decidable gate too: the counterexample accessor answers
+    `some` for a trace render, the fixture's answers `none` for both the trace render
+    and the gas-checkpoint render. -/
+def renderEqPrintTraceRefusalKats_ok : Bool :=
+  (traceCounterAst fxOptionsTrace).isSome &&
+    (realSurface.astOfMain fxOptionsTrace).isNone &&
+    (realSurface.astOfMain fxOptionsGas).isNone
+
+#eval renderEqPrintTraceRefusalKats_ok    -- expect true
+
+/-! ### GATE 11 and 12: the JOINT exhibits R-60 S1 asked for
+
+The class this section exists to close: a headline field takes SEVERAL hypotheses, each
+of them inhabited on its own while the conjunction is empty. Gate 6 checked
+`RunContractIR` alone; the S1 defect lived in the other half, so gate 6 stayed green
+over a headline nobody could instantiate. Every exhibit below is ONE statement about ONE
+Surface, object and observation, and `scripts/check_hypothesis_bundles.py` requires
+every multi-hypothesis field of `LoweringCorrect` to have either such an exhibit or a
+named gap def saying which conjunct is the blocker. -/
+
+/-- GATE 11, R-60 S1: the IR leg as a CONJUNCTION. One object that both passes the
+    Surface's own import check and has a committed run, for every call relation and
+    every gas oracle. Cited from ImportedIR rather than restated, so a regression in the
+    witness is a build failure here. -/
+theorem bundle_irLeg (c : ExternalCalls) (g : ExternalGas) :
+    ∃ (ir : YulObject) (irLyt : EVM.Layout) (obs : Obs),
+      irSurface.irCheck ir = true ∧
+        RunContractIR irSurface irW keccak256 ir irLyt irCd c g obs :=
+  irHypothesis_jointlyInhabited c g
+
+/-- THE SAME DEPLOYMENT AT THE IMPORTED SURFACE. `irSurface` is `realSurface` with one
+    field changed - `runtimeName`, the field R-60 S1 is about - and neither
+    `SupportedS` nor `DeploymentW` reads it, so both exhibits transfer field by field.
+    Written as projections rather than as `exact supportedInhabited` because a structure
+    update replaces the Prop fields with opaque proofs, so the two types are not
+    definitionally equal even though every field they read is identical; the projection
+    form is also the honest one, since it names which clauses carry the exhibit. -/
+theorem supportedInhabited_ir : SupportedS irSurface irSurface.o₀ :=
+  ⟨supportedInhabited.advice, supportedInhabited.instShape, supportedInhabited.noRotInst,
+    supportedInhabited.acc, supportedInhabited.singlePhase, supportedInhabited.hLimbs,
+    supportedInhabited.vkPoints, supportedInhabited.layout,
+    supportedInhabited.production, supportedInhabited.wf⟩
+
+theorem deploymentInhabited_ir :
+    DeploymentW irSurface irW keccak256 fxVkAddr fxQuotientAddr :=
+  ⟨deploymentInhabited.keccak, deploymentInhabited.wf, deploymentInhabited.callvalue,
+    deploymentInhabited.static, deploymentInhabited.vkImm, deploymentInhabited.vkCode,
+    deploymentInhabited.vkNonEmpty, deploymentInhabited.vkHash, deploymentInhabited.qImm,
+    deploymentInhabited.qCode, deploymentInhabited.qHash, deploymentInhabited.qNonEmpty,
+    deploymentInhabited.memguard, deploymentInhabited.disjoint⟩
+
+/-- GATE 12: THE REQUIRED FINDING, AS ONE CONJUNCTION AND NOT AS TWO HALVES. After S1,
+    is `lowering_equivalence`'s hypothesis genuinely inhabited at the real artifact?
+    For the legs this package owns - SupportedS for the Surface's own render options,
+    DeploymentW for the fixture world, and the IR pair (import check plus committed run
+    of the imported solc object) - YES, jointly, at one Surface: this term. The legs it
+    does NOT answer are `Eip2537.Holds` and `EnvAgrees`, which no Surface in the tree
+    satisfies for a reason that is a missing model rather than a missing pin; those are
+    the gap defs below. The honest summary: the IR-and-deployment core of the headline is
+    inhabited at the artifact, the codec-and-environment part is not. -/
+theorem bundle_headlineCore (c : ExternalCalls) (g : ExternalGas) :
+    SupportedS irSurface irSurface.o₀ ∧
+      DeploymentW irSurface irW keccak256 fxVkAddr fxQuotientAddr ∧
+      ∃ (ir : YulObject) (irLyt : EVM.Layout) (obs : Obs),
+        irSurface.irCheck ir = true ∧
+          RunContractIR irSurface irW keccak256 ir irLyt irCd c g obs :=
+  ⟨supportedInhabited_ir, deploymentInhabited_ir, irHypothesis_jointlyInhabited c g⟩
+
+/-- THE EXHIBIT CAN FAIL, and here is the failing case: hand the same Surface a
+    runtimeName that does not name the imported sub-object and the conjunction is empty
+    for that object - not because the run is hard but because there is no runtime block
+    to run. This is the S1 shape, and it is why the exhibit is a conjunction. -/
+theorem bundle_irLeg_fails_for_wrong_name (c : ExternalCalls) (g : ExternalGas) :
+    ¬ (∃ obs, RunContractIR { irSurface with runtimeName := fun _ => "nope" } irW
+      keccak256 verifierIr irLyt irCd c g obs) :=
+  runContractIR_none_for_wrong_name c g
+
+/-! #### The named gaps: conjuncts no Surface in the tree satisfies, with the blocker -/
+
+/-- No run of the assembly or of the shell is exhibited at the fixture, so the run
+    conjunct of verifier_sound, verifier_complete and only_two_outcomes is jointly
+    unexhibited with the deployment. Blocker: a RunVerifier or RunShell witness needs a
+    calldata the decoder accepts, which needs a real proof fixture at `Fr r` - the
+    poseidon bundle is at the BLS12-381 scalar field and the exponent model cannot make
+    `ContractRefAcceptsAcc` return true for it (the same g1Valid wall as Holds). The
+    IR side DOES have a witness (gate 6, gate 11), which is why this gap is about the
+    shell and assembly runs and not about runs in general. -/
+def gap_runLeg_unexhibited : String :=
+  "blocker: no accepted calldata at the exponent model, so no RunVerifier or RunShell "
+    ++ "witness exists to exhibit jointly with SupportedS and DeploymentW"
+
+
+/-- `Eip2537.Holds` is not exhibited at any Surface in the tree. Blocker: the only
+    `AdmissiblePairing` model is the exponent model (R-28, D-P1), and its codec sends a
+    non-identity exponent to bytes no curve check accepts, so the `g1Valid` clause
+    fails. Every field carrying Holds - verifier_sound, verifier_complete,
+    end_to_end_noAcc, lowering_equivalence - has a hypothesis bundle that is jointly
+    EMPTY for a reason that is a missing model, not a missing pin. -/
+def gap_holds_unexhibited : String :=
+  "blocker: no BLS12-381 curve model in the tree (D-P1, R-28); the exponent codec "
+    ++ "fails the g1Valid clause for a non-identity point, so Eip2537.Holds is "
+    ++ "unsatisfiable at the only Surface"
+
+/-- `EnvAgrees` is not exhibited. Blocker: its `truncWidth` clause needs a `FieldConsts`
+    with numBits 255 and its `omegaOrder` clause needs a genuine root of unity in
+    `Fr r`; both are nameable and neither is what stage 4 was asked to build, so the
+    per-partial theorems still carry an unexhibited hypothesis (file header, note 3). -/
+def gap_envAgrees_unexhibited : String :=
+  "blocker: needs a genuine root of unity in Fr r and FieldConsts numBits 255; "
+    ++ "nameable, not built, so EnvAgrees is unexhibited at the only Surface"
+
+/-- R-60 S4: what `encG2_shape` does NOT claim. The pin forces EIP-2537-shaped,
+    precompile-valid bytes for every point; a CONSTANT function satisfies it, and the
+    fixture uses one (`fun _ => bytesZero g2Bytes`, the EIP infinity word). The
+    strengthening the fixture cannot meet is `Function.Injective encG2`, so it is
+    recorded here rather than added as a pin the only witness fails. -/
+def gap_encG2_injective : String :=
+  "blocker: the fixture encoder is constant, so Function.Injective encG2 cannot be "
+    ++ "met at the only Surface; a real G2 codec in Common is missing (D-P17)"
+
+/-- R-60 S9: `qvm_validated_noBoundsFault` does not mention the Surface at all. Every
+    other field of `LoweringCorrect` is a claim about the deployment the record
+    describes; this one quantifies over an arbitrary `LoweringPlan`, so it is a claim
+    about SOME plan - the R-58 F3 unrelated-program class one level up. Blocker: linking
+    it needs `S.plan` to BE a `LoweringPlan`, and `PlanView` carries only the counts Inv
+    reads because P-11's `LoweringPlan::new` has not landed. -/
+def gap_qvmField_surface_free : String :=
+  "blocker: the field quantifies over an arbitrary LoweringPlan and never mentions the "
+    ++ "Surface; linking it needs S.plan to be a LoweringPlan (P-11 LoweringPlan::new)"
+
+/-- R-60 S6: the view transport is NOT a gap any more, and the previous report named the
+    wrong blocker. Recorded here so the gap list is corrected in both directions:
+    `dialect_deterministic` is not needed for transporting an `ObsEquiv`, and the
+    conjunct that WAS blocked was the world-equality one, for a reason the report never
+    named - `ObsView` omitted `selfBalance` and `extCodeHashOf`. Both are in the view
+    now and `Bridge.worldEq_of_view_eq` is the transport. -/
+def gap_view_transport_closed : String :=
+  "closed by R-60 S6: ObsView carries selfBalance and extCodeHashOf, and "
+    ++ "halted_of_view_eq / returnData_of_view_eq / isReturn_of_view_eq / "
+    ++ "isRevertOrHalt_of_view_eq / worldEq_of_view_eq are proved in Bridge.lean"
 end Midfall.Instances.ObligationsGates

@@ -1,39 +1,48 @@
 #!/usr/bin/env python3
-"""Duplicate-fact gate: every copied fact must have a named pin between the copies.
+"""Duplicate-fact gate: every copied fact must have a named pin, a scoped enforcement,
+a derived consumer, or a declared gap - and a NEW copy must be DISCOVERED, not regressed.
 
-WHY (docs/REVIEW.md R-58). Seven of the ten statement defects share one root cause:
-PlanView, Surface, LoweringPlan and GeneratorConfig each carry a COPY of a fact the
-Rust derives once - hasAccumulator, numInstances, the evaluator, encG2, the
-quotient/direct pair, the shell program. A copy with no field relating it to its
-source is a free variable: the reviewer showed 11 of the 13 PartialSpecs fields
-discharge on a PlanView whose hasAccumulator is a one-Bool lie, because nothing
-anywhere compares it to cfg.accumulator.isSome, and that S.shell.codeBlock occurs at
-exactly one site, so the three run relations were about three unrelated programs.
+WHY (docs/REVIEW.md R-58 and R-60 S2). Seven of the ten R-58 statement defects share
+one root cause: PlanView, Surface, LoweringPlan and GeneratorConfig each carry a COPY
+of a fact the Rust derives once - hasAccumulator, numInstances, the evaluator, encG2,
+the quotient/direct pair, the shell program. A copy with no field relating it to its
+source is a free variable. R-60 S1 found the same class in the one place it mattered
+most: the fixture's irCheck hard-coded a runtime naming convention instead of reading
+Surface.runtimeName, so the gate on the headline hypothesis disagreed with the run
+relation it was supposed to describe.
 
-WHAT THIS GATE CHECKS. Dependency structure, not text and not meaning. For each fact
-family it asserts:
+WHAT THIS GATE CHECKS. Dependency structure, not text and not meaning.
 
-  1. every CARRIER (a record field that stores the fact) is still declared in the
-     structure named, so a rename or a deletion cannot silently drop the family;
-  2. if a family has two or more carriers there is a named PIN field, the pin is
-     still declared, and the pin's TYPE mentions the tokens on both sides of the copy
-     (e.g. plan.hasAccumulator AND cfg.accumulator). A pin whose statement names only
-     one side - x = x, or shell.codeBlock = shell.codeBlock - does not connect the
-     copies and fails here;
-  3. a family whose copies are held together by a CONSTRUCTOR VALIDATION instead of a
-     record pin (the quotient/direct pair, which lives in the ported LoweringPlan
-     record and is enforced in LoweringPlan.new) names the fragments of that
-     validation, and they must still be present.
+  1. CARRIER: every record field that stores the fact is still declared in the named
+     structure, so a rename or deletion cannot silently drop the family.
+  2. PIN: if a family has two or more carriers there is a named pin field, and its
+     TYPE mentions the tokens on both sides - matched at WORD BOUNDARIES, because
+     R-60 S2 found that substring matching let 'encG2' be "mentioned" by 'encG2IsEip'.
+     A pin whose every component is trivially decidable is rejected: R-60 S2 found
+     that a self-equality was beaten by any earlier colon in the type, and that a
+     CONJUNCTION of self-equalities passed outright.
+  3. ENFORCED_AT: a family held together by a constructor validation instead of a
+     record pin names the DEFINITION that performs the validation, and the fragments
+     must occur inside THAT definition's body, in comment-stripped code. R-60 S2 found
+     the old form grepped raw file text, so deleting the real quotient/direct checks
+     stayed green while the same English sentences survived in a KAT string.
+  4. DERIVED: a free field that other code re-derives is pinned to its consumers by
+     requiring each consumer definition to READ the field. This is the S1 repair:
+     Surface.irCheck is a projection of Surface.irRuntime, which is a projection of
+     Surface.runtimeName, and if the check ever goes back to hard-coding a name the
+     token disappears from the consumer and the gate reddens.
+  5. DISCOVERY: every structure field in the tracked files whose name is a known
+     carrier stem (optionally with a trailing digit or a suffix) must be accounted for
+     by some family. R-60 S2's most important point: a hand-written family list is a
+     REGRESSION check, and the arrival of a NEW copy - 'hasAccumulator2 : Bool' - is
+     the actual root cause. This is the half that discovers.
+  6. GAP: a copy this package does not repair names a Lean definition that states the
+     gap and its blocker, so the gap lives in the code, is deletable, and reddens the
+     gate when it goes missing or when the blocker is no longer named.
 
-WHAT THIS GATE CANNOT CATCH, stated plainly because R-58 says the last gate was
-oversold. It is not a meaning check. A pin whose two sides are both wrong in the same
-way passes. A pin that connects the right fields with the wrong operator passes as
-long as both tokens appear. A carrier that is present, pinned, and never read by any
-theorem passes. The existing fingerprint gate (check_statement_fingerprints.py) pins
-TEXT FRAGMENTS of the LoweringCorrect fields and demonstrably lets F1, F7 and F8
-through, because those defects are dependency vacuities rather than paraphrases. This
-gate pins DEPENDENCY STRUCTURE. The two are complementary and neither is a semantics
-check: only a proof is a semantics check.
+WHAT THIS GATE CANNOT CATCH, stated plainly. It is not a meaning check. A pin whose two
+sides are both wrong in the same way passes. A carrier that is present, pinned and never
+read by any theorem passes. Only a proof is a semantics check.
 
 Usage:  python3 scripts/check_duplicate_facts.py [--root DIR]
   --root DIR  look for Midfall/... under DIR instead of this script's parent's parent.
@@ -44,20 +53,19 @@ import re
 import sys
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# The families. carriers are (file, structure, field) triples that STORE the fact.
-# pins are (file, structure, field) triples whose type must relate them, and
-# pin_tokens are the strings that pin's type has to mention to count as a link.
-# enforced_at is (file, [fragments]) for a family held together by a constructor
-# validation rather than by a record field.
-# ---------------------------------------------------------------------------
-
 SURFACE = "Midfall/Lowering/Surface.lean"
 INV = "Midfall/Lowering/Inv.lean"
 TYPES = "Midfall/Lowering/Types.lean"
 API = "Midfall/Generator/Api.lean"
 LPLAN = "Midfall/Generator/LoweringPlan.lean"
 EIP = "Midfall/Assumptions/Eip2537.lean"
+
+# Stems that mark a field as "a copy of a fact this programme has already been burned
+# by copying". Discovery (rule 5) flags any field whose name stems from one of these
+# unless a family declares it. Longer stems also match as substrings; short ones only
+# as prefixes, to keep the scan free of noise.
+DISCOVERY_STEMS = ["hasAccumulator", "numInstances", "accumulator", "evaluator",
+                   "encG2", "runtimeName", "vkDigest", "shell"]
 
 FAMILIES = [
     {
@@ -79,18 +87,21 @@ FAMILIES = [
         "carriers": [(TYPES, "Lowered", "evaluator"),
                      (SURFACE, "Surface", "evaluatorRuntime")],
         "pins": [(SURFACE, "Surface", "evaluator_agrees")],
-        "pin_tokens": ["L.evaluator", "evaluatorRuntime"],
+        # R-60 S3: the pin is the runtime-BLOCK equation now, so the token test asks
+        # for the projection that makes it a block equation and not for isSome.
+        "pin_tokens": ["L.evaluator", "evaluatorRuntime", "Object.codeBlock"],
     },
     {
         "name": "encG2",
         "carriers": [(SURFACE, "Surface", "encG2"),
                      (EIP, "G2Enc", "toEip")],
-        "pins": [(SURFACE, "Surface", "encG2_eip")],
+        "pins": [(SURFACE, "Surface", "encG2_shape")],
         "pin_tokens": ["encG2", "encG2IsEip"],
     },
     {
         "name": "shell",
         "carriers": [(SURFACE, "Surface", "shell"),
+                     (SURFACE, "Surface", "shellLayout"),
                      (TYPES, "Lowered", "headGuard"),
                      (TYPES, "Lowered", "main"),
                      (SURFACE, "Surface", "bindLocals")],
@@ -100,68 +111,133 @@ FAMILIES = [
     {
         "name": "vkDigest",
         "carriers": [(SURFACE, "Surface", "vkDigest"),
-                     (SURFACE, "Surface", "vk")],
+                     (SURFACE, "Surface", "vk"),
+                     # R-60 S2 discovery: the third copy of the same word. EnvAgrees is
+                     # the hypothesis that relates the plan slot to the key, so it is a
+                     # carrier of this fact and not an unrelated field sharing a stem.
+                     (INV, "EnvAgrees", "vkDigestWord")],
         "pins": [(SURFACE, "Surface", "vkDigest_spec")],
         "pin_tokens": ["vkDigest", "vk.transcriptRepr"],
     },
     {
+        # R-60 S1: the runtime naming convention. It is a free field, and the S1
+        # defect was a SECOND copy of it baked into the body of the import check.
+        # The repair deleted the copy, so the family is single-carrier by construction
+        # and the DERIVED list is what keeps it that way.
+        "name": "runtimeName",
+        "carriers": [(SURFACE, "Surface", "runtimeName")],
+        "pins": [],
+        "derived": [(SURFACE, "Surface.irRuntime", ["S.runtimeName"]),
+                    (SURFACE, "Surface.irCheck", ["irRuntime"])],
+    },
+    {
         # The one family this package does NOT repair: LoweringPlan is a faithful port
         # of a Rust record (PL:29-45) whose invariant the Rust also does not enforce by
-        # type, so the link is a constructor validation, not a record pin.
+        # type, so the link is a constructor validation, not a record pin. R-60 S2:
+        # the validation is now located by DEFINITION, not by file-wide grep.
         "name": "quotient/direct",
         "carriers": [(LPLAN, "LoweringPlan", "lowering"),
                      (LPLAN, "LoweringPlan", "quotient"),
                      (LPLAN, "LoweringPlan", "direct")],
         "pins": [],
-        "enforced_at": (LPLAN, ["direct plan also carries a compact VM plan",
-                                "direct lowering must not reserve VM program words"]),
+        "enforced_at": (LPLAN, "LoweringPlan.validateGeneratorInvariants",
+                        ["L.quotient.isSome", "L.lowering != QuotientLowering.direct",
+                         "direct plan also carries a compact VM plan",
+                         "direct lowering must not reserve VM program words"]),
+    },
+    {
+        # R-60 S7: shell.codeBlock (the Yul AST the shell runs) and shellLayout.code
+        # (the bytecode the deployment installs) are two copies of "the shell program"
+        # in two representations. No pin is nameable today: relating them needs a
+        # Yul-to-bytecode compiler, and P-13 ported the templates as TEXT renders, so
+        # nothing in Lean emits bytecode from a Block Op. Declared as a gap in the code
+        # (gap_shell_code_vs_layout_code in Surface.lean), not in prose.
+        "name": "shell bytecode",
+        "carriers": [(SURFACE, "Surface", "shell"),
+                     (SURFACE, "Surface", "shellLayout")],
+        "pins": [],
+        "gap": (SURFACE, "gap_shell_code_vs_layout_code",
+                ["Yul-to-bytecode compiler"]),
     },
 ]
 
 # ---------------------------------------------------------------------------
-# A small Lean reader: strip comments, then read 'structure NAME ... where' bodies
-# and the field declarations inside them.
+# A small Lean reader: strip comments, then read 'structure NAME ... where' bodies,
+# the field declarations inside them, and named top-level definitions.
 # ---------------------------------------------------------------------------
+
+STR = re.compile(r'"(?:\\.|[^"\\])*"')
+FORALL = "∀"
+ARROW = "→"
+AND = "∧"
 
 
 def strip_comments(text):
-    """Blank out Lean line and block comments, keeping line structure.
+    """Blank out Lean line and block comments, keeping line and column structure.
 
-    Block comments nest in Lean 4 and open on /-, /-! and /--. Comments are blanked
-    rather than removed so line numbers survive, and so that a field cannot be
-    'declared' inside a doc string - which is how a prose mention would otherwise
-    satisfy a pin-token test.
+    Block comments nest in Lean 4 and open on /-, /-! and /--; their BODIES are
+    blanked too. R-60 S2 is the reason this function is written out again: the
+    previous version opened on /-- and /-! but then COPIED the body through, so a
+    doc string was parsed as code and the tree's own provenance convention
+    ('/-- rust: try_new rejects ... -/') invented a phantom SupportedS field named
+    'rust'. A gate whose parser harvests fields from prose is worse than no gate: it
+    reports the shape of the comments as the shape of the record.
+
+    Comments are blanked rather than removed so line numbers survive, and so that a
+    field cannot be 'declared' inside a doc string - which is how a deleted pin left
+    inside /-- ... -/ kept the pin-token test green.
     """
     out = []
     depth = 0
     i = 0
     n = len(text)
     while i < n:
+        c = text[i]
         if depth == 0:
-            if text.startswith("/-", i) and i + 2 < n and text[i + 2] in "-!":
+            if c == '"':
+                m = STR.match(text, i)
+                if m:
+                    out.append(m.group(0))
+                    i = m.end()
+                    continue
+            if text.startswith("/--", i) or text.startswith("/-!", i):
+                depth = 1
+                out.append("   ")
+                i += 3
+                continue
+            if text.startswith("/-", i):
                 depth = 1
                 out.append("  ")
-                i += 3
+                i += 2
                 continue
             if text.startswith("--", i):
                 j = text.find("\n", i)
                 if j == -1:
+                    out.append(" " * (n - i))
                     break
                 out.append(" " * (j - i))
                 i = j
                 continue
-        else:
-            if text.startswith("/-", i) and i + 2 < n and text[i + 2] in "-!":
-                depth += 1
-                out.append("  ")
-                i += 3
-                continue
-            if text.startswith("-/", i):
-                depth -= 1
-                out.append("  ")
-                i += 2
-                continue
-        out.append(text[i])
+            out.append(c)
+            i += 1
+            continue
+        # inside a block comment: blank the body, keep newlines
+        if text.startswith("/--", i) or text.startswith("/-!", i):
+            depth += 1
+            out.append("   ")
+            i += 3
+            continue
+        if text.startswith("/-", i):
+            depth += 1
+            out.append("  ")
+            i += 2
+            continue
+        if text.startswith("-/", i):
+            depth -= 1
+            out.append("  ")
+            i += 2
+            continue
+        out.append(c if c == "\n" else " ")
         i += 1
     return "".join(out)
 
@@ -169,6 +245,9 @@ def strip_comments(text):
 STRUCT_RE = re.compile(r"^structure\s+([A-Za-z0-9_.']+)")
 FIELD_RE = re.compile(r"^(\s+)([A-Za-z_][A-Za-z0-9_.']*)\s*:\s*")
 TOPLEVEL_RE = re.compile(r"^[A-Za-z_/-]")
+DECL_RE = re.compile(r"^(?:private\s+|protected\s+)?(?:abstract\s+)?"
+                     r"(def|theorem|lemma|abbrev|instance|example|structure)\s+"
+                     r"([A-Za-z0-9_.']+)?")
 
 
 def structures(text):
@@ -211,25 +290,172 @@ def structures(text):
     return result
 
 
+def definitions(text):
+    """Map top-level declaration name -> its full source text, comment-stripped.
+
+    Used for the scoped checks: enforced_at fragments and derived-consumer tokens have
+    to live inside the named definition, not anywhere in the file.
+    """
+    lines = text.splitlines()
+    result = {}
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if ln.strip() and TOPLEVEL_RE.match(ln):
+            m = DECL_RE.match(ln)
+            if m and m.group(2):
+                name = m.group(2)
+                buf = [ln]
+                k = i + 1
+                while k < len(lines):
+                    nxt = lines[k]
+                    if nxt.strip() and TOPLEVEL_RE.match(nxt):
+                        break
+                    buf.append(nxt)
+                    k += 1
+                result[name] = " ".join(s.strip() for s in buf)
+                i = k
+                continue
+        i += 1
+    return result
+
+
+def mentions(text, token):
+    """Word-boundary token test. R-60 S2: substring matching let 'encG2' be counted
+    as mentioned by 'encG2IsEip', so a pin naming only the validator passed the
+    both-sides test without naming the encoder at all."""
+    esc = re.escape(token)
+    return re.search(r"(?<![A-Za-z0-9_'])" + esc + r"(?![A-Za-z0-9_'])", text) is not None
+
+
+def split_top(s, seps):
+    """Split on top-level separators, respecting (), [], {} and string literals."""
+    parts, cur, depth = [], "", 0
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '"':
+            m = STR.match(s, i)
+            if m:
+                cur += m.group(0)
+                i = m.end()
+                continue
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        if depth == 0:
+            hit = None
+            for sep in seps:
+                if s.startswith(sep, i):
+                    hit = sep
+                    break
+            if hit:
+                parts.append(cur)
+                cur = ""
+                i += len(hit)
+                continue
+        cur += c
+        i += 1
+    parts.append(cur)
+    return parts
+
+
+def norm(s):
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def strip_binders(comp):
+    """Drop leading FORALL x : T, and (h : T) -> binder prefixes from a component."""
+    comp = norm(comp)
+    for _ in range(8):
+        before = comp
+        if comp.startswith(FORALL):
+            parts = split_top(comp[1:], [","])
+            if len(parts) > 1:
+                comp = norm(parts[-1])
+        if comp.startswith("("):
+            depth = 0
+            for i, c in enumerate(comp):
+                if c in "([{":
+                    depth += 1
+                elif c in ")]}":
+                    depth -= 1
+                    if depth == 0:
+                        after = comp[i + 1:].strip()
+                        if (after.startswith(ARROW) or after.startswith("->")
+                                or after.startswith(",")):
+                            comp = norm(after.lstrip(ARROW + ",->").strip())
+                        break
+        if comp == before:
+            break
+    return comp
+
+
+def is_trivial(comp):
+    """True if the component is decidable without knowing the fields it names."""
+    c = strip_binders(comp)
+    if c in ("True", ""):
+        return True
+    eqs = split_top(c, ["="])
+    if len(eqs) == 2 and norm(eqs[0]) == norm(eqs[1]) and norm(eqs[0]) != "":
+        return True
+    return False
+
+
+def triviality_problems(typ):
+    """Reject a pin every Surface satisfies.
+
+    R-60 S2 found two defeats here. (a) The old code took the text after the FIRST
+    colon and before the first '=', so any earlier colon in the type - a binder group
+    like '(z : Nat) -> X = X' - made the two sides unequal and the self-equality
+    passed. (b) A CONJUNCTION of self-equalities passed for the same reason. The rule
+    now: split the type into top-level components on the arrow, take the CONCLUSION
+    (the last component), split THAT on the conjunction operator, and reject when every
+    conjunct of the conclusion is decidable without knowing the fields it names. So
+    '(h : X = X) -> True' is rejected through its conclusion and a conjunction of
+    self-equalities through its conjuncts, and neither can hide behind an earlier colon.
+    """
+    comps = [c for c in split_top(typ, [ARROW, "->"]) if c.strip()]
+    if not comps:
+        return ["empty type"]
+    conclusion = comps[-1]
+    conjuncts = [c for c in split_top(conclusion, [AND]) if c.strip()]
+    if not conjuncts:
+        return ["empty conclusion"]
+    if all(is_trivial(c) for c in conjuncts):
+        return ["every conjunct of the conclusion is trivially decidable: " +
+                "; ".join(norm(c) for c in conjuncts)]
+    return []
+
+
 def check(root):
-    cache = {}
-    raw = {}
+    cache, stripped, defcache = {}, {}, {}
+
+    def strip(rel):
+        if rel not in stripped:
+            p = root / rel
+            stripped[rel] = strip_comments(p.read_text(encoding="utf-8")) \
+                if p.exists() else None
+        return stripped[rel]
 
     def read(rel):
         if rel not in cache:
-            p = root / rel
-            cache[rel] = (structures(strip_comments(p.read_text(encoding="utf-8")))
-                          if p.exists() else None)
+            s = strip(rel)
+            cache[rel] = structures(s) if s is not None else None
         return cache[rel]
 
-    def read_raw(rel):
-        if rel not in raw:
-            p = root / rel
-            raw[rel] = p.read_text(encoding="utf-8") if p.exists() else None
-        return raw[rel]
+    def defs(rel):
+        if rel not in defcache:
+            s = strip(rel)
+            defcache[rel] = definitions(s) if s is not None else None
+        return defcache[rel]
 
     problems = []
     pinned = 0
+    gaps = 0
+    derived = 0
+
     for fam in FAMILIES:
         name = fam["name"]
         present = []
@@ -246,50 +472,118 @@ def check(root):
                                 % (name, struct, field, rel))
                 continue
             present.append(field)
-        if len(present) >= 2:
-            if fam.get("pins"):
-                for (rel, struct, field) in fam["pins"]:
-                    structs = read(rel)
-                    if (structs is None or struct not in structs
-                            or field not in structs[struct]):
-                        problems.append("%s: NO PIN - %s.%s is missing from %s, so the "
-                                        "%d copies of this fact are unrelated"
-                                        % (name, struct, field, rel, len(present)))
-                        continue
-                    text = structs[struct][field][1]
-                    missing = [t for t in fam["pin_tokens"] if t not in text]
-                    if missing:
-                        problems.append("%s: PIN DOES NOT CONNECT - %s.%s never mentions "
-                                        "%s, so it does not relate the copies"
-                                        % (name, struct, field, ", ".join(missing)))
-                        continue
-                    # A pin of the shape `x = x` connects nothing even when it
-                    # mentions the right names, so reject a literal self-equality.
-                    typ = text.split(":", 1)[1] if ":" in text else text
-                    if "=" in typ:
-                        lhs, rhs = typ.split("=", 1)
-                        if lhs.strip() == rhs.strip():
-                            problems.append("%s: PIN IS A SELF-EQUALITY - %s.%s says %s"
-                                            % (name, struct, field, typ.strip()))
-                            continue
-                    pinned += 1
-            elif fam.get("enforced_at"):
-                rel, frags = fam["enforced_at"]
-                body = read_raw(rel)
+        if len(present) < 2:
+            for (rel, dname, toks) in fam.get("derived", []):
+                body = (defs(rel) or {}).get(dname)
                 if body is None:
-                    problems.append("%s: enforcement file missing: %s" % (name, rel))
+                    problems.append("%s: DERIVED CONSUMER MISSING - %s is not declared "
+                                    "in %s, so the single carrier has no reader"
+                                    % (name, dname, rel))
                     continue
-                gone = [f for f in frags if f not in body]
-                if gone:
-                    problems.append("%s: ENFORCEMENT VANISHED - %s no longer contains %s"
-                                    % (name, rel, ", ".join(repr(g) for g in gone)))
+                missing = [t for t in toks if not mentions(body, t)]
+                if missing:
+                    problems.append("%s: DERIVED CONSUMER DOES NOT READ THE CARRIER - "
+                                    "%s never mentions %s in %s (R-60 S1: the check must "
+                                    "read the field it belongs to)"
+                                    % (name, dname, ", ".join(missing), rel))
+                    continue
+                derived += 1
+            continue
+        if fam.get("pins"):
+            for (rel, struct, field) in fam["pins"]:
+                structs = read(rel)
+                if (structs is None or struct not in structs
+                        or field not in structs[struct]):
+                    problems.append("%s: NO PIN - %s.%s is missing from %s, so the "
+                                    "%d copies of this fact are unrelated"
+                                    % (name, struct, field, rel, len(present)))
+                    continue
+                text = structs[struct][field][1]
+                missing = [t for t in fam["pin_tokens"] if not mentions(text, t)]
+                if missing:
+                    problems.append("%s: PIN DOES NOT CONNECT - %s.%s never mentions "
+                                    "%s, so it does not relate the copies"
+                                    % (name, struct, field, ", ".join(missing)))
+                    continue
+                typ = text.split(":", 1)[1] if ":" in text else text
+                bad = triviality_problems(typ)
+                if bad:
+                    problems.append("%s: PIN IS TRIVIALLY DECIDABLE - %s.%s says %s (%s)"
+                                    % (name, struct, field, norm(typ), bad[0]))
                     continue
                 pinned += 1
-            else:
-                problems.append("%s: %d copies of this fact with no pin and no named "
-                                "enforcement - the R-58 F2/F3/F6 class"
-                                % (name, len(present)))
-    return problems, pinned
+        elif fam.get("enforced_at"):
+            rel, dname, frags = fam["enforced_at"]
+            body = defs(rel)
+            if body is None:
+                problems.append("%s: enforcement file missing: %s" % (name, rel))
+                continue
+            if dname not in body:
+                problems.append("%s: ENFORCEMENT VANISHED - %s is not declared in %s, "
+                                "so nothing performs the %s validation"
+                                % (name, dname, rel, name))
+                continue
+            scope = body[dname]
+            gone = [f for f in frags if f not in scope]
+            if gone:
+                problems.append("%s: ENFORCEMENT VANISHED - %s no longer contains %s "
+                                "inside %s (the same sentence elsewhere in the file, e.g. "
+                                "in a KAT string, enforces nothing)"
+                                % (name, rel, ", ".join(repr(g) for g in gone), dname))
+                continue
+            pinned += 1
+        elif fam.get("gap"):
+            rel, dname, toks = fam["gap"]
+            body = defs(rel)
+            if body is None or dname not in body:
+                problems.append("%s: DECLARED GAP NOT IN THE CODE - %s is missing from "
+                                "%s, so this unpinned copy is undocumented"
+                                % (name, dname, rel))
+                continue
+            missing = [t for t in toks if t not in body[dname]]
+            if missing:
+                problems.append("%s: GAP BLOCKER MISSING - %s no longer names %s"
+                                % (name, dname, ", ".join(repr(m) for m in missing)))
+                continue
+            gaps += 1
+        else:
+            problems.append("%s: %d copies of this fact with no pin, no named "
+                            "enforcement and no declared gap - the R-58 F2/F3/F6 class"
+                            % (name, len(present)))
+
+    # ---- rule 5: DISCOVERY, not regression ------------------------------------
+    seen = set()
+    for fam in FAMILIES:
+        for entry in fam["carriers"] + fam.get("pins", []):
+            seen.add(entry)
+    for rel in sorted({c[0] for f in FAMILIES
+                       for c in f["carriers"] + f.get("pins", [])}):
+        structs = read(rel)
+        if structs is None:
+            problems.append("discovery: file missing: %s" % rel)
+            continue
+        for struct, fields in sorted(structs.items()):
+            for field in sorted(fields):
+                stem = re.sub(r"\d+$", "", field).lower()
+                if not stem:
+                    continue
+                hit = None
+                for s in DISCOVERY_STEMS:
+                    # PREFIX matching only, after the trailing digit is stripped: a
+                    # substring rule flags ProofEvaluationCounts.lookupAccumulator and
+                    # RenderedArtifacts.quotientEvaluator, different facts that happen
+                    # to END with a carrier name, and a gate that cries wolf gets
+                    # ignored - which is the failure mode R-60 S2 is about.
+                    if stem.startswith(s.lower()):
+                        hit = s
+                        break
+                if hit is None or (rel, struct, field) in seen:
+                    continue
+                problems.append("NEW COPY NOT ACCOUNTED FOR - %s.%s stems from the "
+                                "carrier %r; add it to a family as a carrier with a "
+                                "pin, as an enforcement, or as a declared gap "
+                                "(R-60 S2 discovery)" % (rel, struct + "." + field, hit))
+    return problems, pinned, gaps, derived
 
 
 def main():
@@ -297,14 +591,16 @@ def main():
     root = Path(__file__).resolve().parent.parent
     if "--root" in argv:
         root = Path(argv[argv.index("--root") + 1]).resolve()
-    problems, pinned = check(root)
+    problems, pinned, gaps, derived = check(root)
     if problems:
         print("DUPLICATE-FACT GATE FAILED (%d problem(s)):" % len(problems))
         for p in problems:
             print("  " + p)
         return 1
     print("ok: %d fact families, every one either single-copy or pinned "
-          "(%d pins checked)" % (len(FAMILIES), pinned))
+          "(%d pins, %d derived consumers, %d declared gaps); discovery scan covers "
+          "every field of every tracked structure"
+          % (len(FAMILIES), pinned, derived, gaps))
     return 0
 
 

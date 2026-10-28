@@ -35,10 +35,28 @@
 -- P-IR (`f40424b`) imported the real solc via-ir object;
 -- `Midfall/Instances/ImportedIR.lean` then PROVED a committed run of the
 -- imported runtime for every `ExternalCalls` and every `ExternalGas`, and
--- proved it is a revert that leaves the free-memory pointer at 0x80. So the
--- hypothesis of `ir_refines` is inhabited by a real run of the real artifact,
--- and both names are stated here as the plan asks. What stands between stating
--- and proving is recorded at `lowering_equivalence`.
+-- proved it is a revert that leaves the free-memory pointer at 0x80.
+--
+-- R-60 S1: THE SENTENCE THAT USED TO END THAT PARAGRAPH WAS FALSE, AND IT IS
+-- REPAIRED IN THE CODE, NOT IN THE PROSE. It read "So the hypothesis of
+-- `ir_refines` is inhabited by a real run of the real artifact". The run was.
+-- The HYPOTHESIS was not: every headline field takes `S.irCheck ir = true` as
+-- well, and the fixture's check hard-coded its own naming convention
+-- (`n ++ "_1_deployed"`) instead of reading `S.runtimeName`, so on the imported
+-- object - whose runtime sub-object is `Halo2Verifier_292_deployed` - it returned
+-- `false`. Each half was individually inhabited and the conjunction was empty,
+-- which is the failure mode a per-hypothesis gate cannot see: gate 6 checked
+-- `RunContractIR` alone and stayed green over a headline nobody could instantiate.
+-- The repair deletes the free `irCheck` field: `Surface.irCheck` is now a
+-- PROJECTION of `Surface.runtimeName` (Surface.lean), so the check and the run
+-- relation cannot name different sub-objects. `irHypothesis_jointlyInhabited`
+-- (ImportedIR.lean) exhibits the CONJUNCTION - one object, one layout, one
+-- observation, both conjuncts - and `s1_defect_refutes_the_conjunction` keeps the
+-- broken form in the tree as the refutation, so the exhibit is seen to be able to
+-- fail. `scripts/check_hypothesis_bundles.py` is the gate against the class: every
+-- multi-hypothesis headline conjunction is registered either as a proved joint
+-- exhibit or as a named gap naming its blocking conjunct, and a new field with two
+-- hypotheses and no registration reddens it.
 --
 -- ## THE (a)/(b) SPLIT, APPLIED
 --
@@ -88,6 +106,22 @@
 --       field that cannot fail. The content moved into `end_to_end_noAcc`,
 --       where the spec functions appear directly and a wrong layout or codec is
 --       a statement that does not compose.
+--
+-- ## R-60: THE SECOND PASS AND WHAT IT CHANGED HERE
+--
+-- S1 (blocking): the paragraph above on the headline hypothesis was FALSE as written -
+--   the run was inhabited, the import check was not, and the conjunction was empty.
+--   Fixed in Surface.lean (irCheck is a projection of runtimeName) and exhibited as ONE
+--   conjunction in Instances/ImportedIR.lean (irHypothesis_jointlyInhabited) and
+--   Instances/ObligationsGates.lean (bundle_irLeg, bundle_headlineCore).
+-- S5: render_eq_print gained the trace-refusal conjunct, because the equation half is
+--   satisfied by rfl at a fixture that DEFINES astOfMain from lower.
+-- S6: the gap list below is corrected in both directions - dialect_deterministic is not
+--   needed for the view transport (Bridge.lean proves the four view lemmas), and the
+--   third conjunct's real blocker was ObsView omitting selfBalance and extCodeHashOf,
+--   which it no longer does.
+-- S9: qvm_validated_noBoundsFault does not mention the Surface at all - the F3 class one
+--   level up - recorded at the field and as gap_qvmField_surface_free.
 --
 -- ## GATES
 --
@@ -265,9 +299,13 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
         (obs.isRevertOrHalt ∧ obs.worldUnchanged (callState W S.shellLayout H cd))
   /-- M8: the imported via-ir object refines the shell model, for world-local calls and a fixed gas
       oracle (attack: a relation reading caller memory separates IR from shell). STATED, and the
-      hypothesis is inhabited: Instances/ImportedIR.lean exhibits a committed RunContractIR of the
-      real imported runtime for every call relation and every gas oracle. PROVING is M8 and needs
-      the stage-1 determinism holes plus a Surface whose shell is the real dispatcher. -/
+      hypothesis is inhabited JOINTLY: Instances/ImportedIR.lean exhibits, for every call relation
+      and every gas oracle, ONE object that both passes `S.irCheck` and has a committed
+      `RunContractIR` (`irHypothesis_jointlyInhabited`). R-60 S1: before the repair the run was
+      exhibited and the check was false of it, so the bundle was empty while each half looked
+      alive; the exhibit is now of the conjunction, not of the halves. PROVING is M8 and needs the
+      IR-to-shell simulation plus a Surface whose shell is the real dispatcher - NOT the stage-1
+      determinism holes, which R-60 S6 shows the view transport does not use. -/
   ir_refines : ∀ (ir : YulObject) (irLyt : EVM.Layout), S.irCheck ir = true →
       ∀ (W : ExecEnv) (H : Hash) (cd : Bytes) (c : ExternalCalls) (g₀ : U256), c.WorldLocal →
       ObsEquiv (RunContractIR S W H ir irLyt cd c (ExternalGas.ofFun fun _ => g₀))
@@ -286,10 +324,20 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
        refutes an accessor that returns a block with one statement dropped.
        The structural equality stmtsBeq is still what the two sides are compared with
        when they differ, and renderEqPrintStructuralKats_ok still gates it. -/
-  render_eq_print : ∀ o, S.astOfMain o =
+  render_eq_print : (∀ o, S.astOfMain o =
     match S.lower o with
     | .ok l => some l.main
-    | .error _ => none
+    | .error _ => none) ∧
+    -- R-60 S5: the second conjunct is what stops the first being a definition in
+    -- disguise. The fixture DEFINES astOfMain as the main block of what lower returns,
+    -- so the equation above holds by rfl there and proves nothing on its own - the
+    -- original defect wearing different clothes, which is exactly what this pass was
+    -- told to suspect. The trace-refusal conjunct is not rfl: it says no Surface in
+    -- this bundle may expose an AST for a trace render at all, even one whose render
+    -- happily produces it. ObligationsGates.renderEqPrintAtFixture proves the pair at
+    -- the fixture and renderEqPrintTraceRefusalKats_ok refutes an accessor that
+    -- answers some for a trace option, so the conjunction can fail and is seen to.
+    (∀ o, o.diagnostics.trace = true → S.astOfMain o = none)
   /-- end_to_end_noAcc with the RHS carrying an existence conjunct (PLAN's `∀ obs` alone is vacuous
       when no run exists), the RepackError lift (attack: the two error types never met), the
       instance-length check and the modulus bound. DEVIATION: the sketch writes `S.repackProof` and
@@ -317,7 +365,19 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   /-- D-P20 item 2, validator form (P-09e): no bounds fault class is reachable from a validated program,
       and every operand key lies in the read windows (plan.rs:570-618). DEVIATION: the sketch's
       `OperandModel` and `validate` are P-09e placeholders; this is the landed validator's real
-      signature (Qvm.lean:738), with `segmentsOf` supplying the sketch's segment quantifier. -/
+      signature (Qvm.lean:738), with `segmentsOf` supplying the sketch's segment quantifier.
+
+      R-60 S9, THE F3 CLASS ONE LEVEL UP: this field does not mention the Surface AT ALL.
+      Every other field of this structure is a claim about the deployment the record
+      describes; this one quantifies over an arbitrary `LoweringPlan Program Layout`, so
+      it is a claim about SOME plan and not about the plan this Surface renders - which is
+      the same defect R-58 F3 found in `shell_unfolds` (three run relations about three
+      unrelated programs) raised one level. It is not vacuous - the validator is real and
+      Qvm.lean:738 proves the shape - but it is not pinned to the Surface either, and no
+      pin is nameable today: linking it needs `S.plan` to BE a `LoweringPlan`, and
+      `PlanView` (Inv.lean:109) is the counts Inv reads precisely because P-11's
+      `LoweringPlan::new` has not landed. Recorded as a named gap in
+      scripts/check_hypothesis_bundles.py rather than left for a reader to notice. -/
   qvm_validated_noBoundsFault : ∀ (Program Layout : Type)
       (L : Midfall.Generator.LoweringPlan Program Layout)
       (q : Midfall.Generator.PlannedQuotient),
@@ -455,11 +515,19 @@ theorem points_subgroup_checked_conclusion_is_unconditional
     view-level) and shell_unfolds, completeness via ir_refines on both conjuncts, the two-outcome
     conjunct via ir_refines. Hypotheses are the union of the fields'.
 
-    STATED WITH A LIVE HYPOTHESIS: `hc.ir_refines` is no longer an implication from
-    an unsatisfiable antecedent - Instances/ImportedIR.lean exhibits a committed
-    `RunContractIR` of the imported solc runtime for every call relation and every
-    gas oracle, and proves the run ends in a revert with the free pointer at the
-    artifact's 0x80.
+    STATED WITH A LIVE HYPOTHESIS - AND R-60 S1 RECORDS THAT THIS SENTENCE WAS
+    FALSE WHEN IT WAS FIRST WRITTEN. It claimed inhabitation from
+    Instances/ImportedIR.lean's committed `RunContractIR`, and that run really is
+    committed; what was missing is that every field here takes the run TOGETHER WITH
+    `S.irCheck ir = true`, and the fixture's check hard-coded its own runtime naming
+    instead of reading `S.runtimeName`, so on the imported object it returned false.
+    Individually inhabited, jointly empty, and no gate could see it because gate 6
+    checked the run alone. The repair is in the code: `Surface.irCheck` is no longer a
+    free field but a projection of `Surface.runtimeName` (Surface.lean), and
+    `irHypothesis_jointlyInhabited` (ImportedIR.lean) exhibits the CONJUNCTION - one
+    object, one layout, one observation, both conjuncts - for every call relation and
+    every gas oracle. `s1_defect_refutes_the_conjunction` keeps the broken form in the
+    tree as the refutation, so the exhibit is seen to be able to fail.
 
     THE REQUIRED FINDING, ANSWERED AFTER THE PINS LANDED. The sketch hint ("provable
     now - transport each field through hc.ir_refines") was FALSE as written, and R-58
@@ -472,20 +540,38 @@ theorem points_subgroup_checked_conclusion_is_unconditional
     "verifier_sound plus shell_unfolds gives shell soundness" is now a derivation
     rather than a hope, and the field bundle finally says one thing about one program.
 
-    What still stands between this statement and a proof, all of it on the IR side:
-    (i) `ir_refines` concludes an `ObsEquiv`, a biconditional over VIEW existence;
-    transporting `obs.isReturn` and `obs.returnData = abiTrue` from one side of it to
-    the other needs the view-level lemmas about `Obs.view` that Bridge.lean does not
-    have - existence of a run with a view is not uniqueness of the outcome, and that
-    is also where (ii) bites: the run transport needs `dialect_deterministic` and
-    `noWritersFuel`, both stage-1 holes; (iii) `irCheck` is the decidable fragment
-    (unresolved-call and memoryguard screening), not alpha-equivalence modulo constant
-    substitution, so `hir : S.irCheck ir = true` does not say the imported object is
-    the contract; and (iv) `shell_unfolds` pins the shell MODEL, whose code block is
-    the assembly with no dispatcher in front of it, so the theorem's shell is not the
-    deployed entry path until M8 restates the pin as "the verifyProof arm runs the
-    assembly". In short: statable, with a live hypothesis, and NOT yet provable - the
-    remaining gap is the IR-to-shell simulation, not the shell-to-verifier link. -/
+    WHAT STILL STANDS BETWEEN THIS STATEMENT AND A PROOF, corrected by R-60 S6,
+    which found the previous list wrong in BOTH directions.
+
+    NO LONGER A BLOCKER, and wrongly listed as one: (i) and (ii). The view-level
+    transport was said to need `dialect_deterministic` and `noWritersFuel`. It does
+    not: `ObsEquiv` gives a run on the other side with an EQUAL VIEW, and the outcome
+    properties are functions of the view, so no uniqueness of the STEP relation is
+    involved. Bridge.lean now proves it - `halted_of_view_eq`,
+    `returnData_of_view_eq`, `isReturn_of_view_eq`, `isRevertOrHalt_of_view_eq`, four
+    three-line lemmas - and the third conjunct's real blocker was something else
+    entirely: `ObsView` carried nine of the eleven components `WorldEq` compares, so
+    `obs.worldUnchanged` was NOT view-determined and no amount of determinism would
+    have transported it. R-60 S6 adds `selfBalance` and `extCodeHashOf` to the view and
+    lands `worldEq_of_view_eq`, so all three conjuncts are now view-transportable and
+    `view_sees_selfBalance` / `view_sees_extCodeHashOf` exhibit the hole that was
+    closed. What remains on the view side is nothing: the gap was the view, not the
+    semantics.
+
+    STILL BLOCKERS, and named with what would clear them: (iii) `irCheck` is the
+    decidable fragment (unresolved-call screening), not alpha-equivalence modulo
+    constant substitution, so `hir : S.irCheck ir = true` does not say the imported
+    object IS the contract - clearing it needs the M8 import-time equivalence check;
+    (iv) `shell_unfolds` pins the shell MODEL, whose code block is the assembly with no
+    dispatcher in front of it, so the theorem's shell is not the deployed entry path
+    until M8 restates the pin as "the verifyProof arm runs the assembly"; and (v) the
+    IR-to-shell SIMULATION itself, which is what `ir_refines` asks for and is the whole
+    of M8. `noWritersFuel` and `Run_worldEq_of_noWriters` stay stage-1 holes for the
+    theorems that need a WORLD equality out of a run rather than out of a view - not
+    for the view transport, which no longer needs them. In short: statable, with a
+    hypothesis that is jointly inhabited at the real artifact, and NOT yet provable -
+    the remaining gap is the IR-to-shell simulation, not the shell-to-verifier link
+    and not the view. -/
 theorem lowering_equivalence (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (hc : LoweringCorrect S product) (hsup : SupportedS S S.o₀)
     (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (hdep : DeploymentW S W H vkAddr qAddr)
