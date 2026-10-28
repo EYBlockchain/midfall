@@ -686,6 +686,97 @@ and true: `e3f04cfc1c05d699` vs `e9465b3433265c3f`). So the import must pin the 
 setting triple - viaIR, optimizer enabled, runs 200 - not just the compiler version.
 BASELINE.md's toolchain table carries the measurements.
 
+### D-P15 LANDED (P-IR): what was pinned, and the two decisions the import had to make
+
+The import exists: `formal/scripts/gen_import_solc_ir.py` generates
+`Midfall/Yul/ImportSolcIR.lean` (4,221 lines) from the `ir` artifact of the two
+tracked deployed sources, and commits the artifact text verbatim beside it
+(`Midfall/Yul/solc-ir-Halo2Verifier.yul`, 2,898 lines / 192,150 bytes, sha256
+`a3e3923e...`; `solc-ir-Halo2VerifyingKey.yul`, 604 lines / 64,329 bytes, sha256
+`af3ccbdb...`). The pin is the same triple `extract_ir_builtins.py` enforces - solc
+0.8.30 commit 73712a01, sha256 `738dcdc6...dd683`, `viaIR: true`, optimizer enabled
+runs 200, `evmVersion: cancun`, `metadata.bytecodeHash: none` - and the script refuses
+to run against a compiler whose digest differs. Ten gates at the bottom of the generated file
+re-derive the digest, the artifact shape, the rename mapping, the per-name call-site counts and
+the literal and identifier aggregates of the elaborated AST at `#eval` time (D-P19), so the
+import is reproducible and drift is a build failure rather than a discovery.
+
+**Decision 1 - `ir`, not `irOptimized`.** PLAN section 7 says `irCheck` validates the
+*unoptimised* IR, and the Yul-optimizer hop is in the trusted base: differentially tested against
+the compiler, not proved. So the import pins `ir`. The consequence is measured and stated
+rather than left to be rediscovered: `memoryguard` survives both artifacts with a different
+*argument* - the `ir` runtime object says `memoryguard(128)`, `irOptimized` says
+`memoryguard(0x08e0)`, and the deployed bytecode begins `PUSH2 0x08e0 PUSH1 0x40 MSTORE`,
+which is what `Generator/Evm.lean:129` reads back. The shipped bytes therefore agree with
+`irOptimized` and not with the imported `ir`. That is a memory-layout difference, not an
+observable one: `Bridge.ObsView` excludes memory deliberately, so `lowering_equivalence` can
+be stated at view level over both sides. `verifierRuntime_head_is_memoryguard` pins the 128
+propositionally (`rfl`), so switching artifacts becomes a decision and a build failure. In the
+VK contract the optimizer folds `memoryguard` out entirely - its `irOptimized` has zero
+occurrences - which is why "memoryguard always disappears" was measured per artifact rather than
+assumed.
+
+**Decision 2 - the two alpha-renames are applied at emit time, not in the lexer.** Lean's
+`ident` lexeme rejects `$` and `end` is reserved, so the artifact cannot be quoted as it
+stands. Extending the vendored DSL lexer was rejected: it is in `vendor/` (outside this
+package's authorisation), it would make the DSL accept programs upstream rejects, and either way
+the imported names differ from the artifact text - so the rename must be documented either way,
+and only the emit-time rename can be *gated* from the artifact. The rule is
+`x |-> "solc_" ++ x.replace "$" "_"` for a name containing `$` or in the reserved list, and
+identity otherwise. The reserved list is exactly `[end]`, and that is a measurement: every
+identifier of both artifacts (2,246 distinct) was fed to `yulE%` one at a time and the
+rejections collected - 517 needed the rename, and the only non-`$` one was `end`. (One
+identifier per Lean process matters: batched, the command parser swallows following lines after a
+parse error and under-reported 97 of 514.) The other Lean keywords occurring in the artifacts -
+`if let for switch case default function leave object code data` - sit in grammar positions the
+DSL already handles, and `return` only in the `return(...)` statement, which has its own
+production; renaming them would break the quotation. `irRename_ok` re-derives the mapping from
+the committed artifact with an independent Lean lexer and asserts injectivity, disjointness from
+the untouched names, that no image is a keyword, that every renamed name occurs in the imported
+AST, and that no original name survives anywhere in it.
+
+**Nothing was dropped.** The transform is a 1:1 token rewrite over the whole artifact, comments
+stripped (48 + 9 lines) and strings preserved (they carry the object names `dataoffset` resolves
+and the `setimmutable`/`loadimmutable` key). Measured and reported rather than hoped: zero
+`: u256` and zero `-> u256` annotations in either artifact, so the DSL's documented
+type-annotation gap is not reached; the single `hex"...` literal per artifact is a `data`
+segment, which the DSL does support. Gate 6 compares the elaborated AST's per-name builtin and
+user call-site counts against a call-site manifest the generator measures from the artifact text
+by regex - two independent routes to the same number, so a deleted statement changes only one and
+the gate goes red. Gates 8 and 10 additionally pin the node count, the digest of every identifier
+in order, and the literal aggregates, so an edited variable name or an edited constant reddens
+something too (`scripts/perturb_import_ir.py` runs those controls).
+
+**Finding F-IR-1 (P-VEND's manifest is not a measurement of the deployed verifier).**
+`scripts/extract_ir_builtins.py` keys its standard-json source dict by *basename*, and two of
+its three tracked sources are named `Halo2Verifier.sol` (the deployed one and
+`target/poseidon-fixture-dump/Halo2Verifier.sol`), so the later entry overwrites the earlier and
+the rows labelled `Halo2Verifier` in the tracked `Midfall/Yul/ir-builtins.tsv` were computed
+from the poseidon dump. The deployed artifact has no `xor` site at all; the manifest claims 3,
+and 28 of 42 builtin rows disagree with the deployed object. This package did not edit that script
+or its manifest (they are P-VEND's), and the conclusion P-VEND drew from them survives: the two
+names that mattered, `memoryguard` (2 sites) and `setimmutable` (1 site), agree either way -
+`irBuiltinsManifestDiverges_ok` pins exactly that. The import's own anti-drop gate uses a fresh
+manifest, `Midfall/Yul/solc-ir-callsites.tsv`, measured from the committed artifacts.
+
+**Hazard 3 discharged: `RunContractIR` has a witness.** `Midfall/Instances/ImportedIR.lean`
+exhibits, for *every* `ExternalCalls` and *every* `ExternalGas`, a committed run of the imported
+runtime block from the entry frame an empty calldata produces: prologue, dispatcher skipped
+(`iszero(lt(calldatasize(), 4))` is zero), fall-through to the user function
+`revert_error_42b3...()`, whose body is `revert(0, 0)` - three steps of the real 28-statement
+top-level block, ending in a revert. It lives in `Instances/` because a `Surface` needs an
+`AdmissiblePairing` and D-P17 keeps that import out of theorem-bearing files. It is proved
+non-vacuous in both directions: the observation is a `HaltKind.revert` (not a stop, not a
+return), the free-memory pointer the run leaves is the artifact's 0x80, and a `Surface` whose
+`runtimeName` does not name the imported sub-object has *no* witness at all.
+
+**Consequence for stage 6.** `ir_refines` and `lowering_equivalence` can now be STATED with a
+real, inhabited `RunContractIR` hypothesis over an object that exists in the tree. What is still
+missing is named in the P-IR report: the shell side needs a `Surface` built from the P-11 plan
+and the P-13 AST emitter (the fixture's `blk` is a placeholder), and
+`Bridge.dialect_deterministic` plus the other stage-1 proof obligations are still `sorry`, so the
+equivalence can be stated but not yet proved.
+
 ## D-P21 (ADOPTED, round 51): R-51/F5 - split `chalMass` per round; the uniform x3 mass is unsound
 
 **Decision (human: use the recommendation).** `chalMass` currently applies

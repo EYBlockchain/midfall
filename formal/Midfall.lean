@@ -75,12 +75,14 @@ import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
+import Midfall.Instances.ImportedIR
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
 import Midfall.Yul.Contracts
 import Midfall.Yul.Bridge
 import Midfall.Yul.Builtins
+import Midfall.Yul.ImportSolcIR
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements
