@@ -38,7 +38,8 @@ flowchart TD
 ```
 
 **Headline results**
-- **`lowering_equivalence`** (§9.5) is generic over every supported VK and config. It concerns the compiled-contract model, meaning solc's IR of the generated `.sol` file. That model returns ABI `true` **iff** the Lean verifier accepts the decoded calldata; otherwise it reverts or halts without changing state.
+- **`lowering_equivalence`** (§9.5) is **per-deployment first** (D-P24, round 68) - the deliverable is translation validation over a real-curve Surface, with the generic form over every supported VK and config recorded as a follow-on that AST emission (D-P25) makes reachable. It concerns the compiled-contract model, meaning solc's IR of the generated `.sol` file. That model returns ABI `true` **iff** the Lean verifier accepts the decoded calldata; otherwise it reverts or halts without changing state.
+> **D-P24 note (round 68).** The original wording promised a theorem generic over every supported VK and config. The human decided per-deployment validation is the deliverable, because a generic proof needs induction over the generator AST-building functions - a different order of work - and the code already points this way. The promise is deferred with a route, not abandoned. See `docs/design.md` D-P24.
 - **`end_to_end_noAcc`**: the Lean `verifyNative` accepts a compressed Rust proof π **iff** the contract returns `true` on `encodeCalldata (repack π) inst`.
 - **`deployed_equivalence`**: the Lean generator reproduces the deployed Moonlight artifacts **as Yul ASTs** (structural equality, formatting and comments ignored), so both theorems apply to the deployed code. The link from the deployed artifact to its bytecode is the revm differential (M4), not text equality.
 - **`contract_knowledgeSound`**: knowledge soundness of the deployed contract in AGM + ROM.
