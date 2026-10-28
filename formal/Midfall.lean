@@ -70,6 +70,8 @@ import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Inv
 import Midfall.Lowering.Surface
+import Midfall.Lowering.Qvm
+import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
