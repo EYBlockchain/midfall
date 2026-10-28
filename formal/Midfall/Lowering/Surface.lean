@@ -173,10 +173,20 @@ def encG2IsEip (b : Bytes) : Bool :=
     a proof could pick to make itself true - which is the difference between this
     record and the one attack.md marks VACUOUS.
 
-    blk is the field stage 3 reported as missing. No Lean function returns the Yul AST
-    of a verifier partial: P-13 ported the templates as text renders, and
-    VerifierPartials.lean:2175 really does return String. So the block of a partial is
-    an abstract field, pinned to the program by main_concat. -/
+    blk is the field stage 3 reported as missing, and the field R-62 found the ten
+    *_spec theorems were FALSE ABOUT. It used to be a free function whose only constraint
+    was main_concat, and since L.main comes from the free lower, a Surface could plant any
+    block at all - 'return(0, 0)' for finalPairing - satisfy every hypothesis and refute the
+    conclusion.
+
+    P-AST (docs/plans/P-AST.md) closed that from the generator side: Midfall/Lowering/
+    GenAst.lean now returns a real Yul AST for FinalPairing and for the two AssemblyHelpers
+    definitions it calls, checked against the text port under the token comparator, and
+    Lowering/Partials.lean's BlkIsEmitter pins blk to it as a hypothesis of each spec
+    theorem. Six of the seven partials are still placeholders in that emitter, so the pin is
+    what makes those nine theorems well-posed rather than about-every-program; the text
+    renders (VerifierPartials.lean really does return String) stay what D-P25 calls them: a
+    Lean-side reference, not the deliverable. -/
 structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -203,7 +213,8 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
   -- the lowered program: PLAN 9.5 L, and the render it came from
   o₀ : RenderOptions
   L : Lowered
-  /-- The render function. Abstract because P-13 has not landed the AST emitter;
+  /-- The render function. Abstract because the AST emitter (GenAst.lean) covers one
+      partial of seven, so no Lean function yet produces a whole Lowered from RenderOptions;
       lower_ok is what makes o₀ the options this L came from. -/
   lower : RenderOptions → Except Midfall.Generator.GeneratorError Lowered
   lower_ok : lower o₀ = .ok L

@@ -92,6 +92,37 @@ DERIVED_CHECKS = [
     ("Surface.irRuntime", ["S.runtimeName"]),
 ]
 
+# P-AST (docs/REVIEW.md R-62). The ten *_spec theorems in Lowering/Partials.lean are
+# true as stated ONLY because each carries the blk pin: without it they quantify over every
+# Surface, Surface.blk is free, and a planted 'return(0, 0)' satisfies every hypothesis and
+# refutes the conclusion. Nothing else in the tree reads a theorem's binder list, so
+# deleting one 'hblk' line would restore the false-as-stated quantifier with every other
+# gate still green. These fragments are the gate against that, and against the pin being
+# paraphrased into something no Surface can fail.
+SPEC_FILE = "Midfall/Lowering/Partials.lean"
+GEN_FILE = "Midfall/Lowering/GenAst.lean"
+PARTIAL_SPEC_PINS = [
+    ("vkLoading_spec", ["hblk : BlkIsEmitter S"], False),
+    ("transcriptParser_spec", ["hblk : BlkIsEmitter S"], False),
+    ("lagrange_spec", ["hblk : BlkIsEmitter S"], False),
+    ("lagrange_progress_spec", ["hblk : BlkIsEmitter S"], False),
+    ("quotientLin_spec", ["hblk : BlkIsEmitter S"], False),
+    ("pcs_spec", ["hblk : BlkIsEmitter S"], False),
+    ("finalPairing_spec", ["hblk : BlkIsEmitter S"], False),
+    ("finalPairing_progress_spec", ["hblk : BlkIsEmitter S"], False),
+    ("finalPairing_acc_spec", ["hblk : BlkIsEmitter S"], False),
+    ("traceReturn_spec", ["hblk : BlkIsEmitter S"], False),
+    # The pin itself must pin blk to the EMITTER and main to the emitted whole - not to a
+    # self-equality, not to True. Its body IS the statement, so whole=True.
+    ("BlkIsEmitter", ["S.blk q pv =", "GenAst.emitPartial pv q",
+                      "S.L.main =", "GenAst.emitMain S.plan"], True),
+    # The emitter must stay a function of the plan and keep the two FinalPairing arms
+    # distinct, or the pin degenerates into a constant a placeholder could satisfy.
+    ("emitPartial", ["emitFinalPairing pv", "emitPlaceholder q"], True),
+    ("emitFinalPairingArms", ["emitAccBatch batch", "ec_pairing",
+                              "PAIRING_RHS_MPTR", "PAIRING_LHS_MPTR"], True),
+]
+
 DECL = re.compile(r"^\s*(?:theorem |lemma |def |example )?")
 WORD_START = re.compile(r"^[A-Za-z_]")
 
@@ -206,14 +237,45 @@ def main():
                     problems.append("Surface: " + dname + " no longer mentions " + repr(f)
                                     + " - R-60 S1: the import check must read the naming"
                                     + " field, not hard-code a name")
+    # P-AST: the blk pin on the ten *_spec theorems, and the shape of the pin and the
+    # emitter it pins to. A theorem binder list is invisible to every other gate in this
+    # repository, so this is the only thing that notices an "hblk" being deleted.
+    spec = root / SPEC_FILE
+    gen = root / GEN_FILE
+    pbody = strip_comments(spec.read_text(encoding="utf-8")) if spec.exists() else None
+    gbody = strip_comments(gen.read_text(encoding="utf-8")) if gen.exists() else None
+    if pbody is None:
+        problems.append("Partials.lean missing: %s" % spec)
+    if gbody is None:
+        problems.append("GenAst.lean missing: %s" % gen)
+    if pbody is not None and gbody is not None:
+        for name, frags, whole in PARTIAL_SPEC_PINS:
+            in_gen = name in ("emitPartial", "emitFinalPairingArms")
+            src, where = (gbody, "GenAst.") if in_gen else (pbody, "Partials.")
+            text = field_text(src, name, whole)
+            if not text:
+                problems.append(where + name + ": DECLARATION NOT FOUND")
+                continue
+            if not whole:
+                bad = triviality_problems(conclusion(text))
+                if bad:
+                    problems.append(where + name + ": TYPE IS TRIVIALLY DECIDABLE - "
+                                    + repr(conclusion(text)) + " (" + bad[0]
+                                    + "), so the pin says nothing")
+            for fr in frags:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append(where + name + ": missing fragment " + repr(fr))
     if problems:
         print("STATEMENT FINGERPRINTS BROKEN (%d):" % len(problems))
         for pr in problems:
             print("  " + pr)
         return 1
     print("ok: %d statement fragments present in the TYPE across %d LoweringCorrect "
-          "fields, %d Surface pins and %d derived checks (comments stripped first)"
-          % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS)))
+          "fields, %d Surface pins, %d derived checks and %d blk-pin declarations "
+          "(comments stripped first)"
+          % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
+             len(PARTIAL_SPEC_PINS)))
     return 0
 
 

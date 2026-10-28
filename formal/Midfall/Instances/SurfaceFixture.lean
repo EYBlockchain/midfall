@@ -59,9 +59,15 @@
 --      both are nameable but neither is what this stage was asked to show. The
 --      per-partial theorems therefore still carry an unexhibited hypothesis, reported
 --      as a stage-4 finding rather than papered over with a fake instance.
---   4. The seven blocks are one-statement placeholders. P-13 has not landed the AST
---      emitter, so blk returns what the fixture declares rather than what a render
---      emits; main_concat is rfl here and becomes a theorem when the renderer exists.
+--   4. P-AST CHANGED THIS ONE. blk no longer returns what the fixture declares: it is
+--      Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's emitMain, so
+--      main_concat and the new BlkIsEmitter pin are rfl here by construction rather than
+--      by assertion. finalPairing is a REAL two-statement slice - the deployed arm of
+--      FinalPairing.yul, with fail and ec_pairing defined in main's helper prefix so the
+--      slice can actually run - and the other six are still one-statement placeholders,
+--      because GenAst.emittedPartials is [finalPairing]. The placeholders moved out of
+--      this file into the emitter so that the emitter is the only source of blk in the
+--      tree; a pin against a blk the fixture still declared by hand would pin nothing.
 --   5. irCheck inspects top-level statements only. A full alpha-equivalence check
 --      modulo constant substitution is M8 work and is blocked on the same D-P15
 --      import; what is here is the decidable fragment that can already distinguish a
@@ -158,38 +164,28 @@ def fxPlan : PlanView :=
     numInstances := 1, k := 2, numNegLagranges := 2,
     hasAccumulator := false }
 
-/-! ### The seven placeholder blocks -/
+/-! ### The seven blocks: the emitter, not a hand-written table -/
 
-/-- One statement per partial, with distinct literals, so that a blk which returned the
-    same block for two partials or dropped one changes main and is caught by
-    mainConcatKats_ok rather than by inspection. Placeholders in the honest sense: no
-    Lean function returns a real partial AST yet. -/
-def fxPartialBlocks : Partial → YulBlock
-  | .vkLoading => [Stmt.exprStmt (Expr.builtin Op.mstore
-      [Expr.lit (.number 0x2000), Expr.lit (.number 1)])]
-  | .transcriptParser => [Stmt.exprStmt (Expr.builtin Op.mstore
-      [Expr.lit (.number 0x2100), Expr.lit (.number 2)])]
-  | .lagrange => [Stmt.exprStmt (Expr.builtin Op.mstore
-      [Expr.lit (.number 0x2200), Expr.lit (.number 3)])]
-  | .quotientLin => [Stmt.exprStmt (Expr.builtin Op.mstore
-      [Expr.lit (.number 0x2300), Expr.lit (.number 4)])]
-  | .pcs => [Stmt.exprStmt (Expr.builtin Op.mstore
-      [Expr.lit (.number 0x2400), Expr.lit (.number 5)])]
-  | .finalPairing => [Stmt.exprStmt (Expr.builtin Op.staticcall
-      [Expr.lit (.number 375), Expr.lit (.number 0x0f), Expr.lit (.number 0),
-       Expr.lit (.number 0), Expr.lit (.number 0), Expr.lit (.number 0)])]
-  | .traceReturn => [Stmt.exprStmt (Expr.builtin Op.ret
-      [Expr.lit (.number 0x1000), Expr.lit (.number 0x20)])]
+/-- THE FIXTURE'S blk IS THE GENERATOR FUNCTION: Midfall/Lowering/GenAst.lean's
+    emitPartial, at this fixture's own plan view. Before P-AST this was a hand-written
+    table of seven one-statement dummies, which is the R-62 defect in the only Surface in
+    the tree: blk was free, so every *_spec theorem quantified over every block. Now the
+    fixture's blk, its main block and the BlkIsEmitter pin all come from one function, so
+    the pin is rfl HERE and the exhibits below are about surfaces that DEVIATE from it.
 
-/-- The main block: the seven slices in include order. main_concat is rfl against this
-    definition, which is what makes it a pin rather than a claim: the moment blk and
-    main come from two different functions the field stops being a definition and
-    becomes a theorem. -/
-def fxMain : YulBlock :=
-  fxPartialBlocks .vkLoading ++ fxPartialBlocks .transcriptParser ++
-    fxPartialBlocks .lagrange ++ fxPartialBlocks .quotientLin ++
-    fxPartialBlocks .pcs ++ fxPartialBlocks .finalPairing ++
-    fxPartialBlocks .traceReturn
+    finalPairing is a real two-statement slice; the other six are GenAst's placeholders,
+    one statement each with a distinct literal, so a blk that returned the same block for
+    two partials or dropped one still changes main and is caught by mainConcatKats_ok. -/
+def fxPartialBlocks : Partial → YulBlock := fun q => GenAst.emitPartial fxPlan q
+
+/-- The same function, at the plan view the record carries - the form the pin states. -/
+def fxBlk : Partial → PlanView → YulBlock := fun q pv => GenAst.emitPartial pv q
+
+/-- The main block: the two emitted AssemblyHelpers definitions, then the seven slices in
+    include order. main_concat and BlkIsEmitter are both rfl against this definition,
+    which is what makes them pins rather than claims: the moment blk and main come from
+    two different functions the field stops being a definition and becomes a theorem. -/
+def fxMain : YulBlock := GenAst.emitMain fxPlan
 
 /-- The head guard the dispatcher runs first: the free-memory-pointer check the
     memoryguard bound is about. -/
@@ -373,11 +369,15 @@ def realSurface : Surface rp RP RP RP :=
     -- that.
     astOfMain :=
       fun o => match fxLower o with | .ok l => some l.main | .error _ => none,
-    blk := fun q _ => fxPartialBlocks q, plan := fxPlan,
+    blk := fxBlk, plan := fxPlan,
     expectedVkCodehash := some (keccak256 fxVkRuntime),
     quotientRuntime := some fxQuotientRuntime,
     expectedQuotientCodehash := some (keccak256 fxQuotientRuntime),
-    vkDigest_spec := rfl, vkRuntime_spec := rfl, main_concat := ⟨[], rfl⟩,
+    vkDigest_spec := rfl, vkRuntime_spec := rfl,
+    -- The helpers slot of main_concat is no longer empty and no longer a free choice: it
+    -- is the two AssemblyHelpers definitions the emitter produces, so the existential of
+    -- main_concat is witnessed by the generator and not by nothing.
+    main_concat := ⟨GenAst.emitHelpers fxPlan, rfl⟩,
     -- The R-58 pins. Every one is rfl HERE, which is the point: the fixture is
     -- built so that the shell, the plan and the render agree by construction,
     -- and a Surface that did not agree could not be written at all. Each has a
@@ -545,15 +545,26 @@ def deploymentMemguardKats_ok : Bool :=
 def mainConcatKats_ok : Bool :=
   -- no BEq on Stmt at this dialect (Ast.lean derives Repr only), so the checks are
   -- structural: lengths and the literal each slice stores, not an equality of blocks.
-  realSurface.L.main.length == 7 &&
+  -- main is the two emitted AssemblyHelpers definitions followed by the seven slices:
+  -- TEN statements, where the pre-P-AST fixture carried seven dummies and no helpers at
+  -- all, so a real finalPairing slice could not have resolved fail or ec_pairing.
+  realSurface.L.main.length == 10 &&
+    -- and the first two statements really are those definitions, i.e. mainScope - which
+    -- hoists main - can see them. This is the pin's second conjunct as a computation.
+    (match realSurface.L.main with
+     | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
+     | _ => false) &&
     (realSurface.blk Partial.vkLoading realSurface.plan).length == 1 &&
+    -- the partial the emitter implements is NOT a one-statement dummy: the deployed
+    -- FinalPairing arm is the precompile guard and the swapped ec_pairing call.
+    (realSurface.blk Partial.finalPairing realSurface.plan).length == 2 &&
     (List.zipIdx [Partial.vkLoading, Partial.transcriptParser, Partial.lagrange,
         Partial.quotientLin, Partial.pcs, Partial.finalPairing,
         Partial.traceReturn]).all
-      -- each slice is exactly one statement, and no two slices are the same statement,
-      -- so a duplicated or dropped partial is visible. Compared through Repr because
-      -- Stmt carries no BEq at this dialect (Ast.lean derives Repr only).
-      fun (q, _i) => (fxPartialBlocks q).length == 1 &&
+      -- each slice is nonempty, and no two slices are the same statement, so a duplicated
+      -- or dropped partial is visible. Compared through Repr because Stmt carries no BEq
+      -- at this dialect (Ast.lean derives Repr only).
+      fun (q, _i) => (fxPartialBlocks q).length > 0 &&
         (List.zipIdx [Partial.vkLoading, Partial.transcriptParser, Partial.lagrange,
             Partial.quotientLin, Partial.pcs, Partial.finalPairing,
             Partial.traceReturn]).all
@@ -566,10 +577,10 @@ def mainConcatKats_ok : Bool :=
     refused. A lower that returned .ok for every option would satisfy lower_ok while o0
     pinned nothing about L. -/
 def lowerPinKats_ok : Bool :=
-  (match fxLower fxOptions with | .ok l => l.main.length == 7 | .error _ => false) &&
+  (match fxLower fxOptions with | .ok l => l.main.length == 10 | .error _ => false) &&
     (match fxLower fxOptionsTrace with | .ok _ => false | .error _ => true) &&
     (match realSurface.lower realSurface.o₀ with
-     | .ok l => l.main.length == 7 | .error _ => false)
+     | .ok l => l.main.length == 10 | .error _ => false)
 
 #eval lowerPinKats_ok                     -- expect true
 
@@ -721,5 +732,167 @@ def renderEqPrintPinKats_ok : Bool :=
         | .ok l => some l.main | .error _ => none) : Option YulBlock))
 
 #eval renderEqPrintPinKats_ok           -- expect true
+
+/-! ### 6. The blk pin (R-62): inhabited, and it bites -/
+
+/-- THE SATISFIABILITY WITNESS FOR THE PIN (D-P23, first half). BlkIsEmitter holds of the
+    fixture as a kernel-checked term with no tactic in it, because the fixture's blk IS
+    GenAst.emitPartial and its main IS GenAst.emitMain. That is the point of wiring the
+    emitter into the record rather than describing it: a pin the only Surface in the tree
+    cannot satisfy would make all ten *_spec theorems vacuous, which is the failure class
+    this programme keeps hitting. -/
+theorem blkPinInhabited : BlkIsEmitter realSurface := ⟨fun _q _pv => rfl, rfl⟩
+
+/-- R-62's counterexample block: the slice RETURNS instead of verifying. A run of this
+    halts with a return record, so it is neither a revert nor a normal exit into the next
+    checkpoint, which is what refutes the conclusion of finalPairing_spec - and it is
+    exactly what the pin now excludes. -/
+def plantReturnBlock : YulBlock :=
+  [Stmt.exprStmt (Expr.builtin Op.ret [Expr.lit (.number 0), Expr.lit (.number 0)])]
+
+/-- The plant: blk .finalPairing returns, every other slice is the emitter's. -/
+def plantBlkCounterexample : Partial → PlanView → YulBlock
+  | .finalPairing, _ => plantReturnBlock
+  | q, pv => GenAst.emitPartial pv q
+
+/-- The replanted main. main is free - it comes from lower - so a planted blk has to move
+    main with it for the Surface to be a Surface at all. That is the whole defect: nothing
+    in the record could tell the difference before the pin existed. -/
+def plantMainCounterexample : YulBlock :=
+  GenAst.emitHelpers fxPlan ++
+    Midfall.Lowering.partials.foldl (init := [])
+      fun acc q => acc ++ plantBlkCounterexample q fxPlan
+
+def plantLowered : Lowered := { fxLowered with main := plantMainCounterexample }
+
+/-- The render of the planted program: refuses the same two options fxLower refuses, so
+    lower_ok, astOfMain and SupportedS.production all still behave. -/
+def plantLower (o : RenderOptions) : Except Midfall.Generator.GeneratorError Lowered :=
+  if o.diagnostics.trace || o.diagnostics.gasCheckpoints then
+    .error Midfall.Generator.GeneratorError.noAdviceColumns
+  else
+    .ok plantLowered
+
+def plantShellCounterexample : YulObject :=
+  Object.mk "Halo2Verifier" (fxHeadGuard ++ plantMainCounterexample) [] []
+
+/-- THE COUNTEREXAMPLE SURFACE, as a genuine Surface: every field of the record still
+    discharges - main_concat with the emitted helpers, shell_unfolds, lower_ok - and
+    SupportedS still holds of it (next theorem), so the pin is the ONLY thing in the
+    hypothesis bundle that excludes it. -/
+def plantCounterexampleSurface : Surface rp RP RP RP :=
+  { realSurface with
+    blk := plantBlkCounterexample, L := plantLowered, lower := plantLower,
+    shell := plantShellCounterexample,
+    astOfMain := fun o => match plantLower o with
+      | .ok l => some l.main | .error _ => none,
+    lower_ok := rfl,
+    main_concat := ⟨GenAst.emitHelpers fxPlan, rfl⟩,
+    shell_unfolds := rfl }
+
+/-- THE PIN IS NOT REDUNDANT. Every hypothesis of finalPairing_spec that this fixture can
+    exhibit at all still holds of the planted Surface: SupportedS is unchanged, because
+    none of the ten fields it reads mentions blk or main. So the plant is not excluded by
+    anything that was in the bundle before P-AST - which is precisely R-62's claim - and
+    it is excluded by the pin alone. -/
+theorem plantedStillSupported :
+    SupportedS plantCounterexampleSurface plantCounterexampleSurface.o₀ := by
+  -- The same ten fields supportedInhabited discharges, discharged again here rather than
+  -- transported by a congruence lemma: every one of them reads vk, cfg, plan, E or o₀, and
+  -- the plant changes none of those - it changes blk, L, lower, shell and astOfMain. A
+  -- transport lemma would have been nicer, but SupportedS carries the section's nine
+  -- instance arguments and the two statements do not unify up to them, so the direct
+  -- exhibit is the honest one. Each bullet is a computation on the plant's own projections.
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantCounterexampleSurface, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantCounterexampleSurface, realSurface, fxVk, List.mem_append,
+        List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+
+/-- THE PIN BITES, on R-62's own plant (D-P23, second half). -/
+theorem blkPinBitesCounterexample : ¬ BlkIsEmitter plantCounterexampleSurface := by
+  intro h
+  have h1 := h.1 Partial.finalPairing fxPlan
+  have h4 : SyntaxEq.stmtsBeq (plantCounterexampleSurface.blk Partial.finalPairing fxPlan)
+      plantReturnBlock = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.finalPairing)
+      plantReturnBlock = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- THE PIN IS NOT IMPLIED BY main_concat, which is the only constraint the record used to
+    carry on blk. The boundary plant moves the join between the lagrange and quotientLin
+    slices and nothing else: main is UNCHANGED, so main_concat holds with the same
+    witness, shell_unfolds holds, lower holds - and blk is wrong for two partials. A pin
+    that a plant like this passes would be decoration; this one fails it. -/
+def plantBlkBoundary : Partial → PlanView → YulBlock
+  | .lagrange, pv => GenAst.emitPartial pv .lagrange ++ GenAst.emitPartial pv .quotientLin
+  | .quotientLin, _ => []
+  | q, pv => GenAst.emitPartial pv q
+
+def plantBoundarySurface : Surface rp RP RP RP :=
+  { realSurface with
+    blk := plantBlkBoundary,
+    main_concat := ⟨GenAst.emitHelpers fxPlan, rfl⟩ }
+
+theorem blkPinBitesBoundary : ¬ BlkIsEmitter plantBoundarySurface := by
+  intro h
+  have h1 := h.1 Partial.quotientLin fxPlan
+  have h4 : SyntaxEq.stmtsBeq (plantBoundarySurface.blk Partial.quotientLin fxPlan)
+      [] = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.quotientLin)
+      [] = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- The pin's two halves as a computation, next to the two plants as theorems. Line 1:
+    the fixture's blk agrees with the emitter for every partial under stmtsBeq, the
+    authoritative relation. Line 2: the emitted finalPairing slice is the real program -
+    a guard on success and an assignment from a USER call to ec_pairing - which no
+    placeholder could imitate, and the user-call spelling is the distinction the token
+    comparator cannot make. Lines 3-4: both plants differ from the emitter under the same
+    relation, which is the decidable shadow of the two theorems above. Line 5: the
+    boundary plant keeps main - so main_concat cannot see it. Line 6: the counterexample
+    plant changes main - so the plant is invisible to every field except the pin. Line 7:
+    hoist of the fixture's main resolves fail and ec_pairing, and hoist of the slices
+    alone does not, which is the pin's second conjunct doing the work it was added for. -/
+def blkPinKats_ok : Bool :=
+  (Midfall.Lowering.partials.all fun q =>
+    SyntaxEq.stmtsBeq (realSurface.blk q realSurface.plan)
+      (GenAst.emitPartial realSurface.plan q)) &&
+    (match realSurface.blk Partial.finalPairing realSurface.plan with
+     | [Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"]) _,
+         Stmt.assign ["success"] (Expr.call "ec_pairing" _)] => true
+     | _ => false) &&
+    ! SyntaxEq.stmtsBeq plantReturnBlock (GenAst.emitPartial fxPlan Partial.finalPairing) &&
+    ! SyntaxEq.stmtsBeq (plantBlkBoundary Partial.quotientLin fxPlan)
+      (GenAst.emitPartial fxPlan Partial.quotientLin) &&
+    SyntaxEq.stmtsBeq plantBoundarySurface.L.main (GenAst.emitMain fxPlan) &&
+    ! SyntaxEq.stmtsBeq plantMainCounterexample (GenAst.emitMain fxPlan) &&
+    (let c : ExternalCalls := ⟨fun _ _ _ => False⟩
+     let g : ExternalGas := ExternalGas.ofFun fun _ => 0
+     let d := Bridge.Dialect c g
+     (lookupFun (hoist d realSurface.L.main :: []) "fail").isSome &&
+       (lookupFun (hoist d realSurface.L.main :: []) "ec_pairing").isSome &&
+       ! (lookupFun (hoist d (GenAst.emitSlices fxPlan) :: []) "ec_pairing").isSome)
+
+#eval blkPinKats_ok                       -- expect true
 
 end Midfall.Instances.SurfaceFixture

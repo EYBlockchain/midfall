@@ -64,6 +64,7 @@
 -- does not resolve.
 
 import Midfall.Lowering.Surface
+import Midfall.Lowering.GenAst
 import Midfall.Yul.Contracts
 import Midfall.Assumptions.Eip2537
 
@@ -207,6 +208,62 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
           pre st)
       (fun _ _ _ st' o => o = .halt ∧ Reverted st')
 
+/-! ### The blk pin -/
+
+/-- THE blk PIN, and the reason it exists (docs/REVIEW.md R-62, docs/design.md D-P24).
+
+    WHY. Every *_spec theorem below is quantified over EVERY Surface, and Surface.blk is
+    a free field: its only constraint is main_concat, and the L.main main_concat talks
+    about comes from the free lower. So a Surface whose blk .finalPairing is
+    'return(0, 0)' - with L.main replanted to match, which is always possible because
+    main is free - satisfies every hypothesis above and refutes the conclusion: a
+    returning block is neither a revert nor a normal exit into the next checkpoint. The
+    ten theorems were FALSE AS STATED for that reason, and no amount of proof work fixes
+    a statement that is false.
+
+    WHAT. blk is pinned to the generator function - Midfall/Lowering/GenAst.lean - and
+    the pin is a hypothesis of each theorem. Two conjuncts, not one:
+
+      * 'blk q pv = emitPartial pv q' for every partial and every plan view, so the block
+        a theorem speaks about is the block the generator emits, for every plan and not
+        only the theorem's own; and
+      * 'L.main = emitMain S.plan', i.e. the helpers too. This half is not decoration.
+        mainScope hoists S.L.main, so the scope a partial runs in carries fail,
+        ec_pairing and everything else main defines; a pin on blk alone would still let a
+        Surface whose main has no helper definitions claim to run the emitted slice, and
+        that program cannot run.
+
+    WHAT IT BUYS, and what it does not. It buys: the theorems are now claims about ONE
+    program per plan rather than about every program, so the R-62 counterexample is
+    outside the quantifier. It does not buy a proof: for the six partials GenAst emits a
+    placeholder (GenAst.emittedPartials is [finalPairing]), so those seven theorems are
+    pinned to a placeholder and their registered hole is now "the emitter does not
+    implement this partial yet" instead of "blk is free". The three finalPairing theorems -
+    finalPairing_spec, finalPairing_progress_spec and finalPairing_acc_spec - are the ones
+    whose pinned block is the real emitted program, the acc theorem at a plan view with
+    hasAccumulator = true, which GenAst emits for real even though the deployed artifact
+    does not exercise that arm.
+
+    NON-VACUITY (D-P23). Satisfied by Instances/SurfaceFixture.blkPinInhabited, at the
+    only Surface in the tree, as a kernel-checked term. Refuted by
+    Instances/SurfaceFixture.blkPinBitesBoundary - a Surface that keeps main_concat TRUE
+    and still fails the pin - and by blkPinBitesCounterexample, which plants R-62's own
+    'return(0, 0)' block consistently and fails the pin while every other field of the
+    record still discharges. A pin nobody can fail is decoration; the two exhibits below
+    are that failure. -/
+def BlkIsEmitter (S : Surface p G₁ G₂ Gₜ) : Prop :=
+  (∀ q pv, S.blk q pv = Midfall.Lowering.GenAst.emitPartial pv q) ∧
+    S.L.main = Midfall.Lowering.GenAst.emitMain S.plan
+
+/-- THE PIN IS NOT IMPLIED BY main_concat, which is the only existing constraint on blk.
+    Stated as a projection rather than as a paragraph: the first conjunct is available by
+    name, and Instances/SurfaceFixture.blkPinBitesBoundary is a Surface where main_concat
+    holds and BlkIsEmitter does not - so the pin adds a constraint the record did not
+    already carry. -/
+theorem blkPin_blk {S : Surface p G₁ G₂ Gₜ} (h : BlkIsEmitter S) (q : Partial)
+    (pv : PlanView) : S.blk q pv = Midfall.Lowering.GenAst.emitPartial pv q :=
+  h.1 q pv
+
 /-- The per-partial obligations as a Prop structure, so the file that consumes them
     (Obligations.lean, stage 5) has one name to assume. Every field carries the common
     hypotheses explicitly rather than through a section variable, because the point of
@@ -221,6 +278,12 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
     absent from every field: under hsnap it is already implied, and attack.md marks a
     field implied by its own hypotheses decorative. -/
 structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct) : Prop where
+  /-- THE blk PIN (R-62), carried by the checklist and not only by the theorems. Without
+      it every field below is a claim about EVERY block a Surface might return, which is
+      the false-as-stated shape; Obligations.lean consumes this structure as a single
+      LoweringCorrect field, so the pin has to be inside it or the defect re-enters one
+      level up. -/
+  blk_is : BlkIsEmitter S
   /-- VkLoading.yul: the payload image lands at vkMptr and the calldata envelope is
       the one the layout says. -/
   vkLoading_sound : ∀ (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls)
@@ -385,7 +448,14 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
 
 /-! Each of the seven is stated with its full hypothesis bundle spelled out rather
     than hidden in a structure: the point of stating them is to see what each one
-    needs, and a bundle alias would hide exactly that. -/
+    needs, and a bundle alias would hide exactly that.
+
+    Each carries hblk : BlkIsEmitter S (R-62, P-AST). For finalPairing_spec,
+    finalPairing_progress_spec and finalPairing_acc_spec the pinned block is the real
+    emitted program. For the other seven the pinned block is GenAst.emitPlaceholder, so
+    those theorems are now claims about ONE named program instead of about every program
+    - the false-as-stated quantifier is gone - and their hole is the emitter, which
+    GenAst.emittedPartials records as covering one partial of seven. -/
 
 /-- VkLoading: the payload copy and the calldata envelope. PROOF HOLE: needs the
     VkLoading.yul AST as a Block Op (P-13), the memory-copy lemmas for mcopy over
@@ -395,6 +465,7 @@ theorem vkLoading_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -415,6 +486,7 @@ theorem transcriptParser_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -435,6 +507,7 @@ theorem lagrange_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -455,6 +528,7 @@ theorem lagrange_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : Pairing
     (H : Hash) (W : ExecEnv) (qAddr : U256) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hgood : ChallengesGood S.vk Snap)
@@ -478,6 +552,7 @@ theorem quotientLin_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduc
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -497,6 +572,7 @@ theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -517,14 +593,28 @@ theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     Production only, and that is a hypothesis and not an assumption: a trace render
     returns iszero(iszero(ret)) and never reverts (FinalPairing.yul:81-87), which
     refutes both the revert arm and the success = 1 post. SupportedS.production is
-    what excludes it. PROOF HOLE: needs the FinalPairing.yul and AssemblyHelpers.yul
-    ASTs (P-13), the staticcall failure mapping (MF-4: both failure classes become
-    PRECOMPILE_FAILED, absorbed by the revert arm), and Eip2537.Holds.pairing2 to
-    turn the precompile answer into the pairing equation. -/
+    what excludes it.
+
+    P-AST LANDED THE ASTs, so the hole is no longer about the block existing.
+    GenAst.emitFinalPairing is this partial's Block Op in both arms, and
+    GenAst.emitHelpers supplies the fail and ec_pairing definitions it calls, and
+    hblk pins blk to them. What the registered sorry is now about:
+      (a) the staticcall failure mapping (MF-4: both failure classes become
+          PRECOMPILE_FAILED, absorbed by the revert arm) - the Bridge step lemmas that
+          turn a failed precompile call into a revert carrying the pinned selector;
+      (b) Eip2537.Holds.pairing2, to turn the precompile answer into the pairing
+          equation over the frame ec_pairing lays out;
+      (c) the model. Eip2537.Holds is not known satisfiable at ANY Surface in the tree:
+          the exponent codec sends a non-identity exponent to bytes no curve check
+          accepts, which Instances/SurfaceFixture.encG2AtFixture_ok states as a
+          computation. (c) is the binding one - P5 cannot be CLOSED without a real-curve
+          model, but it can be ATTEMPTED, because (a) and (b) are now statements about a
+          block that exists. -/
 theorem finalPairing_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -549,6 +639,7 @@ theorem finalPairing_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : Pai
     (H : Hash) (W : ExecEnv) (qAddr : U256) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hh : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
@@ -582,6 +673,7 @@ theorem finalPairing_acc_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
     (a : KzgAcc (Fr p) G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
@@ -622,6 +714,7 @@ theorem traceReturn_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduc
     (H : Hash) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
     (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ)
+    (hblk : BlkIsEmitter S)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hcd : Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances

@@ -69,6 +69,7 @@ import Midfall.Lowering.SemanticEquivalence
 import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Inv
+import Midfall.Lowering.GenAst
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
