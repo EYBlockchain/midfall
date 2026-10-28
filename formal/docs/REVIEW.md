@@ -1857,7 +1857,42 @@ for exactly this reason; D6 edited in place and got bitten.
 2. `Exec/VerifyingKey`: the real `VerifyingKey` record, `hash_into`, and the
    `transcript_repr` decision (R-1).
 3. `Exec/Permutation`, `Exec/Logup`, `Exec/Trash`, `Exec/Linearization`:
-   verifier paths only.
-4. `Exec/Verifier`: `prepare`, then `Exec/Native` loses its four sorries.
+### R-56 The committed poseidon fixture is not reproducible, and does not verify
+
+Found by P-C3 while building the conformance exporter, and confirmed by the orchestrator
+from the file sizes. This is a **baseline** finding, not a harness one.
+
+**What matches.** The regenerated `transcript_repr` equals the committed
+`rust_trace.json` `vk_repr` (`4cc2e5ac…494`), and the 10 challenge names and the 21
+point reads match exactly. The VK is the same circuit.
+
+**What does not.** The proof differs:
+
+| | bytes | reads | shape |
+|---|---:|---:|---|
+| committed `fixtures/poseidon/proof.bin` | 4,752 | 138 | 69 `dummy_eval` reads, 1 `q_eval` |
+| regenerated, default features | 2,640 | 72 | no dummies, 3 `q_eval`s |
+| regenerated, `rust-verifier-trace,fewer-point-sets` | 4,848 | 141 | closer, still not equal |
+
+**The sharp part:** replaying the committed `proof.bin` through the real verifier returns
+`Error::Opening` under the profile the trace hooks require. A committed fixture that the
+current code rejects cannot be a faithful record of the current code. So it predates the
+present prover/PCS feature profile, and the third leg of conformance - exporter trace vs
+committed `rust_trace.json` **by value** - is unavailable. Only the shape comparison runs.
+
+**Consequences.**
+1. **M0 cannot be honestly tagged** until this is resolved. PLAN Phase 0 step 6 requires
+   regenerating fixtures and reviewing the diffs; step 7 (G0) runs the revm fixtures on
+   both quotient lowerings. Neither can pass while a committed fixture fails the verifier.
+2. Related, and previously noted as F-6: `fixtures/poseidon/instance.be` is **big-endian
+   (transcript absorb form)** while `poseidon_fixture.rs` writes the LE `to_repr` - two
+   conventions for one filename in one repo.
+3. The green 327-value replay is on the **regenerated** bundle, which is the right thing
+   to compare Lean against, and is now committed under `formal/fixtures/conformance/`.
+
+**Not a defect in the port.** Lean agrees with the live Rust on every value it can be
+given; the disagreement is between committed Rust artefacts and current Rust code.
+
+## Closed
 5. `Assumptions/Pairing.lean`: the named BLS12-381 hypothesis, including
    `G1Codec`, `FieldConsts` and the R-3 properties.
