@@ -2230,3 +2230,49 @@ seconds.
    plus `gcd(r, p-1) = 1`. **Neither exists in Lean.** Research-grade, weeks to months.
 
 **Only (3) is a genuine decision rather than work.** Recorded for the human.
+
+### R-64 After repairing Holds, three independent blockers remain - and the pairing is not the curve
+
+P-HOLDS repaired `g1Decodes` (width condition) and landed the 381-bit primality certificate,
+so R-63 levels 1 and 2 are closed. The required finding then **contradicts the decision
+framing the orchestrator had just given the human**: P5 is not blocked solely by the r-torsion
+point count.
+
+| blocker | what it is | status |
+|---|---|---|
+| 1. `Nat.card G1Frame = r` | the r-torsion point count, needed for `PrimeOrderWith G1 r` | research-grade; human decision; gate-enforced as `gap_g1_prime_order` |
+| 2. **no pairing model in Lean** | `Holds` is stated over `AdmissiblePairing G1 G2 Gt`; there is no Fp12 or target-group model in any library (D-P1) | **independent of 1 and 3** - assuming the torsion count does NOT clear it |
+| 3. group-law construction + G2 frame codec | connecting `Externals.lean` affineAdd to mathlib, and building a G2 frame type | ordinary work, days not hours |
+
+**Blocker 3 was mis-costed by the orchestrator.** The brief called the mathlib connection
+*bookkeeping*; it is not. Mathlib affine points are the general five-coefficient
+`WeierstrassCurve`, whose `Point` carries a per-point `Nonsingular` proof and whose
+`AddCommGroup` is proved **via the class group of the coordinate ring**, not by
+chord-and-tangent computation. Connecting our `affineAdd` needs a short-form embedding with
+equation agreement, a `Nonsingular` proof per point (the all-zero infinity frame is *not* an
+`AffineCurve` point and must map to `Point.zero`), reconciling Nat-level modular inverse with
+field division, and r-torsion closure - and mathlib has **no `nTorsion` definition at all**.
+The agent attempted it and reverted rather than register a half-built section, which is the
+right call.
+
+**What landed is a genuine milestone.** `Nat.Prime pBase` for the 381-bit base field is proved
+by a 10-node Pratt certificate in `Assumptions/BasePrime.lean`, axioms
+`propext, Classical.choice, Quot.sound` only, **no `native_decide`**, whole module builds in
+about 2 seconds, and `Field (ZMod pBase)` now infers. The factorisation is verified in-kernel,
+not trusted - perturbing one factor makes the file fail to elaborate. Measured: `decide` on
+`Nat.Prime` is hopeless even at a 29-bit prime (killed at 100 s), so the certificate approach
+was the only route.
+
+*Caveat:* the factorisations were read from FactorDB (external data). Re-verified in Lean, so
+soundness-neutral, but a primary-source citation may be wanted.
+
+**Residual gate gap, reported not hidden:** appending a vacuous disjunct *after* the last
+fingerprinted fragment leaves the gate green - fragments are substring tests on the type text,
+and `triviality_problems` is not applied to structure-field clauses. The build does not catch
+it either, since `Holds` is only ever a binder.
+
+**Consequence for the plan.** The route to a non-vacuous `finalPairing_spec` over a *real* curve
+requires a pairing implementation that does not exist in Lean. Either `Holds` is restated over
+an **assumed** pairing (which D-P1 already contemplates - if bilinearity or non-degeneracy is
+unproven, it becomes a named hypothesis), or P5 stays vacuous. That is a bigger decision than
+the torsion count and should be taken together with it.
