@@ -1583,6 +1583,39 @@ fn point_pair_word_counts_match_coordinate_encoding() {
     );
 }
 
+/// `try_new` must reject point-pair layouts with the wrong word count, and in
+/// particular the old flagged 10-word layout, with a typed error rather than
+/// accepting it and panicking during rendering.
+#[test]
+fn try_new_rejects_flagged_point_pair_layout() {
+    let (params, vk) = lowering_plan_test_vk();
+    let config = |num_instances| {
+        GeneratorConfig::new(num_instances, 1)
+            .with_accumulator(AccumulatorEncoding::point_pair(11, 7, 56))
+    };
+
+    // Current Moonlight wrap shape: 11 state words + 8 accumulator words.
+    assert!(SolidityGenerator::try_new(&params, &vk, config(19)).is_ok());
+
+    // Too short for the 8-word point pair.
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, config(18)),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "accumulator public-input tail exceeds num_instances",
+            ..
+        })
+    ));
+
+    // Old flagged shape: 11 + 10 = 21 leaves two trailing words.
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, config(21)),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            ..
+        })
+    ));
+}
+
 /// Render a point-pair verifier and check that its decoder never reads an
 /// identity flag, always decodes both coordinates, and rejects the EIP-2537
 /// infinity encoding.
