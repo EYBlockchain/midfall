@@ -196,4 +196,174 @@ def msmScalarWordKats_ok : Bool :=
 
 #eval msmScalarWordKats_ok   -- expect true
 
+/-! ### THE SATISFIABILITY DEFECT: g1Decodes IS UNSATISFIABLE AS WRITTEN
+
+P-CURVE (docs/plans/P-CURVE-real-g1.md) was fired to make Eip2537.Holds satisfiable by
+building a real-curve G1 model, on R-61's reading that the only thing between the exponent
+model and a Holds exhibit is a curve. Measured here, BEFORE any curve work, that is not the
+obstacle: the g1Decodes clause is unsatisfiable for EVERY codec on EVERY prime-order group,
+curve included, so the four-way headline bundle is not merely unexhibited - it is PROVABLY
+EMPTY, and no amount of curve modelling can change that until the clause is repaired.
+
+THE MECHANISM. g1Decodes quantifies over all b : Bytes that the byte validators accept:
+
+    (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+      ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
+
+and g1Of? is the COORDINATE decoder, not a frame validator: it reads bytes 0..64 and 64..128
+through bytesSlice, which clamps to the bytes that exist and never checks the length. So
+every extension of a valid 128-byte frame by any number of trailing bytes satisfies the
+antecedent - garbageFrame k below is the infinite family, all-zero frames of length 0x80 + k,
+every one of which decodes to the point of infinity and passes g1PointMsmValid. The consequent
+then demands c.toEip Q = garbageFrame k for each k, i.e. that toEip hit infinitely many
+distinct byte strings. But PrimeOrderWith G1 p says Nat.card G1 = p, so toEip has at most p
+values. Contradiction, proved below with no computation heavier than a 64-byte decide and no
+axiom beyond the standard three.
+
+WHY THE OTHER FIVE CLAUSES DO NOT HAVE THIS PROBLEM, and why this one was invisible. g1Valid
+is existential over the ENCODINGS the codec produces, so it constrains the range of toEip and
+is happy with a finite one. g1Add, g1Msm1 and pairing2 are equations between precompile
+outputs and codec outputs, again only over frames the codec itself emitted. Only g1Decodes
+runs the implication the other way - from accepted BYTES to a codec preimage - and it is the
+only clause written over raw Bytes rather than over (c.toEip Q). Every frame the precompile
+actually accepts is length-pinned elsewhere (0x100 for G1ADD at g1AddValidInput, a whole
+number of 0xa0 pairs for G1MSM at g1MsmPairs?, of 0x180 for PAIRING_CHECK at pairingPairs?),
+so nothing in the byte model can see the difference; the clause's own docstring says "a frame
+the precompile accepts", and the precompile does NOT accept a 0x81-byte point. The defect is
+that the clause says g1Of?-accepts where the doc says frame-accepts.
+
+THE REPAIR, stated below as g1DecodesWidth and NOT substituted into the structure. Adding the
+frame-width condition to the antecedent - b.size == g1Bytes, which is what the docstring
+already means - removes the obstruction: Holds.g1Decodes implies the repaired clause (proved
+below, so the repair is a genuine relaxation of an unsatisfiable demand and not a rewording),
+and the real-curve frame type in Midfall/Instances/Bls12_381G1.lean satisfies the repaired
+clause outright. Swapping it into the structure is a HEADLINE STATEMENT CHANGE and is
+deliberately left to the orchestrator: this package's rule is that a hypothesis is repaired by
+a decision and a review, not by the agent who is graded on satisfying it. What is NOT closed
+by the repair is recorded there: the remaining clauses still need a group law over Fp and a
+count of the r-torsion, so repairing g1Decodes unblocks the clause but not the exhibit. -/
+
+/-- A valid 128-byte G1 frame with k extra bytes appended. g1Of? accepts every one of them as
+    the point of infinity, because it slices rather than checks the length. -/
+def garbageFrame (k : ℕ) : Bytes := bytesZero (g1Bytes + k)
+
+@[simp] theorem garbageFrame_size (k : ℕ) : (garbageFrame k).size = g1Bytes + k := by
+  show (bytesReplicate (g1Bytes + k) 0).size = _
+  classical
+  show (List.replicate (g1Bytes + k) (0 : UInt8)).toArray.size = _
+  rw [List.toArray_replicate, Array.size_replicate]
+
+/-- The two slices g1Of? reads out of an all-zero frame, at any length that contains them. -/
+theorem bytesSlice_bytesZero (n i j : ℕ) (h : i + j ≤ n) :
+    bytesSlice (bytesZero n) i j = bytesZero j := by
+  classical
+  simp only [bytesSlice, bytesZero, bytesReplicate, List.toArray_replicate, ByteArray.size,
+    Array.size_replicate, Nat.min_eq_left (by omega : i <= n),
+    Nat.min_eq_left (by omega : i + j <= n), Array.extract_replicate, Nat.add_sub_cancel_left]
+
+/-- The distinctness half of the obstruction: the family is infinite because the SIZES
+    differ, so no two of them can share a codec preimage. -/
+theorem garbageFrame_injective : Function.Injective garbageFrame := by
+  intro k j h
+  have := congrArg ByteArray.size h
+  rw [garbageFrame_size, garbageFrame_size] at this
+  omega
+
+set_option maxRecDepth 1000000 in
+private theorem fpCoordOf?_bytesZero64 : fpCoordOf? (bytesZero 64) = some 0 := by decide
+
+/-- EVERY member of the family is accepted by the byte validators: g1Of? decodes it to the
+    point of infinity and g1PointMsmValid passes that point. This is the witness half of the
+    defect (D-P23): not a claim that the clause is awkward, but an explicit infinite family of
+    counterexample inputs. -/
+theorem garbageFrame_accepted (k : ℕ) :
+    ∃ pt, g1Of? (garbageFrame k) = some pt ∧ g1PointMsmValid pt = true := by
+  refine ⟨(0, 0), ?_, by decide⟩
+  have e1 : bytesSlice (garbageFrame k) 0 64 = bytesZero 64 :=
+    bytesSlice_bytesZero _ _ _ (by unfold g1Bytes; omega)
+  have e2 : bytesSlice (garbageFrame k) 64 64 = bytesZero 64 :=
+    bytesSlice_bytesZero _ _ _ (by unfold g1Bytes; omega)
+  simp [g1Of?, e1, e2, fpCoordOf?_bytesZero64]
+
+/-- THE DEFECT, AS A THEOREM. The g1Decodes clause cannot be discharged by any codec on any
+    prime-order group. The proof is the pigeonhole: the clause makes toEip hit every
+    garbageFrame k, the family is infinite, and Nat.card G1 = p makes the range finite -
+    formally, an injection (Nat → G1) makes G1 infinite, so its Nat.card is 0, not p. -/
+theorem g1Decodes_unsatisfiable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    [PrimeOrderWith G₁ p] (c : G1Codec G₁) :
+    ¬ (∀ b : Bytes, (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+        ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b) := by
+  intro h
+  have key : ∀ k : ℕ, ∃ Q, c.ofEip? (garbageFrame k) = some Q ∧ c.toEip Q = garbageFrame k :=
+    fun k => h _ (garbageFrame_accepted k)
+  choose Q hQ using key
+  have hinj : Function.Injective Q := by
+    intro k j hkj
+    exact garbageFrame_injective
+      ((hQ k).2.symm.trans ((congrArg c.toEip hkj).trans (hQ j).2))
+  haveI : Infinite G₁ := Infinite.of_injective Q hinj
+  have hc : Nat.card G₁ = p := (inferInstance : PrimeOrderWith G₁ p).hCard
+  rw [Nat.card_eq_zero_of_infinite] at hc
+  exact absurd hc.symm (Nat.Prime.ne_zero (Fact.out : Nat.Prime p))
+
+/-- THE HEADLINE CONSEQUENCE: Eip2537.Holds has no model at all, at any curve, over any group,
+    with any G2 encoder and any pairing product. This is what makes the four-way bundle
+    (BlkIsEmitter ∧ SupportedS ∧ EnvAgrees ∧ Eip2537.Holds) empty rather than merely
+    unexhibited, and it is the eighth false-as-written finding of the class R-60 S1 named
+    and R-62 counted to seven - except that this time the conjunction is REFUTED, not merely
+    unpopulated. -/
+theorem holds_unsatisfiable (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct) :
+    ¬ (Eip2537.Holds c c₂ product) :=
+  fun h => g1Decodes_unsatisfiable c h.g1Decodes
+
+/-- The non-existence form, which is the shape the bundle gate cares about: there is no triple
+    of codec, encoder and oracle making the hypothesis true, so no field of LoweringCorrect
+    that takes Eip2537.Holds can ever be discharged by exhibit until the clause is repaired. -/
+theorem not_exists_holds :
+    ¬ (∃ (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct),
+        Eip2537.Holds c c₂ product) := by
+  rintro ⟨c, c₂, product, h⟩
+  exact holds_unsatisfiable c c₂ product h
+
+/-- THE REPAIR. b.size == g1Bytes is the frame-width condition the clause's docstring already
+    states ("a frame the precompile accepts") and that every real frame validator pins: G1ADD
+    at 0x100 (g1AddValidInput), G1MSM at a whole number of 0xa0 pairs (g1MsmPairs?),
+    PAIRING_CHECK at a whole number of 0x180 pairs (pairingPairs?). It is stated here as a
+    named proposition, NOT substituted into Eip2537.Holds, because changing a headline
+    hypothesis is a decision for the orchestrator and not for the package that wants to
+    satisfy it (D-P23). -/
+def g1DecodesWidth (c : G1Codec G₁) : Prop :=
+  ∀ b : Bytes, b.size == g1Bytes → (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+    ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
+
+/-- The repair is a relaxation of the written clause and nothing more: every Holds satisfies
+    it. Stated as an implication rather than as a replacement so the direction is on the
+    record - the written clause is strictly stronger, and strictly stronger than
+    satisfiable. -/
+theorem holds_g1DecodesWidth (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : PairingProduct)
+    (h : Eip2537.Holds c c₂ product) : g1DecodesWidth c :=
+  fun b _hs ⟨pt, hpt, hv⟩ => h.g1Decodes b ⟨pt, hpt, hv⟩
+
+/-- THE FAILURE MODE OF THE DEFECT, as a computation (R-41: a demonstrated failure mode, not a
+    narrative). Lines 1-2: the coordinate decoder accepts a 0x81- and a 0xa0-byte frame as the
+    point of infinity, which is what makes the antecedent infinite. Line 3: the frames are
+    pairwise distinct, so they need pairwise distinct preimages. Lines 4-6: the PRECOMPILE
+    itself refuses those lengths, so the tolerance is an artefact of g1Of? being a coordinate
+    reader and not a statement about what EIP-2537 accepts - which is why the repair is a
+    width condition and not a change to the precompile model. -/
+def g1DecodesDefectKats_ok : Bool :=
+  (match g1Of? (garbageFrame 1) with
+   | some pt => g1PointMsmValid pt && g1Of? (garbageFrame 1) == some ((0, 0) : Nat × Nat)
+   | none => false) &&
+  (match g1Of? (garbageFrame 32) with
+   | some pt => g1PointMsmValid pt
+   | none => false) &&
+    ! bytesEq (garbageFrame 1) (garbageFrame 2) &&
+    ! g1AddValidInput (garbageFrame 32) &&
+    g1MsmPairs? (garbageFrame 1) == none &&
+    ! pairingValidInput (garbageFrame 32) &&
+    g1Bytes == 0x80 && g1AddInputBytes == 2 * g1Bytes
+
+#eval g1DecodesDefectKats_ok   -- expect true
+
 end Midfall.Assumptions

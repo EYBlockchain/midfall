@@ -36,6 +36,7 @@
 
 import Midfall.Lowering.Obligations
 import Midfall.Instances.SurfaceFixture
+import Midfall.Instances.Bls12_381G1
 import Midfall.Instances.ImportedIR
 
 namespace Midfall.Instances.ObligationsGates
@@ -360,16 +361,68 @@ def gap_runLeg_unexhibited : String :=
     ++ "witness exists to exhibit jointly with SupportedS and DeploymentW"
 
 
-/-- `Eip2537.Holds` is not exhibited at any Surface in the tree. Blocker: the only
-    `AdmissiblePairing` model is the exponent model (R-28, D-P1), and its codec sends a
-    non-identity exponent to bytes no curve check accepts, so the `g1Valid` clause
-    fails. Every field carrying Holds - verifier_sound, verifier_complete,
-    end_to_end_noAcc, lowering_equivalence - has a hypothesis bundle that is jointly
-    EMPTY for a reason that is a missing model, not a missing pin. -/
+/- P-CURVE, R-61 corrected: the fourth leg is not unexhibited, it is IMPOSSIBLE as
+    written. The bundle the headline fields take - BlkIsEmitter /\ SupportedS /\ EnvAgrees /\
+    Eip2537.Holds - has no witness, and the reason is not the missing curve model the brief
+    expected. The g1Decodes clause quantifies over every Bytes that g1Of? and
+    g1PointMsmValid accept, and g1Of? is a coordinate reader that clamps rather than
+    checking the frame width: every all-zero frame of length 0x80 + k is accepted for every k,
+    so the clause demands toEip hit infinitely many distinct byte strings. PrimeOrderWith
+    G1 p makes the group finite. Midfall/Assumptions/Eip2537.lean proves the consequence three
+    ways (g1Decodes_unsatisfiable, holds_unsatisfiable, not_exists_holds), and this is the
+    declaration that says what that means for the bundle: the four-way conjunction is
+    REFUTED at the fixture Surface, not merely unpopulated.
+
+    WHY THIS IS THE RIGHT SHAPE FOR THE GATE. The brief asked for ONE declaration naming all
+    four conjuncts, because two rounds ago a bundle turned out to be individually inhabited and
+    jointly empty (R-60 S1). A refutation of the conjunction is the same discipline pointed
+    the other way: it names all four in one statement, and it reddens the day someone repairs
+    g1Decodes without replacing it with a real exhibit - the repaired clause no longer implies
+    this proof, so the file stops building. That is the cannot-silently-return property the
+    brief asks for, enforced by the kernel rather than by a text gate.
+
+    The three legs that ARE inhabited are not decoration here: bundle_envAgrees exhibits them
+    jointly, and the fourth conjunct is existentially bound, so the refutation is about Holds
+    and nothing else. -/
+theorem bundle_holds_empty :
+    ¬ (BlkIsEmitter realSurface ∧ SupportedS realSurface realSurface.o₀ ∧
+        EnvAgrees realSurface.E realSurface.vk realSurface.plan realSurface.params
+          realSurface.sG2gen ∧
+        ∃ (product : PairingProduct),
+          Midfall.Assumptions.Eip2537.Holds realSurface.E.g1 ⟨realSurface.encG2⟩ product) := by
+  rintro ⟨_, _, _, product, h⟩
+  exact Midfall.Assumptions.holds_unsatisfiable realSurface.E.g1 ⟨realSurface.encG2⟩ product h
+
+/-- Eip2537.Holds is not exhibited at any Surface in the tree, and P-CURVE found the reason is
+    not the one this def used to give. The old text blamed the exponent codec's g1Valid
+    failure (R-28, D-P1); that was true of the exponent codec and not of the hypothesis. The
+    blockers, in the order they now bite:
+
+      1. g1Decodes as written is unsatisfiable for EVERY codec on EVERY prime-order group -
+         see bundle_holds_empty above and Assumptions.Eip2537.g1Decodes_unsatisfiable. The
+         repair (g1DecodesWidth, adding the 0x80 frame width the clause's own docstring
+         already means) is a one-line change to a headline hypothesis and is the
+         orchestrator's call, not this package's.
+      2. With the repair, g1Valid and the repaired g1Decodes hold at REAL curve points:
+         Midfall/Instances/Bls12_381G1.lean discharges both at the frame type over the
+         r-torsion of y^2 = x^3 + 4, with the published generator's membership proved by
+         kernel decide.
+      3. What still blocks is a group law and a point count: Fact (Nat.Prime pBase) for g1Add
+         and g1Msm1, and Nat.card G1Frame = r for PrimeOrderWith. Those are
+         gap_g1_no_group_law and gap_g1_prime_order in the new file.
+
+    So every field carrying Holds - verifier_sound, verifier_complete, end_to_end_noAcc,
+    lowering_equivalence - has a hypothesis bundle that is EMPTY, and the emptiness is now
+    named at three levels instead of one. -/
 def gap_holds_unexhibited : String :=
-  "blocker: no BLS12-381 curve model in the tree (D-P1, R-28); the exponent codec "
-    ++ "fails the g1Valid clause for a non-identity point, so Eip2537.Holds is "
-    ++ "unsatisfiable at the only Surface"
+  "blocker: Eip2537.Holds is refuted as written, not merely unexhibited - g1Decodes "
+    ++ "quantifies over every frame g1Of? accepts and g1Of? ignores trailing bytes, so the "
+    ++ "clause needs infinitely many preimages of a prime-order (finite) group; see "
+    ++ "bundle_holds_empty and Assumptions.Eip2537.g1Decodes_unsatisfiable. The repair "
+    ++ "g1DecodesWidth is discharged at real curve points in Instances/Bls12_381G1.lean "
+    ++ "(g1Valid with it); what still blocks is a group law over Fp, which needs "
+    ++ "Fact (Nat.Prime pBase), and the r-torsion count Nat.card G1Frame = r."
+
 /-- `EnvAgrees` IS exhibited, so the gap that used to sit here is closed and this def
     replaces it (the pattern `gap_view_transport_closed` sets: a gap that has been closed
     says so, and stays in the file so the registry cannot quietly re-open it). The

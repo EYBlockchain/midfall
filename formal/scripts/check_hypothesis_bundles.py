@@ -59,14 +59,14 @@ REGISTRY = [
         "field": "verifier_sound",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
                  ("gap_runLeg_unexhibited", ["RunVerifier"])],
     },
     {
         "field": "verifier_complete",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
                  ("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
@@ -80,7 +80,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
     {
         "field": "qvm_validated_noBoundsFault",
@@ -93,7 +93,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -103,9 +103,22 @@ REGISTRY = [
         "field": "lowering_equivalence",
         "kind": "theorem",
         "exhibit": ("bundle_envAgrees", ["SupportedS", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Decodes", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
     },
 ]
+
+# A bundle that is provably EMPTY must be refuted by ONE declaration naming every conjunct,
+# for the same reason an inhabited bundle must be exhibited by one: halves certify nothing.
+# P-CURVE found the fourth headline conjunct unsatisfiable as written (g1Decodes needs
+# infinitely many preimages of a finite group), so the four-way bundle's certification is
+# Instances/ObligationsGates.lean:bundle_holds_empty. If the clause is ever repaired and a
+# real exhibit lands, this refutation stops being provable and the entry must be deleted -
+# which is the point: the gate reddens if the gap silently returns OR if the refutation goes
+# stale without the exhibit replacing it.
+REFUTATIONS = [
+    ("bundle_holds_empty", ["BlkIsEmitter", "SupportedS", "EnvAgrees", "Eip2537.Holds"]),
+]
+
 
 def field_statement(text, field):
     """The statement of a LoweringCorrect field or a top-level theorem, comments gone."""
@@ -180,8 +193,8 @@ def check(root):
         tokens = []
         if entry.get("exhibit"):
             tokens += entry["exhibit"][1]
-        for _, ts in entry.get("gaps", []):
-            tokens += ts
+        for g in entry.get("gaps", []):
+            tokens += g[1]
         # 4. NO DRIFT
         for t in tokens:
             if t not in stmt:
@@ -206,7 +219,9 @@ def check(root):
         elif not entry.get("gaps"):
             problems.append("%s: registered with neither an exhibit nor a gap" % field)
         # 3. GAPS
-        for dname, toks in entry.get("gaps", []):
+        for g in entry.get("gaps", []):
+            dname, toks = g[0], g[1]
+            body_only = g[2] if len(g) > 2 else []
             body = gdefs.get(dname)
             if body is None:
                 problems.append("%s: NAMED GAP MISSING - %s is not declared in %s, so "
@@ -217,6 +232,28 @@ def check(root):
             if missing:
                 problems.append("%s: GAP BLOCKER STALE - %s no longer names %s"
                                 % (field, dname, ", ".join(repr(m) for m in missing)))
+            # body-only tokens are not in the field statement (they name a blocker inside the
+            # hypothesis, not a hypothesis of the field), so they are checked against the gap
+            # text alone. P-CURVE added these so the gap cannot be rewritten back to the old
+            # one-line "no curve model" blame while still mentioning Eip2537.Holds.
+            missing_body = [t for t in body_only if t not in body]
+            if missing_body:
+                problems.append("%s: GAP BLOCKER UNDER-SPECIFIED - %s no longer names %s, so "
+                                "the gap blames less than the measured blocker does"
+                                % (field, dname, ", ".join(repr(m) for m in missing_body)))
+    # 5. REFUTATIONS: a provably empty bundle needs one declaration naming every conjunct
+    for dname, toks in REFUTATIONS:
+        body = gdefs.get(dname)
+        if body is None:
+            problems.append("REFUTATION MISSING - %s is not declared in %s, so the empty "
+                            "bundle is asserted in prose and not proved as one conjunction"
+                            % (dname, GATES))
+            continue
+        missing = [t for t in toks if not mentions(body, t)]
+        if missing:
+            problems.append("REFUTATION IS NOT JOINT - %s never mentions %s, so the emptiness "
+                            "is certified by halves and not by one statement (R-60 S1)"
+                            % (dname, ", ".join(repr(m) for m in missing)))
     return problems
 
 
@@ -232,10 +269,10 @@ def main():
             print("  " + pr)
         return 1
     exhibits = sum(1 for e in REGISTRY if e.get("exhibit"))
-    gaps = len({d for e in REGISTRY for d, _ in e.get("gaps", [])})
-    print("ok: %d registered headline bundles (%d jointly exhibited, %d named gap defs); "
-          "every multi-hypothesis field of LoweringCorrect is accounted for"
-          % (len(REGISTRY), exhibits, gaps))
+    gaps = len({g[0] for e in REGISTRY for g in e.get("gaps", [])})
+    print("ok: %d registered headline bundles (%d jointly exhibited, %d named gap defs, "
+          "%d joint refutations); every multi-hypothesis field of LoweringCorrect is "
+          "accounted for" % (len(REGISTRY), exhibits, gaps, len(REFUTATIONS)))
     return 0
 
 
