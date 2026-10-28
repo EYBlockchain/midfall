@@ -65,6 +65,13 @@ echo '== known-answer tests =='
 # booleans, so the R-30 and R-32 regression tests would not have failed CI if
 # they regressed. Negative controls ('-- expect false') pass by returning false.
 python3 scripts/kat_gate.py || exit 1
+
+echo '== LoweringCorrect statement fingerprints =='
+# Obligations.lean's fields are statements, not gated computations, so no #eval gate
+# reads their text. Three paraphrases (ZeroAbove -> True, stmtsBeq -> a length equality,
+# dropping the selector conjunct) all built clean with every gate green. This is the only
+# automated defence against weakening a headline statement silently.
+python3 scripts/check_statement_fingerprints.py || exit 1
 echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean

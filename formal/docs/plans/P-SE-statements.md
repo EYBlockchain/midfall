@@ -40,8 +40,15 @@ invent a different statement.
 | name | section | status | what was done instead |
 |---|---|---|---|
 | `stmtsBeq` | Q (`render_eq_print`) | **no declaration anywhere** (grep `Midfall/` + `vendor/`) | conjunct unwritable; D-P13 names it authoritative - needs a decision |
-| `EvaluatorFrame`, `FrameWellFormed` | Q (`qvm_yul_refines`) | 0 occurrences (stage 4) | field unstated; needs defining in stage 5/6 |
-| `S.plan.qext` | Q (`qvm_yul_refines`) | stage 3's `PlanView` has no such field | add to `PlanView` or restate the clause |
+| `Midfall.Halo2.Verifier.lagrangeTriple`, `MultiPrepare.phaseA/B/C` | J/K | declared **outside** those namespaces | use `Midfall.Halo2.lagrangeTriple`, `Midfall.Halo2.phaseA` |
+| `S.repackProof`, `S.encodeCalldata` | Q (`end_to_end_noAcc`, the two `_faithful` fields) | stage 4 deliberately removed the codec fields from `Surface`, so there is no LHS | the two `_faithful` fields DEFERRED; `end_to_end_noAcc` restated against the spec functions |
+| `EnvAgrees` 7-arg form | L, Q | landed arity is **5** (`E vk plan params sG2gen`) - confirmed by `#check` | use the landed arity |
+| `tblOf S.plan S.accFixedBases` | Q | landed `tblOf` takes the table alone | use the landed arity |
+| untyped `(gas)` binder | Q (`points_subgroup_checked`) | `autoImplicit = false` rejects it | type it: `(gas : ExternalGas)` |
+| `frameValuation` | Q (`qvm_yul_refines`) | absent | field deferred rather than invented |
+| `(exprs[i]'(by omega))` inside a conjunction | P | **does not elaborate** - the length equalities are conjuncts, not hypotheses in scope | Option indexing, equivalent under the length conjuncts |
+| `List.modify` argument order | P | 4.35 is `List.modify : List α → Nat → (α → α) → List α`, index BEFORE function | swapped at the site |
+| `Except.getD`, `List.zip3`, `ZMod.eq_iff_modEq_nat`, `∃ i (h : i < n), …` binder | O/P | absent or invalid syntax | substituted, each recorded in the file header |
 | `List.Sorted` | P (`SelectorFoldConsistent`), Q (`accFixedBases_producer`) | Mathlib order theory not in the built surface | stage 2 used a local `namesAscending`; same fix |
 | `memLeaves` | O (`leafKeys`) | marked SKETCH | verify against landed `QuotientExpr` |
 | `nativePermutationIdentities`, `nativeLookupIdentities`, `nativeIdentities` | P (`expandItem`) | marked SKETCH | verify against `QuotientProgramPlan` |
