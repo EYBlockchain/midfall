@@ -1,6 +1,6 @@
 name = "midfall-formal"
 version = "0.1.0"
-defaultTargets = ["Midfall"]
+defaultTargets = ["Midfall", "midfall-conformance"]
 
 [leanOptions]
 pp.unicode.fun = true
