@@ -134,16 +134,34 @@ base rate, so every future brief assumes there is another.
 * **`Instances/` confinement greps direct imports only** (R-55), so a concrete model in a
   transitively-imported file stays invisible.
 
-## Open with the human
+## Decisions - all taken (round 68)
 
-1. **M0 tag** - blocked on the fixture regeneration decision above. Recommendation given.
-2. **Vendor dialect** - done for the two builtins; `irOptimized` vs `ir` pinned to `ir`.
-3. **`Common/Bytes.lean` lemma** - `Array.foldl` is not defeq to `List.foldl` in 4.35;
-   gates two holes. Authorised, queued.
-4. **F-IR-1** - `extract_ir_builtins.py` keys by basename, so 28 of 42 manifest rows were
-   measured from the wrong artifact. One-line fix plus regeneration.
-5. **F5 / D-P21** and **F6 / D-P22** - recorded as decisions; both are paper-proof work.
-6. **Nothing is pushed.** ~30 commits ahead of `origin/formal/baseline`, all local-only.
+The human took the recommended option on all six open decisions. Recorded as **D-P24 to
+D-P29** in `docs/design.md`; `PLAN` section 0 amended for D-P24 (`4817b16`).
+
+| # | decision | record |
+|---|---|---|
+| 1 | **Per-deployment first**, generic theorem as a stated follow-on | D-P24 |
+| 2 | **Re-pin `Statements.lean`** - a hash freeze is not a licence to keep a known falsehood frozen | D-P27 |
+| 3 | **M0: regenerate** the six live poseidon artefacts under the recorded profile, re-pin `BASELINE.md`, **delete the 12 unread fixtures** | D-P28 |
+| 4 | **Constructor helpers first**; extend the vendored DSL for splicing only if that proves painful | D-P26 |
+| 5 | **Security moves to ArkLib `Interaction`**; D-P21 finally implemented; deployed KS stays a named parameterised assumption | D-P29 |
+| 6 | **`PROOF-PLAN` is NOT retired** - re-pointed at `Interaction`, with an explicit owner for the S7 bridge | D-P29 |
+
+Plus **D-P25**: the generator emits Yul ASTs; `stmtsBeq` is the check of record for M3,
+token comparison is the CI tripwire for Yul, line-based normalisation only for the Solidity
+wrapper. **Checked while amending: PLAN section 11 already said AST equality** (`:556`), so
+the plan was right and `VerifierPartials.lean` drifted - a narrower finding than R-62
+recorded, and D-P25 confirms the plan rather than changing it.
+
+### Still owed, not decisions
+
+* **`fixedBases` "-G" defect** - still stores the identity (P-SE finding 7). Mine to schedule.
+* **F-IR-1** - `extract_ir_builtins.py` basename collision; 28 of 42 manifest rows measured
+  from the wrong artifact. One-line fix plus regeneration.
+* **`Common/Bytes.lean` lemma** - `Array.foldl` is not defeq to `List.foldl` in 4.35.
+* **Correction to an earlier claim here:** "nothing is pushed" was **false**. The work is on
+  `origin/formal/baseline`; I asserted it twice before checking.
 
 ## Next
 
