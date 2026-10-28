@@ -1,18 +1,31 @@
             // ---------- IVC accumulator public-input decoding ----------
             //
+            {%- if self.expected_acc_non_identity_points %}
+            // The Moonlight wrap circuit constrains both accumulator points to
+            // be non-identity and exposes each one as its x and y coordinates,
+            // each through `AssignedField::as_public_input`: seven radix-2^56
+            // limbs of (coord - 1) are packed four-at-a-time into native field
+            // elements. There is no identity-flag word. Rebuild EIP-2537
+            // padded (x_hi, x_lo, y_hi, y_lo) words from that encoding.
+            {%- else %}
             // `AssignedForeignPoint<BLS12-381>` exposes each base-field coordinate
             // through `AssignedField::as_public_input`: seven radix-2^56 limbs of
             // (coord - 1) are packed four-at-a-time into native field elements.
             // The point's identity flag follows the y coordinate as its own
             // public-input word. Rebuild EIP-2537 padded
             // (x_hi, x_lo, y_hi, y_lo) words from that encoding.
+            {%- endif %}
             //
             // Public-input layout for one coordinate:
             //   word 0: limb_0 | limb_1 << bits | ... up to limbs_per_word
             //   word 1: next limbs, if any
             //
             // Public-input layout for one point:
+            {%- if self.expected_acc_non_identity_points %}
+            //   x coordinate words, y coordinate words
+            {%- else %}
             //   x coordinate words, y coordinate words, identity flag word
+            {%- endif %}
             //
             // The limbs are little-endian in the represented integer even
             // though calldata words are loaded as big 256-bit values. The loop
@@ -113,6 +126,39 @@
                 ok := and(ok, lt(hi, shl(128, 1)))
             }
 
+            {% if self.expected_acc_non_identity_points -%}
+            // Decode a public accumulator point into an EIP-2537 4-word G1
+            // slot. This layout has no identity flag: the circuit constrains
+            // the point to be non-identity, so both coordinates are always
+            // decoded and the EIP-2537 infinity encoding is rejected. Points
+            // are curve/subgroup checked later by routing them through G1MSM.
+            function load_acc_point(dst, src, bits, n, base) -> ok {
+                // x and y occupy coord_words packed public-input words each.
+                let limbs_per_word := {{ template_constants.accumulator.limbs_per_word }}
+                let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
+                let x_ok, x_hi, x_lo := load_acc_coord(src, bits, n, base, limbs_per_word)
+                let y_ok, y_hi, y_lo := load_acc_coord(
+                    add(src, mul(coord_words, 0x20)),
+                    bits,
+                    n,
+                    base,
+                    limbs_per_word
+                )
+                ok := and(x_ok, y_ok)
+                // The coordinate codec maps encoded p-1 to decoded zero.
+                // EIP-2537 reserves affine (0,0) for the point at infinity,
+                // which the circuit never exposes here, so reject it rather
+                // than let G1MSM accept it as the identity.
+                let decoded_zero := iszero(or(or(x_hi, x_lo), or(y_hi, y_lo)))
+                ok := and(ok, iszero(decoded_zero))
+                // Store the affine point in the exact precompile input
+                // layout: x_hi, x_lo, y_hi, y_lo.
+                mstore(dst, x_hi)
+                mstore(add(dst, 0x20), x_lo)
+                mstore(add(dst, 0x40), y_hi)
+                mstore(add(dst, 0x60), y_lo)
+            }
+            {%- else -%}
             // Decode a public accumulator point into an EIP-2537 4-word G1
             // slot. Non-identity points are curve/subgroup checked later by
             // routing them through G1MSM.
@@ -163,6 +209,7 @@
                     mstore(add(dst, 0x60), y_lo)
                 }
             }
+            {%- endif %}
 
             {%- if self.expected_has_accumulator %}
             // Validate and prepare the public accumulator equation before the
@@ -186,20 +233,36 @@
                 let limb_base := shl(bits, 1)
                 let limbs_per_word := {{ template_constants.accumulator.limbs_per_word }}
                 let coord_words := div(add(n, sub(limbs_per_word, 1)), limbs_per_word)
+                {%- if self.expected_acc_non_identity_points %}
+                // One public point is its x and y coordinate words. This
+                // layout carries no identity flag word.
+                let point_words := mul(2, coord_words)
+                {%- else %}
                 // One public point is its x and y coordinate words followed
                 // by the identity flag word.
                 let point_words := add(mul(2, coord_words), {{ template_constants.accumulator.identity_flag_words }})
+                {%- endif %}
                 // acc_offset is generated from the VK/protocol shape and
                 // points into the ABI `instances` array.
                 let acc_instance_ptr := add(INSTANCE_CPTR, {{ (self.expected_acc_offset * 32)|hex() }})
 
+                {% if self.expected_acc_non_identity_points -%}
+                // LHS layout: point limbs (x,y), then either an explicit
+                // scalar word or an implicit unit scalar for already-collapsed
+                // point-pair public inputs.
+                {%- else -%}
                 // LHS layout: point limbs (x,y), identity flag, then either an
                 // explicit scalar word or an implicit unit scalar for
                 // already-collapsed point-pair public inputs.
+                {%- endif %}
                 // The scalar pointer is computed unconditionally; the rendered
                 // branch below decides whether to read it or use scalar 1.
                 let lhs_scalar_ptr := add(acc_instance_ptr, mul(point_words, 0x20))
+                {%- if self.expected_acc_non_identity_points %}
+                let lhs_ok := load_acc_point(ACC_LHS_MPTR, acc_instance_ptr, bits, n, limb_base)
+                {%- else %}
                 let lhs_ok, lhs_is_id := load_acc_point(ACC_LHS_MPTR, acc_instance_ptr, bits, n, limb_base)
+                {%- endif %}
                 out := and(out, lhs_ok)
                 // Shared scratch for one-pair LHS validation and the later
                 // variable-length RHS MSM.
@@ -214,9 +277,11 @@
                     // implicit one.
                     let lhs_scalar := 1
                     {%- endif %}
+                    {%- if !self.expected_acc_non_identity_points %}
                     // Identity status is useful for decoding checks above, but
                     // validation still goes through G1MSM for all points.
                     pop(lhs_is_id)
+                    {%- endif %}
                     // Always route the decoded carried point through G1MSM,
                     // even for identity points and zero/one scalars. The
                     // precompile is the on-curve/subgroup validator for this
@@ -242,9 +307,9 @@
                 // accumulator construction.
                     {%- else %}
                 // RHS layout for this generated verifier is an already
-                // collapsed point pair: lhs point, rhs point. Both carried
-                // scalars are implicit one, and there is no fixed-base scalar
-                // tail.
+                // collapsed point pair: lhs point (x,y), rhs point (x,y).
+                // Neither point carries an identity flag, both carried scalars
+                // are implicit one, and there is no fixed-base scalar tail.
                     {%- endif %}
                 {%- else %}
                 // RHS layout for this generated verifier is partially
@@ -258,11 +323,20 @@
                 {%- else %}
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
+                {%- if self.expected_acc_non_identity_points %}
+                // RHS scalar, when present, immediately follows the RHS point
+                // coordinate words. The fixed-base scalar tail starts after it.
+                {%- else %}
                 // RHS scalar, when present, immediately follows the RHS point
                 // limbs and identity flag. The fixed-base scalar tail starts
                 // after it.
+                {%- endif %}
                 let rhs_scalar_ptr := add(rhs_instance_ptr, mul(point_words, 0x20))
+                {%- if self.expected_acc_non_identity_points %}
+                let rhs_ok := load_acc_point(ACC_RHS_MPTR, rhs_instance_ptr, bits, n, limb_base)
+                {%- else %}
                 let rhs_ok, rhs_is_id := load_acc_point(ACC_RHS_MPTR, rhs_instance_ptr, bits, n, limb_base)
+                {%- endif %}
                 out := and(out, rhs_ok)
                 // acc_pair_ptr appends (G1, scalar) pairs into acc_scratch for
                 // one final RHS MSM.
@@ -275,7 +349,9 @@
                     // Implicit unit scalar for already-collapsed point pairs.
                     let rhs_scalar := 1
                     {%- endif %}
+                    {%- if !self.expected_acc_non_identity_points %}
                     pop(rhs_is_id)
+                    {%- endif %}
                     // Keep the carried RHS point in the MSM input even when
                     // it is encoded as identity or has scalar 0/1, so EIP-2537
                     // validates every decoded public accumulator point before

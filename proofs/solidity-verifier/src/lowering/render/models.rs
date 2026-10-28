@@ -526,6 +526,11 @@ pub(crate) struct Halo2Verifier {
     /// words. Moonlight wrap proofs expose an already collapsed point pair and
     /// use implicit unit scalars instead.
     pub(crate) expected_acc_has_carried_scalars: bool,
+    /// Whether the public accumulator points are constrained to be
+    /// non-identity and therefore omit the trailing `0`/`1` identity-flag word.
+    /// This holds for Moonlight wrap point pairs, which expose only `(x, y)`
+    /// coordinate words; the point-and-scalar layout keeps the flag.
+    pub(crate) expected_acc_non_identity_points: bool,
     /// Fixed bases serialized by `AssignedAccumulator<S>::as_public_input`
     /// for the RHS accumulator MSM, in the exact lexicographic
     /// `BTreeMap` order used by midnight-circuits. This is the public
@@ -1146,6 +1151,7 @@ mod tests {
             expected_num_acc_limbs: 0,
             expected_num_acc_limb_bits: 0,
             expected_acc_has_carried_scalars: false,
+            expected_acc_non_identity_points: false,
             acc_fixed_bases: vec![],
         }
     }
