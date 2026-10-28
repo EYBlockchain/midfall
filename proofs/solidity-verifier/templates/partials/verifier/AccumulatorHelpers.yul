@@ -326,7 +326,7 @@
                 {%- else %}
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
-                {%- if !self.expected_acc_non_identity_points %}
+                {%- if self.expected_acc_has_carried_scalars %}
                 // RHS scalar, when present, immediately follows the RHS point
                 // limbs and identity flag. The fixed-base scalar tail starts
                 // after it.

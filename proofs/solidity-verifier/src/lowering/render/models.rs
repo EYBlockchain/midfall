@@ -525,11 +525,21 @@ pub(crate) struct Halo2Verifier {
     /// Whether the public accumulator payload carries explicit LHS/RHS scalar
     /// words. Moonlight wrap proofs expose an already collapsed point pair and
     /// use implicit unit scalars instead.
+    ///
+    /// Together with `expected_acc_non_identity_points`, this is derived from
+    /// `AccumulatorEncodingKind`, so only two combinations are reachable:
+    /// carried scalars with identity flags (`PointAndScalar`), or neither
+    /// (`PointPair`). This is intentional, and the accumulator template relies
+    /// on it.
     pub(crate) expected_acc_has_carried_scalars: bool,
     /// Whether the public accumulator points are constrained to be
     /// non-identity and therefore omit the trailing `0`/`1` identity-flag word.
     /// This holds for Moonlight wrap point pairs, which expose only `(x, y)`
     /// coordinate words; the point-and-scalar layout keeps the flag.
+    ///
+    /// This is set exactly when `expected_acc_has_carried_scalars` is not; see
+    /// that field. It is `false` without an accumulator, so those verifiers
+    /// render the default flagged decoding helpers.
     pub(crate) expected_acc_non_identity_points: bool,
     /// Fixed bases serialized by `AssignedAccumulator<S>::as_public_input`
     /// for the RHS accumulator MSM, in the exact lexicographic
