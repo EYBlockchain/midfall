@@ -275,16 +275,21 @@
                     // implicit one.
                     let lhs_scalar := 1
                     {%- endif %}
-                    {%- if !self.expected_acc_non_identity_points %}
+                    {%- if self.expected_acc_non_identity_points %}
+                    // Route the decoded LHS point through G1MSM with its
+                    // implicit unit scalar; the precompile is the
+                    // on-curve/subgroup validator for this public-input point.
+                    // Identity points were already rejected by load_acc_point.
+                    {%- else %}
                     // Identity status is useful for decoding checks above, but
                     // validation still goes through G1MSM for all points.
                     pop(lhs_is_id)
-                    {%- endif %}
                     // Always route the decoded carried point through G1MSM,
                     // even for identity points and zero/one scalars. The
                     // precompile is the on-curve/subgroup validator for this
                     // public-input point; skipping it would let a malformed
                     // non-identity point hide behind scalar 0.
+                    {%- endif %}
                     mcopy(acc_scratch, ACC_LHS_MPTR, 0x80)
                     mstore(add(acc_scratch, 0x80), lhs_scalar)
                     if out {
@@ -347,13 +352,17 @@
                     // Implicit unit scalar for already-collapsed point pairs.
                     let rhs_scalar := 1
                     {%- endif %}
-                    {%- if !self.expected_acc_non_identity_points %}
+                    {%- if self.expected_acc_non_identity_points %}
+                    // Add the carried RHS point to the MSM input with its
+                    // implicit unit scalar so EIP-2537 validates it before it
+                    // reaches the pairing batch.
+                    {%- else %}
                     pop(rhs_is_id)
-                    {%- endif %}
                     // Keep the carried RHS point in the MSM input even when
                     // it is encoded as identity or has scalar 0/1, so EIP-2537
                     // validates every decoded public accumulator point before
                     // it can affect, or be erased from, the pairing batch.
+                    {%- endif %}
                     mcopy(acc_pair_ptr, ACC_RHS_MPTR, {{ template_constants.g1_bytes|hex() }})
                     mstore(add(acc_pair_ptr, {{ template_constants.g1_bytes|hex() }}), rhs_scalar)
                     // Move to the next (G1, scalar) pair slot.
