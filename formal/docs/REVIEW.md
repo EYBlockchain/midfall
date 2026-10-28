@@ -2068,3 +2068,61 @@ given; the disagreement is between committed Rust artefacts and current Rust cod
 ## Closed
 5. `Assumptions/Pairing.lean`: the named BLS12-381 hypothesis, including
    `G1Codec`, `FieldConsts` and the R-3 properties.
+### R-61 An external review corrected a load-bearing security premise, and two orchestrator claims
+
+Each item below was verified independently before being recorded.
+
+**1. ArkLib already proves Fiat-Shamir and composition. `D-P22` and `PROOF-PLAN` are wrong.**
+The pinned ArkLib has a 39-file `ArkLib/Interaction/` layer containing
+`stateRestoration_knowledge_soundness`
+(`Interaction/Oracle/Security/StateRestorationGame.lean:102`), whose own docstring reads:
+"Round-by-round knowledge bounds imply state-restoration knowledge soundness for the
+actual native verifier. The adversary chooses the input adaptively and supplies the terminal
+witness; the named backwards extractor fails on a valid output with probability at most
+`(Q+k)*error`." Measured: **39 files, 0 `sorry`, 0 `admit`, 0 `native_decide`.** A
+per-round variant (`..._privateCoins`) takes one error per round - exactly the shape of
+`roundErr` - with a tighter `Q*max + Sum` bound than the plan's `(qH+1)*Sum`.
+`KnowledgeComposition.lean` proves sequential composition, replacing the `append_*` lemmas
+previously believed to be `sorry`.
+
+*Why it was missed:* the Phase-1 inventory searched by name (`fiatShamir_soundness`) and
+concluded no Fiat-Shamir theorem exists. **A name-based absence check is not an inventory.**
+Consequence: S4 shrinks from proving generic FS soundness to showing the Keccak chain
+simulates this layer's oracle up to collisions, and the AGM terminal witness maps onto the
+group-element representations so the straight-line extractor becomes the backward map.
+**`#print axioms` on these theorems is the required first step and was not run here.**
+
+**2. `D-P21` was adopted and never implemented.** Both `chalMass` definitions still use a
+uniform `s / 2^128` (`Security/Challenges.lean:31`, `Halo2/Spec/Degrees.lean:241`), so the
+x3 row remains unsound and the duplicate (R-24) is open. **A decision recorded is not a
+decision executed** - the same class of gap as writing a gate that cannot fail.
+
+**3. Three concrete vacuities, all confirmed:**
+* `CommittedInstanceZero (idx) : Prop := True` (`Spec/Relation.lean:137`) takes only `idx`,
+  so it cannot say the committed column is zero.
+* `noWritersFuel := fun _ _ => sorry` (`Yul/Bridge.lean:575`) means `NoWriters` can never be
+  established by anything.
+* The budget hard-codes `ceil(2^256/r) = 3` and 16-byte truncation while everything is
+  generic over `p`, and **nothing states `p = r`** - so for other primes `ksErr` is not an
+  upper bound and S1 would be false as stated.
+
+**4. Two orchestrator claims corrected.** I told the human twice that **nothing is pushed**;
+false - `origin/formal/baseline` is at `c94adc8`. And I reported **189 theorems** as proof
+progress: 133 sit in `Lowering/` and `Yul/` alongside 68 `sorry`, and **none discharges a
+`LoweringCorrect` field**. The honest metric is obligations discharged and exhibited.
+
+**5. The headline has no instance where its hypotheses hold.** `Eip2537.Holds` is
+unsatisfiable at the only `Surface`, so `verifier_sound`, `verifier_complete`,
+`end_to_end_noAcc`, `finalPairing_spec` and the precompile hypothesis have no working
+example. The fix is smaller than "no BLS12-381 model" suggests: mathlib has the affine
+Weierstrass group law (`Affine/Point.lean:805`) and `Yul/Externals.lean` already computes
+G1 addition, MSM and subgroup checks. Keep the pairing as a parameter and define `product`
+from it, so the pairing clause holds by construction.
+
+**6. Scope is undecided and the plan drifted.** PLAN 9.4 still states S1 at `.solidity`
+(truncated) against q-DLOG while `D-P22` says untruncated and ARSDH; sections 13 and 14.6
+still say R-22 "needs a decision". Section 0 promises a theorem generic over every supported
+key while the code targets one instance on a toy pairing model. **Decide explicitly: generic
+theorem, or per-deployment translation validation over a real-curve Surface.** The latter is
+far more tractable and is where the code is already heading.
+
