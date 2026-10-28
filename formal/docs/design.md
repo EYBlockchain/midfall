@@ -732,6 +732,65 @@ parse error and under-reported 97 of 514.) The other Lean keywords occurring in 
 DSL already handles, and `return` only in the `return(...)` statement, which has its own
 production; renaming them would break the quotation. `irRename_ok` re-derives the mapping from
 the committed artifact with an independent Lean lexer and asserts injectivity, disjointness from
+## D-P23 (ADOPTED, round 60): every stated theorem carries a standing non-vacuity obligation
+
+**Decision (human).** Extra review passes on the statements are mandatory, not optional:
+every stated theorem and every structure field must be shown to be **non-vacuous** and to
+**prove something**. This supersedes the earlier deferral of reviews for statement work -
+per-task code reviews stay deferred until the semantic-equivalence results land, but
+**statement reviews now run repeatedly and indefinitely.**
+
+### Why the evidence justified it
+
+The first statement-only review (R-58) found ten defects, six demonstrated in Lean, in
+work that had already passed every mechanical gate. Two patterns explain why ports cannot
+catch this:
+
+* **A field can be satisfied for a reason unrelated to its subject.**
+  `points_subgroup_checked`'s conclusion held with *no hypotheses at all* - the existential
+  call was not tied to the run, and `permissive` admits any failed call to any target.
+  `accFixedBases_producer` held for the empty table. A Surface with
+  `irCheck := fun _ => false` satisfied `ir_refines` trivially.
+* **A Lean record can admit a state the Rust cannot.** `PlanView.hasAccumulator` was a free
+  Bool, so 11 of 13 `PartialSpecs` fields discharged on a one-Bool lie. Same class:
+  `numInstances`, `evaluator`, `encG2`, and the `quotient`/`direct` pair - the last one
+  introduced by the orchestrator while fixing a different vacuity.
+
+### The obligation, stated so it is checkable
+
+For every theorem, and for every field of a structure that a theorem consumes, a package
+must provide **both**:
+
+1. **A satisfiability witness** - a concrete object meeting the hypotheses. If no witness
+   exists in the tree, the statement is vacuous and must say so. (Counterexample that
+   passed every gate: the fixture set `encG2 := fun _ => Bytes.empty`, so *no*
+   `Eip2537.Holds` was satisfiable at the only Surface in the tree, and every field
+   carrying `Holds` was unexhibited.)
+2. **A falsifiability demonstration** - a perturbation that breaks the conclusion while
+   keeping the hypotheses true. If no such perturbation exists, the field cannot fail and
+   is decorative: defer it with its blocker rather than ship it.
+
+### What does NOT satisfy the obligation
+
+* **Text-fragment gates.** `scripts/check_statement_fingerprints.py` pins 42 fragments of
+  `LoweringCorrect` against the plan sketch. It catches paraphrase and nothing else - F1,
+  F7 and F8 all passed it. A gate over fragments is not a gate over meaning.
+* **Prose claims of non-vacuity.** A doc comment saying the statement is meaningful is not
+  a witness.
+* **A `True` or trivially-discharged field.** Attack.md already rejects `True := trivial`
+  placeholders; the same applies to any field whose proof does not depend on its subject.
+
+### Standing practice
+
+1. Every statement-bearing package brief carries this obligation verbatim.
+2. After any batch of statements lands, run a **statement-only adversarial review** -
+   read-only, hunting vacuity, wrong-direction, wrong-reason, arity drift, decorative
+   fields, and duplicated-fact-without-a-pin. R-58 is the model for the report shape.
+3. Repeat after each repair round, because a repair can introduce a new vacuity - it has
+   happened here.
+4. Prefer **deferring a field with a named blocker** to stating one that cannot fail. The
+   deferred trio is the precedent.
+
 the untouched names, that no image is a keyword, that every renamed name occurs in the imported
 AST, and that no original name survives anywhere in it.
 
