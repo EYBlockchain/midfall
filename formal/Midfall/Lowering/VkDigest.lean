@@ -19,8 +19,10 @@
 -- file from importing Midfall/Instances/. The natural home for this fact is next
 -- to generateBaseVk, but Generator/Vk.lean:289 pulls in Instances.ExponentModel
 -- transitively, so the theorem cannot live there - which is exactly why the
--- generateBaseVk corollary (vkDigest_slot0) is an Obligations FIELD and not a
--- theorem line here. What this file may import is Generator/Encoding.lean, which
+-- generateBaseVk corollary (the digest-slot equation) lives in Obligations as a
+-- hypothesis - EnvAgrees.vkDigestWord - and not as a theorem line here. R-58 F5 then
+-- dropped the LoweringCorrect field that restated it, since vkDigest_spec plus
+-- vkDigestWord already derive it. What this file may import is Generator/Encoding.lean, which
 -- carries feToU256 and imports no model (its own header says so at
 -- Encoding.lean:156-161), plus Common/Codec.lean for frToRepr and
 -- Halo2/Exec/Accumulator.lean for frWord. The stage-2 brief states the

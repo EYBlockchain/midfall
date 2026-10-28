@@ -56,6 +56,13 @@
 -- computes, and the stage-3 brief forbids both inventing it and silently constraining
 -- it.
 --
+-- R-58 F9 DELETED ONE PlanView FIELD: `consts : TemplateConstants`. Nothing in the
+-- tree read PV.consts - the only constant any statement here needs is FR_MODULUS, and
+-- that is pinned from the other side by EnvAgrees.modulus (p = frModulusConstant). A
+-- copy of the render's constant table that no theorem consumes is the decoration class
+-- the review names, so it is gone rather than justified; it comes back with the P-11
+-- plan record, whose constants the emitter actually uses, and only with a pin.
+--
 -- WHAT IS NOT HERE. blk (no Lean function returns a partial Yul AST yet, P-13), the
 -- forall-runs contract layer (Midfall/Yul/Contracts.lean), the per-partial
 -- obligations themselves (stage 4), and the reversed-evals spill clause: the contract
@@ -114,10 +121,10 @@ structure PlanView where
   k : Nat
   /-- The negative-rotation count Lagrange.yul:57 walks for l_blind. -/
   numNegLagranges : Nat
-  /-- expected_has_accumulator: whether the acc slots exist in this render. -/
+  /-- expected_has_accumulator: whether the acc slots exist in this render. Pinned to
+      cfg.accumulator by Surface.plan_hasAccumulator (R-58 F2); until that field existed
+      this was a free Bool. -/
   hasAccumulator : Bool
-  /-- The free Solidity constants of the render (FR_MODULUS, the ERR_* codes). -/
-  consts : TemplateConstants
 
 /-! ### Addresses and the memory predicates -/
 
@@ -492,8 +499,7 @@ def witnessPlanView : PlanView :=
     numInstances := 1,
     k := 2,
     numNegLagranges := 2,
-    hasAccumulator := false,
-    consts := templateConstantsDefault }
+    hasAccumulator := false }
 
 /-! ### Known-answer checks
 

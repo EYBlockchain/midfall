@@ -20,10 +20,19 @@
 -- gate below is an `example` whose proof is the existing term, so the exhibit is
 -- cited by name and a regression in the original is a build failure here.
 --
--- WHAT THE FIXTURE DOES NOT EXERCISE, stated rather than glossed: the fixture's
--- `accFixedBases` is a one-entry table with no "-G" row, so the second conjunct
--- of `accFixedBases_producer` is VACUOUS at the only Surface in the tree. That
--- is recorded as a proved refutation below, not left for a reader to find.
+-- WHAT CHANGED HERE UNDER R-58. Gate 9 used to PROVE that the "-G" arm of
+-- `accFixedBases_producer` was vacuous at the fixture, because the fixture table
+-- had no "-G" row. R-58 F7 added the existence conjunct to the field and the row
+-- to the fixture, so gate 9 now exhibits the whole field. Gates 7 and 8 keep their
+-- projections and are re-pointed: `vkDigest_slot0` is dropped from LoweringCorrect
+-- (F5, derivable from two other pins), and `render_eq_print` is now the
+-- astOfMain/lower equation (F8).
+--
+-- WHAT STILL IS NOT EXERCISED: `Eip2537.Holds`. The exponent codec cannot satisfy
+-- its g1Valid clause for a non-identity point, so every field carrying Holds stays
+-- unexhibited. R-58 G2 removed ONE cause of that (the empty encG2); the remaining
+-- cause is the absence of a curve model (D-P1, R-28), which is a model and not a
+-- missing pin. SurfaceFixture.encG2AtFixture_ok shows which is which.
 
 import Midfall.Lowering.Obligations
 import Midfall.Instances.SurfaceFixture
@@ -43,7 +52,7 @@ open YulSemantics YulSemantics.EVM
 def gateProduct : PairingProduct := fun _ => true
 
 /-- GATE 1, the plan's first required exhibit, REUSED from stage 4
-    (SurfaceFixture.lean:372). Without it every field of `LoweringCorrect` that
+    (SurfaceFixture.lean:419). Without it every field of `LoweringCorrect` that
     assumes `SupportedS S S.o₀` would be an implication from an unsatisfiable
     antecedent - the F1 vacuity class the programme has now hit five times. -/
 example : SupportedS realSurface realSurface.o₀ := supportedInhabited
@@ -61,7 +70,7 @@ def astOfMainIsSome_ok : Bool :=
 
 /-- GATE 3, the plan's third required exhibit: the trace-render refutation of
     `only_two_outcomes`, REUSED from stage 4
-    (SurfaceFixture.lean:398 `supportedRefutedForTraceRender`). `SupportedS
+    (SurfaceFixture.lean:444 `supportedRefutedForTraceRender`). `SupportedS
     S S.o₀` is the first hypothesis of the field, so refuting it for a trace
     render is exactly the refutation section Q asks for: a trace render emits
     log1 (TraceAndGasHelpers.yul:20-22), which changes the logs and so changes
@@ -95,21 +104,24 @@ example : ∃ obs, RunContractIR irSurface irW keccak256 verifierIr irLyt irCd
     (irSurface.calls irW gateProduct fxQuotientAddr) (ExternalGas.ofFun fun _ => 0) obs :=
   runContractIR_inhabited _ _
 
-/-- GATE 7. `vkDigest_slot0`'s left-hand projection is reachable and agrees with
-    the pinned word at the fixture, and the projection is not a constant: change
-    the index and a different payload word answers. Without the second line the
-    gate would pass for a `constants` list whose head happened to match by
-    accident. -/
+/-- GATE 7. The digest-slot projection that `EnvAgrees.vkDigestWord` constrains -
+    and that `LoweringCorrect.vkDigest_slot0` used to restate, before R-58 F5 dropped
+    the field as derivable from vkDigest_spec plus vkDigestWord - is reachable and
+    agrees with the pinned word at the fixture, and the projection is not a constant:
+    change the index and a different payload word answers. Without the second line
+    the gate would pass for a `constants` list whose head matched by accident. -/
 def vkDigestSlot0_ok : Bool :=
   (realSurface.plan.vk.constants.getD 0 ("", 0)).2 == realSurface.vkDigest &&
     (realSurface.plan.vk.constants.getD 1 ("", 0)).2 != realSurface.vkDigest
 
 #eval vkDigestSlot0_ok                    -- expect true
 
-/-- GATE 8. `render_eq_print`'s conclusion holds at the fixture's placeholder
-    program - the AST `astOfMain` returns IS the `L.main` the render pin
-    produces - and fails for a program with one statement dropped, so the
-    conjunct is a decision and not a tautology. -/
+/-- GATE 8. `render_eq_print` after R-58 F8: the equation is between the two
+    free functions `astOfMain` and `lower`, and it holds at the fixture for EVERY
+    option, including the ones the render refuses. The second half is the
+    refutation - a block with one statement dropped is not the rendered main, so an
+    accessor that drifted from the render fails the pin instead of satisfying it by
+    being compared with itself, which is what the old form let it do. -/
 def renderEqPrintAtFixture_ok : Bool :=
   (match realSurface.astOfMain realSurface.o₀ with
     | some ast => SyntaxEq.stmtsBeq ast realSurface.L.main
@@ -120,21 +132,51 @@ def renderEqPrintAtFixture_ok : Bool :=
 
 #eval renderEqPrintAtFixture_ok           -- expect true
 
-/-- GATE 9, THE FINDING ABOUT `accFixedBases_producer`. The first conjunct is
-    satisfiable at the fixture - a one-entry table is ascending, and the
-    producer's own ordering is what `namesAscending` pins. The second conjunct
-    is VACUOUS here, and this proves it rather than admitting it in prose: the
-    fixture table has no "-G" row, so no Surface in the tree exercises the
-    `b.name = "-G"` arm. The exhibit that would discharge it is the
-    artifacts.rs:181-227 producer, a generator-side deliverable, not a
-    statement obligation. -/
-theorem accFixedBasesFirstConjunct_ok :
-    namesAscending (realSurface.accFixedBases.toList.map fun b => b.name) := by
-  simp [realSurface, namesAscending]
+/-- GATE 9, R-58 F7. Before the repair this gate PROVED the "-G" arm of
+    `accFixedBases_producer` was vacuous at the only Surface in the tree: the table
+    had one entry and no "-G" row, so the implication discharged on an empty set and
+    the field could not fail. Now the fixture carries the row and this gate exhibits
+    all three conjuncts - ascending names, a "-G" row exists, and every "-G" row is
+    (P.g₁, negate := true) as artifacts.rs:181-227 builds it. The refutation of the
+    existence conjunct (the old one-entry table) is in
+    SurfaceFixture.accFixedBasesKats_ok. -/
+theorem accFixedBasesProducerAtFixture :
+    namesAscending (realSurface.accFixedBases.toList.map fun b => b.name) ∧
+    (∃ b ∈ realSurface.accFixedBases.toList, b.name = "-G") ∧
+    ∀ b ∈ realSurface.accFixedBases.toList, b.name = "-G" →
+      b.base = (inferInstance : AdmissiblePairing RP RP RP).g₁ ∧ b.negate = true := by
+  refine ⟨?_, ⟨{ name := "-G", base := fx 1, negate := true },
+      by simp [realSurface, List.mem_cons], rfl⟩, ?_⟩
+  · simp [realSurface, namesAscending]
+  · intro b hb hn
+    have hlist : realSurface.accFixedBases.toList =
+        [{ name := "-G", base := fx 1, negate := true },
+         { name := "b0", base := 1, negate := false }] := rfl
+    rw [hlist] at hb
+    simp [List.mem_cons] at hb
+    rcases hb with (h|h|h)
+    · subst h; exact ⟨rfl, rfl⟩
+    · simp_all
 
-theorem accFixedBasesNegGArmIsVacuous :
-    ¬ ∃ b ∈ realSurface.accFixedBases.toList, b.name = "-G" := by
-  intro h
-  exact absurd h (by simp [realSurface])
-
+/-- GATE 10, the R-58 pins cited as terms. Each `example` is the pin's statement at
+    the fixture Surface, so a regression in any of them - a pin deleted, or a fixture
+    whose shell, plan, render or encoder stops agreeing - is a BUILD failure here and
+    not a prose claim. This is the exhibit that the headline structure is inhabited by
+    a Surface that MEETS the pins, which is all the non-vacuity that is available
+    before a real render exists. -/
+example : realSurface.shell.codeBlock =
+    realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main :=
+  realSurface.shell_unfolds
+example : realSurface.plan.hasAccumulator = realSurface.cfg.accumulator.isSome :=
+  realSurface.plan_hasAccumulator
+example : realSurface.plan.numInstances = realSurface.cfg.numInstances :=
+  realSurface.plan_numInstances
+example : realSurface.L.evaluator.isSome = realSurface.evaluatorRuntime.isSome :=
+  realSurface.evaluator_agrees
+example : ∀ R : RP, encG2IsEip (realSurface.encG2 R) = true :=
+  realSurface.encG2_eip
+example : ∀ o : Midfall.Generator.RenderOptions, realSurface.astOfMain o =
+    match realSurface.lower o with
+    | .ok l => some l.main
+    | .error _ => none := fun _ => rfl
 end Midfall.Instances.ObligationsGates

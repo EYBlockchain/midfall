@@ -67,7 +67,7 @@
 --       one (`E vk plan params sG2gen`). P-SE-statements.md lists the 7-arg
 --       form as not typechecking, so the landed arity is used.
 --     * `tblOf` - section Q writes `tblOf S.plan S.accFixedBases`; the landed
---       projection (Surface.lean:531) takes the table alone.
+--       projection (Surface.lean:613) takes the table alone.
 --     * `S.repackProof` / `S.encodeCalldata` - stage 4 removed the three codec
 --       fields from `Surface` (Surface.lean header, deviation 2: "a free copy
 --       of a function that exists is a field the Surface can lie about"), so the
@@ -102,15 +102,37 @@
 --
 -- ## WHAT THIS FILE DELIBERATELY DOES NOT PROMISE
 --
--- A Surface whose shell is the real dispatcher (the fixture's `blk` and
--- `shell` are one-statement placeholders, so `shell_unfolds` would have nothing
--- to unfold and it is not a field); `irCheck` as alpha-equivalence modulo
+-- A Surface whose shell is the real solc dispatcher. `shell_unfolds` now EXISTS
+-- (R-58 F3, Surface.lean) and pins the shell's code block to
+-- `L.headGuard ++ bindLocals ++ L.main` by an equation, but what it pins is the shell
+-- MODEL of the entry path: a real dispatcher decodes ABI heads and tests the selector
+-- first, so when M8 imports the via-ir object the pin has to be restated as design2 had
+-- it - the verifyProof ARM runs the assembly. `irCheck` as alpha-equivalence modulo
 -- constant substitution (nameable now - the `setimmutable` and two
 -- `loadimmutable` sites are in the import and gated - but not checked here);
--- `qvm_yul_refines`; the generator half of `points_subgroup_checked`;
+-- `qvm_yul_refines`; `points_subgroup_checked` (deferred by R-58 F1, at its old site);
 -- `direct_correct` (M10); `deployed_equivalence` (M11); and the stage-1 holes
 -- `dialect_deterministic`, `noWritersFuel`, `Run_worldEq_of_noWriters`,
 -- `Evaluator.rel_worldLocal`, `honestCalls_functional`.
+--
+-- ## R-58: THE TEN FINDINGS AND WHAT THIS PACKAGE DID WITH THEM
+--
+-- F1 points_subgroup_checked: DEFERRED behind the call-trace blocker, at its old site.
+-- F2 plan_hasAccumulator, F3 shell_unfolds, F6 plan_numInstances and evaluator_agrees,
+--    G2 encG2_eip: PINS ADDED in Surface.lean, each with a fixture exhibit and a
+--    refutation, each covered by scripts/check_duplicate_facts.py.
+-- F4 SupportedS.qvm and Surface.qvmValidated: DELETED (Surface.lean deviation 4). A
+--    Prop field the fixture discharges with `trivial` is a field that cannot fail.
+-- F5 vkDigest_slot0: DROPPED - derivable from vkDigest_spec plus EnvAgrees.vkDigestWord.
+-- F7 accFixedBases_producer: the exists-a--G conjunct added, so a table with no -G row
+--    refutes the field instead of satisfying it.
+-- F8 render_eq_print: restated as the astOfMain/lower link the fixture actually meets.
+-- F9 the free `model` binder is gone from qvm_validated_noBoundsFault (the hypothesis is
+--    now `.isOk = true`); `memoryZeroAbove` and `PlanView.consts` are deleted in
+--    Surface.lean and Inv.lean; the redundant `success = 1` post of finalPairing_sound
+--    is deleted in Partials.lean.
+-- F10 EnvAgrees is added to verifier_sound and to only_two_outcomes, with the decision
+--    written at the field.
 
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Partials
@@ -176,10 +198,11 @@ def segmentsOf (plan : QuotientProgramPlan) (build : QuotientProgramBuild) : Lis
     aligned because a shifted copy would be a different point, and a subslice
     rather than an equality because one call carries several points.
 
-    Decidable, and stated as the Prop wrapper around the Bool the way Surface.lean
-    does ZeroAbove (Surface.lean:441-451): the hypothesis has to be checkable at a
-    concrete call input for a gate to exhibit it, and a bare forall cannot be
-    evaluated. The scan covers every aligned offset a full needle can start at, so
+    Decidable, and stated as the Prop wrapper around the Bool: the hypothesis has
+    to be checkable at a concrete call input for a gate to exhibit it, and a bare
+    forall cannot be evaluated. (R-58 F9 deleted the Bool sampler next to ZeroAbove
+    that this sentence used to cite, so the comparison is gone; this one is a Bool
+    because a gate reads it.) The scan covers every aligned offset a full needle can start at, so
     the Bool is not a sample of the Prop - it is the Prop. -/
 def isAlignedSubslice (needle : Bytes) (input : List UInt8) : Bool :=
   (List.range (input.length / needle.data.size + 2)).any fun k =>
@@ -187,7 +210,8 @@ def isAlignedSubslice (needle : Bytes) (input : List UInt8) : Bool :=
     off + needle.data.size <= input.length ∧
       (input.drop off).take needle.data.size = needle.data.toList
 
-/-- The proposition, as the points_subgroup_checked field consumes it. -/
+/-- The proposition, as the DEFERRED points_subgroup_checked field will consume it
+    (R-58 F1): the object and its gate stay, the field that used them does not. -/
 def IsAlignedSubslice (needle : Bytes) (input : List UInt8) : Prop :=
   isAlignedSubslice needle input = true
 
@@ -205,6 +229,7 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       (gas : ExternalGas) (obs : Obs),
       SupportedS S S.o₀ → DeploymentW S W H vkAddr qAddr →
       Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
+      EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       ZeroAbove mem₀ →
       RunVerifier S W H cd mem₀ (permissive (S.calls W product qAddr)) gas obs → obs.isReturn →
       SoundSide S H cd →
@@ -220,9 +245,20 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       (∀ obs, RunShell S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
         obs.view = returnView (callState W S.shellLayout H cd))
   /-- Only two outcomes, read-only — on the verifyProof arm (attack: the BUILD_ID()/AUTHORIZED_*
-      getters return other data). -/
+      getters return other data).
+
+      R-58 F10 added EnvAgrees here and to verifier_sound: without it both quantify
+      over Surfaces where the contract's FR_MODULUS literal and the Lean Fr p are
+      different fields, so the claim is about a deployment nobody can build. The
+      asymmetry was in the section-Q sketch too (verifier_complete carried EnvAgrees
+      and its soundness twin did not), so this is plan-inherited rather than drift -
+      decided here, and written down: every field that reasons about what the contract
+      DECIDES now carries it. Holds is deliberately NOT added: only_two_outcomes is a
+      claim about the program's outcomes under adversarial precompiles, not about what
+      a correct precompile answers. -/
   only_two_outcomes : ∀ (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (cd : Bytes) (gas : ExternalGas) (obs : Obs),
       SupportedS S S.o₀ → DeploymentW S W H vkAddr qAddr →
+      EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       bytesTake cd 0 4 = some fnSigVerifyProof →
       RunShell S W H cd (permissive (S.calls W product qAddr)) gas obs →
       obs.view = returnView (callState W S.shellLayout H cd) ∨
@@ -236,9 +272,24 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       ∀ (W : ExecEnv) (H : Hash) (cd : Bytes) (c : ExternalCalls) (g₀ : U256), c.WorldLocal →
       ObsEquiv (RunContractIR S W H ir irLyt cd c (ExternalGas.ofFun fun _ => g₀))
         (RunShell S W H cd c (ExternalGas.ofFun fun _ => g₀))
-  /-- D-P13 structural render_eq_print (R-39: the text equation is false and is dropped). -/
-  render_eq_print : ∀ o L, S.lower o = .ok L →
-      ∀ ast, S.astOfMain o = some ast → YulSemantics.SyntaxEq.stmtsBeq ast L.main = true
+  /-- D-P13, and R-58 F8. The section-Q form was
+       `forall o L, lower o = ok L -> forall ast, astOfMain o = some ast ->
+       stmtsBeq ast L.main`, and the review proved it vacuous: `lower` and `astOfMain`
+       are free Surface functions, so at the only Surface in the tree the conjunct
+       reduces to `stmtsBeq fxMain fxMain` - a self-equality - and a Surface whose
+       astOfMain returns none for every option satisfies the field by contributing no
+       instances at all. The pin below is the equation the fixture actually satisfies:
+       the AST accessor IS the main block of what the render produced, for EVERY option,
+       including the ones the render refuses. It can fail two ways and both are shown:
+       SurfaceFixture.renderEqPrintPinKats_ok refutes an accessor that answers some for
+       an option the render refuses, and ObligationsGates.renderEqPrintAtFixture_ok
+       refutes an accessor that returns a block with one statement dropped.
+       The structural equality stmtsBeq is still what the two sides are compared with
+       when they differ, and renderEqPrintStructuralKats_ok still gates it. -/
+  render_eq_print : ∀ o, S.astOfMain o =
+    match S.lower o with
+    | .ok l => some l.main
+    | .error _ => none
   /-- end_to_end_noAcc with the RHS carrying an existence conjunct (PLAN's `∀ obs` alone is vacuous
       when no run exists), the RepackError lift (attack: the two error types never met), the
       instance-length check and the modulus bound. DEVIATION: the sketch writes `S.repackProof` and
@@ -269,32 +320,58 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       signature (Qvm.lean:738), with `segmentsOf` supplying the sketch's segment quantifier. -/
   qvm_validated_noBoundsFault : ∀ (Program Layout : Type)
       (L : Midfall.Generator.LoweringPlan Program Layout)
-      (model : Midfall.Generator.QuotientValidator.QuotientOperandModel)
       (q : Midfall.Generator.PlannedQuotient),
       L.lowering = Midfall.Generator.QuotientLowering.vm →
       L.quotient = some q →
-      Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory q.build
-        q.plan.selectorFold = .ok model →
+      (Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory q.build
+        q.plan.selectorFold).isOk = true →
       Midfall.Generator.LoweringPlan.supportedQvm L →
       (∀ c ∈ q.build.consts, c.toNat < Midfall.Generator.qvmFrModulus) →
       ∀ seg ∈ segmentsOf q.plan q.build, ∀ mem f,
         Midfall.Generator.evalQuotientIdentity seg q.build.consts mem = .error f →
         (match f with | .readPastEnd _ => False | .constSlotOutOfRange _ _ => False | _ => True)
-  /-- Semantic points_subgroup_checked: every decoded G1 of an accepting run reached G1MSM/PAIRING
-      (0x0b G1ADD does NOT subgroup-check, PLAN.md:567). -/
-  points_subgroup_checked : ∀ (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (cd : Bytes) (mem₀ : Nat → UInt8) (gas : ExternalGas) (obs : Obs) ms instW,
-      SupportedS S S.o₀ → DeploymentW S W H vkAddr qAddr → ZeroAbove mem₀ →
-      RunVerifier S W H cd mem₀ (permissive (S.calls W product qAddr)) gas obs → obs.isReturn →
-      decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances S.E.g1 cd = some (ms, instW) →
-      ∀ Q, Msg.g1 Q ∈ ms → ∃ req resp, (permissive (S.calls W product qAddr)).Call req obs.state resp ∧
-        accountKey req.target ∈ ([0x0c, 0x0f] : List Nat) ∧ IsAlignedSubslice (S.E.g1.toEip Q) req.input
-  /-- Vk-dependent facts, kept here because Generator.Vk imports Instances.ExponentModel (D-P17). -/
-  vkDigest_slot0 : (S.plan.vk.constants.getD 0 ("", 0)).2 = S.vkDigest
+  -- R-58 F1: points_subgroup_checked IS DEFERRED, not repaired. The review proved its
+  -- conclusion holds unconditionally; the proof is below, as
+  -- points_subgroup_checked_conclusion_is_unconditional, and it needs no hypothesis at
+  -- all: the witness the
+  -- field asks for is an existential over (permissive (S.calls W product qAddr)), and
+  -- permissive (Bridge.lean:388) admits ANY request to ANY target provided the
+  -- response is a failure and its world is the state it was called at. So for every Q
+  -- one picks req := { target := 0x0c, input := the bytes of Q } and resp := a failed
+  -- response, and the field is satisfied whether the run made a single call or none.
+  -- The interim fix - tying the target set to the observed state - is still not a
+  -- trace: what the claim needs is that the RUN issued the call, and RunCommitted
+  -- records the final frame, not the calls made along the way. Deferred with the
+  -- call-trace blocker, exactly like the trio below; the witness objects it will
+  -- consume (segmentsOf-style: isAlignedSubslice and its KAT) are defined and gated
+  -- here so the deferral is about the missing trace, not about missing vocabulary.
+
   /-- artifacts.rs:181-227: the table is sorted by name, "-G" ↦ (P.g₁, negate := true). DEVIATION:
       `List.Sorted` is not in the built surface; `namesAscending` (Accumulator.lean:188) is stage 2's
-      substitute for the same proposition, and the dead-identifier table says to reuse it. -/
+      substitute for the same proposition, and the dead-identifier table says to reuse it.
+
+      R-58 F7 ADDED THE MIDDLE CONJUNCT. Without it the last clause is an implication
+      over an empty set at every table that lacks a "-G" row - including the empty
+      table, which is ascending, so the whole field discharged on `{ accFixedBases :=
+      #[] }`. The review demonstrated exactly that. The existence conjunct is what makes
+      the field say something about a producer: a table with no "-G" row now refutes it,
+      and the fixture carries the row (SurfaceFixture.accFixedBasesKats_ok) rather than
+      being refuted by it. -/
   accFixedBases_producer : namesAscending (S.accFixedBases.toList.map AccFixedBase.name) ∧
+      (∃ b ∈ S.accFixedBases.toList, b.name = "-G") ∧
       ∀ b ∈ S.accFixedBases.toList, b.name = "-G" → b.base = P.g₁ ∧ b.negate = true
+
+  -- R-58 F5: vkDigest_slot0 IS DROPPED, not restated. It read
+  -- `(S.plan.vk.constants.getD 0 ("", 0)).2 = S.vkDigest`, and the review showed it is
+  -- derivable from two fields that are already stated: Surface.vkDigest_spec
+  -- (vkDigest = frWord vk.transcriptRepr) and EnvAgrees.vkDigestWord
+  -- ((PV.vk.constants.getD 0 ("", 0)).2 = frWord vk.transcriptRepr). A field that
+  -- follows from two others in the same bundle is decoration, and worse, it was
+  -- decoration that could be satisfied while vkDigest_spec was pointed at a different
+  -- word. The digest-slot fact is not lost: it lives in EnvAgrees.vkDigestWord, which
+  -- every field that needs the digest already carries as a hypothesis, and the
+  -- fixture gate vkDigestSlot0_ok still exercises the projection.
+
   /-- The Exec read schedule has the layout's slot shape (Protocol ↔ Exec bridge). -/
   readScheduleAgrees : ∀ inst π ms, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
       ms.map Msg.slot = (RepackedProofLayoutPlan.fromProofLayout S.plan.proofLayout).slots
@@ -309,10 +386,11 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
     QUOTIENT_FRAME_LEN / QUOTIENT_OUTPUT_LEN / QUOTIENT_MAGIC quadruple of the
     evaluator template (Contracts.lean:384 names nineteen memory slots plus
     four frame fields), which is a P-11 `LoweringPlan` fact. The Surface has no
-    plan record, only a `PlanView`, and `PlanView` (Inv.lean:102) carries the
+    plan record, only a `PlanView`, and `PlanView` (Inv.lean:109) carries the
     counts Inv reads and nothing else.
   * `S.plan.qext` - stage 3's `PlanView` has no such field; P-11's
-    `LoweringPlan::new` is the blocker recorded at Surface.lean:193.
+    `LoweringPlan::new` is the blocker, and R-58 F4 deleted the `qvmValidated`
+    slot that used to stand here (Surface.lean header, deviation 4).
   * `perIdentityValues`, `yOf`, `outputBytes`, `frameValuation` - the sketch
     marks them SKETCH. Stage 5's QvmFold supplies the fold
     (`quotientFold`, `globalIdentities`, `evalExprρ`) but not a valuation read
@@ -333,9 +411,43 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   the Surface's own `proofLayout`, `numInstances` and `E.g1`, which is where a
   wrong layout or codec would show up as a statement that does not compose.
 
-  `shell_unfolds` is not in section Q's structure and is not stated here: the
-  fixture's `shell` and `blk` are one-statement placeholders, so there is
-  nothing for it to unfold into. -/
+  `shell_unfolds` is not a LoweringCorrect field and never was: it is a SURFACE pin,
+  added at R-58 F3 (Surface.lean). Stage 4 declined it because the fixture's shell is a
+  placeholder with nothing to unfold into, which inverted the point - the equation is
+  exactly what makes the placeholder honest, and without it RunShell, RunVerifier and
+  RunContractIR were three unrelated programs.
+
+  R-58 F1 and F5 removed two fields from this structure and both removals are recorded
+  at their old sites rather than left silent: `points_subgroup_checked` is deferred
+  behind the call-trace blocker (its conclusion held unconditionally), and
+  `vkDigest_slot0` is dropped as derivable from two other stated pins.
+  `isAlignedSubslice` and its KAT stay: they are the witness shape the deferred field
+  will consume, and a defined, gated object is not the same thing as a decorative one. -/
+
+/-- R-58 F1 EVIDENCE, proved rather than argued: the deferred field's conclusion is
+    derivable from the SHAPE of `permissive` alone, with no run, no snapshot, no
+    decode and no hypothesis at all. For any call relation, any state and any point
+    encoding, there is a request to 0x0c whose input carries the encoding at offset 0
+    (so it is aligned) and a response `permissive` accepts because it is a failure.
+    That is exactly the vacuity the review demonstrated, now with a proof: the field
+    could not fail, so it is deferred until the run relation carries the call trace the
+    claim needs - a trace of the calls the RUN made, which `RunCommitted` does not
+    record. The interim fix (constrain the target set, or require the response to
+    succeed) still would not say the program issued the call, so it is not shipped
+    either. -/
+theorem points_subgroup_checked_conclusion_is_unconditional
+    (c : ExternalCalls) (st : EvmState) (needle : Bytes) :
+    ∃ req resp, (Midfall.Yul.Bridge.permissive c).Call req st resp ∧
+      accountKey req.target ∈ ([0x0c, 0x0f] : List Nat) ∧
+      IsAlignedSubslice needle req.input := by
+  refine ⟨YulSemantics.EVM.CallRequest.mk .staticcall 0 0x0c 0 needle.data.toList,
+    Midfall.Yul.Bridge.failResp st, ⟨rfl, fun h => absurd h Bool.noConfusion⟩, ?_, ?_⟩
+  · show accountKey (0x0c : U256) ∈ ([0x0c, 0x0f] : List Nat)
+    decide
+  · unfold IsAlignedSubslice isAlignedSubslice
+    rw [List.any_eq_true]
+    refine ⟨0, by simp [List.mem_range], ?_⟩
+    simp
 
 /-! ### The derived headline theorems -/
 
@@ -343,22 +455,37 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
     view-level) and shell_unfolds, completeness via ir_refines on both conjuncts, the two-outcome
     conjunct via ir_refines. Hypotheses are the union of the fields'.
 
-    STATED WITH A LIVE HYPOTHESIS, which is the required finding: `hc.ir_refines`
-    is no longer an implication from an unsatisfiable antecedent -
-    Instances/ImportedIR.lean exhibits a committed `RunContractIR` of the
-    imported solc runtime for every call relation and every gas oracle, and
-    proves the run ends in a revert with the free pointer at the artifact's
-    0x80. What stands between this statement and a proof: (i) the shell side has
-    to be the real dispatcher, and no Surface in the tree has one - the fixture's
-    `shell` is a placeholder, so `RunShell` runs a program that is not the
-    contract; (ii) `ObsEquiv` is a biconditional over view existence, and
-    transporting `obs.isReturn` and `obs.returnData = abiTrue` through it needs
-    the view-level lemmas about `Obs.view` that Bridge.lean does not yet have;
-    (iii) the run-transport itself needs `dialect_deterministic` and
-    `noWritersFuel`, both stage-1 holes; (iv) `irCheck` is the decidable
-    fragment (unresolved-call and memoryguard screening), not alpha-equivalence
-    modulo constant substitution, so the field's hypothesis is weaker than the
-    theorem would need for a real artifact. -/
+    STATED WITH A LIVE HYPOTHESIS: `hc.ir_refines` is no longer an implication from
+    an unsatisfiable antecedent - Instances/ImportedIR.lean exhibits a committed
+    `RunContractIR` of the imported solc runtime for every call relation and every
+    gas oracle, and proves the run ends in a revert with the free pointer at the
+    artifact's 0x80.
+
+    THE REQUIRED FINDING, ANSWERED AFTER THE PINS LANDED. The sketch hint ("provable
+    now - transport each field through hc.ir_refines") was FALSE as written, and R-58
+    F3 said why: nothing linked the shell to the assembly, so `hc.verifier_sound` was
+    a claim about `L.headGuard ++ bindLocals ++ L.main` while the conclusion is a
+    claim about `shell.codeBlock`, and no hypothesis connected them. `shell_unfolds`
+    closes THAT half, and it closes it completely: with the equation, RunShell's
+    program is literally RunVerifier's program, and `callState W Lyt H cd` is by
+    definition `initState W Lyt H cd (fun _ => 0)`, which satisfies ZeroAbove. So
+    "verifier_sound plus shell_unfolds gives shell soundness" is now a derivation
+    rather than a hope, and the field bundle finally says one thing about one program.
+
+    What still stands between this statement and a proof, all of it on the IR side:
+    (i) `ir_refines` concludes an `ObsEquiv`, a biconditional over VIEW existence;
+    transporting `obs.isReturn` and `obs.returnData = abiTrue` from one side of it to
+    the other needs the view-level lemmas about `Obs.view` that Bridge.lean does not
+    have - existence of a run with a view is not uniqueness of the outcome, and that
+    is also where (ii) bites: the run transport needs `dialect_deterministic` and
+    `noWritersFuel`, both stage-1 holes; (iii) `irCheck` is the decidable fragment
+    (unresolved-call and memoryguard screening), not alpha-equivalence modulo constant
+    substitution, so `hir : S.irCheck ir = true` does not say the imported object is
+    the contract; and (iv) `shell_unfolds` pins the shell MODEL, whose code block is
+    the assembly with no dispatcher in front of it, so the theorem's shell is not the
+    deployed entry path until M8 restates the pin as "the verifyProof arm runs the
+    assembly". In short: statable, with a live hypothesis, and NOT yet provable - the
+    remaining gap is the IR-to-shell simulation, not the shell-to-verifier link. -/
 theorem lowering_equivalence (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (hc : LoweringCorrect S product) (hsup : SupportedS S S.o₀)
     (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (hdep : DeploymentW S W H vkAddr qAddr)
@@ -462,7 +589,7 @@ theorem verifyNative_iff_msgs_codec (E : VerifierEnv p G₁ G₂ Gₜ) (F : Feat
   generator and the dialect, so it can live in a file that states theorems. The
   exhibits that need a pairing model - `SupportedS realSurface realSurface.o₀`,
   the `astOfMain` isSome gate, the trace-render refutation of
-  `only_two_outcomes`, the `vkDigest_slot0` projection, and the imported-IR
+  `only_two_outcomes`, the digest-slot projection, and the imported-IR
   inhabitation of `ir_refines` - are in
   `Midfall/Instances/ObligationsGates.lean`, which REUSES stage 4's
   `supportedInhabited` / `supportedRefutedForTraceRender` and P-IR's

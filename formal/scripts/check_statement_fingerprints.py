@@ -19,23 +19,38 @@ from pathlib import Path
 FINGERPRINTS = [
     ("verifier_sound", ["ZeroAbove mem", "SoundSide S H cd",
         "obs.returnData = abiTrue", "LeanAccepts S H cd", "SupportedS S S.o",
-        "DeploymentW S W H vkAddr qAddr", "Eip2537.Holds"]),
+        "DeploymentW S W H vkAddr qAddr", "Eip2537.Holds",
+        "EnvAgrees S.E S.vk S.plan S.params S.sG2gen"]),
     ("verifier_complete", ["CompleteSide S H cd", "EnvAgrees", "G1CodecLaws",
         "LeanAccepts S H cd", "returnView (callState"]),
     ("only_two_outcomes", ["fnSigVerifyProof", "obs.isRevertOrHalt",
-        "obs.worldUnchanged", "returnView (callState"]),
+        "obs.worldUnchanged", "returnView (callState",
+        "EnvAgrees S.E S.vk S.plan S.params S.sG2gen"]),
     ("ir_refines", ["S.irCheck ir = true", "WorldLocal", "ObsEquiv",
         "RunContractIR", "RunShell"]),
-    ("render_eq_print", ["SyntaxEq.stmtsBeq", "S.astOfMain o = some ast", "L.main"]),
+    ("render_eq_print", ["S.astOfMain o =", "match S.lower o with",
+        "some l.main", ".error _ => none"]),
     ("end_to_end_noAcc", ["S.cfg.accumulator = none",
         "inst.size = S.cfg.numInstances", "fromRepackError", "verifyNative",
         "repackProof", "encodeCalldata", "RunContractIR"]),
     ("lowering_equivalence", ["RunContractIR", "obs.isReturn",
         "obs.returnData = abiTrue", "LeanAccepts S H cd",
         "S.irCheck ir = true", "\u2203 obs"]),
-    ("qvm_validated_noBoundsFault", ["readPastEnd", "constSlotOutOfRange"]),
-    ("points_subgroup_checked", ["IsAlignedSubslice"]),
-    ("accFixedBases_producer", [chr(34) + "-G" + chr(34), "negate = true"]),
+    ("qvm_validated_noBoundsFault", ["readPastEnd", "constSlotOutOfRange",
+        "quotientOperandModel", ").isOk = true"]),
+    ("accFixedBases_producer", [chr(34) + "-G" + chr(34), "negate = true",
+        "\u2203 b \u2208 S.accFixedBases.toList", "namesAscending"]),
+]
+# R-58 also added pin FIELDS to the Surface record. Those are statements too, and the
+# duplicate-fact gate only checks that they exist and name both sides - it does not
+# notice a paraphrase that keeps the two names and drops the equation. These fragments
+# pin the shape of each pin, in the file that declares them.
+SURFACE_PINS = [
+    ("shell_unfolds", ["shell.codeBlock =", "L.headGuard ++ bindLocals ++ L.main"]),
+    ("plan_hasAccumulator", ["plan.hasAccumulator =", "cfg.accumulator.isSome"]),
+    ("plan_numInstances", ["plan.numInstances =", "cfg.numInstances"]),
+    ("evaluator_agrees", ["L.evaluator.isSome =", "evaluatorRuntime.isSome"]),
+    ("encG2_eip", ["\u2200 R : G\u2082", "encG2IsEip (encG2 R) = true"]),
 ]
 
 WS = re.compile(r"\s+")
@@ -49,7 +64,10 @@ def norm(s):
 
 def field_text(body, field):
     lines = body.splitlines()
-    pat = re.compile(DECL.pattern + re.escape(field) + r"\b")
+    # The name must be FOLLOWED by a colon (a structure field) or by "("
+    # (a theorem with binders), not by prose: "shell_unfolds below now states"
+    # in a doc comment is not the shell_unfolds field.
+    pat = re.compile(DECL.pattern + re.escape(field) + r"\s*(?::|\()")
     start = None
     for i, ln in enumerate(lines):
         if pat.match(ln):
@@ -91,13 +109,29 @@ def main():
             checked += 1
             if norm(f) not in text:
                 problems.append(field + ": missing fragment " + repr(f))
+    surf = root / "Midfall/Lowering/Surface.lean"
+    if not surf.exists():
+        problems.append("Surface.lean missing: %s" % surf)
+    else:
+        sbody = surf.read_text(encoding="utf-8")
+        for field, frags in SURFACE_PINS:
+            text = field_text(sbody, field)
+            if not text:
+                problems.append("Surface." + field + ": PIN FIELD NOT FOUND")
+                continue
+            for f in frags:
+                checked += 1
+                if norm(f) not in text:
+                    problems.append("Surface." + field + ": missing fragment "
+                                    + repr(f))
     if problems:
         print("STATEMENT FINGERPRINTS BROKEN (%d):" % len(problems))
         for p in problems:
             print("  " + p)
         return 1
-    print("ok: %d statement fragments present across %d LoweringCorrect fields"
-          % (checked, len(FINGERPRINTS)))
+    print("ok: %d statement fragments present across %d LoweringCorrect fields "
+          "and %d Surface pins"
+          % (checked, len(FINGERPRINTS), len(SURFACE_PINS)))
     return 0
 
 

@@ -3,7 +3,7 @@
 --
 -- P-IR (docs/plans/P-IR-import.md) hazard 3: RUNCONTRACTIR HAS A WITNESS.
 --
--- Midfall.Lowering.RunContractIR (Lowering/Surface.lean:483) takes a Surface, a world, a hash,
+-- Midfall.Lowering.RunContractIR (Lowering/Surface.lean:565) takes a Surface, a world, a hash,
 -- an imported solc object, a layout, calldata, a call relation and a gas oracle, and asks for a
 -- committed run of the object's runtime block. Stage 4 could not exhibit one - not because the
 -- run was hard, but because the imported object did not exist and, before P-VEND, the very first

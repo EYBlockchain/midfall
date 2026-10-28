@@ -72,6 +72,18 @@ echo '== LoweringCorrect statement fingerprints =='
 # dropping the selector conjunct) all built clean with every gate green. This is the only
 # automated defence against weakening a headline statement silently.
 python3 scripts/check_statement_fingerprints.py || exit 1
+echo '== duplicated-fact pins =='
+# R-58's root cause: PlanView, Surface, LoweringPlan and GeneratorConfig each carry a
+# COPY of a fact the Rust derives once - hasAccumulator, numInstances, the evaluator,
+# encG2, the quotient/direct pair, the shell program - and a copy with no pin between
+# the two sides is a free variable the reviewer demonstrated discharging 11 of 13
+# PartialSpecs fields on a one-Bool lie. This gate asserts each such fact is either
+# single-copy or has a named pin field mentioning BOTH sides, and that the carriers
+# themselves have not been renamed or deleted. It is a dependency-structure gate: the
+# fingerprint gate above pins text fragments and demonstrably let F1, F7 and F8
+# through, and neither gate is a meaning check - only a proof is one.
+python3 scripts/check_duplicate_facts.py || exit 1
+
 echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean

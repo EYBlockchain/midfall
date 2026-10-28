@@ -15,8 +15,8 @@
 -- P-SE may not edit it, so the real ones are SupportedS and DeploymentW - the naming
 -- choice design2 hazard 8 records.
 --
--- THREE DELIBERATE DEVIATIONS FROM THE DESIGN SKETCHES, each forced by attack.md
--- rather than chosen for convenience:
+-- FOUR DELIBERATE DEVIATIONS FROM THE DESIGN SKETCHES: the first three were forced
+-- by attack.md rather than chosen for convenience, and the fourth is the R-58 repair.
 --
 --   1. THERE IS NO Supported FIELD ON THE RECORD. design2 carried
 --      "Supported : RenderOptions -> Prop" as data, and attack.md marks the whole
@@ -26,7 +26,8 @@
 --      SupportedS is a STRUCTURE OVER REAL SURFACE DATA - vk, cfg, plan, E, the
 --      render options - so the only way to make it unsatisfiable is to make the
 --      verifier itself unsatisfiable, which is the point. The one abstract slot that
---      survives is qvmValidated, named as the field the QVM area owns.
+--      survives was qvmValidated, named as the field the QVM area owns; R-58 F4
+--      deletes it (see deviation 4).
 --
 --   2. THERE ARE NO CODEC FIELDS. design2 carried repackProof, encodeCalldata and
 --      decodeCalldata as Surface data because P-12 had not landed. It has:
@@ -37,22 +38,42 @@
 --      in this package consumes. So LeanAccepts calls the real decoder, and the three
 --      fields plus their three pins are absent. Reported, not hidden.
 --
---   3. hoisted, render, print, shell_unfolds, EvaluatorFrame, FrameWellFormed and
---      tokenBase are ABSENT. hoisted duplicates what mainScope derives from S.L.main
---      (design0: hoisted funs = hoist S.main :: outer), so one of the two is
+--   3. hoisted, render, print, EvaluatorFrame, FrameWellFormed and tokenBase are
+--      ABSENT, and shell_unfolds - absent when stage 4 landed - NOW EXISTS as a real
+--      equation (R-58 F3, deviation 4 below). hoisted duplicates what mainScope
+--      derives from S.L.main (design0: hoisted funs = hoist S.main :: outer), so
+--      one of the two is
 --      decoration. render and print exist only for render_eq_print, whose text
 --      conjunct attack.md proves FALSE under a pretty-printer and TAUTOLOGICAL under
 --      print defined as whatever render emits; the surviving conjunct needs stmtsBeq,
 --      which is cited in Generator/Templates.lean prose as the authoritative AST
 --      equality (D-P13) but has NO declaration anywhere in the tree - grep for
---      "def stmtsBeq" is empty, so the conjunct cannot be written yet. shell_unfolds is
---      True in the sketch, and attack.md rejects "countdown_or_halt : True := trivial"
---      as a pattern. EvaluatorFrame and FrameWellFormed need a quotient frame length on
---      PlanView (sketch name qext), which stage 3 did not define because nothing in
+--      "def stmtsBeq" is empty, so the conjunct cannot be written yet - and R-58 F8
+--      shows the surviving conjunct was itself a vacuity, so render_eq_print is now the
+--      astOfMain/lower link instead (Obligations.lean). EvaluatorFrame and
+--      FrameWellFormed need a quotient frame length on PlanView (sketch name qext),
+--      which stage 3 did not define because nothing in
 --      Exec exposes one; the QVM area has tokenBases (LoweringPlan.lean:1216) over
 --      QuotientMem, which is a different object from the sketch's
 --      tokenBase : VerifierMemoryLayout -> Nat -> Nat. Each is reported in the stage-4
 --      findings as a sketch name that does not resolve.
+--
+--   4. R-58 (docs/REVIEW.md) found that the record still carried COPIES of facts the
+--      Rust derives once with nothing relating them, which is the vacuity class in the
+--      generalisation at the end of that entry. Five pin fields are added below, each
+--      named plan_*, evaluator_agrees, encG2_eip or shell_unfolds so a gate can find
+--      them: shell_unfolds (F3, the pin that makes RunShell and RunVerifier be about
+--      ONE program - without it the lowering_equivalence sketch hint was false as
+--      written), plan_hasAccumulator (F2, hasAccumulator was a free Bool, so 11 of the
+--      13 PartialSpecs fields discharged on a one-Bool lie), plan_numInstances and
+--      evaluator_agrees (F6, the same class twice more), and encG2_eip (G2, which pins
+--      the abstract G2 encoder to the EIP-2537 validator instead of letting it be any
+--      function at all). qvmValidated is DELETED (F4): a Prop field no Surface
+--      construction can fail is decoration, and the QVM obligation that can fail is
+--      LoweringCorrect.qvm_validated_noBoundsFault, which quantifies over a real
+--      LoweringPlan and its real validator. scripts/check_duplicate_facts.py is the
+--      gate against the class: it asserts each copied fact is either single or has a
+--      named pin mentioning both sides.
 --
 -- THE BLOCKER, DECIDED RATHER THAN WORKED AROUND: memguard. attack FIX 32 requires
 -- DeploymentW to bound the free-memory pointer, and D-P15 records that memoryguard
@@ -104,6 +125,18 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ### The surface -/
 
+/-- An EIP-2537 G2 encoding: 256 bytes that decode to a point PAIRING_CHECK accepts.
+    Decidable, and it is the only thing the abstract encoder can be pinned to without a
+    G2 codec in Common (there is none: the generator goes through VkPointCodecs, which
+    sits behind Instances/ExponentModel - D-P17). The all-zero 256-byte word is the
+    EIP-2537 infinity encoding and passes; the empty byte string - what the fixture
+    used before R-58 G2 - does not, and encG2Kats_ok pins both halves. -/
+def encG2IsEip (b : Bytes) : Bool :=
+  b.size = Midfall.Yul.g2Bytes &&
+    match g2Of? b with
+    | some pt => g2PointValid pt
+    | none => false
+
 /-- Everything PLAN 9.5 names that the port does not produce yet, as DATA over the
     types that do exist, plus the two pins that keep the obligations above it from
     being vacuous (P-SE decision D2): o0, the render options the lowered program came
@@ -153,7 +186,16 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       substitution rewrites free Solidity constants into literals, and an unbounded
       walk over a generated block is not something to trust). -/
   bindLocals : YulBlock
-  /-- The shell model: the solc dispatcher wrapping headGuard ++ bindLocals ++ main. -/
+  /-- The shell model. Before R-58 F3 the doc said "the solc dispatcher wrapping
+      headGuard ++ bindLocals ++ main", and nothing in the tree made that true: the
+      shell was a free YulObject and shell.codeBlock occurred at exactly one site, so
+      RunShell, RunVerifier and RunContractIR were about three unrelated programs.
+      shell_unfolds below now states the wrapping as an equality, which is what every
+      Surface in the tree actually is - a MODEL of the entry path, not the dispatcher.
+      A real solc dispatcher does not satisfy the equality (it decodes ABI heads and
+      tests the selector first), so when M8 imports the via-ir object this pin must be
+      restated as design2 had it: the verifyProof ARM of shell runs headGuard ++
+      bindLocals ++ main from the dispatcher memory. Recorded, not hidden. -/
   shell : YulObject
   /-- The shell runtime layout: code, the data maps, and the immutable map that
       loadimmutable reads (EVMExec.lean:793 routes it through env.immutable, which is
@@ -190,12 +232,6 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
   expectedVkCodehash : Option Word256
   quotientRuntime : Option Bytes
   expectedQuotientCodehash : Option Word256
-  /-- The QVM validator slot. P-09e owns the validator; the decidable predicate that
-      exists (LoweringPlan.supportedQvm, LoweringPlan.lean:740) needs a LoweringPlan,
-      and the reference builds one only through LoweringPlan::new, whose memory-layout
-      constructor this tree declined (LoweringPlan.lean header). So the slot is named
-      rather than faked, and the fixture says what it puts in it. -/
-  qvmValidated : Prop
   -- pins: hypotheses about the data above, not new data
   /-- The link that makes vkDigest the contract word rather than a free literal.
       Discharged by feToU256_frToRepr (Lowering/VkDigest.lean:69) once the digest is
@@ -233,6 +269,60 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       blk .quotientLin plan ++ blk .pcs plan ++ blk .finalPairing plan ++
       blk .traceReturn plan
 
+  /-- R-58 F3, THE PIN THAT MAKES THE THREE RUN RELATIONS BE ABOUT ONE PROGRAM.
+      RunVerifier runs L.headGuard ++ bindLocals ++ L.main, RunShell runs
+      shell.codeBlock, and before this field nothing related them: shell.codeBlock
+      occurs at exactly one site in the tree, so a Surface could hand RunShell any
+      program at all and every field of LoweringCorrect that mentions a shell run was
+      about a program no render emits - which is why the lowering_equivalence sketch
+      hint ("transport each field through hc.ir_refines") was FALSE as written.
+      With this equation the two runs differ only in the entry memory: callState is
+      initState at (fun _ => 0), so a shell run is a verifier run at zeroed memory.
+      Stated as an equality rather than as the sketch's True, which attack.md rejects
+      as a pattern (countdown_or_halt : True := trivial). It can fail: the fixture
+      exhibits it and SurfaceFixture.shellPinsKats_ok shows that a shell whose code
+      block is only the main block refutes it. See the shell field for why the equality is the right
+      form for a MODEL and what M8 has to restate it to. -/
+  shell_unfolds : shell.codeBlock = L.headGuard ++ bindLocals ++ L.main
+
+  /-- R-58 F2, the free Bool. PlanView.hasAccumulator is a copy of a fact the Rust
+      derives once: expected_has_accumulator IS accEncoding.isSome (Vk.lean:782 renders
+      the header word as "if inputs.accEncoding.isSome then 1 else 0"). Nothing in the
+      tree compared the copy to the source, so Inv .vk's (PV.hasAccumulator == false ||
+      S.acc.isSome) and Inv .pairing's (PV.hasAccumulator == true || DualMSM.check ...)
+      could both be steered by a one-Bool lie, and every PartialSpecs field that takes
+      hacc : S.plan.hasAccumulator = false discharged on it - the copy, not the
+      configuration, decided whether the no-accumulator arm was available. -/
+  plan_hasAccumulator : plan.hasAccumulator = cfg.accumulator.isSome
+
+  /-- R-58 F6, first half. PlanView.numInstances is Inv's copy of the calldata tail
+      length (the .vk clause of Inv uses it for the calldata envelope) and cfg.numInstances is the
+      generator's; decodeCalldata is called with the cfg one and Inv with the plan one,
+      so an unequal pair describes a verifier whose decoder and memory invariant
+      disagree about how many instance words the calldata carries. -/
+  plan_numInstances : plan.numInstances = cfg.numInstances
+
+  /-- R-58 F6, second half: the dead/live evaluator pair. Lowered.evaluator is the
+      render's Option YulObject and Surface.evaluatorRuntime is the deployment's
+      Option (YulBlock x EVM.Layout) that Surface.calls actually answers with; nothing
+      read L.evaluator at all, so a render that externalised no evaluator could still
+      deploy one (and the reverse). The types differ - the layout is a deployment fact,
+      not part of the object - so this is stated as the isSome agreement, which is the
+      half that is nameable today. The full derivation of the block and the layout from
+      the object waits on the P-13 AST emitter. -/
+  evaluator_agrees : L.evaluator.isSome = evaluatorRuntime.isSome
+
+  /-- R-58 G2: encG2 is an abstract G2 -> Bytes function, and Eip2537.Holds is stated
+      over it (its g2Valid clause is exactly this claim, one forall higher), so an
+      unconstrained encoder makes every Holds hypothesis unsatisfiable and every field
+      that carries one vacuous. The fixture had encG2 := fun _ => Bytes.empty, which
+      fails encG2IsEip, so NO Holds was satisfiable at the only Surface in the tree.
+      This pin is the half that is nameable without a G2 codec in Common: the encoder
+      must return EIP-2537-shaped, precompile-valid bytes for every point. The stronger
+      form - that encG2 P.g₂ is the 256 bytes the render embeds at the G2_BASE slot -
+      needs the header slot layout from the P-11 plan, which PlanView does not carry. -/
+  encG2_eip : ∀ R : G₂, encG2IsEip (encG2 R) = true
+
 /-! ### Supported -/
 
 /-- The codec-side readability of one embedded G1 point, factored out so the forall in
@@ -249,7 +339,10 @@ def ptReadable (b : Bytes) : Prop :=
     LayoutMemory.lean:869 decides them for the poseidon layout.
 
     What is NOT here, with the reason:
-    * PLAN qvm is S.qvmValidated, an abstract Prop, for the reason given at the field.
+    * PLAN qvm is ABSENT (R-58 F4). It was S.qvmValidated, a Prop field the fixture
+      discharged with True, i.e. a field no Surface could fail. The QVM obligation that
+      can fail is LoweringCorrect.qvm_validated_noBoundsFault, which quantifies over a
+      real LoweringPlan and the real LoweringPlan.supportedQvm validator.
     * The column-count arithmetic is stated through vk.cs and cfg rather than through
       the plan, because PlanView carries only the counts Inv reads.
     * instShape carries numCommittedInstances = 1 as well as two instance columns: the
@@ -283,8 +376,6 @@ structure SupportedS (S : Surface p G₁ G₂ Gₜ) (o : RenderOptions) : Prop w
     ptReadable (S.E.g1.toEip C)
   /-- D-P18, both halves, not the half LoweringPlan.lean:748 can state. -/
   layout : S.plan.memory.map.WellFormed ∧ S.plan.memory.validate.isOk = true
-  /-- The QVM validator, as an abstract slot. -/
-  qvm : S.qvmValidated
   /-- Production renders only: a trace render emits log1 (TraceAndGasHelpers.yul:20-22)
       and returns iszero(iszero(success)) instead of reverting, which refutes
       traceReturn_spec and only_two_outcomes. -/
@@ -435,19 +526,12 @@ def callState (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (cd : Bytes) : EvmStat
     the counterexample in attack.md is a caller that left a non-identity
     committed-instance commitment in the g1_identity window.
 
-    Bool-valued with the Prop as the wrapper, the way stage 3 made Inv decidable: the
-    hypothesis has to be checkable at a concrete memory for the fixture to exhibit it,
-    and a bare forall cannot be evaluated. -/
-def memoryZeroAbove (mem₀ : Nat → UInt8) : Bool :=
-  (fun a => mem₀ a == 0) 0x80 && (fun a => mem₀ a == 0) 0x1000 &&
-    (fun a => mem₀ a == 0) 0x2000 && (fun a => mem₀ a == 0) 0x4000
-
-/-- The proposition. Note what the Bool checks and what the Prop means: the four
-    addresses are the ones any statement in this package can name (0x80 the bound
-    itself, 0x1000 TRANSCRIPT_MPTR, 0x2000 the VK payload, 0x4000 the reference
-    synthetic layout top), so the gate is a sample rather than a decision procedure.
-    A theorem that needs the full forall takes ZeroAbove, and only the fixture can
-    show the sample is not the whole claim. -/
+    R-58 F9 deleted the Bool-valued sampler that used to sit here
+    (memoryZeroAbove, four addresses plus a KAT). Nothing consumed it: every theorem
+    takes the Prop below, so the sample was decoration and its gate was a gate about
+    the sample, not about the hypothesis. ZeroAbove stays a Prop because it IS the
+    hypothesis, and a decidable stand-in for a forall over all memory would be a
+    different and weaker claim, not a check of this one. -/
 def ZeroAbove (mem₀ : Nat → UInt8) : Prop := ∀ a, 0x80 ≤ a → mem₀ a = 0
 
 /-- The call relation of a deployment: the honest precompiles, plus the quotient
@@ -625,21 +709,21 @@ def initStateKats_ok : Bool :=
 
 #eval initStateKats_ok                    -- expect true
 
-/-- memoryZeroAbove is about the window the verifier reads, not about the whole address
-    space: the dispatcher is allowed to have written below 0x80, and a memory that is
-    zero everywhere is a stronger hypothesis than the attack states. The second line
-    is the refutation of a bound written at 0x00 instead of 0x80, and the third shows
-    the sample reaches the addresses the verifier actually uses. -/
-def zeroAboveKats_ok : Bool :=
-  memoryZeroAbove (fun _ => 0) &&
-    ! memoryZeroAbove (fun a => if a == 0x80 then 1 else 0) &&
-    ! memoryZeroAbove (fun a => if a == 0x2000 then 1 else 0) &&
-    memoryZeroAbove (fun a => if a < 0x80 then 0xff else 0) &&
-    -- and the sampled addresses are the ones the def comment names, so a dropped
-    -- sample is visible rather than silent
-    (fun m => memoryZeroAbove m) (fun a => if a == 0x1000 then 1 else 0) == false
+/-- encG2IsEip is a decision about the encoder, not a formality: the EIP-2537 infinity
+    encoding (256 zero bytes) passes, the empty byte string fails on the width alone,
+    and a 256-byte string that is not a valid encoding fails on the second clause.
+    The second line is the R-58 G2 perturbation: the value the fixture used before
+    this pin existed refutes it, so the pin is not satisfied by whatever the encoder
+    happens to return. -/
+def encG2Kats_ok : Bool :=
+  encG2IsEip (bytesZero Midfall.Yul.g2Bytes) &&
+    ! encG2IsEip Midfall.Bytes.empty &&
+    ! encG2IsEip (bytesZero (Midfall.Yul.g2Bytes - 32)) &&
+    -- right width, garbage coordinates: the decode/validity half, not the width half
+    ! encG2IsEip (bytesAppend (bytesZero 64) (bytesReplicate 192 (UInt8.ofNat 0xff))) &&
+    Midfall.Yul.g2Bytes == 0x100
 
-#eval zeroAboveKats_ok                    -- expect true
+#eval encG2Kats_ok                        -- expect true
 
 /-- The immutable key the deployment pins is the string-literal encoding of the
     Solidity name, not the name itself: loadimmutable reads env.immutable at

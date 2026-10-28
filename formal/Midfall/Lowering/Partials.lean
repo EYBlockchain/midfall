@@ -289,8 +289,16 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
       snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap →
-      PartialSound S .finalPairing Snap calls gas (calldataPre S cd)
-        (fun V' _ => VEnv.get V' "success" = some 1)
+      PartialSound S .finalPairing Snap calls gas (calldataPre S cd) (fun _ _ => True)
+      -- R-58 F9: this post used to carry an extra conjunct, the claim that the
+      -- success local is 1 after the block returns. It is implied by the post
+      -- invariant itself: finalPairing's post checkpoint is .pairing, and Inv
+      -- .pairing IS the clause (VEnv.get V "success" == some 1) plus the rest, so
+      -- the conjunct could never fail independently of the invariant it sits next to
+      -- - the decorative class. The fact is still asserted, once, where it belongs.
+      -- the progress twin keeps its success = 1 entry condition on the PRE, where
+      -- nothing implies it and where it is what makes the no-revert claim need the
+      -- pairing check as a hypothesis.
   /-- traceReturn establishes no invariant, so its post is the halt record: return
       (RETURN_MPTR, 0x20) with the word 1 in it (TraceReturn.yul:70-72). -/
   traceReturn_sound : ∀ (H : Hash) (calls : ExternalCalls)
@@ -526,8 +534,9 @@ theorem finalPairing_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       S.E.g1 cd = some (ms, instW))
     (hinst : instOfWords? (p := p) instW = some inst)
     (hsnap : snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap) :
-    PartialSound S .finalPairing Snap calls gas (calldataPre S cd)
-      (fun V' _ => VEnv.get V' "success" = some 1) := by
+    PartialSound S .finalPairing Snap calls gas (calldataPre S cd) (fun _ _ => True) := by
+    -- R-58 F9: the success = 1 post conjunct is dropped here too, for the reason at
+    -- PartialSpecs.finalPairing_sound: Inv .pairing already asserts it.
   sorry
 
 /-- The progress twin: with the pairing check passing and the honest fold answering,

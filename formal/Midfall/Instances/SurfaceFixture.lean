@@ -24,11 +24,21 @@
 --
 -- WHAT THE FIXTURE DOES NOT EXERCISE, stated rather than glossed:
 --
---   1. qvmValidated is True. The decidable QVM predicate that exists
---      (LoweringPlan.supportedQvm) needs a LoweringPlan, and the reference builds one
---      only through LoweringPlan::new, whose memory-layout constructor this tree
---      declined (LoweringPlan.lean header). So SupportedS.qvm is the one field the
---      exhibit discharges trivially, and the one field the QVM area still owns.
+--   1. R-58 F4 DELETED the qvmValidated slot this note used to describe. It was
+--      True here, which is exactly the defect: a Prop field the only Surface in the
+--      tree discharges with `trivial` is a field that cannot fail. The QVM
+--      obligation that CAN fail is LoweringCorrect.qvm_validated_noBoundsFault,
+--      which quantifies over a real LoweringPlan and LoweringPlan.supportedQvm.
+--
+--   6. R-58 added five pin fields to Surface - shell_unfolds, plan_hasAccumulator,
+--      plan_numInstances, evaluator_agrees, encG2_eip - and this fixture meets all
+--      five. Four are rfl, because the fixture was built so that the shell, the
+--      plan, the render and the deployment agree by construction; encG2_eip needed
+--      the encoder itself changed, from `fun _ => Bytes.empty` to the EIP-2537
+--      infinity encoding, and THAT is the pin doing its job: the old fixture could
+--      not be written. shellPinsKats_ok, planPinsKats_ok, encG2AtFixture_ok and
+--      accFixedBasesKats_ok below give each pin its refutation, because a pin that
+--      only ever meets one fixture is how we got here (R-41).
 --   2. cfg.accumulator is none, so SupportedS.acc is vacuous in the exhibit. The
 --      accumulator arm needs a Generator AccumulatorEncoding whose validate passes,
 --      which is D-P16 territory and is exercised in Lowering/AccEncoding.lean.
@@ -134,7 +144,7 @@ def fxPlan : PlanView :=
     memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout,
     proofLayout := Midfall.Generator.poseidonProofLayout,
     numInstances := 1, k := 2, numNegLagranges := 2,
-    hasAccumulator := false, consts := templateConstantsDefault }
+    hasAccumulator := false }
 
 /-! ### The seven placeholder blocks -/
 
@@ -317,6 +327,15 @@ def fxOptionsTrace : RenderOptions :=
     quotientLowering := QuotientLowering.vm,
     diagnostics := { trace := true, gasCheckpoints := false }, provenance := none }
 
+/-- A gas-checkpoint render with trace OFF. This is the option that distinguishes the
+    two shapes of astOfMain: the old one keyed only on `trace`, so it answered
+    `some fxMain` here while `fxLower` refuses, and render_eq_print is exactly the
+    equation that catches it. -/
+def fxOptionsGas : RenderOptions :=
+  { vk := RenderVk.embedded, quotient := RenderQuotient.inline,
+    quotientLowering := QuotientLowering.vm,
+    diagnostics := { trace := false, gasCheckpoints := true }, provenance := none }
+
 /-- The world the verifier is deployed into, before the codehash projection. -/
 def fxW0 : ExecEnv :=
   { keccakOf := hashOfBytes keccak256
@@ -343,20 +362,48 @@ def fxW : ExecEnv :=
 def realSurface : Surface rp RP RP RP :=
   { E := fxE, params := fxParams, vk := fxVk,
     cfg := { numInstances := 1, numCommittedInstances := 1, accumulator := none },
-    accFixedBases := #[{ name := "b0", base := 1, negate := false }],
+    -- R-58 F7: the table carries the -G row the producer clause is stated about.
+    -- Before this it was a one-entry table with no -G row, which is why
+    -- ObligationsGates could PROVE the second conjunct of accFixedBases_producer
+    -- was vacuous here. base := fx 1 is expGen, i.e. P.g1 at this model, which is
+    -- what the clause demands of a -G row together with negate := true.
+    accFixedBases :=
+      #[{ name := "-G", base := fx 1, negate := true },
+        { name := "b0", base := 1, negate := false }],
     vkDigest := frWord fxVk.transcriptRepr,
-    sG2gen := fx 5, encG2 := fun _ => Midfall.Bytes.empty,
+    sG2gen := fx 5,
+    -- R-58 G2: the encoder used to be `fun _ => Midfall.Bytes.empty`, which is
+    -- not an EIP-2537 encoding of anything, so no Eip2537.Holds was satisfiable
+    -- at this Surface and every field carrying one was vacuous. The all-zero
+    -- 256-byte word is the EIP infinity encoding: valid, and the degenerate
+    -- encoder the exponent model can actually supply.
+    encG2 := fun _ => Midfall.Yul.bytesZero Midfall.Yul.g2Bytes,
     o₀ := fxOptions, L := fxLowered, lower := fxLower, lower_ok := rfl,
     bindLocals := [], shell := fxShell, shellLayout := fxShellLayout,
     evaluatorRuntime := none, runtimeName := fxRuntimeName,
     irCheck := fixtureIrCheck,
-    astOfMain := fun o => if o.diagnostics.trace then none else some fxMain,
+    -- R-58 F8: astOfMain is now DEFINED as the main block of what the render
+    -- produces, which is exactly the equation render_eq_print states, so the
+    -- field discharges by rfl and the pin says something about the pair of
+    -- functions rather than about a block compared with itself. The old form
+    -- keyed off o.diagnostics.trace only, so it returned `some fxMain` for an
+    -- option the render refuses - a gas-checkpoint render - and the pin caught
+    -- that.
+    astOfMain :=
+      fun o => match fxLower o with | .ok l => some l.main | .error _ => none,
     blk := fun q _ => fxPartialBlocks q, plan := fxPlan,
     expectedVkCodehash := some (keccak256 fxVkRuntime),
     quotientRuntime := some fxQuotientRuntime,
     expectedQuotientCodehash := some (keccak256 fxQuotientRuntime),
-    qvmValidated := True,
-    vkDigest_spec := rfl, vkRuntime_spec := rfl, main_concat := ⟨[], rfl⟩ }
+    vkDigest_spec := rfl, vkRuntime_spec := rfl, main_concat := ⟨[], rfl⟩,
+    -- The R-58 pins. Every one is rfl HERE, which is the point: the fixture is
+    -- built so that the shell, the plan and the render agree by construction,
+    -- and a Surface that did not agree could not be written at all. Each has a
+    -- refutation in the gates below, so none of them is satisfied by a constant.
+    shell_unfolds := rfl,
+    plan_hasAccumulator := rfl, plan_numInstances := rfl,
+    evaluator_agrees := rfl,
+    encG2_eip := fun _ => by native_decide }
 
 /-! ### 1. Supported is INHABITED -/
 
@@ -372,7 +419,7 @@ def realSurface : Surface rp RP RP RP :=
 theorem supportedInhabited : SupportedS realSurface realSurface.o₀ := by
   refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
            singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
-           qvm := ?_, production := ?_, wf := ?_ }
+           production := ?_, wf := ?_ }
   · decide
   · exact ⟨by decide, by decide⟩
   · decide
@@ -386,7 +433,6 @@ theorem supportedInhabited : SupportedS realSurface realSurface.o₀ := by
     subst hnil
     refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
   · exact ⟨by native_decide, by native_decide⟩
-  · trivial
   · exact ⟨by decide, by decide⟩
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
       ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
@@ -553,5 +599,103 @@ def codehashKats_ok : Bool :=
     realSurface.L.vkRuntime.data[0]? == some 0xfe
 
 #eval codehashKats_ok                     -- expect true
+
+/-! ### 5. The R-58 pins, each with its refutation -/
+
+/-- R-58 F3. The shell pin is a decision about two fields, not a definition of one:
+    the shell code block equals headGuard ++ bindLocals ++ main (line 1, which is why
+    the field discharges by rfl), and a shell that carries only the main block - the
+    shape `shell` had when nothing constrained it - refutes it (line 2). Line 3 says
+    the head guard is really in the comparison, so a pin that dropped it would show
+    up here. Compared through Repr because Stmt carries no BEq at this dialect. -/
+def shellPinsKats_ok : Bool :=
+  toString realSurface.shell.codeBlock ==
+    toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main) &&
+    ! (toString fxMain ==
+      toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main)) &&
+    ! (toString fxMain == toString (fxHeadGuard ++ fxMain)) &&
+    -- and the pin is about THIS shell: a shell built from a different main refutes it
+    ! (toString (YulSemantics.Object.codeBlock
+        (Object.mk "Halo2Verifier" (fxHeadGuard ++ fxMain.drop 1) [] [] : YulObject)) ==
+      toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main))
+
+#eval shellPinsKats_ok                    -- expect true
+
+/-- R-58 F2 and F6. Each of the three plan/render pins is an equation between two
+    fields, and each line pair shows both halves: the two sides agree at the fixture,
+    and the value one side COULD have had refutes it. The second line of each pair is
+    the lie the review demonstrated - a PlanView with hasAccumulator := true while
+    cfg.accumulator is none, a plan claiming two instances while cfg says one, a
+    deployment carrying an evaluator runtime the render never produced. A Surface
+    that lied like that cannot be written any more, which is what the pin buys. -/
+def planPinsKats_ok : Bool :=
+  realSurface.plan.hasAccumulator == realSurface.cfg.accumulator.isSome &&
+    ! (true == realSurface.cfg.accumulator.isSome) &&
+    realSurface.plan.numInstances == realSurface.cfg.numInstances &&
+    ! (realSurface.plan.numInstances == 2) &&
+    realSurface.L.evaluator.isSome == realSurface.evaluatorRuntime.isSome &&
+    ! (realSurface.L.evaluator.isSome ==
+      (some (fxRuntime, fxShellLayout) : Option (YulBlock × EVM.Layout)).isSome)
+
+#eval planPinsKats_ok                     -- expect true
+
+/-- R-58 G2. The encoder now returns EIP-2537-shaped bytes for every point, and the
+    value it replaced - the empty byte string - does not, so the pin is what forced
+    the change rather than a note next to it.
+
+    THE HONEST HALF, stated because the review asked for the field to be exhibited
+    and it still is not: fixing encG2 does NOT make `Eip2537.Holds` satisfiable at
+    this Surface. The blocking clause is g1Valid, not g2Valid - the exponent codec
+    sends a non-identity exponent to bytes no curve check accepts (last line below,
+    the same fact vkPointsKats_ok uses to show the clause bites), and D-P1/R-28 say
+    there is no BLS12-381 model in the tree to replace it with. So every field that
+    carries Holds is still unexhibited, for a named reason that is a model, not a
+    missing pin. encG2_eip removed ONE cause of that; it did not remove the only
+    cause. -/
+def encG2AtFixture_ok : Bool :=
+  encG2IsEip (realSurface.encG2 (fx 5)) && encG2IsEip (realSurface.encG2 (fx 0)) &&
+    ! (encG2IsEip Midfall.Bytes.empty) &&
+    -- the remaining blocker: a non-identity exponent is not a curve point
+    (match Midfall.Yul.g1Of? (fxToEip (fx 3)) with
+     | some pt => ! Midfall.Yul.g1PointMsmValid pt
+     | none => true)
+
+#eval encG2AtFixture_ok                   -- expect true
+
+/-- R-58 F7. The table carries the -G row, so the existence conjunct of
+    accFixedBases_producer is exhibited here instead of being proved vacuous (the
+    old gate in ObligationsGates.lean did the latter). Line 2 is the refutation: the
+    one-entry table this fixture used to have fails the existence test. -/
+def accFixedBasesKats_ok : Bool :=
+  realSurface.accFixedBases.toList.map (fun b => b.name) == ["-G", "b0"] &&
+    (realSurface.accFixedBases.toList.any fun b => b.name == "-G" && b.negate) &&
+    ! ((#[{ name := "b0", base := (1 : RP), negate := false }]
+        : Array (AccFixedBase RP)).toList.any fun b => b.name == "-G")
+
+#eval accFixedBasesKats_ok              -- expect true
+
+/-- R-58 F8. render_eq_print at the fixture: astOfMain IS lower.map main for every
+    option, including the two the render refuses, which is the case the old
+    conjunct could not see (an option with no `L` contributes nothing). Line 3 is
+    the refutation the old form allowed: an accessor that answers some for a refused
+    option. -/
+def renderEqPrintPinKats_ok : Bool :=
+  -- compared through Repr: Stmt has no BEq at this dialect, so the equation is
+  -- displayed and matched as text rather than decided as a list.
+  toString (realSurface.astOfMain realSurface.o₀) ==
+    toString ((match realSurface.lower realSurface.o₀ with
+      | .ok l => some l.main | .error _ => none) : Option YulBlock) &&
+    toString (realSurface.astOfMain fxOptionsTrace) ==
+    toString ((match realSurface.lower fxOptionsTrace with
+      | .ok l => some l.main | .error _ => none) : Option YulBlock) &&
+    -- and the option that separates the two shapes: a gas-checkpoint render with
+    -- trace OFF. fxLower refuses it, so the pin demands none; the old accessor keyed
+    -- only on trace and answered some fxMain, which is the refutation.
+    (realSurface.astOfMain fxOptionsGas).isNone &&
+    ! (toString ((if fxOptionsGas.diagnostics.trace then none else some fxMain : Option YulBlock)) ==
+      toString ((match fxLower fxOptionsGas with
+        | .ok l => some l.main | .error _ => none) : Option YulBlock))
+
+#eval renderEqPrintPinKats_ok           -- expect true
 
 end Midfall.Instances.SurfaceFixture
