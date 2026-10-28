@@ -326,15 +326,12 @@
                 {%- else %}
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
-                {%- if self.expected_acc_non_identity_points %}
-                // Point pairs carry no RHS scalar or fixed-base tail;
-                // `rhs_scalar_ptr` only marks the end of the payload.
-                {%- else %}
+                {%- if !self.expected_acc_non_identity_points %}
                 // RHS scalar, when present, immediately follows the RHS point
                 // limbs and identity flag. The fixed-base scalar tail starts
                 // after it.
-                {%- endif %}
                 let rhs_scalar_ptr := add(rhs_instance_ptr, mul(point_words, 0x20))
+                {%- endif %}
                 {%- if self.expected_acc_non_identity_points %}
                 let rhs_ok := load_acc_point(ACC_RHS_MPTR, rhs_instance_ptr, bits, n, limb_base)
                 {%- else %}
