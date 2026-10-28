@@ -247,13 +247,11 @@
                 let acc_instance_ptr := add(INSTANCE_CPTR, {{ (self.expected_acc_offset * 32)|hex() }})
 
                 {% if self.expected_acc_non_identity_points -%}
-                // LHS layout: point limbs (x,y), then either an explicit
-                // scalar word or an implicit unit scalar for already-collapsed
-                // point-pair public inputs.
+                // LHS layout: point limbs (x,y) only. Point pairs carry no
+                // scalar word; the LHS scalar is an implicit one.
                 {%- else -%}
-                // LHS layout: point limbs (x,y), identity flag, then either an
-                // explicit scalar word or an implicit unit scalar for
-                // already-collapsed point-pair public inputs.
+                // LHS layout: point limbs (x,y), identity flag, then the
+                // explicit LHS scalar word.
                 {%- endif %}
                 // The scalar pointer is computed unconditionally; the rendered
                 // branch below decides whether to read it or use scalar 1.
@@ -324,8 +322,8 @@
                 let rhs_instance_ptr := lhs_scalar_ptr
                 {%- endif %}
                 {%- if self.expected_acc_non_identity_points %}
-                // RHS scalar, when present, immediately follows the RHS point
-                // coordinate words. The fixed-base scalar tail starts after it.
+                // Point pairs carry no RHS scalar or fixed-base tail;
+                // `rhs_scalar_ptr` only marks the end of the payload.
                 {%- else %}
                 // RHS scalar, when present, immediately follows the RHS point
                 // limbs and identity flag. The fixed-base scalar tail starts
