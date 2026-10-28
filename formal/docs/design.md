@@ -893,6 +893,62 @@ as a follow-on rather than the deliverable.
 
 * **Why:** the code already points this way, and a generic proof requires induction over the
   generator AST-building functions - a different order of work. AST emission (D-P25) makes
+## D-P30 (ADOPTED, round 72): no raw string expressions - all Yul emission goes through the vendored AST
+
+**Decision (human), extending D-P25.** Every Lean generator function that produces Yul must
+build `Block/Stmt/Expr EVM.Op` from `vendor/yul-semantics`. **The text port is a reference,
+not the deliverable.** PLAN section 8's required equation - `render g o = (lower g o).map
+print` holding **by construction** - is the definition of done, and that is not the
+structure of the code today.
+
+### Measured starting point
+
+| site | state |
+|---|---|
+| `GenAst.emittedPartials` | `[.finalPairing]` - the other six partials fall through to `emitPlaceholder` |
+| `Quotient/Evaluator.lean` | entirely text: `abbrev Lines := List String`, `letLine v rhs := "let " ++ v ++ " := " ++ rhs`, `assignLine`, `u256String`, `columnEvalVar : String`; builders like `lookupSharedPrefixFPlusBeta` return `E F (Option (List String))` and concatenate loop headers and `0x` pointer renderings. **18 string-machinery sites.** |
+| `VerifierPartials.lean` | `renderX : PartialCtx -> String` throughout - **68 String-returning sites** |
+| `Contracts.lean` | assembles the contract from string fragments |
+| `Kzg.computations` (`:1320`) | emits text; already flagged as a prerequisite for `pcs_spec` |
+
+**Expressions must not be string-concatenated.** Numbers become `Literal.number`, variables
+become `Expr.ident` / `Stmt.assign`, calls become `Stmt` forms - no
+`"mload(add(" ++ ... ++ "))"`.
+
+### Explicitly out of scope
+
+The **Solidity** wrapper - `Constructors.sol`, `Constants.sol`, `PrecompileSmoke.sol`, and
+the three contract shells. That is not Yul, has no AST, and stays text with the line-based
+normaliser. **Say so in the header of each such file so nobody "fixes" it.**
+
+### Acceptance, and why each clause is there
+
+1. **Per slice: `stmtsBeq` against the text port parsed output - not token comparison alone.**
+   P-AST measured that spelling every `mcopy` as a USER call left all four token gates green
+   while the `stmtsBeq` gates reddened. The token comparator is a tripwire; `stmtsBeq` is the
+   check of record (D-P13, D-P25).
+2. **Keep the text port and its byte-exact gates** as the cross-check, so each converted slice
+   is validated against something the converter does not control.
+3. **Numeric spelling is a documented divergence, not a failure.** The AST stores
+   `Literal.number (n : Nat)` and prints decimal while the Rust emits hex. Pin the mapping
+   explicitly rather than normalising it away - this is one of the two reasons "compare
+   modulo comments" reports differences on identical code (the other being line breaks).
+4. **`emitPlaceholder` must end up unreachable, or total with a proof of its emptiness.** A
+   `Partial` that silently yields a placeholder is the R-62 defect class returning.
+5. **No `yul%` DSL extension and no fork edit for this.** Constructor helpers sufficed for
+   FinalPairing. If a slice genuinely cannot be built without splicing values into `yul%`,
+   **stop and report it** as a tooling finding.
+6. **Re-check the `blkPinBites*` family** after each slice becomes real, and add the equivalent
+   non-vacuity gate for each newly real slice. `BlkIsEmitter` already pins `blk` and `L.main`;
+   after this it pins them to a generator that is real for all seven slices.
+
+### Ordering
+
+This gates **P7, P9 and P10** - `quotientLin` and `pcs` are what the quotient and PCS specs
+need. **P5 can proceed in parallel**, since FinalPairing's AST is real. **Split per partial
+(or per pair) rather than one large package**, given the interruption pattern and that each
+slice is independently checkable.
+
   the generic form reachable, so this is a deferral with a route, not an abandonment.
 * **Consequence for the `blk` defect (R-62):** `blk` is pinned to the generator AST function
   as a hypothesis of each `*_spec` theorem. That is what makes the ten currently
