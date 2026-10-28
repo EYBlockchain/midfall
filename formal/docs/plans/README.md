@@ -37,7 +37,8 @@ See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board
 |---|---|---|
 | P-05 | abi + encoding | in flight |
 | P-06 | [P-06-api.md](P-06-api.md) | READY |
-| P-07 | kzg | DRAFT |
+**Proof statements come from the sketches, not from summaries.** For any P-SE stage the normative Lean statements are `P-SE-semantic-equivalence.md` sections A-R; see `P-SE-statements.md` for the section-to-line-range map and the list of sketched identifiers that do not resolve. A brief citing only the index entries is under-specified.
+- | P-07 | kzg | DRAFT |
 - **Never perturb the working tree in place.** Apply R-41 source mutations to a copy outside the repo, or verify with `git diff --numstat` after every harness run. A killed D6 harness left `.reverse` deleted from `MultiPrepare.fEval` - a semantic change that built clean and passed KATs (R-54).
 | P-08 | vk | DRAFT |
 | P-08 | vk | DRAFT |
