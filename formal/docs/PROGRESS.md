@@ -6,12 +6,43 @@ work package lands.** Normative plan is `PLAN.md`; proof programme is
 `design.md`; estimates and velocity are `ROADMAP.md`. This file is the running narrative of
 **where we actually are**, newest first.
 
-## Measured state - round 61
+## Round 62 - the repairs landed, and two of them did better than repair
 
-| | value |
-|---|---|
-| `lake build` | green, 5143 jobs (cached rebuild 2.3 s) |
-| Lean | **99 modules, 82,492 lines**, all reachable (orphan gate) |
+`P-REV-FIX` applied all ten R-58 findings plus G2 (`8ed429d`). Tree: 5143 jobs green, 100
+modules, **1147 KATs**, 64 sorries all owned, **58 statement fragments across 9 fields and
+5 Surface pins**, **7 fact families single-copy or pinned**.
+
+* **Five new Surface pins**: `shell_unfolds`, `plan_hasAccumulator`, `plan_numInstances`,
+  `evaluator_agrees`, `encG2_eip`. `shell_unfolds` is the important one - with it,
+  `RunShell`'s program *is* `RunVerifier`'s program, so `verifier_sound + shell_unfolds`
+  gives shell soundness **by unfolding** rather than by hope.
+* **Two did better than repair.** F1 was **deferred, not patched**: the field was removed
+  *and the vacuity proved in the file* (`points_subgroup_checked_conclusion_is_unconditional`)
+  so it cannot silently return. F4 **deleted** `qvmValidated`/`SupportedS.qvm` outright - the
+  fixture discharged it with `trivial`, so it could not fail.
+* **A new pin immediately caught a real bug.** Restating `render_eq_print` as a pin over
+  *every* option failed the old `astOfMain`, which keyed on `trace` only and answered
+  `some` for a gas-checkpoint render the render refuses. The previous formulation hid it.
+* **Honest half on G2:** fixing `encG2` did **not** make `Eip2537.Holds` satisfiable - the
+  blocker is `g1Valid` over the exponent codec, i.e. the missing BLS12-381 model
+  (D-P1/R-28), not a pin. Proved in the tree rather than asserted.
+* **New gate** `check_duplicate_facts.py`: parses the records with comments stripped so
+  prose cannot fake a field, requires a pin whose *type names both sides*, rejects
+  self-equality. Credible because **run before the fixes it reddened with exactly the five
+  real defects**, and it rejects `shell_unfolds` weakened to a self-equality. One honest
+  non-bite: the old `astOfMain` shape reddens a KAT, not the build, because no `Surface`
+  instance is constructed anywhere.
+
+**Where the headline stands:** `lowering_equivalence` is still only **stated**, but half the
+distance closed. The remaining gap is entirely IR-side - `ObsEquiv` view transport,
+`dialect_deterministic`/`noWritersFuel`, `irCheck` not being alpha-equivalence, and the
+dispatcher the shell model does not have until M8 restates the pin per-arm.
+
+**In flight:** `P-REV2`, the second statement review pass required by D-P23 after a repair
+round. It is told to attack the five new pins for ways to satisfy them while the defect
+survives, to test whether the restated `render_eq_print` is now *too easy*, and to try to
+defeat the duplicate-fact gate - a text-parsing gate over Lean source is usually beatable.
+
 | Theorems and lemmas | **189** (was ~20 at the start of the port stretch) |
 | Known-answer gates | 1142 across 76 files, plus 42 statement fingerprints |
 | Tracked sorries | **64**, every one registered with a named owning stage |
