@@ -165,9 +165,23 @@ recorded, and D-P25 confirms the plan rather than changing it.
 
 ## Next
 
-1. `P-REV-FIX` lands -> **second statement review pass** (D-P23 requires repeating after
-   repairs, because repairs can introduce new vacuities).
-2. F-IR-1 fix, `Common/Bytes.lean` lemma.
-3. M0 once the fixture decision is made.
-4. M5-M8 proving work - the long pole now that the statements exist.
+Refreshed round 72 - the previous list predated P-AST, P-4a2 and P-ENV entirely.
 
+1. **D-P30 conversion, split per partial** (the current critical path): six remaining
+   `Partial`s get real AST emitters, then `Quotient/Evaluator.lean` (18 string sites), then
+   `VerifierPartials`/`Contracts`. Each slice gated by `stmtsBeq` against the text port, not
+   token comparison alone. Gates P7, P9, P10.
+2. **P-CURVE** - real-curve G1 model. Now the *only* remaining blocker to P5
+   (`finalPairing_spec`), since P-4a2 closed the `EnvAgrees` blocker and P-ENV made the
+   structure strong enough to reject a degenerate generator.
+3. **P5** can proceed in parallel with (1) - FinalPairing's AST is real.
+4. **M0 execution** (D-P28): regenerate poseidon artefacts, re-pin `BASELINE.md`, delete the
+   12 unread fixtures.
+5. **`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.
+6. **D-P21 implementation** - per-round `chalMass`; adopted round 51, still not done.
+7. Small owed items: F-IR-1 basename collision, `Common/Bytes.lean` `Array.foldl` lemma,
+   `fixedBases` "-G" defect, gate schema gap (two of three gates cannot see theorem-binder
+   hypotheses).
+
+**Blocked on nothing external.** All six round-68 decisions are recorded as D-P24..D-P29 and
+D-P30; nothing is waiting on the human.
