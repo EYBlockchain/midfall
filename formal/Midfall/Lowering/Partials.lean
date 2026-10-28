@@ -235,11 +235,15 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
 
     WHAT IT BUYS, and what it does not. It buys: the theorems are now claims about ONE
     program per plan rather than about every program, so the R-62 counterexample is
-    outside the quantifier. It does not buy a proof: for the six partials GenAst emits a
-    placeholder (GenAst.emittedPartials is [finalPairing]), so those seven theorems are
+    outside the quantifier. It does not buy a proof: for the FOUR partials GenAst emits a
+    placeholder (GenAst.emittedPartials is [lagrange, finalPairing, traceReturn] since
+    P-AST2; the four are vkLoading, transcriptParser, quotientLin and pcs), so those four
+    theorems are
     pinned to a placeholder and their registered hole is now "the emitter does not
-    implement this partial yet" instead of "blk is free". The three finalPairing theorems -
-    finalPairing_spec, finalPairing_progress_spec and finalPairing_acc_spec - are the ones
+    implement this partial yet" instead of "blk is free". The six theorems whose partial is
+    emitted for real - finalPairing_spec, finalPairing_progress_spec and
+    finalPairing_acc_spec, plus lagrange_spec, lagrange_progress_spec and traceReturn_spec
+    from P-AST2 - are the ones
     whose pinned block is the real emitted program, the acc theorem at a plan view with
     hasAccumulator = true, which GenAst emits for real even though the deployed artifact
     does not exercise that arm.
@@ -451,11 +455,12 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     needs, and a bundle alias would hide exactly that.
 
     Each carries hblk : BlkIsEmitter S (R-62, P-AST). For finalPairing_spec,
-    finalPairing_progress_spec and finalPairing_acc_spec the pinned block is the real
-    emitted program. For the other seven the pinned block is GenAst.emitPlaceholder, so
+    finalPairing_progress_spec and finalPairing_acc_spec, and since P-AST2 also for
+    lagrange_spec, lagrange_progress_spec and traceReturn_spec, the pinned block is the real
+    emitted program. For the other four the pinned block is GenAst.emitPlaceholder, so
     those theorems are now claims about ONE named program instead of about every program
     - the false-as-stated quantifier is gone - and their hole is the emitter, which
-    GenAst.emittedPartials records as covering one partial of seven. -/
+    GenAst.emittedPartials records as covering three partials of seven. -/
 
 /-- VkLoading: the payload copy and the calldata envelope. PROOF HOLE: needs the
     VkLoading.yul AST as a Block Op (P-13), the memory-copy lemmas for mcopy over
@@ -500,7 +505,8 @@ theorem transcriptParser_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
 /-- Lagrange: x_n, the three Lagrange slots and the instance evaluation. The extra
     post-condition is the strictness direction: a normal exit proves x^n is not 1,
     because batch_invert rejected the zero that Lean lIRange would have returned.
-    PROOF HOLE: needs the Lagrange.yul AST (P-13) and the batch-inversion contract
+    PROOF HOLE: the Lagrange.yul AST has LANDED (GenAst.emitLagrange, P-AST2, gated against
+    the text port by stmtsBeq), so what remains is the batch-inversion contract
     from AssemblyHelpers (AssemblyHelpers.yul:226-229), plus EnvAgrees.domainN and
     baryWeight to make the k squarings and the N_INV factor agree. -/
 theorem lagrange_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
@@ -710,7 +716,9 @@ theorem finalPairing_acc_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
     next saturates). The exact shape matters: halted = some (.ret, abiTrue) is
     refuted by a block that returns 0x40 bytes, by one that returns the success word
     itself (a trace render), and by one that falls off the end without halting.
-    PROOF HOLE: needs the TraceReturn.yul AST (P-13) and the return builtin record
+    PROOF HOLE: the TraceReturn.yul AST has LANDED (GenAst.emitTraceReturn, P-AST2 - the
+    production arm, which is the only arm SupportedS.production admits), so what remains is
+    the return builtin record
     (EVMExec.lean:840-843 stores readBytes memory p s). -/
 theorem traceReturn_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (calls : ExternalCalls) (gas : ExternalGas)

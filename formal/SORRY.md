@@ -40,18 +40,18 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/Obligations.lean | 606 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Obligations.lean | 641 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Obligations.lean | 659 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 477 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 498 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 520 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 543 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 566 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 586 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 632 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 656 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 706 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 733 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 760 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Partials.lean | 774 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 482 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 503 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 526 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 549 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 572 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 592 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 638 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 662 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 712 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 741 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 768 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Partials.lean | 782 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Qvm.lean | 631 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Qvm.lean | 698 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Qvm.lean | 713 | `sorry` | P-SE: semantic equivalence obligations |
@@ -62,7 +62,7 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/QvmFold.lean | 363 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/QvmFold.lean | 421 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Snapshot.lean | 387 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Surface.lean | 595 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Surface.lean | 596 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/VkDigest.lean | 74 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Statements.lean | 46 | `verifyMsgs (Gₜ := Gₜ) E keccak256 F params v` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 59 | `Spec.accepts H F params vk inst ms := by sor` | frozen statements (S1..S7 land later) |

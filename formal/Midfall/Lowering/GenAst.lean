@@ -19,18 +19,52 @@
 -- is therefore built with the vendored constructors through the small helpers below. The
 -- vendored DSL was NOT extended. The helper route did not prove painful for anything in
 -- scope - FinalPairing (both arms), its ec_pairing and fail helpers, or the seven-slice
--- concatenation - so there is no DSL-change request in this package.
+-- concatenation - so there is no DSL-change request in this package. P-AST2 re-ran that
+-- finding on the two hardest remaining shapes and it still holds: Lagrange needs five
+-- for-loops with their own init/cond/post blocks, a TWO-NAME assignment
+-- ('success, lagrange_precompile_failed := batch_invert(..)') and nested scopes, and every
+-- one of them is a constructor in Ast.lean (Stmt.forLoop, Stmt.assign with a List of
+-- targets, Stmt.block). Two helpers were added - yfor and ysetN - and neither is a DSL
+-- change: they are Lean functions returning Stmt, exactly like ylet and yset. So there is
+-- still no case for splicing values into yul%.
 --
--- WHAT IS EMITTED, and what is a placeholder. Scope is per-deployment first (D-P24) and
--- the instruction for this package is ONE partial completely, so the real emission is
--- FinalPairing plus the two AssemblyHelpers definitions it calls (fail, ec_pairing). The
--- other six partials return emitPlaceholder, the same one-statement dummies the fixture
--- carried before this package; emittedPartials names the difference and
--- emitPlaceholderIsTotal_ok pins that the six are placeholders and finalPairing is not. A
+-- WHAT IS EMITTED, and what is a placeholder. Scope is per-deployment first (D-P24). P-AST
+-- took ONE partial completely - FinalPairing plus the two AssemblyHelpers definitions it
+-- calls (fail, ec_pairing). P-AST2 (docs/plans/P-AST2-lagrange-traceReturn.md) adds two
+-- more under D-P30, so the real emission is now Lagrange, FinalPairing and TraceReturn;
+-- FOUR partials still return emitPlaceholder - vkLoading, transcriptParser, quotientLin and
+-- pcs - and emittedPartials names the difference as data while
+-- emitPlaceholderIsTotal_ok pins it as a computation: three emitted, four placeholders, and
+-- no placeholder equal to the real slice it stands for. A
 -- spec theorem whose partial is not in emittedPartials is pinned to a placeholder: the pin
 -- turns it into a claim about ONE program instead of about every program, which is what
 -- removes the false-as-stated quantifier, and its registered hole becomes "the emitter
 -- does not implement this partial yet" rather than "blk is free".
+--
+-- D-P30: THE TEXT PORT IS A REFERENCE, NOT THE DELIVERABLE. Every function in this file
+-- builds Block/Stmt/Expr EVM.Op from the vendored package; no raw string expression is
+-- emitted anywhere, and the renderX functions of VerifierPartials.lean are kept only as the
+-- independent second source each gate compares against. PLAN section 8's equation
+-- render g o = (lower g o).map print holds BY CONSTRUCTION for the three slices here, and
+-- the checks that say so are the stmtsBeq gates, not the token gates: P-AST measured that
+-- spelling every mcopy as a USER call leaves all four token gates green and reddens only
+-- stmtsBeq, so emitLagrange_beq_ok, emitTraceReturn_beq_ok and the two
+-- emit*_DetectsBuiltinVsCall_ok gates are the records and yulTokens is the tripwire.
+--
+-- NUMERIC SPELLING IS A DOCUMENTED DIVERGENCE, NOT A FAILURE (D-P30 clause 3). The AST
+-- stores Literal.number (n : Nat) and EVM.print renders it in DECIMAL; the Rust and the
+-- text port render the same constants in HEX through the Askama hex filter - the emitted
+-- 'add(mptr, 320)' is the render's 'add(mptr, 0x0140)'. The mapping is pinned by
+-- numericSpellingDivergence_ok rather than normalised away, because the two spellings are
+-- one of the two reasons "compare modulo comments" reports differences on identical code
+-- (the other being line breaks), and a later package that "fixes" the decimal printing
+-- would break the token comparator's hex-to-value reduction.
+--
+-- OUT OF SCOPE, AND STAYING OUT: the SOLIDITY wrapper - Contracts.lean's Constructors.sol,
+-- Constants.sol, PrecompileSmoke.sol and the three contract shells - is not Yul, has no
+-- AST, and stays text with the line-based normaliser (D-P30, "explicitly out of scope").
+-- Nothing in this file emits Solidity, and a later package must not try to convert those
+-- four artifacts to AST emission; there is no Block to build.
 --
 -- PRODUCTION PROFILE ONLY. blk takes (Partial, PlanView) and PlanView carries no
 -- diagnostics, so the emitter produces the production arm: no gas_checkpoint calls, and
@@ -38,7 +72,11 @@
 -- one. That is not a silent restriction - every *_spec theorem already hypothesises
 -- SupportedS, whose production clause is exactly o.diagnostics.trace = false and
 -- o.diagnostics.gasCheckpoints = false. The pin and the theorem's own hypotheses describe
--- the same profile.
+-- the same profile. For TraceReturn the same restriction bites harder: the render's trace
+-- arm interpolates numInstances, k, the user-phase challenge loop, numTrashcans and
+-- expectedHasAccumulator into 53 template lines, and PlanView carries NONE of those (no
+-- trace flag, no phase list, no trashcan count), so the trace arm is not expressible in
+-- this emitter's signature at all - see the note on emitTraceReturnBlock.
 --
 -- HOW THE EMITTED AST IS CHECKED. There is no runtime Yul parser in the vendored tree, so
 -- the check is the one D-P25 names: the token comparator yulTokens (YulGolden.lean)
@@ -113,6 +151,19 @@ def yif (c : Expr Op) (body : List (Stmt Op)) : Stmt Op := Stmt.cond c body
 
 /-- A nested '{ body }' block, i.e. a new scope. -/
 def yblock (body : List (Stmt Op)) : Stmt Op := Stmt.block body
+
+/-- 'for { init } c { post } { body }'. The three sub-blocks are separate statement lists in
+    the AST (Ast.lean:90), which is why the Lagrange loops have to name them individually
+    rather than quote a header line: the render's multi-line for headers
+    ('for { let a := ..\n let b := .. } cond { post }') are a printing artefact, and the
+    token comparator sees the same stream either way. -/
+def yfor (init : List (Stmt Op)) (c : Expr Op) (post body : List (Stmt Op)) : Stmt Op :=
+  Stmt.forLoop init c post body
+
+/-- 'v, w := e' - an assignment to MORE THAN ONE variable, which 'yset' cannot express.
+    Lagrange.yul:34 is the only site in the three real slices that has one:
+    'success, lagrange_precompile_failed := batch_invert(..)', the MF-4 two-value return. -/
+def ysetN (vs : List String) (e : Expr Op) : Stmt Op := Stmt.assign vs e
 
 /-- 'function name(params) -> rets { body }'. An empty rets list prints no '->' arm. -/
 def yfun (name : String) (params rets : List String) (body : List (Stmt Op)) : Stmt Op :=
@@ -269,10 +320,154 @@ def emitFinalPairingArms (hasAcc : Bool) (batch : Nat) : Block Op :=
 def emitFinalPairing (pv : PlanView) : Block Op :=
   emitFinalPairingArms pv.hasAccumulator pv.memory.accumulatorPairingBatchMptr
 
+/-! ### Lagrange -/
+
+/-- The Lagrange / instance-evaluation block (Lagrange.yul:1-99) as an AST, parameterised by
+    the three plan values the template interpolates: the domain exponent k (the render emits
+    it in DECIMAL, 'let k := 6', because the template interpolates an integer, not a hex
+    filter), the negative-rotation count the l_blind loop walks, and the public instance
+    count. The two window sizes are DERIVED here the way the render derives them -
+    '(numInstances + numNegLagranges) * 32' for the denominator run, 'numNegLagranges * 32'
+    for the negative-rotation tail and the l_0 slot, 'numInstances * 32' for the instance
+    loop - so a plan that changes one changes the emitted bytes and the emitted AST by the
+    same amount. emitDependsOnPlan_ok makes that a computation.
+
+    Every call in this block is a dialect built-in EXCEPT batch_invert and fail: batch_invert
+    is AssemblyHelpers.yul:226 (a user function with a two-value return) and fail is
+    AssemblyHelpers.yul:4. mulmod / addmod / sub / lt / mload / mstore / calldataload are
+    dialect names (EVMOp.lean:43-53). That split is invisible to the token comparator and is
+    what emitLagrangeDetectsBuiltinVsCall_ok reddens.
+
+    The 0x20 stride, the '0x20' / '0x40' offsets of l_blind and l_i_cptr, the '+ 0x20' on
+    mptr_end in the batch_invert call and the zero initialiser are literal in the template
+    and stay literal here. -/
+def emitLagrangeAt (k numInstances numNegLagranges : Nat) : Block Op :=
+  let denomWindow := (numInstances + numNegLagranges) * 32
+  let negWindow := numNegLagranges * 32
+  [ ylet "lagrange_precompile_failed" (ylit 0)
+    -- The whole computation runs in its own scope: k, x, mptr and the rest are locals of
+    -- this block and are gone by the time quotientLin reads the slots this writes.
+  , yblock
+    [ ylet "k" (ylit k)
+    , ylet "x" (yop Op.mload [yvar "X_MPTR"])
+      -- x^n by repeated squaring, n = 2^k.
+    , ylet "x_n" (yvar "x")
+    , yfor [ylet "idx" (ylit 0)] (yop Op.lt [yvar "idx", yvar "k"])
+        [yset "idx" (yop Op.add [yvar "idx", ylit 1])]
+        [yset "x_n" (yop Op.mulmod [yvar "x_n", yvar "x_n", yvar "r"])]
+    , ylet "omega" (yop Op.mload [yvar "OMEGA_MPTR"])
+      -- First pass: denominators (x - omega_i) for every Lagrange value needed, then
+      -- x^n - 1 appended at mptr_end, then ONE batch inversion over the whole run.
+    , ylet "mptr" (yvar "LAGRANGE_DENOMS_MPTR")
+    , ylet "mptr_end" (yop Op.add [yvar "mptr", ylit denomWindow])
+    , yfor [ylet "pow_of_omega" (yop Op.mload [yvar "OMEGA_INV_TO_L_MPTR"])]
+        (yop Op.lt [yvar "mptr", yvar "mptr_end"])
+        [yset "mptr" (yop Op.add [yvar "mptr", ylit 0x20])]
+        [ yexpr (yop Op.mstore [yvar "mptr",
+            yop Op.addmod [yvar "x", yop Op.sub [yvar "r", yvar "pow_of_omega"], yvar "r"]])
+        , yset "pow_of_omega" (yop Op.mulmod [yvar "pow_of_omega", yvar "omega", yvar "r"]) ]
+    , ylet "x_n_minus_1" (yop Op.addmod [yvar "x_n", yop Op.sub [yvar "r", ylit 1], yvar "r"])
+    , yexpr (yop Op.mstore [yvar "mptr_end", yvar "x_n_minus_1"])
+      -- MF-4: the second return value separates a failed precompile (chain fault) from a
+      -- rejected denominator (x landed on a domain point). Two assignment targets, which is
+      -- why ysetN exists.
+    , ysetN ["success", "lagrange_precompile_failed"]
+        (ycall "batch_invert" [yvar "success", yvar "LAGRANGE_DENOMS_MPTR",
+          yop Op.add [yvar "mptr_end", ylit 0x20], yvar "BATCH_INV_SCRATCH_MPTR", yvar "r"])
+      -- Second pass over the same window: turn each inverse into L_i(x).
+    , yset "mptr" (yvar "LAGRANGE_DENOMS_MPTR")
+    , ylet "l_i_common" (yop Op.mulmod [yvar "x_n_minus_1",
+        yop Op.mload [yvar "N_INV_MPTR"], yvar "r"])
+    , yfor [ylet "pow_of_omega" (yop Op.mload [yvar "OMEGA_INV_TO_L_MPTR"])]
+        (yop Op.lt [yvar "mptr", yvar "mptr_end"])
+        [yset "mptr" (yop Op.add [yvar "mptr", ylit 0x20])]
+        [ yexpr (yop Op.mstore [yvar "mptr",
+            yop Op.mulmod [yvar "l_i_common",
+              yop Op.mulmod [yop Op.mload [yvar "mptr"], yvar "pow_of_omega", yvar "r"],
+                yvar "r"]])
+        , yset "pow_of_omega" (yop Op.mulmod [yvar "pow_of_omega", yvar "omega", yvar "r"]) ]
+      -- l_blind: the sum of the negative-rotation terms, which start one word in.
+    , ylet "l_blind" (yop Op.mload [yop Op.add [yvar "LAGRANGE_DENOMS_MPTR", ylit 0x20]])
+    , ylet "l_i_cptr" (yop Op.add [yvar "LAGRANGE_DENOMS_MPTR", ylit 0x40])
+    , yfor [ylet "l_i_cptr_end" (yop Op.add [yvar "LAGRANGE_DENOMS_MPTR", ylit negWindow])]
+        (yop Op.lt [yvar "l_i_cptr", yvar "l_i_cptr_end"])
+        [yset "l_i_cptr" (yop Op.add [yvar "l_i_cptr", ylit 0x20])]
+        [ yset "l_blind" (yop Op.addmod [yvar "l_blind",
+            yop Op.mload [yvar "l_i_cptr"], yvar "r"]) ]
+      -- Public instance polynomial at x. The cursor pair advances together; the l_i run
+      -- continues where the negative-rotation loop left it, which is why the post block has
+      -- TWO statements and why the coupling is in the AST and not in a comment.
+    , ylet "instance_eval" (ylit 0)
+    , yfor [ ylet "instance_cptr" (yvar "INSTANCE_CPTR")
+           , ylet "instance_cptr_end" (yop Op.add [yvar "instance_cptr",
+               ylit (numInstances * 32)]) ]
+        (yop Op.lt [yvar "instance_cptr", yvar "instance_cptr_end"])
+        [ yset "instance_cptr" (yop Op.add [yvar "instance_cptr", ylit 0x20])
+        , yset "l_i_cptr" (yop Op.add [yvar "l_i_cptr", ylit 0x20]) ]
+        [ yset "instance_eval" (yop Op.addmod [yvar "instance_eval",
+            yop Op.mulmod [yop Op.mload [yvar "l_i_cptr"],
+              yop Op.calldataload [yvar "instance_cptr"], yvar "r"], yvar "r"]) ]
+      -- Persist the derived values into the slots quotientLin and PCS read.
+    , ylet "x_n_minus_1_inv" (yop Op.mload [yvar "mptr_end"])
+    , ylet "l_last" (yop Op.mload [yvar "LAGRANGE_DENOMS_MPTR"])
+    , ylet "l_0" (yop Op.mload [yop Op.add [yvar "LAGRANGE_DENOMS_MPTR", ylit negWindow]])
+    , yexpr (yop Op.mstore [yvar "X_N_MPTR", yvar "x_n"])
+    , yexpr (yop Op.mstore [yvar "X_N_MINUS_1_INV_MPTR", yvar "x_n_minus_1_inv"])
+    , yexpr (yop Op.mstore [yvar "L_LAST_MPTR", yvar "l_last"])
+    , yexpr (yop Op.mstore [yvar "L_BLIND_MPTR", yvar "l_blind"])
+    , yexpr (yop Op.mstore [yvar "L_0_MPTR", yvar "l_0"])
+    , yexpr (yop Op.mstore [yvar "INSTANCE_EVAL_MPTR", yvar "instance_eval"]) ]
+    -- Section boundary: the two MF-4 incidents, in the template's order.
+  , yif (yop Op.iszero [yvar "success"])
+      [ yif (yvar "lagrange_precompile_failed")
+          [yexpr (ycall "fail" [yvar "ERR_PRECOMPILE_FAILED"])]
+      , yexpr (ycall "fail" [yvar "ERR_PROOF_REJECTED"]) ] ]
+
+/-- The Lagrange slice of one plan: the three values the render interpolates are read out of
+    the plan view, which is exactly what EnvAgrees.negLagranges and domainN tie to the
+    ConstraintSystem, so the emitter and the invariant take them from one place. -/
+def emitLagrange (pv : PlanView) : Block Op :=
+  emitLagrangeAt pv.k pv.numInstances pv.numNegLagranges
+
+/-! ### TraceReturn -/
+
+/-- The terminal arm of TraceReturn.yul:55-73 in its PRODUCTION shape: guard on success,
+    write the ABI true word, return 32 bytes from it. 'fail' is a user call
+    (AssemblyHelpers.yul:4); mstore and ret are dialect built-ins, and 'ret' is the dialect
+    name for the 'return' opcode (EVMOp.lean:26, :71).
+
+    NOT parameterised, and that is a measurement of the template rather than an omission:
+    the production arm interpolates nothing - RETURN_MPTR is a bare Solidity-level constant
+    and the '1' and '0x20' are literal - which is why the text port's arm is a plain string
+    too, and why the existing traceReturn_ast snapshot is a closed block. The ARM CHOICE is
+    plan-dependent in the render (ctx.trace selects the 'return(iszero(iszero(success)))'
+    shape), but PlanView carries no diagnostics flag, so the trace arm is not expressible
+    in this emitter's signature at all; SupportedS.production is exactly the hypothesis that
+    keeps that gap closed. Stated here rather than left to be rediscovered: the four
+    placeholders and this constant slice are the two ways a slice can be plan-independent,
+    and only one of them is a hole. -/
+def emitTraceReturnBlock : Block Op :=
+  [ yif (yop Op.iszero [yvar "success"])
+      [yexpr (ycall "fail" [yvar "ERR_PROOF_REJECTED"])]
+  , yexpr (yop Op.mstore [yvar "RETURN_MPTR", ylit 1])
+  , yexpr (yop Op.ret [yvar "RETURN_MPTR", ylit 0x20]) ]
+
+/-- The TraceReturn slice of one plan. Constant in the plan, by the measurement above. -/
+def emitTraceReturn (_pv : PlanView) : Block Op := emitTraceReturnBlock
+
 /-! ### The emitter, total over Partial -/
 
-/-- The partials this file emits for real. Everything else is a placeholder. -/
-def emittedPartials : List Partial := [.finalPairing]
+/-- The partials this file emits for real. Everything else is a placeholder: after P-AST2
+    those are vkLoading, transcriptParser, quotientLin and pcs - the four named by
+    placeholderPartials below, three of which need a text-emitting source converted first
+    (Kzg.computations for pcs, the Quotient/Evaluator.lean line builders for quotientLin,
+    the parser render for transcriptParser). -/
+def emittedPartials : List Partial := [.lagrange, .finalPairing, .traceReturn]
+
+/-- The four partials still emitted as placeholders, as data rather than as a paragraph:
+    derived from emittedPartials, so the two lists cannot disagree. -/
+def placeholderPartials : List Partial :=
+  Midfall.Lowering.partials.filter (fun q => !emittedPartials.contains q)
 
 /-- Is this partial emitted for real, or is it a placeholder? Decidable, so that "one
     partial completely" is a computation in the tree and not a paragraph in a plan. -/
@@ -282,7 +477,8 @@ def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
     distinct literal per partial so two slices are never interchangeable. These are the
     blocks the fixture carried before P-AST; they moved here so the emitter is the ONLY
     source of blk in the tree, which is what the pin needs in order to mean anything. P-13
-    owes the real AST for the six. -/
+    owes the real AST for the four in placeholderPartials - and D-P30 clause 4 is the rule
+    that they end up unreachable, not merely well-documented. -/
 def emitPlaceholder : Partial → Block Op
   | .vkLoading => [yexpr (yop Op.mstore [ylit 0x2000, ylit 1])]
   | .transcriptParser => [yexpr (yop Op.mstore [ylit 0x2100, ylit 2])]
@@ -297,7 +493,9 @@ def emitPlaceholder : Partial → Block Op
     conditional that quietly says nothing for six of the seven. -/
 def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
   match q with
+  | .lagrange => emitLagrange pv
   | .finalPairing => emitFinalPairing pv
+  | .traceReturn => emitTraceReturn pv
   | q => emitPlaceholder q
 
 /-- The seven slices in include order (Halo2Verifier.sol:217-229), i.e. exactly the tail
@@ -383,19 +581,42 @@ def emitDependsOnPlan_ok : Bool :=
     -- which is the same fact stated the other way round: the parameter reaches the emitted
     -- block through the arm it belongs to, not through a wildcard.
     SyntaxEq.stmtsBeq (emitFinalPairingArms false 0x1000)
-      (emitFinalPairingArms false 0x1020)
+      (emitFinalPairingArms false 0x1020) &&
+    -- P-AST2: the same for Lagrange, where all three plan values reach the block through a
+    -- window size or a loop bound and none of them is decorative.
+    ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 7 1 9) &&
+    ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 6 2 9) &&
+    ! SyntaxEq.stmtsBeq (emitLagrangeAt 6 1 9) (emitLagrangeAt 6 1 8) &&
+    -- and TraceReturn is CONSTANT in the plan, which is the template's own shape and not a
+    -- hole: stated as a computation so a later package that parameterises it has to notice
+    -- it changed this gate.
+    (Midfall.Lowering.partials.all fun _q =>
+      SyntaxEq.stmtsBeq (emitTraceReturn Midfall.Lowering.witnessPlanView)
+        emitTraceReturnBlock)
 
-/-- GATE 8 (what is real and what is a placeholder, as a computation). finalPairing is
-    emitted for real; the other six are placeholders; and the placeholder of finalPairing is
-    NOT what the emitter returns for it, so the pin cannot be satisfied by a dummy for the
-    one partial that has a real body. -/
+/-- GATE 8 (what is real and what is a placeholder, as a computation). THREE partials are
+    emitted for real after P-AST2 - lagrange, finalPairing, traceReturn - and the remaining
+    FOUR are one-statement placeholders named by placeholderPartials. The last three
+    conjuncts are the R-62 clause: for each of the three real slices, the placeholder that
+    used to stand for it is NOT what the emitter returns, so the pin cannot be satisfied by
+    a dummy for a partial that has a real body. Before P-AST2 the lagrange and traceReturn
+    conjuncts were unfalsifiable in exactly this way - the placeholder WAS the emitter's
+    answer - which is what "emitPlaceholder must shrink toward unreachable" (D-P30 clause 4)
+    is measuring. -/
 def emitPlaceholderIsTotal_ok : Bool :=
-  emittedPartials.length == 1 && emittedPartials.contains .finalPairing &&
-    (Midfall.Lowering.partials.all fun q => partialIsEmitted q == (q == .finalPairing)) &&
+  emittedPartials.length == 3 && emittedPartials.contains .finalPairing &&
+    emittedPartials.contains .lagrange && emittedPartials.contains .traceReturn &&
+    placeholderPartials.length == 4 &&
+    placeholderPartials == [.vkLoading, .transcriptParser, .quotientLin, .pcs] &&
     (Midfall.Lowering.partials.all fun q =>
-      q == .finalPairing || (emitPlaceholder q).length == 1) &&
+      partialIsEmitted q ==
+        (q == .finalPairing || q == .lagrange || q == .traceReturn)) &&
+    (Midfall.Lowering.partials.all fun q =>
+      partialIsEmitted q || (emitPlaceholder q).length == 1) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .finalPairing)
-      (emitFinalPairingArms false 0x1000)
+      (emitFinalPairingArms false 0x1000) &&
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .lagrange) (emitLagrangeAt 6 1 9) &&
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .traceReturn) emitTraceReturnBlock
 
 /-- GATE 9 (perturbation). One literal of the emitted block changed - the scratch pointer of
     the ec_pairing frame - turns BOTH relations red: the token stream and stmtsBeq. This is
@@ -524,6 +745,173 @@ def emitAccBatch_beq_ok : Bool :=
       yset "success" (ycall "ec_pairing" [yvar "success", yvar "PAIRING_RHS_MPTR",
           yvar "PAIRING_LHS_MPTR"]) ])
 
+/-! ### The P-AST2 gates: lagrange and traceReturn -/
+
+/-- Rewrite the OUTERMOST expression of every statement in a block, recursing through nested
+    blocks, function bodies, loop init/condition/post and if bodies. The two
+    emit*_DetectsBuiltinVsCall_ok gates use it to mis-spell a dialect built-in as a user call
+    at every depth, which is what the P-AST measurement did to the mcopy of ec_pairing: a
+    shallow map would miss the statements inside the Lagrange loops and leave the gate green
+    for the wrong reason.
+
+    'switch' is returned untouched, and that is a measured limitation rather than a shortcut:
+    recursing through its '(Literal x Block)' pairs defeats structural termination here
+    ('sizeOf' does not decrease through the pair, reported at elaboration), and none of the
+    three real slices contains a switch - the deployed verifier has no switch statement
+    anywhere. A later package that emits one has to extend this and delete the note. -/
+def mapStmtExprs (f : Expr Op → Expr Op) : Stmt Op → Stmt Op
+  | Stmt.block b => Stmt.block (b.map (mapStmtExprs f))
+  | Stmt.funDef n p r b => Stmt.funDef n p r (b.map (mapStmtExprs f))
+  | Stmt.letDecl v (some e) => Stmt.letDecl v (some (f e))
+  | Stmt.letDecl v none => Stmt.letDecl v none
+  | Stmt.assign v e => Stmt.assign v (f e)
+  | Stmt.cond c b => Stmt.cond (f c) (b.map (mapStmtExprs f))
+  | Stmt.switch c cs d => Stmt.switch c cs d
+  | Stmt.forLoop i c p b =>
+      Stmt.forLoop (i.map (mapStmtExprs f)) (f c) (p.map (mapStmtExprs f))
+        (b.map (mapStmtExprs f))
+  | Stmt.exprStmt e => Stmt.exprStmt (f e)
+  | s => s
+
+/-- GATE 14 (the D-P25 tripwire, Lagrange). The emitted AST prints to the same token stream
+    as the TEXT PORT's render of the same partial under the same profile, at the plan values
+    the deployed poseidon artifact was generated with. Secondary relation on purpose - see
+    gate 15 for the record. -/
+def emitLagrange_tokens_ok : Bool :=
+  yulTokens ("{" ++ renderLagrange poseidonCtx ++ "}") ==
+    yulTokens (EVM.print (emitLagrangeAt poseidonCtx.k poseidonCtx.numInstances
+      poseidonCtx.numNegLagranges))
+
+/-- GATE 15 (authoritative, Lagrange). The emitted AST equals the 'yul%' quotation of the
+    same render - VerifierPartialKats.lagrange_ast, which already existed in the tree as a
+    fixed snapshot - under stmtsBeq. This is the gate the brief calls the record: it separates
+    Expr.builtin from Expr.call, it separates a for-loop's three sub-blocks from a flat
+    sequence, and it compares the two-name assignment against a one-name one. The quotation
+    is an independent elaboration path (a parser, not these constructors), so the gate is not
+    self-fulfilling. -/
+def emitLagrange_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq (emitLagrangeAt poseidonCtx.k poseidonCtx.numInstances
+    poseidonCtx.numNegLagranges) VerifierPartialKats.lagrange_ast
+
+/-- GATE 16 (the tripwire, TraceReturn). Same shape as gate 14 against renderTraceReturn. -/
+def emitTraceReturn_tokens_ok : Bool :=
+  yulTokens ("{" ++ renderTraceReturn poseidonCtx ++ "}") ==
+    yulTokens (EVM.print emitTraceReturnBlock)
+
+/-- GATE 17 (authoritative, TraceReturn). The emitted production arm equals the existing
+    traceReturn_ast quotation under stmtsBeq - the same block that VerifierPartials' gate 80
+    ties to traceReturn_direct, so the constructor path, the quotation and the raw-AST path
+    in that file are now one equivalence class rather than three claims. -/
+def emitTraceReturn_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq emitTraceReturnBlock VerifierPartialKats.traceReturn_ast
+
+/-- GATE 18 (perturbation, Lagrange, D-P23 falsifiability of gates 14-15). Each of the three
+    plan values, changed by one, turns BOTH relations red: k moves the loop bound, the
+    instance count moves the denominator window AND the instance loop's end, and the
+    negative-rotation count moves the window, the l_i_cptr_end and the l_0 slot. A gate that
+    only reddened on one of the three would leave two of the parameters decorative. -/
+def emitLagrangeDetectsPerturbation_ok : Bool :=
+  let good := emitLagrangeAt 6 1 9
+  yulTokens (EVM.print good) != yulTokens (EVM.print (emitLagrangeAt 7 1 9)) &&
+    ! SyntaxEq.stmtsBeq good (emitLagrangeAt 7 1 9) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (emitLagrangeAt 6 2 9)) &&
+    ! SyntaxEq.stmtsBeq good (emitLagrangeAt 6 2 9) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (emitLagrangeAt 6 1 8)) &&
+    ! SyntaxEq.stmtsBeq good (emitLagrangeAt 6 1 8)
+
+/-- GATE 19 (the relation gap, at the Lagrange slice). Every mstore of the emitted block
+    spelled as a USER call named 'mstore' keeps the token stream and breaks stmtsBeq - the
+    exact class P-AST measured on ec_pairing, reproduced on this slice, where the mis-spelling
+    is inside nested blocks and for-loop bodies so a shallow rewrite would not reach it. -/
+def emitLagrangeDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitLagrangeAt poseidonCtx.k poseidonCtx.numInstances
+    poseidonCtx.numNegLagranges
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.mstore args => Expr.call "mstore" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad
+
+/-- GATE 20 (the relation gap, at the TraceReturn slice, in the other direction). The
+    terminal 'return' spelled as a USER call named 'return' keeps the token stream and breaks
+    stmtsBeq. TraceReturn is the slice where the wrong choice is most dangerous: the whole
+    post-condition of traceReturn_spec is a '.halt (.ret, abiTrue)' record, and a user call
+    named return does not halt. -/
+def emitTraceReturnDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitTraceReturnBlock
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.ret args => Expr.call "return" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad
+
+/-- GATE 21 (the numeric spelling, pinned as a divergence - D-P30 clause 3). The text port
+    writes the denominator window in hex and the AST prints the same value in decimal; the
+    token comparator maps the two onto each other, which is exactly why the divergence is
+    invisible there and why it needs its own gate. Four things are asserted: the hex form
+    occurs in the render, the decimal form occurs in the printed AST, the hex form does NOT
+    occur in the printed AST (so nobody has normalised it away), and the hex-to-value map the
+    comparator uses sends each pinned literal to the number the emitter put in. -/
+def numericSpellingDivergence_ok : Bool :=
+  let printed := EVM.print (emitLagrangeAt poseidonCtx.k poseidonCtx.numInstances
+    poseidonCtx.numNegLagranges)
+  (renderLagrange poseidonCtx).contains ("let mptr_end := add(mptr, "
+      ++ hexFilter ((poseidonCtx.numInstances + poseidonCtx.numNegLagranges) * 32) ++ ")") &&
+    printed.contains "add(mptr, 320)" &&
+    ! printed.contains "0x0140" &&
+    yulTokens "add(mptr, 320)" == yulTokens "add(mptr, 0x0140)" &&
+    hexLiteral "0x0140" == 320 &&
+    hexLiteral "0x0120" == 288 &&
+    hexLiteral "0x20" == 32 &&
+    -- and the same mapping on the TraceReturn arm: the render's 0x20 is the AST's 32.
+    (renderTraceReturn poseidonCtx).contains "return(RETURN_MPTR, 0x20)" &&
+    (EVM.print emitTraceReturnBlock).contains "return(RETURN_MPTR, 32)"
+
+/-- Does a statement begin a 'for' loop? Top level only; gate 22 counts the five Lagrange
+    loops, which are all siblings inside one block. -/
+def stmtIsFor : Stmt Op → Bool
+  | Stmt.forLoop _ _ _ _ => true
+  | _ => false
+
+/-- GATE 22 (the slice is a program, not a shape). Structural pattern match on the emitted
+    Lagrange: a zero-initialised MF-4 flag, a 28-statement scope containing FIVE for-loops
+    and the two-name batch_invert assignment, then the section-boundary guard. This is the
+    Lagrange twin of SurfaceFixture's blkPinKats_ok line on finalPairing, and it is what
+    makes "real" a computation rather than an adjective: the placeholder is one statement and
+    no permutation of a placeholder matches this. -/
+def emitLagrangeIsReal_ok : Bool :=
+  match emitLagrangeAt poseidonCtx.k poseidonCtx.numInstances
+      poseidonCtx.numNegLagranges with
+  | Stmt.letDecl ["lagrange_precompile_failed"]
+      (some (Expr.lit (Literal.number 0))) :: Stmt.block body :: Stmt.cond _ _ :: [] =>
+      body.length == 28 && (body.filter stmtIsFor).length == 5 &&
+        (body.any fun s => match s with
+          | Stmt.assign ["success", "lagrange_precompile_failed"] (Expr.call "batch_invert" _) =>
+              true
+          | _ => false)
+  | _ => false
+
+/-- GATE 23 (the dispatch, not just the list). emittedPartials CLAIMS three partials are
+    real; gates 14-22 check the emitters themselves. Without this gate the file could grow a
+    real emitLagrange, list it in emittedPartials, and still have emitPartial fall through to
+    emitPlaceholder - the pin would then pin a placeholder while every other gate stayed
+    green. That is the R-62 class one level up, so it is checked as a computation: the
+    dispatch reaches the real body for all three, and the placeholder is NOT what the
+    dispatcher returns for any of them. -/
+def emitPartialRoutesRealSlices_ok : Bool :=
+  SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
+    (emitLagrange Midfall.Lowering.witnessPlanView) &&
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
+      emitTraceReturnBlock &&
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
+      (emitFinalPairing Midfall.Lowering.witnessPlanView) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
+      (emitPlaceholder .lagrange) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
+      (emitPlaceholder .traceReturn) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
+      (emitPlaceholder .finalPairing)
+
 end Midfall.Lowering.GenAst
 
 #eval Midfall.Lowering.GenAst.emitFinalPairing_tokens_ok -- expect true
@@ -539,3 +927,13 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.renderFunctionSlices_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitEcPairing_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitAccBatch_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitLagrange_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitLagrange_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTraceReturn_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTraceReturn_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitLagrangeDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitLagrangeDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTraceReturnDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.numericSpellingDivergence_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitLagrangeIsReal_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitPartialRoutesRealSlices_ok -- expect true

@@ -69,15 +69,23 @@
 --      `fxOmegaOrderExactly` is GONE because the structure now carries the fact, and
 --      `fxDomDegenerate` is the object the old clause accepted and the new one refutes
 --      (`fxEnvAgreesRejectsDegeneratePair`).
---   4. P-AST CHANGED THIS ONE. blk no longer returns what the fixture declares: it is
---      Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's emitMain, so
---      main_concat and the new BlkIsEmitter pin are rfl here by construction rather than
---      by assertion. finalPairing is a REAL two-statement slice - the deployed arm of
+--   4. P-AST CHANGED THIS ONE, P-AST2 EXTENDED IT. blk no longer returns what the fixture
+--      declares: it is Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's
+--      emitMain, so main_concat and the new BlkIsEmitter pin are rfl here by construction
+--      rather than by assertion. THREE slices are real: finalPairing (the deployed arm of
 --      FinalPairing.yul, with fail and ec_pairing defined in main's helper prefix so the
---      slice can actually run - and the other six are still one-statement placeholders,
---      because GenAst.emittedPartials is [finalPairing]. The placeholders moved out of
+--      slice can actually run), lagrange (the three-statement Lagrange.yul block, whose
+--      inner scope carries the five Fr loops and the MF-4 two-value batch_invert) and
+--      traceReturn (the production terminal arm: guard, mstore 1, return 32 bytes). The
+--      other FOUR are still one-statement placeholders - vkLoading, transcriptParser,
+--      quotientLin and pcs - because GenAst.emittedPartials is
+--      [lagrange, finalPairing, traceReturn]. The placeholders moved out of
 --      this file into the emitter so that the emitter is the only source of blk in the
 --      tree; a pin against a blk the fixture still declared by hand would pin nothing.
+--      What P-AST2 adds to THIS file is the plant class the change makes possible: before
+--      it, a Surface whose blk .lagrange was the placeholder satisfied BlkIsEmitter,
+--      because the placeholder WAS the emitter's answer. blkPinBitesLagrangePlaceholder and
+--      blkPinBitesTraceReturnPlaceholder are the two theorems that say it no longer does.
 --   7. Eip2537.Holds is still NOT exhibited, and P-4a2 did not change that: the
 --      blocker is the missing BLS12-381 curve model (D-P1, R-28), not the field
 --      arithmetic. See ObligationsGates.gap_holds_unexhibited and encG2AtFixture_ok.
@@ -227,9 +235,10 @@ def fxPlan : PlanView :=
     fixture's blk, its main block and the BlkIsEmitter pin all come from one function, so
     the pin is rfl HERE and the exhibits below are about surfaces that DEVIATE from it.
 
-    finalPairing is a real two-statement slice; the other six are GenAst's placeholders,
-    one statement each with a distinct literal, so a blk that returned the same block for
-    two partials or dropped one still changes main and is caught by mainConcatKats_ok. -/
+    finalPairing, lagrange and traceReturn are real slices; the other four are GenAst's
+    placeholders, one statement each with a distinct literal, so a blk that returned the
+    same block for two partials or dropped one still changes main and is caught by
+    mainConcatKats_ok. -/
 def fxPartialBlocks : Partial → YulBlock := fun q => GenAst.emitPartial fxPlan q
 
 /-- The same function, at the plan view the record carries - the form the pin states. -/
@@ -600,18 +609,31 @@ def mainConcatKats_ok : Bool :=
   -- no BEq on Stmt at this dialect (Ast.lean derives Repr only), so the checks are
   -- structural: lengths and the literal each slice stores, not an equality of blocks.
   -- main is the two emitted AssemblyHelpers definitions followed by the seven slices:
-  -- TEN statements, where the pre-P-AST fixture carried seven dummies and no helpers at
+  -- FOURTEEN statements since P-AST2 (two helpers, four one-statement placeholders, the
+  -- three-statement Lagrange, the two-statement FinalPairing arm and the three-statement
+  -- TraceReturn arm), where the pre-P-AST fixture carried seven dummies and no helpers at
   -- all, so a real finalPairing slice could not have resolved fail or ec_pairing.
-  realSurface.L.main.length == 10 &&
+  realSurface.L.main.length == 14 &&
     -- and the first two statements really are those definitions, i.e. mainScope - which
     -- hoists main - can see them. This is the pin's second conjunct as a computation.
     (match realSurface.L.main with
      | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
      | _ => false) &&
     (realSurface.blk Partial.vkLoading realSurface.plan).length == 1 &&
-    -- the partial the emitter implements is NOT a one-statement dummy: the deployed
-    -- FinalPairing arm is the precompile guard and the swapped ec_pairing call.
+    -- the three partials the emitter implements are NOT one-statement dummies: the deployed
+    -- FinalPairing arm is the precompile guard and the swapped ec_pairing call, the Lagrange
+    -- slice is the MF-4 flag, the 28-statement computation scope and the section boundary,
+    -- and TraceReturn is the guard, the ABI-true store and the terminal return.
     (realSurface.blk Partial.finalPairing realSurface.plan).length == 2 &&
+    (realSurface.blk Partial.lagrange realSurface.plan).length == 3 &&
+    (realSurface.blk Partial.traceReturn realSurface.plan).length == 3 &&
+    -- and the Lagrange scope really is a scope with loops in it, not three flat statements:
+    -- the fixture's own plan (k = 2, seven negative rotations) is what this measures, so a
+    -- placeholder that merely had three statements would still fail here.
+    (match realSurface.blk Partial.lagrange realSurface.plan with
+     | _ :: Stmt.block body :: _ =>
+         body.length == 28 && (body.filter GenAst.stmtIsFor).length == 5
+     | _ => false) &&
     (List.zipIdx [Partial.vkLoading, Partial.transcriptParser, Partial.lagrange,
         Partial.quotientLin, Partial.pcs, Partial.finalPairing,
         Partial.traceReturn]).all
@@ -631,10 +653,10 @@ def mainConcatKats_ok : Bool :=
     refused. A lower that returned .ok for every option would satisfy lower_ok while o0
     pinned nothing about L. -/
 def lowerPinKats_ok : Bool :=
-  (match fxLower fxOptions with | .ok l => l.main.length == 10 | .error _ => false) &&
+  (match fxLower fxOptions with | .ok l => l.main.length == 14 | .error _ => false) &&
     (match fxLower fxOptionsTrace with | .ok _ => false | .error _ => true) &&
     (match realSurface.lower realSurface.o₀ with
-     | .ok l => l.main.length == 10 | .error _ => false)
+     | .ok l => l.main.length == 14 | .error _ => false)
 
 #eval lowerPinKats_ok                     -- expect true
 
@@ -916,6 +938,175 @@ theorem blkPinBitesBoundary : ¬ BlkIsEmitter plantBoundarySurface := by
   rw [h4] at h5
   exact Bool.noConfusion h5
 
+/-! #### The P-AST2 plants: a real slice put back to its placeholder
+
+    WHY THESE TWO EXIST. Every plant above this section attacks a pin that was already
+    carrying weight: finalPairing was real when P-AST planted a 'return(0, 0)' over it, and
+    quotientLin is STILL a placeholder, which is what makes the boundary plant work - it
+    moves a join between two one-statement dummies. P-AST2 makes lagrange and traceReturn
+    real, and that creates a NEW plant class the older exhibits cannot express: a blk whose
+    lagrange slice is the emitter's OWN placeholder. Before P-AST2 that plant satisfied
+    BlkIsEmitter, because the placeholder was the emitter's answer for those two partials -
+    the pin was true of it by accident, not by design. D-P30 clause 6 is the instruction to
+    re-check exactly this, and the two theorems below are the re-check: the same plant, now
+    excluded, with main replanted so that main_concat, lower_ok and shell_unfolds all still
+    discharge and the pin remains the only thing that refuses it. -/
+
+/-- The replanted main for an arbitrary planted blk: the emitted helpers, then the planted
+    slices in include order. This is what keeps a plant a genuine Surface - main is free, it
+    comes from lower, and main_concat has to be satisfiable by SOME helpers tail. -/
+def plantMainWith (b : Partial → PlanView → YulBlock) : YulBlock :=
+  GenAst.emitHelpers fxPlan ++
+    Midfall.Lowering.partials.foldl (init := []) fun acc q => acc ++ b q fxPlan
+
+/-- The replanted render: refuses the two diagnostic options exactly as fxLower does, so
+    SupportedS.production and the astOfMain equation still behave, and returns the replanted
+    main for the production option. -/
+def plantLowerWith (m : YulBlock) :
+    RenderOptions → Except Midfall.Generator.GeneratorError Lowered := fun o =>
+  if o.diagnostics.trace || o.diagnostics.gasCheckpoints then
+    .error Midfall.Generator.GeneratorError.noAdviceColumns
+  else
+    .ok { fxLowered with main := m }
+
+/-- THE PLANT BUILDER: a Surface that differs from the emitter in blk and nowhere else that
+    a hypothesis can see. Everything except blk, L, lower, shell and astOfMain is the
+    fixture's own, and the five that are not are re-supplied so the record still closes -
+    lower_ok, main_concat and shell_unfolds are all rfl against the replanted main, exactly
+    as in plantCounterexampleSurface. -/
+def plantSurfaceWith (b : Partial → PlanView → YulBlock) : Surface rp RP RP RP :=
+  let m := plantMainWith b
+  let low := plantLowerWith m
+  { realSurface with
+    blk := b, L := { fxLowered with main := m }, lower := low,
+    shell := Object.mk "Halo2Verifier" (fxHeadGuard ++ m) [] [],
+    astOfMain := fun o => match low o with | .ok l => some l.main | .error _ => none,
+    lower_ok := rfl,
+    main_concat := ⟨GenAst.emitHelpers fxPlan, rfl⟩,
+    shell_unfolds := rfl }
+
+/-- The plant P-AST2 makes possible: lagrange back to its placeholder, everything else the
+    emitter's. -/
+def plantBlkLagrangePlaceholder : Partial → PlanView → YulBlock
+  | .lagrange, _pv => GenAst.emitPlaceholder .lagrange
+  | q, pv => GenAst.emitPartial pv q
+
+def plantLagrangePlaceholderSurface : Surface rp RP RP RP :=
+  plantSurfaceWith plantBlkLagrangePlaceholder
+
+/-- THE PIN BITES THE PLACEHOLDER PLANT, LAGRANGE (D-P23, second half for the new slice).
+    The plant's blk is the emitter's own dummy for lagrange, so the ONLY thing that refuses
+    it is that the emitter no longer returns that dummy. -/
+theorem blkPinBitesLagrangePlaceholder : ¬ BlkIsEmitter plantLagrangePlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.lagrange fxPlan
+  have h4 : SyntaxEq.stmtsBeq
+      (plantLagrangePlaceholderSurface.blk Partial.lagrange fxPlan)
+      (GenAst.emitPlaceholder .lagrange) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.lagrange)
+      (GenAst.emitPlaceholder .lagrange) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- The same plant on the other newly real slice. -/
+def plantBlkTraceReturnPlaceholder : Partial → PlanView → YulBlock
+  | .traceReturn, _pv => GenAst.emitPlaceholder .traceReturn
+  | q, pv => GenAst.emitPartial pv q
+
+def plantTraceReturnPlaceholderSurface : Surface rp RP RP RP :=
+  plantSurfaceWith plantBlkTraceReturnPlaceholder
+
+/-- THE PIN BITES THE PLACEHOLDER PLANT, TRACE_RETURN. Note what the placeholder and the
+    real slice have in common: BOTH end in a 'ret' builtin, and the placeholder's is
+    'return(0x1000, 0x20)' - the same LENGTH as the real terminal return, from a different
+    address and with no guard before it. A length-only check cannot tell them apart, which
+    is why this is a stmtsBeq exhibit and not a count. -/
+theorem blkPinBitesTraceReturnPlaceholder :
+    ¬ BlkIsEmitter plantTraceReturnPlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.traceReturn fxPlan
+  have h4 : SyntaxEq.stmtsBeq
+      (plantTraceReturnPlaceholderSurface.blk Partial.traceReturn fxPlan)
+      (GenAst.emitPlaceholder .traceReturn) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.traceReturn)
+      (GenAst.emitPlaceholder .traceReturn) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- EVERY OTHER HYPOTHESIS STILL HOLDS OF THE TWO NEW PLANTS, so the pin is again the only
+    thing that refuses them. Stated as two exhibits rather than transported from
+    plantedStillSupported: that transport was TRIED and FAILS to typecheck (measured -
+    'Type mismatch' at both 'exact plantedStillSupported' sites), for the reason
+    plantedStillSupported's own comment gives: SupportedS carries the section's nine instance
+    arguments and the statements do not unify up to them. So each plant gets the direct ten-
+    bullet exhibit, and each bullet is a computation on the plant's own projections. -/
+theorem plantedLagrangePlaceholderStillSupported :
+    SupportedS plantLagrangePlaceholderSurface plantLagrangePlaceholderSurface.o₀ := by
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantLagrangePlaceholderSurface, plantSurfaceWith, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantLagrangePlaceholderSurface, plantSurfaceWith, realSurface, fxVk,
+        List.mem_append, List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+
+theorem plantedTraceReturnPlaceholderStillSupported :
+    SupportedS plantTraceReturnPlaceholderSurface plantTraceReturnPlaceholderSurface.o₀ := by
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantTraceReturnPlaceholderSurface, plantSurfaceWith, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantTraceReturnPlaceholderSurface, plantSurfaceWith, realSurface, fxVk,
+        List.mem_append, List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+
+/-- Both placeholder plants keep their replanted main DISTINCT from the emitted main, which
+    is the price of being a Surface at all: main_concat is existential over the helper
+    prefix only, so a blk change that left main alone would not be a Surface whose slices
+    tile the tail of its program. -/
+def plantPlaceholderMainsDiffer_ok : Bool :=
+  ! SyntaxEq.stmtsBeq (plantMainWith plantBlkLagrangePlaceholder) (GenAst.emitMain fxPlan) &&
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkTraceReturnPlaceholder)
+      (GenAst.emitMain fxPlan) &&
+    -- and each plant differs from the emitter in EXACTLY one slice, so the plant is about
+    -- the slice and not about the whole program being different.
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkLagrangePlaceholder q fxPlan) (GenAst.emitPartial fxPlan q) ==
+        (q != .lagrange)) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkTraceReturnPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != .traceReturn))
+
+#eval plantPlaceholderMainsDiffer_ok      -- expect true
+
 /-- The pin's two halves as a computation, next to the two plants as theorems. Line 1:
     the fixture's blk agrees with the emitter for every partial under stmtsBeq, the
     authoritative relation. Line 2: the emitted finalPairing slice is the real program -
@@ -926,7 +1117,10 @@ theorem blkPinBitesBoundary : ¬ BlkIsEmitter plantBoundarySurface := by
     boundary plant keeps main - so main_concat cannot see it. Line 6: the counterexample
     plant changes main - so the plant is invisible to every field except the pin. Line 7:
     hoist of the fixture's main resolves fail and ec_pairing, and hoist of the slices
-    alone does not, which is the pin's second conjunct doing the work it was added for. -/
+    alone does not, which is the pin's second conjunct doing the work it was added for.
+    Lines 8-10 are P-AST2: the Lagrange slice is a program and not a length, the TraceReturn
+    slice equals the artifact's quotation, and the two placeholder plants differ from the
+    emitter on exactly the slice they plant. -/
 def blkPinKats_ok : Bool :=
   (Midfall.Lowering.partials.all fun q =>
     SyntaxEq.stmtsBeq (realSurface.blk q realSurface.plan)
@@ -945,7 +1139,31 @@ def blkPinKats_ok : Bool :=
      let d := Bridge.Dialect c g
      (lookupFun (hoist d realSurface.L.main :: []) "fail").isSome &&
        (lookupFun (hoist d realSurface.L.main :: []) "ec_pairing").isSome &&
-       ! (lookupFun (hoist d (GenAst.emitSlices fxPlan) :: []) "ec_pairing").isSome)
+       ! (lookupFun (hoist d (GenAst.emitSlices fxPlan) :: []) "ec_pairing").isSome) &&
+    -- Line 8 (P-AST2): the Lagrange slice at the FIXTURE's plan is the real program - the
+    -- MF-4 flag, a 28-statement scope with five loops, and the section-boundary guard - and
+    -- not three flat statements that happen to have the right length.
+    (match realSurface.blk Partial.lagrange realSurface.plan with
+     | Stmt.letDecl ["lagrange_precompile_failed"]
+         (some (Expr.lit (Literal.number 0))) :: Stmt.block body :: Stmt.cond _ _ :: [] =>
+         body.length == 28 && (body.filter GenAst.stmtIsFor).length == 5
+     | _ => false) &&
+    -- Line 9 (P-AST2): the TraceReturn slice the fixture runs IS the yul% quotation of the
+    -- deployed artifact's terminal arm (VerifierPartialKats.traceReturn_ast, transcribed from
+    -- D:3010-3021 by P-13e and gated there against the render). This is the cross-check the
+    -- converter does not control: TraceReturn is the one real slice whose emitted shape is
+    -- plan-independent, so the snapshot is comparable at the fixture itself.
+    SyntaxEq.stmtsBeq (realSurface.blk Partial.traceReturn realSurface.plan)
+      VerifierPartialKats.traceReturn_ast &&
+    -- Line 10 (P-AST2): the decidable shadow of the two new theorems - each placeholder
+    -- plant differs from the emitter on its own slice and agrees with it on the other six.
+    ! SyntaxEq.stmtsBeq (plantBlkLagrangePlaceholder Partial.lagrange fxPlan)
+      (GenAst.emitPartial fxPlan Partial.lagrange) &&
+    ! SyntaxEq.stmtsBeq (plantBlkTraceReturnPlaceholder Partial.traceReturn fxPlan)
+      (GenAst.emitPartial fxPlan Partial.traceReturn) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkLagrangePlaceholder q fxPlan) (GenAst.emitPartial fxPlan q) ==
+        (q != .lagrange))
 
 #eval blkPinKats_ok                       -- expect true
 /-! ### 7. EnvAgrees: the hypothesis P-4a2 closes (note 3: this used to be unexhibited) -/

@@ -183,7 +183,8 @@ def encG2IsEip (b : Bytes) : Bool :=
     GenAst.lean now returns a real Yul AST for FinalPairing and for the two AssemblyHelpers
     definitions it calls, checked against the text port under the token comparator, and
     Lowering/Partials.lean's BlkIsEmitter pins blk to it as a hypothesis of each spec
-    theorem. Six of the seven partials are still placeholders in that emitter, so the pin is
+    theorem. P-AST2 added Lagrange and TraceReturn, so four of the seven partials are still
+    placeholders in that emitter, and the pin is
     what makes those nine theorems well-posed rather than about-every-program; the text
     renders (VerifierPartials.lean really does return String) stay what D-P25 calls them: a
     Lean-side reference, not the deliverable. -/
@@ -213,8 +214,8 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
   -- the lowered program: PLAN 9.5 L, and the render it came from
   o₀ : RenderOptions
   L : Lowered
-  /-- The render function. Abstract because the AST emitter (GenAst.lean) covers one
-      partial of seven, so no Lean function yet produces a whole Lowered from RenderOptions;
+  /-- The render function. Abstract because the AST emitter (GenAst.lean) covers three
+      partials of seven, so no Lean function yet produces a whole Lowered from RenderOptions;
       lower_ok is what makes o₀ the options this L came from. -/
   lower : RenderOptions → Except Midfall.Generator.GeneratorError Lowered
   lower_ok : lower o₀ = .ok L
