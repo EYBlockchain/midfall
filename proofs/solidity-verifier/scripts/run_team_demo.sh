@@ -18,6 +18,10 @@ SRS_DIR="${SRS_DIR:-"$ROOT_DIR/.srs"}"
 LOG_DIR="${LOG_DIR:-"$ROOT_DIR/target/team-demo-logs"}"
 
 MOONLIGHT_DIR="${MOONLIGHT_DIR:-"$DEFAULT_MOONLIGHT_DIR"}"
+# Known stale: this branch predates midfall#15 (identity-flag words) and
+# Moonlight#91 (flagless wrap accumulator), so the Moonlight step fails against
+# current Midfall. Point it at a Moonlight ref rebased onto master, or pass
+# --skip-moonlight. See docs/reference/TEAM_DEMO_SETUP.md.
 MOONLIGHT_BRANCH="${MOONLIGHT_BRANCH:-codex/wrap-bench-cherry-picks}"
 MOONLIGHT_URL="${MOONLIGHT_URL:-git@github.com:EYBlockchain/Moonlight.git}"
 MOONLIGHT_HTTPS_URL="${MOONLIGHT_HTTPS_URL:-https://github.com/EYBlockchain/Moonlight.git}"
@@ -82,6 +86,8 @@ Options:
   --moonlight-dir DIR      Moonlight checkout, relative to this repo unless absolute.
                          Defaults to a Moonlight checkout next to the Midfall repo.
   --moonlight-branch NAME  Moonlight branch. Defaults to codex/wrap-bench-cherry-picks.
+                         That default is currently stale (see TEAM_DEMO_SETUP.md);
+                         use --skip-moonlight until it is updated.
   --moonlight-url URL      SSH clone URL for Moonlight.
   --https                  Clone Moonlight with the HTTPS URL.
   --update-moonlight       Fetch and switch Moonlight to the requested branch.

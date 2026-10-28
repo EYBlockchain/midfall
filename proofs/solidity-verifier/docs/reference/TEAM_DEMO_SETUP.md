@@ -178,6 +178,18 @@ The Moonlight demo proves the final wrap recursion proof from
 Solidity verifier with this repository, deploys it into local Prague `revm`, and
 verifies the Moonlight proof on-chain.
 
+> **Known issue: the Moonlight part of this demo is currently broken.** The
+> default Moonlight branch, `codex/wrap-bench-cherry-picks`, was last updated in
+> May 2026. It predates two public-input layout changes: Midfall's dedicated
+> foreign-point identity-flag word
+> ([EYBlockchain/midfall#15](https://github.com/EYBlockchain/midfall/pull/15))
+> and Moonlight's flagless, non-identity wrap accumulator
+> ([EYBlockchain/Moonlight#91](https://github.com/EYBlockchain/Moonlight/pull/91)).
+> Against this checkout its wrap bench fails before reaching verifier
+> generation. The demo needs a Moonlight ref with those benchmark commits
+> rebased onto current `master`; until then, run
+> `scripts/run_team_demo.sh --skip-moonlight`.
+
 Clone Moonlight next to this verifier repo:
 
 ```bash
