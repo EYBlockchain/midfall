@@ -27,15 +27,29 @@ R-60 S2 closed two defeats of this gate:
     countdown_or_halt : True := trivial pattern attack.md names, which the old gate
     could not see at all.
 
+P-ENV added a third kind of target: the TYPE OF A STRUCTURE FIELD in Inv.lean. The
+EnvAgrees.omegaOrder clause was strengthened from `omega ^ n = 1` to
+`orderExactly omega n`, and nothing else in the repository reads a structure field's
+type - the duplicate-fact gate checks that a carrier EXISTS and that a pin names both
+sides, and the fingerprints above read LoweringCorrect fields - so without an entry here
+weakening the clause back would build clean, keep every KAT true and leave the degenerate
+`omega = omegaInv = 1` domain accepted again. Each entry is (structure, field, required
+fragments, forbidden fragments); the forbidden half matters, because a field that kept
+the word `orderExactly` and dropped its second conjunct would pass a presence test.
+
 Usage:  python3 scripts/check_statement_fingerprints.py [OBLIGATIONS.LEAN]
+        python3 scripts/check_statement_fingerprints.py --root DIR
+  --root DIR  read every tracked file under DIR instead of this script's parent's
+              parent. Run it against a perturbed copy of the tree to show the gate
+              reddens (R-41: a gate that has never been seen to fail is not a gate).
 """
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from check_duplicate_facts import (ARROW, AND, norm, split_top, strip_comments,
-                                   triviality_problems)
+from check_duplicate_facts import (ARROW, AND, norm, split_top, structures,
+                                   strip_comments, triviality_problems)
 
 FINGERPRINTS = [
     ("verifier_sound", ["ZeroAbove mem", "SoundSide S H cd",
@@ -123,6 +137,14 @@ PARTIAL_SPEC_PINS = [
                               "PAIRING_RHS_MPTR", "PAIRING_LHS_MPTR"], True),
 ]
 
+# P-ENV: the EnvAgrees clause types in Lowering/Inv.lean. (structure, field, must, must not)
+INV_FILE = "Midfall/Lowering/Inv.lean"
+ENV_CLAUSES = [
+    ("EnvAgrees", "omegaOrder",
+     ["Midfall.Assumptions.orderExactly vk.domain.omega vk.domain.n"],
+     ["vk.domain.omega ^ vk.domain.n = 1"]),
+]
+
 DECL = re.compile(r"^\s*(?:theorem |lemma |def |example )?")
 WORD_START = re.compile(r"^[A-Za-z_]")
 
@@ -179,10 +201,23 @@ def field_text(body, field, whole=False):
     return ""
 
 
+def env_clause_text(body, struct, field):
+    """The declaration text of `field` inside `structure struct`, read with the SAME
+    structure parser the duplicate-fact gate uses, so the fragment is matched against the
+    field of THAT structure and not against the first line in the file that mentions the
+    name (a doc string that quotes the old clause would otherwise satisfy the test)."""
+    return norm((structures(body).get(struct) or {}).get(field, (0, ""))[1])
+
+
 def main():
+    argv = sys.argv[1:]
     root = Path(__file__).resolve().parent.parent
+    if "--root" in argv:
+        root = Path(argv[argv.index("--root") + 1]).resolve()
+        argv = [a for i, a in enumerate(argv)
+                if a != "--root" and i != argv.index("--root") + 1]
     default = root / "Midfall/Lowering/Obligations.lean"
-    ob = Path(sys.argv[1]) if len(sys.argv) > 1 else default
+    ob = Path(argv[0]) if argv else default
     if not ob.exists():
         print("check_statement_fingerprints: no such file", ob, file=sys.stderr)
         return 2
@@ -266,16 +301,41 @@ def main():
                 checked += 1
                 if norm(fr) not in text:
                     problems.append(where + name + ": missing fragment " + repr(fr))
+    # P-ENV: the EnvAgrees clause types. A weakened clause elaborates, builds, and keeps
+    # every KAT true - the degenerate domain simply stops being refutable - so this is
+    # the only gate that can see it.
+    inv = root / INV_FILE
+    if not inv.exists():
+        problems.append("Inv.lean missing: %s" % inv)
+    else:
+        ibody = strip_comments(inv.read_text(encoding="utf-8"))
+        for struct, field, must, must_not in ENV_CLAUSES:
+            text = env_clause_text(ibody, struct, field)
+            if not text:
+                problems.append("Inv.%s.%s: CLAUSE NOT FOUND - the field is no longer "
+                                "declared, so nothing pins its type" % (struct, field))
+                continue
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type no longer "
+                                    "says %s (P-ENV: omegaOrder must require the EXACT "
+                                    "order, or a generator equal to 1 satisfies it)"
+                                    % (struct, field, repr(fr)))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type contains the "
+                                    "pre-P-ENV text %s" % (struct, field, repr(fr)))
     if problems:
         print("STATEMENT FINGERPRINTS BROKEN (%d):" % len(problems))
         for pr in problems:
             print("  " + pr)
         return 1
     print("ok: %d statement fragments present in the TYPE across %d LoweringCorrect "
-          "fields, %d Surface pins, %d derived checks and %d blk-pin declarations "
-          "(comments stripped first)"
+          "fields, %d Surface pins, %d derived checks, %d blk-pin declarations and "
+          "%d EnvAgrees clause types (comments stripped first)"
           % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
-             len(PARTIAL_SPEC_PINS)))
+             len(PARTIAL_SPEC_PINS), len(ENV_CLAUSES)))
     return 0
 
 

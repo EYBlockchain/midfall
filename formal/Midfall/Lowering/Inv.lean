@@ -72,6 +72,7 @@
 
 import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
+import Midfall.Assumptions.TwoAdicity
 import Midfall.Generator.Layout
 import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Models
@@ -217,8 +218,21 @@ structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p)
       rotations by omegaInv. -/
   omegaInvMul : vk.domain.omegaInv * vk.domain.omega = 1
   /-- The R-2 completeness side: the contract batch-inverts x^n - 1 and every
-      x - omega^i, so x^n != 1 rules out x = omega^i only if omega has order n. -/
-  omegaOrder : vk.domain.omega ^ vk.domain.n = 1
+      x - omega^i, so x^n != 1 rules out x = omega^i only if omega has order n -
+      EXACTLY n, not merely a divisor of it.
+
+      P-ENV STRENGTHENED THIS from `omega ^ n = 1` to `orderExactly omega n`. The old
+      text was satisfied by `omega := 1`: P-4a2 measured that the placeholder domain
+      (omega = omegaInv = 1 with the CORRECT barycentricWeight) passed all ten
+      clauses, because 1^4 = 1 and 1*1 = 1. That is the D-P23 defect class - a
+      hypothesis a degenerate object satisfies - and non-vacuity does not belong in a
+      separate theorem sitting beside the structure the theorems actually carry,
+      which is where P-4a2 left it. The strengthening is what moves it inside.
+
+      `EnvAgrees.xNotRoot_iff_notDomainPoint` below is the consumer exactness makes
+      derivable, and `SurfaceFixture.fxEnvAgreesRejectsDegeneratePair` is the
+      falsification half: the pair the old clause accepted is now refuted. -/
+  omegaOrder : Midfall.Assumptions.orderExactly vk.domain.omega vk.domain.n
   /-- The l_blind window: Lagrange.yul:57 sums num_neg_lagranges terms starting at
       the second denominator, which is blinding_factors + 1 (mod.rs:509-515). -/
   negLagranges : PV.numNegLagranges = vk.cs.blindingFactors.toOption.getD 0 + 1
@@ -231,6 +245,30 @@ structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p)
   /-- R-1: the contract hashes the VK_DIGEST word into alpha (FinalPairing.yul:22)
       and the Lean transcript absorbs vk.transcriptRepr, imported and unchecked. -/
   vkDigestWord : (PV.vk.constants.getD 0 ("", 0)).2 = frWord vk.transcriptRepr
+
+/-- THE CONSUMER THE STRENGTHENED `omegaOrder` BUYS, and the reason it is not decoration
+    (R-30: a clause no theorem reads is a clause that can be dropped). With a generator of
+    EXACT order n, "x is not a root of the vanishing polynomial" and "x is not one of the
+    n domain points" are the SAME statement - which is precisely the step
+    `lagrange_progress_spec` needs from `ChallengesGood.xNotRoot` (attack.md GenericX
+    FIX). Under the old `omega ^ n = 1` text this was FALSE: at `omega := 1` the left side
+    excludes the single point 1 while the contract reverts on all n of them, so the
+    hypothesis did not deliver the exclusion its doc comment claimed.
+
+    The proof is two rewrites through `domainN` plus `xNotRoot_iff`, which is only
+    available for an exact order: this theorem is the falsification of the weaker clause
+    as much as it is the consumer of the stronger one. -/
+theorem EnvAgrees.xNotRoot_iff_notDomainPoint
+    {E : VerifierEnv p G₁ G₂ Gₜ} {vk : VerifyingKey (Fr p) G₁} {PV : PlanView}
+    {params : ParamsVerifierKZG G₁ G₂} {sG2gen : G₂} {x : Fr p}
+    (h : EnvAgrees E vk PV params sG2gen) :
+    x ^ vk.domain.n ≠ 1 ↔ ∀ i : ℕ, i < vk.domain.n → x ≠ vk.domain.omega ^ i := by
+  have hn : vk.domain.n = 2 ^ vk.domain.k := h.domainN.1
+  have ho : Midfall.Assumptions.orderExactly vk.domain.omega (2 ^ vk.domain.k) := by
+    rw [← hn]
+    exact h.omegaOrder
+  rw [hn]
+  exact Midfall.Assumptions.xNotRoot_iff ho
 
 /-- The finite bad set the squeezed challenges must miss for Lean and the contract to
     agree. R-2 has three manifestations and only the first two diverge between the

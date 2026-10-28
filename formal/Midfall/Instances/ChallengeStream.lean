@@ -58,6 +58,7 @@
 
 import Midfall.Halo2.Exec.Kzg.MultiOpen
 import Midfall.Halo2.Exec.Verifier
+import Midfall.Assumptions.TwoAdicity
 import Midfall.Instances.ExponentModel
 import Midfall.Instances.NativeE2E
 
@@ -238,9 +239,29 @@ def mpNonVacuous_ok : Bool :=
 set_option maxRecDepth 100000 in
 local instance fact1009cs : Fact (Nat.Prime 1009) := ⟨by decide⟩
 
-/-- `Fr 1009` at the same `numBits` as `fc17`, so the truncation width is one byte. -/
+/-- `Fr 1009` with the truncation width the gate needs - one byte - and field constants
+    that are TRUE. P-ENV repaired `rootOfUnity`, `zeta` and `numBits` here: the site reads
+    only `fc.numBits` (MultiOpen.lean:131, :181, :191, :281), so the three order-bearing
+    fields were unread and therefore unfalsifiable, and they were the ZMod-17-shaped
+    placeholder `rootOfUnity := 3, zeta := 2` that P-4a2 PROVED fails both halves of
+    `FieldConsts.IsWellFormed` (`TwoAdicity.fc1009Placeholder_root_fails`,
+    `..._zeta_fails`: 3 has order 168 mod 1009 and 2 has order 504). The values now are
+    `Midfall.Assumptions.fc1009Real`, whose well-formedness is a kernel theorem
+    (`fc1009Real_isWellFormed`, discharged below at THIS name). `numBits` moves 5 -> 10,
+    the true bit width of 1009, and the truncation width is unchanged because
+    divCeil (divCeil 5 8) 2 = 1 = divCeil (divCeil 10 8) 2 - which is why every pinned
+    value in this section is the same value it was before the repair, and why no
+    expectation had to be re-derived. -/
 def fc1009 : FieldConsts (Fr 1009) :=
-  { numBits := 5, s := 4, rootOfUnity := 3, zeta := 2 }
+  { numBits := 10, s := 4, rootOfUnity := 62, zeta := 374 }
+
+/-- THE REPAIRED CONSTANTS ARE WELL FORMED, as a theorem and not as a comment: root of
+    order exactly 2^4, zeta of order exactly 3, s < numBits. The proof is the kernel
+    exhibit in `Midfall/Assumptions/TwoAdicity.lean`, and it typechecks here only because
+    this `fc1009` has the same three values - put the placeholder back and this line is a
+    build failure, which is the falsifiability half. -/
+theorem fc1009_isWellFormed : fc1009.IsWellFormed :=
+  Midfall.Assumptions.fc1009Real_isWellFormed
 
 def ex9 (n : Nat) : Exp 1009 := Multiplicative.ofAdd (n : ZMod 1009)
 

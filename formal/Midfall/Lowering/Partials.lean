@@ -400,7 +400,7 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       PartialProgress S W product qAddr .transcriptParser Snap gas (calldataPre S cd)
   /-- Needs ChallengesGood: at x = omega^i the contract reverts and Lean accepts, so
       without the side condition the no-revert claim is false (attack GenericX entry,
-      and the reason EnvAgrees.omegaOrder exists). -/
+      and the reason EnvAgrees.omegaOrder exists, now as `orderExactly`). -/
   lagrange_progress : ∀ (H : Hash) (W : ExecEnv) (qAddr : U256) (gas : ExternalGas)
       (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
       (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
@@ -522,8 +522,10 @@ theorem lagrange_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
 /-- The progress twin, with the side condition that makes it true. Without
     ChallengesGood the claim is FALSE: at x = omega^i outside the rotation window the
     contract reverts ProofRejected and Lean accepts, so a no-revert statement needs
-    the bad set excluded. EnvAgrees.omegaOrder is what turns x^n not equal to 1 into
-    that exclusion (attack GenericX FIX). PROOF HOLE as for lagrange_spec. -/
+    the bad set excluded. `EnvAgrees.xNotRoot_iff_notDomainPoint` is what turns x^n not
+    equal to 1 into that exclusion, and it needs the EXACT order P-ENV put into
+    `EnvAgrees.omegaOrder`: at `omega := 1` the left side excludes one point and the
+    contract reverts on all n (attack GenericX FIX). PROOF HOLE as for lagrange_spec. -/
 theorem lagrange_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)

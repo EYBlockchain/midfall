@@ -61,6 +61,14 @@
 --      see fxEnvAgrees below, Midfall/Assumptions/TwoAdicity.lean, and the repaired fxFc,
 --      fxDom and fxPlan. The one hypothesis of the headline bundle that is STILL
 --      unexhibited is Eip2537.Holds, for the reason note 7 gives.
+--      P-ENV THEN STRENGTHENED `omegaOrder` from `omega ^ n = 1` to
+--      `orderExactly omega n`, because P-4a2 measured that the old text was satisfied by
+--      `omega = omegaInv = 1` with the CORRECT barycentricWeight - a hypothesis a
+--      degenerate object satisfies, which is the D-P23 class. The exhibit survives
+--      (`fxEnvAgrees.omegaOrder` is `frOmega4_order`), the separate non-vacuity theorem
+--      `fxOmegaOrderExactly` is GONE because the structure now carries the fact, and
+--      `fxDomDegenerate` is the object the old clause accepted and the new one refutes
+--      (`fxEnvAgreesRejectsDegeneratePair`).
 --   4. P-AST CHANGED THIS ONE. blk no longer returns what the fixture declares: it is
 --      Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's emitMain, so
 --      main_concat and the new BlkIsEmitter pin are rfl here by construction rather than
@@ -966,16 +974,48 @@ def fxDomMatchesPort_ok : Bool :=
 
 #eval fxDomMatchesPort_ok               -- expect true
 
-/-- THE NON-VACUITY OF THE REPAIRED DOMAIN (D-P23, first half). `EnvAgrees.omegaOrder`
-    asks only for `omega ^ n = 1`, which the placeholder satisfied; what makes the exhibit
-    worth having is that the order is EXACTLY 2^k, which is what
-    `ChallengesGood.xNotRoot` and `xNotRoot_iff` actually consume. -/
-theorem fxOmegaOrderExactly : Midfall.Assumptions.orderExactly fxDom.omega (2 ^ fxDom.k) :=
-  Midfall.Assumptions.frOmega4_order
+/-- THE DEGENERATE PAIR, KEPT AS THE FALSIFICATION (P-ENV, D-P23 second half). This is
+    the object P-4a2 measured: `omega := 1` **and** `omegaInv := 1` with everything else
+    of the REPAIRED domain left alone - the right `n`, the right `k`, and above all the
+    CORRECT `barycentricWeight`, so the one clause that used to fail on `fxDomOld` passes
+    here. Before P-ENV this satisfied all ten `EnvAgrees` clauses; now `omegaOrder`
+    rejects it. `fxDomOld` cannot serve this purpose: it fails `baryWeight` as well, so a
+    rejection of it says nothing about WHICH clause did the work. -/
+def fxDomDegenerate : EvaluationDomain (Fr rp) :=
+  { fxDom with omega := 1, omegaInv := 1 }
+
+/-- The fixture key with the degenerate domain and nothing else changed, so that every
+    clause of `EnvAgrees` that does not read the domain is the same clause it was. -/
+def fxVkDegenerate : VerifyingKey (Fr rp) RP :=
+  { fxVk with domain := fxDomDegenerate }
+
+/-- The new clause fails on it: the order of 1 is 1, not 4. -/
+theorem fxDegenerateNotExactOrder :
+    ¬ Midfall.Assumptions.orderExactly fxDomDegenerate.omega fxDomDegenerate.n := by
+  intro h
+  have hlt : 1 < fxDomDegenerate.n := by decide
+  exact h.pow_ne_one (m := 1) (by decide) hlt (by decide)
+
+/-- THE OLD CLAUSE TEXT, STILL GREEN HERE: `omega ^ n = 1`. This is the line that makes
+    the demonstration a demonstration and not a claim - the pre-P-ENV `omegaOrder` type
+    is proved of the degenerate pair, so the term that used to elaborate still would, and
+    the only thing that changed is that the structure no longer asks for that. -/
+theorem fxDegeneratePassesOldOmegaOrder :
+    fxDomDegenerate.omega ^ fxDomDegenerate.n = 1 := by decide
+
+/-- And the neighbouring domain clauses it still satisfies, so the rejection below is
+    attributable to `omegaOrder` alone: `omegaInvMul` (1 * 1 = 1), `baryWeight` (the
+    weight was deliberately left correct), and both halves of `domainN`. -/
+theorem fxDegeneratePassesOtherDomainClauses :
+    fxDomDegenerate.omegaInv * fxDomDegenerate.omega = 1 ∧
+      fxDomDegenerate.barycentricWeight = ((2 ^ fxDomDegenerate.k : ℕ) : Fr rp)⁻¹ ∧
+      fxDomDegenerate.n = 2 ^ fxDomDegenerate.k ∧ fxDomDegenerate.k = fxPlan.k :=
+  ⟨by decide, Midfall.Assumptions.frInv4_eq_inv, rfl, rfl⟩
 
 /-- The exactness check that the placeholder passes and a real generator fails: the
-    intermediate power is NOT 1. Together with `fxOmegaOrderExactly` this is the clause
-    that would have caught the original bug. -/
+    intermediate power is NOT 1. This is the decidable half of `EnvAgrees.omegaOrder`
+    (P-ENV strengthened that clause to `orderExactly`, whose second conjunct is exactly
+    this for every proper divisor), and it is what would have caught the original bug. -/
 theorem fxOmegaSquareNe : fxDom.omega ^ 2 ≠ (1 : Fr rp) := by decide
 
 /-- `barycentricWeight` really is the inverse of the domain size, which is the clause that
@@ -1038,16 +1078,73 @@ theorem fxEnvAgrees : EnvAgrees fxE fxVk fxPlan fxParams (fx 5) :=
     domainN := ⟨rfl, rfl⟩
     baryWeight := Midfall.Assumptions.frInv4_eq_inv
     omegaInvMul := Midfall.Assumptions.frOmega4Inv_mul
-    omegaOrder := by decide
+    omegaOrder := Midfall.Assumptions.frOmega4_order
     negLagranges := by decide
     nG2 := rfl
     sG2 := rfl
     vkDigestWord := rfl }
 
+/-- THE EXACTNESS IS NOW A FIELD, NOT A NEIGHBOUR (P-ENV). P-4a2 carried this fact as a
+    standalone theorem `fxOmegaOrderExactly` beside an `EnvAgrees` whose `omegaOrder`
+    clause the degenerate pair satisfied - i.e. non-vacuity lived OUTSIDE the structure the
+    theorems carry. That standalone theorem is DELETED, and this recovers the same statement
+    FROM `fxEnvAgrees.omegaOrder`, which is the evidence that deleting it lost nothing: the
+    structure now implies on its own what used to have to be asserted next to it. -/
+theorem fxEnvAgrees_carriesExactOrder :
+    Midfall.Assumptions.orderExactly fxDom.omega (2 ^ fxDom.k) :=
+  fxEnvAgrees.omegaOrder
+
+/-- THE STRENGTHENED CLAUSE, SPENT AT THE FIXTURE. This is the in-tree consumer of
+    `EnvAgrees.xNotRoot_iff_notDomainPoint`, and it is the concrete form the
+    `lagrange_progress_spec` side condition needs: for this size-4 domain over `Fr r`, x
+    misses the roots of X^4 - 1 EXACTLY when it misses the four points 1, ω, ω², ω³. Not
+    derivable before P-ENV: the old `omega ^ n = 1` clause was silent about whether the
+    powers repeat, and at `omega := 1` they do. -/
+theorem fxXNotRoot_iff_notDomainPoint (x : Fr rp) :
+    x ^ fxDom.n ≠ 1 ↔ ∀ i : ℕ, i < fxDom.n → x ≠ fxDom.omega ^ i :=
+  fxEnvAgrees.xNotRoot_iff_notDomainPoint (x := x)
+
+/-- THE DEGENERATE PAIR IS REJECTED (D-P23, falsifiability half - the point of P-ENV).
+    Where the old clause typechecked, this object is now refuted, and the proof uses
+    `omegaOrder` and NOTHING ELSE: `fxDegeneratePassesOldOmegaOrder` and
+    `fxDegeneratePassesOtherDomainClauses` above show the pre-P-ENV text and the three
+    neighbouring domain clauses all still hold of it, and the five clauses that do not
+    read the domain are the same five as for `fxVk`, which `fxEnvAgrees` discharges. So no
+    clause other than `omegaOrder` could have produced this rejection. -/
+theorem fxEnvAgreesRejectsDegeneratePair :
+    ¬ EnvAgrees fxE fxVkDegenerate fxPlan fxParams (fx 5) :=
+  fun h => fxDegenerateNotExactOrder h.omegaOrder
+
+/-- THE SAME DEMONSTRATION AS A COMPUTATION, so a regression shows up in `checks.sh` and
+    not only in a proof term. Lines 1-3 are the OLD gate applied to the degenerate pair:
+    green, which is the bug P-4a2 measured. Line 4 is the exactness test the strengthened
+    clause adds: red, which is the repair. Lines 5-7 are the repaired generator, where both
+    halves are green. What this KAT cannot see is the clause type itself - a weakening of
+    `EnvAgrees.omegaOrder` back to `omega ^ n = 1` leaves every boolean here unchanged, and
+    it is the fingerprint fragment on the clause type in
+    `scripts/check_statement_fingerprints.py` that reddens that. -/
+def fxDegenerateRejectionKats_ok : Bool :=
+  -- the degenerate pair passes every check the OLD structure could ask for...
+  (fxDomDegenerate.omega ^ fxDomDegenerate.n == 1) &&
+    (fxDomDegenerate.omegaInv * fxDomDegenerate.omega == 1) &&
+    (fxDomDegenerate.barycentricWeight * (2 ^ fxDomDegenerate.k : Fr rp) == 1) &&
+    -- ...and fails the one the new structure asks for: 1^2 == 1, so its order is 1, not 4
+    (fxDomDegenerate.omega ^ 2 == 1) &&
+    -- the repaired generator: top power 1 AND intermediate power not 1
+    (fxDom.omega ^ fxDom.n == 1) && (fxDom.omega ^ 2 != 1) &&
+    (fxDom.omegaInv * fxDom.omega == 1) &&
+    -- and the two domains differ in exactly the two generator fields
+    (fxDomDegenerate.n == fxDom.n) && (fxDomDegenerate.k == fxDom.k) &&
+    (fxDomDegenerate.barycentricWeight == fxDom.barycentricWeight) &&
+    (fxDomDegenerate.omega != fxDom.omega)
+
+#eval fxDegenerateRejectionKats_ok      -- expect true
+
 /-- THE EXHIBIT BITES: the same ten clauses evaluated on the OLD domain are not all
-    satisfiable - baryWeight fails, and omegaOrder holds only because the generator is 1.
-    Stated as a computation over the two records side by side, which is what a regression
-    would show up in. -/
+    satisfiable - baryWeight fails outright, and the PRE-P-ENV omegaOrder text held only
+    because the generator is 1 (see fxDegenerateRejectionKats_ok for the degenerate pair
+    with the weight left correct). Stated as a computation over the two records side by
+    side, which is what a regression would show up in. -/
 def fxEnvAgreesKats_ok : Bool :=
   -- the repaired domain: every clause a computation can check, checked
   (fxDom.omega ^ fxDom.n == 1) && (fxDom.omega ^ 2 != 1) &&

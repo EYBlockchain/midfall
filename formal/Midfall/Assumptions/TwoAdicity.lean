@@ -12,8 +12,11 @@
 -- with `omega := 1`, `omegaInv := 1`, `barycentricWeight := 4`
 -- (Instances/SurfaceFixture.lean, `fxDom`), so `EnvAgrees.baryWeight` evaluates FALSE and
 -- `EnvAgrees.omegaOrder` (`omega ^ n = 1`) passes only VACUOUSLY - a domain whose
--- generator is 1 is not a domain. Any gate of the shape `omega ^ (2^k) = 1` is satisfied
--- by 1, which is the bug class this file exists to make impossible to state.
+-- generator is 1 is not a domain. P-4a2 repaired the fixture and P-ENV then strengthened
+-- that clause to `orderExactly omega n`, so the degenerate generator is now rejected by
+-- the structure itself rather than by a theorem standing beside it. Any gate of the
+-- shape `omega ^ (2^k) = 1` is satisfied by 1, which is the bug class this file exists to
+-- make impossible to state.
 --
 -- WHAT IS PROVED, AND WHERE. Everything here is at the REAL BLS12-381 scalar modulus
 -- `r`, and everything is discharged by the KERNEL (`decide`), not by `native_decide`:
@@ -456,7 +459,11 @@ theorem fc13_isWellFormed : fc13.IsWellFormed :=
     (by decide) (by decide) (by decide)
 
 /-- `ZMod 1009` carries both halves at `s = 4` (`1009 - 1 = 2^4 * 63`), which makes it
-    the largest small field in the tree that can exhibit a size-16 domain. -/
+    the largest small field in the tree that can exhibit a size-16 domain. P-ENV made this
+    the value at BOTH `fc1009` sites in the tree (`Exec/Kzg/MultiOpen.lean` and
+    `Instances/ChallengeStream.lean`), so the exhibit is no longer a parallel universe: the
+    constants the truncation gates hand to the port are these ones, and
+    `ChallengeStream.fc1009_isWellFormed` cites this term by name. -/
 def fc1009Real : FieldConsts (Fr 1009) :=
   { numBits := 10, s := 4, rootOfUnity := 62, zeta := 374 }
 
@@ -464,12 +471,16 @@ theorem fc1009Real_isWellFormed : fc1009Real.IsWellFormed :=
   Midfall.Halo2.FieldConsts.isWellFormed_of (by decide) (by decide) (by decide)
     (by decide) (by decide) (by decide)
 
-/-- AND THE PLACEHOLDER THAT IS ALREADY IN THE TREE FAILS. `Exec/Kzg/MultiOpen.lean:373`
-    and `Instances/ChallengeStream.lean:242` both declare `fc1009` with
-    `rootOfUnity := 3, zeta := 2` at `s := 4`. Neither value has the order the field
-    claims: 3 has order 168 mod 1009 and 2 has order 504. So the `IsWellFormed` predicate
-    is not satisfied by the constants the fixtures already hand to the port - which is
-    exactly the R-3 trust boundary being reported rather than papered over. -/
+/-- AND THE PLACEHOLDER THAT WAS IN THE TREE FAILS. Until P-ENV,
+    `Exec/Kzg/MultiOpen.lean` and `Instances/ChallengeStream.lean` both declared `fc1009`
+    with `rootOfUnity := 3, zeta := 2` at `s := 4`. Neither value has the order the field
+    claims: 3 has order 168 mod 1009 and 2 has order 504, so the `IsWellFormed` predicate
+    was NOT satisfied by the constants the fixtures handed to the port - exactly the R-3
+    trust boundary being reported rather than papered over. Both sites now carry
+    `fc1009Real`'s values. THE TWO THEOREMS BELOW STAY: they are the falsification half of
+    that repair, and they are what `smallFieldKats_ok` and `MultiOpen.moFc1009WellFormed_ok`
+    re-check as computations, so a revert of either site reddens a gate and not only a
+    comment. -/
 theorem fc1009Placeholder_root_fails :
     ¬ orderExactly (3 : Fr 1009) (2 ^ 4) := by
   intro h
@@ -670,8 +681,8 @@ def placeholderVacuityKats_ok : Bool :=
 
 /-- THE SMALL FIELDS, measured: `fc17`'s root half holds and its zeta half cannot hold of
     ANY value (no element of order 3 exists in ZMod 17); `fc13` carries both; `fc1009Real`
-    carries both; and the `fc1009` ALREADY IN THE TREE (rootOfUnity := 3, zeta := 2) fails
-    both halves. -/
+    carries both; and the `fc1009` PLACEHOLDER P-4a2 found in the tree (rootOfUnity := 3,
+    zeta := 2) fails both halves, which is what P-ENV repaired at both sites. -/
 def smallFieldKats_ok : Bool :=
   ((3 : Fr 17) ^ 16 == 1) && ((3 : Fr 17) ^ 8 != 1) &&
     (Finset.univ.filter (fun z : Fr 17 => z ^ 3 == 1) == ({1} : Finset (Fr 17))) &&

@@ -269,7 +269,8 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
       SoundSide S H cd →
       obs.returnData = abiTrue ∧ LeanAccepts S H cd
   /-- Lean accepts ⇒ an honest shell run exists and every honest run returns abiTrue (view-level).
-      Side condition: GenericX (finding 4); needs EnvAgrees.omegaOrder/domainN and toEip 1 = zeros. -/
+      Side condition: GenericX (finding 4); needs EnvAgrees.omegaOrder (EXACT order,
+      P-ENV) / domainN and toEip 1 = zeros. -/
   verifier_complete : ∀ (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (cd : Bytes),
       SupportedS S S.o₀ → DeploymentW S W H vkAddr qAddr →
       Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →

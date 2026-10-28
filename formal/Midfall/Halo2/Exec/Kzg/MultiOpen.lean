@@ -364,17 +364,52 @@ local instance fact17mo : Fact (Nat.Prime 17) := by decide
 
 /-- Fr 1009's field constants, for the truncation gate only. The prime is deliberately
     larger than 256. truncate keeps divCeil (divCeil numBits 8) 2 bytes, which at
-    numBits = 5 is ONE byte, so over Fr 17 - where every value is below 256 -
+    numBits = 10 is ONE byte, so over Fr 17 - where every value is below 256 -
     truncation is the IDENTITY and the whole truncatedChallenges branch is
     unobservable. That is a finding in its own right: a truncation gate written at
     Fr 17 cannot fail, which is why moVCalcTrunc_ok runs at 1009 and why the Fr 17
     clause of it is pinned as an EQUALITY (the branch is a no-op there) rather than as
-    a difference. -/
+    a difference.
+
+    P-ENV REPAIRED THE THREE DEAD FIELDS HERE, and `numBits` with them. Nothing in this
+    module reads `s`, `rootOfUnity` or `zeta` - the only `fc.` projections in the file are
+    `fc.numBits` at :131, :181, :191 and :281 - which is precisely why they were free to
+    stay wrong: a field nothing reads cannot fail. But a `FieldConsts` that declares
+    `s := 4` while its root has order 168 and its zeta has order 504 is a FALSE CLAIM
+    about a field, and P-4a2 proved it (`TwoAdicity.fc1009Placeholder_root_fails`,
+    `..._zeta_fails`). The values are now the ones `Midfall/Assumptions/TwoAdicity.lean`
+    exhibits and proves well formed IN THE KERNEL (`fc1009Real_isWellFormed`): 62 has
+    order exactly 16 = 2^4 in Fr 1009 and 374 has order exactly 3. `numBits` moves from
+    the placeholder 5 to 10, the true bit width of 1009, and that changes nothing here:
+    divCeil (divCeil 5 8) 2 = 1 = divCeil (divCeil 10 8) 2, so the truncation width is
+    the same one byte and every pinned value in this section is UNCHANGED - the
+    non-circularity evidence is that arithmetic plus the fact that no gate value moved,
+    not a re-pinned expectation. `moFc1009WellFormed_ok` re-checks the five literal
+    conditions as a computation, and reddens on the placeholder values. -/
 def fc1009 : FieldConsts (Fr 1009) :=
-  { numBits := 5, s := 4, rootOfUnity := 3, zeta := 2 }
+  { numBits := 10, s := 4, rootOfUnity := 62, zeta := 374 }
 
 set_option maxRecDepth 100000 in
 local instance fact1009mo : Fact (Nat.Prime 1009) := by decide
+
+/-- THE CONSTANTS ARE WELL FORMED, as a computation rather than as a paragraph: `62` has
+    order exactly 2^4 (16th power 1, 8th power NOT 1), `374` has order exactly 3 (cube 1,
+    not itself 1), and `s < numBits`. Those are the five checks `FieldConsts.IsWellFormed`
+    is made of, and they are the same five `TwoAdicity.fc1009Real_isWellFormed` discharges
+    by `decide` - so this is the VM twin of a kernel proof, not a second assertion of it.
+    The last two lines are the falsification half: the PLACEHOLDER values this replaced
+    (root 3, zeta 2) fail both halves, and the truncation width the gates above depend on
+    is the same one byte at numBits 5 and at numBits 10. -/
+def moFc1009WellFormed_ok : Bool :=
+  ((62 : Fr 1009) ^ 2 ^ 4 == 1) && ((62 : Fr 1009) ^ 2 ^ 3 != 1) &&
+    ((374 : Fr 1009) ^ 3 == 1) && ((374 : Fr 1009) != 1) &&
+    (fc1009.s < fc1009.numBits) && (fc1009.s == 4) && (fc1009.numBits == 10) &&
+    (fc1009.rootOfUnity == 62) && (fc1009.zeta == 374) &&
+    (divCeil (divCeil fc1009.numBits 8) 2 == 1) &&
+    (divCeil (divCeil 5 8) 2 == divCeil (divCeil 10 8) 2) &&
+    ((3 : Fr 1009) ^ 2 ^ 4 != 1) && ((2 : Fr 1009) ^ 3 != 1)
+
+#eval moFc1009WellFormed_ok             -- expect true
 
 /-- The ascending-cardinality permutation buildQ applies to the point sets
     (kzg/mod.rs:409-424), which the doc comment there calls load-bearing for the

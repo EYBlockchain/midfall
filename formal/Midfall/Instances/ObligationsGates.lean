@@ -323,6 +323,19 @@ theorem bundle_envAgrees_needs_the_repair :
           realSurface.sG2gen) :=
   fun h => fxDomOldBaryFails h.baryWeight
 
+/-- AND THE STRENGTHENED CLAUSE REFUTES ON ITS OWN (P-ENV). `fxDomOld` was refuted by
+    `baryWeight`, a clause that had been FALSE all along, so that exhibit never needed
+    `omegaOrder` to be non-vacuous and proved nothing about it. Here the weight is the
+    correct one and only the generators are degenerate (`omega = omegaInv = 1`), so the
+    strengthened `omegaOrder` is the sole clause that can refute the bundle - which is
+    the falsifiability demonstration lifted from the structure to the conjunction the
+    headline fields actually take. -/
+theorem bundle_envAgrees_needs_exact_order :
+    ¬ (EnvAgrees realSurface.E
+        { realSurface.vk with domain := fxDomDegenerate } realSurface.plan
+          realSurface.params realSurface.sG2gen) :=
+  fun h => fxDegenerateNotExactOrder h.omegaOrder
+
 /-- THE EXHIBIT CAN FAIL, and here is the failing case: hand the same Surface a
     runtimeName that does not name the imported sub-object and the conjunction is empty
     for that object - not because the run is hard but because there is no runtime block
