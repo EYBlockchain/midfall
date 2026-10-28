@@ -2189,3 +2189,44 @@ roughly a factor of two**, which is the only calibration data we have.
 
 ## Closed
 
+### R-63 `Eip2537.Holds` is provably unsatisfiable - the eighth false-as-written finding
+
+P-CURVE was briefed to build a real-curve G1 model so `Holds` could be exhibited. It
+triggered its stop-and-report clause and found something worse: **`Holds` cannot be satisfied
+by any codec on any group.** Verified by the orchestrator - the three refutation theorems
+exist and the build is green.
+
+**Mechanism.** `g1Decodes` quantifies over every `b : Bytes` such that `g1Of? b` succeeds,
+and demands `c.toEip Q = b`. But `g1Of?` is a **coordinate reader**: `bytesSlice` clamps and
+never checks the frame width, so every all-zero frame of length `0x80 + k` is accepted for
+every `k`. Infinitely many distinct strings required to be the encoding of one element of a
+type with `Nat.card = p`. Proved: `g1Decodes_unsatisfiable`, `holds_unsatisfiable`,
+`not_exists_holds`, axioms `propext, Classical.choice, Quot.sound` only.
+
+**What this retroactively breaks:**
+* **R-61's cheaper route could never have worked.** It proposed keeping the pairing as a
+  parameter and defining `product` from it so the pairing clause holds by construction.
+  True as far as it goes - but `g1Decodes` sinks the whole structure regardless of pairing.
+* **Every theorem taking `Holds` as a binder is currently vacuous.** `finalPairing_spec`
+  could be proved today and the proof would be real - of an implication no object can ever
+  satisfy. Its own docstring says P5 can be ATTEMPTED; that is now worth nothing until the
+  clause is repaired.
+* **The gap wording was wrong for many rounds.** `gap_holds_unexhibited` blamed the missing
+  BLS12-381 model. The curve was never the only blocker. The gap is now gate-enforced to name
+  `g1Decodes`, `Nat.Prime pBase` and `Nat.card G1Frame = r`, so it cannot revert.
+
+**What was genuinely achieved**, and it is the first real curve fact in the project:
+`g1Valid` is discharged at real curve points, with the published EIP-2537 H1 generator as
+witness and `r * G = O` proved by a kernel `decide` at axioms `[propext]` only, in about 15
+seconds.
+
+**The three-level blocker, now precise:**
+1. `g1Decodes` - a **one-line statement repair** (add `b.size == g1Bytes`), already proved
+   satisfiable at real curve points via `g1DecodesWidth`. Not a research problem.
+2. `g1Add`/`g1Msm1` need `Fact (Nat.Prime pBase)` - a 381-bit primality certificate. CompPoly
+   has one for `r` only. Bounded work, 1-3 days.
+3. `PrimeOrderWith G1 r` at any curve-point type **is** the statement that the r-torsion of
+   `E(Fp)` has exactly `r` elements - a point count (SEA), or the n-torsion structure theorem
+   plus `gcd(r, p-1) = 1`. **Neither exists in Lean.** Research-grade, weeks to months.
+
+**Only (3) is a genuine decision rather than work.** Recorded for the human.
