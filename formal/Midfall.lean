@@ -69,7 +69,10 @@ import Midfall.Lowering.SemanticEquivalence
 import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Inv
+import Midfall.Lowering.Surface
+import Midfall.Lowering.Partials
 import Midfall.Instances.InvFixture
+import Midfall.Instances.SurfaceFixture
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
