@@ -686,3 +686,51 @@ and true: `e3f04cfc1c05d699` vs `e9465b3433265c3f`). So the import must pin the 
 setting triple - viaIR, optimizer enabled, runs 200 - not just the compiler version.
 BASELINE.md's toolchain table carries the measurements.
 
+## D-P21 (ADOPTED, round 51): R-51/F5 - split `chalMass` per round; the uniform x3 mass is unsound
+
+**Decision (human: use the recommendation).** `chalMass` currently applies
+`s / 2^128` uniformly to every round under `truncatedChallenges`. That is **wrong in
+different directions for different rounds**, and one function cannot be both:
+
+* For the six untruncated rounds (`theta`, `beta`, `gamma`, `trash`, `y`, `x`) the digest is
+  reduced into the field and NOT truncated, so the true mass is `3s/2^256`. Using
+  `s/2^128` there is **pessimistic but sound** - it throws away ~127 bits of budget for free.
+* For `x3`, Rust does `squeeze_challenge()` (reduce into the field) and THEN `truncate`
+  (`kzg/mod.rs`, `arithmetic.rs:247-252`, `nb_bytes = 16`). The image is `[0, 2^128)` but
+  not uniform: each truncated value is hit by about `r/2^128 ~ 2^127` field elements, so
+  the per-value mass is about `3*ceil(r/2^128)/2^256 ~ 1.5/2^128`. **`s/2^128` is too
+  small there - unsound.**
+
+**Adopted shape:** `chalMass F round s` takes the round, and returns the truncated mass
+only for the rounds Rust actually truncates, with the `ceil(r/2^128)` factor made explicit
+rather than folded into a constant. `Spec/Degrees.lean`'s `x3` row (`maxSetSize * n`) is
+corrected in the same change, since R-23 already recorded that its comment describes
+truncation as happening before field reduction, which is the wrong order.
+
+**Constraint that does NOT change:** truncation is preserved for output compatibility
+(D-P14). We do not alter the deployment to make the proof easier.
+
+## D-P22 (ADOPTED, round 51): R-51/F6 - carry ARSDH for S3; deployed knowledge-soundness is scoped
+
+**Decision (human: use the recommendation).** Two entangled choices, now settled:
+
+1. **S3 (KZG multi-open binding) is stated against ARSDH, not q-DLOG.** ArkLib's
+   `KZG.CommitmentScheme.function_binding` is *proved* under ARSDH
+   (`FunctionBinding/Basic.lean:635`, hypotheses `p >= n+2`, `pairing g1 g2 != 0`,
+   `SampleableType G1`). PLAN 9.4 stated S3 against a q-DLOG game and called it "largely a
+   freebie"; that wording obscured a real choice. Adopted: **carry the ARSDH term** and
+   prove the multi-open bridge ourselves, rather than claim a reduction between the
+   assumptions we do not have.
+2. **S1 and S3 for the DEPLOYED profile are explicitly unresolved**, because of R-22: the
+   truncated powers `truncate(x^j)` used for `x1`/`x4` are not low-degree polynomials in
+   the challenge, so no root-count argument bounds their bad set. Until a bound is proved
+   for the deployed coefficients, `halo2_knowledgeSound` and `kzgMultiOpen_binding` are
+   stated for the **untruncated** profile, and `docs/PLAN.md` section 13 records the
+   deployed case as open. **This is a scope decision, not a gap in the port** - it does not
+   touch byte-conformance work or the lowering theorems, which are hash-agnostic and
+   profile-agnostic.
+
+Note also, so nobody re-derives it: `rbrKnowledgeSoundness_implies_knowledgeSoundness` is
+`sorry` in ArkLib, and **no Fiat-Shamir soundness or knowledge-soundness theorem exists
+there at all** - S4 is entirely ours.
+
