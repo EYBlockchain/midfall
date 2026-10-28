@@ -57,31 +57,30 @@ REGISTRY = [
     },
     {
         "field": "verifier_sound",
-        "exhibit": ("bundle_deployment", ["SupportedS", "DeploymentW"]),
+        "exhibit": ("bundle_deployment",
+                    ["SupportedS", "DeploymentW", "EnvAgrees"]),
         "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
-                 ("gap_envAgrees_unexhibited", ["EnvAgrees"]),
                  ("gap_runLeg_unexhibited", ["RunVerifier"])],
     },
     {
         "field": "verifier_complete",
-        "exhibit": ("bundle_deployment", ["SupportedS", "DeploymentW"]),
+        "exhibit": ("bundle_deployment",
+                    ["SupportedS", "DeploymentW", "EnvAgrees"]),
         "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
-                 ("gap_envAgrees_unexhibited", ["EnvAgrees"]),
                  ("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
         "field": "only_two_outcomes",
-        "exhibit": ("bundle_deployment", ["SupportedS", "DeploymentW"]),
-        "gaps": [("gap_envAgrees_unexhibited", ["EnvAgrees"]),
-                 ("gap_runLeg_unexhibited", ["RunShell"])],
+        "exhibit": ("bundle_deployment",
+                    ["SupportedS", "DeploymentW", "EnvAgrees"]),
+        "gaps": [("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
         "field": "end_to_end_noAcc",
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
-                     "RunContractIR"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
-                 ("gap_envAgrees_unexhibited", ["EnvAgrees"])],
+                     "RunContractIR", "EnvAgrees"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
     },
     {
         "field": "qvm_validated_noBoundsFault",
@@ -93,12 +92,20 @@ REGISTRY = [
         "kind": "theorem",
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
-                     "RunContractIR"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"]),
-                 ("gap_envAgrees_unexhibited", ["EnvAgrees"])],
+                     "RunContractIR", "EnvAgrees"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
+    },
+    # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
+    # Registered separately (rather than replacing an entry) so the DeploymentW and IR
+    # certifications above stay in force; the discovery rule is a set membership test,
+    # so a second entry for a field it already covers is additive, not a duplicate.
+    {
+        "field": "lowering_equivalence",
+        "kind": "theorem",
+        "exhibit": ("bundle_envAgrees", ["SupportedS", "EnvAgrees"]),
+        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"])],
     },
 ]
-
 
 def field_statement(text, field):
     """The statement of a LoweringCorrect field or a top-level theorem, comments gone."""

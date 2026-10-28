@@ -79,15 +79,19 @@ def astOfMainIsSome_ok : Bool :=
     `returnView` nor a revert with an unchanged world. -/
 example : ¬ SupportedS realSurface fxOptionsTrace := supportedRefutedForTraceRender
 
-/-- GATE 4. The hypothesis bundle the completeness fields carry is inhabited
-    TOGETHER: a Surface, a SupportedS for its own render options, and a
-    DeploymentW for the fixture world. Each is an existing term, so this fails
-    the day any of them stops applying - a `SupportedS` that only held for a
-    different render, or a `DeploymentW` whose memguard field stopped
-    discharging, reddens here. -/
+/-- GATE 4. The hypothesis bundle the completeness fields carry is inhabited TOGETHER:
+    a Surface, a SupportedS for its own render options, a DeploymentW for the fixture
+    world, and an EnvAgrees for its field constants and domain. Each is an existing term,
+    so this fails the day any of them stops applying - a SupportedS that only held for a
+    different render, a DeploymentW whose memguard field stopped discharging, or a domain
+    whose generator is no longer of exact order 2^k, reddens here. P-4a2 added the
+    EnvAgrees conjunct rather than exhibiting it separately, because the fields take all
+    four at once and halves are what hid S1. -/
 theorem bundle_deployment : SupportedS realSurface realSurface.o₀ ∧
-    DeploymentW realSurface fxW keccak256 fxVkAddr fxQuotientAddr :=
-  ⟨supportedInhabited, deploymentInhabited⟩
+    DeploymentW realSurface fxW keccak256 fxVkAddr fxQuotientAddr ∧
+      EnvAgrees realSurface.E realSurface.vk realSurface.plan realSurface.params
+        realSurface.sG2gen :=
+  ⟨supportedInhabited, deploymentInhabited, fxEnvAgrees⟩
 
 /-- GATE 5. The structure itself elaborates at a real Surface over a real
     pairing model, with the imported solc object as the IR argument. Stated as a
@@ -271,19 +275,53 @@ theorem deploymentInhabited_ir :
 /-- GATE 12: THE REQUIRED FINDING, AS ONE CONJUNCTION AND NOT AS TWO HALVES. After S1,
     is `lowering_equivalence`'s hypothesis genuinely inhabited at the real artifact?
     For the legs this package owns - SupportedS for the Surface's own render options,
-    DeploymentW for the fixture world, and the IR pair (import check plus committed run
-    of the imported solc object) - YES, jointly, at one Surface: this term. The legs it
-    does NOT answer are `Eip2537.Holds` and `EnvAgrees`, which no Surface in the tree
-    satisfies for a reason that is a missing model rather than a missing pin; those are
-    the gap defs below. The honest summary: the IR-and-deployment core of the headline is
-    inhabited at the artifact, the codec-and-environment part is not. -/
+    DeploymentW for the fixture world, EnvAgrees for the field constants and the domain,
+    and the IR pair (import check plus committed run of the imported solc object) - YES,
+    jointly, at ONE Surface: this term. P-4a2 added the EnvAgrees conjunct here rather
+    than exhibiting it in a second declaration, because four separate exhibits is exactly
+    the shape that let a bundle be individually inhabited and jointly empty (R-60 S1), and
+    the brief for P-4a2 names that as the failure to avoid.
+
+    The leg it does NOT answer is `Eip2537.Holds`, which no Surface in the tree satisfies
+    for a reason that is a missing curve model rather than a missing pin
+    (gap_holds_unexhibited). So the honest summary is now: everything except the codec leg
+    is inhabited jointly at the artifact, and the four-way bundle including Holds is still
+    empty - adding EnvAgrees to the conjunction did not change that, and claiming otherwise
+    would be the individually-inhabited-jointly-empty class one level up. -/
 theorem bundle_headlineCore (c : ExternalCalls) (g : ExternalGas) :
     SupportedS irSurface irSurface.o₀ ∧
       DeploymentW irSurface irW keccak256 fxVkAddr fxQuotientAddr ∧
-      ∃ (ir : YulObject) (irLyt : EVM.Layout) (obs : Obs),
-        irSurface.irCheck ir = true ∧
-          RunContractIR irSurface irW keccak256 ir irLyt irCd c g obs :=
-  ⟨supportedInhabited_ir, deploymentInhabited_ir, irHypothesis_jointlyInhabited c g⟩
+        EnvAgrees irSurface.E irSurface.vk irSurface.plan irSurface.params
+          irSurface.sG2gen ∧
+          ∃ (ir : YulObject) (irLyt : EVM.Layout) (obs : Obs),
+            irSurface.irCheck ir = true ∧
+              RunContractIR irSurface irW keccak256 ir irLyt irCd c g obs :=
+  ⟨supportedInhabited_ir, deploymentInhabited_ir, fxEnvAgrees,
+    irHypothesis_jointlyInhabited c g⟩
+
+/-- GATE 13 (P-4a2): THE THREE LEGS THE FIELD ARITHMETIC CAN CLOSE, IN ONE DECLARATION.
+    BlkIsEmitter (the blk pin, P-AST), SupportedS (the render, stage 4) and EnvAgrees
+    (the environment and the domain, P-4a2) all hold of the SAME Surface. Stated as one
+    conjunction on purpose: the headline per-partial theorems take all three, and three
+    separate exhibits would certify nothing about their being simultaneously satisfiable.
+    The fourth leg the headline wants, Eip2537.Holds, is deliberately absent - it is
+    unsatisfiable at the exponent model, so a declaration naming all four would be an
+    uninhabited hypothesis dressed as an exhibit. -/
+theorem bundle_envAgrees :
+    BlkIsEmitter realSurface ∧ SupportedS realSurface realSurface.o₀ ∧
+      EnvAgrees realSurface.E realSurface.vk realSurface.plan realSurface.params
+        realSurface.sG2gen :=
+  ⟨blkPinInhabited, supportedInhabited, fxEnvAgrees⟩
+
+/-- AND IT BITES: perturb the domain back to the placeholder generator and the third
+    conjunct is no longer dischargable, because `barycentricWeight := 4` is not the inverse
+    of 2^k in Fr r. This is the falsifiability half of the exhibit (D-P23): the bundle is
+    inhabited by the REPAIRED fixture and not by the old one. -/
+theorem bundle_envAgrees_needs_the_repair :
+    ¬ (EnvAgrees realSurface.E
+        { realSurface.vk with domain := fxDomOld } realSurface.plan realSurface.params
+          realSurface.sG2gen) :=
+  fun h => fxDomOldBaryFails h.baryWeight
 
 /-- THE EXHIBIT CAN FAIL, and here is the failing case: hand the same Surface a
     runtimeName that does not name the imported sub-object and the conjunction is empty
@@ -319,14 +357,20 @@ def gap_holds_unexhibited : String :=
   "blocker: no BLS12-381 curve model in the tree (D-P1, R-28); the exponent codec "
     ++ "fails the g1Valid clause for a non-identity point, so Eip2537.Holds is "
     ++ "unsatisfiable at the only Surface"
-
-/-- `EnvAgrees` is not exhibited. Blocker: its `truncWidth` clause needs a `FieldConsts`
-    with numBits 255 and its `omegaOrder` clause needs a genuine root of unity in
-    `Fr r`; both are nameable and neither is what stage 4 was asked to build, so the
-    per-partial theorems still carry an unexhibited hypothesis (file header, note 3). -/
-def gap_envAgrees_unexhibited : String :=
-  "blocker: needs a genuine root of unity in Fr r and FieldConsts numBits 255; "
-    ++ "nameable, not built, so EnvAgrees is unexhibited at the only Surface"
+/-- `EnvAgrees` IS exhibited, so the gap that used to sit here is closed and this def
+    replaces it (the pattern `gap_view_transport_closed` sets: a gap that has been closed
+    says so, and stays in the file so the registry cannot quietly re-open it). The
+    root-of-unity blocker was real - the fixture's domain had `omega := 1`, `omegaInv := 1`,
+    `barycentricWeight := 4`, so `baryWeight` evaluated FALSE and `omegaOrder` passed only
+    vacuously - and it is closed at the REAL scalar field, not at a toy one:
+    Midfall/Assumptions/TwoAdicity.lean proves `frFc.IsWellFormed` (a root of order exactly
+    2^32 and a zeta of order exactly 3, both by kernel `decide` at 255-bit r), and
+    SurfaceFixture.fxEnvAgrees discharges all ten clauses at the repaired fixture.
+    bundle_envAgrees and bundle_deployment above carry it JOINTLY with the other legs. -/
+def gap_envAgrees_closed : String :=
+  "closed by P-4a2: a root of unity of order exactly 2^32 in Fr r is exhibited in "
+    ++ "Assumptions/TwoAdicity.lean, and EnvAgrees is exhibited at the fixture by "
+    ++ "SurfaceFixture.fxEnvAgrees and jointly by bundle_envAgrees"
 
 /-- R-60 S4: what `encG2_shape` does NOT claim. The pin forces EIP-2537-shaped,
     precompile-valid bytes for every point; a CONSTANT function satisfies it, and the

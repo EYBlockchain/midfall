@@ -54,11 +54,13 @@
 --   2. cfg.accumulator is none, so SupportedS.acc is vacuous in the exhibit. The
 --      accumulator arm needs a Generator AccumulatorEncoding whose validate passes,
 --      which is D-P16 territory and is exercised in Lowering/AccEncoding.lean.
---   3. EnvAgrees is NOT exhibited. Its truncWidth clause needs a FieldConsts with
---      numBits 255 and its omegaOrder clause needs a genuine root of unity in Fr r;
---      both are nameable but neither is what this stage was asked to show. The
---      per-partial theorems therefore still carry an unexhibited hypothesis, reported
---      as a stage-4 finding rather than papered over with a fake instance.
+--   3. P-4a2 CLOSED THIS. EnvAgrees WAS not exhibited: its truncWidth clause needed
+--      a FieldConsts with numBits 255, its omegaOrder clause a genuine root of unity in
+--      Fr r, its baryWeight clause the inverse of 2^k, and its negLagranges clause a
+--      PlanView that agreed with its own ConstraintSystem. All four are now discharged:
+--      see fxEnvAgrees below, Midfall/Assumptions/TwoAdicity.lean, and the repaired fxFc,
+--      fxDom and fxPlan. The one hypothesis of the headline bundle that is STILL
+--      unexhibited is Eip2537.Holds, for the reason note 7 gives.
 --   4. P-AST CHANGED THIS ONE. blk no longer returns what the fixture declares: it is
 --      Midfall/Lowering/GenAst.lean's emitPartial, and main is that file's emitMain, so
 --      main_concat and the new BlkIsEmitter pin are rfl here by construction rather than
@@ -68,12 +70,16 @@
 --      because GenAst.emittedPartials is [finalPairing]. The placeholders moved out of
 --      this file into the emitter so that the emitter is the only source of blk in the
 --      tree; a pin against a blk the fixture still declared by hand would pin nothing.
+--   7. Eip2537.Holds is still NOT exhibited, and P-4a2 did not change that: the
+--      blocker is the missing BLS12-381 curve model (D-P1, R-28), not the field
+--      arithmetic. See ObligationsGates.gap_holds_unexhibited and encG2AtFixture_ok.
 --   5. irCheck inspects top-level statements only. A full alpha-equivalence check
 --      modulo constant substitution is M8 work and is blocked on the same D-P15
 --      import; what is here is the decidable fragment that can already distinguish a
 --      resolved call from an unresolved one, which is the distinction the gate needs.
 
 import Midfall.Lowering.Partials
+import Midfall.Assumptions.TwoAdicity
 import Midfall.Instances.ExponentModel
 import Midfall.Generator.LayoutMemory
 import Midfall.Generator.VerifierPartials
@@ -94,9 +100,21 @@ abbrev RP : Type := Exp rp
 /-- The element of a given exponent. -/
 def fx (n : Nat) : RP := Multiplicative.ofAdd (n : ZMod rp)
 
-/-- Field constants for the environment. Only numBits is read by anything here. -/
-def fxFc : FieldConsts (Fr rp) :=
-  { numBits := 255, s := 32, rootOfUnity := 3, zeta := 2 }
+/-- Field constants for the environment: the BLS12-381 scalar field's REAL constants,
+    discharged in Midfall/Assumptions/TwoAdicity.lean. Before P-4a2 this was
+    `{ numBits := 255, s := 32, rootOfUnity := 3, zeta := 2 }` - `numBits` was right, and
+    the other two were the ZMod 17 values (where 3 does have order 16 = 2^4) pasted at the
+    real modulus, where 3 is not a primitive 2^32-th root and 2 has no order-3 property at
+    all. Nothing checked either claim, which is R-3's trust boundary. The values now come
+    from the exhibit in TwoAdicity, which PROVES in the kernel that the root has order
+    exactly 2^32 (its 2^32-th power is 1 and its 2^31-st is -1) and that zeta has order
+    exactly 3. -/
+def fxFc : FieldConsts (Fr rp) := Midfall.Assumptions.frFc
+
+/-- THE REPAIRED HYPOTHESIS, discharged at the fixture's own constants: `rootOfUnity` has
+    order exactly `2^s` and `zeta` has order 3. This is the R-3/R-47 trust boundary closed
+    at the real modulus, by the kernel rather than by `native_decide`. -/
+theorem fxFc_isWellFormed : fxFc.IsWellFormed := Midfall.Assumptions.frFc_isWellFormed
 
 /-- The verifier environment. -/
 def fxE : VerifierEnv rp RP RP RP :=
@@ -107,16 +125,36 @@ def fxE : VerifierEnv rp RP RP RP :=
 def fxParams : ParamsVerifierKZG RP RP :=
   { sG2 := fx 5, nG2Prepared := (fx 1)⁻¹, sG2Prepared := fx 5 }
 
-/-- A size-4 domain written out rather than built by EvaluationDomain.new, which would
-    need a genuine root of unity in Fr r. WellFormed.domainConsistent asks only that
-    n = 2^k and quotientPolyDegree = csDegree - 1, and both hold here by arithmetic on
-    literals; the omega fields are inert for the clauses SupportedS reads, and the
-    fixture says so rather than pretending they are roots. -/
+/-- THE SIZE-4 DOMAIN, REPAIRED. It used to be
+    `{ omega := 1, omegaInv := 1, ..., barycentricWeight := 4 }`, which is not a domain:
+    a generator equal to 1 satisfies `omega ^ n = 1` for every n, so `EnvAgrees.omegaOrder`
+    passed vacuously, and `barycentricWeight := 4` is not the inverse of 2^k in `Fr r`
+    (4 * 4 = 16 != 1), so `EnvAgrees.baryWeight` was FALSE. The brief's own diagnosis,
+    measured rather than assumed.
+
+    The values are what the PORTED constructor produces: `EvaluationDomain.new fxFc 3 2`
+    at the repaired constants (j = csDegree = 3, k = 2) computes extendedK = 3,
+    omega = root^(2^30) of order exactly 4, barycentricWeight = 4^-1, and the two
+    `t_evaluations` of the zeta coset. `fxDomMatchesPort_ok` below re-runs the constructor
+    in the VM and compares all fifteen fields, so the literals are checked against the port
+    rather than asserted alongside it. Written out by hand rather than extracted from the
+    `Except` because `decide` cannot reduce a `ZMod` inversion at 255-bit `r` - the same
+    limit TwoAdicity's header records - and a `getD`-style extraction would have made the
+    domain's definition depend on a computation the kernel cannot check. -/
 def fxDom : EvaluationDomain (Fr rp) :=
-  { n := 4, k := 2, extendedK := 2, omega := 1, omegaInv := 1, extendedOmega := 1,
-    extendedOmegaInv := 1, gCoset := 1, gCosetInv := 1, quotientPolyDegree := 2,
-    ifftDivisor := 4, extendedIfftDivisor := 4, tEvaluations := #[0, 0, 0, 0],
-    barycentricWeight := 4 }
+  { n := 4, k := 2, extendedK := 3,
+    omega := Midfall.Assumptions.frOmega4,
+    omegaInv := Midfall.Assumptions.frOmega4Inv,
+    extendedOmega := Midfall.Assumptions.frRootOfUnity ^ 2 ^ 29,
+    extendedOmegaInv := 0x1333b22e5ce11044babc5affca86bf658e74903694b04fd86037fe81ae99502e,
+    gCoset := Midfall.Assumptions.frZeta,
+    gCosetInv := Midfall.Assumptions.frZeta * Midfall.Assumptions.frZeta,
+    quotientPolyDegree := 2,
+    ifftDivisor := Midfall.Assumptions.frInv4,
+    extendedIfftDivisor := 0x656ff268c469cd9f2cd29d07086d9d04a945ef829ffe907f1fffffff20000001,
+    tEvaluations := #[0x4d491a377113a8daccd13ab0066be558a911e156fffe5bfeaaaaaaa9aaaaaaab,
+                      0xac45a4010001a40200000000ffffffff],
+    barycentricWeight := Midfall.Assumptions.frInv4 }
 
 /-- Two instance columns, one advice, one fixed, no challenges: the shape
     SupportedS.instShape, advice and singlePhase demand. Both instance queries are at
@@ -161,7 +199,15 @@ def fxPlan : PlanView :=
     vkMptr := Midfall.Generator.LayoutMemoryKats.poseidonLayout.vkMptr,
     memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout,
     proofLayout := Midfall.Generator.poseidonProofLayout,
-    numInstances := 1, k := 2, numNegLagranges := 2,
+    numInstances := 1, k := 2,
+    -- P-4a2: this was 2, which is what a circuit with ONE blinding factor would walk.
+    -- fxCs.blindingFactors is ok 6 (Circuit.lean:1593, and the exhibit below recomputes
+    -- it), so EnvAgrees.negLagranges - PV.numNegLagranges = blindingFactors + 1, the
+    -- l_blind window of Lagrange.yul:57 - demanded 7 and the fixture was silently
+    -- disagreeing with its own ConstraintSystem. Found by trying to exhibit EnvAgrees,
+    -- not by reading it: the clause had never been evaluated at this Surface because the
+    -- root-of-unity blocker meant nobody got that far.
+    numNegLagranges := 7,
     hasAccumulator := false }
 
 /-! ### The seven blocks: the emitter, not a hand-written table -/
@@ -894,5 +940,129 @@ def blkPinKats_ok : Bool :=
        ! (lookupFun (hoist d (GenAst.emitSlices fxPlan) :: []) "ec_pairing").isSome)
 
 #eval blkPinKats_ok                       -- expect true
+/-! ### 7. EnvAgrees: the hypothesis P-4a2 closes (note 3: this used to be unexhibited) -/
+
+/-- THE DOMAIN IS THE PORT'S OWN OUTPUT, checked in the VM. `EvaluationDomain.new fxFc 3 2`
+    at the repaired constants (j = csDegree = 3, k = 2) produces all fifteen fields of
+    fxDom exactly, so the literals above were derived from the port and not invented
+    beside it. A `#eval` gate rather than a theorem because the batch inversion inside
+    `new` does not reduce in the kernel at 255-bit `r` - the same limit TwoAdicity's
+    header records for `⁻¹`. Deleting any field comparison, or changing any literal, makes
+    this print false. -/
+def fxDomMatchesPort_ok : Bool :=
+  match EvaluationDomain.new fxFc 3 2 with
+  | .error _ => false
+  | .ok d =>
+      d.n == fxDom.n && d.k == fxDom.k && d.extendedK == fxDom.extendedK &&
+        d.omega == fxDom.omega && d.omegaInv == fxDom.omegaInv &&
+        d.extendedOmega == fxDom.extendedOmega &&
+        d.extendedOmegaInv == fxDom.extendedOmegaInv &&
+        d.gCoset == fxDom.gCoset && d.gCosetInv == fxDom.gCosetInv &&
+        d.quotientPolyDegree == fxDom.quotientPolyDegree &&
+        d.ifftDivisor == fxDom.ifftDivisor &&
+        d.extendedIfftDivisor == fxDom.extendedIfftDivisor &&
+        d.tEvaluations == fxDom.tEvaluations &&
+        d.barycentricWeight == fxDom.barycentricWeight
+
+#eval fxDomMatchesPort_ok               -- expect true
+
+/-- THE NON-VACUITY OF THE REPAIRED DOMAIN (D-P23, first half). `EnvAgrees.omegaOrder`
+    asks only for `omega ^ n = 1`, which the placeholder satisfied; what makes the exhibit
+    worth having is that the order is EXACTLY 2^k, which is what
+    `ChallengesGood.xNotRoot` and `xNotRoot_iff` actually consume. -/
+theorem fxOmegaOrderExactly : Midfall.Assumptions.orderExactly fxDom.omega (2 ^ fxDom.k) :=
+  Midfall.Assumptions.frOmega4_order
+
+/-- The exactness check that the placeholder passes and a real generator fails: the
+    intermediate power is NOT 1. Together with `fxOmegaOrderExactly` this is the clause
+    that would have caught the original bug. -/
+theorem fxOmegaSquareNe : fxDom.omega ^ 2 ≠ (1 : Fr rp) := by decide
+
+/-- `barycentricWeight` really is the inverse of the domain size, which is the clause that
+    was FALSE before the repair. Stated as the multiplication because `decide` cannot
+    reduce `⁻¹` at `r`; `EnvAgrees.baryWeight` below converts it through
+    `eq_inv_iff_mul_eq_one`. -/
+theorem fxBaryWeightTimesN : fxDom.barycentricWeight * (2 ^ fxDom.k : Fr rp) = 1 := by decide
+
+/-- The clause the repaired PlanView had to move for: recomputed from the ConstraintSystem
+    rather than asserted, which is how the 2-vs-7 disagreement was found. -/
+theorem fxNegLagrangesAgree :
+    fxPlan.numNegLagranges = fxCs.blindingFactors.toOption.getD 0 + 1 := by decide
+
+/-- THE OLD PLACEHOLDER, KEPT AS A COUNTEREXAMPLE rather than deleted, so the vacuity this
+    package removed stays visible and re-testable. It is a perfectly good
+    `EvaluationDomain` record - which is exactly the problem: nothing in the type
+    distinguishes it from the repaired one. -/
+def fxDomOld : EvaluationDomain (Fr rp) :=
+  { n := 4, k := 2, extendedK := 2, omega := 1, omegaInv := 1, extendedOmega := 1,
+    extendedOmegaInv := 1, gCoset := 1, gCosetInv := 1, quotientPolyDegree := 2,
+    ifftDivisor := 4, extendedIfftDivisor := 4, tEvaluations := #[0, 0, 0, 0],
+    barycentricWeight := 4 }
+
+/-- The naive gate is green on it: `omega ^ n = 1` holds, and so does the inverse clause.
+    This is the shape of the bug, stated as a theorem so nobody re-introduces a check that
+    cannot fail. -/
+theorem fxDomOldPassesVacuousClauses :
+    fxDomOld.omega ^ fxDomOld.n = 1 ∧ fxDomOld.omegaInv * fxDomOld.omega = 1 :=
+  ⟨by decide, by decide⟩
+
+/-- And the exactness clause refutes it: order 1, not 4. -/
+theorem fxDomOldNotAChain : ¬ Midfall.Assumptions.orderExactly fxDomOld.omega (2 ^ fxDomOld.k) := by
+  intro h
+  have hlt : 1 < 2 ^ 2 := by decide
+  exact h.pow_ne_one (m := 1) (by decide) hlt (by decide)
+
+/-- The baryWeight clause fails on it too, which is the FALSE clause P-4a2's brief names:
+    4 is not the inverse of 4 in Fr r, because 4 * 4 = 16 and r does not divide 15. -/
+theorem fxDomOldBaryFails :
+    fxDomOld.barycentricWeight ≠ ((2 ^ fxDomOld.k : ℕ) : Fr rp)⁻¹ := by
+  intro h
+  have h4 : (4 : Fr rp) = (4 : Fr rp)⁻¹ := h
+  have h5 : (4 : Fr rp) * 4 = (4 : Fr rp)⁻¹ * 4 := congrArg (· * (4 : Fr rp)) h4
+  have h6 : (4 : Fr rp)⁻¹ * 4 = 1 := inv_mul_cancel₀ (by decide : (4 : Fr rp) ≠ 0)
+  have hc : (16 : Fr rp) = 1 := by
+    rw [show (16 : Fr rp) = (4 : Fr rp) * 4 by norm_num, h5, h6]
+  exact (by decide : ¬ ((16 : Fr rp) = (1 : Fr rp))) hc
+
+/-- THE HEADLINE EXHIBIT: `EnvAgrees` holds of the fixture, as a kernel-checked term.
+    Every clause that was vacuous or false at the placeholder is now discharged from a
+    generator of exact order 2^k, an inverse that is an inverse, a numBits that gives the
+    contract's 16-byte truncation width, and a PlanView that agrees with its own
+    ConstraintSystem. The per-partial theorems in Lowering/Partials.lean therefore no
+    longer carry an unexhibited hypothesis for the field-arithmetic reason - the remaining
+    unexhibited hypothesis of the headline bundle is Eip2537.Holds, which is the curve
+    model (note 7), not this. -/
+theorem fxEnvAgrees : EnvAgrees fxE fxVk fxPlan fxParams (fx 5) :=
+  { modulus := rfl
+    truncWidth := by decide
+    domainN := ⟨rfl, rfl⟩
+    baryWeight := Midfall.Assumptions.frInv4_eq_inv
+    omegaInvMul := Midfall.Assumptions.frOmega4Inv_mul
+    omegaOrder := by decide
+    negLagranges := by decide
+    nG2 := rfl
+    sG2 := rfl
+    vkDigestWord := rfl }
+
+/-- THE EXHIBIT BITES: the same ten clauses evaluated on the OLD domain are not all
+    satisfiable - baryWeight fails, and omegaOrder holds only because the generator is 1.
+    Stated as a computation over the two records side by side, which is what a regression
+    would show up in. -/
+def fxEnvAgreesKats_ok : Bool :=
+  -- the repaired domain: every clause a computation can check, checked
+  (fxDom.omega ^ fxDom.n == 1) && (fxDom.omega ^ 2 != 1) &&
+    (fxDom.omegaInv * fxDom.omega == 1) &&
+    (fxDom.barycentricWeight * (2 ^ fxDom.k : Fr rp) == 1) &&
+    (fxDom.n == 2 ^ fxDom.k) && (fxDom.k == fxPlan.k) &&
+    (divCeil (divCeil fxFc.numBits 8) 2 == 16) &&
+    (rp == Midfall.Generator.frModulusConstant) &&
+    (fxPlan.numNegLagranges == fxCs.blindingFactors.toOption.getD 0 + 1) &&
+    -- the old domain: passes the vacuous gate, fails the barycentric one
+    (fxDomOld.omega ^ fxDomOld.n == 1) && (fxDomOld.omega ^ 2 == 1) &&
+    (fxDomOld.barycentricWeight * (2 ^ fxDomOld.k : Fr rp) != 1) &&
+    -- and the constants: s is the two-adicity, and the root has that order exactly
+    (fxFc.s == 32) && ((rp - 1) % 2 ^ 32 == 0) && ((rp - 1) % 2 ^ 33 != 0)
+
+#eval fxEnvAgreesKats_ok                -- expect true
 
 end Midfall.Instances.SurfaceFixture
