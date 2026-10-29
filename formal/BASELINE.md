@@ -1,9 +1,11 @@
-# BASELINE (DRAFT - Phase 0 step 5 complete)
+# BASELINE (Phase 0 steps 5-8 complete - ready for `formal-baseline-v1`)
 
-Written on the `formal/baseline` branch. This file is finalized at the
-`formal-baseline-v1` tag (Phase 0 step 8). Until then the misc-fixes
-re-application (Phase 0 step 5) is COMPLETE; steps 6-8 remain. See the status
-tables below.
+Written on the `formal/baseline` branch. The misc-fixes re-application
+(step 5), the fixture regeneration and re-pinning (step 6), the G0 re-run
+(step 7) and this finalisation (step 8) are all COMPLETE. The tag itself is
+cut by the orchestrator, not by a work package. See the status tables below.
+D-P28 / R-57 is the poseidon-fixture regeneration; its record is the section
+"Poseidon fixture regeneration (D-P28)" further down.
 ## Rust baseline commits
 
 | step | ref | commit |
@@ -79,7 +81,17 @@ in-circuit-fewer-point-sets affects the recursive circuits, not the
 Solidity-facing layout, so it is not one of the four. The optional
 outer-single-h-commitment profile is a different Features value; the
 per-deployment statement (plan 9.6) must name which one it pins.
-TODO: confirm against the frozen deploy command line at the freeze.
+
+**Resolved at the freeze (D-P28).** The four flags above are the profile the
+committed poseidon fixture is rendered under, and R-57's shape arithmetic ties
+`outerFewerPointSets = false` to the 2,640-byte / 72-read proof, which is what
+the current tree actually produces. The cargo feature string that realises this
+profile for the fixture generator is `evm,rust-verifier-trace`
+(`rust-verifier-trace` implies `truncated-challenges` and
+`midnight-proofs/solidity-verifier-trace`); `outer-fewer-point-sets` and
+`outer-single-h-commitment` are NOT passed. The deploy command line still has
+to be confirmed against a real deployment when plan 9.6 is signed off - that is
+an M-item, not a Phase 0 blocker.
 
 ## Milestone status
 
@@ -122,13 +134,18 @@ TODO: confirm against the frozen deploy command line at the freeze.
   graph demanded it (the plan's numeric order put vm/certify after the items
   that call it). Lib tests went 230 -> 248 across the curation, all green under
   the EVM gate with pinned solc 0.8.30 and real SRS assets.
-* **M0 (baseline frozen)**: still to do - step 6 (regenerate the committed
-  fixtures, gas snapshots and deployments/sepolia/moonlight-wrap and review the
-  diffs; the four tracked target/*-fixture-dump files were already regenerated
-  by the test runs and the template-tree digest re-pinned for them), step 7
-  (re-run G0 end to end, including the Moonlight wrap against THIS baseline
-  rather than the git-pinned 2d52f24), step 8 (record fixture SHA-256s and the
-  build profile here, then tag formal-baseline-v1).
+* **M0 (baseline frozen)**: **DONE for steps 6-8 on 2026-10-29**, with two
+  accepted exceptions. Step 6: the six live poseidon artefacts were regenerated
+  under the recorded profile, verified to pass the real verifier, and re-pinned
+  here; the twelve unread poseidon files were deleted (D-P28, R-57). Step 7: G0
+  re-run end to end - results in the G0 table below, including the finding that
+  the `--all-features` leg cannot pass on this host. Step 8: this file is
+  finalised; the tag is cut by the orchestrator. Two exceptions carried into
+  the tag, both environment rather than code: `deployments/sepolia/moonlight-wrap`
+  cannot be refreshed here (no `MOONLIGHT_WRAP_SOLIDITY_*` hooks in the local
+  Moonlight checkout, and the committed artefacts are fetched-back Sepolia
+  runtime bytecode), and the `--all-features` matrix leg needs larger Filecoin
+  SRS assets than this host holds.
 
 ## Toolchain and build profile
 
@@ -137,7 +154,7 @@ TODO: confirm against the frozen deploy command line at the freeze.
 | rust | `1.90.0` (rust-toolchain.toml channel) |
 | solc | `0.8.30+commit.73712a01` (pinned; installed by `scripts/install_pinned_solc.sh` to `proofs/solidity-verifier/.solc/solc`, selected with `SOLC=`) |
 | revm | `19`, `default-features = false, features = [std, blst]` (Prague handler: EIP-2537 G1ADD 0x0b, G1MSM 0x0c, PAIRING 0x0f) |
-| SRS assets | `zk_stdlib/examples/assets/{bls_filecoin_2p19, midnight-srs-2p19, midnight-srs-2p20}` |
+| SRS assets | `zk_stdlib/examples/assets/{bls_filecoin_2p19, midnight-srs-2p19, midnight-srs-2p20}`; the poseidon fixture additionally needs `bls_filecoin_2p6`, which `srs_for_test(_, Some(6))` loads for k = 6 (added to this row at the freeze - it was always required and was not recorded) |
 | test gates | `HALO2_SOLIDITY_RUN_EVM_TESTS=1`, `SRS_DIR`, `SOLC` |
 | cargo profiles | no [profile.dev]/[profile.release]/[profile.test] overrides anywhere, so cargo defaults apply: dev/test have debug-assertions ON and overflow-checks ON; release has both OFF |
 | **reference profile for the port** | **release** - it is what produces the deployed artifacts and what the heavy fixture benches run under. Consequences for the port rules: R4 arithmetic overflow is NOT a panic site in the reference profile, so R5 applies (emulate wrapping only where it can actually occur, prove noOverflow elsewhere), and debug_assert! is compiled out |
@@ -175,14 +192,22 @@ exists only as text. Options are in that entry.
 
 | gate | command | result |
 |---|---|---|
-| proofs suite | `cargo test -p midnight-proofs` | PASS: 32 lib + 1 integration + 8 doc-tests, 0 failures |
-| verifier suite (all features) | `cargo test -p halo2_solidity_verifier --all-features --all-targets` | PASS: 230 lib + all fixture binaries, 0 failures |
-| verifier suite, EVM gate on | `cargo test --release -p halo2_solidity_verifier --features evm,rust-verifier-trace --all-targets` with `HALO2_SOLIDITY_RUN_EVM_TESTS=1` | PASS: 230 lib tests (34s) + ivc / poseidon / rsa / sha / hybrid-mt / foreign-field fixtures, 0 failures |
-| both quotient lowerings | `foreign_field_renders_and_verifies_in_both_lowerings`, `supported_shape_circuit_fuzz_e2e_direct_quotient`, `direct_trace_matches_native_including_intermediates` | PASS |
-| Moonlight wrap end to end | `cargo test --manifest-path ../Moonlight/aggregation/Cargo.toml wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release -- --ignored` | PASS (210s) -- CAVEAT: Moonlight pins midfall at `2d52f24` via git deps, so this ran the pre-merge verifier; re-run with a path patch onto `formal/baseline` before the freeze. The `MOONLIGHT_WRAP_SOLIDITY_DUMP_DIR` render did not produce a dump and needs a look. |
+| proofs suite | `cargo test -p midnight-proofs` | **PASS** (re-measured 2026-10-29): 32 lib + 1 integration + 8 doc-tests, 0 failures |
+| verifier suite, default features | `cargo test -p halo2_solidity_verifier` | **PASS**: 203 lib + 4 in the fixture binaries, 0 failures - the standing gate figure |
+| verifier suite (all features) | `cargo test -p halo2_solidity_verifier --all-features --all-targets` | **FAIL - 210 passed / 39 failed, environment not code.** Every failure is a proof-generation site in `src/test.rs` dying with `SrsError(32, 62)` / `SrsError(64, 252)`: `--all-features` turns on `outer-single-h-commitment`, and under `single-h-commitment` `load_srs` must also fetch `bls_filecoin_2p{extended_k}` (`zk_stdlib/src/utils/plonk_api.rs:282-288`), which this host does not hold (assets present: 2p6, 2p10, 2p12, 2p13, 2p19). R-57 recorded the same wall ("single-h ... cannot even prove at k=6"). None of these tests read `fixtures/poseidon/`, so the fixture regeneration is not implicated. What it would take: fetch the extended-domain Filecoin assets (`scripts/ensure_srs_assets.sh` only guarantees 2p19) or drop `outer-single-h-commitment` from the matrix and state which profile G0 means. |
+| verifier suite, EVM gate on | `cargo test --release -p halo2_solidity_verifier --features evm,rust-verifier-trace --all-targets` with `HALO2_SOLIDITY_RUN_EVM_TESTS=1` | **PASS**: 249 lib tests + ivc / poseidon / rsa / sha / hybrid-mt / foreign-field / conformance-export binaries, 0 failures. This is the profile the regenerated fixture was rendered under. |
+| CI matrix: poseidon fixture | `cargo test --release --features evm,truncated-challenges --test poseidon_fixture` | **PASS** |
+| CI matrix: native/Solidity trace equivalence | `cargo test --release --features evm,truncated-challenges,rust-verifier-trace,solidity-trace --lib native_midfall_verifier_trace_matches_solidity_trace` | **PASS** |
+| CI matrix: real-EVM PBT | `cargo test --release --all-features pbt_` | **FAIL - 8 / 8**, same `SrsError` cause as the all-features row above |
+| both quotient lowerings | `foreign_field_renders_and_verifies_in_both_lowerings` (`tests/foreign_field_fixture.rs`), `supported_shape_circuit_fuzz_e2e_direct_quotient`, `direct_trace_matches_native_including_intermediates` | **PASS** under the recorded profile (1 + 1 + 1 tests, 0 failures). Note the third is a lib test and is among the 39 that fail only under `--all-features`. |
+| regenerated fixture acceptance | replay of the committed `fixtures/poseidon/proof.bin` through `midnight_zk_stdlib::verify` and through the generated Solidity verifier on both lowerings | **PASS - ACCEPT on all three legs** (native ACCEPT; Vm ACCEPT 638,069 gas; Direct ACCEPT 624,166 gas). The stale fixture it replaced replayed as native REJECT `Error::Opening` and could not even be repacked (`LengthMismatch { expected: 2640, actual: 4752 }`). |
+| Moonlight wrap end to end | `cargo test --manifest-path ../Moonlight/aggregation/Cargo.toml wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release -- --ignored` | **PASS** (176.4 s, 1 passed / 0 failed, exit code 0 taken without a pipe) - CAVEAT unchanged: Moonlight pins midfall at `2d52f24` via git deps, so this exercises the proof pipeline, not this baseline's generator. A path patch onto `formal/baseline` is still owed before M3. |
+| Lean build (unchanged by this package) | `cd formal && lake build` | **PASS**: Build completed successfully (5154 jobs), exit 0 - re-run after the fixture replacement and after the G0 dump-dir restore |
+| Lean gate suite (unchanged by this package) | `cd formal && bash scripts/checks.sh` | **PASS**, every stage ok: Statements hash OK, 64 tracked sorries all owned, native_decide confined, all 107 modules reachable, 9 golden pins re-derived from the tracked .sol artifacts, **1257 annotated KATs across 83 files**, 111 statement fingerprints, 12 fact families, 23 spec-theorem bundles certified, axioms probe clean |
 | misc-fixes re-application | Phase 0 step 5 | COMPLETE: 10/10 curated items landed |
-| fixture / gas-snapshot regeneration review | Phase 0 step 6 | NOT STARTED |
-| tag + this file finalized | Phase 0 step 8 | NOT STARTED |
+| fixture regeneration and re-pin | Phase 0 step 6 | COMPLETE 2026-10-29 under D-P28 - see "Poseidon fixture regeneration (D-P28)" |
+| G0 re-run end to end | Phase 0 step 7 | COMPLETE 2026-10-29, with the two `--all-features` legs red for the SRS-asset reason above |
+| tag + this file finalized | Phase 0 step 8 | COMPLETE - this file is final. **Verdict on the tag: safe to cut, with one named exception to accept in the tag message.** Everything defined over the recorded profile is green, including the regenerated fixture acceptance and both Lean gate suites. The exception is that G0 as literally written in PLAN.md 2.7 includes the CI feature matrix, and its two `--all-features` legs are red on this host for a missing-SRS-asset reason that predates and is independent of this package. Either (a) cut the tag and record that exception, or (b) fetch the extended-domain Filecoin assets (or drop `outer-single-h-commitment` from the matrix and re-measure) and cut on a fully green G0. |
 
 ## Phase 0 steps 6 and 7 status
 
@@ -194,12 +219,128 @@ exists only as text. Options are in that entry.
 | regenerate deployments/sepolia/moonlight-wrap | scripts/prove_and_verify_moonlight_sepolia.sh | **BLOCKED, environment, not code.** Two independent blockers: (a) the local ../Moonlight checkout (fbd0f4f) has no MOONLIGHT_WRAP_SOLIDITY_* hooks, so it cannot emit the wrap verifier sources the midfall README documents; (b) the committed artifacts are fetched-back Sepolia runtime bytecode, so refreshing them needs a funded deployment. Consequence to accept explicitly: the plan's M3 golden test ("byte-identical to the deployed Moonlight artifacts") would compare against artifacts rendered by the PRE-curated generator. Either a compatible Moonlight checkout is pinned before M3, or the Moonlight comparison must be restated against a dump regenerated from this baseline. Flagged for sign-off. |
 | Moonlight wrap end to end | cargo test --manifest-path ../Moonlight/aggregation/Cargo.toml wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release -- --ignored | PASS (210 s) in round 1, but against the git-pinned 2d52f24. Re-running against THIS baseline needs a path patch of Moonlight's five midfall git deps; the wrap test itself does not depend on halo2_solidity_verifier, so this validates the proof pipeline, not the generator. |
 | cargo test -p midnight-proofs | default features | PASS (round 1: 32 lib + 1 integration + 8 doc tests). proofs/ is untouched by the curated items. |
-| cargo test -p halo2_solidity_verifier feature matrix | --all-features --all-targets, and evm,rust-verifier-trace with the EVM gate | PASS: 248 lib tests + 11 test binaries, fmt and clippy clean. |
+| cargo test -p halo2_solidity_verifier feature matrix | --all-features --all-targets, and evm,rust-verifier-trace with the EVM gate | SPLIT RESULT (re-measured 2026-10-29): the recorded-profile leg is green - 249 lib tests + every fixture binary, 0 failures. The `--all-features` leg is RED: 210 passed / 39 failed, every failure at a proof-generation site with `SrsError(32, 62)` or `SrsError(64, 252)`. See the G0 table for the cause. The earlier "PASS: 248 lib tests" claim in this row could not be reproduced on this host and is superseded. |
+| regenerate the six live poseidon artefacts (D-P28) | `tests/poseidon_fixture.rs` circuit path at k=6, witness seed 42, prover rng `0xdebd`, features `evm,rust-verifier-trace`, release | **DONE 2026-10-29.** Proof is 2,640 B / 72 reads as R-57 predicted; native + Solidity (Vm and Direct) all ACCEPT; SHA-256s re-pinned; 12 unread files deleted. Full record in "Poseidon fixture regeneration (D-P28)". |
+| side effects of the gate runs on generated artefacts | `cargo test --all-targets` | **Trap, recorded so nobody is surprised.** Two test binaries write into the tree: `tests/poseidon_fixture.rs` rewrites `proofs/solidity-verifier/target/poseidon-fixture-dump/` (four of which are tracked and are what the Lean render gates read), and `tests/conformance_export.rs` rewrites `formal/fixtures/conformance/poseidon/` unless `MIDFALL_CONFORMANCE_OUT` is set. Both were restored byte-identical after the G0 runs (`git status` clean for both paths). Under the recorded profile the tracked `.sol` dumps reproduce byte-for-byte; only the untracked `proof.bin`/`calldata.bin` move, because of the OsRng quotient-limb blinding. |
+
+## Poseidon fixture regeneration (D-P28, 2026-10-29)
+
+R-57 established that the committed poseidon fixture was **stale on arrival**
+(published 2026-04-29, two days before the Keccak transcript changes of
+05-01/05-02) and that the current verifier rejects it. D-P28 authorised
+regenerating the six live artefacts under the profile this file already records,
+re-pinning them, and deleting the twelve files in the directory that nothing
+reads. Executed by P-M0 on 2026-10-29.
+
+**Profile used** (the same one recorded under "Features.solidity" above):
+cargo features `evm,rust-verifier-trace` on `halo2_solidity_verifier`, which
+implies `truncated-challenges` and `midnight-proofs/solidity-verifier-trace`;
+`outer-fewer-point-sets` and `outer-single-h-commitment` NOT passed, i.e.
+`outerFewerPointSets = false`. Release profile. Circuit path identical to
+`proofs/solidity-verifier/tests/poseidon_fixture.rs`: `PoseidonExample` at
+k = 6, witness from `ChaCha8Rng::seed_from_u64(42)`, prover rng seeded
+`0xdebd`, SRS `zk_stdlib/examples/assets/bls_filecoin_2p6`, pinned solc
+0.8.30, revm Prague.
+
+**Resulting proof shape**: 2,640 bytes = 21 x 48 + 51 x 32, i.e. **72 transcript
+reads** - exactly the shape R-57 predicted for `outerFewerPointSets = false`.
+`transcript_repr` is unchanged at `4cc2e5ac...0494`, so the circuit and VK
+identity are the same as the stale fixture's.
+
+**Acceptance** (the step this package exists for). The regenerated `proof.bin`
+was replayed through the real verifier from the bytes on disk:
+
+| leg | verdict |
+|---|---|
+| native `midnight_zk_stdlib::verify::<PoseidonExample, Keccak256>` | **ACCEPT** |
+| generated Solidity verifier, Vm quotient lowering | **ACCEPT**, 638,069 gas |
+| generated Solidity verifier, Direct quotient lowering | **ACCEPT**, 624,166 gas |
+
+For contrast, the stale committed fixture replayed as: native **REJECT
+`Error::Opening`**, and the current generator cannot even lay it out as
+calldata (`repack_proof` -> `LengthMismatch { expected: 2640, actual: 4752,
+prefix_g1: 19, num_evals: 48, num_point_sets: 3 }`).
+
+**Files replaced** (six): `proof.bin`, `vk.bin`, `instance.be`,
+`rust_trace.json`, `solidity_trace.json`, `verifier_trace.bin` under
+`proofs/solidity-verifier/fixtures/poseidon/`.
+
+**Files deleted** (twelve, zero code references - they appeared only in this
+file's SHA table and in plan prose): `adversarial_fixtures.bin`,
+`algebra_fixtures.bin`, `decomp_pairs.bin`, `evals_signature_fixture.bin`,
+`gate_eval_fixture.bin`, `identity_g1_compressed.bin`,
+`lagrange_aux_fixture.bin`, `pairing_fixture.bin`,
+`query_schedule_fixture.bin`, `right_g1_fixture.bin`,
+`right_msm_inputs_digest_fixture.bin`, `right_msm_terms_fixture.bin`.
+
+**Container notes - what is faithful and what changed format.**
+
+* `proof.bin`: current-code proof, compressed G1 + scalar reads, unchanged
+  wire format.
+* `instance.be`: 32 bytes, **big-endian canonical `Fq`** - the convention the
+  committed file used (R-57: "the committed file is genuinely big-endian"). The
+  *value* changed because the committed instance was not the seed-42 instance.
+* `vk.bin`: **format change.** The committed 4,128-byte blob is a legacy
+  container with no writer and no reader anywhere in this tree (it does not even
+  start with the halo2 `VerifyingKey` version byte). The regenerated file is
+  1,302 bytes of `VerifyingKey::to_bytes(SerdeFormat::Processed)`, which
+  `VerifyingKey::from_bytes` round-trips. The VK identity it records is the
+  same: `transcript_repr` matches the first 32 bytes of the old blob.
+* `rust_trace.json`: same container (`{"entries":[{"kind","data":{...}}]}`,
+  kinds `Intermediate` / `ReadPoint` / `ReadScalar` / `Challenge`), emitted
+  from the live `solidity_trace` hooks of the accepted native run. The
+  **vocabulary necessarily differs**: the committed tags (`advice[i]`,
+  `dummy_eval`, `perm_product`, `q_eval`) came from
+  `trace_replay.rs::replay_trace_from_vk`, a hand-written reconstruction
+  deleted at `cf89e5f` that was never a verifier run (R-56 correction). Point
+  payloads are now the 128-byte EIP-2537 padded form the hooks emit, not the
+  old 48-byte compressed form.
+* `solidity_trace.json` and `verifier_trace.bin`: same containers (flat
+  `{kind, tag, *_hex}` array; `MTR1` + u32 BE count + length-prefixed
+  name/data records), regenerated from the LOG stream of a traced render of the
+  accepted proof. The old files recorded a Yul tracer whose emitter is not in
+  this tree (`evals_signature`, `partial_eval.*`, `right_g1_digest`), so the
+  tags are the current tracer's ids 1..=36 plus the proof-read, quotient-identity,
+  PCS and selector-fold ranges.
+
+**The regenerated proof is a recorded run, not a reproducible build.**
+`blind_quotient_limbs` (`proofs/src/plonk/prover.rs:126`) draws its blinding
+challenge from `OsRng`, so two runs of the same generator with the same seeds
+produce the same first 720 bytes (the 15 pre-quotient point reads) and different
+bytes from 721 on. Both runs verify. The SHA-256 table below therefore pins a
+recorded accepted run; a future "regenerate and diff" check must expect the
+quotient-limb tail to move.
+
+**Generator status.** The harness that produced these six files was a
+temporary integration test (`tests/m0_poseidon_regen.rs`), run against
+`M0_OUT` in a scratch directory and then **deleted**: it is not committed, so
+nothing in the tree can currently re-emit this fixture set. The recipe it
+encoded is the one stated above (same circuit, seeds and profile as
+`tests/poseidon_fixture.rs`, plus the native trace events and the traced-render
+LOG stream written into the three containers). If the project wants the fixture
+re-generatable on demand, land that harness as an env-gated test - it must stay
+inert under a plain `--all-targets` run, because an ungated version fails when
+`M0_OUT` is unset.
+
+**Cross-cutting check - no Lean gate reads a byte that changed.** Nothing under
+`formal/` opens `proofs/solidity-verifier/fixtures/poseidon/*`: the only Lean
+mentions are doc comments (`Midfall/Instances/Bls12_381.lean:71,183`,
+`Conformance.lean:79`, `Midfall/Conformance/Bundle.lean:153`). The Lean
+conformance runner reads `formal/fixtures/conformance/poseidon/`, which is a
+separate regenerated bundle and was NOT touched here; the Lean render gates read
+`proofs/solidity-verifier/target/poseidon-fixture-dump/`, which was also not
+touched (restored byte-identical after the G0 runs and re-verified against
+`scripts/check_golden_provenance.py`). One consequence to note: the conformance
+bundle's `proof.bin` is a *different recorded run* of the same circuit and
+instance (same first 720 bytes, different quotient-limb tail). Both verify; they
+are not byte-equal. Re-syncing them is a follow-up package, not a Phase 0 item.
 
 ## Fixture SHA-256s
 
 Generated with shasum -a 256 over the tracked fixture inputs and the tracked
-regenerated dumps on this branch (commit 33a3b20).
+regenerated dumps on this branch. The poseidon rows were re-pinned on 2026-10-29
+under D-P28 (see "Poseidon fixture regeneration"); the twelve unread poseidon
+fixture files that used to appear here were deleted and are no longer pinned.
 
 | sha256 | path |
 |---|---|
@@ -208,24 +349,12 @@ regenerated dumps on this branch (commit 33a3b20).
 | 7945056172df44c07be8aa39b2f50594597d12076ae598b47ad03173479a7def | fixtures/ivc/rust_trace.json |
 | 2c714487a2831d2380aa45bbca3883451b1676d50d0f02fb175eee8f33dd0a01 | fixtures/ivc/solidity_trace.json |
 | 6126880f264a05da16fefa18a69ff26f7be3a30c1bd5bf66d543493ea3a16508 | fixtures/ivc/vk.bin |
-| 112063ccc09c75d07e1945b932617422d936e63e4523a3b8266e2679f6ca1505 | fixtures/poseidon/adversarial_fixtures.bin |
-| a8280b1280b61a78a3f33f67062601f7733441a76d1b25f4b99c34fdf8e54737 | fixtures/poseidon/algebra_fixtures.bin |
-| b6e9250a6834e1d4146797ea858a3302eb3174a1276d804aac482cd272d8cdc0 | fixtures/poseidon/decomp_pairs.bin |
-| 2c33c99e8faaa6d2308fc369a68faa71efae107458359eb1921ddf1b83fbd924 | fixtures/poseidon/evals_signature_fixture.bin |
-| 376b300edd8afe5bb6b468f864aadf7dc7e88526593cbb884ef4b78eb751f83e | fixtures/poseidon/gate_eval_fixture.bin |
-| 5f0657f37554c781402a22917dee2f75def7ab966d7b770905398eba3c444014 | fixtures/poseidon/identity_g1_compressed.bin |
-| 2aa07bf0b2683897898562308b7f44414a8d7fd434b5f666e701a79bfc60b304 | fixtures/poseidon/instance.be |
-| b8bc913b6eab153c2fa6c53563f9bdc9872e6e7b5961d897cddc376829083696 | fixtures/poseidon/lagrange_aux_fixture.bin |
-| 52deadb1eaa1016ec01ce727997da01a3bc6c2cb51a50007bdcd726acd7de548 | fixtures/poseidon/pairing_fixture.bin |
-| 818a766a5d59e1e72d16b290793f87175ef6aebc6a5500329710678024777cc6 | fixtures/poseidon/proof.bin |
-| a2a80f8f637d90cd2062f299e4dd873756faea71795e872bef6376cce22fb0b6 | fixtures/poseidon/query_schedule_fixture.bin |
-| 7b5d2859147c2ddc7a484f6fdd07684bc9877d1111a79eb6fe0cf2dcc64f9cd1 | fixtures/poseidon/right_g1_fixture.bin |
-| 9cdf71381122c880caa6b182c4d0c3ae681cb02c54b8c0390ca2cc4cd647e171 | fixtures/poseidon/right_msm_inputs_digest_fixture.bin |
-| 27cc2b0bc74b60004e7fbb46808055c1f848da73f6111a2e68e75bfc69ff3077 | fixtures/poseidon/right_msm_terms_fixture.bin |
-| 3546b5d001a62cd9e1e48382464b5b9f8c23c8bc051bff50cf26dbd8564fb5ec | fixtures/poseidon/rust_trace.json |
-| 040a48e7ef77bf01e88c5edaeac19193705a38d3e15415b2a0f9cd2588e9e5bb | fixtures/poseidon/solidity_trace.json |
-| ddec2344a12eafad9ee15bd6f7982163bbb8b886087c7fec4ae27006532e8bf3 | fixtures/poseidon/verifier_trace.bin |
-| 31f55168f1ecafade297ecccfee38db1ba45b4b7f149aaedf3c842f4f2d188d9 | fixtures/poseidon/vk.bin |
+| cebaf4594d605689a4e7f5d187d7fee743c34a0299b40c6dea0b3119df03178e | fixtures/poseidon/instance.be |
+| 2120545041f640500771e7e285fed08ce07500794e6004f097984a053b44f289 | fixtures/poseidon/proof.bin |
+| 8abfae7c773f43e985209f7431e85403dc2bb1d98c379b441ef16d22b7cbc540 | fixtures/poseidon/rust_trace.json |
+| 67ed29fdde15d97fdc05397605795e794e6d256589059db37cd0bccb24f362b1 | fixtures/poseidon/solidity_trace.json |
+| 7199576773869c25df0c8b513c24360572d69f77c493cf604b104c981030c745 | fixtures/poseidon/verifier_trace.bin |
+| bffa79eaeca55dade10076e28d53a316a798eece9621313f13938de156307725 | fixtures/poseidon/vk.bin |
 | 52bfc1b1a7b053d8b63916c81ab6e845125cae277b74ddaa5ae7b6d0c5a62e45 | fixtures/rsa_signature/instance.bin |
 | b5212b21b686686749699702ba696f41a800f43ff7c83289a47ab01bd8dc8a6a | fixtures/rsa_signature/proof.bin |
 | 94ff3fbf1934e6c72360307b7dfc38ebb7e41fcfe28ff97fab9c5cf10850ba20 | fixtures/rsa_signature/vk.bin |
@@ -271,7 +400,42 @@ regenerated dumps on this branch (commit 33a3b20).
 | cf9ea60bfee9769886ff15d846388a42bd8682a206c4119298c649a3f4636a92 | target/sha-preimage-fixture-dump/instances.be |
 | 4823c266d0ed0037dba49d37bc3648968b1f434f14e378a041aefddce6d25be2 | target/sha-preimage-fixture-dump/proof.bin |
 
-Total tracked fixture/dump files: 67.
+### Which rows of this table are stable pins (found while re-pinning, 2026-10-29)
+
+The table mixes two kinds of row and only one of them can be a freeze pin.
+
+* **Tracked - 30 rows.** 14 `fixtures/...` rows (5 ivc, 6 poseidon,
+  3 rsa_signature) and 16 `target/...` rows name files that are **tracked in
+  git**, so their bytes are fixed by the commit. 28 of the 30 verify against the
+  working tree today; the 2 that do not are the stale ivc `.sol` rows in point 1
+  below.
+* **Untracked - 25 rows.** The remaining `target/*-fixture-dump/...` rows name
+  files that are **not tracked**: they exist only as whatever the last test run
+  wrote, under whatever feature profile that run used. They cannot be
+  reproduced on demand - the ivc render depends on the bench feature string, and
+  every `proof.bin`/`calldata.bin` moves with the OsRng quotient-limb blinding
+  described above.
+
+Two consequences, both recorded rather than papered over:
+
+1. Two **tracked** rows were already stale before this package ran:
+   `target/ivc-keccak-solidity-dump/Halo2Verifier.sol` and
+   `Halo2QuotientEvaluator.sol`. The table pins
+   `c4a04c1b8825...` / `27a60d2922cf...`; HEAD and the working tree both hold
+   `c9347fde1dfe...` / `4086ef353eb0...`. The step-6 IVC bench regeneration
+   changed them and the table was not re-pinned. This is a defect in the table,
+   not in the artefacts.
+2. The G0 runs on 2026-10-29 rewrote 13 further untracked rows (ivc, rsa, sha
+   and hybrid-mt `proof.bin`/`calldata.bin`/`creation.bin`/`contract-sizes.txt`/`instance.le`),
+   as any run of those fixtures necessarily does.
+
+**Recommendation for the freeze:** keep the 30 tracked rows as the pins (after re-pinning the 2 stale ones), re-pin
+the two stale ivc `.sol` rows to HEAD, and either drop the 25 untracked rows or
+relabel them "last-observed, not a pin". Deciding this changes what the tag
+claims, so it is left to the orchestrator rather than done unilaterally here.
+
+Total tracked fixture/dump files: 55 (67 before D-P28; 12 unread poseidon
+orphans deleted, 6 live poseidon artefacts re-pinned).
 
 
 

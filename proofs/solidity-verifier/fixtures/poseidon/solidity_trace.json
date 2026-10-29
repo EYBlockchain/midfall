@@ -1,1 +1,830 @@
-[{"kind":"ReadPoint","tag":"advice","eip2537_hex":"81e60cdbf67ce5879c7c24b3d3413304dad21febd91bee73191acebb2ed5597de2ea65647177e202c983122854298ed4"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"8e8bf0427660ee129b3ac742b997adf709272d75363146d0880dce510e186fdef0e49e65d30f5304a203642b965b6a31"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"b30df15f939f9f1e19ac2bf52b805ac80e1379e8fd0a9c588404b95cec2b014f444e396014ce28ab497b5cc2aa941736"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"b4908b22c8819acb07f0d59150a7118f3c0a2d3b97bb0b16175fa2ac34020077553e5a94a5a99d5809c03435e9aa5a76"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"83fd77a149152709931d80ffc6e618a834fe0110d53926df32c8728290432217817fd8dca035511a09d4a52844f9c492"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"a23f3a922265548de6e1e3607311b7a3867156aed5b30b51bcacb21e9a2f06a01820189deaa9fdd1f9cf60dcde5445f5"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"a61599aeab3384b4d6c638d561deb71a84e59cd05365cd5bc2b008b1bf797e4d6862ac0052b0d64f20753dbcd29e8b4e"},{"kind":"ReadPoint","tag":"advice","eip2537_hex":"85737395a12ef01dd8fbd54a995c888b32cc74d9a4cd8093ca75e38300f8122a5c814dd10afefa450b03de1f1263df2e"},{"kind":"Challenge","tag":"theta","fe_be_hex":"5da79f088ec824cf983df50d2c7024ee2a6fc2d14e245e3f4de569f1c34325a2"},{"kind":"ReadPoint","tag":"lookup_mult","eip2537_hex":"81cdda948e0df2d8dc2bcbcb2a216a44b661b35bd58219ce50d17e8b9c266d1829adf00fe5c840f920779226f0a1392c"},{"kind":"Challenge","tag":"beta","fe_be_hex":"0477a5891ccb8eb3a708632c708a2b7bb5f059dc95e1bc25f44fb417ffa65c4c"},{"kind":"Challenge","tag":"gamma","fe_be_hex":"6bd3cf7318992ee1dcb6e5e5f7bd78e122a1453318c7087d3ac00045ebd1aab8"},{"kind":"ReadPoint","tag":"perm_product","eip2537_hex":"b9411cd094ccd2d23defbe63850a39a796ddcdcef44f7fe1241bb6505d56fc4178f4ecbb5ec6ba5014dc4ef11bc9517a"},{"kind":"ReadPoint","tag":"perm_product","eip2537_hex":"8da59ef4d22efa935ea36a228d6f71008adee8ff0b230d2538320b4d467b35a6f6e909b6c781bedee2dc9b7e744855cf"},{"kind":"ReadPoint","tag":"perm_product","eip2537_hex":"a45f4dd167ca3437171ad6d4b982403b44f2866132141b865fe9abd0b055547d3ddc3919db874e5be9c3413219d1493f"},{"kind":"ReadPoint","tag":"lookup","eip2537_hex":"8812729949bd06ce74d7ca0e1adc1025ecb636db79cf8e3711361b87357a748f531fe71995befa9a2b033904e4f3d697"},{"kind":"ReadPoint","tag":"lookup","eip2537_hex":"87f8ff32948633aac0ff020e896770d4774cf90fa519fba2e8b50c0342e0effefd9c4c37523589cf84f9d8e399afe3db"},{"kind":"Challenge","tag":"trash_challenge","fe_be_hex":"3a4f48dfa840a95f19d2812de2e376cb6d2721edf593f257457f133d5a0dd195"},{"kind":"ReadPoint","tag":"trashcan","eip2537_hex":"a3b09d6ea5473d836e08e82f77870a56cea906cd667632771fb78b207a074a0098782a87ef02b15cfa7266f159e6135f"},{"kind":"Challenge","tag":"y","fe_be_hex":"61e192f45558aa4d0fc17f09a9f2b2ba0b9fe983c07f0eabf714aa039c4e4784"},{"kind":"ReadPoint","tag":"quotient_limb","eip2537_hex":"aa755f4c64bde20de81c6e98257562e8aaf8bc4bfb60d51fad0f418eecce3ca00d5d95d77abe72a8727f38be78584ee4"},{"kind":"ReadPoint","tag":"quotient_limb","eip2537_hex":"b0d93216a83f47e689512965c5848f8c39b67eb858c414fe6427a491ef7f7cfef561d566caeaa86bc45cbdb95747dcf8"},{"kind":"ReadPoint","tag":"quotient_limb","eip2537_hex":"aaabe8dd6047da8923e93cb0f643f933a6acc0b2bde278eca4ee4ed8063431a13d9dd1b93d3be13822d7866ff3464609"},{"kind":"ReadPoint","tag":"quotient_limb","eip2537_hex":"a3fe945b20303eeb1918026034ade07ac206008d6bbde640b0479e4b5a2ce78f82d342286f0035d5674c65098c4cc742"},{"kind":"Challenge","tag":"x","fe_be_hex":"516a5fbb000a58f7f6b39658291a583eeee4deb9452ccfa76e0e6bc648517789"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"517f20dcf80347a4af3efb14feb1920c29e8f35b7c8d037763e519a5bef9caba"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"3b6703300fd2e08ed62718bbcd69dd0e7f3314109b53432612f99ad4355435d4"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"6b88dacf5c9ade93ba2cc6dcb43b48daa909dabc5650fe3aed07e7c6031aa241"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"13fa71a2451f245f8c353491c945b5d43308373549dcd752f144b8c70fc47487"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"51ac7df4c88715664d1770483fb75d61e5551f9e58635d87f8f73ab1f0dc3b09"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"41f5b65bca090e64641e472af997515ce1f9c363478cef7abb8153167f354284"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"331897d366b979cae0be18065a4ae3fde5353503b884ad534c67cae68e8ff885"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"1a3388bec892451c1df4728a9443dd0f7e72cc5bf61979d1714c113f7c46b979"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"526f8b9718f6240618d06483776b09f7a746a2435f5a2ddee65abefe4046dc78"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"06a3c35c61e9d8ee13cc5b41cf1ba0a246eb65e9c5a9667a30c6be5a2572d4c6"},{"kind":"ReadScalar","tag":"advice_eval","fe_be_hex":"0563630d40928737c052e61519b691f8426b82661400178b46aea061e4ba71b6"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"268a9fbd4efbd107a8e7010dd2eed90b5a3190acdb4ce1754970ccaa1ca5e367"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"700063fb2571a376cdc61ff188811118508dfb4302372e35ab85b993cf510b0f"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"406b9bb2bd3c47a83f4edd3b877a4adf682366966d11a734a03b2972c7adcecc"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"31e6dd0a5392def7d00614b7b4557e76152058a7c3dd9c015c41b3d601ec4028"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"2dad2ba5bb3ca8efe21aa1c9c14314baaa3002818a668ff19d0ffcae5165f9a8"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"169ff8aa47c0e009f9a68d10a64b8c967f2042d65c00b23bd04d7ea946118e4c"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"019ec56c15efd12597c4bd0dd22c5f909cb2734f646bd1559f6b170a3bb4ec9e"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"21ab5bd7c14989f6f48347353bbe321d6e640f8465ef1ee1707e7a6772be711d"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"47cf90a730c293c4c10317f49675661f29ec21ef09e3f954f5acfd8e75c62449"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"fixed_eval","fe_be_hex":"58bdeb65c48b1e9e80eda0ec92c0d190103d6dc8cf8e1a45f7c00f050fb10481"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"46503458bef568da79c402fd3bf3688b961ef06b93f58a214d7610a51a6f837d"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"0a4ba78937bd1619696ced83668e61fb7faffbff60212b39b507e86b45a1ecbe"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"35e914b41778d1011fa5a36aaae152f5fe4e9894b83c6e284f2bf066bdf839a7"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"5de3c6628398eb56b4ee98ebb90fec16819bc7d5cf56d032ec2735904af6ef10"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"651a37fe7a65f0b59b56f279ca745b55c6c1d1e0d8e8b2ca0c0849697b5052e0"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"50ed18e2e66005d348f47905857ab6387f7b79ac12fca39feeb23bfc05e49631"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"515268a1896100bb6dc0dbf63f066eb0f6eb2cdf303aa569aa1ce6d1801f66b2"},{"kind":"ReadScalar","tag":"perm_common_eval","fe_be_hex":"163ffebb77764b4c9f2adace16d342431184ae65339cc2e57f114fd53c9e26d2"},{"kind":"ReadScalar","tag":"perm_cur","fe_be_hex":"05ae92b954d278df54710b903fb36301eb584e2fc603619f8f1e9496799b2abc"},{"kind":"ReadScalar","tag":"perm_next","fe_be_hex":"1571fb2fdfe4e5f074599009a09570c96b6f50727b688ae1c69ab322334222f1"},{"kind":"ReadScalar","tag":"perm_last","fe_be_hex":"46c78a97147c819048dc1a0838c5858764e32a0340a4321e763b83feabea3c83"},{"kind":"ReadScalar","tag":"perm_cur","fe_be_hex":"6dc26d441cf7210a7bc96f667d0839614656d4b6e6f44625d8489388d1f5f8e0"},{"kind":"ReadScalar","tag":"perm_next","fe_be_hex":"530bf6c6fcbbb58031e6bf33733f1cbb923639f351684b1f10cf852b362fa2bf"},{"kind":"ReadScalar","tag":"perm_last","fe_be_hex":"4d0f0489bf7cda84d334f3d06d8007e67305d15ab145dff6d4a148879b2e5803"},{"kind":"ReadScalar","tag":"perm_cur","fe_be_hex":"57c6f9f7d2f53cfed65ddcedc777c41aea0836882214ce362dec8b98f874594d"},{"kind":"ReadScalar","tag":"perm_next","fe_be_hex":"230340fc9bff6f0403cb5d9623a91bf19422ad38b271bc9aa76aa54c7e48c52a"},{"kind":"ReadScalar","tag":"lookup_eval","fe_be_hex":"3859841e32e17933d3d6376476cbc9fec6fdac6dd1770c5c56682dd38b1bcb81"},{"kind":"ReadScalar","tag":"lookup_eval","fe_be_hex":"51cf8b7af274258426f9baf4c7b5b859b15790859fd1acf966547991073dcc8a"},{"kind":"ReadScalar","tag":"lookup_eval","fe_be_hex":"2745dca0940ea7c9f9ba6d334df08a4d7fc17d8f2e05eff69714a0a0e2e81138"},{"kind":"ReadScalar","tag":"lookup_eval","fe_be_hex":"5a2ea9b7e636a5d882dcc25816b49ee55deb2a2fb8897ba937b3561c4b9974bc"},{"kind":"ReadScalar","tag":"trash_eval","fe_be_hex":"02ef94bc929648937325f43a95952c452fc26aedb755e540010f596921138ffa"},{"kind":"Intermediate","tag":"evals_signature","fe_be_hex":"3da1510066bbce93e7b134bcd6e80da9df0e407eb4ebf974cb6f726fb3f405a4"},{"kind":"Intermediate","tag":"partial_eval_signature","fe_be_hex":"50dcb6acc73e04145333674f1212465503aba992e32a0d8d464b62f8a5d98ab9"},{"kind":"Intermediate","tag":"linearization_signature","fe_be_hex":"04487361fe26160444b57f4e5187f442a19065f71bdb0256bd13afa610eacf6d"},{"kind":"Intermediate","tag":"query_list_signature","fe_be_hex":"17f3157c7740a878f5bb4b2cfb32be50a68b738f672a51ac5ca623ddfec7397e"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"217365ac9b9989629991c364f2b86cb3cc7e2dd253c7d8c337eafb54f76e6cfd"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"66f094b9a69a0cedf60eb8ddded60b38f2a8fefba6aaaa036d2f4b6aeb796ca0"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"55bf072edc9e8b29a7a17a8d603af9b3abcc82f7d82044c39d67176c55484c1f"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"02468eea3073e1b27af48d3f41f26c1507f1ca64b176ff5cab1277ec3826efb7"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"2cea1c7a2a07304780718cf0db14b48bcccb4faa81db1d238019aa7b0028dd91"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"734f5438da7262afdb9bab58ace48bdb59881211e83f08495ab5278c943761e9"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"43e6c7a470c1778905f81b8f1a9e30fbbd5ede196bb6f05cb3f2ca4f1569d2a5"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0c329ee772aa7475d856dc6b36d22079898f5deb775ee7e0063c8586bf65f373"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0ac393f94e8beb2695e0d96fac46c2b87df5fe8fc9281414481b2b425ada652e"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"545a2e0413f0b127fb7efb0edaea97e6c5fa1bfe5030edc8b90e81cc3d5d3d05"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"57f6e58eddfdf4b1246102abcc1383f62c22410ec317a437e3c7700c76ef1e66"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"2091646961d0d09fddc51c6beb15f5cc30ebea0a6d1a0cce6cfe566c7c3204af"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"6fe9c3598362fc66465fc26fd2d1302538e9ad9443f4381765fbb85a0c01ca00"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"23062471c3400021f4340394056f72cf07ff840cc8352c8264a25b476e4e3026"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"5b3a696e1a1aa7d80798e529ed5ca8c061f3f4441b6be7cf1044b3dd89d33b82"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0fda02ae267bbc6089dc97650ce12345ef60da5ad037e125c7d018024ca4a427"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0662a7d965658a0be8da606caa381247b9f24151a827ebf3a2b38807964115f6"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"7233bdbea510df4f392d617d65980ce045b4a69774f87dbde69b329eac3a1e25"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"395a81702231f8d3328870d8432625ef3d8affd5b42745d80bea35abfacafda1"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"59822a8396f70a891d061eebc5cd3fbdf83f23f0635b0fba71f57fe4ee38e3eb"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"15c6f19a446a5c45f27f1e2201dd55a06a0b1d9b1766d8b6af1ef040dc20f4e4"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"668c262534b2ce222ac07ccbe555d460a4caa6a71bd635c8f4bade9320f2e67c"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"5e1f88a4ca8d17644338d151a4208dc6848f2b2f1cb422318b3661f2dc7285a2"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"464111e94e086dc09c37893f983acdbda22a36199ee0ac478d9d4ebd7f86a678"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"153e361eaf1ae6fdc2fc5b3c97c82dd54329a250bbb425df88b69b4d3bda65e2"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"508d4ac75a6b644d3c1481b34c5e5b50c2ae9e7985ef4942ce0d0da35d9df21d"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"4bdfb4958fa24de1a0ef2388cbb6759550529fa4ec7c6f7adfa48c319f43d8fb"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"1ee1ab0877f49e49ab6a276088c13b36ec20bc5865c5a06ec1bed18c1f8adeaa"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"08b922953149a29240265228f597982d1775c278cf946478f45ae5f1a8525d92"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0cb56e7fef410b9b69e1aa8c952dfa600c572f3f2f6168455cc87efc2fed8230"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0847db79bc989aaf43d3dd1b484a983eef3d2af9b7f3da74f350ebd5cab8c2a6"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"50fc44c1ba7702a6d747da5d0b0364ef9fc3f0aa58a2a3904256235a8995a3e6"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"165281de2de0391fa23b7e93269ef78693e33d22abfad65ff1a42ac0c9e70e9f"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"593c9d84a62d20676a7897b297ddd00ae978b27af252ceb1080070f0bccd58bf"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"34d6ee7449989ac4dd64721f34516bfa18f7d9ebec836e3481b923abad0db2d9"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"16eaedc732a941e352dfebcb2213a3e3fefeae52072ba5754a71f7e84996a713"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"6f6c3e8c39f278ae1bdf82e4661cbff0b286efb4719c0303e54b40ee185a4301"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"5169390a3942987b5a8534222cd36cb6b5686549f3c6e9aafee37989360bb2ea"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"114f02402bb4f7c9356e1d6dc3e0a9f734c3d00dc33ff3192ed5bc206cf9be4e"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000000"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"25e04962c869ef9c5a4961f389a2eb62d3396c0f6b003cbe57af7e678f791fb0"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"3fce51a692908414ece339e02af9a82233f847d5c95d7de4e88b6b973989d2ff"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"1832ce0456e1acb2bc1caf0a377ececf48e786098d5bf5b1a5a49b0c98d5444b"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"0f9f1b10b091155f93ad077fd099116caafb8290af68a25b7ecead2e232bc3e6"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"34d46301440323ea9e9d34b24854f0fe39a319dc56354c11d12e37191e755936"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"171596ed4c11f4fb1825c822e7e55cf9f524d6e06cc60bafcca84a02a13f2227"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"3214669c09598f4633047c9362eec1f56f8868f1e1f4a8b6bae489535283dc82"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"6d8a8cb25435b745f1493abd9e1eb08dd1375eaeaf2be9cbdaa1565456d085ca"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"557fe05684cedd5f2a647d919f507716990ef42dea34063ba8548d95e1615e29"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"1faf9ef85017b00d38afaef9c45fc01efb0396756a4c7d30c9010bc5b3eb85f6"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"51ce729c9afbc07bb172cb93f7c44cdf93ea8b516e6a0bf85ddc08a32b5a1344"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"503976821440e034de289cc3858057c0afa0405d676aeb0e6ed6bcc91c5ada5b"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"217137664a8952ebd316d1cf31fbc2082c9eb9fa3a917848d2602819fec8ccb8"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"4a499803a7a039636e9748cdb55580c11a62cfbe5f80633fd5ac02c9648f87a4"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"206d5996149fccef1ffbbbd6a180c1ef5550fb53adf6895883f7f004d8c182b0"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"634fb019d7ae3e3a70eea76e60155ebbc2a38be2789a7bb01821e4066560352e"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"6d73e07158fcdcf39012ee7a904662d439d09a763fe714563fe54df84e9618a9"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"50ecbfa690b837bb0a1c8b133761b4d1d8bcc86b92f20d6755e60f22a45798e7"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"2500ca4d0e075a88c7a96589f5aaee896be02719ea54af9905ef909a73d2c9b2"},{"kind":"ReadScalar","tag":"dummy_eval","fe_be_hex":"2618d7274a3f02bbe241561a203140010cdd8606a92137b5bfc369fb2836392f"},{"kind":"Challenge","tag":"x1","fe_be_hex":"19dc7c4cc8e3530fa52fa6284efd12cb2b6b9b6357ef20a90cbfb3a9bb332137"},{"kind":"Challenge","tag":"x2","fe_be_hex":"50ee25d4f5e87dde2ef8ac0fe9c72bb57f26a76a3be4a55dbae87442dc6ed1e9"},{"kind":"ReadPoint","tag":"f_com","eip2537_hex":"98f8b67c44afdb3c7583dfcba0db6ed9405991feb288fcb79f8cf181f0a32882be961ffda067513f57175b8e8e44ee87"},{"kind":"Challenge","tag":"x3","fe_be_hex":"1e356d041d4473b4c1a393782c787c1f0f4c18a172a649726d2e34c624626f1e"},{"kind":"ReadScalar","tag":"q_eval","fe_be_hex":"683585f89b71c600e9014d5d5cbe763ed87bd7ec34ee161493a68acddac0c89b"},{"kind":"Challenge","tag":"x4","fe_be_hex":"381c9934815b628c9ad9d9f9cf4882700050d2f894850bf1d925497db53160a1"},{"kind":"ReadPoint","tag":"pi","eip2537_hex":"830590fd9d9004dadf297def15aba63c6eb7f6733972da094c6ed28678c341019af2aa4d1b6994a4a17b782605926375"},{"kind":"Intermediate","tag":"multi_prepare_signature","fe_be_hex":"16f4cd32fa883443f0ba14089c7c06d2f747750e7eca8474b2534ffa477b1a5f"},{"kind":"Intermediate","tag":"final_msm_scalar_signature","fe_be_hex":"5e5558c7e7d739a585fa10215a9d6a437cc9fc65c35dd62adc9a0d3955f5ea47"},{"kind":"Intermediate","tag":"v_scalar","fe_be_hex":"1bb71d8feb105bb889bea4979aa153c6c32d488234785979441815b5921a3b78"},{"kind":"Intermediate","tag":"fComScalar","fe_be_hex":"000000000000000000000000000000000050d2f894850bf1d925497db53160a1"},{"kind":"Intermediate","tag":"gScalar","fe_be_hex":"583689c33e8d218fa97b33706f00843e90905b80cb860285bbe7ea496de5c489"},{"kind":"Intermediate","tag":"fEval_sol","fe_be_hex":"5868be76f4ee7c024c29170b09c904c19cfe50670be4334fd03eef23dca10266"},{"kind":"Intermediate","tag":"right_g1_digest","fe_be_hex":"1e22ff6d423eac68310c6728de59d2cb7a1021cdef4800ea805b101fe162572d"},{"kind":"Intermediate","tag":"right_g1_len","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000080"},{"kind":"Intermediate","tag":"num_sets","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000001"},{"kind":"Intermediate","tag":"num_commitments","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000027"},{"kind":"Intermediate","tag":"final_pairing_result","fe_be_hex":"0000000000000000000000000000000000000000000000000000000000000001"}]
+[
+  {
+    "eip2537_hex": "0000000000000000000000000000000015a493f87e5d23cf8401856bab9d7e52c117ee1e2859be550a27821e92515b15c1882c756d5680c672098140f6c92e4b0000000000000000000000000000000015c66e190286e3e5e99500157e2a2ec5e55788f503b5eab79c02b7219987bee5aeca9489b0a69cb5a43ed8b8b3bf18e5",
+    "id": 10000,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[0]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000013fb959aff7759ad995da3337622f1bfe51f4063267b9ef673fd783b768f9e03968be3e8e88a5555d28b471ecd413f47000000000000000000000000000000000366f18459b2c6fd3d57b8624470ec88a60d86a8ddab2627201b535c658ba230189a90606cb4e08335232370942745ae",
+    "id": 10001,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[1]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000316e16f4e9ed8e8d1024ef898249006e7711027474406040227b949ade6b0dca163bc13c067acff8aede36054c969b10000000000000000000000000000000015fa5077e48cadb55498ba0685bbc0418cdc275ca5af42b39b350930f0440c43e3971c248164dd6f4cfde2bd209a0848",
+    "id": 10002,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[2]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000002e5af7b61bc6fb1692f62e6227ab57fcbd012740e920e1b35154c097e435f3b478bf6b3081fca996578f3c7e9dfa2220000000000000000000000000000000007b4e517c24670952c381bf088db17457d8b6e1588bb35c9c52fae72d92ea4623a175de6630e2249d676fef58b2d592d",
+    "id": 10003,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[3]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000003804f7d2e2e4eb7862bbe4385198fe4ca761977cbe100384ab4122ca2facc0e4c51d032916957d1d9ed54d1c177620d0000000000000000000000000000000003d3c8aabc60ae0dd5ecc8ae6db0dad0ab5152d1471e45110e8bddf16524d731186bd57bdeeba5ea8aedd1326b856168",
+    "id": 10004,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[4]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000155209424f944a8d9ad31df2d3d6165e90392e1c54c057692e0d68c7122aff616a1687be713466c7a782208a19b1dee0000000000000000000000000000000001484009952443b69bc1ed86b310679be6432b01df455deb99d4c8eab48585f6258c936332dde05235e17b1fac487c4f0",
+    "id": 10005,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[5]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000152bd12abc16c3c57d647a792d63a945a1a67e00fa127be48730d57ed4b5503be4d795377a1391ea670ffc0ff00d051300000000000000000000000000000000120bae8f2c4e47ba800e440def9e85f172e5baf3cf804ba0e48d81e741fb32ddcfa2b1c03b775375faa00b6e76076c2d",
+    "id": 10006,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[6]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000018fbe7855dc1023ecf90a5b814390e145c0be2b90e38a7af9e580ae2d5c5c67d98dab85ea8a44c465132a8bca4162f38000000000000000000000000000000001955b59bf8e3b46fc35bf6793aed9a61c2ca269493d2e216b0a6092da2ac457050fcb197be3d4cd060b68a7038db2f12",
+    "id": 10007,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[7]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000d7e69514b4853b9b46ab427e72f029649164fd16c9fe2a4fd8e2e608a968bd3fe02b899f03289c6726c2214fcccd572000000000000000000000000000000000ef0aa6b1702ea1feb8d0538c5a6d84b7dd870c3831a3029a1230426302ca15e3fe9294f6125b52ce712448cf6a1a94f",
+    "id": 10008,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[8]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000194d37ce207ffd996ed259ddffdbfcd13b4d5408ecf4dff8701dcec73d762691f9a903bbaa3f82bd10cbca238f0b1d910000000000000000000000000000000004dce265e61327106c4e53943da39488f7e389159290426c9949d891d12d3484c2049e7a22187e44db8f3f1cfdb1b231",
+    "id": 10009,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[9]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000015f9d0a98d880c74d449936fee650ec4dfbbc23793a87c656e2eab8f250513d3b0e47b3606d91372952adf2f320b2b5600000000000000000000000000000000021753523036072305d6d6b79438607c10ecc53df2726c572df0ad3a2120377fbb070cd31a7280bc17d8500029a2621f",
+    "id": 10010,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[10]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000003623dc22041270ccca4a7c853327473f154ddb0217ca5f58f5b986ddbb77219322d7c7406d4fc875f4614b379006a920000000000000000000000000000000003837f69daba2832c7ead824436ff3fab6e5e72d218327b90660bccf648a84e7853603df930b34c985515bef466d833b",
+    "id": 10011,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[11]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000001712f390e97fda5d7bf14d58dc57ed005fa1d6f0eb5ed1e338634135b72265bf8af1923a84447965a9d2b8b8997103df0000000000000000000000000000000018e90de5c048cfb860d7afc92a5b2cda670fea5081bb025be23a0b62aa8135f4fc179108de405ba85c0e612adff42a5d",
+    "id": 10012,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[12]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000fe6c33a8b161f9f4ae05f8b5c1b46252153bd7e7fa846afd98412e316469fedcadda0bcc7d4760bcfbd2fd9cc1185fa0000000000000000000000000000000016afa0f5a8bb02a8c10f1b91c9495928e066fdc576964dc983f6e18f3ddece5412cf25f3a819267c912db39710bedc8d",
+    "id": 10013,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[13]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000001405d883ebcfb66deee37247f65d22adb7b2ae3d72da3964575d62946d6ef4b77d77f1e3e9838bf4cae6f17dce7f714b000000000000000000000000000000000663ccdfcb1a4f9839ec8f7053ea0ea2269ded0cb63b4f2014f81293369339fba7663329f39dc7a26137c5790640529b",
+    "id": 10014,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[14]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000011c6e20a489d611eba7197273c2247241b2e5b47ea7bdd6582b35a68583ae3b71a7e0177676683d22c75c02bec8e1f0900000000000000000000000000000000004f887c120f8ad7334b5de4a1ac9c13276fcfaf25f09fed4cb0ebe0b92f3fd7da9b74ad5be349e6eb1a2312b406dd1d",
+    "id": 10015,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[15]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000006d49d3ccab4da0f27bcb94fcb59c21bc22075c83a01dbdbde368d707aa9aff27a3497dc298007b57ab3d00c51444ee700000000000000000000000000000000003799d111c6e2572c434457458952ffc7bb8b0be1fcfd2a53930a407abe01801b456cad7208a4d64498189ff144366c",
+    "id": 10016,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[16]"
+  },
+  {
+    "eip2537_hex": "0000000000000000000000000000000006a9928c6ba50c106227ef523989bc7f37f15c881814256e7ff377fca6ffa53a5ba04408e0e6c3002b3b68f030dc6a3600000000000000000000000000000000104ae12789771054a0df2aee6c231d0a6ffde5af40691af74b9b8d642eb0d5c02e6a05c206854a3a7a2bc7ac5691f555",
+    "id": 10017,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[17]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000001004183b0080ff1d87764cb4dda419c38e92029cd03df4d35321403550171088b9a19468c48b2ae8f2153736073b2534000000000000000000000000000000001592a1af374417d955aa979a1abc9a443caef0dd7666cf5fc1aedbc189951969c48e0cb88d1a84916fddd8bd401b484c",
+    "id": 10018,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[18]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20000,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[0]"
+  },
+  {
+    "fe_be_hex": "2021aea9f0e5f761d601a9ee253268b054e86e18bfc763b246e7bd0894cac9e2",
+    "id": 20001,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[1]"
+  },
+  {
+    "fe_be_hex": "212da11a5b38cc52aa84c5d9beb61dc10c50f8c57ea616ed1e5ccc03db60aaa4",
+    "id": 20002,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[2]"
+  },
+  {
+    "fe_be_hex": "20b2ef30600ca89eaa58de2dd7901fe62b86fbae45739a629b84717bae67ca2c",
+    "id": 20003,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[3]"
+  },
+  {
+    "fe_be_hex": "3d8da99794c2bc83f3ab82bec17104d96016e5cf629d7c33431a93ad3a4fd8e9",
+    "id": 20004,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[4]"
+  },
+  {
+    "fe_be_hex": "365e5ab590c30d2b5d13b06eb2cbf3333993d5895243e87b06b0f1693c87b436",
+    "id": 20005,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[5]"
+  },
+  {
+    "fe_be_hex": "29e1403918c7836dbe6f65fa6cdcf640cb5ef86cef1b822e4750599569cf6967",
+    "id": 20006,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[6]"
+  },
+  {
+    "fe_be_hex": "0e32f7910fd3cbf46c2a9a1a1620203b6b29b18443f052b1ecc6fbbd393e1ba9",
+    "id": 20007,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[7]"
+  },
+  {
+    "fe_be_hex": "5f1795b491d1176d32c4e442004f11160cf16e138200a608b5cefb1c6baa29a1",
+    "id": 20008,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[8]"
+  },
+  {
+    "fe_be_hex": "53c756c7352e093ac235bf1272af89cf27c0379d7a820507be68641766b929d0",
+    "id": 20009,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[9]"
+  },
+  {
+    "fe_be_hex": "19e258d6eaba4fd01cb6f1dbd2c32719535c85e17d93cc29b86bad9d5997b36a",
+    "id": 20010,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[10]"
+  },
+  {
+    "fe_be_hex": "07a043980f3e1f64585b83a7bc9f330ae36748583edbe388bfce985dc4378430",
+    "id": 20011,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[11]"
+  },
+  {
+    "fe_be_hex": "0e350857724cf77e706d06827bcf70658629d46e8f194f12d9f422d011354934",
+    "id": 20012,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[12]"
+  },
+  {
+    "fe_be_hex": "1074b665265a5194efe838d98b816c07b1c62a1f924ddc50ca48625f7164d43f",
+    "id": 20013,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[13]"
+  },
+  {
+    "fe_be_hex": "13b0cd1b8a893081f1284ccd7d13f757e9eef9178298a8325d1179d8795b2419",
+    "id": 20014,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[14]"
+  },
+  {
+    "fe_be_hex": "1ca1acf2505785bdce47bd6a6ffe41e2922c2c0793f0c8c66ee6d221dd24e7ee",
+    "id": 20015,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[15]"
+  },
+  {
+    "fe_be_hex": "6788523a12ea3f062e5a900645ec1e0d783959e82b07b005eafaed84e0339adc",
+    "id": 20016,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[16]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20017,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[17]"
+  },
+  {
+    "fe_be_hex": "315b7ba52ab65d24d33e9dbaf5e5aad51b12553954eea0dccf5559ae7e610b35",
+    "id": 20018,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[18]"
+  },
+  {
+    "fe_be_hex": "30fd2b9f0491fd442a6fb41679cdfd1ea17c8343c6b6963600cb6341afe74372",
+    "id": 20019,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[19]"
+  },
+  {
+    "fe_be_hex": "6e58a0aa3a4c1815d3f9f47d86dc6b54649d4c591c64cbd8853c7be3a58636c4",
+    "id": 20020,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[20]"
+  },
+  {
+    "fe_be_hex": "0700b6c13a017b1079f7bbd0ed6bcc680320de4b3a39a6b4cbe1e69b493c3c66",
+    "id": 20021,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[21]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20022,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[22]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20023,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[23]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20024,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[24]"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000000",
+    "id": 20025,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[25]"
+  },
+  {
+    "fe_be_hex": "22338f6abc019a7f09a58472dfae0df651309860263f13290d1c39b6568d278d",
+    "id": 20026,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[26]"
+  },
+  {
+    "fe_be_hex": "58a216e3ed224dc2f416545b7e991b50bd8acf6b39d3e952712a0a4593bf89b1",
+    "id": 20027,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[27]"
+  },
+  {
+    "fe_be_hex": "15e870ee01b6bc2310ed1da3784b786641b3a7a6bb7e3de99dfa7871bd914a9e",
+    "id": 20028,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[28]"
+  },
+  {
+    "fe_be_hex": "586d7f43fbfbec5cf14513e8fa078d2a6bde077069f3912ce9e68580230cead7",
+    "id": 20029,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[29]"
+  },
+  {
+    "fe_be_hex": "1e1ce6e261c5e414d361501a2534519c181216cf6f13a15dca60983db4f279d4",
+    "id": 20030,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[30]"
+  },
+  {
+    "fe_be_hex": "694472197db84b6886a2df0967288d0af0345496f7d219425b5cc22cf984460e",
+    "id": 20031,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[31]"
+  },
+  {
+    "fe_be_hex": "2680a5a60b212366a88c8954523870a442bdb9c9c9416e80eb8babdbee198e34",
+    "id": 20032,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[32]"
+  },
+  {
+    "fe_be_hex": "2230e662e3db3076ad50ea4fb770b989d9947a8837d1ace78d6bc9a4f00177db",
+    "id": 20033,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[33]"
+  },
+  {
+    "fe_be_hex": "4daf530c953d547b4b873208bf983d48a7804b597e6358820578447e0f6939ae",
+    "id": 20034,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[34]"
+  },
+  {
+    "fe_be_hex": "5db996cb754dbc712253bd9f8495d6dd15dc1d36e636734413bdfd04cef6c637",
+    "id": 20035,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[35]"
+  },
+  {
+    "fe_be_hex": "3c56ce9ad8bcf5564b55428c68793f7553996a58da3d2541816c46249045d410",
+    "id": 20036,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[36]"
+  },
+  {
+    "fe_be_hex": "011ecfe5e6f3358858d176fe74f96088c4dc52f1f1b5125fd28aee22db2dfdd0",
+    "id": 20037,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[37]"
+  },
+  {
+    "fe_be_hex": "02d2bccd9c7bd0edb4084b085bb338166b6ab6b539ab3bb8ae8f5bad966752c7",
+    "id": 20038,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[38]"
+  },
+  {
+    "fe_be_hex": "145adac83dcf3707508ebb990e2a84096b7cdae5960f5ca21f1705c75a35e541",
+    "id": 20039,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[39]"
+  },
+  {
+    "fe_be_hex": "6476a88759530b7f075a9baaa5f89f847968821316aa21d3e09e98c4ef3db394",
+    "id": 20040,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[40]"
+  },
+  {
+    "fe_be_hex": "045aa90a2b6f29916bc6e8f9638b8a10e3f1e25d538fb6df6654def3218f4e30",
+    "id": 20041,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[41]"
+  },
+  {
+    "fe_be_hex": "4468ae23a08b70fd69234c282c3e50dcc5214b4ccec9bdd96ee8d6eb8cbff517",
+    "id": 20042,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[42]"
+  },
+  {
+    "fe_be_hex": "59533fa12a2be22f90ecbfd961cc9c35e5d6698e4901ace0db1c8afd0795d8f8",
+    "id": 20043,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[43]"
+  },
+  {
+    "fe_be_hex": "15285c6c98470280c029c11480a35a287bef60cc44e7d11d3f4522462a3f82d0",
+    "id": 20044,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[44]"
+  },
+  {
+    "fe_be_hex": "5f469f0b63087bb43a806a666e2ea3000334889bc3fb375c6faf06c4b8bd46c5",
+    "id": 20045,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[45]"
+  },
+  {
+    "fe_be_hex": "069a57bcd9e54af4f01349be03c0534aa526139e825233a6eeeb59037cfa80d6",
+    "id": 20046,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[46]"
+  },
+  {
+    "fe_be_hex": "3b94f56597005b141d964a5b12f49362e46628057c981c6177ea3b43c8f00367",
+    "id": 20047,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[47]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000e32ec18e3dcfb39c92b5146367c921f1a4a7a947f0ef38d67e7e5fb0e4b36f34b4cf6af820951b16d7b33c483b0dc7000000000000000000000000000000000067b7504fcdb56d7ae8ad5a6f428ea95646c66d104f9d35d046c780c506faa0bec9d3e5337f0249d870e0bf6f6d0c252",
+    "id": 10019,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[19]"
+  },
+  {
+    "fe_be_hex": "6aadc9d32975b8f6b3ed7a45b6757b0ee0c161ce2f62ad63bc0dc6612a984876",
+    "id": 20048,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[48]"
+  },
+  {
+    "fe_be_hex": "60dfd53d36a1ece050fa903bdb56e822868b9dfb3d27169ebb1fb692c9d6256d",
+    "id": 20049,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[49]"
+  },
+  {
+    "fe_be_hex": "71c2b3a7a2b7a56a9fa5546213d4d4ce6203cd270714dc0f033a9fc8821d92f1",
+    "id": 20050,
+    "kind": "ReadScalar",
+    "tag": "proof_eval[50]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000131c9cd42b29cd79786b9eb79f6e03a26250dfb7e85cfff0018b3e87d073156cceb38e033917331e8cde5c4a89f76ab10000000000000000000000000000000008674dd546717ef80eb5b6e89a668e85dc0d0f60ec30b503e7691a8fe77edb6efed3a1421ebde23eb931ab89899f83d5",
+    "id": 10020,
+    "kind": "ReadPoint",
+    "tag": "proof_commitment[20]"
+  },
+  {
+    "fe_be_hex": "6e9402f87107f557c05463373b4f26b55c8b81b0d6f51c73002fa7999fb8eeab",
+    "id": 30000,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[0]"
+  },
+  {
+    "fe_be_hex": "41e23350bf5d288a375848e22bab1d9ff1eadd1e0f36a8a07015b86812f0e7b2",
+    "id": 30001,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[1]"
+  },
+  {
+    "fe_be_hex": "06b524d5fe78c589077a7ccd43d6de773b4f9fcb62f9bdd4c9dfc5d29c6034ba",
+    "id": 30002,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[2]"
+  },
+  {
+    "fe_be_hex": "26ab76a4d5ee30e02f82788d25a9f4dd8b164058bd4e6c6d8ea74a1f1b7db314",
+    "id": 30003,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[3]"
+  },
+  {
+    "fe_be_hex": "522aadc14830943779158f5e50e128b8047f5da55762191f549c48801fe2887a",
+    "id": 30004,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[4]"
+  },
+  {
+    "fe_be_hex": "4b80d8af03902c4446a1cec15a359e28c5486ef494419874da5d230547296620",
+    "id": 30005,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[5]"
+  },
+  {
+    "fe_be_hex": "3fed7001ef173884e4680ace0288ce8fdf1ff466820b55a381808565ad9bdb96",
+    "id": 30006,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[6]"
+  },
+  {
+    "fe_be_hex": "64caa8748d73d5d351f1947f1a1d757bd778226c1d8b5f698e5dc611afcd4204",
+    "id": 30007,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[7]"
+  },
+  {
+    "fe_be_hex": "4491c3b93556c01bbb418812448429c5786568e5c8ba845e4af089d263eaba15",
+    "id": 30008,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[8]"
+  },
+  {
+    "fe_be_hex": "4419fe213a146e652a77d8b333c7f6bfd4e08ab896f5d4e6db3a0f7b4f9d191e",
+    "id": 30009,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[9]"
+  },
+  {
+    "fe_be_hex": "67c609091fb7ca2800698e05490f9ac82327cac7d62f3d01c3081acd68049a7d",
+    "id": 30010,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[10]"
+  },
+  {
+    "fe_be_hex": "527cc09f4c75e05e3e19d9993fbc14c82a995cf3b12f8ea13b8ee2652c8b9a73",
+    "id": 30011,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[11]"
+  },
+  {
+    "fe_be_hex": "6c23b7206bf34fdb3a231f6819249424131c1111032259a59738d19ac790139b",
+    "id": 30012,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[12]"
+  },
+  {
+    "fe_be_hex": "379818a962926d7e0bbbc4b95bce871fee99e0ca51dffe56122fe126f5a2a891",
+    "id": 30013,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[13]"
+  },
+  {
+    "fe_be_hex": "15dadb24158105ec1b2aea387f38b46de21b348f34a5811519bdef0c9906d3e8",
+    "id": 30014,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[14]"
+  },
+  {
+    "fe_be_hex": "2bdf4270c78440a27984122ed1d92c029d797222a07e900c91aabc9c90317198",
+    "id": 30015,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[15]"
+  },
+  {
+    "fe_be_hex": "22c9d1ac2db01223da531aed0bc14c1b8930ea8c25d8639e93e8a9d1b120cfc5",
+    "id": 30016,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[16]"
+  },
+  {
+    "fe_be_hex": "35351af400652eace3dd9cf16f5dc02bd8f081397d41bd3ad0a6a1dc148f5227",
+    "id": 30017,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[17]"
+  },
+  {
+    "fe_be_hex": "38d521a516e892822b6921c44c00998d3c0e464fb259018f43917b30b00d2625",
+    "id": 30018,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[18]"
+  },
+  {
+    "fe_be_hex": "590a4e56080665143c9f38fc54982432bfe3b651eb5e5ef4dc38b2e871c584e0",
+    "id": 30019,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[19]"
+  },
+  {
+    "fe_be_hex": "62f741a8e30cfcf4777af29a27f0741936035398c6a77742dd63926f86bdd47c",
+    "id": 30020,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[20]"
+  },
+  {
+    "fe_be_hex": "368165f28d12c00ae60a0cf433557de2b8bdd6abb4af4ebb02209be758668b74",
+    "id": 30021,
+    "kind": "Intermediate",
+    "tag": "quotient_identity_eval[21]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000883f3177d3875d110e4606833cc163e04e54203efac945cf7e6c5f4da7a9b3ea9c66d0373fecf4bfbd8959e5f8ab40f0000000000000000000000000000000017f14607c65e9148f71a55697b908bd9ae67dfc54f1cffacff9e5221b7f52f50beb99537d4deb506d7c512c9c6a48820",
+    "id": 34,
+    "kind": "Intermediate",
+    "tag": "linearization_commitment"
+  },
+  {
+    "fe_be_hex": "55c43c5b8c165d1610dbab09e2414c6d575d4b550ce680c3b735deb25ab64551",
+    "id": 41000,
+    "kind": "Intermediate",
+    "tag": "pcs_point_set[0]"
+  },
+  {
+    "eip2537_hex": "55c43c5b8c165d1610dbab09e2414c6d575d4b550ce680c3b735deb25ab6455147d109f47f9b8f369fad14a62f40ba5168de74ddfcb5c4ad9670d65942b56732",
+    "id": 41001,
+    "kind": "Intermediate",
+    "tag": "pcs_point_set[1]"
+  },
+  {
+    "eip2537_hex": "55c43c5b8c165d1610dbab09e2414c6d575d4b550ce680c3b735deb25ab6455147d109f47f9b8f369fad14a62f40ba5168de74ddfcb5c4ad9670d65942b5673228e2e7ca4408978f546dccf5019611c165e7d5fe50531e48aecd97db48157fee",
+    "id": 41002,
+    "kind": "Intermediate",
+    "tag": "pcs_point_set[2]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000a61a2ac53b348483689db1f62770f07e8c978808837f9e19edb5c8ec9082bc2c8b0bd7471b33bc8b466e266f02d2a60000000000000000000000000000000000834c29f006c1e0ca9baf1da32ba211c0d20d5eb64f8d2c303bfb5df5907ee8c87a490848ed84b944d017a15c51b682d",
+    "id": 40000,
+    "kind": "Intermediate",
+    "tag": "pcs_q_com[0]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000151dc4904dcf679e26934531812c6e0953a912be2df0d3047eac20bcce2f483d1366431aff856aecd60ff94508be8f2b0000000000000000000000000000000019ed4b59c48af14dc4ed727bd348a5696e583e34fae25550547c18bf0098047ea2359f66d72f062a5699a2f057d2fd9a",
+    "id": 40001,
+    "kind": "Intermediate",
+    "tag": "pcs_q_com[1]"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000001622efaa08730f6ea148f0ead6c0141539af2c28fe5f58acbbc720625359c29f497362ab001ae45efec833479c59c6580000000000000000000000000000000016aa4307c4182e7381f33f90274eccd4e6a6f8a2ffefb3acf60a61e6f07f7946bc40fe0973cd0d8174b0e550583ed129",
+    "id": 40002,
+    "kind": "Intermediate",
+    "tag": "pcs_q_com[2]"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000131c9cd42b29cd79786b9eb79f6e03a26250dfb7e85cfff0018b3e87d073156cceb38e033917331e8cde5c4a89f76ab10000000000000000000000000000000008674dd546717ef80eb5b6e89a668e85dc0d0f60ec30b503e7691a8fe77edb6efed3a1421ebde23eb931ab89899f83d5",
+    "id": 27,
+    "kind": "Intermediate",
+    "tag": "pairing_lhs"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000120b7692e581342e09f86196c2b666d3fb362fb9e144738ff78d86ac586fac03924c5ca6f91291fec9cd9f1c984b47350000000000000000000000000000000005b29c2850b6ef8f23cfeca63c23c2cbe998def99ab7ce5467698771ce3b145663b9201f8c55a349de1925be06bc5623",
+    "id": 28,
+    "kind": "Intermediate",
+    "tag": "pairing_rhs"
+  },
+  {
+    "fe_be_hex": "5b33df02f6af011e2bff317d61453512d4013cbe6bbbac7c67d8598582a0d6d0",
+    "id": 60000,
+    "kind": "Intermediate",
+    "tag": "selector_fold[0]"
+  },
+  {
+    "fe_be_hex": "3415660dca834c54a8e45a102149083c06fb2fa7116a32be12782b76798fe1a4",
+    "id": 60001,
+    "kind": "Intermediate",
+    "tag": "selector_fold[1]"
+  },
+  {
+    "fe_be_hex": "4a97098a49eeed461c53f4cf142baa3a4d1ea6b251c41b89b13f2044f762439c",
+    "id": 60002,
+    "kind": "Intermediate",
+    "tag": "selector_fold[2]"
+  },
+  {
+    "fe_be_hex": "6e77545fea93642787c31c7c863886765a95aeb288039cca3b6160e9796091a8",
+    "id": 60003,
+    "kind": "Intermediate",
+    "tag": "selector_fold[3]"
+  },
+  {
+    "fe_be_hex": "4cc2e5ac0d3a524691c3723a18e826d6ed01cbf767fdec83fcf3a8f9e7640494",
+    "id": 1,
+    "kind": "Intermediate",
+    "tag": "vk_digest"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+    "id": 2,
+    "kind": "Intermediate",
+    "tag": "num_instances"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000006",
+    "id": 3,
+    "kind": "Intermediate",
+    "tag": "k"
+  },
+  {
+    "fe_be_hex": "721df0b5dcf70753126cf0a7e97b50a53e6ead72f3fe628f03ffffff04000001",
+    "id": 4,
+    "kind": "Intermediate",
+    "tag": "n_inv"
+  },
+  {
+    "fe_be_hex": "45af6345ec055e4d14a1e27164d8fdbd2d967f4be2f951558140d032f0a9ee53",
+    "id": 5,
+    "kind": "Intermediate",
+    "tag": "omega"
+  },
+  {
+    "fe_be_hex": "640d097461a2eeaf4e84b3cd7dc75b61db872ef3dce28e788d28c143168bba2c",
+    "id": 6,
+    "kind": "Intermediate",
+    "tag": "omega_inv"
+  },
+  {
+    "fe_be_hex": "16683244cd6e7bfd7022d98a849d9d1b0cfc4aea2ff66fcf31c3fd8b6147a354",
+    "id": 7,
+    "kind": "Challenge",
+    "tag": "theta"
+  },
+  {
+    "fe_be_hex": "195ed3c0edf4d87c03cacc6285ecfec06e2b7642489acb2d32848e1168c46738",
+    "id": 8,
+    "kind": "Challenge",
+    "tag": "beta"
+  },
+  {
+    "fe_be_hex": "358da9d4376514b43bd2113816aa14e1ec861710c9252ac0c43269e083f9142f",
+    "id": 9,
+    "kind": "Challenge",
+    "tag": "gamma"
+  },
+  {
+    "fe_be_hex": "46046a9de0da4ae95ab2368da4139952bb257c20ef9f410806028bf7a6a9e938",
+    "id": 10,
+    "kind": "Challenge",
+    "tag": "y"
+  },
+  {
+    "fe_be_hex": "55c43c5b8c165d1610dbab09e2414c6d575d4b550ce680c3b735deb25ab64551",
+    "id": 11,
+    "kind": "Challenge",
+    "tag": "x"
+  },
+  {
+    "fe_be_hex": "5ea92fde9c5c3a926e44b0ec6920bdbf084c5e8aa704bc8fc4b4e7fd00093db1",
+    "id": 12,
+    "kind": "Challenge",
+    "tag": "trash_challenge"
+  },
+  {
+    "fe_be_hex": "712e17189fd7a52f24da41110a75508e1eb0a50c0dfddd4c3fbac38345d7c62a",
+    "id": 13,
+    "kind": "Challenge",
+    "tag": "x1"
+  },
+  {
+    "fe_be_hex": "0f117a57a23bb97e3b763fdac458cff9b2a2cb20472a030e8315b64cfe44f755",
+    "id": 14,
+    "kind": "Challenge",
+    "tag": "x2"
+  },
+  {
+    "fe_be_hex": "000000000000000000000000000000009ef1710e96b8894aaebfbe78e079ec8d",
+    "id": 15,
+    "kind": "Challenge",
+    "tag": "x3"
+  },
+  {
+    "fe_be_hex": "49c1ac0d76d89a499cd2b11bb719b71c461dd7169a70892597ab8f526d29349d",
+    "id": 16,
+    "kind": "Challenge",
+    "tag": "x4"
+  },
+  {
+    "fe_be_hex": "68b718bc6c1bf8dd6b4f6e8c5c77d7c7d51f11660f4cb1e5f7057e0b5a2bd0a3",
+    "id": 17,
+    "kind": "Intermediate",
+    "tag": "x_n"
+  },
+  {
+    "fe_be_hex": "6efa7f43b565a475c948e528b5359ac2680500fc1c26477dbe0419f38ba91b99",
+    "id": 18,
+    "kind": "Intermediate",
+    "tag": "x_n_minus_1_inv"
+  },
+  {
+    "fe_be_hex": "34ae6617836d8d7da1adc00187db73ff703475901b85118ea04b16949f1d8ff9",
+    "id": 19,
+    "kind": "Intermediate",
+    "tag": "l_last"
+  },
+  {
+    "fe_be_hex": "4d0ed80fabb31913178a597d69b59488b49406ab3f303dd8aef900e69d2aab7d",
+    "id": 20,
+    "kind": "Intermediate",
+    "tag": "l_blind"
+  },
+  {
+    "fe_be_hex": "557631137a6e6312bc93e2c98378081e9a2b17e8c9eb48e5932d97c2812666bb",
+    "id": 21,
+    "kind": "Intermediate",
+    "tag": "l_0"
+  },
+  {
+    "fe_be_hex": "58f73ef64f405e2fb2cf3ce376426fe5a98dad3b8a2a80c9d0355add61f7fa56",
+    "id": 22,
+    "kind": "Intermediate",
+    "tag": "instance_eval"
+  },
+  {
+    "fe_be_hex": "64ec30486e0ba4c6fafd8f3dbe53ce94a7a03223b0332271536a4cbeacddf0f8",
+    "id": 23,
+    "kind": "Intermediate",
+    "tag": "linearization_expected_eval"
+  },
+  {
+    "fe_be_hex": "0f01770abb91d881383c48ca4b4e0970ac1d71df4fcb398dac95b34053220f09",
+    "id": 36,
+    "kind": "Intermediate",
+    "tag": "quotient_numerator"
+  },
+  {
+    "eip2537_hex": "2d7fc8aadae87c1221e33738493535272c384c5bee8107869ee2e1c839cbd0cb0b368e96bd81846ac7ea697bad2a003d7e9e929cf0b1aa1908fa81f3a5d42f5f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "id": 24,
+    "kind": "Intermediate",
+    "tag": "quotient"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000e32ec18e3dcfb39c92b5146367c921f1a4a7a947f0ef38d67e7e5fb0e4b36f34b4cf6af820951b16d7b33c483b0dc7000000000000000000000000000000000067b7504fcdb56d7ae8ad5a6f428ea95646c66d104f9d35d046c780c506faa0bec9d3e5337f0249d870e0bf6f6d0c252",
+    "id": 25,
+    "kind": "Intermediate",
+    "tag": "f_com"
+  },
+  {
+    "eip2537_hex": "00000000000000000000000000000000131c9cd42b29cd79786b9eb79f6e03a26250dfb7e85cfff0018b3e87d073156cceb38e033917331e8cde5c4a89f76ab10000000000000000000000000000000008674dd546717ef80eb5b6e89a668e85dc0d0f60ec30b503e7691a8fe77edb6efed3a1421ebde23eb931ab89899f83d5",
+    "id": 26,
+    "kind": "Intermediate",
+    "tag": "pi"
+  },
+  {
+    "fe_be_hex": "1a540d6d0ad6d00f3109e85f05443120ead87c478ddd9cb6f3a2f7ed8e32d28a",
+    "id": 31,
+    "kind": "Intermediate",
+    "tag": "f_eval"
+  },
+  {
+    "fe_be_hex": "48deb7261bdc8a64d745ac22cc1be8836110b403809917044e2581b95cba0f85",
+    "id": 32,
+    "kind": "Intermediate",
+    "tag": "v"
+  },
+  {
+    "eip2537_hex": "000000000000000000000000000000000d3a780283aff9e8d59ad7db6a70444e9a323ea957549f14d4b5a565df3a28ed312e8c6cf4819584d1cfabdbe1ba3e7e000000000000000000000000000000000dae717d179325a251cd2b54c5ed5434706eeaa4538c0f00620bd0334432bfd91cedb5de0a043bb28458a7014d454892",
+    "id": 33,
+    "kind": "Intermediate",
+    "tag": "final_com"
+  },
+  {
+    "fe_be_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+    "id": 35,
+    "kind": "Intermediate",
+    "tag": "final_result"
+  }
+]
