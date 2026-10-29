@@ -209,6 +209,32 @@ impl AccumulatorEncoding {
         }
         Ok(tail)
     }
+
+    /// Validates this encoding against `num_instances` and the fixed bases of
+    /// the verified VK, returning the fixed-base scalar tail length.
+    ///
+    /// `num_vk_fixed_bases` is `1 + #fixed + #permutation` commitments: `-G`
+    /// plus every commitment in `fixed_bases(vk)`. A non-empty tail must hold
+    /// exactly one RHS scalar per base, which lowering maps onto them in
+    /// `BTreeMap` name order.
+    pub(crate) fn validate_for_vk(
+        self,
+        num_instances: usize,
+        num_vk_fixed_bases: usize,
+    ) -> Result<usize, GeneratorError> {
+        let tail = self.fixed_scalar_count(num_instances)?;
+        if tail != 0 && tail != num_vk_fixed_bases {
+            return Err(GeneratorError::UnsupportedAccumulatorEncoding {
+                offset: self.offset,
+                num_limbs: self.num_limbs,
+                num_limb_bits: self.num_limb_bits,
+                num_instances,
+                reason: "fixed-base scalar tail must have one scalar for -G and each fixed and \
+                         permutation commitment",
+            });
+        }
+        Ok(tail)
+    }
 }
 
 /// Stable diagnostic view of the identities folded into the quotient numerator.
