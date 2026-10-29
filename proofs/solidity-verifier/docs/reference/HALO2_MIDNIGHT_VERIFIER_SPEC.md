@@ -1428,6 +1428,10 @@ If a fixed-base scalar tail exists, it is consumed as RHS MSM scalars for:
 - fixed commitments;
 - permutation commitments.
 
+The tail must be empty or contain exactly one scalar for each of these bases
+(`1 + #fixed + #permutation` commitments of the verified VK); the generator
+rejects any other length with `UnsupportedAccumulatorEncoding`.
+
 The tail bases are sorted lexicographically by their generated names to match
 Midfall's `BTreeMap` order.
 

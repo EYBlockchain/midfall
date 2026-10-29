@@ -1616,6 +1616,92 @@ fn try_new_rejects_flagged_point_pair_layout() {
     ));
 }
 
+/// A non-empty fixed-base scalar tail must hold exactly one scalar for `-G`
+/// and each fixed and permutation commitment. Shorter tails used to panic in
+/// lowering (or map scalars onto a prefix of the fixed commitments), and longer
+/// ones read base pointers past the fixed-commitment region.
+#[test]
+fn fixed_scalar_tail_must_match_vk_fixed_bases() {
+    // `-G` + 3 fixed + 2 permutation commitments.
+    let num_vk_fixed_bases = 1 + 3 + 2;
+    let encoding = AccumulatorEncoding::new(4, 7, 56);
+    let payload_end = 4 + AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+
+    assert_eq!(
+        encoding.validate_for_vk(payload_end, num_vk_fixed_bases),
+        Ok(0)
+    );
+    assert_eq!(
+        encoding.validate_for_vk(payload_end + num_vk_fixed_bases, num_vk_fixed_bases),
+        Ok(num_vk_fixed_bases)
+    );
+    // Only `-G`, within the permutation count, missing a fixed commitment, and
+    // one past the full tail.
+    for tail in [1, 2, num_vk_fixed_bases - 1, num_vk_fixed_bases + 1] {
+        assert!(
+            matches!(
+                encoding.validate_for_vk(payload_end + tail, num_vk_fixed_bases),
+                Err(GeneratorError::UnsupportedAccumulatorEncoding {
+                    reason: "fixed-base scalar tail must have one scalar for -G and each fixed \
+                             and permutation commitment",
+                    ..
+                })
+            ),
+            "tail of {tail} scalars should be rejected"
+        );
+    }
+
+    // Point pairs still reject any tail before the VK count is considered.
+    let point_pair = AccumulatorEncoding::point_pair(4, 7, 56);
+    let point_pair_end = 4 + AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS;
+    assert_eq!(
+        point_pair.validate_for_vk(point_pair_end, num_vk_fixed_bases),
+        Ok(0)
+    );
+    assert!(matches!(
+        point_pair.validate_for_vk(point_pair_end + num_vk_fixed_bases, num_vk_fixed_bases),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            ..
+        })
+    ));
+}
+
+/// `try_new` sizes the fixed-base scalar tail from the verified VK, and a
+/// verifier with the full tail renders.
+#[test]
+fn try_new_checks_fixed_scalar_tail_against_vk() {
+    let (params, vk) = lowering_plan_test_vk();
+    let num_vk_fixed_bases =
+        1 + vk.fixed_commitments().len() + vk.permutation().commitments().len();
+    assert!(
+        num_vk_fixed_bases >= 2,
+        "test VK should have a fixed commitment"
+    );
+    let config = |tail| {
+        GeneratorConfig::new(
+            AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS + tail,
+            1,
+        )
+        .with_accumulator(AccumulatorEncoding::new(0, 7, 56))
+    };
+
+    assert!(SolidityGenerator::try_new(&params, &vk, config(0)).is_ok());
+    SolidityGenerator::try_new(&params, &vk, config(num_vk_fixed_bases))
+        .expect("full fixed-base scalar tail should be accepted")
+        .render(crate::RenderOptions::default())
+        .expect("full fixed-base scalar tail should render");
+    for tail in [num_vk_fixed_bases - 1, num_vk_fixed_bases + 1] {
+        assert!(
+            matches!(
+                SolidityGenerator::try_new(&params, &vk, config(tail)),
+                Err(GeneratorError::UnsupportedAccumulatorEncoding { .. })
+            ),
+            "tail of {tail} scalars should be rejected"
+        );
+    }
+}
+
 /// Render a point-pair verifier and check that its decoder never reads an
 /// identity flag, always decodes both coordinates, and rejects the EIP-2537
 /// infinity encoding.
