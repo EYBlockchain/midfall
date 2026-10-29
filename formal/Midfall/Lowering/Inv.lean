@@ -143,6 +143,32 @@ structure PlanView where
   expectedNumAccLimbs : Nat
   /-- P-AST3b. expected_num_acc_limb_bits (Vk.lean:789-791, VK:127-131; ART:232). -/
   expectedNumAccLimbBits : Nat
+  /-- P-AST4. M:558 user_phases (ART:160-170, one UserPhase per advice phase): the list
+      TranscriptProofParser.yul:105 LOOPS OVER, and the first list-valued PlanView field.
+      It stays a list: flattening it into "the advice bytes" plus "the challenge count"
+      would delete the loop structure the snapshot exists to check, and the per-phase
+      challenge offset is a RUNNING SUM over the earlier phases (ART:168), which two
+      scalars cannot express at all. So the shape the constructor helpers needed was the
+      plain structure field and nothing more - no DSL change was required, which is the
+      finding P-AST4 was asked to report if it had been. Derived by parserFactsOfPlan. -/
+  userPhases : List Midfall.Generator.UserPhase
+  /-- P-AST4. M:560 num_lookups (ART:291): the guard at T:TranscriptProofParser.yul:142,
+      which decides whether the lookup-multiplicity section is read at all. A Nat and not
+      a Bool because the template guards on `!= 0`: a plan whose section is empty and a
+      plan whose count is zero render the same thing, and only the count is the fact. -/
+  numLookups : Nat
+  /-- P-AST4. M:561 num_permutation_zs (ART:292): the guard at T:172. -/
+  numPermutationZs : Nat
+  /-- P-AST4. M:562 lookup_h_plus_acc (ART:172: sum of lookup_chunks plus num_lookups):
+      the guard at T:195. NOT re-derived here - Artifacts.lean's lookupHPlusAccOf is the
+      one carrier of that sum, and parserFactsOfPlan reads its result off the plan model. -/
+  lookupHPlusAcc : Nat
+  /-- P-AST4. M:563 num_trashcans (ART:294): the guard at T:242. -/
+  numTrashcans : Nat
+  /-- P-AST4. M:614 truncated_challenges (ART:328, a CARGO-FEATURE flag made data by rule
+      R8): the guard at T:355 that decides whether the x3 mask is emitted. A Bool because
+      the template branches on the flag itself and not on a derived count. -/
+  truncatedChallenges : Bool
 
 /-! ### The four accumulator words, derived and not chosen
 
@@ -176,21 +202,73 @@ def accWordsOfEncoding (acc : Option Midfall.Generator.AccumulatorEncoding) :
   | none => (0, 0, 0, 0)
   | some e => (1, e.offset, e.numLimbs, e.numLimbBits)
 
-/-- THE CONSTRUCTOR: a PlanView whose four accumulator words and whose hasAccumulator
-    Bool are all read off `acc` by accWordsOfEncoding, so no call site can pick a number
-    the configuration does not imply. Every PlanView in the tree is built here (Inv's own
+/-! ### The six transcript-parser facts, derived and not chosen
+
+  P-AST4 added these six because TranscriptProofParser.yul loops over userPhases and guards
+  four of its ten proof sections on the four counts, and masks x3 on the flag. They are a
+  COPY of six fields the Rust derives once into the render model (M:557-563 and M:614,
+  filled at ART:160-170 / :291-294 / :328), which is the R-58 F2 / F6 class the
+  duplicate-fact gate exists for. The repair is the same shape P-AST3b used for the four
+  accumulator words: ONE derivation (parserFactsOfPlan, reached only through
+  planViewWithAccumulator, the constructor every call site uses) and a registered family.
+
+  WHY REGISTERED BY HAND, and not by the gate: discovery (rule 5) PREFIX-matches the field
+  name against DISCOVERY_STEMS, and not one of userPhases / numLookups / numPermutationZs /
+  lookupHPlusAcc / numTrashcans / truncatedChallenges begins with hasAccumulator,
+  numInstances, accumulator, evaluator, encG2, runtimeName, vkDigest or shell. "numLookups"
+  does not start with "numInstances"; "lookupHPlusAcc" does not start with "accumulator".
+  Six new copies of six old facts and the automatic scan sees none of them - the same
+  finding P-AST3b recorded for the four `expected*` words, reproduced on a whole family,
+  and the reason the family below is hand-written and says so. -/
+
+/-- The six transcript-parser facts, read off the generator's plan model in ONE place.
+    This is the reference's own single derivation: the six are fields of the assembled
+    Halo2Verifier model (M:557-563, M:614), which Artifacts.lean fills from the
+    constraint-system meta and the proof layout (userPhasesOf at ART:160-170, the three
+    counts at ART:291-294, the sum at ART:172, the cargo flag at ART:328) and which
+    partialCtxOfVerifier then copies into the render context at ART:661-667. Reading them
+    off the model rather than recomputing them here is what keeps this a projection and not
+    a second derivation that could drift from the first.
+
+    The tuple order IS the PlanView field order, and planParserFacts_derive_ok pins both
+    the order and the fact that every component moves when the model moves. -/
+def parserFactsOfPlan (m : Midfall.Generator.Halo2Verifier VerifierMemoryLayout
+    ProofCalldataLayout) :
+    List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool :=
+  (m.userPhases, m.numLookups, m.numPermutationZs, m.lookupHPlusAcc, m.numTrashcans,
+    m.truncatedChallenges)
+
+/-- THE CONSTRUCTOR: a PlanView whose four accumulator words and whose hasAccumulator Bool
+    are all read off `acc` by accWordsOfEncoding, and whose six transcript-parser facts
+    are all read off `facts` - which every deployed call site supplies from
+    parserFactsOfPlan rather than typing - so no call site can pick a number the
+    configuration does not imply. Every PlanView in the tree is built here (Inv's own
     witnessPlanView and Instances/SurfaceFixture's fxPlan), which is what makes "derived
-    from cfg.accumulator" a property of the code and not of a comment. -/
+    from cfg.accumulator and from the plan model" a property of the code and not of a
+    comment. -/
 def planViewWithAccumulator (vk : Halo2VerifyingKey) (vkMptr : Ptr)
     (memory : VerifierMemoryLayout) (proofLayout : ProofCalldataLayout)
     (numInstances k numNegLagranges : Nat)
-    (acc : Option Midfall.Generator.AccumulatorEncoding) : PlanView :=
+    (acc : Option Midfall.Generator.AccumulatorEncoding)
+    (facts : List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool) : PlanView :=
   let (hasWord, accOffset, numLimbs, limbBits) := accWordsOfEncoding acc
+  let (userPhases, numLookups, numPermutationZs, lookupHPlusAcc, numTrashcans,
+      truncatedChallenges) := facts
   { vk := vk, vkMptr := vkMptr, memory := memory, proofLayout := proofLayout,
     numInstances := numInstances, k := k, numNegLagranges := numNegLagranges,
     hasAccumulator := acc.isSome,
     expectedHasAccumulatorWord := hasWord, expectedAccOffset := accOffset,
-    expectedNumAccLimbs := numLimbs, expectedNumAccLimbBits := limbBits }
+    expectedNumAccLimbs := numLimbs, expectedNumAccLimbBits := limbBits,
+    userPhases := userPhases, numLookups := numLookups,
+    numPermutationZs := numPermutationZs, lookupHPlusAcc := lookupHPlusAcc,
+    numTrashcans := numTrashcans, truncatedChallenges := truncatedChallenges }
+
+/-- The empty-plan parser facts: the six values a plan with no phases, no lookups, no
+    permutation products, no lookup helpers, no trashcans and no truncation carries.
+    witnessPlanView and the fixture plan use it, so the six fields are never filled by a
+    call site inventing a number - they are either the deployed derivation's or this. -/
+def emptyParserFacts : List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool :=
+  ([], 0, 0, 0, 0, false)
 
 /-! ### Addresses and the memory predicates -/
 
@@ -600,6 +678,11 @@ def witnessPlanView : PlanView :=
     (memory := Midfall.Generator.LayoutMemoryKats.referenceLayout)
     (proofLayout := proofCalldataLayoutDefault)
     (numInstances := 1) (k := 2) (numNegLagranges := 2) (acc := none)
+    -- P-AST4: the empty-plan facts, not a second set of deployed numbers. The witness
+    -- layout is proofCalldataLayoutDefault - every section empty - so a plan with no
+    -- phases and no counts is the ONE reading consistent with the layout it carries,
+    -- and planParserFacts_derive_ok pins that consistency as a computation.
+    (facts := emptyParserFacts)
 
 /-! ### Known-answer checks
 
@@ -642,7 +725,8 @@ def planAccWords_derive_ok : Bool :=
         (memory := Midfall.Generator.LayoutMemoryKats.referenceLayout)
         (proofLayout := proofCalldataLayoutDefault)
         (numInstances := 1) (k := 2) (numNegLagranges := 2)
-        (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56));
+        (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
+        (facts := emptyParserFacts);
       pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
         pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
         pv.hasAccumulator == true &&

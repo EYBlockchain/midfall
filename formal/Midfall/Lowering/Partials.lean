@@ -235,18 +235,18 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
 
     WHAT IT BUYS, and what it does not. It buys: the theorems are now claims about ONE
     program per plan rather than about every program, so the R-62 counterexample is
-    outside the quantifier. It does not buy a proof: for the THREE partials GenAst still
-    emits a placeholder (GenAst.emittedPartials is [lagrange, quotientLin, finalPairing,
-    traceReturn] since P-AST3a; the three are vkLoading, transcriptParser and pcs), so those
-    three theorems are
-    pinned to a placeholder and their registered hole is now "the emitter does not
-    implement this partial yet" instead of "blk is free". The eight theorems whose partial is
-    emitted for real - finalPairing_spec, finalPairing_progress_spec and
-    finalPairing_acc_spec, plus lagrange_spec, lagrange_progress_spec and traceReturn_spec
-    from P-AST2, plus quotientLin_spec and quotientLin_progress_spec from P-AST3a - are the
-    ones whose pinned block is the real emitted program, the acc theorem at a plan view with
-    hasAccumulator = true, which GenAst emits for real even though the deployed artifact
-    does not exercise that arm. Note what the quotientLin conversion does NOT settle: the
+    outside the quantifier. It does not buy a proof: for the ONE partial GenAst still
+    emits a placeholder (GenAst.emittedPartials is [vkLoading, transcriptParser, lagrange,
+    quotientLin, finalPairing, traceReturn] since P-AST4; the one is pcs), so pcs_spec is
+    pinned to a placeholder and its registered hole is now "the emitter does not
+    implement this partial yet" instead of "blk is free". The nine theorems whose partial is
+    emitted for real - finalPairing_spec, finalPairing_progress_spec, finalPairing_acc_spec,
+    lagrange_spec, lagrange_progress_spec, traceReturn_spec, quotientLin_spec, vkLoading_spec
+    and transcriptParser_spec - are the ones whose pinned block is the real emitted program,
+    the acc theorem at a plan view with hasAccumulator = true, which GenAst emits for real
+    even though the deployed artifact does not exercise that arm. (The list read eight before
+    P-AST4, with vkLoading_spec dropped; it is now enumerated against the file's own theorem
+    names.) Note what the quotientLin conversion does NOT settle: the
     pinned block is the linearization SCOPE, i.e. the template's own body, and the two
     quotient_numerator includes that sit in front of it in the artifact are still text - see
     the measured boundary in GenAst.emitQuotientLinAt and the gate that pins it,

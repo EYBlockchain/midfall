@@ -60,6 +60,7 @@
 
 import Midfall.Generator.Artifacts
 import Midfall.Generator.LayoutMemory
+import Midfall.Lowering.Inv
 
 namespace Midfall.Instances
 open Midfall Midfall.Generator
@@ -630,6 +631,54 @@ def derivedPlan_isTheDeployedPlan_ok : IO Bool :=
               | some q => q.program.evalNumerMptr == 0x6660 && q.stackMptr == 0x6960
               | none => false))
 
+/-- GATE 21 (P-AST4: THE SIX PARSER FACTS PlanView CARRIES ARE THE DERIVED ONES). The
+    transcriptParser emitter reads six plan values that PlanView did not carry before this
+    package, and Inv.lean derives them in exactly one place - parserFactsOfPlan, off the
+    assembled plan model. This gate is the pin that makes 'derived and not typed in at the
+    call site' a computation: the six values the DERIVED model carries are the six the
+    emitter's gates read off poseidonCtx, field for field, and each of the six moves when the
+    model moves by one. Without the second half the derivation could be six constants with a
+    doc comment, which is the accident P-AST3b's standing note is about - and here the
+    deployed values are all NON-zero, so a hard-coding converter would have matched the
+    artifact and passed every relation. -/
+def derivedParserFacts_matchPlanView_ok : IO Bool :=
+  poseidonDerived >>= fun vm =>
+  pure (match vm with
+    | none => false
+    | some v =>
+        let f := Midfall.Lowering.parserFactsOfPlan v
+        let samePhase (a b : UserPhase) : Bool :=
+          a.adviceBytes == b.adviceBytes && a.numChallenges == b.numChallenges
+            && a.challengeOffset == b.challengeOffset
+        let (ph, nl, nz, lh, nt, tc) := f
+        let p := poseidonCtx
+        ph.length == p.userPhases.length && (List.zip ph p.userPhases).all (fun (a, b) => samePhase a b)
+          && nl == p.numLookups && nz == p.numPermutationZs && lh == p.lookupHPlusAcc
+          && nt == p.numTrashcans && tc == p.truncatedChallenges &&
+          -- the derivation is a function of the model, six ways
+          (Midfall.Lowering.parserFactsOfPlan { v with numLookups := v.numLookups + 1 }).2.1 != nl &&
+          (Midfall.Lowering.parserFactsOfPlan { v with numPermutationZs := v.numPermutationZs + 1 }).2.2.1 != nz &&
+          (Midfall.Lowering.parserFactsOfPlan { v with lookupHPlusAcc := v.lookupHPlusAcc + 1 }).2.2.2.1 != lh &&
+          (Midfall.Lowering.parserFactsOfPlan { v with numTrashcans := v.numTrashcans + 1 }).2.2.2.2.1 != nt &&
+          (Midfall.Lowering.parserFactsOfPlan { v with truncatedChallenges := !v.truncatedChallenges }).2.2.2.2.2 == !tc &&
+          (Midfall.Lowering.parserFactsOfPlan { v with userPhases := [{ adviceBytes := 0x420, numChallenges := 0, challengeOffset := 0 }] }).2.1 == nl &&
+          (Midfall.Lowering.parserFactsOfPlan { v with userPhases := v.userPhases ++ [{ adviceBytes := 0x80, numChallenges := 1, challengeOffset := 0 }] }).1.length == ph.length + 1 &&
+          -- and the six land in the PlanView through the constructor, not beside it
+          (let pv := Midfall.Lowering.planViewWithAccumulator
+              (vk := Midfall.Lowering.witnessVkPayload)
+              (vkMptr := v.vkMptr) (memory := v.memory)
+              (proofLayout := v.codegenLayout.proof)
+              (numInstances := v.numInstances) (k := v.k)
+              (numNegLagranges := v.numNegLagranges) (acc := none) (facts := f);
+            pv.userPhases.length == ph.length && pv.numLookups == nl &&
+              pv.numPermutationZs == nz && pv.lookupHPlusAcc == lh &&
+              pv.numTrashcans == nt && pv.truncatedChallenges == tc &&
+              -- the empty-plan reading is the OTHER arm, and it is not the deployed one
+              Midfall.Lowering.witnessPlanView.numLookups == 0 &&
+              Midfall.Lowering.witnessPlanView.userPhases.isEmpty &&
+              pv.numLookups != Midfall.Lowering.witnessPlanView.numLookups)
+    )
+
 /-- GATES 13-20 (R-41, perturbations run inside the gate's own scope). Each flips ONE
     derivation input and requires the whole-file equality to break, so no input is inert and
     no field of the plan is decoration. The causes are named in the report. -/
@@ -712,6 +761,7 @@ def perturb_derivationInputs_ok : IO Bool :=
 #eval Midfall.Instances.DeployedProfileKats.derivedVkLen_matchesArtifact_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedSmokeGas_matchesArtifact_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedPlan_isTheDeployedPlan_ok -- expect true
+#eval Midfall.Instances.DeployedProfileKats.derivedParserFacts_matchPlanView_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.perturb_derivationInputs_ok -- expect true
 
 

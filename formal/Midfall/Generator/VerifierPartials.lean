@@ -4822,6 +4822,185 @@ def vkLoadingAccArm_astAgrees_ok : Bool :=
     { poseidonCtx with expectedHasAccumulator := true } ++ "}") ==
     yulTokens (EVM.print (vkLoading_ast ++ vkLoadingAccArm_ast))
 
+
+/-! ### P-AST4: the transcriptParser snapshot
+
+    The quotation below is the record relation for the transcriptParser slice: an
+    independent elaboration of the deployed bytes through the vendored 'yul%' parser, in the
+    same shape vkLoading_ast and qalLinearization_ast establish. It was produced by
+    transcribing D:1178-1495 with the comment lines removed (the AST carries none) and the
+    twelve-space include indent stripped - NOT by printing an emitter's output, which is
+    what makes gate 92 and GenAst's gate 39 non-circular. One Lean-level wrinkle is worth
+    recording: the parser names a loop variable 'end', a Lean keyword the elaborator's
+    'ident' atom refuses, so the six loop headers write the guillemet escape \u00abend\u00bb, which
+    parses as the identifier 'end' and prints back as 'end'. No DSL change was needed. -/
+
+def transcriptParser_ast : Block EVM.Op := yul% {
+  let buf_len := transcript_init()
+  buf_len := common_word(buf_len, mload(VK_DIGEST_MPTR))
+  {
+      mstore(buf_len, 0)
+      mstore(add(buf_len, 0x20), 0)
+      mstore(add(buf_len, 0x40), 0)
+      mstore(add(buf_len, 0x60), 0)
+      buf_len := add(buf_len, 0x80)
+  }
+  {
+      buf_len := common_word(buf_len, 1)
+      let instance_cptr := INSTANCE_CPTR
+      for { let instance_cptr_end := add(instance_cptr, 0x20) }
+          lt(instance_cptr, instance_cptr_end)
+          { instance_cptr := add(instance_cptr, 0x20) } {
+          let inst_be := calldataload(instance_cptr)
+          success := and(success, lt(inst_be, r))
+          buf_len := common_word(buf_len, inst_be)
+      }
+      if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
+  }
+  let proof_cptr := PROOF_CPTR
+  let advice_walk := ADVICE_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x0400) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(advice_walk, proof_cptr, 0x80)
+      advice_walk := add(advice_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  buf_len := squeeze_to(buf_len, THETA_MPTR)
+  let lookup_m_walk := LOOKUP_M_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x80) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(lookup_m_walk, proof_cptr, 0x80)
+      lookup_m_walk := add(lookup_m_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  buf_len := squeeze_to(buf_len, BETA_MPTR)
+  buf_len := squeeze_to(buf_len, GAMMA_MPTR)
+  let perm_z_walk := PERM_Z_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x0180) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(perm_z_walk, proof_cptr, 0x80)
+      perm_z_walk := add(perm_z_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  let lookup_helper_walk := LOOKUP_HELPER_COMMS_MPTR_BASE
+  let lookup_z_walk := LOOKUP_Z_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x80) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(lookup_helper_walk, proof_cptr, 0x80)
+      lookup_helper_walk := add(lookup_helper_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+  calldatacopy(lookup_z_walk, proof_cptr, 0x80)
+  lookup_z_walk := add(lookup_z_walk, 0x80)
+  proof_cptr := add(proof_cptr, 0x80)
+  buf_len := squeeze_to(buf_len, TRASH_CHALLENGE_MPTR)
+  let trashcan_walk := TRASHCAN_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x80) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(trashcan_walk, proof_cptr, 0x80)
+      trashcan_walk := add(trashcan_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  buf_len := squeeze_to(buf_len, Y_MPTR)
+  let quotient_walk := QUOTIENT_LIMB_COMMS_MPTR_BASE
+  for { let «end» := add(proof_cptr, 0x0200) }
+      lt(proof_cptr, «end»)
+      {} {
+      buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+      calldatacopy(quotient_walk, proof_cptr, 0x80)
+      quotient_walk := add(quotient_walk, 0x80)
+      proof_cptr := add(proof_cptr, 0x80)
+  }
+  buf_len := squeeze_to(buf_len, X_MPTR)
+  {
+      let eval_buf := REVERSED_EVALS_MPTR
+      for { let «end» := add(proof_cptr, 0x0600) }
+          lt(proof_cptr, «end»)
+          {} {
+          let eval := calldataload(proof_cptr)
+          if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
+          mstore(eval_buf, eval)
+          eval_buf := add(eval_buf, 0x20)
+          buf_len := common_word(buf_len, eval)
+          proof_cptr := add(proof_cptr, 0x20)
+      }
+  }
+  buf_len := squeeze_to(buf_len, X1_MPTR)
+  buf_len := squeeze_to(buf_len, X2_MPTR)
+  buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+  calldatacopy(F_COM_MPTR, proof_cptr, 0x80)
+  proof_cptr := add(proof_cptr, 0x80)
+  buf_len := squeeze_to(buf_len, X3_MPTR)
+  mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))
+  mstore(Q_EVAL_CPTR_MPTR, proof_cptr)
+  for { let «end» := add(proof_cptr, 0x60) }
+      lt(proof_cptr, «end»)
+      {} {
+      let eval := calldataload(proof_cptr)
+      if iszero(lt(eval, r)) { fail(ERR_NON_CANONICAL_SCALAR) }
+      buf_len := common_word(buf_len, eval)
+      proof_cptr := add(proof_cptr, 0x20)
+  }
+  buf_len := squeeze_to(buf_len, X4_MPTR)
+  buf_len := common_uncompressed_g1(buf_len, proof_cptr)
+  calldatacopy(PI_MPTR, proof_cptr, 0x80)
+  proof_cptr := add(proof_cptr, 0x80)
+  if iszero(eq(proof_cptr, NUM_INSTANCE_CPTR)) { fail(ERR_BAD_CALLDATA_SHAPE) }
+  if iszero(success) { fail(ERR_NON_CANONICAL_SCALAR) }
+}
+
+/-- GATE 92 (STRUCTURAL, render -> AST, and the slice's provenance). The rendered
+    transcriptParser partial tokenises to transcriptParser_ast, and the render is the
+    deployed slice: 17,136 bytes / 318 lines occurring EXACTLY ONCE in the tracked artifact.
+    The rest of the gate is the anti-self-fulfilment half, in gate 90's shape: the numbers
+    the quotation pins to specific values are RE-READ from the dump's own lines - the six
+    proof-section widths the loops walk, the phase window, the instance window, the ABI
+    cursor the tail guard compares against, and the x3 mask - so the snapshot matches because
+    the artifact says so and not because the transcription agreed with itself. -/
+def transcriptParser_astAgrees_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderTranscriptProofParser poseidonCtx
+  let L := poseidonProofLayout
+  let sect (n : Nat) : String := "for { let end := add(proof_cptr, " ++ hexFilter n ++ ") }"
+  pure (r.length == 17136 && lineCount r == 318 && occ sol r == 1 &&
+    yulTokens ("{" ++ r ++ "}") == yulTokens (EVM.print transcriptParser_ast) &&
+    sol.contains (sect L.lookupMultiplicities.byteLen) &&
+    sol.contains (sect L.permutationProducts.byteLen) &&
+    sol.contains (sect L.trash.byteLen) &&
+    sol.contains (sect L.quotientLimbs.byteLen) &&
+    sol.contains (sect L.evals.byteLen) &&
+    sol.contains (sect L.qEvals.byteLen) &&
+    sol.contains (sect (L.advicePhases.head?.getD (ProofSection.new 0 1 1)).byteLen) &&
+    sol.contains "add(instance_cptr, 0x20)" &&
+    sol.contains "common_word(buf_len, 1)" &&
+    sol.contains "eq(proof_cptr, NUM_INSTANCE_CPTR)" &&
+    sol.contains "mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))" &&
+    occ r "buf_len := squeeze_to(" == 10 &&
+    occ r "calldatacopy(" == 9 &&
+    -- the two counts are about the SLICE and not the whole artifact: the deployed contract
+    -- has more calldatacopy sites than the parser's nine (the PCS region has its own), so
+    -- counting them in `sol` would be a claim about a different partial.
+    occ sol "calldatacopy(" > 9)
+
+/-- GATE 93 (the quotation is not the placeholder, and not the other slices either). The
+    transcriptParser quotation is 44 top-level statements; the emitter's placeholder for the
+    same partial is one flat mstore. Stated here as well as in GenAst because this is the
+    file the quotation lives in, and the size of the gap is the size of what P-AST4 replaced. -/
+def transcriptParser_astIsNoPlaceholder_ok : Bool :=
+  transcriptParser_ast.length == 44
+
+
 end VerifierPartialKats
 
 #eval Midfall.Generator.VerifierPartialKats.vkLoading_astAgrees_ok -- expect true
@@ -4916,3 +5095,6 @@ end VerifierPartialKats
 #eval Midfall.Generator.VerifierPartialKats.inertFields13c_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.qnb13c_newlineLaw_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.qnb13c_rightTrimCount_ok -- expect true
+
+#eval Midfall.Generator.VerifierPartialKats.transcriptParser_astAgrees_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.transcriptParser_astIsNoPlaceholder_ok -- expect true

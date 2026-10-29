@@ -31,13 +31,18 @@
 -- WHAT IS EMITTED, and what is a placeholder. Scope is per-deployment first (D-P24). P-AST
 -- took ONE partial completely - FinalPairing plus the two AssemblyHelpers definitions it
 -- calls (fail, ec_pairing). P-AST2 (docs/plans/P-AST2-lagrange-traceReturn.md) adds two
--- more under D-P30, P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth and P-AST3b
--- (docs/plans/P-AST3b-vkLoading.md) a fifth, so the real
--- emission is now VkLoading, Lagrange, QuotientLin, FinalPairing and TraceReturn; TWO partials still
--- return emitPlaceholder - transcriptParser and pcs - and emittedPartials names
+-- more under D-P30, P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth, P-AST3b
+-- (docs/plans/P-AST3b-vkLoading.md) a fifth and P-AST4
+-- (docs/plans/P-AST4-transcriptParser.md) a sixth, so the real
+-- emission is now VkLoading, TranscriptParser, Lagrange, QuotientLin, FinalPairing and
+-- TraceReturn; ONE partial still
+-- returns emitPlaceholder - pcs - and emittedPartials names
 -- the difference as data while
--- emitPlaceholderIsTotal_ok pins it as a computation: five emitted, two placeholders, and
--- no placeholder equal to the real slice it stands for. A
+-- emitPlaceholderIsTotal_ok pins it as a computation: six emitted, one placeholder, and
+-- no placeholder equal to the real slice it stands for. P-AST4 is the largest conversion so
+-- far by a wide margin - the deployed parser arm is 318 template lines / 17,136 bytes against
+-- vkLoading's 74 / 4,494 - and it is the first slice whose emitted shape depends on a LIST
+-- (the user-phase loop) and not on scalars alone. A
 -- spec theorem whose partial is not in emittedPartials is pinned to a placeholder: the pin
 -- turns it into a claim about ONE program instead of about every program, which is what
 -- removes the false-as-stated quantifier, and its registered hole becomes "the emitter
@@ -83,9 +88,12 @@
 -- the same profile. For TraceReturn the same restriction bites harder: the render's trace
 -- arm interpolates numInstances, k, the user-phase challenge loop, numTrashcans and
 -- expectedHasAccumulator into 53 template lines. P-AST3b narrowed that gap without closing
--- it: PlanView now carries numInstances, k and the accumulator words, but it still has no
--- trace flag, no phase list and no trashcan count, so the trace arm is not expressible in
--- this emitter's signature at all - see the note on emitTraceReturnBlock.
+-- it, and P-AST4 narrows it further without closing it either: PlanView now carries the phase
+-- list and the trashcan count the trace arm needs, but it still has NO trace flag, so the
+-- trace arm remains inexpressible in this emitter's signature - see the note on
+-- emitTraceReturnBlock. What P-AST4 does close is the parser's own gap: the six values
+-- transcriptParser interpolates are now fields, and the four helpers it calls are now
+-- emitted.
 --
 -- HOW THE EMITTED AST IS CHECKED. There is no runtime Yul parser in the vendored tree, so
 -- the check is the one D-P25 names: the token comparator yulTokens (YulGolden.lean)
@@ -255,12 +263,107 @@ def emitEcPairingAt (pv : PlanView) : Block Op :=
   emitEcPairing (pairingScratchOf pv) templateConstantsDefault.eip2537.pairingAddress
     templateConstantsDefault.pairingTwoPairBytes templateConstantsDefault.wordBytes
 
-/-- The two AssemblyHelpers definitions FinalPairing needs, in template order. This is what
-    the pin puts in the 'helpers' slot of main_concat, and it is why the pin has a second
-    conjunct at all: mainScope hoists S.L.main, so a Surface whose blk is the emitted slice
-    but whose main carries no fail / ec_pairing definitions emits a program in which the
-    emitted slice cannot run. -/
-def emitHelpers (pv : PlanView) : Block Op := emitFail ++ emitEcPairingAt pv
+/-! ### AssemblyHelpers: the four definitions transcriptParser calls -/
+
+/-- 'function transcript_init() -> buf_len { buf_len := TRANSCRIPT_MPTR }'
+    (AssemblyHelpers.yul:107-110, rendered at D:673-676).
+
+    NOT parameterised, and the measurement is the point: the four transcript helpers
+    interpolate NOTHING - TRANSCRIPT_MPTR is a bare Solidity-level constant and the '32',
+    '0x20', '0x40', '0x60', '0x80', '128' and the two 128-bit masks are literal template
+    bytes. So each of the four is a CONSTANT function of the plan, exactly like emitFail and
+    emitTraceReturnBlock, and gate 43 below says so as a computation rather than leaving it
+    as an adjective: it perturbs the two template constants a reader might guess were behind
+    those literals (g1_bytes, word_bytes) and shows the helper render does not move while
+    the PARSER render does. That is the difference between "constant because the template is
+    literal" and "constant because the converter typed a number", and only the gate tells
+    them apart. -/
+def emitTranscriptInit : Block Op :=
+  [ yfun "transcript_init" [] ["buf_len"]
+    [ yset "buf_len" (yvar "TRANSCRIPT_MPTR") ] ]
+
+/-- 'function common_word(buf_len, word) -> ret { mstore(buf_len, word)
+    ret := add(buf_len, 32) }' (AssemblyHelpers.yul:114-117, D:680-683).
+
+    The '32' is DECIMAL in the template - the template writes the literal 32 and not the hex
+    filter of word_bytes - so the AST prints the same three characters the render does.
+    That makes this the one site in the four helpers where the two spellings coincide, and
+    gate 21 pins it beside the sites where they do not. -/
+def emitCommonWord : Block Op :=
+  [ yfun "common_word" ["buf_len", "word"] ["ret"]
+    [ yexpr (yop Op.mstore [yvar "buf_len", yvar "word"])
+    , yset "ret" (yop Op.add [yvar "buf_len", ylit 32]) ] ]
+
+/-- One coordinate's canonicality check inside common_uncompressed_g1: accept the 128-bit
+    high word only if it is below BLS_P_HI, or equal to it with a low word not above
+    BLS_P_MINUS_ONE_LO. The x and y copies differ only in the two variable names, which is
+    precisely the shape no length or token-count check can separate - hence the shared
+    constructor and the stmtsBeq gate. -/
+def g1CoordRangeCheck (hi lo : String) : Stmt Op :=
+  yif (yop Op.iszero [yop Op.or
+    [ yop Op.lt [yvar hi, yvar "BLS_P_HI"]
+    , yop Op.and [yop Op.eq [yvar hi, yvar "BLS_P_HI"],
+        yop Op.iszero [yop Op.gt [yvar lo, yvar "BLS_P_MINUS_ONE_LO"]]] ]])
+    [yexpr (ycall "fail" [yvar "ERR_BAD_POINT_ENCODING"])]
+
+/-- 'function common_uncompressed_g1(buf_len, cptr) -> ret' (AssemblyHelpers.yul:149-170,
+    D:715-736): four calldataloads, two top-16-byte rejections, the two 128-bit masks, two
+    coordinate range checks, then the verbatim 128-byte memcpy into the transcript buffer.
+
+    Thirteen statements, and the two range checks are the only place in the whole emitter
+    where a block statement is written across lines in the render - which is the shape that
+    broke the old renderFunction close test (see its header) and the reason gate 11 now
+    pins six slice sizes instead of two. 'fail' is a user call; calldataload, shr, and, or,
+    lt, eq, gt, iszero, calldatacopy and add are dialect built-ins (EVMOp.lean:43-65). -/
+def emitCommonUncompressedG1 : Block Op :=
+  [ yfun "common_uncompressed_g1" ["buf_len", "cptr"] ["ret"]
+    [ ylet "x_hi_word" (yop Op.calldataload [yvar "cptr"])
+    , ylet "x_lo" (yop Op.calldataload [yop Op.add [yvar "cptr", ylit 0x20]])
+    , ylet "y_hi_word" (yop Op.calldataload [yop Op.add [yvar "cptr", ylit 0x40]])
+    , ylet "y_lo" (yop Op.calldataload [yop Op.add [yvar "cptr", ylit 0x60]])
+    , yif (yop Op.shr [ylit 128, yvar "x_hi_word"])
+        [yexpr (ycall "fail" [yvar "ERR_BAD_POINT_ENCODING"])]
+    , yif (yop Op.shr [ylit 128, yvar "y_hi_word"])
+        [yexpr (ycall "fail" [yvar "ERR_BAD_POINT_ENCODING"])]
+    , ylet "x_hi" (yop Op.and [yvar "x_hi_word", ylit 0xffffffffffffffffffffffffffffffff])
+    , ylet "y_hi" (yop Op.and [yvar "y_hi_word", ylit 0xffffffffffffffffffffffffffffffff])
+    , g1CoordRangeCheck "x_hi" "x_lo"
+    , g1CoordRangeCheck "y_hi" "y_lo"
+    , yexpr (yop Op.calldatacopy [yvar "buf_len", yvar "cptr", ylit 0x80])
+    , yset "ret" (yop Op.add [yvar "buf_len", ylit 0x80]) ] ]
+
+/-- 'function squeeze_to(buf_len, mptr) -> ret' (AssemblyHelpers.yul:175-183, D:741-749):
+    one keccak256 over the buffer, reseed the digest at the base, sample the Fq as the
+    digest mod r, return the new cursor. 'let r := FR_MODULUS' shadows the outer r inside
+    this scope and is the template's own line, not a slip - the mod below reads the local. -/
+def emitSqueezeTo : Block Op :=
+  [ yfun "squeeze_to" ["buf_len", "mptr"] ["ret"]
+    [ ylet "h0" (yop Op.keccak256 [yvar "TRANSCRIPT_MPTR",
+        yop Op.sub [yvar "buf_len", yvar "TRANSCRIPT_MPTR"]])
+    , yexpr (yop Op.mstore [yvar "TRANSCRIPT_MPTR", yvar "h0"])
+    , ylet "r" (yvar "FR_MODULUS")
+    , yexpr (yop Op.mstore [yvar "mptr", yop Op.mod [yvar "h0", yvar "r"]])
+    , yset "ret" (yop Op.add [yvar "TRANSCRIPT_MPTR", ylit 32]) ] ]
+
+/-- The four transcript helpers, in template order (AssemblyHelpers.yul:107-183). -/
+def emitTranscriptHelpers : Block Op :=
+  emitTranscriptInit ++ emitCommonWord ++ emitCommonUncompressedG1 ++ emitSqueezeTo
+
+/-- The AssemblyHelpers definitions the emitted slices call: fail and ec_pairing for
+    FinalPairing, Lagrange and VkLoading, and the four transcript helpers for
+    transcriptParser. This is what the pin puts in the 'helpers' slot of main_concat, and it
+    is why the pin has a second conjunct at all: mainScope hoists S.L.main, so a Surface
+    whose blk is the emitted slice but whose main carries no fail / ec_pairing /
+    transcript_init / common_word / common_uncompressed_g1 / squeeze_to definitions emits a
+    program in which the emitted slice cannot run.
+
+    THE HELPER GAP SHRINKS BY FOUR AND DOES NOT CLOSE. batch_invert (AssemblyHelpers.yul:226,
+    called by the real Lagrange slice) and validate_public_accumulator
+    (AccumulatorHelpers.yul:190, called only by the untaken accumulator arm) are still not
+    defined here. P-AST3a and P-AST3b recorded that hole; P-AST4 narrows it without closing
+    it, and the deployed profile still never takes the accumulator arm. -/
+def emitHelpers (pv : PlanView) : Block Op :=
+  emitFail ++ emitTranscriptHelpers ++ emitEcPairingAt pv
 
 /-! ### FinalPairing -/
 
@@ -673,23 +776,238 @@ def emitVkLoadingDeployed : Block Op :=
   let (h, n, k, w, o, l, b, p) := vkLoadingPoseidonArgs
   emitVkLoadingArms h n k w o l b p
 
+/-! ### transcriptParser -/
+
+/-- The four statements one G1 walk runs: absorb the 128-byte calldata form, copy the same
+    bytes into the planned memory slot, advance the slot cursor and the proof cursor. Used
+    six times over the six commitment sections, which is why it is a function and not six
+    copies - the six differ only in the walk variable and the loop bound, a difference no
+    length check can see and stmtsBeq sees exactly. -/
+def g1WalkBody (walk : String) : Block Op :=
+  let g1 := templateConstantsDefault.g1Bytes
+  [ yset "buf_len" (ycall "common_uncompressed_g1" [yvar "buf_len", yvar "proof_cptr"])
+  , yexpr (yop Op.calldatacopy [yvar walk, yvar "proof_cptr", ylit g1])
+  , yset walk (yop Op.add [yvar walk, ylit g1])
+  , yset "proof_cptr" (yop Op.add [yvar "proof_cptr", ylit g1]) ]
+
+/-- The walk loop itself: 'for { let end := add(proof_cptr, N) } lt(proof_cptr, end) {} {
+    ... }'. The bound is the section's byte length and the post block is EMPTY - the cursor
+    advances inside the body, which is why 'end' is a fresh local per loop and why six loops
+    in one scope do not collide. -/
+def g1WalkLoop (walk : String) (bytes : Nat) : Stmt Op :=
+  yfor [ylet "end" (yop Op.add [yvar "proof_cptr", ylit bytes])]
+    (yop Op.lt [yvar "proof_cptr", yvar "end"]) [] (g1WalkBody walk)
+
+/-- The three statements at the two sites that absorb ONE commitment without a walk cursor:
+    f_com and pi. Same first two statements as the walk body and NO slot advance, because
+    the destination is a fixed MPTR and not a cursor - which is the one place a converter
+    reusing g1WalkBody would silently emit a fourth statement ('F_COM_MPTR := add(..)'),
+    and the reason the two shapes are separate definitions. Measured in this package: the
+    reuse bug printed 46 statements against the quotation's 44. -/
+def g1AbsorbCopy (dst : String) : Block Op :=
+  let g1 := templateConstantsDefault.g1Bytes
+  [ yset "buf_len" (ycall "common_uncompressed_g1" [yvar "buf_len", yvar "proof_cptr"])
+  , yexpr (yop Op.calldatacopy [yvar dst, yvar "proof_cptr", ylit g1])
+  , yset "proof_cptr" (yop Op.add [yvar "proof_cptr", ylit g1]) ]
+/-- The transcript proof parser (TranscriptProofParser.yul:1-424, deployed arm
+    D:1178-1495: 17,136 bytes / 318 lines occurring EXACTLY ONCE) as an AST, parameterised
+    by the ELEVEN plan values the template interpolates: the public instance count (twice -
+    the ABI length word and the instance window), the user-phase list, the four shape
+    counts that guard four of the ten proof sections, the truncation flag that guards the
+    x3 mask, and the seven proofLayout section byte lengths the loops walk.
+
+    SCOPE, measured and not chosen: 'blk .transcriptParser' is the TEMPLATE'S OWN BODY - the
+    44 top-level statements the render emits - and not the surrounding prologue ('let r :=
+    FR_MODULUS', 'let success := true'), which belongs to the contract shell exactly as in
+    VkLoading. Gate 39 pins the size, the single occurrence and the include boundary against
+    the tracked artifact at #eval time.
+
+    WHAT ZERO-RENDERS, and why that is the hazard here. The 12 trace sites and the 8
+    gas-checkpoint sites of the template all take their else-arm under
+    SupportedS.production, so no gas_checkpoint or trace_point byte appears - the same
+    restriction every other slice carries. The four shape guards are TRUE at the deployed
+    fixture (numLookups 1, numPermutationZs 3, lookupHPlusAcc 2, numTrashcans 1) and the
+    truncation flag is TRUE, so the deployed slice shows every section present. That is the
+    opposite of the vkLoading accumulator arm and it cuts both ways: a hard-coded 'always
+    emit the section' would reproduce the deployed bytes exactly and pass BOTH relations.
+    Gate 38 is the falsification - each of the six counts driven to zero removes statements
+    from the emitted block, the flag driven false removes the mask, and each of the seven
+    section widths moves a loop bound.
+
+    THE CALL SPLIT. transcript_init, common_word, common_uncompressed_g1, squeeze_to and fail
+    are USER calls (AssemblyHelpers.yul, the first four defined by emitTranscriptHelpers in
+    the same hoisted main); mstore, mload, calldataload, calldatacopy, add, sub, lt, gt, eq,
+    iszero, and, or, shr, mod and keccak256 are dialect built-ins. The parser is the slice
+    with the most sites of both kinds, so gate 40 reproduces the token blindness on it, and
+    it is the slice where a converter reaching for 'ycall' out of habit mis-spells the most.
+
+    NUMERIC SPELLING, pinned by gate 21: the render writes every section width and stride
+    through the hex filter ('add(proof_cptr, 0x0400)', 'add(proof_cptr, 0x20)') and the
+    instance count as a DECIMAL integer ('common_word(buf_len, 1)'), while EVM.print renders
+    1024 and 32 and 1. One region, both spellings, and no AST relation can tell them apart. -/
+def emitTranscriptParserAt (numInstances : Nat) (userPhases : List UserPhase)
+    (numLookups numPermutationZs lookupHPlusAcc numTrashcans : Nat)
+    (truncatedChallenges : Bool) (L : ProofCalldataLayout) : Block Op :=
+  let word := templateConstantsDefault.wordBytes
+  -- 'buf_len := squeeze_to(buf_len, SLOT)': the eleven challenge squeezes, identical except
+  -- for the slot, which is a bare Solidity-level constant and so a yvar and not a ylit.
+  let squeeze (slot : String) : Stmt Op :=
+    yset "buf_len" (ycall "squeeze_to" [yvar "buf_len", yvar slot])
+  -- one phase's challenge squeeze, at its running offset into CHALLENGE_MPTR. The offset is
+  -- a WORD offset scaled by 32, derived here the way ART:168 derives it.
+  let squeezeChallenge (off : Nat) : Stmt Op :=
+    yset "buf_len" (ycall "squeeze_to" [yvar "buf_len",
+      yop Op.add [yvar "CHALLENGE_MPTR", ylit off]])
+  let phaseStmts : Block Op := List.flatten (userPhases.map fun ph =>
+    ([ g1WalkLoop "advice_walk" ph.adviceBytes ] : Block Op) ++
+      ((List.range ph.numChallenges).map fun j =>
+        squeezeChallenge ((ph.challengeOffset + j) * 32)))
+  let lookupStmts : Block Op := List.flatten (L.lookups.map fun lk =>
+    ([ g1WalkLoop "lookup_helper_walk" lk.helpers.byteLen ] : Block Op) ++
+      g1WalkBody "lookup_z_walk")
+  [ ylet "buf_len" (ycall "transcript_init" [])
+  , yset "buf_len" (ycall "common_word" [yvar "buf_len", yop Op.mload [yvar "VK_DIGEST_MPTR"]])
+    -- committed_pi: the identity absorbs as 128 zero bytes, four words at the cursor. A raw
+    -- transcript absorb and not a memory slot, so it has no MPTR and no plan value.
+  , yblock
+      [ yexpr (yop Op.mstore [yvar "buf_len", ylit 0])
+      , yexpr (yop Op.mstore [yop Op.add [yvar "buf_len", ylit 0x20], ylit 0])
+      , yexpr (yop Op.mstore [yop Op.add [yvar "buf_len", ylit 0x40], ylit 0])
+      , yexpr (yop Op.mstore [yop Op.add [yvar "buf_len", ylit 0x60], ylit 0])
+      , yset "buf_len" (yop Op.add [yvar "buf_len", ylit 0x80]) ]
+    -- the instance run: a length word then one word per public input, each range-checked
+    -- against r and folded into `success` rather than reverting on the spot.
+  , yblock
+      [ yset "buf_len" (ycall "common_word" [yvar "buf_len", ylit numInstances])
+      , ylet "instance_cptr" (yvar "INSTANCE_CPTR")
+      , yfor [ylet "instance_cptr_end" (yop Op.add [yvar "instance_cptr",
+            ylit (numInstances * 32)])]
+          (yop Op.lt [yvar "instance_cptr", yvar "instance_cptr_end"])
+          [yset "instance_cptr" (yop Op.add [yvar "instance_cptr", ylit 0x20])]
+          [ ylet "inst_be" (yop Op.calldataload [yvar "instance_cptr"])
+          , yset "success" (yop Op.and [yvar "success",
+              yop Op.lt [yvar "inst_be", yvar "r"]])
+          , yset "buf_len" (ycall "common_word" [yvar "buf_len", yvar "inst_be"]) ]
+      , yif (yop Op.iszero [yvar "success"])
+          [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])] ]
+  , ylet "proof_cptr" (yvar "PROOF_CPTR")
+  , ylet "advice_walk" (yvar "ADVICE_COMMS_MPTR_BASE")
+  ] ++ phaseStmts ++
+    [ squeeze "THETA_MPTR" ] ++
+    (if numLookups != 0 then
+      [ ylet "lookup_m_walk" (yvar "LOOKUP_M_COMMS_MPTR_BASE")
+      , g1WalkLoop "lookup_m_walk" L.lookupMultiplicities.byteLen ] else []) ++
+    [ squeeze "BETA_MPTR", squeeze "GAMMA_MPTR" ] ++
+    (if numPermutationZs != 0 then
+      [ ylet "perm_z_walk" (yvar "PERM_Z_COMMS_MPTR_BASE")
+      , g1WalkLoop "perm_z_walk" L.permutationProducts.byteLen ] else []) ++
+    (if lookupHPlusAcc != 0 then
+      [ ylet "lookup_helper_walk" (yvar "LOOKUP_HELPER_COMMS_MPTR_BASE")
+      , ylet "lookup_z_walk" (yvar "LOOKUP_Z_COMMS_MPTR_BASE") ] ++ lookupStmts else []) ++
+    [ squeeze "TRASH_CHALLENGE_MPTR" ] ++
+    (if numTrashcans != 0 then
+      [ ylet "trashcan_walk" (yvar "TRASHCAN_COMMS_MPTR_BASE")
+      , g1WalkLoop "trashcan_walk" L.trash.byteLen ] else []) ++
+    [ squeeze "Y_MPTR"
+    , ylet "quotient_walk" (yvar "QUOTIENT_LIMB_COMMS_MPTR_BASE")
+    , g1WalkLoop "quotient_walk" L.quotientLimbs.byteLen
+    , squeeze "X_MPTR"
+      -- the eval spill block: cursor, canonicality check, store, advance BOTH cursors. The
+      -- stride here is word_bytes and not g1_bytes, the one place in the section list where
+      -- a copy of the walk shape with the wrong stride would still tokenise to the same
+      -- number of tokens.
+    , yblock
+        [ ylet "eval_buf" (yvar "REVERSED_EVALS_MPTR")
+        , yfor [ylet "end" (yop Op.add [yvar "proof_cptr", ylit L.evals.byteLen])]
+            (yop Op.lt [yvar "proof_cptr", yvar "end"]) []
+            [ ylet "eval" (yop Op.calldataload [yvar "proof_cptr"])
+            , yif (yop Op.iszero [yop Op.lt [yvar "eval", yvar "r"]])
+                [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])]
+            , yexpr (yop Op.mstore [yvar "eval_buf", yvar "eval"])
+            , yset "eval_buf" (yop Op.add [yvar "eval_buf", ylit word])
+            , yset "buf_len" (ycall "common_word" [yvar "buf_len", yvar "eval"])
+            , yset "proof_cptr" (yop Op.add [yvar "proof_cptr", ylit word]) ] ]
+    , squeeze "X1_MPTR", squeeze "X2_MPTR"
+    ] ++ g1AbsorbCopy "F_COM_MPTR" ++
+    [ squeeze "X3_MPTR" ] ++
+    -- the truncated-challenges mask: keep the low 128 bits of the squeezed x3 in its slot.
+    (if truncatedChallenges then
+      [ yexpr (yop Op.mstore [yvar "X3_MPTR",
+          yop Op.and [yop Op.mload [yvar "X3_MPTR"],
+            ylit 0xffffffffffffffffffffffffffffffff]]) ] else []) ++
+    [ yexpr (yop Op.mstore [yvar "Q_EVAL_CPTR_MPTR", yvar "proof_cptr"])
+    , yfor [ylet "end" (yop Op.add [yvar "proof_cptr", ylit L.qEvals.byteLen])]
+        (yop Op.lt [yvar "proof_cptr", yvar "end"]) []
+        [ ylet "eval" (yop Op.calldataload [yvar "proof_cptr"])
+        , yif (yop Op.iszero [yop Op.lt [yvar "eval", yvar "r"]])
+            [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])]
+        , yset "buf_len" (ycall "common_word" [yvar "buf_len", yvar "eval"])
+        , yset "proof_cptr" (yop Op.add [yvar "proof_cptr", ylit word]) ]
+    , squeeze "X4_MPTR"
+    ] ++ g1AbsorbCopy "PI_MPTR" ++
+    -- the two tail guards: the cursor identity P-12's gate 22 cites, then the deferred
+    -- canonicality failure the instance run folded into success.
+    [ yif (yop Op.iszero [yop Op.eq [yvar "proof_cptr", yvar "NUM_INSTANCE_CPTR"]])
+        [yexpr (ycall "fail" [yvar "ERR_BAD_CALLDATA_SHAPE"])]
+    , yif (yop Op.iszero [yvar "success"])
+        [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])] ]
+/-- The transcriptParser slice of one plan: the eleven values the template interpolates, all
+    read out of PlanView - the one count it already carried, the six P-AST4 fields, and the
+    seven proofLayout section accessors. -/
+def emitTranscriptParser (pv : PlanView) : Block Op :=
+  emitTranscriptParserAt pv.numInstances pv.userPhases pv.numLookups
+    pv.numPermutationZs pv.lookupHPlusAcc pv.numTrashcans pv.truncatedChallenges
+    pv.proofLayout
+
+/-- The seven plan values the transcriptParser template interpolates beyond the proof
+    layout, read out of the text port's own deployed profile - the same device
+    vkLoadingPoseidonArgs uses, so the emitter and the text port are fed one set of numbers
+    and cannot be given different ones by accident. -/
+def transcriptParserPoseidonArgs : Nat × List UserPhase × Nat × Nat × Nat × Nat × Bool :=
+  (poseidonCtx.numInstances, poseidonCtx.userPhases, poseidonCtx.numLookups,
+    poseidonCtx.numPermutationZs, poseidonCtx.lookupHPlusAcc, poseidonCtx.numTrashcans,
+    poseidonCtx.truncatedChallenges)
+
+/-- The deployed slice, emitted at the poseidon profile - the block gates 21 and 37-44
+    compare. -/
+def emitTranscriptParserDeployed : Block Op :=
+  let (n, ph, nl, nz, lh, nt, tc) := transcriptParserPoseidonArgs
+  emitTranscriptParserAt n ph nl nz lh nt tc poseidonProofLayout
+
+/-- The deployed plan view the parser gates read through the PlanView fields rather than
+    through the profile tuple: the same eleven values, reached by the constructor. Built
+    here and not in Instances/ because it is a gate input and not a theorem hypothesis. -/
+def transcriptParserPoseidonPlan : PlanView :=
+  Midfall.Lowering.planViewWithAccumulator
+    (vk := Midfall.Lowering.witnessVkPayload)
+    (vkMptr := poseidonCtx.memory.vkMptr)
+    (memory := poseidonCtx.memory)
+    (proofLayout := poseidonProofLayout)
+    (numInstances := poseidonCtx.numInstances) (k := poseidonCtx.k)
+    (numNegLagranges := poseidonCtx.numNegLagranges) (acc := none)
+    (facts := (poseidonCtx.userPhases, poseidonCtx.numLookups,
+      poseidonCtx.numPermutationZs, poseidonCtx.lookupHPlusAcc, poseidonCtx.numTrashcans,
+      poseidonCtx.truncatedChallenges))
 /-! ### The emitter, total over Partial -/
 
-/-- The partials this file emits for real. Everything else is a placeholder: after P-AST3b
-    those are transcriptParser and pcs - the two named by placeholderPartials below - and
-    each of the two is blocked for a DIFFERENT measured reason, not the same reason: pcs
-    needs Kzg.computations converted from text first (P-AST2's finding: the deployed 345
-    generated lines are read back out of the .sol dump, so there is nothing to compare an
-    emitted AST against), and transcriptParser needs four AssemblyHelpers definitions the
-    emitter does not have (transcript_init, common_word, common_uncompressed_g1,
-    squeeze_to) plus the ten proof-section offsets the parser walks, which live in
-    ProofCalldataLayout and have no emitter accessor yet. vkLoading was the third until
-    P-AST3b added the four accumulator words to PlanView; neither of the remaining two is
-    blocked on this template. -/
+/-- The partials this file emits for real. Everything else is a placeholder: after P-AST4
+    that is pcs ALONE, and the reason is a measurement and not a convenience. The deployed
+    345 generated PCS lines come out of Kzg.computations, which IS ported (Kzg.lean:1320) and
+    whose deployed block shape VerifierPartials' gate 89 matches arm for arm - but it consumes
+    a ConstraintSystemMeta and a Data.new schedule for the poseidon circuit, and no theorem-safe
+    Lean term has them (P-AST2's finding, re-confirmed by gate 89's own note). So the generated
+    region is read back out of the .sol dump and there is no independent render an emitted AST
+    could be compared against. Closing it is P-11-shaped work - a deployed LoweringPlan - and
+    that is this package's required finding, stated in the package report and not only here.
+    transcriptParser was the second placeholder until P-AST4 supplied the four AssemblyHelpers
+    definitions it calls (transcript_init, common_word, common_uncompressed_g1, squeeze_to) and
+    the six plan values it interpolates; the ten proof-section widths it walks were already
+    reachable through PlanView.proofLayout, which is why P-AST3b's estimate of this slice as
+    "cheaper than assumed" was right about the machinery and wrong about the size. -/
 def emittedPartials : List Partial :=
-  [.vkLoading, .lagrange, .quotientLin, .finalPairing, .traceReturn]
+  [.vkLoading, .transcriptParser, .lagrange, .quotientLin, .finalPairing, .traceReturn]
 
-/-- The two partials still emitted as placeholders, as data rather than as a paragraph:
+/-- The one partial still emitted as a placeholder, as data rather than as a paragraph:
     derived from emittedPartials, so the two lists cannot disagree. -/
 def placeholderPartials : List Partial :=
   Midfall.Lowering.partials.filter (fun q => !emittedPartials.contains q)
@@ -719,6 +1037,7 @@ def emitPlaceholder : Partial → Block Op
 def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
   match q with
   | .vkLoading => emitVkLoading pv
+  | .transcriptParser => emitTranscriptParser pv
   | .lagrange => emitLagrange pv
   | .quotientLin => emitQuotientLin pv
   | .finalPairing => emitFinalPairing pv
@@ -735,9 +1054,46 @@ def emitMain (pv : PlanView) : Block Op := emitHelpers pv ++ emitSlices pv
 
 /-! ### The text-port comparison machinery -/
 
+/-- Braces introduced minus braces closed on one rendered line, with any '//'-comment
+    stripped first. The comment strip is not tidiness: the transcript helpers' own comment
+    block sits between the function definitions, and a brace inside prose would move the
+    depth and cut a slice in the wrong place. -/
+def braceDelta (l : String) : Int :=
+  let code := match l.splitOn "//" with
+    | first :: _ => first
+    | [] => l
+  ((code.toList.filter fun c => c == '{').length : Int) -
+    (code.toList.filter fun c => c == '}').length
+
+/-- The number of lines from the head of the list through the line that returns the brace
+    depth to zero - i.e. the function's OWN closing brace, not the first '}' that happens
+    to start a line. -/
+def functionCloseAt (ls : List String) : Nat :=
+  let rec go (rest : List String) (d : Int) (i : Nat) : Nat :=
+    match rest with
+    | [] => i
+    | l :: more =>
+        let d' := d + braceDelta l
+        if d' <= 0 then i + 1 else go more d' (i + 1)
+  go ls 0 0
+
 /-- The rendered text of one 'function NAME(...)' definition inside a render: its header
     line through its closing brace, comments included (yulTokens drops them). Used to slice
-    fail and ec_pairing out of the AssemblyHelpers render, which is one string. -/
+    fail, ec_pairing and the four transcript helpers out of the AssemblyHelpers render,
+    which is one string.
+
+    P-AST4 REPAIRED THE CLOSE TEST, and the defect it repaired is the finding. The old rule
+    was "the first line whose trimmed text is '}'", which is the function's close only when
+    the body contains no block statement written across lines. common_uncompressed_g1 does
+    (AssemblyHelpers.yul: its two coordinate range checks each open a '{' and close it on a
+    line of its own), so the old slicer returned 13 lines ending at the INNER '}' - a
+    truncated, syntactically incomplete fragment that no gate could compare an emitted
+    function against. P-AST3b measured "common_uncompressed_g1 13 lines" and reported it as
+    the function's size; it is the slicer's truncation point, and 13 is the number of
+    STATEMENTS in the real function, not of lines. The depth-aware rule returns 22 lines,
+    leaves fail (4), ec_pairing (36), transcript_init (4), common_word (4) and squeeze_to
+    (9) exactly where they were - gate 11 below pins all six sizes so a future regression in
+    either direction is a red gate - and it is a string helper, not a DSL change. -/
 def renderFunction (render name : String) : String :=
   let ls := render.splitOn "\n"
   let header := "function " ++ name ++ "("
@@ -745,8 +1101,7 @@ def renderFunction (render name : String) : String :=
   | none => ""
   | some (_l, i) =>
     let rest := ls.drop i
-    let close := (rest.zipIdx.find? fun (l, _j) => trimWs l == "}").map fun (_l, j) => j + 1
-    String.intercalate "\n" (rest.take (close.getD rest.length))
+    String.intercalate "\n" (rest.take (functionCloseAt rest))
 
 /-! ### Gates -/
 
@@ -866,15 +1221,16 @@ def emitDependsOnPlan_ok : Bool :=
     tail conjuncts below are the only way this gate can tell them apart - a length check
     cannot, and it says so rather than pretending otherwise. -/
 def emitPlaceholderIsTotal_ok : Bool :=
-  emittedPartials.length == 5 && emittedPartials.contains .finalPairing &&
+  emittedPartials.length == 6 && emittedPartials.contains .finalPairing &&
     emittedPartials.contains .lagrange && emittedPartials.contains .traceReturn &&
     emittedPartials.contains .quotientLin && emittedPartials.contains .vkLoading &&
-    placeholderPartials.length == 2 &&
-    placeholderPartials == [.transcriptParser, .pcs] &&
+    emittedPartials.contains .transcriptParser &&
+    placeholderPartials.length == 1 &&
+    placeholderPartials == [.pcs] &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q ==
         (q == .finalPairing || q == .lagrange || q == .traceReturn ||
-          q == .quotientLin || q == .vkLoading)) &&
+          q == .quotientLin || q == .vkLoading || q == .transcriptParser)) &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q || (emitPlaceholder q).length == 1) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .finalPairing)
@@ -884,11 +1240,20 @@ def emitPlaceholderIsTotal_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitPlaceholder .quotientLin) (emitQuotientLinAt 6) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .vkLoading)
       (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0) &&
+    -- P-AST4: the fifth and sixth placeholder-vs-real pairs. The transcriptParser one is the
+    -- only case in the file where the real slice is LONGER than the dummy by more than one
+    -- statement, so it is the pair a length check separates for free - and the pair that a
+    -- length check alone would NOT have separated for vkLoading or quotientLin, which is why
+    -- the conjuncts are stmtsBeq and not counts.
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .transcriptParser)
+      (emitTranscriptParserDeployed) &&
     -- the shape fact that makes the previous two lines load-bearing: same top-level length,
     -- so nothing but stmtsBeq separates the dummy from the real scope.
     (emitPlaceholder .quotientLin).length == 1 && (emitQuotientLinAt 6).length == 1 &&
     (emitPlaceholder .vkLoading).length == 1 &&
     (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0).length == 1 &&
+    (emitPlaceholder .transcriptParser).length == 1 &&
+    emitTranscriptParserDeployed.length == 44 &&
     (match emitQuotientLinAt 6 with
      | [Stmt.block body] => body.length == 9
      | _ => false) &&
@@ -921,16 +1286,36 @@ def emitDetectsBuiltinVsCall_ok : Bool :=
   yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
     ! SyntaxEq.stmtsBeq good bad
 
-/-- GATE 11 (the slicer is not vacuous). renderFunction finds both helpers and finds them as
-    function definitions, so gates 3 and 4 compare a real slice and not the empty string
-    against the empty string; and it returns "" for a name the render does not define, so a
-    typo in a gate name is a red gate rather than a silent agreement. -/
+/-- GATE 11 (the slicer is not vacuous, and its close test is now measured on SIX
+    definitions and not two). renderFunction finds each helper and finds it as a complete
+    function definition, so gates 3, 4 and 37 compare a real slice and not the empty string
+    against the empty string; it returns "" for a name the render does not define, so a typo
+    in a gate name is a red gate rather than a silent agreement; and the six LINE COUNTS are
+    pinned, which is the clause that makes the P-AST4 repair of the close test a gate and not
+    a claim. Without the depth-aware close, common_uncompressed_g1 comes back as 13 lines
+    ending at an inner brace and this gate goes red - measured, not asserted: the naive rule
+    was reverted on a copy of the tree and gate 11 was the first thing to fail. The other five
+    sizes are pinned in the same clause so a future over- or under-run of the depth counter is
+    caught on whichever helper it hits. -/
 def renderFunctionSlices_ok : Bool :=
   (trimWs (renderFunction (renderAssemblyHelpers poseidonCtx) "fail")).startsWith
     "function fail(sel)" &&
     (trimWs (renderFunction (renderAssemblyHelpers poseidonCtx) "ec_pairing")).startsWith
       "function ec_pairing(success, lhs_mptr, rhs_mptr)" &&
-    (renderFunction (renderAssemblyHelpers poseidonCtx) "no_such_helper") == ""
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "no_such_helper") == "" &&
+    let ah := renderAssemblyHelpers poseidonCtx
+    VerifierPartialKats.lineCount (renderFunction ah "fail") == 4 &&
+    VerifierPartialKats.lineCount (renderFunction ah "ec_pairing") == 36 &&
+    VerifierPartialKats.lineCount (renderFunction ah "transcript_init") == 4 &&
+    VerifierPartialKats.lineCount (renderFunction ah "common_word") == 4 &&
+    VerifierPartialKats.lineCount (renderFunction ah "common_uncompressed_g1") == 22 &&
+    VerifierPartialKats.lineCount (renderFunction ah "squeeze_to") == 9 &&
+    -- and each slice ENDS at a column-12 closing brace, i.e. at the function's own end and
+    -- not at a nested block's - the exact shape that defeated the old rule.
+    (["transcript_init", "common_word", "common_uncompressed_g1", "squeeze_to", "ec_pairing"].all
+      fun nm => match ((renderFunction ah nm).splitOn "\n").reverse.head? with
+        | some last => last == "            }"
+        | none => false)
 
 /-! ### Authoritative snapshots: the emitted AST against a quotation
 
@@ -1174,7 +1559,42 @@ def numericSpellingDivergence_ok : Bool :=
     yulTokens "eq(4320, calldataload(PROOF_LEN_CPTR))" ==
       yulTokens "eq(0x10e0, calldataload(PROOF_LEN_CPTR))" &&
     yulTokens "extcodecopy(vk, VK_MPTR, 1)" == yulTokens "extcodecopy(vk, VK_MPTR, 0x01)" &&
-    hexLiteral "0x10e0" == 4320
+    hexLiteral "0x10e0" == 4320 &&
+    -- P-AST4, and the transcriptParser slice - the widest case in the file, because ONE
+    -- region mixes all three spellings: the section widths and the strides go through the
+    -- hex filter ('add(proof_cptr, 0x0400)', 'add(proof_cptr, 0x20)', 'add(proof_cptr, 0x60)'),
+    -- the instance count is interpolated as a DECIMAL integer ('common_word(buf_len, 1)'),
+    -- and the x3 mask is a bare 32-nibble hex literal the template writes verbatim. The AST
+    -- prints 1024, 32, 96, 1 and the 128-bit modulus of 2 in decimal - 34028236692093846346
+    -- 3374607431768211455, a 39-digit number from a 32-character literal. No AST relation can
+    -- see any of it: stmtsBeq and yulTokens both map hex to value, so a converter that
+    -- normalised the render's notation instead of its numbers would be invisible here and
+    -- only a string-containment gate catches it.
+    (renderTranscriptProofParser poseidonCtx).contains
+      "for { let end := add(proof_cptr, 0x0400) }" &&
+    (EVM.print emitTranscriptParserDeployed).contains "add(proof_cptr, 1024)" &&
+    (renderTranscriptProofParser poseidonCtx).contains "add(proof_cptr, 0x60) }" &&
+    (EVM.print emitTranscriptParserDeployed).contains "add(proof_cptr, 96)" &&
+    (renderTranscriptProofParser poseidonCtx).contains "buf_len := common_word(buf_len, 1)" &&
+    (EVM.print emitTranscriptParserDeployed).contains "common_word(buf_len, 1)" &&
+    (renderTranscriptProofParser poseidonCtx).contains
+      "mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))" &&
+    (EVM.print emitTranscriptParserDeployed).contains
+      "mstore(X3_MPTR, and(mload(X3_MPTR), 340282366920938463463374607431768211455))" &&
+    ! (EVM.print emitTranscriptParserDeployed).contains "0x" &&
+    yulTokens "add(proof_cptr, 1024)" == yulTokens "add(proof_cptr, 0x0400)" &&
+    hexLiteral "0x0400" == 1024 &&
+    -- and the four helpers, where the two spellings sit inside ONE function: common_word's
+    -- stride is decimal 32 in the template and prints decimal 32 here - the coincidence the
+    -- emitCommonWord header claims - while common_uncompressed_g1's copy length is the hex
+    -- literal 0x80 and prints 128.
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "common_word").contains
+      "ret := add(buf_len, 32)" &&
+    (EVM.print emitCommonWord).contains "ret := add(buf_len, 32)" &&
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "common_uncompressed_g1").contains
+      "calldatacopy(buf_len, cptr, 0x80)" &&
+    (EVM.print emitCommonUncompressedG1).contains "calldatacopy(buf_len, cptr, 128)" &&
+    yulTokens "calldatacopy(buf_len, cptr, 128)" == yulTokens "calldatacopy(buf_len, cptr, 0x80)"
 
 /-- Does a statement begin a 'for' loop? Top level only; gate 22 counts the five Lagrange
     loops, which are all siblings inside one block. -/
@@ -1249,7 +1669,21 @@ def emitPartialRoutesRealSlices_ok : Bool :=
         Midfall.Lowering.witnessPlanView.expectedNumAccLimbBits
         Midfall.Lowering.witnessPlanView.proofLayout.proofLen) &&
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
-      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0)
+      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0) &&
+    -- P-AST4: the fifth dispatch line. The transcriptParser placeholder is one statement and
+    -- the real slice is forty-four, so 'the dispatcher reached the real body' is decidable by
+    -- length here - but the line that matters is the second one, which says the dispatch reads
+    -- the ELEVEN PlanView fields and not the deployed profile: the witness plan carries the
+    -- empty parser facts, so routing to poseidonCtx's numbers would satisfy the first line and
+    -- fail this one.
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
+      (emitTranscriptParser Midfall.Lowering.witnessPlanView) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
+      (emitPlaceholder .transcriptParser) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
+      emitTranscriptParserDeployed &&
+    SyntaxEq.stmtsBeq (emitPartial transcriptParserPoseidonPlan .transcriptParser)
+      emitTranscriptParserDeployed
 
 /-! ### The P-AST3a gates: quotientLin -/
 
@@ -1486,6 +1920,7 @@ def emitVkLoadingAccWordsDerived_ok : Bool :=
     (numInstances := poseidonCtx.numInstances) (k := poseidonCtx.k)
     (numNegLagranges := poseidonCtx.numNegLagranges)
     (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
+    (facts := Midfall.Lowering.emptyParserFacts)
   pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
     pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
     (EVM.print (emitVkLoading pv)).contains "eq(mload(HAS_ACCUMULATOR_MPTR), 1)" &&
@@ -1502,6 +1937,358 @@ def emitVkLoadingAccWordsDerived_ok : Bool :=
     -- the derivation says so, not because a call site typed them in.
     (EVM.print (emitVkLoading Midfall.Lowering.witnessPlanView)).contains
       "eq(mload(ACC_OFFSET_MPTR), 0)"
+
+/-! ### The P-AST4 gates: the four transcript helpers and transcriptParser -/
+
+/-- The four transcript helpers, quoted from the same AssemblyHelpers region the text port
+    renders (D:673-749), comments stripped because the AST carries none. Each is an
+    independent elaboration of the artifact's own bytes through the vendored 'yul%' parser,
+    which is what makes gate 42 a check and not a tautology.
+
+    ONE QUOTATION NOTE, earned in this package and worth the paragraph: the PARSER's loop
+    variable is named 'end', which is a Lean keyword, and the vendored elaborator parses
+    identifiers with Lean's 'ident' atom (Syntax.lean:52-80), so a quotation writing
+    'let end :=' does not elaborate at all - the first attempt at this snapshot failed with
+    "unexpected token 'end'; expected identifier" at six sites. Lean's own identifier escape,
+    the guillemet form \u00abend\u00bb, parses as the identifier 'end' and prints back as 'end', so
+    the snapshot needed no DSL change and no renaming of the program. Recorded because the
+    escape is invisible in the printed output and a later package will hit it again. -/
+def transcriptInit_snapshot : Block Op := yul% {
+  function transcript_init() -> buf_len {
+    buf_len := TRANSCRIPT_MPTR
+  }
+}
+
+def commonWord_snapshot : Block Op := yul% {
+  function common_word(buf_len, word) -> ret {
+    mstore(buf_len, word)
+    ret := add(buf_len, 32)
+  }
+}
+
+def commonUncompressedG1_snapshot : Block Op := yul% {
+  function common_uncompressed_g1(buf_len, cptr) -> ret {
+    let x_hi_word := calldataload(cptr)
+    let x_lo := calldataload(add(cptr, 0x20))
+    let y_hi_word := calldataload(add(cptr, 0x40))
+    let y_lo := calldataload(add(cptr, 0x60))
+    if shr(128, x_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
+    if shr(128, y_hi_word) { fail(ERR_BAD_POINT_ENCODING) }
+    let x_hi := and(x_hi_word, 0xffffffffffffffffffffffffffffffff)
+    let y_hi := and(y_hi_word, 0xffffffffffffffffffffffffffffffff)
+    if iszero(or(lt(x_hi, BLS_P_HI), and(eq(x_hi, BLS_P_HI), iszero(gt(x_lo, BLS_P_MINUS_ONE_LO))))) {
+        fail(ERR_BAD_POINT_ENCODING)
+    }
+    if iszero(or(lt(y_hi, BLS_P_HI), and(eq(y_hi, BLS_P_HI), iszero(gt(y_lo, BLS_P_MINUS_ONE_LO))))) {
+        fail(ERR_BAD_POINT_ENCODING)
+    }
+    calldatacopy(buf_len, cptr, 0x80)
+    ret := add(buf_len, 0x80)
+  }
+}
+
+def squeezeTo_snapshot : Block Op := yul% {
+  function squeeze_to(buf_len, mptr) -> ret {
+    let h0 := keccak256(TRANSCRIPT_MPTR, sub(buf_len, TRANSCRIPT_MPTR))
+    mstore(TRANSCRIPT_MPTR, h0)
+    let r := FR_MODULUS
+    mstore(mptr, mod(h0, r))
+    ret := add(TRANSCRIPT_MPTR, 32)
+  }
+}
+
+/-- GATE 37 (the D-P25 tripwire, the four helpers). Each emitted helper prints to the same
+    token stream as the text port's OWN definition, sliced out of the AssemblyHelpers render
+    - sliced, not retyped, so the comparison is against the bytes the artifact carries. -/
+def emitTranscriptHelpers_tokens_ok : Bool :=
+  let ah := renderAssemblyHelpers poseidonCtx
+  yulTokens ("{" ++ renderFunction ah "transcript_init" ++ "}") ==
+    yulTokens (EVM.print emitTranscriptInit) &&
+    yulTokens ("{" ++ renderFunction ah "common_word" ++ "}") ==
+      yulTokens (EVM.print emitCommonWord) &&
+    yulTokens ("{" ++ renderFunction ah "common_uncompressed_g1" ++ "}") ==
+      yulTokens (EVM.print emitCommonUncompressedG1) &&
+    yulTokens ("{" ++ renderFunction ah "squeeze_to" ++ "}") ==
+      yulTokens (EVM.print emitSqueezeTo)
+
+/-- GATE 42 (authoritative, the four helpers). Each equals its quotation under stmtsBeq - the
+    relation that separates the fail USER call from the calldatacopy / shr / and / or / lt /
+    gt built-ins around it, which no token gate can see. -/
+def emitTranscriptHelpers_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq emitTranscriptInit transcriptInit_snapshot &&
+    SyntaxEq.stmtsBeq emitCommonWord commonWord_snapshot &&
+    SyntaxEq.stmtsBeq emitCommonUncompressedG1 commonUncompressedG1_snapshot &&
+    SyntaxEq.stmtsBeq emitSqueezeTo squeezeTo_snapshot
+
+/-- GATE 43 (constant in the plan, and the render says so). The four helpers interpolate
+    NOTHING, so two things are asserted: the emitted helpers do not move when the plan
+    moves, and the RENDER does not move either - which is the difference between a constant
+    the template has and a constant a converter typed. The third line is the control: the
+    same perturbation of g1_bytes DOES move the parser render, so the second line is not
+    true of the whole file and the helper's 0x80 is not a swallowed parameter. The fourth
+    line says the same thing from the AST side: a section width moved by one item moves the
+    emitted parser even though no helper changed. -/
+def emitTranscriptHelpersPlanConstant_ok : Bool :=
+  SyntaxEq.stmtsBeq (emitHelpers Midfall.Lowering.witnessPlanView) (emitHelpers
+    { Midfall.Lowering.witnessPlanView with numTrashcans := 3, numLookups := 9 }) &&
+    renderFunction (renderAssemblyHelpers { poseidonCtx with
+      templateConstants := { templateConstantsDefault with
+        g1Bytes := 96, wordBytes := 64 } }) "common_uncompressed_g1" ==
+      renderFunction (renderAssemblyHelpers poseidonCtx) "common_uncompressed_g1" &&
+    renderTranscriptProofParser { poseidonCtx with
+      templateConstants := { templateConstantsDefault with g1Bytes := 96 } } !=
+      renderTranscriptProofParser poseidonCtx &&
+    ! SyntaxEq.stmtsBeq emitTranscriptParserDeployed (emitTranscriptParserAt
+      poseidonCtx.numInstances poseidonCtx.userPhases poseidonCtx.numLookups
+      poseidonCtx.numPermutationZs poseidonCtx.lookupHPlusAcc poseidonCtx.numTrashcans
+      poseidonCtx.truncatedChallenges { poseidonProofLayout with
+        trash := ProofSection.new 0x764 2 templateConstantsDefault.g1Bytes })
+
+/-- GATE 39 (THE REGION BOUNDARY, pinned as a computation - the transcriptParser twin of
+    gate 29 and gate 90). The deployed render is 17,136 bytes / 318 lines and occurs
+    EXACTLY ONCE in the tracked artifact with the include boundary on both sides; the
+    emitted AST tokenises to it; the emitted AST is the quotation; and the values the
+    quotation pins are RE-READ from the dump's own lines - the six section widths the
+    parser interpolates, the phase window, the x3 mask, and the absence of every trace and
+    gas-checkpoint byte. Without the last group the snapshot would be the artifact quoted
+    back at itself, which is the self-fulfilment D-P30 clause 2 forbids. -/
+def emitTranscriptParserRegionBoundary_ok : IO Bool :=
+  VerifierPartialKats.readDump >>= fun sol =>
+  let r := renderTranscriptProofParser poseidonCtx
+  let printed := EVM.print emitTranscriptParserDeployed
+  let sect (n : Nat) : String := "for { let end := add(proof_cptr, "
+    ++ hexFilter n ++ ") }"
+  pure (r.length == 17136 && VerifierPartialKats.lineCount r == 318 &&
+    VerifierPartialKats.occ sol r == 1 &&
+    VerifierPartialKats.includeBoundary sol r &&
+    yulTokens ("{" ++ r ++ "}") == yulTokens printed &&
+    SyntaxEq.stmtsBeq emitTranscriptParserDeployed VerifierPartialKats.transcriptParser_ast &&
+    sol.contains (sect poseidonProofLayout.lookupMultiplicities.byteLen) &&
+    sol.contains (sect poseidonProofLayout.permutationProducts.byteLen) &&
+    sol.contains (sect poseidonProofLayout.trash.byteLen) &&
+    sol.contains (sect poseidonProofLayout.quotientLimbs.byteLen) &&
+    sol.contains (sect poseidonProofLayout.evals.byteLen) &&
+    sol.contains (sect poseidonProofLayout.qEvals.byteLen) &&
+    sol.contains (sect (poseidonProofLayout.advicePhases.head?.getD
+      (ProofSection.new 0 1 1)).byteLen) &&
+    sol.contains "mstore(X3_MPTR, and(mload(X3_MPTR), 0xffffffffffffffffffffffffffffffff))" &&
+    VerifierPartialKats.occ printed "trace_point" == 0 &&
+    VerifierPartialKats.occ printed "trace_u256" == 0 &&
+    VerifierPartialKats.occ printed "gas_checkpoint" == 0 &&
+    ! printed.contains "function")
+
+/-- GATE 38 (perturbation, transcriptParser; D-P23 falsifiability of gates 36-39, and the
+    gate the brief asks for by name). EVERY interpolated plan value, changed, turns BOTH
+    relations red: the token stream and stmtsBeq. Six new PlanView fields, seven proofLayout
+    section accessors, the instance count and the phase list - and each conjunct pair is the
+    answer to a specific accident.
+
+    The four counts and the flag are the sharpest cases, because at the deployed fixture all
+    five are non-zero / true: an emitter that ignored them and always emitted the section
+    would reproduce the artifact byte for byte and pass gate 39 AND gate 36. Driving a count
+    to zero must delete statements, and it does. The seven widths are the second class: each
+    appears exactly once, inside one loop bound, so a hard-coded width moves nothing. The
+    phase list is the third: it is a LIST, so the gate checks a changed field of the single
+    deployed phase AND a SECOND phase - the case no scalar field could express, and the
+    reason P-AST4 was told not to flatten it. The last pair kills the inertness
+    VerifierPartials' gate 45 records for challenge_offset: at the deployed profile zero
+    challenges are squeezed so no RENDER perturbation can see the offset, but a plan with
+    one challenge can, and the emitter must move with it. -/
+def emitTranscriptParserDetectsPerturbation_ok : Bool :=
+  let good := emitTranscriptParserDeployed
+  let bad (n : Nat) (ph : List UserPhase) (nl nz lh nt : Nat) (tc : Bool)
+      (L : ProofCalldataLayout) : Block Op :=
+    emitTranscriptParserAt n ph nl nz lh nt tc L
+  let P := poseidonCtx.userPhases
+  let p0 := P.head?.getD { adviceBytes := 0, numChallenges := 0, challengeOffset := 0 }
+  let L0 := poseidonProofLayout
+  let lk0 := L0.lookups.head?.getD { lookup := 0, helpers := ProofSection.new 0x664 1 128, accumulator := ProofSection.new 0x6e4 1 128 }
+  let g1 := templateConstantsDefault.g1Bytes
+  let w := templateConstantsDefault.wordBytes
+  yulTokens (EVM.print good) != yulTokens (EVM.print (bad 2 P 1 3 2 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 2 P 1 3 2 1 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 0 3 2 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 0 3 2 1 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 0 2 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 0 2 1 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 0 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 0 1 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 0 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 0 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 false L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 false L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with lookupMultiplicities := ProofSection.new 0x464 2 g1 })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with lookupMultiplicities := ProofSection.new 0x464 2 g1 }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with permutationProducts := ProofSection.new 0x4e4 2 g1 })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with permutationProducts := ProofSection.new 0x4e4 2 g1 }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with trash := ProofSection.new 0x764 2 g1 })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with trash := ProofSection.new 0x764 2 g1 }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with quotientLimbs := ProofSection.new 0x7e4 3 g1 })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with quotientLimbs := ProofSection.new 0x7e4 3 g1 }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with evals := ProofSection.new 0x9e4 49 w })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with evals := ProofSection.new 0x9e4 49 w }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with qEvals := ProofSection.new 0x1064 4 w })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with qEvals := ProofSection.new 0x1064 4 w }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 P 1 3 2 1 true
+      { L0 with lookups := [{ lk0 with helpers := ProofSection.new 0x664 2 g1 }] })) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 P 1 3 2 1 true
+      { L0 with lookups := [{ lk0 with helpers := ProofSection.new 0x664 2 g1 }] }) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 [{ p0 with
+      adviceBytes := 0x420 }] 1 3 2 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 [{ p0 with adviceBytes := 0x420 }] 1 3 2 1 true L0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 (P ++ [{ adviceBytes := 0x80, numChallenges := 1, challengeOffset := 0 }]) 1 3 2 1 true L0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 (P ++ [{ adviceBytes := 0x80, numChallenges := 1, challengeOffset := 0 }]) 1 3 2 1 true L0) &&
+    yulTokens (EVM.print (bad 1 [{ adviceBytes := 0x400, numChallenges := 1, challengeOffset := 0 }] 1 3 2 1 true L0)) != yulTokens (EVM.print (bad 1 [{ adviceBytes := 0x400, numChallenges := 1, challengeOffset := 4 }] 1 3 2 1 true L0)) &&
+    -- and the same eighteen through the PlanView fields, so the dispatch cannot read a
+    -- deployed constant and stay green.
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numLookups := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numPermutationZs := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with lookupHPlusAcc := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numTrashcans := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with
+                              truncatedChallenges := true }) &&
+    ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
+      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with userPhases :=
+                              [{ adviceBytes := 0x400, numChallenges := 0,
+                                 challengeOffset := 0 }] })
+
+/-- GATE 40 (the relation gap, at the parser slice). Every calldatacopy spelled as a USER
+    call named 'calldatacopy' keeps the token stream and breaks stmtsBeq - the class P-AST
+    measured on ec_pairing and P-AST2, P-AST3a and P-AST3b re-measured on their own slices,
+    now reproduced on the sixth. Nine sites, and only THREE of them are top-level: the other
+    six sit inside for-loop bodies and the lookup accumulator tail, so a shallow rewrite
+    would fire three times and the gate would pass for the wrong reason. The counts below
+    are the proof that all nine fired on both sides.
+
+    The reverse mis-spelling - common_word as a BUILT-in - is not expressible: the dialect
+    has no Op named common_word, so there is no token-preserving way to write it. That is a
+    limit of the test and not of the emitter, and it is stated because the parser's five
+    common_word calls are exactly the sites a converter would most plausibly get wrong.
+    They are pinned for constructor choice by gate 39's stmtsBeq against the quotation
+    instead: the quotation parses 'common_word(..)' as a user call because that is what the
+    artifact's text says, and an emitter that spelled it as anything else fails there. -/
+def emitTranscriptParserDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitTranscriptParserDeployed
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.calldatacopy args => Expr.call "calldatacopy" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad &&
+    VerifierPartialKats.occ (EVM.print good) "calldatacopy(" == 9 &&
+    VerifierPartialKats.occ (EVM.print bad) "calldatacopy(" == 9 &&
+    (good.filter fun s => match s with
+      | Stmt.exprStmt (Expr.builtin Op.calldatacopy _) => true
+      | _ => false).length == 3
+
+/-- GATE 44 (the slice is a program, not a shape). Structural facts about the emitted
+    deployed parser, every one measured and not chosen: 44 top-level statements, SEVEN
+    top-level for-loops (the phase, multiplicity, perm-Z, lookup-helper, trashcan, quotient
+    and q_evals walks) with the eval-spill loop inside a nested scope, ten top-level
+    squeeze_to USER calls, three top-level calldatacopies, the cursor-identity guard
+    second-to-last and the deferred success guard last. The placeholder is one flat mstore,
+    so no permutation of it matches - and the placeholder and the slice differ in length by
+    43, which is the only pair in the file where a length check separates them for free.
+    That is stated so nobody mistakes the easy case for the pattern. -/
+def emitTranscriptParserIsReal_ok : Bool :=
+  let b := emitTranscriptParserDeployed
+  b.length == 44 && (b.filter stmtIsFor).length == 7 &&
+    (b.filter fun s => match s with
+      | Stmt.assign ["buf_len"] (Expr.call "squeeze_to" _) => true
+      | _ => false).length == 10 &&
+    (b.filter fun s => match s with
+      | Stmt.exprStmt (Expr.builtin Op.calldatacopy _) => true
+      | _ => false).length == 3 &&
+    (match b.getLast? with
+      | some (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail" _)]) => true
+      | _ => false) &&
+    (match b[b.length - 2]? with
+      | some (Stmt.cond (Expr.builtin Op.iszero
+          [Expr.builtin Op.eq [Expr.var "proof_cptr", Expr.var "NUM_INSTANCE_CPTR"]])
+          [Stmt.exprStmt (Expr.call "fail" _)]) => true
+      | _ => false) &&
+    (b.filter fun s => match s with
+      | Stmt.block body => (body.filter stmtIsFor).length == 1
+      | _ => false).length == 2 &&
+    (emitPlaceholder .transcriptParser).length == 1
+
+/-- GATE 41 (THE DERIVATION REACHES THE EMITTED BYTES - the anti-hard-coding gate for the
+    six new fields, and the transcriptParser twin of gate 36). A plan view built through
+    Inv.lean's planViewWithAccumulator from the deployed profile's own facts emits the
+    deployed shape, and each of the six fields, zeroed in the plan view, removes the
+    statements it guards - with the TEXT PORT agreeing token-for-token at the same perturbed
+    value, so emitter and port move together when the plan moves. The first block also pins
+    that the constructor path and the profile-tuple path are the same block, which is what
+    makes transcriptParserPoseidonArgs a convenience and not a second source of numbers.
+
+    This is the gate that answers the standing note directly. The deployed values are all
+    non-zero, so unlike the four accumulator words a hard-coding converter would have
+    reproduced the artifact and passed both relations - and it is also the other direction:
+    an emitter that always emitted every section would pass gate 39 too. Only this gate
+    distinguishes 'reads the plan' from 'happens to match the dump'. -/
+def emitTranscriptParserFactsDerived_ok : Bool :=
+  let pv := transcriptParserPoseidonPlan
+  let dep := emitTranscriptParser pv
+  let printed := EVM.print dep
+  (printed.contains "add(proof_cptr, 1024)" &&
+    printed.contains "squeeze_to(buf_len, X3_MPTR)" &&
+    printed.contains
+      "mstore(X3_MPTR, and(mload(X3_MPTR), 340282366920938463463374607431768211455))" &&
+    printed.contains "let lookup_m_walk" && printed.contains "let perm_z_walk" &&
+    printed.contains "let lookup_helper_walk" && printed.contains "let trashcan_walk") &&
+    SyntaxEq.stmtsBeq dep VerifierPartialKats.transcriptParser_ast &&
+    SyntaxEq.stmtsBeq dep emitTranscriptParserDeployed &&
+    (let z := { pv with numLookups := 0 };
+      ! SyntaxEq.stmtsBeq (emitTranscriptParser z) VerifierPartialKats.transcriptParser_ast &&
+      !(EVM.print (emitTranscriptParser z)).contains "let lookup_m_walk" &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        numLookups := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
+    (let z := { pv with numPermutationZs := 0 };
+      !(EVM.print (emitTranscriptParser z)).contains "let perm_z_walk" &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        numPermutationZs := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
+    (let z := { pv with lookupHPlusAcc := 0 };
+      !(EVM.print (emitTranscriptParser z)).contains "let lookup_helper_walk" &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        lookupHPlusAcc := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
+    (let z := { pv with numTrashcans := 0 };
+      !(EVM.print (emitTranscriptParser z)).contains "let trashcan_walk" &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        numTrashcans := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
+    (let z := { pv with truncatedChallenges := false };
+      !(EVM.print (emitTranscriptParser z)).contains "mstore(X3_MPTR" &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        truncatedChallenges := false } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
+    (let z := { pv with userPhases := [] };
+      (emitTranscriptParser z).length == dep.length - 1 &&
+      yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
+        userPhases := [] } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z)))
+
+#eval Midfall.Lowering.GenAst.emitTranscriptHelpers_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptHelpers_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptHelpersPlanConstant_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptParserRegionBoundary_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptParserDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptParserDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptParserIsReal_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitTranscriptParserFactsDerived_ok -- expect true
 
 end Midfall.Lowering.GenAst
 

@@ -173,6 +173,42 @@ FAMILIES = [
                        "cfg.accumulator"],
     },
     {
+        # P-AST4: the six transcript-parser facts PlanView now carries, because
+        # TranscriptProofParser.yul loops over user_phases (:105), guards four of its ten
+        # proof sections on the four counts (:142, :172, :195, :242) and masks x3 on the
+        # truncation flag (:355). The Rust derives all six ONCE into the render model
+        # (M:557-563, M:614) from the constraint-system meta and the proof layout
+        # (ART:160-170, :291-294, :172, :328), so six fields are six copies of facts that
+        # already live in the plan record - the R-58 F2 / F6 class again, one partial later.
+        # The repair is the P-AST3b shape: ONE derivation (Inv.lean's parserFactsOfPlan,
+        # reached only through planViewWithAccumulator, the constructor every call site
+        # uses) and a pin that ties the derived six to the values the emitter reads
+        # (Instances/DeployedProfile.lean's derivedParserFacts_matchPlanView_ok, which also
+        # perturbs each of the six on the model and requires the tuple to move).
+        #
+        # WHY THIS IS REGISTERED BY HAND, and this is the second time the same hole in the
+        # gate has been found by a human rather than by the gate: discovery (rule 5) is a
+        # PREFIX match of the field name against DISCOVERY_STEMS, and not one of userPhases,
+        # numLookups, numPermutationZs, lookupHPlusAcc, numTrashcans or truncatedChallenges
+        # begins with hasAccumulator, numInstances, accumulator, evaluator, encG2,
+        # runtimeName, vkDigest or shell. "numLookups" does not start with "numInstances";
+        # "lookupHPlusAcc" does not start with "accumulator". A family of six brand-new
+        # copies is invisible to the automatic scan, exactly as the four "expected*" words
+        # were in P-AST3b. The stem list is NOT widened here: adding "num" or "lookup" would
+        # flag dozens of unrelated fields, and a gate that cries wolf gets ignored (R-60 S2).
+        "name": "transcriptParserFacts",
+        "carriers": [(INV, "PlanView", "userPhases"),
+                     (INV, "PlanView", "numLookups"),
+                     (INV, "PlanView", "numPermutationZs"),
+                     (INV, "PlanView", "lookupHPlusAcc"),
+                     (INV, "PlanView", "numTrashcans"),
+                     (INV, "PlanView", "truncatedChallenges")],
+        "pins": [],
+        "enforced_at": (INV, "parserFactsOfPlan",
+                        ["m.userPhases", "m.numLookups", "m.numPermutationZs",
+                         "m.lookupHPlusAcc", "m.numTrashcans", "m.truncatedChallenges"]),
+    },
+    {
         # R-60 S7: shell.codeBlock (the Yul AST the shell runs) and shellLayout.code
         # (the bytecode the deployment installs) are two copies of "the shell program"
         # in two representations. No pin is nameable today: relating them needs a
