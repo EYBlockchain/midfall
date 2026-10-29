@@ -496,15 +496,17 @@ fn point_pair_accumulator_proof_verifies_on_evm() {
         let public_columns: [&[F]; 1] = [&instances];
         let mut transcript =
             CircuitTranscript::<sha3::Keccak256>::init_from_bytes(&compressed_proof);
-        prepare::<F, KZGCommitmentScheme<Bls12>, CircuitTranscript<sha3::Keccak256>>(
+        let guard = prepare::<F, KZGCommitmentScheme<Bls12>, CircuitTranscript<sha3::Keccak256>>(
             pk.get_vk(),
             &[&committed_pi],
             &[&public_columns],
             &mut transcript,
         )
-        .expect("native point-pair accumulator prepare")
-        .verify(&params.verifier_params())
-        .expect("native point-pair accumulator verify");
+        .expect("native point-pair accumulator prepare");
+        transcript.assert_empty().expect("native proof consumed");
+        guard
+            .verify(&params.verifier_params())
+            .expect("native point-pair accumulator verify");
 
         let proof = generator.repack_proof(&compressed_proof).expect("repack point-pair proof");
         let output = call_deployed_verifier(&mut deployed, &proof, &instances);
