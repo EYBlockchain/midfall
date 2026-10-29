@@ -165,10 +165,28 @@ recorded, and D-P25 confirms the plan rather than changing it.
 
 ## Next
 
-Refreshed round 72 - the previous list predated P-AST, P-4a2 and P-ENV entirely.
+**M0 IS DONE.** `formal-baseline-v1` is cut at `df7e607`: the poseidon fixture now passes the
+current verifier on all three legs (native, generated Solidity Vm, Direct) where the previous
+one returned `Error::Opening`. Twelve orphan fixtures deleted, SHA table re-pinned 67 -> 55
+rows and all re-verified against disk. **One named exception:** the two `--all-features` legs
+fail on this host for missing extended-domain SRS assets - pre-existing, unrelated to the
+fixtures. See `BASELINE.md`, "Poseidon fixture regeneration".
 
-1. **D-P30 conversion, split per partial** (the current critical path): THREE `Partial`s
-   still emit placeholders - `vkLoading`, `transcriptParser`, `pcs` (P-AST took
+1. **Protect the freeze** (in flight): land the regeneration harness as an env-gated test -
+   right now nothing in the tree can re-emit the fixture set. Plus the 2 stale tracked `.sol`
+   SHA rows.
+2. **D-P30 remainder:** the `Quotient/Evaluator.lean` + `Kzg.computations` conversion is done;
+   `pcs` needs a deployed circuit (`ProtocolPlan::from_constraint_system`), not more emission.
+3. **D-P21 implementation** - per-round `chalMass`; adopted round 51, still not executed.
+4. **Statement-layer follow-ups:** `vkLoading_spec` world hypothesis (needs a decision),
+   `batch_invert`/`scalar_inv` helper gap, belt-and-braces `hh`/`hkec` fingerprint fragments.
+5. **`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.
+6. Small owed items: F-IR-1 basename collision, `Common/Bytes.lean` `Array.foldl` lemma,
+   `fixedBases` "-G" defect.
+
+**Awaiting the human:** (i) the pairing / r-torsion decision - my recommendation is to assume
+both as named, gate-enforced hypotheses per D-P1's own policy, which unblocks three of the ten
+`*_spec` theorems; (ii) where the world hypothesis belongs for `vkLoading_spec`.
    `finalPairing`, P-AST2 `lagrange` + `traceReturn`, P-AST3a `quotientLin`). Then
    `Quotient/Evaluator.lean` (18 string sites), then `VerifierPartials`/`Contracts`.
    Each slice gated by `stmtsBeq` against the text port AND the token comparator - not
