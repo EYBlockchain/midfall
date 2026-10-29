@@ -1082,21 +1082,34 @@ def bundleAccFixturePlan : PlanView :=
 def emittedEip2537Targets (pv : PlanView) (q : Partial) : List Nat :=
   eip2537TargetsIn (bundleWalkSs (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q))).1
 
-/-- The user-function names the emitted program calls but the emitted helpers never define. THE
-    HELPER GAP AS DATA rather than as a paragraph: `batch_invert` (AssemblyHelpers.yul:226, called
-    at GenAst.lean:509), `scalar_inv` (AssemblyHelpers.yul:640, called from the PCS linearisation
-    expansion at GenAstPcs.lean:267 and :305) and `validate_public_accumulator`
-    (AccumulatorHelpers.yul:190, called at GenAst.lean:770) are called by the emitter and not
-    defined by `emitHelpers` - the first two recorded in prose at GenAst.lean:382-385 and
-    GenAstPcs.lean:33, and all three here as something a gate can read. Note that BOTH the
-    lagrange and the pcs gaps are modexp helpers and not EIP-2537 ones: the emitted pcs slice
-    reaches 0x0b and 0x0c through its OWN staticcalls and reaches nothing through scalar_inv. -/
-def emittedUnresolvedCalls (pv : PlanView) (q : Partial) : List String :=
-  let closed := callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q)
+/-- The user-function names one emitted program calls but no definition in it answers, taken
+    against an ARBITRARY helper block. This is the general form, and the reason it is general is
+    the closure gate below: a gate that can only be run against the real `emitHelpers` cannot be
+    shown to bite, and D-P23 asks for the failure mode as well as for the witness. -/
+def unresolvedCallsUnder (helpers : Block Op) (pv : PlanView) (q : Partial) : List String :=
+  let closed := callClosure helpers (GenAst.emitPartial pv q)
   let defined := closed.filterMap fun
     | Stmt.funDef n _ _ _ => some n
     | _ => none
   ((bundleWalkSs closed).2.filter fun n => !defined.contains n).eraseDups
+
+/-- The user-function names the emitted program calls but the emitted helpers never define. THE
+    HELPER GAP AS DATA rather than as a paragraph, and since P-HELPERS THE THING A CLOSURE GATE
+    REQUIRES TO BE EMPTY (`emittedProgramClosure_ok` below) rather than a hole with a doc string
+    on it - which is the difference between a gap four packages walked past and a gap a build
+    cannot survive.
+
+    What it reports now: `validate_public_accumulator` (AccumulatorHelpers.yul:190, called from
+    the vkLoading accumulator arm) and NOTHING ELSE at any pinned plan view. The two entries it
+    used to carry - `batch_invert` (AssemblyHelpers.yul:226, called at GenAst.lean:509) and
+    `scalar_inv` (:20, called from the PCS linearisation expansion at GenAstPcs.lean:267 and
+    :305) - are emitted now, so the lagrange and pcs rows are empty and the emptiness is gated.
+    Note that BOTH of those two were modexp helpers and not EIP-2537 ones, which is why closing
+    them changed no row of `partialEip2537Targets`: the emitted pcs slice reaches 0x0b and 0x0c
+    through its OWN staticcalls and reaches nothing through scalar_inv, and reaches nothing
+    through the body of scalar_inv either now that the body is emitted. -/
+def emittedUnresolvedCalls (pv : PlanView) (q : Partial) : List String :=
+  unresolvedCallsUnder (GenAst.emitHelpers pv) pv q
 
 /-- THE ADDRESSES THE UNEMITTED HELPERS USE IN THE REFERENCE. This is the record that
     `vkLoading_spec` is a LATENT instance of the hole this package closed for `pcs_spec` and not
@@ -1105,13 +1118,19 @@ def emittedUnresolvedCalls (pv : PlanView) (q : Partial) : List String :=
     (AccumulatorHelpers.yul:190-230). Today the emitted program cannot run it, so the classifier
     correctly reports no reachable EIP-2537 address and the gate correctly demands nothing. The
     moment the helper lands the row stops being empty and the gate demands `Holds` on
-    `vkLoading_spec` by itself, with nobody having to remember to look. `batch_invert` is listed
-    with modexp only to show the list is not curated to flatter the current bundle: that one must
-    NEVER turn into a Holds requirement, because modexp is arithmetic. -/
+    `vkLoading_spec` by itself, with nobody having to remember to look.
+
+    P-HELPERS SHRANK THIS LIST FROM THREE ROWS TO ONE by emitting `batch_invert` and
+    `scalar_inv`, and the deletion is the honest one: a row here asserts the helper is NOT
+    emitted, and after this package that assertion was false for two of the three. The fact those
+    two rows carried - modexp is arithmetic and must NEVER turn into a `Holds` requirement - did
+    not go with them. It is pinned twice over now: by the classifier clause in
+    `partialEip2537Targets_ok` that a modexp address is not an EIP-2537 target, and by the
+    STRONGER form of the same claim in `emittedProgramClosure_ok`, which reads the lagrange and
+    pcs rows as empty even though the closed program now contains three modexp `staticcall`s
+    inside the bodies of the helpers it emits. -/
 def unemittedHelperAddresses : List (String × List Nat) :=
-  [("batch_invert", [templateConstantsDefault.modexp.address]),
-   ("scalar_inv", [templateConstantsDefault.modexp.address]),
-   ("validate_public_accumulator",
+  [("validate_public_accumulator",
      [templateConstantsDefault.eip2537.g1msmAddress,
       templateConstantsDefault.eip2537.g1addAddress])]
 
@@ -1168,20 +1187,30 @@ def partialEip2537Targets_ok : Bool :=
   ((GenAst.emitHelpers GenAst.pcsFixturePlan).all fun
     | Stmt.funDef n _ _ b => !((bundleWalkSs b).2.contains n)
     | _ => true) &&
-  -- 5. the helper gap, as data
-  (emittedUnresolvedCalls GenAst.pcsFixturePlan .lagrange == ["batch_invert"]) &&
-    (emittedUnresolvedCalls GenAst.pcsFixturePlan .pcs == ["scalar_inv"]) &&
+  -- 5. the helper gap, as data. P-HELPERS CLOSED TWO OF THE THREE ROWS this conjunct used to
+  --    pin, and the emptiness is now the assertion: the emitted lagrange and pcs programs call
+  --    nothing main does not define. The row that remains is the accumulator arm the deployed
+  --    profile never takes, and it is the one entry of closureNamedExceptions.
+  (emittedUnresolvedCalls GenAst.pcsFixturePlan .lagrange == []) &&
+    (emittedUnresolvedCalls GenAst.pcsFixturePlan .pcs == []) &&
     (emittedUnresolvedCalls bundleAccFixturePlan .vkLoading
       == ["validate_public_accumulator"]) &&
     (emittedUnresolvedCalls GenAst.pcsFixturePlan .vkLoading == []) &&
     (emittedUnresolvedCalls GenAst.pcsFixturePlan .finalPairing == []) &&
-    (unemittedHelperAddresses.lookup "batch_invert"
-      == some [templateConstantsDefault.modexp.address]) &&
-    (unemittedHelperAddresses.lookup "scalar_inv"
-      == some [templateConstantsDefault.modexp.address]) &&
+    (unemittedHelperAddresses.map Prod.fst == ["validate_public_accumulator"]) &&
     (unemittedHelperAddresses.lookup "validate_public_accumulator"
       == some [templateConstantsDefault.eip2537.g1msmAddress,
                templateConstantsDefault.eip2537.g1addAddress]) &&
+    -- AND THE MODEXP FACT IN ITS STRONGEST FORM. The two helpers this package emitted run the
+    -- modexp precompile, so the CLOSED lagrange program now contains a modexp staticcall that
+    -- the open one did not - and the row is still empty. Before P-HELPERS the same claim rested
+    -- on a helper that was never emitted at all, which was the weaker version of it: nothing was
+    -- reaching 0x05 in the first place. A later package that widens eip2537CallAddresses to
+    -- include modexp reddens here and nowhere else.
+    (EVM.print (callClosure (GenAst.emitHelpers GenAst.pcsFixturePlan)
+      (GenAst.emitPartial GenAst.pcsFixturePlan .lagrange))).contains
+        "staticcall(MODEXP_GAS, 5," &&
+    (emittedEip2537Targets GenAst.pcsFixturePlan .lagrange == []) &&
   -- 6. not vacuous: exactly the two rows that bind Holds are the two that reach
   ((partialEip2537Targets.filter fun (_, l) => !l.isEmpty).map Prod.fst
     == [.pcs, .finalPairing]) &&
@@ -1209,6 +1238,226 @@ def partialEip2537Targets_detectsPerturbation_ok : Bool :=
         GenAst.ylit 0])] == [0x0b])
 
 #eval partialEip2537Targets_detectsPerturbation_ok   -- expect true
+
+/-! ### THE CLOSURE GATE (P-HELPERS): every user call in every emitted slice resolves -/
+
+/- THE DEFECT THIS SECTION EXISTS FOR, in one sentence: `BlkIsEmitter` pins `main` to
+    `emitMain`, and `emitMain` really does contain what the emitter produces, so the pin stayed
+    SATISFIED while the emitted program referenced three functions that were never defined and
+    therefore could not run. A satisfied pin over an unrunnable program is invisible to every
+    other gate in this tree - the token and AST relations compare one slice against one render,
+    and neither one asks what the slice CALLS. This section is the general repair: not the three
+    helpers (two of them are now emitted, and the third is below as a named exception) but the
+    decidable check that would have refused the missing ones on their own. -/
+
+/-- THE NAMED EXCEPTIONS: (partial, callee) pairs the closure gate is TOLD about and does not
+    require. Exactly one, and it is not a convenience - `validate_public_accumulator`
+    (AccumulatorHelpers.yul:190) is called only by the vkLoading accumulator arm, which the
+    deployed profile never takes, and it is not an AssemblyHelpers definition: it lives in a
+    second included file whose render this emitter does not model, and its own body calls five
+    more functions in that file (`load_acc_point`, `load_acc_coord`, `load_acc_coord_shifted`,
+    `check_acc_coord_packing`, `is_bls_p_minus_one`), so closing this exception is the conversion
+    of a whole file and not the addition of one definition. Recorded as data, in a list a gate
+    reads, so that the day it closes is a red gate and not a rumour. -/
+def closureNamedExceptions : List (Partial × String) :=
+  [(.vkLoading, "validate_public_accumulator")]
+
+/-- Is this (partial, callee) pair on the exception list? -/
+def closureIsNamedException (q : Partial) (n : String) : Bool :=
+  closureNamedExceptions.contains (q, n)
+
+/-- THE PLAN VIEWS THE CLOSURE GATE IS CHECKED AT, named so the coverage is data and not an
+    adjective: the no-accumulator fixture and the accumulator fixture, i.e. the two plan views
+    `partialEip2537Targets_ok` unions over and the two the spec theorems are pinned against.
+    THIS IS THE GATE'S COVERAGE LIMIT, stated where a reader will hit it: a plan view not on
+    this list is a plan view whose emitted program this gate has never looked at, and a future
+    arm that only appears at some fourth plan view can still be link-incomplete and green here.
+    The list is the same reason the gate is decidable rather than proved. -/
+def closurePlanViews : List PlanView := [GenAst.pcsFixturePlan, bundleAccFixturePlan]
+
+/-- THE CLOSURE PREDICATE, as a function of the helper block so it can be run against a pruned
+    one. `closureHoldsUnder GenAst.emitHelpers` is the claim; the parameterisation is what lets
+    the falsification below delete a definition and show the claim go red. -/
+def closureHoldsUnder (helpers : PlanView → Block Op) : Bool :=
+  (closurePlanViews.all fun pv =>
+    Midfall.Lowering.partials.all fun q =>
+      (unresolvedCallsUnder (helpers pv) pv q).all fun n => closureIsNamedException q n)
+
+/-- The user calls the WHOLE emitted main cannot resolve, read off `emitMain` itself rather than
+    off one slice and its closure: every call inside every helper body is in scope here too, which
+    is the half the per-partial form gets only through `callClosure`. This is the statement the
+    brief asks for in its literal form - every user call in every emitted slice has a matching
+    `funDef` in `emitMain` - and it is checked alongside the per-slice form rather than instead
+    of it, because the two fail differently: the per-slice form localises the gap to a partial,
+    and this one catches a helper that calls a helper nobody hoists. -/
+def emittedMainUnresolvedCalls (pv : PlanView) : List String :=
+  let main := GenAst.emitMain pv
+  let defined := main.filterMap fun
+    | Stmt.funDef n _ _ _ => some n
+    | _ => none
+  ((bundleWalkSs main).2.filter fun n => !defined.contains n).eraseDups
+
+/-- WHICH PARTIAL EACH EMITTED HELPER IS LOAD-BEARING FOR. The table the falsification below
+    walks, so the deletion evidence covers every definition `emitHelpers` hoists and not just
+    the two this package added. `fail` is listed against finalPairing because that is the slice
+    whose own tail guard calls it; the transcript four are listed against transcriptParser, which
+    is the only slice that calls them; `scalar_inv` against pcs and `batch_invert` against
+    lagrange, which is the pair of gaps P-HELPERS closed. -/
+def closureHelperOwners : List (String × Partial) :=
+  [("fail", .finalPairing), ("scalar_inv", .pcs), ("transcript_init", .transcriptParser),
+   ("common_word", .transcriptParser), ("common_uncompressed_g1", .transcriptParser),
+   ("squeeze_to", .transcriptParser), ("batch_invert", .lagrange), ("ec_pairing", .finalPairing)]
+
+/-- Two lists carry the same set of members, ignoring order and duplicates. Used instead of a
+    sorted comparison because `List.sort` is a Mathlib field and this file is Mathlib-free. -/
+def sameMembers {alpha : Type} [BEq alpha] (xs ys : List alpha) : Bool :=
+  (xs.all fun x => ys.contains x) && (ys.all fun y => xs.contains y)
+
+/-- GATE (THE CLOSURE GATE). Seven clauses:
+
+    1. the predicate itself, at every pinned plan view and every partial;
+    2. the whole-program form: `emitMain` at the no-accumulator plan view resolves EVERYTHING,
+       and at the accumulator plan view the only thing it cannot resolve is the named exception -
+       so the exception list is doing exactly one job and no more;
+    3. every named exception is a call the emitter really does leave unresolved: an exception that
+       stops biting is a red gate, which is what stops this list becoming the place gaps go to be
+       forgotten;
+    4. the exception is ARM-SCOPED and not a wildcard over vkLoading: at the plan view with no
+       accumulator the vkLoading slice resolves completely;
+    5. the exception list and the address record agree, so the two places the remaining gap is
+       written down cannot drift apart;
+    6. the coverage tables are complete: one owner row per emitted definition, one exception row
+       per remaining gap;
+    7. the gate is not vacuous in the direction that matters - the emitted program is big enough
+       that a classifier which always said "resolved" would be caught by clause 3 failing on a
+       pruned helper set, which is the next def. -/
+def emittedProgramClosure_ok : Bool :=
+  -- 1. the predicate
+  closureHoldsUnder GenAst.emitHelpers &&
+    -- 2. the whole-program form
+    (emittedMainUnresolvedCalls GenAst.pcsFixturePlan == []) &&
+    (emittedMainUnresolvedCalls bundleAccFixturePlan == ["validate_public_accumulator"]) &&
+    -- 3. every exception is live
+    (closureNamedExceptions.all fun (q, n) =>
+      (closurePlanViews.any fun pv => (emittedUnresolvedCalls pv q).contains n)) &&
+    -- 4. arm-scoped, not a wildcard
+    (emittedUnresolvedCalls GenAst.pcsFixturePlan .vkLoading == []) &&
+    -- 5. the two records of the remaining gap agree
+    sameMembers (List.map Prod.snd closureNamedExceptions)
+      (List.map Prod.fst unemittedHelperAddresses) &&
+    -- 6. one owner row per emitted definition, and every owner row names a real partial
+    sameMembers ((GenAst.emitHelpers GenAst.pcsFixturePlan).filterMap (fun
+        | Stmt.funDef n _ _ _ => some n
+        | _ => none)) (List.map Prod.fst closureHelperOwners) &&
+    (closureHelperOwners.all fun (_, q) => Midfall.Lowering.partials.contains q) &&
+    -- 7. the slices this gate is about are the real ones: the lagrange and pcs programs are not
+    --    empty, so clause 1 is not being satisfied by nothing to check.
+    (! (GenAst.emitPartial GenAst.pcsFixturePlan .lagrange).isEmpty) &&
+    (! (GenAst.emitPartial GenAst.pcsFixturePlan .pcs).isEmpty)
+
+/-- FALSIFICATION OF THE CLOSURE GATE (D-P23, R-41: the failure mode, not just the witness).
+    Deleting ANY ONE of the eight definitions `emitHelpers` hoists makes the gate false, and
+    makes it false for the partial the owner table names, with the residue being exactly the
+    deleted name - so the gate localises the gap and does not merely notice one. The last line is
+    the liveness control in the other direction: with the real helper block the same predicate is
+    true, so these rows are dependences on the definitions and not a constant false. -/
+def emittedProgramClosure_detectsDeletion_ok : Bool :=
+  (closureHelperOwners.all fun (nm, q) =>
+    (closurePlanViews.all fun pv =>
+      unresolvedCallsUnder (GenAst.emitHelpersWithout nm pv) pv q == [nm]) &&
+      ! closureIsNamedException q nm) &&
+    (["fail", "scalar_inv", "transcript_init", "common_word", "common_uncompressed_g1",
+      "squeeze_to", "batch_invert", "ec_pairing"].all fun nm =>
+      ! closureHoldsUnder (fun pv => GenAst.emitHelpersWithout nm pv)) &&
+    closureHoldsUnder GenAst.emitHelpers
+
+#eval emittedProgramClosure_ok                    -- expect true
+#eval emittedProgramClosure_detectsDeletion_ok    -- expect true
+/- THE OTHER LINK DIMENSION, AS DATA. The closure gate above resolves `Expr.call` names
+    against `Stmt.funDef` names and nothing else. A Yul program also fails to link when it
+    *references a variable no enclosing scope declares*, and the emitted main does that 76 times
+    over: every `*_MPTR`, `*_CPTR`, `ERR_*`, `FR_MODULUS`, `MODEXP_GAS`,
+    `PAIRING_GAS_2PAIR` and the `vk` local is bound OUTSIDE `emitMain`, in the contract shell - the
+    91 `uint256 internal constant` declarations of Halo2Verifier.sol plus the prologue `let`s the
+    artifact puts above the first partial. That is not a defect: D-P30 puts the Solidity wrapper
+    explicitly out of scope, and the wrapper is where those names live. It IS a limit on what the
+    closure gate can promise, and it is recorded here rather than only in a report, so that a
+    later package cannot read "the closure gate is green" as "the emitted program links". -/
+mutual
+def freeRefE : Expr Op → List String
+  | Expr.var n => [n]
+  | Expr.call _ args => freeRefEs args
+  | Expr.builtin _ args => freeRefEs args
+  | _ => []
+termination_by e => sizeOf e
+
+def freeRefEs : List (Expr Op) → List String
+  | [] => []
+  | e :: es => freeRefE e ++ freeRefEs es
+termination_by es => sizeOf es
+
+def freeWalkSs : List (Stmt Op) → List String × List String
+  | [] => ([], [])
+  | s :: ss =>
+      let (a, b) := freeWalkS s
+      let (c, d) := freeWalkSs ss
+      (a ++ c, b ++ d)
+termination_by ss => sizeOf ss
+
+/-- References and declarations in one flat pass. An assignment target is a REFERENCE: in Yul,
+    assigning to a name no scope declared is itself a validation error, so counting it as a
+    declaration would hide exactly the gap this walk looks for. -/
+def freeWalkS : Stmt Op → List String × List String
+  | Stmt.block b => freeWalkSs b
+  | Stmt.funDef n ps rs b => let (r, d) := freeWalkSs b; (r, n :: ps ++ rs ++ d)
+  | Stmt.letDecl vs e => (e.map freeRefE |>.getD [], vs)
+  | Stmt.assign vs e => (freeRefE e ++ vs, [])
+  | Stmt.cond c b => let (r, d) := freeWalkSs b; (freeRefE c ++ r, d)
+  | Stmt.forLoop i c p b =>
+      let (ri, di) := freeWalkSs i
+      let (rp, dp) := freeWalkSs p
+      let (rb, db) := freeWalkSs b
+      (freeRefE c ++ ri ++ rp ++ rb, di ++ dp ++ db)
+  | Stmt.exprStmt e => (freeRefE e, [])
+  | _ => ([], [])
+termination_by s => sizeOf s
+end
+
+/-- The identifiers one emitted program references and does not itself declare. Flat scope: a
+    name declared ANYWHERE in the program counts as declared, which under-approximates the free
+    set and so makes the gate below conservative rather than flattering. -/
+def emittedFreeIdentifiers (pv : PlanView) : List String :=
+  let (rs, ds) := freeWalkSs (GenAst.emitMain pv)
+  (rs.filter fun n => !ds.contains n).eraseDups
+
+/-- GATE (THE CLOSURE GATE IS NOT LINK-COMPLETENESS). Four clauses, all measurements: (1) at the
+    no-accumulator plan view the CALL closure is empty and the IDENTIFIER closure is not - the
+    two move in opposite directions, which is the whole point; (2) every free identifier is a
+    shell-provided name, i.e. upper-case with underscores, or the one lower-case local the
+    wrapper binds for the VK address; (3) the named ones the helpers introduced are in there, so
+    this gate moved when the helpers did; (4) the emitted program uses NO object-level external
+    - no `datasize`, `datacopy`, `dataoffset` or `loadimmutable` - so that third link dimension is
+    currently vacuous, and the closure gate would be blind to it if it stopped being so. -/
+def emittedCallClosureIsNotLinkCompleteness_ok : Bool :=
+  let free := emittedFreeIdentifiers GenAst.pcsFixturePlan
+  (emittedUnresolvedCalls GenAst.pcsFixturePlan .lagrange == []) &&
+    (emittedMainUnresolvedCalls GenAst.pcsFixturePlan == []) &&
+    free.length == 76 &&
+    (free.all fun n => n == "vk" || (n.toList.all fun c => c.isUpper || c.isDigit || c == '_')) &&
+    (["FR_MODULUS", "MODEXP_GAS", "ERR_PRECOMPILE_FAILED", "TRANSCRIPT_MPTR", "vk",
+       "BATCH_INV_SCRATCH_MPTR"].all fun n => free.contains n) &&
+    (let prg := EVM.print (GenAst.emitMain GenAst.pcsFixturePlan);
+      ! (["loadimmutable", "dataoffset", "datasize(", "datacopy("].any fun w =>
+        prg.contains (" " ++ w) || prg.contains ("(" ++ w) || prg.contains ("," ++ w))) &&
+    -- AND THE ACCUMULATOR ARM WIDENS THE IDENTIFIER GAP BY EXACTLY THE TWO SLOTS IT
+    -- READS. The exception is a missing DEFINITION and not a missing binding, but the arm it
+    -- guards references two shell constants the no-accumulator view never names, so the two
+    -- closures are independent in both directions and neither one contains the other.
+    (emittedFreeIdentifiers bundleAccFixturePlan).length == free.length + 2 &&
+    ((emittedFreeIdentifiers bundleAccFixturePlan).filter fun n => !free.contains n) ==
+      ["ACC_RHS_MPTR", "ACC_LHS_MPTR"]
+
+#eval emittedCallClosureIsNotLinkCompleteness_ok   -- expect true
 
 
 /-- The world-state reads one emitted program performs, as data. The EIP-2537 classifier above

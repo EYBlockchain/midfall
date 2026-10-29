@@ -656,19 +656,24 @@ def mainConcatKats_ok : Bool :=
   -- its own section. That is the six new PlanView fields showing up in main's shape, and it is
   -- why the count is pinned rather than described: at the deployed facts the same expression
   -- gives 61, and GenAst's gate 44 pins that one.
-  -- The composition is six helpers, the one-statement vkLoading scope, the twenty-nine
+  -- The composition is eight helpers, the one-statement vkLoading scope, the twenty-nine
   -- statement transcriptParser slice, the three-statement Lagrange, the one-statement
   -- quotientLin scope, the one-statement pcs placeholder, the two-statement FinalPairing arm
   -- and the three-statement TraceReturn arm; the pre-P-AST fixture carried seven dummies and
   -- no helpers at all, so a real finalPairing slice could not have resolved fail or ec_pairing.
-  realSurface.L.main.length == 45 &&
-    -- and the first six statements really are those definitions, i.e. mainScope - which
-    -- hoists main - can see them, including the four the parser calls. This is the pin's
-    -- second conjunct as a computation, and P-AST4 widened it from two names to six.
+  realSurface.L.main.length == 47 &&
+    -- and the first EIGHT statements really are those definitions, in the template's own
+    -- order, i.e. mainScope - which hoists main - can see them: the two EIP-precondition
+    -- helpers fail and ec_pairing, the four the parser calls, and the two modexp helpers
+    -- P-HELPERS added, scalar_inv where the render puts it and batch_invert where the render
+    -- puts it. This is the pin's second conjunct as a computation; P-AST4 widened it from two
+    -- names to six and P-HELPERS to eight, and the ORDER is part of it - a permutation of the
+    -- helper list now reddens here as well as at GenAst's gate 51.
     (match realSurface.L.main with
-     | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "transcript_init" _ _ _ ::
-         Stmt.funDef "common_word" _ _ _ :: Stmt.funDef "common_uncompressed_g1" _ _ _ ::
-         Stmt.funDef "squeeze_to" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
+     | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "scalar_inv" _ _ _ ::
+         Stmt.funDef "transcript_init" _ _ _ :: Stmt.funDef "common_word" _ _ _ ::
+         Stmt.funDef "common_uncompressed_g1" _ _ _ :: Stmt.funDef "squeeze_to" _ _ _ ::
+         Stmt.funDef "batch_invert" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
      | _ => false) &&
     -- THE VKLOADING CLAUSE (P-AST3b), structural for the same reason the quotientLin one
     -- below is: the placeholder it replaced was one statement and the real slice is one
@@ -756,10 +761,10 @@ def mainConcatKats_ok : Bool :=
     conversions this gate still CANNOT see are quotientLin and vkLoading, and the
     transcriptParser placeholder plant is a stmtsBeq exhibit for the same reason. -/
 def lowerPinKats_ok : Bool :=
-  (match fxLower fxOptions with | .ok l => l.main.length == 45 | .error _ => false) &&
+  (match fxLower fxOptions with | .ok l => l.main.length == 47 | .error _ => false) &&
     (match fxLower fxOptionsTrace with | .ok _ => false | .error _ => true) &&
     (match realSurface.lower realSurface.o₀ with
-     | .ok l => l.main.length == 45 | .error _ => false)
+     | .ok l => l.main.length == 47 | .error _ => false)
 
 #eval lowerPinKats_ok                     -- expect true
 
@@ -1197,7 +1202,7 @@ def plantQuotientLinPlaceholderSurface : Surface rp RP RP RP :=
 /-- THE PIN BITES THE PLACEHOLDER PLANT, QUOTIENTLIN (D-P23, second half for the new slice).
     WHAT MAKES THIS PLANT DIFFERENT FROM THE OTHER TWO, and why it needed its own theorem
     rather than a third conjunct: the placeholder and the real slice are BOTH one statement,
-    so plantMainWith of this plant has the SAME LENGTH as GenAst.emitMain fxPlan - 45
+    so plantMainWith of this plant has the SAME LENGTH as GenAst.emitMain fxPlan - 47
     statements either way - and every length-based argument in this file is blind to it. The
     second conjunct below is the witness that the replanted main is length-identical and still
     not the emitted main, i.e. that the pin is refusing this plant on CONTENT alone. Before
@@ -1352,7 +1357,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkTraceReturnPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .traceReturn)) &&
     -- P-AST3a: the third plant, and the extra line that says what is special about it - the
-    -- replanted main has the SAME LENGTH as the emitted main (45 either way), so this is the
+    -- replanted main has the SAME LENGTH as the emitted main (47 either way), so this is the
     -- only plant in
     -- the file whose difference stmtsBeq can see and a length count cannot.
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkQuotientLinPlaceholder)
@@ -1363,7 +1368,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .quotientLin)) &&
     -- P-AST3b: the fourth plant. It differs from the emitter on exactly vkLoading, keeps
-    -- main's LENGTH - 45 either way, because the placeholder and the real slice are both
+    -- main's LENGTH - 47 either way, because the placeholder and the real slice are both
     -- one statement - and is therefore invisible to every count in this file.
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkVkLoadingPlaceholder)
       (GenAst.emitMain fxPlan) &&
@@ -1373,7 +1378,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .vkLoading)) &&
     -- P-AST4: the fifth plant, and the one whose replanted main is NOT length-identical -
-    -- 17 statements against 45, because the placeholder is one statement and the real slice
+    -- 19 statements against 47, because the placeholder is one statement and the real slice
     -- at the fixture plan is twenty-nine. Stated as a difference and not a coincidence: the
     -- two plants above it are length-blind and this one is not, and plantTranscriptParser
     -- LengthVisible_ok below pins which side of that line it falls on.
@@ -1392,7 +1397,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
     conversion. What makes this the sharpest of the four: the placeholder and the real slice
     are BOTH one top-level statement, and the real one is a thirteen-statement scope whose
     second inner statement is an extcodecopy, so nothing but stmtsBeq on the CONTENT
-    separates them and main's length is 14 either way. plantVkLoadingLengthBlind_ok below
+    separates them and main's length is 47 either way. plantVkLoadingLengthBlind_ok below
     is that blindness as a computation. -/
 theorem blkPinBitesVkLoadingPlaceholder :
     ¬ BlkIsEmitter plantVkLoadingPlaceholderSurface := by
@@ -1482,13 +1487,13 @@ theorem blkPinBitesTranscriptParserPlaceholder :
   exact Bool.noConfusion h5
 
 /-- THE LENGTH FACT for this plant, stated because it is the opposite of the two plants
-    above it: the replanted main is SHORTER than the emitted main - 17 against 45 - so this
+    above it: the replanted main is SHORTER than the emitted main - 19 against 47 - so this
     plant is not length-blind. Both halves are computations: the two lengths, and the fact
     that the plant still differs from the emitter on exactly one slice. -/
 def plantTranscriptParserLengthVisible_ok : Bool :=
   (plantMainWith plantBlkTranscriptParserPlaceholder).length ≠ (GenAst.emitMain fxPlan).length &&
-    (plantMainWith plantBlkTranscriptParserPlaceholder).length == 17 &&
-    (GenAst.emitMain fxPlan).length == 45 &&
+    (plantMainWith plantBlkTranscriptParserPlaceholder).length == 19 &&
+    (GenAst.emitMain fxPlan).length == 47 &&
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkTranscriptParserPlaceholder)
       (GenAst.emitMain fxPlan) &&
     (Midfall.Lowering.partials.all fun q =>

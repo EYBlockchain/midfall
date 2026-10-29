@@ -115,6 +115,22 @@
 -- transcriptParser interpolates are now fields, and the four helpers it calls are now
 -- emitted.
 --
+-- P-HELPERS (docs/plans/P-HELPERS-closure.md) closes the helper gap for the TWO MODEXP
+-- DEFINITIONS THE REAL SLICES CALL: scalar_inv (AssemblyHelpers.yul:20, called from the PCS
+-- linearisation expansion at GenAstPcs.lean:267 and :305) and batch_invert (:226, called by
+-- the Lagrange slice at :508). emitHelpers now defines EIGHT functions in the template's own
+-- order - gate 51 pins that order against the render - so the emitted lagrange and pcs
+-- programs are no longer programs the EVM would reject at validation. The one recorded gap
+-- that remains is validate_public_accumulator (AccumulatorHelpers.yul:190), called only by the
+-- vkLoading accumulator arm, which the deployed profile never takes. It is NOT an
+-- AssemblyHelpers definition: it lives in a second included file whose render this emitter does
+-- not model, and it calls five more functions in that file, so converting it is a file
+-- conversion and not a helper addition. It is recorded as a NAMED EXCEPTION in the closure gate
+-- rather than faked here. The general fix - the gate that would have caught this defect in
+-- P-AST2 without anyone noticing - lives in Partials.lean as emittedProgramClosure_ok, which
+-- requires the unresolved-call residue of every emitted slice at every pinned plan view to be
+-- empty modulo those exceptions, and which is shown to bite by deleting a helper definition.
+--
 -- HOW THE EMITTED AST IS CHECKED. There is no runtime Yul parser in the vendored tree, so
 -- the check is the one D-P25 names: the token comparator yulTokens (YulGolden.lean)
 -- applied to EVM.print of the emitted AST against the TEXT PORT's render of the same
@@ -160,8 +176,9 @@ open YulSemantics YulSemantics.EVM Midfall.Generator
     'ylit' a number literal, 'yop' a dialect built-in, 'ycall' a call to a USER function.
     The last two are the distinction the token comparator cannot make and stmtsBeq can
     (YulGolden.lean's header), so every site below chooses between them deliberately:
-    mstore / mcopy / staticcall / add / eq / .. are dialect built-ins, and fail and
-    ec_pairing are user-defined functions (AssemblyHelpers.yul:4 and :269). -/
+    mstore / mcopy / staticcall / add / eq / .. are dialect built-ins, and fail, scalar_inv,
+    batch_invert and ec_pairing are user-defined functions (AssemblyHelpers.yul:4, :20, :226
+    and :269). -/
 
 /-- A Yul identifier use: a local, or one of the Solidity-level constants the render emits
     bare (PAIRING_RHS_MPTR, ERR_PRECOMPILE_FAILED, r). -/
@@ -371,21 +388,207 @@ def emitSqueezeTo : Block Op :=
 def emitTranscriptHelpers : Block Op :=
   emitTranscriptInit ++ emitCommonWord ++ emitCommonUncompressedG1 ++ emitSqueezeTo
 
-/-- The AssemblyHelpers definitions the emitted slices call: fail and ec_pairing for
-    FinalPairing, Lagrange and VkLoading, and the four transcript helpers for
-    transcriptParser. This is what the pin puts in the 'helpers' slot of main_concat, and it
-    is why the pin has a second conjunct at all: mainScope hoists S.L.main, so a Surface
-    whose blk is the emitted slice but whose main carries no fail / ec_pairing /
-    transcript_init / common_word / common_uncompressed_g1 / squeeze_to definitions emits a
-    program in which the emitted slice cannot run.
+/-! ### AssemblyHelpers: the two modexp definitions Lagrange and pcs call -/
 
-    THE HELPER GAP SHRINKS BY FOUR AND DOES NOT CLOSE. batch_invert (AssemblyHelpers.yul:226,
-    called by the real Lagrange slice) and validate_public_accumulator
-    (AccumulatorHelpers.yul:190, called only by the untaken accumulator arm) are still not
-    defined here. P-AST3a and P-AST3b recorded that hole; P-AST4 narrows it without closing
-    it, and the deployed profile still never takes the accumulator arm. -/
+/-- The six `mstore` lines that lay out one EIP-198 modexp frame at `p`: three length words,
+    the base, the exponent `modulus - 2` (Fermat inversion) and the modulus itself. Written
+    ONCE because the same frame is laid out three times in the two helpers below - once in
+    `scalar_inv`, twice in `batch_invert` - and the three copies differ only in the pointer
+    name and in whether the modulus is the bare `FR_MODULUS` or the parameter `r`. That is
+    exactly the difference no length or token-count check can see, so the sharing is the point:
+    a gate that reddens on one of the six offsets reddens on all three sites.
+
+    Every one of the six values is INTERPOLATED by the template (`hexFilter` of
+    `ctx.templateConstants.modexp.*` and of `wordBytes`), so every one is a parameter here and
+    none of them is a literal the converter typed. The gate
+    `emitModexpHelpersDependsOnConstants_ok` perturbs each field and requires BOTH the render
+    and the emitted AST to move; a hard-code that matches the deployed profile reddens neither
+    AST relation, which is the standing note. -/
+def modexpFrameStores (p : String) (base modulus : Expr Op) (tc : TemplateConstants) :
+    Block Op :=
+  let me := tc.modexp
+  [ yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.baseLenOffset], ylit tc.wordBytes])
+  , yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.expLenOffset], ylit tc.wordBytes])
+  , yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.modLenOffset], ylit tc.wordBytes])
+  , yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.baseOffset], base])
+  , yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.expOffset],
+      yop Op.sub [modulus, ylit 2]])
+  , yexpr (yop Op.mstore [yop Op.add [yvar p, ylit me.modOffset], modulus]) ]
+
+/-- `function scalar_inv(x) -> inv` (AssemblyHelpers.yul:640-662, rendered at D:640-662):
+    two canonicality guards, one modexp frame, one staticcall, one size guard, one read-back.
+
+    Parameterised by the scratch pointer the template interpolates (memory.rs:437
+    scalar_inv_scratch_mptr, which is why it is a PlanView field and not a constant) and by the
+    modexp constants the frame and the call read. `fail` is a user call - defined by emitFail
+    in the same hoisted block - and `MODEXP_GAS` / `FR_MODULUS` are bare Solidity-level
+    constants the render emits as identifiers, so they are `yvar`s and not literals. -/
+def emitScalarInv (scratch : Nat) (tc : TemplateConstants) : Block Op :=
+  let me := tc.modexp
+  let guards : Block Op :=
+    [ yif (yop Op.iszero [yop Op.lt [yvar "x", yvar "FR_MODULUS"]])
+        [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])]
+    , yif (yop Op.iszero [yvar "x"])
+        [yexpr (ycall "fail" [yvar "ERR_NON_CANONICAL_SCALAR"])]
+    , ylet "p" (ylit scratch) ]
+  let readBack : Block Op :=
+    [ yif (yop Op.iszero [yop Op.staticcall [yvar "MODEXP_GAS", ylit me.address, yvar "p",
+          ylit me.frameBytes, yvar "p", ylit me.outputBytes]])
+        [yexpr (ycall "fail" [yvar "ERR_PRECOMPILE_FAILED"])]
+    , yif (yop Op.iszero [yop Op.eq [yop Op.returndatasize [], ylit me.outputBytes]])
+        [yexpr (ycall "fail" [yvar "ERR_PRECOMPILE_FAILED"])]
+    , yset "inv" (yop Op.mload [yvar "p"]) ]
+  [ yfun "scalar_inv" ["x"] ["inv"]
+    (guards ++ modexpFrameStores "p" (yvar "x") (yvar "FR_MODULUS") tc ++ readBack) ]
+
+/-- `scalar_inv` at the plan's own scratch pointer and the default template constants - the
+    form `emitHelpers` puts in main. -/
+def emitScalarInvAt (pv : PlanView) : Block Op :=
+  emitScalarInv pv.memory.scalarInvScratchMptr templateConstantsDefault
+
+/-- `function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) ->
+    ret, precompile_failed` (AssemblyHelpers.yul:226-341, rendered at D:718-833): the
+    Montgomery batch inversion - reversed-range guard, empty-batch exit, single-element fast
+    path, forward prefix-product pass, one modexp over the total, backward recovery pass, and
+    the two-element tail that the loop deliberately leaves undone.
+
+    THIRTY-FOUR top-level statements, TWO `for` loops with empty init and post blocks, and
+    FOUR `leave`s at three different nesting depths - the shape that makes this the hardest
+    helper in the file to slice and the easiest to truncate silently, which is why gate 11 pins
+    its line count and gate 51 its statement and loop counts.
+
+    The `0x20` stride literals (the single-element test, the cursor steps, the last-element
+    bound) are LITERAL in the template and stay literal here; only the frame offsets, the
+    precompile address, the frame and output sizes and the word size are interpolated, and
+    those come from `tc`. `r` is a PARAMETER of this function and shadows the outer `r` the
+    way `squeeze_to`'s does - the template's own line, not a slip. -/
+def emitBatchInvert (tc : TemplateConstants) : Block Op :=
+  let me := tc.modexp
+  -- `ret := 0; leave`, the reject-and-return pair the five guard arms share.
+  let reject : Block Op := [yset "ret" (ylit 0), Stmt.leave]
+  -- The single-element fast path: one modexp in place, no prefix scratch at all.
+  let singleArm : Block Op :=
+    ([ ylet "x" (yop Op.mload [yvar "mptr_start"])
+     , yif (yop Op.iszero [yop Op.lt [yvar "x", yvar "r"]]) reject
+     , yif (yop Op.iszero [yvar "x"]) reject
+     , ylet "single_scratch" (yvar "scratch_mptr") ]
+        ++ modexpFrameStores "single_scratch" (yvar "x") (yvar "r") tc ++
+      [ yset "ret" (yop Op.staticcall [yvar "MODEXP_GAS", ylit me.address,
+          yvar "single_scratch", ylit me.frameBytes, yvar "single_scratch",
+          ylit me.outputBytes])
+      , yset "ret" (yop Op.and [yvar "ret", yop Op.eq [yop Op.returndatasize [],
+          ylit me.outputBytes]])
+      , yset "precompile_failed" (yop Op.iszero [yvar "ret"])
+      , yif (yvar "ret") [yexpr (yop Op.mstore [yvar "mptr_start",
+          yop Op.mload [yvar "single_scratch"]])]
+      , Stmt.leave ])
+  -- Everything before the one inversion of the total product.
+  let forward : Block Op :=
+    [ yset "ret" (yvar "success")
+    , yif (yop Op.iszero [yvar "ret"]) [Stmt.leave]
+      -- A reversed range is a codegen error, not a rejected proof: ret, not a fail call.
+    , yif (yop Op.lt [yvar "mptr_end", yvar "mptr_start"]) reject
+    , ylet "count_bytes" (yop Op.sub [yvar "mptr_end", yvar "mptr_start"])
+    , yif (yop Op.iszero [yvar "count_bytes"]) [Stmt.leave]
+    , yif (yop Op.eq [yvar "count_bytes", ylit 0x20]) singleArm
+      -- Prefix products into scratch, up to but NOT including the last word.
+    , ylet "gp_mptr" (yvar "scratch_mptr")
+    , ylet "gp" (yop Op.mload [yvar "mptr_start"])
+    , yif (yop Op.iszero [yop Op.lt [yvar "gp", yvar "r"]]) reject
+    , ylet "mptr" (yop Op.add [yvar "mptr_start", ylit 0x20])
+    , yfor [] (yop Op.lt [yvar "mptr", yop Op.sub [yvar "mptr_end", ylit 0x20]]) []
+        [ ylet "x" (yop Op.mload [yvar "mptr"])
+        , yif (yop Op.iszero [yop Op.lt [yvar "x", yvar "r"]]) reject
+        , yset "gp" (yop Op.mulmod [yvar "gp", yvar "x", yvar "r"])
+        , yexpr (yop Op.mstore [yvar "gp_mptr", yvar "gp"])
+        , yset "mptr" (yop Op.add [yvar "mptr", ylit 0x20])
+        , yset "gp_mptr" (yop Op.add [yvar "gp_mptr", ylit 0x20]) ]
+    , ylet "x_last" (yop Op.mload [yvar "mptr"])
+    , yif (yop Op.iszero [yop Op.lt [yvar "x_last", yvar "r"]]) reject
+    , yset "gp" (yop Op.mulmod [yvar "gp", yvar "x_last", yvar "r"])
+      -- A zero total product means a zero denominator somewhere: no batch inverse exists.
+    , yif (yop Op.iszero [yvar "gp"]) reject ]
+  -- Everything after it: the backward pass and the two-element tail the loop leaves undone.
+  let backward : Block Op :=
+    [ yset "ret" (yop Op.staticcall [yvar "MODEXP_GAS", ylit me.address, yvar "gp_mptr",
+        ylit me.frameBytes, yvar "gp_mptr", ylit me.outputBytes])
+    , yset "ret" (yop Op.and [yvar "ret", yop Op.eq [yop Op.returndatasize [],
+        ylit me.outputBytes]])
+    , yset "precompile_failed" (yop Op.iszero [yvar "ret"])
+      -- Leave BEFORE the backward pass: a failed staticcall wrote no output, and reading the
+      -- stale frame header back would overwrite every denominator with garbage products.
+    , yif (yop Op.iszero [yvar "ret"]) [Stmt.leave]
+    , ylet "all_inv" (yop Op.mload [yvar "gp_mptr"])
+    , ylet "first_mptr" (yvar "mptr_start")
+    , ylet "second_mptr" (yop Op.add [yvar "first_mptr", ylit 0x20])
+    , yset "gp_mptr" (yop Op.sub [yvar "gp_mptr", ylit 0x20])
+    , yfor [] (yop Op.lt [yvar "second_mptr", yvar "mptr"]) []
+        [ ylet "inv" (yop Op.mulmod [yvar "all_inv", yop Op.mload [yvar "gp_mptr"], yvar "r"])
+        , yset "all_inv" (yop Op.mulmod [yvar "all_inv", yop Op.mload [yvar "mptr"], yvar "r"])
+        , yexpr (yop Op.mstore [yvar "mptr", yvar "inv"])
+        , yset "mptr" (yop Op.sub [yvar "mptr", ylit 0x20])
+        , yset "gp_mptr" (yop Op.sub [yvar "gp_mptr", ylit 0x20]) ]
+    , ylet "inv_first" (yop Op.mulmod [yvar "all_inv", yop Op.mload [yvar "second_mptr"],
+        yvar "r"])
+    , ylet "inv_second" (yop Op.mulmod [yvar "all_inv", yop Op.mload [yvar "first_mptr"],
+        yvar "r"])
+    , yexpr (yop Op.mstore [yvar "first_mptr", yvar "inv_first"])
+    , yexpr (yop Op.mstore [yvar "second_mptr", yvar "inv_second"]) ]
+  [ yfun "batch_invert" ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"]
+      ["ret", "precompile_failed"]
+      -- The frame of the total-product inversion sits between the two passes: the template
+      -- writes it at the cursor the forward pass left, which is why the split is HERE and not
+      -- at a statement boundary either side of it.
+      (forward ++ modexpFrameStores "gp_mptr" (yvar "gp") (yvar "r") tc ++ backward) ]
+
+/-- `batch_invert` at the default template constants. It reads NO PlanView field: the batch
+    window is passed to it by its callers as arguments, and the only values the template
+    interpolates into its body are the modexp constants - which is why its dependence gate
+    perturbs the constants and not the plan, and why that is the honest gate rather than a
+    substitute for one. -/
+def emitBatchInvertAt : Block Op := emitBatchInvert templateConstantsDefault
+
+/-- The AssemblyHelpers definitions the emitted slices call: fail, scalar_inv, ec_pairing and
+    the four transcript helpers for FinalPairing, Lagrange, VkLoading and the PCS region, and
+    the four transcript helpers for transcriptParser. This is what the pin puts in the
+    'helpers' slot of main_concat, and it is why the pin has a second conjunct at all:
+    mainScope hoists S.L.main, so a Surface whose blk is the emitted slice but whose main
+    carries no fail / scalar_inv / transcript_init / common_word / common_uncompressed_g1 /
+    squeeze_to / batch_invert / ec_pairing definitions emits a program in which the emitted
+    slice cannot run.
+
+    THE ORDER IS THE TEMPLATE'S ORDER (AssemblyHelpers.yul:4, :20, :107, :114, :149, :175,
+    :226, :269), not an arbitrary concatenation, and gate 51 pins it as a computation: the
+    emitted helper names, read off this block, are exactly the render's own function order.
+    A helper list is the one place where a permutation is invisible to every other gate in
+    this file - stmtsBeq on a SLICE does not care where the slice sits in main - so the
+    ordering claim needs its own check.
+
+    P-HELPERS CLOSED TWO OF THE THREE RECORDED GAPS: scalar_inv (AssemblyHelpers.yul:20) and
+    batch_invert (:226) are now emitted, so the real Lagrange slice and the real PCS slice no
+    longer call a function main never defines. ONE GAP REMAINS AND IS NOT CLOSED HERE:
+    validate_public_accumulator (AccumulatorHelpers.yul:190), called only by the vkLoading
+    accumulator arm, which the deployed profile never takes. It is not an AssemblyHelpers
+    definition at all - it lives in a second included file whose render this emitter does not
+    model, and it calls five more functions in that file (load_acc_point, load_acc_coord,
+    load_acc_coord_shifted, check_acc_coord_packing, is_bls_p_minus_one), so closing it is the
+    conversion of a whole file and not the addition of one definition. It is recorded as a
+    NAMED EXCEPTION in Partials.lean's closure gate (closureNamedExceptions), which is the
+    place a gate can read that the hole exists, rather than a paragraph here that four packages
+    walked past. -/
 def emitHelpers (pv : PlanView) : Block Op :=
-  emitFail ++ emitTranscriptHelpers ++ emitEcPairingAt pv
+  emitFail ++ emitScalarInvAt pv ++ emitTranscriptHelpers ++ emitBatchInvertAt
+    ++ emitEcPairingAt pv
+
+/-- The emitted helper block with ONE definition removed - the shape the closure gate's
+    falsification in Partials.lean needs, and the shape of the defect P-HELPERS was written to
+    close. It is a def and not a `let` inside a gate because the exception table and the
+    deletion table both read it, and a copy of the filter predicate in each place is the kind of
+    duplicated fact this tree has been burned by before. -/
+def emitHelpersWithout (name : String) (pv : PlanView) : Block Op :=
+  (emitHelpers pv).filter fun
+    | Stmt.funDef n _ _ _ => n != name
+    | _ => true
 
 /-! ### FinalPairing -/
 
@@ -1092,6 +1295,16 @@ def functionCloseAt (ls : List String) : Nat :=
         if d' <= 0 then i + 1 else go more d' (i + 1)
   go ls 0 0
 
+/-- Is a sliced fragment a COMPLETE function definition? Its braces balance over the whole
+    fragment, and no proper prefix of it already balances - which is the property the depth-aware
+    close test is supposed to guarantee and the property a truncation at an inner '}' breaks.
+    Comments are stripped by braceDelta, so a brace in prose moves neither test. -/
+def sliceIsComplete (slice : String) : Bool :=
+  let ls := slice.splitOn "\n"
+  let deltas := ls.map braceDelta
+  let depths := (deltas.scanl (· + ·) 0).drop 1 |>.dropLast
+  ! slice.isEmpty && deltas.sum == 0 && (depths.all fun d => d > 0)
+
 /-- The rendered text of one 'function NAME(...)' definition inside a render: its header
     line through its closing brace, comments included (yulTokens drops them). Used to slice
     fail, ec_pairing and the four transcript helpers out of the AssemblyHelpers render,
@@ -1247,7 +1460,7 @@ def emitDetectsBuiltinVsCall_ok : Bool :=
   yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
     ! SyntaxEq.stmtsBeq good bad
 
-/-- GATE 11 (the slicer is not vacuous, and its close test is now measured on SIX
+/-- GATE 11 (the slicer is not vacuous, and its close test is now measured on EIGHT
     definitions and not two). renderFunction finds each helper and finds it as a complete
     function definition, so gates 3, 4 and 37 compare a real slice and not the empty string
     against the empty string; it returns "" for a name the render does not define, so a typo
@@ -1271,12 +1484,31 @@ def renderFunctionSlices_ok : Bool :=
     VerifierPartialKats.lineCount (renderFunction ah "common_word") == 4 &&
     VerifierPartialKats.lineCount (renderFunction ah "common_uncompressed_g1") == 22 &&
     VerifierPartialKats.lineCount (renderFunction ah "squeeze_to") == 9 &&
+    -- P-HELPERS: the two modexp helpers, pinned the same way. batch_invert is the one the
+    -- old close test was most likely to truncate - it contains FOUR block statements written
+    -- across lines (the two range guards inside the fast path, the two for-loop bodies), so
+    -- the naive "first own-line brace" rule would have cut it at its first inner '}' and
+    -- returned 12 lines instead of 116. scalar_inv has no nested block at all and so is the
+    -- control: the same rule that gets batch_invert right must leave it alone at 23.
+    VerifierPartialKats.lineCount (renderFunction ah "scalar_inv") == 23 &&
+    VerifierPartialKats.lineCount (renderFunction ah "batch_invert") == 116 &&
     -- and each slice ENDS at a column-12 closing brace, i.e. at the function's own end and
     -- not at a nested block's - the exact shape that defeated the old rule.
-    (["transcript_init", "common_word", "common_uncompressed_g1", "squeeze_to", "ec_pairing"].all
+    (["transcript_init", "common_word", "common_uncompressed_g1", "squeeze_to", "ec_pairing",
+      "scalar_inv", "batch_invert"].all
       fun nm => match ((renderFunction ah nm).splitOn "\n").reverse.head? with
         | some last => last == "            }"
-        | none => false)
+        | none => false) &&
+    -- AND THE GENERAL FORM OF THAT CHECK, which is the clause that makes "the slicer closes on
+    -- brace depth" a verified property of every slice and not a coincidence of the seven whose
+    -- sizes happen to be pinned: a slice is a COMPLETE function definition exactly when its
+    -- braces balance over the whole slice and no proper prefix of it already balances. A
+    -- truncation at an inner '}' fails the second half; an over-run past the function's own end
+    -- fails the first. Every helper the emitter is built from has to pass, so a future helper
+    -- that the slicer cuts short reddens this line before anything downstream has to notice.
+    (["fail", "scalar_inv", "transcript_init", "common_word", "common_uncompressed_g1",
+      "squeeze_to", "batch_invert", "ec_pairing"].all fun nm =>
+        sliceIsComplete (renderFunction ah nm))
 
 /-! ### Authoritative snapshots: the emitted AST against a quotation
 
@@ -1555,7 +1787,37 @@ def numericSpellingDivergence_ok : Bool :=
     (renderFunction (renderAssemblyHelpers poseidonCtx) "common_uncompressed_g1").contains
       "calldatacopy(buf_len, cptr, 0x80)" &&
     (EVM.print emitCommonUncompressedG1).contains "calldatacopy(buf_len, cptr, 128)" &&
-    yulTokens "calldatacopy(buf_len, cptr, 128)" == yulTokens "calldatacopy(buf_len, cptr, 0x80)"
+    yulTokens "calldatacopy(buf_len, cptr, 128)" == yulTokens "calldatacopy(buf_len, cptr, 0x80)" &&
+    -- P-HELPERS, and the two modexp helpers - the sharpest case in the file, because the SAME
+    -- number is spelled two ways in one line and one of the two is a value the emitter reads
+    -- from a record: the render writes 'mstore(add(p, 0x00), 0x20)' where 0x00 is
+    -- modexp.baseLenOffset (ZERO, rendered as a two-digit hex literal) and 0x20 is wordBytes,
+    -- and the AST prints 'mstore(add(p, 0), 32)'. A converter that normalised the render's
+    -- notation instead of its numbers, or that dropped the zero offset entirely, is invisible
+    -- to stmtsBeq and to yulTokens alike. The precompile address is the same class one step on:
+    -- 'staticcall(MODEXP_GAS, 0x05, p, 0xc0, p, 0x20)' against 'staticcall(MODEXP_GAS, 5, p,
+    -- 192, p, 32)' - three hex literals on one line, three decimals on the other.
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "scalar_inv").contains
+      "mstore(add(p, 0x00), 0x20)" &&
+    (EVM.print (emitScalarInv poseidonCtx.scalarInvScratchMptr
+      templateConstantsDefault)).contains "mstore(add(p, 0), 32)" &&
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "scalar_inv").contains
+      "staticcall(MODEXP_GAS, 0x05, p, 0xc0, p, 0x20)" &&
+    (EVM.print (emitScalarInv poseidonCtx.scalarInvScratchMptr
+      templateConstantsDefault)).contains "staticcall(MODEXP_GAS, 5, p, 192, p, 32)" &&
+    ! (EVM.print (emitScalarInv poseidonCtx.scalarInvScratchMptr
+      templateConstantsDefault)).contains "0x" &&
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "batch_invert").contains
+      "mstore(add(gp_mptr, 0x00), 0x20)" &&
+    (EVM.print (emitBatchInvert templateConstantsDefault)).contains
+      "mstore(add(gp_mptr, 0), 32)" &&
+    (renderFunction (renderAssemblyHelpers poseidonCtx) "batch_invert").contains
+      "if eq(count_bytes, 0x20) {" &&
+    (EVM.print (emitBatchInvert templateConstantsDefault)).contains "if eq(count_bytes, 32) {" &&
+    ! (EVM.print (emitBatchInvert templateConstantsDefault)).contains "0x" &&
+    yulTokens "mstore(add(p, 0), 32)" == yulTokens "mstore(add(p, 0x00), 0x20)" &&
+    hexLiteral "0x00" == 0 &&
+    hexLiteral "0xc0" == 192
 
 /-- Does a statement begin a 'for' loop? Top level only; gate 22 counts the five Lagrange
     loops, which are all siblings inside one block. -/
@@ -2178,6 +2440,378 @@ def emitTranscriptParserFactsDerived_ok : Bool :=
       yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
         userPhases := [] } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z)))
 
+/-! ### P-HELPERS: the two modexp helpers, and the gates that say they are real -/
+
+/-- The deployed `scalar_inv`, quoted from the same template region
+    (AssemblyHelpers.yul:20-42) the text port renders. The numbers are the poseidon profile's:
+    the scratch pointer 0x2800 (memory.rs:437) and the modexp frame the default
+    TemplateConstants imply. -/
+def scalarInv_snapshot : Block Op := yul% {
+  function scalar_inv(x) -> inv {
+    if iszero(lt(x, FR_MODULUS)) { fail(ERR_NON_CANONICAL_SCALAR) }
+    if iszero(x) { fail(ERR_NON_CANONICAL_SCALAR) }
+    let p := 0x2800
+    mstore(add(p, 0x00), 0x20)
+    mstore(add(p, 0x20), 0x20)
+    mstore(add(p, 0x40), 0x20)
+    mstore(add(p, 0x60), x)
+    mstore(add(p, 0x80), sub(FR_MODULUS, 2))
+    mstore(add(p, 0xa0), FR_MODULUS)
+    if iszero(staticcall(MODEXP_GAS, 0x05, p, 0xc0, p, 0x20)) { fail(ERR_PRECOMPILE_FAILED) }
+    if iszero(eq(returndatasize(), 0x20)) { fail(ERR_PRECOMPILE_FAILED) }
+    inv := mload(p)
+  }
+}
+
+/-- The deployed `batch_invert`, quoted from the same template region
+    (AssemblyHelpers.yul:226-341) the text port renders. Transcribed with the render's OWN
+    hex spellings - the frame offsets, the 0x05 modexp address, the 0xc0 frame and the 0x20
+    sizes - because the quotation is the independent second elaboration path, not a copy of
+    what the constructor emitter prints. -/
+def batchInvert_snapshot : Block Op := yul% {
+  function batch_invert(success, mptr_start, mptr_end, scratch_mptr, r) -> ret, precompile_failed {
+    ret := success
+    if iszero(ret) { leave }
+    if lt(mptr_end, mptr_start) {
+        ret := 0
+        leave
+    }
+    let count_bytes := sub(mptr_end, mptr_start)
+    if iszero(count_bytes) { leave }
+    if eq(count_bytes, 0x20) {
+        let x := mload(mptr_start)
+        if iszero(lt(x, r)) {
+            ret := 0
+            leave
+        }
+        if iszero(x) {
+            ret := 0
+            leave
+        }
+        let single_scratch := scratch_mptr
+        mstore(add(single_scratch, 0x00), 0x20)
+        mstore(add(single_scratch, 0x20), 0x20)
+        mstore(add(single_scratch, 0x40), 0x20)
+        mstore(add(single_scratch, 0x60), x)
+        mstore(add(single_scratch, 0x80), sub(r, 2))
+        mstore(add(single_scratch, 0xa0), r)
+        ret := staticcall(MODEXP_GAS, 0x05, single_scratch, 0xc0, single_scratch, 0x20)
+        ret := and(ret, eq(returndatasize(), 0x20))
+        precompile_failed := iszero(ret)
+        if ret { mstore(mptr_start, mload(single_scratch)) }
+        leave
+    }
+    let gp_mptr := scratch_mptr
+    let gp := mload(mptr_start)
+    if iszero(lt(gp, r)) {
+        ret := 0
+        leave
+    }
+    let mptr := add(mptr_start, 0x20)
+    for {} lt(mptr, sub(mptr_end, 0x20)) {} {
+        let x := mload(mptr)
+        if iszero(lt(x, r)) {
+            ret := 0
+            leave
+        }
+        gp := mulmod(gp, x, r)
+        mstore(gp_mptr, gp)
+        mptr := add(mptr, 0x20)
+        gp_mptr := add(gp_mptr, 0x20)
+    }
+    let x_last := mload(mptr)
+    if iszero(lt(x_last, r)) {
+        ret := 0
+        leave
+    }
+    gp := mulmod(gp, x_last, r)
+    if iszero(gp) {
+        ret := 0
+        leave
+    }
+    mstore(add(gp_mptr, 0x00), 0x20)
+    mstore(add(gp_mptr, 0x20), 0x20)
+    mstore(add(gp_mptr, 0x40), 0x20)
+    mstore(add(gp_mptr, 0x60), gp)
+    mstore(add(gp_mptr, 0x80), sub(r, 2))
+    mstore(add(gp_mptr, 0xa0), r)
+    ret := staticcall(MODEXP_GAS, 0x05, gp_mptr, 0xc0, gp_mptr, 0x20)
+    ret := and(ret, eq(returndatasize(), 0x20))
+    precompile_failed := iszero(ret)
+    if iszero(ret) { leave }
+    let all_inv := mload(gp_mptr)
+    let first_mptr := mptr_start
+    let second_mptr := add(first_mptr, 0x20)
+    gp_mptr := sub(gp_mptr, 0x20)
+    for {} lt(second_mptr, mptr) {} {
+        let inv := mulmod(all_inv, mload(gp_mptr), r)
+        all_inv := mulmod(all_inv, mload(mptr), r)
+        mstore(mptr, inv)
+        mptr := sub(mptr, 0x20)
+        gp_mptr := sub(gp_mptr, 0x20)
+    }
+    let inv_first := mulmod(all_inv, mload(second_mptr), r)
+    let inv_second := mulmod(all_inv, mload(first_mptr), r)
+    mstore(first_mptr, inv_first)
+    mstore(second_mptr, inv_second)
+  }
+}
+
+/-- The function names a render defines, in the order they appear. Shared by gate 51 and gate 59
+    so the two cannot disagree about what "the render defines" means. -/
+def renderFunctionNames (render : String) : List String :=
+  ((render.splitOn "\n").filterMap fun l =>
+    let t := trimWs l
+    if t.startsWith "function " then
+      some (String.ofList ((t.drop 9).toString.toList.takeWhile fun c => c != '('))
+    else none)
+
+/-- GATE 51 (THE HELPER ORDER IS THE TEMPLATE ORDER). The function names `emitHelpers` puts in
+    main, read off the block, are EXACTLY the function names the AssemblyHelpers render
+    defines, in the render's order. Every other gate in this file compares one helper at a
+    time, so a permutation of the helper list - or a helper silently dropped while its
+    comparison gate is deleted with it - is invisible to all of them and visible here. -/
+def emitHelpersOrder_matchesTemplate_ok : Bool :=
+  let emitted := (emitHelpers Midfall.Lowering.witnessPlanView).filterMap fun
+    | Stmt.funDef n _ _ _ => some n
+    | _ => none
+  let rendered := renderFunctionNames (renderAssemblyHelpers poseidonCtx)
+  emitted == rendered && emitted.length == 8 &&
+    emitted == ["fail", "scalar_inv", "transcript_init", "common_word",
+      "common_uncompressed_g1", "squeeze_to", "batch_invert", "ec_pairing"]
+
+/-- GATE 52 (the D-P25 tripwire, the two modexp helpers). Each emitted helper prints to the
+    same token stream as the text port's OWN definition, sliced out of the AssemblyHelpers
+    render at the scratch pointer and the template constants the emitter is given. -/
+def emitModexpHelpers_tokens_ok : Bool :=
+  let ah := renderAssemblyHelpers poseidonCtx
+  yulTokens ("{" ++ renderFunction ah "scalar_inv" ++ "}") ==
+    yulTokens (EVM.print (emitScalarInv poseidonCtx.scalarInvScratchMptr
+      templateConstantsDefault)) &&
+    yulTokens ("{" ++ renderFunction ah "batch_invert" ++ "}") ==
+      yulTokens (EVM.print (emitBatchInvert templateConstantsDefault))
+
+/-- GATE 53 (authoritative, the two modexp helpers). Each equals its quotation under stmtsBeq
+    - the relation that separates the `fail` and `scalar_inv` USER calls from the staticcall /
+    mstore / mulmod built-ins around them, which no token gate can see. -/
+def emitModexpHelpers_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq (emitScalarInv poseidonCtx.scalarInvScratchMptr
+    templateConstantsDefault) scalarInv_snapshot &&
+    SyntaxEq.stmtsBeq (emitBatchInvert templateConstantsDefault) batchInvert_snapshot
+
+/-- GATE 54 (PLAN DEPENDENCE, scalar_inv). The one PlanView field the helper interpolates is
+    the scratch pointer, and it is not decoration: moving it by one word IN THE PLAN VIEW moves
+    the emitted AST (line 1), moving the same word in the text port's own context moves the
+    RENDER (line 2), and the emitter at the render's value reproduces the moved render token for
+    token (line 3) - so the parameter that reaches the AST is the parameter the template
+    interpolates and not a number the converter typed. Line 4 is the liveness control: the
+    unperturbed plan reports no movement, so the gate is a dependence and not a tautology.
+
+    THE MEASUREMENT LINE 3 HAS TO MAKE, and it is a finding. The text port's
+    `poseidonCtx.scalarInvScratchMptr` is 0x2800 (0x2900 - modexpScratchBytes, the value the
+    deployed artifact prints) while the converged layout's
+    `witnessPlanView.memory.scalarInvScratchMptr` is a DIFFERENT number, so the gate compares
+    each side against its own source and does not pretend the two agree. Recorded at
+    emitScalarInvScratchSourcesDiffer_ok. -/
+def emitScalarInvDependsOnPlan_ok : Bool :=
+  let M := Midfall.Lowering.witnessPlanView.memory
+  let pv := { Midfall.Lowering.witnessPlanView with memory :=
+    { M with scalarInvScratchMptr := M.scalarInvScratchMptr + 32 } }
+  let moved := renderFunction (renderAssemblyHelpers { poseidonCtx with
+    scalarInvScratchMptr := poseidonCtx.scalarInvScratchMptr + 32 }) "scalar_inv"
+  ! SyntaxEq.stmtsBeq (emitScalarInvAt Midfall.Lowering.witnessPlanView) (emitScalarInvAt pv) &&
+    moved != renderFunction (renderAssemblyHelpers poseidonCtx) "scalar_inv" &&
+    yulTokens ("{" ++ moved ++ "}") ==
+      yulTokens (EVM.print (emitScalarInv (poseidonCtx.scalarInvScratchMptr + 32)
+        templateConstantsDefault)) &&
+    SyntaxEq.stmtsBeq (emitScalarInvAt Midfall.Lowering.witnessPlanView)
+      (emitScalarInv M.scalarInvScratchMptr templateConstantsDefault)
+
+/-- THE SCRATCH SOURCES DISAGREE FOR THIS ONE SLOT, as data, and the disagreement is a finding
+    this package inherited rather than discovered by design - but it bites `emitScalarInvAt`, so
+    it is recorded where the helper is defined.
+
+    `poseidonCtx.scalarInvScratchMptr` is 0x2800, the number the deployed artifact prints, and
+    the text port transcribes it (VerifierPartials' own gate 'poseidonCtx_derivedFromArtifact_ok'
+    is what ties it to the dump). The CONVERGED Lean layout derives a different number for the
+    same slot: 0x1f00 at the witness plan view and 0x3f00 at the poseidon layout's own derived value. The two other
+    memory slots the helpers read - finalPairingScratchMptr and accumulatorPairingBatchMptr -
+    AGREE between ctx and plan (4672 and 4096 on both sides), so this is not a general
+    transcription-vs-derivation split; it is one slot, and it is LayoutMemory's port of
+    memory.rs:437 that disagrees with the artifact, not the render and not this emitter.
+
+    TWO CONSEQUENCES, both stated rather than hidden. (1) Every gate here that compares an
+    emitted helper against the render feeds the emitter the RENDER's value and says so - gate 4
+    for ec_pairing, gate 52 for scalar_inv - because comparing at the plan's value would compare
+    two different programs. (2) The emitted main at a real plan view therefore prints a
+    DIFFERENT scalar_inv scratch address than the artifact does, in one literal, and no gate in
+    the tree currently catches that, because nothing has ever compared emitMain's helper region
+    against the dump. Reported, not repaired: the repair is a decision about which of
+    memory.rs:437's three Lean spellings is normative, and Layout.lean / LayoutMemory.lean are
+    not this package's files. -/
+def emitScalarInvScratchSourcesDiffer_ok : Bool :=
+  poseidonCtx.scalarInvScratchMptr == 0x2800 &&
+    Midfall.Lowering.witnessPlanView.memory.scalarInvScratchMptr == 0x1f00 &&
+    Midfall.Generator.LayoutMemoryKats.poseidonLayout.scalarInvScratchMptr == 0x3f00 &&
+    -- and the two slots that DO agree, so the finding is about one slot and not about the split
+    poseidonCtx.finalPairingScratchMptr ==
+      Midfall.Lowering.witnessPlanView.memory.finalPairingScratchMptr &&
+    poseidonCtx.accumulatorPairingBatchMptr ==
+      Midfall.Lowering.witnessPlanView.memory.accumulatorPairingBatchMptr
+
+/-- The emitter of one modexp helper at one set of template constants, dispatched on the name
+    the render is sliced by. Named so gate 55 can run the same row shape on both helpers
+    without spelling the pair twice. -/
+def emitModexpHelperAt (name : String) (tc : TemplateConstants) : Block Op :=
+  if name == "scalar_inv"
+    then emitScalarInv poseidonCtx.scalarInvScratchMptr tc
+    else emitBatchInvert tc
+
+/-- GATE 55 (THE ANTI-HARD-CODING GATE, the ten interpolated constants). Every value the
+    template interpolates into the two helpers - the six modexp frame offsets, the precompile
+    address, the frame size, the output size and the word size - is perturbed, and for each
+    one THREE things must hold: the RENDER moves, the EMITTED AST moves with it, and the two
+    still agree token for token at the moved value. A converter that typed 0x05 instead of
+    reading `tc.modexp.address` reproduces the deployed bytes, passes gate 52 and gate 53, and
+    reddens here - which is the standing note from three separate measurements, applied to the
+    helpers instead of to a slice. The last line is the liveness control: the identity
+    perturbation reports no movement, so the rows are dependences and not tautologies. -/
+def emitModexpHelpersDependsOnConstants_ok : Bool :=
+  let T := templateConstantsDefault
+  let m := T.modexp
+  let rows : List (String × TemplateConstants) :=
+    [("scalar_inv", { T with modexp := { m with address := 6 } }),
+     ("scalar_inv", { T with modexp := { m with frameBytes := 224 } }),
+     ("scalar_inv", { T with modexp := { m with outputBytes := 64 } }),
+     ("scalar_inv", { T with modexp := { m with baseLenOffset := 1 } }),
+     ("scalar_inv", { T with modexp := { m with expLenOffset := 48 } }),
+     ("scalar_inv", { T with modexp := { m with modLenOffset := 80 } }),
+     ("scalar_inv", { T with modexp := { m with baseOffset := 112 } }),
+     ("scalar_inv", { T with modexp := { m with expOffset := 144 } }),
+     ("scalar_inv", { T with modexp := { m with modOffset := 176 } }),
+     ("scalar_inv", { T with wordBytes := 64 }),
+     ("batch_invert", { T with modexp := { m with address := 6 } }),
+     ("batch_invert", { T with modexp := { m with frameBytes := 224 } }),
+     ("batch_invert", { T with modexp := { m with outputBytes := 64 } }),
+     ("batch_invert", { T with modexp := { m with baseLenOffset := 1 } }),
+     ("batch_invert", { T with modexp := { m with expLenOffset := 48 } }),
+     ("batch_invert", { T with modexp := { m with modLenOffset := 80 } }),
+     ("batch_invert", { T with modexp := { m with baseOffset := 112 } }),
+     ("batch_invert", { T with modexp := { m with expOffset := 144 } }),
+     ("batch_invert", { T with modexp := { m with modOffset := 176 } }),
+     ("batch_invert", { T with wordBytes := 64 })]
+  (rows.all fun (nm, tc) =>
+    let moved := renderFunction (renderAssemblyHelpers { poseidonCtx with
+      templateConstants := tc }) nm
+    moved != renderFunction (renderAssemblyHelpers poseidonCtx) nm &&
+      ! SyntaxEq.stmtsBeq (emitModexpHelperAt nm tc) (emitModexpHelperAt nm T) &&
+      yulTokens ("{" ++ moved ++ "}") == yulTokens (EVM.print (emitModexpHelperAt nm tc))) &&
+    rows.length == 20
+
+/-- GATE 56 (perturbation, the two modexp helpers; D-P23 falsifiability of gates 52-53). One
+    literal of each emitted helper changed turns BOTH relations red - the token stream and
+    stmtsBeq - at each of the two shapes the helpers have that the other four do not: a
+    multi-value return list and a for-loop with empty init and post blocks. -/
+def emitModexpHelpersDetectsPerturbation_ok : Bool :=
+  let T := templateConstantsDefault
+  let m := T.modexp
+  let goodS := emitScalarInv poseidonCtx.scalarInvScratchMptr T
+  let badS := emitScalarInv (poseidonCtx.scalarInvScratchMptr + 32) T
+  let goodB := emitBatchInvert T
+  let badB := emitBatchInvert { T with modexp := { m with frameBytes := 224 } }
+  yulTokens (EVM.print goodS) != yulTokens (EVM.print badS) &&
+    ! SyntaxEq.stmtsBeq goodS badS &&
+    yulTokens (EVM.print goodB) != yulTokens (EVM.print badB) &&
+    ! SyntaxEq.stmtsBeq goodB badB
+
+/-- GATE 57 (the relation gap, at the two modexp helpers). Spelling every `staticcall` of the
+    emitted helper as a USER call named `staticcall` keeps the token stream and breaks
+    stmtsBeq - the class P-AST measured on ec_pairing and P-AST2 on Lagrange, reproduced here,
+    where the mis-spelling sits inside a for-loop body and inside a nested if arm so a shallow
+    rewrite would not reach every site. The occurrence count is the witness that the rewrite
+    reached the nested ones: three staticcalls in batch_invert's printed text, and the count is
+    unchanged by the rewrite. -/
+def emitModexpHelpersDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitBatchInvert templateConstantsDefault
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.staticcall args => Expr.call "staticcall" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad &&
+    VerifierPartialKats.occ (EVM.print good) "staticcall(" ==
+      VerifierPartialKats.occ (EVM.print bad) "staticcall(" &&
+    VerifierPartialKats.occ (EVM.print good) "staticcall(" == 2 &&
+    (let goodS := emitScalarInv poseidonCtx.scalarInvScratchMptr templateConstantsDefault
+      let badS := goodS.map (mapStmtExprs fun
+        | Expr.builtin Op.mstore args => Expr.call "mstore" args
+        | e => e)
+      yulTokens (EVM.print goodS) == yulTokens (EVM.print badS) &&
+        ! SyntaxEq.stmtsBeq goodS badS &&
+        VerifierPartialKats.occ (EVM.print goodS) "mstore(" == 6)
+
+/-- The statements inside the one `funDef` of a helper block, or `() if the block is not a
+    single definition. -/
+def helperBody (b : Block Op) : List (Stmt Op) :=
+  match b with
+  | [Stmt.funDef _ _ _ body] => body
+  | _ => []
+
+/-- GATE 58 (the slices are programs, not shapes). A structural pattern match on each emitted
+    helper: `scalar_inv` is a one-parameter one-return definition of twelve statements whose
+    first two arms call `fail` and whose last three are the staticcall guard chain;
+    `batch_invert` is a five-parameter TWO-return definition of thirty-four statements with
+    exactly two for-loops, four `leave`s at top level and the two-name return list the caller
+    assigns. The counts are the witness that the slicer handed the gate a COMPLETE function:
+    the truncated 13-line fragment P-AST4 found in common_uncompressed_g1 would match none of
+    these patterns, and a gate that only compared token streams would not have noticed. -/
+def emitModexpHelpersIsReal_ok : Bool :=
+  let sb := helperBody (emitScalarInv poseidonCtx.scalarInvScratchMptr
+    templateConstantsDefault)
+  let bb := helperBody (emitBatchInvert templateConstantsDefault)
+  sb.length == 12 &&
+    (match sb[0]? with
+      | some (Stmt.cond (Expr.builtin Op.iszero
+          [Expr.builtin Op.lt [Expr.var "x", Expr.var "FR_MODULUS"]])
+          [Stmt.exprStmt (Expr.call "fail" _)]) => true
+      | _ => false) &&
+    (match sb.getLast? with
+      | some (Stmt.assign ["inv"] (Expr.builtin Op.mload [Expr.var "p"])) => true
+      | _ => false) &&
+    bb.length == 34 &&
+    (bb.filter stmtIsFor).length == 2 &&
+    (match emitBatchInvert templateConstantsDefault with
+      | [Stmt.funDef "batch_invert" ["success", "mptr_start", "mptr_end", "scratch_mptr", "r"]
+          ["ret", "precompile_failed"] _] => true
+      | _ => false) &&
+    (emitHelpers Midfall.Lowering.witnessPlanView).length == 8
+
+/-- GATE 59 (THE REMAINING EXCEPTION, MEASURED AND NOT ASSERTED). P-HELPERS was told it
+    could leave `validate_public_accumulator` unemitted if converting it was too big, and this
+    is the measurement that says it is too big rather than an assertion that it is. Five things:
+    (1) the AssemblyHelpers render does NOT define it, so the premise the earlier packages
+    recorded is right but for a better reason than they gave - it is not an AssemblyHelpers
+    definition at all; (2) a DIFFERENT render does define it, and the slicer gets it WHOLE, 110
+    lines and complete by the same brace test gate 11 uses, so the blocker was never the slicer;
+    (3) it appears only when the accumulator arm is selected, which is why the deployed profile
+    never needed it; (4) its body calls `load_acc_point`, and the render that defines it defines
+    SIX functions - so emitting the one helper moves the unresolved call instead of removing it,
+    and the exception is a file conversion and not a definition; (5) the deployed render of that
+    same file carries five definitions and none of them is the missing one, which is the shape
+    the closure gate is allowed to encode as an exception and nothing else is. -/
+def emitAccumulatorHelperGap_measured_ok : Bool :=
+  let ah := renderAssemblyHelpers poseidonCtx
+  let acc0 := renderAccumulatorHelpers poseidonCtx
+  let acc1 := renderAccumulatorHelpers { poseidonCtx with expectedHasAccumulator := true }
+  let vpa := renderFunction acc1 "validate_public_accumulator"
+  (renderFunction ah "validate_public_accumulator" == "") &&
+    VerifierPartialKats.lineCount vpa == 110 &&
+    sliceIsComplete vpa &&
+    ! acc0.contains "validate_public_accumulator" &&
+    acc1.contains "function validate_public_accumulator" &&
+    vpa.contains "load_acc_point(" &&
+    (renderFunctionNames acc1).length == 6 &&
+    (renderFunctionNames acc0).length == 5 &&
+    ! (renderFunctionNames acc0).contains "validate_public_accumulator"
 #eval Midfall.Lowering.GenAst.emitTranscriptHelpers_tokens_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitTranscriptHelpers_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitTranscriptHelpersPlanConstant_ok -- expect true
@@ -2186,6 +2820,16 @@ def emitTranscriptParserFactsDerived_ok : Bool :=
 #eval Midfall.Lowering.GenAst.emitTranscriptParserDetectsBuiltinVsCall_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitTranscriptParserIsReal_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitTranscriptParserFactsDerived_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitHelpersOrder_matchesTemplate_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpers_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpers_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitScalarInvDependsOnPlan_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpersDependsOnConstants_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpersDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpersDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitModexpHelpersIsReal_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitScalarInvScratchSourcesDiffer_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitAccumulatorHelperGap_measured_ok -- expect true
 
 end Midfall.Lowering.GenAst
 
