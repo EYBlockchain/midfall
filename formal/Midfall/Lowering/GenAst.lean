@@ -2566,6 +2566,14 @@ def renderFunctionNames (render : String) : List String :=
       some (String.ofList ((t.drop 9).toString.toList.takeWhile fun c => c != '('))
     else none)
 
+/-- THE EIGHT EMITTED HELPERS, in the template's order (AssemblyHelpers.yul:4, :20, :107,
+    :114, :149, :175, :226, :269). ONE carrier of the list: gate 51 compares it against the
+    render, and GenAstDispatch's helper-region gate compares it against the dump, so the two
+    cannot disagree about which definitions main is supposed to own. -/
+def emittedHelperNames : List String :=
+  ["fail", "scalar_inv", "transcript_init", "common_word",
+    "common_uncompressed_g1", "squeeze_to", "batch_invert", "ec_pairing"]
+
 /-- GATE 51 (THE HELPER ORDER IS THE TEMPLATE ORDER). The function names `emitHelpers` puts in
     main, read off the block, are EXACTLY the function names the AssemblyHelpers render
     defines, in the render's order. Every other gate in this file compares one helper at a
@@ -2577,8 +2585,7 @@ def emitHelpersOrder_matchesTemplate_ok : Bool :=
     | _ => none
   let rendered := renderFunctionNames (renderAssemblyHelpers poseidonCtx)
   emitted == rendered && emitted.length == 8 &&
-    emitted == ["fail", "scalar_inv", "transcript_init", "common_word",
-      "common_uncompressed_g1", "squeeze_to", "batch_invert", "ec_pairing"]
+    emitted == emittedHelperNames && emittedHelperNames.length == 8
 
 /-- GATE 52 (the D-P25 tripwire, the two modexp helpers). Each emitted helper prints to the
     same token stream as the text port's OWN definition, sliced out of the AssemblyHelpers
@@ -2609,10 +2616,12 @@ def emitModexpHelpers_beq_ok : Bool :=
 
     THE MEASUREMENT LINE 3 HAS TO MAKE, and it is a finding. The text port's
     `poseidonCtx.scalarInvScratchMptr` is 0x2800 (0x2900 - modexpScratchBytes, the value the
-    deployed artifact prints) while the converged layout's
+    deployed artifact prints) while the WITNESS FIXTURE's
     `witnessPlanView.memory.scalarInvScratchMptr` is a DIFFERENT number, so the gate compares
-    each side against its own source and does not pretend the two agree. Recorded at
-    emitScalarInvScratchSourcesDiffer_ok. -/
+    each side against its own source and does not pretend the two agree. The two numbers are
+    one rule read at two different `vk_mptr`s - see emitScalarInvScratchSourcesDiffer_ok for
+    the reconciliation, and GenAstDispatch's emitMainHelperRegion_matchesArtifact_ok for the
+    gate that ties the emitter to the artifact at the DEPLOYED plan view. -/
 def emitScalarInvDependsOnPlan_ok : Bool :=
   let M := Midfall.Lowering.witnessPlanView.memory
   let pv := { Midfall.Lowering.witnessPlanView with memory :=
@@ -2627,32 +2636,70 @@ def emitScalarInvDependsOnPlan_ok : Bool :=
     SyntaxEq.stmtsBeq (emitScalarInvAt Midfall.Lowering.witnessPlanView)
       (emitScalarInv M.scalarInvScratchMptr templateConstantsDefault)
 
-/-- THE SCRATCH SOURCES DISAGREE FOR THIS ONE SLOT, as data, and the disagreement is a finding
-    this package inherited rather than discovered by design - but it bites `emitScalarInvAt`, so
-    it is recorded where the helper is defined.
+/-- THE THREE SPELLINGS OF memory.rs:437, RECONCILED. There is ONE rule and THREE inputs, and
+    the rule is not in dispute. memory.rs:672-677 registers the frame at
+    `vk_start.saturating_sub(MODEXP_SCRATCH_BYTES)` with MODEXP_SCRATCH_WORDS = 8 (mod.rs:92-93),
+    i.e. 0x100 bytes BELOW whichever `vk_mptr` the caller chose, and `validate` re-derives the
+    same expression at memory.rs:1038-1040 as a hard error. LayoutMemory.lean:193-195 ports that
+    line verbatim, so every number below is `its own view's vk_mptr - 0x100` and none of them
+    contradicts the Rust.
 
-    `poseidonCtx.scalarInvScratchMptr` is 0x2800, the number the deployed artifact prints, and
-    the text port transcribes it (VerifierPartials' own gate 'poseidonCtx_derivedFromArtifact_ok'
-    is what ties it to the dump). The CONVERGED Lean layout derives a different number for the
-    same slot: 0x1f00 at the witness plan view and 0x3f00 at the poseidon layout's own derived value. The two other
-    memory slots the helpers read - finalPairingScratchMptr and accumulatorPairingBatchMptr -
-    AGREE between ctx and plan (4672 and 4096 on both sides), so this is not a general
-    transcription-vs-derivation split; it is one slot, and it is LayoutMemory's port of
-    memory.rs:437 that disagrees with the artifact, not the render and not this emitter.
+    WHAT DIFFERS IS THE INPUT, and only one of the three inputs is the deployment:
 
-    TWO CONSEQUENCES, both stated rather than hidden. (1) Every gate here that compares an
-    emitted helper against the render feeds the emitter the RENDER's value and says so - gate 4
-    for ec_pairing, gate 52 for scalar_inv - because comparing at the plan's value would compare
-    two different programs. (2) The emitted main at a real plan view therefore prints a
-    DIFFERENT scalar_inv scratch address than the artifact does, in one literal, and no gate in
-    the tree currently catches that, because nothing has ever compared emitMain's helper region
-    against the dump. Reported, not repaired: the repair is a decision about which of
-    memory.rs:437's three Lean spellings is normative, and Layout.lean / LayoutMemory.lean are
-    not this package's files. -/
+    | view | vk_mptr | scalar_inv_scratch | whose number |
+    |---|---|---|---|
+    | poseidonCtx / poseidonMemoryLayout | 0x2900 | 0x2800 | THE DEPLOYED ARTIFACT: D:115 declares VK_MPTR = 0x2900 and D:650 prints `let p := 0x2800` |
+    | witnessPlanView.memory = LayoutMemoryKats.referenceLayout | 0x2000 | 0x1f00 | the Rust's OWN test fixture of MEM:1294-1299, asserted at MEM:1428-1429 as `0x2000 - MODEXP_SCRATCH_BYTES` |
+    | LayoutMemoryKats.poseidonLayout | 0x4000 | 0x3f00 | the synthetic headline fixture of LayoutMemory.lean:535-537, a chosen vk_mptr and nothing more |
+
+    So the diagnosis this pin used to carry was pointed the wrong way. It is NOT LayoutMemory's
+    port of memory.rs:437 that disagrees with the artifact - the port is faithful and the
+    artifact satisfies it exactly. It is the choice of WHICH LAYOUT A GATE HANDS THE EMITTER.
+    `emitScalarInvAt` is a function of its plan view: at the deployed plan view it prints the
+    artifact's number, at the witness fixture it prints the fixture's. The gate that says so,
+    and that reddens if the two are ever conflated again, is
+    GenAstDispatch's emitMainHelperRegion_matchesArtifact_ok, with its falsification
+    emitMainHelperRegion_detectsWrongScratch_ok.
+
+    FIVE THINGS THIS GATE PINS AS DATA. (1) Each value equals its own view's vk_mptr minus
+    modexpScratchBytes, so the divergence is attributable to the input and not to a typo in the
+    port. (2) The three numbers and the three vk_mptrs, spelled out. (3) The deployed ctx and the
+    deployed layout are ONE source and the deployed plan view carries it, so at the
+    artifact-facing view there is exactly one number to print and it is 0x2800. (4) The two
+    fixture numbers differ from the deployment, so neither can be mistaken for it. (5) The
+    fixture numbers are NOT harmless alternatives: 0x3f00 is the deployed QUOTIENT_MPTR (D:166),
+    a live 4-word region, so a scalar_inv frame at the poseidon KAT's vk_mptr would collide with
+    it - which is the reason the emitter's artifact-facing gate runs at the deployed layout and
+    nowhere else. And the two slots that DO agree across every view - finalPairingScratchMptr
+    4672 and accumulatorPairingBatchMptr 4096 - are why this was one slot and not a general
+    transcription-vs-derivation split. -/
 def emitScalarInvScratchSourcesDiffer_ok : Bool :=
+  let ref := Midfall.Generator.LayoutMemoryKats.referenceLayout
+  let pose := Midfall.Generator.LayoutMemoryKats.poseidonLayout
+  -- (1) ONE RULE, three inputs: every value is its own view's vk_mptr - 0x100
+  poseidonCtx.scalarInvScratchMptr == poseidonCtx.vkMptr - modexpScratchBytes &&
+    ref.scalarInvScratchMptr == ref.vkMptr.value.asUsizeNat - modexpScratchBytes &&
+    pose.scalarInvScratchMptr == pose.vkMptr.value.asUsizeNat - modexpScratchBytes &&
+  -- (2) the three numbers, and the three vk_mptrs that produced them
   poseidonCtx.scalarInvScratchMptr == 0x2800 &&
     Midfall.Lowering.witnessPlanView.memory.scalarInvScratchMptr == 0x1f00 &&
-    Midfall.Generator.LayoutMemoryKats.poseidonLayout.scalarInvScratchMptr == 0x3f00 &&
+    pose.scalarInvScratchMptr == 0x3f00 &&
+    poseidonCtx.vkMptr == 0x2900 &&
+    ref.vkMptr.value.asUsizeNat == 0x2000 &&
+    pose.vkMptr.value.asUsizeNat == 0x4000 &&
+  -- (3) the deployed ctx and the deployed layout are one source, and the deployed plan view
+  --     carries that layout: this is the agreement the missing gate now enforces
+  poseidonMemoryLayout.scalarInvScratchMptr == poseidonCtx.scalarInvScratchMptr &&
+    transcriptParserPoseidonPlan.memory.scalarInvScratchMptr ==
+      poseidonCtx.scalarInvScratchMptr &&
+    transcriptParserPoseidonPlan.memory.finalPairingScratchMptr ==
+      poseidonCtx.finalPairingScratchMptr &&
+  -- (4) neither fixture is the deployment
+  Midfall.Lowering.witnessPlanView.memory.scalarInvScratchMptr !=
+      poseidonCtx.scalarInvScratchMptr &&
+    pose.scalarInvScratchMptr != poseidonCtx.scalarInvScratchMptr &&
+  -- (5) the collision the poseidon KAT's vk_mptr would cause in the DEPLOYED map
+  pose.scalarInvScratchMptr == poseidonMemoryLayout.quotientMptr.value.asUsizeNat &&
     -- and the two slots that DO agree, so the finding is about one slot and not about the split
     poseidonCtx.finalPairingScratchMptr ==
       Midfall.Lowering.witnessPlanView.memory.finalPairingScratchMptr &&

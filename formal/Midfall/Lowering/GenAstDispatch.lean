@@ -595,6 +595,233 @@ def emitPartialRoutesRealSlices_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .pcs)
       (emitPlaceholder .pcs)
 
+/-! ### The artifact-facing plan view, and the helper region against the dump (P-SCRATCH)
+
+THE GATE THIS SECTION ADDS, and why its absence was the real defect. P-SCRATCH found three
+different numbers in the tree for memory.rs:437's scalar-inversion scratch slot: 0x2800 in the
+text port's deployed context, 0x1f00 at the witness plan view and 0x3f00 at the poseidon KAT
+layout. The arbiter is the Rust, and the Rust says all three are the SAME rule read at three
+different vk_mptr inputs: memory.rs:672-677 registers the frame at
+vk_start.saturating_sub(MODEXP_SCRATCH_BYTES) with MODEXP_SCRATCH_WORDS = 8 (mod.rs:92-93),
+i.e. 0x100 bytes below the caller's VK base, and validate re-derives that expression as a
+hard error at memory.rs:1038-1040. LayoutMemory.lean:193-195 ports the line verbatim. The
+deployed artifact satisfies it: D:115 declares VK_MPTR = 0x2900 and D:650 prints
+"let p := 0x2800", and 0x2900 - 0x100 = 0x2800. The 0x1f00 is the Rust's OWN test fixture
+(MEM:1294-1299, asserted at MEM:1428-1429 as 0x2000 - MODEXP_SCRATCH_BYTES), and 0x3f00 is
+the synthetic headline fixture's chosen base at LayoutMemory.lean:535-537.
+
+SO NO DEPLOYED BYTE IS WRONG, and nothing in the port of memory.rs:437 is wrong either. What
+was wrong is that the emitter's artifact-facing gates ran at a FIXTURE plan view and no gate
+ever said which plan view an artifact claim belongs to. The emitter therefore put 0x1f00 into
+main while every artifact-facing gate in the file reached the dump through the TEXT port's own
+context (gates 52-53 compare the emitted helper at poseidonCtx's value and say so), and nothing
+at all compared emitMain's helper region against the dump to notice. That comparison is gate 60,
+and it runs at
+artifactPlanView, the deployed plan view. Gate 61 is its falsification: the same predicate at
+the pre-fix plan view, at a nudged deployed slot, and with the hex-versus-decimal spelling
+control the standing note demands.
+
+WHY THE COMPARISON IS A VALUE COMPARISON. Numeric spelling is invisible to every AST relation
+in this tree - numericSpellingDivergence_ok (GenAst.lean) pins that the emitter prints 10240
+where the artifact prints 0x2800, and yulTokens maps the two onto each other. A gate that
+compared TEXT would therefore pass on a real mismatch or fail on an innocent one, so litValue?
+parses both sides into a Nat and every address clause below compares numbers. -/
+
+/-- THE ARTIFACT-FACING PLAN VIEW: the deployed poseidon profile reached through a PlanView,
+    i.e. the only plan view at which an emitted claim can be compared against the tracked
+    artifact. It is transcriptParserPoseidonPlan (GenAst.lean:1243), which P-AST4 built from
+    poseidonCtx.memory - that is poseidonMemoryLayout, the transcribed deployed layout
+    VerifierPartials' gate 77 checks three ways (against the dump's own *_MPTR lines,
+    against Layout.lean's ported constants and MEM:1039's rule, and against the ported
+    validate). It is NOT witnessPlanView, whose memory is the Rust's 0x2000 test fixture. -/
+def artifactPlanView : PlanView := transcriptParserPoseidonPlan
+
+/-- The HELPER REGION of emitMain: the maximal prefix of function definitions, which is what
+    emitHelpers ++ emitSlices makes of it - the first slice is a Stmt.block, so the prefix
+    stops exactly where main's definitions stop. Slicing emitMain rather than calling
+    emitHelpers is the point: the gate is about what main actually carries. -/
+def mainHelperRegion (pv : PlanView) : Block Op :=
+  (emitMain pv).takeWhile fun | Stmt.funDef _ _ _ _ => true | _ => false
+
+/-- The names of the definitions in a region, in order. -/
+def regionHelperNames (b : Block Op) : List String :=
+  b.filterMap fun | Stmt.funDef n _ _ _ => some n | _ => none
+
+/-- One definition of a region by name, as a block of its own, or the empty block if the region
+    does not define it. A list and not an Option because every caller compares it with
+    EVM.print, and an absent helper prints as the empty string and so fails every comparison
+    it appears in rather than short-circuiting one. -/
+def regionHelper (b : Block Op) (nm : String) : Block Op :=
+  b.filterMap fun s => match s with
+    | Stmt.funDef n _ _ _ => if n == nm then some s else none
+    | _ => none
+
+/-- The value of a decimal literal body. -/
+def decVal (t : String) : Nat :=
+  t.foldl (fun (acc : Nat) (c : Char) => acc * 10 + (c.toNat - '0'.toNat)) 0
+
+/-- THE VALUE OF A YUL NUMBER LITERAL, however it is spelled: 0x2800, 0X2800 and 10240 all
+    give 10240, and anything that is not a number gives none. This is the parser the standing
+    note asks for - numeric spelling is invisible to yulTokens and to stmtsBeq, so a gate that
+    compared text would pass on a real mismatch. -/
+def litValue? (t : String) : Option Nat :=
+  let s := trimWs t
+  if s.startsWith "0x" || s.startsWith "0X" then
+    let ds := ((s.drop 2).takeWhile Char.isHexDigit).toString
+    if ds.isEmpty then none else some (hexVal ds)
+  else
+    let ds := (s.takeWhile (fun c => c >= '0' && c <= '9')).toString
+    if ds.isEmpty then none else some (decVal ds)
+
+/-- The value of the first "let NAME := <literal>" line of a rendered slice, parsed through
+    litValue? so hex and decimal are the same question. None when the slice has no such line,
+    which is what makes an absent helper a red and not a shrug. -/
+def dumpLetValue (slice name : String) : Option Nat :=
+  let needle := "let " ++ name ++ " := "
+  match (slice.splitOn "\n").find? (fun l => (trimWs l).startsWith needle) with
+  | some l => litValue? (((trimWs l).splitOn needle).drop 1 |>.headD "")
+  | none => none
+
+-- Every "let NAME := <number>" in an emitted block, at any nesting depth: the function
+-- bodies, the if arms, the for init/post blocks and the switch cases are all walked, so a
+-- literal the emitter buried inside a branch cannot hide from the comparison. A doc comment
+-- cannot sit directly above `mutual` at this toolchain - the parser reads it as the header of
+-- a declaration and then rejects `mutual` - hence the line comments.
+mutual
+partial def letNumsSs (ss : List (Stmt Op)) : List (String × Nat) :=
+  ss.flatMap letNumsS
+
+partial def letNumsS (s : Stmt Op) : List (String × Nat) :=
+  match s with
+  | Stmt.letDecl vs (some (Expr.lit (Literal.number n))) => vs.map (fun v => (v, n))
+  | Stmt.letDecl _ _ => []
+  | Stmt.block b => letNumsSs b
+  | Stmt.funDef _ _ _ b => letNumsSs b
+  | Stmt.cond _ b => letNumsSs b
+  | Stmt.switch _ cases dflt =>
+      letNumsSs (cases.map Prod.snd).flatten ++
+        (match dflt with | some b => letNumsSs b | none => [])
+  | Stmt.forLoop i _ p b => letNumsSs i ++ letNumsSs p ++ letNumsSs b
+  | _ => []
+end
+
+/-- The value one "let NAME := <literal>" carries in an emitted AST, read off the AST and not
+    off the printed text, so the printer's decimal habit cannot flatter the comparison. -/
+def emittedLetValue (b : Block Op) (name : String) : Option Nat :=
+  match (letNumsSs b).find? (fun p => p.fst == name) with
+  | some p => some p.snd
+  | none => none
+
+/-- One helper of one plan view against the dump's own bytes for that helper, token for token.
+    Split out so the falsification gate can name WHICH helper fails and not merely that one
+    does. -/
+def helperTokensMatch (sol : String) (pv : PlanView) (nm : String) : Bool :=
+  yulTokens ("{" ++ renderFunction sol nm ++ "}") ==
+    yulTokens (EVM.print (regionHelper (mainHelperRegion pv) nm))
+
+/-- THE HELPER-REGION COMPARISON, as a function of the plan view so gate 61 can run the SAME
+    predicate at the wrong one and report that it fails. Six clauses, none of them weaker than
+    the mismatch it was written to catch:
+
+    (1) the region is EXACTLY the eight helpers emitHelpers claims, in the template's order;
+    (2) each of the eight is present in the dump and COMPLETE there - the brace test P-AST4
+        had to repair on the slicer - and is emitted exactly once here;
+    (3) each emitted definition equals the dump's bytes token for token;
+    (4) the two addresses the helpers interpolate are the same NUMBER on both sides, read out
+        of the AST on one side and out of the dump's hex on the other, and each occurs exactly
+        once so "first match wins" cannot pick an unrelated line;
+    (5) the plan view really carries those two numbers, i.e. the emitter read them from the
+        plan and not from a constant the converter typed;
+    (6) THE RUST RULE ITSELF, against the artifact: memory.rs:674 puts the frame at
+        vk_mptr - MODEXP_SCRATCH_BYTES, and the input is the dump's own VK_MPTR line rather
+        than a Lean constant, so the expected side never touches the emitter. -/
+def helperRegionMatchesArtifact (sol : String) (pv : PlanView) : Bool :=
+  let hr := mainHelperRegion pv
+  let sInv := regionHelper hr "scalar_inv"
+  let pair := regionHelper hr "ec_pairing"
+  let dumpInv := renderFunction sol "scalar_inv"
+  let dumpPair := renderFunction sol "ec_pairing"
+  regionHelperNames hr == emittedHelperNames &&
+    emittedHelperNames.length == 8 &&
+    (emittedHelperNames.all fun nm =>
+      sliceIsComplete (renderFunction sol nm) && (regionHelper hr nm).length == 1) &&
+    (emittedHelperNames.all fun nm => helperTokensMatch sol pv nm) &&
+    dumpLetValue dumpInv "p" == emittedLetValue sInv "p" &&
+    dumpLetValue dumpPair "scratch" == emittedLetValue pair "scratch" &&
+    VerifierPartialKats.occ dumpInv "let p := " == 1 &&
+    VerifierPartialKats.occ dumpPair "let scratch := " == 1 &&
+    ((letNumsSs sInv).filter (fun p => p.fst == "p")).length == 1 &&
+    ((letNumsSs pair).filter (fun p => p.fst == "scratch")).length == 1 &&
+    some pv.memory.scalarInvScratchMptr == emittedLetValue sInv "p" &&
+    some pv.memory.finalPairingScratchMptr == emittedLetValue pair "scratch" &&
+    (match EvmKats.solConstant sol "VK_MPTR" with
+      | some vk =>
+          dumpLetValue dumpInv "p" == some (vk - modexpScratchBytes) &&
+            pv.memory.scalarInvScratchMptr == vk - modexpScratchBytes &&
+            vk == poseidonCtx.vkMptr
+      | none => false)
+
+/-- GATE 60 (THE MISSING GATE, P-SCRATCH). emitMain's helper region against the tracked
+    artifact, at the artifact-facing plan view. This is the check whose absence P-SCRATCH names
+    as the real bug: the value mismatch is only what its absence revealed. Two things beyond
+    helperRegionMatchesArtifact are pinned here. The reachability first (D-P19: a moved dump is
+    a named red, never a vacuous needle match), and the shape of the slice - main continues past
+    the eighth definition with a Stmt.block, so the prefix really is the helper region and
+    mainHelperRegion has neither swallowed a slice nor stopped short of a helper. The two line
+    counts are the witness that the dump slices the gate compares against are whole functions
+    and not the truncated fragments P-AST4 found once before. -/
+def emitMainHelperRegion_matchesArtifact_ok : IO Bool :=
+  VerifierPartialKats.readDump >>= fun sol =>
+  let m := emitMain artifactPlanView
+  pure (EvmKats.generatedReadOk sol &&
+    helperRegionMatchesArtifact sol artifactPlanView &&
+    m.length > 8 &&
+    (match m.drop 8 with
+      | [] => false
+      | Stmt.funDef _ _ _ _ :: _ => false
+      | _ :: _ => true) &&
+    VerifierPartialKats.lineCount (renderFunction sol "scalar_inv") == 23 &&
+    VerifierPartialKats.lineCount (renderFunction sol "ec_pairing") == 36)
+
+/-- GATE 61 (D-P23 / R-41: THE GATE MUST BE ABLE TO FAIL, AND THE FAILURE MODE IS NAMED). Six
+    clauses. (1) THE PRE-FIX STATE ITSELF: the emitter fed the witness fixture's layout, which
+    is exactly what the tree did when P-HELPERS recorded the divergence, reddens the gate.
+    (2) It reddens on ONE helper and not on the eight, so the gate localises the defect to the
+    slot instead of drowning it - the measurement that made this diagnosable at all. (3) The
+    number that moved, as a number. (4) A one-word nudge of the DEPLOYED slot reddens it too,
+    so an emitter that hard-coded 0x2800 instead of reading the plan would not pass gate 60.
+    (5) The SPELLING CONTROL: litValue? maps 0x2800, 0X2800 and 10240 onto one number and
+    0x1f00 onto another, which is what makes the address clauses value comparisons rather than
+    text comparisons. (6) The same control at the bytes: the printed AST spells the deployed
+    address in DECIMAL, the dump spells it in HEX, and the two still match - so the gate is not
+    a string comparison wearing a hat. -/
+def emitMainHelperRegion_detectsWrongScratch_ok : IO Bool :=
+  VerifierPartialKats.readDump >>= fun sol =>
+  let witnessMem := Midfall.Lowering.witnessPlanView.memory
+  let badPV := { artifactPlanView with memory := witnessMem }
+  let nudgedPV := { artifactPlanView with memory :=
+    { poseidonMemoryLayout with scalarInvScratchMptr := 0x2820 } }
+  pure (EvmKats.generatedReadOk sol &&
+    ! helperRegionMatchesArtifact sol badPV &&
+    emittedHelperNames.filter (fun nm => ! helperTokensMatch sol badPV nm) ==
+      ["scalar_inv"] &&
+    emittedHelperNames.filter (fun nm => ! helperTokensMatch sol nudgedPV nm) ==
+      ["scalar_inv"] &&
+    emittedLetValue (regionHelper (mainHelperRegion badPV) "scalar_inv") "p" ==
+      some witnessMem.scalarInvScratchMptr &&
+    witnessMem.scalarInvScratchMptr == 0x1f00 &&
+    ! helperRegionMatchesArtifact sol nudgedPV &&
+    litValue? "0x2800" == litValue? "10240" &&
+      litValue? "0X2800" == litValue? "0x2800" &&
+      litValue? "0x2800" == some 10240 &&
+      litValue? "0x1f00" == some 7936 &&
+      litValue? "0x1f00" != litValue? "0x2800" &&
+      litValue? "not a number" == none &&
+    (EVM.print (regionHelper (mainHelperRegion artifactPlanView) "scalar_inv")).contains
+      "10240" &&
+      (renderFunction sol "scalar_inv").contains "0x2800" &&
+      ! (renderFunction sol "scalar_inv").contains "10240")
+
 end Midfall.Lowering.GenAst
 
 #eval Midfall.Lowering.GenAst.emitPlaceholderIsTotal_ok -- expect true
@@ -605,3 +832,5 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.emitPcsReadsOnlyFourFields_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitPcsTagging_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitPcsFaultArm_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitMainHelperRegion_matchesArtifact_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitMainHelperRegion_detectsWrongScratch_ok -- expect true
