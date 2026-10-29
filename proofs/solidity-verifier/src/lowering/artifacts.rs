@@ -192,6 +192,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             expected_num_acc_limbs,
             expected_num_acc_limb_bits,
             expected_acc_has_carried_scalars,
+            expected_acc_non_identity_points,
         ) = self
             .acc_encoding
             .map(|acc_encoding| {
@@ -201,9 +202,10 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
                     acc_encoding.num_limbs,
                     acc_encoding.num_limb_bits,
                     acc_encoding.has_carried_scalars(),
+                    !acc_encoding.has_identity_flags(),
                 )
             })
-            .unwrap_or((false, 0, 0, 0, false));
+            .unwrap_or((false, 0, 0, 0, false, false));
 
         let verifier = Halo2Verifier {
             template_constants: Default::default(),
@@ -273,6 +275,7 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             expected_num_acc_limbs,
             expected_num_acc_limb_bits,
             expected_acc_has_carried_scalars,
+            expected_acc_non_identity_points,
             acc_fixed_bases,
         };
         verifier

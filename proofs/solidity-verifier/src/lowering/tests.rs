@@ -1465,10 +1465,10 @@ fn accumulator_decoder_reads_trailing_identity_flag_word() {
     // x/y must only be decoded for non-identity points: the circuit leaves
     // them unconstrained when the flag is set.
     let load_point = verifier_template
-        .split("function load_acc_point(")
+        .split("function load_acc_point(dst, src, bits, n, base) -> ok, is_id {")
         .nth(1)
         .and_then(|body| body.split("function validate_public_accumulator").next())
-        .expect("load_acc_point should be rendered before validate_public_accumulator");
+        .expect("flagged load_acc_point should be rendered before validate_public_accumulator");
     let (id_branch, non_id_branch) =
         load_point.split_once("if iszero(is_id) {").expect("non-identity branch");
     assert!(
@@ -1537,10 +1537,229 @@ fn accumulator_word_counts_match_circuit_encoding() {
     assert_eq!(public[5], Fq::from(3));
     assert_eq!(&public[6..11], generator_words.as_slice());
     assert_eq!(public[11], Fq::from(5));
+}
+
+/// Compare the point-pair layout with the Moonlight wrap circuit encoding:
+/// each non-identity point exposes only its x and y coordinates through
+/// `AssignedField::as_public_input`, i.e. the foreign point encoding without
+/// its trailing identity-flag word.
+#[test]
+fn point_pair_word_counts_match_coordinate_encoding() {
+    use group::Group;
+    use midnight_circuits::{
+        ecc::curves::CircuitCurve,
+        types::{AssignedField, AssignedForeignPoint, Instantiable},
+    };
+    use midnight_curves::{Fp, G1Projective};
+
+    let encoding = AccumulatorEncoding::point_pair(0, 7, 56);
+    let coordinate_words = |point: &G1Projective| {
+        let (x, y) = point.coordinates().expect("non-identity point");
+        [
+            AssignedField::<Fq, Fp, G1Projective>::as_public_input(&x),
+            AssignedField::<Fq, Fp, G1Projective>::as_public_input(&y),
+        ]
+        .concat()
+    };
+
+    let lhs = G1Projective::generator();
+    let rhs = lhs.double();
+    for point in [lhs, rhs] {
+        let words = coordinate_words(&point);
+        assert_eq!(words.len(), encoding.point_words());
+        let flagged =
+            AssignedForeignPoint::<Fq, G1Projective, G1Projective>::as_public_input(&point);
+        assert_eq!(flagged.split_last(), Some((&Fq::ZERO, words.as_slice())));
+    }
+
+    let public = [coordinate_words(&lhs), coordinate_words(&rhs)].concat();
     assert_eq!(
-        2 * words_per_point(&G1Projective::generator()),
+        public.len(),
         AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS
     );
+    assert_eq!(
+        encoding.fully_collapsed_public_input_words(),
+        Ok(public.len())
+    );
+}
+
+/// `try_new` must reject point-pair layouts with the wrong word count, and in
+/// particular the old flagged 10-word layout, with a typed error rather than
+/// accepting it and panicking during rendering.
+#[test]
+fn try_new_rejects_flagged_point_pair_layout() {
+    let (params, vk) = lowering_plan_test_vk();
+    let config = |num_instances| {
+        GeneratorConfig::new(num_instances, 1)
+            .with_accumulator(AccumulatorEncoding::point_pair(11, 7, 56))
+    };
+
+    // Current Moonlight wrap shape: 11 state words + 8 accumulator words.
+    assert!(SolidityGenerator::try_new(&params, &vk, config(19)).is_ok());
+
+    // Too short for the 8-word point pair.
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, config(18)),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "accumulator public-input tail exceeds num_instances",
+            ..
+        })
+    ));
+
+    // Old flagged shape: 11 + 10 = 21 leaves two trailing words.
+    assert!(matches!(
+        SolidityGenerator::try_new(&params, &vk, config(21)),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            ..
+        })
+    ));
+}
+
+/// A non-empty fixed-base scalar tail must hold exactly one scalar for `-G`
+/// and each fixed and permutation commitment. Shorter tails used to panic in
+/// lowering (or map scalars onto a prefix of the fixed commitments), and longer
+/// ones read base pointers past the fixed-commitment region.
+#[test]
+fn fixed_scalar_tail_must_match_vk_fixed_bases() {
+    // `-G` + 3 fixed + 2 permutation commitments.
+    let num_vk_fixed_bases = 1 + 3 + 2;
+    let encoding = AccumulatorEncoding::new(4, 7, 56);
+    let payload_end = 4 + AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS;
+
+    assert_eq!(
+        encoding.validate_for_vk(payload_end, num_vk_fixed_bases),
+        Ok(0)
+    );
+    assert_eq!(
+        encoding.validate_for_vk(payload_end + num_vk_fixed_bases, num_vk_fixed_bases),
+        Ok(num_vk_fixed_bases)
+    );
+    // Only `-G`, within the permutation count, missing a fixed commitment, and
+    // one past the full tail.
+    for tail in [1, 2, num_vk_fixed_bases - 1, num_vk_fixed_bases + 1] {
+        assert!(
+            matches!(
+                encoding.validate_for_vk(payload_end + tail, num_vk_fixed_bases),
+                Err(GeneratorError::UnsupportedAccumulatorEncoding {
+                    reason: "fixed-base scalar tail must have one scalar for -G and each fixed \
+                             and permutation commitment",
+                    ..
+                })
+            ),
+            "tail of {tail} scalars should be rejected"
+        );
+    }
+
+    // Point pairs still reject any tail before the VK count is considered.
+    let point_pair = AccumulatorEncoding::point_pair(4, 7, 56);
+    let point_pair_end = 4 + AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS;
+    assert_eq!(
+        point_pair.validate_for_vk(point_pair_end, num_vk_fixed_bases),
+        Ok(0)
+    );
+    assert!(matches!(
+        point_pair.validate_for_vk(point_pair_end + num_vk_fixed_bases, num_vk_fixed_bases),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            ..
+        })
+    ));
+}
+
+/// `try_new` sizes the fixed-base scalar tail from the verified VK, and a
+/// verifier with the full tail renders.
+#[test]
+fn try_new_checks_fixed_scalar_tail_against_vk() {
+    let (params, vk) = lowering_plan_test_vk();
+    let num_vk_fixed_bases =
+        1 + vk.fixed_commitments().len() + vk.permutation().commitments().len();
+    assert!(
+        num_vk_fixed_bases >= 2,
+        "test VK should have a fixed commitment"
+    );
+    let config = |tail| {
+        GeneratorConfig::new(
+            AccumulatorEncoding::FULLY_COLLAPSED_PUBLIC_INPUT_WORDS + tail,
+            1,
+        )
+        .with_accumulator(AccumulatorEncoding::new(0, 7, 56))
+    };
+
+    assert!(SolidityGenerator::try_new(&params, &vk, config(0)).is_ok());
+    SolidityGenerator::try_new(&params, &vk, config(num_vk_fixed_bases))
+        .expect("full fixed-base scalar tail should be accepted")
+        .render(crate::RenderOptions::default())
+        .expect("full fixed-base scalar tail should render");
+    for tail in [num_vk_fixed_bases - 1, num_vk_fixed_bases + 1] {
+        assert!(
+            matches!(
+                SolidityGenerator::try_new(&params, &vk, config(tail)),
+                Err(GeneratorError::UnsupportedAccumulatorEncoding { .. })
+            ),
+            "tail of {tail} scalars should be rejected"
+        );
+    }
+}
+
+/// Render a point-pair verifier and check that its decoder never reads an
+/// identity flag, always decodes both coordinates, and rejects the EIP-2537
+/// infinity encoding.
+#[test]
+fn point_pair_verifier_decodes_non_identity_coordinates_only() {
+    let (params, vk) = lowering_plan_test_vk();
+    let render = |config| {
+        SolidityGenerator::new(&params, &vk, config)
+            .render(crate::RenderOptions::default())
+            .expect("render accumulator verifier")
+            .verifier
+    };
+    let point_pair = render(
+        GeneratorConfig::new(11, 1).with_accumulator(AccumulatorEncoding::point_pair(3, 7, 56)),
+    );
+    let point_and_scalar =
+        render(GeneratorConfig::new(12, 1).with_accumulator(AccumulatorEncoding::new(0, 7, 56)));
+
+    assert_eq!(point_pair.matches("function load_acc_point(").count(), 1);
+    let load_point = point_pair
+        .split("function load_acc_point(dst, src, bits, n, base) -> ok {")
+        .nth(1)
+        .and_then(|body| body.split("function validate_public_accumulator").next())
+        .expect("point-pair load_acc_point should return only ok");
+    assert_eq!(load_point.matches("load_acc_coord(").count(), 2);
+    assert!(load_point.contains("ok := and(ok, iszero(decoded_zero))"));
+
+    let validate = point_pair
+        .split("function validate_public_accumulator")
+        .nth(1)
+        .and_then(|body| body.split("// The caller checks `out`").next())
+        .expect("point-pair verifier should validate its accumulator");
+    for required in [
+        "let point_words := mul(2, coord_words)",
+        "let lhs_ok := load_acc_point(",
+        "let rhs_ok := load_acc_point(",
+    ] {
+        assert!(
+            validate.contains(required),
+            "point-pair accumulator layout: {required}"
+        );
+    }
+    let code_only = |source: &str| {
+        source
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or_default())
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    for forbidden in ["flag", "is_id"] {
+        assert!(
+            !code_only(load_point).contains(forbidden) && !code_only(validate).contains(forbidden),
+            "point-pair accumulator decoding must not reference `{forbidden}`"
+        );
+    }
+
+    assert!(point_and_scalar.contains("is_id := eq(flag, 1)"));
+    assert!(point_and_scalar.contains("pop(lhs_is_id)"));
 }
 
 #[test]
@@ -1559,10 +1778,18 @@ fn accumulator_encoding_validation_rejects_dead_configs() {
         point_pair.fully_collapsed_public_input_words(),
         Ok(AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS)
     );
-    assert!(point_pair.validate_for_num_instances(14).is_ok());
-    assert_eq!(point_pair.fixed_scalar_count(14), Ok(0));
+    assert!(point_pair.validate_for_num_instances(12).is_ok());
+    assert_eq!(point_pair.fixed_scalar_count(12), Ok(0));
     assert!(matches!(
-        point_pair.fixed_scalar_count(15),
+        point_pair.validate_for_num_instances(11),
+        Err(GeneratorError::UnsupportedAccumulatorEncoding {
+            reason: "accumulator public-input tail exceeds num_instances",
+            ..
+        })
+    ));
+    // The flagged 10-word point pair would leave two trailing words.
+    assert!(matches!(
+        point_pair.fixed_scalar_count(14),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
             reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
             ..

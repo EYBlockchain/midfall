@@ -32,6 +32,15 @@ use crate::lowering::layout;
 /// followed by one `0`/`1` identity-flag word. Any public-input words after
 /// the fixed accumulator payload are interpreted as the optional RHS
 /// fixed-base scalar tail for partially collapsed accumulators.
+///
+/// [`Self::point_pair`] selects the Moonlight wrap layout instead:
+///
+/// ```text
+/// lhs point coordinates, rhs point coordinates
+/// ```
+///
+/// with the same coordinate encoding but no identity-flag words, no carried
+/// scalars, and no fixed-base scalar tail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct AccumulatorEncoding {
     /// Offset of accumulator limbs in instances.
@@ -50,9 +59,11 @@ pub enum AccumulatorEncodingKind {
     /// `AssignedAccumulator<S>::as_public_input`: lhs point, lhs scalar, rhs
     /// point, rhs scalar, followed by an optional fixed-base scalar tail.
     PointAndScalar,
-    /// Already collapsed point-pair layout: lhs point, rhs point. The generated
-    /// verifier treats both carried scalars as one and does not accept a
-    /// fixed-base scalar tail.
+    /// Already collapsed Moonlight wrap layout: lhs `(x, y)`, rhs `(x, y)`.
+    /// The circuit constrains both points to be non-identity, so neither point
+    /// carries an identity-flag word and the generated verifier rejects any
+    /// point that decodes to the identity. Both carried scalars are implicitly
+    /// one and a fixed-base scalar tail is not accepted.
     PointPair,
 }
 
@@ -75,9 +86,9 @@ impl AccumulatorEncoding {
     pub const SUPPORTED_NUM_LIMB_BITS: usize = layout::accumulator::LIMB_BITS;
     /// Public-input words required by the fully collapsed accumulator form.
     pub const FULLY_COLLAPSED_PUBLIC_INPUT_WORDS: usize = 12;
-    /// Public-input words required by an already collapsed `(lhs, rhs)` point
-    /// pair.
-    pub const POINT_PAIR_PUBLIC_INPUT_WORDS: usize = 10;
+    /// Public-input words required by an already collapsed, non-identity
+    /// `(lhs, rhs)` point pair.
+    pub const POINT_PAIR_PUBLIC_INPUT_WORDS: usize = 8;
 
     /// Return a new `AccumulatorEncoding`.
     pub fn new(offset: usize, num_limbs: usize, num_limb_bits: usize) -> Self {
@@ -89,7 +100,8 @@ impl AccumulatorEncoding {
         }
     }
 
-    /// Return a point-pair accumulator encoding with implicit unit scalars.
+    /// Return a point-pair accumulator encoding with implicit unit scalars and
+    /// no identity flags; both points must be non-identity.
     pub fn point_pair(offset: usize, num_limbs: usize, num_limb_bits: usize) -> Self {
         Self {
             offset,
@@ -105,10 +117,15 @@ impl AccumulatorEncoding {
         self.num_limbs.div_ceil(limbs_per_instance)
     }
 
-    /// Number of public-input words for one G1 point: x and y coordinates
-    /// followed by the identity flag.
+    /// Number of public-input words for one G1 point: x and y coordinates,
+    /// followed by the identity flag when the layout carries one.
     pub(crate) fn point_words(self) -> usize {
-        2 * self.coordinate_words() + layout::accumulator::IDENTITY_FLAG_WORDS
+        2 * self.coordinate_words()
+            + if self.has_identity_flags() {
+                layout::accumulator::IDENTITY_FLAG_WORDS
+            } else {
+                0
+            }
     }
 
     /// Number of public-input words for the lhs and rhs G1 points.
@@ -118,6 +135,12 @@ impl AccumulatorEncoding {
 
     /// Whether this public-input layout carries explicit lhs/rhs scalars.
     pub(crate) fn has_carried_scalars(self) -> bool {
+        matches!(self.kind, AccumulatorEncodingKind::PointAndScalar)
+    }
+
+    /// Whether each public-input point is followed by an identity-flag word.
+    /// Point-pair accumulators are non-identity and omit the flag.
+    pub(crate) fn has_identity_flags(self) -> bool {
         matches!(self.kind, AccumulatorEncodingKind::PointAndScalar)
     }
 
@@ -182,6 +205,32 @@ impl AccumulatorEncoding {
                 num_limb_bits: self.num_limb_bits,
                 num_instances,
                 reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            });
+        }
+        Ok(tail)
+    }
+
+    /// Validates this encoding against `num_instances` and the fixed bases of
+    /// the verified VK, returning the fixed-base scalar tail length.
+    ///
+    /// `num_vk_fixed_bases` is `1 + #fixed + #permutation` commitments: `-G`
+    /// plus every commitment in `fixed_bases(vk)`. A non-empty tail must hold
+    /// exactly one RHS scalar per base, which lowering maps onto them in
+    /// `BTreeMap` name order.
+    pub(crate) fn validate_for_vk(
+        self,
+        num_instances: usize,
+        num_vk_fixed_bases: usize,
+    ) -> Result<usize, GeneratorError> {
+        let tail = self.fixed_scalar_count(num_instances)?;
+        if tail != 0 && tail != num_vk_fixed_bases {
+            return Err(GeneratorError::UnsupportedAccumulatorEncoding {
+                offset: self.offset,
+                num_limbs: self.num_limbs,
+                num_limb_bits: self.num_limb_bits,
+                num_instances,
+                reason: "fixed-base scalar tail must have one scalar for -G and each fixed and \
+                         permutation commitment",
             });
         }
         Ok(tail)

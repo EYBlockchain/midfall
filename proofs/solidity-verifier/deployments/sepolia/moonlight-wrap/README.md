@@ -4,6 +4,16 @@ This directory contains the generated Moonlight wrap verifier contracts that
 were deployed to Sepolia, plus the exact runtime bytecode fetched back from the
 chain.
 
+> **Status: historical demo deployment, not regularly updated.** These
+> contracts were deployed once, on 2026-05-19, and have not been redeployed
+> since. They were rendered from a synthetic Moonlight wrap benchmark (dummy
+> fold-leaf proofs, a `k = 20` wrap circuit, and a seeded `unsafe_setup` SRS
+> whose secret is public, so proofs can be forged against them). They predate
+> later changes to the Moonlight wrap circuit and to the generator's
+> accumulator public-input layout, so they neither match current generator
+> output nor accept current Moonlight wrap proofs. The files below are kept as
+> an exact record of what is on-chain.
+
 ## Addresses
 
 | Contract | Address |
