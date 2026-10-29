@@ -308,6 +308,8 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       (instW : Array Word256) (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       PermissiveFor S W product qAddr calls →
+      (∀ V st, Inv (calls := calls) (gas := gas) S.E S.params .vk S.plan Snap V st →
+        st.env.keccakOf = hashOfBytes H) →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
@@ -342,6 +344,7 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       (instW : Array Word256) (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       PermissiveFor S W product qAddr calls →
+      Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
@@ -355,6 +358,8 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       PermissiveFor S W product qAddr calls →
       Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
+      (∀ V st, Inv (calls := calls) (gas := gas) S.E S.params .pcs S.plan Snap V st →
+        st.env.keccakOf = hashOfBytes H) →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
@@ -400,6 +405,8 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
       (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
+      (∀ V st, Inv (calls := S.calls W product qAddr) (gas := gas) S.E S.params .vk S.plan
+        Snap V st → st.env.keccakOf = hashOfBytes H) →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
@@ -431,6 +438,7 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
       (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
+      Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
@@ -444,6 +452,8 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
       (inst : Array (Fr p)) (Snap : Snapshot p G₁ G₂ Gₜ),
       SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
       Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product →
+      (∀ V st, Inv (calls := S.calls W product qAddr) (gas := gas) S.E S.params .pcs S.plan
+        Snap V st → st.env.keccakOf = hashOfBytes H) →
       DualMSM.check Snap.c.dual S.params = true →
       Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
         S.E.g1 cd = some (ms, instW) →
@@ -489,7 +499,17 @@ theorem vkLoading_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     agreement between the Yul keccak path and the Lean transcript, which is the
     readScheduleAgrees bridge the Encoding area owes. Note this is the one partial
     whose Inv post reaches past the parser: x1..x4 are squeezed inside the PCS phases
-    (Snapshot.lean prefixNeeds), so the snapshot has to be the full one. -/
+    (Snapshot.lean prefixNeeds), so the snapshot has to be the full one.
+
+    hkec IS NEW (P-BUNDLE audit finding 3) and it is the same class of hole as pcs_spec's missing
+    hh, one external earlier: the post pins x1 and x2 in memory to the SNAPSHOT's squeezed
+    challenges (Inv.lean:605-607) and the emitted squeeze_to hashes through the dialect keccak,
+    which the Bridge answers from st.env.keccakOf - so without a hypothesis saying that is
+    hashOfBytes H the theorem asserted a fact about a hash with no hypothesis about the hash.
+    The shape is copied from finalPairing_acc_spec's hkec, which has carried it for the same
+    reason. What hkec does NOT give is the other half the PROOF HOLE names: that the BYTES
+    absorbed agree with the Lean transcript (the readScheduleAgrees bridge the Encoding area
+    owes). That stays a proof obligation about the program, not a hole in the statement. -/
 theorem transcriptParser_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
@@ -498,6 +518,9 @@ theorem transcriptParser_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
+    (hkec : ∀ V st,
+      Inv (calls := calls) (gas := gas) S.E S.params .vk S.plan Snap V st →
+        st.env.keccakOf = hashOfBytes H)
     (hcd : Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
       S.E.g1 cd = some (ms, instW))
     (hinst : instOfWords? (p := p) instW = some inst)
@@ -591,7 +614,27 @@ theorem quotientLin_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduc
     the emitted region is derived from a ConstraintSystemMeta the tree can only supply for a
     FIXTURE circuit, not for poseidon (DeployedProfile.pcs_deployedGap_measured_ok), and the
     eight-block partition survives only through the PcsBlockRole tagging because the AST has
-    no comment node. -/
+    no comment node.
+
+    hh IS NOT HYGIENE AND P-BUNDLE ADDED IT (the tenth hole of this class, and the one every
+    gate missed). Block 5 ends in ONE G1MSM staticcall at 0x0c over the staged pairs
+    (GenAstPcs.pcsBlock5Ast:467-472) and Block 6 is TWO G1MSM-1s and TWO G1ADDs at 0x0c and
+    0x0b (pcsBlock6Ast:492-514); the Inv clauses at the .pcs post read exactly those slots as
+    codec images of snapshot points - FINAL_COM_MPTR, PAIRING_LHS_MPTR, PAIRING_RHS_MPTR
+    (Inv.lean:735-739, 'bytesAt st a 128 == E.g1.toEip Q' at Inv.lean:402). Nothing else in
+    the bundle bridges a precompile ANSWER to the codec the invariant names: hperm constrains
+    a successful answer to be one the honest byte fold could give (PermissiveFor, :111-115),
+    henv's ten clauses are about the domain and the digests (Inv.lean:451-497), hsup is about
+    the shape of the vk, and G1CodecLaws - not even bound here - says only how the codec
+    encodes, never what 0x0b or 0x0c returns. The bridge is Holds.g1Msm1 and Holds.g1Add, and
+    finalPairing_acc_spec's own PROOF HOLE note already names those two clauses - "needs the
+    accumulator partial ASTs and Eip2537.Holds g1Msm1 and g1Add for the slot rewrite" - for
+    exactly the same reason, which is what makes the omission here a hole and not a choice.
+    Without hh the theorem asserts a fact about precompile behaviour with no hypothesis about
+    precompile behaviour: not false, but unprovable as stated, and invisible to
+    check_hypothesis_bundles.py because pcs_spec is not a LoweringCorrect field. The
+    classifier at the foot of this file is what makes it visible, and the gate now reddens if
+    the binder is dropped. -/
 theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
@@ -600,6 +643,7 @@ theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (hsup : SupportedS S S.o₀)
     (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
     (hperm : PermissiveFor S W product qAddr calls)
+    (hh : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
     (hcd : Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
       S.E.g1 cd = some (ms, instW))
     (hinst : instOfWords? (p := p) instW = some inst)
@@ -872,5 +916,403 @@ def alwaysRevertsKats_ok : Bool :=
      | _ => true)
 
 #eval alwaysRevertsKats_ok                -- expect true
+
+
+/-! ### Which partials reach an EIP-2537 precompile (P-BUNDLE) -/
+
+/-- THE THREE ADDRESSES `Eip2537.Holds` IS ABOUT: G1ADD 0x0b, G1MSM 0x0c, PAIRING_CHECK 0x0f,
+    read out of the template constants the emitter itself interpolates
+    (Generator/Models.lean:296-303) rather than re-typed here, so a change to the ported constant
+    moves this list and the classifier with it.
+
+    EIP-198 modexp at 0x05 is NOT in the list, on purpose and not by oversight:
+    Assumptions/Eip2537.lean:37-41 is explicit that modexp is modelled arithmetic and not a
+    hypothesis - `modexpInv_correct` is a THEOREM about the computed `modexpOutput` - so a block
+    that reaches only modexp must not be required to bind `Holds`. The lagrange slice is exactly
+    that block, and row 3b of the gate below pins the exclusion as a computation instead of
+    leaving it to this sentence. -/
+def eip2537CallAddresses : List Nat :=
+  [templateConstantsDefault.eip2537.g1addAddress,
+    templateConstantsDefault.eip2537.g1msmAddress,
+    templateConstantsDefault.eip2537.pairingAddress]
+
+/-- The address operand of a `staticcall`, which is its SECOND argument (gas, address, in, inLen,
+    out, outLen). `none` means the classifier could not read it - a plan-supplied variable rather
+    than a number literal - and an unreadable target is treated as REACHING a precompile, never as
+    evidence of safety. That is the conservative direction: the only way to dodge the requirement
+    is to emit a literal address that is not one of the three. -/
+def staticcallAddr : List (Expr Op) → Option Nat
+  | _ :: Expr.lit (Literal.number n) :: _ => some n
+  | _ => none
+
+/-- Put a list of addresses into the canonical order of `eip2537CallAddresses`, dropping anything
+    outside it and any duplicate. Canonical rather than sorted because Lean 4.35 core has no
+    `List.qsort` (the note Kzg/Utils.lean:71 carries); the order that matters is the order the
+    hypothesis enumerates. -/
+def eip2537Canon (l : List Nat) : List Nat := eip2537CallAddresses.filter fun a => l.elem a
+
+/-- The EIP-2537 addresses among a raw target list. -/
+def eip2537TargetsIn (raw : List (Option Nat)) : List Nat := eip2537Canon (raw.filterMap id)
+
+/-- Does a raw target list reach an EIP-2537 precompile, or an address nobody can read? -/
+def reachesEip2537 (raw : List (Option Nat)) : Bool :=
+  raw.any fun
+    | none => true
+    | some n => eip2537CallAddresses.elem n
+
+/- The two things the bundle classifier reads off a statement tree: every `staticcall` address
+   operand (with `none` for an unreadable one) and every user-function name called. Five mutually
+   recursive structural walks rather than one fold, because the vendored AST nests statement lists
+   inside expressions inside statement lists (Ast.lean:52-88) and a `flatMap` under a match is
+   not structurally decreasing here. A `/- -/` and not a doc string because a doc string cannot
+   precede the `mutual` command - measured: "unexpected token 'mutual'; expected 'lemma'". -/
+mutual
+def bundleWalkE : Expr Op → List (Option Nat) × List String
+  | Expr.builtin Op.staticcall args =>
+      let (t, n) := bundleWalkEs args
+      (staticcallAddr args :: t, n)
+  | Expr.builtin _ args => bundleWalkEs args
+  | Expr.call fn args =>
+      let (t, n) := bundleWalkEs args
+      (t, fn :: n)
+  | _ => ([], [])
+termination_by e => sizeOf e
+
+def bundleWalkEs : List (Expr Op) → List (Option Nat) × List String
+  | [] => ([], [])
+  | e :: es =>
+      let (t, n) := bundleWalkE e
+      let (t', n') := bundleWalkEs es
+      (t ++ t', n ++ n')
+termination_by es => sizeOf es
+
+def bundleWalkS : Stmt Op → List (Option Nat) × List String
+  | Stmt.block b => bundleWalkSs b
+  | Stmt.funDef _ _ _ b => bundleWalkSs b
+  | Stmt.letDecl _ none => ([], [])
+  | Stmt.letDecl _ (some e) => bundleWalkE e
+  | Stmt.assign _ e => bundleWalkE e
+  | Stmt.cond c b =>
+      let (t, n) := bundleWalkE c
+      let (t', n') := bundleWalkSs b
+      (t ++ t', n ++ n')
+  | Stmt.switch c cases none =>
+      let (t, n) := bundleWalkE c
+      let (t', n') := bundleWalkSC cases
+      (t ++ t', n ++ n')
+  | Stmt.switch c cases (some d) =>
+      let (t, n) := bundleWalkE c
+      let (t', n') := bundleWalkSC cases
+      let (t'', n'') := bundleWalkSs d
+      (t ++ t' ++ t'', n ++ n' ++ n'')
+  | Stmt.forLoop init c post body =>
+      let (t, n) := bundleWalkSs init
+      let (t', n') := bundleWalkE c
+      let (t'', n'') := bundleWalkSs post
+      let (t''', n''') := bundleWalkSs body
+      (t ++ t' ++ t'' ++ t''', n ++ n' ++ n'' ++ n''')
+  | Stmt.exprStmt e => bundleWalkE e
+  | _ => ([], [])
+termination_by s => sizeOf s
+
+def bundleWalkSs : List (Stmt Op) → List (Option Nat) × List String
+  | [] => ([], [])
+  | s :: ss =>
+      let (t, n) := bundleWalkS s
+      let (t', n') := bundleWalkSs ss
+      (t ++ t', n ++ n')
+termination_by ss => sizeOf ss
+
+def bundleWalkSC : List (Literal × List (Stmt Op)) → List (Option Nat) × List String
+  | [] => ([], [])
+  | (_, b) :: cs =>
+      let (t, n) := bundleWalkSs b
+      let (t', n') := bundleWalkSC cs
+      (t ++ t', n ++ n')
+termination_by cs => sizeOf cs
+end
+
+/-- The EIP-2537 addresses a block reaches WITHOUT helper resolution. Named because the gate below
+    uses it to show the resolution is load-bearing rather than decorative: the FinalPairing slice
+    contains no staticcall at all - the pairing call lives in the hoisted `ec_pairing` definition
+    (GenAst.emitEcPairingAt, reached through emitHelpers) - so a classifier that read only the
+    slice would have reported finalPairing as needing no hypothesis, which is the wrong answer for
+    the wrong reason. -/
+def directEip2537Targets (b : Block Op) : List Nat := eip2537TargetsIn (bundleWalkSs b).1
+
+/-- One round of helper resolution: append every emitted helper whose name the block calls and
+    which is not already present. -/
+def helperRound (helpers : Block Op) (acc : Block Op) : Block Op :=
+  let called := (bundleWalkSs acc).2.eraseDups
+  let already := acc.filterMap fun
+    | Stmt.funDef n _ _ _ => some n
+    | _ => none
+  acc ++ helpers.filter fun
+    | Stmt.funDef n _ _ _ => called.contains n && !already.contains n
+    | _ => false
+
+/-- The transitive closure of a block under a set of helper definitions, bounded by the number of
+    helpers plus one. The bound is a pigeonhole and not a guess: a round that adds anything adds at
+    least one definition that was not already there, and there are only `helpers.length` of them.
+    A recursive helper would need a real fixpoint; under this bound the closure stops short, which
+    is why the gate below checks the emitted helper set is acyclic rather than assuming it. -/
+def callClosure (helpers : Block Op) (b : Block Op) : Block Op :=
+  (List.range (helpers.length + 1)).foldl (fun acc _ => helperRound helpers acc) b
+
+/-- THE PLAN VIEW WITH THE ACCUMULATOR ARM SELECTED. Derived the way every other plan view in this
+    tree is: through `planViewWithAccumulator`, whose `hasAccumulator` IS `acc.isSome`
+    (Inv.lean:342-346), and not by a structure update that flips the Bool without its four
+    companion words - the one-Bool lie R-58 F2 is about. The accumulator encoding is the same
+    `AccumulatorEncoding.new 2 7 56` Inv.lean:854 and GenAst.lean:1818 use. -/
+def bundleAccFixturePlan : PlanView :=
+  Midfall.Lowering.planViewWithAccumulator (vk := Midfall.Lowering.witnessVkPayload)
+    (vkMptr := KzgKats.memF.vkMptr) (memory := KzgKats.memF)
+    (proofLayout := KzgKats.proofLayoutF) (numInstances := 1) (k := 6)
+    (numNegLagranges := KzgKats.metaF.rotationLast.natAbs)
+    (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
+    (facts := Midfall.Lowering.emptyParserFacts)
+    (meta_ := KzgKats.metaF) (dat := KzgKats.dataF)
+
+/-- The EIP-2537 addresses the EMITTED PROGRAM of one partial reaches: the slice the dispatcher
+    returns for it, closed under `GenAst.emitHelpers`. The closure is what makes this a statement
+    about the theorem and not about a string: `hblk` pins `S.blk q pv` to `emitPartial pv q`
+    AND `S.L.main` to `emitMain S.plan` (BlkIsEmitter, :261-263), `mainScope` hoists
+    `S.L.main` (:124-126), and `emitMain = emitHelpers ++ emitSlices`, so every helper the pin
+    admits is one a run of the partial can call. -/
+def emittedEip2537Targets (pv : PlanView) (q : Partial) : List Nat :=
+  eip2537TargetsIn (bundleWalkSs (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q))).1
+
+/-- The user-function names the emitted program calls but the emitted helpers never define. THE
+    HELPER GAP AS DATA rather than as a paragraph: `batch_invert` (AssemblyHelpers.yul:226, called
+    at GenAst.lean:509), `scalar_inv` (AssemblyHelpers.yul:640, called from the PCS linearisation
+    expansion at GenAstPcs.lean:267 and :305) and `validate_public_accumulator`
+    (AccumulatorHelpers.yul:190, called at GenAst.lean:770) are called by the emitter and not
+    defined by `emitHelpers` - the first two recorded in prose at GenAst.lean:382-385 and
+    GenAstPcs.lean:33, and all three here as something a gate can read. Note that BOTH the
+    lagrange and the pcs gaps are modexp helpers and not EIP-2537 ones: the emitted pcs slice
+    reaches 0x0b and 0x0c through its OWN staticcalls and reaches nothing through scalar_inv. -/
+def emittedUnresolvedCalls (pv : PlanView) (q : Partial) : List String :=
+  let closed := callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q)
+  let defined := closed.filterMap fun
+    | Stmt.funDef n _ _ _ => some n
+    | _ => none
+  ((bundleWalkSs closed).2.filter fun n => !defined.contains n).eraseDups
+
+/-- THE ADDRESSES THE UNEMITTED HELPERS USE IN THE REFERENCE. This is the record that
+    `vkLoading_spec` is a LATENT instance of the hole this package closed for `pcs_spec` and not
+    a clean bill of health: at a plan view with an accumulator the emitted vkLoading slice calls
+    `validate_public_accumulator`, and in the reference that helper runs G1MSM and G1ADD
+    (AccumulatorHelpers.yul:190-230). Today the emitted program cannot run it, so the classifier
+    correctly reports no reachable EIP-2537 address and the gate correctly demands nothing. The
+    moment the helper lands the row stops being empty and the gate demands `Holds` on
+    `vkLoading_spec` by itself, with nobody having to remember to look. `batch_invert` is listed
+    with modexp only to show the list is not curated to flatter the current bundle: that one must
+    NEVER turn into a Holds requirement, because modexp is arithmetic. -/
+def unemittedHelperAddresses : List (String × List Nat) :=
+  [("batch_invert", [templateConstantsDefault.modexp.address]),
+   ("scalar_inv", [templateConstantsDefault.modexp.address]),
+   ("validate_public_accumulator",
+     [templateConstantsDefault.eip2537.g1msmAddress,
+      templateConstantsDefault.eip2537.g1addAddress])]
+
+/-- THE CLASSIFICATION `scripts/check_hypothesis_bundles.py` READS: for each of the seven partials,
+    the EIP-2537 addresses its emitted program reaches over the plan views the spec theorems are
+    pinned at. The gate parses this one definition and derives every spec-theorem binder
+    requirement from it, so the requirement is not a hand-written list of theorems that can quietly
+    stop matching the emitter. The gate ALSO refuses a `Holds` binder on a partial this table says
+    reaches nothing, which is what stops the fix being laundered by adding the hypothesis
+    everywhere. -/
+def partialEip2537Targets : List (Partial × List Nat) :=
+  [(.vkLoading, []), (.transcriptParser, []), (.lagrange, []), (.quotientLin, []),
+   (.pcs, [0x0b, 0x0c]), (.finalPairing, [0x0b, 0x0c, 0x0f]), (.traceReturn, [])]
+
+/-- GATE (THE CLASSIFICATION IS COMPUTED, NOT ASSERTED). Six conjuncts:
+
+    1. the table covers every partial of `Midfall.Lowering.partials`, exactly once, in order, so a
+       new partial with no row is a failure and not an omission;
+    2. every row agrees with what the EMITTER reaches, unioned over the two plan views the spec
+       theorems are pinned at (no accumulator, accumulator);
+    3. the classifier can fail: an empty block reports nothing, a modexp call is NOT counted, an
+       unreadable address IS counted, and the helper closure is what finds 0x0f at all;
+    4. the emitted helper set is acyclic, which is what makes callClosure's bound exact rather than
+       hopeful;
+    5. the helper gap is recorded as data, including the vkLoading accumulator arm;
+    6. the table is not vacuous: the two non-empty rows are the two whose theorems bind `Holds`. -/
+def partialEip2537Targets_ok : Bool :=
+  -- 1. coverage, in the order the partials are declared
+  (partialEip2537Targets.map Prod.fst == partials) &&
+  -- 2. every row is what the emitter reaches
+  (partialEip2537Targets.all fun (q, want) =>
+    eip2537Canon (emittedEip2537Targets GenAst.pcsFixturePlan q
+      ++ emittedEip2537Targets bundleAccFixturePlan q) == want) &&
+  -- 3a. an empty block reaches nothing, so the classifier is not a constant true
+  (directEip2537Targets [] == []) &&
+  -- 3b. modexp at 0x05 is NOT an Eip2537 address: the row that keeps lagrange out of the
+  --     requirement, and the one a package under pressure would be tempted to widen
+  (eip2537TargetsIn [some templateConstantsDefault.modexp.address] == []) &&
+    ! (reachesEip2537 [some templateConstantsDefault.modexp.address]) &&
+  -- 3c. an address the classifier cannot read counts as reaching, so a variable-spelled target
+  --     cannot be used to dodge the requirement
+  (reachesEip2537 [none]) &&
+  (directEip2537Targets [GenAst.yexpr (GenAst.yop Op.staticcall
+    [GenAst.yvar "gas", GenAst.yvar "addr", GenAst.ylit 0, GenAst.ylit 0, GenAst.ylit 0,
+      GenAst.ylit 0])] == []) &&
+  -- 3d. THE CLOSURE IS LOAD-BEARING: the FinalPairing slice alone reaches nothing, and it is the
+  --     hoisted ec_pairing that reaches 0x0f. Delete the closure and this row goes red.
+  (directEip2537Targets (GenAst.emitPartial GenAst.pcsFixturePlan .finalPairing) == []) &&
+    (emittedEip2537Targets GenAst.pcsFixturePlan .finalPairing == [0x0f]) &&
+  -- 3e. and the pcs slice, whose own block carries the four staticcalls
+  (emittedEip2537Targets GenAst.pcsFixturePlan .pcs == [0x0b, 0x0c]) &&
+  -- 4. the emitted helper set is acyclic: no helper body calls its own name, so the bounded
+  --    closure of callClosure IS the real fixpoint
+  ((GenAst.emitHelpers GenAst.pcsFixturePlan).all fun
+    | Stmt.funDef n _ _ b => !((bundleWalkSs b).2.contains n)
+    | _ => true) &&
+  -- 5. the helper gap, as data
+  (emittedUnresolvedCalls GenAst.pcsFixturePlan .lagrange == ["batch_invert"]) &&
+    (emittedUnresolvedCalls GenAst.pcsFixturePlan .pcs == ["scalar_inv"]) &&
+    (emittedUnresolvedCalls bundleAccFixturePlan .vkLoading
+      == ["validate_public_accumulator"]) &&
+    (emittedUnresolvedCalls GenAst.pcsFixturePlan .vkLoading == []) &&
+    (emittedUnresolvedCalls GenAst.pcsFixturePlan .finalPairing == []) &&
+    (unemittedHelperAddresses.lookup "batch_invert"
+      == some [templateConstantsDefault.modexp.address]) &&
+    (unemittedHelperAddresses.lookup "scalar_inv"
+      == some [templateConstantsDefault.modexp.address]) &&
+    (unemittedHelperAddresses.lookup "validate_public_accumulator"
+      == some [templateConstantsDefault.eip2537.g1msmAddress,
+               templateConstantsDefault.eip2537.g1addAddress]) &&
+  -- 6. not vacuous: exactly the two rows that bind Holds are the two that reach
+  ((partialEip2537Targets.filter fun (_, l) => !l.isEmpty).map Prod.fst
+    == [.pcs, .finalPairing]) &&
+    (eip2537CallAddresses == [0x0b, 0x0c, 0x0f])
+
+#eval partialEip2537Targets_ok          -- expect true
+
+/-- FALSIFICATION OF THE CLASSIFIER (D-P23). Every row of the table can be made wrong and the gate
+    above is what notices: dropping the pcs row, and claiming lagrange reaches G1ADD, are each
+    refuted by conjunct 2, and claiming the empty block reaches 0x0b is refuted by conjunct 3a.
+    Without this the table would be a list of numbers that agrees with the emitter by accident. -/
+def partialEip2537Targets_detectsPerturbation_ok : Bool :=
+  ([(.vkLoading, []), (.transcriptParser, []), (.lagrange, []), (.quotientLin, []),
+    (.pcs, []), (.finalPairing, [0x0b, 0x0c, 0x0f]), (.traceReturn, [])]
+    : List (Partial × List Nat)).any fun (q, want) =>
+      eip2537Canon (emittedEip2537Targets GenAst.pcsFixturePlan q
+        ++ emittedEip2537Targets bundleAccFixturePlan q) != want &&
+    ([(.vkLoading, []), (.transcriptParser, []), (.lagrange, [0x0b]), (.quotientLin, []),
+      (.pcs, [0x0b, 0x0c]), (.finalPairing, [0x0b, 0x0c, 0x0f]), (.traceReturn, [])]
+      : List (Partial × List Nat)).any fun (q, want) =>
+        eip2537Canon (emittedEip2537Targets GenAst.pcsFixturePlan q
+          ++ emittedEip2537Targets bundleAccFixturePlan q) != want &&
+    (directEip2537Targets [GenAst.yexpr (GenAst.yop Op.staticcall
+      [GenAst.ylit 0, GenAst.ylit 0x0b, GenAst.ylit 0, GenAst.ylit 0, GenAst.ylit 0,
+        GenAst.ylit 0])] == [0x0b])
+
+#eval partialEip2537Targets_detectsPerturbation_ok   -- expect true
+
+
+/-- The world-state reads one emitted program performs, as data. The EIP-2537 classifier above
+    asks which PRECOMPILES a partial reaches; this asks the same question about the other
+    externals, because the audit of the other nine theorems found one hole of the same CLASS
+    that is not an EIP-2537 hole at all (see gap_vkLoading_world_reads). Read off the printed
+    AST the way GenAstPcs.Kats.writesTo does - a text test on a computed program, not a text
+    test on a source file. -/
+def emittedWorldReads (pv : PlanView) (q : Partial) : List String :=
+  let printed := EVM.print (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q))
+  ["extcodesize(", "extcodehash(", "extcodecopy(", "balance(", "sload("].filter
+    fun s => printed.contains s
+
+/-- AUDIT FINDING 2, RECORDED AS A GAP AND NOT REPAIRED. vkLoading_spec is the one other spec
+    theorem whose conclusion depends on an external answer that no hypothesis pins - the same
+    CLASS as pcs_spec, a different external family. Its post is Inv .vk, whose first clause is
+    'bytesAt st (ptrAddr M.vkMptr) PV.vk.len == PV.vk.bytes' (Inv.lean:582), and the emitted
+    program fills that window with 'extcodecopy(vk, VK_MPTR, 0x01, ...)' behind an
+    extcodesize / extcodehash guard (GenAst.lean:728-734). The hypothesis that says what the
+    world's code at that address IS is DeploymentW - vkCode, wf and vkHash at
+    Surface.lean:559-608, and extcodehash_of_deployment is the projection vkLoading_spec's own
+    docstring already cites - and vkLoading_spec binds none of it: it takes no vkAddr or
+    quotientAddr, and Inv .start says nothing about the code dictionary. So it sits in the same
+    'unprovable as stated' condition P-BUNDLE closed for pcs.
+
+    It is NOT repaired here, and the reason is a decision and not laziness: the world can be
+    pinned in three different places (an Inv .start clause, an addl pre-condition, or two more
+    binders plus DeploymentW), and which one is right depends on whether the shell's
+    loadimmutable(AUTHORIZED_VK) is modelled at the Bridge level at all. That is the
+    orchestrator's call, not this package's. What this package does is make the hole
+    gate-visible: check_hypothesis_bundles.py requires this definition to exist and to name the
+    three reads and the hypothesis that would pin them, so the finding cannot be quietly
+    deleted, and gap_vkLoading_world_reads_measured below is the measurement rather than a
+    paragraph. -/
+def gap_vkLoading_world_reads : String :=
+  "unrepaired P-BUNDLE audit finding: vkLoading_spec's post is Inv .vk, which pins the VK "
+    ++ "payload image at vkMptr, and the emitted slice fills it through extcodesize, "
+    ++ "extcodehash and extcodecopy at the AUTHORIZED_VK address. Blocker: no hypothesis of "
+    ++ "vkLoading_spec says what the world's code at that address is - DeploymentW (vkCode, "
+    ++ "wf, vkHash) is the hypothesis that would, and the theorem takes no vkAddr or "
+    ++ "quotientAddr, while Inv .start pins nothing about the code dictionary. Repair is a "
+    ++ "decision about WHERE the world belongs: an Inv .start clause, an addl pre, or two "
+    ++ "more binders. Reported, not made."
+
+/-- THE MEASUREMENT BEHIND THE GAP: vkLoading is the ONLY partial whose emitted program reads
+    the world, and it reads it through exactly those three builtins. Refuted by an emitter that
+    stops copying the payload, by one that starts reading the world somewhere else, and by a
+    classifier that looks only at staticcalls. -/
+def gap_vkLoading_world_reads_measured : Bool :=
+  emittedWorldReads GenAst.pcsFixturePlan .vkLoading
+    == ["extcodesize(", "extcodehash(", "extcodecopy("] &&
+    emittedWorldReads GenAst.pcsFixturePlan .traceReturn == [] &&
+    emittedWorldReads GenAst.pcsFixturePlan .pcs == [] &&
+    emittedWorldReads GenAst.pcsFixturePlan .lagrange == [] &&
+    emittedWorldReads GenAst.pcsFixturePlan .transcriptParser == [] &&
+    emittedWorldReads GenAst.pcsFixturePlan .quotientLin == [] &&
+    emittedWorldReads GenAst.pcsFixturePlan .finalPairing == []
+
+#eval gap_vkLoading_world_reads_measured -- expect true
+
+
+/-- AUDIT FINDING 3, REPAIRED: the same class, a different external. transcriptParser_spec's
+    post is Inv .transcript, whose challenge clauses are 'holdsFr st (ptrAddr M.x1Mptr) S.a.x1'
+    and its three siblings (Inv.lean:605-607), and the emitted program fills those slots by
+    squeezing through the dialect keccak - 'squeeze_to' runs 'keccak256' (GenAst.lean:361-370),
+    which the Bridge answers from 'st.env.keccakOf'. The snapshot's challenges come from H.
+    Nothing in the bundle said the two are the same hash, so the theorem was in the same
+    unprovable-as-stated condition as pcs_spec - a conclusion that depends on an external answer
+    with no hypothesis about it.
+
+    The repair is not invented here: finalPairing_acc_spec binds exactly this hypothesis (hkec,
+    at its .pcs pre) and its docstring already says why - "alphaOf is hash-parametric while the
+    EVM hashes through env.keccakOf (finding Y-2), so without it the alpha the contract computes
+    is not the alpha the statement names". Same reason, same shape, one partial earlier. The
+    measurement below is what makes it a finding and not a guess: of the seven partials ONLY
+    transcriptParser squeezes without a keccak hypothesis, and finalPairing squeezes only on the
+    accumulator arm - which is the arm that carries hkec. -/
+def emittedKeccak (pv : PlanView) (q : Partial) : Bool :=
+  (EVM.print (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q))).contains "keccak256("
+
+/-- THE KECCAK ROWS, as the same kind of data the EIP-2537 table is: which partials' emitted
+    programs squeeze through the dialect keccak. scripts/check_hypothesis_bundles.py parses this
+    and demands a keccak-agreement hypothesis on the spec theorems for exactly these partials, so
+    audit finding 3 cannot be undone by a later package deleting hkec in silence. finalPairing is
+    in the list because of its ACCUMULATOR arm; the two no-accumulator theorems are exempted by
+    their own 'hacc : S.plan.hasAccumulator = false' binder, which is what the gate checks instead
+    of a hand-written exception. -/
+def partialKeccakSqueeze : List Partial := [.transcriptParser, .finalPairing]
+
+/-- THE MEASUREMENT BEHIND AUDIT FINDING 3. Refuted by an emitter that stops squeezing, by one
+    that starts squeezing somewhere else, and by a classifier that looks only at staticcalls. -/
+def partialKeccakSqueeze_ok : Bool :=
+  (partialKeccakSqueeze == partials.filter fun q =>
+    emittedKeccak GenAst.pcsFixturePlan q || emittedKeccak bundleAccFixturePlan q) &&
+  emittedKeccak GenAst.pcsFixturePlan .transcriptParser &&
+    emittedKeccak bundleAccFixturePlan .transcriptParser &&
+    emittedKeccak bundleAccFixturePlan .finalPairing &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .finalPairing) &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .vkLoading) &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .lagrange) &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .quotientLin) &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .pcs) &&
+    ! (emittedKeccak GenAst.pcsFixturePlan .traceReturn)
+
+#eval partialKeccakSqueeze_ok      -- expect true
 
 end Midfall.Lowering
