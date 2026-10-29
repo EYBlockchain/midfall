@@ -215,11 +215,17 @@ def fxPayload : Halo2VerifyingKey :=
     both decide true, LayoutMemory.lean:869), the payload above, one public instance, a
     size-4 domain, no accumulator arm. -/
 def fxPlan : PlanView :=
-  { vk := fxPayload,
-    vkMptr := Midfall.Generator.LayoutMemoryKats.poseidonLayout.vkMptr,
-    memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout,
-    proofLayout := Midfall.Generator.poseidonProofLayout,
-    numInstances := 1, k := 2,
+  -- P-AST3b: built through Inv.lean's constructor, so the four accumulator words and the
+  -- hasAccumulator Bool are the ones accWordsOfEncoding reads off the fixture's own
+  -- accumulator configuration (none, matching realSurface.cfg) and not four zeros typed
+  -- in. Surface.plan_accExpectations is rfl here because it is a derivation and not a
+  -- choice, and planAccExpectationsKats_ok shows the equation can fail.
+  Midfall.Lowering.planViewWithAccumulator
+    (vk := fxPayload)
+    (vkMptr := Midfall.Generator.LayoutMemoryKats.poseidonLayout.vkMptr)
+    (memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout)
+    (proofLayout := Midfall.Generator.poseidonProofLayout)
+    (numInstances := 1) (k := 2)
     -- P-4a2: this was 2, which is what a circuit with ONE blinding factor would walk.
     -- fxCs.blindingFactors is ok 6 (Circuit.lean:1593, and the exhibit below recomputes
     -- it), so EnvAgrees.negLagranges - PV.numNegLagranges = blindingFactors + 1, the
@@ -227,8 +233,8 @@ def fxPlan : PlanView :=
     -- disagreeing with its own ConstraintSystem. Found by trying to exhibit EnvAgrees,
     -- not by reading it: the clause had never been evaluated at this Surface because the
     -- root-of-unity blocker meant nobody got that far.
-    numNegLagranges := 7,
-    hasAccumulator := false }
+    (numNegLagranges := 7)
+    (acc := none)
 
 /-! ### The seven blocks: the emitter, not a hand-written table -/
 
@@ -239,7 +245,8 @@ def fxPlan : PlanView :=
     fixture's blk, its main block and the BlkIsEmitter pin all come from one function, so
     the pin is rfl HERE and the exhibits below are about surfaces that DEVIATE from it.
 
-    finalPairing, lagrange and traceReturn are real slices; the other four are GenAst's
+    vkLoading, finalPairing, lagrange, quotientLin and traceReturn are real slices; the
+    other two are GenAst's
     placeholders, one statement each with a distinct literal, so a blk that returned the
     same block for two partials or dropped one still changes main and is caught by
     mainConcatKats_ok. -/
@@ -451,6 +458,10 @@ def realSurface : Surface rp RP RP RP :=
     -- refutation in the gates below, so none of them is satisfied by a constant.
     shell_unfolds := rfl,
     plan_hasAccumulator := rfl, plan_numInstances := rfl,
+    -- P-AST3b: rfl because fxPlan was built by planViewWithAccumulator from the SAME
+    -- Option the cfg carries. A plan whose four words disagreed with cfg cannot be written
+    -- into this record at all, and planAccExpectationsKats_ok exhibits the lie.
+    plan_accExpectations := rfl,
     evaluator_agrees := rfl,
     encG2_shape := fun _ => by native_decide }
 
@@ -613,11 +624,13 @@ def mainConcatKats_ok : Bool :=
   -- no BEq on Stmt at this dialect (Ast.lean derives Repr only), so the checks are
   -- structural: lengths and the literal each slice stores, not an equality of blocks.
   -- main is the two emitted AssemblyHelpers definitions followed by the seven slices:
-  -- FOURTEEN statements, and P-AST3a did NOT change that number - measured, not assumed:
-  -- the quotientLin slice is ONE statement before (the placeholder mstore) and ONE statement
-  -- after (the linearization SCOPE), so the conversion is invisible to any length count and
-  -- the structural clause below is the only thing in this gate that can see it. The
-  -- composition is two helpers, three one-statement placeholders, the one-statement
+  -- FOURTEEN statements, and neither P-AST3a nor P-AST3b changed that number - measured, not
+  -- assumed: the quotientLin slice and the vkLoading slice are each ONE statement before
+  -- (a placeholder mstore) and ONE statement after (a SCOPE), so both conversions are
+  -- invisible to any length count and the structural clauses below are the only thing in
+  -- this gate that can see them. The
+  -- composition is two helpers, two one-statement placeholders, the one-statement
+  -- vkLoading scope, the one-statement
   -- quotientLin scope, the three-statement Lagrange, the two-statement FinalPairing arm and
   -- the three-statement TraceReturn arm; the pre-P-AST fixture carried seven dummies and no
   -- helpers at all, so a real finalPairing slice could not have resolved fail or ec_pairing.
@@ -627,7 +640,29 @@ def mainConcatKats_ok : Bool :=
     (match realSurface.L.main with
      | Stmt.funDef "fail" _ _ _ :: Stmt.funDef "ec_pairing" _ _ _ :: _ => true
      | _ => false) &&
-    (realSurface.blk Partial.vkLoading realSurface.plan).length == 1 &&
+    -- THE VKLOADING CLAUSE (P-AST3b), structural for the same reason the quotientLin one
+    -- below is: the placeholder it replaced was one statement and the real slice is one
+    -- statement, so main's LENGTH cannot see this conversion either. What can: a scope of
+    -- THIRTEEN with the extcodecopy at index 1 and no loop, and the HAS_ACCUMULATOR cross-
+    -- check carrying the FIXTURE's own derived word - 0 here because realSurface.cfg
+    -- .accumulator is none, which is the derivation and not four typed zeros;
+    -- planAccExpectationsKats_ok is what says so.
+    (match realSurface.blk Partial.vkLoading realSurface.plan with
+     | [Stmt.block body] =>
+         body.length == 13 && (body.filter GenAst.stmtIsFor).length == 0 &&
+         (match body[1]? with
+          | some (Stmt.exprStmt (Expr.builtin Op.extcodecopy
+              [Expr.var "vk", Expr.var "VK_MPTR", Expr.lit (Literal.number 1),
+               Expr.var "EXPECTED_VK_PAYLOAD_LENGTH"])) => true
+          | _ => false) &&
+         (match body[4]? with
+          | some (Stmt.assign ["success"]
+              (Expr.builtin Op.and [Expr.var "success",
+                Expr.builtin Op.eq
+                  [Expr.builtin Op.mload [Expr.var "HAS_ACCUMULATOR_MPTR"],
+                   Expr.lit (Literal.number 0)]])) => true
+          | _ => false)
+     | _ => false) &&
     -- the four partials the emitter implements are NOT one-statement dummies: the deployed
     -- FinalPairing arm is the precompile guard and the swapped ec_pairing call, the Lagrange
     -- slice is the MF-4 flag, the 28-statement computation scope and the section boundary,
@@ -777,6 +812,47 @@ def planPinsKats_ok : Bool :=
       | _, _ => false)
 
 #eval planPinsKats_ok                     -- expect true
+
+/-- P-AST3b, THE FOUR ACCUMULATOR WORDS AND THE PIN THAT RELATES THEM TO cfg, each half as
+    a computation. Line 1: the fixture's four words ARE accWordsOfEncoding applied to its
+    own cfg.accumulator - the same function the constructor used, so the pin is rfl and not
+    a coincidence. Line 2: the deployed profile's configuration is none, so the four words
+    are the artifact's zeros BECAUSE the derivation says so. Line 3 is THE LIE, forward: a
+    plan carrying offset 7 while cfg says none refutes the pin, which is what makes the
+    four fields constrained data rather than four free Nats. Lines 4-5 are the lie in the
+    OTHER direction, and the one that matters for this package: a plan built from a REAL
+    accumulator encoding carries 1 / 2 / 7 / 56 and not the deployed zeros, so a converter
+    that hard-coded four zeros would be caught by the pin and by GenAst's
+    emitVkLoadingAccWordsDerived_ok rather than by a reviewer's reading of a comment.
+    Line 6: the two spellings of "is there an accumulator" - the Bool Inv reads and the Nat
+    the template interpolates - agree at the fixture, which is automatic only because both
+    come out of one match on one Option. -/
+def planAccExpectationsKats_ok : Bool :=
+  let words (pv : PlanView) : Nat × Nat × Nat × Nat :=
+    (pv.expectedHasAccumulatorWord, pv.expectedAccOffset,
+      pv.expectedNumAccLimbs, pv.expectedNumAccLimbBits)
+  words realSurface.plan ==
+    Midfall.Lowering.accWordsOfEncoding realSurface.cfg.accumulator &&
+    realSurface.cfg.accumulator == none &&
+    words realSurface.plan == (0, 0, 0, 0) &&
+    ! (words { realSurface.plan with expectedAccOffset := 7 } ==
+        Midfall.Lowering.accWordsOfEncoding realSurface.cfg.accumulator) &&
+    (let acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56)
+      let pv := Midfall.Lowering.planViewWithAccumulator
+        (vk := fxPayload)
+        (vkMptr := Midfall.Generator.LayoutMemoryKats.poseidonLayout.vkMptr)
+        (memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout)
+        (proofLayout := Midfall.Generator.poseidonProofLayout)
+        (numInstances := 1) (k := 2) (numNegLagranges := 7)
+        (acc := acc);
+      words pv == Midfall.Lowering.accWordsOfEncoding acc &&
+        words pv == (1, 2, 7, 56) &&
+        words pv != (0, 0, 0, 0) &&
+        ! (words pv == Midfall.Lowering.accWordsOfEncoding none)) &&
+    (realSurface.plan.expectedHasAccumulatorWord ==
+      if realSurface.plan.hasAccumulator then 1 else 0)
+
+#eval planAccExpectationsKats_ok          -- expect true
 
 /-- R-58 G2. The encoder now returns EIP-2537-shaped bytes for every point, and the
     value it replaced - the empty byte string - does not, so the pin is what forced
@@ -973,7 +1049,7 @@ theorem blkPinBitesBoundary : ¬ BlkIsEmitter plantBoundarySurface := by
 
 /-! #### The placeholder plants: a real slice put back to its own placeholder
 
-    WHY THESE THREE EXIST. Every plant above this section attacks a pin that was already
+    WHY THESE FOUR EXIST. Every plant above this section attacks a pin that was already
     carrying weight: finalPairing was real when P-AST planted a 'return(0, 0)' over it, and
     the boundary plant works because it moves a join whose two sides are DIFFERENT from
     what blk claims - since P-AST3a the quotientLin side is a nine-statement scope and not a
@@ -1202,11 +1278,22 @@ theorem plantedQuotientLinPlaceholderStillSupported :
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
       ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
 
-/-- All three placeholder plants keep their replanted main DISTINCT from the emitted main,
+/-- The plant P-AST3b makes possible: vkLoading back to its own placeholder, everything
+    else the emitter's. Declared BEFORE the two KATs below because both of them name it. -/
+def plantBlkVkLoadingPlaceholder : Partial → PlanView → YulBlock
+  | .vkLoading, _pv => GenAst.emitPlaceholder .vkLoading
+  | q, pv => GenAst.emitPartial pv q
+
+def plantVkLoadingPlaceholderSurface : Surface rp RP RP RP :=
+  plantSurfaceWith plantBlkVkLoadingPlaceholder
+
+/-- All four placeholder plants keep their replanted main DISTINCT from the emitted main,
     which is the price of being a Surface at all: main_concat is existential over the helper
     prefix only, so a blk change that left main alone would not be a Surface whose slices
-    tile the tail of its program. The quotientLin line is the one that matters most, because
-    for that plant the two mains have the same LENGTH and only stmtsBeq can tell them apart. -/
+    tile the tail of its program. The quotientLin and vkLoading lines are the ones that
+    matter most, because for those two plants the two mains have the same LENGTH - the
+    placeholder and the real slice are each one statement - and only stmtsBeq can tell them
+    apart. -/
 def plantPlaceholderMainsDiffer_ok : Bool :=
   ! SyntaxEq.stmtsBeq (plantMainWith plantBlkLagrangePlaceholder) (GenAst.emitMain fxPlan) &&
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkTraceReturnPlaceholder)
@@ -1228,9 +1315,89 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       (GenAst.emitMain fxPlan).length &&
     (Midfall.Lowering.partials.all fun q =>
       SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
-        (GenAst.emitPartial fxPlan q) == (q != .quotientLin))
+        (GenAst.emitPartial fxPlan q) == (q != .quotientLin)) &&
+    -- P-AST3b: the fourth plant. It differs from the emitter on exactly vkLoading, keeps
+    -- main's LENGTH - 14 either way, because the placeholder and the real slice are both
+    -- one statement - and is therefore invisible to every count in this file.
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkVkLoadingPlaceholder)
+      (GenAst.emitMain fxPlan) &&
+    (plantMainWith plantBlkVkLoadingPlaceholder).length =
+      (GenAst.emitMain fxPlan).length &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != .vkLoading))
 
 #eval plantPlaceholderMainsDiffer_ok      -- expect true
+
+/-- THE PIN BITES THE PLACEHOLDER PLANT, VKLOADING (D-P23, second half for the new slice).
+    Before this package the plant satisfied BlkIsEmitter outright: 'mstore(0x2000, 1)' WAS
+    the emitter's answer for vkLoading, so the pin was true of it by accident and not by
+    design - which is exactly the plant class D-P30 clause 6 says to re-check at every
+    conversion. What makes this the sharpest of the four: the placeholder and the real slice
+    are BOTH one top-level statement, and the real one is a thirteen-statement scope whose
+    second inner statement is an extcodecopy, so nothing but stmtsBeq on the CONTENT
+    separates them and main's length is 14 either way. plantVkLoadingLengthBlind_ok below
+    is that blindness as a computation. -/
+theorem blkPinBitesVkLoadingPlaceholder :
+    ¬ BlkIsEmitter plantVkLoadingPlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.vkLoading fxPlan
+  have h4 : SyntaxEq.stmtsBeq
+      (plantVkLoadingPlaceholderSurface.blk Partial.vkLoading fxPlan)
+      (GenAst.emitPlaceholder .vkLoading) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.vkLoading)
+      (GenAst.emitPlaceholder .vkLoading) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- THE LENGTH BLINDNESS OF THE VKLOADING PLANT, as a computation next to the theorem
+    above: the replanted main and the emitted main have the SAME number of statements,
+    differ under stmtsBeq, and differ in exactly one slice - and the two slices that differ
+    are both one statement long. A pin that looked at main's shape or length would let this
+    plant through; this is the falsification of the plant class. -/
+def plantVkLoadingLengthBlind_ok : Bool :=
+  (plantMainWith plantBlkVkLoadingPlaceholder).length =
+    (GenAst.emitMain fxPlan).length &&
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkVkLoadingPlaceholder)
+      (GenAst.emitMain fxPlan) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != Partial.vkLoading)) &&
+    (plantBlkVkLoadingPlaceholder Partial.vkLoading fxPlan).length == 1 &&
+    (GenAst.emitPartial fxPlan Partial.vkLoading).length == 1
+
+#eval plantVkLoadingLengthBlind_ok        -- expect true
+
+/-- EVERY OTHER HYPOTHESIS STILL HOLDS OF THE VKLOADING PLANT, so the pin is the ONLY thing
+    that refuses it - the second half of D-P23 / R-41 for this slice. Written as a direct
+    ten-bullet exhibit and NOT transported from plantedStillSupported: P-AST3a measured that
+    the transport fails to typecheck at both 'exact plantedStillSupported' sites, because
+    SupportedS carries the section's nine instance arguments and the statements do not
+    unify up to them. Nothing SupportedS reads mentions blk, L, lower, shell or astOfMain,
+    and this plant changes only those five. -/
+theorem plantedVkLoadingPlaceholderStillSupported :
+    SupportedS plantVkLoadingPlaceholderSurface plantVkLoadingPlaceholderSurface.o₀ := by
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantVkLoadingPlaceholderSurface, plantSurfaceWith, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantVkLoadingPlaceholderSurface, plantSurfaceWith, realSurface, fxVk,
+        List.mem_append, List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
 
 /-- The pin's two halves as a computation, next to the two plants as theorems. Line 1:
     the fixture's blk agrees with the emitter for every partial under stmtsBeq, the
@@ -1319,6 +1486,41 @@ def blkPinKats_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .quotientLin)) &&
     (plantMainWith plantBlkQuotientLinPlaceholder).length =
+      (GenAst.emitMain fxPlan).length &&
+    -- Line 13 (P-AST3b): the deployed vkLoading slice the emitter produces IS the
+    -- artifact's own quotation (VerifierPartialKats.vkLoading_ast, gated in that file
+    -- against the render by their gate 90, which re-reads the size, the single occurrence
+    -- and the six header words from the dump). That is the cross-check this converter does
+    -- not control. At the FIXTURE's own plan the same thirteen-statement scope carries the
+    -- fixture's k (2, not the deployed 6) and the fixture's DERIVED accumulator words (all
+    -- zero because cfg.accumulator is none), so the numbers come from the plan and not from
+    -- the snapshot - the same shape-versus-number split line 11 records for quotientLin.
+    SyntaxEq.stmtsBeq (GenAst.emitVkLoadingArms false 1 6 0 0 0 0 0x10e0)
+      VerifierPartialKats.vkLoading_ast &&
+    (match realSurface.blk Partial.vkLoading realSurface.plan with
+     | [Stmt.block fxB] =>
+         fxB.length == 13 &&
+         (match fxB[3]? with
+          | some (Stmt.assign ["success"]
+              (Expr.builtin Op.and [Expr.var "success",
+                Expr.builtin Op.eq [Expr.builtin Op.mload [Expr.var "K_MPTR"],
+                  Expr.lit (Literal.number 2)]])) => true
+          | _ => false) &&
+         (match fxB[7]? with
+          | some (Stmt.assign ["success"]
+              (Expr.builtin Op.and [Expr.var "success",
+                Expr.builtin Op.eq [Expr.builtin Op.mload
+                  [Expr.var "NUM_ACC_LIMB_BITS_MPTR"], Expr.lit (Literal.number 0)]])) => true
+          | _ => false)
+     | _ => false) &&
+    -- Line 14 (P-AST3b): the decidable shadow of the fourth theorem, and the length
+    -- blindness the pin alone has to overcome.
+    ! SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder Partial.vkLoading fxPlan)
+      (GenAst.emitPartial fxPlan Partial.vkLoading) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder q fxPlan)
+        (GenAst.emitPartial fxPlan q) == (q != .vkLoading)) &&
+    (plantMainWith plantBlkVkLoadingPlaceholder).length =
       (GenAst.emitMain fxPlan).length
 
 #eval blkPinKats_ok                       -- expect true

@@ -31,11 +31,12 @@
 -- WHAT IS EMITTED, and what is a placeholder. Scope is per-deployment first (D-P24). P-AST
 -- took ONE partial completely - FinalPairing plus the two AssemblyHelpers definitions it
 -- calls (fail, ec_pairing). P-AST2 (docs/plans/P-AST2-lagrange-traceReturn.md) adds two
--- more under D-P30 and P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth, so the real
--- emission is now Lagrange, QuotientLin, FinalPairing and TraceReturn; THREE partials still
--- return emitPlaceholder - vkLoading, transcriptParser and pcs - and emittedPartials names
+-- more under D-P30, P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth and P-AST3b
+-- (docs/plans/P-AST3b-vkLoading.md) a fifth, so the real
+-- emission is now VkLoading, Lagrange, QuotientLin, FinalPairing and TraceReturn; TWO partials still
+-- return emitPlaceholder - transcriptParser and pcs - and emittedPartials names
 -- the difference as data while
--- emitPlaceholderIsTotal_ok pins it as a computation: four emitted, three placeholders, and
+-- emitPlaceholderIsTotal_ok pins it as a computation: five emitted, two placeholders, and
 -- no placeholder equal to the real slice it stands for. A
 -- spec theorem whose partial is not in emittedPartials is pinned to a placeholder: the pin
 -- turns it into a claim about ONE program instead of about every program, which is what
@@ -46,12 +47,17 @@
 -- builds Block/Stmt/Expr EVM.Op from the vendored package; no raw string expression is
 -- emitted anywhere, and the renderX functions of VerifierPartials.lean are kept only as the
 -- independent second source each gate compares against. PLAN section 8's equation
--- render g o = (lower g o).map print holds BY CONSTRUCTION for the four slices here, and
+-- render g o = (lower g o).map print holds BY CONSTRUCTION for the five slices here, and
 -- the checks that say so are the stmtsBeq gates, not the token gates: P-AST measured that
 -- spelling every mcopy as a USER call leaves all four token gates green and reddens only
--- stmtsBeq, and P-AST2 and P-AST3a each re-reproduced the blindness on their own slice, so
--- emitLagrange_beq_ok, emitTraceReturn_beq_ok, emitQuotientLin_beq_ok and the three
--- emit*_DetectsBuiltinVsCall_ok gates are the records and yulTokens is the tripwire.
+-- stmtsBeq, and P-AST2, P-AST3a and P-AST3b each re-reproduced the blindness on their own
+-- slice, so
+-- emitLagrange_beq_ok, emitTraceReturn_beq_ok, emitQuotientLin_beq_ok, emitVkLoading_beq_ok
+-- and the four emit*_DetectsBuiltinVsCall_ok gates are the records and yulTokens is the
+-- tripwire. Gate 34 is the sharpest form of the blindness in the whole file: the mis-spelled
+-- constructor is the outermost expression of NINE of the thirteen statements of the emitted
+-- scope, so a converter reaching for ycall on the success chain mis-spells nine sites and
+-- every token gate in the file stays green.
 --
 -- NUMERIC SPELLING IS A DOCUMENTED DIVERGENCE, NOT A FAILURE (D-P30 clause 3). The AST
 -- stores Literal.number (n : Nat) and EVM.print renders it in DECIMAL; the Rust and the
@@ -76,8 +82,9 @@
 -- o.diagnostics.gasCheckpoints = false. The pin and the theorem's own hypotheses describe
 -- the same profile. For TraceReturn the same restriction bites harder: the render's trace
 -- arm interpolates numInstances, k, the user-phase challenge loop, numTrashcans and
--- expectedHasAccumulator into 53 template lines, and PlanView carries NONE of those (no
--- trace flag, no phase list, no trashcan count), so the trace arm is not expressible in
+-- expectedHasAccumulator into 53 template lines. P-AST3b narrowed that gap without closing
+-- it: PlanView now carries numInstances, k and the accumulator words, but it still has no
+-- trace flag, no phase list and no trashcan count, so the trace arm is not expressible in
 -- this emitter's signature at all - see the note on emitTraceReturnBlock.
 --
 -- HOW THE EMITTED AST IS CHECKED. There is no runtime Yul parser in the vendored tree, so
@@ -532,21 +539,157 @@ def emitQuotientLinAt (k : Nat) : Block Op :=
     emitLagrange reads, so the two slices cannot disagree about the domain size. -/
 def emitQuotientLin (pv : PlanView) : Block Op := emitQuotientLinAt pv.k
 
+/-! ### VkLoading -/
+
+/-- The VK-loading block (VkLoading.yul:1-141) as an AST, parameterised by the SEVEN plan
+    values the template interpolates: the public instance count (twice - the header
+    cross-check and the ABI envelope), the domain exponent k, the four accumulator words,
+    and the proof length. The deployed arm is 4,494 bytes / 74 lines occurring EXACTLY
+    ONCE in the tracked artifact, and that measurement is a computation and not a
+    paragraph: VerifierPartialKats.vkLoading_astAgrees_ok (gate 90 in that file) re-reads
+    the size, the single occurrence and the six header words from the dump's own lines,
+    and gate 31 below compares this function against that quotation.
+
+    WHY THE FOUR ACCUMULATOR WORDS ARE PARAMETERS AND NOT ZEROS. P-AST3a measured all four
+    are 0 in the deployed profile and refused to hard-code them: "hard-coding the four
+    zeros would reproduce the deployed bytes and lie for any accumulator plan." This
+    package takes that refusal literally. The words arrive through PlanView, where
+    Inv.lean's accWordsOfEncoding derives them from the accumulator encoding - none arm
+    gives the four zeros the artifact shows, some arm gives 1 / offset / numLimbs /
+    numLimbBits - and Surface.plan_accExpectations pins the copy back to cfg.accumulator.
+    Gate 33 below is the falsification: changing a word changes the emitted block, so
+    the parameter reaches the program and is not decoration.
+
+    SCOPE, measured and not chosen: 'blk .vkLoading' is the TEMPLATE'S OWN BODY, the
+    single top-level scope the render emits, and not the surrounding prologue lines
+    ('let r := FR_MODULUS', 'let success := true') that the artifact shows above it -
+    those belong to the contract shell (Halo2Verifier.sol:217's include order), and no
+    partial owns them. The embedded-VK arm (VkLoading.yul:23-53, the mstore loop over
+    constants, fixedComms and permutationComms) is NOT emitted: poseidonCtx.embeddedVk is
+    none, so the deployed slice takes the external arm, and the embedded arm interpolates
+    a whole payload word list that PlanView carries as PV.vk.bytes rather than as words -
+    converting it is a separate measurement, not a silent widening here.
+
+    EVERY CALL SITE CHOOSES DELIBERATELY. extcodesize, extcodehash, extcodecopy,
+    calldatasize, calldataload, mload, and, eq, iszero and add are dialect built-ins
+    (EVMOp.lean:53, :65); 'fail' is the user function AssemblyHelpers.yul:4, and
+    'validate_public_accumulator' - accumulator arm only - is the user function
+    AccumulatorHelpers.yul:190, i.e. it lives in a DIFFERENT included file from the two
+    helpers emitHelpers defines, and renderFunction cannot slice it out of the
+    AssemblyHelpers render (measured: it returns the empty string for that name). That
+    split is invisible to the token comparator, which is
+    why gate 31 (stmtsBeq against the quotation) is the record and gate 30 is only the
+    tripwire, and why gate 34 reproduces the blindness on this slice.
+
+    THE HELPER GAP THIS SLICE WIDENS, stated rather than left to be rediscovered: the
+    accumulator arm calls validate_public_accumulator, which emitHelpers does NOT define
+    (it defines fail and ec_pairing only), and which lives in AccumulatorHelpers.yul:190 -
+    a file no emitter touches yet. That is the same hole P-AST2 recorded for batch_invert -
+    'main's helper prefix defines fail and ec_pairing ONLY' - and the deployed profile
+    never takes the arm, so no emitted program in the tree calls a function main does not
+    define. A package that emits an accumulator render has to convert that helper in the
+    same change, and it is a 165-line file (gate 31 in VerifierPartials), not two helpers.
+
+    NUMERIC SPELLING, pinned by gate 21: the render writes the proof length and the
+    instance window through the hex filter ('eq(0x10e0, calldataload(PROOF_LEN_CPTR))',
+    'add(INSTANCE_CPTR, 0x20)') and the copy offset as '0x01', while EVM.print renders
+    4320, 32 and 1. The two spellings are one program and no AST relation can tell them
+    apart - the standing note, reproduced on a fourth slice. -/
+def emitVkLoadingArms (hasAcc : Bool)
+    (numInstances k hasWord accOffset numLimbs limbBits proofLen : Nat) : Block Op :=
+  [ yblock
+      [ yif (yop Op.iszero
+          [yop Op.and
+            [yop Op.eq [yop Op.extcodesize [yvar "vk"], yvar "EXPECTED_VK_LENGTH"],
+             yop Op.eq [yop Op.extcodehash [yvar "vk"],
+                        yvar "EXPECTED_VK_CODEHASH_WORD"]]])
+          [yexpr (ycall "fail" [yvar "ERR_VK_MISMATCH"])]
+        -- Runtime byte 0 is INVALID, so the payload copy starts at byte 1: the 0x01 is
+        -- the render's own hex spelling of 1 and prints decimal here.
+      , yexpr (yop Op.extcodecopy [yvar "vk", yvar "VK_MPTR", ylit 0x01,
+          yvar "EXPECTED_VK_PAYLOAD_LENGTH"])
+        -- The six header cross-checks, in the template's order. The last four are the
+        -- accumulator words and they come from the plan, not from the artifact.
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "NUM_INSTANCES_MPTR"], ylit numInstances]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "K_MPTR"], ylit k]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "HAS_ACCUMULATOR_MPTR"], ylit hasWord]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "ACC_OFFSET_MPTR"], ylit accOffset]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "NUM_ACC_LIMBS_MPTR"], ylit numLimbs]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.mload [yvar "NUM_ACC_LIMB_BITS_MPTR"], ylit limbBits]])
+      , yif (yop Op.iszero [yvar "success"])
+          [yexpr (ycall "fail" [yvar "ERR_VK_MISMATCH"])]
+        -- The ABI envelope: proof bytes, instance count, and no trailing words. The
+        -- window is DERIVED here the way the render derives it - numInstances * 32 - so
+        -- a plan with more instances moves the bound and the header check together.
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [ylit proofLen, yop Op.calldataload [yvar "PROOF_LEN_CPTR"]]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [ylit numInstances,
+                     yop Op.calldataload [yvar "NUM_INSTANCE_CPTR"]]])
+      , yset "success" (yop Op.and [yvar "success",
+          yop Op.eq [yop Op.calldatasize [],
+            yop Op.add [yvar "INSTANCE_CPTR", ylit (numInstances * 32)]]])
+      , yif (yop Op.iszero [yvar "success"])
+          [yexpr (ycall "fail" [yvar "ERR_BAD_CALLDATA_SHAPE"])] ] ] ++
+    -- The accumulator precheck, OUTSIDE the scope: the template appends it after the
+    -- block closes, so the top level grows from one statement to four.
+    (if hasAcc then
+      [ ylet "acc_precompile_failed" (ylit 0)
+      , ysetN ["success", "acc_precompile_failed"]
+          (ycall "validate_public_accumulator" [yvar "success", yvar "r"])
+      , yif (yop Op.iszero [yvar "success"])
+          [ yif (yvar "acc_precompile_failed")
+              [yexpr (ycall "fail" [yvar "ERR_PRECOMPILE_FAILED"])]
+          , yexpr (ycall "fail" [yvar "ERR_BAD_POINT_ENCODING"]) ] ]
+     else [])
+
+/-- The VkLoading slice of one plan. Every value comes from a PlanView field: the two
+    counts Inv already read, the four accumulator words P-AST3b added, and the proof
+    length read off the calldata geometry rather than copied a fifth time. -/
+def emitVkLoading (pv : PlanView) : Block Op :=
+  emitVkLoadingArms pv.hasAccumulator pv.numInstances pv.k
+    pv.expectedHasAccumulatorWord pv.expectedAccOffset pv.expectedNumAccLimbs
+    pv.expectedNumAccLimbBits pv.proofLayout.proofLen
+
+/-- The seven plan values the vkLoading template interpolates, read out of the text port's
+    own deployed profile. Every gate that compares against the render or against the
+    quotation uses THIS list, so the emitter and the text port are fed the same seven
+    numbers and cannot be given different ones by accident. -/
+def vkLoadingPoseidonArgs : Bool × Nat × Nat × Nat × Nat × Nat × Nat × Nat :=
+  (poseidonCtx.expectedHasAccumulator, poseidonCtx.numInstances, poseidonCtx.k,
+    poseidonCtx.expectedHasAccumulatorWord, poseidonCtx.expectedAccOffset,
+    poseidonCtx.expectedNumAccLimbs, poseidonCtx.expectedNumAccLimbBits,
+    poseidonCtx.proofLen)
+
+/-- The deployed slice, emitted at the poseidon profile - the block gates 21 and 30-35
+    compare. -/
+def emitVkLoadingDeployed : Block Op :=
+  let (h, n, k, w, o, l, b, p) := vkLoadingPoseidonArgs
+  emitVkLoadingArms h n k w o l b p
+
 /-! ### The emitter, total over Partial -/
 
-/-- The partials this file emits for real. Everything else is a placeholder: after P-AST3a
-    those are vkLoading, transcriptParser and pcs - the three named by placeholderPartials
-    below - and each of the three is blocked for a DIFFERENT measured reason, not the same
-    reason: pcs needs Kzg.computations converted from text first (P-AST2's finding: the
-    deployed blocks are read back out of the .sol dump), transcriptParser needs four
-    AssemblyHelpers definitions the emitter does not have (transcript_init, common_word,
-    common_uncompressed_g1, squeeze_to) plus plan values PlanView does not carry, and vkLoading
-    needs four accumulator words PlanView does not carry. See the required finding in the
-    P-AST3a report; none of the three is blocked on this template. -/
+/-- The partials this file emits for real. Everything else is a placeholder: after P-AST3b
+    those are transcriptParser and pcs - the two named by placeholderPartials below - and
+    each of the two is blocked for a DIFFERENT measured reason, not the same reason: pcs
+    needs Kzg.computations converted from text first (P-AST2's finding: the deployed 345
+    generated lines are read back out of the .sol dump, so there is nothing to compare an
+    emitted AST against), and transcriptParser needs four AssemblyHelpers definitions the
+    emitter does not have (transcript_init, common_word, common_uncompressed_g1,
+    squeeze_to) plus the ten proof-section offsets the parser walks, which live in
+    ProofCalldataLayout and have no emitter accessor yet. vkLoading was the third until
+    P-AST3b added the four accumulator words to PlanView; neither of the remaining two is
+    blocked on this template. -/
 def emittedPartials : List Partial :=
-  [.lagrange, .quotientLin, .finalPairing, .traceReturn]
+  [.vkLoading, .lagrange, .quotientLin, .finalPairing, .traceReturn]
 
-/-- The three partials still emitted as placeholders, as data rather than as a paragraph:
+/-- The two partials still emitted as placeholders, as data rather than as a paragraph:
     derived from emittedPartials, so the two lists cannot disagree. -/
 def placeholderPartials : List Partial :=
   Midfall.Lowering.partials.filter (fun q => !emittedPartials.contains q)
@@ -559,7 +702,7 @@ def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
     distinct literal per partial so two slices are never interchangeable. These are the
     blocks the fixture carried before P-AST; they moved here so the emitter is the ONLY
     source of blk in the tree, which is what the pin needs in order to mean anything. P-13
-    owes the real AST for the three in placeholderPartials - and D-P30 clause 4 is the rule
+    owes the real AST for the two in placeholderPartials - and D-P30 clause 4 is the rule
     that they end up unreachable, not merely well-documented. -/
 def emitPlaceholder : Partial → Block Op
   | .vkLoading => [yexpr (yop Op.mstore [ylit 0x2000, ylit 1])]
@@ -575,6 +718,7 @@ def emitPlaceholder : Partial → Block Op
     conditional that quietly says nothing for six of the seven. -/
 def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
   match q with
+  | .vkLoading => emitVkLoading pv
   | .lagrange => emitLagrange pv
   | .quotientLin => emitQuotientLin pv
   | .finalPairing => emitFinalPairing pv
@@ -677,6 +821,30 @@ def emitDependsOnPlan_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitQuotientLinAt 6) (emitQuotientLinAt 7) &&
     ! SyntaxEq.stmtsBeq (emitQuotientLin Midfall.Lowering.witnessPlanView)
       (emitQuotientLin { Midfall.Lowering.witnessPlanView with k := 3 }) &&
+    -- P-AST3b: and VkLoading, where all SEVEN plan values reach the block through the
+    -- PlanView fields rather than through the deployed constants. Each field moved by one
+    -- changes the emitted AST, so the dispatch cannot ignore any of them - including the
+    -- four accumulator words, which is the whole point of deriving them instead of
+    -- hard-coding the artifact's four zeros.
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with numInstances := 2 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with k := 3 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with
+                       expectedHasAccumulatorWord := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with expectedAccOffset := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with expectedNumAccLimbs := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with
+                       expectedNumAccLimbBits := 1 }) &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading Midfall.Lowering.witnessPlanView)
+      (emitVkLoading { Midfall.Lowering.witnessPlanView with
+                       proofLayout := { Midfall.Lowering.witnessPlanView.proofLayout with
+                                        proofLen :=
+                                          Midfall.Lowering.witnessPlanView.proofLayout.proofLen + 32 } }) &&
     -- and TraceReturn is CONSTANT in the plan, which is the template's own shape and not a
     -- hole: stated as a computation so a later package that parameterises it has to notice
     -- it changed this gate.
@@ -684,27 +852,29 @@ def emitDependsOnPlan_ok : Bool :=
       SyntaxEq.stmtsBeq (emitTraceReturn Midfall.Lowering.witnessPlanView)
         emitTraceReturnBlock)
 
-/-- GATE 8 (what is real and what is a placeholder, as a computation). FOUR partials are
-    emitted for real after P-AST3a - lagrange, quotientLin, finalPairing, traceReturn - and
-    the remaining THREE are one-statement placeholders named by placeholderPartials. The
-    last conjuncts are the R-62 clause: for each real slice, the placeholder that used to
-    stand for it is NOT what the emitter returns, so the pin cannot be satisfied by a dummy
-    for a partial that has a real body. Before P-AST2 the lagrange and traceReturn conjuncts
-    were unfalsifiable in exactly this way, and before this package the quotientLin one was -
-    the placeholder WAS the emitter's answer - which is what "emitPlaceholder must shrink
-    toward unreachable" (D-P30 clause 4) is measuring. The quotientLin conjunct earns its
-    place in a way the others do not: placeholder and real slice are BOTH one statement, so
-    the two tail conjuncts below are the only way this gate can tell them apart - a length
-    check cannot, and it says so rather than pretending otherwise. -/
+/-- GATE 8 (what is real and what is a placeholder, as a computation). FIVE partials are
+    emitted for real after P-AST3b - vkLoading, lagrange, quotientLin, finalPairing,
+    traceReturn - and the remaining TWO are one-statement placeholders named by
+    placeholderPartials. The last conjuncts are the R-62 clause: for each real slice, the
+    placeholder that used to stand for it is NOT what the emitter returns, so the pin cannot
+    be satisfied by a dummy for a partial that has a real body. Before P-AST2 the lagrange
+    and traceReturn conjuncts were unfalsifiable in exactly this way, before P-AST3a the
+    quotientLin one was, and before this package the vkLoading one was - the placeholder WAS
+    the emitter's answer - which is what "emitPlaceholder must shrink toward unreachable"
+    (D-P30 clause 4) is measuring. The quotientLin and vkLoading conjuncts earn their place
+    in a way the others do not: placeholder and real slice are BOTH one statement, so the
+    tail conjuncts below are the only way this gate can tell them apart - a length check
+    cannot, and it says so rather than pretending otherwise. -/
 def emitPlaceholderIsTotal_ok : Bool :=
-  emittedPartials.length == 4 && emittedPartials.contains .finalPairing &&
+  emittedPartials.length == 5 && emittedPartials.contains .finalPairing &&
     emittedPartials.contains .lagrange && emittedPartials.contains .traceReturn &&
-    emittedPartials.contains .quotientLin &&
-    placeholderPartials.length == 3 &&
-    placeholderPartials == [.vkLoading, .transcriptParser, .pcs] &&
+    emittedPartials.contains .quotientLin && emittedPartials.contains .vkLoading &&
+    placeholderPartials.length == 2 &&
+    placeholderPartials == [.transcriptParser, .pcs] &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q ==
-        (q == .finalPairing || q == .lagrange || q == .traceReturn || q == .quotientLin)) &&
+        (q == .finalPairing || q == .lagrange || q == .traceReturn ||
+          q == .quotientLin || q == .vkLoading)) &&
     (Midfall.Lowering.partials.all fun q =>
       partialIsEmitted q || (emitPlaceholder q).length == 1) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .finalPairing)
@@ -712,11 +882,18 @@ def emitPlaceholderIsTotal_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitPlaceholder .lagrange) (emitLagrangeAt 6 1 9) &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .traceReturn) emitTraceReturnBlock &&
     ! SyntaxEq.stmtsBeq (emitPlaceholder .quotientLin) (emitQuotientLinAt 6) &&
-    -- the shape fact that makes the previous line load-bearing: same top-level length, so
-    -- nothing but stmtsBeq separates the dummy from the real scope.
+    ! SyntaxEq.stmtsBeq (emitPlaceholder .vkLoading)
+      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0) &&
+    -- the shape fact that makes the previous two lines load-bearing: same top-level length,
+    -- so nothing but stmtsBeq separates the dummy from the real scope.
     (emitPlaceholder .quotientLin).length == 1 && (emitQuotientLinAt 6).length == 1 &&
+    (emitPlaceholder .vkLoading).length == 1 &&
+    (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0).length == 1 &&
     (match emitQuotientLinAt 6 with
      | [Stmt.block body] => body.length == 9
+     | _ => false) &&
+    (match emitVkLoadingArms false 1 6 0 0 0 0 0x10e0 with
+     | [Stmt.block body] => body.length == 13
      | _ => false)
 
 /-- GATE 9 (perturbation). One literal of the emitted block changed - the scratch pointer of
@@ -979,7 +1156,25 @@ def numericSpellingDivergence_ok : Bool :=
     ! (EVM.print (emitQuotientLinAt poseidonCtx.k)).contains "0x" &&
     (renderQuotientAndLinearization poseidonCtx "" "").contains "let k := 6" &&
     (EVM.print (emitQuotientLinAt poseidonCtx.k)).contains "let k := 6" &&
-    yulTokens "add(QUOTIENT_MPTR, 32)" == yulTokens "add(QUOTIENT_MPTR, 0x20)"
+    yulTokens "add(QUOTIENT_MPTR, 32)" == yulTokens "add(QUOTIENT_MPTR, 0x20)" &&
+    -- P-AST3b, and the VkLoading slice, where THREE different hex spellings occur in one
+    -- 74-line region: the proof length (0x10e0 = 4320), the instance window (0x20 = 32)
+    -- and the payload copy offset (0x01 = 1). The last is the sharpest case in the tree - a
+    -- one-digit hex literal whose decimal spelling is a different number of characters - so
+    -- even a line-length comparison cannot see it and only a string-containment gate can.
+    (renderVkLoading poseidonCtx).contains
+      "eq(0x10e0, calldataload(PROOF_LEN_CPTR))" &&
+    (EVM.print emitVkLoadingDeployed).contains
+      "eq(4320, calldataload(PROOF_LEN_CPTR))" &&
+    (renderVkLoading poseidonCtx).contains "add(INSTANCE_CPTR, 0x20)" &&
+    (EVM.print emitVkLoadingDeployed).contains "add(INSTANCE_CPTR, 32)" &&
+    (renderVkLoading poseidonCtx).contains "extcodecopy(vk, VK_MPTR, 0x01," &&
+    (EVM.print emitVkLoadingDeployed).contains "extcodecopy(vk, VK_MPTR, 1," &&
+    ! (EVM.print emitVkLoadingDeployed).contains "0x" &&
+    yulTokens "eq(4320, calldataload(PROOF_LEN_CPTR))" ==
+      yulTokens "eq(0x10e0, calldataload(PROOF_LEN_CPTR))" &&
+    yulTokens "extcodecopy(vk, VK_MPTR, 1)" == yulTokens "extcodecopy(vk, VK_MPTR, 0x01)" &&
+    hexLiteral "0x10e0" == 4320
 
 /-- Does a statement begin a 'for' loop? Top level only; gate 22 counts the five Lagrange
     loops, which are all siblings inside one block. -/
@@ -1035,7 +1230,26 @@ def emitPartialRoutesRealSlices_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
       (emitQuotientLinAt 6) &&
     ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
-      (emitPlaceholder .finalPairing)
+      (emitPlaceholder .finalPairing) &&
+    -- P-AST3b: the fourth dispatch line, and the one that matters most here. The
+    -- placeholder for vkLoading is one statement and the real slice is one statement too,
+    -- so "the dispatcher reached the real body" cannot be read off any shape or length; it
+    -- is read off stmtsBeq against the dummy.
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
+      (emitPlaceholder .vkLoading) &&
+    -- and the vkLoading dispatch reads the PlanView fields and not the deployed profile:
+    -- the witness plan is k = 2 with the default proof length, so routing to the artifact's
+    -- 6 and 0x10e0 would satisfy the line above and fail these two.
+    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
+      (emitVkLoadingArms Midfall.Lowering.witnessPlanView.hasAccumulator
+        Midfall.Lowering.witnessPlanView.numInstances Midfall.Lowering.witnessPlanView.k
+        Midfall.Lowering.witnessPlanView.expectedHasAccumulatorWord
+        Midfall.Lowering.witnessPlanView.expectedAccOffset
+        Midfall.Lowering.witnessPlanView.expectedNumAccLimbs
+        Midfall.Lowering.witnessPlanView.expectedNumAccLimbBits
+        Midfall.Lowering.witnessPlanView.proofLayout.proofLen) &&
+    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
+      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0)
 
 /-! ### The P-AST3a gates: quotientLin -/
 
@@ -1133,6 +1347,162 @@ def emitQuotientLinRegionBoundary_ok : IO Bool :=
     SyntaxEq.stmtsBeq (emitQuotientLinAt poseidonCtx.k)
       VerifierPartialKats.qalLinearization_ast)
 
+/-! ### The P-AST3b gates: vkLoading -/
+
+/-- GATE 30 (the D-P25 tripwire, VkLoading). The emitted AST prints to the same token
+    stream as the TEXT PORT's render of the same partial under the same profile. Secondary
+    relation on purpose - gate 31 is the record, and gate 34 shows what this one cannot see.
+    -/
+def emitVkLoading_tokens_ok : Bool :=
+  yulTokens ("{" ++ renderVkLoading poseidonCtx ++ "}") ==
+    yulTokens (EVM.print emitVkLoadingDeployed)
+
+/-- GATE 31 (authoritative, VkLoading). The emitted AST equals the 'yul%' quotation of the
+    deployed slice - VerifierPartialKats.vkLoading_ast, gated there against the render by
+    their gate 90 - under stmtsBeq. This is the check of record: it separates Expr.builtin
+    from Expr.call, it separates the thirteen statements of the scope from a flat sequence
+    of the same statements, and it separates the six header cross-checks from each other
+    (four of them differ only in the slot name, which no length or token-count check can
+    see). The quotation is an independent elaboration path, so the gate is not
+    self-fulfilling - the same argument P-AST2 and P-AST3a made for gates 15, 17 and 25. -/
+def emitVkLoading_beq_ok : Bool :=
+  SyntaxEq.stmtsBeq emitVkLoadingDeployed VerifierPartialKats.vkLoading_ast
+
+/-- GATE 32 (authoritative, the untaken arm). The accumulator precheck: the emitted block
+    with the flag set equals the deployed quotation APPENDED to the arm quotation, and the
+    token stream agrees with the render of the same flipped profile. The deployed artifact
+    does not contain the arm, so this is the second reason the arm is not decoration: it is
+    gated for content against a quotation and not only for existence against a flag. -/
+def emitVkLoadingAcc_ok : Bool :=
+  SyntaxEq.stmtsBeq
+    (emitVkLoadingArms true poseidonCtx.numInstances poseidonCtx.k
+      poseidonCtx.expectedHasAccumulatorWord poseidonCtx.expectedAccOffset
+      poseidonCtx.expectedNumAccLimbs poseidonCtx.expectedNumAccLimbBits
+      poseidonCtx.proofLen)
+    (VerifierPartialKats.vkLoading_ast ++ VerifierPartialKats.vkLoadingAccArm_ast) &&
+    yulTokens ("{" ++ renderVkLoading { poseidonCtx with
+        expectedHasAccumulator := true } ++ "}") ==
+      yulTokens (EVM.print (emitVkLoadingArms true poseidonCtx.numInstances poseidonCtx.k
+        poseidonCtx.expectedHasAccumulatorWord poseidonCtx.expectedAccOffset
+        poseidonCtx.expectedNumAccLimbs poseidonCtx.expectedNumAccLimbBits
+        poseidonCtx.proofLen)) &&
+    -- and the arm is FOUR top-level statements where the deployed slice is one, so the
+    -- flag reaches the shape of the emitted block and not only its bytes.
+    (emitVkLoadingArms true 1 6 0 0 0 0 0x10e0).length == 4 &&
+    (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0).length == 1
+
+/-- GATE 33 (perturbation, VkLoading; D-P23 falsifiability of gates 30-32). Each of the
+    seven interpolated plan values, changed by one, turns BOTH relations red - the token
+    stream and stmtsBeq. There is no seventh conjunct for the arm flag because gate 32
+    already shows it changes the top-level shape. A gate that reddened on only some of the
+    seven would leave the rest decorative, and the four accumulator words are exactly the
+    ones a hard-coding converter would leave inert: this is the falsification of the
+    refusal P-AST3a recorded in prose. -/
+def emitVkLoadingDetectsPerturbation_ok : Bool :=
+  let good := emitVkLoadingDeployed
+  let bad (n k w o l b p : Nat) : Block Op :=
+    emitVkLoadingArms poseidonCtx.expectedHasAccumulator n k w o l b p
+  yulTokens (EVM.print good) != yulTokens (EVM.print (bad 2 6 0 0 0 0 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 2 6 0 0 0 0 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 7 0 0 0 0 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 7 0 0 0 0 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 6 1 0 0 0 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 6 1 0 0 0 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 6 0 1 0 0 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 6 0 1 0 0 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 6 0 0 1 0 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 6 0 0 1 0 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 6 0 0 0 1 0x10e0)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 6 0 0 0 1 0x10e0) &&
+    yulTokens (EVM.print good) != yulTokens (EVM.print (bad 1 6 0 0 0 0 0x1100)) &&
+    ! SyntaxEq.stmtsBeq good (bad 1 6 0 0 0 0 0x1100)
+
+/-- GATE 34 (the relation gap, at the VkLoading slice). Every 'and' of the success chain
+    spelled as a USER call named 'and', and the extcodecopy spelled as a USER call named
+    'extcodecopy', keeps the token stream and breaks stmtsBeq - the class P-AST measured on
+    ec_pairing and P-AST2, P-AST3a re-measured on their own slices, now reproduced on the
+    fourth. The 'and' rewrite is the sharpest form of the blindness here: SEVEN statements
+    have it as their outermost expression, so a converter that reached for 'ycall' would
+    mis-spell seven sites and no token gate would notice. -/
+def emitVkLoadingDetectsBuiltinVsCall_ok : Bool :=
+  let good := emitVkLoadingDeployed
+  let bad := good.map (mapStmtExprs fun
+    | Expr.builtin Op.and args => Expr.call "and" args
+    | Expr.builtin Op.extcodecopy args => Expr.call "extcodecopy" args
+    | e => e)
+  yulTokens (EVM.print good) == yulTokens (EVM.print bad) &&
+    ! SyntaxEq.stmtsBeq good bad &&
+    -- and the rewrite really fired: NINE of the thirteen statements inside the scope
+    -- changed their outer constructor, so this is not a gate that passes because nothing
+    -- was rewritten. The nine live inside the scope and not at the top level, which is why
+    -- the match is nested - a shallow filter counts zero and would make this a lie.
+    (match bad with
+     | [Stmt.block body] =>
+         (body.filter fun s => match s with
+           | Stmt.assign ["success"] (Expr.call "and" _) => true
+           | _ => false).length == 9
+     | _ => false)
+
+/-- GATE 35 (the slice is a program, not a shape). Structural pattern match on the emitted
+    VkLoading: ONE top-level statement, a scope of THIRTEEN, with no loop, the extcodecopy
+    at index 1, nine success-fold assignments whose outermost call is the 'and' built-in,
+    and exactly three 'if .. { fail(..) }' guards. The placeholder is one statement too -
+    'mstore(0x2000, 1)' - which is exactly why this matches on the shape INSIDE the scope:
+    no permutation of a single flat mstore has thirteen statements, three user-call guards
+    or an extcodecopy. -/
+def emitVkLoadingIsReal_ok : Bool :=
+  match emitVkLoadingDeployed with
+  | [Stmt.block body] =>
+      body.length == 13 && (body.filter stmtIsFor).length == 0 &&
+      (match body[1]? with
+       | some (Stmt.exprStmt (Expr.builtin Op.extcodecopy
+           [Expr.var "vk", Expr.var "VK_MPTR", Expr.lit (Literal.number 1),
+            Expr.var "EXPECTED_VK_PAYLOAD_LENGTH"])) => true
+       | _ => false) &&
+      (body.filter fun s => match s with
+        | Stmt.assign ["success"] (Expr.builtin Op.and _) => true
+        | _ => false).length == 9 &&
+      (body.filter fun s => match s with
+        | Stmt.cond _ [Stmt.exprStmt (Expr.call "fail" _)] => true
+        | _ => false).length == 3
+  | _ => false
+
+/-- GATE 36 (THE DERIVATION REACHES THE EMITTED BYTES - the anti-hard-coding gate). A plan
+    view built through Inv.lean's planViewWithAccumulator from a REAL accumulator encoding
+    carries 1 / 2 / 7 / 56, and those four numbers appear in the AST this emitter returns
+    for it - where the deployed artifact carries four zeros. Three things are asserted: the
+    derived words are in the emitted text, the emitted block is NOT the deployed quotation
+    (a hard-coded zero would be indistinguishable from the artifact and would pass gate 31
+    while lying for every accumulator plan), and the TEXT PORT agrees token-for-token at the
+    same four values, so the emitter and the port move together when the configuration
+    moves. This is the gate that makes "derived from cfg.accumulator, not hard-coded" a
+    computation instead of a promise. -/
+def emitVkLoadingAccWordsDerived_ok : Bool :=
+  let pv := Midfall.Lowering.planViewWithAccumulator
+    (vk := Midfall.Lowering.witnessVkPayload)
+    (vkMptr := Midfall.Generator.LayoutMemoryKats.referenceLayout.vkMptr)
+    (memory := Midfall.Generator.LayoutMemoryKats.referenceLayout)
+    (proofLayout := poseidonProofLayout)
+    (numInstances := poseidonCtx.numInstances) (k := poseidonCtx.k)
+    (numNegLagranges := poseidonCtx.numNegLagranges)
+    (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
+  pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
+    pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
+    (EVM.print (emitVkLoading pv)).contains "eq(mload(HAS_ACCUMULATOR_MPTR), 1)" &&
+    (EVM.print (emitVkLoading pv)).contains "eq(mload(ACC_OFFSET_MPTR), 2)" &&
+    (EVM.print (emitVkLoading pv)).contains "eq(mload(NUM_ACC_LIMBS_MPTR), 7)" &&
+    (EVM.print (emitVkLoading pv)).contains "eq(mload(NUM_ACC_LIMB_BITS_MPTR), 56)" &&
+    ! SyntaxEq.stmtsBeq (emitVkLoading pv) VerifierPartialKats.vkLoading_ast &&
+    yulTokens ("{" ++ renderVkLoading { poseidonCtx with
+        expectedHasAccumulator := true, expectedHasAccumulatorWord := 1,
+        expectedAccOffset := 2, expectedNumAccLimbs := 7,
+        expectedNumAccLimbBits := 56 } ++ "}") ==
+      yulTokens (EVM.print (emitVkLoading pv)) &&
+    -- and the deployed plan view - the none arm - emits the artifact's four zeros because
+    -- the derivation says so, not because a call site typed them in.
+    (EVM.print (emitVkLoading Midfall.Lowering.witnessPlanView)).contains
+      "eq(mload(ACC_OFFSET_MPTR), 0)"
+
 end Midfall.Lowering.GenAst
 
 #eval Midfall.Lowering.GenAst.emitFinalPairing_tokens_ok -- expect true
@@ -1164,3 +1534,10 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.emitQuotientLinDetectsBuiltinVsCall_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLinIsReal_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLinRegionBoundary_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoading_tokens_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoading_beq_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoadingAcc_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoadingDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoadingDetectsBuiltinVsCall_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoadingIsReal_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitVkLoadingAccWordsDerived_ok -- expect true

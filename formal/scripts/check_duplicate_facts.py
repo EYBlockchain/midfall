@@ -146,6 +146,33 @@ FAMILIES = [
                          "direct lowering must not reserve VM program words"]),
     },
     {
+        # P-AST3b: the four VK-header accumulator words PlanView now carries, because
+        # VkLoading.yul:105-110 cross-checks the loaded VK header against them. The Rust
+        # derives all four ONCE from the accumulator encoding (Vk.lean:782-791, and
+        # Artifacts.lean's accExpectationsOf at ART:229-245), so four fields are four
+        # copies of one fact - the R-58 F2 class one step further. Both repairs the brief
+        # allows are in: the values are DERIVED by Inv.lean's accWordsOfEncoding through
+        # planViewWithAccumulator, the only PlanView constructor any call site uses, AND
+        # the copies are related to their source by the named pin below - one equation over
+        # the 4-tuple, so no individual word can be paraphrased out of it.
+        #
+        # WHY THIS IS REGISTERED BY HAND: discovery (rule 5) would NOT have flagged these
+        # four. The stem scan is a PREFIX match on the field name, and expectedAccOffset /
+        # expectedNumAccLimbs / expectedNumAccLimbBits / expectedHasAccumulatorWord all
+        # begin with "expected". A new spelling of an old copy is a human finding, and this
+        # comment is the record that it was found by a human and not by the gate.
+        "name": "accExpectations",
+        "carriers": [(INV, "PlanView", "expectedHasAccumulatorWord"),
+                     (INV, "PlanView", "expectedAccOffset"),
+                     (INV, "PlanView", "expectedNumAccLimbs"),
+                     (INV, "PlanView", "expectedNumAccLimbBits"),
+                     (API, "GeneratorConfig", "accumulator")],
+        "pins": [(SURFACE, "Surface", "plan_accExpectations")],
+        "pin_tokens": ["plan.expectedHasAccumulatorWord", "plan.expectedAccOffset",
+                       "plan.expectedNumAccLimbs", "plan.expectedNumAccLimbBits",
+                       "cfg.accumulator"],
+    },
+    {
         # R-60 S7: shell.codeBlock (the Yul AST the shell runs) and shellLayout.code
         # (the bytecode the deployment installs) are two copies of "the shell program"
         # in two representations. No pin is nameable today: relating them needs a

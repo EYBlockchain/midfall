@@ -4741,8 +4741,91 @@ def pcs_blocksMatchEmitterShape_ok : IO Bool :=
     && nth 6 == "// build final_com and v (KZG single-opening proof, fused MSM)"
     && nth 7 == "// Scale z*pi - vG before the final pairing check")
 
+/-! ### P-AST3b: the VkLoading snapshots
+
+    The two quotations below are the record relation for the vkLoading slice: an
+    independent elaboration of the deployed bytes through the vendored `yul%` parser,
+    which GenAst's `emitVkLoading_beq_ok` then compares the constructor-built AST
+    against. They are transcribed from the same template region the text port renders
+    (T:partials/verifier/VkLoading.yul:1-141, deployed at D:1103-1176), in the same
+    shape `qalLinearization_ast` and `lagrange_ast` already establish - the parser is
+    not the converter, so a gate between them is not self-fulfilling (D-P30 clause 2). -/
+
+/-- The deployed VK-loading block: the external-VK arm (poseidonCtx.embeddedVk is none,
+    so the extcodesize / extcodehash guard and the extcodecopy are what the artifact
+    carries), the six header cross-checks, and the three ABI-envelope checks. The four
+    accumulator words are the deployed profile's zeros, read off the artifact and not
+    chosen: gate 90 below re-derives them from the dump's own lines. -/
+def vkLoading_ast : Block EVM.Op := yul% {
+  {
+    if iszero(and(
+        eq(extcodesize(vk), EXPECTED_VK_LENGTH),
+        eq(extcodehash(vk), EXPECTED_VK_CODEHASH_WORD)
+    )) { fail(ERR_VK_MISMATCH) }
+    extcodecopy(vk, VK_MPTR, 0x01, EXPECTED_VK_PAYLOAD_LENGTH)
+    success := and(success, eq(mload(NUM_INSTANCES_MPTR), 1))
+    success := and(success, eq(mload(K_MPTR), 6))
+    success := and(success, eq(mload(HAS_ACCUMULATOR_MPTR), 0))
+    success := and(success, eq(mload(ACC_OFFSET_MPTR), 0))
+    success := and(success, eq(mload(NUM_ACC_LIMBS_MPTR), 0))
+    success := and(success, eq(mload(NUM_ACC_LIMB_BITS_MPTR), 0))
+    if iszero(success) { fail(ERR_VK_MISMATCH) }
+    success := and(success, eq(0x10e0, calldataload(PROOF_LEN_CPTR)))
+    success := and(success, eq(1, calldataload(NUM_INSTANCE_CPTR)))
+    success := and(
+        success,
+        eq(calldatasize(), add(INSTANCE_CPTR, 0x20))
+    )
+    if iszero(success) { fail(ERR_BAD_CALLDATA_SHAPE) }
+  }
+}
+
+/-- The accumulator precheck the same template appends when
+    expected_has_accumulator is set (VkLoading.yul:115-137). The deployed artifact does
+    NOT contain it - gate 44 pins that flipping the flag changes the bytes and breaks
+    the artifact match - so this is the arm the text port reaches only through an
+    override, quoted from the render rather than from the dump, exactly as
+    `accBatch_snapshot` is in GenAst. -/
+def vkLoadingAccArm_ast : Block EVM.Op := yul% {
+  let acc_precompile_failed := 0
+  success, acc_precompile_failed := validate_public_accumulator(success, r)
+  if iszero(success) {
+    if acc_precompile_failed { fail(ERR_PRECOMPILE_FAILED) }
+    fail(ERR_BAD_POINT_ENCODING)
+  }
+}
+
+/-- GATE 90 (STRUCTURAL, render -> AST, and the slice's provenance). The rendered
+    vkLoading partial tokenises to `vkLoading_ast`, and the render is the deployed
+    slice: 4,494 bytes / 74 lines occurring EXACTLY ONCE in the tracked artifact. The
+    last three conjuncts are the anti-self-fulfilment half: the six header words the
+    quotation pins to 0 / 0 / 0 / 0 are re-read from the dump's own lines, so the
+    snapshot matches because the artifact says so and not because the transcription
+    agreed with itself. -/
+def vkLoading_astAgrees_ok : IO Bool :=
+  readDump >>= fun sol =>
+  let r := renderVkLoading poseidonCtx
+  pure (r.length == 4494 && lineCount r == 74 && occ sol r == 1 &&
+    yulTokens ("{" ++ r ++ "}") == yulTokens (EVM.print vkLoading_ast) &&
+    sol.contains "eq(mload(HAS_ACCUMULATOR_MPTR), 0)" &&
+    sol.contains "eq(mload(ACC_OFFSET_MPTR), 0)" &&
+    sol.contains "eq(mload(NUM_ACC_LIMBS_MPTR), 0)" &&
+    sol.contains "eq(mload(NUM_ACC_LIMB_BITS_MPTR), 0)" &&
+    sol.contains "eq(mload(NUM_INSTANCES_MPTR), 1)" &&
+    sol.contains "eq(mload(K_MPTR), 6)")
+
+/-- GATE 91 (STRUCTURAL, the untaken arm). The render with the accumulator flag flipped
+    tokenises to the arm quotation appended to the deployed block: the arm is gated for
+    SELECTION and for content, never only for existence (D-P30 clause 2). -/
+def vkLoadingAccArm_astAgrees_ok : Bool :=
+  yulTokens ("{" ++ renderVkLoading
+    { poseidonCtx with expectedHasAccumulator := true } ++ "}") ==
+    yulTokens (EVM.print (vkLoading_ast ++ vkLoadingAccArm_ast))
+
 end VerifierPartialKats
 
+#eval Midfall.Generator.VerifierPartialKats.vkLoading_astAgrees_ok -- expect true
+#eval Midfall.Generator.VerifierPartialKats.vkLoadingAccArm_astAgrees_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.pcs_blocksMatchEmitterShape_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.p13e_artifactsReachable_ok -- expect true
 #eval Midfall.Generator.VerifierPartialKats.p13e_noOrphanTemplate_ok -- expect true

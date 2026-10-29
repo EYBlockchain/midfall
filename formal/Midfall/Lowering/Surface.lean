@@ -338,6 +338,24 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       disagree about how many instance words the calldata carries. -/
   plan_numInstances : plan.numInstances = cfg.numInstances
 
+  /-- P-AST3b, THE FOUR ACCUMULATOR WORDS PINNED TO THEIR SOURCE. PlanView now carries
+      expectedHasAccumulatorWord, expectedAccOffset, expectedNumAccLimbs and
+      expectedNumAccLimbBits because VkLoading.yul:105-110 cross-checks the loaded VK
+      header against them, and the Rust derives those four ONCE from the accumulator
+      encoding (Vk.lean:782-791, and Artifacts.lean's accExpectationsOf at ART:229-245).
+      Four copies of one fact is the R-58 F2 / F6 class, so the pin is stated as one
+      equation over the tuple: the four fields ARE accWordsOfEncoding cfg.accumulator -
+      the same function planViewWithAccumulator applied, now read back off the
+      configuration the render was built from. A plan claiming offset 7 while cfg says
+      none refutes it, and SurfaceFixture.planAccExpectationsKats_ok exhibits both the
+      agreement and the refutation. Registered as the accExpectations family in
+      scripts/check_duplicate_facts.py and fingerprinted in
+      scripts/check_statement_fingerprints.py. -/
+  plan_accExpectations :
+    (plan.expectedHasAccumulatorWord, plan.expectedAccOffset,
+     plan.expectedNumAccLimbs, plan.expectedNumAccLimbBits) =
+      accWordsOfEncoding cfg.accumulator
+
   /-- R-58 F6, second half: the dead/live evaluator pair. Lowered.evaluator is the
       render's Option YulObject and Surface.evaluatorRuntime is the deployment's
       Option (YulBlock x EVM.Layout) that Surface.calls actually answers with; nothing

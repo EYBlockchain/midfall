@@ -76,6 +76,7 @@ import Midfall.Assumptions.TwoAdicity
 import Midfall.Generator.Layout
 import Midfall.Generator.LayoutMemory
 import Midfall.Generator.Models
+import Midfall.Generator.Api
 import Midfall.Generator.Abi
 import Midfall.Generator.Templates
 import Midfall.Halo2.Exec.Accumulator
@@ -126,6 +127,70 @@ structure PlanView where
       cfg.accumulator by Surface.plan_hasAccumulator (R-58 F2); until that field existed
       this was a free Bool. -/
   hasAccumulator : Bool
+  /-- P-AST3b. expected_has_accumulator AS THE VK HEADER WORD: 1 when the render has an
+      accumulator arm, 0 when it does not. Vk.lean:782 (VK:119) renders exactly
+      "if inputs.accEncoding.isSome then 1 else 0", and VkLoading.yul:110 compares the
+      loaded HAS_ACCUMULATOR_MPTR against it. A Nat and not a Bool because that is what
+      the template interpolates; hasAccumulator above is the same fact in the other
+      spelling, and BOTH come out of accWordsOfEncoding, never out of a call site. -/
+  expectedHasAccumulatorWord : Nat
+  /-- P-AST3b. expected_acc_offset: the public-input index the accumulator tail starts
+      at (Vk.lean:783-785, VK:120-123; ART:230). Zero with no accumulator because the
+      reference's unwrap_or_default writes a zero word and the template then compares
+      the loaded header against that word - NOT because any plan has offset 0. -/
+  expectedAccOffset : Nat
+  /-- P-AST3b. expected_num_acc_limbs (Vk.lean:786-788, VK:124-126; ART:231). -/
+  expectedNumAccLimbs : Nat
+  /-- P-AST3b. expected_num_acc_limb_bits (Vk.lean:789-791, VK:127-131; ART:232). -/
+  expectedNumAccLimbBits : Nat
+
+/-! ### The four accumulator words, derived and not chosen
+
+    P-AST3b added these four because VkLoading.yul:105-110 cross-checks the loaded VK
+    header against them, so an emitter that produced the slice had to have them. They are
+    a COPY of a fact the Rust derives once from cfg.accumulator, which is the R-58 F2 /
+    F6 class the duplicate-fact gate exists for, so two things are done about it rather
+    than nothing: the values are DERIVED in one place (accWordsOfEncoding, reached only
+    through planViewWithAccumulator, the constructor every call site uses), and each copy
+    is related to its source by the named pin Surface.plan_accExpectations, registered as
+    a family in scripts/check_duplicate_facts.py. proofLen is NOT a fifth copy: the
+    render reads ctx.proofLen and poseidonProofLayout.proofLen is the same number,
+    pinned by VerifierPartials' own gate 35, so PlanView.proofLayout already carries it. -/
+
+/-- The four VK-header accumulator words, read off the plan's accumulator encoding in ONE
+    place. This is the shape of the reference's own single derivation: Vk.lean:782-791
+    writes the four words from inputs.accEncoding with unwrap_or_default() for the none
+    arm, and Artifacts.lean's accExpectationsOf (ART:229-245) reads the same values off
+    the same Option, with ART:245's unwrap_or((false, 0, 0, 0, false)) as the arm the
+    deployed poseidon profile takes.
+
+    BOTH arms are here because both are the reference's. The deployed profile takes the
+    none arm, which is why all four words are 0 in the artifact - and hard-coding four
+    zeros would reproduce those bytes while lying for every accumulator plan, which is
+    the accident P-AST3a explicitly refused. planAccWords_derive_ok is the falsification:
+    a real encoding moves all four words together, so the derivation is a function and
+    not four constants with a doc comment. -/
+def accWordsOfEncoding (acc : Option Midfall.Generator.AccumulatorEncoding) :
+    Nat × Nat × Nat × Nat :=
+  match acc with
+  | none => (0, 0, 0, 0)
+  | some e => (1, e.offset, e.numLimbs, e.numLimbBits)
+
+/-- THE CONSTRUCTOR: a PlanView whose four accumulator words and whose hasAccumulator
+    Bool are all read off `acc` by accWordsOfEncoding, so no call site can pick a number
+    the configuration does not imply. Every PlanView in the tree is built here (Inv's own
+    witnessPlanView and Instances/SurfaceFixture's fxPlan), which is what makes "derived
+    from cfg.accumulator" a property of the code and not of a comment. -/
+def planViewWithAccumulator (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (memory : VerifierMemoryLayout) (proofLayout : ProofCalldataLayout)
+    (numInstances k numNegLagranges : Nat)
+    (acc : Option Midfall.Generator.AccumulatorEncoding) : PlanView :=
+  let (hasWord, accOffset, numLimbs, limbBits) := accWordsOfEncoding acc
+  { vk := vk, vkMptr := vkMptr, memory := memory, proofLayout := proofLayout,
+    numInstances := numInstances, k := k, numNegLagranges := numNegLagranges,
+    hasAccumulator := acc.isSome,
+    expectedHasAccumulatorWord := hasWord, expectedAccOffset := accOffset,
+    expectedNumAccLimbs := numLimbs, expectedNumAccLimbBits := limbBits }
 
 /-! ### Addresses and the memory predicates -/
 
@@ -530,14 +595,11 @@ def witnessVkPayload : Halo2VerifyingKey :=
     small payload above, the default calldata geometry, one public instance, a size-4
     domain, and no accumulator arm. -/
 def witnessPlanView : PlanView :=
-  { vk := witnessVkPayload,
-    vkMptr := Midfall.Generator.LayoutMemoryKats.referenceLayout.vkMptr,
-    memory := Midfall.Generator.LayoutMemoryKats.referenceLayout,
-    proofLayout := proofCalldataLayoutDefault,
-    numInstances := 1,
-    k := 2,
-    numNegLagranges := 2,
-    hasAccumulator := false }
+  planViewWithAccumulator (vk := witnessVkPayload)
+    (vkMptr := Midfall.Generator.LayoutMemoryKats.referenceLayout.vkMptr)
+    (memory := Midfall.Generator.LayoutMemoryKats.referenceLayout)
+    (proofLayout := proofCalldataLayoutDefault)
+    (numInstances := 1) (k := 2) (numNegLagranges := 2) (acc := none)
 
 /-! ### Known-answer checks
 
@@ -560,6 +622,40 @@ def ptrAddrKats_ok : Bool :=
   -- raw and never through ptrAddr
   witnessPlanView.memory.selectorAccMptr > 0
 
+/-- P-AST3b: THE DERIVATION IS A FUNCTION AND NOT FOUR ZEROS WITH A DOC COMMENT. Line 1
+    is the none arm - the arm the deployed poseidon profile takes - giving the four words
+    the artifact shows. Line 2 is a real encoding moving all four together, and line 3
+    says they move through the CONSTRUCTOR, so a plan view built from an accumulator
+    encoding carries 1 / 2 / 7 / 56 and not 0 / 0 / 0 / 0. Line 4 pins the two spellings
+    of "is there an accumulator" against each other at both plans, which is only
+    automatic because both come out of one match on one Option.
+
+    Without this the four fields could be constants and every gate on the deployed
+    vkLoading slice would still pass - the accident P-AST3a refused to hard-code, made a
+    computation here instead of a refusal in prose. -/
+def planAccWords_derive_ok : Bool :=
+  accWordsOfEncoding none == (0, 0, 0, 0) &&
+    accWordsOfEncoding
+      (some (Midfall.Generator.AccumulatorEncoding.new 2 7 56)) == (1, 2, 7, 56) &&
+    (let pv := planViewWithAccumulator (vk := witnessVkPayload)
+        (vkMptr := Midfall.Generator.LayoutMemoryKats.referenceLayout.vkMptr)
+        (memory := Midfall.Generator.LayoutMemoryKats.referenceLayout)
+        (proofLayout := proofCalldataLayoutDefault)
+        (numInstances := 1) (k := 2) (numNegLagranges := 2)
+        (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56));
+      pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
+        pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
+        pv.hasAccumulator == true &&
+        (pv.expectedHasAccumulatorWord == if pv.hasAccumulator then 1 else 0)) &&
+    witnessPlanView.expectedHasAccumulatorWord == 0 &&
+      witnessPlanView.expectedAccOffset == 0 &&
+      witnessPlanView.expectedNumAccLimbs == 0 &&
+      witnessPlanView.expectedNumAccLimbBits == 0 &&
+      witnessPlanView.hasAccumulator == false &&
+      (witnessPlanView.expectedHasAccumulatorWord ==
+        if witnessPlanView.hasAccumulator then 1 else 0)
+
 #eval ptrAddrKats_ok                      -- expect true
+#eval planAccWords_derive_ok              -- expect true
 
 end Midfall.Lowering

@@ -96,6 +96,12 @@ SURFACE_PINS = [
     # the bytes, not a codec. The injectivity this pin does not make is a named gap in
     # scripts/check_hypothesis_bundles.py, not a satisfied claim.
     ("encG2_shape", ["\u2200 R : G\u2082", "encG2IsEip (encG2 R) = true"]),
+    # P-AST3b: the four accumulator words PlanView now carries. The pin is ONE equation
+    # over the 4-tuple, so a paraphrase that keeps the tuple and drops the derivation - or
+    # keeps the derivation and drops one of the four words - loses a fragment here.
+    ("plan_accExpectations", ["plan.expectedHasAccumulatorWord",
+                              "plan.expectedNumAccLimbBits",
+                              "accWordsOfEncoding cfg.accumulator"]),
 ]
 # R-60 S1: the import check is a PROJECTION of the naming field, not a free field. Its
 # body is fingerprinted here too, because the defect was in a definition and not in a
