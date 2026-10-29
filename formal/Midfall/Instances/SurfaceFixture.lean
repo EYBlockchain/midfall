@@ -211,6 +211,18 @@ def fxPayload : Halo2VerifyingKey :=
     quotientProgramOffsetWords := none, quotientProgramWords := 0,
     quotientConstLabels := [], quotientConstHeaders := [] }
 
+/-- The fixture plan's Data, DERIVED the same way the witness plan's is: Data.new over the
+    default meta, the fixture payload and the fixture layout. The fixture has no circuit, so
+    the honest Data is the one an empty circuit produces - and it is produced by the
+    reference's own constructor rather than transcribed, which is what makes it a derivation
+    at the fixture too. -/
+def fxPlanData : Midfall.Generator.Data :=
+  match Midfall.Generator.Data.new Midfall.Generator.constraintSystemMetaDefault fxPayload
+      Midfall.Generator.LayoutMemoryKats.poseidonLayout with
+  | .ok d => d
+  | .error _ => Midfall.Lowering.emptyDataAt
+    Midfall.Generator.LayoutMemoryKats.poseidonLayout
+
 /-- The plan view: the deployed poseidon memory layout (whose WellFormed and validate
     both decide true, LayoutMemory.lean:869), the payload above, one public instance, a
     size-4 domain, no accumulator arm. -/
@@ -239,6 +251,10 @@ def fxPlan : PlanView :=
     -- the fixture plan's job is the theorem surface, and no gate here compares its
     -- transcriptParser slice against the deployed artifact.
     (facts := Midfall.Lowering.emptyParserFacts)
+    -- P-PLANVIEW: the default meta and the Data derived from it. The fixture's pcs slice is
+    -- therefore empty, for the same reason the witness plan's is, and blkPinBitesPcsPlaceholder
+    -- below is what makes that decidable at the pin.
+    (meta_ := Midfall.Generator.constraintSystemMetaDefault) (dat := fxPlanData)
 
 /-! ### The seven blocks: the emitter, not a hand-written table -/
 
@@ -645,7 +661,7 @@ def mainConcatKats_ok : Bool :=
   -- quotientLin scope, the one-statement pcs placeholder, the two-statement FinalPairing arm
   -- and the three-statement TraceReturn arm; the pre-P-AST fixture carried seven dummies and
   -- no helpers at all, so a real finalPairing slice could not have resolved fail or ec_pairing.
-  realSurface.L.main.length == 46 &&
+  realSurface.L.main.length == 45 &&
     -- and the first six statements really are those definitions, i.e. mainScope - which
     -- hoists main - can see them, including the four the parser calls. This is the pin's
     -- second conjunct as a computation, and P-AST4 widened it from two names to six.
@@ -716,7 +732,7 @@ def mainConcatKats_ok : Bool :=
       -- each slice is nonempty, and no two slices are the same statement, so a duplicated
       -- or dropped partial is visible. Compared through Repr because Stmt carries no BEq
       -- at this dialect (Ast.lean derives Repr only).
-      fun (q, _i) => (fxPartialBlocks q).length > 0 &&
+      fun (q, _i) => ((fxPartialBlocks q).length > 0 || q == Partial.pcs) &&
         (List.zipIdx [Partial.vkLoading, Partial.transcriptParser, Partial.lagrange,
             Partial.quotientLin, Partial.pcs, Partial.finalPairing,
             Partial.traceReturn]).all
@@ -740,10 +756,10 @@ def mainConcatKats_ok : Bool :=
     conversions this gate still CANNOT see are quotientLin and vkLoading, and the
     transcriptParser placeholder plant is a stmtsBeq exhibit for the same reason. -/
 def lowerPinKats_ok : Bool :=
-  (match fxLower fxOptions with | .ok l => l.main.length == 46 | .error _ => false) &&
+  (match fxLower fxOptions with | .ok l => l.main.length == 45 | .error _ => false) &&
     (match fxLower fxOptionsTrace with | .ok _ => false | .error _ => true) &&
     (match realSurface.lower realSurface.o₀ with
-     | .ok l => l.main.length == 46 | .error _ => false)
+     | .ok l => l.main.length == 45 | .error _ => false)
 
 #eval lowerPinKats_ok                     -- expect true
 
@@ -863,7 +879,8 @@ def planAccExpectationsKats_ok : Bool :=
         (memory := Midfall.Generator.LayoutMemoryKats.poseidonLayout)
         (proofLayout := Midfall.Generator.poseidonProofLayout)
         (numInstances := 1) (k := 2) (numNegLagranges := 7)
-        (acc := acc) (facts := Midfall.Lowering.emptyParserFacts);
+        (acc := acc) (facts := Midfall.Lowering.emptyParserFacts)
+        (meta_ := Midfall.Generator.constraintSystemMetaDefault) (dat := fxPlanData);
       words pv == Midfall.Lowering.accWordsOfEncoding acc &&
         words pv == (1, 2, 7, 56) &&
         words pv != (0, 0, 0, 0) &&
@@ -1180,7 +1197,7 @@ def plantQuotientLinPlaceholderSurface : Surface rp RP RP RP :=
 /-- THE PIN BITES THE PLACEHOLDER PLANT, QUOTIENTLIN (D-P23, second half for the new slice).
     WHAT MAKES THIS PLANT DIFFERENT FROM THE OTHER TWO, and why it needed its own theorem
     rather than a third conjunct: the placeholder and the real slice are BOTH one statement,
-    so plantMainWith of this plant has the SAME LENGTH as GenAst.emitMain fxPlan - 46
+    so plantMainWith of this plant has the SAME LENGTH as GenAst.emitMain fxPlan - 45
     statements either way - and every length-based argument in this file is blind to it. The
     second conjunct below is the witness that the replanted main is length-identical and still
     not the emitted main, i.e. that the pin is refusing this plant on CONTENT alone. Before
@@ -1335,7 +1352,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkTraceReturnPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .traceReturn)) &&
     -- P-AST3a: the third plant, and the extra line that says what is special about it - the
-    -- replanted main has the SAME LENGTH as the emitted main (46 either way), so this is the
+    -- replanted main has the SAME LENGTH as the emitted main (45 either way), so this is the
     -- only plant in
     -- the file whose difference stmtsBeq can see and a length count cannot.
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkQuotientLinPlaceholder)
@@ -1346,7 +1363,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkQuotientLinPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .quotientLin)) &&
     -- P-AST3b: the fourth plant. It differs from the emitter on exactly vkLoading, keeps
-    -- main's LENGTH - 46 either way, because the placeholder and the real slice are both
+    -- main's LENGTH - 45 either way, because the placeholder and the real slice are both
     -- one statement - and is therefore invisible to every count in this file.
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkVkLoadingPlaceholder)
       (GenAst.emitMain fxPlan) &&
@@ -1356,7 +1373,7 @@ def plantPlaceholderMainsDiffer_ok : Bool :=
       SyntaxEq.stmtsBeq (plantBlkVkLoadingPlaceholder q fxPlan)
         (GenAst.emitPartial fxPlan q) == (q != .vkLoading)) &&
     -- P-AST4: the fifth plant, and the one whose replanted main is NOT length-identical -
-    -- 18 statements against 46, because the placeholder is one statement and the real slice
+    -- 17 statements against 45, because the placeholder is one statement and the real slice
     -- at the fixture plan is twenty-nine. Stated as a difference and not a coincidence: the
     -- two plants above it are length-blind and this one is not, and plantTranscriptParser
     -- LengthVisible_ok below pins which side of that line it falls on.
@@ -1465,13 +1482,13 @@ theorem blkPinBitesTranscriptParserPlaceholder :
   exact Bool.noConfusion h5
 
 /-- THE LENGTH FACT for this plant, stated because it is the opposite of the two plants
-    above it: the replanted main is SHORTER than the emitted main - 18 against 46 - so this
+    above it: the replanted main is SHORTER than the emitted main - 17 against 45 - so this
     plant is not length-blind. Both halves are computations: the two lengths, and the fact
     that the plant still differs from the emitter on exactly one slice. -/
 def plantTranscriptParserLengthVisible_ok : Bool :=
   (plantMainWith plantBlkTranscriptParserPlaceholder).length ≠ (GenAst.emitMain fxPlan).length &&
-    (plantMainWith plantBlkTranscriptParserPlaceholder).length == 18 &&
-    (GenAst.emitMain fxPlan).length == 46 &&
+    (plantMainWith plantBlkTranscriptParserPlaceholder).length == 17 &&
+    (GenAst.emitMain fxPlan).length == 45 &&
     ! SyntaxEq.stmtsBeq (plantMainWith plantBlkTranscriptParserPlaceholder)
       (GenAst.emitMain fxPlan) &&
     (Midfall.Lowering.partials.all fun q =>
@@ -1519,6 +1536,114 @@ theorem plantedTranscriptParserPlaceholderStillSupported :
   · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
       ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
 
+
+/-- THE PLANT P-PLANVIEW MAKES POSSIBLE, AND THE ONE ITS PREDECESSORS COULD NOT: pcs put
+    back to its own placeholder. Before this package the plant was UNFORMULABLE - the
+    placeholder WAS the emitter's answer for pcs, so a blk returning it satisfied
+    BlkIsEmitter by construction and the pin had nothing to refuse. That is D-P30 clause 6's
+    class exactly, and it is why every conversion has to re-check the plant rather than
+    inherit it.
+
+    WHAT MAKES THIS PLANT THE SHARPEST OF THE FIVE, and it is not the length. The fixture's
+    own plan view has no circuit, so 'GenAst.emitPartial fxPlan .pcs' is the EMPTY block and
+    the placeholder is one statement - a plant a length check would catch for free, and the
+    weakest possible evidence. So the theorem below does not plant at fxPlan: BlkIsEmitter
+    quantifies over EVERY plan view, and the pin is refuted at pcsFixturePlan, where the
+    emitter returns a program of more than a hundred statements and the plant still returns
+    the one-statement dummy. The second theorem is the same plant at the fixture, kept because
+    the empty-vs-one case is the one a fall-through could produce by accident and it too has
+    to be refused. -/
+def plantBlkPcsPlaceholder : Partial → PlanView → YulBlock
+  | .pcs, _pv => GenAst.emitPlaceholder .pcs
+  | q, pv => GenAst.emitPartial pv q
+
+def plantPcsPlaceholderSurface : Surface rp RP RP RP :=
+  plantSurfaceWith plantBlkPcsPlaceholder
+
+/-- THE PIN BITES THE PLACEHOLDER PLANT, PCS, AT A PLAN VIEW WITH A CIRCUIT (D-P23, second
+    half for the seventh slice). The plant's blk is the emitter's own dummy for pcs; the only
+    thing that refuses it is that the emitter no longer returns that dummy - and at the Kzg
+    fixture plan the dummy is one statement against a real multi-block program. -/
+theorem blkPinBitesPcsPlaceholder : ¬ BlkIsEmitter plantPcsPlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.pcs GenAst.pcsFixturePlan
+  have h4 : SyntaxEq.stmtsBeq (plantPcsPlaceholderSurface.blk Partial.pcs
+      GenAst.pcsFixturePlan) (GenAst.emitPlaceholder .pcs) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial GenAst.pcsFixturePlan Partial.pcs)
+      (GenAst.emitPlaceholder .pcs) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- THE SAME PLANT AT THE FIXTURE PLAN VIEW, where the emitted slice is EMPTY because the
+    fixture carries no circuit. Stated separately rather than folded into the theorem above
+    because the two cases are different failures of a would-be emitter: one is a placeholder
+    standing in for a real program, the other is a placeholder standing in for an early return.
+    Both are refused, and the pin is what refuses them. -/
+theorem blkPinBitesPcsPlaceholderAtFixture : ¬ BlkIsEmitter plantPcsPlaceholderSurface := by
+  intro h
+  have h1 := h.1 Partial.pcs fxPlan
+  have h4 : SyntaxEq.stmtsBeq (plantPcsPlaceholderSurface.blk Partial.pcs fxPlan)
+      (GenAst.emitPlaceholder .pcs) = true := by native_decide
+  have h5 : SyntaxEq.stmtsBeq (GenAst.emitPartial fxPlan Partial.pcs)
+      (GenAst.emitPlaceholder .pcs) = false := by native_decide
+  rw [← h1] at h5
+  rw [h4] at h5
+  exact Bool.noConfusion h5
+
+/-- EVERY OTHER HYPOTHESIS STILL HOLDS OF THE PCS PLANT, so the pin is the only thing that
+    refuses it - the second half of D-P23 / R-41 for the seventh slice. Written as a DIRECT
+    ten-bullet exhibit and not transported from plantedStillSupported: P-AST3a, P-AST3b and
+    P-AST4 each measured that the transport fails to typecheck, and P-PLANVIEW re-measured it
+    a fourth time on this very goal - inserting 'exact plantedStillSupported' here gives
+    "plantedStillSupported has type SupportedS plantCounterexampleSurface
+    plantCounterexampleSurface.o₀ but is expected to have type SupportedS
+    plantPcsPlaceholderSurface plantPcsPlaceholderSurface.o₀". Nothing SupportedS reads
+    mentions blk, L, lower, shell or astOfMain, and this plant changes only those five. -/
+theorem plantedPcsPlaceholderStillSupported :
+    SupportedS plantPcsPlaceholderSurface plantPcsPlaceholderSurface.o₀ := by
+  refine { advice := ?_, instShape := ?_, noRotInst := ?_, acc := ?_,
+           singlePhase := ?_, hLimbs := ?_, vkPoints := ?_, layout := ?_,
+           production := ?_, wf := ?_ }
+  · decide
+  · exact ⟨by decide, by decide⟩
+  · decide
+  · intro enc h
+    exact absurd h (by simp [plantPcsPlaceholderSurface, plantSurfaceWith, realSurface])
+  · decide
+  · decide
+  · intro C hC
+    have hnil : C = (1 : RP) := by
+      simpa [plantPcsPlaceholderSurface, plantSurfaceWith, realSurface, fxVk,
+        List.mem_append, List.mem_singleton] using hC
+    subst hnil
+    refine ⟨(0, 0), ?_, ?_⟩ <;> native_decide
+  · exact ⟨by native_decide, by native_decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by show fxCs.degree = Except.ok 3; rfl, by decide,
+      ⟨by decide, by decide⟩, by decide, by decide, by decide, rfl⟩
+
+/-- THE LENGTH FACT for the pcs plant, stated because it is the opposite of the quotientLin
+    and vkLoading plants and the same as the transcriptParser one: at the FIXTURE plan the
+    emitted slice is empty and the placeholder is one statement, so the replanted main is
+    LONGER than the emitted main by exactly one - and a length check would catch this plant
+    at the fixture. That is the easy case. The line that matters is the last one: at the Kzg
+    fixture plan the same plant differs by more than a hundred statements, and in both cases
+    the plant differs from the emitter on exactly the slice it plants and on no other. -/
+def plantPcsPlaceholderLengthVisible_ok : Bool :=
+  (plantMainWith plantBlkPcsPlaceholder).length = (GenAst.emitMain fxPlan).length + 1 &&
+    ! SyntaxEq.stmtsBeq (plantMainWith plantBlkPcsPlaceholder) (GenAst.emitMain fxPlan) &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkPcsPlaceholder q fxPlan) (GenAst.emitPartial fxPlan q) ==
+        (q != Partial.pcs)) &&
+    (GenAst.emitPartial fxPlan Partial.pcs).isEmpty &&
+    (plantBlkPcsPlaceholder Partial.pcs fxPlan).length == 1 &&
+    (GenAst.emitPartial GenAst.pcsFixturePlan Partial.pcs).length > 100 &&
+    (Midfall.Lowering.partials.all fun q =>
+      SyntaxEq.stmtsBeq (plantBlkPcsPlaceholder q GenAst.pcsFixturePlan)
+        (GenAst.emitPartial GenAst.pcsFixturePlan q) == (q != Partial.pcs))
+
+#eval plantPcsPlaceholderLengthVisible_ok   -- expect true
 
 /-- The pin's two halves as a computation, next to the two plants as theorems. Line 1:
     the fixture's blk agrees with the emitter for every partial under stmtsBeq, the

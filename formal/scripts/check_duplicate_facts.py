@@ -197,16 +197,41 @@ FAMILIES = [
         # were in P-AST3b. The stem list is NOT widened here: adding "num" or "lookup" would
         # flag dozens of unrelated fields, and a gate that cries wolf gets ignored (R-60 S2).
         "name": "transcriptParserFacts",
+        # P-PLANVIEW DELETED THREE OF THE SIX CARRIERS rather than pinning them:
+        # numLookups, numPermutationZs and numTrashcans are literally meta_.numLookups,
+        # meta_.numPermutationZs and meta_.numTrashcans (ART:291, :292, :294), so once
+        # PlanView carries the meta they were a copy whose source sat in the same record.
+        # Deleting is the repair the gate prefers - there is now ONE carrier of each fact,
+        # reached by the three projections PlanView.numLookups and siblings - and the
+        # deletion is what this family now records rather than a pin. The three that remain
+        # are the three that are NOT meta projections: userPhases (userPhasesOf indexes the
+        # proof layout and aborts at ART:164, so a total projection would swallow a panic),
+        # lookupHPlusAcc (Artifacts' lookupHPlusAccOf is the one carrier of that sum) and
+        # truncatedChallenges (a build input at ART:328, not a circuit fact).
         "carriers": [(INV, "PlanView", "userPhases"),
-                     (INV, "PlanView", "numLookups"),
-                     (INV, "PlanView", "numPermutationZs"),
                      (INV, "PlanView", "lookupHPlusAcc"),
-                     (INV, "PlanView", "numTrashcans"),
                      (INV, "PlanView", "truncatedChallenges")],
         "pins": [],
         "enforced_at": (INV, "parserFactsOfPlan",
-                        ["m.userPhases", "m.numLookups", "m.numPermutationZs",
-                         "m.lookupHPlusAcc", "m.numTrashcans", "m.truncatedChallenges"]),
+                        ["m.userPhases", "m.lookupHPlusAcc", "m.truncatedChallenges"]),
+    },
+    {
+        # P-PLANVIEW: the two fields the PCS emitter needs, added to PlanView as a
+        # projection of the plan record. Registered as a DECLARED GAP rather than a pin
+        # because there is nothing in Lean to pin them against: the source is
+        # LoweringPlan.meta_ / LoweringPlan.data, and no Surface carries a LoweringPlan
+        # because P-11's LoweringPlan::new has not landed - the same blocker
+        # ObligationsGates.gap_qvmField_surface_free names for the qvm field. The gap lives
+        # in the code (Inv.lean's gap_planview_carries_the_plan), and the package's answer
+        # to "unpinned" is deletion where deletion was possible: see the family above.
+        "name": "pcsPlanInputs",
+        "carriers": [(INV, "PlanView", "meta_"),
+                     (INV, "PlanView", "dat"),
+                     (LPLAN, "LoweringPlan", "meta_"),
+                     (LPLAN, "LoweringPlan", "data")],
+        "pins": [],
+        "gap": (INV, "gap_planview_carries_the_plan",
+                ["PlanView.meta_", "PlanView.dat", "LoweringPlan::new"]),
     },
     {
         # R-60 S7: shell.codeBlock (the Yul AST the shell runs) and shellLayout.code

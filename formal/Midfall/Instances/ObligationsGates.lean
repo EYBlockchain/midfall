@@ -512,7 +512,18 @@ def gap_encG2_injective : String :=
     describes; this one quantifies over an arbitrary `LoweringPlan`, so it is a claim
     about SOME plan - the R-58 F3 unrelated-program class one level up. Blocker: linking
     it needs `S.plan` to BE a `LoweringPlan`, and `PlanView` carries only the counts Inv
-    reads because P-11's `LoweringPlan::new` has not landed. -/
+    reads because P-11's `LoweringPlan::new` has not landed.
+
+    P-PLANVIEW RE-READ THIS NOTE AND DELIBERATELY DID NOT ACT ON THE "ARGUABLY SHOULD" HALF.
+    PlanView now carries the two LoweringPlan fields the PCS emitter needs (`meta_` and
+    `dat`) rather than a reference to the assembled plan, and the reason is that this
+    blocker is the constructor and not the field list: `S.plan` cannot become a
+    `LoweringPlan` until something can BUILD one, and nothing can, so a plan-valued field
+    would be nine more free fields (four of them duplicates of PlanView's own vk, vkMptr,
+    memory and proofLayout) with no derivation behind them. The gap def below is unchanged
+    for that reason - it still names `LoweringPlan::new`, and it is still the honest
+    blocker. The full argument, including why the alternative was rejected rather than
+    deferred, is at Inv.lean's PlanView header. -/
 def gap_qvmField_surface_free : String :=
   "blocker: the field quantifies over an arbitrary LoweringPlan and never mentions the "
     ++ "Surface; linking it needs S.plan to be a LoweringPlan (P-11 LoweringPlan::new)"

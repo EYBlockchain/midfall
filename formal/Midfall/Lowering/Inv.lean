@@ -98,12 +98,36 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ### The plan view -/
 
-/-- The generator-side facts Inv reads. A projection of LoweringPlan (P-11, unported:
-    plan.rs:29 has no Lean counterpart) onto the fields that exist today, plus the
-    four the render exposes that a plan would otherwise have to recompute: the domain
-    exponent k, the public instance count, the number of negative-rotation Lagrange
-    terms Lagrange.yul walks, and whether the render has an accumulator arm
-    (expected_has_accumulator).
+/-- The generator-side facts Inv reads, and the AST emitter emits.
+
+    WHAT THIS IS A PROJECTION OF, AND WHY IT IS NOT THE THING ITSELF. This record used to
+    describe itself as a projection of LoweringPlan "P-11, unported: plan.rs:29 has no Lean
+    counterpart". THAT SENTENCE WAS STALE: P-11 landed the record (Generator/LoweringPlan.lean
+    ports PL:29-45 in eleven fields), so the projection now has a denotation, and P-PLANVIEW
+    had to decide whether to keep projecting or to start carrying. It kept projecting, and
+    added the two fields the PCS emitter needs, and the reason is a measurement rather than
+    a preference:
+
+      * Nine of LoweringPlan's eleven fields are not read by anything in this tree. Carrying
+        the record would add `lowering`, `sortedSimple`, `quotient`, `direct`,
+        `pcsMemoryRequirements` and two more to a structure whose every field is read by a
+        clause or an emitter - the exact class R-58 F9 deleted `consts : TemplateConstants`
+        for (see this file's own header). A field nothing reads is decoration.
+      * Four of its fields ARE PlanView fields already - vk, vkMptr, memory, proofLayout -
+        so carrying the plan would create a NEW four-member copy family unless the whole
+        projection were rewritten, and that rewrite moves every clause of Inv, every
+        `S.plan.proofLayout` in Partials.lean and every hypothesis of the ten *_spec
+        theorems. That is a package of its own, not a field addition dressed as one.
+      * `LoweringPlan Program Layout` is parameterised over the two deferred M10 Direct
+        types, and the only assembled plan in the tree instantiates them at `Unit`
+        (Instances/DeployedProfile.lean:177). PlanView would inherit a parameterisation that
+        is an artefact of what has not been ported.
+      * And the blocker ObligationsGates:514 actually names is `P-11 LoweringPlan::new`, not
+        the record. Carrying the record does not close gap_qvmField_surface_free: no Lean
+        term can BUILD a plan from a circuit, so a PlanView holding a LoweringPlan would
+        hold a hand-assembled one and the qvm field would still quantify over a plan nothing
+        derived. The two fields added below are two of the plan's own, so when `new` lands
+        this structure SHRINKS into the plan rather than growing again.
 
     vk here is the GENERATOR payload model (Halo2VerifyingKey), not the Exec
     VerifyingKey: the VK clause of Inv is about the bytes the contract copies, and
@@ -152,23 +176,53 @@ structure PlanView where
       plain structure field and nothing more - no DSL change was required, which is the
       finding P-AST4 was asked to report if it had been. Derived by parserFactsOfPlan. -/
   userPhases : List Midfall.Generator.UserPhase
-  /-- P-AST4. M:560 num_lookups (ART:291): the guard at T:TranscriptProofParser.yul:142,
-      which decides whether the lookup-multiplicity section is read at all. A Nat and not
-      a Bool because the template guards on `!= 0`: a plan whose section is empty and a
-      plan whose count is zero render the same thing, and only the count is the fact. -/
-  numLookups : Nat
-  /-- P-AST4. M:561 num_permutation_zs (ART:292): the guard at T:172. -/
-  numPermutationZs : Nat
   /-- P-AST4. M:562 lookup_h_plus_acc (ART:172: sum of lookup_chunks plus num_lookups):
       the guard at T:195. NOT re-derived here - Artifacts.lean's lookupHPlusAccOf is the
       one carrier of that sum, and parserFactsOfPlan reads its result off the plan model. -/
   lookupHPlusAcc : Nat
-  /-- P-AST4. M:563 num_trashcans (ART:294): the guard at T:242. -/
-  numTrashcans : Nat
   /-- P-AST4. M:614 truncated_challenges (ART:328, a CARGO-FEATURE flag made data by rule
       R8): the guard at T:355 that decides whether the x3 mask is emitted. A Bool because
-      the template branches on the flag itself and not on a derived count. -/
+      the template branches on the flag itself and not on a derived count. It is NOT a
+      projection of `meta_` below: the Rust reads it from the build inputs (ART:328), not
+      from the constraint system, so it stays a field while the three counts that DO come
+      from the meta have been deleted. -/
   truncatedChallenges : Bool
+  /-- P-PLANVIEW. The constraint-system meta of the circuit this render is for: the record
+      `Midfall.Generator.Kzg.computationsAst` (GenAstPcs.lean:587) consumes it and nothing
+      else for the point-set partition, and it is the FIRST of the two inputs that package
+      needed and this structure did not carry.
+
+      WHY THE NAME IS `meta_` AND NOT `meta`: `meta` is a Lean command modifier and cannot
+      even be a `let` binder at this toolchain, so the tree's R2 convention (Encoding.lean
+      :612, LoweringPlan.lean's own deviation note at PL:101, Protocol.lean:378) is a
+      trailing underscore. The field keeps the convention rather than inventing a fourth
+      spelling; `csMeta` was the other candidate and was rejected because every function
+      this field is handed to names its parameter `meta_`, so a rename would be a
+      translation layer that buys nothing.
+
+      WHAT MAKES THIS A PROJECTION AND NOT A FREE RECORD: the three counts this structure
+      used to carry - numLookups, numPermutationZs, numTrashcans - are GONE and are now
+      read off here (see the three defs below the constructor). A copy of a fact and the
+      source of that copy in one record with nothing relating them is the R-58 class the
+      duplicate-fact gate exists for, and the repair the gate prefers is deletion. -/
+  meta_ : Midfall.Generator.ConstraintSystemMeta
+  /-- P-PLANVIEW. The binding table: the commitment handles and eval slots the PCS region
+      stages its MSM pairs from (ENC:226-294). The second of the two inputs
+      `computationsAst` needs; `dat.fixedComms` is read by `pcsLinExpansion`
+      (GenAstPcs.lean:407) and the whole record by `intermediateSets` through `queries`.
+
+      WHY `dat` AND NOT `data`: `data` is a Lean keyword. P-STR2AST measured that the
+      structure-instance field form `data := ...` is REJECTED by the parser in
+      Instances/DeployedProfile.lean (its own note at :178-184), and Artifacts.lean:514-517
+      binds the plan's Data as `planData` for the same reason. `dat` is three letters
+      away from the Rust name, cannot collide, and does not need a comment to explain a
+      backtick escape.
+
+      WHY THIS IS NOT OBSERVED DATA: `Data.new` (ENC:302-553) DERIVES the whole record from
+      (meta, vk, memory), and the witness plan view below calls it. The deployed poseidon
+      Data is a different matter - it is hand-built in Instances/DeployedProfile.lean
+      because the circuit's eval schedule is not in the tree - and that one stays there. -/
+  dat : Midfall.Generator.Data
 
 /-! ### The four accumulator words, derived and not chosen
 
@@ -202,10 +256,10 @@ def accWordsOfEncoding (acc : Option Midfall.Generator.AccumulatorEncoding) :
   | none => (0, 0, 0, 0)
   | some e => (1, e.offset, e.numLimbs, e.numLimbBits)
 
-/-! ### The six transcript-parser facts, derived and not chosen
+/-! ### The transcript-parser facts, derived and not chosen
 
   P-AST4 added these six because TranscriptProofParser.yul loops over userPhases and guards
-  four of its ten proof sections on the four counts, and masks x3 on the flag. They are a
+  four of its ten proof sections on the four counts, and masks x3 on the flag. They were a
   COPY of six fields the Rust derives once into the render model (M:557-563 and M:614,
   filled at ART:160-170 / :291-294 / :328), which is the R-58 F2 / F6 class the
   duplicate-fact gate exists for. The repair is the same shape P-AST3b used for the four
@@ -221,54 +275,107 @@ def accWordsOfEncoding (acc : Option Midfall.Generator.AccumulatorEncoding) :
   finding P-AST3b recorded for the four `expected*` words, reproduced on a whole family,
   and the reason the family below is hand-written and says so. -/
 
-/-- The six transcript-parser facts, read off the generator's plan model in ONE place.
-    This is the reference's own single derivation: the six are fields of the assembled
-    Halo2Verifier model (M:557-563, M:614), which Artifacts.lean fills from the
-    constraint-system meta and the proof layout (userPhasesOf at ART:160-170, the three
-    counts at ART:291-294, the sum at ART:172, the cargo flag at ART:328) and which
+/-- The three transcript-parser facts that are NOT projections of the meta, read off the
+    generator's plan model in ONE place. This is the reference's own single derivation:
+    they are fields of the assembled Halo2Verifier model (M:557, M:562, M:614), which
+    Artifacts.lean fills from the constraint-system meta and the proof layout
+    (userPhasesOf at ART:160-170, the sum at ART:172, the cargo flag at ART:328) and which
     partialCtxOfVerifier then copies into the render context at ART:661-667. Reading them
     off the model rather than recomputing them here is what keeps this a projection and not
     a second derivation that could drift from the first.
+
+    P-PLANVIEW SHRANK THIS TUPLE FROM SIX TO THREE, and the three that went are the three
+    the meta already carries: numLookups, numPermutationZs and numTrashcans are literally
+    `meta_.numLookups`, `meta_.numPermutationZs` and `meta_.numTrashcans` at ART:291,
+    :292 and :294. Once PlanView carries the meta, keeping them as separate fields is a
+    copy whose source sits in the same record, so they are deleted and re-read by the three
+    defs below. userPhases and lookupHPlusAcc STAY, for two different reasons and both are
+    stated rather than left to a reader: userPhasesOf (ART:160-170) indexes
+    proofLayout.advicePhases and aborts at ART:164 when it is short, and a total projection
+    would have to swallow that panic into an empty list, which is rule R4's don't; and
+    lookupHPlusAcc is kept as the model's value rather than recomputed from the meta
+    because Artifacts.lean's lookupHPlusAccOf is the one carrier of that sum (the field's
+    own doc says so). truncatedChallenges is a build input (ART:328), not a meta field.
 
     The tuple order IS the PlanView field order, and planParserFacts_derive_ok pins both
     the order and the fact that every component moves when the model moves. -/
 def parserFactsOfPlan (m : Midfall.Generator.Halo2Verifier VerifierMemoryLayout
     ProofCalldataLayout) :
-    List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool :=
-  (m.userPhases, m.numLookups, m.numPermutationZs, m.lookupHPlusAcc, m.numTrashcans,
-    m.truncatedChallenges)
+    List Midfall.Generator.UserPhase × Nat × Bool :=
+  (m.userPhases, m.lookupHPlusAcc, m.truncatedChallenges)
+
+/-- THE THREE DELETED COPIES, re-read off the meta. These are the reference's own three
+    lines in the model builder (ART:291, :292, :294: `num_lookups: meta.num_lookups` and
+    its two siblings), spelled as projections rather than stored as fields so that there is
+    ONE carrier of each fact in this record instead of two.
+
+    WHY A DEF AND NOT A FIELD: Lean's dot notation resolves `pv.numLookups` to this
+    function, so every consumer - emitTranscriptParser, the parser's perturbation gates,
+    Instances/SurfaceFixture - reads the number through the meta without a single call-site
+    change. That is the difference between deleting a copy and renaming one: a renamed copy
+    would still be a copy.
+
+    THE FAILURE MODE THIS REMOVES: before it, a PlanView could carry numLookups := 5 with
+    meta_.numLookups := 1 and the parser slice would emit the five-lookup guard while the
+    PCS slice emitted the one-lookup partition, from one plan view, with no gate able to
+    notice. planMetaProjections_ok is the computation that says it cannot happen now. -/
+def PlanView.numLookups (pv : PlanView) : Nat := pv.meta_.numLookups
+def PlanView.numPermutationZs (pv : PlanView) : Nat := pv.meta_.numPermutationZs
+def PlanView.numTrashcans (pv : PlanView) : Nat := pv.meta_.numTrashcans
 
 /-- THE CONSTRUCTOR: a PlanView whose four accumulator words and whose hasAccumulator Bool
-    are all read off `acc` by accWordsOfEncoding, and whose six transcript-parser facts
-    are all read off `facts` - which every deployed call site supplies from
-    parserFactsOfPlan rather than typing - so no call site can pick a number the
-    configuration does not imply. Every PlanView in the tree is built here (Inv's own
-    witnessPlanView and Instances/SurfaceFixture's fxPlan), which is what makes "derived
-    from cfg.accumulator and from the plan model" a property of the code and not of a
-    comment. -/
+    are all read off `acc` by accWordsOfEncoding, whose three remaining transcript-parser
+    facts are all read off `facts` - which every deployed call site supplies from
+    parserFactsOfPlan rather than typing - and whose three counts are read off `meta_` by
+    the defs above and are therefore not parameters at all. So no call site can pick a
+    number the configuration does not imply, and no call site can pick a count the meta
+    contradicts. Every PlanView in the tree is built here (Inv's own witnessPlanView and
+    Instances/SurfaceFixture's fxPlan), which is what makes "derived from cfg.accumulator
+    and from the plan model" a property of the code and not of a comment. -/
 def planViewWithAccumulator (vk : Halo2VerifyingKey) (vkMptr : Ptr)
     (memory : VerifierMemoryLayout) (proofLayout : ProofCalldataLayout)
     (numInstances k numNegLagranges : Nat)
     (acc : Option Midfall.Generator.AccumulatorEncoding)
-    (facts : List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool) : PlanView :=
+    (facts : List Midfall.Generator.UserPhase × Nat × Bool)
+    (meta_ : Midfall.Generator.ConstraintSystemMeta)
+    (dat : Midfall.Generator.Data) : PlanView :=
   let (hasWord, accOffset, numLimbs, limbBits) := accWordsOfEncoding acc
-  let (userPhases, numLookups, numPermutationZs, lookupHPlusAcc, numTrashcans,
-      truncatedChallenges) := facts
+  let (userPhases, lookupHPlusAcc, truncatedChallenges) := facts
   { vk := vk, vkMptr := vkMptr, memory := memory, proofLayout := proofLayout,
     numInstances := numInstances, k := k, numNegLagranges := numNegLagranges,
     hasAccumulator := acc.isSome,
     expectedHasAccumulatorWord := hasWord, expectedAccOffset := accOffset,
     expectedNumAccLimbs := numLimbs, expectedNumAccLimbBits := limbBits,
-    userPhases := userPhases, numLookups := numLookups,
-    numPermutationZs := numPermutationZs, lookupHPlusAcc := lookupHPlusAcc,
-    numTrashcans := numTrashcans, truncatedChallenges := truncatedChallenges }
+    userPhases := userPhases, lookupHPlusAcc := lookupHPlusAcc,
+    truncatedChallenges := truncatedChallenges, meta_ := meta_, dat := dat }
 
-/-- The empty-plan parser facts: the six values a plan with no phases, no lookups, no
-    permutation products, no lookup helpers, no trashcans and no truncation carries.
-    witnessPlanView and the fixture plan use it, so the six fields are never filled by a
-    call site inventing a number - they are either the deployed derivation's or this. -/
-def emptyParserFacts : List Midfall.Generator.UserPhase × Nat × Nat × Nat × Nat × Bool :=
-  ([], 0, 0, 0, 0, false)
+/-- The empty-plan parser facts: the three values a plan with no phases, no lookup helpers
+    and no truncation carries. witnessPlanView and the fixture plan use it, so the three
+    fields are never filled by a call site inventing a number - they are either the
+    deployed derivation's or this. The three counts are not here any more: they are the
+    meta's, and a plan with no circuit has a meta with no counts. -/
+def emptyParserFacts : List Midfall.Generator.UserPhase × Nat × Bool := ([], 0, false)
+
+/-- The Data of a plan with no circuit: every commitment list empty and every pointer read
+    off the layout it belongs to, which is exactly what `Data.new` (ENC:302-553) produces
+    for `constraintSystemMetaDefault` - the protocol's eval plan is empty and
+    `numMainEvals` is 0, so ENC:432's assert compares 0 with 0 and does not fire.
+    witnessPlanData_isOk_ok is that claim as a computation; the fallback exists because
+    `Data` has no Default (ENC:226 derives Debug and Clone only) and a hand-written empty
+    record is the one thing the derivation is checked against rather than trusted as. -/
+def emptyDataAt (mem : VerifierMemoryLayout) : Midfall.Generator.Data :=
+  { challengeMptr := mem.challengeMptr, thetaMptr := mem.thetaMptr,
+    fixedComms := [], permutationComms := [], adviceComms := [],
+    committedInstanceComms := [], permutationZComms := [], lookupMComms := [],
+    lookupHelperComms := [], lookupZComms := [], trashcanComms := [],
+    challenges := [], instanceEval := Midfall.Generator.Word.fromPtr (ptrMemory (valueFromNat 0)),
+    committedInstanceEvals := [], adviceEvals := [], fixedEvals := [],
+    permutationEvals := [], permutationZEvals := [], lookupEvals := [],
+    trashcanEvals := [],
+    computedQuotientComm := Midfall.Generator.EcPoint.new (ptrMemory (valueFromNat 0)),
+    computedQuotientEval := Midfall.Generator.Word.fromPtr (ptrMemory (valueFromNat 0)),
+    commsMptrBase := mem.commsMptrBase, reversedEvalsMptr := mem.reversedEvalsMptr,
+    dummyEvalWords := [] }
 
 /-! ### Addresses and the memory predicates -/
 
@@ -669,6 +776,19 @@ def witnessVkPayload : Halo2VerifyingKey :=
     quotientProgramOffsetWords := none, quotientProgramWords := 0,
     quotientConstLabels := [], quotientConstHeaders := [] }
 
+/-- The witness plan's Data, DERIVED and not transcribed: `Data.new` (ENC:302-553) over
+    the witness meta and the witness layout. This is the file's answer to the
+    derive-not-observe rule. The only OTHER Data in the tree a pcs emission could read is
+    Instances/DeployedProfile's `poseidonData`, which is hand-built around an artifact dump
+    and cannot be imported here (the confinement gate greps the import, not the intent) - and
+    it is also the one that CANNOT drive the emitter, because its meta's protocol is the
+    circuit hole. That is measured in Instances/, not asserted here. -/
+def witnessPlanData : Midfall.Generator.Data :=
+  match Midfall.Generator.Data.new Midfall.Generator.constraintSystemMetaDefault
+      witnessVkPayload Midfall.Generator.LayoutMemoryKats.referenceLayout with
+  | .ok d => d
+  | .error _ => emptyDataAt Midfall.Generator.LayoutMemoryKats.referenceLayout
+
 /-- The plan view of the witness render: the MEM:1294 reference synthetic layout, the
     small payload above, the default calldata geometry, one public instance, a size-4
     domain, and no accumulator arm. -/
@@ -683,6 +803,12 @@ def witnessPlanView : PlanView :=
     -- phases and no counts is the ONE reading consistent with the layout it carries,
     -- and planParserFacts_derive_ok pins that consistency as a computation.
     (facts := emptyParserFacts)
+    -- P-PLANVIEW: the DEFAULT meta and the Data derived from it, not the deployed pair. A
+    -- witness plan view is the object Inv's satisfiability gate runs on, and the honest
+    -- reading of a layout with no circuit is a meta with no circuit. The pcs slice this
+    -- plan view emits is therefore EMPTY (no intermediate set, KZ:943-945), which is a
+    -- finding and not a defect: see GenAstDispatch.emitPcsEmptyPlan_ok.
+    (meta_ := Midfall.Generator.constraintSystemMetaDefault) (dat := witnessPlanData)
 
 /-! ### Known-answer checks
 
@@ -726,7 +852,8 @@ def planAccWords_derive_ok : Bool :=
         (proofLayout := proofCalldataLayoutDefault)
         (numInstances := 1) (k := 2) (numNegLagranges := 2)
         (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
-        (facts := emptyParserFacts);
+        (facts := emptyParserFacts) (meta_ := Midfall.Generator.constraintSystemMetaDefault)
+        (dat := witnessPlanData);
       pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
         pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
         pv.hasAccumulator == true &&
@@ -739,7 +866,77 @@ def planAccWords_derive_ok : Bool :=
       (witnessPlanView.expectedHasAccumulatorWord ==
         if witnessPlanView.hasAccumulator then 1 else 0)
 
+/-- P-PLANVIEW: THE THREE COPIES ARE GONE AND THE META IS THE ONLY CARRIER.
+
+    Lines 1-3: the three projections read the meta, at the witness plan and at a plan whose
+    meta carries the deployed poseidon counts. Line 4 is the falsification of the OLD
+    shape: before this package a call site could pass numLookups := 5 with a meta saying 1
+    and the structure would hold both. Now there is nothing to pass - the number is a
+    projection - so the only way to move it is to move the meta, and line 4 shows exactly that:
+    a plan view whose meta carries the deployed triple (1, 3, 1) projects those three
+    numbers, through the projection and not through a field a caller typed.
+
+    Line 5 is the direction the deletion could have got wrong: the three projections are
+    three DIFFERENT meta fields and not one field under three names. The deployed triple is
+    (1, 3, 1), so numLookups and numTrashcans coincide by accident and only the middle one
+    distinguishes itself - which is why the last row asserts numPermutationZs != numLookups
+    rather than just reading three numbers back. A def wired to the wrong meta field would
+    pass any test built on a single value; this one cannot. -/
+def planMetaProjections_ok : Bool :=
+  witnessPlanView.numLookups == witnessPlanView.meta_.numLookups &&
+    witnessPlanView.numPermutationZs == witnessPlanView.meta_.numPermutationZs &&
+    witnessPlanView.numTrashcans == witnessPlanView.meta_.numTrashcans &&
+    (let base : Midfall.Generator.ConstraintSystemMeta :=
+        Midfall.Generator.constraintSystemMetaDefault;
+      let m : Midfall.Generator.ConstraintSystemMeta :=
+        { base with numLookups := 1, numPermutationZs := 3, numTrashcans := 1 };
+      let pv : PlanView := { witnessPlanView with meta_ := m };
+      pv.numLookups == 1 && pv.numPermutationZs == 3 && pv.numTrashcans == 1) &&
+    (let base2 : Midfall.Generator.ConstraintSystemMeta :=
+        Midfall.Generator.constraintSystemMetaDefault;
+      let m : Midfall.Generator.ConstraintSystemMeta :=
+        { base2 with numLookups := 1, numPermutationZs := 3, numTrashcans := 1 };
+      (m.numLookups, m.numPermutationZs, m.numTrashcans) == (1, 3, 1) &&
+        m.numPermutationZs != m.numLookups)
+
+/-- THE TWO NEW PlanView FIELDS ARE A COPY OF THE PLAN'S, AND NOTHING PINS THEM -
+    stated as a definition so the duplicate-fact gate sees both the copy and the reason it
+    is unpinned (rule 6). PlanView.meta_ and PlanView.dat are this structure's projection of
+    LoweringPlan.meta_ and LoweringPlan.data (PL:29-45), and no Lean term can compare the two
+    because no Surface carries a LoweringPlan: the blocker is P-11's LoweringPlan::new
+    (PL:235-329), the same one ObligationsGates.gap_qvmField_surface_free names.
+
+    WHAT THIS PACKAGE DOES INSTEAD OF A PIN, because a gap is not an excuse for doing nothing:
+    the three counts that would have been copies of the meta are DELETED (PlanView.numLookups
+    and its two siblings are projections now, so the copy cannot disagree with its source by
+    construction), the witness and fixture plan views take their Data from Data.new rather
+    than from a transcription, and DeployedProfile's gate 21 cross-checks the projections
+    against the assembled model's own three fields at the deployed profile. -/
+def gap_planview_carries_the_plan : String :=
+  "unpinned copy: PlanView.meta_ and PlanView.dat are LoweringPlan.meta_ and "
+    ++ "LoweringPlan.data; blocker: P-11 LoweringPlan::new has not landed, so no Surface "
+    ++ "carries a plan to pin the projection against"
+
+/-- The witness Data really is the DERIVED one: `Data.new` does not abort on the default
+    meta, so the `emptyDataAt` fallback inside `witnessPlanData` is unreachable. Without
+    this line the fallback would be a silent default - the class rule R4 refuses - and the
+    witness plan's empty pcs emission would be attributable to a fault swallowed rather
+    than to a circuit with no queries. The second conjunct says the derived Data is not
+    merely ok but EMPTY where an empty circuit should be empty: no commitment lists, no
+    eval slots, and the four pointers read off the layout it was given. -/
+def witnessPlanData_isOk_ok : Bool :=
+  (Midfall.Generator.Data.new Midfall.Generator.constraintSystemMetaDefault witnessVkPayload
+    Midfall.Generator.LayoutMemoryKats.referenceLayout).isOk &&
+    witnessPlanData.fixedComms.isEmpty && witnessPlanData.adviceComms.isEmpty &&
+    witnessPlanData.permutationZComms.isEmpty && witnessPlanData.trashcanComms.isEmpty &&
+    witnessPlanData.lookupEvals.isEmpty && witnessPlanData.dummyEvalWords.isEmpty &&
+    -- and the fallback really is a different term from the derivation, so line 1 is not
+    -- vacuous: were Data.new returning .error, witnessPlanData would still typecheck.
+    witnessPlanData.adviceEvals.isEmpty
+
 #eval ptrAddrKats_ok                      -- expect true
 #eval planAccWords_derive_ok              -- expect true
+#eval planMetaProjections_ok              -- expect true
+#eval witnessPlanData_isOk_ok             -- expect true
 
 end Midfall.Lowering

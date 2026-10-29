@@ -65,6 +65,7 @@
 
 import Midfall.Lowering.Surface
 import Midfall.Lowering.GenAst
+import Midfall.Lowering.GenAstDispatch
 import Midfall.Yul.Contracts
 import Midfall.Assumptions.Eip2537
 
@@ -235,18 +236,16 @@ def PartialRejects (S : Surface p G₁ G₂ Gₜ) (q : Partial) (k : Checkpoint)
 
     WHAT IT BUYS, and what it does not. It buys: the theorems are now claims about ONE
     program per plan rather than about every program, so the R-62 counterexample is
-    outside the quantifier. It does not buy a proof: for the ONE partial GenAst still
-    emits a placeholder (GenAst.emittedPartials is [vkLoading, transcriptParser, lagrange,
-    quotientLin, finalPairing, traceReturn] since P-AST4; the one is pcs), so pcs_spec is
-    pinned to a placeholder and its registered hole is now "the emitter does not
-    implement this partial yet" instead of "blk is free". The nine theorems whose partial is
-    emitted for real - finalPairing_spec, finalPairing_progress_spec, finalPairing_acc_spec,
-    lagrange_spec, lagrange_progress_spec, traceReturn_spec, quotientLin_spec, vkLoading_spec
-    and transcriptParser_spec - are the ones whose pinned block is the real emitted program,
-    the acc theorem at a plan view with hasAccumulator = true, which GenAst emits for real
-    even though the deployed artifact does not exercise that arm. (The list read eight before
-    P-AST4, with vkLoading_spec dropped; it is now enumerated against the file's own theorem
-    names.) Note what the quotientLin conversion does NOT settle: the
+    outside the quantifier. It does not buy a proof. Since P-PLANVIEW the pinned block is a
+    REAL emitted program for all TEN theorems: GenAst.emittedPartials is all seven partials
+    - vkLoading, transcriptParser, lagrange, quotientLin, pcs, finalPairing and traceReturn -
+    and the seventh arm (pcs) reached the emitter when PlanView gained a ConstraintSystemMeta
+    and a Data. Before that, pcs_spec was pinned to a placeholder and its registered hole was
+    "the emitter does not implement this partial yet"; that hole is closed, and what remains
+    in pcs_spec's hole is the substance (the f_eval / v / final_com / pairing-input lemmas and
+    the g1_identity clause that Inv already carries). The acc theorem is pinned at a plan view
+    with hasAccumulator = true, which the emitter produces for real even though the deployed
+    artifact does not exercise that arm. Note what the quotientLin conversion does NOT settle: the
     pinned block is the linearization SCOPE, i.e. the template's own body, and the two
     quotient_numerator includes that sit in front of it in the artifact are still text - see
     the measured boundary in GenAst.emitQuotientLinAt and the gate that pins it,
@@ -458,14 +457,13 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     than hidden in a structure: the point of stating them is to see what each one
     needs, and a bundle alias would hide exactly that.
 
-    Each carries hblk : BlkIsEmitter S (R-62, P-AST). For finalPairing_spec,
-    finalPairing_progress_spec and finalPairing_acc_spec, and since P-AST2 also for
-    lagrange_spec, lagrange_progress_spec and traceReturn_spec, and since P-AST3a also for
-    quotientLin_spec and quotientLin_progress_spec, the pinned block is the real
-    emitted program. For the other three the pinned block is GenAst.emitPlaceholder, so
-    those theorems are now claims about ONE named program instead of about every program
-    - the false-as-stated quantifier is gone - and their hole is the emitter, which
-    GenAst.emittedPartials records as covering four partials of seven. -/
+    Each carries hblk : BlkIsEmitter S (R-62, P-AST). Since P-PLANVIEW the pinned block is
+    the REAL emitted program for every one of the ten: P-AST took finalPairing and its two
+    helpers, P-AST2 lagrange / lagrange_progress / traceReturn, P-AST3a quotientLin, P-AST3b
+    vkLoading, P-AST4 transcriptParser and P-PLANVIEW pcs. No theorem in this file is pinned
+    to a placeholder any more, so "the emitter does not implement this partial yet" is no
+    longer a hole any registered sorry can name - every remaining hole is a proof obligation
+    about the program that exists. -/
 
 /-- VkLoading: the payload copy and the calldata envelope. PROOF HOLE: needs the
     VkLoading.yul AST as a Block Op (P-13), the memory-copy lemmas for mcopy over
@@ -581,11 +579,19 @@ theorem quotientLin_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduc
     PartialSound S .quotientLin Snap calls gas (calldataPre S cd) (fun _ _ => True) := by
   sorry
 
-/-- Pcs.yul: f_eval, v, final_com and the two pairing inputs. PROOF HOLE: needs the
-    Pcs.yul AST, which P-13 ported as TEXT only (Kzg.lean:1320 is the render), plus
-    the committed-instance identity fact the attack names as finding 1 - the
-    g1_identity window clause in Inv is what carries it, and it is only enough
-    because that clause exists. -/
+/-- Pcs.yul: f_eval, v, final_com and the two pairing inputs. THE BLOCK HOLE IS CLOSED: the
+    pcs arm of the emitter is a real AST (GenAstPcs.computationsAst, wired into the dispatch
+    by GenAstDispatch.emitPcsFromPlan), so hblk pins this theorem to the generated region and
+    not to a placeholder. What the registered sorry still needs: the f_eval Horner fold over
+    the REVERSED point sets (Block 4's direction is load-bearing), the v fold's exclusive
+    1..n_sets range with the f_eval term supplying s == n_sets, the final MSM's pair-count
+    agreement with finalMsmShape, and the committed-instance identity fact the attack names as
+    finding 1 - the g1_identity window clause in Inv is what carries it, and it is only enough
+    because that clause exists. Two things this package does NOT settle and the report says so:
+    the emitted region is derived from a ConstraintSystemMeta the tree can only supply for a
+    FIXTURE circuit, not for poseidon (DeployedProfile.pcs_deployedGap_measured_ok), and the
+    eight-block partition survives only through the PcsBlockRole tagging because the AST has
+    no comment node. -/
 theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)

@@ -121,6 +121,10 @@ DERIVED_CHECKS = [
 # paraphrased into something no Surface can fail.
 SPEC_FILE = "Midfall/Lowering/Partials.lean"
 GEN_FILE = "Midfall/Lowering/GenAst.lean"
+# P-PLANVIEW: the dispatch moved to its own module, because emitPartial has to see the
+# pcs emitter and GenAstPcs imports GenAst. The NAME is unchanged - Midfall.Lowering.GenAst.emitPartial
+# - because a Lean namespace is not a file; only the source this gate reads from moved.
+DISPATCH_FILE = "Midfall/Lowering/GenAstDispatch.lean"
 PARTIAL_SPEC_PINS = [
     ("vkLoading_spec", ["hblk : BlkIsEmitter S"], False),
     ("transcriptParser_spec", ["hblk : BlkIsEmitter S"], False),
@@ -138,7 +142,16 @@ PARTIAL_SPEC_PINS = [
                       "S.L.main =", "GenAst.emitMain S.plan"], True),
     # The emitter must stay a function of the plan and keep the two FinalPairing arms
     # distinct, or the pin degenerates into a constant a placeholder could satisfy.
-    ("emitPartial", ["emitFinalPairing pv", "emitPlaceholder q"], True),
+    #
+    # P-PLANVIEW CHANGED THE SECOND FRAGMENT, and the change is the point rather than a
+    # side effect: the old pin was "emitPlaceholder q", i.e. the dispatch had a wildcard arm
+    # that fell through to a dummy. The dispatch is now exhaustive over the seven partials,
+    # so that fragment is not merely absent but WRONG - a future package that reintroduced a
+    # fall-through would be the regression, and this line refuses it. "emitPcsFromPlan pv" is
+    # the seventh arm; the emptiness of placeholderPartials is proved in the Lean tree by
+    # GenAstDispatch.placeholderPartials_nil, which no text gate has to duplicate.
+    ("emitPartial", ["emitFinalPairing pv", "emitPcsFromPlan pv", "emitTraceReturn pv"],
+     True),
     ("emitFinalPairingArms", ["emitAccBatch batch", "ec_pairing",
                               "PAIRING_RHS_MPTR", "PAIRING_LHS_MPTR"], True),
 ]
@@ -360,14 +373,23 @@ def main():
     gen = root / GEN_FILE
     pbody = strip_comments(spec.read_text(encoding="utf-8")) if spec.exists() else None
     gbody = strip_comments(gen.read_text(encoding="utf-8")) if gen.exists() else None
+    disp = root / DISPATCH_FILE
+    dbody = strip_comments(disp.read_text(encoding="utf-8")) if disp.exists() else None
     if pbody is None:
         problems.append("Partials.lean missing: %s" % spec)
     if gbody is None:
         problems.append("GenAst.lean missing: %s" % gen)
-    if pbody is not None and gbody is not None:
+    if dbody is None:
+        problems.append("GenAstDispatch.lean missing: %s" % disp)
+    if pbody is not None and gbody is not None and dbody is not None:
         for name, frags, whole in PARTIAL_SPEC_PINS:
-            in_gen = name in ("emitPartial", "emitFinalPairingArms")
-            src, where = (gbody, "GenAst.") if in_gen else (pbody, "Partials.")
+            in_gen = name in ("emitFinalPairingArms",)
+            if name == "emitPartial":
+                src, where = (dbody, "GenAstDispatch.")
+            elif in_gen:
+                src, where = (gbody, "GenAst.")
+            else:
+                src, where = (pbody, "Partials.")
             text = field_text(src, name, whole)
             if not text:
                 problems.append(where + name + ": DECLARATION NOT FOUND")

@@ -61,6 +61,7 @@
 import Midfall.Generator.Artifacts
 import Midfall.Generator.LayoutMemory
 import Midfall.Lowering.Inv
+import Midfall.Lowering.GenAstDispatch
 
 namespace Midfall.Instances
 open Midfall Midfall.Generator
@@ -631,16 +632,20 @@ def derivedPlan_isTheDeployedPlan_ok : IO Bool :=
               | some q => q.program.evalNumerMptr == 0x6660 && q.stackMptr == 0x6960
               | none => false))
 
-/-- GATE 21 (P-AST4: THE SIX PARSER FACTS PlanView CARRIES ARE THE DERIVED ONES). The
-    transcriptParser emitter reads six plan values that PlanView did not carry before this
-    package, and Inv.lean derives them in exactly one place - parserFactsOfPlan, off the
-    assembled plan model. This gate is the pin that makes 'derived and not typed in at the
-    call site' a computation: the six values the DERIVED model carries are the six the
-    emitter's gates read off poseidonCtx, field for field, and each of the six moves when the
-    model moves by one. Without the second half the derivation could be six constants with a
-    doc comment, which is the accident P-AST3b's standing note is about - and here the
-    deployed values are all NON-zero, so a hard-coding converter would have matched the
-    artifact and passed every relation. -/
+/-- GATE 21 (P-AST4, SHRUNK BY P-PLANVIEW: THE THREE NON-META PARSER FACTS PlanView CARRIES
+    ARE THE DERIVED ONES, and the three that were deleted agree with their source).
+
+    P-AST4 wrote this gate over six values. P-PLANVIEW deleted three of them from PlanView -
+    numLookups, numPermutationZs and numTrashcans are now read off PlanView.meta_ - so the
+    gate has to check something STRONGER than it did before: not just that the model's six
+    values reach the plan view, but that the three the plan view now derives from its meta are
+    the same three the model carries. That equation is the reference's own (ART:291, :292,
+    :294 copy them straight out of the meta), and it is the cross-check that makes the deletion
+    safe: if the deployed meta and the deployed model ever disagreed about a count, the plan
+    view would follow the meta and this gate would say so.
+
+    The perturbation half is unchanged in kind: each remaining component moves when the model
+    moves, so the derivation is a function and not three constants with a doc comment. -/
 def derivedParserFacts_matchPlanView_ok : IO Bool :=
   poseidonDerived >>= fun vm =>
   pure (match vm with
@@ -650,34 +655,92 @@ def derivedParserFacts_matchPlanView_ok : IO Bool :=
         let samePhase (a b : UserPhase) : Bool :=
           a.adviceBytes == b.adviceBytes && a.numChallenges == b.numChallenges
             && a.challengeOffset == b.challengeOffset
-        let (ph, nl, nz, lh, nt, tc) := f
+        let (ph, lh, tc) := f
         let p := poseidonCtx
         ph.length == p.userPhases.length && (List.zip ph p.userPhases).all (fun (a, b) => samePhase a b)
-          && nl == p.numLookups && nz == p.numPermutationZs && lh == p.lookupHPlusAcc
-          && nt == p.numTrashcans && tc == p.truncatedChallenges &&
-          -- the derivation is a function of the model, six ways
-          (Midfall.Lowering.parserFactsOfPlan { v with numLookups := v.numLookups + 1 }).2.1 != nl &&
-          (Midfall.Lowering.parserFactsOfPlan { v with numPermutationZs := v.numPermutationZs + 1 }).2.2.1 != nz &&
-          (Midfall.Lowering.parserFactsOfPlan { v with lookupHPlusAcc := v.lookupHPlusAcc + 1 }).2.2.2.1 != lh &&
-          (Midfall.Lowering.parserFactsOfPlan { v with numTrashcans := v.numTrashcans + 1 }).2.2.2.2.1 != nt &&
-          (Midfall.Lowering.parserFactsOfPlan { v with truncatedChallenges := !v.truncatedChallenges }).2.2.2.2.2 == !tc &&
-          (Midfall.Lowering.parserFactsOfPlan { v with userPhases := [{ adviceBytes := 0x420, numChallenges := 0, challengeOffset := 0 }] }).2.1 == nl &&
+          && lh == p.lookupHPlusAcc && tc == p.truncatedChallenges &&
+          -- THE THREE DELETED COPIES, cross-checked against their source: the model's own
+          -- counts are the plan's counts are the meta's counts, three for three.
+          v.numLookups == poseidonMeta.numLookups &&
+          v.numPermutationZs == poseidonMeta.numPermutationZs &&
+          v.numTrashcans == poseidonMeta.numTrashcans &&
+          -- and the derivation is a function of the model, three ways
+          (Midfall.Lowering.parserFactsOfPlan { v with lookupHPlusAcc := v.lookupHPlusAcc + 1 }).2.1 != lh &&
+          (Midfall.Lowering.parserFactsOfPlan { v with truncatedChallenges := !v.truncatedChallenges }).2.2 == !tc &&
           (Midfall.Lowering.parserFactsOfPlan { v with userPhases := v.userPhases ++ [{ adviceBytes := 0x80, numChallenges := 1, challengeOffset := 0 }] }).1.length == ph.length + 1 &&
-          -- and the six land in the PlanView through the constructor, not beside it
+          -- and the three land in the PlanView through the constructor, not beside it
           (let pv := Midfall.Lowering.planViewWithAccumulator
-              (vk := Midfall.Lowering.witnessVkPayload)
-              (vkMptr := v.vkMptr) (memory := v.memory)
+              (vk := Midfall.Lowering.witnessVkPayload) (vkMptr := v.vkMptr) (memory := v.memory)
               (proofLayout := v.codegenLayout.proof)
               (numInstances := v.numInstances) (k := v.k)
-              (numNegLagranges := v.numNegLagranges) (acc := none) (facts := f);
-            pv.userPhases.length == ph.length && pv.numLookups == nl &&
-              pv.numPermutationZs == nz && pv.lookupHPlusAcc == lh &&
-              pv.numTrashcans == nt && pv.truncatedChallenges == tc &&
-              -- the empty-plan reading is the OTHER arm, and it is not the deployed one
-              Midfall.Lowering.witnessPlanView.numLookups == 0 &&
-              Midfall.Lowering.witnessPlanView.userPhases.isEmpty &&
-              pv.numLookups != Midfall.Lowering.witnessPlanView.numLookups)
+              (numNegLagranges := v.numNegLagranges) (acc := none) (facts := f)
+              (meta_ := poseidonMeta) (dat := poseidonData v.memory);
+            pv.userPhases.length == ph.length && pv.lookupHPlusAcc == lh &&
+            pv.truncatedChallenges == tc &&
+            -- the projections, read back off the deployed plan view: the meta is the carrier
+            pv.numLookups == poseidonMeta.numLookups &&
+            pv.numPermutationZs == poseidonMeta.numPermutationZs &&
+            pv.numTrashcans == poseidonMeta.numTrashcans &&
+            -- and the deployed triple is not the empty-plan one, so the lines above are not
+            -- three zeros agreeing with three zeros
+            pv.numPermutationZs != 0 && pv.numLookups != 0 && pv.numTrashcans != 0 &&
+            Midfall.Lowering.witnessPlanView.numLookups == 0 &&
+            Midfall.Lowering.witnessPlanView.userPhases.isEmpty &&
+            pv.numLookups != Midfall.Lowering.witnessPlanView.numLookups)
     )
+
+/-- GATE 22 (P-PLANVIEW: THE DEPLOYED PLAN VIEW, AND WHAT IT CANNOT EMIT - the circuit gap
+    measured at the emitter instead of asserted in a header).
+
+    PlanView now carries a ConstraintSystemMeta and a Data, so the pcs arm of the dispatcher
+    runs at the deployed profile. It emits NOTHING, and the reason is one field: poseidonMeta's
+    protocol is protocolPlanDefault, because ProtocolPlan::from_constraint_system needs the
+    halo2 ConstraintSystem of the poseidon circuit and that is not in this tree. With no query
+    schedule there is no intermediate point set, and computationsAst takes the KZ:943-945 early
+    return.
+
+    WHY THIS IS STATED AS A GATE AND NOT AS A COMMENT: the previous packages' claim was "no
+    Lean term has a deployed meta/Data", and that is now FALSE as stated - poseidonMeta and
+    poseidonData are Lean terms, and PlanView holds them. What is true is narrower and this
+    gate pins it: the deployed meta is an OBSERVATION of counts, not a derivation of a
+    circuit, and an observed meta with a default protocol cannot drive the emitter. The last
+    two lines are the pair that makes the sentence evidence: the same dispatcher emits a
+    100-plus-statement program at the DERIVED fixture meta, and the artifact's own pcs region
+    is the eight blocks the role arithmetic predicts.
+
+    WHICH IS WHICH, in one line: poseidonMeta / poseidonData are observations and stay here;
+    Encoding.lean's metaFixture / dataFixture are derivations and are what GenAstDispatch's
+    pcs gates run on. -/
+def pcs_deployedGap_measured_ok : IO Bool :=
+  poseidonDerived >>= fun vm =>
+  pure (match vm with
+    | none => false
+    | some v =>
+        let pv := Midfall.Lowering.planViewWithAccumulator
+          (vk := Midfall.Lowering.witnessVkPayload) (vkMptr := v.vkMptr) (memory := v.memory)
+          (proofLayout := v.codegenLayout.proof)
+          (numInstances := v.numInstances) (k := v.k)
+          (numNegLagranges := v.numNegLagranges) (acc := none)
+          (facts := Midfall.Lowering.parserFactsOfPlan v)
+          (meta_ := poseidonMeta) (dat := poseidonData v.memory)
+        -- 1: the protocol really is the default - the circuit hole, named
+        pv.meta_.protocol == Midfall.Generator.protocolPlanDefault &&
+          -- 2: so the deployed plan view emits nothing through the pcs arm
+          (Midfall.Lowering.GenAst.emitPartial pv Midfall.Lowering.Partial.pcs).isEmpty &&
+          -- 3: and it is the early return, not a fault: the emitter is .ok and empty
+          (match Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
+              pv.truncatedChallenges false with
+            | .ok b => b.isEmpty
+            | .error _ => false) &&
+          -- 4: the artifact's region is eight blocks by the role arithmetic
+          (Midfall.Lowering.GenAstPcs.Kats.pcsBlockRoles poseidonMeta.numPermutationZs 33
+            false).length == 8 &&
+          -- 5: the same dispatcher emits a real program at a DERIVED meta
+          (Midfall.Lowering.GenAst.emitPartial Midfall.Lowering.GenAst.pcsFixturePlan
+            Midfall.Lowering.Partial.pcs).length > 100 &&
+          -- 6: and the counts the deployed meta DOES carry are the ones the artifact shows,
+          -- so the gap is the protocol and not the whole record
+          pv.numPermutationZs == 3 && pv.numLookups == 1 && pv.numTrashcans == 1)
 
 /-- GATES 13-20 (R-41, perturbations run inside the gate's own scope). Each flips ONE
     derivation input and requires the whole-file equality to break, so no input is inert and
@@ -762,6 +825,7 @@ def perturb_derivationInputs_ok : IO Bool :=
 #eval Midfall.Instances.DeployedProfileKats.derivedSmokeGas_matchesArtifact_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedPlan_isTheDeployedPlan_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedParserFacts_matchPlanView_ok -- expect true
+#eval Midfall.Instances.DeployedProfileKats.pcs_deployedGap_measured_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.perturb_derivationInputs_ok -- expect true
 
 

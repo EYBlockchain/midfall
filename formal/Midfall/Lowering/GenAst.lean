@@ -33,20 +33,40 @@
 -- calls (fail, ec_pairing). P-AST2 (docs/plans/P-AST2-lagrange-traceReturn.md) adds two
 -- more under D-P30, P-AST3a (docs/plans/P-AST3a-quotientLin.md) a fourth, P-AST3b
 -- (docs/plans/P-AST3b-vkLoading.md) a fifth and P-AST4
--- (docs/plans/P-AST4-transcriptParser.md) a sixth, so the real
--- emission is now VkLoading, TranscriptParser, Lagrange, QuotientLin, FinalPairing and
--- TraceReturn; ONE partial still
--- returns emitPlaceholder - pcs - and emittedPartials names
--- the difference as data while
--- emitPlaceholderIsTotal_ok pins it as a computation: six emitted, one placeholder, and
--- no placeholder equal to the real slice it stands for. P-AST4 is the largest conversion so
--- far by a wide margin - the deployed parser arm is 318 template lines / 17,136 bytes against
--- vkLoading's 74 / 4,494 - and it is the first slice whose emitted shape depends on a LIST
--- (the user-phase loop) and not on scalars alone. A
--- spec theorem whose partial is not in emittedPartials is pinned to a placeholder: the pin
--- turns it into a claim about ONE program instead of about every program, which is what
--- removes the false-as-stated quantifier, and its registered hole becomes "the emitter
--- does not implement this partial yet" rather than "blk is free".
+-- (docs/plans/P-AST4-transcriptParser.md) a sixth. P-PLANVIEW (docs/plans/P-PLANVIEW.md)
+-- adds the seventh - pcs - so ALL SEVEN partials are emitted from a real AST and
+-- emitPlaceholder is unreachable from the dispatcher: the match in GenAstDispatch.emitPartial
+-- is exhaustive over the seven constructors with no wildcard arm, placeholderPartials is
+-- proved empty by placeholderPartials_nil, and the def survives only because the
+-- falsification plants in Instances/SurfaceFixture.lean compare against it.
+--
+-- THE CLAIM THIS FILE USED TO MAKE ABOUT pcs, AND WHY IT WAS WRONG. Until P-STR2AST the
+-- header said an AST emitter for the generated PCS region CANNOT exist: the reasoning was
+-- that Kzg.computations returns List (List String), there is no runtime Yul parser in the
+-- vendored tree, and so no AST could be recovered from the text port. Every step of that was
+-- sound and the conclusion was still false, because it reasoned from the text port outward
+-- instead of from the plan inward: P-STR2AST rebuilt the emitter as computationsAst out of
+-- the same plan values the text port interpolates, gated it block for block against the text
+-- under both relations, and the parser was never needed. What actually blocked the wiring was
+-- one level up - PlanView carried neither a ConstraintSystemMeta nor a Data, the two inputs
+-- computationsAst needs - and P-PLANVIEW added them. Recorded at length because a
+-- "cannot exist" claim in a header is the most expensive kind of stale comment: three
+-- packages repeated it without re-deriving it.
+--
+-- WHAT REMAINS TRUE OF THE DEPLOYED PROFILE, and it is narrower. The seventh arm is real but
+-- at the poseidon plan view it emits NOTHING, because poseidonMeta's protocol field is the
+-- default - the circuit is not in the tree - so there is no query schedule, no intermediate
+-- point set, and the KZ:943-945 early return fires. The emitter is exercised at a DERIVED
+-- circuit instead (Encoding.lean's metaFixture over Protocol.lean's fixtureCs). Both halves
+-- are gated: GenAstDispatch.emitPcsDependsOnPlanView_ok and
+-- DeployedProfile.pcs_deployedGap_measured_ok.
+--
+-- P-AST4 is the largest conversion so far by a wide margin - the deployed parser arm is 318
+-- template lines / 17,136 bytes against vkLoading's 74 / 4,494 - and it is the first slice
+-- whose emitted shape depends on a LIST (the user-phase loop) and not on scalars alone. A
+-- spec theorem whose partial is not in emittedPartials used to be pinned to a placeholder;
+-- since P-PLANVIEW there is no such partial, and every one of the ten *_spec theorems is
+-- pinned to a real emitted program.
 --
 -- D-P30: THE TEXT PORT IS A REFERENCE, NOT THE DELIVERABLE. Every function in this file
 -- builds Block/Stmt/Expr EVM.Op from the vendored package; no raw string expression is
@@ -114,7 +134,9 @@
 -- the stmtsBeq ones.
 --
 -- NON-VACUITY (D-P23, R-41). Satisfiability: Instances/SurfaceFixture.lean exhibits
--- BlkIsEmitter at realSurface, whose main block is literally this file's emitMain.
+-- BlkIsEmitter at realSurface, whose main block is literally emitMain (GenAstDispatch.lean
+-- since P-PLANVIEW, because the dispatch has to see the pcs emitter too - see that file's
+-- header for the import direction).
 -- Falsifiability: the same file plants a blk that keeps main_concat TRUE and still fails
 -- the pin, and plants the R-62 counterexample block itself. Within this file,
 -- emitDependsOnPlan_ok shows the emitter is a function of its arguments and not a
@@ -974,9 +996,47 @@ def emitTranscriptParserDeployed : Block Op :=
   let (n, ph, nl, nz, lh, nt, tc) := transcriptParserPoseidonArgs
   emitTranscriptParserAt n ph nl nz lh nt tc poseidonProofLayout
 
+/-- The three counts the deployed poseidon context carries, re-expressed as the meta
+    PlanView now reads them from. SAY WHICH IS WHICH: this is an OBSERVATION and not a
+    derivation - poseidonCtx is P-13's transcription of the dump's own lines, so a meta built
+    from its counts has exactly the transcription status of the counts themselves. It exists
+    so that the parser gates keep driving the deployed numbers THROUGH the PlanView projection
+    (which is what they are for) rather than through a tuple, and nothing that claims anything
+    about a circuit reads it. The derived meta in this tree is the Kzg fixture's (Encoding.lean
+    metaFixture, from ConstraintSystemMeta.new over Protocol.lean's fixtureCs), and that is
+    the one the pcs gates run on. -/
+def poseidonCountMeta : Midfall.Generator.ConstraintSystemMeta :=
+  let m := Midfall.Generator.constraintSystemMetaDefault
+  { m with numLookups := poseidonCtx.numLookups, numPermutationZs := poseidonCtx.numPermutationZs, numTrashcans := poseidonCtx.numTrashcans }
+
+/-- The Data that goes with poseidonCountMeta: DERIVED by Data.new over the deployed context's
+    own memory, not transcribed. Nothing here reads it for a pcs emission (the pcs gates use
+    the Kzg fixture), so its job is to keep the plan view a coherent pair rather than a meta
+    with an unrelated Data bolted on. -/
+def poseidonCountData : Midfall.Generator.Data :=
+  match Midfall.Generator.Data.new poseidonCountMeta Midfall.Lowering.witnessVkPayload
+      poseidonCtx.memory with
+  | .ok d => d
+  | .error _ => Midfall.Lowering.emptyDataAt poseidonCtx.memory
+
+/-- The three parser counts, one of them replaced. Three defs rather than one three-argument
+    helper because every gate that uses them perturbs exactly ONE count, and a call site that
+    had to re-state the other two could move them by accident - which is the one-field-at-a-
+    time discipline gate 38 exists to keep. This is the shape those gates take now that the
+    three counts are projections of the meta and no longer fields a with-clause can write. -/
+def withNumLookups (n : Nat) (pv : PlanView) : PlanView :=
+  let m := pv.meta_
+  { pv with meta_ := { m with numLookups := n } }
+def withNumPermutationZs (n : Nat) (pv : PlanView) : PlanView :=
+  let m := pv.meta_
+  { pv with meta_ := { m with numPermutationZs := n } }
+def withNumTrashcans (n : Nat) (pv : PlanView) : PlanView :=
+  let m := pv.meta_
+  { pv with meta_ := { m with numTrashcans := n } }
+
 /-- The deployed plan view the parser gates read through the PlanView fields rather than
-    through the profile tuple: the same eleven values, reached by the constructor. Built
-    here and not in Instances/ because it is a gate input and not a theorem hypothesis. -/
+    through the profile tuple: the same values, reached by the constructor. Built here and not
+    in Instances/ because it is a gate input and not a theorem hypothesis. -/
 def transcriptParserPoseidonPlan : PlanView :=
   Midfall.Lowering.planViewWithAccumulator
     (vk := Midfall.Lowering.witnessVkPayload)
@@ -985,43 +1045,18 @@ def transcriptParserPoseidonPlan : PlanView :=
     (proofLayout := poseidonProofLayout)
     (numInstances := poseidonCtx.numInstances) (k := poseidonCtx.k)
     (numNegLagranges := poseidonCtx.numNegLagranges) (acc := none)
-    (facts := (poseidonCtx.userPhases, poseidonCtx.numLookups,
-      poseidonCtx.numPermutationZs, poseidonCtx.lookupHPlusAcc, poseidonCtx.numTrashcans,
+    (facts := (poseidonCtx.userPhases, poseidonCtx.lookupHPlusAcc,
       poseidonCtx.truncatedChallenges))
-/-! ### The emitter, total over Partial -/
-
-/-- The partials this file emits for real. Everything else is a placeholder: after P-AST4
-    that is pcs ALONE, and the reason is a measurement and not a convenience. The deployed
-    345 generated PCS lines come out of Kzg.computations, which IS ported (Kzg.lean:1320) and
-    whose deployed block shape VerifierPartials' gate 89 matches arm for arm - but it consumes
-    a ConstraintSystemMeta and a Data.new schedule for the poseidon circuit, and no theorem-safe
-    Lean term has them (P-AST2's finding, re-confirmed by gate 89's own note). So the generated
-    region is read back out of the .sol dump and there is no independent render an emitted AST
-    could be compared against. Closing it is P-11-shaped work - a deployed LoweringPlan - and
-    that is this package's required finding, stated in the package report and not only here.
-    transcriptParser was the second placeholder until P-AST4 supplied the four AssemblyHelpers
-    definitions it calls (transcript_init, common_word, common_uncompressed_g1, squeeze_to) and
-    the six plan values it interpolates; the ten proof-section widths it walks were already
-    reachable through PlanView.proofLayout, which is why P-AST3b's estimate of this slice as
-    "cheaper than assumed" was right about the machinery and wrong about the size. -/
-def emittedPartials : List Partial :=
-  [.vkLoading, .transcriptParser, .lagrange, .quotientLin, .finalPairing, .traceReturn]
-
-/-- The one partial still emitted as a placeholder, as data rather than as a paragraph:
-    derived from emittedPartials, so the two lists cannot disagree. -/
-def placeholderPartials : List Partial :=
-  Midfall.Lowering.partials.filter (fun q => !emittedPartials.contains q)
-
-/-- Is this partial emitted for real, or is it a placeholder? Decidable, so that "one
-    partial completely" is a computation in the tree and not a paragraph in a plan. -/
-def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
-
-/-- The placeholder for a partial the emitter does not implement yet: one statement, with a
-    distinct literal per partial so two slices are never interchangeable. These are the
-    blocks the fixture carried before P-AST; they moved here so the emitter is the ONLY
-    source of blk in the tree, which is what the pin needs in order to mean anything. P-13
-    owes the real AST for the two in placeholderPartials - and D-P30 clause 4 is the rule
-    that they end up unreachable, not merely well-documented. -/
+    (meta_ := poseidonCountMeta) (dat := poseidonCountData)
+/-- The one-statement dummy for a partial the emitter does not implement. SINCE P-PLANVIEW
+    IT IMPLEMENTS ALL SEVEN, so nothing in the emitter can reach this def: the dispatch's
+    match is exhaustive and placeholderPartials is proved empty. It stays because the
+    falsification plants in Instances/SurfaceFixture.lean need a block to plant - each plant
+    puts a real slice back to its own dummy and the pin has to refuse it - and because the
+    "placeholder is not the emitter's answer" conjuncts in GenAstDispatch's gate 8 read these
+    seven blocks. D-P30 clause 4 asked for the placeholders to end up unreachable rather than
+    merely well-documented; that is now the case, and the plants are the evidence that the
+    unreachability is load-bearing rather than vacuous. -/
 def emitPlaceholder : Partial → Block Op
   | .vkLoading => [yexpr (yop Op.mstore [ylit 0x2000, ylit 1])]
   | .transcriptParser => [yexpr (yop Op.mstore [ylit 0x2100, ylit 2])]
@@ -1031,26 +1066,6 @@ def emitPlaceholder : Partial → Block Op
   | .finalPairing => [yexpr (yop Op.mstore [ylit 0x2500, ylit 6])]
   | .traceReturn => [yexpr (yop Op.ret [ylit 0x1000, ylit 0x20])]
 
-/-- THE GENERATOR FUNCTION the blk pin pins to: the Yul block of one partial under one plan
-    view. Total over Partial by construction, so the pin is a plain equation and not a
-    conditional that quietly says nothing for six of the seven. -/
-def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
-  match q with
-  | .vkLoading => emitVkLoading pv
-  | .transcriptParser => emitTranscriptParser pv
-  | .lagrange => emitLagrange pv
-  | .quotientLin => emitQuotientLin pv
-  | .finalPairing => emitFinalPairing pv
-  | .traceReturn => emitTraceReturn pv
-  | q => emitPlaceholder q
-
-/-- The seven slices in include order (Halo2Verifier.sol:217-229), i.e. exactly the tail
-    main_concat speaks about. -/
-def emitSlices (pv : PlanView) : Block Op :=
-  Midfall.Lowering.partials.foldl (init := []) fun acc q => acc ++ emitPartial pv q
-
-/-- The whole main block the emitter produces: the helpers, then the seven slices. -/
-def emitMain (pv : PlanView) : Block Op := emitHelpers pv ++ emitSlices pv
 
 /-! ### The text-port comparison machinery -/
 
@@ -1206,60 +1221,6 @@ def emitDependsOnPlan_ok : Bool :=
     (Midfall.Lowering.partials.all fun _q =>
       SyntaxEq.stmtsBeq (emitTraceReturn Midfall.Lowering.witnessPlanView)
         emitTraceReturnBlock)
-
-/-- GATE 8 (what is real and what is a placeholder, as a computation). FIVE partials are
-    emitted for real after P-AST3b - vkLoading, lagrange, quotientLin, finalPairing,
-    traceReturn - and the remaining TWO are one-statement placeholders named by
-    placeholderPartials. The last conjuncts are the R-62 clause: for each real slice, the
-    placeholder that used to stand for it is NOT what the emitter returns, so the pin cannot
-    be satisfied by a dummy for a partial that has a real body. Before P-AST2 the lagrange
-    and traceReturn conjuncts were unfalsifiable in exactly this way, before P-AST3a the
-    quotientLin one was, and before this package the vkLoading one was - the placeholder WAS
-    the emitter's answer - which is what "emitPlaceholder must shrink toward unreachable"
-    (D-P30 clause 4) is measuring. The quotientLin and vkLoading conjuncts earn their place
-    in a way the others do not: placeholder and real slice are BOTH one statement, so the
-    tail conjuncts below are the only way this gate can tell them apart - a length check
-    cannot, and it says so rather than pretending otherwise. -/
-def emitPlaceholderIsTotal_ok : Bool :=
-  emittedPartials.length == 6 && emittedPartials.contains .finalPairing &&
-    emittedPartials.contains .lagrange && emittedPartials.contains .traceReturn &&
-    emittedPartials.contains .quotientLin && emittedPartials.contains .vkLoading &&
-    emittedPartials.contains .transcriptParser &&
-    placeholderPartials.length == 1 &&
-    placeholderPartials == [.pcs] &&
-    (Midfall.Lowering.partials.all fun q =>
-      partialIsEmitted q ==
-        (q == .finalPairing || q == .lagrange || q == .traceReturn ||
-          q == .quotientLin || q == .vkLoading || q == .transcriptParser)) &&
-    (Midfall.Lowering.partials.all fun q =>
-      partialIsEmitted q || (emitPlaceholder q).length == 1) &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .finalPairing)
-      (emitFinalPairingArms false 0x1000) &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .lagrange) (emitLagrangeAt 6 1 9) &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .traceReturn) emitTraceReturnBlock &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .quotientLin) (emitQuotientLinAt 6) &&
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .vkLoading)
-      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0) &&
-    -- P-AST4: the fifth and sixth placeholder-vs-real pairs. The transcriptParser one is the
-    -- only case in the file where the real slice is LONGER than the dummy by more than one
-    -- statement, so it is the pair a length check separates for free - and the pair that a
-    -- length check alone would NOT have separated for vkLoading or quotientLin, which is why
-    -- the conjuncts are stmtsBeq and not counts.
-    ! SyntaxEq.stmtsBeq (emitPlaceholder .transcriptParser)
-      (emitTranscriptParserDeployed) &&
-    -- the shape fact that makes the previous two lines load-bearing: same top-level length,
-    -- so nothing but stmtsBeq separates the dummy from the real scope.
-    (emitPlaceholder .quotientLin).length == 1 && (emitQuotientLinAt 6).length == 1 &&
-    (emitPlaceholder .vkLoading).length == 1 &&
-    (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0).length == 1 &&
-    (emitPlaceholder .transcriptParser).length == 1 &&
-    emitTranscriptParserDeployed.length == 44 &&
-    (match emitQuotientLinAt 6 with
-     | [Stmt.block body] => body.length == 9
-     | _ => false) &&
-    (match emitVkLoadingArms false 1 6 0 0 0 0 0x10e0 with
-     | [Stmt.block body] => body.length == 13
-     | _ => false)
 
 /-- GATE 9 (perturbation). One literal of the emitted block changed - the scratch pointer of
     the ec_pairing frame - turns BOTH relations red: the token stream and stmtsBeq. This is
@@ -1620,71 +1581,6 @@ def emitLagrangeIsReal_ok : Bool :=
           | _ => false)
   | _ => false
 
-/-- GATE 23 (the dispatch, not just the list). emittedPartials CLAIMS four partials are
-    real; gates 14-28 check the emitters themselves. Without this gate the file could grow a
-    real emitLagrange, list it in emittedPartials, and still have emitPartial fall through to
-    emitPlaceholder - the pin would then pin a placeholder while every other gate stayed
-    green. That is the R-62 class one level up, so it is checked as a computation: the
-    dispatch reaches the real body for all four, and the placeholder is NOT what the
-    dispatcher returns for any of them. -/
-def emitPartialRoutesRealSlices_ok : Bool :=
-  SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
-    (emitLagrange Midfall.Lowering.witnessPlanView) &&
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
-    emitTraceReturnBlock &&
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
-      (emitQuotientLin Midfall.Lowering.witnessPlanView) &&
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
-      (emitFinalPairing Midfall.Lowering.witnessPlanView) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .lagrange)
-      (emitPlaceholder .lagrange) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .traceReturn)
-      (emitPlaceholder .traceReturn) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
-      (emitPlaceholder .quotientLin) &&
-    -- and the dispatch reads pv.k rather than a hard-coded 6: the fixture plan's k is 2,
-    -- so routing to the deployed constant would still satisfy the line above and this one
-    -- would catch it.
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
-      (emitQuotientLinAt Midfall.Lowering.witnessPlanView.k) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .quotientLin)
-      (emitQuotientLinAt 6) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .finalPairing)
-      (emitPlaceholder .finalPairing) &&
-    -- P-AST3b: the fourth dispatch line, and the one that matters most here. The
-    -- placeholder for vkLoading is one statement and the real slice is one statement too,
-    -- so "the dispatcher reached the real body" cannot be read off any shape or length; it
-    -- is read off stmtsBeq against the dummy.
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
-      (emitPlaceholder .vkLoading) &&
-    -- and the vkLoading dispatch reads the PlanView fields and not the deployed profile:
-    -- the witness plan is k = 2 with the default proof length, so routing to the artifact's
-    -- 6 and 0x10e0 would satisfy the line above and fail these two.
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
-      (emitVkLoadingArms Midfall.Lowering.witnessPlanView.hasAccumulator
-        Midfall.Lowering.witnessPlanView.numInstances Midfall.Lowering.witnessPlanView.k
-        Midfall.Lowering.witnessPlanView.expectedHasAccumulatorWord
-        Midfall.Lowering.witnessPlanView.expectedAccOffset
-        Midfall.Lowering.witnessPlanView.expectedNumAccLimbs
-        Midfall.Lowering.witnessPlanView.expectedNumAccLimbBits
-        Midfall.Lowering.witnessPlanView.proofLayout.proofLen) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .vkLoading)
-      (emitVkLoadingArms false 1 6 0 0 0 0 0x10e0) &&
-    -- P-AST4: the fifth dispatch line. The transcriptParser placeholder is one statement and
-    -- the real slice is forty-four, so 'the dispatcher reached the real body' is decidable by
-    -- length here - but the line that matters is the second one, which says the dispatch reads
-    -- the ELEVEN PlanView fields and not the deployed profile: the witness plan carries the
-    -- empty parser facts, so routing to poseidonCtx's numbers would satisfy the first line and
-    -- fail this one.
-    SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
-      (emitTranscriptParser Midfall.Lowering.witnessPlanView) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
-      (emitPlaceholder .transcriptParser) &&
-    ! SyntaxEq.stmtsBeq (emitPartial Midfall.Lowering.witnessPlanView .transcriptParser)
-      emitTranscriptParserDeployed &&
-    SyntaxEq.stmtsBeq (emitPartial transcriptParserPoseidonPlan .transcriptParser)
-      emitTranscriptParserDeployed
-
 /-! ### The P-AST3a gates: quotientLin -/
 
 /-- GATE 24 (the D-P25 tripwire, QuotientLin). The emitted AST prints to the same token
@@ -1921,6 +1817,7 @@ def emitVkLoadingAccWordsDerived_ok : Bool :=
     (numNegLagranges := poseidonCtx.numNegLagranges)
     (acc := some (Midfall.Generator.AccumulatorEncoding.new 2 7 56))
     (facts := Midfall.Lowering.emptyParserFacts)
+    (meta_ := Midfall.Generator.constraintSystemMetaDefault) (dat := Midfall.Lowering.witnessPlanData)
   pv.expectedHasAccumulatorWord == 1 && pv.expectedAccOffset == 2 &&
     pv.expectedNumAccLimbs == 7 && pv.expectedNumAccLimbBits == 56 &&
     (EVM.print (emitVkLoading pv)).contains "eq(mload(HAS_ACCUMULATOR_MPTR), 1)" &&
@@ -2030,7 +1927,7 @@ def emitTranscriptHelpers_beq_ok : Bool :=
     emitted parser even though no helper changed. -/
 def emitTranscriptHelpersPlanConstant_ok : Bool :=
   SyntaxEq.stmtsBeq (emitHelpers Midfall.Lowering.witnessPlanView) (emitHelpers
-    { Midfall.Lowering.witnessPlanView with numTrashcans := 3, numLookups := 9 }) &&
+    (withNumTrashcans 3 (withNumLookups 9 Midfall.Lowering.witnessPlanView))) &&
     renderFunction (renderAssemblyHelpers { poseidonCtx with
       templateConstants := { templateConstantsDefault with
         g1Bytes := 96, wordBytes := 64 } }) "common_uncompressed_g1" ==
@@ -2154,13 +2051,13 @@ def emitTranscriptParserDetectsPerturbation_ok : Bool :=
     -- and the same eighteen through the PlanView fields, so the dispatch cannot read a
     -- deployed constant and stay green.
     ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
-      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numLookups := 1 }) &&
+      (emitTranscriptParser (withNumLookups 1 Midfall.Lowering.witnessPlanView)) &&
     ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
-      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numPermutationZs := 1 }) &&
+      (emitTranscriptParser (withNumPermutationZs 1 Midfall.Lowering.witnessPlanView)) &&
     ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
       (emitTranscriptParser { Midfall.Lowering.witnessPlanView with lookupHPlusAcc := 1 }) &&
     ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
-      (emitTranscriptParser { Midfall.Lowering.witnessPlanView with numTrashcans := 1 }) &&
+      (emitTranscriptParser (withNumTrashcans 1 Midfall.Lowering.witnessPlanView)) &&
     ! SyntaxEq.stmtsBeq (emitTranscriptParser Midfall.Lowering.witnessPlanView)
       (emitTranscriptParser { Midfall.Lowering.witnessPlanView with
                               truncatedChallenges := true }) &&
@@ -2255,12 +2152,12 @@ def emitTranscriptParserFactsDerived_ok : Bool :=
     printed.contains "let lookup_helper_walk" && printed.contains "let trashcan_walk") &&
     SyntaxEq.stmtsBeq dep VerifierPartialKats.transcriptParser_ast &&
     SyntaxEq.stmtsBeq dep emitTranscriptParserDeployed &&
-    (let z := { pv with numLookups := 0 };
+    (let z := withNumLookups 0 pv;
       ! SyntaxEq.stmtsBeq (emitTranscriptParser z) VerifierPartialKats.transcriptParser_ast &&
       !(EVM.print (emitTranscriptParser z)).contains "let lookup_m_walk" &&
       yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
         numLookups := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
-    (let z := { pv with numPermutationZs := 0 };
+    (let z := withNumPermutationZs 0 pv;
       !(EVM.print (emitTranscriptParser z)).contains "let perm_z_walk" &&
       yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
         numPermutationZs := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
@@ -2268,7 +2165,7 @@ def emitTranscriptParserFactsDerived_ok : Bool :=
       !(EVM.print (emitTranscriptParser z)).contains "let lookup_helper_walk" &&
       yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
         lookupHPlusAcc := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
-    (let z := { pv with numTrashcans := 0 };
+    (let z := withNumTrashcans 0 pv;
       !(EVM.print (emitTranscriptParser z)).contains "let trashcan_walk" &&
       yulTokens ("{" ++ renderTranscriptProofParser { poseidonCtx with
         numTrashcans := 0 } ++ "}") == yulTokens (EVM.print (emitTranscriptParser z))) &&
@@ -2299,7 +2196,6 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.emitFinalPairing_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitFail_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitDependsOnPlan_ok -- expect true
-#eval Midfall.Lowering.GenAst.emitPlaceholderIsTotal_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitDetectsPerturbation_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitDetectsBuiltinVsCall_ok -- expect true
 #eval Midfall.Lowering.GenAst.renderFunctionSlices_ok -- expect true
@@ -2314,7 +2210,6 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.emitTraceReturnDetectsBuiltinVsCall_ok -- expect true
 #eval Midfall.Lowering.GenAst.numericSpellingDivergence_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitLagrangeIsReal_ok -- expect true
-#eval Midfall.Lowering.GenAst.emitPartialRoutesRealSlices_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLin_tokens_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLin_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLinDetectsPerturbation_ok -- expect true
