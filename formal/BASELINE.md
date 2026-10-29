@@ -201,6 +201,7 @@ exists only as text. Options are in that entry.
 | CI matrix: real-EVM PBT | `cargo test --release --all-features pbt_` | **FAIL - 8 / 8**, same `SrsError` cause as the all-features row above |
 | both quotient lowerings | `foreign_field_renders_and_verifies_in_both_lowerings` (`tests/foreign_field_fixture.rs`), `supported_shape_circuit_fuzz_e2e_direct_quotient`, `direct_trace_matches_native_including_intermediates` | **PASS** under the recorded profile (1 + 1 + 1 tests, 0 failures). Note the third is a lib test and is among the 39 that fail only under `--all-features`. |
 | regenerated fixture acceptance | replay of the committed `fixtures/poseidon/proof.bin` through `midnight_zk_stdlib::verify` and through the generated Solidity verifier on both lowerings | **PASS - ACCEPT on all three legs** (native ACCEPT; Vm ACCEPT 638,069 gas; Direct ACCEPT 624,166 gas). The stale fixture it replaced replayed as native REJECT `Error::Opening` and could not even be repacked (`LengthMismatch { expected: 2640, actual: 4752 }`). |
+| poseidon regen harness (P-FREEZE) | `HALO2_SOLIDITY_RUN_EVM_TESTS=1 M0_OUT=<dir> cargo test --release -p halo2_solidity_verifier --features evm,rust-verifier-trace --test m0_poseidon_regen` | **PASS, and inert by default.** With `M0_OUT` unset both tests return immediately (2 passed / 0 failed in 0.00 s inside the `--all-targets` EVM gate) and nothing is written. With `M0_OUT` set it re-emits all six artefacts and asserts structure, not bytes: 2,640 B, 21 point + 51 scalar = 72 transcript reads, native ACCEPT, Solidity ACCEPT on Vm (638,117 gas), Direct (624,214) and the traced render (1,233,414). `vk.bin` and `instance.be` come back byte-identical to the committed files; `proof.bin` and the three traces come back structurally identical only. See "Poseidon fixture regeneration". |
 | Moonlight wrap end to end | `cargo test --manifest-path ../Moonlight/aggregation/Cargo.toml wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release -- --ignored` | **PASS** (176.4 s, 1 passed / 0 failed, exit code 0 taken without a pipe) - CAVEAT unchanged: Moonlight pins midfall at `2d52f24` via git deps, so this exercises the proof pipeline, not this baseline's generator. A path patch onto `formal/baseline` is still owed before M3. |
 | Lean build (unchanged by this package) | `cd formal && lake build` | **PASS**: Build completed successfully (5154 jobs), exit 0 - re-run after the fixture replacement and after the G0 dump-dir restore |
 | Lean gate suite (unchanged by this package) | `cd formal && bash scripts/checks.sh` | **PASS**, every stage ok: Statements hash OK, 64 tracked sorries all owned, native_decide confined, all 107 modules reachable, 9 golden pins re-derived from the tracked .sol artifacts, **1257 annotated KATs across 83 files**, 111 statement fingerprints, 12 fact families, 23 spec-theorem bundles certified, axioms probe clean |
@@ -221,7 +222,7 @@ exists only as text. Options are in that entry.
 | cargo test -p midnight-proofs | default features | PASS (round 1: 32 lib + 1 integration + 8 doc tests). proofs/ is untouched by the curated items. |
 | cargo test -p halo2_solidity_verifier feature matrix | --all-features --all-targets, and evm,rust-verifier-trace with the EVM gate | SPLIT RESULT (re-measured 2026-10-29): the recorded-profile leg is green - 249 lib tests + every fixture binary, 0 failures. The `--all-features` leg is RED: 210 passed / 39 failed, every failure at a proof-generation site with `SrsError(32, 62)` or `SrsError(64, 252)`. See the G0 table for the cause. The earlier "PASS: 248 lib tests" claim in this row could not be reproduced on this host and is superseded. |
 | regenerate the six live poseidon artefacts (D-P28) | `tests/poseidon_fixture.rs` circuit path at k=6, witness seed 42, prover rng `0xdebd`, features `evm,rust-verifier-trace`, release | **DONE 2026-10-29.** Proof is 2,640 B / 72 reads as R-57 predicted; native + Solidity (Vm and Direct) all ACCEPT; SHA-256s re-pinned; 12 unread files deleted. Full record in "Poseidon fixture regeneration (D-P28)". |
-| side effects of the gate runs on generated artefacts | `cargo test --all-targets` | **Trap, recorded so nobody is surprised.** Two test binaries write into the tree: `tests/poseidon_fixture.rs` rewrites `proofs/solidity-verifier/target/poseidon-fixture-dump/` (four of which are tracked and are what the Lean render gates read), and `tests/conformance_export.rs` rewrites `formal/fixtures/conformance/poseidon/` unless `MIDFALL_CONFORMANCE_OUT` is set. Both were restored byte-identical after the G0 runs (`git status` clean for both paths). Under the recorded profile the tracked `.sol` dumps reproduce byte-for-byte; only the untracked `proof.bin`/`calldata.bin` move, because of the OsRng quotient-limb blinding. |
+| side effects of the gate runs on generated artefacts | `cargo test --all-targets` | **Trap, recorded so nobody is surprised.** Two test binaries write into the tree: `tests/poseidon_fixture.rs` rewrites `proofs/solidity-verifier/target/poseidon-fixture-dump/` (four of which are tracked and are what the Lean render gates read), and `tests/conformance_export.rs` rewrites `formal/fixtures/conformance/poseidon/` unless `MIDFALL_CONFORMANCE_OUT` is set. Both were restored byte-identical after the G0 runs (`git status` clean for both paths). Under the recorded profile the tracked `.sol` dumps reproduce byte-for-byte; only the untracked `proof.bin`/`calldata.bin` move, because of the OsRng quotient-limb blinding. A third poseidon binary, `tests/m0_poseidon_regen.rs`, is NOT a side effect: it is inert unless `M0_OUT` is set and then writes only into that directory. |
 
 ## Poseidon fixture regeneration (D-P28, 2026-10-29)
 
@@ -311,16 +312,60 @@ bytes from 721 on. Both runs verify. The SHA-256 table below therefore pins a
 recorded accepted run; a future "regenerate and diff" check must expect the
 quotient-limb tail to move.
 
-**Generator status.** The harness that produced these six files was a
-temporary integration test (`tests/m0_poseidon_regen.rs`), run against
-`M0_OUT` in a scratch directory and then **deleted**: it is not committed, so
-nothing in the tree can currently re-emit this fixture set. The recipe it
-encoded is the one stated above (same circuit, seeds and profile as
-`tests/poseidon_fixture.rs`, plus the native trace events and the traced-render
-LOG stream written into the three containers). If the project wants the fixture
-re-generatable on demand, land that harness as an env-gated test - it must stay
-inert under a plain `--all-targets` run, because an ungated version fails when
-`M0_OUT` is unset.
+**What the landed harness reproduces, measured 2026-10-29 (P-FREEZE).** Two of
+the six artefacts reproduce byte-for-byte; four reproduce only structurally.
+Running `tests/m0_poseidon_regen.rs` against the committed set:
+
+| artefact | reproduces | measured |
+|---|---|---|
+| `vk.bin` | **byte-for-byte** | 1,302 B identical - `VerifyingKey::to_bytes(SerdeFormat::Processed)` is a pure function of circuit + SRS |
+| `instance.be` | **byte-for-byte** | 32 B identical - the seed-42 witness hash |
+| `proof.bin` | structural only | same 2,640 B; first 720 B identical, the tail differs |
+| `rust_trace.json` | structural only | same 32,914 B, same 139 entries in the same order, same kinds / tags / payload widths; 105 of 139 carry different values |
+| `solidity_trace.json` | structural only | same 29,106 B, same 138 records in the same order; 105 differ |
+| `verifier_trace.bin` | structural only | same 12,783 B, same 138 `yul_trace.<tag>#<id>` names and payload lengths; 105 payloads differ |
+
+The divergence starts exactly where the blinding starts: the first differing
+native trace entry is `proof_quotient_commitment[0]`. The 34 entries that do
+reproduce are everything upstream of it - `vk_repr`, `vk_digest`,
+`num_instances`, the 15 pre-quotient point reads, the four challenges squeezed
+before `y`, `k`, `n_inv`, `omega`, `omega_inv`,
+`proof_committed_instance_eval[0]`, five fixed-column evals that are zero in
+both runs, and `final_result`. Everything from `x` onward is downstream of the
+blinded limbs. Gas moves with it: two harness runs measured Vm 638,129 and
+638,117 (Direct 624,226 and 624,214) against the 638,069 / 624,166 recorded
+above - the figures drift by tens of gas from run to run, caused only by the
+different blinded bytes, which is a second reason the gas numbers in this file
+are observations and not pins.
+
+**Consequence for the pins.** The `vk.bin` and `instance.be` rows pin a
+deterministic derivation, so a mismatch there means the circuit, the SRS or a
+seed moved and is a real regression. The `proof.bin` row and the three trace
+rows pin **one recorded accepted run**: what is reproducible about them is the
+container, the read schedule and the tag vocabulary, not the bytes. A
+"regenerate and diff" gate over those four is therefore meaningless; the
+meaningful check is the structural one the harness performs - length, read
+counts, and ACCEPT on all three legs.
+
+**Generator status - the harness is landed (P-FREEZE).** The harness that
+produced these six files was a temporary integration test in P-M0, run against
+`M0_OUT` in a scratch directory and then deleted, which left the recipe as
+prose. It is now committed as `proofs/solidity-verifier/tests/m0_poseidon_regen.rs`,
+**env-gated on `M0_OUT`** (plus `HALO2_SOLIDITY_RUN_EVM_TESTS=1` and `SOLC=` at
+the pinned 0.8.30) and inert without them: with `M0_OUT` unset both tests return
+immediately and write nothing, so a plain `cargo test` and a plain
+`--all-targets` run stay green - which matters because `--all-targets` is
+already red on 39 unrelated tests for the missing extended-domain SRS assets.
+The file re-emits all six artefacts into the directory named by `M0_OUT` and
+asserts **structure, never bytes**: proof length 2,640, 21 point reads + 51
+scalar reads = 72 transcript reads, and ACCEPT from the native verifier and
+from the generated Solidity verifier on the Vm lowering, the Direct lowering
+and the traced render. A second test, `m0_replay_directory`, is gated on
+`M0_REPLAY_DIR` and replays recorded bytes through the real verifier; pointed at
+`fixtures/poseidon/` it reports ACCEPT. That test is also where the
+`instance.be` byte-order trap surfaces: both byte orders of that file decode as
+canonical `Fq`, so a replay must read it big-endian, as recorded, or it rejects
+a good proof with `Error::Opening`.
 
 **Cross-cutting check - no Lean gate reads a byte that changed.** Nothing under
 `formal/` opens `proofs/solidity-verifier/fixtures/poseidon/*`: the only Lean
@@ -337,10 +382,26 @@ are not byte-equal. Re-syncing them is a follow-up package, not a Phase 0 item.
 
 ## Fixture SHA-256s
 
-Generated with shasum -a 256 over the tracked fixture inputs and the tracked
-regenerated dumps on this branch. The poseidon rows were re-pinned on 2026-10-29
+Generated with `shasum -a 256` over the files named, from
+`proofs/solidity-verifier/`. The poseidon rows were re-pinned on 2026-10-29
 under D-P28 (see "Poseidon fixture regeneration"); the twelve unread poseidon
 fixture files that used to appear here were deleted and are no longer pinned.
+
+**The table is split in two, because only one half can be a pin.** Until
+P-FREEZE it was a single 55-row list that half-checked: 25 of those rows named
+files that are not in git at all, and 2 tracked rows had gone stale before the
+freeze without anything noticing. The split below makes the difference
+load-bearing, and `proofs/solidity-verifier/scripts/check_baseline_pins.py`
+enforces it.
+
+### Tracked pins - 30 rows
+
+Every file here is **tracked in git**, so its bytes are fixed by the commit and
+the hash is a real pin. This is the complete set: `git ls-files
+proofs/solidity-verifier/fixtures proofs/solidity-verifier/target` returns
+exactly these 30 paths. All 30 match the working tree as of 2026-10-29, after
+the two stale rows listed under "Resolution of the two stale rows" were
+re-pinned.
 
 | sha256 | path |
 |---|---|
@@ -358,88 +419,113 @@ fixture files that used to appear here were deleted and are no longer pinned.
 | 52bfc1b1a7b053d8b63916c81ab6e845125cae277b74ddaa5ae7b6d0c5a62e45 | fixtures/rsa_signature/instance.bin |
 | b5212b21b686686749699702ba696f41a800f43ff7c83289a47ab01bd8dc8a6a | fixtures/rsa_signature/proof.bin |
 | 94ff3fbf1934e6c72360307b7dfc38ebb7e41fcfe28ff97fab9c5cf10850ba20 | fixtures/rsa_signature/vk.bin |
-| 36b2547aeb19919944ddce0c1ed4c1b706505cc07f4ea915b412dcbdfb647952 | target/hybrid-mt-fixture-dump/Halo2Verifier.direct.sol |
 | db5a581f2b081afb08470dbc65e12eaff8eb43e2aebffbea59310de12d53b4e1 | target/hybrid-mt-fixture-dump/Halo2Verifier.sol |
-| 2efd93795dc725f4aeb2b5b8a930c7ca976034eff47858e922170af109530675 | target/hybrid-mt-fixture-dump/Halo2VerifyingKey.direct.sol |
 | a7307f9a890b903af2b504817792921573a880c1d66fca0755e3a6e220464091 | target/hybrid-mt-fixture-dump/Halo2VerifyingKey.sol |
-| bf60d852d691a69edcdb1b1a6594bf2a266cf6bd33f0beb55ab3ec1442e479f4 | target/hybrid-mt-fixture-dump/calldata.bin |
 | b4cc25f849f2cd6cfccf9f48c2e6772acdfb0065b89f7a10cf9263aa0a5e0f62 | target/hybrid-mt-fixture-dump/instances.be |
-| 5038318eea2b89bf6057b9d67e77b535951ae3d3f80c82e5a665eb3ca65e34d6 | target/hybrid-mt-fixture-dump/proof.bin |
-| 650286cab970e06e5b89693c3c15465a5a3945417babd3ae9652b18e062d5edc | target/ivc-keccak-solidity-dump/Halo2QuotientEvaluator.creation.bin |
-| 27a60d2922cfcf1dca6fae553f52586229aa6b6058533b6c963a5d754ed22c3f | target/ivc-keccak-solidity-dump/Halo2QuotientEvaluator.sol |
-| 9eb2ebf20b84109db5f91b653b267d9e4e0a12bb07964753ca85979502a8ea10 | target/ivc-keccak-solidity-dump/Halo2Verifier.creation.bin |
-| a4746bf835275231564b6321211c753edb314fd1480cd772937ef68debcdaa74 | target/ivc-keccak-solidity-dump/Halo2Verifier.direct.sol |
-| c4a04c1b8825ba9bc5804df204a4d345a5d3a078c08ea23584485be6c8e0edbd | target/ivc-keccak-solidity-dump/Halo2Verifier.sol |
-| c84a2e752e034333e8ca3ff739c3f780a3370badd0ca503742078327c0f6a232 | target/ivc-keccak-solidity-dump/Halo2VerifyingKey.creation.bin |
-| b9b2402aa4944dc7ab2a3543fd0a1c015d9004bfafb5f31a395528ca8d66da76 | target/ivc-keccak-solidity-dump/Halo2VerifyingKey.direct.sol |
+| 4086ef353eb00d62c9b803ff494d6f272ef32e2d1244fe4eed042b924b83d52e | target/ivc-keccak-solidity-dump/Halo2QuotientEvaluator.sol |
+| c9347fde1dfeed43fd1dcc53cf9b6d165b02123e25497cf47001c7b3a6bd93b9 | target/ivc-keccak-solidity-dump/Halo2Verifier.sol |
 | f758587480759d1fc694da6e4d1d6d52352a8d3e530e053feed73c078e2934a2 | target/ivc-keccak-solidity-dump/Halo2VerifyingKey.sol |
-| d4bfd29110a4bbfc8b4c11c04afd24cf79e79fa7b00999051d0aa1dc1a4e0bf8 | target/ivc-keccak-solidity-dump/calldata.bin |
-| fd83143d2116573b575741f48b2625627843440ba229bf78fdfe602fbddafaae | target/ivc-keccak-solidity-dump/contract-sizes.txt |
-| fef09061a36968b52479eb88f67f1e2aa3644392955f8bc2410de27639bf3688 | target/ivc-keccak-solidity-dump/instance.le |
-| bb819789684b0054514e6dc1d1fe6953d12c79ec59ad4077c5e3d1d3146ca1ac | target/ivc-keccak-solidity-dump/proof-evaluation-counts.txt |
-| 6e5c780561a5323b0d93a5f7b632b12755ff2158813abc3c62c1c4366090d03c | target/ivc-keccak-solidity-dump/proof.bin |
 | b3917f0fd49f138a9d7a9ea63ce00852aea64d175b530a6ebbe12372bfaf9257 | target/poseidon-fixture-dump/Halo2Verifier.direct.sol |
 | 0ebebe97beaf2e105faa5be2356de2adf8ed8643c98180603a38215d8215f050 | target/poseidon-fixture-dump/Halo2Verifier.sol |
 | 745779220e757f0d1e5cee903598fa3abbcb0d3c217efd3a5f8fd8929181a48a | target/poseidon-fixture-dump/Halo2VerifyingKey.direct.sol |
 | e4a7d45cd2526ad3efa38cc19cfa7b88d505e060f1feac0db48082fb61f0ce55 | target/poseidon-fixture-dump/Halo2VerifyingKey.sol |
-| 6af78ce3e2fcbe7d363a3999e5714869336eb8ec54210ff4f5013eff5b734ecf | target/poseidon-fixture-dump/calldata.bin |
-| 276b414838d9478519646bd0e8036a00c67994d73f370f00cd5c58ba8cafa0cd | target/poseidon-fixture-dump/instance.be |
-| 2f7ddc435479950f2f49a024dbc62b154664095cfae86291b07f39c3b6e2c3e0 | target/poseidon-fixture-dump/proof.bin |
-| cde1a54117f54903b54aa9d51df769f527135f7cb7ec8c7d9a86a298888bd476 | target/rsa-signature-fixture-dump/Halo2Verifier.direct.sol |
 | 3d1f037f725ee2f149cf472889b3ef9330d3ffdab82a999c13d1fe1b54517429 | target/rsa-signature-fixture-dump/Halo2Verifier.sol |
-| a51b5d176be3d63d25525a92c59442199a196362c3952fea766fc10c4c51fe10 | target/rsa-signature-fixture-dump/Halo2VerifyingKey.direct.sol |
 | 1261c6b1f695a136c70fe6800d59f2823c75d76c60af8df92f1206bfe11f3236 | target/rsa-signature-fixture-dump/Halo2VerifyingKey.sol |
-| 69513007bb8eb73d126322a8e737cf03c10704a5ac03b895a08180a92aa00145 | target/rsa-signature-fixture-dump/calldata.bin |
 | f8cdb21c1143e137aee4f6c4c9cdd274990c66e2160f92c027be88c2024e171f | target/rsa-signature-fixture-dump/instances.be |
-| 47050f4f2cb8657df0950ee4994c967d8ac3abcff4beb8e68953dae35f587973 | target/rsa-signature-fixture-dump/proof.bin |
-| 25810bc294f466828e925b6028aca076bcc9e6720d93d327062c43bfd8b95576 | target/sha-preimage-fixture-dump/Halo2Verifier.direct.sol |
 | d6c6331f2672ec242890232d9e7537eed43c832f33406cbe4328bacd2c4ac6cf | target/sha-preimage-fixture-dump/Halo2Verifier.sol |
-| cea0e0caee99fe979bab45593112e7d41f96c3a6de66b71c90b06c8d7e7c6304 | target/sha-preimage-fixture-dump/Halo2VerifyingKey.direct.sol |
 | 1a99f410c6b8f536c480d4d90b105e2189ef4cdef0235653963e4afe9127d596 | target/sha-preimage-fixture-dump/Halo2VerifyingKey.sol |
-| fe1ebeb5aa810cd0dbf44d2774c5764c25b0fcbbdffef08115656cbe65c80c78 | target/sha-preimage-fixture-dump/calldata.bin |
 | cf9ea60bfee9769886ff15d846388a42bd8682a206c4119298c649a3f4636a92 | target/sha-preimage-fixture-dump/instances.be |
-| 4823c266d0ed0037dba49d37bc3648968b1f434f14e378a041aefddce6d25be2 | target/sha-preimage-fixture-dump/proof.bin |
 
-### Which rows of this table are stable pins (found while re-pinning, 2026-10-29)
+### Untracked, last-observed - 25 rows (**not pins**)
 
-The table mixes two kinds of row and only one of them can be a freeze pin.
+Every file here is **not tracked**: it exists only as whatever the last test run
+wrote, under whatever feature profile that run used. Nothing fixes these bytes,
+so a hash here is an observation and cannot be a pin. Two independent reasons:
 
-* **Tracked - 30 rows.** 14 `fixtures/...` rows (5 ivc, 6 poseidon,
-  3 rsa_signature) and 16 `target/...` rows name files that are **tracked in
-  git**, so their bytes are fixed by the commit. 28 of the 30 verify against the
-  working tree today; the 2 that do not are the stale ivc `.sol` rows in point 1
-  below.
-* **Untracked - 25 rows.** The remaining `target/*-fixture-dump/...` rows name
-  files that are **not tracked**: they exist only as whatever the last test run
-  wrote, under whatever feature profile that run used. They cannot be
-  reproduced on demand - the ivc render depends on the bench feature string, and
-  every `proof.bin`/`calldata.bin` moves with the OsRng quotient-limb blinding
-  described above.
+* every `proof.bin` / `calldata.bin` moves with the `OsRng` quotient-limb
+  blinding described in "Poseidon fixture regeneration", and
+* the `target/ivc-keccak-solidity-dump/` render depends on the bench feature
+  string, not on the recorded profile.
 
-Two consequences, both recorded rather than papered over:
+That is not hypothetical: the gate runs of 2026-10-29 that produced this table
+moved 15 of these 25 rows - including
+`target/poseidon-fixture-dump/proof.bin` and `calldata.bin`, which the mixed
+table had recorded as matching. The values below were re-derived after those
+runs and will move again on the next one. `check_baseline_pins.py` prints a note
+when one has moved and does not fail.
 
-1. Two **tracked** rows were already stale before this package ran:
-   `target/ivc-keccak-solidity-dump/Halo2Verifier.sol` and
-   `Halo2QuotientEvaluator.sol`. The table pins
-   `c4a04c1b8825...` / `27a60d2922cf...`; HEAD and the working tree both hold
-   `c9347fde1dfe...` / `4086ef353eb0...`. The step-6 IVC bench regeneration
-   changed them and the table was not re-pinned. This is a defect in the table,
-   not in the artefacts.
-2. The G0 runs on 2026-10-29 rewrote 13 further untracked rows (ivc, rsa, sha
-   and hybrid-mt `proof.bin`/`calldata.bin`/`creation.bin`/`contract-sizes.txt`/`instance.le`),
-   as any run of those fixtures necessarily does.
+| sha256 | path |
+|---|---|
+| 36b2547aeb19919944ddce0c1ed4c1b706505cc07f4ea915b412dcbdfb647952 | target/hybrid-mt-fixture-dump/Halo2Verifier.direct.sol |
+| 2efd93795dc725f4aeb2b5b8a930c7ca976034eff47858e922170af109530675 | target/hybrid-mt-fixture-dump/Halo2VerifyingKey.direct.sol |
+| 515fcaf6464b47df366c750ddd4ab9eb2b32087d9d79118bf3b30b12139be5ec | target/hybrid-mt-fixture-dump/calldata.bin |
+| 8ee41908564bc833d3fc690c64268576fc8dcdde2d8b8193fb3676d486f28495 | target/hybrid-mt-fixture-dump/proof.bin |
+| ee50b82009d7d8d569448404bdbc9027f02d9926c7ed12a085c8eb4f0fe95863 | target/ivc-keccak-solidity-dump/Halo2QuotientEvaluator.creation.bin |
+| 9e41f6b7080e9182ffd061bb1e46592dbe349002fca7890ba91623ae764225f2 | target/ivc-keccak-solidity-dump/Halo2Verifier.creation.bin |
+| cfbb66095666c4b779887da8a41c4076730e03b08b4afdd371b672b85db38adf | target/ivc-keccak-solidity-dump/Halo2Verifier.direct.sol |
+| c84a2e752e034333e8ca3ff739c3f780a3370badd0ca503742078327c0f6a232 | target/ivc-keccak-solidity-dump/Halo2VerifyingKey.creation.bin |
+| b9b2402aa4944dc7ab2a3543fd0a1c015d9004bfafb5f31a395528ca8d66da76 | target/ivc-keccak-solidity-dump/Halo2VerifyingKey.direct.sol |
+| 7c3dcee39f38a0429c4b7cedf9faf88d7ed6638d543eba5a9e478836f1369f5e | target/ivc-keccak-solidity-dump/calldata.bin |
+| ee7f60ec51c1bc12812f12a6f3920f7f6aaae5744ebf07357a22d57ed6d911c3 | target/ivc-keccak-solidity-dump/contract-sizes.txt |
+| a72b86151973a3fef14b11e4815951d3e8e55d6287fc3b82069cd06a93e812c3 | target/ivc-keccak-solidity-dump/instance.le |
+| bb819789684b0054514e6dc1d1fe6953d12c79ec59ad4077c5e3d1d3146ca1ac | target/ivc-keccak-solidity-dump/proof-evaluation-counts.txt |
+| 1bac941ce0c8478ea4f1837239eaff4ddb153beb6ad681c51296a850ae735878 | target/ivc-keccak-solidity-dump/proof.bin |
+| da85800aa34387d3159c1f813fe6ea5846a65c5e7e64b514b9219d06cf36da7a | target/poseidon-fixture-dump/calldata.bin |
+| 276b414838d9478519646bd0e8036a00c67994d73f370f00cd5c58ba8cafa0cd | target/poseidon-fixture-dump/instance.be |
+| 83acb2796f4e4aaf0a95b757a60a3c5f6668dd93beab7d1e0a97b1e71dfa338e | target/poseidon-fixture-dump/proof.bin |
+| cde1a54117f54903b54aa9d51df769f527135f7cb7ec8c7d9a86a298888bd476 | target/rsa-signature-fixture-dump/Halo2Verifier.direct.sol |
+| a51b5d176be3d63d25525a92c59442199a196362c3952fea766fc10c4c51fe10 | target/rsa-signature-fixture-dump/Halo2VerifyingKey.direct.sol |
+| 07e93d3f3f3f19b32362845e20e8451adb4d0dbe78673a10ae10cb0ad8437525 | target/rsa-signature-fixture-dump/calldata.bin |
+| 7ce34530518c6fc1de126d5e21c867fc166692f35022ea7c46ee5b9dfbe9557c | target/rsa-signature-fixture-dump/proof.bin |
+| 25810bc294f466828e925b6028aca076bcc9e6720d93d327062c43bfd8b95576 | target/sha-preimage-fixture-dump/Halo2Verifier.direct.sol |
+| cea0e0caee99fe979bab45593112e7d41f96c3a6de66b71c90b06c8d7e7c6304 | target/sha-preimage-fixture-dump/Halo2VerifyingKey.direct.sol |
+| d95f2b3856d66f1a4b3daf7a9a131d5c167ec682f473041842c94d93a278e86f | target/sha-preimage-fixture-dump/calldata.bin |
+| 6c79e1bfc176c3852a0184d13170bc7f063fe06ba7f11d52aca5f03af45fbe78 | target/sha-preimage-fixture-dump/proof.bin |
 
-**Recommendation for the freeze:** keep the 30 tracked rows as the pins (after re-pinning the 2 stale ones), re-pin
-the two stale ivc `.sol` rows to HEAD, and either drop the 25 untracked rows or
-relabel them "last-observed, not a pin". Deciding this changes what the tag
-claims, so it is left to the orchestrator rather than done unilaterally here.
+### Checking this table
 
-Total tracked fixture/dump files: 55 (67 before D-P28; 12 unread poseidon
-orphans deleted, 6 live poseidon artefacts re-pinned).
+```text
+python3 proofs/solidity-verifier/scripts/check_baseline_pins.py
+```
 
+It parses both tables, classifies every row against `git ls-files`, and fails
+if a pin does not match its file, if a pin row is not tracked, if a
+last-observed row has become tracked (it then belongs in the pin table), or if
+a path appears in both tables. It deliberately does not fail when a
+last-observed row has moved.
 
+### Resolution of the two stale rows (P-FREEZE, 2026-10-29)
 
-(filled in at the freeze)
+Two **tracked** rows were already stale before D-P28 ran. P-M0 found them and
+deliberately recorded rather than touched them:
+
+| path | table said | HEAD and working tree |
+|---|---|---|
+| `target/ivc-keccak-solidity-dump/Halo2Verifier.sol` | `c4a04c1b8825ba9b...` | `c9347fde1dfeed43...` |
+| `target/ivc-keccak-solidity-dump/Halo2QuotientEvaluator.sol` | `27a60d2922cfcf1d...` | `4086ef353eb00d62...` |
+
+They are now **re-pinned to HEAD** rather than excluded from the pinned set,
+which was the right resolution: the defect was in the table, not in the
+artefacts. The step-6 IVC bench regeneration changed the two files and the
+table was not re-derived afterwards. Both are tracked, both are byte-stable
+under the recorded profile (they are renders, not proofs, so the `OsRng`
+blinding does not touch them), and `Halo2Verifier.sol` is the artifact the Lean
+golden chain cites (`formal/Midfall/Yul/Externals.lean:733`), so the pin now
+agrees with the bytes a Lean gate reads. Nothing was regenerated to produce the
+new values: they are the hashes of the committed blobs, re-derived with
+`shasum -a 256`.
+
+The 25 untracked rows were **not** re-pinned into the pin set and were not
+deleted: they are kept, relabelled, and re-derived as of this package, because
+they are still useful for drift diagnosis - they show what a given run emitted.
+Their status is "last-observed", stated in the heading and enforced by the
+checker.
+
+Total rows: 55 = 30 tracked pins + 25 untracked last-observed. (67 rows before
+D-P28; 12 unread poseidon orphans deleted, 6 live poseidon artefacts
+re-pinned.) The earlier line "Total tracked fixture/dump files: 55" was wrong
+in a way that mattered: 55 was the row count, and only 30 of those files are
+tracked.
 
 ### M2 status update (round 7)
 
