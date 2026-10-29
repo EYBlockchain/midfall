@@ -860,6 +860,26 @@ truncation as happening before field reduction, which is the wrong order.
 **Constraint that does NOT change:** truncation is preserved for output compatibility
 (D-P14). We do not alter the deployment to make the proof easier.
 
+**EXECUTED (P-CHALMASS).** `chalMass F round s` is per-round in
+`Midfall/Security/Challenges.lean` (ENNReal) and `Midfall/Halo2/Spec/Degrees.lean`
+(`ℝ≥0`): `Chal.truncatedValue` names the rounds whose VALUE the Rust truncates
+(`x3` only), `truncPreimageCount = ⌈r/2^128⌉` is a named Nat factor outside the
+division rather than a folded constant, and every mass is stated over the common
+denominator `2^256`. The unsoundness is exhibited both ways:
+`chalMassUniform_lt_x3_mass` (witness - the per-round mass is strictly larger than
+the uniform one) and `uniform_admits_new_refuses` (falsification - at the KAT
+index's `x3` count of 48 a budget of `50/2^128` is admitted by the old bound and
+refused by the new). `Spec/Degrees`'s `x3` row and comment now say
+reduce-then-truncate, and the row count is `max (maxSetSize * n) badPointsX3Count`.
+Two corrections to the decision text itself: the exact factor is
+`3⌈r/2^128⌉/2^128 = 1.3585351690…`, not `\approx 1.5` (the shortfall is 0.442 bits,
+not half a bit), and the six untruncated rounds gain `2^126.42`, not `\sim 127`.
+**Recorded so the failure mode is visible:** D-P29 (docs/design.md:1054, round 68)
+already said "D-P21 is implemented at last", and it was not - `chalMass` still had
+its old two arguments and the same uniform body at the head of this branch, and the
+same sentence went on to call the x3 row "currently unsound" in the next clause. A
+decision annotated as done is not a decision done.
+
 ## D-P22 (ADOPTED, round 51): R-51/F6 - carry ARSDH for S3; deployed knowledge-soundness is scoped
 
 **Decision (human: use the recommendation).** Two entangled choices, now settled:

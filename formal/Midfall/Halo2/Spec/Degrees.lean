@@ -32,8 +32,11 @@
 -- CONSERVATISM RULE. Where the Rust does not name a number, the definition takes
 -- the largest value that is still sound and says so in a `/-! ... -/` note; those
 -- are the four entries marked CONSERVATIVE below (degTheta, degBeta, srsBound,
--- verifierQueries) plus the `x3` row of `roundErr`, which follows the plan
--- verbatim even though `badPointsX3Count` is the honest number.
+-- verifierQueries) plus the `x3` row of `roundErr`, whose bad-point count is now
+-- `max (maxSetSize * n) badPointsX3Count`: the plan's `maxSetSize * n` and the
+-- honest `badPointsX3Count` bound different things (R-23 second bullet) and
+-- neither dominates the other, so the row takes the max rather than silently
+-- picking one. See `Degrees.x3BadPoints`.
 --
 -- Imports are Exec modules read-only plus Spec/Relation; nothing in this file
 -- depends on Exec/Verifier or Exec/Native, which are being edited in parallel.
@@ -229,18 +232,55 @@ theorem chal_mass_ceiling : (2 ^ 256 + scalarOrder - 1) / scalarOrder = 3 := by
   · omega
   · omega
 
-/-- Probability mass of one challenge hitting a bad value when there are `s` bad
-    values (plan 9.4 `chalMass`). With `truncated-challenges` the squeezed
-    digest is cut to 128 bits (rust: the `truncate` after each
-    `squeeze_challenge`, e.g. poly/kzg/mod.rs:456-457), so the denominator is
-    `2^128` and there is no reduction-mod-`r` factor at all; otherwise the mass
-    is `⌈2^256/r⌉ · s / 2^256 = 3s/2^256` by `chal_mass_ceiling`.
+/-- `⌈r / 2^128⌉`: how many field elements share one 128-bit truncation, i.e.
+    how many preimages one truncated value has. Written in the same total Nat
+    ceiling form `(a + b - 1) / b` as `chal_mass_ceiling` and over
+    `scalarOrder`, so it cannot drift from CompPoly's `r`. The literal it reduces
+    to is pinned by `truncPreimageCount_eq` and by `chalMass_kats_ok`.
+    rust: utils/arithmetic.rs:247-252 - `truncate` keeps the low
+    `nb_bytes = NUM_BITS.div_ceil(8).div_ceil(2) = 16` bytes of the canonical
+    representative, i.e. the value mod `2^128`. -/
+def truncPreimageCount : Nat := (scalarOrder + 2 ^ 128 - 1) / 2 ^ 128
+
+theorem truncPreimageCount_eq :
+    truncPreimageCount = 0x73eda753299d7d483339d80809a1d806 := by
+  decide
+
+/-- Which rounds the Rust truncates the VALUE of. Exactly one: `x3`, at
+    poly/kzg/mod.rs:455-457 (multi open) and :285-287 (single open). Every other
+    round's value is a full field element even under `truncated-challenges`; what
+    that feature does to `x1` and `x4` is truncate their POWERS
+    (`truncated_powers`, poly/kzg/mod.rs:394, :502, :521), which is a different
+    question and a different gap (R-22, D-P14, D-P22). -/
+def Chal.truncatedValue : Chal → Bool
+  | .x3 => true
+  | _ => false
+
+/-- The integer factor `chalMass` applies to a round's bad-point count: the
+    `⌈r/2^128⌉` collision factor for the one round whose value is truncated, 1
+    elsewhere. Kept as a Nat OUTSIDE the division so the factor is explicit
+    rather than folded into a constant (D-P21 deliverable 1). -/
+def chalFactor (F : Features) (c : Chal) : Nat :=
+  if F.truncatedChallenges && c.truncatedValue then truncPreimageCount else 1
+
+/-- Probability mass of one challenge of round `c` hitting a bad value when there
+    are `s` bad values (plan 9.4 `chalMass`, made per-round by D-P21).
+    THE ORDER MATTERS and the previous version of this docstring had it backwards:
+    it claimed the digest "is cut to 128 bits ... so there is no reduction-mod-`r`
+    factor at all". The Rust reduces FIRST and truncates SECOND -
+    poly/kzg/mod.rs:455-457 is `let x3 = transcript.squeeze_challenge();` then
+    `let x3 = truncate(x3);`, and `squeeze_challenge` is
+    `sample_keccak_digest_be_mod_r` (transcript/implementors.rs:19, :257-260), a
+    256-bit digest reduced mod `r`. So the two factors MULTIPLY rather than
+    replace: a truncated value has `⌈r/2^128⌉` field preimages, each hit at most
+    `⌈2^256/r⌉ = 3` times (`chal_mass_ceiling`) out of `2^256`, giving
+    `3 · ⌈r/2^128⌉ · s / 2^256` ~ `1.3585 / 2^128`, not `s/2^128`. Rounds whose
+    value is not truncated keep `3s/2^256` whatever the flag says.
     NONCOMPUTABLE because `ℝ≥0` division is a `Real` division in mathlib - the
     same situation as `Midfall.Security.chalMass`, and outside rule R10, which
     binds the Exec layer. -/
-noncomputable def chalMass (F : Features) (s : Nat) : ℝ≥0 :=
-  if F.truncatedChallenges then (s : ℝ≥0) / (2 : ℝ≥0) ^ 128
-  else 3 * (s : ℝ≥0) / (2 : ℝ≥0) ^ 256
+noncomputable def chalMass (F : Features) (c : Chal) (s : Nat) : ℝ≥0 :=
+  3 * ((chalFactor F c * s : Nat) : ℝ≥0) / (2 : ℝ≥0) ^ 256
 
 /-! ### 4. The per-round degrees -/
 
@@ -563,9 +603,10 @@ def CircuitIndex.numPointSets (idx : CircuitIndex (Fr p)) : Nat :=
 /-- `maxSetSize idx` - the largest number of points in one point set
     (rust: the `point_sets[i].len()` that is the sort key at
     poly/kzg/mod.rs:418-420 and the number of factors of `den` at :478).
-    WHERE USED: plan 9.4 `roundErr .x3`, as `maxSetSize * idx.n`. See
-    `badPointsX3Count` below: that product is the shape of the degree bound, but
-    it does not obviously cover the denominator zeros, which is R-2's second
+    WHERE USED: half of the `.x3` row - `Degrees.x3BadPoints` takes
+    `max (maxSetSize * n) badPointsX3Count` (D-P21). See `badPointsX3Count`
+    below: this product is the shape of the degree bound, but it does not
+    obviously cover the denominator zeros, which is R-2's second
     manifestation. -/
 def CircuitIndex.maxSetSize (idx : CircuitIndex (Fr p)) : Nat :=
   match idx.shapeSets with
@@ -668,11 +709,12 @@ def CircuitIndex.badPointsX3Denominator (idx : CircuitIndex (Fr p)) : Nat :=
     poly/kzg/mod.rs:264-276 has degree `< n`) PLUS the denominator zeros of
     `badPointsX3Denominator`, which are a CRASH set rather than a rejection set
     and so have to be excluded separately.
-    PLAN 9.4 DOES NOT USE THIS: it writes `maxSetSize * idx.n` for `.x3`.
-    `roundErr` follows the plan verbatim rather than silently improving on it
-    (plan Section 12: never weaken - or here, never re-derive - a statement
-    quietly), and this definition is the counter-example that Phase 4 has to
-    reconcile. See the package report. -/
+    PLAN 9.4 DOES NOT STATE THIS: it writes `maxSetSize * idx.n` for `.x3`.
+    Since D-P21 the row uses `Degrees.x3BadPoints`, the max of the two, so
+    neither derivation is dropped and neither is silently preferred; which half
+    is the real bound is still the paper's question (plan Section 12 forbids
+    re-deriving a statement quietly, and this is the recorded version of that
+    reconciliation, not a quiet one). See the package report. -/
 def CircuitIndex.badPointsX3Count (idx : CircuitIndex (Fr p)) : Nat :=
   idx.n + idx.badPointsX3Denominator
 
@@ -710,13 +752,37 @@ structure Degrees where
   maxPolysPerSet : Nat
   /-- `roundErr .x2` input: `CircuitIndex.numPointSets`. -/
   numPointSets : Nat
-  /-- `roundErr .x3` input: `CircuitIndex.maxSetSize`, multiplied by `n`. -/
+  /-- `roundErr .x3` input, first half: the largest point set, multiplied by `n`
+      (plan 9.4's shape). See `Degrees.x3BadPoints` for how it is combined. -/
   maxSetSize : Nat
   /-- The domain size, used by the `.x3` row. -/
   n : Nat
+  /-- `roundErr .x3` input, second half: `CircuitIndex.badPointsX3Denominator`,
+      the denominator zeros of poly/kzg/mod.rs:478 counted with multiplicity over
+      the point sets. R-23's second bullet: the plan's `maxSetSize · n` does not
+      obviously cover them. -/
+  badPointsX3Denominator : Nat
   /-- `roundErr .x4` input is `numPointSets + 1`; this field is the `V` of the
       chain-collision term. -/
   verifierQueries : Nat
+
+/-- The `.x3` row's bad-point count, D-P21 / R-23.
+    Two candidate counts exist and NEITHER dominates the other:
+    * plan 9.4 writes `maxSetSize · n` - the degree shape of the batched
+      numerator, `maxSetSize` denominator factors times polynomials of degree
+      `< n`;
+    * `badPointsX3Count = n + badPointsX3Denominator` is the honest count of the
+      two sets x3 really has to avoid: the `n` roots of unity plus every distinct
+      opening point (the `den.invert().unwrap()` zeros at poly/kzg/mod.rs:478-479,
+      which R-2 manifestation 2 records as an ABORT set, not a rejection set).
+    With all-singleton point sets the plan gives `n` and the truth is
+    `n + numPointSets`; with one big set the plan gives more. Taking the max is
+    the conservative reconciliation: it is never below either derivation, so it
+    cannot be smaller than a bound the paper later proves, and it is what the
+    row uses. Plan Section 12 forbids re-deriving a statement quietly - this is
+    the recorded, non-quiet version, and the paper still owns which half is real. -/
+def Degrees.x3BadPoints (d : Degrees) : Nat :=
+  max (d.maxSetSize * d.n) (d.n + d.badPointsX3Denominator)
 
 /-- The degrees of this constraint system, as the bundle `roundErr` consumes. -/
 def CircuitIndex.degrees (idx : CircuitIndex (Fr p)) : Degrees :=
@@ -730,22 +796,46 @@ def CircuitIndex.degrees (idx : CircuitIndex (Fr p)) : Degrees :=
     numPointSets := idx.numPointSets
     maxSetSize := idx.maxSetSize
     n := idx.n
+    badPointsX3Denominator := idx.badPointsX3Denominator
     verifierQueries := idx.verifierQueries }
 
-/-- Per-round error mass, plan 9.4 verbatim: each challenge's bad-point count
-    pushed through `chalMass`. The `.x` row is `degX = cs_degree·n + n` and the
-    `.x3` row is `maxSetSize·n`, both exactly as the plan writes them. -/
+/-- Per-round error mass (plan 9.4): each challenge's bad-point count pushed
+    through the PER-ROUND `chalMass` of D-P21. The `.x` row is
+    `degX = cs_degree·n + n`; the `.x3` row is `x3BadPoints`, the max of the
+    plan's `maxSetSize·n` and the honest `n + Σᵢ|Sᵢ|`, and the only row whose
+    challenge value the Rust truncates, so the only row that carries the
+    `⌈r/2^128⌉` factor. -/
 noncomputable def roundErrDegrees (F : Features) (d : Degrees) : Chal → ℝ≥0
-  | .theta => chalMass F d.degTheta
-  | .beta => chalMass F d.degBeta
-  | .gamma => chalMass F d.degGamma
-  | .trash => chalMass F d.degTrash
-  | .y => chalMass F d.numConstraints
-  | .x => chalMass F d.degX
-  | .x1 => chalMass F d.maxPolysPerSet
-  | .x2 => chalMass F d.numPointSets
-  | .x3 => chalMass F (d.maxSetSize * d.n)
-  | .x4 => chalMass F (d.numPointSets + 1)
+  | .theta => chalMass F .theta d.degTheta
+  | .beta => chalMass F .beta d.degBeta
+  | .gamma => chalMass F .gamma d.degGamma
+  | .trash => chalMass F .trash d.degTrash
+  | .y => chalMass F .y d.numConstraints
+  | .x => chalMass F .x d.degX
+  | .x1 => chalMass F .x1 d.maxPolysPerSet
+  | .x2 => chalMass F .x2 d.numPointSets
+  | .x3 => chalMass F .x3 d.x3BadPoints
+  | .x4 => chalMass F .x4 (d.numPointSets + 1)
+
+/-- The row WIRING is pinned, not just the counts. Every conjunct is `rfl`, so
+    pointing a row at a different count - or at a different round of `chalMass` -
+    breaks the build instead of drifting silently. This exists because the
+    perturbation "change the `.x3` row back to `maxSetSize * n`" left every
+    `#eval` gate green: `x3Row_kats_ok` checks `Degrees.x3BadPoints`, which the
+    row then no longer used. Recorded as a failure to redden in the package
+    report; this theorem is the fix. -/
+theorem roundErrDegrees_wiring (F : Features) (d : Degrees) :
+    roundErrDegrees F d .theta = chalMass F .theta d.degTheta ∧
+    roundErrDegrees F d .beta = chalMass F .beta d.degBeta ∧
+    roundErrDegrees F d .gamma = chalMass F .gamma d.degGamma ∧
+    roundErrDegrees F d .trash = chalMass F .trash d.degTrash ∧
+    roundErrDegrees F d .y = chalMass F .y d.numConstraints ∧
+    roundErrDegrees F d .x = chalMass F .x d.degX ∧
+    roundErrDegrees F d .x1 = chalMass F .x1 d.maxPolysPerSet ∧
+    roundErrDegrees F d .x2 = chalMass F .x2 d.numPointSets ∧
+    roundErrDegrees F d .x3 = chalMass F .x3 d.x3BadPoints ∧
+    roundErrDegrees F d .x4 = chalMass F .x4 (d.numPointSets + 1) :=
+  ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Plan 9.4's `roundErr (F idx)`, i.e. `roundErrDegrees` at the degrees this
     file computes. -/
@@ -1001,14 +1091,50 @@ def roundErr_kats_ok : Bool :=
   d.degTheta == 4 && d.degBeta == 6 && d.degGamma == 2 && d.degTrash == 1 &&
   d.numConstraints == 11 && d.degX == 64 && d.maxPolysPerSet == 9 &&
   d.numPointSets == 3 && d.maxSetSize == 3 && d.n == 16 && d.verifierQueries == 10 &&
+  d.badPointsX3Denominator == 6 && d.x3BadPoints == 48 &&
   Chal.all.length == 10
+
+/-- Both directions of the `.x3` row's max, so neither half of
+    `Degrees.x3BadPoints` is decorative (D-P23/R-41). For the KAT index the
+    plan's `maxSetSize · n = 3 · 16 = 48` dominates the honest
+    `n + Σᵢ|Sᵢ| = 16 + 6 = 22`; for a bundle with singleton-ish sets the honest
+    count dominates - `maxSetSize = 1` gives `n = 16` against `16 + 10 = 26`,
+    which is R-23's "all-singleton point sets the plan gives n and the truth is
+    n + numPointSets" case, exhibited rather than asserted. -/
+def x3RowSingleton : Degrees :=
+  { katIdx.degrees with maxSetSize := 1, badPointsX3Denominator := 10 }
+
+def x3Row_kats_ok : Bool :=
+  let d := katIdx.degrees
+  d.x3BadPoints == 48 && d.maxSetSize * d.n == 48 && d.n + d.badPointsX3Denominator == 22 &&
+  x3RowSingleton.x3BadPoints == 26 &&
+  x3RowSingleton.maxSetSize * x3RowSingleton.n == 16 &&
+  x3RowSingleton.n + x3RowSingleton.badPointsX3Denominator == 26
 
 /-- The arithmetic behind the constant 3, as a `Bool` mirror of the theorems
     `scalarOrder_bits` and `scalarOrder_bracket`; `chal_mass_ceiling` is the
-    conclusion (`⌈2^256/r⌉ = 3`) and is a theorem, not a check. -/
+    conclusion (`⌈2^256/r⌉ = 3`) and is a theorem, not a check.
+    The second block is D-P21's per-round factor: exactly one round carries
+    `⌈r/2^128⌉`, and the integer inequality that makes the x3 mass LARGER than
+    the old uniform `s/2^128` - the unsoundness direction - is checked here and
+    proved over `ENNReal` in `Midfall/Security/Challenges.lean`. -/
 def chalMass_kats_ok : Bool :=
   scalarOrder < 2 ^ 255 && scalarOrder ≥ 2 ^ 254 &&
-  2 * scalarOrder < 2 ^ 256 && 2 ^ 256 < 3 * scalarOrder
+  2 * scalarOrder < 2 ^ 256 && 2 ^ 256 < 3 * scalarOrder &&
+  truncPreimageCount == 0x73eda753299d7d483339d80809a1d806 &&
+  truncPreimageCount == (scalarOrder + 2 ^ 128 - 1) / 2 ^ 128 &&
+  chalFactor Features.solidity Chal.x3 == truncPreimageCount &&
+  (chalFactor Features.solidity Chal.theta == 1 && chalFactor Features.solidity Chal.beta == 1 &&
+   chalFactor Features.solidity Chal.gamma == 1 && chalFactor Features.solidity Chal.trash == 1 &&
+   chalFactor Features.solidity Chal.y == 1 && chalFactor Features.solidity Chal.x == 1 &&
+   chalFactor Features.solidity Chal.x1 == 1 && chalFactor Features.solidity Chal.x2 == 1 &&
+   chalFactor Features.solidity Chal.x4 == 1) &&
+  chalFactor katFullFeatures Chal.x3 == 1 &&
+  (List.map Chal.truncatedValue Chal.all ==
+    [false, false, false, false, false, false, false, false, true, false]) &&
+  3 * truncPreimageCount > 2 ^ 128 &&
+  3 * (truncPreimageCount * 48) > 50 * 2 ^ 128 &&
+  48 * 2 ^ 128 ≤ 50 * 2 ^ 128
 
 /-- The KAT index really satisfies the side conditions, so the numbers above are
     evidence and not accident. Each conjunct is the decidable form of the matching
@@ -1039,4 +1165,5 @@ end Midfall.Halo2.Spec
 #eval Midfall.Halo2.Spec.badPointsX_kats_ok   -- expect true
 #eval Midfall.Halo2.Spec.roundErr_kats_ok   -- expect true
 #eval Midfall.Halo2.Spec.chalMass_kats_ok   -- expect true
+#eval Midfall.Halo2.Spec.x3Row_kats_ok   -- expect true
 #eval Midfall.Halo2.Spec.wellFormed_kats_ok   -- expect true

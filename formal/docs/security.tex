@@ -153,12 +153,23 @@ theorems only for \texttt{truncatedChallenges = false}, which would exclude the
 deployment.
 \end{open}
 
-Two smaller corrections the same analysis forces (R-23): the mass for a truncated
-round is $\lceil 3\lceil r/2^{128}\rceil\rceil/2^{256} \approx 1.5/2^{128}$,
-so $s/2^{128}$ is \emph{not} an upper bound for $x_3$, being short by a factor of
-about $1.5$; and $x_3$ must avoid both the $n$-th roots of unity and every distinct
-opening point, so the honest count is $n + \sum_i |S_i|$, not
-$\max_i |S_i| \cdot n$.
+Two smaller corrections the same analysis forces (R-23, now executed by D-P21 in
+\texttt{Security/Challenges.lean} and \texttt{Spec/Degrees.lean}). Only $x_3$ has
+its \emph{value} truncated, and the order is reduce-then-truncate
+(\texttt{kzg/mod.rs:455-457}: \texttt{squeeze\_challenge} and then
+\texttt{truncate}), so the two factors \emph{multiply} rather than replace. A
+truncated value has $\lceil r/2^{128}\rceil$ field preimages, each hit at most
+$\lceil 2^{256}/r\rceil = 3$ times out of $2^{256}$, so the per-value mass is
+$3\lceil r/2^{128}\rceil/2^{256} = 1.3585351690\ldots/2^{128}$, and $s/2^{128}$
+is \emph{not} an upper bound for $x_3$. The earlier estimate of $1.5$ overstated
+the shortfall: it is $0.442$ bits of budget, not half a bit. For the six rounds
+whose value is not truncated the uniform $s/2^{128}$ was sound but $2^{126.42}$
+too large, which is why $\mathsf{chalMass}$ now takes the round. Separately,
+$x_3$ must avoid both the $n$-th roots of unity and every distinct opening point,
+so the honest count is $n + \sum_i |S_i|$; the plan's $\max_i |S_i| \cdot n$
+neither dominates it nor follows from it, so the row charges
+$\max(\max_i |S_i| \cdot n,\; n + \sum_i |S_i|)$ until the paper decides which
+half is real.
 
 \section{The verifier's final test}
 
