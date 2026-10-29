@@ -93,6 +93,9 @@ echo '== headline hypothesis bundles =='
 # registered reddens this gate, which is the discovery half.
 python3 scripts/check_hypothesis_bundles.py || exit 1
 
+echo '== baseline SHA pins (tracked vs untracked) =='
+python3 ../proofs/solidity-verifier/scripts/check_baseline_pins.py || exit 1
+
 echo '== axioms of the frozen statements =='
 printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean
