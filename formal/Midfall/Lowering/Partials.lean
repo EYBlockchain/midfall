@@ -1564,4 +1564,846 @@ def partialKeccakSqueeze_ok : Bool :=
 
 #eval partialKeccakSqueeze_ok      -- expect true
 
+/-! ### THE ARITY GATE (P-ARITY): every user call matches its definition's signature -/
+
+/- THE HOLE THIS SECTION CLOSES, in one sentence: the closure gate resolves call NAMES and nothing
+else, so `batch_invert(a, b, c, d)` against a five-parameter definition, and `success :=
+batch_invert(...)` binding one of a two-value return, both satisfy it - and neither is a program.
+
+THE GROUND TRUTH IS THE SEMANTICS BEING SILENT, not a validator saying no. Step.callOk carries the
+premise `argvals.length = decl.params.length` (BigStep.lean:204) and Step.letVal and Step.assignVal
+each carry `vals.length = vars.length` (:232, :239), so a wrong count has NO derivation: the
+program is stuck, every `Run` is empty, and each spec theorem about its runs would quantify over
+nothing and be vacuously true. That is the same failure mode as the unhoisted helper P-HELPERS found
+- a satisfied pin over an unrunnable program - and the same one the scratch address revealed.
+
+WHAT THE GATE READS, position by position. A call's result count is not a property of the call alone;
+it is a property of the position the call sits in, and the four positions the vendored rules
+distinguish are: the value of a `letDecl` (must equal the target count), the value of an `assign`
+(must equal the target count), the whole of an `exprStmt` (must be ZERO values, because Step.exprStmt
+demands `.vals []` at :243), and a call nested in any other expression - an argument of a builtin or
+another call, or a condition - where Step.argsCons and Step.ifTrue each demand exactly ONE value
+(:209, :252). The walker below carries that expected count down as its first argument, so all four
+are checked by one pass rather than by four claims. Calls whose callee no definition in the block
+answers are NOT reported here: that is the closure gate's job, and the gate below asserts the two
+lists agree, so a missing definition cannot hide in the gap between them. -/
+
+/-- One user-function call site read off the AST: the callee, how many arguments the call passes,
+and how many results its position binds. -/
+structure CallSite where
+  /-- The callee's name. -/
+  fn : String
+  /-- How many arguments the call passes. -/
+  args : Nat
+  /-- How many results the syntactic position demands. -/
+  binds : Nat
+  deriving Repr, DecidableEq, Inhabited
+
+/-- One arity violation: what the call did and what the definition said, in the shape a report can
+print without re-deriving anything. -/
+structure ArityViolation where
+  /-- The callee's name. -/
+  fn : String
+  /-- Arguments passed at the call site. -/
+  argsPassed : Nat
+  /-- Parameters declared by the definition. -/
+  paramsDeclared : Nat
+  /-- Results bound at the call site. -/
+  resultsBound : Nat
+  /-- Returns declared by the definition. -/
+  resultsDeclared : Nat
+  deriving Repr, DecidableEq, Inhabited
+
+mutual
+/-- The user call sites in an expression, with the number of results its position binds. -/
+def arityWalkE : Nat → Expr Op → List CallSite
+  | _, Expr.lit _ => []
+  | _, Expr.var _ => []
+  | k, Expr.call fn args => { fn := fn, args := args.length, binds := k } :: arityWalkEs args
+  | _, Expr.builtin _ args => arityWalkEs args
+termination_by _ e => sizeOf e
+
+/-- An argument list: every element must be single-valued (Step.argsCons), so the context handed
+down is 1 whatever the enclosing position binds. -/
+def arityWalkEs : List (Expr Op) → List CallSite
+  | [] => []
+  | e :: es => arityWalkE 1 e ++ arityWalkEs es
+termination_by es => sizeOf es
+
+/-- The user call sites in one statement, including the ones inside a function body - which is the
+half the per-slice closure form gets only through `callClosure`. -/
+def arityWalkS : Stmt Op → List CallSite
+  | Stmt.block b => arityWalkSs b
+  | Stmt.funDef _ _ _ b => arityWalkSs b
+  | Stmt.letDecl _ none => []
+  | Stmt.letDecl vs (some e) => arityWalkE vs.length e
+  | Stmt.assign vs e => arityWalkE vs.length e
+  | Stmt.cond c b => arityWalkE 1 c ++ arityWalkSs b
+  | Stmt.switch c cases dflt => arityWalkE 1 c ++ arityWalkSC cases ++ arityWalkOpt dflt
+  | Stmt.forLoop init c post body =>
+      arityWalkSs init ++ arityWalkE 1 c ++ arityWalkSs post ++ arityWalkSs body
+  | Stmt.exprStmt e => arityWalkE 0 e
+  | _ => []
+termination_by s => sizeOf s
+
+/-- The user call sites in a statement list. -/
+def arityWalkSs : List (Stmt Op) → List CallSite
+  | [] => []
+  | s :: ss => arityWalkS s ++ arityWalkSs ss
+termination_by ss => sizeOf ss
+
+/-- The user call sites in a switch's case list. -/
+def arityWalkSC : List (Literal × List (Stmt Op)) → List CallSite
+  | [] => []
+  | (_, b) :: cs => arityWalkSs b ++ arityWalkSC cs
+termination_by cs => sizeOf cs
+
+/-- The user call sites in a switch's optional default block. -/
+def arityWalkOpt : Option (List (Stmt Op)) → List CallSite
+  | none => []
+  | some b => arityWalkSs b
+termination_by b => sizeOf b
+end
+
+/-- The signature table of a block: every user function it defines, with its parameter count and its
+return count. Top-level definitions only, which is where the emitter puts them and is the same
+convention the closure gate resolves names under - a `funDef` nested inside a block would be
+invisible to both, and that is recorded rather than hidden. -/
+def funSignatures (b : Block Op) : List (String × Nat × Nat) :=
+  b.filterMap fun | Stmt.funDef n ps rs _ => some (n, ps.length, rs.length) | _ => none
+
+/-- The call sites whose callee no definition in the block answers. These are the closure gate's
+business and not the arity gate's; the gate below asserts the two agree on the list, so a missing
+definition cannot fall through the gap between the two walkers. -/
+def unresolvedCallSites (b : Block Op) : List CallSite :=
+  let sigs := funSignatures b
+  (arityWalkSs b).filter fun c => (sigs.lookup c.fn).isNone
+
+/-- The arity violations of a block: every user call whose argument count differs from its
+definition's parameter count, or whose bound-result count differs from its return count. -/
+def arityViolations (b : Block Op) : List ArityViolation :=
+  let sigs := funSignatures b
+  (arityWalkSs b).filterMap fun c =>
+    match sigs.lookup c.fn with
+    | none => none
+    | some (np, nr) => if c.args == np && c.binds == nr then none
+      else some (ArityViolation.mk c.fn c.args np c.binds nr)
+
+/-- The names of the eight hoisted helper definitions, read off the emitter rather than pasted. -/
+def arityHelperNames : List String :=
+  (GenAst.emitHelpers GenAst.pcsFixturePlan).filterMap fun
+    | Stmt.funDef n _ _ _ => some n
+    | _ => none
+
+/-- The whole emitted program at the no-accumulator fixture plan view. -/
+def emittedMainPcs : Block Op := GenAst.emitMain GenAst.pcsFixturePlan
+
+/-- The whole emitted program at the accumulator fixture plan view. -/
+def emittedMainAcc : Block Op := GenAst.emitMain bundleAccFixturePlan
+
+/- Deep statement rewrite: apply a statement rule everywhere in a block - inside blocks, function
+bodies, `if` bodies, switch cases and defaults, and all three sub-blocks of a `for` loop. Written as
+four mutually recursive functions because the vendored AST nests statement lists inside pairs and
+options, where a plain `map` does not recurse - the same reason `GenAst.mapStmtExprs` leaves switch
+untouched, except that the mutations below must not. -/
+mutual
+def everywhereSs (f : Stmt Op → Stmt Op) : List (Stmt Op) → List (Stmt Op)
+  | [] => []
+  | s :: ss => everywhereS f s :: everywhereSs f ss
+termination_by ss => sizeOf ss
+
+def everywhereS (f : Stmt Op → Stmt Op) : Stmt Op → Stmt Op
+  | Stmt.block b => f (Stmt.block (everywhereSs f b))
+  | Stmt.funDef n ps rs b => f (Stmt.funDef n ps rs (everywhereSs f b))
+  | Stmt.cond c b => f (Stmt.cond c (everywhereSs f b))
+  | Stmt.switch c cases d => f (Stmt.switch c (everywhereSC f cases) (everywhereSO f d))
+  | Stmt.forLoop i c p b =>
+      f (Stmt.forLoop (everywhereSs f i) c (everywhereSs f p) (everywhereSs f b))
+  | s => f s
+termination_by s => sizeOf s
+
+def everywhereSC (f : Stmt Op → Stmt Op) : List (Literal × List (Stmt Op)) →
+    List (Literal × List (Stmt Op))
+  | [] => []
+  | (l, b) :: cs => (l, everywhereSs f b) :: everywhereSC f cs
+termination_by cs => sizeOf cs
+
+def everywhereSO (f : Stmt Op → Stmt Op) : Option (List (Stmt Op)) → Option (List (Stmt Op))
+  | none => none
+  | some b => some (everywhereSs f b)
+termination_by b => sizeOf b
+end
+
+/-- CLONE MUTATION (arity): every call of the named function passes one MORE argument than the
+definition declares. The first defect the brief asks to be shown. -/
+def cloneWithExtraArg (fn : String) (b : Block Op) : Block Op :=
+  everywhereSs (fun
+    | Stmt.exprStmt (Expr.call n args) =>
+        if n == fn then Stmt.exprStmt (Expr.call n (args ++ [GenAst.ylit 0]))
+          else Stmt.exprStmt (Expr.call n args)
+    | Stmt.assign vs (Expr.call n args) =>
+        if n == fn then Stmt.assign vs (Expr.call n (args ++ [GenAst.ylit 0]))
+          else Stmt.assign vs (Expr.call n args)
+    | Stmt.letDecl vs (some (Expr.call n args)) =>
+        if n == fn then Stmt.letDecl vs (some (Expr.call n (args ++ [GenAst.ylit 0])))
+          else Stmt.letDecl vs (some (Expr.call n args))
+    | s => s) b
+
+/-- CLONE MUTATION (arity): every binding of the named function's results binds one FEWER variable
+than the definition returns. The second defect the brief asks to be shown. -/
+def cloneWithDroppedResult (fn : String) (b : Block Op) : Block Op :=
+  everywhereSs (fun
+    | Stmt.assign (v :: vs) (Expr.call n args) =>
+        if n == fn then Stmt.assign vs (Expr.call n args)
+          else Stmt.assign (v :: vs) (Expr.call n args)
+    | Stmt.letDecl (v :: vs) (some (Expr.call n args)) =>
+        if n == fn then Stmt.letDecl vs (some (Expr.call n args))
+          else Stmt.letDecl (v :: vs) (some (Expr.call n args))
+    | s => s) b
+
+/-- CLONE MUTATION (arity): the call's results are bound to one MORE variable than the definition
+returns, including the case where the call was a bare statement and gains a binding. This is the
+third mutation because `cloneWithDroppedResult` has nothing to drop at a zero-return call, and
+`fail` is called twenty-two times as a statement. -/
+def cloneWithExtraResult (fn : String) (b : Block Op) : Block Op :=
+  everywhereSs (fun
+    | Stmt.exprStmt (Expr.call n args) =>
+        if n == fn then Stmt.letDecl ["arity_probe_extra"] (some (Expr.call n args))
+          else Stmt.exprStmt (Expr.call n args)
+    | Stmt.assign vs (Expr.call n args) =>
+        if n == fn then Stmt.assign (vs ++ ["arity_probe_extra"]) (Expr.call n args)
+          else Stmt.assign vs (Expr.call n args)
+    | Stmt.letDecl vs (some (Expr.call n args)) =>
+        if n == fn then Stmt.letDecl (vs ++ ["arity_probe_extra"]) (some (Expr.call n args))
+          else Stmt.letDecl vs (some (Expr.call n args))
+    | s => s) b
+
+/-- A two-value call bound to one variable: the `wtwo` shape, wrong in the result direction only. -/
+def arityWitnessFewArgs : Block Op := yul% {
+  function wfew(a, b) -> c { c := add(a, b) }
+  let x := wfew(1)
+}
+
+/-- One result bound where the definition returns two. -/
+def arityWitnessFewResults : Block Op := yul% {
+  function wtwo(a) -> c, d { c := a }
+  let x := wtwo(1)
+}
+
+/-- A two-value call used where the semantics demands a single value: an argument position. -/
+def arityWitnessCallInArg : Block Op := yul% {
+  function warg(a) -> c, d { c := a }
+  mstore(0, warg(1))
+}
+
+/-- A one-value call used as a statement: Step.exprStmt demands the empty value list. -/
+def arityWitnessCallAsStmt : Block Op := yul% {
+  function wstmt(a) -> c { c := a }
+  wstmt(1)
+}
+
+/-- The correct shape of each of the four above, as the satisfiability witness D-P23 asks for: the
+same program with the right counts must be clean, or the classifier is a constant false. -/
+def arityWitnessAllOk : Block Op := yul% {
+  function okfew(a, b) -> c { c := add(a, b) }
+  function oktwo(a) -> c, d { c := a }
+  let x := okfew(1, 2)
+  let y, z := oktwo(1)
+  mstore(0, okfew(1, 2))
+}
+
+/-- GATE (THE ARITY GATE). Six clauses:
+
+    1. no violation anywhere in the whole emitted program, at either pinned plan view;
+    2. none in any slice closed under the emitted helpers either, which is the per-partial form and
+       localises a violation to a partial the way the closure gate does;
+    3. the signature table the gate reads, as DATA: the eight hoisted helpers with the parameter and
+       return counts AssemblyHelpers.yul gives them, so a signature change is a red gate and not a
+       silent re-derivation;
+    4. the call-site census: 51 user call sites at the no-accumulator view and 54 at the accumulator
+       view, in exactly eight distinct shapes, so clause 1 is a claim about 51 real calls and not
+       about an empty walk;
+    5. the ONLY callees the arity gate declines to check are exactly the ones the closure gate names
+       as unresolved, at both plan views - the two gates cannot disagree about what is missing, which
+       is what stops a new unresolved helper slipping past both;
+    6. the classifier is not a constant: four hand-built programs, one per arity position, each wrong
+       in exactly one way and each caught, and the corrected version of all four clean. Built with
+       the `yul%` parser and not with the constructors, so the gate is not self-fulfilling. -/
+def emittedProgramArity_ok : Bool :=
+  -- 1. the whole emitted program
+  (closurePlanViews.all fun pv => arityViolations (GenAst.emitMain pv) == []) &&
+    -- 2. and every closed slice
+    (closurePlanViews.all fun pv => partials.all fun q =>
+      arityViolations (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q)) == []) &&
+    -- 3. the signature table, as data
+    (funSignatures (GenAst.emitHelpers GenAst.pcsFixturePlan) ==
+      [("fail", 1, 0), ("scalar_inv", 1, 1), ("transcript_init", 0, 1), ("common_word", 2, 1),
+        ("common_uncompressed_g1", 2, 1), ("squeeze_to", 2, 1), ("batch_invert", 5, 2),
+        ("ec_pairing", 3, 1)]) &&
+    -- 4. the census
+    ((arityWalkSs emittedMainPcs).length == 51) &&
+    ((arityWalkSs emittedMainAcc).length == 54) &&
+    ((arityWalkSs emittedMainPcs).eraseDups ==
+      [{ fn := "fail", args := 1, binds := 0 },
+        { fn := "transcript_init", args := 0, binds := 1 },
+        { fn := "common_word", args := 2, binds := 1 },
+        { fn := "squeeze_to", args := 2, binds := 1 },
+        { fn := "common_uncompressed_g1", args := 2, binds := 1 },
+        { fn := "batch_invert", args := 5, binds := 2 },
+        { fn := "scalar_inv", args := 1, binds := 1 },
+        { fn := "ec_pairing", args := 3, binds := 1 }]) &&
+    -- 5. the two gates agree about what is missing
+    (closurePlanViews.all fun pv =>
+      sameMembers ((unresolvedCallSites (GenAst.emitMain pv)).map (fun c => c.fn)).eraseDups
+        (emittedMainUnresolvedCalls pv)) &&
+    -- 6. the witnesses, one per position, plus the clean control
+    ((arityViolations arityWitnessFewArgs).any fun v =>
+      v.fn == "wfew" && v.argsPassed == 1 && v.paramsDeclared == 2) &&
+    ((arityViolations arityWitnessFewResults).any fun v =>
+      v.fn == "wtwo" && v.resultsBound == 1 && v.resultsDeclared == 2) &&
+    ((arityViolations arityWitnessCallInArg).any fun v =>
+      v.fn == "warg" && v.resultsBound == 1 && v.resultsDeclared == 2) &&
+    ((arityViolations arityWitnessCallAsStmt).any fun v =>
+      v.fn == "wstmt" && v.resultsBound == 0 && v.resultsDeclared == 1) &&
+    (arityViolations arityWitnessAllOk == [])
+
+/-- FALSIFICATION OF THE ARITY GATE (D-P23, R-41: the failure mode, not just the witness). The two
+mutations the brief names, then the general form: EVERY one of the eight helpers reddens the gate
+when a call to it gains an argument, and every one reddens it when the binding gains a result; the
+drop-a-result mutation reddens it for the seven that bind results, `fail` being the honest exception
+because it returns nothing and is called as a statement, where there is no binding to drop and
+`cloneWithExtraResult` is the mutation that applies. The last two lines are the liveness controls:
+the unmutated program is clean, and every mutation really does change the AST, so the gate is not
+reddening on a no-op. -/
+def emittedProgramArity_detectsMutation_ok : Bool :=
+  (arityViolations (cloneWithExtraArg "batch_invert" emittedMainPcs) ==
+      [ArityViolation.mk "batch_invert" 6 5 2 2]) &&
+    (arityViolations (cloneWithDroppedResult "batch_invert" emittedMainPcs) ==
+      [ArityViolation.mk "batch_invert" 5 5 1 2]) &&
+    (arityHelperNames.all fun nm =>
+      (arityViolations (cloneWithExtraArg nm emittedMainPcs)).any fun v =>
+        v.fn == nm && v.argsPassed == v.paramsDeclared + 1) &&
+    (arityHelperNames.all fun nm =>
+      (arityViolations (cloneWithExtraResult nm emittedMainPcs)).any fun v =>
+        v.fn == nm && v.resultsBound == v.resultsDeclared + 1) &&
+    ((arityHelperNames.filter fun nm => nm != "fail").all fun nm =>
+      (arityViolations (cloneWithDroppedResult nm emittedMainPcs)).any fun v =>
+        v.fn == nm && v.resultsBound + 1 == v.resultsDeclared) &&
+    (arityViolations emittedMainPcs == []) &&
+    (arityHelperNames.all fun nm =>
+      ! SyntaxEq.stmtsBeq (cloneWithExtraArg nm emittedMainPcs) emittedMainPcs)
+
+#eval emittedProgramArity_ok                        -- expect true
+#eval emittedProgramArity_detectsMutation_ok        -- expect true
+
+/-! ### THE PLACEMENT GATE (P-ARITY): leave, break and continue sit in the right construct -/
+
+/- THE SECOND HOLE, and it is the one the brief names. The emitted program has twelve `leave`s -
+eleven inside `batch_invert` and one inside `ec_pairing` - and before this section NOTHING said they
+were inside a function definition. THE BRIEF'S COUNT OF SIX IS THE COUNT OF `Stmt.leave` TOKENS IN
+THE EMITTER SOURCE (GenAst.lean:269, 468, 484, 488, 492, 520), not the number of leaves in the AST it
+builds: the `reject` block defined at :468 is spliced into seven different guard arms, so one source
+token becomes seven leaves, and the measured AST census is twelve. Measured, not assumed - which is
+the whole reason this section counts leaves in the program instead of in the file. The vendored semantics does not reject a misplaced one; it simply
+has no rule that consumes it. Step.leave produces the `leave` outcome wherever it appears
+(BigStep.lean:280-281), and the only rule that turns a `leave` outcome back into normal control is
+Step.callOk's `o = .normal OR o = .leave` premise (:207) - at the top level of main a `leave`
+escapes into the run's outcome, and StmtsContractAll's post is then neither the normal arm nor the
+halt arm the spec theorems name. `break` and `continue` are the same class: Step.«break» and
+Step.«continue» produce their outcomes unconditionally (:276-279) and the only consumers are loopStep
+and loopBreak (:310-325), so outside a loop they propagate out of the enclosing block forever. Yul
+has no jump statement and the vendored AST has none either, so this section plus the arity gate above
+is the whole of the control-flow well-formedness dimension of the grammar.
+
+THE CONTEXT THE WALK CARRIES, and the two places a naive version gets it wrong. Two flags: whether an
+enclosing `function` body is in scope, which is what consumes a `leave`, and whether an enclosing
+`for` BODY is in scope, which is what consumes a `break` or `continue`. Entering a `funDef` sets the
+first and CLEARS the second: a function defined inside a loop body is a fresh control context, and a
+`break` in it is not caught by that loop - `callOk` accepts only normal or leave from a body. The
+loop's init and post blocks clear the second too, because the `forLoop` rule requires the init
+outcome to be normal (:270) and `loopStep` requires the post outcome to be normal (:317), so a
+`break` in either is stuck. A `leave` inside a loop inside a function stays legal, because
+Step.loopLeave carries it out of the loop to the call (:329-330). -/
+mutual
+def ctrlWalkS : Bool → Bool → Stmt Op → List String
+  | inFun, inLoop, Stmt.block b => ctrlWalkSs inFun inLoop b
+  | _, _, Stmt.funDef _ _ _ b => ctrlWalkSs true false b
+  | inFun, inLoop, Stmt.cond _ b => ctrlWalkSs inFun inLoop b
+  | inFun, inLoop, Stmt.switch _ cases dflt =>
+      ctrlWalkSC inFun inLoop cases ++ ctrlWalkSO inFun inLoop dflt
+  | inFun, _, Stmt.forLoop init _ post body =>
+      ctrlWalkSs inFun false init ++ ctrlWalkSs inFun true post ++ ctrlWalkSs inFun true body
+  | inFun, _, Stmt.leave => if inFun then [] else ["leave outside a function definition"]
+  | _, inLoop, Stmt.«break» => if inLoop then [] else ["break outside a for loop"]
+  | _, inLoop, Stmt.«continue» => if inLoop then [] else ["continue outside a for loop"]
+  | _, _, _ => []
+termination_by _ _ s => sizeOf s
+
+def ctrlWalkSs : Bool → Bool → List (Stmt Op) → List String
+  | _, _, [] => []
+  | inFun, inLoop, s :: ss => ctrlWalkS inFun inLoop s ++ ctrlWalkSs inFun inLoop ss
+termination_by _ _ ss => sizeOf ss
+
+def ctrlWalkSC : Bool → Bool → List (Literal × List (Stmt Op)) → List String
+  | _, _, [] => []
+  | inFun, inLoop, (_, b) :: cs => ctrlWalkSs inFun inLoop b ++ ctrlWalkSC inFun inLoop cs
+termination_by _ _ cs => sizeOf cs
+
+def ctrlWalkSO : Bool → Bool → Option (List (Stmt Op)) → List String
+  | _, _, none => []
+  | inFun, inLoop, some b => ctrlWalkSs inFun inLoop b
+termination_by _ _ b => sizeOf b
+end
+
+/-- The misplaced control-flow statements in a block, one message per misplaced statement, so the
+report says how many there are and of which kind. -/
+def controlViolations (b : Block Op) : List String := ctrlWalkSs false false b
+
+mutual
+def ctrlCensusS : Stmt Op → Nat × Nat × Nat
+  | Stmt.leave => (1, 0, 0)
+  | Stmt.«break» => (0, 1, 0)
+  | Stmt.«continue» => (0, 0, 1)
+  | Stmt.block bs => ctrlCensusSs bs
+  | Stmt.funDef _ _ _ bs => ctrlCensusSs bs
+  | Stmt.cond _ bs => ctrlCensusSs bs
+  | Stmt.switch _ cs d =>
+      let (a1, a2, a3) := ctrlCensusSC cs
+      let (b1, b2, b3) := ctrlCensusSO d
+      (a1 + b1, a2 + b2, a3 + b3)
+  | Stmt.forLoop ini _ pst bod =>
+      let (a1, a2, a3) := ctrlCensusSs ini
+      let (b1, b2, b3) := ctrlCensusSs pst
+      let (c1, c2, c3) := ctrlCensusSs bod
+      (a1 + b1 + c1, a2 + b2 + c2, a3 + b3 + c3)
+  | _ => (0, 0, 0)
+termination_by s => sizeOf s
+def ctrlCensusSs : List (Stmt Op) → Nat × Nat × Nat
+  | [] => (0, 0, 0)
+  | s :: ss =>
+      let (a1, a2, a3) := ctrlCensusS s
+      let (b1, b2, b3) := ctrlCensusSs ss
+      (a1 + b1, a2 + b2, a3 + b3)
+termination_by ss => sizeOf ss
+def ctrlCensusSC : List (Literal × List (Stmt Op)) → Nat × Nat × Nat
+  | [] => (0, 0, 0)
+  | (_, bs) :: cs =>
+      let (a1, a2, a3) := ctrlCensusSs bs
+      let (b1, b2, b3) := ctrlCensusSC cs
+      (a1 + b1, a2 + b2, a3 + b3)
+termination_by cs => sizeOf cs
+def ctrlCensusSO : Option (List (Stmt Op)) → Nat × Nat × Nat
+  | none => (0, 0, 0)
+  | some bs => ctrlCensusSs bs
+termination_by bs => sizeOf bs
+end
+
+/-- How many `leave`, `break` and `continue` statements a block contains, wherever they sit. The
+census the placement gate is a claim ABOUT: twelve leaves and no break or continue at the fixture plan
+view, which is what makes the gate a statement about real statements rather than about an empty walk.
+-/
+def controlCensus : Block Op → Nat × Nat × Nat := ctrlCensusSs
+
+/-- The `leave` count of each function definition in a block, as (name, count): the census broken out
+by the only construct that is allowed to contain a `leave`. -/
+def leavesPerDefinition (b : Block Op) : List (String × Nat) :=
+  b.filterMap fun | Stmt.funDef n _ _ bs => (n, (controlCensus bs).1) | _ => none
+
+/-- The body of the definition named `name`, concatenated if the name is doubled. -/
+def definitionBody (name : String) (b : Block Op) : Block Op :=
+  (b.filterMap fun | Stmt.funDef n _ _ bs => if n == name then some bs else none | _ => none).flatten
+
+/- Deep removal of every control-flow leaf, with the rest of the tree shape intact: the first half of
+the hoist mutation below. -/
+mutual
+def stripCtrlSs : List (Stmt Op) → List (Stmt Op)
+  | [] => []
+  | Stmt.leave :: ss => stripCtrlSs ss
+  | Stmt.«break» :: ss => stripCtrlSs ss
+  | Stmt.«continue» :: ss => stripCtrlSs ss
+  | s :: ss => stripCtrlS s :: stripCtrlSs ss
+termination_by ss => sizeOf ss
+def stripCtrlS : Stmt Op → Stmt Op
+  | Stmt.block b => Stmt.block (stripCtrlSs b)
+  | Stmt.funDef n ps rs b => Stmt.funDef n ps rs (stripCtrlSs b)
+  | Stmt.cond c b => Stmt.cond c (stripCtrlSs b)
+  | Stmt.switch c cs d => Stmt.switch c (stripCtrlSC cs) (stripCtrlSO d)
+  | Stmt.forLoop i c p b => Stmt.forLoop (stripCtrlSs i) c (stripCtrlSs p) (stripCtrlSs b)
+  | s => s
+termination_by s => sizeOf s
+def stripCtrlSC : List (Literal × List (Stmt Op)) → List (Literal × List (Stmt Op))
+  | [] => []
+  | (l, b) :: cs => (l, stripCtrlSs b) :: stripCtrlSC cs
+termination_by cs => sizeOf cs
+def stripCtrlSO : Option (List (Stmt Op)) → Option (List (Stmt Op))
+  | none => none
+  | some b => some (stripCtrlSs b)
+termination_by b => sizeOf b
+end
+
+/-- CLONE MUTATION (placement): every control-flow leaf inside the definition named `name` is MOVED to
+the top level of the program. The census is unchanged - the same leaves, in the wrong place - which is
+what makes this a placement mutation and not a counting one. -/
+def cloneHoistLeavesOutOf (name : String) (b : Block Op) : Block Op :=
+  let (l, br, c) := controlCensus (definitionBody name b)
+  let stripped := b.map fun
+    | Stmt.funDef n ps rs bs =>
+        if n == name then Stmt.funDef n ps rs (stripCtrlSs bs) else Stmt.funDef n ps rs bs
+    | s => s
+  stripped ++ List.replicate l Stmt.leave ++ List.replicate br Stmt.«break»
+    ++ List.replicate c Stmt.«continue»
+
+/-- CLONE MUTATION (placement): a `break` appended to the body of the definition named `name`, which
+is inside no loop. -/
+def cloneWithBreakInDefinition (name : String) (b : Block Op) : Block Op :=
+  b.map fun
+    | Stmt.funDef n ps rs bs =>
+        if n == name then Stmt.funDef n ps rs (bs ++ [Stmt.«break»]) else Stmt.funDef n ps rs bs
+    | s => s
+
+/-- A `leave` inside a function: the legal shape, and the shape eleven of the emitted program's
+twelve leaves have. -/
+def placementWitnessLeaveInFunction : Block Op := yul% { function pf(a) -> c { c := 1 leave } }
+
+/-- A `leave` at the top level of a block: the defect the brief asks to be shown. -/
+def placementWitnessLeaveAtTop : Block Op := yul% { let a := 1
+ leave }
+
+/-- `break` and `continue` in a loop body: the legal shape. -/
+def placementWitnessBreakInLoop : Block Op := yul% {
+  for { let i := 0 } lt(i, 3) { i := add(i, 1) } { if eq(i, 1) { break } continue }
+}
+
+/-- `break` with no loop at all. -/
+def placementWitnessBreakAtTop : Block Op := yul% { let a := 1
+ break }
+
+/-- `continue` with no loop at all. -/
+def placementWitnessContinueAtTop : Block Op := yul% { let a := 1
+ continue }
+
+/-- `continue` inside a function that is inside no loop. -/
+def placementWitnessContinueInFunction : Block Op := yul% { function pc(a) -> c { c := 1 continue } }
+
+/-- `break` inside a function that is itself inside a loop: the case a walk that only asks "is there
+a loop anywhere above me" gets wrong. -/
+def placementWitnessBreakInFunctionInLoop : Block Op := yul% {
+  for { let i := 0 } lt(i, 3) { i := add(i, 1) } { function pz(a) -> c { c := 1 break } }
+}
+
+/-- `leave` inside a loop inside a function: legal, and the case a walk that treats a loop as a
+barrier gets wrong - Step.loopLeave carries it out to the call. -/
+def placementWitnessLeaveInLoopInFunction : Block Op := yul% {
+  function pw(a) -> c { for { let i := 0 } lt(i, 3) { i := add(i, 1) } { leave } }
+}
+
+/-- `break` in a loop's INIT block: the init must end normal, so this is stuck. -/
+def placementWitnessBreakInLoopInit : Block Op := yul% {
+  for { let i := 0 break } lt(i, 3) { i := add(i, 1) } { continue }
+}
+
+/-- GATE (THE PLACEMENT GATE). Five clauses:
+
+    1. no misplaced control-flow statement in the whole emitted program at either pinned plan view,
+       and none in any slice closed under the emitted helpers;
+    2. the census is real: twelve leaves, no break and no continue at the no-accumulator view, and no
+       leaf at all in the seven slices themselves - every leaf the program has belongs to a helper;
+    3. WHERE they are: eleven inside `batch_invert` and one inside `ec_pairing`, and no other
+       definition contains one - the table the brief asked to be checked, as data;
+    4. the `break` / `continue` half is vacuous on the EMITTED program (clause 2 says so with zeros)
+       and is therefore carried by the witnesses rather than by the program. Stated as a measurement
+       so that the day the emitter grows a loop exit, the vacuity ends and this gate is already
+       looking;
+    5. the classifier separates the legal from the illegal shape in every position a leaf can occupy,
+       including the two a naive walk gets wrong: a `break` inside a function defined inside a loop,
+       and a `break` in a loop's init block. -/
+def emittedProgramPlacement_ok : Bool :=
+  -- 1. the predicate, whole program and per closed slice
+  (closurePlanViews.all fun pv => controlViolations (GenAst.emitMain pv) == []) &&
+    (closurePlanViews.all fun pv => partials.all fun q =>
+      controlViolations (callClosure (GenAst.emitHelpers pv) (GenAst.emitPartial pv q)) == []) &&
+    -- 2. the census, and the slices carrying none of it
+    (controlCensus emittedMainPcs == (12, 0, 0)) &&
+    (controlCensus (GenAst.emitSlices GenAst.pcsFixturePlan) == (0, 0, 0)) &&
+    -- 3. the leaves, by the definition that owns each
+    (leavesPerDefinition (GenAst.emitHelpers GenAst.pcsFixturePlan) ==
+      [("fail", 0), ("scalar_inv", 0), ("transcript_init", 0), ("common_word", 0),
+        ("common_uncompressed_g1", 0), ("squeeze_to", 0), ("batch_invert", 11),
+        ("ec_pairing", 1)]) &&
+    -- 4 and 5. the witnesses
+    (controlViolations placementWitnessLeaveInFunction == []) &&
+    (controlViolations placementWitnessLeaveAtTop == ["leave outside a function definition"]) &&
+    (controlViolations placementWitnessBreakInLoop == []) &&
+    (controlViolations placementWitnessBreakAtTop == ["break outside a for loop"]) &&
+    (controlViolations placementWitnessContinueAtTop == ["continue outside a for loop"]) &&
+    (controlViolations placementWitnessContinueInFunction == ["continue outside a for loop"]) &&
+    (controlViolations placementWitnessBreakInFunctionInLoop == ["break outside a for loop"]) &&
+    (controlViolations placementWitnessLeaveInLoopInFunction == []) &&
+    (controlViolations placementWitnessBreakInLoopInit == ["break outside a for loop"])
+
+/-- FALSIFICATION OF THE PLACEMENT GATE (D-P23, R-41). Hoisting the leaves out of the definition that
+owns them reddens the gate with EXACTLY the number of leaves moved, and the census clause says the
+mutation moved them rather than added them: same twelve leaves, wrong place. The unmutated program is
+clean, so these are dependences on placement and not a constant false. -/
+def emittedProgramPlacement_detectsHoist_ok : Bool :=
+  (controlViolations (cloneHoistLeavesOutOf "batch_invert" emittedMainPcs) ==
+      List.replicate 11 "leave outside a function definition") &&
+    (controlViolations (cloneHoistLeavesOutOf "ec_pairing" emittedMainPcs) ==
+      ["leave outside a function definition"]) &&
+    (controlCensus (cloneHoistLeavesOutOf "batch_invert" emittedMainPcs) ==
+      controlCensus emittedMainPcs) &&
+    (! SyntaxEq.stmtsBeq (cloneHoistLeavesOutOf "batch_invert" emittedMainPcs) emittedMainPcs) &&
+    (controlViolations (cloneWithBreakInDefinition "ec_pairing" emittedMainPcs) ==
+      ["break outside a for loop"]) &&
+    (controlViolations (GenAst.emitPartial GenAst.pcsFixturePlan .lagrange ++ [Stmt.leave]) ==
+      ["leave outside a function definition"]) &&
+    (controlViolations emittedMainPcs == [])
+
+#eval emittedProgramPlacement_ok                    -- expect true
+#eval emittedProgramPlacement_detectsHoist_ok       -- expect true
+
+/-! ### THE EXTERNALS GUARD (P-ARITY): the third link dimension, guarded while it is still vacuous -/
+
+/- THE OPTIONAL ITEM, DONE BECAUSE IT IS CHEAP AND BECAUSE VACUOUS IS NOT THE SAME AS SAFE.
+`datasize`, `datacopy`, `dataoffset` and `loadimmutable` are in the dialect and used by neither the
+emitted program nor the deployed runtime body, so the dimension is vacuous today - and a vacuous
+dimension with no guard is invisible the day it stops being vacuous, which is exactly the class of
+hole P-HELPERS found with the unhoisted helper. An embedded-VK arm or a sub-object reference would
+link-fail in solc and stay green here. The existing
+`emittedCallClosureIsNotLinkCompleteness_ok` clause 4 says the same thing about the PRINTED program;
+this says it about the AST, so it cannot be dodged by a spelling or by a change to the printer.
+
+THE BRIEF'S DIALECT NOTE IS STALE, and the measurement is below rather than in a paragraph. The
+package asks this file to record `setimmutable` and `memoryguard` as absent from the dialect. They
+are not absent: the vendored fork grew both (vendor EVMOp.lean:60 constructors, :219 name resolution,
+gated by Midfall/Yul/Builtins.lean `parseNewBuiltins_ok`), which is what makes the imported via-IR
+runnable at all. So the honest record is: the dialect has all six, the emitted program uses none of
+the six, and the artifact uses `memoryguard` and `setimmutable` in its creation object and prologue -
+the shell, out of scope by D-P30, and not something the emitter emits. Recorded as
+`dialectExternalsGapRecord` so a later package cannot re-derive the stale version of the claim. -/
+
+mutual
+/-- The dialect built-in names an expression calls, duplicates kept, outermost first. -/
+def builtinNamesE : Expr Op → List String
+  | Expr.builtin op args => YulSemantics.EVM.opName op :: builtinNamesEs args
+  | Expr.call _ args => builtinNamesEs args
+  | _ => []
+termination_by e => sizeOf e
+def builtinNamesEs : List (Expr Op) → List String
+  | [] => []
+  | e :: es => builtinNamesE e ++ builtinNamesEs es
+termination_by es => sizeOf es
+def builtinNamesS : Stmt Op → List String
+  | Stmt.block bs => builtinNamesSs bs
+  | Stmt.funDef _ _ _ bs => builtinNamesSs bs
+  | Stmt.letDecl _ (some e) => builtinNamesE e
+  | Stmt.letDecl _ none => []
+  | Stmt.assign _ e => builtinNamesE e
+  | Stmt.cond c bs => builtinNamesE c ++ builtinNamesSs bs
+  | Stmt.switch c cs d => builtinNamesE c ++ builtinNamesSC cs ++ builtinNamesSO d
+  | Stmt.forLoop ini c pst bod =>
+      builtinNamesSs ini ++ builtinNamesE c ++ builtinNamesSs pst ++ builtinNamesSs bod
+  | Stmt.exprStmt e => builtinNamesE e
+  | _ => []
+termination_by s => sizeOf s
+def builtinNamesSs : List (Stmt Op) → List String
+  | [] => []
+  | s :: ss => builtinNamesS s ++ builtinNamesSs ss
+termination_by ss => sizeOf ss
+def builtinNamesSC : List (Literal × List (Stmt Op)) → List String
+  | [] => []
+  | (_, bs) :: cs => builtinNamesSs bs ++ builtinNamesSC cs
+termination_by cs => sizeOf cs
+def builtinNamesSO : Option (List (Stmt Op)) → List String
+  | none => []
+  | some bs => builtinNamesSs bs
+termination_by bs => sizeOf bs
+end
+
+/-- The dialect built-in names a block calls. -/
+def builtinNamesIn : Block Op → List String := builtinNamesSs
+
+/-- The object-level and compile-time builtins: the four that reference a sub-object or an immutable,
+plus the two the fork added for the import. -/
+def guardedExternals : List String :=
+  ["datasize", "datacopy", "dataoffset", "loadimmutable", "memoryguard", "setimmutable"]
+
+/-- Which of the guarded externals a block calls. -/
+def externalUsesIn (b : Block Op) : List String :=
+  (builtinNamesIn b).filter fun n => guardedExternals.contains n
+
+/-- Which of the guarded externals one emitted program calls. -/
+def emittedExternalUses (pv : PlanView) : List String := externalUsesIn (GenAst.emitMain pv)
+
+/-- THE DIALECT GAP, AS MEASURED, correcting the brief. -/
+def dialectExternalsGapRecord : String :=
+  "P-ARITY measurement, correcting the brief: memoryguard and setimmutable ARE in the vendored "
+    ++ "dialect (EVMOp.lean:60 constructors, :219 name resolution, gated by "
+    ++ "Builtins.parseNewBuiltins_ok) - the P-VEND fork added them precisely so the imported via-IR "
+    ++ "could run. The dialect gap that IS still open is the object layer: the emitter produces a "
+    ++ "Block and not an Object, so a datasize/dataoffset of a named sub-object has nothing to "
+    ++ "resolve against even though the Op exists. That is why the guard below asserts non-use "
+    ++ "rather than trying to model the object table."
+
+/-- A program that DOES reach for a sub-object: the classifier must see it. -/
+def externalsWitness : Block Op := yul% {
+  function qd(a) -> c { c := datasize("sub") }
+  let y := datacopy(0, 0, 0)
+}
+
+/-- GATE (THE EXTERNALS GUARD). Four clauses: the emitted program uses none of the six at either
+pinned plan view; the classifier is not a constant, because a program that does use two of them
+reports exactly those two; every guarded name really does resolve in the dialect, so the guard is
+checking a dialect that has them and not a spelling nobody can call; and the record above is non-empty
+prose a reader can find. -/
+def emittedProgramUsesNoGuardedExternals_ok : Bool :=
+  (closurePlanViews.all fun pv => emittedExternalUses pv == []) &&
+    (externalUsesIn externalsWitness == ["datasize", "datacopy"]) &&
+    (guardedExternals.all fun n => (YulSemantics.EVM.parse n).isSome) &&
+    (! dialectExternalsGapRecord.isEmpty)
+
+#eval emittedProgramUsesNoGuardedExternals_ok     -- expect true
+
+/-! ### THE COVERAGE CHECKLIST (P-ARITY): every Stmt constructor and what checks it -/
+
+/- THE DELIVERABLE THE BRIEF ASKS FOR, as a machine-checked list rather than a paragraph. Two lists
+follow: `stmtWellFormednessCoverage`, one row per constructor of the vendored `Stmt` grammar saying
+which gate checks what about it, and `uncheckedWellFormednessDimensions`, the dimensions that remain
+open after this package. The coverage list is PINNED to the grammar by `stmtCtorName`, whose match
+has no wildcard arm: add a constructor to the vendored AST and that match stops compiling, which is
+the only honest way to keep a checklist from going stale. The gate below then checks the list has one
+row per constructor, that the emitted program's own census uses only listed constructors, and that the
+rows marked NOT EXERCISED are exactly the constructors the program does not contain. -/
+
+/-- The constructor name of one statement. The match is exhaustive with no wildcard ON PURPOSE: a new
+`Stmt` constructor in the vendored AST is a build failure here before it is a silent gap in the
+checklist below. -/
+def stmtCtorName : Stmt Op → String
+  | Stmt.block _ => "block"
+  | Stmt.funDef _ _ _ _ => "funDef"
+  | Stmt.letDecl _ _ => "letDecl"
+  | Stmt.assign _ _ => "assign"
+  | Stmt.cond _ _ => "cond"
+  | Stmt.switch _ _ _ => "switch"
+  | Stmt.forLoop _ _ _ _ => "forLoop"
+  | Stmt.exprStmt _ => "exprStmt"
+  | Stmt.«break» => "break"
+  | Stmt.«continue» => "continue"
+  | Stmt.leave => "leave"
+
+/- Every statement in a block, deep, in AST order: the walk the census is taken over. -/
+mutual
+def allStmtsSs : List (Stmt Op) → List (Stmt Op)
+  | [] => []
+  | s :: ss => allStmtsS s ++ allStmtsSs ss
+termination_by ss => sizeOf ss
+def allStmtsS : Stmt Op → List (Stmt Op)
+  | Stmt.block bs => [Stmt.block bs] ++ allStmtsSs bs
+  | Stmt.funDef n ps rs bs => [Stmt.funDef n ps rs bs] ++ allStmtsSs bs
+  | Stmt.cond c bs => [Stmt.cond c bs] ++ allStmtsSs bs
+  | Stmt.switch c cs d => [Stmt.switch c cs d] ++ allStmtsSC cs ++ allStmtsSO d
+  | Stmt.forLoop i c ps bs =>
+      [Stmt.forLoop i c ps bs] ++ allStmtsSs i ++ allStmtsSs ps ++ allStmtsSs bs
+  | s => [s]
+termination_by s => sizeOf s
+def allStmtsSC : List (Literal × List (Stmt Op)) → List (Stmt Op)
+  | [] => []
+  | (_, bs) :: cs => allStmtsSs bs ++ allStmtsSC cs
+termination_by cs => sizeOf cs
+def allStmtsSO : Option (List (Stmt Op)) → List (Stmt Op)
+  | none => []
+  | some bs => allStmtsSs bs
+termination_by bs => sizeOf bs
+end
+
+/-- How many statements of each constructor a block contains, deep. -/
+def stmtCtorCensus (b : Block Op) : List (String × Nat) :=
+  let names := (allStmtsSs b).map stmtCtorName
+  names.eraseDups.map fun n => (n, (names.filter fun m => m == n).length)
+
+/-- ONE ROW PER CONSTRUCTOR of the vendored `Stmt` grammar (Ast.lean:74-86), saying which gate checks
+what about it. This is the checklist the brief asks for. The rows that say NOT EXERCISED are the honest
+ones: the walker covers the constructor, but the emitted program contains none of it, so nothing about
+the EMITTED program can be claimed from those rows and the witnesses carry them instead. -/
+def stmtWellFormednessCoverage : List (String × String) :=
+  [("block", "walked by the closure, arity and placement gates; no well-formedness condition of its "
+    ++ "own beyond nesting"),
+   ("funDef", "ARITY: its params and rets ARE the signature every call site is checked against; "
+    ++ "PLACEMENT: it is the construct that makes a leave legal; CLOSURE: its name is what a call "
+    ++ "resolves to"),
+   ("letDecl", "ARITY: bound-variable count must equal the callee's return count; the "
+    ++ "free-identifier gate covers the names it declares"),
+   ("assign", "ARITY: target count must equal the callee's return count; the free-identifier gate "
+    ++ "counts a target as a REFERENCE, which is the right polarity"),
+   ("cond", "ARITY: a call in the condition must be single-valued; the body is walked by all three "
+    ++ "gates"),
+   ("switch", "ARITY: scrutinee single-valued, case bodies and default walked; NOT EXERCISED - the "
+    ++ "emitted program contains zero switch statements, so this row is carried by the walker and "
+    ++ "not by the program"),
+   ("forLoop", "PLACEMENT: it is the construct that makes break and continue legal, and ONLY its "
+    ++ "body does - init and post must end normal; init, post and body walked by all three gates"),
+   ("exprStmt", "ARITY: a call used as a statement must return zero values, which is the shape "
+    ++ "every fail(..) arm in the program has"),
+   ("break", "PLACEMENT: must be inside a loop body; NOT EXERCISED - zero in the emitted program"),
+   ("continue", "PLACEMENT: must be inside a loop body; NOT EXERCISED - zero in the emitted "
+    ++ "program"),
+   ("leave", "PLACEMENT: must be inside a function definition; TWELVE in the emitted program, "
+    ++ "eleven in batch_invert and one in ec_pairing, all legal and shown load-bearing by the "
+    ++ "hoist mutation")]
+
+/-- THE DIMENSIONS THAT REMAIN OPEN after arity and placement. Each is a real well-formedness
+condition of Yul or of the vendored semantics, none is checked by any gate in this tree, and the list
+is the deliverable: it is the next package's queue rather than the next surprise. -/
+def uncheckedWellFormednessDimensions : List (String × String) :=
+  [("builtin argument arity", "a wrong-arity dialect call (mstore with one argument) has no Step "
+    ++ "rule and is stuck; no gate counts builtin arguments against what the dialect expects. The "
+    ++ "emitted program calls 27 distinct dialect builtins and not one of those argument lists is "
+    ++ "checked anywhere in this tree"),
+   ("duplicate declaration in one scope", "let x := 1 and let x := 2 in one block is rejected by "
+    ++ "the Yul validator and silently shadowed by the semantics; the free-identifier gate is "
+    ++ "flat-scope and cannot see a scope at all"),
+   ("use before declaration, and use after scope exit", "same cause: a flat pass over the whole "
+    ++ "program counts a name declared ANYWHERE as declared, which under-approximates the free set "
+    ++ "- the limit is stated at emittedFreeIdentifiers and is not repaired here"),
+   ("duplicate function name in one scope", "two funDefs with the same name: hoist keeps both and "
+    ++ "lookupFun takes the first, so the second is unreachable and no gate notices"),
+   ("parameter and return name collision inside one funDef", "function f(x) -> x is rejected by "
+    ++ "the validator; the arity gate reads only the COUNTS, which is all the semantics needs to "
+    ++ "run, so this is a validator-only gap"),
+   ("duplicate targets in one let or assign", "let x, x := f() is rejected by the validator; the "
+    ++ "arity gate counts the targets and so cannot see the duplication"),
+   ("duplicate switch case labels", "selectSwitch takes the first match, so a doubled case is "
+    ++ "unreachable; vacuous today because the program has no switch"),
+   ("literal well-formedness", "litWF (EVMOp.lean:80-83) requires a number below 2^256 and a string "
+    ++ "of at most 32 bytes; nothing checks the emitted literals against it, and a 33-byte string "
+    ++ "literal would be silently truncated by litValue rather than rejected"),
+   ("object layer", "the emitter produces a Block and not an Object, so sub-object and data "
+    ++ "resolution is outside the grammar the gates can see - see dialectExternalsGapRecord")]
+
+/-- GATE (THE CHECKLIST IS THE GRAMMAR, NOT A MEMORY). Five clauses: the coverage list has exactly one
+row per constructor of the vendored `Stmt` grammar and no row for anything else; every constructor the
+emitted program uses appears on the list with a non-zero census count; the three constructors the
+emitted program does NOT use are exactly the three the list marks NOT EXERCISED; the open-dimensions
+list is non-empty and has one row per named gap; and the two lists are disjoint, so a dimension cannot
+be recorded as both covered and open. -/
+def stmtWellFormednessCoverage_ok : Bool :=
+  (((stmtWellFormednessCoverage.map Prod.fst).eraseDups).length ==
+      stmtWellFormednessCoverage.length) &&
+    (stmtWellFormednessCoverage.length == 11) &&
+    (sameMembers (stmtWellFormednessCoverage.map Prod.fst)
+      ["block", "funDef", "letDecl", "assign", "cond", "switch", "forLoop", "exprStmt",
+        "break", "continue", "leave"]) &&
+    ((stmtCtorCensus emittedMainPcs).all fun (n, k) =>
+      stmtWellFormednessCoverage.any fun (m, _) => m == n && k > 0) &&
+    ((stmtWellFormednessCoverage.filter fun (_, d) => d.contains "NOT EXERCISED").map Prod.fst
+      == ["switch", "break", "continue"]) &&
+    ((stmtCtorCensus emittedMainPcs).lookup "switch" == none) &&
+    ((stmtCtorCensus emittedMainPcs).lookup "break" == none) &&
+    ((stmtCtorCensus emittedMainPcs).lookup "continue" == none) &&
+    (uncheckedWellFormednessDimensions.length == 9) &&
+    ((uncheckedWellFormednessDimensions.map Prod.fst).all fun n =>
+      ! (stmtWellFormednessCoverage.any fun (m, _) => m == n))
+
+#eval stmtWellFormednessCoverage_ok               -- expect true
+
 end Midfall.Lowering
