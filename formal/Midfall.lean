@@ -73,6 +73,8 @@ import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Inv
 import Midfall.Lowering.GenAst
+import Midfall.Lowering.GenAstPcs
+import Midfall.Lowering.GenAstQuotient
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
