@@ -266,7 +266,7 @@ impl Circuit<F> for PublicWordsCircuit {
         mut layouter: impl Layouter<F>,
     ) -> Result<(), Error> {
         layouter.assign_region(
-            || "identity accumulator words",
+            || "public words",
             |mut region| {
                 for (row, value) in self.instances.iter().enumerate() {
                     config.1.enable(&mut region, row)?;
