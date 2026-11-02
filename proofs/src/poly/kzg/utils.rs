@@ -135,12 +135,14 @@ pub fn construct_intermediate_sets<F: Field + Hash + Ord, Q: Query<F>>(
 /// Computes the dummy openings needed to reduce the number of distinct
 /// multi-open point sets. Each input `(key, point)` pair represents a query
 /// (e.g., a commitment opened at a given point). The function groups queries
-/// by key (by commitment) computes the union of all point sets that contain
-/// more than one point, and returns the missing `(index, point)` pairs that,
-/// once added, make every such point set identical. Keys with a single point
-/// are left untouched (we do this because there are many commitments opened
-/// at a single point, e.g. most selectors; we could also pad those, but the
-/// impact on the proof size would be more significant).
+/// by key (by commitment), computes the union of the point sets of all keys
+/// opened at more than one point, and returns the missing `(index, point)`
+/// pairs that, once added, make every key's point set contain that union.
+///
+/// Keys opened at a single point do not contribute to the union, but they are
+/// padded to it like every other key. The prover, the native and in-circuit
+/// verifiers, and the Solidity verifier generator all rely on this, so
+/// changing it changes the proof format.
 ///
 /// Each returned `index` refers to the position of the key's first occurrence
 /// in the input, so callers can index back into the original query slice.

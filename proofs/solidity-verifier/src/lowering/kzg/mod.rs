@@ -192,7 +192,7 @@ pub(crate) struct DummyQuery {
 /// (using the [`EcPoint`] identity, which is the underlying memory
 /// pointer), unions all non-singleton point sets, and emits the
 /// missing `(first_index, point)` pairs that, once added, make every
-/// non-singleton point set identical.
+/// point set, singletons included, contain that union.
 /// Upstream comment: add dummy queries to reduce the number of distinct
 /// point sets that the KZG verifier must batch.
 ///

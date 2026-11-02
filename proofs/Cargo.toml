@@ -105,8 +105,10 @@ single-h-commitment = []
 
 # Enables a heuristic to reduce the number of distinct multi-open point sets,
 # lowering the verifier MSM length. This can be particularly beneficial for
-# in-circuit verifiers. The heuristic works by adding dummy queries for some
-# polynomials, which may slightly increase proof size.
+# in-circuit verifiers. The heuristic works by adding dummy queries so that
+# polynomials share opening points. Each one adds an evaluation to the proof,
+# so proof size grows, noticeably for circuits with many polynomials opened at
+# a single point.
 fewer-point-sets = []
 
 # Test/debug-only instrumentation used by the Solidity verifier generator to
