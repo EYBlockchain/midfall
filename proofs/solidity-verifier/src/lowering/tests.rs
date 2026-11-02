@@ -1610,7 +1610,7 @@ fn try_new_rejects_flagged_point_pair_layout() {
     assert!(matches!(
         SolidityGenerator::try_new(&params, &vk, config(21)),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
-            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            reason: "point-pair accumulator expects exactly 8 public-input words after offset",
             ..
         })
     ));
@@ -1661,7 +1661,7 @@ fn fixed_scalar_tail_must_match_vk_fixed_bases() {
     assert!(matches!(
         point_pair.validate_for_vk(point_pair_end + num_vk_fixed_bases, num_vk_fixed_bases),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
-            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            reason: "point-pair accumulator expects exactly 8 public-input words after offset",
             ..
         })
     ));
@@ -1791,7 +1791,7 @@ fn accumulator_encoding_validation_rejects_dead_configs() {
     assert!(matches!(
         point_pair.fixed_scalar_count(14),
         Err(GeneratorError::UnsupportedAccumulatorEncoding {
-            reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+            reason: "point-pair accumulator expects exactly 8 public-input words after offset",
             ..
         })
     ));

@@ -199,12 +199,14 @@ impl AccumulatorEncoding {
         self.validate_for_num_instances(num_instances)?;
         let tail = num_instances - (self.offset + self.fixed_payload_words());
         if self.kind == AccumulatorEncodingKind::PointPair && tail != 0 {
+            // The reason below hard-codes the point-pair payload width.
+            const _: () = assert!(AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS == 8);
             return Err(GeneratorError::UnsupportedAccumulatorEncoding {
                 offset: self.offset,
                 num_limbs: self.num_limbs,
                 num_limb_bits: self.num_limb_bits,
                 num_instances,
-                reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+                reason: "point-pair accumulator expects exactly 8 public-input words after offset",
             });
         }
         Ok(tail)
