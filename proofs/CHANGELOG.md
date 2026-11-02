@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Blind logup multiplicities polynomial on non-usable rows for ZK [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
 * Fix cost-model [#435](https://github.com/midnightntwrk/midnight-zk/pull/435)
 * Fix the cost model's proof size under `fewer-point-sets` (dummy multi-open evaluations, including for the permutation σ polynomials) and `single-h-commitment` (a single quotient commitment)
+* Fix `midnight-proofs` failing to build without the `keccak-transcript` feature: the shared transcript imports used by the Blake2b implementations were gated behind it
 
 ### Changed
 * BREAKING: `halo2_solidity_verifier` decodes accumulator points with the dedicated foreign point `is_id` word: each point now occupies 5 public input words (12 for the fully collapsed accumulator), the flag must be 0 or 1, and x/y are not decoded for identity points; verifiers rendered before this change reject the new layout
