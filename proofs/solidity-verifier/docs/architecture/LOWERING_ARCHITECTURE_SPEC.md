@@ -509,7 +509,7 @@ The repository tests the generator through several layers:
 - EVM deployment and verification tests.
 - Trace builds for debugging challenge and proof-read mismatches.
 - Gas checkpoint builds for section-level profiling.
-- IVC and Moonlight integration benches for realistic proof shapes.
+- An IVC integration bench for a realistic recursive proof shape.
 
 Representative local commands:
 
@@ -522,17 +522,12 @@ cargo test --features evm --test codegen
 ```
 
 ```bash
-MOONLIGHT_RUN_WRAP_SOLIDITY_BENCH=1 \
-cargo test --manifest-path /Users/Julien.Coolen/Moonlight/aggregation/Cargo.toml \
-  wrap_circuit_composes_two_fold_children_from_four_dummy_fold_proofs --release \
-  --lib -- --ignored --nocapture
+scripts/run_ivc_bench.sh
 ```
 
-The Moonlight command runs from this repository's Solidity verifier integration
-when Moonlight has a local path dependency pointing back to this checkout. It
-generates Moonlight wrap proof material, repacks it for the Solidity verifier,
-deploys the generated verifier path, and checks the proof on-chain in the local
-EVM harness.
+The IVC bench proves a Midfall IVC chain, renders the final decider verifier,
+deploys it, and checks the proof on-chain in the local EVM harness. Add
+`--trace` to compare the native Rust and Solidity verifier traces.
 
 ## 20. Extension Guidelines
 
@@ -608,4 +603,3 @@ This specification is the architectural overview. More focused details live in:
 - `docs/reference/ASKAMA_TEMPLATE_RUST_MAPPING.md`
 - `docs/reference/QUOTIENT_NUMERATOR_EVALUATOR.md`
 - `docs/reference/QUOTIENT_EVALUATOR_9KB_BYTECODE.md`
-- `docs/reference/TEAM_DEMO_SETUP.md`

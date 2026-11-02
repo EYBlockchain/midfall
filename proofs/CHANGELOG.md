@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 * Add the `halo2_solidity_verifier` crate with Solidity verifier rendering,
-  EVM test harnesses, IVC/Moonlight bench tooling, and audit documentation.
+  EVM test harnesses, IVC bench tooling, and audit documentation.
 * Add `SolidityGenerator::quotient_certificate()` and
   `quotient_certificate_hash()`: a host-side canonical hash of the Solidity
   verifier's quotient lowering plan [#13](https://github.com/EYBlockchain/midfall/pull/13)
@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Share the `z` and `m` polynomials across all logup instances [#279](https://github.com/midnightntwrk/midnight-zk/pull/279)
 
 ### Removed
+* Remove the `halo2_solidity_verifier` team demo runner (`run_team_demo.sh`, `TEAM_DEMO_SETUP.md`) and the Moonlight Sepolia scripts (`deploy_moonlight_sepolia.sh`, `prove_and_verify_moonlight_sepolia.sh`). They built against an unpinned sibling Moonlight branch that no longer matches Midfall; `scripts/run_ivc_bench.sh --trace` still runs the IVC Rust/Solidity trace comparison
 
 ## [0.7.0]
 ### Added

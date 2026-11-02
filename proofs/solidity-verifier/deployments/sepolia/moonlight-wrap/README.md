@@ -55,60 +55,13 @@ transaction emitted zero logs.
 - `Halo2Verifier.runtime.bytecode.hex`: exact deployed verifier runtime bytecode from Sepolia.
 - `deployment.json`: address, transaction, gas, and bytecode metadata.
 
-## Recreate The Deployment
+## Provenance
 
-From `proofs/solidity-verifier`:
-
-```bash
-scripts/install_pinned_solc.sh
-
-cast wallet new ~/.foundry/keystores sepolia-moonlight
-cast wallet address --account sepolia-moonlight
-```
-
-Fund that address with native Sepolia ETH, then deploy. Foundry can prompt for
-the keystore password interactively:
+The contracts were generated from Moonlight's `codex/wrap-bench-cherry-picks`
+wrap bench. The `deploy_moonlight_sepolia.sh` and
+`prove_and_verify_moonlight_sepolia.sh` scripts that produced them have been
+removed. They remain available in git history:
 
 ```bash
-SEPOLIA_RPC_URL=https://... \
-scripts/deploy_moonlight_sepolia.sh \
-  --account sepolia-moonlight \
-  --skip-verify
+git log --diff-filter=D -- proofs/solidity-verifier/scripts/deploy_moonlight_sepolia.sh
 ```
-
-For non-interactive runs, put the keystore password in a local file outside the
-repo, `chmod 600` it, and add `--password-file /path/to/password-file`.
-
-The deploy script writes:
-
-```text
-target/moonlight-wrap-sepolia-deployment.env
-target/moonlight-wrap-sepolia-deployment.json
-```
-
-## Generate And Verify A Fresh Proof
-
-Generate fresh Moonlight calldata, run a free `eth_call`, then broadcast a
-verification transaction:
-
-```bash
-SEPOLIA_RPC_URL=https://... \
-scripts/prove_and_verify_moonlight_sepolia.sh \
-  --moonlight-dir /path/to/Moonlight \
-  --deployment-env target/moonlight-wrap-sepolia-deployment.env \
-  --account sepolia-moonlight \
-  --no-trace \
-  --send
-```
-
-Add `--password-file /path/to/password-file` for non-interactive keystore use.
-Without `--send`, the script only runs `eth_call` and does not spend gas.
-
-## Requirements
-
-- Foundry: `forge` and `cast`.
-- Pinned `solc` installed at `.solc/solc` or supplied via `SOLC`.
-- Sepolia RPC URL.
-- A funded Sepolia account.
-- A Moonlight checkout with the wrap Solidity dump hook enabled.
-- A Sepolia fork that supports EIP-2537 BLS12-381 precompiles.
