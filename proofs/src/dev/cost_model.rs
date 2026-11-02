@@ -851,6 +851,94 @@ mod tests {
         }
     }
 
+    /// Covers shapes `StandardPlonk` does not: a degree-5 gate, so the
+    /// permutation spans two 3-column chunks and the quotient has four limbs;
+    /// advice and fixed columns queried at several rotations; and a trash
+    /// argument.
+    #[derive(Clone, Default)]
+    struct RotationsCircuit;
+
+    #[derive(Clone, Copy)]
+    struct RotationsConfig {
+        advice: [Column<Advice>; 5],
+        q: Column<Fixed>,
+        trash: Selector,
+        instance: Column<Instance>,
+    }
+
+    impl Circuit<Fq> for RotationsCircuit {
+        type Config = RotationsConfig;
+        type FloorPlanner = SimpleFloorPlanner;
+        #[cfg(feature = "circuit-params")]
+        type Params = ();
+
+        fn without_witnesses(&self) -> Self {
+            Self
+        }
+
+        fn configure(meta: &mut ConstraintSystem<Fq>) -> Self::Config {
+            let advice: [Column<Advice>; 5] = std::array::from_fn(|_| meta.advice_column());
+            let q = meta.fixed_column();
+            let trash = meta.complex_selector();
+            let instance = meta.instance_column();
+            meta.enable_equality(instance);
+            advice.iter().for_each(|column| meta.enable_equality(*column));
+
+            meta.create_gate("rotations", |meta| {
+                let a_prev = meta.query_advice(advice[0], Rotation::prev());
+                let a_cur = meta.query_advice(advice[0], Rotation::cur());
+                let a_next = meta.query_advice(advice[0], Rotation::next());
+                let b = meta.query_advice(advice[1], Rotation::cur());
+                let c_next = meta.query_advice(advice[2], Rotation::next());
+                let q_cur = meta.query_fixed(q, Rotation::cur());
+                let q_next = meta.query_fixed(q, Rotation::next());
+                Constraints::without_selector(vec![
+                    q_cur * a_prev * a_cur * a_next * b + q_next * c_next,
+                ])
+            });
+
+            meta.create_gate("trash", |meta| {
+                let d = meta.query_advice(advice[3], Rotation::cur());
+                let e = meta.query_advice(advice[4], Rotation::cur());
+                Constraints::with_additive_selector(trash, vec![d * e])
+            });
+
+            RotationsConfig {
+                advice,
+                q,
+                trash,
+                instance,
+            }
+        }
+
+        fn synthesize(
+            &self,
+            config: Self::Config,
+            mut layouter: impl Layouter<Fq>,
+        ) -> Result<(), Error> {
+            layouter.assign_region(
+                || "",
+                |mut region| {
+                    config.trash.enable(&mut region, 1)?;
+                    for row in 0..4 {
+                        for column in config.advice {
+                            region.assign_advice(|| "", column, row, || Value::known(Fq::ZERO))?;
+                        }
+                        region.assign_fixed(|| "", config.q, row, || Value::known(Fq::ONE))?;
+                    }
+                    region.assign_advice_from_instance(
+                        || "",
+                        config.instance,
+                        0,
+                        config.advice[0],
+                        4,
+                    )?;
+                    Ok(())
+                },
+            )
+        }
+    }
+
     /// With `single-h-commitment` the SRS must also hold the whole quotient,
     /// `(max_degree - 1) * (n - 1)` coefficients, while the Lagrange basis
     /// stays at the circuit size.
@@ -917,6 +1005,19 @@ mod tests {
         let circuit = StandardPlonk::<1>(Fq::from(random_byte[0] as u64));
 
         assert_model_matches_proof(&circuit, 9, 1, &[&[circuit.0]]);
+    }
+
+    #[test]
+    fn cost_model_with_rotations_and_trash() {
+        let model = circuit_model::<_, 48, 32>(&RotationsCircuit, 0);
+        assert_eq!(
+            (model.max_deg, model.permutations, model.trashcans),
+            (5, 6, 1)
+        );
+
+        assert_model_matches_proof(&RotationsCircuit, 9, 0, &[&[Fq::ZERO]]);
+        #[cfg(feature = "committed-instances")]
+        assert_model_matches_proof(&RotationsCircuit, 9, 1, &[&[Fq::ZERO]]);
     }
 
     #[test]
