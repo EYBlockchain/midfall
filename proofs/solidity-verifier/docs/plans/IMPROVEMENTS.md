@@ -67,5 +67,5 @@ This would not automatically reduce gas, but it would make the assembly much
 more auditable and soundness-oriented. For gas, we still need hybrid inlining or
 helper/sharded straight-line evaluators.
 
-Sources: Axiom repo README and audit note, `snark-verifier` docs/source, and
-local checkout paths under `/Users/Julien.Coolen/snark-verifier`.
+Sources: Axiom repo README and audit note, and the `snark-verifier` docs and
+source.

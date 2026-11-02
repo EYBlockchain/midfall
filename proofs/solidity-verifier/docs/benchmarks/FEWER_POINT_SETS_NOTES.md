@@ -87,7 +87,7 @@ commitments in the fused final MSM.
 Command:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \
@@ -130,7 +130,7 @@ commitments staged into the final MSM.
 Diagnostic command:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints,solidity-trace \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \

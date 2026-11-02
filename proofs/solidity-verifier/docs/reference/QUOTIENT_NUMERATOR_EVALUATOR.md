@@ -1052,14 +1052,14 @@ equivalence, so it is not a valid default.
 Run the detailed IVC gas bench:
 
 ```bash
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh
 ```
 
 Run the full IVC Rust/Solidity trace-equivalence test:
 
 ```bash
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 HALO2_SOLIDITY_RUN_IVC_BENCH=1 \
 cargo test --release \
   --features evm,rust-verifier-trace,truncated-challenges,in-circuit-fewer-point-sets \

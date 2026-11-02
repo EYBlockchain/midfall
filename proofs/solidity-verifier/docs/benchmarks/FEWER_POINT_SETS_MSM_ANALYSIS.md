@@ -7,7 +7,7 @@ in this bench.
 I tried the real outer feature:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \

@@ -103,7 +103,7 @@ The same commit also:
 Command:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   scripts/run_ivc_bench.sh
 ```
 
@@ -147,13 +147,13 @@ intermediate work.
 ```sh
 cargo check --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints
 
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   cargo test --release \
   --features evm,truncated-challenges,solidity-gas-checkpoints \
   --test poseidon_fixture poseidon_renders_compiles_and_verifies \
   -- --ignored --nocapture
 
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   cargo test --release \
   --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \

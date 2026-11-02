@@ -3,7 +3,7 @@
 Baseline command:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   scripts/run_ivc_bench.sh
 ```
 
@@ -87,7 +87,7 @@ Validation command:
 ```sh
 cargo check --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints
 
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   scripts/run_ivc_bench.sh
 ```
 
@@ -168,7 +168,7 @@ Validation command:
 ```sh
 cargo check --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints
 
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   scripts/run_ivc_bench.sh
 ```
 
