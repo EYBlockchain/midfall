@@ -47,7 +47,12 @@ impl<'a> SolidityGenerator<'a> {
             config.num_committed_instances,
         )?;
         if let Some(acc_encoding) = config.accumulator {
-            acc_encoding.validate_for_num_instances(config.num_instances)?;
+            // Rejects trailing words for point pairs and fixed-base scalar
+            // tails that don't match `vk`, which later lowering assumes were
+            // validated here.
+            let num_vk_fixed_bases =
+                1 + vk.fixed_commitments().len() + vk.permutation().commitments().len();
+            acc_encoding.validate_for_vk(config.num_instances, num_vk_fixed_bases)?;
         }
         if let Some((column, rotation)) = vk
             .cs()
