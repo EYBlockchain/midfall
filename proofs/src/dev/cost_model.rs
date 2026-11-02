@@ -213,6 +213,28 @@ impl CostOptions {
 
         let column_queries = queries.len();
         queries.iter_mut().for_each(|p| p.rotations.sort());
+
+        // With `fewer-point-sets`, KZG multi-open adds dummy queries to merge
+        // point sets; each one writes an extra evaluation to the proof.
+        let nb_dummy_queries = if crate::poly::kzg::fewer_point_sets_enabled() {
+            // Permutation sigma polynomials are also opened at x. They are not part
+            // of `column_queries`, but `compute_dummy_queries` pads single-point
+            // keys too, so they add dummy evaluations.
+            let sigmas = iter::repeat("0".parse::<Poly>().unwrap()).take(self.permutation.columns);
+            queries.extend(sigmas);
+            let pairs: Vec<_> = (queries.iter().enumerate())
+                .flat_map(|(i, p)| p.rotations.iter().map(move |r| (i, *r)))
+                .collect();
+            let dummies = crate::poly::kzg::compute_dummy_queries(&pairs);
+            for (pair_idx, rotation) in &dummies {
+                queries[pairs[*pair_idx].0].rotations.push(*rotation);
+            }
+            queries.iter_mut().for_each(|p| p.rotations.sort());
+            dummies.len()
+        } else {
+            0
+        };
+
         queries.sort_unstable();
         queries.dedup();
         let point_sets = queries.len();
@@ -257,14 +279,19 @@ impl CostOptions {
             + comp_bytes(1, 1) * self.trash.len();
 
         // Commitments to quotient limbs:
-        // - (max_deg - 1) COMM bytes for the limbs
+        // - (max_deg - 1) COMM bytes for the limbs, or a single COMM with
+        //   `single-h-commitment`
+        #[cfg(not(feature = "single-h-commitment"))]
         let limbs = comp_bytes(self.max_degree - 1, 0);
+        #[cfg(feature = "single-h-commitment")]
+        let limbs = comp_bytes(1, 0);
 
         // Multiopening argument:
         // - COMM bytes for f_commitment
         // - SCALAR bytes per set of points in multiopen argument
         // - COMM bytes for proof
-        let multiopen = comp_bytes(2, point_sets);
+        // - SCALAR bytes per dummy query added by `fewer-point-sets`
+        let multiopen = comp_bytes(2, point_sets + nb_dummy_queries);
 
         let mut nr_rotations = HashSet::new();
         for poly in self.advice.iter() {
@@ -824,68 +851,72 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cost_model() {
-        let k = 9;
-        let mut random_byte = [0u8; 1];
-        OsRng::fill_bytes(&mut OsRng, &mut random_byte);
-        let circuit = StandardPlonk::<1>(Fq::from(random_byte[0] as u64));
+    /// With `single-h-commitment` the SRS must also hold the whole quotient,
+    /// `(max_degree - 1) * (n - 1)` coefficients, while the Lagrange basis
+    /// stays at the circuit size.
+    fn test_params(k: u32, max_degree: usize) -> ParamsKZG<Bls12> {
+        let quotient_k = if cfg!(feature = "single-h-commitment") {
+            (max_degree - 1).next_power_of_two().ilog2()
+        } else {
+            0
+        };
+        let params = ParamsKZG::<Bls12>::unsafe_setup(k + quotient_k, OsRng);
+        #[cfg(feature = "single-h-commitment")]
+        let params = {
+            let mut params = params;
+            params.downsize_lagrange(k);
+            params
+        };
+        params
+    }
 
-        let params = ParamsKZG::<Bls12>::unsafe_setup(k, OsRng);
-        let vk = keygen_vk_with_k::<_, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, k)
+    /// Proves `circuit` and checks that the cost model predicts the proof size.
+    fn assert_model_matches_proof<C: Circuit<Fq>>(
+        circuit: &C,
+        k: u32,
+        nb_committed_instances: usize,
+        instances: &[&[Fq]],
+    ) {
+        let model = circuit_model::<_, 48, 32>(circuit, nb_committed_instances);
+
+        let params = test_params(k, model.max_deg);
+        let vk = keygen_vk_with_k::<_, KZGCommitmentScheme<Bls12>, _>(&params, circuit, k)
             .expect("vk should not fail");
-        let pk = keygen_pk(vk, &circuit).expect("pk should not fail");
+        let pk = keygen_pk(vk, circuit).expect("pk should not fail");
 
-        let instances: &[&[Fq]] = &[&[circuit.0]];
         let mut transcript = CircuitTranscript::<State>::init();
-
         create_proof::<Fq, KZGCommitmentScheme<Bls12>, _, _>(
             &params,
             &pk,
-            std::slice::from_ref(&circuit),
+            std::slice::from_ref(circuit),
             #[cfg(feature = "committed-instances")]
-            0,
+            nb_committed_instances,
             &[instances],
             OsRng,
             &mut transcript,
         )
         .expect("proof generation should not fail");
 
-        let proof = transcript.finalize();
+        assert_eq!(model.size, transcript.finalize().len());
+    }
 
-        assert_eq!(circuit_model::<_, 48, 32>(&circuit, 0).size, proof.len());
+    #[test]
+    fn cost_model() {
+        let mut random_byte = [0u8; 1];
+        OsRng::fill_bytes(&mut OsRng, &mut random_byte);
+        let circuit = StandardPlonk::<1>(Fq::from(random_byte[0] as u64));
+
+        assert_model_matches_proof(&circuit, 9, 0, &[&[circuit.0]]);
     }
 
     #[cfg(feature = "committed-instances")]
     #[test]
     fn cost_model_with_committed_instances() {
-        let k = 9;
         let mut random_byte = [0u8; 1];
         OsRng::fill_bytes(&mut OsRng, &mut random_byte);
         let circuit = StandardPlonk::<1>(Fq::from(random_byte[0] as u64));
 
-        let params = ParamsKZG::<Bls12>::unsafe_setup(k, OsRng);
-        let vk = keygen_vk_with_k::<_, KZGCommitmentScheme<Bls12>, _>(&params, &circuit, k)
-            .expect("vk should not fail");
-        let pk = keygen_pk(vk, &circuit).expect("pk should not fail");
-
-        let instances: &[&[Fq]] = &[&[circuit.0]];
-        let mut transcript = CircuitTranscript::<State>::init();
-
-        create_proof::<Fq, KZGCommitmentScheme<Bls12>, _, _>(
-            &params,
-            &pk,
-            std::slice::from_ref(&circuit),
-            1,
-            &[instances],
-            OsRng,
-            &mut transcript,
-        )
-        .expect("proof generation should not fail");
-
-        let proof = transcript.finalize();
-
-        assert_eq!(circuit_model::<_, 48, 32>(&circuit, 1).size, proof.len());
+        assert_model_matches_proof(&circuit, 9, 1, &[&[circuit.0]]);
     }
 
     #[test]
