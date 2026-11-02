@@ -74,7 +74,7 @@ midnight-curves = { version = "0.2.0", features = [
 default = ["committed-instances"]
 circuit-params = []
 derive_serde = ["midnight-curves/serde"]
-dev-curves = ["midnight-curves/serde"]
+dev-curves = ["midnight-curves/dev-curves", "midnight-curves/serde"]
 
 # Enables a Keccak256-based `TranscriptHash` implementation (from the `sha3`
 # crate) along with the associated `Hashable`/`Sampleable` implementations

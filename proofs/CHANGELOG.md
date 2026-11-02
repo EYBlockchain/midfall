@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Blind logup multiplicities polynomial on non-usable rows for ZK [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
 * Fix cost-model [#435](https://github.com/midnightntwrk/midnight-zk/pull/435)
 * Fix the cost model's proof size under `fewer-point-sets` (dummy multi-open evaluations, including for the permutation σ polynomials) and `single-h-commitment` (a single quotient commitment)
+* Fix the `dev-curves` feature to enable `midnight-curves/dev-curves`, so `midnight-proofs` builds with it outside the workspace
 * Fix `midnight-proofs` failing to build without the `keccak-transcript` feature: the shared transcript imports used by the Blake2b implementations were gated behind it
 
 ### Changed
