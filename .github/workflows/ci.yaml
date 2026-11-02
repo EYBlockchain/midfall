@@ -208,3 +208,14 @@ jobs:
       - name: Run Clippy on `aggregation`
         if: always()
         run: cargo clippy -p midnight-aggregation --all-targets --all-features -- -Dwarnings
+
+      # Library only, so neither dev-dependencies (which turn on
+      # `keccak-transcript`) nor other workspace crates (which turn on
+      # `midnight-curves/dev-curves`) hide feature-gating errors.
+      - name: Run Clippy on `midnight-proofs` without dev-dependencies
+        if: always()
+        run: cargo clippy -p midnight-proofs -- -Dwarnings
+
+      - name: Run Clippy on `midnight-proofs` with all features, without dev-dependencies
+        if: always()
+        run: cargo clippy -p midnight-proofs --all-features -- -Dwarnings
