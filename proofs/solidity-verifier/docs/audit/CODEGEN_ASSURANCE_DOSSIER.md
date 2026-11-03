@@ -89,6 +89,11 @@ Required controls:
 
 - Unsupported shapes fail in `SolidityGenerator::try_new` before rendering.
 - VK and quotient dependencies are pinned by bytecode length and codehash.
+- The VK header stores the canonical quotient certificate hash and the verifier
+  cross-checks it against the generated constant before proof parsing. The hash
+  binds identity order, selector gaps/tails, execution surface, typed quotient
+  expressions, VM bytecode, and constant table without changing the
+  Fiat-Shamir transcript.
 - The proof parser rejects malformed ABI heads, wrong proof length, trailing
   bytes, non-canonical scalars, and non-canonical/off-curve G1 coordinates.
 - The transcript absorbs VK digest, committed identity instance, public input

@@ -274,33 +274,35 @@ continue to pass: 3 transcript tests + 2 IntermediateSets tests.
   word  2..10  : k, n_inv, omega, omega_inv, omega_inv_to_l,
                  has_accumulator, acc_offset, num_acc_limbs,
                  num_acc_limb_bits
-  word 11..14  : G1_BASE        (4 words, EIP-2537 padded)
-  word 15..22  : G2_BASE        (8 words, EIP-2537 padded)
-  word 23..30  : NEG_S_G2_BASE  (8 words, EIP-2537 padded)
-  word 31..    : fixed_comms[i]      (4 words each)
+  word 11      : quotient_manifest_hash
+  word 12..15  : G1_BASE        (4 words, EIP-2537 padded)
+  word 16..23  : G2_BASE        (8 words, EIP-2537 padded)
+  word 24..31  : NEG_S_G2_BASE  (8 words, EIP-2537 padded)
+  word 32..    : fixed_comms[i]      (4 words each)
   word ...     : permutation_comms[i] (4 words each)
   ```
 
   The midnight-proofs migration deliberately bakes per-lookup chunk
   counts, trashcan structure, and `num_simple_selectors` into the
-  Yul body (codegen-time constants), so the runtime VK layout stays
-  *exactly* the same shape as the BN254 / halo2 v0.4 era — only the
-  meaning of the words changed (Fq -> Fr scalars, EIP-2537 padded G1
-  / G2 instead of 64-byte raw points, neg_s_g2 instead of pairing
+  Yul body (codegen-time constants). The runtime VK layout keeps the
+  same contiguous header/base/commitment shape as the BN254 / halo2
+  v0.4 era while adding the quotient certificate word and changing the
+  meaning of the curve words (Fq -> Fr scalars, EIP-2537 padded G1 /
+  G2 instead of 64-byte raw points, neg_s_g2 instead of pairing
   precomputed factors).
 
 * `src/lowering/render/models.rs::tests` — new test module with two
   asserts that pin the byte layout the verifier consumes:
-    * `vk_layout_byte_consistency`: synthesises a 31-scalar +
+    * `vk_layout_byte_consistency`: synthesises a 32-word header +
       2-fixed + 3-perm `Halo2VerifyingKey` and verifies
-      `len() == bytes().len() == 1632 (= 51 * 32)`. Spot-checks the
-      `vk_digest` head, `NEG_S_G2_BASE_MPTR` (word 23),
-      `fixed_comms[0]` (word 31), and `permutation_comms[0]`
-      (word 39) byte offsets.
+      `len() == bytes().len() == 1664 (= 52 * 32)`. Spot-checks the
+      `vk_digest` head, `NEG_S_G2_BASE_MPTR` (word 24),
+      `fixed_comms[0]` (word 32), and `permutation_comms[0]`
+      (word 40) byte offsets.
     * `vk_renders_and_returns_correct_length`: renders the VK
       template and asserts the constructor emits
-      `return(0, 0x0660)` plus the expected `mstore(0x0000, ...)`
-      and `mstore(0x04e0, ...)` lines.
+      `return(0, 0x0680)` plus the expected `mstore(0x0000, ...)`
+      and `mstore(0x0500, ...)` lines.
 
 * Manual `solc 0.8.30` compile of a representative VK render
   (`solc --bin --optimize --via-ir --evm-version cancun`) succeeded
