@@ -13,6 +13,7 @@ use ruint::aliases::U256;
 
 use crate::lowering::{
     abi::{ProofCalldataLayout, TranscriptBufferLayout},
+    diagnostics,
     encoding::{fe_to_u256, g1_to_u256s, g2_to_u256s, ConstraintSystemMeta, Data, Ptr},
     kzg, layout,
     layout::{
@@ -89,6 +90,13 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             header.scalar(Slot::NumAccLimbs, "num_acc_limbs", num_acc_limbs).unwrap();
             header
                 .scalar(Slot::NumAccLimbBits, "num_acc_limb_bits", num_acc_limb_bits)
+                .unwrap();
+            header
+                .scalar(
+                    Slot::QuotientManifestHash,
+                    "quotient_manifest_hash",
+                    U256::ZERO,
+                )
                 .unwrap();
             header
                 .g1(
@@ -276,6 +284,15 @@ impl<'params, 'meta> VerifierBuildInputs<'params, 'meta> {
             final_quotient_build.consts, quotient_program_build.consts,
             "quotient constants changed after VK payload materialization"
         );
+        let quotient_manifest_hash = diagnostics::quotient_certificate_from_parts(
+            &final_meta.protocol.quotient,
+            &final_quotient_plan,
+            &final_quotient_build,
+            &final_quotient_plan.sorted_simple,
+        )
+        .certificate_hash;
+        vk.constants[layout::VkHeaderSlot::QuotientManifestHash.word()] =
+            ("quotient_manifest_hash", quotient_manifest_hash);
 
         vk.quotient_const_offset_words = Some(quotient_const_offset_words);
         vk.quotient_const_words = quotient_const_words;

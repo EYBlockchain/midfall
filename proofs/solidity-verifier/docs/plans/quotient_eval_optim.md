@@ -100,7 +100,7 @@ VK.
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh --skip-srs-download
 ```
 
@@ -138,7 +138,7 @@ into a temp slot, and replaces later appearances with `PUSH_TEMP`.
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh --skip-srs-download
 ```
 
@@ -171,7 +171,7 @@ and lets the existing fused add-mul opcodes trigger more often.
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh --skip-srs-download
 ```
 
@@ -218,7 +218,7 @@ The helper mode currently emits:
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh --skip-srs-download
 ```
 
@@ -266,7 +266,7 @@ pass over `SELECTOR_ACC_MPTR`.
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 scripts/run_ivc_bench.sh --skip-srs-download
 ```
 
@@ -301,7 +301,7 @@ system larger and more expensive for the current two-leaf IVC Keccak bench.
 Command used:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \
@@ -311,7 +311,7 @@ cargo test --release \
 Byte-VM baseline command:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \

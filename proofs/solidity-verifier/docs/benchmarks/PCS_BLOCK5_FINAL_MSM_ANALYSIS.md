@@ -60,7 +60,7 @@ e(final_com - v*G + x3*pi, [1]_2) = e(pi, [s]_2)
 This corresponds to the `x4` batching stage in:
 
 ```text
-/Users/Julien.Coolen/midfall/proofs/src/poly/kzg/mod.rs
+proofs/src/poly/kzg/mod.rs
 ```
 
 around the verifier `multi_open` logic:

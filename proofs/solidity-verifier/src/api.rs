@@ -199,12 +199,14 @@ impl AccumulatorEncoding {
         self.validate_for_num_instances(num_instances)?;
         let tail = num_instances - (self.offset + self.fixed_payload_words());
         if self.kind == AccumulatorEncodingKind::PointPair && tail != 0 {
+            // The reason below hard-codes the point-pair payload width.
+            const _: () = assert!(AccumulatorEncoding::POINT_PAIR_PUBLIC_INPUT_WORDS == 8);
             return Err(GeneratorError::UnsupportedAccumulatorEncoding {
                 offset: self.offset,
                 num_limbs: self.num_limbs,
                 num_limb_bits: self.num_limb_bits,
                 num_instances,
-                reason: "point-pair accumulator encoding does not support a fixed-base scalar tail",
+                reason: "point-pair accumulator expects exactly 8 public-input words after offset",
             });
         }
         Ok(tail)
@@ -260,11 +262,12 @@ pub struct QuotientIdentityManifest {
 
 /// Canonical certificate for the quotient numerator lowering.
 ///
-/// The certificate is a host-side diagnostic and release artifact; it is not
-/// embedded in, or checked by, any generated contract. It describes the
-/// lowering plan rather than the rendered Yul. Human-readable names remain in
-/// [`QuotientIdentitySource`] for review, but the hash intentionally ignores
-/// display-only names.
+/// The certificate is a host-side diagnostic and release artifact. Its
+/// canonical hash is also stored in the generated VK header and checked by the
+/// verifier, but it is not absorbed into the Fiat-Shamir transcript. It
+/// describes the lowering plan rather than the rendered Yul. Human-readable
+/// names remain in [`QuotientIdentitySource`] for review, but the hash
+/// intentionally ignores display-only names.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QuotientCertificate {
     /// Canonical certificate format version.

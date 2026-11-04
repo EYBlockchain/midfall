@@ -174,7 +174,7 @@ runtime artifact below the EIP-170 limit.
 Small Solidity smoke:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --features evm,truncated-challenges,fewer-point-sets,solidity-gas-checkpoints \
   --test poseidon_fixture poseidon_renders_compiles_and_verifies \
   -- --ignored --nocapture
@@ -183,7 +183,7 @@ cargo test --features evm,truncated-challenges,fewer-point-sets,solidity-gas-che
 Full IVC Solidity bench:
 
 ```sh
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 ./scripts/run_ivc_bench.sh --skip-srs-download
 ```
 

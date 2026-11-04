@@ -68,14 +68,14 @@ scripts/run_ivc_bench.sh --check-only
 Use an existing SRS directory or also run the off-circuit Midfall twin:
 
 ```
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
   scripts/run_ivc_bench.sh --native-midfall
 ```
 
 Manual compile command:
 
 ```
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \
@@ -85,7 +85,7 @@ cargo test --release \
 Manual full gas-checkpoint command:
 
 ```
-SRS_DIR=/Users/Julien.Coolen/midfall/zk_stdlib/examples/assets \
+SRS_DIR=../../zk_stdlib/examples/assets \
 cargo test --release \
   --features evm,truncated-challenges,in-circuit-fewer-point-sets,solidity-gas-checkpoints \
   --test ivc_keccak_solidity ivc_final_keccak_solidity_e2e \

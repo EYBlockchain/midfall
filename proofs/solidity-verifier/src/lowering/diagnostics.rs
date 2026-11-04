@@ -107,14 +107,26 @@ pub(crate) fn quotient_identity_manifest(
 /// Build the quotient certificate from the finalized lowering plan used by
 /// render/repack paths.
 pub(crate) fn quotient_certificate(inputs: VerifierBuildInputs<'_, '_>) -> QuotientCertificate {
-    let plan = inputs.lowering_plan();
+    quotient_certificate_for_plan(&inputs.lowering_plan())
+}
 
+fn quotient_certificate_for_plan(
+    plan: &crate::lowering::plan::LoweringPlan,
+) -> QuotientCertificate {
     quotient_certificate_from_parts(
         &plan.meta.protocol.quotient,
         &plan.quotient.plan,
         &plan.quotient.build,
         &plan.quotient.sorted_simple,
     )
+}
+
+/// Return the canonical quotient certificate hash for an already-built
+/// lowering plan.
+pub(crate) fn quotient_certificate_hash_for_plan(
+    plan: &crate::lowering::plan::LoweringPlan,
+) -> U256 {
+    quotient_certificate_for_plan(plan).certificate_hash
 }
 
 /// Return the canonical quotient certificate hash.

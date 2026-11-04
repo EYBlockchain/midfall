@@ -85,6 +85,7 @@
                 success := and(success, eq(mload(ACC_OFFSET_MPTR), {{ expected_acc_offset }}))
                 success := and(success, eq(mload(NUM_ACC_LIMBS_MPTR), {{ expected_num_acc_limbs }}))
                 success := and(success, eq(mload(NUM_ACC_LIMB_BITS_MPTR), {{ expected_num_acc_limb_bits }}))
+                success := and(success, eq(mload(QUOTIENT_CERTIFICATE_HASH_MPTR), EXPECTED_QUOTIENT_CERTIFICATE_HASH_WORD))
                 if iszero(success) { revert(0, 0) }
                 //
                 // The checks below validate the dynamic ABI envelope before the

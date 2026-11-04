@@ -130,9 +130,9 @@ impl<'a> SolidityGenerator<'a> {
     /// Return the quotient certificate for this generator.
     ///
     /// The certificate is derived from the same finalized lowering plan used by
-    /// rendering and proof repacking. It is a host-side artifact only: it is
-    /// not embedded in the generated contracts or absorbed into the
-    /// Fiat-Shamir transcript.
+    /// rendering and proof repacking. Its canonical hash is stored in the
+    /// generated VK payload and checked by the verifier, but it is not absorbed
+    /// into the Fiat-Shamir transcript.
     pub fn quotient_certificate(&self) -> QuotientCertificate {
         crate::lowering::diagnostics::quotient_certificate(self.inputs())
     }

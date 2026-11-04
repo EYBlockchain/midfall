@@ -2,7 +2,9 @@ use std::{io, io::Read};
 
 use blake2b_simd::{Params, State as Blake2bState};
 use ff::{FromUniformBytes, PrimeField};
-use group::{prime::PrimeCurveAffine, GroupEncoding, UncompressedEncoding};
+use group::GroupEncoding;
+#[cfg(feature = "keccak-transcript")]
+use group::{prime::PrimeCurveAffine, UncompressedEncoding};
 #[cfg(feature = "dev-curves")]
 use midnight_curves::bn256::{Fr, G1};
 #[cfg(feature = "keccak-transcript")]
@@ -10,7 +12,6 @@ use num_bigint::BigUint;
 #[cfg(feature = "keccak-transcript")]
 use sha3::{Digest, Keccak256};
 
-#[cfg(feature = "keccak-transcript")]
 use crate::transcript::{
     Hashable, Sampleable, TranscriptHash, BLAKE2B_PREFIX_CHALLENGE, BLAKE2B_PREFIX_COMMON,
 };

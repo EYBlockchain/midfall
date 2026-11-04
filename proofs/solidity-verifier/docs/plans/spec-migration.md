@@ -1,6 +1,6 @@
 ## Scope
 
-Migrate the codegen-based Solidity verifier in `/Users/Julien.Coolen/halo2-solidity-verifier-exp` to consume `midnight-proofs` (path: `../midfall/proofs`) instead of vendored halo2-proofs v0.4. Target a single end-to-end success: verifying the existing `proof.bin / vk.bin / instance.be` fixtures at `/Users/Julien.Coolen/midfall/proofs/solidity-verifier/fixtures/poseidon/` produced by the keccak-branch poseidon example.
+Migrate the codegen-based Solidity verifier in `halo2-solidity-verifier-exp` to consume `midnight-proofs` (path: `../midfall/proofs`) instead of vendored halo2-proofs v0.4. Target a single end-to-end success: verifying the existing `proof.bin / vk.bin / instance.be` fixtures at `proofs/solidity-verifier/fixtures/poseidon/` produced by the keccak-branch poseidon example.
 
 This is a multi-layer rewrite. The halo2-proofs v0.4 verifier and midnight-proofs verifier differ on at least these axes:
 

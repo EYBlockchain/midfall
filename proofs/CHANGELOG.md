@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 * Add the `halo2_solidity_verifier` crate with Solidity verifier rendering,
-  EVM test harnesses, IVC/Moonlight bench tooling, and audit documentation.
+  EVM test harnesses, IVC bench tooling, and audit documentation.
 * Add `SolidityGenerator::quotient_certificate()` and
   `quotient_certificate_hash()`: a host-side canonical hash of the Solidity
   verifier's quotient lowering plan [#13](https://github.com/EYBlockchain/midfall/pull/13)
@@ -23,10 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Fix cost model to account for committed instance column evaluations [#280](https://github.com/midnightntwrk/midnight-zk/pull/280)
 * Increase number of blinding factors to account for logup helper polynomials [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
 * Blind logup multiplicities polynomial on non-usable rows for ZK [#312](https://github.com/midnightntwrk/midnight-zk/pull/312)
+* Fix cost-model [#435](https://github.com/midnightntwrk/midnight-zk/pull/435)
+* Fix the cost model's proof size under `fewer-point-sets` (dummy multi-open evaluations, including for the permutation σ polynomials) and `single-h-commitment` (a single quotient commitment)
+* Fix the `dev-curves` feature to enable `midnight-curves/dev-curves`, so `midnight-proofs` builds with it outside the workspace
+* Fix `midnight-proofs` failing to build without the `keccak-transcript` feature: the shared transcript imports used by the Blake2b implementations were gated behind it
 
 ### Changed
+* BREAKING: `halo2_solidity_verifier` stores the quotient certificate hash in VK header word 11 and the verifier rejects a VK whose stored hash differs from its generated constant; the G1/G2 base points, quotient payload, and commitments each move up one word, so verifiers and VKs rendered before this change are incompatible with ones rendered after it
 * BREAKING: `halo2_solidity_verifier` decodes accumulator points with the dedicated foreign point `is_id` word: each point now occupies 5 public input words (12 for the fully collapsed accumulator), the flag must be 0 or 1, and x/y are not decoded for identity points; verifiers rendered before this change reject the new layout
 * BREAKING: `halo2_solidity_verifier` `AccumulatorEncoding::point_pair` matches the Moonlight wrap circuit, which constrains both accumulator points to be non-identity: each point is only its x/y coordinate words (`POINT_PAIR_PUBLIC_INPUT_WORDS` is 8), there is no identity flag word, and a point that decodes to the EIP-2537 identity is rejected; point-pair verifiers rendered before this change reject the new layout
+* `halo2_solidity_verifier` reports a point-pair accumulator with extra trailing public-input words as `point-pair accumulator expects exactly 8 public-input words after offset` instead of as an unsupported fixed-base scalar tail, so a stale flagged Moonlight wrap layout points at the word count rather than at fixed bases
 * Simplify `CommitmentReference` by removing unused `Chopped` variant [#314](https://github.com/midnightntwrk/midnight-zk/pull/314)
 * Split linearization polynomial into non-constant and constant parts, removing the generator point from the MSM [#313](https://github.com/midnightntwrk/midnight-zk/pull/313)
 * Remove unnecessary polynomial padding in KZG multi-open [#276](https://github.com/midnightntwrk/midnight-zk/pull/276)
@@ -43,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 * Share the `z` and `m` polynomials across all logup instances [#279](https://github.com/midnightntwrk/midnight-zk/pull/279)
 
 ### Removed
+* Remove the `halo2_solidity_verifier` team demo runner (`run_team_demo.sh`, `TEAM_DEMO_SETUP.md`) and the Moonlight Sepolia scripts (`deploy_moonlight_sepolia.sh`, `prove_and_verify_moonlight_sepolia.sh`). They built against an unpinned sibling Moonlight branch that no longer matches Midfall; `scripts/run_ivc_bench.sh --trace` still runs the IVC Rust/Solidity trace comparison
 
 ## [0.7.0]
 ### Added

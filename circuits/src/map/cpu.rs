@@ -87,7 +87,10 @@ pub struct MapMt<F: CircuitField, H: HashCPU<F, F>> {
     map: HashMap<BigUint, F>,
     // Tree nodes, organised from leaves to root (though the root is treated separately)
     default_nodes: [F; TREE_HEIGHT as usize],
-    _marker: PhantomData<H>,
+    // `H` is only used through associated functions and is never stored, so the
+    // marker must not inherit its auto traits: hash chips such as `PoseidonChip`
+    // hold `Rc` state and would otherwise make the map `!Send` and `!Sync`.
+    _marker: PhantomData<fn() -> H>,
 }
 
 impl<F: CircuitField, H: HashCPU<F, F>> PartialEq for MapMt<F, H> {
@@ -270,6 +273,13 @@ mod tests {
         fn hash(inputs: &[midnight_curves::Fq]) -> midnight_curves::Fq {
             inputs[0]
         }
+    }
+
+    #[test]
+    fn map_is_send_and_sync_with_non_send_hash_chip() {
+        fn assert_send_sync<T: Send + Sync>() {}
+
+        assert_send_sync::<MapMt<midnight_curves::Fq, PoseidonChip<midnight_curves::Fq>>>();
     }
 
     #[test]
