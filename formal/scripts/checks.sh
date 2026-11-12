@@ -4,6 +4,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+echo '== memory headroom (report only, D-P31) =='
+# A REPORT, NOT A GATE. This host has been taken down twice by a lean process: 8.7 GB
+# peak RSS killed a session, and a per-unit native_decide reached 16.8 GB with swap past
+# 50 GB. Those numbers used to live only as comments in Midfall/Lowering/RunEmitted.lean,
+# so nothing carried them to the next package. This line makes headroom visible on every
+# gate run, so drift shows up before it is fatal.
+#
+# It cannot fail the build, and that is deliberate: a memory report that reddens a green
+# tree teaches people to delete the report. ram_guard.sh exits 0 whatever it finds, and
+# the || true below covers even a broken guard. The budget that CAN kill is applied by
+# whoever wraps a run: scripts/ram_guard.sh --limit 6G -- lake build.
+#
+# Scope is THIS process tree, never every process named lean: an earlier watchdog summed
+# all lean and charged this session for two unrelated ones already running on the host.
+# Measured cost of this section: 0.07 s per call (5 calls in 0.349 s), on a gate run
+# that takes 450-480 s: unmeasurable. checks.sh went 480 s before this line and
+# 451 s after it, and it still exits 0 (D-P31).
+bash scripts/ram_guard.sh --quiet --limit 6G --warn 4G || true
 echo '== frozen statements hash =='
 sha256sum -c Midfall/Statements.sha256
 

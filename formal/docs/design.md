@@ -1063,3 +1063,121 @@ the current verifier.
   the truncation bound as a **named, parameterised assumption**, so deployed KS becomes a
   theorem conditional on one precise conjecture, with the non-vacuity checks recorded
   (`B = r` satisfies it; `c = (1,-1)` refutes any `B` below about 2^126).
+
+## D-P31 (ADOPTED, round 73): RAM is a budgeted resource - a package that evaluates in the VM states a peak, runs under `ram_guard.sh`, and reports the measurement
+
+**Decision (human), from P-RAM (`docs/plans/P-RAM.md`).** The cost of VM evaluation was
+known, measured, and correctly acted on - and it lived as comments inside
+`Midfall/Lowering/RunEmitted.lean`. Comments do not bind the next package, so the next
+package could repeat the crash exactly. Two crashes are on the record:
+
+| moment | peak lean RSS | outcome |
+|---|---|---|
+| pre-crash session | **8.7 GB** (six `native_decide` in one process) | session killed |
+| per-unit `native_decide` | **16.8 GB** on a 32 GB host | **host went down**, 52-72 GB swap |
+| per-unit `#eval` | 3.8-4.6 GB | killed by the package own watchdog |
+| P-EXEC as shipped | **2.34 GB** | green |
+
+**Root cause is structural, not a leak.** `EvmState.memory` is `Nat -> UInt8`, so every
+`mstore` wraps the previous function and a deep run builds a long closure chain that is
+both slow and memory-heavy. Compounding it, each unit re-spelled the emitted helper block
+until P-EXEC shared it (`RunEmitted.lean:215-220`, `runnableHelpers`): fourteen live
+copies of one block was a 4.2 GB process. Sharing was a memory fix, not a semantic one.
+
+### The rule
+
+Any package that evaluates in the VM - `#eval`, `native_decide`, a KAT that runs the
+interpreter - must:
+
+1. **state an expected peak** in its plan or module header BEFORE running it;
+2. **run under the guard**: `scripts/ram_guard.sh --limit 6G -- lake build`;
+3. **report the measured peak RSS** in its results, taken from the guard own output.
+
+A gate that cannot run within budget is **narrowed or dropped, with the reason recorded**
+- exactly what P-EXEC did when it withdrew the `Instances` theorem form and left the
+lifting lemma in a header for a later, narrower unit set. **A gate that kills the session
+is not a pass**, and withdrawing with a named blocker is the sanctioned response rather
+than a failure.
+
+### The tool
+
+`scripts/ram_guard.sh` - bash 3.2, no dependencies beyond `ps`, `awk`, `sysctl`,
+`vm_stat`. Report mode prints physical memory, bytes free, swap used, the RSS of
+**this process tree**, and a verdict `OK / TIGHT / DANGER`. Wrapper mode launches a
+command, samples its tree, and kills **only that subtree** when a budget is crossed.
+Two budgets, because two shapes fail differently:
+
+* `--limit` - the whole tree summed. Right for a single heavy evaluation.
+* `--proc-limit` - the largest single process. Right for a parallel build, which
+  legitimately sums to a lot while no one worker is dangerous.
+
+**Scoping is by process tree, never by process name.** An earlier watchdog summed every
+process named `lean` and charged this session for two unrelated `lean` processes already
+running on the host (~660 MB each). The guard walks the `ppid` closure from a pid it owns,
+so foreign work is neither counted nor killed.
+
+### Measured baseline on this host (32 GB physical, 10 logical CPUs)
+
+Never measured before; every future budget is set against these rows. All three are the
+guard own output, tree-scoped, nothing else running.
+
+| run | peak tree RSS | largest single process | wall |
+|---|---|---|---|
+| `lake build` warm (5154 jobs replayed) | **0.74 GiB** | 754 MiB (`lake`) | 2.4 s |
+| `lake build` cold: all 107 `Midfall` modules recompiled, deps cached | **16.86 GiB** | 4.28 GiB (`lean`, kernel maxrss) | 112 s |
+| `scripts/checks.sh` (all 13 sections) | **4.94 GiB** | 4.27 GiB (`lean`) | 480 s |
+
+**The cold-build row is the one that changes behaviour.** An ordinary cold build of this
+project own modules - no `native_decide`, nothing exotic - already sums to 16.86 GiB
+across ten concurrent `lean` workers, the same magnitude as the number that took the
+host down. The difference is shape, not size: a build is ten processes at 2-4 GB each for
+two minutes, while both crashes were ONE process climbing alone. Consequences:
+
+* `--limit 6G -- lake build` would kill a cold build at 16.86 GiB. For a build use
+  `--proc-limit 6G --limit 24G`; for a single heavy evaluation the tree budget is the
+  right one. The default `--limit 6G` is chosen for the crash signature, not for the
+  build, and that is why `checks.sh` only *reports* against it.
+* a package adding a per-unit `native_decide` is adding to 16.86 GiB, not starting from
+  zero, if it runs alongside a cold build.
+* a warm `lake build` costs 0.74 GiB and 2.4 s, so wrapping the routine build is free.
+* `checks.sh` at 4.94 GiB tree / 4.27 GiB single means the shipped gate already sits
+  just under a 6 GiB budget with ~1 GiB of margin. That margin is the number to watch.
+
+### Why the gate line is a report and not a gate
+
+`checks.sh` prints one memory line and cannot fail on it. A memory report that reddens a
+green tree teaches people to delete the report; enforcement belongs to whoever wraps the
+run, where the budget was stated deliberately. The line costs 0.07 s per call; the gate
+ran 480 s before the line was added and 451 s after it - the difference is KAT-section
+variance, not the report - and it exits 0 whatever it finds (`|| true` covers even a
+broken guard).
+
+### Non-vacuity of the tool itself (D-P23 / R-41 applied to tooling)
+
+A guard that has never been observed to fire is decoration. `ram_guard.sh --selftest`
+demonstrates three things and is re-runnable:
+
+1. a runaway climbing past a 300 MB budget inside the tree **is killed** (exit 137);
+2. a well-behaved child under budget **passes untouched** (exit 0);
+3. a foreign allocator outside the guarded tree **survives** - the mis-crediting
+   regression test, which a name-matching watchdog would fail.
+
+**Demonstrated on real workloads, not just a toy allocator:**
+
+* `lake env lean Midfall/Lowering/RunEmitted.lean` under `--proc-limit 1G` - **killed,**
+  exit 137, "single-process 1.81 GiB > proc-limit 1.00 GiB", the whole 3-process tree
+  (lake + lean + worker) died, nothing outside it touched.
+* the SAME command under `--proc-limit 6G` - **passed untouched,** exit 0, peak tree
+  2.81 GiB, largest single `lean` 2.15 GiB, kernel maxrss 2.17 GiB. That last number
+  independently confirms the 2.34 GB the `RunEmitted.lean` header claims: the guard
+  measures what the comment asserts.
+* `lake build` under a 6G budget - passed untouched, exit 0, peak tree 0.74 GiB.
+* a 4 GB runaway killed at a 1 GB budget while a 670 MB bystander outside the tree grew
+  undisturbed.
+
+**Recorded failure mode.** Sampling is not tracing: a spike that starts and ends between
+two polls survives the guard. `--kernel` closes that gap for the largest single process
+by reading the kernel own maxrss, and the measured kill latency at a 0.2 s poll was under
+one sampling interval plus the grace period. A run that can OOM the host inside 200 ms is
+not caught by any sampler; both recorded crashes climbed over minutes and are caught.
+

@@ -64,6 +64,19 @@ See PLAN 14.7 for dependency order and **PLAN 14.8 for the M3 scope cut**. Board
 
 ## Standing notes for agents (each cost someone an hour)
 
+- **RAM budget (D-P31, standing).** Any package that evaluates in the VM must state an
+  expected peak RSS *before* running, run under `scripts/ram_guard.sh`
+  (`--limit 6G -- <cmd>` for one heavy evaluation; `--proc-limit 6G --limit 24G` for a
+  parallel build), and report the **measured** peak in its results. Measured baselines on
+  this 32 GB host: warm `lake build` 0.74 GiB, cold rebuild of the 107 `Midfall` modules
+  16.86 GiB tree / 4.28 GiB single process, `scripts/checks.sh` 4.94 GiB tree. A gate
+  that cannot run within budget is **narrowed or dropped with the reason recorded**
+  (P-EXEC precedent) - never shipped as-is, because a gate that kills the session is not
+  a pass. The guard scopes to its own process tree, never to all `lean`
+  (`--selftest` proves both halves), and `checks.sh` prints a memory line that is a
+  report and cannot fail the build.
+
+
 - **`lake env lean FILE` does not apply lakefile options** such as
   `autoImplicit = false`. It accepts code `lake build` rejects. Two agents have been
   bitten. Every number you report must come from `lake build` and
