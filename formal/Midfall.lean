@@ -80,6 +80,7 @@ import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
+import Midfall.Lowering.RunEmitted
 import Midfall.Lowering.Obligations
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
