@@ -1293,3 +1293,65 @@ Reconciliation is a **future milestone**. It is not blocking the current proof w
 the codec lemma, the `Bridge` step lemmas), and nothing in the current queue depends on the
 newer templates. Recorded here so the choice is explicit rather than drift nobody noticed —
 which is the same failure class as the stale poseidon fixture that cost M0 a package.
+
+## D-P34 (DECIDED by the orchestrator, round 113): do NOT assume the r-torsion count — derive it from a cyclic subgroup
+
+**Choice: derive, with a named assumption only as a documented fallback.**
+
+I had been telling the human this was research-grade and needed an assumption. **That was
+wrong.** `PrimeOrderWith G₁ p` is `Nat.card G₁ = p` (noted at `Eip2537.lean:230`). The
+research-grade statement is about the **full r-torsion subgroup** `E(Fp)[r]`. Nothing requires
+`G₁` to be that subgroup. Taking `G₁ := Subgroup.zpowers G` for the standard generator:
+
+```
+Nat.card ⟨G⟩ = orderOf G
+orderOf G = r     from:  r • G = 0,  G ≠ 0,  r prime
+```
+
+Elementary group theory. **And `r • G = 0` is already computed in the tree** — P-CURVE's
+`g1GenFrame_valid` (`Bls12_381G1.lean:217`) is a kernel `decide` of exactly that, by the same
+affine double-and-add the precompile model uses.
+
+**Rationale for choosing derive over assume:** every assumption we avoid is worth more than the
+same assumption made early. The trusted base already carries the pairing, the EIP-2537
+semantics, `p = r`, and the solc hop; adding a fifth when the fourth was unnecessary would have
+been a permanent cost for a temporary convenience. If the derivation fails, the failure is
+recorded with its cause and the assumption can be revisited **with a reason** rather than as a
+default.
+
+**Instruction issued:** P-HOLDS2 was told mid-flight to attempt the derivation and to report a
+concrete failure mode rather than silently falling back. Watch for the codec-direction subtlety:
+`g1Valid` quantifies over every `Q : G₁`, so the codec must be defined on the subgroup and
+`g1Add` must land back inside it.
+
+## D-P35 (DECIDED by the orchestrator, round 113): widen the world projection rather than narrow the evaluator
+
+**Choice: introduce a named `CalleeView` = the `CallWorld` fields plus `address` and
+`keccakOf`, and state `rel_worldLocal` against that.**
+
+P-BRIDGE proved `Evaluator.rel_worldLocal` is **false as stated**, with no axioms at all:
+`calleeState` (`Bridge.lean:797`) reads `st.env.address` and needs `env.keccakOf`, but
+`CallWorld` (`vendor/.../EVMExec.lean:445`) has exactly 11 fields and contains neither. A
+runtime that calls `caller()` or `keccak256` separates two states the hypothesis declares
+equal.
+
+**Why widen rather than narrow:** the evaluator genuinely needs `keccakOf` — the transcript *is*
+its job — so "stop `calleeState` reading those fields" is not available. Widening is a
+**stronger hypothesis on callers**, and it is trivially satisfiable: within one contract
+execution the address and the hash function do not change. So it costs nothing real.
+
+**Why a named projection rather than bolting two fields onto the existing relation:** the defect
+was that a projection silently under-described what the callee reads. A named `CalleeView`
+makes the gap a **structure** rather than a comment — the next field `calleeState` learns to
+read must be added there or the statement goes false again, and a false statement is what we
+just spent a package discovering.
+
+**Consequences to carry:**
+* `honestCalls_worldLocal` becomes applicable to the honest fold once `Evaluator.rel` is
+  restated against `CalleeView`.
+* **`attack.md` line 36's FIX does not hold for the evaluator slot as sketched** — a
+  plan-level correction, not a local one. Recorded here so the plan and the code do not
+  silently disagree.
+* Any other `rel_*`-style hypothesis built on `CallWorld` should be audited for the same
+  under-description; this class — *a projection that quietly omits a field the code reads* — is
+  a sibling of the vacuity class and is probably not unique to this one hypothesis.
