@@ -49,6 +49,9 @@
 import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Curve
+import Midfall.Assumptions.BasePrime
+import Mathlib.Data.ZMod.Basic
+import Mathlib.FieldTheory.Finite.Basic
 import Midfall.Assumptions.Pairing
 import Midfall.Halo2.Exec.Kzg.Msm
 import Midfall.Yul.Externals
@@ -79,6 +82,16 @@ theorem blsP_eq_pBase : blsP = Assumptions.pBase := rfl
 instance : Fact (Nat.Prime blsR) := ⟨by
   have h : blsR = Assumptions.r := rfl
   exact h ▸ (inferInstance : Fact (Nat.Prime Assumptions.r)).out⟩
+
+/-- The base-field modulus, with the same primality transport as `Fact (Nat.Prime blsR)` above:
+    `blsP` and `pBase` are the same number by `rfl`, and `BasePrime.lean` proves that number prime,
+    so `ZMod blsP` is a field and `modPow x (blsP - 2) blsP` is an inverse for every
+    `0 < x < blsP`. The instance has to be RE-STATED rather than found: instance search does not
+    unfold the two definitions into the same literal, which is why `blsP_eq_pBase` above is a proof
+    and not a comment. -/
+instance : Fact (Nat.Prime blsP) := ⟨by
+  have h : blsP = Assumptions.pBase := rfl
+  exact h ▸ pBase_prime⟩
 
 /-! ### The G2 encoder -/
 
@@ -149,6 +162,257 @@ structure Eip2537.Holds (c : G1Codec G₁) (c₂ : G2Enc G₂) (product : Pairin
   g1Decodes : ∀ b : Bytes, b.size == g1Bytes →
     (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
       ∃ Q, c.ofEip? b = some Q ∧ c.toEip Q = b
+
+/-! ### modPow IS exponentiation, and Fermat makes it an inverse (P-MODEXP step 1)
+
+THE READING THE BRIEF PROPOSED, CHECKED AND HELD. `fpOps.inv` and `fp2Ops.inv` compute
+`x^(p-2) mod p` by the square-and-multiply fold `modPow`, and `modexpInvFrame` asks the modexp
+precompile for exactly that exponent at the scalar modulus. So the missing ingredient was never
+a new technique: it is (a) the fold computes `base^exp mod m`, and (b) Fermat's little theorem in
+`ZMod p`, which mathlib has as `ZMod.pow_card_sub_one_eq_one`
+(FieldTheory/Finite/Basic.lean:612) - the form the docstring below already names as the available
+one. What the brief did NOT have right is the SHAPE of the pBase statement: `modexpInvFrame` is a
+32-byte-word frame and `pBase` is 381 bits, so a base-field inversion frame is 48 bytes wide
+(`fpBytes`), not 32. The pBase version is therefore stated at its own width below
+(`fpInvFrame`, `fpInv_correct`) and the r version keeps the 32-byte frame the generator emits.
+
+COST. Nothing here computes at 381 bits: `modPow_eq` is a fold induction and the inverse identity
+is a `ZMod` argument, so both are cheap at either modulus. -/
+
+/-- One binary step of `modPow`'s fold, named so the invariant can be stated about it. -/
+def modPowStep (base exp m i acc : ℕ) : ℕ :=
+  let sq := acc * acc % m
+  if Nat.testBit exp i then sq * base % m else sq
+
+/-- Reducing one factor before a multiply does not change the product mod `m`. -/
+private lemma mod_mul_mod_left (a b m : ℕ) : ((a % m) * b) % m = (a * b) % m := by
+  rw [Nat.mul_mod, Nat.mod_mod]
+  exact (Nat.mul_mod a b m).symm
+
+/-- Reducing the other factor before a multiply does not change the product mod `m`. -/
+private lemma mod_mul_mod_right (a b m : ℕ) : (a * (b % m)) % m = (a * b) % m := by
+  rw [Nat.mul_comm a, mod_mul_mod_left, Nat.mul_comm b]
+
+/-- The digit split at a general base: the low `n` digits, plus the next digit shifted up one
+    place, is the residue modulo one more digit. At `b = 2` this is the bit split the fold
+    invariant needs; at `b = 256` it is the byte split the codec round trip needs. -/
+theorem mod_pow_succ (b e n : ℕ) (hb : 0 < b) :
+    e % b ^ (n + 1) = e % b ^ n + b ^ n * (e / b ^ n % b) := by
+  have hp : 0 < b ^ n := Nat.pow_pos hb
+  have hq : 0 < b ^ (n + 1) := Nat.pow_pos hb
+  have hpow : b ^ (n + 1) = b ^ n * b := Nat.pow_succ b n
+  have hsum : e % b ^ n + b ^ n * (e / b ^ n % b) < b ^ n * b := by
+    have h1 : e / b ^ n % b + 1 ≤ b := Nat.succ_le_of_lt (Nat.mod_lt _ hb)
+    have h4 : e % b ^ n < b ^ n := Nat.mod_lt _ hp
+    have h7 : b ^ n * (e / b ^ n % b) + b ^ n ≤ b ^ n * b := by
+      have h8 : b ^ n * (e / b ^ n % b + 1) ≤ b ^ n * b := Nat.mul_le_mul_left _ h1
+      rwa [Nat.mul_add, Nat.mul_one] at h8
+    omega
+  have hshift : (e / b ^ n) / b = e / b ^ (n + 1) := by
+    rw [Nat.div_div_eq_div_mul, Nat.pow_succ]
+  have h2 : e / b ^ n = b * (e / b ^ (n + 1)) + e / b ^ n % b := by
+    have h3 := Nat.div_add_mod (e / b ^ n) b
+    rw [hshift] at h3
+    omega
+  have hdecomp : (e % b ^ n + b ^ n * (e / b ^ n % b)) + b ^ (n + 1) * (e / b ^ (n + 1)) = e := by
+    have h1 : b ^ n * (e / b ^ n) + e % b ^ n = e := Nat.div_add_mod e (b ^ n)
+    rw [h2, Nat.mul_add, ← Nat.mul_assoc, hpow] at h1
+    rw [hpow]
+    omega
+  have hsum' : e % b ^ n + b ^ n * (e / b ^ n % b) < b ^ (n + 1) := by rwa [hpow]
+  exact ((Nat.div_mod_unique hq).mpr ⟨hdecomp, hsum'⟩).2
+/-- **THE FOLD INVARIANT.** After the steps for the bit positions `n-1, ..., 0` the accumulator
+    holds `base` raised to the high part of `exp` shifted down `n` places, plus its low `n` bits.
+    Generalised in the starting accumulator because that is the only form that inducts: each step
+    doubles the exponent and shifts in one bit. -/
+private theorem modPow_fold (base exp m : ℕ) :
+    ∀ (n A : ℕ), (List.range n).foldr (modPowStep base exp m) (base ^ A % m)
+      = base ^ (A * 2 ^ n + exp % 2 ^ n) % m := by
+  intro n
+  induction n with
+  | zero =>
+      intro A
+      simp [Nat.mod_one]
+  | succ n ih =>
+      intro A
+      have hsq : (base ^ A % m) * (base ^ A % m) % m = base ^ (2 * A) % m := by
+        rw [mod_mul_mod_left, mod_mul_mod_right, ← Nat.pow_add]
+        congr 1
+        ring
+      have hdef : modPowStep base exp m n (base ^ A % m)
+          = if Nat.testBit exp n then (base ^ A % m * (base ^ A % m) % m) * base % m
+            else base ^ A % m * (base ^ A % m) % m := rfl
+      have hstep : modPowStep base exp m n (base ^ A % m)
+          = base ^ (2 * A + (Nat.testBit exp n).toNat) % m := by
+        rw [hdef]
+        by_cases hb : Nat.testBit exp n
+        · rw [if_pos hb, hb]
+          simp only [Bool.toNat_true, hsq, mod_mul_mod_left, Nat.pow_add, Nat.pow_one]
+        · rw [if_neg hb, Bool.eq_false_of_ne_true hb]
+          simp only [Bool.toNat_false, hsq, Nat.add_zero]
+      have hrange : (List.range (n + 1)).foldr (modPowStep base exp m) (base ^ A % m)
+          = (List.range n).foldr (modPowStep base exp m)
+              (modPowStep base exp m n (base ^ A % m)) := by
+        rw [List.range_succ, List.foldr_append]
+        rfl
+      rw [hrange, hstep, ih (2 * A + (Nat.testBit exp n).toNat), Nat.toNat_testBit,
+        mod_pow_succ 2 exp n (by decide), Nat.pow_succ]
+      ring
+
+/-- **`modPow` COMPUTES `base^exp mod m`.** The fold is the textbook left-to-right binary method,
+    so this is the correctness of that fold and nothing more. -/
+theorem modPow_eq (base exp m : ℕ) (_hm : 0 < m) : modPow base exp m = base ^ exp % m := by
+  have hconv : (fun (x y : ℕ) =>
+        (fun (acc : Nat) (i : Nat) =>
+          let sq := acc * acc % m
+          if Nat.testBit exp i then sq * base % m else sq) y x)
+      = modPowStep base exp m := by
+    funext x y
+    rfl
+  have hfold : modPow base exp m
+      = (List.range (Nat.log2 exp + 1)).foldr (modPowStep base exp m) (1 % m) := by
+    unfold modPow
+    rw [List.foldl_reverse, hconv]
+  have hexp : exp % 2 ^ (Nat.log2 exp + 1) = exp := Nat.mod_eq_of_lt Nat.lt_log2_self
+  rw [hfold, show (1 : ℕ) % m = base ^ 0 % m by simp, modPow_fold base exp m]
+  rw [Nat.zero_mul, Nat.zero_add, hexp]
+
+/-- **FERMAT AT A PRIME MODULUS.** `x^(p-2)` is the inverse of `x` in `ZMod p` for every
+    `0 < x < p`. This is the whole of what the gap note billed as the missing ingredient, and it
+    is `ZMod.pow_card_sub_one_eq_one` in one line - the form `modexpInv_correct`'s docstring
+    already identified as the available one. -/
+theorem pow_card_sub_two_eq_inv {p : ℕ} [Fact (Nat.Prime p)] (x : ℕ)
+    (hx0 : 0 < x) (hx : x < p) : (x : ZMod p) ^ (p - 2) = (x : ZMod p)⁻¹ := by
+  have hp : Nat.Prime p := Fact.out
+  have hne : (x : ZMod p) ≠ 0 := by
+    intro h
+    have h1 : (x : ZMod p).val = 0 := by rw [h, ZMod.val_zero]
+    rw [ZMod.val_natCast] at h1
+    have hdvd : p ∣ x := Nat.dvd_iff_mod_eq_zero.mpr h1
+    have : p ≤ x := Nat.le_of_dvd hx0 hdvd
+    omega
+  have h1 : (x : ZMod p) ^ (p - 1) = 1 := ZMod.pow_card_sub_one_eq_one hne
+  have h2 : p - 1 = (p - 2) + 1 := by
+    have := Nat.Prime.one_lt hp
+    omega
+  rw [h2] at h1
+  rw [pow_succ] at h1
+  exact eq_inv_of_mul_eq_one_left h1
+
+/-- **FERMAT IN FIELD FORM.** The same statement with the element abstracted out of `ZMod p`: for
+    every nonzero `a`, `a^(p-2)` is its inverse. `pow_card_sub_two_eq_inv` above is the
+    representative-indexed version this file needs for `modPow`; this is the version the curve
+    files need, and it is the same one line of Fermat. -/
+theorem pow_card_sub_two_eq_inv_card {p : ℕ} [Fact (Nat.Prime p)] (a : ZMod p) (ha : a ≠ 0) :
+    a ^ (p - 2) = a⁻¹ := by
+  have hlt : a.val < p := ZMod.val_lt a
+  have h0 : 0 < a.val :=
+    Nat.pos_of_ne_zero (fun hh => ha ((ZMod.val_eq_zero a).mp hh))
+  have heq : (a.val : ZMod p) = a := ZMod.natCast_zmod_val a
+  rw [← heq]
+  exact pow_card_sub_two_eq_inv a.val h0 hlt
+
+
+/-- **THE MODPOW-AS-MODULAR-INVERSE FACT, AT ANY PRIME MODULUS.** This is the statement the brief
+    asked for, and it is uniform: instantiate at `blsR` for the frame the generator emits or at
+    `pBase` for the field the curve lives in. -/
+theorem modPow_inv {p : ℕ} [Fact (Nat.Prime p)] (x : ℕ) (hx0 : 0 < x) (hx : x < p) :
+    modPow x (p - 2) p = ((x : ZMod p)⁻¹).val := by
+  have hp : 0 < p := Nat.Prime.pos Fact.out
+  rw [modPow_eq x (p - 2) p hp, ← pow_card_sub_two_eq_inv x hx0 hx, ← Nat.cast_pow,
+    ZMod.val_natCast]
+
+/-- `(Nat.toUInt8 x).toNat = x % 256`. The byte encoder below builds its digits with
+    `Nat.toUInt8`, so this is the one step that turns its output back into a number. -/
+private theorem uint8_toNat_toUInt8 (x : ℕ) : (Nat.toUInt8 x).toNat = x % 256 := by
+  unfold Nat.toUInt8
+  rfl
+
+/-- `bytesNatBE v n` really is `n` bytes long, whatever `v` is: the encoder pads on the
+    left and never truncates. -/
+theorem bytesNatBE_size (v n : ℕ) : (bytesNatBE v n).size = n := by
+  show (List.map (fun i => Nat.toUInt8 ((v / 256 ^ i) % 256)) (List.range n).reverse).toArray.size = n
+  rw [List.size_toArray, List.length_map, List.length_reverse, List.length_range]
+
+/-- **THE WORD READER INVERTS THE WORD WRITER.** `bytesToNatBE (bytesNatBE v n) = v % 256^n`,
+    i.e. exactly `v` when `v < 256^n`. This was a gate and is now a theorem: the proof is the digit
+    expansion of `v` in base 256, by induction with the general-base digit split `mod_pow_succ` at
+    `b = 256`. -/
+theorem bytesToNatBE_bytesNatBE (v n : ℕ) : bytesToNatBE (bytesNatBE v n) = v % 256 ^ n := by
+  classical
+  rw [bytesToNatBE_eq_ofLowDigits_reverse]
+  have h1 : ((bytesNatBE v n).data.toList.map UInt8.toNat).reverse
+      = (List.range n).map (fun i => (v / 256 ^ i) % 256) := by
+    show (List.map UInt8.toNat
+          (List.map (fun i => Nat.toUInt8 ((v / 256 ^ i) % 256)) (List.range n).reverse)).reverse = _
+    rw [List.map_map, List.map_reverse, List.reverse_reverse]
+    congr 1
+    funext i
+    simp
+  rw [h1]
+  clear h1
+  induction n with
+  | zero => simp [Nat.mod_one]
+  | succ n ih =>
+      rw [List.range_succ, List.map_append, ofLowDigits_append, List.length_map, List.length_range,
+        List.map_singleton, ofLowDigits_singleton, ih, mod_pow_succ 256 v n (by decide)]
+
+/-- **`fpInv` IS INVERSION IN Fp, AT THE REAL 381-BIT BASE MODULUS.** For `0 < x < pBase` the value
+    `fpOps.inv x` returns is the canonical representative of `x⁻¹` in `ZMod pBase`. This is the fact
+    the agreement theorem needs: the affine group law calls `inv` on already-reduced coordinates,
+    so `x < p` is available at every call site. -/
+theorem fpInv_correct (x : ℕ) (hx0 : 0 < x) (hx : x < blsP) :
+    fpInv x = some ((x : ZMod blsP)⁻¹).val := by
+  show (if x % blsP == 0 then none else some (modPow x (blsP - 2) blsP)) = _
+  by_cases hb : x % blsP == 0
+  · simp at hb
+    rw [Nat.mod_eq_of_lt hx] at hb
+    omega
+  · rw [if_neg hb]
+    exact congrArg some (modPow_inv x hx0 hx)
+
+/-- **THE FALSIFICATION HALF, PART 1: PRIMALITY IS LOAD-BEARING.** At the composite modulus 4 the
+    Fermat exponent gives 1, not the inverse: `3^(4-2) mod 4 = 1` while `3⁻¹ = 3` in `ZMod 4`.
+    So `modPow_inv` is not a statement about exponentiation alone, and no proof of it can skip
+    `Fact (Nat.Prime p)`. -/
+theorem modPow_inv_needs_prime : modPow 3 (4 - 2) 4 * 3 % 4 ≠ 1 := by
+  decide
+
+/-- **THE FALSIFICATION HALF, PART 2: THE EXPONENT IS p-2, NOT p-1.** At the prime 5,
+    `2^(5-1) mod 5 = 1` while `2⁻¹ = 3`. The frame the generator emits subtracts two, and this is
+    the demonstration that subtracting one would not do. -/
+theorem modPow_inv_exponent_is_sub_two :
+    modPow 2 (5 - 2) 5 * 2 % 5 = 1 ∧ modPow 2 (5 - 1) 5 * 2 % 5 ≠ 1 := by
+  constructor <;> decide
+
+/-- **THE DOMAIN CONDITION.** `fpInv 0 = none`: the precompile model has no inverse for zero, and
+    `affineAdd`/`affineDouble` turn a `none` into the point of infinity rather than into a wrong
+    number. -/
+theorem fpInv_zero : fpInv 0 = none := by
+  show (if (0 : ℕ) % blsP == 0 then none else some (modPow 0 (blsP - 2) blsP)) = none
+  rw [if_pos (by simp)]
+
+/-- **SATISFIABILITY WITNESS AT THE REAL MODULUS** (D-P23), as a gate rather than a kernel proof:
+    base-field inversions computed by the same `modPow` the precompile model runs, checked against
+    the field inverse and against multiplication by the original value. Line 1 pins the known
+    answer for 2 at `pBase`: `p ≡ 3 [MOD 4]`, so `2⁻¹ = (p+1)/2`. Line 4 is the zero domain, and
+    line 5-6 check the computed value against `ZMod` inversion itself, not against a hand-written
+    constant. -/
+def fpInvCorrectKats_ok : Bool :=
+  (match fpInv 2 with
+   | some v => (v * 2) % blsP == 1 && v == (blsP + 1) / 2
+   | none => false) &&
+  (match fpInv 3 with
+   | some v => (v * 3) % blsP == 1
+   | none => false) &&
+  (match fpInv (blsP - 1) with
+   | some v => (v * (blsP - 1)) % blsP == 1 && v == blsP - 1
+   | none => false) &&
+  fpInv 0 == none && fpInv blsP == none &&
+  modPow 2 (blsP - 2) blsP == ((2 : ZMod blsP)⁻¹).val &&
+  modPow 7 (blsP - 2) blsP == ((7 : ZMod blsP)⁻¹).val
+
+#eval fpInvCorrectKats_ok   -- expect true
 
 /-! ### Modexp is arithmetic, not an assumption -/
 
