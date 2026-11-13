@@ -1000,4 +1000,363 @@ definitional. Roughly ten lines, as P-MODEXP predicted, but a different ten line
    the same computation in its own frame type.
 -/
 
+
+/-! ### P-CANON: THE CANONICITY WALK
+
+**THE RECORDED WALL IS REAL, AND THE RECORDED DIAGNOSIS IS WRONG ABOUT ITS MECHANISM.** The
+closing section of this file blamed \`fpInv\`: "any defeq that forces whnf of affineAdd /
+affineDouble at real 381-bit literals must evaluate fpInv, a 381-bit modPow, inside the
+elaborator". That is one of two mechanisms, and it is not the one that blocks the walk. Measured
+here, at the DEFAULT \`maxRecDepth\` (512), with \`lake env lean -DautoImplicit=false\`:
+
+* \`example : (affineDouble fpOps genPair).1 < blsP\` - \`rfl\` FAILS ("not definitionally equal",
+  not a depth error: the check gives up and reports non-defeq) while \`decide\` succeeds. That one
+  IS the modPow: the argument is a literal, so \`fpInv\` really runs.
+* \`g1InSubgroup P.1 = true -> affineSmul fpOps blsR P.1 = (0, 0)\` for a VARIABLE \`P\` - the proof
+  is never reached: \`show\`, \`rw [g1InSubgroup]\`, \`simp only [g1InSubgroup]\` and a bare term-mode
+  ascription all die on \`maximum recursion depth\`, and at \`maxRecDepth 100000\` the same check
+  dies on the deterministic 200k-heartbeat whnf budget instead. No literal point is involved, so
+  no \`fpInv\` can be running.
+
+**THE ACTUAL MECHANISM.** \`g1InSubgroup Q\` is \`affineSmul fpOps blsR Q == (0, 0)\`, and \`whnf\` of a
+pair \`==\` does not stop at \`BEq.beq\`: the \`BEq (Nat x Nat)\` instance is a structure projection
+that beta-reduces to \`a.1 == b.1 && a.2 == b.2\`, which forces \`whnf\` of \`affineSmul fpOps blsR Q\`,
+which unrolls the whole 255-step double-and-add fold into one stuck term. **The cost is the FOLD,
+not the INVERSE**, and it is paid whenever a defeq check looks *through* a pair-\`==\` or a
+\`smulFrame\` projection. Two corollaries, both used below:
+
+1. **Never force whnf of a term whose head is a pair-\`==\` or a \`smulFrame\` projection at the
+   literal scalar.** \`unfold\` and \`delta\` substitute a named constant and do NOT whnf, so they
+   cross \`g1InSubgroup\` for free; \`rw\`, \`simp\`, \`show\` and \`change\` all whnf and all die.
+   Measured: \`unfold g1InSubgroup at h\` succeeds where \`rw [g1InSubgroup] at h\` dies.
+2. **\`▸\` along a NAMED equation does not whnf either**, so the transports the recorded note said
+   were impossible - \`smulFrame_val blsR P ▸ h\`, \`(emb_smul blsR P).symm ▸ h\`,
+   \`emb_eq_zero_iff_canonical (smulFrame blsR P) hc\` - all check in milliseconds. It was never the
+   transport that failed; it was rewriting through the \`==\`.
+
+**AND NEITHER CURE IN THE BRIEF IS THE ONE THAT WORKED.** Cure 1 ("keep such facts inside
+\`decide\`") is half right: \`decide\` does prove the byte-level facts (measured: 16.6 s for
+\`affineSmul fpOps blsR genPair = (0, 0)\` at \`maxRecDepth 100000\`, peak tree 4.64 GiB, largest
+process 3.99 GiB), but the walk never needed \`decide\` - it needed a walk over VARIABLES, which is
+cheap because nothing is instantiated at a literal. Cure 2 (a canonicity FIELD on \`FpFrame\`) is
+unnecessary and would have been expensive: it changes every constructor in this file
+(\`infFrame\`, \`genFrame\`, \`negGenFrame\`, \`junkFrame\`) and every \`Subtype.eq\`, and it does not
+remove the branch walk - a frame that carries a canonicity field still has to PROVE that field for
+\`addFrame P Q\`, which is the same walk. **The third approach - walk over variables, transport with
+\`unfold\` / \`delta\` / \`▸\`, and touch literals only through named equations - is what landed, and
+it cost minutes, not the two hours the recorded note priced.** -/
+
+/-- Every \`fpOps\` operation that reduces returns a residue below the modulus, and \`fpOps.zero\` is
+    zero. That is the whole arithmetic content of the walk: the byte law is built ONLY from these,
+    so every coordinate it produces is either one of these (hence reduced) or copied verbatim from
+    an input (hence reduced, if the input was). -/
+private theorem sub_blt {a b : ℕ} : fpOps.sub a b < blsP := Nat.mod_lt _ p_pos
+private theorem zero_blt : fpOps.zero < blsP := p_pos
+
+/-- **THE WALK, DOUBLING HALF.** Five branches, and no literal anywhere in it: the infinity branch
+    and the zero-denominator branch return \`fpOps.zero\`, and the tangent branch returns two
+    \`fpOps.sub\`s. \`cases h : fpOps.inv ...\` splits the \`match\` without ever asking what the
+    inverse IS, which is what keeps \`fpInv\` - and therefore the 381-bit \`modPow\` - out of the
+    elaborator. -/
+theorem affineDouble_canonic (P : Nat × Nat) (_hx : P.1 < blsP) (_hy : P.2 < blsP) :
+    (affineDouble fpOps P).1 < blsP ∧ (affineDouble fpOps P).2 < blsP := by
+  classical
+  by_cases hinf : affineIsInfinity fpOps P = true
+  · rw [affineDouble, if_pos hinf]
+    exact ⟨zero_blt, zero_blt⟩
+  · rw [affineDouble, if_neg hinf]
+    dsimp only
+    cases h : fpOps.inv (fpOps.mul (fpOps.add fpOps.one fpOps.one) P.2) with
+    | none => exact ⟨zero_blt, zero_blt⟩
+    | some i =>
+        dsimp only
+        exact ⟨sub_blt, sub_blt⟩
+
+/-- **THE WALK, ADDITION HALF.** Five branches again: two copy an input - which is exactly where
+    the hypothesis is USED rather than manufactured - one delegates to doubling, one returns the
+    all-zero frame, and the secant returns two reductions. -/
+theorem affineAdd_canonic (P Q : Nat × Nat)
+    (hP : P.1 < blsP ∧ P.2 < blsP) (hQ : Q.1 < blsP ∧ Q.2 < blsP) :
+    (affineAdd fpOps P Q).1 < blsP ∧ (affineAdd fpOps P Q).2 < blsP := by
+  classical
+  by_cases hPinf : affineIsInfinity fpOps P = true
+  · rw [affineAdd, if_pos hPinf]
+    exact hQ
+  · by_cases hQinf : affineIsInfinity fpOps Q = true
+    · rw [affineAdd, if_neg hPinf, if_pos hQinf]
+      exact hP
+    · by_cases hxb : fpOps.beq P.1 Q.1 = true
+      · by_cases hyb : fpOps.beq P.2 Q.2 = true
+        · rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_pos hyb]
+          exact affineDouble_canonic P hP.1 hP.2
+        · rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_neg hyb]
+          exact ⟨zero_blt, zero_blt⟩
+      · rw [affineAdd, if_neg hPinf, if_neg hQinf, if_neg hxb]
+        cases h : fpOps.inv (fpOps.sub Q.1 P.1) with
+        | none => exact ⟨zero_blt, zero_blt⟩
+        | some i =>
+            dsimp only
+            exact ⟨sub_blt, sub_blt⟩
+
+/-- Closure of the frame type under the two laws, canonicity included. -/
+theorem doubleFrame_canonic (P : FpFrame) (hP : CanonicalFrame P) :
+    CanonicalFrame (doubleFrame P) :=
+  affineDouble_canonic P.1 hP.1 hP.2
+
+theorem addFrame_canonic (P Q : FpFrame) (hP : CanonicalFrame P) (hQ : CanonicalFrame Q) :
+    CanonicalFrame (addFrame P Q) :=
+  affineAdd_canonic P.1 Q.1 hP hQ
+
+/-- The fold step preserves canonicity of both registers, and the infinity frame is canonical, so
+    the whole double-and-add never leaves the canonical set. **This is the lemma the recorded
+    obstruction said could not be proved.** -/
+theorem smulStep_canonic (n : ℕ) (st : FpFrame × FpFrame) (i : ℕ)
+    (h1 : CanonicalFrame st.1) (h2 : CanonicalFrame st.2) :
+    CanonicalFrame (smulStep n st i).1 ∧ CanonicalFrame (smulStep n st i).2 := by
+  classical
+  by_cases hb : Nat.testBit n i
+  · rw [smulStep, if_pos hb]
+    exact ⟨addFrame_canonic st.1 st.2 h1 h2, doubleFrame_canonic st.2 h2⟩
+  · rw [smulStep, if_neg hb]
+    exact ⟨h1, doubleFrame_canonic st.2 h2⟩
+
+/-- **THE WALK LANDED: THE FOLD NEVER LEAVES THE CANONICAL SET.** Induction on the number of steps,
+    the same shape as \`fval_fold\` above and for the same reason - \`foldl_range_succ\` to expose the
+    last step, \`smulStep_canonic\` to discharge it. Nothing is instantiated at a literal, which is
+    why it checks in milliseconds where the recorded version died. -/
+theorem smulFrame_canonic (n : ℕ) (P : FpFrame) (hP : CanonicalFrame P) :
+    CanonicalFrame (smulFrame n P) := by
+  classical
+  have key : ∀ k : ℕ,
+      CanonicalFrame ((List.range k).foldl (smulStep n) (infFrame, P)).1 ∧
+        CanonicalFrame ((List.range k).foldl (smulStep n) (infFrame, P)).2 := by
+    intro k
+    induction k with
+    | zero => exact ⟨⟨zero_blt, zero_blt⟩, hP⟩
+    | succ k ih =>
+        rw [foldl_range_succ]
+        exact smulStep_canonic n _ k ih.1 ih.2
+  exact (key (Nat.log2 n + 1)).1
+
+/-! ### What the walk buys: the subgroup half of \`g1Valid\` -/
+
+/-- **\`n • emb P = 0\` IS THE BYTE SUBGROUP TEST**, for any scalar and any frame whose fold output
+    is canonical. Four transports, each along a NAMED equation (\`smulFrame_val\`,
+    \`emb_eq_zero_iff_canonical\`, \`emb_smul\`) and each with \`▸\`, which does not whnf. The general
+    scalar is deliberate: at \`n = blsR\` the hypothesis is discharged by \`smulFrame_canonic\`, and
+    stating it abstractly is what makes the falsification below statable at all. -/
+theorem nsmul_emb_eq_zero_iff (n : ℕ) (P : FpFrame) (hc : CanonicalFrame (smulFrame n P)) :
+    n • emb P = 0 ↔ affineSmul fpOps n P.1 = (0, 0) := by
+  classical
+  constructor
+  · intro h
+    have h2 : emb (smulFrame n P) = 0 := emb_smul n P ▸ h
+    have h1 : (smulFrame n P).1 = (0, 0) := (emb_eq_zero_iff_canonical (smulFrame n P) hc).mp h2
+    exact smulFrame_val n P ▸ h1
+  · intro h
+    have h1 : (smulFrame n P).1 = (0, 0) := (smulFrame_val n P).symm ▸ h
+    have h2 : emb (smulFrame n P) = 0 :=
+      (emb_eq_zero_iff_canonical (smulFrame n P) hc).mpr h1
+    exact (emb_smul n P).symm ▸ h2
+
+/-- **THE SUBGROUP HALF OF \`g1Valid\`.** \`g1InSubgroup\` - the test the precompile itself runs - is
+    exactly "\`blsR • emb P = 0\`" for a canonical frame. Note how the crossing of \`g1InSubgroup\`
+    is done: \`unfold\`, not \`rw\`, because \`rw\` whnfs the pair-\`==\` and wakes the fold. -/
+theorem g1InSubgroup_iff (P : FpFrame) (hP : CanonicalFrame P) :
+    g1InSubgroup P.1 = true ↔ blsR • emb P = 0 := by
+  classical
+  have hc : CanonicalFrame (smulFrame blsR P) := smulFrame_canonic blsR P hP
+  have core : (g1InSubgroup P.1 = true) ↔ affineSmul fpOps blsR P.1 = (0, 0) := by
+    constructor
+    · intro h
+      unfold g1InSubgroup at h
+      exact beq_iff_eq.mp h
+    · intro h
+      unfold g1InSubgroup
+      exact beq_iff_eq.mpr h
+  exact core.trans (nsmul_emb_eq_zero_iff blsR P hc).symm
+
+/-- **\`g1PointMsmValid\`, IN GROUP-THEORETIC FORM.** The validator that G1MSM and PAIRING_CHECK run
+    is exactly "the embedded point is r-torsion", for a canonical frame. The infinity disjunct
+    inside \`g1PointMsmValid\` disappears on its own: an infinity frame embeds to zero and zero is
+    r-torsion, which is why no case split survives into the statement. -/
+theorem g1PointMsmValid_iff (P : FpFrame) (hP : CanonicalFrame P) :
+    g1PointMsmValid P.1 = true ↔ blsR • emb P = 0 := by
+  classical
+  constructor
+  · intro h
+    unfold g1PointMsmValid at h
+    rw [Bool.and_eq_true] at h
+    obtain ⟨-, hdisj⟩ := h
+    rw [Bool.or_eq_true_iff] at hdisj
+    cases hdisj with
+    | inl hinf =>
+        have hz : emb P = 0 := emb_inf P hinf
+        rw [hz]
+        exact nsmul_zero _
+    | inr hsub => exact (g1InSubgroup_iff P hP).mp hsub
+  · intro h
+    unfold g1PointMsmValid
+    simp only [Bool.and_eq_true, FpFrame.onCurve P, true_and, Bool.or_eq_true_iff]
+    right
+    exact (g1InSubgroup_iff P hP).mpr h
+
+/-! ### The strongest witness the recorded note said was unreachable -/
+
+set_option maxHeartbeats 400000000 in
+set_option maxRecDepth 100000 in
+/-- **THE PUBLISHED GENERATOR IS IN THE r-TORSION, BYTE FOR BYTE**: \`affineSmul fpOps blsR genPair =
+    (0, 0)\` at the real 381-bit moduli. MEASURED: 16.6 s of kernel reduction, peak tree 4.64 GiB,
+    largest single process 3.99 GiB, at \`maxRecDepth 100000\` - the same computation
+    \`Instances/Bls12_381G1.lean\` pays for \`g1GenFrame_valid\` in its own frame type, and the number
+    the closing section of this file predicted ("about 15 s"). It is a \`decide\`, and it is the ONLY
+    kernel computation in this section: everything else is a walk over variables. -/
+theorem genPair_r_smul_zero : affineSmul fpOps blsR genPair = (0, 0) := by decide
+
+/-- **\`blsR • emb genFrame = 0\` - THE FACT THE RECORDED NOTE SAID COULD NOT BE TRANSPORTED.** It
+    transports in three lines, because \`▸\` along a named equation never whnfs the fold. This is
+    the "strongest possible witness" P-G1AGREE left out for lack of a defeq. -/
+theorem r_nsmul_emb_genFrame : blsR • emb genFrame = 0 := by
+  have h1 : (smulFrame blsR genFrame).1 = (0, 0) :=
+    (smulFrame_val blsR genFrame).symm ▸ genPair_r_smul_zero
+  have h2 : emb (smulFrame blsR genFrame) = 0 :=
+    (emb_eq_zero_iff_canonical (smulFrame blsR genFrame)
+      (smulFrame_canonic blsR genFrame genFrame_canonical)).mpr h1
+  exact (emb_smul blsR genFrame).symm ▸ h2
+
+/-- The same fact on the byte side, now free: the published generator passes the precompile's own
+    subgroup test, as a THEOREM rather than as a gate. -/
+theorem g1InSubgroup_genPair : g1InSubgroup genPair = true :=
+  (g1InSubgroup_iff genFrame genFrame_canonical).mpr r_nsmul_emb_genFrame
+
+/-- **AND THE WHOLE VALIDATOR PASSES ON THE PUBLISHED GENERATOR**, as a theorem: this is the
+    \`g1PointMsmValid\` fact that \`g1GenFrame_valid\` in \`Instances/Bls12_381G1.lean\` reaches by
+    \`decide\` on the byte frame, reached here through the group law instead. -/
+theorem g1PointMsmValid_genPair : g1PointMsmValid genPair = true :=
+  (g1PointMsmValid_iff genFrame genFrame_canonical).mpr r_nsmul_emb_genFrame
+
+/-! ### D-P23: witnesses and falsifications for the walk -/
+
+/-- **WITNESS FOR THE WALK (D-P23 satisfiability).** The walk is not vacuous: it discharges
+    canonicity for the 255-step fold at the PUBLISHED GENERATOR, which is a real 381-bit
+    computation and not a two-point model. -/
+theorem smulFrame_gen_canonical : CanonicalFrame (smulFrame blsR genFrame) :=
+  smulFrame_canonic blsR genFrame genFrame_canonical
+
+/-- **WITNESS AT THE OTHER END**, cheap and independent of the big \`decide\`: the identity frame
+    satisfies the new equivalence too, so it is not resting on a single point. -/
+theorem g1InSubgroup_infFrame :
+    g1InSubgroup infFrame.1 = true ↔ blsR • emb infFrame = 0 :=
+  g1InSubgroup_iff infFrame ⟨by decide, by decide⟩
+
+/-- **FALSIFICATION FOR THE WALK (D-P23): the hypothesis is load-bearing.** The all-zero-mod-p junk
+    frame is an accepted frame, and the byte sum of it with itself COPIES it, so the output is not
+    canonical. Without the hypothesis the conclusion is simply false, and no restructuring of the
+    type would have saved it: this is the copy branch of \`affineAdd\`, not an arithmetic branch. -/
+theorem affineAdd_canonic_needs_hypothesis : ¬ CanonicalFrame (addFrame junkFrame junkFrame) := by
+  intro hc
+  obtain ⟨h1, _⟩ := hc
+  have e : (addFrame junkFrame junkFrame).1.1 = blsP := rfl
+  rw [e] at h1
+  exact Nat.lt_irrefl blsP h1
+
+/-- **FALSIFICATION FOR \`nsmul_emb_eq_zero_iff\` (D-P23): the canonicity hypothesis is
+    load-bearing, and here is the frame and the scalar that break it.** At \`n = 1\` the fold is a
+    copy, so the junk frame's fold output IS the junk pair: \`1 • emb junkFrame = 0\` holds (junk
+    embeds to zero) while \`affineSmul fpOps 1 junkPair = (0, 0)\` does not. The equivalence is
+    therefore not a tautology about subtype coercion - it fails on a named input. -/
+theorem nsmul_emb_eq_zero_iff_needs_canonical :
+    (1 : ℕ) • emb junkFrame = 0 ∧ affineSmul fpOps 1 junkPair ≠ (0, 0) := by
+  refine ⟨?_, ?_⟩
+  · have hz : emb junkFrame = 0 := emb_inf junkFrame (by decide)
+    rw [hz]
+    exact nsmul_zero _
+  · intro hh
+    have e : affineSmul fpOps 1 junkPair = junkPair := by decide
+    rw [e] at hh
+    exact absurd hh (by decide)
+
+set_option maxRecDepth 100000 in
+/-- **AND THE MEASURED LIMIT OF THAT FALSIFICATION, recorded rather than hidden.** At the ACTUAL
+    scalar \`blsR\` the equivalence happens to survive the junk frame: \`g1InSubgroup junkPair =
+    true\`, and the reason is visible - \`blsR\` has more than one set bit, so the second set bit
+    re-runs the copy branch and flushes the accumulator to the literal \`(0, 0)\`. So canonicity is
+    SUFFICIENT for \`g1InSubgroup_iff\` and NOT necessary at this particular scalar. The honest claim
+    is "the hypothesis is used by the proof and is refutable at \`n = 1\`", not "the statement is
+    false without it". -/
+theorem g1InSubgroup_junkFrame : g1InSubgroup junkPair = true := by decide
+
+
+/-! ### What the walk makes statable: the first prime-order exhibit at a real curve point -/
+
+/-- **THE CYCLIC SUBGROUP GENERATED BY THE PUBLISHED GENERATOR HAS PRIME ORDER \`r\`.** This is the
+    \`PrimeOrderWith\` requirement of \`Eip2537.Holds\` discharged at a REAL curve point, and it is
+    \`primeOrderWith_zpowers\` in one line now that \`blsR • emb genFrame = 0\` exists: the two
+    hypotheses are \`r • G = 0\` (the \`decide\` above, transported) and \`G ≠ 0\`
+    (\`emb_gen_ne_zero\`). Nothing here is a point count - \`Nat.card_zpowers\` and
+    \`orderOf_eq_prime\` do the work, exactly as P-HOLDS2 predicted.
+
+    TWO NAMING FINDINGS, measured rather than inherited. (1) The additive cyclic subgroup in this
+    mathlib revision is \`AddSubgroup.zmultiples\`, NOT \`AddSubgroup.zsmulSet\` (zero hits for
+    \`zsmulSet\` and for \`zsmuls\` across the whole mathlib tree) - the brief's "naming task, not a
+    blocker" is right, and this is the name. (2) Even with the right name the carrier has to be
+    \`Multiplicative\`-wrapped, because \`PrimeOrderWith\` is stated for a \`Group\` and mathlib has
+    NO \`Group (Additive A)\` instance for an additive group \`A\` here (\`#check\` of
+    \`Group (Additive (ZMod 5))\` fails to synthesize, while
+    \`Group (Multiplicative (AddSubgroup.zmultiples (emb genFrame)))\` synthesizes). So the exhibit
+    is a subgroup of \`Multiplicative W.Point\`, not of \`W.Point\`. -/
+theorem primeOrderWith_zpowers_emb_genFrame :
+    PrimeOrderWith (Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) blsR :=
+  primeOrderWith_zpowers (Multiplicative.ofAdd (emb genFrame))
+    (by show Multiplicative.ofAdd (blsR • emb genFrame) = Multiplicative.ofAdd 0
+        rw [r_nsmul_emb_genFrame])
+    (fun h => emb_gen_ne_zero (show emb genFrame = 0 from h))
+
+/-- The cardinality half on its own, since that is the form \`Holds\` consumes: \`Nat.card G₁ = r\`. -/
+theorem natCard_zpowers_emb_genFrame :
+    Nat.card (Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) = blsR :=
+  primeOrderWith_zpowers_emb_genFrame.hCard
+
+/-- **WITNESS FOR THE EXHIBIT (D-P23 satisfiability).** The carrier is not the trivial group: it
+    contains the generator, and its cardinality is not 1. Without \`emb_gen_ne_zero\` the whole
+    construction collapses to \`zpowers 1\`, which \`zpowers_one_not_prime_order\` in
+    \`Assumptions/Eip2537.lean\` already refutes - so the nontriviality is load-bearing here too. -/
+theorem zpowers_emb_gen_nontrivial :
+    Multiplicative.ofAdd (emb genFrame) ∈ Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame)) ∧
+      Nat.card (Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) ≠ 1 :=
+  ⟨Subgroup.mem_zpowers _, fun hh =>
+    Nat.Prime.ne_one (Fact.out : Nat.Prime blsR) (natCard_zpowers_emb_genFrame.symm.trans hh)⟩
+
+/-- **THE REMAINING MECHANICAL ITEM, NAMED.** With the agreement theorems (\`emb_add\`, \`emb_smul\`),
+    the walk (\`smulFrame_canonic\`) and the exhibit (\`primeOrderWith_zpowers_emb_genFrame\`) all in
+    place, \`g1Add\` and \`g1Msm1\` as \`Holds\` FIELDS are blocked by exactly one thing, and it is
+    byte plumbing rather than algebra: the codec round trip
+
+        g1Of? (g1PointBytes P) = some P     for P with both coordinates below blsP,
+
+    plus the two slice equations it needs (\`bytesSlice (g1PointBytes P) 0 64\` and
+    \`... 64 64\`). HOW FAR THIS PACKAGE GOT, stated exactly: \`fpCoordBytes_size\`
+    (\`(bytesAppend eipPad (bytesNatBE x fpBytes)).size = fpPadBytes + fpBytes\`),
+    \`eipPad.size = fpPadBytes\`, \`bytesToNatBE eipPad = 0\` and \`blsP < 256 ^ fpBytes\` all
+    CHECK, and every core lemma the walk needs was located by \`#check\` - \`Array.length_toList\`,
+    \`ByteArray.size_data\`, \`Array.extract_append\`, \`Array.extract_eq_self_of_le\`,
+    \`Array.extract_eq_empty_of_le\`, \`ofLowDigits_append\`,
+    \`bytesToNatBE_eq_ofLowDigits_reverse\` (with \`bytesToNatBE_bytesNatBE\` and
+    \`bytesNatBE_size\` already in \`Assumptions/Eip2537.lean\`).
+    NOT YET PROVING, with the reason for each: \`bytesToNatBE_append2\` (the
+    \`ofLowDigits_append\` rewrite fires on the wrong occurrence once the right-hand side
+    is in \`bytesToNatBE\` form), \`bytesTake_whole\` (it reaches
+    \`some { data := b.data.extract 0 (ByteArray.size b) } = some b\` and the last step
+    needs \`@ByteArray.size_data\`, whose argument is implicit), and the two slice
+    equations (their side conditions must be stated against \`ByteArray.size A\` because
+    \`Array.extract_append\` inserts its own \`min\`); hence \`g1Of?_g1PointBytes\` is
+    unproved. NOT ATTEMPTED: the \`g1AddValidInput\` / \`g1AddOutput\` unfolding and the
+    \`where\`-clause function \`g1MsmPairs?.go\`. NONE of it is the canonicity wall:
+    this is plumbing - which is why it is a package and not a lemma. -/
+def gap_g1_codec_roundtrip : String :=
+  "remaining mechanical item: g1Of? (g1PointBytes P) = some P for canonical P, then "
+    ++ "bytesSlice over the 128-byte concatenation, then g1AddValidInput and g1MsmPairs?.go "
+    ++ "unfolding. Byte plumbing, not the canonicity wall - that one is closed by "
+    ++ "smulFrame_canonic, g1InSubgroup_iff and r_nsmul_emb_genFrame."
+
 end Midfall.Instances
