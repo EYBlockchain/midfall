@@ -165,6 +165,14 @@ recorded, and D-P25 confirms the plan rather than changing it.
 
 ## Next
 
+**KNOWN DIVERGENCE (D-P32, round 102).** The baseline is pinned to Rust `2d52f24`.
+`origin/main` is 25 commits ahead and **all 10 `.yul` verifier templates have changed**, plus
+`Constants.sol`, `PrecompileSmoke.sol` and the generator `src/`. The port is faithful to
+`2d52f24` and is **not** currently a port of `main`. Reconciliation is deferred as a future
+milestone - it needs a template re-port, an M0 re-run and re-pinning of the golden artifacts
+and the 30 SHA pins; it is **not** a rebase. See `docs/design.md` D-P32 and the "Rust
+reference commit" section of `BASELINE.md`.
+
 **M0 IS DONE.** `formal-baseline-v1` is cut at `df7e607`: the poseidon fixture now passes the
 current verifier on all three legs (native, generated Solidity Vm, Direct) where the previous
 one returned `Error::Opening`. Twelve orphan fixtures deleted, SHA table re-pinned 67 -> 55

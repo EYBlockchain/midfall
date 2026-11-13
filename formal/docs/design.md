@@ -1225,3 +1225,71 @@ by reading the kernel own maxrss, and the measured kill latency at a 0.2 s poll 
 one sampling interval plus the grace period. A run that can OOM the host inside 200 ms is
 not caught by any sampler; both recorded crashes climbed over minutes and are caught.
 
+## D-P32 (ADOPTED, round 102): the baseline is pinned to `2d52f24`; drift on `main` is a known divergence
+
+**Decision (human).** `formal-baseline-v1` stays pinned to the commit it forked from. The
+divergence is **recorded, not reconciled now**, and reconciliation is deferred.
+
+### The fork point, verified
+
+`git merge-base formal/baseline origin/main` = **`2d52f24426ceafed7c663b3ef6372d38a0128fec`**
+(`2d52f24`, "Merge pull request #15 from EYBlockchain/id_point_fix"). `origin/main` is now
+`33281c5` (PR #18, `midfall-cleanup`) — **25 commits ahead** of the fork.
+
+### Why this is material, not cosmetic — measured
+
+The drift is **not** confined to Rust-side clean-up. Across `templates/` and `src/`:
+
+* **10 of 10 `.yul` verifier templates changed** — i.e. **every partial the AST emitter is
+  ported from**:
+  `QuotientHelpers.yul`, `QuotientNumeratorBlock.yul` (±235), `AccumulatorHelpers.yul` (±122),
+  `AssemblyHelpers.yul` (±110 — this is where `batch_invert`, `scalar_inv`, `squeeze_to` live),
+  `FinalPairing.yul` (±21), `Lagrange.yul` (±28), `QuotientAndLinearization.yul` (±42),
+  `TraceReturn.yul` (−15), `TranscriptProofParser.yul` (±10), `VkLoading.yul` (±17).
+* **`Constants.sol` ±96** and **`PrecompileSmoke.sol` ±174** — the Solidity wrapper, which
+  D-P30 keeps as text with the line normaliser.
+* **The generator `src/` changed**: `api.rs`, `render.rs`, `artifacts.rs`, `calldata.rs`,
+  `proof.rs`, `diagnostics.rs`, `mod.rs`, `lib.rs`, `evm.rs`.
+* Named behaviour changes: **`46d28d2` checks the quotient certificate hash on-chain** (changes
+  the contract), **`7a363e0` reports point-pair word count on trailing inputs** (changes
+  verifier behaviour on malformed input — exactly the `assertEmpty` / trailing-bytes territory
+  the codec lemma depends on), `f429456` re-models fewer-point-sets and single-h-commitment
+  proof sizes.
+* Overall diff stat: 56 files, +1204 / −18928 (the deletions are largely the removed May IVC
+  fixtures and Moonlight demo scripts).
+
+### What is therefore pinned, and for how long it is trustworthy
+
+| artifact | pinned to |
+|---|---|
+| `formal-baseline-v1` tag | `df7e607` on `formal/baseline`, whose Rust reference is `2d52f24` |
+| golden `.sol` / `.yul` artifacts and the 9 provenance pins | `2d52f24` |
+| the regenerated poseidon fixture (2,640 B) | `2d52f24`, features `evm,rust-verifier-trace` |
+| the 30 tracked baseline SHA pins | `2d52f24` |
+| **every AST emitter in `GenAst*.lean`** | the `2d52f24` template text |
+
+**The port is faithful to `2d52f24`. It is not currently a port of `main`.** Every statement,
+gate and KAT remains internally consistent — the gates compare the emitter against the pinned
+templates, so nothing is *wrong* — but the deployed contract on `main` has moved.
+
+### Consequences to carry until reconciliation
+
+1. **Do not claim the formal artifact verifies the `main` contract.** It verifies the `2d52f24`
+   contract. Phrase every result accordingly.
+2. **Reconciliation will not be a rebase.** It requires: re-porting the ten changed templates,
+   re-running M0 (the fixture may change size or content under `f429456` and `46d28d2`),
+   re-pinning the golden artifacts and the 30 baseline SHAs, and re-checking every `stmtsBeq`
+   gate against the new template text. Budget it as a milestone, not a merge.
+3. **New work should keep targeting the pinned baseline.** Proofs about `verifyNative`, the
+   transcript and the lowering are statements over the pinned model and stay valid; only the
+   *template-text* layer is pinned.
+4. **If `main` moves further, the drift grows.** Re-check
+   `git diff --stat formal/baseline..origin/main -- proofs/solidity-verifier/templates`
+   periodically rather than assuming `2d52f24..33281c5` is the whole gap.
+
+### Deferred, not dropped
+
+Reconciliation is a **future milestone**. It is not blocking the current proof work (section Q,
+the codec lemma, the `Bridge` step lemmas), and nothing in the current queue depends on the
+newer templates. Recorded here so the choice is explicit rather than drift nobody noticed —
+which is the same failure class as the stale poseidon fixture that cost M0 a package.

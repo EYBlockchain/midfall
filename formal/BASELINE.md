@@ -8,6 +8,30 @@ D-P28 / R-57 is the poseidon-fixture regeneration; its record is the section
 "Poseidon fixture regeneration (D-P28)" further down.
 ## Rust baseline commits
 
+## Rust reference commit (D-P32)
+
+**This baseline is pinned to `2d52f24426ceafed7c663b3ef6372d38a0128fec`** (`2d52f24`, "Merge
+pull request #15 from EYBlockchain/id_point_fix"), verified as
+`git merge-base formal/baseline origin/main`.
+
+`origin/main` has since advanced **25 commits** to `33281c5` (PR #18, `midfall-cleanup`).
+**The drift is material, not cosmetic:** all **10 of 10** `.yul` verifier templates changed,
+i.e. every partial the AST emitter is ported from, including `AssemblyHelpers.yul` (+/-110,
+home of `batch_invert`/`scalar_inv`/`squeeze_to`), `QuotientNumeratorBlock.yul` (+/-235),
+`FinalPairing.yul`, `Lagrange.yul`, `VkLoading.yul`, `TranscriptProofParser.yul`, plus
+`Constants.sol`, `PrecompileSmoke.sol`, and the generator `src/` (`api.rs`, `render.rs`,
+`artifacts.rs`, `calldata.rs`, `proof.rs`). Two changes alter verifier behaviour: `46d28d2`
+checks the quotient certificate hash on-chain, and `7a363e0` changes point-pair word-count
+reporting on trailing inputs.
+
+**Decision (D-P32): recorded as a known divergence, not reconciled now.** The port is faithful
+to `2d52f24`; it is **not** currently a port of `main`. Every gate remains internally
+consistent, because the emitter is compared against the pinned templates, but results must be
+phrased as verifying the `2d52f24` contract. Reconciliation is a future milestone requiring a
+template re-port, an M0 re-run, and re-pinning of the golden artifacts and the 30 tracked SHA
+pins. It is **not** a rebase. See `docs/design.md` D-P32.
+
+
 | step | ref | commit |
 |---|---|---|
 | start | main | `2d52f24426ceafed7c663b3ef6372d38a0128fec` |
