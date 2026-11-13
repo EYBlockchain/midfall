@@ -28,6 +28,7 @@ import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Piop
 import Midfall.Lowering.Types
+import Midfall.Lowering.Obligations
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 
@@ -65,7 +66,8 @@ variable (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
 theorem verifyNative_iff_msgs (hc : E.g1.compressedRoundtrip) :
     verifyNative (Gₜ := Gₜ) E F params vk inst π = .ok () ↔
       ∃ ms, decodeRust (Gₜ := Gₜ) E F vk inst π = some ms ∧
-        verifyMsgs (Gₜ := Gₜ) E keccak256 F params vk inst ms = .ok () := by sorry
+        verifyMsgs (Gₜ := Gₜ) E keccak256 F params vk inst ms = .ok () :=
+  Midfall.Lowering.verifyNative_iff_msgs_codec E F params vk inst π hc
 
 end
 

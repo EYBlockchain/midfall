@@ -56,6 +56,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from check_duplicate_facts import strip_comments
 
 EXPECTED = {"propext", "sorryAx", "Classical.choice", "Quot.sound"}
+
+# D-P33 (human, round 107): verifyNative_iff_msgs was FILLED once the codec lemma was proved,
+# so it no longer carries sorryAx. The rule is now PER-DECLARATION rather than a blanket four:
+# a declared-proved statement must depend on exactly the other three, every other frozen
+# statement must still carry sorryAx. Naming the declaration here is the point - an unlisted
+# proof still reddens the gate, so a fill can never relax it silently.
+PROVED = {"Midfall.Statements.verifyNative_iff_msgs"}
 # Matched as SUBSTRINGS, not keys, because Lean mangles a generated axiom after the
 # declaration that produced it: a native_decide at Midfall.Statements.foo reports the axiom
 # as 'Midfall.Statements.foo._native.native_decide.ax_1_1', never as 'Lean.ofReduceBool'.
@@ -197,6 +204,11 @@ def main():
                        "the axiom set is no longer the pinned four")
             problems.append("%s: UNEXPECTED AXIOM %s - %s" % (d, a, why))
         if "sorryAx" not in ax:
+            if d in PROVED:
+                for a in sorted((EXPECTED - {"sorryAx"}) - ax):
+                    problems.append("%s: AXIOM %s GONE - declared PROVED, so it must still "
+                                    "depend on the other three" % (d, a))
+                continue
             problems.append("%s: sorryAx GONE - this frozen statement is no longer a "
                             "registered hole. The spec surface holds statements, not "
                             "proofs: filling it needs a re-pin, a SORRY.md change, and "
@@ -231,10 +243,12 @@ def main():
         print("  expected exactly %s per frozen declaration, %d declarations probed"
               % (sorted(EXPECTED), len(decls)))
         return 1
-    print("ok: %d frozen statements, each depending on exactly %s - no native_decide, "
-          "no Lean.ofReduceBool, sorryAx present as expected for spec statements; and %d "
+    print("ok: %d frozen statements - %d PROVED on exactly %s (D-P33 list), %d still-sorry "
+          "on exactly %s; no native_decide, no Lean.ofReduceBool; and %d "
           "D-P23 witnesses carrying no sorryAx"
-          % (len(decls), ", ".join(sorted(EXPECTED)), len(targets)))
+          % (len(decls), len([d for d in decls if d in PROVED]),
+             sorted(EXPECTED - {"sorryAx"}),
+             len([d for d in decls if d not in PROVED]), sorted(EXPECTED), len(targets)))
     return 0
 
 

@@ -364,6 +364,12 @@ STATEMENTS_IMPORTS = [
     "import Midfall.Halo2.Exec.VerifyingKey",
     "import Midfall.Halo2.Spec.Piop",
     "import Midfall.Lowering.Types",
+    # D-P33 (human, round 107): filling the frozen verifyNative_iff_msgs sorry needs the
+    # proof layer, so the normative file now depends on it. This is the widening the gate
+    # exists to make a deliberate act rather than a silent one - the policy objection in
+    # D-P27 ("the spec surface holds statements, not proofs") was answered on the merits
+    # once the proof existed, and the human chose to fill it.
+    "import Midfall.Lowering.Obligations",
     "import Midfall.Security.SRS",
     "import Midfall.Security.Challenges",
 ]
