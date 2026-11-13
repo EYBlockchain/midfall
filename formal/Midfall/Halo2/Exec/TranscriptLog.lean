@@ -3,10 +3,21 @@
 --
 -- transcript_log_concat: THE LOG'S REPRS CONCATENATE TO THE CONSUMED TRANSCRIPT PREFIX.
 -- P-LOGCONCAT. This is the one named lemma that did not exist anywhere in the tree and
--- that Obligations.lean:669 named as the only substantive obstacle between this codebase
--- and a proof of verifyNative_iff_msgs_codec (and so of the frozen
--- Statements.verifyNative_iff_msgs, whose own sorry at Statements.lean:68 is the
--- deliberate D-P27 hold-out).
+-- that Obligations.lean:669 ONCE named as the only substantive obstacle between this
+-- codebase and a proof of verifyNative_iff_msgs_codec. That sentence was false in both
+-- directions by the time P-CODEC-B read it - the log lemma exists and applies to the
+-- pipeline, and an obstacle the sketch never mentioned (the fold, then decodability) sat
+-- behind it - and it is now corrected in place at Obligations.lean. verifyNative_iff_msgs_codec
+-- IS PROVED as of P-CODEC-C, from three pipeline walks rather than one lemma. What still
+-- separates the frozen Statements.verifyNative_iff_msgs from it is only the deliberate
+-- D-P27 hold-out at Statements.lean:68, which needs a human decision and a re-pin.
+--
+-- SIX OBSTACLES WERE NAMED ACROSS THIS CHAIN, NOT ONE: (1) the tiling itself, (2) the
+-- width condition on logged records, (3) the two do-block walks parseTrace /
+-- verifyAlgebraicConstraints, (4) the fold connecting the log's mapM to the recorded
+-- bytes, (5) the StateT.set non-closure that forced the transfer-lemma method, and
+-- (6) decodability: the log records a read's width and bytes but not WHICH Hashable
+-- produced them. See the P-CODEC-B and P-CODEC-C sections at the foot of this file.
 --
 -- WHAT THE RUST ACTUALLY SAYS (fact-checked at proofs/src/transcript/mod.rs, not taken
 -- from the sketch). CircuitTranscript is { state: H, buffer: Cursor<Vec<u8>> }
@@ -64,7 +75,11 @@
 -- deleting a conjunct from transcriptLogKats_ok leaves every gate green. Each
 -- falsification is therefore also a named theorem above.
 --
--- WHAT THIS FILE DOES NOT YET DO, AND EXACTLY WHY. verifyNative_iff_msgs_codec needs
+-- WHAT THIS FILE DOES NOT YET DO, AND EXACTLY WHY. [SUPERSEDED BY P-CODEC-B STEP 3 AND
+-- P-CODEC-C STEP 1: parseTrace and verifyAlgebraicConstraints now carry Pres, PresWidths
+-- AND PresDecoded walks, and the codec lemma is proved. The paragraph is kept because it
+-- records the Lean mechanic that made them possible, not a current gap.] It used to read:
+-- verifyNative_iff_msgs_codec needs
 -- Pres (Verifier.prepare ...), i.e. the tiling for the transcript the §9.2 pipeline
 -- leaves behind. Everything the pipeline is made of is proved Pres here EXCEPT two
 -- definitions, Verifier.parseTrace and Verifier.verifyAlgebraicConstraints, and the
@@ -2168,6 +2183,11 @@ theorem presWidths_prepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
 
 /-! ### P-CODEC-B step 4: how far it gets, and the sixth obstacle named as a theorem
 
+    [THIS SECTION IS THE OBSTACLE, RECORDED AS A THEOREM - AND IT IS NOW CLOSED: see the
+    P-CODEC-C section at the foot of this file, which adds `Hashable.Dispatchable`,
+    `Transcript.LogDecoded` and the third walk, and discharges
+    `Midfall.Lowering.verifyNative_iff_msgs_codec`.]
+
     Step 4 - discharging `Midfall.Lowering.verifyNative_iff_msgs_codec` - did NOT land.
     The reason is not any of the five obstacles the plan listed: it is a SIXTH, and it is
     recorded here as a theorem rather than as a comment, because that is the only form the
@@ -2226,5 +2246,1258 @@ theorem logWidths_not_logDecoded :
     rw [hnone]
     rfl
 
+
+/-! ### P-CODEC-C step 1: the sixth obstacle CLOSED - `Hashable.Dispatchable`,
+    `Transcript.LogDecoded`, and the third pipeline walk
+
+    P-CODEC-B named the sixth obstacle as a theorem (`logWidths_not_logDecoded` above):
+    the log records a read's WIDTH and BYTES but not WHICH `Hashable` produced them,
+    while `decodeRust` dispatches BY WIDTH. `Transcript.LogWidths` buys that the third
+    dispatch arm is unreachable; it does NOT buy that the arm reached ACCEPTS the bytes.
+    So `decodeRust = some ms` - the hypothesis of `decodeRust_recorded`, and therefore of
+    the whole codec lemma - does not follow from the two invariants the pipeline is
+    already proved to preserve.
+
+    THE FIX, exactly as characterised: a third predicate alongside `Pres` and
+    `PresWidths`, carrying not which WIDTH a read logged but which `Hashable` logged it.
+    `Hashable.Dispatchable E h` says: whatever bytes the own reader of `h` accepts, the
+    dispatch `decodeRust` runs for `E` accepts them too at the width of `h`. For
+    `hashableFr` and `hashableG1 E.g1` that is true DEFINITIONALLY - the reading function
+    IS the decoder the dispatch reaches for (`hashableFr_readRepr_eq`,
+    `hashableG1_readRepr_eq`, both `rfl`) - which is exactly why those two, and only
+    those two, are the verifier path's readers.
+
+    THE TRAP, and it is why this is a predicate rather than a proof. Unlike
+    `hashableG1_allowed`, which holds for EVERY codec (and that is its point: no codec
+    choice can move a G1 read off width 48), `Hashable.Dispatchable E (hashableG1 c)` is
+    FALSE for a codec `c` other than `E.g1`: the dispatch decodes with `E.g1`, so the
+    accepted bytes of another codec need not be accepted by it. So every G1-reading
+    transfer lemma here CARRIES the hypothesis `(hg1 : Hashable.Dispatchable E (hashableG1
+    g1))` rather than discharging it, and it is discharged exactly where the pipeline codec
+    IS `E.g1`: at `presDecoded_prepare` and at the `Pcs.kzg` call sites.
+    `hashableG1_dispatchable` is stated for `hashableG1 E.g1` and for nothing else, and
+    `dispatchable_refutesOtherReader` below is the theorem that says why it cannot be
+    generalised.
+
+    `Transcript.LogDecoded E` is STRONGER than `Transcript.LogWidths`:
+    `logDecoded_imp_logWidths` proves the implication and `logWidths_not_logDecoded`
+    refutes the converse. So the third walk subsumes the second for the codec lemma. The
+    `PresWidths` walk is kept anyway: it is already proved, and it is what
+    `decodeRust_recorded` and `msgWire_logDispatch` are stated against.
+
+    THE `Pcs` OBLIGATION, same as the two existing walks: `Pcs` is a RECORD whose
+    `multiPrepare` field is an arbitrary function, so `PresDecoded E (pcs.multiPrepare
+    queries)` is not provable for a general `pcs`. `presDecoded_verifyAlgebraicConstraints`
+    carries it as `hpcs` and `presDecoded_prepare` discharges it with
+    `PresDecoded.multiPrepare` for `Pcs.kzg`, the only instantiation `verifyNative` uses.
+
+    THE LANDMINES FROM THE FILE HEADER APPLY AND WERE RESPECTED: no `whnf` of
+    `natToBytesLowFirst` with a symbolic value (the squeeze/squeezeChallenge steps go
+    through `replaceState`, which keeps the new state a VARIABLE, and the transcripts in
+    the exhibits are built by hand); the working `StateT` delta set in the algebraic walk;
+    `StateT.pure` spelled out because inside a theorem named `PresDecoded.foo`, `pure`
+    resolves to `PresDecoded.pure`; anonymous-structure updates on one line.
+
+    D-P23 BOTH HALVES, per new lemma, as THEOREMS: `hashableFr_dispatchable` and
+    `hashableG1_dispatchable` (witnesses) against `dispatchable_refutesOtherReader` and
+    `hashableU32_not_dispatchable` (falsifications); `logDecoded_witness` against
+    `logDecoded_refutesWrongSize`; `logDecoded_mapM_some` against
+    `logDecoded_mapM_refutesUndecodable`; `logDecoded_imp_logWidths` against
+    `logWidths_not_logDecoded`; and `set_not_PresDecoded` for the walk predicate. -/
+
+/-- **`Hashable.Dispatchable E h`.** Every byte string the own reader of `h` accepts is a
+    byte string the per-record decoder `decodeRust` dispatches to at that width also
+    accepts. This is the fact the log cannot record and the codec lemma needs: a read that
+    succeeded must leave behind a record the decoder can read back. -/
+def Hashable.Dispatchable {T : Type} (E : VerifierEnv p G₁ G₂ Gₜ) (h : Hashable T) : Prop :=
+  ∀ (b : Bytes) (v : T), h.readRepr? b = some v →
+    ∃ m, logDispatch E (h.width, b) = some m
+
+/-- The two `rfl` lemmas the sixth-obstacle header of this file promised. They are the
+    reason the two verifier-path readers are safe: the function that ACCEPTED the bytes
+    during the read is literally the function the dispatch REACHES FOR at that width. Not
+    two codecs agreeing up to a proof - the same function. -/
+theorem hashableFr_readRepr_eq (b : Bytes) :
+    (hashableFr (p := p)).readRepr? b = frOfRepr? (p := p) b := rfl
+
+theorem hashableG1_readRepr_eq {H : Type} (c : G1Codec H) (b : Bytes) :
+    (hashableG1 c).readRepr? b = c.ofCompressed? b := rfl
+
+/-- At the scalar width the dispatch IS `frOfRepr?`, and at the G1 width it IS the
+    `ofCompressed?` of THE ENVIRONMENT'S OWN codec. These two equations are the whole
+    content of `Dispatchable`, stated where the width tests are already resolved - and
+    they are where the second arm's codec choice is visible: a different codec does not
+    appear on the right-hand side. -/
+theorem logDispatch_at_fr (E : VerifierEnv p G₁ G₂ Gₜ) (b : Bytes) :
+    logDispatch E (32, b) = (frOfRepr? (p := p) b).map Msg.fr := by
+  unfold logDispatch
+  dsimp only []
+  rw [hashableG1_width, hashableFr_width]
+  rw [if_neg (by decide : ¬ ((32 : Nat) == g1CompressedWidth)),
+    if_pos (by decide : (32 : Nat) == (32 : Nat))]
+
+theorem logDispatch_at_g1 (E : VerifierEnv p G₁ G₂ Gₜ) (b : Bytes) :
+    logDispatch E (g1CompressedWidth, b) = (E.g1.ofCompressed? b).map Msg.g1 := by
+  unfold logDispatch
+  dsimp only []
+  rw [hashableG1_width]
+  rw [if_pos (by decide : (g1CompressedWidth : Nat) == g1CompressedWidth)]
+
+/-- The scalar reader is dispatchable for EVERY environment: its `readRepr?` is
+    `frOfRepr?`, its width is 32, and 32 selects the `frOfRepr?` arm. -/
+theorem hashableFr_dispatchable (E : VerifierEnv p G₁ G₂ Gₜ) :
+    Hashable.Dispatchable E (hashableFr (p := p)) := by
+  intro b v hv
+  have hv2 : frOfRepr? (p := p) b = some v := hv
+  refine ⟨Msg.fr v, ?_⟩
+  rw [hashableFr_width, logDispatch_at_fr, hv2]
+  rfl
+
+/-- The compressed-G1 reader is dispatchable FOR THE ENVIRONMENT'S OWN CODEC, and this is
+    the only form that is true: the dispatch decodes with `E.g1`, so the reader that
+    agrees with it is `hashableG1 E.g1`. -/
+theorem hashableG1_dispatchable (E : VerifierEnv p G₁ G₂ Gₜ) :
+    Hashable.Dispatchable E (hashableG1 E.g1) := by
+  intro b v hv
+  rw [hashableG1_readRepr_eq] at hv
+  refine ⟨Msg.g1 v, ?_⟩
+  rw [hashableG1_width, logDispatch_at_g1, hv]
+  rfl
+
+/-- **The decodability condition.** Every record the transcript has logged is a record the
+    decoder can read back. Where `LogWidths` asked only which WIDTH came in, this asks
+    whether the BYTES decode - the question `decodeRust` actually asks. -/
+def Transcript.LogDecoded (E : VerifierEnv p G₁ G₂ Gₜ) (t : Transcript) : Prop :=
+  ∀ rec ∈ t.log.toList, ∃ m, logDispatch E rec = some m
+
+/-- Replacing the hasher state cannot touch the logged bytes - the same shape, and for the
+    same reason, as `Transcript.Tiled.replaceState`. -/
+theorem Transcript.LogDecoded.replaceState (E : VerifierEnv p G₁ G₂ Gₜ)
+    {t : Transcript} (ht : Transcript.LogDecoded E t) {s : Bytes} :
+    Transcript.LogDecoded E ({ t with state := s }) := ht
+
+theorem Transcript.LogDecoded.initFromBytes (E : VerifierEnv p G₁ G₂ Gₜ) (bytes : Bytes) :
+    Transcript.LogDecoded E (Transcript.initFromBytes bytes) := by
+  intro rec hmem
+  simp [Transcript.initFromBytes] at hmem
+
+theorem Transcript.LogDecoded.initWithHash (E : VerifierEnv p G₁ G₂ Gₜ)
+    (H : Bytes → H256) (bytes : Bytes) :
+    Transcript.LogDecoded E (Transcript.initWithHash H bytes) := by
+  intro rec hmem
+  simp [Transcript.initWithHash] at hmem
+
+/-- Absorb logs nothing: only `Transcript.read` writes `log`. -/
+theorem Transcript.LogDecoded.common (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type}
+    (h : Hashable T) {t : Transcript} (ht : Transcript.LogDecoded E t) (input : T) :
+    Transcript.LogDecoded E (t.common h input) := ht
+
+theorem Transcript.LogDecoded.squeeze (E : VerifierEnv p G₁ G₂ Gₜ) {t : Transcript}
+    (ht : Transcript.LogDecoded E t) : Transcript.LogDecoded E (t.squeeze).2 := by
+  cases t with | mk st buf pos h log => exact Transcript.LogDecoded.replaceState E ht
+
+theorem Transcript.LogDecoded.squeezeChallenge (E : VerifierEnv p G₁ G₂ Gₜ) {t : Transcript}
+    (ht : Transcript.LogDecoded E t) : Transcript.LogDecoded E (t.squeezeChallenge (p := p)).2 := by
+  cases t with | mk st buf pos h log => exact Transcript.LogDecoded.replaceState E ht
+
+/-- **The step.** A successful read of a DISPATCHABLE hashable extends the decodable log
+    by exactly the record it logged. This is the one place a new record enters the log
+    (`Exec/Transcript.lean:153`), and the one place `Dispatchable` is consumed. -/
+theorem Transcript.LogDecoded.read (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (h : Hashable T)
+    (hh : Hashable.Dispatchable E h) {t : Transcript} (ht : Transcript.LogDecoded E t)
+    {val : T} {t' : Transcript} (hrun : t.read h = .ok (val, t')) :
+    Transcript.LogDecoded E t' := by
+  cases hbt : bytesTake t.buffer t.pos h.width with
+  | none =>
+      simp only [Transcript.read, hbt] at hrun
+      cases hrun
+  | some repr =>
+      cases hrr : h.readRepr? repr with
+      | none =>
+          simp only [Transcript.read, hbt, hrr] at hrun
+          cases hrun
+      | some val' =>
+          have key : t.read h = .ok (val', Transcript.common h
+              ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val') := by
+            simp only [Transcript.read, hbt, hrr]
+          have hpair : (val, t') = (val', Transcript.common h
+              ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val') := by
+            simpa using hrun.symm.trans key
+          have hteq : t' = Transcript.common h
+              ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val' :=
+            congrArg Prod.snd hpair
+          subst hteq
+          refine Transcript.LogDecoded.common E h ?_ val'
+          intro rec hmem
+          rw [Array.toList_push] at hmem
+          rcases List.mem_append.mp hmem with hold | hnew
+          · exact ht rec hold
+          · rw [List.mem_singleton] at hnew
+            cases hnew
+            exact hh repr val' hrr
+
+/-- n reads in order log n decodable records and nothing else. -/
+theorem Transcript.LogDecoded.readN (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type}
+    (h : Hashable T) (hh : Hashable.Dispatchable E h) {t : Transcript}
+    (ht : Transcript.LogDecoded E t) (n : Nat) {vs : Array T} {t' : Transcript}
+    (hrun : t.readN h n = .ok (vs, t')) : Transcript.LogDecoded E t' := by
+  have key : ∀ (n : Nat) (acc : Array T) (t : Transcript), Transcript.LogDecoded E t →
+      ∀ (vs : Array T) (t' : Transcript),
+      Transcript.readN.go h t acc n = .ok (vs, t') → Transcript.LogDecoded E t' := by
+    intro n
+    induction n with
+    | zero =>
+        intro acc t ht vs t' hrun
+        simp only [Transcript.readN.go] at hrun
+        obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+        exact ht
+    | succ n ih =>
+        intro acc t ht vs t' hrun
+        cases hread : Transcript.read h t with
+        | error e =>
+            simp only [hread, Transcript.readN.go] at hrun
+            cases hrun
+        | ok p =>
+            cases p with
+            | mk v t₂ =>
+                simp only [hread, Transcript.readN.go] at hrun
+                exact ih (acc.push v) t₂
+                  (Transcript.LogDecoded.read E h hh ht hread) vs t' hrun
+  exact key n #[] t ht vs t' hrun
+
+/-- **The third pipeline predicate**, alongside `Pres` (where the cursor got to) and
+    `PresWidths` (which widths came in): whether every record the action appends to the log
+    is one the decoder can read back. The three are independent in one direction and ordered
+    in the other: `PresDecoded E` implies `PresWidths` via `Transcript.logDecoded_imp_logWidths`, the converse is refuted by
+    `logWidths_not_logDecoded`, and NEITHER says anything about the cursor, so neither
+    implies `Pres` and `Pres` implies neither. The codec lemma needs `Pres` for where the
+    bytes came from and `PresDecoded` for whether they read back - which is why there are
+    three walks and not two. -/
+def PresDecoded {T : Type} (E : VerifierEnv p G₁ G₂ Gₜ) (m : TranscriptM T) : Prop :=
+  ∀ (t t' : Transcript) (a : T), Transcript.LogDecoded E t →
+    m.run t = .ok (a, t') → Transcript.LogDecoded E t'
+
+/-- Pointwise equality of runs transfers `PresDecoded` - the third twin of the transfer
+    principle the algebraic walk needs, where `cases h : m.run s` on a HYPOTHESIS cannot
+    abstract the scrutinee but the goal form can. -/
+theorem PresDecoded.congr_of_run_eq {α : Type} (E : VerifierEnv p G₁ G₂ Gₜ)
+    {m n : TranscriptM α} (h : ∀ s, m.run s = n.run s) (hm : PresDecoded E m) :
+    PresDecoded E n := by
+  intro t t' a ht hrun
+  exact hm t t' a ht ((h t).trans hrun)
+
+/-! #### Closure: the same constructs `Pres` and `PresWidths` are closed under
+
+    Every lemma below is the literal twin of the `PresWidths` one of the same name, with
+    `LogWidths` replaced by `LogDecoded E` and `h.AllowedWidth` replaced by
+    `Hashable.Dispatchable E h`. They carry no separate doc strings on purpose: a second
+    copy of the prose would be a second thing to let drift. The interesting differences are
+    all in the hypotheses the G1-reading lemmas now carry - see the section header. -/
+
+
+
+theorem PresDecoded.pure (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (x : T) : PresDecoded E (StateT.pure x : TranscriptM T) := by
+  intro t t' a ht h
+  obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+  exact ht
+
+
+
+theorem PresDecoded.lift (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (e : Except Fault T) : PresDecoded E (StateT.lift e) := by
+  intro t t' a ht h
+  cases e with
+  | error _ => cases h
+  | ok x =>
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+      exact ht
+
+
+
+theorem PresDecoded.get (E : VerifierEnv p G₁ G₂ Gₜ) : PresDecoded E (StateT.get : TranscriptM Transcript) := by
+  intro t t' a ht h
+  obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+  exact ht
+
+
+
+theorem PresDecoded.bind (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {m : TranscriptM α} {f : α → TranscriptM β}
+    (hm : PresDecoded E m) (hf : ∀ x, PresDecoded E (f x)) : PresDecoded E (m >>= f) := by
+  intro t t' b ht h
+  have h2 : m t >>= (fun p : α × Transcript => f p.1 p.2) = (.ok (b, t') :
+      Except Fault (β × Transcript)) := h
+  cases hmt : m t with
+  | error e =>
+      rw [hmt] at h2
+      have h3 : (.error e : Except Fault (β × Transcript)) = .ok (b, t') := h2
+      cases h3
+  | ok p =>
+      cases p with
+      | mk a t₁ =>
+          rw [hmt] at h2
+          have h3 : f a t₁ = (.ok (b, t') : Except Fault (β × Transcript)) := h2
+          exact hf a t₁ t' b (hm t t₁ a ht hmt) h3
+
+
+
+theorem PresDecoded.seq (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {m : TranscriptM α} {n : TranscriptM β}
+    (hm : PresDecoded E m) (hn : PresDecoded E n) : PresDecoded E (m >>= fun _ => n) :=
+  PresDecoded.bind (E) hm (fun _ => hn)
+
+
+
+theorem PresDecoded.ite (E : VerifierEnv p G₁ G₂ Gₜ) {α : Type} {c : Prop} [inst : Decidable c] {m n : TranscriptM α}
+    (hm : PresDecoded E m) (hn : PresDecoded E n) : PresDecoded E (if c then m else n) := by
+  split
+  · exact hm
+  · exact hn
+
+
+
+theorem PresDecoded.fmap (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} (g : α → β) {m : TranscriptM α} (hm : PresDecoded E m) :
+    PresDecoded E (g <$> m) := by
+  intro t t' b ht h
+  have h2 : (fun p : α × Transcript => (g p.1, p.2)) <$> m t =
+      (.ok (b, t') : Except Fault (β × Transcript)) := h
+  cases hrun : m t with
+  | error e =>
+      rw [hrun] at h2
+      have h3 : (.error e : Except Fault (β × Transcript)) = .ok (b, t') := h2
+      cases h3
+  | ok p =>
+      cases p with
+      | mk a t₁ =>
+          rw [hrun] at h2
+          have h3 : (.ok (g a, t₁) : Except Fault (β × Transcript)) = .ok (b, t') := h2
+          obtain ⟨h1, rfl⟩ := pair_eq (ok_pair h3)
+          subst h1
+          exact hm t t₁ a ht hrun
+
+
+
+theorem PresDecoded.guard (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {c : Prop} [inst : Decidable c] (f : Fault)
+    (k : TranscriptM β) (hk : PresDecoded E k) (h : α → PresDecoded E k) :
+    PresDecoded E (if c then ((throw f : TranscriptM α) >>= fun x => k) else k) :=
+  PresDecoded.ite (E) (α := β) (c := c) (PresDecoded.bind (E) (PresDecoded.lift (E) (Except.error f)) h) hk
+
+
+
+theorem PresDecoded.guard' (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {c : Prop} [inst : Decidable c] (f : Fault)
+    (k : TranscriptM β) (hk : PresDecoded E k) (h : α → PresDecoded E k) :
+    PresDecoded E (if c then k else ((throw f : TranscriptM α) >>= fun x => k)) :=
+  PresDecoded.ite (E) (α := β) (c := c) hk (PresDecoded.bind (E) (PresDecoded.lift (E) (Except.error f)) h)
+
+
+
+theorem PresDecoded.read (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (h : Hashable T) (hh : Hashable.Dispatchable E h) :
+    PresDecoded E (tmRead h) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmRead_run_fields h st buf pos hash log] at hrun
+      exact Transcript.LogDecoded.read (E) h hh ht hrun
+
+
+
+theorem PresDecoded.readN (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (h : Hashable T) (hh : Hashable.Dispatchable E h) (n : Nat) :
+    PresDecoded E (tmReadN h n) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmReadN_run_fields h st buf pos hash log n] at hrun
+      exact Transcript.LogDecoded.readN (E) h hh ht n hrun
+
+
+
+theorem PresDecoded.common (E : VerifierEnv p G₁ G₂ Gₜ) {T : Type} (h : Hashable T) (input : T) :
+    PresDecoded E (tmCommon h input) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmCommon_run_fields h st buf pos hash log input] at hrun
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+      exact Transcript.LogDecoded.common (E) h ht input
+
+
+
+theorem PresDecoded.squeezeChallenge (E : VerifierEnv p G₁ G₂ Gₜ) :
+    PresDecoded E (tmSqueezeChallenge (p := p)) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmSqueeze_run_fields (p := p) st buf pos hash log] at hrun
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+      exact Transcript.LogDecoded.squeezeChallenge (E) ht
+
+
+
+theorem PresDecoded.listFoldlM (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {f : β → α → TranscriptM β}
+    (hf : ∀ b x, PresDecoded E (f b x)) :
+    ∀ (l : List α) (init : β), PresDecoded E (List.foldlM (init := init) f l) := by
+  intro l
+  induction l with
+  | nil => intro init; exact PresDecoded.pure (E) _
+  | cons a t ih =>
+      intro init
+      rw [List.foldlM_cons]
+      refine PresDecoded.bind (E) (hf init _) (fun b => ih b)
+
+
+
+theorem PresDecoded.listMapM (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} (l : List α) {f : α → TranscriptM β}
+    (hf : ∀ x, PresDecoded E (f x)) : PresDecoded E (List.mapM f l) := by
+  induction l with
+  | nil => exact PresDecoded.pure (E) _
+  | cons a t ih =>
+      rw [List.mapM_cons]
+      refine PresDecoded.bind (E) (hf _) (fun _ => ?_)
+      refine PresDecoded.bind (E) ih (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.arrayFoldlM (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {f : β → α → TranscriptM β}
+    (hf : ∀ b x, PresDecoded E (f b x)) (init : β) (as : Array α) :
+    PresDecoded E (Array.foldlM (init := init) f as) := by
+  rw [← Array.foldlM_toList]
+  exact PresDecoded.listFoldlM (E) hf as.toList init
+
+
+
+theorem PresDecoded.arrayMapM (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} (as : Array α) {f : α → TranscriptM β}
+    (hf : ∀ x, PresDecoded E (f x)) : PresDecoded E (Array.mapM f as) := by
+  rw [Array.mapM_eq_foldlM]
+  refine PresDecoded.arrayFoldlM (E) (fun bs a => PresDecoded.fmap (E) _ (hf a)) #[] as
+
+
+
+theorem PresDecoded.listForIn (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} (l : List α) (init : β)
+    {f : α → β → TranscriptM (ForInStep β)} (hf : ∀ x b, PresDecoded E (f x b)) :
+    PresDecoded E (forIn l init f) := by
+  classical
+  rw [List.forIn_eq_foldlM]
+  refine PresDecoded.fmap (E) _ (PresDecoded.listFoldlM (E) ?_ l (ForInStep.yield init))
+  intro b x
+  cases b with
+  | yield b => exact hf x b
+  | done b => exact PresDecoded.pure (E) _
+
+
+
+theorem PresDecoded.arrayForIn (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} (as : Array α) (init : β)
+    {f : α → β → TranscriptM (ForInStep β)} (hf : ∀ x b, PresDecoded E (f x b)) :
+    PresDecoded E (forIn as init f) := by
+  rw [← Array.forIn_toList]
+  exact PresDecoded.listForIn (E) as.toList init hf
+
+
+
+theorem PresDecoded.readMultiplicities (E : VerifierEnv p G₁ G₂ Gₜ) {F : Type} {G₁ : Type}
+    (argument : LogupChunkedArgument F) (h : Hashable G₁) (hh : Hashable.Dispatchable E h) :
+    PresDecoded E (Logup.readMultiplicities argument h) := by
+  unfold Logup.readMultiplicities
+  refine PresDecoded.bind (E) (PresDecoded.read (E) h hh) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.trashReadCommitted (E : VerifierEnv p G₁ G₂ Gₜ) {F : Type} {G₁ : Type}
+    (argument : TrashArgument F) (h : Hashable G₁) (hh : Hashable.Dispatchable E h) :
+    PresDecoded E (Trash.readCommitted argument h) := by
+  unfold Trash.readCommitted
+  refine PresDecoded.bind (E) (PresDecoded.read (E) h hh) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.readCommitment (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (cm : Logup.CommittedMultiplicities G₁) (nbChunks : Nat) (h : Hashable G₁)
+    (hh : Hashable.Dispatchable E h) :
+    PresDecoded E (Logup.CommittedMultiplicities.readCommitment cm nbChunks h) := by
+  unfold Logup.CommittedMultiplicities.readCommitment
+  refine PresDecoded.bind (E) (PresDecoded.readN (E) h hh _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) h hh) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.hashInto (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type} [Group G₁]
+    [PrimeOrderWith G₁ p] [Module (ZMod p) (Additive G₁)]
+    (vk : VerifyingKey (Fr p) G₁) : PresDecoded E (VerifyingKey.hashInto vk) := by
+  unfold VerifyingKey.hashInto
+  exact PresDecoded.common (E) hashableFr vk.transcriptRepr
+
+
+
+theorem PresDecoded.permReadProductCommitments (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type} (perm : PermutationArgument)
+    (csDegree : Nat) (h : Hashable G₁) (hh : Hashable.Dispatchable E h) :
+    PresDecoded E (Permutation.readProductCommitments perm csDegree h) := by
+  unfold Permutation.readProductCommitments
+  refine PresDecoded.ite (E) ?_ ?_
+  · refine PresDecoded.bind (E) (PresDecoded.readN (E) h hh _) (fun _ => PresDecoded.pure (E) _)
+  · intro t t' a ht h
+    cases h
+
+
+
+theorem PresDecoded.permVKevaluate (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (vk : Permutation.VerifyingKey G₁) :
+    PresDecoded E (Permutation.VerifyingKey.evaluate (p := p) vk) := by
+  unfold Permutation.VerifyingKey.evaluate
+  refine PresDecoded.bind (E)
+    (PresDecoded.readN (E) (hashableFr (p := p)) (hashableFr_dispatchable E) _) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.permCommittedEvaluate (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (coms : Permutation.Committed G₁) :
+    PresDecoded E (Permutation.Committed.evaluate (p := p) coms) := by
+  unfold Permutation.Committed.evaluate
+  refine PresDecoded.bind (E) (PresDecoded.listForIn (E) (List.range coms.permutationProductCommitments.size)
+      (#[] : Array (Permutation.SetEvaluated (Fr p))) (fun i s => ?_)) (fun _ => PresDecoded.pure (E) _)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E)) (fun _ => ?_)
+  refine PresDecoded.ite (E)
+      (PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E))
+        (fun _ => PresDecoded.pure (E) _)) (PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.logupEvaluate (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (coms : Logup.Committed G₁) : PresDecoded E (Logup.Committed.evaluate (p := p) coms) := by
+  unfold Logup.Committed.evaluate
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E)) (fun _ => ?_)
+  refine PresDecoded.bind (E)
+    (PresDecoded.readN (E) (hashableFr (p := p)) (hashableFr_dispatchable E) _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E))
+    (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.trashEvaluate (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (coms : Trash.Committed G₁) : PresDecoded E (Trash.Committed.evaluate (p := p) coms) := by
+  unfold Trash.Committed.evaluate
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E))
+    (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.addDummies (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresDecoded E (MultiPrepare.addDummies (G₂ := G₂) (Gₜ := Gₜ) g1 queries) := by
+  unfold MultiPrepare.addDummies
+  refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun dummies => ?_)
+  refine PresDecoded.listFoldlM (E) (fun qs x => ?_) dummies queries
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E))
+    (fun eval => ?_)
+  cases hq : qs[x.1]? with
+  | none =>
+      show PresDecoded E (throw (Fault.panic "proofs/src/poly/kzg/mod.rs:349"))
+      exact (PresDecoded.lift (E) (Except.error (Fault.panic "proofs/src/poly/kzg/mod.rs:349"))
+        : PresDecoded E (throw (Fault.panic "proofs/src/poly/kzg/mod.rs:349")))
+  | some o =>
+      exact PresDecoded.pure (E) _
+
+
+
+theorem PresDecoded.phaseA (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresDecoded E (phaseA (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime queries) := by
+  unfold Midfall.Halo2.phaseA
+  refine PresDecoded.ite (E) (α := MultiPrepare.PhaseA (Fr p) G₁)
+      (c := feat.outerFewerPointSets && fewerPointSetsRuntime) ?_ ?_
+  · refine PresDecoded.bind (E) (PresDecoded.addDummies (E) g1 queries) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => PresDecoded.pure (E) _)
+  · refine PresDecoded.bind (E) (PresDecoded.pure (E) queries) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.phaseB (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) :
+    PresDecoded E (phaseB g1 fc feat a) := by
+  unfold Midfall.Halo2.phaseB
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableG1 g1) (hg1)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) (List.range a.qEvalSets.size)
+      (fun _ => PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E))) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.phaseC (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) (b : MultiPrepare.PhaseB (Fr p) G₁) :
+    PresDecoded E (phaseC (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat a b) := by
+  unfold Midfall.Halo2.phaseC
+  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.read (E) (hashableG1 g1) (hg1))
+    (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.multiPrepare (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresDecoded E (multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime
+      queries) := by
+  unfold Midfall.Halo2.multiPrepare
+  refine PresDecoded.bind (E) (PresDecoded.phaseA (E) g1 fc feat fewerPointSetsRuntime queries)
+    (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.phaseB (E) g1 hg1 fc feat _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.phaseC (E) g1 hg1 fc feat _ _) (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.readFixedEvals (E : VerifierEnv p G₁ G₂ Gₜ)
+    (cs : ConstraintSystem (Fr p)) :
+    PresDecoded E (Verifier.readFixedEvals (p := p) cs) := by
+  unfold Verifier.readFixedEvals
+  apply PresDecoded.guard (E)
+  · refine PresDecoded.bind (E)
+      (PresDecoded.readN (E) (hashableFr (p := p)) (hashableFr_dispatchable E) _) (fun read => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.listFoldlM (E) (fun acc step => ?_)
+        (List.zip (List.range cs.fixedQueries.size) cs.fixedQueries.toList) read.toList)
+        (fun _ => PresDecoded.pure (E) _)
+    refine PresDecoded.ite (E) (α := List (Fr p)) (c := cs.hasSimpleSelectorCol step.2.1.index)
+      (PresDecoded.lift (E) _) (PresDecoded.pure (E) _)
+  · intro z
+    refine PresDecoded.bind (E)
+      (PresDecoded.readN (E) (hashableFr (p := p)) (hashableFr_dispatchable E) _) (fun read => ?_)
+    refine PresDecoded.bind (E) (PresDecoded.listFoldlM (E) (fun acc step => ?_)
+        (List.zip (List.range cs.fixedQueries.size) cs.fixedQueries.toList) read.toList)
+        (fun _ => PresDecoded.pure (E) _)
+    refine PresDecoded.ite (E) (α := List (Fr p)) (c := cs.hasSimpleSelectorCol step.2.1.index)
+      (PresDecoded.lift (E) _) (PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.readAlgebra (E : VerifierEnv p G₁ G₂ Gₜ) {G₁ : Type}
+    (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    PresDecoded E (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+      nbCommitted numProofs instances) := by
+  unfold Verifier.readAlgebra
+  refine PresDecoded.bind (E)
+    (PresDecoded.readN (E) (hashableG1 g1) (hg1) _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.lift (E) _) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) instances.toList (fun row =>
+      PresDecoded.listMapM (E) vk.cs.instanceQueries.toList (fun q => ?_))) (fun _ => ?_)
+  · refine PresDecoded.ite (E) (α := Fr p) (c := q.1.index < nbCommitted)
+      (PresDecoded.read (E) (hashableFr (p := p)) (hashableFr_dispatchable E)) ?_
+    dsimp only
+    cases hq : row[q.1.index - nbCommitted]? with
+    | none =>
+        exact (PresDecoded.lift (E) (Except.error (Fault.panic "proofs/src/plonk/verifier.rs:366"))
+          : PresDecoded E (throw (Fault.panic "proofs/src/plonk/verifier.rs:366")))
+    | some col =>
+        dsimp only
+        apply PresDecoded.guard' (E)
+        · exact PresDecoded.lift (E) _
+        · intro z
+          exact PresDecoded.lift (E) _
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) (List.range numProofs)
+      (fun _ => PresDecoded.readN (E) (hashableFr (p := p)) (hashableFr_dispatchable E) _)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.readFixedEvals (E) vk.cs) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.permVKevaluate (E) vk.permutation) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) permutations.toList (fun pc =>
+      PresDecoded.permCommittedEvaluate (E) pc)) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) lookups.toList (fun row =>
+      PresDecoded.listMapM (E) row.toList (fun l => PresDecoded.logupEvaluate (E) l))) (fun _ => ?_)
+  refine PresDecoded.bind (E) (PresDecoded.listMapM (E) trashcans.toList (fun row =>
+      PresDecoded.listMapM (E) row.toList (fun t => PresDecoded.trashEvaluate (E) t)))
+      (fun _ => PresDecoded.pure (E) _)
+
+
+
+theorem PresDecoded.guardWhen (E : VerifierEnv p G₁ G₂ Gₜ) {α β : Type} {c : Prop} [inst : Decidable c] (f : Fault)
+    (k : TranscriptM β) (hk : PresDecoded E k) :
+    PresDecoded E (if c then ((throw f : TranscriptM α) >>= fun x => k) else k) :=
+  PresDecoded.ite (E) (α := β) (c := c)
+    (PresDecoded.bind (E) (PresDecoded.lift (E) (Except.error f)) (fun _ => hk)) hk
+
+
+
+theorem presDecoded_parseTrace (E : VerifierEnv p G₁ G₂ Gₜ)     (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (committed₀ : Array (Array G₁)) (inst : Array (Array (Array (Fr p)))) :
+    PresDecoded E (parseTrace g1 feat vk committed₀ inst) := by
+  unfold parseTrace
+  apply PresDecoded.guardWhen (E)
+  · apply PresDecoded.guardWhen (E)
+    · apply PresDecoded.guardWhen (E)
+      · refine PresDecoded.bind (E) (PresDecoded.hashInto (E) vk) (fun _ => ?_)
+        -- absorb the committed instance commitments
+        refine PresDecoded.bind (E) ?_ (fun _ => ?_)
+        · apply PresDecoded.listForIn (E)
+          · intro row __s
+            refine PresDecoded.bind (E) ?_ (fun _ => PresDecoded.pure (E) _)
+            · apply PresDecoded.arrayForIn (E)
+              · intro com __s
+                exact PresDecoded.bind (E) (PresDecoded.common (E) (hashableG1 g1) com) (fun _ => PresDecoded.pure (E) _)
+        -- absorb each instance column's length then its values
+        · refine PresDecoded.bind (E) ?_ (fun _ => ?_)
+          · apply PresDecoded.listForIn (E)
+            · intro row __s
+              refine PresDecoded.bind (E) ?_ (fun _ => PresDecoded.pure (E) _)
+              · apply PresDecoded.arrayForIn (E)
+                · intro col __s
+                  refine PresDecoded.bind (E) (PresDecoded.common (E) hashableFr (Nat.cast col.size)) (fun _ => ?_)
+                  refine PresDecoded.bind (E) ?_ (fun _ => PresDecoded.pure (E) _)
+                  · apply PresDecoded.arrayForIn (E)
+                    · intro v __s
+                      exact PresDecoded.bind (E) (PresDecoded.common (E) hashableFr v) (fun _ => PresDecoded.pure (E) _)
+          -- the phase loop
+          · refine PresDecoded.bind (E) ?_ (fun x => ?_)
+            · apply PresDecoded.listFoldlM (E)
+              · intro st ph
+                dsimp only []
+                refine PresDecoded.bind (E) ?_ (fun adv => ?_)
+                · apply PresDecoded.listFoldlM (E)
+                  · intro acc k
+                    refine PresDecoded.bind (E) (PresDecoded.readN (E) (hashableG1 g1) (hg1) _) (fun _ => PresDecoded.pure (E) _)
+                · refine PresDecoded.bind (E) ?_ (fun chals => PresDecoded.pure (E) _)
+                  · apply PresDecoded.listFoldlM (E)
+                    · intro acc e
+                      apply PresDecoded.ite (E)
+                      · refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun _ => PresDecoded.pure (E) _)
+                      · exact PresDecoded.pure (E) _
+            · cases x with
+              | mk advPairs chalPairs =>
+                refine PresDecoded.bind (E) ?_ (fun adviceCommitments => ?_)
+                · apply PresDecoded.listFoldlM (E)
+                  · intro acc pairs
+                    refine PresDecoded.bind (E)
+                        (PresDecoded.lift (E) (scatterIndexed vk.cs.numAdviceColumns pairs
+                          "proofs/src/plonk/verifier.rs:118")) (fun _ => PresDecoded.pure (E) _)
+                · refine PresDecoded.bind (E)
+                      (PresDecoded.lift (E) (scatterIndexed vk.cs.numChallenges chalPairs
+                        "proofs/src/plonk/verifier.rs:134")) (fun challenges => ?_)
+                  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun theta => ?_)
+                  refine PresDecoded.bind (E) ?_ (fun lookupMultiplicities => ?_)
+                  · apply PresDecoded.listFoldlM (E)
+                    · intro acc x
+                      refine PresDecoded.bind (E) ?_ (fun row => PresDecoded.pure (E) _)
+                      · apply PresDecoded.listFoldlM (E)
+                        · intro acc' l
+                          refine PresDecoded.bind (E) (PresDecoded.lift (E) (l.chunkByDegree vk.csDegree))
+                            (fun chunked => ?_)
+                          refine PresDecoded.bind (E) (PresDecoded.readMultiplicities (E) chunked (hashableG1 g1) (hg1))
+                            (fun m => PresDecoded.pure (E) _)
+                  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun beta => ?_)
+                  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun gamma => ?_)
+                  refine PresDecoded.bind (E) ?_ (fun permutations => ?_)
+                  · apply PresDecoded.listFoldlM (E)
+                    · intro acc x
+                      refine PresDecoded.bind (E)
+                          (PresDecoded.permReadProductCommitments (E) vk.cs.permutation vk.csDegree (hashableG1 g1) (hg1)) (fun _ => PresDecoded.pure (E) _)
+                  refine PresDecoded.bind (E) ?_ (fun lookups => ?_)
+                  · apply PresDecoded.listFoldlM (E)
+                    · intro acc row
+                      refine PresDecoded.bind (E) ?_ (fun out => PresDecoded.pure (E) _)
+                      · apply PresDecoded.listFoldlM (E)
+                        · intro acc' x
+                          cases x with
+                          | mk m chunked =>
+                            refine PresDecoded.bind (E)
+                                (PresDecoded.readCommitment (E) m chunked.numChunks (hashableG1 g1) (hg1))
+                                (fun _ => PresDecoded.pure (E) _)
+                  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun trashChallenge => ?_)
+                  refine PresDecoded.bind (E) ?_ (fun trashcans => ?_)
+                  · apply PresDecoded.listFoldlM (E)
+                    · intro acc x
+                      refine PresDecoded.bind (E) ?_ (fun row => PresDecoded.pure (E) _)
+                      · apply PresDecoded.listFoldlM (E)
+                        · intro acc' t
+                          refine PresDecoded.bind (E) (PresDecoded.trashReadCommitted (E) t (hashableG1 g1) (hg1))
+                            (fun _ => PresDecoded.pure (E) _)
+                  refine PresDecoded.bind (E) (PresDecoded.squeezeChallenge (E)) (fun y => ?_)
+                  exact PresDecoded.pure (E) _
+
+
+
+theorem presDecoded_verifyAlgebraicConstraints (E : VerifierEnv p G₁ G₂ Gₜ)     (g1 : G1Codec G₁) (hg1 : Hashable.Dispatchable E (hashableG1 g1)) (delta : Fr p) (feat : Features) (pcs : Pcs p G₁ G₂ Gₜ)
+    (vk : VerifyingKey (Fr p) G₁) (trace : VerifierTrace (Fr p) G₁)
+    (committedInstances : Array (Array G₁))
+    (instances : Array (Array (Array (Fr p))))
+    (hpcs : ∀ queries, PresDecoded E (pcs.multiPrepare queries)) :
+    PresDecoded E (Verifier.verifyAlgebraicConstraints (p := p) g1 delta feat pcs vk trace
+      committedInstances instances) := by
+  unfold Verifier.verifyAlgebraicConstraints
+  apply PresDecoded.guardWhen (E)
+  · refine PresDecoded.bind (E) ?_ (fun alg => ?_)
+    · apply PresDecoded.readAlgebra (E) g1 hg1
+    · refine PresDecoded.bind (E) ?_ (fun queries => ?_)
+      · apply PresDecoded.lift (E)
+      · intro t t' b ht h
+        simp only [StateT.run, StateT.bind, StateT.get, Bind.bind, Pure.pure, Except.bind,
+          Except.pure] at h
+        cases hrun : (pcs.multiPrepare queries).run t with
+        | ok p =>
+            cases p with
+            | mk a s' =>
+                simp only [StateT.run] at hrun
+                simp only [StateT.run, StateT.bind, StateT.set, StateT.pure, StateT.lift,
+                  Bind.bind, Pure.pure, Except.bind, Except.pure, hrun] at h
+                cases h
+                exact (hpcs queries) t t' b ht hrun
+        | error f =>
+            cases f with
+            | panic site =>
+                simp only [StateT.run] at hrun
+                simp only [StateT.run, StateT.bind, StateT.set, StateT.pure, StateT.lift,
+                  Bind.bind, Pure.pure, Except.bind, Except.pure, hrun] at h
+                cases h
+            | error er =>
+                simp only [StateT.run] at hrun
+                simp only [StateT.run, StateT.bind, StateT.set, StateT.pure, StateT.lift,
+                  Bind.bind, Pure.pure, Except.bind, Except.pure, hrun] at h
+                cases h
+
+
+/-- **The consequence the codec lemma consumes.** Decodability of the log is exactly what
+    makes the per-record `mapM` succeed: a list whose every element decodes has a decoded
+    list. This is the missing hypothesis of `decodeRust_recorded`, and therefore of
+    `verifyNative_iff_msgs_codec`. -/
+theorem list_mapM_all_some {α β : Type} (f : α → Option β) (l : List α)
+    (h : ∀ a ∈ l, ∃ b, f a = some b) : ∃ ms, l.mapM f = some ms := by
+  induction l with
+  | nil => exact ⟨[], rfl⟩
+  | cons a t ih =>
+      obtain ⟨b, hb⟩ := h a List.mem_cons_self
+      obtain ⟨ms, hms⟩ := ih (fun x hx => h x (List.mem_cons_of_mem a hx))
+      refine ⟨b :: ms, ?_⟩
+      rw [List.mapM_cons, hb, hms]
+      simp
+
+theorem logDecoded_mapM_some (E : VerifierEnv p G₁ G₂ Gₜ) (t : Transcript)
+    (ht : Transcript.LogDecoded E t) :
+    ∃ ms, t.log.toList.mapM (logDispatch E) = some ms :=
+  list_mapM_all_some (logDispatch E) t.log.toList (fun rec hmem => ht rec hmem)
+
+/-- **The new predicate is the stronger one.** Decodable implies allowed width: a record
+    whose width the dispatch does not reach for has no decoder at all, so a log all of
+    whose records decode can only have logged the two widths. Paired with
+    `logWidths_not_logDecoded`, which refutes the converse, this pins the strict ordering
+    the third walk exists to establish: `LogDecoded E` implies `LogWidths` and is
+    strictly stronger than it. -/
+theorem Transcript.logDecoded_imp_logWidths (E : VerifierEnv p G₁ G₂ Gₜ) {t : Transcript}
+    (ht : Transcript.LogDecoded E t) : t.LogWidths := by
+  intro rec hmem
+  obtain ⟨m, hm⟩ := ht rec hmem
+  unfold logDispatch at hm
+  by_cases h1 : rec.1 == (hashableG1 E.g1).width
+  · right
+    exact (Nat.beq_eq.mp h1).trans (hashableG1_width (c := E.g1))
+  · by_cases h2 : rec.1 == (hashableFr (p := p)).width
+    · left
+      exact (Nat.beq_eq.mp h2).trans hashableFr_width
+    · rw [if_neg h1, if_neg h2] at hm
+      cases hm
+
+/-- **The whole §9.2 read schedule leaves a decodable log.** The third and last of the
+    three pipeline theorems. Every hypothesis the walk could not discharge is discharged
+    here, once, at the only codec and the only `Pcs` the verifier path uses. -/
+theorem presDecoded_prepare (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁) (committed : List (List G₁))
+    (inst : List (List (List (Fr p)))) :
+    PresDecoded E (prepare (Gₜ := Gₜ) E F vk committed inst) := by
+  unfold prepare prepareWith Verifier.prepare
+  refine PresDecoded.bind (E) ?_ (fun trace => ?_)
+  · exact presDecoded_parseTrace (E) E.g1 (hashableG1_dispatchable E) F vk _ _
+  · refine presDecoded_verifyAlgebraicConstraints (E) E.g1 (hashableG1_dispatchable E)
+        E.delta F (Pcs.kzg (G₂ := G₂) (Gₜ := Gₜ) E.g1 E.field F E.fewerPointSetsRuntime)
+        vk trace _ _ ?_
+    · intro queries
+      exact PresDecoded.multiPrepare (E) E.g1 (hashableG1_dispatchable E) E.field F
+        E.fewerPointSetsRuntime queries
+
+/-! #### D-P23: both halves of the decodability predicate -/
+
+/-- A width-32 reader that accepts EVERY byte string. It is the sixth obstacle as a
+    definition: right width, wrong reader. -/
+def alwaysAccepts32 : Hashable Bytes where
+  toInput := fun _ => Bytes.empty
+  toBytes := fun b => b
+  width := 32
+  readRepr? := fun b => some b
+
+/-- `frOfRepr?` rejects anything that is not 32 bytes long, whatever the modulus. The
+    exhibits below need this at the ABSTRACT section modulus, where the byte arithmetic
+    cannot be decided by evaluation, so it is proved once here. -/
+theorem frOfRepr_none_of_size_ne (b : Bytes) (h : b.size ≠ 32) :
+    frOfRepr? (p := p) b = none := by
+  rw [frOfRepr?]
+  refine if_neg ?_
+  intro hc
+  rw [Bool.and_eq_true] at hc
+  exact h (Nat.eq_of_beq_eq_true hc.1)
+
+/-- The converse fact the witness needs: whatever `frOfRepr?` accepts really is 32 bytes
+    long, i.e. the record a successful scalar read logs has the width the dispatch reads
+    it back at. -/
+theorem frOfRepr_size_of_some {b : Bytes} {x : Fr p} (h : frOfRepr? (p := p) b = some x) :
+    b.size = 32 := by
+  rw [frOfRepr?] at h
+  by_cases hc : (b.size == 32 && bytesToNatLE b < p)
+  · rw [if_pos hc] at h
+    rw [Bool.and_eq_true] at hc
+    exact Nat.eq_of_beq_eq_true hc.1
+  · rw [if_neg hc] at h
+    exact absurd h (by simp)
+
+/-- **Falsification, as a THEOREM: allowed width does NOT imply dispatchability.** This
+    hashable has an allowed width and a reader that never fails, and it is not
+    `Dispatchable`, because at width 32 the dispatch runs `frOfRepr?`, which rejects a
+    string that is not 32 bytes long. This is exactly why the codec lemma needs a third
+    predicate rather than a re-statement of the width one, and why
+    `hashableG1_dispatchable` is stated for `E.g1` alone. -/
+theorem dispatchable_refutesOtherReader (E : VerifierEnv p G₁ G₂ Gₜ) :
+    alwaysAccepts32.AllowedWidth ∧ ¬ Hashable.Dispatchable E alwaysAccepts32 := by
+  refine ⟨Or.inl rfl, ?_⟩
+  intro h
+  obtain ⟨m, hm⟩ := h Bytes.empty Bytes.empty rfl
+  have hw : alwaysAccepts32.width = 32 := rfl
+  rw [hw, logDispatch_at_fr,
+    frOfRepr_none_of_size_ne (p := p) Bytes.empty (by decide)] at hm
+  cases hm
+
+/-- **Falsification, as a THEOREM: the u32 reader is not dispatchable**, because the
+    dispatch has no arm for width 4. The verifier path must never read through it, and
+    this is the theorem that says what goes wrong if it does. -/
+theorem hashableU32_not_dispatchable (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ¬ Hashable.Dispatchable E hashableU32 := by
+  intro h
+  obtain ⟨m, hm⟩ := h (natToBytesLE 7 4) 7 (by
+    show (if (natToBytesLE 7 4).size == 4 then some (bytesToNatLE (natToBytesLE 7 4))
+      else none) = some 7
+    rw [if_pos (by decide : (natToBytesLE 7 4).size == 4), bytesToNatLE_natToBytesLE,
+      Nat.mod_eq_of_lt (by decide)])
+  have : logDispatch E (hashableU32.width, natToBytesLE 7 4) = none := by
+    unfold logDispatch
+    dsimp only []
+    rw [hashableU32_width, hashableG1_width, hashableFr_width]
+    rw [if_neg (by decide : ¬ ((4 : Nat) == g1CompressedWidth)),
+      if_neg (by decide : ¬ ((4 : Nat) == (32 : Nat)))]
+  rw [this] at hm
+  cases hm
+
+/-- **Satisfiability, as a THEOREM.** The hypothesis of the walk is inhabited, and its
+    conclusion is a fact about a specific message list rather than a bare existence: take
+    any scalar repr the decoder accepts - `frOfRepr_bytes_witness` in
+    `Midfall/Assumptions/Codec.lean` exhibits real ones at `p = 17` - and log exactly the
+    record a real read of it produces. The dispatch reads it back as `Msg.fr x`, the width
+    condition holds of the same transcript, and the recorded bytes are the repr itself. -/
+theorem logDecoded_witness (E : VerifierEnv p G₁ G₂ Gₜ) (b : Bytes) (x : Fr p)
+    (hx : frOfRepr? (p := p) b = some x) :
+    ∃ (t : Transcript) (ms : List (Msg (Fr p) G₁)),
+      Transcript.LogDecoded E t ∧ t.LogWidths ∧
+        t.log.toList.mapM (logDispatch E) = some ms ∧ ms = [Msg.fr x] ∧
+        t.recorded = b ∧ t.pos = b.size ∧ t.pos = 32 := by
+  have hsz : b.size = 32 := frOfRepr_size_of_some hx
+  refine ⟨Transcript.mk Bytes.empty b 32 keccak256 #[(32, b)], [Msg.fr x], ?_, ?_, ?_,
+    rfl, ?_, by rw [hsz], rfl⟩
+  · intro rec hmem
+    have hl : ((#[(32, b)] : Array (Nat × Bytes)).toList) = [(32, b)] := rfl
+    rw [hl] at hmem
+    simp at hmem
+    rcases hmem with rfl
+    exact ⟨Msg.fr x, by rw [logDispatch_at_fr, hx]; rfl⟩
+  · intro rec hmem
+    have hl : ((#[(32, b)] : Array (Nat × Bytes)).toList) = [(32, b)] := rfl
+    rw [hl] at hmem
+    simp at hmem
+    rcases hmem with rfl
+    exact Or.inl rfl
+  · show List.mapM (logDispatch E) [(32, b)] = some [Msg.fr x]
+    rw [List.mapM_cons, logDispatch_at_fr, hx]
+    simp
+  · show ByteArray.mk (b.data.toList.toArray) = b
+    rw [array_toList_toArray]
+
+/-- **Falsification, as a THEOREM: a decodable log is not free.** Here is a transcript
+    whose single record has an ALLOWED width but bytes no decoder accepts: a 0-byte
+    string logged as if it were a scalar repr. `LogWidths` holds of it and `LogDecoded`
+    does not, so the walk that proves `LogDecoded` does work the width walk cannot do. -/
+theorem logDecoded_refutesWrongSize (E : VerifierEnv p G₁ G₂ Gₜ) :
+    Transcript.LogWidths (Transcript.mk Bytes.empty Bytes.empty 32 keccak256
+        #[(32, Bytes.empty)]) ∧
+      ¬ Transcript.LogDecoded E (Transcript.mk Bytes.empty Bytes.empty 32 keccak256
+        #[(32, Bytes.empty)]) := by
+  refine ⟨?_, ?_⟩
+  · intro rec hmem
+    have hl : ((#[(32, Bytes.empty)] : Array (Nat × Bytes)).toList)
+        = [(32, Bytes.empty)] := rfl
+    rw [hl] at hmem
+    simp at hmem
+    rcases hmem with rfl
+    exact Or.inl rfl
+  · intro h
+    obtain ⟨m, hm⟩ := h (32, Bytes.empty) (by simp)
+    rw [logDispatch_at_fr,
+      frOfRepr_none_of_size_ne (p := p) Bytes.empty (by decide)] at hm
+    cases hm
+
+/-- **Falsification, as a THEOREM: without decodability there is no message stream at
+    all.** The same transcript, at the level of the whole `mapM`: the width condition
+    holds, the map fails, so `decodeRust` is `none` on a log whose every width the
+    dispatch reaches for. This is the sixth obstacle in the exact shape
+    `decodeRust_recorded` consumes it. -/
+theorem logDecoded_mapM_refutesUndecodable (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ¬ ∃ (ms : List (Msg (Fr p) G₁)),
+        (Transcript.mk Bytes.empty Bytes.empty 32 keccak256
+            #[(32, Bytes.empty)]).log.toList.mapM (logDispatch E) = some ms := by
+  intro ⟨ms, h⟩
+  have hl : ((#[(32, Bytes.empty)] : Array (Nat × Bytes)).toList)
+      = [(32, Bytes.empty)] := rfl
+  have hw : (Transcript.mk Bytes.empty Bytes.empty 32 keccak256
+      #[(32, Bytes.empty)]).log.toList.mapM (logDispatch E)
+      = List.mapM (logDispatch E) [(32, Bytes.empty)] := by rw [hl]
+  rw [hw, List.mapM_cons, logDispatch_at_fr,
+    frOfRepr_none_of_size_ne (p := p) Bytes.empty (by decide)] at h
+  simp at h
+
+/-- **D-P23 falsification, as a THEOREM: `PresDecoded` is NOT closed under `StateT.set`**,
+    for the same reason as the other two: `set` installs an arbitrary transcript, whose
+    log may carry a record nothing decodes. No `PresDecoded.set` lemma is stated anywhere
+    in this file, and this is the proof that none exists. -/
+theorem set_not_PresDecoded (E : VerifierEnv p G₁ G₂ Gₜ) :
+    ∃ (x : Transcript), ¬ PresDecoded E (StateT.set x) := by
+  refine ⟨Transcript.mk Bytes.empty Bytes.empty 32 keccak256 #[(32, Bytes.empty)], ?_⟩
+  intro h
+  have h1 := h (Transcript.initFromBytes Bytes.empty) _ ()
+    (Transcript.LogDecoded.initFromBytes E _) rfl
+  exact (logDecoded_refutesWrongSize E).2 h1
+
+/-- Satisfiability, computed: two REAL reads of a real buffer through the two verifier-path
+    readers, and the dispatch - spelled at `p = 17` with `widthKatCodec` in place of the
+    environment codec, since this file may not build a `VerifierEnv` (D-P17) - reads both
+    records back to pinned values. `Msg` carries no `BEq`, so the decode is observed
+    through the code each arm returns: 5 for the scalar that was read, 48 for the point.
+    The last two conjuncts are the falsifications, computed: a record of an ALLOWED width
+    whose bytes do not read back makes the whole map `none`. -/
+def logDecodedKat_ok : Bool :=
+  let dispatch := fun rec : Nat × Bytes =>
+    if rec.1 == g1CompressedWidth then (widthKatCodec.ofCompressed? rec.2).map (fun _ => 48)
+    else if rec.1 == 32 then (frOfRepr? (p := 17) rec.2).map (fun x => x.val) else none
+  let buf := frToRepr (p := 17) (5 : Fr 17) ++ natToBytesLE 1 48
+  let bad : Transcript := Transcript.mk Bytes.empty Bytes.empty 32 keccak256
+    #[(32, Bytes.empty)]
+  match ((Transcript.initFromBytes buf).read (hashableFr (p := 17)) >>=
+          fun q => q.2.read (hashableG1 widthKatCodec)) with
+  | .ok (_, t) =>
+      t.log.toList.mapM dispatch == some [5, 48] &&
+        (t.log.toList.mapM dispatch).isSome &&
+        t.log.toList.all (fun rec => (dispatch rec).isSome) &&
+        t.log.toList.all (fun rec => rec.1 == 32 || rec.1 == g1CompressedWidth) &&
+        (bad.log.toList.mapM dispatch == none) &&
+        (dispatch (32, frToRepr (p := 17) (5 : Fr 17)) == some 5)
+  | .error _ => false
+
+#eval logDecodedKat_ok   -- expect true
+
+/-! ### P-CODEC-C step 2: the pipeline shape the codec lemma consumes
+
+    `verifyNative` and `verifyMsgs` are the SAME composition - run the §9.2 schedule on a
+    stream, require the cursor to have eaten the whole stream, then run the opening check -
+    over two different streams. `verifyShape` names that composition once, so the codec
+    lemma is an equality of streams rather than a re-derivation of the verifier.
+    `verifyNative_eq_verifyShape` and `verifyMsgs_eq_verifyShape` are the two
+    recognitions, and they are `rfl` up to the do-block desugaring: the port really does
+    execute one schedule twice, which is the property the §9.2 design was built to have.
+
+    `decodeRust_some` is the inversion the backward direction needs: a successful
+    `decodeRust` means the run succeeded, the cursor ate the whole stream, and the log's
+    per-record decode produced exactly those messages. -/
+/-- The shape both sides of the codec lemma share: run the §9.2 schedule on a stream,
+    require the cursor to have eaten the whole stream, then run the opening check. -/
+def verifyShape (params : ParamsVerifierKZG G₁ G₂)
+    (x : Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)) : Except Fault Unit :=
+  x >>= fun q => q.2.assertEmpty >>= fun _ =>
+    if DualMSM.check q.1 params = true then pure () else throw (Fault.error Error.opening)
+
+theorem verifyShape_ok {params : ParamsVerifierKZG G₁ G₂}
+    {x : Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)}
+    (h : verifyShape params x = Except.ok ()) :
+    ∃ g t, x = Except.ok (g, t) ∧ t.assertEmpty = Except.ok () ∧
+      DualMSM.check g params = true := by
+  cases x with
+  | error e => cases h
+  | ok q =>
+      cases q with
+      | mk g t =>
+          have h1 : (t.assertEmpty >>= fun _ =>
+              if DualMSM.check g params = true then (pure () : Except Fault Unit)
+              else throw (Fault.error Error.opening)) = Except.ok () := h
+          cases h2 : t.assertEmpty with
+          | error e =>
+              rw [h2] at h1
+              cases h1
+          | ok u =>
+              have h3 : (if DualMSM.check g params = true then (pure () : Except Fault Unit)
+                    else throw (Fault.error Error.opening)) = Except.ok () := by
+                rw [h2] at h1
+                exact h1
+              by_cases hc : DualMSM.check g params
+              · exact ⟨g, t, rfl, h2, hc⟩
+              · have h4 : (throw (Fault.error Error.opening) : Except Fault Unit)
+                    = Except.ok () := by simp [hc] at h3 ⊢
+                cases h4
+
+theorem verifyShape_ok_of {params : ParamsVerifierKZG G₁ G₂}
+    {x : Except Fault (DualMSM (Fr p) G₁ G₂ Gₜ × Transcript)} {g t}
+    (hx : x = Except.ok (g, t)) (hempty : t.assertEmpty = Except.ok ())
+    (hcheck : DualMSM.check g params = true) : verifyShape params x = Except.ok () := by
+  subst hx
+  show (t.assertEmpty >>= fun _ =>
+      if DualMSM.check g params = true then (pure () : Except Fault Unit)
+      else throw (Fault.error Error.opening)) = Except.ok ()
+  rw [hempty]
+  show (if DualMSM.check g params = true then (pure () : Except Fault Unit)
+      else throw (Fault.error Error.opening)) = Except.ok ()
+  rw [hcheck]
+  rfl
+
+theorem verifyNative_eq_verifyShape (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
+    (inst : Array (Fr p)) (π : Bytes) :
+    verifyNative (Gₜ := Gₜ) E F params vk inst π
+      = verifyShape params ((prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+          (Transcript.initFromBytes π)) := by
+  unfold verifyNative verifyShape
+  dsimp only []
+
+theorem verifyMsgs_eq_verifyShape (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂) (vk : VerifyingKey (Fr p) G₁)
+    (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
+    verifyMsgs (Gₜ := Gₜ) E H F params vk inst ms
+      = verifyShape params ((prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+          (Transcript.initWithHash H
+            (ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m))))) := by
+  unfold verifyMsgs prepareMsgs verifyShape
+  dsimp only []
+  simp only [Bind.bind, Pure.pure, Except.bind, Except.pure]
+  cases hrun : (StateT.run (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]])
+      (Transcript.initWithHash H _)) with
+  | error e => simp
+  | ok q =>
+      cases q with
+      | mk g t =>
+          cases h2 : t.assertEmpty with
+          | error e => simp [h2]
+          | ok u => simp [h2]
+
+theorem assertEmpty_ok_iff (t : Transcript) :
+    t.assertEmpty = Except.ok () ↔ t.buffer.size = t.pos := by
+  unfold Transcript.assertEmpty
+  by_cases h : t.buffer.size == t.pos
+  · rw [if_pos h]; exact ⟨fun _ => Nat.eq_of_beq_eq_true h, fun _ => rfl⟩
+  · rw [if_neg h]; exact ⟨fun e => absurd e (by simp), fun e => absurd h (by simpa using e)⟩
+
+theorem extract_whole (pi : Bytes) (n : Nat) (h : n = pi.size) : pi.extract 0 n = pi := by
+  subst h
+  apply ByteArray.ext
+  rw [ByteArray.data_extract]
+  apply Array.toList_inj.mp
+  rw [Array.toList_extract]
+  rw [show (ByteArray.size pi) = pi.data.toList.length from Array.length_toList.symm]
+  rw [List.extract_eq_take_drop, List.drop_zero, Nat.sub_zero, List.take_length]
+
+theorem decodeRust_some (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features)
+    (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes)
+    (ms : List (Msg (Fr p) G₁))
+    (h0 : decodeRust (Gₜ := Gₜ) E F vk inst π = some ms) :
+    ∃ g t, (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+        (Transcript.initFromBytes π) = .ok (g, t) ∧ t.pos = t.buffer.size ∧
+      t.log.toList.mapM (logDispatch E) = some ms := by
+  classical
+  unfold decodeRust at h0
+  dsimp only [] at h0
+  have hcase : (∃ g t, (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+        (Transcript.initFromBytes π) = .ok (g, t)) ∨
+      (∃ e, (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+        (Transcript.initFromBytes π) = .error e) := by
+    cases h : (prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]).run
+        (Transcript.initFromBytes π) with
+    | ok q => cases q with | mk g t => exact Or.inl ⟨g, t, rfl⟩
+    | error e => exact Or.inr ⟨e, rfl⟩
+  rcases hcase with ⟨g, t, hrun⟩ | ⟨e, hrun⟩
+  · rw [hrun] at h0
+    simp only [Except.toOption, Option.bind, Bind.bind] at h0
+    by_cases hne : ByteArray.size t.buffer ≠ t.pos
+    · simp only [if_pos hne] at h0
+      cases h0
+    · simp only [if_neg hne] at h0
+      have h2 : t.pos = ByteArray.size t.buffer := by omega
+      exact ⟨g, t, hrun, h2, h0⟩
+  · rw [hrun] at h0
+    simp only [Except.toOption, Option.bind, Bind.bind] at h0
+    cases h0
+
+/-! #### D-P23 for the step-2 shape lemmas -/
+
+/-- Satisfiability of `assertEmpty_ok_iff`: a cursor that has eaten the stream.
+    Falsification, as a THEOREM: a cursor one byte short is NOT empty, and the failure is
+    the NotFound kind the Rust uses (mod.rs:150-159), not a success. Without this the
+    right-hand side could be read as "the log tiles a prefix of the buffer", which is
+    exactly what `decodeRust`'s trailing-bytes test exists to reject. -/
+theorem assertEmpty_ok_witness_and_refutation :
+    (Transcript.initFromBytes Bytes.empty).assertEmpty = Except.ok () ∧
+      ¬ (Transcript.mk Bytes.empty (natToBytesLE 7 4) 3 keccak256 #[]).assertEmpty
+        = Except.ok () :=
+  ⟨rfl, by
+    show Except.error (Fault.error (Error.transcript IoErrorKind.notFound)) ≠ Except.ok ()
+    intro h
+    cases h⟩
+
+/-- Satisfiability of `extract_whole` at the only length that works, and the falsification
+    that the length hypothesis is load-bearing: at one byte short the slice is NOT the
+    stream. -/
+theorem extract_whole_refutesShortPrefix :
+    (natToBytesLE 7 4).extract 0 4 = natToBytesLE 7 4 ∧
+      (natToBytesLE 7 4).extract 0 3 ≠ natToBytesLE 7 4 := by
+  refine ⟨extract_whole _ _ rfl, ?_⟩
+  intro h
+  have h1 := congrArg ByteArray.size h
+  have h2 : ByteArray.size ((natToBytesLE 7 4).extract 0 3) = 3 := by decide
+  have h3 : ByteArray.size (natToBytesLE 7 4) = 4 := by decide
+  rw [h2, h3] at h1
+  exact absurd h1 (by decide)
+
+/-- Falsification, as a THEOREM: `verifyShape` is not the constant `ok ()`. A failed
+    opening check makes it an error even when the run and the cursor are perfect - which
+    is what makes `verifyShape_ok` an inversion rather than a tautology. -/
+theorem verifyShape_refutesFailedCheck {params : ParamsVerifierKZG G₁ G₂} {g t}
+    (hcheck : DualMSM.check g params = false) (_hempty : t.assertEmpty = Except.ok ()) :
+    verifyShape params (Except.ok (g, t)) ≠ Except.ok () := by
+  intro h
+  obtain ⟨g2, t2, hx, _hempty2, hcheck2⟩ := verifyShape_ok h
+  cases hx
+  exact absurd hcheck2 (by simp [hcheck])
 
 end Midfall.Halo2

@@ -107,7 +107,28 @@ a hypothesis the plan did not list.
 
 ### Step 4 - discharge `verifyNative_iff_msgs_codec` (NOT LANDED)
 
-Register stays **63**. The obstacle is named below.
+Register stays **63**. The obstacle is named below, and is now itself a theorem
+(`logWidths_not_logDecoded`) rather than an assertion in a plan file.
+
+## AXIOM AUDIT of everything landed here
+
+`#print axioms`, all clean - no `sorryAx` anywhere, only the three the rest of the tree
+uses:
+
+```
+decodeRust_recorded          [propext, Classical.choice, Quot.sound]
+recorded_fold_of_mapM        [propext, Quot.sound]
+msgWire_logDispatch          [propext, Classical.choice, Quot.sound]
+Transcript.recorded_eq_fold  [propext]
+pres_prepare                 [propext, Classical.choice, Quot.sound]
+presWidths_prepare           [propext, Classical.choice, Quot.sound]
+Pres.congr_of_run_eq         (none)
+set_not_Pres                 [propext, Quot.sound]
+set_not_PresWidths           [propext, Quot.sound]
+logWidths_not_logDecoded     [propext, Classical.choice, Quot.sound]
+fold_lemma_witness           [propext, Classical.choice, Quot.sound]
+Transcript.initWithHash_keccak [propext, Quot.sound]
+```
 
 ## THE SIXTH OBSTACLE (the required finding, part 1)
 
@@ -131,6 +152,13 @@ On the real pipeline this cannot happen - every read site uses `hashableFr` or
 definitionally (`Exec/Transcript.lean:59`, `:69`). But that is a statement about which
 hashable logged each record, which the log does not carry.
 
+It is now proved, as `logWidths_not_logDecoded`: a transcript whose one logged record is
+`(32, natToBytesLE 17 32)` - width 32, so `Transcript.LogWidths` HOLDS, and the dispatch's
+Fr arm is reached, and `frOfRepr? (p := 17) (natToBytesLE 17 32) = none`, so the whole
+`mapM` is `none`. Width and bytes are not enough. Alongside it, `hashableFr_readRepr_eq`
+and `hashableG1_readRepr_eq` (both `rfl`) pin exactly why the two hashables the verifier
+path uses are safe: for them the reading function IS the decoder the dispatch reaches for.
+
 **What it costs to close.** A third pipeline predicate alongside `Pres` and `PresWidths`:
 `Hashable.Dispatchable E h` (a read accepted at width `h.width` is decoded by
 `logDispatch E`), `Transcript.LogDecoded E t`, its per-primitive step lemmas, and then a
@@ -140,7 +168,12 @@ same 20 read sites, the same closure lemmas, the hypotheses discharged by
 `hashableG1_allowed` are now. Estimate: the closure section is a textual generation of the
 `PresWidths` one; the transfers are a third copy of walks that now each fit in one screen
 (`verifyAlgebraicConstraints`) or two (`parseTrace`). **Roughly one working session, no
-thinking.** With it, step 4 is: chain `pres_prepare` + `presWidths_prepare` +
+thinking.** ONE TRAP FOUND WHILE SCOPING IT, so the next package does not rediscover it:
+`(hashableG1 c).Dispatchable E` - "whatever `c` accepts, `E.g1` also decodes" - is FALSE
+for `c ≠ E.g1`, so unlike `hashableG1_allowed` (which holds for EVERY codec, that being its
+whole point) the decodability transfers cannot discharge it at the site. They must CARRY
+it as a hypothesis and it is only discharged at `pres_prepare`, where the pipeline's `g1`
+IS `E.g1`. That is a per-transfer-lemma extra binder across ~10 lemmas, not a rename. With it, step 4 is: chain `pres_prepare` + `presWidths_prepare` +
 `transcript_log_concat` + `decodeRust_recorded` + `Transcript.initWithHash_keccak` +
 `Transcript.assertEmpty`, both directions, and the register goes to 62.
 
@@ -220,6 +253,21 @@ Note on #2: the failure surfaced partly as a heartbeat timeout inside `msgWire_l
 (the corrupted `msgWire` forced a `whnf` of the byte emitter), not a clean type error.
 Reddened is reddened, but the signal was noisier than #1/#3/#4.
 
+## Final gate tail (after everything landed)
+
+```
+== sorry register ==
+ok: 63 tracked sorries
+== module reachability ==
+ok: all 110 modules are reachable from Midfall.lean
+== known-answer tests ==
+ok: 1291 annotated known-answer checks pass across 86 files
+== axioms of the frozen statements ==
+ok: 3 frozen statements, each depending on exactly Classical.choice, Quot.sound,
+    propext, sorryAx ... and 8 D-P23 witnesses carrying no sorryAx
+EXIT=0
+```
+
 ## Files touched
 
 * `Midfall/Halo2/Exec/TranscriptLog.lean` - 1498 -> 2166 lines. Added `import
@@ -229,12 +277,21 @@ Reddened is reddened, but the signal was noisier than #1/#3/#4.
 * Nothing else. `Statements.lean`, `Statements.sha256`, `SORRY.md`, Rust and `vendor/`
   untouched. No `git add`, no commit.
 
-## Scratch left in the tree (deliberately, so nothing is lost)
+## Scratch
 
-`formal/scratch_b.lean` (step 1 as developed), `scratch_c.lean` (the parseTrace Pres walk),
-`scratch_d.lean`/`scratch_w.lean` (the widths twins), `scratch_e.lean`/`scratch_e2.lean`
-(the algebraic walk), `scratch_f.lean` (the set-tail experiments), `scratch_g.lean`,
-`scratch_h.lean` (the assembled step 2+3 block), `parts.json`, `block23.txt`. These are
-outside `Midfall/` so `check_orphans.py` and `kat_gate.py` do not see them and the gate is
-green with them present. They are the source of the landed text and the next package can
-reuse the generation script.
+All development scratch (`scratch_b..i.lean`, `parts.json`, `block23.txt`, `pw_section.txt`)
+was removed once the content had landed, so the tree contains only the landed file and
+this report. The generation recipe for the third walk, if the next package wants it: take
+the `PresWidths` closure + transfer sections (`TranscriptLog.lean` lines 1014-1404 as they
+were before this package, now shifted) and rename `PresWidths`->`PresDec`,
+`LogWidths`->`LogDecoded`, `AllowedWidth`->`Dispatchable`, `hashableFr_allowed`->
+`hashableFr_dispatchable`; then hand-edit the ~10 G1-reading transfers to CARRY the
+hypothesis instead of discharging it (see the trap noted above).
+
+## Final state
+
+`lake build`: Build completed successfully (5156 jobs), peak tree 3.83 GiB /
+largest process 3.09 GiB under `--proc-limit 6G --limit 24G`.
+`bash scripts/checks.sh`: EXIT=0, 13 sections, 63 tracked sorries, 1291 KATs across
+86 files, 110 modules reachable, Statements hash OK, frozen axioms the expected four.
+`Midfall/Halo2/Exec/TranscriptLog.lean` is 2230 lines (was 1498).

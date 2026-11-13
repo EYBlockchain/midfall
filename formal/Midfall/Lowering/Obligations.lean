@@ -175,6 +175,7 @@ import Midfall.Lowering.QvmFold
 import Midfall.Lowering.SemanticEquivalence
 import Midfall.Assumptions.Eip2537
 import Midfall.Assumptions.Codec
+import Midfall.Halo2.Exec.TranscriptLog
 
 namespace Midfall.Lowering
 open Midfall Midfall.Halo2 Midfall.Generator Midfall.Generator.QuotientCertify
@@ -656,20 +657,97 @@ theorem contractRef_noAcc_of_semanticEquivalence (E : VerifierEnv p G₁ G₂ G�
 
 /-- Finding 1: the frozen verifyNative_iff_msgs WAS false for a degenerate codec, and D-P27
     (executed by P-REPIN) amended the frozen text to carry hc : E.g1.compressedRoundtrip - the
-    same hypothesis this restatement has always carried, so the two now agree in shape. What
-    still separates them is the proof obligation, not the statement: this one needs the
-    transcript-log invariant, which is why it lives here and not in the frozen file. Only
-    compressedRoundtrip is needed (the attack showed p ≤ 2^256 is decorative here). -/
+    same hypothesis this restatement has always carried, so the two now agree in shape.
+    P-CODEC-C DISCHARGED THE PROOF OBLIGATION THAT USED TO SEPARATE THEM. What still
+    separates the two is only the ARITY (this one spells the environment out) and the
+    deliberate hold-out: the frozen statement's own sorry at Statements.lean:68 is D-P27's,
+    reserved for a human decision plus a re-pin, and it is NOT touched here. So the frozen
+    statement is now provable modulo that one decision and nothing else - see the report of
+    docs/plans/P-CODEC-C. Only compressedRoundtrip is needed (the attack showed p ≤ 2^256 is
+    decorative here). -/
 theorem verifyNative_iff_msgs_codec (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes) (hc : E.g1.compressedRoundtrip) :
     verifyNative (Gₜ := Gₜ) E F params vk inst π = .ok () ↔
     ∃ ms, decodeRust (Gₜ := Gₜ) E F vk inst π = some ms ∧
       verifyMsgs (Gₜ := Gₜ) E keccak256 F params vk inst ms = .ok () := by
-  sorry
-  -- SKETCH PROOF HINT (section Q): key lemma transcript_log_concat - the log's reprs
-  -- concatenate to the consumed transcript prefix. Note hc is the ONLY codec law the
-  -- statement needs: attack.md's verifyNative_iff_msgs_codec entry proves the sketch's
-  -- hp : p ≤ 2^256 is decorative here, and it is therefore absent.
+  set sched : TranscriptM (DualMSM (Fr p) G₁ G₂ Gₜ)
+      := prepare (Gₜ := Gₜ) E F vk [[1]] [[inst.toList]]
+  have hpres : Pres sched := pres_prepare (p := p) E F vk [[1]] [[inst.toList]]
+  have hwid : PresWidths sched := presWidths_prepare (p := p) E F vk [[1]] [[inst.toList]]
+  have hdcd : PresDecoded E sched := presDecoded_prepare (p := p) E F vk [[1]] [[inst.toList]]
+  constructor
+  · intro hv
+    have hshape : verifyShape params (sched.run (Transcript.initFromBytes π)) = Except.ok () := by
+      rw [← verifyNative_eq_verifyShape (p := p) E F params vk inst π]
+      exact hv
+    obtain ⟨g, t, hrun, hempty, hcheck⟩ := verifyShape_ok hshape
+    have hpos : t.pos = t.buffer.size := ((assertEmpty_ok_iff t).mp hempty).symm
+    have hw : Transcript.LogWidths t :=
+      hwid (Transcript.initFromBytes π) t g (Transcript.LogWidths.initFromBytes π) hrun
+    have hd : Transcript.LogDecoded E t :=
+      hdcd (Transcript.initFromBytes π) t g (Transcript.LogDecoded.initFromBytes E π) hrun
+    obtain ⟨ms, hms⟩ := logDecoded_mapM_some E t hd
+    have hdec : decodeRust (Gₜ := Gₜ) E F vk inst π = some ms := by
+      rw [decodeRust_eq_mapM (p := p) E F vk inst π g t hrun hpos, hms]
+    have hrec : t.recorded = π.extract 0 t.pos :=
+      transcript_log_concat hpres π hrun
+    have hbuf : t.buffer = π := (hpres (Transcript.initFromBytes π) t g
+      (Transcript.tiled_initFromBytes π) hrun).2
+    have hfold : ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m))
+        = π := by
+      rw [decodeRust_recorded (p := p) E hc F vk inst π g t hrun hpos hw ms hdec, hrec]
+      have hposπ : t.pos = ByteArray.size π := by rw [hpos, hbuf]
+      exact extract_whole π t.pos hposπ
+    refine ⟨ms, hdec, ?_⟩
+    rw [verifyMsgs_eq_verifyShape (p := p) E keccak256 F params vk inst ms]
+    refine verifyShape_ok_of ?_ hempty hcheck
+    rw [show Transcript.initWithHash keccak256
+          (ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m)))
+          = Transcript.initFromBytes π from by rw [Transcript.initWithHash_keccak, hfold]]
+    exact hrun
+  · rintro ⟨ms, hdec, hvm⟩
+    obtain ⟨g, t, hrun, hpos, _hmap⟩ :=
+      decodeRust_some (p := p) E F vk inst π ms hdec
+    have hw : Transcript.LogWidths t :=
+      hwid (Transcript.initFromBytes π) t g (Transcript.LogWidths.initFromBytes π) hrun
+    have hrec : t.recorded = π.extract 0 t.pos := transcript_log_concat hpres π hrun
+    have hbuf : t.buffer = π := (hpres (Transcript.initFromBytes π) t g
+      (Transcript.tiled_initFromBytes π) hrun).2
+    have hfold : ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m))
+        = π := by
+      rw [decodeRust_recorded (p := p) E hc F vk inst π g t hrun hpos hw ms hdec, hrec]
+      have hposπ : t.pos = ByteArray.size π := by rw [hpos, hbuf]
+      exact extract_whole π t.pos hposπ
+    have hshape : verifyShape params (sched.run (Transcript.initWithHash keccak256
+        (ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m)))))
+        = Except.ok () := by
+      rw [← verifyMsgs_eq_verifyShape (p := p) E keccak256 F params vk inst ms]
+      exact hvm
+    obtain ⟨g2, t2, hrun2, hempty2, hcheck2⟩ := verifyShape_ok hshape
+    rw [show Transcript.initWithHash keccak256
+          (ms.foldl (init := Bytes.empty) (fun acc m => ByteArray.append acc (msgWire E m)))
+          = Transcript.initFromBytes π from by rw [Transcript.initWithHash_keccak, hfold]] at hrun2
+    have inj := hrun2.symm.trans hrun
+    cases inj
+    rw [verifyNative_eq_verifyShape (p := p) E F params vk inst π]
+    refine verifyShape_ok_of hrun ?_ ?_
+    · exact hempty2
+    · exact hcheck2
+  -- PROOF (P-CODEC-C). Both sides execute ONE schedule: `verifyShape` names the
+  -- composition (run `prepare`, then `assertEmpty`, then the opening check) and
+  -- `verifyNative_eq_verifyShape` / `verifyMsgs_eq_verifyShape` recognise it in each, up to
+  -- the do-block desugaring. What makes the two streams equal is the chain the plan named,
+  -- now complete: `pres_prepare` (the log tiles the consumed prefix), `presWidths_prepare`
+  -- (every logged width is one the decoder dispatches on), `presDecoded_prepare` (every
+  -- logged record is one the decoder ACCEPTS - the sixth obstacle, P-CODEC-C),
+  -- `transcript_log_concat`, `decodeRust_recorded` (the fold lemma: the decoded messages
+  -- re-encode to the recorded prefix), `Transcript.initWithHash_keccak` (keccak-alpha and
+  -- the byte initialiser are definitionally one transcript) and `Transcript.assertEmpty`.
+  -- Note hc is the ONLY codec law the statement needs: attack.md's
+  -- verifyNative_iff_msgs_codec entry proves the sketch's hp : p <= 2^256 is decorative
+  -- here, and it is therefore absent. The frozen Statements.verifyNative_iff_msgs is the
+  -- same statement at the frozen arity; its own sorry at Statements.lean:68 is the
+  -- deliberate D-P27 hold-out and is NOT touched here.
 
 /-! ### Known-answer checks
 
@@ -776,13 +854,17 @@ def onlyTwoOutcomesSelectorKats_ok : Bool :=
 
 #eval onlyTwoOutcomesSelectorKats_ok      -- expect true
 
--- AXIOM AUDIT. The one headline theorem this file actually proves must not
---   lean on a sorry: it is the re-export of the already-proved
---   contractRefAccepts_iff_verifyMsgs (SemanticEquivalence.lean:29), so its axioms
---   are the three the rest of the tree uses and sorryAx is not among them. The four
---   statement holes above all DO carry sorryAx, which is exactly why this one is
---   printed: it separates the field of the headline that is closed today from the
---   four that are M7/M8 work.
+-- AXIOM AUDIT. The two headline theorems this file actually proves must not
+--   lean on a sorry. The first is the re-export of the already-proved
+--   contractRefAccepts_iff_verifyMsgs (SemanticEquivalence.lean:29). The second is
+--   verifyNative_iff_msgs_codec, discharged by P-CODEC-C from the three pipeline
+--   walks in Exec/TranscriptLog.lean (Pres, PresWidths, PresDecoded) plus the fold
+--   lemma; it is the first headline statement of this file to be CLOSED rather than
+--   stated, and its axioms are the three the rest of the tree uses, with sorryAx not
+--   among them. The three statement holes above all DO carry sorryAx, which is
+--   exactly why both of these are printed: they separate the fields of the headline
+--   that are closed today from the ones that are M7/M8 work.
 #print axioms Midfall.Lowering.contractRef_noAcc_of_semanticEquivalence
+#print axioms Midfall.Lowering.verifyNative_iff_msgs_codec
 
 end Midfall.Lowering
