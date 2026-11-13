@@ -111,6 +111,40 @@ prerequisites — which is the useful thing about naming it.
 **6–12 calendar weeks**, dominated by uptime rather than difficulty. The 14-day gap earlier in
 this project moved the calendar by more than every estimate error combined.
 
+
+---
+
+## Revision log
+
+### R1 - round 116, after P-MODEXP. First recorded miss.
+
+| claim made | before | actual | verdict |
+|---|---|---|---|
+| register 57 if modexpInv_correct closes | predicted close | **stayed 58** | **MISS** - needs ~8 byte-slice lemmas, not Fermat |
+| the r-torsion count is not needed at all (D-P34) | retired | **needed again**, via g1Decodes + PrimeOrderWith | **error of kind, twice** |
+| M-A remaining | 3-4 sessions | **5-7** | revised up |
+| total to landmark | 18-31 sessions | **21-35** | revised up |
+| wall-clock | 6-12 weeks | **7-13 weeks** | revised up |
+| Fermat reading | asserted | **held for the math, failed on the frame width** | partial |
+
+**The lesson is not about arithmetic.** D-P34 retired the point count because PrimeOrderWith of a
+cyclic subgroup is two elementary lemmas. That is true - and the count came back through a
+**different door**: g1Decodes demands toEip hit every accepted frame, PrimeOrderWith demands
+Nat.card G1 = r, and together those are **equivalent to** the point count. A blocker can be
+genuinely retired at one clause and silently re-imported at another. **Retiring a premise
+requires checking every clause that could re-import it, not just the one it was raised under.**
+New failure mode for this ledger; fifth error of kind recorded.
+
+**Route forward, per P-MODEXP:** not SEA. Route (b) - n-torsion structure + Weil pairing +
+gcd(r, p-1) = 1 - has a cheap first step: gcd(r, p-1) = 1 follows from BasePrime's existing
+factorisation of p-1, since a 255-bit prime r is not among its small factors. A morning's work.
+
+**Credibility note.** Three of the five kind-errors were the orchestrator's own, all mis-sizing a
+blocker by reasoning from a recorded premise instead of re-deriving it. The mitigation is not
+better estimation; it is the standing re-verify instruction, and the orchestrator's own
+retirements are now included in what must be re-verified.
+
+---
 ## What would most improve this ledger
 
 1. **One `Partials` spec proved.** M-B's rate is pure extrapolation; one datum would tighten it
