@@ -81,10 +81,23 @@
 - verifyNative_iff_msgs: the width discrimination in decodeRust (Native.lean:244-249) relies on 48 (hashableG1) ≠ 32 (hashableFr). hashableU32 is read only by KATs, never on the verifier path, so every log record is 48 or 32 bytes wide. The provable restatement needs compressedRoundtrip, the frOfRepr?/frToRepr round trip, and `Transcript.initWithHash keccak256 = Transcript.initFromBytes` (default field, expected rfl).
 
 ## sorries and partials
-- Midfall/Statements.lean:46 verifyNative_iff_msgs, `by sorry`. Registered in SORRY.md; the file is SHA-256 frozen (d4984965...a3f3).
-- Midfall/Statements.lean:59 verifyMsgs_iff_spec, `by sorry`. Registered.
-- Midfall/Statements.lean:75 contractRef_noAcc, `by sorry`. Registered. It is provable from the unbuilt Lowering.contractRefAccepts_iff_verifyMsgs, but only after a re-pin.
-- Midfall/Halo2/Spec/Piop.lean:56 Spec.accepts, a Prop def `:= sorry`. Registered. Its signature has no E and most likely no Gₜ or pairing binder.
+
+> **CORRIGENDUM (P-STATGATE, after D-P27 was EXECUTED by P-REPIN).** The four entries below
+> are the survey as taken, and the first four are now stale in three ways at once: the line
+> numbers moved (Statements.lean went 79 to 125 lines; the three statements are now at
+> **65**, **91**, **119**), the digest is now
+> **`40d97dc75466f0640746ec6ad5e7d5e273e46bd76fdac06efca7b0e38f54dc6e`**, and two of the three
+> texts were AMENDED - `verifyNative_iff_msgs` gained `hc : E.g1.compressedRoundtrip`,
+> `verifyMsgs_iff_spec`'s right-hand side became `Spec.accepts E H F params vk inst ms`, and
+> `contractRef_noAcc` was marked SUPERSEDED rather than left an open obligation. "Its
+> signature has no E" is likewise no longer true of `Spec.accepts`: it takes `E` first. Kept
+> verbatim because they are the evidence of what was frozen, exactly as the old statement
+> texts are kept in `Midfall/Instances/StatementsRepair.lean`. See docs/design.md D-P27.
+
+- Midfall/Statements.lean:46 verifyNative_iff_msgs, `by sorry`. Registered in SORRY.md; the file is SHA-256 frozen (d4984965...a3f3). **[now :65, digest 40d97dc7...dc6e, and amended under D-P27 to carry the codec law - the false part of this entry was the word "unproved": the statement was FALSE, as attack.md line 107 and repair1_old_false_at_degEnv both show.]**
+- Midfall/Statements.lean:59 verifyMsgs_iff_spec, `by sorry`. Registered. **[now :91; amended under D-P27 to thread the environment into the spec.]**
+- Midfall/Statements.lean:75 contractRef_noAcc, `by sorry`. Registered. It is provable from the unbuilt Lowering.contractRefAccepts_iff_verifyMsgs, but only after a re-pin. **[now :119; the re-pin happened, the lemma was BUILT, and D-P27 marked this SUPERSEDED rather than filling it - the open human decision is recorded in design.md D-P27.]**
+- Midfall/Halo2/Spec/Piop.lean:56 Spec.accepts, a Prop def `:= sorry`. Registered. Its signature has no E and most likely no Gₜ or pairing binder. **[superseded: D-P27 gave it `E` as its first argument. Still a registered hole, and the Exec-tautology ban at Piop.lean:22-30 is intact.]**
 - No `partial def` anywhere under formal/Midfall. The only `partial def`s in the tree are the vendored meta-level macro elaborators at vendor/yul-semantics/YulSemantics/Syntax.lean:104-218.
 - No axiom or admit under Midfall. native_decide appears only in Midfall/Instances/ (for example ExponentModel.lean:425-574 examples) and in vendored example files; the checks.sh gate does not scan vendor/.
 - noncomputable defs, none of them in Exec or Generator: Security/Challenges.lean:31 chalMass (ENNReal), and Spec/Degrees.lean:241 chalMass, :738 roundErrDegrees, :752 roundErr, :756 roundErrAll, :765 ksErrDegrees, :770 ksErr (all ℝ≥0).

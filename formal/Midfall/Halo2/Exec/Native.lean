@@ -81,8 +81,11 @@ pieces of data that every leaf on this path requires:
 And they cannot be added. Both alternatives were tried against the frozen file:
 
 * as an *explicit* parameter, `verifyNative F params vk inst pi` at
-  `Statements.lean:43` fails to elaborate: "Application type mismatch: The argument
-  F has type `Features` but is expected to have type `G1Codec ?m`".
+  `Statements.lean:65` fails to elaborate: "Application type mismatch: The argument
+  F has type `Features` but is expected to have type `G1Codec ?m`". (The line moved
+  from 43 to 65 when D-P27 amended the file; the failure itself is unchanged, and
+  `scripts/check_statement_fingerprints.py` now pins the statement text that produces
+  it, so a re-pin cannot move this silently again.)
 * as an *instance-implicit*, Lean refuses outright: "invalid binder annotation,
   type is not a class instance: `G1Codec G₁`" - and even with `G1Codec` made a
   class, `Statements.lean` binds only `[P : AdmissiblePairing G₁ G₂ Gₜ]` and
@@ -98,10 +101,21 @@ spelling it would register as a false proof hole.)
 
 ### Consequences for the frozen statements
 
-* `verifyNative_iff_msgs` elaborates but is not provable as written. Three of
-  the four defs it mentions (`verifyNative`, `decodeRust`, `verifyMsgs`) have no
-  faithful inhabitant at their frozen types, and `prepareMsgs` is pinned the
-  same way by `Midfall/Lowering/Types.lean`.
+* `verifyNative_iff_msgs` used to elaborate and be FALSE as written: with
+  `toCompressed := fun _ => Bytes.empty` the byte-level verifier accepts the fixture
+  proof while no message stream both decodes and re-verifies. That is no longer the
+  frozen text. D-P27 (executed by P-REPIN) amended it to carry
+  `hc : E.g1.compressedRoundtrip`, the decoder-first law this file's own codec
+  parameter is meant to supply, and `Midfall/Instances/StatementsRepair.lean` keeps
+  both D-P23 halves: `repair1_old_false_at_degEnv` refutes the old text at the
+  degenerate environment by computation, `repair1_satisfiable` exhibits an
+  environment meeting the new one. What is STILL true of the repaired statement is
+  that it is not proved: three of the four defs it mentions (`verifyNative`,
+  `decodeRust`, `verifyMsgs`) have no faithful inhabitant at their frozen types,
+  `prepareMsgs` is pinned the same way by `Midfall/Lowering/Types.lean`, and the
+  scalar half of the decode/re-encode round trip (`frOfRepr?` against `frToRepr`) is
+  a registered hole of its own. `scripts/check_statement_fingerprints.py` refuses the
+  E-free-of-the-codec-law shape, so the repair cannot be undone quietly.
 * `decodeRust` has a second, independent gap: the read schedule is not a
   function of `(F, vk, pi)` alone. `verify_algebraic_constraints` reads one
   evaluation per *committed* instance column (verifier.rs:357-358) and one block

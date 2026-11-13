@@ -642,15 +642,24 @@ theorem end_to_end_acc_complete (S : Surface p G₁ G₂ Gₜ) (product : Pairin
   -- SKETCH PROOF HINT (section Q): verifyNative_iff_msgs_codec; contractRef_acc_complete;
   -- calldata_roundtrip; hc.verifier_complete; hc.ir_refines.
 
-/-- Finding 3: the frozen Statements.contractRef_noAcc, under a new name (filling it needs a re-pin). -/
+/-- Finding 3, and now the reason it was closed: the frozen Statements.contractRef_noAcc is
+    marked SUPERSEDED by THIS lemma under D-P27 (executed by P-REPIN). Same equivalence, one
+    name here and one there. Filling the frozen one's sorry still needs a re-pin, and the spec
+    surface deliberately holds statements rather than proofs, so it stays sorry and stays
+    registered - repair3_rederived exhibits that, and the human decision to fill it or not is
+    recorded in docs/design.md D-P27, not made here. -/
 theorem contractRef_noAcc_of_semanticEquivalence (E : VerifierEnv p G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (ms : List (Msg (Fr p) G₁)) :
     (Midfall.Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) E keccak256 params vk inst ms = true) ↔
       verifyMsgs (Gₜ := Gₜ) E keccak256 Features.solidity params vk inst ms = .ok () :=
   contractRefAccepts_iff_verifyMsgs E keccak256 params vk inst ms
 
-/-- Finding 1: the frozen verifyNative_iff_msgs is false for a degenerate codec; this is the provable
-    form. Only compressedRoundtrip is needed (the attack showed p ≤ 2^256 is decorative here). -/
+/-- Finding 1: the frozen verifyNative_iff_msgs WAS false for a degenerate codec, and D-P27
+    (executed by P-REPIN) amended the frozen text to carry hc : E.g1.compressedRoundtrip - the
+    same hypothesis this restatement has always carried, so the two now agree in shape. What
+    still separates them is the proof obligation, not the statement: this one needs the
+    transcript-log invariant, which is why it lives here and not in the frozen file. Only
+    compressedRoundtrip is needed (the attack showed p ≤ 2^256 is decorative here). -/
 theorem verifyNative_iff_msgs_codec (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes) (hc : E.g1.compressedRoundtrip) :
     verifyNative (Gₜ := Gₜ) E F params vk inst π = .ok () ↔

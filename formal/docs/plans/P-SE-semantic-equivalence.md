@@ -2365,8 +2365,10 @@ theorem contractRef_noAcc_of_semanticEquivalence (E : VerifierEnv p G₁ G₂ G�
       verifyMsgs (Gₜ := Gₜ) E keccak256 Features.solidity params vk inst ms = .ok () :=
   contractRefAccepts_iff_verifyMsgs E keccak256 params vk inst ms
 
-/-- Finding 1: the frozen verifyNative_iff_msgs is false for a degenerate codec; this is the provable
-    form. Only compressedRoundtrip is needed (the attack showed p ≤ 2^256 is decorative here). -/
+/-- Finding 1: the frozen verifyNative_iff_msgs WAS false for a degenerate codec; this is the
+    provable form. Only compressedRoundtrip is needed (the attack showed p ≤ 2^256 is decorative
+    here). [D-P27, executed by P-REPIN: the frozen statement now carries the same hypothesis, so
+    the two agree in shape and what separates them is the proof obligation, not the statement.] -/
 theorem verifyNative_iff_msgs_codec (E : VerifierEnv p G₁ G₂ Gₜ) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p)) (π : Bytes) (hc : E.g1.compressedRoundtrip) :
     verifyNative (Gₜ := Gₜ) E F params vk inst π = .ok () ↔

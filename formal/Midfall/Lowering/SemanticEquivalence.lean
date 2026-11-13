@@ -24,8 +24,12 @@ variable {p : Nat} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-- The currently implemented contract reference has no accumulator arm. It
     accepts exactly when the Rust-faithful message-level verifier succeeds;
-    unlike the frozen `contractRef_noAcc` placeholder, this lemma has a proof
-    and permits any hash `H`. Do not use it to claim accumulator-mode parity. -/
+    unlike the frozen `contractRef_noAcc` placeholder it has a proof and permits
+    any hash `H`, which is precisely why D-P27 (executed by P-REPIN) marked that
+    placeholder SUPERSEDED by this lemma rather than deleting it - the frozen text
+    is the weaker special case, keccak256 fixed where `H` is free, and
+    `repair3_rederived` exhibits it as a one-line re-export of this proof. Do not
+    use this lemma to claim accumulator-mode parity. -/
 theorem contractRefAccepts_iff_verifyMsgs
     (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash)
     (params : ParamsVerifierKZG G₁ G₂)

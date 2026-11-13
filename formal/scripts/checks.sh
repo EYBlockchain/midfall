@@ -115,6 +115,17 @@ echo '== baseline SHA pins (tracked vs untracked) =='
 python3 ../proofs/solidity-verifier/scripts/check_baseline_pins.py || exit 1
 
 echo '== axioms of the frozen statements =='
-printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n#print axioms Midfall.Statements.contractRef_noAcc\n' > /tmp/midfall-ax.lean
-lake env lean /tmp/midfall-ax.lean
+# A GATE, NOT A PRINT (P-STATGATE). This section used to be two lines that printed three
+# axiom sets and exited 0 whatever they said: it printed sorryAx three times and stayed
+# green, which is a report wearing a gate's clothes. scripts/check_frozen_axioms.py now
+# reads the declaration list FROM the frozen file - so a fourth statement cannot arrive
+# unprobed, which the old hand-written probe could not see either - runs the same
+# '#print axioms', and requires each axiom set to be EXACTLY propext, sorryAx,
+# Classical.choice, Quot.sound. sorryAx is EXPECTED: these are spec statements, not
+# proofs, and D-P27 kept all three 'sorry' deliberately, so a gate that failed on sorryAx
+# would be red on every honest version of this file and would be deleted inside a week.
+# What the rule is about is SHAPE: native_decide and Lean.ofReduceBool are named and
+# rejected, and so is a statement that LOSES sorryAx, because filling a frozen hole needs
+# a re-pin, a SORRY.md change and a decision - not a silent edit that looks like progress.
+python3 scripts/check_frozen_axioms.py || exit 1
 

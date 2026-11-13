@@ -45,8 +45,13 @@
 -- model does not certify: it is a model of exponent arithmetic, not of
 -- BLS12-381, every element is its own discrete log, and no theorem here depends
 -- on it (the dependency runs Instances -> Exec, never back). These are Bool
--- computations, not proofs; the frozen `verifyNative_iff_msgs` stays a `sorry`
--- and this file is its executable shadow, nothing more.
+-- computations, not proofs; the frozen `verifyNative_iff_msgs` stays a `sorry`,
+-- and KAT (8) below is the closest thing the tree has to its executable shadow.
+-- "Closest thing" is load-bearing since D-P27: the frozen statement now demands
+-- `E.g1.compressedRoundtrip` and this fixture's codec `expG1Codec` fails it
+-- (`Midfall/Instances/StatementsRepair.lean`, `repair1_law_is_not_free`), so KAT (8)
+-- computes at an environment the repaired statement does not quantify over. See the
+-- doc string on KAT (8) for the whole story.
 --
 -- ON `[[1]]` VERSUS THE PLAN'S `[[0]]`. The plan sketch writes
 -- `prepare E F vk [[0]] [[inst.toList]]`. The baseline Rust
@@ -403,15 +408,34 @@ def n2VerifyNative_ok : Bool :=
   (List.range 17).all (fun pi =>
     ["ok", "opening"].contains (n2FaultKind (n2Proof pi)))
 
-/-- (8) The executable shadow of the frozen `verifyNative_iff_msgs`: for all
-    seventeen streams, `verifyNative` accepts iff `decodeRust` decodes and
+/-- (8) The executable shadow of the PRE-D-P27 shape of the frozen
+    `verifyNative_iff_msgs` - and NOT of the statement as it now stands. For all
+    seventeen streams at `n2Env`, `verifyNative` accepts iff `decodeRust` decodes and
     `verifyMsgs` at keccak256 accepts. Stated as a Bool because the theorem stays
     `sorry`; the mutated proof is included on purpose - it decodes to `some ms` and
     is rejected by both sides, so the ∃ is witnessed on the reject side too and the
     equivalence is not carried by "the bad proof does not decode".
 
+    WHY THE QUALIFICATION, which P-STATGATE added and P-REPIN's audit found (finding 6).
+    D-P27 amended the frozen statement to carry `hc : E.g1.compressedRoundtrip`, and
+    `repair1_law_is_not_free` in `Midfall/Instances/StatementsRepair.lean` proves that
+    the codec this fixture runs on - `expG1Codec`, the only runnable one in the tree -
+    FAILS that law: its `ofCompressed?` accepts any 48-byte string, so
+    `natToBytesBE 18 48` decodes to the generator's square and re-encodes as
+    `natToBytesBE 1 48`. Two distinct strings, one point, which is exactly what the law
+    forbids. So this KAT computes at an environment the repaired statement declines to
+    quantify over. It is still a true computation, and it is still the only
+    byte-level-versus-message-level agreement evidence in the tree; what it is no longer
+    is evidence for the frozen text. The claim this doc string used to make pointed the
+    coverage in the wrong direction, and a KAT that shadows a superseded shape is worse
+    than none because it reads as confirmation.
+
+    What WOULD shadow the repaired shape: the same seventeen-way comparison at
+    `canonG1Codec` / `canonEnv`, the witness environment that does satisfy the law.
+    Nothing runs that today - recorded here as remaining work, not claimed as done.
+
     Rules out: a message-level verifier that disagrees with the byte-level one on
-    some proof (the theorem's actual content), and - via the last two conjuncts -
+    some proof (the old theorem's content), and - via the last two conjuncts -
     the vacuous case where both sides reject everything, which would make the
     seventeen-way ↔ true for the wrong reason. -/
 def n2VerifyMsgsAgrees_ok : Bool :=

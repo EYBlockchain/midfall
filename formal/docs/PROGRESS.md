@@ -142,7 +142,7 @@ D-P29** in `docs/design.md`; `PLAN` section 0 amended for D-P24 (`4817b16`).
 | # | decision | record |
 |---|---|---|
 | 1 | **Per-deployment first**, generic theorem as a stated follow-on | D-P24 |
-| 2 | **Re-pin `Statements.lean`** - a hash freeze is not a licence to keep a known falsehood frozen | D-P27 |
+| 2 | **Re-pin `Statements.lean`** - a hash freeze is not a licence to keep a known falsehood frozen. **EXECUTED** by P-REPIN (digest `40d97dc7…dc6e`); P-STATGATE then gave the frozen file semantic gate coverage, since the hash alone validated none of its content | D-P27 |
 | 3 | **M0: regenerate** the six live poseidon artefacts under the recorded profile, re-pin `BASELINE.md`, **delete the 12 unread fixtures** | D-P28 |
 | 4 | **Constructor helpers first**; extend the vendored DSL for splicing only if that proves painful | D-P26 |
 | 5 | **Security moves to ArkLib `Interaction`**; D-P21 finally implemented; deployed KS stays a named parameterised assumption | D-P29 |
@@ -180,7 +180,13 @@ fixtures. See `BASELINE.md`, "Poseidon fixture regeneration".
 3. **D-P21 implementation** - per-round `chalMass`; adopted round 51, still not executed.
 4. **Statement-layer follow-ups:** `vkLoading_spec` world hypothesis (needs a decision),
    `batch_invert`/`scalar_inv` helper gap, belt-and-braces `hh`/`hkec` fingerprint fragments.
-5. **`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.
+5. ~~**`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.~~
+   **DONE (P-REPIN, digest `40d97dc7…dc6e`)**, and the frozen file now has semantic gate
+   coverage of its own (P-STATGATE: `STATEMENTS` section in
+   `scripts/check_statement_fingerprints.py`, plus `scripts/check_frozen_axioms.py` as a gate
+   instead of a print). Two decisions remain open and are recorded in D-P27: whether to fill
+   `contractRef_noAcc`'s sorry now that it is known derivable, and whether to drop the two
+   dead imports (`Security.SRS`, `Security.Challenges`).
 6. Small owed items: F-IR-1 basename collision, `Common/Bytes.lean` `Array.foldl` lemma,
    `fixedBases` "-G" defect.
 
@@ -203,7 +209,10 @@ both as named, gate-enforced hypotheses per D-P1's own policy, which unblocks th
 3. **P5** can proceed in parallel with (1) - FinalPairing's AST is real.
 4. **M0 execution** (D-P28): regenerate poseidon artefacts, re-pin `BASELINE.md`, delete the
    12 unread fixtures.
-5. **`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.
+5. ~~**`Statements.lean` re-pin** (D-P27) - it still freezes a known-false statement.~~
+   **DONE (P-REPIN)**, digest `40d97dc7…dc6e`; semantic coverage of the frozen file added by
+   P-STATGATE. Open decisions it left: fill `contractRef_noAcc` or keep it as a frozen shape,
+   and drop the two dead imports or keep the surface as pinned.
 6. **D-P21 implementation** - per-round `chalMass`; adopted round 51, still not done.
 7. Small owed items: F-IR-1 basename collision, `Common/Bytes.lean` `Array.foldl` lemma,
    `fixedBases` "-G" defect, gate schema gap (two of three gates cannot see theorem-binder

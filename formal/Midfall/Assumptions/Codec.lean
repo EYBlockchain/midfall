@@ -32,14 +32,22 @@
 -- REMOVED from G1Codec (Common/Codec.lean:97-105 records why) and must stay a
 -- hypothesis here rather than being restated as a fact.
 --
--- KNOWN FALSEHOOD THIS FILE DOES NOT STATE. The frozen
--- Midfall.Statements.verifyNative_iff_msgs is false for a degenerate codec
+-- THE FALSEHOOD THIS FILE DOES NOT STATE, AND WHAT HAPPENED TO IT. The frozen
+-- Midfall.Statements.verifyNative_iff_msgs WAS false for a degenerate codec
 -- (finding B1: toCompressed := fun _ => Bytes.empty re-serialises a 48-byte
--- stream to nothing, so prepareMsgs faults while verifyNative accepts). Its
--- restatement, verifyNative_iff_msgs_codec, belongs to Obligations.lean (stage 6)
--- because it needs the transcript-log invariant; it is NOT hidden here. attack.md
--- line 107 FIX also drops the p <= 2^256 hypothesis from that restatement as
--- decorative while KEEPING it here, where the encoder-first direction is used.
+-- stream to nothing, so prepareMsgs faults while verifyNative accepts). That
+-- sentence is now past tense: D-P27, executed by P-REPIN, amended the frozen text
+-- to carry hc : E.g1.compressedRoundtrip - the law defined in this file's own
+-- bundle, at Common/Codec.lean:113 - and the refutation is no longer a comment
+-- anywhere but a theorem, repair1_old_false_at_degEnv in
+-- Midfall/Instances/StatementsRepair.lean, with repair1_satisfiable on the other
+-- side of D-P23. scripts/check_statement_fingerprints.py pins the repaired shape
+-- and refuses the old one, so this paragraph cannot go back to being present tense
+-- without a gate reddening. Its restatement, verifyNative_iff_msgs_codec, belongs
+-- to Obligations.lean (stage 6) because it needs the transcript-log invariant; it
+-- is NOT hidden here. attack.md line 107 FIX also drops the p <= 2^256 hypothesis
+-- from that restatement as decorative while KEEPING it here, where the
+-- encoder-first direction is used.
 
 import Midfall.Common.Codec
 import Midfall.Common.Bytes

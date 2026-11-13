@@ -1,5 +1,18 @@
 
 
+> **CORRIGENDUM (P-STATGATE, after D-P27 was EXECUTED by P-REPIN).** Every entry in this
+> survey that quotes `Midfall/Statements.lean` - lines 374, 378, 379, 547-548, 1409-1416,
+> 1886-1893, 2553 - records the file **as frozen at `formal-baseline-v1`**, digest
+> `d4984965…a3f3`, sorries at lines 46/59/75. That file has since been amended under D-P27:
+> the digest is now `40d97dc75466f0640746ec6ad5e7d5e273e46bd76fdac06efca7b0e38f54dc6e`, the
+> three statements sit at lines **65**, **91** and **119**, `verifyNative_iff_msgs` carries
+> `hc : E.g1.compressedRoundtrip`, `verifyMsgs_iff_spec`'s right-hand side is
+> `Spec.accepts E H F params vk inst ms`, and `contractRef_noAcc` is marked SUPERSEDED. P-SE
+> findings 1 and 2 are therefore **closed, not merely recorded** - they became the re-pin. The
+> quotes are kept verbatim because they are the evidence of what was frozen, the same reason
+> `Midfall/Instances/StatementsRepair.lean` keeps the old texts as named propositions. See
+> docs/design.md D-P27.
+
 # AREA: Yul semantics layer: vendored powdr-labs/yul-semantics (formal/vendor/yul-semantics/YulSemantics/**), Midfall/Yul/Externals.lean (EIP-2537/EIP-198 byte relations), and what the unwritten Midfall/Yul/Bridge.lean (P-BR, D-
 
 ## constraints

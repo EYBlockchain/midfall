@@ -1010,7 +1010,7 @@ proves painful**, and only as a separately authorised fork edit like `memoryguar
 * **Third option on record:** write templates with named placeholders and substitute after
   (`substConsts`, already in P-SE step P2). Not chosen first.
 
-## D-P27 (ADOPTED, round 68): re-pin `Statements.lean`; a freeze must not protect a false statement
+## D-P27 (ADOPTED round 68, **EXECUTED** by P-REPIN): re-pin `Statements.lean`; a freeze must not protect a false statement
 
 **Decision (human).** The frozen file currently holds `verifyNative_iff_msgs`, which is
 **known false** for a degenerate codec, and `verifyMsgs_iff_spec`, which cannot hold for
@@ -1024,6 +1024,50 @@ they be reported.
   `contractRef_noAcc_of_semanticEquivalence`.
 * **Principle recorded:** a hash freeze protects against silent drift. It is not a licence to
   leave a known falsehood frozen.
+
+**EXECUTED (P-REPIN), 26 rounds late.** The digest moved `d4984965…a3f3` →
+**`40d97dc75466f0640746ec6ad5e7d5e273e46bd76fdac06efca7b0e38f54dc6e`**, which is what
+`Midfall/Statements.sha256` and the `checks.sh` hash section now check. All three authorised
+actions landed, and nothing false was deleted:
+
+* `verifyNative_iff_msgs` carries `hc : E.g1.compressedRoundtrip` **and nothing else** -
+  attack.md line 107 FIX shows `p ≤ 2^256` decorative there, so this is a targeted repair and
+  not a hypothesis pile-up.
+* `verifyMsgs_iff_spec`'s right-hand side is `Spec.accepts E H F params vk inst ms`: the
+  environment is threaded into the spec, which required `Spec.accepts` to gain `E` as its
+  first argument. Arity only - it is still the registered Phase 4 hole, and the Exec-tautology
+  ban at `Spec/Piop.lean:22-30` is intact.
+* `contractRef_noAcc` is **marked SUPERSEDED** by the proved
+  `Lowering.contractRef_noAcc_of_semanticEquivalence` and kept, `sorry` and all, because what
+  this file freezes is the shape of the obligation and the shape is now known to be right.
+
+D-P23's both halves for all three live in `Midfall/Instances/StatementsRepair.lean`:
+witnesses `repair1_satisfiable`, `repair2_new_shape_inhabited`, `repair3_rederived`; retained
+refutations `repair1_old_false_at_degEnv`, `repair1_old_universal_refuted`,
+`repair2_old_refuted`, with the old texts pinned as named propositions
+(`verifyNative_iff_msgsOld`, `verifyMsgs_iff_specOld`) rather than deleted.
+
+**Two decisions this leaves open, recorded rather than taken (P-STATGATE):**
+
+1. `contractRef_noAcc` is **derivable** - `repair3_rederived` is a one-line re-export of a
+   proved lemma with no `sorryAx` in its dependencies - and still carries a `sorry`, so
+   `SORRY.md` counts one hole that is not open. Filling it is a statement-surface change
+   needing a re-pin, and the spec surface deliberately holds statements rather than proofs.
+   Say which you want. `scripts/check_frozen_axioms.py` reddens if it is filled silently, so
+   this cannot drift either way without being noticed.
+2. The two dead imports in the frozen file (`Midfall.Security.SRS`,
+   `Midfall.Security.Challenges`) widen its trusted surface for no reason. Removing them is
+   also a statement-surface change and D-P27 was deliberately narrow. They are now pinned as
+   `STATEMENTS_IMPORTS` in `scripts/check_statement_fingerprints.py`, so the surface is at
+   least visible and any change to it reddens a gate with a reason attached.
+
+**Corollary, added by P-STATGATE.** A hash proves the file *is the file*, never that the file
+is *correct*. Deleting the codec law from the repaired statement left the build and all three
+structural gates green, so the frozen normative file had no semantic coverage at all. It now
+has a two-sided pin in `scripts/check_statement_fingerprints.py` - repaired shape required,
+refuted shape refused, plus exact text, binder context, trusted surface and doc-string
+provenance - and the axiom probe in `scripts/checks.sh` is a gate
+(`scripts/check_frozen_axioms.py`), not a print.
 
 ## D-P28 (ADOPTED, round 68): M0 baseline - regenerate, re-pin, and delete the unread fixtures
 

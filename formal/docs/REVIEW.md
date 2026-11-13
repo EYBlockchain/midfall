@@ -673,8 +673,11 @@ against the real file, not by reasoning about it:
 | \`FieldConsts (Fr p)\` (R-3) | \`multi_prepare\` needs \`NUM_BITS\` for \`truncate\`/\`truncated_powers\` (kzg/mod.rs:394,457,502,521), and truncation is ON in the deployed profile (R-22) |
 | \`delta : Fr p\` (R-3 extended) | \`FieldConsts\` has no delta, so \`partiallyEvaluateIdentities\` takes it and every caller must thread it |
 
-Explicit parameters fail at \`Statements.lean:43\` with "the argument F has type
-\`Features\` but is expected to have type \`G1Codec ?m\`"; instance-implicits fail
+Explicit parameters fail at \`Statements.lean:65\` with "the argument F has type
+\`Features\` but is expected to have type \`G1Codec ?m\`" - 43 was the pre-D-P27 position:
+P-REPIN amended the file, the statement moved to 65, and
+\`scripts/check_statement_fingerprints.py\` now pins that text, so it cannot move again
+without a gate reddening. Instance-implicits fail
 because \`G1Codec\` is a structure, not a class, and \`Statements\` binds only
 \`AdmissiblePairing\` anyway.
 
@@ -2167,6 +2170,16 @@ comparison must be token-level for Yul and line-level only for the Solidity wrap
   comments in `Obligations.lean`, with no REVIEW entry and no place on the open-decisions
   list. **So the SHA-256 freeze on `Statements.lean` currently protects a statement known to
   be false, hidden behind its own `sorry`.**
+  **RESOLVED (D-P27, adopted round 68, EXECUTED by P-REPIN 26 rounds late).** Both statements
+  were amended - `hc : E.g1.compressedRoundtrip` on the first, `Spec.accepts E H F params vk
+  inst ms` on the second - `contractRef_noAcc` was marked SUPERSEDED, the digest moved to
+  `40d97dc75466f0640746ec6ad5e7d5e273e46bd76fdac06efca7b0e38f54dc6e`, and the old texts are
+  retained as named propositions with their refutations in
+  `Midfall/Instances/StatementsRepair.lean`. The reporting failure itself is what D-P27
+  records. P-STATGATE then closed the follow-on gap this entry implies: the freeze had NO
+  semantic gate, so the repair could have been silently undone by a future re-pin -
+  `scripts/check_statement_fingerprints.py` now pins the frozen statements in both directions
+  and `scripts/check_frozen_axioms.py` gates the axiom probe.
 * `fixedBases` still stores the identity as the "-G" entry (finding 7). Unfixed.
 
 **The two plans have no owner for their link.** P-SE is the lowering proof plan; it gives the

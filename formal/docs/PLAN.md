@@ -294,6 +294,15 @@ theorem verifyMsgs_iff_spec (hwf : vk.WellFormed F) :
   (verifyMsgs E H F p vk inst ms).isOk ↔ Spec.accepts H F p vk inst ms
 ```
 
+**D-P27 amended two of the three signatures above, and P-REPIN executed it.** The
+normative text is `Midfall/Statements.lean`, not this sketch: `verifyNative_iff_msgs`
+now carries `hc : E.g1.compressedRoundtrip`, `verifyMsgs_iff_spec`'s right-hand side
+is `Spec.accepts E H F params vk inst ms` with the environment threaded in, and
+`contractRef_noAcc` is marked SUPERSEDED. The sketch is left as written because it is
+the section-9 text of record, and the diff between it and the frozen file IS the D-P27
+amendment; `scripts/check_statement_fingerprints.py` pins the frozen shapes and refuses
+the ones above, so the two cannot drift apart silently again.
+
 The interface re-pin bundles the verifier runtime inputs. It does not yet
 complete `decodeRust`'s read-schedule implementation or parameterise the
 transcript over `H`; see D-P9 in `docs/design.md`.
