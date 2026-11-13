@@ -1395,3 +1395,35 @@ was always relative to an admissible pairing.
 this decision is now taken. **Nothing on the critical path to `lowering_equivalence` is waiting
 on a human any more** — what remains is construction: `modexpInv_correct` → the agreement
 theorem → `g1Add`/`g1Msm1`, plus a G2 frame codec for `g2Valid`.
+
+## D-P37 (ADOPTED, round 115): estimates are recorded with their actuals, and revised in public
+
+**Decision (human, round 115): "continuously refine the estimates/ETA for the milestones as you
+complete sessions."**
+
+Implemented as **`docs/ETA.md`**, a living ledger rather than a number quoted per report.
+
+**The rule:**
+
+1. Every package completion, the orchestrator records in `docs/ETA.md`: what was **estimated**
+   before the package, what **actually** happened, and the **variance**.
+2. Milestone estimates carry a **confidence** and a stated reason for it, not just a range.
+3. **Revisions are visible.** When an estimate moves, the old number stays in the calibration
+   table with its lesson. Silently replacing a bad estimate with a good one destroys the only
+   evidence that would make the next estimate better.
+4. **Errors of kind are logged separately from errors of degree.** The ledger's most useful
+   column is not the size of the miss but the reason: of seven recorded items, **four were errors
+   of kind** — a blocker recorded as large when it was a different shape entirely, almost always
+   because a premise was inherited rather than re-verified.
+
+**Why this exists rather than just "estimate better":** the project's estimates have been wrong
+in a consistent direction and for a consistent reason. `pairing2` was called blocked on a
+pairing implementation three times and was one definition. The r-torsion count was called
+research-grade and was two elementary lemmas. `Array.foldl` transfer was called impossible and
+the lemma existed under a synonym. A single point estimate hides exactly this pattern; a ledger
+exposes it.
+
+**Current headline, recorded so a future revision is visible:** **18–31 sessions to the landmark
+`lowering_equivalence`**, revised **up** from 17–27 because the earlier figure counted only
+packages that closed a sorry and ignored the 0-output sessions. 6–12 calendar weeks, dominated
+by uptime rather than difficulty.

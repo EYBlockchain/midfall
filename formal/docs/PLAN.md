@@ -600,6 +600,8 @@ Parallel tracks after M1: A (M2 → M9), B (M3), C (M4). M5–M8 need A, B and C
 
 
 - **RAM is a budgeted resource (D-P31).** Any package that evaluates in the VM - `#eval`, `native_decide`, a KAT that runs the interpreter - must (a) **state an expected peak** in its plan or module header before running it, (b) **run under the guard** (`scripts/ram_guard.sh --limit 6G -- <cmd>`, or `--proc-limit 6G --limit 24G` for a parallel build), and (c) **report the measured peak RSS** in its results, taken from the guard output. Measured on this host: warm `lake build` **0.74 GiB**, cold rebuild of all 107 `Midfall` modules **16.86 GiB** tree RSS across ten concurrent `lean` workers, `scripts/checks.sh` **4.94 GiB**. A gate that cannot run within budget is **narrowed or dropped with the reason recorded** - the P-EXEC precedent, which withdrew the `Instances` theorem form at 16.8 GB and left the lifting lemma in a header for a narrower set, is the sanctioned response and not a failure. **Scope is the process tree, never the process name**: other `lean` processes run on this host and an earlier watchdog charged them to this session. `scripts/ram_guard.sh --selftest` re-proves the guard fires, fires narrowly, and leaves a normal build alone.
+- **Estimates are recorded with actuals (D-P37).** docs/ETA.md is updated on every package completion with what was estimated, what happened, and the variance. Revisions stay visible; errors of kind are logged separately from errors of degree.
+
 ## 13. Risks and open items
 
 - **Toolchain:** yul-semantics needs a bump to v4.35.0 (low risk, Batteries only).
