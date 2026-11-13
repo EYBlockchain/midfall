@@ -95,9 +95,10 @@ design1 M5-2 assigns this stage the byte lemmas the VkDigest, Calldata and
 Accumulator statements share. They are stated here, in the assumption layer,
 because this is the first file that needs them and because their natural home -
 Midfall/Common/Bytes.lean - is the P-05 row's file, which stage 2 may not edit
-(the standing rule against touching another package's Lean file). Only the half
-that lands is here; the reason the other half does not is recorded at
-frOfRepr_frToRepr and again at Lowering/VkDigest.lean. -/
+(the standing rule against touching another package's Lean file). Only the SHAPE
+half is still here; the VALUE half landed in Common/Bytes.lean when P-BYTES was
+given edit rights on it - see bytesToNatLE_natToBytesLE there and
+frOfRepr_frToRepr below. -/
 
 /-- The digits natToBytesLowFirst emits, least significant first, as a list. This
     is the shape the emitter's accumulator builds, and naming it is what makes the
@@ -162,21 +163,75 @@ theorem frToRepr_size {p : ℕ} [Fact (Nat.Prime p)] (x : Fr p) :
     encoder-first direction) while dropping it from verifyNative_iff_msgs_codec,
     which is decoder-first and does not need it.
 
-    PROOF OBLIGATION, registered in SORRY.md. design1 M5-2 assigns the two byte
-    lemmas it needs to stage 2. The SHAPE half landed above (natToBytesLowFirst_size,
-    frToRepr_size): the repr is always 32 bytes, so frOfRepr?'s width test passes.
-    The VALUE half - bytesToNatLE (natToBytesLE n len) = n % 256^len - did not, and
-    the reason is mechanical: Midfall.bytesToNatBE (Common/Bytes.lean:92) folds with
-    Array.foldl, which in Lean 4.35 is the index-loop over the opaque Array
-    representation and is not definitionally List.foldl on toList, and core exports
-    no Array.foldl_eq_foldl_data. Closing it needs either an Array-index induction
-    over loop bounds or a lemma inside Common/Bytes.lean, which is the P-05 row's
-    file and outside this package's edit rights. The statement is unchanged and the
-    gate frReprKats_ok below computes the round trip at p = 17, so the claim is
-    checked where it can be checked. -/
+    PROVED by P-BYTES. The two byte lemmas design1 M5-2 assigns are
+    natToBytesLowFirst_size (above: the SHAPE half, so frOfRepr?'s width test
+    passes) and bytesToNatLE_natToBytesLE (Common/Bytes.lean: the VALUE half).
+    The obstacle recorded here for several rounds - Array.foldl is not
+    definitionally List.foldl on toList, and "core exports no
+    Array.foldl_eq_foldl_data" - was only half true and blocked nothing: Array.foldl
+    indeed is not definitionally the list fold, but core DOES export the equation,
+    under the name Array.foldl_toList (Init/Data/Array/Bootstrap.lean:45), and that
+    is the single step bytesToNatBE_toList needs. D-P23 halves: the witness is
+    frReprKats_ok below, computed at p = 17; the falsification is
+    frOfRepr_fails_above_width, which shows the conclusion is false for EVERY
+    modulus above 2^256, so hp is not decoration. -/
 theorem frOfRepr_frToRepr {p : ℕ} [Fact (Nat.Prime p)] (hp : p ≤ 2 ^ 256) (x : Fr p) :
     frOfRepr? (p := p) (frToRepr x) = some x := by
-  sorry
+  have hval : x.val < p := ZMod.val_lt x
+  have hv : bytesToNatLE (frToRepr x) = x.val := by
+    show bytesToNatLE (Midfall.natToBytesLE x.val 32) = x.val
+    rw [Midfall.bytesToNatLE_natToBytesLE, Midfall.pow_256_32]
+    exact Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le hval hp)
+  have hcast : (x.val : Fr p) = x := by
+    apply ZMod.val_injective p
+    rw [ZMod.val_natCast, Nat.mod_eq_of_lt hval]
+  rw [frOfRepr?, frToRepr_size x, hv]
+  split
+  · rw [hcast]
+  · simp_all
+
+/-- The bound p <= 2^256 in frOfRepr_frToRepr is not decoration: for EVERY
+    modulus above it the element 2^256 has a 32-byte repr of all zeros, which
+    decodes to 0 and not to itself, so the encoder-first round trip fails. This is
+    the D-P23 falsification half for frOfRepr_frToRepr, and it is a theorem rather
+    than a comment.
+
+    Why it is stated under a hypothesis instead of at a literal prime: a
+    Fact (Nat.Prime p) instance for a prime above 2^256 cannot be produced inside
+    the kernel budget (it is primality of a 257-bit number), so the counterexample
+    is proved for an arbitrary such p and the antecedent is discharged
+    independently by primes_above_two_pow_256. What can be computed is computed:
+    bytesValueRoundTrip_ok in Common/Bytes.lean evaluates
+    bytesToNatLE (natToBytesLE (2^256) 32) == 0, the single step this lemma turns
+    into a theorem. -/
+theorem frOfRepr_fails_above_width {p : ℕ} [Fact (Nat.Prime p)] (hp : 2 ^ 256 < p) :
+    ∃ x : Fr p, frOfRepr? (p := p) (frToRepr x) ≠ some x := by
+  set x : Fr p := ((2 ^ 256 : ℕ) : Fr p) with hx
+  have hval : x.val = 2 ^ 256 := by
+    show ((2 ^ 256 : ℕ) : Fr p).val = 2 ^ 256
+    rw [ZMod.val_natCast, Nat.mod_eq_of_lt hp]
+  have hv : bytesToNatLE (frToRepr x) = 0 := by
+    show bytesToNatLE (Midfall.natToBytesLE x.val 32) = 0
+    rw [hval, Midfall.bytesToNatLE_natToBytesLE, Midfall.pow_256_32, Nat.mod_self]
+  have hzero : (0 : Fr p) ≠ x := by
+    intro h
+    have := congrArg ZMod.val h
+    rw [ZMod.val_zero, hval] at this
+    exact absurd this (by omega)
+  have hpos : (0 : Nat) < p := Nat.Prime.pos (Fact.out : Nat.Prime p)
+  refine ⟨x, ?_⟩
+  rw [frOfRepr?, frToRepr_size x, hv]
+  split
+  · intro h
+    exact hzero (by simpa using h)
+  · simp_all
+
+/-- The hypothesis of frOfRepr_fails_above_width is satisfiable, so that lemma is
+    not an implication with an impossible antecedent: primes above 2^256 exist
+    (Euclid, as Nat.exists_infinite_primes). -/
+theorem primes_above_two_pow_256 : ∃ p : ℕ, 2 ^ 256 < p ∧ p.Prime := by
+  obtain ⟨q, hq1, hq2⟩ := Nat.exists_infinite_primes (2 ^ 256 + 1)
+  exact ⟨q, by omega, hq2⟩
 
 /-! ### Non-vacuity -/
 

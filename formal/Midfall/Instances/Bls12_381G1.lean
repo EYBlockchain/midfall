@@ -123,11 +123,11 @@ theorem G1Frame.val_size (Q : G1Frame) : Q.val.size = g1Bytes := by
 /-- The frame codec: toEip is the identity on the frame and ofEip? is the validator, so the
     precompile's accepted bytes and the codec's bytes are the same object. That is the whole
     point of the representation, and it is what makes the two codec clauses below theorems
-    rather than obligations. Note what it does NOT need: no round trip through bytesToNatBE
-    over an opaque Array.foldl, which Assumptions/Codec.lean:154-171 records as the thing the
-    tree cannot prove and which is why the exponent codec's ofEip? is a cast rather than a
-    decode. The compressed half delegates to the existing G1Affine codec (Bls12_381.lean),
-    whose own round trips are gated there against real Rust trace bytes. -/
+    rather than obligations. Note what it does NOT need: no round trip through bytesToNatBE,
+    which Assumptions/Codec.lean used to record as the thing the tree could not prove - P-BYTES
+    closed it (Common/Bytes.lean, bytesToNatLE_natToBytesLE) and this def does not change: the
+    exponent codec's ofEip? stays a cast rather than a decode, by design and not by gap. The
+    compressed half delegates to G1Affine (Bls12_381.lean), gated against real trace bytes. -/
 def g1FrameCodec : G1Codec G1Frame where
   toEip Q := Q.val
   ofEip? b := if h : g1FrameValid b = true then some ⟨b, h⟩ else none

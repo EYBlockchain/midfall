@@ -55,19 +55,17 @@ open Midfall Midfall.Halo2
 
     PROOF OBLIGATION, registered in SORRY.md. The remaining step is
     bytesToNatLE (natToBytesLE n len) = n % 256^len, i.e. design1 M5-2's
-    bytesToNatLE_natToBytesLE. It does not land in this pass, and the reason is
-    mechanical rather than mathematical: Midfall.bytesToNatBE (Common/Bytes.lean:92)
-    folds with Array.foldl over ByteArray.data, and in Lean 4.35 Array.foldl is the
-    index-loop implementation over the opaque Array representation - it is NOT
-    definitionally List.foldl on toList, and core has no Array.foldl_eq_foldl_data.
-    The induction design1 sketches therefore needs List.toArray / Array.ofList
-    plumbing that does not exist in the imported surface, and the natural fix is a
-    lemma inside Common/Bytes.lean, which is the P-05 row's file and outside this
-    package's edit rights (stage-2 rule: do not edit another package's Lean file).
-    The size half of M5-2 DID land (Assumptions/Codec.lean); the value half, and
-    with it this theorem and the carried-over frOfRepr_frToRepr, is the one
-    remaining byte-level gap. The gate below checks the statement's content
-    computationally at a small prime, so the claim is not merely asserted. -/
+    bytesToNatLE_natToBytesLE. It landed in P-BYTES at Common/Bytes.lean:196 as
+    bytesToNatLE_natToBytesLE, together with the word-level bytesToWordLE_natToBytesLE
+    this theorem actually wants. The obstacle recorded here for several rounds -
+    Array.foldl is not definitionally List.foldl on toList and core has no
+    Array.foldl_eq_foldl_data - was only half true and blocked nothing: the equation
+    is core's Array.foldl_toList (Init/Data/Array/Bootstrap.lean:45). So this hole is
+    now a mechanical exercise over lemmas that exist, and it is the ONLY byte-level
+    gap left in the tree; closing it is a one-line change to this file and a SORRY.md
+    removal, deliberately not taken here (this package's budget is one sorry removal).
+    The gate below checks the statement's content computationally at a small prime,
+    so the claim is not merely asserted. -/
 theorem feToU256_frToRepr {p : ℕ} [Fact (Nat.Prime p)] (x : Midfall.Fr p) :
     Midfall.Generator.feToU256 (Midfall.Generator.bytesToNats (Midfall.frToRepr x)) =
       .ok (Midfall.Halo2.frWord x) := by
