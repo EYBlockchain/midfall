@@ -27,6 +27,7 @@ import Midfall.Halo2.Exec.Linearization
 import Midfall.Halo2.Exec.Verifier
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Transcript
+import Midfall.Halo2.Exec.TranscriptLog
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Halo2.Spec.Relation
 import Midfall.Halo2.Spec.Degrees
