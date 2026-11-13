@@ -115,6 +115,6 @@ echo '== baseline SHA pins (tracked vs untracked) =='
 python3 ../proofs/solidity-verifier/scripts/check_baseline_pins.py || exit 1
 
 echo '== axioms of the frozen statements =='
-printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n' > /tmp/midfall-ax.lean
+printf 'import Midfall.Statements\n#print axioms Midfall.Statements.verifyNative_iff_msgs\n#print axioms Midfall.Statements.verifyMsgs_iff_spec\n#print axioms Midfall.Statements.contractRef_noAcc\n' > /tmp/midfall-ax.lean
 lake env lean /tmp/midfall-ax.lean
 

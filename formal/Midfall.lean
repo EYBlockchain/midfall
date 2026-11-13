@@ -7,6 +7,7 @@ import Midfall.Assumptions.BasePrime
 import Midfall.Assumptions.TwoAdicity
 import Midfall.Instances.ExponentModel
 import Midfall.Instances.NativeE2E
+import Midfall.Instances.StatementsRepair
 import Midfall.Instances.ChallengeStream
 import Midfall.Halo2.Exec.Circuit
 import Midfall.Halo2.Exec.Arith

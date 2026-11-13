@@ -50,8 +50,19 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     Owner: Phase 4, after the `inst` shape decision and together with `Spec/Keygen`
     and the ArkLib `ProtocolSpec` instantiation that S2 needs. -/
 
-/-- Acceptance of a decoded message stream by the mathematical verifier. -/
-def accepts (H : Hash) (F : Features) (params : ParamsVerifierKZG G₁ G₂)
+/-- Acceptance of a decoded message stream by the mathematical verifier.
+
+    D-P27 (executed by P-REPIN): the verifier environment `E` is now an argument. The
+    frozen `Statements.verifyMsgs_iff_spec` used to pair `verifyMsgs E ...` with an
+    `E`-free `accepts`, and that cannot hold for every `E`: `verifyMsgs` consumes `E.g1`,
+    `E.delta`, `E.field` and `E.fewerPointSetsRuntime` while the spec saw none of them.
+    P-SE finding 2 said so in prose; `Midfall.Instances.repair2_old_refuted` now proves
+    it - no predicate that ignores `E` agrees with `verifyMsgs` for every environment.
+    A declarative spec has to name the environment it is a spec OF. This changes the
+    arity and nothing else: the body is still the Phase 4 hole, and the rule above
+    against defining it by calling the Exec pipeline is unchanged. -/
+def accepts (E : VerifierEnv p G₁ G₂ Gₜ) (H : Hash) (F : Features)
+    (params : ParamsVerifierKZG G₁ G₂)
     (vk : VerifyingKey (Fr p) G₁) (inst : Array (Fr p))
     (ms : List (Msg (Fr p) G₁)) : Prop := sorry
 
