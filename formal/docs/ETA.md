@@ -145,6 +145,41 @@ better estimation; it is the standing re-verify instruction, and the orchestrato
 retirements are now included in what must be re-verified.
 
 ---
+### R2 - round 117, after P-G1AGREE. First revision in the flattering direction.
+
+| claim | before | actual | verdict |
+|---|---|---|---|
+| register 58 to 57 (byte plumbing closes modexpInv_correct) | predicted | **57** | **HIT** - first estimate that landed exactly |
+| steps 1-3 (assembly, smul, plumbing) | ~2 h | **~1 h 45 m** | slightly pessimistic |
+| step 4 gcd(r, p-1) = 1 | a morning | **5 minutes, one decide** | **~10x over-estimate** |
+| M-A remaining | 5-7 sessions (R1) | **4-6** | revised down: the agreement theorem is DONE |
+| total to landmark | 21-35 | **20-34** | revised down slightly |
+
+**The pattern holds and it cuts both ways.** Step 4 was over-estimated for the same reason earlier
+blockers were mis-sized: a recorded premise (route (b) first step is a morning's work) was
+inherited instead of re-derived. The kernel just computes gcd(r, p-1) - no factorisation needed.
+**Sixth lesson: an estimate of effort is a premise too**, and mine were wrong in both directions
+roughly equally often.
+
+**A new failure mode, distinct from the kind-errors: a correct diagnosis with a wrong cure.**
+P-MODEXP recorded that rw could not move a W.Nonsingular goal - true, and the transparency note
+pointed at the real cause. But both suggested cures were unnecessary; the fix was transfer lemmas
+over variables proved by subst, exploiting that Point.some's third argument is a Prop and Lean 4
+proof irrelevance is definitional. **A symptom recorded accurately can still carry a bad
+prescription, so "the blocker is real" and "the proposed fix is right" must be verified separately.**
+
+**What M-A now costs, itemised:** canonicity walk (1 session, blocked on an elaborator limit not
+math), point count route (b) (2-3 sessions, gcd already done), G2 codec + Fp2 model (2-3
+sessions, and fp2Ops has no mathlib model at all - a package, not a lemma). The agreement theorem
+that P-MODEXP called THE wall is finished.
+
+**New standing rules, added to the brief template:** lake env lean leaves autoImplicit ON so
+unknown identifiers silently become free variables - pass -DautoImplicit=false; set_option X in
+must precede a declaration's docstring; nsmul_nsmul does not exist in this mathlib (the lemma is
+mul_nsmul, factors swapped); and **where rw cannot cross a defeq, a have with an ascribed type
+can**, because elaboration uses full defeq where the matcher does not. Plus a correction to my
+own rule: perturbing a KAT Bool leaves lake build green - Bool gates live in checks.sh, not the
+build - so "use lake build for perturbations" applies to theorems only.
 ## What would most improve this ledger
 
 1. **One `Partials` spec proved.** M-B's rate is pure extrapolation; one datum would tighten it
