@@ -1355,3 +1355,43 @@ just spent a package discovering.
 * Any other `rel_*`-style hypothesis built on `CallWorld` should be audited for the same
   under-description; this class — *a projection that quietly omits a field the code reads* — is
   a sibling of the vacuity class and is probably not unique to this one hypothesis.
+
+## D-P36 (DECIDED by the orchestrator, round 114): assume `AdmissiblePairing` on the exhibited real groups
+
+**Choice: named hypothesis, not a constructed pairing.**
+
+P-HOLDS2 identified this as the **one** remaining human decision, and it is genuinely about the
+pairing — not about point counts, which D-P34 retired.
+
+Two options:
+* **(a) Assume** `AdmissiblePairing G₁ G₂ Gₜ` for the exhibited real groups, as a named
+  hypothesis in `Assumptions/`.
+* **(b) Construct** Fp12 and a real ate pairing in Lean.
+
+**(b) is genuinely research-grade.** mathlib has no pairing implementation at all, and building
+Fp12 + a provably-bilinear non-degenerate pairing is a project larger than this one. Unlike the
+torsion count, where I mistook an elementary fact for research, **this one really is out of
+scope** — the difference is that `pairingProductOf` has already shown we do not need any
+*properties* of the pairing beyond `P.e` existing and decidable equality on `Gₜ`.
+
+**Why (a) is right rather than a shortcut:** D-P1 already established the design principle —
+statements are quantified over `AdmissiblePairing` precisely because no Lean library has
+BLS12-381, and "if bilinearity or non-degeneracy is unproven, it becomes a named hypothesis".
+The verifier's *spec* is written against the assumed pairing; the `Holds` clause is about the
+**precompile agreeing with that assumed pairing**, and `pairingProductOf` proves that agreement
+by definition. So assuming the class does not weaken any claim we are trying to make — the claim
+was always relative to an admissible pairing.
+
+**Conditions attached:**
+1. The hypothesis must be **named and gate-enforced**, not a bare `sorry` — same policy as every
+   other gap in this project.
+2. It must be recorded as **the single pairing assumption in the trusted base**, listed alongside
+   the EIP-2537 semantics, `p = r`, and the solc hop.
+3. The exhibit must state explicitly that it assumes the pairing **and** derives everything else
+   (group law, order, precompile agreement) — so the assumption is one line, not a shield for
+   work not done.
+
+**Consequence for the human-decision list:** the torsion count is struck entirely (D-P34), and
+this decision is now taken. **Nothing on the critical path to `lowering_equivalence` is waiting
+on a human any more** — what remains is construction: `modexpInv_correct` → the agreement
+theorem → `g1Add`/`g1Msm1`, plus a G2 frame codec for `g2Valid`.
