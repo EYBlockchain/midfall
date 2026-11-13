@@ -239,6 +239,30 @@ instance : Fact (Nat.Prime pBase) := ⟨pBase_prime⟩
 example : Field (ZMod pBase) := inferInstance
 
 
+/-! ### The scalar modulus is not a factor of p - 1 (P-G1AGREE step 4) -/
+
+/-- **gcd(r, p-1) = 1.** The cheap first step of the route to the point count that re-opened when
+    \`g1Decodes\` re-imported \`PrimeOrderWith\` (docs/ETA.md R1: "route (b) - n-torsion structure +
+    Weil pairing + gcd(r, p-1) = 1 - has a cheap first step"). It is cheap because the certificate
+    tree above already forces the kernel to know the factorisation of \`pBase - 1\`: the gcd is a
+    handful of \`Nat.mod\` steps on 381-bit numbers, so \`decide\` settles it outright - no search, no
+    assumption, and no use of the factorisation as data. Measured cost: about 4 s. -/
+theorem gcd_r_pBase_sub_one : Nat.gcd r (pBase - 1) = 1 := by decide
+
+/-- The same fact in the form the n-torsion structure theorem wants: \`r\` does not divide \`p - 1\`,
+    so the \`r\`-torsion of \`E(Fp)\` cannot be a free \`ZMod r\`-module of rank 2 sitting inside
+    \`Fpˣ\` - the Weil-p pairing argument that route (b) is built on has its first hypothesis. -/
+theorem r_not_dvd_pBase_sub_one : ¬ r ∣ pBase - 1 := by
+  intro h
+  have h1 : Nat.gcd r (pBase - 1) = r := Nat.gcd_eq_right h
+  rw [gcd_r_pBase_sub_one] at h1
+  exact Nat.Prime.ne_one (Fact.out : Nat.Prime r) h1.symm
+
+/-- **FALSIFICATION (D-P23): the statement is about \`r\`, not about primes in general.** \`3\` IS a
+    factor of \`p - 1\` - the certificate above factors out \`3 ^ 2\` - so "the gcd of a small prime
+    with \`p - 1\` is 1" is false, and \`gcd_r_pBase_sub_one\` is not an accident of shape. -/
+theorem gcd_three_pBase_sub_one : Nat.gcd 3 (pBase - 1) = 3 := by decide
+
 /-- THE CERTIFICATE AS A COMPUTATION (D-P23: a witness, not a narrative). Line 1 re-checks
     the top-level factorisation; lines 2-4 the two levels below it; line 5 pins the number
     itself against the EIP-2537 modulus, so a certificate for the wrong prime cannot pass. -/

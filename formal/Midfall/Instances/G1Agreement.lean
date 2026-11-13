@@ -526,29 +526,478 @@ private theorem affineDouble_of_y_zero (P : FpFrame) (hP : ¬ affineIsInfinity f
     simp)]
   rfl
 
-/-! ### WHAT THIS PACKAGE DID NOT FINISH, AND EXACTLY WHERE
+/-! ### THE POINT-LEVEL ASSEMBLY (P-G1AGREE step 1) -/
 
-The two coordinate agreements above are proved: on the secant branch and on the tangent branch,
-the byte-level law and mathlib's `addX` / `addY` compute the same field expressions from the same
-slope. What is NOT finished is the `point-level` assembly: turning those coordinate identities into
-`emb P + emb Q = emb (affineAdd P Q)` for all four branches at once, plus the closure statement
-`affineOnCurve fpOps (affineAdd fpOps P Q) = true` that a frame type needs.
+/-- **THE RECORDED OBSTRUCTION, RE-VERIFIED, AND THE FIX - WHICH IS NOT THE SUGGESTED ONE.**
+    P-MODEXP is right that \`rw\` cannot move a \`W.Nonsingular\` goal across a coordinate equality:
+    rewriting the goal \`W.Nonsingular ((affineAdd fpOps P.1 Q.1).1 : K) ((affineAdd ...).2 : K)\`
+    along \`hc1\` has to abstract the *term* \`((affineAdd fpOps P.1 Q.1).1 : K)\` over a motive that
+    re-typechecks the dependent proof argument of \`Point.some\`, and that is exactly where the
+    elaborator reports the target is not type-correct at \`implicit\` transparency. What the
+    write-up did NOT have right is the prescription: neither suggested fix is needed. \`FpFrame\`
+    stays a subtype of a pair, and no \`have\`-carried coordinate is needed either. The move is to
+    stop rewriting the GOAL and instead apply a lemma stated over VARIABLES, where \`subst\`
+    discharges the dependency for free - \`subst\` on a hypothesis between two local variables
+    never builds the motive \`rw\` gets stuck on. It works because \`W.Nonsingular\` is a \`def\` into
+    \`And\` (Affine/Basic.lean:211) and \`Point\` is an \`inductive\` whose third argument is a \`Prop\`
+    (Affine/Point.lean:477), so two \`Point.some\`s with equal coordinates are equal by proof
+    irrelevance, which in Lean 4 is definitional. -/
+private theorem point_some_eq {x₁ x₂ y₁ y₂ : K} (hx : x₁ = x₂) (hy : y₁ = y₂)
+    (h₁ : W.Nonsingular x₁ y₁) (h₂ : W.Nonsingular x₂ y₂) :
+    Point.some x₁ y₁ h₁ = Point.some x₂ y₂ h₂ := by
+  subst hx
+  subst hy
+  rfl
 
-The obstruction is mechanical, not mathematical, and it is one step: given
-`hc1 : ((affineAdd fpOps P.1 Q.1).1 : K) = W.addX (P.1.1) (Q.1.1) (W.slope ...)`, the goal
-`W.Nonsingular ((affineAdd fpOps P.1 Q.1).1 : K) ((affineAdd fpOps P.1 Q.1).2 : K)` refuses to
-rewrite along `hc1` in either direction under `rw`, in every spelling tried (`rw` forward and
-backward, `rw ... at h`, `convert ... using 2`, `heq ▸ heq ▸ e`, and `refine ⟨?_, ?_⟩` on the
-`Nonsingular` structure). The elaborator's note on each failure is that the target is "not
-type-correct under the `implicit` transparency level", which points at the subtype coercion
-`(P : FpFrame) ↦ P.1` interacting with the `: K` ascription inside the projection
-`((affineAdd ...).1 : K)`. The fix is almost certainly to state the coordinate lemmas with an
-explicit `ZMod.val`-free pair projection (e.g. carry `x₃ := (affineAdd fpOps P.1 Q.1).1` as a
-separate `have` and rewrite with that), or to make `FpFrame` a structure with named fields
-`x y` instead of a subtype of a pair. Either is a few lines; the mathematics is done.
+/-- \`Nonsingular\` transported along coordinate equalities, in the variable form that \`subst\`
+    accepts. This is the lemma the recorded obstruction says cannot be proved at all. -/
+private theorem nonsingular_congr {x₁ x₂ y₁ y₂ : K} (hx : x₁ = x₂) (hy : y₁ = y₂)
+    (h : W.Nonsingular x₂ y₂) : W.Nonsingular x₁ y₁ := by
+  subst hx
+  subst hy
+  exact h
 
-Until that assembly lands, `g1Add` and `g1Msm1` remain out of reach for a second reason as well,
-which is independent of this file and is the finding the brief asked for: see the report.
+private theorem equation_congr {x₁ x₂ y₁ y₂ : K} (hx : x₁ = x₂) (hy : y₁ = y₂)
+    (h : W.Equation x₂ y₂) : W.Equation x₁ y₁ := by
+  subst hx
+  subst hy
+  exact h
+
+/-- The field form of nonsingularity for an accepted non-infinity frame: the proof \`emb\` builds
+    internally, named so the assembly can cite it. -/
+private theorem nonsingular_of_frame (P : FpFrame) (hP : ¬ affineIsInfinity fpOps P.1) :
+    W.Nonsingular (P.1.1 : K) (P.1.2 : K) :=
+  nonsingular_of_equation (equation_of_frame P hP)
+
+/-- **CLOSURE, IN ONE STEP.** A pair whose field coordinates agree with a nonsingular pair is an
+    accepted frame. This is where \`nonsingular_add\` becomes "the byte-level sum of two on-curve
+    frames is on-curve", and it goes through \`equation_congr\` rather than through any rewrite of a
+    dependent goal. -/
+private theorem onCurve_of_nonsingular_congr {R : Nat × Nat} {x y : K}
+    (hx : (R.1 : K) = x) (hy : (R.2 : K) = y) (h : W.Nonsingular x y) :
+    affineOnCurve fpOps R = true :=
+  onCurve_of_eq R.1 R.2 (equation_congr hx hy h.1)
+
+/-- \`W\` IS AN ELLIPTIC CURVE: the discriminant of \`y² = x³ + 4\` is \`-27 · 16² = -6912\`
+    (b₂ = b₄ = b₈ = 0 and b₆ = 4a₆ = 16 in Weierstrass.lean:100-131), and \`p ∤ 6912\` because \`p\`
+    is a 381-bit prime. With this instance mathlib's \`AddCommGroup W.Point\` (Affine/Point.lean:805)
+    becomes available, which is what makes \`n • emb P\` statable at all - and therefore what makes
+    the \`zpowers\` route to \`PrimeOrderWith\` statable over a real curve point. The discriminant is a
+    \`rfl\` computation on the coefficient literals; the only arithmetic is \`6912 % blsP\`. -/
+instance : WeierstrassCurve.IsElliptic W := ⟨by
+  have h : (W.Δ : K) = -6912 := rfl
+  rw [h]
+  exact isUnit_iff_ne_zero.mpr (neg_ne_zero.mpr (show (6912 : K) ≠ 0 by decide))⟩
+
+/-- Closure under doubling, both sub-branches: a zero ordinate sends the tangent denominator to
+    \`none\` and the byte law answers the all-zero frame, which is accepted as infinity. -/
+theorem affineDouble_onCurve (P : FpFrame) :
+    affineOnCurve fpOps (affineDouble fpOps P.1) = true := by
+  classical
+  by_cases hPinf : affineIsInfinity fpOps P.1 = true
+  · rw [affineDouble, if_pos hPinf]
+    decide
+  · by_cases hyz : (P.1.2 : K) = 0
+    · rw [affineDouble_of_y_zero P hPinf hyz]
+      decide
+    · obtain ⟨hc1, hc2⟩ := affineDouble_coord P hPinf hyz
+      refine onCurve_of_nonsingular_congr hc1 hc2
+        (nonsingular_add (nonsingular_of_frame P hPinf) (nonsingular_of_frame P hPinf)
+          (fun hxy => ne_negY_of_ne_zero hyz hxy.right))
+
+/-- The doubling of a frame, as a frame. -/
+def doubleFrame (P : FpFrame) : FpFrame :=
+  ⟨affineDouble fpOps P.1, affineDouble_onCurve P⟩
+
+/-- **CLOSURE OF THE ACCEPTED SET UNDER THE BYTE-LEVEL SUM** - the statement P-MODEXP listed as
+    the second missing ingredient, and it is a corollary of the two coordinate agreements, not a
+    separate argument. Five branches, matched one for one against mathlib's own case split. -/
+theorem affineAdd_onCurve (P Q : FpFrame) :
+    affineOnCurve fpOps (affineAdd fpOps P.1 Q.1) = true := by
+  classical
+  by_cases hPinf : affineIsInfinity fpOps P.1 = true
+  · rw [affineAdd, if_pos hPinf]
+    exact Q.2
+  · by_cases hQinf : affineIsInfinity fpOps Q.1 = true
+    · rw [affineAdd, if_neg hPinf, if_pos hQinf]
+      exact P.2
+    · by_cases hxb : fpOps.beq P.1.1 Q.1.1 = true
+      · by_cases hyb : fpOps.beq P.1.2 Q.1.2 = true
+        · rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_pos hyb]
+          exact affineDouble_onCurve P
+        · rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_neg hyb]
+          decide
+      · have hne : (P.1.1 : K) ≠ (Q.1.1 : K) := fun h => hxb ((beq_iff P.1.1 Q.1.1).mpr h)
+        obtain ⟨hc1, hc2⟩ := affineAdd_coord_secant P Q hPinf hQinf hne
+        refine onCurve_of_nonsingular_congr hc1 hc2
+          (nonsingular_add (nonsingular_of_frame P hPinf) (nonsingular_of_frame Q hQinf)
+            (fun hxy => hne hxy.left))
+
+/-- The sum of two frames, as a frame. -/
+def addFrame (P Q : FpFrame) : FpFrame :=
+  ⟨affineAdd fpOps P.1 Q.1, affineAdd_onCurve P Q⟩
+
+/-- **THE AGREEMENT THEOREM, AT THE POINT LEVEL.** \`emb\` carries the byte-level affine sum to
+    mathlib's group law in all four branches of the byte-level case split at once: infinity in,
+    opposite points out (both sides zero), the tangent branch, and the secant branch. Everything
+    P-MODEXP left is here; the mathematics was already in the two coordinate agreements and the
+    only missing piece was \`point_some_eq\`. -/
+theorem emb_add (P Q : FpFrame) : emb P + emb Q = emb (addFrame P Q) := by
+  classical
+  by_cases hPinf : affineIsInfinity fpOps P.1 = true
+  · have h1 : affineAdd fpOps P.1 Q.1 = Q.1 := by rw [affineAdd, if_pos hPinf]
+    have h2 : addFrame P Q = Q := Subtype.eq h1
+    rw [emb_inf P hPinf, h2, zero_add]
+  · by_cases hQinf : affineIsInfinity fpOps Q.1 = true
+    · have h1 : affineAdd fpOps P.1 Q.1 = P.1 := by
+        rw [affineAdd, if_neg hPinf, if_pos hQinf]
+      have h2 : addFrame P Q = P := Subtype.eq h1
+      rw [emb_inf Q hQinf, h2, add_zero]
+    · have hP : W.Nonsingular (P.1.1 : K) (P.1.2 : K) := nonsingular_of_frame P hPinf
+      have hQ : W.Nonsingular (Q.1.1 : K) (Q.1.2 : K) := nonsingular_of_frame Q hQinf
+      by_cases hxb : fpOps.beq P.1.1 Q.1.1 = true
+      · by_cases hyb : fpOps.beq P.1.2 Q.1.2 = true
+        · -- tangent / vertical chord: affineAdd reduces to affineDouble
+          have hx : (P.1.1 : K) = (Q.1.1 : K) := (beq_iff P.1.1 Q.1.1).mp hxb
+          have hy : (P.1.2 : K) = (Q.1.2 : K) := (beq_iff P.1.2 Q.1.2).mp hyb
+          have heQ : Point.some (Q.1.1 : K) (Q.1.2 : K) hQ =
+              Point.some (P.1.1 : K) (P.1.2 : K) hP := point_some_eq hx.symm hy.symm hQ hP
+          have hadd : affineAdd fpOps P.1 Q.1 = affineDouble fpOps P.1 := by
+            rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_pos hyb]
+          have hfr : addFrame P Q = doubleFrame P := Subtype.eq hadd
+          rw [emb_notInf P hPinf, emb_notInf Q hQinf, heQ, hfr]
+          by_cases hyz : (P.1.2 : K) = 0
+          · -- vertical chord: the byte law answers the all-zero frame, mathlib answers zero
+            have hdbl : affineDouble fpOps P.1 = (0, 0) := affineDouble_of_y_zero P hPinf hyz
+            have hif : doubleFrame P = infFrame := Subtype.eq hdbl
+            rw [Point.add_self_of_Y_eq (negY_of_zero hyz), hif, emb_inf infFrame (by decide)]
+          · -- tangent
+            obtain ⟨hc1, hc2⟩ := affineDouble_coord P hPinf hyz
+            have hns : W.Nonsingular
+                (W.addX (P.1.1) (P.1.1) (W.slope (P.1.1) (P.1.1) (P.1.2) (P.1.2)))
+                (W.addY (P.1.1) (P.1.1) (P.1.2) (W.slope (P.1.1) (P.1.1) (P.1.2) (P.1.2))) :=
+              nonsingular_add hP hP (fun hxy => ne_negY_of_ne_zero hyz hxy.right)
+            have hemb : emb (doubleFrame P) =
+                Point.some ((affineDouble fpOps P.1).1 : K) ((affineDouble fpOps P.1).2 : K)
+                  (nonsingular_of_equation (nonsingular_congr hc1 hc2 hns).1) :=
+              emb_of_nonsingular (affineDouble fpOps P.1).1 (affineDouble fpOps P.1).2
+                (nonsingular_congr hc1 hc2 hns)
+            rw [Point.add_self_of_Y_ne (ne_negY_of_ne_zero hyz), hemb]
+            exact point_some_eq hc1.symm hc2.symm hns _
+        · -- opposite points: the byte law answers the all-zero frame, mathlib answers zero
+          have hx : (P.1.1 : K) = (Q.1.1 : K) := (beq_iff P.1.1 Q.1.1).mp hxb
+          have hne : ¬ ((P.1.2 : K) = (Q.1.2 : K)) :=
+            fun h => hyb ((beq_iff P.1.2 Q.1.2).mpr h)
+          have hy : (P.1.2 : K) = W.negY (Q.1.1 : K) (Q.1.2 : K) :=
+            (Y_eq_of_X_eq hP.1 hQ.1 hx).resolve_left hne
+          have hadd : affineAdd fpOps P.1 Q.1 = (0, 0) := by
+            rw [affineAdd, if_neg hPinf, if_neg hQinf, if_pos hxb, if_neg hyb]
+            rfl
+          have hif : addFrame P Q = infFrame := Subtype.eq hadd
+          rw [emb_notInf P hPinf, emb_notInf Q hQinf, Point.add_of_Y_eq hx hy, hif,
+            emb_inf infFrame (by decide)]
+      · -- secant
+        rw [emb_notInf P hPinf, emb_notInf Q hQinf]
+        have hne : (P.1.1 : K) ≠ (Q.1.1 : K) := fun h => hxb ((beq_iff P.1.1 Q.1.1).mpr h)
+        obtain ⟨hc1, hc2⟩ := affineAdd_coord_secant P Q hPinf hQinf hne
+        have hns : W.Nonsingular
+            (W.addX (P.1.1) (Q.1.1) (W.slope (P.1.1) (Q.1.1) (P.1.2) (Q.1.2)))
+            (W.addY (P.1.1) (Q.1.1) (P.1.2) (W.slope (P.1.1) (Q.1.1) (P.1.2) (Q.1.2))) :=
+          nonsingular_add hP hQ (fun hxy => hne hxy.left)
+        have hemb : emb (addFrame P Q) =
+            Point.some ((affineAdd fpOps P.1 Q.1).1 : K) ((affineAdd fpOps P.1 Q.1).2 : K)
+              (nonsingular_of_equation (nonsingular_congr hc1 hc2 hns).1) :=
+          emb_of_nonsingular (affineAdd fpOps P.1 Q.1).1 (affineAdd fpOps P.1 Q.1).2
+            (nonsingular_congr hc1 hc2 hns)
+        rw [Point.add_of_X_ne hne, hemb]
+        exact point_some_eq hc1.symm hc2.symm hns _
+
+/-! ### THE SCALAR-MULTIPLICATION AGREEMENT (P-G1AGREE step 2) -/
+
+/-- One double-and-add step at frame level: the same shape as \`affineSmul\`'s step, lifted to
+    frames by \`addFrame\` / \`doubleFrame\`. Named so the fold invariant can be stated about it,
+    exactly as \`modPowStep\` is named for the same reason. -/
+def smulStep (n : ℕ) (st : FpFrame × FpFrame) (i : ℕ) : FpFrame × FpFrame :=
+  (if Nat.testBit n i then addFrame st.1 st.2 else st.1, doubleFrame st.2)
+
+/-- The same step at byte level, spelled the way \`affineSmul\` spells it. -/
+def smulStepBytes (n : ℕ) (st : (Nat × Nat) × (Nat × Nat)) (i : ℕ) : (Nat × Nat) × (Nat × Nat) :=
+  (if Nat.testBit n i then affineAdd fpOps st.1 st.2 else st.1, affineDouble fpOps st.2)
+
+/-- The underlying pairs of a pair of frames. -/
+private def fval (st : FpFrame × FpFrame) : (Nat × Nat) × (Nat × Nat) := (st.1.1, st.2.1)
+
+/-- The frame-level fold projects down to the byte-level fold, step by step. \`Prod.fst\` does not
+    distribute over a stuck \`if\`, so the two shapes are not defeq and the bit has to be decided
+    first - which is what \`by_cases\` buys here. -/
+private theorem fval_step (n : ℕ) (st : FpFrame × FpFrame) (i : ℕ) :
+    fval (smulStep n st i) = smulStepBytes n (fval st) i := by
+  obtain ⟨A, D⟩ := st
+  have eL : fval (smulStep n (A, D) i) =
+      ((if Nat.testBit n i then addFrame A D else A).1, (doubleFrame D).1) := rfl
+  have eR : smulStepBytes n (fval (A, D)) i =
+      (if Nat.testBit n i then affineAdd fpOps A.1 D.1 else A.1, affineDouble fpOps D.1) := rfl
+  rw [eL, eR]
+  by_cases hb : Nat.testBit n i
+  · rw [if_pos hb, if_pos hb]
+    rfl
+  · rw [if_neg hb, if_neg hb]
+    rfl
+
+/-- \`List.foldl\` over \`List.range (k+1)\` is the fold to \`k\` followed by one step at \`k\`. -/
+private theorem foldl_range_succ {α : Type} (f : α → ℕ → α) (init : α) (k : ℕ) :
+    (List.range (k + 1)).foldl f init = f ((List.range k).foldl f init) k := by
+  rw [List.range_succ, List.foldl_append]
+  rfl
+
+/-- The two folds agree, state by state. -/
+private theorem fval_fold (n : ℕ) (P : FpFrame) :
+    ∀ k : ℕ, fval ((List.range k).foldl (smulStep n) (infFrame, P)) =
+      (List.range k).foldl (smulStepBytes n) ((0, 0), P.1) := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      rw [foldl_range_succ, foldl_range_succ, ← ih]
+      exact fval_step n _ k
+
+/-- **SCALAR MULTIPLICATION AS A FRAME.** The double-and-add fold, run in the frame type: the
+    accepted set is closed under the step, so the fold never leaves it and no separate closure
+    proof is needed at the end. -/
+def smulFrame (n : ℕ) (P : FpFrame) : FpFrame :=
+  ((List.range (Nat.log2 n + 1)).foldl (smulStep n) (infFrame, P)).1
+
+/-- The frame the fold returns has exactly the coordinates \`affineSmul\` computes. -/
+theorem smulFrame_val (n : ℕ) (P : FpFrame) :
+    (smulFrame n P).1 = affineSmul fpOps n P.1 :=
+  congrArg Prod.fst (fval_fold n P (Nat.log2 n + 1))
+
+/-- **DOUBLING AGREES WITH \`emb P + emb P\`.** Note the infinity case: for a non-canonical
+    all-zero-mod-p frame \`affineAdd P P\` returns \`P\` while \`affineDouble P\` returns \`(0,0)\`, so
+    the two frames can differ as frames - but their images under \`emb\` are both zero, which is
+    all the statement needs. -/
+theorem emb_double (P : FpFrame) : emb (doubleFrame P) = emb P + emb P := by
+  classical
+  by_cases hPinf : affineIsInfinity fpOps P.1 = true
+  · have h1 : affineDouble fpOps P.1 = (0, 0) := by
+      rw [affineDouble, if_pos hPinf]
+      rfl
+    have h2 : doubleFrame P = infFrame := Subtype.ext h1
+    rw [h2, emb_inf infFrame (by decide), emb_inf P hPinf, zero_add]
+  · have hbeqx : fpOps.beq P.1.1 P.1.1 = true := (beq_iff P.1.1 P.1.1).mpr rfl
+    have hbeqy : fpOps.beq P.1.2 P.1.2 = true := (beq_iff P.1.2 P.1.2).mpr rfl
+    have h1 : affineAdd fpOps P.1 P.1 = affineDouble fpOps P.1 := by
+      rw [affineAdd, if_neg hPinf, if_neg hPinf, if_pos hbeqx, if_pos hbeqy]
+    have h2 : addFrame P P = doubleFrame P := Subtype.ext h1
+    rw [← h2, emb_add]
+
+/-- **THE FOLD INVARIANT.** After the steps for the bit positions \`0, ..., k-1\` the accumulator
+    carries \`n % 2^k • emb P\` and the doubling register carries \`2^k • emb P\`. Same shape as
+    \`modPow_fold\`, and the same proof: one induction on \`k\`, one \`by_cases\` on the bit, and
+    \`add_nsmul\` where \`modPow_fold\` used \`Nat.pow_add\`. -/
+private theorem emb_smul_fold (n : ℕ) (P : FpFrame) :
+    ∀ k : ℕ, emb ((List.range k).foldl (smulStep n) (infFrame, P)).1 = (n % 2 ^ k) • emb P ∧
+      emb ((List.range k).foldl (smulStep n) (infFrame, P)).2 = 2 ^ k • emb P := by
+  intro k
+  induction k with
+  | zero =>
+      have h1 : ((List.range 0).foldl (smulStep n) (infFrame, P)).1 = infFrame := rfl
+      have h2 : ((List.range 0).foldl (smulStep n) (infFrame, P)).2 = P := rfl
+      rw [h1, h2, Nat.pow_zero, Nat.mod_one, zero_nsmul, one_nsmul,
+        emb_inf infFrame (by decide)]
+      exact ⟨rfl, rfl⟩
+  | succ k ih =>
+      rw [foldl_range_succ]
+      obtain ⟨h1, h2⟩ := ih
+      have e1 : (smulStep n ((List.range k).foldl (smulStep n) (infFrame, P)) k).1 =
+          (if Nat.testBit n k then
+            addFrame ((List.range k).foldl (smulStep n) (infFrame, P)).1
+              ((List.range k).foldl (smulStep n) (infFrame, P)).2
+           else ((List.range k).foldl (smulStep n) (infFrame, P)).1) := rfl
+      have e2 : (smulStep n ((List.range k).foldl (smulStep n) (infFrame, P)) k).2 =
+          doubleFrame ((List.range k).foldl (smulStep n) (infFrame, P)).2 := rfl
+      rw [e1, e2]
+      refine ⟨?_, ?_⟩
+      · by_cases hb : Nat.testBit n k
+        · rw [if_pos hb, ← emb_add, h1, h2, ← add_nsmul, mod_pow_succ 2 n k (by decide),
+            ← Nat.toNat_testBit, hb, Bool.toNat_true, Nat.mul_one]
+        · rw [if_neg hb, h1, mod_pow_succ 2 n k (by decide), ← Nat.toNat_testBit,
+            Bool.eq_false_of_ne_true hb, Bool.toNat_false, Nat.mul_zero, Nat.add_zero]
+      · rw [emb_double, h2, ← two_nsmul, ← mul_nsmul]
+        congr 1
+
+/-- **THE SCALAR-MULTIPLICATION AGREEMENT.** \`n • emb P\` is the frame \`affineSmul\` computes: the
+    byte-level double-and-add and mathlib's \`nsmul\` agree, for every \`n\` and every accepted
+    frame. This is the lemma \`g1Msm1\` needs, and - through \`g1InSubgroup\` - the subgroup half of
+    \`g1Valid\` needs. -/
+theorem emb_smul (n : ℕ) (P : FpFrame) : n • emb P = emb (smulFrame n P) := by
+  have h := emb_smul_fold n P (Nat.log2 n + 1)
+  rw [show smulFrame n P =
+        ((List.range (Nat.log2 n + 1)).foldl (smulStep n) (infFrame, P)).1 from rfl]
+  rw [Nat.mod_eq_of_lt Nat.lt_log2_self] at h
+  exact h.1.symm
+
+/-! ### Canonical frames: where "maps to zero" and "is the all-zero pair" come apart -/
+
+/-- A frame is **canonical** when both coordinates sit below the modulus. Every frame the
+    precompile actually decodes has this property - \`fpCoordOf?\` rejects a coordinate at or above
+    \`blsP\` - and it is what makes "vanishes in the field" and "is literally zero" the same
+    statement, which is the gap between \`emb X = 0\` and the \`affineSmul ... = (0,0)\` that
+    \`g1InSubgroup\` tests. -/
+def CanonicalFrame (P : FpFrame) : Prop := P.1.1 < blsP ∧ P.1.2 < blsP
+
+/-- For a canonical frame the two readings of "is the point at infinity" coincide: the EIP-2537
+    convention (both coordinates vanish in the field) and the literal all-zero pair. Without
+    canonicity this is FALSE - see \`emb_zero_needs_canonical\` - which is why the hypothesis is
+    stated rather than quietly assumed. -/
+theorem emb_eq_zero_iff_canonical (P : FpFrame) (hP : CanonicalFrame P) :
+    emb P = 0 ↔ P.1 = (0, 0) := by
+  classical
+  rw [emb_eq_zero_iff, inf_iff, Prod.mk.injEq]
+  refine ⟨fun ⟨hx, hy⟩ => ⟨?_, ?_⟩, fun ⟨h1, h2⟩ => ⟨?_, ?_⟩⟩
+  · have h2 : P.1.1 % blsP = 0 % blsP := (coe_nat_eq_iff P.1.1 0).mp hx
+    rwa [Nat.mod_eq_of_lt hP.1, Nat.zero_mod] at h2
+  · have h2 : P.1.2 % blsP = 0 % blsP := (coe_nat_eq_iff P.1.2 0).mp hy
+    rwa [Nat.mod_eq_of_lt hP.2, Nat.zero_mod] at h2
+  · rw [h1]
+    exact Nat.cast_zero
+  · rw [h2]
+    exact Nat.cast_zero
+
+/-- **THE CANONICITY HYPOTHESIS BITES** (D-P23 falsification for
+    \`emb_eq_zero_iff_canonical\`). The frame \`((blsP, blsP))\` is accepted - it is infinity in the
+    field sense - \`emb\` sends it to zero, and it is NOT the all-zero pair the precompile's own
+    subgroup test looks for. So "maps to zero" and "is literally (0,0)" come apart without
+    canonicity, and the hypothesis is not decoration. The precompile never hands one over
+    (\`fpCoordOf?\` rejects a coordinate at or above \`p\`), which is exactly why the lemma carries
+    the hypothesis instead of assuming every frame is canonical. -/
+def junkPair : Nat × Nat := (blsP, blsP)
+theorem junkPair_onCurve : affineOnCurve fpOps junkPair = true := by decide
+def junkFrame : FpFrame := ⟨junkPair, junkPair_onCurve⟩
+
+theorem emb_zero_needs_canonical : emb junkFrame = 0 ∧ junkFrame.1 ≠ (0, 0) :=
+  ⟨emb_inf junkFrame (by decide), fun hh =>
+    absurd (congrArg (fun (t : Nat × Nat) => t.1) hh) (Nat.ne_of_gt p_pos)⟩
+
+theorem junkFrame_not_canonical : ¬ CanonicalFrame junkFrame := fun ⟨h1, _⟩ =>
+  Nat.lt_irrefl blsP h1
+
+/-! ### D-P23: witnesses and falsifications for the two agreements -/
+
+/-- The published EIP-2537 G1 generator H1, coordinate by coordinate: the two numbers the EIP
+    prints, which are the two coordinates \`katG1GenWords\` renders. Stated as literals rather than
+    decoded from the frame so the kernel facts below stay shallow. -/
+def genX : Nat :=
+  0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb
+
+/-- The \`y\` of H1. -/
+def genY : Nat :=
+  0x08b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1
+
+/-- The generator as a pair, and as a frame. \`affineOnCurve\` at the REAL 381-bit modulus is a
+    kernel theorem here, not a gate: the curve equation of a point nobody chose. -/
+def genPair : Nat × Nat := (genX, genY)
+
+theorem genPair_onCurve : affineOnCurve fpOps genPair = true := by decide
+
+def genFrame : FpFrame := ⟨genPair, genPair_onCurve⟩
+
+theorem genFrame_canonical : CanonicalFrame genFrame := ⟨by decide, by decide⟩
+theorem genFrame_notInf : ¬ affineIsInfinity fpOps genPair = true := by decide
+
+/-- `genFrame`'s pair, spelled as the pair: the projection is `rfl`, but the elaborator will not
+    always cross the subtype coercion on its own and every `decide` below is priced by whether it
+    has to. -/
+private theorem genFrame_val : genFrame.1 = genPair := rfl
+
+/-- The generator is not mapped to zero, so every statement below about \`emb genFrame\` is about a
+    non-identity point. -/
+theorem emb_gen_ne_zero : emb genFrame ≠ 0 := fun h =>
+  genFrame_notInf ((emb_eq_zero_iff genFrame).mp h)
+
+/-- The additive inverse of H1 as published (\`p - y\`), and the fact that the byte law sends the
+    pair to the all-zero frame: the opposite-points branch is exercised by real bytes. -/
+def negGenY : Nat :=
+  0x114d1d6855d545a8aa7d76c8cf2e21f267816aef1db507c96655b9d5caac42364e6f38ba0ecb751bad54dcd6b939c2ca
+
+def negGenPair : Nat × Nat := (genX, negGenY)
+theorem negGenPair_onCurve : affineOnCurve fpOps negGenPair = true := by decide
+def negGenFrame : FpFrame := ⟨negGenPair, negGenPair_onCurve⟩
+
+theorem add_gen_negGen : affineAdd fpOps genPair negGenPair = (0, 0) := by decide
+
+/-- **WITNESS 1 FOR \`emb_add\` (D-P23 satisfiability).** The assembly is not vacuous and not
+    satisfied by a degenerate model: at the published generator it says the sum with the published
+    negation is the point at infinity, while the generator itself is not. -/
+theorem emb_add_witness : emb genFrame + emb negGenFrame = 0 ∧ emb genFrame ≠ 0 := by
+  refine ⟨?_, emb_gen_ne_zero⟩
+  have h : addFrame genFrame negGenFrame = infFrame := Subtype.ext add_gen_negGen
+  rw [emb_add, h, emb_inf infFrame (by decide)]
+
+/-- **WITNESS 2 FOR `emb_smul` (D-P23 satisfiability).** The fold at `n = 1` really is the
+    identity on the generator - the accumulator picks up the point at the first set bit and nothing
+    else - so the agreement is instantiated at a nontrivial frame, not only at infinity. -/
+theorem smulFrame_one_gen : smulFrame 1 genFrame = genFrame := Subtype.ext rfl
+
+theorem emb_smul_witness_one : (1 : ℕ) • emb genFrame = emb genFrame := by
+  rw [emb_smul, smulFrame_one_gen]
+
+/-- **FALSIFICATION 1 FOR \`emb_add\` (D-P23): the case split is load-bearing.** The naive
+    point-level statement "the sum is \`Point.some\` of the output coordinates" is not even
+    type-correct: the byte law returns the all-zero pair when an input is infinity, and \`(0,0)\` is
+    not a nonsingular pair. -/
+theorem not_all_outputs_nonsingular :
+    ¬ ∀ P Q : FpFrame, W.Nonsingular ((affineAdd fpOps P.1 Q.1).1 : K)
+      ((affineAdd fpOps P.1 Q.1).2 : K) := fun h =>
+  not_onCurve_zero ((h infFrame infFrame).1)
+
+/-- **FALSIFICATION 2 FOR \`emb_smul\` (D-P23): the agreement really depends on the scalar.** Were
+    it the vacuous statement "every scalar multiple is the point", it would say
+    \`0 • emb G = emb G\`, which is false at the generator. -/
+theorem smul_agreement_not_constant :
+    ¬ ∀ (n : ℕ) (P : FpFrame), emb (smulFrame n P) = emb P := by
+  intro h
+  have h1 : (0 : ℕ) • emb genFrame = emb genFrame := by
+    have h2 := h 0 genFrame
+    rw [← emb_smul] at h2
+    exact h2
+  exact emb_gen_ne_zero (h1.symm.trans (zero_nsmul (emb genFrame)))
+/-! ### WHAT P-G1AGREE LANDED, AND WHAT IS LEFT
+
+**LANDED.** Step 1: \`emb_add\` - the point-level assembly - plus the closure statements a frame
+type needs (\`affineAdd_onCurve\`, \`affineDouble_onCurve\`, \`addFrame\`, \`doubleFrame\`). Step 2:
+\`emb_smul\` - the scalar-multiplication agreement - via \`smulFrame\`, plus \`smulFrame_val\` tying
+the frame fold back to \`affineSmul\` byte for byte. The \`IsElliptic\` instance for \`W\` is new and
+it is what makes \`n • emb P\` statable at all: mathlib's \`AddCommGroup W.Point\`
+(Affine/Point.lean:805) is now in scope over the real modulus.
+
+**THE RECORDED OBSTRUCTION WAS RIGHT ABOUT THE SYMPTOM AND WRONG ABOUT THE CURE.** See
+\`point_some_eq\`. \`FpFrame\` was NOT converted to a structure with named fields, and no coordinate
+is carried as a \`have\`: the fix is to state the transfer lemmas over variables and let \`subst\`
+do the work, because \`Point.some\*'s third argument is a \`Prop\` and Lean 4 proof irrelevance is
+definitional. Roughly ten lines, as P-MODEXP predicted, but a different ten lines.
+
+**LEFT, AND MEASURED.** Two items, both mechanical, neither mathematical.
+
+1. \`g1InSubgroup\` in field form. \`emb_smul\` gives \`blsR • emb P = emb (smulFrame blsR P)\`, and
+   \`emb_eq_zero_iff_canonical\` gives \`emb X = 0 ↔ X.1 = (0,0)\` for a CANONICAL frame, so the
+   subgroup half of \`g1Valid\` is one lemma away: it needs
+   \`CanonicalFrame (smulFrame blsR P)\`. That in turn needs "every coordinate \`affineAdd\` /
+   \`affineDouble\` returns is either copied from an input or reduced mod \`p\`", which is a
+   branch walk over the two \`match\`es. It was written and it does not check: the elaborator's
+   whnf of \`affineAdd fpOps genPair genPair\` forces the \`fpInv\` (a 381-bit \`modPow\`) while
+   type-checking, and the defeq check dies on \`maximum recursion depth\` at every depth tried
+   (1024, 100000, 1000000 - the last one flips to "(kernel) deep recursion detected", i.e. a C++
+   stack limit, not a budget). \`decide\` proves the same fact happily, because the kernel reduces
+   with its own deeper stack. The fix is to keep such facts inside \`decide\` and never let a
+   defeq check touch a reduced coordinate - or to add a \`FpFrame\` field for canonicity so the
+   walk is over the type, not over the term. Recorded because it cost 20 minutes and it will
+   cost the next package 20 more.
+2. The same wall blocks the strongest possible witness, \`blsR • emb genFrame = 0\`: the byte-level
+   \`affineSmul fpOps blsR genPair = (0,0)\` IS provable by \`decide\` (measured: about 15 s, proved
+   in a scratch file during this package), but transporting it across \`smulFrame_val\` requires
+   exactly the defeq check that dies above. \`Instances/Bls12_381G1.lean\` already pays the 15 s for
+   the same computation in its own frame type.
 -/
 
 end Midfall.Instances

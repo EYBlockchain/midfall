@@ -416,23 +416,262 @@ def fpInvCorrectKats_ok : Bool :=
 
 /-! ### Modexp is arithmetic, not an assumption -/
 
-/-- The generated inversion frame returns x to the power r-2 modulo r, which is
-    x inverse in the scalar field for every nonzero x below r (Fermat). Externals
-    COMPUTES modexpOutput, so this is a theorem and not a hypothesis - D14 and
-    design2 disagreement D are explicit that stating it as an assumption would
-    mislabel modelled arithmetic as trusted arithmetic.
+/-! ### Byte plumbing for the modexp frame (P-G1AGREE step 3)
 
-    PROOF OBLIGATION, registered in SORRY.md: modPow is a square-and-multiply over
-    the bits of the exponent, so the proof is the correctness of that fold plus
-    the Fermat identity in ZMod blsR. NOTE: the plan sketch cites
-    ZMod.pow_card_sub_two_eq_inv, which does NOT exist in the pinned Mathlib
-    (measured: no such constant); the available form is ZMod.pow_card_sub_one_eq_one
-    (Mathlib/FieldTheory/Finite/Basic.lean:612), from which the inverse identity
-    follows in one line. Reported as a stage-1 finding. -/
+THE GAP WAS NEVER FERMAT. \`modPow_inv\` below already gives \`modPow x (r-2) r = ((x : ZMod r)⁻¹).val\`
+at any prime, so \`modexpInv_correct\` was waiting on ByteArray slice facts: the 6-word modexp frame
+has to be parsed back into its three length words and its three operands. Everything in this
+section is array arithmetic, no number theory.
+
+ONE SPELLING PER STEP, as P-MODEXP warned: \`bs.size\` and \`bs.data.size\` are defeq but the \`rw\`
+matcher does not cross between them, so every lemma here is stated at the \`Bytes\` level and the
+\`.data\` level is entered exactly once, inside \`bytesSlice_at\`, and never again.
+
+MOVED FROM BELOW: \`bytesAppend_size\` and \`bytesSlice_at\` used to live in the pairing-plumbing
+section further down the file; the lemmas here need them and Lean reads top to bottom, so they are
+here and the pairing section keeps the rest. -/
+
+private theorem bytesAppend_size (x y : Bytes) : (bytesAppend x y).size = x.size + y.size := by
+  show (x.data ++ y.data).size = _
+  exact Array.size_append
+
+/-- 'bytesSlice' at an offset that fits is the plain array extract: the clamping 'min's are
+    inert once the window is inside the buffer. -/
+private theorem bytesSlice_at (bs : Bytes) (i n : ℕ) (h : i + n ≤ bs.size) :
+    bytesSlice bs i n = ByteArray.mk (bs.data.extract i (i + n)) := by
+  classical
+  show ByteArray.mk (bs.data.extract (min i bs.size) (min (i + n) bs.size)) = _
+  rw [Nat.min_eq_left (by omega : i ≤ bs.size), Nat.min_eq_left (by omega : i + n ≤ bs.size)]
+
+/-- The one-word big-endian encoding, named so the six slices of the frame can be stated about it. -/
+private def mfw (v : ℕ) : Bytes := bytesNatBE v wordBytes
+
+private theorem mfw_size (v : ℕ) : (mfw v).size = wordBytes := bytesNatBE_size v wordBytes
+
+/-- \`bytesToNatBE\` inverts \`mfw\` below \`256^wordBytes\` - the round trip the frame depends on. -/
+private theorem bytesToNatBE_mfw (v : ℕ) (hv : v < 256 ^ wordBytes) : bytesToNatBE (mfw v) = v := by
+  rw [mfw, bytesToNatBE_bytesNatBE, Nat.mod_eq_of_lt hv]
+
+/-- \`r\` fits in one word, and so does everything the inversion frame puts in a word. -/
+private theorem blsR_lt_word_pow : blsR < 256 ^ wordBytes := by decide
+
+private theorem lt_word_pow : ∀ v : ℕ, v < blsR → v < 256 ^ wordBytes := fun v hv => by
+  have h := blsR_lt_word_pow
+  omega
+
+private theorem blsR_sub_two_lt_word_pow : blsR - 2 < 256 ^ wordBytes := by
+  have h := blsR_lt_word_pow
+  omega
+
+/-- A window that lies inside the LEFT half of a concatenation is a window of the left half. -/
+private theorem bytesSlice_window_before {A B : Bytes} (i n : ℕ) (h : i + n ≤ A.size) :
+    bytesSlice (bytesAppend A B) i n = bytesSlice A i n := by
+  classical
+  rw [bytesSlice_at _ _ _ (by rw [bytesAppend_size]; omega), bytesSlice_at _ _ _ h]
+  show ByteArray.mk ((A.data ++ B.data).extract i (i + n)) = ByteArray.mk (A.data.extract i (i + n))
+  rw [Array.extract_append]
+  have hle : i + n ≤ A.data.size := h
+  have hz : B.data.extract (i - A.data.size) (i + n - A.data.size) = #[] := by
+    refine Array.extract_eq_empty_of_le ?_
+    have h1 : i - A.data.size = 0 :=
+      Nat.sub_eq_zero_of_le (Nat.le_trans (Nat.le_add_right i n) hle)
+    have h2 : i + n - A.data.size = 0 := Nat.sub_eq_zero_of_le hle
+    rw [h1, h2]
+    exact Nat.min_le_left _ _
+  rw [hz, Array.append_empty]
+
+/-- A window that starts exactly where the LEFT half ends is a window of the right half. The offset
+    is one variable with its own size equation, because \`rw\` will not solve \`?k + ?i =?= 96\` and
+    will not accept \`wordBytes + 0\` for \`wordBytes\` in a pattern either: the caller has to name
+    the offset it is cutting at. -/
+private theorem bytesSlice_window_after {A B : Bytes} (o n : ℕ) (ho : o = A.size)
+    (h : n ≤ B.size) : bytesSlice (bytesAppend A B) o n = bytesSlice B 0 n := by
+  classical
+  rw [ho]
+  rw [bytesSlice_at _ _ _ (by rw [bytesAppend_size]; omega), bytesSlice_at _ _ _ (by
+      have h2 : 0 + n ≤ B.size := by rw [Nat.zero_add]; exact h
+      exact h2)]
+  rw [Nat.zero_add]
+  show ByteArray.mk ((bytesAppend A B).data.extract (ByteArray.size A) (ByteArray.size A + n)) =
+    ByteArray.mk (B.data.extract 0 n)
+  rw [show (bytesAppend A B).data = A.data ++ B.data from rfl,
+    show ByteArray.size A = A.data.size from rfl]
+  rw [Array.extract_append]
+  rw [Array.extract_eq_empty_of_le (Nat.min_le_right _ _), Nat.sub_self,
+    Nat.add_sub_cancel_left, Array.empty_append]
+
+/-- The whole buffer is its own window. -/
+private theorem bytesSlice_full (A : Bytes) : bytesSlice A 0 A.size = A := by
+  classical
+  rw [bytesSlice_at _ 0 A.size (by omega), Nat.zero_add]
+  show ByteArray.mk (A.data.extract 0 A.data.size) = A
+  rw [Array.extract_eq_self_of_le (Nat.le_refl _)]
+
+/-- One whole word is its own window, at the `wordBytes` spelling the slices use. -/
+private theorem bytesSlice_mfw_full (v : ℕ) : bytesSlice (mfw v) 0 wordBytes = mfw v := by
+  classical
+  rw [← mfw_size v, bytesSlice_full]
+
+/-- Clamping a window that is already full adds no padding: \`n - n = 0\` and appending zero bytes is
+    the identity. This is what turns \`bytesSlicePad\` into \`bytesSlice\` for a frame that really
+    contains the operand. -/
+private theorem bytesAppend_zero_right (b : Bytes) : bytesAppend b (bytesZero 0) = b := by
+  show ByteArray.mk (b.data ++ (#[] : Array UInt8)) = b
+  rw [Array.append_empty]
+
+private theorem bytesSlicePad_of_size (bs : Bytes) (i n : ℕ) (h : (bytesSlice bs i n).size = n) :
+    bytesSlicePad bs i n = bytesSlice bs i n := by
+  show bytesAppend (bytesSlice bs i n) (bytesZero (n - (bytesSlice bs i n).size)) = _
+  rw [h, Nat.sub_self, bytesAppend_zero_right]
+
+/-- \`bytesOfWords\` on three words, spelled out: the modexp header is a 3-fold concatenation and
+    the fold's empty accumulator has to go before the slices can peel. -/
+private theorem bytesOfWords_three (a b c : ℕ) :
+    bytesOfWords [a, b, c] =
+      bytesAppend (bytesAppend (bytesAppend Bytes.empty (bytesNatBE a wordBytes))
+        (bytesNatBE b wordBytes)) (bytesNatBE c wordBytes) := rfl
+
+private theorem bytesAppend_empty_left (b : Bytes) : bytesAppend Bytes.empty b = b := by
+  show ByteArray.mk ((#[] : Array UInt8) ++ b.data) = b
+  rw [Array.empty_append]
+
+/-- The inversion frame as the six-word concatenation the parser reads. -/
+private theorem modexpInvFrame_shape (x : ℕ) :
+    modexpInvFrame x =
+      bytesAppend (bytesAppend (bytesAppend (bytesAppend (bytesAppend (bytesAppend Bytes.empty
+        (mfw wordBytes)) (mfw wordBytes)) (mfw wordBytes)) (mfw x)) (mfw (blsR - 2)))
+        (mfw blsR) := rfl
+
+/-- **THE SIX SLICES OF THE INVERSION FRAME.** Three length words and three operands, each read
+    back at the offset the parser uses. This is the whole of what stood between \`modexpInv_correct\`
+    and a proof; \`modPow_inv\` was already there. -/
+private theorem modexpInvFrame_slices (x : ℕ) :
+    bytesSlice (modexpInvFrame x) 0 wordBytes = mfw wordBytes ∧
+    bytesSlice (modexpInvFrame x) wordBytes wordBytes = mfw wordBytes ∧
+    bytesSlice (modexpInvFrame x) (2 * wordBytes) wordBytes = mfw wordBytes ∧
+    bytesSlice (modexpInvFrame x) (3 * wordBytes) wordBytes = mfw x ∧
+    bytesSlice (modexpInvFrame x) (4 * wordBytes) wordBytes = mfw (blsR - 2) ∧
+    bytesSlice (modexpInvFrame x) (5 * wordBytes) wordBytes = mfw blsR := by
+  classical
+  rw [modexpInvFrame_shape, bytesAppend_empty_left]
+  have s₁ : (mfw wordBytes).size = wordBytes := mfw_size _
+  have s₂ : (bytesAppend (mfw wordBytes) (mfw wordBytes)).size = 2 * wordBytes := by
+    rw [bytesAppend_size, s₁]; omega
+  have s₃ : (bytesAppend (bytesAppend (mfw wordBytes) (mfw wordBytes)) (mfw wordBytes)).size =
+      3 * wordBytes := by
+    rw [bytesAppend_size, s₂, mfw_size]; omega
+  have s₄ : (bytesAppend (bytesAppend (bytesAppend (mfw wordBytes) (mfw wordBytes))
+      (mfw wordBytes)) (mfw x)).size = 4 * wordBytes := by
+    rw [bytesAppend_size, s₃, mfw_size]; omega
+  have s₅ : (bytesAppend (bytesAppend (bytesAppend (bytesAppend (mfw wordBytes) (mfw wordBytes))
+      (mfw wordBytes)) (mfw x)) (mfw (blsR - 2))).size = 5 * wordBytes := by
+    rw [bytesAppend_size, s₄, mfw_size]; omega
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [bytesSlice_window_before 0 wordBytes (by rw [s₅]; omega),
+        bytesSlice_window_before 0 wordBytes (by rw [s₄]; omega),
+        bytesSlice_window_before 0 wordBytes (by rw [s₃]; omega),
+        bytesSlice_window_before 0 wordBytes (by rw [s₂]; omega),
+        bytesSlice_window_before 0 wordBytes (by rw [s₁]; omega),
+        bytesSlice_mfw_full]
+  · rw [bytesSlice_window_before wordBytes wordBytes (by rw [s₅]; omega),
+        bytesSlice_window_before wordBytes wordBytes (by rw [s₄]; omega),
+        bytesSlice_window_before wordBytes wordBytes (by rw [s₃]; omega),
+        bytesSlice_window_before wordBytes wordBytes (by rw [s₂]; omega),
+        bytesSlice_window_after wordBytes wordBytes (by rw [s₁]) (by rw [mfw_size]),
+        bytesSlice_mfw_full]
+  · rw [bytesSlice_window_before (2 * wordBytes) wordBytes (by rw [s₅]; omega),
+        bytesSlice_window_before (2 * wordBytes) wordBytes (by rw [s₄]; omega),
+        bytesSlice_window_before (2 * wordBytes) wordBytes (by rw [s₃]; omega),
+        bytesSlice_window_after (2 * wordBytes) wordBytes (by rw [s₂]) (by rw [mfw_size]),
+        bytesSlice_mfw_full]
+  · rw [bytesSlice_window_before (3 * wordBytes) wordBytes (by rw [s₅]; omega),
+        bytesSlice_window_before (3 * wordBytes) wordBytes (by rw [s₄]; omega),
+        bytesSlice_window_after (3 * wordBytes) wordBytes (by rw [s₃]) (by rw [mfw_size]),
+        bytesSlice_mfw_full]
+  · rw [bytesSlice_window_before (4 * wordBytes) wordBytes (by rw [s₅]; omega),
+        bytesSlice_window_after (4 * wordBytes) wordBytes (by rw [s₄]) (by rw [mfw_size]),
+        bytesSlice_mfw_full]
+  · rw [bytesSlice_window_after (5 * wordBytes) wordBytes (by rw [s₅]) (by rw [mfw_size]),
+        bytesSlice_mfw_full]
+
+/-- The three declared lengths the parser reads out of the inversion frame. -/
+private theorem modexpInvFrame_sizes (x : ℕ) :
+    modexpSizes (modexpInvFrame x) = (wordBytes, wordBytes, wordBytes) := by
+  classical
+  obtain ⟨s0, s1, s2, -, -, -⟩ := modexpInvFrame_slices x
+  rw [modexpSizes, s0, s1, s2,
+    bytesToNatBE_mfw wordBytes (by decide : wordBytes < 256 ^ wordBytes)]
+
+/-- The frame is inside the EIP-7823 limits, so the parser does not reject it. -/
+private theorem modexpInvFrame_within (x : ℕ) :
+    modexpWithinLimits (modexpInvFrame x) = true := by
+  rw [modexpWithinLimits, modexpInvFrame_sizes]
+  decide
+
+/-- The three operands, read back through the right-padding rule. -/
+private theorem modexpInvFrame_operands (x : ℕ) :
+    bytesSlicePad (modexpInvFrame x) modexpHeaderBytes wordBytes = mfw x ∧
+    bytesSlicePad (modexpInvFrame x) (modexpHeaderBytes + wordBytes) wordBytes = mfw (blsR - 2) ∧
+    bytesSlicePad (modexpInvFrame x) (modexpHeaderBytes + wordBytes + wordBytes) wordBytes =
+      mfw blsR := by
+  obtain ⟨-, -, -, s3, s4, s5⟩ := modexpInvFrame_slices x
+  refine ⟨?_, ?_, ?_⟩
+  · show bytesSlicePad (modexpInvFrame x) (3 * wordBytes) wordBytes = mfw x
+    rw [bytesSlicePad_of_size _ _ _ (by rw [s3, mfw_size]), s3]
+  · show bytesSlicePad (modexpInvFrame x) (4 * wordBytes) wordBytes = mfw (blsR - 2)
+    rw [bytesSlicePad_of_size _ _ _ (by rw [s4, mfw_size]), s4]
+  · show bytesSlicePad (modexpInvFrame x) (5 * wordBytes) wordBytes = mfw blsR
+    rw [bytesSlicePad_of_size _ _ _ (by rw [s5, mfw_size]), s5]
+
+
+/-- **MODINV IS THE SCALAR-FIELD INVERSE, BYTE FOR BYTE.** The frame the generator emits for every
+    \`scalar_inv\` and \`batch_invert\` parses, the modexp runs, and the 32-byte answer is the
+    canonical big-endian encoding of \`x⁻¹\` in \`ZMod blsR\`. The number theory was \`modPow_inv\`;
+    what was missing was the parsing, and it is a dozen slice lemmas. -/
 theorem modexpInv_correct (x : ℕ) (hx : 0 < x) (hr : x < blsR) :
     modexpOutput (modexpInvFrame x) =
       some (bytesNatBE ((x : ZMod blsR)⁻¹).val wordBytes) := by
-  sorry
+  classical
+  obtain ⟨o1, o2, o3⟩ := modexpInvFrame_operands x
+  have hparse : modexpParse? (modexpInvFrame x) =
+      some { baseLen := wordBytes, expLen := wordBytes, modLen := wordBytes,
+             base := mfw x, exponent := mfw (blsR - 2), modulus := mfw blsR } := by
+    rw [modexpParse?, if_pos (modexpInvFrame_within x), modexpInvFrame_sizes x]
+    dsimp only
+    rw [o1, o2, o3]
+  have hnz : ¬ (bytesToNatBE (mfw blsR) == 0) := by
+    rw [bytesToNatBE_mfw blsR blsR_lt_word_pow]
+    decide
+  rw [modexpOutput, hparse]
+  dsimp only
+  rw [if_neg hnz]
+  rw [bytesToNatBE_mfw x (lt_word_pow x hr), bytesToNatBE_mfw (blsR - 2) blsR_sub_two_lt_word_pow,
+    bytesToNatBE_mfw blsR blsR_lt_word_pow, modPow_inv x hx hr]
+
+/-- **SATISFIABILITY WITNESS (D-P23), as a theorem.** The frame for \`x = 1\` really is parsed and
+    really returns 1: \`1^(r-2) mod r = 1\`. Cheap enough to be a theorem rather than a gate, and it
+    pins the whole chain - header, three operands, modexp, byte encoder - on one input whose answer
+    nobody can fudge. -/
+theorem modexpInv_correct_one : modexpOutput (modexpInvFrame 1) = some (bytesNatBE 1 wordBytes) := by
+  have key : some (bytesNatBE ((1 : ZMod blsR)⁻¹).val wordBytes) =
+      some (bytesNatBE 1 wordBytes) := by
+    rw [show ((1 : ZMod blsR)⁻¹).val = 1 from by rw [inv_one, ZMod.val_one]]
+  exact (modexpInv_correct 1 (by decide) (by decide : 1 < blsR)).trans key
+
+set_option maxRecDepth 100000 in
+/-- **FALSIFICATION 1 (D-P23): the parser reads the declared lengths, not a fixed shape.** A frame
+    that declares a one-byte modulus and supplies no modulus bytes parses to a zero modulus, and
+    modexp special-cases that to a one-byte zero answer. That branch is unreachable unless the three
+    header words were actually read out of the frame - so the parse is sensitive to the plumbing this
+    section proves, not to a constant the proof could have invented. -/
+theorem modexpOutput_zero_modulus :
+    modexpOutput (modexpFrame 1 1 1 (bytesNatBE 3 1) (bytesNatBE 5 1) Bytes.empty) =
+      some (bytesZero 1) := by decide
+
+set_option maxRecDepth 100000 in
+/-- **FALSIFICATION 2 (D-P23): the frame depends on its base.** Two different scalars give two
+    different modexp inputs, so \`modexpInv_correct\` is a statement about a family of frames. -/
+theorem modexpInvFrame_two_ne_three : modexpInvFrame 2 ≠ modexpInvFrame 3 := by decide
 
 /-! ### Gates -/
 
@@ -683,18 +922,6 @@ def g1DecodesDefectKats_ok : Bool :=
     means cutting it at the widths the encoders emit. Everything here is about ByteArray and
     Array.extract, with no algebra in it, so it is kept private and out of the way of the
     clauses above. -/
-
-private theorem bytesAppend_size (x y : Bytes) : (bytesAppend x y).size = x.size + y.size := by
-  show (x.data ++ y.data).size = _
-  exact Array.size_append
-
-/-- 'bytesSlice' at an offset that fits is the plain array extract: the clamping 'min's are
-    inert once the window is inside the buffer. -/
-private theorem bytesSlice_at (bs : Bytes) (i n : ℕ) (h : i + n ≤ bs.size) :
-    bytesSlice bs i n = ByteArray.mk (bs.data.extract i (i + n)) := by
-  classical
-  show ByteArray.mk (bs.data.extract (min i bs.size) (min (i + n) bs.size)) = _
-  rw [Nat.min_eq_left (by omega : i ≤ bs.size), Nat.min_eq_left (by omega : i + n ≤ bs.size)]
 
 /-- The four windows of a four-fold concatenation, at the sizes of the pieces. Stated with
     the offsets as '.size' terms because that is the only form the lemmas below match. -/
@@ -967,8 +1194,8 @@ published H1 ('g1GenFrame_valid', as 'affineSmul fpOps blsR G = (0, 0)'). What s
 the tree and 'PrimeOrderWith' at a real curve point is therefore NOT number theory. It is the
 agreement theorem between the byte-level 'affineSmul' and whatever group law the exhibited type
 carries - the same agreement that 'g1Add', 'g1Msm1' and the subgroup half of 'g1Valid' all
-need, and whose missing ingredient is the correctness of 'modPow' as a modular inverse (still a
-'sorry' in this file at 'modexpInv_correct'). -/
+need, and whose missing ingredient was the correctness of 'modPow' as a modular inverse - proved now
+(P-MODEXP's 'modPow_eq' plus P-G1AGREE step 3's frame parsing at 'modexpInv_correct'). -/
 
 /-- **NO POINT COUNT NEEDED.** A cyclic subgroup generated by an element of prime order 'r' has
     exactly 'r' elements, so it is a 'PrimeOrderWith' group. This is the lemma that retires
