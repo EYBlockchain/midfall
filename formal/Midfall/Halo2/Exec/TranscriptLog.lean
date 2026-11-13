@@ -822,4 +822,677 @@ theorem pres_readAlgebra {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   refine Pres.bind (Pres.listMapM trashcans.toList (fun row =>
       Pres.listMapM row.toList (fun t => pres_trashEvaluate t))) (fun _ => Pres.pure _)
 
+
+/-! ### Item 2 of P-CODEC-A: the width condition on transcript log entries
+
+    `decodeRust` (Exec/Native.lean:244-261) maps every log record by
+
+        if rec.1 == wG1 then ... else if rec.1 == wFr then ... else none
+
+    with `wG1 = (hashableG1 E.g1).width` and `wFr = (hashableFr (p := p)).width`.
+    The `else none` arm means: if ANY verifier-path read logged a third width,
+    `verifyNative` can accept while `decodeRust = none`, and the right-hand side of
+    `verifyNative_iff_msgs_codec` is empty - the `iff` would be FALSE, not merely
+    unproved. So the width condition is an obligation of that theorem, not tidiness.
+
+    WHAT IS PROVED HERE, and what is not. The three `Hashable`s the tree defines
+    have widths 32 (`hashableFr`, every `p`), `g1CompressedWidth` = 48
+    (`hashableG1`, every codec - so the codec PARAMETER cannot move the width), and
+    4 (`hashableU32`). The condition is therefore exactly: no verifier-path read
+    uses `hashableU32`. `critic.md:81` asserts that; it is asserted here as a
+    predicate (`Transcript.LogWidths`), with the closure machinery that proves it
+    for every pipeline definition that `Pres` is proved for, and with the
+    `hashableU32` case refuted as a THEOREM rather than left as a comment. The two
+    definitions `Pres` does not reach (`Verifier.parseTrace`,
+    `Verifier.verifyAlgebraicConstraints`) are the same two gaps here: see the
+    report. Nothing below depends on them; each is one more transfer lemma once
+    their `Pres` exists.
+
+    THE WHNF LANDMINE APPLIES HERE TOO, and bit again while writing this:
+    `Transcript.LogWidths.squeeze` cannot be proved by `exact ht` even after
+    `cases t` - the unifier whnfs `(t.squeeze).2` and burns the heartbeat budget on
+    the byte emitter. The fix is the same one `Transcript.Tiled.replaceState` uses:
+    state the fact with the new state as a VARIABLE and let unification do nothing
+    that requires reducing `squeeze`. -/
+
+/-- A logged width `decodeRust` can dispatch on: a scalar repr, or a compressed G1
+    point. Exactly the two arms of its `if` chain. -/
+def Hashable.AllowedWidth {T : Type} (h : Hashable T) : Prop :=
+  h.width = 32 ∨ h.width = g1CompressedWidth
+
+/-- The three widths, pinned as theorems rather than as prose: 32 for every scalar
+    field, `g1CompressedWidth` for EVERY G1 codec (so no codec choice can move it),
+    and 4 for the u32 reader that must never appear on the verifier path. -/
+theorem hashableFr_width {p : ℕ} [Fact (Nat.Prime p)] :
+    (hashableFr (p := p)).width = 32 := rfl
+
+theorem hashableG1_width {G₁ : Type} (c : G1Codec G₁) :
+    (hashableG1 c).width = g1CompressedWidth := rfl
+
+theorem hashableU32_width : hashableU32.width = 4 := rfl
+
+theorem hashableFr_allowed {p : ℕ} [Fact (Nat.Prime p)] :
+    (hashableFr (p := p)).AllowedWidth := Or.inl rfl
+
+theorem hashableG1_allowed {G₁ : Type} (c : G1Codec G₁) :
+    (hashableG1 c).AllowedWidth := Or.inr rfl
+
+/-- `hashableU32` is the one reader whose width the decoder cannot dispatch on. This
+    is why the audit of the verifier path matters, and it is a theorem, not a quote
+    from critic.md. -/
+theorem hashableU32_not_allowed : ¬ hashableU32.AllowedWidth := by
+  intro h
+  cases h with
+  | inl h => exact absurd h (by decide)
+  | inr h => exact absurd h (by decide)
+
+/-- **The width condition.** Every width the transcript has logged is one the decoder
+    dispatches on. -/
+def Transcript.LogWidths (t : Transcript) : Prop :=
+  ∀ rec ∈ t.log.toList, rec.1 = 32 ∨ rec.1 = g1CompressedWidth
+
+/-- Replacing the hasher state cannot touch the logged widths - the same shape, and
+    for the same reason, as `Transcript.Tiled.replaceState`. -/
+theorem Transcript.LogWidths.replaceState {t : Transcript} {s : Bytes}
+    (ht : t.LogWidths) : ({ t with state := s }).LogWidths := ht
+
+theorem Transcript.LogWidths.initFromBytes (bytes : Bytes) :
+    (Transcript.initFromBytes bytes).LogWidths := by
+  intro rec hmem
+  simp [Transcript.initFromBytes] at hmem
+
+theorem Transcript.LogWidths.initWithHash (H : Bytes → H256) (bytes : Bytes) :
+    (Transcript.initWithHash H bytes).LogWidths := by
+  intro rec hmem
+  simp [Transcript.initWithHash] at hmem
+
+/-- Absorb logs nothing: only `Transcript.read` writes `log` (Exec/Transcript.lean:153). -/
+theorem Transcript.LogWidths.common {T : Type} (h : Hashable T) {t : Transcript}
+    (ht : t.LogWidths) (input : T) : (t.common h input).LogWidths := ht
+
+theorem Transcript.LogWidths.squeeze {t : Transcript} (ht : t.LogWidths) :
+    (t.squeeze).2.LogWidths := by
+  cases t with | mk st buf pos h log => exact Transcript.LogWidths.replaceState ht
+
+theorem Transcript.LogWidths.squeezeChallenge {p : ℕ} [Fact (Nat.Prime p)]
+    {t : Transcript} (ht : t.LogWidths) : (t.squeezeChallenge (p := p)).2.LogWidths := by
+  cases t with | mk st buf pos h log => exact Transcript.LogWidths.replaceState ht
+
+/-- **The step.** A successful read extends the logged widths by exactly the hashable
+    it read, and by nothing else. This is the only place a width enters the log. -/
+theorem Transcript.LogWidths.read {T : Type} (h : Hashable T) (hh : h.AllowedWidth)
+    {t : Transcript} (ht : t.LogWidths) {val : T} {t' : Transcript}
+    (hrun : t.read h = .ok (val, t')) : t'.LogWidths := by
+  cases hbt : bytesTake t.buffer t.pos h.width with
+  | none =>
+      simp only [Transcript.read, hbt] at hrun
+      cases hrun
+  | some repr =>
+      cases hrr : h.readRepr? repr with
+      | none =>
+          simp only [Transcript.read, hbt, hrr] at hrun
+          cases hrun
+      | some val' =>
+          have key : t.read h =
+              .ok (val', Transcript.common h
+                ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val') := by
+            simp only [Transcript.read, hbt, hrr]
+          have hpair : (val, t') = (val', Transcript.common h
+              ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val') := by
+            simpa using hrun.symm.trans key
+          have hteq : t' = Transcript.common h
+              ({ t with pos := t.pos + h.width, log := t.log.push (h.width, repr) }) val' :=
+            congrArg Prod.snd hpair
+          subst hteq
+          refine Transcript.LogWidths.common h ?_ val'
+          intro rec hmem
+          rw [Array.toList_push] at hmem
+          rcases List.mem_append.mp hmem with hold | hnew
+          · exact ht rec hold
+          · rw [List.mem_singleton] at hnew
+            cases hnew
+            exact hh
+
+/-- n reads in order log n allowed widths and nothing else. -/
+theorem Transcript.LogWidths.readN {T : Type} (h : Hashable T) (hh : h.AllowedWidth)
+    {t : Transcript} (ht : t.LogWidths) (n : Nat) {vs : Array T} {t' : Transcript}
+    (hrun : t.readN h n = .ok (vs, t')) : t'.LogWidths := by
+  have key : ∀ (n : Nat) (acc : Array T) (t : Transcript), Transcript.LogWidths t →
+      ∀ (vs : Array T) (t' : Transcript),
+      Transcript.readN.go h t acc n = .ok (vs, t') → Transcript.LogWidths t' := by
+    intro n
+    induction n with
+    | zero =>
+        intro acc t ht vs t' hrun
+        simp only [Transcript.readN.go] at hrun
+        obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+        exact ht
+    | succ n ih =>
+        intro acc t ht vs t' hrun
+        cases hread : Transcript.read h t with
+        | error e =>
+            simp only [hread, Transcript.readN.go] at hrun
+            cases hrun
+        | ok p =>
+            cases p with
+            | mk v t₂ =>
+                simp only [hread, Transcript.readN.go] at hrun
+                exact ih (acc.push v) t₂ (Transcript.LogWidths.read h hh ht hread) vs t' hrun
+  exact key n #[] t ht vs t' hrun
+
+/-- An action that never logs a width the decoder cannot dispatch on: the companion
+    of `Pres`, and discharged by the same structural walk. `Pres` says where the
+    cursor got to; this says what the decoder can read back. Neither implies the
+    other, so the codec lemma needs both. -/
+def PresWidths {T : Type} (m : TranscriptM T) : Prop :=
+  ∀ (t t' : Transcript) (a : T), Transcript.LogWidths t →
+    m.run t = .ok (a, t') → Transcript.LogWidths t'
+
+
+/-! #### Closure: the same constructs `Pres` is closed under -/
+
+theorem PresWidths.pure {T : Type} (x : T) : PresWidths (StateT.pure x : TranscriptM T) := by
+  intro t t' a ht h
+  obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+  exact ht
+
+theorem PresWidths.lift {T : Type} (e : Except Fault T) : PresWidths (StateT.lift e) := by
+  intro t t' a ht h
+  cases e with
+  | error _ => cases h
+  | ok x =>
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+      exact ht
+
+theorem PresWidths.get : PresWidths (StateT.get : TranscriptM Transcript) := by
+  intro t t' a ht h
+  obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair h)
+  exact ht
+
+theorem PresWidths.bind {α β : Type} {m : TranscriptM α} {f : α → TranscriptM β}
+    (hm : PresWidths m) (hf : ∀ x, PresWidths (f x)) : PresWidths (m >>= f) := by
+  intro t t' b ht h
+  have h2 : m t >>= (fun p : α × Transcript => f p.1 p.2) = (.ok (b, t') :
+      Except Fault (β × Transcript)) := h
+  cases hmt : m t with
+  | error e =>
+      rw [hmt] at h2
+      have h3 : (.error e : Except Fault (β × Transcript)) = .ok (b, t') := h2
+      cases h3
+  | ok p =>
+      cases p with
+      | mk a t₁ =>
+          rw [hmt] at h2
+          have h3 : f a t₁ = (.ok (b, t') : Except Fault (β × Transcript)) := h2
+          exact hf a t₁ t' b (hm t t₁ a ht hmt) h3
+
+theorem PresWidths.seq {α β : Type} {m : TranscriptM α} {n : TranscriptM β}
+    (hm : PresWidths m) (hn : PresWidths n) : PresWidths (m >>= fun _ => n) :=
+  PresWidths.bind hm (fun _ => hn)
+
+theorem PresWidths.ite {α : Type} {c : Prop} [inst : Decidable c] {m n : TranscriptM α}
+    (hm : PresWidths m) (hn : PresWidths n) : PresWidths (if c then m else n) := by
+  split
+  · exact hm
+  · exact hn
+
+theorem PresWidths.fmap {α β : Type} (g : α → β) {m : TranscriptM α} (hm : PresWidths m) :
+    PresWidths (g <$> m) := by
+  intro t t' b ht h
+  have h2 : (fun p : α × Transcript => (g p.1, p.2)) <$> m t =
+      (.ok (b, t') : Except Fault (β × Transcript)) := h
+  cases hrun : m t with
+  | error e =>
+      rw [hrun] at h2
+      have h3 : (.error e : Except Fault (β × Transcript)) = .ok (b, t') := h2
+      cases h3
+  | ok p =>
+      cases p with
+      | mk a t₁ =>
+          rw [hrun] at h2
+          have h3 : (.ok (g a, t₁) : Except Fault (β × Transcript)) = .ok (b, t') := h2
+          obtain ⟨h1, rfl⟩ := pair_eq (ok_pair h3)
+          subst h1
+          exact hm t t₁ a ht hrun
+
+/-- A guard that throws in one branch: the throwing arm never returns, so the
+    continuation is proved once. Same shape as `Pres.guard`. -/
+theorem PresWidths.guard {α β : Type} {c : Prop} [inst : Decidable c] (f : Fault)
+    (k : TranscriptM β) (hk : PresWidths k) (h : α → PresWidths k) :
+    PresWidths (if c then ((throw f : TranscriptM α) >>= fun x => k) else k) :=
+  PresWidths.ite (α := β) (c := c) (PresWidths.bind (PresWidths.lift (Except.error f)) h) hk
+
+/-- The unless form. -/
+theorem PresWidths.guard' {α β : Type} {c : Prop} [inst : Decidable c] (f : Fault)
+    (k : TranscriptM β) (hk : PresWidths k) (h : α → PresWidths k) :
+    PresWidths (if c then k else ((throw f : TranscriptM α) >>= fun x => k)) :=
+  PresWidths.ite (α := β) (c := c) hk (PresWidths.bind (PresWidths.lift (Except.error f)) h)
+
+theorem PresWidths.read {T : Type} (h : Hashable T) (hh : h.AllowedWidth) :
+    PresWidths (tmRead h) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmRead_run_fields h st buf pos hash log] at hrun
+      exact Transcript.LogWidths.read h hh ht hrun
+
+theorem PresWidths.readN {T : Type} (h : Hashable T) (hh : h.AllowedWidth) (n : Nat) :
+    PresWidths (tmReadN h n) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmReadN_run_fields h st buf pos hash log n] at hrun
+      exact Transcript.LogWidths.readN h hh ht n hrun
+
+theorem PresWidths.common {T : Type} (h : Hashable T) (input : T) :
+    PresWidths (tmCommon h input) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmCommon_run_fields h st buf pos hash log input] at hrun
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+      exact Transcript.LogWidths.common h ht input
+
+theorem PresWidths.squeezeChallenge {p : ℕ} [Fact (Nat.Prime p)] :
+    PresWidths (tmSqueezeChallenge (p := p)) := by
+  intro s t' a ht hrun
+  cases s with
+  | mk st buf pos hash log =>
+      rw [tmSqueeze_run_fields (p := p) st buf pos hash log] at hrun
+      obtain ⟨rfl, rfl⟩ := pair_eq (ok_pair hrun)
+      exact Transcript.LogWidths.squeezeChallenge ht
+
+theorem PresWidths.listFoldlM {α β : Type} {f : β → α → TranscriptM β}
+    (hf : ∀ b x, PresWidths (f b x)) :
+    ∀ (l : List α) (init : β), PresWidths (List.foldlM (init := init) f l) := by
+  intro l
+  induction l with
+  | nil => intro init; exact PresWidths.pure _
+  | cons a t ih =>
+      intro init
+      rw [List.foldlM_cons]
+      refine PresWidths.bind (hf init _) (fun b => ih b)
+
+theorem PresWidths.listMapM {α β : Type} (l : List α) {f : α → TranscriptM β}
+    (hf : ∀ x, PresWidths (f x)) : PresWidths (List.mapM f l) := by
+  induction l with
+  | nil => exact PresWidths.pure _
+  | cons a t ih =>
+      rw [List.mapM_cons]
+      refine PresWidths.bind (hf _) (fun _ => ?_)
+      refine PresWidths.bind ih (fun _ => PresWidths.pure _)
+
+theorem PresWidths.arrayFoldlM {α β : Type} {f : β → α → TranscriptM β}
+    (hf : ∀ b x, PresWidths (f b x)) (init : β) (as : Array α) :
+    PresWidths (Array.foldlM (init := init) f as) := by
+  rw [← Array.foldlM_toList]
+  exact PresWidths.listFoldlM hf as.toList init
+
+theorem PresWidths.arrayMapM {α β : Type} (as : Array α) {f : α → TranscriptM β}
+    (hf : ∀ x, PresWidths (f x)) : PresWidths (Array.mapM f as) := by
+  rw [Array.mapM_eq_foldlM]
+  refine PresWidths.arrayFoldlM (fun bs a => PresWidths.fmap _ (hf a)) #[] as
+
+theorem PresWidths.listForIn {α β : Type} (l : List α) (init : β)
+    {f : α → β → TranscriptM (ForInStep β)} (hf : ∀ x b, PresWidths (f x b)) :
+    PresWidths (forIn l init f) := by
+  classical
+  rw [List.forIn_eq_foldlM]
+  refine PresWidths.fmap _ (PresWidths.listFoldlM ?_ l (ForInStep.yield init))
+  intro b x
+  cases b with
+  | yield b => exact hf x b
+  | done b => exact PresWidths.pure _
+
+theorem PresWidths.arrayForIn {α β : Type} (as : Array α) (init : β)
+    {f : α → β → TranscriptM (ForInStep β)} (hf : ∀ x b, PresWidths (f x b)) :
+    PresWidths (forIn as init f) := by
+  rw [← Array.forIn_toList]
+  exact PresWidths.listForIn as.toList init hf
+
+
+/-! #### Transfer: the same pipeline definitions `Pres` reaches, and no further.
+
+    Every definition below is one whose `Pres` already exists in this file; the width
+    proof is the same structural walk with the hashable named (because the width
+    hypothesis has to be discharged, and `Pres` never needed it). The two definitions
+    `Pres` does NOT reach - `Verifier.parseTrace` and
+    `Verifier.verifyAlgebraicConstraints` - are absent here for the same reason, and
+    their width condition is one more transfer lemma apiece once their `Pres` lands.
+    Note the shape of the hypotheses: where a read site takes its hashable as a
+    PARAMETER (`Logup.readMultiplicities argument h`), the lemma carries
+    `h.AllowedWidth` rather than proving it, because the caller decides. On the
+    verifier path every such caller passes `hashableG1`, whose width is 48 for every
+    codec - `hashableG1_allowed` - so the hypothesis is discharged at the call site
+    without knowing the codec. -/
+
+theorem PresWidths.readMultiplicities {F : Type} {G₁ : Type}
+    (argument : LogupChunkedArgument F) (h : Hashable G₁) (hh : h.AllowedWidth) :
+    PresWidths (Logup.readMultiplicities argument h) := by
+  unfold Logup.readMultiplicities
+  refine PresWidths.bind (PresWidths.read h hh) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.trashReadCommitted {F : Type} {G₁ : Type}
+    (argument : TrashArgument F) (h : Hashable G₁) (hh : h.AllowedWidth) :
+    PresWidths (Trash.readCommitted argument h) := by
+  unfold Trash.readCommitted
+  refine PresWidths.bind (PresWidths.read h hh) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.readCommitment {G₁ : Type}
+    (cm : Logup.CommittedMultiplicities G₁) (nbChunks : Nat) (h : Hashable G₁)
+    (hh : h.AllowedWidth) :
+    PresWidths (Logup.CommittedMultiplicities.readCommitment cm nbChunks h) := by
+  unfold Logup.CommittedMultiplicities.readCommitment
+  refine PresWidths.bind (PresWidths.readN h hh _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.read h hh) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.hashInto {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} [Group G₁]
+    [PrimeOrderWith G₁ p] [Module (ZMod p) (Additive G₁)]
+    (vk : VerifyingKey (Fr p) G₁) : PresWidths (VerifyingKey.hashInto vk) := by
+  unfold VerifyingKey.hashInto
+  exact PresWidths.common hashableFr vk.transcriptRepr
+
+theorem PresWidths.permReadProductCommitments {G₁ : Type} (perm : PermutationArgument)
+    (csDegree : Nat) (h : Hashable G₁) (hh : h.AllowedWidth) :
+    PresWidths (Permutation.readProductCommitments perm csDegree h) := by
+  unfold Permutation.readProductCommitments
+  refine PresWidths.ite ?_ ?_
+  · refine PresWidths.bind (PresWidths.readN h hh _) (fun _ => PresWidths.pure _)
+  · intro t t' a ht h
+    cases h
+
+theorem PresWidths.permVKevaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (vk : Permutation.VerifyingKey G₁) :
+    PresWidths (Permutation.VerifyingKey.evaluate (p := p) vk) := by
+  unfold Permutation.VerifyingKey.evaluate
+  refine PresWidths.bind
+    (PresWidths.readN (hashableFr (p := p)) hashableFr_allowed _) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.permCommittedEvaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (coms : Permutation.Committed G₁) :
+    PresWidths (Permutation.Committed.evaluate (p := p) coms) := by
+  unfold Permutation.Committed.evaluate
+  refine PresWidths.bind (PresWidths.listForIn (List.range coms.permutationProductCommitments.size)
+      (#[] : Array (Permutation.SetEvaluated (Fr p))) (fun i s => ?_)) (fun _ => PresWidths.pure _)
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed) (fun _ => ?_)
+  refine PresWidths.ite
+      (PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed)
+        (fun _ => PresWidths.pure _)) (PresWidths.pure _)
+
+theorem PresWidths.logupEvaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (coms : Logup.Committed G₁) : PresWidths (Logup.Committed.evaluate (p := p) coms) := by
+  unfold Logup.Committed.evaluate
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed) (fun _ => ?_)
+  refine PresWidths.bind
+    (PresWidths.readN (hashableFr (p := p)) hashableFr_allowed _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed)
+    (fun _ => PresWidths.pure _)
+
+theorem PresWidths.trashEvaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (coms : Trash.Committed G₁) : PresWidths (Trash.Committed.evaluate (p := p) coms) := by
+  unfold Trash.Committed.evaluate
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed)
+    (fun _ => PresWidths.pure _)
+
+theorem PresWidths.addDummies {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresWidths (MultiPrepare.addDummies (G₂ := G₂) (Gₜ := Gₜ) g1 queries) := by
+  unfold MultiPrepare.addDummies
+  refine PresWidths.bind (PresWidths.lift _) (fun dummies => ?_)
+  refine PresWidths.listFoldlM (fun qs x => ?_) dummies queries
+  refine PresWidths.bind (PresWidths.read (hashableFr (p := p)) hashableFr_allowed)
+    (fun eval => ?_)
+  cases hq : qs[x.1]? with
+  | none =>
+      show PresWidths (throw (Fault.panic "proofs/src/poly/kzg/mod.rs:349"))
+      exact (PresWidths.lift (Except.error (Fault.panic "proofs/src/poly/kzg/mod.rs:349"))
+        : PresWidths (throw (Fault.panic "proofs/src/poly/kzg/mod.rs:349")))
+  | some o =>
+      exact PresWidths.pure _
+
+theorem PresWidths.phaseA {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresWidths (phaseA (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime queries) := by
+  unfold Midfall.Halo2.phaseA
+  refine PresWidths.ite (α := MultiPrepare.PhaseA (Fr p) G₁)
+      (c := feat.outerFewerPointSets && fewerPointSetsRuntime) ?_ ?_
+  · refine PresWidths.bind (PresWidths.addDummies g1 queries) (fun _ => ?_)
+    refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+    refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+    refine PresWidths.bind (PresWidths.lift _) (fun _ => ?_)
+    refine PresWidths.bind (PresWidths.lift _) (fun _ => PresWidths.pure _)
+  · refine PresWidths.bind (PresWidths.pure queries) (fun _ => ?_)
+    refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+    refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+    refine PresWidths.bind (PresWidths.lift _) (fun _ => ?_)
+    refine PresWidths.bind (PresWidths.lift _) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.phaseB {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) :
+    PresWidths (phaseB g1 fc feat a) := by
+  unfold Midfall.Halo2.phaseB
+  refine PresWidths.bind (PresWidths.read (hashableG1 g1) (hashableG1_allowed g1)) (fun _ => ?_)
+  refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.listMapM (List.range a.qEvalSets.size)
+      (fun _ => PresWidths.read (hashableFr (p := p)) hashableFr_allowed)) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.lift _) (fun _ => PresWidths.pure _)
+
+theorem PresWidths.phaseC {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (a : MultiPrepare.PhaseA (Fr p) G₁) (b : MultiPrepare.PhaseB (Fr p) G₁) :
+    PresWidths (phaseC (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat a b) := by
+  unfold Midfall.Halo2.phaseC
+  refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.lift _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.lift _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.read (hashableG1 g1) (hashableG1_allowed g1))
+    (fun _ => PresWidths.pure _)
+
+theorem PresWidths.multiPrepare {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
+    [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (g1 : G1Codec G₁) (fc : FieldConsts (Fr p)) (feat : Features)
+    (fewerPointSetsRuntime : Bool) (queries : Array (VerifierQuery (Fr p) G₁)) :
+    PresWidths (multiPrepare (G₂ := G₂) (Gₜ := Gₜ) g1 fc feat fewerPointSetsRuntime
+      queries) := by
+  unfold Midfall.Halo2.multiPrepare
+  refine PresWidths.bind (PresWidths.phaseA g1 fc feat fewerPointSetsRuntime queries)
+    (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.phaseB g1 fc feat _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.phaseC g1 fc feat _ _) (fun _ => PresWidths.pure _)
+
+
+theorem PresWidths.readFixedEvals {p : ℕ} [Fact (Nat.Prime p)]
+    (cs : ConstraintSystem (Fr p)) :
+    PresWidths (Verifier.readFixedEvals (p := p) cs) := by
+  unfold Verifier.readFixedEvals
+  apply PresWidths.guard
+  · refine PresWidths.bind
+      (PresWidths.readN (hashableFr (p := p)) hashableFr_allowed _) (fun read => ?_)
+    refine PresWidths.bind (PresWidths.listFoldlM (fun acc step => ?_)
+        (List.zip (List.range cs.fixedQueries.size) cs.fixedQueries.toList) read.toList)
+        (fun _ => PresWidths.pure _)
+    refine PresWidths.ite (α := List (Fr p)) (c := cs.hasSimpleSelectorCol step.2.1.index)
+      (PresWidths.lift _) (PresWidths.pure _)
+  · intro z
+    refine PresWidths.bind
+      (PresWidths.readN (hashableFr (p := p)) hashableFr_allowed _) (fun read => ?_)
+    refine PresWidths.bind (PresWidths.listFoldlM (fun acc step => ?_)
+        (List.zip (List.range cs.fixedQueries.size) cs.fixedQueries.toList) read.toList)
+        (fun _ => PresWidths.pure _)
+    refine PresWidths.ite (α := List (Fr p)) (c := cs.hasSimpleSelectorCol step.2.1.index)
+      (PresWidths.lift _) (PresWidths.pure _)
+
+theorem PresWidths.readAlgebra {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+    (g1 : G1Codec G₁) (feat : Features) (vk : VerifyingKey (Fr p) G₁)
+    (permutations : Array (Permutation.Committed G₁))
+    (lookups : Array (Array (Logup.Committed G₁)))
+    (trashcans : Array (Array (Trash.Committed G₁)))
+    (nbCommitted numProofs : Nat) (instances : Array (Array (Array (Fr p)))) :
+    PresWidths (Verifier.readAlgebra (p := p) g1 feat vk permutations lookups trashcans
+      nbCommitted numProofs instances) := by
+  unfold Verifier.readAlgebra
+  refine PresWidths.bind
+    (PresWidths.readN (hashableG1 g1) (hashableG1_allowed g1) _) (fun _ => ?_)
+  refine PresWidths.bind PresWidths.squeezeChallenge (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.lift _) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.listMapM instances.toList (fun row =>
+      PresWidths.listMapM vk.cs.instanceQueries.toList (fun q => ?_))) (fun _ => ?_)
+  · refine PresWidths.ite (α := Fr p) (c := q.1.index < nbCommitted)
+      (PresWidths.read (hashableFr (p := p)) hashableFr_allowed) ?_
+    dsimp only
+    cases hq : row[q.1.index - nbCommitted]? with
+    | none =>
+        exact (PresWidths.lift (Except.error (Fault.panic "proofs/src/plonk/verifier.rs:366"))
+          : PresWidths (throw (Fault.panic "proofs/src/plonk/verifier.rs:366")))
+    | some col =>
+        dsimp only
+        apply PresWidths.guard'
+        · exact PresWidths.lift _
+        · intro z
+          exact PresWidths.lift _
+  refine PresWidths.bind (PresWidths.listMapM (List.range numProofs)
+      (fun _ => PresWidths.readN (hashableFr (p := p)) hashableFr_allowed _)) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.readFixedEvals vk.cs) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.permVKevaluate vk.permutation) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.listMapM permutations.toList (fun pc =>
+      PresWidths.permCommittedEvaluate pc)) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.listMapM lookups.toList (fun row =>
+      PresWidths.listMapM row.toList (fun l => PresWidths.logupEvaluate l))) (fun _ => ?_)
+  refine PresWidths.bind (PresWidths.listMapM trashcans.toList (fun row =>
+      PresWidths.listMapM row.toList (fun t => PresWidths.trashEvaluate t)))
+      (fun _ => PresWidths.pure _)
+
+
+/-! #### The consequence `decodeRust` needs, and the D-P23 halves -/
+
+/-- **The width condition in the form `decodeRust` consumes it.** Its map over the log is
+    `if rec.1 == wG1 then ... else if rec.1 == wFr then ... else none`. If every logged
+    width is 32 or `g1CompressedWidth`, the third arm is unreachable: the three-arm
+    dispatch is the two-arm one, record by record. So a proof of `PresWidths` for the
+    whole pipeline is exactly what turns "the log tiles the consumed prefix" (item 1 of
+    P-LOGCONCAT, and `transcript_log_concat` above) into "the messages `decodeRust`
+    returns re-serialise to that prefix". -/
+theorem widthDispatch_exhaustive {T : Type} (f g : Bytes → Option T) (rec : Nat × Bytes)
+    (h : rec.1 = 32 ∨ rec.1 = g1CompressedWidth) :
+    (if rec.1 == g1CompressedWidth then f rec.2
+      else if rec.1 == 32 then g rec.2 else none) =
+      (if rec.1 == g1CompressedWidth then f rec.2 else g rec.2) := by
+  cases h with
+  | inl h32 => rw [h32]; rfl
+  | inr h48 => rw [h48]; rfl
+
+/-- The whole-log form: with every width allowed, `decodeRust` can fail on a record only
+    if that record's own decoder fails - never on the width test. -/
+theorem widthDispatch_exhaustive_list {T : Type} (f g : Bytes → Option T)
+    (l : List (Nat × Bytes)) (h : ∀ rec ∈ l, rec.1 = 32 ∨ rec.1 = g1CompressedWidth) :
+    l.mapM (fun rec => if rec.1 == g1CompressedWidth then f rec.2
+        else if rec.1 == 32 then g rec.2 else none)
+      = l.mapM (fun rec => if rec.1 == g1CompressedWidth then f rec.2 else g rec.2) := by
+  induction l with
+  | nil => rfl
+  | cons a t ih =>
+      rw [List.mapM_cons, List.mapM_cons,
+        widthDispatch_exhaustive f g a (h a List.mem_cons_self),
+        ih (fun rec hmem => h rec (List.mem_cons_of_mem a hmem))]
+
+/-- D-P23 falsification, as a THEOREM: the third arm is not decoration. A record of the
+    width a real `hashableU32` read logs is dropped by the dispatch even though the read
+    succeeded - which is exactly how `verifyNative` could accept while `decodeRust` is
+    `none`, and so how the `iff` of `verifyNative_iff_msgs_codec` would be FALSE without
+    the width condition. -/
+theorem widthDispatch_refutesOtherWidth :
+    ∃ (rec : Nat × Bytes),
+      (if rec.1 == g1CompressedWidth then (some 1 : Option Nat)
+        else if rec.1 == 32 then some 2 else none) = none ∧
+      rec.1 = hashableU32.width ∧ rec.1 ≠ 32 ∧ rec.1 ≠ g1CompressedWidth := by
+  refine ⟨(hashableU32.width, Bytes.empty), rfl, rfl, by decide, by decide⟩
+
+/-- D-P23 falsification, as a THEOREM: the width condition can fail, and it fails at the
+    shape a real read produces - one logged record, of width 4. -/
+theorem transcriptLogWidths_refutesU32Read :
+    ∃ (t : Transcript), ¬ Transcript.LogWidths t := by
+  refine ⟨Transcript.mk Bytes.empty (natToBytesLE 7 4) 4 keccak256
+      #[(hashableU32.width, natToBytesLE 7 4)], ?_⟩
+  intro h
+  have h1 : hashableU32.width = 32 ∨ hashableU32.width = g1CompressedWidth :=
+    h (hashableU32.width, natToBytesLE 7 4) (by simp)
+  exact hashableU32_not_allowed h1
+
+/-- A toy G1 codec for the width checks: it accepts exactly the 48-byte strings, so the
+    read succeeds and the width it logs is the codec-INDEPENDENT `g1CompressedWidth` -
+    which is the point: no choice of codec can move a G1 read off 48. -/
+def widthKatCodec : G1Codec Nat where
+  ofCompressed? := fun b => if b.size == 48 then some 1 else none
+  toCompressed := fun _ => natToBytesLE 1 48
+  toEip := fun _ => natToBytesLE 1 128
+  ofEip? := fun _ => none
+
+local instance fact17logw : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- D-P23 satisfiability, as a THEOREM: the condition is inhabited (an empty log
+    satisfies it), and both verifier-path readers preserve it - the scalar reader for
+    every field and the compressed-G1 reader for every codec. -/
+theorem transcriptLogWidths_witness (bytes : Bytes) :
+    Transcript.LogWidths (Transcript.initFromBytes bytes) ∧
+      PresWidths (tmRead (hashableFr (p := 17))) ∧
+      PresWidths (tmRead (hashableG1 widthKatCodec)) ∧
+      PresWidths (tmReadN (hashableFr (p := 17)) 3) :=
+  ⟨Transcript.LogWidths.initFromBytes bytes,
+   PresWidths.read (hashableFr (p := 17)) hashableFr_allowed,
+   PresWidths.read (hashableG1 widthKatCodec) (hashableG1_allowed widthKatCodec),
+   PresWidths.readN (hashableFr (p := 17)) hashableFr_allowed 3⟩
+
+/-- D-P23 satisfiability, computed: real reads of real buffers log exactly the widths the
+    decoder dispatches on, in read order, and the cursor advances by the same amounts. The
+    last conjunct is the falsification, computed: the u32 reader logs 4, which is neither. -/
+def transcriptLogWidthsKats_ok : Bool :=
+  (match (Transcript.initFromBytes (frToRepr (p := 17) (5 : Fr 17))).read
+        (hashableFr (p := 17)) with
+   | .ok (_, t) => t.log.toList.map (fun r => r.1) == [32] && t.pos == 32
+   | .error _ => false) &&
+  (match (Transcript.initFromBytes (natToBytesLE 1 48)).read (hashableG1 widthKatCodec) with
+   | .ok (_, t) => t.log.toList.map (fun r => r.1) == [g1CompressedWidth] &&
+       t.pos == g1CompressedWidth
+   | .error _ => false) &&
+  (let buf := frToRepr (p := 17) (5 : Fr 17) ++ natToBytesLE 1 48
+   match ((Transcript.initFromBytes buf).read (hashableFr (p := 17)) >>=
+          fun p => p.2.read (hashableG1 widthKatCodec)) with
+   | .ok (_, t) =>
+       t.log.toList.map (fun r => r.1) == [32, g1CompressedWidth] &&
+         t.pos == 32 + g1CompressedWidth &&
+         (List.mapM (fun rec =>
+             if rec.1 == g1CompressedWidth then some 1
+             else if rec.1 == 32 then some 2 else none) t.log.toList).isSome
+   | .error _ => false) &&
+  (match (Transcript.initFromBytes (natToBytesLE 7 4)).read hashableU32 with
+   | .ok (_, t) =>
+       t.log.toList.map (fun r => r.1) == [hashableU32.width] &&
+         (List.mapM (fun rec =>
+             if rec.1 == g1CompressedWidth then some 1
+             else if rec.1 == 32 then some 2 else none) t.log.toList) == none
+   | .error _ => false) &&
+  (g1CompressedWidth == 48) && (hashableU32.width == 4)
+
+#eval transcriptLogWidthsKats_ok   -- expect true
+
+
 end Midfall.Halo2
