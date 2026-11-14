@@ -1427,3 +1427,42 @@ exposes it.
 `lowering_equivalence`**, revised **up** from 17–27 because the earlier figure counted only
 packages that closed a sorry and ignored the 0-output sessions. 6–12 calendar weeks, dominated
 by uptime rather than difficulty.
+
+### D-P38 - follow Fable's plan for M8: build the two missing prerequisite files, do not assume the hop
+
+**Human decision, this session.** R-65 established that `IRCheck.lean` and `ShellModel.lean` are named
+as required deliverables in `docs/PLAN.md` §7 and neither exists; `ir_refines` was transcribed
+faithfully but its hypothesis cites `Surface.irCheck`, a decidable placeholder introduced by R-60 S1
+for an unrelated reason. `M8-SCOPE.md` had recommended option (A) — name the solc hop as a trusted-
+base assumption — and dismissed (B) as unestimable. That recommendation is **withdrawn**: it treated
+our omission as a design choice.
+
+**Fable's spec, verbatim:**
+- `ShellModel.lean`: "a Yul model of solc's dispatcher for `verifyProof(bytes,uint256[])`, covering
+  selector `0x1e8e1e13`, the callvalue check, ABI bounds checks, and binding the locals `vk` and
+  `quotientEvaluator` from immutables."
+- `IRCheck.lean` is a **verified checker**: `irCheck ir L = true → ObsEquiv ir (ShellModel.wrap L)`.
+- P11 index row: `irCheck` = **"α-equivalence modulo constant substitution and solc renames,
+  fuel-based"**; `ir_refines` = **"view-level simulation"**; falsification requirement = **"planted
+  rename must fail `irCheck`"**; cost = **unestimated**.
+
+**Consequences.**
+1. **No new trusted-base row.** The only assumption left is the genuinely external one — solc's
+   optimizer hop from `ir` to deployed bytecode (DECISION 1). The `ir` ↔ shell relation becomes a
+   theorem, which is what Fable asked for.
+2. **`ShellModel.lean` also closes the `shell_unfolds` gap** — the wrong-selector calldata that
+   reverts in the artifact but runs the verifier in our model. One file, two problems.
+3. **`irCheck` must be rebuilt to Fable's definition**, not patched: α-equivalence modulo constant
+   substitution and solc renames, fuel-bounded. Note the tension with `IrCheckBlindness.lean`: a full
+   alpha-rename currently PASSES `Surface.irCheck`, and Fable wants alpha-equivalence to pass — so
+   the blindness finding is partly *consistent* with the spec. What must fail is a **planted rename**
+   (one that changes which local a name binds to), and what must be proved is the `ObsEquiv`
+   implication. `IrCheckBlindness` should be re-read against this distinction rather than treated as
+   a refutation of the whole approach.
+4. **Revised M8 cost: 6–12 sessions**, replacing 8–16. Fable marked it "unestimated"; this is our
+   estimate, and it should be re-cut after `ShellModel.lean` lands.
+
+**Standing lesson.** When a plan names a file and a property, **check the file exists** before
+treating a same-named function elsewhere as its fulfilment. This is the third distinct way a recorded
+premise has failed: R-63 was an unsatisfiable statement, R-65's predecessor was a false annotated
+reason, and this is a silently substituted deliverable.
