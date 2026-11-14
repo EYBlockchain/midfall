@@ -104,6 +104,11 @@ GATES = "Midfall/Instances/ObligationsGates.lean"
 HOLDS_GAP_TOKENS = ["holds_exhibited", "assumption_dP36a", "AdmissiblePairing", "g1CodecZ",
                     "g2CodecFold", "g2foldToEip", "pairing2", "g2Valid", "g1CodecZ_g1_four",
                     "bundle_holds_empty", "exponent codec", "2p^2 + 1",
+                    # P-CSURFACE: the record now names the Surface that installs the codecs, so
+                    # the exhibit and its file are required tokens. A gap that recites a closed
+                    # blocker is the failure this list exists to catch, and 'no Surface installs
+                    # them' is exactly what this package closed.
+                    "curveSurface", "curveBundle",
                     "CLOSED AS A TERM", "OPEN AT THE FIXTURE", "FOUR OF FOUR"]
 HOLDS_GAP_FORBIDDEN = ["no Lean library has", "still out of reach", "cannot be stated for all",
                        "nothing to quantify over", "no Fp2 model in the tree",

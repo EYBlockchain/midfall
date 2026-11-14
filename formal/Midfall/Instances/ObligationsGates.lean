@@ -504,22 +504,31 @@ theorem bundle_holdsOld_empty :
          clause at g1CodecZ and g2CodecFold. Nothing about the precompile is assumed:
          pairingProductOf agrees with P.e by definition, which is what P-HOLDS2 established.
          The exponent model is no longer the only place the clause holds.
-      5. THE ONE WALL LEFT, AND IT IS A FIXTURE FACT AND NOT AN OPEN THEOREM. realSurface.E.g1
-         IS the exponent codec, so expG1Codec_not_holds and bundle_holds_empty still refute
-         the four-way bundle at the only Surface in the tree. That is a statement about which
-         codec the fixture installs, and installing a curve codec is not free: VerifierEnv.g1
-         is typed over the Surface's own pairing, so it needs a Surface built over the assumed
-         blsGT carrier - construction of an instance, not a proof.
+      5. CLOSED AS AN INSTANCE, STILL OPEN AT THE FIXTURE - and P-CSURFACE is the package
+         that split the two. The wall this record named last was that realSurface.E.g1 IS
+         the exponent codec, so expG1Codec_not_holds and bundle_holds_empty refuted the
+         four-way bundle at the only Surface in the tree, and because VerifierEnv.g1 is
+         typed over the Surface's own pairing the only way past it was a NEW Surface over
+         the assumed blsGT carrier. That Surface now exists:
+         Instances/CurveSurface.lean's curveSurface installs g1CodecZ and g2foldToEip over
+         bls12_381Pairing, and curveBundle exhibits all four conjuncts - BlkIsEmitter,
+         SupportedS, EnvAgrees and the Holds witness - as ONE term at it. So the emptiness
+         this record asserted is gone, and bundle_holds_empty is NOT stale: it is a
+         refutation about the FIXTURE, which still installs the exponent codec, and it
+         stays exactly where it was. What survives at the curve Surface is the RUN leg, and
+         it is a different gap: gap_runLeg_unexhibited, because no accepted calldata exists
+         at any model in the tree, so the spec theorems' hcd / hinst / hsnap binders are
+         still unexhibited there and curveSpecResidualBinders records that limit in the
+         file that supplies everything else.
 
-    So every field carrying Holds - verifier_sound, verifier_complete, end_to_end_noAcc,
-    lowering_equivalence - still has a hypothesis bundle that is EMPTY at the only Surface in
-    the tree, and the emptiness is now named at ONE level and four closed ones: no Surface
-    installs the exhibited codecs (item 5, a construction and not a theorem), and - no longer -
-    anything about G1's group law, its base primality or its point count, a G2 field or G2
-    codec, or the pairing instance (items 1-4, all closed). The honest reading of the spec
-    theorems that bind Holds at S.E.g1 is therefore: their hypothesis moved from
-    unsatisfiable-in-principle to satisfiable-and-unexhibited, which is the difference between a
-    clause nobody could ever meet and an instance nobody has built yet. -/
+    So the honest reading of the spec theorems that bind Holds at S.E.g1 has now moved
+    TWICE. It used to be an unsatisfiable-in-principle hypothesis; P-HOLDS-FINAL made it
+    satisfiable-and-unexhibited; P-CSURFACE makes it EXHIBITED at a real Surface, which is
+    the difference between a clause nobody could ever meet, an instance nobody had built,
+    and a term in the tree. What has NOT moved is the proofs: pcs_spec, finalPairing_spec,
+    finalPairing_progress_spec and finalPairing_acc_spec are registered holes before the
+    curve Surface and registered holes after it. An instantiation is not a discharge, and
+    the file that makes the instantiation says so at every site. -/
 def gap_holds_unexhibited : String :=
   "CLOSED AS A TERM by P-HOLDS-FINAL, and OPEN AT THE FIXTURE - two different facts, which this "
     ++ "record used to run together. CLOSED: holds_exhibited (Instances/HoldsFinal.lean) is ONE "
@@ -533,13 +542,19 @@ def gap_holds_unexhibited : String :=
     ++ "the Pratt certificate in Assumptions/BasePrime.lean, the r-torsion count is "
     ++ "torsion_eq_zpowers_gen, and the pairing is now a NAMED assumption - D-P36 chose to assume "
     ++ "it rather than construct Fp12, and zero clauses remain unproven at the level of the "
-    ++ "structure. OPEN, AND NOT A THEOREM: no Surface in the tree installs the exhibited codecs. "
-    ++ "realSurface.E.g1 IS the exponent codec, so expG1Codec_not_holds and bundle_holds_empty "
-    ++ "still refute the four-way bundle at the only Surface, and VerifierEnv.g1 is typed over the "
-    ++ "Surface's own pairing, so installing g1CodecZ means building a Surface over blsGT and not "
-    ++ "editing this one. The spec theorems bind Holds at S.E.g1, so their hypothesis moved from "
-    ++ "unsatisfiable-in-principle to satisfiable-and-unexhibited: an unbuilt instance, not an "
-    ++ "unprovable clause. Kept from the old text because it is durable and independent of the "
+    ++ "structure. OPEN AT THE FIXTURE, CLOSED AS AN INSTANCE: realSurface.E.g1 IS the "
+    ++ "exponent codec, so expG1Codec_not_holds and bundle_holds_empty still refute the "
+    ++ "four-way bundle there and always will - it is a fact about which codec the fixture "
+    ++ "installs, not about a missing theorem. But VerifierEnv.g1 is typed over the Surface's "
+    ++ "own pairing, so the way past it was never editing that Surface; it was building a new "
+    ++ "one over blsGT. Instances/CurveSurface.lean does exactly that: curveSurface installs "
+    ++ "g1CodecZ and g2foldToEip over bls12_381Pairing, and curveBundle exhibits BlkIsEmitter, "
+    ++ "SupportedS, EnvAgrees and the Holds witness as ONE term at it. The spec theorems bind "
+    ++ "Holds at S.E.g1, so their hypothesis has moved twice: from unsatisfiable-in-principle "
+    ++ "to satisfiable-and-unexhibited, and from there to EXHIBITED at a real Surface. The "
+    ++ "proofs did not move - an instantiation is not a discharge - and the run leg (hcd, "
+    ++ "hinst, hsnap) is still unexhibited at the curve Surface for the reason "
+    ++ "gap_runLeg_unexhibited gives, which curveSpecResidualBinders names. Kept from the old text because it is durable and independent of the "
     ++ "codec: the G1 squeeze does not transfer to G2 - over Fp2 the elementary fiber bound is "
     ++ "2p^2 + 1 against r^2 ~ p^(4/3), so the pigeonhole that made the G1 count elementary is "
     ++ "vacuous there - see gap_g2_no_fp2_model, which also carries the correction that g2Valid "
@@ -694,6 +709,12 @@ def gapHoldsBlockers_ok : Bool :=
     (gap_holds_unexhibited.contains "bundle_holds_empty") &&
     (gap_holds_unexhibited.contains "exponent codec") &&
     (gap_holds_unexhibited.contains "2p^2 + 1") &&
+    -- P-CSURFACE: the record may no longer say the tree has no Surface installing the codecs,
+    -- because it now has one. The two tokens are the exhibit and the file that carries it, and
+    -- the mirror of this list in scripts/check_hypothesis_bundles.py requires them too, so the
+    -- record cannot be rewritten back to 'unexhibited' from either side without reddening.
+    (gap_holds_unexhibited.contains "curveSurface") &&
+    (gap_holds_unexhibited.contains "curveBundle") &&
     -- the two halves of the claim are the wording, so the wording is pinned: closed AS A TERM,
     -- open AT THE FIXTURE. A record that drops either is claiming something this package did not
     -- prove, and a substring test cannot see that unless the phrase itself is a token.

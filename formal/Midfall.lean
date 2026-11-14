@@ -71,6 +71,8 @@ import Midfall.Instances.G2Codec
 import Midfall.Instances.HoldsStaging
 import Midfall.Assumptions.CurvePairing
 import Midfall.Instances.HoldsFinal
+import Midfall.Instances.CurveSurface
+import Midfall.Instances.IrCheckBlindness
 import Midfall.Instances.DeployedProfile
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
