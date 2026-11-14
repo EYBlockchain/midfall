@@ -64,6 +64,7 @@ import Midfall.Generator.Builder
 import Midfall.Instances.Bls12_381
 import Midfall.Instances.Bls12_381G1
 import Midfall.Instances.G1Agreement
+import Midfall.Instances.G1PointCount
 import Midfall.Instances.DeployedProfile
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types

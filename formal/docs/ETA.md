@@ -310,3 +310,27 @@ after the new sections had already been appended - so the slice deleted 44 KB of
 the build stayed green because what remained was consistent. **Symptom to keep: the file got
 SHORTER after an insertion.** Cost: one rebuild cycle plus a full re-write of both blocks, ~15 min.
 The restored version built green on the first try, which is the only silver lining available.
+
+### R5 - round 120, after P-POINTCOUNT. The point count was elementary after all - third error of kind on this item.
+
+| claim made | before | actual | verdict |
+|---|---|---|---|
+| the count needs the n-torsion structure theorem + Weil pairing | route (b) | **neither**: #E(F_p) <= 2p+1 (two square roots per x) and 2p+1 < r^2 squeeze the r-torsion to exactly r | **error of kind, third time** |
+| mathlib lacks the structure theorem | true | **true but irrelevant** - division polynomials exist with degree bounds and NO link to nsmul; no Weil pairing; no point-counting theorem (LFunction.lean defines the local polynomial, proves nothing) | held, did not gate |
+| gcd(r, p-1) = 1 is the cheap first step of the route | predicted used | **not used at all** | dead work, recorded |
+| the substitute assumption Nat.card accepted frames = r | planned fallback | **it is a theorem**; no new trusted-base entry | better than target |
+| G1 side after this package | 3 of 4 + 1 assumption | **4 of 4, no assumption** (g1CodecZ_g1_four) | revised up |
+| cost | ~1/3 of a session (exploration box) | ~1 session: the count is short; the decoder-to-encoder byte direction (never needed before) and three elaborator walls ate the rest | ~3x the box |
+
+**The mechanism, for the next reader.** For prime r the r-torsion of an abelian group is an
+F_r-vector space, so its size is a power of r. One point of order r gives r of them; the
+affine-plane count gives at most 2p+1 points in all; and r^2 > 2p+1 for any curve with
+cofactor 1 and r much larger than sqrt(p). That is BLS12-381 G1 exactly. No Hasse bound, no
+structure theorem, no pairing, no point counting.
+
+**New wall recorded (fourth of this class).** g1PointMsmValid_iff applied to a VARIABLE frame -
+not decide'd, just an .mp - dies at default maxRecDepth, and unlike the decide cases raising
+the depth DOES clear it (no computation is requested, only a deep unifier whnf). Two Nat.card
+formulations of the count were dropped for the same class of wall: the count is proved as a
+membership statement (torsion_eq_zpowers_gen), not as a Nat.card equation.
+

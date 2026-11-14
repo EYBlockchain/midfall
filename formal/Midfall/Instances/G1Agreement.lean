@@ -2212,6 +2212,10 @@ def gap_g1_codec_roundtrip : String :=
   "closed by P-G1CODEC: the byte round trip, the two slice equations, g1AddValidInput/g1AddOutput, "
     ++ "and g1MsmPairs?.go. Remaining G1-side Holds clause: g1Decodes, which by "
     ++ "g1CodecZ_g1DecodesWidth_iff is exactly surjectivity of g1zToEip onto accepted frames, i.e. "
-    ++ "the point count |E(Fp)[r]| = r (and the same wall makes g1zOfEip? noncomputable)."
+    ++ "the point count |E(Fp)[r]| = r (and the same wall makes g1zOfEip? noncomputable). "
+  ++ "CLOSED BY P-POINTCOUNT: the count is a theorem (Midfall/Instances/G1PointCount.lean, "
+  ++ "torsion_eq_zpowers_gen - proved from #E(Fp) <= 2p+1 < r^2, no Weil pairing and no "
+  ++ "n-torsion structure theorem), g1DecodesWidth g1CodecZ is discharged, and the G1 side is "
+  ++ "four of four with no new named assumption (g1CodecZ_g1_four)."
 
 end Midfall.Instances
