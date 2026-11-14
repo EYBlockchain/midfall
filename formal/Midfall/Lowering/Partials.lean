@@ -771,15 +771,409 @@ theorem finalPairing_acc_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
                 Snap.c.dual a (tblOf S.accFixedBases) = true)) := by
   sorry
 
+/-! ### THE TERMINAL ARM, PROVED (P-SPEC1) -/
+
+/-- THE ONE CLAUSE OF THE PRECONDITION THE TERMINAL ARM READS. `traceReturn_spec` takes the whole
+    `Inv .pairing` bundle and consumes exactly ONE clause of it: the `success` local is the word
+    1. Stated as a named projection because the projection is the thing that could be silently
+    wrong - if `Inv .pairing` did NOT constrain `success`, the guard lemma below would be
+    unprovable - and `not_inv_pairing_of_success_zero` is the half that says it does.
+    SATISFIABILITY of the hypothesis is gated in Instances/InvFixture.lean (`invSatKats_ok`,
+    `invPairingDecisionKats_ok`), which is where a pairing model lives; it cannot be stated as a
+    THEOREM in this file for the same reason `mainScope` cannot be exercised here (hazard 5
+    confines instances to Instances/). That is the limit of what this file can witness, and it
+    is stated rather than hidden. -/
+theorem inv_pairing_success {S : Surface p G₁ G₂ Gₜ} {Snap : Snapshot p G₁ G₂ Gₜ}
+    {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    (h : Inv (calls := calls) (gas := gas) S.E S.params Checkpoint.pairing S.plan Snap V st) :
+    VEnv.get V "success" = some (1 : U256) := by
+  have h1 := h
+  simp [Inv, InvAt] at h1
+  rcases h1.right with h | ⟨hget, _⟩
+  · exact absurd h (by decide)
+  · exact hget
+
+/-- FALSIFICATION OF THAT PROJECTION (D-P23, second half). A frame whose `success` local is 0 -
+    the shape the pairing decision leaves when the precompile answers no - does not satisfy
+    `Inv .pairing` at all, so the clause the projection extracts is a restriction and not a
+    tautology. -/
+theorem not_inv_pairing_of_success_zero {S : Surface p G₁ G₂ Gₜ}
+    {Snap : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    (h : VEnv.get V "success" = some (0 : U256)) :
+    ¬ Inv (calls := calls) (gas := gas) S.E S.params Checkpoint.pairing S.plan Snap V st := by
+  intro hinv
+  have := inv_pairing_success hinv
+  rw [h] at this
+  cases this
+
+/-- THE GUARD EXPRESSION HAS EXACTLY ONE VALUE: `iszero(success)` with `success = 1` is 0, the
+    state is untouched, and no other result is derivable. Proved by inverting the Step relation
+    directly and NOT through `Bridge.dialect_deterministic`, which is still a registered hole:
+    `iszero`, `mstore` and `ret` are LOCAL operations whose step relation is the FUNCTION
+    `stepOp` (the open dialect falls through to it at EVMExec.lean:966), so per-operation
+    uniqueness needs no determinism hypothesis at all. THAT IS A MEASUREMENT: the terminal arm
+    does not depend on M-D, and neither does any other arm whose external calls are all local. -/
+theorem eval_iszero_success
+    {funs : FunEnv (Bridge.Dialect calls gas)} {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    (hs : VEnv.get V "success" = some (1 : U256)) {r : EResult (Bridge.Dialect calls gas)}
+    (h : Step (Bridge.Dialect calls gas) funs V st
+      (.expr (.builtin Op.iszero [.var "success"])) (.eres r)) :
+    r = .vals [0] st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget =>
+                  simp_all [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]
+                  exact hbi.1.symm
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget =>
+                  simp_all [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt hnil => cases hnil
+      | argsHeadHalt hnil hvar => cases hvar
+
+/-- THE GUARD STATEMENT SKIPS. With `success = 1` the only derivation of
+    `if iszero(success) fail(ERR_PROOF_REJECTED)` is `Step.ifFalse`: the `fail` arm is not
+    entered, the variable environment and the machine state are unchanged, and the outcome is
+    normal. This is the half of the terminal arm that the `Inv .pairing` clause pays for, and
+    the reason the hoisted `fail` definition - and the unbound `ERR_PROOF_REJECTED` its body
+    reads - never enter the run. -/
+theorem exec_trace_guard {funs : FunEnv (Bridge.Dialect calls gas)} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState} (hs : VEnv.get V "success" = some (1 : U256))
+    {V' : VEnv (Bridge.Dialect calls gas)} {st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect calls gas) funs V st
+      (Stmt.cond (.builtin Op.iszero [.var "success"])
+        [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])]) V' st' o) :
+    V' = V ∧ st' = st ∧ o = .normal := by
+  cases h with
+  | ifTrue hc hnz _ =>
+      have h0 := eval_iszero_success hs hc
+      cases h0
+      exact absurd rfl hnz
+  | ifFalse hc _ =>
+      have h0 := eval_iszero_success hs hc
+      cases h0
+      exact ⟨rfl, rfl, rfl⟩
+  | ifHalt hc =>
+      have h0 := eval_iszero_success hs hc
+      cases h0
+
+/-- THE `mstore(RETURN_MPTR, 1)` STATEMENT. Inverting it is what forces `RETURN_MPTR` to be
+    BOUND: the emitted arm references a contract-level constant the fragment does not declare
+    (`emittedCallClosureIsNotLinkCompleteness_ok` counts 76 such names and this is one), and a
+    reference to an unbound local has NO Step rule at all. So the binding is a CONSEQUENCE of a
+    run existing - on the right of the equation, not in the hypotheses. THE SKETCH DID NOT NAME
+    THIS: a partial whose shell constants are unbound satisfies every spec VACUOUSLY, and the
+    honest answer is to say so and to exhibit a bound run (`traceReturn_run_inhabited`). -/
+theorem exec_trace_mstore
+    {funs : FunEnv (Bridge.Dialect calls gas)} {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    {V' : VEnv (Bridge.Dialect calls gas)} {st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect calls gas) funs V st
+      (.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)])) V' st' o) :
+    ∃ a, VEnv.get V "RETURN_MPTR" = some a ∧ V' = V ∧ o = .normal ∧
+      st' = { touchMemory st a.toNat 32 with memory := storeWord st.memory a.toNat 1 } := by
+  cases h with
+  | exprStmt hex =>
+      cases hex with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hnil hvar =>
+              cases hnil with
+              | argsCons hnil2 hvar2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hvar2 with
+                      | lit =>
+                          cases hvar with
+                          | var hget =>
+                              refine ⟨_, hget, rfl, rfl, ?_⟩
+                              rename_i aval
+                              have h4 : (Bridge.Dialect calls gas).Builtin Op.mstore [aval, 1] st
+                                  (.ok [] st') := hbi
+                              simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+                              exact h4.symm
+  | exprStmtHalt hex =>
+      cases hex with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hvar =>
+              cases hnil with
+              | argsCons hnil2 hvar2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hvar2 with
+                      | lit =>
+                          cases hvar with
+                          | var hget =>
+                              rename_i aval
+                              have h4 : (Bridge.Dialect calls gas).Builtin Op.mstore [aval, 1] st
+                                  (.halt st') := hbi
+                              simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h => cases h with
+              | argsRestHalt h₁ => cases h₁
+              | argsHeadHalt _ h₂ => cases h₂
+          | argsHeadHalt _ h₂ => cases h₂
+
+/-- THE `return(RETURN_MPTR, 0x20)` STATEMENT: the halt record the post names. THE SKETCH NAMED
+    THIS AS THE ONLY THING MISSING ("the return builtin record, EVMExec.lean:840-843, which
+    stores readBytes memory p s") and it was right about the substance and stale about the line
+    - the fork moved it to :877-880. The payload is `readBytes` over the SAME address the
+    `mstore` wrote, so the bytes are the big-endian word 1 whatever address the shell bound
+    `RETURN_MPTR` to, which is why the spec can name `abiTrue` without naming the address. -/
+theorem exec_trace_ret
+    {funs : FunEnv (Bridge.Dialect calls gas)} {V : VEnv (Bridge.Dialect calls gas)} {st : EvmState}
+    {a : U256} (ha : VEnv.get V "RETURN_MPTR" = some a)
+    {V' : VEnv (Bridge.Dialect calls gas)} {st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect calls gas) funs V st
+      (.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x20)])) V' st' o) :
+    V' = V ∧ o = .halt ∧ st'.halted = some (.ret, readBytes st.memory a.toNat 32) := by
+  cases h with
+  | exprStmtHalt hex =>
+      cases hex with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hvar =>
+              cases hnil with
+              | argsCons hnil2 hvar2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hvar2 with
+                      | lit =>
+                          cases hvar with
+                          | var hget =>
+                              rename_i v
+                              have hva : v = a := Option.some.inj (hget.symm.trans ha)
+                              rw [hva] at hbi
+                              refine ⟨rfl, rfl, ?_⟩
+                              have h4 : (Bridge.Dialect calls gas).Builtin Op.ret [a, 32] st
+                                  (.halt st') := hbi
+                              simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+                              subst h4
+                              rfl
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h => cases h with
+              | argsRestHalt h₁ => cases h₁
+              | argsHeadHalt _ h₂ => cases h₂
+          | argsHeadHalt _ h₂ => cases h₂
+  | exprStmt hex =>
+      cases hex with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hnil hvar =>
+              cases hnil with
+              | argsCons hnil2 hvar2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hvar2 with
+                      | lit =>
+                          cases hvar with
+                          | var hget =>
+                              rename_i v
+                              have hva : v = a := Option.some.inj (hget.symm.trans ha)
+                              rw [hva] at hbi
+                              have h4 : (Bridge.Dialect calls gas).Builtin Op.ret [a, 32] st (.ok [] st') := hbi
+                              simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+
+/-- THE MEMORY FACT THE POST NEEDS: the 32 bytes an `mstore` of the word 1 wrote, read back, ARE
+    `abiTrue` - independent of the address and of the prior memory. -/
+lemma map_congr_range {β : Type} (n : Nat) (f g : Nat → β) (h : ∀ i, i < n → f i = g i) :
+    (List.range n).map f = (List.range n).map g := by
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+      rw [List.range_succ, List.map_append, List.map_append]
+      rw [ih (fun i hi => h i (Nat.lt_of_lt_of_le hi (Nat.le_succ n)))]
+      rw [List.map_singleton, List.map_singleton, h n (Nat.lt_succ_self n)]
+
+theorem readBytes_storeWord_one (mem : Nat → UInt8) (p : Nat) :
+    readBytes (storeWord mem p 1) p 32 = abiTrue := by
+  have pt : ∀ i, i < 32 → storeWord mem p 1 (p + i) = byteAt (1 : U256) (31 - i) := by
+    intro i hi
+    show (if p ≤ p + i ∧ p + i < p + 32 then byteAt (1 : U256) (31 - (p + i - p))
+      else mem (p + i)) = byteAt (1 : U256) (31 - i)
+    simp [hi]
+  have key : (List.range 32).map (fun i => storeWord mem p 1 (p + i))
+      = (List.range 32).map (fun i => byteAt (1 : U256) (31 - i)) := map_congr_range 32 _ _ pt
+  have tail : (List.range 32).map (fun i => byteAt (1 : U256) (31 - i)) = abiTrue := by decide
+  show (List.range 32).map (fun i => storeWord mem p 1 (p + i)) =
+    (Midfall.natToBytesBE 1 32).data.toList
+  rw [key, tail]
+  rfl
+
+/-- FALSIFICATION OF THAT MEMORY FACT (D-P23, second half): the LENGTH is load-bearing, not just
+    the bytes. Reading 33 bytes back is not `abiTrue`, so a post that claimed `abiTrue` after a
+    wider return would be false, and the 0x20 in the emitted arm is doing work. -/
+theorem not_readBytes_storeWord_33 (mem : Nat → UInt8) (p : Nat) :
+    readBytes (storeWord mem p 1) p 33 ≠ abiTrue := by
+  intro h
+  have h1 := congrArg (fun l : List UInt8 => l.length) h
+  have h2 : (readBytes (storeWord mem p 1) p 33).length = 33 := by simp [readBytes]
+  have h3 : abiTrue.length = 32 := by decide
+  rw [h2, h3] at h1
+  omega
+
+/-- The two shell locals the terminal arm needs bound before a run exists at all: `success`,
+    which `Inv .pairing` already pins to 1, and `RETURN_MPTR`, which nothing in the spec pins. -/
+def traceReturnShellV (c : ExternalCalls) (g : ExternalGas) :
+    VEnv (Bridge.Dialect c g) :=
+  [("success", (1 : U256)), ("RETURN_MPTR", BitVec.ofNat 256 0x1000)]
+
+/-- NON-VACUITY OF THE TERMINAL ARM (D-P23, satisfiability half FOR THE SPEC ITSELF).
+    `StmtsContractAll` quantifies over RUNS, so a block with no run satisfies it for the wrong
+    reason - the same failure mode `partialSound_of_alwaysReverts` documents for the other side
+    of the disjunction. Here is a run: from locals binding `success` to 1 and `RETURN_MPTR` to
+    the artifact's 0x1000, the emitted arm HAS a derivation and its halt record is the one the
+    post names. Stated at the BLOCK and not at a Surface, because a Surface whose `Inv .pairing`
+    is satisfiable needs a pairing model (hazard 5) while the run does not care which Surface
+    pinned the block. -/
+theorem traceReturn_run_inhabited {funs : FunEnv (Bridge.Dialect calls gas)} (st : EvmState) :
+    ∃ (V' : VEnv (Bridge.Dialect calls gas)) (st' : EvmState),
+      ExecStmts (Bridge.Dialect calls gas) funs (traceReturnShellV calls gas) st
+        GenAst.emitTraceReturnBlock V' st' .halt ∧
+      st'.halted = some (.ret, abiTrue) := by
+  have hsg : VEnv.get (traceReturnShellV calls gas) "success" = some (1 : U256) := rfl
+  have hrg : VEnv.get (traceReturnShellV calls gas) "RETURN_MPTR" =
+    some (BitVec.ofNat 256 0x1000) := rfl
+  have hiszero : (Bridge.Dialect calls gas).Builtin Op.iszero [1] st (.ok [0] st) := rfl
+  have hguard : ExecStmt (Bridge.Dialect calls gas) funs (traceReturnShellV calls gas) st
+      (Stmt.cond (.builtin Op.iszero [.var "success"])
+        [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])])
+      (traceReturnShellV calls gas) st .normal :=
+    Step.ifFalse (Step.builtinOk (Step.argsCons Step.argsNil (Step.var hsg)) hiszero) rfl
+  let st₁ : EvmState := { touchMemory st 0x1000 32 with memory := storeWord st.memory 0x1000 1 }
+  have hmsbi : (Bridge.Dialect calls gas).Builtin Op.mstore [BitVec.ofNat 256 0x1000, 1] st
+      (.ok [] st₁) := rfl
+  have hms : ExecStmt (Bridge.Dialect calls gas) funs (traceReturnShellV calls gas) st
+      (.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)]))
+      (traceReturnShellV calls gas) st₁ .normal :=
+    Step.exprStmt (Step.builtinOk
+      (Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hrg)) hmsbi)
+  let st₂ : EvmState :=
+    { touchMemory st₁ 0x1000 32 with halted := some (.ret, readBytes st₁.memory 0x1000 32) }
+  have hretbi : (Bridge.Dialect calls gas).Builtin Op.ret [BitVec.ofNat 256 0x1000, 32] st₁
+      (.halt st₂) := rfl
+  have hret : ExecStmt (Bridge.Dialect calls gas) funs (traceReturnShellV calls gas) st₁
+      (.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x20)]))
+      (traceReturnShellV calls gas) st₂ .halt :=
+    Step.exprStmtHalt (Step.builtinHalt
+      (Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hrg)) hretbi)
+  have hhalt : st₂.halted = some (.ret, abiTrue) := by
+    show (some (HaltKind.ret, readBytes st₁.memory 0x1000 32) :
+        Option (HaltKind × List UInt8)) = some (HaltKind.ret, abiTrue)
+    rw [readBytes_storeWord_one]
+  refine ⟨traceReturnShellV calls gas, st₂, ?_, hhalt⟩
+  show ExecStmts (Bridge.Dialect calls gas) funs (traceReturnShellV calls gas) st
+    [Stmt.cond (.builtin Op.iszero [.var "success"])
+        [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])],
+      Stmt.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)]),
+      Stmt.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x20)])]
+      (traceReturnShellV calls gas) st₂ .halt
+  exact Step.seqCons hguard (Step.seqCons hms (Step.seqStop hret (by simp)))
+
+/-- THE MUTANT THE FALSIFICATION RUNS: the emitted arm with the return WIDTH changed from 0x20
+    to 0x40. Same guard, same mstore, one literal different. -/
+def traceReturnReturn64 : Block Op :=
+  [ GenAst.yif (GenAst.yop Op.iszero [GenAst.yvar "success"])
+      [GenAst.yexpr (GenAst.ycall "fail" [GenAst.yvar "ERR_PROOF_REJECTED"])]
+  , GenAst.yexpr (GenAst.yop Op.mstore [GenAst.yvar "RETURN_MPTR", GenAst.ylit 1])
+  , GenAst.yexpr (GenAst.yop Op.ret [GenAst.yvar "RETURN_MPTR", GenAst.ylit 0x40]) ]
+
+/-- FALSIFICATION OF THE SPEC'S POST (D-P23, second half for the theorem itself). The shape
+    `halted = some (.ret, abiTrue)` is refuted by a program that differs from the emitted arm in
+    ONE literal: it returns 0x40 bytes instead of 0x20. It passes the same precondition, it has
+    a run, and its halt record is 64 bytes. So the post of `traceReturn_spec` is a claim about
+    the emitted program and not a tautology about halts - the doc string's own list of refuting
+    shapes, one of them now PROVED rather than asserted. -/
+theorem traceReturn_post_bites :
+    ¬ StmtsContractAll (D := Bridge.Dialect calls gas) [] traceReturnReturn64
+        (fun V st => VEnv.get V "success" = some (1 : U256) ∧
+          VEnv.get V "RETURN_MPTR" = some (BitVec.ofNat 256 0x1000))
+        (fun _ _ _ st' o => o = .halt ∧ st'.halted = some (.ret, abiTrue)) := by
+  intro hall
+  have hpre : VEnv.get (traceReturnShellV calls gas) "success" = some (1 : U256) ∧
+      VEnv.get (traceReturnShellV calls gas) "RETURN_MPTR" = some (BitVec.ofNat 256 0x1000) := ⟨rfl, rfl⟩
+  have hsg : VEnv.get (traceReturnShellV calls gas) "success" = some (1 : U256) := rfl
+  have hrg : VEnv.get (traceReturnShellV calls gas) "RETURN_MPTR" =
+    some (BitVec.ofNat 256 0x1000) := rfl
+  have hiszero : (Bridge.Dialect calls gas).Builtin Op.iszero [1] EvmState.init (.ok [0] EvmState.init) := rfl
+  have hguard : ExecStmt (Bridge.Dialect calls gas) [] (traceReturnShellV calls gas) EvmState.init
+      (Stmt.cond (.builtin Op.iszero [.var "success"])
+        [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])])
+      (traceReturnShellV calls gas) EvmState.init .normal :=
+    Step.ifFalse (Step.builtinOk (Step.argsCons Step.argsNil (Step.var hsg)) hiszero) rfl
+  let st₁ : EvmState :=
+    { touchMemory EvmState.init 0x1000 32 with
+        memory := storeWord EvmState.init.memory 0x1000 1 }
+  have hmsbi : (Bridge.Dialect calls gas).Builtin Op.mstore [BitVec.ofNat 256 0x1000, 1]
+      EvmState.init (.ok [] st₁) := rfl
+  have hms : ExecStmt (Bridge.Dialect calls gas) [] (traceReturnShellV calls gas) EvmState.init
+      (.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)]))
+      (traceReturnShellV calls gas) st₁ .normal :=
+    Step.exprStmt (Step.builtinOk
+      (Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hrg)) hmsbi)
+  let st₂ : EvmState :=
+    { touchMemory st₁ 0x1000 64 with
+        halted := some (.ret, readBytes st₁.memory 0x1000 64) }
+  have hretbi : (Bridge.Dialect calls gas).Builtin Op.ret [BitVec.ofNat 256 0x1000, 64] st₁
+      (.halt st₂) := rfl
+  have hret : ExecStmt (Bridge.Dialect calls gas) [] (traceReturnShellV calls gas) st₁
+      (.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x40)]))
+      (traceReturnShellV calls gas) st₂ .halt :=
+    Step.exprStmtHalt (Step.builtinHalt
+      (Step.argsCons (Step.argsCons Step.argsNil Step.lit) (Step.var hrg)) hretbi)
+  have hrun64 : ExecStmts (Bridge.Dialect calls gas) [] (traceReturnShellV calls gas) EvmState.init
+      traceReturnReturn64 (traceReturnShellV calls gas) st₂ .halt := by
+    show ExecStmts (Bridge.Dialect calls gas) [] (traceReturnShellV calls gas) EvmState.init
+      [Stmt.cond (.builtin Op.iszero [.var "success"])
+          [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])],
+        Stmt.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)]),
+        Stmt.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x40)])]
+        (traceReturnShellV calls gas) st₂ .halt
+    exact Step.seqCons hguard (Step.seqCons hms (Step.seqStop hret (by simp)))
+  have hpost := hall (traceReturnShellV calls gas) EvmState.init hpre _ _ _ hrun64
+  have : st₂.halted ≠ some (.ret, abiTrue) := by
+    intro h
+    have h2 : readBytes st₁.memory 0x1000 64 = abiTrue := by
+      have := h
+      simpa [st₂] using this
+    have hlen : (readBytes st₁.memory 0x1000 64).length = 64 := by simp [readBytes]
+    have h32 : abiTrue.length = 32 := by decide
+    rw [h2] at hlen
+    omega
+  exact this hpost.2
+
+
 /-- TraceReturn: the only partial whose post is a halt record rather than the next
     checkpoint, because there is no checkpoint after the pairing decision (Checkpoint
     next saturates). The exact shape matters: halted = some (.ret, abiTrue) is
     refuted by a block that returns 0x40 bytes, by one that returns the success word
     itself (a trace render), and by one that falls off the end without halting.
-    PROOF HOLE: the TraceReturn.yul AST has LANDED (GenAst.emitTraceReturn, P-AST2 - the
-    production arm, which is the only arm SupportedS.production admits), so what remains is
-    the return builtin record
-    (EVMExec.lean:840-843 stores readBytes memory p s). -/
+    PROVED (P-SPEC1), and the AST landed first (GenAst.emitTraceReturn, P-AST2 - the
+    production arm, which is the only arm SupportedS.production admits). What the proof
+    needed, in order: the pin (hblk, to get the REAL emitted block into the run hypothesis);
+    ONE clause of Inv .pairing (inv_pairing_success); per-operation inversion of the Step
+    relation for iszero / mstore / ret, which needs NO determinism hypothesis because all
+    three are local operations whose relation is the function stepOp - so this arm does not
+    depend on dialect_deterministic (M-D); and the memory fact that readBytes over the
+    address an mstore of 1 wrote IS abiTrue (readBytes_storeWord_one). What the sketch did
+    not name: RETURN_MPTR and ERR_PROOF_REJECTED are FREE identifiers of the fragment, so
+    the arm has no run at all unless the caller's VEnv binds RETURN_MPTR, and the spec is
+    satisfied vacuously at every environment that does not. traceReturn_run_inhabited
+    exhibits a bound run, and traceReturn_post_bites refutes the post with the one-literal
+    mutant that returns 0x40. -/
 theorem traceReturn_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
@@ -798,7 +1192,36 @@ theorem traceReturn_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduc
           Inv (calls := calls) (gas := gas) S.E S.params .pairing S.plan Snap V st ∧
             calldataPre S cd V st)
         (fun _ _ _ st' o => o = .halt ∧ st'.halted = some (.ret, abiTrue)) := by
-  sorry
+
+  intro outer V st hpre V' st' o hrun
+  have hsucc : VEnv.get V "success" = some (1 : U256) := inv_pairing_success hpre.1
+  have hpin : S.blk .traceReturn S.plan
+      = [Stmt.cond (.builtin Op.iszero [.var "success"])
+          [.exprStmt (.call "fail" [.var "ERR_PROOF_REJECTED"])],
+        Stmt.exprStmt (.builtin Op.mstore [.var "RETURN_MPTR", .lit (.number 1)]),
+        Stmt.exprStmt (.builtin Op.ret [.var "RETURN_MPTR", .lit (.number 0x20)])] := by
+    rw [blkPin_blk hblk]
+    simp only [GenAst.emitPartial, GenAst.emitTraceReturn, GenAst.emitTraceReturnBlock,
+      GenAst.yif, GenAst.yexpr, GenAst.yop, GenAst.yvar, GenAst.ylit, GenAst.ycall]
+  rw [hpin] at hrun
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect calls gas) hrun with
+    ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · obtain ⟨rfl, rfl, -⟩ := exec_trace_guard hsucc h₁
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect calls gas) hrest with
+      ⟨V₂, st₂, h₂, hlast⟩ | ⟨h₂, hne₂⟩
+    · obtain ⟨a, ha, rfl, -, hst⟩ := exec_trace_mstore h₂
+      rw [hst] at hlast
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect calls gas) hlast with
+        ⟨V₃, st₃, h₃, _⟩ | ⟨h₃, _⟩
+      · obtain ⟨_, hnorm, _⟩ := exec_trace_ret ha h₃
+        cases hnorm
+      · obtain ⟨rfl, rfl, hh⟩ := exec_trace_ret ha h₃
+        exact ⟨rfl, by rw [hh, readBytes_storeWord_one]⟩
+    · obtain ⟨_, _, _, hn, -⟩ := exec_trace_mstore h₂
+      exact absurd hn hne₂
+  · obtain ⟨_, _, hn⟩ := exec_trace_guard hsucc h₁
+    exact absurd hn hne
+
 
 /-! ### Why both twins are needed -/
 
