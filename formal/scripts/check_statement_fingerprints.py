@@ -134,6 +134,15 @@ SURFACE_PINS = [
     ("plan_accExpectations", ["plan.expectedHasAccumulatorWord",
                               "plan.expectedNumAccLimbBits",
                               "accWordsOfEncoding cfg.accumulator"]),
+    # P-RESTORE3: hProofLayout, restored from sketch M:1676 after its drop-reason turned
+    # out to belong to its two codec neighbours and not to it. The four fragments are the
+    # four things the pin has to keep saying: it is an existential over the generator's own
+    # producer, at the ABI proof pointer, about the plan's layout, as an equation and not a
+    # predicate. Drop any one and the field stops pinning what it was restored to pin.
+    ("hProofLayout", ["\u2203 protocol numEvals numPointSets",
+                      "ProofCalldataLayout.fromProtocol protocol",
+                      "Midfall.Generator.abiVerifyProofProofCptr",
+                      "= .ok plan.proofLayout"]),
 ]
 # R-60 S1: the import check is a PROJECTION of the naming field, not a free field. Its
 # body is fingerprinted here too, because the defect was in a definition and not in a

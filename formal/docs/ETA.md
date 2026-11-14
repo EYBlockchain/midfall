@@ -459,6 +459,34 @@ remaining proofs must establish.
 **Consequence for M-B**, already 'one session then blocked': `finalPairing_spec` and
 `finalPairing_acc_spec` now carry an extra hypothesis `hvks`. That makes them harder to prove and
 *worth* proving - the correct trade. M-B's one approachable spec is unaffected.
+### R12 - round 139, after P-RESTORE3. An annotated reason was false a second time, and the false one was the calldata pin.
+
+**What the package was for.** P-RESTORE2's sweep left 17 sketched obligations that were *annotated*
+as absent. Annotation makes a gap visible, not correct, and these had never been checked.
+
+| claim made | before | actual | verdict |
+|---|---|---|---|
+| the 17 annotated reasons hold | inherited from P-RESTORE2's sweep | **one was FALSE** (`hProofLayout` was dropped as a codec pin; it names no codec), **one was stale** (the numerator evaluator AST now exists), **one was half-false** (the `*_faithful` content had NOT moved into `end_to_end_noAcc`) | **error of kind, 18th** - and the second annotated reason found false, exactly the class R11 opened |
+| re-deriving the sweep reproduces 25 absent | expected 25 | **23**, of which 1 is a parser false positive (prose matched as a field) and 9 are P-RESTORE2's own recorded renames | method holds; the count moves with the restorations |
+| `hProofLayout` cannot be exhibited at the fixture | predicted, because `poseidonMeta.protocol` is the default (the circuit is not in the tree) | **exhibited by `rfl`**: the transcribed poseidon layout is EXACTLY `fromProtocol (protocolShape [8] [1] 3 1 4) 0x64 48 3`, field for field | **wrong estimate, good news** - the artifact transcription and the ported generator agree on 17 fields with no hand-holding |
+| restoring an obligation breaks a fixture exhibit (as it did in P-RESTORE2) | budgeted one fixture rebuild | **nothing broke**; every new exhibit was `rfl` or `native_decide` on the first try | ~2x faster than the last restoration |
+| a `fromProtocol` inversion lemma is cheap | ~10 min | **not proved**: `split at h` over the do-block's match tower survived four attempts | abandoned, and the missing coverage is stated rather than papered over |
+| cost | ~1 session | ~1 session | on budget |
+
+**The finding, in one line.** `hcd` - the hypothesis that `decodeCalldata` yields a given
+message list, carried by every one of the ten specs - was satisfiable or not depending on a
+layout nothing pinned. `Surface.hProofLayout` now pins it, and two new theorems prove the
+converse: break either guard and no calldata decodes at all, so all ten specs become true
+because nothing decodes. The `*_faithful` obligation is exhibited at the deployment's own
+layout for the first time: 72 slots, a 2640-byte compressed stream, a 4484-byte calldata -
+the artifact's own numbers - and the decoder reads back what the encoder wrote.
+
+**Mechanism worth keeping.** Two of the three bad annotations were *bundling* errors: a name was
+listed beside neighbours and inherited their reason without being read. A sweep that matches
+names cannot see that; only re-deriving each reason per name can. The standing instruction to
+re-verify recorded premises now has a second datum, and both times the false premise was in
+the direction that made a spec easier, not harder.
+
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for

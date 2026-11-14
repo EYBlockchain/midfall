@@ -34,9 +34,9 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/Calldata.lean | 444 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 466 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 483 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Obligations.lean | 600 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Obligations.lean | 611 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Obligations.lean | 646 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 668 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 679 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Obligations.lean | 714 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 540 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 574 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Partials.lean | 597 | `sorry` | P-SE: semantic equivalence obligations |
@@ -58,7 +58,7 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/QvmFold.lean | 363 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/QvmFold.lean | 421 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Snapshot.lean | 387 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Surface.lean | 614 | `sorry` | P-SE: semantic equivalence obligations |
+| Midfall/Lowering/Surface.lean | 668 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/VkDigest.lean | 72 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Statements.lean | 95 | `Spec.accepts E H F params vk inst ms := by s` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 123 | `verifyMsgs (Gₜ := Gₜ) E keccak256 Features.s` | frozen statements (S1..S7 land later) |

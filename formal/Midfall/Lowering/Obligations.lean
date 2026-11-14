@@ -442,6 +442,27 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   readScheduleAgrees : ∀ inst π ms, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
       ms.map Msg.slot = (RepackedProofLayoutPlan.fromProofLayout S.plan.proofLayout).slots
 
+/-- P-RESTORE3 VERIFIED THE F5 REASON INSTEAD OF INHERITING IT. The note above says
+    `vkDigest_slot0` is derivable from two stated pins. "Derivable" is a premise like any
+    other, and this project has already been caught out once by an annotated reason that
+    was false (R11, Inv.lean:443-447), so it is now a theorem. The sketch's field read
+    `(S.plan.vk.constants.getD 0 ("", 0)).2 = S.vkDigest`; the derivation is one `trans`
+    over `EnvAgrees.vkDigestWord` (Inv.lean:579) and `Surface.vkDigest_spec`, and both are
+    in the bundle of every field that needs the digest - `verifier_sound`,
+    `verifier_complete`, `only_two_outcomes` and `end_to_end_noAcc` each take `EnvAgrees`,
+    and `vkDigest_spec` is a field of the record the structure is stated over. So the
+    annotation HOLDS, the fact is carried, and the field is NOT re-added: a LoweringCorrect
+    field that follows from two others in the same bundle is the decoration R-58 F5 named.
+    The falsification half is the one already on the books - `ObligationsGates.
+    vkDigestSlot0_ok` exercises the projection, and pointing `vkDigest_spec` at a
+    different word breaks it, which is the failure mode the F5 note says the extra field
+    would have permitted rather than prevented. -/
+theorem vkDigest_slot0_of_the_stated_pins (S : Surface p G₁ G₂ Gₜ)
+    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
+    (hspec : S.vkDigest = frWord S.vk.transcriptRepr) :
+    (S.plan.vk.constants.getD 0 ("", 0)).2 = S.vkDigest :=
+  henv.vkDigestWord.trans hspec.symm
+
 /-! ### Fields section Q sketched and this file does NOT state, with the blocker
 
   `qvm_yul_refines`. Six names, and one missing artifact:
@@ -488,7 +509,54 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   behind the call-trace blocker (its conclusion held unconditionally), and
   `vkDigest_slot0` is dropped as derivable from two other stated pins.
   `isAlignedSubslice` and its KAT stay: they are the witness shape the deferred field
-  will consume, and a defined, gated object is not the same thing as a decorative one. -/
+  will consume, and a defined, gated object is not the same thing as a decorative one.
+
+  P-RESTORE3 (docs/plans/P-RESTORE3.md) RE-READ EVERY REASON ABOVE AND CHANGED THREE.
+
+  * `repackProof_faithful` / `encodeCalldata_faithful`. The reason is correct - there is
+    no Surface codec field, so the sketch's pin has no left-hand side - but the sentence
+    "the content moved into `end_to_end_noAcc`" was FALSE and is corrected here rather
+    than left standing. `end_to_end_noAcc` applies the spec ENCODER to the Surface's
+    layout; it never says the encoder and the decoder agree. And nothing else said it AT
+    THE DEPLOYMENT'S LAYOUT: `calldata_roundtrip`, `calldata_canonical` and
+    `repack_spec_wire` (Calldata.lean:404, :428, :440) state the agreement for an
+    ARBITRARY layout, all three are still `sorry`, and their KATs run at the 4-slot
+    `katPlan` / `katLayout`, not at the poseidon layout the contract is deployed with.
+    The obligation is now exhibited at the deployment's own layout as
+    `SurfaceFixture.encodeCalldata_faithful_at_layout` and
+    `SurfaceFixture.repackProof_faithful_at_layout`, with
+    `SurfaceFixture.faithfulnessRefutations_ok` as the falsification half: the 72-slot
+    schedule, the 2640-byte compressed stream and the 4484-byte calldata are the
+    artifact's own numbers, the decoder reads back what the encoder wrote, and a
+    truncated or extended calldata - or a short compressed stream - is refused.
+  * `hProofLayout` was listed in Surface.lean deviation 2 as one of three codec pins and
+    it is not one: it names no codec and its left-hand side, `plan.proofLayout`, the
+    record has always carried. It is restored as a Surface pin (Surface.lean), exhibited
+    at both Surfaces by `fxProofProtocol`, and it is what makes `decodeCalldata`'s own
+    guards apply to the deployment - see the field's doc comment and
+    `SurfaceFixture.decodeCalldata_none_of_pointer_mismatch` /
+    `..._of_len_skew` for the vacuity it keeps out.
+  * `qvm_yul_refines` stays deferred and the blocker list above is still right in
+    substance, but one line of it has gone stale. `QuotientNumeratorBlock.yul` as a
+    `Block Op` is no longer absent: P-STR2AST landed `Midfall/Lowering/GenAstQuotient.lean`,
+    the batched-identity numerator Evaluator as a real Yul AST, gated token for token
+    against the text port. What is still missing, and why the field is not writable: no
+    function assembles those blocks into a whole evaluator runtime object, and BOTH
+    Surfaces in the tree carry `evaluatorRuntime := none` (SurfaceFixture.lean,
+    CurveSurface.lean), so the hypothesis `S.evaluatorRuntime = some (rt, Lyt)` has no
+    witness at any Surface - the unsatisfiable-hypothesis class, not a smaller one.
+    `S.plan.qext` is still absent for the recorded reason, and re-measured rather than
+    inherited: `PlanView` carries no quotient frame and `VerifierMemoryLayout` has no
+    `quotientExternal` field either (checked by a failed projection, not by grep), so the
+    frame length is a `LoweringPlan` fact (`PlannedQuotient.external`) and P-11 is still
+    the blocker.
+  * `points_subgroup_checked`: the vacuity proof below was re-checked rather than
+    trusted, and it still holds after the `Holds` and G1-codec repairs because it needs no
+    hypothesis at all. `permissive` (Bridge.lean:594) admits ANY request to ANY target
+    whenever the response fails and the world is unchanged, and `failResp`
+    (Bridge.lean:557) supplies exactly such a response at any state. Nothing in the Holds
+    work touched either definition. The deferral stands. -/
+
 
 /-- R-58 F1 EVIDENCE, proved rather than argued: the deferred field's conclusion is
     derivable from the SHAPE of `permissive` alone, with no run, no snapshot, no

@@ -178,6 +178,11 @@ noncomputable def curveSurface : Surface blsR G₁z G2fold blsGT where
   encG2_shape := fun R => by
     simp only [encG2IsEip, g2foldToEip_size, g2Of?_g2foldToEip, g2PointValid_g2fold]
     decide
+  -- P-RESTORE3: the restored pin, on the SAME witness the fixture uses - this Surface
+  -- reuses fxPlan, so the layout is the poseidon one and the discharge is rfl again.
+  -- Recorded because a pin both Surfaces satisfy by the same witness is one cross-check,
+  -- not two.
+  hProofLayout := ⟨fxProofProtocol, 48, 3, rfl⟩
 
 /-- The same Surface with the naming convention that names the IMPORTED runtime
     sub-object, exactly as Instances/ImportedIR.lean does for the fixture. The IR leg of

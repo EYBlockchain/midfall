@@ -493,6 +493,19 @@ def fxW0 : ExecEnv :=
 def fxW : ExecEnv :=
   { fxW0 with extCodeHashOf := fun a => projectedCodeHash fxW0 fxW0.balanceOf a }
 
+/-- P-RESTORE3, THE WITNESS FOR THE RESTORED 'Surface.hProofLayout' PIN. The three
+    numbers after the protocol are the fromProtocol arguments the sketch's pin
+    existentially quantifies over: 48 eval words (D:1405, 0x600 = 48 * 32) and 3 point
+    sets (D:1460, 0x60 = 3 * 32). The protocol is the poseidon commitment stream - one
+    advice phase of 8 G1s (D:1275), one lookup with one helper (D:1332) and its
+    accumulator (D:1343), three permutation products (D:1314), one trashcan (D:1357),
+    four quotient limbs (D:1380) - i.e. exactly the counts 'poseidonMeta' records as
+    OBSERVATIONS of the artifact. So this is not a self-round-trip: the layout on the
+    right is transcribed from the deployed dump's own 'add(proof_cptr, 0x..)' lines and
+    the layout on the left is what the ported Rust generator computes from the counts.
+    They agree field for field, which is the cross-check. -/
+def fxProofProtocol : ProtocolPlan := Midfall.Generator.AbiKats.protocolShape [8] [1] 3 1 4
+
 /-! ### The fixture Surface -/
 
 /-- THE FIXTURE. Every field is data the exhibit can point at, and every pin field is
@@ -549,7 +562,9 @@ def realSurface : Surface rp RP RP RP :=
     -- into this record at all, and planAccExpectationsKats_ok exhibits the lie.
     plan_accExpectations := rfl,
     evaluator_agrees := rfl,
-    encG2_shape := fun x => by unfold fxEncG2; native_decide }
+    encG2_shape := fun x => by unfold fxEncG2; native_decide,
+    -- P-RESTORE3: restored pin. rfl because the witness above IS the computation.
+    hProofLayout := ⟨fxProofProtocol, 48, 3, rfl⟩ }
 
 /-! ### 1. Supported is INHABITED -/
 
@@ -963,6 +978,188 @@ def planAccExpectationsKats_ok : Bool :=
       if realSurface.plan.hasAccumulator then 1 else 0)
 
 #eval planAccExpectationsKats_ok          -- expect true
+/-! ### P-RESTORE3: the restored hProofLayout pin, exhibited and perturbed -/
+
+/-- The witness as a computation: does the generator, at the ABI proof pointer and these
+    counts, produce EXACTLY the layout the fixture plan carries? Bool so a gate can read
+    it; the Prop form is the Surface field itself. -/
+def fxFromProtocolIsFixtureLayout (protocol : ProtocolPlan) (numEvals numPointSets : Nat) : Bool :=
+  match ProofCalldataLayout.fromProtocol protocol abiVerifyProofProofCptr numEvals numPointSets with
+  | .ok L => L == fxPlan.proofLayout
+  | .error _ => false
+
+/-- D-P23, BOTH HALVES, AND THE LIMIT WITH THEM.
+
+    WITNESS (first three conjuncts): the poseidon counts produce the fixture layout, and
+    the two Surfaces in the tree carry that layout, so 'realSurface.hProofLayout' and
+    'curveSurface.hProofLayout' are inhabited by 'rfl' on 'fxProofProtocol'. This is not
+    a self-round-trip: the right-hand side is transcribed from the deployed dump's own
+    'add(proof_cptr, 0x..)' lines and the left-hand side is what the ported Rust
+    generator computes from the counts, so agreement is a cross-check between two
+    independent channels.
+
+    FALSIFICATION (the rest): the witness is not free. Dropping an advice commitment,
+    a permutation product, a trashcan, a quotient limb, a lookup chunk, the eval count
+    or the point-set count each changes the produced layout, so no conjunct of the
+    witness equation is satisfied by accident.
+
+    WHAT THIS DOES NOT CLAIM, said plainly because the last package was told to claim no
+    coverage it does not have: no Surface that FAILS the pin is exhibited. Refuting the
+    existential needs an inversion lemma for 'fromProtocol' (its output's 'proofCptr' is
+    the pointer it was handed), and this package did not prove one - the do-block's match
+    tower defeated 'split at h' after four attempts. What IS proved instead, as the two
+    theorems below, is the consequence the pin exists to keep out, which is the part that
+    matters for vacuity: at a layout that breaks either guard the decoder answers 'none'
+    for EVERY calldata, so 'hcd' is unsatisfiable and every spec that takes it is true
+    because nothing decodes. -/
+def hProofLayoutKats_ok : Bool :=
+  fxFromProtocolIsFixtureLayout fxProofProtocol 48 3 &&
+  (realSurface.plan.proofLayout == fxPlan.proofLayout) &&
+  -- the three witnesses are each pinned
+  (! fxFromProtocolIsFixtureLayout fxProofProtocol 47 3) &&
+  (! fxFromProtocolIsFixtureLayout fxProofProtocol 49 3) &&
+  (! fxFromProtocolIsFixtureLayout fxProofProtocol 48 2) &&
+  (! fxFromProtocolIsFixtureLayout fxProofProtocol 48 4) &&
+  -- and every count the protocol carries is pinned
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [7] [1] 3 1 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [9] [1] 3 1 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 2 1 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 4 1 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 3 0 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 3 2 4) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 3 1 3) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [1] 3 1 5) 48 3) &&
+  (! fxFromProtocolIsFixtureLayout (AbiKats.protocolShape [8] [2] 3 1 4) 48 3) &&
+  -- a skewed layout is not what the witness produces, and the skew is the guard the pin
+  -- vouches against: proofEnd is not proofCptr + proofLen
+  (match ProofCalldataLayout.fromProtocol fxProofProtocol abiVerifyProofProofCptr 48 3 with
+   | .ok L => L != { fxPlan.proofLayout with proofLen := 7 }
+   | .error _ => false)
+
+#eval hProofLayoutKats_ok                 -- expect true
+
+/-- THE CONSEQUENCE THE PIN KEEPS OUT, as a theorem and not a paragraph, first half: a
+    layout whose proof pointer is not the ABI one decodes NOTHING - the second guard of
+    'decodeCalldata' fails before any byte is read. This is what 'hcd' would mean at such
+    a Surface: an unsatisfiable hypothesis, and ten specs that hold because no calldata
+    ever decodes. -/
+theorem decodeCalldata_none_of_pointer_mismatch (L : ProofCalldataLayout)
+    (h : L.proofCptr ≠ abiVerifyProofProofCptr) (cd : Bytes) :
+    decodeCalldata (p := rp) L realSurface.cfg.numInstances realSurface.E.g1 cd = none := by
+  unfold decodeCalldata
+  simp [h]
+
+/-- Second half: a layout whose length word and proof region disagree - the hand-built
+    case attack.md's calldata_canonical FIX is about, and the one the pin's witness
+    equation rules out for a generator-produced layout. -/
+theorem decodeCalldata_none_of_len_skew (L : ProofCalldataLayout)
+    (h : L.proofEnd ≠ L.proofCptr + L.proofLen) (cd : Bytes) :
+    decodeCalldata (p := rp) L realSurface.cfg.numInstances realSurface.E.g1 cd = none := by
+  unfold decodeCalldata
+  simp [h]
+
+/-- And the fixture's own layout satisfies both guards the pin vouches for, by
+    computation and not by inspection of the transcription. -/
+theorem fixtureLayout_satisfies_the_guards :
+    fxPlan.proofLayout.proofCptr = abiVerifyProofProofCptr ∧
+    fxPlan.proofLayout.proofEnd = fxPlan.proofLayout.proofCptr + fxPlan.proofLayout.proofLen ∧
+    (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).repackedLen =
+      fxPlan.proofLayout.proofLen := ⟨rfl, rfl, rfl⟩
+
+/-! ### P-RESTORE3: the '*_faithful' obligation, stated where it can be stated -/
+
+/-- The message list the deployment's own slot schedule names: one message per slot,
+    the identity in every G1 slot and zero in every scalar slot. 72 slots, so a dropped
+    or duplicated slot changes the length and every byte after it. -/
+def fxSlotWitnessMsgs : List (Msg (Fr rp) RP) :=
+  (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).slots.map fun s =>
+    match s with
+    | WireSlot.g1 => Msg.g1 (1 : RP)
+    | WireSlot.fr => Msg.fr (0 : Fr rp)
+
+/-- The compressed proof stream fxSlotWitnessMsgs repacks to: 48 bytes per G1 slot, 32
+    little-endian bytes per scalar slot, in the plan's order. -/
+def fxCompressedProof : Bytes :=
+  (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).slots.foldl
+    (fun (acc : Bytes) (s : WireSlot) =>
+      acc ++ match s with
+        | WireSlot.g1 => realSurface.E.g1.toCompressed (1 : RP)
+        | WireSlot.fr => Midfall.natToBytesLE 0 32)
+    Midfall.Bytes.empty
+
+/-- The two byte strings the faithfulness claims are about: the full calldata the model
+    builds for the deployment's layout, and the repacked proof region inside it. -/
+def fxLayoutCalldata : Bytes :=
+  calldataOf (p := rp) realSurface.E.g1 fxSlotWitnessMsgs [BitVec.ofNat 256 1]
+
+def fxLayoutRepacked : Bytes :=
+  encodeContractProof (p := rp) realSurface.E.g1 fxSlotWitnessMsgs
+
+/-- THE encodeCalldata_faithful OBLIGATION, in the only form the tree can state. The
+    sketch (Q:2285) wrote 'S.encodeCalldata pi inst = Midfall.Lowering.encodeCalldata
+    ...' - a pin from a Surface codec field to the spec function. Stage 4 deleted the
+    codec fields (Surface.lean deviation 2), so that left-hand side does not exist and
+    the literal field is unstatable; what the obligation MEANS - the calldata the model
+    builds is the calldata the model's decoder reads back, AT THE DEPLOYMENT'S OWN
+    LAYOUT, instance count and codec - is stated and exhibited here. Four conjuncts:
+    the envelope decodes; it is the artifact's own 4484 bytes (the poseidon dump's
+    calldata size, Generator/Calldata.lean:844), so the layout is not a toy; the slot
+    schedule is the layout's; and the head words the decoder guards on are the ones the
+    encoder wrote. -/
+def encodeCalldata_faithful_at_layout : Bool :=
+  (decodeCalldata (p := rp) fxPlan.proofLayout realSurface.cfg.numInstances realSurface.E.g1
+    fxLayoutCalldata).isSome &&
+  fxLayoutCalldata.size == 4484 &&
+  (fxSlotWitnessMsgs.map Msg.slot).length ==
+    (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).slots.length &&
+  (cdWord fxLayoutCalldata 4).toNat == 0x40 &&
+  (cdWord fxLayoutCalldata 0x44).toNat == fxPlan.proofLayout.proofLen &&
+  (cdWord fxLayoutCalldata fxPlan.proofLayout.proofEnd).toNat == realSurface.cfg.numInstances
+
+#eval encodeCalldata_faithful_at_layout -- expect true
+
+/-- THE repackProof_faithful OBLIGATION, same treatment (sketch Q:2283). repackProof at
+    the deployment's plan produces exactly the contract bytes of the messages decodeWire
+    reads from the same stream - the wire-level half of repack_spec_wire, instantiated at
+    the layout the contract is deployed with rather than at the 4-slot KAT plan. -/
+def repackProof_faithful_at_layout : Bool :=
+  (match repackProof (p := rp)
+          (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout) realSurface.E.g1
+          fxCompressedProof with
+   | .ok out => out == fxLayoutRepacked
+   | .error _ => false) &&
+  (decodeWire (p := rp)
+      (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout) realSurface.E.g1
+      fxCompressedProof).map (fun ms => ms.length) == some 72 &&
+  fxCompressedProof.size =
+    (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).compressedLen &&
+  fxLayoutRepacked.size =
+    (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).repackedLen
+
+#eval repackProof_faithful_at_layout    -- expect true
+
+/-- THE FALSIFICATION HALF FOR BOTH, and it is a refutation and not a perturbation:
+    delete a slot from the schedule and the stream no longer repacks to the contract
+    bytes of the message list; drop the last byte of the calldata and the decoder
+    refuses it. A faithfulness claim nothing could break would be the decoration the
+    brief names, so each is shown to bite. -/
+def faithfulnessRefutations_ok : Bool :=
+  -- a truncated calldata: the size guard is the last defence, since calldataload pads
+  (! (decodeCalldata (p := rp) fxPlan.proofLayout realSurface.cfg.numInstances
+        realSurface.E.g1 ((bytesTake fxLayoutCalldata 0 4483).getD Midfall.Bytes.empty)).isSome) &&
+  -- a calldata with one trailing byte: EXACT in both directions, so this too refuses
+  (! (decodeCalldata (p := rp) fxPlan.proofLayout realSurface.cfg.numInstances
+        realSurface.E.g1 (fxLayoutCalldata ++ Midfall.natToBytesBE 0 1)).isSome) &&
+  -- a compressed stream one word short: the exact-length guard fires
+  (match repackProof (p := rp)
+          (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout) realSurface.E.g1
+          ((bytesTake fxCompressedProof 0 2608).getD Midfall.Bytes.empty) with
+   | Except.error _ => true
+   | Except.ok _ => false) &&
+  -- and the message list is not the empty one, so the walk is real and not a zero-case
+  (fxSlotWitnessMsgs.length == 72) && (fxCompressedProof.size == 2640)
+
+#eval faithfulnessRefutations_ok        -- expect true
 
 /-- R-58 G2. The encoder now returns EIP-2537-shaped bytes for every point, and the
     value it replaced - the empty byte string - does not, so the pin is what forced

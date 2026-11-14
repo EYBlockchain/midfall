@@ -34,9 +34,17 @@
 --      Lowering/Calldata.lean:186, :241 and :328 define all three concretely over
 --      (proofLayout, numInstances, E.g1). A free copy of a function that exists is a
 --      field the Surface can lie about, and the pins that would tie it down (hRepack,
---      hEncode, hProofLayout in the sketch) are P-12 deliverables that no statement
---      in this package consumes. So LeanAccepts calls the real decoder, and the three
---      fields plus their three pins are absent. Reported, not hidden.
+--      hEncode in the sketch) are P-12 deliverables that no statement in this package
+--      consumes. So LeanAccepts calls the real decoder, and the two fields plus their
+--      two pins are absent. Reported, not hidden.
+--      P-RESTORE3 CORRECTION, and it is the reason this paragraph is worth reading
+--      twice: the deleted list used to name hProofLayout as a third codec pin, and it
+--      is not one. hProofLayout relates plan.proofLayout to ProofCalldataLayout.fromPro-
+--      protocol and mentions no codec, so the reason it was dropped belonged to its
+--      two neighbours and not to it. It is restored below as a Surface pin.
+--      The same mis-bundling is why a sweep that matches names cannot be trusted to
+--      classify: an annotation that is in the right file about the wrong field is still
+--      an unverified premise.
 --
 --   3. hoisted, render, print, EvaluatorFrame, FrameWellFormed and tokenBase are
 --      ABSENT, and shell_unfolds - absent when stage 4 landed - NOW EXISTS as a real
@@ -398,6 +406,52 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       exhibits the constant that satisfies this pin, so the limitation is a computation
       in the tree and not a paragraph. -/
   encG2_shape : ∀ R : G₂, encG2IsEip (encG2 R) = true
+
+  /-- P-RESTORE3 RESTORED THIS, AND THE REASON IT HAD BEEN DROPPED WAS FALSE.
+      Section M line 1676 of the sketch, verbatim: the Surface's proof calldata layout is
+      one the generator's own 'fromProtocol' produces at the ABI proof pointer.
+
+      It had been swept up in deviation 2 above, which deletes the three codec fields and
+      names 'hRepack', 'hEncode', 'hProofLayout' together as "pins that would tie it
+      down ... P-12 deliverables that no statement in this package consumes". That is
+      true of the first two and FALSE of this one: hProofLayout mentions no codec and no
+      Surface function. Its left-hand side is 'plan.proofLayout', a field this record has
+      carried since stage 4. It was dropped for a reason that belongs to its neighbours,
+      which is the same failure R11 found at Inv.lean:443-447 - an annotated gap whose
+      annotation was inherited without being read.
+
+      WHY IT IS LOAD-BEARING, and this is the hole the '*_faithful' pair was a proxy for.
+      'decodeCalldata' refuses EVERY calldata unless the layout it is given satisfies two
+      of its guards: 'L.proofCptr = abiVerifyProofProofCptr' and 'L.proofEnd = L.proofCptr
+      + L.proofLen'. Those two facts are not properties of an arbitrary
+      'ProofCalldataLayout' - the type is a flat record of naturals and Abi.lean's own
+      'proofCalldataLayoutDefault' violates the second - and 'proofLen_eq_repackedLen'
+      (Calldata.lean:379) proves them for exactly the layouts this pin says the Surface's
+      IS. Without the pin, 'hcd : decodeCalldata S.plan.proofLayout S.cfg.numInstances
+      S.E.g1 cd = some (ms, instW)' - a hypothesis of every one of the ten partial specs
+      (Partials.lean), of 'LeanAccepts', and of all three side conditions - is satisfiable
+      or not depending on a layout nothing pinned, and a Surface could be written whose
+      specs are all true because no calldata decodes. That is the vacuity class this
+      record has been repaired against five times, and this field was the last open door.
+
+      EXHIBITED, not asserted: 'SurfaceFixture.hProofLayoutKats_ok' discharges it at
+      'fxPlan' with the witness '(protocolShape [8] [1] 3 1 4, 48, 3)' - the poseidon
+      counts, read off the artifact by 'poseidonMeta' - and shows the equation is
+      sensitive to every one of the three witnesses: change an advice count, the eval
+      count, or the point-set count and the layout the generator produces is no longer
+      the layout the fixture carries. 'realSurface.hProofLayout' and
+      'curveSurface.hProofLayout' are both 'rfl' on that witness.
+
+      WHAT IT DOES NOT CLAIM, stated because the last package was told to state its
+      limits: no inversion lemma for 'fromProtocol' is proved anywhere, so this package
+      has NOT demonstrated a Surface that FAILS the pin - only that the witness is not
+      free. What IS demonstrated, as theorems in Instances/SurfaceFixture.lean, is the
+      consequence the pin exists to keep out: at a layout that breaks either guard,
+      'decodeCalldata' answers 'none' for EVERY calldata, so 'hcd' is unsatisfiable and
+      every spec that takes it is vacuous. -/
+  hProofLayout : ∃ protocol numEvals numPointSets,
+    ProofCalldataLayout.fromProtocol protocol Midfall.Generator.abiVerifyProofProofCptr
+      numEvals numPointSets = .ok plan.proofLayout
 
 /-! ### Supported -/
 
