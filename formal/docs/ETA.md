@@ -180,6 +180,37 @@ mul_nsmul, factors swapped); and **where rw cannot cross a defeq, a have with an
 can**, because elaboration uses full defeq where the matcher does not. Plus a correction to my
 own rule: perturbing a KAT Bool leaves lake build green - Bool gates live in checks.sh, not the
 build - so "use lake build for perturbations" applies to theorems only.
+### R6 - round 126, after P-G2B. The landmark is STAGED.
+
+| claim | before | actual | verdict |
+|---|---|---|---|
+| G2 codec needs maxHeartbeats 4e8 | recorded by P-G2, never tried | **18 min, unfinished, killed** - the wall was an unwanted whnf on a symbolic argument, not a budget | **error of kind, 14th** |
+| checks.sh takes over 10 minutes | recorded | **491 s measured** on the untouched tree | premise did not reproduce |
+| the eval gates are the expensive half of KAT | guessed | **0.4 s vs 16.2 s for the kernel decide** - exactly inverted | wrong direction |
+| r•H2 costs 8.6 s | measured once | **16.2 s of per-pass elaboration** | right number, wrong unit |
+| G2 mirror ~700 lines | estimated | **1091 + 510 + 68 + 147** | under-called by ~2x |
+| M-A remaining | 5-7 sessions | **DONE** - holds_staged exhibits all six clauses conditionally | **closed** |
+
+**The headline: holds_staged exists.** Given an AdmissiblePairing on the exhibited groups plus three
+Gₜ instances, there EXISTS a product with Eip2537.Holds g1CodecZ g2CodecFold product - all six
+fields, axioms the standard three. The FrameLaws encoder-first requirement I flagged as the one
+place the landmark could stall HELD, in four lines, because injectivity makes Classical.choose pick
+the unique preimage.
+
+**So the distance to a single Holds term is now exactly one named hypothesis (D-P36a) - no Fp12, no
+point count, no new mathematics.** That is the position after six sessions on the G1/G2 track,
+against my original estimate of 3-5 for M-A plus a research-grade pairing. The research-grade part
+did not exist; I had misread a free parameter as a missing construction, twice.
+
+**A new sub-class of error, the 14th instance:** the first where the wrongness was in a prescribed
+TACTIC rather than a diagnosis. P-G2 recorded the symptom correctly, named a plausible fix, and never
+tested it - and the fix would have wasted 18 minutes per attempt. **Recorded prescriptions should be
+labelled tried or guessed.**
+
+**Revised totals.** M-A: closed. Remaining to lowering_equivalence: the pairing hypothesis (1
+session), then M-B/M-C/M-D as before. **Total revised from 20-34 to 16-27 sessions**; wall-clock
+**6-11 weeks**. Third revision, net downward.
+
 ## What would most improve this ledger
 
 1. **One `Partials` spec proved.** M-B's rate is pure extrapolation; one datum would tighten it
