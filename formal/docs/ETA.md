@@ -251,6 +251,22 @@ inside a Lean **string literal** counts as a proof hole (lean_grep strips commen
 and a **comment-only** edit shifts SORRY.md's file:line pins - that cost a full 8-minute gate run.
 Also: registry tokens match **source text**, so a phrase split across a string concatenation is
 invisible to the gate.
+### R8 - round 130, after P-CSURFACE-M8. M8 scoped: large, and its headline obligation is broken.
+
+- curve Surface estimated 1 session: **actual 1 session** - first milestone estimate to land exactly.
+- M8 size: was uncosted and refused-to-guess; now **8-16 sessions** (restate the solc hop 1-2; dispatcher model and shell_unfolds restatement 2-4; run leg as prerequisite 2-4; IR-shell bridge 3-6 - all labelled GUESSED in M8-SCOPE.md).
+- Total to lowering_equivalence: **25-43 sessions** (was 16-27 plus M8). Wall-clock **9-18 weeks** (was 6-11). R7's condition that the estimate hold only if M8 is small resolved badly.
+- ir_refines was assumed hard-but-valid. **It is FALSE AS STATED** - error of kind, 16th.
+
+**The finding that justified scoping before sizing.** irCheck was probed before anyone attempted ir_refines, and it is BLIND: irRet (ret 0,32) and irRev (revert 0,0) both pass irCheck by rfl while differing in HaltKind - which ObsView explicitly carries. Five mutants pass against the real 2,898-line artifact, including deleting the first statement of every helper body and mutating the CREATION object. So the hypothesis admits counterexamples, and no amount of M8 proof work can fix a broken hypothesis.
+
+**Had M8 been briefed as a proof attempt rather than a scoping task, 8-16 sessions would have been spent driving at a statement that cannot be true.** Strongest argument in this ledger for scoping before sizing.
+
+**The 16th error of kind is the first belonging to the plan rather than the orchestrator:** ir_refines was written as though irCheck pinned the IR's behaviour. It pins a decidable fragment. Same class as Eip2537.Holds and the frozen verifyNative_iff_msgs - a headline statement that cannot hold as written - found by MEASURING a hypothesis rather than trying to prove it.
+
+**One estimate landed exactly**, which is evidence the calibration converges once work is plumbing rather than unknown-shape mathematics.
+
+**The datum that would tighten the range most: prove ONE Partials spec.** It anchors both M-B (4-6, still pure extrapolation) and M8's re-derive-preconditions-against-dispatcher-memory step - the same unknown counted twice.
 ## What would most improve this ledger
 
 1. **One `Partials` spec proved.** M-B's rate is pure extrapolation; one datum would tighten it
