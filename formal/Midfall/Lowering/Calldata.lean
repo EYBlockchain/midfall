@@ -360,29 +360,356 @@ theorem repackedLen_mod32 (plan : RepackedProofLayoutPlan) :
   rw [heq]
   omega
 
+/-- A left fold of addition is its seed plus its total. The reference's two sums are
+    left folds seeded at a running cursor rather than at 0, so this is the step that
+    turns "fold from anywhere" into "seed + fold from 0". -/
+theorem foldl_add_seed : ∀ (l : List Nat) (acc : Nat),
+    l.foldl (fun a n => a + n) acc = acc + l.foldl (fun a n => a + n) 0 := by
+  intro l
+  induction l with
+  | nil => intro acc; simp
+  | cons x rest ih =>
+      intro acc
+      show rest.foldl (fun a n => a + n) (acc + x) = acc + (x :: rest).foldl (fun a n => a + n) 0
+      rw [ih (acc + x), List.foldl_cons, ih (0 + x)]
+      omega
+
+/-- Dropping the zero entries of a list of naturals does not change its sum, however
+    the left fold of addition is seeded. This is the whole content of the filter in
+    commitmentReadGroups: it drops only counts that would have added 0. -/
+theorem foldl_add_filter_ne_zero : ∀ (l : List Nat) (acc : Nat),
+    (l.filter (fun x => x != 0)).foldl (fun a n => a + n) acc =
+      l.foldl (fun a n => a + n) acc := by
+  intro l
+  induction l with
+  | nil => intro acc; rfl
+  | cons a rest ih =>
+      intro acc
+      rw [List.filter_cons]
+      by_cases h : (a != 0) = true
+      · rw [ite_eq_left h, List.foldl_cons, ih, List.foldl_cons]
+      · rw [ite_eq_right (by simpa using h), ih, List.foldl_cons]
+        have ha : a = 0 := by simpa using h
+        rw [ha, Nat.add_zero]
+
+/-- A flat-map of a pair is a map of the pair's sum, under a left fold of addition.
+    This is the lookup row: AP:271-292 pushes \[helpers, accumulator\] per lookup with
+    NO filter, while nonQuotientG1Count adds the same two counts per lookup. -/
+theorem foldl_flatMap_pair {α : Type} (f g : α → Nat) :
+    ∀ (l : List α) (acc : Nat),
+      (l.flatMap (fun x => [f x, g x])).foldl (fun a n => a + n) acc =
+        (l.map (fun x => f x + g x)).foldl (fun a n => a + n) acc := by
+  intro l
+  induction l with
+  | nil => intro acc; rfl
+  | cons x rest ih =>
+      intro acc
+      show ((f x :: g x :: rest.flatMap (fun y => [f y, g y]))).foldl (fun a n => a + n) acc = _
+      show ((f x :: g x :: rest.flatMap (fun y => [f y, g y]))).foldl (fun a n => a + n) acc =
+        ((f x + g x) :: rest.map (fun y => f y + g y)).foldl (fun a n => a + n) acc
+      simp only [List.foldl_cons, ih, Nat.add_assoc]
+
 /-- The plan's prefix G1 count is the layout's transcript-facing commitment count.
     The filter in commitmentReadGroups drops only ZERO counts, so the sum is
     unchanged - that is the whole content, and it is why the lemma is not rfl: the
-    two sides are different folds over different fields. PROOF OBLIGATION, registered
-    in SORRY.md. -/
+    two sides are different folds over different fields. PROVED here: the three
+    helpers above are the three things the two spellings differ by - the seed of a
+    left fold, the zero filter, and the unfiltered per-lookup pair push. -/
 theorem sum_commitmentReadGroups (L : ProofCalldataLayout) :
     (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count = L.commitmentG1Count := by
-  sorry
+  show L.commitmentReadGroups.foldl (fun acc n => acc + n) 0 = L.commitmentG1Count
+  simp only [ProofCalldataLayout.commitmentReadGroups, ProofCalldataLayout.commitmentG1Count,
+    ProofCalldataLayout.nonQuotientG1Count]
+  by_cases ht : (L.trash.itemCount != 0) = true
+  · rw [ite_eq_left ht]
+    simp only [List.foldl_append, foldl_add_filter_ne_zero,
+      foldl_flatMap_pair (fun (l : Midfall.Generator.ProofLookupCommitmentsLayout) =>
+        l.helpers.itemCount) (fun l => l.accumulator.itemCount),
+      List.foldl_cons, List.foldl_nil]
+    rw [foldl_add_seed]
+  · rw [ite_eq_right (by simpa using ht)]
+    have hz : L.trash.itemCount = 0 := by simpa using ht
+    rw [hz]
+    simp only [List.foldl_append, foldl_add_filter_ne_zero,
+      foldl_flatMap_pair (fun (l : Midfall.Generator.ProofLookupCommitmentsLayout) =>
+        l.helpers.itemCount) (fun l => l.accumulator.itemCount),
+      List.foldl_cons, List.foldl_nil]
+    rw [foldl_add_seed]
+    omega
+
+/-! The inversion machinery for 'proofLen_eq_repackedLen'. Nothing here is a new
+    definition the specs depend on: 'except_bind_ok' is the one-step "a do-block that
+    returned ok must have had every bind return ok" lemma, the two 'foldlM_*' lemmas
+    say what the commitment walk does to its cursor and to the sections it appends,
+    and 'sumNat' is the reference's own left fold of addition named once. They are
+    here rather than in Generator/Abi.lean because this package may not edit that file
+    and because only this file's theorem consumes them. -/
+
+theorem except_bind_ok {ε α β : Type} (m : Except ε α) (f : α → Except ε β) {y : β}
+    (h : m >>= f = .ok y) : ∃ x, m = .ok x ∧ f x = .ok y := by
+  cases m with
+  | ok x => exact ⟨x, rfl, h⟩
+  | error e => cases h
+
+theorem takeCommitmentSection_ok (protocol : Midfall.Generator.ProtocolPlan)
+    (readIdx cursor count : Nat) (expected : Midfall.Generator.CommitmentRead) (label : String)
+    (sect : Midfall.Generator.ProofSection) (r' c' : Nat)
+    (h : ProofCalldataLayout.takeCommitmentSection protocol readIdx cursor expected count label =
+      .ok (sect, r', c')) :
+    sect = Midfall.Generator.ProofSection.new cursor count Midfall.Generator.g1Bytes ∧
+      c' = cursor + count * Midfall.Generator.g1Bytes := by
+  rw [ProofCalldataLayout.takeCommitmentSection] at h
+  simp only [Bind.bind] at h
+  obtain ⟨ri, hri, h2⟩ := except_bind_ok _ _ h
+  cases h2
+  exact ⟨rfl, rfl⟩
+
+def sumNat (l : List Nat) : Nat := l.foldl (fun a b => a + b) 0
+
+theorem sumNat_nil : sumNat [] = 0 := rfl
+theorem sumNat_cons (x : Nat) (l : List Nat) : sumNat (x :: l) = x + sumNat l := by
+  show l.foldl (fun a b => a + b) (0 + x) = x + sumNat l
+  rw [Nat.zero_add, foldl_add_seed]
+  rfl
+theorem sumNat_append (l l' : List Nat) : sumNat (l ++ l') = sumNat l + sumNat l' := by
+  induction l generalizing l' with
+  | nil => simp [sumNat_nil]
+  | cons x rest ih =>
+      rw [sumNat_cons]
+      show sumNat (x :: (rest ++ l')) = (x + sumNat rest) + sumNat l'
+      rw [sumNat_cons, ih]
+      omega
+
+/-- A section whose item width is the G1 width and whose byte length is derived. -/
+def sectIsG1 (s : Midfall.Generator.ProofSection) : Prop :=
+  s.itemBytes = Midfall.Generator.g1Bytes ∧ s.byteLen = s.itemCount * Midfall.Generator.g1Bytes
+
+theorem sectIsG1_new (start count : Nat) :
+    sectIsG1 (Midfall.Generator.ProofSection.new start count Midfall.Generator.g1Bytes) :=
+  ⟨rfl, rfl⟩
+
+theorem foldlM_take_ok (protocol : Midfall.Generator.ProtocolPlan)
+    (expected : Midfall.Generator.CommitmentRead) (label : String) :
+    ∀ (counts : List Nat) (init res : List Midfall.Generator.ProofSection × Nat × Nat),
+      counts.foldlM
+        (fun st count =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2 expected count label).bind
+            fun x => Except.ok (st.1 ++ [x.1], x.2.1, x.2.2)) init = .ok res →
+      (∀ s ∈ init.1, sectIsG1 s) →
+      res.2.2 = init.2.2 + sumNat (counts.map (fun c => c * Midfall.Generator.g1Bytes)) ∧
+        (∀ s ∈ res.1, sectIsG1 s) ∧
+        sumNat (res.1.map (fun s => s.itemCount)) =
+          sumNat (init.1.map (fun s => s.itemCount)) + sumNat counts := by
+  intro counts
+  induction counts with
+  | nil =>
+      intro init res h hinit
+      have hsub : res = init := by cases h; rfl
+      subst hsub
+      exact ⟨rfl, hinit, rfl⟩
+  | cons c rest ih =>
+      intro init res h hinit
+      rw [List.foldlM_cons] at h
+      simp only [Bind.bind] at h
+      obtain ⟨st1, hst1, hrest⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst1'⟩ := except_bind_ok _ _ hst1
+      have hsec := takeCommitmentSection_ok protocol init.2.1 init.2.2 c expected label x.1 x.2.1 x.2.2 hx
+      have hc1 : st1.1 = init.1 ++ [x.1] := by cases hst1'; rfl
+      have hc2 : st1.2.1 = x.2.1 := by cases hst1'; rfl
+      have hc3 : st1.2.2 = x.2.2 := by cases hst1'; rfl
+      have hgx : sectIsG1 x.1 := hsec.1 ▸ sectIsG1_new init.2.2 c
+      have hnew : ∀ s ∈ st1.1, sectIsG1 s := by
+        intro s hs
+        rw [hc1] at hs
+        simp only [List.mem_append, List.mem_singleton] at hs
+        rcases hs with hs | rfl
+        · exact hinit s hs
+        · exact hgx
+      obtain ⟨hcur, hgis, hcnt⟩ := ih st1 res hrest hnew
+      refine ⟨?_, hgis, ?_⟩
+      · rw [hcur, hc3, hsec.2, List.map_cons, sumNat_cons]
+        omega
+      · rw [hcnt, hc1, sumNat_cons, List.map_append, sumNat_append, List.map_singleton,
+          sumNat_cons, sumNat_nil]
+        have he : x.1.itemCount = c := by rw [hsec.1]; rfl
+        rw [he]
+        omega
+
+
+theorem sumNat_map_mul (k : Nat) (l : List Nat) :
+    sumNat (l.map (fun c => c * k)) = k * sumNat l := by
+  induction l with
+  | nil => rfl
+  | cons x rest ih =>
+      rw [List.map_cons, sumNat_cons, sumNat_cons, ih]
+      ring
+
+theorem foldlM_lookups_ok (protocol : Midfall.Generator.ProtocolPlan) :
+    ∀ (pairs : List (Nat × Nat))
+      (init res : List Midfall.Generator.ProofLookupCommitmentsLayout × Nat × Nat),
+      pairs.foldlM
+        (fun st pair =>
+          (ProofCalldataLayout.takeCommitmentSection protocol st.2.1 st.2.2
+              Midfall.Generator.CommitmentRead.lookupHelper pair.2 "lookup helper").bind
+            fun x =>
+          (ProofCalldataLayout.takeCommitmentSection protocol x.2.1 x.2.2
+              Midfall.Generator.CommitmentRead.lookupAccumulator 1 "lookup accumulator").bind
+            fun y =>
+          Except.ok (st.1 ++ [{ lookup := pair.1, helpers := x.1, accumulator := y.1 }],
+            y.2.1, y.2.2)) init = .ok res →
+      (∀ r ∈ init.1, sectIsG1 r.helpers ∧ sectIsG1 r.accumulator) →
+      res.2.2 = init.2.2 + Midfall.Generator.g1Bytes * sumNat (pairs.map (fun p => p.2 + 1)) ∧
+        (∀ r ∈ res.1, sectIsG1 r.helpers ∧ sectIsG1 r.accumulator) ∧
+        sumNat (res.1.map (fun r => r.helpers.itemCount + r.accumulator.itemCount)) =
+          sumNat (init.1.map (fun r => r.helpers.itemCount + r.accumulator.itemCount)) +
+            sumNat (pairs.map (fun p => p.2 + 1)) := by
+  intro pairs
+  induction pairs with
+  | nil =>
+      intro init res h hinit
+      have hsub : res = init := by cases h; rfl
+      subst hsub
+      exact ⟨rfl, hinit, rfl⟩
+  | cons pr rest ih =>
+      intro init res h hinit
+      rw [List.foldlM_cons] at h
+      simp only [Bind.bind] at h
+      obtain ⟨st1, hst1, hrest⟩ := except_bind_ok _ _ h
+      obtain ⟨x, hx, hst1'⟩ := except_bind_ok _ _ hst1
+      obtain ⟨y, hy, hst1''⟩ := except_bind_ok _ _ hst1'
+      have hsec1 := takeCommitmentSection_ok protocol init.2.1 init.2.2 pr.2
+        Midfall.Generator.CommitmentRead.lookupHelper "lookup helper" x.1 x.2.1 x.2.2 hx
+      have hsec2 := takeCommitmentSection_ok protocol x.2.1 x.2.2 1
+        Midfall.Generator.CommitmentRead.lookupAccumulator "lookup accumulator" y.1 y.2.1 y.2.2 hy
+      have hc1 : st1.1 = init.1 ++ [{ lookup := pr.1, helpers := x.1, accumulator := y.1 }] :=
+        by cases hst1''; rfl
+      have hc2 : st1.2.2 = y.2.2 := by cases hst1''; rfl
+      have hnew : ∀ r ∈ st1.1, sectIsG1 r.helpers ∧ sectIsG1 r.accumulator := by
+        intro r hr
+        rw [hc1] at hr
+        simp only [List.mem_append, List.mem_singleton] at hr
+        rcases hr with hr | rfl
+        · exact hinit r hr
+        · exact ⟨hsec1.1 ▸ sectIsG1_new init.2.2 pr.2, hsec2.1 ▸ sectIsG1_new x.2.2 1⟩
+      obtain ⟨hcur, hgis, hcnt⟩ := ih st1 res hrest hnew
+      refine ⟨?_, hgis, ?_⟩
+      · rw [hcur, hc2, hsec2.2, hsec1.2, List.map_cons, sumNat_cons]
+        ring
+      · rw [hcnt, hc1, List.map_append, sumNat_append, List.map_singleton, sumNat_cons, sumNat_nil]
+        have he1 : x.1.itemCount = pr.2 := by rw [hsec1.1]; rfl
+        have he2 : y.1.itemCount = 1 := by rw [hsec2.1]; rfl
+        rw [he1, he2, List.map_cons, sumNat_cons]
+        omega
+
 
 /-- For layouts built by fromProtocol at the ABI proof pointer the proof length IS
     the repacked length and the sections tile exactly (survey, Encoding area: VM and
     Direct plans share this layout). Hand-built layouts need not, which is what the
     guard in decodeCalldata defends against and what
-    commitmentReadGroups_disagreeWhenHandBuilt_ok exhibits. PROOF OBLIGATION,
-    registered in SORRY.md (M5-7: the cursor invariant at each of fromProtocol's ten
-    steps). -/
+    commitmentReadGroups_disagreeWhenHandBuilt_ok exhibits.
+
+    PROVED, and the proof is the cursor invariant M5-7 asked for rather than a
+    paraphrase of it: 'except_bind_ok' peels the six binds and the trailing assert of
+    'fromProtocol', 'foldlM_take_ok' and 'foldlM_lookups_ok' say what each of the ten
+    steps does to the cursor and to the sections it appends, and the two conjuncts are
+    then arithmetic on the resulting cursor chain. The second conjunct is the
+    layout-consistency guard 'decodeCalldata' defends against, so this is the lemma
+    that makes that guard satisfiable for every generated layout - and therefore the
+    lemma that makes 'hcd' in the ten partial specs satisfiable rather than vacuous. -/
 theorem proofLen_eq_repackedLen (protocol : Midfall.Generator.ProtocolPlan)
     (numEvals numPointSets : Nat) (L : ProofCalldataLayout)
-    (h : ProofCalldataLayout.fromProtocol protocol
-        Midfall.Generator.abiVerifyProofProofCptr numEvals numPointSets = .ok L) :
+    (h : ProofCalldataLayout.fromProtocol protocol Midfall.Generator.abiVerifyProofProofCptr
+        numEvals numPointSets = .ok L) :
     L.proofLen = (RepackedProofLayoutPlan.fromProofLayout L).repackedLen ∧
       L.proofEnd = L.proofCptr + L.proofLen := by
-  sorry
+  set cptr := Midfall.Generator.abiVerifyProofProofCptr with hcptrdef
+  rw [ProofCalldataLayout.fromProtocol] at h
+  simp only [Bind.bind] at h
+  obtain ⟨x1, hx1, h1⟩ := except_bind_ok _ _ h
+  obtain ⟨x2, hx2, h2⟩ := except_bind_ok _ _ h1
+  obtain ⟨x3, hx3, h3⟩ := except_bind_ok _ _ h2
+  obtain ⟨x4, hx4, h4⟩ := except_bind_ok _ _ h3
+  obtain ⟨x5, hx5, h5⟩ := except_bind_ok _ _ h4
+  obtain ⟨x6, hx6, h6⟩ := except_bind_ok _ _ h5
+  by_cases hc : (x6.2.1 != protocol.proof.commitments.length) = true
+  · rw [ite_eq_left hc] at h6
+    obtain ⟨r, hr, _⟩ := except_bind_ok _ _ h6
+    cases hr
+  · rw [ite_eq_right (by simpa using hc)] at h6
+    let ws6 := ProofCalldataLayout.wordSection x6.2.2 numEvals
+    let fc := Midfall.Generator.ProofSection.new ws6.2 1 Midfall.Generator.g1Bytes
+    let ws8 := ProofCalldataLayout.wordSection fc.end numPointSets
+    let piS := Midfall.Generator.ProofSection.new ws8.2 1 Midfall.Generator.g1Bytes
+    have hcptrE : L.proofCptr = cptr := by cases h6; rfl
+    have hadvE : L.advicePhases = x1.1 := by cases h6; rfl
+    have hlmE : L.lookupMultiplicities = x2.1 := by cases h6; rfl
+    have hppE : L.permutationProducts = x3.1 := by cases h6; rfl
+    have hlksE : L.lookups = x4.1 := by cases h6; rfl
+    have htrE : L.trash = x5.1 := by cases h6; rfl
+    have hqlE : L.quotientLimbs = x6.1 := by cases h6; rfl
+    have hevE : L.evals = ws6.1 := by cases h6; rfl
+    have hfE : L.fCom = fc := by cases h6; rfl
+    have hqE : L.qEvals = ws8.1 := by cases h6; rfl
+    have hpeE : L.proofEnd = piS.end := by cases h6; rfl
+    have hplE : L.proofLen = piS.end - cptr := by cases h6; rfl
+    let lks := (List.range protocol.lookupChunks.length).zip protocol.lookupChunks
+    have h1' := foldlM_take_ok protocol Midfall.Generator.CommitmentRead.advice "advice phase"
+      protocol.numUserAdvices ([], 0, cptr) x1 hx1 (by intro s hs; simp at hs)
+    have h2' := takeCommitmentSection_ok protocol x1.2.1 x1.2.2 protocol.numLookups
+      Midfall.Generator.CommitmentRead.lookupMultiplicity "lookup multiplicity" x2.1 x2.2.1 x2.2.2 hx2
+    have h3' := takeCommitmentSection_ok protocol x2.2.1 x2.2.2 protocol.numPermutationZs
+      Midfall.Generator.CommitmentRead.permutationProduct "permutation product" x3.1 x3.2.1 x3.2.2 hx3
+    have h4' := foldlM_lookups_ok protocol lks ([], x3.2.1, x3.2.2) x4 hx4
+      (by intro r hr; simp at hr)
+    have h5' := takeCommitmentSection_ok protocol x4.2.1 x4.2.2 protocol.numTrashcans
+      Midfall.Generator.CommitmentRead.trash "trash" x5.1 x5.2.1 x5.2.2 hx5
+    have h6' := takeCommitmentSection_ok protocol x5.2.1 x5.2.2 protocol.numQuotients
+      Midfall.Generator.CommitmentRead.quotient "quotient limb" x6.1 x6.2.1 x6.2.2 hx6
+    have e2 : x2.1.itemCount = protocol.numLookups := by rw [h2'.1]; rfl
+    have e3 : x3.1.itemCount = protocol.numPermutationZs := by rw [h3'.1]; rfl
+    have e5 : x5.1.itemCount = protocol.numTrashcans := by rw [h5'.1]; rfl
+    have e6 : x6.1.itemCount = protocol.numQuotients := by rw [h6'.1]; rfl
+    have hg : Midfall.Generator.g1Bytes = 128 := rfl
+    have hw : Midfall.Generator.wordBytes = 32 := rfl
+    have hCG : L.commitmentG1Count = sumNat protocol.numUserAdvices + protocol.numLookups
+        + protocol.numPermutationZs + sumNat (lks.map (fun p => p.2 + 1))
+        + protocol.numTrashcans + protocol.numQuotients := by
+      simp only [ProofCalldataLayout.commitmentG1Count, ProofCalldataLayout.nonQuotientG1Count,
+        hadvE, hlmE, hppE, hlksE, htrE, hqlE]
+      show sumNat (x1.1.map (fun s => s.itemCount)) + x2.1.itemCount + x3.1.itemCount
+          + sumNat (x4.1.map (fun r => r.helpers.itemCount + r.accumulator.itemCount))
+          + x5.1.itemCount + x6.1.itemCount = _
+      rw [h1'.2.2, h4'.2.2, e2, e3, e5, e6]
+      simp only [List.map_nil, sumNat_nil, Nat.zero_add]
+    have hc6 : x6.2.2 = cptr + Midfall.Generator.g1Bytes * L.commitmentG1Count := by
+      rw [h6'.2, h5'.2, h4'.1, h3'.2, h2'.2, h1'.1, sumNat_map_mul, hCG, hg]
+      ring
+    have hws6 : ws6.2 = x6.2.2 + numEvals * Midfall.Generator.wordBytes := rfl
+    have hfc : fc.end = ws6.2 + 1 * Midfall.Generator.g1Bytes := rfl
+    have hws8 : ws8.2 = fc.end + numPointSets * Midfall.Generator.wordBytes := rfl
+    have hpi : piS.end = ws8.2 + 1 * Midfall.Generator.g1Bytes := rfl
+    have hpe2 : piS.end = cptr + (Midfall.Generator.g1Bytes * L.commitmentG1Count + numEvals * Midfall.Generator.wordBytes
+        + numPointSets * Midfall.Generator.wordBytes + 2 * Midfall.Generator.g1Bytes) := by
+      rw [hpi, hws8, hfc, hws6, hc6]
+      ring
+    have hge : piS.end ≥ cptr := by rw [hpe2]; omega
+    refine ⟨?_, ?_⟩
+    · rw [hplE, hpe2, Nat.add_sub_cancel_left]
+      have hrep : (RepackedProofLayoutPlan.fromProofLayout L).repackedLen
+          = L.commitmentG1Count * Midfall.Generator.g1Bytes + L.evals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+            + L.qEvals.itemCount * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes := by
+        show (RepackedProofLayoutPlan.fromProofLayout L).prefixG1Count * Midfall.Generator.g1Bytes
+            + (RepackedProofLayoutPlan.fromProofLayout L).numEvals * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes
+            + (RepackedProofLayoutPlan.fromProofLayout L).numPointSets * Midfall.Generator.wordBytes + Midfall.Generator.g1Bytes = _
+        rw [sum_commitmentReadGroups L]
+        rfl
+      rw [hrep, hevE, hqE]
+      have f1 : ws6.1.itemCount = numEvals := rfl
+      have f2 : ws8.1.itemCount = numPointSets := rfl
+      rw [f1, f2, hCG, hg, hw]
+      ring
+    · rw [hplE, hcptrE, hpeE, hpe2, Nat.add_sub_cancel_left]
+
 
 /-! ### 6. The four specs -/
 
@@ -415,6 +742,36 @@ theorem calldata_roundtrip {G₁ : Type} [Group G₁]
       some (ms, inst.toArray) := by
   sorry
 
+/-- **THE LAYOUT-CONSISTENCY GUARD IS DERIVABLE, NOT AN ASSUMPTION.**
+    'decodeCalldata' guards on `L.proofEnd = L.proofCptr + L.proofLen`, so a
+    successful decode already carries it. P-MC-CALLDATA found 'calldata_canonical'
+    taking it as an extra binder, which PLAN section H line 1280 does not, and
+    restored the sketched form; these two lemmas are what make the restoration free
+    rather than a strengthening nobody can discharge. They are also the vacuity
+    refutation: break either guard and NOTHING decodes. -/
+theorem decodeCalldata_none_of_layout_skew {G₁ : Type} (L : ProofCalldataLayout)
+    (numInstances : Nat) (c : G1Codec G₁)
+    (h : L.proofEnd ≠ L.proofCptr + L.proofLen) (cd : Bytes) :
+    decodeCalldata (p := p) L numInstances c cd = none := by
+  unfold decodeCalldata
+  simp [h]
+
+theorem decodeCalldata_none_of_pointer_skew {G₁ : Type} (L : ProofCalldataLayout)
+    (numInstances : Nat) (c : G1Codec G₁)
+    (h : L.proofCptr ≠ Midfall.Generator.abiVerifyProofProofCptr) (cd : Bytes) :
+    decodeCalldata (p := p) L numInstances c cd = none := by
+  unfold decodeCalldata
+  simp [h]
+
+theorem decodeCalldata_hend_of_some {G₁ : Type} (L : ProofCalldataLayout)
+    (numInstances : Nat) (c : G1Codec G₁) (cd : Bytes)
+    (ms : List (Msg (Fr p) G₁)) (inst : Array Word256)
+    (h : decodeCalldata (p := p) L numInstances c cd = some (ms, inst)) :
+    L.proofEnd = L.proofCptr + L.proofLen := by
+  by_contra H
+  rw [decodeCalldata_none_of_layout_skew L numInstances c H cd] at h
+  cases h
+
 /-- EXACT in both modes (D7, and P-12's measurement of the templates): trailing bytes
     revert, non-canonical words revert, and an accepted G1 block is the canonical
     encoding of its point, so a decoded calldata is byte-for-byte the calldataOf of
@@ -422,26 +779,491 @@ theorem calldata_roundtrip {G₁ : Type} [Group G₁]
     path at all - that is why accumulator mode needs no exception here.
 
     hypotheses: hc : eipRoundtrip is the decoder-first law that turns "the decoder
-    accepted these bytes" into "these are the encoder's bytes for that point"; hend is
-    the layout-consistency guard (attack.md's FIX) and is necessary for hand-built
-    layouts. PROOF OBLIGATION, registered in SORRY.md (M5-8). -/
+    accepted these bytes" into "these are the encoder's bytes for that point".
+
+    P-MC-CALLDATA RESTORED THIS STATEMENT. It used to carry
+    `hend : L.proofEnd = L.proofCptr + L.proofLen` as a binder, which PLAN section H
+    does not: 'decodeCalldata' guards on exactly that equation, so a successful decode
+    already implies it ('decodeCalldata_hend_of_some'). The hypothesis was a weakening
+    of the sketched claim, and the sketched form is what stands here now.
+    PROOF OBLIGATION, registered in SORRY.md (M5-8). -/
 theorem calldata_canonical {G₁ : Type} (L : ProofCalldataLayout) (numInstances : Nat)
     (c : G1Codec G₁) (hc : c.eipRoundtrip)
-    (hend : L.proofEnd = L.proofCptr + L.proofLen)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (inst : Array Word256)
     (h : decodeCalldata (p := p) L numInstances c cd = some (ms, inst)) :
     cd = calldataOf c ms inst.toList := by
   sorry
 
+/-! The wire-level repack/decode agreement, D8's first half.
+
+    Both walks are the same fold over the same schedule with the same cursor
+    arithmetic, so the proof is one induction over 'plan.slots' carrying both states
+    at once ('wire_go'). The two step functions are named ('repackGo', 'decodeGo')
+    because they are written inline in the definitions above and the induction has to
+    talk about them; each is defeq to the lambda it replaces, and the four 'step_*'
+    lemmas are the per-slot agreement, one pair per slot kind, plus the pair of
+    failure arms. 'widthSum' is the compressed width of a slot list, and
+    'compressedLen_eq_widthSum' is what lets the induction start with the guard
+    discharged} - without it the two walks would have to carry a partiality
+    from 'bytesTake' that the exact-length guard already rules out. -/
+
+section
+variable {G₁ : Type}
+
+
+variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
+
+def slotWidth : WireSlot → Nat
+  | WireSlot.g1 => Midfall.g1CompressedWidth
+  | WireSlot.fr => 32
+
+def widthSum (slots : List WireSlot) : Nat := slots.foldl (fun a s => a + slotWidth s) 0
+
+theorem widthSum_nil : widthSum [] = 0 := rfl
+
+theorem foldlW_seed : ∀ (l : List WireSlot) (acc : Nat),
+    l.foldl (fun a s => a + slotWidth s) acc = acc + widthSum l := by
+  intro l
+  induction l with
+  | nil => intro acc; simp [widthSum]
+  | cons x rest ih =>
+      intro acc
+      show rest.foldl (fun a s => a + slotWidth s) (acc + slotWidth x) =
+        acc + rest.foldl (fun a s => a + slotWidth s) (0 + slotWidth x)
+      rw [Nat.zero_add, ih (acc + slotWidth x), ih (slotWidth x)]
+      omega
+
+theorem widthSum_cons (x : WireSlot) (l : List WireSlot) :
+    widthSum (x :: l) = slotWidth x + widthSum l := by
+  show l.foldl (fun a s => a + slotWidth s) (0 + slotWidth x) = _
+  rw [Nat.zero_add, foldlW_seed]
+
+theorem widthSum_append (l l' : List WireSlot) :
+    widthSum (l ++ l') = widthSum l + widthSum l' := by
+  induction l with
+  | nil => simp [widthSum_nil]
+  | cons x rest ih =>
+      rw [List.cons_append]
+      rw [widthSum_cons, ih, widthSum_cons]
+      omega
+
+theorem widthSum_replicate (n : Nat) (w : Nat) (sl : WireSlot)
+    (h : slotWidth sl = w) : widthSum (List.replicate n sl) = n * w := by
+  induction n with
+  | zero => simp [widthSum_nil]
+  | succ n ih =>
+      rw [List.replicate_succ, widthSum_cons, ih, h, Nat.succ_mul]
+      omega
+
+theorem widthSum_slots (plan : RepackedProofLayoutPlan) :
+    widthSum plan.slots =
+      plan.prefixG1Count * 48 + plan.numEvals * 32 + 48 + plan.numPointSets * 32 + 48 := by
+  have hgw : slotWidth WireSlot.g1 = 48 := rfl
+  have hfw : slotWidth WireSlot.fr = 32 := rfl
+  show widthSum (List.replicate plan.prefixG1Count WireSlot.g1
+      ++ List.replicate plan.numEvals WireSlot.fr ++ [WireSlot.g1]
+      ++ List.replicate plan.numPointSets WireSlot.fr ++ [WireSlot.g1]) = _
+  rw [widthSum_append, widthSum_append, widthSum_append, widthSum_append,
+    widthSum_replicate plan.prefixG1Count 48 WireSlot.g1 hgw,
+    widthSum_replicate plan.numEvals 32 WireSlot.fr hfw,
+    widthSum_replicate plan.numPointSets 32 WireSlot.fr hfw]
+  simp only [widthSum_cons, widthSum_nil, hgw]
+
+theorem compressedLen_eq_widthSum (plan : RepackedProofLayoutPlan) :
+    plan.compressedLen = widthSum plan.slots := by
+  have hg : Midfall.Generator.g1CompressedBytes = 48 := rfl
+  have hw : Midfall.Generator.wordBytes = 32 := rfl
+  unfold RepackedProofLayoutPlan.compressedLen
+  rw [hg, hw, widthSum_slots plan]
+
+
+/-- The repackProof step, named so the induction can talk about it; defeq to the
+    inline lambda in repackProof. -/
+def repackGo (c : G1Codec G₁) (π : Bytes) (st : Bytes × Nat) (sl : WireSlot) :
+    Except RepackError (Bytes × Nat) :=
+  (Midfall.Lowering.repackSlot (p := p) c π sl st.2).bind fun x => pure (st.1 ++ x.1, x.2)
+
+/-- The decodeWire step, named for the same reason. -/
+def decodeGo (c : G1Codec G₁) (π : Bytes) (st : List (Msg (Fr p) G₁) × Nat) (sl : WireSlot) :
+    Option (List (Msg (Fr p) G₁) × Nat) :=
+  match sl with
+  | WireSlot.g1 =>
+      (bytesTake π st.2 Midfall.g1CompressedWidth).bind fun comp =>
+        (c.ofCompressed? comp).bind fun Q =>
+          pure (st.1 ++ [Msg.g1 Q], st.2 + Midfall.g1CompressedWidth)
+  | WireSlot.fr =>
+      (bytesTake π st.2 32).bind fun le =>
+        (Midfall.frOfRepr? (p := p) le).bind fun s =>
+          pure (st.1 ++ [Msg.fr s], st.2 + 32)
+
+theorem encodeContractProof_go (c : G1Codec G₁) :
+    ∀ (l : List (Msg (Fr p) G₁)) (acc : Bytes),
+      l.foldl (fun a m => a ++ Midfall.Lowering.msgContractBytes (p := p) c m) acc =
+        acc ++ Midfall.Lowering.encodeContractProof (p := p) c l := by
+  intro l
+  induction l with
+  | nil =>
+      intro acc
+      show acc = acc ++ Midfall.Lowering.encodeContractProof (p := p) c []
+      rw [show Midfall.Lowering.encodeContractProof (p := p) c [] = ByteArray.empty from rfl,
+        ByteArray.append_empty]
+  | cons m rest ih =>
+      intro acc
+      show rest.foldl (fun a x => a ++ Midfall.Lowering.msgContractBytes (p := p) c x)
+        (acc ++ Midfall.Lowering.msgContractBytes (p := p) c m) =
+        acc ++ Midfall.Lowering.encodeContractProof (p := p) c (m :: rest)
+      have h1 : rest.foldl (fun a x => a ++ Midfall.Lowering.msgContractBytes (p := p) c x)
+          (acc ++ Midfall.Lowering.msgContractBytes (p := p) c m)
+          = (acc ++ Midfall.Lowering.msgContractBytes (p := p) c m) ++
+              Midfall.Lowering.encodeContractProof (p := p) c rest :=
+        ih (acc ++ Midfall.Lowering.msgContractBytes (p := p) c m)
+      have h2 : Midfall.Lowering.encodeContractProof (p := p) c (m :: rest)
+          = (Midfall.Lowering.msgContractBytes (p := p) c m) ++
+              Midfall.Lowering.encodeContractProof (p := p) c rest := by
+        show rest.foldl (fun a x => a ++ Midfall.Lowering.msgContractBytes (p := p) c x)
+            (ByteArray.empty ++ Midfall.Lowering.msgContractBytes (p := p) c m) = _
+        rw [ByteArray.empty_append]
+        exact ih (Midfall.Lowering.msgContractBytes (p := p) c m)
+      rw [h1, h2, ← ByteArray.append_assoc]
+
+theorem encodeContractProof_append (c : G1Codec G₁) (l₁ l₂ : List (Msg (Fr p) G₁)) :
+    Midfall.Lowering.encodeContractProof (p := p) c (l₁ ++ l₂) =
+      Midfall.Lowering.encodeContractProof (p := p) c l₁ ++
+        Midfall.Lowering.encodeContractProof (p := p) c l₂ := by
+  show (l₁ ++ l₂).foldl (fun a m => a ++ Midfall.Lowering.msgContractBytes (p := p) c m)
+      ByteArray.empty = _
+  rw [List.foldl_append,
+    show (List.foldl (fun a m => a ++ Midfall.Lowering.msgContractBytes (p := p) c m)
+        ByteArray.empty l₁) = Midfall.Lowering.encodeContractProof (p := p) c l₁ from rfl,
+    encodeContractProof_go c l₂ (Midfall.Lowering.encodeContractProof (p := p) c l₁)]
+
+theorem step_g1_repack (c : G1Codec G₁) (π : Bytes) (cur : Nat) (comp : Bytes) (acc : Bytes)
+    (Q : G₁) (hcomp : bytesTake π cur Midfall.g1CompressedWidth = some comp)
+    (hq : c.ofCompressed? comp = some Q) :
+    repackGo (p := p) c π (acc, cur) WireSlot.g1 =
+      Except.ok (acc ++ c.toEip Q, cur + Midfall.g1CompressedWidth) := by
+  rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+  dsimp only
+  rw [hq]
+  rfl
+
+theorem step_g1_decode (c : G1Codec G₁) (π : Bytes) (cur : Nat) (comp : Bytes) (Q : G₁)
+    (ms0 : List (Msg (Fr p) G₁)) (hcomp : bytesTake π cur Midfall.g1CompressedWidth = some comp)
+    (hq : c.ofCompressed? comp = some Q) :
+    decodeGo (p := p) c π (ms0, cur) WireSlot.g1 =
+      some (ms0 ++ [Msg.g1 Q], cur + Midfall.g1CompressedWidth) := by
+  rw [decodeGo, hcomp]
+  show (c.ofCompressed? comp).bind (fun Q =>
+      pure (ms0 ++ [Msg.g1 Q], cur + Midfall.g1CompressedWidth)) =
+    some (ms0 ++ [Msg.g1 Q], cur + Midfall.g1CompressedWidth)
+  rw [hq]
+  rfl
+
+theorem step_g1_none (c : G1Codec G₁) (π : Bytes) (cur : Nat) (comp : Bytes) (acc : Bytes)
+    (ms0 : List (Msg (Fr p) G₁)) (hcomp : bytesTake π cur Midfall.g1CompressedWidth = some comp)
+    (hq : c.ofCompressed? comp = none) :
+    (∀ st, repackGo (p := p) c π (acc, cur) WireSlot.g1 ≠ Except.ok st) ∧
+      decodeGo (p := p) c π (ms0, cur) WireSlot.g1 = none := by
+  constructor
+  · intro st hh
+    rw [repackGo, Midfall.Lowering.repackSlot, hcomp] at hh
+    dsimp only at hh
+    rw [hq] at hh
+    cases hh
+  · rw [decodeGo, hcomp]
+    show (c.ofCompressed? comp).bind (fun Q =>
+        pure (ms0 ++ [Msg.g1 Q], cur + Midfall.g1CompressedWidth)) = none
+    rw [hq]
+    rfl
+
+theorem step_fr_repack (c : G1Codec G₁) (π : Bytes) (cur : Nat) (le : Bytes) (acc : Bytes)
+    (s : Fr p) (hcomp : bytesTake π cur 32 = some le)
+    (hs : Midfall.frOfRepr? (p := p) le = some s) :
+    repackGo (p := p) c π (acc, cur) WireSlot.fr =
+      Except.ok (acc ++ Midfall.frToInputBE s, cur + 32) := by
+  rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+  dsimp only
+  rw [hs]
+  rfl
+
+theorem step_fr_decode (c : G1Codec G₁) (π : Bytes) (cur : Nat) (le : Bytes) (s : Fr p)
+    (ms0 : List (Msg (Fr p) G₁)) (hcomp : bytesTake π cur 32 = some le)
+    (hs : Midfall.frOfRepr? (p := p) le = some s) :
+    decodeGo (p := p) c π (ms0, cur) WireSlot.fr = some (ms0 ++ [Msg.fr s], cur + 32) := by
+  rw [decodeGo, hcomp]
+  show (Midfall.frOfRepr? (p := p) le).bind (fun s' => pure (ms0 ++ [Msg.fr s'], cur + 32)) =
+    some (ms0 ++ [Msg.fr s], cur + 32)
+  rw [hs]
+  rfl
+
+theorem step_fr_none (c : G1Codec G₁) (π : Bytes) (cur : Nat) (le : Bytes) (acc : Bytes)
+    (ms0 : List (Msg (Fr p) G₁)) (hcomp : bytesTake π cur 32 = some le)
+    (hs : Midfall.frOfRepr? (p := p) le = none) :
+    (∀ st, repackGo (p := p) c π (acc, cur) WireSlot.fr ≠ Except.ok st) ∧
+      decodeGo (p := p) c π (ms0, cur) WireSlot.fr = none := by
+  constructor
+  · intro st hh
+    rw [repackGo, Midfall.Lowering.repackSlot, hcomp] at hh
+    dsimp only at hh
+    rw [hs] at hh
+    cases hh
+  · rw [decodeGo, hcomp]
+    show (Midfall.frOfRepr? (p := p) le).bind (fun s' => pure (ms0 ++ [Msg.fr s'], cur + 32)) = none
+    rw [hs]
+    rfl
+
+
+theorem wire_go (c : G1Codec G₁) (π : Bytes) :
+    ∀ (slots : List WireSlot) (cur : Nat) (acc : Bytes) (ms0 : List (Msg (Fr p) G₁)),
+      acc = Midfall.Lowering.encodeContractProof (p := p) c ms0 →
+      cur + widthSum slots ≤ π.size →
+      ∀ (π' : Bytes) (cur' : Nat),
+        (slots.foldlM (repackGo (p := p) c π) (acc, cur) = .ok (π', cur')) ↔
+          (∃ ms, slots.foldlM (decodeGo (p := p) c π) (ms0, cur) = some (ms, cur') ∧
+            π' = Midfall.Lowering.encodeContractProof (p := p) c ms) := by
+  intro slots
+  induction slots with
+  | nil =>
+      intro cur acc ms0 hacc _ π' cur'
+      constructor
+      · intro h
+        cases h
+        exact ⟨ms0, rfl, hacc⟩
+      · rintro ⟨ms, hms, heq⟩
+        cases hms
+        rw [heq, hacc]
+        rfl
+  | cons sl rest ih =>
+      intro cur acc ms0 hacc hsize π' cur'
+      rw [List.foldlM_cons, List.foldlM_cons]
+      simp only [Bind.bind]
+      rcases sl with (_ | _)
+      · have hle : cur + Midfall.g1CompressedWidth ≤ π.size := by
+            have h : widthSum (WireSlot.g1 :: rest) = Midfall.g1CompressedWidth + widthSum rest :=
+              widthSum_cons WireSlot.g1 rest
+            omega
+        cases hcomp : bytesTake π cur Midfall.g1CompressedWidth with
+        | none =>
+            have hr : repackGo (p := p) c π (acc, cur) WireSlot.g1 =
+                Except.error (RepackError.invalidCompressedG1 cur "") := by
+              rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+              dsimp only
+              exact rfl
+            have hd : decodeGo (p := p) c π (ms0, cur) WireSlot.g1 = none := by
+              rw [decodeGo, hcomp]
+              exact rfl
+            constructor
+            · intro h
+              obtain ⟨st, hst, _⟩ := except_bind_ok _ _ h
+              rw [hr] at hst
+              cases hst
+            · rintro ⟨ms, hms, _⟩
+              rw [hd] at hms
+              cases hms
+        | some comp =>
+            cases hq : c.ofCompressed? comp with
+            | none =>
+                have hr : repackGo (p := p) c π (acc, cur) WireSlot.g1 =
+                    Except.error (RepackError.invalidCompressedG1 cur
+                      (Midfall.Generator.hexEncodeLower comp)) := by
+                  rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+                  dsimp only
+                  rw [hq]
+                  exact rfl
+                have hd : decodeGo (p := p) c π (ms0, cur) WireSlot.g1 = none := by
+                  rw [decodeGo, hcomp]
+                  show (c.ofCompressed? comp).bind
+                    (fun Q => pure (ms0 ++ [Msg.g1 Q], cur + Midfall.g1CompressedWidth)) = none
+                  rw [hq]
+                  exact rfl
+                constructor
+                · intro h
+                  obtain ⟨st, hst, _⟩ := except_bind_ok _ _ h
+                  rw [hr] at hst
+                  cases hst
+                · rintro ⟨ms, hms, _⟩
+                  rw [hd] at hms
+                  cases hms
+            | some Q =>
+                have hr := step_g1_repack (p := p) c π cur comp acc Q hcomp hq
+                have hd := step_g1_decode (p := p) c π cur comp Q ms0 hcomp hq
+                have hacc' : acc ++ c.toEip Q =
+                    Midfall.Lowering.encodeContractProof (p := p) c (ms0 ++ [Msg.g1 Q]) := by
+                  have this : Midfall.Lowering.encodeContractProof (p := p) c [Msg.g1 Q] =
+                      c.toEip Q := by
+                    simp only [Midfall.Lowering.encodeContractProof,
+                      Midfall.Lowering.msgContractBytes, List.foldl_cons, List.foldl_nil]
+                    rw [show (Midfall.Bytes.empty : Midfall.Bytes) = ByteArray.empty from rfl,
+                      ByteArray.empty_append]
+                  rw [hacc, ← this, ← encodeContractProof_append]
+                have hsize' : (cur + Midfall.g1CompressedWidth) + widthSum rest ≤ π.size := by
+                  have h : widthSum (WireSlot.g1 :: rest) =
+                      Midfall.g1CompressedWidth + widthSum rest := widthSum_cons WireSlot.g1 rest
+                  omega
+                rw [hr, hd]
+                show (rest.foldlM (repackGo (p := p) c π) (acc ++ c.toEip Q,
+                      cur + Midfall.g1CompressedWidth) = .ok (π', cur')) ↔
+                  (∃ ms, rest.foldlM (decodeGo (p := p) c π) (ms0 ++ [Msg.g1 Q],
+                      cur + Midfall.g1CompressedWidth) = some (ms, cur') ∧
+                    π' = Midfall.Lowering.encodeContractProof (p := p) c ms)
+                exact ih (cur + Midfall.g1CompressedWidth) (acc ++ c.toEip Q)
+                  (ms0 ++ [Msg.g1 Q]) hacc' hsize' π' cur'
+      · have hle : cur + 32 ≤ π.size := by
+            have h : widthSum (WireSlot.fr :: rest) = 32 + widthSum rest :=
+              widthSum_cons WireSlot.fr rest
+            omega
+        cases hcomp : bytesTake π cur 32 with
+        | none =>
+            have hr : repackGo (p := p) c π (acc, cur) WireSlot.fr =
+                Except.error (RepackError.nonCanonicalScalar cur "") := by
+              rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+              dsimp only
+              exact rfl
+            have hd : decodeGo (p := p) c π (ms0, cur) WireSlot.fr = none := by
+              rw [decodeGo, hcomp]
+              exact rfl
+            constructor
+            · intro h
+              obtain ⟨st, hst, _⟩ := except_bind_ok _ _ h
+              rw [hr] at hst
+              cases hst
+            · rintro ⟨ms, hms, _⟩
+              rw [hd] at hms
+              cases hms
+        | some le =>
+            cases hs : Midfall.frOfRepr? (p := p) le with
+            | none =>
+                have hr : repackGo (p := p) c π (acc, cur) WireSlot.fr =
+                    Except.error (RepackError.nonCanonicalScalar cur
+                      (Midfall.Generator.hexEncodeLower
+                        (Midfall.Generator.bytesReverse le))) := by
+                  rw [repackGo, Midfall.Lowering.repackSlot, hcomp]
+                  dsimp only
+                  rw [hs]
+                  exact rfl
+                have hd : decodeGo (p := p) c π (ms0, cur) WireSlot.fr = none := by
+                  rw [decodeGo, hcomp]
+                  show (Midfall.frOfRepr? (p := p) le).bind
+                    (fun s => pure (ms0 ++ [Msg.fr s], cur + 32)) = none
+                  rw [hs]
+                  exact rfl
+                constructor
+                · intro h
+                  obtain ⟨st, hst, _⟩ := except_bind_ok _ _ h
+                  rw [hr] at hst
+                  cases hst
+                · rintro ⟨ms, hms, _⟩
+                  rw [hd] at hms
+                  cases hms
+            | some sc =>
+                have hr := step_fr_repack (p := p) c π cur le acc sc hcomp hs
+                have hd := step_fr_decode (p := p) c π cur le sc ms0 hcomp hs
+                have hacc' : acc ++ Midfall.frToInputBE sc =
+                    Midfall.Lowering.encodeContractProof (p := p) c (ms0 ++ [Msg.fr sc]) := by
+                  have this : Midfall.Lowering.encodeContractProof (p := p) c [Msg.fr sc] =
+                      Midfall.frToInputBE sc := by
+                    simp only [Midfall.Lowering.encodeContractProof,
+                      Midfall.Lowering.msgContractBytes, List.foldl_cons, List.foldl_nil]
+                    rw [show (Midfall.Bytes.empty : Midfall.Bytes) = ByteArray.empty from rfl,
+                      ByteArray.empty_append]
+                  rw [hacc, ← this, ← encodeContractProof_append]
+                have hsize' : (cur + 32) + widthSum rest ≤ π.size := by
+                  have h : widthSum (WireSlot.fr :: rest) = 32 + widthSum rest :=
+                    widthSum_cons WireSlot.fr rest
+                  omega
+                rw [hr, hd]
+                show (rest.foldlM (repackGo (p := p) c π) (acc ++ Midfall.frToInputBE sc,
+                      cur + 32) = .ok (π', cur')) ↔
+                  (∃ ms, rest.foldlM (decodeGo (p := p) c π) (ms0 ++ [Msg.fr sc],
+                      cur + 32) = some (ms, cur') ∧
+                    π' = Midfall.Lowering.encodeContractProof (p := p) c ms)
+                exact ih (cur + 32) (acc ++ Midfall.frToInputBE sc) (ms0 ++ [Msg.fr sc])
+                  hacc' hsize' π' cur'
+
+end
+
 /-- D8, the wire-level half of repack_spec: repackProof succeeds exactly when the
     compressed stream decodes by the schedule, and its output is the contract bytes of
     those messages. This is an iff, and it is the half the PLAN's version could not be.
-    PROOF OBLIGATION, registered in SORRY.md. -/
+
+    PROVED by one induction over the slot list that carries both fold states at once
+    ('wire_go'), with the exact-length guard discharged up front by
+    'compressedLen_eq_widthSum' so neither walk has to carry a short-read arm. -/
 theorem repack_spec_wire {G₁ : Type} (plan : RepackedProofLayoutPlan) (c : G1Codec G₁)
     (π π' : Bytes) :
-    repackProof (p := p) plan c π = .ok π' <->
-      (∃ ms, decodeWire (p := p) plan c π = some ms ∧ π' = encodeContractProof c ms) := by
-  sorry
+    Midfall.Lowering.repackProof (p := p) plan c π = .ok π' <->
+      (∃ ms, Midfall.Lowering.decodeWire (p := p) plan c π = some ms ∧
+        π' = Midfall.Lowering.encodeContractProof (p := p) c ms) := by
+  have hnil : (ByteArray.empty : Bytes) =
+      Midfall.Lowering.encodeContractProof (p := p) c ([] : List (Msg (Fr p) G₁)) := rfl
+  have hsize_go : ByteArray.size π = plan.compressedLen →
+      0 + widthSum plan.slots ≤ ByteArray.size π := by
+    intro hs
+    rw [hs, ← compressedLen_eq_widthSum]
+    omega
+  constructor
+  · intro h
+    rw [Midfall.Lowering.repackProof] at h
+    simp only [Bind.bind, Pure.pure, Except.pure] at h
+    by_cases hg : ByteArray.size π ≠ plan.compressedLen
+    · rw [ite_eq_left hg] at h
+      have h' : Except.error (RepackError.lengthMismatch plan.compressedLen (ByteArray.size π)
+          plan.prefixG1Count plan.numEvals plan.numPointSets) = Except.ok π' := h
+      cases h'
+    · rw [ite_eq_right hg] at h
+      have hsize : ByteArray.size π = plan.compressedLen := by
+        by_contra H
+        exact hg H
+      obtain ⟨st, hst, h2⟩ := except_bind_ok _ _ h
+      cases h2
+      have hgo := wire_go (p := p) c π plan.slots 0 ByteArray.empty [] hnil
+        (hsize_go hsize) st.1 st.2
+      obtain ⟨ms, hms, hrfl⟩ := hgo.mp (by exact hst)
+      refine ⟨ms, ?_, hrfl⟩
+      rw [Midfall.Lowering.decodeWire, ite_eq_right hg]
+      show ((plan.slots.foldlM (decodeGo (p := p) c π) ([], (0 : Nat)))).map Prod.fst = some ms
+      rw [hms]
+      exact rfl
+  · rintro ⟨ms, hdec, hrfl⟩
+    rw [Midfall.Lowering.repackProof]
+    simp only [Bind.bind, Pure.pure, Except.pure]
+    by_cases hg : ByteArray.size π ≠ plan.compressedLen
+    · have hnone : Midfall.Lowering.decodeWire (p := p) plan c π = none := by
+        rw [Midfall.Lowering.decodeWire, ite_eq_left hg]
+      rw [hnone] at hdec
+      cases hdec
+    · rw [ite_eq_right hg]
+      have hsize : ByteArray.size π = plan.compressedLen := by
+        by_contra H
+        exact hg H
+      have hdec' : (plan.slots.foldlM (decodeGo (p := p) c π) ([], (0 : Nat))).map Prod.fst =
+          some ms := by
+        rw [Midfall.Lowering.decodeWire, ite_eq_right hg] at hdec
+        exact hdec
+      rcases hfold : (plan.slots.foldlM (decodeGo (p := p) c π) ([], (0 : Nat))) with
+          hnone | ⟨m2, c2⟩
+      · rw [hfold] at hdec'
+        cases hdec'
+      · have hdec'' : some m2 = some ms := by
+          have h1 : (plan.slots.foldlM (decodeGo (p := p) c π) ([], (0 : Nat))).map Prod.fst =
+              some ms := hdec'
+          rw [hfold] at h1
+          exact h1
+        have hm2 : m2 = ms := Option.some.inj hdec''
+        have hfold' : (plan.slots.foldlM (decodeGo (p := p) c π) ([], (0 : Nat))) =
+            some (ms, c2) := by rw [hfold, hm2]
+        have hgo := wire_go (p := p) c π plan.slots 0 ByteArray.empty [] hnil
+          (hsize_go hsize) (Midfall.Lowering.encodeContractProof (p := p) c ms) c2
+        have hok : plan.slots.foldlM (repackGo (p := p) c π) (ByteArray.empty, (0 : Nat)) =
+            .ok (Midfall.Lowering.encodeContractProof (p := p) c ms, c2) :=
+          hgo.mpr ⟨ms, hfold', rfl⟩
+        rw [hrfl]
+        show (plan.slots.foldlM (repackGo (p := p) c π) (ByteArray.empty, (0 : Nat))).bind
+            (fun x => pure x.1) =
+          .ok (Midfall.Lowering.encodeContractProof (p := p) c ms)
+        rw [hok]
+        exact rfl
+
 
 /-- D8, the pipeline-level half, in the ONLY direction that is true. The PLAN wrote
     "repackProof = .ok π' iff exists ms, decodeRust = some ms and ...", and that is
@@ -465,12 +1287,67 @@ theorem repack_spec_of_decodeRust {G₁ G₂ Gₜ : Type}
     repackProof (p := p) plan E.g1 π = .ok (encodeContractProof E.g1 ms) := by
   sorry
 
+/-! Symmetry of the generator's pointer equality. 'Location' and 'Value' carry no
+    BEq (Encoding.lean:204 records why), so the four *Beq defs are hand-written and
+    their symmetry is not free. 'points_subgroup_checked_generator' needs it because
+    KZ:697 compares candidate.point against a.point while the statement reads the
+    other way round. -/
+
+
+
+theorem except_ok_inj {ε α : Type} {x y : α} (h : @Except.ok ε α x = @Except.ok ε α y) : x = y := by
+  cases h; rfl
+
+theorem beqSwap {α : Type} [BEq α] [LawfulBEq α] (a b : α) : (a == b) = (b == a) := by
+  by_cases h : a = b
+  · subst h
+    rfl
+  · rw [show (a == b) = false by simpa using h,
+        show (b == a) = false by simpa using (Ne.symm h)]
+
+theorem andSwap (x y : Bool) : (x && y) = (y && x) := by
+  rcases x <;> rcases y <;> rfl
+
+theorem locationBeq_comm (a b : Midfall.Generator.Location) :
+    Midfall.Generator.locationBeq a b = Midfall.Generator.locationBeq b a := by
+  rcases a with (_ | _) <;> rcases b with (_ | _) <;> rfl
+
+theorem valueBeq_comm (a b : Midfall.Generator.Value) :
+    Midfall.Generator.valueBeq a b = Midfall.Generator.valueBeq b a := by
+  cases a with
+  | integer x =>
+      cases b with
+      | integer y => show (x == y) = (y == x); rw [beqSwap x y]
+      | identifier _ _ => rfl
+  | identifier n1 o1 =>
+      cases b with
+      | integer _ => rfl
+      | identifier n2 o2 =>
+          show (n1 == n2 && o1 == o2) = (n2 == n1 && o2 == o1)
+          rw [beqSwap n1 n2, beqSwap o1 o2]
+
+theorem ptrBeq_comm (a b : Midfall.Generator.Ptr) :
+    Midfall.Generator.ptrBeq a b = Midfall.Generator.ptrBeq b a := by
+  unfold Midfall.Generator.ptrBeq
+  rw [locationBeq_comm, valueBeq_comm]
+
+theorem ecPointBeq_comm (a b : Midfall.Generator.EcPoint) :
+    Midfall.Generator.ecPointBeq a b = Midfall.Generator.ecPointBeq b a := by
+  show Midfall.Generator.ptrBeq a.base b.base = Midfall.Generator.ptrBeq b.base a.base
+  rw [ptrBeq_comm]
+
 /-- The generator layer of points_subgroup_checked: if the generator's own coverage
     validator accepts, then the absorbed proof G1s are exactly the layout's count and
     every one of them is an input to a precompile call the generator emits. The
     semantic layer - "every absorbed point reaches a precompile at run time" - is an
-    Obligations field because it needs the call trace. PROOF OBLIGATION, registered in
-    SORRY.md. -/
+    Obligations field because it needs the call trace.
+
+    PROVED by inverting the two branches of KZ:729-740: the count branch cannot have
+    fired (that is the first conjunct), the precompileValidatedG1s bind must have
+    returned some u, and validateG1PrecompileCoverage returning .ok () means the
+    missing-filter is empty, which is the cover. ecPointBeq_comm is needed because
+    KZ:697 compares candidate-then-absorbed while the statement reads it the other
+    way round. -/
 theorem points_subgroup_checked_generator
     (meta_ : Midfall.Generator.ConstraintSystemMeta) (data : Midfall.Generator.Data)
     (memory : Midfall.Generator.VerifierMemoryLayout) (L : ProofCalldataLayout)
@@ -480,7 +1357,46 @@ theorem points_subgroup_checked_generator
       ∀ t ∈ Midfall.Generator.proofAbsorbedG1s meta_ data memory,
         ∃ u, Midfall.Generator.precompileValidatedG1s meta_ data memory = .ok u ∧
           ∃ v ∈ u, Midfall.Generator.ecPointBeq t.point v.point = true := by
-  sorry
+  set absorbed := Midfall.Generator.proofAbsorbedG1s meta_ data memory
+  rw [Midfall.Generator.validateAbsorbedG1PrecompileCoverage] at h
+  simp only [Bind.bind, Pure.pure, Except.pure] at h
+  by_cases hc : (absorbed.length != L.totalG1Count) = true
+  · rw [ite_eq_left hc] at h
+    cases h
+  · rw [ite_eq_right (by simpa using hc)] at h
+    have hlen : absorbed.length = L.totalG1Count := by
+      by_contra H
+      exact hc (by simp [H])
+    obtain ⟨u, hu, h2⟩ := except_bind_ok _ _ h
+    have hinner : Midfall.Generator.validateG1PrecompileCoverage absorbed u = .ok () :=
+      except_ok_inj h2
+    have hnil : (absorbed.filter
+        (fun a => ! u.any (fun c => Midfall.Generator.ecPointBeq c.point a.point))) = [] := by
+      have hhead : (absorbed.filter
+          (fun a => ! u.any (fun c => Midfall.Generator.ecPointBeq c.point a.point))).head? = none := by
+        rw [Midfall.Generator.validateG1PrecompileCoverage] at hinner
+        split at hinner
+        · assumption
+        · exact absurd hinner (by simp)
+      rw [← List.head?_eq_none_iff]
+      exact hhead
+    refine ⟨hlen, ?_⟩
+    intro t ht
+    refine ⟨u, hu, ?_⟩
+    have hcov : u.any (fun c => Midfall.Generator.ecPointBeq c.point t.point) = true := by
+      by_contra H
+      have : t ∈ absorbed.filter
+          (fun a => ! u.any (fun c => Midfall.Generator.ecPointBeq c.point a.point)) := by
+        simp only [List.mem_filter]
+        exact ⟨ht, by simpa using H⟩
+      rw [hnil] at this
+      exact absurd this (by simp)
+    obtain ⟨v, hv, hbeq⟩ := List.any_eq_true.mp hcov
+    have hfin : Midfall.Generator.ecPointBeq t.point v.point = true := by
+      rw [ecPointBeq_comm]
+      exact hbeq
+    exact ⟨v, hv, hfin⟩
+
 
 
 /-! ### 7. Known-answer checks
@@ -736,6 +1652,85 @@ def encodeCalldataKats_ok : Bool :=
   (match repackThenEncode (p := 17) 1 katPlan toyCodec katCompressed #[5] with
    | .ok cd => cd == calldataOf (p := 17) toyCodec katMsgs [BitVec.ofNat 256 5]
    | .error _ => false)
+
+/-! ### 8. D-P23: every claim in this file carries a witness AND a refutation
+
+    The rule is that a proved bridge must be shown to be satisfiable and to be
+    breakable, both as THEOREMS and not as comments. The Bool gates above are the
+    per-guard refutations; what follows are the Prop forms, including the one that
+    matters most for the ten partial specs: 'hcd' is not an unsatisfiable hypothesis
+    at a layout the decoder's own guards can be met by. -/
+
+/- **THE TWO WITNESSES THAT MUST EVALUATE BYTES LIVE UNDER Instances/.** Proving that some
+   calldata really decodes, and that an over-long stream really does not, needs the toy
+   buffers reduced, and the only reduction that finishes inside the budget is
+   native_decide - which the native_decide-confinement gate forbids in a theorem-bearing
+   file. They are therefore proved in Instances/SurfaceFixture.lean as
+   hcd_satisfiable_toy and repack_wire_refuted_length_toy, next to
+   hcd_satisfiable_at_deployment. Everything else in this section is portable and stays. -/
+
+/-- The skew GATE 5 builds really does break the guard, so the refutation above is
+    not standing on an uninhabited hypothesis. -/
+theorem katLayout_skew_breaks_the_guard :
+    ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofEnd ≠
+      ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofCptr +
+        ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofLen := by
+  decide
+
+/-- Witness for 'repack_spec_wire': the iff is inhabited, and the left side really
+    produces the contract bytes of what the right side decodes. -/
+theorem repack_wire_witness :
+    repackProof (p := 17) katPlan toyCodec katCompressed =
+      Except.ok (encodeContractProof (p := 17) toyCodec katMsgs) := by
+  set_option maxRecDepth 200000 in
+  exact rfl
+
+/-- Witness for 'sum_commitmentReadGroups' at a layout whose group list is not the
+    trivial one. -/
+theorem sum_groups_witness :
+    (RepackedProofLayoutPlan.fromProofLayout katLayout).prefixG1Count =
+      katLayout.commitmentG1Count := sum_commitmentReadGroups katLayout
+
+/-- Refutation for 'sum_commitmentReadGroups': the filter is not decoration. A
+    layout with a zero advice phase reports a group list that is NOT the list of
+    every phase count, so the lemma is a real statement about a filter and not
+    'List.sum_map_id' in disguise. -/
+theorem sum_groups_filter_bites :
+    ({ Midfall.Generator.proofCalldataLayoutDefault with
+       advicePhases := [Midfall.Generator.ProofSection.new 0 0 128,
+         Midfall.Generator.ProofSection.new 0 3 128] }).commitmentReadGroups ≠
+    [0, 3] := by
+  intro hh
+  exact absurd hh (by decide)
+
+/-- Witness for 'proofLen_eq_repackedLen': the toy layout really does tile, so the
+    two guards the lemma delivers are met by something. -/
+theorem proofLen_witness :
+    katLayout.proofLen = (RepackedProofLayoutPlan.fromProofLayout katLayout).repackedLen ∧
+      katLayout.proofEnd = katLayout.proofCptr + katLayout.proofLen := ⟨rfl, rfl⟩
+
+/-- Refutation for 'proofLen_eq_repackedLen': the hypothesis is not vacuous either -
+    a hand-built layout with a length word that disagrees with its proof region
+    fails the second conjunct, which is what the decoder's guard defends against. -/
+theorem proofLen_skew_falsifies :
+    ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofEnd ≠
+      ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofCptr +
+        ({ katLayout with proofLen := 7 } : ProofCalldataLayout).proofLen := by
+  decide
+
+/-- Refutation for 'points_subgroup_checked_generator': the validator's hypothesis
+    is a real constraint, not a True. A layout whose total G1 count disagrees with
+    what the generator tracked cannot satisfy it - which is the cross-module
+    invariant absorbedCoverage_countMismatch_ok exercises on the Rust side. -/
+theorem psc_hypothesis_is_a_real_constraint (meta_ : Midfall.Generator.ConstraintSystemMeta)
+    (data : Midfall.Generator.Data) (memory : Midfall.Generator.VerifierMemoryLayout)
+    (L : ProofCalldataLayout)
+    (h : L.totalG1Count ≠ (Midfall.Generator.proofAbsorbedG1s meta_ data memory).length) :
+    Midfall.Generator.validateAbsorbedG1PrecompileCoverage meta_ data memory L ≠
+      .ok (.ok ()) := by
+  intro hh
+  have := points_subgroup_checked_generator meta_ data memory L hh |>.1
+  exact h this.symm
 
 end CdKats
 

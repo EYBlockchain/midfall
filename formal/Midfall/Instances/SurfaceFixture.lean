@@ -1161,6 +1161,88 @@ def faithfulnessRefutations_ok : Bool :=
 
 #eval faithfulnessRefutations_ok        -- expect true
 
+/-! ### P-MC-CALLDATA: the four exhibits above that became THEOREMS
+
+    The Bool gates stay, because a gate is what a CI run can read. What is new is that
+    three of their conjuncts are now propositions proved by the kernel rather than by
+    the interpreter, and one of them is the anti-vacuity claim the whole 'hcd' layer
+    rests on. -/
+
+/-- **THE CHAIN CLOSES AT THE DEPLOYMENT'S OWN LAYOUT.** 'hcd' - the hypothesis of all
+    ten partial specs, of 'LeanAccepts' and of all three side conditions - is
+    SATISFIABLE at the real 4484-byte calldata over the real 72-slot layout. This is
+    the theorem form of the first conjunct of 'encodeCalldata_faithful_at_layout', and
+    it is what 'Surface.hProofLayout' was restored to make provable: without the two
+    guards 'decodeCalldata' insists on, 'hcd' would be an unsatisfiable hypothesis and
+    every spec that takes it would be true because nothing decodes. -/
+theorem hcd_satisfiable_at_deployment :
+    (decodeCalldata (p := rp) fxPlan.proofLayout realSurface.cfg.numInstances
+      realSurface.E.g1 fxLayoutCalldata).isSome := by
+  native_decide
+
+/- The same claim at the toy layout this file's decoder KATs are built on, so the
+    anti-vacuity witness exists at BOTH sizes. It lives here and not in
+    `Midfall/Lowering/Calldata.lean` only because reducing the toy bytes needs
+    `native_decide`, which the confinement gate keeps out of theorem-bearing files;
+    the portable half of the same story (`decodeCalldata_none_of_layout_skew`,
+    `decodeCalldata_none_of_pointer_skew`, `decodeCalldata_hend_of_some`) is
+    proved by unfolding alone and stays there. -/
+
+section ToyCalldataWitnesses
+local instance cdFact17 : Fact (Nat.Prime 17) := ⟨by decide⟩
+open Midfall.Lowering Midfall.Lowering.CdKats
+
+theorem hcd_satisfiable_toy :
+    (decodeCalldata (p := 17) katLayout 1 toyCodec
+       (calldataOf (p := 17) toyCodec katMsgs [BitVec.ofNat 256 7])).isSome := by
+  native_decide
+
+/-- Refutation companion: an over-long compressed stream is rejected by BOTH sides of
+    `repack_spec_wire`, which is the arm the iff loses if `decodeWire` drops
+    its exact-length guard. Perturbation evidence: with that guard deleted, this is the
+    theorem `native_decide` refutes. -/
+theorem repack_wire_refuted_length_toy :
+    (decodeWire (p := 17) katPlan toyCodec
+       (katCompressed ++ Midfall.natToBytesLE 1 32)).isNone := by
+  native_decide
+end ToyCalldataWitnesses
+
+/-- The same two guards, for the same layout, as a CONSEQUENCE of
+    'proofLen_eq_repackedLen' rather than as a computation over a transcription. The
+    difference matters: 'fixtureLayout_satisfies_the_guards' checks the numbers this
+    package transcribed from the deployed dump, while this says any layout the
+    generator produces at the ABI pointer satisfies them, so the pin's witness cannot
+    be the only layout for which the decoder is usable. -/
+theorem fixtureLayout_guards_from_theorem :
+    fxPlan.proofLayout.proofCptr = abiVerifyProofProofCptr ∧
+      fxPlan.proofLayout.proofLen =
+        (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout).repackedLen ∧
+      fxPlan.proofLayout.proofEnd =
+        fxPlan.proofLayout.proofCptr + fxPlan.proofLayout.proofLen := by
+  obtain ⟨h1, h2⟩ := Midfall.Lowering.proofLen_eq_repackedLen fxProofProtocol 48 3
+    fxPlan.proofLayout rfl
+  exact ⟨rfl, h1, h2⟩
+
+/-- The theorem form of 'repackProof_faithful_at_layout''s first conjunct: at the
+    deployment's plan the repacker's output IS the contract bytes of the message list
+    the schedule decodes to. Spelled as a match because 'Except' over 'RepackError'
+    carries no BEq, so the equation is not directly decidable. -/
+theorem repackProof_faithful_at_layout_is_ok :
+    (match repackProof (p := rp)
+          (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout) realSurface.E.g1
+          fxCompressedProof with
+     | .ok out => out == fxLayoutRepacked
+     | .error _ => false) = true := by
+  native_decide
+
+/-- And the decodeWire half of the same claim, at the deployment's 72 slots rather
+    than at the 4-slot KAT plan. -/
+theorem decodeWire_faithful_at_layout_is_ok :
+    (decodeWire (p := rp)
+        (RepackedProofLayoutPlan.fromProofLayout fxPlan.proofLayout) realSurface.E.g1
+        fxCompressedProof).map (fun ms => ms.length) == some 72 := by
+  native_decide
+
 /-- R-58 G2. The encoder now returns EIP-2537-shaped bytes for every point, and the
     value it replaced - the empty byte string - does not, so the pin is what forced
     the change rather than a note next to it.

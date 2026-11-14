@@ -216,3 +216,87 @@ exhibited. Refuting the existential needs an inversion lemma for `fromProtocol` 
 tower did not close it and the lemma was not proved. The gate for the class is
 `scripts/check_statement_fingerprints.py` `SURFACE_PINS`, which now carries `hProofLayout`
 (235 fragments, up from 231) and reddens if the pin is paraphrased or gutted.
+
+
+---
+
+## P-MC-CALLDATA - the seven `Calldata.lean` holes, checked against section H
+
+Statement authority: `docs/plans/P-SE-semantic-equivalence.md` section H, lines 1111-1314.
+Each of the seven holes was read against its sketch BEFORE being proved. Result: **six of the
+seven matched the sketch verbatim** (modulo the recorded `hexOf` -> `hexEncodeLower` and
+`encodeCalldataRaw`-as-alias substitutions, which predate this package and are annotated at
+their sites). **One had drifted, and it had drifted WEAKER.**
+
+| hole | sketch | implemented form found | verdict |
+|---|---|---|---|
+| `sum_commitmentReadGroups` | H:1258 | identical | proved as stated |
+| `proofLen_eq_repackedLen` | H:1261 | identical | proved as stated |
+| `calldata_roundtrip` | H:1267 | identical, incl. `hp : p <= 2^256` | NOT proved (out of room); statement unchanged |
+| `calldata_canonical` | H:1280 | **carried an extra binder** `hend : L.proofEnd = L.proofCptr + L.proofLen` | **RESTORED to the sketch, then left as a hole** |
+| `repack_spec_wire` | H:1287 | identical | proved as stated |
+| `repack_spec_of_decodeRust` | H:1294 | identical | NOT proved (out of room); statement unchanged |
+| `points_subgroup_checked_generator` | H:1305 | identical | proved as stated |
+
+**The `calldata_canonical` drift, and why the sketch form is the right one.** The implemented
+statement took the layout-consistency equation as a hypothesis. Section H does not, and cannot
+need it: `decodeCalldata` itself contains `guard (L.proofEnd == L.proofCptr + L.proofLen)`,
+so any successful decode already implies it. The file's own docstring even justified the binder
+as "necessary for hand-built layouts", which is false for the same reason - it is necessary for
+hand-built layouts to *decode at all*, which is the hypothesis. Carrying it as a binder made
+the claim strictly weaker than the sketch, which is the drift class this package was told to
+look for. Restored: `hend` is gone from the statement, and `decodeCalldata_hend_of_some`
+(Calldata.lean, section 6) proves the equation from `h` so the restoration costs the next
+package nothing. One honest caveat, because the authority document disagrees with ITSELF and the next
+package should not have to rediscover it: section H (lines 1280-1284, the designated
+authority for this package) states `calldata_canonical` WITHOUT `hend`, while the same
+document's index row at line 233 reads
+`calldata_canonical (hc : eipRoundtrip) (hend)`. So the binder in the tree may be a
+transcription of the index rather than a drift from the sketch. The restoration follows
+section H because that is what the brief names as authority, and the choice is cheap either
+way: `decodeCalldata_hend_of_some` proves the equation from `h`, so a future proof of the
+sketched form can recover `hend` in one line, and a future decision to keep the index's
+shape is a one-line re-addition rather than a re-proof. **A human should pick one and
+delete the other from the authority document.**
+The two generic refutations `decodeCalldata_none_of_layout_skew` and
+`decodeCalldata_none_of_pointer_skew` moved from the KAT namespace to section 6 as part of the
+same edit, because they are the contrapositive of exactly this fact and are stated over an
+arbitrary codec, not the toy.
+
+**Does the `hProofLayout -> proofLen_eq_repackedLen -> calldata_roundtrip -> hcd` chain
+close?** **Partly, and the part that did not is the last link.** `proofLen_eq_repackedLen` is
+now a theorem, so the first arrow is proved: for EVERY layout the generator produces at the ABI
+pointer - not just the transcribed poseidon one - the two guards `decodeCalldata` insists on
+hold, and `proofLen` really is the repacked length. The anti-vacuity claim itself is now a
+theorem at the deployment's own layout: `SurfaceFixture.hcd_satisfiable_at_deployment` proves
+`(decodeCalldata\ rp\ fxPlan.proofLayout\ numInstances\ E.g1\ fxLayoutCalldata).isSome` -
+4484 bytes, 72 slots, the real codec - so `hcd` is satisfiable and the ten specs are not true
+because nothing decodes. What is still missing is the *symbolic* `calldata_roundtrip`: the
+statement that for an ARBITRARY message list with the layout's slot shape, `calldataOf` round
+trips. That needs byte-level window lemmas for `cdWord` over an unbounded buffer (the decoder
+reads 32-byte words at symbolic offsets), which is a larger piece than the room left. It is
+registered at Calldata.lean:743 unchanged.
+
+**D-P23 for the four claims proved here.** Witness and refutation, both as theorems, all in
+`Calldata.lean` section 8 (`CdKats` except where noted:
+`sum_commitmentReadGroups` - `sum_groups_witness` + `sum_groups_filter_bites` (a layout whose
+group list is NOT the list of phase counts, so the lemma is about a filter and not
+`List.sum_map_id`). `proofLen_eq_repackedLen` - `proofLen_witness` + `proofLen_skew_falsifies`
++ `SurfaceFixture.fixtureLayout_guards_from_theorem` (the guards derived from the theorem
+rather than checked against the transcription). `repack_spec_wire` - `repack_wire_witness` +
+`repack_wire_refuted_length` + `SurfaceFixture.repackProof_faithful_at_layout_is_ok` and
+`decodeWire_faithful_at_layout_is_ok` (the 72-slot deployment plan, as theorems).
+`points_subgroup_checked_generator` - witness is the pre-existing
+`validateAbsorbedCoverage_fixture_ok` gate over the real plan; refutation is
+`psc_hypothesis_is_a_real_constraint`, which proves the hypothesis fails whenever the layout's
+`totalG1Count` disagrees with what the generator tracked.
+
+**The limit, stated because it has now been measured eighteen times.** Deleting a falsification
+theorem leaves the build green: with `repack_wire_refuted_length` removed, `lake build`
+completed successfully (2119 jobs) and nothing anywhere noticed. No gate in `checks.sh`
+distinguishes a refutation from a comment. The five perturbations run for this package all
+behaved - deleting the layout-consistency guard reddened, dropping `decodeWire`'s exact-length
+guard reddened (and `native_decide` caught the resulting falsehood), falsifying the second
+conjunct of `proofLen_eq_repackedLen` reddened, and changing `sum_commitmentReadGroups`'s
+right-hand side to `totalG1Count` reddened - but none of those is a *deletion* of a
+refutation, and that gap is not closed here.
