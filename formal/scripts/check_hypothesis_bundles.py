@@ -91,18 +91,44 @@ GATES = "Midfall/Instances/ObligationsGates.lean"
 #  * The fourth element of a gap tuple is a FORBIDDEN list: phrases that named a blocker which
 #    is now closed. This is the direction the body-only tokens cannot cover - they require the
 #    gap to say more, never that it stop saying something - so a reverted record reddens.
-HOLDS_GAP_TOKENS = ["g2Valid", "pairing2", "Fp[u]/(u^2+1)", "2p^2 + 1",
-                    "AdmissiblePairing", "g1CodecZ_g1_four", "g2foldToEip",
-                    "holds_staged", "g1zToEip_injective",
-                    "ONE clause remains", "FOUR OF FOUR"]
+#
+# P-HOLDS-FINAL RE-POINTED THEM A THIRD TIME, and the direction of the change is the interesting
+# one: the record is now CLOSED as a term, so the tokens moved from naming an OPEN clause to
+# naming the exhibit that closed it and the ONE fact that survives - that no Surface installs the
+# codecs. "ONE clause remains" therefore left the required list and joined the FORBIDDEN list: a
+# record that still counts a remaining clause after the last one closed is reciting a retired
+# blame, which is the exact failure the forbidden mechanism exists for. "holds_exhibited" and
+# "assumption_dP36a" are required so the record cannot be rewritten back to "nothing is staged"
+# without reddening, and "CLOSED AS A TERM" / "OPEN AT THE FIXTURE" are required because those
+# two phrases ARE the finding - a substring test cannot see wording unless the wording is a token.
+HOLDS_GAP_TOKENS = ["holds_exhibited", "assumption_dP36a", "AdmissiblePairing", "g1CodecZ",
+                    "g2CodecFold", "g2foldToEip", "pairing2", "g2Valid", "g1CodecZ_g1_four",
+                    "bundle_holds_empty", "exponent codec", "2p^2 + 1",
+                    "CLOSED AS A TERM", "OPEN AT THE FIXTURE", "FOUR OF FOUR"]
 HOLDS_GAP_FORBIDDEN = ["no Lean library has", "still out of reach", "cannot be stated for all",
-                       "nothing to quantify over", "no Fp2 model in the tree"]
+                       "nothing to quantify over", "no Fp2 model in the tree",
+                       "ONE clause remains", "not exhibited as a single term",
+                       "or construct Fp12"]
+#
+# THE NAMED HYPOTHESIS, registered the same way a gap is (P-HOLDS-FINAL, D-P36a). The exhibit rests
+# on ONE assumption and the gate's job is to make it impossible to widen it silently: every
+# constant it names must appear, and the phrases that would turn an assumption into a construction
+# or into the conclusion are banned. The axiom-level twin of this list is the holds_exhibited
+# probe in scripts/check_frozen_axioms.py, which is the stronger check - a text gate can be
+# satisfied by a sentence, an axiom set cannot.
+ASSUMPTION_TOKENS = ["blsGT", "blsGT_group", "blsGT_primeOrder", "blsGT_module",
+                     "bls12_381Pairing", "AdmissiblePairing", "G₁z", "G2fold", "D-P36a",
+                     "no Fp12", "trusted base", "holds_exhibited", "Five constants",
+                     "cannot silently widen"]
+ASSUMPTION_FORBIDDEN = ["proves the pairing", "constructs Fp12", "assumes Eip2537.Holds",
+                        "no new assumption"]
 G2_GAP_TOKENS = ["g2Valid", "Fp[u]/(u^2+1)", "2p^2 + 1", "fp2Ops",
                  "closed by P-G2B", "non-degenerate", "g2foldToEip", "all-zero encoder"]
 GAP_HOLDS = ("gap_holds_unexhibited", ["Eip2537.Holds"], HOLDS_GAP_TOKENS,
              HOLDS_GAP_FORBIDDEN)
 G2_GAP_FORBIDDEN = ["has no Fp2", "nothing to quantify over"]
 GAP_G2 = ("gap_g2_no_fp2_model", ["Eip2537.Holds"], G2_GAP_TOKENS, G2_GAP_FORBIDDEN)
+ASSUMPTION = ("assumption_dP36a", ["Eip2537.Holds"], ASSUMPTION_TOKENS, ASSUMPTION_FORBIDDEN)
 
 REGISTRY = [
     {
@@ -114,14 +140,14 @@ REGISTRY = [
         "field": "verifier_sound",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2,
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION,
                  ("gap_runLeg_unexhibited", ["RunVerifier"])],
     },
     {
         "field": "verifier_complete",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2,
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION,
                  ("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
@@ -135,7 +161,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2],
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION],
     },
     {
         "field": "qvm_validated_noBoundsFault",
@@ -148,7 +174,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2],
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -158,7 +184,7 @@ REGISTRY = [
         "field": "lowering_equivalence",
         "kind": "theorem",
         "exhibit": ("bundle_envAgrees", ["SupportedS", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2],
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION],
     },
 ]
 

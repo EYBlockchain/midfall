@@ -10,8 +10,10 @@
 -- proofs do not need, everything is stated over an `AdmissiblePairing` shaped
 -- exactly like the parameters ArkLib's KZG takes
 -- (ArkLib/Commitments/Functional/KZG/Basic.lean:47-52), so ArkLib's theorems
--- apply to it verbatim. The concrete BLS12-381 instance is discharged once, in
--- Midfall/Assumptions/Pairing.lean.
+-- apply to it verbatim. The concrete BLS12-381 instance is not constructed here
+-- at all: per D-P36a an AdmissiblePairing on the exhibited groups is ASSUMED, as five named
+-- constants in Midfall/Assumptions/CurvePairing.lean (P-HOLDS-FINAL), while the moduli that pin
+-- the scalar field live in Midfall/Assumptions/Pairing.lean.
 --
 -- Bilinearity is carried by the *type*: a curried `LinearMap` between the
 -- additive forms of the three groups is precisely a `ZMod p`-bilinear pairing.

@@ -101,6 +101,42 @@ REPAIR_NO_SORRY = ["repair1_satisfiable", "repair1_old_false_at_degEnv",
                    "repair2_new_shape_inhabited", "repair3_rederived",
                    "repair3_hash_is_not_forced", "repair1_law_is_not_free"]
 
+# ---------------------------------------------------------------------------
+# THE D-P36a TRUSTED-BASE PROBE (P-HOLDS-FINAL).
+#
+# WHY THIS IS HERE AND NOT ONLY IN THE TEXT GATES. check_hypothesis_bundles.py can
+# require assumption_dP36a to NAME five constants; it cannot require the exhibit to
+# depend on exactly those five and nothing else. That second half is what "cannot
+# silently widen" actually means, and only the kernel can answer it: '#print axioms'
+# on holds_exhibited is a computed fact about the proof term, not a sentence someone
+# can paraphrase. So this gate asserts an EXACT SET, in both directions:
+#   * an EXTRA axiom reddens - a sixth assumption, a native_decide smuggled into a
+#     dependency, or a 'sorry' filled by an untracked axiom;
+#   * a MISSING axiom reddens too, because holds_exhibited ceasing to depend on
+#     bls12_381Pairing would mean the exhibit is no longer the thing D-P36a authorised
+#     (someone proved it outright, or quietly restated it weaker), and either way the
+#     trusted-base row in docs/PLAN.md section 1 has just become false.
+# The names below are FULLY QUALIFIED, which is what the probe actually gets: printed names
+# depend on where the '#print axioms' command sits, and the first version of this gate copied
+# the unqualified spelling from a scratch file that declared the axioms in the same namespace.
+# It matched nothing and reddened on all five. Measured, not guessed.
+# ---------------------------------------------------------------------------
+HOLDS_FILE = "Midfall/Instances/HoldsFinal.lean"
+HOLDS_MODULE = "Midfall.Instances.HoldsFinal"
+# The five constants of Assumptions/CurvePairing.lean, i.e. D-P36a in full.
+DP36A_AXIOMS = {"Midfall.Assumptions.blsGT", "Midfall.Assumptions.blsGT_group",
+                "Midfall.Assumptions.blsGT_primeOrder", "Midfall.Assumptions.blsGT_module",
+                "Midfall.Assumptions.bls12_381Pairing"}
+# The exhibit's axiom set: the standard three (no classical logic claim is avoided here)
+# plus exactly the five above. NOT 'sorryAx': the exhibit is a proof.
+HOLDS_EXPECTED = {"propext", "Classical.choice", "Quot.sound"} | DP36A_AXIOMS
+# The exhibit and its D-P23 halves. All are proofs, so sorryAx in any of them means the
+# witness or the refutation the file claims has been replaced by a hole.
+HOLDS_NO_SORRY = ["holds_exhibited", "holds_exhibited_is_the_live_structure",
+                  "holds_exhibit_witness", "holds_refutes_constant_true",
+                  "holds_refutes_constant_false", "dP36a_class_not_empty",
+                  "dP36a_pairing_not_the_zero_map", "dP36a_target_not_a_singleton"]
+
 DECL = re.compile(r"^(?:private\s+|protected\s+)?(?:abstract\s+)?"
                   r"(theorem|lemma|def|abbrev|example)\b\s*([A-Za-z_][A-Za-z0-9_.']*)?")
 NAMESPACE = re.compile(r"^namespace\s+([A-Za-z_][A-Za-z0-9_.']*)")
@@ -148,6 +184,17 @@ def repair_targets(root):
     return [d for d in have if d.split(".")[-1] in set(REPAIR_NO_SORRY)]
 
 
+def holds_targets(root):
+    """The D-P23 halves in Instances/HoldsFinal.lean, qualified by the namespace the file
+    actually declares them in (the same lesson check_frozen_axioms learned for
+    StatementsRepair: a Lean namespace is not a file)."""
+    p = root / HOLDS_FILE
+    if not p.exists():
+        return []
+    have = frozen_declarations(p)
+    return [d for d in have if d.split(".")[-1] in set(HOLDS_NO_SORRY)]
+
+
 def parse(text):
     """full name -> set of axioms, read from #print axioms output, wrapped lines included."""
     got = {m.group(1): {a.strip() for a in m.group(2).split(",") if a.strip()}
@@ -182,6 +229,9 @@ def main():
         if (root / REPAIR_FILE).exists():
             imports.append("import %s\n" % REPAIR_MODULE)
             prints += ["#print axioms %s\n" % d for d in repair_targets(root)]
+        if (root / HOLDS_FILE).exists():
+            imports.append("import %s\n" % HOLDS_MODULE)
+            prints += ["#print axioms %s\n" % d for d in holds_targets(root)]
         probe.write_text("".join(imports) + "".join(prints), encoding="utf-8")
         r = subprocess.run(["lake", "env", "lean", str(probe)], cwd=root,
                            capture_output=True, text=True)
@@ -236,6 +286,39 @@ def main():
                             "satisfiability or refutation the frozen doc string cites is "
                             "asserted and not demonstrated (D-P23 wants both halves PROVED)"
                             % d)
+    # --- the D-P36a probe: exact axiom set on the exhibit, no sorry on any half ---
+    ht = holds_targets(root)
+    if not (root / HOLDS_FILE).exists():
+        problems.append("%s is missing, so the D-P36a exhibit cannot be probed at all"
+                        % HOLDS_FILE)
+    for n in HOLDS_NO_SORRY:
+        if not any(d.split(".")[-1] == n for d in ht):
+            problems.append("%s: EXHIBIT HALF NOT FOUND in %s - the trusted-base row and the "
+                            "bundle registry both cite it by name and it is no longer a "
+                            "declaration of that file" % (n, HOLDS_FILE))
+    for d in ht:
+        if d not in got:
+            problems.append("%s: NO AXIOM REPORT - it does not elaborate or was not probed; "
+                            "silence is not a pass" % d)
+            continue
+        ax = got[d]
+        if "sorryAx" in ax:
+            problems.append("%s: D-P23 HALF IS A HOLE - it carries sorryAx, so the witness or "
+                            "the refutation Instances/HoldsFinal.lean claims is asserted and "
+                            "not demonstrated" % d)
+        if d.split(".")[-1] == "holds_exhibited":
+            for a in sorted(ax - HOLDS_EXPECTED):
+                why = next((w for key, w in BANNED if key in a),
+                           "the trusted base of the Holds exhibit has WIDENED beyond D-P36a")
+                problems.append("%s: UNEXPECTED AXIOM %s - %s. Either the assumption was "
+                                "widened or something upstream started trusting the native "
+                                "evaluator; docs/PLAN.md section 1 would now be false."
+                                % (d, a, why))
+            for a in sorted(HOLDS_EXPECTED - ax):
+                problems.append("%s: ASSUMPTION AXIOM %s GONE - the exhibit no longer depends "
+                                "on the named hypothesis it is supposed to rest on, so the "
+                                "trusted-base row and this gate have to be re-read, not "
+                                "quietly relaxed" % (d, a))
     if problems:
         print("FROZEN STATEMENT AXIOMS BROKEN (%d):" % len(problems))
         for pr in problems:
@@ -249,6 +332,9 @@ def main():
           % (len(decls), len([d for d in decls if d in PROVED]),
              sorted(EXPECTED - {"sorryAx"}),
              len([d for d in decls if d not in PROVED]), sorted(EXPECTED), len(targets)))
+    print("ok: D-P36a probe - holds_exhibited depends on exactly %s (the standard three plus "
+          "the five named constants of Assumptions/CurvePairing.lean), and %d exhibit halves "
+          "carry no sorryAx" % (sorted(HOLDS_EXPECTED), len(ht)))
     return 0
 
 

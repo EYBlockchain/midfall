@@ -16,13 +16,18 @@
 -- lines. The G2 side needed the same ingredient and got it the same way
 -- ('g2foldToEip_injective', via 'addOrderOf_emb2_h2').
 --
--- WHAT IS STILL NOT CLAIMED, and this is the honest limit of the file:
---   * No 'AdmissiblePairing' on the curve groups exists in the tree. The theorem below is
---     CONDITIONAL: its hypothesis is exactly D-P36a, and nothing here discharges it. The only
---     'AdmissiblePairing' model in the tree is the exponent model (Instances/ExponentModel.lean),
---     and 'Exp blsR' is used here as the G2 CARRIER (an exponent-indexed carrier, which is what
---     makes a G2 encoder computable at all), NOT as a pairing model: the pairing below is a
---     hypothesis over 'G₁z' and 'G2fold', and no instance of it is available.
+-- WHAT THIS FILE DOES NOT CLAIM, and what P-HOLDS-FINAL changed since it was written:
+--   * The theorem below is CONDITIONAL and this file never discharges its hypothesis: its binder
+--     is exactly D-P36a. What changed in P-HOLDS-FINAL is that D-P36a became a NAMED assumption -
+--     five constants in Assumptions/CurvePairing.lean, recorded as 'assumption_dP36a' - so the
+--     unconditional exhibit exists one file away, as 'holds_exhibited' in
+--     Instances/HoldsFinal.lean, and it is this theorem with that binder discharged. Before that
+--     package the honest statement was 'no AdmissiblePairing on the curve groups exists in the
+--     tree'; now it is 'one is assumed, by name, and the gate pins the assumption set'. The only
+--     'AdmissiblePairing' MODEL in the tree is still the exponent model
+--     (Instances/ExponentModel.lean), and 'Exp blsR' is used here as the G2 CARRIER (an
+--     exponent-indexed carrier, which is what makes a G2 encoder computable at all), NOT as a
+--     pairing model: nothing here constructs a pairing.
 --   * The G2 carrier is not a set of curve points, so the 'Holds' term is not a claim that the
 --     precompile's accepted G2 frames are exactly the multiples of H2. See Instances/G2Codec.lean's
 --     header for what the carrier does and does not certify.

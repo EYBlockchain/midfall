@@ -672,12 +672,12 @@ theorem pcs_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
           turn a failed precompile call into a revert carrying the pinned selector;
       (b) Eip2537.Holds.pairing2, to turn the precompile answer into the pairing
           equation over the frame ec_pairing lays out;
-      (c) the model. Eip2537.Holds is not known satisfiable at ANY Surface in the tree:
-          the exponent codec sends a non-identity exponent to bytes no curve check
-          accepts, which Instances/SurfaceFixture.encG2AtFixture_ok states as a
-          computation. (c) is the binding one - P5 cannot be CLOSED without a real-curve
-          model, but it can be ATTEMPTED, because (a) and (b) are now statements about a
-          block that exists. -/
+      (c) the model, RESTATED BY P-HOLDS-FINAL: Eip2537.Holds is exhibited as ONE term now
+          (Instances/HoldsFinal.lean, 'holds_exhibited', under the named D-P36a pairing
+          assumption), so the clause HAS a model - still not at any Surface, because the
+          exponent codec sends a non-identity exponent to bytes no curve check accepts
+          (encG2AtFixture_ok) and VerifierEnv.g1 is typed over the Surface's own pairing. So
+          (c) is now a missing INSTANCE and not a missing Fp12; (a)/(b) are the Bridge work. -/
 theorem finalPairing_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)

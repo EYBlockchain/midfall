@@ -13,11 +13,20 @@
 -- or that `zeta` has order 3, and a wrong value silently changes the extended
 -- domain and the coset.
 --
--- This file therefore does two things: it pins the two moduli and the
+-- This file therefore does one thing: it pins the two moduli and the
 -- two-adicity as *data* (with the scalar field tied to CompPoly's, proved
--- below), and it states `BLS12_381Data`, the hypothesis structure that a real
--- instantiation must discharge. Per the gap policy there is no `sorry` here: a
--- hypothesis is a binder, not a hole.
+-- below). Per the gap policy there is no `sorry` here: a hypothesis is a binder,
+-- not a hole.
+--
+-- A NOTE ON THIS HEADER, because it used to be wrong and the correction is the kind
+-- of thing a later reader keeps tripping over. It claimed this file "states
+-- `BLS12_381Data`, the hypothesis structure that a real instantiation must
+-- discharge". No such declaration has ever existed here - the critic pass over
+-- P-SE-evidence found it and recorded it as a stale header claim, and a promise a
+-- file does not keep is worse than no promise. The named hypothesis this project
+-- actually needed arrived in P-HOLDS-FINAL as D-P36a, and it lives in
+-- `Assumptions/CurvePairing.lean` (five constants, recorded as `assumption_dP36a`
+-- in Instances/ObligationsGates.lean), not here.
 
 import CompPoly.Fields.BLS12_381.Basic
 import Midfall.Common.Curve
