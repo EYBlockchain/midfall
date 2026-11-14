@@ -421,6 +421,44 @@ witness/falsification pair to state; the two probes written to check the audit (
 `finalPairing` post-recovery) were run OUTSIDE the tree at `/tmp` and are reported as text, not
 committed.
 
+### R11 - round 138, after P-RESTORE2. The specs were weaker than the sketches, and one was false.
+
+**Four claims, and what measuring them showed:**
+
+- My first audit said 8 dropped EnvAgrees fields were a weakening. **Over-flagged**: 4 were recorded
+  with reasons and 3 relocated.
+- My correction said 7 of 8 were fine. **Under-flagged**: `accBasesInVk` was unannotated, and the
+  reversedEvals drop lived in the wrong register.
+- `Inv.lean:443-447` argued the three VK header clauses were redundant against the `.vk` payload
+  pin, and everyone inherited it. **REFUTED** - it pins memory to payload, never payload to codec,
+  and at the old two-word fixture the slots were not even inside the pinned range.
+- I planned to restore the sketch's 7-argument `EnvAgrees`. **Reverted after measuring**: it would
+  have deleted three curve exhibits to gain four clauses. The clauses live in sibling `VkSlotsAgree`,
+  and `EnvAgrees AND VkSlotsAgree` is the sketch's hypothesis field for field.
+
+**The 17th error of kind is the most instructive yet: an ANNOTATED reason was still wrong.** The
+redundancy argument was plausible, written down confidently, and false. **An annotated reason is
+still a premise.** The standing instruction to re-verify recorded premises now has to cover
+*explanations*, not just claims of impossibility.
+
+**A second lesson about my own corrections**: over-flagged, then under-corrected - and both errors
+came from checking whether a drop was *mentioned* rather than whether the *reason given* held. The
+mechanical sweep of 404 sketched declarations (25 absent, 8 unannotated) is the first check that
+does not depend on my reading.
+
+**What changed in the specs.** Four clauses restored and **consumed** (`hvks` in three theorems plus
+two checklist fields), so they are load-bearing. One spec's statement was strengthened because it
+was **false as written** - the emitted block reads `success` before writing it. The fixture grew from
+a 2-word to a 31-word header with codec-derived points. `PartialRejects` went from dead code to
+backing two real obligations.
+
+**Cost: 1 session.** Fragments 221 to 231, `ENV_CLAUSES` 1 to 5, 13/13 perturbations reddened,
+sorries unchanged at 56 - **restoration costs no proofs and removes none**; it changes what the
+remaining proofs must establish.
+
+**Consequence for M-B**, already 'one session then blocked': `finalPairing_spec` and
+`finalPairing_acc_spec` now carry an extra hypothesis `hvks`. That makes them harder to prove and
+*worth* proving - the correct trade. M-B's one approachable spec is unaffected.
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
