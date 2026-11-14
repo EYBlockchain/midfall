@@ -90,9 +90,16 @@
 --      BlkIsEmitter, because the placeholder WAS the emitter's answer.
 --      blkPinBitesLagrangePlaceholder, blkPinBitesTraceReturnPlaceholder and
 --      blkPinBitesQuotientLinPlaceholder are the three theorems that say it no longer does.
---   7. Eip2537.Holds is still NOT exhibited, and P-4a2 did not change that: the
---      blocker is the missing BLS12-381 curve model (D-P1, R-28), not the field
---      arithmetic. See ObligationsGates.gap_holds_unexhibited and encG2AtFixture_ok.
+--   7. Eip2537.Holds is still NOT exhibited as a single term, and P-4a2 did not change
+--      that - but the reason P-GAPFIX re-pointed. It used to be "the missing BLS12-381
+--      curve model (D-P1, R-28)". A curve model now EXISTS (Instances/G1Agreement.lean
+--      works over ZMod blsP and exhibits four of the six Holds clauses at a real-curve
+--      codec, g1CodecZ_g1_four), so what keeps Holds unexhibited here is that THIS
+--      fixture's pairing model is the exponent model: Surface is parameterised at
+--      RP = Exp rp, VerifierEnv.g1 is typed over that pairing, and a curve codec cannot
+--      be installed without a curve AdmissiblePairing (D-P36). The other two open clauses
+--      are g2Valid - no Fp2 model, gap_g2_no_fp2_model - and pairing2 at real points.
+--      See ObligationsGates.gap_holds_unexhibited and encG2AtFixture_ok.
 --   5. irCheck inspects top-level statements only. A full alpha-equivalence check
 --      modulo constant substitution is M8 work and is blocked on the same D-P15
 --      import; what is here is the decidable fragment that can already distinguish a
@@ -901,13 +908,18 @@ def planAccExpectationsKats_ok : Bool :=
 
     THE HONEST HALF, stated because the review asked for the field to be exhibited
     and it still is not: fixing encG2 does NOT make `Eip2537.Holds` satisfiable at
-    this Surface. The blocking clause is g1Valid, not g2Valid - the exponent codec
-    sends a non-identity exponent to bytes no curve check accepts (last line below,
-    the same fact vkPointsKats_ok uses to show the clause bites), and D-P1/R-28 say
-    there is no BLS12-381 model in the tree to replace it with. So every field that
-    carries Holds is still unexhibited, for a named reason that is a model, not a
-    missing pin. encG2_shape removed ONE cause of that; it did not remove the only
-    cause. -/
+    this Surface. The blocking clause at THIS codec is g1Valid, not g2Valid - the
+    exponent codec sends a non-identity exponent to bytes no curve check accepts
+    (last line below, the same fact vkPointsKats_ok uses to show the clause bites).
+    Re-pointed by P-GAPFIX, because the reason this note used to give for there being
+    no replacement codec is no longer true: D-P1/R-28 said the tree has no BLS12-381
+    model, and it now has one whose codec discharges all four G1-side clauses
+    (g1CodecZ_g1_four). What the tree still has no instance of is a curve
+    AdmissiblePairing (D-P36), and since VerifierEnv.g1 is typed over the Surface's own
+    pairing, that is what keeps the exponent codec installed here. So every field that
+    carries Holds is still unexhibited, for a named reason that is a model and not a
+    missing pin - just a different model than this note claimed. encG2_shape removed ONE
+    cause of that; it did not remove the only cause. -/
 def encG2AtFixture_ok : Bool :=
   encG2IsEip (realSurface.encG2 (fx 5)) && encG2IsEip (realSurface.encG2 (fx 0)) &&
     -- R-60 S4, the limitation as a computation: the pin is met by a CONSTANT encoder,
@@ -1897,8 +1909,8 @@ theorem fxDomOldBaryFails :
     contract's 16-byte truncation width, and a PlanView that agrees with its own
     ConstraintSystem. The per-partial theorems in Lowering/Partials.lean therefore no
     longer carry an unexhibited hypothesis for the field-arithmetic reason - the remaining
-    unexhibited hypothesis of the headline bundle is Eip2537.Holds, which is the curve
-    model (note 7), not this. -/
+    unexhibited hypothesis of the headline bundle is Eip2537.Holds, which is the pairing
+    model at this fixture plus the missing G2/Fp2 model (note 7), not this. -/
 theorem fxEnvAgrees : EnvAgrees fxE fxVk fxPlan fxParams (fx 5) :=
   { modulus := rfl
     truncWidth := by decide

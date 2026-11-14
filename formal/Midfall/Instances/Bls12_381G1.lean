@@ -11,7 +11,9 @@
 -- points (the generator below is the published H1 and its r-torsion membership is a kernel
 -- proof, not an assertion), and the codec is the byte codec: toEip is the identity on a
 -- frame, ofEip? is the validator. That makes two of the six Holds clauses TRUE over real
--- curve points here - g1Valid, and g1Decodes in the width-repaired form - which is the part
+-- curve points AT THIS CODEC - g1Valid, and g1Decodes in the width-repaired form - and the
+-- frame type is not the carrier the exhibit uses: g1CodecZ on the zpowers carrier G₁z
+-- discharges FOUR of six (g1CodecZ_g1_four, Instances/G1PointCount.lean). Which is the part
 -- of the brief that is achievable, and it is achievable in Instances/ rather than in
 -- Assumptions/ because D-P17 keeps a concrete curve out of theorem-bearing files.
 --
@@ -27,7 +29,8 @@
 --      (g1FrameCodec_decodesWidth) and refutes the pinned old text (g1FrameCodec_not_g1DecodesOld).
 --      What the repair does NOT buy is the exhibit: repairing g1Decodes unblocks the clause,
 --      not the exhibit, for the two reasons below.
---   2. G1Frame IS NOT A GROUP, AND CANNOT BE MADE INTO ONE HERE. The obstruction is not the
+--   2. G1Frame IS NOT A GROUP, AND CANNOT BE MADE INTO ONE HERE - THOUGH THE CLAUSES THAT
+--      DEPENDED ON IT ARE PROVED ANYWAY, ON A DIFFERENT CARRIER. The obstruction is not the
 --      codec and not the byte model: affineAdd and affineSmul in Externals.lean are integer
 --      arithmetic on decoded bytes, and the facts that would make them a group law - the sum
 --      of two on-curve points is on-curve, the chord-and-tangent law is associative, r * P = O
@@ -37,21 +40,36 @@
 --      pBase): a 381-bit primality proof. THE TREE NOW HAS ONE: Assumptions/BasePrime.lean
 --      proves Nat.Prime pBase by a Lucas/Pratt certificate (CompPoly's pattern for r, extended
 --      to the base modulus), so ZMod pBase is a Field and the blocker below is construction,
---      not a missing fact: the group law on the frame type still has to be BUILT, and the
---      agreement of affineAdd with mathlib's AffinePoint.add still has to be proved. Until
---      that construction exists g1Add and g1Msm1 cannot be stated for all points at all: they
---      are equations between affineAdd/affineSmul and a group law that does not exist yet.
---      What is demonstrated below is the concrete instances of those equations on real
---      points, as gates - the clause shape is right and the arithmetic is right; the
---      generalisation is what is missing.
---   3. G1Frame DOES NOT HAVE PRIME ORDER, AND THAT IS A POINT-COUNTING THEOREM.
---      PrimeOrderWith G1Frame r is Nat.card G1Frame = r: the r-torsion of E(Fp) has exactly r
---      elements. For BLS12-381's G1 that is true, but proving it needs either a point count of
---      E over Fp (Schoof-Elkies-Atkin, which no Lean library has) or the structure theorem for
---      the n-torsion of an elliptic curve over a field plus gcd(r, p - 1) = 1, which mathlib
---      does not have either. This is the wall the "smaller than it sounds" framing does not
---      get past: Holds asks for a prime-order group whose codec hits EVERY precompile-valid
---      frame, and that demand IS a statement about how many curve points there are.
+--      not a missing fact: the group law on the FRAME type still has to be BUILT, and the
+--      agreement of affineAdd with mathlib's AffinePoint.add still has to be proved AT THE
+--      FRAME TYPE. WHAT P-GAPFIX CORRECTS IN THIS HEADER is the sentence that used to follow,
+--      "until that construction exists g1Add and g1Msm1 cannot be stated for all points at
+--      all". That is no longer true and was overtaken by P-G1AGREE and P-G1CODEC: the general
+--      statements exist on the zpowers carrier G₁z, whose group law is mathlib's own on
+--      WeierstrassCurve.Affine.Point, and g1CodecZ_g1Add and g1CodecZ_g1Msm1 are theorems
+--      about EVERY point of that carrier (jointly with g1Valid and g1Decodes in
+--      g1CodecZ_g1_four, Instances/G1PointCount.lean). So the frame type's missing Group
+--      instance is now redundant plumbing rather than the wall: the exhibit does not need it,
+--      because it has a carrier that already has one. What is demonstrated below is still
+--      what it always was - the concrete instances of those equations on real frames, as
+--      gates, at the byte codec rather than at the subgroup carrier.
+--   3. G1Frame STILL HAS NO PRIME ORDER INSTANCE - BUT THE COUNT THAT USED TO BE BLAMED FOR
+--      IT IS A THEOREM NOW, AND THAT CHANGED WHAT THIS FILE IS. PrimeOrderWith G1Frame r is
+--      Nat.card G1Frame = r: the r-torsion of E(Fp) has exactly r elements. This header used
+--      to say that proving it needs a point count of E over Fp (Schoof-Elkies-Atkin, which no
+--      Lean library has) or the n-torsion structure theorem plus gcd(r, p - 1) = 1, and that
+--      the demand "a prime-order group whose codec hits EVERY precompile-valid frame" IS a
+--      statement about how many curve points there are. Every clause of that was overtaken:
+--      P-POINTCOUNT proved the count by a third route nobody had priced - #E(Fp) <= 2p+1 (two
+--      square roots per x, no Hasse bound) squeezed against 2p+1 < r^2 forces every r-torsion
+--      point into the cyclic subgroup generated by the published generator
+--      (Instances/G1PointCount.lean, torsion_eq_zpowers_gen), with no Weil pairing, no
+--      structure theorem and no new named assumption - and the carrier Holds is exhibited on
+--      never needed the count at all, since PrimeOrderWith G₁z blsR follows from
+--      primeOrderWith_zpowers (D-P34). So the G1 side of Holds is FOUR OF FOUR at a real-curve
+--      codec (g1CodecZ_g1_four), and what is left of Holds is g2Valid and pairing2, neither of
+--      which is a G1 question. gap_g1_prime_order is re-pointed to the two transport jobs that
+--      actually remain.
 --
 -- WHY THE FRAME TYPE AND NOT AN EXPONENT TYPE. The cheaper-looking model - keep G1 as
 -- Multiplicative (ZMod r) and define toEip n as the bytes of n * G - satisfies nothing this
@@ -290,8 +308,12 @@ def g1PrecompileAgreesKats_ok : Bool :=
 #eval g1PrecompileAgreesKats_ok   -- expect true
 
 /-- THE TWO GAPS, as named defs so the next reader sees the blocker and not just the absence.
-    These are not Holds clauses and not hypotheses: they name the two missing mathematical
-    results, each of which is a package of its own. -/
+    These are not Holds clauses and not hypotheses. P-GAPFIX re-pointed them, because they are
+    no longer a pair: gap_g1_no_group_law is OPEN as construction at the frame type, and
+    gap_g1_prime_order is CLOSED as mathematics - the count it blamed is a theorem of
+    Instances/G1PointCount.lean - leaving only transport plumbing behind it. Neither is a
+    blocker on the path to a single Holds term any more; gap_holds_unexhibited and
+    gap_g2_no_fp2_model in Instances/ObligationsGates.lean name what is. -/
 def gap_g1_no_group_law : String :=
   "blocker: G1Frame has no Group instance. affineAdd/affineSmul are integer arithmetic on "
     ++ "decoded bytes; the group-law facts (closure of the on-curve set, associativity, "
@@ -300,23 +322,55 @@ def gap_g1_no_group_law : String :=
     ++ "(Assumptions/BasePrime.lean, pBase_prime: Nat.Prime pBase by a Lucas/Pratt "
     ++ "certificate, no native_decide), so ZMod pBase is a Field and the remaining work is "
     ++ "construction, not a missing fact: build the group law on the frame type and prove "
-    ++ "affineAdd agrees with mathlib's. Without it g1Add and g1Msm1 cannot be stated for "
-    ++ "all points, only for the ones a gate can name."
+    ++ "affineAdd agrees with mathlib's. Note what this does NOT block any more: g1Add and "
+    ++ "g1Msm1 ARE stated and proved for every point of a real-curve carrier - the zpowers "
+    ++ "carrier G₁z, whose group law is mathlib's own (g1CodecZ_g1Add, g1CodecZ_g1Msm1, "
+    ++ "Instances/G1Agreement.lean) - so what the missing instance costs is the FRAME type's "
+    ++ "own use as a Holds carrier, which the exhibit no longer needs. What is demonstrated "
+    ++ "below stays what it always was: the concrete instances of those equations on real "
+    ++ "frames, as gates, at the byte codec."
 
+/-- RE-POINTED BY P-GAPFIX, AND THE RE-PPOINTING IS THE POINT. This record used to blame a
+    point count no Lean library has, and that claim is now false: Instances/G1PointCount.lean
+    proves torsion_eq_zpowers_gen - every r-torsion point of E(Fp) is an integer multiple of
+    the published generator - from the elementary squeeze #E(Fp) <= 2p+1 < r^2, with no Hasse
+    bound, no Weil pairing, no n-torsion structure theorem and no new named assumption. The
+    carrier Holds is actually exhibited on has prime order by INSTANCE (G1Agreement.lean,
+    instance primeOrderZ : PrimeOrderWith G₁z blsR, via natCard_zpowers_emb_genFrame), so the
+    G1 side is four of four at g1CodecZ (g1CodecZ_g1_four) and this is no longer a blocker on
+    the path to a Holds term. What is left is two transport jobs and neither is number
+    theory: the frame subtype has no Group instance at all (gap_g1_no_group_law), and the
+    count has never been restated as Nat.card G1Frame = r FOR THE FRAME SUBTYPE - the two
+    Nat.card formulations were dropped at an elaborator wall and are recorded as plumbing,
+    not as missing mathematics, in the G1PointCount header. -/
 def gap_g1_prime_order : String :=
-  "blocker: PrimeOrderWith G1Frame r is Nat.card G1Frame = r, i.e. the r-torsion of E(Fp) "
-    ++ "has exactly r elements - a point count (Schoof-Elkies-Atkin), or the n-torsion "
-    ++ "structure theorem plus gcd(r, p-1) = 1. Neither exists in Lean today, and it is "
-    ++ "what the repaired g1Decodes demands of ANY codec, since that clause makes toEip "
-    ++ "surjective onto the accepted frames."
+  "CLOSED AS MATHEMATICS, OPEN AS PLUMBING: what this record used to blame - that "
+    ++ "Nat.card G1Frame = r needs a point count (Schoof-Elkies-Atkin) or the n-torsion "
+    ++ "structure theorem plus gcd(r, p-1) = 1 - is no longer true. "
+    ++ "Instances/G1PointCount.lean proves torsion_eq_zpowers_gen, that every r-torsion "
+    ++ "point of E(Fp) is an integer multiple of the published generator, from the "
+    ++ "elementary squeeze #E(Fp) <= 2p+1 < r^2 with no Hasse bound, no Weil pairing and no "
+    ++ "new assumption, and the carrier Holds is exhibited on has prime order by instance "
+    ++ "(G1Agreement.lean, primeOrderZ : PrimeOrderWith G₁z blsR), so the G1 side is four of "
+    ++ "four at a real-curve codec (g1CodecZ_g1_four). Two transport jobs remain and neither "
+    ++ "is a count: G1Frame has no Group instance at all, which is gap_g1_no_group_law and "
+    ++ "not a number-theory item, and the count has never been restated as "
+    ++ "Nat.card G1Frame = r for the frame subtype - the two Nat.card formulations were "
+    ++ "dropped at an elaborator wall and are recorded as plumbing in the G1PointCount "
+    ++ "header. What Holds still waits on is g2Valid and pairing2 at real points, and "
+    ++ "neither is a G1 question (gap_holds_unexhibited, gap_g2_no_fp2_model)."
+
 
 /-- THE HONEST SUMMARY OF THIS PACKAGE, as a computation. Two of the six clauses hold at real
-    curve points by theorem (g1FrameCodec_g1Valid, g1FrameCodec_decodesWidth); the PINNED OLD
-    g1DecodesOld is refuted at this codec by theorem (g1FrameCodec_not_g1DecodesOld), so the codec is
-    not what made Holds unsatisfiable as written; and the three clauses that need a group
-    law are demonstrated only pointwise, by the gates above. Nothing here claims Holds, and
-    this gate is the statement of that: it reddens the day someone weakens a clause to make
-    it pass. -/
+    curve points AT THIS CODEC by theorem (g1FrameCodec_g1Valid, g1FrameCodec_decodesWidth);
+    the PINNED OLD g1DecodesOld is refuted at this codec by theorem
+    (g1FrameCodec_not_g1DecodesOld), so the codec is not what made Holds unsatisfiable as
+    written; and the three clauses that need a group law are demonstrated only pointwise here,
+    by the gates above - the general statements live at the zpowers carrier (g1CodecZ_g1_four).
+    Nothing in THIS file claims Holds, and this gate is the statement of that: it reddens the
+    day someone weakens a clause to make it pass. The last five conjuncts are P-GAPFIX's
+    anti-revert: they pin the gap strings to the blockers they now name, so a record cannot
+    silently revert to the closed blame (the r-torsion count) without reddening lake build. -/
 def g1ModelStatus_ok : Bool :=
   -- g1Valid holds at the generator, which is a non-identity point
   (match g1Of? (g1FrameCodec.toEip g1GenFrame) with
@@ -332,9 +386,15 @@ def g1ModelStatus_ok : Bool :=
     (g1FrameCodec.toEip g1InfFrame).size == g1Bytes &&
     (g1FrameValid (garbageFrame 1) == false) &&
     (g1Of? (garbageFrame 1) == some ((0, 0) : Nat × Nat)) &&
-    -- and the two gap strings name the blockers they claim to
+    -- and the two gap strings name the blockers they claim to: the group law is still open
+    -- and says which fact it needs, and the prime-order record names the theorem that CLOSED
+    -- the count it used to blame, the exhibit that closed the G1 side, and the two clauses
+    -- that are actually still open.
     (gap_g1_no_group_law.contains "Nat.Prime pBase") &&
-    (gap_g1_prime_order.contains "Nat.card G1Frame = r")
+    (gap_g1_prime_order.contains "Nat.card G1Frame = r") &&
+    (gap_g1_prime_order.contains "torsion_eq_zpowers_gen") &&
+    (gap_g1_prime_order.contains "g1CodecZ_g1_four") &&
+    (gap_g1_prime_order.contains "g2Valid")
 
 #eval g1ModelStatus_ok   -- expect true
 

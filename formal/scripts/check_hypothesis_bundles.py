@@ -50,6 +50,44 @@ GATES = "Midfall/Instances/ObligationsGates.lean"
 
 # The registry. "exhibit" is (declaration, tokens it must mention); "gaps" is a list of
 # (declaration, tokens it must name as the blocker).
+#
+# P-GAPFIX RE-POINTED THE BODY-ONLY TOKENS, AND THE REASON IS THIS GATE'S OWN REASON: a gap
+# that names a CLOSED blocker reads to the next agent as a current claim, which is the
+# failure this project keeps hitting. All three tokens P-CURVE installed name items that are
+# now closed - `g1Valid` is discharged at a real-curve codec (g1CodecZ_g1_four),
+# `Nat.Prime pBase` is certified by the Pratt certificate in Assumptions/BasePrime.lean, and
+# the r-torsion count `Nat.card G1Frame = r` is a theorem (Instances/G1PointCount.lean,
+# torsion_eq_zpowers_gen) - so leaving them enforced would have kept this gate green only by
+# making the gap records recite a stale blame. The tokens below name what is ACTUALLY open:
+# the two remaining clauses (g2Valid, pairing2), the model each one needs (Fp[u]/(u^2+1) for
+# G2, an AdmissiblePairing on the exhibited groups for the pairing), the arithmetic that says
+# the G1 route does NOT transfer to G2 (2p^2 + 1 against r^2), and the exhibit that closed
+# the G1 side - so the record cannot silently revert to blaming a closed item.
+#
+# Each token list is a constant rather than five copies: the same gap is registered against
+# every field that carries it, and a token edited in four of five places is a gate that
+# passes by accident. Dropping ANY token below reddens this gate - P-GAPFIX demonstrated one
+# perturbation per token, and the Lean-side twin of this check is ObligationsGates'
+# gapHoldsBlockers_ok / gapG2Blockers_ok and Bls12_381G1's g1ModelStatus_ok.
+#
+# TWO additions P-GAPFIX made to the schema itself, both from the same worry:
+#  * "TWO clauses remain" and "FOUR OF FOUR" are enforced tokens, not prose. The COUNT of open
+#    clauses is part of the claim a gap record makes, and a rewrite that keeps every blocker
+#    name while quietly saying "one clause remains" or "the G1 side is not done" is a stale
+#    blame wearing current clothes. A substring test cannot see wording, so the wording that
+#    IS the finding is pinned as a token.
+#  * The fourth element of a gap tuple is a FORBIDDEN list: phrases that named a blocker which
+#    is now closed. This is the direction the body-only tokens cannot cover - they require the
+#    gap to say more, never that it stop saying something - so a reverted record reddens.
+HOLDS_GAP_TOKENS = ["g2Valid", "pairing2", "Fp[u]/(u^2+1)", "2p^2 + 1",
+                    "AdmissiblePairing", "g1CodecZ_g1_four",
+                    "TWO clauses remain", "FOUR OF FOUR"]
+HOLDS_GAP_FORBIDDEN = ["no Lean library has", "still out of reach", "cannot be stated for all"]
+G2_GAP_TOKENS = ["g2Valid", "Fp[u]/(u^2+1)", "2p^2 + 1", "fp2Ops"]
+GAP_HOLDS = ("gap_holds_unexhibited", ["Eip2537.Holds"], HOLDS_GAP_TOKENS,
+             HOLDS_GAP_FORBIDDEN)
+GAP_G2 = ("gap_g2_no_fp2_model", ["Eip2537.Holds"], G2_GAP_TOKENS)
+
 REGISTRY = [
     {
         "field": "ir_refines",
@@ -60,14 +98,14 @@ REGISTRY = [
         "field": "verifier_sound",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
+        "gaps": [GAP_HOLDS, GAP_G2,
                  ("gap_runLeg_unexhibited", ["RunVerifier"])],
     },
     {
         "field": "verifier_complete",
         "exhibit": ("bundle_deployment",
                     ["SupportedS", "DeploymentW", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"]),
+        "gaps": [GAP_HOLDS, GAP_G2,
                  ("gap_runLeg_unexhibited", ["RunShell"])],
     },
     {
@@ -81,7 +119,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [GAP_HOLDS, GAP_G2],
     },
     {
         "field": "qvm_validated_noBoundsFault",
@@ -94,7 +132,7 @@ REGISTRY = [
         "exhibit": ("bundle_headlineCore",
                     ["SupportedS", "DeploymentW", "irCheck ir = true",
                      "RunContractIR", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [GAP_HOLDS, GAP_G2],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -104,7 +142,7 @@ REGISTRY = [
         "field": "lowering_equivalence",
         "kind": "theorem",
         "exhibit": ("bundle_envAgrees", ["SupportedS", "EnvAgrees"]),
-        "gaps": [("gap_holds_unexhibited", ["Eip2537.Holds"], ["g1Valid", "Nat.Prime pBase", "Nat.card G1Frame = r"])],
+        "gaps": [GAP_HOLDS, GAP_G2],
     },
 ]
 
@@ -124,6 +162,16 @@ REGISTRY = [
 # provable and the entry must be DELETED and replaced by an exhibit - which is the point: the
 # gate reddens if the gap silently returns OR if a refutation goes stale without an exhibit
 # replacing it.
+#
+# WHAT P-GAPFIX CHECKED HERE, because these two entries are the places in the registry that
+# could still read as "no G1 codec satisfies any Holds clause". They do not say that and must
+# not be made to: the tree HAS such a codec now - g1CodecZ on the zpowers carrier G₁z
+# discharges all four G1-side clauses jointly (g1CodecZ_g1_four) - and bundle_holds_empty is a
+# refutation about WHICH CODEC THE FIXTURE INSTALLS (realSurface.E.g1 is the exponent model),
+# not about a missing theorem. Both entries stay exactly as they are: expG1Codec_not_holds is
+# about the EXPONENT codec and remains true however good the curve codec gets, and
+# bundle_holdsOld_empty pins the repaired decode defect, which the standing rule keeps as a
+# failing term.
 REFUTATIONS = [
     ("bundle_holds_empty", ["BlkIsEmitter", "SupportedS", "EnvAgrees", "Eip2537.Holds"]),
     ("bundle_holdsOld_empty",
@@ -634,6 +682,7 @@ def check(root):
         for g in entry.get("gaps", []):
             dname, toks = g[0], g[1]
             body_only = g[2] if len(g) > 2 else []
+            forbidden = g[3] if len(g) > 3 else []
             body = gdefs.get(dname)
             if body is None:
                 problems.append("%s: NAMED GAP MISSING - %s is not declared in %s, so "
@@ -653,6 +702,17 @@ def check(root):
                 problems.append("%s: GAP BLOCKER UNDER-SPECIFIED - %s no longer names %s, so "
                                 "the gap blames less than the measured blocker does"
                                 % (field, dname, ", ".join(repr(m) for m in missing_body)))
+            # FORBIDDEN phrases (P-GAPFIX): the mirror image of the check above. A body-only
+            # token can only ever force a gap to name MORE; nothing in the schema stopped a
+            # record from keeping every required token while re-adding a blame that has since
+            # been closed. A closed item named as open is exactly the stale claim this gate
+            # exists to prevent, so the retired phrases are listed and their presence reddens.
+            recited = [t for t in forbidden if t in body]
+            if recited:
+                problems.append("%s: GAP BLOCKER STALE BLAME - %s recites %s, which names a "
+                                "blocker that is CLOSED; a retired blame reads to the next "
+                                "agent as a current claim (P-GAPFIX)"
+                                % (field, dname, ", ".join(repr(m) for m in recited)))
     # 5. REFUTATIONS: a provably empty bundle needs one declaration naming every conjunct
     for dname, toks in REFUTATIONS:
         body = gdefs.get(dname)

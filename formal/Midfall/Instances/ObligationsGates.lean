@@ -28,17 +28,21 @@
 -- (F5, derivable from two other pins), and `render_eq_print` is now the
 -- astOfMain/lower equation (F8).
 --
--- WHAT STILL IS NOT EXERCISED: `Eip2537.Holds`. The exponent codec cannot satisfy
--- its g1Valid clause for a non-identity point, so every field carrying Holds stays
--- unexhibited. R-58 G2 removed ONE cause of that (the empty encG2); the remaining
--- cause is the absence of a curve model (D-P1, R-28), which is a model and not a
--- missing pin. SurfaceFixture.encG2AtFixture_ok shows which is which.
---
--- R-63 added a THIRD cause - the g1Decodes clause was unsatisfiable for EVERY codec -
--- and P-HOLDS repaired it, so the sentence above is true again rather than true by
--- accident: the blocker is the codec and the curve, not the statement. See
--- bundle_holds_empty (live, refuted through g1Valid) and bundle_holdsOld_empty (the
--- pinned old text, refuted for every codec).
+-- WHAT STILL IS NOT EXERCISED: a single `Eip2537.Holds` TERM, and the reason is no
+-- longer the reason this header gave for two rounds. R-58 G2 removed one cause (the
+-- empty encG2); R-63 found a third - g1Decodes was unsatisfiable for EVERY codec - and
+-- P-HOLDS repaired it; and the cause blamed above, "the absence of a curve model
+-- (D-P1, R-28)", is no longer the whole story either. A real-curve model EXISTS and
+-- discharges all FOUR G1-side clauses at one codec on one carrier (g1CodecZ_g1_four,
+-- Instances/G1PointCount.lean), so what keeps every field carrying Holds unexhibited
+-- is now two other clauses: g2Valid, which has no Fp2 model to be discharged at
+-- (gap_g2_no_fp2_model), and pairing2 at real points, which needs an AdmissiblePairing
+-- on the curve groups and is D-P36's standing decision. The exponent codec's g1Valid
+-- failure is still what refutes the four-way bundle AT THIS FIXTURE - see
+-- bundle_holds_empty - but that is a fact about which codec the fixture installs, and
+-- expG1Codec_not_holds is about the EXPONENT codec and stays true however good the
+-- curve codec gets. bundle_holdsOld_empty pins the repaired decode defect.
+-- SurfaceFixture.encG2AtFixture_ok shows which is which.
 
 import Midfall.Lowering.Obligations
 import Midfall.Instances.SurfaceFixture
@@ -289,12 +293,14 @@ theorem deploymentInhabited_ir :
     the shape that let a bundle be individually inhabited and jointly empty (R-60 S1), and
     the brief for P-4a2 names that as the failure to avoid.
 
-    The leg it does NOT answer is `Eip2537.Holds`, which no Surface in the tree satisfies
-    for a reason that is a missing curve model rather than a missing pin
-    (gap_holds_unexhibited). So the honest summary is now: everything except the codec leg
-    is inhabited jointly at the artifact, and the four-way bundle including Holds is still
-    empty - adding EnvAgrees to the conjunction did not change that, and claiming otherwise
-    would be the individually-inhabited-jointly-empty class one level up. -/
+    The leg it does NOT answer is `Eip2537.Holds`, which no Surface in the tree satisfies -
+    for reasons that are two missing MODELS (a G2/Fp2 model for g2Valid, a curve
+    AdmissiblePairing for pairing2) and not a missing pin, and no longer for anything on the
+    G1 side (gap_holds_unexhibited, gap_g2_no_fp2_model). So the honest summary is now:
+    everything except the Holds leg is inhabited jointly at the artifact, and the four-way
+    bundle including Holds is still empty - adding EnvAgrees to the conjunction did not change
+    that, and claiming otherwise would be the individually-inhabited-jointly-empty class one
+    level up. -/
 theorem bundle_headlineCore (c : ExternalCalls) (g : ExternalGas) :
     SupportedS irSurface irSurface.o₀ ∧
       DeploymentW irSurface irW keccak256 fxVkAddr fxQuotientAddr ∧
@@ -379,19 +385,26 @@ def gap_runLeg_unexhibited : String :=
 
       * bundle_holds_empty - the LIVE bundle, still empty at the fixture, refuted by the
         clause the repair exposes: the fixture codec is the exponent model and its g1Valid
-        fails at a non-identity exponent. This is the NEW blocker, and gap_holds_unexhibited
-        now names it.
+        fails at a non-identity exponent. That is a fact about WHICH CODEC THE FIXTURE
+        INSTALLS, and gap_holds_unexhibited says so - it is no longer the open mathematics.
       * bundle_holdsOld_empty - the OLD bundle, refuted for every codec, kept as the
         regression pin so the repaired clause cannot silently be weakened back.
 
-    WHY THE LIVE ONE IS A REFUTATION AND NOT AN EXHIBIT. An exhibit would need a codec that
-    satisfies all six clauses at a prime-order group. The only codec in the tree that
-    satisfies the repaired decode clause is g1FrameCodec (Instances/Bls12_381G1.lean), and
-    G1Frame has neither a Group instance - the Fact (Nat.Prime pBase) it needs is now
-    certified (Assumptions/BasePrime.lean) but the group law itself is still unbuilt -
-    nor prime order (needs the r-torsion count), so it cannot even be the G1 of a Holds.
-    The headline fields therefore still carry an uninstantiable hypothesis - for two
-    named curve reasons and no longer for a third, spurious one. -/
+    WHY THE LIVE ONE IS STILL A REFUTATION AND NOT AN EXHIBIT - RE-READ BY P-GAPFIX, because
+    the paragraph this def used to carry is now false in its middle. It said the only codec in
+    the tree satisfying the repaired decode clause was g1FrameCodec, and that G1Frame had
+    neither a Group instance nor prime order, "so it cannot even be the G1 of a Holds". Two
+    of those three claims are overtaken: the r-torsion count is a theorem
+    (torsion_eq_zpowers_gen), and there IS a codec on a prime-order real-curve carrier that
+    satisfies all four G1-side clauses jointly - g1CodecZ on G₁z, exhibited by
+    g1CodecZ_g1_four (Instances/G1PointCount.lean). What is still true, and is the whole
+    reason this declaration stays a refutation, is that an exhibit AT THIS SURFACE needs
+    `realSurface.E.g1` to be that codec, and `VerifierEnv.g1` is typed over the Surface's own
+    `AdmissiblePairing`: the only pairing model in the tree is the exponent model (R-28), so
+    installing the curve codec means installing a curve pairing, which is D-P36's open
+    decision and not a field assignment. The headline fields therefore still carry an
+    uninstantiable hypothesis - for the pairing and the G2 model, and no longer for anything
+    about G1's group law, its base primality or its count. -/
 
 set_option maxRecDepth 1000000 in
 /-- THE FIXTURE CODEC CANNOT SATISFY HOLDS, and the reason is now visible instead of hidden.
@@ -445,43 +458,165 @@ theorem bundle_holdsOld_empty :
   rintro ⟨_, _, _, product, h⟩
   exact Midfall.Assumptions.holdsOld_unsatisfiable realSurface.E.g1 ⟨realSurface.encG2⟩ product h
 
-/-- Eip2537.Holds is not exhibited at any Surface in the tree, and the reason has changed twice.
-    The original text blamed the exponent codec's g1Valid failure (R-28, D-P1); P-CURVE found
-    that the g1Decodes clause made the structure REFUTABLE for every codec (R-63); and
-    P-HOLDS repaired that clause, which moved the refutation back onto the codec. The blockers,
+/-- Eip2537.Holds is not exhibited at any Surface in the tree, and the reason has changed
+    three times. The original text blamed the exponent codec's g1Valid failure (R-28, D-P1);
+    P-CURVE found that the g1Decodes clause made the structure REFUTABLE for every codec
+    (R-63); P-HOLDS repaired that clause, which moved the refutation back onto the codec; and
+    P-POINTCOUNT then closed the last G1-side item, which is why this record had to be
+    re-pointed rather than left alone. A gap that recites closed blockers reads to the next
+    agent as a current claim, and that is the failure this project keeps hitting. The items,
     in the order they now bite:
 
-      1. CLOSED. g1Decodes as written was unsatisfiable for every codec on every prime-order
-         group (Assumptions.Eip2537.g1DecodesOld_unsatisfiable). The repair - the 0x80 frame
-         width the clause's own docstring always meant - is now the live field, and
-         Instances/Bls12_381G1.lean discharges it at real curve points
+      1. CLOSED (R-63 / P-HOLDS). g1Decodes as written was unsatisfiable for every codec on
+         every prime-order group (Assumptions.Eip2537.g1DecodesOld_unsatisfiable). The repair -
+         the 0x80 frame width the clause's own docstring always meant - is now the live field,
+         and Instances/Bls12_381G1.lean discharges it at real curve points
          (g1FrameCodec_decodesWidth), while refuting the pinned old text there too.
-      2. THE FIXTURE CODEC: g1Valid. realSurface.E.g1 is the exponent model, whose toEip writes
-         the exponent and not a point, so fx 3 encodes as the frame (0, 3), which is not on
-         y^2 = x^3 + 4. expG1Codec_not_holds proves it and bundle_holds_empty carries it into
-         the four-way conjunction.
-      3. ANY CURVE CODEC, IF ONE IS INSTALLED: a group law and a point count. g1Add and g1Msm1
-         need a Group on the frame type, which needs a Field instance on ZMod pBase - that
-         primality fact IS now certified (Assumptions/BasePrime.lean, pBase_prime), so what is
-         left is the construction and the agreement proof, not the number theory - and
-         PrimeOrderWith needs Nat.card G1Frame = r, the r-torsion count, which is still out of
-         reach. Those are gap_g1_no_group_law and gap_g1_prime_order in Instances/Bls12_381G1.lean.
+      2. CLOSED (P-CURVE / P-G1CODEC / P-POINTCOUNT). The whole G1 side is FOUR OF FOUR at a
+         real-curve codec: g1CodecZ_g1_four exhibits g1Valid, g1Add, g1Msm1 and g1Decodes
+         TOGETHER at g1CodecZ on the zpowers carrier G₁z of the published generator, with no
+         new named assumption. The two blockers this record used to blame for any curve codec
+         are theorems now: the Fact (Nat.Prime pBase) the group law needs is certified by a
+         Lucas/Pratt certificate (Assumptions/BasePrime.lean, pBase_prime), and the r-torsion
+         count is proved elementarily (Instances/G1PointCount.lean, torsion_eq_zpowers_gen,
+         from #E(Fp) <= 2p+1 < r^2). gap_g1_no_group_law and gap_g1_prime_order in
+         Instances/Bls12_381G1.lean are re-pointed to match: the first is still open as
+         construction at the FRAME type, the second is closed as mathematics.
+      3. OPEN, FIRST REMAINING CLAUSE: g2Valid. There is no Fp2 model in the tree, so there is
+         nothing for the clause to quantify over. gap_g2_no_fp2_model below carries the route
+         and the one finding that decides its cost - the G1 pigeonhole does NOT transfer over
+         Fp2, so the count argument must not be re-run by analogy.
+      4. OPEN, SECOND REMAINING CLAUSE: pairing2 at real points. The clause is discharged only
+         at the exponent model (Instances/PairingProduct.lean,
+         pairing2_holds_for_the_defined_product), whose toEip writes an exponent and not a
+         curve point, so it is not an exhibit at a curve group. What is needed is an
+         AdmissiblePairing on the exhibited groups, and D-P36 stands: assume it as a named
+         hypothesis or construct Fp12, and construction is larger than this project.
+      5. AND A THIRD, SEPARATE FACT ABOUT THE FIXTURE - not an open theorem. realSurface.E.g1
+         IS the exponent codec, so expG1Codec_not_holds and bundle_holds_empty still refute
+         the four-way bundle at the only Surface in the tree. That is a statement about which
+         codec the fixture installs, and installing a curve codec is not free: VerifierEnv.g1
+         is typed over the Surface's own pairing, so it needs the same AdmissiblePairing as
+         item 4. The two open clauses and the fixture wall are TWO walls, not three.
 
     So every field carrying Holds - verifier_sound, verifier_complete, end_to_end_noAcc,
     lowering_equivalence - still has a hypothesis bundle that is EMPTY at the only Surface in
-    the tree, and the emptiness is named at three levels: the codec clause that bites today,
-    the field instance that bites for any curve codec, and the count that bites for any
-    prime-order group. -/
+    the tree, and the emptiness is named at two open levels and one closed one: the G2 model
+    no codec can lack, the pairing instance no Surface has, and - no longer - anything about
+    G1's group law, its base primality or its point count. -/
 def gap_holds_unexhibited : String :=
-  "blocker: Eip2537.Holds is not exhibited at any Surface. The g1Decodes width defect that "
-    ++ "made it REFUTED for every codec is REPAIRED: the live clause is "
-    ++ "Assumptions.Eip2537.g1DecodesWidth and the old text is pinned as "
-    ++ "g1DecodesOld_unsatisfiable. What bites at the fixture is g1Valid - realSurface.E.g1 is "
-    ++ "the exponent model, so expG1Codec_not_holds and bundle_holds_empty refute the four-way "
-    ++ "bundle there. What bites for any curve codec is building the group law over Fp - the "
-    ++ "Fact (Nat.Prime pBase) it needs is now certified in Assumptions/BasePrime.lean, so this "
-    ++ "is construction and not a missing fact - and the r-torsion count Nat.card G1Frame = r, "
-    ++ "which is still a point count no Lean library has."
+  "blocker: Eip2537.Holds is still not exhibited as a single term at any Surface, and the "
+    ++ "open half is no longer a G1 question. The G1 side is FOUR OF FOUR at a real-curve "
+    ++ "codec: g1CodecZ_g1_four (Instances/G1PointCount.lean) exhibits g1Valid, g1Add, g1Msm1 "
+    ++ "and g1Decodes together at g1CodecZ on the zpowers carrier G₁z of the published "
+    ++ "generator, with no new named assumption. So the three blockers this record used to "
+    ++ "name are CLOSED and must not be read as open: the g1Decodes width defect is repaired "
+    ++ "(live clause Assumptions.Eip2537.g1DecodesWidth, old text pinned as "
+    ++ "g1DecodesOld_unsatisfiable), the Fact (Nat.Prime pBase) the group law needs is "
+    ++ "certified by a Pratt certificate (Assumptions/BasePrime.lean, pBase_prime), and the "
+    ++ "r-torsion count Nat.card G1Frame = r is a theorem (torsion_eq_zpowers_gen, from "
+    ++ "#E(Fp) <= 2p+1 < r^2). TWO clauses remain. (1) g2Valid has no model to be discharged "
+    ++ "at, because the tree has no Fp2: Fp[u]/(u^2+1) is the buildable route - Externals.lean "
+    ++ "spells the indeterminate v, and its fp2Ops is the byte model of exactly this field - "
+    ++ "pBase % 4 = 3 "
+    ++ "is pinned by Assumptions.BasePrime.basePrimeKats_ok, so u^2 + 1 has no root in Fp - "
+    ++ "and behind it sit the G2 curve, its codec, the group-law agreement and G2's OWN "
+    ++ "r-torsion argument. The G1 squeeze does NOT transfer there: over Fp2 the same "
+    ++ "elementary fiber bound is 2p^2 + 1 while r^2 is about p^(4/3), so 2p^2 + 1 > r^2 and "
+    ++ "the pigeonhole that made the G1 count elementary is vacuous. See gap_g2_no_fp2_model. "
+    ++ "(2) pairing2 at real points: the clause is discharged only at the exponent model "
+    ++ "(Instances/PairingProduct.lean), whose toEip writes an exponent and not a curve "
+    ++ "point, so it is not an exhibit at a curve group; what is needed is an "
+    ++ "AdmissiblePairing on the exhibited groups, and D-P36 stands - assume it as a named "
+    ++ "hypothesis or construct Fp12, and construction is larger than this project. Third, "
+    ++ "and separate: at the FIXTURE the four-way bundle is refuted because realSurface.E.g1 "
+    ++ "IS the exponent codec, so expG1Codec_not_holds and bundle_holds_empty still hold "
+    ++ "there. That is about WHICH CODEC THE FIXTURE INSTALLS and not about a missing G1 "
+    ++ "theorem - and it is not free to change either, because VerifierEnv.g1 is typed over "
+    ++ "the Surface's own pairing, so installing the curve codec means installing a curve "
+    ++ "AdmissiblePairing: blocker (2) again, and so TWO walls, not three."
+
+/-- THE G2 BLOCKER AS A NAMED REGISTRY RECORD (P-GAPFIX). gap_holds_unexhibited names g2Valid
+    as one of the two open clauses, and a blocker that lives only inside another gap's prose
+    is a blocker nobody is held to: the registry can enforce tokens against a NAMED def and
+    against nothing else. This is that def.
+
+    WHY IT IS A MODEL AND NOT A PIN. g2Valid quantifies over R : G₂ and asks that the
+    encoder's bytes decode through the precompile's own validators (g2Of? / g2PointValid,
+    Midfall/Yul/Externals.lean). The tree has the BYTE half of Fp2 - fp2Ops is integer
+    arithmetic on pairs over ZMod blsP, and affineOnCurve fp2Ops / g2InSubgroup already use
+    it - and no ALGEBRAIC half: no type with a Field instance for Fp[u]/(u^2+1), so nothing
+    can state that the byte law agrees with a group law. That agreement is exactly the shape
+    the G1 side needed and got (P-G1AGREE, over ZMod blsP).
+
+    THE FINDING THAT DECIDES THE COST, recorded so the next package does not re-derive it.
+    P-POINTCOUNT made the G1 count elementary with one squeeze: #E(Fp) <= 2p+1 < r^2, so two
+    independent r-torsion points would not fit. Over Fp2 the same elementary bound is
+    2p^2 + 1 and r^2 is about p^(4/3), i.e. far BELOW it, so the pigeonhole is vacuous and
+    the G1 route cannot be re-run for G2. Both inequalities are pinned as a COMPUTATION by
+    gapHoldsBlockers_ok below rather than asserted in prose.
+
+    AND THE CHEAPER ROUTE THE FAILURE DOES NOT BLOCK, because recording only the wall would
+    over-state it: Holds has no g2Decodes clause, so a G2 carrier taken as the CYCLIC subgroup
+    generated by a published H2 needs r • H2 = 0 and H2 <> 1 and NO count at all - D-P34's
+    route, Assumptions.Eip2537.primeOrderWith_zpowers, the same lemma that made the G1 side
+    prime-order without a count. The count route is closed for G2; the cyclic-subgroup route
+    is open, and it is the one to walk. -/
+def gap_g2_no_fp2_model : String :=
+  "blocker: g2Valid - the second clause of Eip2537.Holds - has no model to be discharged at, "
+    ++ "because the tree has no Fp2. The route is Fp[u]/(u^2+1): pBase % 4 = 3 is pinned by "
+    ++ "Assumptions.BasePrime.basePrimeKats_ok, so u^2 + 1 has no root in Fp and the quotient "
+    ++ "is a field. Behind that model sit four items, each with its own cost: the G2 curve "
+    ++ "y^2 = x^3 + 4(v+1) over it, a G2 encoder at the 0x100 EIP width, the agreement "
+    ++ "between affineAdd/affineSmul on fp2Ops and mathlib's group law, and G2's own r-torsion "
+    ++ "argument. THE G1 ROUTE DOES NOT TRANSFER, and that is the finding this record exists "
+    ++ "to carry: the G1 count followed from #E(Fp) <= 2p+1 < r^2, while over Fp2 the same "
+    ++ "elementary fiber bound is 2p^2 + 1 against r^2 ~ p^(4/3), so 2p^2 + 1 > r^2 and the "
+    ++ "pigeonhole proves nothing there - a G2 r-torsion argument needs genuinely different "
+    ++ "input and must not be assumed to copy the G1 one. What the failed transfer does NOT "
+    ++ "block is the cheaper route: Holds has no g2Decodes clause, so a G2 carrier taken as "
+    ++ "the cyclic subgroup generated by a published H2 needs r • H2 = 0 and H2 <> 1 and no "
+    ++ "count at all (D-P34's route, Assumptions.Eip2537.primeOrderWith_zpowers)."
+
+/-- D-P23 FOR THE GAP RECORDS THEMSELVES (P-GAPFIX). A rewritten gap is a claim, and a claim
+    with no way to fail is decoration. This gate is the Lean-side twin of the body-only tokens
+    in scripts/check_hypothesis_bundles.py: the registry reddens from outside the build, and
+    this reddens lake build itself if a token is dropped or if a record reverts to the closed
+    G1 blame. Lines 1-6 pin the two open clauses, the two models they need and the exhibit
+    that closed the G1 side; lines 7-10 pin the same for the G2 record; lines 11-12 pin the
+    COUNT of open clauses and the acknowledgement that the G1 side is closed, so the wording
+    that IS the finding cannot be inverted while the token list still passes; lines 13-14 are
+    forbidden phrases - blame that named items since closed, which no required-token check can
+    ever catch because required tokens only force a record to say MORE; and lines 15-17 pin
+    the ARITHMETIC the transfer failure rests on rather than trusting the prose - 2p+1 < r^2
+    over Fp (the squeeze that WORKED), r^2 < 2p^2 + 1 over Fp2 (the squeeze that does NOT),
+    and p ≡ 3 mod 4 (which makes u^2 + 1 irreducible and the quotient a field). -/
+def gapHoldsBlockers_ok : Bool :=
+  (gap_holds_unexhibited.contains "g2Valid") &&
+    (gap_holds_unexhibited.contains "pairing2") &&
+    (gap_holds_unexhibited.contains "Fp[u]/(u^2+1)") &&
+    (gap_holds_unexhibited.contains "2p^2 + 1") &&
+    (gap_holds_unexhibited.contains "AdmissiblePairing") &&
+    (gap_holds_unexhibited.contains "g1CodecZ_g1_four") &&
+    (gap_g2_no_fp2_model.contains "g2Valid") &&
+    (gap_g2_no_fp2_model.contains "Fp[u]/(u^2+1)") &&
+    (gap_g2_no_fp2_model.contains "2p^2 + 1") &&
+    (gap_g2_no_fp2_model.contains "fp2Ops") &&
+    -- the COUNT of open clauses is part of the claim, so it is pinned as a token and not left
+    -- to prose: a rewrite that keeps every blocker name while saying "one clause remains", or
+    -- that un-closes the G1 side, reddens here and in the registry.
+    (gap_holds_unexhibited.contains "TWO clauses remain") &&
+    (gap_holds_unexhibited.contains "FOUR OF FOUR") &&
+    -- and the mirror image: phrases that named a now-CLOSED blocker as open. The registry can
+    -- force a gap to say more; only a forbidden-phrase check stops a record re-adding a
+    -- retired blame while keeping every required token.
+    ! (gap_holds_unexhibited.contains "no Lean library has") &&
+    ! (gap_holds_unexhibited.contains "still out of reach") &&
+    (2 * blsP + 1 < blsR * blsR) &&
+    (blsR * blsR < 2 * blsP * blsP + 1) &&
+    (blsP % 4 == 3)
+
+#eval gapHoldsBlockers_ok                   -- expect true
 
 /-- `EnvAgrees` IS exhibited, so the gap that used to sit here is closed and this def
     replaces it (the pattern `gap_view_transport_closed` sets: a gap that has been closed

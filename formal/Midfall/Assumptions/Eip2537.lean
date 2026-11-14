@@ -764,10 +764,10 @@ scripts/check_statement_fingerprints.py for the six Holds clause types are what 
 clause being weakened back into the pinned old one while the refutations still build.
 
 WHAT THE REPAIR DOES NOT CLOSE. g1Decodes was the clause that blocked FIRST, and it blocked
-for a reason that had nothing to do with curves. With it repaired the remaining blockers are
-the two curve facts recorded in Midfall/Instances/Bls12_381G1.lean: a group law over Fp, which
-needs Fact (Nat.Prime pBase), and the r-torsion point count Nat.card G1Frame = r that
-PrimeOrderWith demands. Repairing g1Decodes unblocks the clause, not the exhibit. -/
+for a reason that had nothing to do with curves. RE-POINTED BY P-GAPFIX: the two curve facts
+this note named as the remaining blockers - the group law needing Fact (Nat.Prime pBase), and
+the r-torsion count Nat.card G1Frame = r - are CLOSED (BasePrime certifies the prime; G1PointCount
+proves the count), so what Holds waits on is g2Valid and pairing2. gap_holds_unexhibited. -/
 
 /-- A valid 128-byte G1 frame with k extra bytes appended. g1Of? accepts every one of them as
     the point of infinity, because it slices rather than checks the length. -/
