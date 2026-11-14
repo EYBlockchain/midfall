@@ -2289,3 +2289,60 @@ requires a pairing implementation that does not exist in Lean. Either `Holds` is
 an **assumed** pairing (which D-P1 already contemplates - if bilinearity or non-degeneracy is
 unproven, it becomes a named hypothesis), or P5 stays vacuous. That is a bigger decision than
 the torsion count and should be taken together with it.
+
+### R-65 - M8's two prerequisite files were never built; `ir_refines` cites a placeholder
+
+**Class: omission, not mistranscription and not refactoring.**
+
+`docs/PLAN.md` line 226-228 specifies, under **"Required step: solc IR translation validation"**:
+
+> `IRCheck.lean` is a **verified checker**: `irCheck ir L = true -> ObsEquiv ir (ShellModel.wrap L)`.
+
+and line 224 specifies `ShellModel.lean`: *"a Yul model of solc's dispatcher for
+`verifyProof(bytes,uint256[])`, covering selector `0x1e8e1e13`, the callvalue check, ABI bounds
+checks, and binding the locals `vk` and `quotientEvaluator` from immutables."* Milestone M8 (line
+571) reads: **"solc IR translation validation (required) | `irCheck` verified; `ir_refines`"**.
+
+**Neither file exists.** Verified by direct test:
+
+```
+Bridge: EXISTS   Externals: EXISTS   ImportSolcIR: EXISTS
+ShellModel: MISSING   Print: MISSING   IRCheck: MISSING
+```
+
+What exists instead is `Surface.irCheck` (`Surface.lean:771`), a **decidable projection of
+`runtimeName`** introduced by R-60 S1 to fix an unrelated defect - a free `irCheck` field had let
+the fixture hard-code its own check. It shares the name and the `-> Bool` type with Fable's
+specified checker and satisfies none of its specification.
+
+**Consequence.** `ir_refines` (sketch line 505) was transcribed **faithfully** - a diff against the
+sketch shows nothing wrong, which is exactly why this survived. But its hypothesis `irCheck ir = true
+cites the placeholder. P-CSURFACE-M8 then proved the placeholder blind (`IrCheckBlindness.lean`:
+`irRet` and `irRev` both pass by `rfl` while differing in `HaltKind`), which makes `ir_refines`
+**refutable rather than unproved**.
+
+> **The theorem is right; the constant it cites is the wrong one.** A mistranscription is visible in
+a diff. A refactoring is a decision someone made. This was neither - a stand-in that typechecked,
+cited downstream as though it were the specification, and **nothing could detect it** except the
+verification Fable asked for and nobody built.
+
+**This also corrects `M8-SCOPE.md`.** It presented three options and recommended (A), naming the solc
+hop as a trusted-base assumption, dismissing (B) as "not estimable; months." That conflation is the
+errors: (B) as Fable wrote it is **not** "verify solc the compiler" - it is "build a decidable
+`irCheck` and prove it implies `ObsEquiv`", which for the **one pinned artifact** is translation
+validation of a single object, i.e. close to option (C). **The decision point I put to the human was
+partly an artifact of our own omission: Fable had already answered it.**
+
+**Revised M8 plan (6-12 sessions, replacing 8-16):**
+1. Build `ShellModel.lean` per PLAN line 224. **This is also the `shell_unfolds` gap** - the
+   wrong-selector calldata that reverts in the artifact but runs the verifier in our model. One file
+   closes both.
+2. Build `IRCheck.lean` per PLAN line 228, establishing the property **for the pinned `ir`** rather
+   than for all of its preimage.
+3. `ir_refines` then follows as a corollary, **with no new trusted-base row**. The only assumption
+   left is the genuinely external one: solc's optimizer hop from `ir` to deployed bytecode.
+
+**Standing lesson added:** when a plan names a file and a property, **check the file exists** before
+treating a same-named function elsewhere as its fulfilment. This is the third distinct way a recorded
+premise has failed here - R11 was an annotated reason that was false; this is a named deliverable
+that was silently substituted.
