@@ -80,3 +80,73 @@ invent a different statement.
    checked against what the plan already decided rather than reinvented.
 4. `P-SE-evidence/attack.md` FIX lines (binding) and the matching `design*.md`.
 5. The dead-identifier table above, so a sketched name is verified rather than trusted.
+
+## P-RESTORE2 - the sketch-vs-implementation record for sections K, L, M, N
+
+Added by P-RESTORE2, whose whole subject is drops that were never written down. The rule
+this package adds, and which the four packages before it did not have:
+
+> **A rename, an arity change, or a dropped field on a sketched statement requires a line
+> in this file, in the same commit.** Not in a doc comment in the Lean file, not in a
+> plan brief that gets archived: here, where the next auditor looks. The reason is
+> measured: `EnvAgrees.accBasesInVk` was dropped and recorded nowhere, and the only
+> reason anyone noticed is that a human happened to diff the sketch by hand. Everything
+> below was found the same way - mechanically, by listing every declaration and every
+> structure field the sketch writes in sections A-R and grepping the tree for it - so
+> none of it is a judgement call about intent.
+
+### The audit: every sketched obligation absent from the tree without a record
+
+404 declarations and structure fields appear in the sketch's code blocks (sections A-R).
+25 of them have no counterpart in `Midfall/`. 17 of those 25 are named in a Lean comment,
+in `docs/ETA.md`, or in this file - i.e. they are annotated gaps, which is the acceptable
+state. **Eight are named nowhere.** That is the class this package exists to eliminate.
+
+| sketched name | section | what it actually is | status after P-RESTORE2 |
+|---|---|---|---|
+| `EnvAgrees.accBasesInVk` | L:1551 | every fixed-base table entry is a point a VK header slot encodes | **RESTORED** as `VkSlotsAgree.accBasesInVk`, exhibited at the fixture (`fxVkSlotsAgree`) and consumed by `finalPairing_acc_spec` as `hvks` |
+| `Inv`'s reversed-evals clause (`reversedEvalsOf`) | L:1585 | pins the parser's main output window | **RECORDED** in Inv.lean's DROPPED list with the measured blocker, plus `gap_reversedEvalsWindow`. It WAS annotated - at Inv.lean:66-71, in the header's prose, which is not the register anyone greps - so the brief's "recorded nowhere" is half right and is corrected here |
+| `publicInstanceEval` | K:1434 | the instance evaluation the Lagrange partial reads | **RENAMED, never recorded**: the tree has `instanceEvalOf` (Snapshot.lean), same job, same attack fix about `getD 0`. Recorded now |
+| `finalPairing_sound_noAcc` | N:1882 | the no-accumulator pairing soundness theorem | **RENAMED, never recorded**: landed as `finalPairing_spec`. Recorded now |
+| `finalPairing_progress_noAcc` | N:1895 | its progress twin | **RENAMED, never recorded**: landed as `finalPairing_progress_spec`. Recorded now |
+| `finalPairing_sound_acc` | N:1906 | the accumulator arm | **RENAMED, never recorded**: landed as `finalPairing_acc_spec`. Recorded now |
+| `EnvAgrees.accConsistent` | L:1547 | `hasAccumulator = accEncoding.isSome` | **RELOCATED, never recorded**: the two siblings accHeader/accNoHeader are named in docs/ETA.md:383; this one is not named anywhere. Its content lives as the `pv.expectedHasAccumulatorWord == if pv.hasAccumulator then 1 else 0` line of `planAccWords_derive_ok` (Inv.lean:857-860). Recorded now |
+| `PlanView.qplan`, `PlanView.qbuild` | L:1495-1496 | the quotient plan and its build, carried on the plan view | **REPLACED, never recorded by name**: the landed PlanView carries `meta_` and `dat` instead, and `gap_planview_carries_the_plan` (Inv.lean) describes the plan-projection decision without naming these two fields. Recorded now |
+| `Surface.modulusPinned` | M:1674 | `p = Midfall.Assumptions.r` as a Surface pin | **RELOCATED, never recorded**: the same fact is `EnvAgrees.modulus` (`p = frModulusConstant`), and `fxEnvAgreesKats_ok` asserts `rp == frModulusConstant`, so the obligation is carried - just not under this name and not in this structure. Recorded now |
+
+### Other P-RESTORE2 deviations
+
+* `EnvAgrees` arity. The sketch's is seven (E, vk, PV, params, sG2gen, encG2, fb); the
+  landed one stayed at five and the two extra arguments moved to a sibling structure
+  `VkSlotsAgree (E) (PV) (sG2gen) (encG2) (fb)`. The reason is measured and is in that
+  structure's doc comment: folding them in makes `curveEnvAgrees` - and with it
+  `curveBundle` and `curveBundleCore`, the only exhibit of `Eip2537.Holds` at a Surface -
+  undischargeable, because curveSurface reuses the fixture's payload image and its G1
+  codec is noncomputable. The conjunction of the two structures IS the sketch's
+  seven-argument hypothesis, field for field.
+* `g1BaseWords` / `g2BaseWords` / `negSG2Words` **restored** after the recorded reason for
+  dropping them was checked and found false (see Inv.lean's dropped list: the .vk clause
+  pins the payload COPY and never mentions a codec, so the clauses were not redundant).
+  The sketch's literal slot indices 11/15/23 are the derived `vkG1BaseSlot` /
+  `vkG2BaseSlot` / `vkNegSG2BaseSlot`, which `Models.lean:1159-1160` computes to 11/15/23.
+* `finalPairing_progress_spec` **strengthened against the sketch**: the sketch (N:1873)
+  gives it no `success` hypothesis, but the emitted slice reads the local before writing
+  it (GenAst.lean:651-654), so the sketch's form is false for a run entering with
+  success = 0. The entry condition is now on the pre. Deviation on the strong side.
+* `PartialSpecs.transcript_rejects` and `PartialSpecs.pcs_rejects` **landed** (sketch
+  N:1860-1865), which is what `PartialRejects` was defined for and which ends its status
+  as a definition nothing consumes. The sketch's stage-tagged fault key does not
+  typecheck (Fault carries no stage); the landed key is the fault itself, with the stage
+  named by which field it is - the workaround PartialRejects' own doc comment promised.
+* `delta` (sketch L:1526) stays dropped, with a MEASURED reason now. The literal the
+  contract emits is `let delta := {{ fr_delta }} // BLS12-381 Fr::DELTA`
+  (QuotientNumeratorBlock.yul:1407), and `fr_delta_literal()` is COMPUTED as
+  `fe_to_u256::<Fq>(&Fq::DELTA)` (quotient_numerator/yul_emit.rs:330). The Rust test
+  `permutation_delta_literal_is_computed_from_field_constant` (tests.rs:3467-3475)
+  asserts the codegen source must NOT contain that literal. A Lean `blsDeltaLiteral`
+  would therefore be a hard-coded transcription in the one place the reference has a
+  test against hard-coding - and it is a BASE-field constant (Fq::DELTA) cast into
+  `Fr p`, the cross-field move R-26.7 refuses to lose. Third: the fixture sets
+  `VerifierEnv.delta := 2`, a placeholder nothing ties to the artifact, so the clause
+  would be false at the only Surface able to check it. Recorded in the Inv.lean
+  dropped list; docs/plans/P-DELTA-GAP.md stays open.

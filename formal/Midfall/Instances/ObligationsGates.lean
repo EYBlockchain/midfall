@@ -165,8 +165,8 @@ theorem accFixedBasesProducerAtFixture :
     ∀ b ∈ realSurface.accFixedBases.toList, b.name = "-G" →
       b.base = (inferInstance : AdmissiblePairing RP RP RP).g₁ ∧ b.negate = true := by
   refine ⟨?_, ⟨{ name := "-G", base := fx 1, negate := true },
-      by simp [realSurface, List.mem_cons], rfl⟩, ?_⟩
-  · simp [realSurface, namesAscending]
+      by simp [realSurface, fxAccFixedBases, List.mem_cons], rfl⟩, ?_⟩
+  · simp [realSurface, fxAccFixedBases, namesAscending]
   · intro b hb hn
     have hlist : realSurface.accFixedBases.toList =
         [{ name := "-G", base := fx 1, negate := true },

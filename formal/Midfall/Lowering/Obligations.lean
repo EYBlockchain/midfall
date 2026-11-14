@@ -82,8 +82,12 @@
 --       reused verbatim: `namesAscending`.
 --     * `EnvAgrees` - section Q writes the 7-argument form
 --       (`... S.sG2gen S.encG2 S.accFixedBases`); stage 3 landed a 5-argument
---       one (`E vk plan params sG2gen`). P-SE-statements.md lists the 7-arg
---       form as not typechecking, so the landed arity is used.
+--       one (`E vk plan params sG2gen`). P-RESTORE2 restored the two missing
+--       arguments and the four clauses that needed them, but as a SIBLING
+--       structure `VkSlotsAgree E PV sG2gen encG2 fb` and not as fields - the
+--       measured reason is in that structure doc comment and in
+--       docs/plans/P-SE-statements.md. The conjunction of the two IS the
+--       sketch form with seven arguments, field for field.
 --     * `tblOf` - section Q writes `tblOf S.plan S.accFixedBases`; the landed
 --       projection (Surface.lean:613) takes the table alone.
 --     * `S.repackProof` / `S.encodeCalldata` - stage 4 removed the three codec

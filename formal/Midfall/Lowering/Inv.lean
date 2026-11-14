@@ -410,6 +410,41 @@ def holdsG1s (E : VerifierEnv p G₁ G₂ Gₜ) (st : EvmState) (base : Nat)
 def holdsFrs (st : EvmState) (base : Nat) (xs : Array (Fr p)) : Bool :=
   (xs.zipIdx.toList).all fun (x, i) => holdsFr st (base + 32 * i) x
 
+/-! ### The VK header word readers (P-RESTORE2)
+
+    The design sketch's EnvAgrees named four clauses over vkG1Words and vkG2Words, and
+    this file's dropped list recorded that NEITHER function exists. That was true and is
+    no longer: these are the two functions the sketch meant, built here so the clauses
+    can be restored instead of left out. They read the payload image the same way
+    Halo2VerifyingKey.bytes does - every scalar constant as 32 big-endian bytes, in list
+    order - so a header slot is a word index into PV.vk.constants and the point it holds
+    is the concatenation of the words that follow it. -/
+
+/-- n consecutive header words of the payload image, starting at word index i, as
+    big-endian bytes. A slice that runs off the end of constants is SHORTER and never
+    zero-padded: List.drop past the end is [], so vkHeaderBytes PV 100 4 = Bytes.empty
+    and a clause about a slot the render does not have is FALSE rather than vacuous. That
+    is deliberate - Models.lean:1227 refuses the same silent zero for the same reason. -/
+def vkHeaderBytes (PV : PlanView) (i n : Nat) : Bytes :=
+  ((PV.vk.constants.drop i).take n).foldl (init := Bytes.empty)
+    fun acc (_, w) => ByteArray.append acc (wordToBytesBE w)
+
+/-- The 128-byte EIP-2537 G1 image at header word i (four words: x_hi, x_lo, y_hi, y_lo -
+    G1_WORDS = 4, and LM:395-401 through Models.lean:1160). -/
+def vkG1Words (PV : PlanView) (i : Nat) : Bytes := vkHeaderBytes PV i 4
+
+/-- The 256-byte EIP-2537 G2 image at header word i (eight words: G2_WORDS = 8, and
+    NEG_S_G2_BASE = G2_BASE + 8 is what makes the three slots 11, 15, 23). -/
+def vkG2Words (PV : PlanView) (i : Nat) : Bytes := vkHeaderBytes PV i 8
+
+/-- The three header slots the sketch named by literal index. They are NOT literals here:
+    vkHeaderTemplateSlotsDefault is the port of the reference's own slot table and
+    Models.lean:1159-1160 computes g1Base = 11, g2Base = 15, negSG2Base = 23, so the
+    clauses below name the derivation and a re-slotted render moves with it. -/
+def vkG1BaseSlot : Nat := vkHeaderTemplateSlotsDefault.g1Base
+def vkG2BaseSlot : Nat := vkHeaderTemplateSlotsDefault.g2Base
+def vkNegSG2BaseSlot : Nat := vkHeaderTemplateSlotsDefault.negSG2Base
+
 /-- The Yul locals Inv may rely on. Only r is claimed, and only conditionally: r is
     bound by the prologue (Contracts.lean vhAfterTraceAndGas emits
     let r := FR_MODULUS) and every arithmetic partial reads it, but a render whose
@@ -435,19 +470,66 @@ def LocalsOk (V : VEnv (Bridge.Dialect calls gas)) : Bool :=
     comment rather than invented.
 
     DROPPED FROM THE SKETCH, with the reason:
-    * delta : E.delta = (Nat.cast blsDeltaLiteral : Fr p). blsDeltaLiteral does not
-      exist anywhere in the tree (the design comment already says the Lean constant
-      does not exist yet), so there is nothing to be equal to. The contract hard-codes
-      the permutation delta literal (QuotientNumeratorBlock.yul:1407); tying it to
-      E.delta needs a generator-side constant first.
-    * g1BaseWords / g2BaseWords / negSG2Words over vkG1Words and vkG2Words: neither
-      function exists (Vk.lean has vkG1WordsOf, which is a different thing). They are
-      also redundant: the G1 and G2 base points are part of the VK payload image, and
-      the .vk clause of Inv pins that image byte for byte, so the header words are
-      already constrained by a clause that does exist.
+    * delta : E.delta = (Nat.cast blsDeltaLiteral : Fr p). STILL DROPPED, and
+      P-RESTORE2 went and looked instead of inheriting the note, which changed the reason
+      in a way that matters. blsDeltaLiteral does not exist, true - but it does not exist
+      because the REFERENCE refuses to have it: the emitted literal at
+      QuotientNumeratorBlock.yul:1407 is 'let delta := {{ fr_delta }} // BLS12-381
+      Fr::DELTA', and fr_delta_literal() is COMPUTED as fe_to_u256::<Fq>(&Fq::DELTA)
+      (quotient_numerator/yul_emit.rs:330), with a Rust test named
+      permutation_delta_literal_is_computed_from_field_constant (tests.rs:3467-3475)
+      whose second assertion is that the codegen source must NOT contain the literal.
+      Defining blsDeltaLiteral in Lean would therefore be hard-coding, in the one place
+      the reference has a test against hard-coding, and it would be a transcription with
+      no generator-side term to check it against. TWO further findings, both reported
+      rather than fixed here: the constant is a BASE-field DELTA (Fq::DELTA) while
+      E.delta : Fr p, so the sketch's Nat.cast into Fr crosses fields the way R-26.7
+      refuses to lose; and the fixture's VerifierEnv.delta is 2
+      (Instances/SurfaceFixture.lean), a placeholder no exhibit ties to anything, so the
+      clause would be false at the only Surface that could check it. See
+      docs/plans/P-DELTA-GAP.md.
+    * the Inv .transcript reversed-evals clause, holdsFrs st (ptrAddr M.reversedEvalsMptr)
+      (reversedEvalsOf PV S) (sketch line 1585). THIS ONE WAS PREVIOUSLY ANNOTATED ONLY
+      IN THIS FILE'S HEADER PROSE (line 66-71, "WHAT IS NOT HERE"), which is not the
+      register anyone greps; it is here now, with the reason MEASURED rather than
+      inherited. reversedEvalsOf does not exist, and the reason it does not is a real
+      two-order problem and not laziness: the window is laid out by Data.new zipping
+      meta.protocol.proof.evals (ENC:698, Protocol.lean:1399-1420 pins the deployed
+      twenty-one reads and they use all nine EvalRead variants), while the snapshot's
+      eval scalars are stored by readAlgebra in TRANSCRIPT order, split across six
+      differently-shaped arrays (Verifier.lean:913-933: instanceEvals, adviceEvals,
+      fixedEvals, permutationsCommon, permutationsEvaluated, lookupsEvaluated,
+      trashcansEvaluated). No Lean term maps one to the other: Data.adviceEvals is a
+      map (col, rot) -> Word POINTER (ENC:706-707), not to a value, and the pointer is
+      the slot in the very window the clause wants to pin. Writing reversedEvalsOf means
+      writing that nine-variant index bridge, and a wrong index in it pins memory to the
+      WRONG EVAL - a stronger lie than an absent clause. gap_reversedEvalsWindow below
+      is the machine-readable form of this record.
     * vkDigestWord is kept: it is the one header fact the payload copy does not
       already give, because the contract hashes the digest WORD rather than reading
-      it from the payload. -/
+      it from the payload.
+
+    RESTORED BY P-RESTORE2 (they were in the sketch, and the reason given for dropping
+    them was checked and found FALSE):
+    * g1BaseWords / g2BaseWords / negSG2Words. The stated reason had two halves. The
+      first - vkG1Words and vkG2Words do not exist - is now simply wrong: they are
+      defined above. The second - that the three clauses are REDUNDANT because the .vk
+      clause pins the payload image byte for byte - was REFUTED by inspection, and the
+      refutation is worth keeping because it is the class of argument this project keeps
+      inheriting. Inv's .vk clause is bytesAt st (ptrAddr M.vkMptr) PV.vk.len ==
+      PV.vk.bytes: it pins MEMORY to the PAYLOAD. The payload is a free field of
+      PlanView, so that clause is satisfied by whatever constants the plan view happens
+      to carry; it never mentions P.g1, P.g2, sG2gen or encG2. "The G1 base slot holds
+      the encoding of the generator" is therefore stated NOWHERE without these clauses.
+      Concretely: the pinned byte range is [vkMptr, vkMptr + PV.vk.len) and PV.vk.len is
+      constants.length * 32 + commitment words (Models.lean:462), so slots 11, 15 and 23
+      are inside the range only for a render whose payload has 31 header words - and
+      being inside the range pins the COPY, not the CONTENT. Nothing tied them to the
+      codecs.
+    * accBasesInVk, which was absent from BOTH registers: not in the structure, not in
+      the dropped list, not in docs/plans/P-SE-statements.md. It is the clause
+      finalPairing_acc_spec needs to relate the folded point to
+      a.fullyCollapse (tblOf fb), and it is here now. -/
 structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p) G₁)
     (PV : PlanView) (params : ParamsVerifierKZG G₁ G₂) (sG2gen : G₂) : Prop where
   /-- addmod, mulmod and the instance range check all use the FR_MODULUS literal
@@ -496,6 +578,61 @@ structure EnvAgrees (E : VerifierEnv p G₁ G₂ Gₜ) (vk : VerifyingKey (Fr p)
       and the Lean transcript absorbs vk.transcriptRepr, imported and unchecked. -/
   vkDigestWord : (PV.vk.constants.getD 0 ("", 0)).2 = frWord vk.transcriptRepr
 
+/-- THE FOUR VK-HEADER AND FIXED-BASE CLAUSES THE SKETCH PUT INSIDE EnvAgrees, restored
+    verbatim and carried here instead.
+
+    WHY A SIBLING STRUCTURE AND NOT FOUR MORE FIELDS. The sketch's EnvAgrees takes seven
+    arguments - E, vk, PV, params, sG2gen, encG2, fb - and these four clauses are the
+    reason it needs the last two. Restoring them as EnvAgrees fields was tried first, and
+    the measurement that stopped it is this: curveSurface (Instances/CurveSurface.lean),
+    the only Surface in the tree with a real-curve G1 codec and the only exhibit of
+    Eip2537.Holds AT A SURFACE, sets its plan field to the FIXTURE's payload image. That
+    payload's slot 11 holds the exponent model's encoding of its generator, while
+    curveSurface.E.g1 is g1CodecZ, whose toEip is noncomputable
+    (G1Agreement.lean:2002 - its ofEip? needs a discrete log), so the equation is neither
+    satisfiable at that payload nor decidable against it. A seven-field EnvAgrees would
+    have had to DELETE curveEnvAgrees, curveBundle and curveBundleCore to gain the four
+    clauses - coverage destroyed in order to add coverage. Splitting keeps every existing
+    exhibit and adds the clauses as real, exhibited, gate-pinned obligations.
+
+    WHAT IS AND IS NOT LOST BY THE SPLIT. Nothing in content:
+    'EnvAgrees E vk PV params sG2gen ∧ VkSlotsAgree E PV sG2gen encG2 fb' IS the sketch's
+    seven-argument structure, field for field. What is lost is the single name, so every
+    theorem that needs the header clauses must say so - which is an improvement, not a
+    regression: the sketch's own note is that only the accumulator and pairing partials
+    read them.
+
+    THE OTHER FINDING, reported rather than routed around: these clauses are FALSE at a
+    two-word payload, so the fixture's VK image had to grow to the reference's thirty-one
+    words (Instances/SurfaceFixture.lean, fxPayload). The clauses had been dropped, so
+    nothing had ever checked the payload could carry them. -/
+structure VkSlotsAgree (E : VerifierEnv p G₁ G₂ Gₜ) (PV : PlanView)
+    (sG2gen : G₂) (encG2 : G₂ → Bytes) (fb : Array (AccFixedBase G₁)) : Prop where
+  /-- G1_BASE (header word 11) holds the encoding of the pairing's G1 generator. The
+      contract reads G1_BASE as an EcPoint source in every MSM (AssemblyHelpers.yul:226
+      and the ec_pairing frame), so if the slot holds some other point the precompile
+      answers a different equation than DualMSM.check states. P-RESTORE2 restored this
+      from the sketch; see the dropped-list note above for why the redundancy argument
+      that removed it did not hold. -/
+  g1BaseWords : vkG1Words PV vkG1BaseSlot = E.g1.toEip P.g₁
+  /-- G2_BASE (word 15) is encG2 of the G2 generator, and NEG_S_G2_BASE (word 23) is
+      encG2 of the inverse of the SAME point the params carry - which is what EnvAgrees.sG2
+      names apart. The ec_pairing frame is [LHS | G2_BASE | RHS | NEG_S_G2]
+      (AssemblyHelpers.yul:284-287), so these two slots are half of the pairing input
+      and nothing else in the tree says what they hold. -/
+  g2BaseWords : vkG2Words PV vkG2BaseSlot = encG2 P.g₂
+  negSG2Words : vkG2Words PV vkNegSG2BaseSlot = encG2 sG2gen⁻¹
+  /-- Every fixed-base table entry the accumulator fold indexes is a point the VK header
+      actually encodes. This is the clause finalPairing_acc_spec needs: the fold is
+      a.fullyCollapse (tblOf fb), whose bases come from this table, while the bytes the
+      contract MSMs are the ones the header slots hold - so without this the folded point
+      and the MSM's point are unrelated terms and the accumulator arm's conclusion cannot
+      be reached at all. The reference builds the table FROM the slots
+      (Artifacts.lean:288 accFixedBasesOf: -G maps to g1BaseMptrOf, i.e. word 11, and
+      self_vk_fixed_com_i / self_vk_perm_com_i to the commitment sections), so the
+      existential is what the generator guarantees and not a hope. -/
+  accBasesInVk : ∀ b ∈ fb.toList, ∃ slot, vkG1Words PV slot = E.g1.toEip b.base
+
 /-- THE CONSUMER THE STRENGTHENED `omegaOrder` BUYS, and the reason it is not decoration
     (R-30: a clause no theorem reads is a clause that can be dropped). With a generator of
     EXACT order n, "x is not a root of the vanishing polynomial" and "x is not one of the
@@ -519,6 +656,28 @@ theorem EnvAgrees.xNotRoot_iff_notDomainPoint
     exact h.omegaOrder
   rw [hn]
   exact Midfall.Assumptions.xNotRoot_iff ho
+
+/-- THE REVERSED-EVALS WINDOW IS NOT PINNED, and this is the machine-readable form of the
+    record so it cannot become invisible again (the pattern is gap_planview_carries_the_plan
+    at the end of this file). The sketch's Inv .transcript arm carried
+    'holdsFrs st (ptrAddr M.reversedEvalsMptr) (reversedEvalsOf PV S)'; the clause is
+    absent and reversedEvalsOf does not exist. The blocker, measured: the window's order
+    is meta.protocol.proof.evals (ENC:698) and the snapshot's evals are in readAlgebra's
+    transcript order across six differently-shaped arrays (Verifier.lean:913-933), and
+    the only map between them in the tree, Data.adviceEvals, goes from a query key to a
+    POINTER INTO THAT SAME WINDOW rather than to a value. WHAT IS LOST, precisely: the
+    parser's main output is this table - GenAst.lean:1144-1154 mstores every eval scalar
+    it reads into it - so transcriptParser_spec's post can say nothing about the one
+    region the partial exists to fill, and any eval the parser mis-spills satisfies Inv.
+    WHAT WOULD CLOSE IT: a nine-variant bridge EvalRead -> Fr over SnapAlgebra, with a
+    KAT at the deployed twenty-one-read plan (Protocol.lean:1399) pinning each slot to
+    the eval it names. That bridge is a package, not a field, and it is named here rather
+    than guessed at. -/
+def gap_reversedEvalsWindow : String :=
+  "Inv .transcript does not pin the REVERSED_EVALS window; blocker: reversedEvalsOf "
+    ++ "needs the EvalRead -> Fr bridge from the Data.new plan order (ENC:698) to "
+    ++ "readAlgebra's transcript-order arrays (Verifier.lean:913-933), which does not "
+    ++ "exist; consequence: transcriptParser_spec cannot state the parser's main output"
 
 /-- The finite bad set the squeezed challenges must miss for Lean and the contract to
     agree. R-2 has three manifestations and only the first two diverge between the
@@ -666,6 +825,69 @@ def Inv (E : VerifierEnv p G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂
     (k : Checkpoint) (PV : PlanView) (S : Snapshot p G₁ G₂ Gₜ)
     (V : VEnv (Bridge.Dialect calls gas)) (st : EvmState) : Prop :=
   InvAt E params k PV S V st = true
+
+/-- THE TWO CLAUSES THE .pairing ARM CARRIES, SPLIT OUT BY NAME.
+
+    WHY THIS EXISTS AND IS NOT HYGIENE. P-SPECPIN dropped two post conjuncts from
+    finalPairing_spec - VEnv.get V" "success" = some 1 and DualMSM.check Snap.c.dual
+    S.params = true - on the ground that both are implied by the post invariant
+    Inv .pairing together with the no-accumulator hypothesis. That argument was made
+    OUTSIDE the tree and never committed, which left the relocation load-bearing and
+    unpinned: the conjuncts lived in a proof nobody could read, and no gate said Inv
+    .pairing still asserts them. These are those lemmas, in the tree, sorry-free; the
+    INV_CLAUSES entries in scripts/check_statement_fingerprints.py pin the two clauses
+    they are recovered from. -/
+theorem Inv.pairing_success {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState} (h : Inv E params Checkpoint.pairing PV S V st) :
+    VEnv.get V "success" = some (1 : U256) := by
+  have h1 := h
+  simp [Inv, InvAt] at h1
+  rcases h1.right with hne | ⟨hget, _⟩
+  · exact absurd hne (by decide)
+  · exact hget
+
+/-- The DualMSM half of the same arm, as the disjunction Inv states it: in an accumulator
+    render the decision was already taken by the batched pairing and the plain DualMSM is
+    not the claim, so hacc below is what a no-accumulator statement needs. -/
+theorem Inv.pairing_dualMsm_or {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState} (h : Inv E params Checkpoint.pairing PV S V st) :
+    PV.hasAccumulator = true ∨ DualMSM.check S.c.dual params = true := by
+  have h1 := h
+  simp [Inv, InvAt] at h1
+  rcases h1.right with hne | ⟨_, hdual⟩
+  · exact absurd hne (by decide)
+  · exact hdual
+
+/-- THE RECOVERY the two dropped conjuncts were asked for: Inv at .pairing plus the
+    no-accumulator hypothesis gives both back, sorry-free, in the tree. -/
+theorem Inv.pairing_decision {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState} (h : Inv E params Checkpoint.pairing PV S V st)
+    (hacc : PV.hasAccumulator = false) :
+    VEnv.get V "success" = some (1 : U256) ∧ DualMSM.check S.c.dual params = true := by
+  refine ⟨Inv.pairing_success h, ?_⟩
+  cases Inv.pairing_dualMsm_or h with
+  | inl htrue => exact absurd htrue (by rw [hacc]; exact by decide)
+  | inr hchk => exact hchk
+
+/-- FALSIFICATION OF THE RECOVERED DUALMSM CONJUNCT (D-P23, second half). The recovery
+    lemma above is worth nothing if Inv .pairing could not fail on this clause: a state at
+    .pairing in a no-accumulator render whose DualMSM check is false does not satisfy the
+    invariant at all, so the conjunct finalPairing_spec stopped carrying is a restriction
+    and not a restatement. The success half has its own falsification next door, in
+    Midfall/Lowering/Partials.lean (not_inv_pairing_of_success_zero). -/
+theorem not_inv_pairing_of_dualMsm_false
+    {E : VerifierEnv p G₁ G₂ Gₜ} {params : ParamsVerifierKZG G₁ G₂}
+    {PV : PlanView} {S : Snapshot p G₁ G₂ Gₜ} {V : VEnv (Bridge.Dialect calls gas)}
+    {st : EvmState} (hacc : PV.hasAccumulator = false)
+    (hchk : DualMSM.check S.c.dual params = false) :
+    ¬ Inv E params Checkpoint.pairing PV S V st := by
+  intro h
+  cases Inv.pairing_dualMsm_or h with
+  | inl htrue => exact absurd htrue (by rw [hacc]; exact by decide)
+  | inr heq => exact absurd heq (by rw [hchk]; exact by decide)
 
 /-  WHY THERE IS NO Inv_mono HERE. design0 lists Inv_mono (k₁ ≤ k₂ → Inv k₂ → Inv k₁)
     as a lemma of this file. It is FALSE as written, and stating it as a trivially

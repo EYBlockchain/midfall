@@ -268,9 +268,19 @@ PARTIAL_SPEC_CONCLUSIONS = [
     ("lagrange_progress_spec",
      ["PartialProgress S W product qAddr .lagrange", "Snap gas (calldataPre S cd)"],
      ["PartialSound", "PartialRejects", "\u2227 True", "\u2228 True", "=> True", "Reverted"]),
+    # P-RESTORE2 MOVED THIS PIN, and says so because a pin moved without a note is the
+    # same defect as a clause dropped without one. The theorem used to take
+    # (calldataPre S cd) as its whole pre, and that statement was FALSE: the emitted
+    # slice reads the success local before it writes it (GenAst.lean:651-654), so a run
+    # entering at .pcs with success = 0 reverts and PartialProgress's o = .normal post
+    # cannot hold. The entry condition is now on the pre, and the OLD form is in must_not
+    # so a package that quietly restores the sketch's weaker pre reddens this gate
+    # instead of quietly being true of a program that reverts.
     ("finalPairing_progress_spec",
-     ["PartialProgress S W product qAddr .finalPairing", "Snap gas (calldataPre S cd)"],
-     ["PartialSound", "PartialRejects", "\u2227 True", "\u2228 True", "=> True", "Reverted"]),
+     ["PartialProgress S W product qAddr .finalPairing", "Snap gas",
+      'calldataPre S cd V st \u2227 VEnv.get V "success" = some 1'],
+     ["PartialSound", "PartialRejects", "\u2227 True", "\u2228 True", "=> True", "Reverted",
+      "(calldataPre S cd)"]),
     # ---- the two arms stated OUTSIDE the relation wrappers, so the checkpoint, the pre and the
     # post are all in the theorem's own text, and all three are pinned here.
     ("finalPairing_acc_spec",
@@ -359,6 +369,44 @@ ENV_CLAUSES = [
     ("EnvAgrees", "omegaOrder",
      ["Midfall.Assumptions.orderExactly vk.domain.omega vk.domain.n"],
      ["vk.domain.omega ^ vk.domain.n = 1"]),
+    # P-RESTORE2: the four VK-header / fixed-base clauses the sketch carried inside
+    # EnvAgrees. They had been dropped, the stated reason for dropping them measured FALSE
+    # (the .vk clause pins the payload COPY and never mentions a codec), and they are now
+    # fields of VkSlotsAgree in the same file. A hypothesis structure no theorem reads and
+    # no gate pins is a hypothesis that gets hollowed out to True on the next package that
+    # needs a proof, which is what happened to these four once already.
+    ("VkSlotsAgree", "g1BaseWords",
+     ["vkG1Words PV vkG1BaseSlot = E.g1.toEip P.g\u2081"],
+     ["= True", "Bytes.empty"]),
+    ("VkSlotsAgree", "g2BaseWords",
+     ["vkG2Words PV vkG2BaseSlot = encG2 P.g\u2082"],
+     ["= True"]),
+    ("VkSlotsAgree", "negSG2Words",
+     ["vkG2Words PV vkNegSG2BaseSlot = encG2 sG2gen\u207b\u00b9"],
+     ["= True"]),
+    ("VkSlotsAgree", "accBasesInVk",
+     ["\u2200 b \u2208 fb.toList, \u2203 slot, vkG1Words PV slot = E.g1.toEip b.base"],
+     ["= True", "\u2200 b \u2208 fb.toList, True"]),
+]
+
+# P-RESTORE2 STEP 3: the clauses of Inv ITSELF. InvAt is a Bool-valued def and not a
+# structure, so env_clause_text cannot reach it; these are read with the same whole-body
+# parser the checkpoint maps use. WHY THEY NEED PINNING: P-SPECPIN dropped two post
+# conjuncts from finalPairing_spec on the ground that Inv .pairing already asserts them,
+# and that relocation is now load-bearing - Inv.pairing_decision in Inv.lean is the
+# in-tree proof of it. If the .pairing arm were hollowed out the recovery lemma would
+# still elaborate (it reads the arm by shape) and the specs would silently stop asserting
+# the pairing decision. LocalsOk is here for the same reason: every Inv hypothesis
+# carries it, and it is one match away from being a constant true.
+INV_CLAUSES = [
+    ("InvAt",
+     ["if k == Checkpoint.pairing then",
+      'VEnv.get V "success" == some 1',
+      "PV.hasAccumulator == true || DualMSM.check S.c.dual params"],
+     ["PV.hasAccumulator == true || True", "DualMSM.check S.c.dual params && True"]),
+    ("LocalsOk",
+     ['match VEnv.get V "r" with', "w == BitVec.ofNat 256 p"],
+     ["fun _ => true"]),
 ]
 
 # P-HOLDS (docs/REVIEW.md R-63): the six Eip2537.Holds clause types in
@@ -998,6 +1046,27 @@ def main():
                 if norm(fr) in text:
                     problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type contains the "
                                     "pre-P-ENV text %s" % (struct, field, repr(fr)))
+        # P-RESTORE2: the .pairing arm of InvAt and LocalsOk, read as whole def bodies.
+        for dname, must, must_not in INV_CLAUSES:
+            text = field_text(ibody, dname, whole=True)
+            if not text:
+                problems.append("Inv." + dname + ": CLAUSE NOT FOUND - the definition that "
+                                "carries the .pairing arm has been deleted or renamed, so the "
+                                "conjuncts finalPairing_spec dropped have nothing to recover "
+                                "from")
+                continue
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("Inv.%s: CLAUSE WEAKENED - the body no longer says %s "
+                                    "(P-RESTORE2: the .pairing success and DualMSM clauses are "
+                                    "what finalPairing_spec's dropped post conjuncts are "
+                                    "recovered from; hollowing them hollows the specs)"
+                                    % (dname, repr(fr)))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("Inv.%s: CLAUSE HOLLOWED - the body contains %s"
+                                    % (dname, repr(fr)))
     # P-HOLDS: the six Eip2537.Holds clause types, and the named decode propositions the
     # repair pins. A weakened clause elaborates, builds, and keeps every KAT true - the
     # unsatisfiable demand simply stops being refutable - so this is the only text gate that
@@ -1192,13 +1261,14 @@ def main():
           "fields, %d Surface pins, %d derived checks, %d blk-pin declarations, "
           "%d spec postconditions read off the CONCLUSION, %d spec relation definitions, "
           "%d checkpoint maps, "
-          "%d EnvAgrees clause types, %d Holds clause types plus %d Holds decode pins, "
+          "%d EnvAgrees clause types, %d Inv clause groups, "
+          "%d Holds clause types plus %d Holds decode pins, "
           "and %d frozen statements (exact text, binders, trusted surface, doc "
           "provenance) against %d repair witnesses (comments stripped first)"
           % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
              len(PARTIAL_SPEC_PINS), len(PARTIAL_SPEC_CONCLUSIONS),
              len(SPEC_RELATION_DEFS), len(CHECKPOINT_MAP),
-             len(ENV_CLAUSES), len(HOLDS_CLAUSES),
+             len(ENV_CLAUSES), len(INV_CLAUSES), len(HOLDS_CLAUSES),
              len(HOLDS_DEFS), len(STATEMENTS_PINS), len(REPAIR_PINS)))
 
 

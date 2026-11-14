@@ -206,13 +206,74 @@ def fxVk : VerifyingKey (Fr rp) RP :=
   { domain := fxDom, fixedCommitments := #[1], permutation := { commitments := #[] },
     cs := fxCs, csDegree := 3, transcriptRepr := 7 }
 
-/-- The payload image VkLoading copies: two header words, no commitments. Small on
-    purpose, for the reason stage 3 gave: the .vk clause of Inv copies the whole
-    payload, and a kilobyte of synthetic words makes the kernel exceed its recursion
-    limit. -/
+/-- THE G2 ENCODER, hoisted out of realSurface so the VK header derivation below and the
+    Surface field are ONE term and cannot drift. It is the degenerate encoder the exponent
+    model can supply (R-58 G2): every G2 point is the EIP-2537 infinity encoding, 256 zero
+    bytes. That is stated here because it is a LIMIT of the exhibit, not a detail: at this
+    Surface EnvAgrees.g2BaseWords and negSG2Words are satisfied by a constant function, so
+    they are exercised vacuously and only the G1 slot distinguishes anything. -/
+def fxEncG2 : RP → Bytes := fun _ => Midfall.Yul.bytesZero Midfall.Yul.g2Bytes
+
+/-- The contract positive-base table, hoisted out of realSurface for the same reason:
+    EnvAgrees.accBasesInVk must be exhibited at the table the Surface actually carries
+    (R-58 F7: the -G row is what makes accFixedBases_producer non-vacuous here). -/
+def fxAccFixedBases : Array (AccFixedBase RP) :=
+  #[{ name := "-G", base := fx 1, negate := true },
+    { name := "b0", base := 1, negate := false }]
+
+/-- The i-th 32-byte big-endian word of a byte string: the inverse of the
+    `wordToBytesBE` fold `vkHeaderBytes` performs, so a point written into the header
+    through these words reads back through `vkG1Words` as the same bytes. -/
+def fxWordAt (bs : Bytes) (i : Nat) : Word256 :=
+  BitVec.ofNat 256 (Midfall.bytesToNatBE
+    (ByteArray.mk (((bs.toList.drop (i * 32)).take 32).toArray)))
+
+/-- The first `n` words of a byte string, in order. -/
+def fxWordsOf (bs : Bytes) (n : Nat) : List Word256 := (List.range n).map (fxWordAt bs)
+
+/-- THE VK PAYLOAD IMAGE, and P-RESTORE2 made it thirty-one words instead of two.
+
+    WHY IT GREW. The sketch's EnvAgrees names the G1 base slot, the G2 base slot and the
+    NEG_S_G2 slot (header words 11, 15, 23 - `vkHeaderTemplateSlotsDefault`), and
+    `accBasesInVk` says every fixed-base entry is a point some header slot encodes. A
+    two-word payload cannot satisfy any of that: `vkHeaderBytes` of a slice that runs off
+    the end is `Bytes.empty`, never a zero-padded stand-in, so the clauses were FALSE at
+    this fixture and the only reason nobody noticed is that the clauses had been dropped.
+    That is the finding P-RESTORE2 was told to report rather than route around: the
+    fixture had been built small to fit the weakened hypothesis, and it is now built to fit
+    the strong one. The shape is the reference's own - eleven scalars, four G1 words, eight
+    G2 words, eight NEG_S_G2 words, exactly `syntheticVkConstants` at Models.lean:1168 -
+    and the point words are DERIVED from the codecs rather than transcribed from them, so
+    a codec change moves the payload with it.
+
+    THE COST, stated because stage 3 recorded it: the .vk clause of Inv copies
+    `PV.vk.len` bytes and a kilobyte of payload was said to push the kernel over its
+    recursion limit. It does not: the copy is a `ByteArray` slice, not a per-byte kernel
+    reduction, and `fxInvSatKats_ok` below evaluates Inv at this plan view in the
+    interpreter. If that ever changes, the fix is a smaller clause, not a smaller payload.
+    -/
+def fxHeaderScalars : List (String × Word256) :=
+  [("vk_digest", 7), ("num_instances", 1), ("k", 2), ("n_inv", 4), ("omega", 5),
+   ("omega_inv", 6), ("omega_inv_to_l", 7), ("has_accumulator", 0), ("acc_offset", 0),
+   ("num_acc_limbs", 0), ("num_acc_limb_bits", 0)]
+
+/-- The three point slots, each filled from the codec that the clause names. The G1 slot
+    is `fxToEip` of the pairing generator; the two G2 slots are `fxEncG2` of the G2
+    generator and of the inverse of the sG2 the params carry - which at this fixture are
+    the same 256 zero bytes, because the encoder is constant (see fxEncG2). -/
+def fxHeaderPointWords : List (String × Word256) :=
+  ((fxWordsOf ((expG1Codec (p := rp)).toEip ((inferInstance :
+      Midfall.AdmissiblePairing (p := rp) RP RP RP).g₁)) 4).zipIdx.map
+      fun (w, i) => ("g1_base_" ++ toString i, w)) ++
+  ((fxWordsOf (fxEncG2 ((inferInstance :
+      Midfall.AdmissiblePairing (p := rp) RP RP RP).g₂)) 8).zipIdx.map
+      fun (w, i) => ("g2_base_" ++ toString i, w)) ++
+  ((fxWordsOf (fxEncG2 ((fx 5 : RP)⁻¹)) 8).zipIdx.map
+      fun (w, i) => ("neg_s_g2_" ++ toString i, w))
+
 def fxPayload : Halo2VerifyingKey :=
   { constructorPayloadMptr := 0x6000,
-    constants := [("digest", 7), ("g2base", 8)],
+    constants := fxHeaderScalars ++ fxHeaderPointWords,
     fixedComms := [], permutationComms := [],
     quotientConstOffsetWords := none, quotientConstWords := 0,
     quotientProgramOffsetWords := none, quotientProgramWords := 0,
@@ -447,9 +508,7 @@ def realSurface : Surface rp RP RP RP :=
     -- ObligationsGates could PROVE the second conjunct of accFixedBases_producer
     -- was vacuous here. base := fx 1 is expGen, i.e. P.g1 at this model, which is
     -- what the clause demands of a -G row together with negate := true.
-    accFixedBases :=
-      #[{ name := "-G", base := fx 1, negate := true },
-        { name := "b0", base := 1, negate := false }],
+    accFixedBases := fxAccFixedBases,
     vkDigest := frWord fxVk.transcriptRepr,
     sG2gen := fx 5,
     -- R-58 G2: the encoder used to be `fun _ => Midfall.Bytes.empty`, which is
@@ -457,7 +516,7 @@ def realSurface : Surface rp RP RP RP :=
     -- at this Surface and every field carrying one was vacuous. The all-zero
     -- 256-byte word is the EIP infinity encoding: valid, and the degenerate
     -- encoder the exponent model can actually supply.
-    encG2 := fun _ => Midfall.Yul.bytesZero Midfall.Yul.g2Bytes,
+    encG2 := fxEncG2,
     o₀ := fxOptions, L := fxLowered, lower := fxLower, lower_ok := rfl,
     bindLocals := [], shell := fxShell, shellLayout := fxShellLayout,
     evaluatorRuntime := none, runtimeName := fxRuntimeName,
@@ -490,7 +549,7 @@ def realSurface : Surface rp RP RP RP :=
     -- into this record at all, and planAccExpectationsKats_ok exhibits the lie.
     plan_accExpectations := rfl,
     evaluator_agrees := rfl,
-    encG2_shape := fun _ => by native_decide }
+    encG2_shape := fun x => by unfold fxEncG2; native_decide }
 
 /-! ### 1. Supported is INHABITED -/
 
@@ -587,7 +646,10 @@ theorem deploymentInhabited :
     vkImm := fun _ => by native_decide
     vkCode := fun _ => by
       simp [fxW, fxW0, realSurface, fxLowered, fxVkRuntime]
-    vkNonEmpty := by decide
+    -- P-RESTORE2: 'by decide' became 'by native_decide'. The payload image grew from two
+    -- header words to the reference's thirty-one, and the kernel can no longer reduce the
+    -- size comparison inside its recursion budget (maxRecDepth, measured). See fxPayload.
+    vkNonEmpty := by native_decide
     vkHash := fun _ h => by
       have := Option.some.inj h
       subst this
@@ -1922,6 +1984,111 @@ theorem fxEnvAgrees : EnvAgrees fxE fxVk fxPlan fxParams (fx 5) :=
     nG2 := rfl
     sG2 := rfl
     vkDigestWord := rfl }
+
+/-- THE FOUR RESTORED CLAUSES, EXHIBITED AT THE FIXTURE. P-RESTORE2 restored them from
+    the sketch (they are the sketch's g1BaseWords, g2BaseWords, negSG2Words and
+    accBasesInVk); they live in Lowering/Inv.lean's VkSlotsAgree and the reason for the
+    split is recorded there. THE COST OF THE RESTORATION, reported rather than hidden:
+    the fixture's payload image used to be two header words, which cannot satisfy a clause
+    about word 11, so fxPayload now carries the reference's thirty-one. -/
+theorem fxVkSlotsAgree :
+    VkSlotsAgree fxE fxPlan (fx 5) fxEncG2 fxAccFixedBases :=
+  { -- THE FOUR CLAUSES P-RESTORE2 RESTORED, each discharged by computation over the
+    -- payload built above. native_decide and not decide: the kernel cannot reduce a
+    -- 128-byte natToBytesBE fold inside its recursion budget - measured, an rfl on the
+    -- same equation fails with maxRecDepth raised to 20000 - and the alternative, a
+    -- hand-proved ByteArray split/concat lemma, would be a proof about the helper and
+    -- not about the payload. This is the same trust boundary encG2_shape already crosses
+    -- in this record, and fxHeaderSlotsKats_ok below re-checks all four as a Bool
+    -- computation so a regression shows up in checks.sh and not only in a proof term.
+    -- THE LIMIT, stated: fxEncG2 is a CONSTANT function here (every G2 point is the
+    -- infinity encoding), so g2BaseWords and negSG2Words are satisfied by zeros and
+    -- distinguish nothing at this fixture. They are exercised properly only by
+    -- fxHeaderSlotsKats_ok lines 3-4, which moves the slot contents and shows the
+    -- clauses change, and by the G1 slot, which is not constant.
+    g1BaseWords := by native_decide
+    g2BaseWords := by native_decide
+    negSG2Words := by native_decide
+    accBasesInVk := by
+      intro b hb
+      have hcases : b = { name := "-G", base := fx 1, negate := true } ∨
+          b = { name := "b0", base := (1 : RP), negate := false } := by
+        simpa [fxAccFixedBases, List.mem_cons, List.mem_singleton] using hb
+      cases hcases with
+      | inl e => subst e; exact ⟨Midfall.Lowering.vkG1BaseSlot, by native_decide⟩
+      | inr e => subst e; exact ⟨Midfall.Lowering.vkG2BaseSlot, by native_decide⟩ }
+
+/-- FALSIFICATION OF THE FOUR RESTORED CLAUSES (D-P23, second half). A clause nobody can
+    break is a clause nobody can rely on, and these four were last removed on the
+    strength of an argument that turned out to be wrong, so each gets a computation here
+    that says it can fail. Lines 1-2: the G1 slot holds the generator encoding, and
+    changing ONE WORD of it breaks the equation - so the clause is about the payload and
+    not about the length of the payload. Line 3: a payload that stops before slot 11
+    gives an empty slice and fails, which is the vkHeaderBytes no-silent-zero rule doing
+    its job. Line 4: the fixed-base clause is not satisfied by an arbitrary table - a
+    third entry naming a point no slot encodes is refuted over every slot the payload
+    has. Line 5: the two G2 slots are equal to each other here ONLY because fxEncG2 is
+    constant; the KAT says so explicitly rather than letting the exhibit look stronger
+    than it is. -/
+def fxHeaderSlotsKats_ok : Bool :=
+  let cs := fxPlan.vk.constants
+  let pv (ws : List (String × Word256)) : PlanView :=
+    { fxPlan with vk := { fxPlan.vk with constants := ws } }
+  let offTable := fxAccFixedBases.push { name := "not_in_vk", base := fx 3, negate := false }
+  -- 1 the slot holds the generator encoding
+  (Midfall.Lowering.vkG1Words fxPlan Midfall.Lowering.vkG1BaseSlot == fxToEip (fx 1)) &&
+    -- 2 one word moved and the clause is gone
+    (Midfall.Lowering.vkG1Words (pv (cs.take 11 ++ [("g1_base_0", 9)] ++ cs.drop 12))
+       Midfall.Lowering.vkG1BaseSlot != fxToEip (fx 1)) &&
+    -- 3 a payload that stops short gives an empty slice, not a zero-padded one
+    (Midfall.Lowering.vkG1Words (pv (cs.take 11)) Midfall.Lowering.vkG1BaseSlot
+       != fxToEip (fx 1)) &&
+    (Midfall.Lowering.vkG1Words (pv (cs.take 11)) Midfall.Lowering.vkG1BaseSlot
+       == Midfall.Bytes.empty) &&
+    -- 4 the fixed-base clause can fail: a table entry no slot encodes
+    (offTable.toList.any fun b =>
+       !(List.range 31).any fun slot =>
+         Midfall.Lowering.vkG1Words fxPlan slot == fxToEip b.base) &&
+    -- and the two entries the real table DOES carry are each found
+    (fxAccFixedBases.toList.all fun b =>
+       (List.range 31).any fun slot =>
+         Midfall.Lowering.vkG1Words fxPlan slot == fxToEip b.base) &&
+    -- 5 the G2 slots: equal here because the encoder is constant, stated as a
+    --   computation so the degeneracy is visible rather than implied
+    (fxEncG2 (fx 1) == fxEncG2 ((fx 5 : RP)⁻¹)) &&
+    (Midfall.Lowering.vkG2Words fxPlan Midfall.Lowering.vkG2BaseSlot == fxEncG2 (fx 1)) &&
+    (Midfall.Lowering.vkG2Words fxPlan Midfall.Lowering.vkNegSG2BaseSlot
+       == fxEncG2 ((fx 5 : RP)⁻¹)) &&
+    -- and the two G2 slots are DIFFERENT regions of the payload, so a render that
+    -- aliased them would still be caught by the slot indices themselves
+    (Midfall.Lowering.vkG2BaseSlot != Midfall.Lowering.vkNegSG2BaseSlot)
+
+
+/-- FALSIFICATION OF THE RESTORED CLAUSES, AS A THEOREM (D-P23, second half - the Bool
+    KAT above is the computation; this is the kernel-checked form). The first statement is
+    the transfer: any payload whose G1 base slot does not encode the generator fails
+    VkSlotsAgree, by the g1BaseWords clause alone. The second instantiates it at a
+    payload that differs from the fixture payload in ONE WORD, which is the measurement
+    that says the clause is about the slot contents and not about the slot count. -/
+theorem fxVkSlotsAgree_needs_the_g1_slot (ws : List (String × Word256))
+    (h : Midfall.Lowering.vkG1Words { fxPlan with vk := { fxPlan.vk with constants := ws } }
+          Midfall.Lowering.vkG1BaseSlot
+        ≠ fxE.g1.toEip (inferInstance : Midfall.AdmissiblePairing RP RP RP).g₁) :
+    ¬ VkSlotsAgree fxE { fxPlan with vk := { fxPlan.vk with constants := ws } } (fx 5)
+        fxEncG2 fxAccFixedBases :=
+  fun hv => h hv.g1BaseWords
+
+/-- THE ONE-WORD PERTURBATION, discharged. -/
+theorem fxVkSlotsAgreeRejectsMovedG1Slot :
+    ¬ VkSlotsAgree fxE
+        { fxPlan with vk := { fxPlan.vk with
+            constants := (fxPlan.vk.constants.take 11) ++ [("g1_base_0", 9)]
+              ++ (fxPlan.vk.constants.drop 12) } } (fx 5) fxEncG2 fxAccFixedBases :=
+  fxVkSlotsAgree_needs_the_g1_slot
+    ((fxPlan.vk.constants.take 11) ++ [("g1_base_0", 9)] ++ (fxPlan.vk.constants.drop 12))
+    (by native_decide)
+
+#eval fxHeaderSlotsKats_ok              -- expect true
 
 /-- THE EXACTNESS IS NOW A FIELD, NOT A NEIGHBOUR (P-ENV). P-4a2 carried this fact as a
     standalone theorem `fxOmegaOrderExactly` beside an `EnvAgrees` whose `omegaOrder`

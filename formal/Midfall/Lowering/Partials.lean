@@ -169,9 +169,16 @@ def PartialSound (S : Surface p G₁ G₂ Gₜ) (q : Partial) (Snap : Snapshot p
 
     This is the twin that gives PartialSound its content. A block that reverts
     unconditionally satisfies PartialSound for every checkpoint - the left disjunct is
-    always available - so soundness alone proves nothing about the deployment. always
-    Reverts satisfies soundness is the lemma that says so, and it is proved rather
-    than claimed. -/
+    always available - so soundness alone proves nothing about the deployment.
+    partialSound_of_alwaysReverts is the lemma that says so.
+
+    P-RESTORE2 CORRECTED THIS DOCSTRING, WHICH WAS FALSE AS WRITTEN. It said the lemma
+    "is proved rather than claimed". It is not: partialSound_of_alwaysReverts and its
+    progress twin partialProgress_not_of_alwaysReverts are both registered sorries
+    (SORRY.md names them), so the claim that gives PartialSound its content is STATED and
+    not yet PROVED. The statement is still the right statement - that is what this
+    docstring is for - but a reader who trusted the sentence would believe the vacuity
+    class had been closed when it has not. -/
 def PartialProgress (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (product : PairingProduct)
     (qAddr : U256) (q : Partial) (Snap : Snapshot p G₁ G₂ Gₜ) (gas : ExternalGas)
     (addl : VEnv (Bridge.Dialect (S.calls W product qAddr) gas) →
@@ -364,6 +371,7 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
       snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap →
+      VkSlotsAgree S.E S.plan S.sG2gen S.encG2 S.accFixedBases →
       PartialSound S .finalPairing Snap calls gas (calldataPre S cd) (fun _ _ => True)
       -- R-58 F9: this post used to carry an extra conjunct, the claim that the
       -- success local is 1 after the block returns. It is implied by the post
@@ -391,6 +399,41 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
             Inv (calls := calls) (gas := gas) S.E S.params .pairing S.plan Snap V st ∧
               calldataPre S cd V st)
           (fun _ _ _ st' o => o = .halt ∧ st'.halted = some (.ret, abiTrue))
+  -- THE TWO FAULT-IMPLIES-REVERT OBLIGATIONS THE SKETCH ASKED FOR (section N, lines
+  -- 1860-1865), landed by P-RESTORE2. Before this package PartialRejects was DEFINED AND
+  -- USED BY NOTHING: the shape existed, the two fields that would have consumed it did
+  -- not, and the deviation note said they were deferred because the sketch's key does not
+  -- typecheck. A definition nothing consumes is decoration, and a deferred obligation
+  -- with no field naming it is invisible - the exact class this package exists to remove.
+  --
+  -- THE KEY, corrected. The sketch writes snapshotOf ... = .error (.pcs, f). Fault has
+  -- two constructors and neither carries a stage (Error.lean:56-58), so the stage is not
+  -- recoverable from the fault value and the sketch's key does not elaborate. The landed
+  -- shape keys on the fault itself and names the stage by which field it is - which is
+  -- also what PartialRejects' own doc comment already said it would do.
+  /-- The parser partial, entered with a calldata the decoder refused. The pre is the
+      calldata link and nothing else: there is no snapshot to name, which is why
+      PartialRejects existentials over snapshots instead of taking one. -/
+  transcript_rejects : ∀ (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls)
+      (gas : ExternalGas) (cd : Bytes),
+      SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
+      Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
+        S.E.g1 cd = none →
+      PartialRejects S .transcriptParser .vk calls gas
+        (fun st => st.env.calldata = cd.data.toList)
+  /-- The PCS partial, entered after the Lean pipeline faulted at or before it. The
+      hypotheses are the sketch's H* MINUS the snapshot, because the whole point is that
+      there is none: snapshotOf returns .error f for the fault the field is keyed on. -/
+  pcs_rejects : ∀ (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls)
+      (gas : ExternalGas) (cd : Bytes) (ms : List (Msg (Fr p) G₁))
+      (instW : Array Word256) (inst : Array (Fr p)) (f : Midfall.Halo2.Fault),
+      SupportedS S S.o₀ → EnvAgrees S.E S.vk S.plan S.params S.sG2gen →
+      Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
+        S.E.g1 cd = some (ms, instW) →
+      instOfWords? (p := p) instW = some inst →
+      snapshotOf S.E H S.vk inst ms (accOf S instW) = .error f →
+      PartialRejects S .pcs .quotient calls gas
+        (fun st => st.env.calldata = cd.data.toList)
   -- progress twins, each with the side condition that makes it true
   vkLoading_progress : ∀ (H : Hash) (W : ExecEnv) (qAddr : U256) (gas : ExternalGas)
       (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
@@ -459,7 +502,9 @@ structure PartialSpecs (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
         S.E.g1 cd = some (ms, instW) →
       instOfWords? (p := p) instW = some inst →
       snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap →
-      PartialProgress S W product qAddr .finalPairing Snap gas (calldataPre S cd)
+      VkSlotsAgree S.E S.plan S.sG2gen S.encG2 S.accFixedBases →
+      PartialProgress S W product qAddr .finalPairing Snap gas
+        (fun V st => calldataPre S cd V st ∧ VEnv.get V "success" = some 1)
 
 /-! ### The seven per-partial theorems -/
 
@@ -688,6 +733,7 @@ theorem finalPairing_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
     (hperm : PermissiveFor S W product qAddr calls)
     (hh : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
     (hacc : S.plan.hasAccumulator = false)
+    (hvks : VkSlotsAgree S.E S.plan S.sG2gen S.encG2 S.accFixedBases)
     (hcd : Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout S.cfg.numInstances
       S.E.g1 cd = some (ms, instW))
     (hinst : instOfWords? (p := p) instW = some inst)
@@ -695,12 +741,34 @@ theorem finalPairing_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
     PartialSound S .finalPairing Snap calls gas (calldataPre S cd) (fun _ _ => True) := by
     -- R-58 F9: the success = 1 post conjunct is dropped here too, for the reason at
     -- PartialSpecs.finalPairing_sound: Inv .pairing already asserts it.
+    -- P-RESTORE2 STEP 3: that argument is now a THEOREM in the tree and not a comment -
+    -- Inv.pairing_decision (Lowering/Inv.lean) recovers both dropped conjuncts from
+    -- Inv at .pairing plus hacc, sorry-free, and scripts/check_statement_fingerprints.py
+    -- pins the two clauses of the .pairing arm it recovers them from (INV_CLAUSES).
   sorry
 
 /-- The progress twin: with the pairing check passing and the honest fold answering,
-    the block returns normally into the .pairing checkpoint. The success = 1 entry
-    condition is on the pre rather than derived, because Inv .pairing is the only
-    place the local is claimed and this starts at .pcs (Inv.lean LocalsOk note).
+    the block returns normally into the .pairing checkpoint.
+
+    THE success = 1 ENTRY CONDITION, AND WHICH OF THE TWO TEXTS WAS WRONG. This
+    docstring used to say the condition "is on the pre rather than derived", and the
+    theorem did not have it: the pre was Inv at .pcs plus the calldata link, and Inv .pcs
+    says nothing about the local (Inv.lean's LocalsOk note explains why success is claimed
+    only at .pairing). P-RESTORE2 was told to check which of the two was wrong rather than
+    edit the prose, and the answer is the STATEMENT. The emitted block reads the local
+    before it writes it: GenAst.emitFinalPairingArms ends the slice with
+    'yif (iszero success) [fail ERR_PRECOMPILE_FAILED]' and only then
+    'success := ec_pairing success ...' (GenAst.lean:651-654), so a run that enters with
+    success = 0 reverts on the first of those two lines. PartialProgress demands
+    o = .normal, so the theorem was FALSE for such a run - not unproved, false. The
+    condition is now on the pre, where the emitter needs it.
+
+    THE SKETCH DID NOT HAVE IT, and that is recorded rather than hidden: section N line
+    1873-1875 gives finalPairing_progress the hypotheses H* + Holds + DualMSM.check and
+    nothing about the local. The sketch is the weaker statement and the weaker statement
+    is the one that is false, so the landed form deviates from it on the strong side.
+    docs/plans/P-SE-statements.md carries the line.
+
     PROOF HOLE as for finalPairing_spec, plus Eip2537.Holds.pairing2 in the direction
     that turns a true check into a true precompile answer. -/
 theorem finalPairing_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
@@ -718,7 +786,8 @@ theorem finalPairing_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : Pai
       S.E.g1 cd = some (ms, instW))
     (hinst : instOfWords? (p := p) instW = some inst)
     (hsnap : snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap) :
-    PartialProgress S W product qAddr .finalPairing Snap gas (calldataPre S cd) := by
+    PartialProgress S W product qAddr .finalPairing Snap gas
+      (fun V st => calldataPre S cd V st ∧ VEnv.get V "success" = some 1) := by
   sorry
 
 /-- The accumulator arm (FinalPairing.yul:14-61 then :88). The batch preimage is
@@ -735,7 +804,16 @@ theorem finalPairing_progress_spec (S : Surface p G₁ G₂ Gₜ) (product : Pai
     phase produces a KzgAcc, so the snapshot carries none unless the caller decoded
     one - which is what accOf is for, and why hS is a hypothesis rather than a
     computation. PROOF HOLE: needs the accumulator partial ASTs and Eip2537.Holds
-    g1Msm1 and g1Add for the slot rewrite. -/
+    g1Msm1 and g1Add for the slot rewrite.
+
+    hvks IS NEW (P-RESTORE2 STEP 1) AND IT IS THE CLAUSE THE SKETCH WROTE FOR THIS
+    THEOREM. The conclusion names a.fullyCollapse (tblOf S.accFixedBases) on both sides of
+    the batched check, while the bytes the contract MSMs are the ones the VK header slots
+    hold. Without VkSlotsAgree.accBasesInVk - 'every fixed-base table entry is a point
+    some header slot encodes' - the folded point and the MSM's point are unrelated terms
+    and the arm cannot be reached at all. The sketch carried that clause inside EnvAgrees
+    (section L line 1551); it had been dropped with no record anywhere, which is the defect
+    this package was opened to fix. -/
 theorem finalPairing_acc_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (H : Hash) (W : ExecEnv) (qAddr : U256) (calls : ExternalCalls) (gas : ExternalGas)
     (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256)
@@ -747,6 +825,7 @@ theorem finalPairing_acc_spec (S : Surface p G₁ G₂ Gₜ) (product : PairingP
     (hperm : PermissiveFor S W product qAddr calls)
     (hh : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
     (henc : S.plan.hasAccumulator = true)
+    (hvks : VkSlotsAgree S.E S.plan S.sG2gen S.encG2 S.accFixedBases)
     (hS : Snap.acc = some a)
     (hkec : ∀ V st,
       Inv (calls := calls) (gas := gas) S.E S.params .pcs S.plan Snap V st →
