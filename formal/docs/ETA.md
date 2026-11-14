@@ -237,3 +237,76 @@ load-bearing for the PROOF and refutable at `n = 1` (`nsmul_emb_eq_zero_iff_need
 at the actual scalar `blsR` it is NOT necessary for the junk frame: `g1InSubgroup junkPair = true`
 by `decide`, because `blsR` has more than one set bit and the second one flushes the accumulator
 to the literal `(0,0)`. A hypothesis being used is not the same as a hypothesis being necessary.
+
+---
+### R4 - round 119, after P-G1CODEC. The plumbing landed; two NEW walls showed up where none were recorded.
+
+| claim | before (recorded) | actual | verdict |
+|---|---|---|---|
+| ~ofLowDigits_append~ fires on the wrong occurrence once the RHS is in ~bytesToNatBE~ form | P-CANON | **CONFIRMED.** Cure: convert all three sides (~A~, ~B~, ~A ++ B~) to ~ofLowDigits~ as named ~have~s, rewrite at that level, convert back with ~← hB, ← hA~ | right, and the cure is new |
+| ~bytesTake_whole~ needs ~@ByteArray.size_data~ to state its hypothesis | P-CANON | **WRONG IN ITS SPECIFICS.** ~bytesTake b 0 b.size = some b~ needs NO hypothesis. What fails is ~rw [Array.extract_eq_self_of_le _]~: that lemma's array AND its bound are implicit, so the matcher has nothing to match on. Cure: the ~@~-term ~@Array.extract_eq_self_of_le UInt8 (ByteArray.size b) b.data (Nat.le_refl _)~ | **tenth wrong premise** - symptom real, named cause wrong |
+| slice side conditions must be stated against ~ByteArray.size A~ | P-CANON | **CONFIRMED** verbatim: ~bytesSlice_window_before / _after~ take ~Bytes~-level hypotheses and enter ~.data~ exactly once | right |
+| "budget for ~g1MsmPairs?.go~, it is a ~where~-clause function and may not behave like the rest" | this brief | **it behaved exactly like the rest.** ~g1MsmPairs?.go.eq_1~ / ~.eq_2~ are ~rfl~-level equation lemmas; the one-pair frame unfolds in 12 lines | **over-estimate, and the brief told me to over-estimate it** |
+| ~Point.toAffine~ + ~ZMod.val~ gives the codec map | this brief | ~Point.toAffine~ **does not exist** in this mathlib (zero hits under AlgebraicGeometry/EllipticCurve/). A two-line ~match~ on the ~Point~ inductive does the job, and ~ZMod.val_lt~ is what makes every frame canonical by construction | right idea, wrong name - **eleventh wrong premise** |
+| a ~G1Codec~ on the ~zpowers~ carrier is "the missing piece" | P-CANON | **also missing: ~Module (ZMod blsR) (Additive G₁z)~ does not synthesize.** Built from ~AddCommGroup.zmodModule~, whose hypothesis ~∀ x, r • x = 0~ is exactly ~r_nsmul_emb_genFrame~. So ~g1Msm1~ was not blocked by plumbing alone - it was blocked by that instance, which P-CANON made possible but did not name | **the named blocker was real but incomplete** |
+| expected RAM peak, single module | brief quoted 4.82 GiB tree / 4.09 GiB largest | **4.82 GiB tree / 4.07 GiB largest** (verdict TIGHT at ~--proc-limit 6G --limit 24G~) | **HIT** - first time the quoted figure matched |
+| my own estimate: byte plumbing 40 min, exhibit 40 min | this session | plumbing **25 min** (optimistic by nothing), exhibit **~70 min** (pessimistic by 30) - the overrun was two unrecorded walls, below | wrong in both directions, as usual |
+
+**TWO WALLS NOBODY RECORDED, both the same shape as the ~affineSmul~ fold wall.**
+(1) **~g1PointMsmValid P~ for a VARIABLE ~P~ cannot be whnf'd.** ~dsimp~ of the ~match~ in
+~g1MsmOutput~ forces ~List.all [(P, s)] f~, which forces ~g1InSubgroup P = affineSmul fpOps blsR P
+== (0,0)~ - the 255-step fold, on a variable. Reached through a ~List.all~ over a LITERAL LIST, not
+through a pair-~==~, so P-CANON's diagnosis would not have predicted it. Cure: ~g1MsmOutput_some~
+takes the decoded list as a VARIABLE ~ps~ with ~g1MsmPairs? input = some ps~ as a hypothesis, so
+the ~all~ stays stuck and is rewritable. (2) **~blsR • X~ for a variable ~X : W.Point~ cannot be
+whnf'd either** - ~nsmul~ recurses on the 255-bit literal, so ~rfl~ on
+~toAdd (ofAdd X ^ blsR) = blsR • X~ dies at the default ~maxRecDepth~. Cure: the PROPOSITIONAL
+~toAdd_pow~ instead of the definitional route. **Lesson: "whnf of a fold at a literal scalar" is a
+category, not a lemma - ~affineSmul~, ~List.all~-forcing, and ~nsmul~ are three doors into it.**
+
+**What landed (84 declarations, 887 lines, ~Midfall/Instances/G1Agreement.lean~).** All four links of
+the chain: ~bytesToNatBE_bytesAppend~, ~bytesTake_of_size~, ~fpCoordOf?_fpCoordBytes~,
+~bytesSlice_g1PointBytes_left~ / ~_right~, **~g1Of?_g1PointBytes~ (THE ROUND TRIP)**,
+~g1AddValidInput_g1PointBytes~, ~g1AddOutput_g1PointBytes~, **~g1MsmPairs?_singleton~ (the
+~where~-clause)**, ~g1MsmOutput_some~, ~g1MsmOutput_singleton~. And the exhibit: ~G₁z~,
+~instance PrimeOrderWith~, **~instance Module (ZMod blsR) (Additive G₁z)~**, ~ptPair~, ~frameOf~,
+~emb_frameOf~, ~ptPair_emb~, ~nsmul_blsR_eq_zero~, ~g1PointMsmValid_ptPair~, **~g1CodecZ~**, and the
+three clauses **~g1CodecZ_g1Valid~, ~g1CodecZ_g1Add~, ~g1CodecZ_g1Msm1~** plus
+~g1CodecZ_eipRoundtrip~ and ~g1CodecZ_g1DecodesWidth_iff~. Register unchanged at 57: nothing here
+was a sorry.
+
+**THE REQUIRED FINDING, stated exactly.** On the G1 side, **three of the four G1 clauses are now
+discharged at a real-curve codec** (~g1Valid~, ~g1Add~, ~g1Msm1~). The fourth, ~g1Decodes~, is
+**equivalent over this codec to surjectivity of ~g1zToEip~ onto the frames the precompile accepts**
+(~g1CodecZ_g1DecodesWidth_iff~), and that statement is ~|E(Fp)[r]| = r~ - so **yes, the point count
+is genuinely the only thing between here and four of four on the G1 side.** It is NOT the only thing
+between here and a ~Holds~ TERM: ~pairing2~ needs an ~AdmissiblePairing~ and the only one in the
+tree is the exponent model (P-HOLDS2), so "five of six" is five clauses discharged across TWO
+exhibits (four G1-side at the curve once the count lands, ~pairing2~ at the exponent model), not
+five fields of one ~Holds~ structure. ~g2Valid~ remains the sixth and needs the G2/Fp2 package.
+Stating the limit plainly, because the brief's framing invited the opposite: **no ~Holds~ term
+exists yet and this package does not produce one.**
+
+**Perturbation evidence (APFS clone of the WHOLE repo under /tmp, ~30 s per build).** TWELVE code
+perturbations, **TWELVE reddened** ~lake build Midfall.Instances.G1Agreement~: drop the round trip's
+~y~-canonicity; swap ~x~ and ~y~ in the round trip's conclusion; claim the double instead of the sum
+in ~g1AddOutput_g1PointBytes~; wrong slice offset in ~bytesSlice_g1PointBytes_right~; wrong scalar
+readback in ~g1MsmPairs?_singleton~; zero the scalar in ~g1MsmOutput_singleton~; drop the product in
+~g1CodecZ_g1Add~; drop the scalar action in ~g1CodecZ_g1Msm1~; drop the width hypothesis from the
+~g1Decodes~ equivalence; invert the validator transfer ~g1PointMsmValid_ptPair~; break the infinity
+branch of ~emb_frameOf~; drop canonicity from ~ptPair_emb~. **No perturbation failed to redden**,
+which is worth saying precisely because the last two packages each had one that did not.
+**DELETING all ten falsification and witness theorems** (~g1Of?_g1PointBytes_needs_canonical~,
+~g1AddValidInput_needs_the_length~, ~g1MsmPairs?_needs_whole_pairs~, ~g1zToEip_not_constant~,
+~g1CodecZ_g1Msm1_scalar_matters~, ~g1zOfEip?_refuses_outside_the_image~,
+~g1CodecZ_g1Valid_witness~, ~g1CodecZ_g1Add_witness~, ~g1CodecZ_g1Add_refuses_noncanonical~,
+~fpCoordOf?_fpCoordBytes_none_of_too_big~) **leaves the build GREEN** - the falsification-deletion
+gap, measured a **tenth** time across six packages. **No gate coverage is claimed for any
+falsification here: they are true, proved, and invisible when removed.**
+
+**A self-inflicted loss worth recording.** A splice that replaced the closing ~gap~ docstring used
+~s.indexOf('end Midfall.Instances')~ for the right-hand cut, which found the file's LAST line only
+after the new sections had already been appended - so the slice deleted 44 KB of fresh proofs and
+the build stayed green because what remained was consistent. **Symptom to keep: the file got
+SHORTER after an insertion.** Cost: one rebuild cycle plus a full re-write of both blocks, ~15 min.
+The restored version built green on the first try, which is the only silver lining available.

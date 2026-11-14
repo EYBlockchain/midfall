@@ -35,7 +35,9 @@
 -- `field_simp` + `ring`, and the primality of pBase is the certificate in
 -- Assumptions/BasePrime.lean, not a search.
 
+import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
+import Mathlib.Algebra.Module.ZMod
 import Mathlib.AlgebraicGeometry.EllipticCurve.Affine.Point
 
 namespace Midfall.Instances
@@ -1327,36 +1329,889 @@ theorem zpowers_emb_gen_nontrivial :
   ⟨Subgroup.mem_zpowers _, fun hh =>
     Nat.Prime.ne_one (Fact.out : Nat.Prime blsR) (natCard_zpowers_emb_genFrame.symm.trans hh)⟩
 
-/-- **THE REMAINING MECHANICAL ITEM, NAMED.** With the agreement theorems (\`emb_add\`, \`emb_smul\`),
-    the walk (\`smulFrame_canonic\`) and the exhibit (\`primeOrderWith_zpowers_emb_genFrame\`) all in
-    place, \`g1Add\` and \`g1Msm1\` as \`Holds\` FIELDS are blocked by exactly one thing, and it is
-    byte plumbing rather than algebra: the codec round trip
+/-! ### P-G1CODEC: THE BYTE CODEC ROUND TRIP
 
-        g1Of? (g1PointBytes P) = some P     for P with both coordinates below blsP,
+**THE CHAIN LANDED, ALL FOUR LINKS.** P-CANON scoped this as "byte plumbing, not the canonicity
+wall" and named three matcher obstacles with their causes. RE-VERDICT, each one measured here:
 
-    plus the two slice equations it needs (\`bytesSlice (g1PointBytes P) 0 64\` and
-    \`... 64 64\`). HOW FAR THIS PACKAGE GOT, stated exactly: \`fpCoordBytes_size\`
-    (\`(bytesAppend eipPad (bytesNatBE x fpBytes)).size = fpPadBytes + fpBytes\`),
-    \`eipPad.size = fpPadBytes\`, \`bytesToNatBE eipPad = 0\` and \`blsP < 256 ^ fpBytes\` all
-    CHECK, and every core lemma the walk needs was located by \`#check\` - \`Array.length_toList\`,
-    \`ByteArray.size_data\`, \`Array.extract_append\`, \`Array.extract_eq_self_of_le\`,
-    \`Array.extract_eq_empty_of_le\`, \`ofLowDigits_append\`,
-    \`bytesToNatBE_eq_ofLowDigits_reverse\` (with \`bytesToNatBE_bytesNatBE\` and
-    \`bytesNatBE_size\` already in \`Assumptions/Eip2537.lean\`).
-    NOT YET PROVING, with the reason for each: \`bytesToNatBE_append2\` (the
-    \`ofLowDigits_append\` rewrite fires on the wrong occurrence once the right-hand side
-    is in \`bytesToNatBE\` form), \`bytesTake_whole\` (it reaches
-    \`some { data := b.data.extract 0 (ByteArray.size b) } = some b\` and the last step
-    needs \`@ByteArray.size_data\`, whose argument is implicit), and the two slice
-    equations (their side conditions must be stated against \`ByteArray.size A\` because
-    \`Array.extract_append\` inserts its own \`min\`); hence \`g1Of?_g1PointBytes\` is
-    unproved. NOT ATTEMPTED: the \`g1AddValidInput\` / \`g1AddOutput\` unfolding and the
-    \`where\`-clause function \`g1MsmPairs?.go\`. NONE of it is the canonicity wall:
-    this is plumbing - which is why it is a package and not a lemma. -/
+1. `ofLowDigits_append` fires on the wrong occurrence once the RHS is in `bytesToNatBE` form -
+   **CONFIRMED, and the cure is to never rewrite the goal at all.** `bytesToNatBE_bytesAppend` is
+   proved by converting ALL THREE sides (`A`, `B`, `A ++ B`) into `ofLowDigits` form as named
+   `have`s first, rewriting the ofLowDigits-level equation, and converting back with `← hB, ← hA`.
+2. `bytesTake_whole` needs `@ByteArray.size_data` to state its hypothesis - **WRONG IN ITS
+   SPECIFICS.** `bytesTake b 0 b.size = some b` needs NO hypothesis. What does not work is
+   `rw [Array.extract_eq_self_of_le ...]`: that lemma's array AND its bound are both implicit, so
+   the matcher sees `Array.extract ?m` with nothing to match on. The cure is to supply it as a
+   term: `@Array.extract_eq_self_of_le UInt8 (ByteArray.size b) b.data (Nat.le_refl _)` - the
+   ascribe-the-type trick again, in a second guise.
+3. The slice side conditions must be stated against `ByteArray.size A` because
+   `Array.extract_append` inserts its own `min` - **CONFIRMED.** The window lemmas below take
+   `i + n ≤ A.size` and `o = A.size` at the `Bytes` level and enter `.data` exactly once.
+
+ONE NEW WALL, NOT IN P-CANON'S LIST: **`g1PointMsmValid P` for a VARIABLE `P` cannot be whnf'd at
+all.** `dsimp` of the match in `g1MsmOutput` forces `List.all [(P, s)] f`, which forces
+`g1PointMsmValid P`, which forces `affineSmul fpOps blsR P == (0, 0)` - the 255-step fold, on a
+variable. Same pair-`==` wall as P-CANON, reached through a `List.all` instead of a `show`. The
+cure is the same shape: **generalise.** `g1MsmOutput_some` takes the decoded list as a VARIABLE
+`ps` with `g1MsmPairs? input = some ps` as a hypothesis, so nothing is instantiated at a literal
+list and the `all` stays stuck - which is what makes it rewritable. -/
+
+/-- The base modulus fits in `fpBytes` bytes: 381 bits inside 48 (= 384). -/
+private theorem blsP_lt_fpBytes_pow : blsP < 256 ^ fpBytes := by decide
+
+private theorem bytesAppend_size (A B : Bytes) :
+    (bytesAppend A B).size = A.size + B.size := by
+  show (A.data ++ B.data).size = _
+  exact Array.size_append
+
+private theorem bytesZero_size (n : Nat) : (bytesZero n).size = n := by
+  show ((List.replicate n 0).toArray).size = n
+  rw [Array.size_eq_length_toList, List.toList_toArray, List.length_replicate]
+
+/-- Reading a concatenation big-endian: the RIGHT operand sits in the low positions and the LEFT
+    one is shifted past it. This is the equation P-CANON could not get `ofLowDigits_append` to
+    produce. -/
+theorem bytesToNatBE_bytesAppend (A B : Bytes) :
+    bytesToNatBE (bytesAppend A B) =
+      bytesToNatBE B + 256 ^ B.size * bytesToNatBE A := by
+  have hA : bytesToNatBE A = ofLowDigits 256 (A.data.toList.map UInt8.toNat).reverse :=
+    bytesToNatBE_eq_ofLowDigits_reverse A
+  have hB : bytesToNatBE B = ofLowDigits 256 (B.data.toList.map UInt8.toNat).reverse :=
+    bytesToNatBE_eq_ofLowDigits_reverse B
+  have hAB : bytesToNatBE (bytesAppend A B)
+      = ofLowDigits 256 ((A.data.toList ++ B.data.toList).map UInt8.toNat).reverse := by
+    rw [bytesToNatBE_eq_ofLowDigits_reverse]
+    show ofLowDigits 256 (((A.data ++ B.data).toList).map UInt8.toNat).reverse = _
+    rw [Array.toList_append]
+  have hlen : ((B.data.toList.map UInt8.toNat).reverse).length = B.size := by
+    rw [List.length_reverse, List.length_map, Array.length_toList, ByteArray.size_data]
+  rw [hAB, List.map_append, List.reverse_append, ofLowDigits_append, ← hB, ← hA, hlen]
+
+/-- The EIP-2537 pad reads as zero - which is why canonicity subsumes the padding test. -/
+theorem bytesToNatBE_eipPad : bytesToNatBE eipPad = 0 := rfl
+
+/-- A padded coordinate is exactly `fpPadBytes + fpBytes = 64` bytes, whatever the value. -/
+theorem fpCoordBytes_size (x : Nat) : (fpCoordBytes x).size = fpPadBytes + fpBytes := by
+  show (bytesAppend eipPad (bytesNatBE x fpBytes)).size = _
+  rw [bytesAppend_size, bytesNatBE_size]
+  have h : eipPad.size = fpPadBytes := rfl
+  rw [h]
+
+/-- **THE COORDINATE ROUND TRIP, VALUE HALF.** The pad contributes `256 ^ 48 * 0` and the body is
+    `x % 256 ^ 48 = x` because `x < blsP < 256 ^ 48`. -/
+theorem bytesToNatBE_fpCoordBytes (x : Nat) (hx : x < blsP) :
+    bytesToNatBE (fpCoordBytes x) = x := by
+  have h : bytesToNatBE (fpCoordBytes x)
+      = bytesToNatBE (bytesNatBE x fpBytes)
+          + 256 ^ (bytesNatBE x fpBytes).size * bytesToNatBE eipPad := by
+    show bytesToNatBE (bytesAppend eipPad (bytesNatBE x fpBytes)) = _
+    rw [bytesToNatBE_bytesAppend]
+  have hlt : x < 256 ^ fpBytes := Nat.lt_of_lt_of_le hx (Nat.le_of_lt blsP_lt_fpBytes_pow)
+  rw [h, bytesNatBE_size, bytesToNatBE_eipPad, Nat.mul_zero, Nat.add_zero,
+    bytesToNatBE_bytesNatBE, Nat.mod_eq_of_lt hlt]
+
+/-- Taking the whole buffer is the identity - with NO hypothesis; see header note 2 for what this
+    actually needed. -/
+theorem bytesTake_of_size (b : Bytes) : bytesTake b 0 b.size = some b := by
+  classical
+  unfold bytesTake
+  rw [if_pos (by rw [Nat.zero_add])]
+  rw [Nat.zero_add]
+  have key : b.data.extract 0 (ByteArray.size b) = b.data :=
+    @Array.extract_eq_self_of_le UInt8 (ByteArray.size b) b.data (Nat.le_refl _)
+  rw [key]
+
+/-- **THE COORDINATE ROUND TRIP, DECODER HALF.** -/
+theorem fpCoordOf?_fpCoordBytes (x : Nat) (hx : x < blsP) :
+    fpCoordOf? (fpCoordBytes x) = some x := by
+  classical
+  unfold fpCoordOf?
+  have hs : (fpCoordBytes x).size = fpPadBytes + fpBytes := fpCoordBytes_size x
+  have htake : bytesTake (fpCoordBytes x) 0 (fpPadBytes + fpBytes) = some (fpCoordBytes x) := by
+    rw [← hs]; exact bytesTake_of_size _
+  rw [htake]
+  dsimp only
+  rw [bytesToNatBE_fpCoordBytes x hx, if_pos hx]
+
+/-- **AND ITS CONTRADICTORY:** a coordinate at or above the modulus encodes but never decodes.
+    This is the half the round trip's falsification rests on. -/
+theorem fpCoordOf?_fpCoordBytes_none_of_too_big (x : Nat) (hx : ¬ (x < blsP))
+    (hxb : x < 256 ^ fpBytes) : fpCoordOf? (fpCoordBytes x) = none := by
+  classical
+  unfold fpCoordOf?
+  have hs : (fpCoordBytes x).size = fpPadBytes + fpBytes := fpCoordBytes_size x
+  have htake : bytesTake (fpCoordBytes x) 0 (fpPadBytes + fpBytes) = some (fpCoordBytes x) := by
+    rw [← hs]; exact bytesTake_of_size _
+  rw [htake]
+  show (if bytesToNatBE (fpCoordBytes x) < blsP
+        then some (bytesToNatBE (fpCoordBytes x)) else none) = none
+  have heq : bytesToNatBE (fpCoordBytes x) = x := by
+    show bytesToNatBE (bytesAppend eipPad (bytesNatBE x fpBytes)) = _
+    rw [bytesToNatBE_bytesAppend, bytesNatBE_size, bytesToNatBE_eipPad, Nat.mul_zero,
+      Nat.add_zero, bytesToNatBE_bytesNatBE, Nat.mod_eq_of_lt hxb]
+  rw [if_neg (fun hh => hx (heq ▸ hh))]
+
+/-! #### Slice windows over a concatenation -/
+
+theorem bytesSlice_at (bs : Bytes) (i n : Nat) (h : i + n ≤ bs.size) :
+    bytesSlice bs i n = ByteArray.mk (bs.data.extract i (i + n)) := by
+  classical
+  show ByteArray.mk (bs.data.extract (min i bs.size) (min (i + n) bs.size)) = _
+  rw [Nat.min_eq_left (by omega : i ≤ bs.size), Nat.min_eq_left (by omega : i + n ≤ bs.size)]
+
+/-- A window that fits has exactly the requested width: the clamp is inert inside the buffer. -/
+theorem bytesSlice_size {bs : Bytes} (i n : Nat) (h : i + n ≤ bs.size) :
+    (bytesSlice bs i n).size = n := by
+  rw [bytesSlice_at _ _ _ h]
+  show (bs.data.extract i (i + n)).size = n
+  have h2 : i + n ≤ bs.data.size := h
+  rw [Array.size_extract, Nat.min_eq_left h2, Nat.add_sub_cancel_left]
+
+theorem bytesSlice_full (A : Bytes) : bytesSlice A 0 A.size = A := by
+  classical
+  rw [bytesSlice_at _ 0 A.size (by omega), Nat.zero_add]
+  show ByteArray.mk (A.data.extract 0 A.data.size) = A
+  rw [Array.extract_eq_self_of_le (Nat.le_refl _)]
+
+/-- A window inside the LEFT half of a concatenation is a window of the left half. -/
+theorem bytesSlice_window_before {A B : Bytes} (i n : Nat) (h : i + n ≤ A.size) :
+    bytesSlice (bytesAppend A B) i n = bytesSlice A i n := by
+  classical
+  rw [bytesSlice_at _ _ _ (by rw [bytesAppend_size]; omega), bytesSlice_at _ _ _ h]
+  show ByteArray.mk ((A.data ++ B.data).extract i (i + n)) = ByteArray.mk (A.data.extract i (i + n))
+  rw [Array.extract_append]
+  have hz : B.data.extract (i - A.data.size) (i + n - A.data.size) = #[] := by
+    refine Array.extract_eq_empty_of_le ?_
+    have h1 : i - A.data.size = 0 :=
+      Nat.sub_eq_zero_of_le (Nat.le_trans (Nat.le_add_right i n) (by exact_mod_cast h))
+    have h2 : i + n - A.data.size = 0 := Nat.sub_eq_zero_of_le (by exact_mod_cast h)
+    rw [h1, h2]
+    exact Nat.min_le_left _ _
+  rw [hz, Array.append_empty]
+
+/-- A window that starts where the LEFT half ends is a window of the right half. -/
+theorem bytesSlice_window_after {A B : Bytes} (o n : Nat) (ho : o = A.size) (h : n ≤ B.size) :
+    bytesSlice (bytesAppend A B) o n = bytesSlice B 0 n := by
+  classical
+  rw [ho]
+  rw [bytesSlice_at _ _ _ (by rw [bytesAppend_size]; omega),
+      bytesSlice_at _ _ _ (by rw [Nat.zero_add]; exact h)]
+  rw [Nat.zero_add]
+  show ByteArray.mk ((bytesAppend A B).data.extract (ByteArray.size A) (ByteArray.size A + n)) =
+    ByteArray.mk (B.data.extract 0 n)
+  rw [show (bytesAppend A B).data = A.data ++ B.data from rfl,
+    show ByteArray.size A = A.data.size from rfl]
+  rw [Array.extract_append]
+  rw [Array.extract_eq_empty_of_le (Nat.min_le_right _ _), Nat.sub_self,
+    Nat.add_sub_cancel_left, Array.empty_append]
+
+theorem bytesTake_window_before {A B : Bytes} (i n : Nat) (h : i + n ≤ A.size) :
+    bytesTake (bytesAppend A B) i n = bytesTake A i n := by
+  classical
+  unfold bytesTake
+  rw [if_pos (by rw [bytesAppend_size]; omega), if_pos h]
+  show some (ByteArray.mk ((A.data ++ B.data).extract i (i + n))) =
+    some (ByteArray.mk (A.data.extract i (i + n)))
+  rw [Array.extract_append]
+  have hz : B.data.extract (i - A.data.size) (i + n - A.data.size) = #[] := by
+    refine Array.extract_eq_empty_of_le ?_
+    have h1 : i - A.data.size = 0 :=
+      Nat.sub_eq_zero_of_le (Nat.le_trans (Nat.le_add_right i n) (by exact_mod_cast h))
+    have h2 : i + n - A.data.size = 0 := Nat.sub_eq_zero_of_le (by exact_mod_cast h)
+    rw [h1, h2]
+    exact Nat.min_le_left _ _
+  rw [hz, Array.append_empty]
+
+theorem bytesTake_window_after {A B : Bytes} (o n : Nat) (ho : o = A.size) (h : n ≤ B.size) :
+    bytesTake (bytesAppend A B) o n = bytesTake B 0 n := by
+  classical
+  rw [ho]
+  unfold bytesTake
+  rw [if_pos (by rw [bytesAppend_size]; omega), if_pos (by rw [Nat.zero_add]; exact h)]
+  show some (ByteArray.mk ((bytesAppend A B).data.extract (ByteArray.size A)
+      (ByteArray.size A + n))) = some (ByteArray.mk (B.data.extract 0 (0 + n)))
+  rw [show (bytesAppend A B).data = A.data ++ B.data from rfl,
+      show ByteArray.size A = A.data.size from rfl]
+  rw [Nat.zero_add, Array.extract_append]
+  rw [Array.extract_eq_empty_of_le (Nat.min_le_right _ _), Nat.sub_self,
+    Nat.add_sub_cancel_left, Array.empty_append]
+
+/-! #### LINKS 1 AND 2: the two slice equations and the round trip -/
+
+/-- **SLICE EQUATION 1 OF 2**: the first 64 bytes of a 128-byte G1 encoding are the `x`
+    coordinate's padded encoding. -/
+theorem bytesSlice_g1PointBytes_left (P : Nat × Nat) :
+    bytesSlice (g1PointBytes P) 0 64 = fpCoordBytes P.1 := by
+  classical
+  have hs : (fpCoordBytes P.1).size = 64 := by
+    rw [fpCoordBytes_size]; rfl
+  rw [show g1PointBytes P = bytesAppend (fpCoordBytes P.1) (fpCoordBytes P.2) from rfl,
+      bytesSlice_window_before 0 64 (by rw [hs]), ← hs, bytesSlice_full]
+
+/-- **SLICE EQUATION 2 OF 2**: the second 64 bytes are the `y` coordinate's. -/
+theorem bytesSlice_g1PointBytes_right (P : Nat × Nat) :
+    bytesSlice (g1PointBytes P) 64 64 = fpCoordBytes P.2 := by
+  classical
+  have hs : (fpCoordBytes P.1).size = 64 := by rw [fpCoordBytes_size]; rfl
+  have ht : (fpCoordBytes P.2).size = 64 := by rw [fpCoordBytes_size]; rfl
+  rw [show g1PointBytes P = bytesAppend (fpCoordBytes P.1) (fpCoordBytes P.2) from rfl,
+      bytesSlice_window_after 64 64 hs.symm (Nat.le_of_eq ht.symm), ← ht, bytesSlice_full]
+
+/-- **LINK 1, THE ROUND TRIP ITSELF.** The decoder reads back what the encoder wrote, for every
+    canonically-encodable point. Four rewrites once the slice equations are on the table. -/
+theorem g1Of?_g1PointBytes (P : Nat × Nat) (hx : P.1 < blsP) (hy : P.2 < blsP) :
+    g1Of? (g1PointBytes P) = some P := by
+  classical
+  unfold g1Of?
+  rw [bytesSlice_g1PointBytes_left, bytesSlice_g1PointBytes_right,
+      fpCoordOf?_fpCoordBytes P.1 hx, fpCoordOf?_fpCoordBytes P.2 hy]
+
+/-- **WITNESS FOR THE ROUND TRIP (D-P23 satisfiability)**, at the PUBLISHED generator: the
+    encoder-decoder pair round-trips on a point nobody chose. -/
+theorem g1Of?_g1PointBytes_genPair : g1Of? (g1PointBytes genPair) = some genPair :=
+  g1Of?_g1PointBytes genPair (by decide) (by decide)
+
+/-- **FALSIFICATION FOR THE ROUND TRIP (D-P23): the canonicity hypothesis is load-bearing.**
+    `blsP` is not below `blsP`, so the decoder refuses the encoding of the junk pair even though
+    the encoder writes it happily. -/
+theorem g1Of?_g1PointBytes_needs_canonical : g1Of? (g1PointBytes junkPair) = none := by
+  classical
+  show g1Of? (g1PointBytes (blsP, blsP)) = none
+  unfold g1Of?
+  rw [bytesSlice_g1PointBytes_left, bytesSlice_g1PointBytes_right,
+      fpCoordOf?_fpCoordBytes_none_of_too_big blsP (Nat.lt_irrefl blsP)
+        blsP_lt_fpBytes_pow]
+
+/-- A G1 encoding is exactly `g1Bytes = 128` bytes, for every point. -/
+theorem g1PointBytes_size (P : Nat × Nat) : (g1PointBytes P).size = g1Bytes := by
+  show (bytesAppend (fpCoordBytes P.1) (fpCoordBytes P.2)).size = _
+  rw [bytesAppend_size, fpCoordBytes_size, fpCoordBytes_size]
+  rfl
+
+/-! #### LINK 3: `g1AddValidInput` and `g1AddOutput` unfold -/
+
+private theorem bytesSlice_g1AddFrame_left (P Q : Nat × Nat) :
+    bytesSlice (g1AddFrame (g1PointBytes P) (g1PointBytes Q)) 0 g1Bytes = g1PointBytes P := by
+  classical
+  have hs : (g1PointBytes P).size = g1Bytes := g1PointBytes_size P
+  rw [show g1AddFrame (g1PointBytes P) (g1PointBytes Q)
+        = bytesAppend (g1PointBytes P) (g1PointBytes Q) from rfl,
+      bytesSlice_window_before 0 g1Bytes (by rw [hs]; omega), ← hs, bytesSlice_full]
+
+private theorem bytesSlice_g1AddFrame_right (P Q : Nat × Nat) :
+    bytesSlice (g1AddFrame (g1PointBytes P) (g1PointBytes Q)) g1Bytes g1Bytes
+      = g1PointBytes Q := by
+  classical
+  have hs : (g1PointBytes P).size = g1Bytes := g1PointBytes_size P
+  have ht : (g1PointBytes Q).size = g1Bytes := g1PointBytes_size Q
+  rw [show g1AddFrame (g1PointBytes P) (g1PointBytes Q)
+        = bytesAppend (g1PointBytes P) (g1PointBytes Q) from rfl,
+      bytesSlice_window_after g1Bytes g1Bytes hs.symm (Nat.le_of_eq ht.symm), ← ht,
+      bytesSlice_full]
+
+private theorem g1AddFrame_size_beq (P Q : Nat × Nat) :
+    ((g1AddFrame (g1PointBytes P) (g1PointBytes Q)).size == g1AddInputBytes) = true := by
+  show ((bytesAppend (g1PointBytes P) (g1PointBytes Q)).size == g1AddInputBytes) = true
+  rw [bytesAppend_size, g1PointBytes_size, g1PointBytes_size]
+  decide
+
+/-- **`g1AddValidInput`, ON CODEC-EMITTED FRAMES, IS THE VALIDATOR OF THE POINTS.** -/
+theorem g1AddValidInput_g1PointBytes (P Q : Nat × Nat)
+    (hx : P.1 < blsP) (hy : P.2 < blsP) (hx' : Q.1 < blsP) (hy' : Q.2 < blsP) :
+    g1AddValidInput (g1AddFrame (g1PointBytes P) (g1PointBytes Q))
+      = (g1PointAddValid P && g1PointAddValid Q) := by
+  classical
+  unfold g1AddValidInput
+  rw [g1AddFrame_size_beq, Bool.true_and, bytesSlice_g1AddFrame_left,
+      bytesSlice_g1AddFrame_right, g1Of?_g1PointBytes P hx hy, g1Of?_g1PointBytes Q hx' hy']
+
+/-- **`g1AddOutput` ON CODEC-EMITTED FRAMES IS `g1PointBytes` OF THE BYTE SUM** - the right-hand
+    side of the `g1Add` clause, one step short of the group law. -/
+theorem g1AddOutput_g1PointBytes (P Q : Nat × Nat)
+    (hx : P.1 < blsP) (hy : P.2 < blsP) (hx' : Q.1 < blsP) (hy' : Q.2 < blsP)
+    (hP : g1PointAddValid P = true) (hQ : g1PointAddValid Q = true) :
+    g1AddOutput (g1AddFrame (g1PointBytes P) (g1PointBytes Q))
+      = some (g1PointBytes (affineAdd fpOps P Q)) := by
+  classical
+  unfold g1AddOutput
+  rw [bytesSlice_g1AddFrame_left, bytesSlice_g1AddFrame_right,
+      g1Of?_g1PointBytes P hx hy, g1Of?_g1PointBytes Q hx' hy']
+  have hv : g1AddValidInput (g1AddFrame (g1PointBytes P) (g1PointBytes Q)) = true := by
+    rw [g1AddValidInput_g1PointBytes P Q hx hy hx' hy', hP, hQ]
+    rfl
+  rw [hv]
+  rfl
+
+/-- **FALSIFICATION FOR THE G1ADD UNFOLDING (D-P23): the length conjunct is load-bearing.** The
+    full 0x100 frame is accepted; the SAME two points truncated to 255 bytes are refused - and
+    `bytesSlice` clamps rather than failing, so a validator that only looked at coordinates would
+    accept the short frame too. -/
+theorem g1AddValidInput_needs_the_length :
+    g1AddValidInput (g1AddFrame (g1PointBytes genPair) (g1PointBytes genPair)) = true ∧
+      g1AddValidInput (bytesSlice
+        (g1AddFrame (g1PointBytes genPair) (g1PointBytes genPair)) 0 255) = false := by
+  refine ⟨?_, ?_⟩
+  · rw [g1AddValidInput_g1PointBytes genPair genPair (by decide) (by decide) (by decide)
+      (by decide)]
+    rfl
+  · have h : (bytesSlice (g1AddFrame (g1PointBytes genPair) (g1PointBytes genPair)) 0 255).size
+        = 255 := bytesSlice_size 0 255 (by
+          show (0 : Nat) + 255 ≤
+            ByteArray.size (bytesAppend (g1PointBytes genPair) (g1PointBytes genPair))
+          rw [bytesAppend_size, g1PointBytes_size]
+          unfold g1Bytes
+          omega)
+    unfold g1AddValidInput
+    rw [h]
+    decide
+
+/-! #### LINK 4: the `where`-clause function `g1MsmPairs?.go` -/
+
+set_option maxRecDepth 100000 in
+private theorem natToBytesBE_size (n len : Nat) : (natToBytesBE n len).size = len := by
+  show ((natToBytesLowFirst n len).data.toList.reverse.toArray).size = len
+  simp [List.length_reverse, Midfall.Assumptions.natToBytesLowFirst_size]
+
+private theorem frToInputBE_size (x : Fr blsR) : (frToInputBE x).size = frBytes := by
+  show (natToBytesBE x.val 32).size = frBytes
+  rw [natToBytesBE_size]
+  rfl
+
+/-- The scalar slot reads back as the scalar's canonical value: `frToInputBE` is 32 bytes and
+    `r < 2 ^ 256`, so no truncation happens - the fact that makes the `g1Msm1` clause's
+    "canonical word" wording load-bearing rather than decorative. -/
+theorem bytesToNatBE_frToInputBE (x : Fr blsR) : bytesToNatBE (frToInputBE x) = x.val := by
+  show bytesToNatBE (natToBytesBE x.val 32) = x.val
+  rw [bytesToNatBE_natToBytesBE, Nat.mod_eq_of_lt]
+  have h2 : blsR < 256 ^ (32 : Nat) := by show blsR < 2 ^ 256; decide
+  exact Nat.lt_of_lt_of_le (ZMod.val_lt x) (Nat.le_of_lt h2)
+
+private theorem g1MsmFrame_singleton (p sc : Bytes) :
+    g1MsmFrame [(p, sc)] = bytesAppend p sc := by
+  show bytesAppend Bytes.empty (bytesAppend p sc) = _
+  rw [show bytesAppend Bytes.empty (bytesAppend p sc) = bytesAppend p sc from by
+    show ByteArray.mk ((#[] : Array UInt8) ++ (bytesAppend p sc).data) = _
+    rw [Array.empty_append]]
+
+/-- **LINK 4, THE `where`-CLAUSE FUNCTION.** P-CANON did not attempt this and told the next package
+    to budget for it; it needed no budget. The compiler exposes the clauses as
+    `g1MsmPairs?.go.eq_1` and `.eq_2`, both `rfl`-level, so the one-pair frame unfolds in a dozen
+    lines once the `bytesTake` windows and the round trip are available. The `dsimp only` between
+    the rewrites is what fires each `match` - `rw` does not reduce a `match`. -/
+theorem g1MsmPairs?_singleton (P : Nat × Nat) (s : Fr blsR)
+    (hx : P.1 < blsP) (hy : P.2 < blsP) :
+    g1MsmPairs? (g1MsmFrame [(g1PointBytes P, frToInputBE s)]) = some [((P, s.val))] := by
+  classical
+  rw [g1MsmFrame_singleton]
+  have hsz : (bytesAppend (g1PointBytes P) (frToInputBE s)).size = g1MsmPairBytes := by
+    rw [bytesAppend_size, g1PointBytes_size, frToInputBE_size]
+    rfl
+  unfold g1MsmPairs?
+  rw [if_neg (by rw [hsz]; decide), hsz]
+  have hdiv : g1MsmPairBytes / g1MsmPairBytes = 1 := by decide
+  rw [hdiv, g1MsmPairs?.go.eq_2]
+  have t1 : bytesTake (bytesAppend (g1PointBytes P) (frToInputBE s)) 0 g1Bytes
+      = some (g1PointBytes P) := by
+    rw [bytesTake_window_before 0 g1Bytes (by rw [g1PointBytes_size]; omega),
+        ← g1PointBytes_size, bytesTake_of_size]
+  have t2 : bytesTake (bytesAppend (g1PointBytes P) (frToInputBE s)) (0 + g1Bytes) frBytes
+      = some (frToInputBE s) := by
+    rw [Nat.zero_add, bytesTake_window_after g1Bytes frBytes
+        ((g1PointBytes_size P).symm) (by rw [frToInputBE_size]),
+        ← frToInputBE_size, bytesTake_of_size]
+  rw [t1, t2]
+  dsimp only
+  rw [g1Of?_g1PointBytes P hx hy, bytesToNatBE_frToInputBE s]
+  dsimp only
+  rw [g1MsmPairs?.go.eq_1]
+  rfl
+
+/-- **THE `g1MsmOutput` TRANSFER, STATED OVER A VARIABLE LIST.** Forced, not stylistic - see the
+    header: a literal list makes the elaborator evaluate `g1PointMsmValid` on a variable point. -/
+theorem g1MsmOutput_some {input : Bytes} {ps : List ((Nat × Nat) × Nat)}
+    (h : g1MsmPairs? input = some ps)
+    (hall : ps.all (fun pr => g1PointMsmValid pr.1) = true) :
+    g1MsmOutput input =
+      some (g1PointBytes (ps.foldl (fun (acc : Nat × Nat) (pr : (Nat × Nat) × Nat) =>
+        affineAdd fpOps acc (affineSmul fpOps pr.2 pr.1)) (0, 0))) := by
+  classical
+  unfold g1MsmOutput
+  rw [h]
+  dsimp only
+  rw [hall, if_pos rfl]
+
+private theorem addFrame_val (P Q : FpFrame) :
+    (addFrame P Q).1 = affineAdd fpOps P.1 Q.1 := rfl
+
+private theorem affineAdd_inf_left (Q : Nat × Nat) : affineAdd fpOps (0, 0) Q = Q := by
+  rw [affineAdd, if_pos (by decide)]
+
+/-- **THE ONE-PAIR MSM OUTPUT.** -/
+theorem g1MsmOutput_singleton (P : Nat × Nat) (s : Fr blsR) (hx : P.1 < blsP) (hy : P.2 < blsP)
+    (hv : g1PointMsmValid P = true) :
+    g1MsmOutput (g1MsmFrame [(g1PointBytes P, frToInputBE s)])
+      = some (g1PointBytes (affineSmul fpOps s.val P)) := by
+  classical
+  have hall : ([(P, s.val)] : List ((Nat × Nat) × Nat)).all
+      (fun pr => g1PointMsmValid pr.1) = true := by
+    rw [List.all_cons, List.all_nil, hv, Bool.and_true]
+  rw [g1MsmOutput_some (ps := [(P, s.val)]) (g1MsmPairs?_singleton P s hx hy) hall]
+  show some (g1PointBytes (affineAdd fpOps (0, 0) (affineSmul fpOps s.val P))) = _
+  rw [affineAdd_inf_left]
+
+/-- **FALSIFICATION FOR THE MSM UNFOLDING (D-P23): the pair-length discipline is real.** The
+    160-byte frame parses as one pair; the SAME frame with one trailing byte is refused by the
+    `% g1MsmPairBytes` test before `go` ever runs. -/
+theorem g1MsmPairs?_needs_whole_pairs :
+    (g1MsmPairs? (g1MsmFrame [(g1PointBytes genPair, frToInputBE (1 : Fr blsR))])).isSome ∧
+      (g1MsmPairs? (bytesAppend (g1MsmFrame
+        [(g1PointBytes genPair, frToInputBE (1 : Fr blsR))]) (bytesZero 1))).isNone := by
+  refine ⟨?_, ?_⟩
+  · rw [g1MsmPairs?_singleton genPair 1 (by decide) (by decide)]
+    decide
+  · have hsz : (bytesAppend (g1MsmFrame [(g1PointBytes genPair, frToInputBE (1 : Fr blsR))])
+        (bytesZero 1)).size = 161 := by
+      rw [bytesAppend_size, g1MsmFrame_singleton, bytesAppend_size, g1PointBytes_size,
+        frToInputBE_size]
+      rfl
+    have hcond : ((161 : Nat) == 0 || 161 % g1MsmPairBytes != 0) = true := by decide
+    have hnone : g1MsmPairs? (bytesAppend (g1MsmFrame
+        [(g1PointBytes genPair, frToInputBE (1 : Fr blsR))]) (bytesZero 1)) = none := by
+      unfold g1MsmPairs?
+      rw [hsz, if_pos hcond]
+    rw [hnone]
+    decide
+
+
+/-! ### P-G1CODEC: THE G1Codec ON THE `zpowers` CARRIER
+
+**THE SECOND MISSING PIECE, AND WHY THE ROUND TRIP ALONE WAS NOT ENOUGH.** P-CANON named this
+explicitly: canonicity + point count does NOT give five of six; it is canonicity (done) + point
+count + codec round trip (done above) + **a codec on a carrier that can be plugged into `Holds`**.
+The carrier has to be a `Group` with `PrimeOrderWith` and a `Module (ZMod r)` on its additive form,
+and the only real-curve object in the tree with all three is the cyclic subgroup generated by the
+published H1, whose prime order P-CANON established (`primeOrderWith_zpowers_emb_genFrame`).
+
+THREE SPELLING FINDINGS, measured here rather than inherited:
+
+* `Point.toAffine` **does not exist** in this mathlib revision (zero hits under
+  AlgebraicGeometry/EllipticCurve/). The point-to-coordinates map is a two-line `match` on the
+  `Point` inductive, and the canonicality the brief wanted from `ZMod.val` is exactly `ZMod.val_lt`:
+  a coordinate read out through `val` is BELOW `blsP` by construction, so the round trip applies
+  with nothing left to discharge.
+* `Module (ZMod blsR) (Additive G₁z)` does NOT synthesize. It is built from
+  `AddCommGroup.zmodModule`, whose hypothesis - `∀ x, r • x = 0` - is the exponent fact the carrier
+  gets from `r • emb genFrame = 0`. So `g1Msm1` is statable at all only because P-CANON landed
+  `r_nsmul_emb_genFrame`.
+* **`blsR • X` for a VARIABLE `X : W.Point` cannot be whnf'd** - `nsmul` recurses on the literal
+  255-bit scalar, and any `rfl` / `show` / `rw`-motive that forces it dies at the default
+  `maxRecDepth`. That is the same shape as the `affineSmul` fold wall, on the mathlib side rather
+  than the byte side, and it is why `nsmul_blsR_eq_zero` below goes through the propositional
+  `toAdd_pow` instead of the one-line `rfl` that looks correct. -/
+
+/-- **THE CARRIER.** The cyclic subgroup generated by the published H1, multiplicatively wrapped so
+    that `Group` synthesizes (P-CANON's naming finding: `Group (Additive A)` does not). -/
+abbrev G₁z : Type := Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))
+
+instance primeOrderZ : PrimeOrderWith G₁z blsR := primeOrderWith_zpowers_emb_genFrame
+
+theorem zpow_gen_blsR : (Multiplicative.ofAdd (emb genFrame)) ^ blsR = 1 :=
+  show Multiplicative.ofAdd (blsR • emb genFrame) = Multiplicative.ofAdd 0 from
+    congrArg Multiplicative.ofAdd r_nsmul_emb_genFrame
+
+/-- **EVERY ELEMENT OF THE CARRIER IS `r`-TORSION, multiplicatively.** `Subgroup.mem_zpowers_iff`
+    answers with an INTEGER exponent, so the calculation lives in `zpow`:
+    `(g ^ n) ^ r = g ^ (n * r) = g ^ (r * n) = (g ^ r) ^ n = 1`. -/
+theorem pow_blsR_eq_one_ambient (x : Multiplicative W.Point)
+    (hx : x ∈ Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) : x ^ blsR = 1 := by
+  classical
+  obtain ⟨n, hn⟩ := Subgroup.mem_zpowers_iff.mp hx
+  subst hn
+  rw [← zpow_natCast, ← zpow_mul, Int.mul_comm, zpow_mul, zpow_natCast, zpow_gen_blsR, one_zpow]
+
+theorem pow_blsR_eq_one (x : G₁z) : x ^ blsR = 1 := by
+  rw [Subtype.ext_iff, Subgroup.coe_pow, Subgroup.coe_one]
+  exact pow_blsR_eq_one_ambient x x.prop
+
+/-- **THE `ZMod r` MODULE STRUCTURE THE `g1Msm1` CLAUSE NEEDS.** Not an instance mathlib finds on
+    its own: `AddCommGroup.zmodModule` is an `abbrev` taking the exponent law as an argument, and
+    that argument is `pow_blsR_eq_one`. -/
+instance moduleZ : Module (ZMod blsR) (Additive G₁z) :=
+  AddCommGroup.zmodModule (fun y : Additive G₁z => by
+    apply Additive.ext
+    show (y.toMul : G₁z) ^ blsR = 1
+    exact pow_blsR_eq_one y.toMul)
+
+/-- **A CURVE POINT AS A CANONICAL COORDINATE PAIR** - the map the brief asked for. `Point.toAffine`
+    does not exist in this revision, so this is a `match` on the inductive; the infinity point maps
+    to the all-zero frame, matching `emb`'s convention exactly. -/
+def ptPair (X : W.Point) : Nat × Nat :=
+  match X with
+  | 0 => (0, 0)
+  | Point.some x y _ => (x.val, y.val)
+
+theorem ptPair_zero : ptPair (0 : W.Point) = (0, 0) := rfl
+
+theorem ptPair_some (x y : K) (h : W.Nonsingular x y) :
+    ptPair (Point.some x y h) = (x.val, y.val) := rfl
+
+/-- **THE `ptPair` IMAGE IS AN ACCEPTED FRAME**, in both branches. -/
+theorem onCurve_ptPair (X : W.Point) : affineOnCurve fpOps (ptPair X) = true := by
+  classical
+  cases X with
+  | zero => decide
+  | some x y h =>
+      rw [ptPair_some]
+      have heq : W.Equation x y := h.1
+      have h1 : (y : K) ^ 2 = (x : K) ^ 3 + 4 := by
+        rw [W.equation_iff] at heq
+        rw [a₁z, a₂z, a₃z, a₄z, a₆z] at heq
+        have hy : (y : K) ^ 2 + (0 : K) * x * y + (0 : K) * y = (y : K) ^ 2 := by ring
+        have hx : (x : K) ^ 3 + (0 : K) * x ^ 2 + (0 : K) * x + 4 = (x : K) ^ 3 + 4 := by ring
+        rw [hy, hx] at heq
+        exact heq
+      have hx : ((x.val : ℕ) : K) = x := ZMod.natCast_zmod_val x
+      have hy : ((y.val : ℕ) : K) = y := ZMod.natCast_zmod_val y
+      refine onCurve_of_eq_pow x.val y.val ?_
+      rw [hx, hy]
+      exact h1
+
+/-- **THE FRAME OF A CURVE POINT.** -/
+def frameOf (X : W.Point) : FpFrame := ⟨ptPair X, onCurve_ptPair X⟩
+
+theorem frameOf_val (X : W.Point) : (frameOf X).1 = ptPair X := rfl
+
+/-- **`emb` AND `ptPair` ARE INVERSE ON THE LEFT.** Note the `have` with an ascribed type instead of
+    `rw [emb_notInf _ hi]`: rewriting through `emb`'s dependent `if` builds a motive over the
+    `Nonsingular` proof argument and is rejected as not type-correct - the exact obstruction
+    P-MODEXP recorded for `Point.some`, arriving again from a different direction. -/
+theorem emb_frameOf (X : W.Point) : emb (frameOf X) = X := by
+  classical
+  cases X with
+  | zero => exact emb_inf _ (by decide)
+  | some x y h =>
+      have hx : ((x.val : ℕ) : K) = x := ZMod.natCast_zmod_val x
+      have hy : ((y.val : ℕ) : K) = y := ZMod.natCast_zmod_val y
+      have hns : W.Nonsingular ((x.val : ℕ) : K) ((y.val : ℕ) : K) := nonsingular_congr hx hy h
+      have hi : ¬ affineIsInfinity fpOps (frameOf (Point.some x y h)).1 = true := by
+        rw [frameOf_val, ptPair_some]; exact notInf_of_nonsingular x.val y.val hns
+      have key : emb (frameOf (Point.some x y h)) =
+          Point.some ((x.val : ℕ) : K) ((y.val : ℕ) : K)
+            (nonsingular_of_equation (equation_of_frame (frameOf (Point.some x y h)) hi)) :=
+        emb_notInf _ hi
+      rw [key]
+      exact point_some_eq hx hy _ h
+
+/-- Every `ptPair` frame is canonical - the whole point of going through `ZMod.val`. -/
+theorem canonical_frameOf (X : W.Point) : CanonicalFrame (frameOf X) := by
+  cases X with
+  | zero =>
+      show (0 : Nat) < blsP ∧ (0 : Nat) < blsP
+      exact ⟨p_pos, p_pos⟩
+  | some x y h => exact ⟨ZMod.val_lt x, ZMod.val_lt y⟩
+
+/-- **AND ON THE RIGHT**: reading coordinates back off an embedded CANONICAL frame is the identity.
+    Canonicity is what makes this true - a frame whose coordinate is `blsP` embeds to the same
+    point as one whose coordinate is `0`. Same canonicity wall P-CANON walked, arriving from the
+    byte side. -/
+theorem ptPair_emb (P : FpFrame) (hP : CanonicalFrame P) : ptPair (emb P) = P.1 := by
+  classical
+  obtain ⟨h1, h2⟩ := hP
+  by_cases h : affineIsInfinity fpOps P.1 = true
+  · have hz : emb P = 0 := emb_inf P h
+    rw [hz, ptPair_zero]
+    exact ((emb_eq_zero_iff_canonical P ⟨h1, h2⟩).mp hz).symm
+  · have key : emb P = Point.some ((P.1.1 : ℕ) : K) ((P.1.2 : ℕ) : K)
+        (nonsingular_of_equation (equation_of_frame P h)) := emb_notInf P h
+    rw [key]
+    have e1 : ((P.1.1 : ℕ) : K).val = P.1.1 := by
+      rw [ZMod.val_natCast, Nat.mod_eq_of_lt h1]
+    have e2 : ((P.1.2 : ℕ) : K).val = P.1.2 := by
+      rw [ZMod.val_natCast, Nat.mod_eq_of_lt h2]
+    rw [ptPair_some]
+    exact Prod.ext e1 e2
+
+/-- **EVERY ELEMENT OF THE CARRIER IS `r`-TORSION, additively.** The transport is PROPOSITIONAL
+    (`toAdd_pow`), not definitional: `rfl` on `toAdd (ofAdd X ^ blsR) = blsR • X` dies because the
+    right-hand side whnf's into a 255-bit `nsmul` recursion. See the section header. -/
+theorem nsmul_blsR_eq_zero (X : W.Point)
+    (hX : Multiplicative.ofAdd X ∈ Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) :
+    blsR • X = 0 := by
+  classical
+  have h1 : (Multiplicative.ofAdd X) ^ blsR = 1 := pow_blsR_eq_one_ambient _ hX
+  have h2 : ((Multiplicative.ofAdd X) ^ blsR).toAdd = blsR • X := toAdd_pow _ _
+  rw [← h2, h1]
+  rfl
+
+/-- **THE PRECOMPILE'S OWN VALIDATOR ACCEPTS EVERY `ptPair`** - P-CANON's `g1InSubgroup_iff` route
+    applied to EVERY element of the carrier, not just the generator. -/
+theorem g1PointMsmValid_ptPair (X : W.Point)
+    (hX : Multiplicative.ofAdd X ∈ Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame))) :
+    g1PointMsmValid (ptPair X) = true := by
+  classical
+  have hc : CanonicalFrame (frameOf X) := canonical_frameOf X
+  have htor : blsR • emb (frameOf X) = 0 := by
+    rw [emb_frameOf]; exact nsmul_blsR_eq_zero X hX
+  exact (g1PointMsmValid_iff (frameOf X) hc).mpr htor
+
+private theorem g1PointAddValid_ptPair (X : W.Point) : g1PointAddValid (ptPair X) = true :=
+  onCurve_ptPair X
+
+/-! #### The codec -/
+
+/-- The underlying curve point of a carrier element. -/
+def g1zPoint (Q : G₁z) : W.Point := Multiplicative.toAdd Q.val
+
+private theorem g1zPoint_mem (Q : G₁z) :
+    Multiplicative.ofAdd (g1zPoint Q) ∈
+      Subgroup.zpowers (Multiplicative.ofAdd (emb genFrame)) :=
+  Q.prop
+
+/-- The pair the codec encodes. -/
+def g1zPair (Q : G₁z) : Nat × Nat := ptPair (g1zPoint Q)
+
+theorem g1zPair_canonical (Q : G₁z) : (g1zPair Q).1 < blsP ∧ (g1zPair Q).2 < blsP :=
+  canonical_frameOf (g1zPoint Q)
+
+theorem g1zPoint_mul (P Q : G₁z) : g1zPoint (P * Q) = g1zPoint P + g1zPoint Q := rfl
+
+/-- The scalar action projects through too: the `ZMod r` smul built by `AddCommGroup.zmodModule`
+    is `val`-indexed `nsmul`, which is what the byte fold computes with. -/
+theorem g1zPoint_gsmul (Q : G₁z) (s : Fr blsR) :
+    g1zPoint (Midfall.Halo2.gsmul s Q) = s.val • g1zPoint Q := by
+  classical
+  have h : (Midfall.Halo2.gsmul s Q : G₁z) = Q ^ s.val := rfl
+  rw [h, g1zPoint, Subgroup.coe_pow, toAdd_pow]
+  rfl
+
+/-- **THE ENCODER**: the EIP-2537 padded byte encoding of the point - the `Point` -> canonical-bytes
+    map the brief asked for, via the coordinate projection and `ZMod.val`. -/
+def g1zToEip (Q : G₁z) : Bytes := g1PointBytes (g1zPair Q)
+
+/-- **THE DECODER, NONCOMPUTABLY.** Making this computable is a DISCRETE LOG: an accepted frame is
+    an `r`-torsion point and `ofEip?` has to name an exponent `n` with `ptPair = n • emb genFrame`.
+    Not a plumbing item and not this package's item - the same wall as `g1Decodes`, stated precisely
+    by `g1CodecZ_g1DecodesWidth_iff`. -/
+noncomputable def g1zOfEip? (b : Bytes) : Option G₁z := by
+  classical
+  exact if h : ∃ Q : G₁z, g1zToEip Q = b then some (Classical.choose h) else none
+
+/-- **THE G1Codec ON THE `zpowers` CARRIER** - the second missing piece P-CANON named. The
+    compressed half is a placeholder and says so: no `Holds` clause reads it, and a real
+    `ofCompressed?` needs the same discrete log as `ofEip?`. -/
+noncomputable def g1CodecZ : G1Codec G₁z where
+  toEip := g1zToEip
+  ofEip? := g1zOfEip?
+  toCompressed := fun Q => bytesNatBE (g1zPair Q).1 fpBytes
+  ofCompressed? := fun _ => none
+
+/-- The generator as a carrier element: the carrier is not the trivial group. -/
+def g1zGen : G₁z :=
+  ⟨Multiplicative.ofAdd (emb genFrame), Subgroup.mem_zpowers_iff.mpr ⟨1, zpow_one _⟩⟩
+
+theorem g1zPoint_gen : g1zPoint g1zGen = emb genFrame := rfl
+theorem g1zPair_gen : g1zPair g1zGen = genPair := rfl
+theorem g1zPair_one : g1zPair (1 : G₁z) = (0, 0) := rfl
+theorem g1zToEip_gen : g1zToEip g1zGen = g1PointBytes genPair := rfl
+theorem g1zToEip_zero : g1zToEip (1 : G₁z) = g1PointBytes (0, 0) := rfl
+
+/-! #### The three G1-side `Holds` clauses, discharged -/
+
+/-- **`g1Valid`, DISCHARGED AT THE REAL-CURVE CODEC.** The quantifier is over the whole carrier,
+    not over a named generator. -/
+theorem g1CodecZ_g1Valid :
+    ∀ Q : G₁z, ∃ pt, g1Of? (g1CodecZ.toEip Q) = some pt ∧ g1PointMsmValid pt = true := by
+  intro Q
+  obtain ⟨h1, h2⟩ := g1zPair_canonical Q
+  exact ⟨g1zPair Q, g1Of?_g1PointBytes (g1zPair Q) h1 h2,
+    g1PointMsmValid_ptPair (g1zPoint Q) (g1zPoint_mem Q)⟩
+
+/-- **`g1Add`, DISCHARGED.** The G1ADD frame built from two codec encodings returns the codec
+    encoding of the product. Algebra: `emb_add` (P-G1AGREE). Plumbing: `g1AddOutput_g1PointBytes`
+    (this package). Bridge: `ptPair` and `emb` are inverse on canonical frames, and `addFrame`'s
+    output is canonical by P-CANON's `affineAdd_canonic` - which is what lets `ptPair_emb` apply. -/
+theorem g1CodecZ_g1Add :
+    ∀ P Q : G₁z, g1AddOutput (g1AddFrame (g1CodecZ.toEip P) (g1CodecZ.toEip Q)) =
+      some (g1CodecZ.toEip (P * Q)) := by
+  intro P Q
+  obtain ⟨a1, a2⟩ := g1zPair_canonical P
+  obtain ⟨b1, b2⟩ := g1zPair_canonical Q
+  show g1AddOutput (g1AddFrame (g1PointBytes (g1zPair P)) (g1PointBytes (g1zPair Q))) =
+      some (g1PointBytes (g1zPair (P * Q)))
+  rw [g1AddOutput_g1PointBytes (g1zPair P) (g1zPair Q) a1 a2 b1 b2
+      (g1PointAddValid_ptPair (g1zPoint P)) (g1PointAddValid_ptPair (g1zPoint Q))]
+  refine congrArg (fun t => some (g1PointBytes t)) ?_
+  show affineAdd fpOps (ptPair (g1zPoint P)) (ptPair (g1zPoint Q)) =
+      ptPair (g1zPoint (P * Q))
+  refine Eq.symm ?_
+  rw [g1zPoint_mul, ← emb_frameOf (g1zPoint P), ← emb_frameOf (g1zPoint Q), emb_add,
+      ptPair_emb (addFrame (frameOf (g1zPoint P)) (frameOf (g1zPoint Q)))
+        (addFrame_canonic (frameOf (g1zPoint P)) (frameOf (g1zPoint Q))
+          (canonical_frameOf _) (canonical_frameOf _)),
+      addFrame_val, frameOf_val, frameOf_val, emb_frameOf, emb_frameOf]
+
+/-- **`g1Msm1`, DISCHARGED.** One-pair G1MSM on the interleaved 0xa0 record is the scalar action
+    `gsmul`, the scalar carried in the canonical big-endian word. This is where the `where`-clause
+    `go` unfolding is consumed, and the `Module (ZMod blsR)` instance is what makes `gsmul` statable
+    at a real curve point at all. -/
+theorem g1CodecZ_g1Msm1 :
+    ∀ (Q : G₁z) (s : Fr blsR),
+      g1MsmOutput (g1MsmFrame [(g1CodecZ.toEip Q, frToInputBE s)]) =
+        some (g1CodecZ.toEip (Midfall.Halo2.gsmul s Q)) := by
+  intro Q s
+  obtain ⟨h1, h2⟩ := g1zPair_canonical Q
+  show g1MsmOutput (g1MsmFrame [(g1PointBytes (g1zPair Q), frToInputBE s)]) =
+      some (g1PointBytes (g1zPair (Midfall.Halo2.gsmul s Q)))
+  rw [g1MsmOutput_singleton (g1zPair Q) s h1 h2
+      (g1PointMsmValid_ptPair (g1zPoint Q) (g1zPoint_mem Q))]
+  refine congrArg (fun t => some (g1PointBytes t)) ?_
+  show affineSmul fpOps s.val (ptPair (g1zPoint Q)) =
+      ptPair (g1zPoint (Midfall.Halo2.gsmul s Q))
+  refine Eq.symm ?_
+  rw [g1zPoint_gsmul, ← emb_frameOf (g1zPoint Q), emb_smul,
+      ptPair_emb (smulFrame s.val (frameOf (g1zPoint Q)))
+        (smulFrame_canonic s.val (frameOf (g1zPoint Q)) (canonical_frameOf _)),
+      smulFrame_val, frameOf_val, emb_frameOf]
+
+/-- **THE DECODER-FIRST CANONICALITY LAW `G1Codec.eipRoundtrip` AT THE REAL-CURVE CODEC.** This
+    direction needs NO point count and NO discrete log: whatever `ofEip?` accepts re-encodes to the
+    bytes it came from. It is the anti-malleability property, and it is the codec law available
+    today. -/
+theorem g1CodecZ_eipRoundtrip : G1Codec.eipRoundtrip g1CodecZ := by
+  classical
+  intro b Q h0
+  have h : g1zOfEip? b = some Q := h0
+  by_cases hex : ∃ R : G₁z, g1zToEip R = b
+  · have h2 : g1zOfEip? b = some (Classical.choose hex) := by
+      unfold g1zOfEip?
+      exact dif_pos hex
+    rw [h2] at h
+    obtain rfl := Option.some.inj h
+    exact Classical.choose_spec hex
+  · have h2 : g1zOfEip? b = none := by
+      unfold g1zOfEip?
+      exact dif_neg hex
+    rw [h2] at h
+    exact absurd h (by simp)
+
+/-- **THE EXACT SHAPE OF WHAT IS LEFT, AS AN EQUIVALENCE.** `g1Decodes` - the fourth G1-side clause
+    - is equivalent, over this codec, to "`g1zToEip` is onto the frames the precompile accepts".
+    That is not byte plumbing and not a definitional gap: it says every `r`-torsion point of `E(Fp)`
+    is a multiple of the published generator, i.e. `|E(Fp)[r]| = r`. THIS is where the point-count
+    package lands, and it is the only G1-side clause this package could not close. -/
+theorem g1CodecZ_g1DecodesWidth_iff :
+    g1DecodesWidth g1CodecZ ↔
+      ∀ b : Bytes, b.size == g1Bytes →
+        (∃ pt, g1Of? b = some pt ∧ g1PointMsmValid pt = true) →
+          ∃ Q : G₁z, g1zToEip Q = b := by
+  classical
+  constructor
+  · intro h b hb ⟨pt, hpt, hv⟩
+    obtain ⟨Q, _, hQ⟩ := h b hb ⟨pt, hpt, hv⟩
+    exact ⟨Q, hQ⟩
+  · intro h b hb ⟨pt, hpt, hv⟩
+    obtain ⟨Q, hQ⟩ := h b hb ⟨pt, hpt, hv⟩
+    have hex : ∃ R : G₁z, g1zToEip R = b := ⟨Q, hQ⟩
+    have h1 : g1zOfEip? b = some (Classical.choose hex) := dif_pos hex
+    exact ⟨Classical.choose hex, h1, Classical.choose_spec hex⟩
+
+/-! #### D-P23: witnesses and falsifications for the codec -/
+
+/-- **WITNESS FOR `g1Valid` (D-P23 satisfiability), AT THE PUBLISHED GENERATOR**: the decoded pair
+    IS the EIP's own H1 coordinates - not a two-point model and not the identity. -/
+theorem g1CodecZ_g1Valid_witness :
+    ∃ pt, g1Of? (g1CodecZ.toEip g1zGen) = some pt ∧ g1PointMsmValid pt = true ∧ pt = genPair :=
+  ⟨genPair, by
+      show g1Of? (g1zToEip g1zGen) = some genPair
+      rw [g1zToEip_gen]
+      exact g1Of?_g1PointBytes_genPair,
+    g1PointMsmValid_ptPair (g1zPoint g1zGen) (g1zPoint_mem g1zGen), rfl⟩
+
+/-- **FALSIFICATION FOR THE CODEC (D-P23): `toEip` IS NOT A CONSTANT MAP.** If it were, all three
+    clauses above would be vacuous. -/
+theorem g1zToEip_not_constant : g1zToEip g1zGen ≠ g1zToEip (1 : G₁z) := by
+  intro hh
+  have e1 : g1Of? (g1zToEip g1zGen) = some genPair := by
+    rw [g1zToEip_gen]
+    exact g1Of?_g1PointBytes_genPair
+  have e2 : g1Of? (g1zToEip (1 : G₁z)) = some (0, 0) := by
+    rw [g1zToEip_zero]
+    exact g1Of?_g1PointBytes (0, 0) p_pos p_pos
+  rw [hh, e2] at e1
+  obtain hq := Option.some.inj e1
+  have hx : genX = 0 := (congrArg (fun t : Nat × Nat => t.1) hq).symm
+  exact (by decide : genX ≠ 0) hx
+
+/-- **WITNESS FOR `g1Add` (D-P23 satisfiability)**: adding the identity frame to the generator
+    frame returns the generator frame - the EIP's own infinity branch, reached through the codec. -/
+theorem g1CodecZ_g1Add_witness :
+    g1AddOutput (g1AddFrame (g1CodecZ.toEip g1zGen) (g1CodecZ.toEip (1 : G₁z))) =
+      some (g1CodecZ.toEip g1zGen) := by
+  rw [g1CodecZ_g1Add g1zGen (1 : G₁z), mul_one]
+
+/-- **FALSIFICATION FOR `g1Add` (D-P23): the precompile REFUSES a frame whose point is not
+    canonically encoded**, so the clause's left-hand side is not automatically a `some`. -/
+theorem g1CodecZ_g1Add_refuses_noncanonical :
+    g1AddOutput (g1AddFrame (g1PointBytes junkPair) (g1PointBytes junkPair)) = none := by
+  classical
+  unfold g1AddOutput
+  rw [bytesSlice_g1AddFrame_left, bytesSlice_g1AddFrame_right,
+      g1Of?_g1PointBytes_needs_canonical]
+
+/-- **FALSIFICATION FOR `g1Msm1` (D-P23): THE SCALAR IS LOAD-BEARING.** At `s = 0` the clause names
+    the identity element and at `s = 1` the generator, and those two carrier elements are DISTINCT.
+    The third conjunct is stated at the carrier and not at the bytes: rewriting a hypothesis that
+    contains `g1zToEip (gsmul 0 g1zGen)` blows the recursion depth, because the byte encoder has to
+    be whnf'd to instantiate the motive. Recorded because it cost a build cycle. -/
+theorem g1CodecZ_g1Msm1_scalar_matters :
+    Midfall.Halo2.gsmul (0 : Fr blsR) g1zGen = (1 : G₁z) ∧
+      Midfall.Halo2.gsmul (1 : Fr blsR) g1zGen = g1zGen ∧ (1 : G₁z) ≠ g1zGen := by
+  classical
+  have h0 : Midfall.Halo2.gsmul (0 : Fr blsR) g1zGen = (1 : G₁z) := by
+    show Additive.toMul ((0 : Fr blsR) • Additive.ofMul g1zGen) = _
+    rw [zero_smul]
+    rfl
+  have h1 : Midfall.Halo2.gsmul (1 : Fr blsR) g1zGen = g1zGen := by
+    show Additive.toMul ((1 : Fr blsR) • Additive.ofMul g1zGen) = _
+    rw [one_smul]
+    rfl
+  refine ⟨h0, h1, ?_⟩
+  intro hh
+  exact g1zToEip_not_constant (congrArg g1zToEip hh).symm
+
+/-- **FALSIFICATION FOR THE DECODER (D-P23): `ofEip?` REFUSES A FRAME OUTSIDE THE IMAGE.** Width is
+    the easiest witness: a 129-byte frame encodes nothing, because every `toEip` is exactly
+    `g1Bytes` long. So `eipRoundtrip` is not the vacuous truth of a decoder that accepts everything. -/
+theorem g1zOfEip?_refuses_outside_the_image : g1zOfEip? (bytesZero (g1Bytes + 1)) = none := by
+  classical
+  have h : ¬ ∃ Q : G₁z, g1zToEip Q = bytesZero (g1Bytes + 1) := by
+    intro hex
+    obtain ⟨Q, hQ⟩ := hex
+    have hs : (g1zToEip Q).size = g1Bytes := g1PointBytes_size (g1zPair Q)
+    rw [hQ, bytesZero_size] at hs
+    omega
+  have h2 : g1zOfEip? (bytesZero (g1Bytes + 1)) = none := dif_neg h
+  exact h2
+
+/-- **WHAT P-G1CODEC TOOK OFF THIS LIST, AND WHAT IS LEFT.** The four links P-CANON named are
+ALL closed: `g1Of?_g1PointBytes` (the round trip), `bytesSlice_g1PointBytes_left` / `_right` (the two
+slice equations), `g1AddValidInput_g1PointBytes` and `g1AddOutput_g1PointBytes` (the G1ADD
+unfolding), and `g1MsmPairs?_singleton` (the `where`-clause `go`, which P-CANON did not attempt and
+which needed no special budget - the compiler's `.go.eq_1` / `.eq_2` are `rfl`-level). On top of
+them the second missing piece landed too: `g1CodecZ`, a `G1Codec` on the `zpowers` carrier, with
+`g1CodecZ_g1Valid`, `g1CodecZ_g1Add` and `g1CodecZ_g1Msm1` discharging three of the six `Holds`
+clauses at real curve points, and `g1CodecZ_eipRoundtrip` discharging the codec law of
+Common/Codec.lean.
+
+WHAT IS LEFT on the G1 side is ONE clause and it is not plumbing: `g1Decodes`.
+`g1CodecZ_g1DecodesWidth_iff` states exactly what it needs - that `g1zToEip` be onto the frames the
+precompile accepts, i.e. that every `r`-torsion point of `E(Fp)` be a multiple of the published
+generator, which is `|E(Fp)[r]| = r`. That is the point-count package (route (b)), and the same
+wall makes `g1zOfEip?` noncomputable: a computable decoder is a discrete log. -/
 def gap_g1_codec_roundtrip : String :=
-  "remaining mechanical item: g1Of? (g1PointBytes P) = some P for canonical P, then "
-    ++ "bytesSlice over the 128-byte concatenation, then g1AddValidInput and g1MsmPairs?.go "
-    ++ "unfolding. Byte plumbing, not the canonicity wall - that one is closed by "
-    ++ "smulFrame_canonic, g1InSubgroup_iff and r_nsmul_emb_genFrame."
+  "closed by P-G1CODEC: the byte round trip, the two slice equations, g1AddValidInput/g1AddOutput, "
+    ++ "and g1MsmPairs?.go. Remaining G1-side Holds clause: g1Decodes, which by "
+    ++ "g1CodecZ_g1DecodesWidth_iff is exactly surjectivity of g1zToEip onto accepted frames, i.e. "
+    ++ "the point count |E(Fp)[r]| = r (and the same wall makes g1zOfEip? noncomputable)."
 
 end Midfall.Instances
