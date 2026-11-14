@@ -64,6 +64,18 @@ GATES = "Midfall/Instances/ObligationsGates.lean"
 # the G1 route does NOT transfer to G2 (2p^2 + 1 against r^2), and the exhibit that closed
 # the G1 side - so the record cannot silently revert to blaming a closed item.
 #
+# P-G2B RE-POINTED THEM AGAIN, for two reasons at once. (a) g2Valid is CLOSED: the Fp2 model
+# landed in P-G2 and the codec in P-G2B (Instances/G2Codec.lean, the exponent-fold carrier
+# G2fold and its encoder g2foldToEip), so the COUNT token moved from "TWO clauses remain" to
+# "ONE clause remains" and "g2foldToEip" became a required token - a record that closes the gap
+# without naming what closed it reddens. (b) The old wording was an OVER-STATEMENT, and the
+# forbidden lists are the only direction this schema can enforce: gap_g2_no_fp2_model may no
+# longer say the tree "has no Fp2", and neither record may say g2Valid had "nothing to quantify
+# over", because the constant all-zero encoder satisfies that clause on any carrier
+# (g2Valid_degenerate_constant_encoder). What was missing was a non-degenerate codec, not a
+# field, and the tokens now say so. The Lean-side twin of every line below is
+# ObligationsGates' gapHoldsBlockers_ok, edited in the same commit.
+#
 # Each token list is a constant rather than five copies: the same gap is registered against
 # every field that carries it, and a token edited in four of five places is a gate that
 # passes by accident. Dropping ANY token below reddens this gate - P-GAPFIX demonstrated one
@@ -80,13 +92,17 @@ GATES = "Midfall/Instances/ObligationsGates.lean"
 #    is now closed. This is the direction the body-only tokens cannot cover - they require the
 #    gap to say more, never that it stop saying something - so a reverted record reddens.
 HOLDS_GAP_TOKENS = ["g2Valid", "pairing2", "Fp[u]/(u^2+1)", "2p^2 + 1",
-                    "AdmissiblePairing", "g1CodecZ_g1_four",
-                    "TWO clauses remain", "FOUR OF FOUR"]
-HOLDS_GAP_FORBIDDEN = ["no Lean library has", "still out of reach", "cannot be stated for all"]
-G2_GAP_TOKENS = ["g2Valid", "Fp[u]/(u^2+1)", "2p^2 + 1", "fp2Ops"]
+                    "AdmissiblePairing", "g1CodecZ_g1_four", "g2foldToEip",
+                    "holds_staged", "g1zToEip_injective",
+                    "ONE clause remains", "FOUR OF FOUR"]
+HOLDS_GAP_FORBIDDEN = ["no Lean library has", "still out of reach", "cannot be stated for all",
+                       "nothing to quantify over", "no Fp2 model in the tree"]
+G2_GAP_TOKENS = ["g2Valid", "Fp[u]/(u^2+1)", "2p^2 + 1", "fp2Ops",
+                 "closed by P-G2B", "non-degenerate", "g2foldToEip", "all-zero encoder"]
 GAP_HOLDS = ("gap_holds_unexhibited", ["Eip2537.Holds"], HOLDS_GAP_TOKENS,
              HOLDS_GAP_FORBIDDEN)
-GAP_G2 = ("gap_g2_no_fp2_model", ["Eip2537.Holds"], G2_GAP_TOKENS)
+G2_GAP_FORBIDDEN = ["has no Fp2", "nothing to quantify over"]
+GAP_G2 = ("gap_g2_no_fp2_model", ["Eip2537.Holds"], G2_GAP_TOKENS, G2_GAP_FORBIDDEN)
 
 REGISTRY = [
     {

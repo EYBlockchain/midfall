@@ -17,6 +17,15 @@
 -- WHAT IS NEW AND WHAT IT COST.
 --   * The field is Fp2 = Fp[u]/(u^2+1) (Instances/Fp2.lean), so the coefficient is 4(u+1) = (4,4)
 --     and the discriminant is -13824u rather than -6912: a different computation, same shape.
+--   * THE TWO HEAVY KERNEL COMPUTATIONS MOVED OUT (P-G2B step 3). 'h2Pair_onCurve' and
+--     'h2Pair_r_smul_zero' now live in Instances/G2Kernel.lean, a file with NO '#eval' line, and
+--     'h2Frame' below is built from the imported 'h2Pair_onCurve'. They are moved because
+--     'scripts/kat_gate.py' re-elaborates every '#eval'-bearing file from source - the cached olean
+--     of THAT file is not used, only of what it imports - so a 'decide' sitting next to a '#eval'
+--     costs its full price on every gate pass. Measured: this file went from 20.3 s to 4.1 s of
+--     re-elaboration, and 'checks.sh' from 491 s to 476 s. The obvious guess was that the '#eval'
+--     lines were the expensive part; they are not - the two gates cost 0.4 s in total, because the
+--     255-step fold is far cheaper interpreted than as a kernel 'decide'.
 --   * THE EXPENSIVE KERNEL COMPUTATION IS CHEAPER THAN PREDICTED. 'affineSmul fp2Ops blsR h2Pair =
 --     ((0,0),(0,0))' by 'decide' measures 8.6 s here (maxRecDepth 100000, maxHeartbeats 4e9,
 --     largest process 4.42 GiB), where the brief budgeted ~4x the G1 fold's 16.6 s. The reason is
@@ -36,6 +45,7 @@
 -- runs the theorems, and NOTHING in either deletes a falsification theorem and reddens the build.
 
 import Midfall.Instances.Fp2
+import Midfall.Instances.G2Kernel
 import Midfall.Instances.G1Agreement
 import Midfall.Assumptions.Eip2537
 import Mathlib.AlgebraicGeometry.EllipticCurve.Affine.Point
@@ -912,29 +922,12 @@ theorem g2PointValid_iff2 (P : Fp2Frame) (hP : CanonicalFrame2 P) :
 
 /-! ### THE PUBLISHED GENERATOR H2 AND ITS r-TORSION MEMBERSHIP -/
 
-/-- x_c0 of EIP-2537's H2, as 'katG2GenWords' renders it (PrecompileSmoke.sol:161-168). -/
-def h2x0 : Nat :=
-  0x024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb8
-
-/-- x_c1 of H2. -/
-def h2x1 : Nat :=
-  0x13e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e
-
-/-- y_c0 of H2. -/
-def h2y0 : Nat :=
-  0x0ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801
-
-/-- y_c1 of H2. -/
-def h2y1 : Nat :=
-  0x0606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be
-
-/-- The published H2 as a byte point: ((x_c0, x_c1), (y_c0, y_c1)), the order 'g2Of?' decodes. -/
-def h2Pair : AffinePt (Nat × Nat) := ((h2x0, h2x1), (h2y0, h2y1))
-
-/-- **H2 IS ON THE CURVE** y^2 = x^3 + 4(u+1) over Fp2, as a kernel theorem: 'affineOnCurve fp2Ops'
-    at the real 381-bit modulus, computed by the same integer arithmetic the precompile model uses.
-    Independently confirmed in Python bignum arithmetic over Fp[u]/(u^2+1) before this was written. -/
-theorem h2Pair_onCurve : affineOnCurve fp2Ops h2Pair = true := by decide
+/-- **THE GENERATOR'S BYTES AND THE TWO HEAVY KERNEL COMPUTATIONS LIVE IN** Instances/
+    G2Kernel.lean (P-G2B step 3): the published coordinates, 'h2Pair_onCurve' and
+    'h2Pair_r_smul_zero'. They are moved, not deleted - 'h2Frame' below is built from
+    'h2Pair_onCurve' - and they are moved because a 'decide' in a file that carries an '#eval'
+    line is re-run by every gate pass: 16.2 s of the 20.3 s this file costs to re-elaborate.
+    The '#eval' gates that cite them are at the bottom of this file and in Instances/G2Gates.lean. -/
 
 def h2Frame : Fp2Frame := ⟨h2Pair, h2Pair_onCurve⟩
 
@@ -946,17 +939,6 @@ theorem h2Frame_notInf : ¬ affineIsInfinity fp2Ops h2Pair = true := by decide
 theorem emb2_h2_ne_zero : emb2 h2Frame ≠ 0 := fun h =>
   h2Frame_notInf ((emb2_eq_zero_iff h2Frame).mp h)
 
-set_option maxHeartbeats 4000000000 in
-set_option maxRecDepth 100000 in
-/-- **THE EXPENSIVE KERNEL COMPUTATION, MEASURED.** 'affineSmul fp2Ops blsR h2Pair = ((0,0),(0,0))':
-    the published H2 is killed by the precompile's own 255-step double-and-add. MEASURED HERE:
-    8.6 s of kernel reduction, largest single process 4.42 GiB, at maxRecDepth 100000 and
-    maxHeartbeats 4e9. THE BRIEF BUDGETED ~4x the G1 fold's 16.6 s and the estimate was WRONG IN
-    THE PESSIMISTIC DIRECTION by about 2x: the fold's cost is the 'modPow' inside 'fpInv', and
-    'fp2Ops.inv' calls 'fpInv' exactly once per inverse (on the norm, a 381-bit natural), so a G2
-    step costs one G1-sized modPow plus cheap pair arithmetic. It is a theorem and appears in no
-    '#eval', so no gate pass re-runs it. -/
-theorem h2Pair_r_smul_zero : affineSmul fp2Ops blsR h2Pair = ((0, 0), (0, 0)) := by decide
 
 /-- **'blsR • emb2 h2Frame = 0' AS A GROUP STATEMENT**, transported from the byte computation in
     three lines because '▸' along a named equation never whnfs the fold. -/
@@ -1033,8 +1015,8 @@ def g2AgreementKats_ok : Bool :=
 
 #eval g2AgreementKats_ok   -- expect true
 
-/-- **WHAT P-G2 LANDED HERE, AND THE SPECIFIC CAUSE OF WHAT IT DID NOT.**
-    LANDED: the Fp2 field model (Instances/Fp2.lean) with 'p % 4 = 3' as a theorem and the
+/-- **WHAT P-G2 LANDED HERE, AND WHAT P-G2B LANDED ON TOP OF IT.**
+    LANDED (P-G2): the Fp2 field model (Instances/Fp2.lean) with 'p % 4 = 3' as a theorem and the
     byte-model agreement for every operation of 'fp2Ops' including 'inv'; the G2 curve
     y^2 = x^3 + 4(u+1) over it with mathlib's 'IsElliptic' instance (discriminant -13824u);
     'emb2_add' and 'emb2_smul' - the full group-law and scalar-multiplication agreement between
@@ -1042,48 +1024,60 @@ def g2AgreementKats_ok : Bool :=
     variables; 'g2InSubgroup_iff2' and 'g2PointValid_iff2'; and the published H2 with
     'r • H2 = 0' as a kernel theorem (measured 8.6 s, largest process 4.42 GiB).
 
-    STALLED, WITH THE CAUSE: the 'g2Valid' EXHIBIT at a codec. Two specific blockers, both plumbing
-    and neither mathematical, and both hit at the byte layer rather than the field layer.
+    WAS STALLED, NOW CLOSED (P-G2B): the 'g2Valid' EXHIBIT at a codec. Two specific blockers, both
+    plumbing and neither mathematical, and both hit at the byte layer rather than the field layer.
       (1) The 0x100 round trip needs 'g2Of? (g2PointBytes P) = some P', i.e. four slice windows over
           a three-fold 'bytesAppend' nest. 'bytesAppend_size' is PRIVATE in Instances/G1Agreement.lean,
-          so the window lemmas that G1 proves for a two-fold nest cannot be reused as they stand, and
-          re-deriving them for the four-coordinate frame ran into the elaborator's 200k-heartbeat
-          default whnf budget on 'fpCoordBytes' size arithmetic (the same family as the four walls
-          G1Agreement documents; the cure is 'set_option maxHeartbeats' on the byte lemmas, which was
-          not tried before the budget ran out).
+          so the window lemmas that G1 proves for a two-fold nest cannot be reused as they stand.
       (2) The zpowers carrier used for G1 ('Subgroup.zpowers (ofAdd (emb genFrame))') cannot be
           copied, because encoding a 'W2.Point' needs its coordinates as canonical naturals and an
           element of 'Fp2 = AdjoinRoot Fp (X^2+1)' is a quotient with no computable representative
-          extraction - the G1 file gets that from 'ZMod.val'. The exponent-indexed carrier with the
-          fold encoder was designed to route around it ('g2foldToEip' writes the bytes the fold
-          computes, so canonicity is 'smulFrame2_canonic' and no quotient is ever read back), but the
-          codec lemmas for it sit behind blocker (1).
-    So 'g2Valid' is DISCHARGED AT THE VALIDATOR LEVEL ('g2PointValid_h2Pair': the published
-    generator passes it, as a theorem) but NOT YET AS A HOLDS CLAUSE QUANTIFIED OVER A CARRIER. -/
-def gap_g2_codec_plumbing : String :=
-  "blocker: g2Valid is not yet exhibited as a Holds clause over a carrier, and the cause is byte "
-    ++ "plumbing, not the Fp2 model - which landed (Instances/Fp2.lean) together with the group-law "
-    ++ "agreement emb2_add, emb2_smul and the r-torsion theorem r • H2 = 0. Two named items: "
-    ++ "(1) g2Of? (g2PointBytes P) = some P needs four slice windows over a three-fold bytesAppend "
-    ++ "nest, and bytesAppend_size is private in Instances/G1Agreement.lean; the re-derived version "
-    ++ "hits the 200k-heartbeat default whnf budget on fpCoordBytes size arithmetic. "
-    ++ "(2) The G1 zpowers carrier cannot be copied because an AdjoinRoot element has no computable "
-    ++ "coordinate extraction (the G1 file uses ZMod.val); the exponent-indexed fold carrier avoids "
-    ++ "that but still needs (1)."
+          extraction - the G1 file gets that from 'ZMod.val'.
 
-/-- **THE REQUIRED FINDING, AS A COMPUTATION**: with the Fp2 model and the G2 agreement landed, the
-    open Holds clauses are 'g2Valid' (blocked on the codec plumbing above, NOT on any missing
-    mathematics) and 'pairing2' at real points (blocked on D-P36a, a curve 'AdmissiblePairing').
-    The G1 side is four of four. So a single 'Holds' term needs exactly TWO items: the byte plumbing
-    of (1), and one named assumption. It does not need Fp12, a point count, or any new number
-    theory - and the count route stays closed for G2 (2p^2 + 1 > r^2, pinned on line 8 of the gate). -/
+    BOTH CLOSED BY P-G2B IN Instances/G2Codec.lean, and the predicted cause of (1) was WRONG IN
+    KIND, which is why it is recorded rather than quietly fixed. 'bytesAppend_size' really is
+    private and three lines re-derive it; the window lemmas really are reusable as they stand. But
+    the wall was NOT the 200k-heartbeat default: raising it to 4e8 - the prescription this file
+    recorded and P-G2B was told to try - did not finish in 18 minutes, because the elaborator was
+    whnf'ing 'ByteArray.size (bytesNatBE x 48)' on a SYMBOLIC 'x' while it chose between
+    'g2PointBytes P' and the unfolded nest. A bigger budget does not fix a whnf that should not
+    happen; the cure is to rewrite the structural equation first ('rw [g2PointBytes_nest]') and to
+    hand every width over as an equation 'omega' treats as an atom. With that the four windows fit
+    in the DEFAULT budget (measured: whole file 9.2 s, of which 4.4 s is one 'decide' about the
+    all-zero frame). Blocker (2) is closed exactly as designed: the carrier is the exponent group
+    and the encoder writes the fold's bytes, so canonicity is 'smulFrame2_canonic' and no quotient
+    is read back. -/
+def gap_g2_codec_plumbing : String :=
+  "closed by P-G2B: g2Valid IS exhibited as a Holds clause over a carrier - the exponent-fold "
+    ++ "carrier G2fold with encoder g2foldToEip in Instances/G2Codec.lean, whose bytes are the "
+    ++ "smulFrame2 fold at the published H2, so canonicity is smulFrame2_canonic and no AdjoinRoot "
+    ++ "quotient is ever read back. Both named blockers were byte plumbing, as this record said, "
+    ++ "and the predicted cause of (1) was wrong in kind: bytesAppend_size is private in "
+    ++ "Instances/G1Agreement.lean and three lines re-derive it, but the wall was NOT the "
+    ++ "200k-heartbeat whnf budget - raising it to 4e8 did not finish in 18 minutes - it was the "
+    ++ "elaborator whnf'ing ByteArray.size (bytesNatBE x 48) on a symbolic x while choosing between "
+    ++ "g2PointBytes P and its unfolded nest; the cure is to rewrite the nest equation first and "
+    ++ "supply every width as an equation omega treats as an atom. (2) closed as designed: an "
+    ++ "AdjoinRoot element has no computable coordinate extraction (the G1 file uses ZMod.val), so "
+    ++ "the carrier is the exponent group and the encoder writes the fold's bytes. What remains of "
+    ++ "Holds is pairing2 at real points, i.e. the D-P36a AdmissiblePairing hypothesis."
+
+/-- **THE REQUIRED FINDING, AS A COMPUTATION.** With the Fp2 model (P-G2), the G2 group-law
+    agreement (P-G2) and the G2 codec (P-G2B) landed, the open 'Holds' clauses are down to ONE:
+    'pairing2' at real points, blocked on D-P36a - an 'AdmissiblePairing' on the exhibited groups.
+    'g1Valid', 'g1Add', 'g1Msm1' and 'g1Decodes' are four of four at 'g1CodecZ' (P-POINTCOUNT), and
+    'g2Valid' is discharged at 'g2foldToEip' (P-G2B). It does not need Fp12, a G2 point count (the
+    count route stays closed for G2: 2p^2 + 1 > r^2, pinned on line 7 below), or any new number
+    theory. Lines 1-3 pin the closed record's own tokens, so this claim cannot be made by deleting
+    the blocker names; line 4 pins the new codec by name, so the record cannot be rewritten to close
+    the gap without naming what closed it. -/
 def g2ModelStatus_ok : Bool :=
-  (gap_g2_codec_plumbing.contains "bytesAppend_size") &&
+  (gap_g2_codec_plumbing.contains "closed by P-G2B") &&
+    (gap_g2_codec_plumbing.contains "bytesAppend_size") &&
     (gap_g2_codec_plumbing.contains "AdjoinRoot") &&
-    (gap_g2_codec_plumbing.contains "g2Valid") &&
+    (gap_g2_codec_plumbing.contains "g2foldToEip") &&
     (blsP % 4 == 3) &&
     (g2PointValid h2Pair) &&
-    (affineOnCurve fp2Ops h2Pair) &&
     (2 * blsP * blsP + 1 > blsR * blsR)
 
 #eval g2ModelStatus_ok   -- expect true
