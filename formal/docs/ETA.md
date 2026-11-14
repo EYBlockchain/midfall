@@ -487,6 +487,30 @@ names cannot see that; only re-deriving each reason per name can. The standing i
 re-verify recorded premises now has a second datum, and both times the false premise was in
 the direction that made a spec easier, not harder.
 
+### R13 - round 145, after P-MC-CALLDATA. Register 52, and the vacuity class is closed.
+
+- **`hcd` satisfiability is now a THEOREM** at the deployment layout (4484 bytes, 72 slots, real
+  codec). The ten specs are not true because nothing decodes. P-RESTORE3 opened the question; this
+  closes it.
+- **The 18th error of kind: a recorded BLOCKER was a tactic failure.** P-RESTORE3 logged
+  `proofLen_eq_repackedLen` as blocked because "the do-block match tower defeated split at h after
+  four attempts." It was a missing four-line lemma. Same class as R-65 and R11 - a confident
+  recorded reason that did not hold. **New rule: record blockers as "I could not" rather than "it
+  cannot"** - a recorded blocker stops the next agent from trying.
+- **M-C's calldata tranche re-cuts**: 4 of 7 proved, and the last 3 are gated behind
+  `Obligations.readScheduleAgrees` (stage 6), not behind more calldata work. The dependency ran the
+  OTHER way from what the plan assumed - `Accumulator` has zero mentions of `decodeCalldata` and
+  `Partials` only takes `hcd` as a hypothesis.
+- **A statement had drifted weaker and was restored** (`calldata_canonical`'s extra `hend` binder).
+  The authority document contradicts itself between section H and the index row. **Ruled: section H
+  wins** by the standing rule, and the merits agree since `hend` is derivable.
+- **Four new elaborator facts** the wall list did not name: `rw` cannot cross a match binder without
+  `dsimp` first; the `rfl` TACTIC uses reducible transparency where term-mode `rfl` uses default;
+  `Midfall.Bytes.empty` vs `ByteArray.empty` are defeq but block `rw`; `rcases` Option patterns are
+  `(none | some)`, not source order.
+
+**M8 is now being built per Fable's plan (D-P38), not assumed.** Revised M8: **6-12 sessions**.
+**Register: 52.** M-C remaining: Accumulator 12, Qvm+QvmFold 9, calldata residue 3 (behind stage 6).
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
