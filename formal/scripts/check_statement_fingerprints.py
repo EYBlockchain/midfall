@@ -37,6 +37,38 @@ weakening the clause back would build clean, keep every KAT true and leave the d
 fragments, forbidden fragments); the forbidden half matters, because a field that kept
 the word `orderExactly` and dropped its second conjunct would pass a presence test.
 
+P-SPECPIN added a fifth kind of target: the CONCLUSION of a spec theorem in Lowering/
+Partials.lean. P-SPEC1 proved traceReturn_spec and then measured this gate rather than
+trusting it, and found that weakening the theorem's own post - the halt record
+'st'.halted = some (.ret, abiTrue)' replaced by 'o = .halt and True', with the proof
+repaired to match - left lake build GREEN and all three text gates at rc=0 with the sorry
+register unchanged. PARTIAL_SPEC_PINS carried one fragment per theorem, the binder
+'hblk : BlkIsEmitter S', and never the conclusion: the fifth blind spot of the class after
+theorem-binder hypotheses, EnvAgrees clause types, Holds clause texts and the frozen
+normative file. So the only thing protecting a proved spec from silent gutting was its
+proof, and a package under schedule pressure edits both.
+
+Three things close it, and each is needed because the others are defeatable alone:
+
+  * PARTIAL_SPEC_CONCLUSIONS - the postcondition shape each of the ten specs must retain,
+    matched against conclusion(...) and NOT against the declaration, because a decoy
+    hypothesis '(hdecoy : (fun _ : Prop => True) (PartialSound ...) = True)' elaborates, is
+    rfl, and would satisfy a presence test run over the binder list while the conclusion had
+    been emptied. Every entry is two-sided: a trivialised post ('and True', 'or True', a
+    wildcard payload, a bare 'o = .halt') is REJECTED, not merely missing.
+  * SPEC_RELATION_DEFS - the bodies of PartialSound and PartialProgress, because pinning the
+    application and not the definition leaves the obvious way round: keep 'PartialSound S
+    .pcs ...' word for word and hollow the relation's post out, which guts six specs at once
+    without editing a theorem. Same reasoning as FROZEN_CITED_DEFS.
+  * CHECKPOINT_MAP - Partial.pre and Checkpoint.next, because eight of the ten conclusions
+    name a Partial and not a Checkpoint: the target Inv checkpoint is computed by those two
+    maps, so moving '.pcs => .pairing' silently moves the claim while every theorem text
+    stays put.
+
+All twelve perturbations in the package report redden the gate; ten of them passed the gate
+as it stood at HEAD. Two of the twelve are 'or True' guttings that keep EVERY required
+fragment verbatim - those are why the must_not direction is not decoration.
+
 Usage:  python3 scripts/check_statement_fingerprints.py [OBLIGATIONS.LEAN]
         python3 scripts/check_statement_fingerprints.py --root DIR
   --root DIR  read every tracked file under DIR instead of this script's parent's
@@ -125,21 +157,28 @@ GEN_FILE = "Midfall/Lowering/GenAst.lean"
 # pcs emitter and GenAstPcs imports GenAst. The NAME is unchanged - Midfall.Lowering.GenAst.emitPartial
 # - because a Lean namespace is not a file; only the source this gate reads from moved.
 DISPATCH_FILE = "Midfall/Lowering/GenAstDispatch.lean"
+#
+# P-SPECPIN made each entry a 4-tuple (theorem, must, must_not, whole). The must half now
+# carries the CONCLUSION SHAPE as well as the binder, and the must_not half refuses the
+# trivialisations a package under pressure would write - `o = .halt ∧ True`, a progress twin
+# demoted to `PartialSound`, a strictness post replaced by `(fun _ _ => True)`. Presence-only is
+# not enough: the hole P-SPEC1 measured was a conclusion that KEPT its outer shape and LOST its
+# content, and a gate that only looks for the shape waves it through.
 PARTIAL_SPEC_PINS = [
-    ("vkLoading_spec", ["hblk : BlkIsEmitter S"], False),
-    ("transcriptParser_spec", ["hblk : BlkIsEmitter S"], False),
-    ("lagrange_spec", ["hblk : BlkIsEmitter S"], False),
-    ("lagrange_progress_spec", ["hblk : BlkIsEmitter S"], False),
-    ("quotientLin_spec", ["hblk : BlkIsEmitter S"], False),
-    ("pcs_spec", ["hblk : BlkIsEmitter S"], False),
-    ("finalPairing_spec", ["hblk : BlkIsEmitter S"], False),
-    ("finalPairing_progress_spec", ["hblk : BlkIsEmitter S"], False),
-    ("finalPairing_acc_spec", ["hblk : BlkIsEmitter S"], False),
-    ("traceReturn_spec", ["hblk : BlkIsEmitter S"], False),
+    ("vkLoading_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("transcriptParser_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("lagrange_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("lagrange_progress_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("quotientLin_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("pcs_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("finalPairing_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("finalPairing_progress_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("finalPairing_acc_spec", ["hblk : BlkIsEmitter S"], [], False),
+    ("traceReturn_spec", ["hblk : BlkIsEmitter S"], [], False),
     # The pin itself must pin blk to the EMITTER and main to the emitted whole - not to a
     # self-equality, not to True. Its body IS the statement, so whole=True.
     ("BlkIsEmitter", ["S.blk q pv =", "GenAst.emitPartial pv q",
-                      "S.L.main =", "GenAst.emitMain S.plan"], True),
+                      "S.L.main =", "GenAst.emitMain S.plan"], [], True),
     # The emitter must stay a function of the plan and keep the two FinalPairing arms
     # distinct, or the pin degenerates into a constant a placeholder could satisfy.
     #
@@ -151,9 +190,167 @@ PARTIAL_SPEC_PINS = [
     # the seventh arm; the emptiness of placeholderPartials is proved in the Lean tree by
     # GenAstDispatch.placeholderPartials_nil, which no text gate has to duplicate.
     ("emitPartial", ["emitFinalPairing pv", "emitPcsFromPlan pv", "emitTraceReturn pv"],
-     True),
+     [], True),
     ("emitFinalPairingArms", ["emitAccBatch batch", "ec_pairing",
-                              "PAIRING_RHS_MPTR", "PAIRING_LHS_MPTR"], True),
+                              "PAIRING_RHS_MPTR", "PAIRING_LHS_MPTR"], [], True),
+]
+
+# ---------------------------------------------------------------------------
+# P-SPECPIN: THE POSTCONDITION EACH SPEC MUST RETAIN, READ OFF THE CONCLUSION ALONE.
+#
+# WHY THIS SECTION EXISTS. P-SPEC1 proved `traceReturn_spec` and then MEASURED the gate instead
+# of trusting it. Weakening that theorem's conclusion from the halt record
+#
+#     (fun _ _ _ st' o => o = .halt ∧ st'.halted = some (.ret, abiTrue))
+#
+# to
+#
+#     (fun _ _ _ st' o => o = .halt ∧ True)
+#
+# - and repairing the proof to match, which is a one-line change - leaves `lake build` GREEN and
+# `check_statement_fingerprints.py`, `check_hypothesis_bundles.py` and `check_duplicate_facts.py`
+# all at rc=0 with the sorry register unchanged. `PARTIAL_SPEC_PINS` carried
+# `["hblk : BlkIsEmitter S"]` per theorem: the binder, never the conclusion. So the only thing
+# standing between a proved spec and a silent gutting was the proof itself, and a package under
+# schedule pressure edits both. This is the fifth structural blind spot of the class - theorem
+# binders, EnvAgrees clause types, Holds clause texts, the frozen normative file, and now the
+# CONCLUSIONS of the very theorems the project is trying to close.
+#
+# WHY THE CONCLUSION AND NOT THE DECLARATION. R-60 S2 learned that a fragment matched anywhere in
+# a declaration can be carried by a part of it that says nothing: the original exploit was a field
+# whose real text sat in a trailing comment. The same attack exists here - a decoy hypothesis
+#
+#     (hdecoy : (fun _ : Prop => True)
+#       (PartialSound S .pcs Snap calls gas (calldataPre S cd) (fun _ _ => True)) = True)
+#
+# elaborates, is `rfl`, and would satisfy a presence test run over the binder list while the
+# conclusion had been emptied. So every fragment below is matched against `conclusion(...)`: the
+# text after the first TOP-LEVEL colon with the value cut. A hypothesis cannot reach it.
+#
+# BOTH DIRECTIONS, as STATEMENTS_PINS and HOLDS_CLAUSES do. `must` is the postcondition shape;
+# `must_not` is the trivialisation of it. The must half alone would still pass a gutting that kept
+# the outer application and hollowed the argument, and the must_not half is what makes `True` in
+# a post a gate failure rather than a refactor.
+PARTIAL_SPEC_CONCLUSIONS = [
+    # ---- the six soundness arms: PartialSound at the partial's own checkpoint, with the calldata
+    # link as the extra pre and the partial's own extra post.
+    ("vkLoading_spec",
+     ["PartialSound S .vkLoading", "Snap calls gas (calldataPre S cd)", "(fun _ _ => True)"],
+     ["PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True",
+      "fun _ _ _ st' o => True", "fun _ _ V' st' o => True"]),
+    ("transcriptParser_spec",
+     ["PartialSound S .transcriptParser", "Snap calls gas (calldataPre S cd)",
+      "(fun _ _ => True)"],
+     ["PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True",
+      "fun _ _ _ st' o => True", "fun _ _ V' st' o => True"]),
+    # lagrange is the ONE spec whose extra post is not True: a normal exit proves x^n is not 1,
+    # because batch_invert rejects the zero Lean's lIRange accepts. Replacing that with
+    # (fun _ _ => True) is the exact gutting this row refuses - it is IN must_not, not merely
+    # absent from must.
+    ("lagrange_spec",
+     ["PartialSound S .lagrange", "Snap calls gas (calldataPre S cd)",
+      "fun _ _ => Snap.alg.x ^ S.vk.domain.n \u2260 1"],
+     ["(fun _ _ => True)", "PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True"]),
+    ("quotientLin_spec",
+     ["PartialSound S .quotientLin", "Snap calls gas (calldataPre S cd)", "(fun _ _ => True)"],
+     ["PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True",
+      "fun _ _ _ st' o => True", "fun _ _ V' st' o => True"]),
+    ("pcs_spec",
+     ["PartialSound S .pcs", "Snap calls gas (calldataPre S cd)", "(fun _ _ => True)"],
+     ["PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True",
+      "fun _ _ _ st' o => True", "fun _ _ V' st' o => True"]),
+    ("finalPairing_spec",
+     ["PartialSound S .finalPairing", "Snap calls gas (calldataPre S cd)", "(fun _ _ => True)"],
+     ["PartialProgress", "PartialRejects", "\u2227 True", "\u2228 True",
+      "fun _ _ _ st' o => True", "fun _ _ V' st' o => True"]),
+    # ---- the progress arms. Their whole content is that the block does NOT revert, so the
+    # revert arm is the forbidden shape: `Reverted`, any disjunction, and any trivial post.
+    ("lagrange_progress_spec",
+     ["PartialProgress S W product qAddr .lagrange", "Snap gas (calldataPre S cd)"],
+     ["PartialSound", "PartialRejects", "\u2227 True", "\u2228 True", "=> True", "Reverted"]),
+    ("finalPairing_progress_spec",
+     ["PartialProgress S W product qAddr .finalPairing", "Snap gas (calldataPre S cd)"],
+     ["PartialSound", "PartialRejects", "\u2227 True", "\u2228 True", "=> True", "Reverted"]),
+    # ---- the two arms stated OUTSIDE the relation wrappers, so the checkpoint, the pre and the
+    # post are all in the theorem's own text, and all three are pinned here.
+    ("finalPairing_acc_spec",
+     ["StmtsContractAll (D := Bridge.Dialect calls gas) (mainScope S calls gas outer) "
+      "(S.blk .finalPairing S.plan)",
+      "Inv (calls := calls) (gas := gas) S.E S.params .pcs S.plan Snap V st",
+      "calldataPre S cd V st",
+      "(o = .halt \u2227 Reverted st')",
+      "o = .normal \u2227 VEnv.get V' \"success\" = some 1",
+      "batchedCheck S.params",
+      "Snap.c.dual a (tblOf S.accFixedBases) = true"],
+     # The accumulator arm's decision is batchedCheck over the batched pair. DualMSM.check is the
+     # NO-accumulator decision: if it appears in this conclusion the arm has been swapped for the
+     # other one and the accumulator claim is gone.
+     ["\u2227 True", "\u2228 True", "DualMSM.check Snap.c.dual S.params = true",
+      "fun _ _ V' st' o => True"]),
+    ("traceReturn_spec",
+     ["StmtsContractAll (D := Bridge.Dialect calls gas) (mainScope S calls gas outer) "
+      "(S.blk .traceReturn S.plan)",
+      "Inv (calls := calls) (gas := gas) S.E S.params .pairing S.plan Snap V st",
+      "calldataPre S cd V st",
+      "o = .halt \u2227 st'.halted = some (.ret, abiTrue)"],
+     # Every one of these is a shape the halt record could be weakened to that still ELABORATES
+     # and still builds: `o = .halt \u2227 True` (the hole P-SPEC1 measured), a bare `o = .halt`, a
+     # wildcard payload `some (.ret, _)` that drops the abiTrue word, a wildcard kind
+     # `some (_, abiTrue)` that drops the return, and an existential that drops both.
+     ["o = .halt \u2227 True", "o = .halt)", "some (.ret, _)", "some (_, abiTrue)",
+      "\u2203 d, st'.halted", "\u2227 True", "\u2228 True", "fun _ _ _ st' o => True",
+      "Reverted st'"]),
+]
+
+# The two relations the eight wrapper conclusions are applications OF. Pinning the application and
+# not the definition leaves the obvious way round: keep `PartialSound S .pcs ...` word for word and
+# redefine PartialSound's post to True, which guts all six soundness specs at once without
+# touching one theorem. Same reasoning as FROZEN_CITED_DEFS for Statements.lean. whole=True,
+# because for a definition the BODY is the statement.
+SPEC_RELATION_DEFS = [
+    ("PartialSound",
+     ["\u2200 outer,",
+      "StmtsContractAll (D := Bridge.Dialect calls gas) (mainScope S calls gas outer)",
+      "(S.blk q S.plan)",
+      "Inv (calls := calls) (gas := gas) S.E S.params q.pre S.plan Snap V st",
+      "addl V st",
+      "(o = .halt \u2227 Reverted st')",
+      "o = .normal",
+      "Inv (calls := calls) (gas := gas) S.E S.params q.pre.next S.plan Snap V' st'",
+      "extra V' st'"],
+     ["fun _ _ V' st' o => True", "\u2227 True", "\u2228 True"]),
+    # The progress twin's content is the ABSENCE of the revert arm, so a disjunction anywhere in
+    # its body - and the word Reverted - is the soundness shape creeping back in.
+    ("PartialProgress",
+     ["\u2200 outer,",
+      "StmtsContractAll (D := Bridge.Dialect (S.calls W product qAddr) gas)",
+      "(S.blk q S.plan)",
+      "Inv (calls := S.calls W product qAddr) (gas := gas) S.E S.params q.pre S.plan Snap V st",
+      "addl V st",
+      "o = .normal",
+      "Inv (calls := S.calls W product qAddr) (gas := gas) S.E S.params q.pre.next S.plan "
+      "Snap V' st'"],
+     ["\u2228", "Reverted", "=> True"]),
+]
+
+# The checkpoint each wrapper spec's post REACHES. The eight wrapper conclusions name a Partial and
+# not a Checkpoint: the target Inv checkpoint is `q.pre.next`, computed by the two maps below.
+# Move `.lagrange => .transcript` to `.lagrange => .start` and every lagrange post silently stops
+# asserting the Lagrange slots while the theorem text is unchanged and the build is green. Each of
+# the seven arms and seven successors is pinned to its OWN right-hand side, so any move reddens a
+# named fragment rather than sliding past a count.
+CHECKPOINT_MAP_FILE = "Midfall/Lowering/Checkpoint.lean"
+CHECKPOINT_MAP = [
+    ("Partial.pre",
+     [".vkLoading => .start", ".transcriptParser => .vk", ".lagrange => .transcript",
+      ".quotientLin => .lagrange", ".pcs => .quotient", ".finalPairing => .pcs",
+      ".traceReturn => .pairing"],
+     []),
+    ("Checkpoint.next",
+     [".start => .vk", ".vk => .transcript", ".transcript => .lagrange",
+      ".lagrange => .quotient", ".quotient => .pcs", ".pcs => .pairing",
+      ".pairing => .pairing"],
+     []),
 ]
 
 # P-ENV: the EnvAgrees clause types in Lowering/Inv.lean. (structure, field, must, must not)
@@ -679,7 +876,7 @@ def main():
     if dbody is None:
         problems.append("GenAstDispatch.lean missing: %s" % disp)
     if pbody is not None and gbody is not None and dbody is not None:
-        for name, frags, whole in PARTIAL_SPEC_PINS:
+        for name, frags, must_not, whole in PARTIAL_SPEC_PINS:
             in_gen = name in ("emitFinalPairingArms",)
             if name == "emitPartial":
                 src, where = (dbody, "GenAstDispatch.")
@@ -701,6 +898,81 @@ def main():
                 checked += 1
                 if norm(fr) not in text:
                     problems.append(where + name + ": missing fragment " + repr(fr))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append(where + name + ": FORBIDDEN SHAPE - the declaration "
+                                    "contains " + repr(fr))
+        # P-SPECPIN: the postcondition each spec must retain, read off the CONCLUSION alone so a
+        # decoy hypothesis in the binder list cannot satisfy it. See the note on the list.
+        for name, must, must_not in PARTIAL_SPEC_CONCLUSIONS:
+            text = field_text(pbody, name)
+            if not text:
+                problems.append("Partials." + name + ": SPEC DECLARATION NOT FOUND - the "
+                                "theorem has been deleted, renamed, or demoted below a section, "
+                                "so nothing pins its postcondition")
+                continue
+            c = conclusion(text)
+            if not c:
+                problems.append("Partials." + name + ": NO CONCLUSION - the theorem declares no "
+                                "type, so there is no postcondition to retain")
+                continue
+            bad = triviality_problems(c)
+            if bad:
+                problems.append("Partials." + name + ": CONCLUSION IS TRIVIALLY DECIDABLE - "
+                                + repr(c) + " (" + bad[0] + "), so the spec constrains nothing")
+            for fr in must:
+                checked += 1
+                if norm(fr) not in c:
+                    problems.append("Partials." + name + ": POSTCONDITION WEAKENED - the "
+                                    "conclusion no longer says " + repr(fr)
+                                    + " (P-SPECPIN: this is the postcondition shape the theorem "
+                                    "was proved for; a repair has to move this pin and say why)")
+            for fr in must_not:
+                if norm(fr) in c:
+                    problems.append("Partials." + name + ": POSTCONDITION TRIVIALISED - the "
+                                    "conclusion contains " + repr(fr)
+                                    + ", a shape that elaborates, builds, and asserts nothing")
+        # The relations those conclusions are applications of: hollowing the definition guts all
+        # eight wrapper specs without touching a theorem.
+        for name, must, must_not in SPEC_RELATION_DEFS:
+            text = field_text(pbody, name, whole=True)
+            if not text:
+                problems.append("Partials." + name + ": RELATION DEFINITION NOT FOUND - the "
+                                "specs' conclusions are applications of it")
+                continue
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("Partials." + name + ": RELATION HOLLOWED - the body no "
+                                    "longer says " + repr(fr))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("Partials." + name + ": RELATION HOLLOWED - the body "
+                                    "contains " + repr(fr))
+        # And the map that turns a Partial into the checkpoint its post must reach.
+        cmap = root / CHECKPOINT_MAP_FILE
+        if not cmap.exists():
+            problems.append("Checkpoint.lean missing: %s - nothing pins which checkpoint each "
+                            "spec's post reaches" % cmap)
+        else:
+            cbody = strip_comments(cmap.read_text(encoding="utf-8"))
+            for name, must, must_not in CHECKPOINT_MAP:
+                text = field_text(cbody, name, whole=True)
+                if not text:
+                    problems.append("Checkpoint." + name + ": MAP DEFINITION NOT FOUND - the "
+                                    "specs' target checkpoints are computed by it")
+                    continue
+                for fr in must:
+                    checked += 1
+                    if norm(fr) not in text:
+                        problems.append("Checkpoint." + name + ": CHECKPOINT MOVED - the map no "
+                                        "longer says " + repr(fr)
+                                        + " (P-SPECPIN: this is the Inv checkpoint a spec's post "
+                                        "reaches; moving it silently moves the claim)")
+                for fr in must_not:
+                    if norm(fr) in text:
+                        problems.append("Checkpoint." + name + ": CHECKPOINT MOVED - the map "
+                                        "contains " + repr(fr))
     # P-ENV: the EnvAgrees clause types. A weakened clause elaborates, builds, and keeps
     # every KAT true - the degenerate domain simply stops being refutable - so this is
     # the only gate that can see it.
@@ -918,11 +1190,15 @@ def main():
         return 1
     print("ok: %d statement fragments present in the TYPE across %d LoweringCorrect "
           "fields, %d Surface pins, %d derived checks, %d blk-pin declarations, "
+          "%d spec postconditions read off the CONCLUSION, %d spec relation definitions, "
+          "%d checkpoint maps, "
           "%d EnvAgrees clause types, %d Holds clause types plus %d Holds decode pins, "
           "and %d frozen statements (exact text, binders, trusted surface, doc "
           "provenance) against %d repair witnesses (comments stripped first)"
           % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
-             len(PARTIAL_SPEC_PINS), len(ENV_CLAUSES), len(HOLDS_CLAUSES),
+             len(PARTIAL_SPEC_PINS), len(PARTIAL_SPEC_CONCLUSIONS),
+             len(SPEC_RELATION_DEFS), len(CHECKPOINT_MAP),
+             len(ENV_CLAUSES), len(HOLDS_CLAUSES),
              len(HOLDS_DEFS), len(STATEMENTS_PINS), len(REPAIR_PINS)))
 
 

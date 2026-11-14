@@ -78,6 +78,8 @@ and the item list is wrong** — four of the twelve bind `Eip2537.Holds` and are
 bridges that do not exist yet (`readScheduleAgrees`, the batch-inversion agreement). Re-cut M-B as
 **2–3 sessions for the approachable arms**, with the rest charged where it actually blocks.
 
+**RE-CUT AGAIN AFTER R10 (the item list was wrong a second time).** The twelve were never twelve specs: `Partials.lean` held twelve registered holes, ten spec theorems plus two `alwaysReverts` vacuity lemmas. Of the eleven left, **three are approachable and only one of those is a spec** (`quotientLin_spec`, and two of its intended post clauses are inert because `Snapshot.lin` is always `none`); four bind `Eip2537.Holds` and are M8's; three need bridges that do not exist (`readScheduleAgrees`, the batch-inversion agreement); one is unprovable as stated and needs a decision about where the world belongs. **M-B is now 1 session, then blocked.** Full table at R10.
+
 ### M-C — `Accumulator` 12 + `Calldata` 7 + `Qvm`/`QvmFold` 9 — **NOT STARTED**
 
 Largely independent of M-A. `Qvm` needs `LoweringPlan::new` (circuit-as-data, uncosted).
@@ -110,11 +112,11 @@ prerequisites — which is the useful thing about naming it.
 | | sessions | note |
 |---|---|---|
 | M-A remaining | 3–4 | in flight |
-| M-B | 4–6 | extrapolated |
+| M-B | **1, then blocked** | re-cut twice: R9 found the item list wrong, R10 found 8 of the 11 remaining holes are not M-B's to prove |
 | M-C | 8–14 | bulk by count |
 | M-D | 2–5 | widest variance |
 | M-E | 1–2 | transport |
-| **Total to landmark** | **18–31** | **revised up from 17–27** |
+| **Total to landmark** | **15–26** | **revised down from 18–31 by R10's M-B re-cut; M8 (8–16, R8) is still NOT in this table, so this total is optimistic by exactly M8** |
 
 **Wall-clock:** at 1–2 sessions per active hour and this session's observed availability,
 **6–12 calendar weeks**, dominated by uptime rather than difficulty. The 14-day gap earlier in
@@ -336,6 +338,88 @@ composition. So M-B should be re-scoped to 'the specs whose bridges exist' at 2-
 the Holds-binding four moved to M8's line (they were double-counted there already: R8 named the
 same run leg) and vkLoading moved to a statement-repair item. **The same unknown counted twice
 in R8 is now counted once, measured: the run leg for a local-only arm is cheap.**
+
+### R10 - round 132, after P-SPECPIN. The gate hole is closed; M-B's item list is wrong AGAIN, in a way only a read-only audit found.
+
+**What landed (gate only - no Lean file was touched, by instruction).** `scripts/check_statement_fingerprints.py`
+gained conclusion pins for all ten specs, read off the CONCLUSION alone (the text after the first
+top-level colon, value cut), each two-sided: a `must` postcondition shape and a `must_not` list of the
+trivialisation shapes. Plus two supporting pin sets the conclusion pins are worthless without: the
+bodies of `PartialSound`/`PartialProgress` (else the application is kept and the relation behind it
+hollowed), and `Partial.pre`/`Checkpoint.next` (else the target Inv checkpoint moves under a spec
+whose text names only a Partial). Fragments **158 -> 221**. `lake build` green at 5212 jobs,
+`checks.sh` EXIT=0 in 13 sections, register unchanged at **56** (no Lean line shifted).
+
+**Shown to bite, not asserted.** Twelve perturbations on an APFS clone of the whole repo, each run
+against BOTH the new gate and the gate as it stood at HEAD:
+
+| perturbation | old gate | new gate |
+|---|---|---|
+| traceReturn post -> `o = .halt ∧ True` (**the hole P-SPEC1 reported**) | **rc=0** | rc=1 |
+| traceReturn post -> bare `o = .halt` | rc=0 | rc=1 |
+| traceReturn post -> wildcard payload `some (.ret, _)` | rc=0 | rc=1 |
+| lagrange strictness post -> `(fun _ _ => True)` | rc=0 | rc=1 |
+| lagrange_progress demoted `PartialProgress` -> `PartialSound` | rc=0 | rc=1 |
+| `PartialSound` body hollowed to a True post | rc=0 | rc=1 |
+| `Checkpoint.next` moved `.pcs => .pairing` -> `.pcs => .pcs` | rc=0 | rc=1 |
+| acc arm decision swapped `batchedCheck` -> `DualMSM.check` | rc=0 | rc=1 |
+| traceReturn post suffixed `∨ True` - EVERY must fragment still present | rc=0 | rc=1 |
+| vkLoading conclusion suffixed `∨ True` - EVERY must fragment still present | rc=0 | rc=1 |
+| vkLoading conclusion -> `True` | rc=1 | rc=1 |
+| decoy binder carries the fragments, conclusion -> `True` | rc=1 | rc=1 |
+
+Ten of the twelve were invisible to the old gate; all twelve redden the new one. The two
+`∨ True` rows are the ones that justify the `must_not` direction: a gutting that keeps every
+required fragment verbatim and empties the post beside it passes a presence test, and only the
+forbidden-shape half sees it. **No perturbation failed to redden.**
+
+**M-B's eleven remaining holes, classified (read-only; nothing proved).** First a count
+correction: the "twelve specs" of R9 were never twelve specs. `Partials.lean` held twelve
+registered holes, of which **ten are spec theorems and two are the `alwaysReverts` vacuity
+lemmas**. Of the eleven that remain:
+
+| hole | class | the specific missing thing |
+|---|---|---|
+| `vkLoading_spec` | **unprovable as stated** (two blockers) | (a) `gap_vkLoading_world_reads`: the post pins the VK payload at `vkMptr`, the emitted slice fills it via `extcodesize`/`extcodehash`/`extcodecopy` at AUTHORIZED_VK, and no hypothesis says what the world's code there is (`DeploymentW` would; the theorem binds none). (b) NEW: the sketch's `EnvAgrees.accHeader`/`accNoHeader` - whose own comment says "without these clauses vkLoading_spec is unprovable in accumulator renders" - are not in the implemented 10-field structure. |
+| `transcriptParser_spec` | **needs two bridges** | (a) `readScheduleAgrees`, the Encoding-area transcript-bytes agreement the PROOF HOLE names. (b) NEW: the parser's main output is the REVERSED_EVALS table (`GenAst.lean:1144-1154` writes it) and `Inv .transcript` has **no clause pinning that window** - the sketch's `holdsFrs st (ptrAddr M.reversedEvalsMptr) (reversedEvalsOf PV S)` was dropped and `reversedEvalsOf` exists nowhere in the tree. So the post cannot express what the partial is for. |
+| `lagrange_spec` | **needs bridge** | the batch-inversion agreement (`AssemblyHelpers.yul:226-229` vs Lean `lIRange`), P-MODEXP in flight; plus Fr-word <-> `mulmod`/`addmod` agreement for the squaring walk. |
+| `lagrange_progress_spec` | **needs bridge** (same) | same batch-inversion agreement. NOT blocked on its side condition: `EnvAgrees.xNotRoot_iff_notDomainPoint` (Inv.lean:511) already turns `ChallengesGood.xNotRoot` into the domain-point exclusion. |
+| `quotientLin_spec` | **approachable now, but partly inert** | nothing is missing from the hypotheses - no `Holds`, no world read, no Encoding bridge - and the emitted slice writes exactly the two words the post demands (`GenAst.lean:862-863`). CAVEAT, and it is a statement finding, not a proof one: two of the intended clauses (quotient eval, selector buckets) are **inert** because `Snapshot.lin` is a named hole always `none` from `snapshotOf` (D6 limit 1, `Snapshot.lean:136`), so a proof of this spec buys strictly less than the sketch claimed. |
+| `pcs_spec` | **binds `Holds`** - M8 | `hh : Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product`; no Surface in the tree exhibits `Holds` at its own codec (`curveSpecResidualBinders`). Plus the f_eval Horner fold and the `finalMsmShape` pair-count agreement. |
+| `finalPairing_spec` | **binds `Holds`** - M8 | `hh` + `Holds.pairing2` to turn the precompile answer into the pairing equation, + the staticcall failure mapping. |
+| `finalPairing_progress_spec` | **binds `Holds`** - M8 | `hh` + `Holds.pairing2` in the check-true -> answer-true direction. |
+| `finalPairing_acc_spec` | **binds `Holds`** - M8, + a dropped clause | `hh` (`g1Msm1`/`g1Add` for the slot rewrite) + the accumulator partial ASTs; and the sketch's `EnvAgrees.accBasesInVk` - which existed precisely so this theorem could relate the folded point to `a.fullyCollapse (tblOf PV fb)` - has **no counterpart anywhere** and is not in Inv.lean's dropped list. Inv's `.vk` accumulator `holdsG1` slot clauses were also replaced by `hasAccumulator == false || S.acc.isSome` (named gap R-52). |
+| `partialSound_of_alwaysReverts` | **approachable now** | no missing hypothesis; needs Step inversion at the open dialect for `revert`. NOTE: `PartialSound`'s own docstring (Partials.lean:173) says "always Reverts satisfies soundness is the lemma that says so, and it is **proved** rather than claimed" while the lemma is a `sorry` - a doc-vs-tree mismatch this item would repair. |
+| `partialProgress_not_of_alwaysReverts` | **approachable now** | same inversion + `.halt ≠ .normal`; its satisfiability side condition is a binder (`hpre`), so no instance is needed. |
+
+**THE REQUIRED FINDING - the honest size of M-B.** 3 approachable, 4 M8's, 3 bridge-blocked,
+1 statement-blocked. And of the 3 approachable, only **one is a per-partial spec**
+(`quotientLin_spec`), whose post is partly inert; the other two are definitional vacuity lemmas
+that close nothing on the `PartialSpecs` checklist. So M-B is **not 4-6 sessions and is not 2-3
+either**. It is **one session of approachable residue - three holes - and then it is blocked**,
+behind M8's `Holds`-at-a-Surface exhibit (4 holes), behind `readScheduleAgrees` and the
+batch-inversion agreement (3 holes), and behind a decision about where the world belongs in
+`vkLoading_spec` (1 hole). Charging M-B 4-6 sessions has been carrying work that cannot start.
+
+| claim | before (recorded) | measured | verdict |
+|---|---|---|---|
+| M-B = 4-6 sessions, then 2-3 for "the approachable arms" | R9 | 1 session closes 3 of 11; the other 8 need M8, two named bridges, or a statement repair | **still too high, and the item list was wrong twice**: the twelve were 10 specs + 2 vacuity lemmas, and the "four approachable" of R9 was three, one of which is partly inert |
+| the spec-pin gate protects the proved specs | assumed until P-SPEC1 | it protected the BINDER only; 10 of 12 guttings passed it | **fifth gate blind spot of the class, now closed and shown to bite** |
+| conclusion fragments must be read off the conclusion | not considered | a decoy binder `(hdecoy : (fun _ : Prop => True) (PartialSound ...) = True)` elaborates and is `rfl`, so a declaration-scoped presence test is defeatable | matched on `conclusion(...)` only |
+| pinning the application is enough | not considered | redefining `PartialSound`'s post to `True` guts six specs at once with no theorem edited | relation bodies + `Partial.pre`/`Checkpoint.next` pinned too |
+| expected RAM for a full gate run | brief quoted 5.09 GiB tree / 4.42 GiB largest | **5.11 GiB tree / 4.44 GiB largest lean**, verdict TIGHT at 17.00 GiB avail, EXIT=0 | matches; `ram_guard --selftest` ALL PASS first, `--proc-limit 6G --limit 24G` |
+
+**Limits of this repair, stated rather than hidden.** (1) It is a TEXT gate. A package that
+weakens a conclusion AND moves the pin in the same commit passes it; what makes that visible is
+the diff, not the gate. (2) The fragments name shapes, not meanings: `some (.ret, abiTrue)` is
+pinned as tokens, so renaming `abiTrue` reddens the gate even if the rename is sound. (3) The
+falsification-deletion gap is unchanged - **sixteenth measurement, no new claim**: deleting
+`not_inv_pairing_of_success_zero`, `not_readBytes_storeWord_33` or `traceReturn_post_bites`
+still leaves the build green and every gate green. No gate coverage is claimed for
+falsifications here either. (4) D-P23: this package adds no new Lean theorem, so there is no new
+witness/falsification pair to state; the two probes written to check the audit (the
+`finalPairing` post-recovery) were run OUTSIDE the tree at `/tmp` and are reported as text, not
+committed.
 
 ## What would most improve this ledger
 
