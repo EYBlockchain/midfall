@@ -211,6 +211,46 @@ labelled tried or guessed.**
 session), then M-B/M-C/M-D as before. **Total revised from 20-34 to 16-27 sessions**; wall-clock
 **6-11 weeks**. Third revision, net downward.
 
+### R7 - round 129, after P-HOLDS-FINAL. The model track is CLOSED; the difficulty moved.
+
+| claim | before | actual | verdict |
+|---|---|---|---|
+| M-A: exhibit a single Holds term | 5-7 sessions (R2) | **6 sessions, closed** | **HIT** |
+| distance to lowering_equivalence after Holds | just the LoweringCorrect fields + Bridge lemmas | **no** - M8 (ir_refines) is where the difficulty lives | **error of kind, 15th** |
+| exhibiting Helps the four Holds-binding specs | implied | **advances none of their proofs** - they bind at S.E.g1 | **vacuity status only** |
+| checks.sh ~476 s | recorded | 8m31s = 511 s | close |
+| derivation a few lines | estimated | **one line** - but the package cost gate plumbing + 5 stale premises | right about the proof, wrong about the package |
+
+**The headline: holds_exhibited exists.** All six Holds clauses, unconditional, resting on exactly
+five named axioms, gate-enforced at three layers including an axiom-shape probe where an extra axiom
+AND a missing one both redden. **No mathematical model-construction is left anywhere on the path.**
+
+**The 15th error of kind is a reframing, not a mis-size.** I said the landmark would reduce to the
+LoweringCorrect fields and the Bridge lemmas once Holds was exhibited. It does not. Two corrections:
+
+1. **Exhibiting Holds at codecs advances four spec theorems by nothing.** They bind Holds at
+   S.E.g1 - the Surface's own codec. The antecedent moved from unsatisfiable-in-principle to
+   satisfiable-and-unexhibited. Real for the trusted base, **zero** for their proofs.
+2. **M8 is the actual remaining difficulty**: irCheck is a decidable fragment rather than
+   alpha-equivalence, shell_unfolds pins the shell model rather than the deployed entry path, and
+   ir_refines - the IR-to-shell simulation - is untouched by everything on this track.
+
+**Lesson: a milestone's difficulty can relocate rather than shrink.** Closing the model track did not
+shorten the path to the landmark; it revealed the weight was mostly elsewhere. **When a blocker
+closes, re-ask where the difficulty went rather than subtracting it.**
+
+**Revised totals.** M-A **closed**. New item: build a Surface over the curve codecs (1 session,
+plumbing). M8 **uncosted - the largest open estimate in the project**. Remaining to the landmark:
+M-B 4-6, M-C 8-14, M-D 2-5, M-E 1-2, Surface 1, **M8 unknown**. **Total 16-27 becomes 16-27 plus
+M8**, and I decline to number M8 until it is scoped rather than guess a third time. Wall-clock
+unchanged at 6-11 weeks **only if M8 is small**; it is the single item that could move that
+materially.
+
+**Two new traps found by running**, both cheap to state and expensive to rediscover: the word sorry
+inside a Lean **string literal** counts as a proof hole (lean_grep strips comments, not strings),
+and a **comment-only** edit shifts SORRY.md's file:line pins - that cost a full 8-minute gate run.
+Also: registry tokens match **source text**, so a phrase split across a string concatenation is
+invisible to the gate.
 ## What would most improve this ledger
 
 1. **One `Partials` spec proved.** M-B's rate is pure extrapolation; one datum would tighten it
