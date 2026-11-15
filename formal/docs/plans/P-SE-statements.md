@@ -300,3 +300,47 @@ guard reddened (and `native_decide` caught the resulting falsehood), falsifying 
 conjunct of `proofLen_eq_repackedLen` reddened, and changing `sum_commitmentReadGroups`'s
 right-hand side to `totalG1Count` reddened - but none of those is a *deletion* of a
 refutation, and that gap is not closed here.
+
+## P-M8-IRCHECK - the two signature changes 'IRCheck.lean' owes
+
+Fable's sketch (docs/PLAN.md line 228) is 'irCheck ir L = true -> ObsEquiv ir (ShellModel.wrap L)',
+one hypothesis. 'Midfall/Yul/IRCheck.lean' lands a theorem of that shape - 'irCheck_sound' - and it
+needs **one extra hypothesis**, recorded here rather than hidden:
+
+* 'hlyt : irLyt = S.shellLayout'. 'RunContractIR' runs the artifact in 'callState W irLyt H cd' and
+  'wrap' runs the model in 'callState W S.shellLayout H cd'. 'datacopy', 'datasize' and
+  'loadimmutable' read 'code', 'dataOffset', 'dataSize' and 'immutable' out of the frame, and
+  'ObsView' carries the bytes those produce, so no theorem of Fable's shape can avoid tying the two
+  layouts. The tie is a Prop about a function field ('immutable : U256 -> U256'), so it cannot be
+  folded into the checker's Bool; it is a named hypothesis instead. Nothing else about the sketch's
+  shape changed: the conclusion is still 'ObsEquiv', not a one-sided simulation.
+
+**The determinism dependency was NOT taken, because it does not exist.** The brief offered "prove
+'dialect_deterministic' first" or "land a weaker one-sided simulation". Neither:
+'ObsEquiv' is a bi-implication between two existential statements, so a per-run matching discharges
+it, and a per-run matching never asks a run to be unique. 'obsEquiv_iff_runsMatch' proves the
+characterisation and 'irCheck_sound' uses it. 'Bridge.dialect_deterministic' (Bridge.lean:186)
+stays a registered hole and stays irrelevant to this theorem - the second time this tree has found
+that hole cited as a blocker where it was not one (the first is recorded at Bridge.lean's R-60 S6
+note).
+
+**Where the checker is weaker than the sketch, and by how much.** P11 defines 'irCheck' as
+"alpha-equivalence modulo constant substitution and solc renames, fuel-based". The checker
+'irAlphaCheck' implements exactly that - fuel-bounded, descends into every function body and nested
+block, names its legal constant substitutions in 'constSubst', names its renames in 'solcRenames',
+requires the rename to be a bijection whose call sites moved with it - and its **soundness is not
+proved**. What is proved is 'irCheck', the same shape with the relaxation tables forced to the
+identity, i.e. literal AST equality plus the creation check. The reason is mechanical and is written
+out in the file header: making the alpha layer sound needs a transport lemma over the vendored 'Step'
+that carries the function environment, and Lean 4.35 will not do structural recursion or mutual
+induction through 'Stmt.switch' (R-37, re-measured twice this session). So the tree has a sound
+checker that is conservative and a Fable-shaped checker that is not yet proved sound, and
+'ir_refines' cannot cite the second until the transport lands.
+
+**One convention this file had to adopt.** 'SyntaxEq.stmtsBeq' does not reduce in the kernel on these
+blocks - 'theorem t : stmtsBeq sample alphaRename = false := by decide' fails with "failed to
+reduce" even though the interpreter evaluates it to 'false' - which is the recorded reason artifact
+cross-checks in this tree are 'Bool' gates read by 'kat_gate' rather than theorems. The falsifications
+that could be stated as theorems (everything through the file's own matcher, which does reduce) are
+theorems; the two that hinge on 'stmtsBeq' ('irCheckCore_witness_gate', 'witness_creation_ok_gate')
+are gates with '#eval' lines.
