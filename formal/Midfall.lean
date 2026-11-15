@@ -93,11 +93,13 @@ import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
 import Midfall.Lowering.RunEmitted
+import Midfall.Lowering.FrameWalk
 import Midfall.Lowering.Obligations
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
 import Midfall.Instances.ImportedIR
 import Midfall.Instances.ObligationsGates
+import Midfall.Instances.FrameWalkWitness
 import Midfall.Instances.PairingProduct
 import Midfall.Security.SRS
 import Midfall.Security.Challenges

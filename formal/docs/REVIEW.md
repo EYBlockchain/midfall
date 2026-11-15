@@ -2523,3 +2523,126 @@ that makes 'RunShell' and 'RunContractIR' both nonempty, which is 'gap_runLeg_un
 same wall the four '*_spec' theorems hit. Item (3) is the expensive one; item (1) is cheap enough to
 measure first, because if the emitted program already avoids both reads the crux is (2) and (3) and
 not the frame problem R-66 named.
+
+
+### R-68 - P-FRAME: the emitted program is frame-insensitive, so the frame is NOT the crux of ir_refines - and a larger obstruction surfaced
+
+R-66 closed with a hypothesis about where the last open leg of the headline is blocked: the dispatcher
+prologue 'mstore(0x40, memoryguard(128))' leaves the arm in a frame with 'activeWords' 3 and word
+'0x40' equal to 128, 'initState' has 'activeWords' 0, and 'prologue_write_is_observable' exhibits a
+program whose two runs halt with different payloads. Therefore 'ObsEquiv (wrap S ...) (RunShell S ...)'
+is false FOR A GENERAL PROGRAM. P-FRAME (docs/plans/P-FRAME.md) asked the question R-66 left open - is
+it false of the program this generator actually emits - and the answer, measured and kernel-checked, is
+**no**.
+
+**THE MEASUREMENT.** Two new modules. 'Midfall/Lowering/FrameWalk.lean' carries the walk;
+'Midfall/Instances/FrameWalkWitness.lean' carries the verdict on the real emitted AST.
+
+* The frame difference can only reach 'ObsView' through TWO channels, and the file says why: 'ObsView'
+  (Bridge.lean:373) carries the outcome, the halt payload and the eleven world components, and carries
+  NEITHER memory NOR 'activeWords'. So the channels are 'msize' - the sole reader of 'activeWords'
+  (EVMExec.lean:375 defines 'memorySize', :765 is its only reader) - and a memory READ overlapping
+  [64, 96), the bytes the prologue writes. A WRITE is not a channel ('mstore' is blind, EVMOp.lean:106),
+  and gas is not one either, because 'ir_refines' fixes the oracle at 'ofFun (fun _ => g0)'.
+* 'mainFrameClean': of the **75** memory reads in 'GenAst.emitMain fxPlan', **none** touches [64, 96),
+  and **all 75** have addresses the walk resolved. Unresolved counts dirty, so this is not the walk
+  shrugging. 'mainSiteCount' pins the 75 as a separate theorem, because 'clean with zero sites' would be
+  a vacuous pass.
+* 'mainHasNoMsize': a SEPARATE whole-block walk that enters every one of the eight emitted helper bodies
+  whether called or not. 'msize' occurs nowhere.
+* 'armDirtyIsTheHeadGuardOnly': the whole arm 'headGuard ++ bindLocals ++ main' - the program 'RunShell'
+  actually runs - has exactly ONE frame-visible read, stated as an equality against a one-element list,
+  and it is 'mload(0x40)' inside 'headGuard's bound test. Nothing else.
+* 'headGuard_indifferent_at_the_model_threshold': 0 and 128 both fail 'gt (cdot) 0x1000', so that one read
+  cannot separate the frames. The brief said this lemma was worth landing regardless of everything else,
+  and it is proved at the threshold the model uses.
+* 'readBytes_avoids_window': two memories agreeing outside [64, 96) agree on any range avoiding it. The
+  per-read core of Step 2.
+* 'perPartialClean': all seven partials, walked individually and not only as the concatenation.
+
+**EVERY VERDICT IS 'decide', NOT A KAT.** The kernel checks them, so the compiler is not trusted for the
+headline. That forced a real design decision: the kernel CANNOT reduce 'String.splitOn' or
+'String.startsWith' (they are '@[extern]' C++), so feeding the walk 'RunEmitted.solConstants' - which is
+exactly those two functions applied to the rendered contract - makes every verdict undecidable in the
+kernel. Measured: 'shellConsts.length = 92' FAILS 'decide' on the parsed table while the same walk over a
+literal table decides in about a second. The fix is 'FrameWalk.pinnedConstants', a literal transcription,
+PINNED by 'shellConsts_matches_artifact_ok' and gated by 'kat_gate.py' - a copy with a named pin between
+the two sides, which is the R-58 rule applied honestly rather than a second source of truth smuggled in.
+
+**THE WALK IS INTERPROCEDURAL, AND THE CONTROLS SAY SO.** Ten plants in 'FrameWalk', each rejected by
+'decide': literal 'mload(64)'; 'msize()'; a read through a LET-bound name equal to 64 (constant
+propagation must bite, not just literal matching); a read through a CALL PARAMETER bound to 64 at the
+call site (interprocedural inlining must bite); 'keccak256(0x30, 0x40)', a range overlapping the window
+without starting at it; plants inside a 'funDef' body, a 'for' body, a 'switch' DEFAULT and a 'switch'
+CASE; and an unresolvable address. Three controls ACCEPTED, so the rejections discriminate: a read at
+0x1000, a read ending exactly at 64, a read starting exactly at 96. And 'fuelBoundIsLoadBearing': the
+SAME program turns dirty when the fuel is starved to one layer, so 'clean' means the walk finished.
+
+**A REAL DEFECT THE OBVIOUS IMPLEMENTATION HAS, FOUND BY THE CONTROL.** 'mload's read size is the constant
+32, not 'args[1]'. A walk that took 'mload's size from its second argument scores 'mload(64)' as a
+ZERO-byte read and calls the program clean - and every plant except the literal one would still have
+passed. 'readShape' pins it and 'plantLiteralRejects' is the control that shows the pinning is
+load-bearing. Perturbation P1 in the clone reproduces the defect by changing 'some (0, 32, 0)' to
+'some (0, 0, 1)': four 'decide' proofs break.
+
+**PERTURBATION EVIDENCE, INCLUDING THE FAILURES TO REDDEN.** Run in an APFS clone of the whole repo under
+'/tmp' via 'lake build', never against the working tree:
+
+| perturbation | build | KAT gate |
+| --- | --- | --- |
+| P1 'mload' size from 'args[1]' | **RED** (4 decide failures) | - |
+| P2 'Site.frameVisible' gutted to 'false' | **RED** (4 decide failures) | - |
+| P3 'Site.frameVisible' gutted to 'true' | **RED** (3 decide failures) | - |
+| P4 pinned 'VK_DIGEST_MPTR' moved into the window | **RED** (4 witness decide failures) | - |
+| P5 delete 'plantViaParameterRejects', leaving its '#print axioms' | **RED** - but only because the print names it | - |
+| P5b delete the theorem AND its '#print axioms' | **GREEN** | **GREEN (1324 checks)** |
+| P6 gut 'shellConsts_matches_artifact_ok' to the constant 'true' | **GREEN** | **GREEN** |
+
+P5b is the **twenty-ninth** measurement of the falsification-deletion gap: a gate that catches a deleted
+falsification only because an unrelated '#print axioms' happens to name it is not a gate about the
+falsification. P6 is the same class on the pin: gutting the artifact-equality gate to 'true' keeps the
+build green and the '#eval ... -- expect true' line still prints 'true'. **No coverage is claimed for
+either.** What DOES bite is the 'decide' machinery itself: P1-P4 all redden, which is the point of landing
+the controls as theorems rather than as prose.
+
+**WHAT STEP 1 DOES NOT SETTLE, AND THE LARGER FINDING IT EXPOSED.** The walk is about addresses. It does
+not discharge 'ir_refines' at 'ShellModel.modelIr S', and while measuring it a different obstruction
+surfaced that has nothing to do with the frame. 'freeNames' (FrameWalk) computes the identifiers a block
+uses that it never binds: the arm at the curve Surface has **61** of them ('armHasFreeIdentifiers',
+'vk_is_free'), and 'curveSurface.bindLocals = []' ('bindLocals_binds_nothing'), while 'YulSemantics.Run'
+starts the variable environment at '[]' (BigStep.lean:366) and 'Step.var' needs 'VEnv.get V x = some v'.
+'RunEmitted.lean:67-76' already records that the emitted program is a FRAGMENT whose free names are the
+contract-level 'uint256 internal constant' declarations, and 'RunEmitted' binds them with 'shellLets' in
+order to run it at all - but the block 'RunShell' is stated over does not bind them. If that yields 'no
+'RunShell' run exists' then 'wrap S W H [] c g' is inhabited by 'unroutable_calldata_reverts' while
+'RunShell S W H [] c g' is empty, so 'ObsEquiv' FAILS and 'ir_refines' at 'modelIr S' is **REFUTED rather
+than unprovable** - the fourth entry in the class of 'ir_refines'-as-originally-stated and the
+unsatisfiable 'Eip2537.Holds'. **It is reported, not claimed.** The missing half is an inversion of the
+'Step' derivation through 'headGuard' (which passes, since 'mload(64)' is 0 in 'callState') and the eight
+emitted 'funDef's down to the first executed statement of 'main', and that inversion is NOT proved here.
+'gap_runShell_uninhabited_candidate' records it as a candidate with the missing step named.
+
+**WHAT REMAINS FOR STEP 3, EXACTLY.** Three things, and the frame is not one of them: (1) the run leg -
+'gap_runLeg_unexhibited', no calldata at which either side is known to have a run; (2) the entry path -
+'wrap' runs the callvalue guard, thirteen ABI bounds tests and 'bindLocalsFromImmutables', and 'RunShell'
+runs the arm alone, so the two programs differ wherever a guard fires or a bound local is read; (3) the
+'Step'-relation induction that turns 'readBytes_avoids_window' into a per-run lemma, which is the same
+77-constructor cost class as the registered hole 'Bridge.Run_worldEq_of_noWriters', still an open hole.
+Step 3 was NOT attempted beyond the measurement, because the brief says to stop rather than fake it when
+the run leg is what is needed.
+
+**REGISTER AND BUILD.** 'lake build' green at **5217 jobs** (was 5215; two modules added), 127 modules
+reachable. 'bash scripts/checks.sh' green across all 13 sections: **41 tracked sorries, unchanged, and
+SORRY.md is byte-identical to its pre-package state** - no pin moved, because both new files carry no
+proof hole and the one-line 'Midfall.lean' import sits above every pinned file. KATs went **1318 to 1324**
+across **93 to 95** files. Statement fragments 245, fact families 12, headline bundles 8, gap defs 6,
+joint refutations 2, baseline pins 30 - all unchanged. The axiom probe still reports no 'native_decide'
+and no 'Lean.ofReduceBool' on the frozen statements.
+
+**ONE DISCHARGE THAT IS DELIBERATELY WEAKER, LABELLED AT THE SITE.** 'armHasFreeIdentifiers' and
+'vk_is_free' are 'native_decide', not 'decide': 'freeNames' is a 'mutual' structural recursion, which Lean
+compiles through 'WellFounded.fix', and the kernel will not reduce it - the same reason
+'Bridge.noWritersScan' exists. So the two supporting measurements are compiler-trusted while every
+frame-insensitivity verdict is kernel-trusted. That is the intended asymmetry: the headline gets the
+kernel, the side observation gets the compiler, and D-P20 keeps the 'native_decide' inside
+'Midfall/Instances/'.
