@@ -1599,6 +1599,242 @@ theorem loadAccPoint_flag0 (enc : AccumulatorEncoding) (inst : Array Word256) (s
   simp
   refine ⟨fun a b c d => hne ⟨a, b, c, d⟩, bytes_append_assoc _ _ _⟩
 
+
+/-! ### The limb ↔ word bridge: what the encoder packs, the loader reads back
+
+  `encodeAccCoordWords` packs the `numLimbs` radix-`2^numLimbBits` limbs of a
+  coordinate into `limbsPerInstance` limbs per emitted native word; `loadAccCoordShifted`
+  reads limb `i` back out of word `i / limbsPerInstance` at bit offset
+  `numLimbBits * (i % limbsPerInstance)`. For the deployed 7x56 shape the two words hold
+  4 and 3 limbs, so the LAST CHUNK IS SHORT - that is the `min 4 (7 - 4*j)` split the
+  packing check performs, and the reason the two chunk bounds below are 2^224 and 2^168
+  rather than two copies of 2^224.
+
+  This is the bridge the four `decodeAcc_*` round trips were stuck on. P-BYTES landed
+  `ofLowDigits_digit` as the ingredient and named two things as still owed: a `foldl` →
+  `ofLowDigits` bridge for the outer sum, and the short-chunk case split. Both are here.
+  -/
+
+/-- `a.toList.toArray = a`, the direction core does not state under a usable name (core
+    has `List.toList_toArray`, the other way round). `Array.toList_inj` turns one into
+    the other, which is why this is one line and not a new idea. -/
+private theorem array_toList_toArray {α : Type} (a : Array α) : a.toList.toArray = a :=
+  by cases a with | mk l => simp
+
+/-- **The `foldl` → `ofLowDigits` bridge for the outer limb sum.** `loadAccCoordShifted`
+    accumulates `acc + g i * B ^ i` over `List.range n`, which IS positional notation in
+    base `B` over the digit list `map g (range n)`. Nothing in the tree said this:
+    `foldl_horner_eq_ofLowDigits` (Common/Bytes.lean:144) is the Horner form
+    `acc * b + f x`, and the loader never multiplies the accumulator by the base - it
+    multiplies each DIGIT by a power of the base and adds. This is the first of the two
+    bridges P-BYTES recorded as still owed. -/
+private theorem foldl_range_add_pow_eq_ofLowDigits (B : Nat) (g : Nat → Nat) (n : Nat) :
+    (List.range n).foldl (fun acc i => acc + g i * B ^ i) 0
+      = ofLowDigits B ((List.range n).map g) := by
+  induction n with
+  | zero => rfl
+  | succ k ih =>
+      rw [List.range_succ, List.foldl_append, List.map_append, List.map_singleton,
+          ofLowDigits_append, ih, List.length_map, List.length_range, ofLowDigits_singleton]
+      simp only [List.foldl_cons, List.foldl_nil, Nat.mul_comm]
+
+/-- **The short-chunk case split**, the second bridge P-BYTES recorded as owed. For the
+    7x56 shape the packing check (yul:62-83) looks at `min 4 (7 - 4*j)` limbs in word
+    `j`: 4 in word 0 (224 bits used) and 3 in word 1 (168 bits used). Two words, two
+    bounds, and the second is the short chunk - which is why the hypothesis list is
+    asymmetric. Stated for the concrete shape rather than in general because the `min`
+    only splits two ways here. -/
+private theorem checkAccCoordPacking_two_words (W0 W1 : Nat) (h0 : W0 < 2 ^ 224) (h1 : W1 < 2 ^ 168) :
+    checkAccCoordPacking (AccumulatorEncoding.new 0 7 56)
+      #[BitVec.ofNat 256 W0, BitVec.ofNat 256 W1] 0 = true := by
+  unfold checkAccCoordPacking
+  dsimp only [AccumulatorEncoding.new]
+  show ((List.range 2).all fun wordIdx =>
+      if min 4 (7 - wordIdx * 4) * 56 < 256 then
+        decide ((#[BitVec.ofNat 256 W0, BitVec.ofNat 256 W1].getD (0 + wordIdx) 0).toNat
+          < 2 ^ (min 4 (7 - wordIdx * 4) * 56))
+      else true) = true
+  rw [show (List.range 2 : List Nat) = [0, 1] from rfl]
+  simp only [List.all_cons, List.all_nil, Bool.and_true]
+  rw [Bool.and_eq_true]
+  refine ⟨?_, ?_⟩
+  · have hc : min 4 (7 - 0 * 4) * 56 < 256 := by decide
+    rw [ite_eq_left hc, decide_eq_true_eq]
+    show W0 % 2 ^ 256 < 2 ^ 224
+    rwa [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h0
+      (Nat.pow_le_pow_right (by decide) (by omega)))]
+  · have hc : min 4 (7 - 1 * 4) * 56 < 256 := by decide
+    rw [ite_eq_left hc, decide_eq_true_eq]
+    show W1 % 2 ^ 256 < 2 ^ 168
+    rwa [Nat.mod_eq_of_lt (Nat.lt_of_lt_of_le h1
+      (Nat.pow_le_pow_right (by decide) (by omega)))]
+
+/-- The shared computation behind `loadAccCoordShifted_encode` and
+    `encodeAccCoordWords_packingOk`: both conclusions are read off the single fact that
+    the two emitted words ARE the two limb chunks of `v = (c + p - 1) % p`. Proved once
+    because both need the same 40-line setup, and a second copy is a drift risk. -/
+theorem encodeAccCoordWords_core (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (c : Nat) :
+    loadAccCoordShifted enc (encodeAccCoordWords enc c) 0
+        = (c + accFpModulus - 1) % accFpModulus
+      ∧ checkAccCoordPacking enc (encodeAccCoordWords enc c) 0 = true := by
+  simp [AccumulatorEncoding.limbShapeOk, accLimbs, accLimbBits, Bool.and_eq_true] at hshape
+  have hnl : enc.numLimbs = 7 := hshape.1
+  have hbits : enc.numLimbBits = 56 := hshape.2
+  have hlpw : enc.limbsPerInstance = 4 := by
+    show max 1 (254 / enc.numLimbBits) = 4
+    rw [hbits]; rfl
+  have hcw : enc.coordinateWords = 2 := by
+    show divCeil enc.numLimbs enc.limbsPerInstance = 2
+    rw [hnl, hlpw]; rfl
+  have hpos : 0 < accFpModulus := by decide
+  have hB : 0 < (2 : Nat) ^ 56 := Nat.pow_pos (by decide)
+  have h2pos : (2 : Nat) > 0 := by decide
+  set v := (c + accFpModulus - 1) % accFpModulus with hvdef
+  have hv : v < accFpModulus := Nat.mod_lt _ hpos
+  have hfit : v < 2 ^ (56 * 7) := by
+    have h384 : accFpModulus < 2 ^ 384 := by rw [← pow_256_48]; exact accFpModulus_lt_256_48
+    have hle : (2 : Nat) ^ 384 ≤ 2 ^ (56 * 7) := Nat.pow_le_pow_right h2pos (by omega)
+    exact Nat.lt_trans hv (Nat.lt_of_lt_of_le h384 hle)
+  set f := fun (i : Nat) => v / 2 ^ (56 * i) % 2 ^ 56 with hfdef
+  have hlimbs : (biToLimbs 7 56 v).toList = (List.range 7).map f := rfl
+  have hfdig : ∀ i, f i < 2 ^ 56 := fun i => Nat.mod_lt _ hB
+  have hof : ofLowDigits (2 ^ 56) ((List.range 7).map f) = v := by
+    have h1 : ofLowDigits (2 ^ 56) ((biToLimbs 7 56 v).toList) = v := by
+      rw [← biFromLimbs_eq_ofLowDigits, array_toList_toArray, biFromLimbs_biToLimbs 7 56 v hfit]
+    rwa [hlimbs] at h1
+  set W0 := ofLowDigits (2 ^ 56) [f 0, f 1, f 2, f 3] with hW0def
+  set W1 := ofLowDigits (2 ^ 56) [f 4, f 5, f 6] with hW1def
+  have hmap4 : [f 0, f 1, f 2, f 3] = List.map f [0, 1, 2, 3] := rfl
+  have hmap3 : [f 4, f 5, f 6] = List.map f [4, 5, 6] := rfl
+  have hd0 : ∀ x ∈ [f 0, f 1, f 2, f 3], x < 2 ^ 56 := by
+    rw [hmap4]
+    intro x hx
+    obtain ⟨i, _, rfl⟩ := List.mem_map.mp hx
+    exact hfdig i
+  have hd1 : ∀ x ∈ [f 4, f 5, f 6], x < 2 ^ 56 := by
+    rw [hmap3]
+    intro x hx
+    obtain ⟨i, _, rfl⟩ := List.mem_map.mp hx
+    exact hfdig i
+  have hW0b : W0 < 2 ^ 224 := by
+    have h := ofLowDigits_lt_pow hB [f 0, f 1, f 2, f 3] hd0
+    refine Nat.lt_of_lt_of_le h ?_
+    show (2 ^ 56) ^ 4 ≤ 2 ^ 224
+    rw [← Nat.pow_mul]
+  have hW1b : W1 < 2 ^ 168 := by
+    have h := ofLowDigits_lt_pow hB [f 4, f 5, f 6] hd1
+    refine Nat.lt_of_lt_of_le h ?_
+    show (2 ^ 56) ^ 3 ≤ 2 ^ 168
+    rw [← Nat.pow_mul]
+  have hW0lt : W0 < 2 ^ 256 := Nat.lt_of_lt_of_le hW0b (Nat.pow_le_pow_right h2pos (by omega))
+  have hW1lt : W1 < 2 ^ 256 := Nat.lt_of_lt_of_le hW1b (Nat.pow_le_pow_right h2pos (by omega))
+  have hex0 : biFromLimbs 56 ((biToLimbs 7 56 v).extract 0 4) = W0 := by
+    rw [biFromLimbs_eq_ofLowDigits, Array.toList_extract, hlimbs]
+    show ofLowDigits (2 ^ 56) [f 0, f 1, f 2, f 3] = W0
+    exact hW0def.symm
+  have hex1 : biFromLimbs 56 ((biToLimbs 7 56 v).extract 4 8) = W1 := by
+    rw [biFromLimbs_eq_ofLowDigits, Array.toList_extract, hlimbs]
+    show ofLowDigits (2 ^ 56) [f 4, f 5, f 6] = W1
+    exact hW1def.symm
+  have henc : encodeAccCoordWords enc c = #[BitVec.ofNat 256 W0, BitVec.ofNat 256 W1] := by
+    unfold encodeAccCoordWords
+    dsimp only
+    rw [← hvdef, hnl, hbits, hlpw, hcw]
+    show (List.map (fun j =>
+          BitVec.ofNat 256 (biFromLimbs 56
+            ((biToLimbs 7 56 v).extract (j * 4) ((j + 1) * 4)))) [0, 1]).toArray = _
+    simp only [List.map_cons, List.map_nil, Nat.one_mul]
+    rw [hex0, hex1]
+  have hW0to : (BitVec.ofNat 256 W0).toNat = W0 := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hW0lt]
+  have hW1to : (BitVec.ofNat 256 W1).toNat = W1 := by
+    rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hW1lt]
+  let inst : Array Word256 := #[BitVec.ofNat 256 W0, BitVec.ofNat 256 W1]
+  let g := fun (i : Nat) => (inst.getD (0 + i / 4) 0).toNat / 2 ^ (56 * (i % 4)) % 2 ^ 56
+  have hg0 : g 0 = f 0 := by
+    show (BitVec.ofNat 256 W0).toNat / 2 ^ 0 % 2 ^ 56 = f 0
+    rw [hW0to, hW0def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 0, f 1, f 2, f 3] hd0 0 (f 0) [f 1, f 2, f 3] rfl
+  have hg1 : g 1 = f 1 := by
+    show (BitVec.ofNat 256 W0).toNat / 2 ^ 56 % 2 ^ 56 = f 1
+    rw [hW0to, hW0def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 0, f 1, f 2, f 3] hd0 1 (f 1) [f 2, f 3] rfl
+  have hg2 : g 2 = f 2 := by
+    show (BitVec.ofNat 256 W0).toNat / 2 ^ 112 % 2 ^ 56 = f 2
+    rw [hW0to, hW0def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 0, f 1, f 2, f 3] hd0 2 (f 2) [f 3] rfl
+  have hg3 : g 3 = f 3 := by
+    show (BitVec.ofNat 256 W0).toNat / 2 ^ 168 % 2 ^ 56 = f 3
+    rw [hW0to, hW0def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 0, f 1, f 2, f 3] hd0 3 (f 3) [] rfl
+  have hg4 : g 4 = f 4 := by
+    show (BitVec.ofNat 256 W1).toNat / 2 ^ 0 % 2 ^ 56 = f 4
+    rw [hW1to, hW1def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 4, f 5, f 6] hd1 0 (f 4) [f 5, f 6] rfl
+  have hg5 : g 5 = f 5 := by
+    show (BitVec.ofNat 256 W1).toNat / 2 ^ 56 % 2 ^ 56 = f 5
+    rw [hW1to, hW1def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 4, f 5, f 6] hd1 1 (f 5) [f 6] rfl
+  have hg6 : g 6 = f 6 := by
+    show (BitVec.ofNat 256 W1).toNat / 2 ^ 112 % 2 ^ 56 = f 6
+    rw [hW1to, hW1def]
+    exact ofLowDigits_digit (2 ^ 56) hB [f 4, f 5, f 6] hd1 2 (f 6) [] rfl
+  have hmap : (List.range 7).map g = (List.range 7).map f := by
+    show [g 0, g 1, g 2, g 3, g 4, g 5, g 6] = [f 0, f 1, f 2, f 3, f 4, f 5, f 6]
+    rw [hg0, hg1, hg2, hg3, hg4, hg5, hg6]
+  have hfold : loadAccCoordShifted enc inst 0
+      = ofLowDigits (2 ^ 56) ((List.range 7).map g) := by
+    unfold loadAccCoordShifted
+    rw [hnl, hbits, hlpw]
+    show (List.range 7).foldl (fun acc i => acc + g i * 2 ^ (56 * i)) 0 = _
+    have key : (fun acc i => acc + g i * 2 ^ (56 * i))
+        = (fun acc i => acc + g i * (2 ^ 56) ^ i) := by
+      funext acc i
+      show acc + g i * 2 ^ (56 * i) = acc + g i * (2 ^ 56) ^ i
+      rw [Nat.pow_mul]
+    rw [key, foldl_range_add_pow_eq_ofLowDigits]
+  have hpack : checkAccCoordPacking enc inst 0 = true := by
+    unfold checkAccCoordPacking
+    rw [hcw, hnl, hlpw, hbits]
+    exact checkAccCoordPacking_two_words W0 W1 hW0b hW1b
+  have hleft : loadAccCoordShifted enc (encodeAccCoordWords enc c) 0 = v := by
+    rw [henc, hfold, hmap, hof]
+  have hright : checkAccCoordPacking enc (encodeAccCoordWords enc c) 0 = true := by
+    rw [henc]
+    exact hpack
+  exact ⟨hleft, hright⟩
+
+/-- **The named unblocking step (P-LIMB step 1).** The shifted-limb loader reads back
+    exactly the shifted value the encoder packed: for the deployed 7x56 shape and any
+    coordinate below the base-field modulus, `loadAccCoordShifted` inverts
+    `encodeAccCoordWords`. The `- 1` sentinel belongs to the ENCODER, so the conclusion
+    is `c + p - 1` and not `c`; `decodeAccCoord_encode` is where the sentinel is undone
+    and the coordinate comes back whole.
+
+    FINDING, recorded rather than smoothed over: the hypothesis `hc : c < accFpModulus`
+    is NOT used. The encoder's own reduction `v = (c + p - 1) % p` already bounds `v`
+    below `p < 2^384 ≤ 2^(7*56)`, which is all the limb round trip consumes, so the
+    identity holds for every `c`. It is kept because the brief and the contract's domain
+    both state it, and because dropping a sketched hypothesis is the drift class this
+    project is guarding against. -/
+theorem loadAccCoordShifted_encode (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (c : Nat) (_hc : c < accFpModulus) :
+    loadAccCoordShifted enc (encodeAccCoordWords enc c) 0
+      = (c + accFpModulus - 1) % accFpModulus :=
+  (encodeAccCoordWords_core enc hshape c).1
+
+/-- **What the canonical-packing check accepts.** The words the encoder emits never trip
+    `checkAccCoordPacking` (yul:62-83), because each chunk is below its own bit width:
+    4 limbs (224 bits) in word 0 and 3 limbs (168 bits) in word 1. Without this the
+    decoder's first rejection arm could fire on an honestly generated coordinate, and
+    `decodeAccCoord_encode` would be unreachable. Same finding as above: `hc` is not
+    used, and is kept for the same reason. -/
+theorem encodeAccCoordWords_packingOk (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (c : Nat) (_hc : c < accFpModulus) :
+    checkAccCoordPacking enc (encodeAccCoordWords enc c) 0 = true :=
+  (encodeAccCoordWords_core enc hshape c).2
+
 /-
 ### D-P23 evidence for the byte lemmas
 
@@ -1693,6 +1929,46 @@ def eipFrameKats_ok : Bool :=
       natToBytesBE accGenY 48).size == 128
 
 #eval eipFrameKats_ok   -- expect true
+
+
+set_option exponentiation.threshold 512 in
+/-- **`loadAccCoordShifted_encode`, witness**: at the real generator coordinate the
+    loader returns the shifted value `x - 1`, which is what the sentinel design says
+    it must. Computed, not cited: `decide` runs the encoder and the loader on the
+    actual BLS12-381 generator. -/
+theorem loadAccCoordShifted_encode_witness :
+    loadAccCoordShifted (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accGenX) 0 = accGenX - 1 := by decide
+
+set_option exponentiation.threshold 512 in
+/-- **`loadAccCoordShifted_encode`, falsification**: the 7x56 shape hypothesis is
+    load-bearing. At 3 limbs the encoder truncates `v` to the low 168 bits and the
+    loader faithfully reads back the truncation, so the identity fails - which is
+    exactly why `limbShapeOk` gates the decoder. -/
+theorem loadAccCoordShifted_encode_needs_shape :
+    loadAccCoordShifted (AccumulatorEncoding.new 0 3 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 3 56) accGenX) 0
+      ≠ (accGenX + accFpModulus - 1) % accFpModulus := by decide
+
+set_option exponentiation.threshold 512 in
+/-- **`encodeAccCoordWords_packingOk`, witness**: the honest words pass the contract's
+    canonical-packing check at the generator coordinate. -/
+theorem encodeAccCoordWords_packingOk_witness :
+    checkAccCoordPacking (AccumulatorEncoding.new 0 7 56)
+      (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accGenX) 0 = true := by decide
+
+set_option exponentiation.threshold 512 in
+/-- **`checkAccCoordPacking`, falsification**: the check is not vacuous and it is not
+    implied by the limb sum. A word with bit 224 set and nothing else reconstructs to
+    the SAME limb sum (0 - no limb reaches bit 224), yet the packing check rejects it.
+    That is the canonicity the check exists for, and it is why the round trip needs
+    `encodeAccCoordWords_packingOk` as a separate fact rather than reading it off the
+    value identity. -/
+theorem encodeAccCoordWords_packingOk_needs_check :
+    checkAccCoordPacking (AccumulatorEncoding.new 0 7 56)
+        (#[BitVec.ofNat 256 (2 ^ 224), 0] : Array Word256) 0 = false ∧
+    loadAccCoordShifted (AccumulatorEncoding.new 0 7 56)
+        (#[BitVec.ofNat 256 (2 ^ 224), 0] : Array Word256) 0 = 0 := by decide
 
 end Dp23Bytes
 

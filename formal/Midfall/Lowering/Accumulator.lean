@@ -55,6 +55,7 @@ import Midfall.Assumptions.Codec
 import Midfall.Halo2.Exec.Accumulator
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Kzg.Utils
+import Midfall.Common.GSMul
 import Midfall.Lowering.Types
 import Midfall.Halo2.Spec.Lemmas
 
@@ -198,6 +199,169 @@ example : namesAscending [] ∧ namesAscending ["-G"] ∧ namesAscending ["-G", 
 example : ¬ namesAscending ["a", "a"] := by
   intro h
   exact absurd h.1 (by simp)
+
+/-! ### The `accMapInsert` fold lemmas (P-LIMB step 2)
+
+  `decodeAcc` rebuilds the RHS fixed-base map by folding `accMapInsert` over
+  `(fixedBases.zip tailWords)` in table order, so the round trips can only reproduce
+  the tail verbatim when that fold loses nothing. It does not in general: the fold
+  SORTS by name and OVERWRITES a repeated name. The hypothesis that makes it an
+  identity is `namesAscending` - the BTreeMap invariant the Rust gets for free and
+  which `decodeAcc_encode` already carries as `hsorted`. No prior table named any of
+  these four lemmas; P-BYTES recorded the fold lemma as missing from every diagnosis.
+  -/
+
+
+private theorem accMapInsert_go_app {F : Type} : ∀ (l : List (String × F)) (k : String) (v : F),
+    (∀ k2 ∈ l.map Prod.fst, k2 < k) →
+      Midfall.Halo2.accMapInsert.go k v l = l ++ [(k, v)] := by
+  intro l
+  induction l with
+  | nil => intro k v _; rfl
+  | cons x xs ih =>
+      intro k v hk
+      cases x with
+      | mk k2 v2 =>
+          have hlt : k2 < k := hk k2 (by simp)
+          have hne : ¬ (k == k2) := by
+            intro h
+            exact String.lt_irrefl k2 ((of_decide_eq_true h) ▸ hlt)
+          have hgt : ¬ (k < k2) := fun h => String.lt_asymm hlt h
+          simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, if_neg hgt]
+          rw [ih k v (fun y hy => hk y (by simp [hy]))]
+          exact List.cons_append.symm
+
+private theorem namesAscending_head_lt_mem : ∀ (l : List String) (a : String),
+    namesAscending (a :: l) → ∀ x ∈ l, a < x := by
+  intro l
+  induction l with
+  | nil => intro a _ x hx; exact absurd hx (by simp)
+  | cons b rest ih =>
+      intro a h x hx
+      have hab : a < b := h.1
+      obtain he | hx := List.mem_cons.mp hx
+      · rw [he]
+        exact hab
+      · exact String.lt_trans hab (ih b h.2 x hx)
+
+private theorem namesAscending_tail (a : String) : ∀ (l : List String),
+    namesAscending (a :: l) → namesAscending l := by
+  intro l h
+  cases l with
+  | nil => exact trivial
+  | cons b t => exact h.2
+
+private theorem namesAscending_snoc (l : List String) (k : String) :
+    namesAscending l → (∀ x ∈ l, x < k) → namesAscending (l ++ [k]) := by
+  induction l with
+  | nil => intro _ _; exact trivial
+  | cons a rest ih =>
+      intro h hall
+      have ha : a < k := hall a List.mem_cons_self
+      cases rest with
+      | nil => exact ⟨ha, trivial⟩
+      | cons b t =>
+          exact ⟨h.1, ih h.2 (fun x hx => hall x (by simp [hx]))⟩
+
+private theorem accMapInsert_fold_sorted_go {F : Type} :
+    ∀ (l : List (String × F)) (acc : Array (String × F)),
+      namesAscending (acc.toList.map Prod.fst) →
+      namesAscending (l.map Prod.fst) →
+      (∀ k2 ∈ acc.toList.map Prod.fst, ∀ j ∈ l.map Prod.fst, k2 < j) →
+      (List.foldl (fun a (n, s) => accMapInsert a n s) acc l).toList = acc.toList ++ l := by
+  intro l
+  induction l with
+  | nil =>
+      intro acc hacc _ _
+      show acc.toList = acc.toList ++ []
+      exact (List.append_nil _).symm
+  | cons x xs ih =>
+      intro acc hacc hl hall
+      cases x with
+      | mk n s =>
+        have hmn : namesAscending (n :: xs.map Prod.fst) := hl
+        have hall2 : ∀ k2 ∈ acc.toList.map Prod.fst, ∀ j ∈ n :: xs.map Prod.fst, k2 < j := hall
+        have hlast : (accMapInsert acc n s).toList = acc.toList ++ [(n, s)] := by
+          show (Midfall.Halo2.accMapInsert.go n s acc.toList).toArray.toList = _
+          rw [List.toList_toArray, accMapInsert_go_app]
+          exact fun k2 hk2 => hall2 k2 hk2 n List.mem_cons_self
+        have hasc : namesAscending ((accMapInsert acc n s).toList.map Prod.fst) := by
+          rw [hlast, List.map_append, List.map_singleton]
+          exact namesAscending_snoc _ _ hacc
+            (fun y hy => hall2 y hy n List.mem_cons_self)
+        have h2 : ∀ k2 ∈ (accMapInsert acc n s).toList.map Prod.fst,
+            ∀ j ∈ xs.map Prod.fst, k2 < j := by
+          rw [hlast, List.map_append, List.map_singleton]
+          intro k2 hk2 j hj
+          rcases List.mem_append.mp hk2 with hk2 | hk2
+          · exact hall2 k2 hk2 j (List.mem_cons_of_mem n hj)
+          · rcases List.mem_singleton.mp hk2 with heq
+            rw [heq]
+            exact namesAscending_head_lt_mem _ n hmn j hj
+        show (List.foldl (fun a (n2, s2) => accMapInsert a n2 s2)
+            (accMapInsert acc n s) xs).toList = _
+        rw [ih _ hasc (namesAscending_tail n _ hmn) h2, hlast]
+        exact List.append_assoc _ _ _
+
+theorem accMapInsert_fold_sorted_id {F : Type} (l : List (String × F))
+    (hl : namesAscending (l.map Prod.fst)) :
+    (List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × F)) l).toList = l := by
+  have hnil : ((#[] : Array (String × F)).toList ++ l) = l := by simp
+  have := accMapInsert_fold_sorted_go l (#[] : Array (String × F)) trivial hl (by simp)
+  rw [hnil] at this
+  exact this
+
+/-- **Corollary: the fold is injective on ascending name lists.** Two ascending lists
+    that fold to the same map ARE the same list - the form `decodeAcc_encode`
+    consumes, since the decoder rebuilds the fixed-base map by folding in table order
+    and the round trip only reproduces the tail when that fold loses nothing.
+
+    FINDING on the brief: P-LIMB step 2 asked for a **`Nodup`** fold-injectivity
+    lemma for `decodeAcc_injective`. Nodup alone does NOT give the identity form: the
+    fold SORTS, so a duplicate-free but descending list folds to a permutation of
+    itself - the second falsification below is exactly that. What
+    `decodeAcc_injective` needs is injectivity of the map READBACK (a `find?`-level
+    statement about `accMapInsert`, needing two interaction lemmas that are not
+    landed here). Reported rather than papered over. -/
+theorem accMapInsert_fold_inj {F : Type} (l₁ l₂ : List (String × F))
+    (h₁ : namesAscending (l₁.map Prod.fst)) (h₂ : namesAscending (l₂.map Prod.fst))
+    (hfold : List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × F)) l₁
+      = List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × F)) l₂) : l₁ = l₂ := by
+  have e₁ := accMapInsert_fold_sorted_id l₁ h₁
+  have e₂ := accMapInsert_fold_sorted_id l₂ h₂
+  rw [← e₁, ← e₂]
+  exact congrArg Array.toList hfold
+
+/-- **`accMapInsert_fold_sorted_id`, witness**: the deployed fixed-base name order
+    (what `artifacts.rs:225` sorts to) really is ascending and the fold reproduces it
+    verbatim. -/
+theorem accMapInsert_fold_sorted_witness :
+    (List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × Nat))
+      [("-G", 0), ("self_vk_fixed_com_0", 1), ("self_vk_perm_com_0", 2)]).toList =
+      [("-G", 0), ("self_vk_fixed_com_0", 1), ("self_vk_perm_com_0", 2)] :=
+  accMapInsert_fold_sorted_id _ ⟨by simp, by simp, trivial⟩
+
+/-- **`accMapInsert_fold_sorted_id`, falsification (duplicates)**: with a repeated
+    name the fold OVERWRITES and silently drops an entry - the malleability `hnodup`
+    rules out in `decodeAcc_injective`. -/
+theorem accMapInsert_fold_sorted_needs_nodup :
+    (List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × Nat)) [("a", 1), ("a", 2)]).toList
+      ≠ [("a", 1), ("a", 2)] := by decide
+
+/-- **`accMapInsert_fold_sorted_id`, falsification (order)**: duplicate-free is NOT
+    enough. `[("b", 1), ("a", 2)]` has two distinct names, yet the fold sorts them,
+    so the result is a different list and the identity fails. This is why the
+    hypothesis is `namesAscending` and not `Nodup`. -/
+theorem accMapInsert_fold_sorted_needs_ascending :
+    (List.foldl (fun acc (n, s) => accMapInsert acc n s)
+        (#[] : Array (String × Nat)) [("b", 1), ("a", 2)]).toList
+      ≠ [("b", 1), ("a", 2)] := by decide
+
 
 
 /-- PLAN 9.5 decodeAcc_encode, restricted to the only shape the contract can read
@@ -348,60 +512,6 @@ theorem decideBool_eq_true_iff {α : Type} {a b : α} (d : Decidable (a = b)) :
 
 section Msm
 variable {G₁ : Type} [Group G₁] [PrimeOrderWith G₁ p] [Module (ZMod p) (Additive G₁)]
-
-/-! #### The scalar-action and MSM-fold lemmas the two MSMKZG.eval holes need
-
-    All of it is forced by the shape of msmSpecific: a foldl over a filterMap of a
-    zip, with the group written multiplicatively (as the plan and the Rust do) and
-    the scalar action written additively (gsmul s Q = Additive.toMul (s • ofMul Q),
-    D-P1). The translation lemmas below are the only place that mismatch is paid
-    for, and each of them is rfl-level on the Additive transport: Mathlib's
-    Additive.ofMul_mul / toMul_nsmul family is NOT in this project's built surface
-    (the lakefile builds only the Mathlib modules the tree already uses, and
-    #check @Additive.ofMul_mul says so), so the facts are proved here from
-    add_smul / smul_add / smul_smul plus a rfl, rather than cited. -/
-
-/-- Zero acts trivially: 0 • Q = 1. This is what makes the filterMap in
-    msmSpecific (dropping zero coefficients, msm.rs:170) a semantic no-op. -/
-theorem gsmul_zero (Q : G₁) : gsmul (p := p) (0 : Fr p) Q = 1 := by
-  show Additive.toMul ((0 : ZMod p) • Additive.ofMul Q) = 1
-  rw [zero_smul]; rfl
-
-/-- One acts as the identity. -/
-theorem gsmul_one (Q : G₁) : gsmul (p := p) (1 : Fr p) Q = Q := by
-  show Additive.toMul ((1 : ZMod p) • Additive.ofMul Q) = Q
-  rw [one_smul]; rfl
-
-/-- Any scalar fixes the identity: c • 1 = 1. -/
-theorem gsmul_one_pt (c : Fr p) : gsmul (p := p) c (1 : G₁) = 1 := by
-  show Additive.toMul (c • Additive.ofMul (1 : G₁)) = 1
-  rw [show (Additive.ofMul (1 : G₁) : Additive G₁) = 0 from rfl, smul_zero]; rfl
-
-/-- The action is additive in the point: c • (x * y) = (c • x) * (c • y). -/
-theorem gsmul_mul (a : Fr p) (x y : G₁) :
-    gsmul (p := p) a (x * y) = gsmul (p := p) a x * gsmul (p := p) a y := by
-  show Additive.toMul (a • Additive.ofMul (x * y)) = _
-  rw [show (Additive.ofMul (x * y) : Additive G₁) = Additive.ofMul x + Additive.ofMul y from rfl,
-      smul_add]; rfl
-
-/-- The action is additive in the scalar: (a + b) • Q = (a • Q) * (b • Q). -/
-theorem gsmul_add (a b : Fr p) (Q : G₁) :
-    gsmul (p := p) (a + b) Q = gsmul (p := p) a Q * gsmul (p := p) b Q := by
-  show Additive.toMul ((a + b) • Additive.ofMul Q) = _
-  rw [add_smul]; rfl
-
-/-- The action is multiplicative in the scalar: (a * b) • Q = a • (b • Q). -/
-theorem gsmul_mul_gsmul (a b : Fr p) (Q : G₁) :
-    gsmul (p := p) (a * b) Q = gsmul (p := p) a (gsmul (p := p) b Q) := by
-  show Additive.toMul ((a * b) • Additive.ofMul Q) = _
-  rw [← smul_smul]; rfl
-
-/-- The scalar action agrees with the multiplicative power at a natural exponent.
-    The one place where the two notations have to be reconciled. -/
-theorem gsmul_nat (n : ℕ) (Q : G₁) : gsmul (p := p) (n : Fr p) Q = Q ^ n := by
-  induction n with
-  | zero => rw [Nat.cast_zero, gsmul_zero, pow_zero]
-  | succ k ih => rw [Nat.cast_add, Nat.cast_one, gsmul_add, ih, pow_succ, gsmul_one]
 
 /-- The zip-fold of an MSM with the zero-dropping filterMap folded away. -/
 private def msmProd (l : List (Fr p × G₁)) : G₁ :=
