@@ -375,4 +375,178 @@ def bytesRoundTrip_ok : Bool :=
 
 #eval bytesRoundTrip_ok   -- expect true, and scripts/checks.sh asserts it
 
+/-! ### Fixed-width frame lemmas (P-BYTES)
+
+    The EIP-2537 encodings the accumulator codec reads and writes are
+    concatenations of fixed-width big-endian fields, so what the decoder and the
+    codec's laws need is a SPLIT lemma: write x = hi * 256^m + lo with
+    lo < 256^m; then the m + n big-endian bytes of x are the n bytes of hi
+    followed by the m bytes of lo. Nothing in the tree had it.
+    bytesToNatBE_natToBytesBE above round-trips a VALUE and says nothing about how
+    an emitted string is laid out, which is why the decodeAcc round trips were
+    stuck: the decoder rebuilds one coordinate as two 32-byte words while the
+    codec's law speaks of one 48-byte field, and the two are equal only by a fact
+    about digit lists. -/
+
+private theorem go_zero : ∀ (n : Nat) (acc : Bytes),
+    Midfall.natToBytesLowFirst.go n 0 acc = acc := by
+  intro n acc; rfl
+
+private theorem go_succ : ∀ (n : Nat) (k : Nat) (acc : Bytes),
+    Midfall.natToBytesLowFirst.go n (k+1) acc =
+      Midfall.natToBytesLowFirst.go (n/256) k (acc.push (Nat.toUInt8 (n % 256))) := by
+  intro n k acc; rfl
+
+private theorem empty_data_toList : Bytes.empty.data.toList = [] := rfl
+
+private theorem push_data_toList : ∀ (a : Bytes) (x : UInt8),
+    (a.push x).data.toList = a.data.toList ++ [x] := by
+  intro a x
+  cases a with
+  | mk arr => simp [ByteArray.push, Array.toList_push]
+
+/-- The emitter APPENDS: go n len acc is acc followed by what the emitter writes
+    from empty. Stated on the underlying list because that is where ByteArray.push
+    becomes an append of a singleton. -/
+private theorem go_data_toList : ∀ (len : Nat) (n : Nat) (acc : Bytes),
+    (Midfall.natToBytesLowFirst.go n len acc).data.toList =
+      acc.data.toList ++ (Midfall.natToBytesLowFirst.go n len Bytes.empty).data.toList := by
+  intro len
+  induction len with
+  | zero =>
+      intro n acc
+      rw [go_zero, go_zero, empty_data_toList, List.append_nil]
+  | succ k ih =>
+      intro n acc
+      have key := ih (n := n / 256)
+      rw [go_succ, key (acc := acc.push (Nat.toUInt8 (n % 256))), go_succ,
+          key (acc := Bytes.empty.push (Nat.toUInt8 (n % 256))),
+          push_data_toList, push_data_toList, empty_data_toList]
+      simp [List.append_assoc, List.nil_append]
+
+/-- Split at a byte boundary in the emitter's own least-significant-first order.
+    The hypothesis is load-bearing: lo = 256^m would carry into hi's digits. -/
+theorem natToBytesLowFirst_split : ∀ (m : Nat) (hi lo : Nat), lo < 256 ^ m →
+    ∀ (n : Nat),
+      (natToBytesLowFirst (hi * 256 ^ m + lo) (m + n)).data.toList =
+        (natToBytesLowFirst lo m).data.toList ++ (natToBytesLowFirst hi n).data.toList := by
+  intro m
+  induction m with
+  | zero =>
+      intro hi lo hlo n
+      have h0 : lo = 0 := by omega
+      subst h0
+      rw [Nat.pow_zero, Nat.mul_one, Nat.add_zero, Nat.zero_add]
+      simp [natToBytesLowFirst, go_zero, empty_data_toList, List.nil_append]
+  | succ k ih =>
+      intro hi lo hlo n
+      have hpow : 256 ^ (k + 1) = 256 * 256 ^ k := by rw [Nat.pow_succ']
+      have hdm : 256 * (lo / 256) + lo % 256 = lo := Nat.div_add_mod lo 256
+      have hdv : hi * 256 ^ (k + 1) + lo = 256 * (hi * 256 ^ k + lo / 256) + lo % 256 := by
+        rw [hpow, Nat.mul_add, Nat.add_assoc, hdm, Nat.mul_left_comm 256 hi (256 ^ k)]
+      have hmod : (hi * 256 ^ (k + 1) + lo) % 256 = lo % 256 := by
+        rw [hdv, Nat.add_comm, Nat.add_mul_mod_self_left, Nat.mod_mod]
+      have hdiv : (hi * 256 ^ (k + 1) + lo) / 256 = hi * 256 ^ k + lo / 256 := by
+        rw [hdv, Nat.add_comm, Nat.add_mul_div_left _ _ (by decide : 0 < 256),
+            Nat.div_eq_of_lt (Nat.mod_lt lo (by decide : 0 < 256)), Nat.zero_add]
+      have hlen : k + 1 + n = (k + n) + 1 := by omega
+      have hc : lo / 256 < 256 ^ k := by
+        have h : lo < 256 * 256 ^ k := by rwa [← hpow]
+        exact Nat.div_lt_of_lt_mul h
+      have hL : (natToBytesLowFirst (hi * 256 ^ (k + 1) + lo) (k + 1 + n)).data.toList =
+          [Nat.toUInt8 (lo % 256)] ++
+            (natToBytesLowFirst (hi * 256 ^ k + lo / 256) (k + n)).data.toList := by
+        show (Midfall.natToBytesLowFirst.go (hi * 256 ^ (k + 1) + lo) (k + 1 + n)
+                Bytes.empty).data.toList = _
+        rw [hlen, go_succ, hmod, hdiv,
+            go_data_toList (len := k + n) (n := hi * 256 ^ k + lo / 256)
+              (acc := Bytes.empty.push (Nat.toUInt8 (lo % 256)))]
+        rw [push_data_toList, empty_data_toList, List.nil_append]
+        simp only [natToBytesLowFirst]
+      have hR : (natToBytesLowFirst lo (k + 1)).data.toList =
+          [Nat.toUInt8 (lo % 256)] ++ (natToBytesLowFirst (lo / 256) k).data.toList := by
+        show (Midfall.natToBytesLowFirst.go lo (k + 1) Bytes.empty).data.toList = _
+        rw [go_succ,
+            go_data_toList (len := k) (n := lo / 256)
+              (acc := Bytes.empty.push (Nat.toUInt8 (lo % 256)))]
+        rw [push_data_toList, empty_data_toList, List.nil_append]
+        simp only [natToBytesLowFirst]
+      rw [hL, ih hi (lo / 256) hc, ← List.append_assoc, ← hR]
+
+/-- **The split lemma, big-endian**: the m + n bytes of hi * 256^m + lo are hi's n
+    bytes followed by lo's m bytes. This is the fact that makes the decoder's
+    two-word rebuild of a coordinate equal the codec's one 48-byte field. -/
+theorem natToBytesBE_split (hi lo m : Nat) (hlo : lo < 256 ^ m) : ∀ (n : Nat),
+    natToBytesBE (hi * 256 ^ m + lo) (m + n) = natToBytesBE hi n ++ natToBytesBE lo m := by
+  intro n
+  have hb (x l : Nat) : (natToBytesBE x l).data.toList =
+      (natToBytesLowFirst x l).data.toList.reverse := by
+    simp [natToBytesBE, List.toList_toArray]
+  have hap (a b : Bytes) : (a ++ b).data.toList = a.data.toList ++ b.data.toList := rfl
+  apply ByteArray.ext
+  rw [← Array.toList_inj, hb, hap, hb, hb,
+      natToBytesLowFirst_split (m := m) hi lo hlo n, List.reverse_append]
+
+/-- ByteArray append is append on the underlying array. Not rfl: the projection
+    does not reduce through the core implementation of append. -/
+private theorem append_data (u v : Bytes) : (u ++ v).data = u.data ++ v.data := by
+  apply Array.toList_inj.mp
+  show (u ++ v).data.toList = (u.data ++ v.data).toList
+  rw [Array.toList_append]
+  rfl
+
+/-- Reading a window that lies inside the left operand of a concatenation - the
+    EIP frame's first coordinate. -/
+theorem bytesTake_append_left (u v : Bytes) (i n : Nat) (h : i + n ≤ u.size) :
+    bytesTake (u ++ v) i n = bytesTake u i n := by
+  have hdp := append_data u v
+  unfold bytesTake
+  rw [hdp]
+  have h1 : i + n ≤ (u ++ v).size := Nat.le_trans h (by
+    rw [ByteArray.size_append]; omega)
+  rw [if_pos h1, if_pos h, Array.extract_append]
+  have h2 : i - u.data.size = 0 := Nat.sub_eq_zero_of_le (by
+    have hz : u.data.size = u.size := rfl
+    omega)
+  have h3 : i + n - u.data.size = 0 := Nat.sub_eq_zero_of_le (by
+    have hz : u.data.size = u.size := rfl
+    omega)
+  rw [h2, h3, Array.extract_zero, Array.append_empty]
+
+/-- Reading a window that lies inside the right operand of a concatenation - the
+    EIP frame's second coordinate. -/
+theorem bytesTake_append_right (u v : Bytes) (i n : Nat) (h : i + n ≤ v.size) :
+    bytesTake (u ++ v) (u.size + i) n = bytesTake v i n := by
+  have hdp := append_data u v
+  unfold bytesTake
+  rw [hdp]
+  have h1 : u.size + i + n ≤ (u ++ v).size := by
+    rw [ByteArray.size_append]; omega
+  rw [if_pos h1, if_pos h, Array.extract_append]
+  have h2 : u.size + i - u.data.size = i := by
+    have hz : u.data.size = u.size := rfl
+    omega
+  have h3 : u.size + i + n - u.data.size = i + n := by
+    have hz : u.data.size = u.size := rfl
+    omega
+  rw [h2, h3]
+  have h4 : u.data.extract (u.size + i) (u.size + i + n) = #[] :=
+    Array.extract_eq_empty_of_le (by
+      have hz : u.data.size = u.size := rfl
+      have : min (u.size + i + n) u.data.size ≤ u.data.size := Nat.min_le_right _ _
+      omega)
+  rw [h4, Array.empty_append]
+
+set_option exponentiation.threshold 512 in
+/-- The width of a 48-byte EIP-2537 field in the emitter's base. Stated by the
+    power law rather than by rfl: the kernel refuses to EVALUATE 2^384 (the
+    exponentiation threshold is 256), and every attempt to do so is a warning. -/
+theorem pow_256_48 : (256 : Nat) ^ 48 = 2 ^ 384 := by
+  rw [show (256 : Nat) = 2 ^ 8 from rfl, ← Nat.pow_mul]
+
+/-- The width of the 16-byte EIP zero pad. -/
+theorem pow_256_16 : (256 : Nat) ^ 16 = 2 ^ 128 := by
+  rw [show (256 : Nat) = 2 ^ 8 from rfl, ← Nat.pow_mul]
+
+
 end Midfall

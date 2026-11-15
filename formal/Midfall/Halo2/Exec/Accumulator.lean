@@ -1344,4 +1344,356 @@ end Kats
 #eval accLimbKats_ok            -- expect true
 #eval accNameOrderKats_ok       -- expect true
 
+private theorem range_succ_map (k : Nat) :
+    List.range (k + 1) = 0 :: (List.range k).map Nat.succ := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      have h1 : List.range (k + 1 + 1) = List.range (k + 1) ++ [k + 1] := List.range_succ
+      have h2 : List.map Nat.succ (List.range k) ++ [k + 1] =
+          List.map Nat.succ (List.range k ++ [k]) := by
+        rw [List.map_append, List.map_singleton]
+      have h3 : List.range k ++ [k] = List.range (k + 1) := (List.range_succ :
+          List.range (k + 1) = List.range k ++ [k]).symm
+      rw [h1]
+      nth_rw 1 [ih]
+      rw [List.cons_append, h2, h3]
+
+/-- Positional notation splits at a take/drop boundary. -/
+private theorem ofLowDigits_take_drop (B : Nat) : ∀ (l : List Nat) (i : Nat), i ≤ l.length →
+    ofLowDigits B l = ofLowDigits B (l.take i) + B ^ i * ofLowDigits B (l.drop i) := by
+  intro l
+  induction l with
+  | nil => intro i hi; simp
+  | cons d t ih =>
+      intro i hi
+      cases i with
+      | zero => simp [ofLowDigits_nil]
+      | succ j =>
+          have hti : List.take (j + 1) (d :: t) = d :: List.take j t := rfl
+          have hdi : List.drop (j + 1) (d :: t) = List.drop j t := rfl
+          have h1 : ofLowDigits B (d :: t) = d + B * ofLowDigits B t := rfl
+          have h2 : ofLowDigits B (d :: List.take j t) =
+              d + B * ofLowDigits B (List.take j t) := rfl
+          rw [hti, hdi, h1, ih j (by simpa using hi), h2, Nat.pow_succ']
+          simp [Nat.mul_add, Nat.mul_assoc, Nat.add_assoc]
+
+/-- A digit list with every digit below the base has value below base^length. -/
+private theorem ofLowDigits_lt_pow {B : ℕ} (_hb : 0 < B) : ∀ (l : List ℕ),
+    (∀ d ∈ l, d < B) → ofLowDigits B l < B ^ l.length := by
+  intro l
+  induction l with
+  | nil => intro _; simp
+  | cons d t ih =>
+      intro h
+      have hd : d < B := h d List.mem_cons_self
+      have ht : ∀ x ∈ t, x < B := fun x hx => h x (List.mem_cons_of_mem d hx)
+      have hV := ih ht
+      have h1 : d + 1 ≤ B := Nat.succ_le_of_lt hd
+      have h2 : ofLowDigits B t + 1 ≤ B ^ t.length := Nat.succ_le_of_lt hV
+      have h3 : B * (ofLowDigits B t + 1) ≤ B * B ^ t.length := Nat.mul_le_mul_left B h2
+      have h4 : B * (ofLowDigits B t + 1) = B * ofLowDigits B t + B := by
+        rw [Nat.mul_add, Nat.mul_one]
+      rw [ofLowDigits_cons]
+      have h5 : d + B * ofLowDigits B t + 1 ≤ B * B ^ t.length := by
+        calc d + B * ofLowDigits B t + 1 = (d + 1) + B * ofLowDigits B t := by omega
+          _ ≤ B + B * ofLowDigits B t := Nat.add_le_add_right h1 _
+          _ = B * (ofLowDigits B t + 1) := by rw [h4]; omega
+          _ ≤ B * B ^ t.length := h3
+      rw [List.length_cons, Nat.pow_succ']
+      omega
+
+/-- **The digit at position i of a positional value.** -/
+theorem ofLowDigits_digit (B : Nat) (hB : 0 < B) : ∀ (l : List Nat),
+    (∀ x ∈ l, x < B) → ∀ i a rest, l.drop i = a :: rest →
+      ofLowDigits B l / B ^ i % B = a := by
+  intro l hd i a rest hdrop
+  have hlen : i < l.length := by
+    have h1 : (List.drop i l).length = l.length - i := List.length_drop
+    rw [hdrop] at h1
+    have h2 : (a :: rest).length > 0 := by simp
+    omega
+  have hsplit : ofLowDigits B l =
+      ofLowDigits B (l.take i) + B ^ i * ofLowDigits B (l.drop i) :=
+    ofLowDigits_take_drop B l i (Nat.le_of_lt hlen)
+  have hlt : ofLowDigits B (l.take i) < B ^ i := by
+    have hl2 : (l.take i).length = i := List.length_take_of_le (Nat.le_of_lt hlen)
+    have := ofLowDigits_lt_pow hB (l.take i) (fun x hx => hd x (List.mem_of_mem_take hx))
+    rwa [hl2] at this
+  have hmem : a ∈ List.drop i l := by rw [hdrop]; exact List.mem_cons_self
+  have ha : a < B := hd a (List.mem_of_mem_drop hmem)
+  have hdiv : ofLowDigits B l / B ^ i = ofLowDigits B (l.drop i) := by
+    rw [hsplit, Nat.add_mul_div_left _ _ (Nat.pow_pos hB), Nat.div_eq_of_lt hlt,
+        Nat.zero_add]
+  rw [hdiv, hdrop, ofLowDigits_cons, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt ha]
+
+/-- biFromLimbs is positional notation in base 2^bits over the list order. -/
+theorem biFromLimbs_eq_ofLowDigits (bits : Nat) (l : List Nat) :
+    biFromLimbs bits l.toArray = ofLowDigits (2 ^ bits) l := by
+  show (l.reverse).foldl (fun (acc : Nat) (x : Nat) => acc * 2 ^ bits + x) 0 = _
+  rw [foldl_eq_ofLowDigits_reverse (b := 2 ^ bits) (f := fun x => x) (init := 0)]
+  simp [List.reverse_reverse]
+
+/-- **The limb round trip**: packing the little-endian limbs of v back together
+    recovers v whenever v fits the declared number of limbs. This is the fact the
+    encoder relies on and the contract's range check enforces, and it was nowhere
+    in the tree. -/
+theorem biFromLimbs_biToLimbs (numLimbs numLimbBits : Nat) (v : Nat)
+    (hv : v < 2 ^ (numLimbBits * numLimbs)) :
+    biFromLimbs numLimbBits (biToLimbs numLimbs numLimbBits v) = v := by
+  have hB : 0 < 2 ^ numLimbBits := Nat.pow_pos (by decide)
+  show biFromLimbs numLimbBits ((List.range numLimbs).map
+      (fun i => v / 2 ^ (numLimbBits * i) % 2 ^ numLimbBits) |>.toArray) = _
+  rw [biFromLimbs_eq_ofLowDigits]
+  have key : ∀ (n : Nat) (v : Nat),
+      ofLowDigits (2 ^ numLimbBits)
+          ((List.range n).map (fun i => v / 2 ^ (numLimbBits * i) % 2 ^ numLimbBits))
+        = v % 2 ^ (numLimbBits * n) := by
+    intro n
+    induction n with
+    | zero => intro v; simp [Nat.mod_one]
+    | succ k ih =>
+        intro v
+        rw [range_succ_map, List.map_cons, ofLowDigits_cons, Nat.mul_zero,
+            Nat.pow_zero, Nat.div_one, List.map_map]
+        have hshift : ∀ i, v / 2 ^ (numLimbBits * (i + 1)) % 2 ^ numLimbBits
+            = (v / 2 ^ numLimbBits) / 2 ^ (numLimbBits * i) % 2 ^ numLimbBits := by
+          intro i
+          have hp : 2 ^ (numLimbBits * (i + 1)) =
+              2 ^ numLimbBits * 2 ^ (numLimbBits * i) := by
+            rw [Nat.mul_add, Nat.mul_one, Nat.pow_add, Nat.mul_comm]
+          rw [hp, ← Nat.div_div_eq_div_mul]
+        have hp1 : (2 ^ numLimbBits) ^ k = 2 ^ (numLimbBits * k) :=
+          (Nat.pow_mul 2 numLimbBits k).symm
+        have hp2 : (2 ^ numLimbBits) ^ (k + 1) = 2 ^ (numLimbBits * (k + 1)) :=
+          (Nat.pow_mul 2 numLimbBits (k + 1)).symm
+        have h1 : v % 2 ^ numLimbBits + 2 ^ numLimbBits *
+              ((v / 2 ^ numLimbBits) % 2 ^ (numLimbBits * k))
+            = v % 2 ^ (numLimbBits * (k + 1)) := by
+          rw [← hp1, ← hp2]
+          exact mod_low_digit v (2 ^ numLimbBits) k hB
+        have hmap : ((fun i => v / 2 ^ (numLimbBits * i) % 2 ^ numLimbBits) ∘ Nat.succ) =
+            (fun i => (v / 2 ^ numLimbBits) / 2 ^ (numLimbBits * i) % 2 ^ numLimbBits) :=
+          funext (fun i => hshift i)
+        rw [hmap, ih, h1]
+  rw [key, Nat.mod_eq_of_lt hv]
+/-- ByteArray append associates. Not rfl: append does not reduce through the core
+    implementation, only its underlying array's toList does. -/
+private theorem bytes_append_assoc (a b c : Bytes) : (a ++ b) ++ c = a ++ (b ++ c) := by
+  apply ByteArray.ext
+  rw [← Array.toList_inj]
+  show (((a ++ b) ++ c).data.toList) = (a ++ (b ++ c)).data.toList
+  have h (x y : Bytes) : (x ++ y).data.toList = x.data.toList ++ y.data.toList := rfl
+  rw [h, h, h, h, List.append_assoc]
+
+set_option exponentiation.threshold 512 in
+/-- The base-field modulus fits the 48-byte EIP-2537 field. Stated in the emitter's
+    own base and with the exponentiation threshold raised: the kernel refuses to
+    EVALUATE 2^384 at the default threshold of 256, and every spelling that forces it
+    is a warning or a heartbeat timeout. -/
+theorem accFpModulus_lt_256_48 : accFpModulus < 256 ^ 48 := by decide
+
+set_option exponentiation.threshold 512 in
+/-- A base-field coordinate's high word fits the EIP-2537 128-bit slot the contract
+    checks (AccumulatorHelpers.yul:113). -/
+theorem eipCoord_hi_lt_128 (x : Nat) (hx : x < accFpModulus) : x / 2 ^ 256 < 2 ^ 128 := by
+  have key : (2 : Nat) ^ 256 * 2 ^ 128 = 256 ^ 48 := by
+    rw [← Nat.pow_add, show (256 : Nat) + 128 = 384 from rfl, pow_256_48]
+  have hlt : x < 2 ^ 256 * 2 ^ 128 := by
+    rw [key]
+    exact Nat.lt_of_lt_of_le hx (Nat.le_of_lt accFpModulus_lt_256_48)
+  exact Nat.div_lt_of_lt_mul hlt
+
+set_option exponentiation.threshold 512 in
+/-- A 256-bit word's big-endian bytes are the 32 bytes the emitter writes for its
+    value. -/
+theorem wordToBytesBE_natToBytesBE (n : Nat) (hn : n < 2 ^ 256) :
+    wordToBytesBE (BitVec.ofNat 256 n) = natToBytesBE n 32 := by
+  show natToBytesBE (BitVec.ofNat 256 n).toNat 32 = _
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hn]
+
+/-- **Zero-prefix case of the split**: the n zero bytes followed by lo's m bytes are
+    lo's m + n bytes. Spelled separately because applying natToBytesBE_split with a
+    zero high part asks the elaborator to reduce 0 * 256^m inside a unification
+    problem, which times out at the default heartbeat budget (measured: 200k
+    heartbeats, no progress). -/
+theorem natToBytesBE_zero_prefix (lo m n : Nat) (hlo : lo < 256 ^ m) :
+    natToBytesBE lo (m + n) = natToBytesBE 0 n ++ natToBytesBE lo m := by
+  have h : (0 : Nat) * 256 ^ m + lo = lo := by rw [Nat.zero_mul, Nat.zero_add]
+  nth_rw 1 [← h]
+  exact natToBytesBE_split 0 lo m hlo n
+
+/-- **The 16-48 frame lemma for one coordinate**: the two 32-byte words the decoder
+    rebuilds from a (hi, lo) pair are the 16 zero pad followed by the 48 big-endian
+    bytes of the coordinate. This is the byte identity the decodeAcc round trips were
+    stuck on: the codec's law speaks of one 48-byte field, the decoder emits two
+    256-bit words, and only this lemma says they are the same bytes. -/
+theorem eipCoordFrame (x : Nat) (hx : x / 2 ^ 256 < 2 ^ 128) :
+    wordToBytesBE (BitVec.ofNat 256 (x / 2 ^ 256)) ++
+        wordToBytesBE (BitVec.ofNat 256 (x % 2 ^ 256)) =
+      natToBytesBE 0 16 ++ natToBytesBE x 48 := by
+  have hB : 0 < (2 : Nat) ^ 256 := Nat.pow_pos (by decide : 0 < (2 : Nat))
+  have hsum : (x / 2 ^ 256) * 2 ^ 256 + x % 2 ^ 256 = x := by
+    rw [Nat.mul_comm, Nat.div_add_mod]
+  have hlo : x % 2 ^ 256 < 256 ^ 32 := by
+    rw [pow_256_32]; exact Nat.mod_lt x hB
+  have hhi : x / 2 ^ 256 < 256 ^ 16 := by
+    rw [pow_256_16]; exact hx
+  have h1 : natToBytesBE x 48 =
+      natToBytesBE (x / 2 ^ 256) 16 ++ natToBytesBE (x % 2 ^ 256) 32 := by
+    have h2' : x = (x / 2 ^ 256) * 256 ^ 32 + x % 2 ^ 256 := by
+      rw [pow_256_32]
+      exact hsum.symm
+    nth_rw 1 [h2']
+    exact natToBytesBE_split (x / 2 ^ 256) (x % 2 ^ 256) 32 hlo 16
+  have h2 : natToBytesBE (x / 2 ^ 256) 32 =
+      natToBytesBE 0 16 ++ natToBytesBE (x / 2 ^ 256) 16 :=
+    natToBytesBE_zero_prefix (x / 2 ^ 256) 16 16 hhi
+  have h128 : x / 2 ^ 256 < 2 ^ 256 := Nat.lt_of_lt_of_le hx (by
+    have : (2 : Nat) ^ 128 ≤ 2 ^ 256 := by
+      rw [show (256 : Nat) = 128 + 128 from rfl, Nat.pow_add]
+      exact Nat.le_mul_self (2 ^ 128)
+    exact this)
+  rw [wordToBytesBE_natToBytesBE _ h128,
+      wordToBytesBE_natToBytesBE _ (Nat.mod_lt x hB), h2, bytes_append_assoc, ← h1]
+
+set_option exponentiation.threshold 512 in
+/-- The full 16-48-16-48 EIP-2537 G1 frame, in the shape loadAccPoint emits it. -/
+theorem eipFrame (x y : Nat) (hx : x / 2 ^ 256 < 2 ^ 128) (hy : y / 2 ^ 256 < 2 ^ 128) :
+    (wordToBytesBE (BitVec.ofNat 256 (x / 2 ^ 256)) ++
+        wordToBytesBE (BitVec.ofNat 256 (x % 2 ^ 256))) ++
+      (wordToBytesBE (BitVec.ofNat 256 (y / 2 ^ 256)) ++
+        wordToBytesBE (BitVec.ofNat 256 (y % 2 ^ 256))) =
+      natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++ natToBytesBE y 48 := by
+  rw [eipCoordFrame x hx, eipCoordFrame y hy, ← bytes_append_assoc]
+
+/-- **The flag-1 case of the accumulator point loader**: with the identity flag set the
+    coordinate words are neither decoded nor range-checked, and the emitted point is the
+    128 zero bytes of the EIP-2537 infinity encoding whatever those words hold. This is
+    the R-25 malleability as a theorem about the loader rather than a comment about it. -/
+theorem loadAccPoint_flag1 (enc : AccumulatorEncoding) (inst : Array Word256) (src : Nat)
+    (hflag : (inst.getD (src + 2 * enc.coordinateWords) 0).toNat = 1) :
+    loadAccPoint enc inst src = some (natToBytesBE 0 (4 * accWordBytes), true) := by
+  unfold loadAccPoint
+  dsimp only
+  rw [hflag]
+  simp
+
+/-- **The flag-0 case**: when both coordinate slots decode to a (hi, lo) pair and the
+    four words are not all zero, the loader emits the two words per coordinate and the
+    identity flag reads back false. Stated over the decoded pairs, because the encoder
+    direction (decodeAccCoord_encode) is what this layer still owes. -/
+theorem loadAccPoint_flag0 (enc : AccumulatorEncoding) (inst : Array Word256) (src : Nat)
+    (xhi xlo yhi ylo : Nat)
+    (hflag : (inst.getD (src + 2 * enc.coordinateWords) 0).toNat = 0)
+    (hx : decodeAccCoord enc inst src = some (xhi, xlo))
+    (hy : decodeAccCoord enc inst (src + enc.coordinateWords) = some (yhi, ylo))
+    (hne : ¬ (xhi = 0 ∧ xlo = 0 ∧ yhi = 0 ∧ ylo = 0)) :
+    loadAccPoint enc inst src =
+      some ((wordToBytesBE (BitVec.ofNat 256 xhi) ++ wordToBytesBE (BitVec.ofNat 256 xlo)) ++
+            (wordToBytesBE (BitVec.ofNat 256 yhi) ++ wordToBytesBE (BitVec.ofNat 256 ylo)),
+            false) := by
+  unfold loadAccPoint
+  dsimp only
+  rw [hflag, hx, hy]
+  simp
+  refine ⟨fun a b c d => hne ⟨a, b, c, d⟩, bytes_append_assoc _ _ _⟩
+
+/-
+### D-P23 evidence for the byte lemmas
+
+    Each lemma this package lands gets BOTH halves as theorems: a satisfiability
+    witness and a falsification showing the hypothesis it consumes is load-bearing.
+    All of it is at concrete bytes, so none of it needs a VerifierEnv or anything
+    from Midfall/Instances/ (D-P17). No coverage is claimed for the *persistence*
+    of these theorems: deleting a falsification leaves the build green and no gate
+    catches it, which is the measured falsification-deletion gap. -/
+section Dp23Bytes
+
+/-- **natToBytesBE_split, witness**: a concrete split at a 3-byte low field. -/
+theorem natToBytesBE_split_witness :
+    natToBytesBE (7 * 256 ^ 3 + 255) 5 = natToBytesBE 7 2 ++ natToBytesBE 255 3 :=
+  natToBytesBE_split 7 255 3 (by decide) 2
+
+/-- **natToBytesBE_split, falsification**: the hypothesis lo < 256^m is load-bearing.
+    At lo = 256^1 the emitter truncates the low field, so the split equation is false
+    and the two sides are different byte strings. -/
+theorem natToBytesBE_split_needs_bound :
+    natToBytesBE (0 * 256 ^ 1 + 256) 2 ≠ natToBytesBE 0 1 ++ natToBytesBE 256 1 := by decide
+
+/-- **biFromLimbs_biToLimbs, witness**: a value that fits the declared limbs round
+    trips exactly. -/
+theorem biFromLimbs_biToLimbs_witness :
+    biFromLimbs 8 (biToLimbs 3 8 1234) = 1234 :=
+  biFromLimbs_biToLimbs 3 8 1234 (by decide)
+
+/-- **biFromLimbs_biToLimbs, falsification**: without the fit hypothesis the limb list
+    silently drops the overflow - util.rs:93-98 panics where the port truncates - so
+    2^16 does not fit two 8-bit limbs and the round trip does not return it. -/
+theorem biFromLimbs_biToLimbs_needs_fit :
+    biFromLimbs 8 (biToLimbs 2 8 65536) ≠ 65536 := by decide
+
+/-- **eipCoordFrame, witness at the real curve constant**: the EIP-2537 generator's x
+    coordinate satisfies the frame identity, so the lemma is not vacuous on the only
+    coordinate the contract actually carries. -/
+theorem eipCoordFrame_witness :
+    wordToBytesBE (BitVec.ofNat 256 (accGenX / 2 ^ 256)) ++
+        wordToBytesBE (BitVec.ofNat 256 (accGenX % 2 ^ 256)) =
+      natToBytesBE 0 16 ++ natToBytesBE accGenX 48 :=
+  eipCoordFrame accGenX (eipCoord_hi_lt_128 accGenX (by decide))
+
+set_option exponentiation.threshold 512 in
+/-- **eipCoordFrame, falsification**: the 128-bit bound on the high word is the
+    contract's own check (AccumulatorHelpers.yul:113) and it is load-bearing. At
+    x = 2^384 the high word is 2^128, which does not fit the 16-byte pad, and the
+    48-byte emitter truncates the whole value to zero bytes. -/
+theorem eipCoordFrame_needs_hi_bound :
+    wordToBytesBE (BitVec.ofNat 256 ((2 ^ 384) / 2 ^ 256)) ++
+        wordToBytesBE (BitVec.ofNat 256 ((2 ^ 384) % 2 ^ 256)) ≠
+      natToBytesBE 0 16 ++ natToBytesBE (2 ^ 384) 48 := by decide
+
+/-- **loadAccPoint_flag1, witness**: a flagged point whose coordinate words are
+    arbitrary garbage still loads as the 128 zero bytes. This is the R-25 malleability
+    exhibited at the loader rather than asserted about it. -/
+theorem loadAccPoint_flag1_witness :
+    loadAccPoint (AccumulatorEncoding.new 0 7 56)
+        (#[1, 2, 3, 4, 1, 5, 6, 7, 8, 9, 0, 0] : Array Word256) 0 =
+      some (natToBytesBE 0 (4 * accWordBytes), true) :=
+  loadAccPoint_flag1 _ _ 0 rfl
+
+/-- **loadAccPoint_flag1, falsification**: the flag word is what makes the loader
+    ignore the coordinate words. Clear it and a successful load carries `false`, so
+    the `true` of loadAccPoint_flag1 is not decoration. -/
+theorem loadAccPoint_flag1_needs_flag (enc : AccumulatorEncoding) (inst : Array Word256)
+    (src : Nat) (xhi xlo yhi ylo : Nat)
+    (hflag : (inst.getD (src + 2 * enc.coordinateWords) 0).toNat = 0)
+    (hx : decodeAccCoord enc inst src = some (xhi, xlo))
+    (hy : decodeAccCoord enc inst (src + enc.coordinateWords) = some (yhi, ylo))
+    (hne : ¬ (xhi = 0 ∧ xlo = 0 ∧ yhi = 0 ∧ ylo = 0)) :
+    loadAccPoint enc inst src ≠ some (natToBytesBE 0 (4 * accWordBytes), true) := by
+  rw [loadAccPoint_flag0 enc inst src xhi xlo yhi ylo hflag hx hy hne]
+  intro h
+  exact absurd (congrArg Prod.snd (Option.some.inj h)) Bool.false_ne_true
+
+/-- **loadAccPoint_flag0, falsification**: a flag of 2 is a malformed public input,
+    not “some other point” (yul:125-127), so the loader rejects it outright. Without
+    this the flag hypothesis of loadAccPoint_flag0 would be decorative. -/
+theorem loadAccPoint_flag0_needs_bit :
+    loadAccPoint (AccumulatorEncoding.new 0 7 56)
+        (#[1, 2, 3, 4, 2, 5, 6, 7, 8, 9, 0, 0] : Array Word256) 0 = none := by decide
+
+/-- The frame identity computed, at the widths the EIP-2537 encoding actually uses. -/
+def eipFrameKats_ok : Bool :=
+  (natToBytesBE (accGenX / 2 ^ 256) 16 ++ natToBytesBE (accGenX % 2 ^ 256) 32 ==
+      natToBytesBE accGenX 48) &&
+  (wordToBytesBE (BitVec.ofNat 256 (accGenX / 2 ^ 256)) ++
+      wordToBytesBE (BitVec.ofNat 256 (accGenX % 2 ^ 256)) ==
+      natToBytesBE 0 16 ++ natToBytesBE accGenX 48) &&
+  (natToBytesBE 0 16 ++ natToBytesBE accGenX 48 ++ natToBytesBE 0 16 ++
+      natToBytesBE accGenY 48).size == 128
+
+#eval eipFrameKats_ok   -- expect true
+
+end Dp23Bytes
+
 end Midfall.Halo2
