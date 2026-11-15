@@ -553,3 +553,34 @@ refutation tokens are now matched against the declaration's CONCLUSION. Both fix
 **And the standing limit, restated because it has now been measured twenty-six times:** deleting any
 falsification theorem named above leaves 'lake build' green and no gate in 'checks.sh' notices. No
 persistence coverage is claimed for any falsification in this package, only truth.
+
+## P-QVM - the nine quotient-VM holes (sections O and P), checked against their sketches
+
+| hole | sketch | verdict |
+|---|---|---|
+| 'Qvm.lean qvm_compile_correct_identity' | section O:2031-2040, verbatim modulo the typed binders 'autoImplicit = false' forces | PROOF GAP, not statement drift. Needs the emitter-vs-interpreter induction over the six mutually recursive emitters (VmBuilder.lean:700-894) with the four peephole cases discharged under 'RecognizersSound'. Not attempted here. |
+| 'Qvm.lean qvm_compile_correct_certifier' | section O:2056-2062, matches | PROOF GAP, and downstream of the row above (its own doc says so). Not attempted. |
+| 'Qvm.lean qvm_compile_correct_program' | section O:2063-2065, matches | PROOF GAP. The 'vk' binder is NOT a vacuity: the seed only chooses the PRNG memory and both sides of the certifier's comparison read the SAME memory, so the statement is genuinely vk-independent - and genuinely unproved. |
+| 'Qvm.lean qvm_validated_noBoundsFault' | NOT in section O. The plan's own sketch is the headline-bundle field at P-SE-semantic-equivalence.md:2268-2271, over an abstract 'validate' and 'segmentsOf' | DRIFT FOUND AND RESTORED. The committed conclusion excluded 'readPastEnd' only at the single index 'exprEnd'; the sketch excludes every 'readPastEnd'. Restored to '\u2200 i, f ≠ QVMFault.readPastEnd i' and left OPEN at that strength. See docs/REVIEW.md R-69. |
+| 'Qvm.lean qvm_validated_windows' | NOT in section O either; the file's own layout form of D-P20 item 2 | **PROVED.** Statement unchanged. Five helper theorems ('peel_bind', 'forEachM_ok_iff', 'operands_ok_of_validated', 'windowFor_mem_ok', 'windowFor_token_window'). |
+| 'Qvm.lean builder_segments_total' | section O:2069-2074, matches once 'itemStarts' is defined from 'quotientOpLen' as the sketch's SKETCH comment promises | PROOF GAP. The brief called this "the most self-contained, a counting/segment fact"; it is not - the conclusion is an interpreter-totality claim over builder-emitted bytes, i.e. the same alignment machinery as row 1. |
+| 'QvmFold.lean identityCorrespondence_of_bridge' | NOT in section P (the sketch has only the 'IdentityCorrespondence' def) | **FALSE AS WRITTEN** - the fifth refuted headline. 'bridgeCounterexample_hypotheses_hold' + 'bridgeCounterexample_conclusion_fails'. The missing fourth hypothesis is a statement change and is left as a human decision. |
+| 'QvmFold.lean quotientFold_matches_linearization' | section P:2150-2158, matches modulo 'CommitmentReference.linear' being spelled out | PROOF GAP, and the statement checks out against 'computeLinearizationCommitment' (Exec/Linearization.lean:68-113): reverse walk gives 'y^(m-1-i)', the None bucket folds into 'expectedEval' with the minus sign, and 'groupedAdd' emits Some buckets in ascending column order = ascending bucket index under 'SelectorFoldConsistent' conjunct 1. Not attempted: it needs 'sparse fold = naive global powers' as an induction plus a 'groupedAdd' ordering invariant. |
+| 'QvmFold.lean qvm_compile_correct_stream' | NOT in section P; it is D-P20 claim 1 restated | PROOF GAP. Its 'hseg' is the named segment-evaluator seam (the test module's HashMap memory vs P-09b's PRNG memory), and 'streamIsInterpretedOnly' is the named exclusion - both hypotheses with owners, both non-vacuous ('foldClaim1_agreementOnInterpretedStream_ok' and 'foldClaim1_exclusionIsLoadBearing_ok'). |
+
+**NO HOLE HERE DEPENDS ON 'evaluatorRuntime'.** Neither file imports 'Midfall/Lowering/Surface.lean'
+and neither mentions 'evaluatorRuntime' (grep: 0 occurrences in each; no 'Midfall/Generator/' file
+imports Surface). The 'evaluatorRuntime := none' gap blocks 'qvm_yul_refines' and nothing in this
+pair of files.
+
+**D-P23 COVERAGE CLAIMED.** For 'qvm_validated_windows': 'windows_conclusion_is_not_a_tautology'
+(the falsification - an aligned pointer outside every window, rejected by the validator's own
+operand check) and 'windows_hypotheses_satisfiable' (the witness, CONDITIONAL on the pinned gate
+'validator_noOOB_onTheRealPlan_ok' because 'decide' cannot reduce ByteArray or the fuel-bounded
+phase-1 walk, and 'native_decide' is confined to 'Midfall/Instances/'). For the refutation of
+'identityCorrespondence_of_bridge': both halves landed as theorems. For the six holes still open:
+nothing claimed - D-P23 attaches to closed claims.
+
+**STANDING LIMIT, restated because it was measured again here:** deleting any of the four new
+evidence theorems leaves 'lake build' green and no gate in 'checks.sh' notices. No persistence
+coverage is claimed for any falsification in this package, only truth.

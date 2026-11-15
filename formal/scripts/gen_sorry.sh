@@ -22,8 +22,20 @@ owner() {
 }
 
 BT='`'
+# The declaration column is cut at 44 CHARACTERS, and it has to be done in Python, not
+# with `cut -c1-44`: on this host /usr/bin/cut is BSD cut, whose -c counts BYTES
+# whenever LC_CTYPE is not a UTF-8 locale (LC_ALL=C is enough). Two rows carry
+# non-ASCII characters - Midfall/Halo2/Spec/Piop.lean:67 (`G₁`) and
+# Midfall/Statements.lean:123 (`Gₜ ... Gₜ`) - so under LC_ALL=C the byte cut landed
+# one byte inside the last character and emitted `... := sorr` and `... keccak256 Feature`
+# instead of the committed `... := sorry` and `... Features.s`. The register therefore
+# rewrote itself differently depending on who ran it, which is how a table that is
+# supposed to protect the sorry inventory ends up hiding a real hole under a mangled row.
+# Python decodes UTF-8 explicitly and slices by codepoint, so the output is byte-identical
+# in every locale (verified: regenerated under LC_ALL=C, C.UTF-8 and en_US.UTF-8 and
+# diffed against the committed table).
 table=$(while IFS=: read -r file line; do
-      rest=$(sed -n "${line}p" "$file" | sed -E 's/^[[:space:]]*//; s/[[:space:]]*$//' | cut -c1-44)
+      rest=$(sed -n "${line}p" "$file" | python3 -c 'import sys; sys.stdout.write(sys.stdin.buffer.read().decode("utf-8").strip()[:44])')
       printf '| %s | %s | %s%s%s | %s |\n' "$file" "$line" "$BT" "$rest" "$BT" "$(owner "$file")"
     done < <(bash scripts/sorries.sh))
 

@@ -310,7 +310,20 @@ theorem nth?_bucketPositionOf (xs : List Nat) (a : Nat) (h : a ∈ xs) :
     tied to the verifier's evaluation environment. That is ONE layer, not a bundle, and
     it is the honest answer to whether IdentityCorrespondence is dischargeable now: the
     blocker P-11 named (an unported function) is gone; what is left is a stated
-    valuation-agreement obligation with a named owner. -/
+    valuation-agreement obligation with a named owner.
+
+    FALSE AS WRITTEN - P-QVM FINDING, see QvmFoldKats.bridgeCounterexample_* below. The
+    three hypotheses pin the LENGTH of 'exprs', the value of 'vals', and the FIRST
+    projection of every 'exprs' entry (the bucket tag). The conclusion's value conjunct
+    needs the SECOND projection: 'exprs[i]?.map Prod.snd = some (qvmToFr (vals[i]?.getD 0))'.
+    No hypothesis mentions 'Prod.snd' of 'exprs' at all, so the value half is not
+    derivable, and the exhibit at the end of this file satisfies all three hypotheses while
+    refuting the conclusion. What the derivation needs is a fourth hypothesis saying the
+    verifier-side value equals the QVM-side value - which is the frame-valuation obligation
+    this def already names as 'hvals' owner. So the repair is not a different proof, it is
+    moving one named obligation from the conclusion into a hypothesis, and that is a
+    statement change a human has to accept: this package does not edit a registered
+    statement to make it provable (standing instruction), so the hole stays a hole. -/
 theorem identityCorrespondence_of_bridge (plan : QuotientProgramPlan)
     (exprs : Array (Option Nat × FrR)) (vals : List QVMFr) (ρ : Valuation)
     (horder : exprs.size = (globalIdentities plan).length)
@@ -658,6 +671,88 @@ def foldClaim1_exclusionIsLoadBearing_ok : Bool :=
       | .error _ => true
       | .ok arts => arts.identityTrace.length != (globalIdentities withNative).length
 #eval foldClaim1_exclusionIsLoadBearing_ok -- expect true
+
+
+/-! ### FINDING: `identityCorrespondence_of_bridge` is false as written
+
+    Both D-P23 halves for the finding itself: `bridgeCounterexample_hypotheses_hold` is
+    the satisfiability witness (all three hypotheses at once, on a real plan record), and
+    `bridgeCounterexample_conclusion_fails` is the falsification (the conclusion is false
+    at that same witness). Together they are the refutation of the theorem as registered.
+    Per the measured falsification-deletion gap: deleting either leaves the build green and
+    no gate catches it, so no persistence coverage is claimed here, only truth. -/
+
+/-- One Main identity whose expression is the constant 0, so its value under every
+    valuation is 0. Built with FoldCompute's own `cIdentity` fixture helper. -/
+def bridgeCounterexampleId : QuotientIdentity :=
+  Midfall.Generator.QuotientFoldComputeKats.cIdentity 0 QuotientTarget.main
+    (Midfall.Generator.QuotientExpr.const 0)
+
+/-- The one-identity plan. `sortedSimple` is empty because the single identity targets Main,
+    so no bucket is named and the tag hypothesis reduces to `none`. -/
+def bridgeCounterexamplePlan : QuotientProgramPlan :=
+  { inlineIdentities := []
+    items := [QuotientProgramItem.identity bridgeCounterexampleId]
+    nativeIdentities := []
+    nativePermutationIdentities := []
+    nativeLookupIdentities := []
+    structuredTailIdentities := []
+    sortedSimple := []
+    hasNativePermutation := false
+    hasNativeLookup := false
+    selectorFold := Midfall.Generator.selectorFoldPlanDefault }
+
+/-- The verifier-side array: the RIGHT tag and a value of 1 where the QVM says 0. This is
+    the degree of freedom the hypothesis bundle leaves open. -/
+def bridgeCounterexampleExprs : Array (Option Nat × FrR) := #[(none, 1)]
+
+/-- The QVM-side values: the identity's own value under `bridgeCounterexampleRho`. -/
+def bridgeCounterexampleVals : List QVMFr := [0]
+
+/-- The zero valuation. -/
+def bridgeCounterexampleRho : Valuation := fun _ _ => 0
+
+/-- SATISFIABILITY WITNESS (D-P23, first half): the three hypotheses of
+    `identityCorrespondence_of_bridge` are simultaneously satisfiable, so the hole is not
+    vacuous - it is missing a hypothesis. -/
+theorem bridgeCounterexample_hypotheses_hold :
+    bridgeCounterexampleExprs.size = (globalIdentities bridgeCounterexamplePlan).length ∧
+      (bridgeCounterexampleVals =
+        ((globalIdentities bridgeCounterexamplePlan).map
+          fun id => (evalExprρ bridgeCounterexampleRho id.expr).toOption.getD 0)) ∧
+      ∀ i (h : i < (globalIdentities bridgeCounterexamplePlan).length),
+        (bridgeCounterexampleExprs[i]?.map Prod.fst) =
+          some (match (globalIdentities bridgeCounterexamplePlan)[i]'h |>.target with
+                | .main => (none : Option Nat)
+                | .selector s => bridgeCounterexamplePlan.sortedSimple[s]?) := by
+  refine ⟨by decide, ?_, ?_⟩
+  · show [0] = [(evalExprρ bridgeCounterexampleRho bridgeCounterexampleId.expr).toOption.getD 0]
+    unfold evalExprρ
+    unfold Midfall.Generator.fqFromU256
+    rfl
+  · intro i h
+    have hlen : (globalIdentities bridgeCounterexamplePlan).length = 1 := by decide
+    rw [hlen] at h
+    have : i = 0 := by omega
+    subst this
+    show (bridgeCounterexampleExprs[0]?.map Prod.fst) =
+        some (match (globalIdentities bridgeCounterexamplePlan)[0]'(by decide) |>.target with
+              | .main => (none : Option Nat)
+              | .selector s => bridgeCounterexamplePlan.sortedSimple[s]?)
+    dsimp only [bridgeCounterexampleExprs, globalIdentities, bridgeCounterexamplePlan,
+      expandItem, bridgeCounterexampleId]
+    rfl
+
+/-- THE FALSIFICATION (D-P23, second half, and the finding): at that same witness the
+    conclusion is FALSE. The value conjunct demands `1 = (0 : Fr r)` because `exprs` carries
+    1 where the QVM's own value is 0, and no hypothesis forbids that. -/
+theorem bridgeCounterexample_conclusion_fails :
+    ¬ IdentityCorrespondence bridgeCounterexamplePlan bridgeCounterexampleExprs
+        bridgeCounterexampleVals := by
+  intro hc
+  rcases hc with ⟨_, _, hval⟩
+  have h0 := hval 0 (by decide)
+  simp [bridgeCounterexampleExprs, bridgeCounterexampleVals, Midfall.Lowering.qvmToFr] at h0
 
 end Midfall.Lowering.QvmFoldKats
 

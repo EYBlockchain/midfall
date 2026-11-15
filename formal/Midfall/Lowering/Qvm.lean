@@ -734,7 +734,20 @@ theorem qvm_compile_correct_program (r : QuotientShapeRecognizers)
     that the fixture really is the VM arm.
     PROOF HOLE (M6/M7): VmValidator's header states the two-phase soundness argument
     informally ("phase 1's byte span covers every offset the walker reads"); it has not
-    been written as an induction over quotientBytecodeOps. -/
+    been written as an induction over quotientBytecodeOps.
+
+    RESTORED TO THE SKETCH'S STRENGTH BY P-QVM (docs/REVIEW.md R-69). The committed conclusion
+    read 'f ≠ QVMFault.readPastEnd exprEnd', which excludes ONE index, while the plan's own
+    sketch (P-SE-semantic-equivalence.md:2271) excludes EVERY readPastEnd - 'match f with
+    | .readPastEnd _ => False | .constSlotOutOfRange _ _ => False | _ => True'. The second
+    conjunct had already been written universally ('∀ slot idx, ...'), so the narrowing was
+    asymmetric and silent: drift, not a decision, and the standing instruction is to restore the
+    stronger original rather than keep a weaker committed form. The conclusion below is therefore
+    the sketched one. What that costs, named precisely: the proof now needs "the interpreter never
+    runs past the end of its own segment", i.e. the per-opcode agreement between
+    evalQuotientIdentityStep's 'consumed' field and the validator's quotientOpLen across all
+    ~25 opcode arms, plus the loop induction over the fuel-bounded walk. That is a package of its
+    own; the hole stays open at the restored strength rather than being closed at the weak one. -/
 theorem qvm_validated_noBoundsFault {Program Layout : Type}
     (model : QuotientOperandModel)
     (L : Midfall.Generator.LoweringPlan Program Layout)
@@ -750,7 +763,7 @@ theorem qvm_validated_noBoundsFault {Program Layout : Type}
     (hf : Midfall.Generator.evalQuotientIdentity
         (((qvmBytesToNats q.build.bytes).drop cursor).take (exprEnd - cursor))
         q.build.consts mem = .error f) :
-    f ≠ QVMFault.readPastEnd exprEnd ∧
+    (∀ i, f ≠ QVMFault.readPastEnd i) ∧
       (∀ slot idx, f ≠ QVMFault.constSlotOutOfRange slot idx) := by
   sorry
 
@@ -768,6 +781,131 @@ def operandList (bytes : List Nat) (idx op : Nat) : List QuotientOperand :=
   match visitQuotientOperands bytes idx op with
   | .ok operands => operands
   | .error _ => []
+
+/-! #### Proof machinery for the window half -/
+
+/-- A successful monadic bind has a successful left action and a successful continuation on
+    its result. The validator's checks are written in 'do' notation, whose statements are
+    binds, so reading a check back from its own success needs this: 'h : x >>= k = .ok b'
+    is the only shape the port's 'Except' blocks present, and Lean has no core lemma of
+    this form ('Except.bind_eq_ok_iff' does not exist in v4.35.0 - measured). -/
+theorem peel_bind {α β ε : Type} {x : Except ε α} {k : α → Except ε β} {b : β}
+    (h : (x >>= k) = .ok b) : ∃ a, x = .ok a ∧ k a = .ok b := by
+  cases x with
+  | ok a => exact ⟨a, rfl, h⟩
+  | error e => cases h
+
+/-- 'forEachM' succeeds exactly when every element's action succeeds. QVM's phase-2 loop is
+    a Rust 'for' with '?' inside, ported as 'forEachM', so "every operand was checked" and
+    "the check succeeded" are the same fact only under this lemma. -/
+theorem forEachM_ok_iff {ε α : Type} (xs : List α) (f : α → Except ε Unit) :
+    forEachM xs f = .ok () ↔ ∀ x ∈ xs, f x = .ok () := by
+  constructor
+  · induction xs with
+    | nil => intro _ _ hx; cases hx
+    | cons y rest ih =>
+        intro h z hz
+        have h1 : forEachM (y :: rest) f = (f y >>= fun _ => forEachM rest f) := rfl
+        rw [h1] at h
+        rcases List.mem_cons.mp hz with hz | hz
+        · subst hz
+          obtain ⟨a, ha, _⟩ := peel_bind h
+          cases a
+          exact ha
+        · obtain ⟨_, _, hrest⟩ := peel_bind h
+          exact ih hrest z hz
+  · intro h
+    induction xs with
+    | nil => rfl
+    | cons y rest ih =>
+        have h1 : forEachM (y :: rest) f = (f y >>= fun _ => forEachM rest f) := rfl
+        rw [h1, h y (by simp)]
+        show (Except.ok () >>= fun _ => forEachM rest f) = .ok ()
+        rw [show (Except.ok () >>= fun _ => forEachM rest f) = forEachM rest f from rfl]
+        exact ih (fun x hx => h x (by simp [hx]))
+
+/-- What 'validateQuotientProgramOperands' actually bought: the phase-1 walk succeeded, and
+    every operand of every instruction it named passed 'checkQuotientOperand'. The two
+    "total reading" scaffolds above ('bytecodeOpList', 'operandList') are what make this
+    statement writable at all - phase 2 aborts on the first bad operand, so without the
+    total reading there is no "every operand" to quantify over. -/
+theorem operands_ok_of_validated {bytes : List Nat} {model : QuotientOperandModel}
+    (h : validateQuotientProgramOperands bytes model = .ok ()) :
+    ∃ ops, quotientBytecodeOps bytes = .ok ops ∧
+      ∀ p ∈ ops.map (fun (idx, op, _len) => (idx, op)),
+        ∀ operand ∈ operandList bytes p.1 p.2, checkQuotientOperand model p.1 operand = .ok () := by
+  unfold validateQuotientProgramOperands at h
+  obtain ⟨_, _, h1⟩ := peel_bind h
+  obtain ⟨maxStack, _, h2⟩ := peel_bind h1
+  by_cases hgt : maxStack > model.stackWords
+  · simp only [if_pos hgt] at h2
+    cases h2
+  · simp only [if_neg hgt] at h2
+    obtain ⟨_, _, h3⟩ := peel_bind h2
+    obtain ⟨ops, ho, h4⟩ := peel_bind h3
+    have hf := (forEachM_ok_iff (ops.map fun (idx, op, _len) => (idx, op))
+        (fun x => match x with
+          | (idx, op) => do
+              let operands ← visitQuotientOperands bytes idx op
+              forEachM operands (checkQuotientOperand model idx))).mp h4
+    refine ⟨ops, ho, ?_⟩
+    intro p hp
+    have h5 := hf p hp
+    obtain ⟨operands, hv', h6⟩ := peel_bind h5
+    have hlist : operandList bytes p.1 p.2 = operands := by
+      simp [operandList, hv']
+    rw [hlist]
+    exact (forEachM_ok_iff operands (checkQuotientOperand model p.1)).mp h6
+
+/-- A literal memory operand that passed the check has a window: 'checkQuotientMemOperand'
+    ends with exactly the test 'windowFor ptr == none', so a successful check cannot name a
+    pointer outside every window. The reduction of the ported 'do' block is spelled out as
+    'hred' because 'simp' will not unfold these definitions (measured: 'simp only
+    [checkQuotientMemOperand]' reports no progress); 'unfold' plus 'rfl' does reduce it. -/
+theorem windowFor_mem_ok {model : QuotientOperandModel} {idx : Nat} {kind : String} {ptr : Nat}
+    (h : checkQuotientOperand model idx (QuotientOperand.mem kind ptr) = .ok ()) :
+    model.read.windowFor ptr ≠ none := by
+  have hred : checkQuotientOperand model idx (QuotientOperand.mem kind ptr) =
+      (if (ptr % wordBytes != 0) = true then
+          .error (QuotientValidationFault.pointerMisaligned kind ptr idx)
+        else
+          if (model.read.windowFor ptr == none) = true then
+              .error (QuotientValidationFault.pointerOutsideWindows kind ptr idx
+                (describeReadWindows model.read))
+          else .ok ()) := by
+    unfold checkQuotientOperand checkQuotientMemOperand
+    rfl
+  by_cases hc : (model.read.windowFor ptr == none) = true
+  · refine absurd h ?_
+    intro hh
+    rw [hred, hc] at hh
+    by_cases hd : (ptr % wordBytes != 0) = true
+    · rw [if_pos hd] at hh; cases hh
+    · rw [if_neg hd] at hh; cases hh
+  · exact fun con => hc (by simp [con])
+
+/-- The token twin. The offset-overflow leg is a separate fault from the window leg and both
+    are errors, so the proof only needs "some fault", not a named one - which is why this
+    destructs the hypothesis rather than computing a right-hand side. -/
+theorem windowFor_token_window {model : QuotientOperandModel} {idx t off base : Nat}
+    (h : checkQuotientOperand model idx (QuotientOperand.token t off) = .ok ())
+    (hb : model.read.tokenBase t = some base) :
+    model.read.windowFor (base + off) ≠ none := by
+  intro con
+  refine absurd h ?_
+  intro hh
+  have hc : (model.read.windowFor (base + off) == none) = true := by simp [con]
+  unfold checkQuotientOperand checkQuotientMemOperand at hh
+  simp only [bind, Except.bind] at hh
+  rw [hb] at hh
+  simp only [bind, Except.bind] at hh
+  by_cases hd : base + off < base
+  · rw [if_pos hd] at hh; cases hh
+  · rw [if_neg hd] at hh
+    by_cases halign : ((base + off) % wordBytes != 0) = true
+    · rw [if_pos halign] at hh; cases hh
+    · rw [if_neg halign, hc] at hh; cases hh
+
 
 /-- The window half of hazard 5, in the form D-P20 item 2's resolution asks for: a
     LAYOUT property, quantified over the read model rather than over a memory object
@@ -793,7 +931,49 @@ theorem qvm_validated_windows {Program Layout : Type}
             | none => True
             | some base => model.read.windowFor (base + off) ≠ none
         | _ => True := by
-  sorry
+  have hsup : L.supportedQvmBool = true := hvalidated
+  have hsb : L.supportedQvmBool =
+      match L.quotient with
+      | none => false
+      | some q =>
+          match Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+              q.build q.plan.selectorFold with
+          | .error _ => false
+          | .ok model =>
+              match validateQuotientProgramOperands (bytesToList q.build.bytes) model with
+              | .ok _ => true
+              | .error _ => false := by
+    unfold LoweringPlan.supportedQvmBool
+    rw [hvm]
+    rfl
+  rw [hsb] at hsup
+  rw [hq] at hsup
+  dsimp only at hsup
+  rw [hmodel] at hsup
+  cases hx : validateQuotientProgramOperands (bytesToList q.build.bytes) model with
+  | ok u =>
+      cases u
+      obtain ⟨ops, ho, hall⟩ := operands_ok_of_validated hx
+      intro idx op hop operand hopd
+      have hlist : bytecodeOpList (bytesToList q.build.bytes) =
+          ops.map fun (idx, op, _len) => (idx, op) := by
+        simp [bytecodeOpList, ho]
+      rw [hlist] at hop
+      have hok := hall (idx, op) hop operand hopd
+      cases operand with
+      | mem kind ptr => exact windowFor_mem_ok hok
+      | token t off =>
+          by_cases hb : model.read.tokenBase t = none
+          · simp only [hb]
+          · obtain ⟨base, hbase⟩ : ∃ base, model.read.tokenBase t = some base := by
+              cases m : model.read.tokenBase t with
+              | none => exact absurd m hb
+              | some base => exact ⟨base, rfl⟩
+            simp only [hbase]
+            exact windowFor_token_window hok hbase
+      | _ => trivial
+  | error f => simp [hx] at hsup
+
 
 /-- The builder-side totality statement (design1's builder_segments_total): a segment
     of a builder-produced program never faults at all - so in particular never
@@ -1117,6 +1297,64 @@ def cacheConsistent_freshAndDerived_ok : Bool :=
      !(List.all (memOfρ ρ [(0, 0x100)]).cache fun (_, _, v) =>
         v == deriveReferenceMemory Midfall.Bytes.empty 0 0x100))
 #eval cacheConsistent_freshAndDerived_ok -- expect true
+
+
+/-! #### D-P23 evidence for qvm_validated_windows
+
+    Both halves as THEOREMS, per D-P23. THE LIMIT, stated rather than hidden: the witness
+    below is CONDITIONAL on the pinned gate fact
+    'validator_noOOB_onTheRealPlan_ok', because 'decide' cannot reach the fixture -
+    'planBuild.bytes' is a ByteArray and ByteArray operations are '@[extern]' C++, and the
+    phase-1 walk 'quotientBytecodeOpsGo' is a fuel-bounded recursion the kernel will not
+    reduce (measured: 'rfl' proves 'quotientOpLen badBytes 0 = ok 5' but fails on
+    'quotientBytecodeOps badBytes = ok [...]'). 'native_decide' is confined to
+    Midfall/Instances/ by checks.sh and this file may not import Instances (D-P17). So the
+    satisfiability half is discharged from the gate that kat_gate.py runs at every gate
+    run, not from the kernel. Per the measured falsification-deletion gap (thirty times):
+    deleting either theorem leaves the build green and no gate catches it, so no
+    persistence coverage is claimed here, only truth. -/
+
+/-- SATISFIABILITY WITNESS (D-P23, first half). P-11's VM fixture satisfies the hypothesis
+    bundle of 'qvm_validated_windows' - the lowering arm, the quotient arm, the operand
+    model built from it, and the validator predicate - provided the pinned gate holds. The
+    'error' arm of the model match is refuted inside the proof, so the witness really names
+    a model the validator accepted rather than an arbitrary one. -/
+theorem windows_hypotheses_satisfiable
+    (hgate : Midfall.Generator.LoweringPlanKats.planVM.supportedQvmBool = true) :
+    ∃ (model : QuotientOperandModel) (q : Midfall.Generator.PlannedQuotient),
+      Midfall.Generator.LoweringPlanKats.planVM.lowering = Midfall.Generator.QuotientLowering.vm ∧
+      Midfall.Generator.LoweringPlanKats.planVM.quotient = some q ∧
+      Midfall.Generator.quotientOperandModel Midfall.Generator.LoweringPlanKats.planVM.meta_ Midfall.Generator.LoweringPlanKats.planVM.data
+        Midfall.Generator.LoweringPlanKats.planVM.vk Midfall.Generator.LoweringPlanKats.planVM.vkMptr Midfall.Generator.LoweringPlanKats.planVM.memory q.build q.plan.selectorFold = .ok model ∧
+      Midfall.Generator.LoweringPlanKats.planVM.supportedQvm := by
+  cases hm : Midfall.Generator.quotientOperandModel Midfall.Generator.LoweringPlanKats.planVM.meta_ Midfall.Generator.LoweringPlanKats.planVM.data
+      Midfall.Generator.LoweringPlanKats.planVM.vk Midfall.Generator.LoweringPlanKats.planVM.vkMptr Midfall.Generator.LoweringPlanKats.planVM.memory
+      Midfall.Generator.LoweringPlanKats.plannedQ.build Midfall.Generator.LoweringPlanKats.plannedQ.plan.selectorFold with
+  | ok m =>
+      exact ⟨m, Midfall.Generator.LoweringPlanKats.plannedQ, rfl, rfl, hm, hgate⟩
+  | error f =>
+      have hfalse : Midfall.Generator.LoweringPlanKats.planVM.supportedQvmBool = false := by
+        unfold Midfall.Generator.LoweringPlan.supportedQvmBool
+        rw [show Midfall.Generator.LoweringPlanKats.planVM.lowering = Midfall.Generator.QuotientLowering.vm from rfl,
+            show Midfall.Generator.LoweringPlanKats.planVM.quotient = some Midfall.Generator.LoweringPlanKats.plannedQ from rfl]
+        dsimp only
+        rw [hm]
+      exact absurd hgate (by rw [hfalse]; exact Bool.false_ne_true)
+
+/-- THE FALSIFICATION (D-P23, second half). The window conclusion is not a tautology: on
+    the empty-window model the aligned pointer 0xffffffe0 lies outside every window, and
+    the validator's own operand check rejects that operand. So the property
+    'qvm_validated_windows' concludes is one a program can fail, which is what makes the
+    'hvalidated' hypothesis load-bearing rather than decorative. -/
+theorem windows_conclusion_is_not_a_tautology :
+    quotientOperandModelDefault.read.windowFor 0xffffffe0 = none ∧
+      checkQuotientOperand quotientOperandModelDefault 0
+        (QuotientOperand.mem "literal" 0xffffffe0) ≠ .ok () := by
+  refine ⟨rfl, ?_⟩
+  intro hh
+  unfold checkQuotientOperand checkQuotientMemOperand at hh
+  simp only [bind, Except.bind] at hh
+  cases hh
 
 end Midfall.Lowering.QvmKats
 

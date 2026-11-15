@@ -2646,3 +2646,92 @@ compiles through 'WellFounded.fix', and the kernel will not reduce it - the same
 frame-insensitivity verdict is kernel-trusted. That is the intended asymmetry: the headline gets the
 kernel, the side observation gets the compiler, and D-P20 keeps the 'native_decide' inside
 'Midfall/Instances/'.
+
+### R-69 - P-QVM: the first quotient-VM hole closes, a fifth headline statement is refuted as written, and a sixth was quietly weaker than its own sketch
+
+P-QVM was briefed to close as many of the nine per-identity compile-correctness holes of the
+quotient VM as fit (milestone M6's first tranche), plus two tooling items. It closed ONE hole,
+REFUTED one statement, RESTORED one statement that had drifted weaker than its sketch, fixed one
+tooling defect, and measured that the other tooling item the brief prescribed is impossible.
+
+**CLOSED: 'Midfall/Lowering/Qvm.lean qvm_validated_windows'.** The window half of hazard 5 is now a
+theorem, not a hole. The proof is five named steps: 'peel_bind' (a successful 'Except' bind has a
+successful left action and continuation - Lean 4.35 has no core lemma of this shape, measured:
+'Except.bind_eq_ok_iff' does not exist), 'forEachM_ok_iff' (the ported Rust 'for .. ?' loop succeeds
+exactly when every element's action succeeds), 'operands_ok_of_validated' (destructuring
+'validateQuotientProgramOperands' into 'quotientBytecodeOps' success plus per-instruction operand
+checks), and 'windowFor_mem_ok' / 'windowFor_token_window' (a passed 'checkQuotientMemOperand'
+cannot name a pointer outside every window, because the window test is the last statement of that
+check). The statement is UNCHANGED from the committed form. Register 41 -> 40.
+
+**REFUTED AS WRITTEN: 'Midfall/Lowering/QvmFold.lean identityCorrespondence_of_bridge'.** This is
+the fifth headline hypothesis the project has had to refute rather than prove. The theorem binds
+three hypotheses: 'horder' (the size of 'exprs'), 'hvals' ('vals' is the QVM's own evaluation of
+the plan's expressions under the frame valuation), and 'htags' (the FIRST projection of every
+'exprs' entry, the bucket tag). The conclusion 'IdentityCorrespondence' has a VALUE conjunct
+'exprs[i]?.map Prod.snd = some (qvmToFr (vals[i]?.getD 0))' about the SECOND projection of 'exprs',
+and NO hypothesis mentions it. So the derivation does not go through, and it is not a proof gap:
+'bridgeCounterexample_hypotheses_hold' exhibits a real one-identity plan record satisfying all
+three hypotheses and 'bridgeCounterexample_conclusion_fails' refutes the conclusion at that same
+witness ('exprs' carries 1 where the QVM's own value is 0). The repair is a FOURTH hypothesis -
+verifier-side value equals QVM-side value, which is exactly the frame-valuation obligation the
+def's own doc comment names as 'hvals' owner - and that is a STATEMENT CHANGE, recorded here as a
+human decision and NOT made in the code. The hole stays a 'sorry' at its committed strength.
+
+**RESTORED: 'qvm_validated_noBoundsFault' had drifted weaker than its own sketch.** The committed
+conclusion read 'f ≠ QVMFault.readPastEnd exprEnd' - ONE index - where the plan's sketch
+(P-SE-semantic-equivalence.md:2271) excludes EVERY 'readPastEnd' ('match f with | .readPastEnd _ =>
+False | .constSlotOutOfRange _ _ => False | _ => True'). The second conjunct had been written in the
+universal form ('∀ slot idx, f ≠ constSlotOutOfRange slot idx'), so the narrowing was
+asymmetric and silent: exactly the drift class the standing instruction covers. P-QVM restored the
+sketched strength ('∀ i, f ≠ QVMFault.readPastEnd i') and left the hole OPEN at the
+restored strength rather than closing it at the weak one. What the restored form costs, named
+precisely: the proof now needs 'the interpreter never runs past the end of its segment', i.e. the
+per-opcode alignment between 'evalQuotientIdentityStep's 'consumed' field and the validator's
+'quotientOpLen' across all ~25 opcode arms, plus a loop induction over the fuel-bounded walk. That
+is a package of its own, and the same machinery is what the remaining five holes
+('qvm_compile_correct_identity', '-certifier', '-program', '-stream', 'builder_segments_total')
+all wait on - the brief's suggestion that 'builder_segments_total' was "a counting/segment fact"
+and the most self-contained of the nine was wrong: its conclusion is an interpreter-totality claim
+over builder-emitted bytes.
+
+**NOT VACUOUS, AND NOT 'evaluatorRuntime'.** Checked rather than assumed: neither 'Qvm.lean' nor
+'QvmFold.lean' imports 'Midfall/Lowering/Surface.lean' or mentions 'evaluatorRuntime' (grep: zero
+occurrences in either file, and no 'Midfall/Generator/' file imports Surface), so none of the nine
+holes is blocked on the 'evaluatorRuntime := none' gap - that gap blocks 'qvm_yul_refines' only.
+The validator hypotheses are satisfiable at P-11's 'LoweringPlanKats.planVM' (which is what
+'validator_noOOB_onTheRealPlan_ok' pins), and the builder hypotheses at 'QvmFoldKats.foldPlan'.
+The satisfiability witness for the closed theorem is stated as a THEOREM CONDITIONAL ON that pinned
+gate, because 'decide' cannot reach it: 'planBuild.bytes' is a ByteArray and the phase-1 walk
+'quotientBytecodeOpsGo' is a fuel-bounded recursion the kernel will not reduce (measured: 'rfl'
+proves 'quotientOpLen badBytes 0 = ok 5' and fails on 'quotientBytecodeOps badBytes = ok [...]'),
+while 'native_decide' is confined to 'Midfall/Instances/'.
+
+**TOOLING FIXED: 'scripts/gen_sorry.sh'.** The declaration column was cut with 'cut -c1-44', and on
+this host '/usr/bin/cut' is BSD cut, whose '-c' counts BYTES whenever 'LC_CTYPE' is not a UTF-8
+locale. Two rows carry non-ASCII characters, so under 'LC_ALL=C' the register rewrote
+'Midfall/Halo2/Spec/Piop.lean:67' as '... := sorr' and 'Midfall/Statements.lean:123' as
+'... keccak256 Featur' - a register that rewrites itself wrongly depending on who runs it. The cut
+is now a Python codepoint slice, and regeneration is byte-identical to the committed table under
+'LC_ALL=C', 'C.UTF-8' and 'en_US.UTF-8' (all three tested).
+
+**BRIEF CORRECTION: the second tooling item was impossible as prescribed.** The brief asked for
+'shellConsts_matches_artifact_ok' to become a 'decide' theorem comparing the pinned constant table
+to the rendered one. Measured: 'decide' gets stuck reducing 'RunEmitted.solConstants', which is
+'(renderConstants poseidonCtx).splitOn "\n"' - 'String.splitOn' is '@[extern]' C++ and the kernel
+cannot reduce it. 'FrameWalk.lean:121-137' already records exactly this and says the pin exists
+BECAUSE of it ('shellConsts.length = 92' FAILS 'decide' when 'shellConsts' is the parsed table).
+The only alternative is 'native_decide', which adds 'Lean.ofReduceBool' - compiler trust the same
+header refuses for a headline fact - and is confined to 'Midfall/Instances/' anyway. So the gate
+stays decorative and is reported blocked, not silently replaced with a weaker substitute. The
+falsification-deletion gap on it (P6 in the R-68 battery, 'measured thirty times') stands as
+recorded there.
+
+**PERTURBATION EVIDENCE, and the gap again.** In an APFS clone of the whole repo: making
+'qvm_validated_windows' conclude 'windowFor ptr = none' (a false statement) reddens the build;
+deleting the 'hvalidated' hypothesis reddens it; gutting the helper 'windowFor_mem_ok' to conclude
+'True' reddens it. So the proof proves something and the hypothesis is load-bearing IN THE PROOF.
+DELETING the two D-P23 evidence theorems ('windows_hypotheses_satisfiable',
+'windows_conclusion_is_not_a_tautology') and the two bridge counterexample theorems leaves the
+build green and no gate notices - the falsification-deletion gap, measured again here. No
+persistence coverage is claimed for any falsification in this package, only truth.
