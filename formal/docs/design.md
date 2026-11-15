@@ -1466,3 +1466,50 @@ our omission as a design choice.
 treating a same-named function elsewhere as its fulfilment. This is the third distinct way a recorded
 premise has failed: R-63 was an unsatisfiable statement, R-65's predecessor was a false annotated
 reason, and this is a silently substituted deliverable.
+
+## Q-OPEN-1 — awaiting human decision: Fable's `irCheck` relation is too narrow for solc's output
+
+**Raised:** round 147, after P-M8-IRCHECK (`e8fe473`). **Blocks:** M8's headline obligation
+`ir_refines`. **Does not block:** M-C (running), M-B, the model track.
+
+### The measurement
+
+`IRCheck.lean` landed with `irCheck_sound` proving Fable's stated `ObsEquiv` conclusion unchanged.
+But **the pinned artifact cannot satisfy the checker's hypothesis**, and this is a property of
+`irCheck`'s *definition*, not a bug:
+
+- solc duplicates every binding through a fresh temporary — measured in the artifact:
+  `let _2 := loadimmutable("5"); let expr_287 := _2; let var_vk_286 := expr_287`, where the model
+  has **one** binding.
+- the artifact routes every abort and arm through **declared helpers**
+  (`shift_right_224_unsigned`, `revert_error_42b3…`, `external_fun_verifyProof_291`,
+  `allocate_unbounded`, `solc_abi_decode_tuple_…`) where the model **inlines**.
+
+> **An inlining is a simulation, not a rename.**
+
+`artifact_alpha_self = TRUE` (the artifact's own dispatcher head α-matches itself), so the matcher is
+not broken — the shape difference is real. `artifact_verdict = mismatch`, first divergence at the
+dispatcher's third statement.
+
+### Why Fable's spec has this limit
+
+`PLAN.md` §7 line 228 requires a *decidable* checker implying `ObsEquiv`. α-equivalence modulo
+constant substitution and solc renames (P11 row) was a guess at how coarse a decidable relation
+could be. The measurement says it is **too fine**: it can never fire on real solc output.
+
+### The three options
+
+| | option | cost | risk |
+|---|---|---|---|
+| **1** | **Coarsen the checker** to a decidable simulation handling inlining and binding duplication | 3–6 sessions | deviates from Fable's wording; a coarser decidable relation is harder to prove sound |
+| **2** | **Make the model match solc's shape** — declared helpers, duplicated bindings | 1–2 sessions | the "model" becomes a copy of the artifact and stops modelling anything |
+| **3** | **Keep α-equivalence**, accept `ir_refines` unprovable for the artifact | 0 | leaves M8's headline obligation permanently open |
+
+**Orchestrator recommendation: option 1**, because Fable's *intent* was a decidable sufficient
+condition for a behavioural relation, and α-equivalence was a guess at its coarseness that the
+evidence now refutes. **Option 2 is a trap** — it would make the theorem true and the model useless,
+which is the vacuity failure class this project has measured twenty times.
+
+**Not decided unilaterally** because it redefines a named deliverable in the plan. Until it is
+decided, M8's remaining work is: α-transport lemma (1–2 sessions, needed under every option), then
+the run leg (2–4), then whichever body relation option 1/2/3 implies.
