@@ -439,7 +439,7 @@ structure LoweringCorrect (S : Surface p G₁ G₂ Gₜ) (product : PairingProdu
   -- every field that needs the digest already carries as a hypothesis, and the
   -- fixture gate vkDigestSlot0_ok still exercises the projection.
 
-  /-- The Exec read schedule has the layout's slot shape (Protocol ↔ Exec bridge). -/
+  /-- The Exec read schedule has the layout's slot shape (Protocol ↔ Exec bridge). P-SCHED: VACUOUS at the deployment until the fixture's empty adviceColumnPhase was repaired, and REFUTED at it afterwards - see Instances/ObligationsGates.lean, readScheduleAgrees_refuted_at_deployment; the field needs a vk-to-plan pin the Surface record does not carry. -/
   readScheduleAgrees : ∀ inst π ms, decodeRust (Gₜ := Gₜ) S.E Features.solidity S.vk inst π = some ms →
       ms.map Msg.slot = (RepackedProofLayoutPlan.fromProofLayout S.plan.proofLayout).slots
 

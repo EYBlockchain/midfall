@@ -186,10 +186,31 @@ def fxDom : EvaluationDomain (Fr rp) :=
 /-- Two instance columns, one advice, one fixed, no challenges: the shape
     SupportedS.instShape, advice and singlePhase demand. Both instance queries are at
     rotation 0, which is noRotInst; a query at rotation 1 would make the exhibit fail
-    rather than pass quietly. -/
+    rather than pass quietly.
+
+    P-SCHED: `adviceColumnPhase` IS NOW SET, AND IT USED TO BE AN EMPTY VECTOR. It came
+    from `ConstraintSystem.default` (`#[]`) while `numAdviceColumns := 1`, which is not
+    a constraint system the reference could produce: the phase loop in
+    `Verifier.parseTrace` (Exec/Verifier.lean:148-171) picks the advice columns of phase
+    `ph` with `cs.adviceColumnPhase[i]?`, so an empty vector picks NONE,
+    `scatterIndexed 1 []` finds a hole at advice column 0, and `prepare` faults with
+    `Fault.panic "proofs/src/plonk/verifier.rs:118"` BEFORE ANY PROOF BYTE IS CONSUMED -
+    the fault does not depend on the stream at all. Measured consequence: `decodeRust`
+    answered `none` for every byte string at the deployment (63 buffers tried, including
+    the artifact's own 2640-byte compressed stream and the 4484-byte calldata), so the
+    whole byte-level decode path was untested at the only computable Surface in the tree,
+    and every `LoweringCorrect` field of the shape `decodeRust ... = some ms -> ...` was
+    vacuous for that reason rather than for a reason anyone had written down. With the
+    vector set to the one phase the system has, `prepare` runs to completion at the
+    fixture, consumes 336 bytes, and `decodeRust` returns `some` - see
+    `Midfall/Instances/ObligationsGates.lean`, `decodeRust_some_at_deployment`. The shape
+    is the one every other constraint system in the tree already uses
+    (Instances/NativeE2E.lean:96, Instances/ExponentModel.lean:496,
+    Halo2/Spec/Relation.lean:176): one advice column, phase 0. -/
 def fxCs : ConstraintSystem (Fr rp) :=
   { ConstraintSystem.default with
     numFixedColumns := 1, numAdviceColumns := 1, numInstanceColumns := 2,
+    adviceColumnPhase := #[⟨0⟩],
     numChallenges := 0,
     instanceQueries := #[(vCol 0 Any.instance, Rotation.value 0),
                          (vCol 1 Any.instance, Rotation.value 0)] }

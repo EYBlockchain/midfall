@@ -805,4 +805,154 @@ def gap_view_transport_closed : String :=
   "closed by R-60 S6: ObsView carries selfBalance and extCodeHashOf, and "
     ++ "halted_of_view_eq / returnData_of_view_eq / isReturn_of_view_eq / "
     ++ "isRevertOrHalt_of_view_eq / worldEq_of_view_eq are proved in Bridge.lean"
+
+/-! ### P-SCHED: `readScheduleAgrees` (Obligations.lean:443) - vacuous at the
+      deployment before the fixture repair, refuted after it -/
+
+
+/-- The instance vector the deployment's own `cfg.numInstances = 1` names. -/
+def schedInst : Array (Fr rp) := #[1]
+
+/-- **THE BYTE-LEVEL WITNESS AT THE DEPLOYMENT: 336 ZERO BYTES.** Five 48-byte G1
+    slots and three 32-byte scalar slots, which is exactly what the fixture's own
+    verifier schedule consumes and no more, so `decodeRust`'s trailing-bytes test
+    passes. First exhibit of its kind: nothing at the deployment had ever decoded a
+    proof FROM BYTES before P-SCHED repaired `SurfaceFixture.fxCs`. -/
+def schedWitness : Bytes := Midfall.natToBytesLE 0 336
+
+/-- The slot pattern the decoder reports at that witness: advice, the two quotient
+    limbs, the committed-instance and advice evaluations, `f_com`, the one
+    `q_evals_on_x3`, and pi. -/
+def schedWitnessSlots : List WireSlot :=
+  [WireSlot.g1, WireSlot.g1, WireSlot.g1, WireSlot.fr, WireSlot.fr,
+   WireSlot.g1, WireSlot.fr, WireSlot.g1]
+
+/-- **SATISFIABILITY HALF OF THE FIELD'S HYPOTHESIS, AS A THEOREM.** `decodeRust`
+    returns `some` at the deployment - so `LoweringCorrect.readScheduleAgrees`
+    (Obligations.lean:443) is no longer vacuous there. `native_decide` because the
+    schedule squeezes challenges through `keccak256`, which is an `extern` the kernel
+    cannot reduce: `rfl` on this equation fails, and it fails for the same reason the
+    brief's third bad premise did. -/
+theorem decodeRust_some_at_deployment :
+    (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk
+      schedInst schedWitness).map (fun ms : List (Msg (Fr rp) RP) => ms.map Msg.slot) =
+      some schedWitnessSlots := by native_decide
+
+theorem schedWitness_length : schedWitnessSlots.length = 8 := rfl
+
+theorem layout_length :
+    (RepackedProofLayoutPlan.fromProofLayout realSurface.plan.proofLayout).slots.length = 72 := rfl
+
+/-- The two slot lists differ by length alone, so no arithmetic is needed to separate
+    them: 8 reads against the poseidon layout's 72 slots. -/
+theorem schedWitnessSlots_ne_layout :
+    schedWitnessSlots ≠ (RepackedProofLayoutPlan.fromProofLayout realSurface.plan.proofLayout).slots :=
+  by
+  intro h
+  have h8 : schedWitnessSlots.length =
+      (RepackedProofLayoutPlan.fromProofLayout realSurface.plan.proofLayout).slots.length :=
+    congrArg (fun l : List WireSlot => l.length) h
+  rw [schedWitness_length, layout_length] at h8
+  omega
+
+theorem some_of_map_some {α β : Type} (f : α → β) (x : Option α) (y : β)
+    (h : x.map f = some y) : ∃ a, x = some a := by
+  cases x with
+  | none => cases h
+  | some a => exact ⟨a, rfl⟩
+
+/-- **THE FIELD IS FALSE AT THE DEPLOYMENT, NOT MERELY UNPROVED.** This is the
+    falsification half, and it is the finding: `readScheduleAgrees` was satisfiable
+    ONLY because the fixture's constraint system could not decode anything. Repair the
+    constraint system - which is what makes the fixture a model of a deployment at all
+    - and the field's conclusion fails at a concrete witness. The reason it must fail is
+    structural: `Surface.vk` (Surface.lean:207) and `Surface.plan` (:291) are
+    INDEPENDENT free fields, and no pin among the ten at Surface.lean:298-473 relates
+    the read schedule the first induces to the slot layout the second names. So the
+    field needs a hypothesis the Surface record does not carry, and the fixture as built
+    could never satisfy one: its plan is the 72-slot poseidon layout while its vk is a
+    one-advice-column toy. -/
+theorem readScheduleAgrees_refuted_at_deployment :
+    ¬ (∀ (inst : Array (Fr rp)) (π : Bytes) (ms : List (Msg (Fr rp) RP)),
+        decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk inst π = some ms →
+          ms.map Msg.slot =
+            (RepackedProofLayoutPlan.fromProofLayout realSurface.plan.proofLayout).slots) :=
+  by
+  intro hall
+  obtain ⟨ms, hms⟩ := some_of_map_some (fun ms : List (Msg (Fr rp) RP) => ms.map Msg.slot)
+    (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk schedInst schedWitness)
+    schedWitnessSlots decodeRust_some_at_deployment
+  have h1 := hall schedInst schedWitness ms hms
+  have hmap : Option.map (fun ms : List (Msg (Fr rp) RP) => ms.map Msg.slot)
+      (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk schedInst schedWitness)
+      = some (ms.map Msg.slot) := by rw [hms]; rfl
+  have h2 : ms.map Msg.slot = schedWitnessSlots :=
+    Option.some.inj (hmap.symm.trans decodeRust_some_at_deployment)
+  exact schedWitnessSlots_ne_layout (h2.symm.trans h1)
+
+/-- **THE CONSTRAINT SYSTEM THE FIXTURE CARRIED BEFORE P-SCHED**, kept so the vacuity
+    it caused stays a measurement in the tree and not a paragraph: `numAdviceColumns := 1`
+    with an empty `adviceColumnPhase`. -/
+def prePSchedVk : VerifyingKey (Fr rp) RP :=
+  { realSurface.vk with cs := { realSurface.vk.cs with adviceColumnPhase := #[] } }
+
+/-- The mechanism, with no keccak in it and therefore kernel-checked: a hole in the
+    scatter is a FAULT, and the phase loop hands it an empty pair list when no advice
+    column is assigned to the phase, so `prepare` dies before reading the stream. -/
+theorem scatterIndexed_hole_is_a_fault :
+    scatterIndexed (α := RP) 1 [] "site" = .error (Fault.panic "site") := rfl
+
+/-- The sweep that measured the vacuity: all-zero buffers 0..2496 in steps of 64,
+    all-ones buffers up to 2527, the artifact's own 2640-byte compressed stream, the
+    4484-byte calldata, and the empty buffer. -/
+def prePSchedSweep : List Bytes :=
+  (List.range 40).map (fun n => Midfall.natToBytesLE 0 (n * 64)) ++
+    (List.range 20).map (fun n => Midfall.natToBytesLE 1 (n * 133)) ++
+    [fxCompressedProof, fxLayoutCalldata, Midfall.Bytes.empty]
+
+theorem prePSchedSweep_length : prePSchedSweep.length = 63 := rfl
+
+/-- **THE VACUITY, AS A GATE**: at the pre-repair vk not one of the 63 decodes, so the
+    hypothesis of `readScheduleAgrees` was empty at the deployment. -/
+def prePSched_none_on_sweep_ok : Bool :=
+  List.all prePSchedSweep (fun π =>
+    (decodeRust (Gₜ := RP) realSurface.E Features.solidity prePSchedVk schedInst π).isNone)
+#eval prePSched_none_on_sweep_ok            -- expect true
+
+/-- The same sweep's positive control after the repair: the witness decodes. -/
+def postPSched_witness_decodes_ok : Bool :=
+  (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk schedInst
+    schedWitness).isSome
+#eval postPSched_witness_decodes_ok         -- expect true
+
+/-- And the repair is what unlocks it: at the pre-repair key the very same 336-byte
+    witness does NOT decode. Without this conjunct the sweep above could be a fact
+    about `decodeRust` rather than about the fixture. -/
+def repairIsWhatUnlocksIt_ok : Bool :=
+  (! (decodeRust (Gₜ := RP) realSurface.E Features.solidity prePSchedVk schedInst
+      schedWitness).isSome) && prePSchedSweep.length == 63
+#eval repairIsWhatUnlocksIt_ok              -- expect true
+
+/-- HONEST SCOPE. The repair makes the pipeline RUN at the fixture; it does not make
+    the artifact's own streams decode there, because the fixture's vk and its plan
+    describe different circuits: a 336-byte schedule against a 2640-byte poseidon
+    stream. Exact-length is the decoder's own test, so both are refused and only the
+    336-byte witness passes. -/
+def artifactStreams_still_refused_ok : Bool :=
+  (! (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk schedInst
+      fxCompressedProof).isSome) &&
+  (! (decodeRust (Gₜ := RP) realSurface.E Features.solidity realSurface.vk schedInst
+      fxLayoutCalldata).isSome) &&
+  (List.filter (fun n => (decodeRust (Gₜ := RP) realSurface.E Features.solidity
+      realSurface.vk schedInst (Midfall.natToBytesLE 0 n)).isSome) [304, 320, 335, 337, 384]) == []
+#eval artifactStreams_still_refused_ok      -- expect true
+
+/-- The named gap this package leaves behind, in the registry style of the others in
+    this file: what is missing is a PIN, not a proof. -/
+def gap_readScheduleAgrees_pin : String :=
+  "blocker: readScheduleAgrees relates Surface.vk's read schedule to Surface.plan's "
+    ++ "slot layout, and no pin in Lowering/Surface.lean connects the two free fields; "
+    ++ "the fixture's own vk (8 reads) and plan (72 slots) disagree, so the field is "
+    ++ "refuted at the deployment rather than merely unproved (P-SCHED)"
+
 end Midfall.Instances.ObligationsGates
