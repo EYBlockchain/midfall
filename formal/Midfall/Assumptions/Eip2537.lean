@@ -357,6 +357,200 @@ theorem bytesToNatBE_bytesNatBE (v n : ℕ) : bytesToNatBE (bytesNatBE v n) = v 
       rw [List.range_succ, List.map_append, ofLowDigits_append, List.length_map, List.length_range,
         List.map_singleton, ofLowDigits_singleton, ih, mod_pow_succ 256 v n (by decide)]
 
+/-! ### THE BYTE BRIDGE BETWEEN THE TWO INDEPENDENT BIG-ENDIAN ENCODERS (P-CODECLAWS)
+
+    `Midfall.natToBytesBE` (Common/Bytes.lean:59) and `Midfall.Yul.bytesNatBE`
+    (Yul/Externals.lean:191) are TWO SEPARATE big-endian encoders, and
+    Yul/Externals.lean:188 says they are kept apart ON PURPOSE: "two independent
+    big-endian encoders that must agree is worth more than one shared one". What that note
+    declines to do is PROVE they agree, and until this section nothing in the tree did:
+    `G1CodecLaws.eipShape` and `toEip_one` (Assumptions/Codec.lean:84, :87) speak
+    `natToBytesBE` bytes while `g1CodecZ.toEip` is `bytesNatBE` bytes, which is the one
+    thing standing between `G1CodecLaws` and having a witness at any codec.
+
+    THE BRIDGE IS TRUE, UNCONDITIONALLY, AND THAT IS THE FINDING: no side condition on `v`
+    or on `len` is needed, so `g1CodecZ` is NOT the wrong codec for `G1CodecLaws` and the
+    law bundle does not have to be relaxed to fit it. Both encoders emit the base-256 digits
+    of `v` most-significant-first and both TRUNCATE to `len` bytes when `v` does not fit -
+    `natToBytesBE` by dividing the accumulator down, `bytesNatBE` by dividing by `256^i` -
+    so they agree even in the overflow case (`bytesNatBE 256 1 = natToBytesBE 256 1 = #[0]`).
+    Proving the agreement does NOT fold one definition into the other: both stay exactly as
+    they are, which is what the note says the pair is worth.
+
+    AXIOM COST: `bytesNatBE_eq_natToBytesBE` and the frame lemma rest on `propext` and
+    `Quot.sound` only - no `sorryAx`, no `Classical.choice` (measured with `#print axioms`
+    while this section was written, and not left as a `#print` line because this file
+    carries none). -/
+
+/-- Reindexing: `(range (k+1)).map f` is `f 0` followed by the shifted map. Stated in
+    this direction because that is what the emitter's `acc.push` step produces, and neither
+    core nor Mathlib has it in this shape. -/
+private theorem range_succ_map {α : Type} (f : ℕ → α) : ∀ k : ℕ,
+    f 0 :: (List.range k).map (fun i => f (i + 1)) = (List.range (k + 1)).map f := by
+  intro k
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      calc f 0 :: List.map (fun i => f (i + 1)) (List.range (k + 1))
+          _ = f 0 :: (List.map (fun i => f (i + 1)) (List.range k) ++ [f (k + 1)]) := by
+                rw [List.range_succ, List.map_append, List.map_singleton]
+          _ = (f 0 :: List.map (fun i => f (i + 1)) (List.range k)) ++ [f (k + 1)] := by
+                rw [← List.cons_append]
+          _ = List.map f (List.range (k + 1)) ++ [f (k + 1)] := by rw [ih]
+          _ = List.map f (List.range (k + 1) ++ [k + 1]) := by
+                rw [← List.map_singleton, ← List.map_append]
+          _ = List.map f (List.range (k + 2)) := by
+                congr 1
+                have h : (k + 1) + 1 = k + 2 := by omega
+                rw [← List.range_succ, h]
+
+/-- The emitter's output as digits: `go v len acc` is `acc` followed by the base-256
+    digits of `v`, least significant first - the SAME digits `bytesNatBE` builds from the
+    top down. This is the "base-256 digit split" the gap record predicted the bridge would
+    need. -/
+private theorem natToBytesLowFirst_go_digits : ∀ (len : ℕ) (v : ℕ) (acc : Bytes),
+    (Midfall.natToBytesLowFirst.go v len acc).data.toList =
+      acc.data.toList ++ (List.range len).map
+        (fun i => Nat.toUInt8 ((v / 256 ^ i) % 256)) := by
+  intro len
+  induction len with
+  | zero => intro v acc; simp [Midfall.natToBytesLowFirst.go]
+  | succ k ih =>
+      intro v acc
+      have hstep : Midfall.natToBytesLowFirst.go v (k + 1) acc =
+          Midfall.natToBytesLowFirst.go (v / 256) k (acc.push (Nat.toUInt8 (v % 256))) := rfl
+      have hpush : (acc.push (Nat.toUInt8 (v % 256))).data.toList =
+          acc.data.toList ++ [Nat.toUInt8 (v % 256)] := by
+        cases acc with
+        | mk arr => simp [ByteArray.push, Array.toList_push]
+      have hdiv : ∀ i : ℕ, v / 256 / 256 ^ i = v / 256 ^ (i + 1) := by
+        intro i
+        rw [Nat.div_div_eq_div_mul, Nat.pow_succ' (n := i)]
+      have h0 : Nat.toUInt8 (v % 256) = Nat.toUInt8 ((v / 256 ^ 0) % 256) := by
+        simp
+      have hfun : (fun i => Nat.toUInt8 ((v / 256 / 256 ^ i) % 256)) =
+          (fun i => Nat.toUInt8 ((v / 256 ^ (i + 1)) % 256)) := by
+        funext i
+        rw [hdiv]
+      rw [hstep, ih, hpush, ← range_succ_map, h0, hfun, List.append_assoc]
+      rfl
+
+/-- **THE BRIDGE**: the two independent big-endian encoders emit the same bytes, at every
+    value and every width, with NO side condition on either argument. This is the lemma that
+    stood between `G1CodecLaws` and having a witness at any codec. -/
+theorem bytesNatBE_eq_natToBytesBE (v len : ℕ) : bytesNatBE v len = Midfall.natToBytesBE v len := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  have h0 : (Bytes.empty : Bytes).data.toList = [] := rfl
+  have h := natToBytesLowFirst_go_digits (len := len) (v := v) (acc := Bytes.empty)
+  rw [h0, List.nil_append] at h
+  show ((List.range len).reverse.map (fun i => Nat.toUInt8 ((v / 256 ^ i) % 256))).toArray.toList = _
+  rw [List.toList_toArray, Midfall.natToBytesBE, Midfall.natToBytesLowFirst, List.toList_toArray,
+    h, List.map_reverse]
+
+/-- The local concatenation of `Yul/Externals.lean` and ByteArray's own `++` are the same
+    operation. Not `rfl`: `(a ++ b).data` does not reduce, only `.data.toList` does, so the
+    argument goes through `Array.toList_append`. Recorded because every frame lemma below
+    needs it and `Common/Bytes.lean:492` keeps its own copy private. -/
+theorem bytesAppend_eq_append (a b : Bytes) : bytesAppend a b = a ++ b := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  show (a.data ++ b.data).toList = (a ++ b).data.toList
+  rw [Array.toList_append]
+  rfl
+
+/-- ByteArray append is associative - through `.data.toList`, since neither projection
+    reduces on its own. -/
+private theorem bytes_append_assoc (a b c : Bytes) : (a ++ b) ++ c = a ++ (b ++ c) := by
+  apply ByteArray.ext
+  apply Array.toList_inj.mp
+  show (a.data.toList ++ b.data.toList) ++ c.data.toList =
+      a.data.toList ++ (b.data.toList ++ c.data.toList)
+  rw [List.append_assoc]
+
+/-- The 16-byte EIP pad is `natToBytesBE 0 16`: the frame law's padding words and the
+    codec's padding words are the same bytes. `Midfall.eipPad` (Common/Bytes.lean:70) is a
+    THIRD independent spelling of the same sixteen zeros, and this is the lemma that lets
+    `eipShape`'s padding be cited in the codec's idiom. Computed by `decide` at the array
+    level: sixteen pushes is well inside the kernel budget, so no digit induction is needed. -/
+theorem eipPad_eq_natToBytesBE_zero : Midfall.eipPad = Midfall.natToBytesBE 0 16 := by
+  apply ByteArray.ext
+  decide
+
+/-- Splitting a zero emission at a byte boundary: `natToBytesBE 0 (m+n)` is `n` zero bytes
+    followed by `m` zero bytes - `natToBytesBE_split` (Common/Bytes.lean:479) read at
+    `hi = lo = 0`. -/
+theorem natToBytesBE_zero_add (m n : ℕ) :
+    Midfall.natToBytesBE 0 (m + n) =
+      Midfall.natToBytesBE 0 n ++ Midfall.natToBytesBE 0 m := by
+  have hlt : 0 < (256 : ℕ) ^ m := by
+    exact Nat.pow_pos (by decide : 0 < (256 : ℕ))
+  have h := Midfall.natToBytesBE_split 0 0 m hlt n
+  simpa using h
+
+/-- **THE IDENTITY FRAME IN THE LAW'S OWN IDIOM**: 128 zero bytes ARE the 16-48-16-48 split
+    of 128 zero bytes. `toEip_one` is this equation applied to the codec. -/
+theorem natToBytesBE_zero_128 :
+    Midfall.natToBytesBE 0 128 = Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE 0 48 ++
+      Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE 0 48 := by
+  rw [show (128 : ℕ) = 112 + 16 from rfl, natToBytesBE_zero_add,
+    show (112 : ℕ) = 64 + 48 from rfl, natToBytesBE_zero_add,
+    show (64 : ℕ) = 48 + 16 from rfl, natToBytesBE_zero_add]
+  simp only [bytes_append_assoc]
+
+/-- **THE FRAME, IN THE LAW'S OWN IDIOM**: the EIP-2537 padded G1 frame that `g1PointBytes`
+    writes IS the `natToBytesBE` frame that `G1CodecLaws.eipShape` demands. This single
+    equation is what the two failing fields were missing, and it is the whole of the gap:
+    nothing is weakened, the encoders stay independent definitions, and the agreement is now
+    a theorem. -/
+theorem g1PointBytes_eq_natToBytesBE_frame (x y : ℕ) :
+    g1PointBytes (x, y) =
+      Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE x 48 ++
+        Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE y 48 := by
+  show bytesAppend (bytesAppend eipPad (bytesNatBE x fpBytes))
+      (bytesAppend eipPad (bytesNatBE y fpBytes)) = _
+  rw [eipPad_eq_natToBytesBE_zero, bytesNatBE_eq_natToBytesBE, bytesNatBE_eq_natToBytesBE,
+    bytesAppend_eq_append, bytesAppend_eq_append, bytesAppend_eq_append]
+  simp only [bytes_append_assoc, fpBytes]
+
+/-- **D-P23 FALSIFICATION FOR THE BRIDGE: IT IS A BIG-ENDIAN AGREEMENT AND NOT A FACT ABOUT
+    ANY PAIR OF EMITTERS.** `bytesNatBE 1 2` is `#[0, 1]` and `natToBytesLE 1 2` is
+    `#[1, 0]`, so a proof that reached the conclusion by "any two byte emitters agree" would
+    be wrong and the byte order would be doing no work. Without this line the bridge could be
+    read as order-blind, which is the R-20 defect class this file exists to keep shut. The
+    digit lists are computed through `natToBytesLowFirst_go_digits` rather than `decide`d on
+    byte arrays: `ByteArray.push` does not reduce in the kernel at the widths involved. -/
+theorem bytesNatBE_ne_natToBytesLE : bytesNatBE 1 2 ≠ Midfall.natToBytesLE 1 2 := by
+  intro h
+  have hL : (Midfall.natToBytesLE 1 2).data.toList = [1, 0] := by
+    simp only [Midfall.natToBytesLE, Midfall.natToBytesLowFirst]
+    rw [natToBytesLowFirst_go_digits]
+    rfl
+  have hR : (bytesNatBE 1 2).data.toList = [0, 1] := rfl
+  have h1 := congrArg (fun b : Bytes => b.data.toList) h
+  rw [hR, hL] at h1
+  exact absurd h1 (by decide)
+
+/-- The bridge, computed, at the widths the EIP frame actually uses and at the overflow case
+    the two encoders agree on for DIFFERENT reasons (`natToBytesBE` divides the accumulator
+    down, `bytesNatBE` divides by `256^i`): 256 at width 1 is `#[0]` on both sides, and
+    `2^384` at width 48 truncates identically. `bytesNatBE_eq_natToBytesBE` is the theorem;
+    this is the gate that says the theorem is about bytes and not about a stuck equation. The
+    last three conjuncts are the falsification above, computed. -/
+def bytesBridgeKats_ok : Bool :=
+  bytesEq (bytesNatBE 0x01020304 4) (Midfall.natToBytesBE 0x01020304 4) &&
+  bytesEq (bytesNatBE 0 16) Midfall.eipPad &&
+  bytesEq (bytesNatBE 0 48) (Midfall.natToBytesBE 0 48) &&
+  bytesEq (bytesNatBE 0 128) (Midfall.natToBytesBE 0 128) &&
+  bytesEq (bytesNatBE 256 1) (Midfall.natToBytesBE 256 1) &&
+  bytesEq (bytesNatBE (2 ^ 384) 48) (Midfall.natToBytesBE (2 ^ 384) 48) &&
+  bytesEq (bytesNatBE blsP 48) (Midfall.natToBytesBE blsP 48) &&
+  (! bytesEq (bytesNatBE 1 2) (Midfall.natToBytesLE 1 2)) &&
+  (bytesNatBE 0x01020304 4).data.toList.map UInt8.toNat == [1, 2, 3, 4] &&
+  (Midfall.natToBytesBE 0x01020304 4).data.toList.map UInt8.toNat == [1, 2, 3, 4]
+
+#eval bytesBridgeKats_ok   -- expect true
+
 /-- **`fpInv` IS INVERSION IN Fp, AT THE REAL 381-BIT BASE MODULUS.** For `0 < x < pBase` the value
     `fpOps.inv x` returns is the canonical representative of `x⁻¹` in `ZMod pBase`. This is the fact
     the agreement theorem needs: the affine group law calls `inv` on already-reduced coordinates,

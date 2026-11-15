@@ -464,15 +464,17 @@ theorem curveSurfacesDifferOnlyInNaming :
 -- except the 'native_decide' axioms the FIXTURE's own layout exhibit carries and this file
 -- REUSES rather than re-proving. Reported, not hidden: the trusted base of 'curveBundle' is
 -- 'holds_exhibited's trusted base plus the fixture's, and the delta is zero new assumptions.
-/-! ### P-LOWEQ: the headline bundle at the curve Surface, and the one leg nothing witnesses -/
+/-! ### P-LOWEQ and P-CODECLAWS: the headline bundle at the curve Surface, now with all its legs -/
 
 /-- **THE 'G1CodecLaws' LEG, MEASURED FIELD BY FIELD AT THE CURVE CODEC.** 'G1CodecLaws'
-(Assumptions/Codec.lean:75) has SEVEN fields and, before this package, NO term of that type existed
-anywhere in the tree - not at 'g1CodecZ', not at the exponent codec, not at any codec. Five of the
-seven are theorems here, in one conjunction: 'eipRoundtrip' and 'ofEip_toEip' are the existing
-'g1CodecZ_eipRoundtrip' (G1Agreement.lean:2080) and 'g1CodecZ_ofEip_toEip' (Bls12_381G1.lean:69);
-'compressedRoundtrip' holds because 'g1CodecZ.ofCompressed?' is 'fun _ => none', so its premise is
-uninhabited; and the two width clauses are 'bytesNatBE_size' and 'g1CodecZ_toEip_size'. -/
+(Assumptions/Codec.lean:75) has SEVEN fields and, before P-LOWEQ, NO term of that type existed
+anywhere in the tree - not at 'g1CodecZ', not at the exponent codec, not at any codec. P-LOWEQ got
+five of the seven onto the board in one conjunction: 'eipRoundtrip' and 'ofEip_toEip' are the
+existing 'g1CodecZ_eipRoundtrip' (G1Agreement.lean:2080) and 'g1CodecZ_ofEip_toEip'
+(HoldsStaging.lean:69); 'compressedRoundtrip' holds because 'g1CodecZ.ofCompressed?' is
+'fun _ => none', so its premise is uninhabited; and the two width clauses are 'bytesNatBE_size'
+and 'g1CodecZ_toEip_size'. Kept as a theorem after P-CODECLAWS because it is the measurement, and
+because a bundle exhibit that only names the whole structure would not say which fields were free. -/
 theorem g1CodecZ_five_of_seven :
     G1Codec.eipRoundtrip g1CodecZ ∧ G1Codec.compressedRoundtrip g1CodecZ ∧
       (∀ Q : G₁z, g1CodecZ.ofEip? (g1CodecZ.toEip Q) = some Q) ∧
@@ -482,21 +484,121 @@ theorem g1CodecZ_five_of_seven :
     g1CodecZ_ofEip_toEip, fun Q => bytesNatBE_size _ fpBytes,
     fun Q => g1CodecZ_toEip_size Q⟩
 
-/-- **THE TWO LEGS THAT DO NOT CLOSE, AND EXACTLY WHY.** 'eipShape' and 'toEip_one' speak the bytes
-of a point in the 'Midfall.natToBytesBE' idiom (Common/Bytes.lean:59), while 'g1CodecZ.toEip' is
-'g1zToEip' = 'g1PointBytes' = 'fpCoordBytes' = 'bytesAppend eipPad (bytesNatBE x fpBytes)' in the
-'YulSemantics' idiom (Yul/Externals.lean:455,191). The two encoders are INTENTIONALLY independent -
-Externals.lean:188 says so in terms: "two independent big-endian encoders that must agree is worth
-more than one shared one" - and the agreement lemma 'bytesNatBE v n = natToBytesBE v n' is proved
-NOWHERE in the tree. So 'G1CodecLaws g1CodecZ' is one byte-bridge lemma away from being a term, and
-that lemma is a real job (ByteArray extensionality plus the base-256 digit split), not a formality.
+/-- **THE SIXTH FIELD, LANDED.** 'eipShape' was one of the two fields P-LOWEQ could not close, and
+the reason was never algebra: it speaks 'Midfall.natToBytesBE' bytes while 'g1CodecZ.toEip' is
+'bytesNatBE' bytes, and the two encoders are independent definitions on purpose
+(Yul/Externals.lean:188). 'bytesNatBE_eq_natToBytesBE' (Assumptions/Eip2537.lean) is the bridge, and
+it needs NO side condition, so the codec is not being bent to fit the law and the law is not being
+bent to fit the codec. The coordinates the law asks for are the carrier point's own canonical ones
+('g1zPair_canonical', which is 'ZMod.val' at both coordinates), and the 'Q ≠ 1' hypothesis buys the
+'¬ (x = 0 ∧ y = 0)' clause through 'g1zToEip_injective': a carrier element whose pair is
+(0,0) encodes to the same bytes as the identity, so it IS the identity. -/
+theorem g1CodecZ_eipShape : ∀ Q : G₁z, Q ≠ 1 → ∃ x y : ℕ, x < pBase ∧ y < pBase ∧
+    ¬ (x = 0 ∧ y = 0) ∧ g1CodecZ.toEip Q =
+      natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++ natToBytesBE y 48 := by
+  intro Q hQ
+  obtain ⟨hx, hy⟩ := g1zPair_canonical Q
+  refine ⟨(g1zPair Q).1, (g1zPair Q).2, hx, hy, ?_, ?_⟩
+  · intro hh
+    have hp : g1zPair Q = (0, 0) := Prod.ext hh.1 hh.2
+    have he : g1zToEip Q = g1zToEip (1 : G₁z) := by
+      show g1PointBytes (g1zPair Q) = g1PointBytes (g1zPair (1 : G₁z))
+      rw [hp, g1zPair_one]
+    exact hQ (g1zToEip_injective he)
+  · show g1zToEip Q = _
+    rw [g1zToEip, g1PointBytes_eq_natToBytesBE_frame]
 
-STATED AS A NAMED GAP SO A GATE CAN POINT AT IT, in the style of 'gap_holds_unexhibited' above. -/
+/-- **THE SEVENTH FIELD, LANDED.** The committed point is absorbed as 128 zero bytes by the contract
+(TranscriptProofParser.yul:36-46) and Lean absorbs 'toEip 1'; the law pins the two to the same
+string. 'g1zPair_one' says the identity's pair is (0,0) - the EIP's infinity convention - and
+'natToBytesBE_zero_128' is the arithmetic of the frame: 16 + 48 + 16 + 48 = 128 zero bytes ARE 128 zero bytes
+in the law's own idiom. -/
+theorem g1CodecZ_toEip_one : g1CodecZ.toEip (1 : G₁z) = Midfall.natToBytesBE 0 128 := by
+  show g1zToEip (1 : G₁z) = Midfall.natToBytesBE 0 128
+  rw [g1zToEip, g1zPair_one, g1PointBytes_eq_natToBytesBE_frame, ← natToBytesBE_zero_128]
+
+/-- **SEVEN OF SEVEN: 'G1CodecLaws' HAS A WITNESS AT A REAL CODEC.** This is the term whose absence
+was the whole content of 'gap_g1codecLaws_unexhibited': the headline 'lowering_equivalence' carries
+'hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1' and until this line nothing in the tree was known
+to satisfy that binder. It is a satisfiability witness in the strongest sense - a closed term of the
+type, at the codec the curve Surface installs - and it rests on 'propext', 'Quot.sound' and
+'Classical.choice' only: the last is the pre-existing trusted base of 'g1CodecZ.ofEip?', which is a
+'Classical.choose' because reading an exponent off a curve point is a discrete log. No 'sorryAx'. -/
+theorem g1CodecZ_laws : G1CodecLaws g1CodecZ where
+  eipRoundtrip := g1CodecZ_eipRoundtrip
+  compressedRoundtrip := fun _ _ h => absurd h (by simp [g1CodecZ])
+  ofEip_toEip := g1CodecZ_ofEip_toEip
+  eipShape := g1CodecZ_eipShape
+  toEip_one := g1CodecZ_toEip_one
+  compressedWidth := fun Q => bytesNatBE_size _ fpBytes
+  eipWidth := fun Q => g1CodecZ_toEip_size Q
+
+/-- **D-P23 WITNESS FOR THE TWO NEW FIELDS, AT THE PUBLISHED GENERATOR.** Not an existence claim
+about some point: the frame of 'g1zGen' is the EIP's own H1 coordinates, in the law's idiom, and
+those coordinates are not both zero. Without this the two fields just landed could be read as
+satisfied only by the identity branch. -/
+theorem eipShape_witness_at_generator :
+    g1CodecZ.toEip g1zGen =
+      Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE genX 48 ++
+        Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE genY 48 := by
+  show g1PointBytes genPair = _
+  exact g1PointBytes_eq_natToBytesBE_frame genX genY
+
+theorem eipShape_generator_is_nonzero : ¬ (genX = 0 ∧ genY = 0) ∧ g1zGen ≠ (1 : G₁z) :=
+  ⟨by decide, fun h => g1zToEip_not_constant (congrArg g1zToEip h)⟩
+
+/-- **D-P23 FALSIFICATION FOR 'toEip_one': THE PIN IS ABOUT THE IDENTITY AND NOT ABOUT EVERY
+POINT.** 'toEip_one' names one byte string, and the codec does NOT emit it for the generator - so
+the field is not satisfied by a constant encoder and not implied by 'eipWidth', which the same
+codec also satisfies. 'shortEipCodec' (Assumptions/Codec.lean:243) is the other direction: a codec
+whose width is wrong refutes 'toEip_one' by byte count. -/
+theorem toEip_one_is_not_the_generator_frame :
+    g1CodecZ.toEip (1 : G₁z) = Midfall.natToBytesBE 0 128 ∧
+      g1CodecZ.toEip g1zGen ≠ Midfall.natToBytesBE 0 128 := by
+  refine ⟨g1CodecZ_toEip_one, ?_⟩
+  intro h
+  exact g1zToEip_not_constant (h.trans g1CodecZ_toEip_one.symm)
+
+/-- **D-P23 FALSIFICATION FOR 'eipShape': THE IN-FIELD CLAUSE IS LOAD-BEARING.** 'junkPair' is the
+frame '(blsP, blsP)': it has the 16-48-16-48 SHAPE the law demands, it is 128 bytes, and the
+precompile refuses it ('g1Of?_g1PointBytes_needs_canonical'). So no in-field pair 'x, y < pBase'
+spells those bytes - the '\exists x y, x < pBase \wedge y < pBase' half of 'eipShape' is doing real
+work and is not a paraphrase of 'eipWidth'. -/
+theorem eipShape_infield_bites : ¬ ∃ x y : ℕ, x < pBase ∧ y < pBase ∧
+    g1PointBytes junkPair =
+      Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE x 48 ++
+        Midfall.natToBytesBE 0 16 ++ Midfall.natToBytesBE y 48 := by
+  rintro ⟨x, y, hx, hy, h⟩
+  rw [← g1PointBytes_eq_natToBytesBE_frame x y] at h
+  have e1 : g1Of? (g1PointBytes junkPair) = none := g1Of?_g1PointBytes_needs_canonical
+  have e2 : g1Of? (g1PointBytes (x, y)) = some (x, y) := g1Of?_g1PointBytes (x, y) hx hy
+  have e3 : g1Of? (g1PointBytes (x, y)) = none := by rw [← h]; exact e1
+  rw [e3] at e2
+  exact absurd e2 (by simp)
+
+/-- **THE GAP THAT STOOD HERE, NOW CLOSED - KEPT AS A RECORD, IN THE STYLE OF
+'gap_holds_unexhibited'.** What was missing was ONE equation between two encoders the tree keeps
+independent ON PURPOSE, and the honest reading of 'Externals.lean:188' was not that the bridge was
+forbidden but that nobody had proved it. It is proved now, unconditionally, and the codec choice did
+not have to move: 'g1CodecZ' is the right codec for 'G1CodecLaws' after all. What is STILL open on
+the codec path is a different item and this record says which: 'g1zOfEip?' is noncomputable because
+reading an exponent off a curve point is a discrete log, and no Surface in the tree installs a
+curve pairing (D-P36a), so the law is satisfied at a codec that no 'LoweringCorrect' exhibit yet
+runs end to end. -/
 def gap_g1codecLaws_unexhibited : String :=
-  "G1CodecLaws has no witness at any codec in the tree. Five of seven fields are theorems at "
-    ++ "g1CodecZ (g1CodecZ_five_of_seven); eipShape and toEip_one need bytesNatBE v n = "
-    ++ "natToBytesBE v n, the bridge between the two independent big-endian encoders that "
-    ++ "Yul/Externals.lean:188 keeps apart on purpose and that no file proves."
+  "CLOSED BY P-CODECLAWS. G1CodecLaws now has a witness at a real codec: g1CodecZ_laws is "
+    ++ "SEVEN OF SEVEN fields at g1CodecZ, the codec that curveSurface installs at E.g1. The two "
+    ++ "fields P-LOWEQ "
+    ++ "could not land were eipShape and toEip_one, and the only thing between them and a proof was "
+    ++ "the bridge bytesNatBE v n = natToBytesBE v n between the two big-endian encoders that "
+    ++ "Yul/Externals.lean:188 keeps independent ON PURPOSE. The bridge is a theorem with NO side "
+    ++ "condition (Assumptions/Eip2537.lean, bytesNatBE_eq_natToBytesBE): both encoders emit base-256 "
+    ++ "digits most-significant-first and both truncate to len bytes, so they agree even on overflow. "
+    ++ "Neither encoder was folded into the other and no law was relaxed. D-P23 falsifications: "
+    ++ "bytesNatBE_ne_natToBytesLE (the bridge is a big-endian agreement, not order-blindness) and "
+    ++ "eipShape_infield_bites (the in-field clause is load-bearing). STILL OPEN, and it is not this: "
+    ++ "g1zOfEip? is noncomputable (discrete log), and no Surface installs a curve pairing (D-P36a), "
+    ++ "so the headline's LoweringCorrect binder is still the uninhabited one."
 
 /-- **A CALADATA THAT SATISFIES 'hsel' AND 'hside' AT THE CURVE SURFACE.** Four bytes: exactly the
 selector, so 'bytesTake cd 0 4 = some fnSigVerifyProof' is 'rfl', and 'decodeCalldata' refuses it
@@ -516,12 +618,16 @@ theorem loweqCd_hside : SideConditions curveSurface keccak256 loweqCd := by
   rw [hnone] at hdec
   exact absurd hdec (by simp)
 
-/-- **THE HEADLINE BUNDLE, SIX OF ITS SEVEN SURFACE LEGS, JOINTLY INHABITED AT ONE SURFACE.** One
-term, not six: 'DeploymentW', 'Holds' (with the product it is exhibited at), 'EnvAgrees',
-'SupportedS', 'hsel', 'hside', and the 'WorldLocal' leg the restatement added. The seventh leg,
-'G1CodecLaws', is the one nothing witnesses - see 'gap_g1codecLaws_unexhibited' - and that is the
-finding, reported rather than papered over: as it stands the headline theorem's 'hcodec' binder has
-no model in this tree, so the theorem is proved but its hypothesis bundle is not known inhabited. -/
+/-- **EVERY HYPOTHESIS THE HEADLINE TAKES OUTSIDE ITS 'hc' BUNDLE, IN ONE TERM - EIGHT OF EIGHT.**
+'SupportedS', 'DeploymentW', 'EnvAgrees', 'Eip2537.Holds' (with the product it is exhibited at),
+'G1CodecLaws', 'SideConditions', the 'hsel' byte pin, and the 'WorldLocal' leg the restatement
+added. P-LOWEQ landed seven of these and named the eighth as unexhibited; P-CODECLAWS closed it with
+'g1CodecZ_laws', so 'lowering_equivalence' now has a witness for every binder except ONE, and that
+one is not in this conjunction: 'hc : LoweringCorrect S product' is the headline's own bundle, and
+its open leg is 'ir_refines' at 'ShellModel.modelIr S' - see 'gap_runLeg_unexhibited' and
+'gap_holds_unexhibited' for what is and is not exhibited there. THE LIMIT OF THIS EXHIBIT, STATED
+RATHER THAN HIDDEN: it is eight conjuncts at one Surface, not the headline's whole hypothesis
+bundle, and it proves no spec theorem. -/
 theorem loweqBundleCore (product : PairingProduct)
     (hh : Eip2537.Holds curveSurface.E.g1 ⟨curveSurface.encG2⟩ product) :
     SupportedS curveSurface curveSurface.o₀ ∧
@@ -529,11 +635,12 @@ theorem loweqBundleCore (product : PairingProduct)
         EnvAgrees curveSurface.E curveSurface.vk curveSurface.plan curveSurface.params
           curveSurface.sG2gen ∧
           Eip2537.Holds curveSurface.E.g1 ⟨curveSurface.encG2⟩ product ∧
+          Midfall.Assumptions.G1CodecLaws curveSurface.E.g1 ∧
           SideConditions curveSurface keccak256 loweqCd ∧
           Midfall.bytesTake loweqCd 0 4 = some Midfall.Generator.fnSigVerifyProof ∧
           (curveSurface.calls fxW product fxQuotientAddr).WorldLocal :=
-  ⟨curveSupported, curveDeployment, curveEnvAgrees, hh, loweqCd_hside, loweqCd_hsel,
-    honestCalls_worldLocal product fxQuotientAddr (fun _ _ _ => False)
+  ⟨curveSupported, curveDeployment, curveEnvAgrees, hh, g1CodecZ_laws, loweqCd_hside,
+    loweqCd_hsel, honestCalls_worldLocal product fxQuotientAddr (fun _ _ _ => False)
       (fun _ _ _ _ _ => Iff.rfl)⟩
 
 /-- **THE 'WorldLocal' LEG IS NOT FREE AT AN EXTERNALISED RENDER.** The restatement's one new
@@ -545,6 +652,8 @@ it go, and it is a fact about this record, not a general theorem about 'S.calls'
 theorem loweqWorldLocal_is_the_none_evaluator : curveSurface.evaluatorRuntime = none := rfl
 
 #print axioms Midfall.Instances.CurveSurface.g1CodecZ_five_of_seven
+#print axioms Midfall.Instances.CurveSurface.g1CodecZ_laws
+#print axioms Midfall.Instances.CurveSurface.eipShape_infield_bites
 #print axioms Midfall.Instances.CurveSurface.loweqBundleCore
 #print axioms Midfall.Instances.CurveSurface.loweqCd_hsel
 #print axioms curveBundle

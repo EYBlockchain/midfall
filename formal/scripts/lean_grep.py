@@ -11,9 +11,32 @@ hit on the first try. So we strip comments properly: line comments, nested block
 comments, and string literals (which may contain "--").
 
 Line numbers are preserved: a stripped line yields the empty string.
+
+THE PRIME BUG P-CODECLAWS FIXED (docs/REVIEW.md R-66, last item). The old stripper tested
+for a char literal (') BEFORE it tested for a line comment (--), and it entered a char
+state on ANY quote. Lean identifiers may contain primes - obs', hshell', \u03bb' - so the
+trailing prime of an identifier at block-comment depth zero opened a PHANTOM char literal,
+and every line after it stopped being comment-stripped: a /-- doc string -/ below such a
+proof was scanned as code. P-LOWEQ's first regenerated SORRY.md listed two FALSE proof
+holes sitting in a docstring three lines below a proof, with the build green, and the only
+reason the register is correct today is that that package avoided primed identifiers.
+
+THE FIX, THREE PARTS. (1) A line comment is tested before a quote, so '--' wins wherever
+both could start. (2) A quote opens a char literal only if a WELL-FORMED one matches at
+that position - one character, or one backslash escape, between the quotes. A prime is
+then ordinary code text and opens nothing, which is lexically correct: in Lean 'f'a'' is
+one identifier, not a function applied to a char. (3) Char literals are emitted as code
+rather than blanked, because the state existed to stop a quote inside a char literal from
+opening a phantom STRING, and that is still achieved: the literal is consumed atomically.
+A char literal cannot hold '--' or a sorry, so keeping its text costs nothing.
 """
 import re
 import sys
+
+# A well-formed Lean char literal: 'c', '\\\'' , '\\n', ... . '\\x41' and '\\u{...}' do not
+# match; they are then treated as ordinary text, which is harmless because they contain no
+# comment marker and no quote that could open a string.
+CHARLIT = re.compile(r"'(?:\\.|[^'\\])'")
 
 
 def code_only(text: str) -> str:
@@ -22,7 +45,6 @@ def code_only(text: str) -> str:
     i, n = 0, len(text)
     depth = 0  # nesting depth of block comments
     in_str = False
-    in_char = False
     while i < n:
         c = text[i]
         if in_str:
@@ -33,12 +55,6 @@ def code_only(text: str) -> str:
                 continue
             if c == '"':
                 in_str = False
-            i += 1
-            continue
-        if in_char:
-            out.append(c)
-            if c == "'":
-                in_char = False
             i += 1
             continue
         # /-- /-! and bare /- all open a NESTED block comment in Lean 4. The
@@ -64,16 +80,26 @@ def code_only(text: str) -> str:
             out.append(c)
             i += 1
             continue
-        if c == "'":
-            in_char = True
-            out.append(c)
-            i += 1
-            continue
+        # THE ORDERING FIX (R-66): a line comment is tested BEFORE any quote handling, so
+        # '--' can never be swallowed by a char-literal state that a prime opened.
         if text.startswith("--", i):
             j = text.find("\n", i)
             j = n if j < 0 else j
             out.append(" " * (j - i))
             i = j
+            continue
+        if c == "'":
+            m = CHARLIT.match(text, i)
+            if m:
+                # A real char literal: consumed atomically so a quote inside it cannot open
+                # a phantom string. Its text is kept - it cannot hold '--' or a proof hole.
+                out.append(m.group(0))
+                i = m.end()
+                continue
+            # A prime (Lean identifiers may end in ') or a stray quote: ordinary code text.
+            # The old code entered a char state here, which is the phantom.
+            out.append(c)
+            i += 1
             continue
         out.append(c)
         i += 1

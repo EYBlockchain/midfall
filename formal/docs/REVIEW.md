@@ -2421,3 +2421,105 @@ literal and everything after it stops being stripped. The first regenerated SORR
 FALSE proof holes inside a docstring three lines below the new proof, with the build green. The
 register is correct now because P-LOWEQ avoided primed identifiers in 'Obligations.lean'; the
 stripper itself is unfixed and any future proof that binds primed names will hit it again.
+
+### R-67 - P-CODECLAWS: the byte bridge is TRUE, 'G1CodecLaws' has a witness at a real codec, and both gate defects R-66 left are closed
+
+R-66 ended with two open items: a proved headline whose 'hcodec : G1CodecLaws S.E.g1' binder had no
+model anywhere in the tree, and two gate defects left unfixed on purpose. Both are closed, and the
+gap closed with them was ONE equation.
+
+**THE BRIDGE IS TRUE, WITH NO SIDE CONDITION - AND IT WAS MEASURED BEFORE ANYTHING WAS BUILT ON IT.**
+'bytesNatBE v n = natToBytesBE v n' for every 'v' and every 'n' ('Midfall/Assumptions/Eip2537.lean',
+'bytesNatBE_eq_natToBytesBE'). Both encoders emit the base-256 digits of 'v' most-significant-first,
+and both TRUNCATE to 'n' bytes when 'v' does not fit - 'natToBytesBE' by dividing the accumulator
+down, 'bytesNatBE' by dividing by '256^i' - so they agree even on overflow ('bytesNatBE 256 1 =
+natToBytesBE 256 1 = #[0]'). The equation was checked outside Lean first, on 99 value/width pairs
+including '2^384' and 'blsP', zero mismatches. So 'g1CodecZ' is NOT the wrong codec for
+'G1CodecLaws', no law was relaxed and no statement was weakened: 'CurveSurface.g1CodecZ_laws' is a
+term of 'G1CodecLaws g1CodecZ' with all SEVEN fields, resting on 'propext', 'Quot.sound' and
+'Classical.choice' - the last being the pre-existing trusted base of 'g1CodecZ.ofEip?', which is a
+'Classical.choose' because reading an exponent off a curve point is a discrete log. No 'sorryAx'.
+
+**THE INDEPENDENCE NOTE WAS RIGHT, AND IT IS UNCHANGED.** 'Yul/Externals.lean:188' keeps the two
+big-endian encoders apart on purpose: "two independent big-endian encoders that must agree is worth
+more than one shared one". Landing the bridge does not fold one definition into the other - both
+definitions are untouched - it discharges the "must agree" half as a theorem, which is the only
+reading on which that note buys anything. The note never claimed the two differed; the tree had
+simply never proved they agreed.
+
+**WHAT IT TOOK, AND FOUR REDUCTION TRAPS FOUND ON THE WAY.** ByteArray extensionality plus the
+base-256 digit split, exactly as 'gap_g1codecLaws_unexhibited' predicted, plus one list lemma
+neither core nor Mathlib states in the needed shape ('range_succ_map': the digits of a width-(k+1)
+emission are the leading digit followed by the digits of the shifted value). Four things that read
+as obvious and are not true, each of which cost a cycle: (1) 'natToBytesLowFirst.go v 0 acc' is NOT
+'rfl' - the equation compiler's zero case needs 'simp [go]'; (2) '(a ++ b).data' does not reduce but
+'(a ++ b).data.toList' does, so every concatenation lemma has to go through the list; (3) core's
+'List.append_assoc' runs the OPPOSITE way to the Lean 3 spelling ('as ++ (bs ++ cs) = (as ++ bs) ++
+cs'), which silently turns a 'rw' into a no-op; (4) 'decide' cannot evaluate a 128-byte
+'natToBytesBE' but it CAN evaluate a 16-byte one, which is why 'eipPad_eq_natToBytesBE_zero' is a
+'decide' and the frame lemma is not.
+
+**D-P23, BOTH HALVES, FOR EVERY CLAIM THIS PACKAGE MADE.** Satisfiability: 'g1CodecZ_laws' is itself
+the strongest possible witness for the bundle; 'eipShape_witness_at_generator' lands the frame of the
+PUBLISHED H1 generator in the law's own idiom, and 'eipShape_generator_is_nonzero' says those
+coordinates are not both zero and the generator is not the identity, so 'eipShape's 'Q ≠ 1'
+hypothesis is satisfiable and its '¬ (x = 0 ∧ y = 0)' clause is doing work. Falsification, as
+theorems and not as prose: 'bytesNatBE_ne_natToBytesLE' (the bridge is a BIG-ENDIAN agreement and not
+order-blindness: 'bytesNatBE 1 2' is #[0, 1] against 'natToBytesLE 1 2' = #[1, 0], the R-20 class);
+'toEip_one_is_not_the_generator_frame' ('toEip_one' names a byte string the codec does NOT emit for
+the generator, so the field is not satisfied by a constant map); 'eipShape_infield_bites' (the
+'x < pBase ∧ y < pBase' half is load-bearing: 'junkPair = (blsP, blsP)' has the right 16-48-16-48
+SHAPE and 128 bytes and no in-field pair spells those bytes, because the precompile refuses it). The
+two refutations R-66 already had at 'shortEipCodec' and 'nullDecoderCodec' stay true.
+
+**GATE DEFECT 1, FIXED: 'scripts/lean_grep.py' tested a quote for a char literal BEFORE it tested a
+line comment, and it entered a char state on ANY quote.** Now (a) a line comment is tested before any
+quote handling, and (b) a quote opens a char literal only if a WELL-FORMED one matches at that
+position, so the trailing prime of an identifier is ordinary text - which is lexically correct, since
+in Lean an identifier may contain primes and "f'a'" is one identifier, not a function applied to a
+char. Evidence that it bites, in an APFS clone of the whole repo: a 'sorry' placed inside a docstring
+three lines below 'theorem phantomPrime' : True := trivial' is NOT listed by 'scripts/sorries.sh'
+(the old stripper listed it), while a real 'sorry' in code below it IS listed, at its line. The same
+pair of tests for 'native_decide' shows the false positive disappearing. The register is unchanged at
+41 rows and no 'file:line' pin moved, because neither edited file carries a proof hole.
+
+**GATE DEFECT 2, FIXED WITH ITS LIMIT STATED: a joint exhibit could have a conjunct gutted to 'True'
+and stay green.** The exhibit test ran 'mentions' over the whole declaration text, binder list
+included, so 'Eip2537.Holds' survived in the binder 'hh' after its conjunct was deleted. Exhibits and
+refutations now match tokens against 'conclusion_of' - the text after the first top-level ':' and
+before the ':='. Evidence, in the clone: gut the 'Eip2537.Holds' conjunct of 'loweqBundleCore' to
+'Truth' AND patch the matching proof component to 'trivial' so the build still passes - 'lake build'
+GREEN (2215 jobs), the OLD gate GREEN, the NEW gate RED. THE LIMIT, MEASURED AND NOT CLAIMED AWAY: a
+conjunct replaced by a DIFFERENT proposition that still names the token - '(Eip2537.Holds → True)' -
+passes the new gate too, because no text gate can see through a proposition; renaming the exhibit the
+gap record names ('g1CodecZ_laws') reddens nothing in the gate and is caught only by the build; and
+DELETING a falsification theorem ('eipShape_infield_bites') reddens nothing at all. That is the
+twenty-eighth measurement of the falsification-deletion gap. No coverage is claimed for it.
+
+**THE REQUIRED FINDING: IS THE HEADLINE BUNDLE NOW KNOWN INHABITED?** For every hypothesis
+'lowering_equivalence' takes OUTSIDE its 'hc' binder - yes, jointly, at one Surface:
+'loweqBundleCore' is now eight conjuncts ('SupportedS', 'DeploymentW', 'EnvAgrees', 'Eip2537.Holds',
+'G1CodecLaws', 'SideConditions', the 'hsel' byte pin, 'WorldLocal') in ONE term at 'curveSurface'.
+The remaining uninhabited hypothesis is 'hc : LoweringCorrect S product' itself, and its open leg is
+'ir_refines' at 'ShellModel.modelIr S' - out of scope here, and reported on below. So the theorem is
+proved, every binder except one is known satisfiable, and the one that is not is the run leg and not
+the codec.
+
+**WHAT 'ir_refines' AT 'modelIr S' WOULD NEED - LEARNED BY READING, NOT STARTED.** The field asks for
+'ObsEquiv (RunContractIR S W H (modelIr S) irLyt cd c g) (RunShell S W H cd c g)', and R-66's three
+theorems show the two sides start in DIFFERENT frames: 'initState' always has 'activeWords = 0' while
+the dispatcher's 'mstore(0x40, memoryguard(128))' leaves 3, and the arm's first statement reads that
+very word. So the statement is FALSE for a general program ('prologue_write_is_observable') and can
+only hold of a program that never reads 'msize' and never reads word '0x40' except in 'headGuard's
+bound test, where 0 and 128 both pass. THE OPACITY OF 'L.main' IS NOT THE WALL IT LOOKS LIKE:
+'BlkIsEmitter S' (Partials.lean:268) pins 'S.L.main = GenAst.emitMain S.plan', 'curveBlk' discharges
+it at the curve Surface by 'rfl', and the emitted AST is already walked in-tree by the machinery the
+P-BUNDLE gate uses ('bundleWalkSs', 'callClosure', 'eip2537TargetsIn'). The package that takes this
+on needs three things, in order: (1) a syntactic walk of 'GenAst.emitMain' proving no 'msize' and no
+non-'headGuard' read of '0x40', gated by a negative control that plants such a read; (2) a
+frame-insensitivity lemma - two runs from states differing only in 'activeWords' and word '0x40'
+agree in 'view' for any program with that syntactic property; (3) the run leg itself, i.e. calldata
+that makes 'RunShell' and 'RunContractIR' both nonempty, which is 'gap_runLeg_unexhibited' and the
+same wall the four '*_spec' theorems hit. Item (3) is the expensive one; item (1) is cheap enough to
+measure first, because if the emitted program already avoids both reads the crux is (2) and (3) and
+not the frame problem R-66 named.

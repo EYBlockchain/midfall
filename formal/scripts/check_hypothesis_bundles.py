@@ -138,6 +138,19 @@ G2_GAP_TOKENS = ["g2Valid", "Fp[u]/(u^2+1)", "2p^2 + 1", "fp2Ops",
 GAP_HOLDS = ("gap_holds_unexhibited", ["Eip2537.Holds"], HOLDS_GAP_TOKENS,
              HOLDS_GAP_FORBIDDEN)
 G2_GAP_FORBIDDEN = ["has no Fp2", "nothing to quantify over"]
+#
+# P-CODECLAWS CLOSED THE G1CodecLaws GAP, and the two lists below say so in both directions. The
+# required tokens name the exhibit that closed it (g1CodecZ_laws), the bridge lemma that made it
+# possible (bytesNatBE_eq_natToBytesBE), the count phrase that IS the finding ("SEVEN OF SEVEN"),
+# the two fields that moved, the Surface that installs the codec, and both D-P23 falsifications -
+# so the record cannot be rewritten back to "one lemma away" without reddening. The forbidden list
+# is the retired blame: the phrases this def used to carry, which would read to the next agent as a
+# current claim (the P-GAPFIX failure mode).
+CODECLAWS_GAP_TOKENS = ["g1CodecZ_laws", "bytesNatBE_eq_natToBytesBE", "SEVEN OF SEVEN",
+                        "eipShape", "toEip_one", "curveSurface", "bytesNatBE_ne_natToBytesLE",
+                        "eipShape_infield_bites", "CLOSED BY P-CODECLAWS", "discrete log"]
+CODECLAWS_GAP_FORBIDDEN = ["has no witness at any codec", "proved NOWHERE", "no file proves",
+                           "one byte-bridge lemma away", "not known to be satisfiable"]
 GAP_G2 = ("gap_g2_no_fp2_model", ["Eip2537.Holds"], G2_GAP_TOKENS, G2_GAP_FORBIDDEN)
 ASSUMPTION = ("assumption_dP36a", ["Eip2537.Holds"], ASSUMPTION_TOKENS, ASSUMPTION_FORBIDDEN)
 
@@ -189,12 +202,18 @@ REGISTRY = [
         # gap_holds_unexhibited above.
         "field": "lowering_equivalence",
         "kind": "theorem",
+        # P-CODECLAWS: the seventh leg landed, so 'G1CodecLaws' moved from the gap record into the
+        # EXHIBIT token list - the CONCLUSION of loweqBundleCore has to name it now, and a bundle
+        # that drops the leg reddens (see conclusion_of below for why the conclusion and not the
+        # binder list). The gap record stays, as a closed record in the style of
+        # gap_holds_unexhibited, and its body-only tokens now name what CLOSED it, not what blocked
+        # it. The forbidden list is the retired blame.
         "exhibit": ("loweqBundleCore",
-                    ["SupportedS", "DeploymentW", "EnvAgrees", "Eip2537.Holds",
+                    ["SupportedS", "DeploymentW", "EnvAgrees", "Eip2537.Holds", "G1CodecLaws",
                      "SideConditions", "WorldLocal"]),
         "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION,
-                 ("gap_g1codecLaws_unexhibited", ["G1CodecLaws"],
-                  ["bytesNatBE", "natToBytesBE", "eipShape", "toEip_one"], [])],
+                 ("gap_g1codecLaws_unexhibited", ["G1CodecLaws"], CODECLAWS_GAP_TOKENS,
+                  CODECLAWS_GAP_FORBIDDEN)],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -675,6 +694,29 @@ def hypothesis_count(stmt):
     return max(0, len(split_top(body, [ARROW, "->"])) - 1)
 
 
+def conclusion_of(body):
+    """The CONCLUSION of a declaration: binders and proof term dropped.
+
+    WHY THIS EXISTS (P-CODECLAWS, the second gate defect P-LOWEQ left behind). The exhibit test
+    asked whether a token occurs anywhere in the declaration's text - and a declaration's text
+    includes its BINDER LIST and its proof term. So a joint exhibit could have a conjunct gutted
+    to 'True' and stay green: 'loweqBundleCore (product : PairingProduct)
+    (hh : Eip2537.Holds curveSurface.E.g1 ...) : ... (and) True (and) ...' still mentions
+    'Eip2537.Holds' in the binder 'hh', and 'mentions' is a word-boundary search over the whole
+    body. A gutted conjunct is the individually-inhabited-jointly-empty failure (R-60 S1) wearing
+    the exhibit's own clothes: the exhibit is supposed to be the CONJUNCTION, and the conjuncts
+    are the conclusion.
+
+    WHAT THIS DOES NOT BUY, stated rather than hidden: it pins that each token appears in the
+    conclusion, not that it appears as a top-level conjunct, and not that the conjunct is the
+    right proposition. A conjunct replaced by a DIFFERENT proposition that happens to name the
+    same token still passes, and no text gate can see that - only a proof is a semantics check.
+    """
+    stmt = split_first(body, ":=")[0]
+    _binders, concl = split_first(stmt, ":")
+    return concl if concl else body
+
+
 def check(root):
     def stripped(rel):
         p = root / rel
@@ -737,11 +779,13 @@ def check(root):
                 problems.append("%s: JOINT EXHIBIT MISSING - %s is not declared in %s"
                                 % (field, dname, GATES))
                 continue
-            missing = [t for t in toks if not mentions(body, t)]
+            concl = conclusion_of(body)
+            missing = [t for t in toks if not mentions(concl, t)]
             if missing:
-                problems.append("%s: EXHIBIT IS NOT JOINT - %s never mentions %s, so the "
-                                "bundle is certified by halves and not by one statement "
-                                "(R-60 S1)"
+                problems.append("%s: EXHIBIT IS NOT JOINT - %s never mentions %s IN ITS "
+                                "CONCLUSION, so the bundle is certified by halves, or by a "
+                                "binder, or by a gutted conjunct that survives on its binder "
+                                "alone (R-60 S1; P-CODECLAWS)"
                                 % (field, dname, ", ".join(repr(m) for m in missing)))
         elif not entry.get("gaps"):
             problems.append("%s: registered with neither an exhibit nor a gap" % field)
@@ -788,10 +832,12 @@ def check(root):
                             "bundle is asserted in prose and not proved as one conjunction"
                             % (dname, GATES))
             continue
-        missing = [t for t in toks if not mentions(body, t)]
+        concl = conclusion_of(body)
+        missing = [t for t in toks if not mentions(concl, t)]
         if missing:
-            problems.append("REFUTATION IS NOT JOINT - %s never mentions %s, so the emptiness "
-                            "is certified by halves and not by one statement (R-60 S1)"
+            problems.append("REFUTATION IS NOT JOINT - %s never mentions %s IN ITS CONCLUSION, "
+                            "so the emptiness is certified by halves and not by one statement "
+                            "(R-60 S1; P-CODECLAWS)"
                             % (dname, ", ".join(repr(m) for m in missing)))
     spec_problems, spec_certified = spec_bundle_problems(root)
     problems += spec_problems

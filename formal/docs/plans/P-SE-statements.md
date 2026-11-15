@@ -519,28 +519,36 @@ it lands:
 | 'wrap_of_arm_run' | 'stop_run_is_neither_return_nor_revert' builds a real dispatcher run through the transport shape | 'prologue_write_is_observable' |
 | the two-outcome conjunct is a real constraint | 'cdWellFormed_is_accepted' gives the accepting calldata | 'stop_run_is_neither_return_nor_revert' - a 'stop' run is neither return nor revert, so 'only_two_outcomes' can fail |
 | the selector hypothesis is a real constraint | 'wrong_selector_calldata_fails_hsel' | 'wrong_selector_reverts_at_witness' |
-| the headline bundle is jointly inhabited | 'CurveSurface.loweqBundleCore' - 'SupportedS', 'DeploymentW', 'EnvAgrees', 'Eip2537.Holds', 'hside', 'hsel' and 'WorldLocal' in ONE term at one Surface | 'curveBundle_holds_leg_refuted_at_the_fixture', 'curveSupported_refuted_by_wrong_cs', 'curveHolds_refutes_constant_true' / '_false' |
+| the headline bundle is jointly inhabited | 'CurveSurface.loweqBundleCore' - 'SupportedS', 'DeploymentW', 'EnvAgrees', 'Eip2537.Holds', 'G1CodecLaws', 'hside', 'hsel' and 'WorldLocal' in ONE term at one Surface (eight of eight outside 'hc') | 'curveBundle_holds_leg_refuted_at_the_fixture', 'curveSupported_refuted_by_wrong_cs', 'curveHolds_refutes_constant_true' / '_false' |
 
-**THE ONE LEG NOTHING WITNESSES, and it is not the frame.** 'Midfall.Assumptions.G1CodecLaws' has
-SEVEN fields and, before this package, **no term of that type existed anywhere in the tree** - not at
-'g1CodecZ', not at the exponent codec, not anywhere. Five of the seven are theorems at the curve
-codec now ('CurveSurface.g1CodecZ_five_of_seven': 'eipRoundtrip' and 'ofEip_toEip' already existed,
-'compressedRoundtrip' is vacuous because 'g1CodecZ.ofCompressed? = fun _ => none', and both width
-clauses are existing size lemmas). The two that are not are 'eipShape' and 'toEip_one', and the
-reason is specific: they speak bytes in the 'Midfall.natToBytesBE' idiom while 'g1CodecZ.toEip' is
-'g1PointBytes' in the 'bytesNatBE' idiom, and the bridge 'bytesNatBE v n = natToBytesBE v n' is
-proved nowhere - 'Yul/Externals.lean:188' says the two encoders are kept independent ON PURPOSE.
-So the headline is proved and its 'hcodec' binder is still not known to be satisfiable. That is
-recorded as the named gap 'CurveSurface.gap_g1codecLaws_unexhibited' and the bundle gate now demands
-it, so it cannot be forgotten.
+**THE LEG THAT NOTHING WITNESSED - CLOSED BY P-CODECLAWS.** 'Midfall.Assumptions.G1CodecLaws' has
+SEVEN fields and, before P-LOWEQ, **no term of that type existed anywhere in the tree** - not at
+'g1CodecZ', not at the exponent codec, not anywhere. P-LOWEQ got five of the seven onto the board
+('CurveSurface.g1CodecZ_five_of_seven') and named the blocker for the other two: 'eipShape' and
+'toEip_one' speak bytes in the 'Midfall.natToBytesBE' idiom while 'g1CodecZ.toEip' is 'g1PointBytes'
+in the 'bytesNatBE' idiom, and the bridge 'bytesNatBE v n = natToBytesBE v n' was proved nowhere -
+'Yul/Externals.lean:188' keeps the two encoders independent ON PURPOSE. P-CODECLAWS proved the
+bridge, and it is TRUE WITH NO SIDE CONDITION: both encoders emit base-256 digits
+most-significant-first and both truncate to 'n' bytes, so they agree even on overflow. So
+'g1CodecZ' was the right codec after all, nothing was relaxed, and 'CurveSurface.g1CodecZ_laws' is a
+term of 'G1CodecLaws g1CodecZ' with all SEVEN fields ('propext', 'Quot.sound', 'Classical.choice' -
+the last inherited from the codec's discrete-log decoder). 'loweqBundleCore' gained the leg, so the
+headline's 'hcodec' binder is now known satisfiable at a real Surface, and the gap record
+'gap_g1codecLaws_unexhibited' is a CLOSED record naming what closed it. What is still not inhabited
+is the headline's own 'hc : LoweringCorrect S product', whose open leg is 'ir_refines' at
+'ShellModel.modelIr S' - see docs/REVIEW.md R-67 for what that needs and why 'L.main' being opaque is
+not the obstacle it appears to be.
 
-**A GATE DEFECT FOUND ON THE WAY, worth recording because it cost a cycle.** 'scripts/lean_grep.py'
-strips comments before searching for 'sorry', but it tests a single quote for a char literal BEFORE
-it tests a line comment, so an identifier containing a prime - 'obs'', 'hshell'' - opens a phantom
-char literal and the text after it stops being stripped. The first regenerated register listed two
-FALSE proof holes in a docstring three lines below the new proof, and the build stayed green. The
-workaround taken here is to avoid primed identifiers in 'Obligations.lean'; the defect itself is
-unfixed and is reported at docs/REVIEW.md R-66.
+**THE TWO GATE DEFECTS FOUND ON THE WAY, BOTH NOW FIXED.** (1) 'scripts/lean_grep.py' tested a quote
+for a char literal BEFORE it tested a line comment, so an identifier containing a prime - 'obs'',
+'hshell'' - opened a phantom char literal and the text after it stopped being stripped; the first
+regenerated register listed two FALSE proof holes in a docstring with the build green. Fixed in
+P-CODECLAWS: '--' is tested first and a quote only opens a char literal if a well-formed one matches,
+demonstrated by a 'sorry' in a docstring after a primed identifier going unlisted while a real one is
+still listed. (2) A joint exhibit could have a conjunct gutted to 'True' and stay green, because the
+bundle gate's 'mentions' test found the token in the BINDER list. Fixed in P-CODECLAWS: exhibit and
+refutation tokens are now matched against the declaration's CONCLUSION. Both fixes and their limits
+(including what still cannot be seen) are recorded at docs/REVIEW.md R-67.
 
 **And the standing limit, restated because it has now been measured twenty-six times:** deleting any
 falsification theorem named above leaves 'lake build' green and no gate in 'checks.sh' notices. No
