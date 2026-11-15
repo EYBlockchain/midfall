@@ -1,103 +1,104 @@
-# P-LOWEQ - restate `lowering_equivalence` about the GENERATED Yul. Scope correction.
+# P-LOWEQ - restate `lowering_equivalence` over `ShellModel.wrap` and PROVE it. Tier 2.
 
-Status: **HUMAN-DIRECTED.** The deliverable is the generator's Yul/Solidity lowering, not
-solc's output. `lowering_equivalence` currently quantifies over `(ir : YulObject)
-(hir : S.irCheck ir = true)` and calls `RunContractIR` — i.e. **solc's IR**. Restate it about
-`RunShell`/`RunVerifier` and **drop the `ir`/`irCheck` quantification entirely**.
+Status: **HUMAN-DIRECTED, option A.** The deliverable is the generator's lowering; the entry
+path must be modelled (it comes from Solidity), but **solc itself is not**. So restate over
+`ShellModel.wrap` — the in-tree Yul model of solc's dispatcher — and **prove the theorem**.
 
-## Why this is a scope change, not a weakening
+## Why `ShellModel.wrap` and not plain `RunShell`
 
-**`RunVerifier` already runs the generator's own Yul** (`Surface.lean:797`):
-```lean
-∃ V', RunCommitted c g (S.L.headGuard ++ S.bindLocals ++ S.L.main)
-    (initState W S.shellLayout H cd mem₀) V' obs.state obs.outcome
-```
-and `LoweringCorrect`'s headline fields are stated over `RunVerifier`. **The substance was
-always generator-scoped** — only the headline theorem's *shape* reached into solc.
+The generator emits **Solidity with inline `assembly` blocks** (`Halo2Verifier.sol`, 2665
+lines, `pragma solidity 0.8.30`, four `assembly ("memory-safe")` blocks). The Yul partials
+are the *body*; the selector dispatch, callvalue guard, ABI bounds and `loadimmutable` bindings
+come from Solidity. `RunVerifier` runs `headGuard ++ bindLocals ++ main` — **body only, no
+entry path** — so restating over it would prove a narrower claim than the objective wants.
+`ShellModel.wrap` (P-M8-SHELL) models the entry path **in Yul, in this tree**, with the three
+falsifications proved as theorems. That is Tier 2: real entry-path semantics, no solc.
 
-**`shell_unfolds` is the bridge**: its own comment says it is "the pin that makes `RunShell`
-and `RunVerifier` be about the same thing… a shell run is a verifier run at zeroed memory",
-stated as a real **equality**, not the sketch's `True`. So the restated theorem should be
-provable from `LoweringCorrect` + `shell_unfolds` — **the transport the sketch always claimed.**
+## The key lemma this needs
 
-## What to do
+`LoweringCorrect`'s fields are stated over `RunVerifier`. `ShellModel.wrap` runs the dispatcher
+whose `verifyProof` arm body is `armBody S = S.L.headGuard ++ S.bindLocals ++ S.L.main` —
+**the same program `RunVerifier` runs.** So the bridge is:
 
-1. **Restate `lowering_equivalence`** (`Obligations.lean:649`) with `RunShell` in place of
-   `RunContractIR`, dropping `(ir)`, `(irLyt)` and `(hir)`. Keep all three conjuncts and their
-   **asymmetry** exactly: soundness over `permissive (S.calls W product qAddr)` and ANY gas;
-   completeness over `S.calls` honest and `ofFun _ => 0`; the third conjunct's two-outcome
-   read-only claim. Keep `DeploymentW`, `Holds`, `EnvAgrees`, `G1CodecLaws`, `SupportedS`,
-   `hsel`, `hside`.
-   - **`RunShell` not `RunVerifier`** is the closer analogue: `RunContractIR` used
-     `callState W irLyt H cd`, and `RunShell` uses `callState W S.shellLayout H cd` — same
-     shape, no `mem₀`. If you prefer `RunVerifier`, say why and handle `mem₀`.
-2. **Prove it, or state precisely what is missing.** The sketch's own note says it is a
-   transport through `hc : LoweringCorrect S product`. If it does not go through, report the
-   exact gap — do not weaken a conjunct to make it close.
-3. **NON-VACUITY IS MANDATORY (D-P23).** Exhibit that the hypothesis bundle is **jointly
-   inhabited** at a real Surface: `DeploymentW ∧ Holds ∧ EnvAgrees ∧ G1CodecLaws ∧ SupportedS
-   ∧ hsel ∧ hside`. Note `curveSurface` now exhibits `Holds` at its own codecs, but the
-   `Holds` here is `S.E.g1`'s — check whether the fixture or the curve Surface can witness
-   the whole bundle. **If it cannot, that is the finding**, and it is the same vacuity class
-   as `hcd`. Also give a falsification: a calldata failing `hsel`, and a run that is neither
-   return nor revert.
-4. **Record the deviation** in `docs/plans/P-SE-statements.md` **in the same change** — the
-   standing rule. State plainly: the sketched theorem quantified over solc's IR; the landed
-   one quantifies over the generated Yul; the deployed-contract claim is **out of scope by
-   human decision**, not weakened.
-5. **Update the gates that pin the old shape.** `check_statement_fingerprints` and
-   `check_hypothesis_bundles` have entries citing `RunContractIR`/`irCheck` for this theorem;
-   they must move in the same commit or the register reddens.
-6. **Do NOT delete `ShellModel.lean` or `IRCheck.lean`.** They are real, proved work (
-   `irCheck_sound` proves Fable's conclusion unchanged); they simply leave the critical path.
-   Mark them `/-- Off the critical path since P-LOWEQ: about solc's IR, which is out of
-   scope. -/` rather than removing.
+> **for calldata that routes to `verifyProof` and passes the dispatcher's own ABI bounds, a
+> `wrap` run is a `RunVerifier` run** (up to the layout tie).
 
-## Also worth checking while you are in `Obligations.lean`
+**Prove that first.** It is the whole transport. Note `ShellModel.lean` already has
+`runOn`, `dispatcherCode`, `armBody` and the wrap-level corollaries to build on.
 
-**Does `LoweringCorrect` itself need any `ir`/`irCheck` field?** 14 mentions of
-`RunContractIR` exist in that file. If any of the 48 fields is stated over the IR rather than
-the shell, that field is also mis-scoped — list them and say which need the same treatment.
+## Then restate and prove
+
+1. **Restate `lowering_equivalence`** (`Obligations.lean:649`) over `ShellModel.wrap`, dropping
+   `(ir)`, `(irLyt)` and `(hir : S.irCheck ir = true)`. Keep all three conjuncts and the
+   **soundness/completeness asymmetry exactly**: soundness over `permissive` calls and ANY
+   gas; completeness over honest calls and `ofFun _ => 0`; the two-outcome read-only conjunct.
+   Keep `DeploymentW`, `Holds`, `EnvAgrees`, `G1CodecLaws`, `SupportedS`, `hside`.
+2. **Check whether `hsel` is still needed.** The selector check now lives INSIDE the modelled
+   dispatcher, so `bytesTake cd 0 4 = some fnSigVerifyProof` may be derivable from the run
+   rather than hypothesised. **If it can be derived, derive it** — fewer hypotheses is
+   stronger. If dropping it changes the claim's meaning, keep it and say why.
+3. **PROVE it.** The sketch calls it a transport through `hc : LoweringCorrect S product`. If
+   it does not close, name the exact gap — **do not weaken a conjunct to make it close.**
+
+## Non-vacuity is mandatory (D-P23), and this is the risk
+
+**Exhibit the hypothesis bundle as jointly inhabited** at a real Surface: `DeploymentW ∧ Holds
+∧ EnvAgrees ∧ G1CodecLaws ∧ SupportedS ∧ hside`. Note the trap: `curveSurface` exhibits `Holds`
+at *its* codecs, but the theorem needs it at `S.E.g1`. **If no Surface witnesses the whole
+bundle, that is the finding** — same class as the `hcd` vacuity and the `ir_refines`
+refutation. Also give falsifications: a calldata failing the selector, and a run that is
+neither return nor revert.
+
+## Record the scope decision
+
+* **`P-SE-statements.md`, same change**: the sketch quantified over solc's IR; the landed
+  theorem quantifies over the generated Yul plus an in-tree model of the Solidity entry path.
+  The link to solc's actual output is **out of scope by human decision (option A)**, not
+  weakened. Name Tier 3 explicitly so nobody thinks it was forgotten.
+* **Update the gates** pinning the old shape — `check_statement_fingerprints` and
+  `check_hypothesis_bundles` cite `RunContractIR`/`irCheck` for this theorem.
+* **Do NOT delete `ShellModel.lean` or `IRCheck.lean`.** `ShellModel` is now load-bearing;
+  `IRCheck` is the Tier-3 bridge, keep it and note it is off the headline path.
+* **Check the other 13 `RunContractIR` mentions in `Obligations.lean`** — if any of the 48
+  `LoweringCorrect` fields is stated over the IR rather than the shell, list it.
 
 ## Constraints
 
-* **This is a scope change authorised by the human. Do not use it as licence to weaken
-  anything else.** Every other statement stays as sketched.
-* **Never weaken a conjunct to make the proof close.** Report the gap instead.
+* **Never weaken any statement other than the authorised restatement.** Every other spec stays
+  as sketched.
 * **D-P23 both halves as theorems.** Falsification-deletion gap measured **25 times**.
 * **AFTER ANY SCRIPTED INSERT, ASSERT THE FILE GREW.**
 * **SORRY.md traps**: `sorry` in a string literal counts; comment edits shift `file:line`
   pins. Regenerate with `scripts/gen_sorry.sh`; three-way agreement.
-* **`Statements.lean` is FROZEN** — do not touch it or its `.sha256`. If the frozen text
-  mentions the IR, that is a separate question to report, not to edit.
+* **`Statements.lean` is FROZEN** — do not touch it or its `.sha256`.
 * **Gate changes must keep all 13 sections green and be shown to redden** (R-41).
+* **Never run `checks.sh` while a file is being edited** — stale oleans give bogus KAT
+  failures. Gate ~9–10 min.
 * **RAM (D-P31)**: `ram_guard.sh --selftest` first; `--proc-limit 6G --limit 24G`.
-* **Never run `checks.sh` while a file is being edited** — stale oleans produce bogus KAT
-  failures. Gate is ~9–10 min.
-* Do NOT edit Rust, `vendor/`, `ShellModel.lean` or `IRCheck.lean` bodies. Do NOT git add or
-  commit. Leave no scratch. **Report back even if stuck.**
+* **Durability**: land incrementally, keep the tree green, interim report after the key lemma.
+* Do NOT edit Rust, `vendor/`, `ShellModel.lean` or `IRCheck.lean` **bodies** (adding lemmas is
+  fine), and do NOT touch `Halo2/Exec/Accumulator.lean`, `Lowering/Accumulator.lean` or
+  `scripts/kat_gate.py` — another agent owns those. Do NOT git add or commit. No scratch.
 
 ## Environment
 
 Repo `/Users/julian/midfall`, branch `formal/baseline`, tag `formal-baseline-v1` at `df7e607`.
-Build green at **5215 jobs**, 125 modules; `checks.sh` green: **44 tracked sorries**, 1317 KATs
-across 93 files, 235 fragments, 30 pins, Statements hash OK.
-**Another agent is working in `Halo2/Exec/Accumulator.lean`, `Lowering/Accumulator.lean` and
-`scripts/kat_gate.py` — do not touch those three files.**
+Build green at **5215 jobs**; register **42** (another agent is mid-flight, so expect it to
+move again). `checks.sh` sections: 235 fragments, 1317 KATs, 30 pins, Statements hash OK.
 
-Read first: `Midfall/Lowering/Obligations.lean:600-700` (the current statement and its long
-docstring, which enumerates exactly why it is not yet provable), `Midfall/Lowering/Surface.lean
-` (`RunVerifier` :797, `RunShell` :742, `RunContractIR` :735, `shell_unfolds`, `DeploymentW`),
-`Midfall/Instances/SurfaceFixture.lean` (what the fixture exhibits), sketch section R,
-`docs/plans/P-SE-statements.md`, `docs/PLAN.md` lines 17 and 70 (the trusted-base split).
+Read first: `Midfall/Yul/ShellModel.lean` (**`wrap`, `armBody`, `runOn`, `dispatcherCode`, the
+three falsifications**), `Midfall/Lowering/Obligations.lean:600-700` (the current statement
+and its long docstring enumerating why it is not yet provable), `Midfall/Lowering/Surface.lean`
+(`RunVerifier` :797, `RunShell` :742, `RunContractIR` :735, `shell_unfolds`, `DeploymentW`),
+`Midfall/Instances/SurfaceFixture.lean`, sketch section R, `docs/PLAN.md` lines 17 and 70.
 
 ## Acceptance
 
 - `lake build` and `bash scripts/checks.sh` green.
-- `lowering_equivalence` restated over the generated Yul with no `ir`/`irCheck` quantifier.
-- **Proved, or the exact remaining gap named.**
-- Non-vacuity exhibit + falsification for the new hypothesis bundle.
-- Deviation recorded in `P-SE-statements.md` in the same change; gates updated.
-- **Required finding**: with the solc hop descoped, what is the honest remaining distance to a
-  *proved* `lowering_equivalence` about the generator? The prior estimate was 6–12 sessions of
-  M8; if the answer is now single-digit, say so plainly.
+- The key lemma (`wrap` run ≡ `RunVerifier` run on routed, bounds-passing calldata) landed.
+- **`lowering_equivalence` restated over `ShellModel.wrap` and PROVED**, or the exact
+  remaining gap named with the same precision as the `ir_refines` refutation.
+- Non-vacuity exhibit + falsifications, or a plain statement that the bundle is uninhabited.
+- Deviation recorded; gates updated.
+- **Required finding**: is the headline theorem now closed? If yes, what does the project
+  still owe before `lowering_correct` can be stated for a real Surface?
