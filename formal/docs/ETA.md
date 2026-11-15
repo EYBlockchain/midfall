@@ -511,6 +511,33 @@ the direction that made a spec easier, not harder.
 
 **M8 is now being built per Fable's plan (D-P38), not assumed.** Revised M8: **6-12 sessions**.
 **Register: 52.** M-C remaining: Accumulator 12, Qvm+QvmFold 9, calldata residue 3 (behind stage 6).
+### R14 - round 147, after P-M8-IRCHECK. Fable's checker is built and sound - and its relation is too narrow.
+
+- **`IRCheck.lean` landed: 839 lines, 19 theorems, zero sorries**, with `irCheck_sound` proving
+  Fable's stated `ObsEquiv` conclusion **unchanged**. Both section 7 deliverables now exist.
+- **The 19th recorded-blocker-was-wrong**: the brief asserted `ObsEquiv` needs
+  `dialect_deterministic`. It does not — `ObsEquiv` is existence-to-existence in both directions, so
+  a per-run matching discharges the forall. **Second time in this tree.** The agent accepted its own
+  brief's premise for an hour before re-measuring it.
+- **The substitution guards measured out as independent**, not one guard with a consequence: dropping
+  table membership alone leaves the build GREEN, and dropping value-preservation alone also leaves it
+  GREEN. Only dropping both restores the blindness.
+- **`ir_refines` is NOT provable, and the reason is a limit in Fable's spec, not our implementation.**
+  The artifact cannot satisfy alpha-equivalence: solc duplicates every binding through a fresh
+  temporary and routes every abort through **declared helpers where the model inlines**. **An
+  inlining is a simulation, not a rename.** `artifact_alpha_self = TRUE` proves the matcher is not
+  broken.
+
+**M8 re-split from measurement: 1-2 (alpha-transport) + 2-4 (run leg) + 3-6 (render-to-artifact body
+equality).** D-P38's 6-12 stands, but the third item is now the dominant cost and is **bigger than
+M8's own file** — it is M3's golden equality lifted to the whole contract.
+
+**`M8-SCOPE`'s verdict refined, not overturned:** `ir_refines` is FALSE of the placeholder,
+UNPROVABLE-BUT-NOT-FALSE of the sound checker, and provable-in-shape only after transport + body
+equality.
+
+**Register: 52. Both Fable-named M8 files exist.** The next question is a spec question, not a
+coding question.
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
