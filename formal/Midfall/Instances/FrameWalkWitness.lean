@@ -283,24 +283,36 @@ theorem vk_is_free : "vk" ∈ freeNames armBlk := by native_decide
 theorem bindLocals_binds_nothing :
     Midfall.Instances.CurveSurface.curveSurface.bindLocals = [] := rfl
 
-/-- **AND THE DISPATCHER SIDE IS INHABITED WHERE THE SHELL SIDE MAY NOT BE.**
+/-- **AND THE DISPATCHER SIDE IS INHABITED WHERE THE SHELL SIDE IS EMPTY.**
     'unroutable_calldata_reverts' (ShellModel.lean:1360) gives, for ANY arm body and any frame whose
     calldata is shorter than four bytes, a run of 'dispatcher body' ending 'some (.revert, [])', and
     'size_test_skips_the_switch_on_empty_calldata' pins the hypothesis at the empty calldata by 'rfl'.
-    So the dispatcher reaches a revert observation without ever entering the arm. This is the shape of
-    the obstruction, stated as the two facts that ARE proved and the one that is not. -/
+    So the dispatcher reaches a revert observation without ever entering the arm. The inversion this
+    record used to name as the missing half is now proved, one file over, and it went the refutation
+    way - so the two facts above are no longer the shape of an obstruction but the two halves of a
+    REFUTATION. -/
 def gap_runShell_uninhabited_candidate : String :=
-  "CANDIDATE REFUTATION, NOT LANDED. The arm RunShell runs at curveSurface has 61 free identifiers "
-    ++ "(armHasFreeIdentifiers, vk_is_free) and nothing binds them (bindLocals_binds_nothing), while "
-    ++ "YulSemantics.Run starts the variable environment at [] (BigStep.lean:366) and Step.var needs "
-    ++ "VEnv.get V x = some v. IF that yields 'no RunShell run exists' - which needs an inversion of "
-    ++ "the Step derivation through headGuard (which passes, since mload(64) is 0 in callState) and "
-    ++ "the eight emitted funDefs (no-ops) down to the first executed statement of main, and that "
-    ++ "inversion is NOT proved here - then RunShell S W H [] c g is empty while wrap S W H [] c g is "
-    ++ "inhabited by unroutable_calldata_reverts, so ObsEquiv FAILS and LoweringCorrect.ir_refines at "
-    ++ "ShellModel.modelIr S is REFUTED rather than unprovable, for a reason that has nothing to do "
-    ++ "with the frame. The fourth refuted headline hypothesis would be that one. It is reported, not "
-    ++ "claimed: the missing half is the inversion, and no theorem in this file asserts it."
+  "CLOSED BY P-RUNSHELL, AS A REFUTATION AND NOT A GAP. The inversion landed: RunShell curveSurface "
+    ++ "W H cd c g is EMPTY for every world, hash, calldata, call relation and gas oracle "
+    ++ "(RunShellInversion.no_arm_run, runShell_curveSurface_empty). The arm's first executed "
+    ++ "statement reads vk, EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH_WORD, nothing binds them "
+    ++ "(armHasFreeIdentifiers, vk_is_free, bindLocals_binds_nothing), YulSemantics.Run starts the "
+    ++ "variable environment at [] (BigStep.lean:366) and Step.var needs VEnv.get V x = some v. The "
+    ++ "head guard is NOT the obstruction: guard_forced proves it passes and binds nothing, and "
+    ++ "guard_is_not_the_obstruction exhibits a run of [head guard; revert(0,0)] from the same frame, "
+    ++ "while bound_read_has_a_run proves the read has a derivation once vk IS bound. So the emptiness "
+    ++ "is the binding, not the frame, the builtin, or every program. CONSEQUENCE: ObsEquiv fails "
+    ++ "(obsEquiv_wrap_runShell_fails), so LoweringCorrect.ir_refines at ShellModel.modelIr "
+    ++ "curveSurface is REFUTED (ir_refines_refuted_at_curveSurface) and LoweringCorrect curveSurface "
+    ++ "product has NO instance for ANY product (curveSurface_not_LoweringCorrect) - the fourth "
+    ++ "refuted headline hypothesis in this project, and lowering_equivalence is vacuous at the curve "
+    ++ "Surface. STILL OPEN, and it is a spec question rather than this one: Surface.bindLocals cannot "
+    ++ "close the program. A Yul function is not a closure - Step.callOk binds the parameters and the "
+    ++ "zeroed return slots and nothing else (BigStep.lean:189) - and six of the eight emitted helpers "
+    ++ "read names their own signature does not provide (RunShellInversion.helperOwnFree_count_ok), so "
+    ++ "no legal value of bindLocals makes the arm a closed program. The fix belongs in the emitter "
+    ++ "(inline the contract-level constants, as solc does) or in the spec (a bindInside-style "
+    ++ "transform), not in this fixture. The Surface was NOT edited and RunShell was NOT changed."
 
 
 #print axioms Midfall.Instances.FrameWalkWitness.mainFrameClean
