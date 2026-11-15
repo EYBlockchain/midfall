@@ -240,7 +240,26 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       A real solc dispatcher does not satisfy the equality (it decodes ABI heads and
       tests the selector first), so when M8 imports the via-ir object this pin must be
       restated as design2 had it: the verifyProof ARM of shell runs headGuard ++
-      bindLocals ++ main from the dispatcher memory. Recorded, not hidden. -/
+      bindLocals ++ main from the dispatcher memory. Recorded, not hidden.
+
+      P-M8-SHELL (docs/plans/P-M8-SHELL.md, D-P38) BUILT THAT DISPATCHER: Midfall/Yul/ShellModel.lean
+      models solc's entry path - memoryguard prologue, calldatasize test, selector switch on
+      0x1e8e1e13, the callvalue check, the ABI offset/length bounds checks, and the vk and
+      quotientEvaluator bindings from the immutables - and ShellModel.wrap runs it in this record's
+      own frame. WHAT CHANGED AND WHAT DID NOT: this pin is UNCHANGED and stays true, because it is
+      about `shell`, which is still the head-guard model. What the new file makes decidable is the
+      difference: `ShellModel.oldShell body` is exactly head-guard-then-body (what `shell.codeBlock`
+      equals by this pin), and `ShellModel.wrong_selector_reverts` proves the dispatcher reverts on a
+      calldata carrying an unroutable selector while
+      `ShellModel.old_shell_runs_the_verifier_on_the_same_frame` proves this model RETURNS on the
+      same frame and the same body. The two halt kinds differ in `Bridge.ObsView`'s `halted` field,
+      so `RunShell` and `ShellModel.wrap` are observably different programs - which is the sentence
+      `shell_unfolds` used to only imply. Restating this pin to the ARM form (design2's wording) is
+      `IRCheck.lean`'s job, not this file's: the checker's theorem has to cite `wrap`, and changing a
+      registered pin's statement moves the fingerprint registry in the same commit (D-P27). Until
+      then the honest reading is: `shell_unfolds` pins the MODEL, `ShellModel.wrap` is the
+      DISPATCHER, and the gap between them is a theorem in ShellModel.lean rather than a
+      paragraph here. -/
   shell : YulObject
   /-- The shell runtime layout: code, the data maps, and the immutable map that
       loadimmutable reads (EVMExec.lean:793 routes it through env.immutable, which is

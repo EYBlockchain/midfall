@@ -45,6 +45,7 @@
 import Midfall.Lowering.Surface
 import Midfall.Instances.SurfaceFixture
 import Midfall.Yul.ImportSolcIR
+import Midfall.Yul.ShellModel
 
 namespace Midfall.Instances.ImportedIR
 open Midfall Midfall.Halo2 Midfall.Lowering Midfall.Generator Midfall.Yul Midfall.Yul.Bridge
@@ -410,5 +411,62 @@ def irCheckAgreesWithRun_ok : Bool :=
 #print axioms Midfall.Instances.ImportedIR.runContractIR_inhabited
 #print axioms Midfall.Instances.ImportedIR.importedRuntime_runs
 #print axioms Midfall.Instances.ImportedIR.witness_freePointer_is_the_ir_value
+
+/-! ### P-M8-SHELL: the dispatcher model against the pinned artifact -/
+
+/-- **THE REQUIRED FINDING, STATED AT THE PINNED `ir`.** PLAN section 7 line 228's
+    `irCheck ir L = true -> ObsEquiv ir (ShellModel.wrap L)` is now a `Prop` over the
+    object this file imported: the left side is `RunContractIR` on `verifierIr`, the
+    right side is `ShellModel.wrap` on the same Surface, world, hash, layout, calldata, call
+    relation and gas oracle. The example above this section states the same shape with
+    `RunShell`; the difference is not cosmetic - `ShellModel.lean` proves that a
+    wrong-selector calldata reverts in `wrap` and RUNS THE VERIFIER in `RunShell`, so
+    with `RunShell` on the right the statement was refutable, and with `wrap` it is not. -/
+example : Prop :=
+  forall (c : ExternalCalls) (g : ExternalGas),
+    ObsEquiv (RunContractIR irSurface irW keccak256 verifierIr irLyt irCd c g)
+      (Midfall.Yul.ShellModel.wrap irSurface irW keccak256 irCd c g)
+
+/-- **AND EXHIBITED, NOT MERELY STATED.** On the one input the tree runs the artifact at - empty
+    calldata - the imported runtime and the dispatcher model produce the SAME observation: prologue,
+    size test does not fire, fall-through `revert(0,0)`, frame rolled back. `irSt2` and
+    `ShellModel.revertState (ShellModel.stAfterPrologue irSt0)` are the same state by `rfl`,
+    which is the strongest form of agreement available without a determinism theorem
+    (`dialect_deterministic` is still a registered hole, so `ObsEquiv` itself cannot be
+    proved from one pair of runs - it needs `every` run on each side to be matched).
+
+    What this closes: `ir_refines` is no longer refutable at the exhibited input. What it does
+    NOT close: a calldata carrying the `AUTHORIZED_VK()` getter selector, or a well-formed
+    `verifyProof` calldata, has no exhibited run on either side - the run leg (M-C) is still
+    the prerequisite for the equivalence itself. -/
+theorem model_and_artifact_agree_on_the_unroutable_input (c : ExternalCalls) (g : ExternalGas) :
+    ∃ obs₁ obs₂, RunContractIR irSurface irW keccak256 verifierIr irLyt irCd c g obs₁ ∧
+      Midfall.Yul.ShellModel.wrap irSurface irW keccak256 irCd c g obs₂ ∧
+        obs₁.view = obs₂.view := by
+  have hsize : Midfall.Yul.ShellModel.sizeTestValue irSt0 = 0 := rfl
+  obtain ⟨st', hrun, hhr⟩ :=
+    Midfall.Yul.ShellModel.unroutable_calldata_reverts
+      (body := Midfall.Yul.ShellModel.armBody irSurface) (st₀ := irSt0) (c := c) (g := g) hsize
+  refine ⟨⟨committedState irSt0 irSt2, .halt⟩, ⟨committedState irSt0 st', .halt⟩,
+    ⟨verifierRuntime, [], irRuntime_of_import, ⟨irSt2, importedRuntime_runs c g, rfl⟩⟩,
+    ⟨[], ⟨st', hrun, rfl⟩⟩, ?_⟩
+  show (Obs.view ⟨committedState irSt0 irSt2, .halt⟩) = Obs.view ⟨committedState irSt0 st', .halt⟩
+  simp [Obs.view, committedState, hhr, irSt2, HaltKind.commits, readBytes]
+
+/-- The gate for the exhibit above: the model's dispatcher on the `irSurface` frame really is
+    a three-statement program whose fall-through is the same revert the artifact reaches, and the
+    frame it runs in is the frame this file exhibits - same free-memory pointer after the prologue,
+    same byte at `0x5f`. -/
+def shellModelAtImported_ok : Bool :=
+  (Midfall.Yul.ShellModel.dispatcherCode irSurface).length == 3 &&
+    Midfall.Yul.ShellModel.sizeTestValue irSt0 == 0 &&
+    Midfall.Yul.ShellModel.selectorWord irSt0 == 0 &&
+    irSt2.halted.map (fun h => h.1) == some HaltKind.revert &&
+    (irSt2.halted.map (fun h => h.2)) == some [] &&
+    Midfall.Yul.Builtins.freePtr (Midfall.Yul.ShellModel.stAfterPrologue irSt0) ==
+      Midfall.Yul.Builtins.freePtr irSt1 &&
+    (Midfall.Yul.ShellModel.stAfterPrologue irSt0).memory 95 == irSt1.memory 95
+
+#eval shellModelAtImported_ok               -- expect true
 
 end Midfall.Instances.ImportedIR

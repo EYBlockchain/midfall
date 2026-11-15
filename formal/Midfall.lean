@@ -106,6 +106,7 @@ import Midfall.Yul.Contracts
 import Midfall.Yul.Bridge
 import Midfall.Yul.Builtins
 import Midfall.Yul.ImportSolcIR
+import Midfall.Yul.ShellModel
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements

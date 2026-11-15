@@ -6,6 +6,76 @@ work package lands.** Normative plan is `PLAN.md`; proof programme is
 `design.md`; estimates and velocity are `ROADMAP.md`. This file is the running narrative of
 **where we actually are**, newest first.
 
+## Round 63 - P-M8-SHELL: the dispatcher Fable asked for exists, and it reverts
+
+`Midfall/Yul/ShellModel.lean` (**new: 1,499 lines, 46 theorems, 69 definitions, ZERO sorries**),
+plus 58 lines in `Instances/ImportedIR.lean` and a doc-comment pass on `Lowering/Surface.lean`.
+Tree: 5213 jobs green (was 5212), **52 tracked sorries unchanged**, 13 gate sections.
+D-P38 authorized it; R-65 is the finding it answers.
+
+* **The four specified behaviours are all modelled, from the vendored AST (D-P30):** the
+  `mstore(0x40, memoryguard(128))` prologue, the `iszero(lt(calldatasize(), 4))` test, the selector
+  switch on `0x1e8e1e13` (plus the artifact's `AUTHORIZED_VK()` case at `0x42b72597`), the callvalue
+  check, thirteen ABI offset/length bounds statements in solc's own order, and the
+  `vk` / `quotientEvaluator` bindings from `loadimmutable`. Cross-checked against the pinned artifact
+  by `model_prologue_is_the_artifacts`, `model_size_test_is_the_artifacts`, `artifact_case_labels` and
+  `model_selector_is_the_generators` - the prologue and the size test are **statement-for-statement
+  identical** to the imported runtime under `SyntaxEq`, and the selector is tied to
+  `Generator.fnSigVerifyProof` rather than re-typed.
+* **The three falsifications are theorems, not assertions** - `wrong_selector_reverts`,
+  `nonzero_callvalue_reverts`, `truncated_bytes_reverts`, each a built `Step` derivation ending in
+  `some (.revert, [])`, each with its witness calldata as a `def` and its D-P23 satisfiability
+  corollary, each with the load-bearing refutation
+  (`falsification_hypotheses_are_load_bearing`: at a well-formed calldata every test the theorems
+  name answers the other way). A fourth derivation, `bindLocals_read_the_pinned_immutables`, runs
+  the two `loadimmutable` statements and puts the pinned keys' words in `vk` and
+  `quotientEvaluator` - added after a control that swapped the two bindings survived every gate,
+  which is the failure mode this project's gates exist for and the reason the control is reported.
+  `#print axioms` on all three: `[propext, Quot.sound]` - no
+  `sorryAx`, no `native_decide`, no oracle.
+* **The first one is the bug this package existed to fix, and it is now a pair of theorems.**
+  `ShellModel.oldShell body` is what `shell_unfolds` pins (head guard, then program). On the SAME
+  frame and the SAME body: `wrong_selector_reverts` says the dispatcher reverts,
+  `old_shell_runs_the_verifier_on_the_same_frame` says the old model **returns**, and
+  `old_and_new_differ_in_the_observable_halt` says the two halt kinds differ in the
+  `ObsView.halted` field - i.e. at exactly the level `ObsEquiv` compares at. **`shell_unfolds` is
+  UNCHANGED and stays true**: it is a pin about `shell`, which is still the head-guard model. It is
+  a registered fingerprint token (`check_statement_fingerprints.py:121`) and a duplicate-fact pin,
+  so restating it to design2's ARM form moves the registry in the same commit as the statement -
+  which is `IRCheck.lean`’s commit, because its theorem is the thing that has to cite `wrap`.
+* **REQUIRED FINDING: yes, it states.** `ObsEquiv (RunContractIR … ir …) (ShellModel.wrap …)`
+  elaborates - `wrap` was given `RunShell’s` exact arity for that reason - and it is **exhibited**,
+  not merely typechecked: `model_and_artifact_agree_on_the_unroutable_input` produces one
+  `ObsView` that both the imported runtime and the dispatcher model reach on the empty-calldata
+  input `ImportedIR` already runs. So `ir_refines` is no longer refutable at the exhibited input,
+  and `IRCheck.lean` can be briefed. What is still missing for the equivalence itself is named in
+  `ImportedIR`: `dialect_deterministic` is a registered hole, so one agreeing pair does not give
+  `ObsEquiv’s` forall, and there is still no accepted-calldata run on either side (the run leg).
+* **A recorded blocker re-measured and found to be a tactic failure, not a structural one (19th).**
+  `M8-SCOPE.md’s` claim that option (B) was "not estimable; months" was wrong for the reason D-P38
+  gave, and this package is the measurement: the dispatcher model plus its three falsifications is
+  **one session**, not a compiler verification. The estimate to correct is this file’s own
+  `M8-b: 2-4 sessions` - the dispatcher-model half of that landed in 1; the half the note called
+  cheap ("re-deriving every per-partial pre-condition against dispatcher-written memory") is still
+  unpriced because still no partial spec exists to re-derive.
+* **`IrCheckBlindness` re-read against Fable’s definition, as instructed.** Its `mutAlpha` row is
+  illusory - a full alpha-rename is what the specified checker must ACCEPT. `mutBroken` (planted
+  rename, call site left alone) is the one mutant Fable’s "planted rename must fail" demands, and
+  the current placeholder already rejects it. The three that REMAIN counterexamples under the
+  intended definition are `mutRevertLen`, `mutDeleteInside` and `mutCreation`: none is an
+  alpha-rename, all three change observables or the deployed image, and a checker that is
+  "alpha-equivalence modulo constant substitution" must be told **which** substitutions are legal -
+  if it permits arbitrary literal substitution it re-admits `mutRevertLen’s` `revert(p,0)→revert(p,32)`
+  and is blind again in exactly the same place. That is a design constraint on `IRCheck.lean`, not a
+  refutation of it. `mutFold` (`add x 0`) is the interesting edge: it is not an alpha-rename but it
+  IS observationally equivalent, so a conservative checker rejecting it is correct-but-incomplete
+  rather than wrong.
+
+**Where the headline stands:** M8 is now one file from being statable end-to-end. `IRCheck.lean` is
+briefable: it has a `wrap` to cite, a pinned `ir` to check, a decidable target (the artifact’s
+named-helper shape is where it must be permissive, and `ShellModel’s` header records exactly where
+the model inlines what the artifact names), and one exhibited input where the property holds.
+
 ## Round 62 - the repairs landed, and two of them did better than repair
 
 `P-REV-FIX` applied all ten R-58 findings plus G2 (`8ed429d`). Tree: 5143 jobs green, 100
