@@ -344,3 +344,94 @@ cross-checks in this tree are 'Bool' gates read by 'kat_gate' rather than theore
 that could be stated as theorems (everything through the file's own matcher, which does reduce) are
 theorems; the two that hinge on 'stmtsBeq' ('irCheckCore_witness_gate', 'witness_creation_ok_gate')
 are gates with '#eval' lines.
+
+
+## P-MC-ACC - the twelve Accumulator.lean holes, checked against section F
+
+Statement authority: docs/plans/P-SE-semantic-equivalence.md section F, lines 904-1091. Each of the
+twelve implemented statements was read against its sketch BEFORE being proved, which is the step
+this file exists to force. Result: **no drift found in this section** - the fourth consecutive
+package that looked, and the first that found nothing to restore. That is recorded as a measurement,
+not an assumption; the per-hole verdict is below.
+
+| hole | sketch | implemented form found | verdict |
+|---|---|---|---|
+| decodeAcc_injective | F:931 | identical (accWords form, hrt/hone/hnodup all present) | matched; NOT proved (out of room), statement unchanged |
+| decodeAcc_encode | F:952 | identical except List.Sorted -> namesAscending (recorded at :52 above) | matched; NOT proved, statement unchanged |
+| decodeAcc_encode_noNeg | F:972 | identical, same binder list plus hneg | matched; NOT proved, statement unchanged |
+| decodeAcc_encode_pointPair | F:986 | identical PLUS hfb : fb.size = 0, and no tail/hsorted/hnames binders | matched - the strengthening is the R-26 third-defect repair already recorded in the file header; NOT proved, statement unchanged |
+| MSMKZG.eval_scale | F:998 | identical | **proved as stated** |
+| MSMKZG.eval_addMsm | F:1000 | identical, both lockstep hypotheses present | **proved as stated** (only hm is consumed: List.zip_append takes a DISJUNCTION, so one lockstep equality suffices; hn is kept because the sketch carries it and dropping a sketched hypothesis is the drift class - annotated at the site) |
+| batched_complete | F:1012 | identical | **proved as stated** |
+| batched_atMostOneRoot | F:1019 | identical | **proved as stated** |
+| dualMsm_check_iff_contract | F:1032 | identical, both inverse pins present | **proved as stated** |
+| exists_zmod_smul_generator | F:1038 | identical | **proved as stated** |
+| contractRefAcceptsAcc_none | F:1068 | identical (the sketch's untyped binders typed out, which autoImplicit = false requires) | **proved as stated** |
+| contractRef_acc_complete | F:1076 | identical | **proved as stated** |
+
+**Tally: 8 provable as stated, 0 needing restoration, 4 not attempted (all four decodeAcc-family).**
+
+### The two blockers this package was told to re-measure. Both were false.
+
+- **"The decodeAcc family is blocked on the -s elaboration."** NOT A BLOCKER. The claim is plan
+  line 112 ("decodeAcc's -s at Accumulator.lean:987 is unverified: #check @Midfall.Halo2.decodeAcc
+  first") and index line 351 lists "decodeAcc -s elaboration" as the risk. #check resolves it and
+  the module builds, so the note is from before the file had ever been built. What actually blocks
+  the four holes is byte-level mathematics that does not exist anywhere in the tree:
+  loadAccPoint_flag0/1, decodeAccCoord_inj, encodeAccCoordWords_packingOk, biFromLimbs_biToLimbs,
+  and the natToBytesBE 16-48-16-48 frame lemma that makes a reconstructed (hi, lo) pair equal the
+  codec's toEip byte for byte. **Recorded as "I could not", per the rule R13 introduced - and the
+  next package should budget for the byte lemmas, not for an elaborator fight.**
+- **"dualMsm_check_iff_contract needs the run leg."** NOT A PREREQUISITE. The proved statement is
+  dualMsm_check_eq (decideBool_eq_true_iff plus toMul_eq_one_iff_zero, both one-liners) followed by
+  map_neg in the G2 slot and the two inverse pins hn and hs. Fourteen lines, no run, no execution
+  relation, no memory frame, no IRCheck, no ShellModel. The file's own docstring already preferred
+  this reading (attack.md's dualMsm_check entry, P3 over P2) and it was right. **Twenty-second
+  recorded blocker that turned out to be a missing lemma - and the second time in this tree that a
+  prerequisite inherited by a whole area was not a prerequisite at all** (the first is Bridge's
+  dialect_deterministic, recorded at R14).
+
+### Deviations this package introduced, and the new lemmas it added
+
+- No sketched statement was renamed, re-ordered or weakened. The new names are all NEW lemmas that
+  the holes consume, not restatements of sketched ones: MSMKZG.eval_eq_msmSpecific,
+  MSMKZG.wf_scale_fromBase, gsmul_zero / gsmul_one / gsmul_one_pt / gsmul_mul / gsmul_add /
+  gsmul_mul_gsmul / gsmul_nat, toMul_eq_one_iff_zero, dualMsm_check_eq, kzgAcc_check_eq,
+  batchedCheck_eq, MSMKZG.eval_init, and the private msmProd / foldl_dropZero /
+  msmSpecific_eq_msmProd / msmProd_append / msmProd_map_scale / zip_map_left / msmSpecific_one_left
+  machinery.
+- **Mathlib's Additive transport lemmas are not in this project's built surface.**
+  #check @Additive.ofMul_mul, @Additive.toMul_nsmul, @Additive.ofMul_zpow, @nsmul_succ,
+  @Fintype.card_univ, @Subgroup.coe_inj and @ZSubgroup.mem_zpowers_iff all report unknown, because
+  the lakefile builds only the Mathlib modules the tree already imports. The gsmul facts are
+  therefore proved in Accumulator.lean from add_smul / smul_add / smul_smul / zero_smul / one_smul
+  plus rfl-level structure eta on the Additive tags. Anyone tempted to cite the Mathlib names
+  should check they resolve first.
+- **exists_zmod_smul_generator is proved by counting through Fintype.ofFinite**, derived from
+  Nat.card G1 = p <> 0 (an infinite type has Nat.card 0), with the pigeonhole step
+  Fintype.card_lt_of_injective_not_surjective. The zpowers/Set.univ route was abandoned because
+  Fintype.card_univ is not in the built surface.
+
+### D-P23 coverage actually claimed by this package, and the limit
+
+Witness AND falsification, both as theorems, for four of the eight claims proved:
+
+| claim | witness | falsification |
+|---|---|---|
+| MSMKZG.eval_scale | eval_scale_witness | eval_scale_falsifies (scale-by-0 changes a non-identity value, so the factor is not decoration) |
+| MSMKZG.eval_addMsm | eval_addMsm_witness | eval_addMsm_falsifies (a mismatched channel loses the other's term under the zip) |
+| exists_zmod_smul_generator | exists_zmod_smul_witness | exists_zmod_smul_needs_nontrivial (with the identity in place of g1 the analogous claim collapses the group) |
+| contractRefAcceptsAcc_none | instOfWords_witness | instOfWords_falsifies (a word at or above r rejects the whole array, in either position) |
+
+**NOT claimed:** dualMsm_check_iff_contract, batched_complete, batched_atMostOneRoot and
+contractRef_acc_complete have no witness/falsification pair in the tree. The exhibits were drafted
+(empty DualMSM passing every params, KzgAcc.trivial passing its own invariant, params with one
+inverse pin broken so the two sides of the iff come apart) and each needs delta+iota reductions of
+constructor applications - DualMSM.init.left.eval, KzgAcc.trivial.lhs.eval - that this session ran
+out of room to finish. They were removed rather than left commented out, because a comment is not a
+proof. contractRef_acc_complete additionally cannot have its bundle witnessed in this file at all:
+a VerifierEnv exhibit lives under Instances/, which D-P17 forbids here.
+
+**And the standing limit, restated because it has now been measured twenty times:** deleting any of
+the four falsification theorems above leaves lake build green and no gate in checks.sh notices. No
+coverage is claimed for the persistence of a falsification, only for its truth.

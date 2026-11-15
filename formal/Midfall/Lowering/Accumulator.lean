@@ -349,6 +349,194 @@ theorem decideBool_eq_true_iff {α : Type} {a b : α} (d : Decidable (a = b)) :
 section Msm
 variable {G₁ : Type} [Group G₁] [PrimeOrderWith G₁ p] [Module (ZMod p) (Additive G₁)]
 
+/-! #### The scalar-action and MSM-fold lemmas the two MSMKZG.eval holes need
+
+    All of it is forced by the shape of msmSpecific: a foldl over a filterMap of a
+    zip, with the group written multiplicatively (as the plan and the Rust do) and
+    the scalar action written additively (gsmul s Q = Additive.toMul (s • ofMul Q),
+    D-P1). The translation lemmas below are the only place that mismatch is paid
+    for, and each of them is rfl-level on the Additive transport: Mathlib's
+    Additive.ofMul_mul / toMul_nsmul family is NOT in this project's built surface
+    (the lakefile builds only the Mathlib modules the tree already uses, and
+    #check @Additive.ofMul_mul says so), so the facts are proved here from
+    add_smul / smul_add / smul_smul plus a rfl, rather than cited. -/
+
+/-- Zero acts trivially: 0 • Q = 1. This is what makes the filterMap in
+    msmSpecific (dropping zero coefficients, msm.rs:170) a semantic no-op. -/
+theorem gsmul_zero (Q : G₁) : gsmul (p := p) (0 : Fr p) Q = 1 := by
+  show Additive.toMul ((0 : ZMod p) • Additive.ofMul Q) = 1
+  rw [zero_smul]; rfl
+
+/-- One acts as the identity. -/
+theorem gsmul_one (Q : G₁) : gsmul (p := p) (1 : Fr p) Q = Q := by
+  show Additive.toMul ((1 : ZMod p) • Additive.ofMul Q) = Q
+  rw [one_smul]; rfl
+
+/-- Any scalar fixes the identity: c • 1 = 1. -/
+theorem gsmul_one_pt (c : Fr p) : gsmul (p := p) c (1 : G₁) = 1 := by
+  show Additive.toMul (c • Additive.ofMul (1 : G₁)) = 1
+  rw [show (Additive.ofMul (1 : G₁) : Additive G₁) = 0 from rfl, smul_zero]; rfl
+
+/-- The action is additive in the point: c • (x * y) = (c • x) * (c • y). -/
+theorem gsmul_mul (a : Fr p) (x y : G₁) :
+    gsmul (p := p) a (x * y) = gsmul (p := p) a x * gsmul (p := p) a y := by
+  show Additive.toMul (a • Additive.ofMul (x * y)) = _
+  rw [show (Additive.ofMul (x * y) : Additive G₁) = Additive.ofMul x + Additive.ofMul y from rfl,
+      smul_add]; rfl
+
+/-- The action is additive in the scalar: (a + b) • Q = (a • Q) * (b • Q). -/
+theorem gsmul_add (a b : Fr p) (Q : G₁) :
+    gsmul (p := p) (a + b) Q = gsmul (p := p) a Q * gsmul (p := p) b Q := by
+  show Additive.toMul ((a + b) • Additive.ofMul Q) = _
+  rw [add_smul]; rfl
+
+/-- The action is multiplicative in the scalar: (a * b) • Q = a • (b • Q). -/
+theorem gsmul_mul_gsmul (a b : Fr p) (Q : G₁) :
+    gsmul (p := p) (a * b) Q = gsmul (p := p) a (gsmul (p := p) b Q) := by
+  show Additive.toMul ((a * b) • Additive.ofMul Q) = _
+  rw [← smul_smul]; rfl
+
+/-- The scalar action agrees with the multiplicative power at a natural exponent.
+    The one place where the two notations have to be reconciled. -/
+theorem gsmul_nat (n : ℕ) (Q : G₁) : gsmul (p := p) (n : Fr p) Q = Q ^ n := by
+  induction n with
+  | zero => rw [Nat.cast_zero, gsmul_zero, pow_zero]
+  | succ k ih => rw [Nat.cast_add, Nat.cast_one, gsmul_add, ih, pow_succ, gsmul_one]
+
+/-- The zip-fold of an MSM with the zero-dropping filterMap folded away. -/
+private def msmProd (l : List (Fr p × G₁)) : G₁ :=
+  l.foldl (fun acc (s, b) => acc * gsmul (p := p) s b) 1
+
+/-- Dropping the zero-scalar pairs changes nothing, because 0 • b = 1 and
+    multiplying by 1 on the right is a no-op. Generalised over the accumulator,
+    which is what makes the induction go: foldl threads it through the list. -/
+private theorem foldl_dropZero (l : List (Fr p × G₁)) :
+    ∀ (acc : G₁),
+      (l.filterMap fun (s, b) => if s = 0 then none else some (s, b)).foldl
+          (fun acc (s, b) => acc * gsmul (p := p) s b) acc
+        = l.foldl (fun acc (s, b) => acc * gsmul (p := p) s b) acc := by
+  induction l with
+  | nil => intro acc; rfl
+  | cons x xs ih =>
+      cases x with
+      | mk s b =>
+        intro acc
+        by_cases hs : s = 0
+        · subst hs
+          simp only [List.filterMap_cons, List.foldl_cons, reduceIte, gsmul_zero, mul_one]
+          exact ih acc
+        · simp only [List.filterMap_cons, List.foldl_cons, hs]
+          exact ih (acc * gsmul (p := p) s b)
+
+/-- msmSpecific IS the fold over the zip. This is the lemma both holes reduce to:
+    with it the [1] shortcut in MSMKZG.eval is seen to be a no-op and the
+    filterMap disappears. -/
+private theorem msmSpecific_eq_msmProd (coeffs : Array (Fr p)) (bases : Array G₁) :
+    msmSpecific (p := p) coeffs bases = msmProd (List.zip coeffs.toList bases.toList) := by
+  show ((List.zip coeffs.toList bases.toList).filterMap
+          fun (s, b) => if s = 0 then none else some (s, b)).foldl
+          (fun acc (s, b) => acc * gsmul (p := p) s b) 1 = _
+  rw [foldl_dropZero]
+  rfl
+
+/-- The fold splits over an appended list: prod (l₁ ++ l₂) = prod l₁ * prod l₂.
+    This is the whole content of eval_addMsm once the zip splits too. -/
+private theorem msmProd_append (l₁ l₂ : List (Fr p × G₁)) :
+    msmProd (p := p) (l₁ ++ l₂) = msmProd (p := p) l₁ * msmProd (p := p) l₂ := by
+  have hstep : ∀ (l : List (Fr p × G₁)) (s : Fr p) (b : G₁),
+      msmProd (p := p) ((s, b) :: l)
+        = l.foldl (fun acc q => acc * gsmul (p := p) q.1 q.2) (gsmul (p := p) s b) := by
+    intro l s b
+    show ((s, b) :: l).foldl (fun acc (s, b) => acc * gsmul (p := p) s b) 1 = _
+    simp only [List.foldl_cons, one_mul]
+  have key : ∀ (l : List (Fr p × G₁)) (acc : G₁),
+      l.foldl (fun acc (s, b) => acc * gsmul (p := p) s b) acc = acc * msmProd (p := p) l := by
+    intro l
+    induction l with
+    | nil => intro acc; simp [msmProd]
+    | cons x xs ih =>
+        cases x with
+        | mk s b =>
+          intro acc
+          show xs.foldl (fun acc q => acc * gsmul (p := p) q.1 q.2) (acc * gsmul (p := p) s b) = _
+          rw [ih (acc * gsmul (p := p) s b), hstep, ih (gsmul (p := p) s b), mul_assoc]
+  show (l₁ ++ l₂).foldl (fun acc (s, b) => acc * gsmul (p := p) s b) 1 = _
+  rw [List.foldl_append, key, key]
+  simp only [one_mul]
+
+/-- Scaling every scalar of the fold by c scales the value by c. The induction is
+    over the accumulator, not the list value: gsmul c is a group endomorphism
+    (gsmul_mul) and (s * c) • b = c • (s • b) (gsmul_mul_gsmul). -/
+private theorem msmProd_map_scale (c : Fr p) (l : List (Fr p × G₁)) :
+    msmProd (p := p) (l.map fun q => (q.1 * c, q.2)) = gsmul (p := p) c (msmProd (p := p) l) := by
+  have key : ∀ (l : List (Fr p × G₁)) (acc : G₁),
+      (l.map fun q => (q.1 * c, q.2)).foldl (fun acc q => acc * gsmul (p := p) q.1 q.2)
+          (gsmul (p := p) c acc)
+        = gsmul (p := p) c (l.foldl (fun acc q => acc * gsmul (p := p) q.1 q.2) acc) := by
+    intro l
+    induction l with
+    | nil => intro acc; rfl
+    | cons x xs ih =>
+        cases x with
+        | mk s b =>
+          intro acc
+          rw [List.map_cons, List.foldl_cons, List.foldl_cons]
+          have h1 : gsmul (p := p) (s * c) b = gsmul (p := p) c (gsmul (p := p) s b) := by
+            rw [mul_comm, gsmul_mul_gsmul]
+          rw [h1, ← gsmul_mul, ih (acc * gsmul (p := p) s b)]
+  show (l.map fun q => (q.1 * c, q.2)).foldl (fun acc q => acc * gsmul (p := p) q.1 q.2) 1 = _
+  rw [← gsmul_one_pt c]
+  exact key l 1
+
+/-- Mapping the left list maps the zip: zip (map f cs) bs = map (λ p => (f p.1,
+    p.2)) (zip cs bs). Mathlib's List.zip_map_left is stated with Prod.map f id,
+    which is the same function but not the same pattern, and the length-free form
+    is what scale needs (zip truncates, map does not change lengths). -/
+private theorem zip_map_left {α β γ : Type} (f : α → β) :
+    ∀ (cs : List α) (bs : List γ),
+      List.zip (cs.map f) bs = (List.zip cs bs).map fun q => (f q.1, q.2) := by
+  intro cs
+  induction cs with
+  | nil => intro bs; cases bs <;> rfl
+  | cons a t ih =>
+      intro bs
+      cases bs with
+      | nil => rfl
+      | cons b rest => simp only [List.map_cons, List.zip_cons_cons, ih rest]
+
+/-- The one-term fold, computed: msmSpecific #[1] bases = bases.getD 0 1. This is
+    the [1] shortcut and the msmSpecific branch agreeing on their common domain. -/
+private theorem msmSpecific_one_left (bases : Array G₁) :
+    msmSpecific (p := p) #[1] bases = bases.getD 0 1 := by
+  cases bases with
+  | mk l =>
+      cases l with
+      | nil => simp [msmSpecific, Array.getD]
+      | cons b rest => simp [msmSpecific, Array.getD, gsmul_one]
+
+/-- **The [1] shortcut in MSMKZG.eval is a no-op on every input.** Stated once
+    here rather than inside each hole, because both holes need it and because it
+    is the precise content of the docstring claim that the shortcut "agrees with
+    msmSpecific case by case". Positive branch: msmSpecific_one_left. Negative
+    branch: reflexivity. -/
+theorem MSMKZG.eval_eq_msmSpecific (m : MSMKZG (Fr p) G₁) :
+    m.eval = msmSpecific (p := p) m.scalars m.bases := by
+  unfold MSMKZG.eval
+  split
+  · rename_i h
+    have hs : m.scalars = #[1] := by
+      rw [← Array.toList_inj]
+      simpa using h
+    rw [hs, msmSpecific_one_left]
+  · rfl
+
+/-- Lockstep lengths of a scaled one-term MSM: the hypothesis eval_addMsm needs
+    for the accumulator side, where there is no Wf hypothesis to hand. -/
+theorem MSMKZG.wf_scale_fromBase (Q : G₁) (c : Fr p) :
+    ((MSMKZG.fromBase (p := p) Q).scale c).scalars.size =
+      ((MSMKZG.fromBase (p := p) Q).scale c).bases.size := by
+  simp [MSMKZG.scale, MSMKZG.fromBase]
+
 /-- A one-term MSM with scalar 1 evaluates to its base: the shortcut in
     MSMKZG.eval fires and there is nothing else to add. -/
 theorem MSMKZG.eval_fromBase (Q : G₁) : (MSMKZG.fromBase (p := p) Q).eval = Q := by
@@ -361,7 +549,10 @@ theorem MSMKZG.eval_fromBase (Q : G₁) : (MSMKZG.fromBase (p := p) Q).eval = Q 
     hypothesis is decorative. PROOF OBLIGATION, registered in SORRY.md. -/
 theorem MSMKZG.eval_scale (m : MSMKZG (Fr p) G₁) (c : Fr p) :
     (m.scale c).eval = gsmul c m.eval := by
-  sorry
+  rw [MSMKZG.eval_eq_msmSpecific, MSMKZG.eval_eq_msmSpecific]
+  show msmSpecific (p := p) (m.scalars.map fun s => s * c) m.bases = _
+  rw [msmSpecific_eq_msmProd, msmSpecific_eq_msmProd, Array.toList_map, zip_map_left,
+    msmProd_map_scale]
 
 /-- Additivity of the MSM value across addMsm. Lockstep lengths ARE required:
     msmSpecific zips and truncates, so a scalars/bases mismatch silently drops a
@@ -369,7 +560,20 @@ theorem MSMKZG.eval_scale (m : MSMKZG (Fr p) G₁) (c : Fr p) :
 theorem MSMKZG.eval_addMsm (m n : MSMKZG (Fr p) G₁)
     (hm : m.scalars.size = m.bases.size) (hn : n.scalars.size = n.bases.size) :
     (m.addMsm n).eval = m.eval * n.eval := by
-  sorry
+  -- Both lockstep lengths are in the statement - they are the MSMKZG.Wf invariant the
+  -- sketch carries - but the zip split needs only one of them: List.zip_append takes a
+  -- DISJUNCTION, because zip truncates to the shorter side and either equality lines up
+  -- the middle boundary. hn is therefore not consumed below; it is kept rather than
+  -- dropped because dropping a sketched hypothesis is the drift class this package must
+  -- not commit. The have below is what references it.
+  have _hnl : n.scalars.toList.length = n.bases.toList.length := by
+    rwa [Array.length_toList, Array.length_toList]
+  rw [MSMKZG.eval_eq_msmSpecific, MSMKZG.eval_eq_msmSpecific, MSMKZG.eval_eq_msmSpecific]
+  show msmSpecific (p := p) (m.scalars ++ n.scalars) (m.bases ++ n.bases) = _
+  rw [msmSpecific_eq_msmProd, msmSpecific_eq_msmProd, msmSpecific_eq_msmProd,
+    Array.toList_append, Array.toList_append,
+    List.zip_append (by rw [Array.length_toList, Array.length_toList]; exact hm),
+    msmProd_append]
 
 end Msm
 
@@ -378,6 +582,95 @@ variable {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂] [Group Gₜ]
   [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-! #### The check-level pairing equations the S5 pair and the contract lift consume
+
+    Each of the three Bool checks in this section is decideBool applied to an
+    equation in Gt, so each one is a named Prop once decideBool_eq_true_iff and the
+    toMul/ofMul identity transport are paid for. Naming them is what makes the four
+    holes below one-line rewrites rather than four copies of the same unfolding. -/
+
+/-- The two notations for the identity agree: toMul z = 1 exactly when z = 0. Both
+    directions are rfl on the Additive tags (ofMul (toMul z) = z and ofMul 1 = 0),
+    so no Mathlib transport lemma is needed - and none is in the built surface. -/
+theorem toMul_eq_one_iff_zero {G : Type} [Group G] (z : Additive G) :
+    Additive.toMul z = (1 : G) ↔ z = 0 := by
+  constructor
+  · intro h; apply_fun Additive.ofMul at h; exact h
+  · intro h; exact h
+
+/-- DualMSM.check in the Prop it decides. This is the form every pairing lift
+    consumes: the two pairing terms, in the reference orientation (left paired
+    with sG2, right with nG2 - the swap against the contract orientation is
+    dualMsm_check_iff_contract below). -/
+theorem dualMsm_check_eq (d : DualMSM (Fr p) G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂) :
+    DualMSM.check d params = true <->
+      P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared) = 0 := by
+  unfold DualMSM.check
+  dsimp only
+  rw [decideBool_eq_true_iff]
+  exact toMul_eq_one_iff_zero _
+
+/-- KzgAcc.check in the same Prop: the accumulator invariant e(lhs, [tau]_2) =
+    e(rhs, [1]_2) of accumulator.rs:16-25, read through the one-term-per-side
+    DualMSM that check builds. -/
+theorem kzgAcc_check_eq (a : KzgAcc (Fr p) G₁ G₂ Gₜ) (params : ParamsVerifierKZG G₁ G₂)
+    (tbl : Array (String × G₁)) :
+    KzgAcc.check a params tbl = true <->
+      P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared) = 0 := by
+  unfold KzgAcc.check DualMSM.new
+  dsimp only
+  rw [dualMsm_check_eq, MSMKZG.eval_fromBase, MSMKZG.eval_fromBase]
+
+/-- **The batched equation, stated once.** batchedCheck adds alpha times the
+    accumulator pair to the KZG pair inside one DualMSM.check, so by bilinearity
+    its Prop is X + alpha - Y where X is the DualMSM.check equation and Y is the
+    KzgAcc.check equation. That single display is what both S5 halves are about,
+    and it is why neither needs an exponent model or a cyclic-group lemma. -/
+theorem batchedCheck_eq (params : ParamsVerifierKZG G₁ G₂) (d : DualMSM (Fr p) G₁ G₂ Gₜ)
+    (a : KzgAcc (Fr p) G₁ G₂ Gₜ) (tbl : Array (String × G₁))
+    (hWf : d.left.scalars.size = d.left.bases.size ∧ d.right.scalars.size = d.right.bases.size)
+    (alpha : Fr p) :
+    batchedCheck params alpha d a tbl = true <->
+      (P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+       P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared)) +
+      alpha • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared)) = 0 := by
+  unfold batchedCheck
+  dsimp only
+  rw [dualMsm_check_eq, DualMSM.new]
+  have hl : (d.left.addMsm ((MSMKZG.fromBase (p := p) (a.lhs.eval tbl)).scale alpha)).eval
+      = d.left.eval * gsmul (p := p) alpha (a.lhs.eval tbl) := by
+    rw [MSMKZG.eval_addMsm (hm := hWf.1) (hn := MSMKZG.wf_scale_fromBase _ _),
+        MSMKZG.eval_scale, MSMKZG.eval_fromBase]
+  have hr : (d.right.addMsm ((MSMKZG.fromBase (p := p) (a.rhs.eval tbl)).scale alpha)).eval
+      = d.right.eval * gsmul (p := p) alpha (a.rhs.eval tbl) := by
+    rw [MSMKZG.eval_addMsm (hm := hWf.2) (hn := MSMKZG.wf_scale_fromBase _ _),
+        MSMKZG.eval_scale, MSMKZG.eval_fromBase]
+  rw [hl, hr]
+  have key : P.e (Additive.ofMul (d.left.eval * gsmul (p := p) alpha (a.lhs.eval tbl)))
+        (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul (d.right.eval * gsmul (p := p) alpha (a.rhs.eval tbl)))
+        (Additive.ofMul params.nG2Prepared)
+      = (P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+         P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared)) +
+        alpha • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+                 P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared)) := by
+    have o1 : (Additive.ofMul (d.left.eval * gsmul (p := p) alpha (a.lhs.eval tbl)) : Additive G₁)
+        = Additive.ofMul d.left.eval + Additive.ofMul (gsmul (p := p) alpha (a.lhs.eval tbl)) := rfl
+    have o2 : (Additive.ofMul (d.right.eval * gsmul (p := p) alpha (a.rhs.eval tbl)) : Additive G₁)
+        = Additive.ofMul d.right.eval + Additive.ofMul (gsmul (p := p) alpha (a.rhs.eval tbl)) := rfl
+    have g1 : Additive.ofMul (gsmul (p := p) alpha (a.lhs.eval tbl))
+        = alpha • Additive.ofMul (a.lhs.eval tbl) := rfl
+    have g2 : Additive.ofMul (gsmul (p := p) alpha (a.rhs.eval tbl))
+        = alpha • Additive.ofMul (a.rhs.eval tbl) := rfl
+    rw [o1, o2, g1, g2, LinearMap.map_add, LinearMap.map_add, LinearMap.map_smul,
+      LinearMap.map_smul, LinearMap.add_apply, LinearMap.add_apply, LinearMap.smul_apply,
+      LinearMap.smul_apply, smul_add]
+    abel
+  rw [key]
 
 /-- S5 completeness half: if both equations hold then the alpha-batched equation
     holds, for every alpha (bilinearity: the batched value is X + alpha - Y with X
@@ -392,7 +685,10 @@ theorem batched_complete (params : ParamsVerifierKZG G₁ G₂) (d : DualMSM (Fr
     (hWf : d.left.scalars.size = d.left.bases.size ∧ d.right.scalars.size = d.right.bases.size)
     (hd : DualMSM.check d params = true) (ha : KzgAcc.check a params tbl = true)
     (alpha : Fr p) : batchedCheck params alpha d a tbl = true := by
-  sorry
+  rw [batchedCheck_eq params d a tbl hWf alpha]
+  have hX := (dualMsm_check_eq (p := p) d params).mp hd
+  have hY := (kzgAcc_check_eq (p := p) a params tbl).mp ha
+  rw [hX, hY, smul_zero, add_zero]
 
 /-- S5 soundness half: if either equation fails then at most one alpha makes the
     batched one pass. Over the ZMod p-module Additive Gt (a field, so no zero
@@ -406,7 +702,38 @@ theorem batched_atMostOneRoot (params : ParamsVerifierKZG G₁ G₂)
     (hbad : DualMSM.check d params = false \/ KzgAcc.check a params tbl = false)
     (alpha beta : Fr p) (hα : batchedCheck params alpha d a tbl = true)
     (hβ : batchedCheck params beta d a tbl = true) : alpha = beta := by
-  sorry
+  have hα' := (batchedCheck_eq params d a tbl hWf alpha).mp hα
+  have hβ' := (batchedCheck_eq params d a tbl hWf beta).mp hβ
+  by_contra hne
+  -- Write X for the DualMSM sum and Y for the accumulator sum, exactly as
+  -- batchedCheck_eq displays them. hα' : X + alpha - Y = 0 and hβ' : X + beta - Y = 0,
+  -- so (alpha - beta) - Y = 0; ZMod p is a field, so a nonzero scalar is cancellable,
+  -- giving Y = 0 and then X = 0 - which says neither check failed, contradicting hbad.
+  have hsub : (alpha - beta) • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared)) = 0 := by
+    have h2 : P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared) + alpha • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared)) = P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared) + beta • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared)) := by rw [hα', hβ']
+    rw [sub_smul, add_left_cancel_iff.mp h2]
+    simp
+  have hy0 : P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared) = 0 := by
+    have h1 : (alpha - beta)⁻¹ • ((alpha - beta) • (P.e (Additive.ofMul (a.lhs.eval tbl)) (Additive.ofMul params.sG2Prepared) +
+               P.e (Additive.ofMul (a.rhs.eval tbl)) (Additive.ofMul params.nG2Prepared))) =
+        (alpha - beta)⁻¹ • (0 : Additive Gₜ) := by rw [hsub]
+    rw [smul_smul, inv_mul_cancel₀ (sub_ne_zero.mpr hne), one_smul, smul_zero] at h1
+    exact h1
+  have hx0 : P.e (Additive.ofMul d.left.eval) (Additive.ofMul params.sG2Prepared) +
+      P.e (Additive.ofMul d.right.eval) (Additive.ofMul params.nG2Prepared) = 0 := by
+    rw [hy0, smul_zero] at hα'
+    rwa [add_zero] at hα'
+  obtain hbd | hbd := hbad
+  · exact Bool.false_ne_true
+      (hbd.symm.trans ((dualMsm_check_eq (p := p) d params).mpr hx0))
+  · exact Bool.false_ne_true
+      (hbd.symm.trans ((kzgAcc_check_eq (p := p) a params tbl).mpr hy0))
 
 /-- The contract orientation at CHECK level: e(PAIRING_RHS, G2) *
     e(PAIRING_LHS, NEG_S_G2) = 1. The swap is FinalPairing.yul:88
@@ -433,14 +760,74 @@ theorem dualMsm_check_iff_contract (d : DualMSM (Fr p) G₁ G₂ Gₜ)
     (hn : params.nG2Prepared = g2⁻¹) (hs : params.sG2Prepared = negSG2⁻¹) :
     DualMSM.check d params = true <->
       contractPairingHolds g2 negSG2 d.left.eval d.right.eval := by
-  sorry
+  -- No run leg, no exponent model: the lift is linearity in the G2 slot plus the two
+  -- inverse pins hn and hs. This is the claim the index flagged for re-measurement.
+  rw [dualMsm_check_eq, hn, hs]
+  have n1 : P.e (Additive.ofMul d.left.eval) (Additive.ofMul (negSG2⁻¹))
+      = - P.e (Additive.ofMul d.left.eval) (Additive.ofMul negSG2) := by
+    rw [show (Additive.ofMul (negSG2⁻¹) : Additive G₂) = - Additive.ofMul negSG2 from rfl,
+        LinearMap.map_neg]
+  have n2 : P.e (Additive.ofMul d.right.eval) (Additive.ofMul (g2⁻¹))
+      = - P.e (Additive.ofMul d.right.eval) (Additive.ofMul g2) := by
+    rw [show (Additive.ofMul (g2⁻¹) : Additive G₂) = - Additive.ofMul g2 from rfl,
+        LinearMap.map_neg]
+  rw [n1, n2, ← neg_add, neg_eq_zero]
+  unfold contractPairingHolds
+  constructor <;> intro h <;> simpa [add_comm] using h
 
 /-- Spec-level: every G1 element is a multiple of the SRS base (prime order makes
     the group cyclic and g1 is nontrivial). TRUE but not needed by the check-level
     lift above; kept because the Spec-level statements consume it. PROOF
     OBLIGATION, registered in SORRY.md. -/
 theorem exists_zmod_smul_generator (Q : G₁) : ∃ s : ZMod p, Q = gsmul s P.g₁ := by
-  sorry
+  have hfin : Finite G₁ := by
+    by_contra hinf
+    have hz : Nat.card G₁ = 0 := @Nat.card_eq_zero_of_infinite G₁ ⟨hinf⟩
+    rw [PrimeOrderWith.hCard] at hz
+    exact absurd hz (Nat.Prime.ne_zero (Fact.out : Nat.Prime p))
+  haveI : Fintype G₁ := Fintype.ofFinite G₁
+  have hc : Fintype.card G₁ = p := by rw [← Nat.card_eq_fintype_card, PrimeOrderWith.hCard]
+  -- g₁ is nontrivial and its order divides the group order, which is prime: so its
+  -- order IS p, and the first p powers of g₁ are pairwise distinct.
+  have hord : orderOf P.g₁ = p := by
+    have hd : orderOf P.g₁ ∣ Fintype.card G₁ := orderOf_dvd_card
+    rw [hc] at hd
+    have hne : orderOf P.g₁ ≠ 1 := fun hh => P.hG₁ (orderOf_eq_one_iff.mp hh)
+    exact (Nat.Prime.eq_one_or_self_of_dvd (Fact.out : Nat.Prime p) _ hd).resolve_left hne
+  have hinj : Function.Injective (fun n : Fin p => (P.g₁ : G₁) ^ (n : ℕ)) := by
+    intro a b hab
+    have hab' : (P.g₁ : G₁) ^ a.val = (P.g₁ : G₁) ^ b.val := hab
+    apply Fin.ext
+    by_contra hne
+    rcases Nat.lt_or_gt_of_ne hne with hlt | hgt
+    · have hd : orderOf P.g₁ ∣ (b.val - a.val) := by
+        refine orderOf_dvd_of_pow_eq_one ?_
+        have h2 : (P.g₁ : G₁) ^ a.val * (P.g₁ : G₁) ^ (b.val - a.val)
+            = (P.g₁ : G₁) ^ a.val * 1 := by
+          rw [← pow_add, Nat.add_sub_of_le (Nat.le_of_lt hlt), hab', mul_one]
+        exact mul_left_cancel h2
+      rw [hord] at hd
+      have hle := Nat.le_of_dvd (by omega : 0 < b.val - a.val) hd
+      omega
+    · have hd : orderOf P.g₁ ∣ (a.val - b.val) := by
+        refine orderOf_dvd_of_pow_eq_one ?_
+        have h2 : (P.g₁ : G₁) ^ b.val * (P.g₁ : G₁) ^ (a.val - b.val)
+            = (P.g₁ : G₁) ^ b.val * 1 := by
+          rw [← pow_add, Nat.add_sub_of_le (Nat.le_of_lt hgt), hab'.symm, mul_one]
+        exact mul_left_cancel h2
+      rw [hord] at hd
+      have hle := Nat.le_of_dvd (by omega : 0 < a.val - b.val) hd
+      omega
+  -- p distinct powers in a p-element group: the pigeonhole closes it.
+  have hsurj : Function.Surjective (fun n : Fin p => (P.g₁ : G₁) ^ (n : ℕ)) := by
+    by_contra hnot
+    have hlt := Fintype.card_lt_of_injective_not_surjective
+      (fun n : Fin p => (P.g₁ : G₁) ^ (n : ℕ)) hinj hnot
+    rw [Fintype.card_fin, hc] at hlt
+    omega
+  obtain ⟨⟨n, _hnlt⟩, hn2⟩ := hsurj Q
+  have hn2' : (P.g₁ : G₁) ^ (n : ℕ) = Q := hn2
+  exact ⟨(n : ZMod p), hn2'.symm.trans ((gsmul_nat n P.g₁).symm)⟩
 
 end S5
 
@@ -523,7 +910,17 @@ theorem contractRefAcceptsAcc_none {G₁ G₂ Gₜ : Type}
     ContractRefAcceptsAcc E H params vk none vkDigest fb instW ms = true <->
       (∃ inst, instOfWords? (p := p) instW = some inst ∧
         Midfall.Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) E H params vk inst ms = true) := by
-  sorry
+  -- The accumulator arm is unreachable with cfgAcc = none, so the only difference from
+  -- ContractRefAccepts is the instance-word gate - and that gate is a conjunct of the
+  -- right-hand side rather than a change of behaviour. The show is the delta/iota step
+  -- that exposes the outer match; cases on it then finishes both branches.
+  show (match instOfWords? (p := p) instW with
+        | none => false
+        | some inst =>
+          Midfall.Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) E H params vk inst ms) = true <->
+      (∃ inst, instOfWords? (p := p) instW = some inst ∧
+        Midfall.Lowering.ContractRefAccepts (p := p) (Gₜ := Gₜ) E H params vk inst ms = true)
+  cases hw : instOfWords? (p := p) instW <;> simp
 
 /-- PLAN 9.5 contractRef_acc_complete: the R-26.4 direction ONLY (the contract is
     strictly stronger than the reference in accumulator mode, so there is no iff).
@@ -552,7 +949,44 @@ theorem contractRef_acc_complete {G₁ G₂ Gₜ : Type}
     (hWf : ∀ d, prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .ok d ->
       d.left.scalars.size = d.left.bases.size /\ d.right.scalars.size = d.right.bases.size) :
     ContractRefAcceptsAcc E H params vk (some enc) vkDigest fb instW ms = true := by
-  sorry
+  -- verifyMsgs is prepareMsgs followed by DualMSM.check, so hv names the DualMSM the
+  -- contract reference will build and says its own check passed; ha names the decoded
+  -- accumulator and hchk its invariant. batched_complete is then the whole argument -
+  -- which is exactly what the docstring says this lemma owes to M9.
+  obtain ⟨d, hd, hdcheck⟩ :
+      ∃ d, prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .ok d ∧
+        DualMSM.check d params = true := by
+    obtain ⟨d, hd⟩ : ∃ d, prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .ok d := by
+      by_contra hno
+      obtain ⟨f, hf⟩ : ∃ f, prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms = .error f := by
+        cases h : prepareMsgs (Gₜ := Gₜ) E H Features.solidity vk inst ms with
+        | ok d => exact absurd ⟨d, h⟩ hno
+        | error f => exact ⟨f, rfl⟩
+      have h4 : verifyMsgs (Gₜ := Gₜ) E H Features.solidity params vk inst ms = .error f := by
+        unfold verifyMsgs
+        rw [hf]
+        rfl
+      rw [h4] at hv
+      simp at hv
+    refine ⟨d, hd, ?_⟩
+    by_contra hc
+    have h5 : verifyMsgs (Gₜ := Gₜ) E H Features.solidity params vk inst ms
+        = (if DualMSM.check d params = true then .ok ()
+           else .error (Fault.error Error.opening)) := by
+      unfold verifyMsgs
+      rw [hd]
+      rfl
+    rw [h5] at hv
+    simp [hc] at hv
+  unfold ContractRefAcceptsAcc
+  simp only [hinst, hd, ha]
+  -- apply, not refine: the batching scalar is read off the goal by unification, and
+  -- asking Lean to synthesise it positionally whnf's batchedCheck to death (measured:
+  -- 200k heartbeats, timeout; apply closes in milliseconds).
+  apply batched_complete
+  · exact hWf d hd
+  · exact hdcheck
+  · exact hchk
 
 
 /-! ### 7. Known-answer checks
@@ -716,5 +1150,117 @@ def pointPairTailKats_ok : Bool :=
 #eval pointPairTailKats_ok   -- expect true
 
 end Kats
+
+
+/-! ### 8. D-P23 evidence for the holes this package closed
+
+    Each claim below gets BOTH halves as theorems: a satisfiability witness and a
+    falsification. They are stated over the abstract bundle, not at concrete bytes:
+    Accumulator.lean is theorem-bearing and may not import Midfall/Instances/ (D-P17),
+    so concrete-byte exhibits belong to Instances/ and are NOT claimed here.
+
+    NOT CLAIMED, stated as a limit rather than hidden: the four pairing-level claims
+    (dualMsm_check_iff_contract, batched_complete, batched_atMostOneRoot,
+    contractRef_acc_complete) have NO witness/falsification pair in this change. The
+    exhibits were drafted (empty DualMSM, trivial accumulator, params with one inverse
+    pin broken) and each needs a chain of delta+iota reductions of constructor
+    applications - DualMSM.init.left.eval, KzgAcc.trivial.lhs.eval - that this session
+    ran out of room to finish; the drafts are not in the file. The reason they are not
+    left in commented-out form is the standing rule that a comment is not a proof.
+    And per the measured falsification-deletion gap: deleting any falsification
+    theorem below leaves the build green and no gate catches it, so no coverage is
+    claimed for the *persistence* of these theorems, only for their truth. -/
+
+section Dp23
+variable {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂] [Group Gₜ]
+  [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+  [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+
+/-- **eval_scale, witness.** On a one-term MSM the lemma computes to the scalar
+    multiple of the base - the case the [1] shortcut in eval is about. -/
+theorem eval_scale_witness (Q : G₁) (c : Fr p) :
+    ((MSMKZG.fromBase (p := p) Q).scale c).eval = gsmul (p := p) c Q := by
+  rw [MSMKZG.eval_scale, MSMKZG.eval_fromBase]
+
+/-- **eval_scale, falsification.** The factor is not decoration: scaling a
+    non-identity one-term MSM by 0 changes its value, so the tempting weakening
+    '(m.scale c).eval = m.eval' is false for some m and c. -/
+theorem eval_scale_falsifies (Q : G₁) (hQ : Q ≠ 1) :
+    ∃ (m : MSMKZG (Fr p) G₁) (c : Fr p), (m.scale c).eval ≠ m.eval :=
+  ⟨MSMKZG.fromBase (p := p) Q, 0, by
+    rw [MSMKZG.eval_scale, MSMKZG.eval_fromBase, gsmul_zero]; exact fun hh => hQ hh.symm⟩
+
+/-- **eval_addMsm, witness.** Two one-term channels add to the product of their
+    bases - the shape prepareMsgs builds when it concatenates MSMs. -/
+theorem eval_addMsm_witness (Q R : G₁) :
+    ((MSMKZG.fromBase (p := p) Q).addMsm (MSMKZG.fromBase (p := p) R)).eval = Q * R := by
+  rw [MSMKZG.eval_addMsm (hm := by simp [MSMKZG.fromBase]) (hn := by simp [MSMKZG.fromBase]),
+      MSMKZG.eval_fromBase, MSMKZG.eval_fromBase]
+
+/-- **eval_addMsm, falsification.** Without the lockstep lengths the statement is
+    false: a channel whose scalars and bases disagree silently loses the other
+    channel's term under the zip, and the sum law fails. -/
+theorem eval_addMsm_falsifies (Q : G₁) (hQ : Q ≠ 1) :
+    ∃ (m n : MSMKZG (Fr p) G₁),
+      ¬ (m.scalars.size = m.bases.size ∧ n.scalars.size = n.bases.size) ∧
+        (m.addMsm n).eval ≠ m.eval * n.eval := by
+  refine ⟨⟨#[0], #[], #[]⟩, MSMKZG.fromBase (p := p) Q, ?_, ?_⟩
+  · simp [MSMKZG.fromBase]
+  · have hA : ((⟨#[0], #[], #[]⟩ : MSMKZG (Fr p) G₁).addMsm
+          (MSMKZG.fromBase (p := p) Q)).eval = (1 : G₁) := by
+      rw [MSMKZG.eval_eq_msmSpecific]
+      show msmSpecific (p := p) (#[0] ++ #[1]) (#[] ++ #[Q]) = 1
+      simp [msmSpecific]
+    have hB : (⟨#[0], #[], #[]⟩ : MSMKZG (Fr p) G₁).eval = (1 : G₁) := by
+      rw [MSMKZG.eval_eq_msmSpecific]
+      show msmSpecific (p := p) (#[0] : Array (Fr p)) (#[] : Array G₁) = 1
+      simp [msmSpecific]
+    rw [hA, hB, MSMKZG.eval_fromBase, one_mul]
+    exact fun hh => hQ hh.symm
+
+/-- **exists_zmod_smul_generator, witness.** The generator itself is hit, by s = 1. -/
+theorem exists_zmod_smul_witness : ∃ s : ZMod p, P.g₁ = gsmul (p := p) s P.g₁ :=
+  ⟨1, by rw [gsmul_one]⟩
+
+/-- **exists_zmod_smul_generator, falsification.** The claim is about a NONTRIVIAL
+    base. Replace g₁ by the identity and the analogous statement collapses the whole
+    group to one element - so hG₁, the field the statement consumes, is what makes it
+    a theorem rather than a tautology about a one-element type. -/
+theorem exists_zmod_smul_needs_nontrivial
+    (h : ∀ Q : G₁, ∃ s : ZMod p, Q = gsmul (p := p) s (1 : G₁)) : Subsingleton G₁ :=
+  ⟨fun a b => by
+    obtain ⟨s, hs⟩ := h a
+    obtain ⟨t, ht⟩ := h b
+    rw [hs, ht, gsmul_one_pt, gsmul_one_pt]⟩
+
+end Dp23
+
+local instance factPrime17dp : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- **contractRefAcceptsAcc_none, witness.** The raw-word gate accepts a list of
+    canonical scalars, so the existential on the right-hand side is inhabited and the
+    equivalence is not vacuous. -/
+theorem instOfWords_witness :
+    instOfWords? (p := 17) #[BitVec.ofNat 256 1, BitVec.ofNat 256 2] =
+      some #[1, 2] := by decide
+
+/-- **contractRefAcceptsAcc_none, falsification.** The gate REJECTS rather than
+    reduces (R-26.7): a word equal to r, or above it, makes the whole array none, in
+    either position. Without this the raw-word interface of
+    contractRefAcceptsAcc_none would be decorative, because every word list would
+    decode. -/
+theorem instOfWords_falsifies :
+    instOfWords? (p := 17) #[BitVec.ofNat 256 1, BitVec.ofNat 256 40] = none ∧
+      instOfWords? (p := 17) #[BitVec.ofNat 256 40, BitVec.ofNat 256 1] = none ∧
+      frOfWord? (p := 17) (BitVec.ofNat 256 17) = none := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide
+
+/-! **contractRef_acc_complete: no D-P23 half is claimed for it here.** The reason is a
+    confinement rule, not a missing lemma: its hypothesis bundle names a VerifierEnv, a
+    VerifyingKey and a decodable instance array, and the only objects of those types in
+    the tree live under Midfall/Instances/, which this file may not import (D-P17). What
+    the lemma adds on top of that bundle is batched_complete, and no witness pair is
+    claimed for that either (see the limit note at the head of this section). -/
 
 end Midfall.Lowering

@@ -80,7 +80,7 @@ bridges that do not exist yet (`readScheduleAgrees`, the batch-inversion agreeme
 
 **RE-CUT AGAIN AFTER R10 (the item list was wrong a second time).** The twelve were never twelve specs: `Partials.lean` held twelve registered holes, ten spec theorems plus two `alwaysReverts` vacuity lemmas. Of the eleven left, **three are approachable and only one of those is a spec** (`quotientLin_spec`, and two of its intended post clauses are inert because `Snapshot.lin` is always `none`); four bind `Eip2537.Holds` and are M8's; three need bridges that do not exist (`readScheduleAgrees`, the batch-inversion agreement); one is unprovable as stated and needs a decision about where the world belongs. **M-B is now 1 session, then blocked.** Full table at R10.
 
-### M-C — `Accumulator` 12 + `Calldata` 7 + `Qvm`/`QvmFold` 9 — **NOT STARTED**
+### M-C — Accumulator 4 of 12 left + Calldata 3 of 7 left + Qvm/QvmFold 9 — **IN FLIGHT** (P-MC-CALLDATA 4/7, P-MC-ACC 8/12)
 
 Largely independent of M-A. `Qvm` needs `LoweringPlan::new` (circuit-as-data, uncosted).
 **Estimate: 8–14 sessions.** `Calldata` is the most mechanical and should be first.
@@ -538,6 +538,72 @@ equality.
 
 **Register: 52. Both Fable-named M8 files exist.** The next question is a spec question, not a
 coding question.
+### R15 - round 150, after P-MC-ACC. Register 52 -> 44, and both named blockers were false.
+
+**Eight of the twelve Accumulator holes closed: MSMKZG.eval_scale, MSMKZG.eval_addMsm,
+batched_complete, batched_atMostOneRoot, dualMsm_check_iff_contract,
+exists_zmod_smul_generator, contractRefAcceptsAcc_none, contractRef_acc_complete.** The four
+decodeAcc round-trip holes (decodeAcc_injective, decodeAcc_encode, decodeAcc_encode_noNeg,
+decodeAcc_encode_pointPair) are untouched and still registered.
+
+**The statement audit, which is what this package was told to do first.** All twelve implemented
+statements were read against their sketch in P-SE-semantic-equivalence.md section F (904-1091)
+BEFORE being proved. **Zero needed restoration: eight are verbatim modulo the recorded
+List.Sorted -> namesAscending substitution and the generator/Exec encoding bridge, and the four
+decodeAcc ones carry the R-25/R-26 repairs that were already made and already recorded** (the
+accWords projection, the .pointAndScalar restriction, and the hfb : fb.size = 0 hypothesis the
+sketch lacked). So the count this package reports is **8 provable as stated, 0 restored, 4 not
+attempted** - and the fourth consecutive package to find drift found none here. That is a
+finding, not an absence of checking: the audit is in P-SE-statements.md under P-MC-ACC.
+
+**Both claimed blockers were measured and both were FALSE.**
+
+- "The decodeAcc family is blocked on the -s elaboration" (plan line 112, index line 351).
+  #check @Midfall.Halo2.decodeAcc resolves and the module builds; the note predates the file ever
+  being built. **The real cost is byte-level, not elaboration**: the four holes need
+  loadAccPoint_flag0/1, decodeAccCoord_inj, encodeAccCoordWords_packingOk and the natToBytesBE
+  16-48-16-48 frame lemmas, none of which exist. Twenty-first case of a recorded "it cannot" that
+  was an "I could not".
+- "dualMsm_check_iff_contract needs the run leg." **It does not.** The lift is dualMsm_check_eq
+  (decideBool plus the toMul/ofMul identity transport) plus linearity in the G2 slot (map_neg)
+  plus the two inverse pins; it is 14 lines and never mentions a run, an execution or a memory
+  frame. The docstring's own reading (P3's, against P2's heavier one) was right and was provable
+  without the prerequisite everyone inherited.
+
+**What the eight proofs actually cost** was not the mathematics but three transport layers the
+tree had never needed: (i) gsmul is Additive.toMul (s • Additive.ofMul Q) while msmSpecific folds
+a multiplicative product, and Mathlib's Additive.ofMul_mul / toMul_nsmul family is NOT in the
+built surface, so seven gsmul lemmas are proved from add_smul / smul_add / smul_smul plus a rfl;
+(ii) MSMKZG.eval's [1] shortcut had to be proved a no-op (eval_eq_msmSpecific) before either eval
+lemma could be stated in one piece; (iii) the Bool checks had to be turned into their Props
+(dualMsm_check_eq, kzgAcc_check_eq, batchedCheck_eq) once instead of four times.
+
+**Two tactic findings for the wall list.** (1) refine batched_complete ... _ with the batching
+scalar as the last positional argument times out at 200k heartbeats whnf-ing batchedCheck;
+apply batched_complete with the three premises as separate goals closes in milliseconds. Same
+statement, same data: **positional metavariable synthesis in a deep application is the wall, not
+the lemma.** (2) A section variable is auto-included only when the STATEMENT mentions it: an
+exhibit whose statement does not name P cannot use P.g1 in its proof, which reads as "unknown
+identifier" and cost a cycle.
+
+**D-P23: four of the eight claims have both halves as theorems; four do not, and the limit is
+stated in the file.** eval_scale, eval_addMsm, exists_zmod_smul_generator and the
+contractRefAcceptsAcc_none word-gate each have a witness and a falsification
+(eval_scale_witness / eval_scale_falsifies, eval_addMsm_witness / eval_addMsm_falsifies,
+exists_zmod_smul_witness / exists_zmod_smul_needs_nontrivial, instOfWords_witness /
+instOfWords_falsifies). **No witness/falsification pair is claimed for dualMsm_check_iff_contract,
+batched_complete, batched_atMostOneRoot or contractRef_acc_complete**: the exhibits were drafted
+(empty DualMSM, KzgAcc.trivial, params with one inverse pin broken) and each needs a chain of
+delta+iota reductions of constructor applications that this session ran out of room to finish. The
+drafts are not in the file, and the reason they are not left as comments is the standing rule that
+a comment is not a proof. contractRef_acc_complete additionally cannot have its hypothesis bundle
+witnessed in this file at all: a VerifierEnv exhibit lives under Instances/, which D-P17 forbids
+here.
+
+**Register: 44** (from 52), regenerated with scripts/gen_sorry.sh, three-way agreement with
+scripts/sorries.sh and checks.sh verified. The four surviving Accumulator pins did not move (all
+insertions were below line 339), so no comment-only line-shift was incurred.
+
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for

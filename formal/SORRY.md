@@ -19,14 +19,6 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/Accumulator.lean | 249 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Accumulator.lean | 275 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Accumulator.lean | 339 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 364 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 372 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 395 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 409 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 436 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 443 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 526 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/Lowering/Accumulator.lean | 555 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 743 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 795 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Calldata.lean | 1288 | `sorry` | P-SE: semantic equivalence obligations |
