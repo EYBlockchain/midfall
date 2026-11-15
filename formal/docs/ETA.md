@@ -604,6 +604,46 @@ here.
 scripts/sorries.sh and checks.sh verified. The four surviving Accumulator pins did not move (all
 insertions were below line 339), so no comment-only line-shift was incurred.
 
+### R18 - round 172, after P-RUNSHELL. The fourth refutation, and it hits the real artifact.
+
+**`ir_refines` is REFUTED — not at our model, but at solc's actual imported output.**
+`ir_refines_refuted_at_the_imported_artifact` refutes the exact shape `ImportedIR.lean:355` states as
+an unproved `example : Prop` that stage 6 was meant to discharge. Kernel-checked, no `native_decide`,
+no `sorryAx`. **M8's bridge is false for solc's output, not just for our model of it.**
+
+| claim | believed | measured |
+|---|---|---|
+| the frame difference blocks ir_refines | R-66's crux | **NO** — the emitted program is frame-insensitive |
+| curveSurface can discharge LoweringCorrect | assumed since P-LOWEQ | **NO** — RunShell has no runs at all |
+| fix it by populating bindLocals | the obvious repair | **INSUFFICIENT** — 6 of 8 helpers read names no arm-level block can bind |
+| sha256sum is missing on this host | reported by the package | **FALSE** — /sbin/sha256sum exists; a PATH artefact |
+| gen_sorry.sh is reliable | assumed | **NO** — it truncates two declaration columns by one char |
+
+**Why the refutation is strong rather than an artefact:** the package ruled out the easy explanations
+instead of assuming them. The head guard is proved to PASS and a run of head-guard-then-revert from
+the same frame is exhibited; a derivation of extcodesize(vk) is exhibited once vk IS bound. So the
+emptiness is the binding — not the builtin, not the frame, not the program class.
+
+**The structural fact that kills the easy fix: a Yul function is not a closure.** Step.callOk binds
+params plus zeroed rets only, and six of the eight emitted helpers read names their own signature
+cannot supply. Binding all 61 free names to zero is STILL STUCK — the gate passes and it dies inside
+a helper. **No legal value of bindLocals closes the program.**
+
+**Consequence for this ledger's own history.** This is the fourth headline statement found false or
+vacuous as written: Holds.g1Decodes, Inv_mono, ir_refines-via-irCheck, and now ir_refines via the open
+arm. **Three of the four were in Fable's plan, not in my transcription of it.** The pattern is not
+carelessness — it is that a statement about a FRAGMENT treated as a PROGRAM looks fine until someone
+actually runs it.
+
+**Register: 41. `lowering_equivalence` remains proved, and is now known vacuous at every Surface in
+the tree.** That is not a regression — a vacuous theorem you know is vacuous is worth more than a
+proved one you believe. But the next step is a **design decision, not a proof**: whether `RunShell`
+stays the right-hand side of `ir_refines` at all.
+
+**Cost re-estimate:** the emitter change — inline contract-level constants as solc does — is a **Rust
+change**, outside current confinement. The Lean alternative is a spec-level closure transform plus
+restating the `shell_unfolds` pin. **Neither is inside the 10–16 session figure**, which assumed the
+curve Surface could discharge the bundle.
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
