@@ -1,5 +1,5 @@
 -- |
--- Midfall.Common.GSMul
+-- Midfall.Halo2.Exec.Kzg.GSMul
 --
 -- The scalar-action transport lemmas. `gsmul` (Halo2/Exec/Kzg/Msm.lean:35) is the
 -- port's bridge between the two notations the project is committed to: the groups are
@@ -13,7 +13,10 @@
 -- section 8 next to the two MSMKZG.eval holes that needed them, which made them look
 -- local to that proof. They are not: they are transport facts about a Midfall
 -- definition, and any other file that folds an MSM over `gsmul` needs exactly them.
--- Relocated by P-LIMB step 3.
+-- Relocated by P-LIMB step 3, and to THIS directory by P-ACCENC step 0: at
+-- Common/ it was the only module under Common/ that imported Halo2/, a layering
+-- inversion (gsmul is defined at Halo2/Exec/Kzg/Msm.lean:35, so a Common module had
+-- to import upward to reach it).
 --
 -- WHY THEY ARE NOT SIMPLY CITED FROM MATHLIB. The section comment that used to
 -- introduce them claimed "Mathlib's Additive.ofMul_mul / toMul_nsmul family is NOT in

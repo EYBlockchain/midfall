@@ -60,6 +60,7 @@ import Midfall.Common.Bytes
 import Midfall.Common.Codec
 import Midfall.Common.Curve
 import Midfall.Assumptions.Pairing
+import Midfall.Assumptions.Codec
 import Midfall.Halo2.Exec.Arith
 import Midfall.Halo2.Exec.Error
 import Midfall.Halo2.Exec.Features
@@ -1971,5 +1972,617 @@ theorem encodeAccCoordWords_packingOk_needs_check :
         (#[BitVec.ofNat 256 (2 ^ 224), 0] : Array Word256) 0 = 0 := by decide
 
 end Dp23Bytes
+
+/-! ## 9. The encoder direction of the two readers
+
+  `decodeAccCoord` (yul:86-114) and `loadAccPoint` are the two readers
+  `decodeAcc` is built from. Until now the tree only had the DECODER side of each:
+  `loadAccCoordShifted_encode` says the limb sum the loader computes is the
+  shifted value the encoder packed, and `loadAccPoint_flag0` / `_flag1` say what the
+  point loader emits GIVEN the coordinate pairs it decoded. What was missing is the round
+  trip - feed the encoder own words back through the reader and get the coordinate
+  (resp. the EIP-2537 byte string) out. That is what this section lands, and it is the
+  link P-LIMB named and no earlier table mentioned.
+
+  THE WALL, and the way round it. The `decodeAccCoord` range check is written the way
+  the contract writes it - as a `(hi, lo)` comparison against `BLS_P_HI` /
+  `BLS_P_MINUS_ONE_LO` (yul:89-94) - so proving it accepts every `v < p` means
+  moving between `v < p` and `v / 2^256 < p / 2^256`. Routing that through the
+  generic division lemmas (`Nat.div_le_div_right` and friends) blows the kernel
+  recursion limit in this elaboration context: their implicit divisor is the 2^256-scale
+  numeral. The way round it is to keep the divisor concrete and derive the comparison from
+  the SPLIT of `p` itself. `plimb_split` and its siblings are closed equations between
+  numerals, so each is a `decide` and no division lemma is ever asked to instantiate a
+  2^256-scale implicit; the only symbolic division facts left are `Nat.div_add_mod` and
+  `Nat.div_lt_of_lt_mul`, both applied at the literal `2 ^ 256`.
+
+  A SECOND WALL, found here rather than inherited: `simp` EVALUATES the literal
+  `2 ^ 256` while normalising a `decide` goal, so a hypothesis stated with the
+  unevaluated power no longer matches and `simp [h]` silently fails. Every Bool readback
+  below therefore goes through `simp only [decide_eq_true_eq]` (or `not_decide`), which
+  converts the goal to a Prop without touching the numerals. -/
+set_option exponentiation.threshold 512 in
+/-- The base-field modulus split at the 256-bit boundary the contract range check uses:
+    p = pHi * 2^256 + pLo + 1. Closed numerals, so this is a decide. -/
+theorem plimb_split : accFpModulus = accFpHi * 2 ^ 256 + accFpMinusOneLo + 1 := by decide
+
+set_option exponentiation.threshold 512 in
+/-- The high limb fits the EIP-2537 128-bit slot the contract checks (yul:113). -/
+theorem plimb_hi_eq : accFpHi < 2 ^ 128 := by decide
+
+/-- The low limb is a proper residue, which is what makes the split above a
+    division-with-remainder and not just an equation. -/
+theorem plimb_lo_lt : accFpMinusOneLo < 2 ^ 256 :=
+  Nat.mod_lt _ (Nat.pow_pos (by decide : 0 < (2 : Nat)))
+
+/-- p - 1 in the contract own (hi, lo) pieces. -/
+theorem plimb_pred : accFpModulus - 1 = accFpHi * 2 ^ 256 + accFpMinusOneLo := by
+  rw [plimb_split]
+  omega
+
+set_option exponentiation.threshold 512 in
+/-- The sentinel value p - 1 splits into exactly (accFpHi, accFpMinusOneLo), which is
+    what isBlsPMinusOne tests - so the sentinel arm fires on p - 1 and nothing else.
+    Closed numerals: both halves are a decide, not a division argument. -/
+theorem plimb_pred_hi : (accFpModulus - 1) / 2 ^ 256 = accFpHi := by decide
+
+set_option exponentiation.threshold 512 in
+theorem plimb_pred_lo : (accFpModulus - 1) % 2 ^ 256 = accFpMinusOneLo := by decide
+
+/-- The shifted encoder maps coordinate 0 to the sentinel p - 1, and every other
+    in-field coordinate c to c - 1. This is the minus-one shift of field_chip.rs:131
+    stated as an equation about the value the loader computes. -/
+theorem encodeAccCoord_shift_value (c : Nat) (hc : c < accFpModulus) :
+    (c + accFpModulus - 1) % accFpModulus = if c = 0 then accFpModulus - 1 else c - 1 := by
+  have hpos : 0 < accFpModulus := by decide
+  cases c with
+  | zero =>
+      have h1 : (0 + accFpModulus - 1) % accFpModulus = accFpModulus - 1 :=
+        Nat.mod_eq_of_lt (Nat.sub_lt hpos (by decide : (0 : Nat) < 1))
+      rw [h1]
+      simp
+  | succ k =>
+      have hlt : k < accFpModulus := by omega
+      rw [ite_eq_right (Nat.succ_ne_zero k), Nat.add_sub_cancel,
+          show k + 1 + accFpModulus - 1 = k + accFpModulus from by omega,
+          Nat.add_mod, Nat.mod_self, Nat.add_zero, Nat.mod_mod, Nat.mod_eq_of_lt hlt]
+
+/-- **The range check accepts every value below p** - the contract (hi, lo) comparison
+    (yul:89-94) plus the 128-bit high-word check (yul:113), as a concrete Bool equation
+    a caller can rewrite with. -/
+theorem decodeAccCoord_accepts_of_lt (v : Nat) (hv : v < accFpModulus) :
+    ((v / 2 ^ 256 < accFpHi ||
+          ((v / 2 ^ 256 == accFpHi) && ! (v % 2 ^ 256 > accFpMinusOneLo))) &&
+      v / 2 ^ 256 < 2 ^ 128) = true := by
+  have hB : 0 < (2 : Nat) ^ 256 := Nat.pow_pos (by decide)
+  have hlo : v % 2 ^ 256 < 2 ^ 256 := Nat.mod_lt v hB
+  have hsum : (v / 2 ^ 256) * 2 ^ 256 + v % 2 ^ 256 = v := by
+    rw [Nat.mul_comm, Nat.div_add_mod]
+  have hstep : accFpHi * 2 ^ 256 + accFpMinusOneLo + 1 ≤ accFpHi * 2 ^ 256 + 2 ^ 256 := by
+    rw [Nat.add_assoc, Nat.add_le_add_iff_left]
+    exact Nat.succ_le_of_lt plimb_lo_lt
+  have h3 : accFpHi * 2 ^ 256 + 2 ^ 256 = 2 ^ 256 * (accFpHi + 1) :=
+    calc accFpHi * 2 ^ 256 + 2 ^ 256 = 2 ^ 256 * accFpHi + 2 ^ 256 := by rw [Nat.mul_comm]
+      _ = 2 ^ 256 * (accFpHi + 1) := by rw [Nat.mul_add, Nat.mul_one]
+  have hmul : v < 2 ^ 256 * (accFpHi + 1) :=
+    Nat.lt_of_lt_of_le
+      (Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hv (Nat.le_of_eq plimb_split)) hstep)
+      (Nat.le_of_eq h3)
+  have hhi_le : v / 2 ^ 256 ≤ accFpHi :=
+    Nat.le_of_lt_succ (Nat.div_lt_of_lt_mul hmul)
+  rw [Bool.and_eq_true]
+  refine ⟨?_, by simp only [decide_eq_true_eq]; exact eipCoord_hi_lt_128 v hv⟩
+  rw [Bool.or_eq_true]
+  by_cases hlt : v / 2 ^ 256 < accFpHi
+  · exact Or.inl (by simp only [decide_eq_true_eq]; exact hlt)
+  · have heq : v / 2 ^ 256 = accFpHi :=
+      Nat.le_antisymm hhi_le (Nat.le_of_not_lt hlt)
+    have hle2 : v % 2 ^ 256 ≤ accFpMinusOneLo := by
+      rw [heq] at hsum
+      have hv' : v < accFpHi * 2 ^ 256 + accFpMinusOneLo + 1 :=
+        Nat.lt_of_lt_of_le hv (Nat.le_of_eq plimb_split)
+      rw [← hsum] at hv'
+      rw [Nat.add_assoc] at hv'
+      exact Nat.le_of_lt_succ (Nat.add_lt_add_iff_left.mp hv')
+    refine Or.inr ?_
+    rw [Bool.and_eq_true, heq]
+    refine ⟨by decide, ?_⟩
+    have hne : ¬ (accFpMinusOneLo < v % 2 ^ 256) := Nat.not_lt.mpr hle2
+    cases hd : decide (v % 2 ^ 256 > accFpMinusOneLo) with
+    | true => exact absurd (of_decide_eq_true hd) hne
+    | false => rfl
+
+/-- The sentinel test fires at p - 1, and nowhere below it. -/
+theorem isBlsPMinusOne_at_pred :
+    isBlsPMinusOne ((accFpModulus - 1) / 2 ^ 256) ((accFpModulus - 1) % 2 ^ 256) = true := by
+  rw [plimb_pred_hi, plimb_pred_lo]
+  rfl
+
+theorem isBlsPMinusOne_ne_of_lt_pred (v : Nat) (hv : v < accFpModulus - 1) :
+    ¬ (isBlsPMinusOne (v / 2 ^ 256) (v % 2 ^ 256) = true) := by
+  intro h
+  unfold isBlsPMinusOne at h
+  rw [Bool.and_eq_true] at h
+  have h1 : v / 2 ^ 256 = accFpHi := Nat.eq_of_beq_eq_true h.1
+  have h2 : v % 2 ^ 256 = accFpMinusOneLo := Nat.eq_of_beq_eq_true h.2
+  have hsum : (v / 2 ^ 256) * 2 ^ 256 + v % 2 ^ 256 = v := by
+    rw [Nat.mul_comm, Nat.div_add_mod]
+  rw [h1, h2, ← plimb_pred] at hsum
+  omega
+
+/-- **The encoder direction of the coordinate reader (P-ACCENC step 2).** Feeding the
+    words `encodeAccCoordWords` emits back through `decodeAccCoord` returns the
+    coordinate whole, in the EIP-2537 `(hi, lo)` split the contract callers want: the
+    minus-one sentinel is undone by the `+1` at yul:96-108, the packing check accepts the
+    honest words, and coordinate 0 comes back as `(0, 0)` through the sentinel arm. This
+    is the lemma the four `decodeAcc_*` round trips were stuck on. -/
+theorem decodeAccCoord_encode (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (c : Nat) (hc : c < accFpModulus) :
+    decodeAccCoord enc (encodeAccCoordWords enc c) 0 = some (c / 2 ^ 256, c % 2 ^ 256) := by
+  have hpos : 0 < accFpModulus := by decide
+  have hv : (c + accFpModulus - 1) % accFpModulus < accFpModulus := Nat.mod_lt _ hpos
+  have hpack : checkAccCoordPacking enc (encodeAccCoordWords enc c) 0 = true :=
+    encodeAccCoordWords_packingOk enc hshape c hc
+  have hload : loadAccCoordShifted enc (encodeAccCoordWords enc c) 0 =
+      (c + accFpModulus - 1) % accFpModulus :=
+    loadAccCoordShifted_encode enc hshape c hc
+  unfold decodeAccCoord
+  dsimp only
+  rw [hload, hpack]
+  simp only [Bool.not_true, Bool.false_eq_true, ite_false]
+  rw [decodeAccCoord_accepts_of_lt ((c + accFpModulus - 1) % accFpModulus) hv]
+  simp only [Bool.not_true, Bool.false_eq_true, ite_false]
+  cases c with
+  | zero =>
+      rw [Nat.zero_add, Nat.mod_eq_of_lt (Nat.sub_lt hpos (by decide : (0 : Nat) < 1)),
+          isBlsPMinusOne_at_pred]
+      simp
+  | succ k =>
+      have hlt : k < accFpModulus := by omega
+      have h1 : (k + 1 + accFpModulus - 1) % accFpModulus = k := by
+        rw [show k + 1 + accFpModulus - 1 = k + accFpModulus from by omega,
+            Nat.add_mod, Nat.mod_self, Nat.add_zero, Nat.mod_mod, Nat.mod_eq_of_lt hlt]
+      rw [h1]
+      exact ite_eq_right (isBlsPMinusOne_ne_of_lt_pred k (by omega))
+
+
+/-- The readers only ever look at the first `2 * coordinateWords` words of a point block
+    (plus the flag word at `2 * coordinateWords`), so unrelated words before or after cannot
+    change what they compute. These transfer lemmas are what lets the round trips be stated about
+    a whole instance array while being proved one block at a time.
+
+    FINDING, method-rule style: `Array.getD_append` and `List.getD_append` are NOT in
+    this project built surface (both probed against `import Midfall`), and neither is
+    `List.length_toArray` or `Array.size_toList` - the size/list bridges that DO exist
+    are `Array.size_eq_length_toList` and `List.toList_toArray`. The two append
+    transfers are four lines each by induction on `List.getD_cons_succ`, so they are proved
+    here rather than imported. A fourth wall, found here: `0 + j` is NOT defeq to `j`
+    (Nat.add recurses on its SECOND argument), so every `show` that drops a leading `0 +`
+    fails and needs `simp only [Nat.zero_add]` instead. -/
+private theorem getD_toList {α : Type} (a : Array α) (i : Nat) (d : α) :
+    a.getD i d = a.toList.getD i d := by
+  cases a
+  simp
+
+private theorem getD_append_left_list {α : Type} (l l' : List α) (d : α) :
+    ∀ n, n < l.length → (l ++ l').getD n d = l.getD n d := by
+  induction l with
+  | nil => intro n h; rw [List.length_nil] at h; omega
+  | cons a t ih =>
+      intro n h
+      cases n with
+      | zero => rw [List.cons_append, List.getD_cons_zero, List.getD_cons_zero]
+      | succ m =>
+          have h2 : m < t.length := by simpa using h
+          rw [List.cons_append, List.getD_cons_succ, ih m h2, List.getD_cons_succ]
+
+private theorem getD_append_right_list {α : Type} (l l' : List α) (d : α) :
+    ∀ n, l.length ≤ n → (l ++ l').getD n d = l'.getD (n - l.length) d := by
+  induction l with
+  | nil => intro n _; rfl
+  | cons a t ih =>
+      intro n h
+      cases n with
+      | zero => rw [List.length_cons] at h; omega
+      | succ m =>
+          have h2 : t.length ≤ m := by simpa using h
+          have hsub : m + 1 - (a :: t).length = m - t.length := by
+            rw [List.length_cons]
+            omega
+          rw [List.cons_append, List.getD_cons_succ, ih m h2, hsub]
+
+private theorem getD_append_left {α : Type} (a b : Array α) (i : Nat) (d : α)
+    (hi : i < a.size) : (a ++ b).getD i d = a.getD i d := by
+  have h : i < a.toList.length := by
+    rw [← Array.size_eq_length_toList]
+    exact hi
+  rw [getD_toList, Array.toList_append, getD_append_left_list a.toList b.toList d i h]
+  exact (getD_toList a i d).symm
+
+private theorem getD_append_right {α : Type} (a b : Array α) (i : Nat) (d : α)
+    (hi : i < b.size) : (a ++ b).getD (a.size + i) d = b.getD i d := by
+  have hlt : i < b.toList.length := by
+    rw [← Array.size_eq_length_toList]
+    exact hi
+  have hle : a.toList.length ≤ a.size + i := by
+    rw [← Array.size_eq_length_toList]
+    omega
+  rw [getD_toList, Array.toList_append,
+      getD_append_right_list a.toList b.toList d (a.size + i) hle]
+  have hsub : a.size + i - a.toList.length = i := by
+    rw [← Array.size_eq_length_toList]
+    omega
+  rw [hsub, getD_toList]
+
+private theorem getD_snoc {α : Type} (a : Array α) (v : α) (d : α) :
+    (a ++ #[v]).getD a.size d = v := by
+  rw [← Nat.add_zero a.size, getD_append_right a (#[v]) 0 d (by simp)]
+  simp
+
+/-- One limb chunk per declared coordinate word: the encoder emits exactly
+    `coordinateWords` words for a coordinate, which is what makes the block boundaries in
+    an instance array line up with what the decoder expects. -/
+theorem encodeAccCoordWords_size (enc : AccumulatorEncoding) (c : Nat) :
+    (encodeAccCoordWords enc c).size = enc.coordinateWords := by
+  unfold encodeAccCoordWords
+  dsimp only
+  rw [Array.size_eq_length_toList, List.toList_toArray, List.length_map, List.length_range]
+
+private theorem limbsPerInstance_pos (enc : AccumulatorEncoding) : 0 < enc.limbsPerInstance := by
+  show 0 < max 1 (254 / enc.numLimbBits)
+  omega
+
+/-- Limb `i` of a coordinate lives in word `i / limbsPerInstance`, and that word index
+    is always below `coordinateWords` - the short last chunk is exactly what `divCeil` pays
+    for. Note `divCeil` is the project own definition (Exec/Arith.lean:53), not Mathlib
+    `Nat.divCeil`, so the bound comes from `Nat.le_div_iff_mul_le`. -/
+private theorem lt_coordinateWords (enc : AccumulatorEncoding) (i : Nat)
+    (hi : i < enc.numLimbs) : i / enc.limbsPerInstance < enc.coordinateWords := by
+  have hpos : 0 < enc.limbsPerInstance := limbsPerInstance_pos enc
+  show i / enc.limbsPerInstance < divCeil enc.numLimbs enc.limbsPerInstance
+  unfold divCeil
+  rw [Nat.lt_iff_add_one_le, Nat.le_div_iff_mul_le hpos, Nat.add_mul, Nat.one_mul]
+  have h1 : (i / enc.limbsPerInstance) * enc.limbsPerInstance ≤ i :=
+    Nat.div_mul_le_self i enc.limbsPerInstance
+  have h2 : i + 1 ≤ enc.numLimbs := Nat.succ_le_of_lt hi
+  have h3 : enc.numLimbs ≤ enc.numLimbs + enc.limbsPerInstance - 1 := by
+    have : 1 ≤ enc.limbsPerInstance := hpos
+    omega
+  omega
+
+private theorem foldl_range_congr {α : Type} (n : Nat) (f g : α → ℕ → α) (init : α)
+    (h : ∀ i < n, ∀ a, f a i = g a i) :
+    (List.range n).foldl f init = (List.range n).foldl g init := by
+  induction n with
+  | zero => rfl
+  | succ k ih =>
+      rw [List.range_succ, List.foldl_append, List.foldl_append,
+          ih (fun i hi a => h i (Nat.lt_of_lt_of_le hi (Nat.le_succ k)) a)]
+      show f (List.foldl g init (List.range k)) k = g (List.foldl g init (List.range k)) k
+      exact h k (Nat.lt_succ_self k) _
+
+private theorem all_range_congr (n : Nat) (f g : Nat → Bool)
+    (h : ∀ i < n, f i = g i) : (List.range n).all f = (List.range n).all g := by
+  induction n with
+  | zero => rfl
+  | succ k ih =>
+      rw [List.range_succ, List.all_append, List.all_append,
+          ih (fun i hi => h i (Nat.lt_of_lt_of_le hi (Nat.le_succ k)))]
+      rw [show ([k].all f) = f k from by rw [List.all_cons, List.all_nil, Bool.and_true],
+          show ([k].all g) = g k from by rw [List.all_cons, List.all_nil, Bool.and_true],
+          h k (Nat.lt_succ_self k)]
+
+/-- **The readers are local.** Two arrays that agree on the `coordinateWords` words of a
+    block decode the same coordinate, wherever in either array the block starts. -/
+theorem decodeAccCoord_congr (enc : AccumulatorEncoding) (inst inst' : Array Word256)
+    (src src' : Nat)
+    (h : ∀ j < enc.coordinateWords, inst.getD (src + j) 0 = inst'.getD (src' + j) 0) :
+    decodeAccCoord enc inst src = decodeAccCoord enc inst' src' := by
+  have hshift : loadAccCoordShifted enc inst src = loadAccCoordShifted enc inst' src' := by
+    unfold loadAccCoordShifted
+    dsimp only
+    refine foldl_range_congr enc.numLimbs _ _ 0 (fun i hi acc => ?_)
+    rw [h (i / enc.limbsPerInstance) (lt_coordinateWords enc i hi)]
+  have hpack : checkAccCoordPacking enc inst src = checkAccCoordPacking enc inst' src' := by
+    unfold checkAccCoordPacking
+    dsimp only
+    refine all_range_congr enc.coordinateWords _ _ (fun j hj => ?_)
+    rw [h j hj]
+  unfold decodeAccCoord
+  dsimp only
+  rw [hshift, hpack]
+
+set_option maxRecDepth 100000 in
+/-- The emitter always produces exactly `len` bytes, big-endian too. Same shape as the
+    little-endian `Midfall.Assumptions.natToBytesLowFirst_size` it is derived from. -/
+private theorem natToBytesBE_size (n len : Nat) : (natToBytesBE n len).size = len := by
+  show ((natToBytesLowFirst n len).data.toList.reverse.toArray).size = len
+  simp [List.length_reverse, Midfall.Assumptions.natToBytesLowFirst_size]
+
+/-- Reading the whole buffer is the identity. -/
+private theorem bytesTake_whole (b : Bytes) : bytesTake b 0 b.size = some b := by
+  unfold bytesTake
+  rw [ite_eq_left (by rw [Nat.zero_add] <;> omega)]
+  rw [Nat.zero_add]
+  have key : b.data.extract 0 (ByteArray.size b) = b.data :=
+    @Array.extract_eq_self_of_le UInt8 (ByteArray.size b) b.data (Nat.le_refl _)
+  rw [key]
+
+/-- The two coordinates of the 16-48-16-48 frame read back through `coordOfEip`: emitter
+    and reader agree byte for byte. This is what lets the codec law `eipShape` be fed to
+    the loader. -/
+theorem coordOfEip_frame (x y : Nat) (hx : x < 256 ^ 48) (hy : y < 256 ^ 48) :
+    coordOfEip (natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++
+        natToBytesBE y 48) 0 = x ∧
+      coordOfEip (natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++
+        natToBytesBE y 48) 1 = y := by
+  set P := natToBytesBE 0 16 with hPdef
+  set Q := natToBytesBE x 48 with hQdef
+  set S := natToBytesBE y 48 with hSdef
+  have hP : P.size = 16 := natToBytesBE_size 0 16
+  have hQ : Q.size = 48 := natToBytesBE_size x 48
+  have hS : S.size = 48 := natToBytesBE_size y 48
+  have hPQ : (P ++ Q).size = 64 := by rw [ByteArray.size_append, hP, hQ]
+  have hPQP : ((P ++ Q) ++ P).size = 80 := by rw [ByteArray.size_append, hPQ, hP]
+  have ht0 : bytesTake (((P ++ Q) ++ P) ++ S) 16 48 = some Q := by
+    rw [bytesTake_append_left ((P ++ Q) ++ P) S 16 48 (by rw [hPQP] <;> omega),
+        bytesTake_append_left (P ++ Q) P 16 48 (by rw [hPQ] <;> omega),
+        ← hP]
+    refine (bytesTake_append_right P Q 0 48 (by rw [hQ] <;> omega)).trans ?_
+    rw [← hQ]
+    exact bytesTake_whole Q
+  have ht1 : bytesTake (((P ++ Q) ++ P) ++ S) 80 48 = some S := by
+    rw [← hPQP]
+    refine (bytesTake_append_right ((P ++ Q) ++ P) S 0 48 (by rw [hS] <;> omega)).trans ?_
+    rw [← hS]
+    exact bytesTake_whole S
+  refine ⟨?_, ?_⟩
+  · unfold coordOfEip
+    rw [ht0]
+    exact (bytesToNatBE_natToBytesBE x 48).trans (Nat.mod_eq_of_lt hx)
+  · unfold coordOfEip
+    rw [ht1]
+    exact (bytesToNatBE_natToBytesBE y 48).trans (Nat.mod_eq_of_lt hy)
+
+/-- **The encoder direction of the point loader, coordinate form (P-ACCENC step 1).** Two
+    in-field coordinates that are not both zero, packed by `encodeAccCoordWords` with a
+    flag-0 word, load back as the EIP-2537 frame and the flag reads false. This is where
+    `eipFrame` finally gets used: the decoder emits two 256-bit words per coordinate and the
+    codec law speaks of one 48-byte field, and only the frame lemma says they are the same
+    bytes. -/
+theorem loadAccPoint_encode_coords (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (x y : Nat)
+    (hx : x < accFpModulus) (hy : y < accFpModulus)
+    (hne : ¬ (x = 0 ∧ y = 0)) :
+    loadAccPoint enc (encodeAccCoordWords enc x ++ encodeAccCoordWords enc y ++
+        #[BitVec.ofNat 256 0]) 0 =
+      some (natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++
+        natToBytesBE y 48, false) := by
+  set A := encodeAccCoordWords enc x with hAdef
+  set B := encodeAccCoordWords enc y with hBdef
+  have hAs : A.size = enc.coordinateWords := encodeAccCoordWords_size enc x
+  have hBs : B.size = enc.coordinateWords := encodeAccCoordWords_size enc y
+  have hget0 : ∀ j < enc.coordinateWords,
+      Array.getD ((A ++ B) ++ #[BitVec.ofNat 256 0]) (0 + j) 0 =
+        Array.getD A (0 + j) 0 := by
+    intro j hj
+    simp only [Nat.zero_add]
+    rw [getD_append_left (A ++ B) (#[BitVec.ofNat 256 0] : Array Word256) j 0
+          (by rw [Array.size_append, hAs, hBs]; omega),
+        getD_append_left A B j 0 (by rw [hAs]; exact hj)]
+  have hget1 : ∀ j < enc.coordinateWords,
+      Array.getD ((A ++ B) ++ #[BitVec.ofNat 256 0]) (0 + enc.coordinateWords + j) 0 =
+        Array.getD B (0 + j) 0 := by
+    intro j hj
+    simp only [Nat.zero_add]
+    rw [← hAs]
+    rw [getD_append_left (A ++ B) (#[BitVec.ofNat 256 0] : Array Word256) (A.size + j) 0
+          (by rw [Array.size_append, hAs, hBs]; omega),
+        getD_append_right A B j 0 (by rw [hBs]; exact hj)]
+  have hflag : (Array.getD ((A ++ B) ++ #[BitVec.ofNat 256 0])
+      (0 + 2 * enc.coordinateWords) 0).toNat = 0 := by
+    simp only [Nat.zero_add]
+    rw [show (2 * enc.coordinateWords) = (A ++ B).size from
+          (by rw [Array.size_append, hAs, hBs]; omega), getD_snoc]
+    rfl
+  have hx' : decodeAccCoord enc ((A ++ B) ++ #[BitVec.ofNat 256 0]) 0 =
+      some (x / 2 ^ 256, x % 2 ^ 256) := by
+    rw [decodeAccCoord_congr enc _ A 0 0 hget0, decodeAccCoord_encode enc hshape x hx]
+  have hy' : decodeAccCoord enc ((A ++ B) ++ #[BitVec.ofNat 256 0]) (0 + enc.coordinateWords) =
+      some (y / 2 ^ 256, y % 2 ^ 256) := by
+    rw [decodeAccCoord_congr enc _ B (0 + enc.coordinateWords) 0 hget1,
+        decodeAccCoord_encode enc hshape y hy]
+  have hne' : ¬ (x / 2 ^ 256 = 0 ∧ x % 2 ^ 256 = 0 ∧ y / 2 ^ 256 = 0 ∧ y % 2 ^ 256 = 0) := by
+    rintro ⟨h1, h2, h3, h4⟩
+    apply hne
+    refine ⟨?_, ?_⟩
+    · have hs : (x / 2 ^ 256) * 2 ^ 256 + x % 2 ^ 256 = x := by
+        rw [Nat.mul_comm, Nat.div_add_mod]
+      rw [h1, h2, Nat.zero_mul, Nat.add_zero] at hs
+      exact hs.symm
+    · have hs : (y / 2 ^ 256) * 2 ^ 256 + y % 2 ^ 256 = y := by
+        rw [Nat.mul_comm, Nat.div_add_mod]
+      rw [h3, h4, Nat.zero_mul, Nat.add_zero] at hs
+      exact hs.symm
+  rw [loadAccPoint_flag0 enc _ 0 (x / 2 ^ 256) (x % 2 ^ 256) (y / 2 ^ 256) (y % 2 ^ 256)
+      hflag hx' hy' hne']
+  rw [eipFrame x y (eipCoord_hi_lt_128 x hx) (eipCoord_hi_lt_128 y hy)]
+
+/-- **`loadAccPoint_encode` (P-ACCENC step 1): the encoder direction of the accumulator
+    point loader, stated at the codec.** The words `AccMsm.asPublicInputPoint` emits for a
+    point load back through `loadAccPoint` as exactly the codec EIP-2537 bytes of that
+    point, and the flag word reads back as the same Bool the encoder wrote. Both arms are
+    needed and they consume different laws: a non-identity point goes through `eipShape`
+    (which supplies in-field, not-both-zero coordinates) plus `eipFrame`; the identity goes
+    through `toEip_one` and the flag-1 arm, which ignores the coordinate words entirely.
+    This is the link P-LIMB named and no earlier table mentioned, and the last byte-level fact
+    `decodeAcc_encode` was missing. -/
+theorem loadAccPoint_encode {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (enc : AccumulatorEncoding) (hshape : enc.limbShapeOk = true)
+    (codec : G1Codec G₁) (hc : Midfall.Assumptions.G1CodecLaws codec) (Q : G₁) :
+    loadAccPoint enc (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec Q) 0 =
+      some (codec.toEip Q, decideBool (P.decEqG₁ Q 1)) := by
+  by_cases hQ : Q = 1
+  · subst hQ
+    have hdb : decideBool (P.decEqG₁ (1 : G₁) 1) = true := by
+      cases hd : P.decEqG₁ (1 : G₁) 1 with
+      | isTrue _ => rfl
+      | isFalse hf => exact absurd rfl hf
+    unfold AccMsm.asPublicInputPoint
+    dsimp only
+    rw [hdb]
+    simp only [ite_true]
+    have hflag : ((encodeAccCoordWords enc (coordOfEip (codec.toEip 1) 0) ++
+        encodeAccCoordWords enc (coordOfEip (codec.toEip 1) 1)) ++
+        #[BitVec.ofNat 256 1]).getD (0 + 2 * enc.coordinateWords) 0 =
+        BitVec.ofNat 256 1 := by
+      simp only [Nat.zero_add]
+      have hsz : (encodeAccCoordWords enc (coordOfEip (codec.toEip 1) 0) ++
+          encodeAccCoordWords enc (coordOfEip (codec.toEip 1) 1)).size =
+          2 * enc.coordinateWords := by
+        rw [Array.size_append, encodeAccCoordWords_size, encodeAccCoordWords_size]
+        omega
+      rw [← hsz, getD_snoc]
+    rw [loadAccPoint_flag1 enc _ _ (by rw [hflag]; rfl), hc.toEip_one]
+    exact (rfl : some (natToBytesBE 0 (4 * accWordBytes), true) =
+        some (natToBytesBE 0 128, true))
+  · have hdb : decideBool (P.decEqG₁ Q 1) = false := by
+      cases hd : P.decEqG₁ Q 1 with
+      | isTrue hq => exact absurd hq hQ
+      | isFalse _ => rfl
+    obtain ⟨x, y, hx, hy, hne, heip⟩ := hc.eipShape Q hQ
+    have hframe := coordOfEip_frame x y
+      (Nat.lt_trans hx accFpModulus_lt_256_48) (Nat.lt_trans hy accFpModulus_lt_256_48)
+    unfold AccMsm.asPublicInputPoint
+    dsimp only
+    rw [heip, hframe.1, hframe.2, hdb]
+    simp only [Bool.false_eq_true, ite_false]
+    rw [loadAccPoint_encode_coords enc hshape x y hx hy hne, ← heip, ← hdb]
+
+section Dp23Point
+
+set_option exponentiation.threshold 512 in
+/-- `decodeAccCoord_encode`, witness at the real generator coordinate: the reader inverts
+    the writer on the only coordinate the contract actually carries. -/
+theorem decodeAccCoord_encode_witness :
+    decodeAccCoord (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accGenX) 0
+      = some (accGenX / 2 ^ 256, accGenX % 2 ^ 256) := by decide
+
+set_option exponentiation.threshold 512 in
+/-- `decodeAccCoord_encode`, witness at the sentinel: coordinate 0 comes back as (0, 0),
+    which is the whole point of the minus-one shift and the arm a naive statement misses. -/
+theorem decodeAccCoord_encode_sentinel_witness :
+    decodeAccCoord (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) 0) 0 = some (0, 0) := by decide
+
+set_option exponentiation.threshold 512 in
+/-- `decodeAccCoord_encode`, falsification (shape): at 3 limbs the encoder truncates and
+    the reader faithfully returns the truncation, so the round trip fails - which is why
+    `limbShapeOk` gates the decoder. -/
+theorem decodeAccCoord_encode_needs_shape :
+    decodeAccCoord (AccumulatorEncoding.new 0 3 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 3 56) accGenX) 0
+      ≠ some (accGenX / 2 ^ 256, accGenX % 2 ^ 256) := by decide
+
+set_option exponentiation.threshold 512 in
+/-- `decodeAccCoord_encode`, falsification (in-field): at c = p the encoder wraps to the
+    sentinel and the reader returns (0, 0), not the out-of-field coordinate, so the
+    `c < accFpModulus` hypothesis is load-bearing. -/
+theorem decodeAccCoord_encode_needs_infield :
+    decodeAccCoord (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accFpModulus) 0
+      ≠ some (accFpModulus / 2 ^ 256, accFpModulus % 2 ^ 256) := by decide
+
+/-- `loadAccPoint_encode_coords`, witness: the deployed generator coordinates. -/
+theorem loadAccPoint_encode_coords_witness :
+    loadAccPoint (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accGenX ++
+         encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) accGenY ++
+        #[BitVec.ofNat 256 0]) 0 =
+      some (natToBytesBE 0 16 ++ natToBytesBE accGenX 48 ++ natToBytesBE 0 16 ++
+        natToBytesBE accGenY 48, false) :=
+  loadAccPoint_encode_coords (AccumulatorEncoding.new 0 7 56) rfl accGenX accGenY
+    (by decide) (by decide) (by decide)
+
+set_option exponentiation.threshold 512 in
+/-- `loadAccPoint_encode_coords`, falsification: with both coordinates 0 the loader
+    REJECTS (yul:152-157, the all-zero encoding is reserved for the infinity), so hne is
+    load-bearing and the frame conclusion is not vacuously reachable. -/
+theorem loadAccPoint_encode_coords_needs_nonzero :
+    loadAccPoint (AccumulatorEncoding.new 0 7 56)
+        (encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) 0 ++
+         encodeAccCoordWords (AccumulatorEncoding.new 0 7 56) 0 ++
+        #[BitVec.ofNat 256 0]) 0 = none := by decide
+
+/-- `loadAccPoint_encode_coords`, falsification (flag): set the flag word and the same
+    honest coordinate words load as the 128 zero bytes instead of the frame, so the flag
+    position of the block is what the lemma is about. -/
+theorem loadAccPoint_encode_coords_needs_flag0 (enc : AccumulatorEncoding)
+    (hshape : enc.limbShapeOk = true) (x y : Nat)
+    (hx : x < accFpModulus) (hy : y < accFpModulus) (hne : ¬ (x = 0 ∧ y = 0)) :
+    loadAccPoint enc (encodeAccCoordWords enc x ++ encodeAccCoordWords enc y ++
+        #[BitVec.ofNat 256 1]) 0
+      ≠ some (natToBytesBE 0 16 ++ natToBytesBE x 48 ++ natToBytesBE 0 16 ++
+        natToBytesBE y 48, false) := by
+  have hflag : Array.getD ((encodeAccCoordWords enc x ++ encodeAccCoordWords enc y) ++
+      #[BitVec.ofNat 256 1])
+      (0 + 2 * enc.coordinateWords) 0 = BitVec.ofNat 256 1 := by
+    simp only [Nat.zero_add]
+    have hsz : (encodeAccCoordWords enc x ++ encodeAccCoordWords enc y).size =
+        2 * enc.coordinateWords := by
+      rw [Array.size_append, encodeAccCoordWords_size, encodeAccCoordWords_size]
+      omega
+    rw [← hsz, getD_snoc]
+  rw [loadAccPoint_flag1 enc _ _ (by rw [hflag]; rfl)]
+  intro h
+  exact absurd (congrArg Prod.snd (Option.some.inj h)) (by simp)
+
+/-- `loadAccPoint_encode`, witness (identity arm): the theorem really does fire at Q = 1 and
+    says the loader emits the 128 zero bytes the contract reserves for the infinity. -/
+theorem loadAccPoint_encode_witness_identity {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂]
+    [Group Gₜ] [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (enc : AccumulatorEncoding) (hshape : enc.limbShapeOk = true)
+    (codec : G1Codec G₁) (hc : Midfall.Assumptions.G1CodecLaws codec) :
+    loadAccPoint enc (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec 1) 0 =
+      some (natToBytesBE 0 128, true) := by
+  have hdb : decideBool (P.decEqG₁ (1 : G₁) 1) = true := by
+    cases hd : P.decEqG₁ (1 : G₁) 1 with
+    | isTrue _ => rfl
+    | isFalse hf => exact absurd rfl hf
+  rw [loadAccPoint_encode enc hshape codec hc (1 : G₁), hc.toEip_one, hdb]
+
+end Dp23Point
+
+
+/-- **`loadAccPoint` is local too** (the point-level companion of `decodeAccCoord_congr`):
+    two arrays that agree on the `2 * coordinateWords + 1` words of a block - the two
+    coordinate pairs AND the flag word - load the same point. Without this the round trips
+    could only be stated about an array that IS one block. -/
+theorem loadAccPoint_congr (enc : AccumulatorEncoding) (inst inst' : Array Word256)
+    (src src' : Nat)
+    (h : ∀ j ≤ 2 * enc.coordinateWords, inst.getD (src + j) 0 = inst'.getD (src' + j) 0) :
+    loadAccPoint enc inst src = loadAccPoint enc inst' src' := by
+  have hf : (inst.getD (src + 2 * enc.coordinateWords) 0).toNat =
+      (inst'.getD (src' + 2 * enc.coordinateWords) 0).toNat :=
+    congrArg BitVec.toNat (h (2 * enc.coordinateWords) (Nat.le_refl _))
+  have hx : decodeAccCoord enc inst src = decodeAccCoord enc inst' src' :=
+    decodeAccCoord_congr enc inst inst' src src'
+      (fun j hj => h j (by omega))
+  have hy : decodeAccCoord enc inst (src + enc.coordinateWords) =
+      decodeAccCoord enc inst' (src' + enc.coordinateWords) := by
+    refine decodeAccCoord_congr enc inst inst' _ _ ?_
+    intro j hj
+    have h2 := h (enc.coordinateWords + j) (by omega)
+    rw [← Nat.add_assoc, ← Nat.add_assoc] at h2
+    exact h2
+  unfold loadAccPoint
+  dsimp only
+  rw [hf, hx, hy]
 
 end Midfall.Halo2

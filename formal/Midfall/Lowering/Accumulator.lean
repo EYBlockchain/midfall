@@ -55,7 +55,7 @@ import Midfall.Assumptions.Codec
 import Midfall.Halo2.Exec.Accumulator
 import Midfall.Halo2.Exec.Native
 import Midfall.Halo2.Exec.Kzg.Utils
-import Midfall.Common.GSMul
+import Midfall.Halo2.Exec.Kzg.GSMul
 import Midfall.Lowering.Types
 import Midfall.Halo2.Spec.Lemmas
 
@@ -1372,5 +1372,110 @@ theorem instOfWords_falsifies :
     the tree live under Midfall/Instances/, which this file may not import (D-P17). What
     the lemma adds on top of that bundle is batched_complete, and no witness pair is
     claimed for that either (see the limit note at the head of this section). -/
+
+/-! ### The `find?` readback lemmas (P-ACCENC step 3)
+
+  `decodeAcc_injective` does NOT need the fold to be injective as a list equation -
+  `accMapInsert_fold_inj` already has that for ascending lists - it needs to read ONE
+  scalar back out of the map the decoder built, for a named base. That is a `find?`
+  statement, and it splits in two: the key that was inserted, and a key that was not.
+  Neither was in the tree before this package; P-LIMB named the pair and landed
+  neither. Stated over `toList` because `Array.find?` is NOT `List.find?` on `toList`
+  in this toolchain (probed: `l.toArray.find? p = l.find? p` is not rfl), and proved
+  through the `go` helper because `accMapInsert.go k v []` does not reduce by `rfl` -
+  the equation compiler put it behind `if`, so every arm needs `simp [go]`. -/
+
+private theorem go_find?_inserted {F : Type} : ∀ (l : List (String × F)) (k : String) (v : F),
+    (Midfall.Halo2.accMapInsert.go k v l).find? (fun e => e.1 == k) = some (k, v) := by
+  intro l
+  induction l with
+  | nil => intro k v; simp [Midfall.Halo2.accMapInsert.go]
+  | cons x xs ih =>
+      intro k v
+      cases x with
+      | mk k' v' =>
+          by_cases h : k = k'
+          · subst h
+            have hb : (k == k) = true := by simp
+            simp only [Midfall.Halo2.accMapInsert.go, if_pos hb]
+            rw [List.find?_cons]
+            simp
+          · have hne : ¬ (k == k') := by simp [h]
+            have hne2 : ¬ (k' == k) := by simpa using Ne.symm h
+            by_cases hlt : k < k'
+            · simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, ite_eq_left hlt]
+              rw [List.find?_cons]
+              simp
+            · simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, ite_eq_right hlt]
+              rw [List.find?_cons]
+              simp [hne2, ih]
+
+private theorem go_find?_other {F : Type} : ∀ (l : List (String × F)) (k k' : String) (v : F),
+    ¬ (k' == k) →
+    (Midfall.Halo2.accMapInsert.go k v l).find? (fun e => e.1 == k') =
+      l.find? (fun e => e.1 == k') := by
+  intro l
+  induction l with
+  | nil =>
+      intro k k' v h
+      have hneq : ¬ (k = k') := fun g => h (by simp [g])
+      simp [Midfall.Halo2.accMapInsert.go, hneq]
+  | cons x xs ih =>
+      intro k k' v h
+      have hneq : ¬ (k = k') := fun g => h (by simp [g])
+      have hc2 : (k == k') = false := by simp [hneq]
+      cases x with
+      | mk k'' v' =>
+          by_cases h2 : k = k''
+          · subst h2
+            have hb : (k == k) = true := by simp
+            simp only [Midfall.Halo2.accMapInsert.go, if_pos hb]
+            rw [List.find?_cons, List.find?_cons, hc2]
+          · have hne : ¬ (k == k'') := by simp [h2]
+            by_cases hlt : k < k''
+            · simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, ite_eq_left hlt]
+              rw [List.find?_cons, List.find?_cons, hc2]
+            · simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, ite_eq_right hlt]
+              rw [List.find?_cons, List.find?_cons, ih k k' v h]
+
+/-- **`find?` readback at the inserted key (P-ACCENC step 3, first of the pair).** Whatever
+    the map was before, the entry stored under the key just inserted reads back exactly -
+    and it is the only entry under that key, which is what makes the overwrite semantics
+    of `accMapInsert` (BTreeMap::insert) safe here. -/
+theorem accMapInsert_find?_inserted {F : Type} (m : Array (String × F)) (k : String) (v : F) :
+    (accMapInsert m k v).toList.find? (fun e => e.1 == k) = some (k, v) := by
+  show (Midfall.Halo2.accMapInsert.go k v m.toList).toArray.toList.find?
+      (fun e => e.1 == k) = some (k, v)
+  rw [List.toList_toArray]
+  exact go_find?_inserted m.toList k v
+
+/-- **`find?` readback at a different key (P-ACCENC step 3, second of the pair).** Inserting
+    under one key leaves every OTHER key readback unchanged - the fact `decodeAcc_injective`
+    consumes for the base whose word it is not currently looking at. -/
+theorem accMapInsert_find?_other {F : Type} (m : Array (String × F)) (k k' : String) (v : F)
+    (h : ¬ (k' == k)) :
+    (accMapInsert m k v).toList.find? (fun e => e.1 == k') =
+      m.toList.find? (fun e => e.1 == k') := by
+  show (Midfall.Halo2.accMapInsert.go k v m.toList).toArray.toList.find?
+      (fun e => e.1 == k') = m.toList.find? (fun e => e.1 == k')
+  rw [List.toList_toArray]
+  exact go_find?_other m.toList k k' v h
+
+/-- **`accMapInsert_find?_inserted`, witness**: computed on a real two-name map, so the
+    readback is not vacuous. -/
+theorem accMapInsert_find?_inserted_witness :
+    (accMapInsert #[("a", 1)] "b" 2).toList.find? (fun e => e.1 == "b") = some ("b", 2) :=
+  by decide
+
+/-- **`accMapInsert_find?_other`, falsification**: the distinctness hypothesis is
+    load-bearing. At k' = k the insert OVERWRITES, so the readback changes and the
+    equation of accMapInsert_find?_other fails. -/
+theorem accMapInsert_find?_other_needs_ne :
+    (accMapInsert #[("b", 1)] "b" 2).toList.find? (fun e => e.1 == "b") ≠
+      (#[("b", 1)] : Array (String × Nat)).toList.find? (fun e => e.1 == "b") := by decide
+
+
+
+
 
 end Midfall.Lowering
