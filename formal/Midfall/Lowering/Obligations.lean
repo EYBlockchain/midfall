@@ -174,6 +174,7 @@
 
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Partials
+import Midfall.Yul.ShellModel
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.SemanticEquivalence
@@ -585,89 +586,180 @@ theorem points_subgroup_checked_conclusion_is_unconditional
 
 /-! ### The derived headline theorems -/
 
-/-- PLAN 9.5's headline, derived from the fields: soundness via ir_refines (isReturn/returnData are
-    view-level) and shell_unfolds, completeness via ir_refines on both conjuncts, the two-outcome
-    conjunct via ir_refines. Hypotheses are the union of the fields'.
+/-- WorldEq is a conjunction of eleven component equalities, so it is an equivalence
+relation; the headline needs the transitivity half (transport 'the world is unchanged' from the
+shell-side observation to the wrap-side one) and it is not stated in Bridge.lean. -/
+theorem worldEq_symm {a b : EvmState} (h : WorldEq a b) : WorldEq b a :=
+  ⟨h.1.symm, h.2.1.symm, h.2.2.1.symm, h.2.2.2.1.symm, h.2.2.2.2.1.symm,
+    h.2.2.2.2.2.1.symm, h.2.2.2.2.2.2.1.symm, h.2.2.2.2.2.2.2.1.symm,
+    h.2.2.2.2.2.2.2.2.1.symm, h.2.2.2.2.2.2.2.2.2.1.symm, h.2.2.2.2.2.2.2.2.2.2.symm⟩
 
-    STATED WITH A LIVE HYPOTHESIS - AND R-60 S1 RECORDS THAT THIS SENTENCE WAS
-    FALSE WHEN IT WAS FIRST WRITTEN. It claimed inhabitation from
-    Instances/ImportedIR.lean's committed `RunContractIR`, and that run really is
-    committed; what was missing is that every field here takes the run TOGETHER WITH
-    `S.irCheck ir = true`, and the fixture's check hard-coded its own runtime naming
-    instead of reading `S.runtimeName`, so on the imported object it returned false.
-    Individually inhabited, jointly empty, and no gate could see it because gate 6
-    checked the run alone. The repair is in the code: `Surface.irCheck` is no longer a
-    free field but a projection of `Surface.runtimeName` (Surface.lean), and
-    `irHypothesis_jointlyInhabited` (ImportedIR.lean) exhibits the CONJUNCTION - one
-    object, one layout, one observation, both conjuncts - for every call relation and
-    every gas oracle. `s1_defect_refutes_the_conjunction` keeps the broken form in the
-    tree as the refutation, so the exhibit is seen to be able to fail.
+theorem worldEq_trans {a b c : EvmState} (hab : WorldEq a b) (hbc : WorldEq b c) : WorldEq a c :=
+  ⟨hab.1.trans hbc.1, hab.2.1.trans hbc.2.1, hab.2.2.1.trans hbc.2.2.1,
+    hab.2.2.2.1.trans hbc.2.2.2.1, hab.2.2.2.2.1.trans hbc.2.2.2.2.1,
+    hab.2.2.2.2.2.1.trans hbc.2.2.2.2.2.1, hab.2.2.2.2.2.2.1.trans hbc.2.2.2.2.2.2.1,
+    hab.2.2.2.2.2.2.2.1.trans hbc.2.2.2.2.2.2.2.1,
+    hab.2.2.2.2.2.2.2.2.1.trans hbc.2.2.2.2.2.2.2.2.1,
+    hab.2.2.2.2.2.2.2.2.2.1.trans hbc.2.2.2.2.2.2.2.2.2.1,
+    hab.2.2.2.2.2.2.2.2.2.2.trans hbc.2.2.2.2.2.2.2.2.2.2⟩
 
-    THE REQUIRED FINDING, ANSWERED AFTER THE PINS LANDED. The sketch hint ("provable
-    now - transport each field through hc.ir_refines") was FALSE as written, and R-58
-    F3 said why: nothing linked the shell to the assembly, so `hc.verifier_sound` was
-    a claim about `L.headGuard ++ bindLocals ++ L.main` while the conclusion is a
-    claim about `shell.codeBlock`, and no hypothesis connected them. `shell_unfolds`
-    closes THAT half, and it closes it completely: with the equation, RunShell's
-    program is literally RunVerifier's program, and `callState W Lyt H cd` is by
-    definition `initState W Lyt H cd (fun _ => 0)`, which satisfies ZeroAbove. So
-    "verifier_sound plus shell_unfolds gives shell soundness" is now a derivation
-    rather than a hope, and the field bundle finally says one thing about one program.
+/-- **THE HEADLINE, RESTATED OVER THE IN-TREE DISPATCHER MODEL (P-LOWEQ, Tier 2).**
 
-    WHAT STILL STANDS BETWEEN THIS STATEMENT AND A PROOF, corrected by R-60 S6,
-    which found the previous list wrong in BOTH directions.
+WHAT CHANGED, and it is one thing: the run predicate. The sketch quantified over a solc via-ir
+object - (ir), (irLyt) and (hir : S.irCheck ir = true) - and concluded about 'RunContractIR S W H
+ir irLyt cd ...'. This theorem concludes about 'ShellModel.wrap S W H cd ...', the Yul model of
+solc's dispatcher built in Midfall/Yul/ShellModel.lean, and it drops the three IR binders. The
+layout tie the sketch spelled as 'irLyt' is now the Surface's own 'S.shellLayout', which is what
+'wrap' runs in. Everything else is EXACTLY as sketched: three conjuncts, the soundness/completeness
+asymmetry (soundness over permissive calls and ANY gas, completeness over honest calls and
+'ofFun _ => 0'), the two-outcome read-only conjunct, and 'DeploymentW', 'Holds', 'EnvAgrees',
+'G1CodecLaws', 'SupportedS', 'hsel', 'hside'.
 
-    NO LONGER A BLOCKER, and wrongly listed as one: (i) and (ii). The view-level
-    transport was said to need `dialect_deterministic` and `noWritersFuel`. It does
-    not: `ObsEquiv` gives a run on the other side with an EQUAL VIEW, and the outcome
-    properties are functions of the view, so no uniqueness of the STEP relation is
-    involved. Bridge.lean now proves it - `halted_of_view_eq`,
-    `returnData_of_view_eq`, `isReturn_of_view_eq`, `isRevertOrHalt_of_view_eq`, four
-    three-line lemmas - and the third conjunct's real blocker was something else
-    entirely: `ObsView` carried nine of the eleven components `WorldEq` compares, so
-    `obs.worldUnchanged` was NOT view-determined and no amount of determinism would
-    have transported it. R-60 S6 adds `selfBalance` and `extCodeHashOf` to the view and
-    lands `worldEq_of_view_eq`, so all three conjuncts are now view-transportable and
-    `view_sees_selfBalance` / `view_sees_extCodeHashOf` exhibit the hole that was
-    closed. What remains on the view side is nothing: the gap was the view, not the
-    semantics.
+PROVED, and the transport is 'hc.ir_refines' READ AT THE MODEL. 'ShellModel.modelIr S' is the
+Yul object whose runtime sub-object IS 'dispatcherCode S'; 'S.irCheck (modelIr S) = true' is
+'rfl' (ShellModel.modelIr_irCheck), and 'RunContractIR S W H (modelIr S) S.shellLayout cd c g' is
+'wrap S W H cd c g' by 'ShellModel.wrap_iff_modelRunContractIR'. So the bridge from the modelled
+entry path to the body-only model is a hypothesis the obligations bundle ALREADY carries, and no
+solc artifact is named anywhere in this statement or its proof.
 
-    STILL BLOCKERS, and named with what would clear them: (iii) `irCheck` is the
-    decidable fragment (unresolved-call screening), not alpha-equivalence modulo
-    constant substitution, so `hir : S.irCheck ir = true` does not say the imported
-    object IS the contract - clearing it needs the M8 import-time equivalence check;
-    (iv) `shell_unfolds` pins the shell MODEL, whose code block is the assembly with no
-    dispatcher in front of it, so the theorem's shell is not the deployed entry path
-    until M8 restates the pin as "the verifyProof arm runs the assembly"; and (v) the
-    IR-to-shell SIMULATION itself, which is what `ir_refines` asks for and is the whole
-    of M8. `noWritersFuel` and `Run_worldEq_of_noWriters` stay stage-1 holes for the
-    theorems that need a WORLD equality out of a run rather than out of a view - not
-    for the view transport, which no longer needs them. In short: statable, with a
-    hypothesis that is jointly inhabited at the real artifact, and NOT yet provable -
-    the remaining gap is the IR-to-shell simulation, not the shell-to-verifier link
-    and not the view. -/
+THE FINDING THAT REWRITES THE BRIEF. The package brief's key lemma - 'for calldata that routes to
+verifyProof and passes the dispatcher's own ABI bounds, a wrap run is a RunVerifier run up to the
+layout tie' - is FALSE as a statement about frames, and ShellModel now proves it false:
+'mstore(0x40, memoryguard(128))' changes the frame the arm runs in, 'no_mem₀_reaches_the_arm_frame'
+shows no 'mem₀' makes 'RunVerifier's frame equal to it (activeWords 0 versus 3), and
+'prologue_write_is_observable' exhibits a program whose two runs of the SAME program from the two
+frames halt with different payloads. So 'ObsEquiv (wrap ...) (RunShell ...)' is not a theorem of
+the model, and the bridge has to be an assumption. 'ir_refines' is that assumption. What the
+restatement buys is that the assumption is now read at an in-tree object instead of at solc's
+output, and that its check is 'rfl' instead of a hypothesis about an imported artifact.
+
+THE ONE HYPOTHESIS THE SKETCH DID NOT HAVE, and why it is forced. 'hwl :
+(S.calls W product qAddr).WorldLocal'. 'ir_refines' asks for the call relation to be world-local,
+and the sketchCvs proof hint asserted without argument that 'permissive and honest calls are both
+WorldLocal'. THAT CLAIM IS FALSE IN THIS TREE: 'honestCalls_worldLocal' needs the evaluator slot's
+relation to be world-local, and 'Bridge.rel_worldLocal' is a registered hole whose own docstring
+carries the refutation ('world_projection_misses_address_and_keccak': 'CallWorld.ofState' does not
+pin 'env.address' or 'env.keccakOf', and an evaluator runtime that reads 'caller()' or
+'keccak256' separates two world-equal states). So the hypothesis is stated rather than the hole
+papered over. It is vacuous for an embedded render - 'S.evaluatorRuntime = none' makes the slot
+relation constantly False and 'honestCalls_worldLocal' discharges it - and load-bearing for an
+externalised one. Recorded as a deviation, not hidden.
+
+WHY 'hsel' STAYS. The brief asked whether the selector hypothesis is now derivable, the selector
+check having moved inside the modelled dispatcher. It is not, and the reason is the third
+conjunct: 'only_two_outcomes' is ITSELF stated with 'bytesTake cd 0 4 = some fnSigVerifyProof' as
+its hypothesis (Obligations.lean:302), so the field this theorem transports through does not
+without it. And a 'wrap' run does not supply it: a wrong-selector calldata has a 'wrap' run - the
+dispatcher's fall-through 'revert(0,0)' - so 'wrap' is inhabited on unroutable input and the
+selector fact cannot be read off the run. What IS now derived rather than assumed is the ARM
+ROUTING: 'ShellModel.dispatcherAccepts' carries 'selectorWord = selectorVerifyProof' as a
+condition on the frame, and 'ShellModel.armPrefix_passes' proves the routed arm reaches the
+program. Dropping 'hsel' would change the claim, so it stays.
+
+WHAT THE OLD DOCSTRING CLAIMED AND IS NOW SUPERSEDED: the previous text said the remaining gap was
+'the IR-to-shell simulation, not the shell-to-verifier link and not the view'. That was wrong in
+both directions, and P-LOWEQ measured it. The shell-to-verifier link is 'rfl'
+('ShellModel.armBody_is_the_verifier_program' plus 'shell_unfolds'); the view transport was already
+proved by R-60 S6; and what was actually missing was a bridge from the DISPATCHER MODEL to the
+body-only model - which is not a proof but a hypothesis, and is 'ir_refines'. -/
 theorem lowering_equivalence (S : Surface p G₁ G₂ Gₜ) (product : PairingProduct)
     (hc : LoweringCorrect S product) (hsup : SupportedS S S.o₀)
     (W : ExecEnv) (H : Hash) (vkAddr qAddr : U256) (hdep : DeploymentW S W H vkAddr qAddr)
     (hpc : Midfall.Assumptions.Eip2537.Holds S.E.g1 ⟨S.encG2⟩ product)
-    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen) (hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1)
-    (ir : YulObject) (irLyt : EVM.Layout) (hir : S.irCheck ir = true)
-    (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hside : SideConditions S H cd) (g₀ : U256) :
+    (henv : EnvAgrees S.E S.vk S.plan S.params S.sG2gen)
+    (hcodec : Midfall.Assumptions.G1CodecLaws S.E.g1)
+    (hwl : (S.calls W product qAddr).WorldLocal)
+    (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof)
+    (hside : SideConditions S H cd) (g₀ : U256) :
     -- soundness: any run that returns, returns true, and Lean accepts
-    (∀ obs, RunContractIR S W H ir irLyt cd (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀) obs →
+    (∀ obs, ShellModel.wrap S W H cd (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀) obs →
       obs.isReturn → obs.returnData = abiTrue ∧ LeanAccepts S H cd) ∧
     -- completeness: Lean accepts ⇒ honest runs exist and all return true
     (LeanAccepts S H cd →
-      (∃ obs, RunContractIR S W H ir irLyt cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs) ∧
-      ∀ obs, RunContractIR S W H ir irLyt cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
-        obs.view = returnView (callState W irLyt H cd)) ∧
+      (∃ obs, ShellModel.wrap S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs) ∧
+      ∀ obs, ShellModel.wrap S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
+        obs.view = returnView (callState W S.shellLayout H cd)) ∧
     -- only two outcomes, read-only
-    (∀ obs, RunContractIR S W H ir irLyt cd (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀) obs →
-      obs.view = returnView (callState W irLyt H cd) ∨
-        (obs.isRevertOrHalt ∧ obs.worldUnchanged (callState W irLyt H cd))) := by
-  sorry
-  -- SKETCH PROOF HINT (section Q): provable now - transport each field through
-  -- hc.ir_refines (permissive and honest calls are both WorldLocal).
+    (∀ obs, ShellModel.wrap S W H cd (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀) obs →
+      obs.view = returnView (callState W S.shellLayout H cd) ∨
+        (obs.isRevertOrHalt ∧ obs.worldUnchanged (callState W S.shellLayout H cd))) := by
+  -- The two call relations the fields quantify over, both world-local: the honest one by
+  -- hypothesis, the permissive one by the fold lemma.
+  have hwlP : (permissive (S.calls W product qAddr)).WorldLocal := permissive_worldLocal _ hwl
+  -- THE BRIDGE: ir_refines read at the in-tree dispatcher model, once per call relation.
+  have hbP : ObsEquiv (RunContractIR S W H (ShellModel.modelIr S) S.shellLayout cd
+      (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀))
+      (RunShell S W H cd (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀)) :=
+    hc.ir_refines (ShellModel.modelIr S) S.shellLayout (ShellModel.modelIr_irCheck S) W H cd
+      (permissive (S.calls W product qAddr)) g₀ hwlP
+  have hbH : ObsEquiv (RunContractIR S W H (ShellModel.modelIr S) S.shellLayout cd
+      (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0))
+      (RunShell S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0)) :=
+    hc.ir_refines (ShellModel.modelIr S) S.shellLayout (ShellModel.modelIr_irCheck S) W H cd
+      (S.calls W product qAddr) 0 hwl
+  unfold ObsEquiv at hbP hbH
+  -- wrap-to-RunShell and back, at each of the two call relations.
+  have w2sP : ∀ obs, ShellModel.wrap S W H cd (permissive (S.calls W product qAddr))
+      (ExternalGas.ofFun fun _ => g₀) obs →
+      ∃ oSh, RunShell S W H cd (permissive (S.calls W product qAddr))
+        (ExternalGas.ofFun fun _ => g₀) oSh ∧ oSh.view = obs.view := by
+    intro obs h
+    exact (hbP obs.view).1 ⟨obs,
+      (ShellModel.wrap_iff_modelRunContractIR S W H cd
+        (permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g₀) obs).mpr h, rfl⟩
+  have w2sH : ∀ obs, ShellModel.wrap S W H cd (S.calls W product qAddr)
+      (ExternalGas.ofFun fun _ => 0) obs →
+      ∃ oSh, RunShell S W H cd (S.calls W product qAddr)
+        (ExternalGas.ofFun fun _ => 0) oSh ∧ oSh.view = obs.view := by
+    intro obs h
+    exact (hbH obs.view).1 ⟨obs,
+      (ShellModel.wrap_iff_modelRunContractIR S W H cd
+        (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs).mpr h, rfl⟩
+  have s2wH : ∀ obs, RunShell S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) obs →
+      ∃ oSh, ShellModel.wrap S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) oSh
+        ∧ oSh.view = obs.view := by
+    intro obs h
+    obtain ⟨oSh2, hCv, hv⟩ := (hbH obs.view).2 ⟨obs, h, rfl⟩
+    exact ⟨oSh2,
+      (ShellModel.wrap_iff_modelRunContractIR S W H cd
+        (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0) oSh2).mp hCv, hv⟩
+  -- the two halves of SideConditions, which the fields want separately
+  have hsnd : SoundSide S H cd :=
+    fun ms instW inst hd hi => (hside ms instW inst hd hi).2
+  have hcmp : CompleteSide S H cd :=
+    fun ms instW inst hd hi => (hside ms instW inst hd hi).1
+  refine ⟨?_, ?_, ?_⟩
+  · -- SOUNDNESS, over permissive calls and ANY gas oracle g₀.
+    intro obs hwrap hisret
+    obtain ⟨oSh, hSh, hview⟩ := w2sP obs hwrap
+    have hv : RunVerifier S W H cd (fun _ => 0) (permissive (S.calls W product qAddr))
+        (ExternalGas.ofFun fun _ => g₀) oSh :=
+      ShellModel.runShell_eq_runVerifier_zero S W H cd _ _ oSh hSh
+    have hIsRet : oSh.isReturn := (isReturn_of_view_eq hview).mpr hisret
+    obtain ⟨hret, hla⟩ := hc.verifier_sound W H vkAddr qAddr cd (fun _ => 0)
+        (ExternalGas.ofFun fun _ => g₀) oSh hsup hdep hpc henv (fun _ ha => rfl) hv hIsRet hsnd
+    exact ⟨(returnData_of_view_eq hview).symm.trans hret, hla⟩
+  · -- COMPLETENESS, over honest calls and zero gas.
+    intro hla
+    obtain ⟨hex, hall⟩ := hc.verifier_complete W H vkAddr qAddr cd hsup hdep hpc henv hcodec
+      hla hcmp
+    refine ⟨?_, ?_⟩
+    · obtain ⟨oSh, hSh⟩ := hex
+      obtain ⟨oSh2, hWp2, _hv⟩ := s2wH oSh hSh
+      exact ⟨oSh2, hWp2⟩
+    · intro obs hwrap
+      obtain ⟨oSh, hSh, hview⟩ := w2sH obs hwrap
+      exact hview ▸ hall oSh hSh
+  · -- TWO OUTCOMES, read-only, over permissive calls and ANY gas oracle.
+    intro obs hwrap
+    obtain ⟨oSh, hSh, hview⟩ := w2sP obs hwrap
+    cases hc.only_two_outcomes W H vkAddr qAddr cd (ExternalGas.ofFun fun _ => g₀) oSh
+        hsup hdep henv hsel hSh with
+    | inl hret => exact Or.inl (hview ▸ hret)
+    | inr h =>
+        exact Or.inr ⟨(isRevertOrHalt_of_view_eq hview).mp h.1,
+          worldEq_trans h.2 (worldEq_of_view_eq hview)⟩
+
 
 /-- Exact equivalence to the message-level verifier without an accumulator (R-10 makes `h` necessary). -/
 theorem lowering_equivalence_noAcc (S : Surface p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
@@ -936,6 +1028,7 @@ def onlyTwoOutcomesSelectorKats_ok : Bool :=
 --   among them. The three statement holes above all DO carry sorryAx, which is
 --   exactly why both of these are printed: they separate the fields of the headline
 --   that are closed today from the ones that are M7/M8 work.
+#print axioms Midfall.Lowering.lowering_equivalence
 #print axioms Midfall.Lowering.contractRef_noAcc_of_semanticEquivalence
 #print axioms Midfall.Lowering.verifyNative_iff_msgs_codec
 

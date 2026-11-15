@@ -2346,3 +2346,78 @@ partly an artifact of our own omission: Fable had already answered it.**
 treating a same-named function elsewhere as its fulfilment. This is the third distinct way a recorded
 premise has failed here - R11 was an annotated reason that was false; this is a named deliverable
 that was silently substituted.
+
+
+### R-66 - P-LOWEQ: the package brief's key lemma was false as written, three theorems say so, and the headline landed anyway
+
+The human brief for P-LOWEQ (docs/plans/P-LOWEQ.md) asked for one lemma before anything else:
+
+> for calldata that routes to 'verifyProof' and passes the dispatcher's own ABI bounds, a 'wrap' run
+> is a 'RunVerifier' run up to the layout tie.
+
+**It is not.** The dispatcher's prologue 'mstore(0x40, memoryguard(128))' changes the FRAME the arm
+runs in, and 'RunVerifier'/'RunShell' run the same program from a frame the prologue never touched.
+Three theorems in 'Midfall/Yul/ShellModel.lean' sections 11-12 measure it:
+
+* 'no_mem₀_reaches_the_arm_frame' - for EVERY 'mem₀', 'initState W S.shellLayout H cd mem₀' differs
+  from the arm frame, because 'initState' takes the memory and nothing else, so 'activeWords' is 0
+  while the prologue leaves 3.
+* 'arm_frame_reads_a_different_head_word' - the difference is not in a corner of the state: the arm's
+  first statement is 'if gt(mload(0x40), 0x1000)', and the word it reads is 0 in one frame and 128
+  in the other.
+* 'prologue_write_is_observable' - the program 'return(0x5f, 1)' has a run from each frame, and the
+  two 'halted' payloads differ ('[0]' against '[0x80]'). So 'ObsEquiv (wrap S ...) (RunShell S ...)'
+  is FALSE for a general lowered program, and 'activeWords' is observable through 'msize'
+  ('EVMExec.lean:375' defines 'memorySize', ':765' is its only reader).
+
+**The theorem nevertheless closed**, because the bridge was already in the bundle and the brief did not
+look there: 'LoweringCorrect.ir_refines' quantifies over EVERY object that passes 'S.irCheck', and
+'ShellModel.modelIr S' - the in-tree object whose runtime sub-object IS 'dispatcherCode S' - passes
+it by 'rfl' ('modelIr_irCheck'), with 'RunContractIR S W H (modelIr S) S.shellLayout cd c g' equal to
+'wrap S W H cd c g' by 'wrap_iff_modelRunContractIR'. So 'lowering_equivalence' is restated over
+'wrap', proved, and 'sorryAx' is not among its axioms. The scope note is
+docs/plans/P-SE-statements.md, section P-LOWEQ; Tier 3 (the link to solc's actual output) is named
+there as out of scope by decision, and 'IRCheck.lean' stays with 'irCheck_sound' unchanged and off
+the headline path.
+
+**Three things this finding exposes about the record, not just about the brief.**
+
+1. **A package's docstrings cited three lemmas that do not exist.** 'calldatasizeTest_passes'
+   (ShellModel.lean:708), 'zero_callvalue_reaches_the_body' (:869) and
+   'wellformed_calldata_reaches_the_body' (:931) are each cited as the D-P23 witness half for one of
+   the three falsifications - "the hypothesis it names is the one that fires, and here is the lemma
+   that shows the guard passes instead". None of the three was ever written. The falsifications
+   showed the guards FIRING; nothing showed them PASSING. P-LOWEQ lands the third as
+   'armPrefix_passes' (with 'cdWellFormed_is_accepted' as its witness) and corrects the citations by
+   naming them as absent in its own docstring rather than quietly back-filling two more. Citing a
+   lemma that does not exist is worse than citing nothing: it tells the next agent the work is done.
+   This is the D-P23 gap wearing a new hat - a claim about coverage that was recorded as coverage.
+
+2. **An inherited parenthetical was false.** Section Q's proof hint for 'lowering_equivalence' says
+   the transport is free because "permissive and honest calls are both WorldLocal". 'ir_refines'
+   demands 'c.WorldLocal'; 'honestCalls_worldLocal' can only discharge it if the evaluator slot's
+   relation is world-local; 'Bridge.rel_worldLocal' is a registered 'sorry' whose own docstring
+   carries the refutation ('world_projection_misses_address_and_keccak': 'CallWorld.ofState' does not
+   pin 'env.address' or 'env.keccakOf'). The restatement therefore carries
+   'hwl : (S.calls W product qAddr).WorldLocal' as an explicit hypothesis - the one binder the
+   landed theorem has that the sketch did not - and 'CurveSurface.loweqBundleCore' discharges it at
+   the curve Surface only because that render externalises no evaluator. Twenty-sixth measurement of
+   a recorded premise being wrong.
+
+3. **'G1CodecLaws' has no witness at any codec in the tree.** Seven fields, zero terms - the headline
+   has carried 'hcodec : G1CodecLaws S.E.g1' as a hypothesis with no model since it was written.
+   P-LOWEQ gets five of the seven onto the board at the real-curve codec
+   ('CurveSurface.g1CodecZ_five_of_seven') and names the blocker for the other two precisely:
+   'eipShape' and 'toEip_one' speak 'Midfall.natToBytesBE' bytes while 'g1CodecZ.toEip' is
+   'bytesNatBE' bytes, and 'Yul/Externals.lean:188' keeps the two big-endian encoders independent ON
+   PURPOSE and nothing proves them equal. Recorded as 'gap_g1codecLaws_unexhibited' and demanded by
+   the bundle gate, so the headline cannot be read as fully inhabited. **The theorem is proved; one of
+   its hypotheses is still not known to be satisfiable.**
+
+**A gate defect found while regenerating the register.** 'scripts/lean_grep.py' strips comments
+before searching for 'sorry', but it tests for a char literal (''') BEFORE it tests for a line
+comment ('--'), so an identifier containing a prime - 'obs'', 'hshell'' - opens a phantom char
+literal and everything after it stops being stripped. The first regenerated SORRY.md listed two
+FALSE proof holes inside a docstring three lines below the new proof, with the build green. The
+register is correct now because P-LOWEQ avoided primed identifiers in 'Obligations.lean'; the
+stripper itself is unfixed and any future proof that binds primed names will hit it again.

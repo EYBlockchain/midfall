@@ -464,6 +464,89 @@ theorem curveSurfacesDifferOnlyInNaming :
 -- except the 'native_decide' axioms the FIXTURE's own layout exhibit carries and this file
 -- REUSES rather than re-proving. Reported, not hidden: the trusted base of 'curveBundle' is
 -- 'holds_exhibited's trusted base plus the fixture's, and the delta is zero new assumptions.
+/-! ### P-LOWEQ: the headline bundle at the curve Surface, and the one leg nothing witnesses -/
+
+/-- **THE 'G1CodecLaws' LEG, MEASURED FIELD BY FIELD AT THE CURVE CODEC.** 'G1CodecLaws'
+(Assumptions/Codec.lean:75) has SEVEN fields and, before this package, NO term of that type existed
+anywhere in the tree - not at 'g1CodecZ', not at the exponent codec, not at any codec. Five of the
+seven are theorems here, in one conjunction: 'eipRoundtrip' and 'ofEip_toEip' are the existing
+'g1CodecZ_eipRoundtrip' (G1Agreement.lean:2080) and 'g1CodecZ_ofEip_toEip' (Bls12_381G1.lean:69);
+'compressedRoundtrip' holds because 'g1CodecZ.ofCompressed?' is 'fun _ => none', so its premise is
+uninhabited; and the two width clauses are 'bytesNatBE_size' and 'g1CodecZ_toEip_size'. -/
+theorem g1CodecZ_five_of_seven :
+    G1Codec.eipRoundtrip g1CodecZ ∧ G1Codec.compressedRoundtrip g1CodecZ ∧
+      (∀ Q : G₁z, g1CodecZ.ofEip? (g1CodecZ.toEip Q) = some Q) ∧
+      (∀ Q : G₁z, (g1CodecZ.toCompressed Q).size = g1CompressedWidth) ∧
+      (∀ Q : G₁z, (g1CodecZ.toEip Q).size = g1EipWidth) :=
+  ⟨g1CodecZ_eipRoundtrip, fun _ _ h => absurd h (by simp [g1CodecZ]),
+    g1CodecZ_ofEip_toEip, fun Q => bytesNatBE_size _ fpBytes,
+    fun Q => g1CodecZ_toEip_size Q⟩
+
+/-- **THE TWO LEGS THAT DO NOT CLOSE, AND EXACTLY WHY.** 'eipShape' and 'toEip_one' speak the bytes
+of a point in the 'Midfall.natToBytesBE' idiom (Common/Bytes.lean:59), while 'g1CodecZ.toEip' is
+'g1zToEip' = 'g1PointBytes' = 'fpCoordBytes' = 'bytesAppend eipPad (bytesNatBE x fpBytes)' in the
+'YulSemantics' idiom (Yul/Externals.lean:455,191). The two encoders are INTENTIONALLY independent -
+Externals.lean:188 says so in terms: "two independent big-endian encoders that must agree is worth
+more than one shared one" - and the agreement lemma 'bytesNatBE v n = natToBytesBE v n' is proved
+NOWHERE in the tree. So 'G1CodecLaws g1CodecZ' is one byte-bridge lemma away from being a term, and
+that lemma is a real job (ByteArray extensionality plus the base-256 digit split), not a formality.
+
+STATED AS A NAMED GAP SO A GATE CAN POINT AT IT, in the style of 'gap_holds_unexhibited' above. -/
+def gap_g1codecLaws_unexhibited : String :=
+  "G1CodecLaws has no witness at any codec in the tree. Five of seven fields are theorems at "
+    ++ "g1CodecZ (g1CodecZ_five_of_seven); eipShape and toEip_one need bytesNatBE v n = "
+    ++ "natToBytesBE v n, the bridge between the two independent big-endian encoders that "
+    ++ "Yul/Externals.lean:188 keeps apart on purpose and that no file proves."
+
+/-- **A CALADATA THAT SATISFIES 'hsel' AND 'hside' AT THE CURVE SURFACE.** Four bytes: exactly the
+selector, so 'bytesTake cd 0 4 = some fnSigVerifyProof' is 'rfl', and 'decodeCalldata' refuses it
+on the size guard, so 'SideConditions' holds vacuously. The vacuity is honest and it is the SAME
+vacuity 'curveSpecResidualBinders' already names: no accepted calldata exists at any model in the
+tree, so a NON-vacuous 'hside' is not supplyable here by anybody. -/
+def loweqCd : Bytes := Midfall.Generator.bytesFromNats [0x1e, 0x8e, 0x1e, 0x13]
+
+theorem loweqCd_hsel :
+    Midfall.bytesTake loweqCd 0 4 = some Midfall.Generator.fnSigVerifyProof := rfl
+
+theorem loweqCd_hside : SideConditions curveSurface keccak256 loweqCd := by
+  intro ms instW inst hdec _
+  have hnone :
+      Midfall.Lowering.decodeCalldata (p := blsR) curveSurface.plan.proofLayout
+        curveSurface.cfg.numInstances curveSurface.E.g1 loweqCd = none := rfl
+  rw [hnone] at hdec
+  exact absurd hdec (by simp)
+
+/-- **THE HEADLINE BUNDLE, SIX OF ITS SEVEN SURFACE LEGS, JOINTLY INHABITED AT ONE SURFACE.** One
+term, not six: 'DeploymentW', 'Holds' (with the product it is exhibited at), 'EnvAgrees',
+'SupportedS', 'hsel', 'hside', and the 'WorldLocal' leg the restatement added. The seventh leg,
+'G1CodecLaws', is the one nothing witnesses - see 'gap_g1codecLaws_unexhibited' - and that is the
+finding, reported rather than papered over: as it stands the headline theorem's 'hcodec' binder has
+no model in this tree, so the theorem is proved but its hypothesis bundle is not known inhabited. -/
+theorem loweqBundleCore (product : PairingProduct)
+    (hh : Eip2537.Holds curveSurface.E.g1 ⟨curveSurface.encG2⟩ product) :
+    SupportedS curveSurface curveSurface.o₀ ∧
+      DeploymentW curveSurface fxW keccak256 fxVkAddr fxQuotientAddr ∧
+        EnvAgrees curveSurface.E curveSurface.vk curveSurface.plan curveSurface.params
+          curveSurface.sG2gen ∧
+          Eip2537.Holds curveSurface.E.g1 ⟨curveSurface.encG2⟩ product ∧
+          SideConditions curveSurface keccak256 loweqCd ∧
+          Midfall.bytesTake loweqCd 0 4 = some Midfall.Generator.fnSigVerifyProof ∧
+          (curveSurface.calls fxW product fxQuotientAddr).WorldLocal :=
+  ⟨curveSupported, curveDeployment, curveEnvAgrees, hh, loweqCd_hside, loweqCd_hsel,
+    honestCalls_worldLocal product fxQuotientAddr (fun _ _ _ => False)
+      (fun _ _ _ _ _ => Iff.rfl)⟩
+
+/-- **THE 'WorldLocal' LEG IS NOT FREE AT AN EXTERNALISED RENDER.** The restatement's one new
+hypothesis is discharged here because 'curveSurface.evaluatorRuntime = none', so the evaluator slot
+answers 'False' for every request and the side condition on 'honestCalls_worldLocal' is trivial.
+Swap in a Surface that DOES externalise the evaluator and this line is exactly where the registered
+hole 'Bridge.rel_worldLocal' bites. The falsification half: the trivial slot relation is what makes
+it go, and it is a fact about this record, not a general theorem about 'S.calls'. -/
+theorem loweqWorldLocal_is_the_none_evaluator : curveSurface.evaluatorRuntime = none := rfl
+
+#print axioms Midfall.Instances.CurveSurface.g1CodecZ_five_of_seven
+#print axioms Midfall.Instances.CurveSurface.loweqBundleCore
+#print axioms Midfall.Instances.CurveSurface.loweqCd_hsel
 #print axioms curveBundle
 #print axioms curveHolds
 #print axioms curveEnvAgrees

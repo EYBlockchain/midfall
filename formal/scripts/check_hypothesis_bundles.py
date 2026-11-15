@@ -47,6 +47,12 @@ from check_duplicate_facts import (ARROW, STR, definitions, mentions, split_top,
 
 OB = "Midfall/Lowering/Obligations.lean"
 GATES = "Midfall/Instances/ObligationsGates.lean"
+# P-LOWEQ: the headline's joint exhibit moved to the file that owns the CURVE codecs, because
+# the bundle it exhibits needs Eip2537.Holds at S.E.g1 and ObligationsGates.lean's fixture
+# codec cannot supply it (bundle_holds_empty is the refutation of exactly that). Exhibits and
+# gaps are therefore read from BOTH files; the rule that they must be ONE declaration naming
+# every conjunct is unchanged.
+GATES2 = "Midfall/Instances/CurveSurface.lean"
 
 # The registry. "exhibit" is (declaration, tokens it must mention); "gaps" is a list of
 # (declaration, tokens it must name as the blocker).
@@ -174,12 +180,21 @@ REGISTRY = [
         "gaps": [("gap_qvmField_surface_free", ["LoweringPlan"])],
     },
     {
+        # P-LOWEQ. The headline no longer quantifies over a solc via-ir object, so the
+        # irCheck / RunContractIR tokens this entry used to demand are GONE from its
+        # statement and demanding them would have been the gate pinning a shape the human
+        # retired. What replaced them: the run predicate is ShellModel.wrap, the bundle
+        # carries the new WorldLocal leg, and the conjunct nothing exhibits is G1CodecLaws -
+        # named as a gap rather than left for a reader to notice, in the same style as
+        # gap_holds_unexhibited above.
         "field": "lowering_equivalence",
         "kind": "theorem",
-        "exhibit": ("bundle_headlineCore",
-                    ["SupportedS", "DeploymentW", "irCheck ir = true",
-                     "RunContractIR", "EnvAgrees"]),
-        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION],
+        "exhibit": ("loweqBundleCore",
+                    ["SupportedS", "DeploymentW", "EnvAgrees", "Eip2537.Holds",
+                     "SideConditions", "WorldLocal"]),
+        "gaps": [GAP_HOLDS, GAP_G2, ASSUMPTION,
+                 ("gap_g1codecLaws_unexhibited", ["G1CodecLaws"],
+                  ["bytesNatBE", "natToBytesBE", "eipShape", "toEip_one"], [])],
     },
     # P-4a2: the three legs the field arithmetic closes, exhibited as ONE conjunction.
     # Registered separately (rather than replacing an entry) so the DeploymentW and IR
@@ -672,6 +687,11 @@ def check(root):
     if gates is None:
         return ["missing file: " + GATES]
     gdefs = definitions(gates)
+    curve = stripped(GATES2)
+    if curve is None:
+        return ["missing file: " + GATES2]
+    for _k, _v in definitions(curve).items():
+        gdefs.setdefault(_k, _v)
     problems = []
 
     # 1. DISCOVERY: every multi-hypothesis field of LoweringCorrect is registered

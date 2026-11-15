@@ -104,9 +104,24 @@ FINGERPRINTS = [
     ("end_to_end_noAcc", ["S.cfg.accumulator = none",
         "inst.size = S.cfg.numInstances", "fromRepackError", "verifyNative",
         "repackProof", "encodeCalldata", "RunContractIR"]),
-    ("lowering_equivalence", ["RunContractIR", "obs.isReturn",
+    # P-LOWEQ: the headline moved off solc's IR and onto the in-tree dispatcher model, so
+    # the two fragments that pinned the OLD shape (RunContractIR, S.irCheck ir = true) are
+    # GONE from this statement and their replacements are pinned instead: the run predicate
+    # is ShellModel.wrap, the one new hypothesis is the WorldLocal leg the ir_refines
+    # transport demands, and the selector hypothesis that survived the move is spelled. A
+    # restatement that quietly dropped a conjunct or re-added the IR binders reddens here.
+    ("lowering_equivalence", ["ShellModel.wrap", "obs.isReturn",
         "obs.returnData = abiTrue", "LeanAccepts S H cd",
-        "S.irCheck ir = true", "\u2203 obs"]),
+        "hwl : (S.calls W product qAddr).WorldLocal",
+        "bytesTake cd 0 4 = some fnSigVerifyProof",
+        "Midfall.Assumptions.G1CodecLaws S.E.g1",
+        "Midfall.Assumptions.Eip2537.Holds S.E.g1 \u27e8S.encG2\u27e9 product",
+        "hdep : DeploymentW S W H vkAddr qAddr", "hc : LoweringCorrect S product",
+        "SideConditions S H cd", "obs.worldUnchanged (callState W S.shellLayout H cd)",
+        "returnView (callState W S.shellLayout H cd)",
+        "permissive (S.calls W product qAddr)) (ExternalGas.ofFun fun _ => g\u2080) obs \u2192 obs.isReturn",
+        "\u2203 obs, ShellModel.wrap S W H cd (S.calls W product qAddr) (ExternalGas.ofFun fun _ => 0)",
+        "\u2203 obs"]),
     ("qvm_validated_noBoundsFault", ["readPastEnd", "constSlotOutOfRange",
         "quotientOperandModel", ").isOk = true"]),
     ("accFixedBases_producer", [chr(34) + "-G" + chr(34), "negate = true",

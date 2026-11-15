@@ -705,7 +705,7 @@ theorem zero_eq_zero : (0 : U256) = (OD c g).zero := rfl
 
     Hypotheses, each about what the dispatcher itself reads: `sizeTestValue st₀ = 1` says the
     calldata is at least 4 bytes long (the `ImportedIR` empty-calldata witness is the dual case,
-    `calldatasizeTest_passes`); the two `≠`s say the selector matches neither case label,
+    `cdWellFormed_is_accepted.1`); the two `≠`s say the selector matches neither case label,
     which `switch_miss` turns into the empty `selectSwitch` block. -/
 theorem wrong_selector_reverts {body : YulBlock} {st₀ : EvmState}
     (hsize : sizeTestValue st₀ = 1)
@@ -866,7 +866,7 @@ theorem dispatch_prefix {body : YulBlock} {st₀ : EvmState} (hsize : sizeTestVa
 /-- **FALSIFICATION 2 - THE CALLVALUE CHECK.** A `verifyProof` calldata carrying value
     reverts: `verifyProof` is `external view`, so solc's arm opens with
     `if callvalue() revert`. The hypothesis is load-bearing:
-    `zero_callvalue_reaches_the_body` is the same frame at value 0 and does not take this
+    `cdWellFormed_is_accepted.2.2.1` is the same fact at value 0 and does not take this
     abort. -/
 theorem nonzero_callvalue_reverts {body : YulBlock} {st₀ : EvmState}
     (hsize : sizeTestValue st₀ = 1) (hsel : selectorWord st₀ = selectorVerifyProof)
@@ -928,7 +928,7 @@ theorem dataPosLoad_val {funs : FunEnv (OD c g)} {V : VEnv (OD c g)} {st : EvmSt
     `abi_decode_t_bytes_calldata_ptr` emits and the one a truncated proof trips.
 
     Every hypothesis before `htrunc` is a check that PASSES (the arm gets as far as the tail
-    test); `htrunc` is the check that fails. `wellformed_calldata_reaches_the_body`
+    test); `htrunc` is the check that fails. `armPrefix_passes` (P-LOWEQ) is the lemma that
     discharges them all at a well-formed calldata and shows the arm proceeds, so the truncation
     hypothesis is the one doing the work. -/
 theorem truncated_bytes_reverts {body : YulBlock} {st₀ : EvmState}
@@ -1568,6 +1568,766 @@ def shellModelKats_ok : Bool :=
 #print axioms Midfall.Yul.ShellModel.nonzero_callvalue_reverts
 #print axioms Midfall.Yul.ShellModel.truncated_bytes_reverts
 #print axioms Midfall.Yul.ShellModel.old_shell_runs_the_verifier_on_the_same_frame
+
+/-! ### 10. P-LOWEQ: the transport from 'wrap' to the lowered program -/
+
+/-- Everything the 'verifyProof' arm runs before the lowered program: the callvalue guard, the
+thirteen ABI-decode statements and the two immutable bindings. -/
+def armPrefix : YulBlock := callvalueGuard :: abiDecode ++ bindLocalsFromImmutables
+
+/-- The arm is the prefix and the program and nothing else, definitionally. -/
+theorem verifyProofArm_eq_armPrefix (body : YulBlock) :
+    verifyProofArm body = armPrefix ++ body := rfl
+
+/-- **THE PROGRAM HALF OF THE KEY LEMMA.** The 'verifyProof' arm runs
+'S.L.headGuard ++ S.bindLocals ++ S.L.main', which is LITERALLY the program 'RunVerifier' runs
+(Surface.lean:799), and under the surface pin 'shell_unfolds' it is also 'S.shell.codeBlock'. The
+dispatcher puts an entry path in front of the verifier program; it does not replace it. This is a
+'rfl', and that is the point: there is no second copy of the program anywhere in the transport. -/
+theorem armBody_is_the_verifier_program (S : Surface p G₁ G₂ Gₜ) :
+    armBody S = S.L.headGuard ++ S.bindLocals ++ S.L.main := rfl
+
+/-- The same identification through the pin that makes 'RunShell' and 'RunVerifier' one program
+(R-58 F3). -/
+theorem armBody_eq_shell_codeBlock (S : Surface p G₁ G₂ Gₜ) :
+    S.shell.codeBlock = armBody S := S.shell_unfolds
+
+/-- The four tests one dynamic ABI argument must pass: offset ceiling, length presence, length
+ceiling, tail bound. 'stride' is 1 for 'bytes' and 32 for 'uint256[]'. -/
+def argAccepted (st₀ : EvmState) (head stride : U256) : Prop :=
+  let off := wordFrom st₀.env.calldata head.toNat
+  ceilingValue off = 0 ∧ lengthPresentValue (headStart + off) st₀ = 0 ∧
+    (let len := wordFrom st₀.env.calldata (headStart + off).toNat
+     ceilingValue len = 0 ∧ tailValue (headStart + off) (len * stride) st₀ = 0)
+
+/-- **THE DISPATCHER ACCEPTS THE CALLDATA.** Every test the entry path performs answers PASS at
+the frame 'st₀': the size test enters the switch, the selector routes to 'verifyProof', the
+callvalue is zero, the head region is present, and both dynamic arguments clear their four
+bounds. This is a condition on the FRAME, not on a Surface or a deployment, which is what makes it
+usable as the hypothesis of a transport that has to work at every Surface. -/
+def dispatcherAccepts (st₀ : EvmState) : Prop :=
+  sizeTestValue st₀ = 1 ∧ selectorWord st₀ = selectorVerifyProof ∧
+    st₀.env.callvalue = 0 ∧ headLengthValue st₀ = 0 ∧
+    argAccepted st₀ headStart 1 ∧ argAccepted st₀ (headStart + 32) 32
+
+/-- The environment the selector declaration leaves. -/
+def selEnv (st₀ : EvmState) : VEnv (OD c g) := [("selector", selectorWord st₀)]
+
+/-- The word the arm's 'vk' binding reads at this frame. -/
+def immVk (st₀ : EvmState) : U256 := st₀.env.immutable (litValue (.string vkImmutableKey))
+
+/-- Its twin for the quotient evaluator. -/
+def immQuotient (st₀ : EvmState) : U256 :=
+  st₀.env.immutable (litValue (.string quotientImmutableKey))
+
+/-- The first dynamic head, read off the frame. -/
+def proofOffsetAt (st₀ : EvmState) : U256 := wordFrom st₀.env.calldata headStart.toNat
+
+/-- The 'bytes' length word, at 'headStart + proofOffsetAt'. -/
+def proofLengthAt (st₀ : EvmState) : U256 :=
+  wordFrom st₀.env.calldata (headStart + proofOffsetAt st₀).toNat
+
+/-- The second dynamic head. -/
+def instancesOffsetAt (st₀ : EvmState) : U256 :=
+  wordFrom st₀.env.calldata (headStart + 32).toNat
+
+/-- The 'uint256[]' length word. -/
+def instancesLengthAt (st₀ : EvmState) : U256 :=
+  wordFrom st₀.env.calldata (headStart + instancesOffsetAt st₀).toNat
+
+/-- The environment the thirteen decode statements leave, innermost binding first. Written flat;
+it is definitionally the cons chain the 'letVal' steps build, which is what makes the transport's
+environment close by 'rfl'. -/
+def decodeEnv (st₀ : EvmState) : VEnv (OD c g) :=
+  [("instancesLength", instancesLengthAt st₀), ("instancesOffset", instancesOffsetAt st₀),
+    ("proofLength", proofLengthAt st₀), ("proofOffset", proofOffsetAt st₀),
+    ("selector", selectorWord st₀)]
+
+/-- The decode environment plus the 'vk' binding: what the second immutable let starts from. -/
+def vkEnv (st₀ : EvmState) : VEnv (OD c g) :=
+  [("vk", immVk st₀), ("instancesLength", instancesLengthAt st₀),
+    ("instancesOffset", instancesOffsetAt st₀), ("proofLength", proofLengthAt st₀),
+    ("proofOffset", proofOffsetAt st₀), ("selector", selectorWord st₀)]
+
+/-- The environment the whole arm prefix leaves: the two immutable bindings on top of the decode
+values. -/
+def armEnv (st₀ : EvmState) : VEnv (OD c g) :=
+  [("quotientEvaluator", immQuotient st₀), ("vk", immVk st₀),
+    ("instancesLength", instancesLengthAt st₀), ("instancesOffset", instancesOffsetAt st₀),
+    ("proofLength", proofLengthAt st₀), ("proofOffset", proofOffsetAt st₀),
+    ("selector", selectorWord st₀)]
+
+/-- **THE FRAME THE ARM EXECUTES IN**: the deployment frame after the dispatcher's prologue. -/
+def armFrame (st₀ : EvmState) : EvmState := stAfterPrologue st₀
+
+/-- The function scopes the 'verifyProof' arm block sees inside the dispatcher. -/
+def armFuns (body : YulBlock) : FunEnv (OD c g) :=
+  hoist (OD c g) (verifyProofArm body) ::
+    hoist (OD c g) [selectorDecl, selectorSwitch body] :: [[]]
+
+/-- **THE ENTRY PATH CONTRIBUTES NO HALT.** On a calldata the dispatcher accepts, the whole
+'verifyProof' arm prefix - callvalue guard, thirteen decode statements, two immutable bindings -
+runs to '.normal' in the frame the prologue leaves, and the environment it leaves is 'armEnv'.
+
+This is the lemma the three falsifications' own docstrings promise and which was NOT in the file:
+'calldatasizeTest_passes' (cited at line 708), 'zero_callvalue_reaches_the_body' (cited at line
+869) and 'wellformed_calldata_reaches_the_body' (cited at line 931) are three names that appear
+nowhere in the tree but in those three comments. The falsifications showed the guards FIRE;
+nothing showed them PASS. Recorded as a finding in the package report rather than fixed silently. -/
+theorem armPrefix_passes {st₀ : EvmState} (hacc : dispatcherAccepts st₀)
+    {F : FunEnv (OD c g)} {P : YulBlock} {V' : VEnv (OD c g)} {st' : EvmState} {o : Outcome}
+    (hP : Step (OD c g) F (armEnv st₀) (armFrame st₀) (.stmts P) (.sres V' st' o)) :
+    Step (OD c g) F (selEnv st₀) (armFrame st₀) (.stmts (armPrefix ++ P))
+      (.sres V' st' o) := by
+  obtain ⟨hsz, hselv, hcv, hheads, hproof, hinst⟩ := hacc
+  obtain ⟨hpoBound, hpoPresent, hplBound, hplTail⟩ := hproof
+  obtain ⟨hioBound, hioPresent, hilBound, hilTail⟩ := hinst
+  -- 'argAccepted' spells its two values with a 'let', so the four facts above arrive in the
+  -- unfolded form. Re-state them at the named definitions the proof uses; each is 'rfl'.
+  have hpoBound' : ceilingValue (proofOffsetAt st₀) = 0 := hpoBound
+  have hpoPresent' : lengthPresentValue (headStart + proofOffsetAt st₀) st₀ = 0 := hpoPresent
+  have hplBound' : ceilingValue (proofLengthAt st₀) = 0 := hplBound
+  have hplTail' : tailValue (headStart + proofOffsetAt st₀) (proofLengthAt st₀ * 1) st₀ = 0 :=
+    hplTail
+  have hioBound' : ceilingValue (instancesOffsetAt st₀) = 0 := hioBound
+  have hioPresent' : lengthPresentValue (headStart + instancesOffsetAt st₀) st₀ = 0 := hioPresent
+  have hilBound' : ceilingValue (instancesLengthAt st₀) = 0 := hilBound
+  have hilTail' : tailValue (headStart + instancesOffsetAt st₀) (instancesLengthAt st₀ * 32) st₀
+      = 0 := hilTail
+  let st₁ := armFrame st₀
+  let V₂ : VEnv (OD c g) :=
+    [("proofOffset", proofOffsetAt st₀), ("selector", selectorWord st₀)]
+  let V₃ : VEnv (OD c g) :=
+    [("proofLength", proofLengthAt st₀), ("proofOffset", proofOffsetAt st₀),
+      ("selector", selectorWord st₀)]
+  let V₄ : VEnv (OD c g) :=
+    [("instancesOffset", instancesOffsetAt st₀), ("proofLength", proofLengthAt st₀),
+      ("proofOffset", proofOffsetAt st₀), ("selector", selectorWord st₀)]
+  -- 1. the callvalue guard passes
+  have hcvs : Step (OD c g) F (selEnv st₀) st₁ (.expr (Expr.builtin Op.callvalue []))
+      (.eres (.vals [0] st₁)) := by
+    have e := callvalueStep (funs := F) (V := selEnv st₀) (st := st₁)
+    rw [show st₁.env.callvalue = st₀.env.callvalue from rfl, hcv] at e
+    exact e
+  have h1 : Step (OD c g) F (selEnv st₀) st₁ (.stmt callvalueGuard)
+      (.sres (selEnv st₀) st₁ .normal) :=
+    guardPasses (funs := F) (V := selEnv st₀) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.callvalue []) hcvs
+  -- 2. the head-region guard passes
+  have hheads' : Step (OD c g) F (selEnv st₀) st₁ (.expr (Expr.builtin Op.slt
+        [Expr.builtin Op.sub [Expr.builtin Op.calldatasize [], w headStart], w tupleHeadBytes]))
+      (.eres (.vals [0] st₁)) := by
+    have e := headLengthTest_val (funs := F) (V := selEnv st₀) (st := st₁)
+    rw [show headLengthValue st₁ = headLengthValue st₀ from rfl, hheads] at e
+    exact e
+  have h2 : Step (OD c g) F (selEnv st₀) st₁ (.stmt headLengthGuard)
+      (.sres (selEnv st₀) st₁ .normal) :=
+    guardPasses (funs := F) (V := selEnv st₀) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.slt
+        [Expr.builtin Op.sub [Expr.builtin Op.calldatasize [], w headStart], w tupleHeadBytes])
+      hheads'
+  -- 3. let proofOffset := calldataload(add(headStart, 0))
+  have hpo' : Step (OD c g) F (selEnv st₀) st₁ (.expr (Expr.builtin Op.calldataload
+        [Expr.builtin Op.add [w headStart, w 0]])) (.eres (.vals [proofOffsetAt st₀] st₁)) := by
+    have e := headLoad_val (funs := F) (V := selEnv st₀) (st := st₁) 0
+    rw [show wordFrom st₁.env.calldata (headStart + 0).toNat = proofOffsetAt st₀ from rfl] at e
+    exact e
+  have h3 : Step (OD c g) F (selEnv st₀) st₁ (.stmt proofOffsetDecl) (.sres V₂ st₁ .normal) :=
+    Step.letVal (vars := ["proofOffset"]) (vals := [proofOffsetAt st₀])
+      (e := Expr.builtin Op.calldataload [Expr.builtin Op.add [w headStart, w 0]])
+      (st1 := st₁) (funs := F) (V := selEnv st₀) (st := st₁) hpo' rfl
+  -- 4. the proof offset ceiling passes
+  have h4e : Step (OD c g) F V₂ st₁
+      (.expr (Expr.builtin Op.gt [Expr.var "proofOffset", w abiLengthCeiling]))
+      (.eres (.vals [0] st₁)) := by
+    have e := ceilingTest_val (funs := F) (V := V₂) (st := st₁) (y := "proofOffset")
+      (x := proofOffsetAt st₀) (rfl : VEnv.get V₂ "proofOffset" = some (proofOffsetAt st₀))
+    rw [hpoBound'] at e
+    exact e
+  have h4 : Step (OD c g) F V₂ st₁ (.stmt (offsetCeilingGuard "proofOffset"))
+      (.sres V₂ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₂) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.var "proofOffset", w abiLengthCeiling]) h4e
+  -- 5. the proof length word is inside the calldata
+  have h5e : Step (OD c g) F V₂ st₁ (.expr (Expr.builtin Op.iszero
+        [Expr.builtin Op.slt [Expr.builtin Op.add [dataPos "proofOffset", w 31],
+          Expr.builtin Op.calldatasize []]])) (.eres (.vals [0] st₁)) := by
+    have e := lengthPresent_val (funs := F) (V := V₂) (st := st₁) (y := "proofOffset")
+      (pos := proofOffsetAt st₀) (rfl : VEnv.get V₂ "proofOffset" = some (proofOffsetAt st₀))
+    rw [show lengthPresentValue (headStart + proofOffsetAt st₀) st₁ =
+          lengthPresentValue (headStart + proofOffsetAt st₀) st₀ from rfl, hpoPresent'] at e
+    exact e
+  have h5 : Step (OD c g) F V₂ st₁ (.stmt (lengthPresentGuard "proofOffset"))
+      (.sres V₂ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₂) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.iszero [Expr.builtin Op.slt
+        [Expr.builtin Op.add [dataPos "proofOffset", w 31], Expr.builtin Op.calldatasize []]]) h5e
+  -- 6. let proofLength := calldataload(add(headStart, proofOffset))
+  have hpl' : Step (OD c g) F V₂ st₁
+      (.expr (Expr.builtin Op.calldataload [dataPos "proofOffset"]))
+      (.eres (.vals [proofLengthAt st₀] st₁)) := by
+    have e := dataPosLoad_val (funs := F) (V := V₂) (st := st₁) (o := "proofOffset")
+      (pos := proofOffsetAt st₀) (rfl : VEnv.get V₂ "proofOffset" = some (proofOffsetAt st₀))
+    rw [show wordFrom st₁.env.calldata (headStart + proofOffsetAt st₀).toNat =
+          proofLengthAt st₀ from rfl] at e
+    exact e
+  have h6 : Step (OD c g) F V₂ st₁ (.stmt proofLengthDecl) (.sres V₃ st₁ .normal) :=
+    Step.letVal (vars := ["proofLength"]) (vals := [proofLengthAt st₀])
+      (e := Expr.builtin Op.calldataload [dataPos "proofOffset"])
+      (st1 := st₁) (funs := F) (V := V₂) (st := st₁) hpl' rfl
+  -- 7. the proof length ceiling passes
+  have h7e : Step (OD c g) F V₃ st₁
+      (.expr (Expr.builtin Op.gt [Expr.var "proofLength", w abiLengthCeiling]))
+      (.eres (.vals [0] st₁)) := by
+    have e := ceilingTest_val (funs := F) (V := V₃) (st := st₁) (y := "proofLength")
+      (x := proofLengthAt st₀) (rfl : VEnv.get V₃ "proofLength" = some (proofLengthAt st₀))
+    rw [hplBound'] at e
+    exact e
+  have h7 : Step (OD c g) F V₃ st₁ (.stmt (offsetCeilingGuard "proofLength"))
+      (.sres V₃ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₃) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.var "proofLength", w abiLengthCeiling]) h7e
+  -- 8. the proof tail bound passes - the check truncated_bytes_reverts shows firing
+  have h8e : Step (OD c g) F V₃ st₁ (.expr (Expr.builtin Op.gt
+        [Expr.builtin Op.add [Expr.builtin Op.add [dataPos "proofOffset", w 32],
+            Expr.builtin Op.mul [Expr.var "proofLength", w 1]],
+          Expr.builtin Op.calldatasize []])) (.eres (.vals [0] st₁)) := by
+    have e := tail_val (funs := F) (V := V₃) (st := st₁) (o := "proofOffset")
+      (l := "proofLength") (pos := proofOffsetAt st₀) (len := proofLengthAt st₀) (stride := 1)
+      (rfl : VEnv.get V₃ "proofOffset" = some (proofOffsetAt st₀))
+      (rfl : VEnv.get V₃ "proofLength" = some (proofLengthAt st₀))
+    rw [show tailValue (headStart + proofOffsetAt st₀) (proofLengthAt st₀ * 1) st₁ =
+          tailValue (headStart + proofOffsetAt st₀) (proofLengthAt st₀ * 1) st₀ from rfl,
+        hplTail'] at e
+    exact e
+  have h8 : Step (OD c g) F V₃ st₁ (.stmt (tailGuard "proofOffset" "proofLength" 1))
+      (.sres V₃ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₃) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.builtin Op.add
+          [Expr.builtin Op.add [dataPos "proofOffset", w 32],
+            Expr.builtin Op.mul [Expr.var "proofLength", w 1]],
+          Expr.builtin Op.calldatasize []]) h8e
+  -- 9. let instancesOffset := calldataload(add(headStart, 32))
+  have hio' : Step (OD c g) F V₃ st₁ (.expr (Expr.builtin Op.calldataload
+        [Expr.builtin Op.add [w headStart, w 32]]))
+      (.eres (.vals [instancesOffsetAt st₀] st₁)) := by
+    have e := headLoad_val (funs := F) (V := V₃) (st := st₁) 32
+    rw [show wordFrom st₁.env.calldata (headStart + 32).toNat = instancesOffsetAt st₀ from rfl] at e
+    exact e
+  have h9 : Step (OD c g) F V₃ st₁ (.stmt instancesOffsetDecl) (.sres V₄ st₁ .normal) :=
+    Step.letVal (vars := ["instancesOffset"]) (vals := [instancesOffsetAt st₀])
+      (e := Expr.builtin Op.calldataload [Expr.builtin Op.add [w headStart, w 32]])
+      (st1 := st₁) (funs := F) (V := V₃) (st := st₁) hio' rfl
+  -- 10. the instances offset ceiling passes
+  have h10e : Step (OD c g) F V₄ st₁
+      (.expr (Expr.builtin Op.gt [Expr.var "instancesOffset", w abiLengthCeiling]))
+      (.eres (.vals [0] st₁)) := by
+    have e := ceilingTest_val (funs := F) (V := V₄) (st := st₁) (y := "instancesOffset")
+      (x := instancesOffsetAt st₀)
+      (rfl : VEnv.get V₄ "instancesOffset" = some (instancesOffsetAt st₀))
+    rw [hioBound'] at e
+    exact e
+  have h10 : Step (OD c g) F V₄ st₁ (.stmt (offsetCeilingGuard "instancesOffset"))
+      (.sres V₄ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₄) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.var "instancesOffset", w abiLengthCeiling]) h10e
+  -- 11. the instances length word is inside the calldata
+  have h11e : Step (OD c g) F V₄ st₁ (.expr (Expr.builtin Op.iszero
+        [Expr.builtin Op.slt [Expr.builtin Op.add [dataPos "instancesOffset", w 31],
+          Expr.builtin Op.calldatasize []]])) (.eres (.vals [0] st₁)) := by
+    have e := lengthPresent_val (funs := F) (V := V₄) (st := st₁) (y := "instancesOffset")
+      (pos := instancesOffsetAt st₀)
+      (rfl : VEnv.get V₄ "instancesOffset" = some (instancesOffsetAt st₀))
+    rw [show lengthPresentValue (headStart + instancesOffsetAt st₀) st₁ =
+          lengthPresentValue (headStart + instancesOffsetAt st₀) st₀ from rfl, hioPresent'] at e
+    exact e
+  have h11 : Step (OD c g) F V₄ st₁ (.stmt (lengthPresentGuard "instancesOffset"))
+      (.sres V₄ st₁ .normal) :=
+    guardPasses (funs := F) (V := V₄) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.iszero [Expr.builtin Op.slt
+        [Expr.builtin Op.add [dataPos "instancesOffset", w 31],
+          Expr.builtin Op.calldatasize []]]) h11e
+  -- 12. let instancesLength := calldataload(add(headStart, instancesOffset))
+  have hil' : Step (OD c g) F V₄ st₁
+      (.expr (Expr.builtin Op.calldataload [dataPos "instancesOffset"]))
+      (.eres (.vals [instancesLengthAt st₀] st₁)) := by
+    have e := dataPosLoad_val (funs := F) (V := V₄) (st := st₁) (o := "instancesOffset")
+      (pos := instancesOffsetAt st₀)
+      (rfl : VEnv.get V₄ "instancesOffset" = some (instancesOffsetAt st₀))
+    rw [show wordFrom st₁.env.calldata (headStart + instancesOffsetAt st₀).toNat =
+          instancesLengthAt st₀ from rfl] at e
+    exact e
+  have h12 : Step (OD c g) F V₄ st₁ (.stmt instancesLengthDecl)
+      (.sres (decodeEnv st₀) st₁ .normal) :=
+    Step.letVal (vars := ["instancesLength"]) (vals := [instancesLengthAt st₀])
+      (e := Expr.builtin Op.calldataload [dataPos "instancesOffset"])
+      (st1 := st₁) (funs := F) (V := V₄) (st := st₁) hil' rfl
+  -- 13. the instances length ceiling passes
+  have h13e : Step (OD c g) F (decodeEnv st₀) st₁
+      (.expr (Expr.builtin Op.gt [Expr.var "instancesLength", w abiLengthCeiling]))
+      (.eres (.vals [0] st₁)) := by
+    have e := ceilingTest_val (funs := F) (V := decodeEnv st₀) (st := st₁)
+      (y := "instancesLength") (x := instancesLengthAt st₀)
+      (rfl : VEnv.get (decodeEnv st₀) "instancesLength" = some (instancesLengthAt st₀))
+    rw [hilBound'] at e
+    exact e
+  have h13 : Step (OD c g) F (decodeEnv st₀) st₁
+      (.stmt (offsetCeilingGuard "instancesLength")) (.sres (decodeEnv st₀) st₁ .normal) :=
+    guardPasses (funs := F) (V := decodeEnv st₀) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.var "instancesLength", w abiLengthCeiling]) h13e
+  -- 14. the instances tail bound passes
+  have h14e : Step (OD c g) F (decodeEnv st₀) st₁ (.expr (Expr.builtin Op.gt
+        [Expr.builtin Op.add [Expr.builtin Op.add [dataPos "instancesOffset", w 32],
+            Expr.builtin Op.mul [Expr.var "instancesLength", w 32]],
+          Expr.builtin Op.calldatasize []])) (.eres (.vals [0] st₁)) := by
+    have e := tail_val (funs := F) (V := decodeEnv st₀) (st := st₁) (o := "instancesOffset")
+      (l := "instancesLength") (pos := instancesOffsetAt st₀) (len := instancesLengthAt st₀)
+      (stride := 32)
+      (rfl : VEnv.get (decodeEnv st₀) "instancesOffset" = some (instancesOffsetAt st₀))
+      (rfl : VEnv.get (decodeEnv st₀) "instancesLength" = some (instancesLengthAt st₀))
+    rw [show tailValue (headStart + instancesOffsetAt st₀) (instancesLengthAt st₀ * 32) st₁ =
+          tailValue (headStart + instancesOffsetAt st₀) (instancesLengthAt st₀ * 32) st₀ from rfl,
+        hilTail'] at e
+    exact e
+  have h14 : Step (OD c g) F (decodeEnv st₀) st₁
+      (.stmt (tailGuard "instancesOffset" "instancesLength" 32))
+      (.sres (decodeEnv st₀) st₁ .normal) :=
+    guardPasses (funs := F) (V := decodeEnv st₀) (st := st₁) (st' := st₁)
+      (test := Expr.builtin Op.gt [Expr.builtin Op.add
+          [Expr.builtin Op.add [dataPos "instancesOffset", w 32],
+            Expr.builtin Op.mul [Expr.var "instancesLength", w 32]],
+          Expr.builtin Op.calldatasize []]) h14e
+
+  -- 15-16. the two immutable bindings
+  have hvkE : Step (OD c g) F (decodeEnv st₀) st₁ (.expr (Expr.builtin Op.loadimmutable
+        [Expr.lit (.string vkImmutableKey)])) (.eres (.vals [immVk st₀] st₁)) :=
+    bi1 (op := Op.loadimmutable) (st' := st₁) (e := Expr.lit (.string vkImmutableKey))
+      (v := litValue (.string vkImmutableKey)) (u := immVk st₀) (funs := F) (V := decodeEnv st₀)
+      (st := st₁)
+      (Step.lit (D := OD c g) (l := Literal.string vkImmutableKey) (funs := F)
+        (V := decodeEnv st₀) (st := st₁))
+      (rfl : (OD c g).Builtin Op.loadimmutable [litValue (.string vkImmutableKey)] st₁
+        (.ok [immVk st₀] st₁))
+  have h15 : Step (OD c g) F (decodeEnv st₀) st₁
+      (.stmt (Stmt.letDecl ["vk"] (some (Expr.builtin Op.loadimmutable
+        [Expr.lit (.string vkImmutableKey)]))))
+      (.sres (vkEnv st₀) st₁ .normal) :=
+    Step.letVal (vars := ["vk"]) (vals := [immVk st₀])
+      (e := Expr.builtin Op.loadimmutable [Expr.lit (.string vkImmutableKey)])
+      (st1 := st₁) (funs := F) (V := decodeEnv st₀) (st := st₁) hvkE rfl
+  have hqE : Step (OD c g) F (vkEnv st₀) st₁
+      (.expr (Expr.builtin Op.loadimmutable [Expr.lit (.string quotientImmutableKey)]))
+      (.eres (.vals [immQuotient st₀] st₁)) :=
+    bi1 (op := Op.loadimmutable) (st' := st₁) (e := Expr.lit (.string quotientImmutableKey))
+      (v := litValue (.string quotientImmutableKey)) (u := immQuotient st₀) (funs := F)
+      (V := vkEnv st₀) (st := st₁)
+      (Step.lit (D := OD c g) (l := Literal.string quotientImmutableKey) (funs := F)
+        (V := vkEnv st₀) (st := st₁))
+      (rfl : (OD c g).Builtin Op.loadimmutable [litValue (.string quotientImmutableKey)] st₁
+        (.ok [immQuotient st₀] st₁))
+  have h16 : Step (OD c g) F (vkEnv st₀) st₁
+      (.stmt (Stmt.letDecl ["quotientEvaluator"] (some (Expr.builtin Op.loadimmutable
+        [Expr.lit (.string quotientImmutableKey)])))) (.sres (armEnv st₀) st₁ .normal) :=
+    Step.letVal (vars := ["quotientEvaluator"]) (vals := [immQuotient st₀])
+      (e := Expr.builtin Op.loadimmutable [Expr.lit (.string quotientImmutableKey)])
+      (st1 := st₁) (funs := F) (V := vkEnv st₀) (st := st₁) hqE rfl
+  -- assemble: armPrefix is exactly the sixteen statements above, in this order
+  show Step (OD c g) F (selEnv st₀) st₁
+    (.stmts ([callvalueGuard, headLengthGuard, proofOffsetDecl,
+        offsetCeilingGuard "proofOffset", lengthPresentGuard "proofOffset", proofLengthDecl,
+        offsetCeilingGuard "proofLength", tailGuard "proofOffset" "proofLength" 1,
+        instancesOffsetDecl, offsetCeilingGuard "instancesOffset",
+        lengthPresentGuard "instancesOffset", instancesLengthDecl,
+        offsetCeilingGuard "instancesLength", tailGuard "instancesOffset" "instancesLength" 32]
+        ++ bindLocalsFromImmutables ++ P))
+      (.sres V' st' o)
+  refine seqC (c := c) (g := g) (funs := F) (V := selEnv st₀) (st := st₁) (V₁ := selEnv st₀)
+    (st₁ := st₁) h1 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := selEnv st₀) (st := st₁) (V₁ := selEnv st₀)
+    (st₁ := st₁) h2 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := selEnv st₀) (st := st₁) (V₁ := V₂)
+    (st₁ := st₁) h3 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₂) (st := st₁) (V₁ := V₂) (st₁ := st₁) h4 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₂) (st := st₁) (V₁ := V₂) (st₁ := st₁) h5 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₂) (st := st₁) (V₁ := V₃) (st₁ := st₁) h6 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₃) (st := st₁) (V₁ := V₃) (st₁ := st₁) h7 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₃) (st := st₁) (V₁ := V₃) (st₁ := st₁) h8 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₃) (st := st₁) (V₁ := V₄)
+    (st₁ := st₁) h9 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₄) (st := st₁) (V₁ := V₄) (st₁ := st₁) h10 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₄) (st := st₁) (V₁ := V₄) (st₁ := st₁) h11 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := V₄) (st := st₁) (V₁ := decodeEnv st₀)
+    (st₁ := st₁) h12 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := decodeEnv st₀) (st := st₁)
+    (V₁ := decodeEnv st₀) (st₁ := st₁) h13 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := decodeEnv st₀) (st := st₁)
+    (V₁ := decodeEnv st₀) (st₁ := st₁) h14 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := decodeEnv st₀) (st := st₁)
+    (V₁ := vkEnv st₀) (st₁ := st₁) h15 ?_
+  refine seqC (c := c) (g := g) (funs := F) (V := vkEnv st₀)
+    (st := st₁) (V₁ := armEnv st₀) (st₁ := st₁) h16 ?_
+  exact hP
+
+/-- The prefix alone, with nothing after it: the '.normal' termination of the entry path. -/
+theorem armPrefix_normal {st₀ : EvmState} (hacc : dispatcherAccepts st₀)
+    {F : FunEnv (OD c g)} :
+    Step (OD c g) F (selEnv st₀) (armFrame st₀) (.stmts armPrefix)
+      (.sres (armEnv st₀) (armFrame st₀) .normal) :=
+  armPrefix_passes (hacc := hacc) (P := []) (seqN (c := c) (g := g) (funs := F)
+    (V := armEnv st₀) (st := armFrame st₀))
+
+/-- **THE KEY TRANSPORT.** Suppose the routed 'verifyProof' arm - the switch block the dispatcher
+selects, which on an accepting calldata IS 'armPrefix ++ armBody S' - runs the lowered program and
+halts. Then the Surface has a 'wrap' run, observed at the deployment frame. Together with
+'armPrefix_passes' this says the entry path contributes the prologue's frame change and nothing
+else: no halt, no world effect, no external call.
+
+The hypothesis is the switch block's own step rather than a 'Run' of 'armBody S', and that is
+deliberate: inside the dispatcher the arm sees the function scopes 'armFuns' and the variable
+environment 'armEnv', and a 'Step' derivation does not move between environments - 'VEnv.get'
+answers the innermost binding, so a body that names 'vk' means a different word in a different
+environment. Stating the transport where the arm actually runs is the honest form; stating it as
+'Run (armBody S)' would be a claim about a different program. -/
+theorem wrap_of_arm_run {S : Surface p G₁ G₂ Gₜ} (W : ExecEnv) (H : Hash) (cd : Bytes)
+    (hacc : dispatcherAccepts (callState W S.shellLayout H cd)) {st' : EvmState}
+    (harm : Step (OD c g)
+        (hoist (OD c g) [selectorDecl, selectorSwitch (armBody S)] :: [[]])
+        (selEnv (callState W S.shellLayout H cd)) (armFrame (callState W S.shellLayout H cd))
+        (.stmt (.block (selectSwitch (OD c g) (selectorWord (callState W S.shellLayout H cd))
+            (caseList (armBody S)) none)))
+        (.sres (selEnv (callState W S.shellLayout H cd)) st' .halt)) :
+    wrap S W H cd c g ⟨committedState (callState W S.shellLayout H cd) st', .halt⟩ := by
+  set st₀ := callState W S.shellLayout H cd
+  have hstmts : Step (OD c g) [[]] [] st₀ (.stmts (dispatcher (armBody S))) (.sres [] st' .halt) :=
+    dispatch_prefix (body := armBody S) (st₀ := st₀) hacc.1 harm
+  exact ⟨[], st', blk (c := c) (g := g) (funs := []) (V := []) (st := st₀)
+      (body := dispatcher (armBody S)) (V₁ := []) (st₁ := st') (o := .halt) hstmts, rfl⟩
+
+/-- **THE ARM BLOCK, DECOMPOSED.** On an accepting calldata the routed switch block IS the arm
+prefix followed by the lowered program: the prefix runs to '.normal' in the prologue's frame
+('armPrefix_passes') and the program's own step finishes the job. This is the form the headline
+transport cites, and it is the lemma the file's own docstrings promised. -/
+theorem switch_block_of_body_run {S : Surface p G₁ G₂ Gₜ} (W : ExecEnv) (H : Hash) (cd : Bytes)
+    (hacc : dispatcherAccepts (callState W S.shellLayout H cd))
+    {V' : VEnv (OD c g)} {st' : EvmState}
+    (hbody : Step (OD c g) (armFuns (armBody S)) (armEnv (callState W S.shellLayout H cd))
+        (armFrame (callState W S.shellLayout H cd)) (.stmts (armBody S)) (.sres V' st' .halt))
+    (hres : restore (selEnv (callState W S.shellLayout H cd)) V' =
+      selEnv (callState W S.shellLayout H cd)) :
+    Step (OD c g)
+        (hoist (OD c g) [selectorDecl, selectorSwitch (armBody S)] :: [[]])
+        (selEnv (callState W S.shellLayout H cd)) (armFrame (callState W S.shellLayout H cd))
+        (.stmt (.block (selectSwitch (OD c g) (selectorWord (callState W S.shellLayout H cd))
+            (caseList (armBody S)) none)))
+        (.sres (selEnv (callState W S.shellLayout H cd)) st' .halt) := by
+  set st₀ := callState W S.shellLayout H cd
+  have hseq : Step (OD c g) (armFuns (armBody S)) (selEnv st₀) (armFrame st₀)
+      (.stmts (verifyProofArm (armBody S))) (.sres V' st' .halt) := by
+    show Step (OD c g) (armFuns (armBody S)) (selEnv st₀) (armFrame st₀)
+      (.stmts (armPrefix ++ armBody S)) (.sres V' st' .halt)
+    exact armPrefix_passes (hacc := hacc) (F := armFuns (armBody S)) (P := armBody S) hbody
+  have key : Step (OD c g) (hoist (OD c g) [selectorDecl, selectorSwitch (armBody S)] :: [[]])
+      (selEnv st₀) (armFrame st₀)
+      (.stmt (.block (selectSwitch (OD c g) (selectorWord st₀) (caseList (armBody S)) none)))
+      (.sres (restore (selEnv st₀) V') st' .halt) := by
+    rw [switch_verifyProof (cv := selectorWord st₀) (body := armBody S) hacc.2.1]
+    exact blk (c := c) (g := g) (body := verifyProofArm (armBody S))
+      (funs := hoist (OD c g) [selectorDecl, selectorSwitch (armBody S)] :: [[]]) (V := selEnv st₀)
+      (st := armFrame st₀) (V₁ := V') (st₁ := st') (o := .halt) hseq
+  rw [hres] at key
+  exact key
+
+/-! ### 11. The frame tie, and why it does not tie -/
+
+/-- The prologue's mark bump, on its own: whatever the incoming frame's mark is, the arm frame's
+is at least three words, because 'mstore(0x40, memoryguard(128))' touches the byte range
+[64, 96). -/
+theorem arm_frame_active_words_nonzero (st₀ : EvmState) : (armFrame st₀).activeWords ≠ 0 := by
+  show (stAfterPrologue st₀).activeWords ≠ 0
+  have h : (stAfterPrologue st₀).activeWords =
+      BitVec.ofNat 256 (Nat.max st₀.activeWords.toNat 3) := by
+    show BitVec.ofNat 256 (activeWordsAfter st₀.activeWords.toNat 64 32) = _
+    rw [activeWordsAfter, if_neg (by decide : (32 : Nat) ≠ 0)]
+  intro hh
+  have hto : (BitVec.ofNat 256 (Nat.max st₀.activeWords.toNat 3)).toNat =
+      (0 : BitVec 256).toNat := congrArg BitVec.toNat (h ▸ hh)
+  rw [BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt (Nat.max_lt.mpr ⟨st₀.activeWords.isLt, by decide⟩)] at hto
+  have hz : (0 : BitVec 256).toNat = 0 := rfl
+  rw [hz] at hto
+  have h3 : 3 ≤ Nat.max st₀.activeWords.toNat 3 := Nat.le_max_right _ _
+  omega
+
+/-- **NO MEMORY CHOICE MAKES THE 'RunVerifier' FRAME THE ARM FRAME.** 'RunVerifier' builds its
+frame with 'initState', which takes the memory as a parameter and nothing else, so its
+active-words mark is always 'EvmState.init.activeWords = 0'. The dispatcher's prologue
+'mstore(0x40, memoryguard(128))' bumps the mark to three words, and 'armFrame' is the prologue's
+post-state. So the two frames are never the same state, for ANY 'mem₀' - including the one that
+copies the prologue's write into the memory.
+
+This is the exact obstruction between the 'wrap' model and the three run fields of
+'LoweringCorrect', and it is a fact about the model rather than a missing proof: 'activeWords' is
+what 'msize' answers ('EVMExec.lean:375' defines 'memorySize' and ':765' is its only reader in
+the vendored dialect), so a program that reads 'msize' can tell the two frames apart, and no
+hypothesis of 'LoweringCorrect' says the lowered program does not. -/
+theorem no_mem₀_reaches_the_arm_frame (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash)
+    (cd : Bytes) (mem₀ : Nat → UInt8) :
+    initState W S.shellLayout H cd mem₀ ≠ armFrame (callState W S.shellLayout H cd) := by
+  intro h
+  have h₁ : (initState W S.shellLayout H cd mem₀).activeWords = 0 := rfl
+  have h₂ : (armFrame (callState W S.shellLayout H cd)).activeWords ≠ 0 :=
+    arm_frame_active_words_nonzero (callState W S.shellLayout H cd)
+  exact h₂ (by rw [← h, h₁])
+
+/-- The prologue's write is visible in the frame the arm runs in: the free-memory-pointer word is
+the reservation, not zero. Stated as the two words the arm's FIRST statement reads, because
+'headGuard' is 'if gt(mload(0x40), 0x1000) revert' - the arm's own first act is to read the word
+the dispatcher wrote. So the difference is not in a corner of the state the program never looks
+at: it is in the first word the program looks at. -/
+theorem arm_frame_reads_a_different_head_word (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash)
+    (cd : Bytes) :
+    (callState W S.shellLayout H cd).memory 95 = 0 ∧
+      (armFrame (callState W S.shellLayout H cd)).memory 95 = 0x80 :=
+  ⟨rfl, rfl⟩
+
+/-- **THE TRANSPORT IS NOT A VIEW EQUIVALENCE, AND HERE IS THE PROGRAM THAT SHOWS IT.** The
+two-statement program 'return(mload(0x40), 32)' run from the deployment frame and from the arm
+frame halts with two DIFFERENT return payloads, so the bridge 'LoweringCorrect' would need - an
+'ObsEquiv' between the dispatcher model and the body-only model - is FALSE rather than merely
+unstated. This is the same class of finding as the 'ir_refines' refutation: the candidate
+hypothesis is shown unable to hold, not just unproved. -/
+theorem prologue_write_is_observable :
+    ∃ (P : YulBlock) (st₀ : EvmState) (s₁ s₂ : EvmState),
+      Run c g P st₀ [] s₁ .halt ∧ Run c g P (stAfterPrologue st₀) [] s₂ .halt ∧
+        s₁.halted ≠ s₂.halted := by
+  let st₀ : EvmState := frame (be4 0xdeadbeef) 0
+  let st₂ : EvmState := stAfterPrologue st₀
+  -- 'return(0x5f, 1)': the last byte of the word the prologue writes. Zero in the deployment
+  -- frame, 0x80 in the arm frame.
+  let P : YulBlock := [Stmt.exprStmt (Expr.builtin Op.ret [w 0x5f, w 1])]
+  let s₁ : EvmState :=
+    { touchMemory st₀ 0x5f 1 with halted := some (HaltKind.ret, readBytes st₀.memory 0x5f 1) }
+  let s₂ : EvmState :=
+    { touchMemory st₂ 0x5f 1 with halted := some (HaltKind.ret, readBytes st₂.memory 0x5f 1) }
+  have h₁ : Run c g P st₀ [] s₁ .halt :=
+    blk (c := c) (g := g) (funs := []) (V := []) (st := st₀) (body := P) (V₁ := []) (st₁ := s₁)
+      (o := .halt)
+      (seqStopH (c := c) (g := g) (funs := hoist (OD c g) P :: []) (V := []) (st := st₀)
+        (s₁ := Stmt.exprStmt (Expr.builtin Op.ret [w 0x5f, w 1])) (rest := []) (V₁ := [])
+        (st₁ := s₁)
+        (Step.exprStmtHalt (D := OD c g) (funs := hoist (OD c g) P :: []) (V := [])
+          (st := st₀) (e := Expr.builtin Op.ret [w 0x5f, w 1]) (st1 := s₁)
+          (Step.builtinHalt (D := OD c g) (funs := hoist (OD c g) P :: []) (V := [])
+            (st := st₀) (op := Op.ret) (args := [w 0x5f, w 1]) (argvals := [0x5f, 1])
+            (st1 := st₀) (st2 := s₁) (wlits_eval st₀ [0x5f, 1])
+            (rfl : (OD c g).Builtin Op.ret [0x5f, 1] st₀ (.halt s₁)))))
+  have h₂ : Run c g P st₂ [] s₂ .halt :=
+    blk (c := c) (g := g) (funs := []) (V := []) (st := st₂) (body := P) (V₁ := []) (st₁ := s₂)
+      (o := .halt)
+      (seqStopH (c := c) (g := g) (funs := hoist (OD c g) P :: []) (V := []) (st := st₂)
+        (s₁ := Stmt.exprStmt (Expr.builtin Op.ret [w 0x5f, w 1])) (rest := []) (V₁ := [])
+        (st₁ := s₂)
+        (Step.exprStmtHalt (D := OD c g) (funs := hoist (OD c g) P :: []) (V := [])
+          (st := st₂) (e := Expr.builtin Op.ret [w 0x5f, w 1]) (st1 := s₂)
+          (Step.builtinHalt (D := OD c g) (funs := hoist (OD c g) P :: []) (V := [])
+            (st := st₂) (op := Op.ret) (args := [w 0x5f, w 1]) (argvals := [0x5f, 1])
+            (st1 := st₂) (st2 := s₂) (wlits_eval st₂ [0x5f, 1])
+            (rfl : (OD c g).Builtin Op.ret [0x5f, 1] st₂ (.halt s₂)))))
+  have hne : s₁.halted ≠ s₂.halted := by
+    show some (HaltKind.ret, readBytes st₀.memory 0x5f 1) ≠
+      some (HaltKind.ret, readBytes st₂.memory 0x5f 1)
+    intro hh
+    have hd := congrArg Prod.snd (Option.some.inj hh)
+    have hz : readBytes st₀.memory 0x5f 1 = [0] := rfl
+    have ho : readBytes st₂.memory 0x5f 1 = [0x80] := rfl
+    rw [hz, ho] at hd
+    exact absurd hd (by decide)
+  exact ⟨P, st₀, s₁, s₂, h₁, h₂, hne⟩
+
+-- **AXIOM AUDIT FOR THE TRANSPORT.** The key lemma, the transport and the frame refutation are
+-- derivations, not assumptions: no proof hole, and nothing beyond the vendored semantics' own
+-- quotation machinery.
+#print axioms Midfall.Yul.ShellModel.armPrefix_passes
+#print axioms Midfall.Yul.ShellModel.wrap_of_arm_run
+#print axioms Midfall.Yul.ShellModel.prologue_write_is_observable
+
+/-! ### 12. The in-tree object the headline bridge is read at -/
+
+/-- **THE DISPATCHER MODEL AS A YUL OBJECT.** One runtime sub-object, named the way the Surface
+names runtimes, whose code block IS 'dispatcherCode S'. No solc artifact is involved: the object
+is assembled from the model. This is the object 'LoweringCorrect.ir_refines' is read at when the
+headline theorem speaks about 'wrap' rather than about an imported via-ir object. -/
+def modelIr (S : Surface p G₁ G₂ Gₜ) : YulObject :=
+  Object.mk S.shell.name ([] : YulBlock)
+    [Object.mk (S.runtimeName S.shell.name) (dispatcherCode S) [] []] []
+
+/-- The Surface's own runtime lookup finds the model, by 'rfl' - which is the point: the naming
+field and the object are built from the same 'S.runtimeName', so there is no second convention to
+disagree with (R-60 S1 was exactly this failure mode). -/
+theorem modelIr_irRuntime (S : Surface p G₁ G₂ Gₜ) :
+    S.irRuntime (modelIr S) = some (dispatcherCode S) := by
+  have hsub : (modelIr S).subObject (S.runtimeName (modelIr S).name)
+      = some (Object.mk (S.runtimeName S.shell.name) (dispatcherCode S) [] []) := by
+    show List.find? (fun x => decide (x.name = S.runtimeName (modelIr S).name))
+        [Object.mk (S.runtimeName S.shell.name) (dispatcherCode S) [] []] = _
+    refine List.find?_cons_of_pos (decide_eq_true rfl)
+  rw [Surface.irRuntime, hsub]
+  rfl
+
+/-- **THE MODEL PASSES THE IMPORT CHECK.** 'Surface.irCheck' is the decidable fragment: the
+runtime sub-object exists and has no unresolved top-level call. The dispatcher's three top-level
+statements are an 'mstore', a 'cond' and a 'revert', all builtins, so nothing is unresolved - the
+model is inside the fragment by construction rather than by assumption. -/
+theorem modelIr_irCheck (S : Surface p G₁ G₂ Gₜ) : S.irCheck (modelIr S) = true := by
+  have h : S.irCheck (modelIr S) = ! unresolvedTop (dispatcherCode S) := by
+    rw [Surface.irCheck, modelIr_irRuntime]
+  rw [h]
+  rfl
+
+/-- **THE BRIDGE IS A DEFINITIONAL IDENTIFICATION, NOT A SIMULATION.** At the model object,
+'RunContractIR' IS 'wrap': same program, same frame, same commit base. This is the step that lets
+the headline be restated over 'wrap' without losing the only transport 'LoweringCorrect' carries. -/
+theorem wrap_iff_modelRunContractIR (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash)
+    (cd : Bytes) (c : ExternalCalls) (g : ExternalGas) (obs : Obs) :
+    RunContractIR S W H (modelIr S) S.shellLayout cd c g obs ↔ wrap S W H cd c g obs := by
+  constructor
+  · rintro ⟨rt, V', hrt, hrun⟩
+    rw [modelIr_irRuntime] at hrt
+    cases Option.some.inj hrt
+    exact ⟨V', hrun⟩
+  · rintro ⟨V', hrun⟩
+    exact ⟨dispatcherCode S, V', modelIr_irRuntime S, hrun⟩
+
+/-- **AND THE SHELL RUN IS THE VERIFIER RUN AT ZERO MEMORY.** 'RunShell' and 'RunVerifier' differ
+in the statement by which block and which frame: 'shell.codeBlock' versus
+'S.L.headGuard ++ S.bindLocals ++ S.L.main', and 'callState' versus 'initState ... mem₀'. Under
+the surface pin 'shell_unfolds' the two programs are one, and 'callState' IS 'initState' at the
+everywhere-zero memory - so the two run predicates are the same predicate, by 'rfl'. This is the
+one frame identification the model DOES give for free, and it is what the headline's soundness
+conjunct runs on. -/
+theorem runShell_eq_runVerifier_zero (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash)
+    (cd : Bytes) (c : ExternalCalls) (g : ExternalGas) (obs : Obs) :
+    RunShell S W H cd c g obs → RunVerifier S W H cd (fun _ => 0) c g obs :=
+  fun ⟨V', hrun⟩ => ⟨V', by rw [← S.shell_unfolds]; exact hrun⟩
+
+/-! ### 13. D-P23 for the transport: the accepting calldata, and two more falsifications -/
+
+/-- **THE WITNESS THAT 'dispatcherAccepts' IS SATISFIABLE.** At the file's own well-formed
+calldata every entry-path test answers PASS: the size test enters the switch, the selector routes,
+the callvalue is zero, the head region is present, and both dynamic arguments clear offset ceiling,
+length presence, length ceiling and tail bound - thirteen 'rfl's, i.e. a computation on the model's
+own decoder rather than a claim about it. Without this line 'armPrefix_passes' would be a theorem
+about a condition nothing satisfies, which is exactly the D-P23 half the three falsifications had
+and the positive direction did not. -/
+theorem cdWellFormed_is_accepted : dispatcherAccepts (frame cdWellFormed 0) :=
+  ⟨rfl, rfl, rfl, rfl, ⟨rfl, rfl, ⟨rfl, rfl⟩⟩, ⟨rfl, rfl, ⟨rfl, rfl⟩⟩⟩
+
+/-- **AND THE ACCEPTING CONDITION IS NOT VACUOUS IN THE OTHER DIRECTION EITHER**: the two calldata
+the falsifications use both FAIL it, the wrong-selector one on the routing conjunct and the
+truncated one on the proof tail bound. So 'dispatcherAccepts' discriminates, and 'armPrefix_passes'
+is not an implication over an empty set. -/
+theorem dispatcherAccepts_refuted_by_the_falsification_witnesses :
+    ¬ dispatcherAccepts (frame cdWrongSelector 0) ∧
+      ¬ dispatcherAccepts (frame cdTruncatedProof 0) ∧
+      ¬ dispatcherAccepts (frame [] 0) := by
+  refine ⟨?_, ?_, ?_⟩
+  · intro h
+    obtain ⟨_, hsel, _, _, _, _⟩ := h
+    exact absurd hsel (by decide)
+  · intro h
+    obtain ⟨_, _, _, _, hproof, _⟩ := h
+    obtain ⟨_, _, _, htail⟩ := hproof
+    exact absurd htail (by decide)
+  · intro h
+    obtain ⟨hsize, _, _, _, _, _⟩ := h
+    exact absurd hsize (by decide)
+
+/-- A body that runs off its last statement: 'stop()' halts with a COMMITTING kind, which is
+neither a return nor a revert. -/
+def stopBody : YulBlock := [Stmt.exprStmt (Expr.builtin Op.stop [])]
+
+/-- The state 'stop()' leaves: 'stepOp's own clause (EVMExec.lean:875). -/
+def stopState (st : EvmState) : EvmState := { st with halted := some (.stop, []) }
+
+/-- **FALSIFICATION 4 - A RUN THAT IS NEITHER RETURN NOR REVERT.** The two-outcome conjunct of the
+headline is not a theorem about programs. A dispatcher run on a calldata the dispatcher ACCEPTS -
+so the entry path contributes nothing - reaches 'stop', and the observation is neither
+'Obs.isReturn' nor 'Obs.isRevertOrHalt' ('HaltKind.commits stop = true', so the read-only half of
+the disjunct fails too). This is precisely what 'LoweringCorrect.only_two_outcomes' rules out by
+hypothesis, and it is exhibited here as a run of the model rather than asserted in prose: delete
+the hypothesis and the conjunct is false of a program this model runs. -/
+theorem stop_run_is_neither_return_nor_revert :
+    ∃ obs, runOn stopBody (frame cdWellFormed 0) c g obs ∧
+      ¬ obs.isReturn ∧ ¬ obs.isRevertOrHalt := by
+  let st₀ : EvmState := frame cdWellFormed 0
+  let FI : FunEnv (OD c g) := hoist (OD c g) [selectorDecl, selectorSwitch stopBody] :: [[]]
+  let FA : FunEnv (OD c g) := hoist (OD c g) (verifyProofArm stopBody) :: FI
+  have hstop : Step (OD c g) FA (armEnv st₀) (armFrame st₀) (.stmts stopBody)
+      (.sres (armEnv st₀) (stopState (armFrame st₀)) .halt) := by
+    show Step (OD c g) FA (armEnv st₀) (armFrame st₀)
+      (.stmts [Stmt.exprStmt (Expr.builtin Op.stop [])])
+      (.sres (armEnv st₀) (stopState (armFrame st₀)) .halt)
+    exact seqStopH (c := c) (g := g) (funs := FA) (V := armEnv st₀) (st := armFrame st₀)
+      (s₁ := Stmt.exprStmt (Expr.builtin Op.stop [])) (rest := []) (V₁ := armEnv st₀)
+      (st₁ := stopState (armFrame st₀))
+      (Step.exprStmtHalt (D := OD c g) (funs := FA) (V := armEnv st₀) (st := armFrame st₀)
+        (e := Expr.builtin Op.stop []) (st1 := stopState (armFrame st₀))
+        (Step.builtinHalt (D := OD c g) (funs := FA) (V := armEnv st₀) (st := armFrame st₀)
+          (op := Op.stop) (args := ([] : List (Expr EVM.Op))) (argvals := ([] : List U256))
+          (st1 := armFrame st₀) (st2 := stopState (armFrame st₀))
+          (Step.argsNil (D := OD c g) (st := armFrame st₀))
+          (rfl : (OD c g).Builtin Op.stop [] (armFrame st₀)
+            (.halt (stopState (armFrame st₀))))))
+  have hseq : Step (OD c g) FA (selEnv st₀) (armFrame st₀)
+      (.stmts (verifyProofArm stopBody)) (.sres (armEnv st₀) (stopState (armFrame st₀)) .halt) := by
+    show Step (OD c g) FA (selEnv st₀) (armFrame st₀)
+      (.stmts (armPrefix ++ stopBody)) (.sres (armEnv st₀) (stopState (armFrame st₀)) .halt)
+    exact armPrefix_passes (hacc := cdWellFormed_is_accepted) (F := FA) (P := stopBody) hstop
+  have hres : (restore (selEnv st₀) (armEnv st₀) : VEnv (OD c g)) = selEnv st₀ := rfl
+  have harm : Step (OD c g) FI (selEnv st₀) (armFrame st₀)
+      (.stmt (.block (selectSwitch (OD c g) (selectorWord st₀) (caseList stopBody) none)))
+      (.sres (selEnv st₀) (stopState (armFrame st₀)) .halt) := by
+    rw [switch_verifyProof (cv := selectorWord st₀) (body := stopBody)
+      cdWellFormed_is_accepted.2.1]
+    have key : Step (OD c g) FI (selEnv st₀) (armFrame st₀)
+        (.stmt (.block (verifyProofArm stopBody)))
+        (.sres (restore (selEnv st₀) (armEnv st₀)) (stopState (armFrame st₀)) .halt) :=
+      blk (c := c) (g := g) (body := verifyProofArm stopBody) (funs := FI) (V := selEnv st₀)
+        (st := armFrame st₀) (V₁ := armEnv st₀) (st₁ := stopState (armFrame st₀)) (o := .halt)
+        hseq
+    rw [hres] at key
+    exact key
+  have hsize : sizeTestValue st₀ = 1 := cdWellFormed_is_accepted.1
+  have hstmts : Step (OD c g) [[]] [] st₀ (.stmts (dispatcher stopBody))
+      (.sres [] (stopState (armFrame st₀)) .halt) :=
+    dispatch_prefix (body := stopBody) (st₀ := st₀) hsize harm
+  refine ⟨⟨stopState (armFrame st₀), .halt⟩, ⟨[], ⟨_, blk (c := c) (g := g) (funs := [])
+      (V := []) (st := st₀) (body := dispatcher stopBody) (V₁ := [])
+      (st₁ := stopState (armFrame st₀)) (o := .halt) hstmts, rfl⟩⟩, ?_, ?_⟩
+  · intro ⟨d, hd⟩
+    exact HaltKind.noConfusion (congrArg Prod.fst (Option.some.inj hd))
+  · intro ⟨k, d, hd, hk⟩
+    have hk2 : k = HaltKind.stop :=
+      congrArg Prod.fst (Option.some.inj hd).symm
+    rw [hk2] at hk
+    exact absurd hk (by decide)
+
+/-- **FALSIFICATION 5 - A CALLDATA THAT FAILS THE SELECTOR HYPOTHESIS.** The headline keeps
+'hsel : bytesTake cd 0 4 = some fnSigVerifyProof', and this is the witness that it can fail:
+'cdWrongSelector' carries 0xdeadbeef, so its first four bytes are not the selector and
+'dispatcherAccepts' is false of its frame ('dispatcherAccepts_refuted_by_the_falsification_witnesss'
+is the second half) - and yet it HAS a dispatcher run, namely 'wrong_selector_reverts_at_witness',
+whose halt is 'revert(0,0)'. So the selector hypothesis is not implied by the existence of a run,
+which is the reason it stays in the statement, and the run an unroutable calldata does have lands on
+the second disjunct of the third conjunct rather than the first. -/
+theorem wrong_selector_calldata_fails_hsel :
+    cdWrongSelector.take 4 ≠ Midfall.Generator.fnSigVerifyProof.data.toList := by
+  intro h
+  exact absurd h (by decide)
+
+#print axioms Midfall.Yul.ShellModel.cdWellFormed_is_accepted
+#print axioms Midfall.Yul.ShellModel.stop_run_is_neither_return_nor_revert
+#print axioms Midfall.Yul.ShellModel.dispatcherAccepts_refuted_by_the_falsification_witnesses
 
 end Midfall.Yul.ShellModel
 

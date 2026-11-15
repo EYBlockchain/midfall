@@ -435,3 +435,113 @@ a VerifierEnv exhibit lives under Instances/, which D-P17 forbids here.
 **And the standing limit, restated because it has now been measured twenty times:** deleting any of
 the four falsification theorems above leaves lake build green and no gate in checks.sh notices. No
 coverage is claimed for the persistence of a falsification, only for its truth.
+
+
+## P-LOWEQ - the headline moved off solc's IR onto the in-tree dispatcher model (Tier 2 scope decision)
+
+**What the sketch said.** Section Q's 'lowering_equivalence' quantified over a solc via-ir object:
+'(ir : YulObject) (irLyt : EVM.Layout) (hir : S.irCheck ir = true)', and all three conjuncts were
+stated about 'RunContractIR S W H ir irLyt cd ...'.
+
+**What landed.** 'Midfall/Lowering/Obligations.lean:lowering_equivalence' now quantifies over
+nothing of the sort. The run predicate in all three conjuncts is 'Midfall.Yul.ShellModel.wrap', the
+Yul model of solc's dispatcher (selector switch, callvalue guard, ABI bounds, 'loadimmutable'
+bindings) built in-tree at P-M8-SHELL. The three IR binders are gone; the layout tie the sketch
+spelled as 'irLyt' is now the Surface's own 'S.shellLayout', which is what 'wrap' runs in. All three
+conjuncts and their asymmetry are unchanged: soundness over permissive calls and ANY gas,
+completeness over honest calls and 'ofFun _ => 0', and the two-outcome read-only conjunct.
+'DeploymentW', 'Holds', 'EnvAgrees', 'G1CodecLaws', 'SupportedS', 'hsel' and 'hside' are all kept.
+
+**It is PROVED.** '#print axioms' reports [propext, Classical.choice, Quot.sound] - no 'sorryAx'.
+The old statement's 'sorry' is gone; the register went 42 to 41.
+
+**TIER 3, NAMED EXPLICITLY.** The link from the generated Solidity's ACTUAL compiled output to
+'ShellModel.wrap' is **out of scope by human decision (option A), not forgotten**. 'Midfall/Yul/IRCheck.lean'
+stays in the tree and 'irCheck_sound' still proves Fable's stated conclusion unchanged
+('docs/PLAN.md:228'); it is simply no longer on the headline path. What the headline does depend on
+is 'LoweringCorrect.ir_refines' - a field of the obligations bundle - read at the in-tree object
+'ShellModel.modelIr S'. That is a hypothesis about a program, not a solc dependency: no imported
+artifact is named in the statement or the proof, and 'S.irCheck (modelIr S) = true' is a theorem.
+
+**THE BRIEF'S KEY LEMMA WAS FALSE, AND THE MEASUREMENT IS ON THE RECORD.** The package brief asked
+for: "for calldata that routes to 'verifyProof' and passes the dispatcher's own ABI bounds, a 'wrap'
+run is a 'RunVerifier' run up to the layout tie." It is not, and three theorems say so:
+
+| theorem | what it rules out |
+|---|---|
+| 'ShellModel.no_mem₀_reaches_the_arm_frame' | no 'mem₀' makes 'RunVerifier's frame the frame the arm runs in: 'initState' always has 'activeWords = 0', the prologue's 'mstore(0x40, memoryguard(128))' leaves 3 |
+| 'ShellModel.arm_frame_reads_a_different_head_word' | the difference is in the first word the arm reads: 'headGuard' is 'if gt(mload(0x40), 0x1000)', 0 in one frame and 128 in the other |
+| 'ShellModel.prologue_write_is_observable' | a program that returns the byte the prologue wrote has two runs of the SAME program with DIFFERENT 'halted' payloads, so 'ObsEquiv (wrap ...) (RunShell ...)' is false for a general arm |
+
+So the bridge cannot be a frame theorem. It is 'ir_refines', which is exactly what it is for. What
+the restatement buys is that the bridge is now read at an object this tree builds, with a check that
+is 'rfl', instead of at solc's output with a check that had to be hypothesised.
+
+**THE ONE NEW HYPOTHESIS, and the inherited claim that was wrong.** 'hwl :
+(S.calls W product qAddr).WorldLocal'. 'ir_refines' demands the call relation be world-local, and
+section Q's proof hint asserted in a parenthetical that "permissive and honest calls are both
+WorldLocal". THAT IS FALSE IN THIS TREE: 'honestCalls_worldLocal' needs the evaluator slot's
+relation to be world-local, 'Bridge.rel_worldLocal' is a registered hole, and its own docstring
+carries the refutation ('world_projection_misses_address_and_keccak' - 'CallWorld.ofState' does not
+pin 'env.address' or 'env.keccakOf', and an evaluator that reads 'caller()' or 'keccak256'
+separates two world-equal states). The hypothesis is therefore stated. It is discharged at the curve
+Surface ('CurveSurface.loweqBundleCore') because 'curveSurface.evaluatorRuntime = none' makes the
+slot relation constantly False; it is NOT free for an externalised render.
+
+**'hsel' KEPT, and why dropping it would change the claim.** The selector check did move inside the
+modelled dispatcher, so the routing is now a frame condition ('ShellModel.dispatcherAccepts' carries
+'selectorWord = selectorVerifyProof', and 'armPrefix_passes' proves the routed arm reaches the
+program). But 'hsel' cannot be dropped: (i) 'only_two_outcomes' is itself stated with
+'bytesTake cd 0 4 = some fnSigVerifyProof', so the field being transported needs it; and (ii) a
+'wrap' run does not imply it - 'ShellModel.wrong_selector_calldata_fails_hsel' plus
+'wrong_selector_reverts_at_witness' exhibit a calldata that fails 'hsel' and still has a dispatcher
+run, namely the fall-through 'revert(0,0)'. What IS newly derived rather than assumed is that the
+routed arm runs the verifier program at all.
+
+**Mis-scoped siblings, listed as asked.** Two other statements in 'Obligations.lean' still quantify
+over the solc IR and were NOT in scope for this restatement:
+* 'LoweringCorrect.end_to_end_noAcc' (field, Obligations.lean:352) takes '(ir) (irLyt)' and
+  hypothesises 'S.irCheck ir = true', and its conclusion quantifies over 'RunContractIR'. If the
+  headline moves to 'wrap', this field is stated about a different program than the headline now
+  speaks of. Flagged, not changed: editing a LoweringCorrect field is a spec decision.
+* 'end_to_end_acc_complete' (theorem, Obligations.lean:786) has the same shape - '(ir) (irLyt)
+  (hir : S.irCheck ir = true)' and a 'RunContractIR' conclusion - and is still a registered 'sorry'.
+'ir_refines' itself stays as sketched; it is now load-bearing for the headline rather than a
+Tier-3 bridge on a dead path.
+
+**D-P23 coverage claimed by this package.** Witness AND falsification, as theorems, for every claim
+it lands:
+
+| claim | witness | falsification |
+|---|---|---|
+| 'dispatcherAccepts' (the entry path passes) | 'cdWellFormed_is_accepted' (thirteen 'rfl's) | 'dispatcherAccepts_refuted_by_the_falsification_witnesses' - the wrong-selector calldata, the truncated-proof calldata and the empty calldata each fail it |
+| 'armPrefix_passes' | same witness: the accepting calldata is the one the lemma quantifies over | the three P-M8-SHELL falsifications show each guard firing |
+| 'wrap_of_arm_run' | 'stop_run_is_neither_return_nor_revert' builds a real dispatcher run through the transport shape | 'prologue_write_is_observable' |
+| the two-outcome conjunct is a real constraint | 'cdWellFormed_is_accepted' gives the accepting calldata | 'stop_run_is_neither_return_nor_revert' - a 'stop' run is neither return nor revert, so 'only_two_outcomes' can fail |
+| the selector hypothesis is a real constraint | 'wrong_selector_calldata_fails_hsel' | 'wrong_selector_reverts_at_witness' |
+| the headline bundle is jointly inhabited | 'CurveSurface.loweqBundleCore' - 'SupportedS', 'DeploymentW', 'EnvAgrees', 'Eip2537.Holds', 'hside', 'hsel' and 'WorldLocal' in ONE term at one Surface | 'curveBundle_holds_leg_refuted_at_the_fixture', 'curveSupported_refuted_by_wrong_cs', 'curveHolds_refutes_constant_true' / '_false' |
+
+**THE ONE LEG NOTHING WITNESSES, and it is not the frame.** 'Midfall.Assumptions.G1CodecLaws' has
+SEVEN fields and, before this package, **no term of that type existed anywhere in the tree** - not at
+'g1CodecZ', not at the exponent codec, not anywhere. Five of the seven are theorems at the curve
+codec now ('CurveSurface.g1CodecZ_five_of_seven': 'eipRoundtrip' and 'ofEip_toEip' already existed,
+'compressedRoundtrip' is vacuous because 'g1CodecZ.ofCompressed? = fun _ => none', and both width
+clauses are existing size lemmas). The two that are not are 'eipShape' and 'toEip_one', and the
+reason is specific: they speak bytes in the 'Midfall.natToBytesBE' idiom while 'g1CodecZ.toEip' is
+'g1PointBytes' in the 'bytesNatBE' idiom, and the bridge 'bytesNatBE v n = natToBytesBE v n' is
+proved nowhere - 'Yul/Externals.lean:188' says the two encoders are kept independent ON PURPOSE.
+So the headline is proved and its 'hcodec' binder is still not known to be satisfiable. That is
+recorded as the named gap 'CurveSurface.gap_g1codecLaws_unexhibited' and the bundle gate now demands
+it, so it cannot be forgotten.
+
+**A GATE DEFECT FOUND ON THE WAY, worth recording because it cost a cycle.** 'scripts/lean_grep.py'
+strips comments before searching for 'sorry', but it tests a single quote for a char literal BEFORE
+it tests a line comment, so an identifier containing a prime - 'obs'', 'hshell'' - opens a phantom
+char literal and the text after it stops being stripped. The first regenerated register listed two
+FALSE proof holes in a docstring three lines below the new proof, and the build stayed green. The
+workaround taken here is to avoid primed identifiers in 'Obligations.lean'; the defect itself is
+unfixed and is reported at docs/REVIEW.md R-66.
+
+**And the standing limit, restated because it has now been measured twenty-six times:** deleting any
+falsification theorem named above leaves 'lake build' green and no gate in 'checks.sh' notices. No
+persistence coverage is claimed for any falsification in this package, only truth.
