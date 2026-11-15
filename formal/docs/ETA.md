@@ -644,6 +644,46 @@ stays the right-hand side of `ir_refines` at all.
 change**, outside current confinement. The Lean alternative is a spec-level closure transform plus
 restating the `shell_unfolds` pin. **Neither is inside the 10–16 session figure**, which assumed the
 curve Surface could discharge the bundle.
+### R19 - round 175, after P-QVM. Fifth refuted statement, one restoration, register 40.
+
+| claim | believed | measured |
+|---|---|---|
+| `identityCorrespondence_of_bridge` is a proof gap | listed as a hole | **FALSE AS WRITTEN** — hypotheses pin `exprs`' first projection, conclusion needs the second |
+| `qvm_validated_noBoundsFault` was as sketched | committed for 5 packages | **weaker than the sketch** — excluded `readPastEnd` at one index, not all |
+| `builder_segments_total` is the most self-contained | my brief's ordering | **wrong** — an interpreter-totality claim as hard as the archetype |
+| `shellConsts_matches_artifact_ok` can be a `decide` theorem | my brief | **IMPOSSIBLE** — `splitOn` is `@[extern]` C++; `FrameWalk.lean:121-137` already said so |
+| the Qvm holes depend on `evaluatorRuntime` | plausible | **NO** — zero occurrences in either file; that gap blocks `qvm_yul_refines` only |
+
+**The 5th refuted headline statement, and the restoration that took five packages.**
+`qvm_validated_noBoundsFault` had been committed **weaker than its sketch** — excluding `readPastEnd`
+only at `exprEnd` where the sketch excludes every `readPastEnd`, and the narrowing was **asymmetric and
+silent** (the second conjunct was already universal). It survived because **each package assumed the
+weakening was someone else's deliberate choice.** Restored to sketch strength, left open there, with
+the missing machinery named so it cannot be re-weakened by accident.
+
+**Third false premise in an orchestrator brief this session** — after `dialect_deterministic` and the
+`Common/GSMul.lean` path. The `decide` conversion of a decorative pin is impossible, and the tree
+**already recorded why**. The package reported it blocked rather than substituting `native_decide`,
+which would have added compiler trust the same file header refuses.
+
+> **My briefs are not authoritative and must not be treated as such.** Three of them carried a wrong
+> premise this session; the fix each time was measurement, not deference.
+
+**Non-vacuity done properly:** none of the nine is vacuous, and for the archetype the **smallest witness
+was computed** — a 7-byte segment with zero constants that evaluates to exactly the reference's field
+element. So `qvm_compile_correct_identity` is satisfiable **and true at its smallest instance**: a
+proof gap, not a statement gap.
+
+**Tooling win:** `gen_sorry.sh`'s truncation was BSD `cut -c` counting **bytes** under a non-UTF-8
+`LC_CTYPE`. Fixed with a codepoint slice, verified byte-identical under three locales. A register that
+rewrites itself wrongly would eventually hide a real hole.
+
+**Rate: 1 sorry closed** — bottom of the measured 1–3 band. But 1 refutation + 1 restoration + 1
+tooling fix is the real yield, and the refutation saves a package from driving at a false statement.
+
+**Register: 40** (from 64). Six Qvm holes now share one named gap: per-opcode agreement between
+`evalQuotientIdentityStep.consumed` and the validator's `quotientOpLen` across ~25 arms, plus a loop
+induction over the fuel-bounded walks.
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
