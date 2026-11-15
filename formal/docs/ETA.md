@@ -684,6 +684,43 @@ tooling fix is the real yield, and the refutation saves a package from driving a
 **Register: 40** (from 64). Six Qvm holes now share one named gap: per-opcode agreement between
 `evalQuotientIdentityStep.consumed` and the validator's `quotientOpLen` across ~25 arms, plus a loop
 induction over the fuel-bounded walks.
+### R20 - round 177, after P-SCHED. The fixture could not decode; fixing it refuted a field.
+
+| claim | believed | measured |
+|---|---|---|
+| the deployment fixture was sound | 5 packages of green gates | **`fxCs` had `numAdviceColumns := 1` with `adviceColumnPhase := []` — `decodeRust` returned `none` on all 63 buffers** |
+| `readScheduleAgrees` unblocks 3 holes (my brief) | stated as fact | **FALSE** — all three take it as a binder or name it in prose |
+| the field is a proof gap | assumed | **vacuous before the repair, FALSE after** — 8 decoded slots vs the layout's 72 |
+| the fingerprint gate covers every `LoweringCorrect` field | its own claim | **FALSE** — deleting `readScheduleAgrees` entirely leaves all gates green |
+| my cancellation of the counterexample Surface | sound call | **right for the wrong reason** — the fixture repair produced a stronger counterexample |
+
+**The pattern that keeps repeating: a fixture tuned until a check passes, rather than a check run on
+the fixture.** The deployment fixture verified when handed messages, so every gate stayed green — but
+**nothing had ever decoded a proof from bytes at it.** The byte-level path was untested, and the field
+that depends on it was satisfiable *only because* the decode always faulted.
+
+**Sixth refuted headline statement** — and the first refuted **at the deployment**, not on a constructed
+example. `readScheduleAgrees_refuted_at_deployment` is a theorem. `scatterIndexed_hole_is_a_fault`
+carries **no axioms at all**.
+
+**A new and serious gate blind spot.** `P8`: deleting a whole `LoweringCorrect` field leaves the build
+and all three text gates green, while the fingerprint gate still prints "9 LoweringCorrect fields".
+**`P7`**: gutting a field's conclusion to a self-equality also passes everything. So the claim that
+all 48 obligation fields are gate-tracked is **not true**, and the count the gate prints is a literal,
+not a derived fact.
+
+**Five false premises in orchestrator briefs this session** — `dialect_deterministic`, the
+`Common/GSMul.lean` path, the impossible `decide` conversion, `readScheduleAgrees` unblocking three
+holes, and a register target that was impossible by construction. **The fix every single time was the
+instruction to verify rather than inherit.** Briefs must keep being treated as hypotheses.
+
+**Consequence for every later package:** the repair changes the fixture's constraint system, hence the
+VK hash and every derived challenge stream. 1334 KATs and 30 pins still pass, so nothing tracked
+depended on the broken value — but conformance replays at this vk now have a **live schedule** where
+they previously had a fault. **That is where real byte-level decode work starts**, and where a genuine
+vk/layout mismatch becomes visible for the first time.
+
+**Register: 40, unchanged — by the nature of the finding, not a shortfall.**
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
