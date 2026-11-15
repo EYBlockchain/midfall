@@ -259,6 +259,33 @@ def fixedScalarCount (enc : AccumulatorEncoding) (numInstances : Nat) : Option N
     let tail := numInstances - (enc.offset + enc.fixedPayloadWords)
     if enc.kind == .pointPair && tail != 0 then none else some tail
 
+/-- **P-TRUNK link (b): `fixedScalarCount` is EXACT on the payload the encoder emits.**
+    For a point-and-scalar encoding whose limb shape is the supported one, an instance
+    array of `offset + fixedPayloadWords + n` words - the 12 fixed accumulator words plus
+    an n-word fixed-base tail - reports exactly `n`, so the decoder's first gate agrees
+    with the encoder's output length instead of merely not rejecting it.
+
+    Both hypotheses are load-bearing and neither is decoration: without `hshape` the
+    `validFor` conjunct is false and the answer is `none` (`decodeAcc_encode` carries it
+    as `hshape` for exactly this reason); with `.pointPair` a NON-ZERO tail is a
+    rejection (api.rs:186), which is why the point-pair round trip needs `fb.size = 0`.
+    No prior table named this lemma: P-ACCENC listed it as the third of the four trunk
+    links and P-LIMB before it had never seen it. -/
+theorem fixedScalarCount_exact (enc : AccumulatorEncoding) (n : Nat)
+    (hshape : enc.limbShapeOk = true)
+    (hkind : enc.kind = AccumulatorEncodingKind.pointAndScalar) :
+    enc.fixedScalarCount (enc.offset + enc.fixedPayloadWords + n) = some n := by
+  have hv : enc.validFor (enc.offset + enc.fixedPayloadWords + n) = true := by
+    unfold AccumulatorEncoding.validFor
+    rw [hshape, Bool.true_and]
+    exact decide_eq_true (Nat.le_add_right _ n)
+  have hsub : enc.offset + enc.fixedPayloadWords + n - (enc.offset + enc.fixedPayloadWords) = n := by
+    omega
+  unfold AccumulatorEncoding.fixedScalarCount
+  dsimp only
+  rw [hv, Bool.not_true, hsub, hkind]
+  rfl
+
 end AccumulatorEncoding
 
 
@@ -432,6 +459,32 @@ def coordOfEip (b : Bytes) (i : Nat) : Nat :=
     `Array Word256`-typed decoder below. Plan Section 13 records the same gap
     for `calldata_canonical`. -/
 def frWord (x : Fr p) : Word256 := BitVec.ofNat 256 x.val
+
+/-- **P-TRUNK link (c), first half: the scalar word reads back.** `frWord` truncates mod
+    `2^256`, and `x.val` is already below `p`, so under `hp : p < 2^256` the truncation is a
+    no-op and the word's `toNat` IS the field element's canonical representative. Never
+    previously named by any table: P-ACCENC's four-link trunk list had the getD transfer and
+    `fixedScalarCount` exactness but not this, and `decodeAcc_encode` needs it twice - once
+    for each carried scalar and once per tail word - because `decodeAcc` reads words as
+    `Nat` and re-casts them. -/
+theorem frWord_toNat (hp : p < 2 ^ 256) (x : Fr p) : (frWord x).toNat = x.val := by
+  unfold frWord
+  rw [BitVec.toNat_ofNat]
+  exact Nat.mod_eq_of_lt (Nat.lt_trans (ZMod.val_lt x) hp)
+
+/-- **P-TRUNK link (c), second half: and it round trips back through `Nat.cast`.** The
+    decoder's rejection test is `w < p` on the raw word, and its reconstruction is
+    `Nat.cast w`, so this is the pair of facts that makes the encoder/decoder scalar
+    round trip the identity rather than a mod-`p` shuffle. -/
+theorem frWord_toNat_lt (hp : p < 2 ^ 256) (x : Fr p) : (frWord x).toNat < p := by
+  rw [frWord_toNat hp x]
+  exact ZMod.val_lt x
+
+/-- **P-TRUNK link (c), the round trip itself.** -/
+theorem natCast_frWord_toNat (hp : p < 2 ^ 256) (x : Fr p) :
+    ((frWord x).toNat : Fr p) = x := by
+  rw [frWord_toNat hp x]
+  simpa using ZMod.natCast_val (R := Fr p) x
 
 
 /-! ## 4. `AccMsm`: the accumulator's MSM shape
@@ -2151,14 +2204,24 @@ theorem decodeAccCoord_encode (enc : AccumulatorEncoding)
     change what they compute. These transfer lemmas are what lets the round trips be stated about
     a whole instance array while being proved one block at a time.
 
-    FINDING, method-rule style: `Array.getD_append` and `List.getD_append` are NOT in
-    this project built surface (both probed against `import Midfall`), and neither is
-    `List.length_toArray` or `Array.size_toList` - the size/list bridges that DO exist
-    are `Array.size_eq_length_toList` and `List.toList_toArray`. The two append
-    transfers are four lines each by induction on `List.getD_cons_succ`, so they are proved
-    here rather than imported. A fourth wall, found here: `0 + j` is NOT defeq to `j`
-    (Nat.add recurses on its SECOND argument), so every `show` that drops a leading `0 +`
-    fails and needs `simp only [Nat.zero_add]` instead. -/
+    FINDING, CORRECTED BY P-TRUNK (method rule, and it cuts BOTH ways). P-ACCENC recorded
+    that `Array.getD_append` and `List.getD_append` are not in the built surface.
+    `Array.getD_append` is genuinely absent. `List.getD_append` is NOT: it exists, with
+    `List.getD_append_right`, in `Mathlib.Data.List.GetD` - which is why
+    `#check @List.getD_append` prints against `import Midfall` (some other file in that
+    closure pulls the module in) while this file still cannot see it: the name is not in
+    THIS file's import closure, so the two list transfers below stay hand-proved. A name
+    being "in the environment" and "in this file's closure" are different claims, and only
+    the second one is what `lake build` checks. Adding the import would delete these 30
+    lines; it was not done here because this is the most-imported file in the tree and a
+    package whose job was four plumbing lemmas has no business changing its module graph.
+    Re-probed absent from every closure: `List.length_toArray`, `Array.size_toList`,
+    `List.getD_take`, `List.getD_drop`, `Array.getD_extract` - the last three are the
+    wall `decodeAcc_encode_pointPair` is gated on. What DOES exist:
+    `Array.size_eq_length_toList`, `List.toList_toArray`, `Array.toList_inj`. And the
+    wall P-ACCENC paid for is still there: `0 + j` is NOT defeq to `j` (Nat.add recurses
+    on its SECOND argument), so every `show` that drops a leading `0 +` fails and needs
+    `simp only [Nat.zero_add]` instead. -/
 private theorem getD_toList {α : Type} (a : Array α) (i : Nat) (d : α) :
     a.getD i d = a.toList.getD i d := by
   cases a
@@ -2191,7 +2254,7 @@ private theorem getD_append_right_list {α : Type} (l l' : List α) (d : α) :
             omega
           rw [List.cons_append, List.getD_cons_succ, ih m h2, hsub]
 
-private theorem getD_append_left {α : Type} (a b : Array α) (i : Nat) (d : α)
+theorem getD_append_left {α : Type} (a b : Array α) (i : Nat) (d : α)
     (hi : i < a.size) : (a ++ b).getD i d = a.getD i d := by
   have h : i < a.toList.length := by
     rw [← Array.size_eq_length_toList]
@@ -2199,7 +2262,7 @@ private theorem getD_append_left {α : Type} (a b : Array α) (i : Nat) (d : α)
   rw [getD_toList, Array.toList_append, getD_append_left_list a.toList b.toList d i h]
   exact (getD_toList a i d).symm
 
-private theorem getD_append_right {α : Type} (a b : Array α) (i : Nat) (d : α)
+theorem getD_append_right {α : Type} (a b : Array α) (i : Nat) (d : α)
     (hi : i < b.size) : (a ++ b).getD (a.size + i) d = b.getD i d := by
   have hlt : i < b.toList.length := by
     rw [← Array.size_eq_length_toList]
@@ -2214,10 +2277,23 @@ private theorem getD_append_right {α : Type} (a b : Array α) (i : Nat) (d : α
     omega
   rw [hsub, getD_toList]
 
-private theorem getD_snoc {α : Type} (a : Array α) (v : α) (d : α) :
+theorem getD_snoc {α : Type} (a : Array α) (v : α) (d : α) :
     (a ++ #[v]).getD a.size d = v := by
   rw [← Nat.add_zero a.size, getD_append_right a (#[v]) 0 d (by simp)]
   simp
+
+/-- **P-TRUNK link (a), the form the accumulator round trips consume.** The decoder reads at
+    `enc.offset` and the encoder emits a tail with no prefix, so every word the decoder looks
+    at of `pre ++ inst` sits at `enc.offset + j` and must be transferred to `inst.getD j`.
+    `hpre : pre.size = enc.offset` is the hypothesis `decodeAcc_encode` carries, and the
+    offset is exactly the length the append splits at, so this is `getD_append_right` with
+    the length rewritten - which is why the honest amount of new mathematics here is one
+    lemma of four lines and three visibility changes, not a re-proof. -/
+theorem getD_append_offset {α : Type} (pre inst : Array α) (offset : Nat)
+    (hpre : pre.size = offset) (j : Nat) (d : α) (hj : j < inst.size) :
+    (pre ++ inst).getD (offset + j) d = inst.getD j d := by
+  rw [← hpre]
+  exact getD_append_right pre inst j d hj
 
 /-- One limb chunk per declared coordinate word: the encoder emits exactly
     `coordinateWords` words for a coordinate, which is what makes the block boundaries in
@@ -2228,6 +2304,80 @@ theorem encodeAccCoordWords_size (enc : AccumulatorEncoding) (c : Nat) :
   dsimp only
   rw [Array.size_eq_length_toList, List.toList_toArray, List.length_map, List.length_range]
 
+/-- **P-TRUNK: the point block is exactly `pointWords` wide.** Two coordinate blocks of
+    `coordinateWords` words each plus the flag word - the number `decodeAcc` strides by, and
+    the number every index computation in the round trip is built from. -/
+theorem AccMsm.asPublicInputPoint_size {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (enc : AccumulatorEncoding) (codec : G1Codec G₁) (Q : G₁) :
+    (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec Q).size = enc.pointWords := by
+  unfold AccMsm.asPublicInputPoint
+  dsimp only
+  rw [Array.size_append, Array.size_append, encodeAccCoordWords_size, encodeAccCoordWords_size,
+    Array.size_singleton]
+  dsimp only [AccumulatorEncoding.pointWords, accIdentityFlagWords]
+  omega
+
+/-- **P-TRUNK: the emitted tail, block by block.** For the collapsed point-and-scalar shape
+    the round trip is about - one base with one carried scalar per side plus the RHS fixed-base
+    tail - the encoder output is exactly point block, scalar, point block, scalar, tail words.
+    Stated as one equation rather than as a pile of index arithmetic because every `getD`
+    transfer the round trip needs is then a rewrite away. The one-element `Array.foldl` is the
+    only awkward part: `Array.foldl` is a bounded loop over indices, so it does not reduce by
+    `rfl` and needs `unfold Array.foldl Array.foldlM Array.foldlM.loop` twice. -/
+theorem encodeAccInstances_collapsed {G₁ G₂ Gₜ : Type} [Group G₁] [Group G₂] [Group Gₜ]
+    [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
+    [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
+    [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
+    (enc : AccumulatorEncoding) (codec : G1Codec G₁)
+    (L R : G₁) (sL sR : Fr p) (tail : Array (String × Fr p)) :
+    encodeAccInstances enc codec
+        ({ lhs := { bases := #[L], scalars := #[sL], fixedBaseScalars := #[] },
+           rhs := { bases := #[R], scalars := #[sR], fixedBaseScalars := tail } }
+          : KzgAcc (Fr p) G₁ G₂ Gₜ)
+      = AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec L ++ #[frWord sL]
+        ++ (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec R ++ #[frWord sR]
+            ++ tail.map (fun x => frWord x.2)) := by
+  unfold encodeAccInstances KzgAcc.asPublicInput AccMsm.asPublicInput
+  dsimp only
+  have hfoldL : Array.foldl (fun acc Q =>
+      acc ++ AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec Q) #[] #[L]
+      = AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec L := by
+    unfold Array.foldl Array.foldlM Array.foldlM.loop
+    simp
+    unfold Array.foldlM.loop
+    dsimp only
+    rfl
+  have hfoldR : Array.foldl (fun acc Q =>
+      acc ++ AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec Q) #[] #[R]
+      = AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) enc codec R := by
+    unfold Array.foldl Array.foldlM Array.foldlM.loop
+    simp
+    unfold Array.foldlM.loop
+    dsimp only
+    rfl
+  rw [hfoldL, hfoldR]
+  simp only [Array.map_singleton, Array.map_empty, Array.append_empty]
+
+/-- **P-TRUNK: an array is the `getD` of its own indices.** `decodeAcc` reads its tail as
+    `(List.range tail).map (fun j => (inst.getD (tailIdx + j) 0).toNat)`, so any statement
+    about the words it read has to be turned back into a statement about an `Array`.
+    `Array.toList_eq_map_get` and `Array.ext_getD` do not exist (probed), so this is proved at
+    the list level with `range_succ_map` (private here) and lifted by cases. -/
+theorem toList_eq_range_getD {α : Type} (a : Array α) (d : α) :
+    (List.range a.size).map (fun i => a.getD i d) = a.toList := by
+  have hlist : ∀ (l : List α), (List.range l.length).map (fun i => l.getD i d) = l := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons x xs ih =>
+        rw [List.length_cons, range_succ_map, List.map_cons, List.map_map, Function.comp_def]
+        simp only [Nat.succ_eq_add_one, List.getD_cons_zero, List.getD_cons_succ]
+        rw [ih]
+  cases a with
+  | mk l => simpa using hlist l
 private theorem limbsPerInstance_pos (enc : AccumulatorEncoding) : 0 < enc.limbsPerInstance := by
   show 0 < max 1 (254 / enc.numLimbBits)
   omega

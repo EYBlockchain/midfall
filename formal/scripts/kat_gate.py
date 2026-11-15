@@ -35,8 +35,32 @@ EVAL = re.compile(
     r"(?:\s+--\s*expect\s+(?P<exp>[^\s,]+).*)?\s*$"
 )
 
-# only these shapes count as #eval output
+# Only these shapes count as #eval output.
+#
+# P-TRUNK HARDENING (a defect that cost two packages a gate run each). The bracket arm
+# used to harvest ANY stdout line that begins with [ and ends with ], which is exactly
+# the shape of a linter hint: Lean prints its fix-it block
+#
+#   Hint: Replace the deprecated name:
+#     [apply] simp [foo]
+#
+# on the SAME stream as #eval output, so "[apply] simp [foo]" was counted as a fake
+# value and checks.sh went rc=1 with "printed 6 value(s) for 5 #eval line(s)" on a
+# file lake build accepted. R-53 below is the same class from the other direction
+# (prose inside a block comment read as a gate). Two anchors now apply:
+#
+#   * a real #eval value is the WHOLE line and has nothing after its closing bracket,
+#     so a line with ] followed by more text is a diagnostic, not a value;
+#   * a line that opens with a bracketed word ([apply], [warning]) is a diagnostic.
+#
+# A genuine list value ([], [1, 2], ["a"], [pointAndScalar]) satisfies both.
 VALUE = re.compile(r"^(true|false|-?\d+|\"[^\"]*\"|\[.*\])$")
+DIAG = re.compile(r"^\[[A-Za-z_][A-Za-z0-9_.]*\][ \t]|\][ \t]+\S")
+
+
+def is_value(line):
+    """True if `line` is a #eval result rather than a linter diagnostic."""
+    return bool(VALUE.match(line)) and not DIAG.search(line)
 
 
 def gate_lines(text):
@@ -113,8 +137,7 @@ def main() -> int:
                             % (path, proc.returncode, detail[:120]))
             continue
 
-        values = [l.strip() for l in proc.stdout.splitlines()
-                  if VALUE.match(l.strip())]
+        values = [l.strip() for l in proc.stdout.splitlines() if is_value(l.strip())]
         if len(values) != len(specs):
             problems.append("%s: printed %d value(s) for %d #eval line(s)"
                             % (path, len(values), len(specs)))

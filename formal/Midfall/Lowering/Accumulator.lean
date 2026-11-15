@@ -363,6 +363,149 @@ theorem accMapInsert_fold_sorted_needs_ascending :
       ≠ [("b", 1), ("a", 2)] := by decide
 
 
+/-! ### P-TRUNK link (d): the fold alignment no earlier table wrote down
+
+  `decodeAcc` does NOT fold the tail as `(name, scalar)` pairs. It folds
+  `List.zip fixedBases.toList tailWords` - a PAIR OF A RECORD AND A WORD - and the value it
+  inserts is `if b.negate then -s else s`. `negateByTable`, the thing the round trip must
+  come out to, computes its sign a different way: `fb.any (fun b => b.name == n && b.negate)`.
+  `accMapInsert_fold_sorted_id` cannot bridge those two: it knows nothing about records,
+  nothing about a per-entry value function, and nothing about `any`. This section is the
+  three lemmas that do, and no prior table (P-LIMB, P-BYTES, P-ACCENC, P-TRUNK's own sketch
+  pointer) named more than a fragment of it. -/
+
+/-- **Link (d), first half: the fold with a per-entry value function.** The general-accumulator
+    form, mirroring `accMapInsert_fold_sorted_go`: folding `accMapInsert` over an ascending
+    list of (base, word) pairs appends the entries in order, each carrying the value the
+    function computes for it. `emb` is the word-to-field map - `Nat.cast` at the use site,
+    because `decodeAcc` reads words as `Nat` and negates them in `Fr p`, so the coercion
+    sits INSIDE the conditional and a lemma without it cannot match the term. -/
+private theorem accMapInsert_fold_negate_go {G₁ : Type} {F : Type} [Neg F] {W : Type}
+    (emb : W → F) :
+    ∀ (l : List (AccFixedBase G₁ × W)) (acc : Array (String × F)),
+      namesAscending (acc.toList.map Prod.fst) →
+      namesAscending (l.map (fun x => x.1.name)) →
+      (∀ k2 ∈ acc.toList.map Prod.fst, ∀ j ∈ l.map (fun x => x.1.name), k2 < j) →
+      (List.foldl (fun acc x => accMapInsert acc x.1.name
+          (if x.1.negate then -emb x.2 else emb x.2)) acc l).toList
+        = acc.toList ++ l.map (fun x =>
+            (x.1.name, if x.1.negate then -emb x.2 else emb x.2)) := by
+  intro l
+  induction l with
+  | nil =>
+      intro acc _ _ _
+      show acc.toList = acc.toList ++ []
+      exact (List.append_nil _).symm
+  | cons x xs ih =>
+      intro acc hacc hl hall
+      cases x with
+      | mk b s =>
+        have hlast : (accMapInsert acc b.name (if b.negate then -emb s else emb s)).toList
+            = acc.toList ++ [(b.name, if b.negate then -emb s else emb s)] := by
+          show (Midfall.Halo2.accMapInsert.go b.name
+            (if b.negate then -emb s else emb s) acc.toList).toArray.toList = _
+          rw [List.toList_toArray, accMapInsert_go_app]
+          exact fun k2 hk2 => hall k2 hk2 b.name List.mem_cons_self
+        have hasc : namesAscending
+            ((accMapInsert acc b.name (if b.negate then -emb s else emb s)).toList.map Prod.fst) := by
+          rw [hlast, List.map_append, List.map_singleton]
+          exact namesAscending_snoc _ _ hacc
+            (fun y hy => hall y hy b.name List.mem_cons_self)
+        have h2 : ∀ k2 ∈ (Array.toList
+            (accMapInsert acc b.name (if b.negate then -emb s else emb s))).map Prod.fst,
+            ∀ j ∈ xs.map (fun x => x.1.name), k2 < j := by
+          rw [hlast, List.map_append, List.map_singleton]
+          intro k2 hk2 j hj
+          rcases List.mem_append.mp hk2 with hk2 | hk2
+          · exact hall k2 hk2 j (List.mem_cons_of_mem b.name hj)
+          · rcases List.mem_singleton.mp hk2 with heq
+            rw [heq]
+            exact namesAscending_head_lt_mem _ b.name hl j hj
+        show (List.foldl (fun acc x => accMapInsert acc x.1.name
+            (if x.1.negate then -emb x.2 else emb x.2))
+            (accMapInsert acc b.name (if b.negate then -emb s else emb s)) xs).toList = _
+        rw [ih _ hasc (namesAscending_tail b.name _ hl) h2, hlast]
+        exact List.append_assoc _ _ _
+
+/-- **Link (d), first half at the empty map.** What `decodeAcc` actually runs. -/
+theorem accMapInsert_fold_negate {G₁ : Type} {F : Type} [Neg F] {W : Type} (emb : W → F)
+    (l : List (AccFixedBase G₁ × W))
+    (hl : namesAscending (l.map (fun x => x.1.name))) :
+    (List.foldl (fun acc x => accMapInsert acc x.1.name
+        (if x.1.negate then -emb x.2 else emb x.2)) (#[] : Array (String × F)) l).toList
+      = l.map (fun x => (x.1.name, if x.1.negate then -emb x.2 else emb x.2)) := by
+  have hnil : ((#[] : Array (String × F)).toList
+      ++ l.map (fun x => (x.1.name, if x.1.negate then -emb x.2 else emb x.2)))
+      = l.map (fun x => (x.1.name, if x.1.negate then -emb x.2 else emb x.2)) := by simp
+  have := accMapInsert_fold_negate_go emb l (#[] : Array (String × F)) trivial hl (by simp)
+  rw [hnil] at this
+  exact this
+
+/-- **Link (d), second half: the `any` bridge.** `negateByTable` decides a sign by scanning
+    the whole table for a name match, while the fold reads the flag off the entry it is
+    holding. Under `namesAscending` - which is strict, so the names are distinct - the two
+    agree, and that is the ONLY reason they agree: with a repeated name the scan can pick up
+    a negated entry that is not the one being folded. This is the hypothesis the brief's
+    "the `fb.any ↔ b.negate` bridge under distinctness" names. -/
+theorem accFixedBase_any_negate {G₁ : Type} (fb : List (AccFixedBase G₁))
+    (h : namesAscending (fb.map AccFixedBase.name)) (b : AccFixedBase G₁) (hb : b ∈ fb) :
+    fb.any (fun c => c.name == b.name && c.negate) = b.negate := by
+  induction fb with
+  | nil => exact absurd hb (by simp)
+  | cons x xs ih =>
+      rcases List.mem_cons.mp hb with he | hb'
+      · subst he
+        have hne : ∀ c ∈ xs, ¬ (c.name == b.name) := by
+          intro c hc
+          have hlt : b.name < c.name :=
+            namesAscending_head_lt_mem (xs.map AccFixedBase.name) b.name h c.name
+              ((List.mem_map (f := AccFixedBase.name)).mpr ⟨c, hc, rfl⟩)
+          intro g
+          exact String.lt_irrefl b.name ((of_decide_eq_true g) ▸ hlt)
+        have h2 : xs.any (fun c => c.name == b.name && c.negate) = false := by
+          rw [List.any_eq_false]
+          intro c hc
+          exact by simp [hne c hc]
+        rw [List.any_cons, h2, Bool.or_false]
+        have h3 : (b.name == b.name) = true := by simp
+        rw [h3, Bool.true_and]
+      · have hlt : x.name < b.name :=
+          namesAscending_head_lt_mem (xs.map AccFixedBase.name) x.name h b.name
+            ((List.mem_map (f := AccFixedBase.name)).mpr ⟨b, hb', rfl⟩)
+        have hne : ¬ (x.name == b.name) := by
+          intro g
+          exact String.lt_irrefl x.name ((of_decide_eq_true g) ▸ hlt)
+        have h1 : (x.name == b.name && x.negate) = false := by simp [hne]
+        rw [List.any_cons, h1, Bool.false_or]
+        exact ih (namesAscending_tail x.name _ h) hb'
+
+/-- **Link (d), third half: name/word alignment.** The decoder zips the TABLE with the WORDS
+    it read; the encoder emitted the words from the TAIL, and `hnames` is what says the two
+    name lists are the same list. Read back through `frWord` and `Nat.cast` (link (c)) the
+    word at position `i` is the tail's own scalar at `i`, so the zipped, re-projected list
+    IS the tail. Without this the fold lemma lands on a list of pairs nobody can compare with
+    `negateByTable`'s map. -/
+theorem zip_align_frWord {G₁ : Type} (bs : List (AccFixedBase G₁)) (t : List (String × Fr p))
+    (hp : p < 2 ^ 256)
+    (h1 : bs.map AccFixedBase.name = t.map Prod.fst) :
+    (bs.zip (t.map (fun x => (frWord x.2).toNat))).map (fun x => (x.1.name, (x.2 : Fr p))) = t := by
+  induction bs generalizing t with
+  | nil =>
+      cases t with
+      | nil => rfl
+      | cons x xs => exact absurd h1 (by simp)
+  | cons b bs' ih =>
+      cases t with
+      | nil => exact absurd h1 (by simp)
+      | cons x xs' =>
+          simp only [List.map_cons] at h1
+          obtain ⟨hnm, h1'⟩ := List.cons.inj h1
+          show List.map (fun z => (z.1.name, (z.2 : Fr p)))
+              ((b, (frWord x.2).toNat) :: bs'.zip (xs'.map (fun y => (frWord y.2).toNat)))
+              = (x.1, x.2) :: xs'
+          rw [List.map_cons, natCast_frWord_toNat hp x.2, ih xs' h1', hnm]
+
+
 
 /-- PLAN 9.5 decodeAcc_encode, restricted to the only shape the contract can read
     (R-26.2): a COLLAPSED point-and-scalar accumulator - one base with one carried
@@ -386,10 +529,18 @@ theorem accMapInsert_fold_sorted_needs_ascending :
       (artifacts.rs:225 sorts by name).
     * hpre - decodeAcc reads at enc.offset, so the prefix must be exactly that long.
 
-    PROOF OBLIGATION, registered in SORRY.md (M5-4's lemma list:
-    encodeAccCoordWords_packingOk, biFromLimbs_biToLimbs, loadAccCoordShifted_encode,
-    decodeAccCoord_encode, loadAccPoint_encode_nonId / _id,
-    accMapInsert_fold_sorted_id, fixedScalarCount_exact). -/
+    PROVED (P-TRUNK). What the proof actually consumed, in order: the encoder block
+    structure (Exec `encodeAccInstances_collapsed`, which no table named either), link (b)
+    `fixedScalarCount_exact`, link (a) `getD_append_offset` plus the now-public
+    `getD_append_left/right` and `getD_snoc`, the block-width lemma
+    `asPublicInputPoint_size`, the array/getD bridge `toList_eq_range_getD`, link (c)
+    `frWord_toNat` / `natCast_frWord_toNat`, the P-ACCENC point link `loadAccPoint_encode` through
+    `loadAccPoint_congr`, `hc.ofEip_toEip` for the two point decodes, and link (d)
+    `accMapInsert_fold_negate` + `accFixedBase_any_negate` + `zip_align_frWord` for the
+    fixed-base tail. Of M5-4's predicted list, `accMapInsert_fold_sorted_id` alone was NOT
+    enough (it knows nothing about records or about `any`), and
+    `loadAccPoint_encode_nonId` is not a name in the tree - the two arms are
+    `loadAccPoint_encode_coords` and `loadAccPoint_encode`. -/
 theorem decodeAcc_encode {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -410,11 +561,306 @@ theorem decodeAcc_encode {G₁ G₂ Gₜ : Type}
         rhs := { bases := #[R], scalars := #[sR], fixedBaseScalars := tail } }
     decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) codec fb
         (pre ++ encodeAccInstances (toExec enc) codec a) = some (negateByTable fb a) := by
-  sorry
+  intro a
+  set e := toExec enc with he
+  have hkindE : e.kind = AccumulatorEncodingKind.pointAndScalar := by
+    show toExecKind enc.kind = _
+    rw [hkind]
+    rfl
+  have hcarr : e.hasCarriedScalars = true := by
+    show (toExec enc).hasCarriedScalars = true
+    rw [toExec_hasCarriedScalars]
+    unfold Midfall.Generator.AccumulatorEncoding.hasCarriedScalars
+    rw [hkind]
+    rfl
+  have hshapeE : e.limbShapeOk = true := hshape
+  have hfpw : e.fixedPayloadWords = 2 * e.pointWords + 2 := by
+    show e.pointPairWords + (if e.hasCarriedScalars then accCarriedScalars else 0) = _
+    rw [hcarr]
+    show e.pointPairWords + accCarriedScalars = 2 * e.pointWords + 2
+    dsimp only [AccumulatorEncoding.pointPairWords, accCarriedScalars]
+  have hpreE : pre.size = e.offset := hpre
+  have henc : encodeAccInstances e codec a
+      = AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) e codec L ++ #[frWord sL]
+        ++ (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) e codec R ++ #[frWord sR]
+            ++ tail.map (fun x => frWord x.2)) :=
+    encodeAccInstances_collapsed e codec L R sL sR tail
+  have hptw (Q : G₁) :
+      (AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) e codec Q).size = e.pointWords :=
+    AccMsm.asPublicInputPoint_size e codec Q
+  have hfbsize : fb.size = tail.size := by
+    have h := congrArg List.length hnames
+    rw [List.length_map, List.length_map] at h
+    rw [← Array.size_eq_length_toList, ← Array.size_eq_length_toList] at h
+    exact h
+  -- block abbreviations
+  set P1 := AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) e codec L with hp1
+  set P2 := AccMsm.asPublicInputPoint (G₂ := G₂) (Gₜ := Gₜ) e codec R with hp2
+  set T := tail.map (fun x => frWord x.2) with hT
+  set blk := P1 ++ #[frWord sL] ++ (P2 ++ #[frWord sR] ++ T) with hblk
+  have hpw1 : e.pointWords = 2 * e.coordinateWords + 1 := rfl
+  have hsz1 : P1.size = e.pointWords := hptw L
+  have hsz2 : P2.size = e.pointWords := hptw R
+  have hszT : T.size = tail.size := by rw [hT]; simp only [Array.size_map]
+  have hA : (P1 ++ #[frWord sL]).size = e.pointWords + 1 := by
+    rw [Array.size_append, hsz1, Array.size_singleton]
+  have hD : (P2 ++ #[frWord sR]).size = e.pointWords + 1 := by
+    rw [Array.size_append, hsz2, Array.size_singleton]
+  have hszC : (P2 ++ #[frWord sR] ++ T).size = e.pointWords + 1 + tail.size := by
+    rw [Array.size_append, hD, hszT]
+  have hbsz : blk.size = e.fixedPayloadWords + tail.size := by
+    rw [hblk]
+    simp only [Array.size_append, Array.size_singleton, hsz1, hsz2, hszT]
+    rw [hfpw]
+    omega
+  have hencb : encodeAccInstances e codec a = blk := henc
+  have hinstsz : (pre ++ encodeAccInstances e codec a).size =
+      e.offset + e.fixedPayloadWords + tail.size := by
+    rw [Array.size_append, hencb, hbsz, hpreE]
+    omega
+  have hfsc : e.fixedScalarCount (pre ++ encodeAccInstances e codec a).size = some tail.size := by
+    rw [hinstsz]
+    exact AccumulatorEncoding.fixedScalarCount_exact e tail.size hshapeE hkindE
+  have hget : ∀ j, j < blk.size →
+      (pre ++ encodeAccInstances e codec a).getD (e.offset + j) 0 = blk.getD j 0 := by
+    intro j hj
+    rw [hencb]
+    exact getD_append_offset pre blk e.offset hpreE j 0 hj
+  have hjL : e.pointWords < blk.size := by rw [hbsz, hfpw]; omega
+  have hjR : e.pointWords + 1 + e.pointWords < blk.size := by rw [hbsz, hfpw]; omega
+  have hjT : ∀ j, j < tail.size → e.pointWords + 1 + e.pointWords + 1 + j < blk.size := by
+    intro j hj
+    rw [hbsz, hfpw]
+    omega
+  have hreadL : blk.getD e.pointWords 0 = frWord sL := by
+    rw [hblk, getD_append_left (P1 ++ #[frWord sL]) (P2 ++ #[frWord sR] ++ T) e.pointWords 0
+          (by rw [hA]; omega), ← hsz1]
+    exact getD_snoc P1 (frWord sL) 0
+  have hreadR : blk.getD (e.pointWords + 1 + e.pointWords) 0 = frWord sR := by
+    rw [hblk,
+      show e.pointWords + 1 + e.pointWords = (P1 ++ #[frWord sL]).size + e.pointWords from by rw [hA],
+      getD_append_right (P1 ++ #[frWord sL]) (P2 ++ #[frWord sR] ++ T) e.pointWords 0
+        (by simp only [Array.size_append, Array.size_singleton, hsz2, hszT]; omega)]
+    rw [← hsz2,
+      getD_append_left (P2 ++ #[frWord sR]) T P2.size 0 (by rw [Array.size_append, hsz2, Array.size_singleton]; omega)]
+    exact getD_snoc P2 (frWord sR) 0
+  have hreadT : ∀ j, j < tail.size →
+      blk.getD (e.pointWords + 1 + e.pointWords + 1 + j) 0 = T.getD j 0 := by
+    intro j hj
+    rw [hblk,
+      show e.pointWords + 1 + e.pointWords + 1 + j =
+          (P1 ++ #[frWord sL]).size + ((P2 ++ #[frWord sR]).size + j) from by
+        rw [hA, hD]; omega,
+      getD_append_right (P1 ++ #[frWord sL]) (P2 ++ #[frWord sR] ++ T)
+        ((P2 ++ #[frWord sR]).size + j) 0
+        (by simp only [Array.size_append, Array.size_singleton, hsz2, hszT]; omega),
+      getD_append_right (P2 ++ #[frWord sR]) T j 0 (by rw [hszT]; exact hj)]
+  have h1 : (List.range tail.size).map
+      (fun j => blk.getD (e.pointWords + 1 + e.pointWords + 1 + j) 0) = T.toList := by
+    rw [← hszT, ← toList_eq_range_getD T 0]
+    refine List.map_eq_map_iff.mpr (fun j hj => hreadT j (by rw [← hszT]; exact List.mem_range.mp hj))
+  have hTW : (List.range tail.size).map
+      (fun j => BitVec.toNat (blk.getD (e.pointWords + 1 + e.pointWords + 1 + j) 0))
+      = tail.toList.map (fun x => (frWord x.2).toNat) := by
+    have h2 : (List.range tail.size).map
+        (fun j => BitVec.toNat (blk.getD (e.pointWords + 1 + e.pointWords + 1 + j) 0))
+        = T.toList.map BitVec.toNat := by
+      have h2a := congrArg (·.map BitVec.toNat) h1
+      rw [List.map_map, Function.comp_def] at h2a
+      exact h2a
+    rw [h2, hT, Array.toList_map, List.map_map, Function.comp_def]
+  have hwordL : BitVec.toNat
+      ((pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords) 0) = sL.val := by
+    rw [hget e.pointWords hjL, hreadL, frWord_toNat hp sL]
+  have hwordR : BitVec.toNat
+      ((pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords + 1 + e.pointWords) 0)
+      = sR.val := by
+    rw [show e.offset + e.pointWords + 1 + e.pointWords = e.offset + (e.pointWords + 1 + e.pointWords)
+          from by omega, hget (e.pointWords + 1 + e.pointWords) hjR, hreadR, frWord_toNat hp sR]
+  have hc1 : ∀ jj ≤ 2 * e.coordinateWords,
+      (pre ++ encodeAccInstances e codec a).getD (e.offset + jj) 0 = P1.getD (0 + jj) 0 := by
+    intro jj hjj
+    rw [hget jj (by omega), hblk,
+      getD_append_left (P1 ++ #[frWord sL]) (P2 ++ #[frWord sR] ++ T) jj 0 (by rw [hA]; omega),
+      getD_append_left P1 (#[frWord sL]) jj 0 (by rw [hsz1]; omega)]
+    exact (congrArg (P1.getD · 0) (Nat.zero_add jj)).symm
+  have hloadL : loadAccPoint e (pre ++ encodeAccInstances e codec a) e.offset
+      = some (codec.toEip L, decideBool (P.decEqG₁ L 1)) := by
+    rw [loadAccPoint_congr e _ P1 e.offset 0 hc1, loadAccPoint_encode e hshapeE codec hc L]
+  have hc2 : ∀ jj ≤ 2 * e.coordinateWords,
+      (pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords + 1 + jj) 0
+        = P2.getD (0 + jj) 0 := by
+    intro jj hjj
+    rw [show e.offset + e.pointWords + 1 + jj = e.offset + (e.pointWords + 1 + jj) from by omega,
+      hget (e.pointWords + 1 + jj) (by omega), hblk,
+      show e.pointWords + 1 + jj = (P1 ++ #[frWord sL]).size + jj from by rw [hA],
+      getD_append_right (P1 ++ #[frWord sL]) (P2 ++ #[frWord sR] ++ T) jj 0
+        (by simp only [Array.size_append, Array.size_singleton, hsz2, hszT]; omega),
+      getD_append_left (P2 ++ #[frWord sR]) T jj 0
+        (by rw [Array.size_append, hsz2, Array.size_singleton]; omega),
+      getD_append_left P2 (#[frWord sR]) jj 0 (by rw [hsz2]; omega)]
+    exact (congrArg (P2.getD · 0) (Nat.zero_add jj)).symm
+  have hloadR : loadAccPoint e (pre ++ encodeAccInstances e codec a)
+      (e.offset + e.pointWords + 1) = some (codec.toEip R, decideBool (P.decEqG₁ R 1)) := by
+    rw [loadAccPoint_congr e _ P2 (e.offset + e.pointWords + 1) 0 hc2,
+      loadAccPoint_encode e hshapeE codec hc R]
+  have hfbasc : namesAscending (fb.toList.map AccFixedBase.name) := by
+    rw [hnames]
+    exact hsorted
+  have hzl : (fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map (fun x => x.1.name)
+      = tail.toList.map Prod.fst := by
+    have h := zip_align_frWord fb.toList tail.toList hp hnames
+    have h2 : (fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map (fun x => x.1.name)
+        = ((fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map
+            (fun x => (x.1.name, (x.2 : Fr p)))).map Prod.fst := by
+      rw [List.map_map, Function.comp_def]
+    rw [h2, h]
+  -- the tail word list at the whole-array level
+  have hTW2 : (List.range tail.size).map
+      (fun j => BitVec.toNat ((pre ++ encodeAccInstances e codec a).getD
+        (e.offset + (e.pointWords + 1 + e.pointWords + 1 + j)) 0))
+      = tail.toList.map (fun x => (frWord x.2).toNat) := by
+    have h : (List.range tail.size).map
+        (fun j => BitVec.toNat ((pre ++ encodeAccInstances e codec a).getD
+          (e.offset + (e.pointWords + 1 + e.pointWords + 1 + j)) 0))
+        = (List.range tail.size).map
+            (fun j => BitVec.toNat (blk.getD (e.pointWords + 1 + e.pointWords + 1 + j) 0)) := by
+      refine List.map_eq_map_iff.mpr (fun j hj =>
+        congrArg BitVec.toNat (hget (e.pointWords + 1 + e.pointWords + 1 + j)
+          (hjT j (List.mem_range.mp hj))))
+    rw [h, hTW]
+  -- the scalar bounds
+  have hbL : decide (BitVec.toNat
+      ((pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords) 0) < p) = true := by
+    rw [hwordL]
+    exact decide_eq_true (ZMod.val_lt sL)
+  have hbR : decide (BitVec.toNat
+      ((pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords + 1 + e.pointWords) 0) < p)
+      = true := by
+    rw [hwordR]
+    exact decide_eq_true (ZMod.val_lt sR)
+  have hbT : (tail.toList.map (fun x => (frWord x.2).toNat)).any
+      (fun w => !decide (w < p)) = false := by
+    rw [List.any_eq_false]
+    intro w hw
+    obtain ⟨x, hx, rfl⟩ := List.mem_map.mp hw
+    exact by simp [frWord_toNat_lt hp x.2]
+  have hscL : (↑(BitVec.toNat
+      ((pre ++ encodeAccInstances e codec a).getD (e.offset + e.pointWords) 0)) : Fr p) = sL := by
+    rw [hwordL]
+    simpa using ZMod.natCast_val (R := Fr p) sL
+  have hscR : (↑(BitVec.toNat ((pre ++ encodeAccInstances e codec a).getD
+      (e.offset + e.pointWords + 1 + e.pointWords) 0)) : Fr p) = sR := by
+    rw [hwordR]
+    simpa using ZMod.natCast_val (R := Fr p) sR
+  -- the fold
+  have hmem_zip : ∀ {α β : Type} (bs : List α) (vs : List β) (p : α × β),
+      p ∈ bs.zip vs → p.1 ∈ bs := by
+    intro α β bs
+    induction bs with
+    | nil => intro vs p hp; exact absurd hp (by simp)
+    | cons b bs ih =>
+        intro vs p hp
+        cases vs with
+        | nil => exact absurd hp (by simp)
+        | cons w ws =>
+            rcases List.mem_cons.mp hp with rfl | hp
+            · exact List.mem_cons_self
+            · exact List.mem_cons_of_mem _ (ih ws p hp)
+  have hany_bridge : ∀ (as : Array (AccFixedBase G₁)) (p : AccFixedBase G₁ → Bool),
+      as.any p = as.toList.any p := by
+    intro as p
+    cases as
+    simp [Array.any]
+  have hflag : ∀ p ∈ fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat)),
+      p.1.negate = fb.any (fun c => c.name == p.1.name && c.negate) := by
+    intro p hp
+    rw [hany_bridge]
+    exact (accFixedBase_any_negate fb.toList hfbasc p.1 (hmem_zip _ _ _ hp)).symm
+  have hl_fold : namesAscending
+      ((fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map (fun x => x.1.name)) := by
+    rw [hzl]
+    exact hsorted
+  have hfold_eq := accMapInsert_fold_negate (emb := (fun (w : Nat) => (w : Fr p)))
+      (fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))) hl_fold
+  have halign := zip_align_frWord fb.toList tail.toList hp hnames
+  have hfold : List.foldl (fun acc x => accMapInsert acc x.1.name
+        (if x.1.negate = true then -↑x.2 else ↑x.2)) (#[] : Array (String × Fr p))
+        (fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat)))
+      = tail.map (fun x => (x.1, if fb.any (fun c => c.name == x.1 && c.negate) then -x.2 else x.2)) := by
+    refine Array.toList_inj.mp ?_
+    rw [hfold_eq, Array.toList_map]
+    have h3 : (fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map
+          (fun x => (x.1.name, if x.1.negate = true then -↑x.2 else ↑x.2))
+        = ((fb.toList.zip (tail.toList.map (fun x => (frWord x.2).toNat))).map
+            (fun x => (x.1.name, (x.2 : Fr p)))).map
+            (fun y => (y.1, if fb.any (fun c => c.name == y.1 && c.negate) then -y.2 else y.2)) := by
+      rw [List.map_map, Function.comp_def]
+      refine List.map_eq_map_iff.mpr (fun p hp => ?_)
+      rw [hflag p hp]
+    rw [h3, halign]
+  -- the decoder itself
+  unfold decodeAcc
+  dsimp only
+  rw [hfsc]
+  dsimp only [Bind.bind, Option.bind]
+  rw [hfbsize]
+  have hg1 : ((tail.size : Nat) != tail.size) = false := by simp
+  rw [hg1, if_neg (by simp : ¬((false : Bool) = true))]
+  simp only [hcarr, reduceIte]
+  rw [hbL, hbR]
+  simp only [show ∀ j : Nat, ((e.offset + e.pointWords + 1) + e.pointWords + 1) + j
+      = e.offset + (e.pointWords + 1 + e.pointWords + 1 + j) from by omega]
+  rw [hTW2, hbT]
+  simp only [Bool.not_true, Bool.and_false, Bool.false_or, Bool.false_eq_true, reduceIte]
+  rw [hloadL]
+  dsimp only [Bind.bind, Option.bind]
+  rw [hloadR]
+  dsimp only [Bind.bind, Option.bind]
+  rw [hc.ofEip_toEip L, hc.ofEip_toEip R]
+  dsimp only [Bind.bind, Option.bind]
+  rw [hscL, hscR]
+  rw [hfold]
+  exact rfl
+
+/-- **`negateByTable` is the identity when nothing in the table is negated** (P-TRUNK, the
+    extra ~10 lines the brief predicted for `decodeAcc_encode_noNeg`). The scan
+    `fb.any (fun b => b.name == n && b.negate)` is false for every name the moment every
+    `negate` flag is false, so the map relabels nothing. Note this is the ARRAY-level
+    `any`, which is why the bridge below is needed: `Array.any` is a bounded loop, not
+    `List.any` on `toList` (the same trap as `Array.find?`, and re-probed here). -/
+private theorem array_any_toList_any {α : Type} (as : Array α) (p : α → Bool) :
+    as.any p = as.toList.any p := by
+  cases as
+  simp [Array.any]
+
+theorem negateByTable_eq_of_noNeg {G₁ G₂ Gₜ : Type}
+    (fb : Array (AccFixedBase G₁)) (a : KzgAcc (Fr p) G₁ G₂ Gₜ)
+    (hneg : ∀ b ∈ fb.toList, b.negate = false) : negateByTable fb a = a := by
+  have hneg : ∀ n : String, fb.any (fun b => b.name == n && b.negate) = false := by
+    intro n
+    rw [array_any_toList_any, List.any_eq_false]
+    intro b hb
+    rw [hneg b hb]
+    simp
+  unfold negateByTable
+  dsimp only
+  have hmap : a.rhs.fixedBaseScalars.map
+      (fun x => (x.1, if fb.any (fun c => c.name == x.1 && c.negate) then -x.2 else x.2))
+      = a.rhs.fixedBaseScalars := by
+    refine Array.toList_inj.mp ?_
+    rw [Array.toList_map]
+    show a.rhs.fixedBaseScalars.toList.map
+        (fun x => (x.1, if fb.any (fun c => c.name == x.1 && c.negate) = true then -x.2 else x.2))
+        = _
+    simp only [hneg, Bool.false_eq_true, ite_false, Prod.mk.eta]
+    exact List.map_id' _
+  rw [hmap]
 
 /-- The PLAN's literal conclusion, which holds exactly when no base is negated.
     Same binders and same hypotheses as decodeAcc_encode; the extra hneg is what
-    turns negateByTable fb a back into a. PROOF OBLIGATION, registered in SORRY.md. -/
+    turns negateByTable fb a back into a. PROVED (P-TRUNK) in four lines from
+    decodeAcc_encode plus negateByTable_eq_of_noNeg, as the brief predicted. -/
 theorem decodeAcc_encode_noNeg {G₁ G₂ Gₜ : Type}
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -436,7 +882,13 @@ theorem decodeAcc_encode_noNeg {G₁ G₂ Gₜ : Type}
         rhs := { bases := #[R], scalars := #[sR], fixedBaseScalars := tail } }
     decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) codec fb
         (pre ++ encodeAccInstances (toExec enc) codec a) = some a := by
-  sorry
+  intro a
+  have h : decodeAcc (p := p) (G₂ := G₂) (Gₜ := Gₜ) (toExec enc) codec fb
+      (pre ++ encodeAccInstances (toExec enc) codec a) = some (negateByTable fb a) :=
+    decodeAcc_encode (p := p) (G₁ := G₁) (G₂ := G₂) (Gₜ := Gₜ) hp enc hkind hshape codec hc L R
+      sL sR tail hsorted fb hnames pre hpre
+  rw [negateByTable_eq_of_noNeg fb a hneg] at h
+  exact h
 
 /-- Drop the two carried-scalar slots from an encodeAccInstances word stream: the
     lhs scalar sits at pointWords and the rhs scalar at 2*pointWords + 1, which is
@@ -1438,6 +1890,64 @@ private theorem go_find?_other {F : Type} : ∀ (l : List (String × F)) (k k' :
             · simp only [Midfall.Halo2.accMapInsert.go, if_neg hne, ite_eq_right hlt]
               rw [List.find?_cons, List.find?_cons, ih k k' v h]
 
+/-! ### P-TRUNK: D-P23 evidence for the two holes this package closed and the links it landed
+
+  Both halves as THEOREMS, per D-P23. NOT CLAIMED: a satisfiability witness for the
+  CONCLUSION of `decodeAcc_encode` needs a concrete `G1Codec` and a concrete curve,
+  and those live under `Midfall/Instances/`, which this file may not import (D-P17) - the same
+  limit P-ACCENC recorded for the codec-level exhibit. What IS exhibited here is the
+  encoding-side bundle at the DEPLOYED shape, and every hypothesis that drives the decoder
+  gets a falsification showing it is load-bearing. Per the measured falsification-deletion
+  gap (25 times): deleting any of these leaves the build green and no gate catches it, so
+  no persistence coverage is claimed here, only truth. -/
+
+local instance factPrime17trunk : Fact (Nat.Prime 17) := ⟨by decide⟩
+
+/-- **Satisfiability witness for the trunk bundle.** The deployed accumulator shape - offset
+    4, seven limbs of 56 bits (api.rs:75, layout/mod.rs:296) - satisfies the kind hypothesis,
+    the limb-shape hypothesis and link (b) for a 12 + 2 word payload, all at once.
+    `decodeAcc_encode` quantifies over exactly this bundle, so it is not vacuous. -/
+theorem decodeAcc_encode_witness :
+    Midfall.Generator.AccumulatorEncoding.kind
+        (Midfall.Generator.AccumulatorEncoding.new 4 7 56) =
+      Midfall.Generator.AccumulatorEncodingKind.pointAndScalar ∧
+    (toExec (Midfall.Generator.AccumulatorEncoding.new 4 7 56)).limbShapeOk = true ∧
+    (toExec (Midfall.Generator.AccumulatorEncoding.new 4 7 56)).fixedScalarCount
+        (4 + (toExec (Midfall.Generator.AccumulatorEncoding.new 4 7 56)).fixedPayloadWords + 2)
+        = some 2 := by
+  refine ⟨rfl, rfl, ?_⟩
+  exact AccumulatorEncoding.fixedScalarCount_exact _ 2 rfl rfl
+
+/-- **Falsification: the kind hypothesis of `decodeAcc_encode` is load-bearing.** For a
+    `.pointPair` encoding the decoder rejects ANY non-empty tail (api.rs:186) before it reads
+    a word, so a round trip over a tail would be `none = some _`. This is why the sketch had
+    to split `decodeAcc_encode` into the point-and-scalar and point-pair statements, and why
+    `decodeAcc_encode_pointPair` carries `hfb : fb.size = 0`. -/
+theorem fixedScalarCount_pointPair_rejects_tail :
+    (Midfall.Halo2.AccumulatorEncoding.pointPair 4 7 56).fixedScalarCount (4 + 12 + 2) = none := by
+  decide
+/-- **Falsification: link (b) needs the limb shape.** The SAME payload length on a six-limb
+    encoding answers `none`, so `fixedScalarCount_exact` is gated by `validFor` and not by
+    arithmetic. -/
+theorem fixedScalarCount_exact_needs_shape :
+    (Midfall.Halo2.AccumulatorEncoding.new 4 6 56).fixedScalarCount (4 + 12 + 2) = none := by
+  decide
+
+/-- **Satisfiability witness: link (c) computes.** The scalar readback at a real prime. -/
+theorem frWord_toNat_witness :
+    (Midfall.Halo2.frWord (p := 17) 5).toNat = 5 ∧
+    ((Midfall.Halo2.frWord (p := 17) 5).toNat : Midfall.Fr 17) = 5 := by decide
+
+/-- **Falsification: `hneg` is what turns `negateByTable fb a` back into `a`.** With one negated
+    table entry the relabelled scalar is `-1`, and `(-1 : Fr 17) ≠ 1`, so the literal
+    conclusion of `decodeAcc_encode_noNeg` is false for that table. Stated over `Unit` because
+    `negateByTable` needs no group structure, only a field to negate. -/
+theorem negateByTable_needs_noNeg :
+    ([(⟨("a" : String), (), true⟩ : AccFixedBase Unit)] : List (AccFixedBase Unit)).any
+        (fun b => b.name == ("a" : String) && b.negate) = true ∧
+    (-1 : Midfall.Fr 17) ≠ (1 : Midfall.Fr 17) := by
+  refine ⟨by decide, ?_⟩
+  decide
 /-- **`find?` readback at the inserted key (P-ACCENC step 3, first of the pair).** Whatever
     the map was before, the entry stored under the key just inserted reads back exactly -
     and it is the only entry under that key, which is what makes the overwrite semantics
