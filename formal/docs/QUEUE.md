@@ -26,7 +26,7 @@ when its `after` tickets are merged.
 
 ## Q0 — land V2 cleanly
 
-### Q0.1 — Land the V2 files unchanged
+### Q0.1 — Land the V2 files unchanged  **[MERGED b8ca493]**
 INFRA · KAT · box 1.5 h · Sonnet · after T0.4
 
 - **Goal.** The three provided files build inside the tree, unchanged.
@@ -53,6 +53,20 @@ INFRA · KAT · box 1.5 h · Sonnet · after T0.4
   likeliest is `check_duplicate_facts.py` discovering `Render`'s fields), merge Q0.1 and issue card
   **Q0.1b**: narrow that gate's scan to its v1 paths (one line, no V2 entries).
 
+### Q0.1b — Give gen_sorry.sh an owner case for Midfall/LoweringV2/*  [READY]
+
+INFRA · KAT · box 0.25 h · Sonnet · after Q0.1
+
+- **Goal.** The six V2 rows in SORRY.md name an owning work package instead of UNOWNED.
+- **Needs.** scripts/gen_sorry.sh owner(); the six rows at LoweringV2/Program.lean:201 and
+  Statements.lean:371/377/388/417/450.
+- **Does NOT need.** Any .lean edit; any proof; any new gate.
+- **Do.** Add the case; regenerate SORRY.md; confirm the row count stays 45.
+- **Deliverable.** owner() handles Midfall/LoweringV2/*; 6 rows updated.
+- **Accept.** bash scripts/sorries.sh | wc -l = 45; no LoweringV2 row says UNOWNED.
+- **Stop if.** The register count moves off 45.
+
+---
 ### Q0.2 — Cut V2 off the retired modules; land the cone tool
 INFRA · PORT · box 2 h · Sonnet · after Q0.1
 

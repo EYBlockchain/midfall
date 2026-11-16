@@ -1009,3 +1009,23 @@ two new interpreter gates in `RunShellInhabited.lean`.
 **The lesson, for the next brief.** A recorded mechanism and a recorded conclusion are different claims, and a test that confirms the conclusion while falsifying the mechanism is worth having - it is the difference between "the field is refuted" (still true) and "restating the RHS fixes it" (false). Before recommending a repair, ask what the repaired statement is inhabited BY.
 
 **Register movement.** None: 39 tracked sorries before and after, no statement edited, no hole closed or opened. KAT pins moved 1348 -> 1352 and 98 -> 99 for the four new interpreter gates in 'RunLegRouted.lean'. Two gap defs change status in the report rather than in the tree: 'gap_runLeg_unexhibited' is now EXHIBITED on the shell side and refuted-empty on the model side, and 'ir_refines_refuted_at_the_imported_artifact' is re-established.
+
+## V2 ledger — cards Q0.x onward (fresh; v1 rows above are history)
+
+**Progress measure per EXECUTION-V2:** the root's cone count and block contracts integrated. Register,
+gate and KAT counts are **not** progress. Cone counts are unavailable until Q0.2 lands the tool.
+
+| card | box | actual | cone delta | outcome | note |
+|---|---|---|---|---|---|
+| T0.1–T0.4 cut-over | — | ~40 min | n/a | done | v1 tagged `formal/v1-final` at `a680b5c`; D-V2 recorded as **D-P44**, not the expected D-P43, because D-P43 had been consumed by an executed v1 repair |
+| Q0.1 land V2 files | 1.5 h | ~26 min subagent + orchestrator gate | n/a (no cone tool) | **DONE** | 874 insertions, 0 deletions; three files byte-identical; register 39→45 with exactly the six predicted names; **`LegacyVacuity` has zero sorries — the three v1 refutations are proved**, two on `[propext, Classical.choice, Quot.sound]` and `stuck_satisfies_every_post` on `[propext]` alone |
+
+**False premises found in V2 so far (running total, for the C.5 calibration rule):**
+
+- Q0.1 predicted `check_duplicate_facts.py` would redden on `Render`'s fields and pre-authorised a
+  follow-up for it. It stayed green. Harmless, but it is a card premise that did not survive contact.
+- PLAN-V2 §2 assumed D-P43 was free. It was not.
+
+**Cost observation for later cards:** a KAT card costs two full KAT passes (~20 min) because the card
+requires `kat_gate.py` once *and* `checks.sh` once, and `checks.sh` runs `kat_gate.py`. Worth
+collapsing in a later card; **sample size 1**, so not yet a conclusion.
