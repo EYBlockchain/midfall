@@ -49,11 +49,23 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. Next READY: **D.1** (deployment generator inputs as pure terms, GEN, 2.5 h box) - the first card that can move a cone. Q0.5 remains BLOCKED on the R-72 decision above.
+**In flight:** none. Next READY: **D.2** (or WP-I2 once the `poseidonModel` total-term question below
+is settled). **Q0.5 still BLOCKED** on the R-72 decision.
 `entryFrame_inhabited` sorry at `Blocks.lean:185` generically) and **D.1** (deployment generator
 inputs as pure terms, GEN).
 
-**TICKET Q0.4b (merged `3034c6a`):** `entryFrame_inhabited` PROVED, axioms
+**TICKET D.1 (merged `d18424b`):** the deployment generator inputs are now PURE terms.
+`Instances/PoseidonInputs.lean` (321 ln, 9 gates): `poseidonVkGen`, `poseidonPlanV2`, `poseidonCtx`,
+`poseidonQBlocks`, `poseidonModel`. **Gate `poseidonRender_bytesExact_ok` is pure and reproduces the
+deployed verifier contract byte for byte from those terms alone** - 175,908 chars / 3,024 lines
+(reconciled by the orchestrator against `wc -c` 175,918 bytes: the 10-byte gap is UTF-8 multi-byte).
+KAT pins 1352 to 1361, files 99 to 100. **Cone did NOT move (1 and 1)** - fixture card, no cone debt
+retired. **PREMISE GAP for WP-I2:** `poseidonModel` cannot be a total pure term - `Halo2Verifier` has
+no `Inhabited` or `Default` (measured) and 71 fields, so it is delivered as a pure `Except` with
+`.isOk` gated. WP-I2 needs either `deriving Inhabited` on that record (a v1 edit) or
+`Render.model : Option Model`. **Also: `Generator.poseidonCtx` has ZERO lines in all five
+generated-code regions**, so the pure ctx must be sliced from the dump; gate D.1-7 keeps the fallback
+from being silently load-bearing.
 `[propext, Classical.choice, Quot.sound]`, register 45 to 44. **Cone delta: NONE - both roots
 still read 1.** This was bookkeeping, not progress: the roots are bare sorries with no body that
 could reference the lemma. The card also caught a mis-scope in the orchestrator brief (four

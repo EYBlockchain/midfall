@@ -186,7 +186,7 @@ INFRA · PORT · box 1 h · after human approval of the R-72 repair
 ---
 ## CORE — consumer first, to calibration point 1
 
-### D.1 — The deployment's generator inputs as pure terms
+### D.1 — The deployment's generator inputs as pure terms  **[MERGED d18424b - cone did NOT move]**
 GEN · PORT · box 2.5 h (split at 1 h into VK/plan · qblocks/model) · Sonnet · after Q0.3
 
 - **Goal.** Every generator-side input of `poseidonRender` is a pure term (no IO) derived from one
