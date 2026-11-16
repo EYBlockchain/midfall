@@ -1513,3 +1513,57 @@ which is the vacuity failure class this project has measured twenty times.
 **Not decided unilaterally** because it redefines a named deliverable in the plan. Until it is
 decided, M8's remaining work is: α-transport lemma (1–2 sessions, needed under every option), then
 the run leg (2–4), then whichever body relation option 1/2/3 implies.
+
+### D-P39 (ORCHESTRATOR DECISION, human delegated) - `ir_refines`: specify the constant-inlining embedding
+
+**Chosen: option (iii), implemented as a specified inlining transform in Lean.** The emitted Yul
+is a *fragment* whose free identifiers are the Solidity wrapper's `uint256 internal constant`
+declarations. In the real build, **solc inlines those constants at every use site**, inside
+function bodies as well as the top level. So the embedding is not an invention - it describes
+what the reference pipeline does.
+
+**Decision:**
+1. Define `inlineContractConstants : List (String x Nat) -> YulBlock -> YulBlock` in Lean -
+   substitute each contract-level constant's literal at every *use site*, **including inside
+   `funDef` bodies**, threading parameters so a shadowing binder is not substituted. Values
+   come from the same table `RunEmitted.shellLets` already uses - no new numbers.
+2. `RunShell`'s program becomes `inlineContractConstants consts (armBody S)`. **A signature
+   change to a sketched definition, permitted because the sketched form is false as written**
+   (`runShell_curveSurface_empty`).
+3. `shell_unfolds` restated to the ARM form in the same commit, fingerprint registry moved
+   together (D-P27). `Surface.lean:257-261` already assigns that restatement.
+
+**Rejected:** (i) changing the Rust emitter - it would break M3's golden AST equality against a
+reference that emits Solidity-with-declarations. (ii) an unbounded closure transform - invents
+semantics the reference lacks. **Test of this decision: after inlining, `RunShell` must be
+inhabited.** If not, the embedding is wrong and this is revisited.
+
+### D-P40 (ORCHESTRATOR DECISION) - `identityCorrespondence_of_bridge`: add the fourth hypothesis
+
+P-QVM proved the three sketched hypotheses pin `exprs`' **first** projection (bucket tag) while
+the conclusion needs the **second** (value), and nothing pins it - the statement is false as
+written, with both halves landed as counterexample theorems.
+
+**Decision: add the missing hypothesis** - the verifier-side value of each `exprs` entry equals
+the QVM-side value the bridge is about. This strengthens the hypothesis set and narrows the
+claim; permitted because the alternative is a false theorem. Record in `P-SE-statements.md` as
+a deviation from the sketch with the counterexample theorems as evidence.
+
+### D-P41 (ORCHESTRATOR DECISION) - `readScheduleAgrees`: require Surface coherence
+
+P-SCHED refuted the field at the deployment: the fixture's `vk` has an 8-read schedule while its
+`plan` is the 72-slot poseidon layout. `Surface.vk` and `Surface.plan` are independent free
+fields with nothing relating them, so the field is not derivable and is false at the only
+exhibited pair.
+
+**Decision: add a `Surface` pin requiring `vk` and `plan` to come from one render** - a
+coherence condition, not a slot-equality assertion. `readScheduleAgrees` then becomes derivable
+from coherence plus the existing decode lemmas rather than a bare hypothesis.
+
+**Consequence, and it is the real cost: the fixture is incoherent and must be rebuilt** so its
+`vk` and `plan` derive from one render. That is a genuine finding, not an obstacle - an
+incoherent fixture is why the mismatch was invisible. The P-SCHED repair already changed the VK
+hash and every derived challenge stream, so this is a second fixture change of the same kind.
+
+**Rejected:** deleting the field, or weakening its conclusion to the 8-slot schedule. Both would
+hide a real vk/layout disagreement.
