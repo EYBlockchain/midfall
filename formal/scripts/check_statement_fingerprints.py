@@ -65,6 +65,26 @@ Three things close it, and each is needed because the others are defeatable alon
     maps, so moving '.pcs => .pairing' silently moves the claim while every theorem text
     stays put.
 
+P-GATEINTEG closed the sixth blind spot of this class, and it is the one every other entry
+in this doc string assumed away: THE FIELD LIST WAS WRITTEN BY HAND. Every table here is a
+list of names, and nothing compared a list to the structure it claims to cover. So
+P-SCHED P8 - delete 'readScheduleAgrees' from LoweringCorrect outright - built green,
+left all three text gates green, and this gate still printed "9 LoweringCorrect fields",
+because that number was len(FINGERPRINTS). It was not even nine fields: eight entries were
+fields and the ninth, 'lowering_equivalence', is a theorem in the same file, while
+'partials' and 'readScheduleAgrees' were fields with no entry at all. And the checklist
+inside 'partials' - all sixteen PartialSpecs fields - was named by nothing anywhere under
+scripts/.
+
+The gate now PARSES the structures (same parser the duplicate-fact gate uses, on
+comment-stripped text) and enforces four derived rules over every tracked structure:
+coverage (a field with no pin reddens), no dead names (a pin whose field is gone reddens),
+count agreement (the printed number is the parsed one), and non-triviality of EVERY parsed
+field's conclusion - the rule that used to guard only Surface pins, now extended to
+LoweringCorrect fields, PartialSpecs fields, EnvAgrees, VkSlotsAgree, ChallengesGood and
+Eip2537.Holds clauses. P7's gutting of a conclusion to 'ms.map Msg.slot = ms.map Msg.slot'
+is caught by that rule and by the fragment list, and the gate says which field it saw.
+
 All twelve perturbations in the package report redden the gate; ten of them passed the gate
 as it stood at HEAD. Two of the twelve are 'or True' guttings that keep EVERY required
 fragment verbatim - those are why the must_not direction is not decoration.
@@ -126,7 +146,200 @@ FINGERPRINTS = [
         "quotientOperandModel", ").isOk = true"]),
     ("accFixedBases_producer", [chr(34) + "-G" + chr(34), "negate = true",
         "\u2203 b \u2208 S.accFixedBases.toList", "namesAscending"]),
+    # ---- P-GATEINTEG: the two fields this list did NOT carry, added because the new
+    # structure-derived coverage check reddened on them. `partials` is the field that
+    # carries the whole per-partial checklist as ONE LoweringCorrect field, and
+    # `readScheduleAgrees` is the field P-SCHED deleted (P8) with every gate green: the
+    # registry had nine entries, the structure has ten fields, and nothing compared the
+    # two numbers. Both are pinned here now, and the gate prints the count it PARSED.
+    ("partials", ["PartialSpecs S product"]),
+    ("readScheduleAgrees", ["\u2200 inst \u03c0 ms",
+        "decodeRust (G\u209c := G\u209c) S.E Features.solidity S.vk inst \u03c0 = some ms",
+        "ms.map Msg.slot",
+        "(RepackedProofLayoutPlan.fromProofLayout S.plan.proofLayout).slots"]),
 ]
+
+
+# ---------------------------------------------------------------------------
+# P-GATEINTEG: THE PER-PARTIAL CHECKLIST, FIELD BY FIELD.
+#
+# WHY THIS TABLE EXISTS. LoweringCorrect carries PartialSpecs as ONE field ('partials'),
+# so the fingerprint gate read nine names out of a ten-field structure and never looked
+# at the checklist inside it. Measured, not assumed: NOT ONE of the sixteen PartialSpecs
+# field names appeared anywhere under scripts/. Deleting finalPairing_sound, gutting
+# pcs_rejects to a self-equality, or renaming vkLoading_progress so the mirror of its
+# theorem no longer has a twin was invisible to every text gate in the repository. The
+# *_spec THEOREMS were pinned by P-SPECPIN; the checklist FIELDS the headline carries
+# were not - and it is the fields a LoweringCorrect instance has to discharge.
+#
+# WHY FRAGMENTS AND NOT BARE NAMES. A name-only registry is defeated by keeping the name
+# and hollowing the type - the R-60 S2 attack this file documents twice. Each entry is
+# (field, must, must_not), matched against the field type read FROM THE STRUCTURE, so a
+# paraphrase that drops the blk pin, the permissive leg, the Holds leg, the keccak leg,
+# the DualMSM hypothesis or the checkpoint loses a NAMED fragment.
+#
+# The spine is a constant because it is the same five hypotheses in fifteen fields, and
+# one constant is the only honest way to say 'every one of these keeps all five': the
+# copy that drifts in one of fifteen places is exactly the defect this project measures.
+# ---------------------------------------------------------------------------
+_SPECS_SPINE = [
+    "SupportedS S S.o\u2080",
+    "EnvAgrees S.E S.vk S.plan S.params S.sG2gen",
+    "Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout "
+    "S.cfg.numInstances S.E.g1 cd = some (ms, instW)",
+    "instOfWords? (p := p) instW = some inst",
+    "snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap",
+]
+# The fault-implies-revert pair keys on a decode that FAILED, so it carries the
+# decodeCalldata leg as '= none' and the snapshot leg as '= .error f' - not the spine,
+# whose whole point is that a snapshot exists.
+_SPECS_DECODE_NONE = ("Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout "
+                      "S.cfg.numInstances S.E.g1 cd = none")
+_SPECS_SNAPSHOT_ERROR = "snapshotOf S.E H S.vk inst ms (accOf S instW) = .error f"
+_SPECS_CALDATA_PRE = "(fun st => st.env.calldata = cd.data.toList)"
+_SPECS_PERMISSIVE = "PermissiveFor S W product qAddr calls"
+_SPECS_HOLDS = "Midfall.Assumptions.Eip2537.Holds S.E.g1 \u27e8S.encG2\u27e9 product"
+_SPECS_VKSLOTS = "VkSlotsAgree S.E S.plan S.sG2gen S.encG2 S.accFixedBases"
+# The keccak agreement, spelled at each of the four places it legitimately differs: the
+# checkpoint it is taken at (.vk / .pcs) and the call relation it quantifies over (the
+# bundle's own 'calls' in a sound field, 'S.calls W product qAddr' in a progress twin).
+# They are NOT interchangeable, which is why they are four constants and not one.
+_SPECS_KECCAK_SOUND_VK = ("(\u2200 V st, Inv (calls := calls) (gas := gas) S.E S.params "
+                          ".vk S.plan Snap V st \u2192 st.env.keccakOf = hashOfBytes H)")
+_SPECS_KECCAK_SOUND_PCS = ("(\u2200 V st, Inv (calls := calls) (gas := gas) S.E S.params "
+                           ".pcs S.plan Snap V st \u2192 st.env.keccakOf = hashOfBytes H)")
+_SPECS_KECCAK_PROG_VK = ("(\u2200 V st, Inv (calls := S.calls W product qAddr) (gas := gas) "
+                         "S.E S.params .vk S.plan Snap V st \u2192 "
+                         "st.env.keccakOf = hashOfBytes H)")
+_SPECS_KECCAK_PROG_PCS = ("(\u2200 V st, Inv (calls := S.calls W product qAddr) (gas := gas) "
+                          "S.E S.params .pcs S.plan Snap V st \u2192 "
+                          "st.env.keccakOf = hashOfBytes H)")
+# The two shapes every field in this structure refuses: a progress claim inside a sound
+# field (and vice versa), and a post widened by a conjunct that cannot fail.
+_SPECS_NO_PROGRESS = ["PartialProgress", "\u2227 True", "\u2228 True"]
+_SPECS_NO_SOUND = ["PartialSound", "\u2227 True", "\u2228 True"]
+
+PARTIAL_SPECS_FINGERPRINTS = [
+    # THE blk PIN, carried by the checklist and not only by the theorems (R-62). If this
+    # field goes the sixteen claims below quantify over every block a Surface returns.
+    ("blk_is", ["BlkIsEmitter S"], ["= True"]),
+    ("vkLoading_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE,
+                     "PartialSound S .vkLoading Snap calls gas (calldataPre S cd) "
+                     "(fun _ _ => True)"],
+     _SPECS_NO_PROGRESS + ["PartialSound S .pcs"]),
+    ("transcriptParser_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE, _SPECS_KECCAK_SOUND_VK,
+                     "PartialSound S .transcriptParser Snap calls gas "
+                     "(calldataPre S cd) (fun _ _ => True)"],
+     _SPECS_NO_PROGRESS),
+    # lagrange is the ONE sound arm whose post is not True: a normal exit proves x^n != 1,
+    # because the contract batch-inverts where Lean's lIRange yields zeros silently.
+    # Replacing that post with (fun _ _ => True) is the gutting this row refuses.
+    ("lagrange_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE,
+                     "PartialSound S .lagrange Snap calls gas (calldataPre S cd) "
+                     "(fun _ _ => Snap.alg.x ^ S.vk.domain.n \u2260 1)"],
+     _SPECS_NO_PROGRESS + ["(fun _ _ => True)"]),
+    ("quotientLin_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE,
+                     "PartialSound S .quotientLin Snap calls gas (calldataPre S cd) "
+                     "(fun _ _ => True)"],
+     _SPECS_NO_PROGRESS),
+    ("pcs_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE, _SPECS_HOLDS,
+                     "PartialSound S .pcs Snap calls gas (calldataPre S cd) "
+                     "(fun _ _ => True)"],
+     _SPECS_NO_PROGRESS),
+    # finalPairing carries the whole bundle: Holds, the keccak leg at .pcs, AND the VK
+    # slot agreement. Drop any one and the arm stops being the claim the theorem proves.
+    ("finalPairing_sound",
+     _SPECS_SPINE + [_SPECS_PERMISSIVE, _SPECS_HOLDS, _SPECS_KECCAK_SOUND_PCS,
+                     _SPECS_VKSLOTS,
+                     "PartialSound S .finalPairing Snap calls gas (calldataPre S cd) "
+                     "(fun _ _ => True)"],
+     _SPECS_NO_PROGRESS),
+    # Stated OUTSIDE the relation wrappers: checkpoint, pre and halt record are all in the
+    # field's own text, so all three are pinned. The must_not half is the gutting menu -
+    # a bare 'o = .halt', a wildcard payload, a wildcard kind, an existential.
+    ("traceReturn_sound",
+     ["SupportedS S S.o\u2080", "EnvAgrees S.E S.vk S.plan S.params S.sG2gen",
+      "Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout "
+      "S.cfg.numInstances S.E.g1 cd = some (ms, instW)",
+      "instOfWords? (p := p) instW = some inst",
+      "snapshotOf S.E H S.vk inst ms (accOf S instW) = .ok Snap",
+      "\u2200 outer,",
+      "StmtsContractAll (D := Bridge.Dialect calls gas) (mainScope S calls gas outer)",
+      "(S.blk .traceReturn S.plan)",
+      "Inv (calls := calls) (gas := gas) S.E S.params .pairing S.plan Snap V st "
+      "\u2227 calldataPre S cd V st",
+      "(fun _ _ _ st' o => o = .halt \u2227 st'.halted = some (.ret, abiTrue))"],
+     ["o = .halt \u2227 True", "o = .halt)", "some (.ret, _)", "some (_, abiTrue)",
+      "\u2203 d, st'.halted", "\u2227 True", "\u2228 True"]),
+    # The two fault-implies-revert obligations (section N). Their content is the FAILED
+    # decode and the absent snapshot: '= none' and '= .error f' are the whole claim.
+    ("transcript_rejects",
+     ["SupportedS S S.o\u2080", "EnvAgrees S.E S.vk S.plan S.params S.sG2gen",
+      _SPECS_DECODE_NONE,
+      "PartialRejects S .transcriptParser .vk calls gas", _SPECS_CALDATA_PRE],
+     _SPECS_NO_PROGRESS + ["PartialSound", "= True"]),
+    ("pcs_rejects",
+     ["SupportedS S S.o\u2080", "EnvAgrees S.E S.vk S.plan S.params S.sG2gen",
+      "Midfall.Lowering.decodeCalldata (p := p) S.plan.proofLayout "
+      "S.cfg.numInstances S.E.g1 cd = some (ms, instW)",
+      "instOfWords? (p := p) instW = some inst",
+      _SPECS_SNAPSHOT_ERROR,
+      "PartialRejects S .pcs .quotient calls gas", _SPECS_CALDATA_PRE],
+     _SPECS_NO_PROGRESS + ["PartialSound", "= True"]),
+    # ---- the six progress twins. Their content is that the block does NOT revert, so
+    # PartialSound and the word Reverted are the forbidden shapes, and each twin must
+    # name its OWN partial: a progress field that quietly points at another checkpoint
+    # stops being the twin of the sound arm above it.
+    ("vkLoading_progress",
+     _SPECS_SPINE + ["PartialProgress S W product qAddr .vkLoading Snap gas "
+                     "(calldataPre S cd)"],
+     _SPECS_NO_SOUND + ["PartialProgress S W product qAddr .pcs"]),
+    ("transcriptParser_progress",
+     _SPECS_SPINE + [_SPECS_KECCAK_PROG_VK,
+                     "PartialProgress S W product qAddr .transcriptParser Snap gas "
+                     "(calldataPre S cd)"],
+     _SPECS_NO_SOUND),
+    # lagrange's twin needs ChallengesGood: at x = omega^i the contract reverts and Lean
+    # accepts, so without that side condition the no-revert claim is simply false.
+    ("lagrange_progress",
+     _SPECS_SPINE + ["ChallengesGood S.vk Snap",
+                     "PartialProgress S W product qAddr .lagrange Snap gas "
+                     "(calldataPre S cd)"],
+     _SPECS_NO_SOUND),
+    ("quotientLin_progress",
+     _SPECS_SPINE + ["PartialProgress S W product qAddr .quotientLin Snap gas "
+                     "(calldataPre S cd)"],
+     _SPECS_NO_SOUND),
+    ("pcs_progress",
+     _SPECS_SPINE + [_SPECS_HOLDS,
+                     "PartialProgress S W product qAddr .pcs Snap gas "
+                     "(calldataPre S cd)"],
+     _SPECS_NO_SOUND),
+    # The pairing check has to PASS for the honest fold to return, so DualMSM.check is a
+    # hypothesis of the no-revert claim and the entry condition lives on the PRE.
+    ("finalPairing_progress",
+     _SPECS_SPINE + [_SPECS_HOLDS, _SPECS_KECCAK_PROG_PCS,
+                     "DualMSM.check Snap.c.dual S.params = true",
+                     _SPECS_VKSLOTS,
+                     "PartialProgress S W product qAddr .finalPairing Snap gas "
+                     "(fun V st => calldataPre S cd V st \u2227 VEnv.get V "
+                     "\"success\" = some 1)"],
+     _SPECS_NO_SOUND + ["DualMSM.check Snap.c.dual S.params = false"]),
+]
+
+# The same three-way shape for the headline structure: a field may not be the OTHER
+# field's claim, and may not carry a conjunct that cannot fail. Only readScheduleAgrees
+# needs an explicit must_not today - its P7 gutting is a self-equality, and naming the
+# exact text here means the gate says WHICH attack it saw rather than only that the
+# conclusion is decidable.
+FIELD_MUST_NOT = {
+    "readScheduleAgrees": ["ms.map Msg.slot = ms.map Msg.slot", "= True"],
+}
 
 # R-58 also added pin FIELDS to the Surface record. Those are statements too, and the
 # duplicate-fact gate only checks that they exist and name both sides - it does not
@@ -399,6 +612,39 @@ ENV_CLAUSES = [
     # fields of VkSlotsAgree in the same file. A hypothesis structure no theorem reads and
     # no gate pins is a hypothesis that gets hollowed out to True on the next package that
     # needs a proof, which is what happened to these four once already.
+    # ---- P-GATEINTEG: the nine EnvAgrees clauses this list did NOT carry. The coverage
+    # rule added by this package parses 'structure EnvAgrees' and found them: 10 fields,
+    # 1 pinned. They are the hypotheses verifier_sound, verifier_complete,
+    # only_two_outcomes and end_to_end_noAcc all carry, and a clause relaxed to a
+    # self-equality or widened with a disjunct that cannot fail elaborates, builds, and
+    # keeps every KAT true - the omegaOrder defect (P-ENV) with nine more chances to
+    # recur. Each entry is the equation the clause states, and neither 'True' nor a
+    # widened form is accepted.
+    ("EnvAgrees", "modulus", ["p = frModulusConstant"], ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "truncWidth",
+     ["divCeil (divCeil E.field.numBits 8) 2 = 16"], ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "domainN",
+     ["vk.domain.n = 2 ^ vk.domain.k", "vk.domain.k = PV.k"],
+     ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "baryWeight",
+     ["vk.domain.barycentricWeight = ((2 ^ vk.domain.k : \u2115) : Fr p)\u207b\u00b9"],
+     ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "omegaInvMul",
+     ["vk.domain.omegaInv * vk.domain.omega = 1"], ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "negLagranges",
+     ["PV.numNegLagranges = vk.cs.blindingFactors.toOption.getD 0 + 1"],
+     ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "nG2", ["params.nG2Prepared = P.g\u2082\u207b\u00b9"],
+     ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "sG2", ["params.sG2Prepared = sG2gen"], ["\u2227 True", "\u2228 True"]),
+    ("EnvAgrees", "vkDigestWord",
+     ['(PV.vk.constants.getD 0 ("", 0)).2 = frWord vk.transcriptRepr'],
+     ["\u2227 True", "\u2228 True"]),
+    # P-GATEINTEG: ChallengesGood is a one-field structure in the same file, and the
+    # field is the whole claim - lagrange_sound's post and lagrange_progress's hypothesis
+    # both rest on it. Unpinned until the coverage rule parsed it.
+    ("ChallengesGood", "xNotRoot",
+     ["S.alg.x ^ vk.domain.n \u2260 1"], ["\u2227 True", "\u2228 True"]),
     ("VkSlotsAgree", "g1BaseWords",
      ["vkG1Words PV vkG1BaseSlot = E.g1.toEip P.g\u2081"],
      ["= True", "Bytes.empty"]),
@@ -869,6 +1115,151 @@ def env_clause_text(body, struct, field):
     return norm((structures(body).get(struct) or {}).get(field, (0, ""))[1])
 
 
+# ---------------------------------------------------------------------------
+# P-GATEINTEG: THE FIELD LIST IS PARSED FROM THE STRUCTURE, NOT WRITTEN BY HAND.
+#
+# THE DEFECT THIS CLOSES. Every table above is a list of NAMES written by a human, and
+# nothing in the repository ever compared one to the structure it claims to cover. So
+# P-SCHED P8 - delete 'readScheduleAgrees' from LoweringCorrect outright - left the
+# build green, all three text gates green, and this gate still printing "9 LoweringCorrect
+# fields": the printed count was len(FINGERPRINTS), a literal that cannot move when a
+# field does. It was not even nine fields: eight of the nine entries were fields and the
+# ninth, 'lowering_equivalence', is a theorem in the same file, while 'partials' and
+# 'readScheduleAgrees' were fields with no entry at all.
+#
+# THE RULE, IN FOUR PARTS, ALL DERIVED FROM THE PARSED STRUCTURE:
+#   (a) COVERAGE. Every field the parser finds must have a registry entry. A field with
+#       no pin reddens - that is precisely what P8 slipped through.
+#   (b) NO DEAD NAMES. Every registry entry must name a field the structure still
+#       declares, unless it is a declared non-field entry (the theorem). A rename trips
+#       (a) and (b) at once, which is the point: the old name stops being live and the
+#       new one is unpinned.
+#   (c) COUNT AGREEMENT. The parsed count must equal the number of registry entries that
+#       name fields. Redundant with (a) and (b) and asserted anyway, because it is the
+#       number this gate PRINTS, and a printed number that is derived rather than typed
+#       is the whole deliverable.
+#   (d) EVERY FIELD'S CONCLUSION MUST BE ABLE TO FAIL. The triviality rule that already
+#       guarded Surface pins and the *_spec conclusions now runs over every parsed field
+#       of every tracked structure, whether or not a fragment list mentions it. P7's
+#       gutting - a conclusion replaced by 'ms.map Msg.slot = ms.map Msg.slot' - is a
+#       self-equality, and it is now seen twice: once here and once by the fragment list.
+#
+# The fields are read with the SAME structure parser the duplicate-fact gate uses, on
+# comment-stripped text, so a fragment is matched against the field of THAT structure and
+# not against a doc string that quotes it (R-60 S2).
+# ---------------------------------------------------------------------------
+def _registry_from_clauses(table, struct):
+    """The clause tables already carry (structure, field, must, must_not); re-cut them as
+    (field, must, must_not) so the coverage rule can read the field list off the
+    structure and compare."""
+    return [(f, must, must_not) for (s, f, must, must_not) in table if s == struct]
+
+
+# The two headline obligation structures are checked in full here - coverage, count, and
+# every fragment - because nothing in the tree CONSTRUCTS a term of either, which is
+# exactly why a field could vanish with the build green. The four hypothesis structures
+# below are checked for COVERAGE and triviality only: their fragments are already
+# enforced by the ENV_CLAUSES / HOLDS_CLAUSES loops, and re-checking them here would
+# count the same fragment twice. They are also constructed at the fixture
+# (Instances/SurfaceFixture.lean:2279-2312 builds EnvAgrees and VkSlotsAgree field by
+# field), so deleting one of their fields reddens lake build - a gutting does not, which
+# is what the triviality rule and the clause pins are for.
+TRACKED_STRUCTURES = [
+    # (file, structure, registry, label, non-field entries, check fragments here?)
+    ("Midfall/Lowering/Obligations.lean", "LoweringCorrect",
+     [(f, frags, FIELD_MUST_NOT.get(f, [])) for f, frags in FINGERPRINTS],
+     "LoweringCorrect", {"lowering_equivalence"}, True),
+    ("Midfall/Lowering/Partials.lean", "PartialSpecs",
+     [(f, must, must_not) for f, must, must_not in PARTIAL_SPECS_FINGERPRINTS],
+     "PartialSpecs", set(), True),
+    ("Midfall/Lowering/Inv.lean", "EnvAgrees",
+     _registry_from_clauses(ENV_CLAUSES, "EnvAgrees"), "EnvAgrees", set(), False),
+    ("Midfall/Lowering/Inv.lean", "VkSlotsAgree",
+     _registry_from_clauses(ENV_CLAUSES, "VkSlotsAgree"), "VkSlotsAgree", set(), False),
+    ("Midfall/Lowering/Inv.lean", "ChallengesGood",
+     _registry_from_clauses(ENV_CLAUSES, "ChallengesGood"), "ChallengesGood", set(), False),
+    ("Midfall/Assumptions/Eip2537.lean", "Eip2537.Holds",
+     _registry_from_clauses(HOLDS_CLAUSES, "Eip2537.Holds"), "Eip2537.Holds", set(), False),
+]
+
+
+def check_tracked_structures(root, problems):
+    """Returns (derived field counts by label, set of pinned field names, fragments)."""
+    counts, pinned_all, checked = {}, set(), 0
+    for rel, struct, registry, label, nonfield, check_frags in TRACKED_STRUCTURES:
+        path = root / rel
+        if not path.exists():
+            problems.append("%s: file missing: %s - the structure cannot be parsed, so "
+                            "no field of it is tracked by anything" % (label, rel))
+            continue
+        body = strip_comments(path.read_text(encoding="utf-8"))
+        fields = structures(body).get(struct)
+        if not fields:
+            problems.append("%s: STRUCTURE NOT FOUND in %s - deleted, renamed, or moved "
+                            "below a section, so every pin that claims to read it now "
+                            "reads nothing" % (label, rel))
+            continue
+        counts[label] = len(fields)
+        reg = {}
+        for f, must, must_not in registry:
+            if f in reg:
+                problems.append("%s.%s: DUPLICATE REGISTRY ENTRY - the registry pins the "
+                                "same field twice, so a count can no longer be read off it"
+                                % (label, f))
+            reg[f] = (must, must_not)
+        live = {f for f in reg if f in fields}
+        pinned_all |= live
+        # (a) COVERAGE - the check P8 slipped through.
+        for f in sorted(set(fields) - live):
+            problems.append(
+                "%s.%s: FIELD HAS NO PIN - the structure declares %d fields and the "
+                "registry covers %d, and this one is in none of them, so it can be "
+                "deleted, renamed or gutted with every gate green (P-GATEINTEG P8)"
+                % (label, f, len(fields), len(live)))
+        # (b) NO DEAD NAMES.
+        for f in sorted(set(reg) - set(fields) - nonfield):
+            problems.append(
+                "%s.%s: REGISTRY NAMES A DEAD FIELD - %s no longer declares it in %s. "
+                "Either the field was deleted or renamed (which is the regression) or the "
+                "pin was retired without deleting it (which is a lie in a table)"
+                % (label, f, struct, rel))
+        # (c) COUNT AGREEMENT.
+        if len(fields) != len(live):
+            problems.append(
+                "%s: FIELD COUNT DISAGREES - %d fields parsed from 'structure %s' in %s, "
+                "%d pinned by the registry. The number this gate prints used to be "
+                "len(FINGERPRINTS), a literal that could not move when a field did"
+                % (label, len(fields), struct, rel, len(live)))
+        # (d) EVERY FIELD: able to fail, then its fragments.
+        for f in sorted(fields):
+            text = env_clause_text(body, struct, f)
+            if not text:
+                problems.append("%s.%s: FIELD TEXT EMPTY - the parser found the name but "
+                                "no type, so there is nothing to pin" % (label, f))
+                continue
+            bad = triviality_problems(conclusion(text))
+            if bad:
+                problems.append(
+                    "%s.%s: FIELD CONCLUSION IS TRIVIALLY DECIDABLE - it says %s (%s), so "
+                    "no Surface can fail it (P-GATEINTEG P7: a gutted field is the same "
+                    "defeat R-60 S2 found on a Surface pin, one level up)"
+                    % (label, f, repr(conclusion(text)), bad[0]))
+                continue
+            if not check_frags:
+                continue    # coverage + triviality only; the clause loop enforces the text
+            must, must_not = reg.get(f, ([], []))
+            for fr in must:
+                checked += 1
+                if norm(fr) not in text:
+                    problems.append("%s.%s: missing fragment %r in the TYPE (comments and "
+                                    "the value do not count)" % (label, f, fr))
+            for fr in must_not:
+                if norm(fr) in text:
+                    problems.append("%s.%s: FORBIDDEN SHAPE - the field type contains %r"
+                                    % (label, f, fr))
+    return counts, pinned_all, checked
+
+
 def main():
     argv = sys.argv[1:]
     root = Path(__file__).resolve().parent.parent
@@ -884,7 +1275,16 @@ def main():
     body = strip_comments(ob.read_text(encoding="utf-8"))
     problems = []
     checked = 0
+    # P-GATEINTEG: the structure-derived coverage check runs FIRST, and returns the set of
+    # field names it pinned, so a fragment is never counted twice through two parsers.
+    derived, pinned_fields, struct_checked = check_tracked_structures(root, problems)
+    checked += struct_checked
     for field, frags in FINGERPRINTS:
+        if field in pinned_fields:
+            # P-GATEINTEG: a field of a tracked structure, already pinned above from the
+            # PARSED structure. Only an entry that is not a field - the lowering_equivalence
+            # theorem - still needs the name search below.
+            continue
         text = field_text(body, field)
         if not text:
             problems.append(field + ": FIELD NOT FOUND")
@@ -1062,10 +1462,17 @@ def main():
             for fr in must:
                 checked += 1
                 if norm(fr) not in text:
+                    # P-GATEINTEG: this loop used to recite the omegaOrder explanation for
+                    # every clause it covered, which was wrong for the fourteen others once
+                    # the coverage rule pulled them in. The reason now travels with the
+                    # clause that needs it.
+                    why = (" (P-ENV: omegaOrder must require the EXACT order, or a "
+                           "generator equal to 1 satisfies it)" if field == "omegaOrder"
+                           else " (P-GATEINTEG: the coverage rule found this clause unpinned"
+                           " - a hypothesis no gate reads is a hypothesis that gets hollowed"
+                           " to True)")
                     problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type no longer "
-                                    "says %s (P-ENV: omegaOrder must require the EXACT "
-                                    "order, or a generator equal to 1 satisfies it)"
-                                    % (struct, field, repr(fr)))
+                                    "says %s%s" % (struct, field, repr(fr), why))
             for fr in must_not:
                 if norm(fr) in text:
                     problems.append("Inv.%s.%s: CLAUSE WEAKENED - the type contains the "
@@ -1281,19 +1688,32 @@ def main():
         for pr in problems:
             print("  " + pr)
         return 1
+    # P-GATEINTEG: the two structure counts are the PARSED ones. Before this the line
+    # printed len(FINGERPRINTS) and called it "LoweringCorrect fields", which was wrong
+    # twice over: the list held a theorem among its fields, and it held no entry at all
+    # for two of the structure's ten fields. A count the gate cannot lose is a count that
+    # cannot be trusted.
     print("ok: %d statement fragments present in the TYPE across %d LoweringCorrect "
-          "fields, %d Surface pins, %d derived checks, %d blk-pin declarations, "
+          "fields and %d PartialSpecs fields (both parsed from the structures), "
+          "%d Surface pins, %d derived checks, %d blk-pin declarations, "
           "%d spec postconditions read off the CONCLUSION, %d spec relation definitions, "
           "%d checkpoint maps, "
           "%d EnvAgrees clause types, %d Inv clause groups, "
           "%d Holds clause types plus %d Holds decode pins, "
+          "%d/%d/%d/%d fields parsed for EnvAgrees/VkSlotsAgree/ChallengesGood/"
+          "Eip2537.Holds (coverage derived from the structures, not from the tables), "
           "and %d frozen statements (exact text, binders, trusted surface, doc "
           "provenance) against %d repair witnesses (comments stripped first)"
-          % (checked, len(FINGERPRINTS), len(SURFACE_PINS), len(DERIVED_CHECKS),
+          % (checked, derived.get("LoweringCorrect", 0),
+             derived.get("PartialSpecs", 0),
+             len(SURFACE_PINS), len(DERIVED_CHECKS),
              len(PARTIAL_SPEC_PINS), len(PARTIAL_SPEC_CONCLUSIONS),
              len(SPEC_RELATION_DEFS), len(CHECKPOINT_MAP),
-             len(ENV_CLAUSES), len(INV_CLAUSES), len(HOLDS_CLAUSES),
-             len(HOLDS_DEFS), len(STATEMENTS_PINS), len(REPAIR_PINS)))
+             len(ENV_CLAUSES), len(INV_CLAUSES),
+             len(HOLDS_CLAUSES), len(HOLDS_DEFS),
+             derived.get("EnvAgrees", 0), derived.get("VkSlotsAgree", 0),
+             derived.get("ChallengesGood", 0), derived.get("Eip2537.Holds", 0),
+             len(STATEMENTS_PINS), len(REPAIR_PINS)))
 
 
 if __name__ == "__main__":

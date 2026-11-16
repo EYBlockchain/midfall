@@ -20,6 +20,11 @@ was broken:
   a gate that realigns its own expectations is not a gate.
 * One bad file used to abort the whole run, hiding every later KAT. Failures
   are now collected and reported together.
+* THE TOTAL WAS PRINTED AND NEVER ASSERTED (P-GATEINTEG, P-SCHED P6). Deleting a gate
+  together with its "#eval ... -- expect ..." line simply made the report say one
+  fewer check and exit 0. EXPECTED_KAT_TOTAL and EXPECTED_KAT_FILES pin both numbers
+  now, and they are checked statically - before any file is run - so a deleted gate
+  reddens in a second. A deliberate change has to move the pin.
 """
 import re
 import subprocess
@@ -34,6 +39,24 @@ EVAL = re.compile(
     r"^#eval\s+(?P<expr>.+?)"
     r"(?:\s+--\s*expect\s+(?P<exp>[^\s,]+).*)?\s*$"
 )
+
+# P-GATEINTEG (P6): THE TOTAL IS ASSERTED, NOT PRINTED.
+#
+# WHY. The KAT section used to end at "ok: %d annotated known-answer checks pass
+# across %d files" and exit 0 whatever the number said. Deleting a gate therefore went
+# unseen: P-SCHED P6 removed a "def X_ok : Bool := ..." together with its
+# "#eval X_ok -- expect true" line, and the whole suite stayed green while the printed
+# count quietly dropped by one. A count that is reported and never compared is a report
+# wearing a gate's clothes - the same defect P-STATGATE found in the axiom probe.
+#
+# WHY AN EXACT PIN AND NOT A FLOOR. "at least N" would still let the count fall by one
+# every package as long as it stayed above the floor, which is how a register rots. An
+# exact total means an unexpected drop reddens AND a deliberate change has to move this
+# line - so the diff says out loud that a gate was added or removed, which is the whole
+# point of a pin. Both numbers are static properties of the tree, computed BEFORE any
+# "lake env lean" runs, so a deleted gate reddens in a second instead of eight minutes.
+EXPECTED_KAT_TOTAL = 1334
+EXPECTED_KAT_FILES = 96
 
 # Only these shapes count as #eval output.
 #
@@ -110,6 +133,11 @@ def main() -> int:
     uncommented = 0
     problems = []
 
+    # ---- PASS 1: read the tree and collect every gate line, WITHOUT running lean.
+    # The total is asserted here, before anything expensive, so a deleted gate is a
+    # one-second failure and not an eight-minute one (P-GATEINTEG / P-SCHED P6).
+    per_file = []
+    annotated = 0
     for path in files:
         specs = []
         for stripped in gate_lines(path.read_text(encoding="utf-8")):
@@ -124,10 +152,38 @@ def main() -> int:
             # 'true' there and '[8]' in '-- expect [8]'.
             if exp is not None:
                 exp = exp.rstrip(".,:;")
+            else:
+                uncommented += 1
+            if exp is not None:
+                annotated += 1
             specs.append((m.group("expr"), exp))
         if not specs:
             continue
+        per_file.append((path, specs))
 
+    if len(per_file) != EXPECTED_KAT_FILES or annotated != EXPECTED_KAT_TOTAL:
+        print("KAT GATE FAILED (total moved):")
+        if len(per_file) != EXPECTED_KAT_FILES:
+            print("  KAT FILE COUNT MOVED - %d files carry a #eval gate, pinned %d. A file"
+                  % (len(per_file), EXPECTED_KAT_FILES))
+            print("  whose last gate was deleted has left the suite silently.")
+        if annotated != EXPECTED_KAT_TOTAL:
+            print("  KAT TOTAL MOVED - %d annotated known-answer checks in the tree, pinned"
+                  % annotated)
+            print("  %d (%+d). Deleting a gate and its '#eval ... -- expect ...' line is"
+                  % (EXPECTED_KAT_TOTAL, annotated - EXPECTED_KAT_TOTAL))
+            print("  exactly what this catches (P-SCHED P6): the count used to be printed")
+            print("  and never asserted. If the change is deliberate, move EXPECTED_KAT_TOTAL")
+            print("  in scripts/kat_gate.py and say why in the commit.")
+        return 1
+    if problems:
+        print("KAT GATE FAILED (%d problem(s)):" % len(problems))
+        for pr in problems:
+            print("  " + pr)
+        return 1
+
+    # ---- PASS 2: run each file and compare the values it prints.
+    for path, specs in per_file:
         proc = subprocess.run(["lake", "env", "lean", str(path)],
                               capture_output=True, text=True)
         if proc.returncode != 0:
@@ -145,12 +201,19 @@ def main() -> int:
 
         for (expr, exp), actual in zip(specs, values):
             if exp is None:
-                uncommented += 1
-                continue
+                continue          # counted in pass 1; nothing to compare against
             checked += 1
             if actual != exp:
                 problems.append("%s: %s expected %r, got %r"
                                 % (path, expr[:60], exp, actual))
+
+    # Belt and braces: the total was asserted statically, so every annotated gate must
+    # also have been COMPARED. A file that failed to elaborate skips its gates, and this
+    # is the line that stops such a skip reading as a pass on the remaining ones.
+    if checked != annotated:
+        problems.append("only %d of the %d annotated gates were compared - a KAT file was"
+                        " skipped, which is a failure and not a smaller pass"
+                        % (checked, annotated))
 
     if problems:
         print("KAT GATE FAILED (%d problem(s)):" % len(problems))
@@ -158,8 +221,9 @@ def main() -> int:
             print("  " + pr)
         return 1
 
-    print("ok: %d annotated known-answer checks pass across %d files"
-          % (checked, len(files)))
+    print("ok: %d annotated known-answer checks pass across %d files (both pinned:"
+          " %d and %d in scripts/kat_gate.py)"
+          % (checked, len(per_file), EXPECTED_KAT_TOTAL, EXPECTED_KAT_FILES))
     if uncommented:
         print("note: %d unannotated #eval line(s) are NOT gated; add" % uncommented)
         print("      \"-- expect <value>\" to gate them")
