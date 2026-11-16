@@ -15,6 +15,11 @@
   `artifacts.rs` on that plan. `CodegenAgrees` ties the AST emitter (`GenAst`) to the TEXT the
   ported codegen prints (`renderHalo2Verifier`), token for token. It is decidable and must be
   exhibited (by computation) at every render the headline is instantiated at.
+
+  SPLIT (Q0.3). §1-§4 are the FROZEN program surface; they are hashed in
+  `Midfall/LoweringV2/Frozen.sha256` and checked by `scripts/checks.sh`. §5 (the generator-side
+  obligations `topBinders`, `inline_append`, `emitSlices_eq`) moved verbatim to
+  `ProgramLemmas.lean`, which is refinable. No statement text was changed by the split.
 -/
 import Midfall.Lowering.GenAstDispatch
 import Midfall.Lowering.InlineConstants
@@ -187,28 +192,5 @@ def codegenAgrees (pv : PlanView) (m : Model) : Bool :=
     yulTokens (YulSemantics.EVM.print (mainAsmRaw pv)) == mainAssemblyTokens m
 
 def CodegenAgrees (pv : PlanView) (m : Model) : Prop := codegenAgrees pv m = true
-
-/-! ## 5. Generator-side obligations (theorems; owned by WP-A) -/
-
-/-- The names a block binds at its top level (`let`, function names). -/
-def topBinders (b : YulBlock) : List String := b.flatMap Inline.boundOf
-
-/-- Inlining distributes over concatenation when the left block binds no constant name at top
-    level. This is what licenses proving contracts per slice and composing them. OBLIGATION. -/
-theorem inline_append (consts : List (String × Nat)) (a b : YulBlock)
-    (h : ∀ x ∈ topBinders a, x ∉ consts.map Prod.fst) :
-    Inline.inlineContractConstants consts (a ++ b) =
-      Inline.inlineContractConstants consts a ++ Inline.inlineContractConstants consts b := by
-  sorry
-
-/-- The main block is the helpers followed by the slices in include order. Replaces the v1
-    `main_concat` PIN (a hypothesis on a free field) by a THEOREM about the emitter. -/
-theorem emitSlices_eq (pv : PlanView) :
-    GenAst.emitSlices pv =
-      GenAst.emitPartial pv .vkLoading ++ GenAst.emitPartial pv .transcriptParser ++
-      GenAst.emitPartial pv .lagrange ++ GenAst.emitPartial pv .quotientLin ++
-      GenAst.emitPartial pv .pcs ++ GenAst.emitPartial pv .finalPairing ++
-      GenAst.emitPartial pv .traceReturn := by
-  simp [GenAst.emitSlices, Midfall.Lowering.partials, List.append_assoc]
 
 end Midfall.LoweringV2

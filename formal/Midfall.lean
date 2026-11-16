@@ -121,6 +121,8 @@ import Midfall.Common.Json
 import Midfall.Halo2.Spec.Lemmas
 import Midfall.Conformance.Replay
 import Midfall.LoweringV2.Program
+import Midfall.LoweringV2.ProgramLemmas
 import Midfall.LoweringV2.Statements
+import Midfall.LoweringV2.Blocks
 import Midfall.Lowering.LegacyVacuity
 import Midfall.Tools.ConeReport

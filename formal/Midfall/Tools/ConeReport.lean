@@ -10,12 +10,15 @@
                      later proof cannot smuggle one back in through a lemma;
     * cone_sorries:  how many declarations inside each cone still use sorryAx - the distance left.
 
-  The two roots are the generic composition theorem and the end-to-end corollary of Statements.lean.
+  The two roots are the generic composition theorem and the end-to-end corollary. Since the Q0.3
+  split they live in `Midfall/LoweringV2/Blocks.lean` (the REFINABLE half), not in `Statements.lean`
+  (the FROZEN half); their NAMES are unchanged, so the cone queries below did not have to move.
   Both are `sorry` today (WP-M5, WP-E1); the counts printed here are the baseline Q0.3 compares against.
 -/
 import Midfall.LoweringV2.Shared
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Statements
+import Midfall.LoweringV2.Blocks
 import Midfall.Tools.ConeSorries
 
 #imports_avoid [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]

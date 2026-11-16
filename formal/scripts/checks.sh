@@ -24,6 +24,7 @@ echo '== memory headroom (report only, D-P31) =='
 bash scripts/ram_guard.sh --quiet --limit 6G --warn 4G || true
 echo '== frozen statements hash =='
 sha256sum -c Midfall/Statements.sha256
+sha256sum -c Midfall/LoweringV2/Frozen.sha256
 
 echo '== sorry register =='
 # The inventory comes from scripts/sorries.sh, which is also what generates the
