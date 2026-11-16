@@ -49,12 +49,39 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. Next READY: **D.2** (or WP-I2 once the `poseidonModel` total-term question below
+**In flight:** none. **D.3 is now BLOCKED** by standing blocker 1 above (its check 3 cannot pass at the
+exhibit codec). Next actionable: **WP-I2 needs a decision on `poseidonModel` totality AND on the
+`ofCompressed?` placeholder** - both are v1 edits or frozen-surface edits, so neither is mine.
+**Q0.5 still BLOCKED** on R-72.
 is settled). **Q0.5 still BLOCKED** on the R-72 decision.
 `entryFrame_inhabited` sorry at `Blocks.lean:185` generically) and **D.1** (deployment generator
 inputs as pure terms, GEN).
 
-**TICKET D.1 (merged `d18424b`):** the deployment generator inputs are now PURE terms.
+**TICKET D.2 (merged `8e43ac8`):** `Instances/PoseidonEnv.lean` (665 ln, 14 gates, 8 pin theorems, 0
+`native_decide`) delivers `poseidonE`, `poseidonParams`, `poseidonVkExec` (computable), `poseidonSG2`,
+`poseidonEncG2`. KAT pins 1361->1375, files 100->101. **Cone did NOT move (1 and 1)** - bookkeeping.
+`poseidonEncG2` is **cited not copied**: `poseidonHolds_isTheExhibitsClause` proves the exhibit's
+`Holds` binder and this file's are the same Prop by `rfl`, so `holds_exhibited` transfers with no
+transport. **VK ships WITHOUT `WellFormed`** - `vk.json` lacks `gates`/`lookups`/`trashcans`/
+`permutation.columns` and D.1's `poseidonPlanV2.meta_` cannot supply them either (measured empty), so
+`cs.degree` recomputes 3 vs cached 5. **No CS data was invented**; gate 13 pins the gap.
+
+**STANDING BLOCKERS D.2 EXPOSED (log these; they outgrow a card report):**
+1. **`g1CodecZ.ofCompressed? := fun _ => none`** (G1Agreement.lean:2006) - a v1 placeholder V2
+   inherited. Compressed hex cannot reach `G1z` at all, not merely not computably. **This blocks D.3
+   check 3 and WP-I2**: every compressed read at the exhibit codec is `none`, so
+   `decodeCalldata`/`repackProof` at `poseidonE.g1` cannot pass until a real `ofCompressed?` lands -
+   and a real one needs an r-torsion-to-zpowers route the tree lacks (`X in zpowers g1` is a discrete
+   log as literally typed).
+2. **`frFc.rootOfUnity` is NOT the deployment root of unity** (differ by odd power 61). Repaired by a
+   gated 64-case VM search, and gate 12 asserts the unrepaired root disagrees so the repair is
+   visibly load-bearing. **But `extendedOmega`/`extendedOmegaInv`/`tEvaluations` are
+   consistent-with and NOT verified-against the deployment** - `vk.json` has no `extended_omega` key.
+   A finding about TwoAdicity's constants.
+3. `params.json` G2 compressed hexes are **96 bytes** (two 48-byte Fp2 halves), not 48.
+4. `poseidonSG2` cannot be checked against `s_g2_compressed_hex` - `G2fold = Exp blsR` is the exponent
+   carrier, so naming `s*G2` is a discrete log in G2. It is the assumed pairing's `g2`; the `rfl` is
+   about that substitution, **not** a fixture check.
 `Instances/PoseidonInputs.lean` (321 ln, 9 gates): `poseidonVkGen`, `poseidonPlanV2`, `poseidonCtx`,
 `poseidonQBlocks`, `poseidonModel`. **Gate `poseidonRender_bytesExact_ok` is pure and reproduces the
 deployed verifier contract byte for byte from those terms alone** - 175,908 chars / 3,024 lines

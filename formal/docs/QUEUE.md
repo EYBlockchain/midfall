@@ -217,7 +217,7 @@ GEN · PORT · box 2.5 h (split at 1 h into VK/plan · qblocks/model) · Sonnet 
   - `generateVerifierFromPlan …` returns `.ok`.
 - **Stop if.** After (a)–(c), a term is still only obtainable through IO.
 
-### D.2 — The Lean verifier's side of the deployment
+### D.2 — The Lean verifier's side of the deployment  **[MERGED 8e43ac8 - cone did NOT move; exposes the ofCompressed blocker]**
 ALG · PORT · box 2.5 h · strongest · after Q0.3
 
 - **Goal.** Pure terms `poseidonE`, `poseidonParams`, `poseidonVkExec : VerifyingKey (Fr p) G₁`,
