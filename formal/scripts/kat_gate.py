@@ -78,8 +78,13 @@ EVAL = re.compile(
 # artifact_both_inputs_ok (the real solc artifact reverts with zero bytes at BOTH inputs). So the
 # file count goes 98 -> 99 and the total 1348 -> 1352. No gate was deleted; the delta is +4/+1 and
 # nothing else moved.
-EXPECTED_KAT_TOTAL = 1352
-EXPECTED_KAT_FILES = 99
+# D.1 (GEN/PORT) adds Midfall/Instances/PoseidonInputs.lean: a NEW file in the suite carrying NINE
+# '#eval ... -- expect true' gates (the pure VK/plan round-trip, the two IO-equality KATs the card
+# asks for, the pure model's .ok and validate_layout, the ctx/blocks equality, the pure whole-file
+# render, and the pure-vs-derived model cross-check). So the file count goes 99 -> 100 and the total
+# 1352 -> 1361. No gate was deleted; the delta is +9/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1361
+EXPECTED_KAT_FILES = 100
 
 # Only these shapes count as #eval output.
 #

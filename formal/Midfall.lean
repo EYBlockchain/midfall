@@ -74,6 +74,7 @@ import Midfall.Instances.HoldsFinal
 import Midfall.Instances.CurveSurface
 import Midfall.Instances.IrCheckBlindness
 import Midfall.Instances.DeployedProfile
+import Midfall.Instances.PoseidonInputs
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Lowering.AccEncoding
