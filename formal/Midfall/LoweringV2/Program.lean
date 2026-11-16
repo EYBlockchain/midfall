@@ -18,7 +18,7 @@
 -/
 import Midfall.Lowering.GenAstDispatch
 import Midfall.Lowering.InlineConstants
-import Midfall.Lowering.FrameWalk
+import Midfall.LoweringV2.Shared
 import Midfall.Generator.Artifacts
 import Midfall.Generator.Contracts
 import Midfall.Generator.YulGolden
@@ -121,10 +121,11 @@ def sliceOf (pv : PlanView) (m : Model) (q : Partial) : YulBlock :=
   Inline.inlineContractConstants (constTableOf m) (GenAst.emitPartial pv q)
 
 /-- Closedness, decidably: the only free names of the inlined main block are the wrapper locals.
-    `FrameWalk.freeNames` is not kernel-reducible, so this is discharged by `native_decide` in
+    `Shared.freeNames` (the copy of `FrameWalk.freeNames`) is not kernel-reducible, so this is
+    discharged by `native_decide` in
     `Instances/` (D-P17), per render. -/
 def mainClosed (pv : PlanView) (m : Model) : Bool :=
-  (FrameWalk.freeNames (Inline.inlineContractConstants (constTableOf m) (mainAsmRaw pv))).all
+  (freeNames (Inline.inlineContractConstants (constTableOf m) (mainAsmRaw pv))).all
     fun x => x == "vk" || x == "quotientEvaluator"
 
 /-! ## 4. Codegen agreement: the AST IS the text the ported codegen prints -/

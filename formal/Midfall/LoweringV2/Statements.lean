@@ -33,11 +33,9 @@
   contract, production render. Each restriction is lifted by a named later package.
 -/
 import Midfall.LoweringV2.Program
-import Midfall.Lowering.Surface
-import Midfall.Lowering.Partials
+import Midfall.LoweringV2.Shared
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Calldata
-import Midfall.Lowering.Accumulator
 import Midfall.Assumptions.Eip2537
 import Midfall.Assumptions.Codec
 import Midfall.Halo2.Exec.Native

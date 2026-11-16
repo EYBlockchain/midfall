@@ -1,6 +1,6 @@
 # STATUS — overwritten by every ticket (≤ 1 page)
 
-**As of:** `b8ca493` (2026-11-16 19:55Z). v1 frozen at tag `formal/v1-final` (`a680b5c`).
+**As of:** `b035cf1` (2026-11-16 20:05Z). v1 frozen at tag `formal/v1-final` (`a680b5c`).
 Numbers below are from tool output the orchestrator ran itself, not from a subagent report.
 
 **Plan:** `docs/plans/PLAN-V2.md` (what) · `docs/plans/EXECUTION-V2.md` (how) · live queue
@@ -26,8 +26,10 @@ and `ir_refines_field_is_false` on `[propext, Classical.choice, Quot.sound]`, an
 `stuck_satisfies_every_post` on `[propext]` alone. **This is the formal basis for retiring v1**, now
 kernel-checked inside the tree rather than asserted in a plan.
 
-**In flight:** none. Next READY: **Q0.2** (cut V2 off the retired modules; land the cone tool) and new
-**Q0.1b** (one line: give `gen_sorry.sh` an owner case for `Midfall/LoweringV2/*`).
+**In flight:** **Q0.2** (INFRA/PORT, branch `t/Q0.2` from `b035cf1`) — cut V2 off the 14 retired
+modules and land the cone tool. Its `ConeReport` output becomes the baseline cone numbers.
+Q0.1b was done by the orchestrator (one-line script edit, no theorem) at `b035cf1`.
+Next READY after Q0.2: **Q0.3** (freeze the V2 surface; one `verify.sh`).
 
 **Last ticket:** Q0.1 · INFRA · KAT. Outcome **DONE**, squash-merged at `b8ca493`. Cone delta: n/a (no
 cone tool yet). Files: 874 insertions, 0 deletions, no v1 or frozen file touched.

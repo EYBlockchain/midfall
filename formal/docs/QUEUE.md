@@ -53,7 +53,7 @@ INFRA · KAT · box 1.5 h · Sonnet · after T0.4
   likeliest is `check_duplicate_facts.py` discovering `Render`'s fields), merge Q0.1 and issue card
   **Q0.1b**: narrow that gate's scan to its v1 paths (one line, no V2 entries).
 
-### Q0.1b — Give gen_sorry.sh an owner case for Midfall/LoweringV2/*  [READY]
+### Q0.1b — Give gen_sorry.sh an owner case for Midfall/LoweringV2/*  **[MERGED b035cf1]**
 
 INFRA · KAT · box 0.25 h · Sonnet · after Q0.1
 

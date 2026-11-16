@@ -123,3 +123,4 @@ import Midfall.Conformance.Replay
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Statements
 import Midfall.Lowering.LegacyVacuity
+import Midfall.Tools.ConeReport

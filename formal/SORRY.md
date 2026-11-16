@@ -44,12 +44,12 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Lowering/Snapshot.lean | 387 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/Surface.lean | 718 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/VkDigest.lean | 72 | `sorry` | P-SE: semantic equivalence obligations |
-| Midfall/LoweringV2/Program.lean | 201 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
-| Midfall/LoweringV2/Statements.lean | 371 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
-| Midfall/LoweringV2/Statements.lean | 377 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
-| Midfall/LoweringV2/Statements.lean | 388 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
-| Midfall/LoweringV2/Statements.lean | 417 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
-| Midfall/LoweringV2/Statements.lean | 450 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Program.lean | 202 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Statements.lean | 369 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Statements.lean | 375 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Statements.lean | 386 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Statements.lean | 415 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall/LoweringV2/Statements.lean | 448 | `sorry` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall/Statements.lean | 95 | `Spec.accepts E H F params vk inst ms := by s` | frozen statements (S1..S7 land later) |
 | Midfall/Statements.lean | 123 | `verifyMsgs (Gₜ := Gₜ) E keccak256 Features.s` | frozen statements (S1..S7 land later) |
 | Midfall/Yul/Bridge.lean | 472 | `sorry` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
