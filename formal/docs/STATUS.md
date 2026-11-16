@@ -46,14 +46,20 @@ add `hR : R.Valid` to the headline. **I am not asking permission to continue** �
 READY and unaffected, and I am working them. But no card may claim DONE on §6 until this is resolved,
 and `HypothesesInhabited` must not be reported as evidence of readiness in the meantime.
 
-**Register** (not progress): **45**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
+**Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: Q0.4b** (land the probe's `entryFrame_witness` — it closes the
+**In flight:** none. Next READY: **D.1** (deployment generator inputs as pure terms, GEN, 2.5 h box) - the first card that can move a cone. Q0.5 remains BLOCKED on the R-72 decision above.
 `entryFrame_inhabited` sorry at `Blocks.lean:185` generically) and **D.1** (deployment generator
 inputs as pure terms, GEN).
 
-**Last ticket:** Q0.4 · INFRA · PROBE · read-only. Outcome **HIT/NEGATIVE-with-evidence**, merged
+**TICKET Q0.4b (merged `3034c6a`):** `entryFrame_inhabited` PROVED, axioms
+`[propext, Classical.choice, Quot.sound]`, register 45 to 44. **Cone delta: NONE - both roots
+still read 1.** This was bookkeeping, not progress: the roots are bare sorries with no body that
+could reference the lemma. The card also caught a mis-scope in the orchestrator brief (four
+`probeW*` decls named as helpers of `entryFrame_witness`, which they are not) and refused to
+land them as dead code. Next READY: **D.1**. **Q0.5 still BLOCKED** on the R-72 decision.
+
 `70f8111` (REVIEW.md R-72 only). **Cone delta: none** — probe card, no Lean landed. Probe sources
 survive at `/tmp/q04/probe1.lean` and `probe2.lean` for Q0.4b to land.
 

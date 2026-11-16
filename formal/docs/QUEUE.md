@@ -153,7 +153,7 @@ INFRA · PROBE · box 1 h · fresh subagent, read-only · after Q0.3
 
 ---
 
-### Q0.4b — Land the probe's generic inhabitation proofs  [READY]
+### Q0.4b — Land the probe's generic inhabitation proofs  **[MERGED 3034c6a - cone did NOT move]**
 
 INFRA · PROOF · box 0.75 h · Sonnet · after Q0.4
 
