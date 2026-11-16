@@ -1669,3 +1669,38 @@ edited here: `ir_refines`, `ShellModel.armBody`, `RunShell` and `wrap` are untou
 `ir_refines_refuted_at_the_imported_artifact`, retracted by P-INLINE and never re-established, IS
 back: `RunLegRouted.ir_refines_refuted_at_the_imported_artifact`, at the real solc artifact,
 unconditionally, with both sides inhabited and each side's view unique.
+
+### D-P43 (ORCHESTRATOR DECISION) - close the model arm: armBody must be the inlined program
+
+Prompted by P-RUNLEG. wrap_routed_uninhabited proves the model side has NO OBSERVATION AT ALL on routed
+calldata, because ShellModel.armBody S is the un-inlined fragment.
+
+Why this is mine to decide: D-P39 explicitly declined to touch armBody, on the grounds that changing it
+would change ShellModel.wrap. P-RUNLEG shows that was backwards - changing it is exactly what is
+required, and the control proves the entry path is innocent: the dispatcher over the CLOSED arm reverts
+with the same four bytes as the bare closed arm.
+
+Decision:
+1. ShellModel.armBody S := armProgram S - the inlined, closed program. Contract constants are already
+   inlined by D-P39's transform; the two locals are already bound by bindLocals. Nothing new is
+   invented - the same embedding applied one place further out.
+2. Restate every pin citing armBody in the same commit, fingerprint and duplicate-fact registries moved
+   together (D-P27). Expect the FrameWalk and FrameWalkWitness theorems to need re-checking, since the
+   block they walked changes.
+3. Then re-run the routed comparison. Both outcomes are informative:
+   - Agree: M2 is gone, ir_refines is no longer refuted that way, and F2 becomes live on its merits
+     rather than as a repair.
+   - Still disagree: the cause is the ABORT ENCODING - the artifact revert_error is revert(0,0), zero
+     bytes, while the emitted fail(sel) is revert(0,4). Name it and stop; that is D-P44 decision.
+
+Evidence this is the right repair: P-RUNLEG perturbation P4 - extending the locals to bind
+EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH_WORD makes gate_no_stmts no longer apply. The repair was
+simulated at the environment before being made in the spec.
+
+Also fixed: RunShellInversion.lean lines 27-32 still say curveSurface.bindLocals is empty and list vk as
+free. Since D-P39 it is shellLocalLets and the free names are the 59 contract constants. Stale prose is
+a false premise waiting for the next agent.
+
+Falsifiability: D-P43 stands or falls on the re-run routed comparison. If the sides agree, M2 is gone.
+If not, the abort encoding is the real mechanism and D-P43 was a partial fix - still progress, recorded
+as such.
