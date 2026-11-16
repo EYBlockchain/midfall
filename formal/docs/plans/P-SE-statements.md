@@ -72,6 +72,61 @@ invent a different statement.
 * **PLAN 13's calldata-canonicity risk note** said trailing bytes and words >= r may be
   accepted. P-12 measured the decoder is **EXACT**; corrected in `28c1e8d`.
 
+## AUDIT GAP: sorry'd theorems with NO sketch in sections A-R
+
+**THE GAP, NAMED.** The rule at the head of this file is that the statements to prove are the
+Lean sketches in `P-SE-semantic-equivalence.md` sections A-R, and that every P-SE package
+audits its proof statements against them. **That rule cannot cover eleven of the forty
+tracked `sorry`s**, because those eleven theorem names appear ZERO times in the plan file -
+not in A-R, not in the index, not anywhere. They come from design documents and from earlier
+packages' own decisions. The rule has therefore been silently assuming a coverage it does not
+have: a package that faithfully "audits every statement against the sketches" finds nothing to
+audit for these eleven, and reports success. That is not agreement, it is an unexamined set.
+
+Measured by script over `SORRY.md` (40 tracked holes) against
+`docs/plans/P-SE-semantic-equivalence.md`: **29 name-match, 11 do not.** The eleven split
+into two very different kinds, and only the first is a true hole in the rule.
+
+### Kind 1 - no sketch anywhere (5). These are the audit hole.
+
+| theorem | file:line | actual source | what the plan has instead |
+|---|---|---|---|
+| `qvm_compile_correct_stream` | `Lowering/QvmFold.lean:434` | D-P20 claim 1 (the per-STREAM fold agreement), design1 M6; carried into `P-QVM.md`/`P-QVMARMS.md` as one of the six quotient-VM holes | `qvm_compile_correct_identity` / `_certifier` / `_program` are sketched at 2031/2056/2063. D-P20 splits `qvm_compile_correct` into TWO claims and the plan sketches only claim 2. Claim 1 has no sketch at all - the name occurs 0 times |
+| `identityCorrespondence_of_bridge` | `Lowering/QvmFold.lean:338` | design1's `IdentityCorrespondence` bridge, restated in `P-QVM.md`; the name occurs 0 times in the plan | Section P sketches the `QuotientExpr`-from-`Expression` direction (`quotient_expr_from_expression`) and section Q the `qvm_yul_refines` field, but no `IdentityCorrespondence` statement |
+| `rel_worldLocal` | `Yul/Bridge.lean:872` | `docs/design.md` and the attack.md line-36 FIX; named in `P-SE-stage6.md` | The plan sketches `WorldLocal` as a DEF (line 195) and `honestCalls_worldLocal` (line 713). This theorem is about the CALL RELATION's insensitivity to the caller projection, and it is a REFUTATION exhibit: the committed doc comment says the property "does NOT hold for the evaluator slot as sketched". A statement whose purpose is to record a refutation cannot be audited against a sketch that asserts the opposite |
+| `partialSound_of_alwaysReverts` | `Lowering/Partials.lean:1330` | `docs/ETA.md` only | Section N sketches `partials : PartialSpecs S product` as ONE field. This is a meta-lemma about the always-reverting partial, not one of its components |
+| `partialProgress_not_of_alwaysReverts` | `Lowering/Partials.lean:1344` | `docs/ETA.md` only | as above |
+
+### Kind 2 - subject sketched, theorem name is Lean-side (6)
+
+`transcriptParser_spec`, `lagrange_spec`, `lagrange_progress_spec`, `quotientLin_spec`,
+`finalPairing_progress_spec` and `finalPairing_acc_spec` (`Lowering/Partials.lean`:574,
+597, 620, 648, 791, 851). Section N sketches the per-partial contracts as the single field
+`partials : PartialSpecs S product` - "the per-partial contracts (Partials.lean), including
+the pulled-forward finalPairing_spec" - so the SUBJECT of each is sketched, but as structure
+FIELDS (`.transcriptParser`, `.lagrange`, `.finalPairing`) rather than as theorem names, and
+the `_progress_spec` / `_acc_spec` splits are Lean-side refinements the sketch never made.
+These six are auditable by matching a theorem to the field it discharges; they are NOT
+auditable by name. Recorded here so the match is explicit rather than inferred.
+
+### What this changes about the standing instruction
+
+1. **"Audit every proof statement against the sketches in A-R" is not a total procedure.**
+   It has a domain of 29 of 40 tracked holes. A package that runs it and reports "all
+   statements audited" has checked 72.5% of the register and said 100%.
+2. **The five Kind-1 statements need a named authority of their own.** Until someone writes
+   the claim-1 stream sketch and an `IdentityCorrespondence` sketch into the plan, their
+   normative source is the design document that introduced them, and the audit must be run
+   against THAT - or the absence must be reported, which is what this section does.
+3. **A refutation exhibit is not a sketch deviation.** `rel_worldLocal` is tracked as a hole
+   precisely because the sketched property is false for the evaluator slot. Auditing it
+   against section Q would "find" a deviation that is the whole point of the theorem.
+4. **The gap is not new and it was not noticed.** `qvm_compile_correct_stream` and
+   `identityCorrespondence_of_bridge` have been in the register since P-QVM stated them, and
+   six packages audited against A-R before this one without the absence surfacing. The
+   orchestrator confirmed the zero-occurrence count before this package started; the script
+   in this package reproduced it and found nine more.
+
 ## Required reading order for a stage brief
 
 1. This map - your section's line range.

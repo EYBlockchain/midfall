@@ -1521,6 +1521,712 @@ theorem evalQuotientIdentityLoop_fuelNeverBinds
         exact ih (j + step.consumed) step.stack step.mem hsub hcon
       · simp [Midfall.Generator.evalQuotientIdentityLoop.go, hlt]
 
+
+/-! ### 8. The read bound: every operand read fits inside the stride (P-READOFF) -/
+
+/-- No read fault: the computation never names the read-past-end class.
+
+    WHY THIS PREDICATE EXISTS. Section 7 proved that the interpreter's 'consumed' and the
+    validator's 'quotientOpLen' agree, and R-70 measured that
+    'qvm_validated_noBoundsFault' needs a SECOND, different fact: that every operand the
+    interpreter READS lies inside the stride it is about to advance by. Agreement on
+    strides says nothing about read offsets - an arm could declare a byte it never reads,
+    or read one byte past its declaration, and both walkers would still agree.
+
+    'NoRF' is the operational reading of "the read fits": a computation names no
+    read-past-end fault. Every fault the reference can raise comes from one of six readers
+    (byteAt, readU16, readU32, constAt, popStack, indexOrPanic) plus three explicit
+    throws, and only the first three can name readPastEnd - so a step is NoRF as soon as
+    its byte reads are inside the buffer, whatever the constant table or the stack does.
+    That decomposition is what makes the 26-arm pass mechanical, and it is why the lemma
+    below is stated against the STRIDE rather than against a per-arm numeral: the four
+    dynamic arms have no numeral (RUN is 3+5n, AFFINE_SUM is 5+3l+5p, MODARITH7 is a
+    header plus five counted blocks), which is exactly why P-QVMARMS could measure them
+    and not prove them.
+
+    THE LIMIT OF THE MEASUREMENT, stated rather than hidden. The differential enumeration
+    in the gates below shows the read extent EQUALS the stride on every arm that reads at
+    all. That is a fact about the payload the enumeration engineered, not a property of the
+    arm: nothing in the validator forbids a stride that over-declares, and a thinner payload
+    makes an arm read less. So what the enumeration establishes is that NO COUNTEREXAMPLE
+    EXISTS to the weak form under a payload built to defeat the guards. The weak form -
+    reads inside the stride - is what is proved below and what the hole needs. R-70's
+    warning ("do not strengthen it") is honoured: no lemma here claims the reads fill the
+    stride. -/
+def NoRF {α : Type} (x : Except QVMFault α) : Prop :=
+  ∀ i, x ≠ .error (QVMFault.readPastEnd i)
+
+namespace NoRF
+
+theorem ok {α : Type} (a : α) : NoRF (Except.ok a) := by
+  intro i h; cases h
+
+theorem error {α : Type} (e : QVMFault) (h : ∀ i, e ≠ QVMFault.readPastEnd i) :
+    NoRF (Except.error (α := α) e) := by
+  intro i hh
+  exact h i (Except.error.inj hh)
+
+/-- Bind preserves the read bound: a fault of the read class is either the left action's
+    own or the continuation's on the value the left action returned. -/
+theorem bind {α β : Type} {x : Except QVMFault α} {f : α → Except QVMFault β}
+    (hx : NoRF x) (hf : ∀ a, NoRF (f a)) : NoRF (x >>= f) := by
+  intro i h
+  cases x with
+  | ok a => exact hf a i h
+  | error e => exact hx i (congrArg Except.error (Except.error.inj h))
+
+/-- The equation-carrying bind rule. Plain 'bind' is not enough for the counted folds: the
+    induction hypothesis has to know that the intermediate state's CURSOR is the one the
+    step function produced, and the plain rule hands the continuation an arbitrary value. -/
+theorem bind2 {α β : Type} (x : Except QVMFault α) (f : α → Except QVMFault β)
+    (hx : NoRF x) (hf : ∀ a, x = .ok a → NoRF (f a)) : NoRF (x >>= f) := by
+  cases x with
+  | ok a => exact hf a rfl
+  | error e =>
+      have hne : ∀ i, e ≠ QVMFault.readPastEnd i := by
+        intro i hh
+        exact hx i (congrArg (Except.error (α := α)) hh)
+      exact NoRF.error e hne
+
+/-- Matching a pair is never the source of a read fault: the arms of such a match are the
+    two projections applied to the scrutinee. Needed because the reference's ported 'let
+    (a, b) := e' blocks hide behind a stuck match when 'e' is a memory derivation, so the
+    counted folds sit behind one. -/
+theorem pair_match {ε α β : Type} (e : ε × α) (f : ε → α → Except QVMFault β)
+    (h : ∀ x y, NoRF (f x y)) : NoRF (match e with | (x, y) => f x y) := by
+  cases e with
+  | mk x y => exact h x y
+
+/-- LOOP LEMMA, plain form: a fold whose every step names no read fault names none. Used
+    by the blocks whose only in-loop byte read is the PANIC-class one. -/
+theorem fold_noRF {α : Type} : ∀ (n : Nat) (init : α)
+    (f : Nat → α → Except QVMFault α),
+    (∀ (i : Nat) (a : α), i < n → NoRF (f i a)) →
+      NoRF (Midfall.Generator.foldRangeIdxM n init f) := by
+  intro n
+  induction n with
+  | zero => intro init f _; exact NoRF.ok _
+  | succ k ih =>
+      intro init f hf
+      have hgo : Midfall.Generator.foldRangeIdxM (k+1) init f =
+          (f 0 init >>= fun x =>
+             Midfall.Generator.foldRangeIdxM k x (fun i => f (i+1)) >>= fun y => .ok y) := rfl
+      rw [hgo]
+      exact NoRF.bind (hf 0 init (by omega))
+        (fun x => NoRF.bind
+          (ih x (fun i => f (i+1)) (fun i a hi => hf (i+1) a (by omega)))
+          (fun _ => NoRF.ok _))
+
+/-- LOOP LEMMA for the counted blocks. A stride-'w' fold of 'n' blocks over a cursor that
+    starts at 'c₀' names no read fault whenever 'c₀ + w·n ≤ L', every step reads only
+    below 'L', and every successful step advances the cursor by exactly 'w'.
+
+    This is the read-side twin of 'foldRangeIdxM_ok_advance' (section 7), and it is the
+    mechanism R-70 named as "the tool that would do" the dynamic arms: their stride is a
+    function of operand bytes read mid-instruction, so the bound cannot be a numeral per
+    arm and has to be carried through the fold as an invariant on the cursor. The
+    invariant is stated on the cursor ('s.2.1 + w ≤ L') rather than on the block index
+    because the fold's own recursion shifts the index, not the cursor. -/
+theorem fold_blocks_noRF {β : Type} (w L : Nat) :
+    ∀ (n : Nat) (init : QVMFr × Nat × β)
+      (f : Nat → QVMFr × Nat × β → Except QVMFault (QVMFr × Nat × β)),
+      init.2.1 + w * n ≤ L →
+      (∀ (i : Nat) (s : QVMFr × Nat × β), i < n → s.2.1 + w ≤ L → NoRF (f i s)) →
+      (∀ (i : Nat) (s r : QVMFr × Nat × β), i < n → f i s = .ok r → r.2.1 = s.2.1 + w) →
+      NoRF (Midfall.Generator.foldRangeIdxM n init f) := by
+  intro n
+  induction n with
+  | zero => intro init f _ _ _; exact NoRF.ok _
+  | succ k ih =>
+      intro init f hinit hf hadv
+      have hw : w ≤ w * (k+1) := by nlinarith
+      have h0 : init.2.1 + w ≤ L := by omega
+      have hstep : NoRF (f 0 init) := hf 0 init (by omega) h0
+      have hgo : Midfall.Generator.foldRangeIdxM (k+1) init f =
+          (f 0 init >>= fun x =>
+             Midfall.Generator.foldRangeIdxM k x (fun i => f (i+1)) >>= fun y => .ok y) := rfl
+      rw [hgo]
+      refine NoRF.bind2 (f 0 init)
+        (fun x => Midfall.Generator.foldRangeIdxM k x (fun i => f (i+1)) >>= fun y => .ok y)
+        hstep (fun x hx => ?_)
+      have hw' : x.2.1 = init.2.1 + w := hadv 0 init x (by omega) hx
+      have hmul : w * (k+1) = w + w * k := by ring
+      have hrec : x.2.1 + w * k ≤ L := by omega
+      exact NoRF.bind
+        (ih x (fun i => f (i+1)) hrec
+          (fun i s hi hs => hf (i+1) s (by omega) hs)
+          (fun i s r hi hr => hadv (i+1) s r (by omega) hr))
+        (fun _ => NoRF.ok _)
+
+end NoRF
+
+/-! #### The six readers, sorted by whether they can name a read fault at all -/
+
+/-- 'byteAt' inside the buffer names no read fault. -/
+theorem byteAt_noRF (bytes : List Nat) (k : Nat) (hk : k < bytes.length) :
+    NoRF (Midfall.Generator.byteAt bytes k) := by
+  unfold Midfall.Generator.byteAt
+  have hne : bytes.drop k ≠ [] := by
+    intro hh
+    have hlen : (bytes.drop k).length = bytes.length - k := List.length_drop
+    rw [hh] at hlen
+    simp at hlen
+    omega
+  cases h : bytes.drop k with
+  | cons b rest => exact NoRF.ok b
+  | nil => exact absurd h hne
+
+/-- 'readU16' is two 'byteAt' calls, so it needs two bytes. -/
+theorem readU16_noRF (bytes : List Nat) (k : Nat) (hk : k + 1 < bytes.length) :
+    NoRF (Midfall.Generator.readU16 bytes k) := by
+  unfold Midfall.Generator.readU16
+  refine NoRF.bind (byteAt_noRF bytes k (by omega)) (fun _ => ?_)
+  refine NoRF.bind (byteAt_noRF bytes (k+1) (by omega)) (fun _ => NoRF.ok _)
+
+/-- 'readU32' is four 'byteAt' calls. -/
+theorem readU32_noRF (bytes : List Nat) (k : Nat) (hk : k + 3 < bytes.length) :
+    NoRF (Midfall.Generator.readU32 bytes k) := by
+  unfold Midfall.Generator.readU32
+  refine NoRF.bind (byteAt_noRF bytes k (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (k+1) (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (k+2) (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (k+3) (by omega)) (fun _ => NoRF.ok _))))
+
+/-- 'fqFromU256' names the canonicality PANIC, never a read fault. -/
+theorem fqFromU256_noRF (value : Midfall.Word256) :
+    NoRF (Midfall.Generator.fqFromU256 value) := by
+  unfold Midfall.Generator.fqFromU256
+  by_cases hb : value.toNat < qvmFrModulus
+  · rw [if_pos hb]; exact NoRF.ok _
+  · rw [if_neg hb]
+    exact NoRF.error (QVMFault.panic
+      "proofs/solidity-verifier/src/lowering/quotient_numerator/vm/reference.rs:548")
+      (by intro i h; cases h)
+
+/-- 'constAt' names the slot fault or the canonicality panic. It reads the CONSTANT TABLE,
+    not the program bytes, so it is structurally incapable of a readPastEnd - which is what
+    splits the hole into its two halves. No argument about bytes discharges the table half,
+    and no argument about the table discharges the bytes half. -/
+theorem constAt_noRF (consts : List Midfall.Word256) (slot idx : Nat) :
+    NoRF (Midfall.Generator.constAt consts slot idx) := by
+  unfold Midfall.Generator.constAt
+  cases hcs : consts.drop slot with
+  | cons v rest => show NoRF (Midfall.Generator.fqFromU256 v); exact fqFromU256_noRF v
+  | nil =>
+      exact NoRF.error (QVMFault.constSlotOutOfRange slot idx)
+        (by intro i h; cases h)
+
+/-- 'popStack' names the stack-underflow fault only. -/
+theorem popStack_noRF (stack : List QVMFr) (idx : Nat) :
+    NoRF (Midfall.Generator.popStack stack idx) := by
+  unfold Midfall.Generator.popStack
+  cases stack with
+  | nil => exact NoRF.error (QVMFault.stackUnderflow idx) (by intro i h; cases h)
+  | cons v rest => exact NoRF.ok (v, rest)
+
+/-- 'indexOrPanic' - the one read in the reference that PANICS rather than returning Err
+    (QVR:427, hazard 5's pair with the up-front guard) - names the panic class, never
+    readPastEnd. This is why the pairwise coefficient block is free in the read bound: the
+    guard is the only bounds-checked read of that block and the 49 indexed reads after it
+    cannot produce the fault the hole excludes. -/
+theorem indexOrPanic_noRF (bytes : List Nat) (k : Nat) :
+    NoRF (Midfall.Generator.indexOrPanic bytes k) := by
+  unfold Midfall.Generator.indexOrPanic
+  cases h : bytes.drop k with
+  | cons b rest => exact NoRF.ok b
+  | nil =>
+      exact NoRF.error (QVMFault.panic
+        "proofs/solidity-verifier/src/lowering/quotient_numerator/vm/reference.rs:427")
+        (by intro i hh; cases hh)
+
+/-! #### The five shape helpers, read-bounded -/
+
+/-- The fused affine product term reads 5 bytes at idx..idx+4 and returns that as its
+    length; the read bound and 'affineProductTerm_ok_mid' (section 7) are the same numeral
+    from two different directions. -/
+theorem affineLinearTerm_noRF (bytes : List Nat) (idx : Nat)
+    (hfit : idx + 3 ≤ bytes.length) (consts : List Midfall.Word256)
+    (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.affineLinearTerm bytes consts mem idx) := by
+  unfold Midfall.Generator.affineLinearTerm
+  refine NoRF.bind (readU16_noRF bytes idx (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (idx+2) (by omega)) (fun _ =>
+    NoRF.bind (constAt_noRF consts _ idx) (fun _ => NoRF.ok _)))
+
+/-- The fused affine product term reads 5 bytes at idx..idx+4. -/
+theorem affineProductTerm_noRF (bytes : List Nat) (idx : Nat)
+    (hfit : idx + 5 ≤ bytes.length) (consts : List Word256)
+    (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.affineProductTerm bytes consts mem idx) := by
+  unfold Midfall.Generator.affineProductTerm
+  refine NoRF.bind (readU16_noRF bytes idx (by omega)) (fun _ =>
+    NoRF.bind (readU16_noRF bytes (idx+2) (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (idx+4) (by omega)) (fun _ =>
+    NoRF.bind (constAt_noRF consts _ idx) (fun _ => NoRF.ok _))))
+
+/-- The seven-limb linear block reads 3 bytes per limb at cursors idx, idx+3, ..., idx+18,
+    so its read extent is 21 = 3 · quotientVmLimbs - the numeral 'limbLinearForm_ok_mid'
+    proves from the other side. This is where the fold invariant earns its keep: the cursor
+    is not a numeral in the term, it is the second component of the fold state, so the
+    bound has to be carried through 'fold_blocks_noRF'. -/
+theorem limbLinearForm_noRF (bytes : List Nat) (idx : Nat)
+    (hfit : idx + 3 * quotientVmLimbs ≤ bytes.length) (consts : List Word256)
+    (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.limbLinearForm bytes consts mem idx) := by
+  have key := NoRF.fold_blocks_noRF (β := QuotientRefMemory) 3 bytes.length
+  unfold Midfall.Generator.limbLinearForm
+  refine NoRF.bind (key quotientVmLimbs (qvmFrZero, idx, mem) _ ?_ ?_ ?_) (fun _ => NoRF.ok _)
+  · simp only [Prod.snd, Prod.fst]
+    omega
+  · intro i s hi hs
+    obtain ⟨acc, cursor, m⟩ := s
+    refine NoRF.bind (byteAt_noRF bytes cursor (by
+        simp only [Prod.snd, Prod.fst] at hs ⊢; omega)) (fun slot =>
+      NoRF.bind (readU16_noRF bytes (cursor+1) (by
+        simp only [Prod.snd, Prod.fst] at hs ⊢; omega)) (fun _ =>
+      NoRF.bind (constAt_noRF consts slot cursor) (fun _ => NoRF.ok _)))
+  · intro i s r hi hr
+    obtain ⟨acc, cursor, m⟩ := s
+    obtain ⟨acc', cursor', m'⟩ := r
+    obtain ⟨slot, _, hr⟩ := peel_bind hr
+    obtain ⟨ptr, _, hr⟩ := peel_bind hr
+    obtain ⟨c, _, hr⟩ := peel_bind hr
+    rcases m.literal ptr with ⟨v, mm⟩
+    simp at *
+    omega
+
+/-- The row block is a u16 plus the linear block at idx+2: extent 2 + 21 = 23, the numeral
+    'limbRowForm_ok_mid' proves. -/
+theorem limbRowForm_noRF (bytes : List Nat) (idx : Nat)
+    (hfit : idx + 23 ≤ bytes.length) (consts : List Word256)
+    (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.limbRowForm bytes consts mem idx) := by
+  unfold Midfall.Generator.limbRowForm
+  refine NoRF.bind (readU16_noRF bytes idx (by omega)) (fun _ =>
+    NoRF.bind (limbLinearForm_noRF bytes (idx+2) ?_ consts _) (fun _ => NoRF.ok _))
+  · have hl : quotientVmLimbs = 7 := rfl
+    omega
+
+/-- The pairwise block reads FOUR header bytes plus the coefficient guard at
+    coeffIdx + 12 = idx + 16, so its read extent is 17 = 4 + quotientVmPairwiseCoeffs -
+    and the stride the table declares for the ARM is 18 because the opcode byte is not part
+    of the helper's view. This is the arm R-70 called "one arithmetic slip away" from
+    declaring a byte it never reads: the margin is exactly that opcode byte.
+
+    The 49 indexed coefficient reads inside the fold are the PANIC class, not readPastEnd
+    ('indexOrPanic_noRF'), so the fold is unconditionally NoRF and needs no cursor
+    invariant - the up-front guard is the only bounds-checked read of the block, which is
+    hazard 5's pair in two adjacent lines and is now a proved distinction rather than a
+    comment. -/
+theorem limbPairwiseForm_noRF (bytes : List Nat) (idx : Nat)
+    (hfit : idx + 4 + quotientVmPairwiseCoeffs ≤ bytes.length)
+    (consts : List Word256) (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.limbPairwiseForm bytes consts mem idx) := by
+  have hc : quotientVmPairwiseCoeffs = 13 := rfl
+  unfold Midfall.Generator.limbPairwiseForm
+  refine NoRF.bind (readU16_noRF bytes idx (by omega)) (fun _ =>
+    NoRF.bind (readU16_noRF bytes (idx+2) (by omega)) (fun _ =>
+    NoRF.bind (byteAt_noRF bytes (idx + 4 + quotientVmPairwiseCoeffs - 1) (by omega))
+      (fun _ => NoRF.bind (NoRF.fold_noRF quotientVmLimbs (qvmFrZero, mem) _ ?_)
+        (fun _ => NoRF.ok _))))
+  · intro i a hi
+    obtain ⟨acc, m⟩ := a
+    dsimp only
+    apply NoRF.fold_noRF
+    intro j b hj
+    refine NoRF.bind (indexOrPanic_noRF bytes _) (fun _ =>
+      NoRF.bind (constAt_noRF consts _ _) (fun _ => NoRF.ok _))
+
+/-- THE PER-ARM READ BOUND, 22 arms (P-READOFF deliverable 2). For each of the 22 static
+    identity arms: when the validator's walker gives the instruction at index 0 a stride and
+    that stride FITS INSIDE THE BUFFER, the interpreter's step names no read-past-end fault.
+
+    This is the second per-arm fact R-70 said 'qvm_validated_noBoundsFault' needs, and it is
+    a DIFFERENT fact from 'evalQuotientIdentityStep_consumed_agrees' (section 7): that one
+    compares two numbers, this one bounds where bytes are touched. Neither implies the other
+    - an arm could agree on the stride and still read past it, or read short and disagree.
+
+    Stated against the STRIDE rather than a per-arm numeral so the four dynamic arms can
+    join the same statement; the fit hypothesis is what makes it a bound rather than a
+    tautology - drop it and ADD is a counterexample at idx = bytes.length.
+
+    CONDITIONAL BY CONSTRUCTION, for the same reason as section 7: 'hlen' is a hypothesis.
+    The interpreter refuses three shapes the walker walks (unknown MODARITH7 flags, a
+    zero-length RUN, zero AFFINE_SUM counts); those refusals are NOT read faults, which is
+    what lets this statement survive them - see the gates.
+
+    NOT INCLUDED HERE: the four dynamic arms. Two of them - the RUN pair - are proved
+    separately below ('runAddMulMemMemConstU8_noRF', 'runAddMulConstU8MemU16_noRF') because
+    their stride is a function of a count read mid-instruction and cannot be written as a
+    numeral in this case split; AFFINE_SUM and MODARITH7 are measured-agreeing and not yet
+    proved, for the chaining reason in their own doc comments. So the read bound covers
+    24 of the 26 identity arms, and the two gaps are arithmetic depth, not a missing idea. -/
+theorem evalQuotientIdentityStep_readsWithinStride
+    (op : Nat)
+    (hop : op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpLin7 \/ op = qOpBilin7Row \/ op = qOpBilin7Pairwise)
+    (rest : List Nat)
+    (len : Nat)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len)
+    (hfit : len ≤ (op :: rest).length)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.evalQuotientIdentityStep (op :: rest) consts 0 op stack mem) := by
+  rcases hop with (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpPushConst :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemLiteral :: rest) 0 = .ok 5 from rfl)] at hlen
+    obtain rfl : len = 5 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU32_noRF (qOpPushMemLiteral :: rest) 1 ?_) (fun _ => NoRF.ok _)
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemToken :: rest) 0 = .ok 2 from rfl)] at hlen
+    obtain rfl : len = 2 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (byteAt_noRF (qOpPushMemToken :: rest) 1 ?_) (fun _ => NoRF.ok _)
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemTokenOffset :: rest) 0 = .ok 6 from rfl)] at hlen
+    obtain rfl : len = 6 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (byteAt_noRF (qOpPushMemTokenOffset :: rest) 1 ?_) (fun _ =>
+        NoRF.bind (readU32_noRF (qOpPushMemTokenOffset :: rest) 2 ?_) (fun _ => NoRF.ok _))
+    · omega
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpPushMemU16 :: rest) 1 ?_) (fun _ => NoRF.ok _)
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAdd :: rest) 0 = .ok 1 from rfl)] at hlen
+    obtain rfl : len = 1 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ =>
+        NoRF.bind (popStack_noRF _ 0) (fun _ => NoRF.ok _))
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMul :: rest) 0 = .ok 1 from rfl)] at hlen
+    obtain rfl : len = 1 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ =>
+        NoRF.bind (popStack_noRF _ 0) (fun _ => NoRF.ok _))
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpNeg :: rest) 0 = .ok 1 from rfl)] at hlen
+    obtain rfl : len = 1 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    obtain rfl : len = 2 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (byteAt_noRF (qOpPushConstU8 :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    obtain rfl : len = 2 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (byteAt_noRF (qOpAddConstU8 :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    obtain rfl : len = 2 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (byteAt_noRF (qOpMulConstU8 :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpAddConst :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpMulConst :: rest) 1 ?_) (fun slot =>
+        NoRF.bind (constAt_noRF consts slot 0) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpAddMemU16 :: rest) 1 ?_) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    obtain rfl : len = 3 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpMulMemU16 :: rest) 1 ?_) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulMemMem :: rest) 0 = .ok 5 from rfl)] at hlen
+    obtain rfl : len = 5 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (readU16_noRF (qOpAddMulMemMem :: rest) 1 ?_) (fun _ =>
+        NoRF.bind (readU16_noRF (qOpAddMulMemMem :: rest) 3 ?_) (fun _ =>
+        NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)))
+    · omega
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPow5 :: rest) 0 = .ok 1 from rfl)] at hlen
+    obtain rfl : len = 1 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ => NoRF.ok _)
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulMemMemConstU8 :: rest) 0 = .ok 6 from rfl)] at hlen
+    obtain rfl : len = 6 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ =>
+        NoRF.bind (affineProductTerm_noRF (qOpAddMulMemMemConstU8 :: rest) 1 ?_ consts mem) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulConstU8MemU16 :: rest) 0 = .ok 4 from rfl)] at hlen
+    obtain rfl : len = 4 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (popStack_noRF stack 0) (fun _ =>
+        NoRF.bind (affineLinearTerm_noRF (qOpAddMulConstU8MemU16 :: rest) 1 ?_ consts mem) (fun _ => NoRF.ok _))
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpLin7 :: rest) 0 = .ok 22 from rfl)] at hlen
+    obtain rfl : len = 22 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (limbLinearForm_noRF (qOpLin7 :: rest) 1 ?_ consts mem) (fun _ => NoRF.ok _)
+    · have hl : quotientVmLimbs = 7 := rfl
+      omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpBilin7Row :: rest) 0 = .ok 24 from rfl)] at hlen
+    obtain rfl : len = 24 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (limbRowForm_noRF (qOpBilin7Row :: rest) 1 ?_ consts mem) (fun _ => NoRF.ok _)
+    · omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpBilin7Pairwise :: rest) 0 = .ok 18 from rfl)] at hlen
+    obtain rfl : len = 18 := (Except.ok.inj hlen).symm
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+    refine NoRF.bind (limbPairwiseForm_noRF (qOpBilin7Pairwise :: rest) 1 ?_ consts mem) (fun _ => NoRF.ok _)
+    · have hc : quotientVmPairwiseCoeffs = 13 := rfl
+      omega
+
+/-- D-P23 SATISFIABILITY HALF, as a theorem. The hypotheses of the read-bound lemma are
+    satisfiable at a concrete witness, and the witness is the live one: PUSH_MEM_LITERAL on
+    a five-byte instruction fits its stride, succeeds, and names no read fault. -/
+theorem reads_within_stride_hypotheses_satisfiable :
+    (∃ step, Midfall.Generator.evalQuotientIdentityStep [qOpPushMemLiteral, 0, 0, 1, 0]
+        armsWitnessConsts 0 qOpPushMemLiteral [] armsWitnessMem = .ok step
+        ∧ step.consumed = 5)
+    ∧ NoRF (Midfall.Generator.evalQuotientIdentityStep [qOpPushMemLiteral, 0, 0, 1, 0]
+        armsWitnessConsts 0 qOpPushMemLiteral [] armsWitnessMem) := by
+  refine ⟨⟨_, rfl, rfl⟩, fun i h => ?_⟩
+  cases h
+
+/-- D-P23 FALSIFICATION HALF, as a theorem. The conclusion is not a tautology: the SAME arm
+    on a three-byte instruction DOES fault readPastEnd, at byte 3 - the first byte its stride
+    claims that is missing. So "names no read fault" excludes a fault the interpreter really
+    produces, and
+    the fit hypothesis is exactly what separates the two cases. Without this the read lemma
+    could have been vacuously true on every arm. -/
+theorem reads_within_stride_conclusion_is_not_a_tautology :
+    ∃ i, Midfall.Generator.evalQuotientIdentityStep
+        [qOpPushMemLiteral, 0, 0] armsWitnessConsts 0 qOpPushMemLiteral
+        [] armsWitnessMem = .error (QVMFault.readPastEnd i) := by
+  refine ⟨3, ?_⟩
+  unfold Midfall.Generator.evalQuotientIdentityStep Midfall.Generator.readU32
+    Midfall.Generator.byteAt
+  simp (config := { decide := true }) [bind, Except.bind]
+
+/-- THE DYNAMIC ARMS, READ-BOUNDED (P-READOFF). R-70 said the four dynamic arms were
+    measurable but not provable because "their widths come from nested counted blocks, and
+    'foldRangeIdxM_ok_advance' is the tool that would do it". On the read side the twin tool
+    is 'NoRF.fold_blocks_noRF', and these two RUN arms are it working: the stride is
+    '3+5n' / '3+3n', a function of a u16 read out of the payload, so the bound is carried
+    through the fold as a cursor invariant rather than written as a numeral per arm.
+
+    NOTE THE SHAPE OF THE HYPOTHESES. Both take the decoded count as a hypothesis ('hn')
+    rather than deriving it, because the step's own first action is the read that produces
+    it - the same conditionality section 7 had to accept for the stride agreement, and for
+    the same reason: the interpreter refuses shapes the walker walks (here a zero-length
+    RUN), and a lemma that assumed the count was nonzero would be excluding a case the
+    arm actually reaches. The zero case is discharged HERE, as a throw that names
+    'zeroLengthRun' and therefore no read fault - not by a hypothesis that hides it. -/
+theorem runAddMulMemMemConstU8_noRF (bytes : List Nat) (idx n : Nat)
+    (hn : Midfall.Generator.readU16 bytes (idx + 1) = .ok n)
+    (hfit : idx + 3 + 5 * n ≤ bytes.length)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpRunAddMulMemMemConstU8 stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := { decide := true }) only [reduceIte]
+  rw [hn]
+  simp only [bind, Except.bind]
+  by_cases hc : n ≠ 0
+  · rw [if_pos (by simp [hc])]
+    refine NoRF.bind (popStack_noRF stack idx) (fun px =>
+      NoRF.bind (NoRF.fold_blocks_noRF (β := QuotientRefMemory) 5
+          (bytes.length - idx - 3) n (px.1, 0, mem) _ ?_ ?_ ?_) (fun _ => NoRF.ok _))
+    · simp only [Prod.snd, Prod.fst]
+      have h3 : idx + 3 ≤ bytes.length := by omega
+      omega
+    · intro i s hi hs
+      refine NoRF.bind (affineProductTerm_noRF bytes (idx + 3 + s.2.1) ?_ consts s.2.2)
+        (fun _ => NoRF.ok _)
+      have h3 : idx + 3 ≤ bytes.length := by omega
+      omega
+    · intro i s r hi hr
+      obtain ⟨acc, used, m⟩ := s
+      obtain ⟨acc', used', m'⟩ := r
+      obtain ⟨pw, hpw, hr⟩ := peel_bind hr
+      have hl := affineProductTerm_ok_mid hpw
+      rcases pw with ⟨v, l, mm⟩
+      simp at *
+      omega
+  · rw [if_neg (by simp [hc])]
+    refine NoRF.error (QVMFault.zeroLengthRun idx) (by intro i h; cases h)
+
+/-- The second RUN arm: '3+3n' over affine LINEAR terms of 3 bytes each. Same mechanism,
+    different stride - which is the point. -/
+theorem runAddMulConstU8MemU16_noRF (bytes : List Nat) (idx n : Nat)
+    (hn : Midfall.Generator.readU16 bytes (idx + 1) = .ok n)
+    (hfit : idx + 3 + 3 * n ≤ bytes.length)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory) :
+    NoRF (Midfall.Generator.evalQuotientIdentityStep bytes consts idx
+      qOpRunAddMulConstU8MemU16 stack mem) := by
+  unfold Midfall.Generator.evalQuotientIdentityStep
+  simp (config := { decide := true }) only [reduceIte]
+  rw [hn]
+  simp only [bind, Except.bind]
+  by_cases hc : n ≠ 0
+  · rw [if_pos (by simp [hc])]
+    refine NoRF.bind (popStack_noRF stack idx) (fun px =>
+      NoRF.bind (NoRF.fold_blocks_noRF (β := QuotientRefMemory) 3
+          (bytes.length - idx - 3) n (px.1, 0, mem) _ ?_ ?_ ?_) (fun _ => NoRF.ok _))
+    · simp only [Prod.snd, Prod.fst]
+      have h3 : idx + 3 ≤ bytes.length := by omega
+      omega
+    · intro i s hi hs
+      refine NoRF.bind (affineLinearTerm_noRF bytes (idx + 3 + s.2.1) ?_ consts s.2.2)
+        (fun _ => NoRF.ok _)
+      have h3 : idx + 3 ≤ bytes.length := by omega
+      omega
+    · intro i s r hi hr
+      obtain ⟨acc, used, m⟩ := s
+      obtain ⟨acc', used', m'⟩ := r
+      obtain ⟨lw, hlw, hr⟩ := peel_bind hr
+      have hl := affineLinearTerm_ok_mid hlw
+      rcases lw with ⟨v, l, mm⟩
+      simp at *
+      omega
+  · rw [if_neg (by simp [hc])]
+    refine NoRF.error (QVMFault.zeroLengthRun idx) (by intro i h; cases h)
+
+/-! #### The phase-2 const-slot wiring (P-READOFF deliverable 3) -/
+
+/-- THE WIRING. 'qvm_validated_noBoundsFault' excludes TWO fault classes and they need two
+    unrelated facts: the read bound is about the program BYTES, this is about the CONSTANT
+    TABLE. The interpreter's 'constAt consts slot idx' faults 'constSlotOutOfRange slot idx'
+    exactly when 'slot ≥ consts.length' - 'consts.drop slot = []' is the only way that
+    constructor is produced. The validator's phase-2 'checkQuotientConstSlot slot wide
+    model.numConsts idx' rejects exactly 'slot ≥ model.numConsts'. The two bounds MEET
+    because 'quotientOperandModel' builds the model with 'numConsts := build.consts.length',
+    and this pins it. Without this the validator would be checking slots against a number
+    nothing relates to the table the interpreter indexes, and the hole's second conjunct
+    would be unprovable in principle rather than merely unproved.
+
+    WHAT THIS DOES NOT BUY, named rather than glossed: it says the two BOUNDS coincide. It
+    does not say the interpreter reads only slots the walker visited - that is a per-arm
+    correspondence between 'evalQuotientIdentityStep' and 'visitQuotientOperands', it is a
+    third 26-arm pass, and it is the remaining obstacle to closing the hole. -/
+theorem numConsts_eq_build_length {Program Layout : Type}
+    (L : Midfall.Generator.LoweringPlan Program Layout)
+    (q : Midfall.Generator.PlannedQuotient)
+    (model : QuotientOperandModel)
+    (hmodel : Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+      q.build q.plan.selectorFold = .ok model) :
+    model.numConsts = q.build.consts.length := by
+  cases h : Midfall.Generator.quotientReadModel L.meta_ L.data L.vk L.vkMptr L.memory with
+  | error f =>
+      have herr : Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+          q.build q.plan.selectorFold = .error f := by
+        unfold Midfall.Generator.quotientOperandModel
+        rw [h]
+        simp only [bind, Except.bind]
+      exact absurd (herr ▸ hmodel) (by simp)
+  | ok rm =>
+      have hok : Midfall.Generator.quotientOperandModel L.meta_ L.data L.vk L.vkMptr L.memory
+          q.build q.plan.selectorFold =
+            .ok (QuotientOperandModel.mk rm q.build.consts.length
+              L.meta_.numSimpleSelectors q.plan.selectorFold.maxPower
+              ((L.memory.quotientStackHi - L.memory.quotientStackMptr) / wordBytes)) := by
+        unfold Midfall.Generator.quotientOperandModel
+        rw [h]
+        simp only [bind, Except.bind, pure, Except.pure]
+      rw [hok] at hmodel
+      have he : QuotientOperandModel.mk rm q.build.consts.length L.meta_.numSimpleSelectors
+          q.plan.selectorFold.maxPower
+          ((L.memory.quotientStackHi - L.memory.quotientStackMptr) / wordBytes) = model :=
+        Except.ok.inj hmodel
+      rw [← he]
+
+/-- The table half in the direction the hole needs: a slot below the table length cannot
+    produce the slot fault, whatever value is stored there. Together with
+    'numConsts_eq_build_length' this is the whole const-slot argument EXCEPT the per-arm
+    correspondence named above. -/
+theorem constAt_ok_of_lt {consts : List Midfall.Word256} {slot idx : Nat}
+    (hlt : slot < consts.length) :
+    Midfall.Generator.constAt consts slot idx ≠
+      .error (QVMFault.constSlotOutOfRange slot idx) := by
+  unfold Midfall.Generator.constAt
+  cases hcs : consts.drop slot with
+  | cons v rest =>
+      show Midfall.Generator.fqFromU256 v ≠
+        .error (QVMFault.constSlotOutOfRange slot idx)
+      intro h
+      unfold Midfall.Generator.fqFromU256 at h
+      by_cases hb : v.toNat < qvmFrModulus
+      · rw [if_pos hb] at h; cases h
+      · rw [if_neg hb] at h; cases h
+  | nil =>
+      have hlen : (consts.drop slot).length = consts.length - slot := List.length_drop
+      rw [hcs] at hlen
+      simp at hlen
+      omega
 end Midfall.Lowering
 
 
@@ -1963,5 +2669,135 @@ def arms_agreement_differential_sweep_ok : Bool :=
     && ((List.range 256).filter arms_lenOk).length == 31
     && arms_stepErrors 0x1a && ! arms_lenOk 0x1a
 #eval arms_agreement_differential_sweep_ok -- expect true
+
+/-! #### GATE - the read-extent enumeration re-run inside the build (P-READOFF) -/
+
+/-- The step at idx, on the engineered environment: does it name a read fault? Not a Rust
+    item - this is the measurement probe. -/
+def armsStepFaultsRead (bytes : List Nat) (idx : Nat) (op : Nat) : Bool :=
+  match evalQuotientIdentityStep bytes armsConsts idx op armsStack armsMem with
+  | .error (QVMFault.readPastEnd _) => true
+  | _ => false
+
+/-- THE MEASURED READ EXTENT of one arm at one index: the shortest prefix of the payload on
+    which the step stops faulting readPastEnd, relative to the instruction index. That is
+    operationally "one past the largest byte index the arm actually reads", which is the
+    only reading of "the arm reads byte k" that the port exposes - there is no read-effect
+    model in the reference and none is invented here.
+
+    999999 is the sentinel for "no prefix suffices": the instruction as claimed does not fit
+    the payload at all, which is what a readPastEnd IS. The sentinel is kept distinct from 0
+    so a truncated payload cannot be mistaken for a zero-operand arm. -/
+def armsReadExtent (bytes : List Nat) (idx : Nat) (op : Nat) : Nat :=
+  match (List.range (bytes.length + 1)).find?
+      (fun n => ! armsStepFaultsRead (bytes.take n) idx op) with
+  | some n => if n >= idx + 1 then n - idx else 0
+  | none => 999999
+
+/-- ditto, the interpreter's own stride -/
+def armsStepConsumed (bytes : List Nat) (idx : Nat) (op : Nat) : Option Nat :=
+  match evalQuotientIdentityStep bytes armsConsts idx op armsStack armsMem with
+  | .ok s => some s.consumed
+  | .error _ => none
+
+/-- The four arms that read NO operand byte: their stride is the opcode byte alone, so the
+    read extent is legitimately 0. Named as a set rather than left as an unexplained
+    residue, so the 22/26 figure cannot silently decay to 26/26 if someone forces one of
+    these four to claim a read. -/
+def readsNothingArms : List Nat := [qOpAdd, qOpMul, qOpNeg, qOpPow5]
+
+/-- GATE (P-READOFF, differential enumeration, half 1). The read-extent enumeration over
+    all 31 opcodeFixtures at each fixture's own testIdx, re-run inside the build. Four
+    conjuncts:
+      * every arm's measured read extent is at most the stride the step reports;
+      * exactly 26 of the 31 arms reach a success, so the sweep cannot be satisfied by
+        every arm erroring (the non-vacuity half);
+      * exactly 22 arms read to the stride and the four that read less are EXACTLY
+        'readsNothingArms' at extent 0 - so the padding-free observation is pinned as a
+        property of THIS payload, not claimed as a property of the arms;
+      * the extent is also at most the VALIDATOR's stride, which is the form the hole needs.
+    Rules out: an arm reading past its declared stride, and the no-read class silently
+    changing membership. -/
+def readsWithinStride_differential_fixtures_ok : Bool :=
+  (QuotientVmValidatorKats.opcodeFixtures.all fun f =>
+    match armsStepConsumed f.bytes f.testIdx f.op with
+    | some c => armsReadExtent f.bytes f.testIdx f.op <= c
+    | none => true)
+    && (QuotientVmValidatorKats.opcodeFixtures.filter fun f =>
+          (armsStepConsumed f.bytes f.testIdx f.op).isSome).length == 26
+    && (QuotientVmValidatorKats.opcodeFixtures.filter fun f =>
+          match armsStepConsumed f.bytes f.testIdx f.op with
+          | some c => armsReadExtent f.bytes f.testIdx f.op == c
+          | none => false).length == 22
+    && List.Perm ((QuotientVmValidatorKats.opcodeFixtures.filter fun f =>
+          match armsStepConsumed f.bytes f.testIdx f.op with
+          | some c => armsReadExtent f.bytes f.testIdx f.op < c
+          | none => false).map fun f => f.op) readsNothingArms
+    && (QuotientVmValidatorKats.opcodeFixtures.all fun f =>
+          match armsStepConsumed f.bytes f.testIdx f.op with
+          | none => true
+          | some _ =>
+              readsNothingArms.contains f.op == (armsReadExtent f.bytes f.testIdx f.op == 0))
+    && (QuotientVmValidatorKats.opcodeFixtures.all fun f =>
+          match QuotientValidator.quotientOpLen f.bytes f.testIdx with
+          | .ok n => armsReadExtent f.bytes f.testIdx f.op <= n
+          | .error _ => true)
+#eval readsWithinStride_differential_fixtures_ok -- expect true
+
+/-- The three dynamic arms whose GUARD short-circuits on an un-engineered payload, named as
+    a set so the trap conjunct cannot be quietly narrowed to the easy arms. MODARITH7 is not
+    in this list: it does not error on a zero payload, it SUCCEEDS with every count zero,
+    which is the more dangerous failure mode and gets its own conjunct below. -/
+def guardShortCircuitArms : List Nat :=
+  [qOpRunAddMulMemMemConstU8, qOpRunAddMulConstU8MemU16, qOpAffineSum]
+
+/-- GATE (P-READOFF, differential enumeration, half 2). The same comparison over EVERY
+    opcode byte 0..255 against the engineered payload, PLUS the negative controls that
+    prove the enumeration has teeth. Five conjuncts:
+      * no arm's read extent exceeds its stride, over all 256 opcode bytes;
+      * exactly 26 arms reach a success on the engineered payload (the same 26 as the
+        fixture half, so the two enumerations agree with each other);
+      * TEETH: claiming every stride one byte too short is REJECTED for exactly 22 arms,
+        and the four that survive are exactly 'readsNothingArms'. Without this conjunct a
+        sweep that measured nothing could still report agreement;
+      * THE PAYLOAD TRAP, pinned: on an all-zero payload the four dynamic arms
+        short-circuit on their own guards (two zeroLengthRun, one affineSumZeroCounts, and
+        MODARITH7 succeeding with every count zero), and each of their measured extents is
+        STRICTLY SMALLER than on the engineered payload. This is the conjunct that makes
+        the engineered payload load-bearing rather than decorative - delete the engineering
+        and the gate goes red instead of silently measuring 3, 3, 5 and 7 bytes of
+        instructions that read 13, 9, 13 and 148.
+      * the MODARITH7 flag asymmetry on the READ side: an illegal flag byte makes the
+        interpreter refuse at extent 2 while quotientOpLen still reports a stride, so the
+        read bound is conditional on the walker's success exactly as the stride agreement
+        is. -/
+def readsWithinStride_differential_sweep_ok : Bool :=
+  (List.range 256).all fun op =>
+    match armsStepConsumed ([op] ++ armsPayload) 0 op with
+    | some c => armsReadExtent ([op] ++ armsPayload) 0 op <= c
+    | none => true
+    && ((List.range 256).filter fun op =>
+          (armsStepConsumed ([op] ++ armsPayload) 0 op).isSome).length == 26
+    && ((List.range 256).filter fun op =>
+          match armsStepConsumed ([op] ++ armsPayload) 0 op with
+          | some c => !(armsReadExtent ([op] ++ armsPayload) 0 op <= c - 1)
+          | none => false).length == 22
+    && List.Perm ((List.range 256).filter fun op =>
+          match armsStepConsumed ([op] ++ armsPayload) 0 op with
+          | some c => armsReadExtent ([op] ++ armsPayload) 0 op < c
+          | none => false) readsNothingArms
+    && List.all guardShortCircuitArms fun op =>
+         ! (armsStepConsumed ([op] ++ List.replicate 60 0) 0 op).isSome
+    && armsReadExtent ([qOpModarith7] ++ List.replicate 60 0) 0 qOpModarith7
+         < armsReadExtent ([qOpModarith7] ++ armsPayload) 0 qOpModarith7
+    && (match evalQuotientIdentityStep ([qOpModarith7, 0x04] ++ armsPayload.tail.tail)
+            armsConsts 0 qOpModarith7 armsStack armsMem with
+        | .error (QVMFault.modarith7UnknownFlags _ _) => true
+        | _ => false)
+    && (match QuotientValidator.quotientOpLen ([qOpModarith7, 0x04] ++ armsPayload.tail.tail) 0 with
+        | .ok _ => true
+        | .error _ => false)
+#eval readsWithinStride_differential_sweep_ok -- expect true
+
 end Midfall.Lowering.QvmKats
 

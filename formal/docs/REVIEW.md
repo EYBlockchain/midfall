@@ -2840,3 +2840,133 @@ by a walker that accepts everything; and the perturbation battery below reddens 
 by changing one stride. The falsification-DELETION gap is measured here for the
 THIRTY-THIRD time: deleting a gate line and its `#eval` is caught only by the total pin,
 and only while the pin is moved in the same commit. No persistence coverage is claimed.
+
+
+### R-71 - P-READOFF: the second per-arm fact lands and holds for 24 of 26 arms, and the audit rule has a hole in it
+
+P-READOFF was briefed to land the read-within-stride fact that `qvm_validated_noBoundsFault`
+needs on top of P-QVMARMS's stride agreement, close the hole at its restored strength, and
+record a coverage gap in the standing audit instruction. It landed the read fact as a
+**proved 22-arm case split plus 2 of the 4 dynamic arms**, landed the const-slot wiring as a
+lemma, added two differential gates with the negative controls inside them, and added the
+audit section. **The hole did not close and the register stays at 40.** The obstacle is named
+below and it is not the one the brief expected.
+
+**THE ENUMERATION FIRST, AGAIN, AND IT SAID YES.** Differential enumeration before induction
+(R-70) was run over all 31 opcode fixtures at each fixture's own `testIdx` and over every
+opcode byte 0..255 against the engineered payload, measuring each arm's **read extent** as
+"the shortest prefix of the payload on which the step stops faulting `readPastEnd`, minus the
+instruction index" — the only reading of "the arm reads byte k" the port exposes, since there
+is no read-effect model in the reference and none was invented. **Zero disagreements.** 22
+arms read exactly to the stride, 4 read no operand byte at all (`add`, `mul`, `neg`,
+`pow5` — their stride is the opcode byte alone), 5 stream arms error as documented.
+
+**THE FOUR NEGATIVE CONTROLS, because an enumeration that cannot fail has measured nothing.**
+(1) THE PAYLOAD TRAP, quantified: on an all-zero payload the two RUN arms short-circuit with
+`zeroLengthRun` at extent 3, AFFINE_SUM with `affineSumZeroCounts` at extent 5, and MODARITH7
+SUCCEEDS with every count zero at extent **7** — against 13, 9, 13 and **148** on the
+engineered payload. A naive sweep would have read 7 bytes of a 148-byte instruction and
+reported agreement. This is now a conjunct INSIDE the gate, so deleting the payload
+engineering reddens the build instead of silently narrowing what is measured. (2) BILIN7_PAIRWISE
+truncation ladder reproduced: `take 17` faults `readPastEnd 17`, `take 18` succeeds — byte 17
+really is read, confirming P-QVMARMS's finding. (3) TEETH: claiming every stride one byte too
+short is REJECTED for exactly 22 of the 26 arms, and the four survivors are exactly the
+no-read class. (4) MODARITH7 flag ladder: flags 0x4 and 0xff make the interpreter refuse at
+extent 2 while `quotientOpLen` still reports strides of 44 and 148 — the documented
+interpreter-refuses-what-the-walker-walks asymmetry, now measured on the READ side too.
+
+**WHAT THE MEASUREMENT DOES NOT SAY, and the next package must not read it as saying.** The
+extent EQUALS the stride on every reading arm. That is a fact about the payload the
+enumeration engineered, not a property of the arms: nothing in the validator forbids a stride
+that over-declares, and a thinner payload makes an arm read less. What the enumeration
+establishes is that **no counterexample exists to the weak form under a payload built to
+defeat the guards.** The proved lemma is the weak form — reads inside the stride — exactly as
+R-70 instructed ("do not strengthen it"). The gate pins the padding-free observation as a
+property of THIS payload by asserting the four no-read arms as a named set
+(`readsNothingArms`), so the 22/26 figure cannot silently decay to 26/26 if someone forces
+one of those four to claim a read.
+
+**LANDED** (`Midfall/Lowering/Qvm.lean` section 8): `NoRF` ("names no read fault") with
+`ok`/`error`/`bind`/`bind2`/`pair_match`; the six readers sorted by whether they can name a
+read fault at all — `byteAt_noRF`, `readU16_noRF`, `readU32_noRF` need bytes, and
+`constAt_noRF`, `popStack_noRF`, `indexOrPanic_noRF` are STRUCTURALLY incapable of one, which
+is what splits the hole into two unrelated halves; two fold lemmas (`fold_noRF` plain and
+`fold_blocks_noRF` with the cursor invariant — the read-side twin of `foldRangeIdxM_ok_advance`);
+five shape-helper read bounds; **`evalQuotientIdentityStep_readsWithinStride` for 22 arms in
+one case split**; `runAddMulMemMemConstU8_noRF` and `runAddMulConstU8MemU16_noRF`;
+`numConsts_eq_build_length` and `constAt_ok_of_lt`; the two D-P23 halves as theorems
+(`reads_within_stride_hypotheses_satisfiable`,
+`reads_within_stride_conclusion_is_not_a_tautology`); and the two differential gates.
+
+**THE REQUIRED FINDING, ANSWERED.** Do the four dynamic arms behave differently from the 22
+static ones? **Not in the property — all four read inside their stride, proved for the two
+RUN arms and measured for AFFINE_SUM and MODARITH7. They differ in the PROOF SHAPE.** A
+static arm's stride is a numeral from the table, so its read bound is a numeral and the case
+split is arithmetic. A dynamic arm's stride is a function of operand bytes read
+MID-INSTRUCTION (RUN 3+5n, AFFINE_SUM 5+3l+5p, MODARITH7 a flag-dependent header plus five
+counted blocks), so the bound cannot be written per arm at all — it has to be carried through
+the counted fold as an invariant on the cursor, which is what `fold_blocks_noRF` is. That is
+the mechanism that made them measurable-but-not-provable for P-QVMARMS, and it works: the two
+RUN arms are the proof. What still resists is **chaining**: AFFINE_SUM needs the second
+fold's starting cursor to be the first fold's result (`usedA = 3l), so `NoRF.bind2`'s
+equation-carrying rule is required one level deeper), and MODARITH7 needs five such chains
+behind a header whose length depends on flag bits the walker does not check. Neither is
+obstructed in principle; both are more lines than this package had.
+
+**THE EXACT REMAINING OBSTACLE TO THE HOLE — and it is not the read bound.** The brief
+estimated the hole at ~40% done with the arms machinery as one of three parts. Corrected:
+`qvm_validated_noBoundsFault`'s conclusion is TWO conjuncts and each needs a chain, not a
+lemma. (a) The read bound landed here is one link; the other links are a walk induction over
+`identitySegment` establishing that every instruction in the delimited segment fits inside
+it, a loop induction over `evalQuotientIdentityLoop` tying the interpreter's cursors to that
+walk (which needs `consumed = quotientOpLen` at every visited cursor, i.e. the section-7
+agreement EXTENDED to the four dynamic arms — proved for 22, not for 4), and locality lemmas
+moving both walkers between `bytes` at absolute index `j` and the segment at relative index
+`j - cursor`. (b) The const-slot conjunct needs, in addition to `numConsts_eq_build_length`
+which is proved, a THIRD per-arm pass: the correspondence between the slots
+`evalQuotientIdentityStep` reads via `constAt` and the `konst` operands
+`visitQuotientOperands` returns. The two walkers are independent code over the same bytes and
+nothing in the tree relates them; the phase-2 check bounds slots the WALKER names, and the
+interpreter can only be shown safe if the walker names every slot the interpreter reads. That
+correspondence is the same size as the two passes already done and was not started. **The
+hole is at roughly 55%, not closed, and the binding constraint is now the const-slot
+correspondence rather than the read bound.**
+
+**A STATEMENT THE BRIEF GOT WRONG, for the ledger (eighth such).** The brief said the hole was
+"about 40% done and the closest of six remaining" with the read fact as "the second per-arm
+fact that one quotient-VM hole still needs". The read fact was indeed needed and is indeed
+the second per-arm fact — but the hole needs a THIRD per-arm fact the brief did not name (the
+const-slot correspondence), and it needs the stride agreement for the four dynamic arms,
+which P-QVMARMS explicitly reported as unproved. Two of the four missing links were
+unaccounted for. The estimate of "closest of six" still holds: it is the only one of the six
+whose remaining parts are all mechanical case splits rather than an emitter value-semantics
+induction.
+
+**SORRY REGISTER: UNCHANGED at 40.** No hole closed, so no re-pin of `SORRY.md`.
+
+**KAT PINS MOVED DELIBERATELY: 1336 → 1338.** The two new differential gates
+(`readsWithinStride_differential_fixtures_ok`, `readsWithinStride_differential_sweep_ok`) are
+new `#eval ... -- expect true` obligations in an existing file, so `EXPECTED_KAT_FILES`
+stays 96 and the total moves by 2. The count moved because two real checks were added; the
+reason is in this entry, which is the intended use of the pin.
+
+**D-P23 BOTH HALVES, for every claim closed here.** Satisfiability:
+`reads_within_stride_hypotheses_satisfiable` — PUSH_MEM_LITERAL on a five-byte instruction
+fits its stride, succeeds, and names no read fault. Falsification:
+`reads_within_stride_conclusion_is_not_a_tautology` — the SAME arm on a three-byte
+instruction DOES fault `readPastEnd 3`, so the conclusion excludes a fault the interpreter
+really produces and the fit hypothesis is exactly what separates the two cases. The
+falsification-DELETION gap is measured here for the **THIRTY-FOURTH** time: deleting either
+theorem leaves the build green and no gate catches it. No persistence coverage is claimed.
+
+**THE AUDIT GAP, in `docs/plans/P-SE-statements.md`.** Eleven of the forty tracked `sorry`s
+have theorem names that appear ZERO times in `P-SE-semantic-equivalence.md`, which the
+standing instruction names as the sole statement authority. The brief knew two of them; a
+script over `SORRY.md` found nine more. Five have no sketch anywhere at all
+(`qvm_compile_correct_stream` and `identityCorrespondence_of_bridge` from D-P20 claim 1 /
+design1, `rel_worldLocal` from design.md/attack.md — a REFUTATION exhibit, which cannot be
+audited against a sketch asserting the opposite — and the two `..._of_alwaysReverts` lemmas
+from `ETA.md` only). Six more have their SUBJECT sketched as a `PartialSpecs` field but
+their theorem name is Lean-side. So "audit every proof statement against the sketches in
+A–R" has a domain of 29 of 40, and a package that runs it and reports "all statements
+audited" has checked 72.5% of the register and said 100%. Named rather than worked around.
