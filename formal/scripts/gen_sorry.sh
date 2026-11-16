@@ -17,6 +17,7 @@ owner() {
     Midfall/Yul/*)                echo 'P-SE stage 1-2: Yul run/contracts layer (semantic equivalence)' ;;
     Midfall/Lowering/*)           echo 'P-SE: semantic equivalence obligations' ;;
     Midfall/Assumptions/*)        echo 'P-SE: named holes in assumption files' ;;
+    Midfall/LoweringV2/*)         echo 'V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md' ;;
     *)                                echo 'UNOWNED - assign a work package' ;;
   esac
 }
