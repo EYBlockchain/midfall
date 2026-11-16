@@ -779,6 +779,36 @@ two differential gates.
 fractions above in it. `qvm_validated_noBoundsFault` is the only one reachable without it, and
 it needs the read-offset enumeration first - differentially, before inducting.
 
+### R23 - round 185, after P-READOFF. Read bound proved; the audit rule covers 72.5% of the register.
+
+| claim | believed | measured |
+|---|---|---|
+| the hole needs one more per-arm fact (my brief) | asserted | **needs a THIRD, unnamed** - const-slot correspondence. Now ~55% |
+| 2 holes have no sketch | my brief | **11 of 40** - understated by 5.5x |
+| the read bound is the binding constraint | my brief | **no** - the const-slot correspondence is; the read bound was the easy half |
+| lake build green means the gates passed | assumed by every package | **FALSE** - a false eval-expect-true is an info line. **KAT verdicts are enforced by kat_gate.py, not the compiler** |
+| the four dynamic arms differ in the property | assumed | **no** - they differ in PROOF SHAPE: stride is a function of bytes read mid-instruction |
+
+**The audit-domain finding changes how I must brief.** The standing rule - audit every proof statement
+against the sketches in A-R - has a domain of **29 of 40**. A package that runs it and reports "all
+statements audited" has checked **72.5%** and said **100%**. From now on briefs must say: **audit
+against A-R where a sketch exists; list the ones that have none.**
+
+**The lake build finding is architectural and was invisible for 180 turns.** A false
+`eval ... -- expect true` is an info line, not a build error, so **lake build green has never meant the
+KAT gates passed.** Every perturbation in this project's history that concluded "the gate is green"
+from `lake build` alone may have been reading a false verdict as a pass. The falsification-deletion
+gap - 34 measurements - is partly a symptom of this.
+
+**A near-miss that vindicates the growth rule:** the read tool silently truncated a 1967-line file and
+a splice dropped **612 lines**. Assert-the-file-grew caught it - the file SHRANK. **New rule for all
+packages and for the orchestrator: do not round-trip files over ~1500 lines through the read tool;**
+use direct file access. This hazard applies to me as much as to agents.
+
+**Eighth false premise in my briefs this session.** Consistent pattern: I assert a blocker's size or a
+rule's coverage without deriving it. Every correction came from the instruction to measure.
+
+**Register: 40 unchanged - the read fact landed, the hole did not close. 24 of 26 arms proved.**
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
