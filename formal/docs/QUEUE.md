@@ -142,7 +142,7 @@ INFRA · KAT · box 1.5 h · Sonnet · after Q0.2
   - The orchestrator's single full `verify.sh` run is green.
 - **Stop if.** The split would change the text of any frozen statement.
 
-### Q0.4 — Adversarial review of the frozen surface
+### Q0.4 — Adversarial review of the frozen surface  **[MERGED 70f8111 - HIT, see R-72]**
 INFRA · PROBE · box 1 h · fresh subagent, read-only · after Q0.3
 
 - **Goal.** For each frozen statement, give a sketch of a joint witness for all its hypotheses, or a
@@ -153,6 +153,37 @@ INFRA · PROBE · box 1 h · fresh subagent, read-only · after Q0.3
 
 ---
 
+### Q0.4b — Land the probe's generic inhabitation proofs  [READY]
+
+INFRA · PROOF · box 0.75 h · Sonnet · after Q0.4
+
+- **Goal.** The probe proved `entryFrame_inhabited` generically in scratch; land it and close the sorry.
+- **Needs.** `/tmp/q04/probe1.lean` — `entryFrame_witness` (:45), `probeW`/`probeW0` (:60,:67),
+  `probeW_wf` (:72), `probeW_vkCode` (:75), `deployment_witness` (:81). Target: `Blocks.lean:185`
+  (`entryFrame_inhabited`) and `Blocks.lean:148` if `blockContracts_of_valid` can reuse them.
+- **Does NOT need.** R-72 repair (frozen file, human decision); any edit to `Statements.lean`.
+- **Do.** Move the proofs into `Blocks.lean` (REFINABLE), discharge the `entryFrame_inhabited` sorry,
+  regenerate `SORRY.md`, run `verify.sh --quick`.
+- **Deliverable.** `entryFrame_inhabited` proved; register 45 → 44.
+- **Accept.** `verify.sh --quick` green; `#print axioms` of `entryFrame_inhabited` clean; report the
+  cone counts before and after — **if `cone_sorries end_to_end` does not move, say so**: progress is
+  the root's cone, not the register.
+- **Stop if.** The probe proof does not transplant unchanged.
+
+### Q0.5 — Repair the non-vacuity gate (R-72)  [BLOCKED: human decision]
+
+INFRA · PORT · box 1 h · after human approval of the R-72 repair
+
+- **Goal.** Make `HypothesesInhabited` gate the vacuity it exists to gate.
+- **Needs.** Human answer to the two questions in STATUS.md "Waiting on human".
+- **Do.** Add `LeanAccepts R H cd` (or `∃ ms instW, decodeCalldata … = some (ms, instW)`) and a
+  run-existence conjunct to `Statements.lean` §8; re-hash `Frozen.sha256`; add `hR : R.Valid` to
+  `LoweringEquivalence` if approved. Update PLAN-V2:355 wording if the gate's meaning changes.
+- **Accept.** A reproducer showing `gate_weak` NO LONGER type-checks, and that the new gate needs a
+  real accepting calldata. **The repair must be demonstrated to have teeth, not just to compile.**
+- **Stop if.** Any change would alter a statement other than the gate and the headline's hypothesis list.
+
+---
 ## CORE — consumer first, to calibration point 1
 
 ### D.1 — The deployment's generator inputs as pure terms

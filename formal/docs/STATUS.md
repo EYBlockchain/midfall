@@ -1,47 +1,66 @@
 # STATUS — overwritten by every ticket (≤ 1 page)
 
-**As of:** `96910d3` (2026-11-16 21:10Z). v1 frozen at `formal/v1-final` (`a680b5c`).
-All numbers from the orchestrator's own full `scripts/verify.sh` run after the merge.
+**As of:** `70f8111` (2026-11-16 21:30Z). v1 frozen at `formal/v1-final`.
 
 **Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
 **Headline:** `lowering_equivalence_poseidon` — **not yet stated** (C.1). Status word: *not stated*.
 
-**Cone roots** (`Midfall/Tools/ConeReport.lean`, printed by `verify.sh`):
+**Cone roots** (`ConeReport`, printed by `verify.sh`):
 - `imports_avoid: ok (14 modules)`
 - `cone_avoids lowering_equivalence_of_blocks: ok` · `cone_sorries …: **1**`
 - `cone_avoids end_to_end: ok` · `cone_sorries …: **1**`
-- Axioms of the roots: not yet printed by `verify.sh` (Q0.3 recorded the `native_decide` name shape;
-  printing root axioms is a later card).
 - Each cone holds exactly one sorried declaration: the root itself.
 
-**Frozen surface (Q0.3):** `Program.lean` §1–§4, `Shared.lean`, `Statements.lean` §1–§5 +
-`HypothesesInhabited` + `calldataOf` + the two wrapper Props, hashed in
-`Midfall/LoweringV2/Frozen.sha256`; `checks.sh` verifies it. **Pin demonstrated**: appending one
-character to a copy gives `Statements.lean: FAILED`, exit 1.
+## ⚠ WAITING ON HUMAN — R-72: the frozen non-vacuity gate does not gate the vacuity
 
-**`native_decide` axiom shape (PLAN-V2 §2.5 requirement, now recorded):** on Lean 4.35.0 it adds
-**exactly one axiom per declaration**, named `<declName>._native.native_decide.ax_1_1`; no
-`Lean.ofReduceBool`, no `propext`, no `Classical.choice`, no `Quot.sound`. Confirmed on three decls.
+**Q0.4 (read-only probe) found a real defect in a FROZEN statement, and I cannot repair it: the rules
+say I do not change the frozen surface.** Verified by the orchestrator reading the text, not only from
+the report.
 
-**Register** (not progress): **45**, zero `UNOWNED`. **KAT** (not progress): 1352 / 99 files, pinned.
-**Modules:** 137+ reachable. `verify.sh` exit **0**.
+`HypothesesInhabited` (`Statements.lean:269`, frozen) is:
+`∃ W Lyt H vkAddr cd st₀, DeploymentV2 ∧ EntryFrame ∧ Eip2537.Holds ∧ SoundSide ∧ CompleteSide`.
+**It never mentions `LeanAccepts` and never asserts a run exists.** `SoundSide`/`CompleteSide` are
+themselves `∀ …, decodeCalldata … = some → …`, so both hold whenever decode returns `none` — proved as
+`sides_of_none`. The probe's `sel_nondecode` shows the bare 4-byte selector never decodes at ALL, so
+`gate_weak` derives `HypothesesInhabited` from `vkNonEmpty` + address disjointness +
+`TRANSCRIPT_MPTR ≥ 0x80` + `Holds`, while `no_accept_at_gate_cd` proves `¬ LeanAccepts` at that same
+calldata. **`PLAN-V2:355` makes `HypothesesInhabited` part of the §6 DONE test, so as written a green
+gate proves nothing about readiness.**
 
-**In flight:** none. Next READY: **Q0.4** (adversarial review of the frozen surface, read-only, 1 h)
-and **D.1** (deployment generator inputs as pure terms, GEN, 2.5 h box).
+**Also:** the headline's conjuncts 1 and 3 are `∀ obs, RunBody … → …` and conjunct 2 asserts existence
+only under `LeanAccepts → …`, so `headline_of_no_runs` machine-checks that (no runs) ∧ (nothing
+accepted) ⟹ `LoweringEquivalence`. **A proved headline would not yet certify that anything works.**
 
-**Last ticket:** Q0.3 · INFRA · KAT. Outcome **DONE**, merged `96910d3`. **Cone delta: none (1 and 1,
-unchanged)** — Q0.3 is infrastructure; it changes what can be trusted, not the cone.
+**Two decisions requested:**
+1. **Repair `HypothesesInhabited`** — add `LeanAccepts R H cd` (or at least
+   `∃ ms instW, decodeCalldata … = some (ms, instW)`) **and** a run-existence conjunct. Requires
+   editing a frozen file and re-hashing `Frozen.sha256`.
+2. **Decide whether `LoweringEquivalence` should assume `R.Valid`.** Asymmetric today: `EndToEnd` does,
+   the headline does not — so a proved headline certifies no plan/VK coherence, which is exactly the
+   8-slot-vs-72-slot mismatch v1 was bitten by.
 
-**Waiting on human:** none.
+**My recommendation: approve both.** Add the `LeanAccepts` + run-existence conjuncts to the gate, and
+add `hR : R.Valid` to the headline. **I am not asking permission to continue** — D.1 and Q0.4b are
+READY and unaffected, and I am working them. But no card may claim DONE on §6 until this is resolved,
+and `HypothesesInhabited` must not be reported as evidence of readiness in the meantime.
 
-**Calibration (sample size 3):** Q0.1 26 min / box 1.5 h; Q0.2 35 min / box 2 h; Q0.3 19 min / box
-1.5 h. All under box. Gate time, not Lean, dominates.
+**Register** (not progress): **45**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
+`verify.sh` exit **0**. Frozen hashes match.
 
-**False premises in cards so far: 2** (Q0.1's predicted `check_duplicate_facts` reddening, which did
-not happen; Q0.3's `EndToEnd`/`EntryFrameInhabited`, which did not exist). Both caught by VERIFY FIRST
-before or during the card; neither caused damage. Below the ask-the-human threshold (2 of 5).
+**In flight:** none. **Next READY: Q0.4b** (land the probe's `entryFrame_witness` — it closes the
+`entryFrame_inhabited` sorry at `Blocks.lean:185` generically) and **D.1** (deployment generator
+inputs as pure terms, GEN).
 
-**Blockers:** none. Quirks recorded: `/-!` before `import` is rejected by this toolchain (use `/-`);
-`native_decide` adds one named axiom per declaration.
+**Last ticket:** Q0.4 · INFRA · PROBE · read-only. Outcome **HIT/NEGATIVE-with-evidence**, merged
+`70f8111` (REVIEW.md R-72 only). **Cone delta: none** — probe card, no Lean landed. Probe sources
+survive at `/tmp/q04/probe1.lean` and `probe2.lean` for Q0.4b to land.
+
+**Calibration (sample size 4):** Q0.1 26 min, Q0.2 35 min, Q0.3 19 min, Q0.4 32 min — all under box.
+
+**False premises / defects: 3** (Q0.1 predicted reddening that did not happen; Q0.3 named two defs that
+did not exist; Q0.4 found a real defect in a frozen statement). The third is the first where the
+defect was in the plan's own acceptance test rather than in a card.
+
+**Blockers:** none for D.1 or Q0.4b. R-72 blocks any §6 DONE claim.

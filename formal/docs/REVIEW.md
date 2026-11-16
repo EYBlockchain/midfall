@@ -2970,3 +2970,69 @@ from `ETA.md` only). Six more have their SUBJECT sketched as a `PartialSpecs` fi
 their theorem name is Lean-side. So "audit every proof statement against the sketches in
 A–R" has a domain of 29 of 40, and a package that runs it and reports "all statements
 audited" has checked 72.5% of the register and said 100%. Named rather than worked around.
+
+
+## Q0.4 probe at `c57acc3` — FINDING ON A FROZEN STATEMENT, NEEDS AN OWNER
+
+### R-72 `LoweringV2.HypothesesInhabited` does not gate the vacuity it exists to gate
+
+**The defect.** `Statements.lean:269` (§8, FROZEN, hashed in `Frozen.sha256`) is the D-P23
+non-vacuity gate for the headline: it is the conjunction
+`DeploymentV2 ∧ EntryFrame ∧ Eip2537.Holds ∧ SoundSide ∧ CompleteSide`. It does **not**
+contain `LeanAccepts`, and it does not contain any run. But `SoundSide` (:223) and
+`CompleteSide` (:232) are both of the shape
+`∀ ms instW, decodeCalldata … cd = some (ms, instW) → …` — so they go **true** exactly when
+nothing decodes. The two conjuncts the gate uses to witness "a calldata the side conditions
+admit" are the two that a non-decoding calldata satisfies for free. A render can pass
+`HypothesesInhabited` with **no accepting calldata at all** and **no run at all**, and the
+headline is then true because nothing satisfies it — the failure mode this gate was written
+against (D-P23, "applied to the WHOLE hypothesis set this time").
+
+**MINIMAL REPRODUCER (scratch `/tmp/q04/probe1.lean`, `lake env lean` at `c57acc3`, exit 0,
+no `sorryAx`).** Three kernel-clean theorems, generic in the render:
+
+1. `sel_nondecode`: for EVERY layout, instance count and codec,
+   `decodeCalldata (p := p) L n c fnSigVerifyProof = none` — the bare 4-byte selector fails
+   `decodeCalldata`'s head-word guard (`(cdWord cd 4).toNat == 0x40` reads 0). Axioms
+   `[propext, Classical.choice, Quot.sound]`.
+2. `gate_weak`: from only `R.plan.vk.runtimeBytes.size ≠ 0`, the address-disjointness side
+   condition, `∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t` and
+   `Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product`,
+   `HypothesesInhabited R product` **holds** — witnessed at `cd := fnSigVerifyProof`, i.e. at
+   a calldata for which `SoundSide`/`CompleteSide` are vacuous.
+3. `no_accept_at_gate_cd`: `¬ LeanAccepts R H fnSigVerifyProof` — the calldata the gate is
+   satisfied by is one the Lean verifier rejects. (2) and (3) hold simultaneously.
+
+**And the headline itself, machine-checked.** `headline_of_no_runs`: if `RunBody` has no runs
+for any call relation and `LeanAccepts` never holds, then `LoweringEquivalence R product`.
+So the frozen headline is satisfiable with **zero runs**. Conjunct 2 (:257–:260) does contain a
+real `∃ obs, RunBody …`, but it sits behind
+`LeanAccepts R H cd → CompleteSide R H cd → G1CodecLaws R.E.g1 →`, so it fires only where
+`LeanAccepts` does. `EntryFrame` and `DeploymentV2` are NOT where it hides — both are
+inhabited generically (`entryFrame_witness`, `deployment_witness` in the same probe; the
+first is a complete proof of the `sorry` at `Blocks.lean:185`). `Eip2537.Holds` is inhabited
+at a Surface's own codecs (`Instances/CurveSurface.lean:280` `curveHolds`, discharged by
+`HoldsFinal.holds_exhibited`), so the hiding place is `LeanAccepts` and nothing else.
+
+**Why this is live right now, not hypothetical.** The tree's own registry says no accepted
+calldata exists anywhere: `Instances/CurveSurface.lean:357`
+(`curveSpecResidualBinders`: "no accepted calldata at any model in the tree") and
+`Instances/ObligationsGates.lean:393` (`gap_runLeg_unexhibited`). `poseidonRender` does not
+exist at `c57acc3` — `grep -rn poseidonRender` hits only docstrings — so the deployment
+instance WP-I2 must build has never been formed, and `PLAN-V2:355` makes `HypothesesInhabited`
+its acceptance test. A green `HypothesesInhabited poseidonRender poseidonProduct` would prove
+nothing about readiness.
+
+**What the repair needs (HUMAN DECISION — not applied).** The gate must demand the thing whose
+absence makes the headline empty, e.g. add `LeanAccepts R H cd` (or at minimum
+`∃ ms instW, decodeCalldata … = some (ms, instW)`) to the conjunction, and ideally an
+existence claim about runs. That edits a FROZEN file and re-hashes `Frozen.sha256`, which is
+outside a probe's authority. Note the asymmetry the repair has to keep: `EndToEnd` (:299) DOES
+take `hR : R.Valid`, while `LoweringEquivalence` takes no `Valid` at all — the coherence
+clauses that would rule out v1's 8-slot-vs-72-slot plan/VK mismatch
+(`Valid.circuitMeta`, `Valid.layout`) are not hypotheses of the headline, so a proved headline
+does not by itself certify that the render's plan describes the render's VK.
+
+**D-P23 both halves.** Satisfiability: `gate_weak` above is a witness term. Falsification:
+`no_accept_at_gate_cd` shows the exhibited calldata is rejected by the Lean side, i.e. the
+gate's witness is exactly the vacuous case. Both kernel-clean at this commit.

@@ -182,7 +182,14 @@ theorem entryFrame_inhabited (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : 
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
     (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) :
     EntryFrameInhabited R W Lyt H cd hsel hcv ht := by
-  sorry
+  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel⟩
+  · exact fun a _ => rfl
+  · obtain ⟨t, ht₁, ht₂⟩ := ht
+    refine ⟨t, ht₁, ?_⟩
+    have h0 : (loadWord ((initState W Lyt H cd (fun _ : Nat => (0 : UInt8)))).memory 0x40).toNat = 0 := by
+      show (loadWord (fun _ : Nat => (0 : UInt8)) 0x40).toNat = 0
+      decide
+    rw [h0]; omega
 
 /-- **END TO END (no accumulator).** Given the headline at this render, Lean's byte-level verifier
     accepts the compressed Rust proof iff the encoder produces calldata on which, from every entry

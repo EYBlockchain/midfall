@@ -1038,3 +1038,4 @@ has not progressed the root.
 
 **`verify.sh` is now the single entry point** — subagents run `--quick`, the orchestrator runs the full
 one. Cone baseline unchanged at 1 and 1, correctly: Q0.3 is infrastructure and moves no cone.
+| Q0.4 adversarial review of frozen surface | 1 h | ~32 min | none (probe card, no Lean landed) | **HIT** | found R-72: `HypothesesInhabited` is satisfiable with no accepting calldata and no runs; PLAN-V2:355 makes it a DONE test. Verified by the orchestrator reading the frozen text. Two repairs need a human decision because they edit a frozen file |
