@@ -1,43 +1,47 @@
 # STATUS — overwritten by every ticket (≤ 1 page)
 
-**As of:** `3235d17` (2026-11-16 20:45Z). v1 frozen at tag `formal/v1-final` (`a680b5c`).
-Every number here is from a command the orchestrator ran after the merge.
+**As of:** `96910d3` (2026-11-16 21:10Z). v1 frozen at `formal/v1-final` (`a680b5c`).
+All numbers from the orchestrator's own full `scripts/verify.sh` run after the merge.
 
-**Plan:** `docs/plans/PLAN-V2.md` (what) · `docs/plans/EXECUTION-V2.md` (how) · `docs/QUEUE.md`.
-Scope decision **D-P44** in `docs/design.md`. `docs/PLAN.md` points at V2.
+**Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
+Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
 **Headline:** `lowering_equivalence_poseidon` — **not yet stated** (C.1). Status word: *not stated*.
 
-**Cone roots** — first real numbers, printed by `Midfall/Tools/ConeReport.lean` (Q0.2 baseline):
+**Cone roots** (`Midfall/Tools/ConeReport.lean`, printed by `verify.sh`):
+- `imports_avoid: ok (14 modules)`
+- `cone_avoids lowering_equivalence_of_blocks: ok` · `cone_sorries …: **1**`
+- `cone_avoids end_to_end: ok` · `cone_sorries …: **1**`
+- Axioms of the roots: not yet printed by `verify.sh` (Q0.3 recorded the `native_decide` name shape;
+  printing root axioms is a later card).
+- Each cone holds exactly one sorried declaration: the root itself.
 
-- `cone_avoids lowering_equivalence_of_blocks: ok (14 modules)` · `cone_sorries …: **1**`
-- `cone_avoids end_to_end: ok (14 modules)` · `cone_sorries …: **1**`
-- `imports_avoid: ok (14 modules)` — **the V2 closure contains 0 of the 14 retired modules** (was 6).
-- Axioms of the roots: not yet printed (Q0.3 wires `verify.sh`).
-- Each cone holds exactly one sorried declaration: the root itself. The other four V2 obligations are
-  not yet in either cone — they are the parts later cards wire in.
+**Frozen surface (Q0.3):** `Program.lean` §1–§4, `Shared.lean`, `Statements.lean` §1–§5 +
+`HypothesesInhabited` + `calldataOf` + the two wrapper Props, hashed in
+`Midfall/LoweringV2/Frozen.sha256`; `checks.sh` verifies it. **Pin demonstrated**: appending one
+character to a copy gives `Statements.lean: FAILED`, exit 1.
 
-**Register** (not a progress measure): **45** — `ok: 45 tracked sorries`. Zero `UNOWNED` rows.
-**KAT totals** (not a progress measure): **1352 across 99 files**, both pinned.
-**Modules:** 137 reachable. `checks.sh` exit **0**, 13 sections green.
+**`native_decide` axiom shape (PLAN-V2 §2.5 requirement, now recorded):** on Lean 4.35.0 it adds
+**exactly one axiom per declaration**, named `<declName>._native.native_decide.ax_1_1`; no
+`Lean.ofReduceBool`, no `propext`, no `Classical.choice`, no `Quot.sound`. Confirmed on three decls.
 
-**Proved and in the tree (not just landed):** `LegacyVacuity` — zero sorries; `not_LoweringCorrect` and
-`ir_refines_field_is_false` on `[propext, Classical.choice, Quot.sound]`, `stuck_satisfies_every_post`
-on `[propext]`. `ConeSorriesTest.lean` exits 0 with all 8 `#guard_msgs` passing.
+**Register** (not progress): **45**, zero `UNOWNED`. **KAT** (not progress): 1352 / 99 files, pinned.
+**Modules:** 137+ reachable. `verify.sh` exit **0**.
 
-**In flight:** none. Next READY: **Q0.3** (freeze the V2 surface; land `verify.sh`, one command that
-runs build + cone report + register and prints root axioms).
+**In flight:** none. Next READY: **Q0.4** (adversarial review of the frozen surface, read-only, 1 h)
+and **D.1** (deployment generator inputs as pure terms, GEN, 2.5 h box).
 
-**Last ticket:** Q0.2 · INFRA · PORT. Outcome **DONE**, squash-merged `3235d17`.
-**Cone delta: baseline established (1 and 1).** Files: `Shared.lean` 195 ln + `ConeReport` 29 +
-`ConeSorries` 78; `Program.lean`/`Statements.lean` edited to drop 4 retired imports. No v1, frozen or
-vendor file touched; no deletions.
+**Last ticket:** Q0.3 · INFRA · KAT. Outcome **DONE**, merged `96910d3`. **Cone delta: none (1 and 1,
+unchanged)** — Q0.3 is infrastructure; it changes what can be trusted, not the cone.
 
 **Waiting on human:** none.
 
-**Calibration (sample size 2):** Q0.1 box 1.5 h → ~26 min. Q0.2 box 2 h → ~35 min. Both under box.
-Cost driver is the gate, not the Lean: a full `checks.sh` is ~14 min and it re-runs `kat_gate.py`, which
-cards also require separately. **Q0.3 should collapse this** by making `verify.sh` the single entry.
+**Calibration (sample size 3):** Q0.1 26 min / box 1.5 h; Q0.2 35 min / box 2 h; Q0.3 19 min / box
+1.5 h. All under box. Gate time, not Lean, dominates.
 
-**Blockers:** none. Environment quirk recorded: this toolchain rejects a `/-!` module docstring before
-the `import` header — use `/-`. Every repo file already does.
+**False premises in cards so far: 2** (Q0.1's predicted `check_duplicate_facts` reddening, which did
+not happen; Q0.3's `EndToEnd`/`EntryFrameInhabited`, which did not exist). Both caught by VERIFY FIRST
+before or during the card; neither caused damage. Below the ask-the-human threshold (2 of 5).
+
+**Blockers:** none. Quirks recorded: `/-!` before `import` is rejected by this toolchain (use `/-`);
+`native_decide` adds one named axiom per declaration.

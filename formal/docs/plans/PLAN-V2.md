@@ -74,7 +74,7 @@ Other v1 defects V2 fixes by construction:
 5. **Trusted evaluation.** Decidable facts about the deployment (`poseidon_valid` clauses, codegen
    agreement, fixture KATs) may be closed by `native_decide`, only in `Instances/` (D-P17).
    - The headline's axiom list may therefore contain the compiler-trust axiom(s) `native_decide`
-     adds. Q0.3 records their exact names in this toolchain.
+     adds. Q0.3 records their exact names in this toolchain. **Measured at `96910d3` on Lean 4.35.0: `native_decide` adds exactly one axiom per declaration, named `<declName>._native.native_decide.ax_1_1`; it adds no `Lean.ofReduceBool`, no `propext`, no `Classical.choice` and no `Quot.sound`. Confirmed on three declarations.**
    - A kernel-only re-check is optional, as WP-X8.
 
 ## 3. Starting point: four files provided (all compile against `979f358`, verified out of tree)

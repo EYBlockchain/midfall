@@ -1034,3 +1034,7 @@ collapsing in a later card; **sample size 1**, so not yet a conclusion.
 **Cone baseline established at Q0.2** — the first measurable progress number V2 has had. Both roots sit
 at `cone_sorries: 1` (the root alone). Later cards must move this number; a card that does not change it
 has not progressed the root.
+| Q0.3 freeze surface + verify.sh | 1.5 h | ~19 min subagent + full verify.sh | **none (1 and 1, unchanged)** — infra card | **DONE** | card premise false: `EndToEnd`/`EntryFrameInhabited` did not exist; wrappers introduced and proved definitional with a negative control; `native_decide` adds exactly one axiom per decl, `<decl>._native.native_decide.ax_1_1` |
+
+**`verify.sh` is now the single entry point** — subagents run `--quick`, the orchestrator runs the full
+one. Cone baseline unchanged at 1 and 1, correctly: Q0.3 is infrastructure and moves no cone.

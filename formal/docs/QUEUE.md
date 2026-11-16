@@ -111,7 +111,7 @@ INFRA · PORT · box 2 h · Sonnet · after Q0.1
 - **Stop if.** A copied definition needs something not listed. Report the error; do not chase it
   into v1 files.
 
-### Q0.3 — Freeze the surface; one verify command
+### Q0.3 — Freeze the surface; one verify command  **[MERGED 96910d3]**
 INFRA · KAT · box 1.5 h · Sonnet · after Q0.2
 
 - **Goal.** The frozen V2 surface cannot change silently, and one command verifies a ticket.
