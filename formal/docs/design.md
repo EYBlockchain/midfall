@@ -1704,3 +1704,46 @@ a false premise waiting for the next agent.
 Falsifiability: D-P43 stands or falls on the re-run routed comparison. If the sides agree, M2 is gone.
 If not, the abort encoding is the real mechanism and D-P43 was a partial fix - still progress, recorded
 as such.
+
+## D-P44 — **D-V2 (approved by the human via the `/goal` prompt): V2 scope decision**
+
+> Recorded verbatim from `docs/plans/PLAN-V2.md` §2, per QUEUE T0.3.
+>
+> **Numbering note:** PLAN-V2 §2 expected D-V2 to land as D-P43, on the reasoning that P-DET took
+> D-P42 and P-RUNLEG had only *reserved* D-P43 for an `ir_refines` edit that D-V2 makes moot. That
+> reservation was spent before the cut-over: **D-P43 is already recorded above as the `armBody`
+> closing decision** (commit `daf2243`), which was an executed v1 repair, not a reservation. D-V2
+> therefore takes the next free number, **D-P44**. It supersedes D-P38, Q-OPEN-1, and the pending
+> `ir_refines` edit that D-P42/D-P43 were working toward. Nothing in D-P43's content is invalidated —
+> `armBody` closure is retired along with the rest of the `ir_refines` chain by clause 3 below.
+
+1. **Object of the theorem:** the Yul of the two `verifyProof` assembly blocks as printed by the Lean
+   text port (`Generator/Contracts.renderHalo2Verifier`), parsed by construction through the `GenAst`
+   emitter and tied to the text by token equality (`CodegenAgrees`), with contract-level constants
+   substituted (`Inline.inlineContractConstants`) — Solidity's own constant semantics.
+2. **Trusted base:** delete the two solc rows of PLAN §1 (the "checked Solidity→IR" row and the
+   "trusted optimizer" row) and add ONE row: *"Solidity entry semantics of the generated wrapper:
+   `EntryFrame` (`LoweringV2/Statements.lean` §3) — selector routing, `view` ⇒ zero call value, ABI
+   decoding only reads calldata, solc's free-memory prologue leaves `mload(0x40) ≤ TRANSCRIPT_MPTR`,
+   fresh frame. Trusted; validated by the revm differential (M4), not in Lean."* Everything solc adds
+   before the assembly can only revert, so soundness and two-outcomes do not depend on it.
+3. **Retired** (stop work; keep building until WP-X6 deletes them): `LoweringCorrect`,
+   `Lowering.lowering_equivalence`, `end_to_end_noAcc`/`end_to_end_acc_complete` (v1),
+   `RunContractIR`, `Surface.irCheck`, `ir_refines`, `Yul/ImportSolcIR.lean`, `Yul/IRCheck.lean`,
+   `Instances/ImportedIR.lean`, `Instances/IrCheckBlindness.lean`, `Instances/RunShellInversion.lean`,
+   `Instances/RunShellInhabited.lean`, `scripts/gen_import_solc_ir.py`, `scripts/perturb_import_ir.py`,
+   `Yul/solc-ir-*.yul`, milestone M8, P-DET. `Yul/ShellModel.lean` is kept only as raw material for
+   optional WP-X5.
+4. **Per-deployment first** (D-P24 stands). The claimed headline is
+   `lowering_equivalence_poseidon (product : PairingProduct) :
+   LoweringEquivalence poseidonRender product`.
+   - It is stated for **every** pairing product. `LoweringEquivalence` already takes
+     `Eip2537.Holds … product` as a hypothesis, so no pairing implementation is ever needed.
+   - The one concrete product, `HoldsFinal`'s exhibited `poseidonProduct`, is used only for
+     non-vacuity (`HypothesesInhabited`).
+   - The ∀-render theorem is WP-X4.
+5. **Trusted evaluation.** Decidable facts about the deployment (`poseidon_valid` clauses, codegen
+   agreement, fixture KATs) may be closed by `native_decide`, only in `Instances/` (D-P17).
+   - The headline's axiom list may therefore contain the compiler-trust axiom(s) `native_decide` adds.
+     Q0.3 records their exact names in this toolchain.
+   - A kernel-only re-check is optional, as WP-X8.

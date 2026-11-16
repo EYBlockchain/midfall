@@ -1,5 +1,12 @@
 # Midfall formal: faithful Lean 4 port of the Halo2 verifier and verified Solidity/Yul lowering
 
+> **SUPERSEDED AS THE ACTIVE PLAN by `docs/plans/PLAN-V2.md` (D-P44 / D-V2, 2026-11-16).**
+> This file describes **v1**, which is frozen at tag `formal/v1-final`.
+> The object of the theorem, the trusted base, the retired modules and the queue all
+> changed: read `docs/plans/PLAN-V2.md` (what) and `docs/plans/EXECUTION-V2.md` (how),
+> and work `docs/QUEUE.md`. Nothing proved here is deleted; v1 work stays in the tree
+> and V2 does not depend on it. Recorded decision: `docs/design.md` D-P44.
+
 > Copy of the normative plan, kept in the repository so that a work package, a
 > review checklist or a sub-agent brief can cite it by section number. The
 > meaning of §9 is normative and is mirrored by the frozen
