@@ -106,7 +106,9 @@ FAMILIES = [
                      (TYPES, "Lowered", "main"),
                      (SURFACE, "Surface", "bindLocals")],
         "pins": [(SURFACE, "Surface", "shell_unfolds")],
-        "pin_tokens": ["shell.codeBlock", "L.headGuard", "bindLocals", "L.main"],
+        # P-INLINE (D-P39): the pin now also cites the embedding, so the token list carries it.
+        "pin_tokens": ["shell.codeBlock", "L.headGuard", "bindLocals", "L.main",
+                       "inlineContractConstants"],
     },
     {
         "name": "vkDigest",

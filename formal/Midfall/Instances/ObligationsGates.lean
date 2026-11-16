@@ -47,6 +47,7 @@
 -- bundle_holdsOld_empty pins the repaired decode defect.
 -- SurfaceFixture.encG2AtFixture_ok shows which is which.
 
+import Midfall.Lowering.FrameWalk
 import Midfall.Lowering.Obligations
 import Midfall.Instances.SurfaceFixture
 import Midfall.Instances.Bls12_381G1
@@ -184,8 +185,22 @@ theorem accFixedBasesProducerAtFixture :
     a Surface that MEETS the pins, which is all the non-vacuity that is available
     before a real render exists. -/
 example : realSurface.shell.codeBlock =
-    realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main :=
+    Midfall.Lowering.Inline.inlineContractConstants
+      Midfall.Lowering.Inline.contractConstants
+      (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main) :=
   realSurface.shell_unfolds
+
+/-- **D-P39, THE FALSIFICATION HALF OF THE RESTATEMENT.** The raw concatenation is NOT the shell's
+    code block, and the reason is measurable rather than editorial: it leaves 60 identifiers free
+    (the contract-level constants - 'vk' is no longer one of them because 'bindLocals' now binds it,
+    which is why this says 60 and not the 61 P-RUNSHELL counted, and 'success' was never in the free
+    set because 'FrameWalk.boundNames' counts the two helper parameters named 'success' as a binding)
+    while the inlined arm leaves NONE ('FrameWalkWitness.inlinedArmHasNoFreeIdentifiers'). So the old
+    pin was not a weaker spelling of the new one: it was a FALSE statement, which is exactly what
+    D-P39 records. -/
+example : (Midfall.Lowering.FrameWalk.freeNames
+      (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main)).length = 60 :=
+  by native_decide
 example : realSurface.plan.hasAccumulator = realSurface.cfg.accumulator.isSome :=
   realSurface.plan_hasAccumulator
 example : realSurface.plan.numInstances = realSurface.cfg.numInstances :=

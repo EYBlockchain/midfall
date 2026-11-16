@@ -458,8 +458,15 @@ def fxShellLayout : EVM.Layout :=
       else if k == litValue (.string "AUTHORIZED_QUOTIENT") then fxQuotientAddr
       else 0 }
 
-/-- The shell object: the dispatcher block. -/
-def fxShell : YulObject := Object.mk "Halo2Verifier" (fxHeadGuard ++ fxMain) [] []
+/-- **THE ARM THE SHELL CARRIES** (D-P39). The head guard, then the two shell locals BOUND, then the
+    emitted main with the 90 contract-level constants INLINED at every use site including inside the
+    eight helper bodies. This is the block `RunShell` runs, and `shell_unfolds` is `rfl` about it. -/
+def fxArmOf (m : YulBlock) : YulBlock :=
+  Midfall.Lowering.Inline.inlineContractConstants Midfall.Lowering.Inline.contractConstants
+    (fxHeadGuard ++ Midfall.Lowering.Inline.shellLocalLets ++ m)
+
+/-- The shell object: the ARM block, constants inlined (D-P39). -/
+def fxShell : YulObject := Object.mk "Halo2Verifier" (fxArmOf fxMain) [] []
 
 /-- The lowered program. -/
 def fxLowered : Lowered :=
@@ -552,7 +559,8 @@ def realSurface : Surface rp RP RP RP :=
     -- encoder the exponent model can actually supply.
     encG2 := fxEncG2,
     o₀ := fxOptions, L := fxLowered, lower := fxLower, lower_ok := rfl,
-    bindLocals := [], shell := fxShell, shellLayout := fxShellLayout,
+    bindLocals := Midfall.Lowering.Inline.shellLocalLets, shell := fxShell,
+    shellLayout := fxShellLayout,
     evaluatorRuntime := none, runtimeName := fxRuntimeName,
     -- R-58 F8: astOfMain is now DEFINED as the main block of what the render
     -- produces, which is exactly the equation render_eq_print states, so the
@@ -910,14 +918,18 @@ def codehashKats_ok : Bool :=
     up here. Compared through Repr because Stmt carries no BEq at this dialect. -/
 def shellPinsKats_ok : Bool :=
   toString realSurface.shell.codeBlock ==
-    toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main) &&
+    toString (fxArmOf realSurface.L.main) &&
+    -- the ARM form, not the raw concatenation: the pin cites the embedding, so a shell carrying the
+    -- uninlined fragment - which is what made RunShell empty - refutes it (D-P39)
+    ! (toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main) ==
+      toString (fxArmOf realSurface.L.main)) &&
     ! (toString fxMain ==
       toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main)) &&
     ! (toString fxMain == toString (fxHeadGuard ++ fxMain)) &&
     -- and the pin is about THIS shell: a shell built from a different main refutes it
     ! (toString (YulSemantics.Object.codeBlock
-        (Object.mk "Halo2Verifier" (fxHeadGuard ++ fxMain.drop 1) [] [] : YulObject)) ==
-      toString (realSurface.L.headGuard ++ realSurface.bindLocals ++ realSurface.L.main))
+        (Object.mk "Halo2Verifier" (fxArmOf (fxMain.drop 1)) [] [] : YulObject)) ==
+      toString (fxArmOf realSurface.L.main))
 
 #eval shellPinsKats_ok                    -- expect true
 
@@ -1374,7 +1386,7 @@ def plantLower (o : RenderOptions) : Except Midfall.Generator.GeneratorError Low
     .ok plantLowered
 
 def plantShellCounterexample : YulObject :=
-  Object.mk "Halo2Verifier" (fxHeadGuard ++ plantMainCounterexample) [] []
+  Object.mk "Halo2Verifier" (fxArmOf plantMainCounterexample) [] []
 
 /-- THE COUNTEREXAMPLE SURFACE, as a genuine Surface: every field of the record still
     discharges - main_concat with the emitted helpers, shell_unfolds, lower_ok - and
@@ -1508,7 +1520,7 @@ def plantSurfaceWith (b : Partial → PlanView → YulBlock) : Surface rp RP RP 
   let low := plantLowerWith m
   { realSurface with
     blk := b, L := { fxLowered with main := m }, lower := low,
-    shell := Object.mk "Halo2Verifier" (fxHeadGuard ++ m) [] [],
+    shell := Object.mk "Halo2Verifier" (fxArmOf m) [] [],
     astOfMain := fun o => match low o with | .ok l => some l.main | .error _ => none,
     lower_ok := rfl,
     main_concat := ⟨GenAst.emitHelpers fxPlan, rfl⟩,

@@ -639,3 +639,62 @@ nothing claimed - D-P23 attaches to closed claims.
 **STANDING LIMIT, restated because it was measured again here:** deleting any of the four new
 evidence theorems leaves 'lake build' green and no gate in 'checks.sh' notices. No persistence
 coverage is claimed for any falsification in this package, only truth.
+
+## P-INLINE - D-P39: the constant-inlining embedding, and the ARM-form restatement of shell_unfolds
+
+**WHAT WAS CHANGED, and the authority for changing it.** 'Surface.shell_unfolds' and 'RunShell' are
+sketched definitions, and D-P39 (docs/design.md, orchestrator decision on delegated human authority)
+permits the signature change because the sketched form is FALSE AS WRITTEN: 'RunShellInversion.no_arm_run'
+proved the block the pin names has no 'Step' derivation at any frame, so 'RunShell' was the empty
+relation at every Surface and 'lowering_equivalence' was vacuous everywhere it was reachable.
+
+| Item | Sketch / previous form | What landed, and why |
+| 'Surface.shell_unfolds' | 'shell.codeBlock = L.headGuard ++ bindLocals ++ L.main' | **RESTATED TO THE ARM FORM**: 'shell.codeBlock = inlineContractConstants contractConstants (L.headGuard ++ bindLocals ++ L.main)'. The fingerprint registry ('scripts/check_statement_fingerprints.py', SURFACE_PINS) moved in the SAME commit and now carries the 'inlineContractConstants' token, and 'check_duplicate_facts.py' gained the same token in the 'shell' family's pin_tokens (D-P27). The old form was not a weaker spelling: it was false, and 'ObligationsGates' now exhibits that (the raw concatenation leaves 60 identifiers free, the inlined arm leaves none). |
+| 'Surface.bindLocals' at both fixtures | '[]' | **FIXTURE BUG, FIXED**: 'Midfall.Lowering.Inline.shellLocalLets', i.e. 'let vk := 0x1000' and 'let success := 1' - the two names 'RunEmitted.shellLocals' already carried. The field is documented as "the constant-substituted locals block"; what belongs in it is the wrapper's LOCALS, not the contract constants. 'FrameWalkWitness.bindLocals_binds_the_two_shell_locals' replaces 'bindLocals_binds_nothing'. |
+| 'RunShell' | 'RunCommitted c g S.shell.codeBlock (callState ...)' | **UNCHANGED**, and that is deliberate: the pin is what makes its program the inlined arm at every Surface. Restating 'RunShell' itself would have made the pin decorative. 'RunVerifier' now runs 'Surface.armProgram', the same term spelled out, so 'ShellModel.runShell_eq_runVerifier_zero' survives - the R-58 F3 purpose of the pin (one program behind all three run relations) is preserved, not traded away for the run. |
+| 'ShellModel.armBody' | 'S.L.headGuard ++ S.bindLocals ++ S.L.main' | **UNCHANGED.** 'armBody_eq_shell_codeBlock' is restated to carry the embedding ('S.shell.codeBlock = inlineContractConstants contractConstants (armBody S)'), which is the honest form. 'armBody' is deliberately NOT inlined: it is what 'ShellModel.wrap' puts behind the dispatcher's entry path, and changing it would change 'wrap', which the headline reads. That asymmetry is a named consequence, not an oversight - see the F1/F2 fork in the package report. |
+| 'RunEmitted' parser and constant table | defined in 'RunEmitted.lean:77-125' | **MOVED, not copied**, to 'Midfall/Lowering/InlineConstants.lean': 'Surface.lean' needs the table and 'RunEmitted' imports 'Partials' which imports 'Surface' - a cycle. 'RunEmitted' now cites the moved names through 'abbrev', so 'RunEmitted.shellLets' still resolves and 'FrameWalk.shellConsts_matches_artifact_ok' still compares against the same single table. 'FrameWalk.pinnedConstants' (the literal transcription the walk needs for 'decide') moved to the same file for the same reason, so there are still exactly two copies of these numbers in the tree: the parsed artifact table and the pinned literal, with a named pin between them. |
+
+**THE EMBEDDING IS NOT 'INLINE EVERYTHING'.** 'contractConstants' is the Solidity 'uint256 internal
+constant' table ONLY. 'vk' and 'success' are locals: 'success' is assignment-accumulated eleven times
+at the top of 'main' and is REUSED AS A PARAMETER NAME by 'batch_invert' and 'ec_pairing'. Inlining it
+rewrites the reads and leaves the writes pointing at an undeclared name - 'RunEmitted.inlineTheLocalsToo_stuck_ok'
+measures that the artifact then gets STUCK, and 'Inline.inlining_a_local_rewrites_reads_but_not_writes'
+states the mechanism as a theorem. This is a correction to D-P39 as written ('the same table
+RunEmitted.shellLets uses'), accepted by the orchestrator and recorded here.
+
+**THEOREMS ADDED.** 'Midfall/Lowering/InlineConstants.lean': 'inExpr_keeps_shadowed',
+'inExpr_substitutes_unshadowed', 'planted_parameter_shadow_survives', 'unshadowed_site_is_substituted',
+'planted_let_shadow_survives', 'planted_switch_shadow_survives', 'shadowing_is_load_bearing',
+'naive_transform_substitutes_under_the_shadow', 'inlining_a_local_rewrites_reads_but_not_writes',
+'binding_a_local_leaves_the_chain'. 'Midfall/Instances/RunShellInhabited.lean':
+'arm_derivation' (a 'Step' derivation of the whole inlined arm), 'runShell_curveSurface_inhabited',
+'shell_run_reverts_four_bytes', 'wrap_empty_cd_reverts_nil', 'shell_run_is_not_the_wrap_run',
+'ir_refines_refuted_at_curveSurface_of_unique_wrap'. 'FrameWalkWitness':
+'inlinedArmHasNoFreeIdentifiers', 'armWithLocals_still_has_60_free',
+'bindLocals_binds_the_two_shell_locals', 'armInlined_is_the_shell_codeBlock',
+'rawArm_is_not_the_shell_codeBlock'.
+
+**THEOREMS REMOVED, and why that is not a weakening.** 'runShell_curveSurface_empty',
+'runShell_realSurface_empty', 'runShell_irSurface_empty', 'obsEquiv_wrap_runShell_fails',
+'ir_refines_refuted_at_curveSurface', 'curveSurface_not_LoweringCorrect' and
+'ir_refines_refuted_at_the_imported_artifact' were all the raw-arm emptiness transported through the
+old pin. After D-P39 their content is FALSE ('RunShell curveSurface' has runs), so they are deleted
+rather than restated weaker; 'RunShellInversion' section 12 records exactly that, and the
+imported-artifact refutation is NOT re-established by any route - it is reported as unsettled.
+
+**D-P23 COVERAGE CLAIMED.** Satisfiability: 'runShell_curveSurface_inhabited' (a derivation, kernel-
+checked: its axiom set is propext / Classical.choice / Quot.sound plus the five D-P36a curve-pairing
+assumptions 'curveSurface' is built on - no 'sorryAx', no 'Lean.ofReduceBool'). Falsification:
+'RunShellInversion.no_arm_run' (the same program with the embedding removed has NO derivation) plus
+'Inline.shadowing_is_load_bearing' / 'naive_transform_substitutes_under_the_shadow' (the wrong
+transform produces a different program) plus 'RunEmitted.inlineTheLocalsToo_stuck_ok'. For the
+'ir_refines' question the honest answer is a REDUCTION, so no unconditional refutation is claimed:
+see 'ir_refines_refuted_at_curveSurface_of_unique_wrap'.
+
+**STANDING LIMIT, restated because it was measured again here:** deleting any of the new evidence
+theorems leaves 'lake build' green and no gate in 'checks.sh' notices. The gates added here
+('inlineShadowingKats_ok', 'naiveTransformIsWrong_ok', 'contractConstantsShape_ok',
+'inlineFuelIsEnough_ok', 'inlinedArtifactArmRuns_ok', 'inlineTheLocalsToo_stuck_ok') are independent
+measurements: they never call the lemmas. KAT pins moved 1340 -> 1346 and 96 -> 97 files, deliberately,
+in the commit that added the six gates.

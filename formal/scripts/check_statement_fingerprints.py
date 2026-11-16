@@ -346,7 +346,12 @@ FIELD_MUST_NOT = {
 # notice a paraphrase that keeps the two names and drops the equation. These fragments
 # pin the shape of each pin, in the file that declares them.
 SURFACE_PINS = [
-    ("shell_unfolds", ["shell.codeBlock =", "L.headGuard ++ bindLocals ++ L.main"]),
+    # P-INLINE (D-P39): the pin was restated to the ARM form in the same commit this registry
+    # entry moved (D-P27). The third fragment is the embedding itself - a paraphrase that keeps the
+    # concatenation and drops the constant inlining loses a token here, which is the point: the
+    # un-inlined form is the statement RunShellInversion proved FALSE.
+    ("shell_unfolds", ["shell.codeBlock =", "inlineContractConstants",
+                       "L.headGuard ++ bindLocals ++ L.main"]),
     ("plan_hasAccumulator", ["plan.hasAccumulator =", "cfg.accumulator.isSome"]),
     ("plan_numInstances", ["plan.numInstances =", "cfg.numInstances"]),
     # R-60 S3: the evaluator pin is the runtime-BLOCK equation, not the isSome agreement.

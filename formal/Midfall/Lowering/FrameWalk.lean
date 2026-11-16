@@ -55,6 +55,7 @@ be vacuously rejecting: it accepts a clean block, it accepts a read ending exact
 edge and one starting exactly above it, and it rejects the same clean block with the fuel starved.
 -/
 import Midfall.Lowering.GenAstDispatch
+import Midfall.Lowering.InlineConstants
 import Midfall.Lowering.RunEmitted
 import YulSemantics.Syntax
 
@@ -118,117 +119,14 @@ def frameVisibleSites : List Site -> List Site
     is reported as dirty rather than silently treated as a number. -/
 abbrev Consts := List (String × Option Nat)
 
-/-- THE PINNED CONSTANT TABLE, and why it is a literal here.
-
-    The walk has to be discharged by 'decide', i.e. by the KERNEL, because that is the only discharge
-    this project trusts for a headline fact: a KAT trusts the compiler, a 'decide' does not. And the
-    kernel CANNOT reduce 'String.splitOn' or 'String.startsWith' - they are '@[extern]' C++ - so
-    feeding the walk 'RunEmitted.solConstants', which is exactly those two functions applied to the
-    rendered contract, makes every verdict about the real program undecidable in the kernel.
-    Measured, not assumed: 'shellConsts.length = 92' FAILS 'decide' when 'shellConsts' is the parsed
-    table, while the same walk over a literal table decides in about a second.
-
-    THE FIX IS A PIN, NOT A SUBSTITUTION. 'pinnedConstants' is a transcription of the same table and
-    'shellConsts_matches_artifact_ok' is the gate saying the transcription IS the artifact's own
-    numbers, evaluated by 'kat_gate.py' at every gate run, so a regenerated or edited contract that
-    moves a constant reddens the gate instead of silently desynchronising the two tables. That is the
-    R-58 copy class handled the only way it can be handled here: a copy WITH a named pin between the
-    two sides.
--/
-def pinnedConstants : List (String × Nat) := [
-  ("EXPECTED_VK_PAYLOAD_LENGTH", 4576),
-  ("EXPECTED_VK_LENGTH", 4577),
-  ("EXPECTED_VK_CODEHASH_WORD", 15933609736973938366157763540951553264596488184743928812768469146773639656731),
-  ("PROOF_LEN_CPTR", 68),
-  ("PROOF_CPTR", 100),
-  ("NUM_INSTANCE_CPTR", 4420),
-  ("INSTANCE_CPTR", 4452),
-  ("TRANSCRIPT_MPTR", 4096),
-  ("RETURN_MPTR", 4096),
-  ("VK_MPTR", 10496),
-  ("VK_DIGEST_MPTR", 10496),
-  ("NUM_INSTANCES_MPTR", 10528),
-  ("K_MPTR", 10560),
-  ("N_INV_MPTR", 10592),
-  ("OMEGA_MPTR", 10624),
-  ("OMEGA_INV_MPTR", 10656),
-  ("OMEGA_INV_TO_L_MPTR", 10688),
-  ("HAS_ACCUMULATOR_MPTR", 10720),
-  ("ACC_OFFSET_MPTR", 10752),
-  ("NUM_ACC_LIMBS_MPTR", 10784),
-  ("NUM_ACC_LIMB_BITS_MPTR", 10816),
-  ("G1_BASE_MPTR", 10848),
-  ("G2_BASE_MPTR", 10976),
-  ("NEG_S_G2_BASE_MPTR", 11232),
-  ("CHALLENGE_MPTR", 15072),
-  ("THETA_MPTR", 15072),
-  ("BETA_MPTR", 15104),
-  ("GAMMA_MPTR", 15136),
-  ("TRASH_CHALLENGE_MPTR", 15168),
-  ("Y_MPTR", 15200),
-  ("X_MPTR", 15232),
-  ("X1_MPTR", 15264),
-  ("X2_MPTR", 15296),
-  ("X3_MPTR", 15328),
-  ("X4_MPTR", 15360),
-  ("F_COM_MPTR", 15392),
-  ("PI_MPTR", 15520),
-  ("ACC_LHS_MPTR", 15648),
-  ("ACC_RHS_MPTR", 15776),
-  ("X_N_MPTR", 15904),
-  ("X_N_MINUS_1_INV_MPTR", 15936),
-  ("L_LAST_MPTR", 15968),
-  ("L_BLIND_MPTR", 16000),
-  ("L_0_MPTR", 16032),
-  ("INSTANCE_EVAL_MPTR", 16064),
-  ("QUOTIENT_EVAL_MPTR", 16096),
-  ("QUOTIENT_MPTR", 16128),
-  ("F_EVAL_MPTR", 16288),
-  ("V_MPTR", 16320),
-  ("FINAL_COM_MPTR", 16352),
-  ("PAIRING_LHS_MPTR", 16480),
-  ("PAIRING_RHS_MPTR", 16608),
-  ("ROT_POINTS_MPTR", 16736),
-  ("X1_POWERS_MPTR", 17632),
-  ("Q_COM_MPTR", 19712),
-  ("Q_EVAL_SET_MPTR", 19712),
-  ("Q_EVAL_CPTR_MPTR", 21504),
-  ("G1_IDENTITY_MPTR", 21760),
-  ("REVERSED_EVALS_MPTR", 22112),
-  ("SELECTOR_ACC_MPTR", 26080),
-  ("QUOTIENT_RETURN_MPTR", 4096),
-  ("BATCH_INV_SCRATCH_MPTR", 26080),
-  ("LAGRANGE_DENOMS_MPTR", 26560),
-  ("TRACE_U256_MPTR", 33728),
-  ("ADVICE_COMMS_MPTR_BASE", 23648),
-  ("LOOKUP_M_COMMS_MPTR_BASE", 24672),
-  ("PERM_Z_COMMS_MPTR_BASE", 24800),
-  ("LOOKUP_HELPER_COMMS_MPTR_BASE", 25184),
-  ("LOOKUP_Z_COMMS_MPTR_BASE", 25312),
-  ("TRASHCAN_COMMS_MPTR_BASE", 25440),
-  ("QUOTIENT_LIMB_COMMS_MPTR_BASE", 25568),
-  ("G1ADD_GAS", 375),
-  ("G1MSM_GAS_1PAIR", 12000),
-  ("PAIRING_GAS_2PAIR", 102900),
-  ("MODEXP_GAS", 4080),
-  ("G1MSM_GAS_SMOKE", 337836),
-  ("ERR_BAD_CALLDATA_SHAPE", 463070076),
-  ("ERR_VK_MISMATCH", 2756171582),
-  ("ERR_NON_CANONICAL_SCALAR", 2001928258),
-  ("ERR_BAD_POINT_ENCODING", 4068017644),
-  ("ERR_PRECOMPILE_FAILED", 2229802642),
-  ("ERR_PROOF_REJECTED", 3283146957),
-  ("ERR_QUOTIENT_PROGRAM_INVALID", 1019747209),
-  ("ERR_MEMORY_LAYOUT_VIOLATED", 3381169443),
-  ("FR_MODULUS", 52435875175126190479447740508185965837690552500527637822603658699938581184513),
-  ("BLS_P_HI", 34565483545414906068789196026815425751),
-  ("BLS_P_MINUS_ONE_LO", 45442060874369865957053122457065728162598490762543039060009208264153100167850),
-  ("BLS_P_MINUS_ONE_PACKED_0", 25645630028331783532722944590531249665523018521732413678114874305194),
-  ("BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG", 25645630028331783532722944590531249665523018521732485735708912233130),
-  ("BLS_P_MINUS_ONE_PACKED_1", 148457621397983152316361523253305392630546779012),
-  ("vk", 4096),
-  ("success", 1)
-]
+/-- **THE PINNED CONSTANT TABLE MOVED**, by P-INLINE (D-P39), to
+    'Midfall/Lowering/InlineConstants.lean', which is now the single owner of BOTH the parsed
+    artifact table and this literal transcription of it. The reason is the same cycle that moved the
+    parsed table: the inlining transform needs these numbers and 'Surface.lean' cannot import
+    'RunEmitted.lean'. Everything the moved doc string says still holds and is recorded at its new
+    home - the kernel cannot reduce 'String.splitOn', so a 'decide' verdict about the real program
+    needs a literal table, and the copy is held honest by 'shellConsts_matches_artifact_ok' below. -/
+abbrev pinnedConstants : List (String × Nat) := Midfall.Lowering.Inline.pinnedConstants
 
 /-- The walk's constant environment: the pinned table, every entry resolved. -/
 def shellConsts : Consts := pinnedConstants.map fun n => (n.1, some n.2)

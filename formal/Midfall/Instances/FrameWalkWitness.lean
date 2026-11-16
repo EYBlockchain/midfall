@@ -74,10 +74,26 @@ namespace Midfall.Instances.FrameWalkWitness
 /-- The emitted main block at the fixture plan, which IS the curve Surface's plan. -/
 def mainBlk : List (Stmt FOp) := Midfall.Lowering.GenAst.emitMain fxPlan
 
-/-- The arm the shell runs: 'headGuard ++ bindLocals ++ main', spelled from the fixture's own three
-    pieces, which is what the curve Surface's fields reduce to. -/
+/-- **THE FULLY RAW ARM**: 'headGuard ++ [] ++ main', i.e. the program as it was before D-P39, with
+    NOTHING bound. Kept under this name because 'RunShellInversion.no_arm_run' is a theorem about
+    THIS block and its proof runs on an EMPTY variable environment - the emptiness is the point. -/
 def armBlk : List (Stmt FOp) := fxHeadGuard ++ ([] : List (Stmt FOp))
   ++ Midfall.Lowering.GenAst.emitMain fxPlan
+
+/-- **THE ARM AS THE SURFACE NOW STATES IT**: 'headGuard ++ bindLocals ++ main' with the two shell
+    locals bound (D-P39). This is 'ShellModel.armBody curveSurface' by 'rfl'. It is STILL not a
+    closed program - 59 contract-level identifiers remain free, and P-RUNSHELL's
+    'armBoundAllZeroStillStuck_ok' already measured that no arm-level binding can close it - which is
+    exactly the gap the inlining below fills. -/
+def armWithLocals : List (Stmt FOp) := fxHeadGuard
+  ++ Midfall.Lowering.Inline.shellLocalLets ++ Midfall.Lowering.GenAst.emitMain fxPlan
+
+/-- **THE PROGRAM 'RunShell' RUNS.** The arm with the contract-level constants inlined at every use
+    site, inside the helper bodies included (D-P39). Equal to 'curveSurface.shell.codeBlock' by
+    'rfl', i.e. by the kernel and not by a pin a proof has to be handed. -/
+def armInlined : List (Stmt FOp) :=
+  Midfall.Lowering.Inline.inlineContractConstants Midfall.Lowering.Inline.contractConstants
+    armWithLocals
 
 /-- **THE WALKED MAIN IS THE CURVE SURFACE'S MAIN.** 'curveSurface.L.main' is
     'GenAst.emitMain curveSurface.plan' by 'curveBlk', and 'curveSurface.plan' is 'fxPlan', so the
@@ -88,13 +104,33 @@ theorem mainBlk_is_the_curve_main :
 
 /-- **THE WALKED ARM IS THE RUN ARM.** Not a claim about a model of it: the same statement list, by
     definition unfolding. Without this the walk could be about a block that merely resembles the
-    program rather than the program itself. -/
-theorem armBlk_is_the_shell_codeBlock :
-    armBlk = Midfall.Instances.CurveSurface.curveSurface.shell.codeBlock := rfl
+    program rather than the program itself.
 
-/-- And it is the dispatcher's arm body, the block 'ShellModel.wrap' runs after the prologue. -/
-theorem armBlk_is_the_arm_body :
-    armBlk = Midfall.Yul.ShellModel.armBody Midfall.Instances.CurveSurface.curveSurface := rfl
+    D-P39 MOVED WHAT THIS IDENTIFIES. 'armBlk' is the RAW arm and the shell no longer carries the raw
+    arm, so the equation below is about 'armWithLocals' and 'armInlined' instead - and the raw one is
+    kept as a named refutation of the pre-D-P39 pin ('rawArm_is_not_the_shell_codeBlock'). -/
+theorem armWithLocals_is_the_arm_body :
+    armWithLocals = Midfall.Yul.ShellModel.armBody Midfall.Instances.CurveSurface.curveSurface := rfl
+
+theorem armInlined_is_the_shell_codeBlock :
+    armInlined = Midfall.Instances.CurveSurface.curveSurface.shell.codeBlock := rfl
+
+/-- **AND THE RAW ARM IS NOT IT ANY MORE**, which is the same fact as the refutation P-RUNSHELL proved,
+    restated as a positive identification of what changed: the two blocks differ, so the emptiness
+    was about the binding and not about the frame. -/
+theorem rawArm_is_not_the_shell_codeBlock : armBlk ≠ armInlined := by
+  intro h
+  exact absurd (congrArg (fun b => b.length) h) (by decide : armBlk.length ≠ armInlined.length)
+
+/-- The two lengths, as data rather than as a hint about the proof above: the raw arm has 48
+    statements and the arm the Surface now carries has 50, because 'bindLocals' contributes the two
+    'let's. Kernel-checked. -/
+theorem arm_lengths : armBlk.length = 48 ∧ armInlined.length = 50 := ⟨by decide, by decide⟩
+
+/-- The raw arm is what 'ShellModel.armBody' was BEFORE the fixture bound the two locals; kept so the
+    P-RUNSHELL spine still has a named subject. -/
+theorem rawArm_is_the_arm_body_without_locals :
+    armBlk = fxHeadGuard ++ Midfall.Lowering.GenAst.emitMain fxPlan := rfl
 
 /-- **THE EMITTED MAIN IS FRAME-INSENSITIVE.** Kernel-checked: 'decide' runs the whole interprocedural
     walk over the real emitted program and finds no frame-visible read. THE HEADLINE MEASUREMENT OF
@@ -268,6 +304,24 @@ def what_step1_does_not_settle : String :=
     'main' evaluates 'extcodesize(vk)' unconditionally. -/
 theorem armHasFreeIdentifiers : (freeNames armBlk).length = 61 := by native_decide
 
+/-- **D-P39 DELIVERABLE 1: THE INLINED ARM IS A CLOSED PROGRAM.** Zero free identifiers. The
+    discharge is 'native_decide', and that is a limit of the evidence rather than a shortcut: the
+    walk is kernel-reducible (every verdict above in this file is a 'decide') but 'freeNames' is a
+    'mutual' block compiled through 'WellFounded.fix', which the kernel will not unfold - the same
+    asymmetry 'armHasFreeIdentifiers' below records. So this theorem is compiler-trusted
+    ('Lean.ofReduceBool' in its axiom set) and the kernel-checked companion is
+    'RunShellInversion.inlinedArm_gateIsClosed', which pins the exact statement the run gets stuck on
+    before inlining and evaluates after. -/
+theorem inlinedArmHasNoFreeIdentifiers : (freeNames armInlined).length = 0 := by native_decide
+
+/-- ...and the two locals alone do NOT close it: 60 identifiers remain free, all of them contract
+    constants. This is the measurement that separates the fixture bug from the spec gap, and the
+    arithmetic is worth stating: the raw arm left 61 free, binding 'vk' takes it to 60, and inlining
+    the 60 takes it to none. ('success' was never in the free set - 'FrameWalk.boundNames' counts the
+    two helper PARAMETERS named 'success' as a binding, generously, which is the same convention that
+    made it count 'RETURN_MPTR' as bound.) -/
+theorem armWithLocals_still_has_60_free : (freeNames armWithLocals).length = 60 := by native_decide
+
 /-- 'vk' specifically, the one the first executed statement needs.
 
     THE DISCHARGE HERE IS THE WEAKER ONE, AND IT IS LABELLED AS SUCH. 'freeNames' is a 'mutual'
@@ -279,9 +333,21 @@ theorem armHasFreeIdentifiers : (freeNames armBlk).length = 61 := by native_deci
     confined to 'Midfall/Instances/' by D-P20, and this file is in Instances. -/
 theorem vk_is_free : "vk" ∈ freeNames armBlk := by native_decide
 
-/-- Nothing in the Surface binds it: the arm's local-binding field is empty at this Surface, by 'rfl'. -/
-theorem bindLocals_binds_nothing :
-    Midfall.Instances.CurveSurface.curveSurface.bindLocals = [] := rfl
+/-- **WHAT THE SURFACE BINDS, AND WHAT IT DOES NOT.** D-P39 moved 'bindLocals' from '[]' to the two
+    shell locals, by 'rfl'. So 'vk' is no longer free at the Surface - and the 59 contract constants
+    are still free in 'armWithLocals', which is what the inlining is for. The point of stating this
+    as a theorem rather than a sentence is that it pins WHICH HALF of the old emptiness was a fixture
+    bug ('bindLocals = []') and which half was the spec gap (the constants). -/
+theorem bindLocals_binds_the_two_shell_locals :
+    Midfall.Instances.CurveSurface.curveSurface.bindLocals
+      = Midfall.Lowering.Inline.shellLocalLets := rfl
+
+/-- And it binds NO contract constant: the field is not where they go. -/
+theorem bindLocals_binds_no_constant :
+    (Midfall.Lowering.Inline.contractConstants.map Prod.fst).all fun n =>
+      !(Midfall.Lowering.FrameWalk.boundNames
+          Midfall.Lowering.Inline.shellLocalLets).contains n := by
+  native_decide
 
 /-- **AND THE DISPATCHER SIDE IS INHABITED WHERE THE SHELL SIDE IS EMPTY.**
     'unroutable_calldata_reverts' (ShellModel.lean:1360) gives, for ANY arm body and any frame whose

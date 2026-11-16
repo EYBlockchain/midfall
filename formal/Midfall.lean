@@ -101,6 +101,7 @@ import Midfall.Instances.ImportedIR
 import Midfall.Instances.ObligationsGates
 import Midfall.Instances.FrameWalkWitness
 import Midfall.Instances.RunShellInversion
+import Midfall.Instances.RunShellInhabited
 import Midfall.Instances.PairingProduct
 import Midfall.Security.SRS
 import Midfall.Security.Challenges

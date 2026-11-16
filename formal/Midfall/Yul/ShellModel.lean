@@ -1588,9 +1588,21 @@ theorem armBody_is_the_verifier_program (S : Surface p G₁ G₂ Gₜ) :
     armBody S = S.L.headGuard ++ S.bindLocals ++ S.L.main := rfl
 
 /-- The same identification through the pin that makes 'RunShell' and 'RunVerifier' one program
-(R-58 F3). -/
+(R-58 F3), RESTATED by D-P39: the pin now carries the constant embedding, so what the shell's code
+block equals is the arm BODY WITH THE CONTRACT CONSTANTS INLINED, and not the raw concatenation.
+The raw equation is not merely unprovable, it is FALSE at every Surface in the tree - that is what
+'RunShellInversion.no_arm_run' measured, and 'Surface.lean' records why the restatement was
+permitted. -/
 theorem armBody_eq_shell_codeBlock (S : Surface p G₁ G₂ Gₜ) :
-    S.shell.codeBlock = armBody S := S.shell_unfolds
+    S.shell.codeBlock =
+      Midfall.Lowering.Inline.inlineContractConstants
+        Midfall.Lowering.Inline.contractConstants (armBody S) := S.shell_unfolds
+
+/-- **AND THE SHELL RUNS THE ARM PROGRAM.** 'Surface.armProgram' is the spelled right-hand side of
+    the pin, so this is 'rfl': there is no second copy of the program between the pin, 'RunShell' and
+    'RunVerifier'. -/
+theorem shell_codeBlock_is_armProgram (S : Surface p G₁ G₂ Gₜ) :
+    S.shell.codeBlock = armProgram S := S.shell_unfolds
 
 /-- The four tests one dynamic ABI argument must pass: offset ceiling, length presence, length
 ceiling, tail bound. 'stride' is 1 for 'bytes' and 32 for 'uint256[]'. -/
@@ -2199,16 +2211,21 @@ theorem wrap_iff_modelRunContractIR (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv)
     exact ⟨dispatcherCode S, V', modelIr_irRuntime S, hrun⟩
 
 /-- **AND THE SHELL RUN IS THE VERIFIER RUN AT ZERO MEMORY.** 'RunShell' and 'RunVerifier' differ
-in the statement by which block and which frame: 'shell.codeBlock' versus
-'S.L.headGuard ++ S.bindLocals ++ S.L.main', and 'callState' versus 'initState ... mem₀'. Under
-the surface pin 'shell_unfolds' the two programs are one, and 'callState' IS 'initState' at the
-everywhere-zero memory - so the two run predicates are the same predicate, by 'rfl'. This is the
-one frame identification the model DOES give for free, and it is what the headline's soundness
-conjunct runs on. -/
+in the statement by which block and which frame: 'shell.codeBlock' versus 'armProgram S', and
+'callState' versus 'initState ... mem₀'. Under the surface pin 'shell_unfolds' the two programs are
+one - and after D-P39 they are one BECAUSE the pin names the inlined arm on both sides, which is the
+only reason this theorem survived the restatement. 'callState' IS 'initState' at the everywhere-zero
+memory, so the two run predicates are the same predicate. This is the one frame identification the
+model DOES give for free, and it is what the headline's soundness conjunct runs on. -/
 theorem runShell_eq_runVerifier_zero (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash)
     (cd : Bytes) (c : ExternalCalls) (g : ExternalGas) (obs : Obs) :
     RunShell S W H cd c g obs → RunVerifier S W H cd (fun _ => 0) c g obs :=
-  fun ⟨V', hrun⟩ => ⟨V', by rw [← S.shell_unfolds]; exact hrun⟩
+  fun ⟨V', hrun⟩ => ⟨V', by
+    -- 'armProgram S' is the spelled right-hand side of the pin, definitionally; the pin itself is
+    -- what turns it into 'S.shell.codeBlock'. D-P39.
+    have key : S.shell.codeBlock = armProgram S := S.shell_unfolds
+    rw [← key]
+    exact hrun⟩
 
 /-! ### 13. D-P23 for the transport: the accepting calldata, and two more falsifications -/
 

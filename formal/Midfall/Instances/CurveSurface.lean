@@ -156,7 +156,7 @@ noncomputable def curveSurface : Surface blsR G₁z G2fold blsGT where
   L := fxLowered
   lower := fxLower
   lower_ok := rfl
-  bindLocals := []
+  bindLocals := Midfall.Lowering.Inline.shellLocalLets
   shell := fxShell
   shellLayout := fxShellLayout
   evaluatorRuntime := none
@@ -199,7 +199,8 @@ theorem curveSurfaceProgramIsTheFixtures :
     curveSurface.L = fxLowered ∧ curveSurface.plan = fxPlan ∧
       curveSurface.shell = fxShell ∧ curveSurface.shellLayout = fxShellLayout ∧
       curveSurface.blk = fxBlk ∧ curveSurface.lower = fxLower ∧
-      curveSurface.o₀ = fxOptions ∧ curveSurface.bindLocals = [] ∧
+      curveSurface.o₀ = fxOptions ∧
+      curveSurface.bindLocals = Midfall.Lowering.Inline.shellLocalLets ∧
       curveSurface.evaluatorRuntime = none ∧
       curveSurface.runtimeName = fxRuntimeName :=
   ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩

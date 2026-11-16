@@ -466,27 +466,6 @@ theorem no_arm_run {W : ExecEnv} {H : Midfall.Halo2.Hash} {cd : Bytes}
       have ⟨_, horfl⟩ := guard_forced hguard
       exact absurd horfl ho
 
-/-! ### 7. RunShell at the curve Surface is empty -/
-
-/-- **THE INVERSION, AT THE SURFACE.** For every world, every hash, every calldata, every call
-    relation and every gas oracle, \`RunShell curveSurface\` has NO observation: the set is empty. -/
-theorem runShell_curveSurface_empty (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes)
-    (c : ExternalCalls) (g : ExternalGas) (obs : Midfall.Yul.Bridge.Obs) :
-    ¬ RunShell curveSurface W H cd c g obs := by
-  rintro ⟨V', st', hrun, _⟩
-  rw [<- FrameWalkWitness.armBlk_is_the_shell_codeBlock] at hrun
-  exact no_arm_run hrun
-
-/-- The same emptiness at the FIXTURE Surface: its shell block, its layout and its empty
-    \`bindLocals\` are the same data, so \`RunShell realSurface\` is empty too. -/
-theorem runShell_realSurface_empty (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes)
-    (c : ExternalCalls) (g : ExternalGas) (obs : Midfall.Yul.Bridge.Obs) :
-    ¬ RunShell realSurface W H cd c g obs := by
-  rintro ⟨V', st', hrun, _⟩
-  have key : realSurface.shell.codeBlock = armBlk := rfl
-  rw [key] at hrun
-  exact no_arm_run hrun
-
 /-! ### 8. The dispatcher side IS inhabited there, so ObsEquiv fails -/
 
 /-- **ONE SIDE INHABITED.** On the empty calldata the dispatcher falls through to \`revert(0,0)\` for
@@ -500,88 +479,6 @@ theorem wrap_empty_cd_inhabited (c : ExternalCalls) (g : ExternalGas) :
     ShellModel.unroutable_calldata_reverts (body := ShellModel.armBody curveSurface) hsize
   exact ⟨⟨committedState (callState fxW curveSurface.shellLayout keccak256
       (ByteArray.empty : Bytes)) st', .halt⟩, ⟨[], ⟨st', hrun, rfl⟩⟩⟩
-
-/-- **THE OBSERVATIONAL EQUIVALENCE FAILS.** One view exists on the dispatcher side and on no
-    observation of the shell side - because there is no observation of the shell side. -/
-theorem obsEquiv_wrap_runShell_fails (c : ExternalCalls) (g : ExternalGas) :
-    ¬ ObsEquiv (ShellModel.wrap curveSurface fxW keccak256 (ByteArray.empty : Bytes) c g)
-      (RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) c g) := by
-  intro h
-  obtain ⟨obs, hwrap⟩ := wrap_empty_cd_inhabited c g
-  obtain ⟨o, hsh, _⟩ := (h obs.view).1 ⟨obs, hwrap, rfl⟩
-  exact runShell_curveSurface_empty fxW keccak256 (ByteArray.empty : Bytes) c g o hsh
-
-/-- The empty call relation is world-local, so it is an admissible witness for the binder
-    \`ir_refines\` puts on the call relation. No assumption about the precompiles is needed for the
-    refutation: the arm gets stuck before it reaches one. -/
-theorem noCalls_worldLocal : ExternalCalls.WorldLocal ExternalCalls.none :=
-  fun _ _ _ _ _ => Iff.rfl
-
-/-- **\`LoweringCorrect.ir_refines\` AT THE CURVE SURFACE IS REFUTED, NOT UNPROVABLE.** Read at the
-    in-tree dispatcher model \`ShellModel.modelIr curveSurface\` - the object the headline
-    \`lowering_equivalence\` transports through, whose import check is \`rfl\` - its conclusion is false
-    for a world-local call relation, a zero gas oracle, the fixture world and the empty calldata. -/
-theorem ir_refines_refuted_at_curveSurface :
-    ¬ (∀ (ir : YulObject) (irLyt : EVM.Layout), curveSurface.irCheck ir = true →
-        ∀ (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes) (c : ExternalCalls) (g₀ : U256),
-          c.WorldLocal →
-          ObsEquiv (RunContractIR curveSurface W H ir irLyt cd c (ExternalGas.ofFun fun _ => g₀))
-            (RunShell curveSurface W H cd c (ExternalGas.ofFun fun _ => g₀))) := by
-  intro h
-  have hob := h (ShellModel.modelIr curveSurface) curveSurface.shellLayout
-    (ShellModel.modelIr_irCheck curveSurface) fxW keccak256 (ByteArray.empty : Bytes)
-    ExternalCalls.none 0 noCalls_worldLocal
-  obtain ⟨obs, hwrap⟩ := wrap_empty_cd_inhabited ExternalCalls.none (ExternalGas.ofFun fun _ => 0)
-  have hiff := ShellModel.wrap_iff_modelRunContractIR curveSurface fxW keccak256
-    (ByteArray.empty : Bytes) ExternalCalls.none (ExternalGas.ofFun fun _ => 0) obs
-  obtain ⟨o, ho, _⟩ := (hob obs.view).1 ⟨obs, hiff.mpr hwrap, rfl⟩
-  exact runShell_curveSurface_empty fxW keccak256 (ByteArray.empty : Bytes) ExternalCalls.none
-    (ExternalGas.ofFun fun _ => 0) o ho
-
-/-- **THE REQUIRED FINDING: THE CURVE SURFACE CANNOT DISCHARGE \`LoweringCorrect\` AT ALL.** For
-    EVERY \`product\`. The bundle has a FALSE field, not an unproved one. So
-    \`lowering_equivalence curveSurface product\` is vacuous for every product, and the eight-leg
-    exhibit \`loweqBundleCore\` - every binder the headline takes outside its bundle - cannot be
-    repaired into a witness of the bundle. -/
-theorem curveSurface_not_LoweringCorrect (product : PairingProduct) :
-    ¬ LoweringCorrect curveSurface product := by
-  intro hc
-  exact ir_refines_refuted_at_curveSurface hc.ir_refines
-
-/-- The same emptiness at the IMPORT-NAMING Surface: it is \`realSurface\` with one field changed,
-    and \`shell\` is not that field, so its arm is the same open statement list. -/
-theorem runShell_irSurface_empty (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes)
-    (c : ExternalCalls) (g : ExternalGas) (obs : Midfall.Yul.Bridge.Obs) :
-    ¬ RunShell Midfall.Instances.ImportedIR.irSurface W H cd c g obs := by
-  rintro ⟨V', st', hrun, _⟩
-  have key : Midfall.Instances.ImportedIR.irSurface.shell.codeBlock = armBlk := rfl
-  rw [key] at hrun
-  exact no_arm_run hrun
-
-/-- **THE STRONGER REFUTATION: IT IS NOT AN ARTEFACT OF THE MODEL OBJECT.** The \`ir_refines\` shape
-    that \`Instances/ImportedIR.lean:355\` states as an \`example : Prop\` and hopes stage 6 will prove
-    is FALSE at the REAL imported solc artifact. \`irHypothesis_jointlyInhabited\` exhibits, for every
-    call relation and gas oracle, ONE object that both passes \`irSurface.irCheck\` and has a committed
-    \`RunContractIR\` at the empty calldata; the shell side of the same equivalence is empty. So the M8
-    bridge is refuted for solc's own output and not merely for \`ShellModel.modelIr\`, and no
-    IR-to-shell simulation can prove it while the shell's arm is the emitted program. -/
-theorem ir_refines_refuted_at_the_imported_artifact :
-    ¬ (∀ (ir : YulObject) (irLyt : EVM.Layout),
-        Midfall.Instances.ImportedIR.irSurface.irCheck ir = true →
-        ∀ (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes) (c : ExternalCalls) (g₀ : U256),
-          c.WorldLocal →
-          ObsEquiv (RunContractIR Midfall.Instances.ImportedIR.irSurface W H ir irLyt cd c
-            (ExternalGas.ofFun fun _ => g₀))
-            (RunShell Midfall.Instances.ImportedIR.irSurface W H cd c (ExternalGas.ofFun fun _ => g₀))) := by
-  intro h
-  obtain ⟨ir, irLyt, obs, hcheck, hrun⟩ :=
-    Midfall.Instances.ImportedIR.irHypothesis_jointlyInhabited ExternalCalls.none
-      (ExternalGas.ofFun fun _ => 0)
-  have hob := h ir irLyt hcheck Midfall.Instances.ImportedIR.irW keccak256
-    Midfall.Instances.ImportedIR.irCd ExternalCalls.none 0 noCalls_worldLocal
-  obtain ⟨o, ho, _⟩ := (hob obs.view).1 ⟨obs, hrun, rfl⟩
-  exact runShell_irSurface_empty Midfall.Instances.ImportedIR.irW keccak256
-    Midfall.Instances.ImportedIR.irCd ExternalCalls.none (ExternalGas.ofFun fun _ => 0) o ho
 
 /-! ### 9. D-P23: the falsification half -/
 
@@ -772,21 +669,24 @@ theorem entry_path_binds_vk :
       | Stmt.letDecl xs _ => some xs
       | _ => none).flatten.contains "vk" = true := rfl
 
-/-- **AND THE SHELL SIDE IS EMPTY FOR EVERY CALLDATA**, not just the unroutable one. That is what
-    makes the guard-firing difference unobservable at this Surface: there is no shell run at any
-    input for a guard to disagree with. The guard difference is a REAL second mechanism - R-66 and
-    \`ShellModel.old_shell_runs_the_verifier_on_the_same_frame\` prove it on a body with no free
-    identifiers - but it is MASKED here, not independent evidence. -/
-theorem runShell_empty_for_every_cd (W : ExecEnv) (H : Midfall.Halo2.Hash) (cd : Bytes)
-    (c : ExternalCalls) (g : ExternalGas) (obs : Midfall.Yul.Bridge.Obs) :
-    ¬ RunShell curveSurface W H cd c g obs :=
-  runShell_curveSurface_empty W H cd c g obs
+/- **WHAT THIS FILE NO LONGER PROVES, AND WHY THAT IS THE RESULT.** Every theorem above is about
+    'armBlk', the RAW arm, and all of them survive D-P39: the raw arm has no run, the head guard is
+    not the obstruction, and a bound read has one. What this file USED to carry on top of them -
+    'runShell_curveSurface_empty', 'runShell_realSurface_empty', 'runShell_irSurface_empty',
+    'obsEquiv_wrap_runShell_fails', 'ir_refines_refuted_at_curveSurface',
+    'curveSurface_not_LoweringCorrect' and 'ir_refines_refuted_at_the_imported_artifact' - was a
+    different thing: each was the raw-arm emptiness transported to 'RunShell' through the pin
+    'shell.codeBlock = headGuard ++ bindLocals ++ main'. D-P39 restated that pin (the emitted
+    program is a fragment and solc inlines the contract constants at every use site), so the
+    transport broke and with it the seven theorems. They are NOT restated here as weaker claims,
+    because the claims they made are now FALSE: 'RunShell curveSurface' is inhabited
+    ('RunShellInhabited.runShell_curveSurface_inhabited'). The 'ir_refines' question they settled
+    - is the field refuted at the model IR, and by what mechanism - is answered again from scratch,
+    with both sides inhabited, in 'Midfall/Instances/RunShellInhabited.lean'. The imported-artifact
+    refutation is NOT re-established: its only route was shell emptiness, and this package does not
+    settle whether it survives, which is reported rather than papered over. -/
 
 #print axioms Midfall.Instances.RunShellInversion.no_arm_run
-#print axioms Midfall.Instances.RunShellInversion.runShell_curveSurface_empty
-#print axioms Midfall.Instances.RunShellInversion.ir_refines_refuted_at_the_imported_artifact
-#print axioms Midfall.Instances.RunShellInversion.ir_refines_refuted_at_curveSurface
-#print axioms Midfall.Instances.RunShellInversion.curveSurface_not_LoweringCorrect
 #print axioms Midfall.Instances.RunShellInversion.guard_is_not_the_obstruction
 #print axioms Midfall.Instances.RunShellInversion.bound_read_has_a_run
 #print axioms Midfall.Instances.RunShellInversion.step_vals_noVar

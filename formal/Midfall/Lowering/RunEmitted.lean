@@ -49,6 +49,7 @@ WHAT IS NOT HERE EITHER.
 import Midfall.Lowering.GenAstDispatch
 import Midfall.Generator.VerifierPartials
 import Midfall.Lowering.Partials
+import Midfall.Lowering.InlineConstants
 import YulSemantics.Interp
 
 namespace Midfall.Lowering.RunEmitted
@@ -62,64 +63,24 @@ def FUEL : Nat := 20000
 abbrev D : Dialect := EVM.exec.toDialect
 abbrev SR : Type := Interp.SResult EVM.exec
 
-/-! ### The shell constant table, read out of the rendered contract -/
+/-! ### The shell constant table, read out of the rendered contract
 
-/-- The emitted program is a FRAGMENT: P-ARITY measured the identifiers it references and does
-    not declare, and Partials.lean:1379-1385 records why that is not a defect - they are the
-    contract-level uint256 internal constant declarations of Halo2Verifier.sol, and D-P30 puts
-    the Solidity wrapper out of scope. To RUN the fragment they must be bound.
+    MOVED to 'Midfall/Lowering/InlineConstants.lean' by P-INLINE (D-P39), which now owns the parser,
+    the table and the inlining transform. It could not stay here: 'Surface.lean' needs the table and
+    this file imports 'Lowering/Partials.lean', which imports 'Surface.lean' - a cycle. The names
+    below are ABBREVIATIONS of the moved definitions, not copies, so 'RunEmitted.shellLets' still
+    resolves and still denotes the artifact's own numbers, and 'FrameWalk'
+    ('shellConsts_matches_artifact_ok') still compares against the same single table. -/
 
-    THE VALUES ARE NOT A HAND-WRITTEN TABLE. They are parsed out of the contract the renderer
-    itself produces: renderConstants poseidonCtx is the constants section of the deployed
-    artifact, so this is the artifact's own numbers read at #eval time (D-P19). The gate
-    emittedShellConstantsCoverFreeNames_ok is what makes that checkable: it fails if a free
-    identifier of the emitted program has no constant behind it. -/
-def myTrim (s : String) : String :=
-  String.ofList (List.reverse (List.dropWhile (· == ' ')
-    (List.reverse (List.dropWhile (· == ' ') s.toList))))
-
-def strDrop (s : String) (n : Nat) : String := String.ofList (s.toList.drop n)
-
-def hexDigitVal (c : Char) : Nat :=
-  if c >= '0' && c <= '9' then c.toNat - '0'.toNat
-  else if c >= 'a' && c <= 'f' then c.toNat - 'a'.toNat + 10
-  else if c >= 'A' && c <= 'F' then c.toNat - 'A'.toNat + 10
-  else 0
-
-/-- A Solidity integer literal: 0x-hex or decimal, folded LEFT so the first digit is the most
-    significant. An earlier draft folded 16 * rest + head, which silently REVERSED every
-    literal - invisible on the palindromic 0x44, and caught only because the gate below pins
-    EXPECTED_VK_LENGTH against the artifact's own 4577. Recorded because a parser that is wrong
-    on most inputs and right on the ones a reader eyeballs is the classic silent defect. -/
-def natOfLiteral (s : String) : Nat :=
-  if s.startsWith "0x" then
-    (strDrop s 2).toList.foldl (fun acc c => acc * 16 + hexDigitVal c) 0
-  else
-    s.toList.foldl (fun acc c => if c.isDigit then acc * 10 + (c.toNat - '0'.toNat) else acc) 0
-
-/-- One "uint256 internal constant NAME = VALUE;" line of the rendered contract. -/
-def solConstantLine? (l : String) : Option (String × Nat) :=
-  let pre := "uint256 internal constant "
-  let t := myTrim l
-  if t.startsWith pre then
-    match (strDrop t pre.length).splitOn "=" with
-    | [nm, v] => match v.splitOn ";" with
-        | [val, _] => some (myTrim nm, natOfLiteral (myTrim val))
-        | _ => none
-    | _ => none
-  else none
-
-/-- The deployed contract's own constant table. -/
-def solConstants : List (String × Nat) :=
-  (renderConstants poseidonCtx).splitOn "\n" |>.filterMap solConstantLine?
+/-- The artifact's own parsed 'uint256 internal constant' table. -/
+abbrev solConstants : List (String × Nat) := Midfall.Lowering.Inline.solConstants
 
 /-- The two shell-provided locals that are NOT constants: the VK address and the success
     accumulator the artifact's prologue initialises to true (GenAst.lean:893 and :1046 both
     name 'let success := true' as shell material). -/
-def shellLocals : List (String × Nat) := [("vk", 0x1000), ("success", 1)]
+abbrev shellLocals : List (String × Nat) := Midfall.Lowering.Inline.shellLocals
 
-def letsOf : List (String × Nat) -> Block EVM.Op :=
-  fun xs => xs.map fun (n, v) => Stmt.letDecl [n] (some (Expr.lit (Literal.number v)))
+abbrev letsOf : List (String × Nat) -> Block EVM.Op := Midfall.Lowering.Inline.letsOf
 
 /-- The fragment's free names, bound. -/
 def shellLets : Block EVM.Op := letsOf (solConstants ++ shellLocals)
@@ -434,5 +395,61 @@ def emittedWholeProgramRevertSelector_ok : Bool :=
   wholeProgramHalt.endsWith "[164, 71, 215, 62]"
 
 #eval emittedWholeProgramRevertSelector_ok          -- expect true
+
+/-! ### D-P39: the inlined arm, and what the embedding is NOT -/
+
+/-- GATE (THE WALK'S FUEL IS ENOUGH FOR THE REAL PROGRAM). 'inlineExhaustedAt' reports exhaustion as
+    data, so this is the check that the bound is not silently under-substituting on the emitted main.
+    Red if 'inlineFuel' is lowered below what the program needs, or if the walk stops descending. -/
+def inlineFuelIsEnough_ok : Bool :=
+  ! (Midfall.Lowering.Inline.inlineExhaustedAt Midfall.Lowering.Inline.inlineFuel
+        Midfall.Lowering.Inline.contractConstants (emitMain artifactPlanView)) &&
+    (Midfall.Lowering.Inline.inlineExhaustedAt 1
+        Midfall.Lowering.Inline.contractConstants (emitMain artifactPlanView))
+
+/-- GATE (THE INLINED ARM RUNS, AND THE UN-INLINED ONE DOES NOT). The D-P39 test, at the artifact
+    plan view and the closed executable dialect: the arm with the contract constants inlined and the
+    two shell locals bound reaches a halt - the same VK-mismatch revert
+    emittedWholeProgramStopsAt_ok pins - while the same arm with the embedding removed is STUCK.
+    This is the gate form of the theorem in Midfall/Instances/RunShellInhabited.lean; the theorem is
+    the evidence for the curve Surface, this gate is the evidence for the artifact plan view. -/
+def inlinedArtifactArmRuns_ok : Bool :=
+  let inl := Midfall.Lowering.Inline.shellLocalLets ++
+        Midfall.Lowering.Inline.inlineContractConstants
+          Midfall.Lowering.Inline.contractConstants (emitMain artifactPlanView)
+  let raw := Midfall.Lowering.Inline.shellLocalLets ++ emitMain artifactPlanView
+  (match runBlock inl EvmState.init with
+    | .ok (_, st, _) => match st.halted with
+        | some (.revert, d) => d.length == 4
+        | _ => false
+    | _ => false) &&
+    (match runBlock raw EvmState.init with
+      | .stuck => true
+      | _ => false)
+
+/-- GATE (THE TWO LOCALS MUST NOT BE INLINED). 'success' is assigned, so a transform that treats it
+    as a constant rewrites the READS of the accumulator chain into the literal 1 while leaving the
+    WRITES as writes to a name nothing declares - 'VEnv.set' on an unbound name is a no-op rather
+    than an error (BigStep.lean:95-98, 'well-formed programs never hit that case'), so the wrong
+    embedding produces a DIFFERENT PROGRAM rather than a stuck one. What this gate asserts is the
+    syntactic difference, which is the part that is true. THE MEASURED NEGATIVE IS RECORDED, NOT
+    HIDDEN: at the empty-calldata frame the two embeddings reach the SAME halt (both revert with the
+    VK-mismatch selector, because the VK gate fires before any 'success' read), so the boundary is
+    NOT observable there - an earlier draft of this gate claimed it was and evaluated to false. The
+    observable consequence needs a frame where the VK gate passes, which is the deployment-calldata
+    work this package does not have. The mechanism is the theorem
+    'Inline.inlining_a_local_rewrites_reads_but_not_writes'; the syntactic difference is this gate.
+    -/
+def inlineTheLocalsToo_differs_ok : Bool := ! (SyntaxEq.stmtsBeq
+      (Midfall.Lowering.Inline.inlineContractConstants
+        (Midfall.Lowering.Inline.contractConstants ++ Midfall.Lowering.Inline.shellLocals)
+        (emitMain artifactPlanView))
+      (Midfall.Lowering.Inline.shellLocalLets ++
+        Midfall.Lowering.Inline.inlineContractConstants
+          Midfall.Lowering.Inline.contractConstants (emitMain artifactPlanView)))
+
+#eval inlineFuelIsEnough_ok                   -- expect true
+#eval inlinedArtifactArmRuns_ok               -- expect true
+#eval inlineTheLocalsToo_differs_ok           -- expect true
 
 end Midfall.Lowering.RunEmitted

@@ -132,6 +132,7 @@
 -- AdmissiblePairing, the only model in the tree is in Instances/, and the confinement
 -- gate keeps that import out of any file that states theorems (hazard 3).
 
+import Midfall.Lowering.InlineConstants
 import Midfall.Lowering.Inv
 import Midfall.Lowering.Types
 import Midfall.Lowering.Calldata
@@ -229,7 +230,17 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
   lower_ok : lower o₀ = .ok L
   /-- The constant-substituted locals block (R-37: produced with fuel, because the
       substitution rewrites free Solidity constants into literals, and an unbounded
-      walk over a generated block is not something to trust). -/
+      walk over a generated block is not something to trust).
+
+      P-INLINE (D-P39) READS THIS FIELD FOR WHAT IT DOCUMENTS: the locals the wrapper declares,
+      namely 'vk' and 'success' ('RunEmitted.shellLocals'), bound by 'let'. It is NOT where
+      contract-level constants go - a 'let' above a 'funDef' cannot reach into the function body,
+      because 'Step.callOk' initialises the callee with parameters and zeroed return slots only
+      (BigStep.lean:189), and P-RUNSHELL measured six of the eight emitted helpers reading names
+      their own signature cannot supply. Those are INLINED instead, by
+      'Midfall.Lowering.Inline.inlineContractConstants', in the pin below. An empty 'bindLocals' at
+      a Surface whose program reads 'vk' is a fixture bug, and 'curveSurface.bindLocals = []' was
+      exactly that. -/
   bindLocals : YulBlock
   /-- The shell model. Before R-58 F3 the doc said "the solc dispatcher wrapping
       headGuard ++ bindLocals ++ main", and nothing in the tree made that true: the
@@ -254,12 +265,20 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       `ShellModel.old_shell_runs_the_verifier_on_the_same_frame` proves this model RETURNS on the
       same frame and the same body. The two halt kinds differ in `Bridge.ObsView`'s `halted` field,
       so `RunShell` and `ShellModel.wrap` are observably different programs - which is the sentence
-      `shell_unfolds` used to only imply. Restating this pin to the ARM form (design2's wording) is
-      `IRCheck.lean`'s job, not this file's: the checker's theorem has to cite `wrap`, and changing a
-      registered pin's statement moves the fingerprint registry in the same commit (D-P27). Until
-      then the honest reading is: `shell_unfolds` pins the MODEL, `ShellModel.wrap` is the
-      DISPATCHER, and the gap between them is a theorem in ShellModel.lean rather than a
-      paragraph here. -/
+      `shell_unfolds` used to only imply.
+
+      P-INLINE (D-P39) RESTATED THIS PIN TO THE ARM FORM, in the same commit as the fingerprint
+      registry move (D-P27) that the previous version of this paragraph deferred to `IRCheck.lean`.
+      The restatement: the code block is the ARM with the contract-level constants embedded, i.e.
+      `inlineContractConstants contractConstants (headGuard ++ bindLocals ++ main)`, and the registry
+      now carries the `inlineContractConstants` token, so a paraphrase that drops the embedding
+      reddens. What the pin is NOT, and cannot be from inside this file: a pin that makes `shell` BE
+      the dispatcher. `ShellModel` imports this file, so a `Surface` field cannot cite
+      `ShellModel.dispatcher` - the cycle is structural, not stylistic. The dispatcher-versus-arm
+      gap therefore stays what P-M8-SHELL made it: a theorem in ShellModel.lean
+      (`old_shell_runs_the_verifier_on_the_same_frame`, `wrong_selector_reverts`). `RunShell` is the
+      ARM and `ShellModel.wrap` is the DISPATCHER, and P-INLINE reports that difference as the fork
+      it is (F1/F2 in the package report) rather than editing it away here. -/
   shell : YulObject
   /-- The shell runtime layout: code, the data maps, and the immutable map that
       loadimmutable reads (EVMExec.lean:793 routes it through env.immutable, which is
@@ -345,8 +364,20 @@ structure Surface (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
       as a pattern (countdown_or_halt : True := trivial). It can fail: the fixture
       exhibits it and SurfaceFixture.shellPinsKats_ok shows that a shell whose code
       block is only the main block refutes it. See the shell field for why the equality is the right
-      form for a MODEL and what M8 has to restate it to. -/
-  shell_unfolds : shell.codeBlock = L.headGuard ++ bindLocals ++ L.main
+      form for a MODEL.
+
+      P-INLINE (D-P39), THE ARM-FORM RESTATEMENT. The right-hand side used to be the raw lowered
+      concatenation, and that made the pin FALSE AS WRITTEN at every Surface in the tree: the
+      concatenation leaves 61 identifiers free, so `RunShell` had no runs at all
+      (`RunShellInversion.no_arm_run`, `runShell_curveSurface_empty` - a refutation of a
+      `LoweringCorrect` field, not a gap). The pin now names the ARM with the contract-level
+      constants embedded, which is what solc puts in the deployed code and what
+      `ShellModel.armBody` composes with. A signature change to a sketched definition, permitted
+      precisely because the sketched form was false. The fingerprint registry
+      (scripts/check_statement_fingerprints.py, SURFACE_PINS) moved in the same commit. -/
+  shell_unfolds : shell.codeBlock =
+    Midfall.Lowering.Inline.inlineContractConstants Midfall.Lowering.Inline.contractConstants
+      (L.headGuard ++ bindLocals ++ L.main)
 
   /-- R-58 F2, the free Bool. PlanView.hasAccumulator is a copy of a fact the Rust
       derives once: expected_has_accumulator IS accEncoding.isSome (Vk.lean:782 renders
@@ -792,11 +823,22 @@ def Surface.irCheck (S : Surface p G₁ G₂ Gₜ) (ir : YulObject) : Bool :=
   | some rt => ! unresolvedTop rt
   | none => false
 
-/-- PLAN 9.5 RunVerifier: headGuard ++ bindLocals ++ main, from an arbitrary memory,
-    observed at the frame boundary. -/
+/-- **D-P39: THE PROGRAM THE `verifyProof` ARM RUNS.** The lowered concatenation with the
+    contract-level constants inlined at every use site, inside function bodies included. Both
+    `RunVerifier` and - through the `shell_unfolds` pin - `RunShell` run THIS block, so the two
+    run relations stay about one program (the R-58 F3 purpose of the pin) while the program itself
+    is the closed one the deployed contract executes. `ShellModel.armBody` is the un-inlined
+    concatenation and is deliberately left alone: it is what the dispatcher model puts behind its
+    entry path, and changing it would change `ShellModel.wrap`, which the headline reads. -/
+def armProgram (S : Surface p G₁ G₂ Gₜ) : YulBlock :=
+  Midfall.Lowering.Inline.inlineContractConstants Midfall.Lowering.Inline.contractConstants
+    (S.L.headGuard ++ S.bindLocals ++ S.L.main)
+
+/-- PLAN 9.5 RunVerifier: the arm program, from an arbitrary memory, observed at the frame
+    boundary. -/
 def RunVerifier (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (cd : Bytes)
     (mem₀ : Nat → UInt8) (c : ExternalCalls) (g : ExternalGas) (obs : Obs) : Prop :=
-  ∃ V', RunCommitted c g (S.L.headGuard ++ S.bindLocals ++ S.L.main)
+  ∃ V', RunCommitted c g (armProgram S)
     (initState W S.shellLayout H cd mem₀) V' obs.state obs.outcome
 
 /-- PLAN 9.5 RunContractIR over the imported via-ir object runtime block. Stated here
@@ -811,7 +853,12 @@ def RunContractIR (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (ir : 
   ∃ rt V', S.irRuntime ir = some rt ∧
     RunCommitted c g rt (callState W irLyt H cd) V' obs.state obs.outcome
 
-/-- PLAN 9.5 RunShell: the hand-written dispatcher model wrapping the assembly. -/
+/-- PLAN 9.5 RunShell: the hand-written dispatcher model wrapping the assembly. Its program is
+    `S.shell.codeBlock`, which the `shell_unfolds` pin now identifies with the INLINED arm
+    (`armProgram S`, D-P39) - so the definition is unchanged and the program it runs is not the
+    fragment P-RUNSHELL found uninhabitable. Before the pin was restated this was the empty relation
+    at every Surface; `RunShellInversion.runShell_curveSurface_inhabited` is the exhibit that says
+    it no longer is. -/
 def RunShell (S : Surface p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (cd : Bytes)
     (c : ExternalCalls) (g : ExternalGas) (obs : Obs) : Prop :=
   ∃ V', RunCommitted c g S.shell.codeBlock (callState W S.shellLayout H cd)
