@@ -75,6 +75,7 @@ import Midfall.Instances.CurveSurface
 import Midfall.Instances.IrCheckBlindness
 import Midfall.Instances.DeployedProfile
 import Midfall.Instances.PoseidonInputs
+import Midfall.Instances.PoseidonEnv
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Lowering.AccEncoding

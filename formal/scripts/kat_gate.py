@@ -83,8 +83,20 @@ EVAL = re.compile(
 # asks for, the pure model's .ok and validate_layout, the ctx/blocks equality, the pure whole-file
 # render, and the pure-vs-derived model cross-check). So the file count goes 99 -> 100 and the total
 # 1352 -> 1361. No gate was deleted; the delta is +9/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1361
-EXPECTED_KAT_FILES = 100
+# D.2 (ALG/PORT) adds Midfall/Instances/PoseidonEnv.lean: a NEW file in the suite carrying FOURTEEN
+# '#eval ... -- expect true' gates (the strict vk.json/params.json parse with every hex width pinned;
+# the domain's k, n and extended_k; omega and omega_inv against the file's own hexes including the
+# primitive-64th-root half that a degenerate omega = 1 would fail; every column count; all three query
+# lists read back as the (column, rotation) pairs the exporter wrote; cs_degree with the quotient-degree
+# clause of WellFormed that DOES survive the fixture; the imported transcript_repr; the 27 compressed
+# commitments re-encoding to themselves; those same 27 pinned coordinate by coordinate against D.1's
+# artifact words; the G2 encoder's shape and non-constancy; params.json's byte-level facts; the
+# root-of-unity repair together with the clause that says the unrepaired root disagrees; the WellFormed
+# gap pinned as a falsifiable obligation rather than hidden; and the three counts D.1's typed-in meta
+# agrees with vk.json on). So the file count goes 100 -> 101 and the total 1361 -> 1375. No gate was
+# deleted; the delta is +14/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1375
+EXPECTED_KAT_FILES = 101
 
 # Only these shapes count as #eval output.
 #
