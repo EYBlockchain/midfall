@@ -55,7 +55,7 @@ EVAL = re.compile(
 # line - so the diff says out loud that a gate was added or removed, which is the whole
 # point of a pin. Both numbers are static properties of the tree, computed BEFORE any
 # "lake env lean" runs, so a deleted gate reddens in a second instead of eight minutes.
-EXPECTED_KAT_TOTAL = 1338
+EXPECTED_KAT_TOTAL = 1340
 EXPECTED_KAT_FILES = 96
 
 # Only these shapes count as #eval output.

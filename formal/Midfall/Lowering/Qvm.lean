@@ -2227,6 +2227,596 @@ theorem constAt_ok_of_lt {consts : List Midfall.Word256} {slot idx : Nat}
       rw [hcs] at hlen
       simp at hlen
       omega
+/-! ### 9. The third per-arm fact: the const-slot correspondence (P-CONTSLOT)
+
+    THE HOLE NEEDS TWO UNRELATED FACTS and this section lands the second one. Section 7 made
+    the two walkers take the same STRIDES; section 8 made the interpreter's operand READS fit
+    inside them; both are about the program BYTES. The hole's second conjunct is
+    'constSlotOutOfRange', which is about the CONSTANT TABLE, and it needs a third per-arm
+    fact neither section supplies: every slot 'evalQuotientIdentityStep' looks up via 'constAt'
+    must be a slot 'visitQuotientOperands' returns as a 'konst' operand, because phase 2 bounds
+    only the slots the WALKER names (checkQuotientConstSlot slot wide model.numConsts idx), and
+    'numConsts_eq_build_length' ties that bound to the table the interpreter indexes. Two
+    independent code paths over the same bytes; nothing in the tree related them until now.
+
+    WHY THERE IS NO READ-EFFECT MODEL, and what is measured instead. The reference has no
+    notion of "the interpreter read byte p" - R-71 declined to invent one and this package
+    does not either. The observable is the FAULT: 'constAt consts slot idx' produces
+    'constSlotOutOfRange slot idx' exactly when 'slot >= consts.length', so a slot read is
+    detectable by making the table shorter than the value that byte holds. Both sides are
+    probed the same way - the interpreter by its fault, the walker by a 'konst' operand whose
+    slot is out of range - so the comparison is between two measurements, not between a
+    measurement and a definition. The lemma below is the statement those measurements agree
+    with, and the gates in the KAT section re-run the measurements so the lemma cannot drift.
+
+    WHAT THE ENUMERATION FOUND, before a single tactic was written (R-70's order). Over the 26
+    identity arms the two position sets are EQUAL, not merely nested: 74 slot positions in
+    total, per arm 2/1/1/1/2/2/1/1/7/7/13 for the static readers and 2/2/2/30 for the four
+    dynamic ones. Zero disagreements. The five stream arms and the unknown-opcode class name
+    nothing on either side.
+
+    THE CONDITIONALITY, and it is the third time this has bitten. The lemma takes 'hw', that the
+    walker succeeds on the instruction, and 'hw' is LOAD-BEARING: 'const_slot_correspondence_-
+    needs_walker_success' exhibits LIN7 on a four-byte program with an empty table, where the
+    interpreter faults 'constSlotOutOfRange 0 1' at limb term 0 while the walker panics at term
+    1 and so names nothing. This is the same asymmetry section 7 met from the other direction
+    (the interpreter refuses shapes the walker walks); here the walker refuses bytes the
+    interpreter never reaches. It is discharged in the hole by 'supportedQvm', which runs phase
+    2 over every instruction of the finalized program - so the hypothesis is one the caller can
+    actually discharge, not an assumption nobody can supply.
+
+    WHAT IS NOT HERE, named rather than glossed: the seven arms whose slot reads sit inside a
+    counted fold - LIN7, BILIN7_ROW, BILIN7_PAIRWISE, the two RUN arms, AFFINE_SUM and
+    MODARITH7 - are proved by the case split below only for their non-folded parts and are
+    EXCLUDED from the 19-arm statement. Each needs a cursor-invariant induction over the
+    interpreter's fold PLUS a prefix lemma over the walker's fold, because the erroring
+    iteration's cursor is 'base + w * i' only if every earlier iteration succeeded and advanced
+    by exactly w. That is the same chaining obstacle section 8 reports for the read bound, on
+    the slot axis; the measurement above covers all 26 arms, the proof covers 19.
+
+    ONE MORE THING THE HOLE NEEDS, and neither this brief nor R-71 named it. The membership
+    form proved here is NOT by itself enough to refute a 'constSlotOutOfRange' fault. Validation
+    bounds every slot the walker NAMES: 'slot in walkerKonstSlots implies slot < model.numConsts'.
+    The correspondence gives the membership. What is still missing is that the faulted slot is
+    the one the table lacks - 'step = .error (constSlotOutOfRange slot j) implies
+    consts.length <= slot' - which is true (constAt is the only producer of that constructor and
+    it carries its own slot argument, see 'constAt_slotFault') but has to be traced through the
+    same 26-arm case split to be attached to the STEP rather than to one constAt call. So the
+    brief's third per-arm fact is really TWO passes over the same arms: membership (here) and
+    out-of-range-ness (not here). Both are case splits of the shape written below, so neither is
+    obstructed; the second is shorter than the first because 'constAt_slotFault' already does the
+    per-call work. -/
+
+def walkerKonstSlots (bytes : List Nat) (idx op : Nat) : List Nat :=
+  (operandList bytes idx op).filterMap fun o => match o with
+    | QuotientOperand.konst slot _ => some slot
+    | _ => none
+
+def NamesSlot {α : Type} (x : Except QVMFault α) (S : List Nat) : Prop :=
+  ∀ slot j, x = .error (QVMFault.constSlotOutOfRange slot j) → slot ∈ S
+
+theorem NamesSlot.ok {α : Type} (a : α) (S : List Nat) : NamesSlot (Except.ok a) S := by
+  intro slot j h; cases h
+theorem NamesSlot.error {α : Type} {e : QVMFault} (S : List Nat)
+    (h : ∀ slot j, e ≠ QVMFault.constSlotOutOfRange slot j) :
+    NamesSlot (Except.error (α := α) e) S := by
+  intro slot j hh
+  exact absurd (Except.error.inj hh) (h slot j)
+theorem NamesSlot.never {α : Type} {x : Except QVMFault α} (S : List Nat)
+    (h : ∀ slot j, x ≠ .error (QVMFault.constSlotOutOfRange slot j)) : NamesSlot x S := by
+  intro slot j hh; exact absurd hh (h slot j)
+theorem NamesSlot.bind {α β : Type} {x : Except QVMFault α} {f : α → Except QVMFault β}
+    {S : List Nat} (hx : NamesSlot x S) (hf : ∀ a, NamesSlot (f a) S) :
+    NamesSlot (x >>= f) S := by
+  intro slot j h
+  cases x with
+  | ok a => exact hf a slot j h
+  | error e =>
+      have h2 : e = QVMFault.constSlotOutOfRange slot j := Except.error.inj h
+      subst h2
+      exact hx slot j rfl
+theorem NamesSlot.bind2 {α β : Type} (x : Except QVMFault α) (f : α → Except QVMFault β)
+    {S : List Nat} (hx : NamesSlot x S) (hf : ∀ a, x = .ok a → NamesSlot (f a) S) :
+    NamesSlot (x >>= f) S := by
+  intro slot j h
+  cases x with
+  | ok a => exact hf a rfl slot j h
+  | error e =>
+      have h2 : e = QVMFault.constSlotOutOfRange slot j := Except.error.inj h
+      subst h2
+      exact hx slot j rfl
+theorem NamesSlot.pair_match {ε α β : Type} (e : ε × α)
+    (f : ε → α → Except QVMFault β) {S : List Nat}
+    (h : ∀ x y, NamesSlot (f x y) S) :
+    NamesSlot (match e with | (x, y) => f x y) S := by
+  cases e with
+  | mk x y => exact h x y
+
+theorem byteAt_not_slotFault (bytes : List Nat) (k s j : Nat) :
+    Midfall.Generator.byteAt bytes k ≠ .error (QVMFault.constSlotOutOfRange s j) := by
+  unfold Midfall.Generator.byteAt
+  cases hcs : bytes.drop k with
+  | cons b rest => show Except.ok b ≠ _; intro h2; cases h2
+  | nil => show Except.error (QVMFault.readPastEnd k) ≠ _; intro h2; cases h2
+theorem byteAt_namesSlot (bytes : List Nat) (k : Nat) (S : List Nat) :
+    NamesSlot (Midfall.Generator.byteAt bytes k) S :=
+  NamesSlot.never S (byteAt_not_slotFault bytes k)
+theorem readU16_namesSlot (bytes : List Nat) (k : Nat) (S : List Nat) :
+    NamesSlot (Midfall.Generator.readU16 bytes k) S := by
+  unfold Midfall.Generator.readU16
+  refine NamesSlot.bind (byteAt_namesSlot bytes k S) (fun _ =>
+    NamesSlot.bind (byteAt_namesSlot bytes (k+1) S) (fun _ => NamesSlot.ok _ S))
+theorem readU32_namesSlot (bytes : List Nat) (k : Nat) (S : List Nat) :
+    NamesSlot (Midfall.Generator.readU32 bytes k) S := by
+  unfold Midfall.Generator.readU32
+  refine NamesSlot.bind (byteAt_namesSlot bytes k S) (fun _ =>
+    NamesSlot.bind (byteAt_namesSlot bytes (k+1) S) (fun _ =>
+      NamesSlot.bind (byteAt_namesSlot bytes (k+2) S) (fun _ =>
+        NamesSlot.bind (byteAt_namesSlot bytes (k+3) S) (fun _ => NamesSlot.ok _ S))))
+theorem popStack_not_slotFault (stack : List QVMFr) (idx s j : Nat) :
+    Midfall.Generator.popStack stack idx ≠ .error (QVMFault.constSlotOutOfRange s j) := by
+  unfold Midfall.Generator.popStack
+  cases stack with
+  | cons v rest => show Except.ok (v, rest) ≠ _; intro h2; cases h2
+  | nil => show Except.error _ ≠ _; intro h2; cases h2
+theorem popStack_namesSlot (stack : List QVMFr) (idx : Nat) (S : List Nat) :
+    NamesSlot (Midfall.Generator.popStack stack idx) S :=
+  NamesSlot.never S (popStack_not_slotFault stack idx)
+theorem fqFromU256_not_slotFault (v : Midfall.Word256) (s j : Nat) :
+    Midfall.Generator.fqFromU256 v ≠ .error (QVMFault.constSlotOutOfRange s j) := by
+  unfold Midfall.Generator.fqFromU256
+  by_cases h : v.toNat < qvmFrModulus
+  · rw [if_pos h]; intro h2; cases h2
+  · rw [if_neg h]; intro h2; cases h2
+theorem constAt_slotFault {consts : List Midfall.Word256} {slot idx s j : Nat}
+    (h : Midfall.Generator.constAt consts slot idx =
+        .error (QVMFault.constSlotOutOfRange s j)) : s = slot := by
+  unfold Midfall.Generator.constAt at h
+  cases hcs : consts.drop slot with
+  | cons v rest =>
+      rw [hcs] at h
+      exact absurd h (fqFromU256_not_slotFault v s j)
+  | nil =>
+      rw [hcs] at h
+      have h2 := Except.error.inj h
+      cases h2
+      rfl
+theorem constAt_namesSlot {consts : List Midfall.Word256} (slot idx : Nat) (S : List Nat)
+    (h : slot ∈ S) : NamesSlot (Midfall.Generator.constAt consts slot idx) S := by
+  intro s j hh
+  have : s = slot := constAt_slotFault hh
+  subst this
+  exact h
+
+/-! #### Bridges: the two readers name the same byte -/
+
+theorem drop_succ_tail {l : List Nat} (k : Nat) : l.drop (k+1) = (l.drop k).tail := by
+  induction l generalizing k with
+  | nil => simp [List.drop]
+  | cons a rest ih =>
+      cases k with
+      | zero => rfl
+      | succ j => show rest.drop (j+1) = (rest.drop j).tail; exact ih j
+
+theorem drop_cons_of_byteAt_ok {bytes : List Nat} {k b : Nat}
+    (h : Midfall.Generator.byteAt bytes k = .ok b) :
+    ∃ rest, bytes.drop k = b :: rest := by
+  unfold Midfall.Generator.byteAt at h
+  cases hcs : bytes.drop k with
+  | cons c rest =>
+      rw [hcs] at h
+      have hc : c = b := by simpa using h
+      rw [← hc]
+      exact ⟨rest, rfl⟩
+  | nil =>
+      rw [hcs] at h
+      cases h
+
+theorem drop_cons_of_byteAtPanic_ok {bytes : List Nat} {k b line : Nat}
+    (h : Midfall.Generator.QuotientValidator.byteAtPanic bytes k line = .ok b) :
+    ∃ rest, bytes.drop k = b :: rest := by
+  unfold Midfall.Generator.QuotientValidator.byteAtPanic at h
+  cases hcs : bytes.drop k with
+  | cons c rest =>
+      rw [hcs] at h
+      have hc : c = b := by simpa using h
+      rw [← hc]
+      exact ⟨rest, rfl⟩
+  | nil =>
+      rw [hcs] at h
+      cases h
+
+theorem byteAt_iff_byteAtPanic {bytes : List Nat} {k b line : Nat} :
+    Midfall.Generator.byteAt bytes k = .ok b ↔
+      Midfall.Generator.QuotientValidator.byteAtPanic bytes k line = .ok b := by
+  constructor
+  · intro h
+    obtain ⟨rest, heq⟩ := drop_cons_of_byteAt_ok h
+    unfold Midfall.Generator.QuotientValidator.byteAtPanic
+    rw [heq]
+  · intro h
+    obtain ⟨rest, heq⟩ := drop_cons_of_byteAtPanic_ok h
+    unfold Midfall.Generator.byteAt
+    rw [heq]
+
+theorem readU16_iff_readU16 {bytes : List Nat} {k v : Nat} :
+    Midfall.Generator.readU16 bytes k = .ok v ↔
+      Midfall.Generator.QuotientValidator.readU16 bytes k = .ok v := by
+  constructor
+  · intro h
+    unfold Midfall.Generator.readU16 at h
+    obtain ⟨b0, hb0, hrest⟩ := peel_bind h
+    obtain ⟨b1, hb1, hv⟩ := peel_bind hrest
+    have hv' : v = b0 * 256 + b1 := (Except.ok.inj hv).symm
+    obtain ⟨r, hr⟩ := drop_cons_of_byteAt_ok hb0
+    obtain ⟨r2, hr2⟩ := drop_cons_of_byteAt_ok hb1
+    have hmid : r = b1 :: r2 := by
+      have hq : bytes.drop (k+1) = (bytes.drop k).tail := @drop_succ_tail bytes k
+      rw [hr] at hq
+      rw [hq] at hr2
+      exact hr2
+    unfold Midfall.Generator.QuotientValidator.readU16
+    rw [hv', hr, hmid]
+  · intro h
+    unfold Midfall.Generator.QuotientValidator.readU16 at h
+    cases hcs : bytes.drop k with
+    | cons b0 rest =>
+        cases hrest : rest with
+        | cons b1 rest2 =>
+            rw [hcs, hrest] at h
+            have hv : v = b0 * 256 + b1 := (Except.ok.inj h).symm
+            have h1 : bytes.drop k = b0 :: b1 :: rest2 := by rw [hcs, hrest]
+            have h2 : bytes.drop (k+1) = b1 :: rest2 := by
+              have := @drop_succ_tail bytes k
+              rwa [h1] at this
+            have hb0 : Midfall.Generator.byteAt bytes k = .ok b0 := by
+              unfold Midfall.Generator.byteAt
+              rw [h1]
+            have hb1 : Midfall.Generator.byteAt bytes (k+1) = .ok b1 := by
+              unfold Midfall.Generator.byteAt
+              rw [h2]
+            rw [hv]
+            unfold Midfall.Generator.readU16
+            rw [hb0, hb1]
+            rfl
+        | nil => rw [hcs, hrest] at h; cases h
+    | nil => rw [hcs] at h; cases h
+
+/-! #### Membership -/
+
+theorem mem_walkerKonstSlots_narrow {bytes : List Nat} {idx op slot : Nat}
+    (h : QuotientOperand.konst slot false ∈ operandList bytes idx op) :
+    slot ∈ walkerKonstSlots bytes idx op := by
+  unfold walkerKonstSlots
+  refine List.mem_filterMap.mpr ⟨_, h, ?_⟩
+  simp
+
+theorem mem_walkerKonstSlots_wide {bytes : List Nat} {idx op slot : Nat}
+    (h : QuotientOperand.konst slot true ∈ operandList bytes idx op) :
+    slot ∈ walkerKonstSlots bytes idx op := by
+  unfold walkerKonstSlots
+  refine List.mem_filterMap.mpr ⟨_, h, ?_⟩
+  simp
+
+
+/-! #### The 19 non-folded static arms -/
+
+theorem affineProductTerm_namesSlot {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {k : Nat} {S : List Nat}
+    (h : ∀ b, Midfall.Generator.byteAt bytes (k + 4) = .ok b → b ∈ S) :
+    NamesSlot (Midfall.Generator.affineProductTerm bytes consts mem k) S := by
+  unfold Midfall.Generator.affineProductTerm
+  refine NamesSlot.bind (readU16_namesSlot bytes k S) (fun _ =>
+    NamesSlot.bind (readU16_namesSlot bytes (k+2) S) (fun _ =>
+      NamesSlot.bind2 (Midfall.Generator.byteAt bytes (k+4)) _
+        (byteAt_namesSlot bytes (k+4) S) (fun b hb =>
+          NamesSlot.bind (constAt_namesSlot b k S (h b hb)) (fun _ => NamesSlot.ok _ S))))
+
+theorem affineLinearTerm_namesSlot {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {k : Nat} {S : List Nat}
+    (h : ∀ b, Midfall.Generator.byteAt bytes (k + 2) = .ok b → b ∈ S) :
+    NamesSlot (Midfall.Generator.affineLinearTerm bytes consts mem k) S := by
+  unfold Midfall.Generator.affineLinearTerm
+  refine NamesSlot.bind (readU16_namesSlot bytes k S) (fun _ =>
+    NamesSlot.bind2 (Midfall.Generator.byteAt bytes (k+2)) _
+      (byteAt_namesSlot bytes (k+2) S) (fun b hb =>
+        NamesSlot.bind (constAt_namesSlot b k S (h b hb)) (fun _ => NamesSlot.ok _ S)))
+
+/-- The walker-side extraction: a single narrow slot read at position p. -/
+theorem walk_one_narrow {bytes : List Nat} {idx p line op : Nat}
+    (hw : ∃ os, Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op = .ok os)
+    (hw' : Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op =
+      (Midfall.Generator.QuotientValidator.byteAtPanic bytes p line >>= fun s =>
+        .ok [QuotientOperand.konst s false])) :
+    ∃ s, Midfall.Generator.QuotientValidator.byteAtPanic bytes p line = .ok s ∧
+      walkerKonstSlots bytes idx op = [s] := by
+  obtain ⟨os, hos⟩ := hw
+  rw [hw'] at hos
+  obtain ⟨s, hs, hos'⟩ := peel_bind hos
+  refine ⟨s, hs, ?_⟩
+  unfold walkerKonstSlots
+  have : operandList bytes idx op = [QuotientOperand.konst s false] := by
+    unfold operandList
+    rw [hw', hos]
+    exact (Except.ok.inj hos').symm
+  rw [this]
+  rfl
+
+/-- The walker-side extraction: a single wide slot read at position p. -/
+theorem walk_one_wide {bytes : List Nat} {idx p op : Nat}
+    (hw : ∃ os, Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op = .ok os)
+    (hw' : Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op =
+      (Midfall.Generator.QuotientValidator.readU16 bytes p >>= fun s =>
+        .ok [QuotientOperand.konst s true])) :
+    ∃ s, Midfall.Generator.QuotientValidator.readU16 bytes p = .ok s ∧
+      walkerKonstSlots bytes idx op = [s] := by
+  obtain ⟨os, hos⟩ := hw
+  rw [hw'] at hos
+  obtain ⟨s, hs, hos'⟩ := peel_bind hos
+  refine ⟨s, hs, ?_⟩
+  unfold walkerKonstSlots
+  have : operandList bytes idx op = [QuotientOperand.konst s true] := by
+    unfold operandList
+    rw [hw', hos]
+    exact (Except.ok.inj hos').symm
+  rw [this]
+  rfl
+
+/-- The walker-side extraction: two u16 reads then one narrow slot. -/
+theorem walk_two_mem_one_narrow {bytes : List Nat} {idx p1 p2 p3 line op : Nat}
+    (hw : ∃ os, Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op = .ok os)
+    (hw' : Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op =
+      (Midfall.Generator.QuotientValidator.readU16 bytes p1 >>= fun lhs =>
+        Midfall.Generator.QuotientValidator.readU16 bytes p2 >>= fun rhs =>
+          .ok [QuotientOperand.mem "u16" lhs, QuotientOperand.mem "u16" rhs,
+               QuotientOperand.konst p3 false])) :
+    walkerKonstSlots bytes idx op = [p3] := by
+  obtain ⟨os, hos⟩ := hw
+  rw [hw'] at hos
+  obtain ⟨lhs, hl, h1⟩ := peel_bind hos
+  obtain ⟨rhs, hr, hos'⟩ := peel_bind h1
+  unfold walkerKonstSlots
+  have : operandList bytes idx op =
+      [QuotientOperand.mem "u16" lhs, QuotientOperand.mem "u16" rhs,
+       QuotientOperand.konst p3 false] := by
+    unfold operandList
+    rw [hw', hos]
+    exact (Except.ok.inj hos').symm
+  rw [this]
+  rfl
+
+theorem evalQuotientIdentityStep_constSlot_namedByWalker
+    (bytes : List Nat) (consts : List Midfall.Word256) (idx : Nat) (op : Nat)
+    (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hop : op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5)
+    (hw : ∃ os, Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx op = .ok os) :
+    NamesSlot (Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem)
+      (walkerKonstSlots bytes idx op) := by
+  rcases hop with (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_wide (p := idx+1) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.readU16 bytes (idx+1)) _ (readU16_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.readU16 bytes (idx+1) = .ok s' := readU16_iff_readU16.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ => NamesSlot.ok _ [a])
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (readU32_namesSlot bytes (idx+1) _) (fun _ => NamesSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (byteAt_namesSlot bytes (idx+1) _) (fun _ => NamesSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (byteAt_namesSlot bytes (idx+1) _) (fun _ =>
+      NamesSlot.bind (readU32_namesSlot bytes (idx+2) _) (fun _ => NamesSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (readU16_namesSlot bytes (idx+1) _) (fun _ => NamesSlot.ok _ _)
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun x =>
+      NamesSlot.bind (popStack_namesSlot x.2 idx _) (fun _ => NamesSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun x =>
+      NamesSlot.bind (popStack_namesSlot x.2 idx _) (fun _ => NamesSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ => NamesSlot.ok _ _)
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_narrow (p := idx+1) (line := 2369) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.byteAt bytes (idx+1)) _ (byteAt_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.byteAt bytes (idx+1) = .ok s' := byteAt_iff_byteAtPanic.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ => NamesSlot.ok _ [a])
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_narrow (p := idx+1) (line := 2369) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.byteAt bytes (idx+1)) _ (byteAt_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.byteAt bytes (idx+1) = .ok s' := byteAt_iff_byteAtPanic.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx [a]) (fun _ => NamesSlot.ok _ [a]))
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_narrow (p := idx+1) (line := 2369) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.byteAt bytes (idx+1)) _ (byteAt_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.byteAt bytes (idx+1) = .ok s' := byteAt_iff_byteAtPanic.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx [a]) (fun _ => NamesSlot.ok _ [a]))
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_wide (p := idx+1) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.readU16 bytes (idx+1)) _ (readU16_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.readU16 bytes (idx+1) = .ok s' := readU16_iff_readU16.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx [a]) (fun _ => NamesSlot.ok _ [a]))
+  · subst h
+    obtain ⟨s', hs', hslots⟩ := walk_one_wide (p := idx+1) hw (by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte])
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    rw [hslots]
+    refine NamesSlot.bind2 (Midfall.Generator.readU16 bytes (idx+1)) _ (readU16_namesSlot bytes (idx+1) [s'])
+      (fun a ha => ?_)
+    have h2 : Midfall.Generator.readU16 bytes (idx+1) = .ok s' := readU16_iff_readU16.mpr hs'
+    have : a = s' := Except.ok.inj (ha.symm.trans h2)
+    subst this
+    exact NamesSlot.bind (constAt_namesSlot a idx [a] (by simp)) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx [a]) (fun _ => NamesSlot.ok _ [a]))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (readU16_namesSlot bytes (idx+1) _) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ => NamesSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (readU16_namesSlot bytes (idx+1) _) (fun _ =>
+      NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ => NamesSlot.ok _ _))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ =>
+      NamesSlot.bind (affineProductTerm_namesSlot (fun b hb => ?_)) (fun _ => NamesSlot.ok _ _))
+    obtain ⟨os, hos⟩ := hw
+    have hw' : Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx qOpAddMulMemMemConstU8 =
+        (Midfall.Generator.QuotientValidator.readU16 bytes (idx+1) >>= fun lhs =>
+          Midfall.Generator.QuotientValidator.readU16 bytes (idx+3) >>= fun rhs =>
+            Midfall.Generator.QuotientValidator.byteAtPanic bytes (idx+5) 2393 >>= fun slot =>
+              .ok [QuotientOperand.mem "u16" lhs, QuotientOperand.mem "u16" rhs,
+                   QuotientOperand.konst slot false]) := by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte]
+    rw [hw'] at hos
+    obtain ⟨lhs, hl, h1⟩ := peel_bind hos
+    obtain ⟨rhs, hr, h2⟩ := peel_bind h1
+    obtain ⟨s', hs', hos'⟩ := peel_bind h2
+    have hos2 : os = [QuotientOperand.mem "u16" lhs, QuotientOperand.mem "u16" rhs,
+        QuotientOperand.konst s' false] := (Except.ok.inj hos').symm
+    have hmem : QuotientOperand.konst s' false ∈ operandList bytes idx qOpAddMulMemMemConstU8 := by
+      unfold operandList
+      rw [hw', hos, hos2]
+      simp
+    have h2b : Midfall.Generator.byteAt bytes (idx+5) = .ok s' := byteAt_iff_byteAtPanic.mpr hs'
+    have h3 : Midfall.Generator.byteAt bytes (idx + 1 + 4) = .ok b := hb
+    have h4 : idx + 1 + 4 = idx + 5 := by ring
+    rw [h4] at h3
+    have hb : b = s' := Except.ok.inj (h3.symm.trans h2b)
+    rw [hb]
+    unfold walkerKonstSlots
+    exact List.mem_filterMap.mpr ⟨_, hmem, by simp⟩
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ =>
+      NamesSlot.bind (affineLinearTerm_namesSlot (fun b hb => ?_)) (fun _ => NamesSlot.ok _ _))
+    obtain ⟨os, hos⟩ := hw
+    have hw' : Midfall.Generator.QuotientValidator.visitQuotientOperands bytes idx qOpAddMulConstU8MemU16 =
+        (Midfall.Generator.QuotientValidator.readU16 bytes (idx+1) >>= fun ptr =>
+          Midfall.Generator.QuotientValidator.byteAtPanic bytes (idx+3) 2398 >>= fun slot =>
+            .ok [QuotientOperand.mem "u16" ptr, QuotientOperand.konst slot false]) := by
+      unfold Midfall.Generator.QuotientValidator.visitQuotientOperands
+      simp (config := {decide := true}) only [reduceIte]
+    rw [hw'] at hos
+    obtain ⟨ptr, hp, h1⟩ := peel_bind hos
+    obtain ⟨s', hs', hos'⟩ := peel_bind h1
+    have hos2 : os = [QuotientOperand.mem "u16" ptr, QuotientOperand.konst s' false] :=
+      (Except.ok.inj hos').symm
+    have hmem : QuotientOperand.konst s' false ∈ operandList bytes idx qOpAddMulConstU8MemU16 := by
+      unfold operandList
+      rw [hw', hos, hos2]
+      simp
+    have h2b : Midfall.Generator.byteAt bytes (idx+3) = .ok s' := byteAt_iff_byteAtPanic.mpr hs'
+    have h3 : Midfall.Generator.byteAt bytes (idx + 1 + 2) = .ok b := hb
+    have h4 : idx + 1 + 2 = idx + 3 := by ring
+    rw [h4] at h3
+    have hb : b = s' := Except.ok.inj (h3.symm.trans h2b)
+    rw [hb]
+    unfold walkerKonstSlots
+    exact List.mem_filterMap.mpr ⟨_, hmem, by simp⟩
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (readU16_namesSlot bytes (idx+1) _) (fun _ =>
+      NamesSlot.bind (readU16_namesSlot bytes (idx+3) _) (fun _ =>
+        NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ => NamesSlot.ok _ _)))
+  · subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := {decide := true}) only [reduceIte]
+    refine NamesSlot.bind (popStack_namesSlot stack idx _) (fun _ => NamesSlot.ok _ _)
+
+/-- D-P23 SATISFIABILITY HALF, as a theorem. The correspondence lemma's hypotheses are
+    satisfiable at a witness where its conclusion is not vacuous: PUSH_CONST_U8 over a two-byte
+    program and an EMPTY constant table really does fault 'constSlotOutOfRange 3 0', the byte
+    at index 1 is 3 and the table has no entry 3 - and the walker really does name slot 3, so
+    the membership the lemma claims is a claim about a fault that actually happens. -/
+theorem const_slot_correspondence_hypotheses_satisfiable :
+    Midfall.Generator.evalQuotientIdentityStep [qOpPushConstU8, 3] ([] : List Midfall.Word256)
+        0 qOpPushConstU8 ([] : List QVMFr) armsWitnessMem
+        = .error (QVMFault.constSlotOutOfRange 3 0)
+      ∧ walkerKonstSlots [qOpPushConstU8, 3] 0 qOpPushConstU8 = [3] := by
+  refine ⟨?_, ?_⟩ <;> rfl
+
+/-- D-P23 FALSIFICATION HALF, as a theorem. The 'hw' hypothesis is load-bearing, and the
+    conclusion is a real exclusion rather than an unfalsifiable one. LIN7 on a FOUR-byte
+    program with an empty table faults 'constSlotOutOfRange 0 1' at limb term 0 - the byte at
+    index 1 is 0 and the table is empty - while the walker PANICS at term 1, whose u16 pointer
+    runs off the end, and so names no slot at all. There 'slot ∈ walkerKonstSlots' is FALSE,
+    so the lemma is not satisfied by a vacuous membership: the walker-success hypothesis is
+    exactly what separates the hole's reach (a validated program, where phase 2 walked every
+    instruction) from this case. Third time the same asymmetry appears from a new direction:
+    section 7 met the interpreter refusing shapes the walker walks, section 8 the reads, here
+    the walker refusing bytes the interpreter never reaches. -/
+theorem const_slot_correspondence_needs_walker_success :
+    Midfall.Generator.evalQuotientIdentityStep (qOpLin7 :: List.replicate 3 0)
+        ([] : List Midfall.Word256) 0 qOpLin7 ([] : List QVMFr) armsWitnessMem
+        = .error (QVMFault.constSlotOutOfRange 0 1)
+      ∧ walkerKonstSlots (qOpLin7 :: List.replicate 3 0) 0 qOpLin7 = [] := by
+  refine ⟨?_, ?_⟩ <;> rfl
+
 end Midfall.Lowering
 
 
@@ -2799,5 +3389,157 @@ def readsWithinStride_differential_sweep_ok : Bool :=
         | .error _ => false)
 #eval readsWithinStride_differential_sweep_ok -- expect true
 
+
+/-! #### GATE - the const-slot correspondence enumerated inside the build (P-CONTSLOT) -/
+
+/-- The constant-table length the slot probe bounds against. A slot at or above it is out of
+    range for BOTH sides, which is what makes an out-of-range slot observable: the interpreter
+    answers 'constSlotOutOfRange', the walker returns a 'konst' whose slot fails
+    'checkQuotientConstSlot'. Not a Rust item. -/
+def slotProbeBound : Nat := 200
+
+/-- The byte value written into the probed position: equal to the table length, so a side that
+    reads that position AS A SLOT reports it out of range and a side that reads it as anything
+    else (a count, a pointer byte, a flag) does not. Not a Rust item. -/
+def slotProbeSentinel : Nat := 200
+
+/-- ditto -/
+def slotProbeTable : List Word256 := List.take slotProbeBound armsConsts
+
+/-- THE ENGINEERED PAYLOAD, per arm. This is the part R-70 warned is easy to skip and
+    impossible to fake: with an all-zero payload MODARITH7's five count bytes are all zero,
+    AFFINE_SUM's two counts are zero and both RUN counts are zero, and every one of those arms
+    then names NO const slot at all - MODARITH7's 30-slot block is simply never walked.
+    'flags = 3' exercises BOTH header legs (the cond pointer and the const slot), and the five
+    count bytes are 1 so all five blocks run. Not a Rust item. -/
+def slotProbePayload (op : Nat) : List Nat :=
+  let tail := List.replicate 90 0
+  if op == qOpModarith7 then [op, 3, 0, 0, 0, 1, 1, 1, 1, 1] ++ tail
+  else if op == qOpAffineSum then [op, 0, 1, 0, 1] ++ tail
+  else if op == qOpRunAddMulMemMemConstU8 || op == qOpRunAddMulConstU8MemU16 then [op, 0, 2] ++ tail
+  else [op] ++ tail
+
+/-- ditto -/
+def slotProbePerturb (bytes : List Nat) (p : Nat) : List Nat :=
+  (bytes.take p) ++ [slotProbeSentinel] ++ (bytes.drop (p+1))
+
+/-- THE INTERPRETER-SIDE PROBE: does the step read a const slot at position p? Measured, not
+    defined - see the section-9 header. -/
+def interpSlotAtP (bytes : List Nat) (idx op p : Nat) : Bool :=
+  match evalQuotientIdentityStep (slotProbePerturb bytes p) slotProbeTable idx op armsStack armsMem with
+  | .error (QVMFault.constSlotOutOfRange s _) => slotProbeBound ≤ s
+  | _ => false
+
+/-- THE WALKER-SIDE PROBE, the same question asked of 'visitQuotientOperands'. -/
+def walkerSlotAtP (bytes : List Nat) (idx op p : Nat) : Bool :=
+  (operandList (slotProbePerturb bytes p) idx op).any fun o => match o with
+    | QuotientOperand.konst s _ => slotProbeBound ≤ s
+    | _ => false
+
+/-- How far the probe runs: the instruction's own declared width plus a margin, so a slot read
+    OUTSIDE the stride would still be caught rather than silently out of range. -/
+def slotProbeWidth (bytes : List Nat) (idx op : Nat) : Nat :=
+  match QuotientValidator.quotientOpLen bytes idx with
+  | .ok n => n + 4
+  | .error _ => 12
+
+/-- ditto -/
+def interpSlotPositionsAt (bytes : List Nat) (idx op : Nat) : List Nat :=
+  (List.range (slotProbeWidth bytes idx op)).filter (interpSlotAtP bytes idx op)
+
+/-- ditto -/
+def walkerSlotPositionsAt (bytes : List Nat) (idx op : Nat) : List Nat :=
+  (List.range (slotProbeWidth bytes idx op)).filter (walkerSlotAtP bytes idx op)
+
+/-- ditto, on the un-engineered payload, for the trap conjunct -/
+def zeroSlotProbe (op : Nat) : List Nat := [op] ++ List.replicate 90 0
+
+/-- The 15 arms that read at least one const slot and the 11 that read none, named as sets so
+    the 15/26 figure cannot silently decay if an arm gains or loses a slot read. -/
+def slotReadingArms : List Nat :=
+  [qOpPushConst, qOpPushConstU8, qOpAddConstU8, qOpMulConstU8, qOpAddConst, qOpMulConst,
+   qOpAddMulMemMemConstU8, qOpAddMulConstU8MemU16, qOpLin7, qOpBilin7Row, qOpBilin7Pairwise,
+   qOpRunAddMulMemMemConstU8, qOpRunAddMulConstU8MemU16, qOpAffineSum, qOpModarith7]
+
+/-- ditto -/
+def noSlotArms : List Nat :=
+  [qOpPushMemLiteral, qOpPushMemToken, qOpPushMemTokenOffset, qOpPushMemU16, qOpAdd, qOpMul,
+   qOpNeg, qOpPow5, qOpAddMemU16, qOpMulMemU16, qOpAddMulMemMem]
+
+/-- The 26 arms the slot probe runs over: the 22 static plus the 4 dynamic. -/
+def slotProbeArms : List Nat := staticIdentityArms ++ dynamicIdentityArms
+
+/-- The konst slots of a walker operand list. -/
+def konstOf (os : List QuotientOperand) : List Nat :=
+  os.filterMap fun o => match o with
+    | QuotientOperand.konst s _ => some s
+    | _ => none
+
+/-- The slot the interpreter faults on at one table length, if it faults at all. -/
+def interpSlotsAt (bytes : List Nat) (idx op L : Nat) : Option Nat :=
+  match evalQuotientIdentityStep bytes (List.take L armsConsts) idx op armsStack armsMem with
+  | .error (QVMFault.constSlotOutOfRange s _) => some s
+  | _ => none
+
+/-- GATE (P-CONTSLOT, differential enumeration, half 1). The correspondence measured on the
+    31 REAL opcode fixtures - complete phase-1-accepted programs at each fixture's own
+    testIdx - against a THIRD source: the fixture table's hand-transcribed 'operands' field,
+    written independently of the walker. Four conjuncts: the walker's konst slots equal the
+    transcription; every slot the interpreter faults on (sweeping the table length) is one the
+    walker names; exactly 15 of the 31 fixtures read a slot, so the gate cannot be satisfied by
+    an enumeration that finds nothing; and the five stream fixtures name none on either side.
+    Rules out: the correspondence drifting from the code it enumerated, and the fixture
+    transcription silently agreeing with the walker only because one was copied from the other.
+    -/
+def constSlots_differential_fixtures_ok : Bool :=
+  let ws := QuotientVmValidatorKats.opcodeFixtures.map fun f =>
+    (f.op, konstOf (operandList f.bytes f.testIdx f.op))
+  (QuotientVmValidatorKats.opcodeFixtures.all fun f =>
+      konstOf f.operands == konstOf (operandList f.bytes f.testIdx f.op))
+    && (QuotientVmValidatorKats.opcodeFixtures.all fun f =>
+        ((List.range 15).filterMap (interpSlotsAt f.bytes f.testIdx f.op)).all
+          (fun s => s ∈ konstOf (operandList f.bytes f.testIdx f.op)))
+    && (ws.filter fun (_, k) => k != []).length == 15
+    && (ws.filter fun (op, _) => op ∈ streamIdentityExcluded).all fun (_, k) => k == []
+    && (QuotientVmValidatorKats.opcodeFixtures.filter fun f =>
+          (interpSlotsAt f.bytes f.testIdx f.op 0).isSome).length == 15
+#eval constSlots_differential_fixtures_ok -- expect true
+
+/-- GATE (P-CONTSLOT, differential enumeration, half 2). The position-level correspondence over
+    all 26 identity arms against the engineered payload, plus the controls that give it teeth.
+    Conjuncts:
+      * per arm, the interpreter's slot positions EQUAL the walker's (not merely inside them);
+      * the total is exactly 74 positions, so no arm can quietly stop reading slots;
+      * the arms that read a slot are exactly 'slotReadingArms' and the rest exactly
+        'noSlotArms';
+      * TEETH: shifting the walker's positions one byte right is REJECTED for every arm that
+        reads a slot - without this a probe that found nothing anywhere would still "agree";
+      * THE PAYLOAD TRAP, pinned: on an all-zero payload the four dynamic arms name zero slot
+        positions on both sides while the engineered payload makes them name 2, 2, 2 and 30 -
+        36 of the 74 positions, and all of MODARITH7's. Delete the payload engineering and this
+        conjunct reddens instead of silently narrowing what is measured;
+      * the reserved byte 0x1a is named by neither side, so the agreement is not bought by a
+        walker that accepts everything. -/
+def constSlots_differential_sweep_ok : Bool :=
+  let trips := slotProbeArms.map fun op =>
+    (op, interpSlotPositionsAt (slotProbePayload op) 0 op,
+         walkerSlotPositionsAt (slotProbePayload op) 0 op)
+  trips.all fun (_, a, b) => a == b
+    && (trips.map fun (_, a, _) => a.length).sum == 74
+    && List.Perm ((trips.filter fun (_, a, _) => a != []).map fun (op, _, _) => op)
+        slotReadingArms
+    && List.Perm ((trips.filter fun (_, a, _) => a == []).map fun (op, _, _) => op)
+        noSlotArms
+    && trips.all fun (_, a, b) => a == [] || a != b.map (· + 1)
+    && slotProbeArms.all fun op =>
+         interpSlotPositionsAt (zeroSlotProbe op) 0 op
+           == walkerSlotPositionsAt (zeroSlotProbe op) 0 op
+    && slotProbeArms.all fun op => op ∈ dynamicIdentityArms →
+         interpSlotPositionsAt (zeroSlotProbe op) 0 op == []
+    && (trips.filter fun (op, _, _) => op ∈ dynamicIdentityArms).all fun (_, a, _) => a != []
+    && interpSlotPositionsAt [0x1a] 0 0x1a == []
+    && walkerSlotPositionsAt [0x1a] 0 0x1a == []
+    && trips.all fun (_, a, _) => a.length ≤ 30
+#eval constSlots_differential_sweep_ok -- expect true
 end Midfall.Lowering.QvmKats
 
