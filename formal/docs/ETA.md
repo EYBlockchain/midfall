@@ -748,6 +748,37 @@ direction for a fix and the opposite of what a package under pressure would do.
 anything, which is exactly the error the standing instruction exists to catch.
 
 **Register: 40. Gate integrity is materially better than it was an hour ago.**
+### R22 - round 181, after P-QVMARMS. The shared gap was a component, and I sized it from assertion again.
+
+| claim | believed (my brief) | measured |
+|---|---|---|
+| one shared gap blocks six Qvm holes | the whole blocker | **a component of five, ~5-15% each**; only `qvm_validated_noBoundsFault` is mostly it (~40%) |
+| "mechanical but large, ~25 arms plus a loop induction" | the cost | **the arms are mechanical and landed in one session**; the emitter induction the same holes need is ~40 panic sites and 4 peephole cases - a separate package |
+| per-opcode `consumed` vs `quotientOpLen` agreement | assumed to be where a disagreement might hide | **holds on all 26 identity arms**, 31 fixtures and all 256 opcode bytes; the only asymmetry is the five stream opcodes, which are a DOMAIN boundary, not a drift |
+| the agreement is what `noBoundsFault` needs | stated by P-QVM | **incomplete**: stride agreement is one of two per-arm facts. The other is "every operand READ fits inside the stride", a second 22-arm pass nothing in section 7 gives |
+| `builder_segments_total` is not self-contained | P-QVM already corrected this | confirmed: totality over EVERY fault class, not just the two bounds classes |
+| the loop induction is one lemma | assumed | **two**: fuel adequacy (`evalQuotientIdentityLoop_fuelNeverBinds`, landed) and cursor correspondence (not landed) |
+
+**Eighth correction to orchestrator briefs this session**, and the same error class as R21's 48:
+a blocker's SIZE asserted without measuring it. The differential-enumeration pass cost about
+forty minutes and answered the size question before any proof was attempted - see docs/REVIEW.md
+R-70 for the technique writeup.
+
+**LANDED**: `Qvm.lean` section 7 - the enumeration table, 3 arm-set defs +
+`arms_enumeration_is_exhaustive` (22+4+5 = the 31 table opcodes, disjoint, by `decide`), 5
+shape-helper length lemmas, the fold induction `foldRangeIdxM_ok_advance` (this is the plan's
+owed `foldRangeIdxM_induction`, P8 row), `evalQuotientIdentityStep_consumed_agrees` over 22
+arms in one case split, `streamArms_error`, the fuel-adequacy loop induction, 2 D-P23 witness
+theorems, and 2 differential gates re-running the enumeration inside the build.
+
+**Register: 40, unchanged. No hole closed.** KAT pins moved 1334 to 1336 deliberately, for the
+two differential gates.
+
+**NEXT, if the six are still wanted**: the emitter value-semantics induction over
+`identityExpr` is the real cost of five of them and needs its own brief with the per-hole
+fractions above in it. `qvm_validated_noBoundsFault` is the only one reachable without it, and
+it needs the read-offset enumeration first - differentially, before inducting.
+
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for

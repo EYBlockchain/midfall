@@ -994,6 +994,533 @@ theorem builder_segments_total (r : QuotientShapeRecognizers) (hr : RecognizersS
       = .ok (v, mem') := by
   sorry
 
+
+/-! ### 7. The arms agreement: the interpreter's consumed vs the validator's width -/
+
+/-- THE ARMS ENUMERATION (P-QVMARMS).
+
+    evalQuotientIdentityStep (VmReference.lean:730-867) has 24 opcode arms plus the
+    five-arm stream-level or-pattern and the unknown-opcode fallback.
+    QuotientValidator.quotientOpLen (VmValidator.lean:651-666) has four decoded arms plus
+    the static-table fallback. The two were run SIDE BY SIDE over (a) all 31 entries of
+    QuotientVmValidatorKats.opcodeFixtures - one complete phase-1-accepted program per
+    table opcode, at each fixture's own testIdx - and (b) every opcode byte 0..255 against
+    a 604-byte operand payload engineered so every arm's operand reads succeed (MODARITH7
+    flags legal, both AFFINE_SUM counts nonzero, the RUN count nonzero). The gate
+    arms_agreement_differential_ok below re-runs both measurements inside the build.
+
+    RESULT: NO DISAGREEMENT. All 26 identity arms agree exactly, including the four
+    dynamic forms (on the fixtures: RUN 13 and 9, MODARITH7 148, AFFINE_SUM 13). The
+    table is the enumeration; step is what evalQuotientIdentityStep reports as consumed,
+    len is what quotientOpLen reports, and source is where quotientOpLen gets it.
+
+--   push_const                     3            table
+--   push_mem_literal               5            table
+--   push_mem_token                 2            table
+--   push_mem_token_offset          6            table
+--   push_mem_u16                   3            table
+--   add                            1            table
+--   mul                            1            table
+--   neg                            1            table
+--   push_const_u8                  2            table
+--   add_const_u8                   2            table
+--   mul_const_u8                   2            table
+--   add_const                      3            table
+--   mul_const                      3            table
+--   add_mem_u16                    3            table
+--   mul_mem_u16                    3            table
+--   add_mul_mem_mem_const_u8       6            table
+--   add_mul_const_u8_mem_u16       4            table
+--   add_mul_mem_mem                5            table
+--   lin7                           22           table
+--   bilin7_row                     24           table
+--   bilin7_pairwise                18           table
+--   pow5                           1            table
+--   run_add_mul_mem_mem_const_u8   3+5n         decode
+--   run_add_mul_const_u8_mem_u16   3+3n         decode
+--   affine_sum                     5+3l+5p      decode
+--   modarith7                      header+blocks decode
+--   fold_main                      - / 1        stream
+--   fold_selector                  - / 4        stream
+--   native_permutation             - / 1        stream
+--   native_identity                - / 3        stream
+--   native_lookup                  - / 1        stream
+
+    Two asymmetries were found, and NEITHER is a width disagreement:
+
+      * the five stream-level opcodes have a validator width (1, 4, 1, 3, 1) but are an
+        ERROR in the identity interpreter (streamOpcodeInIdentity, QVR:325-333). That is
+        the documented DOMAIN OF QVM.run boundary, so streamIdentityExcluded below is
+        EXCLUDED from every agreement statement rather than assumed away - and
+        streamArms_error proves the exclusion rather than asserting it. A loop induction
+        does NOT need a "no stream opcode in the segment" hypothesis: identitySegment
+        (VmCertify.lean:409-435) stops at FOLD_MAIN / FOLD_SELECTOR and ERRORS on the
+        three native markers, so a segment it delimits contains none by construction.
+      * the interpreter refuses three shapes quotientOpLen happily walks: MODARITH7 with
+        unknown flag bits, a zero-length RUN, and AFFINE_SUM with a zero count. So the
+        agreement is CONDITIONAL - equal widths wherever both sides succeed - which is
+        why every lemma below takes the step's success and the walk's success as
+        hypotheses. A lemma stating the agreement unconditionally would be FALSE, and
+        the validator-side half of that asymmetry was already pinned by
+        twoPhase_checkedAndUncheckedWalksAgree_ok. -/
+def staticIdentityArms : List Nat :=
+  [qOpPushConst, qOpPushMemLiteral, qOpPushMemToken, qOpPushMemTokenOffset, qOpPushMemU16,
+   qOpAdd, qOpMul, qOpNeg, qOpPushConstU8, qOpAddConstU8, qOpMulConstU8, qOpAddConst,
+   qOpMulConst, qOpAddMemU16, qOpMulMemU16, qOpAddMulMemMemConstU8, qOpAddMulConstU8MemU16,
+   qOpAddMulMemMem, qOpLin7, qOpBilin7Row, qOpBilin7Pairwise, qOpPow5]
+
+/-- The four arms whose width quotientOpLen decodes from the operand bytes rather than
+    reading from the table (byteLen = 0 in the table, pinned by
+    opcodeTable_pinnedByteLengths_ok). -/
+def dynamicIdentityArms : List Nat :=
+  [qOpRunAddMulMemMemConstU8, qOpRunAddMulConstU8MemU16, qOpAffineSum, qOpModarith7]
+
+/-- The five stream-level opcodes: a width to the validator, an ERROR to the identity
+    interpreter. Not an oversight - see DOMAIN OF QVM.run, VmReference.lean:861-865. -/
+def streamIdentityExcluded : List Nat :=
+  [qOpFoldMain, qOpFoldSelector, qOpNativePermutation, qOpNativeLookup, qOpNativeIdentity]
+
+/-- The enumeration is exhaustive and disjoint: 22 static + 4 dynamic + 5 stream = the 31
+    entries of the opcode table, in table order, and nothing is counted twice. -/
+theorem arms_enumeration_is_exhaustive :
+    staticIdentityArms.length = 22 ∧ dynamicIdentityArms.length = 4
+      ∧ streamIdentityExcluded.length = 5
+      ∧ List.Nodup (staticIdentityArms ++ dynamicIdentityArms ++ streamIdentityExcluded)
+      ∧ (staticIdentityArms ++ dynamicIdentityArms ++ streamIdentityExcluded).Perm
+        (quotientVmSpec.opcodes.map fun s => s.opcode) := by
+  refine ⟨by rfl, by rfl, by rfl, ?_, ?_⟩ <;> decide
+
+/-- The shape-helper decoders return their byte length as the middle component of their
+    triple. These five lemmas are what makes the LIN7 / BILIN7 / fused-affine arms'
+    consumed a numeral rather than an uninterpreted fold result. -/
+theorem affineProductTerm_ok_mid {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {idx : Nat} {w : QVMFr × Nat × QuotientRefMemory}
+    (h : Midfall.Generator.affineProductTerm bytes consts mem idx = .ok w) : w.2.1 = 5 := by
+  unfold Midfall.Generator.affineProductTerm at h
+  repeat (obtain ⟨_, _, h⟩ := peel_bind h)
+  rcases w with ⟨wv, wl, wm⟩
+  simp at *
+  omega
+
+theorem affineLinearTerm_ok_mid {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {idx : Nat} {w : QVMFr × Nat × QuotientRefMemory}
+    (h : Midfall.Generator.affineLinearTerm bytes consts mem idx = .ok w) : w.2.1 = 3 := by
+  unfold Midfall.Generator.affineLinearTerm at h
+  repeat (obtain ⟨_, _, h⟩ := peel_bind h)
+  rcases w with ⟨wv, wl, wm⟩
+  simp at *
+  omega
+
+theorem limbPairwiseForm_ok_mid {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {idx : Nat} {w : QVMFr × Nat × QuotientRefMemory}
+    (h : Midfall.Generator.limbPairwiseForm bytes consts mem idx = .ok w) :
+    w.2.1 = 4 + quotientVmPairwiseCoeffs := by
+  unfold Midfall.Generator.limbPairwiseForm at h
+  repeat (obtain ⟨_, _, h⟩ := peel_bind h)
+  rcases w with ⟨wv, wl, wm⟩
+  simp at *
+  omega
+
+/-- LOOP INDUCTION over the shape-helper fold: if every successful step advances the middle
+    component by exactly w, a successful fold of n steps advances it by n*w. This is the
+    induction the four dynamic decoders need, and it is the only place the fuel-bounded
+    walk of the helper forms is inducted over. -/
+theorem foldRangeIdxM_ok_advance {ε α β : Type} (w : Nat) :
+    ∀ (n : Nat) (f : Nat → α × Nat × β → Except ε (α × Nat × β))
+      (a₀ : α) (c₀ : Nat) (m₀ : β) (out : α × Nat × β),
+      (∀ i s r, f i s = .ok r → r.2.1 = s.2.1 + w) →
+      Midfall.Generator.foldRangeIdxM n (a₀, c₀, m₀) f = .ok out → out.2.1 = c₀ + w * n := by
+  intro n
+  induction n with
+  | zero =>
+      intro f a₀ c₀ m₀ out _ h
+      cases h; rfl
+  | succ k ih =>
+      intro f a₀ c₀ m₀ out hf h
+      have hstep : Midfall.Generator.foldRangeIdxM (k+1) (a₀, c₀, m₀) f =
+          (f 0 (a₀, c₀, m₀) >>= fun x =>
+             Midfall.Generator.foldRangeIdxM k x (fun i => f (i+1)) >>= fun y => .ok y) := by
+        simp only [Midfall.Generator.foldRangeIdxM]
+      rw [hstep] at h
+      obtain ⟨x, hx, h1⟩ := peel_bind h
+      obtain ⟨y, hy, h2⟩ := peel_bind h1
+      have hyo : out = y := (Except.ok.inj h2).symm
+      have hrec := ih (fun i => f (i+1)) x.1 x.2.1 x.2.2 y (fun i s r hr => hf (i+1) s r hr) hy
+      rw [← hyo] at hrec
+      have hw : x.2.1 = c₀ + w := hf 0 (a₀, c₀, m₀) x hx
+      have hmul : w * (k+1) = w + w * k := by ring
+      rw [hmul] at *
+      omega
+
+theorem limbLinearForm_ok_mid {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {idx : Nat} {w : QVMFr × Nat × QuotientRefMemory}
+    (h : Midfall.Generator.limbLinearForm bytes consts mem idx = .ok w) : w.2.1 = 21 := by
+  unfold Midfall.Generator.limbLinearForm at h
+  obtain ⟨x, hx, hv⟩ := peel_bind h
+  rcases x with ⟨xa, xc, xm⟩
+  have key : xc = idx + 3 * quotientVmLimbs := by
+    refine foldRangeIdxM_ok_advance 3 quotientVmLimbs _ qvmFrZero idx mem (xa, xc, xm) ?_ hx
+    intro i s r hr
+    rcases s with ⟨acc, cursor, mem⟩
+    obtain ⟨slot, _, hr⟩ := peel_bind hr
+    obtain ⟨ptr, _, hr⟩ := peel_bind hr
+    obtain ⟨cc, _, hr⟩ := peel_bind hr
+    rcases mem.literal ptr with ⟨vv, mm⟩
+    rcases r with ⟨rv, rl, rm⟩
+    simp at *
+    omega
+  have hlimbs : quotientVmLimbs = 7 := rfl
+  rw [hlimbs] at key
+  rcases w with ⟨wv, wl, wm⟩
+  simp at *
+  omega
+
+theorem limbRowForm_ok_mid {bytes : List Nat} {consts : List Midfall.Word256}
+    {mem : QuotientRefMemory} {idx : Nat} {w : QVMFr × Nat × QuotientRefMemory}
+    (h : Midfall.Generator.limbRowForm bytes consts mem idx = .ok w) : w.2.1 = 23 := by
+  unfold Midfall.Generator.limbRowForm at h
+  obtain ⟨lhs, _, h⟩ := peel_bind h
+  obtain ⟨inner, hin, h⟩ := peel_bind h
+  rcases inner with ⟨i1, i2, i3⟩
+  have hl2 := limbLinearForm_ok_mid hin
+  rcases w with ⟨wv, wl, wm⟩
+  simp at *
+  omega
+
+/-- THE PER-ARM AGREEMENT, 22 arms. For each of the 22 static identity arms: when the
+    identity step succeeds on an instruction whose opcode byte is at index 0 and the
+    validator's walker gives the same instruction a width, the consumed the step reports
+    IS that width. Written at index 0 with the opcode consed on - that is the general
+    statement up to renaming the suffix (List.drop), and it is the shape both walks
+    actually present at a cursor. Conditional by construction: the hypotheses are the two
+    successes, and dropping either one makes the statement false (see the doc above). -/
+theorem evalQuotientIdentityStep_consumed_agrees
+    (op : Nat)
+    (hop : op = qOpPushConst \/ op = qOpPushMemLiteral \/ op = qOpPushMemToken \/ op = qOpPushMemTokenOffset \/ op = qOpPushMemU16 \/ op = qOpAdd \/ op = qOpMul \/ op = qOpNeg \/ op = qOpPushConstU8 \/ op = qOpAddConstU8 \/ op = qOpMulConstU8 \/ op = qOpAddConst \/ op = qOpMulConst \/ op = qOpAddMemU16 \/ op = qOpMulMemU16 \/ op = qOpAddMulMemMem \/ op = qOpPow5 \/ op = qOpAddMulMemMemConstU8 \/ op = qOpAddMulConstU8MemU16 \/ op = qOpBilin7Pairwise \/ op = qOpLin7 \/ op = qOpBilin7Row)
+    (rest : List Nat)
+    (consts : List Midfall.Word256) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (step : IdentityStep) (len : Nat)
+    (hstep : Midfall.Generator.evalQuotientIdentityStep (op :: rest) consts 0 op stack mem
+      = .ok step)
+    (hlen : Midfall.Generator.QuotientValidator.quotientOpLen (op :: rest) 0 = .ok len) :
+    step.consumed = len := by
+  rcases hop with (h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h)
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemLiteral :: rest) 0 = .ok 5 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemToken :: rest) 0 = .ok 2 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemTokenOffset :: rest) 0 = .ok 6 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAdd :: rest) 0 = .ok 1 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMul :: rest) 0 = .ok 1 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpNeg :: rest) 0 = .ok 1 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPushConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulConstU8 :: rest) 0 = .ok 2 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulConst :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpMulMemU16 :: rest) 0 = .ok 3 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulMemMem :: rest) 0 = .ok 5 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpPow5 :: rest) 0 = .ok 1 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    repeat (obtain ⟨_, _, hstep⟩ := peel_bind hstep)
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulMemMemConstU8 :: rest) 0 = .ok 6 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    obtain ⟨_, _, hstep⟩ := peel_bind hstep
+    obtain ⟨pw, hpw, hstep⟩ := peel_bind hstep
+    have hl := affineProductTerm_ok_mid hpw
+    rcases pw with ⟨p1, p2, p3⟩
+    have hcw : quotientVmPairwiseCoeffs = 13 := rfl
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpAddMulConstU8MemU16 :: rest) 0 = .ok 4 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    obtain ⟨_, _, hstep⟩ := peel_bind hstep
+    obtain ⟨pw, hpw, hstep⟩ := peel_bind hstep
+    have hl := affineLinearTerm_ok_mid hpw
+    rcases pw with ⟨p1, p2, p3⟩
+    have hcw : quotientVmPairwiseCoeffs = 13 := rfl
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpBilin7Pairwise :: rest) 0 = .ok 18 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    obtain ⟨pw, hpw, hstep⟩ := peel_bind hstep
+    have hl := limbPairwiseForm_ok_mid hpw
+    rcases pw with ⟨p1, p2, p3⟩
+    have hcw : quotientVmPairwiseCoeffs = 13 := rfl
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpLin7 :: rest) 0 = .ok 22 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    obtain ⟨pw, hpw, hstep⟩ := peel_bind hstep
+    have hl := limbLinearForm_ok_mid hpw
+    rcases pw with ⟨p1, p2, p3⟩
+    have hcw : quotientVmPairwiseCoeffs = 13 := rfl
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+  · subst h
+    rw [(show Midfall.Generator.QuotientValidator.quotientOpLen (qOpBilin7Row :: rest) 0 = .ok 24 from rfl)] at hlen
+    simp at hlen
+    unfold Midfall.Generator.evalQuotientIdentityStep at hstep
+    simp (config := { decide := true }) at hstep
+    obtain ⟨pw, hpw, hstep⟩ := peel_bind hstep
+    have hl := limbRowForm_ok_mid hpw
+    rcases pw with ⟨p1, p2, p3⟩
+    have hcw : quotientVmPairwiseCoeffs = 13 := rfl
+    rcases step with ⟨st, c, hc2, m⟩
+    simp at *
+    omega
+
+/-- The witness environment the two D-P23 halves below run in. Not a Rust item. -/
+def armsWitnessConsts : List Word256 := Midfall.Generator.QuotientVmRefKats.refConsts
+
+/-- ditto -/
+def armsWitnessMem : QuotientRefMemory :=
+  Midfall.Generator.quotientRefMemoryNew Midfall.Generator.QuotientVmRefKats.refSeedA
+
+/-- D-P23 SATISFIABILITY HALF, as a theorem. The hypotheses of
+    evalQuotientIdentityStep_consumed_agrees are satisfiable at concrete witnesses, and the
+    agreed width is NOT a constant the statement could have guessed: PUSH_CONST agrees at
+    3 and ADD agrees at 1. Without this the agreement lemma could in principle be vacuous
+    on both arms. -/
+theorem arms_agreement_hypotheses_satisfiable :
+    (∃ step, Midfall.Generator.evalQuotientIdentityStep [qOpPushConst, 0, 3]
+        armsWitnessConsts 0 qOpPushConst [1] armsWitnessMem = .ok step ∧
+        Midfall.Generator.QuotientValidator.quotientOpLen [qOpPushConst, 0, 3] 0 = .ok 3
+        ∧ step.consumed = 3)
+    ∧ (∃ step, Midfall.Generator.evalQuotientIdentityStep [qOpAdd]
+        armsWitnessConsts 0 qOpAdd [1, 2] armsWitnessMem = .ok step ∧
+        Midfall.Generator.QuotientValidator.quotientOpLen [qOpAdd] 0 = .ok 1
+        ∧ step.consumed = 1) := by
+  refine ⟨⟨_, rfl, rfl, rfl⟩, ⟨_, rfl, rfl, rfl⟩⟩
+
+/-- D-P23 FALSIFICATION HALF, as a theorem. The conclusion is not a tautology: at the SAME
+    witness the step's consumed is 3 and NOT 4, so a walker that reported 4 for
+    PUSH_CONST - the single-byte perturbation the battery in the package report names -
+    satisfies every hypothesis of the agreement lemma and violates its conclusion. -/
+theorem arms_agreement_conclusion_is_not_a_tautology :
+    ∃ step, Midfall.Generator.evalQuotientIdentityStep [qOpPushConst, 0, 3]
+        armsWitnessConsts 0 qOpPushConst [1] armsWitnessMem = .ok step ∧
+        step.consumed ≠ 4 := by
+  obtain ⟨step, h1, _, h2⟩ := arms_agreement_hypotheses_satisfiable.1
+  exact ⟨step, h1, by omega⟩
+
+/-- The five stream-level arms are an ERROR for the identity interpreter, so they are not
+    missing from the agreement lemma above - they are outside its domain. This is what
+    makes the exclusion a proved fact rather than a comment. -/
+theorem streamArms_error (bytes : List Nat) (consts : List Midfall.Word256) (idx : Nat)
+    (op : Nat) (stack : List QVMFr) (mem : QuotientRefMemory)
+    (hop : op = qOpFoldMain \/ op = qOpFoldSelector \/ op = qOpNativePermutation
+      \/ op = qOpNativeLookup \/ op = qOpNativeIdentity) :
+    Midfall.Generator.evalQuotientIdentityStep bytes consts idx op stack mem
+      = .error (QVMFault.streamOpcodeInIdentity op idx) := by
+  rcases hop with (h|h|h|h|h)
+  all_goals
+    subst h
+    unfold Midfall.Generator.evalQuotientIdentityStep
+    simp (config := { decide := true })
+
+/-- LOOP INDUCTION over the fuel-bounded walk of evalQuotientIdentityLoop
+    (VmReference.lean:874-892). Every arm advances the cursor by at least one byte - that
+    is the hConsumed proof field of IdentityStep, which is why the arm that forgot to
+    advance does not typecheck - so bytes.length iterations always suffice and the
+    fuel-exhausted arm is unreachable. This is the fuel-adequacy lemma the survey lists as
+    owed for builder_segments_total ("evalQuotientIdentityLoop.go never exhausts its
+    fuel"), proved here for an arbitrary per-cursor success hypothesis rather than for one
+    fixed program. -/
+theorem evalQuotientIdentityLoop_fuelNeverBinds
+    (bytes : List Nat) (consts : List Midfall.Word256)
+    (hsteps : ∀ (j : Nat) (stk : List QVMFr) (m : QuotientRefMemory), j < bytes.length →
+        ∃ step, Midfall.Generator.evalQuotientIdentityStep bytes consts j (bytes.getD j 0) stk m
+          = .ok step) :
+    ∀ (fuel j : Nat) (stk : List QVMFr) (m : QuotientRefMemory),
+      bytes.length - j ≤ fuel →
+      Midfall.Generator.evalQuotientIdentityLoop.go bytes consts fuel j stk m ≠
+        .error (QVMFault.panic "reference VM fuel exhausted") := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro j stk m hlen
+      by_cases hlt : j < bytes.length
+      · have : Midfall.Generator.evalQuotientIdentityLoop.go bytes consts 0 j stk m =
+            .error (QVMFault.panic "reference VM fuel exhausted") := by
+          simp [Midfall.Generator.evalQuotientIdentityLoop.go, hlt]
+        omega
+      · simp [Midfall.Generator.evalQuotientIdentityLoop.go, hlt]
+  | succ k ih =>
+      intro j stk m hlen
+      by_cases hlt : j < bytes.length
+      · obtain ⟨step, hstep⟩ := hsteps j stk m hlt
+        have hgo : Midfall.Generator.evalQuotientIdentityLoop.go bytes consts (k+1) j stk m =
+            (Midfall.Generator.evalQuotientIdentityStep bytes consts j (bytes.getD j 0) stk m
+               >>= fun s =>
+             Midfall.Generator.evalQuotientIdentityLoop.go bytes consts k (j + s.consumed)
+               s.stack s.mem) := by
+          simp [Midfall.Generator.evalQuotientIdentityLoop.go, hlt]
+        rw [hgo, hstep]
+        simp only [bind, Except.bind]
+        intro hcon
+        have hpos : 1 ≤ step.consumed := step.hConsumed
+        have hA : bytes.length - (j + step.consumed) ≤ bytes.length - (j + 1) :=
+          Nat.sub_le_sub_left (by omega : j + 1 ≤ j + step.consumed) bytes.length
+        have hE : bytes.length - j - 1 ≤ k := by omega
+        have hB : bytes.length - (j + 1) ≤ k := by
+          rw [← Nat.sub_sub]
+          exact hE
+        have hsub : bytes.length - (j + step.consumed) ≤ k := Nat.le_trans hA hB
+        exact ih (j + step.consumed) step.stack step.mem hsub hcon
+      · simp [Midfall.Generator.evalQuotientIdentityLoop.go, hlt]
+
 end Midfall.Lowering
 
 
@@ -1356,5 +1883,85 @@ theorem windows_conclusion_is_not_a_tautology :
   simp only [bind, Except.bind] at hh
   cases hh
 
+/-! #### GATE - the differential enumeration re-run inside the build -/
+
+/-- The operand environment the two differential gates run in: a constant table wide
+    enough for every slot any fixture names (the pairwise block reaches slot 12), a
+    stack deep enough for the deepest arm, and the reference PRNG memory. Not a Rust
+    item. -/
+def armsConsts : List Word256 := (List.range 300).map fun i => BitVec.ofNat 256 (i + 1)
+
+/-- ditto. -/
+def armsStack : List QVMFr := List.replicate 40 7
+
+/-- ditto. -/
+def armsMem : QuotientRefMemory := Midfall.Generator.quotientRefMemoryNew Midfall.Generator.QuotientVmRefKats.refSeedA
+
+/-- The engineered operand payload. payload[0] = 0 keeps the MODARITH7 flag byte legal;
+    the big-endian u16s at idx+1 and idx+3 are 4 and 2, both nonzero, so the RUN count
+    and BOTH AFFINE_SUM counts pass their nonzero guards. That engineering is what makes
+    the sweep exercise the dynamic arms instead of short-circuiting on their guards. -/
+def armsPayload : List Nat := [0, 4, 0, 2] ++ List.replicate 600 0
+
+/-- One (bytes, index, opcode) triple compared across the two walkers. True means the
+    widths agree, or both sides refused, or the only disagreement is the documented
+    stream-opcode domain boundary. -/
+def armsAgreeAt (bytes : List Nat) (idx op : Nat) : Bool :=
+  match (evalQuotientIdentityStep bytes armsConsts idx op armsStack armsMem,
+         Midfall.Generator.QuotientValidator.quotientOpLen bytes idx) with
+  | (.ok s, .ok n) => s.consumed == n
+  | (.error _, .error _) => true
+  | (.error (QVMFault.streamOpcodeInIdentity _ _), .ok _) => op ∈ streamIdentityExcluded
+  | (.error _, .ok _) => false
+  | (.ok _, .error _) => false
+
+/-- GATE (P-QVMARMS, differential enumeration, half 1). Re-runs the ARMS ENUMERATION
+    inside the build over all 31 opcodeFixtures - one complete phase-1-accepted program
+    per table opcode, at each fixture own testIdx. The third conjunct is the non-vacuity
+    half: exactly 26 of the 31 arms must reach a success on the interpreter side, so the
+    gate cannot be satisfied by every arm erroring. Rules out: the enumeration in
+    section 7 drifting from the code it enumerated - a new arm, a changed stride, a
+    table edit - without a rebuild going red. -/
+def arms_agreement_differential_fixtures_ok : Bool :=
+  (QuotientVmValidatorKats.opcodeFixtures.all fun f => armsAgreeAt f.bytes f.testIdx f.op)
+    && QuotientVmValidatorKats.opcodeFixtures.length == 31
+    && (QuotientVmValidatorKats.opcodeFixtures.filter fun f =>
+          match evalQuotientIdentityStep f.bytes armsConsts f.testIdx f.op armsStack armsMem with
+          | .ok _ => true
+          | .error _ => false).length == 26
+#eval arms_agreement_differential_fixtures_ok -- expect true
+
+/-- GATE (P-QVMARMS, differential enumeration, half 2). The same comparison over EVERY
+    opcode byte 0..255 against the engineered payload, so an arm that exists in the
+    interpreter but not in the table (or the reverse) cannot hide between fixtures. The
+    second conjunct pins that the five stream opcodes are EXACTLY the set where the
+    walker has a width and the step refuses; the third that exactly the 31 table opcodes
+    have a width at all; the fourth and fifth that the reserved byte 0x1a is refused by
+    BOTH sides, so the agreement is not being bought by a walker that accepts everything.
+    Rules out: the agreement being an artifact of the fixture set, and the stream
+    exclusion silently growing or shrinking. -/
+def arms_stepErrors (op : Nat) : Bool :=
+  match evalQuotientIdentityStep ([op] ++ armsPayload) armsConsts 0 op armsStack armsMem with
+  | .ok _ => false
+  | .error _ => true
+
+/-- ditto, validator side -/
+def arms_lenOk (op : Nat) : Bool :=
+  match Midfall.Generator.QuotientValidator.quotientOpLen ([op] ++ armsPayload) 0 with
+  | .ok _ => true
+  | .error _ => false
+
+/-- ditto -/
+def arms_streamError (op : Nat) : Bool :=
+  match evalQuotientIdentityStep ([op] ++ armsPayload) armsConsts 0 op armsStack armsMem with
+  | .error (QVMFault.streamOpcodeInIdentity _ _) => true
+  | _ => false
+
+def arms_agreement_differential_sweep_ok : Bool :=
+  (List.range 256).all fun op => armsAgreeAt ([op] ++ armsPayload) 0 op
+    && List.Perm ((List.range 256).filter arms_streamError) streamIdentityExcluded
+    && ((List.range 256).filter arms_lenOk).length == 31
+    && arms_stepErrors 0x1a && ! arms_lenOk 0x1a
+#eval arms_agreement_differential_sweep_ok -- expect true
 end Midfall.Lowering.QvmKats
 

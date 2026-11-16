@@ -2735,3 +2735,108 @@ DELETING the two D-P23 evidence theorems ('windows_hypotheses_satisfiable',
 'windows_conclusion_is_not_a_tautology') and the two bridge counterexample theorems leaves the
 build green and no gate notices - the falsification-deletion gap, measured again here. No
 persistence coverage is claimed for any falsification in this package, only truth.
+
+### R-70 - P-QVMARMS: differential enumeration before induction, and the shared gap was a component, not the whole
+
+**THE TECHNIQUE, named for reuse: DIFFERENTIAL ENUMERATION BEFORE INDUCTION.** When two
+independent implementations are claimed to agree - here the interpreter's
+`evalQuotientIdentityStep` `consumed` field and the validator's `quotientOpLen` - do NOT
+start by proving a per-case lemma. Start by RUNNING both, mechanically, over (a) every
+existing fixture program at every index the fixture itself names, and (b) every value of
+the discriminating argument (here: every opcode byte 0..255) against an operand payload
+ENGINEERED so that every arm's operand reads succeed. The engineering is the part that is
+easy to skip and impossible to fake: MODARITH7 needs a legal flag byte, AFFINE_SUM needs
+BOTH counts nonzero, the RUN opcodes need a nonzero count, and the constant table has to
+reach the highest slot any arm can name (the pairwise block reaches slot 12). With a
+naive all-zero payload the dynamic arms short-circuit on their own guards and the sweep
+silently measures only the easy arms.
+
+Cost: about forty minutes, no proofs, no oleans. What it bought: the agreement verdict for
+26 arms, the two asymmetries, and the shape of the conditional - all BEFORE a single
+tactic was written. Five of this project's headline statements were refuted by measuring
+first; this is the same trick pointed at a claim that happened to be TRUE, and it is worth
+recording that it works both ways. Both measurements are now re-run inside the build as
+`arms_agreement_differential_fixtures_ok` and `arms_agreement_differential_sweep_ok`
+(`Midfall/Lowering/Qvm.lean`), so the enumeration cannot drift from the code it enumerated.
+
+**THE BRIEF WAS WRONG ABOUT THE SIZE OF THE BLOCKER, for the seventh time this session.**
+P-QVMARMS was briefed as "the one shared gap blocking six holes ... mechanical but large,
+roughly twenty-five opcode arms plus a loop induction". The arms machinery is real and it
+is now landed, but it is a COMPONENT of five of the six holes, not the whole of any of
+them except `qvm_validated_noBoundsFault`, and even there it is one of three parts. The
+per-hole measurement, corrected:
+
+| hole | arms machinery | what else it needs |
+|---|---|---|
+| `qvm_compile_correct_identity` | ~10% | the emitter value-semantics induction over `identityExpr` (VmBuilder.lean:700-894, ~40 panic sites, 4 peephole cases under `hr`) |
+| `qvm_compile_correct_certifier` | ~10% | the above, plus an induction over `plan.items` with `itemStarts` cursor arithmetic, plus `CacheConsistent` memory threading |
+| `qvm_compile_correct_program` | ~5% | the above, plus the trailing-byte check and the seed unfolding |
+| `qvm_compile_correct_stream` | ~10% | the above, plus the fold-walk induction over `evalQuotientProgramArtifacts.go`, plus the TestMem/QuotientRefMemory seam `hseg` |
+| `builder_segments_total` | ~15% | the above, plus totality (no fault AT ALL, so stack depth and every other fault class too) |
+| `qvm_validated_noBoundsFault` | ~40% | the per-arm READ-BOUND enumeration (below) and the phase-2 const-slot wiring |
+
+The emitter induction is its own package and was NOT started, on instruction.
+
+**THE FINDING THE ARMS LEMMA DOES NOT COVER, and the next package needs it.** Agreement of
+`consumed` with `quotientOpLen` says the two walks take the same STRIDES. It does not say
+the interpreter's operand READS fit inside the stride, and `qvm_validated_noBoundsFault`
+needs exactly that second fact: "the interpreter never reads past the end of its own
+segment" is a statement about read offsets, not about the returned width. Measured here
+by truncation ladder: for every arm the operand reads fill the instruction exactly
+(BILIN7_PAIRWISE on an 18-byte instruction fails with `readPastEnd 17` at length 17, so
+byte 17 IS read - the coefficient guard is at `coeffIdx + 12` where `coeffIdx = idx + 4`
+and the helper is called at `idx + 1`). So the property "every read index < idx +
+consumed" holds on the probes, but it is a SECOND 22-arm pass that has not been proved,
+and no lemma in section 7 gives it. Anyone re-attempting the hole should enumerate read
+offsets the same differential way before inducting on it.
+
+**A NEAR MISS worth recording: the padding trap that is NOT a trap.** The obvious lemma to
+reach for is `idx + step.consumed ≤ bytes.length` from step success, and it is tempting to
+assume it because the widths are derived from the operand layouts. It would be FALSE if
+any arm declared a byte it never reads - and BILIN7_PAIRWISE is one arithmetic slip away
+from being exactly that (`4 + quotientVmPairwiseCoeffs` in the helper vs the table's
+`1 + 2*2 + quotientVmPairwiseCoeffs`; the guard reads `coeffIdx + coeffs - 1`, so the
+margin is a single byte). Stating the weaker "reads < idx + consumed" avoids the whole
+class. Do not strengthen it.
+
+**THE FIVE STREAM OPCODES ARE A DOMAIN BOUNDARY, NOT A DISAGREEMENT.** FOLD_MAIN,
+FOLD_SELECTOR, NATIVE_PERMUTATION, NATIVE_LOOKUP and NATIVE_IDENTITY have validator widths
+(1, 4, 1, 3, 1) and are an ERROR in the identity interpreter (QVR:325-333). The brief's
+instruction was to carry "the segment contains no stream opcode" as a hypothesis if
+needed. It is NOT needed: `identitySegment` (VmCertify.lean:409-435) stops at
+FOLD_MAIN/FOLD_SELECTOR and ERRORS on the three native markers, so a segment it delimits
+contains none by construction. `streamArms_error` proves the interpreter half rather than
+documenting it. A hypothesis nobody can discharge is how `readScheduleAgrees` went vacuous;
+this one would have been discharged only by assumption.
+
+**LANDED.** `Midfall/Lowering/Qvm.lean` section 7: the enumeration table, three arm-set
+defs plus `arms_enumeration_is_exhaustive` (22 + 4 + 5 = the 31 table opcodes, disjoint,
+proved by `decide`), five shape-helper length lemmas (`affineProductTerm_ok_mid` = 5,
+`affineLinearTerm_ok_mid` = 3, `limbPairwiseForm_ok_mid` = 17, `limbLinearForm_ok_mid` = 21,
+`limbRowForm_ok_mid` = 23), the fold induction `foldRangeIdxM_ok_advance`,
+`evalQuotientIdentityStep_consumed_agrees` (22 arms, one case split, conditional on both
+successes), `streamArms_error`, and the loop induction
+`evalQuotientIdentityLoop_fuelNeverBinds` - the fuel-adequacy lemma the survey lists as
+owed for `builder_segments_total`. The four DYNAMIC arms (RUN x2, AFFINE_SUM, MODARITH7)
+are measured-agreeing but not proved-agreeing: their widths come from nested counted
+blocks, and `foldRangeIdxM_ok_advance` is the tool that would do it.
+
+**SORRY REGISTER: UNCHANGED at 40.** No hole closed. The register lines did not move -
+section 7 was inserted after the last hole in the file and the gates after the last
+declaration - so no re-pin was needed.
+
+**KAT PINS MOVED DELIBERATELY: 1334 -> 1336.** The two differential gates above are new
+`#eval ... -- expect true` obligations in an existing file, so `EXPECTED_KAT_FILES` stays
+96 and `EXPECTED_KAT_TOTAL` moves by 2. This is the intended use of the pin: the count
+moved because two real checks were added, and the reason is in this entry.
+
+**D-P23 BOTH HALVES.** Satisfiability: `arms_enumeration_is_exhaustive` is a non-vacuous
+witness that the three arm sets are disjoint and cover the table, and
+`arms_agreement_differential_fixtures_ok` carries its own non-vacuity conjunct (exactly 26
+of the 31 arms must reach a success on the interpreter side, so the gate cannot be
+satisfied by every arm erroring). Falsification: `arms_agreement_differential_sweep_ok`
+pins that the reserved byte 0x1a is refused by BOTH sides, so the agreement is not bought
+by a walker that accepts everything; and the perturbation battery below reddens the gate
+by changing one stride. The falsification-DELETION gap is measured here for the
+THIRTY-THIRD time: deleting a gate line and its `#eval` is caught only by the total pin,
+and only while the pin is moved in the same commit. No persistence coverage is claimed.
