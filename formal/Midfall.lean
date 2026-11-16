@@ -120,3 +120,6 @@ import Midfall.Probe.ArkLibProbe
 import Midfall.Common.Json
 import Midfall.Halo2.Spec.Lemmas
 import Midfall.Conformance.Replay
+import Midfall.LoweringV2.Program
+import Midfall.LoweringV2.Statements
+import Midfall.Lowering.LegacyVacuity
