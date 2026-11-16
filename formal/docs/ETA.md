@@ -1029,3 +1029,8 @@ gate and KAT counts are **not** progress. Cone counts are unavailable until Q0.2
 **Cost observation for later cards:** a KAT card costs two full KAT passes (~20 min) because the card
 requires `kat_gate.py` once *and* `checks.sh` once, and `checks.sh` runs `kat_gate.py`. Worth
 collapsing in a later card; **sample size 1**, so not yet a conclusion.
+| Q0.2 cut V2 off retired modules + cone tool | 2 h | ~35 min subagent + orchestrator gate | **baseline set: cone_sorries 1 and 1**; V2 closure 0 of 14 AVOID modules (was 6) | **DONE** | all six NEEDS line refs exact on re-check; six copied ranges verified verbatim by the orchestrator; no false premise in the card |
+
+**Cone baseline established at Q0.2** — the first measurable progress number V2 has had. Both roots sit
+at `cone_sorries: 1` (the root alone). Later cards must move this number; a card that does not change it
+has not progressed the root.

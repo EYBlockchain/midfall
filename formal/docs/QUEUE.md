@@ -67,7 +67,7 @@ INFRA · KAT · box 0.25 h · Sonnet · after Q0.1
 - **Stop if.** The register count moves off 45.
 
 ---
-### Q0.2 — Cut V2 off the retired modules; land the cone tool
+### Q0.2 — Cut V2 off the retired modules; land the cone tool  **[MERGED 3235d17]**
 INFRA · PORT · box 2 h · Sonnet · after Q0.1
 
 - **Goal.** Nothing V2 imports, directly or transitively, is retired or parked, and the cone report
