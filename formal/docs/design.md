@@ -1639,3 +1639,33 @@ The field stays as registered, stays refuted at the exhibited Surface, and the o
 whether to restate it. `curveSurface` therefore cannot be a `LoweringCorrect` instance as long as
 the field keeps `RunShell` on the right: that is what the refutation means, and it is reported
 rather than repaired by editing the statement.
+
+
+**ADDENDUM - D-P42 TESTED BY P-RUNLEG (the falsifiability paragraph executed).** The routed-calldata
+attack this decision named as item (i) has now been run, and the answer is SPLIT, so the decision is
+amended rather than overturned. `RunLegRouted.ir_refines_refuted_at_curveSurface_routed` refutes
+`ir_refines` at `curveSurface` on a calldata the dispatcher DOES route (`ShellModel.cdWellFormed`,
+228 B, `bytesTake cd 0 4 = some fnSigVerifyProof`, all sixteen entry-path tests passing at the
+deployment frame), so the disagreement is NOT an artefact of the empty calldata and D-P42 stands.
+But the mechanism D-P42 recorded is the mechanism of the UNROUTABLE input only:
+`RunLegRouted.wrap_routed_uninhabited` proves that on routed input `wrap curveSurface` has **no
+observation at all** - the dispatcher enters the arm and gets stuck at the VK gate, because
+`ShellModel.armBody S = S.L.headGuard ++ S.bindLocals ++ S.L.main` is the UN-INLINED fragment and
+its contract-level constants `EXPECTED_VK_LENGTH`/`EXPECTED_VK_CODEHASH_WORD` are bound by nothing
+in the entry path (`bindLocalsFromImmutables` binds `vk` and `quotientEvaluator` and nothing else).
+So there are TWO mechanisms, and `RunLegRouted.the_two_mechanisms_are_distinct` states the
+inhabitation pattern that separates them: at the empty calldata both sides run and their halt
+PAYLOADS differ (zero bytes against four); at the routed calldata the shell runs and the model side
+is empty. The control settles which half of the entry path matters: the dispatcher over the CLOSED
+(inlined) arm reverts with the same four bytes as the bare arm (`control_of_arm_block_run`, plus the
+interpreter gate `routed_comparison_ok`), so the prologue, the size test, the switch and the thirteen
+ABI bounds tests contribute NO halt of their own. **CONSEQUENCE FOR THE RECOMMENDATION, AND IT IS A
+CORRECTION: F2 does not repair anything at `curveSurface`.** Restating `ir_refines`'s right-hand
+side to `wrap` would swap a side that disagrees for a side that is empty on routed input, and
+`gap_runLeg_unexhibited` would survive the restatement. The repair the evidence points at is to make
+the model's arm the closed program - which is what D-P39 declined to do when it restated the pin - and
+that is a statement change requiring its own decision (D-P43, orchestrator's to write). Nothing was
+edited here: `ir_refines`, `ShellModel.armBody`, `RunShell` and `wrap` are untouched.
+`ir_refines_refuted_at_the_imported_artifact`, retracted by P-INLINE and never re-established, IS
+back: `RunLegRouted.ir_refines_refuted_at_the_imported_artifact`, at the real solc artifact,
+unconditionally, with both sides inhabited and each side's view unique.

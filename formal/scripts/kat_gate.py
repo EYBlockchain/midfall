@@ -68,8 +68,18 @@ EVAL = re.compile(
 # arm_reverts_four_bytes_ok), which are the independent interpreter measurement of the D-P42 entry-path
 # difference. So the file count goes 97 -> 98 and the total 1346 -> 1348. No gate was deleted; the
 # delta is +2/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1348
-EXPECTED_KAT_FILES = 98
+# P-RUNLEG moved both pins deliberately, in the commit that added the gates.
+# Midfall/Instances/RunLegRouted.lean is a NEW file in the suite carrying FOUR '#eval ... -- expect
+# true' gates: routed_comparison_ok (the routed comparison measured through the fuel interpreter:
+# closed arm 4 bytes, dispatcher over the OPEN arm STUCK, dispatcher over the CLOSED arm 4 bytes,
+# open arm STUCK), unroutable_comparison_ok (the same programs at the empty calldata: 4, 0, 0 - the
+# two-mechanisms contrast), routed_calldata_is_the_routed_one_ok (the exhibit discriminates: the
+# wrong-selector, truncated and empty calldata all fail the dispatcher's own tests) and
+# artifact_both_inputs_ok (the real solc artifact reverts with zero bytes at BOTH inputs). So the
+# file count goes 98 -> 99 and the total 1348 -> 1352. No gate was deleted; the delta is +4/+1 and
+# nothing else moved.
+EXPECTED_KAT_TOTAL = 1352
+EXPECTED_KAT_FILES = 99
 
 # Only these shapes count as #eval output.
 #
