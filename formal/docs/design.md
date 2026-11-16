@@ -1567,3 +1567,75 @@ hash and every derived challenge stream, so this is a second fixture change of t
 
 **Rejected:** deleting the field, or weakening its conclusion to the 8-slot schedule. Both would
 hide a real vk/layout disagreement.
+
+### D-P42 (DECIDED by P-DET, from P-INLINE's evidence) - `ir_refines`: the right-hand side should have been `wrap`, and `RunShell` is a DIFFERENT program
+
+P-INLINE found that `RunShell` (bare arm) and `ShellModel.wrap` (dispatcher) disagree on empty
+calldata, and named a fork: **F1** - make `Surface.shell` BE the dispatcher, so the two sides run one
+program; **F2** - accept that they are different programs and restate the field's right-hand side.
+P-DET decides **F2**, and the reason is that F1 is both unimplementable and self-defeating.
+
+**THE DIFFERENCE IS CONSTRUCTIVE, NOT ACCIDENTAL.** `RunShell S W H cd c g` runs
+`S.shell.codeBlock` from `callState W S.shellLayout H cd`; `wrap` runs
+`ShellModel.dispatcherCode S = prologue ++ [cond calldatasizeTest [selectorDecl, selectorSwitch
+(armBody S)], revert00]` from the same frame. The shell has NO ENTRY PATH: no `memoryguard`
+prologue, no size test, no selector switch, no fall-through abort. On a calldata shorter than four
+bytes the dispatcher's size test skips the switch entirely and falls through to `revert(0, 0)`,
+while the bare arm's first executed non-definition statement is the VK gate, which fails and
+reverts with a four-byte selector. `RunShellInhabited.shell_run_is_not_the_wrap_run` pins the
+payload difference and `RunShellInhabited.ir_refines_refuted_at_curveSurface` - UNCONDITIONAL since
+P-DET closed `Bridge.dialect_deterministic` - turns it into `not ObsEquiv`. So this is not a
+modelling slip that a better fixture would repair: the two relations are about two different blocks.
+
+**F1 IS NOT EVEN EXPRESSIBLE AS A PIN.** `ShellModel` imports `Midfall.Lowering.Surface` (it needs
+`Surface`, `ExecEnv`, `Hash`, `Bytes` to state `wrap`), so a `Surface` field that pointed at
+`ShellModel.dispatcherCode` would close a cycle. The cycle is STRUCTURAL, not an import-ordering
+accident: the dispatcher model is defined in terms of the record it would have to live in. Nothing
+in `Surface.lean` can name `dispatcherCode`, so there is no pin to write - which is why D-P39's
+embedding went the other way and pinned `shell.codeBlock` to the ARM instead.
+
+**F1 WOULD ALSO DESTROY THE FIELD.** `ir_refines` exists to say something non-trivial: that the
+via-IR artifact refines the hand-written shell model. If the shell model WERE the dispatcher, the
+two sides of the equivalence would be one program and the field would be `ObsEquiv R R` - a
+tautology wearing a theorem's clothes. The distinction the field tests is precisely the distinction
+between an imported solc object and the modelled entry path, and F1 deletes the second term.
+
+**CONSEQUENCE, and it is the substantive part of the decision: `ir_refines`'s right-hand side should
+have been `wrap` all along.** That is exactly what P-LOWEQ already did to the headline:
+`lowering_equivalence` concludes about `ShellModel.wrap S W H cd ...` and reads `hc.ir_refines` at
+`ShellModel.modelIr S`, whose runtime sub-object IS `dispatcherCode S`
+(`ShellModel.wrap_iff_modelRunContractIR`). So the headline is stated at the pair that can be
+equivalent, and the registered field - whose right-hand side is `RunShell` - is refuted at the curve
+Surface by a difference that is a specification artefact and not a lowering bug.
+
+**AND IT IS UNAVOIDABLE, NOT A PREFERENCE, BECAUSE THE FIELD IS NOW REFUTED - NOT MERELY UNPROVED.**
+`ir_refines` quantifies over EVERY `ir` with `S.irCheck ir = true`. `ShellModel.modelIr curveSurface`
+passes that check by proof (`modelIr_irCheck`), and at that single instantiation the conclusion is
+FALSE. Therefore `LoweringCorrect curveSurface product` has NO INSTANCE FOR ANY `product` - landed as
+`RunShellInhabited.curveSurface_not_LoweringCorrect`. That is the conclusion P-RUNSHELL reached from
+shell EMPTINESS and P-INLINE retracted along with six other theorems when D-P39 made the shell
+inhabited; it is now back on a better-founded route, because both sides HAVE runs and they disagree.
+So the honest summary of P-INLINE plus P-DET is: **the curve Surface cannot discharge
+`LoweringCorrect`, not because its shell is empty (that was fixed by D-P39) but because `RunShell` and
+`wrap` differ BY CONSTRUCTION on unroutable calldata - the field as sketched compares the wrong two
+things.** Restating its right-hand side to `wrap` is therefore not one option among two; it is the
+only consistent reading, and F1 is not available at all.
+
+**HOW THIS DECISION CAN BE FALSIFIED, stated so the next package can attack it rather than trust it.**
+D-P42 stands or falls on `ir_refines_refuted_at_curveSurface`. Three findings would overturn it: (i) a
+proof that `RunShell curveSurface` and `wrap curveSurface` DO have a common view at some frame where
+the calldata routes, which would make the disagreement an artefact of the empty calldata rather than
+of the entry path; (ii) a demonstration that `curveSurface.shell.codeBlock` was itself mis-pinned, so
+that the shell SHOULD carry the dispatcher and the pin - not the field - is what is wrong; or (iii) a
+route to `LoweringCorrect curveSurface product` that does not need `ir_refines`, which cannot exist
+since it is a structure field, so (iii) would in fact be a change to the field list. (i) is the live
+one: the refutation is at the UNROUTABLE input, and a routed-calldata refutation or agreement is what
+would decide whether the mechanism generalises.
+
+**WHAT WAS NOT DONE, deliberately.** `LoweringCorrect.ir_refines` was NOT edited. Restating its
+right-hand side from `RunShell` to `wrap` is a change to a frozen obligation-bundle field, and the
+refutation above is the evidence that the change is needed - not authority to make it silently.
+The field stays as registered, stays refuted at the exhibited Surface, and the orchestrator decides
+whether to restate it. `curveSurface` therefore cannot be a `LoweringCorrect` instance as long as
+the field keeps `RunShell` on the right: that is what the refutation means, and it is reported
+rather than repaired by editing the statement.

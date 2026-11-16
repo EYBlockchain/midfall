@@ -624,9 +624,13 @@ theorem loweqCd_hside : SideConditions curveSurface keccak256 loweqCd := by
 'G1CodecLaws', 'SideConditions', the 'hsel' byte pin, and the 'WorldLocal' leg the restatement
 added. P-LOWEQ landed seven of these and named the eighth as unexhibited; P-CODECLAWS closed it with
 'g1CodecZ_laws', so 'lowering_equivalence' now has a witness for every binder except ONE, and that
-one is not in this conjunction: 'hc : LoweringCorrect S product' is the headline's own bundle, and
-its open leg is 'ir_refines' at 'ShellModel.modelIr S' - see 'gap_runLeg_unexhibited' and
-'gap_holds_unexhibited' for what is and is not exhibited there. THE LIMIT OF THIS EXHIBIT, STATED
+one is not in this conjunction: 'hc : LoweringCorrect S product' is the headline's own bundle - AND P-DET PROVED THAT
+BUNDLE UNINHABITED AT THIS SURFACE: 'ir_refines' read at 'ShellModel.modelIr S' is FALSE
+('RunShellInhabited.ir_refines_refuted_at_curveSurface'), so no 'LoweringCorrect curveSurface product'
+exists for ANY product ('RunShellInhabited.curveSurface_not_LoweringCorrect'). Eight of eight outside
+the bundle, zero of one inside it. The old text called 'ir_refines' the open leg; it is a refuted leg,
+which is stronger and changes what the exhibit can be used for. See D-P42 (docs/design.md) for the
+decision this forces and 'gap_runLeg_unexhibited' and 'gap_holds_unexhibited' for the other two legs. THE LIMIT OF THIS EXHIBIT, STATED
 RATHER THAN HIDDEN: it is eight conjuncts at one Surface, not the headline's whole hypothesis
 bundle, and it proves no spec theorem. -/
 theorem loweqBundleCore (product : PairingProduct)

@@ -167,6 +167,40 @@ theorem ofFun_functional (f : EvmState -> U256) : ExternalGas.Functional (Extern
   simp [ExternalGas.ofFun] at h₁ h₂
   rw [h₁, h₂]
 
+/-- A built-in whose open-dialect relation IS the stepOp graph is deterministic, because a
+    function has at most one some value. This is the whole of the argument for 80 of the 87
+    constructors of Op, and it is the shape of the vendored EVM.evm_deterministic
+    (Determinism.lean:419) applied one constructor at a time. -/
+theorem det_of_stepOp_graph {c : ExternalCalls} {g : ExternalGas} {op : Op}
+    (H : ∀ (args : List U256) (st : EvmState) (r : BuiltinResult U256 EvmState),
+      (Dialect c g).Builtin op args st r ↔ stepOp op args st = some r) :
+    (Dialect c g).Deterministic op := by
+  intro args st r₁ r₂ h₁ h₂
+  exact Option.some.inj (((H args st r₁).mp h₁).symm.trans ((H args st r₂).mp h₂))
+
+/-- hc is exactly what the call family needs, and this is the lemma that says so: a functional
+    relation makes externalCall single-valued, because everything on the caller side is the
+    FUNCTION finishCall of the response. -/
+theorem externalCall_unique {c : ExternalCalls} (hc : c.Functional)
+    (kind : EVM.CallKind) (gas target value io is oo os : U256) (st : EvmState)
+    {r₁ r₂ : BuiltinResult U256 EvmState}
+    (h₁ : externalCall c kind gas target value io is oo os st r₁)
+    (h₂ : externalCall c kind gas target value io is oo os st r₂) : r₁ = r₂ := by
+  obtain ⟨resp₁, hcall₁, rfl⟩ := h₁
+  obtain ⟨resp₂, hcall₂, rfl⟩ := h₂
+  have hEq : resp₁ = resp₂ := hc _ _ _ _ hcall₁ hcall₂
+  subst hEq
+  rfl
+
+/-- Under ExternalCreates.none the create family has NO result at all outside a static frame, so
+    create and create2 are deterministic VACUOUSLY here rather than by a uniqueness argument.
+    Stated as a negation so the emptiness is the thing on the record. -/
+theorem externalCreate_none_ne {kind : EVM.CreateKind} {value offset size : U256}
+    {salt : Option U256} {st : EvmState} {r : BuiltinResult U256 EvmState}
+    (h : externalCreate ExternalCreates.none kind value offset size salt st r) : False := by
+  obtain ⟨resp, hcr, _⟩ := h
+  exact absurd hcr (by simp [ExternalCreates.none])
+
 /-- Every built-in of the open dialect is deterministic once both oracles are
     functional. The op split (design2: 70 trivial cases plus 7 external ones):
     the call family goes through externalCall, whose response is unique under hc
@@ -176,14 +210,86 @@ theorem ofFun_functional (f : EvmState -> U256) : ExternalGas.Functional (Extern
     stepOp op args st = some r, a function graph (the EVM.evm_deterministic
     argument, Determinism.lean:419).
 
-    PROOF OBLIGATION, registered in SORRY.md: cases on Op is 77 constructors and
-    each needs the match form of builtinWithExternal unfolded (EVMExec.lean:878-929).
-    This is the single hole standing between stage 1 and every determinism
-    corollary; nothing downstream is restated to avoid it. -/
+    CLOSED BY P-DET, AND TRUE EXACTLY AS REGISTERED - no weakening was needed and none was
+    done. Two premises in the old text were wrong and are corrected here. (1) It said "cases on
+    Op is 77 constructors": the real count is EIGHTY-SEVEN (EVMOp.lean:41-71), so the estimate of
+    the work was wrong in the harmless direction. (2) The brief that commissioned this package
+    guessed that literal determinism is PROBABLY FALSE because gas stays nondeterministic and
+    ExternalGas is an arbitrary oracle. It is not false, and the reason is that the registered
+    statement already carries the two functionality hypotheses: with hg the gas case pins its
+    answer to one word per state, and with hc the call family pins it to one response per
+    (request, pre-state) pair. What IS false - and twoResponses_nondet exhibits it - is
+    determinism WITHOUT those hypotheses, and ExternalGas.any is the refutation of the gas half.
+    So the honest target the brief suspected (determinism of the OBSERVATION given a fixed call
+    relation and gas oracle) is not weaker than what was registered: Run.det and
+    RunCommitted.det below already state exactly that, and they are corollaries of a theorem now
+    rather than of a hole.
+    Kernel-clean: the axiom closure is [propext, Quot.sound] - no sorryAx, no native_decide, no
+    Classical.choice. -/
 theorem dialect_deterministic {c : ExternalCalls} {g : ExternalGas}
     (hc : c.Functional) (hg : g.Functional) (op : Op) :
     (Dialect c g).Deterministic op := by
-  sorry
+  cases op
+  -- The 80 local constructors: (Dialect c g).Builtin op args st r IS stepOp op args st = some r,
+  -- by the catch-all arm of builtinWithExternal (EVMExec.lean:963), so it is a function graph.
+  all_goals try exact det_of_stepOp_graph (fun _ _ _ => Iff.rfl)
+  case gas =>
+    intro args st r₁ r₂ h₁ h₂
+    cases args with
+    | cons a as => simp only [builtinWithExternal] at h₁
+    | nil =>
+        simp only [builtinWithExternal] at h₁ h₂
+        obtain ⟨q, hq, rfl⟩ := h₁
+        obtain ⟨q', hq', rfl⟩ := h₂
+        have hEq : q = q' := hg st q q' hq hq'
+        subst hEq
+        rfl
+  case call =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨a,_|⟨b,_|⟨v,_|⟨io,_|⟨is,_|⟨oo,_|⟨os,_|⟨x8,xs⟩⟩⟩⟩⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    by_cases hstat : st.env.static = true ∧ v ≠ 0
+    · rw [ite_eq_left hstat] at h₁
+      rw [ite_eq_left hstat] at h₂
+      exact h₁.trans h₂.symm
+    · rw [ite_eq_right hstat] at h₁
+      rw [ite_eq_right hstat] at h₂
+      exact externalCall_unique hc .call a b v io is oo os st h₁ h₂
+  case callcode =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨a,_|⟨b,_|⟨v,_|⟨io,_|⟨is,_|⟨oo,_|⟨os,_|⟨x8,xs⟩⟩⟩⟩⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    exact externalCall_unique hc .callcode a b v io is oo os st h₁ h₂
+  case delegatecall =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨a,_|⟨b,_|⟨io,_|⟨is,_|⟨oo,_|⟨os,_|⟨x7,xs⟩⟩⟩⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    exact externalCall_unique hc .delegatecall a b st.env.callvalue io is oo os st h₁ h₂
+  case staticcall =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨a,_|⟨b,_|⟨io,_|⟨is,_|⟨oo,_|⟨os,_|⟨x7,xs⟩⟩⟩⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    exact externalCall_unique hc .staticcall a b 0 io is oo os st h₁ h₂
+  case create =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨v,_|⟨off,_|⟨sz,_|⟨x4,xs⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    by_cases hstat : st.env.static = true
+    · rw [ite_eq_left hstat] at h₁
+      rw [ite_eq_left hstat] at h₂
+      exact h₁.trans h₂.symm
+    · rw [ite_eq_right hstat] at h₁
+      exact (externalCreate_none_ne h₁).elim
+  case create2 =>
+    intro args st r₁ r₂ h₁ h₂
+    rcases args with _|⟨v,_|⟨off,_|⟨sz,_|⟨salt,_|⟨x5,xs⟩⟩⟩⟩⟩
+    all_goals simp only [builtinWithExternal] at h₁ h₂
+    by_cases hstat : st.env.static = true
+    · rw [ite_eq_left hstat] at h₁
+      rw [ite_eq_left hstat] at h₂
+      exact h₁.trans h₂.symm
+    · rw [ite_eq_right hstat] at h₁
+      exact (externalCreate_none_ne h₁).elim
 
 /-- Whole-program determinism at the open dialect, inherited from the generic
     Run.det (Determinism.lean:411). Both hypotheses are load-bearing - see
@@ -289,6 +395,37 @@ theorem twoResponses_nondet :
   obtain ⟨st₁, r₁, m₁⟩ := run_staticcall_mstore (c := c) (resp := okResp) hok
   obtain ⟨st₂, r₂, m₂⟩ := run_staticcall_mstore (c := c) (resp := badResp) hbad
   exact ⟨[], [], st₁, st₂, r₁, r₂, by rw [m₁, m₂]; show (1 : UInt8) ≠ 0; decide⟩
+
+/-- **hg IS LOAD-BEARING TOO, AND THIS IS THE REFUTATION OF ITS NEGATION (D-P23, falsification half
+    for the hole P-DET closed).** With the maximally open oracle ExternalGas.any the gas op has TWO
+    results at ONE state - the words 0 and 1 - so Deterministic Op.gas is FALSE there. The old
+    docstring asserted this dependency in prose ("with .any the gas() op has no Deterministic proof",
+    ecosystem Y-5) and nothing in the tree proved it; now it is a theorem, so the hypothesis cannot be
+    quietly dropped from dialect_deterministic without the tree noticing. twoResponses_nondet is the
+    matching exhibit for hc: between the two, both hypotheses are demonstrated necessary rather than
+    decorative (R-30/R-32). -/
+theorem gas_nondet_with_any :
+    ¬ (Dialect ExternalCalls.none ExternalGas.any).Deterministic Op.gas := by
+  intro h
+  have h₁ : (Dialect ExternalCalls.none ExternalGas.any).Builtin Op.gas [] EvmState.init
+      (.ok [0] EvmState.init) := ⟨0, trivial, rfl⟩
+  have h₂ : (Dialect ExternalCalls.none ExternalGas.any).Builtin Op.gas [] EvmState.init
+      (.ok [1] EvmState.init) := ⟨1, trivial, rfl⟩
+  have hEq : (0 : U256) = 1 := by
+    have hres := h [] EvmState.init _ _ h₁ h₂
+    injection hres with hvals _
+    injection hvals
+  exact absurd hEq (by decide)
+
+/-- **D-P23, SATISFIABILITY HALF.** The two hypotheses of dialect_deterministic are jointly
+    satisfiable by real oracles, so the closed hole is not a statement about an empty type class:
+    ExternalCalls.none is functional (no response is offered, so at most one is) and ofFun is
+    functional by ofFun_functional above. Instantiated at that pair, dialect_deterministic is the
+    content of Run.det and RunCommitted.det that P-DET's refutation consumes. -/
+theorem determinism_hypotheses_satisfiable :
+    ∃ (c : ExternalCalls) (g : ExternalGas), c.Functional ∧ g.Functional :=
+  ⟨ExternalCalls.none, ExternalGas.ofFun fun _ => 0,
+    fun _ _ _ _ h _ => False.elim h, ofFun_functional (fun _ => 0)⟩
 
 
 /-! ### The keccak hook -/

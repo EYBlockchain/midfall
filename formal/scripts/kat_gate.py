@@ -62,8 +62,14 @@ EVAL = re.compile(
 # gates in the new module and three in RunEmitted (inlineFuelIsEnough_ok,
 # inlinedArtifactArmRuns_ok, inlineTheLocalsToo_stuck_ok). No gate was deleted; the delta is +6/+1
 # and nothing else moved.
-EXPECTED_KAT_TOTAL = 1346
-EXPECTED_KAT_FILES = 97
+# P-DET moved both pins deliberately, in the commit that added the gates.
+# Midfall/Instances/RunShellInhabited.lean carried NO '#eval ... -- expect' line before P-DET, so it
+# was not in the suite at all; P-DET adds TWO (dispatcher_reverts_zero_bytes_ok,
+# arm_reverts_four_bytes_ok), which are the independent interpreter measurement of the D-P42 entry-path
+# difference. So the file count goes 97 -> 98 and the total 1346 -> 1348. No gate was deleted; the
+# delta is +2/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1348
+EXPECTED_KAT_FILES = 98
 
 # Only these shapes count as #eval output.
 #

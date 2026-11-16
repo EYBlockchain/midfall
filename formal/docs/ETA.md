@@ -22,6 +22,7 @@ lost 14 calendar days to a gap that cost zero work.
 | r-torsion point count | research-grade, weeks–months | `Nat.card_zpowers` + `orderOf_eq_prime`, **elementary** | **wrong kind again** | a named lemma's absence was read as the fact's absence |
 | `Array.foldl` transfer | impossible, no core lemma | `Array.foldl_toList` exists | **wrong name, right shape** | a precise negative about one name is not a negative about the fact |
 | P-CODEC (4 items, one session) | 4 items | **0 durable output** | **over-scoped** | briefs must fit the budget; mandated ordering fixed it |
+| `dialect_deterministic`: true or false? | brief guessed **probably FALSE** (gas nondeterministic, arbitrary oracle) | **TRUE AS REGISTERED, proved in one session**, 3 s of elaboration, kernel-clean | **wrong kind again** | the registered statement already carries `hc : c.Functional` and `hg : g.Functional`; the guess reasoned about gas nondeterminism WITHOUT reading the hypotheses the statement assumes. Same class as the `77 constructors` figure in the hole's own docstring (real count 87) |
 
 **Pattern, stated plainly:** of the seven items above, **four were errors of kind, not of
 degree** — I recorded a blocker as large when it was a different shape entirely, usually
@@ -39,6 +40,7 @@ re-verify recorded premises is the mitigation and it has paid for itself repeate
 | P-HOLDS2 | 1 | 0 | `pairing2` + order lemma; retired a research-grade claim |
 | P-CODEC | 1 | 0 | **ran out of room, no durable output** |
 | P-SPEC1 | 1 | 1 (traceReturn_spec) | first `Partials` spec proved; 13 new declarations incl. the D-P23 pair; two gate gaps measured |
+| P-DET | 1 | **1 (`dialect_deterministic`, closed AS REGISTERED)** | first sorry closed since P-SPEC1; +14 declarations (12 theorems, 2 gates); the `ir_refines` refutation became unconditional and `curveSurface_not_LoweringCorrect` came back on a better route; KAT pins moved +2/+1 |
 
 **Rate: 1–3 sorries per session on hard work; 0 when the package is exploratory or over-scoped.**
 At 58 remaining and a mean of ~1.3, the naive projection is **~45 sessions**, not the 17–27 I
@@ -85,11 +87,18 @@ bridges that do not exist yet (`readScheduleAgrees`, the batch-inversion agreeme
 Largely independent of M-A. `Qvm` needs `LoweringPlan::new` (circuit-as-data, uncosted).
 **Estimate: 8–14 sessions.** `Calldata` is the most mechanical and should be first.
 
-### M-D — `dialect_deterministic` + the transport — **NOT STARTED**
+### M-D — `dialect_deterministic` + the transport — **CLOSED by P-DET in 1 session**
 
 P-BRIDGE: hits the 200k-heartbeat limit on external-call arms; 7 external ops by hand plus ~70
 local via `Option.some.inj`. **Estimate: 2–5 sessions, wide variance.** This is the item most
 likely to be mis-estimated in either direction.
+
+**ACTUAL: 1 session, and the predicted wall did not exist.** The 200k-heartbeat claim was about a
+fuel shape this proof never uses: 80 of the 87 ops fall to ONE lemma (`det_of_stepOp_graph`, whose
+hypothesis is `Iff.rfl` per op) and the 7 external ones are arity splits plus `externalCall_unique`.
+The whole theorem elaborates in **2.2 s** with a peak single-process RSS of 3.01 GiB. The transport
+half — `Run.det`, `RunCommitted.det` — was already written and needed no change; it stopped being a
+corollary of a hole and became a corollary of a theorem. Recorded at R24.
 
 ### M-E — `lowering_equivalence` itself — **NOT STARTED**
 
@@ -114,9 +123,9 @@ prerequisites — which is the useful thing about naming it.
 | M-A remaining | 3–4 | in flight |
 | M-B | **1, then blocked** | re-cut twice: R9 found the item list wrong, R10 found 8 of the 11 remaining holes are not M-B's to prove |
 | M-C | 8–14 | bulk by count |
-| M-D | 2–5 | widest variance |
+| M-D | **0 — closed by P-DET** | was the widest variance on the list; it cost 1 session and 2.2 s of elaboration |
 | M-E | 1–2 | transport |
-| **Total to landmark** | **15–26** | **revised down from 18–31 by R10's M-B re-cut; M8 (8–16, R8) is still NOT in this table, so this total is optimistic by exactly M8** |
+| **Total to landmark** | **13–24** | **revised down from 15–26 by P-DET closing M-D (2–5 → 0). Still revised down from 18–31 by R10's M-B re-cut; M8 (8–16, R8) is still NOT in this table, so this total is optimistic by exactly M8** |
 
 **Wall-clock:** at 1–2 sessions per active hour and this session's observed availability,
 **6–12 calendar weeks**, dominated by uptime rather than difficulty. The 14-day gap earlier in
@@ -963,3 +972,24 @@ the depth DOES clear it (no computation is requested, only a deep unifier whnf).
 formulations of the count were dropped for the same class of wall: the count is proved as a
 membership statement (torsion_eq_zpowers_gen), not as a Nat.card equation.
 
+
+### R24 - round 186, after P-DET. The named blocker was true, and the brief's guess about it was the only wrong thing.
+
+| claim made | before | actual | verdict |
+|---|---|---|---|
+| `dialect_deterministic` is probably FALSE as registered (gas nondeterministic, `ExternalGas` arbitrary) | brief's prediction, stated as the thing to check first | **TRUE as registered, and proved.** The statement already assumes `hc : c.Functional` and `hg : g.Functional`; under those the `gas` case has one answer per state and the call family one response per (request, pre-state) pair | **error of kind - a premise about the semantics reasoned about without reading the signature that carries it** |
+| the honest target is view-level determinism given fixed `c` and `g`, so the registered hole needs a deviation entry | predicted restatement | **no restatement needed.** `Run.det` / `RunCommitted.det` already were that statement; they were corollaries of a hole and are now corollaries of a theorem | premise wrong, outcome better |
+| "cases on Op is 77 constructors" (the hole's own docstring) | 77 | **87** (`EVMOp.lean:41-71`); 80 discharged by one lemma, 7 need arity splits | wrong number, harmless direction |
+| the hole is the single thing between the open field and a settled answer | stated in the brief | **true for the route taken** - `RunCommitted.det` really does inherit it - and the refutation became unconditional the moment it closed | held |
+| third citation of this hole as a prerequisite | two prior citations had both been false | **the third was real**, which is why the honest answer is not "fake again" but "real, and provable" | held |
+| cost | one package | one package: ~40 min to the first green proof of the hole, the rest to the unconditional refutation, D-P42, the gates and the register | on budget |
+
+**The lesson, for the next brief.** Before predicting whether a registered statement is true, read what
+it ASSUMES. Both errors in this package - mine and the brief's - were the same shape: a fact about the
+semantics (gas is nondeterministic) applied to a statement that had already hypothesized it away. The
+project's standing instruction to re-verify recorded premises cuts both ways: it also applies to
+premises a brief brings with it.
+
+**Register movement.** 40 -> 39, the first close since P-SPEC1 and the third of this class (a named
+hole that turned out to be true and merely unproved). KAT pins moved 1346 -> 1348 and 97 -> 98 for the
+two new interpreter gates in `RunShellInhabited.lean`.

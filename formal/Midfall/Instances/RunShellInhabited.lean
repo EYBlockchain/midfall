@@ -416,6 +416,163 @@ theorem ir_refines_refuted_at_curveSurface_of_unique_wrap
   obtain ⟨oIr, hIr, hv⟩ := (h obsSh.view).2 ⟨obsSh, hsh, rfl⟩
   exact hunique oIr hIr obsSh hsh hv
 
+/-! ### P-DET: the hypothesis of the theorem above is now a PROOF, so the refutation is UNCONDITIONAL -/
+
+/-- **THE UNIQUENING STEP, AND IT IS NO LONGER A HYPOTHESIS.** Two committed runs of the SAME program
+    from the SAME frame at the fixture dialect have the same view. This is 'Bridge.RunCommitted.det'
+    read at 'c0' and 'g0', and the only reason it was out of reach before P-DET is that
+    'RunCommitted.det' inherits 'Bridge.dialect_deterministic' - the registered hole at
+    Bridge.lean:186, which P-DET CLOSED as a theorem, TRUE EXACTLY AS REGISTERED. Both functionality
+    hypotheses are discharged at the concrete oracles above ('noCalls_functional', 'gas_functional'). -/
+theorem view_eq_of_committed_runs {prog : Block FOp} {st0 : EvmState}
+    {V₁ V₂ : VEnv OD0} {s₁ s₂ : EvmState} {o₁ o₂ : Outcome}
+    (h₁ : RunCommitted c0 g0 prog st0 V₁ s₁ o₁)
+    (h₂ : RunCommitted c0 g0 prog st0 V₂ s₂ o₂) :
+    (⟨s₁, o₁⟩ : Midfall.Yul.Bridge.Obs).view = (⟨s₂, o₂⟩ : Midfall.Yul.Bridge.Obs).view := by
+  obtain ⟨rfl, rfl, rfl⟩ := RunCommitted.det noCalls_functional gas_functional h₁ h₂
+  rfl
+
+/-- So the SHELL side has exactly one view at the fixture frame: the four-byte VK-mismatch revert. -/
+theorem runShell_view_unique {o₁ o₂ : Midfall.Yul.Bridge.Obs}
+    (h₁ : RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) c0 g0 o₁)
+    (h₂ : RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) c0 g0 o₂) :
+    o₁.view = o₂.view := by
+  obtain ⟨V₁, hr₁⟩ := h₁
+  obtain ⟨V₂, hr₂⟩ := h₂
+  exact view_eq_of_committed_runs hr₁ hr₂
+
+/-- And the IR side has exactly one view: the dispatcher's empty revert. The runtime sub-object is
+    pinned by 'S.irRuntime ir = some rt' - a function - so two runs cannot disagree about WHICH
+    block they ran, which is what makes the uniqueness argument go through at all. -/
+theorem runContractIR_view_unique {o₁ o₂ : Midfall.Yul.Bridge.Obs}
+    (h₁ : RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+      curveSurface.shellLayout (ByteArray.empty : Bytes) c0 g0 o₁)
+    (h₂ : RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+      curveSurface.shellLayout (ByteArray.empty : Bytes) c0 g0 o₂) :
+    o₁.view = o₂.view := by
+  obtain ⟨rt₁, V₁, hrt₁, hr₁⟩ := h₁
+  obtain ⟨rt₂, V₂, hrt₂, hr₂⟩ := h₂
+  have hrt : rt₁ = rt₂ := (Option.some.inj hrt₁).symm.trans (Option.some.inj hrt₂)
+  subst hrt
+  exact view_eq_of_committed_runs hr₁ hr₂
+
+/-- **THE HYPOTHESIS, DISCHARGED.** No run of the model IR at the fixture frame has the shell's view,
+    and conversely - the two sides have ONE view each and those views differ in 'ObsView.halted'. -/
+theorem ir_refines_hunique_at_curveSurface :
+    forall (o : Midfall.Yul.Bridge.Obs),
+      RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+        curveSurface.shellLayout (ByteArray.empty : Bytes) ExternalCalls.none
+        (ExternalGas.ofFun fun _ => 0) o ->
+        forall (oSh : Midfall.Yul.Bridge.Obs),
+        RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) ExternalCalls.none
+          (ExternalGas.ofFun fun _ => 0) oSh ->
+        o.view ≠ oSh.view := by
+  intro o ho oSh hSh hEq
+  obtain ⟨obsSh, hsh, hShalt, -⟩ := shell_run_reverts_four_bytes
+  obtain ⟨obsIr, hir, hIrhalt⟩ := wrap_empty_cd_reverts_nil
+  have hIr : RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+      curveSurface.shellLayout (ByteArray.empty : Bytes) c0 g0 obsIr :=
+    (ShellModel.wrap_iff_modelRunContractIR curveSurface fxW keccak256
+      (ByteArray.empty : Bytes) c0 g0 obsIr).mpr hir
+  have h1 : o.view = obsIr.view := runContractIR_view_unique ho hIr
+  have h2 : oSh.view = obsSh.view := runShell_view_unique hSh hsh
+  rw [h1, h2] at hEq
+  have hh := halted_of_view_eq hEq
+  have hEq2 : (some (.revert, []) : Option (HaltKind × List UInt8)) = some (.revert, shellHaltData) :=
+    hIrhalt.symm.trans (hh.trans hShalt)
+  exact shell_run_is_not_the_wrap_run
+    ((congrArg Prod.snd (Option.some.inj hEq2))).symm
+
+/-- **THE REQUIRED FINDING OF P-INLINE, NOW UNCONDITIONALLY: 'ir_refines' IS FALSE AT THE CURVE
+    SURFACE.** Read the field as 'LoweringCorrect.ir_refines' (Obligations.lean:316) at
+    'S := curveSurface' and instantiate its binders with the in-tree model object, the Surface's own
+    shell layout, the fixture world and hash, the EMPTY calldata, the empty call relation and the
+    constant-zero gas oracle. Every hypothesis of the field holds at that instantiation -
+    'ShellModel.modelIr_irCheck' gives 'irCheck (modelIr curveSurface) = true' and
+    'noCalls_worldLocal' gives the world-locality the field asks for - and the conclusion is FALSE. -/
+theorem ir_refines_refuted_at_curveSurface :
+    ¬ ObsEquiv
+        (RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+          curveSurface.shellLayout (ByteArray.empty : Bytes) ExternalCalls.none
+          (ExternalGas.ofFun fun _ => 0))
+        (RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) ExternalCalls.none
+          (ExternalGas.ofFun fun _ => 0)) :=
+  ir_refines_refuted_at_curveSurface_of_unique_wrap ir_refines_hunique_at_curveSurface
+
+/-- **D-P23, THE FALSIFICATION HALF OF THE REFUTATION ITSELF.** The refutation is not vacuous: the
+    instantiation it refutes at satisfies every hypothesis of the field. Both sides are inhabited -
+    'runShell_curveSurface_inhabited' and 'wrap_empty_cd_reverts_nil' - and the two hypotheses the
+    field asks for are theorems at this instantiation, not assumptions. -/
+theorem ir_refines_hypotheses_hold_at_the_refuted_instantiation :
+    curveSurface.irCheck (ShellModel.modelIr curveSurface) = true ∧
+      (ExternalCalls.none : YulSemantics.EVM.ExternalCalls).WorldLocal ∧
+      (exists o, RunShell curveSurface fxW keccak256 (ByteArray.empty : Bytes) c0 g0 o) ∧
+      (exists o, RunContractIR curveSurface fxW keccak256 (ShellModel.modelIr curveSurface)
+        curveSurface.shellLayout (ByteArray.empty : Bytes) c0 g0 o) := by
+  refine ⟨ShellModel.modelIr_irCheck curveSurface, noCalls_worldLocal,
+    runShell_curveSurface_inhabited, ?_⟩
+  obtain ⟨obsIr, hir, -⟩ := wrap_empty_cd_reverts_nil
+  exact ⟨obsIr,
+    (ShellModel.wrap_iff_modelRunContractIR curveSurface fxW keccak256
+      (ByteArray.empty : Bytes) c0 g0 obsIr).mpr hir⟩
+
+/-- **THE CONSEQUENCE THE BUNDLE HAS TO LIVE WITH: THE CURVE SURFACE CANNOT DISCHARGE
+    'LoweringCorrect' AT ALL, FOR ANY 'product'.** This is the conclusion P-RUNSHELL reached by shell
+    emptiness and P-INLINE retracted along with six others - arrived at again, by a different and
+    better-founded route. The mechanism is NOT emptiness this time: BOTH sides are inhabited
+    ('runShell_curveSurface_inhabited', 'wrap_empty_cd_reverts_nil') and they disagree because the
+    bare arm has no entry path and the dispatcher does. So the bundle has a FALSE field at this
+    Surface, not an unproved one, and 'lowering_equivalence curveSurface product' is vacuous for every
+    product however many of its other seven fields hold. 'ir_refines' was NOT edited to make this
+    true; D-P42 records the decision this forces. -/
+theorem curveSurface_not_LoweringCorrect (product : Midfall.Yul.PairingProduct) :
+    ¬ LoweringCorrect curveSurface product := by
+  intro hc
+  exact ir_refines_refuted_at_curveSurface
+    (hc.ir_refines (ShellModel.modelIr curveSurface) curveSurface.shellLayout
+      (ShellModel.modelIr_irCheck curveSurface) fxW keccak256 (ByteArray.empty : Bytes)
+      ExternalCalls.none 0 noCalls_worldLocal)
+
+/-! ### Independent measurement: the entry path is the whole difference (D-P23, KAT form)
+
+The theorems above prove the disagreement through the big-step 'Step' relation. These two gates
+measure the SAME fact through a completely different engine - the vendored fuel interpreter
+'YulSemantics.Interp.run' at the closed 'EVM.exec' dialect - which is what makes them an independent
+measurement rather than a restatement: they never call 'arm_derivation', 'RunCommitted.det' or any
+lemma above. Both runs use the SAME body 'arm'; the only difference is whether 'ShellModel.dispatcher
+puts the entry path in front of it. That is the F2 mechanism of D-P42, measured.
+
+FUEL SHAPE, and it is the reason these two lines cost 3 s and not 18 min: 'Interp.run' charges fuel
+per NESTING LEVEL, so a walk over the generated AST is linear in the program's depth. Any fuel-bounded
+walk that charges per LIST ELEMENT is pathological on a program this size - the measurement is on
+the record in P-INLINE and in the P-DET brief.
+-/
+
+/-- The dispatcher over the arm reverts with ZERO bytes at the shell's own frame: the size test skips
+    the switch and the fall-through 'revert(0, 0)' fires. -/
+def dispatcher_reverts_zero_bytes_ok : Bool :=
+  match YulSemantics.Interp.run EVM.exec 20000 (ShellModel.dispatcher arm) stF with
+  | .ok (_, st, _) => match st.halted with
+      | some (.revert, d) => d.length == 0
+      | _ => false
+  | _ => false
+
+#eval dispatcher_reverts_zero_bytes_ok -- expect true
+
+/-- The bare arm at the same frame reverts with FOUR bytes: the VK-mismatch selector the emitted fail
+    helper stores at address 0. Same body, same frame, no entry path - a different halt payload. -/
+def arm_reverts_four_bytes_ok : Bool :=
+  match YulSemantics.Interp.run EVM.exec 20000 arm stF with
+  | .ok (_, st, _) => match st.halted with
+      | some (.revert, d) => d.length == 4
+      | _ => false
+  | _ => false
+
+#eval arm_reverts_four_bytes_ok -- expect true
+
+
+#print axioms Midfall.Instances.RunShellInhabited.curveSurface_not_LoweringCorrect
+#print axioms Midfall.Instances.RunShellInhabited.ir_refines_refuted_at_curveSurface
 #print axioms Midfall.Instances.RunShellInhabited.runShell_curveSurface_inhabited
 #print axioms Midfall.Instances.RunShellInhabited.shell_run_reverts_four_bytes
 #print axioms Midfall.Instances.RunShellInhabited.ir_refines_refuted_at_curveSurface_of_unique_wrap

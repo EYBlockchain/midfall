@@ -698,3 +698,92 @@ theorems leaves 'lake build' green and no gate in 'checks.sh' notices. The gates
 'inlineFuelIsEnough_ok', 'inlinedArtifactArmRuns_ok', 'inlineTheLocalsToo_stuck_ok') are independent
 measurements: they never call the lemmas. KAT pins moved 1340 -> 1346 and 96 -> 97 files, deliberately,
 in the commit that added the six gates.
+
+## P-DET - `dialect_deterministic` CLOSED AS REGISTERED; the `ir_refines` refutation becomes unconditional
+
+**NO STATEMENT DEVIATION, AND THAT IS THE HEADLINE.** `Bridge.dialect_deterministic`
+(`Midfall/Yul/Bridge.lean:186`, section B) is **TRUE EXACTLY AS REGISTERED** and is now a theorem with
+the registered signature, the registered hypotheses and the registered conclusion. Nothing was
+weakened, nothing was restated, no triviality was substituted. The register moves 40 -> 39.
+
+**TWO PREMISES WERE WRONG, AND BOTH ARE RECORDED RATHER THAN SWALLOWED.**
+1. The registered docstring said *"cases on Op is 77 constructors"*. The real count is **87**
+   (`vendor/yul-semantics/YulSemantics/Dialect/EVMOp.lean:41-71`). 80 of them are discharged by ONE
+   lemma (`det_of_stepOp_graph`: their `Builtin` is the `stepOp` graph by the catch-all arm of
+   `builtinWithExternal`, and a function has at most one `some` value); the 7 external ones each need
+   their own arity split. The estimate of the work was wrong in the harmless direction and the hole
+   cost one package-day less than advertised.
+2. The commissioning brief guessed that literal determinism is *"probably false"* because `gas()` stays
+   nondeterministic and `ExternalGas` is an arbitrary oracle. **It is not false, and the reason is that
+   the registered statement already carries `hg : g.Functional` and `hc : c.Functional`.** Under `hg`
+   the `gas` case pins its answer to one word per state; under `hc` the call family pins it to one
+   response per (request, pre-state) pair and everything caller-side is the FUNCTION `finishCall`.
+   What IS false - and what the file already exhibited - is determinism WITHOUT those hypotheses.
+   So the "honest target" the brief suspected (determinism of the `ObsView` given fixed `c` and `g`) is
+   not weaker than the registered statement: `Run.det` and `RunCommitted.det` already state exactly
+   that, and they were corollaries of a hole and are now corollaries of a theorem.
+   **LESSON FOR BRIEFING: read what a registered statement ASSUMES before speculating about whether it
+   is true.** Both errors were of that shape - a premise about the semantics was reasoned about without
+   re-reading the signature it lived in.
+
+**THE DEPENDENCY QUESTION, ANSWERED: REAL, UNLIKE THE TWO EARLIER FALSE CITATIONS.**
+`dialect_deterministic` has now been cited as a prerequisite three times. The first (P-SPEC1, local-only
+specs) and the second (P-M8-IRCHECK, `ObsEquiv`) were NOT dependencies - per-op inversion and the
+bi-implication-between-existentials respectively made it unnecessary. The third (P-INLINE, turning
+`shell_run_is_not_the_wrap_run` into `not ObsEquiv`) **was** one: `ObsEquiv` is a biconditional over
+view EXISTENCE, so refuting it needs a *no run on side A has view v* statement, and the route P-INLINE
+took ran through uniqueness of the committed run, i.e. `RunCommitted.det`, i.e. this hole. The answer
+is therefore not "the dependency was fake again" - it is "the dependency was real and the hole it
+pointed at was provable". A second route to the same negation exists in principle (per-run inversion of
+the dispatcher's three-statement entry path, which touches only local deterministic builtins and so
+needs no determinism hypothesis at all), and it is now unnecessary rather than unavailable.
+
+| Item | Registered / previous form | What landed |
+|---|---|---|
+| `Bridge.dialect_deterministic` | `∀ op, (Dialect c g).Deterministic op` under `hc`, `hg` - `sorry` | **PROVED, UNCHANGED.** Helpers `det_of_stepOp_graph`, `externalCall_unique`, `externalCreate_none_ne` added beside it. Kernel closure `[propext, Quot.sound]`: no `sorryAx`, no `native_decide`, no `Classical.choice`. |
+| `create` / `create2` determinism | docstring prose: "deterministic or stuck" | `externalCreate_none_ne` makes it a THEOREM that under `ExternalCreates.none` there is NO result outside a static frame, so those two ops are deterministic VACUOUSLY. |
+| `hg` load-bearing | asserted in prose ("with .any the gas() op has no Deterministic proof", ecosystem Y-5), never proved | `gas_nondet_with_any`: `¬ (Dialect ExternalCalls.none ExternalGas.any).Deterministic Op.gas`, exhibited as two results (words 0 and 1) at one state. `twoResponses_nondet` is the matching exhibit for `hc`, so BOTH hypotheses are now demonstrated necessary (D-P23 falsification half for the closed hole). |
+| Hypothesis satisfiability | unstated | `determinism_hypotheses_satisfiable`: `ExternalCalls.none` and `ExternalGas.ofFun` are jointly functional, so the closed hole is not about an uninhabitable hypothesis set. |
+| `ir_refines_refuted_at_curveSurface_of_unique_wrap` | conditional on wrap-view uniqueness | **KEPT UNCHANGED**, and its hypothesis is now a theorem: `ir_refines_hunique_at_curveSurface`, via `view_eq_of_committed_runs` / `runShell_view_unique` / `runContractIR_view_unique`. |
+| `ir_refines` itself | `∀ ir irLyt, S.irCheck ir = true → ... ObsEquiv (RunContractIR ...) (RunShell ...)` | **NOT EDITED.** Refuted at the curve Surface by `ir_refines_refuted_at_curveSurface` (unconditional) and consequently `curveSurface_not_LoweringCorrect (product)`. D-P42 records the decision this forces; the restatement of the right-hand side to `wrap` is left to a package briefed to make it. |
+
+**THEOREMS ADDED.** `Midfall/Yul/Bridge.lean`: `det_of_stepOp_graph`, `externalCall_unique`,
+`externalCreate_none_ne`, `gas_nondet_with_any`, `determinism_hypotheses_satisfiable`.
+`Midfall/Instances/RunShellInhabited.lean`: `view_eq_of_committed_runs`, `runShell_view_unique`,
+`runContractIR_view_unique`, `ir_refines_hunique_at_curveSurface`,
+`ir_refines_refuted_at_curveSurface`, `ir_refines_hypotheses_hold_at_the_refuted_instantiation`,
+`curveSurface_not_LoweringCorrect`.
+
+**GATES ADDED, AND THE PINS MOVED DELIBERATELY.** Two `#eval ... -- expect true` gates in
+`RunShellInhabited.lean` - `dispatcher_reverts_zero_bytes_ok` and `arm_reverts_four_bytes_ok` - which
+measure the D-P42 entry-path difference through the vendored FUEL INTERPRETER at the closed `EVM.exec`
+dialect, i.e. through a different engine from the big-step `Step` relation the theorems use, and
+without calling any of them. That file carried no `#eval` gate before, so `EXPECTED_KAT_TOTAL` moves
+1346 -> 1348 and `EXPECTED_KAT_FILES` 97 -> 98; the delta is +2/+1 and nothing was deleted.
+
+**D-P23 COVERAGE CLAIMED.** For the closed hole: satisfiability
+`determinism_hypotheses_satisfiable`, falsification `gas_nondet_with_any` plus the pre-existing
+`twoResponses_nondet`. For the refutation: satisfiability
+`ir_refines_hypotheses_hold_at_the_refuted_instantiation` (the instantiation satisfies `irCheck`,
+`WorldLocal`, and BOTH sides are inhabited), falsification `ir_refines_refuted_at_curveSurface` itself.
+
+**PERTURBATION EVIDENCE (P-DET). APFS clone of the whole repo at /tmp/pdet-clone, gates run inside**
+**the clone with hash-verified restore - never git checkout. Measured, and the failures to redden are**
+**reported as failures to redden:**
+
+| control | perturbation | `lake build` | sorry register | kat_gate.py | verdict |
+|---|---|---|---|---|---|
+| C1 | put the `sorry` back in `dialect_deterministic` | GREEN | **RED** (tree=40 vs listed=39) | GREEN | **the closure IS gated** - by the register, which is the one gate that reaches this claim |
+| C2 | delete `gas_nondet_with_any` (the `hg` falsification) and regenerate the register | GREEN | GREEN | GREEN (1348/98) | **FAILURE TO REDDEN** - the 36th measurement of the gap: no gate calls the lemma |
+| C3 | delete the unconditional refutation and `curveSurface_not_LoweringCorrect` | RED | GREEN | GREEN | control mis-applied (the slice also removed a line the file still referenced), so it is reported as inconclusive rather than as evidence |
+| C4 | flip ONE expectation `-- expect true` -> `-- expect false` | **GREEN** | GREEN | **RED** | the R-71 class, demonstrated on a gate this package added: a false expectation is an info message to the compiler and a failure only to the gate |
+| C5 | drop `hg` from the registered statement | **RED** (`Unknown identifier hg` at the gas case) | - | - | the hypothesis is load-bearing IN THE PROOF, not just in the statement |
+| C6 | perturb the gate INPUT (`d.length == 4` -> `== 3`) | GREEN | GREEN | **RED**: `arm_reverts_four_bytes_ok expected 'true', got 'false'` | the new gates are sensitive to the measured value, not merely to the count - the R-40 requirement |
+**STANDING LIMIT, measured again and not claimed away:** the closure of `dialect_deterministic` is
+covered by exactly one gate - the sorry register (control C1 above: put the `sorry` back and it reddens).
+The D-P23 falsification theorem `gas_nondet_with_any` is covered by NOTHING (control C2: delete it,
+regenerate the register, and `lake build`, the sorry register and `kat_gate.py` are all green - the
+**thirty-sixth** measurement of the differential gap). The refutation theorems in `RunShellInhabited`
+are likewise uncalled by any gate, because the gates are independent measurements that never call the
+lemmas; the control that was meant to demonstrate that (C3) was mis-applied and is reported as
+inconclusive rather than retconned. No persistence coverage is claimed for the refutation, only truth.
