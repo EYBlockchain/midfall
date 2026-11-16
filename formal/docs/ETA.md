@@ -721,6 +721,33 @@ they previously had a fault. **That is where real byte-level decode work starts*
 vk/layout mismatch becomes visible for the first time.
 
 **Register: 40, unchanged — by the nature of the finding, not a shortfall.**
+### R21 - round 179, after P-GATEINTEG. 28 obligation fields had no pin.
+
+| claim | believed | measured |
+|---|---|---|
+| all 48 obligation fields are gate-tracked (my brief) | asserted | **28 had no pin**; 48 is not derivable — the structures carry 26 |
+| the gate printed 9 LoweringCorrect fields | 9 fields | **8 fields + 1 theorem** |
+| PartialSpecs was covered | assumed | **16 of 16 fields unpinned** — no name appeared anywhere under scripts/ |
+| the triviality rule's scope was the gap | my brief | **its INPUT was** — it only saw fields a human had listed |
+| EnvAgrees clauses are build-guarded | assumed | **2 of 9 hollow to True and stay green** — discharged by decide, and decide proves True |
+
+**The structural reason this mattered:** LoweringCorrect.partials carries all 16 PartialSpecs
+obligations in one field, and **nothing in the tree constructs a term of either structure** — so the
+build cannot guard them and only a text gate can. Seven checklist fields have **no theorem twin at
+all**, existing only as a field with nothing duplicating their content into a theorem text.
+
+**The fix derived rather than asserted**: the gate now parses the structures and enforces coverage,
+no-dead-names, count-agreement and per-field non-triviality. Fragments 245 to 374. KAT totals asserted
+statically, so a deleted gate reddens in about one second instead of eight minutes.
+
+**Rule (a) reddened on 28 real fields. The package wrote content pins for them rather than weakening
+the rule** — must and must_not fragments, each shown to redden on its own gutting. That is the correct
+direction for a fix and the opposite of what a package under pressure would do.
+
+**Sixth correction to my own briefs this session** — the 48-field number was never computed from
+anything, which is exactly the error the standing instruction exists to catch.
+
+**Register: 40. Gate integrity is materially better than it was an hour ago.**
 ## What would most improve this ledger
 
 1. ~~**One `Partials` spec proved.**~~ **DELIVERED by P-SPEC1** - see R9. The datum says the rate is right for
