@@ -49,13 +49,13 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **D.3 is now BLOCKED** by standing blocker 1 above (its check 3 cannot pass at the
-exhibit codec). Next actionable: **WP-I2 needs a decision on `poseidonModel` totality AND on the
-`ofCompressed?` placeholder** - both are v1 edits or frozen-surface edits, so neither is mine.
-**Q0.5 still BLOCKED** on R-72.
-is settled). **Q0.5 still BLOCKED** on the R-72 decision.
-`entryFrame_inhabited` sorry at `Blocks.lean:185` generically) and **D.1** (deployment generator
-inputs as pure terms, GEN).
+**In flight:** none. **D.3 is formally READY** (deps D.1 and D.2 both merged), but its check 3 cannot
+pass at the exhibit codec while `g1CodecZ.ofCompressed?` is a placeholder - brief it expecting that
+one check to fail, and do not let it fake the pass.
+**Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
+session, so verify it before assuming the SEM/ALG chain is reachable.
+**Two decisions are not mine:** WP-I2 needs `poseidonModel` totality and a real `ofCompressed?` -
+both are v1 or frozen-surface edits. **Q0.5 still BLOCKED** on R-72.
 
 **TICKET D.2 (merged `8e43ac8`):** `Instances/PoseidonEnv.lean` (665 ln, 14 gates, 8 pin theorems, 0
 `native_decide`) delivers `poseidonE`, `poseidonParams`, `poseidonVkExec` (computable), `poseidonSG2`,
