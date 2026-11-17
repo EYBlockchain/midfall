@@ -25,7 +25,12 @@
   offered iff `q ≠ .traceReturn`) is therefore satisfied by construction and, on this reading, not
   needed; the gate is not fought anywhere in this file.
 
-  PREMISE GAP FOUND - `vkPins` (§5). `Clean R .vk` postulates `Inv .vk`, whose first clause pins
+  PREMISE GAP FOUND - `vkPins` (§5) - CLOSED BY D-P50/S.9: the six clauses are now
+  `Render.Valid` clauses 12-13 (`Statements.lean` §2, FROZEN, re-hashed in the same commit) and S.8
+  PROVED all six at the deployment sorry-free, so `vk_blockRow` takes no pin hypothesis. The finding
+  is kept verbatim below and in §5 because it is WHY the frozen edit was needed.
+
+  `Clean R .vk` postulates `Inv .vk`, whose first clause pins
   MEMORY AT `PV.memory.vkMptr` TO `PV.vk.bytes`. The block writes to the inlined `VK_MPTR` constant
   and copies `EXPECTED_VK_PAYLOAD_LENGTH` bytes from byte 1 of `extCodeOf vk`. THE LINK THE BRIEF
   ASKED ABOUT HOLDS: `Frame.vkCode` (Blocks.lean:61) is exactly `extCodeOf vkAddr =
@@ -644,7 +649,7 @@ theorem vk_poison_step {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge
   exact vk_get_set_of_some hsucc
 
 
-/-! ## 5. THE PREMISE GAP: `vkPins`
+/-! ## 5. THE PREMISE GAP: `vkPins` - CLOSED BY D-P50, IT IS NOW CLAUSES 12-13 OF `Valid`
 
   `Clean R .vk` postulates `Inv .vk`, whose first clause is
   `bytesAt st (ptrAddr PV.memory.vkMptr) PV.vk.len == PV.vk.bytes` (Inv.lean:741). The block writes
@@ -664,27 +669,24 @@ theorem vk_poison_step {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge
   the copy from clobbering the g1_identity window that `Inv`'s unconditional clause pins to zero.
   Pin 3 is what turns `decodeCalldata = some …` into `Inv .vk`'s calldata-length clause. -/
 
-/-- The four render facts `BlockSound R .vkLoading` needs and `Render.Valid` does not carry. -/
-structure vkPins (R : Render p G₁ G₂ Gₜ) : Prop where
-  /-- The table's VK window is the plan view's VK window. -/
-  vkMptr : ∃ m, R.consts.lookup "VK_MPTR" = some m ∧ m = ptrAddr R.pv.memory.vkMptr
-  /-- The table's payload length is the payload's own length. -/
-  payloadLen : ∃ m, R.consts.lookup "EXPECTED_VK_PAYLOAD_LENGTH" = some m ∧ m = R.pv.vk.len
-  /-- The plan view's instance count is the configuration's, which is the one `decodeCalldata`
-      was called with. -/
-  numInst : R.pv.numInstances = R.cfg.numInstances
-  /-- The VK window does not overlap the g1_identity window `Inv` pins to zero at every
-      checkpoint. -/
-  disjoint : ptrAddr R.pv.memory.g1IdentityMptr + 128 ≤ ptrAddr R.pv.memory.vkMptr ∨
-    ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ ptrAddr R.pv.memory.g1IdentityMptr
+/- **D-P50 / S.9: THE TWO STRUCTURES MOVED, THEY ARE NOT RELAXED.** `vkPins` and
+    `vkProgressPins` now live in `Statements.lean` section 2 (FROZEN - re-hashed in the same commit)
+    as `Midfall.LoweringV2.vkPins` / `Midfall.LoweringV2.vkProgressPins`, and are clauses 12 and 13
+    of `Render.Valid`. The six clauses are the SAME SIX, in the same order, with the same names and
+    the same text: nothing was weakened, dropped, or turned into a semantic obligation. They moved
+    because the hinge `blockContracts_of_valid` (Blocks.lean:152) takes `hR : R.Valid` and must
+    yield a row for EVERY `Partial`, so while the pins were free premises of `vk_blockRow` the hinge
+    could not be proved from its own stated hypothesis. What made the frozen edit admissible is that
+    the pins are PROVED, not guessed: S.8 constructed `vkPins poseidonRender` and
+    `vkProgressPins poseidonRender` sorry-free (S.8's probes), landed by S.9 in
+    `Instances/PoseidonPins.lean`. -/
 
-/-- The two MORE the existence half needs: the guard in statement 1 must be passable, which is a
-    fact about the table and the deployed runtime, not about any run. Soundness does not need them
-    (there the guard passing is a hypothesis the run supplies) - T.1's asymmetry again. -/
-structure vkProgressPins (R : Render p G₁ G₂ Gₜ) : Prop where
-  vkLen : ∃ m, R.consts.lookup "EXPECTED_VK_LENGTH" = some m ∧ m = R.plan.vk.runtimeBytes.size
-  vkHash : ∃ m, R.consts.lookup "EXPECTED_VK_CODEHASH_WORD" = some m ∧
-    m = (keccak256 R.plan.vk.runtimeBytes).toNat
+/-- **THE PINS ARE A PROJECTION NOW, NOT A HYPOTHESIS (D-P50).** -/
+theorem vkPins_of_valid (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) : vkPins R := hR.vkPins
+
+/-- The progress half, likewise (D-P50). -/
+theorem vkProgressPins_of_valid (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) : vkProgressPins R :=
+  hR.vkProgressPins
 
 /-! ## 6. WHAT THIS CARD DID NOT CLOSE, STATED AT EXACTLY THE SHAPE THE CONSUMER ASKS FOR
 
@@ -755,16 +757,18 @@ theorem vk_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
 
 /-- **THE ROW, ASSEMBLED FROM THE THREE GAPS.** Sorry-free given them: this is re-association only,
     exactly the shape `tr_blockRow` / `fp_blockRow` have in `Blocks/Compose.lean`, and it is what
-    `blockContracts_of_valid_of_rows` (Blocks.lean:713) consumes as its `hvk` argument. It carries
-    TWO render hypotheses that `Valid` does not supply - `vkPins` and `vkProgressPins` - so M.1 must
-    be given them the same way it must be given `trRetMptr` and `fpG2Slots`. -/
-theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
-    (hpins : vkPins R) (hppins : vkProgressPins R) :
+    `blockContracts_of_valid_of_rows` (Blocks.lean:713) consumes as its `hvk` argument. SINCE D-P50 IT
+    CARRIES NO PIN HYPOTHESES AT ALL: `vkPins` and `vkProgressPins` are clauses 12 and 13 of `Valid`,
+    so the row is `BlockRow R product .vkLoading` outright and the pins arrive through the `hR` the
+    row already takes - which is exactly what the hinge needed and what distinguishes this row from
+    `tr_blockRow` / `fp_blockRow`, which still carry `trRetMptr` / `fpG2Slots` as free premises. The
+    three gaps are still `sorry`, so THE ROW IS STILL NOT CLOSED. -/
+theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
     BlockRow R product Partial.vkLoading := by
   intro hR _hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap
-  refine ⟨fun g => ⟨vk_sound_clean R product hR hpins Snap H vkAddr cd g,
+  refine ⟨fun g => ⟨vk_sound_clean R product hR hR.vkPins Snap H vkAddr cd g,
       vk_poison_walk R product hR Snap H vkAddr cd g⟩, fun _hcodec _hcg _hdual =>
-      vk_progress R product hR hpins hppins Snap H vkAddr cd _hcodec _hcg _hdual⟩
+      vk_progress R product hR hR.vkPins hR.vkProgressPins Snap H vkAddr cd _hcodec _hcg _hdual⟩
 
 #print axioms Midfall.LoweringV2.Blocks.VkLoading.vk_slice
 #print axioms Midfall.LoweringV2.Blocks.VkLoading.vk_assign_inv
