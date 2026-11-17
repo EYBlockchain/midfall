@@ -1207,6 +1207,47 @@ GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
   `stmtsBeq`). Only the splice SITE is unresolved.**
 
 ---
+### G1.2c — Land the splice WITH D-P65's scope repair  **[READY — supersedes the G1.2 frozen half]**
+
+GEN · EMIT · box 1.5 h · strongest · after G1.2a (`0144b8e`) · **carries D-P65**
+
+- **Decision I have made (the card asked):** **re-scope rather than defer.** D-P65 is APPROVED and
+  PLAN-V3 states *"Do not merge G1.2 without the scope repair."* Folding the splice into G1.3 would
+  leave `emitQuotientHelpersAt` as dead code for a card and would defer an approved repair for no
+  benefit. **The splice and the scope repair land together.**
+- **Needs.** `/tmp/g12-patch/G1.2-PATCH.md` (ready-to-apply, re-printed lines: `mainAsmRaw` def
+  `Program.lean:98`; callers `:116`, `:133`, `:192`, `PoseidonValid.lean:295` — all four have `m`).
+  **D-P65's shape: `docs/plans/V3-evidence/design/statements.md` §2(d), candidate B**, including its
+  extra `hns : noShadowB R = true` hypothesis and the restated conjunct `[hoist prog] = scopeV3`.
+- **Do.** 1. Apply the patch (splice + `sliceOf` companion). 2. Apply D-P65's scope change so
+  **`hoist (R.prog)` and `hoist (R.helpers)` agree** — measured: a Program-only splice makes prog
+  hoist 10 vs helpers 8 and `prog_slices_decomp`'s **second** conjunct FALSE. 3. Update the
+  `PoseidonValid.lean:295` pin **6779 → 6847** (measured; the row renders 70 because 68 is the bare
+  region and 70 is brace-wrapped). 4. **Refresh `V3-evidence/ReviewProbes.lean:179` (`sliceOf` lengths
+  `[1,44,3,1,225,2,3]` → quotientLin becomes 3) and `:182-184` (8 AST `funDefs` → 10).** ⚠ **That file
+  is NOT kat-scanned, so it goes stale SILENTLY** — leaving it is a review artefact that misleads.
+- **Frozen diff: `Program.lean` AND `Statements.lean`, two `Frozen.sha256` lines, ONE commit**
+  (D-P65 amends D-P52). Show both as a deliberate diff.
+- **Accept.** `checks.sh` exits 0; **`prog_slices_decomp` is still a sorry, not a refutation**; gate
+  23 green; GenAst 55/55; cone reported at every root (**expect 9 unchanged** — `codegenAgrees` stays
+  false at 6847 ≠ 14054 until G1.1/G1.3). **No pin bumped to buy green.**
+- **Stop if.** The two frozen lines would become three · `prog_slices_decomp` turns false ·
+  `ReviewProbes.lean` cannot be refreshed consistently · >1.5 h.
+
+## ⚠ HANDOVER — the plan changed materially while this session ran
+
+**PL.G has run (D-P71, D-P72, D-P73 signed).** Two things I did not brief against and the next session
+**must** read before taking a card:
+  1. **The plan is restated for the generator theorem (`lowering_correctW`); fixtures are tests.**
+     Rows are marked "restated for every…" — **§6's DONE wording I have been optimising against may no
+     longer be the target.** Read PLAN-V3 §2.2 rows 71-73 and the PL.G restatement FIRST.
+  2. **D-P72 widens the supported class to the IVC verifier** (accumulator mode with batched pairing
+     checks) — *"ensure we cover the IVC proofs with extra pairing check, batched"*. **That is a scope
+     expansion beyond `poseidonRender`.** The `mainAsmRaw`/`sliceOf` widening G1.2c performs should be
+     checked against it rather than assumed to be the final shape.
+
+**Verified state at handover:** `checks.sh` **exit 0** (1400 gates / 102 files), register 58, **headline
+cone 9** (from 11), frozen all OK, `formal/baseline` = `25fafe4` pushed and clean.
 ### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**  **[V3: MERGED INTO OBJ.2 (and OBJ.15) — do not run; its 895 / 5,489 split is measured 5,431 / 953]**
 GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
 
