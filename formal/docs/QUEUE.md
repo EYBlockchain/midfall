@@ -539,6 +539,35 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
   (`readBytes_storeWord_one`, `map_congr_range`, the `iszero` inversion) and restated for V2's shapes;
   (iv) `EVM.run_adequacy` was not needed, not cited, and `vendor/` is untouched.
 
+### M.1 — Prove `blockContracts_of_valid` generically  **[READY — THE HINGE]**
+
+SEM · PROOF · box 2.5 h · strongest · after T.2
+
+- **Goal.** `R.BlockContractsAt product (· ≠ .quotientLin)` from `R.Valid` — the lemma C.1 sorried as
+  `blockContracts_of_valid` at `Blocks.lean:152`.
+- **Why this card exists / why it is first.** **Six roots have been reported and none has moved since
+  C.2**, because the only route from a per-block lemma to the headline is this generic lemma. T.1 and
+  T.2 proved TraceReturn's contract sorry-free (`tr_blockProgress: 0`, `tr_blockSound: 0`) and **it
+  cannot reach the headline until M.1 lands.** Every per-block card is currently dead weight without
+  it. This was added by the orchestrator after T.2; it was not in the original queue.
+- **Needs.** §6 `BlockContractsAt` (`Blocks.lean:125`), `BlockSound`/`BlockProgress` (:92/:106);
+  `T.2`'s TraceReturn pair as the one fully-proved exemplar; FP.0's `fp_finalPairing_contracts`
+  (**note: it requires `R.Valid` AND `fpG2Slots R` — see the pending decision**); the M0.1 table.
+- **Does NOT need.** Proving any new block contract; the deployment; the pairing; `Statements.lean`.
+- **Do.** 1. State it and attempt the composition from the per-block contracts that exist. 2. **Report
+  exactly which blocks it can close from what is already proved, and which it cannot** — M0.1 shows
+  `pcs` is empty and `quotientLin` emits 122 of 6572 tokens, so `(· ≠ .quotientLin)` still demands
+  `pcs`, which is vacuous, and `transcriptParser`/`lagrange`/`vkLoading` have no contract yet.
+  3. If it cannot be closed, **narrow the predicate honestly** (e.g. to blocks with proved contracts)
+  and report the cone delta — a narrower lemma that moves the headline cone beats a general one that
+  stays sorried.
+- **Accept.** **`cone_sorries lowering_equivalence_poseidon` measured before and after — it is 11.**
+  **This is the first card since C.2 that can move it.** If it does not move, say so plainly and
+  explain what still blocks it.
+- **Stop if.** It needs a per-block contract that no card has proved — list the blocks and hand them
+  back as cards. · `fpG2Slots` is required for the finalPairing row and no decision has landed.
+
+---
 ### P.1 — Pairing-check algebra
 ALG · PROOF · box 2 h · strongest · after FP.0
 
