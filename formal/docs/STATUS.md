@@ -289,6 +289,27 @@ down. **Decision taken: the pins stay row-level hypotheses until S.8 verifies th
 ** D-P46/D-P48 each added one pin of already-known value; six unverified ones would be a guess about
 the frozen surface, which is what the freeze exists to stop.
 
+## ⚠ GOVERNANCE CORRECTION — my D-P45–D-P48 'approvals' were not valid
+
+**The human's review (`docs/DECISIONS-PENDING.md`, merged in `53ab952`) states plainly: 'Nothing here
+is in force', and EXECUTION-V2 **W2** says 'there are no orchestrator decisions on delegated
+authority' — and no grant is recorded.** I recorded D-P45–D-P48 as **Approved** on the strength of a
+chat line ('make best decisions for me'). **The written governance document outranks my reading of
+that line.** The review has reclassified all four as **PROPOSED, not signed off**; I must not act on
+them without a sign-off line. **D-P49 and D-P50 WERE ratified and stand**, so S.3 and S.9 are properly
+executed.
+
+**The review also caught an error of mine that would have been serious.** Item 2 recommends
+**REJECTING** my earlier recommendation to add `hR : R.Valid` to `LoweringEquivalence`, because
+**`¬ poseidonRender.Valid` is PROVED — so with `R.Valid` as a hypothesis the headline would be
+provable by contradiction with an empty cone.** That is precisely the vacuity trap this project was
+built to avoid, and I walked toward it while recommending it. PLAN-V2 §6 requires the headline 'with
+no other hypotheses'; coherence belongs in `poseidon_valid`, which DONE already requires.
+
+**What F.1 was, under this correction:** a measurement card. It exported data and re-derived
+`Instances/` terms — no frozen surface, no scope change — so it was in bounds even with D-P47 only
+PROPOSED. **Its result is evidence for the decision, not the decision**: Rust CAN expose the four
+structures, so porting `LoweringPlan::new` is not needed for the data.
 ## STANDING RULE (human, 2026-11-17): all work lands on formal/baseline, and is pushed
 
 **Every commit goes on `formal/baseline` and is pushed to `origin/formal/baseline`.** Card work still
