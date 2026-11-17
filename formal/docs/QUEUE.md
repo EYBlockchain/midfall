@@ -558,7 +558,7 @@ PoseidonValid.lean:468; 6 of 11 clauses refuted). Until the render is valid, blo
 are generic progress only. F.2 and R.2 are READY now. R.1 is DONE (`2041977`, run as "F.1" ahead of
 D-P47 sign-off). R.3, R.4 and R.5 wait on decisions drafted in `docs/DECISIONS-PENDING.md` (R.5: below).
 
-### F.2 — The deployment table: every hypothesis of the headline route, decided once  **[READY — RUN FIRST]**
+### F.2 — The deployment table: every hypothesis of the headline route, decided once  **[MERGED d2f7b61 - 7 PROVED / 4 REFUTED / 2 OPEN; corrected F.1/R.1 clause 1]**
 GEN · PROBE · box 1 h · Sonnet · after nothing
 
 - **Goal.** One table at `poseidonRender` of everything the headline route needs, so the remaining
@@ -608,6 +608,292 @@ GEN · PROBE · box 1 h · Sonnet · after nothing
   one EMIT child card per region in QUEUE.md (EXECUTION-V2 §4 EMIT row).
 - **Accept.** The token counts account for the measured gap (10433 − 3156), or the residue is
   explained.
+
+**R.2 RESULT — the WP-G1 region inventory, re-measured at `93fbe23` (branch `t/R.2`).**
+
+Route: the COMPUTABLE proxies `poseidonM` / `poseidonPv` (`Instances/PoseidonValid.lean:90-91`,
+pinned to `poseidonRender` by the `rfl` theorems at :93-101 — `poseidonRender` itself is
+noncomputable, so nothing that projects from it reaches `#eval`). AST side
+`yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))`; text side `mainAssemblyTokens
+poseidonM`. Probe `R2probe.lean` (scratch, `lake env lean`, 8 s, no emitter edit). **No emitter
+file was touched; only this file changed.**
+
+**Headline: AST 6761, text 14054, gap 7293, first divergence at token 1333.**
+
+| region of `mainAssemblyText` | AST | text | missing | equal | WP-G1 item (PLAN-V2:232) |
+|---|---|---|---|---|---|
+| `assemblyHelpers` | 1303 | 1303 | 0 | yes | closed by P-HELPERS |
+| `accumulatorHelpers` | 0 | 823 | **823** | **no** | item 1 → **G1.1** |
+| `traceAndGasHelpers` | 0 | 0 | 0 | yes | item 1's second include — **vacuous**, finding 1 |
+| `vkLoading` | 223 | 223 | 0 | yes | closed |
+| `transcriptProofParser` | 923 | 923 | 0 | yes | closed |
+| `lagrange` | 501 | 501 | 0 | yes | closed |
+| `quotientAndLinearization` | 120 | 6572 | **6452** | **no** | item 2 |
+| — `renderQuotientHelpers` | 0 | 68 | 68 | no | item 2a → **G1.2** |
+| — `renderQuotientNumeratorBlock` | 0 | 6384 | 6384 | no | item 2b → **G1.3** |
+| — the linearization scope | 120 | 120 | 0 | yes | closed (`emitQuotientLin`) |
+| `pcs` | 3605 | 3623 | **18** | **no** | not a WP-G1 item — finding 3 → **G1.4** |
+| `finalPairing` | 22 | 22 | 0 | yes | closed |
+| `traceReturn` | 23 | 23 | 0 | yes | closed |
+| shell: `vhMainAssemblyOpen` −6 (30) + `vhAfterTraceAndGas` (10) + closing `}` (1) | 41 | 41 | 0 | yes | closed |
+| `includeGlue` × 10 and `verifierDirectSection` (`quotientDirect = none`) | 0 | 0 | 0 | yes | nothing to emit |
+| **TOTAL** | **6761** | **14054** | **7293** | | |
+
+**The arithmetic closes, and it closes token-for-token, not just in length.**
+823 + 68 + 6384 + 18 = **7293** = 14054 − 6761. Stronger: the measured excision — the text with
+`accumulatorHelpers`, `renderQuotientHelpers` and `renderQuotientNumeratorBlock` removed and the
+`pcs` region replaced by the emitted one — is **equal to the AST token list** (`excised == ast`
+prints `true`, length 6761). So there is no residue and no fifth gap hiding in the middle: the four
+rows above are the whole of clause 6.
+
+**Delta from the two earlier figures.** C.4's 3156 / 10433 (gap 7277) and F.2's 6761 / 14054 (gap
+7293). F.2 reproduces exactly here. The move is one row: R.1/F.1's `cs.json` re-export gave
+`poseidonPlanV2.meta_` a real protocol, so `computationsAst` now returns 8 blocks / 225 statements
+(3605 tokens) where it returned none, and the text's pcs region grew from 2 tokens (an empty
+`{ }`) to 3623. Under this table C.4's gap decomposes as 823 + 68 + 6384 + 2 = 7277 — same four
+rows, only pcs moved (+16 of the +16 gap change; AST +3605, text +3621). The first-divergence index
+1333 is unchanged, because it sits before the pcs region.
+
+**Four findings.**
+
+1. **`traceAndGasHelpers` is not a missing region: it renders 0 tokens at this deployment.**
+   `renderTraceAndGasHelpers` (`VerifierPartials.lean:2361`) is an `if ctx.trace` and the render
+   model has `trace = false` (as has `gasCheckpoints`). `Program.lean:94-97` and PLAN-V2:233
+   name "the accumulator / trace helper includes" as one gap; the trace half is vacuous for every
+   gas render, so **clause 6 should be restated as three includes, not four**, and no EMIT card is
+   issued for it. It becomes real only for a `trace = true` render, which nothing in the cone asks for.
+2. **`validate_public_accumulator` is not in the deployed `AccumulatorHelpers` render** — measured:
+   5 functions, none of them that one (it appears only at `expectedHasAccumulator := true`, gate 59,
+   `GenAst.lean:2848`). So G1.1 does NOT discharge `Partials.lean:1764`
+   `closureNamedExceptions = [(.vkLoading, "validate_public_accumulator")]`; that exception belongs
+   to an accumulator render and must survive G1.1 green.
+3. **The pcs row is neither a missing region nor the circuit gap.** Its 3571 non-brace tokens are
+   already **identical** to the text's; the 18-token residue is exactly 9 block-scope brace pairs —
+   the region's own wrapper plus the 8 blocks of the `computationsAst` partition — that
+   `emitPcsFromPlan`'s `blocks.flatten` (`GenAstDispatch.lean:134`) discards. Consequence for
+   WP-G1: PLAN-V2:236's acceptance ("coverage table all-equal except PCS; `codegenAgrees` false only
+   because of PCS") is now the WRONG target. With G1.1–G1.4 the measured excision says
+   `codegenAgrees poseidonPv poseidonM = true`, i.e. **clause 6 becomes PROVED, not closer**, and
+   `Valid.codegen` (`LoweringV2/Statements.lean:200`) stops being a root cause **without** WP-G4 or
+   WP-G3. WP-G1 should be re-scoped to these four cards.
+4. **Only one of the four cards touches a frozen file.** The `accumulatorHelpers` splice goes in
+   `mainAsmRaw` (`Program.lean:99`), and `Program.lean` is sha256-pinned
+   (`Midfall/LoweringV2/Frozen.sha256`, checked at `scripts/checks.sh:27`) — so G1.1 needs one
+   deliberate re-hash. G1.2–G1.4 land entirely in `GenAstDispatch.lean` (the `quotientLin` arm and
+   `emitPcsFromPlan`), which is NOT pinned: the quotient regions belong in `emitPartial`, not in
+   `mainAsmRaw`, because `emitSlices` folds `emitPartial` and `emitSlices_eq` (`ProgramLemmas.lean:35`)
+   stays a one-`simp` proof either way. The frozen KNOWN-GAP docstring at `Program.lean:92-97` is what
+   the set retires — and it names four includes where three are real.
+
+**Premises in the R.2 card that did not survive re-measurement.** (a) "clause 6 — one of the 7 root
+causes blocking `poseidon_valid`": F.2's own table at this commit is 4 REFUTED (2, 3, 6, 9) + 1 SORRY
+(4) + 1 OPEN (1) over 13 clauses, so clause 6 is one of **four** refutations — but it is the only one
+of the four closable inside Lean without a Rust port (2 and 3 need WP-G4, 9 is a v1 `Exec/VerifyingKey`
+defect). (b) "the accumulator / trace helper includes": the trace half renders 0 tokens (finding 1).
+(c) PLAN-V2:236's "coverage table all-equal except PCS": PCS is 18 brace tokens from equal (finding 3).
+(d) The card's 3156 / 10433 is superseded by 6761 / 14054, which is what reproduces here.
+
+### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY]**
+GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
+
+- **Goal.** `GenAst` emits the 823-token region `mainAssemblyText` puts between `assemblyHelpers`
+  and `traceAndGasHelpers` and `mainAsmRaw` does not, so the `accumulatorHelpers` row reads
+  `equal true`.
+- **Needs** (measured at `93fbe23` by R.2).
+  - the region: `(partsOf poseidonM).accumulatorHelpers` = `renderAccumulatorHelpers
+    (partialCtxOfVerifier poseidonM)` — 823 tokens, 165 lines, **exactly 5 complete function
+    definitions** and no other tokens: `load_acc_coord_shifted` 202, `is_bls_p_minus_one` 31,
+    `check_acc_coord_packing` 151, `load_acc_coord` 165, `load_acc_point` 274 (sum = 823);
+  - the splice site: `Program.lean:99`, between `GenAst.emitHelpers pv` and `mainLocals`;
+  - the comparator machinery already in the tree: `GenAst.renderFunction` (GenAst.lean:1325),
+    `GenAst.sliceIsComplete` (:1302), `yulTokens`, `YulSemantics.EVM.print`; the constructor
+    helpers `yfun/ylet/yset/yexpr/yif/yop/yvar/ylit` (GenAst.lean:185-225);
+  - the two contract constants the region reads: `BLS_P_HI`, `BLS_P_MINUS_ONE_LO`. They stay as
+    `yvar` uses: `mainAsmRaw` is the UN-inlined block (`constTableOf` substitutes at §3).
+- **Does NOT need.** `validate_public_accumulator` (finding 2 — not in this render); any block
+  contract, `BlockRow`, or Yul semantics; an accumulator render; `Statements.lean`; touching
+  `emitHelpers` (see Do 2); `Frozen.sha256` (the orchestrator re-hashes).
+- **Do.**
+  1. `def GenAst.emitAccumulatorHelpers (pv : PlanView) : Block Op` — the 5 definitions in the
+     template's order, each built with the constructor helpers (the pattern of
+     `emitTranscriptHelpers`, GenAst.lean:388, and of gates 37/42).
+  2. Splice it into `mainAsmRaw` between `emitHelpers` and `mainLocals`. **Do not append to
+     `emitHelpers`:** `helpersOf` (`Program.lean:120-121`) reuses that block for the per-block
+     contracts, and gate 51 `emitHelpersOrder_matchesTemplate_ok` (GenAst.lean:2582) pins its
+     function names to the AssemblyHelpers render — 8 definitions, and adding 5 reddens it.
+  3. One token gate per function (`renderFunction … nm` prints to the same tokens as the emitted
+     def — the shape of gates 3/4), one whole-region gate, and one perturbation gate that a
+     one-literal change of any of the 5 defs reddens (D-P23).
+  4. Re-run the R.2 probe: the row goes `equal true` and the gap falls 7293 → 6470.
+- **Deliverable.** `GenAst.emitAccumulatorHelpers`; the `mainAsmRaw` splice; 5 + 1 + 1 gates with
+  their `#eval` lines; the updated counts in `deciding_codegen_witness`
+  (`Instances/PoseidonValid.lean:291`) and in that file's header table.
+- **Accept.** `(yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1 |>.dropLast
+  == yulTokens ((partsOf poseidonM).accumulatorHelpers)` prints `true`; a one-literal mutation of
+  any of the 5 defs reddens it; `codegenAgrees poseidonPv poseidonM` is still `false` (G1.2–G1.4
+  open); gate 51, gate 59 and `closureNamedExceptions` still green; `verify.sh --quick` green;
+  `git status` shows no `.lean` change outside `GenAst`/`GenAstDispatch`/`Program`/`PoseidonValid`.
+- **Stop if.** A function slice is not `sliceIsComplete`; a value the region interpolates is not a
+  `PlanView`/`Model` field (PREMISE GAP — name the value); > 2.5 h.
+- **Reproducer.** `/tmp/g11/p.lean`, then `cd formal && lake env lean /tmp/g11/p.lean` (~8 s):
+
+          import Midfall.Instances.PoseidonValid
+          import Midfall.LoweringV2.Program
+          open Midfall Midfall.Generator Midfall.Instances Midfall.Instances.PoseidonValid
+          open Midfall.LoweringV2 Midfall.Lowering YulSemantics YulSemantics.EVM
+          -- text side, runs today: expect 823
+          #eval (yulTokens ((partsOf poseidonM).accumulatorHelpers)).length
+          -- function inventory, runs today: expect the 5 names above
+          #eval Midfall.Lowering.GenAst.renderFunctionNames ((partsOf poseidonM).accumulatorHelpers)
+          -- AST side, runs once this card lands: expect true
+          -- #eval ((yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1).dropLast
+          --         == yulTokens ((partsOf poseidonM).accumulatorHelpers)
+
+### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY]**
+GEN · EMIT · box 0.75 h · Sonnet · after R.2; **a prerequisite of G1.3** (both definitions are
+called ONLY from the numerator block — measured: neither `q_program_fail(` nor `q_pow5(` occurs in
+any other region of the main block)
+
+- **Goal.** Emit the first of the two `quotient_numerator` includes that `mainAssemblyText` puts in
+  front of the linearization scope, so the `renderQuotientHelpers` row reads `equal true`.
+- **Needs.**
+  - the region: `renderQuotientHelpers (partialCtxOfVerifier poseidonM)` — 68 tokens, 31 lines,
+    exactly 2 definitions: `q_program_fail` 23 tokens (4 lines), `q_pow5` 45 tokens (5 lines);
+  - the flag that selects the second one: `ctx.quotientPow5Helper = true` at this render
+    (`quotientLimb7Helper = false`, `quotientWideLimb7Helper = false`, so those two arms render
+    nothing — the emitter must read the flags, not hard-code the pair);
+  - the splice: inside the `quotientLin` arm of `GenAst.emitPartial`
+    (`GenAstDispatch.lean:193`), PREPENDED to `emitQuotientLin pv`, so `emitSlices` keeps its
+    seven-arm shape and `emitSlices_eq` (`ProgramLemmas.lean:35`, proved by one `simp`) still
+    discharges;
+  - `FR_MODULUS` is the only contract constant the region reads (measured); `mulmod` × 3, `mstore` × 1.
+- **Does NOT need.** `renderQuotientNumeratorBlock` (G1.3); the limb7 / wide-limb7 arms (dead at
+  this render — emit the flag test, not the bodies); any contract or proof; `GenAstQuotient.lean`.
+- **Do.**
+  1. `def GenAst.emitQuotientHelpers (pv : PlanView) : Block Op` reading the two flags off the plan
+     view (PREMISE GAP if `quotientPow5Helper` is not reachable from `PlanView`/`Model`: name the
+     field, do not type the literal).
+  2. Prepend it in the `quotientLin` arm; re-run the R.2 probe: the `quotientAndLinearization` row
+     goes 120 → 188 and the gap falls 6470 → 6402.
+  3. Gates: one per function against `renderFunction`, one whole-region, one perturbation.
+- **Deliverable.** `GenAst.emitQuotientHelpers`, the `emitPartial` arm edit, 4 gates, the R.2 table
+  row updated in this file.
+- **Accept.** the whole-region KAT prints `true`; a one-literal mutation reddens; gates 24/25/26/27/28
+  (the existing `emitQuotientLin` gates) still green; `verify.sh --quick` green.
+- **Stop if.** The 68 tokens do not decompose as 23 + 45 at this commit; > 1 h.
+- **Reproducer.** `/tmp/g12/p.lean` (same imports and `open` line as G1.1's):
+
+          #eval (yulTokens (renderQuotientHelpers (partialCtxOfVerifier poseidonM))).length  -- 68
+          #eval Midfall.Lowering.GenAst.renderFunctionNames
+                 (renderQuotientHelpers (partialCtxOfVerifier poseidonM))                     -- [q_program_fail, q_pow5]
+          #eval (partialCtxOfVerifier poseidonM).quotientPow5Helper                            -- true
+
+### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY]**
+GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
+
+- **Goal.** Emit `renderQuotientNumeratorBlock`, the second `quotient_numerator` include: 6384
+  tokens, 922 lines, the largest un-emitted region in the tree and 88 % of clause 6.
+- **Needs.**
+  - the region: `renderQuotientNumeratorBlock (partialCtxOfVerifier poseidonM)` — 6384 tokens, 922
+    lines, **0 function definitions** (it is inline statements inside the linearization scope),
+    437 `let`, 14 `if`, 10 `for`, 2 `switch`, 91 brace pairs, 182 `mload`, 59 `mstore`,
+    158 `mulmod`, 144 `addmod`;
+  - **the measured split**, which is what makes this card honest about its box:
+    **895 tokens** are the generated inline-computation lines
+    (`ctx.quotientInlineComputations`: 1 block, 99 lines) and **5489 tokens** are the QVM
+    interpreter template plus the `QuotientProgram`-field interpolations
+    (`constMptr`, `programMptr`, `evalNumerMptr`, `len`, `stackMptr`, `guards`, `opUsage`,
+    the opcode bytes — `renderQuotientNumeratorBlock` runs `VerifierPartials.lean:1266-1979`);
+  - the reuse target PLAN-V2:232 names: `Midfall/Lowering/GenAstQuotient.lean` — AST twins of the
+    string formatters already exist there (`evaluateA`, `gateComputationsTaggedA`,
+    `permutationComputationsA`, `lookupComputationsA`, `trashcanComputationsA`, :298-589), with
+    their own text-vs-AST agreement gates (:627-658). The 895-token part is those four families.
+  - the 12 contract constants the region reads: `X_MPTR`, `Y_MPTR`, `INSTANCE_EVAL_MPTR`,
+    `GAMMA_MPTR`, `BETA_MPTR`, `THETA_MPTR`, `L_0_MPTR`, `L_LAST_MPTR`, `L_BLIND_MPTR`,
+    `TRASH_CHALLENGE_MPTR`, `SELECTOR_ACC_MPTR`, `QUOTIENT_EVAL_MPTR`.
+- **Does NOT need.** `renderQuotientHelpers` (G1.2); the linearization scope (already emitted,
+  120 = 120); the untaken arms of the template (external quotient, direct, probe, trace, gas
+  checkpoints — `ctx.quotientExternal = none`, `ctx.quotientDirect = none`, `quotientProbe =
+  false`, `trace = false`); any block contract; WP-G3 (`compact_quotient_computation_blocks`) —
+  this card emits what the ported text port renders TODAY, from the model's own fields.
+- **Do.**
+  0. **Split first.** If the 5489-token interpreter part does not land inside the box, stop and
+     report: the two halves (template+program fields / inline computations) are independent EMIT
+     cards and this card's reproducer already sizes them. Do not half-emit: a partial region leaves
+     the row unequal and buys nothing.
+  1. `def GenAst.emitQuotientNumerator (pv : PlanView) : Block Op`, spliced in the `quotientLin`
+     arm between `emitQuotientHelpers pv` and `emitQuotientLin pv`.
+  2. Every interpolated value comes from `pv` / `partialCtxOfVerifier` — never typed in (D-P30;
+     the anti-hard-coding gates 36/41 are the pattern to copy).
+  3. Gates: whole-region token KAT, a per-`for`-site count (`VerifierPartials.lean:1262-1264`
+     records that the five generated-code for-sites contribute 528 of the 921 rendered lines),
+     and a perturbation per interpolation family.
+- **Deliverable.** `GenAst.emitQuotientNumerator` (or two defs plus a report saying so), the arm
+  splice, the gate set, the R.2 row updated.
+- **Accept.** The whole-region KAT — `GenAst.emitPartial poseidonPv .quotientLin` printed (minus its
+  outer braces) against `yulTokens ((partsOf poseidonM).quotientAndLinearization)` — prints `true`; a one-literal
+  mutation reddens; the gap falls to 18 (pcs only); `verify.sh --quick` green.
+- **Stop if.** It needs a plan field that does not exist (PREMISE GAP); the box is blown (Do 0); any
+  single `#eval` exceeds 60 s (the region is 55,597 bytes of text — keep the gate on token lists,
+  not on pretty-printed string equality).
+- **Reproducer.** `/tmp/g13/p.lean`:
+
+          #eval (yulTokens (renderQuotientNumeratorBlock (partialCtxOfVerifier poseidonM))).length -- 6384
+          #eval ((partialCtxOfVerifier poseidonM).quotientInlineComputations).flatten.length        -- 99 lines
+          #eval (yulTokens (String.intercalate "\n"
+                  (partialCtxOfVerifier poseidonM).quotientInlineComputations.flatten)).length     -- 895
+          #eval Midfall.Lowering.GenAst.renderFunctionNames
+                 (renderQuotientNumeratorBlock (partialCtxOfVerifier poseidonM))                     -- []
+
+### G1.4 — EMIT the pcs block scopes: stop flattening the 8-block partition (18 tokens)  **[READY]**
+GEN · EMIT · box 0.5 h · Sonnet · after R.2 (independent of G1.1–G1.3)
+
+- **Goal.** The `pcs` row's 18-token residue is 9 block-scope brace pairs, not statements: emit the
+  partition as `Stmt.block` scopes instead of flattening it, so the row reads `equal true` and
+  `codegenAgrees` becomes `true` at the deployment (with G1.1–G1.3).
+- **Needs.**
+  - the measurement: text pcs 3623 tokens vs emitted 3605; **the 3571 non-brace tokens are already
+    identical** (`noBraces` comparison prints `true`); text has 26 `{`/`}` pairs, the AST 17 —
+    the missing 9 are the region's own wrapper plus the 8 blocks `computationsAst` returns;
+  - the defect: `emitPcsFromPlan` (`GenAstDispatch.lean:131-135`) does `blocks.flatten`, and its
+    docstring's justification ("the braces the token gates add are the comparator's, not the
+    artifact's") is true of the OUTER comparator and false of the 8 inner scopes — in Yul a `{`
+    opens a `let` scope, so dropping them is a scoping change, not a spelling change;
+  - `pcsTaggedFromPlan` / `GenAstPcs.Kats.pcsTaggedBlocks` (:152-157), which already recover the
+    partition and its roles.
+- **Does NOT need.** WP-G4 (the circuit gap is a different thing and this row no longer depends on
+  it); any change to `computationsAst`; contracts (the pcs row is S.2's boundary problem, not this).
+- **Do.**
+  1. `emitPcsFromPlan pv := blocks.map Stmt.block` (flatten one level less), or keep the flat list
+     and wrap the region once in `mainAsmRaw` — whichever makes the token KAT close; state which.
+  2. Re-check the gates that read the pcs arm, all in `GenAstDispatch.lean`:
+     `emitPcsDispatch_beq_ok` (:251), `emitPcsDispatch_tokens_ok` (:276),
+     `emitPcsTagging_ok` (:397), `emitPcsFaultArm_ok` (:431), `emitPcsReadsOnlyFourFields_ok` (:376) — several compare against a flattened expectation and
+     will need the same one-level change, honestly and in the same commit.
+  3. Gate: the whole-region token KAT plus a perturbation that moves one block boundary.
+- **Deliverable.** the `emitPcsFromPlan` change, the repaired pcs gate set, and — if G1.1–G1.3 have
+  landed — `theorem deciding_codegen : codegenAgrees poseidonPv poseidonM = true` replacing
+  `PoseidonValid.lean:276`'s `= false`, with clause 6 flipped REFUTED → PROVED in that file's table.
+- **Accept.** the pcs row prints `equal true`; with G1.1–G1.3 in, `codegenAgrees poseidonPv
+  poseidonM` prints `true` and `Midfall.Instances.PoseidonValid.poseidonValid_codegen_not` is
+  REPLACED by the positive (clause 6 REFUTED → PROVED; `deciding_codegen` at :276 restated to
+  `= true`). **Do not promise a cone move:** `poseidonRender_notValid` runs through clause 2, and
+  clauses 2/3 (WP-G4) and 9 (a v1 `WellFormed` field) stay refuted, so `poseidon_valid` is still
+  open after all four cards — what these four do is delete one of the four refutations and make
+  clause 6 the first non-plan clause to close. Report `cone_sorries` before and after anyway.
+  `verify.sh --quick` green.
+- **Stop if.** The non-brace equality (3571 = 3571) no longer holds at the merge commit — then the
+  circuit gap has moved and this card is premature; report instead of forcing braces in.
+- **Reproducer.** `/tmp/g14/p.lean`:
+
+          open Midfall Midfall.Generator Midfall.Instances Midfall.Instances.PoseidonValid
+            Midfall.LoweringV2 Midfall.Lowering YulSemantics YulSemantics.EVM
+          def nb (l : List String) : List String := l.filter (fun t => t != "{" && t != "}")
+          def inner (b : Block EVM.Op) : List String := ((yulTokens (EVM.print b)).drop 1).dropLast
+          #eval let t := yulTokens ((partsOf poseidonM).pcs)
+                let a := inner (GenAst.emitPartial poseidonPv .pcs)
+                (t.length, a.length, (nb t).length, nb t == nb a)   -- (3623, 3605, 3571, true)
+
 
 ### ~~R.1~~ (review draft) — Re-export the fixture with the constraint-system data (D-P47)  **[SUPERSEDED — executed as R.1 below (`2041977`); do not run]**
 INFRA · PROBE · box 1 h · Sonnet · after D-P47 sign-off
