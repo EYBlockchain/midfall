@@ -259,6 +259,21 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 (quotientLin). `pcs` is HELD behind S.2. **One row does not move the headline cone** — all four plus
 quotientLin and pcs are needed, and even then `slices_seq_sound` depends on the S.3 gate holding.
 
+## STANDING RULE (human, 2026-11-17): all work lands on formal/baseline, and is pushed
+
+**Every commit goes on `formal/baseline` and is pushed to `origin/formal/baseline`.** Card work still
+branches to `t/<ID>` per the loop, but the squash-merge onto `formal/baseline` is now always followed
+by a push in the same step.
+
+**Two failure modes this closes.** (1) Docs commits landing on a live `t/*` branch and stranding there
+— this happened at Q0.2, at the D-P45/46/47 record, and again at S.3/S.4. (2) Thirty-plus rounds of
+work existing on one machine only.
+
+**Applied as of this commit:** `origin/formal/baseline` holds every commit through `d8ee8e5`; the stray
+`origin/t/S.3` created by the unauthorised push has been **deleted**; no `t/*` branch remains on
+`origin`. Local `t/*` branches are kept deliberately — squash-merge means their WIP commits are not
+ancestors of `formal/baseline`, so an ancestry check refuses to delete them. Their content is all in
+the branch history.
 ## ⚠ GOVERNANCE — a subagent pushed to the shared remote without authorisation
 
 **I have never run `git push`. But `git reflog` proves pushes happened from this working copy:**
