@@ -724,8 +724,11 @@ theorem tr_fail_reverts {R : Render p G₁ G₂ Gₜ}
 
   WHAT IS CLOSED HERE: BlockProgress R .traceReturn - §6's TOTAL contract (Blocks.lean:106), both
   halves, sorry-free (T.1) - and BlockSound R .traceReturn, BOTH conjuncts (tr_blockSound): conjunct 1
-  as tr_sound_clean (T.1) and conjunct 2 as tr_poison_walk (T.2), whose only content is the fail
-  inversion of §3.1. TraceReturn has no remaining node.
+  as tr_sound_clean_noarm and conjunct 2 as tr_poison_walk_noarm. SINCE S.3 (D-P49 §6 gate) those two
+  ARM-FREE restatements - not T.1's tr_sound_clean / T.2's tr_poison_walk - are what tr_blockSound
+  cites: the gate deletes the poisoned arm at .traceReturn, so the armed disjunct is no longer
+  available there. The armed walks are untouched and still sorry-free; the fail inversion of §3.1 is
+  the whole content of both conjunct 2s. TraceReturn has no remaining node.
 
   What the clean walk spends: q.pre is .pairing, so the clean boundary is Clean R .pairing - and the
   ONLY part of it used is VEnv.get V "success" = some 1, the third conjunct of Clean. No Inv clause is
@@ -771,6 +774,42 @@ theorem tr_sound_clean (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
   · obtain ⟨_, _, h3⟩ := tr_guard_skip hsucc h₁
     exact absurd h3 hne
 
+/-- **CONJUNCT 1 WITHOUT THE POISONED ARM — the D-P49 §6 gate (S.3).** THE SAME WALK AS
+    `tr_sound_clean`, with the third disjunct deleted from the goal and the one `Or.inr` at the end
+    of the return case re-scaffolded. Nothing else changes: the arm was never cited, so no new proof
+    is needed — the run reverts or takes `exitOk`, which is all the gated §6 post asks of
+    `.traceReturn`. `tr_blockSound` is now built from THIS lemma, not from `tr_sound_clean`. -/
+theorem tr_sound_clean_noarm (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes) (g : ExternalGas)
+    {V : VEnv (Dperm product g)} {st : EvmState}
+    (hclean : Clean R Checkpoint.pairing Snap H vkAddr cd V st)
+    {V' : VEnv (Dperm product g)} {st' : EvmState} {o : Outcome}
+    (hrun : ExecStmts (Dperm product g) (R.scope (permissive (callsOf product)) g) V st
+      (R.slice Partial.traceReturn) V' st' o) :
+    (o = .halt ∧ Reverted st') ∨
+      exitOk R Partial.traceReturn Snap H vkAddr cd V' st' o := by
+  rw [tr_slice R] at hrun
+  have hsucc : VEnv.get V "success" = some (1 : U256) := hclean.2.2
+  rcases Step.stmts_cons_inv (D := Dperm product g) hrun with ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · obtain ⟨rfl, rfl, _⟩ := tr_guard_skip hsucc h₁
+    rcases Step.stmts_cons_inv (D := Dperm product g) hrest with
+        ⟨V₂, st₂, h₂, hlast⟩ | ⟨h₂, hne₂⟩
+    · obtain ⟨a, haddr, rfl, hst₂⟩ := tr_mstore_step h₂
+      rw [hst₂] at hlast
+      rcases Step.stmts_cons_inv (D := Dperm product g) hlast with
+          ⟨V₃, st₃, h₃, hnil⟩ | ⟨h₃, hne₃⟩
+      · have h0 := tr_ret_o h₃
+        cases h0
+      · have ho : o = Outcome.halt := tr_ret_o h₃
+        subst ho
+        obtain ⟨rfl, hrec⟩ := tr_ret_step haddr h₃
+        have hpay : some (HaltKind.ret, readBytes (storeWord st₁.memory (BitVec.toNat a) 1)
+            (BitVec.toNat a) 32) = some (HaltKind.ret, abiTrue) :=
+          congrArg (fun x => some (HaltKind.ret, x)) (readBytes_storeWord_one _ _)
+        exact Or.inr ⟨rfl, hrec.trans hpay⟩
+    · exact absurd (tr_mstore_o h₂) hne₂
+  · obtain ⟨_, _, h3⟩ := tr_guard_skip hsucc h₁
+    exact absurd h3 hne
 
 /-- **INTERFACE STEP 2, THE POISONED DUAL.** On a poisoned boundary `success` is 0, so the guard
     expression is `iszero(0) = 1` and the arm FIRES. Same route as tr_iszero_val - invert the local
@@ -865,6 +904,27 @@ theorem tr_poison_walk (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) 
   · exact absurd (tr_guard_reverts hl hsucc h₁).1
       (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
   · exact Or.inl (tr_guard_reverts hl hsucc h₁)
+
+/-- **CONJUNCT 2 WITHOUT THE POISONED ARM — the D-P49 §6 gate (S.3).** THE SAME WALK AS
+    `tr_poison_walk`, with the second disjunct deleted: at `.traceReturn` the gated §6 post asks
+    only for the revert, and the guard on `success = 0` delivers exactly that — the fail arm reverts,
+    so the tail is never reached. The arm was never cited: the only change from `tr_poison_walk` is
+    the goal and the dropped `Or.inl`. -/
+theorem tr_poison_walk_noarm (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (hpois : Poisoned R H vkAddr cd V st)
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g) V st
+      (R.slice Partial.traceReturn) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  rw [tr_slice R] at hrun
+  have hsucc : VEnv.get V "success" = some (0 : U256) := hpois.2
+  have hl : lookupFun (R.scope c g) "fail" = some (failFDecl, R.scope c g) := fail_lookup R
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · exact absurd (tr_guard_reverts hl hsucc h₁).1
+      (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · exact tr_guard_reverts hl hsucc h₁
 
 /-- The honest dialect BlockProgress runs at, and its scope. -/
 abbrev Dhonest (product : PairingProduct) :=
@@ -967,8 +1027,11 @@ theorem tr_blockProgress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
 
 /-- **NODE 1 CLOSED, THE OTHER HALF: BlockSound R .traceReturn** - §6's soundness contract
     (Blocks.lean:92) at the dialect the consumer actually asks for, which is
-    \`permissive (callsOf product)\` with an arbitrary gas oracle: conjunct 1 is tr_sound_clean (T.1)
-    and conjunct 2 is tr_poison_walk (this card). Nothing here needs the trRetMptr pin - both
+    \`permissive (callsOf product)\` with an arbitrary gas oracle: conjunct 1 is tr_sound_clean_noarm
+    and conjunct 2 is tr_poison_walk_noarm — the ARM-FREE restatements of T.1's and T.2's walks, which
+    is what the D-P49 §6 gate requires at \`.traceReturn\` (the armed \`tr_sound_clean\` /
+    \`tr_poison_walk\` are unchanged and still sorry-free, but their third / second disjunct is now
+    unprovable here, so they cannot be cited). Nothing here needs the trRetMptr pin - both
     conjuncts are forall-runs halves, so the run is a hypothesis and the return-window binding is a
     CONSEQUENCE of it, exactly as the header predicts.
 
@@ -982,7 +1045,9 @@ theorem tr_blockProgress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
 theorem tr_blockSound (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (g : ExternalGas) (cd : Bytes) :
     BlockSound R Partial.traceReturn Snap H vkAddr (permissive (callsOf product)) g cd :=
-  ⟨fun V st h V' st' o hrun => tr_sound_clean R product Snap H vkAddr cd g h hrun,
-   fun V st h V' st' o hrun => tr_poison_walk R H vkAddr cd h hrun⟩
+  ⟨fun _V _st h _V' _st' _o hrun =>
+      (tr_sound_clean_noarm R product Snap H vkAddr cd g h hrun).elim
+        (fun hrev => Or.inl hrev) (fun hok => Or.inr (Or.inl hok)),
+   fun _V _st h _V' _st' _o hrun => Or.inl (tr_poison_walk_noarm R H vkAddr cd h hrun)⟩
 
 end Midfall.LoweringV2.Blocks.TraceReturn

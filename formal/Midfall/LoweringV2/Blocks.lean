@@ -86,19 +86,19 @@ def exitOk (R : Render p G₁ G₂ Gₜ) (q : Partial) (Snap : Snapshot p G₁ G
   | .traceReturn => o = .halt ∧ st'.halted = some (.ret, abiTrue)
   | _ => o = .normal ∧ Clean R q.pre.next Snap H vkAddr cd V' st'
 
-/-- SOUNDNESS CONTRACT. From a clean boundary every run reverts, exits clean, or exits poisoned;
-    from a poisoned boundary every run reverts or stays poisoned (so a pending failure can never be
-    laundered into a return). -/
+/-- SOUNDNESS CONTRACT. From a clean boundary every run reverts, exits clean, or - only when
+    `q ≠ .traceReturn` (D-P49, S.3: at traceReturn the guard reverts, so the arm is not offered)
+    exits poisoned; from a poisoned boundary every run reverts or stays poisoned, never laundered. -/
 def BlockSound (R : Render p G₁ G₂ Gₜ) (q : Partial) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)
     (vkAddr : U256) (c : ExternalCalls) (g : ExternalGas) (cd : Bytes) : Prop :=
   StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.slice q)
       (fun V st => Clean R q.pre Snap H vkAddr cd V st)
       (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨ exitOk R q Snap H vkAddr cd V' st' o ∨
-        (o = .normal ∧ Poisoned R H vkAddr cd V' st')) ∧
+        (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')) ∧
     StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.slice q)
       (fun V st => Poisoned R H vkAddr cd V st)
       (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
-        (o = .normal ∧ Poisoned R H vkAddr cd V' st'))
+        (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st'))
 
 /-- PROGRESS CONTRACT, TOTAL: under the honest precompiles, from a clean boundary a run EXISTS and
     every run exits clean. (v1's `PartialProgress` asserted no existence and was vacuous on stuck

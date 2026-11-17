@@ -411,9 +411,20 @@ theorem fp_finalPairing_contracts (R : Render p G₁ G₂ Gₜ) (product : Pairi
           | false => rfl
         have hsucc' : VEnv.get V' "success" = some (0 : U256) := by
           rw [hsucc0, hansf]; exact rfl
-        refine Or.inr (Or.inr ⟨rfl, hframe, hsucc'⟩)
+        -- S.3 / D-P49: §6's poisoned arm is now gated on `q ≠ .traceReturn`, and this is
+        -- `.finalPairing`, so the arm gained a first component. `finalPairing ≠ traceReturn` is a
+        -- decidable inequality on the emitter's constructor list - no content, no new premise.
+        refine Or.inr (Or.inr ⟨by decide, rfl, hframe, hsucc'⟩)
   · -- `BlockSound` conjunct 2: a poisoned boundary is never laundered - the guard reverts first.
-    exact fp_stmt_steps R hR H vkAddr cd (permissive (callsOf product)) g
+    -- S.3 / D-P49: §6's arm is now `finalPairing ≠ traceReturn ∧ normal ∧ Poisoned`, so
+    -- `fp_stmt_steps`'s ungated post no longer matches by `exact`. Both of its disjuncts still land:
+    -- the revert goes left unchanged, and the normal-poison handoff gains the decidable inequality.
+    -- Same content, one wrapper, no new premise.
+    intro V st h V' st' o hrun
+    rcases fp_stmt_steps R hR H vkAddr cd (permissive (callsOf product)) g V st h V' st' o hrun
+        with hrev | hnorm
+    · exact Or.inl hrev
+    · exact Or.inr ⟨by decide, hnorm⟩
   · -- `BlockProgress`, existence half: an honest run exists and exits `exitOk`.
     obtain ⟨_, hex⟩ := (ec_pairing_contract R product hR hslots hpc H vkAddr cd Snap
       (callsOf product) (ExternalGas.ofFun fun _ => 0)).2 rfl
