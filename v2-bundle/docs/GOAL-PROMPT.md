@@ -23,10 +23,12 @@ formal/docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean), then its w
 generated verifier of the IVC decider circuit (accumulator mode with the batched final pairing,
 external quotient evaluator)
 
-  theorem lowering_correctW (R) (Q : EvalObject) (product) (hR : ValidW R Q) :
-      LoweringEquivalenceW R Q product
+  theorem lowering_correctW (R) (Q : EvalObject) (product) (hR : ValidW R Q)
+      (hQ : isExternal R → EvalContracts R Q) : LoweringEquivalenceW R Q product
 
-(PLAN-V3 §5 M9; formal/docs/plans/V3-evidence/lean/widening/WideningV3.lean), and
+(PLAN-V3 §5 M9; formal/docs/plans/V3-evidence/lean/widening/WideningStages.lean; `hQ`, the
+evaluator's contract, is proved for the generated evaluator body by card WID.17 and dropped by
+card WID.H), and
 
   theorem generator_done : Done fixtureCd
 
@@ -210,8 +212,9 @@ RULES (EXECUTION-V2 §5 has W1–W11 in full; PLAN-V3 §4 has W12–W15)
   - never round-trip files over 1,500 lines through read/write tools.
 - No new gates, registries, ledgers or scripts beyond verify.sh, the cone report and the gates D-P69
   approves (cards DG.1–DG.9, PL.1). No deletion experiments. Subagents write no docs.
-- Estimates: none beyond PLAN-V3 §9's prior until calibration point C (card T3.9). Every estimate
-  states its sample size.
+- Estimates: PLAN-V3 §9's prior for M5 onward is void (D-P71). None for M5–M10 before card GEN.1
+  (point B) reports, and none for M6 before point C (card T3.9). Every estimate states its
+  sample size.
 
 ASK THE HUMAN. Write the question under "Waiting on human" in STATUS.md and keep working on other READY
 cards. Ask when:
