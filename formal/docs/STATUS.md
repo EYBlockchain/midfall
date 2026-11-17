@@ -254,10 +254,28 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** **S.4** (`BlockRow .vkLoading`) on `t/S.4` from `d0aabba`. S.3 merged as `d0aabba`.
-**Next: S.5** (transcriptParser — 44 stmts, 9 own loops, the big one), **S.6** (lagrange), **S.7**
-(quotientLin). `pcs` is HELD behind S.2. **One row does not move the headline cone** — all four plus
-quotientLin and pcs are needed, and even then `slices_seq_sound` depends on the S.3 gate holding.
+**In flight:** none. **S.4 merged `93c0d4c` as PARTIAL** - the `vkLoading` row did NOT close (3 named
+sorries: `vk_sound_clean`, `vk_poison_walk`, `vk_progress`), but 15 sorry-free lemmas landed and are
+the handoff for S.5/S.6/S.7. **New root `vk_blockRow: 3`; all six existing cones unchanged.**
+Register **60** (SORRY.md was found desynced at 57 and regenerated - see the merge commit).
+
+**Next: S.8 FIRST** (verify the six `vkLoading` pins computationally at the deployment, 1 h), then
+**S.5** (transcriptParser - 44 stmts, 9 own loops, the big one), **S.6** (lagrange), **S.7**
+(quotientLin). `pcs` stays HELD behind S.2. **No single row moves the headline cone; six are needed
+and even then `slices_seq_sound` depends on the S.3 gate.**
+
+## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
+
+**Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as
+`VkSlotsAgree`, V2 dropped it) · T.1/S.1 `trRetMptr` (`Valid` pins `TRANSCRIPT_MPTR` only) · S.4 six
+more for `vkLoading`. **Without S.4's first four, `BlockSound R .vkLoading` is FALSE, not merely
+unproved** - the copy lands elsewhere and the block exits normal with `success = 1`.
+
+**Consequence: `blockContracts_of_valid` quantifies over all seven blocks, so the hinge may be
+unprovable as stated, not merely unproved** - C.4's refutation of `poseidon_valid` again, one layer
+down. **Decision taken: the pins stay row-level hypotheses until S.8 verifies them at the deployment.
+** D-P46/D-P48 each added one pin of already-known value; six unverified ones would be a guess about
+the frozen surface, which is what the freeze exists to stop.
 
 ## STANDING RULE (human, 2026-11-17): all work lands on formal/baseline, and is pushed
 

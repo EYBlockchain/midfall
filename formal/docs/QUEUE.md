@@ -557,7 +557,7 @@ SEM · REFACTOR · box 1 h · strongest · after S.1
 - **Stop if.** Repairing `tr_blockRow` needs a new proof beyond S.1's restatements · any root's cone
   moves unexpectedly.
 
-### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3]**
+### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**
 SEM · PROOF · box 2 h · strongest · after S.3
 - **Goal.** `BlockRow R product .vkLoading`. **Shape from S.1:** pre `Clean R .start`, post `(halt ∧
   Reverted) ∨ Clean R .vk ∨ (normal ∧ Poisoned)`; honest `StmtsTotal` gated on `G1CodecLaws ∧
@@ -567,6 +567,30 @@ SEM · PROOF · box 2 h · strongest · after S.3
 - **Does NOT need.** Other blocks; the deployment; the pairing.
 - **Accept.** Sorry-free or a named lemma per gap; **report whether the headline cone moved.**
 
+### S.8 — Verify the six `vkLoading` pins at the deployment  **[READY — RUN BEFORE ANY `Valid` CHANGE]**
+
+GEN · KAT · box 1 h · Sonnet · after S.4
+
+- **Goal.** Establish computationally whether S.4's six pins are TRUE at the deployment, before any of
+  them enters frozen `Valid`. **D-P46/D-P48 each added one pin whose value was already known; six at
+  once, unverified, is a guess about the frozen surface and is refused.**
+- **Needs.** S.4's `vkPins` (1 table `VK_MPTR` = `ptrAddr pv.memory.vkMptr`; 2
+  `EXPECTED_VK_PAYLOAD_LENGTH` = `pv.vk.len`; 3 `pv.numInstances` = `cfg.numInstances`; 4 VK/g1Identity
+  window disjointness) and `vkProgressPins` (5 `EXPECTED_VK_LENGTH` = `runtimeBytes.size`; 6
+  `EXPECTED_VK_CODEHASH_WORD` = `keccak256 runtimeBytes`). Computable proxies `poseidonPv`/`poseidonM`
+  (C.4's pattern, pinned to `poseidonRender` by `rfl`); `poseidonRender` is noncomputable.
+- **Do.** Evaluate each at the deployment. **All six are decidable equalities over `consts.lookup` and
+  lengths — no proof needed, just computation.** Report TRUE / FALSE / UNDECIDABLE per pin, with the
+  printed value.
+- **Deliverable.** The verdict table + a recommendation: which pins (if any) are safe to add to
+  `Render.Valid` as a follow-up decision, and which must stay row-level hypotheses.
+- **Accept.** Six printed values. **If any pin is FALSE at the deployment, say so loudly** — that means
+  `BlockSound R .vkLoading` is false at the deployment even with the pins, and the §6 shape problem is
+  deeper than under-pinning.
+- **Stop if.** A pin is not decidable by computation (report which and why).
+- **Does NOT need.** Editing `Valid`; any block row; the pairing.
+
+---
 ### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3]**
 SEM · PROOF · box 2.5 h · strongest · after S.3
 - **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
