@@ -15,6 +15,7 @@ sorry`, so what is listed here is the planned Phase 1 state, not sloppiness.
 | Midfall/Instances/PoseidonV2.lean | 191 | `sorry` | V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap |
 | Midfall/Instances/PoseidonV2.lean | 209 | `sorry` | V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap |
 | Midfall/Instances/PoseidonV2.lean | 221 | `sorry` | V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap |
+| Midfall/Instances/PoseidonValid.lean | 227 | `sorry` | V2 (PLAN-V2): C.4 Valid.model - no Inhabited Model, kernel cannot reduce poseidonModel |
 | Midfall/Lowering/AccEncoding.lean | 194 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/AccEncoding.lean | 254 | `sorry` | P-SE: semantic equivalence obligations |
 | Midfall/Lowering/AccEncoding.lean | 306 | `sorry` | P-SE: semantic equivalence obligations |

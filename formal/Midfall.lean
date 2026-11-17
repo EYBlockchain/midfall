@@ -78,6 +78,7 @@ import Midfall.Instances.PoseidonInputs
 import Midfall.Instances.PoseidonEnv
 import Midfall.Instances.PoseidonCoherence
 import Midfall.Instances.PoseidonV2
+import Midfall.Instances.PoseidonValid
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Lowering.AccEncoding
