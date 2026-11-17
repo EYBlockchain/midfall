@@ -269,13 +269,14 @@ agreement verified. **S.9 stated plainly the hinge is STILL not closable:** pins
 
 **Next READY (2026-11-17, after the review merge `6481731`), in QUEUE order:** **F.2** (deployment
 table), **R.2** (WP-G1 region inventory), **F.1** (sequencing glue — expected headline cone 11 → 9,
-the first drop), **S.10** (stale clause-count prose) and **S.2**. S.4–S.6 follow F.1. Q0.5, R.1, R.3
-and R.4 wait on human sign-off (`docs/DECISIONS-PENDING.md`).
+the first drop), **S.10** (stale clause-count prose) and **S.2**. S.4–S.6 follow F.1. R.1 is DONE
+(`2041977`, recorded there as "F.1"). Q0.5, R.3, R.4 and R.5 wait on human sign-off (`docs/DECISIONS-PENDING.md`).
 **Decisions:** **D-P49 and D-P50 are APPROVED** — ratified by the human on 2026-11-17 after S.3/S.9 had
 applied them. **D-P45–D-P48 are PROPOSED, not decided:** the human did not delegate (EXECUTION-V2 W2).
 Draft wording is in `docs/DECISIONS-PENDING.md`, with R-72's second question (recommended: reject),
 `Rejects`/`SoundSide`, the `pcs`/`Inv` boundary (S.2), WP-T ordering, `Valid.model` (R.3) and Gap B
-(R.4). **D-P47 (R.1) is on the critical path:** every route to the headline needs `poseidon_valid`.
+(R.4). **`poseidon_valid` is on the critical path:** every route to the headline needs it; after R.1, four
+clauses remain refuted (2 `layout`, 3 `invariants`, 6 `codegen`, 9 `permutationCommitmentsMatch`).
 ## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
 
 **Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as

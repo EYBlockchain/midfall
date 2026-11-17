@@ -555,8 +555,8 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
 **CRITICAL PATH — make the deployment render valid** *(added in review, 2026-11-17)*. Every route to
 the headline goes through `poseidon_valid`, and `¬ poseidonRender.Valid` is PROVED (C.4,
 PoseidonValid.lean:468; 6 of 11 clauses refuted). Until the render is valid, block rows (S.3–S.7)
-are generic progress only. F.2 and R.2 are READY now; R.1, R.3 and R.4 wait on decisions drafted in
-`docs/DECISIONS-PENDING.md`.
+are generic progress only. F.2 and R.2 are READY now. R.1 is DONE (`2041977`, run as "F.1" ahead of
+D-P47 sign-off). R.3, R.4 and R.5 wait on decisions drafted in `docs/DECISIONS-PENDING.md` (R.5: below).
 
 ### F.2 — The deployment table: every hypothesis of the headline route, decided once  **[READY — RUN FIRST]**
 GEN · PROBE · box 1 h · Sonnet · after nothing
@@ -609,7 +609,7 @@ GEN · PROBE · box 1 h · Sonnet · after nothing
 - **Accept.** The token counts account for the measured gap (10433 − 3156), or the residue is
   explained.
 
-### R.1 — Re-export the fixture with the constraint-system data (D-P47)  **[BLOCKED: human sign-off of D-P47, which is PROPOSED]**
+### ~~R.1~~ (review draft) — Re-export the fixture with the constraint-system data (D-P47)  **[SUPERSEDED — executed as R.1 below (`2041977`); do not run]**
 INFRA · PROBE · box 1 h · Sonnet · after D-P47 sign-off
 
 - **Goal.** A refreshed `fixtures/conformance/poseidon/` whose `vk.json` (or a sibling file) carries
@@ -642,6 +642,20 @@ DECISION · ≤ 1 page
   with s·G₂, and neither D-P46's slot pin nor FP.0's `fpG2Slots` hypothesis can hold at this render as
   modelled. Same discrete-log class as `g1CodecZ.ofCompressed?`. Blocks D-P46 and the FinalPairing
   route at the deployment.
+
+### R.5 — The committed fixture is not reproducible  **[BLOCKED: human decision]**
+DECISION · ≤ 1 page · raised by R.1 (`2041977`)
+
+- R.1 found that `proof.bin` and `trace.json` differ from run to run (the prover's blinding is
+  non-deterministic), and the committed bundle matches neither of its two runs. Every other output is
+  byte-stable. The regenerated `Halo2Verifier.sol` differs from the committed one only in `BUILD_ID`
+  (a stale tracked dump).
+- R.1 kept the committed `proof.bin`/`trace.json`, because D.3 checks 4–5 pin the transcript to
+  `trace.json`. Its regenerated copies were left in `/tmp/f1-regen/`, which is not in the tree
+  (EXECUTION-V2 forbids `/tmp`-only evidence); treat them as lost.
+- Decide: keep the committed proof as the pinned ground truth with unknown provenance, or make the
+  export deterministic (seeded RNG in the test exporter), regenerate once, and re-pin D.3 checks 4–5
+  in the same commit. Either way, refresh or untrack the stale `Halo2Verifier.sol` dump.
 
 ---
 **BLOCK ROWS — generic progress.** Rows are stated for every `R`; none can move the headline cone
@@ -758,7 +772,7 @@ INFRA · PORT · box 1.5 h · Sonnet · after S.8
   the pairing; v1 files; `vendor/`.
 
 ---
-### F.1 — Re-export the poseidon fixture WITH the constraint-system data (D-P47)  **[READY — CRITICAL PATH]**
+### R.1 (ran as "F.1") — Re-export the poseidon fixture WITH the constraint-system data (D-P47)  **[DONE 2041977 — ran ahead of D-P47 sign-off as a measurement card; `Valid` clauses 6/6/1 → 8 proved / 4 refuted / 1 sorry; reproducibility → R.5; do not re-run]**
 
 GEN · PORT · box 2.5 h · strongest · **split at 1 h into (export) and (re-derive)** · after S.9
 
