@@ -1,8 +1,8 @@
 # PLAN-V3 — prove the Lean verifier equivalent to the Yul emitted by the Lean codegen, on a real object, against a Rust-faithful reference
 
-**STATUS: ADOPTED (2026-11-17).** The human signed D-P60–D-P69 (§2.2) after `53bf8c1`; `design.md`
+**STATUS: ADOPTED AND CUT OVER (2026-11-17).** The human signed D-P60–D-P69 (§2.2) after `53bf8c1`; `design.md`
 quotes the sign-off (EXECUTION-V2 W2). Each decision's conditions are recorded in its entry and
-still apply. The cut-over is card PL.0 (§10.2); until it has run, `QUEUE.md` is worked as it is.
+still apply. The cut-over (card PL.0, §10.2) is done: `QUEUE.md`'s V3 table is the order.
 
 Handover brief for the orchestrator and for the human who signs. Self-contained: read §0–§4 before
 touching anything. Paths are relative to `formal/` unless they start with `proofs/`.

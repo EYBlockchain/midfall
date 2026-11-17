@@ -12,7 +12,7 @@
 >   **`PLAN-V3.md` §0–§4 and §10**; wherever it says "DONE means PLAN-V2 §6", DONE is
 >   **PLAN-V3 §6**; the headline named in the goal is PLAN-V3 §5 M7's. §4 rules 1–12 of this file
 >   and EXECUTION-V2 stay binding, with PLAN-V3 §4's W12–W15 added. The first card is **PL.0**
->   (in `QUEUE.md`), which performs the cut-over. Each other PLAN-V3 decision (D-P61–D-P69) gates
+>   (in `QUEUE.md`), which performs the cut-over — **done 2026-11-17** (tag `formal/v2-cutover`). Each other PLAN-V3 decision (D-P61–D-P69) gates
 >   only the cards that name it: an unsigned one leaves those cards BLOCKED, as W2 requires.
 
 Handover brief for the implementing agent (Sonnet 5.5). Self-contained: read §0–§3 before

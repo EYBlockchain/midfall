@@ -2,15 +2,18 @@
 
 **As of:** `1009658` (2026-11-17 01:25Z). v1 frozen at `formal/v1-final`.
 
-**Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
+**Plan:** `docs/plans/PLAN-V3.md` (D-P60; cut over by PL.0, tag `formal/v2-cutover`) · rules
+`docs/plans/EXECUTION-V2.md` + PLAN-V3 §4 · cards `docs/plans/PLAN-V3-cards.md` · queue `docs/QUEUE.md`
+(the V3 table at its top). PLAN-V2 is kept for its rules and its V2 cards.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
-## ✅ PLAN-V3 ADOPTED — D-P60–D-P69 signed off by the human (2026-11-17, after `53bf8c1`)
+## ✅ PLAN-V3 ADOPTED AND CUT OVER — D-P60–D-P69 signed (2026-11-17, after `53bf8c1`); PL.0 done
 
 An independent review and a revised plan are in `docs/plans/` (`REVIEW-V3.md`, `PLAN-V3.md`,
 `PLAN-V3-cards.md`, evidence under `V3-evidence/`). **D-P60 is signed, so PLAN-V3 is the active plan**: `PLAN-V2.md`'s banner and §6 note and
-`EXECUTION-V2.md`'s note now redirect to it, and the goal prompt is unchanged. **Next: card PL.0**
-(the cut-over, docs only, the orchestrator itself), with **DG.0** (the KAT gate is red at the tip).
+`EXECUTION-V2.md`'s note now redirect to it, and the goal prompt is unchanged. **PL.0 is done**: the queue's V3
+table is the order (105 rows), and every V2 card is marked. **Next: DG.0** (the KAT gate is red at the
+tip), then the table's READY rows top-down. F.1 is recorded there as merged (`f588ba2`, cone 11 → 9).
 **In force now:** D-P65 — the G1.1–G1.3 batch must carry the block-scope repair, or it does not
 merge G1.2. Every decision's conditions are recorded in its `design.md` entry and are applied, not
 chosen; an unmet condition stops its card. Records: `design.md` D-P60–D-P69; `docs/DECISIONS-PENDING.md` §12.

@@ -1562,7 +1562,7 @@ These complete the queue: the cut-over, the W13 repair of the present tree, the 
 block rows (each a SKELETON that issues its own PROOF children), the headline and the end-to-end
 statement. They follow the same format. Model routing (EXECUTION-V2 W10) is on each card.
 
-### PL.0 — Cut over to PLAN-V3
+### PL.0 — Cut over to PLAN-V3  **[DONE 2026-11-17 — tag `formal/v2-cutover`]**
 
 INFRA · DECISION · box 0.5 h · orchestrator, no subagent · after D-P60 is signed
 

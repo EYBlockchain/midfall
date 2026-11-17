@@ -1,5 +1,8 @@
 # Midfall formal: faithful Lean 4 port of the Halo2 verifier and verified Solidity/Yul lowering
 
+> **THE ACTIVE PLAN IS `docs/plans/PLAN-V3.md`** (D-P60, signed 2026-11-17; cut over by card PL.0,
+> tag `formal/v2-cutover`). PLAN-V2 (D-P44) is kept for its rules and its V2 cards.
+>
 > **SUPERSEDED AS THE ACTIVE PLAN by `docs/plans/PLAN-V2.md` (D-P44 / D-V2, 2026-11-16).**
 > This file describes **v1**, which is frozen at tag `formal/v1-final`.
 > The object of the theorem, the trusted base, the retired modules and the queue all
