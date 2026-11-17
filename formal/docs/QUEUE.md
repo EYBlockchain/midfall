@@ -13,6 +13,26 @@ when its `after` tickets are merged.
 - **Facts.** "Measured" facts below were measured at `15c0b3a` (2026-11-16). The orchestrator
   re-checks them at the current commit before briefing (EXECUTION-V2 §2.3).
 
+## ⚠ PLAN-V3 is PROPOSED (2026-11-17) — flags on READY cards; nothing changes until D-P60 is signed
+
+A review (`docs/plans/REVIEW-V3.md`) and a revised plan (`docs/plans/PLAN-V3.md`, cards in
+`docs/plans/PLAN-V3-cards.md`) are in the tree, **unsigned**. This queue stays the live queue. The
+flags below are **leads** (EXECUTION-V2 §2.3): verify each at the current commit before a brief
+relies on it. Reproducer for all of them: `bash docs/plans/V3-evidence/check.sh` (or one area:
+`probes`, `statements`, `soundness`, `prooftech`, `reference`, `object`, `tooling`). The full table
+is PLAN-V3 §10.1; the drafts for signature are `docs/DECISIONS-PENDING.md` §12.
+
+| card | flag |
+|---|---|
+| **G1.1–G1.3 batch** | **Do not merge G1.2 without the scope repair** (needs D-P65, unsigned): with `q_program_fail` / `q_pow5` in the `.quotientLin` slice, `prog_slices_decomp`'s second conjunct (`Blocks.lean:224`) is false and the frozen `Render.scope` (`Statements.lean:109`, outside D-P52) lacks both functions. G1.3's 895 / 5,489 split is measured as 5,431 / 953 |
+| **R.4** | Its first hour has an answer: an axiom-free route exists (constructed pairing, the SRS point as data). No G2 axiom is needed (needs D-P62 to land as designed) |
+| **R.4b** | A *computable* G1 decoder exists and equals the `Classical.choose` one on the EIP half; prefer it |
+| **R.5** | The non-determinism is `OsRng` in `blind_quotient_limbs` (`proofs/src/plonk/prover.rs:126`), baseline code: D-P58's fallback (3) applies |
+| **R.8**, **R.9** | Frozen `Valid.circuitMeta` forces `numPointSets = 0`; a faithful plan has 3. Exporting or proving more cannot close clauses 1 and 2 together |
+| **T.2b** | A verified `wp` engine proves the literal-slice TraceReturn fact in 13 lines; land it rather than write a tactic. The closed-slice form is still to do |
+| **T.3**, **S.5**, **S.6** | The engine's kernel check on the lagrange loop is not bounded yet; do not apply D-P57's hand-proof fallback on that ground before PLAN-V3 card T3.0 has measured it |
+| every card | The tip fails `checks.sh` (sorry register: `PoseidonValid.lean` 227 → 252) and `kat_gate.py` (pinned total; two `-- expect TRUE` annotations). Fixing that needs no decision |
+
 ## CUT-OVER — the orchestrator does these itself (EXECUTION-V2 §1)
 
 | ID | deliverable | after |

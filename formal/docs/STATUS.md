@@ -5,6 +5,16 @@
 **Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
+## ⚠ WAITING ON HUMAN — PLAN-V3 proposed (2026-11-17); ten decisions D-P60–D-P69, unsigned
+
+An independent review and a revised plan are in `docs/plans/` (`REVIEW-V3.md`, `PLAN-V3.md`,
+`PLAN-V3-cards.md`, evidence under `V3-evidence/`). **PLAN-V2 and this queue stay in force until
+D-P60 is signed.** What the orchestrator does meanwhile: read `QUEUE.md`'s PLAN-V3 banner before
+picking a card (it flags the G1 batch, R.4, R.4b, R.5, R.8, R.9, T.2b, T.3); treat each flag as a
+lead and verify it. Most urgent for the human: **D-P65** (the block scope must change in the same
+re-hash as the G1.1–G1.3 batch) and **D-P61** (the Lean verifier rejects every proof of the fixture
+key today). Drafts: `docs/DECISIONS-PENDING.md` §12. Cut-over when signed: PLAN-V3 §10.2, card PL.0.
+
 **TICKET M0.1 (probe, `252ea1d`; table landed in `docs/QUEUE.md` under M0.1):** the 7×4 block-frame
 table was computed in ONE lean run and **the orchestrator re-ran it and reproduced every headline
 number** (54 = 54 stmt sum; `batch_invert` the only looping helper; quotientLin 122/6572 tokens; pcs
