@@ -267,8 +267,8 @@ target** — PCS is 18 brace tokens from equal and needs no separate epic.
 **Next READY (human, 2026-11-17, after `2cad8cc`):** **F.1** (sequencing glue: the only READY card
 expected to move the headline cone, 11 → 9, and it needs no decision), then **G1.4b** (D-P51 signed off
 2026-11-17; first push `t/G1.4` and land its patch in the tree, since both exist only in the
-orchestrator's environment). **G1.1–G1.3 are BLOCKED** on sign-off of the batched `Program.lean`
-re-hash (`docs/DECISIONS-PENDING.md` §11), and run after G1.4b (`PoseidonValid.lean:292` collision).
+orchestrator's environment). Then **G1.1–G1.3 as one batch** with a single `Program.lean`
+re-hash (**D-P52, signed off 2026-11-17**), after G1.4b (`PoseidonValid.lean:292` collision).
 G1.4 is superseded by G1.4b. `traceAndGasHelpers` is vacuous at this render (`ctx.trace = false`), so
 it has no card.
 

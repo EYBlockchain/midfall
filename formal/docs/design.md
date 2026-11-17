@@ -1947,3 +1947,27 @@ stops and reports rather than being rewritten.
 **Also recorded: clause 6 did NOT flip.** `codegenAgrees poseidonPv poseidonM` is still `false`; AST
 6761 → 6779 (+18) and the remaining gap 7275 = 823 + 68 + 6384 is **exactly G1.1–G1.3 and nothing
 else.** **Cone stays 11.** The card reported that precisely instead of claiming a win it hadn't got.
+
+## D-P52 — **Approved: one batched `Program.lean` re-hash for G1.1–G1.3**
+
+> Raised by G1.2b (`2cad8cc`); drafted as `docs/DECISIONS-PENDING.md` §11. **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `6918991`.
+
+**Decision.** G1.1, G1.2 and G1.3 land as **one batch with one deliberate re-hash** of frozen
+`Program.lean` (`Midfall/LoweringV2/Frozen.sha256`). The batch:
+- widens `mainAsmRaw` to take the model `m` and updates its four callers (all have `m` in scope);
+- splices the three regions (`accumulatorHelpers`, `renderQuotientHelpers`,
+  `renderQuotientNumeratorBlock`) into `mainAsmRaw`;
+- adds the same regions to `sliceOf`'s `.quotientLin` body **in the same commit**, because otherwise
+  `prog_slices_decomp` (Blocks.lean:220) becomes false rather than unproved;
+- retires the KNOWN-GAP docstring at `Program.lean:92-97`.
+
+**Conditions — the card stops if any fails.** The frozen diff is `Program.lean` only, with exactly one
+`Frozen.sha256` line changed, shown as a deliberate diff in the commit message. `Valid.codegen`
+(Statements.lean:200) keeps its meaning. The batch runs after G1.4b and recomputes the
+`PoseidonValid.lean:292` token pin from G1.4b's value (6779).
+
+**Expected result, to be measured, not assumed.** With G1.4b, R.2 measured `codegenAgrees` TRUE at the
+deployment, so `Valid` clause 6 becomes proved. `poseidon_valid` stays refuted (clauses 2, 3, 9), so
+the headline cone is not expected to move.
+

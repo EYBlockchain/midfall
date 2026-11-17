@@ -748,8 +748,8 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
 `/tmp/g14-patch`) and branch `t/G1.4` are not on origin. Land them under
 `formal/docs/plans/G1-evidence/` and push `t/G1.4` before any G1 card relies on them (W5).
 
-**Sign-off needed.** The batch re-hashes frozen `Program.lean`, so G1.1–G1.3 are BLOCKED on
-`docs/DECISIONS-PENDING.md` §11.
+**Signed off: D-P52 (2026-11-17).** G1.1–G1.3 run as ONE batch with one `Program.lean` re-hash, after
+G1.4b, under D-P52's conditions (`design.md`).
 
 **SITE FOUND: `mainAsmRaw (pv) (m)` — gate 23 AVOIDED, one frozen re-hash (`Program.lean`) unavoidable.
 ⇒ G1.1 + G1.2 + G1.3 must be BATCHED into that single re-hash.**
@@ -778,7 +778,7 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
   `GenAstDispatch.lean` and the regions belong in `emitPartial`. **`emitPartial` cannot read the
   flags; the regions belong in `mainAsmRaw`, a FROZEN file.** That is what makes the re-hash shared.
 
-### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[BLOCKED: human sign-off of the batched `Program.lean` re-hash — DECISIONS-PENDING §11; runs after G1.4b]**
+### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY after G1.4b — one batch with G1.2/G1.3 under D-P52 (single `Program.lean` re-hash)]**
 GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
 
 - **Goal.** `GenAst` emits the 823-token region `mainAssemblyText` puts between `assemblyHelpers`
@@ -834,7 +834,7 @@ GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2�
           -- #eval ((yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1).dropLast
           --         == yulTokens ((partsOf poseidonM).accumulatorHelpers)
 
-### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[BLOCKED: as G1.1 — DECISIONS-PENDING §11]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
+### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
 GEN · EMIT · box 0.75 h · Sonnet · after R.2; **a prerequisite of G1.3** (both definitions are
 called ONLY from the numerator block — measured: neither `q_program_fail(` nor `q_pow5(` occurs in
 any other region of the main block)
@@ -906,7 +906,7 @@ GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
   `stmtsBeq`). Only the splice SITE is unresolved.**
 
 ---
-### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[BLOCKED: as G1.1 — DECISIONS-PENDING §11]**
+### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**
 GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
 
 - **Goal.** Emit `renderQuotientNumeratorBlock`, the second `quotient_numerator` include: 6384
