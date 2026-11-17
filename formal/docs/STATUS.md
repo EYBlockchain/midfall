@@ -77,10 +77,45 @@ forbidden) PLUS a `getD` restatement, **or** a frozen change to `Render.model`.
 **A card can refute a cone member and leave the cone unchanged — the cone measures what is cited, not
 what is known.** Do not read a static cone as plan stability.
 
-Register 53→54. 30 `native_decide` axioms added, all confined to `Instances/`; every decl in the file
+Register 53→54→57 (FP.0). 30 `native_decide` axioms added, all confined to `Instances/`; every decl in the file
 also carries `poseidonModel_isOk`'s axiom via `poseidonRender.model`. Method: `poseidonRender` is
 noncomputable and was never `#eval`'d — computation went through computable proxies `poseidonM`/
 `poseidonPv` **pinned to the render by `rfl`**.
+
+## ✅ FP.0 (merged `ff7d145`): first block contract integrated — but conditional on a REFUTED hypothesis
+
+`Blocks/FinalPairing.lean` (473 ln, exactly 3 sorries). **New 4th cone root:**
+`cone_sorries fp_finalPairing_contracts: 3` = `fp_pairing_algebra` (P.1), `ec_pairing_contract` (T.4),
+`fp_stmt_steps` (T.5). Headline cone **11 → 11** — and it CANNOT move: the headline reaches per-block
+contracts only via the generic sorried `blockContracts_of_valid`. **Register 54 → 57.**
+
+**This is the first progress of the SECOND kind the rules recognise** — block contracts integrated into
+the composition. A static cone was never evidence of a static plan.
+
+⚠ **BUT READ THE STATEMENT:** `fp_finalPairing_contracts (R) (product) (hR : R.Valid)
+(hslots : fpG2Slots R) : …`. **It requires `R.Valid`, and C.4 PROVED `¬ poseidonRender.Valid`.** So
+**this contract cannot be instantiated at the deployment as things stand** — it is a correct contract
+about a class of renders that does not include ours. Not FP.0's defect; it is C.4's refutation
+propagating, and the clearest evidence yet that **the upstream data problems are the critical path.**
+Also: the glue carries `sorryAx` (inherited from its 3 leaves) — conditional on 3 OPEN obligations,
+not proved.
+
+⚠ **NEW HUMAN DECISION — `fpG2Slots`, and V2 dropped a check v1 had.** `ec_pairing` copies G2 args from
+the VK payload at `G2_BASE_MPTR` / `NEG_S_G2_BASE_MPTR`, and **nothing in §6 pins those bytes** to
+`encG2` of `params.nG2Prepared⁻¹`/`sG2Prepared⁻¹`. **v1 had them as `VkSlotsAgree.g2BaseWords`/
+`negSG2Words` (Inv.lean:623-624); V2's `Valid` has no `VkSlotsAgree` at all.** The card named it
+`fpG2Slots R` and carried it as a hypothesis rather than inventing it. **Fix (a): add 2 clauses to
+frozen §2. Fix (b): exhibit at the deployment by computation.** Consequence: `blockContracts_of_valid`
+cannot cover `.finalPairing` either.
+
+**C.2's poisoned-normal gap does NOT bite FinalPairing** — checked: at `.finalPairing` the
+`normal ∧ Poisoned` arm IS the intended handoff; what must not happen is laundering an EXISTING poison
+(BlockSound conjunct 2 = T.5). **No `Frame`/`Clean` field added.**
+
+**COST FINDING for T.4/T.5:** the `Inv .pcs → Inv .pairing` transfer does NOT check sorry-free —
+`InvAt`'s 30-clause `&&` chain blows the 200,000-heartbeat default (`timeout at whnf`). **Heartbeats
+were not raised**; folded into `ec_pairing_contract`'s post as `(success = 1 → Inv .pairing)`.
+Budget real time for any Inv-chain tactic.
 
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
@@ -153,14 +188,10 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: C.3** (after C.2 — staged rejection; also where the
-`Rejects`/`SoundSide` decision lands) and **FP.0** (after C.2). **C.4's finding means no Lean card can
-make `poseidon_valid` true** — §6 is unreachable until the upstream data problems are fixed.
-**Waiting on human (4):** ProtocolPlan/poseidonMeta provenance (now 3 distinct data problems) ·
-`Rejects`/`SoundSide` · R-72 (Q0.5) · `g1CodecZ.ofCompressed?`.
-`g1CodecZ.ofCompressed?` · **now also `Rejects`/`SoundSide`.**
-`g1CodecZ.ofCompressed?` (D.3 check 3).
-**Still blocked on human:** ProtocolPlan provenance (blocks `poseidon_valid`, now 3 obstacles) · R-72
+**In flight:** none. **Next READY: T.1** (after FP.0 — the automation design) and **C.3** (after C.2).
+**§6 is unreachable by Lean alone:** FP.0's contract needs `R.Valid`, which C.4 proved false for
+`poseidonRender`. **Waiting on human (5):** poseidonMeta/ProtocolPlan provenance (3 data problems) ·
+`fpG2Slots` fix (a) or (b) · `Rejects`/`SoundSide` · R-72 (Q0.5) · `g1CodecZ.ofCompressed?`.
 (Q0.5) · `poseidonModel` totality · real `g1CodecZ.ofCompressed?` (blocks D.3 check 3).
 **Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
 session, so verify it before assuming the SEM/ALG chain is reachable.

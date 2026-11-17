@@ -457,7 +457,7 @@ GEN · SKELETON · box 2 h · Sonnet · after C.1
   is reported.
 - **Stop if.** A clause evaluates to `false`. Report NEGATIVE with the values.
 
-### FP.0 — FinalPairing contract skeleton
+### FP.0 — FinalPairing contract skeleton  **[MERGED ff7d145 - 1st block contract; needs R.Valid which is REFUTED]**
 SEM · SKELETON · box 2 h · strongest · after C.2
 
 - **Goal.** FinalPairing's `BlockSound` ∧ `BlockProgress`, proved from named sorried lemmas:
