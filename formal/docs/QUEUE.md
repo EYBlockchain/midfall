@@ -335,7 +335,7 @@ args `(L) (m) (acc)`; `acc = poseidonConfig.accumulator = none`, pinned by the f
    blocks`, `mA.pcsComputations.length = 0`, and the rendered text region is also empty (2/2).
    **C.2 must not read the pcs row as "pcs needs nothing"** — every cell is vacuous.
 
-### C.2 — Composition skeleton with a requirements table
+### C.2 — Composition skeleton with a requirements table  **[MERGED 9401f1a - cone 5 to 11; Rejects decision needed]**
 SEM · SKELETON · box 2 h · strongest · after M0.1
 
 - **Goal.** Prove `lowering_equivalence_of_blocks` modulo named lemmas.

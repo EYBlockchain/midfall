@@ -13,6 +13,34 @@ empty at plan level). Route: `sliceOf (planViewOf poseidonPlanV2 poseidonModelVa
 **Shared cross-slice locals are exactly `{vk, r, success}`. `fail()` reverts, it does not set
 `success := 0` — distinct requirement paths.** C.2 is briefed off the landed table, not off memory.
 
+## ⚠ CONE MOVED UP: 5 → 11 (C.2, merged `9401f1a`) — skeleton-first cost, stated honestly
+
+`lowering_equivalence_of_blocks` is now **derived from 7 named sorried lemmas + 11 proved transport
+facts** (113-line body, no `sorry` tactic of its own). **But it still depends on `sorryAx`** — measured:
+`[propext, sorryAx, Classical.choice, Quot.sound]`. So it is **conditional on seven OPEN obligations**,
+not proved. Cone: `of_blocks` 1→7, **headline 5→11**, `end_to_end` 1→1. Register 47→53.
+`cone_avoids` ok for all three roots. **A plan that only ever shows the cone falling is not
+skeletonising anything** — but the number is worse today and must be reported that way.
+
+## ⚠ NEW HUMAN DECISION — `Render.Rejects` cannot serve conjunct 3
+
+**`Rejects` demands `SoundSide`, which the frozen third conjunct of `LoweringEquivalence` does not
+carry — so conjunct 3's ¬LeanAccepts branch is unreachable from `hrej`.** Deleting `SoundSide` from
+`Rejects` makes `rejects_of_not_accepts` a one-liner and **drops the cone by 1**. `Blocks.lean` §6 is
+designated refinable by Q0.3, so this is within V2's rules — **but it changes what `Rejects` MEANS.**
+The card correctly did not do it (authorisation was Frame/Clean fields only). **Choose: delete
+`SoundSide` from `Rejects`, or let C.3 own it.**
+
+**Second expressiveness finding (no decision needed, it is FP.0/T.1's job):** `BlockSound R
+.traceReturn` admits `o = .normal ∧ Poisoned`, so the needed program-level post is **strictly stronger
+than 7× `BlockSound`**. The missing fact is 'traceReturn reverts on `iszero(success)`' and **no
+`Frame`/`Clean` field fixes it.**
+
+**Requirements table:** landed in QUEUE.md under C.2 (84 lines), one row per lemma with statement,
+composition step, and size estimate **with sample size**; two rows say 'no basis yet' rather than
+inventing numbers. M0.1 caveats carried: 2 of 7 sequenced links are vacuous (pcs empty at plan level),
+and `hB` includes quotientLin, which emits 122 of 6572 tokens.
+
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
 `lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
@@ -83,9 +111,11 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: C.2** (after M0.1) — the composition skeleton; **the first card that
-can reduce the headline cone from 5.** Its NEEDS include the M0.1 table, now landed in QUEUE.
+**In flight:** none. **Next READY: C.4** (after C.1, validity skeleton clause by clause) and **C.3**
+(after C.2, staged rejection) — **C.3 is where the `Rejects`/`SoundSide` decision lands if I do not
+get one.** M0.1's table and C.2's requirements table are both in QUEUE.md as inputs.
 **Still blocked on human:** ProtocolPlan provenance (`poseidon_valid`, 3 obstacles) · R-72 (Q0.5) ·
+`g1CodecZ.ofCompressed?` · **now also `Rejects`/`SoundSide`.**
 `g1CodecZ.ofCompressed?` (D.3 check 3).
 **Still blocked on human:** ProtocolPlan provenance (blocks `poseidon_valid`, now 3 obstacles) · R-72
 (Q0.5) · `poseidonModel` totality · real `g1CodecZ.ofCompressed?` (blocks D.3 check 3).
