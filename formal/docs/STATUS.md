@@ -8,7 +8,9 @@ Everything before this overwrite is in git history (`git show formal/v2-cutover:
 top is the order**. Decisions D-P60–D-P69 are signed (`design.md`); their recorded conditions still
 gate the cards that name them. PLAN-V2 is kept for its rules and its V2 cards. `PLAN.md` points at V3.
 
-**Reading the goal prompt under V3** (the prompt is unchanged; these files redirect it):
+**The goal prompt.** `v2-bundle/docs/GOAL-PROMPT.md` is now the **V3 version** (PLAN-V3 §10.3, with the
+V2 prompt's loop and rules adjusted). Until the human pastes it, a session running the V2 prompt
+reads its references this way:
 - "read PLAN-V2 §0–§4" → read **PLAN-V3 §0–§4 and §10** (PLAN-V2's banner says so).
 - "DONE means PLAN-V2 §6" → DONE is **PLAN-V3 §6**, the Lean term `Done` (PLAN-V2 §6's note).
 - The headline name `lowering_equivalence_poseidon`: card PL.1 deletes today's theorem of that
@@ -40,5 +42,5 @@ no frozen edit), **OBJ.17** (name the target "fixture F1"), **Q0.5** (V2 card, c
 re-hashes `Program.lean` and `Statements.lean` together, or it does not merge G1.2. W14 — no Yul
 PROOF card is READY before T3.11's exhibit, whatever the table's status column says.
 
-**Waiting on human:** nothing blocks the queue. Optional: paste PLAN-V3 §10.3 as the goal prompt
-(it says what the redirects already say).
+**Waiting on human:** nothing blocks the queue. Recommended: paste the V3 goal prompt
+(`v2-bundle/docs/GOAL-PROMPT.md`, everything below its line) as the orchestrator's `/goal`.

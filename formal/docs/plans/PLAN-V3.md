@@ -1107,7 +1107,8 @@ orchestrator can check: a signed D-P60 in `design.md`.
 | "you do not decide" (W2) | every V3 card names the decision it waits for | an unsigned D-P61–D-P69 leaves its cards BLOCKED; nothing is acted on early |
 
 So the human's only action is to sign (or strike) decisions in `design.md`. §10.3 restates the goal
-for V3 and is optional: pasting it changes nothing the four files do not already say.
+for V3; `v2-bundle/docs/GOAL-PROMPT.md` now holds it in full, with the V2 prompt's loop and rules
+adjusted for V3 (updated 2026-11-17, after PL.0). Pasting it removes the reliance on the redirects.
 
 ### 10.1 Before D-P60 is signed: flags on live cards (leads, each with its reproducer)
 
@@ -1167,7 +1168,7 @@ re-hashes; `checks.sh`; the cone tool; W1–W11. **What stops.** Block rows abou
 render; pin-by-pin additions to `Valid` after R.6; any card whose only effect is downstream of a
 refuted leaf.
 
-### 10.3 The orchestrator's goal, restated for V3 (optional)
+### 10.3 The orchestrator's goal, restated for V3 (full text: `v2-bundle/docs/GOAL-PROMPT.md`)
 
 ```
 GOAL  In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove

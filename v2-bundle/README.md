@@ -6,7 +6,7 @@
 |---|---|---|
 | `docs/PLAN-V2.md`, `docs/EXECUTION-V2.md` | `formal/docs/plans/` | T0.4 (orchestrator) |
 | `docs/QUEUE.md`, `docs/STATUS.md` | `formal/docs/` | T0.4 |
-| `docs/GOAL-PROMPT.md` | the orchestrator's `/goal` (paste it) | the human |
+| `docs/GOAL-PROMPT.md` | the orchestrator's `/goal` (paste it). Since 2026-11-17 it is the PLAN-V3 version; the V2 version is at tag `formal/v2-cutover` | the human |
 | `docs/background/formal-lowering-review.md` | not landed; background only (the original review, findings F1–F11) | — |
 | `lean/Midfall/LoweringV2/{Program,Statements}.lean`, `lean/Midfall/Lowering/LegacyVacuity.lean` | `formal/Midfall/…` | Q0.1 |
 | `lean/Midfall/Tools/ConeSorries.lean` | `formal/Midfall/Tools/` | Q0.2 |
