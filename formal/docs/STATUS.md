@@ -156,3 +156,35 @@ things I will brief.
 **Question 4 for the human:** may a card push and delete `formal/ci-negctl` on `origin` to prove CI can go red — or should the CI negative control be done on a fork, or skipped with the gate's red-capability argued some other way?
 
 **Context, checked at `d6cef1e`:** DG.7's step 4 is that create-and-delete on the shared `EYBlockchain/midfall` remote, and `.github/workflows/formal.yml` does not exist yet, so it must be created. Verified good news: the runner label `ubuntu-latest-16-core-x64` is already used by `ci.yaml` at `:47`, `:65`, `:92`. DG.7's own Guidance declares its premises untested (*“Nothing here was run in this session”*) — per the loop that is a probe to run, not a brief to issue blind. **The session before this one ended at round 46 by context exhaustion; four questions await the human: the W13 trio above, plus question 4.**
+
+## STANDING RULE (human, 2026-11-17): check the cards, docs and code before any definite statement
+
+**Applies to the orchestrator, not only to subagents.** Before asserting that something is blocked,
+missing, contradictory or impossible, **run the command or read the file that would show it.** If I
+have not, the output is a **lead**, and must be labelled one.
+
+**Why this is here. Three times in four rounds I escalated a 'blocker' that the documents already
+answered:**
+  - *"should the report print UNREACHABLE instead of 9?"* — **DG.2 already ships it**; the report
+    prints `[UNREACHABLE (a leaf is refuted…)]`. Found by a card reading actual output, not by me.
+  - *"which ticket clears `poseidon_valid`?"* and *"delete or repair?"* — **PL.1 does it, and deletes
+    its consumers too**; `PLAN-V3.md:366` says so outright. I had skimmed past it.
+  - *"`checks.sh` is red at the KAT gate"* — a **stale claim in my own STATUS**, fixed rounds earlier
+    by DG.0. A stale blocker stops work that is already unblocked.
+
+**This is the project's central failure mode, and I was committing it.** Every one of these was
+answerable by `grep`, `cat`, or running the gate. The rule exists in the plan already — *"comments,
+docstrings, ledger prose, design memos and earlier reports, **including yours**, are leads"* — I had
+been applying it to subagents and not to myself.
+
+### ⚠ SELF-CORRECTION: my "DG.6 ↔ PL.1 ordering defect" is an UNVERIFIED LEAD, not a finding
+
+I asserted that DG.6 (adds `#assert_no_refuted_sorry`) cannot merge before PL.1 (deletes the refuted
+sorry the gate detects). **I did not check this.** Evidence I have not read:
+  - whether DG.6's Accept line requires the gate to **pass** at DG.6's own commit, or only to be
+    **present and wired**;
+  - whether `PLAN-V3.md:359` ("errors today on `poseidon_valid`") is a **statement of current state
+    that PL.1 resolves**, or a contradiction with the table;
+  - whether §5 M0's listing order is a **dependency order** at all.
+
+**Treat it as a question to verify before briefing DG.6, not as a plan defect to report.**
