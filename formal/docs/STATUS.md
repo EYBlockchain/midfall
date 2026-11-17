@@ -254,29 +254,24 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **S.9 merged `fece4c7`: D-P50 executed.** `Render.Valid` now has **13 clauses**
-(`vkPins`/`vkProgressPins` moved into frozen `Statements.lean` §2 verbatim — the import direction
-`VkLoading → Blocks → Statements` forbids referencing them). `vk_blockRow` takes **no pin
-hypotheses** — pins arrive via `hR.vkPins`/`hR.vkProgressPins`, so the hinge can reach them from
-`R.Valid`. `Frozen.sha256` re-hashed deliberately (one line, `Statements.lean 362e0b64→50fd6257`).
-**`native_decide` axioms in the deployment path: 1 → 7** — §6 permits this, but the trusted base is
-now seven compiler decisions wide, which is a property of the result, not a detail.
+**In flight:** none. **R.2 merged `8c5f237`** — the WP-G1 region inventory. **Arithmetic closes
+token-for-token: 823 + 68 + 6384 + 18 = 7293 = 14054 − 6761** (orchestrator re-verified the sum), and
+the text with those four regions excised **equals** the AST list. C.4's older 3156/10433 decomposes
+under the same table, so both measurements are consistent.
 
-**ALL EIGHT CONES UNCHANGED** (headline 11, `vk_blockRow` 3, `tr_blockSound`/`tr_blockProgress` 0,
-`fp_finalPairing_contracts` 3, `of_blocks` 7, `end_to_end` 1, `vk_slice` 0). Register 60, three-way
-agreement verified. **S.9 stated plainly the hinge is STILL not closable:** pins are reachable from
-`Valid`, but `poseidonRender.Valid` stays refuted by C.4's six clauses.
+**THE FINDING THAT MATTERS: with all four regions emitted, `codegenAgrees` at the deployment evaluates
+TRUE — clause 6 becomes PROVED, not merely closer.** **It is the only one of the four refuted `Valid`
+clauses closable in Lean without a Rust port.** It also means **PLAN-V2:236 sets the wrong acceptance
+target** — PCS is 18 brace tokens from equal and needs no separate epic.
 
-**Next READY (2026-11-17, after the review merge `6481731`), in QUEUE order:** **F.2** (deployment
-table), **R.2** (WP-G1 region inventory), **F.1** (sequencing glue — expected headline cone 11 → 9,
-the first drop), **S.10** (stale clause-count prose) and **S.2**. S.4–S.6 follow F.1. R.1 is DONE
-(`2041977`, recorded there as "F.1"). Q0.5, R.3, R.4 and R.5 wait on human sign-off (`docs/DECISIONS-PENDING.md`).
-**Decisions:** **D-P49 and D-P50 are APPROVED** — ratified by the human on 2026-11-17 after S.3/S.9 had
-applied them. **D-P45–D-P48 are PROPOSED, not decided:** the human did not delegate (EXECUTION-V2 W2).
-Draft wording is in `docs/DECISIONS-PENDING.md`, with R-72's second question (recommended: reject),
-`Rejects`/`SoundSide`, the `pcs`/`Inv` boundary (S.2), WP-T ordering, `Valid.model` (R.3) and Gap B
-(R.4). **`poseidon_valid` is on the critical path:** every route to the headline needs it; after R.1, four
-clauses remain refuted (2 `layout`, 3 `invariants`, 6 `codegen`, 9 `permutationCommitmentsMatch`).
+**Next READY: G1.4 (18 tokens, 0.5 h) — the cheapest cone-relevant win available**, then G1.2 (68),
+G1.1 (823, **needs sign-off: the only card touching a frozen file — splices into `mainAsmRaw` in
+sha256-pinned `Program.lean`**), G1.3 (6384, split-first). G1.2–G1.4 land in the unpinned
+`GenAstDispatch.lean`. `traceAndGasHelpers` is vacuous at this render (`ctx.trace = false`) — no card.
+
+**Stated limit: `poseidon_valid` does NOT close from these.** `poseidonRender_notValid` runs through
+clause 2, and clauses 2/3/9 stay refuted. **Cone stays 11 until the plan-sizing port (2/3) and the v1
+`permutationCommitmentsMatch` defect (9) are addressed — both upstream.**
 ## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
 
 **Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as
