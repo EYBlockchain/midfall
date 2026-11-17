@@ -2055,3 +2055,26 @@ A reuse candidate gets a ticket only when a SKELETON puts it in the cone.
 | | `Surface.lean`: `extcodehash_of_deployment` | B1.0 restates it if needed |
 | **Parked (8)** | `AccEncoding.lean`: `toExec_fullyCollapsed`, `toExec_validFor`, `toExec_fixedScalarCount`. `Accumulator.lean`: `decodeAcc_injective`, `decodeAcc_encode_pointPair` | X-phase |
 | | `Halo2/Spec/Piop.lean`: `accepts` (a sorried def). `Statements.lean`: `verifyMsgs_iff_spec`, `contractRef_noAcc` | X7 |
+
+## ⚠ HANDOVER 2 (round 43) — G1.2c must NOT be run as written
+
+**I scoped G1.2c before reading the PL.G restatement, and the restatement invalidates its framing.**
+The goal is now the generator theorem `lowering_correct` **for every render with `ValidV3`**, widened
+to IVC as `lowering_correctW`. **Fixtures are tests.** The binding line is:
+
+> **No PROOF card may state or prove anything at a fixture.**
+
+**G1.2c's acceptance is built on `codegenAgrees poseidonPv poseidonM` and a `PoseidonValid.lean` token
+pin — both fixture-level measurements, therefore tests under the restatement.** A card treating them
+as the acceptance condition optimises the wrong thing.
+
+**The structural work D-P65 requires is still needed** — the `mainAsmRaw` widening, the `sliceOf`
+companion, and the `hoist` scope repair that keeps `prog_slices_decomp` from becoming a refutation —
+**but it must be re-framed against `ValidV3`/`lowering_correct`, not against the poseidon fixture.**
+
+**Also noted:** T3.4 dropped; T3.6 replaced by GEN.1; T3.3 and T3.11 are tests. Area WID = milestone
+M9; area CERT = M10 (D-P73 certifies the generator itself). **A missed PLAN-V3 §5 M5 threshold goes to
+the human — per-fixture rows are not a fallback.**
+
+**Next card comes from the V3 table, not my V2-framed queue: row 2, DG.1 (land the axiom gate), after
+DG.0 which is done.** Read PLAN-V3 §2.2 rows 71-73 and §5 M9/M10 before briefing it.
