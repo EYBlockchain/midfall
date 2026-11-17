@@ -41,6 +41,47 @@ composition step, and size estimate **with sample size**; two rows say 'no basis
 inventing numbers. M0.1 caveats carried: 2 of 7 sequenced links are vacuous (pcs empty at plan level),
 and `hB` includes quotientLin, which emits 122 of 6572 tokens.
 
+## ⚠⚠ C.4 (merged `aee4f69`): `poseidonRender` is PROVABLY NOT Valid
+
+**`theorem poseidonRender_notValid : ¬ poseidonRender.Valid` is PROVED** (PoseidonValid.lean:468,
+verified by the orchestrator). **C.1's `poseidon_valid` sorry is not unfinished — it is IMPOSSIBLE at
+this render.** Clause map at `poseidonRender` (11 clauses of `Render.Valid`, `Statements.lean:139`):
+**4 PROVED / 6 REFUTED / 1 SORRY.** The card predicted 3 refuted; it is 6.
+
+| clause | verdict | deciding value |
+|---|---|---|
+| circuitMeta | REFUTED | numEvals 27 vs 48 |
+| layout | REFUTED | proofLen 1792 vs 4320 |
+| invariants | REFUTED *(not predicted)* | `.error "PCS query schedule must end with linearization query"` |
+| model | **SORRY (true but undischageable)** | two obstructions, see below |
+| inputs | PROVED | k=6=domain.k |
+| codegen | REFUTED *(not predicted)* | 3156 AST vs 10433 printed tokens; first diff idx 1333 = WP-G1 |
+| closed | PROVED | mainClosed = true |
+| slots | REFUTED *(not predicted)* | negLagranges reads 9 = 7 (pv 9 vs cs 6+1) |
+| supported | REFUTED *(not predicted)* | csDegree .ok 3 vs 5; perm 8 vs 0 (D.2 gap A) |
+| noWriters | PROVED | noWritersFuel 200 = true |
+| transcriptMptr | PROVED | TRANSCRIPT_MPTR 4096 ≥ 0x80 |
+
+**FOUR INDEPENDENT ROOT CAUSES, only one of them in Lean.** Clauses 1/2/3/8 are ONE finding (typed-in
+`poseidonMeta` over `constraintSystemMetaDefault`); clause 9 is D.2 gap A (no gates in `vk.json`);
+clause 6 is WP-G1 (AST emitter). **The ProtocolPlan question is not one decision — it is at least
+three separate upstream data problems.**
+
+**`model` is true but blocked twice.** Beyond C.1's non-reduction, `poseidonModelVal`'s error arm
+mentions `poseidonModel` in its own proof type, so `cases`/`rw`/`conv`/`simp`/`▸` all fail on the
+motive (each message measured). Discharge needs `deriving Inhabited` on `Halo2Verifier` (v1 edit,
+forbidden) PLUS a `getD` restatement, **or** a frozen change to `Render.model`.
+
+**CONE DID NOT MOVE: 11 → 11, byte-identical list.** `PoseidonV2` cannot import `PoseidonValid`
+(cycle), so the new named sorry sits outside the cone while `poseidon_valid` remains the cone's sorry.
+**A card can refute a cone member and leave the cone unchanged — the cone measures what is cited, not
+what is known.** Do not read a static cone as plan stability.
+
+Register 53→54. 30 `native_decide` axioms added, all confined to `Instances/`; every decl in the file
+also carries `poseidonModel_isOk`'s axiom via `poseidonRender.model`. Method: `poseidonRender` is
+noncomputable and was never `#eval`'d — computation went through computable proxies `poseidonM`/
+`poseidonPv` **pinned to the render by `rfl`**.
+
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
 `lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
@@ -112,10 +153,11 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: C.4** (after C.1, validity skeleton clause by clause) and **C.3**
-(after C.2, staged rejection) — **C.3 is where the `Rejects`/`SoundSide` decision lands if I do not
-get one.** M0.1's table and C.2's requirements table are both in QUEUE.md as inputs.
-**Still blocked on human:** ProtocolPlan provenance (`poseidon_valid`, 3 obstacles) · R-72 (Q0.5) ·
+**In flight:** none. **Next READY: C.3** (after C.2 — staged rejection; also where the
+`Rejects`/`SoundSide` decision lands) and **FP.0** (after C.2). **C.4's finding means no Lean card can
+make `poseidon_valid` true** — §6 is unreachable until the upstream data problems are fixed.
+**Waiting on human (4):** ProtocolPlan/poseidonMeta provenance (now 3 distinct data problems) ·
+`Rejects`/`SoundSide` · R-72 (Q0.5) · `g1CodecZ.ofCompressed?`.
 `g1CodecZ.ofCompressed?` · **now also `Rejects`/`SoundSide`.**
 `g1CodecZ.ofCompressed?` (D.3 check 3).
 **Still blocked on human:** ProtocolPlan provenance (blocks `poseidon_valid`, now 3 obstacles) · R-72

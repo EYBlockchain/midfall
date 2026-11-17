@@ -443,7 +443,7 @@ still has `poseidon_valid`, `poseidon_quotient_block`, `poseidon_rejects` and
 only when the rows above close; `prog_slices_decomp` is the one new sorry NOT in the cone (nothing
 cites it yet), so the table has 7 rows and the cone shows 6 of them plus `Run_worldEq_of_noWriters`.
 
-### C.4 — Validity skeleton, clause by clause
+### C.4 — Validity skeleton, clause by clause  **[MERGED aee4f69 - NEGATIVE: 6 of 11 clauses REFUTED; not Valid is PROVED]**
 GEN · SKELETON · box 2 h · Sonnet · after C.1
 
 - **Goal.** `poseidon_valid` built from one lemma per `Render.Valid` clause. The 11 clauses are
