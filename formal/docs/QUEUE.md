@@ -772,7 +772,7 @@ GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2�
           -- #eval ((yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1).dropLast
           --         == yulTokens ((partsOf poseidonM).accumulatorHelpers)
 
-### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY]**
+### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
 GEN · EMIT · box 0.75 h · Sonnet · after R.2; **a prerequisite of G1.3** (both definitions are
 called ONLY from the numerator block — measured: neither `q_program_fail(` nor `q_pow5(` occurs in
 any other region of the main block)
@@ -811,6 +811,39 @@ any other region of the main block)
                  (renderQuotientHelpers (partialCtxOfVerifier poseidonM))                     -- [q_program_fail, q_pow5]
           #eval (partialCtxOfVerifier poseidonM).quotientPow5Helper                            -- true
 
+### G1.2b — Find the real splice site for the quotient helpers  **[READY — BLOCKS G1.2/G1.3]**
+
+GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
+
+- **Goal.** Determine where the quotient helper flags can actually be read, given that **G1.2's
+  recommended repair (c) rests on a false premise.**
+- **THE FALSE PREMISE, caught by the orchestrator at `5a8585e`.** G1.2 states that `mainAsmRaw` and
+  `sliceOf` (`Program.lean:98`/`:125`) **both take `(pv, m)`**, so the flag is readable with no new
+  duplicate fact. **Measured: `def mainAsmRaw (pv : PlanView) : YulBlock` — it takes `pv` ONLY.** The
+  flags are `Halo2Verifier`/`Model` fields (`Models.lean:764-766`), so **`m` is not in scope at
+  `mainAsmRaw` at all.** Widening it is a frozen `Program.lean` change with a signature blast radius,
+  not the free splice (c) was sold as. **`sliceOf` does take `(pv) (m)` — so half the claim holds.**
+- **Do.** For each candidate site — `sliceOf`, `mainAsmRaw`, `emitPartial`, and any call path from
+  `DeployedProfile`/`PoseidonV2` that already has a `Model` in hand — print whether `m` (or the flags)
+  is in scope, and what a splice there would cost in call sites and frozen re-hashes. **One row per
+  site, each with the printed signature that decides it.**
+- **Accept.** A table of candidate splice sites with **printed signatures**, and a recommendation that
+  states its own blast radius honestly (call sites touched, frozen files re-hashed, gates at risk).
+  **If no site has `m` without a signature change, say that plainly — it means repair (a) or a new
+  shape, and G1.1/G1.2/G1.3 all wait on it.**
+- **Also settle, from G1.2's second finding:** the limb7/wide arms interpolate
+  `limb7YulCoeffs`/`wideLimb7YulCoeffs` (6 entries, 203 tokens each) and are **not Bool-selectable in
+  any meaningful sense**. **`emit the flag test, not the bodies` would be a silent lie for a limb7
+  render.** The honest shape G1.2 proposed: `q_program_fail` unconditional + `q_pow5` on its flag +
+  the limb7 family as a **named un-emitted arm with a gate asserting that a true flag makes the region
+  unequal.** Decide whether that gate is required here or deferred.
+- **Does NOT need.** Implementing any splice; G1.1/G1.3; frozen edits.
+- **Reproducer preserved:** `/tmp/g12-patch/G1.2-PROPOSAL.md` + probes `/tmp/g12/p.lean`, `p3.lean`,
+  `p5.lean` (~8 s each). **G1.2's emitter is verified working and flag-parametric — the row prints
+  `equal true`, and teeth are proven 4/4 (a one-literal mutation reddens both the token row and
+  `stmtsBeq`). Only the splice SITE is unresolved.**
+
+---
 ### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY]**
 GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
 
