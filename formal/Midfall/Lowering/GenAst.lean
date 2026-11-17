@@ -867,6 +867,42 @@ def emitQuotientLinAt (k : Nat) : Block Op :=
     emitLagrange reads, so the two slices cannot disagree about the domain size. -/
 def emitQuotientLin (pv : PlanView) : Block Op := emitQuotientLinAt pv.k
 
+/-- T:partials/quotient_numerator/QuotientHelpers.yul: the q_program_fail definition. The text port
+    renders it UNCONDITIONALLY (VerifierPartials.lean:1183), so the emitter does too: it is the
+    quotient VM's revert helper, defined here rather than in AssemblyHelpers.yul because the
+    quotient program renders in BOTH the main verifier and the standalone evaluator assembly. -/
+def emitQProgramFail : Block Op :=
+  [ yfun "q_program_fail" [] []
+      [ yexpr (yop Op.mstore [ylit 0x00, yop Op.shl [ylit 224, ylit 0x3cc81b89]])
+      , yexpr (yop Op.revert [ylit 0x00, ylit 0x04]) ] ]
+
+/-- The q_pow5 definition: the pow5 arm of the same template, gated on the flag the render model
+    carries. FR_MODULUS stays a NAME: the v2 inliner substitutes it (Program.lean's constTableOf). -/
+def emitQPow5 : Block Op :=
+  [ yfun "q_pow5" ["x"] ["z"]
+      [ ylet "q_r" (yvar "FR_MODULUS")
+      , ylet "x2" (yop Op.mulmod [yvar "x", yvar "x", yvar "q_r"])
+      , yset "z" (yop Op.mulmod [yvar "x", yop Op.mulmod [yvar "x2", yvar "x2", yvar "q_r"],
+          yvar "q_r"]) ] ]
+
+/-- The quotient helper region AS A FUNCTION OF THE FLAG (G1.2). 'emitPartial' cannot carry this:
+    its only input is a PlanView, and PlanView has no route to the three quotient helper flags -
+    they are Model fields (Models.lean:764-766) copied into PartialCtx by partialCtxOfVerifier
+    (Artifacts.lean:681-683) and DERIVED in Rust from the generated quotient blocks. So the caller
+    that HAS the model passes the flag in; nothing here is hard-coded.
+
+    THE UN-EMITTED ARMS, NAMED. The template has two more arms, 'q_limb7' and 'q_widelimb7', each
+    rendered when 'quotientLimb7Helper' / 'quotientWideLimb7Helper' is set. They are NOT
+    Bool-selectable in any meaningful sense: each interpolates a coefficient LIST
+    ('limb7YulCoeffs' / 'wideLimb7YulCoeffs', 6 entries at the deployed render) into a chain of
+    addmod/mulmod statements, and each render is 203 tokens against this region's 68. A flag-only
+    emitter would emit NOTHING when those flags are set, i.e. be silently wrong for exactly the
+    renders they describe. They are out of scope here and gate 62 says so on its own face: it
+    hypothesises both flags FALSE. Converting them needs the coefficient list as an input, which is
+    a widening of this signature and not a branch inside it. -/
+def emitQuotientHelpersAt (pow5 : Bool) : Block Op :=
+  emitQProgramFail ++ (if pow5 then emitQPow5 else [])
+
 /-! ### VkLoading -/
 
 /-- The VK-loading block (VkLoading.yul:1-141) as an AST, parameterised by the SEVEN plan
@@ -1939,6 +1975,65 @@ def emitQuotientLinRegionBoundary_ok : IO Bool :=
     SyntaxEq.stmtsBeq (emitQuotientLinAt poseidonCtx.k)
       VerifierPartialKats.qalLinearization_ast)
 
+/-- The row relation for the quotient helper region: the TEXT the port renders for the deployed
+    quotient profile against the tokens of an emitted block. Wrapped in braces on the text side
+    because that is what 'EVM.print' of a block produces; the region itself is 68 tokens and the
+    wrapped render is 70. -/
+def quotientHelpersRegionRow (b : Block Op) : Bool :=
+  yulTokens ("{" ++ renderQuotientHelpers quotientCtx ++ "}") == yulTokens (EVM.print b)
+
+/-- GATE 62 (THE QUOTIENT HELPER REGION, G1.2). The two definitions the
+    'partials/quotient_numerator/QuotientHelpers.yul' include renders - 'q_program_fail' and, on
+    its flag, 'q_pow5' - reproduced by the AST emitter token for token. THE FLAGS ARE READ, NOT
+    WRITTEN: 'quotientPow5Helper' selects the second definition, and the two conjuncts that follow
+    it are the AST-SIDE HYPOTHESIS that the limb7 and wide-limb7 arms are off at this render - the
+    arms 'emitQuotientHelpersAt' does NOT emit (see its header). They are part of the gate and not
+    a comment because a render that turned either on would make the equality below false, and the
+    gate would redden instead of silently emitting a short region. Measured here, not inherited:
+    the deployed render is 70 tokens wrapped (68 bare), pow5 on, limb7 off, wide off. -/
+def emitQuotientHelpersRegion_ok : Bool :=
+  quotientCtx.quotientLimb7Helper == false &&
+    quotientCtx.quotientWideLimb7Helper == false &&
+    quotientHelpersRegionRow (emitQuotientHelpersAt quotientCtx.quotientPow5Helper)
+
+/-- GATE 63 (perturbation, the quotient helper region; D-P23 falsifiability of gate 62). Two
+    one-literal mutations, one per definition: the shift amount of the revert selector in
+    'q_program_fail' (224 -> 225) and the second operand of the inner 'mulmod' in 'q_pow5'
+    (x2 -> x3). Each reddens BOTH relations - the token row and 'stmtsBeq' against the real region -
+    so neither definition is decoration and the row is not blind to the interior of either. -/
+def emitQuotientHelpersDetectsPerturbation_ok : Bool :=
+  let real := emitQuotientHelpersAt true
+  let badShl : Block Op :=
+    [ yfun "q_program_fail" [] []
+        [ yexpr (yop Op.mstore [ylit 0x00, yop Op.shl [ylit 225, ylit 0x3cc81b89]])
+        , yexpr (yop Op.revert [ylit 0x00, ylit 0x04]) ] ] ++ emitQPow5
+  let badOperand : Block Op :=
+    emitQProgramFail ++
+      [ yfun "q_pow5" ["x"] ["z"]
+          [ ylet "q_r" (yvar "FR_MODULUS")
+          , ylet "x2" (yop Op.mulmod [yvar "x", yvar "x", yvar "q_r"])
+          , yset "z" (yop Op.mulmod [yvar "x",
+              yop Op.mulmod [yvar "x2", yvar "x3", yvar "q_r"], yvar "q_r"]) ] ]
+  ! quotientHelpersRegionRow badShl && ! quotientHelpersRegionRow badOperand &&
+    ! SyntaxEq.stmtsBeq real badShl && ! SyntaxEq.stmtsBeq real badOperand
+
+/-- GATE 64 (THE FLAG REACHES THE PROGRAM). 'emitQuotientHelpersAt' is a function of the flag and
+    not a constant with a flag-shaped argument: the emitted definition list and the token count move
+    with it (2 defs / 70 tokens on, 1 def / 25 tokens off, braces included), and the flag the gate
+    reads is the one the deployed render carries. The bare-region counts are 68 and 23; the +2 is the
+    block's own pair of braces, which is also why the splice into 'mainAsmRaw' moves that block by 68
+    tokens and not 70. -/
+def emitQuotientHelpersFlagSelects_ok : Bool :=
+  ((emitQuotientHelpersAt true).filterMap fun
+      | .funDef n _ _ _ => some n
+      | _ => none) == ["q_program_fail", "q_pow5"] &&
+    ((emitQuotientHelpersAt false).filterMap fun
+        | .funDef n _ _ _ => some n
+        | _ => none) == ["q_program_fail"] &&
+    (yulTokens (EVM.print (emitQuotientHelpersAt true))).length == 70 &&
+    (yulTokens (EVM.print (emitQuotientHelpersAt false))).length == 25 &&
+    quotientCtx.quotientPow5Helper == true
+
 /-! ### The P-AST3b gates: vkLoading -/
 
 /-- GATE 30 (the D-P25 tripwire, VkLoading). The emitted AST prints to the same token
@@ -2907,6 +3002,9 @@ end Midfall.Lowering.GenAst
 #eval Midfall.Lowering.GenAst.emitQuotientLinDetectsBuiltinVsCall_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLinIsReal_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitQuotientLinRegionBoundary_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientHelpersRegion_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientHelpersDetectsPerturbation_ok -- expect true
+#eval Midfall.Lowering.GenAst.emitQuotientHelpersFlagSelects_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitVkLoading_tokens_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitVkLoading_beq_ok -- expect true
 #eval Midfall.Lowering.GenAst.emitVkLoadingAcc_ok -- expect true

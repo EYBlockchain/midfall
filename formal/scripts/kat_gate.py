@@ -131,7 +131,18 @@ EVAL = re.compile(
 # They were already counted as annotated gates (the regex takes any non-space token as the
 # expectation), so the measured total is 1397 before and after the spelling fix - what the typo hid
 # was the COMPARISON, which pass 1's total failure never let run.
-EXPECTED_KAT_TOTAL = 1397
+# G1.2 moved EXPECTED_KAT_TOTAL 1397 -> 1400 deliberately: three NEW gates in
+# Midfall/Lowering/GenAst.lean - the quotient helper region emitter the G1.2 batch splices into
+# Program.mainAsmRaw - and not a re-spelling or a replacement of anything.
+# emitQuotientHelpersRegion_ok (the q_program_fail + q_pow5 region against the text port's render,
+# with the limb7 / wide-limb7 flags hypothesised FALSE on the gate's own face);
+# emitQuotientHelpersDetectsPerturbation_ok (two one-literal mutations, one per definition, each
+# reddening BOTH the token row and stmtsBeq - the teeth); emitQuotientHelpersFlagSelects_ok (the
+# definition list and the token count move with the flag, so the emitter is a function of the Model
+# field and not a constant). No gate was deleted or edited and the file count does not move
+# (GenAst.lean was already in the suite). All three were run through `lake env lean` before this
+# line moved and all three print true.
+EXPECTED_KAT_TOTAL = 1400
 EXPECTED_KAT_FILES = 102
 
 # Only these shapes count as #eval output.
