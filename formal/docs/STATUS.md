@@ -1,82 +1,117 @@
-# STATUS — overwritten by every ticket (≤ 1 page)
+```
+imports_avoid: ok (14 modules)
+cone_avoids Midfall.LoweringV2.lowering_equivalence_of_blocks: ok (14 modules)
+cone_avoids Midfall.LoweringV2.end_to_end: ok (14 modules)
+cone_sorries Midfall.LoweringV2.lowering_equivalence_of_blocks: 5
+Midfall.LoweringV2.noWriters_prog
+Midfall.LoweringV2.prefix_run_clean
+Midfall.LoweringV2.rejects_of_not_accepts
+Midfall.LoweringV2.runBody_iff_slices
+Midfall.Yul.Bridge.Run_worldEq_of_noWriters
+cone_sorries Midfall.LoweringV2.end_to_end: 1
+Midfall.LoweringV2.end_to_end
+cone_avoids Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon: ok (14 modules)
+cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon: 9
+Midfall.LoweringV2.blockContracts_of_valid
+Midfall.LoweringV2.noWriters_prog
+Midfall.LoweringV2.prefix_run_clean
+Midfall.LoweringV2.rejects_of_not_accepts
+Midfall.LoweringV2.runBody_iff_slices
+Midfall.Instances.PoseidonV2.poseidon_quotient_block
+Midfall.Instances.PoseidonV2.poseidon_rejects
+Midfall.Instances.PoseidonV2.poseidon_valid
+Midfall.Yul.Bridge.Run_worldEq_of_noWriters
+cone_sorries Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts: 3
+Midfall.LoweringV2.Blocks.FinalPairing.ec_pairing_contract
+Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra
+Midfall.LoweringV2.Blocks.FinalPairing.fp_stmt_steps
+cone_sorries Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress: 0
+cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress: ok (14 modules)
+cone_avoids Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts: ok (14 modules)
+cone_sorries Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound: 0
+cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound: ok (14 modules)
+cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow: 3
+Midfall.LoweringV2.Blocks.VkLoading.vk_poison_walk
+Midfall.LoweringV2.Blocks.VkLoading.vk_progress
+Midfall.LoweringV2.Blocks.VkLoading.vk_sound_clean
+cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_slice: 0
+cone_avoids Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow: ok (14 modules)
+assert_axioms Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon: ok (9 named, 1 native)
+assert_axioms Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound: ok (3 named, 0 native)
+assert_axioms Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress: ok (3 named, 0 native)
+cone_report Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon: 9 sorried leaves = 8 OPEN + 1 REFUTED + 0 VACUOUS  [UNREACHABLE (a leaf is refuted: False is derivable, the count is not a distance)]
+  OPEN     Midfall.Instances.PoseidonV2.poseidon_quotient_block
+  OPEN     Midfall.Instances.PoseidonV2.poseidon_rejects
+  REFUTED  Midfall.Instances.PoseidonV2.poseidon_valid   (negation proved: Midfall.Instances.PoseidonValid.poseidonRender_notValid)
+  OPEN     Midfall.LoweringV2.blockContracts_of_valid
+  OPEN     Midfall.LoweringV2.noWriters_prog
+  OPEN     Midfall.LoweringV2.prefix_run_clean
+  OPEN     Midfall.LoweringV2.rejects_of_not_accepts
+  OPEN     Midfall.LoweringV2.runBody_iff_slices
+  OPEN     Midfall.Yul.Bridge.Run_worldEq_of_noWriters
+  axioms: [propext,
+ sorryAx,
+ Classical.choice,
+ Quot.sound,
+ Midfall.Assumptions.bls12_381Pairing,
+ Midfall.Assumptions.blsGT,
+ Midfall.Assumptions.blsGT_group,
+ Midfall.Assumptions.blsGT_module,
+ Midfall.Assumptions.blsGT_primeOrder]
+  native axioms: 1 [Midfall.Instances.PoseidonV2.poseidonModel_isOk._native.native_decide.ax_1_1]
+exhibits: 0 PRESENT, 4 MISSING of 4
+  MISSING  Midfall.Instances.PoseidonExhibit.fixture_returns_abiTrue_ok
+  MISSING  Midfall.Instances.PoseidonExhibit.fixture_leanAccepts_ok
+  MISSING  Midfall.Instances.PoseidonExhibit.mutants_revert_ok
+  MISSING  Midfall.Instances.PoseidonExhibit.mutants_leanRejects_ok
+block_coverage Midfall.LoweringV2.BlockRow at Midfall.Instances.PoseidonV2.poseidonRender: 0 INTEGRATED, 1 CONDITIONAL, 2 SORRY, 4 NONE of 7
+  SORRY       Midfall.Lowering.Partial.vkLoading  Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow
+  NONE        Midfall.Lowering.Partial.transcriptParser  
+  NONE        Midfall.Lowering.Partial.lagrange  
+  NONE        Midfall.Lowering.Partial.quotientLin  
+  NONE        Midfall.Lowering.Partial.pcs  
+  SORRY       Midfall.Lowering.Partial.finalPairing  Midfall.LoweringV2.Blocks.fp_blockRow
+  CONDITIONAL Midfall.Lowering.Partial.traceReturn  Midfall.LoweringV2.Blocks.tr_blockRow (1 undischarged hypothesis/es, 18 binders)
+slice_tokens [(Midfall.Lowering.Partial.vkLoading, 225), (Midfall.Lowering.Partial.transcriptParser, 925), (Midfall.Lowering.Partial.lagrange, 503), (Midfall.Lowering.Partial.quotientLin, 122), (Midfall.Lowering.Partial.pcs, 3625), (Midfall.Lowering.Partial.finalPairing, 24), (Midfall.Lowering.Partial.traceReturn, 25)]
+program_tokens ast_main 6779 generator_text_main 14054 codegenAgrees false
+axiom_sweep: ok (5 named axioms [Midfall.Assumptions.bls12_381Pairing,
+ Midfall.Assumptions.blsGT,
+ Midfall.Assumptions.blsGT_group,
+ Midfall.Assumptions.blsGT_module,
+ Midfall.Assumptions.blsGT_primeOrder], 126 native_decide axioms)
+opaque / extern / implemented_by / unsafe constants of the project (39):
+sorry_sweep: 58 declarations use sorryAx directly (1 REFUTED, 1 VACUOUS); 9 in the cone of Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon; 71 of 22468 project constants depend on it
+closure_fingerprint [Midfall.LoweringV2.LoweringEquivalence,
+ Midfall.LoweringV2.Render.Valid,
+ Midfall.LoweringV2.HypothesesInhabited,
+ Midfall.LoweringV2.EndToEnd,
+ Midfall.LoweringV2.EntryFrameInhabited]: 3449 project declarations, 477 external leaves, digest a6ddb51ce1dae8bd
+verify.sh: ok (--report)
+```
 
-**As of:** `aeba06b` (2026-11-17), after the PLAN-V3 cut-over (card PL.0, tag `formal/v2-cutover`).
-Everything before this overwrite is in git history (`git show formal/v2-cutover:formal/docs/STATUS.md`).
+## State at `13dd7a5` (card DG.8 — the block above is tool output; nothing in it is hand-transcribed)
 
-**Plan:** `docs/plans/PLAN-V3.md` (D-P60) · cards `docs/plans/PLAN-V3-cards.md` · rules
-`docs/plans/EXECUTION-V2.md` + PLAN-V3 §4 (W12–W15) · queue `docs/QUEUE.md` — **the V3 table at its
-top is the order**. Decisions D-P60–D-P69 are signed (`design.md`); their recorded conditions still
-gate the cards that name them. PLAN-V2 is kept for its rules and its V2 cards. `PLAN.md` points at V3.
+- **Plan:** `docs/plans/PLAN-V3.md` (D-P60–D-P69, D-P71–D-P73 signed in `design.md`) · cards `PLAN-V3-cards.md` · rules `EXECUTION-V2.md` + PLAN-V3 §4 (W12–W15) · **order = the V3 table at the top of `docs/QUEUE.md`**.
+- **The headline cone is UNREACHABLE, not a distance** (report above: `9 sorried leaves = 8 OPEN + 1 REFUTED`): `poseidon_valid` is refuted in the tree. That is a **live W13 violation** — the three questions at the foot of this file.
+- **Gates:** `checks.sh` green at `13dd7a5` (run by this card); sorry register in sync — 58 sorried declarations, 9 in the cone, 1 REFUTED, 1 VACUOUS.
+- **The goal changed 2026-11-17 (D-P71/72/73).** The deliverable is the generator theorem `lowering_correct` — for EVERY render with `ValidV3 R` — widened to the IVC verifier (`lowering_correctW`) and certified at the generator (`generator_correct`). **No block row, totality lemma or headline is proved at a fixture; fixtures are tests** (F1 Poseidon, F2 the IVC decider). A missed threshold of PLAN-V3 §5 M5 goes to the human; per-fixture rows are not a fallback.
+- **D-P73 blocker, measured above:** `codegenAgrees false` — 6,779 AST tokens against 14,054 of generator text. CERT.1 probes two suspect lemmas first; a refuted one goes to the human.
+- **First READY rows:** DG.6 in the table, held by the questions below; then ST.1, OBJ.17, Q0.5, S.10. **W14:** no Yul PROOF card is READY before T3.11's exhibit — the report shows **0 of 4 exhibits PRESENT**.
+- **Waiting on human:** paste `v2-bundle/docs/GOAL-PROMPT.md` (everything below its line) as the orchestrator's `/goal` — **the prompt changed with D-P71 and D-P72.** D-P72 clause 9 asks the generator's owner for a free-memory guard in the evaluator template.
 
-**The goal prompt.** `v2-bundle/docs/GOAL-PROMPT.md` is now the **V3 version** (PLAN-V3 §10.3, with the
-V2 prompt's loop and rules adjusted). Until the human pastes it, a session running the V2 prompt
-reads its references this way:
-- "read PLAN-V2 §0–§4" → read **PLAN-V3 §0–§4 and §10** (PLAN-V2's banner says so).
-- "DONE means PLAN-V2 §6" → DONE is **PLAN-V3 §6**, the Lean term `Done` (PLAN-V2 §6's note).
-- The headline name `lowering_equivalence_poseidon`: card PL.1 deletes today's theorem of that
-  name (its cone holds a refuted sorry, W13); M7's PL.H restates it as the V3 headline.
-- "FIRST: THE CUT-OVER (T0.1–T0.4)" and "expected D-P43" are V2 history: done (D-V2 is D-P44).
-- W6 ("no new gates") does not apply to the gates D-P69 approves (EXECUTION-V2's V3 note).
+## The English statement (PLAN-V3 §6) — skeleton, trusted base itemised
 
-**Cone report** at `4e18c65`, whose Lean sources are this tip's (`lake build` green, 5240 jobs):
-`imports_avoid: ok` · `lowering_equivalence_poseidon: 9` (`blockContracts_of_valid`,
-`noWriters_prog`, `prefix_run_clean`, `rejects_of_not_accepts`, `runBody_iff_slices`,
-`poseidon_quotient_block`, `poseidon_rejects`, `poseidon_valid`, `Run_worldEq_of_noWriters`) ·
-`lowering_equivalence_of_blocks: 5` · `end_to_end: 1` · `fp_finalPairing_contracts: 3` ·
-`tr_blockSound: 0` · `tr_blockProgress: 0` · `vk_blockRow: 3` · `vk_slice: 0`.
-**The headline cone is UNREACHABLE, not a distance**: `poseidon_valid` is refuted in the tree
-(`poseidonRender_notValid`) and `rejects_of_not_accepts` is false as stated (REVIEW-V3 RV-02, RV-10).
-Headline axioms (measured at `f2fe99b`): standard three, `sorryAx`, the five D-P36a constants, one
-`native_decide` axiom.
-
-**Gates at the tip:** `checks.sh` is **red** at the KAT gate (1397 annotated checks against a pinned
-1393; two annotations spelled `-- expect TRUE`). The sorry register is in sync. Card DG.0 fixes it.
-
-**Last outcomes:** F.1 merged `f588ba2` (sequencing glue proved; headline cone 11 → 9). PL.0 done
-`aeba06b` (the V3 table; every V2 card marked CONTINUES, MERGED INTO, SUPERSEDED or DONE).
-
-**Next READY, top of the V3 table:** **DG.0** (gates green), then **ST.1** (land the V3 staging module,
-no frozen edit), **OBJ.17** (name the target "fixture F1"), **Q0.5** (V2 card, continues).
-
-**In force, applied by condition:** D-P65 — the G1.1–G1.3 batch carries the block-scope repair and
-re-hashes `Program.lean` and `Statements.lean` together, or it does not merge G1.2. W14 — no Yul
-PROOF card is READY before T3.11's exhibit, whatever the table's status column says.
-
-**THE GOAL CHANGED ON 2026-11-17 (D-P71, D-P72; `design.md`).** The deliverable is the generator
-theorem `lowering_correct (R) (product) (hR : ValidV3 R) : LoweringEquivalenceV3 R product` — for
-EVERY render — and its widening to the IVC verifier, `lowering_correctW` (accumulator mode with
-the batched final pairing; external evaluator). **No block row, totality lemma or headline is
-proved at a fixture; fixtures are tests** (F1 Poseidon; F2 the IVC decider circuit). Card PL.G has
-run: PLAN-V3 §0, §2.2, §5 M5–M9, §6, §7, §9, §10.3, the cards, the V3 table and the goal prompt
-are the restated text. Lines above that speak of `lowering_equivalence_poseidon` as the headline
-describe the tree before D-P71; card PL.1 still deletes that theorem.
-
-**What changed for the queue.**
-- M0–M4 cards are unchanged (needed on either route).
-- M5–M8: T3.4 DROPPED; T3.6 REPLACED BY GEN.1; T3.3 and T3.11 are tests only. T3.9, T3.10, SIM.6,
-  HLP.1, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H, PL.E, DG.4, DG.9 are RESTATED in place for
-  every render; their children are area GEN-ROWS of `PLAN-V3-cards.md`. New: T3.1b (lands
-  `wp_run`), GEN.0 (lands parametric execution; measured in the design pass: 7 leaves, kernel
-  0.24 s), GEN.1, GEN.3 (loop rule, proved in the design pass), GEN.4, GEN.5, RECON.1b, RECON.3.
-  T3.7 is dropped; T3.0 is optional.
-- M9 (D-P72): area WID, 20 cards. WID.2 depends on nothing. M10 (D-P73): area CERT, 10 cards.
-- Evidence: `docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean` (the headline; its
-  falsifier is proved), `lean/soundness/GeneratorRows.lean` (40 named open row obligations; the
-  composition is proved), `lean/widening/*.lean`. `bash docs/plans/V3-evidence/check.sh` has two
-  new areas' worth of files (`soundness` grew; `widening` is new).
-- **A missed threshold of PLAN-V3 §5 M5 (points P, B, L, C, D) goes to the human. Per-fixture
-  rows are not a fallback.**
-
-**D-P73 (signed 2026-11-17): the generator itself is certified.** The final theorem is
-`generator_correct`: hypotheses on the generator's input only (`Generates gi o`, `SupportedInput
-gi`); `lowering_correct` is its main lemma. Milestone M10, area CERT (10 cards; evidence
-`lean/object/GeneratorCertified.lean`, 33 named lemmas). It is not provable before the tree
-emitter is complete: at F1 the port's text and the emitted tree disagree today (6,761 tokens
-against 14,054). CERT.1 probes two suspect lemmas first; a refuted one goes to the human.
-
-**Waiting on human:** paste the goal prompt (`v2-bundle/docs/GOAL-PROMPT.md`, everything below its
-line) as the orchestrator's `/goal`: **the prompt changed with D-P71 and D-P72.** D-P72 clause 9
-asks the generator's owner for a free-memory guard in the evaluator template.
+- **The claim:** for every program the Lean port of the generator emits for a circuit in the supported class — `lowering_correct (R) (product) (hR : ValidV3 R) : LoweringEquivalenceV3 R product`. Before M10 that is conditional on `ValidV3 R`, checked by computation for each circuit; after M10 (D-P73) the only hypotheses are on the generator's input (`SupportedInput`: the scope clauses, a size bound, two codec laws) and the Lean printer is trusted. **UNTESTED** — `ValidV3 poseidonRender` is refuted today.
+- **About the Lean generator's output:** the Rust generator is tested against it byte for byte on the test circuits, **not proved equal**. **UNTESTED** (`codegenAgrees false` above).
+- **Test circuits** F1, and F2 after M9; **no on-chain contract is covered**.
+- **The test SRS trapdoor is public** (D-P63): no soundness of the proof system is claimed for it.
+- **The two side conditions** and what each excludes, saying that `SoundSide` is a predicate on prover-supplied calldata (RV-20).
+- **In accumulator mode (M9):** the right-hand side is the contract's own batched check; against the Rust verifier the theorem is complete, and sound up to one value of `alpha` per input; the IVC and decider SRS are assumed to share one `[s]₂`.
+- **The trusted base** — assumed, not proved away: the yul-semantics EVM dialect and the Bridge; `EntryFrame` (selector routing, zero call value, the free-memory prologue, zero memory from `0x80`, calldata shorter than 2²⁵⁶, the `memory-safe` footprint, the ABI decoder not reverting on decodable calldata); with the external evaluator, `EvaluatorTrust` (an account that passes the code-hash pin behaves as the generated evaluator body); the precompile assumption `Eip2537.Holds` in its two real-world halves, and that the chain implements EIP-2537 and modexp.
+- **The Lean Yul token parser and `EVM.mkCall`** — they decide what tree a parsed region is. **UNTESTED** until OBJ.1's round-trip KATs land.
+- **The axioms:** the standard three for `lowering_correct`; for `generator_done`, each `native_decide` axiom by owner declaration. Measured above: 9 named + 1 native at the headline; tree-wide `axiom_sweep: ok`, 5 named + 126 native_decide.
+- **Port fidelity, and how each side is tested:** the generator by the artifact gates; the verifier by the reference gate and the mutation corpus. **UNTESTED** — 0 of 4 exhibits PRESENT.
+- **Not modelled:** gas, including the forwarded-gas constants; solc.
 
 ## ⚠ WAITING ON HUMAN — a REFUTED node is in the cone, and DG.6 cannot clear it
 
@@ -116,31 +151,8 @@ this kind). INFRA cards that do not depend on it — **DG.7** (CI that runs and 
 both merged) and **DG.8** (STATUS generated from the report, after DG.2) — are READY and are the next
 things I will brief.
 
-## ⚠ DG.7 HELD — it needs a shared-remote side effect I will not take unasked
+## ⚠ DG.7 HELD — question 4 for the human
 
-**Checked at `d6cef1e` rather than briefing blind:**
-- **`.github/workflows/formal.yml` does not exist** — the card says "replace" it. It must be created.
-- **Good news, verified:** the runner label `ubuntu-latest-16-core-x64` is **already used by `ci.yaml`
-  at `:47`, `:65`, `:92`** — so the label is presumably available to the org and the card's biggest
-  unverified premise is partly retired.
-- **The blocker:** DG.7's step 4 is *"Push a throwaway branch `formal/ci-negctl` with
-  `EXPECTED_KAT_TOTAL` off by one and confirm it is red; delete the branch."* **That is a create-and-
-delete on the shared `EYBlockchain/midfall` remote.**
+**Question 4 for the human:** may a card push and delete `formal/ci-negctl` on `origin` to prove CI can go red — or should the CI negative control be done on a fork, or skipped with the gate's red-capability argued some other way?
 
-**Why I'm stopping rather than delegating.** A subagent already pushed to this remote once without
-authorisation this session (found via `git reflog`, not by design). **The standing push rule is
-"every commit on `formal/baseline` is pushed" — it does not extend to creating and deleting
-throwaway branches on an org repo.** A negative control is the right instinct; running it on shared
-infrastructure without asking is not my call to make.
-
-**Question 4 for the human:** may a card push and delete `formal/ci-negctl` on `origin` to prove CI
-can go red — or should the CI negative control be done on a fork, or skipped with the gate's
-red-capability argued some other way?
-
-**Also noted:** DG.7's own Guidance says *"Nothing here was run in this session. Unverified:
-lean-action's input names beyond `lake-package-directory`"* — **the card declares its own premises
-untested.** Per the loop, that is a probe to run, not a brief to issue blind.
-
-**Session ended at round 46 by context exhaustion.** Tree green and pushed (`d6cef1e`). Four questions
-await the human (the W13 refuted-node trio above, plus this one). **DG.8 (STATUS generated from the
-report, after DG.2) is READY, needs no shared-remote action, and is the next card to brief.**
+**Context, checked at `d6cef1e`:** DG.7's step 4 is that create-and-delete on the shared `EYBlockchain/midfall` remote, and `.github/workflows/formal.yml` does not exist yet, so it must be created. Verified good news: the runner label `ubuntu-latest-16-core-x64` is already used by `ci.yaml` at `:47`, `:65`, `:92`. DG.7's own Guidance declares its premises untested (*“Nothing here was run in this session”*) — per the loop that is a probe to run, not a brief to issue blind. **The session before this one ended at round 46 by context exhaustion; four questions await the human: the W13 trio above, plus question 4.**

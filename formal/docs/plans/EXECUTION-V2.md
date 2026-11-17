@@ -314,16 +314,16 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
 
 ## 6. Progress, claims, estimates
 
-- **Progress measure.** `#cone_sorries <root>` lists the sorried declarations the root depends on.
-  The tool is `tools/ConeSorries.lean` in the bundle, which also provides `#cone_in`, `#cone_avoids`
-  and `#imports_avoid`.
-  - It passes 8 self-tests on v4.35.0. On this repo's build, `traceReturn_spec` gives 0 and
-    `transcriptParser_spec` gives 1 (itself), in about 30 s including loading.
-  - It also produced Q0.2's exact move list.
-  - Roots: `lowering_equivalence_of_blocks` and `end_to_end` until C.1, then
-    `lowering_equivalence_poseidon` (plus `end_to_end` at the deployment).
-  - `verify.sh` prints the count; `STATUS.md` carries it.
-  - Register totals, gate counts and KAT counts are **not** progress measures.
+- **Progress measure.** The four report lines `bash scripts/verify.sh --report` prints, in this
+  order (PLAN-V3 §6). The cone count is only the LAST of them; the first four are the measure:
+  - **leaf status** — `cone_report …<root>: N sorried leaves = a OPEN + b REFUTED + c VACUOUS`; a
+    REFUTED or VACUOUS leaf prints `[UNREACHABLE …]`, and then the count is not a distance (W13).
+  - **exhibits** — `exhibits: 4 PRESENT, 0 MISSING of 4`.
+  - **block coverage** — `block_coverage …: 7 INTEGRATED of 7`.
+  - **axiom sweep** — `axiom_sweep: ok`, with `sorry_sweep: … 0 REFUTED, 0 VACUOUS in the cone`.
+  - **cone count (last)** — `cone_sorries <root>: 0`, from `tools/ConeSorries.lean` (which also
+    provides `#cone_in`, `#cone_avoids`, `#imports_avoid`). Register totals, gate counts and KAT
+    counts are **not** progress measures.
 - **Cone status.** `STATUS.md` marks every sorry in the root's cone OPEN, REFUTED (a proved negation
   exists, e.g. `poseidonRender_notValid`) or BLOCKED (waiting on a decision or on data). A REFUTED
   node means the root is unreachable by the current route: the next ticket addresses it (fix the
