@@ -703,13 +703,20 @@ def GateAt (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (cd : Bytes)
   ∃ (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256) (st₀ : EvmState),
     DeploymentV2 R W keccak256 vkAddr ∧ EntryFrame R W Lyt keccak256 cd st₀ ∧
       Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ SoundSide R keccak256 cd ∧
-      CompleteSide R keccak256 cd ∧ LeanAccepts R keccak256 cd ∧ G1CodecLaws R.E.g1
+      CompleteSide R keccak256 cd ∧
+      -- The R-72 conjunct of the frozen `HypothesesInhabited`, as re-hashed by Q0.5 (`c384b8b`):
+      -- the calldata decodes and the snapshot exists. Copied verbatim, at `H := keccak256`.
+      (∃ ms instW inst Snap,
+        decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
+        instOfWords? (p := p) instW = some inst ∧
+        snapshotOf R.E keccak256 R.vk inst ms none = .ok Snap) ∧
+      LeanAccepts R keccak256 cd ∧ G1CodecLaws R.E.g1
 
 /-- The pinned gate implies the frozen one: nothing is lost by pinning. -/
 theorem hypothesesInhabited_of_gateAt (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (cd : Bytes) (h : GateAt R product cd) : HypothesesInhabited R product := by
-  obtain ⟨W, Lyt, vkAddr, st₀, h1, h2, h3, h4, h5, _, _⟩ := h
-  exact ⟨W, Lyt, keccak256, vkAddr, cd, st₀, h1, h2, h3, h4, h5⟩
+  obtain ⟨W, Lyt, vkAddr, st₀, h1, h2, h3, h4, h5, h6, _, h7⟩ := h
+  exact ⟨W, Lyt, keccak256, vkAddr, cd, st₀, h1, h2, h3, h4, h5, h6, h7⟩
 
 /-- TOTALITY (I-6): the modelled program is never stuck. Conjuncts 1 and 3 of `LoweringEquivalence`
     quantify over ALL runs, so on calldata the Lean verifier rejects they say nothing unless a run
