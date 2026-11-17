@@ -239,7 +239,7 @@ ALG · PORT · box 2.5 h · strongest · after Q0.3
   - If points are computable: the first fixed commitment re-encodes to its hex.
 - **Stop if.** The VK type needs data that `vk.json` does not contain. Report the field.
 
-### D.3 — Coherent success path, before any proof uses the deployment
+### D.3 — Coherent success path, before any proof uses the deployment  **[MERGED db4b2e6 - NEGATIVE: checks 1,2 false, check 3 blocked; C.1 BLOCKED]**
 GEN · KAT · box 2 h · Sonnet · after D.1, D.2
 
 - **Goal.** Show by computation that the fixture proof goes through the Lean side at the render's own

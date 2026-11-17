@@ -49,14 +49,48 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **D.3 is formally READY** (deps D.1 and D.2 both merged), but its check 3 cannot
-pass at the exhibit codec while `g1CodecZ.ofCompressed?` is a placeholder - brief it expecting that
-one check to fail, and do not let it fake the pass.
+**In flight:** none. **C.1 is BLOCKED** (see the ProtocolPlan decision above) — so the SEM/ALG chain
+(T.1, P.1 via FP.0 via C.2) has no cone root to attach to yet. **Nothing in the queue can move a cone
+until the ProtocolPlan question is answered.** Q0.5 still BLOCKED on R-72.
 **Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
 session, so verify it before assuming the SEM/ALG chain is reachable.
 **Two decisions are not mine:** WP-I2 needs `poseidonModel` totality and a real `ofCompressed?` -
 both are v1 or frozen-surface edits. **Q0.5 still BLOCKED** on R-72.
 
+**TICKET D.3 (merged `db4b2e6`, NEGATIVE-as-evidence):** `Instances/PoseidonCoherence.lean` (526 ln,
+19 gates, 3 of them `expect false`, 0 sorry, no `native_decide`). KAT pins 1375->1393, files 101->102.
+**Cone did NOT move (1 and 1).**
+
+VERDICTS: check 1 Layout **FAIL**, check 2 Meta **FAIL**, check 3 Decode **BLOCKED**, check 4 Transcript
+**PASS** (10 challenges byte-identical; replay 327 checks 0 failures), check 5 Negative control
+**PASS with teeth** (flip byte 943 -> first differing challenge index 6, indices 0-5 identical; flip
+byte 0 -> index 0, all differ; flip byte 2592 -> nothing moves).
+
+## ⚠⚠ NEW HUMAN DECISION — C.1 IS BLOCKED, AND SO IS EVERYTHING DOWNSTREAM OF IT
+
+**The headline `lowering_equivalence_poseidon` cannot be stated at the deployed profile.** Root cause,
+proved by `rfl`: `planM.protocol = Midfall.Generator.protocolPlanDefault`. `Valid.circuitMeta` and
+`Valid.layout` are both unsatisfiable on the same typed-in `poseidonMeta` because it has no real
+`ProtocolPlan`, so `fromProtocol` yields proofLen 1792 where the plan says 4320.
+
+**The fix is neither a fixture edit nor a `g1CodecZ` edit.** It needs a `poseidonMeta` whose `protocol`
+is the real `ProtocolPlan` — i.e. exactly the CS data D.2 logged as gap A (`gates`, `lookups`,
+`trashcans`, `permutation.columns`), which is in **neither** `vk.json` **nor** `poseidonPlanV2.meta_`
+(both measured empty). **Where does the real ProtocolPlan come from?** That is a scope question, not a
+card: it may need a port of `LoweringPlan::new`/QRS:2000, which D.2's card explicitly excluded.
+
+**THIRD: the conformance bundle is NOT the committed Rust fixture proof.** `trace.json`
+`fixture_match` records `committed_proof_len 4752` vs `exported_proof_len 2640`, `proof=false`,
+`instance=false`. The bundle is self-consistent (`proof.bin` is the 2640-byte exported proof and
+`proof_len` agrees) but anyone treating it as the committed fixture will be wrong.
+
+**Also: check 1's card clause conflated widths** — repacked contract width (G1@128 = 4320) vs
+compressed Rust width (G1@48 = 2640). The repaired reading ties both plus 72 slots to the trace's 72
+reads and passes. **C.1 will hit the same conflation.**
+
+**And check 3 is worse than my own brief said:** `g1CodecZ` is `noncomputable`, so the decode check is
+not executable at all — not merely false. Diagnostics confirm the layout and decoder are fine at
+`g1AffineCodec` (72 msgs, 1 inst); the exhibit's codec is the blocker.
 **TICKET D.2 (merged `8e43ac8`):** `Instances/PoseidonEnv.lean` (665 ln, 14 gates, 8 pin theorems, 0
 `native_decide`) delivers `poseidonE`, `poseidonParams`, `poseidonVkExec` (computable), `poseidonSG2`,
 `poseidonEncG2`. KAT pins 1361->1375, files 100->101. **Cone did NOT move (1 and 1)** - bookkeeping.
