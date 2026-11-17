@@ -1916,9 +1916,9 @@ lookup will hit this.
 
 ## D-P51 — **Approved: update the 4 gates that hard-code the pcs flattening (G1.4 follow-through)**
 
-> Raised by G1.4's stop-and-report. The human delegated decisions on 2026-11-17; **note the review's
-> W2 finding that delegated authority was not in fact granted — so this is recorded as PROPOSED until
-> signed, and the follow-up card does not run on it alone.**
+> Raised by G1.4's stop-and-report. **Status: APPROVED.** Signed off: human (repository owner),
+> 2026-11-17, in session after `2cad8cc`. G1.4b may run on it; its per-gate "what did this protect"
+> check and its stop condition still apply.
 
 **The situation.** G1.4 fixed `emitPcsFromPlan` to emit the 8-block partition as `Stmt.block` scopes
 instead of flattening it. **The pcs row now prints `equal true`** (3623 == 3623, braces 52 == 52, the

@@ -133,6 +133,23 @@ the tactic, TraceReturn took 988 lines by hand, and S.4–S.6 queue more hand pr
 
 Decision: ______ · Signed off: ______
 
+## 11. Batched `Program.lean` re-hash for G1.1–G1.3 (frozen)
+
+G1.2b (`2cad8cc`) found that the quotient-helper and numerator regions must splice into
+`mainAsmRaw`, which must be widened to take the model, in sha256-pinned `Program.lean`. G1.1's
+accumulator include goes there too. So G1.1–G1.3 need one deliberate re-hash, done as one batch.
+- **What changes.** `mainAsmRaw` takes `m` (four callers, all with `m` in scope); the three regions
+  are spliced; `sliceOf`'s `.quotientLin` body gains the same regions in the same commit (otherwise
+  `prog_slices_decomp`, Blocks.lean:220, becomes false); the KNOWN-GAP docstring at
+  `Program.lean:92-97` is retired.
+- **What it buys.** With G1.4b, R.2 measured `codegenAgrees` TRUE at the deployment, so `Valid`
+  clause 6 becomes proved. It does not close `poseidon_valid`: clauses 2, 3 and 9 stay refuted.
+- **Recommended: approve, conditional on the card showing** that the frozen diff is `Program.lean`
+  only, with one `Frozen.sha256` line, the `sliceOf` companion is in the same commit, and
+  `Valid.codegen` (Statements.lean:200) does not change meaning. If it does, the card stops.
+
+Decision: ______ · Signed off: ______
+
 ## Also open (no decision needed yet)
 
 - `Rejects`/`SoundSide` (C.2). Keep it an investigation (C.3). D-P47's refusal to weaken it to

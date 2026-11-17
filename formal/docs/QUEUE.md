@@ -597,7 +597,7 @@ only computable reading — R.4's premise stands, and it is the `sG2Prepared := 
 | **F.2-G4** **frozen §2's docstring now misstates the measurement**: `Statements.lean:179-181` says "C.4 still refutes six of the original eleven clauses at `poseidonRender`"; at this commit four are refuted and `slots` is a theorem | `#print axioms Midfall.Instances.PoseidonValid.poseidonValid_slots` | no `sorryAx` (clause 8 PROVED at the render, ten `native_decide` uses). Frozen file, so the fix is a decision plus a `Frozen.sha256` re-hash, not an edit |
 | **F.2-G5** `PoseidonValid.lean:132` prints a **stale** deciding value for clause 2 ("derived proofLen 1792 against the plan's 4320") while the same file's own defs say 4224/4320 and its header says 4224 | `#eval deciding_layout_derivedProofLen` · `#eval deciding_layout_planProofLen` | `4224` · `4320`. The 1792 is D.3's number at `protocolPlanDefault`, superseded by F.1. Not a soundness problem (`deciding_layout` is a sorry-free Prop-level refutation), but the file claims "every value in it is printed by this file" |
 
-### R.2 — WP-G1 region inventory (`Valid.codegen`)  **[READY]**
+### R.2 — WP-G1 region inventory (`Valid.codegen`)  **[DONE 8c5f237 — the four regions close the gap exactly; EMIT cards G1.1–G1.4]**
 GEN · PROBE · box 1 h · Sonnet · after nothing
 
 - **Goal.** The list of regions the `GenAst` emitter does not produce yet, so WP-G1 (PLAN-V2:232) can
@@ -693,7 +693,29 @@ defect). (b) "the accumulator / trace helper includes": the trace half renders 0
 (c) PLAN-V2:236's "coverage table all-equal except PCS": PCS is 18 brace tokens from equal (finding 3).
 (d) The card's 3156 / 10433 is superseded by 6761 / 14054, which is what reproduces here.
 
-### G1.4b — Land the pcs block scopes + the 5 gate updates from D-P51  **[READY — patch preserved]**
+### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY — RUN NEXT]**
+> Moved ahead of the G1 cards by the human (2026-11-17): it is the only READY card expected to move the
+> headline cone, and it needs no decision. S.3 merged `d0aabba`.
+SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3
+
+- **Goal.** Both sequencing lemmas proved sorry-free from their seven per-block hypotheses, with
+  D-P49's gate in place. C.2 left this glue sorried, which hid the sequencing ceiling until S.1, six
+  cards later. Proving it now finds any further ceiling BEFORE four row cards are spent.
+- **Needs.** S.3 merged; `slices_seq_sound` (Blocks.lean:307) and `slices_seq_progress` (:325), their
+  mid predicate `Clean R k ∨ Poisoned` (docstring at :287); `StmtsTotal` (:49); C.2's size estimates
+  (QUEUE C.2 table: 60–100 and 90–130 lines).
+- **Does NOT need.** Any block row; the deployment; `Statements.lean`.
+- **Also.** Fix the stale docstring at `Blocks.lean:301-303` (it still says §6 has the poisoned arm;
+  S.3 left it for the next card that touches `slices_seq_sound`).
+- **Deliverable.** Both lemmas, sorry-free.
+- **Accept.** `#print axioms` of both with `sorryAx` grep = 0. **Expected: `cone_sorries
+  lowering_equivalence_poseidon` 11 → 9 and `lowering_equivalence_of_blocks` 7 → 5** — the first
+  headline-cone drop since C.2.
+- **Stop if.** A handoff needs a fact no `BlockSound`/`BlockProgress` supplies: report the exact goal
+  state. That is the next ceiling, and finding it here is the point of this card.
+
+---
+### G1.4b — Land the pcs block scopes + the 5 gate updates from D-P51  **[READY after F.1 — D-P51 signed off 2026-11-17; needs `t/G1.4` pushed, see Needs]**
 
 GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
 
@@ -703,6 +725,10 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
   verified emitter change — **apply, do not re-derive**. Sites: `GenAstDispatch.lean:280`, `:404`,
   `:505`; `SurfaceFixture.plantPcsPlaceholderLengthVisible_ok:2032`; `PoseidonValid.lean:292`
   (6761 → 6779).
+- **Not reachable at `2cad8cc` (human, 2026-11-17).** `t/G1.4` is not on origin and `/tmp/g14-patch` is
+  not in the tree. First push `t/G1.4` and copy the patch to `formal/docs/plans/G1-evidence/`
+  (EXECUTION-V2 W5: evidence a card relies on is landed, never left in `/tmp`). If neither exists any
+  more, STOP: the change must be re-derived, and that is a new card.
 - **Do.** 1. Apply the emitter change. 2. Update the five sites **exactly as G1.4 proposed** (`:404`
   already evaluated TRUE). 3. **For each updated gate, state in one line what it was protecting and
   show that protection still holds — stronger or equal, never weaker.** 4. If any gate turns out to
@@ -717,6 +743,13 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
 
 ---
 ### ⚠ SEQUENCING COLLISION + RE-SCOPE from G1.2b (probe, `9c1c9a5`, nothing edited)
+
+**Evidence location (human, 2026-11-17).** The G1 reproducers (`/tmp/g11`–`/tmp/g14`, `/tmp/g12-patch`,
+`/tmp/g14-patch`) and branch `t/G1.4` are not on origin. Land them under
+`formal/docs/plans/G1-evidence/` and push `t/G1.4` before any G1 card relies on them (W5).
+
+**Sign-off needed.** The batch re-hashes frozen `Program.lean`, so G1.1–G1.3 are BLOCKED on
+`docs/DECISIONS-PENDING.md` §11.
 
 **SITE FOUND: `mainAsmRaw (pv) (m)` — gate 23 AVOIDED, one frozen re-hash (`Program.lean`) unavoidable.
 ⇒ G1.1 + G1.2 + G1.3 must be BATCHED into that single re-hash.**
@@ -745,7 +778,7 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
   `GenAstDispatch.lean` and the regions belong in `emitPartial`. **`emitPartial` cannot read the
   flags; the regions belong in `mainAsmRaw`, a FROZEN file.** That is what makes the re-hash shared.
 
-### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY]**
+### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[BLOCKED: human sign-off of the batched `Program.lean` re-hash — DECISIONS-PENDING §11; runs after G1.4b]**
 GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
 
 - **Goal.** `GenAst` emits the 823-token region `mainAssemblyText` puts between `assemblyHelpers`
@@ -801,7 +834,7 @@ GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2�
           -- #eval ((yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1).dropLast
           --         == yulTokens ((partsOf poseidonM).accumulatorHelpers)
 
-### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
+### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[BLOCKED: as G1.1 — DECISIONS-PENDING §11]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
 GEN · EMIT · box 0.75 h · Sonnet · after R.2; **a prerequisite of G1.3** (both definitions are
 called ONLY from the numerator block — measured: neither `q_program_fail(` nor `q_pow5(` occurs in
 any other region of the main block)
@@ -840,7 +873,7 @@ any other region of the main block)
                  (renderQuotientHelpers (partialCtxOfVerifier poseidonM))                     -- [q_program_fail, q_pow5]
           #eval (partialCtxOfVerifier poseidonM).quotientPow5Helper                            -- true
 
-### G1.2b — Find the real splice site for the quotient helpers  **[READY — BLOCKS G1.2/G1.3]**  **[DONE 9c1c9a5 - SITE FOUND: mainAsmRaw(pv,m); gate 23 avoided; batch G1.1+G1.2+G1.3]**
+### G1.2b — Find the real splice site for the quotient helpers  **[DONE 9c1c9a5 - SITE FOUND: mainAsmRaw(pv,m); gate 23 avoided; batch G1.1+G1.2+G1.3]**
 
 GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
 
@@ -873,7 +906,7 @@ GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
   `stmtsBeq`). Only the splice SITE is unresolved.**
 
 ---
-### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY]**
+### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[BLOCKED: as G1.1 — DECISIONS-PENDING §11]**
 GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
 
 - **Goal.** Emit `renderQuotientNumeratorBlock`, the second `quotient_numerator` include: 6384
@@ -930,7 +963,7 @@ GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest 
           #eval Midfall.Lowering.GenAst.renderFunctionNames
                  (renderQuotientNumeratorBlock (partialCtxOfVerifier poseidonM))                     -- []
 
-### G1.4 — EMIT the pcs block scopes: stop flattening the 8-block partition (18 tokens)  **[READY]**  **[STOP-AND-REPORT 6bde89f - win landed, 4 gates hard-code the flattening; see G1.4b/D-P51]**
+### G1.4 — EMIT the pcs block scopes: stop flattening the 8-block partition (18 tokens)  **[SUPERSEDED by G1.4b — do not re-run]**  **[STOP-AND-REPORT 6bde89f - win landed, 4 gates hard-code the flattening; see G1.4b/D-P51]**
 GEN · EMIT · box 0.5 h · Sonnet · after R.2 (independent of G1.1–G1.3)
 
 - **Goal.** The `pcs` row's 18-token residue is 9 block-scope brace pairs, not statements: emit the
@@ -1058,25 +1091,6 @@ SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
   new or repaired lemma with **`sorryAx` grep = 0**; `Frozen.sha256` verifies.
 - **Stop if.** Step 1 does not elaborate sorry-free — D-P49's premise is then false: report NEGATIVE
   with the goal state · any root's cone moves unexpectedly.
-
-### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY — S.3 merged d0aabba]**
-SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3
-
-- **Goal.** Both sequencing lemmas proved sorry-free from their seven per-block hypotheses, with
-  D-P49's gate in place. C.2 left this glue sorried, which hid the sequencing ceiling until S.1, six
-  cards later. Proving it now finds any further ceiling BEFORE four row cards are spent.
-- **Needs.** S.3 merged; `slices_seq_sound` (Blocks.lean:307) and `slices_seq_progress` (:325), their
-  mid predicate `Clean R k ∨ Poisoned` (docstring at :287); `StmtsTotal` (:49); C.2's size estimates
-  (QUEUE C.2 table: 60–100 and 90–130 lines).
-- **Does NOT need.** Any block row; the deployment; `Statements.lean`.
-- **Also.** Fix the stale docstring at `Blocks.lean:301-303` (it still says §6 has the poisoned arm;
-  S.3 left it for the next card that touches `slices_seq_sound`).
-- **Deliverable.** Both lemmas, sorry-free.
-- **Accept.** `#print axioms` of both with `sorryAx` grep = 0. **Expected: `cone_sorries
-  lowering_equivalence_poseidon` 11 → 9 and `lowering_equivalence_of_blocks` 7 → 5** — the first
-  headline-cone drop since C.2.
-- **Stop if.** A handoff needs a fact no `BlockSound`/`BlockProgress` supplies: report the exact goal
-  state. That is the next ceiling, and finding it here is the point of this card.
 
 ### S.4 — `BlockRow` for `vkLoading`  **[READY after F.1]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**
 SEM · PROOF · box 2 h · strongest · after S.3, F.1
