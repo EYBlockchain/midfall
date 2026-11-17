@@ -553,7 +553,7 @@ ALG · PROOF · box 2 h · strongest · after FP.0
 - **Stop if.** The equivalence needs a property of `product` that `Holds` does not give. Report it as
   a PREMISE GAP.
 
-### T.2 — `yul_step`, accepted by TraceReturn
+### T.2 — `yul_step`, accepted by TraceReturn  **[MERGED e54fc7d - TraceReturn FULLY closed, both contracts sorry-free]**
 SEM · PROOF · box 2.5 h · strongest · after T.1
 
 - **Goal.** A tactic for straight-line code, builtins and `if` on concrete conditions.

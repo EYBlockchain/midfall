@@ -157,6 +157,32 @@ partial read+write and restored it via `git show HEAD:…` (read-only; forbidden
 reachable.** T.1 also wrote exact remaining nodes + step signatures into T.2–T.5 (+125 lines), so
 those cards now name specific nodes. Register unchanged at 57.
 
+## ✅ T.2 (merged `e54fc7d`): TraceReturn FULLY closed — 2 sorry-free contracts, cone unmoved
+
+`BlockSound R .traceReturn` **and** `BlockProgress R .traceReturn` both PROVED sorry-free —
+**the first block in V2 with a complete contract.** Roots `tr_blockProgress: 0` and
+`tr_blockSound: 0`, axioms `[propext, Classical.choice, Quot.sound]`, `sorryAx` grep = 0, file has 0
+sorries. `tr_fail_reverts` (:707) written and named for T.5 to cite — arbitrary `FunEnv`,
+selector-**value**-free, so finalPairing's site instantiates it directly. **Not duplicated.** Register
+unchanged at 57.
+
+**SIX ROOTS REPORTED, NONE MOVED — and that is correct.** headline 11→11, of_blocks 7→7, end_to_end
+1→1, fp_finalPairing 3→3, tr_blockProgress 0→0, tr_blockSound →0. **T.2's own card ACCEPT said 'and
+the cone falls' — that criterion is unsatisfiable by construction**, written before I established the
+hinge is `blockContracts_of_valid`. **Recorded as a stale card line, not as a met criterion.**
+
+**FIRST FALSE PREMISES FROM A CARD-TO-CARD HANDOFF.** T.1's handoff was accurate on the expensive parts
+(S1–S6 reused, both traps held, 4.0 s module) but wrong twice: **(1) 'mechanical, no content' was
+false** — casing at a concrete result index `.vals [] st'` fails with *Dependent elimination failed*;
+the fix is `tr_fail_expr` at an **abstract** index, and that is where most of the time went. **At a
+dependent index, abstract it rather than case at the concrete value.** (2) `rw [fail_lookup R] at
+hlookup` does not apply — the call sits under `Step.block`, so the lookup transfers **by defeq**, not
+by rewriting.
+
+**NOT DONE, DELIBERATELY: no `yul_step` macro.** The card's goal named a tactic; conjunct 2's content
+was one call inversion, and with S1–S6 as named lemmas the macro is packaging, not proof. **T.2 said so
+rather than writing a macro to satisfy a goal line.** The macro is now a T.3/T.4 decision.
+
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
 `lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
@@ -228,9 +254,11 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: T.2** (after T.1 — `BlockSound` conjunct 2 only, exact goal state in
-the card) and **C.3** (after C.2). **`blockContracts_of_valid` is the hinge**: no per-block proof
-reaches the headline until it is proved generically.
+**In flight:** none. **Next READY: T.3** (after T.2 — `BlockSound`/`BlockProgress` at `.lagrange` via
+`batch_invert`; the loop node) and **C.3** (after C.2). **`blockContracts_of_valid` (Blocks.lean:152,
+sorry) is the single hinge** — no per-block proof reaches the headline until it is proved generically.
+**Consider making it a card of its own; it now gates everything.**
 **Waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
+`g1CodecZ.ofCompressed?`. Plus `RETURN_MPTR` pin (T.1) — a card, not a decision.
 `g1CodecZ.ofCompressed?`. **Plus `RETURN_MPTR` pin** (T.1 gap) — dischargeable by computation, so it
 is a card, not a decision.
