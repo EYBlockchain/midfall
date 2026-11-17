@@ -498,7 +498,7 @@ SEM · SKELETON · box 2 h · strongest · after C.2
 
 **FALSE PREMISES IN THE CARD, both confirmed as the brief stated.** (1) C.2 has no FinalPairing names — none existed anywhere in the tree before this file; the names are this card's output. (2) `poseidonRender.slice .finalPairing` cannot be `#eval`'d (`poseidonRender` is `noncomputable`, PoseidonV2.lean:152) — nothing here computes, no `#eval`/`native_decide` is used, and the C.4 computable-proxy pattern was not needed because the slice's shape was read off `GenAst.emitFinalPairingArms` rather than evaluated.
 
-### T.1 — Automation design from real cone nodes
+### T.1 — Automation design from real cone nodes  **[MERGED a432de6 - tr_blockProgress PROVED, cone 0; headline cone unchanged]**
 SEM · SKELETON · box 2 h · strongest · after FP.0
 
 - **Goal.** One tactic interface that will close three named cone nodes:

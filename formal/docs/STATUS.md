@@ -117,6 +117,46 @@ cannot cover `.finalPairing` either.
 were not raised**; folded into `ec_pairing_contract`'s post as `(success = 1 → Inv .pairing)`.
 Budget real time for any Inv-chain tactic.
 
+## ✅ T.1 (merged `a432de6`): FIRST GENUINELY SORRY-FREE BLOCK CONTRACT
+
+`Blocks/TraceReturn.lean` (629 ln, **0 sorries**). **`tr_blockProgress` axioms:
+`[propext, Classical.choice, Quot.sound]` — no `sorryAx`, confirmed by grep (count 0).** Under the
+rules' definition (clean axioms AND used in the cone) this is the first V2 block contract actually
+**proved**, not conditionally derived. §6's TOTAL progress contract, both halves, + `BlockSound`
+conjunct 1. **New cone root: `cone_sorries tr_blockProgress: 0`.**
+
+**THE CONE ON THE HEADLINE DID NOT MOVE (11→11) AND CANNOT YET.** Nothing in either existing cone
+cites the new file: the headline reaches per-block contracts only through the sorried
+`blockContracts_of_valid`. **That lemma is now the single hinge — until it is proved generically, no
+per-block work reaches the headline.** A proved contract landing while no number moves is the clearest
+proof that the cone measures citation, not knowledge.
+
+**NEW PREMISE GAP — an asymmetry, not an oversight:** progress's EXISTENCE half needs `trRetMptr`
+(`∃ m, R.consts.lookup "RETURN_MPTR" = some m`); nothing in `Frame`/`Clean`/`Inv` supplies it and
+**V2's `Valid` pins only `TRANSCRIPT_MPTR`** (v1 recorded the same trap, `Partials.lean:1251`).
+Dischargeable by computation at the deployment (`pinnedConstants` has `RETURN_MPTR = 4096`).
+**Soundness needs no pin — there the binding follows from the run.** Progress asserts existence, so it
+inherits a data obligation soundness does not.
+
+**SIX RECURRING STEPS (S1–S6), two of them negative results:** **S1 `simp`/`unfold` CANNOT turn a
+slice into its statement list** (`unfold Inline.inlineScan` lands in `brecOn`; the partially-applied
+recursive arg is untouchable) — use `show` + `rfl` against defs naming each stuck site. **Never route
+through `dialect_deterministic`.** **Trap for T.2: `classical` before a forward `Step` construction
+swaps `DecidableEq D.Value` for `Classical.propDecidable` and index unification dies opaquely.** The
+S4 index trick (state the outcome in the hypothesis so `cases` prunes) is the reusable idea.
+
+**5 false premises in this card — the most of any.** The Bridge-direction warning I relayed does not
+bite (no view lemma needed; every step is a `Step` inversion, already §6's direction). `lagrange` is
+the LARGEST node, not a hand-proof candidate. **`traceReturn_spec` is a weaker pattern than
+advertised** — v1's slice was UN-INLINED so its `simp only [GenAst…]` route fails in V2. `run_adequacy
+never needed; `vendor/` never opened. And `BlockProgress` is not the cheap half (see the gap above).
+
+**INCIDENT, self-reported and independently verified:** the subagent truncated `Midfall.lean` with a
+partial read+write and restored it via `git show HEAD:…` (read-only; forbidden ops NOT used).
+**Orchestrator verified: 135 lines vs 134 at HEAD, +1 insertion, ZERO deletions, 146/146 modules
+reachable.** T.1 also wrote exact remaining nodes + step signatures into T.2–T.5 (+125 lines), so
+those cards now name specific nodes. Register unchanged at 57.
+
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
 `lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
@@ -188,99 +228,9 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: T.1** (after FP.0 — the automation design) and **C.3** (after C.2).
-**§6 is unreachable by Lean alone:** FP.0's contract needs `R.Valid`, which C.4 proved false for
-`poseidonRender`. **Waiting on human (5):** poseidonMeta/ProtocolPlan provenance (3 data problems) ·
-`fpG2Slots` fix (a) or (b) · `Rejects`/`SoundSide` · R-72 (Q0.5) · `g1CodecZ.ofCompressed?`.
-(Q0.5) · `poseidonModel` totality · real `g1CodecZ.ofCompressed?` (blocks D.3 check 3).
-**Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
-session, so verify it before assuming the SEM/ALG chain is reachable.
-**Two decisions are not mine:** WP-I2 needs `poseidonModel` totality and a real `ofCompressed?` -
-both are v1 or frozen-surface edits. **Q0.5 still BLOCKED** on R-72.
-
-**TICKET D.3 (merged `db4b2e6`, NEGATIVE-as-evidence):** `Instances/PoseidonCoherence.lean` (526 ln,
-19 gates, 3 of them `expect false`, 0 sorry, no `native_decide`). KAT pins 1375->1393, files 101->102.
-**Cone did NOT move (1 and 1).**
-
-VERDICTS: check 1 Layout **FAIL**, check 2 Meta **FAIL**, check 3 Decode **BLOCKED**, check 4 Transcript
-**PASS** (10 challenges byte-identical; replay 327 checks 0 failures), check 5 Negative control
-**PASS with teeth** (flip byte 943 -> first differing challenge index 6, indices 0-5 identical; flip
-byte 0 -> index 0, all differ; flip byte 2592 -> nothing moves).
-
-## ⚠⚠ NEW HUMAN DECISION — C.1 IS BLOCKED, AND SO IS EVERYTHING DOWNSTREAM OF IT
-
-**The headline `lowering_equivalence_poseidon` cannot be stated at the deployed profile.** Root cause,
-proved by `rfl`: `planM.protocol = Midfall.Generator.protocolPlanDefault`. `Valid.circuitMeta` and
-`Valid.layout` are both unsatisfiable on the same typed-in `poseidonMeta` because it has no real
-`ProtocolPlan`, so `fromProtocol` yields proofLen 1792 where the plan says 4320.
-
-**The fix is neither a fixture edit nor a `g1CodecZ` edit.** It needs a `poseidonMeta` whose `protocol`
-is the real `ProtocolPlan` — i.e. exactly the CS data D.2 logged as gap A (`gates`, `lookups`,
-`trashcans`, `permutation.columns`), which is in **neither** `vk.json` **nor** `poseidonPlanV2.meta_`
-(both measured empty). **Where does the real ProtocolPlan come from?** That is a scope question, not a
-card: it may need a port of `LoweringPlan::new`/QRS:2000, which D.2's card explicitly excluded.
-
-**THIRD: the conformance bundle is NOT the committed Rust fixture proof.** `trace.json`
-`fixture_match` records `committed_proof_len 4752` vs `exported_proof_len 2640`, `proof=false`,
-`instance=false`. The bundle is self-consistent (`proof.bin` is the 2640-byte exported proof and
-`proof_len` agrees) but anyone treating it as the committed fixture will be wrong.
-
-**Also: check 1's card clause conflated widths** — repacked contract width (G1@128 = 4320) vs
-compressed Rust width (G1@48 = 2640). The repaired reading ties both plus 72 slots to the trace's 72
-reads and passes. **C.1 will hit the same conflation.**
-
-**And check 3 is worse than my own brief said:** `g1CodecZ` is `noncomputable`, so the decode check is
-not executable at all — not merely false. Diagnostics confirm the layout and decoder are fine at
-`g1AffineCodec` (72 msgs, 1 inst); the exhibit's codec is the blocker.
-**TICKET D.2 (merged `8e43ac8`):** `Instances/PoseidonEnv.lean` (665 ln, 14 gates, 8 pin theorems, 0
-`native_decide`) delivers `poseidonE`, `poseidonParams`, `poseidonVkExec` (computable), `poseidonSG2`,
-`poseidonEncG2`. KAT pins 1361->1375, files 100->101. **Cone did NOT move (1 and 1)** - bookkeeping.
-`poseidonEncG2` is **cited not copied**: `poseidonHolds_isTheExhibitsClause` proves the exhibit's
-`Holds` binder and this file's are the same Prop by `rfl`, so `holds_exhibited` transfers with no
-transport. **VK ships WITHOUT `WellFormed`** - `vk.json` lacks `gates`/`lookups`/`trashcans`/
-`permutation.columns` and D.1's `poseidonPlanV2.meta_` cannot supply them either (measured empty), so
-`cs.degree` recomputes 3 vs cached 5. **No CS data was invented**; gate 13 pins the gap.
-
-**STANDING BLOCKERS D.2 EXPOSED (log these; they outgrow a card report):**
-1. **`g1CodecZ.ofCompressed? := fun _ => none`** (G1Agreement.lean:2006) - a v1 placeholder V2
-   inherited. Compressed hex cannot reach `G1z` at all, not merely not computably. **This blocks D.3
-   check 3 and WP-I2**: every compressed read at the exhibit codec is `none`, so
-   `decodeCalldata`/`repackProof` at `poseidonE.g1` cannot pass until a real `ofCompressed?` lands -
-   and a real one needs an r-torsion-to-zpowers route the tree lacks (`X in zpowers g1` is a discrete
-   log as literally typed).
-2. **`frFc.rootOfUnity` is NOT the deployment root of unity** (differ by odd power 61). Repaired by a
-   gated 64-case VM search, and gate 12 asserts the unrepaired root disagrees so the repair is
-   visibly load-bearing. **But `extendedOmega`/`extendedOmegaInv`/`tEvaluations` are
-   consistent-with and NOT verified-against the deployment** - `vk.json` has no `extended_omega` key.
-   A finding about TwoAdicity's constants.
-3. `params.json` G2 compressed hexes are **96 bytes** (two 48-byte Fp2 halves), not 48.
-4. `poseidonSG2` cannot be checked against `s_g2_compressed_hex` - `G2fold = Exp blsR` is the exponent
-   carrier, so naming `s*G2` is a discrete log in G2. It is the assumed pairing's `g2`; the `rfl` is
-   about that substitution, **not** a fixture check.
-`Instances/PoseidonInputs.lean` (321 ln, 9 gates): `poseidonVkGen`, `poseidonPlanV2`, `poseidonCtx`,
-`poseidonQBlocks`, `poseidonModel`. **Gate `poseidonRender_bytesExact_ok` is pure and reproduces the
-deployed verifier contract byte for byte from those terms alone** - 175,908 chars / 3,024 lines
-(reconciled by the orchestrator against `wc -c` 175,918 bytes: the 10-byte gap is UTF-8 multi-byte).
-KAT pins 1352 to 1361, files 99 to 100. **Cone did NOT move (1 and 1)** - fixture card, no cone debt
-retired. **PREMISE GAP for WP-I2:** `poseidonModel` cannot be a total pure term - `Halo2Verifier` has
-no `Inhabited` or `Default` (measured) and 71 fields, so it is delivered as a pure `Except` with
-`.isOk` gated. WP-I2 needs either `deriving Inhabited` on that record (a v1 edit) or
-`Render.model : Option Model`. **Also: `Generator.poseidonCtx` has ZERO lines in all five
-generated-code regions**, so the pure ctx must be sliced from the dump; gate D.1-7 keeps the fallback
-from being silently load-bearing.
-`[propext, Classical.choice, Quot.sound]`, register 45 to 44. **Cone delta: NONE - both roots
-still read 1.** This was bookkeeping, not progress: the roots are bare sorries with no body that
-could reference the lemma. The card also caught a mis-scope in the orchestrator brief (four
-`probeW*` decls named as helpers of `entryFrame_witness`, which they are not) and refused to
-land them as dead code. Next READY: **D.1**. **Q0.5 still BLOCKED** on the R-72 decision.
-
-`70f8111` (REVIEW.md R-72 only). **Cone delta: none** — probe card, no Lean landed. Probe sources
-survive at `/tmp/q04/probe1.lean` and `probe2.lean` for Q0.4b to land.
-
-**Calibration (sample size 4):** Q0.1 26 min, Q0.2 35 min, Q0.3 19 min, Q0.4 32 min — all under box.
-
-**False premises / defects: 3** (Q0.1 predicted reddening that did not happen; Q0.3 named two defs that
-did not exist; Q0.4 found a real defect in a frozen statement). The third is the first where the
-defect was in the plan's own acceptance test rather than in a card.
-
-**Blockers:** none for D.1 or Q0.4b. R-72 blocks any §6 DONE claim.
+**In flight:** none. **Next READY: T.2** (after T.1 — `BlockSound` conjunct 2 only, exact goal state in
+the card) and **C.3** (after C.2). **`blockContracts_of_valid` is the hinge**: no per-block proof
+reaches the headline until it is proved generically.
+**Waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
+`g1CodecZ.ofCompressed?`. **Plus `RETURN_MPTR` pin** (T.1 gap) — dischargeable by computation, so it
+is a card, not a decision.
