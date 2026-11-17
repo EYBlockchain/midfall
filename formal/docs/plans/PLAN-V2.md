@@ -353,6 +353,12 @@ bash scripts/verify.sh   # ram_guard + lake build + checks.sh (incl. kat_gate) +
 - `poseidon_valid` includes `codegen` (AST = Lean codegen text), `circuitMeta` (plan derived from the
   verifier's own VK), `closed`, `noWriters`.
 - `HypothesesInhabited` and `entryFrame_inhabited` are proved.
+  `HypothesesInhabited` now certifies (D-P45, R-72) that the side conditions are **non-vacuous at a
+  calldata that actually decodes, parses and replays** - the witness carries `decodeCalldata … = some
+  (ms, instW)`, `instOfWords? instW = some inst` and `snapshotOf … = .ok Snap`, plus `G1CodecLaws`.
+  **Its stated limit:** headline + gate certify non-vacuity at a real calldata; they do NOT certify
+  that some calldata is *accepted* at the deployment - protection against a Lean verifier that rejects
+  everything is structural (`Valid.slots`, the base pins), not a witness here.
 - The English statement in `docs/STATUS.md` names: the two side conditions (`SoundSide`, `CompleteSide`,
   negligible bad sets), the trusted `EntryFrame`, the D-P36a curve axioms, `Eip2537.Holds`, the
   first-headline scope (no accumulator, embedded quotient, separate VK, production), and that gas is

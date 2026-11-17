@@ -47,8 +47,11 @@
    12   vkPins          PROVED    unchanged (S.8/S.9): VK_MPTR, payload length, instance count,
                                   disjointness all hold at the derived plan view.
    13   vkProgressPins  PROVED    unchanged (S.8/S.9): EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH.
+   14   returnMptr      PROVED    NEW (D-P48, clause and discharge landed together by Q0.5):
+                                  RETURN_MPTR = some 4096, so tr_blockProgress's existence half is
+                                  reachable from `R.Valid` at all.
 
-  So 8 PROVED, 4 REFUTED, 1 SORRY - from 6/6/1. `poseidonRender.Valid` is STILL unsatisfiable and
+  So 9 PROVED, 4 REFUTED, 1 SORRY out of fourteen clauses - from 6/6/1 of thirteen. `poseidonRender.Valid` is STILL unsatisfiable and
   `poseidonRender_notValid` now runs through clause 2 rather than clause 1, because clause 1 became
   a theorem. What is left is no longer "the constraint system is missing": it is
   `LoweringPlan::new`'s post-constructor sizing (clauses 2 and 3) and one v1 `WellFormed` field
@@ -486,10 +489,25 @@ theorem poseidonValid_transcriptMptr :
   show ∃ t, (constTableOf poseidonM).lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t
   exact ⟨4096, by native_decide, by decide⟩
 
+/-! ## 14. returnMptr - PROVED (D-P48, landed with the clause by Q0.5) -/
+
+/-- The terminal arm's return window is bound in this render's own constant table, so
+    `tr_blockProgress`'s EXISTENCE half is reachable from `R.Valid` at all - which is the whole
+    reason D-P48 exists (M.1: "progress asserts existence and so inherits a data obligation
+    soundness does not"). F.2 measured it first; Q0.5 lands the clause and this discharge together.
+    The value is 4096 = 0x1000, the same word `pinnedConstants` carries, read back out of the
+    ported `Constants.sol` parse - so this is a computation at the deployment, not a premise.
+    AXIOM: poseidonValid_returnMptr._native.native_decide.ax_1_1. -/
+theorem poseidonValid_returnMptr :
+    ∃ m, poseidonRender.consts.lookup "RETURN_MPTR" = some m := by
+  show ∃ m, (constTableOf poseidonM).lookup "RETURN_MPTR" = some m
+  exact ⟨4096, by native_decide⟩
+
 /-! ## THE HEADLINE OF THIS CARD -/
 
-/-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Six of its eleven clauses are false at this
-    render; one refutation is enough and this uses clause 1. This is the card's own stop condition
+/-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Several of its clauses are false at this
+    render (the header table above is the current verdict per clause, and it is the authority - a
+    count in prose here would already be stale again); one refutation is enough and this uses clause 1. This is the card's own stop condition
     stated as a theorem rather than as a report line: C.1's `poseidon_valid` sorry is not an
     unfinished proof, it is an impossible one, and the only way to finish it is upstream - a
     `poseidonMeta` whose `protocol` is the real `ProtocolPlan`, which needs the halo2 constraint

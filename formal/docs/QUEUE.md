@@ -722,7 +722,7 @@ defect). (b) "the accumulator / trace helper includes": the trace half renders 0
 (c) PLAN-V2:236's "coverage table all-equal except PCS": PCS is 18 brace tokens from equal (finding 3).
 (d) The card's 3156 / 10433 is superseded by 6761 / 14054, which is what reproduces here.
 
-### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY — RUN NEXT]**
+### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[MERGED f588ba2 - CONE 11 to 9, FIRST DROP; both sorry-free, no ceiling]**
 > Moved ahead of the G1 cards by the human (2026-11-17): it is the only READY card expected to move the
 > headline cone, and it needs no decision. S.3 merged `d0aabba`.
 SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3

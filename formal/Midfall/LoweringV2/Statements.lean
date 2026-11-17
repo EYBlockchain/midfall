@@ -137,7 +137,7 @@ structure SupportedV2 (R : Render p G₁ G₂ Gₜ) : Prop where
     moved here by S.9 so that `Valid` can CARRY them). `Clean R .vk` postulates `Inv .vk`, whose
     first clause pins memory at `ptrAddr R.pv.memory.vkMptr` to `R.pv.vk.bytes`, and the block
     writes to the inlined `VK_MPTR` and copies `EXPECTED_VK_PAYLOAD_LENGTH` bytes. Nothing in
-    `Frame`, `Clean`, `Inv` or the other ten clauses says the render's CONSTANT TABLE agrees with
+    `Frame`, `Clean`, `Inv` or any other `Valid` clause says the render's CONSTANT TABLE agrees with
     its own PLAN VIEW about where that window is, how long the payload is, and how many instances
     the calldata carries - and without pins 1, 2 and 4 `BlockSound R .vkLoading` is FALSE, not
     merely unproved: a render whose table points `VK_MPTR` elsewhere copies the payload to the
@@ -171,14 +171,17 @@ structure vkProgressPins (R : Render p G₁ G₂ Gₜ) : Prop where
     deployment (by `decide`, `rfl` or, in `Instances/`, `native_decide`). None is a semantic
     obligation about the program.
 
-    THIRTEEN clauses since D-P50/S.9, which added the two `vkLoading` pin bundles at the end: S.4
+    The clauses ARE the fields of the structure below, in order. No count of them is given here, on
+    purpose: a count in prose rots the moment a clause is added and a pointer does not. D-P50/S.9
+    added the two `vkLoading` pin bundles at the end: S.4
     had shown `BlockSound R .vkLoading` is FALSE without them, so the hinge `blockContracts_of_valid`
     - which takes `hR : R.Valid` and must yield a row for EVERY `Partial` - could not have been
     proved from its own stated hypothesis while they were free premises of the row. Adding clauses
-    only strengthens `Valid` (D-P50, rationale 3), and both bundles are PROVED at the deployment, so
-    neither is a guessed premise. What this does NOT change: C.4 still refutes six of the original
-    eleven clauses at `poseidonRender`, so `poseidonRender.Valid` remains unsatisfiable
-    (`Instances/PoseidonValid.lean`, `poseidonRender_notValid`). -/
+    only strengthens `Valid` (D-P50, rationale 3), and every bundle is PROVED at the deployment, so
+    none is a guessed premise. What this does NOT change: `poseidonRender.Valid` remains
+    unsatisfiable. `poseidonRender_notValid` in `Instances/PoseidonValid.lean` refutes it, and that
+    file's header carries the per-clause table of which clauses are PROVED, REFUTED or SORRY at the
+    deployment - read the table, not this comment, for the current verdicts. -/
 structure Render.Valid (R : Render p G₁ G₂ Gₜ) : Prop where
   /-- The plan's circuit meta IS the ported meta of the verifier's own constraint system. This is
       the clause v1 could not state, and whose absence let `realSurface` pair a 72-slot plan with
@@ -210,11 +213,17 @@ structure Render.Valid (R : Render p G₁ G₂ Gₜ) : Prop where
   /-- The generator's own `TRANSCRIPT_MPTR` lies above Solidity's reserved words, so an entry
       frame exists (`entryFrame_inhabited`). -/
   transcriptMptr : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t
-  /-- CLAUSES 12 AND 13 OF 13 (D-P50, landed by S.9 from S.8's proved discharge): the six
+  /-- THE TWO `vkLoading` PIN BUNDLES (D-P50, landed by S.9 from S.8's proved discharge): the six
       `vkLoading` pins. `Blocks/VkLoading.lean` section 5 says what each one buys and
       `Instances/PoseidonPins.lean` decides all six at `poseidonRender` with no `sorryAx`. -/
   vkPins : vkPins R
   vkProgressPins : vkProgressPins R
+  /-- The terminal arm's return window is bound in the render's own constant table (D-P48, landed
+      here). `tr_blockProgress`'s EXISTENCE half must exhibit a run of `return(RETURN_MPTR, 0x20)`,
+      and nothing in `Frame`, `Clean` or `Inv` binds that site - so progress carries a data
+      obligation soundness does not. PROVED at the deployment: `RETURN_MPTR = some 4096`, in
+      `pinnedConstants` (`Instances/PoseidonValid.lean`, `poseidonValid_returnMptr`). -/
+  returnMptr : ∃ m, R.consts.lookup "RETURN_MPTR" = some m
 
 /-! ## 3. The world, the entry frame, the calls -/
 
@@ -312,12 +321,31 @@ def LoweringEquivalence (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
 
 /-! ## 8. Non-vacuity (D-P23, applied to the WHOLE hypothesis set this time) -/
 
-/-- Every hypothesis of `LoweringEquivalence` holds at once at this render, with a calldata the side
-    conditions admit. Must be PROVED at each deployment the headline is claimed for. -/
+/-- Every hypothesis of `LoweringEquivalence` holds at once at this render, at a calldata that
+    ACTUALLY DECODES, PARSES AND REPLAYS. Must be PROVED at each deployment the headline is claimed
+    for.
+
+    THE LAST THREE CONJUNCTS ARE THE D-P45 REPAIR (R-72). `SoundSide` and `CompleteSide` are both
+    universals over `decodeCalldata … = some (ms, instW)`, so each goes TRUE exactly when nothing
+    decodes: without the `decodeCalldata` / `instOfWords?` / `snapshotOf` chain the gate was
+    satisfiable at the bare 4-byte `verifyProof` selector, which never decodes (`Instances/R72GateProbe.lean`,
+    `sel_nondecode` + `gate_weak` + `no_accept_at_gate_cd` - the witness, landed). `LeanAccepts` was
+    NOT adopted, and there is no run-existence conjunct: D-P45 records why (the former is not
+    computable at a real SRS, the latter is redundant given the headline).
+
+    STATED LIMIT (D-P45). Headline + gate certify that the side conditions are NON-VACUOUS at a real
+    calldata. They do NOT certify that some calldata is ACCEPTED at the deployment. The protection
+    against a Lean verifier that rejects everything is structural - `Valid.slots` and the base pins -
+    not a witness here. -/
 def HypothesesInhabited (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
   ∃ (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState),
     DeploymentV2 R W H vkAddr ∧ EntryFrame R W Lyt H cd st₀ ∧
-      Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ SoundSide R H cd ∧ CompleteSide R H cd
+      Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ SoundSide R H cd ∧ CompleteSide R H cd ∧
+      (∃ ms instW inst Snap,
+        decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
+        instOfWords? (p := p) instW = some inst ∧
+        snapshotOf R.E H R.vk inst ms none = .ok Snap) ∧
+      G1CodecLaws R.E.g1
 
 /-- THE STATEMENT OF `entryFrame_inhabited` AS A PROP (Q0.3 wrapper). The binder telescope is
     `entryFrame_inhabited`'s, verbatim, and the body is its conclusion, verbatim: the wrapper is

@@ -130,6 +130,7 @@ import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.ProgramLemmas
 import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
+import Midfall.Instances.R72GateProbe
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.Compose
