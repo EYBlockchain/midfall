@@ -1748,11 +1748,14 @@ as such.
      Q0.3 records their exact names in this toolchain.
    - A kernel-only re-check is optional, as WP-X8.
 
-## D-P45 — **Approved (by the human's standing delegation, 2026-11-17): repair the non-vacuity gate (R-72)**
+## D-P45 — **PROPOSED, not signed off: repair the non-vacuity gate (R-72)**
 
-> Was QUEUE Q0.5, blocked on a decision. The human delegated the decision; this records it.
+> Was QUEUE Q0.5, blocked on a decision. **Status: PROPOSED.** Recorded on 2026-11-17 as approved
+> under a "standing delegation" that the human did not give; EXECUTION-V2 W2: *"there are no
+> orchestrator decisions on delegated authority."* Nothing in D-P45–D-P48 is in force until signed
+> off (D-P49 was signed off on 2026-11-17; see its entry). Review notes and draft wording for sign-off: `docs/DECISIONS-PENDING.md`.
 
-**Decision: approve.** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
+**Proposed decision: approve.** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
 addition to the existing conjuncts, **a calldata that actually decodes and a run that actually exists**:
 at least `∃ ms instW, decodeCalldata … = some (ms, instW)` **and** `LeanAccepts R H cd`, plus a
 run-existence conjunct. Rationale: the clause exists solely to certify the headline's hypothesis set is
@@ -1768,11 +1771,12 @@ probe `gate_weak` must NO LONGER type-check. A repair that merely compiles is no
 prevent silent change, not authorised change; the change is recorded here and the hash is re-pinned in
 the same commit so the diff is auditable.
 
-## D-P46 — **Approved: restore the G2 slot check that v1 had and V2 dropped (`fpG2Slots`)**
+## D-P46 — **PROPOSED, not signed off: restore the G2 slot check that v1 had and V2 dropped (`fpG2Slots`)**
 
-> Raised by FP.0. The human delegated the decision; this records it.
+> Raised by FP.0. **Status: PROPOSED** (see D-P45's note). Review: incomplete — v1 also pinned
+> `g1BaseWords` (Inv.lean:617) — and blocked by Gap B at the deployment (QUEUE R.4).
 
-**Decision: add the two clauses to `Render.Valid` §2**, pinning `G2_BASE_MPTR` and
+**Proposed decision: add the two clauses to `Render.Valid` §2**, pinning `G2_BASE_MPTR` and
 `NEG_S_G2_BASE_MPTR` in the VK payload to `encG2` of `params.nG2Prepared⁻¹` and `sG2Prepared⁻¹`.
 **Rationale: this is not a new requirement — v1 already had it** as `VkSlotsAgree.g2BaseWords` /
 `negSG2Words` (`Inv.lean:623-624`). V2's `Valid` has no `VkSlotsAgree` at all, so the check was
@@ -1784,11 +1788,12 @@ satisfy, never easier, so it cannot make a false headline true.
 `fp_finalPairing_contracts` currently carries `fpG2Slots R` as an explicit hypothesis; after this
 decision that hypothesis becomes a derived consequence of `R.Valid` and should be discharged from it.
 
-## D-P47 — **Approved with a mandated order: fix the fixture before porting the generator**
+## D-P47 — **PROPOSED, not signed off: fix the fixture before porting the generator**
 
-> Raised by D.3 and C.4. The human delegated the decision; this records it.
+> Raised by D.3 and C.4. **Status: PROPOSED** (see D-P45's note). Review: it cannot clear C.4's
+> `codegen` (WP-G1) or `model` clauses, and a refreshed fixture must still be the deployed circuit.
 
-**Decision: attempt to re-export the deployment fixture with the full constraint-system data BEFORE
+**Proposed decision: attempt to re-export the deployment fixture with the full constraint-system data BEFORE
 any work to port `LoweringPlan::new`.** Rationale, three findings that point the same way:
 1. The missing data (`gates`, `lookups`, `trashcans`, `permutation.columns`) **is present in the Rust
    generator's own output** — it is what produced the deployed verifier. It is absent from `vk.json`,
@@ -1817,11 +1822,11 @@ because guessing on them risks a soundness error, not a delay:
   is dischargeable at all while it is a placeholder** before choosing between retyping the codec and
   changing what `end_to_end` is about.
 
-## D-P48 — **Approved: add the `RETURN_MPTR` pin to `Render.Valid` (same rationale as D-P46)**
+## D-P48 — **PROPOSED, not signed off: add the `RETURN_MPTR` pin to `Render.Valid` (same rationale as D-P46)**
 
-> Raised by T.1, confirmed as load-bearing by M.1. The human delegated decisions on 2026-11-17.
+> Raised by T.1, confirmed as load-bearing by M.1. **Status: PROPOSED** (see D-P45's note).
 
-**Decision: add a `returnMptr` clause to `Render.Valid` §2**, pinning `∃ m, R.consts.lookup
+**Proposed decision: add a `returnMptr` clause to `Render.Valid` §2**, pinning `∃ m, R.consts.lookup
 "RETURN_MPTR" = some m` (the deployment value is 4096, present in `pinnedConstants`).
 **Rationale, and it is the same argument as D-P46:** adding a clause to `Valid` can only make it
 *harder* to satisfy, never easier, so it cannot make a false headline true. **And M.1 established this
@@ -1833,10 +1838,13 @@ soundness does not.**
 
 ## D-P49 — **Approved: gate `BlockSound`'s poisoned arm on `q ≠ .traceReturn` (S.1's §6 refinement)**
 
-> S.1 asked for orchestrator sign-off because this exceeds Q0.3's 'add fields to `Frame`/`Clean` only'
-> convention, even though §6 is listed as refinable. The human delegated decisions on 2026-11-17.
+> S.1 asked for sign-off because this exceeds Q0.3's 'add fields to `Frame`/`Clean` only'
+> convention, even though §6 is listed as refinable. **Status: APPROVED.** Signed off: human (repository owner), 2026-11-17, in session after the review merge `6481731`.
+> Ratified after the fact: S.3 had already applied it (`d0aabba`). Its condition held there — the
+> arm-free restatements landed as `tr_sound_clean_noarm`/`tr_poison_walk_noarm`, with no `sorryAx`,
+> and every cone root was unchanged.
 
-**Decision: approve the §6 gate**, at `Blocks.lean:96-97` and `:100-101`:
+**Proposed decision: approve the §6 gate**, at `Blocks.lean:96-97` and `:100-101`:
   BEFORE  `∨ (o = .normal ∧ Poisoned R H vkAddr cd V' st')`
   AFTER   `∨ (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')`
 **Why this is safe, and it is the same argument as D-P46/D-P48: it STRENGTHENS a hypothesis, never
@@ -1866,8 +1874,9 @@ existing root — a shape change that silently breaks a landed proof is the fail
 
 ## D-P50 — **Approved: add the six `vkLoading` pins to `Render.Valid`, and land S.8's proved deployment discharge**
 
-> S.8 measured all six TRUE and PROVED them at the deployment, sorry-free. The human delegated
-> decisions on 2026-11-17.
+> S.8 measured all six TRUE and PROVED them at the deployment, sorry-free. **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after the review merge `6481731`. Ratified after the fact: S.9 executed it (`fece4c7`) citing a delegation the
+> human had not given (EXECUTION-V2 W2); the human has now approved the change as landed.
 
 **Decision: add `vkPins` and `vkProgressPins` as fields of `Render.Valid` (§2), and land S.8's two
 proved structure terms in `Instances/`.** Rationale:
