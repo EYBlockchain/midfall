@@ -693,6 +693,29 @@ defect). (b) "the accumulator / trace helper includes": the trace half renders 0
 (c) PLAN-V2:236's "coverage table all-equal except PCS": PCS is 18 brace tokens from equal (finding 3).
 (d) The card's 3156 / 10433 is superseded by 6761 / 14054, which is what reproduces here.
 
+### G1.4b — Land the pcs block scopes + the 5 gate updates from D-P51  **[READY — patch preserved]**
+
+GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
+
+- **Goal.** Apply the preserved emitter change AND the five gate/witness updates so the tree is green
+  with the corrected scoping.
+- **Needs.** **`/tmp/g14-patch/0001-WIP-G1.4-*.patch`** and branch **`t/G1.4` (`3a5b5ce`)** hold the
+  verified emitter change — **apply, do not re-derive**. Sites: `GenAstDispatch.lean:280`, `:404`,
+  `:505`; `SurfaceFixture.plantPcsPlaceholderLengthVisible_ok:2032`; `PoseidonValid.lean:292`
+  (6761 → 6779).
+- **Do.** 1. Apply the emitter change. 2. Update the five sites **exactly as G1.4 proposed** (`:404`
+  already evaluated TRUE). 3. **For each updated gate, state in one line what it was protecting and
+  show that protection still holds — stronger or equal, never weaker.** 4. If any gate turns out to
+  guard a real property rather than the flattening, **STOP on that one and report**.
+- **Accept.** `verify.sh --quick` **green** (the whole point); pcs row prints `equal true`;
+  **all 10 GenAstDispatch gates true**, RunEmitted 9/9, DeployedProfile 15/15, D.1 9/9, PoseidonEnv
+  18/18; `Frozen.sha256` all OK; **`cone_sorries lowering_equivalence_poseidon` before and after —
+  expect 11 → 11, since clause 6 needs G1.1–G1.3 too. Report the number, not a hope.**
+- **Stop if.** D-P51 is not signed off · any gate cannot be made stronger-or-equal · the build is still
+  red after the five updates (then the analysis is wrong — report, do not hunt).
+- **Does NOT need.** G1.1–G1.3; `computationsAst` changes; contracts; frozen files.
+
+---
 ### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY]**
 GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
 
@@ -845,7 +868,7 @@ GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest 
           #eval Midfall.Lowering.GenAst.renderFunctionNames
                  (renderQuotientNumeratorBlock (partialCtxOfVerifier poseidonM))                     -- []
 
-### G1.4 — EMIT the pcs block scopes: stop flattening the 8-block partition (18 tokens)  **[READY]**
+### G1.4 — EMIT the pcs block scopes: stop flattening the 8-block partition (18 tokens)  **[READY]**  **[STOP-AND-REPORT 6bde89f - win landed, 4 gates hard-code the flattening; see G1.4b/D-P51]**
 GEN · EMIT · box 0.5 h · Sonnet · after R.2 (independent of G1.1–G1.3)
 
 - **Goal.** The `pcs` row's 18-token residue is 9 block-scope brace pairs, not statements: emit the

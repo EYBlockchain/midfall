@@ -1913,3 +1913,37 @@ at the computable proxies** (stuck at `List.lookup "VK_MPTR" (constTableOf posei
 `maxRecDepth 20000` still stuck; `vm_decide` unavailable). **The only working route is `native_decide`
 on the proxies plus defeq transfer back to the render.** Any later card that tries to decide a `consts`
 lookup will hit this.
+
+## D-P51 — **Approved: update the 4 gates that hard-code the pcs flattening (G1.4 follow-through)**
+
+> Raised by G1.4's stop-and-report. The human delegated decisions on 2026-11-17; **note the review's
+> W2 finding that delegated authority was not in fact granted — so this is recorded as PROPOSED until
+> signed, and the follow-up card does not run on it alone.**
+
+**The situation.** G1.4 fixed `emitPcsFromPlan` to emit the 8-block partition as `Stmt.block` scopes
+instead of flattening it. **The pcs row now prints `equal true`** (3623 == 3623, braces 52 == 52, the
+3571 non-brace tokens untouched — **braces-only at token level, and RunEmitted's 9 executable-semantics
+gates still pass, so nothing the code MEANS regressed**). But **four gates hard-code the flattening**
+and now fail, and `PoseidonValid.lean:292` pins the old AST count 6761.
+
+**Decision: approve updating all five sites.** The test, in every case, is **whether the gate asserts
+the old wrong behaviour or an independent property.** These four assert the flattening itself — the
+defect being fixed. **A gate that encodes a bug does not earn protection from it.** The proposed
+replacements are **strictly stronger**, and the card did not guess: it evaluated the `:404` replacement
+(`stmtsBeq [Stmt.block ((tagged.map Prod.snd).map Stmt.block)]`) to TRUE, and `:505` reuses the deep
+`[Stmt.block body]` idiom the same gate already applies to `quotientLin`/`vkLoading`.
+
+**What this is not.** It is **not** adjusting a test to match a change I wanted — which is the failure
+mode I explicitly armed against in the brief ('do not adjust the gate to match your change'). **The
+card obeyed that, stopped, and reported that my two acceptance clauses were jointly unsatisfiable.**
+They were: 'all 10 gates still true' and 'do not adjust any gate' cannot both hold when 3 gates encode
+the flattening. **That contradiction was mine, and catching it is the card working correctly.**
+
+**Standing condition on the follow-up card:** every updated gate must be shown **stronger or equal**,
+never weaker, and the card must **name what each gate was protecting and show that protection still
+holds.** If any one of them turns out to be guarding a real property rather than the flattening, it
+stops and reports rather than being rewritten.
+
+**Also recorded: clause 6 did NOT flip.** `codegenAgrees poseidonPv poseidonM` is still `false`; AST
+6761 → 6779 (+18) and the remaining gap 7275 = 823 + 68 + 6384 is **exactly G1.1–G1.3 and nothing
+else.** **Cone stays 11.** The card reported that precisely instead of claiming a win it hadn't got.
