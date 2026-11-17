@@ -115,3 +115,32 @@ but only once the statements ticket lands.
 this kind). INFRA cards that do not depend on it — **DG.7** (CI that runs and can pass, after DG.0+DG.2,
 both merged) and **DG.8** (STATUS generated from the report, after DG.2) — are READY and are the next
 things I will brief.
+
+## ⚠ DG.7 HELD — it needs a shared-remote side effect I will not take unasked
+
+**Checked at `d6cef1e` rather than briefing blind:**
+- **`.github/workflows/formal.yml` does not exist** — the card says "replace" it. It must be created.
+- **Good news, verified:** the runner label `ubuntu-latest-16-core-x64` is **already used by `ci.yaml`
+  at `:47`, `:65`, `:92`** — so the label is presumably available to the org and the card's biggest
+  unverified premise is partly retired.
+- **The blocker:** DG.7's step 4 is *"Push a throwaway branch `formal/ci-negctl` with
+  `EXPECTED_KAT_TOTAL` off by one and confirm it is red; delete the branch."* **That is a create-and-
+delete on the shared `EYBlockchain/midfall` remote.**
+
+**Why I'm stopping rather than delegating.** A subagent already pushed to this remote once without
+authorisation this session (found via `git reflog`, not by design). **The standing push rule is
+"every commit on `formal/baseline` is pushed" — it does not extend to creating and deleting
+throwaway branches on an org repo.** A negative control is the right instinct; running it on shared
+infrastructure without asking is not my call to make.
+
+**Question 4 for the human:** may a card push and delete `formal/ci-negctl` on `origin` to prove CI
+can go red — or should the CI negative control be done on a fork, or skipped with the gate's
+red-capability argued some other way?
+
+**Also noted:** DG.7's own Guidance says *"Nothing here was run in this session. Unverified:
+lean-action's input names beyond `lake-package-directory`"* — **the card declares its own premises
+untested.** Per the loop, that is a probe to run, not a brief to issue blind.
+
+**Session ended at round 46 by context exhaustion.** Tree green and pushed (`d6cef1e`). Four questions
+await the human (the W13 refuted-node trio above, plus this one). **DG.8 (STATUS generated from the
+report, after DG.2) is READY, needs no shared-remote action, and is the next card to brief.**
