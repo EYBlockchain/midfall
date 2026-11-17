@@ -42,5 +42,13 @@ no frozen edit), **OBJ.17** (name the target "fixture F1"), **Q0.5** (V2 card, c
 re-hashes `Program.lean` and `Statements.lean` together, or it does not merge G1.2. W14 — no Yul
 PROOF card is READY before T3.11's exhibit, whatever the table's status column says.
 
-**Waiting on human:** nothing blocks the queue. Recommended: paste the V3 goal prompt
+**D-P71 (signed 2026-11-17, `design.md`): the goal is the generator theorem, not `poseidon_done`.**
+`lowering_correct (R) (product) (hR : R.ValidV3) : LoweringEquivalenceV3 R product`; rows are proved
+for every render; fixtures are tests only. Read the goal prompt's GOAL and DONE paragraphs through
+D-P71 until card PL.G rewrites them. Rows of the V3 table noted "D-P71: restated by PL.G" are not
+briefed as written; T3.4 is dropped and T3.6 is replaced by GEN.1; **GEN.0** (probe) becomes READY when PL.G has run. If
+GEN.0 or GEN.1 misses its Accept line, stop and ask the human: per-fixture rows are not a fallback.
+
+**Waiting on human:** card **PL.G** (the plan rewrite for D-P71; a plan session runs it, not a
+subagent). Otherwise nothing blocks the queue. Recommended: paste the V3 goal prompt
 (`v2-bundle/docs/GOAL-PROMPT.md`, everything below its line) as the orchestrator's `/goal`.

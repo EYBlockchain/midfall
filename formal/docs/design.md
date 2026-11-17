@@ -2360,3 +2360,52 @@ refinement rules.
 - CI runs on `formal/baseline` (card DG.7).
 - Exporter schema 2 (card REF.11, extends D-P58): `calldata.bin`, the EVM result, a mutation
   corpus with Rust verdicts, `build.json`, both `.sol` dumps, a manifest.
+
+## D-P71 — **Approved: the deliverable is the generator theorem; fixtures are tests (amends D-P24, D-P44 clause 4, D-P60, D-P68, D-P69)**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §13. **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session at `c22b51a` (instruction:
+> *"Sign D-P71"*, given on the draft of §13 as written). The human's stated requirement, same
+> session: *"I thought we would formally verify the codegenerator, the lowering itself"* and
+> *"i am not interested in proofs for fixtures"*. No D-P70 is recorded: the number was reserved
+> for a draft in another session.
+
+**Decision.**
+- **Deliverable.** The headline has no fixture in it:
+  `theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.ValidV3) :
+  LoweringEquivalenceV3 R product`. `ValidV3` contains the generated-by clause, so `R` ranges over
+  what the Lean port of the generator emits. `poseidon_done`, `lowering_equivalence_poseidon` and
+  `end_to_end_poseidon` are no longer goals.
+- **Rows.** `R.SimContracts product`, `R.ProgContracts product` and `TotalV3 R product` are proved
+  from `hR : R.ValidV3` for every `R`. No block row, totality lemma or headline is stated or proved
+  at a fixture. D-P68's architecture stands; its technology clause ("rows are proved per fixture on
+  literal slices pinned by `native_decide`") is struck. The `wp` engine is kept and run on
+  parametric slices.
+- **Validity is checked per circuit, not proved for all inputs.** `ValidV3 R` stays a hypothesis,
+  discharged for a given circuit by computation. Proving it for every supported input is not part
+  of this decision.
+- **Fixtures are tests.** F1 and any further circuit are kept for: W12 witnesses and falsifiers;
+  the W14 run-it gates; the non-vacuity gate; the reference gate against Rust; byte equality of the
+  rendered contracts with the Rust artifacts. `native_decide` stays allowed there (D-P44).
+- **Axioms.** `lowering_correct` closes under `[propext, Classical.choice, Quot.sound]` only. A
+  `native_decide` axiom in its cone is a defect.
+- **Supported class.** `SupportedV3` as typechecked (`V3-evidence/lean/statements/
+  StatementsV3.lean:592`). Widening it is a separate decision per clause. The IVC verifier is
+  outside this class (accumulator, external evaluator: PLAN-V3 §5 items X1, X2).
+
+**Amends.** D-P24 is withdrawn. D-P44 clause 4: the claimed headline becomes `lowering_correct`,
+and X4 is the goal; clauses 1–3 stand. D-P60: PLAN-V3 stays adopted, with M5–M8, §0 and §6 restated
+by card PL.G. D-P68: the technology clause only. D-P69: `Done` loses its fixture in `headline` and
+`valid`; `gate`, `reference`, `artifact`, `vkArtifact` stay as fields about F1. D-P61–D-P67 are
+unaffected.
+
+**Conditions (applied, not chosen).**
+- D-P60's hold stands (no block row before PLAN-V3's M4 exit gate), and W14 stands.
+- Card GEN.0 runs first and alone; card GEN.1 replaces T3.6.
+- If GEN.0 or GEN.1 misses its threshold: **stop and re-plan the proof technology with the human.**
+  Falling back to per-fixture rows is NOT pre-approved.
+- Until card PL.G has run, the per-fixture cards it restates (T3.4, T3.6, T3.9, T3.10 route A,
+  SIM.6, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H, PL.E, DG.4) are not briefed as written.
+
+**Not decided here.** The cost is unmeasured (one block closed for every `R`: 25 tokens, 1,053
+lines). No estimate is recorded before GEN.1 reports.
