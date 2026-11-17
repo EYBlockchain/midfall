@@ -43,10 +43,10 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 
 | # | ID | card | M | layer · type · box · model | after | status | source / note |
 |---|---|---|---|---|---|---|---|
-| 1 | **DG.0** | Make the gates green at the tip | M0 | INFRA · KAT · 1 h · Sonnet | — | READY | PLAN-V3-cards |
-| 2 | **DG.1** | Land the axiom gate | M0 | INFRA · PORT · 2 h · strongest | DG.0 | after DG.0 | PLAN-V3-cards |
-| 3 | **DG.2** | Sorry register by declaration, from the environment | M0 | INFRA · PORT · 2.5 h · strongest | DG.1 | after DG.1 | PLAN-V3-cards |
-| 4 | **DG.6** | No registered sorry may be refuted | M0 | INFRA · KAT · 0.5 h · Sonnet | DG.2 | after DG.2 | PLAN-V3-cards |
+| 1 | **DG.0** | Make the gates green at the tip | M0 | INFRA · KAT · 1 h · Sonnet | — | **MERGED b4fd751** | PLAN-V3-cards |
+| 2 | **DG.1** | Land the axiom gate | M0 | INFRA · PORT · 2 h · strongest | DG.0 | **MERGED 3a7c017** | PLAN-V3-cards |
+| 3 | **DG.2** | Sorry register by declaration, from the environment | M0 | INFRA · PORT · 2.5 h · strongest | DG.1 | **MERGED 2a8ded8** | PLAN-V3-cards |
+| 4 | **DG.6** | No registered sorry may be refuted | M0 | INFRA · KAT · 0.5 h · Sonnet | DG.2 | **READY** | PLAN-V3-cards |
 | 5 | **PL.1** | W13: take the refuted sorries out of the tree | M0 | INFRA · PORT · 1.5 h · Sonnet | DG.6 | after DG.6 | PLAN-V3-cards; deletes poseidon_valid and its consumers (W13) |
 | 6 | **DG.7** | CI that runs and can pass | M0 | INFRA · PROBE · 2 h · Sonnet | DG.0, DG.2 | after DG.0, DG.2 | PLAN-V3-cards |
 | 7 | **DG.8** | STATUS generated from the report | M0 | INFRA · PORT · 1 h · Sonnet | DG.2 | after DG.2 | PLAN-V3-cards |
