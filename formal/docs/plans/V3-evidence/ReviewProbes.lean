@@ -172,22 +172,28 @@ example (S : Nat) : BitVec.ofNat 256 (S + 2^256) = BitVec.ofNat 256 S := by
 #guard deciding_layout_derivedProofLen == 4224
 #guard deciding_layout_planProofLen == 4320
 
-/-! ## 6. The program at the deployment is not the generator's output yet (RV-12, RV-13) -/
+/-! ## 6. The program at the deployment IS the generator's output (RV-12 CLOSED by M2; RV-13 closed by ST.3) -/
 
-/- Statements per slice, in include order. `quotientLin` is one statement. -/
+/- Statements per slice, in include order. `quotientLin` is FOUR statements since OBJ.2: the two
+    `quotient_numerator` includes in front of the linearization scope. `pcs` is ONE block scope
+    carrying the eight-block partition (G1.4b). -/
 #guard ([Partial.vkLoading, .transcriptParser, .lagrange, .quotientLin, .pcs, .finalPairing,
-    .traceReturn].map fun q => (sliceOf poseidonPv poseidonM q).length) == [1, 44, 3, 1, 225, 2, 3]
+    .traceReturn].map fun q => (sliceOf poseidonPv poseidonM q).length) == [1, 44, 3, 4, 1, 2, 3]
 
-/- Function definitions: 8 in the AST, 15 in the generator's text. -/
-#guard ((mainAsmRaw poseidonPv).filter fun s =>
-    match s with | YulSemantics.Stmt.funDef .. => true | _ => false).length == 8
+/- Function definitions: 15 at the top level of the emitted AST (8 AssemblyHelpers + 5
+    AccumulatorHelpers, G1.1, plus the 2 the slices contribute), and 15 function keywords in the
+    generator's text - the two quotient helpers are flat statements of the `.quotientLin` slice,
+    which is exactly what ST.3's scope had to absorb. -/
+#guard ((mainAsmRaw poseidonPv poseidonM).filter fun s =>
+    match s with | YulSemantics.Stmt.funDef .. => true | _ => false).length == 15
 #guard ((mainAssemblyTokens poseidonM).filter (· == "function")).length == 15
 
-/- So the token-agreement clause `Valid.codegen` is false at the deployment. -/
-#guard codegenAgrees poseidonPv poseidonM == false
+/- So the token-agreement clause `Valid.codegen` is TRUE at the deployment: RV-12 closed. -/
+#guard codegenAgrees poseidonPv poseidonM == true
 
-/- RV-13. `Render.scope` hoists the helper block only, but the generator's text defines
-    `q_program_fail` and `q_pow5` AFTER `let success` - inside the slice region. -/
+/- RV-13, the reason the splice and the scope were ONE re-hash: the generator's text defines
+    `q_program_fail` and `q_pow5` AFTER `let success`, i.e. inside the slice region, so a scope that
+    hoists only the helpers is the wrong scope. `Render.scope` now hoists helpers then slices. -/
 #guard (let t := mainAssemblyTokens poseidonM
         t.idxOf "success" < t.idxOf "q_program_fail" && t.idxOf "success" < t.idxOf "q_pow5")
 

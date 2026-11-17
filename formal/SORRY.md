@@ -88,7 +88,7 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.LoweringV2.inline_append | Midfall.LoweringV2.ProgramLemmas | theorem | OPEN | - | `60d11701168a999f` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall.LoweringV2.noWriters_prog | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `2b62208f4c1f0276` | V3 ST.12 - scans_prog_addr_indep removes it |
 | Midfall.LoweringV2.prefix_run_clean | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `4e5f39adb62c935e` | V3 SIM.7 - deletes prefix_run_clean |
-| Midfall.LoweringV2.prog_slices_decomp | Midfall.LoweringV2.Blocks | theorem | OPEN | - | `1c0cd7a7d5151068` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall.LoweringV2.prog_slices_decomp | Midfall.LoweringV2.Blocks | theorem | OPEN | - | `7c068b01308bc4df` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall.LoweringV2.rejects_of_not_accepts | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `126f21c9acf4e222` | V3 ST.5 - deletes rejects_of_not_accepts |
 | Midfall.LoweringV2.runBody_iff_slices | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `90b03cbcf87a5e9b` | V3 SIM.7 - deletes runBody_iff_slices |
 | Midfall.Statements.contractRef_noAcc | Midfall.Statements | theorem | OPEN | - | `c1a70bb473847dd8` | frozen statements (S1..S7 land later) |

@@ -104,10 +104,31 @@ def slice (q : Partial) : YulBlock := sliceOf R.pv R.model q
 /-- The inlined helper definitions. -/
 def helpers : YulBlock := helpersOf R.pv R.model
 
-/-- The function scope every block runs in: the hoisted inlined helpers (the only `funDef`s of
-    the program; `hoist_prog_eq_helpers` below is the obligation that says so). -/
+/-- THE SEVEN SLICES IN INCLUDE ORDER: the concatenation the per-block contracts compose over, and
+    the tail of `prog`. Moved here from `Blocks.lean` by ST.3 (D-P65) because `scope` below now needs
+    it: a frozen statement may not rest on a refinable definition. Same text, same `R.slice`. -/
+def slices : YulBlock :=
+  R.slice .vkLoading ++ R.slice .transcriptParser ++ R.slice .lagrange ++
+    R.slice .quotientLin ++ R.slice .pcs ++ R.slice .finalPairing ++ R.slice .traceReturn
+
+/-- THE FUNCTION SCOPE EVERY BLOCK RUNS IN (D-P65, ST.3): the hoisted inlined helpers FOLLOWED BY the
+    hoisted slices, as one scope. Not the hoist of the whole program - measured against copies of all
+    five block files, `[hoist (R.prog 0 0)]` breaks `fail_lookup := rfl` in `Blocks/TraceReturn.lean
+    :405` for a generic render, and this shape compiles all five with NO proof edit.
+
+    WHY IT MOVED. Before OBJ.2 the helpers were the only `funDef`s of the program, so
+    `[hoist R.helpers]` was the whole scope and `hoist (R.prog a b) = hoist R.helpers` was the
+    obligation saying so. G1.2 puts `q_program_fail` and `q_pow5` INSIDE the `.quotientLin` slice, so
+    the slices now contribute function definitions of their own and a scope that hoists only the
+    helpers is not the scope the program runs in: `prog_slices_decomp`'s second conjunct would be
+    FALSE, not merely unproved (RV-13). That is why the splice and this change are one re-hash.
+
+    ORDER IS NOT COSMETIC: `lookupFun` walks scopes innermost-first and `hoist` is a `filterMap` over
+    the block, so helpers-then-slices is the order the program declares them in and the order a
+    duplicate name would have to resolve in. `prog_slices_decomp`'s second conjunct is the statement
+    that this scope is the program's own. -/
 def scope (c : ExternalCalls) (g : ExternalGas) : FunEnv (Bridge.Dialect c g) :=
-  [hoist (Bridge.Dialect c g) R.helpers]
+  [hoist (Bridge.Dialect c g) R.helpers ++ hoist (Bridge.Dialect c g) R.slices]
 
 end Render
 

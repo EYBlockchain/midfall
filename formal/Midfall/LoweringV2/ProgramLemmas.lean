@@ -40,4 +40,16 @@ theorem emitSlices_eq (pv : PlanView) :
       GenAst.emitPartial pv .traceReturn := by
   simp [GenAst.emitSlices, Midfall.Lowering.partials, List.append_assoc]
 
+/-- The model-aware analogue of `emitSlices_eq` above, and the equation `mainAsmRaw` now rests on:
+    the seven slices in include order, with the `.quotientLin` arm carrying the two
+    `quotient_numerator` includes in front of the linearization scope (OBJ.2). Same one-`simp`
+    discharge: the cost of this lemma is the emitter's, not the proof's. -/
+theorem emitSlicesM_eq (pv : PlanView) (c : Midfall.Generator.PartialCtx) :
+    GenAst.emitSlicesM pv c =
+      GenAst.emitPartialM pv c .vkLoading ++ GenAst.emitPartialM pv c .transcriptParser ++
+      GenAst.emitPartialM pv c .lagrange ++ GenAst.emitPartialM pv c .quotientLin ++
+      GenAst.emitPartialM pv c .pcs ++ GenAst.emitPartialM pv c .finalPairing ++
+      GenAst.emitPartialM pv c .traceReturn := by
+  simp [GenAst.emitSlicesM, Midfall.Lowering.partials, List.append_assoc]
+
 end Midfall.LoweringV2

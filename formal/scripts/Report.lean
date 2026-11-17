@@ -36,7 +36,7 @@ open Midfall.Instances.PoseidonValid
 -- (iii) block coverage at the deployment, and the weights
 #block_coverage Midfall.LoweringV2.BlockRow Midfall.Lowering.Partial at Midfall.Instances.PoseidonV2.poseidonRender under [Midfall]
 #eval IO.println s!"slice_tokens {partials.map fun q => (reprStr q, (yulTokens (YulSemantics.EVM.print (sliceOf poseidonPv poseidonM q))).length)}"
-#eval IO.println s!"program_tokens ast_main {(yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length} generator_text_main {(mainAssemblyTokens poseidonM).length} codegenAgrees {codegenAgrees poseidonPv poseidonM}"
+#eval IO.println s!"program_tokens ast_main {(yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv poseidonM))).length} generator_text_main {(mainAssemblyTokens poseidonM).length} codegenAgrees {codegenAgrees poseidonPv poseidonM}"
 
 -- (iv) the axiom allow-list over the whole tree
 #axiom_sweep [Midfall, YulSemantics] allow [Midfall.Assumptions.blsGT, Midfall.Assumptions.blsGT_group,

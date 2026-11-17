@@ -28,9 +28,8 @@
     4   model           SORRY     unchanged: true by construction, not machine-dischargeable (C.4's
                                   gap (c) plus the dependent-motive obstruction).
     5   inputs          PROVED    unchanged. k = 6 = vk.domain.k.
-    6   codegen         REFUTED   unchanged in kind (WP-G1, the un-emitted includes), bigger on both
-                                  sides now: AST 6779 tokens against text 14054 (was 3156/10433) -
-                                  the pcs arm emits 225 statements where it used to emit none.
+    6   codegen         PROVED    FLIPPED BY M2 (G1.1 + G1.2 + OBJ.2): WP-G1 closed, AST 14054 tokens
+                                  / 74 statements against text 14054 (was 6779/66). `codegenStruct` is the
     7   closed          PROVED    unchanged.
     8   slots           PROVED    FLIPPED. `numNegLagranges` 9 against `blindingFactors + 1` = 9
                                   (was 9 vs 7: the empty CS recomputed blinding_factors to 6 while
@@ -51,11 +50,13 @@
                                   RETURN_MPTR = some 4096, so tr_blockProgress's existence half is
                                   reachable from `R.Valid` at all.
 
-  So 9 PROVED, 4 REFUTED, 1 SORRY out of fourteen clauses - from 6/6/1 of thirteen. `poseidonRender.Valid` is STILL unsatisfiable and
+  So 10 PROVED, 3 REFUTED, 1 SORRY out of fourteen clauses - from 9/4/1 (was 6/6/1 of thirteen). `poseidonRender.Valid` is STILL unsatisfiable and
   `poseidonRender_notValid` now runs through clause 2 rather than clause 1, because clause 1 became
   a theorem. What is left is no longer "the constraint system is missing": it is
   `LoweringPlan::new`'s post-constructor sizing (clauses 2 and 3) and one v1 `WellFormed` field
-  (clause 9), plus the AST emitter (clause 6), none of which is fixture data.
+  (clause 9). The AST emitter (clause 6) is no longer one of them: M2 closed it by building
+  the three missing includes, and `deciding_codegenStruct` now ties the AST to the parse of
+  the generator text and not merely to its token stream.
 
   ## WHAT WAS NOT TOUCHED
 
@@ -272,11 +273,15 @@ theorem poseidonValid_inputs :
        poseidonInputs.truncatedChallenges = Features.solidity.truncatedChallenges
   exact ⟨rfl, rfl, by native_decide, rfl⟩
 
-/-! ## 6. codegen - REFUTED -/
+/-! ## 6. codegen - PROVED (M2: G1.1 + G1.2 + OBJ.2 + ST.3) -/
 
-/-- THE DECIDING VALUE FOR CLAUSE 6: the whole conjunction is false. AXIOM:
-    deciding_codegen._native.native_decide.ax_1_1. -/
-theorem deciding_codegen : codegenAgrees poseidonPv poseidonM = false := by native_decide
+/-- THE DECIDING VALUE FOR CLAUSE 6: the whole conjunction is TRUE. It was false at every commit
+    before this batch - `mainAsmRaw` emitted 6,779 of the generator's 14,054 tokens, and clause 6
+    was the one refutation here that was about the AST emitter rather than about typed-in plan meta.
+    WP-G1 closed it: the five accumulator-codec definitions and `q_program_fail` / `q_pow5` as
+    structured trees (G1.1, G1.2) and the 6,384-token quotient numerator as the parse of the model's
+    own lines (OBJ.2). AXIOM: deciding_codegen._native.native_decide.ax_1_1. -/
+theorem deciding_codegen : codegenAgrees poseidonPv poseidonM = true := by native_decide
 
 /-- The half that is TRUE, pinned so the refutation cannot be read as "the emitter is broken
     everywhere": the ABI-shape guard block prints to the guard text token for token. AXIOM:
@@ -285,28 +290,39 @@ theorem deciding_codegen_guard :
     yulTokens (YulSemantics.EVM.print (abiGuardBlock poseidonM)) == abiGuardTokens poseidonM := by
   native_decide
 
-/-- THE FIRST DIFFERING TOKEN, as a minimal reproducer a reader can check by eye. The emitted main
-    block is 3156 tokens where the printed text is 10433, and at index 1333 the AST has already
-    moved on to `let r := FR_MODULUS` while the text is still emitting
-    `function load_acc_coord_shifted (src, bits)` - an accumulator helper include that
-    `GenAst.emitSlices` does not emit. AXIOM:
-    deciding_codegen_witness._native.native_decide.ax_1_1. -/
+/-- THE WITNESS FOR CLAUSE 6, as the numbers a reader can check by eye: the emitted main block is
+    the generator's main block - 74 statements and 14,054 tokens on both sides, where the emitter
+    reached 66 statements / 6,779 tokens before this batch. The three regions the gap was made of
+    are 823 (accumulator codecs) + 68 (quotient helpers) + 6,384 (numerator) = 7,275 tokens, and
+    6,779 + 7,275 = 14,054 exactly: nothing was padded and nothing is left un-emitted at this
+    render. AXIOM: deciding_codegen_witness._native.native_decide.ax_1_1. -/
 theorem deciding_codegen_witness :
-    (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length = 6779 ∧
+    (mainAsmRaw poseidonPv poseidonM).length = 74 ∧
+      (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv poseidonM))).length = 14054 ∧
       (mainAssemblyTokens poseidonM).length = 14054 := by
   native_decide
 
-/-- **CLAUSE 6 OF 11 - REFUTED.** The literal `Render.Valid.codegen`. `Program.lean:96-101`
-    already says this is false and names the gap (WP-G1: emitSlices emits the linearization SCOPE of
-    QuotientAndLinearization but not the two `quotient_numerator` includes in front of them, and
-    the accumulator and trace helper includes are not emitted) - "CodegenAgrees below is FALSE until
-    they are, which is the point: the gap is a red gate, not a silent omission". This is that red
-    gate MEASURED at the deployment, and it is the only refutation here that is NOT about the plan's
-    meta: it is the AST emitter, and it is C.2/WP-G1's to close. -/
-theorem poseidonValid_codegen_not : ¬ CodegenAgrees poseidonRender.pv poseidonRender.model := by
-  show ¬ (codegenAgrees poseidonPv poseidonM = true)
-  rw [deciding_codegen]
-  decide
+/-- **CLAUSE 6 - PROVED.** The literal `Render.Valid.codegen`, and the only `Valid` clause this
+    repository has ever been able to close by building the missing emitter instead of narrowing the
+    claim. `Program.lean` kept the gap as a RED GATE on purpose ("`CodegenAgrees` below is FALSE
+    until they are, which is the point: the gap is a red gate, not a silent omission") and the gate
+    is now green at the deployment. What is still NOT claimed, and is what the un-emitted arms named
+    in `mainAsmRaw` and `emitQuotientHelpersAt` are for: a render with an accumulator, or with the
+    `q_limb7` / `q_widelimb7` helper flags set, makes this clause FALSE again rather than quietly
+    skipping a region. This is a statement about ONE render, discharged by computation on it. -/
+theorem poseidonValid_codegen : CodegenAgrees poseidonRender.pv poseidonRender.model := by
+  show codegenAgrees poseidonPv poseidonM = true
+  exact deciding_codegen
+
+/-- THE STRUCTURAL TIE AT THE DEPLOYMENT (OBJ.2): the emitter's AST is `stmtsBeq`-equal to the
+    parse of the generator text, for both assembly blocks. Stronger than clause 6, which only
+    compares token streams and cannot see builtin-versus-call (RV-27). The parsed numerator half
+    agrees by construction - see `codegenStruct`'s docstring for what is and is not being trusted
+    here - and the structured half is what the per-region mutation falsifiers in
+    `M2BatchKats.lean` put teeth into. AXIOM:
+    deciding_codegenStruct._native.native_decide.ax_1_1. -/
+theorem deciding_codegenStruct :
+    codegenStruct (mainAsmRaw poseidonPv poseidonM) poseidonM = true := by native_decide
 
 /-! ## 7. closed - PROVED -/
 

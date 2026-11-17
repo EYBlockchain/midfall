@@ -164,6 +164,7 @@ import Midfall.Lowering.Types
 import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Inv
 import Midfall.Generator.VerifierPartials
+import Midfall.Lowering.YulParse
 import YulSemantics.Syntax
 import YulSemantics.PrettyPrint
 
@@ -590,6 +591,155 @@ def emitHelpersWithout (name : String) (pv : PlanView) : Block Op :=
     | Stmt.funDef n _ _ _ => n != name
     | _ => true
 
+/-! ### AccumulatorHelpers (G1.1)
+
+The include 'mainAssemblyText' puts between 'AssemblyHelpers' and 'TraceAndGasHelpers'
+('T:partials/verifier/AccumulatorHelpers.yul'): at a render with NO accumulator it is exactly FIVE
+function definitions and no other token - 'load_acc_coord_shifted' (202 tokens),
+'is_bls_p_minus_one' (31), 'check_acc_coord_packing' (151), 'load_acc_coord' (165) and
+'load_acc_point' (274), 823 in all. 'emitHelpers' does NOT carry them and must not: gate 51
+('emitHelpersOrder_matchesTemplate_ok') pins 'emitHelpers' to the AssemblyHelpers render's eight
+names, 'helpersOf' reuses that block for the per-block contracts, and the sixth name this file would
+add ('validate_public_accumulator') renders only when the render HAS an accumulator. So this is a
+SEPARATE block, spliced into 'mainAsmRaw' and into 'helpersOf' together with it.
+
+WHY THE SIGNATURE IS A NAT AND NOT A PLAN VIEW. The region interpolates exactly one value from the
+render: 'let limbs_per_word := 4' inside 'load_acc_point', which the template reads from
+'ctx.templateConstants.accumulator.limbsPerWord' (VerifierPartials.lean:960). That is a
+'TemplateConstants' field and NOT a 'PlanView' field - G1.1's carded signature '(pv : PlanView)'
+cannot reach it, which is the premise gap the card says to name rather than to type in. It arrives as
+a value, and 'emitAccumulatorHelpers' below supplies it from the same source 'emitEcPairingAt' takes
+its precompile addresses from (:302-303), so nothing is hard-coded at the splice site and gate 66
+says the parameter reaches the program.
+
+THE UN-EMITTED ARM, NAMED. The template has a second, much larger arm gated on
+'ctx.expectedHasAccumulator': 'validate_public_accumulator', which interpolates
+'expectedNumAccLimbBits', 'expectedNumAccLimbs', 'expectedAccOffset', 'accMsmScratch', the
+carried-scalar flag and a loop over 'accFixedBases'. At this render 'expectedHasAccumulator' is false
+('SupportedV2.noAcc'), so that arm renders NOTHING and the five definitions below are the whole
+region - which is what the token KAT checks, and what makes a true flag a RED gate rather than a
+silent omission: an accumulator render would put several thousand more tokens where this emits 823,
+and 'codegenAgrees' reddens. Converting that arm is OBJ.13's card, not this one. -/
+
+/-- 'load_acc_coord_shifted': rebuild one 384-bit coordinate from radix-2^56 limbs packed
+    little-endian into calldata words, splitting it into the EIP-2537 high/low word pair. -/
+def emitLoadAccCoordShifted : Block Op :=
+  [ yfun "load_acc_coord_shifted" ["src", "bits", "n", "base", "limbs_per_word"] ["hi", "lo"]
+      [ ylet "mask" (yop Op.sub [yvar "base", ylit 1])
+      , yfor [ylet "i" (ylit 0)] (yop Op.lt [yvar "i", yvar "n"])
+          [ yset "i" (yop Op.add [yvar "i", ylit 1]) ]
+          [ ylet "packed" (yop Op.calldataload [yop Op.add [yvar "src",
+              yop Op.mul [yop Op.div [yvar "i", yvar "limbs_per_word"], ylit 0x20]]])
+          , ylet "limb" (yop Op.and
+              [ yop Op.shr [yop Op.mul [yop Op.mod [yvar "i", yvar "limbs_per_word"], yvar "bits"],
+                  yvar "packed"]
+              , yvar "mask" ])
+          , ylet "shift" (yop Op.mul [yvar "i", yvar "bits"])
+          , yif (yop Op.lt [yvar "shift", ylit 256])
+              [ yset "lo" (yop Op.add [yvar "lo", yop Op.shl [yvar "shift", yvar "limb"]])
+              , yif (yop Op.gt [yop Op.add [yvar "shift", yvar "bits"], ylit 256])
+                  [ yset "hi" (yop Op.add [yvar "hi",
+                      yop Op.shr [yop Op.sub [ylit 256, yvar "shift"], yvar "limb"]]) ] ]
+          , yif (yop Op.iszero [yop Op.lt [yvar "shift", ylit 256]])
+              [ yset "hi" (yop Op.add [yvar "hi",
+                  yop Op.shl [yop Op.sub [yvar "shift", ylit 256], yvar "limb"]]) ] ] ] ]
+
+/-- 'is_bls_p_minus_one': the shifted codec writes p-1 for the coordinate zero, so the sentinel is
+    explicit. 'BLS_P_HI' and 'BLS_P_MINUS_ONE_LO' stay NAMES: 'mainAsmRaw' is the un-inlined block and
+    'constTableOf' substitutes them at the splice into 'asmOf'. -/
+def emitIsBlsPMinusOne : Block Op :=
+  [ yfun "is_bls_p_minus_one" ["hi", "lo"] ["yes"]
+      [ yset "yes" (yop Op.and [yop Op.eq [yvar "hi", yvar "BLS_P_HI"],
+          yop Op.eq [yvar "lo", yvar "BLS_P_MINUS_ONE_LO"]]) ] ]
+
+/-- 'check_acc_coord_packing': reject unused high bits so that one coordinate has exactly one
+    calldata encoding. -/
+def emitCheckAccCoordPacking : Block Op :=
+  [ yfun "check_acc_coord_packing" ["src", "bits", "n", "limbs_per_word"] ["ok"]
+      [ yset "ok" (ylit 1)
+      , ylet "coord_words" (yop Op.div
+          [ yop Op.add [yvar "n", yop Op.sub [yvar "limbs_per_word", ylit 1]]
+          , yvar "limbs_per_word" ])
+      , yfor [ylet "word_idx" (ylit 0)] (yop Op.lt [yvar "word_idx", yvar "coord_words"])
+          [ yset "word_idx" (yop Op.add [yvar "word_idx", ylit 1]) ]
+          [ ylet "remaining" (yop Op.sub [yvar "n",
+              yop Op.mul [yvar "word_idx", yvar "limbs_per_word"]])
+          , ylet "limbs_in_word" (yvar "limbs_per_word")
+          , yif (yop Op.lt [yvar "remaining", yvar "limbs_per_word"])
+              [ yset "limbs_in_word" (yvar "remaining") ]
+          , ylet "used_bits" (yop Op.mul [yvar "limbs_in_word", yvar "bits"])
+          , yif (yop Op.lt [yvar "used_bits", ylit 256])
+              [ yset "ok" (yop Op.and [yvar "ok", yop Op.lt
+                  [ yop Op.calldataload [yop Op.add [yvar "src",
+                      yop Op.mul [yvar "word_idx", ylit 0x20]]]
+                  , yop Op.shl [yvar "used_bits", ylit 1] ]]) ] ] ] ]
+
+/-- 'load_acc_coord': pack check, decode, range check against p, undo the -1 shift with a carry into
+    the high word, and require the EIP-2537 high word to fit its low 128 bits. -/
+def emitLoadAccCoord : Block Op :=
+  [ yfun "load_acc_coord" ["src", "bits", "n", "base", "limbs_per_word"] ["ok", "hi", "lo"]
+      [ yset "ok" (ycall "check_acc_coord_packing"
+            (List.map yvar ["src", "bits", "n", "limbs_per_word"]))
+      , ysetN ["hi", "lo"] (ycall "load_acc_coord_shifted"
+            (List.map yvar ["src", "bits", "n", "base", "limbs_per_word"]))
+      , yset "ok" (yop Op.and [yvar "ok", yop Op.or
+          [ yop Op.lt [yvar "hi", yvar "BLS_P_HI"]
+          , yop Op.and [yop Op.eq [yvar "hi", yvar "BLS_P_HI"],
+              yop Op.iszero [yop Op.gt [yvar "lo", yvar "BLS_P_MINUS_ONE_LO"]]] ] ])
+      , ylet "was_p_minus_one" (ycall "is_bls_p_minus_one" [yvar "hi", yvar "lo"])
+      , yif (yvar "was_p_minus_one") [ yset "hi" (ylit 0), yset "lo" (ylit 0) ]
+      , yif (yop Op.iszero [yvar "was_p_minus_one"])
+          [ ylet "next_lo" (yop Op.add [yvar "lo", ylit 1])
+          , yset "hi" (yop Op.add [yvar "hi", yop Op.lt [yvar "next_lo", yvar "lo"]])
+          , yset "lo" (yvar "next_lo") ]
+      , yset "ok" (yop Op.and [yvar "ok",
+          yop Op.lt [yvar "hi", yop Op.shl [ylit 128, ylit 1]]]) ] ]
+
+/-- 'load_acc_point': decode one public accumulator point into an EIP-2537 four-word G1 slot. The
+    ONLY site in the region that interpolates a render value - 'limbs_per_word' - and the reason for
+    the parameter on 'emitAccumulatorHelpersAt'. -/
+def emitLoadAccPoint (limbsPerWord : Nat) : Block Op :=
+  [ yfun "load_acc_point" ["dst", "src", "bits", "n", "base"] ["ok", "is_id"]
+      [ ylet "limbs_per_word" (ylit limbsPerWord)
+      , ylet "coord_words" (yop Op.div
+          [ yop Op.add [yvar "n", yop Op.sub [yvar "limbs_per_word", ylit 1]]
+          , yvar "limbs_per_word" ])
+      , ylet "flag" (yop Op.calldataload [yop Op.add [yvar "src",
+          yop Op.mul [yop Op.mul [ylit 2, yvar "coord_words"], ylit 0x20]]])
+      , yset "ok" (yop Op.lt [yvar "flag", ylit 2])
+      , yset "is_id" (yop Op.eq [yvar "flag", ylit 1])
+      , yif (yvar "is_id")
+          [ yexpr (yop Op.mstore [yvar "dst", ylit 0])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x20], ylit 0])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x40], ylit 0])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x60], ylit 0]) ]
+      , yif (yop Op.iszero [yvar "is_id"])
+          [ Stmt.letDecl ["x_ok", "x_hi", "x_lo"] (some (ycall "load_acc_coord"
+              (List.map yvar ["src", "bits", "n", "base", "limbs_per_word"])))
+          , Stmt.letDecl ["y_ok", "y_hi", "y_lo"] (some (ycall "load_acc_coord"
+              [ yop Op.add [yvar "src", yop Op.mul [yvar "coord_words", ylit 0x20]]
+              , yvar "bits", yvar "n", yvar "base", yvar "limbs_per_word" ]))
+          , yset "ok" (yop Op.and [yvar "ok", yop Op.and [yvar "x_ok", yvar "y_ok"]])
+          , ylet "decoded_zero" (yop Op.iszero
+              [yop Op.or [yop Op.or [yvar "x_hi", yvar "x_lo"], yop Op.or [yvar "y_hi", yvar "y_lo"]]])
+          , yset "ok" (yop Op.and [yvar "ok", yop Op.iszero [yvar "decoded_zero"]])
+          , yexpr (yop Op.mstore [yvar "dst", yvar "x_hi"])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x20], yvar "x_lo"])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x40], yvar "y_hi"])
+          , yexpr (yop Op.mstore [yop Op.add [yvar "dst", ylit 0x60], yvar "y_lo"]) ] ] ]
+
+/-- The five accumulator-codec definitions in template order, at a render's 'limbs_per_word'. -/
+def emitAccumulatorHelpersAt (limbsPerWord : Nat) : Block Op :=
+  emitLoadAccCoordShifted ++ emitIsBlsPMinusOne ++ emitCheckAccCoordPacking ++ emitLoadAccCoord
+    ++ emitLoadAccPoint limbsPerWord
+
+/-- The region at the template constants this tree renders with: the same source 'emitEcPairingAt'
+    reads its precompile addresses from (:302-303), so neither side invents a number. -/
+def emitAccumulatorHelpers : Block Op :=
+  emitAccumulatorHelpersAt templateConstantsDefault.accumulator.limbsPerWord
+
+
+
 /-! ### FinalPairing -/
 
 /-- The MSM-then-ADD pair the accumulator arm runs twice, once per side: batch the point
@@ -610,6 +760,36 @@ def accMsmThenAdd (g1 : Nat) (tc : TemplateConstants) (src dst : String) : Block
           yvar "batch_ptr", ylit tc.g1addInputBytes, yvar dst, ylit g1])
       , yset "success" (yop Op.and [yvar "success",
           yop Op.eq [yop Op.returndatasize [], ylit g1]]) ] ]
+
+/-! ### The quotient numerator (OBJ.2) -/
+
+/-- THE NUMERATOR AS THE PARSE OF THE MODEL'S OWN LINES (OBJ.2, which replaces G1.3 as carded).
+    'renderQuotientNumeratorBlock' is 6,384 tokens, of which 5,431 are the SIX GENERATED LINE
+    FAMILIES the ported 'compact_quotient_computation_blocks' writes into
+    'ctx.quotientInlineComputations' and its siblings and 953 are the QVM interpreter template.
+    G1.3 sized that 895 / 5,489 and was about six times wrong, so PLAN-V3 section 5 replaces the
+    carded structured emitter with a PARSE; OBJ.15 (optional) is the only place the 953-token
+    template is later given a tree emitter.
+
+    WHY A PARSE IS ENOUGH HERE, stated plainly rather than left as a style choice. The region is the
+    output of the ported generator, so a hand-written emitter would be a SECOND implementation of it
+    - the thing this whole package exists to avoid. What the parse buys is the STRUCTURE token
+    equality cannot express: 'EVM.mkCall' resolves 'mulmod' to the built-in and 'q_program_fail' to a
+    call, so 'codegenStruct' is a statement about the AST and not about a spelling. What is then
+    trusted for this region is the parser-printer round trip (OBJ.1: print after parse is the
+    identity on all 14,054 tokens) and that resolution - NOT 'codegen', which for a parsed region
+    holds by construction: mutate the template and both sides move together. The per-region mutation
+    falsifier therefore applies to the STRUCTURED emitters (G1.1, G1.2) and not to this one, and the
+    content of this region is checked elsewhere: by 'GeneratedBy' (M2's later cards), by the artifact
+    gate (these are Rust's own words), and by the block proofs (they compute the Lean quotient).
+
+    TOTAL BY CONSTRUCTION: 'none' - which can only mean the generator wrote a stream this parser does
+    not read - yields the empty block, and 'codegenStruct' reddens on the size mismatch rather than
+    the file failing to elaborate. -/
+def emitQuotientNumerator (c : PartialCtx) : Block Op :=
+  match YulParse.parseLines [renderQuotientNumeratorBlock c] with
+  | some b => b
+  | none => []
 
 /-- The batch-and-randomise block of the accumulator arm (FinalPairing.yul:14-62): the
     0x240-byte preimage tag || vk_digest || KZG rhs/lhs || accumulator rhs/lhs, alpha as

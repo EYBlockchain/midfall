@@ -197,15 +197,16 @@ def Render.preSlice (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256) : YulBlo
 def Render.mainLocalsInlined (R : Render p G₁ G₂ Gₜ) : YulBlock :=
   Inline.inlineContractConstants R.consts mainLocals
 
-/-- The seven slices in include order: the concatenation the per-block contracts compose over. The
-    closed-program analogue of `GenAst.emitSlices`, whose equation is the PROVED `emitSlices_eq`. -/
-def Render.slices (R : Render p G₁ G₂ Gₜ) : YulBlock :=
-  R.slice .vkLoading ++ R.slice .transcriptParser ++ R.slice .lagrange ++
-    R.slice .quotientLin ++ R.slice .pcs ++ R.slice .finalPairing ++ R.slice .traceReturn
+-- `Render.slices` MOVED TO `Statements.lean` section 1 (ST.3, D-P65), same text: the frozen
+-- `Render.scope` now concatenates the hoisted slices, and a frozen statement may not rest on a
+-- definition living in this refinable file. Every use below resolves through `Render`.
 
 /-- **PREFIX LEMMA, STRUCTURAL HALF** (WP-M5a). The closed program IS the prefix, the hoisted
-    helpers, the main locals and the seven slices in include order, and its only function
-    definitions are the helpers' — so its hoisted scope is the block scope `R.scope`.
+    helpers, the main locals and the seven slices in include order, and its function definitions are
+    the helpers' followed by the slices' — so its hoisted scope is exactly the block scope `R.scope`.
+    (ST.3 restated this conjunct: since G1.2 puts `q_program_fail` and `q_pow5` inside the
+    `.quotientLin` slice the slices DO contribute definitions, and the pre-ST.3 form
+    `hoist prog = hoist helpers` was FALSE at any render where the splice had landed.)
 
     This is the named obligation `Statements.lean:108` advertises as `hoist_prog_eq_helpers` and
     which does not exist anywhere in the tree: the second conjunct IS that missing lemma. It is what
@@ -221,7 +222,7 @@ theorem prog_slices_decomp (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
     (c : ExternalCalls) (g : ExternalGas) :
     R.prog vkAddr qAddr =
         R.preSlice vkAddr qAddr ++ R.helpers ++ R.mainLocalsInlined ++ R.slices ∧
-      hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr) = hoist (Bridge.Dialect c g) R.helpers := by
+      [hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr)] = R.scope c g := by
   sorry
 
 /-- **PREFIX LEMMA, SEMANTIC HALF** (WP-M5a). From an `EntryFrame` on calldata the Lean verifier
@@ -872,7 +873,7 @@ theorem end_to_end (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR 
   with `.start` as the shared pre. Two consequences are recorded below as code, not prose.
 
   * NARROWING the hinge TO A PROPER SUBSET MOVES NOTHING. The predicate is not where the cost sits:
-    `Render.slices` (:202) concatenates seven slices, so a sequencing lemma over `R.slices` cannot be
+    `Render.slices` (Statements.lean, section 1) concatenates seven slices, so a sequencing lemma over `R.slices` cannot be
     handed a partial function, and any `BlockContractsAt P` with `P` smaller than `(· ≠ .quotientLin)` does
     not even reach C.1's glue `poseidon_block_contracts` (`Instances/PoseidonV2.lean:229`), which needs
     `(· ≠ .quotientLin)` to pair with the quotient row. The hinge contributes ONE sorry to the headline cone

@@ -215,6 +215,47 @@ def emitPartial (pv : PlanView) (q : Partial) : Block Op :=
 def emitSlices (pv : PlanView) : Block Op :=
   Midfall.Lowering.partials.foldl (init := []) fun acc q => acc ++ emitPartial pv q
 
+/-- **THE MODEL-AWARE DISPATCH (OBJ.2).** 'emitPartial' takes a 'PlanView' and a 'Partial' and CANNOT
+    see the three quotient helper flags or the generated quotient lines: those are 'Model' fields
+    ('Models.lean:764-766') copied into 'PartialCtx' by 'partialCtxOfVerifier' and derived in Rust
+    from the generated quotient blocks. G1.2b measured that this is why the two 'quotient_numerator'
+    includes cannot be spliced into 'emitPartial' at all, and why the splice site had to move to
+    'mainAsmRaw' - a frozen file - which is what makes D-P52's re-hash unavoidable. This is the
+    function that takes the extra input, and 'emitPartial' is left untouched so every existing gate,
+    contract and 'sliceOf' caller that does not need the model keeps compiling unchanged.
+
+    THE ONE ARM THAT DIFFERS is '.quotientLin': the two includes go IN FRONT of the linearization
+    scope, in the order the template lays them out, so the slice becomes four statements
+    ('q_program_fail', 'q_pow5', the numerator block, the scope) where it was one. Every other arm
+    is 'emitPartial' verbatim - the bridge lemma the KAT file states for the five unchanged partials,
+    'emitPartialM_eq_on_the_other_arms', is what says this is a widening and not a rewrite.
+
+    THE UN-EMITTED LIMB7 ARMS, NAMED (the same hole G1.2's gate 62 declares). 'emitQuotientHelpersAt'
+    emits 'q_program_fail' unconditionally and 'q_pow5' on its flag; 'q_limb7' and 'q_widelimb7'
+    render on their own flags and each interpolates a coefficient LIST, so no Bool-selectable emitter
+    covers them. A render with either flag set therefore gets a slice that is SHORTER than the text
+    and 'codegenAgrees' goes FALSE - a red gate, not a silent lie. That is deliberate and it is what
+    the falsifier 'limb7FlagMakesRegionUnequal_ok' pins from the other side. -/
+def emitPartialM (pv : PlanView) (c : PartialCtx) (q : Partial) : Block Op :=
+  if q = Partial.quotientLin then
+    emitQuotientHelpersAt c.quotientPow5Helper ++ emitQuotientNumerator c ++ emitQuotientLin pv
+  else emitPartial pv q
+
+/-- The seven slices in include order, model-aware: the tail of 'mainAsmRaw' from OBJ.2 on. -/
+def emitSlicesM (pv : PlanView) (c : PartialCtx) : Block Op :=
+  Midfall.Lowering.partials.foldl (init := []) fun acc q => acc ++ emitPartialM pv c q
+/-- BRIDGE (OBJ.2): THE WIDENING IS A WIDENING. On every arm except '.quotientLin' the
+    model-aware dispatch is the old one verbatim, so the six partials that did not need the model
+    keep the gates and contracts they already had and nothing about them is re-proved here. Without
+    this lemma 'emitPartialM' reads as a rewrite of the dispatch rather than as one new arm, and
+    every downstream 'emitPartial' gate would have to be duplicated against the new name. -/
+theorem emitPartialM_eq_on_the_other_arms (pv : PlanView) (c : PartialCtx) (q : Partial)
+    (hq : q ≠ Partial.quotientLin) : emitPartialM pv c q = emitPartial pv q := by
+  simp [emitPartialM, hq]
+
+
+
+
 /-- The whole main block the emitter produces: the helpers, then the seven slices. -/
 def emitMain (pv : PlanView) : Block Op := emitHelpers pv ++ emitSlices pv
 /-! ### The fixture plan view the pcs gates run on -/

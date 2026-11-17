@@ -158,8 +158,8 @@ EVAL = re.compile(
 # gate was deleted or edited. So the file count goes 102 -> 103 and the total 1400 -> 1417: the delta
 # is +17/+1 and nothing else moved. All seventeen were run through `lake env lean` before
 # this line moved.
-EXPECTED_KAT_TOTAL = 1417
-EXPECTED_KAT_FILES = 103
+EXPECTED_KAT_TOTAL = 1440
+EXPECTED_KAT_FILES = 104
 
 # Only these shapes count as #eval output.
 #
