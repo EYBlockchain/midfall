@@ -105,6 +105,7 @@ import Midfall.Assumptions.CurvePairing
 import Midfall.Instances.Bls12_381
 import Midfall.Instances.G1Agreement
 import Midfall.Instances.G2Codec
+import Midfall.Instances.PoseidonFixture
 import Midfall.Instances.PoseidonInputs
 import Midfall.Conformance.Bundle
 import Midfall.Common.Json
@@ -112,111 +113,10 @@ import Midfall.Common.Json
 namespace Midfall.Instances.PoseidonEnv
 
 open Midfall Midfall.Halo2 Midfall.Conformance
+open Midfall.Instances.PoseidonFixture
 open Midfall.Instances Midfall.Assumptions Midfall.Yul
 
 /-! ## 1. The fixtures, reached purely -/
-
-/-- vk.json, baked in at build time. include_str resolves relative to THIS file and not to the CWD
-    (measured in D.1, re-measured here), so the path is ../../fixtures/... from Midfall/Instances/. -/
-def vkText : String := include_str "../../fixtures/conformance/poseidon/vk.json"
-
-/-- params.json, same channel. -/
-def paramsText : String := include_str "../../fixtures/conformance/poseidon/params.json"
-
-/-- The one totaliser this file needs: a failed parse leaves the EMPTY payload behind, and gate 1 is
-    what reddens if it is ever taken. Same shape as D.1's poseidonVkUnparsed, for the same reason: a
-    default a parse failure can reach must be obviously broken, not plausibly fine. -/
-def fromExcept {ε : Type} {α : Type} (e : Except ε α) (d : α) : α :=
-  match e with | .ok a => a | .error _ => d
-
-/-- col_idx is Option<usize> in Rust, and the exporter writes null for a selector that was converted
-    away. jNat would call that an error, so the option gets its own strict reader. -/
-def jOptNat (o : JValue) (k : String) : Except String (Option Nat) :=
-  match o.getObjVal? k with
-  | .ok Lean.Json.null => .ok none
-  | .ok v => do pure (some (← jNatVal v))
-  | .error e => .error e
-
-/-- A hex field whose width the schema fixes. jHexBytes' would accept any even length, and R-20 is
-    the record of what a width slip costs, so the width is asserted here. -/
-def jHexFixed (o : JValue) (k : String) (nBytes : Nat) : Except String Bytes :=
-  do jHexBytes (← jString o k) nBytes
-
-/-- The vk.json payload as data. Every field is read with a strict accessor and nothing is coerced.
-    The record keeps the JSON's shapes - (column, rotation) pairs, phases as Nat - rather than the
-    Exec record's, so the KATs compare against the file and not against a translation of it. -/
-structure PoseidonVkData where
-  k : Nat
-  n : Nat
-  extendedK : Nat
-  csDegree : Nat
-  quotientPolyDegree : Nat
-  numFixedColumns : Nat
-  numAdviceColumns : Nat
-  numInstanceColumns : Nat
-  numChallenges : Nat
-  numLookups : Nat
-  numTrashcans : Nat
-  numCommittedInstances : Nat
-  nbPublicInputs : Nat
-  scalarNumBits : Nat
-  truncatedChallenges : Bool
-  adviceColumnPhases : Array Nat
-  adviceQueries : Array (Nat × Int)
-  instanceQueries : Array (Nat × Int)
-  fixedQueries : Array (Nat × Int)
-  selectorFlags : Array SelectorFlag
-  omegaBytes : Bytes
-  omegaInvBytes : Bytes
-  transcriptReprBytes : Bytes
-  fixedCommitmentHex : Array Bytes
-  permutationCommitmentHex : Array Bytes
-
-def jSelectorFlags (o : JValue) (k : String) : Except String (Array SelectorFlag) := do
-  let a ← jArray o k
-  a.mapM fun f => do pure { isSimple := (← jBool f "is_simple"), colIdx := (← jOptNat f "col_idx") }
-
-def poseidonVkData? : Except String PoseidonVkData := do
-  let j ← jParse vkText
-  pure {
-    k := (← jNat j "k"), n := (← jNat j "n"), extendedK := (← jNat j "extended_k"),
-    csDegree := (← jNat j "cs_degree"),
-    quotientPolyDegree := (← jNat j "quotient_poly_degree"),
-    numFixedColumns := (← jNat j "num_fixed_columns"),
-    numAdviceColumns := (← jNat j "num_advice_columns"),
-    numInstanceColumns := (← jNat j "num_instance_columns"),
-    numChallenges := (← jNat j "num_challenges"),
-    numLookups := (← jNat j "num_lookups"),
-    numTrashcans := (← jNat j "num_trashcans"),
-    numCommittedInstances := (← jNat j "num_committed_instances"),
-    nbPublicInputs := (← jNat j "nb_public_inputs"),
-    scalarNumBits := (← jNat j "scalar_num_bits"),
-    truncatedChallenges := (← jBool j "truncated_challenges"),
-    adviceColumnPhases := (← jNatArr j "advice_column_phase"),
-    adviceQueries := (← jQueryArr j "advice_queries"),
-    instanceQueries := (← jQueryArr j "instance_queries"),
-    fixedQueries := (← jQueryArr j "fixed_queries"),
-    selectorFlags := (← jSelectorFlags j "selector_flags"),
-    omegaBytes := (← jHexFixed j "omega_be_hex" 32),
-    omegaInvBytes := (← jHexFixed j "omega_inv_be_hex" 32),
-    transcriptReprBytes := (← jHexFixed j "transcript_repr_be_hex" 32),
-    fixedCommitmentHex := (← jHexArr j "fixed_commitments_compressed_hex"),
-    permutationCommitmentHex := (← jHexArr j "permutation_commitments_compressed_hex") }
-
-/-- The empty payload: every count 0, every list empty. A parse failure therefore cannot masquerade
-    as a small key - poseidonVkExec built from it has an empty CS and a zero domain, and gate 1
-    fails long before anything downstream could be believed. -/
-def poseidonVkDataUnparsed : PoseidonVkData :=
-  { k := 0, n := 0, extendedK := 0, csDegree := 0, quotientPolyDegree := 0,
-    numFixedColumns := 0, numAdviceColumns := 0, numInstanceColumns := 0, numChallenges := 0,
-    numLookups := 0, numTrashcans := 0, numCommittedInstances := 0, nbPublicInputs := 0,
-    scalarNumBits := 0, truncatedChallenges := false, adviceColumnPhases := #[],
-    adviceQueries := #[], instanceQueries := #[], fixedQueries := #[], selectorFlags := #[],
-    omegaBytes := ByteArray.mk #[], omegaInvBytes := ByteArray.mk #[],
-    transcriptReprBytes := ByteArray.mk #[], fixedCommitmentHex := #[],
-    permutationCommitmentHex := #[] }
-
-def poseidonVkData : PoseidonVkData := fromExcept poseidonVkData? poseidonVkDataUnparsed
 
 /-! ## 2. params.json, as data -/
 
@@ -285,56 +185,6 @@ def poseidonDomain : EvaluationDomain (Fr blsR) :=
 
 /-- vk.json's transcript_repr_be_hex, imported and not recomputed (R-1). -/
 def poseidonTranscriptRepr : Fr blsR := (bytesToNatBE poseidonVkData.transcriptReprBytes : Fr blsR)
-
-/-! ## 4. The constraint system, from the keys vk.json has -/
-
-/-- An advice column carries its phase in its kind (Exec/Circuit structural choice 2), and the phase
-    is vk.json's advice_column_phase[i]. -/
-def poseidonAdviceColumn (idx : Nat) : Column :=
-  { index := idx, columnType := Any.advice { phase := { val :=
-      (poseidonVkData.adviceColumnPhases[idx]?.getD 0) } } }
-
-/-- A JSON rotation is an i32, so it becomes Rotation.value and never Rotation.cur: the port's own
-    header records that the two are distinct inhabitants here and one value in Rust, and an importer
-    that collapsed them would silently deduplicate queries the reference keeps apart. -/
-def poseidonRotation (r : Int) : Rotation := Rotation.value r
-
-def poseidonAdviceQueries : Array (Column × Rotation) :=
-  poseidonVkData.adviceQueries.map fun (c, r) => (poseidonAdviceColumn c, poseidonRotation r)
-
-def poseidonInstanceQueries : Array (Column × Rotation) :=
-  poseidonVkData.instanceQueries.map fun (c, r) =>
-    ({ index := c, columnType := Any.instance }, poseidonRotation r)
-
-def poseidonFixedQueries : Array (Column × Rotation) :=
-  poseidonVkData.fixedQueries.map fun (c, r) =>
-    ({ index := c, columnType := Any.fixed }, poseidonRotation r)
-
-/-- num_advice_queries[i] is how many distinct queries advice column i has: circuit.rs's
-    query_advice_index bumps it exactly when the (column, rotation) pair is new. So it is derivable
-    from advice_queries, and it is derived here rather than invented. -/
-def poseidonNumAdviceQueries : Array Nat :=
-  (List.range poseidonVkData.numAdviceColumns).toArray.map fun i =>
-    (poseidonVkData.adviceQueries.filter (fun q => q.1 == i)).size
-
-/-- THE CONSTRAINT SYSTEM. Filled from vk.json where vk.json has the data and from
-    ConstraintSystem.default where it does not. The four fields with no source are named in the
-    header (gap A): gates, lookups, trashcans, permutation.columns. numSelectors is NOT one of them:
-    the reference's selector() pushes one flag per selector, so num_selectors = selector_flags.len(),
-    and that is how it is derived here. -/
-def poseidonCs : ConstraintSystem (Fr blsR) :=
-  { ConstraintSystem.default with
-    numFixedColumns := poseidonVkData.numFixedColumns
-    numAdviceColumns := poseidonVkData.numAdviceColumns
-    numInstanceColumns := poseidonVkData.numInstanceColumns
-    numSelectors := poseidonVkData.selectorFlags.size
-    selectorFlags := poseidonVkData.selectorFlags
-    numChallenges := poseidonVkData.numChallenges
-    adviceColumnPhase := poseidonVkData.adviceColumnPhases.map fun ph => { val := ph }
-    adviceQueries := poseidonAdviceQueries
-    numAdviceQueries := poseidonNumAdviceQueries
-    instanceQueries := poseidonInstanceQueries
-    fixedQueries := poseidonFixedQueries }
 
 /-! ## 5. The commitments, and the codec route stated as a theorem -/
 
@@ -440,6 +290,7 @@ namespace Midfall.Instances.PoseidonEnvKats
 
 open Midfall Midfall.Halo2 Midfall.Conformance
 open Midfall.Instances Midfall.Assumptions Midfall.Yul
+open Midfall.Instances.PoseidonFixture
 open Midfall.Instances.PoseidonEnv
 open Midfall.Instances.PoseidonInputs
 
@@ -625,21 +476,91 @@ def poseidonRootRepair_ok : Bool :=
         | .ok d => d.omega != poseidonOmega && d.n == poseidonVkData.n
         | .error _ => false)
 
-/-- GATE 13 (THE OPEN OBLIGATION, PINNED RATHER THAN HIDDEN). vk.json carries no gates, no lookup
-    arguments, no trashcan arguments and no permutation columns, so the CS's four fields are empty
-    and the ported degree recomputation answers 3 where the fixture caches 5. That is
-    WellFormed.csDegreeMatches failing, and it is a property of the FIXTURE, not of this file. The
-    gate asserts the gap in a form that goes FALSE the day the data arrives from a real source, so
-    the obligation cannot be quietly forgotten and cannot be quietly satisfied by invented gates. -/
-def poseidonWellFormed_open_ok : Bool :=
-  poseidonCs.gates.isEmpty && poseidonCs.lookups.isEmpty && poseidonCs.trashcans.isEmpty
-    && poseidonCs.permutation.columns.isEmpty && poseidonCs.unblindedAdviceColumns.isEmpty
-    && poseidonCs.generalColumnAnnotations.isEmpty && poseidonCs.constants.isEmpty
-    && poseidonCs.minimumDegree == none
-    && (match poseidonCs.degree with | .ok d => d == 3 | .error _ => false)
-    && (match poseidonCs.degree with | .ok d => d != poseidonVkExec.csDegree | .error _ => false)
+/-- GATE 13 (THE GAP PIN, CLOSED BY F.1 - AND ONE REMAINING). D.2 shipped this WITHOUT a
+    `WellFormed` proof and pinned WHY: an empty `gates` array made the ported degree recompute to 3
+    against the imported 5, and an empty `permutation.columns` made the commitment count unreadable.
+    F.1's `cs.json` fills both. So the gate now reads the other way, and it is still falsifiable in
+    both halves: the degree clause HOLDS (the ported `ConstraintSystem.degree` on the exported gates
+    is 5, equal to vk.json's `cs_degree` - which is also the evidence that the unexportable
+    `minimum_degree` did not bind), and `permutationCommitmentsMatch` STILL FAILS, 8 sigma
+    commitments against `divCeil 8 3` = 3 z-chunks. That second half is a v1 clause defect, not a
+    data gap: the reference commits one sigma polynomial per permutation COLUMN. -/
+def poseidonWellFormed_closed_ok : Bool :=
+  -- the four structures are present, by the exporter's own counts
+  poseidonCs.gates.size == 5 && poseidonCs.lookups.size == poseidonVkData.numLookups
+    && poseidonCs.trashcans.size == poseidonVkData.numTrashcans
+    && poseidonCs.permutation.columns.size == 8
+    -- and the degree clause that D.2 could not discharge now discharges
+    && (match poseidonCs.degree with | .ok d => d == poseidonVkExec.csDegree | .error _ => false)
+    && (match poseidonCs.blindingFactors with | .ok b => b == poseidonCsData.blindingFactors | .error _ => false)
+    -- the remaining WellFormed failure, pinned so it cannot be quietly re-stated away
     && !(poseidonVkExec.permutation.commitments.size ==
         divCeil poseidonCs.permutation.columns.size (poseidonVkExec.csDegree - 2))
+    -- the fields cs.json cannot reach are still the defaults, and SAY so
+    && poseidonCs.unblindedAdviceColumns.isEmpty && poseidonCs.generalColumnAnnotations.isEmpty
+    && poseidonCs.constants.isEmpty && poseidonCs.minimumDegree == none
+
+/-- GATE F.1-1 (the derivation is a derivation). The plan's meta comes out of the ported
+    constructor, not out of a transcription, and the PCS memory the plan carries is what the real
+    protocol predicts - which it is NOT, and that is the finding: `poseidonLayoutConfig.pcs` is
+    P-13's observation of the artifact and the real protocol recomputes different numbers, which is
+    why C.4's clause 3 is still refuted. This gate pins the parts that ARE right. -/
+def poseidonMeta_derived_ok : Bool :=
+  Midfall.Instances.poseidonMetaDerived?.isOk
+    && Midfall.Instances.poseidonMeta.protocol.numFixeds == 19
+    && Midfall.Instances.poseidonMeta.protocol.pcsQueries.length == 49
+    && Midfall.Instances.poseidonMeta.protocol.commonPolys.length == 6
+    && Midfall.Instances.poseidonMeta.numEvals == 48
+
+/-- GATE F.1-2 (the derived counts are the OBSERVED counts). D.2/P-13 typed in eleven counts from
+    the artifact's own lines; the derivation reproduces every one of them, which is what makes the
+    swap safe and what the byte-exactness gate D.1-8 then confirms at the whole contract. The three
+    fields the observation left at their defaults because it had no source - numFixeds,
+    permutationColumns, the query lists - are listed as ADDED, not as agreeing. -/
+def poseidonMeta_matchesTypedIn_ok : Bool :=
+  Midfall.Instances.poseidonMeta.numLookups == Midfall.Instances.poseidonMetaTypedIn.numLookups
+    && Midfall.Instances.poseidonMeta.lookupChunks == Midfall.Instances.poseidonMetaTypedIn.lookupChunks
+    && Midfall.Instances.poseidonMeta.numTrashcans == Midfall.Instances.poseidonMetaTypedIn.numTrashcans
+    && Midfall.Instances.poseidonMeta.numPermutationZs == Midfall.Instances.poseidonMetaTypedIn.numPermutationZs
+    && Midfall.Instances.poseidonMeta.numQuotients == Midfall.Instances.poseidonMetaTypedIn.numQuotients
+    && Midfall.Instances.poseidonMeta.numEvals == Midfall.Instances.poseidonMetaTypedIn.numEvals
+    && Midfall.Instances.poseidonMeta.numSimpleSelectors == Midfall.Instances.poseidonMetaTypedIn.numSimpleSelectors
+    && Midfall.Instances.poseidonMeta.numUserAdvices == Midfall.Instances.poseidonMetaTypedIn.numUserAdvices
+    && Midfall.Instances.poseidonMeta.numUserChallenges == Midfall.Instances.poseidonMetaTypedIn.numUserChallenges
+    && Midfall.Instances.poseidonMeta.adviceIndices == Midfall.Instances.poseidonMetaTypedIn.adviceIndices
+    && Midfall.Instances.poseidonMeta.challengeIndices == Midfall.Instances.poseidonMetaTypedIn.challengeIndices
+    && Midfall.Instances.poseidonMeta.rotationLast == Midfall.Instances.poseidonMetaTypedIn.rotationLast
+    -- and the four the observation could not source
+    && Midfall.Instances.poseidonMeta.numFixeds == 19
+    && Midfall.Instances.poseidonMeta.permutationColumns.length == 8
+    && Midfall.Instances.poseidonMeta.adviceQueries.length == 11
+    && Midfall.Instances.poseidonMeta.instanceQueries.length == 2
+
+/-- GATE F.1-3 (the lookup chunking, port against reference). `num_chunks_at_cs_degree` is what
+    `BatchedArgument::num_chunks` returned in Rust at the same `cs_degree`; the ported
+    `LogupBatchedArgument.numChunks` on the imported expression trees must answer the same. This is
+    the KAT that the exported trees are not merely well-formed but LOAD-BEARING. -/
+def poseidonLookup_chunks_kat_ok : Bool :=
+  poseidonCsData.numChunks.toList == [1]
+    && (poseidonCs.lookups.toList.all fun l =>
+          match l.numChunks poseidonCsData.csDegree with
+          | .ok n => n == 1 | .error _ => false)
+
+/-- GATE F.1-4 (gate count and poly count, from two channels). The exporter counts gates and
+    constraint polynomials twice - once as the array it serialises and once in its `summary` block -
+    and the importer must agree with both, so a truncated cs.json cannot pass F.1-3 by being small. -/
+def poseidonCs_counts_ok : Bool :=
+  poseidonCsData?.isOk && poseidonCsData.numGates == poseidonCsData.gates.size
+    && poseidonCsData.gatePolyTotal == (poseidonCsData.gates.map fun g => g.polys.size).sum
+    && poseidonCsData.numGates == 5 && poseidonCsData.gatePolyTotal == 11
+    && poseidonCsData.trashcans.size == 1
+    -- the trash name is the reference's own join("&") over its constraint names, and for the
+    -- poseidon partial_round_gate trashcan those names are EMPTY, so the honest value is seven
+    -- ampersands. Asserted as what the reference produced, not as a prettier guess: the
+    -- partial_round_gate label lives on the GATE (gates[4].name), not on the trashcan.
+    && poseidonCsData.trashcans[0]?.map (fun t => t.name == "&&&&&&&") == some true
+    && poseidonCsData.gates[4]?.map (fun g => g.name == "partial_round_gate") == some true
+    && poseidonCsData.gates[4]?.map (fun g => g.polys.size == 0) == some true
 
 /-- GATE 14 (vk.json against D.1's typed-in meta). The three counts the deployed profile does carry
     agree with the exporter: one lookup, one trashcan, four simple selectors. Recorded as a gate
@@ -667,5 +588,9 @@ end Midfall.Instances.PoseidonEnvKats
 #eval Midfall.Instances.PoseidonEnvKats.poseidonEncG2_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonParams_bytes_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonRootRepair_ok -- expect true
-#eval Midfall.Instances.PoseidonEnvKats.poseidonWellFormed_open_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonWellFormed_closed_ok -- expect true (F.1 closed D.2 gap A except permutationCommitmentsMatch)
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_crossCheck_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_derived_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_matchesTypedIn_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonLookup_chunks_kat_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonCs_counts_ok -- expect true

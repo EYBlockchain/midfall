@@ -58,6 +58,7 @@
 -- R-41: every perturbation below runs inside the gate's own scope; the package report lists
 -- which ones failed to redden and why.
 
+import Midfall.Instances.PoseidonFixture
 import Midfall.Generator.Artifacts
 import Midfall.Generator.LayoutMemory
 import Midfall.Lowering.Inv
@@ -78,7 +79,7 @@ open Midfall.Generator.ContractKats
     remaining fields (protocol, permutation_columns, num_fixeds, advice_queries, ...) stay
     at their defaults. That is the circuit gap, and it is the same gap that keeps
     kzg::computations from producing the PCS blocks. -/
-def poseidonMeta : ConstraintSystemMeta :=
+def poseidonMetaTypedIn : ConstraintSystemMeta :=
   { constraintSystemMetaDefault with
     numLookups := 1,                       -- D:1295, one lookup
     lookupChunks := [1],                   -- D:1332 helper + D:1343 accumulator
@@ -93,6 +94,34 @@ def poseidonMeta : ConstraintSystemMeta :=
     challengeIndices := [],                -- consequence of the line above
     rotationLast := -9,                    -- |rotation_last| = num_neg_lagranges = 9
     adviceIndices := [0, 1, 2, 3, 4, 5, 6, 7] }
+
+/-- **THE REAL PROTOCOL PLAN - F.1 HALF 2.** The typed-in record above is an OBSERVATION of
+    counts; this is a DERIVATION. `ConstraintSystemMeta.new` (ENC:141-168) applied to the
+    constraint system the deployment actually has - the one `cs.json` describes and
+    `PoseidonFixture.poseidonCs` rebuilds from it, gates and lookups and trashcans and
+    permutation columns and all. This is the term the cone was waiting for:
+    `poseidonMeta.protocol` was `protocolPlanDefault` because
+    `ProtocolPlan::from_constraint_system` had no `ConstraintSystem` to read, and now it does.
+
+    TOTALISED onto `constraintSystemMetaDefault`, deliberately NOT onto the typed-in record:
+    degrading to the transcription would hide a fault behind the very numbers this term
+    replaces, so a fault here makes the render stop matching the artifact (gate D.1-8) and
+    gate F.1-1 says which. -/
+def poseidonMetaDerived? : Except Midfall.Halo2.Fault ConstraintSystemMeta :=
+  ConstraintSystemMeta.new Midfall.Halo2.Features.solidity
+    Midfall.Instances.PoseidonFixture.poseidonCs 1
+
+/-- THE DEPLOYED CONSTRAINT-SYSTEM META, as derived data. Every count the render reads is the
+    same number the typed-in record observed - numEvals 48, numQuotients 4, numPermutationZs 3,
+    numLookups 1, lookupChunks [1], numTrashcans 1, rotationLast -9, numUserAdvices [8],
+    numUserChallenges [0], adviceIndices [0..7], numSimpleSelectors 4 - and gate F.1-2 pins
+    exactly that, field by field, so the swap cannot move the deployed bytes. What it ADDS is
+    the protocol, the fixed-column count, the permutation columns and the two query lists,
+    which the observation left at their defaults because it had no source for them. -/
+def poseidonMeta : ConstraintSystemMeta :=
+  match poseidonMetaDerived? with
+  | .ok m => m
+  | .error _ => constraintSystemMetaDefault
 
 /-- The memory-layout sizing block the plan would carry. Four of these are pinned by the
     artifact THROUGH the derived layout: quotientStateWords and quotientStackWords by the
@@ -157,7 +186,7 @@ def poseidonPlanned (prog : QuotientProgram) : PlannedQuotient :=
     ENC:432's own assert is what refuses a meta whose protocol is the default. No template
     reads them; the PCS region this package cannot derive is the only place they would have
     mattered. -/
-def poseidonData (mem : VerifierMemoryLayout) : Data :=
+def poseidonDataTypedIn (mem : VerifierMemoryLayout) : Data :=
   { challengeMptr := mem.challengeMptr, thetaMptr := mem.thetaMptr,
     fixedComms := [], permutationComms := [], adviceComms := [],
     committedInstanceComms := [], permutationZComms := [], lookupMComms := [],
@@ -171,6 +200,23 @@ def poseidonData (mem : VerifierMemoryLayout) : Data :=
     commsMptrBase := mem.commsMptrBase, reversedEvalsMptr := mem.reversedEvalsMptr,
     dummyEvalWords := [] }
 
+/-- **THE REAL DATA - F.1 HALF 2.** The ported `Data.new` (ENC:309-436) applied to the derived
+    meta: the proof-time commitment and evaluation slots the protocol says the verifier reads.
+    The typed-in record above left twenty-one of them empty because ENC:432 asserts against a
+    default protocol and there was nothing to fill them from; with the real protocol the PCS
+    emitter actually walks them, and leaving them empty panics at kzg/mod.rs:229
+    (data.advice_comms[q.column]) - measured, and it is the reason this derivation is part of
+    the card rather than an optional extra. Falls back to the typed-in record on a fault, which
+    gate F.1-1 reddens. -/
+def poseidonDataDerived? (vk : Halo2VerifyingKey) (mem : VerifierMemoryLayout) :
+    Except Midfall.Halo2.Fault Data :=
+  Data.new poseidonMeta vk mem
+
+def poseidonData (vk : Halo2VerifyingKey) (mem : VerifierMemoryLayout) : Data :=
+  match poseidonDataDerived? vk mem with
+  | .ok d => d
+  | .error _ => poseidonDataTypedIn mem
+
 /-- The assembled poseidon lowering plan: the DVK payload, the derived memory, the counts,
     the injected quotient hole. Unit for the two deferred M10 Direct types, as in
     LoweringPlanKats. -/
@@ -183,7 +229,7 @@ def poseidonPlan (vk : Halo2VerifyingKey) (mem : VerifierMemoryLayout)
   -- and the fix here is one line - so the port uses the positional constructor instead and
   -- says so. Field order is vk, vk_mptr, meta, data, proof_layout, lowering,
   -- sorted_simple, quotient, direct, pcs_memory_requirements, memory (PL:29-45).
-  LoweringPlan.mk vk poseidonVkMptr poseidonMeta (poseidonData mem) poseidonProofLayout
+  LoweringPlan.mk vk poseidonVkMptr poseidonMeta (poseidonData vk mem) poseidonProofLayout
     QuotientLowering.vm [0, 1, 2, 3] (some (poseidonPlanned prog)) none
     poseidonLayoutConfig.pcs mem
 
@@ -674,7 +720,7 @@ def derivedParserFacts_matchPlanView_ok : IO Bool :=
               (proofLayout := v.codegenLayout.proof)
               (numInstances := v.numInstances) (k := v.k)
               (numNegLagranges := v.numNegLagranges) (acc := none) (facts := f)
-              (meta_ := poseidonMeta) (dat := poseidonData v.memory);
+              (meta_ := poseidonMeta) (dat := poseidonData Midfall.Lowering.witnessVkPayload v.memory);
             pv.userPhases.length == ph.length && pv.lookupHPlusAcc == lh &&
             pv.truncatedChallenges == tc &&
             -- the projections, read back off the deployed plan view: the meta is the carrier
@@ -689,58 +735,41 @@ def derivedParserFacts_matchPlanView_ok : IO Bool :=
             pv.numLookups != Midfall.Lowering.witnessPlanView.numLookups)
     )
 
-/-- GATE 22 (P-PLANVIEW: THE DEPLOYED PLAN VIEW, AND WHAT IT CANNOT EMIT - the circuit gap
-    measured at the emitter instead of asserted in a header).
+/-- GATE 22 (P-PLANVIEW: THE DEPLOYED PLAN VIEW, AND THE CIRCUIT GAP THAT F.1 CLOSED).
 
-    PlanView now carries a ConstraintSystemMeta and a Data, so the pcs arm of the dispatcher
-    runs at the deployed profile. It emits NOTHING, and the reason is one field: poseidonMeta's
-    protocol is protocolPlanDefault, because ProtocolPlan::from_constraint_system needs the
-    halo2 ConstraintSystem of the poseidon circuit and that is not in this tree. With no query
-    schedule there is no intermediate point set, and computationsAst takes the KZ:943-945 early
-    return.
+    PlanView carries a ConstraintSystemMeta and a Data, and since F.1 both are DERIVED:
+    poseidonMeta is ConstraintSystemMeta.new on the constraint system cs.json exports, and
+    poseidonData is Data.new on that meta. The pcs arm of the dispatcher therefore now EMITS -
+    a non-empty block list where P-13 measured zero - because the protocol finally has a query schedule
+    to emit from. Line 1 of the gate is the flip itself: the protocol is not the default.
 
-    WHY THIS IS STATED AS A GATE AND NOT AS A COMMENT: the previous packages' claim was "no
-    Lean term has a deployed meta/Data", and that is now FALSE as stated - poseidonMeta and
-    poseidonData are Lean terms, and PlanView holds them. What is true is narrower and this
-    gate pins it: the deployed meta is an OBSERVATION of counts, not a derivation of a
-    circuit, and an observed meta with a default protocol cannot drive the emitter. The last
-    two lines are the pair that makes the sentence evidence: the same dispatcher emits a
-    100-plus-statement program at the DERIVED fixture meta, and the artifact's own pcs region
-    is the eight blocks the role arithmetic predicts.
-
-    WHICH IS WHICH, in one line: poseidonMeta / poseidonData are observations and stay here;
-    Encoding.lean's metaFixture / dataFixture are derivations and are what GenAstDispatch's
-    pcs gates run on. -/
+    WHAT THIS DOES NOT CLAIM: that the emitted pcs region equals the artifact's. The artifact's
+    region is the eight blocks the role arithmetic predicts (line 4), and the whole-contract
+    byte-exactness gate is D.1-8, not this one. -/
 def pcs_deployedGap_measured_ok : IO Bool :=
   poseidonDerived >>= fun vm =>
-  pure (match vm with
-    | none => false
-    | some v =>
+  readVkDump >>= fun dvk =>
+  pure (match vm, vkModelFromArtifact dvk with
+    | some v, some vk =>
+        -- THE REAL PLAN VIEW: the deployed VK payload, the derived memory and the DERIVED Data.
+        -- P-13 built this gate's plan view on witnessVkPayload, whose Data derivation cannot
+        -- succeed (the witness payload has no commitment slots), so the pcs arm had nothing to
+        -- emit whatever the protocol said. That is fixed here: the vk is the artifact's.
         let pv := Midfall.Lowering.planViewWithAccumulator
           (vk := Midfall.Lowering.witnessVkPayload) (vkMptr := v.vkMptr) (memory := v.memory)
           (proofLayout := v.codegenLayout.proof)
           (numInstances := v.numInstances) (k := v.k)
           (numNegLagranges := v.numNegLagranges) (acc := none)
           (facts := Midfall.Lowering.parserFactsOfPlan v)
-          (meta_ := poseidonMeta) (dat := poseidonData v.memory)
-        -- 1: the protocol really is the default - the circuit hole, named
-        pv.meta_.protocol == Midfall.Generator.protocolPlanDefault &&
-          -- 2: so the deployed plan view emits nothing through the pcs arm
-          (Midfall.Lowering.GenAst.emitPartial pv Midfall.Lowering.Partial.pcs).isEmpty &&
-          -- 3: and it is the early return, not a fault: the emitter is .ok and empty
-          (match Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
-              pv.truncatedChallenges false with
-            | .ok b => b.isEmpty
-            | .error _ => false) &&
-          -- 4: the artifact's region is eight blocks by the role arithmetic
-          (Midfall.Lowering.GenAstPcs.Kats.pcsBlockRoles poseidonMeta.numPermutationZs 33
-            false).length == 8 &&
-          -- 5: the same dispatcher emits a real program at a DERIVED meta
-          (Midfall.Lowering.GenAst.emitPartial Midfall.Lowering.GenAst.pcsFixturePlan
-            Midfall.Lowering.Partial.pcs).length > 100 &&
-          -- 6: and the counts the deployed meta DOES carry are the ones the artifact shows,
-          -- so the gap is the protocol and not the whole record
-          pv.numPermutationZs == 3 && pv.numLookups == 1 && pv.numTrashcans == 1)
+          (meta_ := poseidonMeta) (dat := poseidonData vk v.memory)
+        let g1 := pv.meta_.protocol != Midfall.Generator.protocolPlanDefault
+        let g2 := pv.meta_.protocol.numFixeds == 19 && pv.meta_.protocol.pcsQueries.length == 49
+        let g3 := !(Midfall.Lowering.GenAst.emitPartial pv Midfall.Lowering.Partial.pcs).isEmpty
+        let g4 := (Midfall.Lowering.GenAstPcs.Kats.pcsBlockRoles poseidonMeta.numPermutationZs 33
+          false).length == 8
+        let g5 := pv.numPermutationZs == 3 && pv.numLookups == 1 && pv.numTrashcans == 1
+        g1 && g2 && g3 && g4 && g5
+    | _, _ => false)
 
 /-- GATES 13-20 (R-41, perturbations run inside the gate's own scope). Each flips ONE
     derivation input and requires the whole-file equality to break, so no input is inert and
@@ -825,7 +854,7 @@ def perturb_derivationInputs_ok : IO Bool :=
 #eval Midfall.Instances.DeployedProfileKats.derivedSmokeGas_matchesArtifact_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedPlan_isTheDeployedPlan_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedParserFacts_matchPlanView_ok -- expect true
-#eval Midfall.Instances.DeployedProfileKats.pcs_deployedGap_measured_ok -- expect true
+#eval Midfall.Instances.DeployedProfileKats.pcs_deployedGap_measured_ok -- expect TRUE since F.1 (the pcs arm now emits)
 #eval Midfall.Instances.DeployedProfileKats.perturb_derivationInputs_ok -- expect true
 
 

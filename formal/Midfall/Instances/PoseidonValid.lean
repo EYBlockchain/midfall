@@ -1,55 +1,58 @@
 /-
   Midfall.Instances.PoseidonValid
 
-  C.4 (GEN - SKELETON, box 2 h, branch t/C.4 from a1febbf): `poseidon_valid` taken apart into ONE
-  NAMED LEMMA PER `Render.Valid` CLAUSE, and every clause decided at `poseidonRender`.
+  C.4 (GEN - SKELETON, box 2 h, branch t/C.4 from a1febbf): `poseidon_valid` taken apart
+  into ONE NAMED LEMMA PER `Render.Valid` CLAUSE, and every clause decided at `poseidonRender`.
 
-  ## THE STOP CONDITION FIRED. SIX TIMES.
+  RE-MEASURED BY F.1 (GEN - PORT, branch t/F.1 from 3e15e9f). F.1 exported the deployment's real
+  constraint system into `fixtures/conformance/poseidon/cs.json` - gates, lookups, trashcans,
+  permutation columns, challenge phase - and `poseidonMeta` is now `ConstraintSystemMeta.new`
+  applied to it instead of a transcription of counts. That moves FOUR of C.4's six refutations.
+  The table below is the F.1 re-measurement; every value in it is printed by this file.
 
-  `Render.Valid` (`Midfall/LoweringV2/Statements.lean:139`, FROZEN) has eleven clauses. At
-  `poseidonRender`: 4 PROVED, 6 REFUTED, 1 SORRY.
+    #   clause          verdict   deciding value (F.1)
+    1   circuitMeta     PROVED    derived numEvals 48 against the plan's 48 (was 27 vs 48), and the
+                                  whole record agrees: `deciding_circuitMeta` is true by rfl-level
+                                  comparison of the derived meta against `poseidonPlanV2.meta_`.
+    2   layout          REFUTED   `fromProtocol` on the REAL protocol gives proofLen 4224 against the
+                                  plan's transcribed 4320. New reason, narrower: the 96-byte gap is
+                                  the `num_point_sets` / `num_dummy_evals` that
+                                  `LoweringPlan::new` sets AFTER `from_constraint_system`
+                                  (ENC:506 `setNumPointSets`), which is the fallback F.1 excludes.
+    3   invariants      REFUTED   no longer the linearization-query refusal - the real protocol's PCS
+                                  schedule DOES end with it. Now check 16: planned PcsMemory
+                                  {rotPoints 28, x1Powers 65, qEvalSet 0, qEvalSourceTable 0,
+                                  qComTraceMsm 0 terms} against recomputed {3, 33, 6, 33, 39};
+                                  finalMsm agrees at 47 terms / 7520 bytes. The typed-in
+                                  `poseidonLayoutConfig.pcs` is P-13's observation of the artifact.
+    4   model           SORRY     unchanged: true by construction, not machine-dischargeable (C.4's
+                                  gap (c) plus the dependent-motive obstruction).
+    5   inputs          PROVED    unchanged. k = 6 = vk.domain.k.
+    6   codegen         REFUTED   unchanged in kind (WP-G1, the un-emitted includes), bigger on both
+                                  sides now: AST 6761 tokens against text 14054 (was 3156/10433) -
+                                  the pcs arm emits 225 statements where it used to emit none.
+    7   closed          PROVED    unchanged.
+    8   slots           PROVED    FLIPPED. `numNegLagranges` 9 against `blindingFactors + 1` = 9
+                                  (was 9 vs 7: the empty CS recomputed blinding_factors to 6 while
+                                  vk.json always said 8). All ten `EnvAgrees` clauses now hold.
+    9   supported       REFUTED   narrowed to ONE field. `csDegreeMatches` now HOLDS - the ported
+                                  degree on the exported gates is 5 = the imported cs_degree - and
+                                  `permutationCommitmentsMatch` still fails: 8 sigma commitments
+                                  against `divCeil 8 3` = 3 z-chunks. That clause compares the VK's
+                                  per-COLUMN sigma commitments with the proof's per-CHUNK z count;
+                                  it is a v1 `Exec/VerifyingKey` defect, not a data gap.
+   10   noWriters       PROVED    unchanged in verdict, higher fuel: 200 is now EXHAUSTED (the main
+                                  block grew), 2000 and 20000 both answer true.
+   11   transcriptMptr  PROVED    unchanged. TRANSCRIPT_MPTR = 4096.
+   12   vkPins          PROVED    unchanged (S.8/S.9): VK_MPTR, payload length, instance count,
+                                  disjointness all hold at the derived plan view.
+   13   vkProgressPins  PROVED    unchanged (S.8/S.9): EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH.
 
-    #   clause          verdict   deciding evidence
-    1   circuitMeta     REFUTED   derived numEvals 27 against the typed-in 48 (D.3 check 2). The
-                                  full field attribution is `PoseidonCoherence`'s
-                                  check2_failureAttribution_ok - cited, not redone.
-    2   layout          REFUTED   fromProtocol on the DEFAULT protocol gives proofLen 1792 against
-                                  the plan's 4320 (D.3 check 1). Root: check2_typedInProtocolIsDefault.
-    3   invariants      REFUTED   NOT PREDICTED BY THE CARD. validateGeneratorInvariants returns
-                                  .ok (.error "protocol invariant failed: PCS query schedule must
-                                  end with linearization query") - the FIRST of the sixteen checks,
-                                  meta_.validateAgainstProtocol, refuses, because a default protocol
-                                  describes no query schedule. Same root cause, third face.
-    4   model           SORRY     true, and NOT machine-dischargeable - and, NEW, not dischargeable
-                                  by case split either. See the clause's own docstring.
-    5   inputs          PROVED    three rfl and one native_decide (k = 6 = vk.domain.k, not rfl
-                                  because the domain arrives through EvaluationDomain.new).
-    6   codegen         REFUTED   the documented WP-G1 gap, MEASURED here: the guard block agrees
-                                  token for token; the main block prints 3156 tokens where the
-                                  ported codegen prints 10433, first difference at index 1333,
-                                  where the AST says `let` and the text says `function`
-                                  (load_acc_coord_shifted - an accumulator helper include).
-    7   closed          PROVED    mainClosed = true; every free name of the inlined main block is
-                                  vk or quotientEvaluator.
-    8   slots           REFUTED   EnvAgrees.negLagranges reads 9 = 7: the plan view carries
-                                  numNegLagranges 9 (typed-in meta rotationLast := -9) while the
-                                  VK's own cs.blindingFactors is 6. The other NINE clauses of
-                                  EnvAgrees hold and are proved below, including omegaOrder.
-    9   supported       REFUTED   a DIFFERENT root cause: SupportedV2.wf.csDegreeMatches demands
-                                  vk.cs.degree = .ok vk.csDegree, and the ported degree recomputes
-                                  to 3 against the imported cs_degree 5 (D.2 gap A: vk.json has no
-                                  gates). wf.permutationCommitmentsMatch fails too, 8 against 0.
-                                  The other eleven SupportedV2 fields hold and are proved below.
-   10   noWriters       PROVED    noWritersFuel 200 on the closed program at (0, 0); 2000 agrees.
-   11   transcriptMptr  PROVED    TRANSCRIPT_MPTR = 4096 >= 0x80.
-
-  So `poseidonRender.Valid` is UNSATISFIABLE, and `poseidonRender_notValid` proves that from
-  clause 1 alone. C.1's `poseidon_valid` sorry is not an unfinished proof; it is an impossible one
-  at this render. Four of the six refutations - clauses 1, 2, 3, 8 - are ONE finding with four
-  faces: `DeployedProfile.poseidonMeta` is typed in over `constraintSystemMetaDefault`, so every
-  clause that compares the plan's meta against the VK's constraint system fails. Clause 9 is D.2's
-  gap A (a constraint system with no gates), and clause 6 is WP-G1 (the AST emitter), unrelated to
-  either. The card asked for the per-clause map rather than a green build; this is that map.
+  So 8 PROVED, 4 REFUTED, 1 SORRY - from 6/6/1. `poseidonRender.Valid` is STILL unsatisfiable and
+  `poseidonRender_notValid` now runs through clause 2 rather than clause 1, because clause 1 became
+  a theorem. What is left is no longer "the constraint system is missing": it is
+  `LoweringPlan::new`'s post-constructor sizing (clauses 2 and 3) and one v1 `WellFormed` field
+  (clause 9), plus the AST emitter (clause 6), none of which is fixture data.
 
   ## WHAT WAS NOT TOUCHED
 
@@ -99,32 +102,30 @@ theorem poseidonProg_eq : poseidonRender.prog 0 0 = asmOf poseidonPv poseidonM 0
 
 /-! ## 1. circuitMeta - REFUTED -/
 
-/-- THE DECIDING VALUE FOR CLAUSE 1: the ported constructor on the deployment's own constraint system
-    yields 27 evals; the typed-in meta the plan carries says 48. One number refutes an equality of
-    records. AXIOM: deciding_circuitMeta._native.native_decide.ax_1_1. -/
+/-- **CLAUSE 1 OF 13 - PROVED SINCE F.1.** `ConstraintSystemMeta.new` on the deployment's
+    own constraint system now RETURNS the meta the plan carries, because the plan's meta IS that
+    call: DeployedProfile's `poseidonMeta` is `ConstraintSystemMeta.new Features.solidity poseidonCs 1`
+    and `poseidonCs` now carries the gates, lookups, trashcans and permutation columns that
+    `cs.json` exports (F.1). C.4's refutation read "derived numEvals 27 against the typed-in 48";
+    the derived number is now 48 and the whole record agrees, so the clause is TRUE at this render.
+
+    Stated as the deciding computation rather than as the Prop. `ConstraintSystemMeta` derives
+    `BEq` and `Fault` derives no `DecidableEq`, so the record comparison is what native_decide can
+    see; the Prop form `... = .ok plan.meta_` follows from it by a case split on the constructor
+    plus the fact that the error arm is unreachable, and `poseidonRender_notValid` below no longer
+    runs through this clause. AXIOM: deciding_circuitMeta._native.native_decide.ax_1_1. -/
 theorem deciding_circuitMeta :
     (match ConstraintSystemMeta.new Features.solidity poseidonVkExec.cs 1 with
-      | .ok m => m.numEvals | .error _ => 0) ≠ poseidonPlanV2.meta_.numEvals := by
+      | .ok m => m == poseidonPlanV2.meta_ | .error _ => false) = true := by
   native_decide
 
-/-- The refutation at the whole record, as a Bool: the constructor SUCCEEDS (D.3's
-    check2_constructor_isOk) and the two metas are simply not the same meta. -/
-theorem deciding_circuitMeta_record :
+/-- THE PRINTED VALUE FOR CLAUSE 1: the derived numEvals, which C.4 measured at 27 and F.1 moves to
+    48 - the artifact's own 0x600 word count. AXIOM:
+    deciding_circuitMeta_numEvals._native.native_decide.ax_1_1. -/
+theorem deciding_circuitMeta_numEvals :
     (match ConstraintSystemMeta.new Features.solidity poseidonVkExec.cs 1 with
-      | .ok m => m == poseidonPlanV2.meta_ | .error _ => true) = false := by
+      | .ok m => m.numEvals | .error _ => 0) = 48 := by
   native_decide
-
-/-- **CLAUSE 1 OF 11 - REFUTED.** The literal `Render.Valid.circuitMeta` at `poseidonRender`,
-    and nothing weaker. D.3's `check2_circuitMeta_holds` is false; this is that fact as a
-    kernel-checked theorem (the kernel checks the SHAPE; the deciding value is native_decide). -/
-theorem poseidonValid_circuitMeta_not :
-    ¬ (ConstraintSystemMeta.new Features.solidity poseidonRender.vk.cs
-        poseidonRender.cfg.numCommittedInstances = .ok poseidonRender.plan.meta_) := by
-  show ¬ (ConstraintSystemMeta.new Features.solidity poseidonVkExec.cs 1 = .ok poseidonPlanV2.meta_)
-  intro h
-  exact deciding_circuitMeta
-    (congrArg (fun x : Except Fault ConstraintSystemMeta =>
-      match x with | .ok m => m.numEvals | .error _ => 0) h)
 
 /-! ## 2. layout - REFUTED -/
 
@@ -151,25 +152,49 @@ theorem poseidonValid_layout_not :
     (congrArg (fun x : Except Fault ProofCalldataLayout =>
       match x with | .ok l => l.proofLen | .error _ => 0) h)
 
-/-- THE ROOT CAUSE OF CLAUSES 1, 2, 3 AND 8, cited from D.3 rather than restated: the typed-in meta's
-    protocol field IS the default protocol plan. -/
+/-- THE ROOT CAUSE OF CLAUSES 1, 2, 3 AND 8 IS GONE. D.3's crux - that the plan's protocol field IS
+    `protocolPlanDefault` - was flipped by F.1: `poseidonPlanV2.meta_.protocol` is the real
+    `ProtocolPlan`, derived from `cs.json`. Clause 2 therefore fails for a NEW and narrower reason:
+    `fromProtocol` on the real protocol builds a 4224-byte layout where the plan's transcribed
+    `poseidonProofLayout` is 4320, and the 96-byte difference is the `num_point_sets` /
+    `num_dummy_evals` that `LoweringPlan::new` sets AFTER `from_constraint_system` (ENC:506's
+    `setNumPointSets`), which is the fallback this card was told not to port. -/
 theorem deciding_layout_rootCause :
-    poseidonPlanV2.meta_.protocol = Midfall.Generator.protocolPlanDefault :=
-  PoseidonCoherence.check2_typedInProtocolIsDefault
+    poseidonPlanV2.meta_.protocol ≠ Midfall.Generator.protocolPlanDefault :=
+  PoseidonCoherence.check2_typedInProtocolIsReal
+
+/-- The two printed proof lengths clause 2 now turns on: 4224 derived against 4320 transcribed. -/
+def deciding_layout_derivedProofLen : Nat :=
+  match ProofCalldataLayout.fromProtocol poseidonPlanV2.meta_.protocol abiVerifyProofProofCptr
+      poseidonPlanV2.meta_.numEvals poseidonPlanV2.meta_.numPointSets with
+  | .ok l => l.proofLen | .error _ => 0
+
+def deciding_layout_planProofLen : Nat := poseidonPlanV2.proofLayout.proofLen
 
 /-! ## 3. invariants - REFUTED -/
 
-/-- THE DECIDING VALUE FOR CLAUSE 3, as the reference's own message string, so a change in the
-    invariant checker's text reddens this rather than passing silently. AXIOM:
+/-- THE DECIDING VALUE FOR CLAUSE 3: the plan still refuses its own invariant check, but for a
+    completely different reason now that the protocol is real. With `protocolPlanDefault` the FIRST
+    of the sixteen checks refused ("PCS query schedule must end with linearization query"); with the
+    real protocol the schedule DOES end with the linearization query and check 1 passes, and the
+    refusal has moved to the PCS memory sizing: the plan's transcribed `poseidonLayoutConfig.pcs`
+    (rotPoints 28, x1Powers 65, qEvalSet 0, qEvalSourceTable 0, qComTraceMsm 0 terms) against what
+    the real protocol recomputes (rotPoints 3, x1Powers 33, qEvalSet 6, qEvalSourceTable 33,
+    qComTraceMsm 39 terms; finalMsm agrees at 47 terms / 7520 bytes). AXIOM:
     deciding_invariants._native.native_decide.ax_1_1. -/
 theorem deciding_invariants :
     (match poseidonPlanV2.validateGeneratorInvariants with
-      | .ok (.error s) => s
-      | .ok (.ok ()) => "OK"
-      | .error (Fault.panic t) => "PANIC " ++ t
-      | .error (Fault.error _) => "OTHER") =
-      "protocol invariant failed: PCS query schedule must end with linearization query" := by
+      | .ok (.ok ()) => true | _ => false) = false := by
   native_decide
+
+/-- THE REFUSAL, AS THE REFERENCE PRINTS IT, for the report rather than as a pinned string: a
+    message-text change should not redden a clause verdict. -/
+def deciding_invariants_message : String :=
+  match poseidonPlanV2.validateGeneratorInvariants with
+  | .ok (.error s) => s
+  | .ok (.ok ()) => "OK"
+  | .error (Fault.panic t) => "PANIC " ++ t
+  | .error _ => "OTHER"
 
 /-- **CLAUSE 3 OF 11 - REFUTED, AND THE CARD DID NOT PREDICT IT.** The literal
     `Render.Valid.invariants`: the plan must pass the generator's own sixteen invariant checks
@@ -264,10 +289,8 @@ theorem deciding_codegen_guard :
     `GenAst.emitSlices` does not emit. AXIOM:
     deciding_codegen_witness._native.native_decide.ax_1_1. -/
 theorem deciding_codegen_witness :
-    ((yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).drop 1333).head? = some "let" ∧
-      ((mainAssemblyTokens poseidonM).drop 1333).head? = some "function" ∧
-      (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length = 3156 ∧
-      (mainAssemblyTokens poseidonM).length = 10433 := by
+    (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length = 6761 ∧
+      (mainAssemblyTokens poseidonM).length = 14054 := by
   native_decide
 
 /-- **CLAUSE 6 OF 11 - REFUTED.** The literal `Render.Valid.codegen`. `Program.lean:96-101`
@@ -294,22 +317,16 @@ theorem poseidonValid_closed : mainClosed poseidonRender.pv poseidonRender.model
 
 /-! ## 8. slots - REFUTED -/
 
-/-- THE DECIDING VALUE FOR CLAUSE 8: 9 against 7. AXIOM:
-    deciding_slots._native.native_decide.ax_1_1. -/
-theorem deciding_slots :
-    poseidonPv.numNegLagranges ≠ poseidonVkExec.cs.blindingFactors.toOption.getD 0 + 1 := by
+/-- **CLAUSE 8 OF 13 - PROVED SINCE F.1.** `EnvAgrees`'s `negLagranges` clause reads
+    `PV.numNegLagranges = vk.cs.blindingFactors + 1`. C.4 measured 9 against 7 and refuted it,
+    because the VK's constraint system had no trashcans and no lookup chunks and so recomputed
+    `blinding_factors` to 6 while the plan's typed-in `rotationLast` said -9. With the real
+    constraint system the reference's own number is 8 (vk.json has said 8 all along - the port was
+    reading an empty CS), so the clause is 9 = 9 and it HOLDS. AXIOM:
+    poseidonValid_slots_negLagranges._native.native_decide.ax_1_1. -/
+theorem poseidonValid_slots_negLagranges :
+    poseidonPv.numNegLagranges = poseidonVkExec.cs.blindingFactors.toOption.getD 0 + 1 := by
   native_decide
-
-/-- **CLAUSE 8 OF 11 - REFUTED.** The literal `Render.Valid.slots`, i.e. `EnvAgrees`'s ten
-    clauses. Nine hold and are proved in `poseidonValid_slots_nine`; `negLagranges` does not: it
-    demands `PV.numNegLagranges = vk.cs.blindingFactors + 1`, and the plan view carries 9 (it comes
-    from the typed-in meta's `rotationLast := -9`) while the VK's own constraint system says
-    blindingFactors = 6, so the clause reads 9 = 7. Fourth face of the typed-in meta. -/
-theorem poseidonValid_slots_not :
-    ¬ EnvAgrees poseidonRender.E poseidonRender.vk poseidonRender.pv poseidonRender.params
-        poseidonRender.sG2gen := by
-  intro h
-  exact deciding_slots h.negLagranges
 
 /-- The finite content of `EnvAgrees.omegaOrder`, which is the one clause of the ten that is
     neither a computation at the render nor refuted: `orderExactly` is a forall over every smaller
@@ -351,13 +368,28 @@ theorem poseidonValid_slots_nine :
     by native_decide, by native_decide, by native_decide, by native_decide, omegaOrder, rfl, rfl,
     by native_decide⟩
 
+/-- **CLAUSE 8 OF 13, WHOLE - PROVED.** All ten `EnvAgrees` clauses at `poseidonRender`: the nine
+    C.4 already proved, plus `negLagranges`. This is the first of C.4's six refutations to become a
+    proof, and it is the same root cause clause 1 had - the missing constraint system - closed by
+    the same export. -/
+theorem poseidonValid_slots :
+    EnvAgrees poseidonRender.E poseidonRender.vk poseidonRender.pv poseidonRender.params
+      poseidonRender.sG2gen := by
+  obtain ⟨hmod, htrunc, hd1, hd2, hbary, homega, horder, hng2, hsg2, hdig⟩ :=
+    poseidonValid_slots_nine
+  refine ⟨hmod, htrunc, ⟨hd1, hd2⟩, hbary, homega, horder, ?_, hng2, hsg2, hdig⟩
+  show poseidonPv.numNegLagranges = poseidonVkExec.cs.blindingFactors.toOption.getD 0 + 1
+  exact poseidonValid_slots_negLagranges
+
 /-! ## 9. supported - REFUTED -/
 
-/-- THE DECIDING VALUES FOR CLAUSE 9: the ported degree recomputes to 3 against the imported
-    cs_degree 5. AXIOM: deciding_supported._native.native_decide.ax_1_1. -/
-theorem deciding_supported :
-    (match poseidonVkExec.cs.degree with | .ok d => d | .error _ => 0) ≠
-      poseidonVkExec.csDegree := by
+/-- **CLAUSE 9'S FIRST FACE IS CLOSED BY F.1.** `SupportedV2.wf.csDegreeMatches` demands
+    `vk.cs.degree = .ok vk.csDegree`. C.4 measured the ported degree recomputing to 3 against the
+    imported 5 - D.2's gap A, an empty `gates` array. With the exported gates the ported
+    `ConstraintSystem.degree` recomputes to 5 and the clause HOLDS. AXIOM:
+    deciding_supported_degree._native.native_decide.ax_1_1. -/
+theorem deciding_supported_degree :
+    (match poseidonVkExec.cs.degree with | .ok d => d | .error _ => 0) = poseidonVkExec.csDegree := by
   native_decide
 
 /-- The second failing `WellFormed` clause, so the refutation is not one unlucky field: 8
@@ -369,7 +401,7 @@ theorem deciding_supported_perm :
       divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2) := by
   native_decide
 
-/-- **CLAUSE 9 OF 11 - REFUTED, BY A DIFFERENT ROOT CAUSE FROM 1, 2, 3 AND 8.**
+/-- **CLAUSE 9 OF 13 - STILL REFUTED, BY ONE FIELD, AND IT IS NOT THE EXPORT'S.**
     `SupportedV2 poseidonRender` requires `R.vk.WellFormed Features.solidity`, whose first clause
     `csDegreeMatches` demands `vk.cs.degree = .ok vk.csDegree`. With `gates = #[]` - D.2 gap A,
     vk.json carries no gates at all - the ported `ConstraintSystem.degree` recomputes to 3 while
@@ -378,9 +410,7 @@ theorem deciding_supported_perm :
     clauses 1, 2, 3 and 8 from the other side. -/
 theorem poseidonValid_supported_not : ¬ SupportedV2 poseidonRender := by
   intro h
-  exact deciding_supported
-    (congrArg (fun x : Except Fault Nat => match x with | .ok d => d | .error _ => 0)
-      h.wf.csDegreeMatches)
+  exact deciding_supported_perm h.wf.permutationCommitmentsMatch
 
 /-- The eleven `SupportedV2` fields that DO hold, so clause 9's refutation is located. Every one is
     a computation at the render's own vk, plan and flags. AXIOMS:
@@ -430,16 +460,19 @@ theorem poseidonValid_supported_vkPoints :
     same scan at ten times the fuel agrees. AXIOM:
     deciding_noWriters_fuel._native.native_decide.ax_1_1. -/
 theorem deciding_noWriters_fuel :
-    noWritersFuel 200 (asmOf poseidonPv poseidonM 0 0) = true ∧
-      noWritersFuel 2000 (asmOf poseidonPv poseidonM 0 0) = true := by
+    noWritersFuel 2000 (asmOf poseidonPv poseidonM 0 0) = true ∧
+      noWritersFuel 20000 (asmOf poseidonPv poseidonM 0 0) = true := by
   native_decide
 
-/-- **CLAUSE 10 OF 11 - PROVED.** The generated program performs no world write - no `sstore`,
-    `tstore`, `log*`, `create*` or value-bearing `call`.
+/-- **CLAUSE 10 OF 13 - PROVED, AT A HIGHER FUEL THAN C.4 NEEDED.** The generated program performs
+    no world write - no `sstore`, `tstore`, `log*`, `create*` or value-bearing `call`. C.4 exhibited
+    fuel 200; with the real protocol the pcs arm emits 225 statements instead of nothing, the main
+    block is bigger, and 200 is now EXHAUSTED (measured false) while 2000 and 20000 both answer true.
+    The fuel is exhibited at 2000 below.
     AXIOM: poseidonValid_noWriters._native.native_decide.ax_1_1. -/
 theorem poseidonValid_noWriters : NoWriters (poseidonRender.prog 0 0) := by
   show NoWriters (asmOf poseidonPv poseidonM 0 0)
-  exact ⟨200, by native_decide⟩
+  exact ⟨2000, by native_decide⟩
 
 /-! ## 11. transcriptMptr - PROVED -/
 
@@ -466,6 +499,6 @@ theorem poseidonValid_transcriptMptr :
     (`Statements` section 5), so C.1's headline survives as stated; `Valid` enters only through
     `blockContracts_of_valid`, which is where the sorry sits. -/
 theorem poseidonRender_notValid : ¬ poseidonRender.Valid :=
-  fun h => poseidonValid_circuitMeta_not h.circuitMeta
+  fun h => poseidonValid_layout_not h.layout
 
 end Midfall.Instances.PoseidonValid

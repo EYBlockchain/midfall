@@ -616,6 +616,49 @@ INFRA · PORT · box 1.5 h · Sonnet · after S.8
   the pairing; v1 files; `vendor/`.
 
 ---
+### F.1 — Re-export the poseidon fixture WITH the constraint-system data (D-P47)  **[READY — CRITICAL PATH]**
+
+GEN · PORT · box 2.5 h · strongest · **split at 1 h into (export) and (re-derive)** · after S.9
+
+- **Goal.** Make the deployment's real `ProtocolPlan` available as data, so C.4's four
+  protocol-caused refutations (`circuitMeta`, `layout`, `invariants`, `slots`) can close from facts
+  rather than from a port of `LoweringPlan::new`. **D-P47 mandates this BEFORE any such port.**
+- **Why this is the critical path.** C.4 PROVED `¬ poseidonRender.Valid`: 6 of 13 clauses refuted, and
+  clauses 1/2/3/8 are ONE root cause — `planM.protocol = protocolPlanDefault`, a typed-in placeholder.
+  **No Lean card can fix that. Until it is fixed, the cone cannot reach 0 however many block rows land.**
+- **Needs (orchestrator-measured at 3e15e9f).**
+  - Export source: **`proofs/solidity-verifier/tests/poseidon_fixture.rs`** — it writes
+    `proofs/solidity-verifier/target/poseidon-fixture-dump/{Halo2VerifyingKey.sol, Halo2Verifier.sol,`
+    `calldata.bin, instance.be, …}`.
+  - `formal/fixtures/conformance/poseidon/vk.json` currently has: `advice_column_phase`,
+    `advice_queries`, `blinding_factors`, `cs_degree`, `extended_k`, `fixed_commitments_compressed_hex`,
+    `fixed_queries`, `instance_queries`, `k`, `n`, `nb_public_inputs`, `num_advice_columns`,
+    `num_challenges`, `num_committed_instances`, `omega_be_hex`, `permutation_commitments_compressed_hex`,
+    `proof_len`, … **and NOT: `gates`, `lookups` (only `num_lookups`), `trashcans` (only
+    `num_trashcans`), `permutation.columns`.** Those four are exactly what D.2 gap A and C.4 need.
+  - `Instances/PoseidonInputs.lean` (`poseidonVkGen`, `poseidonPlanV2`), `Instances/PoseidonEnv.lean`,
+    `Instances/PoseidonV2.lean` (`poseidonRender`), `Instances/PoseidonCoherence.lean` (D.3 checks 1-2).
+- **Do — HALF 1 (export, ≤1 h).** Extend `poseidon_fixture.rs` to emit the four missing structures
+  into `vk.json` (or a sibling `cs.json` if the shape is awkward). **Re-run the fixture; do not hand-edit
+  JSON.** If the Rust side cannot expose them, **that is the NEGATIVE D-P47 asked for — report it with
+  the exact Rust error and stop; it makes `LoweringPlan::new` the plan.**
+- **Do — HALF 2 (re-derive, only if half 1 lands).** Rebuild `poseidonVkGen`/`poseidonPlanV2` so
+  `poseidonMeta.protocol` is the real `ProtocolPlan`, then re-run **D.3 checks 1-2 and C.4's clause
+  table**. **Expect some to flip from REFUTED to PROVED — report each with its printed value.**
+- **Does NOT need.** Porting `LoweringPlan::new` (that is the fallback, not this card); any block row;
+  the pairing; §6/§7 changes; `Frozen.sha256` edits.
+- **Deliverable.** The export change + (if half 2 runs) the re-derived terms and a before/after clause
+  table. **Also: D.3 found the bundle is NOT the committed fixture (`committed_proof_len 4752` vs
+  `exported 2640`, `proof=false`) — if the re-export can fix that too, do it here; one refresh, not two.**
+- **Accept.** **`cone_sorries lowering_equivalence_poseidon` before and after — it is 11.** **This is the
+  first card with a realistic chance of moving it: if `poseidon_valid`'s four protocol clauses close,
+  the `poseidon_valid` sorry may become dischargeable.** Report the C.4 clause table re-measured, not
+  asserted. `verify.sh --quick` green; `git diff --stat` shows no frozen `.lean` touched.
+- **Stop if.** The Rust side cannot expose the data (NEGATIVE — a deliverable) · half 1 exceeds 1 h ·
+  re-deriving changes a frozen statement · any evaluation >60 s · the fixture regenerates with
+  DIFFERENT bytes for things that should be stable (that means the export is not reproducible — stop).
+
+---
 ### S.10 — Fix the stale `Valid` clause-count prose  **[READY — small]**
 
 INFRA · DOCS · box 0.5 h · Sonnet · after S.9

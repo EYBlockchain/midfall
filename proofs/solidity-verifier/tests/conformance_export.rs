@@ -50,7 +50,7 @@ use midnight_circuits::{
 use midnight_curves::{Bls12, Fq, G1Affine, G1Projective};
 use midnight_proofs::{
     circuit::{Layouter, Value},
-    plonk::{prepare, solidity_trace, Error, VerifyingKey},
+    plonk::{prepare, solidity_trace, Any, Error, Expression, VerifyingKey},
     poly::{
         kzg::{msm::msm_specific, KZGCommitmentScheme},
         CommitmentLabel,
@@ -236,6 +236,54 @@ fn point_hex(p: &G1Projective) -> String {
 fn g2_hex(p: &midnight_curves::G2Projective) -> String {
     use group::GroupEncoding;
     hex::encode(p.to_affine().to_bytes().as_ref())
+}
+
+/// F.1: one `Expression<F>` as data, so the constraint system's gate / lookup /
+/// trashcan polynomials reach the Lean tree as FACTS instead of as a port of the
+/// builder that made them.
+///
+/// The variant set mirrors `proofs/src/plonk/circuit.rs:824-849` one for one and
+/// every payload is read through a PUBLIC accessor (`FixedQuery::column_index`,
+/// `AdviceQuery::phase`, `Challenge::index`, ...); nothing here reaches into a
+/// `pub(crate)` field, so this adds no baseline surface. `degree` is carried on
+/// every node because it is the only thing the plan path actually reads of an
+/// expression (`ConstraintSystem::degree`, `BatchedArgument::num_chunks`,
+/// `TrashArgument::required_degree`), and shipping the reference's own value lets
+/// the importer KAT its port of `Expression::degree` against the artifact rather
+/// than trusting its own tree walk.
+fn expr_json(e: &Expression<F>) -> serde_json::Value {
+    let deg = e.degree();
+    match e {
+        Expression::Constant(c) => json!({"k": "constant", "f": be_hex(c), "degree": deg}),
+        Expression::Selector(s) => json!({
+            "k": "selector", "index": s.index(), "is_simple": s.is_simple(), "degree": deg
+        }),
+        Expression::Fixed(q) => json!({
+            "k": "fixed", "index": q.index(), "col": q.column_index(),
+            "rot": q.rotation().0, "degree": deg
+        }),
+        Expression::Advice(q) => json!({
+            "k": "advice", "index": q.index, "col": q.column_index(),
+            "rot": q.rotation().0, "phase": q.phase(), "degree": deg
+        }),
+        Expression::Instance(q) => json!({
+            "k": "instance", "index": q.index, "col": q.column_index(),
+            "rot": q.rotation().0, "degree": deg
+        }),
+        Expression::Challenge(c) => json!({
+            "k": "challenge", "index": c.index(), "phase": c.phase(), "degree": deg
+        }),
+        Expression::Negated(a) => json!({"k": "negated", "a": expr_json(a), "degree": deg}),
+        Expression::Sum(a, b) => json!({
+            "k": "sum", "a": expr_json(a), "b": expr_json(b), "degree": deg
+        }),
+        Expression::Product(a, b) => json!({
+            "k": "product", "a": expr_json(a), "b": expr_json(b), "degree": deg
+        }),
+        Expression::Scaled(a, s) => json!({
+            "k": "scaled", "a": expr_json(a), "f": be_hex(s), "degree": deg
+        }),
+    }
 }
 
 /// Trace ids the verifier records for squeezed challenges: 7 theta, 8 beta,
@@ -612,6 +660,109 @@ fn export_poseidon_conformance_bundle() {
         })).collect::<Vec<_>>(),
     });
 
+    // --- F.1: the constraint system ITSELF, as data ---------------------------
+    //
+    // The four structures vk.json never carried - gates, lookups, trashcans and
+    // permutation.columns - are what `ProtocolPlan::from_constraint_system` reads and
+    // therefore what C.4's protocol-caused refutations have been waiting for. They are
+    // written to a SIBLING file rather than into vk.json: vk.json's schema is already
+    // parsed by `Instances/PoseidonEnv.lean` field by field, and a gate is a nested
+    // tree, not a scalar. Nothing here is computed by the exporter beyond what the
+    // reference's own accessors return; the values are the deployment's, read out of
+    // the same `vk.cs()` the native verifier just checked the proof against.
+    let cs_degree = cs.degree();
+    let perm_cols = cs.permutation().get_columns();
+    let permutation_columns: Vec<_> = perm_cols
+        .iter()
+        .map(|c| match c.column_type() {
+            Any::Advice(a) => json!({"type": "advice", "index": c.index(), "phase": a.phase()}),
+            Any::Fixed => json!({"type": "fixed", "index": c.index(), "phase": null}),
+            Any::Instance => json!({"type": "instance", "index": c.index(), "phase": null}),
+        })
+        .collect();
+    let gates: Vec<_> = cs
+        .gates()
+        .iter()
+        .map(|g| {
+            json!({
+                "name": g.name(),
+                "constraint_names": (0..g.polynomials().len())
+                    .map(|i| g.constraint_name(i).to_string())
+                    .collect::<Vec<_>>(),
+                "polys": g.polynomials().iter().map(expr_json).collect::<Vec<_>>(),
+                "queried_selectors": g.queried_selectors().iter()
+                    .map(|s| json!({"index": s.index(), "is_simple": s.is_simple()}))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    // `chunk_by_degree(cs_degree)` is the exact call PM:344 makes, so the exported
+    // num_chunks is the reference's own answer and the Lean importer can KAT its port
+    // of `LogupBatchedArgument::num_chunks` against it. `input_expressions` is the
+    // flattened chunk list: `chunk_by_degree` partitions `input_expressions` in order
+    // (logup.rs:326-338), so flattening restores it exactly.
+    let lookups: Vec<_> = cs
+        .lookups()
+        .iter()
+        .map(|l| {
+            let chunked = l.chunk_by_degree(cs_degree);
+            let chunks = chunked.input_expression_chunks();
+            json!({
+                "selector": expr_json(l.selector_expression()),
+                "table_expressions": l.table_expressions().iter().map(expr_json).collect::<Vec<_>>(),
+                "input_expressions": chunks.iter().flatten()
+                    .map(|pl| pl.iter().map(expr_json).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                "num_parallel_lookups": chunks.iter().flatten().count(),
+                "num_chunks_at_cs_degree": chunked.num_chunks(),
+            })
+        })
+        .collect();
+    let trashcans: Vec<_> = cs
+        .trashcans()
+        .iter()
+        .map(|t| {
+            json!({
+                "name": t.name(),
+                "selector": expr_json(t.selector()),
+                "constraint_expressions": t.constraint_expressions().iter().map(expr_json).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let cs_json = json!({
+        "schema": 1,
+        "source": "proofs/solidity-verifier/tests/conformance_export.rs (F.1 half 1)",
+        "cs_degree": cs_degree,
+        "blinding_factors": cs.blinding_factors(),
+        "num_simple_selectors": cs.num_simple_selectors(),
+        "challenge_phase": cs.challenge_phase(),
+        "permutation_columns": permutation_columns,
+        "gates": gates,
+        "lookups": lookups,
+        "trashcans": trashcans,
+        // Cross-checks: the reference's own summary numbers, restated next to the
+        // structures they summarize so an importer that drops a subtree cannot pass a
+        // count gate by accident.
+        "summary": {
+            "num_gates": gates.len(),
+            "gate_poly_total": cs.gates().iter().map(|g| g.polynomials().len()).sum::<usize>(),
+            "num_lookups": cs.lookups().len(),
+            "num_trashcans": cs.trashcans().len(),
+            "num_permutation_columns": perm_cols.len(),
+        },
+        // Recorded, not hidden: five ConstraintSystem fields have NO public accessor
+        // outside proofs/src, so they are absent from this file and the importer must
+        // take them from ConstraintSystem.default. None is read by the plan path;
+        // `cs_degree` above is what proves `minimum_degree` did not bind here.
+        "not_exported": [
+            "gate.queried_cells (circuit.rs:1627, pub(crate))",
+            "lookup name (logup.rs:172, pub(crate), no accessor)",
+            "minimum_degree (circuit.rs:1726, pub(crate), no accessor)",
+            "unblinded_advice_columns (circuit.rs:1687, pub(crate), no accessor)",
+            "general_column_annotations (circuit.rs:1720, pub(crate), no accessor)"
+        ],
+    });
+
     let dir = if mode == "committed" { PathBuf::from(out_dir().to_str().unwrap().to_string() + "_committed") } else { out_dir() };
     fs::create_dir_all(&dir).expect("create the conformance output directory");
     fs::write(dir.join("vk.json"), serde_json::to_string_pretty(&vk_json).unwrap()).unwrap();
@@ -621,6 +772,7 @@ fn export_poseidon_conformance_bundle() {
         .unwrap();
     fs::write(dir.join("proof.bin"), &proof).unwrap();
     fs::write(dir.join("trace.json"), serde_json::to_string_pretty(&trace_json).unwrap()).unwrap();
+    fs::write(dir.join("cs.json"), serde_json::to_string_pretty(&cs_json).unwrap()).unwrap();
 
     let identities = (0u64..)
         .take_while(|j| {

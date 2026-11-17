@@ -229,48 +229,41 @@ def check2_constructor_isOk : Bool :=
 def check2_circuitMeta_holds : Bool :=
   match derivedMeta with | .ok m => m == planM | .error _ => false
 
-/-- THE ATTRIBUTION, pinned as a falsifiable gate rather than as prose. Every number is the
-    derived one against the typed-in one, so the day either side changes this gate reddens and says
-    which field moved. The zeros on the derived side are D.2's gap A - vk.json has no gates, no
-    lookups, no trashcans and no permutation.columns - and the zeros on the typed-in side are
-    `constraintSystemMetaDefault`, which is what `poseidonMeta` is built from. -/
+/-- THE ATTRIBUTION, RE-MEASURED BY F.1 HALF 2. D.3's version of this gate pinned the derived meta
+    against a TYPED-IN one and listed eleven places where they disagreed, and every one of those
+    disagreements was the missing constraint system. Now the plan's meta IS the derived meta, so the
+    gate reads the other way: the two are the same record, and the numbers that used to be zeros on
+    the derived side are the deployment's own. Each is still spelled out, because a gate that only
+    said `m == planM` would not say WHICH field moved if it ever stopped holding. -/
 def check2_failureAttribution_ok : Bool :=
   match derivedMeta with
   | .error _ => false
   | .ok m =>
-      -- derived 0 / typed-in 1: vk.json has num_lookups but no BatchedArgument.
-      m.numLookups == 0 && planM.numLookups == 1
-        -- derived 0 / typed-in 1: same for trashcans.
-        && m.numTrashcans == 0 && planM.numTrashcans == 1
-        -- derived 0 / typed-in 3: no permutation.columns in vk.json.
-        && m.numPermutationZs == 0 && planM.numPermutationZs == 3
-        && m.permutationColumns.length == 0
-        -- derived 2 / typed-in 4: with gates = #[] the ported degree recomputes to 3, so the
-        -- quotient count comes out degree-1 = 2 while the artifact says 4. D.2's gap A exactly.
-        && m.numQuotients == 2 && planM.numQuotients == 4
-        -- derived 27 / typed-in 48.
-        && m.numEvals == 27 && planM.numEvals == 48
-        -- the mirror image: the derived side DOES have the fixed columns, the query lists and the
-        -- permutation chunk length, and the typed-in side records none of them.
-        && m.numFixeds == 19 && planM.numFixeds == 0
-        && m.permutationChunkLen == 1 && planM.permutationChunkLen == 0
-        && m.adviceQueries.length == 11 && planM.adviceQueries.length == 0
-        && m.instanceQueries.length == 2 && planM.instanceQueries.length == 0
-        && m.numCommittedInstances == 1 && planM.numCommittedInstances == 0
-        && m.rotationLast == -7 && planM.rotationLast == -9
-        && m.simpleSelectorCols == [13, 14, 15, 17] && planM.simpleSelectorCols == [0, 1, 2, 3]
-        -- and the field that decides check 1: the typed-in protocol is the default, so it has no
-        -- commitment plan at all and `fromProtocol` cannot rebuild the layout from it.
-        && m.protocol != planM.protocol
-        && planM.protocol.proof.commitments.isEmpty
+      m == planM
+      -- the four structures cs.json supplied, non-zero on the derived side and equal to the plan's.
+      && m.numLookups == 1 && m.numTrashcans == 1 && m.numPermutationZs == 3
+      && m.permutationColumns.length == 8
+      -- the counts that used to be the gap, now derived rather than observed.
+      && m.numFixeds == 19 && m.permutationChunkLen == 3
+      && m.adviceQueries.length == 11 && m.instanceQueries.length == 2
+      && m.numEvals == 48 && m.numQuotients == 4 && m.rotationLast == -9
+      && m.simpleSelectorCols == [13, 14, 15, 17] && m.numCommittedInstances == 1
+      -- and the field D.3 called the crux: the protocol is the real plan, not the default.
+      && (m.protocol != Midfall.Generator.protocolPlanDefault)
+      && m.protocol.pcsQueries.length == 49 && m.protocol.numFixeds == 19
 
-/-- **THE CRUX, BY RFL.** The typed-in meta's protocol field IS `protocolPlanDefault` - not
-    merely empty in the commitment plan, the default plan outright. This one equation is why BOTH
-    `Valid.layout` and `Valid.circuitMeta` fail at the deployed profile, and it is the reason the two
-    failures are one finding and not two: `fromProtocol` can only build the layout the protocol
-    describes, and the default protocol describes no commitments at all. -/
-theorem check2_typedInProtocolIsDefault : planM.protocol = Midfall.Generator.protocolPlanDefault :=
-  rfl
+/-- **THE CRUX, FLIPPED BY F.1.** What D.3 proved by `rfl` - that the plan's protocol field IS
+    `protocolPlanDefault` - is now FALSE, and that is the card's whole point. `poseidonMeta` is
+    `ConstraintSystemMeta.new Features.solidity poseidonCs 1`, and `poseidonCs` now carries the
+    gates, lookups, trashcans and permutation columns that `cs.json` exports, so the plan carries
+    a real `ProtocolPlan`: 19 fixeds, 8 permutation columns, 11 advice queries, a 49-entry PCS
+    query schedule. Proved by a field the default cannot fake. -/
+theorem check2_typedInProtocolIsReal : planM.protocol ≠ Midfall.Generator.protocolPlanDefault := by
+  intro h
+  have h1 : planM.protocol.numFixeds = 19 := by native_decide
+  have h2 : (Midfall.Generator.protocolPlanDefault : Midfall.Generator.ProtocolPlan).numFixeds = 0 := rfl
+  rw [h] at h1
+  omega
 
 /-- The three counts D.2 gate 14 already pinned as agreeing, restated so this file does not read as
     "nothing agrees": numLookups and numTrashcans agree with vk.json on the DERIVED side only
@@ -499,14 +492,14 @@ end Midfall.Instances.PoseidonCoherence
 
 -- CHECK 1
 #eval Midfall.Instances.PoseidonCoherence.check1_validLayout_holds -- expect false
-#eval Midfall.Instances.PoseidonCoherence.check1_derivedProofLen -- expect 1792
+#eval Midfall.Instances.PoseidonCoherence.check1_derivedProofLen -- expect 4224 (was 1792 at the default protocol)
 #eval Midfall.Instances.PoseidonCoherence.check1_proofLen_eq_traceProofLen -- expect false
 #eval Midfall.Instances.PoseidonCoherence.check1_layoutPredictsFixtureProof_ok -- expect true
 #eval Midfall.Instances.PoseidonCoherence.check1_twoWidths_ok -- expect true
 
 -- CHECK 2
 #eval Midfall.Instances.PoseidonCoherence.check2_constructor_isOk -- expect true
-#eval Midfall.Instances.PoseidonCoherence.check2_circuitMeta_holds -- expect false
+#eval Midfall.Instances.PoseidonCoherence.check2_circuitMeta_holds -- expect TRUE since F.1
 #eval Midfall.Instances.PoseidonCoherence.check2_failureAttribution_ok -- expect true
 #eval Midfall.Instances.PoseidonCoherence.check2_agreeingCounts_ok -- expect true
 
