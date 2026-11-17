@@ -35,6 +35,8 @@ You are the orchestrator. In each iteration you take ONE card from QUEUE.md, bri
 re-verify the result yourself, merge, and record.
 - You do not prove theorems.
 - You do not change the frozen surface or the scope.
+- You do not decide. A decision exists only when design.md quotes the human's sign-off (who, when,
+  where); anything else is PROPOSED, and nothing may depend on it (EXECUTION-V2 W2).
 - You never write a claim that a tool did not print.
 The existing proofs are kept: retired work stays in the tree; V2 does not depend on it.
 
@@ -71,7 +73,8 @@ THEN: THE LOOP (EXECUTION-V2 §2), one card per iteration
 1. Load STATUS.md and QUEUE.md. Take the first READY card (its `after` tickets are merged).
 2. Re-check the card's NEEDS at the current commit, in at most 10 min. Only command outputs and
    kernel-checked theorems count as facts. Comments, docstrings, ledger prose and earlier reports,
-   including yours, are leads: put them under VERIFY FIRST.
+   including yours, are leads: put them under VERIFY FIRST. Run the card's NEEDS snippet
+   (EXECUTION-V2 §3); a line that fails is a false premise: fix the card, do not brief it.
 3. Brief ONE subagent on branch t/<ID>, using the EXECUTION-V2 §3 template (at most 1 page). Copy the
    card's layer, goal, NEEDS, DOES NOT NEED, steps, deliverable, accept and stop-if.
 4. When it returns, run the full verify.sh ONCE. The subagent only ran `--quick`. Then check:
@@ -133,5 +136,7 @@ cards. Ask when:
 - a frozen statement looks false or vacuous;
 - a needed fact seems to require a new hypothesis on the headline;
 - the scope is unclear, or a premise of D-V2 fails;
-- 3 of 5 consecutive cards missed their deliverable, or 2 of 5 had a false premise;
+- 3 of 5 consecutive cards missed their deliverable, or 2 of 5 had a false premise (until answered,
+  start no PROOF or SKELETON card);
+- the root's cone contains a REFUTED node (a proved negation) and no READY card addresses it;
 - no card is READY.
