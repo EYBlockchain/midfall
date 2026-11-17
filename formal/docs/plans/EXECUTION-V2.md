@@ -4,6 +4,18 @@
 orchestrator agent that plans and delegates one ticket at a time to one subagent**. The live queue is
 `formal/docs/QUEUE.md`, the state is `formal/docs/STATUS.md`, and the main prompt is `GOAL-PROMPT.md`.
 
+> **PLAN-V3 hand-over (added 2026-11-17; conditional on a signed D-P60 in `design.md`).** Nothing in
+> this file changes before that. After it: (1) "PLAN-V2" in §2 and §5 reads "PLAN-V3"; (2) rules
+> **W12–W15** (PLAN-V3 §4) are added to W1–W11: a witness and a falsifier before any brief; no
+> refuted sorry kept in the tree; the model must run its object before a Yul proof card is READY;
+> frozen means the meaning, and re-hashes are batched; (3) cards come from
+> `docs/plans/PLAN-V3-cards.md`, entered in `QUEUE.md` by card PL.0 as one line each, and briefed
+> with §3's template plus the EVIDENCE line of PLAN-V3 §7; (4) one more ticket type,
+> **STATEMENT** (≤ 2.5 h): a new or changed statement lands together with its witness and its
+> falsifier, and is done when its consumer compiles; (5) the progress measure of §6 is the report
+> of PLAN-V3 §6 (leaf status, exhibits, block coverage, axiom sweep), with the cone count as its
+> last line. The loop of §2, the subagent contract of §3 and W1–W11 are unchanged.
+
 The design principle, from the log and from an external review of it (Appendix A): the executing
 agent is good at bounded proofs, counterexamples and honest disclosure. The failures were mostly
 **orchestration** failures:

@@ -13,7 +13,9 @@ D-P60 is signed.** What the orchestrator does meanwhile: read `QUEUE.md`'s PLAN-
 picking a card (it flags the G1 batch, R.4, R.4b, R.5, R.8, R.9, T.2b, T.3); treat each flag as a
 lead and verify it. Most urgent for the human: **D-P65** (the block scope must change in the same
 re-hash as the G1.1–G1.3 batch) and **D-P61** (the Lean verifier rejects every proof of the fixture
-key today). Drafts: `docs/DECISIONS-PENDING.md` §12. Cut-over when signed: PLAN-V3 §10.2, card PL.0.
+key today). Drafts: `docs/DECISIONS-PENDING.md` §12. Cut-over when signed: card PL.0 in `QUEUE.md`. **The goal
+prompt does not change**: `PLAN-V2.md`'s banner and §6 redirect to PLAN-V3 once D-P60 is signed.
+READY now and needing no decision: card **DG.0** (the KAT gate is red at the tip).
 
 **TICKET M0.1 (probe, `252ea1d`; table landed in `docs/QUEUE.md` under M0.1):** the 7×4 block-frame
 table was computed in ONE lean run and **the orchestrator re-ran it and reproduced every headline

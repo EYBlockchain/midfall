@@ -31,7 +31,38 @@ is PLAN-V3 §10.1; the drafts for signature are `docs/DECISIONS-PENDING.md` §12
 | **R.8**, **R.9** | Frozen `Valid.circuitMeta` forces `numPointSets = 0`; a faithful plan has 3. Exporting or proving more cannot close clauses 1 and 2 together |
 | **T.2b** | A verified `wp` engine proves the literal-slice TraceReturn fact in 13 lines; land it rather than write a tactic. The closed-slice form is still to do |
 | **T.3**, **S.5**, **S.6** | The engine's kernel check on the lagrange loop is not bounded yet; do not apply D-P57's hand-proof fallback on that ground before PLAN-V3 card T3.0 has measured it |
-| every card | The tip fails `checks.sh` (sorry register: `PoseidonValid.lean` 227 → 252) and `kat_gate.py` (pinned total; two `-- expect TRUE` annotations). Fixing that needs no decision |
+| every card | The tip (`4e18c65`) still fails `kat_gate.py`: 1397 annotated checks against a pinned 1393, and two `-- expect TRUE` annotations that can never match `true` (`DeployedProfile.lean:857`, `PoseidonCoherence.lean:502`). The sorry register is back in sync since F.1. Card **DG.0** below fixes it and needs no decision |
+
+### DG.0 — Make the gates green at the tip  **[READY — no decision needed; run before the next PROOF card]**
+INFRA · KAT · box 1 h · Sonnet · after —
+
+- **Goal.** `bash scripts/checks.sh` exits 0 at the tip.
+- **Needs.** `scripts/kat_gate.py:113` (`EXPECTED_KAT_TOTAL = 1393`; the tree has 1397 since
+  `2041977`); `Midfall/Instances/DeployedProfile.lean:857` and
+  `Midfall/Instances/PoseidonCoherence.lean:502` (annotations spelled `-- expect TRUE`; the gate
+  compares case-sensitively and the values print `true`).
+- **Does NOT need.** Any new gate, any proof, PLAN-V3 or any of its decisions.
+- **Do.**
+  1. Re-measure: `python3 scripts/kat_gate.py` (fails in about a second on the total).
+  2. Correct the two annotations to `-- expect true` (keep the prose after it).
+  3. Move `EXPECTED_KAT_TOTAL` (and `EXPECTED_KAT_FILES` if it moved) to the measured values, and
+     say in the commit which commit added the four gates.
+  4. One full `kat_gate.py` run; then `checks.sh`.
+- **Deliverable.** The two annotation fixes and the pin; nothing else.
+- **Accept.** `bash scripts/checks.sh` exits 0; the KAT report names 1397 gates compared.
+- **Stop if.** A gate other than the two annotations fails once the total is corrected: report it
+  with its file and line, do not adjust its expectation.
+
+### PL.0 — Cut over to PLAN-V3  **[BLOCKED: D-P60 unsigned — `docs/DECISIONS-PENDING.md` §12]**
+INFRA · DECISION · box 0.5 h · orchestrator, no subagent · after D-P60 is signed in `design.md`
+
+- **Goal.** This queue, `STATUS.md` and `PLAN.md` point at PLAN-V3, with nothing proved deleted and
+  no card in flight lost.
+- **Card.** Full text: `docs/plans/PLAN-V3-cards.md`, card PL.0. Mapping of every live card
+  (CONTINUES / MERGED INTO / SUPERSEDED): PLAN-V3 §10.2. Order of the V3 cards: PLAN-V3 §5, the
+  table "Every card, by milestone".
+- **READY when.** `grep -n '^## D-P60' docs/design.md` shows an entry with a W2 sign-off line. Until
+  then this card is skipped and the queue runs as it is.
 
 ## CUT-OVER — the orchestrator does these itself (EXECUTION-V2 §1)
 

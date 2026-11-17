@@ -1089,6 +1089,25 @@ re-estimates by analogy, stating the sample size.
 **Nothing in this section needs a new decision except where it says so.** It is written so that the
 next orchestrator session can act on it from `STATUS.md` + `QUEUE.md` alone.
 
+### 10.0 How this works with the existing goal prompt (no change to it)
+
+The orchestrator's goal prompt reads `STATUS.md`, `QUEUE.md`, `EXECUTION-V2.md` §0–§7 and
+`PLAN-V2.md` §0–§4 at the start of every session, takes the first READY card, and defines DONE as
+PLAN-V2 §6. The hand-over therefore lives in those four files, and is conditional on one fact the
+orchestrator can check: a signed D-P60 in `design.md`.
+
+| the goal prompt says | what the orchestrator finds there | effect |
+|---|---|---|
+| read `STATUS.md` | a WAITING ON HUMAN block naming PLAN-V3, D-P60–D-P69 and the two urgent rows | it knows the plan exists and is unsigned |
+| read `QUEUE.md`, take the first READY card | a banner of flags on READY cards (leads); card **DG.0** READY; card **PL.0** BLOCKED on D-P60 | before sign-off it fixes its red gate and verifies the flags; after sign-off PL.0 is READY and performs the cut-over |
+| read `PLAN-V2.md` §0–§4 | a banner: with D-P60 signed, read PLAN-V3 §0–§4 and §10 instead | the plan it works from switches on the signature, not before |
+| DONE means PLAN-V2 §6 | a note in §6: with D-P60 signed, DONE is PLAN-V3 §6 | the definition of done switches with it |
+| read `EXECUTION-V2.md` §0–§7 | a note: with D-P60 signed, W12–W15 are added and cards come from `PLAN-V3-cards.md` | the loop and the subagent contract are unchanged |
+| "you do not decide" (W2) | every V3 card names the decision it waits for | an unsigned D-P61–D-P69 leaves its cards BLOCKED; nothing is acted on early |
+
+So the human's only action is to sign (or strike) decisions in `design.md`. §10.3 restates the goal
+for V3 and is optional: pasting it changes nothing the four files do not already say.
+
 ### 10.1 Before D-P60 is signed: flags on live cards (leads, each with its reproducer)
 
 The live queue keeps running under PLAN-V2. These flags are *leads* in the sense of EXECUTION-V2
@@ -1109,7 +1128,7 @@ any of them with `bash docs/plans/V3-evidence/check.sh <area>`.
 | **T.2b** (WP-T, D-P57) | A verified `wp` engine proves the all-runs fact for the literal F1 TraceReturn slice in 13 lines. That meets D-P57's line count on the literal slice; the closed-slice form (`traceReturn_spec` at the render, with the existence half) is still to do and is T3.4. Land the engine (T3.1, T3.3, T3.4) rather than write a new tactic | `prooftech` (`TR.lean`) |
 | **T.3**, **S.5**, **S.6** | Hold until T3.0: the engine's kernel check on the lagrange loop is not bounded yet. Do not apply D-P57's hand-proof fallback on that ground | `prooftech` (`LAGP.lean`; `design/prooftech.md` §2.4) |
 | **S.4**, **S.7**, **C.3**, **C.5**, **M.1**, pcs row, **S.2** | Hold: these are rows about a render whose `Valid` is false and whose reference rejects every proof. D-P60 makes the hold formal | `ReviewProbes.lean` |
-| every card | **The tip is red**: `checks.sh` fails at the sorry register, and `kat_gate.py` at the pinned total and two `expect TRUE` annotations. DG.0 is within existing rules and needs no decision | `bash scripts/checks.sh` |
+| every card | **The tip is red**: `kat_gate.py` fails at the pinned total (1397 against 1393) and at two `expect TRUE` annotations; the sorry register is back in sync since F.1. Card DG.0 is in `QUEUE.md`, READY, within existing rules, and needs no decision | `python3 scripts/kat_gate.py` |
 
 ### 10.2 When D-P60 is signed: PL.0
 
@@ -1147,7 +1166,7 @@ re-hashes; `checks.sh`; the cone tool; W1–W11. **What stops.** Block rows abou
 render; pin-by-pin additions to `Valid` after R.6; any card whose only effect is downstream of a
 refuted leaf.
 
-### 10.3 The orchestrator's goal, restated for V3 (for the human to paste when D-P60 is signed)
+### 10.3 The orchestrator's goal, restated for V3 (optional)
 
 ```
 GOAL  In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove
