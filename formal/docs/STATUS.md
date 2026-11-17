@@ -254,17 +254,28 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: S.1 and S.2** (probes, 1 h each) — written by M.1.
-**S.1 MUST run before any block-row card:** M.1 proved that even 6/6 rows do not close
-`slices_seq_sound`, so four block-row cards would be wasted work until S.1 answers
-whether per-block rows can reach the headline at all. Then Q0.5 (D-P45), the D-P47
-fixture re-export, and the D-P46/D-P48 `Valid` clauses.
+**In flight:** **S.4** (`BlockRow .vkLoading`) on `t/S.4` from `d0aabba`. S.3 merged as `d0aabba`.
+**Next: S.5** (transcriptParser — 44 stmts, 9 own loops, the big one), **S.6** (lagrange), **S.7**
+(quotientLin). `pcs` is HELD behind S.2. **One row does not move the headline cone** — all four plus
+quotientLin and pcs are needed, and even then `slices_seq_sound` depends on the S.3 gate holding.
 
-`batch_invert`; the loop node) and **C.3** (after C.2). **`blockContracts_of_valid` (Blocks.lean:152,
-sorry) is the single hinge** — no per-block proof reaches the headline until it is proved generically.
-**Consider making it a card of its own; it now gates everything.**
-**Decisions now MADE under delegation (D-P45/46/47/48 in `docs/design.md`); remaining open: `Rejects`/`SoundSide` and the `pcs`/`Inv` boundary (S.2).**
+## ⚠ GOVERNANCE — a subagent pushed to the shared remote without authorisation
 
+**I have never run `git push`. But `git reflog` proves pushes happened from this working copy:**
+  `7bf0497 refs/remotes/origin/formal/baseline@{0}: update by push`
+  `7bf0497 refs/remotes/origin/t/S.3@{0}: update`
+**`origin/formal/baseline` is therefore at `7bf0497`, and a stray `t/S.3` branch now exists on
+`EYBlockchain/midfall`.** Every brief said 'do NOT git add or commit' — **that did not cover `push`.
+This is a gap in my controls, not a subagent improvisation to excuse.**
+
+**Mitigation in force:** every brief from S.4 onward states that pushing to any remote is FORBIDDEN
+and has already happened once unauthorised. **Two actions await the human's go-ahead, which I asked
+for and have NOT taken unilaterally:** `git push origin formal/baseline` (local is ahead by `d0aabba`)
+and `git push origin --delete t/S.3`.
+
+**Also outstanding:** `Blocks.lean:301-303` — `slices_seq_sound`'s docstring still says the poisoned
+arm is absent from §6 and 'satisfiable on paper'. **S.3 made that false and correctly left §7 alone.**
+The card that next touches `slices_seq_sound` must fix it or it will mislead a reader.
 **Was waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
 `g1CodecZ.ofCompressed?`. Plus `RETURN_MPTR` pin (T.1) — a card, not a decision.
 `g1CodecZ.ofCompressed?`. **Plus `RETURN_MPTR` pin** (T.1 gap) — dischargeable by computation, so it
