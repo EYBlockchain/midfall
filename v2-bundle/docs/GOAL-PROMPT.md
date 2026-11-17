@@ -5,6 +5,10 @@ Paste everything below the line as the orchestrator's goal. This is the PLAN-V3 
 the V2 prompt's role, loop and rules, adjusted for V3. The V2 version is in git history
 (`git show formal/v2-cutover:v2-bundle/docs/GOAL-PROMPT.md`).
 
+**Amended by D-P71 (signed 2026-11-17): the goal is the generator theorem `lowering_correct`, for
+every render with `ValidV3`, not `poseidon_done`.** The text below still names the fixture goal;
+card PL.G rewrites it. Do not paste it as it stands without that amendment.
+
 ---
 
 GOAL

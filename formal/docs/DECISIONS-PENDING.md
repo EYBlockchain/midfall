@@ -90,3 +90,121 @@ minutes, writes nothing into the repository).
 | 69 | DONE as one Lean term with `#assert_axioms`; closure fingerprint; CI on this branch; exporter schema 2 | — |
 
 Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` — recorded in `design.md` D-P60–D-P69.
+
+## 13. D-P71 — the deliverable is the generator theorem; fixtures are tests — SIGNED OFF (2026-11-17), recorded as D-P71 in `design.md`
+
+Drafted 2026-11-17 at `c22b51a` and **signed off by the human the same day** (instruction: *"Sign
+D-P71"*; `design.md` D-P71 quotes it). The text below is the draft as signed. The number D-P70 was
+left free for a fixture-F2 draft another session was writing; D-P71 makes a second fixture proof
+moot, so no D-P70 is recorded.
+
+**Why it is here.** The human said in session on 2026-11-17: *"I thought we would formally verify
+the codegenerator, the lowering itself"* and *"i am not interested in proofs for fixtures"*. The
+record shows where the plan left that goal:
+
+| when | record | effect |
+|---|---|---|
+| 2026-10-23 | original `PLAN.md` §9 (`3d0d778`) | `verifier_sound (g o L) (hL : g.lower o = .ok L) (hsup : Supported g o)`: every supported generator input |
+| 2026-10-28 | D-P24 (`c7e71a9`) | "per-deployment translation validation first"; the generic theorem becomes a follow-on |
+| 2026-11-16 | D-P44 clause 4 | headline `lowering_equivalence_poseidon`; the every-render theorem is X4, "later"; block rows still generic in `R` |
+| 2026-11-17 | D-P68, technology clause | rows proved per fixture on literal slices pinned by `native_decide` |
+
+**What is already generic (checked at `c22b51a`).** The V3 statements quantify over every render:
+`ValidV3 R` (`V3-evidence/lean/statements/StatementsV3.lean:613`) contains the generated-by clause
+(`Render.GeneratedBy`, `object/ObjectV3Full.lean:615`: `R` is what the Lean generator returns for
+its own key, config and flags), and the composition
+`lowering_equivalence_of_stages (R) (product) (hR : R.Valid) … (hsim : R.SimContracts product)
+(hprog : R.ProgContracts product)` (`soundness/SoundnessV3.lean:1226`) is proved for every `R`.
+`tr_blockSound` and `tr_blockProgress` are proved for every `R` (`Blocks/TraceReturn.lean`).
+`Blocks/VkLoading.lean` is written for every `R` and stops at three named sorries (`:728`, `:743`,
+`:756`). So the route D-P68 changed is the SEM half of the block rows, and only that.
+
+### The decision
+
+1. **Deliverable.** The headline is stated with no fixture in it:
+
+   ```lean
+   theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+       (hR : R.ValidV3) : LoweringEquivalenceV3 R product
+   ```
+
+   In words: for every program the Lean port of the generator emits, for any circuit in the
+   supported class, the four conjuncts of the V3 headline hold. `poseidon_done`,
+   `lowering_equivalence_poseidon` and `end_to_end_poseidon` are no longer goals.
+2. **Rows.** `R.SimContracts product`, `R.ProgContracts product` and `TotalV3 R product` are proved
+   from `hR : R.ValidV3` for every `R`. No block row, totality lemma or headline is stated or
+   proved at a fixture. The staged architecture of D-P68 (`StageInv`, `BlockSim`, `BlockProgS`) is
+   unchanged; its **technology clause** ("rows are proved per fixture on literal slices pinned by
+   `native_decide`") is struck. The `wp` engine is kept as a tool and is run on parametric slices
+   (card GEN.0 measures whether it can be).
+3. **Validity is checked per circuit, not proved for all inputs.** `ValidV3 R` stays a hypothesis.
+   For a given circuit it is discharged by computation, as `StatementsV3.lean:608-612` already
+   says of every clause except the codec-bearing ones. A new circuit then costs one evaluation,
+   not a new proof. Proving `ValidV3` for every supported input (so that no per-circuit check is
+   needed) is **not** part of this decision.
+4. **Fixtures are tests.** F1, and any further circuit, are kept for exactly these uses, none of
+   which is an equivalence proof: W12 witnesses and falsifiers; the W14 run-it gates; the
+   non-vacuity gate (`ValidV3` and the headline's hypotheses hold together at one real circuit,
+   whose calldata the Lean verifier accepts); the reference gate against Rust; byte equality of
+   the rendered contracts with the Rust artifacts. `native_decide` stays allowed there (D-P44).
+5. **Axioms.** `lowering_correct` is closed under `[propext, Classical.choice, Quot.sound]` only.
+   A `native_decide` axiom in its cone is a defect: with no fixture in the statement there is no
+   fixture fact for one to carry.
+6. **Supported class.** `SupportedV3` as typechecked (`StatementsV3.lean:592`): one phase, the
+   instance shape of clause `instShape`, no accumulator, embedded quotient evaluator, separate key
+   contract, production flags. Widening it is a separate decision per clause. **The IVC verifier
+   is outside this class** (it uses the accumulator and the external evaluator, items X1 and X2 of
+   PLAN-V3 §5); which other clauses it fails is unmeasured (card GEN.2).
+
+### What it amends
+
+| signed entry | amendment |
+|---|---|
+| D-P24 | withdrawn: the generic theorem is the deliverable, not a follow-on |
+| D-P44 clause 4 | the claimed headline becomes `lowering_correct`; X4 is promoted from "later" to the goal. Clauses 1–3 stand |
+| D-P60 | PLAN-V3 stays adopted; M5–M8 are restated by card PL.G (below). "Fixture F1" stays the name of the test circuit |
+| D-P68 | technology clause struck (point 2). Architecture, the RECON.2 condition and "stop and re-plan with the human" stand |
+| D-P69 | `Done` loses its fixture parameter in `headline` and `valid`; `gate`, `reference`, `artifact`, `vkArtifact` stay as fields about F1 |
+
+D-P61–D-P67 are unaffected: the reference repairs, the curve model, the test SRS, the statement
+surface and `ValidV3` are needed on either route.
+
+### What it does to the cards (applied by card PL.G)
+
+| cards | effect |
+|---|---|
+| M0–M4 (all `DG`, `REF`, `OBJ`, `ST` cards; SIM.1–SIM.5, SIM.7–SIM.12; RECON.1, RECON.2) | unchanged |
+| T3.0, T3.1, T3.2, T3.5, T3.7, T3.8, HLP.1 | unchanged in aim; each "accept" slice gains its parametric form after GEN.0 |
+| T3.3 (slice literals with pins), T3.11 (executable exhibit) | kept as tests only: they feed W14, never a proof |
+| T3.4 (TraceReturn at the deployment) | dropped: the row is proved for every `R`; SIM.7 migrates it |
+| T3.6 (vkLoading at the deployment) | replaced by GEN.1 |
+| T3.9 (lagrange at the deployment) | restated for every `R`; its loops then have symbolic bounds, so it needs a loop-invariant rule, which is not built (PLAN-V3 §5 M5, "a loop hatch … is not built") |
+| T3.10 (quotient numerator route) | route A (execute the emitted numerator) is per fixture and is excluded; route B (the interpreter loop refines the reference VM, proved once) is the only route |
+| SIM.6, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP | restated for every `R` |
+| PL.H, PL.E, DG.4 | restated: `lowering_correct`, the generic end-to-end theorem, the amended `Done` |
+| M5 thresholds A–C (PLAN-V3 §5) | replaced by the thresholds of GEN.0 and GEN.1 |
+
+### Conditions (applied, not chosen)
+
+- D-P60's hold stands: no block row is briefed before PLAN-V3's M4 exit gate, and W14 stands.
+- **GEN.0 runs first and alone.** It is a probe and proves nothing about the render.
+- **If GEN.0 or GEN.1 misses its threshold: stop and re-plan the proof technology with the
+  human.** Falling back to per-fixture rows is not pre-approved.
+- Card PL.G rewrites PLAN-V3 §0, §5 M5–M8, §6, the affected cards, the goal prompt and the V3
+  table. Until it has run, the per-fixture cards it restates are not briefed as written.
+
+### Cost, stated honestly
+
+Unmeasured. One block is closed for every `R`: TraceReturn, 25 tokens, 1,053 lines by `Step`
+inversion. At that rate the 14,054 tokens of the F1 main block are out of reach by hand, so the
+route is viable only if symbolic execution works with symbolic layout constants (GEN.0) and
+symbolic loop bounds (T3.9 restated). Comparing three generated verifiers (Poseidon, RSA, IVC):
+the helpers do not differ (0 of 219 code lines), key loading and the transcript parser differ in
+7–11 of 42 and 5–11 of 98 lines, and the region from Lagrange to the final pairing differs in
+622–845 of 1,094. The quotient and the opening check are the generated code proper. No estimate
+is given before GEN.1 reports.
+
+**Cards:** `GEN.0`, `GEN.1`, `GEN.2`, `PL.G` in `docs/plans/PLAN-V3-cards.md`, with rows in the V3
+table of `QUEUE.md`.
+
+Signed off: human (repository owner), 2026-11-17, in session at `c22b51a` — recorded in `design.md` D-P71.

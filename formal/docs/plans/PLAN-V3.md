@@ -4,6 +4,14 @@
 quotes the sign-off (EXECUTION-V2 W2). Each decision's conditions are recorded in its entry and
 still apply. The cut-over (card PL.0, §10.2) is done: `QUEUE.md`'s V3 table is the order.
 
+**AMENDED BY D-P71 (signed 2026-11-17, `design.md`).** The deliverable is the generator theorem
+`lowering_correct (R) (product) (hR : R.ValidV3) : LoweringEquivalenceV3 R product`: every block row
+is proved for every render, and no row, totality lemma or headline is proved at a fixture. F1 is a
+test circuit (witnesses, falsifiers, the run-it gates, non-vacuity, the reference and artifact
+gates). **§0, §5 M5–M8 and §6 below still carry the per-fixture text; card PL.G restates them.
+Where they differ from D-P71, D-P71 governs.** New cards: GEN.0, GEN.1, GEN.2, PL.G (area GEN of
+`PLAN-V3-cards.md`).
+
 Handover brief for the orchestrator and for the human who signs. Self-contained: read §0–§4 before
 touching anything. Paths are relative to `formal/` unless they start with `proofs/`.
 

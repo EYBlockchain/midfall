@@ -1940,3 +1940,190 @@ ALG · PROOF · box 2.5 h · strongest · after PL.H
 - **Accept.** `#assert_axioms end_to_end_poseidon` with the frozen list; every item of §6's English
   statement is present and names the tool output it came from.
 - **Stop if.** A calldata lemma is false at the fixture layout: land the counterexample (NEGATIVE).
+
+## Area GEN — the generator theorem  **[D-P71, signed 2026-11-17]**
+
+Drafted 2026-11-17 at `c22b51a` with `docs/DECISIONS-PENDING.md` §13; D-P71 was signed the same day
+(`design.md`). GEN.0 is READY, GEN.1 replaces T3.6, and PL.G restates the cards D-P71 lists. Until
+PL.G has run, those cards are not briefed as written. Ids: `GEN.n`; `PL.G` is plan-level.
+
+**Context for GEN.0–GEN.2.** Under D-P71 a block row is proved for every render `R` from
+`hR : R.ValidV3`, not at `poseidonRender`. Three things that are numerals on a literal slice are
+then variables: the constants the inliner substitutes (`R.consts`), the function scope
+(`R.scope c g`, the hoisted helpers of `R`), and loop bounds. GEN.0 measures the first two on the
+smallest block that has them; GEN.1 closes that block; loop bounds are T3.9 restated.
+
+### GEN.0 — Symbolic-layout probe: does the `wp` engine run a parametric slice?
+
+SEM · PROBE · box 2.5 h · strongest · after —
+
+- **Goal.** Decide, by measurement, how a block is executed when its constants are variables:
+  **P1** `wp_run` as it is, on the parametric body; **P2** `wp_run` after the constant sites are
+  rewritten to free `U256` variables; **P3** neither, so the walk is by `Step` inversion with the
+  lemmas of `Blocks/VkLoading.lean` §2–§4.
+- **Needs.** `docs/plans/V3-evidence/lean/prooftech/WP.lean` (`wp_sound` :209, `allRuns_cons_wp`
+  :401), `WPBridge.lean`, `WPTac.lean` (`wp_run` :221), `VK.lean` (`vk_all` :26: the literal
+  execution, 4 leaves, 74.7 ms, one named sorry at :42).
+  `Midfall/LoweringV2/Blocks/VkLoading.lean`: `vkSite` :94, `vkBody` :152, `vk_slice_raw` :164,
+  `vk_slice` :189, `vkVk0_var` :199, `vkSucc0_var` :203, `vkVal` :212, `vk_fail_reverts` :449.
+  `Midfall/LoweringV2/Statements.lean:147` (`vkPins`).
+- **Does NOT need.** `Inv`, `Clean`, `StageInv`, `Frame`, the Lean verifier, any algebra, any other
+  block, `PoseidonSlices.lean`, `native_decide`.
+- **VERIFY FIRST.** `bash docs/plans/V3-evidence/check.sh prooftech` passes at the tip. `vk_all`
+  still reports 4 leaves.
+- **Do.**
+  1. New file `docs/plans/V3-evidence/lean/prooftech/VKP.lean`, importing `WPTac` and
+     `Midfall.LoweringV2.Blocks.VkLoading`. List the constant names `vkBody` looks up: unfold
+     `vkS1 … vkS13` and `vkHdr` and write the list in a comment (expect `VK_MPTR`,
+     `EXPECTED_VK_PAYLOAD_LENGTH`, the six header slot names of `vkBody`, and the calldata
+     constants of `vkS10`–`vkS12`).
+  2. State `vk_all_param`. Variables: `consts : Inline.Consts`, `n k w o l b q : Nat`, a function
+     environment `funs`, and one hypothesis per name of step 1 of the form
+     `consts.lookup "VK_MPTR" = some m_vk` with `m_vk : U256` free, plus
+     `consts.lookup "vk" = none` and `consts.lookup "success" = none`. Conclusion: the `AllRuns`
+     statement of `vk_all`, with `vkLoadingLit` replaced by
+     `[Stmt.block (vkBody consts n k w o l b q)]` and the same post (halt and reverted, or normal
+     with `success = 1`).
+  3. The scope is a variable, so the `fail` helper cannot be executed. Give it a call summary: a
+     `CSound` instance built from `vk_fail_reverts` (`VkLoading.lean` §3, proved at an arbitrary
+     selector site). This is the HLP.1 shape; write only the one summary.
+  4. **P1.** Run `wp_run` on the goal as stated. Record: terminates or not within 60 s; open
+     leaves; the first stuck term, verbatim.
+  5. **P2.** Prove `vkBody consts n k w o l b q = vkBodyV m_vk … ` where `vkBodyV` is the same
+     list with every site an `Expr.lit` of the free variable (by `simp only [vkSite, h…]`, one
+     hypothesis per site; `success` is a stuck lookup in statement 3 and a raw variable from
+     statement 4 on, `VkLoading.lean:50-55`). Rewrite, then `wp_run`. Record leaves, `wp_run` ms,
+     kernel ms (profiler on, threshold 50, as `VK.lean` sets it).
+  6. On the normal-exit leaf of the variant that ran: state the memory fact the residue gives
+     (the window at `m_vk` of the copied length equals bytes 1… of the key's code; memory outside
+     the window is unchanged) and try to close it with read-over-write lemmas stated on free
+     addresses. Record every side condition it needs that is not among the hypotheses
+     (for example `m_vk.toNat + len < 2 ^ 256`). **List them; do not add them.**
+  7. Table: variant, leaves, `wp_run` ms, kernel ms, lines, against the literal `vk_all` on the
+     same machine.
+- **Deliverable.** `VKP.lean`, typechecking under `check.sh prooftech` (a sorry is allowed only at
+  the memory leaf of step 6, named); the table; the verdict P1, P2 or P3; the list of constants;
+  the list of side conditions.
+- **Accept.** P1 or P2 reaches the four leaves of `vk_all` with kernel ≤ 2 s and elaboration ≤ 10 s,
+  no `maxHeartbeats` raise and no `maxRecDepth` above `VK.lean`'s 10000. Falsifier: with the
+  `VK_MPTR` hypothesis removed, the same script does not reach four leaves.
+- **Stop if.** Neither variant meets the threshold at 1.5 h: the verdict is P3. Land the two stuck
+  goals verbatim and stop; do not start a hand walk in this card. Under D-P71 a P3 verdict goes to
+  the human.
+- **Guidance.** Never `simp` the `wp` term itself. Every run under `ram_guard.sh` with the 60 s
+  alarm (`perl -e 'alarm shift; exec @ARGV' 60 lake env lean VKP.lean`). `yul%` is not used:
+  it leaves `mkCall "name"` unreduced. The literal run needed `set_option wpLets false`.
+
+### GEN.1 — The vkLoading row for every render (calibration; replaces T3.6)
+
+SEM · PROOF · box 2.5 h · strongest · after GEN.0, SIM.8, T3.2, T3.5, T3.11
+
+- **Goal.** Close the three sorries SIM.8 leaves behind `vk_blockSim` for every `R` with
+  `hR : R.Valid`, by the variant GEN.0 chose, and measure lines per token and hours. This is the
+  first block row proved on the D-P71 route and the number every later estimate starts from.
+- **Needs.** SIM.8's statements (`vk_sim_clean`, `vk_poison_walk`, `vk_prog`); GEN.0's `VKP.lean`
+  and its two lists; `Blocks/VkLoading.lean` §1–§5 (`vk_slice` :189, `vk_poison_step` :631,
+  `vk_get_set_of_some` :611, `vkPins_of_valid` :685, `vkProgressPins_of_valid` :688); T3.5's simp
+  set `yul_word`; T3.2's `wpSS_exists` for the existence half; `StageInv` at `.start` and `.vk`.
+- **Does NOT need.** Loops, `staticcall`, `ZMod`, any fixture, `native_decide`.
+- **VERIFY FIRST.** GEN.0's verdict is P1 or P2. T3.11's exhibit is PRESENT (W14). The three
+  sorries are still the only ones in the file (`grep -c sorry`).
+- **Do.**
+  1. Move `vk_all_param` into the tree and instantiate its constant hypotheses from
+     `hR.vkPins`, `hR.vkProgressPins` and `vk_slice R hR`.
+  2. `vk_sim_clean`: derive `StageInv .vk` from the residue. Assemble the `.vk` clauses one at a
+     time with `if_pos` / `if_neg` on the `Checkpoint.idx` guards; do not normalise the whole
+     chain (FP.0 measured that this exceeds the default heartbeats, `VkLoading.lean:710-712`).
+  3. `vk_poison_walk`: from a poisoned boundary every run reverts; `vk_poison_step` is the content
+     of the six header guards.
+  4. `vk_prog`: exhibit the run with `wpSS_exists`.
+  5. Test, not proof: one `example` instantiating the row at `poseidonRender`, and SIM.8's
+     falsifier re-checked.
+  6. Report: new lines, lines per token (the slice is 225 tokens), elaboration and kernel
+     seconds, hours.
+- **Deliverable.** `vk_blockSim` and the progress row, sorry-free, for every `R`.
+- **Accept.** `#assert_axioms` on both with `[propext, Classical.choice, Quot.sound]` and an empty
+  native list; at most 300 new lines; elaboration ≤ 30 s and kernel ≤ 5 s for the file; no
+  heartbeat raise; the `example` at `poseidonRender` typechecks.
+- **Stop if.** A clause of `StageInv .vk` needs a fact that neither the block nor `ValidV3`
+  supplies: PREMISE GAP with the exact goal; do not add a pin. At 1 h with less than a third done:
+  stop (EXECUTION-V2). **A missed Accept line is reported to the human (D-P71's condition); the
+  per-fixture row is not a fallback.**
+- **Guidance.** The block is one `Stmt.block` of thirteen statements; a normal exit has
+  `success = 1`, so the clean walk does not use the `normal ∧ Poisoned` arm (`VkLoading.lean:19-26`).
+  The block's exit environment is `restore V Vb`; reading `success` back through it needs
+  `vk_get_set_of_some`.
+
+### GEN.2 — Scope probe: which `SupportedV3` clauses does the IVC key fail?
+
+INFRA · KAT · box 2 h · Sonnet · after REF.11
+
+- **Goal.** A table, printed by Lean, of every decidable `SupportedV3` clause evaluated on the IVC
+  verifying key, so that widening the supported class to the IVC verifier is decided on facts.
+- **Needs.** REF.11's exporter (schema 2, D-P69); the Rust test that writes
+  `proofs/solidity-verifier/target/ivc-keccak-solidity-dump/` (find it by grepping for the
+  directory name); `StatementsV3.lean:592` (`SupportedV3`).
+- **Does NOT need.** Any proof, any Yul, the proof bytes of the IVC fixture.
+- **Do.**
+  1. Export the IVC key in the bundle format to `formal/fixtures/conformance/ivc/vk.json`.
+  2. In a KAT file, `#eval` each of `advice`, `instShape`, `noRotInst`, `singlePhase`, `hLimbs`,
+     `production`, `noAcc`, `embeddedQuotient`, `separateVk`, and print the counts behind them
+     (phases, challenges, instance columns, lookups, trashcans, point sets, `k`).
+  3. Run the same evaluation on F1 as a control: every clause prints `true`.
+- **Deliverable.** The committed key, the KAT file, the table in the report.
+- **Accept.** The table is produced by `#eval`, not typed in; the F1 control passes.
+- **Stop if.** The exporter cannot produce the IVC key inside the box: report the command and the
+  time it reached.
+- **Guidance.** Two failures are known from the generated contract and need no export:
+  `noAcc` (the contract decodes an accumulator: `ACC_OFFSET` 4, 7 limbs of 56 bits) and
+  `embeddedQuotient` (`Halo2QuotientEvaluator.sol`, `AUTHORIZED_QUOTIENT`). The card finds the rest.
+
+### PL.G — Restate the plan for the generator theorem (D-P71)
+
+INFRA · DECISION · box 2.5 h · the plan session with the human, no subagent · after —
+
+- **Goal.** Every file the orchestrator reads states D-P71: the goal is `lowering_correct`, rows
+  are proved for every render, fixtures are tests.
+- **Needs.** `design.md` D-P71; `docs/DECISIONS-PENDING.md` §13 (the amendment and card tables);
+  PLAN-V3 §0, §2.2, §5 M5–M8, §6, §10.3; `v2-bundle/docs/GOAL-PROMPT.md`; the V3 table of
+  `QUEUE.md`; `V3-evidence/lean/statements/StatementsV3.lean`, `soundness/SoundnessV3.lean`.
+- **Does NOT need.** GEN.0's verdict: the technology paragraph of M5 points at GEN.0's report
+  and is completed when it lands. No Lean proof.
+- **Do.**
+  1. PLAN-V3 §0: the objective is the generator theorem for the class `SupportedV3`; F1 is the
+     test circuit. §2.2: add row 71. §1/§2: one line each on D-P24, D-P44 clause 4, D-P68, D-P69.
+  2. §5 M5: the cards become T3.0, T3.1, T3.2, T3.5, T3.7, T3.8, HLP.1, GEN.0, GEN.1, T3.9
+     restated, T3.10 with route B only. Replace "Why per deployment" and the A–C threshold rows
+     by GEN.0's and GEN.1's Accept lines. Exit gate: the rows for `.traceReturn`, `.vkLoading`,
+     `.lagrange` and the prefix proved for every `R`.
+  3. §5 M6: every row statement takes `(R) (hR : R.ValidV3)`. Exit gate:
+     `theorem rows_correct (R) (product) (hR : R.ValidV3) : R.SimContracts product ∧
+     R.ProgContracts product ∧ TotalV3 R product` with `0 sorried leaves`.
+  4. §5 M7, M8: PL.H proves `lowering_correct`. PL.E proves the end-to-end theorem for every
+     `R`; the three calldata lemmas (`Lowering/Calldata.lean:731, :790, :1276`) are then needed
+     for every layout, not at the fixture layout.
+  5. §6: `Done` becomes
+     `headline : ∀ R product, R.ValidV3 → LoweringEquivalenceV3 R product` (stated under the
+     section variables), `nonvacuous : poseidonRender.ValidV3 ∧ ∃ product, GateAtV3 poseidonRender
+     product fixtureCd`, and `reference`, `artifact`, `vkArtifact` unchanged. Two axiom gates:
+     `#assert_axioms lowering_correct [propext, Classical.choice, Quot.sound]` with an empty
+     native list, and the frozen owner list for `Done`. Rewrite the English statement: the claim
+     is for every circuit in the class; the per-circuit obligation is the `ValidV3` check.
+  6. `PLAN-V3-cards.md`: restate T3.9, T3.10, SIM.6, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H,
+     PL.E, DG.4 in place, each heading tagged `[D-P71: RESTATED]`; tag T3.4 `[D-P71: DROPPED]`,
+     T3.6 `[D-P71: REPLACED BY GEN.1]`, T3.3 and T3.11 `[D-P71: TEST ONLY]`. Add one card for the
+     loop rule with a symbolic bound that T3.9 restated needs
+     (`Midfall/Yul/Contracts.lean:298`, `ExecLoopAll.countdown_or_halt`, is the starting point).
+  7. `QUEUE.md`: set the `after` columns that named T3.4 or T3.6 to GEN.1 and clear the
+     "D-P71: wait for PL.G" notes. `GOAL-PROMPT.md`: the GOAL, DONE and Fixtures paragraphs.
+     `STATUS.md`: one line.
+- **Deliverable.** The edits above in one commit.
+- **Accept.** `grep -n "poseidon_done\|lowering_equivalence_poseidon\|end_to_end_poseidon\|at the
+  deployment\|per deployment"` over PLAN-V3 §0–§10, the cards and the goal prompt returns only
+  lines that are history or tests and say so. Every restated statement typechecks in a
+  `V3-evidence` file, with its witness (the instance at `poseidonRender`) and its falsifier (W12).
+- **Stop if.** A restated row is false for some `R` with `R.ValidV3` (the class is too wide or a
+  pin is missing): do not add a hypothesis; write the counterexample and ask the human.
+- **Guidance.** The statements are already generic: `BlockSim` (`SoundnessV3.lean:559`),
+  `BlockProgS` (:1065) and `lowering_equivalence_of_stages` (:1226) take any `R`. The rewrite is
+  of who discharges the row hypotheses, not of the architecture.
