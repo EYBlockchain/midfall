@@ -170,30 +170,50 @@ INFRA · PROOF · box 0.75 h · Sonnet · after Q0.4
   the root's cone, not the register.
 - **Stop if.** The probe proof does not transplant unchanged.
 
-### Q0.5 — Repair the non-vacuity gate (R-72)  [BLOCKED: human sign-off of D-P45, which is PROPOSED — draft in `docs/DECISIONS-PENDING.md` §3]
+### Q0.5 — Repair the non-vacuity gate (R-72) + land the `RETURN_MPTR` pin — ONE `Statements.lean` re-hash  **[READY after F.1 — D-P45 (amended) and D-P48 signed off 2026-11-17]**
 
-INFRA · PORT · box 1 h · after human sign-off of D-P45
+INFRA · PORT · box 1.5 h · strongest · after F.1
 
-- **Goal.** Make `HypothesesInhabited` gate the vacuity it exists to gate.
-- **Needs.** D-P45 signed off, with the exact conjunct text it approves.
+- **Goal.** One deliberate re-hash of frozen `Statements.lean` carrying three signed-off changes:
+  1. `HypothesesInhabited` gains D-P45's **amended** conjuncts (decode ∧ parse ∧ replay, plus
+     `G1CodecLaws`; exact text in `design.md` D-P45). **NOT `LeanAccepts`, NOT a run-existence
+     conjunct** — D-P45 records why.
+  2. `Render.Valid` gains D-P48's `returnMptr : ∃ m, R.consts.lookup "RETURN_MPTR" = some m` as the
+     last clause.
+  3. The stale `Valid` docstring (`Statements.lean:179-181`, F.2-G4: "refutes six of the original
+     eleven") is rewritten **without a count**: point to `poseidonRender_notValid` and the clause
+     table in `Instances/PoseidonValid.lean`, so it cannot go stale again.
+- **Needs.** `HypothesesInhabited` at `Statements.lean:317` (line at `4b525ef`); `Valid` at `:182`;
+  S.9 (`fece4c7`) as the precedent for adding a `Valid` clause; F.2's `trRetMptr` deployment proof
+  (`RETURN_MPTR = some 4096`).
 - **Verify first.** R-72's reproducer is **not in the tree**: it lived in `/tmp/q04/probe1.lean`,
   which is gone, and survives only as prose (REVIEW.md:2991-3005: `sel_nondecode`, `gate_weak`,
   `no_accept_at_gate_cd`).
-- **Do.** 1. Re-create the three reproducer theorems from REVIEW.md:2991-3005 and confirm `gate_weak`
-  type-checks against the CURRENT gate (the falsifier must fail before the fix). 2. Apply the
-  signed-off text to `Statements.lean` §8 and re-hash `Frozen.sha256` in the same commit. 3. Update
-  PLAN-V2:355 wording if the gate's meaning changes.
-- **Not this card, whatever is decided.** Adding `hR : R.Valid` to `LoweringEquivalence` (R-72's
-  second question; `docs/DECISIONS-PENDING.md` §2 recommends rejecting it: with
-  `poseidonRender_notValid` proved it would make the headline provable by contradiction, and PLAN-V2
-  §6 requires the headline "with no other hypotheses"). Also not this card: discharging the new gate
-  at the deployment. REVIEW.md:3019 records "no accepted calldata at any model in the tree" and the
-  deployment's G1 decoder is `Classical.choose` (G1Agreement.lean:1995), so that witness must be
-  proved, not evaluated, by a later card.
-- **Accept.** `gate_weak` type-checks before step 2 and NO LONGER type-checks after it (commands and
-  output in the report), and the new gate needs a real accepting calldata. **The repair must be
-  demonstrated to have teeth, not just to compile.**
-- **Stop if.** Any change would alter a statement other than the gate.
+- **Do.**
+  1. Re-create the three reproducer theorems **in the tree** (an `Instances/` or `Tests/` file, W5)
+     and confirm `gate_weak` type-checks against the CURRENT gate. The falsifier must hold before the
+     fix.
+  2. Apply changes 1–3 to `Statements.lean` and re-hash `Frozen.sha256` in the same commit. The commit
+     message shows the frozen diff.
+  3. Add the `returnMptr` discharge to `Instances/PoseidonValid.lean` (a 14th clause row, PROVED).
+  4. Repair any anonymous-constructor `Render.Valid` terms as S.9 did.
+  5. Update PLAN-V2:355 with one sentence on what the gate now certifies, and its stated limit.
+- **Not this card.**
+  - `hR : R.Valid` in the headline: REJECTED, D-P54.
+  - Discharging the new gate at the deployment: that needs R.4b's G1 decode, and is a later card.
+  - D-P46's base pins: they get their own re-hash after R.4 (R.6).
+- **Accept.**
+  - `gate_weak` type-checks before step 2 and NO LONGER type-checks after it; commands and output go
+    in the report. **The repair must have teeth, not just compile.**
+  - `#print axioms` of the reproducers is in the report.
+  - `Frozen.sha256` all OK after the re-hash, with exactly one line changed.
+  - `verify.sh --quick` green.
+  - `cone_sorries lowering_equivalence_poseidon` before and after (expected unchanged; report the
+    number).
+- **Stop if.**
+  - Any change would alter a statement other than these three.
+  - `G1CodecLaws poseidonE.g1` turns out to be FALSE (not merely unproved) at the deployment's codec:
+    the gate would then be undischargeable. Report; do not drop the conjunct.
 
 ---
 ## CORE — consumer first, to calibration point 1
@@ -555,8 +575,17 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
 **CRITICAL PATH — make the deployment render valid** *(added in review, 2026-11-17)*. Every route to
 the headline goes through `poseidon_valid`, and `¬ poseidonRender.Valid` is PROVED (C.4,
 PoseidonValid.lean:468; 6 of 11 clauses refuted). Until the render is valid, block rows (S.3–S.7)
-are generic progress only. F.2 and R.2 are READY now. R.1 is DONE (`2041977`, run as "F.1" ahead of
-D-P47 sign-off). R.3, R.4 and R.5 wait on decisions drafted in `docs/DECISIONS-PENDING.md` (R.5: below).
+are generic progress only. F.2 and R.2 are DONE. R.1 is DONE (`2041977`, run as "F.1" ahead of
+D-P47 sign-off). **All drafted decisions were signed off on 2026-11-17 (D-P45–D-P48, D-P53–D-P59;
+`design.md`).** The clause-by-clause route to `poseidon_valid`, each after F.1:
+- clause 1 `circuitMeta`: R.9
+- clauses 2/3: R.8, an export-first probe for WP-G4
+- clause 4 `model`: R.3
+- clause 6 `codegen`: G1.4b, then the G1.1–G1.3 batch
+- clause 9 `supported`: R.7
+- the D-P46 pins: R.4, then R.6
+- clause 14 `returnMptr`: Q0.5
+- fixture provenance: R.5
 
 ### F.2 — The deployment table: every hypothesis of the headline route, decided once  **[MERGED d2f7b61 - 7 PROVED / 4 REFUTED / 2 OPEN; corrected F.1/R.1 clause 1]**
 GEN · PROBE · box 1 h · Sonnet · after nothing
@@ -1030,36 +1059,173 @@ INFRA · PROBE · box 1 h · Sonnet · after D-P47 sign-off
 - **Stop if.** The refreshed fixture describes a different circuit or VK from the deployed contract:
   that is a scope question for the human.
 
-### R.3 — Make `Valid.model` dischargeable  **[BLOCKED: human decision — `docs/DECISIONS-PENDING.md` §9]**
-DECISION · ≤ 1 page
+### R.3 — Make `Valid.model` dischargeable (D-P56)  **[READY after F.1 — D-P56 signed off 2026-11-17]**
+GEN · PROOF · box 1 h · strongest · after F.1
 
-- C.4: `model` is true but blocked twice — `poseidonModelVal`'s error arm mentions `poseidonModel` in
-  its own proof type, so `cases`/`rw`/`simp` fail on the motive. Both routes C.4 measured need the
-  human: `deriving Inhabited` on `Halo2Verifier` (a v1 edit) plus a `getD` restatement, or a frozen
-  change to `Render.Valid.model`.
+- **Goal.** `Valid` clause 4 (`model`) PROVED at `poseidonRender`, with no `sorryAx`.
+- **Needs.** C.4: the clause is true but blocked, because `poseidonModelVal`'s error arm
+  (`PoseidonV2.lean:111`) mentions `poseidonModel` (`PoseidonInputs.lean:126`) in its own proof type.
+  F.2-G1's pattern (one `native_decide` on `.isOk`, then `cases`).
+- **Do.**
+  1. `deriving instance Inhabited for Halo2Verifier` in a V2/`Instances/` file. **No v1 edit.**
+  2. Restate `poseidonModelVal` as `getD` on `poseidonModel`.
+  3. Discharge clause 4 by F.2-G1's pattern.
+- **Accept.** Clause 4 PROVED with `#print axioms` free of `sorryAx`; every other `Valid` clause keeps
+  its F.2 verdict (report the table); `verify.sh --quick` green.
+- **Stop if.** The stand-alone `deriving instance` fails. Only then apply D-P56's fallback (one-line
+  `deriving Inhabited` at `Generator/Models.lean:757`, line count unchanged), and report which path ran.
 
-### R.4 — Gap B: how s·G₂ is modelled at the deployment  **[BLOCKED: human decision — `docs/DECISIONS-PENDING.md` §8]**
-DECISION · ≤ 1 page
+### R.4 — Gap B: name the G2 bases from their bytes (D-P55)  **[READY after F.1 — D-P55 signed off 2026-11-17]**
+ALG · PROOF · box 2.5 h · strongest · after F.1
 
-- The model's s·G₂ is the generator: `poseidonSG2 := bls12_381Pairing.g₂`, "NOT checked against that
-  hex" (PoseidonEnv.lean:386). So the deployment's Lean verifier pairs with g₂ where the contract pairs
-  with s·G₂, and neither D-P46's slot pin nor FP.0's `fpG2Slots` hypothesis can hold at this render as
-  modelled. Same discrete-log class as `g1CodecZ.ofCompressed?`. Blocks D-P46 and the FinalPairing
-  route at the deployment.
+- **Goal.** At the deployment, `poseidonSG2` and the prepared G2 parameters are the points the payload
+  holds, not `g₂`, so D-P46's NEG_S_G2 pin can hold (F.2-G2: the payload's
+  `NEG_S_G2[16..21] = [5,10,194,124,53,39]`, not `encG2(−H2)`).
+- **Needs.**
+  - `PoseidonEnv.lean:236` (`poseidonSG2 := bls12_381Pairing.g₂`, "NOT checked against that hex").
+  - `G2Codec.lean:245` (`G2fold = Exp blsR`).
+  - `G1PointCount.lean`'s `torsion_eq_zpowers_gen` (`aa53b57`) as the model for the G1 route, and its
+    commit message on why the squeeze fails over Fp2.
+  - D-P55's exact axiom conditions.
+- **Do.**
+  1. **First hour, P-POINTCOUNT's lesson:** look for an axiom-free proof of G2 r-torsion cyclicity
+     from what this specific curve allows. If found, land it and skip step 2.
+  2. Otherwise add D-P55's single axiom in `Midfall/Assumptions/` with the three required KATs and its
+     docstring. Update PLAN-V2's axiom lists in the same commit (D-P55 names the lines).
+  3. Name the G2 bases from the payload bytes by `Classical.choose`, and re-derive the prepared
+     parameters.
+- **Accept.**
+  - `vkG2Words poseidonPv vkNegSG2BaseSlot = poseidonEncG2 (sG2Prepared)⁻¹` PROVED (and the G2_BASE
+    half).
+  - `#print axioms` lists only standard + D-P36a + native_decide (+ the D-P55 axiom if step 2 ran).
+  - F.2's PROVED `Valid` clauses stay PROVED (report the table).
+  - `verify.sh --quick` green.
+- **Stop if.**
+  - The axiom would need any premise other than a computed validity check of the bytes.
+  - A KAT shows the check TRUE off the r-torsion. The axiom would then be false: do NOT land it.
 
-### R.5 — The committed fixture is not reproducible  **[BLOCKED: human decision]**
-DECISION · ≤ 1 page · raised by R.1 (`2041977`)
+### R.4b — G1: a real `ofCompressed?` and the fixture calldata decoding (D-P55 step 1)  **[READY after F.1]**
+ALG · PROOF · box 2 h · strongest · after F.1
 
-- R.1 found that `proof.bin` and `trace.json` differ from run to run (the prover's blinding is
-  non-deterministic), and the committed bundle matches neither of its two runs. Every other output is
-  byte-stable. The regenerated `Halo2Verifier.sol` differs from the committed one only in `BUILD_ID`
-  (a stale tracked dump).
-- R.1 kept the committed `proof.bin`/`trace.json`, because D.3 checks 4–5 pin the transcript to
-  `trace.json`. Its regenerated copies were left in `/tmp/f1-regen/`, which is not in the tree
-  (EXECUTION-V2 forbids `/tmp`-only evidence); treat them as lost.
-- Decide: keep the committed proof as the pinned ground truth with unknown provenance, or make the
-  export deterministic (seeded RNG in the test exporter), regenerate once, and re-pin D.3 checks 4–5
-  in the same commit. Either way, refresh or untrack the stale `Halo2Verifier.sol` dump.
+- **Goal.** Two results:
+  - `g1CodecZ.ofCompressed?` is the `Classical.choose` decoder (same scheme as `g1zOfEip?`,
+    `G1Agreement.lean:1995`) instead of `fun _ => none`.
+  - The fixture calldata provably decodes, parses and replays. These are the D-P45 conjuncts, at the
+    deployment. **No axiom: existence comes from `torsion_eq_zpowers_gen` plus computed checks.**
+- **Needs.**
+  - F.2-G3 (the witness is not evaluable at the codec).
+  - `check3_codec_decodes_no_compressed_point` (`PoseidonCoherence.lean:432`), which this card retires
+    or inverts.
+  - The committed fixture `proof.bin`, or R.5's regenerated one if R.5 has merged.
+- **Do.** First measure whether `decodeCalldata` reads `ofCompressed?` at all. If it does not, the
+  decoder change serves `end_to_end` only; say so and do both.
+- **Accept.**
+  - `∃ ms instW inst Snap, decodeCalldata … = some (ms, instW) ∧ instOfWords? instW = some inst ∧
+    snapshotOf … = .ok Snap` PROVED at the fixture calldata.
+  - `G1CodecLaws poseidonE.g1` PROVED.
+  - Both with `#print axioms` standard + D-P36a + native_decide.
+- **Stop if.** A fixture G1 point fails the computed subgroup check: that is a fixture defect, so
+  report it.
+
+### R.5 — Make the fixture export reproducible (D-P58)  **[READY after F.1 — D-P58 signed off 2026-11-17]**
+GEN · KAT · box 1.5 h · Sonnet · after F.1 · raised by R.1 (`2041977`)
+
+- **Known.**
+  - R.1 found that `proof.bin` and `trace.json` differ from run to run, and the committed bundle
+    matches neither run.
+  - **The exporter already seeds both RNGs** (`proofs/solidity-verifier/tests/conformance_export.rs:330`,
+    `:333`), so the source is elsewhere. Do not assume it is the seed.
+  - The regenerated `Halo2Verifier.sol` differs from the committed one only in `BUILD_ID`.
+- **Do.**
+  1. List every consumer of `proof.bin`/`trace.json`/`Halo2Verifier.sol` in the tree (`grep`).
+  2. Export twice, diff the outputs, and locate the non-determinism.
+  3. Apply D-P58:
+     - **(a)** If the fix is in test or exporter code: fix it, regenerate ONCE, replace the files,
+       and re-pin D.3 checks 4–5 in the same commit.
+     - **(b)** If it is in baseline code (`proofs/src`, `zk_stdlib`): change nothing there. Record
+       the committed files' provenance as "unknown; verified by D.3 checks 4–5".
+  4. `Halo2Verifier.sol`: refresh it if a gate or KAT reads it, otherwise untrack it.
+- **Accept.**
+  - Under (a): two consecutive exports byte-identical, with the sha256 of every output in the report.
+  - D.3 and `verify.sh --quick` green.
+  - The report says which branch ran.
+- **Stop if.** A frozen file depends on `proof.bin`/`trace.json`. Or the regenerated bundle describes
+  a different circuit or VK from the deployed contract (a scope question).
+
+### R.6 — Land D-P46's three VK base pins (second `Statements.lean` re-hash)  **[READY after R.4 — D-P46 signed off 2026-11-17]**
+INFRA · PORT · box 1.5 h · strongest · after R.4, Q0.5
+
+- **Goal.** `Render.Valid` gains `baseSlots` (three conjuncts, `design.md` D-P46), PROVED at
+  `poseidonRender`.
+- **Do.**
+  1. Add the clause, and the docstring exception D-P46 records (`Statements.lean:170`, "decided by
+     computation"). Re-hash `Frozen.sha256` in the same commit.
+  2. Discharge the clause at the deployment: F.2-G2's proved halves, plus R.4's NEG_S_G2.
+  3. Discharge `fp_finalPairing_contracts`'s `fpG2Slots R` hypothesis from `R.Valid`.
+- **Accept.**
+  - The clause is PROVED with no `sorryAx`.
+  - `fpG2Slots` is no longer a free hypothesis of FinalPairing.
+  - `Frozen.sha256` OK, with exactly one line changed.
+  - `verify.sh --quick` green.
+- **Stop if.** Any conjunct is FALSE at the deployment after R.4.
+
+### R.7 — Fix `WellFormed.permutationCommitmentsMatch` (D-P59, `Valid` clause 9)  **[READY after F.1 — D-P59 signed off 2026-11-17]**
+GEN · PORT · box 1 h · strongest · after F.1
+
+- **Goal.** `Valid` clause 9 (`supported`) no longer refuted by a mis-ported field.
+- **Needs.** `Halo2/Exec/VerifyingKey.lean:99-102,114` and `proofs/src/plonk/permutation.rs:123` (one
+  sigma commitment per COLUMN). Consumers: `Halo2/Spec/Degrees.lean:102` (docstring), PoseidonEnv
+  gate 13 (`PoseidonEnv.lean:478-500`, which pins the failure), and `PoseidonValid.lean:40,413`
+  (`deciding_supported_perm`).
+- **Do.**
+  1. **First, read the Lean permutation verifier port**, and confirm it indexes
+     `vk.permutation.commitments` per column.
+  2. Restate the field as `… = vk.cs.permutation.columns.size`, and correct both docstrings in
+     place, keeping line counts.
+  3. Flip gate 13's second half to assert the corrected clause holds. Expected result: 8 = 8. Gate 13
+     already pins `permutation.columns.size == 8`.
+  4. Fix gate 4's stale docstring (`PoseidonEnv.lean:354-357`). It predates R.1 and says "no
+     permutation columns … divCeil 0 3".
+  5. Re-decide clause 9 at the deployment.
+- **Accept.**
+  - Clause 9 PROVED, or refuted only by a DIFFERENT sub-clause, named in the report with its
+    deciding value.
+  - Gate 13 green.
+  - `SORRY.md` line references are unchanged, or regenerated in the same commit.
+  - `verify.sh --quick` green.
+- **Stop if.** The port indexes the VK commitments by chunk: that is a port defect larger than this
+  field, so report it and do not patch around it.
+
+### R.8 — Export-first probe for `Valid` clauses 2/3 (WP-G4 scope)  **[READY after F.1]**
+GEN · PROBE · box 1 h · Sonnet · after F.1 · read-only
+
+- **Known (F.2).**
+  - Clause 2 `layout` is refuted: proofLen 4224 vs 4320.
+  - Clause 3 `invariants` is refuted: PCS memory sizing comes from `LoweringPlan::new`'s
+    post-constructor `set_num_point_sets`/`set_num_dummy_evals`.
+- **Do.**
+  1. Locate the Rust lines that set those numbers.
+  2. Decide which case this is: **(i)** the Lean derivation is missing a post-constructor step (so
+     port it), or **(ii)** the fixture exports values from before and after those mutations
+     inconsistently (so fix the export, as D-P47 did).
+- **Deliverable.** A one-page verdict with:
+  - the Rust lines;
+  - the case, (i) or (ii);
+  - the Lean lines to change, with a line estimate;
+  - whether any frozen file is touched;
+  - a drafted EMIT card.
+- **Stop if.** A frozen file must change. Draft the change as a new item at the end of
+  `docs/DECISIONS-PENDING.md`, unsigned.
+
+### R.9 — Discharge `Valid.circuitMeta` as a Prop (F.2-G1)  **[READY after F.1 — small]**
+GEN · PROOF · box 0.5 h · Sonnet · after F.1
+
+- **Goal.** Clause 1 is PROVED as a Prop, not only as a Bool decision. Land F.2-G1's 8-line proof in
+  `Instances/PoseidonValid.lean`: `show poseidonMetaDerived? = .ok poseidonMeta; cases h :
+  poseidonMetaDerived?`; in the ok arm `rw [poseidonMeta, h]`; the error arm is killed by the
+  `native_decide` on `.isOk`.
+- **Accept.** `#print axioms` with no `sorryAx`; no new instance; no frozen edit; `verify.sh --quick`
+  green.
 
 ---
 **BLOCK ROWS — generic progress.** Rows are stated for every `R`; none can move the headline cone
@@ -1209,16 +1375,21 @@ INFRA · DOCS · box 0.5 h · Sonnet · after S.9
 - **Needs.** `Instances/PoseidonValid.lean` 'CLAUSE n OF 11' headers; `Instances/PoseidonV2.lean:173`
   'the eleven computation clauses'; any other '11 clauses' mention (`grep -rn 'OF 11\|eleven'
   Midfall/Instances/`).
-- **Do.** Update the counts and clause numbering. **Comment text only — no proof changes.**
-- **Accept.** `grep` shows no stale '11 clauses'/'OF 11' referring to `Valid`; `verify.sh --quick` green;
+- **Do.** Update the counts and clause numbering. **Comment text only — no proof changes.** Also fix
+  F.2-G5: `PoseidonValid.lean:132`'s docstring says "derived proofLen 1792"; the value the file
+  computes is **4224** (`#eval deciding_layout_derivedProofLen`). If Q0.5 has merged, the count is
+  **14** (`returnMptr`); after R.6, **15** (`baseSlots`). Use the count at the time you run, or
+  better, count-free wording as Q0.5 does for `Statements.lean`.
+- **Accept.** `grep` shows no stale '11 clauses'/'OF 11' referring to `Valid` and no '1792' in
+  `PoseidonValid.lean`; `verify.sh --quick` green;
   `Frozen.sha256` verifies (these files are NOT frozen, so no re-hash).
 - **Note for whoever runs it:** rebuilding `PoseidonValid.lean` re-runs ~20 `native_decide`s — budget
   for it; S.9 left this out of scope for exactly that reason.
 - **Does NOT need.** Any proof change; the pins; any block row.
 
 ---
-### S.5 — `BlockRow` for `transcriptParser`  **[READY after F.1; see the WP-T stop below]**
-SEM · PROOF · box 2.5 h · strongest · after S.3, F.1
+### S.5 — `BlockRow` for `transcriptParser`  **[READY after T.3 — D-P57 signed off 2026-11-17; reverts to after F.1 only under D-P57's fallback]**
+SEM · PROOF · box 2.5 h · strongest · after S.3, T.3 (D-P57)
 - **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
   invariants.** Pre `Clean R .vk`, post `… ∨ Clean R .transcript ∨ …`.
 - **Needs.** M0.1's transcriptParser row (16 locals written; 4 static ranges + **11 dynamic write
@@ -1228,11 +1399,11 @@ SEM · PROOF · box 2.5 h · strongest · after S.3, F.1
 - **Accept.** As S.4. **If the 9 invariants do not close, deliver the ones that do and name the rest.**
 - **Stop if.** The first loop invariant is not closed at 1 h. PLAN-V2:269 puts automation (WP-T)
   BEFORE block proofs because "hand proofs at that density are infeasible", and TraceReturn took 988
-  lines by hand. Report lines per Yul token so the WP-T decision (`docs/DECISIONS-PENDING.md` §10) is
-  taken on data.
+  lines by hand. Report lines per Yul token. (The WP-T decision is taken: D-P57. This stop still
+  applies, with the tactic in hand.)
 
-### S.6 — `BlockRow` for `lagrange`  **[READY after F.1]**
-SEM · PROOF · box 2 h · strongest · after S.3, F.1
+### S.6 — `BlockRow` for `lagrange`  **[READY after T.3 — D-P57: T.3's target IS this row; if T.3 merged it, mark S.6 DONE with T.3's hash and skip]**
+SEM · PROOF · box 2 h · strongest · after S.3, T.3 (D-P57)
 - **Goal.** `BlockRow R product .lagrange`. **The only loop-bearing helper is `batch_invert`.** Pre
   `Clean R .transcript`, post `… ∨ Clean R .lagrange ∨ …`.
 - **Needs.** M0.1's lagrange row (3 stmts, 21 locals written, 5 own loops, `success :=
@@ -1375,6 +1546,30 @@ SEM · PROOF · box 2.5 h · strongest · after T.1
   run hypothesis, i.e. already the direction §6 states. C.2's wrong-direction finding does not bite
   a run-level walk; it bites only when an `Obs` has to be transported.
 
+### T.2b — WP-T tactic: re-prove `traceReturn_spec` in under 100 lines (D-P57)  **[READY after F.1 — D-P57 signed off 2026-11-17]**
+SEM · PROOF · box 2.5 h · strongest · after F.1, T.2
+
+- **Goal.** The PLAN-V2:278-279 accept line. Package T.2's recurring steps S1–S6 (above;
+  `Blocks/TraceReturn.lean`) as a tactic, or a small tactic family, and re-prove
+  `traceReturn_spec` (`BlockSound` ∧ `BlockProgress` at `.traceReturn`) on the closed slice with it,
+  **in under 100 lines**. Also step VkLoading's straight-line prefix as the second client.
+- **Needs.** T.2's two traps (slice does not reduce by `simp`; no `classical` before a forward
+  `Step`); T.1's interface.
+- **Do not** delete the 988-line hand proof. Land the tactic proof alongside it, under a new name, and
+  check both against the same statement.
+- **Accept.** The tactic proof is sorry-free with the axioms printed. Report:
+  - its line count;
+  - lines per Yul token, for both TraceReturn and the VkLoading prefix;
+  - the hand proof's lines per token, for comparison.
+  Under 100 lines ⇒ D-P57's accept line is met, and T.3 is READY.
+- **Stop if.** 2.5 h without meeting the line. Then deliver what works and write T.2c (one follow-up,
+  ≤ 2.5 h) naming the blocker. If T.2c also misses the line, **D-P57's fallback applies by
+  condition:**
+  - record it in STATUS;
+  - S.5/S.6 revert to `after F.1`;
+  - T.3 becomes a hand proof of the lagrange row;
+  - re-estimate `docs/ETA.md` from the measured lines per token.
+
 ### T.4 — `staticcall` stepping, accepted by `ec_pairing_contract`
 SEM · PROOF · box 2.5 h · strongest · after T.2
 
@@ -1461,8 +1656,8 @@ SEM · SKELETON · box 2 h · strongest · after C.2
 - **Does NOT need.** Block soundness or progress proofs.
 - **Accept.** The cone lists the per-block lemmas, and the report has a requirements table.
 
-### T.3 — Symbolic branches and loops
-SEM · PROOF · box 2.5 h · strongest · after T.2
+### T.3 — Symbolic branches and loops  **[READY after T.2b (or T.2c) met D-P57's accept line; under D-P57's fallback, hand proof of the lagrange row]**
+SEM · PROOF · box 2.5 h · strongest · after T.2b (D-P57)
 
 - **Goal.** Symbolic `if`/`switch` splits and loops with user invariants.
 - **Needs.** The loop node T.1 named, and T.2's tactic.

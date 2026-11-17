@@ -1748,14 +1748,45 @@ as such.
      Q0.3 records their exact names in this toolchain.
    - A kernel-only re-check is optional, as WP-X8.
 
-## D-P45 — **PROPOSED, not signed off: repair the non-vacuity gate (R-72)**
+## D-P45 — **Approved (amended): repair the non-vacuity gate (R-72) — the witness must decode, parse and replay**
 
-> Was QUEUE Q0.5, blocked on a decision. **Status: PROPOSED.** Recorded on 2026-11-17 as approved
-> under a "standing delegation" that the human did not give; EXECUTION-V2 W2: *"there are no
-> orchestrator decisions on delegated authority."* Nothing in D-P45–D-P48 is in force until signed
-> off (D-P49 was signed off on 2026-11-17; see its entry). Review notes and draft wording for sign-off: `docs/DECISIONS-PENDING.md`.
+> Was QUEUE Q0.5, blocked on a decision. First recorded on 2026-11-17 as approved under a "standing
+> delegation" the human did not give (W2); reclassified PROPOSED by the review. **Status: APPROVED
+> AS AMENDED below.** Signed off: human (repository owner), 2026-11-17, in session after `4b525ef`
+> (instruction "make best choices for remaining decisions"; choices drafted by the assistant for the
+> human, see D-P53). The original proposal is kept below for the record; it is NOT what was approved.
 
-**Proposed decision: approve.** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
+**Approved text.** `HypothesesInhabited` (frozen, `Statements.lean:317` at `4b525ef`) gains two
+conjuncts; the exact text may differ only in elaboration annotations (`(p := p)`, `(Gₜ := Gₜ)`):
+
+```lean
+def HypothesesInhabited (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
+  ∃ (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState),
+    DeploymentV2 R W H vkAddr ∧ EntryFrame R W Lyt H cd st₀ ∧
+      Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ SoundSide R H cd ∧ CompleteSide R H cd ∧
+      (∃ ms instW inst Snap,
+        decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
+        instOfWords? (p := p) instW = some inst ∧
+        snapshotOf R.E H R.vk inst ms none = .ok Snap) ∧
+      G1CodecLaws R.E.g1
+```
+
+**Why this and not `LeanAccepts`.** The new conjunct is exactly the antecedent chain of `SoundSide`
+and `CompleteSide`, so at the witness both side conditions bite instead of holding vacuously, and
+`gate_weak` dies (`sel_nondecode`: the bare selector never decodes). `LeanAccepts` was NOT adopted:
+at any render whose SRS is a real setup, `verifyMsgs … = .ok ()` reduces through bilinearity and
+non-degeneracy to a G1 equation `P₁ + s·P₂ = 0` between computed points, `s` the setup secret.
+Proving it means computing with `s`, which KZG's binding assumption says no one can do, so the
+conjunct could never be discharged at a real deployment and PLAN-V2:355's DONE test would be
+unmeetable (F.2-G3 measured the witness NOT-COMPUTABLE). No run-existence conjunct either: it is
+redundant given the headline (DECISIONS-PENDING §3).
+
+**Stated limit, to go in the English statement.** Headline ∧ gate certify that the side conditions are
+non-vacuous at a real calldata. They do NOT certify that some calldata is accepted at the deployment;
+the protection against a Lean verifier that rejects everything is structural (`Valid.slots`, D-P46's
+base pins after D-P55), not a witness.
+
+**Original proposal (not adopted as written).** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
 addition to the existing conjuncts, **a calldata that actually decodes and a run that actually exists**:
 at least `∃ ms instW, decodeCalldata … = some (ms, instW)` **and** `LeanAccepts R H cd`, plus a
 run-existence conjunct. Rationale: the clause exists solely to certify the headline's hypothesis set is
@@ -1771,12 +1802,26 @@ probe `gate_weak` must NO LONGER type-check. A repair that merely compiles is no
 prevent silent change, not authorised change; the change is recorded here and the hash is re-pinned in
 the same commit so the diff is auditable.
 
-## D-P46 — **PROPOSED, not signed off: restore the G2 slot check that v1 had and V2 dropped (`fpG2Slots`)**
+## D-P46 — **Approved (extended, sequenced): restore the VK base-slot pins v1 had and V2 dropped — all three, after Gap B**
 
-> Raised by FP.0. **Status: PROPOSED** (see D-P45's note). Review: incomplete — v1 also pinned
-> `g1BaseWords` (Inv.lean:617) — and blocked by Gap B at the deployment (QUEUE R.4).
+> Raised by FP.0. **Status: APPROVED** with the review's extension. Signed off: human (repository
+> owner), 2026-11-17, in session after `4b525ef` (see D-P45's note and D-P53).
 
-**Proposed decision: add the two clauses to `Render.Valid` §2**, pinning `G2_BASE_MPTR` and
+**Approved.** One `Render.Valid` clause with three conjuncts, as drafted in DECISIONS-PENDING §4
+(G1 base, G2 base, NEG_S_G2 base; G1 half spelled for V2 by the card):
+`baseSlots : vkG1Words R.pv vkG1BaseSlot = R.E.g1.toEip <G1 generator> ∧ vkG2Words R.pv vkG2BaseSlot =
+R.encG2 (R.params.nG2Prepared)⁻¹ ∧ vkG2Words R.pv vkNegSG2BaseSlot = R.encG2 (R.params.sG2Prepared)⁻¹`.
+- **Sequencing.** It lands in ONE `Statements.lean` re-hash AFTER R.4 (D-P55). F.2-G2 measured the G1
+  and G2_BASE halves already TRUE at the payload, but the NEG_S_G2 half is FALSE as modelled
+  (`poseidonSG2 := g₂`); adding a clause known false at the deployment adds a refutation, not
+  information. After R.4 the third half holds by `choose_spec`.
+- **Same re-hash:** `Valid`'s "decided by computation" docstring (`Statements.lean:170`) gets the
+  recorded exception: a clause may be discharged at the deployment by proof (as `vkPins` already is,
+  and `baseSlots` will be), provided it is a fact about the render and not a semantic obligation
+  about the program.
+- **Then** `fp_finalPairing_contracts`'s `fpG2Slots R` hypothesis is discharged from `R.Valid`.
+
+**Original proposal (two pins; extended above):** add the two clauses to `Render.Valid` §2, pinning `G2_BASE_MPTR` and
 `NEG_S_G2_BASE_MPTR` in the VK payload to `encG2` of `params.nG2Prepared⁻¹` and `sG2Prepared⁻¹`.
 **Rationale: this is not a new requirement — v1 already had it** as `VkSlotsAgree.g2BaseWords` /
 `negSG2Words` (`Inv.lean:623-624`). V2's `Valid` has no `VkSlotsAgree` at all, so the check was
@@ -1788,12 +1833,16 @@ satisfy, never easier, so it cannot make a false headline true.
 `fp_finalPairing_contracts` currently carries `fpG2Slots R` as an explicit hypothesis; after this
 decision that hypothesis becomes a derived consequence of `R.Valid` and should be discharged from it.
 
-## D-P47 — **PROPOSED, not signed off: fix the fixture before porting the generator**
+## D-P47 — **Approved (ratified after the fact): fix the fixture before porting the generator**
 
-> Raised by D.3 and C.4. **Status: PROPOSED** (see D-P45's note). Review: it cannot clear C.4's
-> `codegen` (WP-G1) or `model` clauses, and a refreshed fixture must still be the deployed circuit.
+> Raised by D.3 and C.4. **Status: APPROVED — ratified.** Signed off: human (repository owner),
+> 2026-11-17, in session after `4b525ef` (see D-P53). R.1 (run as "F.1", `2041977`) already executed
+> it as a measurement card: Rust CAN export the constraint system, D.1's byte gate still passes, and
+> `Valid` went to 8 proved / 4 refuted / 1 sorry. The same export-first rule now governs clauses 2/3:
+> QUEUE R.8 probes whether the post-constructor PCS sizing can be exported before any WP-G4 port.
+> Reproducibility of the export is D-P58.
 
-**Proposed decision: attempt to re-export the deployment fixture with the full constraint-system data BEFORE
+**Decision: attempt to re-export the deployment fixture with the full constraint-system data BEFORE
 any work to port `LoweringPlan::new`.** Rationale, three findings that point the same way:
 1. The missing data (`gates`, `lookups`, `trashcans`, `permutation.columns`) **is present in the Rust
    generator's own output** — it is what produced the deployed verifier. It is absent from `vk.json`,
@@ -1822,11 +1871,14 @@ because guessing on them risks a soundness error, not a delay:
   is dischargeable at all while it is a placeholder** before choosing between retyping the codec and
   changing what `end_to_end` is about.
 
-## D-P48 — **PROPOSED, not signed off: add the `RETURN_MPTR` pin to `Render.Valid` (same rationale as D-P46)**
+## D-P48 — **Approved: add the `RETURN_MPTR` pin to `Render.Valid` (same rationale as D-P46)**
 
-> Raised by T.1, confirmed as load-bearing by M.1. **Status: PROPOSED** (see D-P45's note).
+> Raised by T.1, confirmed as load-bearing by M.1. **Status: APPROVED.** Signed off: human
+> (repository owner), 2026-11-17, in session after `4b525ef` (see D-P53). Lands in Q0.5's single
+> `Statements.lean` re-hash together with D-P45; F.2 measured `trRetMptr` PROVED at the deployment
+> (`RETURN_MPTR = some 4096`), so the clause is discharged in the same card.
 
-**Proposed decision: add a `returnMptr` clause to `Render.Valid` §2**, pinning `∃ m, R.consts.lookup
+**Decision: add a `returnMptr` clause to `Render.Valid` §2**, pinning `∃ m, R.consts.lookup
 "RETURN_MPTR" = some m` (the deployment value is 4096, present in `pinnedConstants`).
 **Rationale, and it is the same argument as D-P46:** adding a clause to `Valid` can only make it
 *harder* to satisfy, never easier, so it cannot make a false headline true. **And M.1 established this
@@ -1971,3 +2023,132 @@ else.** **Cone stays 11.** The card reported that precisely instead of claiming 
 deployment, so `Valid` clause 6 becomes proved. `poseidon_valid` stays refuted (clauses 2, 3, 9), so
 the headline cone is not expected to move.
 
+## D-P53 — **Approved: W2 stands; how the 2026-11-17 batch was signed**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §1. **Status: APPROVED.** Signed off: human (repository
+> owner), 2026-11-17, in session after `4b525ef`.
+
+**Decision: keep W2 unchanged** — *"there are no orchestrator decisions on delegated authority."* No
+standing grant is created and the GOAL prompt is not amended.
+
+**How D-P45–D-P48 and D-P53–D-P59 were signed.** The human instructed, in session: *"make best choices
+for remaining decisions"*. The assistant drafted each choice and recorded it; the human's instruction
+is the sign-off. This is a **one-time human sign-off of the listed decisions, not a delegation**: it
+gives the orchestrator no authority, and it covers nothing not written in these entries. Where an
+entry pre-approves a fallback (D-P55, D-P56, D-P57, D-P58), the orchestrator applies the stated
+condition; it does not choose. Any of these may be revisited by the human; until then they stand.
+
+## D-P54 — **Approved: do NOT add `hR : R.Valid` to `LoweringEquivalence` (R-72's second question)**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §2. **Status: APPROVED (rejection).** Signed off: see D-P53.
+
+`¬ poseidonRender.Valid` is PROVED (`PoseidonValid.lean`, `poseidonRender_notValid`), so with
+`R.Valid` as a hypothesis the headline would be provable by contradiction with an empty cone — the
+vacuity trap this project exists to avoid. PLAN-V2 §6 requires the headline "with no other
+hypotheses". Plan/VK coherence is certified where it belongs: DONE requires `poseidon_valid` proved.
+
+## D-P55 — **Approved: Gap B and the G1 codec — name points from their bytes; G1 needs no axiom, G2 needs one**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §8 (QUEUE R.4). **Status: APPROVED.** Signed off: see D-P53.
+
+**What the drafts missed.** `G2fold = Exp blsR` is the exponent carrier (`G2Codec.lean:245`) and `G₁z`
+is `Subgroup.zpowers` of the generator (`G1Agreement.lean:1814`). Naming any concrete point from its
+bytes needs `∃ x, enc x = bytes`, i.e. that the point is a multiple of the generator. Option (a)'s
+"no new axiom" holds only where that existence is provable:
+- **G1: it is.** P-POINTCOUNT (`aa53b57`, `G1PointCount.lean`, sorry-free, standard axioms) proved
+  `torsion_eq_zpowers_gen` elementarily: every r-torsion point of E(Fp) is a multiple of the
+  published generator. A computed on-curve + subgroup check of the bytes therefore gives existence.
+- **G2: it is not, by the same route.** The same commit records that the squeeze fails over Fp2
+  (`#E'(Fp2) ≤ 2p²+1` exceeds `r²`); the known proofs need the Weil pairing or point counting, which
+  mathlib lacks. The fixture SRS is a file (`srs_for_test`, `zk_stdlib/examples/assets`), so `s` is
+  not available either.
+
+**Decision.**
+1. **G1 (no axiom).** Make `g1CodecZ.ofCompressed?` real by the same `Classical.choose` scheme as
+   `g1zOfEip?` (`G1Agreement.lean:1995`), and discharge concrete decodes via `torsion_eq_zpowers_gen`
+   plus computed checks. This unblocks D-P45's discharge and `end_to_end` (F.2-G3). QUEUE R.4b.
+2. **G2 (one axiom, only if R.4's first hour finds no axiom-free route).** Add exactly ONE axiom in
+   `Midfall/Assumptions/`, beside D-P36a: the G2 analogue of `torsion_eq_zpowers_gen` — every byte
+   string that passes a computed EIP-2537 G2 validity check (on the twist over Fp2, and `r·Q = O`) is
+   `g2foldToEip x` for some `x : G2fold`. It is a published fact about BLS12-381 (the G2 subgroup is
+   cyclic of prime order r), not a fact about this fixture. Required with it:
+   - KATs: the check is TRUE at `G2_BASE` and `NEG_S_G2` payload bytes, and FALSE at a twist point
+     outside the r-torsion (the premise is neither vacuous nor trivially true);
+   - a docstring citing the G2 cofactor/order fact and `aa53b57`'s finding;
+   - PLAN-V2's axiom lists (§6 report categories, :265, :313-314, :346-348) updated in the same commit
+     from "five D-P36a" to "five D-P36a + the D-P55 G2 cyclicity axiom".
+3. **Then name the bases.** `poseidonSG2` (`PoseidonEnv.lean:236`) and the prepared G2 parameters come
+   from the payload bytes by `Classical.choose`, so D-P46's NEG_S_G2 pin holds by `choose_spec`.
+
+**Rejected:** per-byte-string axioms (fixture-dependent, and they would change with D-P58's
+regeneration); (c) rescoping FinalPairing away from the deployment's VK (weakens the English
+headline). **Trust-base change, stated plainly:** if step 2 lands, the headline's axiom list grows by
+one curve fact. It is the only trust-base change in this batch.
+
+## D-P56 — **Approved: make `Valid.model` dischargeable without a statement change (QUEUE R.3)**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §9. **Status: APPROVED, option (a), narrowed.** Signed off:
+> see D-P53.
+
+Restate `poseidonModelVal` (`PoseidonV2.lean:111`) as `getD` on `poseidonModel`
+(`PoseidonInputs.lean:126`) and close clause 4 with F.2-G1's pattern (one `native_decide` on
+`.isOk`, then `cases`), so no `DecidableEq` is needed. The `Inhabited` instance is obtained with
+`deriving instance Inhabited for Halo2Verifier` **in a V2/`Instances/` file — no v1 edit**. Only if that
+cannot derive: the one-line v1 exception (`deriving Inhabited` on `Generator/Models.lean:757`) is
+approved, with `Models.lean`'s line count unchanged (or `SORRY.md` regenerated in the same commit).
+No statement changes; no frozen file.
+
+## D-P57 — **Approved: WP-T before the loop-heavy rows, time-boxed, with a pre-approved fallback**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §10. **Status: APPROVED, option (a).** Signed off: see D-P53.
+
+- **Order.** WP-T (QUEUE T.2b, then T.3) runs before S.5 and S.6; S.5/S.6 are `after T.3`. T.3's
+  target is S.6's row (`BlockSound/BlockProgress R .lagrange`), so S.6 is closed by T.3 if T.3 lands.
+  S.4 stays as is (one statement, by hand).
+- **Accept line (PLAN-V2:278-279).** Re-prove `traceReturn_spec` on the closed slice in under 100
+  lines with the tactic, and record lines per Yul token.
+- **Time box.** T.2b plus at most one follow-up card (T.2c), each ≤ 2.5 h.
+- **Pre-approved fallback (option b), applied by condition, not choice.** If the accept line is missed
+  after T.2c, WP-T is dropped: T.3 reverts to a hand proof of the lagrange row, S.5/S.6 revert to
+  `after F.1` with their 1 h stop rules, and `docs/ETA.md` is re-estimated from TraceReturn's measured
+  lines per token (988 lines by hand). The orchestrator records which branch applied.
+
+## D-P58 — **Approved: make the fixture export reproducible (QUEUE R.5)**
+
+> Raised by R.1 (`2041977`). **Status: APPROVED.** Signed off: see D-P53.
+
+**Correction to the premise.** The exporter already seeds both RNGs
+(`proofs/solidity-verifier/tests/conformance_export.rs:330`, `:333`: witness `42`, prover `0xdebd`), so
+"seed the RNG" is not the fix: the run-to-run difference R.1 saw has another source.
+**Decision.**
+1. Find that source (two exports, diff).
+2. If the fix lies in test/exporter code: make the export deterministic, regenerate ONCE, and replace
+   `proof.bin`/`trace.json`. Re-pin D.3 checks 4–5 in the same commit.
+3. **Pre-approved fallback:** if the source is in baseline code (`proofs/src`, `zk_stdlib`), do not
+   change it. Keep the committed `proof.bin`/`trace.json` as the pinned ground truth, and record its
+   provenance as "unknown; verified by D.3 checks 4–5".
+4. Either way, for the stale `Halo2Verifier.sol` dump: refresh it if any gate or KAT reads it,
+   otherwise untrack it.
+5. If any frozen file depends on `proof.bin`/`trace.json`, stop (that would need a human decision).
+
+## D-P59 — **Approved: fix the v1 `WellFormed.permutationCommitmentsMatch` defect (`Valid` clause 9)**
+
+> Raised by R.1/F.2 (clause 9 REFUTED). **Status: APPROVED — recorded exception to "do not edit v1
+> `.lean` files".** Signed off: see D-P53.
+
+**The defect.** `VerifyingKey.WellFormed.permutationCommitmentsMatch` (`Halo2/Exec/VerifyingKey.lean:114`)
+requires `vk.permutation.commitments.size = divCeil columns (csDegree - 2)`. That is the **proof's**
+z-commitment count (one per chunk, `verifier.rs:41-45`). The **VK** holds one sigma commitment per
+permutation COLUMN: `proofs/src/plonk/permutation.rs:123` builds them as
+`(0..argument.columns.len())`. At the deployment, 8 sigma commitments ≠ `divCeil 8 3` = 3, so a
+correct VK is refuted. This is a mis-port, not a deployment fact.
+
+**Decision.** Restate the field as `vk.permutation.commitments.size = vk.cs.permutation.columns.size`,
+and correct its docstring bullet (`:99-102`) and `Halo2/Spec/Degrees.lean:102` in place.
+- **Line counts unchanged**, or `SORRY.md` regenerated in the same commit.
+- **Consequence recorded.** `SupportedV2.wf` (frozen `Statements.lean`) refers to this structure, so
+  the meaning of frozen `Render.Valid` changes without a hash change. This entry is the record of that
+  change.
+- **Card stops if** the Lean permutation verifier port indexes `vk.permutation.commitments` by chunk
+  rather than by column: that would be a port defect, larger than this field, and needs its own
+  decision.

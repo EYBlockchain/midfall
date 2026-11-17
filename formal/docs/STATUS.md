@@ -218,7 +218,17 @@ only meaningful once the root actually imports what it claims to avoid.**
 - `cone_avoids end_to_end: ok` · `cone_sorries …: **1**`
 - Each cone holds exactly one sorried declaration: the root itself.
 
-## ⚠ WAITING ON HUMAN — R-72: the frozen non-vacuity gate does not gate the vacuity
+## ✅ RESOLVED (human, 2026-11-17) — R-72: the frozen non-vacuity gate does not gate the vacuity
+
+**Both decisions below were taken on 2026-11-17; see `design.md`.**
+- **Decision 1 → D-P45 (amended).** The gate gains decode ∧ `instOfWords?` ∧ `snapshotOf … = .ok`,
+  plus `G1CodecLaws`. **NOT `LeanAccepts`**: at a real SRS the final pairing is `P₁ + s·P₂ = 0` with
+  s unknown, so `LeanAccepts` is not dischargeable at the deployment, and the gate would become
+  unprovable.
+- **Decision 2 → D-P54: REJECTED** (the review's reason, below).
+- **Work:** QUEUE **Q0.5**, after F.1. It lands with D-P48's `returnMptr` clause in ONE
+  `Statements.lean` re-hash. The record below is kept as the finding.
+
 
 **Q0.4 (read-only probe) found a real defect in a FROZEN statement, and I cannot repair it: the rules
 say I do not change the frozen surface.** Verified by the orchestrator reading the text, not only from
@@ -264,7 +274,24 @@ TRUE — clause 6 becomes PROVED, not merely closer.** **It is the only one of t
 clauses closable in Lean without a Rust port.** It also means **PLAN-V2:236 sets the wrong acceptance
 target** — PCS is 18 brace tokens from equal and needs no separate epic.
 
-**Next READY (human, 2026-11-17, after `2cad8cc`):** **F.1** (sequencing glue: the only READY card
+**Next READY (human, 2026-11-17, after `4b525ef`; every remaining decision now signed off: D-P45–D-P48,
+D-P53–D-P59):**
+
+1. **F.1** — RUN NEXT, unchanged.
+2. **Q0.5** — D-P45 (amended) + D-P48: one `Statements.lean` re-hash.
+3. **G1.4b**, then the **G1.1–G1.3 batch**.
+4. The R cards, all after F.1:
+   - **R.3** — `Valid.model`, D-P56
+   - **R.4** — Gap B for G2, D-P55
+   - **R.4b** — G1 decoder and the fixture decode
+   - **R.5** — fixture reproducibility, D-P58
+   - **R.6** — the D-P46 base pins, after R.4
+   - **R.7** — clause 9, D-P59
+   - **R.8** — the clauses 2/3 probe
+   - **R.9** — clause 1 as a Prop
+5. **T.2b** — the WP-T accept line, D-P57; then T.3, then S.5/S.6.
+
+Previous ordering, for the record (human, after `2cad8cc`): **F.1** (sequencing glue: the only READY card
 expected to move the headline cone, 11 → 9, and it needs no decision), then **G1.4b** (D-P51 signed off
 2026-11-17; first push `t/G1.4` and land its patch in the tree, since both exist only in the
 orchestrator's environment). Then **G1.1–G1.3 as one batch** with a single `Program.lean`
@@ -272,9 +299,12 @@ re-hash (**D-P52, signed off 2026-11-17**), after G1.4b (`PoseidonValid.lean:292
 G1.4 is superseded by G1.4b. `traceAndGasHelpers` is vacuous at this render (`ctx.trace = false`), so
 it has no card.
 
-**Stated limit: `poseidon_valid` does NOT close from these.** `poseidonRender_notValid` runs through
-clause 2, and clauses 2/3/9 stay refuted. **Cone stays 11 until the plan-sizing port (2/3) and the v1
-`permutationCommitmentsMatch` defect (9) are addressed — both upstream.**
+**Stated limit: `poseidon_valid` does NOT close from the G1 cards alone.** `poseidonRender_notValid`
+runs through clause 2, and clauses 2/3/9 stay refuted until their cards land:
+- **clause 9 → R.7.** D-P59 fixes the mis-ported v1 field: it should count per column, not per chunk.
+- **clauses 2/3 → R.8.** An export-first probe of the post-constructor PCS sizing, which may need a
+  port.
+- **clause 4 → R.3.** **clause 1 → R.9.**
 ## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
 
 **Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as
@@ -304,6 +334,10 @@ executed.
 provable by contradiction with an empty cone.** That is precisely the vacuity trap this project was
 built to avoid, and I walked toward it while recommending it. PLAN-V2 §6 requires the headline 'with
 no other hypotheses'; coherence belongs in `poseidon_valid`, which DONE already requires.
+
+**SUPERSEDED (human, 2026-11-17): D-P45–D-P48 are now signed off, by the human, with a sign-off
+line** (D-P53 records how). D-P45 was amended: no `LeanAccepts`. D-P47 was ratified after the fact.
+**W2 is unchanged.** The orchestrator still records no decisions on delegated authority.
 
 **What F.1 was, under this correction:** a measurement card. It exported data and re-derived
 `Instances/` terms — no frozen surface, no scope change — so it was in bounds even with D-P47 only
