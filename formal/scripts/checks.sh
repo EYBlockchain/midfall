@@ -41,8 +41,14 @@ echo "ok: $(echo "$found" | wc -l | tr -d ' ') tracked sorries"
 echo '== native_decide confinement =='
 # scripts/lean_grep.py strips comments first, so prose that mentions the tactic
 # (there is such a doc string in Security/Challenges.lean) is not a use of it.
+# ONE FILE IS EXEMPT, BY NAME: Midfall/Tools/Done.lean is the tool that IMPLEMENTS this rule and the
+# axiom sweep, so it carries the token as DATA - the generated-axiom name shape it matches on
+# (`_native.native_decide.ax_*`), the tactic name it compares against, the strings it prints - in 9
+# places. lean_grep.py strips comments but not string literals, so those reads as uses. A
+# native_decide in a PROOF anywhere else under Midfall/ is still red, and the exemption is a filename,
+# not a directory, so a new tool that needs it must say so here. (DG.2 rewrites this line: keep it.)
 bad=$(python3 scripts/lean_grep.py '\bnative_decide\b' \
-  $(find Midfall -name '*.lean' | sort) | grep -v 'Midfall/Instances/' || true)
+  $(find Midfall -name '*.lean' | sort) | grep -v 'Midfall/Instances/' | grep -v '^Midfall/Tools/Done.lean:' || true)
 echo '== module reachability =='
 # kat_gate.py walks the filesystem, so an unimported module can pass its #eval gates
 # while lake build never compiles it. Two had slipped through (R-50). This makes an

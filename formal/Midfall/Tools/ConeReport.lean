@@ -35,6 +35,7 @@ import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Instances.PoseidonV2
 import Midfall.Tools.ConeSorries
+import Midfall.Tools.Done
 
 #imports_avoid [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
 
@@ -78,3 +79,20 @@ import Midfall.Tools.ConeSorries
 #cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow
 #cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_slice
 #cone_avoids Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
+
+/- ## THE AXIOM GATE (PLAN-V3 section 6)
+
+The axiom half of DONE as a build error. While the headline is open, `sorryAx` is allowed BY NAME
+and everything else is already pinned: a user axiom, or a `native_decide` outside the listed
+declarations, reddens the build today. DONE is the commit that deletes the token `sorryAx` here. -/
+open Midfall.Tools.Done in
+#assert_axioms Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
+  [propext, Classical.choice, Quot.sound, sorryAx, Midfall.Assumptions.blsGT,
+   Midfall.Assumptions.blsGT_group, Midfall.Assumptions.blsGT_primeOrder,
+   Midfall.Assumptions.blsGT_module, Midfall.Assumptions.bls12_381Pairing]
+  native [Midfall.Instances.PoseidonV2.poseidonModel_isOk]
+
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound [propext, Classical.choice, Quot.sound]
+open Midfall.Tools.Done in
+#assert_axioms Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress [propext, Classical.choice, Quot.sound]
