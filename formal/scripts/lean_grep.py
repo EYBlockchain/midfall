@@ -12,6 +12,16 @@ comments, and string literals (which may contain "--").
 
 Line numbers are preserved: a stripped line yields the empty string.
 
+WHAT THIS SCANNER CANNOT DO, AND WHY THE GATES EXEMPT ONE FILE BY NAME. A string literal is kept
+as code text (it must be tracked, or a "--" inside a string would open a phantom comment), so a
+token that appears only inside a message string reads as a use of it. No regex fixes that; it is
+why the sorry register and the native_decide gate now read the ENVIRONMENT (scripts/Report.lean).
+While the text scan is kept as a cross-check, ONE FILE IS EXEMPT BY NAME: Midfall/Tools/Done.lean
+is the tool that implements both rules and so carries the tokens `sorry` (in the messages it
+prints) and `native_decide` (in the axiom-name shape it matches) as DATA - 1 and 9 occurrences.
+The exemption is a filename, not a directory, so a new tool that needs it must say so where it is
+granted: scripts/sorries.sh and scripts/checks.sh.
+
 THE PRIME BUG P-CODECLAWS FIXED (docs/REVIEW.md R-66, last item). The old stripper tested
 for a char literal (') BEFORE it tested for a line comment (--), and it entered a char
 state on ANY quote. Lean identifiers may contain primes - obs', hshell', \u03bb' - so the
@@ -111,16 +121,21 @@ def main() -> int:
         print(__doc__, file=sys.stderr)
         return 2
     pat = re.compile(sys.argv[1])
+    rc = 0
     for path in sys.argv[2:]:
         try:
             with open(path, encoding="utf-8") as fh:
                 src = fh.read()
-        except OSError:
+        except (OSError, UnicodeDecodeError) as exc:
+            # A file that cannot be read was NOT scanned, so its hits are unknown. That is an error,
+            # not a silent pass (review J-10): exit 2, which pipefail turns into a red gate.
+            print(f"lean_grep: cannot scan {path}: {exc}", file=sys.stderr)
+            rc = 2
             continue
         for lineno, line in enumerate(code_only(src).split("\n"), start=1):
             if pat.search(line):
                 print(f"{path}:{lineno}")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

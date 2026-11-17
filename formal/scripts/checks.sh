@@ -27,35 +27,69 @@ sha256sum -c Midfall/Statements.sha256
 sha256sum -c Midfall/LoweringV2/Frozen.sha256
 
 echo '== sorry register =='
-# The inventory comes from scripts/sorries.sh, which is also what generates the
-# register table (scripts/gen_sorry.sh), so gate and register cannot drift apart.
-found=$(bash scripts/sorries.sh)
-listed=$(sed -nE 's/^\| ([^ |]+) \| ([0-9]+) \|.*/\1:\2/p' SORRY.md | sort -t: -k1,1 -k2,2n)
+# KEYED BY DECLARATION, READ FROM THE ENVIRONMENT (scripts/sorries.sh --env, which runs #sorry_sweep
+# in scripts/Report.lean). The old file:line key reddened on an unrelated edit (2041977 moved
+# PoseidonValid.lean 227 -> 252 and the tip stayed red, review J-8), said nothing about WHICH
+# declaration was open (review J-10), and could not see a hole with no `sorry` token - `admit`, `stop`,
+# a macro, a direct `sorryAx` (review J-2). The sweep reads elaborated terms, so all four are seen, and
+# each row also carries the declaration's STATUS (OPEN / REFUTED / VACUOUS), whether it sits in the
+# headline cone (ROOT), and a structural hash of its statement: a restated sorry moves its hash.
+found=$(bash scripts/sorries.sh --env)
+# The six pinned columns of every table row, in the same LC_ALL=C order the scan prints them in.
+listed=$(sed -nE 's/^\| ([^ |]+) \| ([^ |]+) \| ([^ |]+) \| ([^ |]+) \| ([^ |]+) \| `([0-9a-f]{16})` \|.*/\1 \2 \3 \4 \5 \6/p' SORRY.md | LC_ALL=C sort)
 if [ "$found" != "$listed" ]; then
-  echo 'sorry register out of sync with the tree'
+  echo 'sorry register out of sync with the tree (< register, > tree): run scripts/gen_sorry.sh'
   diff <(echo "$listed") <(echo "$found") || true
   exit 1
 fi
-echo "ok: $(echo "$found" | wc -l | tr -d ' ') tracked sorries"
+# CROSS-CHECK with the text scan: both must find sorries in the same MODULES (measured at 3a7c017:
+# 19 = 19, and the per-module counts agree at 58 = 58). Text only: a `sorry` the build never
+# elaborates. Environment only: a hole with no `sorry` token. Either disagreement is a real finding,
+# not noise, so it is a hard failure.
+textmods=$(bash scripts/sorries.sh | cut -d: -f1 | sed -e 's/\.lean$//' -e 's#/#.#g' | sort -u)
+envmods=$(echo "$found" | awk '{print $2}' | sort -u)
+if [ "$textmods" != "$envmods" ]; then
+  echo 'text scan and environment scan disagree on the modules holding a sorry (< text, > environment):'
+  diff <(echo "$textmods") <(echo "$envmods") || true
+  exit 1
+fi
+# A hole in the headline cone must name the card that removes it (review I-10). gen_sorry.sh keys
+# owners by declaration name, so a renamed cone sorry arrives UNOWNED and reddens this on purpose.
+if grep -E '^\| [^|]+ \| [^|]+ \| [^|]+ \| [^|]+ \| ROOT \| [^|]+ \| UNOWNED' SORRY.md; then
+  echo 'a sorry in the headline cone has no card (review I-10)'
+  exit 1
+fi
+echo "ok: $(echo "$found" | grep -c .) sorried declarations, $(echo "$found" | grep -c ' ROOT ') in the headline cone, $(echo "$found" | grep -c ' REFUTED ') REFUTED"
 
 echo '== native_decide confinement =='
 # scripts/lean_grep.py strips comments first, so prose that mentions the tactic
 # (there is such a doc string in Security/Challenges.lean) is not a use of it.
-# ONE FILE IS EXEMPT, BY NAME: Midfall/Tools/Done.lean is the tool that IMPLEMENTS this rule and the
-# axiom sweep, so it carries the token as DATA - the generated-axiom name shape it matches on
-# (`_native.native_decide.ax_*`), the tactic name it compares against, the strings it prints - in 9
-# places. lean_grep.py strips comments but not string literals, so those reads as uses. A
-# native_decide in a PROOF anywhere else under Midfall/ is still red, and the exemption is a filename,
-# not a directory, so a new tool that needs it must say so here. (DG.2 rewrites this line: keep it.)
-bad=$(python3 scripts/lean_grep.py '\bnative_decide\b' \
-  $(find Midfall -name '*.lean' | sort) | grep -v 'Midfall/Instances/' | grep -v '^Midfall/Tools/Done.lean:' || true)
+# ONE FILE IS EXEMPT, BY NAME - DG.1's exemption, KEPT by DG.2: Midfall/Tools/Done.lean is the tool
+# that IMPLEMENTS this rule and the axiom sweep, so it carries the token as DATA - the generated-axiom
+# name shape it matches on (`_native.native_decide.ax_*`), the tactic name it compares against, the
+# strings it prints - in 9 places. lean_grep.py strips comments but not string literals, so those read
+# as uses. A native_decide in a PROOF anywhere else under Midfall/ is still red, and the exemption is
+# a filename, not a directory, so a new tool that needs it must say so here. The exemption is applied
+# BEFORE the count below, so the number printed is uses of the tactic and not mentions of the word.
+# The environment half of this rule is `#axiom_sweep` in scripts/Report.lean - already run by
+# `sorries.sh --env` above - which ERRORS on any project axiom that is neither a D-P36a constant nor a
+# native_decide axiom generated inside a declaration of a Midfall.Instances module, and reads the
+# kernel rather than the text, so no exemption is needed there.
+# The scanner's exit status is taken on its OWN line: `scan | grep -v ... || true` also swallowed a
+# CRASH of the scanner and left the gate green (review J-12). `decide +native` generates the same
+# axiom, so it is the same violation (control G: the old regex found 0 hits for it).
+uses=$(python3 scripts/lean_grep.py '\bnative_decide\b|\bdecide\s*\+native\b' \
+  $(find Midfall -name '*.lean' | sort))
+scanned=$(printf '%s\n' "$uses" | grep -v '^Midfall/Tools/Done.lean:' || true)
+bad=$(printf '%s\n' "$scanned" | grep -v '^Midfall/Instances/' | grep . || true)
+if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
+echo "ok: $(printf '%s\n' "$scanned" | grep -c .) uses, all under Midfall/Instances/"
+
 echo '== module reachability =='
 # kat_gate.py walks the filesystem, so an unimported module can pass its #eval gates
 # while lake build never compiles it. Two had slipped through (R-50). This makes an
 # orphan a hard failure.
 python3 scripts/check_orphans.py || exit 1
-
-if [ -n "$bad" ]; then echo 'native_decide outside Instances/:'; echo "$bad"; exit 1; fi
 
 echo '== golden fixture provenance =='
 # The Phase 6 golden gates compare an AST against a pinned string; nothing in Lean

@@ -2,7 +2,12 @@
 # verify.sh - ONE command that verifies a V2 ticket (PLAN-V2 §6, card Q0.3).
 #
 #   bash scripts/verify.sh --quick    build + DoneTest + ConeReport          (inner loop)
-#   bash scripts/verify.sh            ram_guard + build + checks.sh + DoneTest + ConeReport
+#   bash scripts/verify.sh --report   ConeReport + the progress report, NO build (the STATUS.md header)
+#   bash scripts/verify.sh            ram_guard + build + checks.sh + DoneTest + ConeReport + report
+#
+# DG.2: the progress report is scripts/Report.lean (the whole-tree sweeps: cone_report, exhibits,
+# block_coverage, axiom_sweep, sorry_sweep, closure_fingerprint). The sorry register in checks.sh reads
+# its SORRY lines through scripts/sorries.sh --env, so the gate and the report are the same scan.
 #
 # DG.1: the axiom half of DONE is ASSERTED inside ConeReport.lean by three #assert_axioms commands, and
 # the two lines cone_report() now requires below are what stop that gate from being deleted in silence.
@@ -44,11 +49,28 @@ cone_report() {
   printf '%s\n' "$out"
 }
 
+# The progress report: tool output only. STATUS.md opens with it, verbatim (W8, card DG.8). The
+# `SORRY ` and `DECL ` rows are the machine-readable feeds (SORRY.md, Closure.manifest) and are
+# filtered out here: what prints is the report a human reads.
+progress_report() {
+  local out
+  if ! out=$(lake env lean scripts/Report.lean 2>&1); then
+    printf '%s\n' "$out"
+    echo 'verify.sh: scripts/Report.lean failed' >&2
+    return 1
+  fi
+  printf '%s\n' "$out" | grep -Ev '^(SORRY|DECL|  opaque) '
+}
+
 case "${1:-}" in
   --quick)
     lake build
     lake env lean scripts/DoneTest.lean
     cone_report
+    ;;
+  --report)
+    cone_report
+    progress_report
     ;;
   '')
     # --proc-limit is the shape that matters here: a cold parallel `lake build` legitimately sums
@@ -58,9 +80,10 @@ case "${1:-}" in
     bash scripts/checks.sh
     lake env lean scripts/DoneTest.lean
     cone_report
+    progress_report
     ;;
   *)
-    echo "verify.sh: unknown argument '$1' (expected --quick or nothing)" >&2
+    echo "verify.sh: unknown argument '$1' (expected --quick, --report or nothing)" >&2
     exit 2
     ;;
 esac
