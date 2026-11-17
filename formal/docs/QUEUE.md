@@ -716,6 +716,35 @@ GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
 - **Does NOT need.** G1.1–G1.3; `computationsAst` changes; contracts; frozen files.
 
 ---
+### ⚠ SEQUENCING COLLISION + RE-SCOPE from G1.2b (probe, `9c1c9a5`, nothing edited)
+
+**SITE FOUND: `mainAsmRaw (pv) (m)` — gate 23 AVOIDED, one frozen re-hash (`Program.lean`) unavoidable.
+⇒ G1.1 + G1.2 + G1.3 must be BATCHED into that single re-hash.**
+
+- **Flag is a DIRECT `Model` field** (printed: `#eval poseidonM.quotientPow5Helper = true`) — no
+  `PartialCtx` hop, no new `PlanView` field, no duplicate fact. Good news.
+- **`mainAsmRaw` has FOUR callers, not one** (`Program.lean:116`, `:133`, `:192`;
+  `PoseidonValid.lean:292`) — **all already have `m` in scope**, so the change is mechanical but not
+  one-line. **My 'one call site' claim was false.**
+- **`sliceOf` is a COMPANION, not the site.** Splicing there avoids gate 23 but **cannot close
+  `codegenAgrees`** (printed: `sliceOf pv m .quotientLin` = 122 = `emitPartial pv .quotientLin` —
+  parallel views, not nested). **AND `sliceOf`'s `.quotientLin` body MUST gain the same region, or
+  `prog_slices_decomp` (`Blocks.lean:220`, currently sorry) becomes FALSE, not merely unproved.**
+- **⚠ COLLISION — sequence these.** `PoseidonValid.lean:292` pins the AST total. **G1.4b moves it
+  6761 → 6779; the G1.1/G1.2/G1.3 batch moves it to 6829.** Two cards edit the same line with
+  different values. **Run G1.4b FIRST, then the batch recomputes from 6779** — or the batch will
+  silently redden G1.4b's witness.
+- **limb7 verdict: include it in G1.2 as one extra conjunct, do not defer** — but the failure is NOT
+  silent (at a limb7 render `codegenAgrees` goes FALSE, a red gate). Text side is already covered by
+  gate 64 `perturb_quotientHelperFlags_ok`. **Add the AST-side hypothesis**
+  `&& m.quotientLimb7Helper = false && m.quotientWideLimb7Helper = false` with a docstring naming the
+  un-emitted arm.
+- **G1.2 alone does NOT flip clause 6** (printed `codegenAgrees = false` with the splice in, 6829 ≠
+  14054). Clause 6 needs all four regions.
+- **QUEUE R.2 finding 4 is FALSE for G1.2/G1.3** — it says they land entirely in the unpinned
+  `GenAstDispatch.lean` and the regions belong in `emitPartial`. **`emitPartial` cannot read the
+  flags; the regions belong in `mainAsmRaw`, a FROZEN file.** That is what makes the re-hash shared.
+
 ### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY]**
 GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
 
@@ -811,7 +840,7 @@ any other region of the main block)
                  (renderQuotientHelpers (partialCtxOfVerifier poseidonM))                     -- [q_program_fail, q_pow5]
           #eval (partialCtxOfVerifier poseidonM).quotientPow5Helper                            -- true
 
-### G1.2b — Find the real splice site for the quotient helpers  **[READY — BLOCKS G1.2/G1.3]**
+### G1.2b — Find the real splice site for the quotient helpers  **[READY — BLOCKS G1.2/G1.3]**  **[DONE 9c1c9a5 - SITE FOUND: mainAsmRaw(pv,m); gate 23 avoided; batch G1.1+G1.2+G1.3]**
 
 GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
 
