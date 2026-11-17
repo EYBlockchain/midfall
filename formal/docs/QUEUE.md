@@ -591,7 +591,7 @@ GEN · KAT · box 1 h · Sonnet · after S.4
 - **Does NOT need.** Editing `Valid`; any block row; the pairing.
 
 ---
-### S.9 — Land the six pins: `Valid` fields + the proved deployment discharge  **[READY]**
+### S.9 — Land the six pins: `Valid` fields + the proved deployment discharge  **[READY]**  **[MERGED fece4c7 - Valid now 13 clauses; vk_blockRow pin-free; cone unchanged]**
 
 INFRA · PORT · box 1.5 h · Sonnet · after S.8
 
@@ -614,6 +614,23 @@ INFRA · PORT · box 1.5 h · Sonnet · after S.8
   it (that contradicts S.8 and must be reported, not fixed silently).
 - **Does NOT need.** Proving `vk_sound_clean`/`vk_progress`/`vk_poison_walk`; any other block row;
   the pairing; v1 files; `vendor/`.
+
+---
+### S.10 — Fix the stale `Valid` clause-count prose  **[READY — small]**
+
+INFRA · DOCS · box 0.5 h · Sonnet · after S.9
+
+- **Goal.** `Render.Valid` now has **13** clauses (S.9 appended `vkPins`, `vkProgressPins`). Several
+  comments still say 11 and actively misdescribe the frozen surface.
+- **Needs.** `Instances/PoseidonValid.lean` 'CLAUSE n OF 11' headers; `Instances/PoseidonV2.lean:173`
+  'the eleven computation clauses'; any other '11 clauses' mention (`grep -rn 'OF 11\|eleven'
+  Midfall/Instances/`).
+- **Do.** Update the counts and clause numbering. **Comment text only — no proof changes.**
+- **Accept.** `grep` shows no stale '11 clauses'/'OF 11' referring to `Valid`; `verify.sh --quick` green;
+  `Frozen.sha256` verifies (these files are NOT frozen, so no re-hash).
+- **Note for whoever runs it:** rebuilding `PoseidonValid.lean` re-runs ~20 `native_decide`s — budget
+  for it; S.9 left this out of scope for exactly that reason.
+- **Does NOT need.** Any proof change; the pins; any block row.
 
 ---
 ### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3]**

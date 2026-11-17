@@ -254,16 +254,23 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **S.4 merged `93c0d4c` as PARTIAL** - the `vkLoading` row did NOT close (3 named
-sorries: `vk_sound_clean`, `vk_poison_walk`, `vk_progress`), but 15 sorry-free lemmas landed and are
-the handoff for S.5/S.6/S.7. **New root `vk_blockRow: 3`; all six existing cones unchanged.**
-Register **60** (SORRY.md was found desynced at 57 and regenerated - see the merge commit).
+**In flight:** none. **S.9 merged `fece4c7`: D-P50 executed.** `Render.Valid` now has **13 clauses**
+(`vkPins`/`vkProgressPins` moved into frozen `Statements.lean` §2 verbatim — the import direction
+`VkLoading → Blocks → Statements` forbids referencing them). `vk_blockRow` takes **no pin
+hypotheses** — pins arrive via `hR.vkPins`/`hR.vkProgressPins`, so the hinge can reach them from
+`R.Valid`. `Frozen.sha256` re-hashed deliberately (one line, `Statements.lean 362e0b64→50fd6257`).
+**`native_decide` axioms in the deployment path: 1 → 7** — §6 permits this, but the trusted base is
+now seven compiler decisions wide, which is a property of the result, not a detail.
 
-**Next: S.8 FIRST** (verify the six `vkLoading` pins computationally at the deployment, 1 h), then
-**S.5** (transcriptParser - 44 stmts, 9 own loops, the big one), **S.6** (lagrange), **S.7**
-(quotientLin). `pcs` stays HELD behind S.2. **No single row moves the headline cone; six are needed
-and even then `slices_seq_sound` depends on the S.3 gate.**
+**ALL EIGHT CONES UNCHANGED** (headline 11, `vk_blockRow` 3, `tr_blockSound`/`tr_blockProgress` 0,
+`fp_finalPairing_contracts` 3, `of_blocks` 7, `end_to_end` 1, `vk_slice` 0). Register 60, three-way
+agreement verified. **S.9 stated plainly the hinge is STILL not closable:** pins are reachable from
+`Valid`, but `poseidonRender.Valid` stays refuted by C.4's six clauses.
 
+**Next READY: S.10** (fix stale 'eleven clauses' prose — `Valid` is 13 now; the comments currently
+misdescribe the frozen surface), then **the D-P47 fixture re-export card**, then S.5/S.6/S.7. `pcs`
+stays HELD behind S.2. **D-P47 is the critical path and has not been started — no further block row
+changes that.**
 ## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
 
 **Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as
