@@ -299,11 +299,50 @@ end Midfall.Generator
     proofs/solidity-verifier/.gitignore:4: target/ for it. The dump directory is
     force-added file by file (Halo2Verifier.sol, Halo2VerifyingKey.sol and
     instances.be are tracked; calldata.bin, proof.bin and instance.be in the same
-    directory are not). The gates that need the raw proof and calldata bytes
-    therefore return true when the artifact is absent, and
-    calldataDumpBytesPresent_ok reports their reachability as a VALUE rather than as
-    an assertion, so a fresh clone loses those gates LOUDLY and visibly instead of
-    silently. The tracked-.sol gates carry the load in either case. -/
+    directory are not).
+
+    ## R.5: absence is a NAMED RED, never a silent true (was: a vacuous pass)
+
+    Until R.5 these three gates returned true when the artifact they needed was
+    missing, on the theory that a fresh clone should stay green. That theory was
+    already false: calldataDumpBytesPresent_ok is annotated "-- expect true" and
+    reads the same two files, so a fresh clone has ALWAYS been red here - the
+    vacuous true bought nothing and cost the two comparison gates their teeth. A
+    gate that returns true on missing input is a report wearing a gate's clothes
+    (R-72). So the absence arms now go through dumpBytesAbsent, which prints a
+    named SKIP-NAMED reason and returns FALSE. The reason is deliberately printed as
+    a line that is NOT value-shaped (kat_gate.py accepts only true, false, a number,
+    a quoted string or a bracketed list, and matches them POSITIONALLY to the #eval
+    lines): a value-shaped diagnostic would shift every later gate's expected value
+    and turn a named skip into an unrelated failure. Measured with the dump directory
+    moved aside: 23 gates, 23 harvested values, the four SKIP-NAMED lines ignored.
+
+    ## Why the bundle must be ONE run, and what cannot be made reproducible
+
+    R.5 ran the export twice from a clean state and diffed it byte for byte.
+    Halo2Verifier.sol, Halo2VerifyingKey.sol and instance.be reproduce EXACTLY,
+    run to run and against the committed bytes. proof.bin diverges from byte 721
+    (1718 of 2640 bytes) and calldata.bin from byte 2037, which is the same
+    divergence carried into the repacked form (0x64 + 1936 = 2000, the first
+    blinded h-limb slot). 721 = 15 * 48 + 1: the first 15 transcript reads are the
+    pre-quotient commitments, and byte 721 is the first quotient-limb commitment.
+
+    The cause is NOT the seed. Both RNGs are seeded (conformance_export.rs:330
+    witness 42, :333 prover 0xdebd) and both seeds are effective for everything
+    they reach. What they do not reach is blind_quotient_limbs
+    (proofs/src/plonk/prover.rs:121-131), which takes no rng argument at all and
+    draws F::random(OsRng) at prover.rs:126. It is compiled in whenever
+    single-h-commitment is off, which is the recorded profile. So the inter-limb
+    blinding scalars come from the OS, and no amount of seeding in test or
+    exporter code makes two proofs byte-equal. That is baseline code, so D-P58 (b)
+    applies: change nothing in proofs/src.
+
+    The gates do not need byte-reproducible proofs. Gates 15-17 compare MY repack
+    of the dump's proof.bin against the dump's calldata.bin, i.e. against the
+    Rust's repack of the SAME bytes. They need a consistent bundle, not a
+    repeatable one - which is exactly what the mixed-vintage dump (proof.bin from
+    one run, calldata.bin from another) broke. Regenerate the dump with ONE
+    poseidon_fixture run and they pass on real bytes. -/
 
 namespace Midfall.Generator.CalldataKats
 
@@ -467,6 +506,25 @@ def readDumpCalldataBin : IO Bytes := readBinFirst
   (dumpDirCandidates.map (fun d => d ++ "/calldata.bin")) 65536
 def readDumpInstanceBe : IO Bytes := readBinFirst
   (dumpDirCandidates.map (fun d => d ++ "/instance.be")) 4096
+
+/-- R.5 / R-72: the presence guard. The three gates that need the UNTRACKED dump
+    bytes used to answer `true` when those bytes were absent, which made them
+    non-gates: they passed for the one reason that should never be a pass. This
+    names the missing input and returns FALSE, so absence is a red that says what is
+    missing instead of a green that says nothing.
+
+    The printed line is not value-shaped on purpose: kat_gate.py counts gated values
+    on stdout and matches them positionally to the `#eval` lines, so a value-shaped
+    diagnostic here would shift every later gate's expected value.
+
+    This is not a new rule in the tree, it is the tree's rule applied to the last
+    three files that did not follow it: Evm.lean:177-179 and VmTypes.lean:1279 both
+    already say a missing artifact is a RED, never a silent true. -/
+def dumpBytesAbsent (what : String) : IO Bool := do
+  IO.eprintln ("SKIP-NAMED (counts as a FAILURE, not a pass): " ++ what
+    ++ " is absent or unreadable; this gate needs the bytes from ONE poseidon_fixture run")
+  pure false
+
 def readParserPartial : IO String := readFirst parserPartialCandidates
 def readVkLoading : IO String := readFirst vkLoadingCandidates
 def readAsmHelpers : IO String := readFirst asmHelpersCandidates
@@ -485,12 +543,16 @@ def calldataArtifactsReachable_ok : IO Bool :=
   pure (generatedReadOk sol && pp.length > 10000 && vl.length > 2000
     && ah.length > 3000 && qvm.length > 100000 && api.length > 20000)
 
-/-- The untracked-artifact report (see the section header): a VALUE, not an
-    assertion, so a fresh clone shows false here and still builds. -/
+/-- The untracked-artifact presence gate. It is annotated "-- expect true", so it
+    has ALWAYS reddened a fresh clone - which is the fact R.5 leans on: the three
+    comparison gates below could not buy green-on-a-fresh-clone by returning true on
+    missing bytes, because this gate had already decided that missing bytes are a
+    failure. They were only buying silence. -/
 def calldataDumpBytesPresent_ok : IO Bool :=
   readDumpProofBin >>= fun c =>
   readDumpCalldataBin >>= fun d =>
-  pure (c.size > 1000 && d.size > 1000)
+  if c.size > 1000 && d.size > 1000 then pure true
+  else dumpBytesAbsent "target/poseidon-fixture-dump/{proof.bin,calldata.bin}"
 
 /-- The first add(proof_cptr, 0x..) after the first line containing needle: how the
     eval and q_eval section widths are read out of the generated contract instead of
@@ -766,55 +828,63 @@ def encodeCalldataWithInstances_endToEnd_ok : Bool :=
 
 /-! ## The Rust artifact: the poseidon fixture -/
 
-/-- GATE 15 (D-P19, UNTRACKED-CONDITIONAL - see the section header). The scalar leg
-    of repackProof against the real Rust repack: the plan is derived from the tracked
-    contract, the compressed bytes are the dump's real proof, and the repacked bytes
-    are the ones inside the dump's real calldata. Every eval and q_eval word my walk
-    emits must equal the word the Rust emitted. -/
+/-- GATE 15 (D-P19; R.5 makes it unconditional). The scalar leg of repackProof
+    against the real Rust repack: the plan is derived from the tracked contract, the
+    compressed bytes are the dump's real proof, and the repacked bytes are the ones
+    inside the dump's real calldata. Every eval and q_eval word my walk emits must
+    equal the word the Rust emitted. Absent bytes are a NAMED FAILURE (see
+    `dumpBytesAbsent`), not a pass: the two files must come from the same
+    `poseidon_fixture` run, because proof bytes move every run (OsRng quotient-limb
+    blinding, `proofs/src/plonk/prover.rs:126`) and a stale pair compares two
+    different proofs. -/
 def repackProof_scalarLeg_matchesRust_ok : IO Bool :=
   poseidonPlanFromArtifacts >>= fun mp =>
   readDumpProofBin >>= fun comp =>
   readDumpCalldataBin >>= fun cd =>
-  pure (match mp with
-    | none => true
-    | some plan =>
-        if comp.size == 0 || cd.size == 0 then true
-        else match repackProof toyCodec plan comp with
-          | .error _ => false
-          | .ok out =>
-              match bytesTake cd 0x64 out.size with
-              | none => false
-              | some real =>
-                  out.size == real.size && out.size == plan.repackedLen
-                    && (List.range plan.numEvals).all (fun i =>
-                        bytesTake out (fixtureEvalOffset plan + i * wordBytes) wordBytes
-                          == bytesTake real (fixtureEvalOffset plan + i * wordBytes) wordBytes)
-                    && (List.range plan.numPointSets).all (fun i =>
-                        bytesTake out (fixtureQEvalOffset plan + i * wordBytes) wordBytes
-                          == bytesTake real (fixtureQEvalOffset plan + i * wordBytes) wordBytes)
-          )
+  match mp with
+  | none => dumpBytesAbsent
+      "the derived poseidon plan (needs the tracked Halo2Verifier.sol AND dump proof.bin)"
+  | some plan =>
+      if comp.size == 0 then dumpBytesAbsent "target/poseidon-fixture-dump/proof.bin"
+      else if cd.size == 0 then dumpBytesAbsent "target/poseidon-fixture-dump/calldata.bin"
+      else pure (match repackProof toyCodec plan comp with
+        | .error _ => false
+        | .ok out =>
+            match bytesTake cd 0x64 out.size with
+            | none => false
+            | some real =>
+                out.size == real.size && out.size == plan.repackedLen
+                  && (List.range plan.numEvals).all (fun i =>
+                      bytesTake out (fixtureEvalOffset plan + i * wordBytes) wordBytes
+                        == bytesTake real (fixtureEvalOffset plan + i * wordBytes) wordBytes)
+                  && (List.range plan.numPointSets).all (fun i =>
+                      bytesTake out (fixtureQEvalOffset plan + i * wordBytes) wordBytes
+                        == bytesTake real (fixtureQEvalOffset plan + i * wordBytes) wordBytes))
 
-/-- GATE 16 (D-P19, UNTRACKED-CONDITIONAL). The G1 leg's POSITIONS and PADDING
-    against the real repacked proof: at each of the prefix-plus-two slots my walk
-    emits, the Rust's bytes have the 16-byte high pad on both coordinates, and the x
-    word's leading byte is the compressed block's leading byte with the ZCash
+/-- GATE 16 (D-P19; R.5 makes it unconditional). The G1 leg's POSITIONS and
+    PADDING against the real repacked proof: at each of the prefix-plus-two slots my
+    walk emits, the Rust's bytes have the 16-byte high pad on both coordinates, and
+    the x word's leading byte is the compressed block's leading byte with the ZCash
     compression bits masked off. The square root is the codec's, not this package's
-    (D-P17); the FRAME this package builds is checked against real bytes. -/
+    (D-P17); the FRAME this package builds is checked against real bytes. Absent
+    bytes are a NAMED FAILURE, not a pass - same reason as GATE 15. -/
 def repackProof_g1Frame_matchesRust_ok : IO Bool :=
   poseidonPlanFromArtifacts >>= fun mp =>
   readDumpProofBin >>= fun comp =>
   readDumpCalldataBin >>= fun cd =>
-  pure (match mp with
-    | none => true
-    | some plan =>
-        if comp.size == 0 || cd.size == 0 then true
-        else
+  match mp with
+  | none => dumpBytesAbsent
+      "the derived poseidon plan (needs the tracked Halo2Verifier.sol AND dump proof.bin)"
+  | some plan =>
+      if comp.size == 0 then dumpBytesAbsent "target/poseidon-fixture-dump/proof.bin"
+      else if cd.size == 0 then dumpBytesAbsent "target/poseidon-fixture-dump/calldata.bin"
+      else
           let repackedSlots : List Nat := (List.range plan.prefixG1Count).map (fun i => i * g1Bytes)
             ++ [fixtureQEvalOffset plan - g1Bytes, plan.repackedLen - g1Bytes]
           let compressedSlots : List Nat :=
             (List.range plan.prefixG1Count).map (fun i => i * g1CompressedBytes)
               ++ [fixtureFComCompressed plan, comp.size - g1CompressedBytes]
-          repackedSlots.length == compressedSlots.length
+          pure (repackedSlots.length == compressedSlots.length
             && repackedSlots.length == plan.prefixG1Count + 2
             && (repackedSlots.zip compressedSlots).all (fun rc =>
                  let rp := rc.1
@@ -828,21 +898,21 @@ def repackProof_g1Frame_matchesRust_ok : IO Bool :=
                       | some hx, some hc => hx % 32 == hx && hc % 32 == hx
                       | _, _ => false))
 
-/-- GATE 17 (D-P19, UNTRACKED-CONDITIONAL). The whole envelope: re-encoding the
-    Rust's own repacked proof with the Rust's own instance word must reproduce
+/-- GATE 17 (D-P19; R.5 makes it unconditional). The whole envelope: re-encoding
+    the Rust's own repacked proof with the Rust's own instance word must reproduce
     calldata.bin byte for byte. This is the strongest form of the round trip and
-    exactly the gate the brief asked for; it is conditional only because the artifact
-    is gitignored. Note instance.be is a to_repr, i.e. LITTLE-endian despite the
-    name, which is what feToU256 expects. -/
+    exactly the gate the brief asked for. Note instance.be is a to_repr, i.e.
+    LITTLE-endian despite the name, which is what feToU256 expects. -/
 def encodeCalldata_matchesDumpCalldata_ok : IO Bool :=
   readDumpCalldataBin >>= fun cd =>
   readDumpInstanceBe >>= fun inst =>
-  pure (if cd.size == 0 || inst.size != 32 then true
-    else match bytesTake cd 0x64 (cd.size - 0x64 - 0x40) with
-      | none => false
-      | some proof => match feToU256 (bytesToNats inst) with
-        | .ok w => encodeCalldata proof [w] == cd && cd.size == 4484
-        | .error _ => false)
+  if cd.size == 0 then dumpBytesAbsent "target/poseidon-fixture-dump/calldata.bin"
+  else if inst.size != 32 then dumpBytesAbsent "target/poseidon-fixture-dump/instance.be"
+  else pure (match bytesTake cd 0x64 (cd.size - 0x64 - 0x40) with
+    | none => false
+    | some proof => match feToU256 (bytesToNats inst) with
+      | .ok w => encodeCalldata proof [w] == cd && cd.size == 4484
+      | .error _ => false)
 
 /-! ## HAZARD 1: what the decoder actually accepts -/
 

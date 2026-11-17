@@ -195,6 +195,36 @@ fn poseidon_renders_compiles_and_verifies() {
         <F as ff::PrimeField>::to_repr(&instance).as_ref(),
     )
     .ok();
+
+    // R.5: repack and encode the calldata HERE, in the same block as the proof it
+    // repacks, and BEFORE the pinned-solc early return. Two reasons, both learned
+    // the hard way.
+    //
+    // (1) The dump is the Lean repack oracle (formal/Midfall/Generator/Calldata.lean
+    //     GATES 15-17) and those gates compare THIS run's proof.bin against THIS
+    //     run's calldata.bin. While the calldata write sat below
+    //     pinned_solc_available(), a host without the pinned solc rewrote proof.bin
+    //     and left calldata.bin at whatever an OLDER run had written - a
+    //     mixed-vintage directory, and gates that failed for a reason that had
+    //     nothing to do with the Lean walk. The committed dump was in exactly that
+    //     state: proof.bin from one run, calldata.bin from another.
+    // (2) Proof bytes are NOT reproducible between runs, so the pair can only ever
+    //     be made consistent by producing it in one run. blind_quotient_limbs
+    //     (proofs/src/plonk/prover.rs:121-131) takes no rng parameter and draws
+    //     F::random(OsRng) at prover.rs:126, so the inter-limb blinding scalars
+    //     come from the OS regardless of the seeded witness (42) and prover (0xdebd)
+    //     RNGs above. Two runs agree for the first 720 bytes (15 pre-quotient point
+    //     reads) and diverge from byte 721, the first quotient-limb commitment. Both
+    //     proofs verify. Nothing in this crate can seed that away: it is baseline
+    //     code, and D-P58 (b) says do not touch it.
+    //
+    // Re-pack the prover's 48-byte compressed G1 commitments into the
+    // 128-byte EIP-2537 form expected by the generated Solidity.
+    let repacked_len = generator.repack_proof(&proof).expect("proof repack should succeed").len();
+    let calldata = generator
+        .encode_calldata(&proof, &[instance])
+        .expect("calldata encoding should succeed");
+    std::fs::write(format!("{dump_dir}/calldata.bin"), &calldata).ok();
     eprintln!(
         "[poseidon_fixture] proof = {} bytes, vk_solidity = {} bytes, verifier_solidity = {} bytes; \
          dumps under {dump_dir}",
@@ -217,13 +247,8 @@ fn poseidon_renders_compiles_and_verifies() {
     let vk_address = evm.create(vk_creation_code);
     let verifier_address = evm.create_with_address_arg(verifier_creation_code, vk_address);
 
-    // Re-pack the prover's 48-byte compressed G1 commitments into the
-    // 128-byte EIP-2537 form expected by the generated Solidity.
-    let repacked_len = generator.repack_proof(&proof).expect("proof repack should succeed").len();
-    let calldata = generator
-        .encode_calldata(&proof, &[instance])
-        .expect("calldata encoding should succeed");
-    std::fs::write(format!("{dump_dir}/calldata.bin"), &calldata).ok();
+    // R.5: repacked_len and calldata are bound above, next to the proof they were
+    // built from, so the dump directory is always ONE vintage.
     eprintln!(
         "[poseidon_fixture] calldata = {} bytes (compressed_proof={}, repacked={}, instances={})",
         calldata.len(),
