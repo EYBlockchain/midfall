@@ -3,9 +3,9 @@
 Ready-to-brief cards for `PLAN-V3.md`, in the `QUEUE.md` card format (EXECUTION-V2 §3). The area
 cards were written by the six design passes behind PLAN-V3, each from measurements and typechecked
 Lean under `docs/plans/V3-evidence/lean/`; the plan-level cards at the end were written with the
-plan. **They are PROPOSED: no card may be briefed before the decision it names is signed (PLAN-V3
-§2.2), and the orchestrator re-checks each card's NEEDS at the current commit before briefing
-(EXECUTION-V2 §2.3).**
+plan. **The decisions they name, D-P60–D-P69, were signed on 2026-11-17 (`design.md`). A card still
+waits for the conditions its decision records, and the orchestrator re-checks each card's NEEDS
+at the current commit before briefing (EXECUTION-V2 §2.3).**
 
 - **Order, milestones and exit gates:** PLAN-V3 §5. This file is grouped by area, not by order.
 - **Ids.** `REF.n` reference side, `OBJ.n` object, `ST.n` statements, `SIM.n` soundness
@@ -37,7 +37,9 @@ plan. **They are PROPOSED: no card may be briefed before the decision it names i
 
 ## M1 and M4 — the reference side  (waits for: D-P61, D-P62, D-P63; 16 cards, 25 box-hours)
 
-### REF.D — Reference-side decisions
+### REF.D — Reference-side decisions  **[DONE — signed 2026-11-17]**
+
+> **Do not run.** D-P61, D-P62 and D-P63 were signed by the human on 2026-11-17 (after `53bf8c1`) and are recorded in `design.md` with their conditions. What remains of this card is those conditions, which the cards that name each decision apply.
 
 DECISION · DECISION · box 0.5 h · orchestrator + human · after PL.0 or earlier
 
@@ -308,7 +310,9 @@ ALG · PROBE · box 1 h · Sonnet · after REF.6, REF.11
 
 ## M2 — the object  (waits for: D-P65, D-P67; 18 cards, 31.5 box-hours)
 
-### OBJ.0 — Object decisions: the scope, and `ValidV3`
+### OBJ.0 — Object decisions: the scope, and `ValidV3`  **[DONE — signed 2026-11-17]**
+
+> **Do not run.** D-P65 and D-P67 were signed by the human on 2026-11-17 (after `53bf8c1`) and are recorded in `design.md` with their conditions. What remains of this card is those conditions, which the cards that name each decision apply.
 
 DECISION · DECISION · box 0.5 h · orchestrator + human · after PL.0 or earlier
 
@@ -595,6 +599,8 @@ GEN · PROBE · box 1 h · Sonnet · after OBJ.7
 
 ### OBJ.17 — Name the target: fixture F1
 
+> The naming clause is signed (D-P60). This card is the docs edit that applies it.
+
 DECISION · DECISION · box 0.5 h · orchestrator + human · after —
 
 - **Goal.** The human signs or strikes the naming clause of D-P60 of PLAN-V3 §2.2, and `design.md` quotes the sign-off
@@ -637,7 +643,9 @@ INFRA · STATEMENT · box 1.5 h · Sonnet · after —
 - **Stop if.** Any of the three files fails to compile at the ticket's base commit (a Lean source changed since 2cad8cc): stop and report the first error; do not repair statements inside this ticket.
 - **Guidance.** The Falsifiers file has theorems and imports Instances, so it must live under Midfall/Instances (D-P17). Do not use `simp` on anything containing `List.replicate (2 ^ 256) _`. `native_decide` appears only in the Deploy file, for `poseidon_delta_not`.
 
-### ST.2 — Statement-surface decisions
+### ST.2 — Statement-surface decisions  **[DONE — signed 2026-11-17]**
+
+> **Do not run.** D-P64 and D-P66 were signed by the human on 2026-11-17 (after `53bf8c1`) and are recorded in `design.md` with their conditions. What remains of this card is those conditions, which the cards that name each decision apply.
 
 DECISION · DECISION · box 0.5 h · orchestrator + human · after ST.1
 
@@ -934,7 +942,9 @@ ALG · PROBE · box 2 h · Sonnet · after ST.14
 
 ## M3 and M6 — the soundness architecture  (waits for: D-P68; 13 cards, 25.5 box-hours)
 
-### SIM.0 — Block architecture and proof technology
+### SIM.0 — Block architecture and proof technology  **[DONE — signed 2026-11-17]**
+
+> **Do not run.** D-P68 were signed by the human on 2026-11-17 (after `53bf8c1`) and are recorded in `design.md` with their conditions. What remains of this card is those conditions, which the cards that name each decision apply.
 
 DECISION · DECISION · box 0.5 h · orchestrator + human · after ST.1
 

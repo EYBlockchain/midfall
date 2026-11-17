@@ -13,19 +13,20 @@ when its `after` tickets are merged.
 - **Facts.** "Measured" facts below were measured at `15c0b3a` (2026-11-16). The orchestrator
   re-checks them at the current commit before briefing (EXECUTION-V2 §2.3).
 
-## ⚠ PLAN-V3 is PROPOSED (2026-11-17) — flags on READY cards; nothing changes until D-P60 is signed
+## ✅ PLAN-V3 ADOPTED (D-P60–D-P69 signed 2026-11-17) — run PL.0 next; the flags below apply until it has run
 
 A review (`docs/plans/REVIEW-V3.md`) and a revised plan (`docs/plans/PLAN-V3.md`, cards in
-`docs/plans/PLAN-V3-cards.md`) are in the tree, **unsigned**. This queue stays the live queue. The
+`docs/plans/PLAN-V3-cards.md`) are in the tree, and **D-P60–D-P69 are signed** (`design.md`).
+This queue stays the live queue; card PL.0 below enters the V3 cards and marks the cards here. The
 flags below are **leads** (EXECUTION-V2 §2.3): verify each at the current commit before a brief
 relies on it. Reproducer for all of them: `bash docs/plans/V3-evidence/check.sh` (or one area:
 `probes`, `statements`, `soundness`, `prooftech`, `reference`, `object`, `tooling`). The full table
-is PLAN-V3 §10.1; the drafts for signature are `docs/DECISIONS-PENDING.md` §12.
+is PLAN-V3 §10.1; the signed records are `design.md` D-P60–D-P69.
 
 | card | flag |
 |---|---|
-| **G1.1–G1.3 batch** | **Do not merge G1.2 without the scope repair** (needs D-P65, unsigned): with `q_program_fail` / `q_pow5` in the `.quotientLin` slice, `prog_slices_decomp`'s second conjunct (`Blocks.lean:224`) is false and the frozen `Render.scope` (`Statements.lean:109`, outside D-P52) lacks both functions. G1.3's 895 / 5,489 split is measured as 5,431 / 953 |
-| **R.4** | Its first hour has an answer: an axiom-free route exists (constructed pairing, the SRS point as data). No G2 axiom is needed (needs D-P62 to land as designed) |
+| **G1.1–G1.3 batch** | **Do not merge G1.2 without the scope repair** (D-P65, signed: the batch's frozen diff is `Program.lean` and `Statements.lean`): with `q_program_fail` / `q_pow5` in the `.quotientLin` slice, `prog_slices_decomp`'s second conjunct (`Blocks.lean:224`) is false and the frozen `Render.scope` (`Statements.lean:109`, outside D-P52) lacks both functions. G1.3's 895 / 5,489 split is measured as 5,431 / 953 |
+| **R.4** | MERGED INTO REF.4–REF.6 at PL.0 (D-P62, signed: constructed pairing, the SRS point as data, no G2 axiom). Do not add D-P55's G2 axiom |
 | **R.4b** | A *computable* G1 decoder exists and equals the `Classical.choose` one on the EIP half; prefer it |
 | **R.5** | The non-determinism is `OsRng` in `blind_quotient_limbs` (`proofs/src/plonk/prover.rs:126`), baseline code: D-P58's fallback (3) applies |
 | **R.8**, **R.9** | Frozen `Valid.circuitMeta` forces `numPointSets = 0`; a faithful plan has 3. Exporting or proving more cannot close clauses 1 and 2 together |
@@ -53,7 +54,7 @@ INFRA · KAT · box 1 h · Sonnet · after —
 - **Stop if.** A gate other than the two annotations fails once the total is corrected: report it
   with its file and line, do not adjust its expectation.
 
-### PL.0 — Cut over to PLAN-V3  **[BLOCKED: D-P60 unsigned — `docs/DECISIONS-PENDING.md` §12]**
+### PL.0 — Cut over to PLAN-V3  **[READY — D-P60 signed off 2026-11-17; RUN NEXT]**
 INFRA · DECISION · box 0.5 h · orchestrator, no subagent · after D-P60 is signed in `design.md`
 
 - **Goal.** This queue, `STATUS.md` and `PLAN.md` point at PLAN-V3, with nothing proved deleted and
@@ -61,8 +62,7 @@ INFRA · DECISION · box 0.5 h · orchestrator, no subagent · after D-P60 is si
 - **Card.** Full text: `docs/plans/PLAN-V3-cards.md`, card PL.0. Mapping of every live card
   (CONTINUES / MERGED INTO / SUPERSEDED): PLAN-V3 §10.2. Order of the V3 cards: PLAN-V3 §5, the
   table "Every card, by milestone".
-- **READY when.** `grep -n '^## D-P60' docs/design.md` shows an entry with a W2 sign-off line. Until
-  then this card is skipped and the queue runs as it is.
+- **READY.** `design.md` D-P60 carries the W2 sign-off line (2026-11-17, after `53bf8c1`).
 
 ## CUT-OVER — the orchestrator does these itself (EXECUTION-V2 §1)
 

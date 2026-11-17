@@ -1,8 +1,8 @@
 # PLAN-V3 — prove the Lean verifier equivalent to the Yul emitted by the Lean codegen, on a real object, against a Rust-faithful reference
 
-**STATUS: PROPOSED (2026-11-17). Nothing here is in force.** It becomes the active plan only when
-the human signs D-P60 (§2) and `design.md` quotes the sign-off (EXECUTION-V2 W2). Until then
-`PLAN-V2.md` and `QUEUE.md` stand.
+**STATUS: ADOPTED (2026-11-17).** The human signed D-P60–D-P69 (§2.2) after `53bf8c1`; `design.md`
+quotes the sign-off (EXECUTION-V2 W2). Each decision's conditions are recorded in its entry and
+still apply. The cut-over is card PL.0 (§10.2); until it has run, `QUEUE.md` is worked as it is.
 
 Handover brief for the orchestrator and for the human who signs. Self-contained: read §0–§4 before
 touching anything. Paths are relative to `formal/` unless they start with `proofs/`.
@@ -103,9 +103,11 @@ signed, the signed decisions apply as written.
 | D-P58 | Find the source of fixture non-determinism; fallback if it is in baseline code | **Source found**: `blind_quotient_limbs` draws from `OsRng` (`proofs/src/plonk/prover.rs:126`). That is baseline code, so D-P58's fallback (3) applies. D-P69 extends the export instead of seeding the prover |
 | D-P59 | Fix `permutationCommitmentsMatch` | **Unchanged** (R.7 = REF.3) |
 
-### 2.2 Requested (all PROPOSED; next free number is D-P60)
+### 2.2 Signed (2026-11-17): D-P60–D-P69
 
-Record each verbatim in `design.md` when signed. "Frozen" means a `Frozen.sha256` re-hash.
+Recorded in `design.md` with their conditions. Two points of the sign-off narrow this table: the
+optional `EntryFrameV3'` of row 64 is **not** taken, and the "if struck" fallbacks below are **not**
+pre-approved (an unmet condition stops its card). "Frozen" means a `Frozen.sha256` re-hash.
 
 | D-P | decision | recommended | touches |
 |---|---|---|---|

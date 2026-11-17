@@ -67,10 +67,11 @@ Kept as a heading so QUEUE.md's §11 references stay valid.
   human wants evidence that `LeanAccepts` is satisfiable at all, the route is a toy render with a
   known `s` — not queued.
 
-## 12. PLAN-V3 — ten decisions, D-P60–D-P69 — UNSIGNED (2026-11-17)
+## 12. PLAN-V3 — ten decisions, D-P60–D-P69 — SIGNED OFF (2026-11-17), recorded as D-P60–D-P69 in `design.md`
 
 An independent review of `formal/` (`docs/plans/REVIEW-V3.md`, 46 findings) and a revised plan
-(`docs/plans/PLAN-V3.md`) were added on 2026-11-17. **Nothing in them is in force.** The full text,
+(`docs/plans/PLAN-V3.md`) were added on 2026-11-17. **All ten were signed off by the human on 2026-11-17, after `53bf8c1`** (see D-P60 for how).
+Their conditions still apply, as recorded in each entry. The full text,
 recommendation and "if struck" consequence of each row is PLAN-V3 §2.2; how each relates to the
 signed D-P45–D-P59 is PLAN-V3 §2.1. Evidence: `bash docs/plans/V3-evidence/check.sh` (about six
 minutes, writes nothing into the repository).
@@ -88,4 +89,4 @@ minutes, writes nothing into the repository).
 | 68 | Staged block contracts and the `wp` engine; thresholds replace D-P57's hand-proof fallback | after RECON.2 |
 | 69 | DONE as one Lean term with `#assert_axioms`; closure fingerprint; CI on this branch; exporter schema 2 | — |
 
-Decision: ______ · Signed off: ______   (one line per row, in `design.md`)
+Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` — recorded in `design.md` D-P60–D-P69.

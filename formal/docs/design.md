@@ -2152,3 +2152,211 @@ and correct its docstring bullet (`:99-102`) and `Halo2/Spec/Degrees.lean:102` i
 - **Card stops if** the Lean permutation verifier port indexes `vk.permutation.commitments` by chunk
   rather than by column: that would be a port defect, larger than this field, and needs its own
   decision.
+
+## D-P60 — **Approved: D-V3 — adopt PLAN-V3**
+
+> Drafted as PLAN-V3 §2.2 row 60 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**How D-P60–D-P69 were signed.** The human instructed, in session after `53bf8c1`: *"sign off D-P60 to
+D-P69 in design.md"*. The text of each entry is PLAN-V3 §2.2's row, recorded verbatim with the
+conditions that row states. As with D-P53, this is a **one-time human sign-off of the listed
+entries, not a delegation**: W2 stands, the orchestrator gains no authority, and nothing not written
+in these entries is approved. Where an entry carries a condition ("after RECON.1", "before the G1
+batch merges"), the orchestrator applies the condition; it does not choose. Where a condition is
+not met, the card that depends on it stops and reports; the "if struck" fallbacks of PLAN-V3 §2.2
+are **not** pre-approved.
+
+**Decision.** Adopt `docs/plans/PLAN-V3.md` as the active plan, with `docs/plans/PLAN-V3-cards.md`
+as its cards and `docs/plans/REVIEW-V3.md` as the findings it rests on.
+- Stop SEM block rows about the present render (S.4–S.7, T.3–T.5, C.3, C.5, M.1) until M4's exit
+  gate (W14); the rows already proved are kept. This holds T.3, S.5 and S.6, which D-P57 had
+  sequenced after T.2b: **an amendment of D-P57's order.**
+- Name the target "fixture F1", never "the deployment".
+- Add rules W12–W15 (PLAN-V3 §4) to W1–W11.
+- The cut-over is PLAN-V3 §10, performed by card PL.0 (now READY). The goal prompt is unchanged:
+  `PLAN-V2.md`'s banner and §6 note, and `EXECUTION-V2.md`'s note, redirect to PLAN-V3 from this
+  signature on.
+- **Must not be done** (PLAN-V3 §2.2): deleting `SoundSide` from `Rejects` (RV-10).
+
+## D-P61 — **Approved: two further reference repairs in `Halo2/Exec` — grouping by allocation slot, semantic `Rotation` equality**
+
+> Drafted as PLAN-V3 §2.2 row 61 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** Two edits to v1 `Halo2/Exec` files, beside D-P59's, as a **recorded exception to "do
+not edit v1 `.lean` files"**:
+1. Multi-open grouping by `CommitSlot` (card REF.1): one-piece commitments are compared by an
+   explicit allocation slot, as Rust compares them by pointer (`proofs/src/poly/query.rs:125`),
+   not by value (`Exec/Kzg/MultiOpen.lean:42`).
+2. Semantic `BEq Rotation` (card REF.2): equality of the integer, as Rust's `Rotation(pub i32)`.
+
+**Why.** They change what the frozen `LeanAccepts` *means*: today it is false for every proof of the
+fixture key (REVIEW-V3 RV-03, RV-04, machine-checked in `V3-evidence/ReviewProbes.lean` §3).
+- Line counts of the edited files unchanged, or `SORRY.md` regenerated in the same commit (as
+  D-P59).
+- The two KAT clauses that pin the old behaviour (`Circuit.lean:1892`, `:2083`) flip in the same
+  commit; that flip is the falsifier.
+- The cards stop if a further divergence from Rust appears on the fixture: it is reported, not
+  absorbed.
+
+## D-P62 — **Approved: the curve assumption — construct the pairing; the SRS point is data (amends D-P55 steps 2–3)**
+
+> Drafted as PLAN-V3 §2.2 row 62 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.**
+- **(a)** Replace the five D-P36a axioms by the constructed pairing `e(P, k) = k • P` on
+  `(G₁z, G2fold, G₁z)` with `g₁ := g1zGen`, `g₂ := g2foldExp 1`. **No G2 cyclicity axiom**: D-P55
+  step 2 is withdrawn.
+- **(b)** The SRS point is data: `poseidonRenderAt s`, with the hypothesis `SrsEncodes s` only for
+  an SRS whose trapdoor is unknown, instead of `Classical.choose` over an axiom (D-P55 step 3).
+- **(c)** The deployment codec is the computable `g1CodecC` (it equals `g1CodecZ` on the EIP half,
+  `g1CodecC_ofEip`), which implements D-P55 step 1.
+
+**Trust-base change, stated plainly:** the headline's axiom list **shrinks** to `propext`,
+`Classical.choice`, `Quot.sound` and the recorded `native_decide` axioms. In the same commit:
+`check_frozen_axioms.py:126-131`, `check_hypothesis_bundles.py:130` and PLAN-V2's axiom lists
+(§6; the lines D-P55 names) change from "five D-P36a" to none. `Eip2537.Holds` at the constructed
+pairing says of the real EVM what it said before: G1ADD, G1MSM, MODEXP agree with `Externals.lean`,
+and PAIRING_CHECK on `(P₁, k₁H₂), (P₂, k₂H₂)` returns 1 iff `k₁P₁ + k₂P₂ = 0`.
+- Cards REF.4, REF.5, REF.5g, REF.6; QUEUE R.4 and R.4b are MERGED INTO them (PLAN-V3 §10.2).
+- Stop if `#print axioms holds_exhibited_noAxiom` is not the standard three.
+
+## D-P63 — **Approved: a test SRS with a known trapdoor for fixture F1 (amends D-P58's fallback 3)**
+
+> Drafted as PLAN-V3 §2.2 row 63 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** Regenerate F1 with a seeded `ParamsKZG::unsafe_setup` whose trapdoor is exported
+(card REF.11, run first in M1), so acceptance, the `−s·G₂` pin and the generator's own SRS check
+become computations. This **amends D-P58's fallback 3** ("keep the committed `proof.bin`/`trace.json`
+as the pinned ground truth"): the committed bundle is kept as a second instance of the reference
+gate (REF.8), and F1 becomes the new bundle.
+
+**Consequence accepted.** Every F1 measurement of PLAN-V3 §3 and every `native_decide` pin on
+fixture data is re-taken on the new bundle; REF.11 runs before any of them for that reason.
+**Stated limit, for the English statement:** F1's trapdoor is public, so the equivalence holds but
+no soundness of the proof system is claimed for this SRS; `SrsEncodes` is not a hypothesis of
+`Done`.
+- REF.11 does not seed the prover in `proofs/src` (the non-determinism is `OsRng` in
+  `blind_quotient_limbs`, `prover.rs:126`, baseline code): gates compare Lean with the `trace.json`
+  and EVM result of the same bundle, pinned by a manifest.
+- Stop if the regenerated bundle is a different circuit or key shape from F1 (a scope question).
+
+## D-P64 — **Approved: the statement surface V3 (frozen)**
+
+> Drafted as PLAN-V3 §2.2 row 64 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** In one signed re-hash of the frozen surface: `calldataOf` as `repackThenEncode`;
+`EntryFrameV3` (adds `cd.size < 2^256`); `G1CodecHeadlineLaws` as a hypothesis of every conjunct;
+conjunct 4 (totality); `EndToEndV3`. Text: `docs/plans/V3-evidence/lean/statements/StatementsV3.lean`,
+landed first as a staging module by ST.1.
+
+**Condition (applied, not chosen):** the re-hash lands only after ST.1 has landed the compiled text
+in the tree and M2 its witnesses (W12). The card shows the one-commit hash diff.
+- **The option is NOT taken by this sign-off.** PLAN-V3 offered, in the same re-hash, zero memory
+  from `TRANSCRIPT_MPTR` instead of from `0x80` (`EntryFrameV3'`). The headline keeps zero memory
+  from `0x80`; taking the option needs its own decision.
+- Witness and falsifiers: `StatementsV3Deploy.lean`, `StatementsV3Falsifiers.lean`.
+
+## D-P65 — **Approved: the block scope, in D-P52's re-hash (amends D-P52's frozen-diff condition)**
+
+> Drafted as PLAN-V3 §2.2 row 65 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** The block scope becomes `[hoist helpers ++ hoist slices]` and `Render.slices` moves
+into `Statements.lean`. Without it, `prog_slices_decomp`'s second conjunct is false the moment G1.2
+puts `q_program_fail` into a slice (RV-13).
+
+**This amends D-P52's condition** "the frozen diff is `Program.lean` only, with exactly one
+`Frozen.sha256` line changed": the G1 batch's frozen diff is now `Program.lean` **and**
+`Statements.lean`, with those two hash lines changed, in one commit. Per PLAN-V3 §5 M2 the same
+re-hash also carries OBJ.2's `Program.lean` signature edits.
+
+**Condition (applied, not chosen): in force before the G1 batch merges G1.2.** The batch stops if
+the scope edit is not in it. Evidence: copies of the five block files compile with no proof edit
+under this scope (`design/statements.md` §2(d)); the alternative `[hoist (R.prog 0 0)]` breaks
+`fail_lookup := rfl` and is rejected.
+
+## D-P66 — **Approved: the non-vacuity gate for F1 (amends D-P45)**
+
+> Drafted as PLAN-V3 §2.2 row 66 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** `HypothesesInhabitedV3`: the hash is pinned to `keccak256`; `LeanAccepts` is added
+back; `G1CodecHeadlineLaws` replaces `G1CodecLaws`. Text: `StatementsV3.lean`
+(`HypothesesInhabitedV3`).
+
+**Why D-P45 is amended.** D-P45 left out `LeanAccepts` because at a real SRS it is
+undischargeable. Its condition here, D-P63, is approved: at F1's test SRS `LeanAccepts` is a
+computation (`check_iff_g1`). An existential hash let the gate be met by an artificial hash and a
+forged transcript (REVIEW-V3 RV-35), so it is pinned. Q0.5 (D-P45) runs as queued; this text
+replaces it at ST.4.
+- Stop if the F1 accepted calldata cannot be produced (REF.12): then the gate stays D-P45's text
+  with the hash pinned, and the human is told.
+
+## D-P67 — **Approved: `ValidV3` (frozen), seven clauses**
+
+> Drafted as PLAN-V3 §2.2 row 67 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.** `Render.Valid` becomes seven clauses: `generated`, `inputs`, `program`, `noWriters`,
+`env`, `payload`, `supported`. It subsumes the 13-clause text, `vkPins`, `vkProgressPins`, and
+D-P46's and D-P48's pins (which stay in force until this lands). It adds the structural tie
+`codegenStruct` (AST = parse of the text).
+
+**Conditions (applied, not chosen).** The re-hash lands only when (1) RECON.1 has produced the
+single text of `ValidV3`, `PayloadAgrees` and `programOk` (the two typechecked drafts differ;
+PLAN-V3 §3, "Known gaps") and (2) OBJ.7 shows `generateAll` reproduces the Rust artifact. If either
+fails, the card stops and the human decides; PLAN-V3's "if struck" fallback is **not**
+pre-approved.
+- `delta` is pinned through `generated`, not through `payload` (`inputs.frDelta` is inert at F1);
+  RECON.1 shows it by `#eval`.
+
+## D-P68 — **Approved: staged block contracts and the `wp` proof technology (refinable §6/§7; replaces D-P57's fallback)**
+
+> Drafted as PLAN-V3 §2.2 row 68 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.**
+- **Architecture.** `StageInv`, `BlockSim`, `BlockProgS`; `Render.Rejects` becomes a corollary;
+  `rejects_of_not_accepts`, `prefix_run_clean`, `runBody_iff_slices` are deleted. The x = 0 row is
+  closed by the decidable pin `hasMultiPointSet`. Recorded because it replaces signed §6 shapes
+  (D-P49's gate carries over to `BlockSim`).
+- **Technology.** Rows are proved per fixture on literal slices pinned by `native_decide`, with the
+  verified `wp` engine (`wp_sound`). The certificate strategy is chosen by card T3.0's measured
+  table.
+- **D-P57's hand-proof fallback is replaced** by the go/no-go thresholds of PLAN-V3 §5 M5; at
+  calibration point C a miss means **stop and re-plan with the human** (the reflective executor is
+  not pre-approved).
+
+**Condition (applied, not chosen):** the architecture lands after RECON.2, which makes the staged
+rows conclude the four V3 obligations and adds `cdSize` to `Frame` (as written, `SimContracts` is
+false for calldata of 2²⁵⁶ bytes or more; PLAN-V3 §5 M3). Adding a field to `Frame` is within §6's
+refinement rules.
+
+## D-P69 — **Approved: the definition of done as one Lean term, and the fixture bundle (extends D-P58)**
+
+> Drafted as PLAN-V3 §2.2 row 69 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` (instruction:
+> *"sign off D-P60 to D-P69 in design.md"*; see D-P60 for how the batch was signed).
+
+**Decision.**
+- DONE is the Lean structure `Done` (PLAN-V3 §6), checked by `#assert_axioms` with a frozen
+  allow-list (standard three plus named `native_decide` owners). This replaces PLAN-V2 §6.
+- The closure fingerprint of the frozen statements joins `Frozen.sha256` (card DG.3, after M1:
+  D-P61's edits change the closure of `LeanAccepts`).
+- CI runs on `formal/baseline` (card DG.7).
+- Exporter schema 2 (card REF.11, extends D-P58): `calldata.bin`, the EVM result, a mutation
+  corpus with Rust verdicts, `build.json`, both `.sol` dumps, a manifest.

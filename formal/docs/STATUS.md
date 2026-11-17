@@ -5,17 +5,15 @@
 **Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
-## ⚠ WAITING ON HUMAN — PLAN-V3 proposed (2026-11-17); ten decisions D-P60–D-P69, unsigned
+## ✅ PLAN-V3 ADOPTED — D-P60–D-P69 signed off by the human (2026-11-17, after `53bf8c1`)
 
 An independent review and a revised plan are in `docs/plans/` (`REVIEW-V3.md`, `PLAN-V3.md`,
-`PLAN-V3-cards.md`, evidence under `V3-evidence/`). **PLAN-V2 and this queue stay in force until
-D-P60 is signed.** What the orchestrator does meanwhile: read `QUEUE.md`'s PLAN-V3 banner before
-picking a card (it flags the G1 batch, R.4, R.4b, R.5, R.8, R.9, T.2b, T.3); treat each flag as a
-lead and verify it. Most urgent for the human: **D-P65** (the block scope must change in the same
-re-hash as the G1.1–G1.3 batch) and **D-P61** (the Lean verifier rejects every proof of the fixture
-key today). Drafts: `docs/DECISIONS-PENDING.md` §12. Cut-over when signed: card PL.0 in `QUEUE.md`. **The goal
-prompt does not change**: `PLAN-V2.md`'s banner and §6 redirect to PLAN-V3 once D-P60 is signed.
-READY now and needing no decision: card **DG.0** (the KAT gate is red at the tip).
+`PLAN-V3-cards.md`, evidence under `V3-evidence/`). **D-P60 is signed, so PLAN-V3 is the active plan**: `PLAN-V2.md`'s banner and §6 note and
+`EXECUTION-V2.md`'s note now redirect to it, and the goal prompt is unchanged. **Next: card PL.0**
+(the cut-over, docs only, the orchestrator itself), with **DG.0** (the KAT gate is red at the tip).
+**In force now:** D-P65 — the G1.1–G1.3 batch must carry the block-scope repair, or it does not
+merge G1.2. Every decision's conditions are recorded in its `design.md` entry and are applied, not
+chosen; an unmet condition stops its card. Records: `design.md` D-P60–D-P69; `docs/DECISIONS-PENDING.md` §12.
 
 **TICKET M0.1 (probe, `252ea1d`; table landed in `docs/QUEUE.md` under M0.1):** the 7×4 block-frame
 table was computed in ONE lean run and **the orchestrator re-ran it and reproduced every headline
