@@ -142,8 +142,23 @@ EVAL = re.compile(
 # field and not a constant). No gate was deleted or edited and the file count does not move
 # (GenAst.lean was already in the suite). All three were run through `lake env lean` before this
 # line moved and all three print true.
-EXPECTED_KAT_TOTAL = 1400
-EXPECTED_KAT_FILES = 102
+# ST.1 moved both pins deliberately, in the commit that landed the V3 staging surface.
+# TWO NEW ANNOTATED GATES, both in the new module Midfall/LoweringV3/Statements.lean, both run
+# through `lake env lean` before this line moved and both printing the value written next to them:
+# calldataOfV3_witness_ok -- expect true (the repaired repack-then-encode reproduces the frozen
+# composition's calldata at the p = 17 toy codec and decodes back to the same messages and instance
+# words); frozenCalldata_isOk -- expect false (the falsifier: the frozen repack-then-repack path
+# never returns .ok at the same data). No gate was deleted, edited or re-spelled anywhere else.
+# The FILE count moves 102 -> 105 because three modules now carry `#eval` lines: the new
+# Midfall/LoweringV3/Statements.lean (the two gates above) plus the two landed Instances files,
+# Midfall/Instances/StatementsV3Deploy.lean (18 #eval lines) and
+# Midfall/Instances/StatementsV3Falsifiers.lean (7). Those 25 are UNANNOTATED measurement lines
+# ported verbatim from docs/plans/V3-evidence/lean/statements/; they print tuples and records, which
+# the VALUE shape below does not read as a value, so pass 2 reports a value-count mismatch for those
+# two files. ST.1 was told to port verbatim and to adapt names only, so the measurements were NOT
+# rewritten to fit the gate: the mismatch is reported on the ticket rather than repaired here.
+EXPECTED_KAT_TOTAL = 1402
+EXPECTED_KAT_FILES = 105
 
 # Only these shapes count as #eval output.
 #

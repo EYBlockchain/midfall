@@ -137,3 +137,6 @@ import Midfall.LoweringV2.Blocks.Compose
 import Midfall.Lowering.LegacyVacuity
 import Midfall.Tools.Done
 import Midfall.Tools.ConeReport
+import Midfall.LoweringV3.Statements
+import Midfall.Instances.StatementsV3Deploy
+import Midfall.Instances.StatementsV3Falsifiers
