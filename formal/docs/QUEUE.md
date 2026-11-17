@@ -628,7 +628,7 @@ DECISION · ≤ 1 page
 **BLOCK ROWS — generic progress.** Rows are stated for every `R`; none can move the headline cone
 while `poseidon_valid` is refuted (see CRITICAL PATH above).
 
-### S.3 — Apply the D-P49 §6 gate and repair the rows  **[BLOCKED: human sign-off of D-P49, which is PROPOSED (recommended: approve)]**
+### S.3 — Apply the D-P49 §6 gate and repair the rows  **[MERGED d0aabba — DONE; D-P49 signed off 2026-11-17]**
 
 SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
 
@@ -636,7 +636,7 @@ SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
 - **Needs (present at `7bf0497`).** `Blocks.lean:96-97`, `:100-101`; `tr_blockRow`/`fp_blockRow`/
   `blockContractsAt_twoRows` in `Blocks/Compose.lean`; `tr_sound_clean` (TraceReturn.lean:741) and
   `tr_poison_walk` (:853).
-- **NOT in the tree.** The arm-free restatements `tr_sound_clean'` and `tr_poison_walk'` that D-P49
+- **(Landed in `d0aabba` as `tr_sound_clean_noarm`/`tr_poison_walk_noarm`, no `sorryAx`.)** Original card text: the arm-free restatements `tr_sound_clean'` and `tr_poison_walk'` that D-P49
   cites as its evidence: S.1 elaborated them in scratch and merged no code. They are step 1 here, not
   a premise.
 - **NEEDS snippet** (the orchestrator runs it before briefing; every line must elaborate):
@@ -655,7 +655,7 @@ SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
 - **Stop if.** Step 1 does not elaborate sorry-free — D-P49's premise is then false: report NEGATIVE
   with the goal state · any root's cone moves unexpectedly.
 
-### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY after S.3]**
+### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY — S.3 merged d0aabba]**
 SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3
 
 - **Goal.** Both sequencing lemmas proved sorry-free from their seven per-block hypotheses, with
@@ -665,6 +665,8 @@ SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after
   mid predicate `Clean R k ∨ Poisoned` (docstring at :287); `StmtsTotal` (:49); C.2's size estimates
   (QUEUE C.2 table: 60–100 and 90–130 lines).
 - **Does NOT need.** Any block row; the deployment; `Statements.lean`.
+- **Also.** Fix the stale docstring at `Blocks.lean:301-303` (it still says §6 has the poisoned arm;
+  S.3 left it for the next card that touches `slices_seq_sound`).
 - **Deliverable.** Both lemmas, sorry-free.
 - **Accept.** `#print axioms` of both with `sorryAx` grep = 0. **Expected: `cone_sorries
   lowering_equivalence_poseidon` 11 → 9 and `lowering_equivalence_of_blocks` 7 → 5** — the first
@@ -672,7 +674,7 @@ SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after
 - **Stop if.** A handoff needs a fact no `BlockSound`/`BlockProgress` supplies: report the exact goal
   state. That is the next ceiling, and finding it here is the point of this card.
 
-### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3 and F.1]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**
+### S.4 — `BlockRow` for `vkLoading`  **[READY after F.1]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**
 SEM · PROOF · box 2 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .vkLoading`. **Shape from S.1:** pre `Clean R .start`, post `(halt ∧
   Reverted) ∨ Clean R .vk ∨ (normal ∧ Poisoned)`; honest `StmtsTotal` gated on `G1CodecLaws ∧
@@ -754,7 +756,7 @@ INFRA · DOCS · box 0.5 h · Sonnet · after S.9
 - **Does NOT need.** Any proof change; the pins; any block row.
 
 ---
-### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3 and F.1; see the WP-T stop below]**
+### S.5 — `BlockRow` for `transcriptParser`  **[READY after F.1; see the WP-T stop below]**
 SEM · PROOF · box 2.5 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
   invariants.** Pre `Clean R .vk`, post `… ∨ Clean R .transcript ∨ …`.
@@ -768,7 +770,7 @@ SEM · PROOF · box 2.5 h · strongest · after S.3, F.1
   lines by hand. Report lines per Yul token so the WP-T decision (`docs/DECISIONS-PENDING.md` §10) is
   taken on data.
 
-### S.6 — `BlockRow` for `lagrange`  **[READY after S.3 and F.1]**
+### S.6 — `BlockRow` for `lagrange`  **[READY after F.1]**
 SEM · PROOF · box 2 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .lagrange`. **The only loop-bearing helper is `batch_invert`.** Pre
   `Clean R .transcript`, post `… ∨ Clean R .lagrange ∨ …`.
@@ -798,7 +800,7 @@ S.1 showed (in scratch; nothing landed) that an empty slice's `BlockSound` force
 pairingRhs 16608). **The `pcs` row is REFUTABLE, not merely hard, until S.2 lands.** Do not write it.
 
 ---
-### S.1 — Resolve the `slices_seq_sound` ceiling  **[DONE (read-only probe, no code merged) - verdict (b), a §6 shape problem; records in 7bf0497 (not `3963aa3`, which is M.1's ETA row); see D-P49 (PROPOSED) and S.3]**
+### S.1 — Resolve the `slices_seq_sound` ceiling  **[DONE (read-only probe, no code merged) - verdict (b), a §6 shape problem; records in 7bf0497 (not `3963aa3`, which is M.1's ETA row); see D-P49 (signed off 2026-11-17) and S.3]**
 
 SEM · PROBE · box 1 h · strongest · after M.1
 

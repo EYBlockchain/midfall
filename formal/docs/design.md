@@ -1752,8 +1752,8 @@ as such.
 
 > Was QUEUE Q0.5, blocked on a decision. **Status: PROPOSED.** Recorded on 2026-11-17 as approved
 > under a "standing delegation" that the human did not give; EXECUTION-V2 W2: *"there are no
-> orchestrator decisions on delegated authority."* Nothing in D-P45–D-P49 is in force until signed
-> off. Review notes and draft wording for sign-off: `docs/DECISIONS-PENDING.md`.
+> orchestrator decisions on delegated authority."* Nothing in D-P45–D-P48 is in force until signed
+> off (D-P49 was signed off on 2026-11-17; see its entry). Review notes and draft wording for sign-off: `docs/DECISIONS-PENDING.md`.
 
 **Proposed decision: approve.** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
 addition to the existing conjuncts, **a calldata that actually decodes and a run that actually exists**:
@@ -1836,11 +1836,13 @@ corner. `Valid` currently carries `transcriptMptr` only (`Statements.lean:169`),
 it and why the asymmetry exists: **progress asserts existence and so inherits a data obligation
 soundness does not.**
 
-## D-P49 — **PROPOSED, not signed off: gate `BlockSound`'s poisoned arm on `q ≠ .traceReturn` (S.1's §6 refinement)**
+## D-P49 — **Approved: gate `BlockSound`'s poisoned arm on `q ≠ .traceReturn` (S.1's §6 refinement)**
 
 > S.1 asked for sign-off because this exceeds Q0.3's 'add fields to `Frame`/`Clean` only'
-> convention, even though §6 is listed as refinable. **Status: PROPOSED** (see D-P45's note). Its
-> cited evidence (`tr_sound_clean'`, `tr_poison_walk'`) is in no commit; QUEUE S.3 now lands it first.
+> convention, even though §6 is listed as refinable. **Status: APPROVED.** Signed off: human (repository owner), 2026-11-17, in session after the review merge `6481731`.
+> Ratified after the fact: S.3 had already applied it (`d0aabba`). Its condition held there — the
+> arm-free restatements landed as `tr_sound_clean_noarm`/`tr_poison_walk_noarm`, with no `sorryAx`,
+> and every cone root was unchanged.
 
 **Proposed decision: approve the §6 gate**, at `Blocks.lean:96-97` and `:100-101`:
   BEFORE  `∨ (o = .normal ∧ Poisoned R H vkAddr cd V' st')`
@@ -1872,8 +1874,9 @@ existing root — a shape change that silently breaks a landed proof is the fail
 
 ## D-P50 — **Approved: add the six `vkLoading` pins to `Render.Valid`, and land S.8's proved deployment discharge**
 
-> S.8 measured all six TRUE and PROVED them at the deployment, sorry-free. The human delegated
-> decisions on 2026-11-17.
+> S.8 measured all six TRUE and PROVED them at the deployment, sorry-free. **Status: APPROVED.**
+> Signed off: human (repository owner), 2026-11-17, in session after the review merge `6481731`. Ratified after the fact: S.9 executed it (`fece4c7`) citing a delegation the
+> human had not given (EXECUTION-V2 W2); the human has now approved the change as landed.
 
 **Decision: add `vkPins` and `vkProgressPins` as fields of `Render.Valid` (§2), and land S.8's two
 proved structure terms in `Instances/`.** Rationale:

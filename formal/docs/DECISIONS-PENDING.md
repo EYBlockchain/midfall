@@ -2,7 +2,7 @@
 
 Drafted in a review of `formal/baseline...7bf0497`. **Nothing here is in force.** For each item:
 fill in the decision and the sign-off line, then record it in `design.md` (the PROPOSED entry for
-D-P45–D-P49, or the next free D-P number for the others) and delete it here. The orchestrator must
+D-P45–D-P48, or the next free D-P number for the others) and delete it here. The orchestrator must
 not act on an item without a sign-off line (EXECUTION-V2 W2). Sign-off format:
 `Signed off: <name>, <date>, <where: message / commit / PR>`.
 
@@ -10,7 +10,8 @@ not act on an item without a sign-off line (EXECUTION-V2 W2). Sign-off format:
 
 D-P45–D-P49 cite a "standing delegation" (2026-11-17); W2 says *"there are no orchestrator decisions
 on delegated authority"*, and no grant is recorded anywhere.
-- **Recommended: keep W2.** D-P45–D-P49 stay PROPOSED until each is signed below.
+- **Recommended: keep W2.** D-P45–D-P48 stay PROPOSED until each is signed below. (D-P49 and
+  D-P50 were ratified by the human on 2026-11-17; they are recorded in `design.md`.)
 - Alternative: amend W2 and the GOAL prompt with a bounded grant. For example, the orchestrator
   may approve changes to REFINABLE §6/§7 shapes that only strengthen proof obligations and come with
   a landed witness and falsifier; frozen-surface, scope and fixture changes stay human-only.
@@ -90,14 +91,9 @@ Decision: ______ · Signed off: ______
 
 Decision: ______ · Signed off: ______
 
-## 7. D-P49: gate `BlockSound`'s poisoned arm on `q ≠ .traceReturn` (refinable §6)
+## 7. D-P49 — SIGNED OFF (2026-11-17), recorded in `design.md`
 
-- **Recommended: approve, conditional on QUEUE S.3 step 1.** If `tr_sound_clean'` and
-  `tr_poison_walk'` do not elaborate sorry-free, D-P49 falls. The reasoning checks out:
-  `slices_seq_sound`'s post has no `normal ∧ Poisoned` arm (Blocks.lean:307), and `isRevertOrHalt`
-  excludes running off the end (Bridge.lean:552). So rejecting option (a) is correct.
-
-Decision: ______ · Signed off: ______
+Kept as a heading so the §8/§9 references in QUEUE.md stay valid.
 
 ## 8. Gap B: how s·G₂ is modelled at the deployment (QUEUE R.4)
 

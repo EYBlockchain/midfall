@@ -267,18 +267,15 @@ now seven compiler decisions wide, which is a property of the result, not a deta
 agreement verified. **S.9 stated plainly the hinge is STILL not closable:** pins are reachable from
 `Valid`, but `poseidonRender.Valid` stays refuted by C.4's six clauses.
 
-**Next READY (review, 2026-11-17, merged after S.9):** **S.10** (small), then **F.2** (deployment
-table), **R.2** (WP-G1 region inventory) and **S.2**, probes of 1 h each. S.3, Q0.5, R.1, R.3 and R.4
-wait on human sign-off (`docs/DECISIONS-PENDING.md`); F.1 follows S.3, and S.5–S.7 follow F.1.
-**D-P45–D-P49 are PROPOSED, not decided:** the human did not delegate (EXECUTION-V2 W2). Draft wording
-for sign-off is in `docs/DECISIONS-PENDING.md`, with the other open items: R-72's second question
-(recommended: reject), `Rejects`/`SoundSide`, the `pcs`/`Inv` boundary (S.2), WP-T ordering,
-`Valid.model` (R.3) and Gap B (R.4).
-
-**Next READY: S.10** (fix stale 'eleven clauses' prose — `Valid` is 13 now; the comments currently
-misdescribe the frozen surface), then **the D-P47 fixture re-export card**, then S.5/S.6/S.7. `pcs`
-stays HELD behind S.2. **D-P47 is the critical path and has not been started — no further block row
-changes that.**
+**Next READY (2026-11-17, after the review merge `6481731`), in QUEUE order:** **F.2** (deployment
+table), **R.2** (WP-G1 region inventory), **F.1** (sequencing glue — expected headline cone 11 → 9,
+the first drop), **S.10** (stale clause-count prose) and **S.2**. S.4–S.6 follow F.1. Q0.5, R.1, R.3
+and R.4 wait on human sign-off (`docs/DECISIONS-PENDING.md`).
+**Decisions:** **D-P49 and D-P50 are APPROVED** — ratified by the human on 2026-11-17 after S.3/S.9 had
+applied them. **D-P45–D-P48 are PROPOSED, not decided:** the human did not delegate (EXECUTION-V2 W2).
+Draft wording is in `docs/DECISIONS-PENDING.md`, with R-72's second question (recommended: reject),
+`Rejects`/`SoundSide`, the `pcs`/`Inv` boundary (S.2), WP-T ordering, `Valid.model` (R.3) and Gap B
+(R.4). **D-P47 (R.1) is on the critical path:** every route to the headline needs `poseidon_valid`.
 ## ⚠ STRUCTURAL FINDING - §6 systematically under-pins the memory layout
 
 **Three consecutive cards each found a missing pin in the same place:** FP.0 `fpG2Slots` (v1 had it as
