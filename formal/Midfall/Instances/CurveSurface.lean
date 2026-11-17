@@ -80,6 +80,7 @@ import Midfall.Instances.SurfaceFixture
 import Midfall.Instances.ImportedIR
 import Midfall.Instances.ObligationsGates
 import Midfall.Instances.HoldsFinal
+import Midfall.Instances.PoseidonEnv
 import Midfall.Assumptions.CurvePairing
 import Midfall.Yul.ImportSolcIR
 
@@ -211,6 +212,17 @@ theorem curveSurfaceCodecsAreTheCurveOnes :
     curveSurface.E.g1 = g1CodecZ ∧ curveSurface.encG2 = g2foldToEip ∧
       curveSurface.sG2gen = g2foldExp 5 ∧ curveSurface.E.field = frFc :=
   ⟨rfl, rfl, rfl, rfl⟩
+
+/-- **D.2's PIN, MOVED HERE BY C.1 - SAME CONTENT, NEW HOME.** 'poseidonEncG2' IS the encoder this
+    Surface installs at 'encG2', so a render built from D.2 and a render built from this file bind
+    one encoder. It was stated in 'Instances/PoseidonEnv.lean' and it is the same 'rfl'; it moved
+    because citing 'curveSurface' from PoseidonEnv made PoseidonEnv transitively import this file,
+    whose closure carries ten of the AVOID 14 retired modules - and C.1's cone root
+    ('Instances/PoseidonV2.lean') has to import PoseidonEnv. '#imports_avoid' in ConeReport is a
+    FILE-level check, so the edge had to go somewhere, and the right somewhere is here, next to the
+    term the pin talks about. Nothing was deleted. -/
+theorem curveEncG2_isPoseidonEncG2 :
+    Midfall.Instances.PoseidonEnv.poseidonEncG2 = curveSurface.encG2 := rfl
 
 /-! ### The five legs, exhibited -/
 

@@ -101,7 +101,10 @@
   computation: R-1 imports it, and it arrives here as vk.json's transcript_repr_be_hex. No
   poseidonRender: that is C.1, and it consumes these five terms plus D.1's five.
 -/
-import Midfall.Instances.CurveSurface
+import Midfall.Assumptions.CurvePairing
+import Midfall.Instances.Bls12_381
+import Midfall.Instances.G1Agreement
+import Midfall.Instances.G2Codec
 import Midfall.Instances.PoseidonInputs
 import Midfall.Conformance.Bundle
 import Midfall.Common.Json
@@ -404,10 +407,12 @@ theorem poseidonE_g1_isTheExhibitCodec : poseidonE.g1 = g1CodecZ := rfl
 /-- poseidonEncG2 IS the encoder of g2CodecFold, the G2 codec of the exhibit. -/
 theorem poseidonEncG2_isTheExhibitEncoder : poseidonEncG2 = g2CodecFold.toEip := rfl
 
-/-- poseidonEncG2 IS what the curve Surface installs at encG2, so a render built from this file and
-    a render built from curveSurface bind the same encoder. -/
-theorem poseidonEncG2_isCurveSurfaceEncG2 :
-    poseidonEncG2 = Midfall.Instances.CurveSurface.curveSurface.encG2 := rfl
+/- poseidonEncG2 IS what the curve Surface installs at encG2. That pin MOVED to
+    Instances/CurveSurface.lean (C.1, curveEncG2_isPoseidonEncG2): citing curveSurface from here
+    imported Midfall.Instances.CurveSurface, whose transitive closure carries ten of the AVOID 14
+    retired modules, and C.1's cone root has to import THIS file. The pin is unchanged in content -
+    it is the same rfl, restated where the term it names lives - and dropping it would have left the
+    V2 cone importing retired v1. -/
 
 /-- **THE TRANSFER, AND THE ANSWER TO THE CARD'S ITEM 5.** For every product, the exhibit's Holds
     binder and this file's are the SAME PROPOSITION - not equivalent, identical. So holds_exhibited

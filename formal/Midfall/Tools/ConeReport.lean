@@ -10,15 +10,27 @@
                      later proof cannot smuggle one back in through a lemma;
     * cone_sorries:  how many declarations inside each cone still use sorryAx - the distance left.
 
-  The two roots are the generic composition theorem and the end-to-end corollary. Since the Q0.3
-  split they live in `Midfall/LoweringV2/Blocks.lean` (the REFINABLE half), not in `Statements.lean`
-  (the FROZEN half); their NAMES are unchanged, so the cone queries below did not have to move.
-  Both are `sorry` today (WP-M5, WP-E1); the counts printed here are the baseline Q0.3 compares against.
+  THE ROOTS. Three of them, and the first is the one every later card is measured against:
+  `lowering_equivalence_poseidon` (C.1, `Midfall/Instances/PoseidonV2.lean`) is the headline stated
+  AT A DEPLOYMENT - `poseidonRender`, formed from D.1's five generator terms and D.2's five
+  verifier terms - and its cone is the three named sorried lemmas of that file plus the sorried
+  obligations of `Blocks.lean` that composition already leaned on. The other two are the generic
+  composition theorem and the end-to-end corollary; since the Q0.3 split they live in
+  `Midfall/LoweringV2/Blocks.lean` (the REFINABLE half), not in `Statements.lean` (the FROZEN half),
+  and their NAMES are unchanged, so the cone queries below did not have to move. All three are
+  `sorry` today (WP-M5, WP-E1, and C.1's three); the counts printed here are what later cards move.
+
+  One import note, because it is load-bearing and it is C.1's finding: `Midfall.Instances.PoseidonEnv`
+  reached ten of the AVOID 14 through a single edge to `Midfall.Instances.CurveSurface`, and that
+  edge existed only to state one `rfl` pin. `#imports_avoid` below is a FILE-level check, so the pin
+  moved to CurveSurface.lean (same content, new home) rather than the render being left out of this
+  file. If `imports_avoid` ever reddens again from an `Instances/` import, look for an edge like that.
 -/
 import Midfall.LoweringV2.Shared
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
+import Midfall.Instances.PoseidonV2
 import Midfall.Tools.ConeSorries
 
 #imports_avoid [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
@@ -30,3 +42,7 @@ import Midfall.Tools.ConeSorries
 #cone_sorries Midfall.LoweringV2.lowering_equivalence_of_blocks
 
 #cone_sorries Midfall.LoweringV2.end_to_end
+
+#cone_avoids Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
+
+#cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon

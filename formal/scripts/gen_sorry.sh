@@ -18,6 +18,7 @@ owner() {
     Midfall/Lowering/*)           echo 'P-SE: semantic equivalence obligations' ;;
     Midfall/Assumptions/*)        echo 'P-SE: named holes in assumption files' ;;
     Midfall/LoweringV2/*)         echo 'V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md' ;;
+    Midfall/Instances/PoseidonV2.lean) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
     *)                                echo 'UNOWNED - assign a work package' ;;
   esac
 }
