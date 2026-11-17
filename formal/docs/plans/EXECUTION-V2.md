@@ -100,6 +100,8 @@ entries are mapped in `QUEUE.md`: 17 reuse candidates, 14 retired with v1, 8 par
      `#print axioms`, `#cone_sorries`, `#eval`, `rg -n`.
    - Comments, docstrings, ETA/REVIEW prose and earlier reports, including your own, are **leads**:
      they go under "verify first".
+   - Run the card's **NEEDS snippet** (§3) with `lake env lean` under `ram_guard.sh`. A line that
+     fails to elaborate is a false premise: fix the card, do not brief it.
    - If checking a premise would take longer, issue a PROBE ticket instead.
 4. **Brief and delegate.** Use the §3 template, ≤ 1 page; one subagent, one ticket.
 5. **Re-verify on `t/<ID>`**, without trusting the report. The subagent ran only
@@ -129,7 +131,8 @@ entries are mapped in `QUEUE.md`: 17 reuse candidates, 14 retired with v1, 8 par
      tickets.
    - **`QUEUE.md`:** state change; children from SKELETON/PROBE reports; blockers *with* reproducers.
 8. **Triggers (§6).** If a DECISION is needed: write a ≤ 1-page request under "Waiting on human" in
-   `STATUS.md`, mark its dependants BLOCKED, and continue with other READY tickets.
+   `STATUS.md`, mark its dependants BLOCKED, and continue with other READY tickets. A decision exists
+   only once the human has signed it off (W2); until then it is PROPOSED and nothing is built on it.
 9. **Context hygiene.** Every ~10 tickets, or when the orchestrator's context is past ~60%, end the
    session. A fresh one resumes from `STATUS.md` + `QUEUE.md` + this file + the goal prompt. If that
    is not enough, fix `STATUS.md`.
@@ -148,6 +151,8 @@ GOAL: <one sentence>                                  CONSUMER: <theorem that wi
 NEEDS (verified at <commit>): <exact names, file:line — evidence (command → output)>
 DOES NOT NEED (do not open, do not investigate): <the tempting wrong prerequisites, by name>
 VERIFY FIRST (≤20 min; stop if false): <claims taken from comments, prose or earlier reports>
+NEEDS SNIPPET (run by the orchestrator at <commit> before briefing, output pasted): one `#check` /
+        `#print axioms` / `#eval` line per name in NEEDS; any failure means the card is fixed first
 DO: <≤ 5 steps>
 DELIVERABLE: <exact Lean names and signatures; nothing else>
 ACCEPTANCE: <commands + expected output; for KAT/exhibit: the intended outcome and where it occurs>
@@ -177,8 +182,8 @@ NEXT: <child tickets, each with its size and the evidence for it>
 | type | box | done when |
 |---|---|---|
 | PROBE | ≤ 1 h | the report has the measured values and the commands that produced them |
-| SKELETON | ≤ 2 h | the consumer compiles from named, `sorry`'d sub-lemmas; each sub-lemma is probed (an `#eval` on deployed data, or differential enumeration as in REVIEW R-70) and sized; children are in `QUEUE.md`. The cone count may **rise**: that is the point |
-| PROOF | ≤ 2.5 h | the node is proved, **used by its consumer**, and the root's cone count fell |
+| SKELETON | ≤ 2 h | the consumer compiles from named, `sorry`'d sub-lemmas; each sub-lemma is probed (an `#eval` on deployed data, or differential enumeration as in REVIEW R-70) and sized; children are in `QUEUE.md`. The cone count may **rise**: that is the point. The **glue** (sequencing, transport and composition lemmas) is proved, not `sorry`'d: only leaf obligations (one per block or per clause) may be `sorry`. A sorried glue lemma hides the next ceiling (C.2 → S.1) |
+| PROOF | ≤ 2.5 h | the node is proved and **used by its consumer**. The card states in advance whether the root's cone falls: it can fall only when the consumer is in the root's cone and this node was its last open input. An accept line that cannot be met by construction is a defect in the card, fixed before briefing (T.2) |
 | EMIT | ≤ 2.5 h | one `GenAst` region; its token KAT equals the ported codegen's text; a one-literal mutation reddens |
 | PORT | ≤ 2.5 h | one Rust fn under port rules R1–R11 (`docs/PLAN.md:143`); golden KAT green at the deployed value |
 | KAT | ≤ 1 h | one decidable fact at the deployment, with its **intended outcome** (below) |
@@ -218,7 +223,10 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
 - **W2 Statements [O+S].** A new or changed statement gets its own ticket, with two pieces of
   evidence kept next to it: a witness that **all** its hypotheses hold together at the deployment,
   and a falsifier. No registry. The frozen surface changes only by human DECISION; there are no
-  orchestrator decisions on delegated authority.
+  orchestrator decisions on delegated authority. A DECISION counts only when `design.md` quotes the
+  human's sign-off: who, when, and where (message, commit or PR). An entry without one is PROPOSED:
+  it changes nothing, and no ticket may depend on it. Evidence cited for a decision is landed (a
+  theorem at a commit), not a scratch run.
 - **W3 Consumer first [O].** Skeleton the consumer before proving its parts. Families get one shared
   case-split lemma and a complete requirements table first (§4).
 - **W4 Time box [S].** One deliverable, ≤ 2.5 h. At 1 h with less than a third done: commit WIP to
@@ -226,13 +234,17 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
 - **W5 Evidence [O+S].** Facts are command outputs or kernel-checked theorems at the current commit.
   Prose and earlier diagnoses are leads. A **blocker** is a minimal reproducer (an `example` plus the
   error text, at a commit), never a sentence; it is re-run before any brief relies on it. Sizes are
-  measured, never asserted.
+  measured, never asserted. A reproducer or probe result that a card or decision relies on is landed
+  (in the tree or in the merged evidence), never left in `/tmp`: R-72's reproducer and S.1's
+  restatements were both lost that way.
 - **W6 No policing, no bookkeeping [O+S].**
   - No new gates, registries or ledgers.
   - No demonstrations that unused theorems can be deleted; no gate or KAT counts reported as progress.
   - The existing `checks.sh` suite runs unchanged. The only new tooling is the cone report (Q0.2)
     and `verify.sh` (Q0.3).
   - **Subagents write no docs**: their report is the only prose they produce.
+  - **Handoffs.** Text the orchestrator copies from one report into another card is ≤ 10 lines of
+    names, signatures and command output. Prose predictions in handoffs caused T.2's false premises.
   - The orchestrator writes exactly four things per ticket: the commit message, one `STATUS.md`
     overwrite, one ETA row, and the `QUEUE.md` line updates. There are no overlapping progress
     reports.
@@ -244,7 +256,9 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
     clean axioms.
   - Commit subjects never say PROVED for a conditional, and a proxy run is never called end-to-end.
 - **W8 Docs [O].**
-  - `STATUS.md` (≤ 1 page) is overwritten each ticket; `QUEUE.md` has one line per ticket.
+  - `STATUS.md` (≤ 1 page) is overwritten each ticket: first the ConeReport and `#print axioms`
+    output of the last full `verify.sh`, verbatim, then ≤ 10 lines of prose. Nothing from an earlier
+    ticket survives unless it is still true. `QUEUE.md` has one line per ticket.
   - The report is the commit body; `ETA.md` gets one row per ticket.
   - `REVIEW.md` only for real defects; `design.md` only for human decisions.
   - New docstrings ≤ 5 lines. `PROGRESS.md` is retired.
@@ -295,6 +309,10 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
     `lowering_equivalence_poseidon` (plus `end_to_end` at the deployment).
   - `verify.sh` prints the count; `STATUS.md` carries it.
   - Register totals, gate counts and KAT counts are **not** progress measures.
+- **Cone status.** `STATUS.md` marks every sorry in the root's cone OPEN, REFUTED (a proved negation
+  exists, e.g. `poseidonRender_notValid`) or BLOCKED (waiting on a decision or on data). A REFUTED
+  node means the root is unreachable by the current route: the next ticket addresses it (fix the
+  object, or re-plan with the human), and tickets whose only effect is downstream of it are not READY.
 - **ETA row per ticket:** ID, type, box, actual h, cone before→after, premises held (y/n), outcome.
   No derived percentages.
 - **Calibration, not extrapolation.** No schedule beyond PLAN-V2 §9's prior until **calibration
@@ -305,7 +323,8 @@ PLAN-V2 §4 (content rules 1–12) still applies. The tag says who each rule bin
   - Points: C.5; end of TranscriptParser; after the QVM interpreter refinement.
 - **Stop and re-plan** if 3 of any 5 consecutive tickets miss their deliverable, or 2 of 5 had a
   false premise. Re-planning is reorder/split in `QUEUE.md`; scope or frozen-surface changes go to
-  the human.
+  the human. While the trigger holds, start no PROOF or SKELETON ticket: write the re-plan under
+  "Waiting on human" and run only PROBE and KAT tickets until the human answers.
 
 ## 7. Queue
 

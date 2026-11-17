@@ -254,16 +254,15 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: S.1 and S.2** (probes, 1 h each) — written by M.1.
-**S.1 MUST run before any block-row card:** M.1 proved that even 6/6 rows do not close
-`slices_seq_sound`, so four block-row cards would be wasted work until S.1 answers
-whether per-block rows can reach the headline at all. Then Q0.5 (D-P45), the D-P47
-fixture re-export, and the D-P46/D-P48 `Valid` clauses.
+**In flight:** none. **Next READY (review, 2026-11-17): F.2** (deployment table), **R.2** (WP-G1
+region inventory) and **S.2**, probes of 1 h each. S.1 is DONE (records `7bf0497`). S.3, Q0.5, R.1,
+R.3 and R.4 wait on human sign-off (`docs/DECISIONS-PENDING.md`); F.1 follows S.3, and S.4–S.6
+follow F.1.
 
 `batch_invert`; the loop node) and **C.3** (after C.2). **`blockContracts_of_valid` (Blocks.lean:152,
 sorry) is the single hinge** — no per-block proof reaches the headline until it is proved generically.
 **Consider making it a card of its own; it now gates everything.**
-**Decisions now MADE under delegation (D-P45/46/47/48 in `docs/design.md`); remaining open: `Rejects`/`SoundSide` and the `pcs`/`Inv` boundary (S.2).**
+**D-P45–D-P49 are PROPOSED, not decided:** the human did not delegate (EXECUTION-V2 W2). Draft wording for sign-off is in `docs/DECISIONS-PENDING.md`, with the other open items: R-72's second question (recommended: reject), `Rejects`/`SoundSide`, the `pcs`/`Inv` boundary (S.2), WP-T ordering, `Valid.model` (R.3) and Gap B (R.4).
 
 **Was waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
 `g1CodecZ.ofCompressed?`. Plus `RETURN_MPTR` pin (T.1) — a card, not a decision.

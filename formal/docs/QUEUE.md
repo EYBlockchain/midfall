@@ -142,7 +142,7 @@ INFRA · KAT · box 1.5 h · Sonnet · after Q0.2
   - The orchestrator's single full `verify.sh` run is green.
 - **Stop if.** The split would change the text of any frozen statement.
 
-### Q0.4 — Adversarial review of the frozen surface  **[MERGED 70f8111 - HIT, see R-72]**
+### Q0.4 — Adversarial review of the frozen surface  **[DONE (read-only probe) - HIT: R-72, recorded in 3034c6a; the `70f8111` cited here before is not a commit in this repo]**
 INFRA · PROBE · box 1 h · fresh subagent, read-only · after Q0.3
 
 - **Goal.** For each frozen statement, give a sketch of a joint witness for all its hypotheses, or a
@@ -170,18 +170,30 @@ INFRA · PROOF · box 0.75 h · Sonnet · after Q0.4
   the root's cone, not the register.
 - **Stop if.** The probe proof does not transplant unchanged.
 
-### Q0.5 — Repair the non-vacuity gate (R-72)  [BLOCKED: human decision]
+### Q0.5 — Repair the non-vacuity gate (R-72)  [BLOCKED: human sign-off of D-P45, which is PROPOSED — draft in `docs/DECISIONS-PENDING.md` §3]
 
-INFRA · PORT · box 1 h · after human approval of the R-72 repair
+INFRA · PORT · box 1 h · after human sign-off of D-P45
 
 - **Goal.** Make `HypothesesInhabited` gate the vacuity it exists to gate.
-- **Needs.** Human answer to the two questions in STATUS.md "Waiting on human".
-- **Do.** Add `LeanAccepts R H cd` (or `∃ ms instW, decodeCalldata … = some (ms, instW)`) and a
-  run-existence conjunct to `Statements.lean` §8; re-hash `Frozen.sha256`; add `hR : R.Valid` to
-  `LoweringEquivalence` if approved. Update PLAN-V2:355 wording if the gate's meaning changes.
-- **Accept.** A reproducer showing `gate_weak` NO LONGER type-checks, and that the new gate needs a
-  real accepting calldata. **The repair must be demonstrated to have teeth, not just to compile.**
-- **Stop if.** Any change would alter a statement other than the gate and the headline's hypothesis list.
+- **Needs.** D-P45 signed off, with the exact conjunct text it approves.
+- **Verify first.** R-72's reproducer is **not in the tree**: it lived in `/tmp/q04/probe1.lean`,
+  which is gone, and survives only as prose (REVIEW.md:2991-3005: `sel_nondecode`, `gate_weak`,
+  `no_accept_at_gate_cd`).
+- **Do.** 1. Re-create the three reproducer theorems from REVIEW.md:2991-3005 and confirm `gate_weak`
+  type-checks against the CURRENT gate (the falsifier must fail before the fix). 2. Apply the
+  signed-off text to `Statements.lean` §8 and re-hash `Frozen.sha256` in the same commit. 3. Update
+  PLAN-V2:355 wording if the gate's meaning changes.
+- **Not this card, whatever is decided.** Adding `hR : R.Valid` to `LoweringEquivalence` (R-72's
+  second question; `docs/DECISIONS-PENDING.md` §2 recommends rejecting it: with
+  `poseidonRender_notValid` proved it would make the headline provable by contradiction, and PLAN-V2
+  §6 requires the headline "with no other hypotheses"). Also not this card: discharging the new gate
+  at the deployment. REVIEW.md:3019 records "no accepted calldata at any model in the tree" and the
+  deployment's G1 decoder is `Classical.choose` (G1Agreement.lean:1995), so that witness must be
+  proved, not evaluated, by a later card.
+- **Accept.** `gate_weak` type-checks before step 2 and NO LONGER type-checks after it (commands and
+  output in the report), and the new gate needs a real accepting calldata. **The repair must be
+  demonstrated to have teeth, not just to compile.**
+- **Stop if.** Any change would alter a statement other than the gate.
 
 ---
 ## CORE — consumer first, to calibration point 1
@@ -539,36 +551,145 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
   (`readBytes_storeWord_one`, `map_congr_range`, the `iszero` inversion) and restated for V2's shapes;
   (iv) `EVM.run_adequacy` was not needed, not cited, and `vendor/` is untouched.
 
-### S.3 — Apply the D-P49 §6 gate and repair the rows  **[READY — RUN FIRST]**
+---
+**CRITICAL PATH — make the deployment render valid** *(added in review, 2026-11-17)*. Every route to
+the headline goes through `poseidon_valid`, and `¬ poseidonRender.Valid` is PROVED (C.4,
+PoseidonValid.lean:468; 6 of 11 clauses refuted). Until the render is valid, block rows (S.3–S.7)
+are generic progress only. F.2 and R.2 are READY now; R.1, R.3 and R.4 wait on decisions drafted in
+`docs/DECISIONS-PENDING.md`.
 
-SEM · REFACTOR · box 1 h · strongest · after S.1
+### F.2 — The deployment table: every hypothesis of the headline route, decided once  **[READY — RUN FIRST]**
+GEN · PROBE · box 1 h · Sonnet · after nothing
+
+- **Goal.** One table at `poseidonRender` of everything the headline route needs, so the remaining
+  gaps surface in one card rather than one per card (EXECUTION-V2 §4: "nothing is discovered one pass
+  at a time"; C.2, C.4, FP.0, T.1, M.1 and S.1 each found one more).
+- **Rows.** The 11 `Render.Valid` clauses (re-run C.4's table at the current commit); the proposed
+  pins `fpG2Slots` (D-P46), `trRetMptr` (D-P48) and v1's `g1BaseWords` (Inv.lean:617); the
+  `Rejects`/`SoundSide` gap (C.2); `G1CodecLaws poseidonE.g1`; the D-P45 witness (an accepting
+  calldata).
+- **Columns.** Verdict — PROVED · REFUTED · OPEN · NOT-COMPUTABLE (depends on an axiom or on
+  `Classical.choose`) — then the exact command or theorem that decided it, and the root cause.
+- **Verify first.** `fpG2Slots` at the deployment: `poseidonSG2 := bls12_381Pairing.g₂`
+  (PoseidonEnv.lean:386) and `poseidonParams.sG2Prepared := poseidonSG2`, so its second conjunct reads
+  `NEG_S_G2_BASE = encG2 g₂⁻¹` (−G₂) while the payload holds −s·G₂ (Gap B, R.4). Expect REFUTED or
+  NOT-COMPUTABLE; record which.
+- **Does NOT need.** Proofs of any clause; edits to `Statements.lean`, the fixtures or the profile.
+- **Deliverable.** The table in the report; one QUEUE line per new gap, with its reproducer.
+- **Accept.** Every row cites a command output or theorem at the card's commit.
+
+### R.2 — WP-G1 region inventory (`Valid.codegen`)  **[READY]**
+GEN · PROBE · box 1 h · Sonnet · after nothing
+
+- **Goal.** The list of regions the `GenAst` emitter does not produce yet, so WP-G1 (PLAN-V2:232) can
+  be cut into EMIT cards. C.4 measured 3156 AST tokens against 10433 printed, first difference at
+  index 1333.
+- **Does NOT need.** Writing any emitter; Yul semantics.
+- **Deliverable.** One row per missing region: its name, printed token count (`#eval`) and WP-G1 item;
+  one EMIT child card per region in QUEUE.md (EXECUTION-V2 §4 EMIT row).
+- **Accept.** The token counts account for the measured gap (10433 − 3156), or the residue is
+  explained.
+
+### R.1 — Re-export the fixture with the constraint-system data (D-P47)  **[BLOCKED: human sign-off of D-P47, which is PROPOSED]**
+INFRA · PROBE · box 1 h · Sonnet · after D-P47 sign-off
+
+- **Goal.** A refreshed `fixtures/conformance/poseidon/` whose `vk.json` (or a sibling file) carries
+  `gates`, `lookups`, `trashcans` and `permutation.columns`, with `proof.bin`/`instances.json` from
+  the same export (D.3: committed proof 4752 B vs exported 2640 B).
+- **Verify first.** Locate the Rust exporter that wrote the fixture (path:line). The refreshed VK must
+  still reproduce the deployed contract byte for byte (D.1's gate).
+- **Does NOT need.** Porting `LoweringPlan::new` (WP-G4); any proof.
+- **Deliverable.** The refreshed fixture files, or NEGATIVE with the reason (then WP-G4 becomes the
+  plan, per D-P47). Child card: GEN · KAT — re-run D.3 checks 1–2 (`Valid.layout`,
+  `Valid.circuitMeta`) and C.4's `circuitMeta`, `layout`, `invariants`, `slots` and `supported`
+  clauses on the refreshed fixture, one verdict each.
+- **Accept.** D.1's byte-for-byte gate still passes on the refreshed fixture.
+- **Stop if.** The refreshed fixture describes a different circuit or VK from the deployed contract:
+  that is a scope question for the human.
+
+### R.3 — Make `Valid.model` dischargeable  **[BLOCKED: human decision — `docs/DECISIONS-PENDING.md` §9]**
+DECISION · ≤ 1 page
+
+- C.4: `model` is true but blocked twice — `poseidonModelVal`'s error arm mentions `poseidonModel` in
+  its own proof type, so `cases`/`rw`/`simp` fail on the motive. Both routes C.4 measured need the
+  human: `deriving Inhabited` on `Halo2Verifier` (a v1 edit) plus a `getD` restatement, or a frozen
+  change to `Render.Valid.model`.
+
+### R.4 — Gap B: how s·G₂ is modelled at the deployment  **[BLOCKED: human decision — `docs/DECISIONS-PENDING.md` §8]**
+DECISION · ≤ 1 page
+
+- The model's s·G₂ is the generator: `poseidonSG2 := bls12_381Pairing.g₂`, "NOT checked against that
+  hex" (PoseidonEnv.lean:386). So the deployment's Lean verifier pairs with g₂ where the contract pairs
+  with s·G₂, and neither D-P46's slot pin nor FP.0's `fpG2Slots` hypothesis can hold at this render as
+  modelled. Same discrete-log class as `g1CodecZ.ofCompressed?`. Blocks D-P46 and the FinalPairing
+  route at the deployment.
+
+---
+**BLOCK ROWS — generic progress.** Rows are stated for every `R`; none can move the headline cone
+while `poseidon_valid` is refuted (see CRITICAL PATH above).
+
+### S.3 — Apply the D-P49 §6 gate and repair the rows  **[BLOCKED: human sign-off of D-P49, which is PROPOSED (recommended: approve)]**
+
+SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
 
 - **Goal.** Gate `BlockSound`'s two poisoned arms on `q ≠ .traceReturn` and repair every dependent.
-- **Needs.** `Blocks.lean:96-97`, `:100-101`; `tr_blockRow`/`fp_blockRow`/`blockContractsAt_twoRows` in
-  `Blocks/Compose.lean`; `tr_sound_clean`/`tr_poison_walk` in `Blocks/TraceReturn.lean`.
-- **Do.** 1. Apply the gate exactly as D-P49 states. 2. Rebuild `tr_blockRow` from the ARM-FREE
-  restatements (`tr_sound_clean'`, `tr_poison_walk'` per S.1) — **the landed one cites the armed
-  version and will break.** 3. Confirm `fp_blockRow` still type-checks (finalPairing ≠ traceReturn, so
-  it should be unaffected — verify, do not assume).
-- **Deliverable.** The gate + repaired rows, all sorry-free.
+- **Needs (present at `7bf0497`).** `Blocks.lean:96-97`, `:100-101`; `tr_blockRow`/`fp_blockRow`/
+  `blockContractsAt_twoRows` in `Blocks/Compose.lean`; `tr_sound_clean` (TraceReturn.lean:741) and
+  `tr_poison_walk` (:853).
+- **NOT in the tree.** The arm-free restatements `tr_sound_clean'` and `tr_poison_walk'` that D-P49
+  cites as its evidence: S.1 elaborated them in scratch and merged no code. They are step 1 here, not
+  a premise.
+- **NEEDS snippet** (the orchestrator runs it before briefing; every line must elaborate):
+  `#check @Midfall.LoweringV2.Blocks.TraceReturn.tr_sound_clean`,
+  `#check @Midfall.LoweringV2.Blocks.TraceReturn.tr_poison_walk`,
+  `#check @Midfall.LoweringV2.Blocks.tr_blockRow`, `#check @Midfall.LoweringV2.Blocks.fp_blockRow`.
+- **Do.** 1. Land `tr_sound_clean'` (clean → revert ∨ exitOk) and `tr_poison_walk'` (poisoned →
+  revert) in `Blocks/TraceReturn.lean`, sorry-free. 2. Apply the gate exactly as D-P49 states.
+  3. Rebuild `tr_blockRow` from step 1's lemmas — **the landed one cites the armed version and will
+  break.** 4. Confirm `fp_blockRow` still type-checks (finalPairing ≠ traceReturn — verify, do not
+  assume).
+- **Deliverable.** The two restatements, the gate and the repaired rows, all sorry-free.
 - **Accept.** `verify.sh --quick` green; **`cone_sorries` unchanged at every root** (headline 11,
   `tr_blockSound` 0, `tr_blockProgress` 0, `fp_finalPairing_contracts` 3); `#print axioms` of every
-  repaired lemma with **`sorryAx` grep = 0**; `Frozen.sha256` verifies.
-- **Stop if.** Repairing `tr_blockRow` needs a new proof beyond S.1's restatements · any root's cone
-  moves unexpectedly.
+  new or repaired lemma with **`sorryAx` grep = 0**; `Frozen.sha256` verifies.
+- **Stop if.** Step 1 does not elaborate sorry-free — D-P49's premise is then false: report NEGATIVE
+  with the goal state · any root's cone moves unexpectedly.
 
-### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3]**
-SEM · PROOF · box 2 h · strongest · after S.3
+### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY after S.3]**
+SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3
+
+- **Goal.** Both sequencing lemmas proved sorry-free from their seven per-block hypotheses, with
+  D-P49's gate in place. C.2 left this glue sorried, which hid the sequencing ceiling until S.1, six
+  cards later. Proving it now finds any further ceiling BEFORE four row cards are spent.
+- **Needs.** S.3 merged; `slices_seq_sound` (Blocks.lean:307) and `slices_seq_progress` (:325), their
+  mid predicate `Clean R k ∨ Poisoned` (docstring at :287); `StmtsTotal` (:49); C.2's size estimates
+  (QUEUE C.2 table: 60–100 and 90–130 lines).
+- **Does NOT need.** Any block row; the deployment; `Statements.lean`.
+- **Deliverable.** Both lemmas, sorry-free.
+- **Accept.** `#print axioms` of both with `sorryAx` grep = 0. **Expected: `cone_sorries
+  lowering_equivalence_poseidon` 11 → 9 and `lowering_equivalence_of_blocks` 7 → 5** — the first
+  headline-cone drop since C.2.
+- **Stop if.** A handoff needs a fact no `BlockSound`/`BlockProgress` supplies: report the exact goal
+  state. That is the next ceiling, and finding it here is the point of this card.
+
+### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3 and F.1]**
+SEM · PROOF · box 2 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .vkLoading`. **Shape from S.1:** pre `Clean R .start`, post `(halt ∧
   Reverted) ∨ Clean R .vk ∨ (normal ∧ Poisoned)`; honest `StmtsTotal` gated on `G1CodecLaws ∧
   ChallengesGood ∧ DualMSM.check`.
 - **Needs.** M0.1's vkLoading row (1 stmt; writes 0x2900..0x3ae0 {vk_payload} + 0x0..0x20 via fail;
   **9 `success := and(…)` guards ⇒ the poisoned arm is LIVE**); `extcodecopy` vs `Frame.vkCode`.
 - **Does NOT need.** Other blocks; the deployment; the pairing.
-- **Accept.** Sorry-free or a named lemma per gap; **report whether the headline cone moved.**
+- **Accept (S.4–S.6).** The row proved with `#print axioms` `sorryAx` grep = 0, or PARTIAL with each
+  gap a named sorried lemma. Consumer: `blockContracts_of_valid_of_rows` (Blocks.lean:713).
+  **Expected headline cone: unchanged** — a row reaches the headline only when all seven rows exist
+  and `blockContracts_of_valid` is re-proved from `_of_rows`. Every `BlockRow` opens with
+  `(R.Valid) →` (Blocks.lean:688) and `¬ poseidonRender.Valid` is proved, so a row stated AT
+  `poseidonRender` is vacuous (PLAN-V2 §4.4): state rows for every `R`, and never report one as
+  headline progress.
 
-### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3]**
-SEM · PROOF · box 2.5 h · strongest · after S.3
+### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3 and F.1; see the WP-T stop below]**
+SEM · PROOF · box 2.5 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
   invariants.** Pre `Clean R .vk`, post `… ∨ Clean R .transcript ∨ …`.
 - **Needs.** M0.1's transcriptParser row (16 locals written; 4 static ranges + **11 dynamic write
@@ -576,9 +697,13 @@ SEM · PROOF · box 2.5 h · strongest · after S.3
   loops); `Yul/Contracts.lean` loop rules.
 - **Split at 1 h** into (loops) and (guards) if needed.
 - **Accept.** As S.4. **If the 9 invariants do not close, deliver the ones that do and name the rest.**
+- **Stop if.** The first loop invariant is not closed at 1 h. PLAN-V2:269 puts automation (WP-T)
+  BEFORE block proofs because "hand proofs at that density are infeasible", and TraceReturn took 988
+  lines by hand. Report lines per Yul token so the WP-T decision (`docs/DECISIONS-PENDING.md` §10) is
+  taken on data.
 
-### S.6 — `BlockRow` for `lagrange`  **[READY after S.3]**
-SEM · PROOF · box 2 h · strongest · after S.3
+### S.6 — `BlockRow` for `lagrange`  **[READY after S.3 and F.1]**
+SEM · PROOF · box 2 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .lagrange`. **The only loop-bearing helper is `batch_invert`.** Pre
   `Clean R .transcript`, post `… ∨ Clean R .lagrange ∨ …`.
 - **Needs.** M0.1's lagrange row (3 stmts, 21 locals written, 5 own loops, `success :=
@@ -586,22 +711,28 @@ SEM · PROOF · box 2 h · strongest · after S.3
   transfer blows the heartbeat default — do NOT raise heartbeats, fold the clause as FP.0 did.**
 - **Accept.** As S.4.
 
-### S.7 — `BlockRow` for `quotientLin` (GAP G3)  **[READY after S.3]**
-SEM · PROOF · box 1.5 h · Sonnet · after S.3
-- **Goal.** `BlockRow R product .quotientLin` — **S.1 established six rows are NOT enough;**
-  `.quotientLin` needs a `BlockSound` too. This is C.1's `poseidon_quotient_block`.
+### S.7 — The `quotientLin` contract (GAP G3)  **[BLOCKED: WP-G1 not merged (see R.2) · S.2 may move five `Inv` clauses into this post]**
+SEM · PROOF · box 1.5 h · strongest (W10: Quotient) · after R.2's WP-G1 children, S.2
+- **Goal.** Discharge C.1's `poseidon_quotient_block` (PoseidonV2.lean:207). **S.1 established six
+  rows are NOT enough;** `.quotientLin` needs its contract too.
+- **Not a `BlockRow`.** `poseidon_quotient_block` has no `R.Valid` hypothesis; `BlockRow` opens with
+  `(R.Valid) →` (Blocks.lean:688), and `¬ poseidonRender.Valid` is proved (PoseidonValid.lean:468). A
+  row stated at `poseidonRender` is therefore vacuous and cannot discharge it (PLAN-V2 §4.4). A
+  generic row would also need `R.qblocks = compactBlocks R.plan` in `Valid` (WP-G3, PLAN-V2:258,
+  frozen-surface sign-off).
 - **Needs.** M0.1's quotientLin row (1 stmt, **122 of 6572 tokens emitted**, writes only the 2-word
-  QUOTIENT_MPTR payload, **0 `success` assigns**); WP-G1.
-- **Stop if.** The 98% unemitted region means the row cannot be stated at all — report, do not pad.
-- **Accept.** As S.4.
+  QUOTIENT_MPTR payload, **0 `success` assigns**); WP-G1 merged; S.2's verdict.
+- **Stop if.** The unemitted region means the contract cannot be stated at all — report, do not pad.
+- **Accept.** `poseidon_quotient_block` proved, `sorryAx` grep = 0, headline cone down by 1; or
+  PARTIAL with each gap a named lemma.
 
 ### ~~pcs row~~  **[HELD — blocked by S.2]**
-S.1 PROVED sorry-free that an empty slice's `BlockSound` forces `Inv .quotient → Inv .pcs`, and the
+S.1 showed (in scratch; nothing landed) that an empty slice's `BlockSound` forces `Inv .quotient → Inv .pcs`, and the
 `.pcs` arm adds five clauses `.quotient` lacks (fEval 16288, v 16320, finalCom 16352, pairingLhs 16480,
 pairingRhs 16608). **The `pcs` row is REFUTABLE, not merely hard, until S.2 lands.** Do not write it.
 
 ---
-### S.1 — Resolve the `slices_seq_sound` ceiling  **[READY — DO BEFORE ANY BLOCK-ROW CARD]**  **[DONE 3963aa3 - CEILING-REFRAMEABLE; see S.3]**
+### S.1 — Resolve the `slices_seq_sound` ceiling  **[DONE (read-only probe, no code merged) - verdict (b), a §6 shape problem; records in 7bf0497 (not `3963aa3`, which is M.1's ETA row); see D-P49 (PROPOSED) and S.3]**
 
 SEM · PROBE · box 1 h · strongest · after M.1
 
@@ -627,6 +758,9 @@ GEN · PROBE · box 1 h · Sonnet · after M.1
   `Clean .quotient → Clean .pcs`, asserting fEval 16288, v 16320, finalCom 16352, pairingLhs 16480,
   pairingRhs 16608 — **all outside the lagrange/quotient arms 15904-16192 — at a boundary nothing
   before it writes.** Not fixable by adding `Frame`/`Clean` fields.
+- **Verify first (10 min).** PLAN-V2:108 already attributes the empty PCS to the typed-in
+  `poseidonMeta` ("fixed by deriving the meta from the real VK (WP-I1/WP-G4)"). If that holds at the
+  current commit, the verdict is (a) and this card closes into R.1.
 - **Do.** Determine which of: (a) the plan must emit the PCS computations (ties to D-P47's fixture
   re-export — the CS data may include them); or (b) those clauses belong to the `quotientLin` row's
   post. Report with evidence from the plan/Inv definitions.
