@@ -1830,3 +1830,36 @@ be discharged from `R.Valid` at all — the pin sits on the critical path to the
 corner. `Valid` currently carries `transcriptMptr` only (`Statements.lean:169`), which is why T.1 hit
 it and why the asymmetry exists: **progress asserts existence and so inherits a data obligation
 soundness does not.**
+
+## D-P49 — **Approved: gate `BlockSound`'s poisoned arm on `q ≠ .traceReturn` (S.1's §6 refinement)**
+
+> S.1 asked for orchestrator sign-off because this exceeds Q0.3's 'add fields to `Frame`/`Clean` only'
+> convention, even though §6 is listed as refinable. The human delegated decisions on 2026-11-17.
+
+**Decision: approve the §6 gate**, at `Blocks.lean:96-97` and `:100-101`:
+  BEFORE  `∨ (o = .normal ∧ Poisoned R H vkAddr cd V' st')`
+  AFTER   `∨ (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')`
+**Why this is safe, and it is the same argument as D-P46/D-P48: it STRENGTHENS a hypothesis, never
+weakens one.** `BlockSound` feeds `BlockContractsAt`, which is a *hypothesis* of
+`lowering_equivalence_of_blocks`. Making a hypothesis harder to satisfy can only make the composition
+harder to apply — **it cannot make a false headline true.** And S.1 verified sorry-free that the
+strengthened claims hold at `.traceReturn`: `tr_sound_clean'` (clean → revert ∨ exitOk) and
+`tr_poison_walk'` (poisoned → revert, always) both elaborate on `[propext, Classical.choice,
+Quot.sound]`. **The arm is vacuous in the existing proofs — a hypothesis-strength gap, not a semantic
+one.**
+
+**Why not the §7 alternative.** Threading an extra `hlast` through `slices_seq_sound`,
+`lowering_equivalence_of_blocks` and `end_to_end` spreads one local fact across three signatures and
+leaves §6 stating something weaker than the truth. **The gate makes the shape honest at the place it
+belongs:** at `traceReturn` a poisoned run genuinely cannot end `normal` — it reverts. Smaller, local,
+and it does not leak into the headline's hypotheses.
+
+**Rejected: option (a)** (add the arm to `slices_seq_sound`'s post). S.1 showed it would break the
+frozen consumer — `LoweringEquivalence` conjunct 3 demands every permissive run satisfies
+`view = returnView st₀ ∨ isRevertOrHalt`, and a normal fall-through is neither. **Recorded so nobody
+retries it.**
+
+**Scope condition on the card that applies it:** changing §6 invalidates the already-sorry-free
+`tr_blockRow`/`fp_blockRow`, which cite `tr_blockSound` *with* the arm. **The card must repair them in
+the same commit** from the arm-free restatements, and must show `cone_sorries` unchanged at every
+existing root — a shape change that silently breaks a landed proof is the failure mode here.

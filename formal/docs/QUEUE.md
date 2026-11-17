@@ -539,7 +539,69 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
   (`readBytes_storeWord_one`, `map_congr_range`, the `iszero` inversion) and restated for V2's shapes;
   (iv) `EVM.run_adequacy` was not needed, not cited, and `vendor/` is untouched.
 
-### S.1 — Resolve the `slices_seq_sound` ceiling  **[READY — DO BEFORE ANY BLOCK-ROW CARD]**
+### S.3 — Apply the D-P49 §6 gate and repair the rows  **[READY — RUN FIRST]**
+
+SEM · REFACTOR · box 1 h · strongest · after S.1
+
+- **Goal.** Gate `BlockSound`'s two poisoned arms on `q ≠ .traceReturn` and repair every dependent.
+- **Needs.** `Blocks.lean:96-97`, `:100-101`; `tr_blockRow`/`fp_blockRow`/`blockContractsAt_twoRows` in
+  `Blocks/Compose.lean`; `tr_sound_clean`/`tr_poison_walk` in `Blocks/TraceReturn.lean`.
+- **Do.** 1. Apply the gate exactly as D-P49 states. 2. Rebuild `tr_blockRow` from the ARM-FREE
+  restatements (`tr_sound_clean'`, `tr_poison_walk'` per S.1) — **the landed one cites the armed
+  version and will break.** 3. Confirm `fp_blockRow` still type-checks (finalPairing ≠ traceReturn, so
+  it should be unaffected — verify, do not assume).
+- **Deliverable.** The gate + repaired rows, all sorry-free.
+- **Accept.** `verify.sh --quick` green; **`cone_sorries` unchanged at every root** (headline 11,
+  `tr_blockSound` 0, `tr_blockProgress` 0, `fp_finalPairing_contracts` 3); `#print axioms` of every
+  repaired lemma with **`sorryAx` grep = 0**; `Frozen.sha256` verifies.
+- **Stop if.** Repairing `tr_blockRow` needs a new proof beyond S.1's restatements · any root's cone
+  moves unexpectedly.
+
+### S.4 — `BlockRow` for `vkLoading`  **[READY after S.3]**
+SEM · PROOF · box 2 h · strongest · after S.3
+- **Goal.** `BlockRow R product .vkLoading`. **Shape from S.1:** pre `Clean R .start`, post `(halt ∧
+  Reverted) ∨ Clean R .vk ∨ (normal ∧ Poisoned)`; honest `StmtsTotal` gated on `G1CodecLaws ∧
+  ChallengesGood ∧ DualMSM.check`.
+- **Needs.** M0.1's vkLoading row (1 stmt; writes 0x2900..0x3ae0 {vk_payload} + 0x0..0x20 via fail;
+  **9 `success := and(…)` guards ⇒ the poisoned arm is LIVE**); `extcodecopy` vs `Frame.vkCode`.
+- **Does NOT need.** Other blocks; the deployment; the pairing.
+- **Accept.** Sorry-free or a named lemma per gap; **report whether the headline cone moved.**
+
+### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3]**
+SEM · PROOF · box 2.5 h · strongest · after S.3
+- **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
+  invariants.** Pre `Clean R .vk`, post `… ∨ Clean R .transcript ∨ …`.
+- **Needs.** M0.1's transcriptParser row (16 locals written; 4 static ranges + **11 dynamic write
+  sites**; helpers `transcript_init, common_word, fail, common_uncompressed_g1, squeeze_to`, none
+  loops); `Yul/Contracts.lean` loop rules.
+- **Split at 1 h** into (loops) and (guards) if needed.
+- **Accept.** As S.4. **If the 9 invariants do not close, deliver the ones that do and name the rest.**
+
+### S.6 — `BlockRow` for `lagrange`  **[READY after S.3]**
+SEM · PROOF · box 2 h · strongest · after S.3
+- **Goal.** `BlockRow R product .lagrange`. **The only loop-bearing helper is `batch_invert`.** Pre
+  `Clean R .transcript`, post `… ∨ Clean R .lagrange ∨ …`.
+- **Needs.** M0.1's lagrange row (3 stmts, 21 locals written, 5 own loops, `success :=
+  batch_invert(…)`); `Yul/Contracts.lean` loop inversion; **FP.0's cost finding: the `Inv`-chain
+  transfer blows the heartbeat default — do NOT raise heartbeats, fold the clause as FP.0 did.**
+- **Accept.** As S.4.
+
+### S.7 — `BlockRow` for `quotientLin` (GAP G3)  **[READY after S.3]**
+SEM · PROOF · box 1.5 h · Sonnet · after S.3
+- **Goal.** `BlockRow R product .quotientLin` — **S.1 established six rows are NOT enough;**
+  `.quotientLin` needs a `BlockSound` too. This is C.1's `poseidon_quotient_block`.
+- **Needs.** M0.1's quotientLin row (1 stmt, **122 of 6572 tokens emitted**, writes only the 2-word
+  QUOTIENT_MPTR payload, **0 `success` assigns**); WP-G1.
+- **Stop if.** The 98% unemitted region means the row cannot be stated at all — report, do not pad.
+- **Accept.** As S.4.
+
+### ~~pcs row~~  **[HELD — blocked by S.2]**
+S.1 PROVED sorry-free that an empty slice's `BlockSound` forces `Inv .quotient → Inv .pcs`, and the
+`.pcs` arm adds five clauses `.quotient` lacks (fEval 16288, v 16320, finalCom 16352, pairingLhs 16480,
+pairingRhs 16608). **The `pcs` row is REFUTABLE, not merely hard, until S.2 lands.** Do not write it.
+
+---
+### S.1 — Resolve the `slices_seq_sound` ceiling  **[READY — DO BEFORE ANY BLOCK-ROW CARD]**  **[DONE 3963aa3 - CEILING-REFRAMEABLE; see S.3]**
 
 SEM · PROBE · box 1 h · strongest · after M.1
 
