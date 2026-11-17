@@ -42,13 +42,38 @@ no frozen edit), **OBJ.17** (name the target "fixture F1"), **Q0.5** (V2 card, c
 re-hashes `Program.lean` and `Statements.lean` together, or it does not merge G1.2. W14 — no Yul
 PROOF card is READY before T3.11's exhibit, whatever the table's status column says.
 
-**D-P71 (signed 2026-11-17, `design.md`): the goal is the generator theorem, not `poseidon_done`.**
-`lowering_correct (R) (product) (hR : R.ValidV3) : LoweringEquivalenceV3 R product`; rows are proved
-for every render; fixtures are tests only. Read the goal prompt's GOAL and DONE paragraphs through
-D-P71 until card PL.G rewrites them. Rows of the V3 table noted "D-P71: restated by PL.G" are not
-briefed as written; T3.4 is dropped and T3.6 is replaced by GEN.1; **GEN.0** (probe) becomes READY when PL.G has run. If
-GEN.0 or GEN.1 misses its Accept line, stop and ask the human: per-fixture rows are not a fallback.
+**THE GOAL CHANGED ON 2026-11-17 (D-P71, D-P72; `design.md`).** The deliverable is the generator
+theorem `lowering_correct (R) (product) (hR : ValidV3 R) : LoweringEquivalenceV3 R product` — for
+EVERY render — and its widening to the IVC verifier, `lowering_correctW` (accumulator mode with
+the batched final pairing; external evaluator). **No block row, totality lemma or headline is
+proved at a fixture; fixtures are tests** (F1 Poseidon; F2 the IVC decider circuit). Card PL.G has
+run: PLAN-V3 §0, §2.2, §5 M5–M9, §6, §7, §9, §10.3, the cards, the V3 table and the goal prompt
+are the restated text. Lines above that speak of `lowering_equivalence_poseidon` as the headline
+describe the tree before D-P71; card PL.1 still deletes that theorem.
 
-**Waiting on human:** card **PL.G** (the plan rewrite for D-P71; a plan session runs it, not a
-subagent). Otherwise nothing blocks the queue. Recommended: paste the V3 goal prompt
-(`v2-bundle/docs/GOAL-PROMPT.md`, everything below its line) as the orchestrator's `/goal`.
+**What changed for the queue.**
+- M0–M4 cards are unchanged (needed on either route).
+- M5–M8: T3.4 DROPPED; T3.6 REPLACED BY GEN.1; T3.3 and T3.11 are tests only. T3.9, T3.10, SIM.6,
+  HLP.1, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H, PL.E, DG.4, DG.9 are RESTATED in place for
+  every render; their children are area GEN-ROWS of `PLAN-V3-cards.md`. New: T3.1b (lands
+  `wp_run`), GEN.0 (lands parametric execution; measured in the design pass: 7 leaves, kernel
+  0.24 s), GEN.1, GEN.3 (loop rule, proved in the design pass), GEN.4, GEN.5, RECON.1b, RECON.3.
+  T3.7 is dropped; T3.0 is optional.
+- M9 (D-P72): area WID, 20 cards. WID.2 depends on nothing. M10 (D-P73): area CERT, 10 cards.
+- Evidence: `docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean` (the headline; its
+  falsifier is proved), `lean/soundness/GeneratorRows.lean` (40 named open row obligations; the
+  composition is proved), `lean/widening/*.lean`. `bash docs/plans/V3-evidence/check.sh` has two
+  new areas' worth of files (`soundness` grew; `widening` is new).
+- **A missed threshold of PLAN-V3 §5 M5 (points P, B, L, C, D) goes to the human. Per-fixture
+  rows are not a fallback.**
+
+**D-P73 (signed 2026-11-17): the generator itself is certified.** The final theorem is
+`generator_correct`: hypotheses on the generator's input only (`Generates gi o`, `SupportedInput
+gi`); `lowering_correct` is its main lemma. Milestone M10, area CERT (10 cards; evidence
+`lean/object/GeneratorCertified.lean`, 33 named lemmas). It is not provable before the tree
+emitter is complete: at F1 the port's text and the emitted tree disagree today (6,761 tokens
+against 14,054). CERT.1 probes two suspect lemmas first; a refuted one goes to the human.
+
+**Waiting on human:** paste the goal prompt (`v2-bundle/docs/GOAL-PROMPT.md`, everything below its
+line) as the orchestrator's `/goal`: **the prompt changed with D-P71 and D-P72.** D-P72 clause 9
+asks the generator's owner for a free-memory guard in the evaluator template.

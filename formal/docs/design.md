@@ -2409,3 +2409,203 @@ unaffected.
 
 **Not decided here.** The cost is unmeasured (one block closed for every `R`: 25 tokens, 1,053
 lines). No estimate is recorded before GEN.1 reports.
+
+## D-P72 — **Approved: widen the supported class to the IVC verifier (accumulator mode with the batched pairing check; external quotient evaluator)**
+
+> Drafted 2026-11-17 at `cf00592` as `docs/DECISIONS-PENDING.md` §14. Evidence:
+> `docs/plans/V3-evidence/design/ivc-widening.md`, `ivc-object-reference.md`,
+> `lean/widening/*.lean` (`bash docs/plans/V3-evidence/check.sh widening`).
+> **Scope: APPROVED.** Signed off: human (repository owner), 2026-11-17, in the plan session at
+> `cf00592` (instruction: *"ensure we cover the IVC proofs with extra pairing check, batched"*;
+> earlier the same day: *"I would like to prove correct the IVC circuit verifier"* and *"i am not
+> interested in proofs for fixtures"*).
+> **Clauses 1–10 below: APPROVED.** Signed off: human (repository owner), 2026-11-17, in the plan
+> session at `cf00592`, on the clauses as drafted here and in `DECISIONS-PENDING.md` §14
+> (instruction: *"sign D-P72 clauses 1 to 10"*). The "if struck" column of §14 is therefore moot.
+
+**What is signed (scope).** The generator theorem of D-P71 must cover the generated verifier of the
+IVC decider circuit: accumulator mode, in which the contract folds the carried accumulator into the
+final pairing with a keccak-derived challenge `alpha` (one batched pairing check instead of two),
+and the external quotient evaluator that this verifier calls. It is covered as a **widening of the
+supported class, for every render**; no block row, totality lemma or headline is proved at the IVC
+circuit (D-P71). The IVC decider circuit becomes test fixture **F2**. This strikes items X1 and X2
+from "later" (PLAN-V3 §5) and D-P71's clause "the IVC verifier is outside this class".
+
+**Facts the clauses rest on** (measured or read at `cf00592`; details in the two memos).
+- Two `SupportedV3` clauses are known to fail on the IVC key: `noAcc` and `embeddedQuotient`.
+  (Corrected the same day after review: the first draft said "exactly two". The other clauses
+  were read off the artifact or inferred, and `wf` and `layout` are unmeasured; card GEN.2 prints
+  the table from the exported key.)
+- Rust has no single function that the contract ports in accumulator mode. The e2e test checks the
+  decider proof with `midnight_zk_stdlib::verify` and, separately, `final_acc.check` under the IVC
+  SRS. The contract makes one pairing check on `(kzg_lhs + α·acc_lhs, kzg_rhs + α·acc_rhs)`.
+  So an iff with "the Rust verifier" does not exist.
+- The Lean generator already renders the seven partials of the IVC verifier byte for byte
+  (`lean/widening/IvcPartials.lean`); the evaluator contract, the acc config and the external
+  frame are ported and tested only synthetically; no bundle of the decider circuit exists.
+- The tracked IVC contracts have no proof: `proof.bin`, `calldata.bin` and `contract-sizes.txt` in
+  the dump are untracked leftovers of 2026-10-07 from another render.
+
+**Clauses (signed).**
+1. **One theorem.** The stated target becomes `lowering_correctW (R) (Q : EvalObject) (product)
+   (hR : ValidW R Q) : LoweringEquivalenceW R Q product` (`lean/widening/WideningStages.lean`; see
+   the note recorded after review, below, for the hypothesis `hQ` it carries until WID.H).
+   D-P71's `lowering_correct` is its corollary (`lowering_correct_of_W`), and at a render with no
+   accumulator and an embedded evaluator the widened statement is the V3 text
+   (`equivalenceW_iff_V3`, proved). The rows of the base class are proved first, in the widened
+   shape, so that nothing is restated when the two new arms are added.
+2. **Accumulator kinds.** Point-and-scalar with no fixed-base tail (`SupportedW.accKind`,
+   `AccShape`). The limb shape (7 limbs of 56 bits) is the only one the generator accepts and is
+   not a class parameter. Point-pair and the fixed-base tail are later widenings.
+3. **Right-hand side.** `LeanAcceptsAcc`: a Lean reference of the contract's own check, decoding
+   the accumulator from the RAW instance words and batching with the keccak `alpha`. Its relation
+   to Rust is two proved corollaries, not an iff: `leanAcceptsAcc_of_rust` (Rust accepts the
+   proof and the accumulator passes its own check ⇒ the reference accepts) and
+   `rust_or_collision_of_leanAcceptsAcc` with `alpha_atMostOne` (the reference accepts ⇒ both Rust
+   checks hold, or `alpha` is the one value that makes the two failures cancel). No probability is
+   claimed. `¬AlphaCollision` is NOT added to `SoundSide`.
+4. **The evaluator.** The object is the Yul body the Lean generator emits for
+   `Halo2QuotientEvaluator.sol`, run in the closed dialect. `EvaluatorTrust` is a hypothesis of the
+   headline, keyed on the code-size and code-hash pin the verifier itself tests: an account that
+   passes the pin answers as the generated body does and changes no world state. It is the
+   evaluator's analogue of `EntryFrame` (solc is trusted). It is shown satisfiable
+   (`evaluatorTrust_model`).
+5. **Gas oracle.** Conjunct 2 keeps the zero oracle (the V3 text); the rows are proved for
+   `CompleteAnyGasW`, which totality needs.
+6. **`idLaw`** (`ofEip? (toEip 1) = some 1`) is a hypothesis in accumulator mode only.
+7. **Test fixture F2.** The IVC bundle is regenerated under ONE seeded test SRS (`unsafe_setup(20)`
+   then `downsize(19)`: the IVC and decider SRS must share the trapdoor), with exporter schema 2
+   plus the accumulator mutants. A production-SRS render serves byte equality, the clause table
+   and the reference gate up to the two pairing inputs; it cannot serve the acceptance gate.
+8. **A Rust-side assertion.** Add `assert_eq!(ivc_srs.s_g2(), decider_srs.s_g2())` to the e2e test
+   (it has none), and name the one-SRS assumption in the English statement.
+9. **Evaluator free-memory guard.** Ask the generator's owner for the guard the verifier has;
+   until then `EvalEntry.fmp` is a trusted bound (measured `0x8c0 ≤ 0x1000`).
+10. **`Evaluator.rel_worldLocal`** (sorried, argued false, used only on the retired v1 route) is
+    deleted with the v1 track.
+
+**Recorded after review (2026-11-17), within clause 4.** The target as first drafted,
+`lowering_correctW (hR : ValidW R Q)`, is false for an arbitrary evaluator object `Q` (an empty
+body makes the contract revert on every proof). Until card WID.6 ties `Q` to the generated body
+(`Q = evalObjectOf R`, a clause of `ValidW`), the target carries the evaluator's contract as an
+explicit hypothesis (`hQ : isExternal R → EvalContracts R Q`); card WID.17 proves it for the
+generated body and card WID.H drops it. This adds no assumption to the final theorem: clause 4's
+object was always "the Yul body the Lean generator emits".
+
+**What the widened theorem says, in words.** For every render in the widened class: the body of
+`verifyProof` returns ABI `true` iff the Lean reference of the contract's check accepts the
+calldata — in accumulator mode that reference includes the batched pairing check — and otherwise
+reverts without touching the world, and is never stuck; under the precompile assumption, the entry
+frame, and (external evaluator) `EvaluatorTrust`. Against Rust in accumulator mode: complete, and
+sound up to one value of `alpha` per input.
+
+**Conditions (applied, not chosen).**
+- Clause 1: card RECON.3 moves the row statements to the widened shape **before** any ROW card of
+  M6 is briefed. The rows of the base class are proved first.
+- Clauses 8 and 9 touch Rust under `proofs/solidity-verifier` (a test assertion; a guard in the
+  evaluator template). Clause 9 is a request to the generator's owner: until the guard exists,
+  `EvalEntry.fmp` is a trusted bound and the English statement says so. A guard changes the
+  rendered evaluator and its pinned code hash, so it lands before test fixture F2 is exported
+  (WID.4), or F2 is re-exported.
+- Clauses 4 and 6 add hypotheses to the widened headline (`EvaluatorTrust`, `idLaw`). They are the
+  only ones this decision authorises; a row that needs another is a PREMISE GAP.
+- D-P71's conditions stand (GEN.0 first; a missed threshold goes to the human).
+
+## D-P73 — **Approved: certify the generator itself — the headline's hypotheses are on the generator's input only (amends D-P71 point 3, D-P69)**
+
+> Drafted as `docs/DECISIONS-PENDING.md` §15. **Status: APPROVED, with clause 1 as amended.**
+> Signed off: human (repository owner), 2026-11-17, in the plan session at `cf00592`. The human
+> first said *"sign D-P73 once the design agent reports"*; the report amended clause 1 in two
+> points (AMENDED (a) and (b) below), the plan session held the signature and showed the amended
+> text, and the human then signed it (instruction: *"Sign as amended"*). The human's stated
+> requirement: *"i thought the codegenerator itself would be certified"*.
+> Evidence: `docs/plans/V3-evidence/lean/object/GeneratorCertified.lean`, `CertMeasure.lean`,
+> `design/generator-certified.md` (`bash docs/plans/V3-evidence/check.sh object`).
+
+**Decision.**
+
+1. **Deliverable.** The headline's hypotheses are on the input only (typechecked):
+
+   ```lean
+   theorem generator_certified (gi : GenInput p G₁ G₂ Gₜ) (o : CertOut)
+       (hg : Generates gi o) (hs : SupportedInput gi) : (renderOf gi o).ValidV3
+   theorem generator_correct_V3 (gi) (o) (hg : Generates gi o) (hs : SupportedInput gi) (product) :
+       LoweringEquivalenceV3 (renderOf gi o) product
+   ```
+
+   `renderOf gi o` leaves no field of the render free. No per-circuit check remains in the
+   theorem. (This strikes D-P71 point 3 and item X11.) After D-P72 the same statement is made
+   for `ValidW` and `LoweringEquivalenceW`.
+   - **AMENDED (a): the certified function generates the key payload too.**
+     `generate gi` is `generateVk`, then the SRS fingerprint, then `generateAll`. With the payload
+     taken as an input (as `generateAll` takes it today) the claim is false: flipping the `omega`
+     word of the payload leaves the generator accepting, and the constants no longer agree with
+     the key (measured). So the certified generator is `generate`, and `GenInput` is the key, the
+     SRS, the point codecs, the configuration, the flags and two strings (`features`, `frDelta`)
+     that no key determines.
+   - **AMENDED (b): `SupportedInput` is not purely decidable.** It is: the scope clauses of the
+     supported class (decidable; `layout` is dropped because it follows from generation
+     succeeding); the input-only half of `EnvAgrees`; **two codec laws** (the generator's point
+     encoders agree with the verifier's `toEip`/`encG2`) — hypotheses on the environment, of the
+     same kind as the headline's codec hypothesis, not computations; `deltaLiteral`; and a **new
+     size bound** (`numInstances < 2^64`, `k < 64`: Rust computes in `usize`, the port in `Nat`,
+     and the header words wrap otherwise).
+2. **G1, route A: the tree is the generator's output.** The assembly text the Lean generator
+   prints is **defined** as the print of the emitted tree. The template-text port stays in the
+   tree as a test oracle. Measured for this route: with solc 0.8.30 under the project's pinned
+   options (`--via-ir --optimize --evm-version cancun --no-cbor-metadata`), the port's text and
+   the variant with both assembly blocks replaced by the print of the tree compile to **identical
+   runtime and creation bytecode** at F1 (with a Homebrew build of solc, not the pinned binary:
+   to be repeated with the pinned one). Consequences:
+   - the artifact gate against Rust compares **tokens**, or compiled bytecode, inside the assembly
+     blocks (comments and layout are not printed); outside them the text is unchanged;
+   - **the tree emitter must be complete first**: the accumulator helpers, the quotient helpers
+     and the quotient numerator block need tree emitters (OBJ.13, OBJ.14, OBJ.15 and the
+     numerator's line families). The block rows need those trees on any route;
+   - `Constants.sol` is printed from the constant table (data first), which removes one lemma;
+   - not taken: (B) prove the two emitters token-equal for every input — 11 renderer/emitter
+     pairs, three trees missing, sized at 25–40 cards, and the kernel cannot reduce the tokenizer
+     even on a 15-byte literal, so it needs symbolic string lemmas; (C) define the tree as the
+     parse of the text — everything B costs, plus the parser, plus restating the rows.
+3. **G2: one lemma per output clause**, proved for every supported input. The 33, by kind:
+   (a) what the generator's own validation checks (4: S each); (b) syntactic invariants of the
+   tree emitters — constants declared, calls resolved, no world write, exit discipline (4: M
+   each), no shadowing and closedness (4: S); (c) builder lemmas (9: S; the payload header: M);
+   (c)+(d) with a codec law (5: S to M). A clause that cannot be proved for every input as stated
+   is a finding for the human, not a hypothesis to add. **Two are suspects today:** `v3_planMeta`
+   (the plan's data is built from the final memory layout, Rust's from an intermediate one) and
+   `v3_cdBound` (no generator check bounds the proof length; it may need a circuit-size bound in
+   the supported class). Each is the first card of its family: confirm or refute before proving.
+4. **What the Lean generator is for.** Certification is about the **Lean** generator. The Rust
+   generator is not certified: it is tested against the Lean one. A contract is covered by the
+   theorem when it was produced by the Lean generator, or when its text is token-equal (or its
+   bytecode equal) to what the Lean generator prints for the same input — a computation, once per
+   deployment. **Today the Lean `generate` cannot run on a real key** (there is no computable G2
+   decompression), so the second form is the only one available until that is built.
+5. **Still trusted** after this decision: the Lean printer `EVM.print` (the text given to solc is
+   the print of the tree; a print/parse round-trip theorem would remove it); solc, through
+   `EntryFrame`, `EvaluatorTrust`, constant inlining and the Solidity outside the assembly
+   blocks; the precompiles; the two codec laws; the Lean kernel and the three standard axioms.
+   Removed: the per-circuit evaluation of `ValidV3`, and the Lean token parser.
+
+**Amends.**
+
+| signed entry | amendment |
+|---|---|
+| D-P71 point 3 | struck: validity is proved for every supported input, not checked per circuit |
+| D-P67 (`ValidV3`, frozen) | unchanged as a statement; it becomes a lemma's conclusion instead of the headline's hypothesis |
+| D-P69 / D-P71 (`GeneratorDone`) | `headline` is `generator_correct`; `artifact` compares tokens or bytecode inside the assembly blocks |
+| PLAN-V3 §5 | a new milestone M10 "the generator is certified"; the tree-emitter cards (OBJ.13–OBJ.15, the numerator families) move in front of M5; route A's printing change lands with OBJ.7 |
+
+**Conditions (applied, not chosen).**
+
+- The block rows of M5–M6 are proved against the tree emitters, as today. Route A changes which
+  text is printed, not what the rows are about, so no row waits for this decision.
+- `generator_certified` cannot be proved before the tree emitter is complete: two of its lemmas
+  are false at F1 today for that reason alone.
+- A confirmed suspect (`v3_planMeta`, `v3_cdBound`), or any clause false for some supported
+  input, stops its card and goes to the human.
+
+**Not decided here.** Whether the contracts that are deployed are produced by the Lean generator
+or by the Rust one. Until the Lean `generate` runs on a real key, a deployed contract is covered
+by a per-deployment comparison with what the Lean generator prints (clause 4).

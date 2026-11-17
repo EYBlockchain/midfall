@@ -4,13 +4,14 @@
 quotes the sign-off (EXECUTION-V2 W2). Each decision's conditions are recorded in its entry and
 still apply. The cut-over (card PL.0, §10.2) is done: `QUEUE.md`'s V3 table is the order.
 
-**AMENDED BY D-P71 (signed 2026-11-17, `design.md`).** The deliverable is the generator theorem
-`lowering_correct (R) (product) (hR : R.ValidV3) : LoweringEquivalenceV3 R product`: every block row
-is proved for every render, and no row, totality lemma or headline is proved at a fixture. F1 is a
-test circuit (witnesses, falsifiers, the run-it gates, non-vacuity, the reference and artifact
-gates). **§0, §5 M5–M8 and §6 below still carry the per-fixture text; card PL.G restates them.
-Where they differ from D-P71, D-P71 governs.** New cards: GEN.0, GEN.1, GEN.2, PL.G (area GEN of
-`PLAN-V3-cards.md`).
+**AMENDED BY D-P71, D-P72 AND D-P73 (signed 2026-11-17, `design.md`); restated by card PL.G.** The
+deliverable is the generator theorem `lowering_correct` (§0): every block row is proved for every
+render, and no row, totality lemma or headline is proved at a fixture. Fixtures are tests. The
+supported class is widened to the IVC verifier (accumulator mode with the batched pairing check,
+external evaluator: §5 M9). The generator itself is certified: the final theorem's hypotheses are
+on the generator's input only (§5 M10). §0, §2.2, §5 M5–M10, §6, §7, §9 and §10.3 below are the
+restated text.
+Sections that describe M0–M4 are unchanged: they are needed on either route.
 
 Handover brief for the orchestrator and for the human who signs. Self-contained: read §0–§4 before
 touching anything. Paths are relative to `formal/` unless they start with `proofs/`.
@@ -34,22 +35,61 @@ touching anything. Paths are relative to `formal/` unless they start with `proof
 
 ## 0. Objective, in one sentence
 
-Prove, in Lean 4, that for the **fixture render F1** (the `PoseidonExample` circuit, k = 6, one
-instance), **the body of `verifyProof` emitted by the Lean port of the Rust generator**, run in the
-yul-semantics EVM dialect from the state Solidity hands it, **returns ABI `true` iff the
+Prove, in Lean 4, **the generator theorem** (D-P71): for **every program the Lean port of the Rust
+generator emits, for any circuit in the supported class**, **the body of `verifyProof`**, run in
+the yul-semantics EVM dialect from the state Solidity hands it, **returns ABI `true` iff the
 Rust-faithful Lean verifier accepts the decoded calldata, and otherwise reverts without touching
-the world** — where *the program is the generator's whole output* (checked against the Rust
-artifact byte for byte), *the Lean verifier is shown to agree with the Rust verifier on Rust-made
-proofs*, the statement is *not vacuous* (an accepted proof exists and runs to `return(true)`), and
-the modelled program is *never stuck*.
+the world** — where *the Lean generator is checked against the Rust generator byte for byte* on
+test circuits, *the Lean verifier is shown to agree with the Rust verifier on Rust-made proofs*,
+the statement is *not vacuous* (at a test circuit the hypothesis holds and an accepted proof runs
+to `return(true)`), and the modelled program is *never stuck*.
 
-What changed from PLAN-V2 §0: the four italicised clauses. Each was assumed by V2 and is false or
-unchecked at `f2fe99b`.
+```lean
+theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
+    LoweringEquivalenceV3 R product          -- V3-evidence/lean/statements/GeneratorTheorem.lean
+```
 
-**Out of scope, stated plainly.** solc (trusted through `EntryFrame`); gas; any on-chain contract
-(the only one in the repository, Sepolia `moonlight-wrap`, is another circuit in accumulator mode
-from superseded templates — REVIEW-V3 RV-17); accumulator mode, the external evaluator, the
-embedded key; the ∀-render theorem; the security statements S1–S7.
+**No fixture occurs in the statement, and no block row, totality lemma or headline is proved at a
+fixture.** `ValidV3 R` says that `R` is what the generator returns for its own key, configuration
+and flags, and that the circuit is in the supported class.
+
+**The generator itself is certified (D-P73).** `ValidV3` is not left as a per-circuit check: it is
+proved for every supported input, so the final theorem has hypotheses on the generator's
+**input** only (§5 M10):
+
+```lean
+theorem generator_certified (gi : GenInput p G₁ G₂ Gₜ) (o : CertOut)
+    (hg : Generates gi o) (hs : SupportedInput gi) : (renderOf gi o).ValidV3
+theorem generator_correct (gi) (o) (hg : Generates gi o) (hs : SupportedInput gi) (product) :
+    LoweringEquivalenceV3 (renderOf gi o) product     -- V3-evidence/lean/object/GeneratorCertified.lean
+```
+
+`generate` is the whole Lean generator, key-payload generation included; the assembly text it
+prints is defined as the print of the emitted tree. `lowering_correct` is the main lemma of
+`generator_correct`; M5–M9 prove it, M10 proves `generator_certified`.
+
+**The supported class.** `SupportedV3` as typechecked (one user phase, the instance shape of clause
+`instShape`, separate key contract, production flags), **widened by D-P72 to accumulator mode with
+the batched final pairing and to the external quotient evaluator**, which is what the generated
+verifier of the IVC decider circuit uses (§5 M9). Until M9 lands, the theorem covers the base
+class only.
+
+**Fixtures are tests.** F1 (the `PoseidonExample` circuit, k = 6, test SRS) and F2 (the IVC decider
+circuit, k = 20) are kept for exactly these uses, none of which is an equivalence proof: W12
+witnesses and falsifiers; the W14 run-it gates; the non-vacuity gate; the reference gate against
+Rust; byte equality of the rendered contracts with the Rust artifacts. `native_decide` stays
+allowed there (D-P44) and must not occur in the cone of `lowering_correct`.
+
+What changed from PLAN-V2 §0: the four italicised clauses (each was assumed by V2 and was false or
+unchecked at `f2fe99b`). What changed with D-P71: the quantifier. Until 2026-11-17 this section
+named the fixture render F1 as the object and `poseidon_done` as the goal (D-P24, D-P44 clause 4,
+D-P68's technology clause); that text is in git history (`git show cf00592:formal/docs/plans/PLAN-V3.md`).
+
+**Out of scope, stated plainly.** solc (trusted through `EntryFrame`, and for the external
+evaluator through `EvaluatorFrame`, D-P72); gas; any on-chain contract (the only one in the
+repository, Sepolia `moonlight-wrap`, is from superseded templates — REVIEW-V3 RV-17); the embedded
+key; the Rust generator (it is tested against the certified Lean generator, not proved equal to
+it); the security statements S1–S7.
 
 ## 1. Why V2 is revised (checked, not argued)
 
@@ -111,7 +151,7 @@ signed, the signed decisions apply as written.
 | D-P58 | Find the source of fixture non-determinism; fallback if it is in baseline code | **Source found**: `blind_quotient_limbs` draws from `OsRng` (`proofs/src/plonk/prover.rs:126`). That is baseline code, so D-P58's fallback (3) applies. D-P69 extends the export instead of seeding the prover |
 | D-P59 | Fix `permutationCommitmentsMatch` | **Unchanged** (R.7 = REF.3) |
 
-### 2.2 Signed (2026-11-17): D-P60–D-P69
+### 2.2 Signed (2026-11-17): D-P60–D-P69, D-P71, D-P72, D-P73
 
 Recorded in `design.md` with their conditions. Two points of the sign-off narrow this table: the
 optional `EntryFrameV3'` of row 64 is **not** taken, and the "if struck" fallbacks below are **not**
@@ -127,8 +167,11 @@ pre-approved (an unmet condition stops its card). "Frozen" means a `Frozen.sha25
 | **65** | **Scope, in D-P52's re-hash.** The block scope becomes `[hoist helpers ++ hoist slices]` and `Render.slices` moves into `Statements.lean`. Without it, `prog_slices_decomp`'s second conjunct is false the moment G1.2 puts `q_program_fail` into a slice (RV-13). D-P52 covers `Program.lean` only | approve; **needed before the G1 batch merges** | frozen |
 | **66** | **The gate, for F1 (amends D-P45).** `HypothesesInhabitedV3`: hash pinned to `keccak256`; `LeanAccepts` added back; `G1CodecHeadlineLaws`. Conditional on D-P63 | approve if D-P63 is approved; otherwise keep D-P45's text and pin the hash only | frozen |
 | **67** | **`ValidV3`** (frozen). Seven clauses: `generated`, `inputs`, `program`, `noWriters`, `env`, `payload`, `supported`. Subsumes the 13-clause text, `vkPins`, `vkProgressPins`, D-P46's and D-P48's pins. Adds the structural tie `codegenStruct` (AST = parse of the text) | approve, after OBJ.7 shows `generateAll` reproduces the artifact | frozen |
-| **68** | **Block architecture and proof technology** (refinable; recorded because it replaces signed shapes and D-P57's fallback). `StageInv`, `BlockSim`, `BlockProgS`; `Render.Rejects` becomes a corollary; `rejects_of_not_accepts`, `prefix_run_clean`, `runBody_iff_slices` are deleted. Rows are proved per fixture on literal slices pinned by `native_decide`, with the verified `wp` engine. The certificate strategy is chosen by T3.0's table; the go/no-go thresholds of §5 M5 replace D-P57's hand-proof fallback | approve | `Blocks.lean` |
+| **68** | **Block architecture and proof technology** (refinable; recorded because it replaces signed shapes and D-P57's fallback). `StageInv`, `BlockSim`, `BlockProgS`; `Render.Rejects` becomes a corollary; `rejects_of_not_accepts`, `prefix_run_clean`, `runBody_iff_slices` are deleted. ~~Rows are proved per fixture on literal slices pinned by `native_decide`~~ (**struck by D-P71, row 71**: rows are proved for every render), with the verified `wp` engine. The certificate strategy is chosen by T3.0's table; the go/no-go thresholds of §5 M5 replace D-P57's hand-proof fallback | approve | `Blocks.lean` |
 | **69** | **Definition of done and the fixture bundle.** DONE is the Lean structure `Done` (§6), checked by `#assert_axioms`; the closure fingerprint of the frozen statements joins `Frozen.sha256`; CI runs on `formal/baseline`. Exporter schema 2: `calldata.bin`, the EVM result, a mutation corpus with Rust verdicts, a manifest (extends D-P58) | approve | gates, CI, `proofs/solidity-verifier/tests` |
+| **71** | **The deliverable is the generator theorem; fixtures are tests** (signed 2026-11-17; amends D-P24, D-P44 clause 4, D-P60, D-P68's technology clause, D-P69). `lowering_correct (R) (product) (hR : ValidV3 R)` for every render; no row, totality lemma or headline at a fixture; `ValidV3` is checked per circuit by computation; `native_decide` must not occur in the headline's cone | signed | §0, §5 M5–M8, §6, cards |
+| **72** | **The supported class is widened to the IVC verifier** (signed 2026-11-17, scope and ten clauses): accumulator mode with the batched final pairing, and the external quotient evaluator, for every render. One theorem `lowering_correctW`; right-hand side `LeanAcceptsAcc` (complete against Rust, sound up to one `alpha`); `EvaluatorTrust` and `idLaw` as hypotheses; test fixture F2 under one seeded test SRS | signed | §5 M9, area WID |
+| **73** | **Certify the generator itself: input-only hypotheses** (signed 2026-11-17, with clause 1 as amended; strikes D-P71 point 3). `generator_correct`: generation succeeded on a supported input ⇒ the program is correct. The certified function includes key-payload generation; the assembly text is the print of the emitted tree; 33 lemmas, one per output clause of `ValidV3`. Not provable before the tree emitter is complete | signed | §5 M10, area CERT |
 
 **Must not be done:** deleting `SoundSide` from `Rejects` (RV-10).
 
@@ -255,19 +298,22 @@ outside `formal/` needs `--root`.
 
 ## 5. Milestones and work packages
 
-Nine milestones, M0–M8. Each has an **exit gate** that is a command with an expected output; a milestone
+Eleven milestones, M0–M10. Each has an **exit gate** that is a command with an expected output; a milestone
 is not done until its gate is green at the tip. Cards are in `PLAN-V3-cards.md`; this section gives
 the context, the Lean specification, the proof strategy and the order. With one subagent the queue
 order is M0, then M1 and M2 interleaved (they do not depend on each other), then M3, M4, M5, M6,
-M7, M8. T3.0, T3.1 and T3.3 (M5) do not depend on M1–M4 and may be pulled forward whenever the
-queue is blocked on a signature. The *proof* cards of M5 (T3.4 onward) do wait: W14 asks for the
-slice under proof to have run on the fixture calldata first, which needs REF.11 (M1) and DG.5.
+M7, M8, with M9's object and fixture cards interleaved from M2 on and its row cards after the
+base-class row each one extends. T3.0, T3.1, T3.3, GEN.0, GEN.3, GEN.4 and WID.2 do not depend on
+M1–M4 and may be pulled forward whenever the queue is blocked. The *row* cards of M5 (GEN.1
+onward) do wait: W14 asks for the program to have run on a test calldata first, which needs
+REF.11 (M1) and DG.5 — a test, not a premise of any proof.
 
 ```
 M0 stop the line ──┬── M1 reference runs ──────────┐
                    ├── M2 object complete, generated ┼── M3 surface V3 frozen ── M4 it runs, and accepts
                    └── (T3.0, T3.1, T3.3) ───────────┘                              │
                                                      M5 proof technology calibrated ┴── M6 block rows ── M7 headline ── M8 end to end
+                   M9 widen to the IVC verifier: fixtures and object from M2 on; RECON.3 before M6; rows after M6; WID.H after M7
 ```
 
 **Every card, by milestone** (the queue order within a milestone is the order listed; decision
@@ -276,16 +322,18 @@ in the tree):
 
 | milestone | cards, in order |
 |---|---|
-| M0 | DG.0, DG.1, DG.2, DG.6, PL.1, DG.7, DG.8, ST.1, PL.0, OBJ.17 |
+| M0 | DG.0, DG.1, DG.2, DG.6, PL.1, DG.7, DG.8, ST.1, PL.0, OBJ.17; PL.G (done 2026-11-17: this restatement) |
 | M1 | REF.D, REF.11 with OBJ.11 (one Rust run: the F1 bundle), REF.2, REF.1, REF.3 (= live R.7), REF.4, REF.5, REF.5g, REF.6, REF.8, ST.18, REF.9, REF.10, REF.12 |
 | M2 | OBJ.0 (D-P65), live G1.4b, OBJ.1, then ONE re-hash: live G1.1 and G1.2, OBJ.2 (which replaces G1.3), ST.3; then ST.11, ST.12, OBJ.4, OBJ.5, OBJ.6, OBJ.7, OBJ.16 |
-| M3 | RECON.1, RECON.2, ST.2, SIM.0, OBJ.0 (D-P67), ST.4, ST.5, ST.6 with OBJ.8, REF.7, ST.15, OBJ.9, ST.7, SIM.1, SIM.2, SIM.3, SIM.7, SIM.8, ST.8, SIM.4, DG.3, DG.4 |
+| M3 | RECON.1, RECON.1b, RECON.2, ST.2, SIM.0, OBJ.0 (D-P67), ST.4, ST.5, ST.6 with OBJ.8, REF.7, ST.15, OBJ.9, ST.7, SIM.1, SIM.2, SIM.3, SIM.7, SIM.8, ST.8, SIM.4, DG.3, DG.4 |
 | M4 | REF.13, REF.14, DG.5, T3.11, ST.14, ST.17, OBJ.10, OBJ.12 |
-| M5 | T3.0, T3.1, T3.3, T3.2, T3.4, T3.5, HLP.1, T3.6, T3.7, T3.8, T3.9, ST.16, T3.10, SIM.6, ST.13 |
-| M6 | SIM.5 (with ST.9, ST.10), SIM.9, SIM.10, SIM.11, SIM.12, ROW.TP, ROW.Q, ROW.PCS, ROW.FP and the PROOF children each ROW card issues, then TOT.1 |
+| M5 | T3.1, T3.1b, GEN.0, GEN.3, GEN.4, GEN.5, T3.2, T3.5, HLP.1 (HLP.1.a–c), GEN.1, T3.8, T3.9 (T3.9.a–h), ST.16, T3.10, SIM.6 (SIM.6.a–d), ST.13; optional: T3.0; dropped: T3.7; tests only: T3.3 (and M4's T3.11). T3.4 dropped; T3.6 replaced by GEN.1. ROW/T3.9/SIM.6/HLP.1 children that have no card yet are issued by their parent SKELETON card |
+| M6 | RECON.3 (D-P72 clause 1, first), SIM.5 (with ST.9, ST.10), SIM.9, SIM.10, SIM.11, SIM.12, ROW.TP (ROW.TP.1–9), ROW.Q (ROW.Q.1, ROW.Q.6 and the children it issues), ROW.PCS (ROW.PCS.2, ROW.PCS.9), ROW.FP, then TOT.1 (TOT.1.a) |
 | M7 | PL.H, DG.9 |
 | M8 | PL.E |
-| optional | OBJ.13, OBJ.14, OBJ.15 (structured emitters replacing the interim parses) |
+| M9 | WID.2, WID.1, WID.3, WID.4, GEN.2, WID.5, WID.6, WID.7, WID.8, WID.9, WID.11, WID.12, WID.13, WID.14, WID.15, WID.16, WID.17, WID.19, WID.H |
+| M10 | CERT.0, CERT.1 (suspects, early), CERT.2, CERT.3, CERT.4, CERT.5, CERT.6, CERT.7, CERT.8, CERT.H |
+| emitters, no longer optional | OBJ.14, OBJ.15 (the numerator helpers and the interpreter template as trees: needed by ROW.Q, M6); OBJ.13 (the accumulator helpers as a tree: needed by WID.12, M9) |
 
 OBJ.3 is superseded by ST.3 and is not run.
 
@@ -762,219 +810,462 @@ theorem poseidon_inhabited : HypothesesInhabitedV3 poseidonRender (pairingProduc
 `#print axioms poseidon_inhabited` has no `sorryAx`; `artifact_gate_poseidon` is `true` with
 `#cone_avoids_decls poseidonRender [poseidonVerifierDump, poseidonVkDump]` passing.
 
-### M5 — Proof technology, calibrated on three real blocks (SEM/ALG; 12 cards)
+### M5 — Proof technology for every render, calibrated on three blocks (SEM/ALG)
 
-**Context.** About 13,000 tokens remain. PLAN-V2 said to build automation first and it was skipped.
-A verified `wp` engine now exists in scratch and handles loop-free blocks; loops at scale are
-**not** demonstrated. M5 is where the plan finds out, with thresholds fixed in advance.
+**Context (D-P71).** A row is proved for every render `R` from validity, not at a fixture. A slice
+of `R` is `Inline.inlineContractConstants (constTableOf R.model) (GenAst.emitPartial R.pv q)`
+(`Program.lean:125`), so a row is a statement about an **emitter** of `Midfall/Lowering/GenAst*.lean`
+at every plan view, composed with the inliner at every constant table. Three things that were
+numerals on a literal slice are now variables: the layout constants (each use site is a stuck
+`match consts.lookup x`, named `vkSite` in `Blocks/VkLoading.lean:94`), the function scope (the
+hoisted helpers of `R`), and loop bounds. M5 finds out, on three blocks and with thresholds fixed
+in advance, what a proof costs under those three.
 
-**Cards.** T3.0 (certificate-cost probe — first, alone), T3.1 (land the engine and `execOf`), T3.3
-(slice literals), T3.2 (totality: `wpSS_exists`), T3.4 (TraceReturn, calibration A), T3.5 (word and
-memory layer), T3.6 (vkLoading, calibration B), T3.7 (driver with cuts), T3.8 (field-arithmetic
-bridge), T3.9 (lagrange, calibration C), T3.10 (quotient numerator: classify and choose the
-route), SIM.6 (the prefix rows).
+**What is already proved for every `R`** (`V3-evidence/lean/soundness/GeneratorRows.lean`,
+`check.sh soundness`): the composition (`sim_rows`, `prog_rows`, `rows_correct`'s reduction,
+`lowering_correct_of_rows`, `rejectsV3_of_rows`); the helper scope (`helpers_eq`, `fail_is`,
+`batch_invert_is`, `helpers_funDefs`: all eight helpers resolve, in every render's scope, to the
+body their emitter prints); normal forms of emitted slices on a symbolic table and layout
+(`lagInner_length`, `qlinInner_length`, `lag_sq_loop_form`, by the six-line tactic `kernel_rfl`:
+the kernel reduces the inliner where the elaborator's `rfl` times out). In the tree:
+`tr_blockSound`, `tr_blockProgress` (TraceReturn, 1,053 lines by `Step` inversion) and
+`Blocks/VkLoading.lean` up to three named sorries.
 
-**Lean specification** (`prooftech/WP.lean`, `WPBridge.lean`, `P1_Exec.lean`, `WPX.lean`):
+**Cards.** T3.0 (certificate-cost probe), T3.1 (land the engine and `execOf`), T3.2 (totality:
+`wpSS_exists`), T3.5 (word and memory layer), T3.8 (field-arithmetic bridge), **T3.1b** (land `wp_run`), **GEN.0** (land parametric execution), **GEN.3** (the loop rule),
+**GEN.4** (the inliner over a concatenation), **GEN.5** (land the row statements), **HLP.1** with HLP.1.a–c (helper summaries), **GEN.1** (vkLoading for
+every render: calibration B), **T3.9** with T3.9.a–h (lagrange: calibration C), **T3.10** (the
+quotient contract, route B), **SIM.6** with SIM.6.a–d (the prefix rows), ST.16, ST.13. T3.3 and
+T3.11 are tests (W14). T3.4 and T3.7 are dropped (proofs on the fixture's literal slices); T3.6 is
+replaced by GEN.1; T3.0 is optional (it measures unrolled loops, which no proof uses any more).
+T3.2 also proves the liveness form `wpSS_exists_C`.
+
+**Lean specification** (`prooftech/WP.lean`, `WPBridge.lean`, `WPX.lean`, `VKP.lean`,
+`LoopRule.lean`; `soundness/GeneratorRows.lean`):
 
 ```lean
-theorem wp_sound (hB : BSound D B) (hC : CSound D C) : ∀ n : Nat,
-    (∀ funs V st e Q, wpE D B C n funs V st e Q → ∀ r, EvalExpr D funs V st e r → Q r) ∧ …
-    (∀ funs V st ss Q, wpSS D B C n funs V st ss Q →
-        ∀ V' st' o, ExecStmts D funs V st ss V' st' o → Q V' st' o) ∧ …      -- proved, [propext]
-theorem Bopen_sound (c : ExternalCalls) (g : ExternalGas) :
-    BSound (Bridge.Dialect c g) (Bopen c g)                                 -- ANY c, ANY g
-theorem execOf_lawful … : (execOf c g cf gf).Lawful                          -- honest dialect is executable
-theorem runs_agree_of_wp …                                                   -- replaces determinism
-
--- the word layer the residues need (stated; T3.5, T3.8)
-theorem loadWord_storeWord (mem) (p q : Nat) (v : U256) :
-    loadWord (storeWord mem p v) q =
-      if q = p then v else if q + 32 ≤ p ∨ p + 32 ≤ q then loadWord mem q
-      else loadWord (storeWord mem p v) q
-theorem mulmod_toFr (a b : U256) :
-    qvmToFr (BitVec.ofNat 256 ((a.toNat * b.toNat) % qvmFrModulus)).toNat = qvmToFr a.toNat * qvmToFr b.toNat
+theorem wp_sound (hB : BSound D B) (hC : CSound D C) : ∀ n : Nat, …        -- proved, [propext]
+theorem Bopen_sound (c : ExternalCalls) (g : ExternalGas) : BSound (Bridge.Dialect c g) (Bopen c g)
+theorem wpSS_exists (hB : BLive D B) (hC : ∀ funs fn args st, C funs fn args st = none) …
+-- parametric execution (GEN.0): the vkLoading body with its constant sites as free variables
+def vkBodyV … ; theorem vkBody_eq_vkBodyV … ; theorem vk_all_param …       -- VKP.lean
+-- loops with a symbolic bound (GEN.3)                                      -- LoopRule.lean
+-- helper scope, for every render (HLP.1.a; proved)
+theorem helpers_eq (R) : R.helpers = …      theorem fail_is (R) …      theorem batch_invert_is (R) …
+-- the rows, for every render (GeneratorRows.lean; each is a named open obligation with children)
+theorem lag_blockSim (R) (product) (hR : R.Valid) … : BlockSim R .lagrange H vkAddr (permissive (callsOf product)) g cd
+theorem rows_correct (R) (product) (hR : R.Valid) :
+    R.ExitOk ∧ R.SimContracts product ∧ R.ProgContracts product     -- SimPins comes from the codec laws
 ```
 
 **Strategy.**
-- *The shape of a block proof.* Two layers, never mixed. **SEM**: `wp_run` executes the literal
-  slice symbolically and leaves, at each exit, a residue that is a straight-line word program over
-  named values ("the block computes this function of its input memory, or reverts"). **ALG**: that
-  word function agrees with the Lean stage, proved with no Yul in sight. The word-level function is
-  stated as a function of the *layout*, so the ALG half is generic in the render even though the
-  SEM half is per deployment.
-- *Why per deployment.* On literal slices every address is a numeral; trap S1 and the constant
-  pins vanish *from the slice*. They move to the boundary: `StageInv`, `Frame` and `Mirror` are
-  stated over `R.pv` layout fields, and `poseidonRender` is noncomputable, so each layout field
-  needs one computable-face lemma (`poseidonRender.pv.memory.x = <numeral>`, by the `rfl` pins to
-  `poseidonPv` plus one `native_decide`). The four slices and the helpers pin to `sliceOf` by
-  `native_decide` in 13.5 s. The transport from a literal-slice fact to `BlockSim poseidonRender q`
-  is T3.4's deliverable and is unmeasured. The generic `BlockRow` statements stay in `Blocks.lean`
-  as WP-X4 targets.
-- *Helper summaries.* The rows call `squeeze_to` (10 sites), `common_uncompressed_g1` (9),
-  `common_word`, `transcript_init`, `batch_invert`, `scalar_inv`, `ec_pairing`, `q_program_fail`
-  (13) and `q_pow5` (6). Each gets one call summary with its `CSound` proof (card **HLP.1**), so a
-  row executes a call site in one step instead of re-executing the body.
-- *Why `wp` and not `Step` inversion.* `TraceReturn.lean`'s lemmas are site-specific: each new
-  statement shape costs a new 20–40 line lemma. `wp_sound` subsumes them. `Bopen` quantifies over
-  every response at `staticcall` and every word at `gas()`, so it covers conjuncts 1 and 3, where
-  neither `run_adequacy` nor `dialect_deterministic` applies. `keccak` stays an uninterpreted term,
-  so execution is hash-agnostic.
-- *What is not solved.* Kernel cost is super-linear in the fuel literal (the same 30 loop steps:
-  1.85 s at fuel 40, 33 s at fuel 400), and the whole lagrange slice executes in the tactic
-  (21.5 s, 42 leaves) but its kernel check did not complete. The cause is not understood. **T3.0
-  decides among three certificate strategies by measurement**: C1, fuel-free rule lemmas applied by
-  the tactic; C2, fuel spent only at loop iterations and calls, with every declaration chunked by
-  the cut rule `allRuns_cons_wp`; C3, a reflective executor on a reified symbolic state (largest
-  trusted base; fallback).
-- *Loops whose control reads memory.* Loop *bounds* at F1 are numerals, but the quotient VM's
-  interpreter loop is driven by memory: its guard and its opcode `switch` read the program that
-  VkLoading copied from the key's code (`QuotientNumeratorBlock.yul:483-491`). The driver's rule is
-  never to evaluate a guard that mentions symbolic memory, so that loop executes only after the
-  payload words are resolved to literals by read-over-`copyInto` (T3.5), which is unmeasured.
-  ST.16 classifies every loop of the program first. A loop hatch around
-  `ExecLoopAll.countdown_or_halt` for genuinely symbolic bounds is not built.
-- *The quotient VM* has **no Yul-level statement anywhere** in the tree: `Qvm.lean` and
-  `VmReference.lean` are entirely about the Lean reference VM. Two routes, chosen by T3.10 once the
-  AST exists: (A) execute the emitted numerator to a word program and discharge "program =
-  `evalExprρ` of the plan's identities" by a reflective structural check; (B) prove once that the
-  Yul interpreter loop refines `evalQuotientIdentity`, then evaluate the reference VM. The counts
-  (164 `mulmod`, 145 `addmod`, 11 `for`, 2 `switch`, 0 `staticcall`) suggest most of the region is
-  straight-line arithmetic, but the interpreter loop (previous bullet) is the open part of route A.
-  There is no evidence for either route yet.
-  `identityCorrespondence_of_bridge` (`QvmFold.lean:327`) must be restated: the same file proves
-  its hypotheses can hold while its conclusion fails.
+- *The shape of a block proof, unchanged.* Two layers, never mixed. **SEM**: the slice computes a
+  word-level function of its input memory, or reverts. **ALG**: that word function agrees with
+  the Lean stage, with no Yul in sight. What changes is the SEM half: it is proved about the
+  emitter's output for every plan view.
+- *Normal form first.* Each emitted group is brought to a normal form with its constant sites as
+  variables (`kernel_rfl`, GEN.4 for concatenations), then executed. A proof never unfolds the
+  inliner by `simp`.
+- *Constants are `Nat` variables with hypotheses.* A site is `Expr.lit (.number v)` with
+  `consts.lookup "X" = some v`; the facts a proof needs about `v` (it is the plan view's address;
+  it is below `2^256`; two windows are disjoint) come from `ValidV3` clauses, never from a
+  numeral. The table of which clause supplies which fact is M6's "premise gaps".
+- *Helpers are summarised once.* The scope is a variable, so a helper cannot be executed at a call
+  site: each helper gets one call summary with its `CSound` proof (HLP.1), stated as "the scope of
+  a valid render defines `f` with this body" (`helpers_eq`).
+- *Loops need a rule.* With a symbolic bound a loop cannot be unrolled. GEN.3 lands one invariant
+  rule (starting point `Midfall/Yul/Contracts.lean:298`, `ExecLoopAll.countdown_or_halt`) with a
+  witness and a falsifier; T3.9.a is its first use on a real loop and fixes the script every later
+  loop card copies.
+- *Lists need induction over the emitter.* Where the generator maps over a list (user phases,
+  lookups, point sets, quotient blocks), the proof is an induction over that list, with one lemma
+  per emitted group. The transcript parser's schedule is data (`tpEvents`), and its read
+  projection is the layout's slot list (`tp_events_slots`, witnessed and falsified at F1).
+- *The `wp` engine runs a parametric slice once its constant sites are variables* (measured by
+  the design pass, `prooftech/VKP.lean`, `design/prooftech-generic.md`). On the vkLoading body:
+  as emitted, `wp_run` stops at the first stuck `vkSite … consts` (P1); after rewriting with
+  `vkBody_eq_vkBodyV` it closes **7 leaves in 86–100 ms, kernel 225–243 ms** (P2), against 4
+  leaves, 106 ms and 365 ms for the literal fixture slice. `vk_all_param` is proved for every
+  constant table and every scope, with the memory fact (`vk_all_param_mem`), and needed no side
+  condition. GEN.0 lands it and re-measures at the tip (point P).
+- *The existence half needs a liveness form of a call summary.* `wpSS_exists` assumes no
+  summaries; without the `fail` summary three leaves stay stuck at the scope lookup. `CLive` and
+  `wpSS_exists_C` are stated (`VKP.lean`); `Cfail_live` is proved; GEN.1 proves `wpSS_exists_C`.
+- *The loop rule exists* (`prooftech/LoopRule.lean`, no sorry): `allRuns_for_cons_wp` takes an
+  invariant and one-iteration `wp` (`wpIter`), with no variant and no count; witness
+  `sumLoop_all` for every `n < 2^256`, falsifiers for a dropped preservation premise and a
+  dropped bound. GEN.3 lands it; T3.9.a is its first use on a real loop.
+- The cards of M5–M6 state their children as facts about an emitter's output, whatever tactic
+  proves them, so a later change of technology changes line counts and not statements.
 
-**Go / no-go thresholds (fixed now, measured at the calibration points).**
+**Go / no-go thresholds (fixed now).**
 
 | point | card | accept | if missed |
 |---|---|---|---|
-| A | T3.4 | `BlockSim` and `BlockProgS` at `.traceReturn` **stated over `poseidonRender`** (transport and existence half included), ≤ 100 lines, kernel ≤ 0.1 s for the slice fact | re-open T3.1: the transport is the problem |
-| B | T3.6 | vkLoading row closed over `poseidonRender`; kernel ≤ 1 s, elaboration ≤ 5 s for the slice fact | the word layer is the bottleneck: split T3.5 |
-| C | T3.7, T3.9 | lagrange row closed; kernel ≤ 60 s **in total** for the slice; no `maxRecDepth` or `maxHeartbeats` raise (the prototype `LAGP.lean` raises `maxRecDepth`: that does not count) | **stop and re-plan with the human.** The fallback is the reflective executor C3, a one-off component the design pass guessed at 1,500–3,000 lines; it has no card, and one is written only then |
-| D | T3.10 | a typechecked contract for the numerator and a route with a measured prototype on one identity | the numerator is re-planned with the human |
+| P | GEN.0 | at the tip, `vk_all_param` closes its 7 leaves: kernel ≤ 2 s, elaboration ≤ 10 s, no heartbeat raise (design pass: 0.24 s, P2) | the verdict is no longer P2: **stop and ask the human** (D-P71) |
+| B | GEN.1 | the vkLoading row closed for every `R`; ≤ 300 new lines; elaboration ≤ 30 s, kernel ≤ 5 s; axioms: the standard three, no native | **stop and re-plan the proof technology with the human**; per-fixture rows are not a fallback |
+| L | GEN.3, T3.9.a | the loop rule landed with witness and falsifiers (proved in the design pass); `lag_sq_loop` closed in ≤ 120 lines | the rule is restated with the human; no loop-bearing row is briefed |
+| C | T3.9 | the lagrange row closed for every `R`; no `maxRecDepth` or `maxHeartbeats` raise | **stop and re-plan with the human** |
+| D | T3.10 | a typechecked contract `QInterpRefines` and a measured prototype of the interpreter refinement on one opcode arm | the numerator is re-planned with the human |
 
-**Exit gate.** Rows for `.traceReturn`, `.vkLoading`, `.lagrange` and the prefix proved at F1
-against `StageInv` (`#assert_axioms` each: standard three plus the recorded slice pins), and the
-ETA rows of calibration points A–C. No schedule for M6 is written before point C.
+**Exit gate.** The rows for `.traceReturn`, `.vkLoading`, `.lagrange` and the prefix are proved for
+every `R` against `StageInv` (`#assert_axioms` each: the standard three, empty native list), with
+the ETA rows of points P, B, L, C. No schedule for M6 is written before point C.
 
-### M6 — The remaining block rows (SEM/ALG; sized at calibration point C)
+### M6 — The remaining block rows, for every render (SEM/ALG; sized at point C)
 
-**Context.** Four rows remain: transcriptParser, quotientLin, pcs, finalPairing. Each starts with a
-SKELETON card that states its two halves and its requirements table (EXECUTION-V2 §4, family rule):
-**ROW.TP, ROW.Q, ROW.PCS, ROW.FP**, in that order.
+**Context.** Four rows remain: transcriptParser, quotientLin, pcs, finalPairing, then totality.
+Each starts with a restated SKELETON card (`ROW.TP`, `ROW.Q`, `ROW.PCS`, `ROW.FP`, `TOT.1`) whose
+children are in area GEN-ROWS of the card file; each child lands one named obligation of
+`GeneratorRows.lean`.
 
-| row | SEM half (what the block computes) | ALG half (agreement with the Lean stage) | hardest point |
-|---|---|---|---|
-| transcriptParser | copies each calldata section to its memory window, range-checks G1 words and scalars, absorbs and squeezes in the layout's schedule | "if the Lean prefix exists, its transcript is the plan's schedule" — needed five times in one shape; `xcript_total` (SIM.10): the transcript-only prefix exists on every decodable calldata | the `x3` truncation; `Mirror` for five commitment regions and the reversed evaluations window |
-| quotientLin | route A or B of T3.10 | `linearize_eq_full` (proved) fills `Snapshot.lin`; `quotientFold_matches_linearization` (`QvmFold.lean:364`, open) | the only row that reads `SoundSide` |
-| pcs | point-set construction, the MSM loops, `scalar_inv` | the new obligation "normal exit with `success = 1` implies a decoding exists": `Mirror`, the G1MSM coverage invariant, `Holds.g1Decodes`, `decodeCalldata_isSome_iff` (SIM.12) | MSM loops: no evidence yet, although the slice and its only helper, `scalar_inv`, are emitted today, so T3.0 can measure them now; the `x = 0` pin |
-| finalPairing | `ec_pairing` on the two MSM results | `fp_pairing_algebra` (true as stated); `Holds.pairing2`; base-point pins from `PayloadAgrees` | restate `ec_pairing_contract` at `permissive (callsOf product)` with pre `Clean .pcs ∨ Poisoned` (RV-23) |
+| row | what the emitter prints | induct over / loop bound | stated children | hardest point |
+|---|---|---|---|---|
+| transcriptParser (`GenAst.lean:1073-1178`) | fixed head and tail; one walk loop per section; four loop-free helpers; eleven squeezes | `userPhases`, `L.lookups`; section `byteLen/128`, `numInstances`, `evals.byteLen/32` | `tp_computes`, `tp_agrees`, `tp_poison`, `g1walk_loop_sem` (one lemma for six sections), `tp_events_slots`, `inlineScan_append`; `tp_blockSim` is proved from the first three | the inliner over a symbolic list (GEN.4); the transcript buffer's capacity (gap PG-TPBUF) |
+| quotientLin (`GenAst.lean:840-864` today) | the linearization scope (one loop, bound `k`); the interpreter template; six generated-line families | the interpreter loop reads its program from memory; list inductions over `R.qblocks` | `qlin_split_loop`; the contract `QInterpRefines`; builder correctness | **no tree emitter exists for the numerator** (gap PG-Q-OBJECT: OBJ.14, OBJ.15 and the six line families). Route B only. Builder correctness comes into scope: `Qvm.lean:631, :698, :713, :768, :995`, `QvmFold.lean:338, :376, :434`. This is the largest new cost of D-P71 |
+| pcs (`GenAstPcs.lean:1128`) | eight blocks at F1 (225 statements) | the point sets; the MSM loops | `pcs_b2_sem`, `decode_exists` | the coverage invariant; the row is false if the PCS emitter faults (the slice is then `[]`): gap PG-PCS-EMIT |
+| finalPairing (`GenAst.lean:649`) | fixed text, two arms (`hasAcc`) | none | `ec_pairing_sem`; `fp_poison` is proved | restate `ec_pairing_contract` at `permissive (callsOf product)` (RV-23); the accumulator arm is WID.15 |
+| totality | — | — | `gasFree_of_valid`, `runBody_gas_oblivious`, `block_live`, `prefix_live`; `total_correct` is proved from them | "no `gas()` in the program" becomes a clause or a lemma about the emitters (gap PG-GAS) |
 
-**Supporting ALG cards.** SIM.9 (`leanStage_agree`: the padded prefix equals the later stage on the
-prefix fields), SIM.10, SIM.11 (`lean_fault_table`), `snapshotOf_prepareMsgs`
-(`Snapshot.lean:380`), `noWriters_prog`, `Run_worldEq_of_noWriters` (with `quiet_init`: one generic
-per-op lemma, two instances).
+**Premise gaps: facts a generic row needs that validity does not state today.** Each is a
+typechecked `def PG_*` in `GeneratorRows.lean` §2 and is **never** added as a hypothesis by a
+subagent. Each evaluates `true` at F1. Where it comes from:
 
-**Exit gate.** `#cone_report` on the theorem
-`poseidon_rows (product) : poseidonRender.SimContracts product ∧ poseidonRender.ProgContracts
-product ∧ TotalV3 poseidonRender product` prints `0 sorried leaves`, and the block-coverage line
-prints `7 INTEGRATED of 7`. (A report on `lowering_equivalence_of_stages` alone would not do: it
-takes the rows as hypotheses.)
+| gap | the missing fact | supplied by |
+|---|---|---|
+| PG-SIMPINS | codec laws, `hasMultiPointSet` | the headline's codec hypothesis (`simPins_of_laws`), RECON.2 step 4. `SimPins` is **not** a consequence of validity (`simPins_not_of_valid`); `rows_correct` does not claim it |
+| PG-EXIT | `R.ExitOk` (the exit shape of the pre-block and the six slices) | **RECON.1 addition 5**: one exit scan; today `ExitOk` and `ValidV3.exitDiscipline` are two different scans and no lemma links them |
+| PG-NOSHADOW | `R.consts.lookup "r" = none` | the single text's `noShadow` clause (RECON.1) |
+| PG-CONSTS-LAG, -TP | the table equals the plan view's addresses (6 + 23 names) | `programOk`'s `constsCoherent` (the 7-clause object text; in the single text after RECON.1; OBJ.4, OBJ.8) |
+| PG-FRMOD | the table's `FR_MODULUS` is `p` | `constsCoherent` together with `EnvAgrees.modulus` (RECON.1 addition 6) |
+| PG-PARSER | the parser's inputs come from the model, `rawSlots` from the plan | `GeneratedBy` (OBJ.7; in the single text after RECON.1) |
+| PG-TPBUF | the transcript region holds the longest absorb run and is disjoint from the walk windows | **not stated anywhere today**: RECON.1 addition 2 (a new layout clause, or a lemma from `memory.map.WellFormed`); ROW.TP step 3 checks which |
+| PG-NEGLAG | `2 ≤ numNegLagranges` | **RECON.1 addition 4** (RECON.1 step 4 deletes `WellFormedV3`, so the fact must be kept explicitly). If the generator accepts a key without it, the lagrange row is false there: a finding for the human |
+| PG-PCS-EMIT | the PCS emitter does not fault and is non-empty | `GeneratedBy` (generation succeeded) |
+| PG-G2SLOTS | the G2 slots | `PayloadAgrees` |
+| PG-G1ID | the `g1_identity` window lies above `0x80` | **RECON.1 addition 3** (no clause gives it today, and `EntryFrameV3'` was declined) |
+| PG-GAS | `gas()` only as the gas argument of a call | **RECON.1 addition 1** ("no `gas()`" would exclude every external-evaluator render) |
+| PG-Q-OBJECT | a tree emitter for the numerator | OBJ.14, OBJ.15, and one emitter card per line family (issued by ROW.Q) |
+
+**Two texts of validity exist today**, and the evidence uses both: the 18-clause
+`Midfall.LoweringV3.ValidV3` (`statements/StatementsV3.lean:613`; used by `GeneratorTheorem.lean`
+and copied by `WideningV3.lean`'s `ValidCore`), the 7-clause `Render.ValidV3`
+(`object/ObjectV3Full.lean`; the one with `programOk`, `constsCoherent`, `GeneratedBy`), and the
+tree's `R.Valid` (used by `GeneratorRows.lean`). RECON.1 makes them one, with the six additions
+above, **before** ST.6's re-hash; **RECON.1b** then rebases the four evidence files onto it. Until
+both have run, "supplied by" in the table above names where the fact will come from, not a
+projection that exists.
+
+**Supporting ALG cards.** SIM.9 (`leanStage_agree`), SIM.10, SIM.11 (`lean_fault_table`),
+`snapshotOf_prepareMsgs` (`Snapshot.lean:380`), `noWriters_prog`, `Run_worldEq_of_noWriters`.
+
+**Exit gate.** `#cone_report` on
+`rows_correct (R) (product) (hR : ValidV3 R) : R.ExitOk ∧ R.SimContracts product ∧
+R.ProgContracts product`, together with `rows_total : TotalV3 R product` (which also needs
+`hasMultiPointSet R = true`, a clause of the single text after RECON.1), prints `0 sorried leaves`, the block-coverage line prints `7 INTEGRATED of 7`,
+and `#assert_axioms rows_correct [propext, Classical.choice, Quot.sound] native []` passes.
 
 ### M7 — The headline (card PL.H)
 
 ```lean
-theorem lowering_equivalence_poseidon (product : PairingProduct) :
-    LoweringEquivalenceV3 poseidonRender product
-#assert_axioms Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
-  [propext, Classical.choice, Quot.sound] native [<the frozen list of owner declarations>]
-theorem poseidon_done : Done fixtureCd
+theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
+    LoweringEquivalenceV3 R product
+#assert_axioms Midfall.LoweringV3.lowering_correct [propext, Classical.choice, Quot.sound] native []
 ```
 
-**Strategy.** `lowering_equivalenceV3_of` applied to RECON.2's four obligations at F1:
-`twoOutcomes_of_scans`, `rejectsV3_of_sims`, `completeV3_of_progs` and TOT.1's `poseidon_total`. Nothing is proved here; if a proof is needed, a leaf was
-mis-stated — stop and report. **Exit gate:** §6.
+**Strategy.** `lowering_equivalenceV3_of` applied to the four obligations for every `R`
+(`V3-evidence/lean/statements/GeneratorTheorem.lean`, where the composition is already proved):
+`twoOutcomes_correct` (from two `ValidV3` scan clauses), `rejects_correct` and `complete_correct`
+(from `rows_correct`), `total_correct` (TOT.1). Nothing is proved here; if a proof is needed, a
+leaf was mis-stated — stop and report. A test, not a goal: one `example` instantiating the
+theorem at `poseidonRender`. **Exit gate:** §6.
 
-**A corollary worth stating, outside `Done`.** The Yul program does not depend on the SRS trapdoor.
-So `theorem lowering_equivalence_poseidon_at (s : ZMod blsR) (hSrs : SrsEncodes s) (product) :
-LoweringEquivalenceV3 (poseidonRenderAt s) product` follows from the same rows, with `hSrs`
-supplying the one pin a real SRS cannot compute (`PayloadAgrees.negSG2`). That is the form that
-speaks about a production SRS; `Done` is at the test SRS, whose trapdoor is public.
+**The SRS.** The Yul program does not depend on the SRS trapdoor, and neither does the theorem:
+`ValidV3 R` holds or fails for a render at any SRS, with `PayloadAgrees.negSG2` the one clause a
+production SRS cannot compute (it needs `SrsEncodes s`). The test renders use a test SRS whose
+trapdoor is public (D-P63), so that the non-vacuity gate is a computation.
 
 ### M8 — End to end and the English statement (card PL.E)
 
-`EndToEndV3` from the headline, `verifyNative_iff_msgs_codec` (proved; copy it out of
-`Obligations.lean`), `entryFrame_inhabitedV3`, and the three calldata lemmas
-(`Lowering/Calldata.lean:731, :790, :1276`) at the fixture layout. Then the English statement of
-§6 goes into `STATUS.md`. **Exit gate:** `#assert_axioms end_to_end_poseidon` with the same list.
+`EndToEndV3` for every render, from the headline, `verifyNative_iff_msgs_codec` (proved; copy it
+out of `Obligations.lean`), `entryFrame_inhabitedV3`, and the three calldata lemmas
+(`Lowering/Calldata.lean:731, :790, :1276`) **for every layout a valid render has**. Then the
+English statement of §6 goes into `STATUS.md`. **Exit gate:** `#assert_axioms end_to_end` with an
+empty native list.
 
-### Later, each a separate decision (unchanged from PLAN-V2 Phase X, with two additions)
+### M9 — Widen the class to the IVC verifier (D-P72; area WID, 20 cards incl. GEN.2, RECON.3)
 
-X1 accumulator mode (a precondition for any claim about the Moonlight contract, together with a
-redeployment under the current templates); X2 external evaluator (`Evaluator.rel_worldLocal` is
-false as stated and must be restated first — RV-31); X3 embedded key; X4 the ∀-render theorem
-(the generic `BlockRow`s; the ALG halves are already generic); X5 the Solidity wrapper; X6 delete
-the retired v1 track; X7 security; **X8 a total reference verifier** in the contract's order,
-which would remove `SoundSide` (RV-20); **X9 the missing-precompile response** in `permissive`
-(RV-30).
+**Context.** The generated verifier of the IVC decider circuit is known to fail two clauses of
+`SupportedV3`: `noAcc` and `embeddedQuotient` (read off the artifact). Of the others, `advice`,
+`instShape`, `singlePhase`, `production`, `separateVk` were read as true; `noRotInst`, `hLimbs`
+and `vkPoints` are inferred or checked outside Lean; `wf` and `layout` are not measured. **Card
+GEN.2 prints the table from the exported key; until then "two" is a lower bound.**
+In accumulator mode the contract decodes a carried KZG accumulator from the public instances
+(two G1 points as 7 limbs of 56 bits, a flag and a scalar each), validates it through the G1MSM
+precompile, and folds it into the final pairing with a keccak-derived challenge:
+`e(kzg_lhs + α·acc_lhs, −[s]₂) · e(kzg_rhs + α·acc_rhs, [1]₂) = 1` — **one pairing check where
+Rust makes two**. With the external evaluator, the quotient numerator is computed by a second
+contract, pinned by code size and code hash and reached by `staticcall`. D-P72 widens the
+generator theorem to both, **for every render**; the IVC circuit is test fixture F2.
+
+**No new block and no new checkpoint.** Accumulator validation is inside VkLoading, the evaluator
+call inside QuotientAndLinearization, the batching inside FinalPairing. Three rows gain an arm
+(vkLoading, quotientLin, finalPairing), three owe a frame clause (they do not write the two
+accumulator slots), and one row is new: the evaluator body, in the closed dialect.
+
+**Lean specification** (`V3-evidence/lean/widening/`, typechecked by `check.sh widening`):
+
+```lean
+structure SupportedW (R) : Prop            -- SupportedV3 minus noAcc / embeddedQuotient, plus
+                                           --   accKind (point-and-scalar), AccShape (no tail), ExternalPinned
+def LeanAcceptsAcc (R) (H) (cd) : Prop     -- the contract's own check: decode the accumulator from the RAW
+                                           --   instance words, collapse, batch with the keccak alpha
+theorem leanAcceptsAcc_iff_noAcc …         -- without an accumulator it is V3's LeanAccepts   (proved)
+theorem leanAcceptsAcc_of_rust …           -- Rust accepts the proof ∧ the accumulator passes its own
+                                           --   check ⇒ the reference accepts                  (proved)
+theorem rust_or_collision_of_leanAcceptsAcc …  -- the converse, up to AlphaCollision            (proved)
+theorem alpha_atMostOne …                  -- at most one alpha makes two failures cancel       (proved)
+structure EvaluatorTrust (R) (Q : EvalObject) (W) …   -- an account that passes the verifier's pin answers
+                                           --   as the generated evaluator body, and changes no state
+def callsW (R) (product) (qAddr) …         -- the honest precompiles plus the evaluator slot
+def LoweringEquivalenceW (R) (Q) (product) : Prop      -- the four conjuncts, with qAddr variable
+theorem equivalenceW_iff_V3 …              -- at a V3-class render it is the V3 headline        (proved)
+theorem lowering_correctW (R) (Q) (product) (hR : ValidW R Q) (hQ : isExternal R → EvalContracts R Q) :
+    LoweringEquivalenceW R Q product       -- THE TARGET (WideningStages.lean; hQ is dropped by WID.H)
+theorem lowering_correct_of_W …            -- D-P71's theorem is its corollary                  (proved from the target)
+-- stages (WideningStages.lean)
+def AccInv (R) (cd) (st) : Prop            -- the two slots hold toEip of the collapsed accumulator of the RAW words
+def leanStageW …                           -- the last stage asks the batched check, not DualMSM.check
+def BatchedInv (R) (H) (cd) (st) : Prop    -- the two pairing slots hold the reference's batched inputs
+def EvalContracts (R) (Q) : Prop           -- EvalBodyShape ∧ EvalBodyAgree ∧ EvalBodyTotal
+def SimContractsW / ProgContractsW …       -- V3's row families over StageInvW and callsW
+```
+
+**What the widened theorem claims about Rust.** In accumulator mode there is no single Rust
+function the contract ports: the e2e test verifies the decider proof (`midnight_zk_stdlib::verify`)
+and, separately, `final_acc.check` under the IVC SRS. So the theorem's right-hand side is
+`LeanAcceptsAcc`, and its relation to Rust is the two corollaries above: **complete, and sound up
+to one value of `alpha` per input**. No probability is claimed, and `¬AlphaCollision` is not put
+into `SoundSide` (D-P72 clause 3). The English statement at DONE says this in these words.
+
+**Strategy.**
+- *Statements first, base class first.* WID.1 lands the statements; RECON.3 moves the row families
+  to the widened shape before any ROW card of M6 is briefed, with the proved reduction to the V3
+  shape (`leanStageW_noAcc`, `callsW_embedded`), so that every base-class row is proved once.
+- *V3's `StageInv` cannot be used at an accumulator render.* It is unsatisfiable after `.start`
+  there (`stageInv_false_of_acc`, proved): `Inv`'s `.vk` clause needs a snapshot that carries an
+  accumulator, and every staged snapshot has none. `StageInvW` reads the accumulator-carrying
+  snapshot and is `StageInv` at V3's corner (`stageInvW_iff_V3`, proved). So RECON.3 restates
+  **every** row over `StageInvW`; the rows that use neither `noAcc` nor `embeddedQuotient`
+  (transcriptParser, lagrange, pcs, traceReturn) keep one arm, the others (prefix, vkLoading,
+  quotientLin, finalPairing, totality) get a second.
+- *The target carries the evaluator's contract until the object is tied down.*
+  `lowering_correctW (hR : ValidW R Q) (hQ : isExternal R → EvalContracts R Q)`: without `hQ` it is
+  false for an arbitrary `Q` (`lowering_correctW_needs_evalContracts`,
+  `evalBodyShape_emptyBody_false`: an empty evaluator body). WID.6 ties `Q` to the generated
+  body, WID.17 proves the contract, WID.H drops `hQ`.
+- *`AccInv` is unconditional.* It is stated on raw instance words with no snapshot, because the
+  contract validates the accumulator before any proof point is known to be a group element. It
+  belongs with `LeanRaw` and `Mirror`, never in `Agree`.
+- *The accumulator helpers have literal loop bounds* at their only call sites (7 limbs, 2
+  coordinate words), so they need GEN.0's parametric execution and not the loop rule. The one new
+  piece of arithmetic is the contract's `(hi, lo)` reconstruction of a coordinate with a limb
+  straddling bit 256 against the port's sum-and-split (WID.11); it is stated nowhere today.
+- *The evaluator is the same interpreter.* Its numerator is the object of ROW.Q's route B (the
+  interpreter loop refines the reference VM). The widening adds a wrapper, a frame-transport lemma
+  (callee memory after `calldatacopy` equals the caller's window) and one opcode arm
+  (`0x21 MODARITH7`), **provided ROW.Q is stated over a memory window and a dialect parameter**.
+  Today it is not: `QInterpRefines` is fixed to `Bridge.Dialect c g` and T3.10's agreement
+  relation is over plan-view addresses. T3.10 and ROW.Q carry a note to state the contract over
+  a window and a dialect; this is the one place where M9 constrains M6. The evaluator body also
+  needs a **tree emitter** (an extension of OBJ.15 to the external arm), not a parse of its text:
+  WID.6 says which.
+- *Totality needs more than agreement.* A permissive caller state need not satisfy `StageInv`, so
+  the evaluator body must be total on every input (WID.17 child 6).
+- *The object side is mostly ported.* Seven template partials already render the IVC verifier byte
+  for byte (WID.2). What has never run on a real key: the quotient plan on the decider's limb
+  shapes, the evaluator shell, the PCS emitter at five point sets (WID.5).
+
+**Test fixture F2** (D-P72 clause 7). WID.3 exports the decider key under the production SRS
+(byte equality, the clause table). WID.4 regenerates the whole flow under ONE seeded test SRS —
+the IVC SRS (k = 19) is the `downsize` of the decider's (k = 20), because the contract pairs the
+KZG check and the accumulator against one `[s]₂` — and exports the proof, the calldata, the trace
+with `alpha` and the two collapsed points, and accumulator mutants. The tracked dump has no
+usable proof: its `proof.bin` and `calldata.bin` are untracked leftovers of another render.
+
+**Cards, in order.** WID.2 (now); WID.1; WID.3, WID.4, GEN.2, WID.5, WID.6 (object and fixtures);
+WID.8, WID.9 (reference and acceptance at F2); RECON.3 (before M6's rows); WID.11, WID.12 (ALG
+and helper summaries); WID.13–WID.17, WID.19 (rows, each after its base-class row); WID.H.
+
+**Exit gate.** `#cone_report` on `lowering_correctW` prints `0 sorried leaves`;
+`#assert_axioms lowering_correctW [propext, Classical.choice, Quot.sound]` with an empty native
+list passes; the three artifact gates and the acceptance gate at F2 are `true`; every accumulator
+mutant of WID.4 is rejected at its intended stage.
+
+### M10 — The generator is certified (D-P73; area CERT, 10 cards)
+
+**Context.** After M7 the theorem reads "for every render with `ValidV3`". `ValidV3 R` is a
+condition on the generator's output, and until D-P73 it was to be evaluated once per circuit.
+M10 proves it for every supported input, so that the final theorem is about the generator
+function: `generate gi = .ok o → SupportedInput gi → …`. Two things have to become true first.
+
+1. **The tree must be the generator's output (route A).** Today the port prints text from
+   templates and the proofs talk about a tree built by a second emitter; at F1 the two disagree
+   (`codegenAgrees = false`: 6,761 tokens against 14,054, first difference at token 1,333, where
+   the text has the accumulator helpers; `codegenStruct = false`). The tree emitter lacks the
+   accumulator helpers, the quotient helpers and the quotient numerator block. Once it is
+   complete (OBJ.13–OBJ.15 and the numerator families: M6 and M9 need them anyway), the Lean
+   generator's assembly text is **defined** as the print of the tree (CERT.2). Measured at F1:
+   under the project's pinned solc options the template text and the printed tree compile to
+   identical runtime and creation bytecode (with a Homebrew solc 0.8.30; CERT.2 repeats it with
+   the pinned binary).
+2. **The key payload must be generated inside the certified function.** `generateAll` takes the
+   payload as an input; with that, the claim is false (flip the payload's `omega` word: the
+   generator still accepts). `generate` runs `generateVk`, the SRS fingerprint and `generateAll`.
+
+**Lean specification** (`V3-evidence/lean/object/GeneratorCertified.lean`; elaborates; 33 named
+open lemmas; the two theorems below are proved from them):
+
+```lean
+structure GenInput (p) (G₁ G₂ Gₜ)     -- E, encG2, vk, srs, codecs, cfg, flags, features, frDelta
+def generate (gi : GenInput p G₁ G₂ Gₜ) : Except Fault CertOut      -- generateVk; srsFingerprint; generateAll
+def Generates (gi) (o) : Prop := generate gi = .ok o
+def renderOf (gi) (o) : Render p G₁ G₂ Gₜ                            -- no field free
+structure SupportedInput (gi) : Prop   -- scope clauses (decidable); the input half of EnvAgrees;
+                                       --   two codec laws (hypotheses); deltaLiteral; a size bound
+theorem generate_spec …                -- proved
+theorem generator_certified (gi) (o) (hg : Generates gi o) (hs : SupportedInput gi) : (renderOf gi o).ValidV3
+theorem generator_correct_V3 (gi) (o) (hg) (hs) (product) : LoweringEquivalenceV3 (renderOf gi o) product
+```
+
+**The 33 lemmas, by kind** (each: "generation succeeded on a supported input ⇒ the clause"):
+
+| kind | lemmas | card |
+|---|---|---|
+| (a) what the generator's own validation checks | `prog_transcriptFloor`, `supported_layout`, `v3_invariants`, `env_nG2` | CERT.4 |
+| (b) syntactic invariants of the tree emitters | `prog_constsDeclared`, `prog_callsResolved`, `prog_noWriters`, `v3_exitDiscipline` (one card each); `prog_noShadow`, `prog_closed`, `v3_closed`, `v3_noShadow` | CERT.5 |
+| (c) builder lemmas | `plan_vk_of_generateAll`, `prog_noDirect`, `prog_constNodup`, `env_k`, `env_negLagranges`, `v3_layout`, `v3_model`, `v3_pins_of_valid`; `payload_header`; `prog_constLinesLiteral`, `prog_constTable` (both disappear when `Constants.sol` is printed from the table, CERT.3) | CERT.6 |
+| (c)+(d) with a codec law | `env_vkDigest`, `payload_g1Base`, `payload_g2Base`, `payload_negSG2`, `payload_comms`, `v3_payload` | CERT.7 |
+| route A | `prog_codegenStruct`, `v3_codegen` (false at F1 today; true by construction after CERT.2) | CERT.2 |
+| **suspects** | `v3_planMeta` (the plan's data is built from the final memory layout, Rust's from an intermediate one), `v3_cdBound` (no generator check bounds the proof length) | CERT.1, first |
+
+**Strategy.**
+- *Suspects first.* CERT.1 confirms or refutes the two suspects before any proving: a refuted
+  lemma is a finding for the human (it may need a clause in the supported class), not a
+  hypothesis to add.
+- *Kind (a) is unfolding.* `generate_spec` gives the chain of successful steps; the clause is the
+  check that a step performed.
+- *Kind (b) is induction over the emitters*, once per scan, with one lemma per emitter group. The
+  row proofs of M5–M6 already need the emitters' structure; the scans reuse it.
+- *Kind (c) is "the table is the data".* The constant table, the plan view and the key payload
+  are computed from the key; each lemma unfolds one builder.
+- *The token gate.* With route A the artifact gate compares tokens (or compiled bytecode) inside
+  the assembly blocks; outside them the text is the port's and stays byte-equal to Rust.
+
+**What stays trusted.** The Lean printer `EVM.print`; solc (through `EntryFrame`,
+`EvaluatorTrust`, constant inlining and the Solidity outside the assembly blocks); the
+precompiles; the two codec laws; the kernel and the standard axioms. The Rust generator is
+tested, not certified. **The Lean `generate` cannot run on a real key today** (no computable G2
+decompression: CERT.8), so until then a deployed contract is covered by comparing it with what
+the Lean generator prints for the same input.
+
+**Exit gate.** `#assert_axioms generator_correct [propext, Classical.choice, Quot.sound] native []`
+passes; `#cone_report generator_correct` prints `0 sorried leaves`; `generate` runs on the F1 key
+and on the F2 key and the artifact gates pass in their route-A form.
+
+### Later, each a separate decision
+
+X1 (accumulator mode) and X2 (external evaluator) are no longer "later": D-P72, milestone M9.
+X11 (validity for every input) is D-P73, milestone M10.
+X4 (the every-render theorem) is the goal: D-P71. Remaining: X3 embedded key; X5 the Solidity
+wrapper; X6 delete the retired v1 track (with `Evaluator.rel_worldLocal`, D-P72 clause 10); X7
+security; **X8 a total reference verifier** in the contract's order, which would remove `SoundSide`
+(RV-20); **X9 the missing-precompile response** in `permissive` (RV-30); **X10** the point-pair
+accumulator kind and the fixed-base tail (D-P72 clause 2); **X12** a print/parse round-trip
+theorem, which would remove the Lean printer from the trusted base (D-P73 clause 5).
 
 ## 6. Definition of done
 
-One Lean term, one command.
+Two Lean terms, one command.
 
 ```lean
-structure Done (fixtureCd : Bytes) : Prop where
-  headline : ∀ product : PairingProduct, LoweringEquivalenceV3 poseidonRender product
-  valid    : poseidonRender.ValidV3
-  gate     : ∃ product : PairingProduct, GateAtV3 poseidonRender product fixtureCd
-             -- = HypothesesInhabitedV3 at the given calldata: EntryFrameV3, G1CodecHeadlineLaws,
-             --   keccak256, LeanAccepts. (tooling/T7.lean's `GateAt` is the V2-shaped prototype.)
-  reference : referenceGate_ok = true      -- the Lean verifier reproduces Rust's MSM on F1 (M1)
-  artifact : ArtifactEq poseidonRender.model poseidonVerifierDump
-  vkArtifact : renderHalo2VerifyingKey poseidonRender.plan.vk = poseidonVkDump   -- the key contract too
-theorem poseidon_done : Done fixtureCd
+-- the generator theorem: no fixture, no native_decide in its cone
+theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
+    LoweringEquivalenceV3 R product
+
+-- the proof part of DONE (V3-evidence/lean/statements/GeneratorTheorem.lean)
+structure GeneratorDone (Rt : Render p G₁ G₂ Gₜ) (cd : Bytes) : Prop where
+  headline   : ∀ (R : Render p G₁ G₂ Gₜ) (product : PairingProduct), ValidV3 R → LoweringEquivalenceV3 R product
+  nonvacuous : ValidV3 Rt ∧ ∃ product : PairingProduct, GateAtV3 Rt product cd
+
+-- DONE (card DG.4): the proof part at the test render F1, plus three tests
+structure Done (cd : Bytes) : Prop where
+  proof      : GeneratorDone poseidonRender cd
+  reference  : nativeReplay_ok = true       -- REF.8: the Lean verifier reproduces Rust's MSM on F1 (M1)
+  artifact   : ArtifactEq poseidonRender.model poseidonVerifierDump
+  vkArtifact : renderHalo2VerifyingKey poseidonRender.plan.vk = poseidonVkDump
+theorem generator_done : Done fixtureCd
 ```
+
+With M9 (D-P72) the headline is `lowering_correctW`, `lowering_correct` is its corollary, and
+`Done` gains the same four items at test fixture F2 (card WID.H). With M10 (D-P73) `headline`
+becomes `generator_correct` — hypotheses on the generator's input only — `nonvacuous` becomes
+"`generate` succeeds on the test key and the gate holds at its render", and `artifact` compares
+tokens or bytecode inside the assembly blocks (card CERT.H).
 
 ```bash
 cd formal
 bash scripts/verify.sh          # ram_guard + lake build + checks.sh (incl. kat_gate) + report
 # the report must print:
-#   cone_report …poseidon_done: 0 sorried leaves
+#   cone_report …lowering_correct: 0 sorried leaves
+#   cone_report …generator_done:   0 sorried leaves
 #   exhibits: 4 PRESENT, 0 MISSING of 4
 #   block_coverage …: 7 INTEGRATED of 7
 #   axiom_sweep: ok        sorry_sweep: … 0 REFUTED, 0 VACUOUS in the cone
 #   closure_fingerprint: matches Frozen.sha256
-# and the build contains, as a gate:
-#   #assert_axioms Midfall.Instances.PoseidonDone.poseidon_done
+# and the build contains, as gates:
+#   #assert_axioms Midfall.LoweringV3.lowering_correct [propext, Classical.choice, Quot.sound] native []
+#   #assert_axioms Midfall.Instances.GeneratorDone.generator_done
 #     [propext, Classical.choice, Quot.sound] native [<frozen owner list>]
 ```
 
-Totality is conjunct 4 of the headline, so it is not a separate field. The names above are V3's;
-after the cut-overs of M3 the same items carry their V2 names (`LoweringEquivalence`,
-`Render.Valid`), and `Done` is stated over whichever are in the tree (DG.4).
+The first gate is the point of D-P71: a `native_decide` axiom in the cone of `lowering_correct`
+would mean a fixture fact entered a proof. The second gate allows the named fixture
+computations of `nonvacuous`, `reference`, `artifact` and `vkArtifact`, and nothing else.
+Totality is conjunct 4 of the headline. The names are V3's; after the cut-overs of M3 the same
+items carry their landed names.
 
-`not_done_today` is proved today in two independent ways (`poseidonRender_notValid`; the rendered
-text differs from the artifact inside `BUILD_ID` only — a design-pass measurement). The first
-proof is about the V2 `Valid`; DG.4 re-proves it against `ValidV3` (`programOk` is false today).
-It is deleted in the commit that proves `poseidon_done`.
+`not_done_today` is proved today from `¬ ValidV3 poseidonRender` (the payload clause is refuted at
+the present render) and is deleted in the commit that proves `generator_done`.
 
 **The English statement `STATUS.md` must carry at DONE** names, itemised:
 
-- the claim, for fixture F1 only, and that no on-chain contract is covered;
-- that **F1's SRS trapdoor is public** (D-P63): the equivalence holds, but no soundness of the
-  proof system is claimed for this SRS, and `SrsEncodes` is not a hypothesis of `Done`;
+- **the claim: for every program the Lean port of the generator emits for a circuit in the
+  supported class**, and what the class is, clause by clause. Before M10: that it is conditional
+  on `ValidV3 R`, checked by computation for each circuit. After M10 (D-P73): that the only
+  hypotheses are on the generator's input (`SupportedInput`: the scope clauses, a size bound, and
+  two codec laws), and that the Lean printer is trusted;
+- that the theorem is about the **Lean** generator's output: the Rust generator is tested against
+  it byte for byte on the test circuits, not proved equal;
+- the test circuits (F1; F2 after M9), and that no on-chain contract is covered;
+- that **the test SRS trapdoor is public** (D-P63): no soundness of the proof system is claimed
+  for it;
 - the two side conditions and what each excludes, saying that `SoundSide` is a predicate on
   prover-supplied calldata (RV-20);
+- **in accumulator mode (M9):** the right-hand side is the contract's own batched check; against
+  the Rust verifier the theorem is complete, and sound up to one value of `alpha` per input; the
+  IVC and decider SRS are assumed to share one `[s]₂`;
 - the trusted base: the yul-semantics EVM dialect and the Bridge; `EntryFrame` (selector routing,
-  zero call value, the free-memory prologue, zero memory from `0x80` (from `TRANSCRIPT_MPTR` only
-  if D-P64's option is signed, with `g1IdentityAbove` in `programOk`), calldata shorter
-  than 2²⁵⁶, the `memory-safe` footprint, the ABI decoder not reverting on decodable calldata);
-  the precompile assumption `Eip2537.Holds` in its two real-world halves, and that the chain
-  implements EIP-2537 and modexp;
-- the Lean Yul token parser and `EVM.mkCall` (they decide what AST a parsed region is);
-- the axioms: the standard three and each `native_decide` axiom by owner declaration;
-- port fidelity and how each side is tested: the generator by the artifact gate; the verifier by
-  the reference gate and the mutation corpus, on one circuit;
+  zero call value, the free-memory prologue, zero memory from `0x80`, calldata shorter than 2²⁵⁶,
+  the `memory-safe` footprint, the ABI decoder not reverting on decodable calldata); with the
+  external evaluator, `EvaluatorTrust` (an account that passes the code-hash pin behaves as the
+  generated evaluator body); the precompile assumption `Eip2537.Holds` in its two real-world
+  halves, and that the chain implements EIP-2537 and modexp;
+- the Lean Yul token parser and `EVM.mkCall` (they decide what tree a parsed region is);
+- the axioms: the standard three for `lowering_correct`; for `generator_done`, each
+  `native_decide` axiom by owner declaration;
+- port fidelity and how each side is tested: the generator by the artifact gates; the verifier by
+  the reference gate and the mutation corpus;
 - what is not modelled: gas, including the forwarded-gas constants; solc.
 
 ## 7. Briefing: the template, and what makes a card workable by Sonnet 5.5
@@ -1013,8 +1304,16 @@ when all three are in the tree and the statement's consumer compiles. Decision c
 
 | route | cards | why |
 |---|---|---|
-| Sonnet | every PORT, KAT, EMIT and gate card whose deliverable exists in an evidence file: DG.0–DG.9 (except DG.1–DG.3), REF.2–REF.8, REF.11–REF.14, OBJ.1, OBJ.4, OBJ.5, OBJ.9–OBJ.16, ST.1, ST.3–ST.7, ST.12, ST.14–ST.16, SIM.1, SIM.3, SIM.7, SIM.8, SIM.11, T3.1, T3.3, T3.4, T3.11, PL.1 | the statement and usually the proof are provided; the work is landing and checking |
-| strongest | SKELETON cards; anything that proves a new theorem about `Step` or `wp`, or new mathematics: SIM.2, SIM.5, SIM.6, SIM.9, SIM.10, SIM.12, T3.0, T3.2, T3.5–T3.10, ST.9–ST.11, ST.13, ST.17, REF.1, REF.9, REF.10, OBJ.2, OBJ.6–OBJ.8, DG.1–DG.3, RECON.1, RECON.2, HLP.1, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H, PL.E | a wrong statement or a mis-chosen induction here costs a milestone |
+| Sonnet | every PORT, KAT, EMIT and gate card whose deliverable exists in an evidence file: DG.0–DG.9 (except DG.1–DG.3), REF.2–REF.8, REF.11–REF.14, OBJ.1, OBJ.4, OBJ.5, OBJ.9–OBJ.16, ST.1, ST.3–ST.7, ST.12, ST.14–ST.16, SIM.1, SIM.3, SIM.7, SIM.8, SIM.11, T3.1, T3.3, T3.11, PL.1; WID.1–WID.4, GEN.2, WID.8, WID.9, WID.14; and the row children whose statement is typechecked **and** whose proof pattern has been run once in the tree: HLP.1.a, SIM.6.d, T3.9.b–e, T3.9.h, ROW.TP.1, ROW.TP.9, ROW.Q.1, ROW.PCS.2, ROW.PCS.9 | the statement and usually the proof are provided; the work is landing and checking |
+| strongest | SKELETON cards; anything that proves a new theorem about `Step` or `wp`, or new mathematics: SIM.2, SIM.5, SIM.6, SIM.9, SIM.10, SIM.12, T3.0, T3.2, T3.5, T3.7–T3.10, ST.9–ST.11, ST.13, ST.17, REF.1, REF.9, REF.10, OBJ.2, OBJ.6–OBJ.8, DG.1–DG.3, RECON.1–RECON.3, HLP.1, TOT.1, ROW.TP, ROW.Q, ROW.PCS, ROW.FP, PL.H, PL.E; **GEN.0, GEN.1, GEN.3, GEN.4**; the first use of a pattern (T3.9.a for loops, HLP.1.b–c, SIM.6.a–c, T3.9.g, ROW.TP.2, ROW.TP.6–8, ROW.Q.6, TOT.1.a); WID.5, WID.6, WID.11–WID.13, WID.15–WID.17, WID.19, WID.H | a wrong statement or a mis-chosen induction here costs a milestone |
+
+**Why more cards are `strongest` than before D-P71.** On the fixture route most proofs existed in
+an evidence file and a card was a port. For every render the statements exist and typecheck
+(`GeneratorRows.lean`, `GeneratorTheorem.lean`, `lean/widening/`), and so do the compositions, but
+the row proofs do not: each pattern (parametric execution, the loop rule, an induction over an
+emitter, a helper summary) is new until its first card has run. That first card is `strongest`;
+the cards that copy its script are `Sonnet`. Each `strongest` child carries its Sonnet-only split
+in its Guidance line.
 
 If only Sonnet is available, keep the `strongest` cards but split each at its numbered steps into
 cards of at most one hour, and give each child the parent's evidence file and stop conditions.
@@ -1066,6 +1365,14 @@ V2 ledger shows such estimates were wrong by large factors.
 | M6 onward | unknown until point C; the quotient numerator and the PCS loops dominate |
 
 **No completion date is given before calibration point C.**
+
+**After D-P71 the prior for M5 onward is void.** It was a prior for proofs on literal slices at
+one fixture. For every render, one block is closed (TraceReturn: 25 tokens, 1,053 lines by `Step`
+inversion); 40 row obligations are stated and typechecked (`GeneratorRows.lean`), 35 cards are
+written for them, and ROW.Q lists about 30 further children for the quotient builder. **No
+estimate for M5–M9 is recorded before GEN.1 (point B) reports**, and none for M6 before point C.
+The largest known costs: the quotient numerator (no tree emitter exists; builder correctness is
+now in scope), the transcript parser's list inductions, and the PCS loops.
 
 ### 9.3 Calibration points
 
@@ -1176,29 +1483,35 @@ re-hashes; `checks.sh`; the cone tool; W1–W11. **What stops.** Block rows abou
 render; pin-by-pin additions to `Valid` after R.6; any card whose only effect is downstream of a
 refuted leaf.
 
-### 10.3 The orchestrator's goal, restated for V3 (full text: `v2-bundle/docs/GOAL-PROMPT.md`)
+### 10.3 The orchestrator's goal, restated for D-P71 and D-P72 (full text: `v2-bundle/docs/GOAL-PROMPT.md`)
 
 ```
 GOAL  In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove
-        theorem poseidon_done : Done fixtureCd
-      as defined in formal/docs/plans/PLAN-V3.md §6: the V3 headline for fixture F1 for every
-      pairing product, validity of the render, the non-vacuity gate at keccak256 on the fixture
-      calldata, totality, and equality of the rendered text with the Rust artifact.
-DONE  means PLAN-V3 §6: verify.sh green; the report prints 0 sorried leaves, 4 exhibits PRESENT,
-      7 rows INTEGRATED, axiom_sweep ok, closure fingerprint matching; #assert_axioms on
-      poseidon_done passes with the frozen list.
+        theorem lowering_correct (R) (product) (hR : ValidV3 R) : LoweringEquivalenceV3 R product
+      for EVERY render R the Lean port of the generator emits (PLAN-V3 §0), then its widening to
+      the IVC verifier, lowering_correctW (PLAN-V3 §5 M9), and theorem generator_done : Done
+      fixtureCd (PLAN-V3 §6): the headline, plus non-vacuity, the reference gate and the artifact
+      gates at the test circuits. No block row, totality lemma or headline is proved at a fixture.
+DONE  means PLAN-V3 §6: verify.sh green; the report prints 0 sorried leaves on lowering_correct
+      and on generator_done, 4 exhibits PRESENT, 7 rows INTEGRATED, axiom_sweep ok, closure
+      fingerprint matching; #assert_axioms lowering_correct passes with the standard three axioms
+      and an EMPTY native list; #assert_axioms generator_done passes with the frozen owner list.
 READ AT THE START OF EVERY SESSION (nothing else in full)
       formal/docs/STATUS.md · formal/docs/QUEUE.md · formal/docs/plans/EXECUTION-V2.md §0–§7 ·
       formal/docs/plans/PLAN-V3.md §0–§4 and §10 · the card you are about to brief, in
       formal/docs/plans/PLAN-V3-cards.md.
-ROLE  Unchanged from the V2 goal: one card, one subagent, re-verify, merge, record. You do not
-      prove, you do not edit the frozen surface, you do not decide (W2). Rules W1–W15.
-ORDER PLAN-V3 §5: M0, then M1 and M2 interleaved, M3, M4, M5, M6, M7, M8. A milestone is done
-      when its exit gate prints the expected output at the tip, and not before.
+ROLE  Unchanged: one card, one subagent, re-verify, merge, record. You do not prove, you do not
+      edit the frozen surface, you do not decide (W2). Rules W1–W15.
+ORDER PLAN-V3 §5: M0, then M1 and M2 interleaved, M3, M4, M5, M6, M7, M8, with M9's cards where
+      the V3 table places them. A milestone is done when its exit gate prints the expected output
+      at the tip, and not before. GEN.0 runs first among the M5 proof cards; a missed threshold
+      of PLAN-V3 §5 M5 goes to the human (per-fixture rows are not a fallback). Then M10:
+      generator_correct, with hypotheses on the generator's input only (D-P73).
 ```
 
 ---
 
-*This plan and its evidence were produced by an automated review and six design passes, then
+*This plan and its evidence were produced by an automated review and six design passes, then restated
+for D-P71 and D-P72 from four further design passes (generic rows, proof technology, the IVC widening, its object and reference), and
 checked by re-compiling every Lean file from its shipped location (`check.sh`, all files `ok`). Please verify the statements
 and measurements against the tree before relying on them.*

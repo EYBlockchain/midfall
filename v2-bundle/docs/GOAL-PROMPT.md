@@ -5,45 +5,69 @@ Paste everything below the line as the orchestrator's goal. This is the PLAN-V3 
 the V2 prompt's role, loop and rules, adjusted for V3. The V2 version is in git history
 (`git show formal/v2-cutover:v2-bundle/docs/GOAL-PROMPT.md`).
 
-**Amended by D-P71 (signed 2026-11-17): the goal is the generator theorem `lowering_correct`, for
-every render with `ValidV3`, not `poseidon_done`.** The text below still names the fixture goal;
-card PL.G rewrites it. Do not paste it as it stands without that amendment.
+**Rewritten for D-P71, D-P72 and D-P73 (signed 2026-11-17) by card PL.G:** the goal is the generator
+theorem `lowering_correct`, for every render, widened to the IVC verifier; fixtures are tests. The
+fixture-goal version is in git history (`git show cf00592:v2-bundle/docs/GOAL-PROMPT.md`).
 
 ---
 
 GOAL
-In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove
+In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove the
+generator theorem
 
-  theorem poseidon_done : Done fixtureCd
+  theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
+      LoweringEquivalenceV3 R product
 
-as defined in formal/docs/plans/PLAN-V3.md §6. Its fields are:
-- the V3 headline for fixture F1, for every pairing product: `lowering_equivalence_poseidon`,
-  restated by card PL.H (M7) over the V3 `LoweringEquivalence` (four conjuncts: soundness,
-  completeness, two outcomes, totality);
-- validity of the render (`ValidV3`);
-- the non-vacuity gate at keccak256 on the fixture calldata, which the Lean verifier ACCEPTS;
-- agreement of the Lean verifier with the Rust verifier on the fixture proof (the reference gate);
-- equality of the rendered `Halo2Verifier.sol` and `Halo2VerifyingKey.sol` with the Rust artifact.
+as stated in formal/docs/plans/PLAN-V3.md §0 and §5 M7 (typechecked in
+formal/docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean), then its widening to the
+generated verifier of the IVC decider circuit (accumulator mode with the batched final pairing,
+external quotient evaluator)
 
-In words: the body of `verifyProof` that the Lean port of the Rust generator emits — the whole
-program, checked against the Rust artifact byte for byte — run in the yul-semantics EVM dialect
-from the entry frame Solidity provides, under ANY pairing precompile answer `product` that
-satisfies `Eip2537.Holds`, returns ABI `true` iff the Rust-faithful Lean verifier accepts the
-calldata, otherwise reverts without touching the world, and is never stuck. solc is trusted and out
-of scope. Fixture F1 is the PoseidonExample circuit (k = 6, one instance, test SRS); no on-chain
+  theorem lowering_correctW (R) (Q : EvalObject) (product) (hR : ValidW R Q) :
+      LoweringEquivalenceW R Q product
+
+(PLAN-V3 §5 M9; formal/docs/plans/V3-evidence/lean/widening/WideningV3.lean), and
+
+  theorem generator_done : Done fixtureCd
+
+as defined in PLAN-V3 §6: the headline for every render, non-vacuity at a test circuit (`ValidV3`
+holds there and the Lean verifier ACCEPTS its calldata, hash pinned to keccak256), agreement of
+the Lean verifier with the Rust verifier on the test proof (the reference gate), and equality of
+the rendered `Halo2Verifier.sol` and `Halo2VerifyingKey.sol` with the Rust artifact.
+
+In words: for EVERY program the Lean port of the Rust generator emits, for any circuit in the
+supported class, the body of `verifyProof`, run in the yul-semantics EVM dialect from the entry
+frame Solidity provides, under ANY pairing precompile answer `product` that satisfies
+`Eip2537.Holds`, returns ABI `true` iff the Rust-faithful Lean verifier accepts the calldata,
+otherwise reverts without touching the world, and is never stuck. `R` ranges over renders;
+`ValidV3 R` says `R` is what the generator returns for its own key, configuration and flags, and
+is checked by computation for a given circuit. solc is trusted and out of scope. No on-chain
 contract is covered. No ticket ever implements a pairing; the product is a parameter.
 
-Then prove `end_to_end_poseidon` (card PL.E, M8) and write the English statement of PLAN-V3 §6 in
-STATUS.md.
+NO PROOF IS AT A FIXTURE (D-P71). No block row, totality lemma or headline is stated or proved at
+`poseidonRender` or at any other fixture. Fixtures are tests only: W12 witnesses and falsifiers,
+the W14 run-it gates, the non-vacuity gate, the reference gate, the artifact gates. `native_decide`
+is allowed there and must NOT occur in the cone of `lowering_correct` or `lowering_correctW`.
+The test circuits are F1 (PoseidonExample, k = 6, test SRS) and F2 (the IVC decider circuit,
+k = 20, one seeded test SRS; card WID.4).
+
+Then prove `end_to_end` for every render (card PL.E, M8), then certify the generator (M10,
+D-P73): `generator_correct`, whose only hypotheses are that the Lean generator succeeded on an
+input in the supported class (formal/docs/plans/V3-evidence/lean/object/GeneratorCertified.lean),
+and write the English statement of PLAN-V3 §6 in STATUS.md.
 
 DONE means PLAN-V3 §6 holds:
 - `formal/scripts/verify.sh` is green, and its report prints: `0 sorried leaves` on
-  `poseidon_done`; `exhibits: 4 PRESENT, 0 MISSING of 4`; `block_coverage …: 7 INTEGRATED of 7`;
-  `axiom_sweep: ok`; `sorry_sweep: … 0 REFUTED, 0 VACUOUS in the cone`; the closure fingerprint
-  matching `Frozen.sha256`.
-- `#assert_axioms Midfall.Instances.PoseidonDone.poseidon_done [propext, Classical.choice,
-  Quot.sound] native [<the frozen owner list>]` passes in the build.
+  `lowering_correct` and on `generator_done`; `exhibits: 4 PRESENT, 0 MISSING of 4`;
+  `block_coverage …: 7 INTEGRATED of 7`; `axiom_sweep: ok`; `sorry_sweep: … 0 REFUTED, 0 VACUOUS
+  in the cone`; the closure fingerprint matching `Frozen.sha256`.
+- Two axiom gates pass in the build:
+  `#assert_axioms Midfall.LoweringV3.lowering_correct [propext, Classical.choice, Quot.sound]
+  native []` (an EMPTY native list), and
+  `#assert_axioms Midfall.Instances.GeneratorDone.generator_done [propext, Classical.choice,
+  Quot.sound] native [<the frozen owner list>]`.
 - STATUS.md states the theorem in English with its full trusted base, itemised as PLAN-V3 §6 lists.
+- With M9: the same for `lowering_correctW`, and the F2 gates of card WID.H.
 
 YOUR ROLE
 You are the orchestrator. In each iteration you take ONE card, brief ONE subagent, re-verify the
@@ -71,6 +95,17 @@ ALREADY DECIDED BY THE HUMAN (design.md)
 - D-V2 is D-P44: the object of the theorem is the Yul the Lean codegen emits; solc, `ir_refines`,
   RunShell, ShellModel-as-target and M8 are retired; `native_decide` is allowed in Instances/ for
   fixture facts.
+- D-P71: the deliverable is the generator theorem; fixtures are tests; D-P68's per-fixture
+  technology clause is struck. If card GEN.0 or GEN.1 misses its Accept line, STOP and ask the
+  human: per-fixture rows are NOT a fallback.
+- D-P72: the supported class is widened to the IVC verifier (area WID, PLAN-V3 §5 M9). In
+  accumulator mode the right-hand side is the contract's own batched check (`LeanAcceptsAcc`);
+  `EvaluatorTrust` and `idLaw` are the only hypotheses it adds.
+- D-P73: the generator itself is certified (area CERT, PLAN-V3 §5 M10). The final theorem is
+  `generator_correct (gi) (o) (hg : Generates gi o) (hs : SupportedInput gi) (product)`, with
+  hypotheses on the generator's input only; `lowering_correct` is its main lemma. A lemma of area
+  CERT that is false for some supported input goes to the human: you never add a hypothesis to
+  `SupportedInput`.
 - D-P45–D-P59 and D-P60–D-P69 are signed. D-P60 adopts PLAN-V3. Each entry records CONDITIONS
   ("after RECON.1", "before the G1 batch merges G1.2", …): you apply a condition, you do not choose;
   an unmet condition stops the card that depends on it, and the "if struck" fallbacks of PLAN-V3
@@ -80,11 +115,12 @@ ALREADY DECIDED BY THE HUMAN (design.md)
 THE LOOP (EXECUTION-V2 §2), one card per iteration
 1. Load STATUS.md and QUEUE.md. Take the first row of the V3 table whose status is READY: every card
    in its `after` column is merged, and the decision it names is signed with its conditions met.
-   A PROOF card about Yul is also not READY until the executable exhibit for its object exists
-   (W14; card T3.11), whatever the status column says.
+   A PROOF card about Yul is also not READY until the executable exhibit exists (W14; card T3.11:
+   the generated program has run a test calldata to the intended outcome), whatever the status
+   column says. The exhibit is a test: it is never a premise of the proof.
 2. Check premises at the current commit, in at most 10 min:
    - run `bash formal/docs/plans/V3-evidence/check.sh <area>` for the card's evidence (areas:
-     probes, statements, soundness, prooftech, reference, object, tooling); a failure is a false
+     probes, statements, soundness, prooftech, reference, object, tooling, widening); a failure is a false
      premise;
    - run the card's NEEDS snippet. Only command outputs and kernel-checked theorems count as facts.
      Comments, docstrings, ledger prose, design memos and earlier reports, including yours, are
@@ -99,7 +135,8 @@ THE LOOP (EXECUTION-V2 §2), one card per iteration
      delivered theorems and of the root;
    - git diff --stat: no frozen or v1 file touched unless the card's signed decision authorises it;
      no unexpected deletion or shrinkage;
-   - PROOF cards: the lemma is used by its consumer;
+   - PROOF cards: the lemma is used by its consumer, is stated for every render (no fixture in
+     the statement), and `#assert_axioms` on it passes with an EMPTY native list;
    - KAT and exhibit cards: the intended outcome happened at the intended place;
    - STATEMENT cards: the statement, its witness and its falsifier are all in the tree (W12).
 5. Merge according to the outcome:
@@ -131,25 +168,32 @@ RULES (EXECUTION-V2 §5 has W1–W11 in full; PLAN-V3 §4 has W12–W15)
     complete per-case requirements table, computed by #eval.
   - A lemma that no consumer uses is not a card.
 - W12 Witness and falsifier before a brief: a sorried statement is briefed only when the tree holds a
-  witness that its hypotheses hold together at F1 and a falsifier (a mutated object for which it is
-  false, or for a generic statement a weakening exhibited false).
+  witness that its hypotheses hold together at a test circuit and a falsifier (a mutated emitter
+  output or input for which it is false, or a weakening exhibited false). A card's first job is
+  to try to falsify its statement.
+- PREMISE GAPS. A generic row may need a fact about the render that validity does not state
+  (`PG_*` in GeneratorRows.lean; table in PLAN-V3 §5 M6). A subagent never adds one as a
+  hypothesis: the table says which card or which `ValidV3` clause supplies it.
 - W13 No refuted hole: a sorry whose negation is proved (by statement or by instance) is deleted in
   the same commit as the refutation, and so is any consumer whose remaining hypothesis is refuted.
   A cone with a refuted leaf is reported as UNREACHABLE, never as a number.
-- W14 Run it before proving it: the modelled program runs the fixture calldata to the intended
-  outcome under the fuel interpreter, and a mutant does not, before any Yul PROOF card about it.
+- W14 Run it before proving it: the modelled program runs a test calldata to the intended
+  outcome under the fuel interpreter, and a mutant does not, before any Yul PROOF card about the
+  block it exercises.
 - W15 Frozen means the meaning: frozen edits only in a card whose brief names the signed decision,
   shows the hash diff and carries the witness and falsifier of every changed statement; batch them
   per milestone (five re-hashes in all, PLAN-V3 §4).
-- Fixtures. F1 is the bundle REF.11 exports (D-P63: test SRS with its trapdoor). Every gate of M1–M4
-  reads that bundle. A run that stops at an early guard is never evidence of readiness.
+- Fixtures are tests. F1 is the bundle REF.11 exports (D-P63: test SRS with its trapdoor); F2 is
+  the IVC bundle WID.4 exports. Every gate of M1–M4 reads the F1 bundle. A run that stops at an
+  early guard is never evidence of readiness. A proof that mentions a fixture is rejected.
 - Progress is the report (PLAN-V3 §6): leaf status (OPEN / REFUTED / VACUOUS), exhibits PRESENT,
   block rows INTEGRATED, the axiom sweep; the cone count is its last line. Register, gate and KAT
   counts are not progress.
 - Claims:
   - "proved" means clean axioms AND used in the cone;
   - "conditional on X" always states X's status: open, inhabited or refuted;
-  - "headline proved" only for `poseidon_done` with `#assert_axioms` passing.
+  - "headline proved" only for `lowering_correct` with `#assert_axioms … native []` passing;
+  - "for every circuit" always adds: conditional on `ValidV3`, checked per circuit.
 - Blockers are minimal reproducers (an example plus the error text, at a commit), re-run before any
   brief relies on them. Reproducers and probes a card or decision relies on are landed, never left
   in /tmp.
@@ -174,8 +218,10 @@ cards. Ask when:
 - a frozen statement looks false or vacuous;
 - a needed fact seems to require a new hypothesis on the headline;
 - a signed decision's condition fails, or a card needs a change no signed decision covers;
-- a calibration point of PLAN-V3 §5 M5 misses its threshold (at point C: stop loop-bearing rows and
-  re-plan with the human);
+- a calibration point of PLAN-V3 §5 M5 misses its threshold (P, B, L, C or D): stop the cards
+  that depend on it and re-plan with the human;
+- a generic row is FALSE for some valid render (the class is too wide or a clause is missing):
+  land the counterexample, do not add a hypothesis;
 - a card finds a new divergence between the Lean verifier and Rust, or a G1 window of the calldata
   that no MSM reads (a soundness question about the generated contract);
 - 3 of 5 consecutive cards missed their deliverable, or 2 of 5 had a false premise (until answered,
