@@ -110,7 +110,28 @@ EVAL = re.compile(
 # their first-differing challenge indices (6, 0 and none), the reddened replay on a corrupt bundle,
 # and two labelled DIAGNOSTICS that localise check 3's blocker to the render's G1 codec rather than
 # to the layout or the decoder. No gate was deleted; the delta is +18/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1393
+# DG.0 moved EXPECTED_KAT_TOTAL 1393 -> 1397 deliberately, and names the commit that added the gates.
+# The four are 2041977 (F.1: Rust CAN export the constraint system), all four in
+# Midfall/Instances/PoseidonEnv.lean: poseidonMeta_derived_ok (the plan's ConstraintSystemMeta comes
+# out of the ported DERIVATION, not a transcription - poseidonMetaDerived?.isOk with numFixeds 19, 49
+# pcsQueries, 6 commonPolys, numEvals 48); poseidonMeta_matchesTypedIn_ok (the derived counts
+# reproduce all eleven counts D.2/P-13 typed in from the artifact, plus the four fields the
+# observation had no source for); poseidonLookup_chunks_kat_ok (the ported LogupBatchedArgument
+# .numChunks over the imported expression trees answers what Rust's num_chunks_at_cs_degree returned,
+# i.e. [1], so the exported trees are load-bearing and not merely well-formed); poseidonCs_counts_ok
+# (5 gates / 11 gate polys agree across the exporter's two channels, with the trashcan name "&&&&&&&"
+# and gates[4] = partial_round_gate pinned as the reference produced them). F.1 also swapped
+# poseidonWellFormed_open_ok for poseidonWellFormed_closed_ok, which is net zero, and the file count
+# does not move: PoseidonEnv.lean was already in the suite. So the delta is +4/+0 and nothing else
+# moved - the pin was simply left red for two cards rather than bumped silently.
+# THE SAME COMMIT mis-spelled two annotations as "-- expect TRUE" (uppercase) while Lean prints
+# `true` and this gate compares case-sensitively: DeployedProfile.lean pcs_deployedGap_measured_ok
+# and PoseidonCoherence.lean check2_circuitMeta_holds. DG.0 re-spelled them to lowercase and changed
+# NO expectation: both were run through `lake env lean` before this line moved and both print true.
+# They were already counted as annotated gates (the regex takes any non-space token as the
+# expectation), so the measured total is 1397 before and after the spelling fix - what the typo hid
+# was the COMPARISON, which pass 1's total failure never let run.
+EXPECTED_KAT_TOTAL = 1397
 EXPECTED_KAT_FILES = 102
 
 # Only these shapes count as #eval output.

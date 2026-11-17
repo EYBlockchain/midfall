@@ -854,7 +854,7 @@ def perturb_derivationInputs_ok : IO Bool :=
 #eval Midfall.Instances.DeployedProfileKats.derivedSmokeGas_matchesArtifact_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedPlan_isTheDeployedPlan_ok -- expect true
 #eval Midfall.Instances.DeployedProfileKats.derivedParserFacts_matchPlanView_ok -- expect true
-#eval Midfall.Instances.DeployedProfileKats.pcs_deployedGap_measured_ok -- expect TRUE since F.1 (the pcs arm now emits)
+#eval Midfall.Instances.DeployedProfileKats.pcs_deployedGap_measured_ok -- expect true since F.1 (the pcs arm now emits)
 #eval Midfall.Instances.DeployedProfileKats.perturb_derivationInputs_ok -- expect true
 
 

@@ -499,7 +499,7 @@ end Midfall.Instances.PoseidonCoherence
 
 -- CHECK 2
 #eval Midfall.Instances.PoseidonCoherence.check2_constructor_isOk -- expect true
-#eval Midfall.Instances.PoseidonCoherence.check2_circuitMeta_holds -- expect TRUE since F.1
+#eval Midfall.Instances.PoseidonCoherence.check2_circuitMeta_holds -- expect true since F.1
 #eval Midfall.Instances.PoseidonCoherence.check2_failureAttribution_ok -- expect true
 #eval Midfall.Instances.PoseidonCoherence.check2_agreeingCounts_ok -- expect true
 
