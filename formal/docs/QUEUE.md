@@ -290,7 +290,7 @@ SEM · SKELETON · box 2 h · strongest · after D.3
   `#cone_avoids` is still ok.
 - **Stop if.** `poseidonRender` cannot be formed from the D.1/D.2 terms. Report the missing field.
 
-### M0.1 — Measure the blocks' frames
+### M0.1 — Measure the blocks' frames  **[DONE 252ea1d - table landed below]**
 SEM · PROBE · box 1 h · Sonnet · after C.1
 
 - **Goal.** Produce one table row per `Partial` with these columns:
@@ -301,6 +301,39 @@ SEM · PROBE · box 1 h · Sonnet · after C.1
 - **Do.** Run `#eval` over `poseidonRender.slice q`, using the copied walkers (`freeNames`, …).
 - **Does NOT need.** Proofs.
 - **Deliverable.** The table, in the report, with the commands that produced it.
+
+
+**M0.1 RESULT — the table (re-run and reproduced by the orchestrator at 252ea1d; full verbatim
+output preserved at `/tmp/m01/OUTPUT.txt`). Route: `sliceOf (planViewOf poseidonPlanV2
+poseidonModelVal poseidonConfig.accumulator) poseidonModelVal q` — `planViewOf` takes THREE explicit
+args `(L) (m) (acc)`; `acc = poseidonConfig.accumulator = none`, pinned by the frozen
+`Statements.lean:93` `Render.pv` definition. `poseidonRender` was NOT made computable.**
+
+| Partial | C1 locals read / written | C2 memory written | C3 sets `success:=0` | C4 helper with a loop |
+|---|---|---|---|---|
+| vkLoading | W: success · R: vk, success | 0x2900..0x3ae0 (4576B) {vk_payload}; +0x0..0x20 via fail | **YES** — 9 assigns, all `and(success, eq(…))` | NO (calls `fail` only); 0 own loops |
+| transcriptParser | W: 16 locals · R: 17 · ext-in: r | 4 static ranges + 11 dynamic sites (buf_len walks, calldatacopy of advice/lookup/perm/trashcan/quotient walks) | **YES** — `and(success, lt(inst_be, r))` | NO; 9 own for-loops |
+| lagrange | W: 21 locals · R: 22 · ext-in: r | static 0x3e20..0x3ee0, 0x6900..0x6920; dynamic `mstore(mptr)` loop 0x67c0..0x6900 step 32 | **YES** — `success := batch_invert(…)` | **YES — via `batch_invert`, the ONLY looping helper (direct and transitive)**; 5 own loops |
+| quotientLin | W: 7 locals · R: 8 · ext-in: r | static 0x3f00..0x3f40 (64B) = QUOTIENT_MPTR payload; no dynamic | **NO** — 0 success assigns | NO (calls nothing); 1 own loop |
+| pcs | **EMPTY — 0 stmts, 0 names** | none | NO | NO |
+| finalPairing | W: success · R: success | none in slice; via `ec_pairing` 0x1240..0x1540 (768B) + fail 0x0..0x20 | **YES** — `success := ec_pairing(…)` | NO (`ec_pairing` has no for); 0 own loops |
+| traceReturn | W: none · R: success · ext-in: success | static 0x1000..0x1020 (`mstore(4096,1)` then `return(4096,32)`) | **NO** — reverts via fail or returns abiTrue | NO; 0 own loops |
+
+**Five things C.2 must know that the table cannot express:**
+1. **Cross-slice shared locals are exactly `{vk, r, success}`** — the union of read-and-not-written-here
+   over all 7 slices. `r`/`success` are declared by `mainLocals` (Program.lean:88-90) OUTSIDE every
+   slice; `vk` by `wrapperLocals`. `quotientEvaluator` never appears (`mA.quotientExternal = none`).
+2. **`fail()` does NOT set `success := 0`** — it mstores the selector at 0x0 and `revert(0,4)`. 5 of 7
+   slices call it (all but quotientLin and pcs). **Revert path and success path are distinct
+   requirements.**
+3. **Route validated:** sum of slice stmt counts = 54 = `(GenAst.emitSlices pvA).length`; slice token
+   count = text-region count + 2 (block braces) for 5 of 7. Only quotientLin and pcs break the pattern.
+4. **quotientLin emits only 122 of 6572 tokens** — 98% of the quotient region is not emitted (WP-G1:
+   the two quotient_numerator includes + accumulator/trace helper includes). **This is exactly the
+   block C.1 sorried separately as `poseidon_quotient_block`.**
+5. **pcs is empty at the plan/model level, not an emitter omission** — `computationsAst = ok, 0
+   blocks`, `mA.pcsComputations.length = 0`, and the rendered text region is also empty (2/2).
+   **C.2 must not read the pcs row as "pcs needs nothing"** — every cell is vacuous.
 
 ### C.2 — Composition skeleton with a requirements table
 SEM · SKELETON · box 2 h · strongest · after M0.1
@@ -325,6 +358,90 @@ SEM · SKELETON · box 2 h · strongest · after M0.1
 - **Stop if.** Composition needs a block fact not expressible with the §6 shapes. Report the exact
   goal state. Refining §6 is allowed only by adding fields to `Frame`/`Clean`, and each change is
   listed.
+
+**C.2 RESULT — composition landed on t/C.2: the requirements table.**
+
+`lowering_equivalence_of_blocks` is now a THEOREM with no `sorry`: 113 proof lines that wire the §6
+contracts to the frozen `LoweringEquivalence`. Everything semantic sits in 7 named sorried lemmas in
+`Blocks.lean` §7.1 plus 11 proved transport facts. CONE: `lowering_equivalence_of_blocks` 1 → 7;
+headline `lowering_equivalence_poseidon` **5 → 11** (it moved; see the note at the end).
+
+| Lemma (Blocks.lean unless noted) | What it must deliver | Composition step that uses it | Size estimate, with evidence |
+|---|---|---|---|
+| `prog_slices_decomp` :220 (SORRY) | `R.prog a b = preSlice ++ helpers ++ mainLocals ++ slices` AND `hoist (prog a b) = hoist helpers` — the second conjunct IS the `hoist_prog_eq_helpers` that Statements.lean:108 advertises and that does not exist in the tree | Structural premise of `runBody_iff_slices` and `prefix_run_clean`. NOT cited by the composition itself, so it is **not in the cone report** | `20-40 lines, LOW CONFIDENCE`. Evidence: `emitSlices_eq` is 2 proof lines (n=1); the 4 proved `Inline` lemmas are 1-11 lines each (n=4) but none is about `++`. The real cost is `inline_append`'s (sorried, ProgramLemmas.lean:27): **no basis yet** (n=0 proved lemmas in the tree about `inlineContractConstants` distributing over concatenation). |
+| `prefix_run_clean` :246 (SORRY) | From `EntryFrame` + `DeploymentV2` + `LeanAccepts`: the calldata decodes, `snapshotOf = .ok Snap`, `DualMSM.check = true`, and the prefix run exists and ends `Clean R .start` | STEP 1, in all three conjuncts — the only route from `LeanAccepts` to `hB`'s hypothesis set | **No basis yet.** Bundles three kinds of work: (a) `snapshotOf_prepareMsgs` (registered sorry, Snapshot.lean:387) for the `Snap` witness and the `DualMSM` clause; (b) discharging `Inv .start` + `Frame` (`LocalsOk`, the g1-identity window from `zeroAbove`, `let vk`, `let r := FR_MODULUS`); (c) a `Step` construction of the prefix run. Closest proved sample: `entryFrame_inhabited` at 9 proof lines (n=1) — but it builds a state, not a run. |
+| `runBody_iff_slices` :276 (SORRY) | `RunBody R vkAddr 0 c g st₀ obs ↔ ∃ V' st' o, obs = ⟨committedState st₀ st', o⟩ ∧ ExecStmts (R.scope c g) V₁ st₁ R.slices V' st' o`, given the prefix run `hp` to the SAME `V₁ st₁` | STEP 1: forward direction spends a per-slice contract on a `RunBody` hypothesis (conjuncts 1, 3); backward direction turns `StmtsContract`'s witness into the headline's existence claim (conjunct 2) | `30-60 lines`. Evidence: `Step.stmts_append_inv` 10 proof lines and `StmtsContractAll.append` 9 (n=2 proved reassociation lemmas); the rest is `Step.block` / `Step.funDef` bookkeeping (BigStep.lean:222-227). No semantic content. |
+| `slices_seq_sound` :307 (SORRY) | 7 × `BlockSound` → one `StmtsContractAll` over `R.slices`: pre `Clean R .start`, post `(o = .halt ∧ Reverted) ∨ exitOk .traceReturn` | STEP 2 in conjuncts 1 and 3 | `60-100 lines`. Evidence: `StmtsContractAll.append` is 9 proof lines (n=1) applied 6 times, each with a `mid` predicate `Clean R k ∨ Poisoned` and a 3-way split of `BlockSound`'s post (`3-4` lines each) → 6 × `13 ≈ 78. **The table's most important cell:** the post stated here has NO `o = .normal ∧ Poisoned` arm, and 7 copies of `BlockSound` do NOT give that — `BlockSound R .traceReturn` permits a poisoned fall-through on paper. The missing fact ("`traceReturn` reverts on `iszero(success)`") is a per-block requirement for FP.0/T.1 and its size is **no basis yet**. |
+| `slices_seq_progress` :325 (SORRY) | 7 × `BlockProgress` → `StmtsTotal` over `R.slices` (a run exists + every run exits `exitOk .traceReturn`) | STEP 2 in conjunct 2 (both the `∃ obs` and the `∀ obs` halves) | `90-130 lines`. Evidence: the same 6 handoffs twice (`StmtsContract` and `StmtsContractAll`), n=1 sample of the combinator, plus `ExecLoopAll.countdown_or_halt` at 50 proof lines (n=1) as the only proved multi-constructor inversion in the tree — the relevant one for the `lagrange`/`batch_invert` link, which per M0.1 is the ONLY looping helper. |
+| `noWriters_prog` :340 (SORRY) | `NoWriters (R.prog vkAddr qAddr)` from `hR.noWriters : NoWriters (R.prog 0 0)` | TRANSPORT: the `hn` argument of `Bridge.Run_worldEq_of_noWriters`, via `worldEq_of_runBody` | **No basis yet.** Evidence: the two proved `NoWriters` exhibits in Bridge are `⟨30, by decide⟩`-style on ≤3-statement blocks (n=2); the program is 54 statements / 6572 tokens (M0.1), so `decide` scaling is untested and may not fit the ≤60 s budget. The honest shape is a substitution lemma on `noWritersScan` about `lit` values, cost unknown. |
+| `rejects_of_not_accepts` :356 (SORRY) | `Render.Rejects` WITHOUT `SoundSide`: `¬ LeanAccepts` → every permissive run reverts | STEP 3 in conjunct 3 ONLY (conjunct 1 uses `hrej` directly, where `SoundSide` IS available) | **Not estimable here, by construction.** It is `Rejects` with one hypothesis deleted, so its cost IS the cost of WP-M0's staged rejection contracts (card C.3), not a new obligation of this card. See premise finding 2. |
+
+**PROVED IN THIS CARD (0 sorries; 11 names, all cited by the composition):** `worldEq_symm`,
+`exists_revert_of_Reverted`, `halted_committedState`, `worldEq_committedState`,
+`worldEq_of_runBody`, `not_isRevertOrHalt_of_isReturn`, `isRevertOrHalt_of_Reverted`,
+`obs_view_eq_returnView`, `view_eq_returnView_of_committed`, `exitOk_traceReturn_apply`,
+`returnData_of_committed_ret`. 59 proof lines total (n=11, median 4 lines).
+
+**REUSED, NOT NEW:** `emitSlices_eq` (proved, 2 lines) · `inline_append` (sorried,
+ProgramLemmas.lean:27) · `hoist_prog_addr_indep` (sorried, Blocks.lean:145 — cited by nothing in
+this composition, so NOT in the cone) · `Bridge.Run_worldEq_of_noWriters` (registered sorry,
+Bridge.lean:1221 — **now IN the headline cone**; it was not before) ·
+`Bridge.view_eq_of_worldEq_and_halt` (proved, 3 lines) · `StmtsContractAll.append` (proved) ·
+`Snapshot.snapshotOf_prepareMsgs` (registered sorry, folded into `prefix_run_clean`).
+The brief also listed `halted_of_view_eq` and `worldEq_of_view_eq` as needed: the composition does
+NOT cite them. It needs the CONVERSE transport (world + halt → view), which is
+`view_eq_of_worldEq_and_halt`. Both are proved, so nothing is blocked — the brief named the wrong
+direction.
+
+**TWO PREMISE FINDINGS (both were NEEDS items on this card).**
+1. `Bridge.Run_worldEq_of_noWriters` **DOES EXIST**: `Midfall/Yul/Bridge.lean:1221`, a real `theorem`
+   with a `sorry` at :1223, registered in SORRY.md as `Midfall/Yul/Bridge.lean | 1223`. The
+   orchestrator's grep missed it because the declaration is `Run_worldEq_of_noWriters` (no `Bridge.`
+   prefix on the declaration; the prefix appears only in prose). NOT a premise gap. It is cited, via
+   `worldEq_of_runBody`, exactly as the brief asked.
+2. `Render.Rejects` is NOT sufficient for the composition, and this IS a gap: `Rejects` demands
+   `SoundSide R H cd`, but the third conjunct of the frozen `LoweringEquivalence`
+   (Statements.lean:250-262) carries no `SoundSide`. Conjunct 3's `¬ LeanAccepts` branch is
+   therefore unreachable from `hrej`. `SoundSide` excludes the logup-panic bad set, a COMPLETENESS
+   side condition, and is spurious in the "Lean rejects ⇒ contract reverts" direction. Deleting it
+   from `Rejects` would strengthen a §6 shape by REMOVING a hypothesis, which this card was not
+   authorised to do (authorisation was add-fields-to-`Frame`/`Clean` only), so it is named as
+   `rejects_of_not_accepts` instead. **Decision needed:** delete `SoundSide` from `Render.Rejects`
+   (then `rejects_of_not_accepts` collapses to a one-line `exact` and the cone drops by 1), or keep
+   the split and let C.3 own both.
+
+**§6 FIELD CHANGES: NONE.** `Frame` and `Clean` are untouched — no field added, none removed. The
+composition is expressible with the §6 shapes as they stand, with two recorded limits: the
+`traceReturn` poisoned fall-through (a POST-condition limit, not a boundary-predicate limit) and the
+`Rejects`/`SoundSide` hypothesis mismatch (a §6 hypothesis-set limit in `Rejects`, not in
+`Frame`/`Clean`).
+
+**M0.1 CAVEATS CARRIED INTO THIS TABLE (do not read the sequencing rows as "cheap, therefore done").**
+`slices_seq_sound` and `slices_seq_progress` chain over all SEVEN slices, and two of those seven
+links are vacuous or near-vacuous at the plan level:
+* `quotientLin` emits **122 of 6572 tokens** (M0.1 finding 4: the two `quotient_numerator` includes
+  and the accumulator/trace helper includes are not emitted). Its `BlockSound`/`BlockProgress` are
+  therefore about 2% of the region the contract is supposed to cover, and it is the block C.1 sorried
+  separately as `poseidon_quotient_block`. `hB` is asked for `fun _ => True`, i.e. it INCLUDES
+  `quotientLin`: the composition cannot skip it, and closing the other six does not close this one.
+* `pcs` is **EMPTY at the plan level** (M0.1 finding 5: `computationsAst = ok, 0 blocks`,
+  `mA.pcsComputations.length = 0`, rendered text region empty too). Its two contracts are vacuously
+  satisfiable, so a green `slices_seq_*` proves NOTHING about the PCS stage. The row is not "needs
+  nothing"; it is "needs a plan-level fix upstream of every card in this queue".
+Consequence for the cone: the sequencing lemmas are the CHEAP part (est. 150-230 lines together, n=1
+combinator sample each) and the `hB` hypothesis they consume is the expensive part — 7 block
+contracts, 2 of which are currently about an empty or 2%-emitted region.
+
+**CONE, BEFORE AND AFTER (measured, not projected).**
+`#cone_sorries Midfall.LoweringV2.lowering_equivalence_of_blocks`: **1 → 7**.
+`#cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon`: **5 → 11**.
+It moved UP by 6. That is not progress on the headline and is not presented as any: the headline
+still has `poseidon_valid`, `poseidon_quotient_block`, `poseidon_rejects` and
+`blockContracts_of_valid` in its cone, and now also 6 new LoweringV2 names plus
+`Bridge.Run_worldEq_of_noWriters`. What changed is that one unnamed hole (the body of
+`lowering_equivalence_of_blocks`) became 7 named ones with pinned interfaces. The count goes down
+only when the rows above close; `prog_slices_decomp` is the one new sorry NOT in the cone (nothing
+cites it yet), so the table has 7 rows and the cone shows 6 of them plus `Run_worldEq_of_noWriters`.
 
 ### C.4 — Validity skeleton, clause by clause
 GEN · SKELETON · box 2 h · Sonnet · after C.1

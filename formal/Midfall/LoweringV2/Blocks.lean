@@ -153,16 +153,459 @@ theorem blockContracts_of_valid (R : Render p G₁ G₂ Gₜ) (product : Pairing
     (hR : R.Valid) : R.BlockContractsAt product (· ≠ .quotientLin) := by
   sorry
 
-/-- COMPOSITION (WP-M5): a valid render whose blocks satisfy their contracts and whose program
-    rejects what Lean rejects satisfies the headline. Uses `emitSlices_eq`, `inline_append`,
-    `hoist_prog_addr_indep`, `NoWriters` with `Bridge.Run_worldEq_of_noWriters`, and the view
-    lemmas of `Bridge` (`halted_of_view_eq`, `worldEq_of_view_eq`, ...). This is a LEMMA: its two
-    bundle hypotheses are discharged per deployment, and the headline that is claimed (below) has
-    neither. -/
+/-! ### 7.1 The named obligations WP-M5 composes from
+
+  `lowering_equivalence_of_blocks` is proved below from the lemmas of this section. Seven are named
+  `sorry`s with pinned interfaces; the transport facts are PROVED here, so the composition itself
+  contains no `sorry`. The requirements table in `docs/QUEUE.md` has one row per name.
+
+  THE FOUR GROUPS.
+  * PREFIX (`prog_slices_decomp`, `prefix_run_clean`): the closed program is the prefix, the
+    helpers, the main locals and the seven slices; and the prefix run from an `EntryFrame` on
+    calldata the Lean verifier accepts ends at a `Clean` boundary at `.start`.
+  * GLUE (`runBody_iff_slices`): a run of the program is a prefix run followed by a run of
+    `R.slices` in `R.scope`, and conversely.
+  * SEQUENCING (`slices_seq_sound`, `slices_seq_progress`): the seven per-slice contracts compose to
+    one contract for `R.slices`, by `StmtsContractAll.append`.
+  * REJECTION + TRANSPORT (`rejects_of_not_accepts`, `noWriters_prog`, `worldEq_of_runBody`).
+
+  WHAT THE M0.1 TABLE FORCES ON THESE STATEMENTS (docs/QUEUE.md, M0.1 RESULT).
+  * The only cross-slice locals are `vk`, `r`, `success`, and all three are declared OUTSIDE every
+    slice (`wrapperLocals`, `mainLocals`). That is why a prefix lemma is needed at all: no slice
+    establishes its own shared locals, and `Frame` carries `vk` and `r` while `Clean`/`Poisoned`
+    carry `success`.
+  * `fail()` REVERTS (mstore 0x0, revert(0,4)) and does NOT set `success := 0`. So the revert arm
+    and the poisoned arm of `BlockSound`'s postcondition are SEPARATE requirements, and
+    `slices_seq_sound` has to keep both: 5 of the 7 slices can take the revert arm, and the
+    poisoned arm is only reachable from a failed precompile.
+  * `quotientLin` emits 122 of 6572 tokens and `pcs` is EMPTY at the plan level, so two of the
+    seven sequenced contracts are near-vacuous. The sequencing lemmas still compose by 7
+    applications of `StmtsContractAll.append`, which is why this section is cheap and the block
+    contracts behind it are not: the cost of the cone is not in this file.
+  * Only `lagrange` calls a looping helper (`batch_invert`), so of the seven slices six have a
+    fuel-free step argument and one does not; `slices_seq_*` are stated so that the loop cost lands
+    in the per-slice contracts, not in the composition. -/
+
+/-- The statements the closed program runs before the first slice: the ABI-shape guard, the two
+    wrapper locals, and the main block's memory-layout guard, constant-inlined. -/
+def Render.preSlice (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256) : YulBlock :=
+  Inline.inlineContractConstants R.consts
+    (abiGuardBlock R.model ++ wrapperLocals R.model vkAddr qAddr ++ mainGuardBlock)
+
+/-- `mainLocals` after constant inlining: `let r := FR_MODULUS`, `let success := true`. These are
+    the two declarations the M0.1 table counts as living outside every slice. -/
+def Render.mainLocalsInlined (R : Render p G₁ G₂ Gₜ) : YulBlock :=
+  Inline.inlineContractConstants R.consts mainLocals
+
+/-- The seven slices in include order: the concatenation the per-block contracts compose over. The
+    closed-program analogue of `GenAst.emitSlices`, whose equation is the PROVED `emitSlices_eq`. -/
+def Render.slices (R : Render p G₁ G₂ Gₜ) : YulBlock :=
+  R.slice .vkLoading ++ R.slice .transcriptParser ++ R.slice .lagrange ++
+    R.slice .quotientLin ++ R.slice .pcs ++ R.slice .finalPairing ++ R.slice .traceReturn
+
+/-- **PREFIX LEMMA, STRUCTURAL HALF** (WP-M5a). The closed program IS the prefix, the hoisted
+    helpers, the main locals and the seven slices in include order, and its only function
+    definitions are the helpers' — so its hoisted scope is the block scope `R.scope`.
+
+    This is the named obligation `Statements.lean:108` advertises as `hoist_prog_eq_helpers` and
+    which does not exist anywhere in the tree: the second conjunct IS that missing lemma. It is what
+    licenses reading a `Run` of `R.prog` as a run of `R.slices` in `R.scope`, i.e. what makes the §6
+    contracts usable at all.
+
+    COST EVIDENCE: `emitSlices_eq` is proved by one `simp` (ProgramLemmas.lean:35, no sorry). The
+    missing work is pushing `Inline.inlineContractConstants` through the five `++` of `asmOf`, which
+    is `inline_append` (SORRIED, ProgramLemmas.lean:27) discharged a handful of times against the
+    `topBinders` side condition, plus `hoist`'s `filterMap` over a concatenation. No semantic
+    content: this is a fact about the emitter. -/
+theorem prog_slices_decomp (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
+    (c : ExternalCalls) (g : ExternalGas) :
+    R.prog vkAddr qAddr =
+        R.preSlice vkAddr qAddr ++ R.helpers ++ R.mainLocalsInlined ++ R.slices ∧
+      hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr) = hoist (Bridge.Dialect c g) R.helpers := by
+  sorry
+
+/-- **PREFIX LEMMA, SEMANTIC HALF** (WP-M5a). From an `EntryFrame` on calldata the Lean verifier
+    accepts, the prefix run EXISTS and ends at a `Clean` boundary at `.start` — and the calldata
+    decodes to a snapshot, which is the hypothesis set `BlockContractsAt` needs.
+
+    WHY THE SNAPSHOT FACTS ARE IN THE CONCLUSION. `Render.BlockContractsAt` is stated under
+    `decodeCalldata = some` / `instOfWords? = some` / `snapshotOf = .ok`, and the headline only ever
+    has `LeanAccepts`. The bridge is `Snapshot.snapshotOf_prepareMsgs` (a REGISTERED sorry,
+    Snapshot.lean:387): its second conjunct turns `prepareMsgs = .ok` into `(snapshotOf).isOk`,
+    i.e. into the witness `Snap`, and its first conjunct plus the unfolding of `verifyMsgs` gives
+    the `DualMSM.check` clause that `BlockProgress` is gated on. Rather than add a second named hole
+    for that one-line transfer it is folded into this interface; the requirements table records it
+    as the reason this row is not free.
+
+    WHY `Clean .start` IS NOT TRIVIAL. `Inv .start` is `st.halted == none && LocalsOk V &&
+    bytesAt st g1IdentityMptr 128 == 0`, and `Frame` additionally asks for `VEnv.get V "vk" = some
+    vkAddr` and the `FR_MODULUS` read of `r`. The first two are entry-frame and deployment facts
+    (`zeroAbove`, `DeploymentV2.vkCode`); the last two are the `let vk = AUTHORIZED_VK` / `let r :=
+    FR_MODULUS` statements of the prefix — the M0.1 finding that the shared locals are declared
+    outside every slice. -/
+theorem prefix_run_clean (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.Valid)
+    (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
+    (c : ExternalCalls) (g : ExternalGas) (hacc : LeanAccepts R H cd) :
+    ∃ (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+        (Snap : Snapshot p G₁ G₂ Gₜ) (V₁ : VEnv (Bridge.Dialect c g)) (st₁ : EvmState),
+      decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
+      instOfWords? (p := p) instW = some inst ∧
+      snapshotOf R.E H R.vk inst ms none = .ok Snap ∧
+      DualMSM.check Snap.c.dual R.params = true ∧
+      Clean R .start Snap H vkAddr cd V₁ st₁ ∧
+      ExecStmts (D := Bridge.Dialect c g) (R.scope c g) [] st₀
+        (R.preSlice vkAddr 0 ++ R.mainLocalsInlined) V₁ st₁ .normal := by
+  sorry
+
+/-- **GLUE** (WP-M5a): a run of the program is exactly a prefix run followed by a run of `R.slices`
+    in `R.scope`, up to the observation boundary `committedState`. Both directions are needed: the
+    forward one to spend a per-slice contract on a `RunBody` hypothesis, the backward one to turn
+    the existence half of `StmtsTotal` into the existence half of the headline's completeness
+    conjunct.
+
+    COST EVIDENCE: `Run D prog st₀ V' st' o` unfolds to `Step D [] [] st₀ (.block prog) V' st' o`
+    (BigStep.lean:366-368), `Step.block` puts `hoist D prog` on the function stack and runs the
+    WHOLE statement list (BigStep.lean:225-227), and every `funDef` statement is a no-op step
+    (`Step.funDef`). So the proof is: rewrite by `prog_slices_decomp`, reassociate the `ExecStmts`
+    run over `++` with `Step.stmts_append_inv` (PROVED, Contracts.lean:115), and discharge the
+    helper statements as `Step.funDef`. The `restore [] Vb = []` collapse is what forces a `Run`'s
+    final `VEnv` to be empty, which is why the statement quantifies the intermediate `V₁` rather
+    than the final one. -/
+theorem runBody_iff_slices (R : Render p G₁ G₂ Gₜ) (vkAddr : U256)
+    (c : ExternalCalls) (g : ExternalGas) (st₀ : EvmState)
+    (V₁ : VEnv (Bridge.Dialect c g)) (st₁ : EvmState)
+    (hp : ExecStmts (D := Bridge.Dialect c g) (R.scope c g) [] st₀
+        (R.preSlice vkAddr 0 ++ R.mainLocalsInlined) V₁ st₁ .normal) (obs : Obs) :
+    RunBody R vkAddr 0 c g st₀ obs ↔
+      ∃ (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome),
+        obs = ⟨committedState st₀ st', o⟩ ∧
+          ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V₁ st₁ R.slices V' st' o := by
+  sorry
+
+/-- **PER-BLOCK SEQUENCING, SOUNDNESS HALF** (WP-M5b). Seven `BlockSound`s compose to one contract
+    for the concatenation: from a `Clean` boundary at `.start`, every run of the whole slice list
+    either reverts or finishes the way `traceReturn` finishes.
+
+    THE MID PREDICATES ARE THE POINT OF THE LEMMA. `StmtsContractAll.append` needs, at each of the
+    six handoffs, a `mid` that the finished block establishes AND the next block consumes.
+    `BlockSound`'s post gives `Clean R k.next` (through `exitOk`), `Poisoned`, or a revert, so the
+    mid at boundary `k` is `fun V st => Clean R k Snap H vkAddr cd V st ∨ Poisoned R H vkAddr cd V
+    st` — expressible with the §6 shapes as they stand, with no new field. The chain is `.start` →
+    `.vk` → `.transcript` → `.lagrange` → `.quotient` → `.pcs` → `.pairing`, which is
+    `Partial.pre` applied to the tail of `Render.slices`'s own concatenation order.
+
+    THE ONE ARM THE PER-BLOCK CONTRACTS DO NOT GIVE. The postcondition here has NO `o = .normal ∧
+    Poisoned` arm: after `traceReturn` there is no fall-through, because `traceReturn` reverts on
+    `iszero(success)` and otherwise returns. `BlockSound R .traceReturn` as §6 states it does NOT
+    say that — its poisoned arm `(o = .normal ∧ Poisoned ...)` is satisfiable on paper. So this
+    lemma is strictly stronger than 7 copies of `BlockSound`, and the extra fact belongs to the
+    FinalPairing/TraceReturn cards (FP.0, T.1), not here. Recorded as a §6 expressiveness finding:
+    it is NOT fixable by adding a field to `Frame`/`Clean`, because it is about a POST, not about a
+    boundary predicate. -/
+theorem slices_seq_sound (R : Render p G₁ G₂ Gₜ) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)
+    (vkAddr : U256) (cd : Bytes) (c : ExternalCalls) (g : ExternalGas)
+    (h7 : ∀ q : Partial, BlockSound R q Snap H vkAddr c g cd) :
+    StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) R.slices
+        (fun V st => Clean R .start Snap H vkAddr cd V st)
+        (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
+          exitOk R .traceReturn Snap H vkAddr cd V' st' o) := by
+  sorry
+
+/-- **PER-BLOCK SEQUENCING, PROGRESS HALF** (WP-M5b): the seven `BlockProgress`es compose to a
+    TOTAL contract for the concatenation — a run exists, and every run finishes the `traceReturn`
+    way. Under the honest calls nothing fails, so the mid at each handoff is `Clean R k` alone and
+    no `Poisoned` disjunct is needed; that is the only difference from `slices_seq_sound`.
+
+    COST EVIDENCE: `StmtsTotal = StmtsContract ∧ StmtsContractAll` (Blocks.lean:49), so the proof is
+    the same six handoffs twice, the existential half additionally needing the prefix run to exist.
+    Note the hypothesis is gated on `DualMSM.check = true` inside `BlockContractsAt`, which is where
+    the `.pairing` arm of `Inv` gets its decision clause. -/
+theorem slices_seq_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (h7 : ∀ q : Partial, BlockProgress R q Snap H vkAddr product cd) :
+    StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+        (R.scope _ _) R.slices
+        (fun V st => Clean R .start Snap H vkAddr cd V st)
+        (fun _ _ V' st' o => exitOk R .traceReturn Snap H vkAddr cd V' st' o) := by
+  sorry
+
+/-- **TRANSPORT, HYPOTHESIS HALF** (WP-M5c): the `noWritersFuel` scan is insensitive to the two
+    addresses the wrapper binds. `Render.Valid.noWriters` pins `NoWriters (R.prog 0 0)` and the
+    headline runs `R.prog vkAddr 0`, so `Bridge.Run_worldEq_of_noWriters` cannot be cited without
+    this step. The two addresses occur only as `Stmt.letDecl ... (some (lit ...))` right-hand sides
+    in `wrapperLocals` (Program.lean:105-108), and `noWritersScan` classifies ops, not literal values.
+    Same cost class as `hoist_prog_addr_indep` (sorried, Blocks.lean:145). -/
+theorem noWriters_prog (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (vkAddr qAddr : U256) :
+    NoWriters (R.prog vkAddr qAddr) := by
+  sorry
+
+/-- **REJECTION COMPOSITION, THE HALF `Render.Rejects` DOES NOT SUPPLY** (WP-M5c).
+
+    PREMISE GAP, FOUND BY THIS CARD. The brief says composition reuses `Render.Rejects`. It cannot
+    stand alone: `Rejects` demands `SoundSide R H cd` as a hypothesis, and the THIRD conjunct of the
+    frozen `LoweringEquivalence` (Statements.lean:250-262) carries no `SoundSide` at all. So the
+    case split in conjunct 3 has a branch — `¬ LeanAccepts` with no `SoundSide` — that `hrej` cannot
+    reach. `SoundSide` excludes the logup-panic bad set, which is a COMPLETENESS side condition:
+    nothing in the "Lean rejects, so the contract reverts" direction needs it, so the hypothesis is
+    spurious for this use. Deleting it from `Rejects` would strengthen a §6 shape by REMOVING a
+    hypothesis, which this card is not authorised to do (§6 refinement is add-fields-to-`Frame`/
+    `Clean` only), so it is named as a separate obligation. Conjunct 1 below DOES use `hrej`
+    directly, where `SoundSide` is available. -/
+theorem rejects_of_not_accepts (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (g : ExternalGas) (obs : Obs)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hna : ¬ LeanAccepts R H cd)
+    (hobs : RunBody R vkAddr 0 (permissive (callsOf product)) g st₀ obs) :
+    obs.isRevertOrHalt := by
+  sorry
+
+/-! #### Transport facts that are PROVED here (no new holes) -/
+
+/-- `WorldEq` is symmetric: it is eleven component equalities. Needed because the Bridge view lemma
+    consumes `WorldEq o₁.state o₂.state` in the direction `run → entry`, while `Run_worldEq_of_noWriters`
+    produces `entry → run`. -/
+theorem worldEq_symm {a b : EvmState} (h : WorldEq a b) : WorldEq b a := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := h
+  exact ⟨h1.symm, h2.symm, h3.symm, h4.symm, h5.symm, h6.symm, h7.symm, h8.symm, h9.symm,
+    h10.symm, h11.symm⟩
+
+/-- A revert record is a non-committing halt. -/
+theorem exists_revert_of_Reverted {st : EvmState} (h : Reverted st) :
+    ∃ d, st.halted = some (.revert, d) := by
+  cases hst : st.halted with
+  | none => exact absurd h (by simp [Reverted, revertedOf, hst])
+  | some kd =>
+      cases kd with
+      | mk k d =>
+          cases k with
+          | revert => exact ⟨d, rfl⟩
+          | _ => exact absurd h (by simp [Reverted, revertedOf, hst])
+
+/-- `committedState` never changes the halt record: a committing halt keeps `st'` and a rolling-back
+    one copies `st'.halted` into the rollback record. -/
+theorem halted_committedState (st₀ st' : EvmState) : (committedState st₀ st').halted = st'.halted := by
+  cases hst : st'.halted with
+  | none => simp [committedState, hst]
+  | some kd =>
+      cases kd with
+      | mk k d =>
+          by_cases hk : k.commits
+          · simp [committedState, hst, hk]
+          · simp [committedState, hst, hk]
+
+/-- `committedState` never changes the world relative to `st₀`: it either keeps `st'` (a committing
+    halt, where `WorldEq` transfers) or rolls back to `st₀` itself. -/
+theorem worldEq_committedState (st₀ st' : EvmState) (h : WorldEq st₀ st') :
+    WorldEq st₀ (committedState st₀ st') := by
+  cases hst : st'.halted with
+  | none =>
+      simp only [committedState, hst]
+      exact h
+  | some kd =>
+      cases kd with
+      | mk k d =>
+          by_cases hk : k.commits
+          · simp only [committedState, hst, hk]
+            exact h
+          · simp only [committedState, hst, hk]
+            exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- THE NO-WRITERS TRANSPORT THE COMPOSITION CITES: `Bridge.Run_worldEq_of_noWriters` (a registered
+    sorry, Bridge.lean:1221) applied to a `RunBody` hypothesis. This is the exact no-writers
+    transport the soundness claim depends on — the syntactic `NoWriters` scan on the program plus
+    the per-op "non-writer implies WorldEq-preserving" table the Bridge docstring records as a
+    77-constructor obligation. -/
+theorem worldEq_of_runBody (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (vkAddr : U256)
+    (c : ExternalCalls) (g : ExternalGas) (st₀ : EvmState) (obs : Obs)
+    (hobs : RunBody R vkAddr 0 c g st₀ obs) : WorldEq st₀ obs.state := by
+  obtain ⟨V', st', hrun, heq⟩ := hobs
+  have hw := Bridge.Run_worldEq_of_noWriters (noWriters_prog R hR vkAddr 0) hrun
+  rw [heq]
+  exact worldEq_committedState st₀ st' hw
+
+/-- Returning and reverting-or-halting are exclusive. -/
+theorem not_isRevertOrHalt_of_isReturn {o : Obs} (h : o.isReturn) : ¬ o.isRevertOrHalt := by
+  obtain ⟨d, hd⟩ := h
+  rintro ⟨k, e, hk, hcomm⟩
+  rw [hk] at hd
+  cases hd
+  exact absurd hcomm (by decide)
+
+/-- A reverted run's observation is a non-committing halt: `committedState` keeps the halt record. -/
+theorem isRevertOrHalt_of_Reverted (st₀ st' : EvmState) (h : Reverted st') :
+    (⟨committedState st₀ st', .halt⟩ : Obs).isRevertOrHalt := by
+  obtain ⟨d, hd⟩ := exists_revert_of_Reverted h
+  refine ⟨.revert, d, ?_, by decide⟩
+  rw [halted_committedState, hd]
+
+/-- The view transport, and the reason R-60 S6 added `selfBalance` and `extCodeHashOf` to the view:
+    once the world, the halt record and the outcome agree the VIEWS agree, by the PROVED
+    `Bridge.view_eq_of_worldEq_and_halt`. No determinism hypothesis is used anywhere in this file. -/
+theorem obs_view_eq_returnView (obs : Obs) (st₀ : EvmState)
+    (hw : WorldEq obs.state st₀) (hh : obs.state.halted = some (.ret, abiTrue))
+    (ho : obs.outcome = .halt) : obs.view = returnView st₀ :=
+  view_eq_of_worldEq_and_halt hw hh ho
+
+/-- The same transport for a committed observation of a returning run. -/
+theorem view_eq_returnView_of_committed (st₀ st' : EvmState)
+    (hw : WorldEq st₀ (committedState st₀ st')) (hh : st'.halted = some (.ret, abiTrue)) :
+    (⟨committedState st₀ st', .halt⟩ : Obs).view = returnView st₀ := by
+  refine obs_view_eq_returnView ⟨committedState st₀ st', .halt⟩ st₀ (worldEq_symm hw) ?_ rfl
+  rw [halted_committedState, hh]
+
+/-- The `exitOk` arm of the last slice, read as the two facts the composition needs. -/
+theorem exitOk_traceReturn_apply {c : ExternalCalls} {g : ExternalGas}
+    {R : Render p G₁ G₂ Gₜ} {Snap : Snapshot p G₁ G₂ Gₜ} {H : Hash}
+    {vkAddr : U256} {cd : Bytes} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (h : exitOk R .traceReturn Snap H vkAddr cd V' st' o) :
+    o = .halt ∧ st'.halted = some (.ret, abiTrue) := by
+  simpa [exitOk] using h
+
+/-- The bytes a committed returning observation exposes. -/
+theorem returnData_of_committed_ret (st₀ st' : EvmState)
+    (hh : st'.halted = some (.ret, abiTrue)) :
+    (⟨committedState st₀ st', .halt⟩ : Obs).returnData = abiTrue := by
+  simp only [Obs.returnData, halted_committedState, hh]
+
+/-- **COMPOSITION (WP-M5).** A valid render whose blocks satisfy their contracts and whose program
+    rejects what Lean rejects satisfies the headline. Everything semantic is in the seven named
+    obligations of §7.1; what is proved here is the `∀`/`∃`/`∨` plumbing that wires them to the
+    frozen `LoweringEquivalence`, and it contains no `sorry`.
+
+    THE THREE COMPOSITION STEPS, in the order the brief asks for them.
+    1. PREFIX: `prog_slices_decomp` + `prefix_run_clean` + `runBody_iff_slices` turn a `RunBody`
+       hypothesis into a run of `R.slices` from a `Clean` boundary at `.start`, and back.
+    2. SEQUENCING: `slices_seq_sound` / `slices_seq_progress` spend the seven contracts of `hB` at
+       that boundary and hand back one contract for the whole slice list.
+    3. REJECTION: `hrej` closes conjunct 1's `¬ LeanAccepts` branch (where `SoundSide` IS a
+       hypothesis); `rejects_of_not_accepts` closes conjunct 3's, where it is not.
+    TRANSPORT throughout: `worldEq_of_runBody` (citing the registered
+    `Bridge.Run_worldEq_of_noWriters`) and `view_eq_returnView_of_committed` (citing the PROVED
+    `Bridge.view_eq_of_worldEq_and_halt`).
+
+    NOTE ON WHAT `hB` IS ASKED FOR: the predicate is `fun _ => True`, i.e. ALL SEVEN blocks,
+    including `.quotientLin` — which is the block C.1 sorried separately as
+    `poseidon_quotient_block`, and whose emitted region is 122 of 6572 tokens (M0.1). The
+    composition does not get to skip it: `slices_seq_sound` chains over all seven. -/
 theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : R.Valid) (hB : R.BlockContractsAt product (fun _ => True)) (hrej : R.Rejects product) :
     LoweringEquivalence R product := by
-  sorry
+  intro W Lyt H vkAddr cd st₀ hdep hentry hpc
+  /- STEP 0. Unpack `hB` at an explicit snapshot witness: the two families of per-block contracts,
+     for the permissive dialect (soundness) and the honest one (progress). -/
+  have hcontracts (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+      (Snap : Snapshot p G₁ G₂ Gₜ)
+      (hdec : decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd =
+        some (ms, instW))
+      (hinst : instOfWords? (p := p) instW = some inst)
+      (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap) :
+      (∀ (q : Partial) (gg : ExternalGas),
+          BlockSound R q Snap H vkAddr (permissive (callsOf product)) gg cd) ∧
+        (∀ (q : Partial), G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap →
+          DualMSM.check Snap.c.dual R.params = true → BlockProgress R q Snap H vkAddr product cd) :=
+    ⟨fun q gg => (hB hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap q trivial).1 gg,
+      fun q => (hB hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap q trivial).2⟩
+  /- STEP 2 (SEQUENCING), specialised to this deployment: one contract for `R.slices`. -/
+  have seqSound (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+      (Snap : Snapshot p G₁ G₂ Gₜ)
+      (hdec : decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd =
+        some (ms, instW))
+      (hinst : instOfWords? (p := p) instW = some inst)
+      (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap) (gg : ExternalGas) :
+      StmtsContractAll (D := Bridge.Dialect (permissive (callsOf product)) gg) (R.scope _ _) R.slices
+          (fun V st => Clean R .start Snap H vkAddr cd V st)
+          (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
+            exitOk R .traceReturn Snap H vkAddr cd V' st' o) :=
+    fun V st hpre V' st' o hrun =>
+      slices_seq_sound R Snap H vkAddr cd (permissive (callsOf product)) gg
+        (fun q => ((hcontracts ms instW inst Snap hdec hinst hsnap).1 q) gg) V st hpre V' st' o hrun
+  have seqProgress (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+      (Snap : Snapshot p G₁ G₂ Gₜ)
+      (hdec : decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd =
+        some (ms, instW))
+      (hinst : instOfWords? (p := p) instW = some inst)
+      (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap)
+      (hcodec : G1CodecLaws R.E.g1) (hcg : ChallengesGood R.vk Snap)
+      (hdual : DualMSM.check Snap.c.dual R.params = true) :
+      StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+          (R.scope _ _) R.slices
+          (fun V st => Clean R .start Snap H vkAddr cd V st)
+          (fun _ _ V' st' o => exitOk R .traceReturn Snap H vkAddr cd V' st' o) :=
+    slices_seq_progress R product Snap H vkAddr cd
+      (fun q => (hcontracts ms instW inst Snap hdec hinst hsnap).2 q hcodec hcg hdual)
+
+  refine ⟨?_, ?_, ?_⟩
+  · -- (1) SOUNDNESS: a returning run under permissive calls returns ABI `true`, and Lean accepts.
+    intro gg obs hobs hret hside
+    by_cases hacc : LeanAccepts R H cd
+    · -- Steps 1+2: factor the run, spend the sequenced contract, read off the return.
+      obtain ⟨ms, instW, inst, Snap, V₁, st₁, hdec, hinst, hsnap, hdual, hclean, hpre⟩ :=
+        prefix_run_clean R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc
+          (permissive (callsOf product)) gg hacc
+      obtain ⟨V', st', o, heq, hsl⟩ :=
+        (runBody_iff_slices R vkAddr (permissive (callsOf product)) gg st₀ V₁ st₁ hpre obs).1 hobs
+      rw [heq] at hret ⊢
+      have hpost := seqSound ms instW inst Snap hdec hinst hsnap gg V₁ st₁ hclean V' st' o hsl
+      rcases hpost with ⟨rfl, hrev⟩ | hok
+      · exact absurd (isRevertOrHalt_of_Reverted st₀ st' hrev)
+          (not_isRevertOrHalt_of_isReturn hret)
+      · obtain ⟨ho, hh⟩ := exitOk_traceReturn_apply hok
+        subst ho
+        exact ⟨returnData_of_committed_ret st₀ st' hh, hacc⟩
+    · -- REJECTION: `Rejects` applies here because `SoundSide` is a hypothesis of this conjunct.
+      exact absurd (hrej W Lyt H vkAddr cd st₀ gg obs hdep hentry hpc hside hacc hobs)
+        (not_isRevertOrHalt_of_isReturn hret)
+  · -- (2) COMPLETENESS: if Lean accepts, an honest run exists and every honest run returns.
+    intro hacc hcomp hcodec
+    obtain ⟨ms, instW, inst, Snap, V₁, st₁, hdec, hinst, hsnap, hdual, hclean, hpre⟩ :=
+      prefix_run_clean R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc
+        (callsOf product) (ExternalGas.ofFun fun _ => 0) hacc
+    obtain ⟨hcon, hall⟩ :=
+      seqProgress ms instW inst Snap hdec hinst hsnap hcodec
+        (hcomp ms instW inst Snap hdec hinst hsnap) hdual
+    refine ⟨?_, ?_⟩
+    · obtain ⟨V', st', o, hsl, _⟩ := hcon V₁ st₁ hclean
+      exact ⟨⟨committedState st₀ st', o⟩,
+        (runBody_iff_slices R vkAddr (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ V₁ st₁
+          hpre ⟨committedState st₀ st', o⟩).2 ⟨V', st', o, rfl, hsl⟩⟩
+    · intro obs hobs
+      obtain ⟨V', st', o, heq, hsl⟩ :=
+        (runBody_iff_slices R vkAddr (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ V₁ st₁
+          hpre obs).1 hobs
+      have hpost := hall V₁ st₁ hclean V' st' o hsl
+      have hw : WorldEq st₀ (committedState st₀ st') := by
+        have h2 := worldEq_of_runBody R hR vkAddr (callsOf product)
+          (ExternalGas.ofFun fun _ => 0) st₀ obs hobs
+        rwa [heq] at h2
+      obtain ⟨ho, hh⟩ := exitOk_traceReturn_apply hpost
+      subst ho
+      rw [heq]
+      exact view_eq_returnView_of_committed st₀ st' hw hh
+  · -- (3) TWO OUTCOMES: every permissive run returns ABI `true` or reverts with the world alone.
+    intro gg obs hobs
+    have hw : WorldEq st₀ obs.state :=
+      worldEq_of_runBody R hR vkAddr (permissive (callsOf product)) gg st₀ obs hobs
+    by_cases hacc : LeanAccepts R H cd
+    · obtain ⟨ms, instW, inst, Snap, V₁, st₁, hdec, hinst, hsnap, hdual, hclean, hpre⟩ :=
+        prefix_run_clean R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc
+          (permissive (callsOf product)) gg hacc
+      obtain ⟨V', st', o, heq, hsl⟩ :=
+        (runBody_iff_slices R vkAddr (permissive (callsOf product)) gg st₀ V₁ st₁ hpre obs).1 hobs
+      rw [heq] at hw ⊢
+      have hpost := seqSound ms instW inst Snap hdec hinst hsnap gg V₁ st₁ hclean V' st' o hsl
+      rcases hpost with ⟨rfl, hrev⟩ | hok
+      · right
+        exact ⟨isRevertOrHalt_of_Reverted st₀ st' hrev, hw⟩
+      · left
+        obtain ⟨ho, hh⟩ := exitOk_traceReturn_apply hok
+        subst ho
+        exact view_eq_returnView_of_committed st₀ st' hw hh
+    · right
+      exact ⟨rejects_of_not_accepts R product W Lyt H vkAddr cd st₀ gg obs hdep hentry hpc hacc hobs,
+        hw⟩
 
 /-! ### The claimed headline is PER DEPLOYMENT (D-P24)
 

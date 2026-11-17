@@ -5,6 +5,14 @@
 **Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
+**TICKET M0.1 (probe, `252ea1d`; table landed in `docs/QUEUE.md` under M0.1):** the 7×4 block-frame
+table was computed in ONE lean run and **the orchestrator re-ran it and reproduced every headline
+number** (54 = 54 stmt sum; `batch_invert` the only looping helper; quotientLin 122/6572 tokens; pcs
+empty at plan level). Route: `sliceOf (planViewOf poseidonPlanV2 poseidonModelVal
+`poseidonConfig.accumulator) poseidonModelVal q` — `planViewOf` takes THREE explicit args.
+**Shared cross-slice locals are exactly `{vk, r, success}`. `fail()` reverts, it does not set
+`success := 0` — distinct requirement paths.** C.2 is briefed off the landed table, not off memory.
+
 ## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
 
 `lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
@@ -75,8 +83,10 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: M0.1** (after C.1) — measure the blocks' frames; it feeds C.2, the
-first card that can reduce the headline cone from 5.
+**In flight:** none. **Next READY: C.2** (after M0.1) — the composition skeleton; **the first card that
+can reduce the headline cone from 5.** Its NEEDS include the M0.1 table, now landed in QUEUE.
+**Still blocked on human:** ProtocolPlan provenance (`poseidon_valid`, 3 obstacles) · R-72 (Q0.5) ·
+`g1CodecZ.ofCompressed?` (D.3 check 3).
 **Still blocked on human:** ProtocolPlan provenance (blocks `poseidon_valid`, now 3 obstacles) · R-72
 (Q0.5) · `poseidonModel` totality · real `g1CodecZ.ofCompressed?` (blocks D.3 check 3).
 **Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
