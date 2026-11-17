@@ -101,6 +101,7 @@ import Midfall.Lowering.Partials
 import Midfall.Lowering.RunEmitted
 import Midfall.Lowering.FrameWalk
 import Midfall.Lowering.Obligations
+import Midfall.Lowering.YulParse
 import Midfall.Instances.InvFixture
 import Midfall.Instances.SurfaceFixture
 import Midfall.Instances.ImportedIR
@@ -110,6 +111,7 @@ import Midfall.Instances.RunShellInversion
 import Midfall.Instances.RunShellInhabited
 import Midfall.Instances.RunLegRouted
 import Midfall.Instances.PairingProduct
+import Midfall.Instances.YulParseKats
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals

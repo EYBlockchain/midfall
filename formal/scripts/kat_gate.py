@@ -142,8 +142,24 @@ EVAL = re.compile(
 # field and not a constant). No gate was deleted or edited and the file count does not move
 # (GenAst.lean was already in the suite). All three were run through `lake env lean` before this
 # line moved and all three print true.
-EXPECTED_KAT_TOTAL = 1400
-EXPECTED_KAT_FILES = 102
+# OBJ.1 (V3 row 31, the M2 entry) adds Midfall/Instances/YulParseKats.lean: a NEW file in the suite
+# carrying SEVENTEEN annotated '#eval ... -- expect' gates, plus the card's two unannotated acceptance
+# prints. The seventeen: the main-block and guard-block token round trips (mainRoundTrip_ok,
+# guardRoundTrip_ok); the two acceptance lines pinned as values (mainRtLine_ok, which pins
+# "parsed stmts=74 roundTrip=true tokens=14054", and guardRtLine_ok, which pins
+# "parsed stmts=1 roundTrip=true tokens=52"); one stmtsBeq gate per existing emitter output (helpers,
+# vkLoading, transcriptParser, lagrange, quotientLin, pcs, finalPairing, traceReturn); the one-literal
+# mutation falsifier for those eight (regionMutationTeeth_ok, which also asserts the mutation really
+# changes the text); and FOUR negatives - an unbalanced-brace stream, the real main block with its
+# closing brace dropped, an inner block that never closes, and trailing tokens after the closing brace
+# (W12: a parser with no falsifier is not a gate). The two unannotated prints are the card's acceptance
+# lines verbatim; they print a String containing spaces, which this script cannot annotate (an
+# expectation is one token), and the same two facts ARE gated by mainRtLine_ok and guardRtLine_ok. No
+# gate was deleted or edited. So the file count goes 102 -> 103 and the total 1400 -> 1417: the delta
+# is +17/+1 and nothing else moved. All seventeen were run through `lake env lean` before
+# this line moved.
+EXPECTED_KAT_TOTAL = 1417
+EXPECTED_KAT_FILES = 103
 
 # Only these shapes count as #eval output.
 #
