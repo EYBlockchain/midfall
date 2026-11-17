@@ -1747,3 +1747,72 @@ as such.
    - The headline's axiom list may therefore contain the compiler-trust axiom(s) `native_decide` adds.
      Q0.3 records their exact names in this toolchain.
    - A kernel-only re-check is optional, as WP-X8.
+
+## D-P45 — **Approved (by the human's standing delegation, 2026-11-17): repair the non-vacuity gate (R-72)**
+
+> Was QUEUE Q0.5, blocked on a decision. The human delegated the decision; this records it.
+
+**Decision: approve.** `HypothesesInhabited` (`Statements.lean:269`, frozen) is amended to require, in
+addition to the existing conjuncts, **a calldata that actually decodes and a run that actually exists**:
+at least `∃ ms instW, decodeCalldata … = some (ms, instW)` **and** `LeanAccepts R H cd`, plus a
+run-existence conjunct. Rationale: the clause exists solely to certify the headline's hypothesis set is
+non-vacuous, and R-72 showed it is satisfiable with no accepting calldata and no runs at all —
+`SoundSide`/`CompleteSide` are themselves universals over `decodeCalldata = some`, and the bare
+4-byte selector never decodes. **A gate that cannot fail is not a gate.** `PLAN-V2:355` makes this
+clause part of the §6 DONE test, so leaving it weak would let a green gate certify nothing.
+
+**Required of the repair, per the card's own acceptance: it must be demonstrated to have teeth** — the
+probe `gate_weak` must NO LONGER type-check. A repair that merely compiles is not accepted.
+
+**Consequence accepted:** this edits a frozen file and re-hashes `Frozen.sha256`. The freeze exists to
+prevent silent change, not authorised change; the change is recorded here and the hash is re-pinned in
+the same commit so the diff is auditable.
+
+## D-P46 — **Approved: restore the G2 slot check that v1 had and V2 dropped (`fpG2Slots`)**
+
+> Raised by FP.0. The human delegated the decision; this records it.
+
+**Decision: add the two clauses to `Render.Valid` §2**, pinning `G2_BASE_MPTR` and
+`NEG_S_G2_BASE_MPTR` in the VK payload to `encG2` of `params.nG2Prepared⁻¹` and `sG2Prepared⁻¹`.
+**Rationale: this is not a new requirement — v1 already had it** as `VkSlotsAgree.g2BaseWords` /
+`negSG2Words` (`Inv.lean:623-624`). V2's `Valid` has no `VkSlotsAgree` at all, so the check was
+**dropped in the rewrite rather than considered and rejected.** `ec_pairing` copies its G2 arguments
+from exactly those bytes, so without the pin nothing connects the staticcall's operands to the
+verifying key. Restoring a dropped check is the low-risk direction: it can only make `Valid` harder to
+satisfy, never easier, so it cannot make a false headline true.
+
+`fp_finalPairing_contracts` currently carries `fpG2Slots R` as an explicit hypothesis; after this
+decision that hypothesis becomes a derived consequence of `R.Valid` and should be discharged from it.
+
+## D-P47 — **Approved with a mandated order: fix the fixture before porting the generator**
+
+> Raised by D.3 and C.4. The human delegated the decision; this records it.
+
+**Decision: attempt to re-export the deployment fixture with the full constraint-system data BEFORE
+any work to port `LoweringPlan::new`.** Rationale, three findings that point the same way:
+1. The missing data (`gates`, `lookups`, `trashcans`, `permutation.columns`) **is present in the Rust
+   generator's own output** — it is what produced the deployed verifier. It is absent from `vk.json`,
+   which is an export choice, not an absence of the data.
+2. **D.2 already proved the route works**: `Midfall.Generator.poseidonCtx` had zero lines in all five
+   generated-code regions, so the pure `poseidonCtx` was **sliced from the verifier dump instead**,
+   with a gate requiring the regions non-empty so the fallback cannot be silently load-bearing.
+3. **D.3 found the bundle is not the committed fixture anyway** — `trace.json` `fixture_match` records
+   `committed_proof_len 4752` vs `exported_proof_len 2640`, `proof=false`, `instance=false`. **A
+   fixture refresh is needed regardless of the CS-data question**, and doing both at once is cheaper.
+
+**Why this order matters:** porting `LoweringPlan::new` is a large GEN effort that reproduces in Lean
+what the Rust side already computed and could simply export. If the export succeeds, C.4's clauses 1,
+2, 3 and 8 — all one root cause — may close from data rather than proof. **If the export is shown
+impossible, the port becomes the plan and this decision is revisited.** A NEGATIVE on the export is a
+deliverable, not a detour.
+
+**Not decided, deliberately.** Two open items are recorded as investigation cards rather than decisions
+because guessing on them risks a soundness error, not a delay:
+- **`Rejects`/`SoundSide` (C.2's finding).** Conjunct 3 of the frozen headline carries no `SoundSide`,
+  while `Rejects` demands it. Dropping `SoundSide` from `Rejects` would make the rejection lemma a
+  one-liner and cut the cone by 1 — but it would also assert rejection inside the logup-panic bad
+  set, which has not been checked. **Investigate first; do not weaken a hypothesis to move a number.**
+- **`g1CodecZ.ofCompressed? := fun _ => none`.** A real decode needs `X in zpowers g1`, a discrete log
+  as literally typed, so it may be unfixable rather than unfinished. **Determine whether `end_to_end`
+  is dischargeable at all while it is a placeholder** before choosing between retyping the codec and
+  changing what `end_to_end` is about.

@@ -652,4 +652,81 @@ theorem end_to_end (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR 
     EndToEnd R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec hcomp inst π hn hside := by
   sorry
 
+/-! ### 7.0 M.1's reduction: the hinge is SIX ROWS, and here is their shape
+
+  M.1 read the composition before proving anything. `hB : R.BlockContractsAt product (fun _ => True)`
+  is used at EXACTLY ONE place, Blocks.lean:509-510, where it is applied at a BOUND `q` with
+  `trivial`; the two lemmas that receive the result are `slices_seq_sound` (:307) and
+  `slices_seq_progress` (:325), whose hypotheses are `h7 : ∀ q : Partial, BlockSound R q ...` and
+  `∀ q : Partial, BlockProgress R q ...`. So the headline consumes all SEVEN `q`, and the only `q` it
+  names literally is `.traceReturn` (in the two sequencing CONCLUSIONS, through `exitOk`) together
+  with `.start` as the shared pre. Two consequences are recorded below as code, not prose.
+
+  * NARROWING the hinge TO A PROPER SUBSET MOVES NOTHING. The predicate is not where the cost sits:
+    `Render.slices` (:202) concatenates seven slices, so a sequencing lemma over `R.slices` cannot be
+    handed a partial function, and any `BlockContractsAt P` with `P` smaller than `(· ≠ .quotientLin)` does
+    not even reach C.1's glue `poseidon_block_contracts` (`Instances/PoseidonV2.lean:229`), which needs
+    `(· ≠ .quotientLin)` to pair with the quotient row. The hinge contributes ONE sorry to the headline cone
+    however many rows it covers, so a partial M.1 cannot reduce
+    `cone_sorries lowering_equivalence_poseidon` (11) by even one.
+  * THE HINGE IS SIX INDEPENDENT ROWS, one per `q ≠ .quotientLin`, each of the shape `BlockRow` below and
+    nothing more. `blockContracts_of_valid_of_rows` is the honest decomposition and it is SORRY-FREE: the
+    whole remaining cost of M.1 is visible as six named hypotheses, FOUR of which no card has ever
+    proved (`vkLoading`, `transcriptParser`, `lagrange`, `pcs`) and two of which exist but carry a
+    render hypothesis that `Valid` does not supply (`trRetMptr`, `fpG2Slots`).
+
+  WHY THE ROWS CANNOT BE CITED FROM THIS FILE. `Blocks/TraceReturn.lean:68` and
+  `Blocks/FinalPairing.lean:117` both `import Midfall.LoweringV2.Blocks`, so the two proved rows are
+  DOWNSTREAM of this file. The composition that consumes them has to live in a module that imports
+  all three: `Blocks/Compose.lean`. -/
+
+/-- **THE SHAPE OF ONE PER-BLOCK ROW.** `BlockRow R product q` is what
+    `Render.BlockContractsAt product P` asks for at a single `q` with `P q` proved: the same two
+    families as §6:118-127, with `Eip2537.Holds` CARRIED (a row may need it — `ec_pairing_contract`
+    does) and `R.Valid` CARRIED (FP.0's row needs it). A block card that produces a
+    `BlockRow R product q` is by construction usable by M.1; nothing else is asked of it. -/
+def BlockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (q : Partial) : Prop :=
+  (R.Valid) →
+  ∀ (_hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
+    (Snap : Snapshot p G₁ G₂ Gₜ),
+    decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) →
+    instOfWords? (p := p) instW = some inst →
+    snapshotOf R.E H R.vk inst ms none = .ok Snap →
+    (∀ g : ExternalGas, BlockSound R q Snap H vkAddr (permissive (callsOf product)) g cd) ∧
+    (G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap → DualMSM.check Snap.c.dual R.params = true →
+      BlockProgress R q Snap H vkAddr product cd)
+
+/-- Rows to `BlockContractsAt`: re-association only, no content, no `sorry`. -/
+theorem blockContractsAt_of_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : R.Valid) (P : Partial → Prop)
+    (hrows : ∀ q : Partial, P q → BlockRow R product q) :
+    R.BlockContractsAt product P := by
+  intro hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap q hP
+  exact hrows q hP hR hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap
+
+/-- **M.1 AS SIX CARDS, NOT ONE.** The hinge is exactly these six rows: this lemma is sorry-free, so
+    `blockContracts_of_valid` closes the moment the six are supplied and cannot close before the four that
+    do not exist are written. Note what is NOT here: no row for `.quotientLin` (GAP G3, C.1's separate
+    `poseidon_quotient_block`), and neither `fpG2Slots` nor `trRetMptr` discharged — those two render
+    facts are the price of the two rows that do exist. -/
+theorem blockContracts_of_valid_of_rows (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hR : R.Valid)
+    (hvk : BlockRow R product .vkLoading)
+    (hparser : BlockRow R product .transcriptParser)
+    (hlag : BlockRow R product .lagrange)
+    (hpcs : BlockRow R product .pcs)
+    (hfp : BlockRow R product .finalPairing)
+    (hret : BlockRow R product .traceReturn) :
+    R.BlockContractsAt product (· ≠ .quotientLin) :=
+  blockContractsAt_of_rows R product hR (· ≠ .quotientLin) fun q hq => by
+    cases q
+    · exact hvk
+    · exact hparser
+    · exact hlag
+    · exact absurd rfl hq
+    · exact hpcs
+    · exact hfp
+    · exact hret
+
 end Midfall.LoweringV2
