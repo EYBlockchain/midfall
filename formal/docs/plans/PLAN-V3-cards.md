@@ -1392,17 +1392,31 @@ INFRA · KAT · box 1.5 h · Sonnet · after T3.1
 
 INFRA · KAT · box 1 h · Sonnet · after —
 
-- **Goal.** checks.sh exits 0 at the branch tip, with no new tooling.
-- **Needs.** formal/SORRY.md row 18; formal/scripts/kat_gate.py (EXPECTED_KAT_TOTAL); Midfall/Instances/DeployedProfile.lean:857; Midfall/Instances/PoseidonCoherence.lean:502. Patch 0 and the kat_gate.py diff of the memo.
-- **Does NOT need.** Any Lean tool, any change to checks.sh, any re-hash of a frozen file.
+> **Re-measured at `aeba06b` (dry run of the orchestrator):** the sorry register is already in sync
+> (F.1 regenerated it), and `kat_gate.py` has no `--static` mode. This card is therefore the two
+> annotation fixes and the pin, as in `QUEUE.md`. Adding `--static` is DG.2's business, not this
+> card's.
+
+- **Goal.** `bash scripts/checks.sh` exits 0 at the tip, with no new tooling.
+- **Needs.** `scripts/kat_gate.py:113` (`EXPECTED_KAT_TOTAL = 1393`; measured 1397 since `2041977`);
+  `Midfall/Instances/DeployedProfile.lean:857` and `Midfall/Instances/PoseidonCoherence.lean:502`
+  (annotations `-- expect TRUE`; the gate compares case-sensitively and the values print `true`).
+  Evidence area: `bash docs/plans/V3-evidence/check.sh probes`.
+- **Does NOT need.** Any new gate or script, any change to `checks.sh`, any re-hash of a frozen
+  file, any PLAN-V3 decision.
 - **Do.**
-  1. Apply Patch 0 (one SORRY.md row, two annotations) and the kat_gate.py diff.
-  2. Run python3 scripts/kat_gate.py --static; if the total is not 1397 (G1.4b or G1.1-G1.3 landed first), move the pin to the printed number and name the added gates in the comment.
-  3. Run bash scripts/checks.sh once, in full.
-- **Deliverable.** One commit touching exactly those four files.
-- **Accept.** python3 scripts/kat_gate.py --static prints 'ok (static): 1397 annotated known-answer checks in 102 files; no file was run'. bash scripts/checks.sh exits 0 and its KAT line reads 'ok: 1397 annotated known-answer checks pass across 102 files'. Falsifier: restore 'expect TRUE' on one line and the static pass fails in under 2 s naming the file.
-- **Stop if.** Any gate other than the three known ones is red: report its first failing line and do not adjust it.
-- **Guidance.** The full KAT pass was NOT run in this design session (102 lean processes, about 8 minutes); only the static pass and the two affected #evals were. Caught: review J-8 and J+1 (commit 2041977).
+  1. `python3 scripts/kat_gate.py` — fails in about a second on the total (records the number).
+  2. Correct the two annotations to `-- expect true`, keeping the prose after them.
+  3. Move `EXPECTED_KAT_TOTAL` (and `EXPECTED_KAT_FILES` if it moved) to the measured values; name
+     in the commit the commit that added the four gates (`2041977`).
+  4. One full `python3 scripts/kat_gate.py` run, then `bash scripts/checks.sh` once.
+- **Deliverable.** One commit touching exactly `scripts/kat_gate.py` and the two `.lean` files.
+- **Accept.** `bash scripts/checks.sh` exits 0, and its KAT line names 1397 checks compared (or the
+  re-measured total). Falsifier: with one annotation restored to `expect TRUE`, `kat_gate.py`
+  fails naming that file.
+- **Stop if.** Any gate other than these is red once the total is right: report its first failing
+  line and do not adjust its expectation.
+- **Guidance.** The full KAT pass takes about 8 minutes (102 files). Caught: REVIEW-V3 RV-40.
 
 ### DG.1 — Land the axiom gate
 

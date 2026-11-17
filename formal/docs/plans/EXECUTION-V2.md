@@ -14,7 +14,10 @@ orchestrator agent that plans and delegates one ticket at a time to one subagent
 > **STATEMENT** (≤ 2.5 h): a new or changed statement lands together with its witness and its
 > falsifier, and is done when its consumer compiles; (5) the progress measure of §6 is the report
 > of PLAN-V3 §6 (leaf status, exhibits, block coverage, axiom sweep), with the cone count as its
-> last line. The loop of §2, the subagent contract of §3 and W1–W11 are unchanged.
+> last line. The loop of §2, the subagent contract of §3 and W1–W11 are unchanged,
+> **except W6's "no new gates, registries or ledgers": it does not apply to the gates D-P69 approves**
+> (cards DG.1–DG.9 and PL.1). Each of those cards names the recorded failure it would have caught;
+> any other new gate still needs a decision.
 
 The design principle, from the log and from an external review of it (Appendix A): the executing
 agent is good at bounded proofs, counterexamples and honest disclosure. The failures were mostly

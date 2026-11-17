@@ -286,9 +286,8 @@ OBJ.3 is superseded by ST.3 and is not run.
 **Context.** The tip fails its own gates, CI does not run, the register holds a refuted sorry, and
 nothing asserts the headline's axioms. Every later exit gate depends on tools that tell the truth.
 
-**Cards.** DG.0 (gates green at the tip: regenerate the register, move the KAT pin to the measured
-total, fix the two `expect TRUE` annotations, land `ReviewProbes.lean` as a `lake env lean` step of
-`verify.sh`); DG.1 (`#assert_axioms`); DG.2 (register keyed by declaration, from the environment);
+**Cards.** DG.0 (gates green at the tip: move the KAT pin to the measured total and fix the two
+`expect TRUE` annotations; the sorry register is already in sync since F.1); DG.1 (`#assert_axioms`); DG.2 (register keyed by declaration, from the environment);
 DG.6 (`#assert_no_refuted_sorry`); DG.7 (CI on `formal/baseline`); DG.8 (STATUS generated from the
 report); PL.1 (W13: take the refuted sorry out of the route); ST.1 (land `LoweringV3` as a
 *staging* module with its fixture and falsifier files — no frozen edit); PL.0 (the cut-over, §10).
