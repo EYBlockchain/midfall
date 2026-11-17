@@ -66,3 +66,27 @@ Kept as a heading so QUEUE.md's §11 references stay valid.
 - **Acceptance at the deployment is not certifiable in this model** (D-P45's stated limit). If the
   human wants evidence that `LeanAccepts` is satisfiable at all, the route is a toy render with a
   known `s` — not queued.
+
+## 12. PLAN-V3 — ten decisions, D-P60–D-P69 — SIGNED OFF (2026-11-17), recorded as D-P60–D-P69 in `design.md`
+
+An independent review of `formal/` (`docs/plans/REVIEW-V3.md`, 46 findings) and a revised plan
+(`docs/plans/PLAN-V3.md`) were added on 2026-11-17. **All ten were signed off by the human on 2026-11-17, after `53bf8c1`** (see D-P60 for how).
+Their conditions still apply, as recorded in each entry. The full text,
+recommendation and "if struck" consequence of each row is PLAN-V3 §2.2; how each relates to the
+signed D-P45–D-P59 is PLAN-V3 §2.1. Evidence: `bash docs/plans/V3-evidence/check.sh` (about six
+minutes, writes nothing into the repository).
+
+| D-P | one line | urgent? |
+|---|---|---|
+| 60 | Adopt PLAN-V3; hold block rows about the present render until its M4 exit gate; name the target "fixture F1"; rules W12–W15 | — |
+| 61 | Two more reference repairs in `Halo2/Exec` (grouping by `CommitSlot`, semantic `BEq Rotation`): today the Lean verifier rejects every proof of the fixture key | yes: without it no headline is worth proving |
+| 62 | Curve assumption, amends D-P55 steps 2–3: construct the pairing (no axioms, no G2 axiom); the SRS point is data | before R.4 spends its box |
+| 63 | Test SRS with a known trapdoor for F1, amends D-P58's fallback 3 | — |
+| 64 | Statement surface V3 (frozen): `calldataOf`, `EntryFrameV3`, codec laws, totality conjunct, `EndToEndV3` | after ST.1 |
+| 65 | The block scope, in D-P52's re-hash | **yes: before the G1.1–G1.3 batch merges G1.2** |
+| 66 | The gate for F1, amends D-P45: hash pinned to `keccak256`, `LeanAccepts` added back (conditional on 63) | — |
+| 67 | `ValidV3` (frozen), seven clauses; subsumes D-P46's and D-P48's pins | after RECON.1 |
+| 68 | Staged block contracts and the `wp` engine; thresholds replace D-P57's hand-proof fallback | after RECON.2 |
+| 69 | DONE as one Lean term with `#assert_axioms`; closure fingerprint; CI on this branch; exporter schema 2 | — |
+
+Signed off: human (repository owner), 2026-11-17, in session after `53bf8c1` — recorded in `design.md` D-P60–D-P69.

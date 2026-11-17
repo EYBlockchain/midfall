@@ -12,6 +12,181 @@ when its `after` tickets are merged.
   runs the full `verify.sh` **once**, before merging.
 - **Facts.** "Measured" facts below were measured at `15c0b3a` (2026-11-16). The orchestrator
   re-checks them at the current commit before briefing (EXECUTION-V2 §2.3).
+- **Since PL.0 (2026-11-17) the plan is PLAN-V3** (D-P60). The order is the **V3 table** directly
+  below: take its first READY row. A V2 card further down runs only where that table lists it;
+  every other V2 card is marked MERGED INTO, SUPERSEDED or DONE.
+
+## V3 — THE LIVE ORDER (PLAN-V3 §5; cut over by PL.0, 2026-11-17)
+
+**How to use this table.** It is the queue: take the **first row whose status is READY**. A row is
+READY when every card in its `after` column is merged, and the decision it names is signed (all of
+D-P60–D-P69 are, `design.md`; their recorded **conditions** still gate the cards that name them).
+When a card merges, change its status to `MERGED <hash>` and re-evaluate the rows that wait for it.
+
+- **Card text.** Rows marked `PLAN-V3-cards` are briefed from `docs/plans/PLAN-V3-cards.md` (the
+  heading `### <ID> —`); rows marked `V2 card below` from the card of that ID further down this
+  file. Copy the card into the EXECUTION-V2 §3 brief, adding PLAN-V3 §7's EVIDENCE line.
+- **Before briefing any card:** `bash docs/plans/V3-evidence/check.sh <area>` at the tip, then the
+  card's NEEDS (EXECUTION-V2 §2.3). The evidence is a lead until it re-checks.
+- **Milestone exit gates** are PLAN-V3 §5; a milestone is done when its gate prints the expected
+  output at the tip. Rules W1–W15 bind (EXECUTION-V2 §5 and PLAN-V3 §4).
+- **Statuses are set from `after` only.** A `PROOF` card about Yul is additionally not READY until
+  W14's exhibit exists (T3.11), whatever this column says.
+
+| # | ID | card | M | layer · type · box · model | after | status | source / note |
+|---|---|---|---|---|---|---|---|
+| 1 | **DG.0** | Make the gates green at the tip | M0 | INFRA · KAT · 1 h · Sonnet | — | READY | PLAN-V3-cards |
+| 2 | **DG.1** | Land the axiom gate | M0 | INFRA · PORT · 2 h · strongest | DG.0 | after DG.0 | PLAN-V3-cards |
+| 3 | **DG.2** | Sorry register by declaration, from the environment | M0 | INFRA · PORT · 2.5 h · strongest | DG.1 | after DG.1 | PLAN-V3-cards |
+| 4 | **DG.6** | No registered sorry may be refuted | M0 | INFRA · KAT · 0.5 h · Sonnet | DG.2 | after DG.2 | PLAN-V3-cards |
+| 5 | **PL.1** | W13: take the refuted sorries out of the tree | M0 | INFRA · PORT · 1.5 h · Sonnet | DG.6 | after DG.6 | PLAN-V3-cards; deletes poseidon_valid and its consumers (W13) |
+| 6 | **DG.7** | CI that runs and can pass | M0 | INFRA · PROBE · 2 h · Sonnet | DG.0, DG.2 | after DG.0, DG.2 | PLAN-V3-cards |
+| 7 | **DG.8** | STATUS generated from the report | M0 | INFRA · PORT · 1 h · Sonnet | DG.2 | after DG.2 | PLAN-V3-cards |
+| 8 | **ST.1** | Land the V3 staging module, its deployment file and the falsifiers (no frozen edit) | M0 | INFRA · STATEMENT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards |
+| 9 | **PL.0** | Cut over to PLAN-V3 | M0 | INFRA · DECISION · 0.5 h · orchestrator, no subagent | D-P60 is signed | DONE (this cut-over) | PLAN-V3-cards |
+| 10 | **OBJ.17** | Name the target: fixture F1 | M0 | DECISION · DECISION · 0.5 h · orchestrator + human | — | READY | PLAN-V3-cards; docs edit applying D-P60's naming clause |
+| 11 | **Q0.5** | Repair the non-vacuity gate + the RETURN_MPTR pin (one `Statements.lean` re-hash) | M0 | INFRA · PORT · strongest | F.1 | READY | V2 card below; D-P66 later strengthens it at ST.4 |
+| 12 | **S.10** | Fix the stale `Valid` clause-count prose | M0 | INFRA · KAT · Sonnet | — | READY | V2 card below |
+| 13 | **REF.D** | Reference-side decisions | M1 | DECISION · DECISION · 0.5 h · orchestrator + human | PL.0 or earlier | DONE — D-P61–63 signed | PLAN-V3-cards |
+| 14 | **REF.11** | Exporter schema 2: test SRS with trapdoor, calldata, mutations, manifest | M1 | INFRA · PORT · 2.5 h · Sonnet | — | READY | PLAN-V3-cards |
+| 15 | **OBJ.11** | Export the remaining generator inputs from Rust and re-export the dump | M1 | INFRA · PORT · 2 h · Sonnet | — (one Rust run with REF.11) | READY | PLAN-V3-cards |
+| 16 | **REF.2** | Semantic equality on Rotation | M1 | ALG · PORT · 1 h · Sonnet | REF.D | READY | PLAN-V3-cards |
+| 17 | **REF.1** | Multi-open grouping by allocation slot | M1 | ALG · PORT · 2.5 h · strongest | REF.D | READY | PLAN-V3-cards |
+| 18 | **R.7** | = REF.3: fix `WellFormed.permutationCommitmentsMatch` (D-P59) | M1 | GEN · PORT · strongest | F.1 | READY | V2 card below |
+| 19 | **REF.4** | A real, computable G1 codec on G₁z | M1 | ALG · PORT · 2 h · Sonnet | REF.D | READY | PLAN-V3-cards |
+| 20 | **REF.5** | The deployment pairing by construction; retire the five D-P36a axioms | M1 | ALG · PORT · 1.5 h · Sonnet | REF.D | READY | PLAN-V3-cards |
+| 21 | **REF.5g** | Gates follow the axiom removal | M1 | INFRA · KAT · 0.5 h · Sonnet | REF.5 | after REF.5 | PLAN-V3-cards |
+| 22 | **REF.6** | Real key data at the deployment | M1 | ALG · PORT · 2 h · Sonnet | REF.4, REF.5 | after REF.4, REF.5 | PLAN-V3-cards |
+| 23 | **R.6** | D-P46's three VK base pins (second `Statements.lean` re-hash); subsumed at ST.6 | M1 | INFRA · PORT · strongest | REF.6, Q0.5 | after REF.6, Q0.5 | V2 card below; R.4 is merged into REF.5–REF.6 |
+| 24 | **REF.8** | The reference gate: Lean prepare reproduces Rust's final MSM | M1 | ALG · KAT · 2 h · Sonnet | REF.1, REF.2, REF.6 | after REF.1, REF.2, REF.6 | PLAN-V3-cards |
+| 25 | **ST.18** | The real compressed codec on G1z | M1 | ALG · PROBE · 2 h · Sonnet | REF.4 | after REF.4 | PLAN-V3-cards |
+| 26 | **REF.9** | fpSqrt recovers y from x and the sign bit | M1 | ALG · PROOF · 2.5 h · strongest | REF.4 | after REF.4 | PLAN-V3-cards |
+| 27 | **REF.10** | The encoder-first compressed law | M1 | ALG · PROOF · 2.5 h · strongest | REF.9 | after REF.9 | PLAN-V3-cards |
+| 28 | **REF.12** | Acceptance gate at the known trapdoor | M1 | ALG · KAT · 1.5 h · Sonnet | REF.8, REF.11 | after REF.8, REF.11 | PLAN-V3-cards |
+| 29 | **OBJ.0** | Object decisions: the scope, and `ValidV3` | M2 | DECISION · DECISION · 0.5 h · orchestrator + human | PL.0 or earlier | DONE — D-P65, D-P67 signed | PLAN-V3-cards |
+| 30 | **G1.4b** | Land the pcs block scopes + the 5 gate updates (D-P51) | M2 | GEN · EMIT · Sonnet | F.1 | READY | V2 card below; needs `t/G1.4` on origin (see its Needs) |
+| 31 | **OBJ.1** | Land the Yul token parser with its round-trip KATs | M2 | INFRA · KAT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards |
+| 32 | **G1.1** | EMIT `AccumulatorHelpers` (823 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | V2 card below; one commit with G1.2, OBJ.2, ST.3 (D-P65) |
+| 33 | **G1.2** | EMIT `QuotientHelpers` (68 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | V2 card below; one commit with G1.1, OBJ.2, ST.3 (D-P65) |
+| 34 | **OBJ.2** | Complete the program: accumulator helpers, quotient region, pcs scopes | M2 | GEN · EMIT · 2.5 h · strongest | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | PLAN-V3-cards; replaces G1.3; one commit with G1.1, G1.2, ST.3 (D-P65) |
+| 35 | **ST.3** | Cut-over A: the block scope and the slices move | M2 | INFRA · PORT · 1.5 h · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | PLAN-V3-cards; one commit with G1.1, G1.2, OBJ.2 (D-P65) |
+| 36 | **ST.11** | prog_slices_decompV3 | M2 | GEN · PROOF · 2.5 h · strongest | ST.3, ST.6 | after ST.3, ST.6 | PLAN-V3-cards |
+| 37 | **ST.12** | scans_prog_addr_indep | M2 | GEN · PROOF · 2 h · Sonnet | ST.5 | after ST.5 | PLAN-V3-cards |
+| 38 | **OBJ.4** | One constants-coherence clause and its generic lookup lemmas | M2 | GEN · STATEMENT · 2 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+| 39 | **OBJ.5** | Object fingerprint KAT | M2 | INFRA · KAT · 0.75 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+| 40 | **OBJ.6** | Port the quotient glue of LoweringPlan::new | M2 | GEN · PORT · 2.5 h · strongest | — | READY | PLAN-V3-cards |
+| 41 | **OBJ.7** | LoweringPlan.newFromVk, compactBlocksOf, generateAll | M2 | GEN · PORT · 2 h · strongest | OBJ.6 | after OBJ.6 | PLAN-V3-cards |
+| 42 | **OBJ.16** | Probe: does the port reproduce the three other in-scope fixtures | M2 | GEN · PROBE · 1 h · Sonnet | OBJ.7 | after OBJ.7 | PLAN-V3-cards |
+| 43 | **R.3** | Make `Valid.model` dischargeable (D-P56) | M2 | GEN · PROOF · strongest | F.1 | READY | V2 card below; OBJ.8 offers a second route |
+| 44 | **RECON.1** | One `ValidV3`: reconcile the two typechecked texts | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.7, ST.1 | after OBJ.7, ST.1 | PLAN-V3-cards; before ST.6 and D-P67 lands |
+| 45 | **RECON.2** | One composition: the four V3 obligations from the staged rows | M3 | SEM · SKELETON · 2.5 h · strongest | SIM.1, ST.1, RECON.1 | after SIM.1, ST.1, RECON.1 | PLAN-V3-cards; before SIM.2 and ST.5 |
+| 46 | **ST.2** | Statement-surface decisions | M3 | DECISION · DECISION · 0.5 h · orchestrator + human | ST.1 | DONE — D-P64, D-P66 signed | PLAN-V3-cards |
+| 47 | **SIM.0** | Block architecture and proof technology | M3 | DECISION · DECISION · 0.5 h · orchestrator + human | ST.1 | DONE — D-P68 signed | PLAN-V3-cards |
+| 48 | **ST.4** | Cut-over B1: codec bundles, calldataOf, EndToEnd, EntryFrame, the headline, the gate | M3 | INFRA · PORT · 2.5 h · Sonnet | ST.3 | after ST.3 | PLAN-V3-cards |
+| 49 | **ST.5** | Cut-over B2: the composition in Blocks.lean and the headline assembly | M3 | INFRA · PORT · 2.5 h · Sonnet | ST.4 | after ST.4 | PLAN-V3-cards |
+| 50 | **ST.6** | Cut-over C: Render.Valid in its V3 text | M3 | GEN · PORT · 2.5 h · Sonnet | ST.4 | after ST.4 | PLAN-V3-cards |
+| 51 | **OBJ.8** | State ValidV3 on the frozen surface and rebuild the fixture render from the generator | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.0, OBJ.3, OBJ.4, OBJ.7 | after OBJ.3, OBJ.4, OBJ.7 | PLAN-V3-cards |
+| 52 | **REF.7** | KeyAgrees: the key pins EnvAgrees lacks | M3 | ALG · STATEMENT · 1.5 h · Sonnet | REF.6 | after REF.6 | PLAN-V3-cards |
+| 53 | **ST.15** | Deployment data: delta and the post-processed plan meta | M3 | GEN · PORT · 2 h · Sonnet | ST.6 | after ST.6 | PLAN-V3-cards |
+| 54 | **OBJ.9** | Prove the decidable half of ValidV3 at the fixture | M3 | GEN · PROOF · 2 h · Sonnet | OBJ.8 | after OBJ.8 | PLAN-V3-cards |
+| 55 | **ST.7** | The V3 clause table at poseidonRender | M3 | GEN · KAT · 2 h · Sonnet | ST.6 | after ST.6 | PLAN-V3-cards |
+| 56 | **SIM.1** | Land the Lean staged view (section 1 of the scratch file) | M3 | ALG · PORT · 2 h · Sonnet | SIM.0 | READY | PLAN-V3-cards |
+| 57 | **SIM.2** | Land StageInv, BlockSim, BlockProgS and the proved composition | M3 | INFRA · SKELETON · 2.5 h · strongest | SIM.1 | after SIM.1 | PLAN-V3-cards |
+| 58 | **SIM.3** | Conjunct 3 without a snapshot: exit scan, TraceReturn exit, two outcomes | M3 | INFRA · PORT · 2 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
+| 59 | **SIM.7** | Migrate the proved rows and retire the old composition | M3 | SEM · PORT · 1.5 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
+| 60 | **SIM.8** | Restate the VkLoading row over StageInv | M3 | SEM · STATEMENT · 1.5 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
+| 61 | **ST.8** | TwoOutcomes: the Step-induction requirements table and the invariant statement | M3 | SEM · SKELETON · 2 h · strongest | ST.1 | after ST.1 | PLAN-V3-cards |
+| 62 | **SIM.4** | Probe the exit-discipline meta-lemma | M3 | INFRA · PROBE · 1.5 h · Sonnet | SIM.3 | after SIM.3 | PLAN-V3-cards |
+| 63 | **DG.3** | Pin the closure of the frozen statements | M3 | INFRA · DECISION · 1.5 h · strongest | DG.2 | after DG.2 | PLAN-V3-cards |
+| 64 | **DG.4** | State Done at the deployment, with its refutation | M3 | INFRA · STATEMENT · 2 h · Sonnet | DG.1 | after DG.1 | PLAN-V3-cards |
+| 65 | **REF.13** | Probe: snapshotOf against Rust's intermediate values | M4 | ALG · PROBE · 1 h · Sonnet | REF.8 | after REF.8 | PLAN-V3-cards |
+| 66 | **REF.14** | Probe: the calldata leg at the real codec | M4 | ALG · PROBE · 1 h · Sonnet | REF.6, REF.11 | after REF.6, REF.11 | PLAN-V3-cards |
+| 67 | **DG.5** | The fixture calldata as a pure term | M4 | GEN · KAT · 1.5 h · Sonnet | DG.4 | after DG.4 | PLAN-V3-cards |
+| 68 | **T3.11** | Executable exhibit as a KAT | M4 | INFRA · KAT · 1.5 h · Sonnet | T3.1 | after T3.1 | PLAN-V3-cards |
+| 69 | **ST.14** | Deployment codec: the headline laws at poseidonE | M4 | ALG · PORT · 2 h · Sonnet | ST.4 | after ST.4 | PLAN-V3-cards |
+| 70 | **ST.17** | HypothesesInhabitedV3: feasibility probe | M4 | ALG · PROBE · 2.5 h · strongest | ST.14 | after ST.14 | PLAN-V3-cards |
+| 71 | **OBJ.10** | Split generateVk into base and reservation loop; data-level base payload | M4 | GEN · PORT · 2.5 h · Sonnet | OBJ.6 | after OBJ.6 | PLAN-V3-cards |
+| 72 | **OBJ.12** | The artifact gate: both files byte for byte, nothing from the artifact | M4 | GEN · KAT · 2 h · Sonnet | OBJ.7, OBJ.10, OBJ.11 | after OBJ.7, OBJ.10, OBJ.11 | PLAN-V3-cards |
+| 73 | **T3.0** | Certificate-cost probe: choose how the kernel checks a symbolic execution | M5 | SEM · PROBE · 2.5 h · strongest | — | READY | PLAN-V3-cards; may be pulled forward when blocked (PLAN-V3 §5) |
+| 74 | **T3.1** | Land the wp engine and the lawful executable Bridge dialect | M5 | SEM · PORT · 2 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked |
+| 75 | **T3.3** | Generated slice literals with pins | M5 | GEN · EMIT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked |
+| 76 | **T3.2** | Totality: wpSS_exists | M5 | SEM · PROOF · 2.5 h · strongest | T3.1 | after T3.1 | PLAN-V3-cards |
+| 77 | **T3.4** | TraceReturn at the deployment (calibration A) | M5 | SEM · PROOF · 2 h · Sonnet | T3.1, T3.3 | after T3.1, T3.3 | PLAN-V3-cards; W14: after T3.11 has run the complete program on F1 |
+| 78 | **T3.5** | Word and memory layer, accepted by the vkLoading residue | M5 | ALG · PROOF · 2.5 h · strongest | T3.1 | after T3.1 | PLAN-V3-cards |
+| 79 | **HLP.1** | Helper call summaries | M5 | SEM · PROOF · 2.5 h · strongest | T3.1, T3.3, T3.5 | after T3.1, T3.3, T3.5 | PLAN-V3-cards |
+| 80 | **T3.6** | vkLoading row at the deployment (calibration B) | M5 | SEM · PROOF · 2.5 h · strongest | T3.4, T3.5 | after T3.4, T3.5 | PLAN-V3-cards |
+| 81 | **T3.7** | Statement-level driver with cuts, accepted by the lagrange slice | M5 | SEM · PROOF · 2.5 h · strongest | T3.0, T3.1 | after T3.0, T3.1 | PLAN-V3-cards |
+| 82 | **T3.8** | Field-arithmetic bridge, accepted by x_n = x^(2^k) | M5 | ALG · PROOF · 2 h · strongest | T3.5 | after T3.5 | PLAN-V3-cards |
+| 83 | **T3.9** | Lagrange row at the deployment (calibration C) | M5 | SEM · PROOF · 2.5 h · strongest | T3.7, T3.8 | after T3.7, T3.8 | PLAN-V3-cards |
+| 84 | **ST.16** | BodyTotal: the requirements table | M5 | SEM · PROBE · 2 h · Sonnet | ST.5 | after ST.5 | PLAN-V3-cards |
+| 85 | **T3.10** | Quotient numerator: classify, choose the route, state the contract | M5 | SEM · STATEMENT · 2 h · strongest | T3.3 | after T3.3 | PLAN-V3-cards |
+| 86 | **SIM.6** | The prefix rows: prefix_sim and prefix_prog | M5 | SEM · PROOF · 2.5 h · strongest | SIM.2 | after SIM.2 | PLAN-V3-cards |
+| 87 | **ST.13** | runBody_mono | M5 | SEM · PROOF · 2 h · strongest | ST.5 | after ST.5 | PLAN-V3-cards |
+| 88 | **SIM.5** | Prove quiet_init | M6 | INFRA · PROOF · 2.5 h · strongest | SIM.4 | after SIM.4 | PLAN-V3-cards |
+| 89 | **ST.9** | twoOutcomes_of_exitDiscipline: expressions and builtins | M6 | SEM · PROOF · 2.5 h · strongest | — (merged into SIM.4–SIM.5) | DO NOT RUN | PLAN-V3-cards; merged into SIM.4–SIM.5: do not run separately |
+| 90 | **ST.10** | twoOutcomes_of_exitDiscipline: statements and the return tail | M6 | SEM · PROOF · 2.5 h · strongest | — (merged into SIM.5) | DO NOT RUN | PLAN-V3-cards; merged into SIM.5: do not run separately |
+| 91 | **SIM.9** | leanStage coherence: the staged chain is a chain, with equal fields | M6 | ALG · PROOF · 2.5 h · strongest | SIM.1 | after SIM.1 | PLAN-V3-cards |
+| 92 | **SIM.10** | xcript_total: the transcript-only prefix always exists on decodable calldata | M6 | ALG · PROOF · 2.5 h · strongest | SIM.1 | after SIM.1 | PLAN-V3-cards |
+| 93 | **SIM.11** | The fault table as a gate and as a theorem statement | M6 | ALG · KAT · 2 h · Sonnet | SIM.1 | after SIM.1 | PLAN-V3-cards |
+| 94 | **SIM.12** | PCS row decomposition: the decode-exists lemma | M6 | SEM · STATEMENT · 2 h · strongest | SIM.2, SIM.1 | after SIM.2, SIM.1 | PLAN-V3-cards |
+| 95 | **ROW.TP** | TranscriptParser row: skeleton and requirements table | M6 | SEM · SKELETON · 2 h · strongest | SIM.2, SIM.10, T3.6 (calibration B), OBJ.2 | after SIM.2, SIM.10, T3.6, OBJ.2 | PLAN-V3-cards |
+| 96 | **ROW.Q** | Quotient row: contract and route | M6 | SEM · SKELETON · 2.5 h · strongest | T3.10 (calibration D), OBJ.2, SIM.2 | after T3.10, OBJ.2, SIM.2 | PLAN-V3-cards |
+| 97 | **ROW.PCS** | PCS row: decode-exists and the MSM loops | M6 | SEM · SKELETON · 2.5 h · strongest | ROW.Q, SIM.12, T3.9, the M1 exit gate | after ROW.Q, SIM.12, T3.9, the M1 exit gate | PLAN-V3-cards |
+| 98 | **ROW.FP** | FinalPairing row, restated | M6 | SEM · PROOF · 2.5 h · strongest | ROW.PCS, PL.1, REF.5, T3.5 | after ROW.PCS, PL.1, REF.5, T3.5 | PLAN-V3-cards |
+| 99 | **TOT.1** | Totality at F1: `TotalV3 poseidonRender` | M6 | SEM · PROOF · 2.5 h · strongest | ROW.FP, T3.2, ST.13, ST.16, SIM.6 | after ROW.FP, T3.2, ST.13, ST.16, SIM.6 | PLAN-V3-cards |
+| 100 | **PL.H** | The headline | M7 | INFRA · PROOF · 1 h · strongest | every ROW card, TOT.1, SIM.5, SIM.6, ST.11–ST.13 | after every ROW card, TOT.1, SIM.5, SIM.6, ST.11–ST.13 | PLAN-V3-cards |
+| 101 | **DG.9** | The DONE commit | M7 | INFRA · KAT · 1 h · Sonnet | DG.3, DG.4, DG.5, DG.6, DG.7, DG.8 | after DG.3, DG.4, DG.5, DG.6, DG.7, DG.8 | PLAN-V3-cards |
+| 102 | **PL.E** | End to end and the English statement | M8 | ALG · PROOF · 2.5 h · strongest | PL.H | after PL.H | PLAN-V3-cards |
+| 103 | **OBJ.13** | Structured emitter for AccumulatorHelpers | optional | GEN · EMIT · 2 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+| 104 | **OBJ.14** | Structured emitter for QuotientHelpers | optional | GEN · EMIT · 0.75 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+| 105 | **OBJ.15** | Structured emitter for the QVM interpreter template | optional | GEN · EMIT · 2.5 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+
+### Leads for the cards above (PLAN-V3 §10.1, verified at `4e18c65`; re-check before relying on one)
+
+| card | flag |
+|---|---|
+| **G1.1–G1.3 batch** | **Do not merge G1.2 without the scope repair** (D-P65, signed: the batch's frozen diff is `Program.lean` and `Statements.lean`): with `q_program_fail` / `q_pow5` in the `.quotientLin` slice, `prog_slices_decomp`'s second conjunct (`Blocks.lean:224`) is false and the frozen `Render.scope` (`Statements.lean:109`, outside D-P52) lacks both functions. G1.3's 895 / 5,489 split is measured as 5,431 / 953 |
+| **R.4** | MERGED INTO REF.4–REF.6 at PL.0 (D-P62, signed: constructed pairing, the SRS point as data, no G2 axiom). Do not add D-P55's G2 axiom |
+| **R.4b** | A *computable* G1 decoder exists and equals the `Classical.choose` one on the EIP half; prefer it |
+| **R.5** | The non-determinism is `OsRng` in `blind_quotient_limbs` (`proofs/src/plonk/prover.rs:126`), baseline code: D-P58's fallback (3) applies |
+| **R.8**, **R.9** | Frozen `Valid.circuitMeta` forces `numPointSets = 0`; a faithful plan has 3. Exporting or proving more cannot close clauses 1 and 2 together |
+| **T.2b** | A verified `wp` engine proves the literal-slice TraceReturn fact in 13 lines; land it rather than write a tactic. The closed-slice form is still to do |
+| **T.3**, **S.5**, **S.6** | The engine's kernel check on the lagrange loop is not bounded yet; do not apply D-P57's hand-proof fallback on that ground before PLAN-V3 card T3.0 has measured it |
+| every card | The tip (`4e18c65`) still fails `kat_gate.py`: 1397 annotated checks against a pinned 1393, and two `-- expect TRUE` annotations that can never match `true` (`DeployedProfile.lean:857`, `PoseidonCoherence.lean:502`). The sorry register is back in sync since F.1. Card **DG.0** below fixes it and needs no decision |
+
+### DG.0 — Make the gates green at the tip  **[READY — no decision needed; run before the next PROOF card]**  **[V3: row 1 of the V3 table]**
+INFRA · KAT · box 1 h · Sonnet · after —
+
+- **Goal.** `bash scripts/checks.sh` exits 0 at the tip.
+- **Needs.** `scripts/kat_gate.py:113` (`EXPECTED_KAT_TOTAL = 1393`; the tree has 1397 since
+  `2041977`); `Midfall/Instances/DeployedProfile.lean:857` and
+  `Midfall/Instances/PoseidonCoherence.lean:502` (annotations spelled `-- expect TRUE`; the gate
+  compares case-sensitively and the values print `true`).
+- **Does NOT need.** Any new gate, any proof, PLAN-V3 or any of its decisions.
+- **Do.**
+  1. Re-measure: `python3 scripts/kat_gate.py` (fails in about a second on the total).
+  2. Correct the two annotations to `-- expect true` (keep the prose after it).
+  3. Move `EXPECTED_KAT_TOTAL` (and `EXPECTED_KAT_FILES` if it moved) to the measured values, and
+     say in the commit which commit added the four gates.
+  4. One full `kat_gate.py` run; then `checks.sh`.
+- **Deliverable.** The two annotation fixes and the pin; nothing else.
+- **Accept.** `bash scripts/checks.sh` exits 0; the KAT report names 1397 gates compared.
+- **Stop if.** A gate other than the two annotations fails once the total is corrected: report it
+  with its file and line, do not adjust its expectation.
+
+### PL.0 — Cut over to PLAN-V3  **[DONE 2026-11-17 — tag `formal/v2-cutover`; the V3 table above is the result]**
+INFRA · DECISION · box 0.5 h · orchestrator, no subagent · after D-P60 is signed in `design.md`
+
+- **Goal.** This queue, `STATUS.md` and `PLAN.md` point at PLAN-V3, with nothing proved deleted and
+  no card in flight lost.
+- **Card.** Full text: `docs/plans/PLAN-V3-cards.md`, card PL.0. Mapping of every live card
+  (CONTINUES / MERGED INTO / SUPERSEDED): PLAN-V3 §10.2. Order of the V3 cards: PLAN-V3 §5, the
+  table "Every card, by milestone".
+- **READY.** `design.md` D-P60 carries the W2 sign-off line (2026-11-17, after `53bf8c1`).
+
+---
+
+# V2 CARDS (kept for their text; each one is marked by PL.0. Run a V2 card only where the V3 table lists it)
 
 ## CUT-OVER — the orchestrator does these itself (EXECUTION-V2 §1)
 
@@ -170,7 +345,7 @@ INFRA · PROOF · box 0.75 h · Sonnet · after Q0.4
   the root's cone, not the register.
 - **Stop if.** The probe proof does not transplant unchanged.
 
-### Q0.5 — Repair the non-vacuity gate (R-72) + land the `RETURN_MPTR` pin — ONE `Statements.lean` re-hash  **[READY after F.1 — D-P45 (amended) and D-P48 signed off 2026-11-17]**
+### Q0.5 — Repair the non-vacuity gate (R-72) + land the `RETURN_MPTR` pin — ONE `Statements.lean` re-hash  **[READY after F.1 — D-P45 (amended) and D-P48 signed off 2026-11-17]**  **[V3: CONTINUES — row 11; D-P66 strengthens it at ST.4]**
 
 INFRA · PORT · box 1.5 h · strongest · after F.1
 
@@ -722,7 +897,7 @@ defect). (b) "the accumulator / trace helper includes": the trace half renders 0
 (c) PLAN-V2:236's "coverage table all-equal except PCS": PCS is 18 brace tokens from equal (finding 3).
 (d) The card's 3156 / 10433 is superseded by 6761 / 14054, which is what reproduces here.
 
-### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[MERGED f588ba2 - CONE 11 to 9, FIRST DROP; both sorry-free, no ceiling]**
+### F.1 — Prove the sequencing glue (`slices_seq_sound`, `slices_seq_progress`)  **[READY — RUN NEXT]**  **[V3: MERGED f588ba2 — both lemmas proved, headline cone 11 → 9; SIM.2 reuses the technique]**
 > Moved ahead of the G1 cards by the human (2026-11-17): it is the only READY card expected to move the
 > headline cone, and it needs no decision. S.3 merged `d0aabba`.
 SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after S.3
@@ -744,7 +919,7 @@ SEM · PROOF · box 2.5 h (split at 1 h: sound / progress) · strongest · after
   state. That is the next ceiling, and finding it here is the point of this card.
 
 ---
-### G1.4b — Land the pcs block scopes + the 5 gate updates from D-P51  **[READY after F.1 — D-P51 signed off 2026-11-17; needs `t/G1.4` pushed, see Needs]**
+### G1.4b — Land the pcs block scopes + the 5 gate updates from D-P51  **[READY after F.1 — D-P51 signed off 2026-11-17; needs `t/G1.4` pushed, see Needs]**  **[V3: CONTINUES — M2]**
 
 GEN · EMIT · box 1 h · Sonnet · after G1.4 (stopped), needs D-P51 signed off
 
@@ -807,7 +982,7 @@ G1.4b, under D-P52's conditions (`design.md`).
   `GenAstDispatch.lean` and the regions belong in `emitPartial`. **`emitPartial` cannot read the
   flags; the regions belong in `mainAsmRaw`, a FROZEN file.** That is what makes the re-hash shared.
 
-### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY after G1.4b — one batch with G1.2/G1.3 under D-P52 (single `Program.lean` re-hash)]**
+### G1.1 — EMIT the `AccumulatorHelpers` include (823 tokens)  **[READY after G1.4b — one batch with G1.2/G1.3 under D-P52 (single `Program.lean` re-hash)]**  **[V3: CONTINUES — M2, in the D-P65 batch with G1.2, OBJ.2, ST.3]**
 GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2–G1.4)
 
 - **Goal.** `GenAst` emits the 823-token region `mainAssemblyText` puts between `assemblyHelpers`
@@ -863,7 +1038,7 @@ GEN · EMIT · box 2 h · Sonnet · after R.2 (nothing else; parallel with G1.2�
           -- #eval ((yulTokens (EVM.print (GenAst.emitAccumulatorHelpers poseidonPv))).drop 1).dropLast
           --         == yulTokens ((partsOf poseidonM).accumulatorHelpers)
 
-### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**
+### G1.2 — EMIT `QuotientHelpers`: `q_program_fail` and `q_pow5` (68 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**  **[STOPPED CLEAN 5a8585e - 3 constraints unsatisfiable; splice site unresolved, see G1.2b]**  **[V3: CONTINUES — M2, in the D-P65 batch with G1.1, OBJ.2, ST.3]**
 GEN · EMIT · box 0.75 h · Sonnet · after R.2; **a prerequisite of G1.3** (both definitions are
 called ONLY from the numerator block — measured: neither `q_program_fail(` nor `q_pow5(` occurs in
 any other region of the main block)
@@ -935,7 +1110,7 @@ GEN · PROBE · box 0.5 h · Sonnet · after G1.2 (stopped clean)
   `stmtsBeq`). Only the splice SITE is unresolved.**
 
 ---
-### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**
+### G1.3 — EMIT the quotient-numerator block (6384 tokens)  **[READY after G1.4b — batch with G1.1, D-P52]**  **[V3: MERGED INTO OBJ.2 (and OBJ.15) — do not run; its 895 / 5,489 split is measured 5,431 / 953]**
 GEN · EMIT · box 2.5 h, **over-box by measurement — see Do 0** · strongest · after G1.2
 
 - **Goal.** Emit `renderQuotientNumeratorBlock`, the second `quotient_numerator` include: 6384
@@ -1059,7 +1234,7 @@ INFRA · PROBE · box 1 h · Sonnet · after D-P47 sign-off
 - **Stop if.** The refreshed fixture describes a different circuit or VK from the deployed contract:
   that is a scope question for the human.
 
-### R.3 — Make `Valid.model` dischargeable (D-P56)  **[READY after F.1 — D-P56 signed off 2026-11-17]**
+### R.3 — Make `Valid.model` dischargeable (D-P56)  **[READY after F.1 — D-P56 signed off 2026-11-17]**  **[V3: CONTINUES — M2]**
 GEN · PROOF · box 1 h · strongest · after F.1
 
 - **Goal.** `Valid` clause 4 (`model`) PROVED at `poseidonRender`, with no `sorryAx`.
@@ -1075,7 +1250,7 @@ GEN · PROOF · box 1 h · strongest · after F.1
 - **Stop if.** The stand-alone `deriving instance` fails. Only then apply D-P56's fallback (one-line
   `deriving Inhabited` at `Generator/Models.lean:757`, line count unchanged), and report which path ran.
 
-### R.4 — Gap B: name the G2 bases from their bytes (D-P55)  **[READY after F.1 — D-P55 signed off 2026-11-17]**
+### R.4 — Gap B: name the G2 bases from their bytes (D-P55)  **[READY after F.1 — D-P55 signed off 2026-11-17]**  **[V3: MERGED INTO REF.5, REF.6 (D-P62: no G2 axiom) — do not run]**
 ALG · PROOF · box 2.5 h · strongest · after F.1
 
 - **Goal.** At the deployment, `poseidonSG2` and the prepared G2 parameters are the points the payload
@@ -1104,7 +1279,7 @@ ALG · PROOF · box 2.5 h · strongest · after F.1
   - The axiom would need any premise other than a computed validity check of the bytes.
   - A KAT shows the check TRUE off the r-torsion. The axiom would then be false: do NOT land it.
 
-### R.4b — G1: a real `ofCompressed?` and the fixture calldata decoding (D-P55 step 1)  **[READY after F.1]**
+### R.4b — G1: a real `ofCompressed?` and the fixture calldata decoding (D-P55 step 1)  **[READY after F.1]**  **[V3: MERGED INTO REF.4, REF.9, REF.10 — do not run]**
 ALG · PROOF · box 2 h · strongest · after F.1
 
 - **Goal.** Two results:
@@ -1127,7 +1302,7 @@ ALG · PROOF · box 2 h · strongest · after F.1
 - **Stop if.** A fixture G1 point fails the computed subgroup check: that is a fixture defect, so
   report it.
 
-### R.5 — Make the fixture export reproducible (D-P58)  **[READY after F.1 — D-P58 signed off 2026-11-17]**
+### R.5 — Make the fixture export reproducible (D-P58)  **[READY after F.1 — D-P58 signed off 2026-11-17]**  **[V3: MERGED INTO REF.11 (D-P63; source is `OsRng`, prover.rs:126) — do not run]**
 GEN · KAT · box 1.5 h · Sonnet · after F.1 · raised by R.1 (`2041977`)
 
 - **Known.**
@@ -1152,7 +1327,7 @@ GEN · KAT · box 1.5 h · Sonnet · after F.1 · raised by R.1 (`2041977`)
 - **Stop if.** A frozen file depends on `proof.bin`/`trace.json`. Or the regenerated bundle describes
   a different circuit or VK from the deployed contract (a scope question).
 
-### R.6 — Land D-P46's three VK base pins (second `Statements.lean` re-hash)  **[READY after R.4 — D-P46 signed off 2026-11-17]**
+### R.6 — Land D-P46's three VK base pins (second `Statements.lean` re-hash)  **[READY after R.4 — D-P46 signed off 2026-11-17]**  **[V3: CONTINUES — M1, after REF.6 and Q0.5; subsumed at ST.6]**
 INFRA · PORT · box 1.5 h · strongest · after R.4, Q0.5
 
 - **Goal.** `Render.Valid` gains `baseSlots` (three conjuncts, `design.md` D-P46), PROVED at
@@ -1169,7 +1344,7 @@ INFRA · PORT · box 1.5 h · strongest · after R.4, Q0.5
   - `verify.sh --quick` green.
 - **Stop if.** Any conjunct is FALSE at the deployment after R.4.
 
-### R.7 — Fix `WellFormed.permutationCommitmentsMatch` (D-P59, `Valid` clause 9)  **[READY after F.1 — D-P59 signed off 2026-11-17]**
+### R.7 — Fix `WellFormed.permutationCommitmentsMatch` (D-P59, `Valid` clause 9)  **[READY after F.1 — D-P59 signed off 2026-11-17]**  **[V3: CONTINUES — = REF.3, M1]**
 GEN · PORT · box 1 h · strongest · after F.1
 
 - **Goal.** `Valid` clause 9 (`supported`) no longer refuted by a mis-ported field.
@@ -1196,7 +1371,7 @@ GEN · PORT · box 1 h · strongest · after F.1
 - **Stop if.** The port indexes the VK commitments by chunk: that is a port defect larger than this
   field, so report it and do not patch around it.
 
-### R.8 — Export-first probe for `Valid` clauses 2/3 (WP-G4 scope)  **[READY after F.1]**
+### R.8 — Export-first probe for `Valid` clauses 2/3 (WP-G4 scope)  **[READY after F.1]**  **[V3: MERGED INTO OBJ.6, OBJ.7, ST.6 — do not run]**
 GEN · PROBE · box 1 h · Sonnet · after F.1 · read-only
 
 - **Known (F.2).**
@@ -1217,7 +1392,7 @@ GEN · PROBE · box 1 h · Sonnet · after F.1 · read-only
 - **Stop if.** A frozen file must change. Draft the change as a new item at the end of
   `docs/DECISIONS-PENDING.md`, unsigned.
 
-### R.9 — Discharge `Valid.circuitMeta` as a Prop (F.2-G1)  **[READY after F.1 — small]**
+### R.9 — Discharge `Valid.circuitMeta` as a Prop (F.2-G1)  **[READY after F.1 — small]**  **[V3: MERGED INTO OBJ.6, OBJ.7, ST.6 — do not run (the clause it discharges is restated)]**
 GEN · PROOF · box 0.5 h · Sonnet · after F.1
 
 - **Goal.** Clause 1 is PROVED as a Prop, not only as a Bool decision. Land F.2-G1's 8-line proof in
@@ -1258,7 +1433,7 @@ SEM · PROOF · box 1.5 h · strongest · after S.1, D-P49 sign-off
 - **Stop if.** Step 1 does not elaborate sorry-free — D-P49's premise is then false: report NEGATIVE
   with the goal state · any root's cone moves unexpectedly.
 
-### S.4 — `BlockRow` for `vkLoading`  **[READY after F.1]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**
+### S.4 — `BlockRow` for `vkLoading`  **[READY after F.1]**  **[MERGED 93c0d4c - PARTIAL: row NOT closed, 15 sorry-free lemmas + 6 pin gaps]**  **[V3: MERGED INTO SIM.8, T3.6 — do not run]**
 SEM · PROOF · box 2 h · strongest · after S.3, F.1
 - **Goal.** `BlockRow R product .vkLoading`. **Shape from S.1:** pre `Clean R .start`, post `(halt ∧
   Reverted) ∨ Clean R .vk ∨ (normal ∧ Poisoned)`; honest `StmtsTotal` gated on `G1CodecLaws ∧
@@ -1274,7 +1449,7 @@ SEM · PROOF · box 2 h · strongest · after S.3, F.1
   `poseidonRender` is vacuous (PLAN-V2 §4.4): state rows for every `R`, and never report one as
   headline progress.
 
-### S.8 — Verify the six `vkLoading` pins at the deployment  **[READY — RUN BEFORE ANY `Valid` CHANGE]**  **[DONE 89e9c0a - all six pins TRUE and PROVED at the deployment; see D-P50/S.9]**
+### S.8 — Verify the six `vkLoading` pins at the deployment  **[READY — RUN BEFORE ANY `Valid` CHANGE]**  **[DONE 89e9c0a - all six pins TRUE and PROVED at the deployment; see D-P50/S.9]**  **[V3: DONE]**
 
 GEN · KAT · box 1 h · Sonnet · after S.4
 
@@ -1298,7 +1473,7 @@ GEN · KAT · box 1 h · Sonnet · after S.4
 - **Does NOT need.** Editing `Valid`; any block row; the pairing.
 
 ---
-### S.9 — Land the six pins: `Valid` fields + the proved deployment discharge  **[READY]**  **[MERGED fece4c7 - Valid now 13 clauses; vk_blockRow pin-free; cone unchanged]**
+### S.9 — Land the six pins: `Valid` fields + the proved deployment discharge  **[READY]**  **[MERGED fece4c7 - Valid now 13 clauses; vk_blockRow pin-free; cone unchanged]**  **[V3: DONE]**
 
 INFRA · PORT · box 1.5 h · Sonnet · after S.8
 
@@ -1366,7 +1541,7 @@ GEN · PORT · box 2.5 h · strongest · **split at 1 h into (export) and (re-de
   DIFFERENT bytes for things that should be stable (that means the export is not reproducible — stop).
 
 ---
-### S.10 — Fix the stale `Valid` clause-count prose  **[READY — small]**
+### S.10 — Fix the stale `Valid` clause-count prose  **[READY — small]**  **[V3: CONTINUES — row 12]**
 
 INFRA · DOCS · box 0.5 h · Sonnet · after S.9
 
@@ -1388,7 +1563,7 @@ INFRA · DOCS · box 0.5 h · Sonnet · after S.9
 - **Does NOT need.** Any proof change; the pins; any block row.
 
 ---
-### S.5 — `BlockRow` for `transcriptParser`  **[READY after T.3 — D-P57 signed off 2026-11-17; reverts to after F.1 only under D-P57's fallback]**
+### S.5 — `BlockRow` for `transcriptParser`  **[READY after T.3 — D-P57 signed off 2026-11-17; reverts to after F.1 only under D-P57's fallback]**  **[V3: MERGED INTO ROW.TP — do not run]**
 SEM · PROOF · box 2.5 h · strongest · after S.3, T.3 (D-P57)
 - **Goal.** `BlockRow R product .transcriptParser`. **The big one: 44 stmts, 9 own loops ⇒ fuel + 9
   invariants.** Pre `Clean R .vk`, post `… ∨ Clean R .transcript ∨ …`.
@@ -1402,7 +1577,7 @@ SEM · PROOF · box 2.5 h · strongest · after S.3, T.3 (D-P57)
   lines by hand. Report lines per Yul token. (The WP-T decision is taken: D-P57. This stop still
   applies, with the tactic in hand.)
 
-### S.6 — `BlockRow` for `lagrange`  **[READY after T.3 — D-P57: T.3's target IS this row; if T.3 merged it, mark S.6 DONE with T.3's hash and skip]**
+### S.6 — `BlockRow` for `lagrange`  **[READY after T.3 — D-P57: T.3's target IS this row; if T.3 merged it, mark S.6 DONE with T.3's hash and skip]**  **[V3: MERGED INTO T3.7, T3.9 — do not run]**
 SEM · PROOF · box 2 h · strongest · after S.3, T.3 (D-P57)
 - **Goal.** `BlockRow R product .lagrange`. **The only loop-bearing helper is `batch_invert`.** Pre
   `Clean R .transcript`, post `… ∨ Clean R .lagrange ∨ …`.
@@ -1411,7 +1586,7 @@ SEM · PROOF · box 2 h · strongest · after S.3, T.3 (D-P57)
   transfer blows the heartbeat default — do NOT raise heartbeats, fold the clause as FP.0 did.**
 - **Accept.** As S.4.
 
-### S.7 — The `quotientLin` contract (GAP G3)  **[BLOCKED: WP-G1 not merged (see R.2) · S.2 may move five `Inv` clauses into this post]**
+### S.7 — The `quotientLin` contract (GAP G3)  **[BLOCKED: WP-G1 not merged (see R.2) · S.2 may move five `Inv` clauses into this post]**  **[V3: MERGED INTO T3.10, ROW.Q — do not run]**
 SEM · PROOF · box 1.5 h · strongest (W10: Quotient) · after R.2's WP-G1 children, S.2
 - **Goal.** Discharge C.1's `poseidon_quotient_block` (PoseidonV2.lean:207). **S.1 established six
   rows are NOT enough;** `.quotientLin` needs its contract too.
@@ -1426,7 +1601,7 @@ SEM · PROOF · box 1.5 h · strongest (W10: Quotient) · after R.2's WP-G1 chil
 - **Accept.** `poseidon_quotient_block` proved, `sorryAx` grep = 0, headline cone down by 1; or
   PARTIAL with each gap a named lemma.
 
-### ~~pcs row~~  **[HELD — blocked by S.2]**
+### ~~pcs row~~  **[HELD — blocked by S.2]**  **[V3: MERGED INTO SIM.12, ROW.PCS]**
 S.1 showed (in scratch; nothing landed) that an empty slice's `BlockSound` forces `Inv .quotient → Inv .pcs`, and the
 `.pcs` arm adds five clauses `.quotient` lacks (fEval 16288, v 16320, finalCom 16352, pairingLhs 16480,
 pairingRhs 16608). **The `pcs` row is REFUTABLE, not merely hard, until S.2 lands.** Do not write it.
@@ -1449,7 +1624,7 @@ SEM · PROBE · box 1 h · strongest · after M.1
   reshapes the plan and is worth more than four cards of work.
 - **Does NOT need.** Proving any block row. Editing §6.
 
-### S.2 — Resolve the `pcs` / `Inv` boundary misalignment  **[READY]**
+### S.2 — Resolve the `pcs` / `Inv` boundary misalignment  **[READY]**  **[V3: MERGED INTO SIM.12, ROW.PCS — do not run]**
 
 GEN · PROBE · box 1 h · Sonnet · after M.1
 
@@ -1469,7 +1644,7 @@ GEN · PROBE · box 1 h · Sonnet · after M.1
 - **Does NOT need.** Proving anything; editing the plan.
 
 ---
-### M.1 — Prove `blockContracts_of_valid` generically  **[READY — THE HINGE]**  **[MERGED 126c99e - OUTCOME (B): needs ALL 7 rows; narrowing moves nothing]**
+### M.1 — Prove `blockContracts_of_valid` generically  **[READY — THE HINGE]**  **[MERGED 126c99e - OUTCOME (B): needs ALL 7 rows; narrowing moves nothing]**  **[V3: SUPERSEDED by SIM.2, PL.H — do not run]**
 
 SEM · PROOF · box 2.5 h · strongest · after T.2
 
@@ -1498,7 +1673,7 @@ SEM · PROOF · box 2.5 h · strongest · after T.2
   back as cards. · `fpG2Slots` is required for the finalPairing row and no decision has landed.
 
 ---
-### P.1 — Pairing-check algebra
+### P.1 — Pairing-check algebra  **[V3: MERGED INTO ROW.FP — do not run]**
 ALG · PROOF · box 2 h · strongest · after FP.0
 
 - **Goal.** Prove `fp_pairing_algebra`: under `Eip2537.Holds g1 g2codec product`, the precompile
@@ -1546,7 +1721,7 @@ SEM · PROOF · box 2.5 h · strongest · after T.1
   run hypothesis, i.e. already the direction §6 states. C.2's wrong-direction finding does not bite
   a run-level walk; it bites only when an `Obs` has to be transported.
 
-### T.2b — WP-T tactic: re-prove `traceReturn_spec` in under 100 lines (D-P57)  **[READY after F.1 — D-P57 signed off 2026-11-17]**
+### T.2b — WP-T tactic: re-prove `traceReturn_spec` in under 100 lines (D-P57)  **[READY after F.1 — D-P57 signed off 2026-11-17]**  **[V3: MERGED INTO T3.1, T3.3, T3.4 — do not run]**
 SEM · PROOF · box 2.5 h · strongest · after F.1, T.2
 
 - **Goal.** The PLAN-V2:278-279 accept line. Package T.2's recurring steps S1–S6 (above;
@@ -1570,7 +1745,7 @@ SEM · PROOF · box 2.5 h · strongest · after F.1, T.2
   - T.3 becomes a hand proof of the lagrange row;
   - re-estimate `docs/ETA.md` from the measured lines per token.
 
-### T.4 — `staticcall` stepping, accepted by `ec_pairing_contract`
+### T.4 — `staticcall` stepping, accepted by `ec_pairing_contract`  **[V3: MERGED INTO ROW.FP — do not run]**
 SEM · PROOF · box 2.5 h · strongest · after T.2
 
 - **Goal.** Stepping through `permissive (callsOf product)` (`Bridge.lean:731`; `Statements` §3),
@@ -1600,7 +1775,7 @@ SEM · PROOF · box 2.5 h · strongest · after T.2
   whnf the chain as a unit. T.1 has no measurement either way and promises nothing; try it under the
   60 s rule, and if it also times out report it as a PREMISE GAP rather than raising heartbeats.
 
-### T.5 — Arithmetic and memory, accepted by FinalPairing
+### T.5 — Arithmetic and memory, accepted by FinalPairing  **[V3: MERGED INTO ROW.FP — do not run]**
 SEM · PROOF · box 2.5 h · strongest · after T.2, P.1
 
 - **Goal.** `U256` `mulmod`/`addmod` ↔ `ZMod p` under `< r`, and memory read-over-write at layout
@@ -1637,7 +1812,7 @@ SEM · PROOF · box 2.5 h · strongest · after T.2, P.1
   32-byte tail. Do NOT reach for `simp [storeWord]` on the whole thing — the `if p ≤ i ∧ i < p + 32`
   guard is what needs the per-index `hi : i < 32` fact.
 
-### C.5 — Compose FinalPairing ; TraceReturn (calibration point 1)
+### C.5 — Compose FinalPairing ; TraceReturn (calibration point 1)  **[V3: SUPERSEDED by SIM.2, PL.H — do not run]**
 SEM · PROOF · box 2 h · strongest · after T.4, T.5, C.2
 
 - **Goal.** C.2's sequencing node for FinalPairing ; TraceReturn, starting from `Clean` at `.pcs`.
@@ -1646,7 +1821,7 @@ SEM · PROOF · box 2 h · strongest · after T.4, T.5, C.2
 - **Accept.** The cone falls. Then the orchestrator runs **calibration point 1** (EXECUTION-V2 §6;
   PLAN-V2 §9.3).
 
-### C.3 — Staged rejection skeleton
+### C.3 — Staged rejection skeleton  **[V3: SUPERSEDED by SIM.0–SIM.3 (staged contracts replace staged rejection) — do not run]**
 SEM · SKELETON · box 2 h · strongest · after C.2
 
 - **Goal.** `Render.Rejects` from per-block rejection lemmas, modulo sorries, with each block's
@@ -1656,7 +1831,7 @@ SEM · SKELETON · box 2 h · strongest · after C.2
 - **Does NOT need.** Block soundness or progress proofs.
 - **Accept.** The cone lists the per-block lemmas, and the report has a requirements table.
 
-### T.3 — Symbolic branches and loops  **[READY after T.2b (or T.2c) met D-P57's accept line; under D-P57's fallback, hand proof of the lagrange row]**
+### T.3 — Symbolic branches and loops  **[READY after T.2b (or T.2c) met D-P57's accept line; under D-P57's fallback, hand proof of the lagrange row]**  **[V3: MERGED INTO T3.7, T3.9 — do not run]**
 SEM · PROOF · box 2.5 h · strongest · after T.2b (D-P57)
 
 - **Goal.** Symbolic `if`/`switch` splits and loops with user invariants.

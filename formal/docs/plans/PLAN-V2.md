@@ -1,5 +1,20 @@
 # PLAN-V2 — prove the Lean verifier equivalent to the Solidity/Yul emitted by the Lean codegen
 
+> **HAND-OVER TO PLAN-V3 — CONDITIONAL ON D-P60 (added 2026-11-17).**
+> A review (`docs/plans/REVIEW-V3.md`) and a revised plan (`docs/plans/PLAN-V3.md`) are in the tree.
+> **Until `design.md` holds a signed D-P60, this file is the plan and nothing below changes.** The
+> orchestrator's goal prompt is unchanged in both cases; this banner is how it finds the new plan.
+>
+> - **D-P60 not signed** (check `grep -n '^## D-P60' formal/docs/design.md`): PLAN-V3 is PROPOSED.
+>   Work `QUEUE.md` as usual. Its PLAN-V3 banner flags several READY cards; each flag is a *lead*
+>   to verify, never a fact and never an instruction.
+> - **D-P60 signed**: wherever the goal prompt says "PLAN-V2 §0–§4", read
+>   **`PLAN-V3.md` §0–§4 and §10**; wherever it says "DONE means PLAN-V2 §6", DONE is
+>   **PLAN-V3 §6**; the headline named in the goal is PLAN-V3 §5 M7's. §4 rules 1–12 of this file
+>   and EXECUTION-V2 stay binding, with PLAN-V3 §4's W12–W15 added. The first card is **PL.0**
+>   (in `QUEUE.md`), which performs the cut-over — **done 2026-11-17** (tag `formal/v2-cutover`). Each other PLAN-V3 decision (D-P61–D-P69) gates
+>   only the cards that name it: an unsigned one leaves those cards BLOCKED, as W2 requires.
+
 Handover brief for the implementing agent (Sonnet 5.5). Self-contained: read §0–§3 before
 touching anything. Paths are relative to the repository root (`midfall/`).
 
@@ -335,6 +350,9 @@ the deployed layout.
 - **X7 security (S1–S7):** `Spec.accepts` is a `sorry` *definition* today, so `verifyMsgs_iff_spec` has no content until it is defined.
 
 ## 6. Definition of done (V2 headline)
+
+> If `design.md` holds a signed D-P60, the definition of done is `PLAN-V3.md` §6 (the Lean term
+> `Done`), not this section. Until then this section stands.
 
 ```bash
 cd formal
