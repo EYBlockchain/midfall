@@ -31,6 +31,7 @@ import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Blocks.FinalPairing
+import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.Instances.PoseidonV2
 import Midfall.Tools.ConeSorries
 
@@ -53,4 +54,9 @@ import Midfall.Tools.ConeSorries
 --    per-block contracts only through the generic sorried `blockContracts_of_valid` - so this is the
 --    number P.1, T.4 and T.5 watch, and it is the number that says the three groups are in the cone. 
 #cone_sorries Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts
+-- T.1's own root: TraceReturn's PROGRESS contract, hand-proved with no sorry. The cone count printed
+--    here is 0 by construction - the acceptance check is that it STAYS 0 as the interface is reused,
+--    and that the two roots above do not move (nothing in either cone cites this file yet).
+#cone_sorries Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress
+#cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
 #cone_avoids Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]

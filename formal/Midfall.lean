@@ -130,5 +130,6 @@ import Midfall.LoweringV2.ProgramLemmas
 import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Blocks.FinalPairing
+import Midfall.LoweringV2.Blocks.TraceReturn
 import Midfall.Lowering.LegacyVacuity
 import Midfall.Tools.ConeReport

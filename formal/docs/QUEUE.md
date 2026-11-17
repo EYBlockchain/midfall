@@ -514,6 +514,30 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
   3. Write each step's tactic signature into the existing T.2–T.5 cards (the exact node each one
      must close). Add a card only if a step fits none of them.
 - **Deliverable.** The hand proof (it closes one node) and the updated T.2–T.5 cards.
+- **RESULT (T.1, landed).** New file `Midfall/LoweringV2/Blocks/TraceReturn.lean`, no `sorry`, axioms
+  `[propext, Classical.choice, Quot.sound]`. **Closed: `BlockProgress R .traceReturn`** (§6's TOTAL
+  contract, Blocks.lean:106) as `tr_blockProgress`; `#cone_sorries` on it prints **0**, and a
+  `#cone_avoids` line for it is added to `Tools/ConeReport.lean`. `BlockSound`'s **conjunct 1** is
+  closed as `tr_sound_clean`; conjunct 2 is one step short (the `fail` inversion, S6) and is written
+  into T.5 and T.2 above. The interface is six named step lemmas S1–S6 (§2–§3 of that file), reused
+  verbatim by T.2/T.3/T.4/T.5 per the cards.
+  **PREMISE GAP FOUND:** the existence half needs the render's constant table to bind `RETURN_MPTR`
+  (named `trRetMptr`), because `BlockProgress` must EXHIBIT a run and nothing in
+  `Frame`/`Clean`/`Inv` binds the return window — v1's own note at Partials.lean:1251 says the same,
+  and V2's `Valid` pins only `TRANSCRIPT_MPTR`. Soundness needs no such pin: there the binding is a
+  CONSEQUENCE of the run (`trAddr`). Dischargeable at the deployment by computation
+  (`pinnedConstants` has `("RETURN_MPTR", 4096)`).
+  **CONE: headline 11 → 11, `fp_finalPairing_contracts` 3 → 3 — neither moved, and neither could:**
+  nothing in either cone cites TraceReturn.lean (the headline reaches per-block contracts only through
+  the sorried `blockContracts_of_valid`). `verify.sh --quick` green.
+  **FALSE PREMISES IN THE CARD:** (i) the `Bridge` view-direction problem does not arise at this node
+  — no view lemma is cited or needed, every step is a `Step` inversion on a run hypothesis, which is
+  already the direction §6 states; (ii) the card's "pick the smallest such node" for the loop node is
+  `lagrange`, and it is NOT the smallest of the three — TraceReturn is, by a wide margin, and that is
+  what got closed; (iii) `traceReturn_spec` was READ as a pattern only (Partials.lean:1256, v1,
+  retired) and nothing was imported from it — three of its pieces are copied by value
+  (`readBytes_storeWord_one`, `map_congr_range`, the `iszero` inversion) and restated for V2's shapes;
+  (iv) `EVM.run_adequacy` was not needed, not cited, and `vendor/` is untouched.
 
 ### P.1 — Pairing-check algebra
 ALG · PROOF · box 2 h · strongest · after FP.0
@@ -537,6 +561,31 @@ SEM · PROOF · box 2.5 h · strongest · after T.1
 - **Does NOT need.** Other blocks, `staticcall`, or field arithmetic.
 - **Accept.** It closes TraceReturn `BlockSound` ∧ `BlockProgress` and the cone falls. A tactic that
   closes no node is not done.
+- **T.1 RESULT + THE EXACT NODE LEFT.** `BlockProgress R .traceReturn` is **CLOSED**, sorry-free, in
+  the new `Midfall/LoweringV2/Blocks/TraceReturn.lean` (`tr_blockProgress`; axioms
+  `[propext, Classical.choice, Quot.sound]`, `#cone_sorries` on it = **0**). `BlockSound`'s
+  **conjunct 1** is proved there as `tr_sound_clean`. So **T.2's remaining target is exactly
+  `BlockSound R .traceReturn Snap H vkAddr (permissive (callsOf product)) g cd` conjunct 2** (the
+  poisoned walk), and the only thing in it is step S6 below — hand it to T.5's `fail` step and wrap:
+  `⟨fun V st a V' st' o => tr_sound_clean …, fun V st a V' st' o => S6 …⟩`.
+  THE RECURRING STEPS, all in that file, reuse verbatim:
+  **S1** `tr_slice` — the slice as a statement list; **S2** `tr_iszero_val` — invert a local builtin's
+  `EvalExpr` through `stepOp` with `simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]`, never
+  through `dialect_deterministic`; **S3** `tr_guard_skip` + `Step.stmts_cons_inv` at every boundary
+  (general in the `if` body — the clean path never enters it); **S4** `tr_mstore_step` / `tr_mstore_o`;
+  **S5** `ret_step` / `tr_ret_o` + `readBytes_storeWord_one`; **S6** `fail_lookup` (proved, `rfl`) +
+  `revertedOf_revert` — the hoisted-helper call, NOT yet composed into a walk (the open piece).
+  TWO TRAPS, both measured, save T.2 the hour: (i) **the slice does not reduce by `simp`/`unfold`** —
+  `unfold Inline.inlineScan` lands in the equation compiler's `brecOn` and `simp only [inlineScan.eq_1,
+  eq_2]` cannot touch the partially-applied recursive argument; the route is `show` the inlined form →
+  `rfl` against defs that NAME each stuck site (`trRetExpr`/`trErrExpr`/`trSuccExpr`) → rewrite the one
+  lookup that must reduce (`consts_succ_none`); (ii) **do not put `classical` before a forward `Step`
+  construction** — it swaps `DecidableEq D.Value` for `Classical.propDecidable` and the index
+  unification fails with an opaque "type mismatch" on `Step.seqCons`; case-split only inside the
+  inversion lemmas. THIRD: the `Bridge` view lemmas (`halted_of_view_eq`, `worldEq_of_view_eq`,
+  `view_eq_of_worldEq_and_halt`) are NOT needed at this node — every step is a `Step` inversion on a
+  run hypothesis, i.e. already the direction §6 states. C.2's wrong-direction finding does not bite
+  a run-level walk; it bites only when an `Obs` has to be transported.
 
 ### T.4 — `staticcall` stepping, accepted by `ec_pairing_contract`
 SEM · PROOF · box 2.5 h · strongest · after T.2
@@ -546,6 +595,27 @@ SEM · PROOF · box 2.5 h · strongest · after T.2
 - **Needs.** `ec_pairing_contract` (FP.0), `Eip2537.Holds`, and T.2's tactic.
 - **Does NOT need.** P.1's proof, a pairing implementation, or field-arithmetic simp sets.
 - **Accept.** It closes `ec_pairing_contract`.
+- **T.1 SIGNATURE — exact node: `ec_pairing_contract`** (FinalPairing.lean:314, sorry at :328). T.1
+  closed TraceReturn instead (smaller), so this node is untouched, but the interface is now fixed and
+  T.4 must be written against it. Steps to reuse: **S1** `tr_slice`'s three moves at
+  `R.slice Partial.finalPairing` — the stuck-site defs must be added for FOUR more names
+  (`PAIRING_RHS_MPTR`, `PAIRING_LHS_MPTR`, `G2_BASE_MPTR`, `NEG_S_G2_BASE_MPTR`) and each is read
+  through an `trAddr`-shaped absorber (`trRet_eval_inv`) so the walk treats the site as opaque and
+  the case split on `R.consts.lookup` happens once, in a lemma, not at every use. **S3** the
+  `stmts_cons_inv` split. **S4/S5** the store/load inversions plus the INDEX TRICK: state the outcome
+  IN the hypothesis (`… V' st' .normal`) so `cases` prunes the impossible `Step` rule for free —
+  this is what makes a `staticcall` tractable, because `callOk` and `callHalt` are the same
+  constructor family and naming the outcome picks one. **S6** `fail_lookup` is proved by `rfl`:
+  `hoist` is a top-level `filterMap` and `lookupFun` short-circuits, so the FP.0 warning about an
+  18-minute reduction over the inlined helper block does NOT apply to a function lookup — measured,
+  the whole of `TraceReturn.lean` elaborates in 5 s. **THE Inv CHAIN, per FP.0's cost finding: do
+  not try to derive `Inv .pcs → Inv .pairing`.** `fpPost`'s conditional clause is the budget; the
+  glue applies it. What T.4 must actually produce inside that clause is
+  `success = 1 → Inv .pairing`. **NOT MEASURED BY T.1 — the first route to try:** FP.0's timeout
+  came from normalising the whole thirty-clause `&&` chain at once. Building `Inv .pairing` clause by
+  clause from `Inv .pcs` (so only the two NEW clauses are ever elaborated) never asks the kernel to
+  whnf the chain as a unit. T.1 has no measurement either way and promises nothing; try it under the
+  60 s rule, and if it also times out report it as a PREMISE GAP rather than raising heartbeats.
 
 ### T.5 — Arithmetic and memory, accepted by FinalPairing
 SEM · PROOF · box 2.5 h · strongest · after T.2, P.1
@@ -555,6 +625,34 @@ SEM · PROOF · box 2.5 h · strongest · after T.2, P.1
 - **Needs.** FP.0's arithmetic and memory nodes, P.1, and T.4.
 - **Does NOT need.** Other blocks.
 - **Accept.** It closes FinalPairing `BlockSound` ∧ `BlockProgress`.
+- **T.1 SIGNATURE — TWO exact nodes, and one of them is now shared with T.2.**
+  (a) `fp_stmt_steps` (FinalPairing.lean:352, sorry at :358). Its whole content is ONE step: the
+  guard `if iszero(success) { fail(ERR_PRECOMPILE_FAILED) }` fires on `success = 0` and the hoisted
+  `fail` reverts. T.1 proved the two facts it needs and nothing else is missing:
+  `fail_lookup` (`lookupFun (R.scope c g) "fail" = some ⟨["sel"], [], [mstore(0, shl(224, sel)),
+  revert(0,4)]⟩`, proved by `rfl`, TraceReturn.lean:396) and `revertedOf_revert` (:407). What T.1
+  did NOT finish, and what blocks T.2's TraceReturn conjunct 2 identically, is the INVERSION of the
+  call: `Step.callHalt` destructuring needs `cases hlookup` after `rw [fail_lookup R]`, then
+  `Step.block` → `Step.stmts_cons_inv` over the two-statement body, then `tr_revert_halts`-style
+  inversion of `revert(0,4)` (`simp only [Bridge.Dialect, builtinWithExternal, stepOp]` then
+  `Option.some.injEq` / `BuiltinResult.halt.injEq`). The exact goal state T.1 stopped at, so the
+  next card does not rediscover it: after `cases h with | exprStmtHalt hex | callHalt hargs hlookup
+  hlen hbody` and the two `cases hargs`, `rw [fail_lookup R] at hlookup; cases hlookup` succeeds and
+  `hbody : Step (R.scope c g) ((["sel"] := [e]) ++ bindZeros …) st (.stmt (.block failBody))
+  (.sres V' st' .halt)`; the remaining work is `cases hbody with | block hstmts` and the two-statement
+  split, where the seqCons branch needs `shl` proved non-halting (`trShl_ne_halts`-style: `cases` on
+  `builtinHalt` then `simp [Bridge.Dialect, builtinWithExternal, stepOp]`). Three mechanical
+  case-name iterations, no content. **T.2 and T.5 want the same lemma — write it once, name it
+  `tr_fail_reverts`, and have both cite it.**
+  (b) the arithmetic/memory table itself: `U256` ↔ `ZMod p` under `< r` and read-over-write at the
+  layout addresses. T.1 measured nothing here, but it did settle the SHAPE of a memory-preservation
+  lemma: `tr_mstore_step` returns the new state as an explicit record
+  (`{ touchMemory st a.toNat 32 with memory := storeWord st.memory a.toNat 1 }`), so a
+  read-over-write fact is a `readBytes`/`loadWord` equation over THAT term, and
+  `readBytes_storeWord_one` (TraceReturn.lean:368, copied from v1 Partials.lean:1080 because V2 may
+  not import it) is the template: reduce to `List.range` maps, `map_congr_range`, then `decide` the
+  32-byte tail. Do NOT reach for `simp [storeWord]` on the whole thing — the `if p ≤ i ∧ i < p + 32`
+  guard is what needs the per-index `hi : i < 32` fact.
 
 ### C.5 — Compose FinalPairing ; TraceReturn (calibration point 1)
 SEM · PROOF · box 2 h · strongest · after T.4, T.5, C.2
@@ -582,6 +680,33 @@ SEM · PROOF · box 2.5 h · strongest · after T.2
 - **Needs.** The loop node T.1 named, and T.2's tactic.
 - **Does NOT need.** The pairing or other blocks.
 - **Accept.** It closes that loop node.
+- **T.1 SIGNATURE — THE LOOP NODE IS `lagrange`, VIA `batch_invert`.** M0.1 measured it the only
+  helper reaching a `for`-loop, direct or transitively; `lagrange` has 5 own loops and the call is
+  `success := batch_invert(success, 26560, add(mptr_end,32), 26080, r)`. So T.3's exact target is
+  `BlockSound R .lagrange` ∧ `BlockProgress R .lagrange` (the §6 shapes, Blocks.lean:92 / :106) at
+  `R.slice Partial.lagrange` — NOT a helper-local statement, because §6 quantifies over slices of the
+  CLOSED program and `batch_invert` is inside `R.helpers`, reached from the slice only as a
+  `Step.callOk`/`callHalt` whose body runs in `R.scope`.
+  What T.1 hands over unchanged: **S1** the slice-shape route (`show` + `rfl` against stuck-site defs
+  + rewrite the lookups that must reduce) — at `lagrange` the stuck sites are the `mptr` constants
+  and `26560`/`26080` arrive as literals already, so the inlining is the cheap part; **S2/S3** the
+  local-builtin inversion and the `stmts_cons_inv` split; **S4/S5** the store/load inversions with the
+  INDEX TRICK (state the outcome in the hypothesis so `cases` prunes); **S6** the hoisted-helper
+  lookup, which is `rfl` and fast.
+  What T.3 must ADD, and T.1 deliberately did not attempt: the loop rules. `Midfall/Yul/Contracts.lean`
+  already inverts all seven loop constructors (`loopDone`, `loopCondHalt`, `loopStep`,
+  `loopPostHalt`, `loopBreak`, `loopLeave`, `loopBodyHalt`) and its header records that
+  `ExecLoopAll.countdown_or_halt` as sketched is NOT derivable — the extra arms are stated there
+  instead, so the rule to use is the one in that file, not a two-hypothesis sketch. `batch_invert`'s
+  two loops are a forward prefix pass and a backward recovery pass with `mptr`/`gp_mptr` cursors, and
+  its `leave` statements are the arms the sketch could not discharge. Fuel: `lagrange` is the ONLY
+  slice that needs it (M0.1), so the fuel argument belongs in T.3's per-slice contract and NOT in
+  C.2's `slices_seq_*` (Blocks.lean:185-187 says exactly that).
+  ONE MEASUREMENT THAT SAVES T.3 A WRONG TURN: the loop counter arithmetic is over `U256`
+  (`BitVec 256`), and `lt(mptr, sub(mptr_end, 0x20))` cannot be discharged by `omega` — it needs
+  `BitVec.ult_lemma`/`toNat` transport. T.1 hit the same wall one level down at
+  `readBytes_storeWord_one` and solved it by reducing to `Nat` with a per-index `i < 32` fact rather
+  than by deciding the whole vector expression.
 
 ---
 
