@@ -48,8 +48,9 @@ is stated for **every** product in `Instances/PoseidonV2.lean` (merged `1009658`
 three named sorried lemmas. **Full `verify.sh` exit 0.** The root the DONE test names now has a number:
 
 - `cone_avoids lowering_equivalence_poseidon: ok (14 modules)`
-- **`cone_sorries lowering_equivalence_poseidon: 5`** — `blockContracts_of_valid`,
-  `lowering_equivalence_of_blocks`, `poseidon_quotient_block`, `poseidon_rejects`, `poseidon_valid`.
+- **`cone_sorries lowering_equivalence_poseidon: 11`** (was 5; **C.2 raised it** - see below)
+  (`blockContracts_of_valid`, `lowering_equivalence_of_blocks`, `poseidon_quotient_block`,
+   `poseidon_rejects`, `poseidon_valid` + 6 new named lemmas)
 - Axioms: standard three + the five D-P36a curve constants + **exactly one** `native_decide` axiom
   (`…poseidonModel_isOk._native.native_decide.ax_1_1`) + `sorryAx`. **§6 DONE requires cone 0 and no
   `sorryAx`.**
