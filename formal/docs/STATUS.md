@@ -254,11 +254,18 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **Next READY: T.3** (after T.2 — `BlockSound`/`BlockProgress` at `.lagrange` via
+**In flight:** none. **Next READY: S.1 and S.2** (probes, 1 h each) — written by M.1.
+**S.1 MUST run before any block-row card:** M.1 proved that even 6/6 rows do not close
+`slices_seq_sound`, so four block-row cards would be wasted work until S.1 answers
+whether per-block rows can reach the headline at all. Then Q0.5 (D-P45), the D-P47
+fixture re-export, and the D-P46/D-P48 `Valid` clauses.
+
 `batch_invert`; the loop node) and **C.3** (after C.2). **`blockContracts_of_valid` (Blocks.lean:152,
 sorry) is the single hinge** — no per-block proof reaches the headline until it is proved generically.
 **Consider making it a card of its own; it now gates everything.**
-**Waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
+**Decisions now MADE under delegation (D-P45/46/47/48 in `docs/design.md`); remaining open: `Rejects`/`SoundSide` and the `pcs`/`Inv` boundary (S.2).**
+
+**Was waiting on human (5):** poseidonMeta/ProtocolPlan · `fpG2Slots` · `Rejects`/`SoundSide` · R-72 ·
 `g1CodecZ.ofCompressed?`. Plus `RETURN_MPTR` pin (T.1) — a card, not a decision.
 `g1CodecZ.ofCompressed?`. **Plus `RETURN_MPTR` pin** (T.1 gap) — dischargeable by computation, so it
 is a card, not a decision.

@@ -539,7 +539,41 @@ SEM · SKELETON · box 2 h · strongest · after FP.0
   (`readBytes_storeWord_one`, `map_congr_range`, the `iszero` inversion) and restated for V2's shapes;
   (iv) `EVM.run_adequacy` was not needed, not cited, and `vendor/` is untouched.
 
-### M.1 — Prove `blockContracts_of_valid` generically  **[READY — THE HINGE]**
+### S.1 — Resolve the `slices_seq_sound` ceiling  **[READY — DO BEFORE ANY BLOCK-ROW CARD]**
+
+SEM · PROBE · box 1 h · strongest · after M.1
+
+- **Goal.** Determine whether the four missing block rows can close `slices_seq_sound` at all.
+- **Why first.** M.1 established that **even 6/6 rows plus the quotient row do NOT close
+  `slices_seq_sound`** — its post has no `normal ∧ Poisoned` arm (`Blocks.lean:299-305`) and no
+  per-block contract supplies it. **Writing four block-row cards against a known ceiling would waste
+  them.** This card decides whether they are worth writing.
+- **Do.** State precisely what `slices_seq_sound`'s post asserts vs what `BlockRow` supplies; determine
+  whether the gap is (a) a missing arm in the sequencing lemma's post, (b) a §6 shape problem, or
+  (c) genuinely unprovable as stated. Report which, with the goal state.
+- **Deliverable.** The verdict + the minimal change that would close it, if any.
+- **Accept.** A clear answer to: *can per-block rows ever reach the headline?* If no, say so — that
+  reshapes the plan and is worth more than four cards of work.
+- **Does NOT need.** Proving any block row. Editing §6.
+
+### S.2 — Resolve the `pcs` / `Inv` boundary misalignment  **[READY]**
+
+GEN · PROBE · box 1 h · Sonnet · after M.1
+
+- **Goal.** Decide where the five `.pcs`-arm `Inv` clauses belong.
+- **Why.** M.1 measured `sliceOf poseidonPv poseidonM .pcs = []`, so the `pcs` row collapses to
+  `Clean .quotient → Clean .pcs`, asserting fEval 16288, v 16320, finalCom 16352, pairingLhs 16480,
+  pairingRhs 16608 — **all outside the lagrange/quotient arms 15904-16192 — at a boundary nothing
+  before it writes.** Not fixable by adding `Frame`/`Clean` fields.
+- **Do.** Determine which of: (a) the plan must emit the PCS computations (ties to D-P47's fixture
+  re-export — the CS data may include them); or (b) those clauses belong to the `quotientLin` row's
+  post. Report with evidence from the plan/Inv definitions.
+- **Deliverable.** The verdict and which card it becomes. **If (a), it is part of D-P47, not separate
+  work — say so.**
+- **Does NOT need.** Proving anything; editing the plan.
+
+---
+### M.1 — Prove `blockContracts_of_valid` generically  **[READY — THE HINGE]**  **[MERGED 126c99e - OUTCOME (B): needs ALL 7 rows; narrowing moves nothing]**
 
 SEM · PROOF · box 2.5 h · strongest · after T.2
 

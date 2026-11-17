@@ -1816,3 +1816,17 @@ because guessing on them risks a soundness error, not a delay:
   as literally typed, so it may be unfixable rather than unfinished. **Determine whether `end_to_end`
   is dischargeable at all while it is a placeholder** before choosing between retyping the codec and
   changing what `end_to_end` is about.
+
+## D-P48 — **Approved: add the `RETURN_MPTR` pin to `Render.Valid` (same rationale as D-P46)**
+
+> Raised by T.1, confirmed as load-bearing by M.1. The human delegated decisions on 2026-11-17.
+
+**Decision: add a `returnMptr` clause to `Render.Valid` §2**, pinning `∃ m, R.consts.lookup
+"RETURN_MPTR" = some m` (the deployment value is 4096, present in `pinnedConstants`).
+**Rationale, and it is the same argument as D-P46:** adding a clause to `Valid` can only make it
+*harder* to satisfy, never easier, so it cannot make a false headline true. **And M.1 established this
+is not optional:** `tr_blockProgress` requires `trRetMptr R`, so without it the TraceReturn row cannot
+be discharged from `R.Valid` at all — the pin sits on the critical path to the hinge, not off in a
+corner. `Valid` currently carries `transcriptMptr` only (`Statements.lean:169`), which is why T.1 hit
+it and why the asymmetry exists: **progress asserts existence and so inherits a data obligation
+soundness does not.**
