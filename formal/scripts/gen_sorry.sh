@@ -17,6 +17,7 @@ owner() {
     Midfall/Yul/*)                echo 'P-SE stage 1-2: Yul run/contracts layer (semantic equivalence)' ;;
     Midfall/Lowering/*)           echo 'P-SE: semantic equivalence obligations' ;;
     Midfall/Assumptions/*)        echo 'P-SE: named holes in assumption files' ;;
+    Midfall/LoweringV2/Blocks/FinalPairing.lean) echo 'V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps' ;;
     Midfall/LoweringV2/*)         echo 'V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md' ;;
     Midfall/Instances/PoseidonV2.lean) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
     Midfall/Instances/PoseidonValid.lean) echo 'V2 (PLAN-V2): C.4 Valid.model - no Inhabited Model, kernel cannot reduce poseidonModel' ;;

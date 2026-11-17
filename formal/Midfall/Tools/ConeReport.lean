@@ -30,6 +30,7 @@ import Midfall.LoweringV2.Shared
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
+import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.Instances.PoseidonV2
 import Midfall.Tools.ConeSorries
 
@@ -46,3 +47,10 @@ import Midfall.Tools.ConeSorries
 #cone_avoids Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
 
 #cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
+
+-- FP.0's own root: the FinalPairing block contract, whose cone is exactly the three named lemma
+--    groups (P.1 / T.4 / T.5). Nothing in the headline's cone cites it yet - the headline reaches the
+--    per-block contracts only through the generic sorried `blockContracts_of_valid` - so this is the
+--    number P.1, T.4 and T.5 watch, and it is the number that says the three groups are in the cone. 
+#cone_sorries Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts
+#cone_avoids Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
