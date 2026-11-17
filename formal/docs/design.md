@@ -1863,3 +1863,44 @@ retries it.**
 `tr_blockRow`/`fp_blockRow`, which cite `tr_blockSound` *with* the arm. **The card must repair them in
 the same commit** from the arm-free restatements, and must show `cone_sorries` unchanged at every
 existing root — a shape change that silently breaks a landed proof is the failure mode here.
+
+## D-P50 — **Approved: add the six `vkLoading` pins to `Render.Valid`, and land S.8's proved deployment discharge**
+
+> S.8 measured all six TRUE and PROVED them at the deployment, sorry-free. The human delegated
+> decisions on 2026-11-17.
+
+**Decision: add `vkPins` and `vkProgressPins` as fields of `Render.Valid` (§2), and land S.8's two
+proved structure terms in `Instances/`.** Rationale:
+
+1. **It is structurally required, not cosmetic.** `blockContracts_of_valid` takes `hR : R.Valid` and
+   must yield a row for every `Partial`. S.4 established that `BlockSound R .vkLoading` is **false**
+   without the pins. So if the pins are not reachable from `R.Valid`, **the hinge cannot be proved from
+   its own stated hypothesis** — it would need extra hypotheses, which changes a cone member's
+   signature and ripples into C.2's composition. Putting them in `Valid` is the contained fix.
+2. **They are exactly the kind of fact `Valid` exists to pin** — 'this render is the generator's output
+   for THIS verifying key'. A render whose VK window is not the table's VK window is not that render.
+3. **They are proved, not guessed.** S.8 printed both sides of all six and constructed
+   `vkPins poseidonRender` and `vkProgressPins poseidonRender` with **no `sorryAx`**. This is what
+   distinguishes D-P50 from the guess I refused last round: **the evidence exists before the frozen
+   edit, not after.** Same direction as D-P46/D-P48 — adding clauses only strengthens `Valid`, so it
+   cannot make a false headline true.
+
+**Cost accepted, stated plainly:** each pin is discharged at the deployment by `native_decide`, so
+`poseidon_valid` will carry **six more compiler-trusted axioms** (`<decl>._native.native_decide.ax_1_1`
+per pin, on top of the existing `poseidonModel_isOk` one). §6's DONE test permits 'the `native_decide`
+compiler-trust axiom(s) that Q0.3 records', so this is within scope — **but the headline's trusted base
+grows by six decisions, and STATUS must say so rather than bury it.** Discharges live in `Instances/`
+(`check_frozen_axioms.py` probes only `Statements.lean`).
+
+**What this does NOT fix, and the card said so unprompted.** True pins do not make
+`poseidonRender.Valid` reachable — **C.4 refutes 6 of its 11 clauses** (`circuitMeta`, `layout`,
+`invariants`, `codegen`, `slots`, `supported`). D-P50 removes the *guessed-premise* objection to the
+hinge; it does not move `cone_sorries vk_blockRow`, which stays at 3, and it does not touch
+`poseidon_valid`'s refutation. **The critical path is still D-P47's fixture re-export.**
+
+**A method finding worth recording:** the noncomputability culprit is `Assumptions.instGroupBlsGT`, the
+carrier instance — not `poseidonRender`'s own fields. And **plain `decide`/`rfl` fail on all six even
+at the computable proxies** (stuck at `List.lookup "VK_MPTR" (constTableOf poseidonM)`;
+`maxRecDepth 20000` still stuck; `vm_decide` unavailable). **The only working route is `native_decide`
+on the proxies plus defeq transfer back to the render.** Any later card that tries to decide a `consts`
+lookup will hit this.

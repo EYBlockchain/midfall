@@ -567,7 +567,7 @@ SEM · PROOF · box 2 h · strongest · after S.3
 - **Does NOT need.** Other blocks; the deployment; the pairing.
 - **Accept.** Sorry-free or a named lemma per gap; **report whether the headline cone moved.**
 
-### S.8 — Verify the six `vkLoading` pins at the deployment  **[READY — RUN BEFORE ANY `Valid` CHANGE]**
+### S.8 — Verify the six `vkLoading` pins at the deployment  **[READY — RUN BEFORE ANY `Valid` CHANGE]**  **[DONE 89e9c0a - all six pins TRUE and PROVED at the deployment; see D-P50/S.9]**
 
 GEN · KAT · box 1 h · Sonnet · after S.4
 
@@ -589,6 +589,31 @@ GEN · KAT · box 1 h · Sonnet · after S.4
   deeper than under-pinning.
 - **Stop if.** A pin is not decidable by computation (report which and why).
 - **Does NOT need.** Editing `Valid`; any block row; the pairing.
+
+---
+### S.9 — Land the six pins: `Valid` fields + the proved deployment discharge  **[READY]**
+
+INFRA · PORT · box 1.5 h · Sonnet · after S.8
+
+- **Goal.** Execute D-P50: add `vkPins`/`vkProgressPins` as `Render.Valid` fields and land S.8's proved
+  structure terms so `vk_blockRow` can be discharged from facts rather than hypotheses.
+- **Needs.** `/tmp/s8/` probes — **if missing, STOP**: the proved `pins_at_render` /
+  `progress_at_render` terms and the six `native_decide` lemmas must be transplanted, not re-derived.
+  `Blocks/VkLoading.lean:668`/`:684` (the structures); `Instances/PoseidonValid.lean:87-88` (proxies);
+  the defeq transfer lemmas `poseidonConsts_eq`/`poseidonPv_eq`/`poseidonPlan_eq`/`poseidonCfg_eq`.
+- **Do.** 1. Add the two structures as fields of `Render.Valid` (`Statements.lean` §2 — **frozen, so
+  re-hash `Frozen.sha256` in the same commit and say so in the message**). 2. Land the six decided
+  lemmas + two structure terms in `Instances/PoseidonPins.lean`. 3. Feed them to `vk_blockRow` so the
+  pins are no longer free hypotheses. 4. Regenerate `SORRY.md`.
+- **Accept.** `verify.sh --quick` green; **`cone_sorries` at every root before and after — `vk_blockRow`
+  is expected to STAY at 3** (the pins were never the sorried part). `#print axioms` of the two
+  structure terms, with `sorryAx` grep = 0. **List all `native_decide` axioms now in the deployment
+  path — the count should go from 1 to 7.** Frozen re-hash shown as a deliberate diff.
+- **Stop if.** `/tmp/s8/` is gone · adding the fields breaks any existing `Valid` construction site
+  (report it — that means something already builds a `Valid`) · a re-derived pin fails where S.8 proved
+  it (that contradicts S.8 and must be reported, not fixed silently).
+- **Does NOT need.** Proving `vk_sound_clean`/`vk_progress`/`vk_poison_walk`; any other block row;
+  the pairing; v1 files; `vendor/`.
 
 ---
 ### S.5 — `BlockRow` for `transcriptParser`  **[READY after S.3]**
