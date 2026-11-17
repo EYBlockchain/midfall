@@ -32,10 +32,14 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
   output at the tip. Rules W1–W15 bind (EXECUTION-V2 §5 and PLAN-V3 §4).
 - **Statuses are set from `after` only.** A `PROOF` card about Yul is additionally not READY until
   W14's exhibit exists (T3.11), whatever this column says.
-- **D-P71 (signed 2026-11-17, `design.md`).** The goal is the generator theorem `lowering_correct`,
-  for every render with `ValidV3`; fixtures are tests. Rows whose note says "D-P71: restated by
-  PL.G" are **not briefed as written** until PL.G has run. PL.G is a plan edit the human runs in a
-  plan session; skip its row. GEN.0 is a probe; it becomes READY when PL.G has run.
+- **D-P71, D-P72 and D-P73 (signed 2026-11-17, `design.md`).** The goal is the generator theorem
+  `lowering_correct`, for every render with `ValidV3`, widened to the IVC verifier
+  (`lowering_correctW`); fixtures are tests. Card PL.G has run: rows marked "restated for every
+  render" carry the new text in `PLAN-V3-cards.md`, their children are the lettered rows under
+  them (area GEN-ROWS), and area WID is milestone M9. T3.4 is dropped, T3.6 is replaced by GEN.1,
+  T3.3 and T3.11 are tests. D-P73 (signed the same day): the generator itself is certified —
+  area CERT, milestone M10. **No PROOF card may state or prove anything at a fixture.** A missed
+  threshold of PLAN-V3 §5 M5 goes to the human; per-fixture rows are not a fallback.
 
 | # | ID | card | M | layer · type · box · model | after | status | source / note |
 |---|---|---|---|---|---|---|---|
@@ -49,7 +53,7 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 8 | **ST.1** | Land the V3 staging module, its deployment file and the falsifiers (no frozen edit) | M0 | INFRA · STATEMENT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards |
 | 9 | **PL.0** | Cut over to PLAN-V3 | M0 | INFRA · DECISION · 0.5 h · orchestrator, no subagent | D-P60 is signed | DONE (this cut-over) | PLAN-V3-cards |
 | 10 | **OBJ.17** | Name the target: fixture F1 | M0 | DECISION · DECISION · 0.5 h · orchestrator + human | — | READY | PLAN-V3-cards; docs edit applying D-P60's naming clause |
-| 10a | **PL.G** | Restate the plan for the generator theorem (D-P71) | M0 | INFRA · DECISION · 2.5 h · the plan session with the human, no subagent | D-P71 is signed | READY — not briefed: the human runs it in a plan session | PLAN-V3-cards (area GEN) |
+| 10a | **PL.G** | Restate the plan for the generator theorem (D-P71) | M0 | INFRA · DECISION · 2.5 h · the plan session with the human, no subagent | D-P71 is signed | DONE 2026-11-17 (plan session) | PLAN-V3-cards (area GEN) |
 | 11 | **Q0.5** | Repair the non-vacuity gate + the RETURN_MPTR pin (one `Statements.lean` re-hash) | M0 | INFRA · PORT · strongest | F.1 | READY | V2 card below; D-P66 later strengthens it at ST.4 |
 | 12 | **S.10** | Fix the stale `Valid` clause-count prose | M0 | INFRA · KAT · Sonnet | — | READY | V2 card below |
 | 13 | **REF.D** | Reference-side decisions | M1 | DECISION · DECISION · 0.5 h · orchestrator + human | PL.0 or earlier | DONE — D-P61–63 signed | PLAN-V3-cards |
@@ -84,26 +88,27 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 42 | **OBJ.16** | Probe: does the port reproduce the three other in-scope fixtures | M2 | GEN · PROBE · 1 h · Sonnet | OBJ.7 | after OBJ.7 | PLAN-V3-cards |
 | 43 | **R.3** | Make `Valid.model` dischargeable (D-P56) | M2 | GEN · PROOF · strongest | F.1 | READY | V2 card below; OBJ.8 offers a second route |
 | 44 | **RECON.1** | One `ValidV3`: reconcile the two typechecked texts | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.7, ST.1 | after OBJ.7, ST.1 | PLAN-V3-cards; before ST.6 and D-P67 lands |
+| 44b | **RECON.1b** | Rebase the generic evidence onto the single `ValidV3` | M3 | GEN · STATEMENT · 2.5 h · strongest | RECON.1 | after RECON.1 | PLAN-V3-cards; D-P71: rebases the generic evidence onto the single `ValidV3` |
 | 45 | **RECON.2** | One composition: the four V3 obligations from the staged rows | M3 | SEM · SKELETON · 2.5 h · strongest | SIM.1, ST.1, RECON.1 | after SIM.1, ST.1, RECON.1 | PLAN-V3-cards; before SIM.2 and ST.5 |
 | 46 | **ST.2** | Statement-surface decisions | M3 | DECISION · DECISION · 0.5 h · orchestrator + human | ST.1 | DONE — D-P64, D-P66 signed | PLAN-V3-cards |
 | 47 | **SIM.0** | Block architecture and proof technology | M3 | DECISION · DECISION · 0.5 h · orchestrator + human | ST.1 | DONE — D-P68 signed | PLAN-V3-cards |
 | 48 | **ST.4** | Cut-over B1: codec bundles, calldataOf, EndToEnd, EntryFrame, the headline, the gate | M3 | INFRA · PORT · 2.5 h · Sonnet | ST.3 | after ST.3 | PLAN-V3-cards |
 | 49 | **ST.5** | Cut-over B2: the composition in Blocks.lean and the headline assembly | M3 | INFRA · PORT · 2.5 h · Sonnet | ST.4 | after ST.4 | PLAN-V3-cards |
-| 50 | **ST.6** | Cut-over C: Render.Valid in its V3 text | M3 | GEN · PORT · 2.5 h · Sonnet | ST.4 | after ST.4 | PLAN-V3-cards |
-| 51 | **OBJ.8** | State ValidV3 on the frozen surface and rebuild the fixture render from the generator | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.0, OBJ.3, OBJ.4, OBJ.7 | after OBJ.3, OBJ.4, OBJ.7 | PLAN-V3-cards |
+| 50 | **ST.6** | Cut-over C: Render.Valid in its V3 text | M3 | GEN · PORT · 2.5 h · Sonnet | ST.4, RECON.1 | after ST.4, RECON.1 | PLAN-V3-cards |
+| 51 | **OBJ.8** | State ValidV3 on the frozen surface and rebuild the fixture render from the generator | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.0, ST.3, OBJ.4, OBJ.7 | after ST.3, OBJ.4, OBJ.7 | PLAN-V3-cards |
 | 52 | **REF.7** | KeyAgrees: the key pins EnvAgrees lacks | M3 | ALG · STATEMENT · 1.5 h · Sonnet | REF.6 | after REF.6 | PLAN-V3-cards |
 | 53 | **ST.15** | Deployment data: delta and the post-processed plan meta | M3 | GEN · PORT · 2 h · Sonnet | ST.6 | after ST.6 | PLAN-V3-cards |
 | 54 | **OBJ.9** | Prove the decidable half of ValidV3 at the fixture | M3 | GEN · PROOF · 2 h · Sonnet | OBJ.8 | after OBJ.8 | PLAN-V3-cards |
 | 55 | **ST.7** | The V3 clause table at poseidonRender | M3 | GEN · KAT · 2 h · Sonnet | ST.6 | after ST.6 | PLAN-V3-cards |
 | 56 | **SIM.1** | Land the Lean staged view (section 1 of the scratch file) | M3 | ALG · PORT · 2 h · Sonnet | SIM.0 | READY | PLAN-V3-cards |
-| 57 | **SIM.2** | Land StageInv, BlockSim, BlockProgS and the proved composition | M3 | INFRA · SKELETON · 2.5 h · strongest | SIM.1 | after SIM.1 | PLAN-V3-cards |
+| 57 | **SIM.2** | Land StageInv, BlockSim, BlockProgS and the proved composition | M3 | INFRA · SKELETON · 2.5 h · strongest | SIM.1, RECON.2 | after SIM.1, RECON.2 | PLAN-V3-cards |
 | 58 | **SIM.3** | Conjunct 3 without a snapshot: exit scan, TraceReturn exit, two outcomes | M3 | INFRA · PORT · 2 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
 | 59 | **SIM.7** | Migrate the proved rows and retire the old composition | M3 | SEM · PORT · 1.5 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
 | 60 | **SIM.8** | Restate the VkLoading row over StageInv | M3 | SEM · STATEMENT · 1.5 h · Sonnet | SIM.2 | after SIM.2 | PLAN-V3-cards |
 | 61 | **ST.8** | TwoOutcomes: the Step-induction requirements table and the invariant statement | M3 | SEM · SKELETON · 2 h · strongest | ST.1 | after ST.1 | PLAN-V3-cards |
 | 62 | **SIM.4** | Probe the exit-discipline meta-lemma | M3 | INFRA · PROBE · 1.5 h · Sonnet | SIM.3 | after SIM.3 | PLAN-V3-cards |
 | 63 | **DG.3** | Pin the closure of the frozen statements | M3 | INFRA · DECISION · 1.5 h · strongest | DG.2 | after DG.2 | PLAN-V3-cards |
-| 64 | **DG.4** | State Done at the deployment, with its refutation | M3 | INFRA · STATEMENT · 2 h · Sonnet | DG.1 | after DG.1 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
+| 64 | **DG.4** | State `Done` for the generator theorem, with its refutation | M3 | INFRA · STATEMENT · 2 h · Sonnet | DG.1, ST.1, REF.8 | after DG.1, ST.1, REF.8 | PLAN-V3-cards; D-P71: restated for every render |
 | 65 | **REF.13** | Probe: snapshotOf against Rust's intermediate values | M4 | ALG · PROBE · 1 h · Sonnet | REF.8 | after REF.8 | PLAN-V3-cards |
 | 66 | **REF.14** | Probe: the calldata leg at the real codec | M4 | ALG · PROBE · 1 h · Sonnet | REF.6, REF.11 | after REF.6, REF.11 | PLAN-V3-cards |
 | 67 | **DG.5** | The fixture calldata as a pure term | M4 | GEN · KAT · 1.5 h · Sonnet | DG.4 | after DG.4 | PLAN-V3-cards |
@@ -112,24 +117,52 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 70 | **ST.17** | HypothesesInhabitedV3: feasibility probe | M4 | ALG · PROBE · 2.5 h · strongest | ST.14 | after ST.14 | PLAN-V3-cards |
 | 71 | **OBJ.10** | Split generateVk into base and reservation loop; data-level base payload | M4 | GEN · PORT · 2.5 h · Sonnet | OBJ.6 | after OBJ.6 | PLAN-V3-cards |
 | 72 | **OBJ.12** | The artifact gate: both files byte for byte, nothing from the artifact | M4 | GEN · KAT · 2 h · Sonnet | OBJ.7, OBJ.10, OBJ.11 | after OBJ.7, OBJ.10, OBJ.11 | PLAN-V3-cards |
-| 73 | **T3.0** | Certificate-cost probe: choose how the kernel checks a symbolic execution | M5 | SEM · PROBE · 2.5 h · strongest | — | READY | PLAN-V3-cards; may be pulled forward when blocked (PLAN-V3 §5) |
-| 73a | **GEN.0** | Symbolic-layout probe: does the `wp` engine run a parametric slice? | M5 | SEM · PROBE · 2.5 h · strongest | PL.G | after PL.G | PLAN-V3-cards (area GEN); D-P71: runs first and alone; PL.G corrects the card (constants are `Nat`) and lands its statement skeleton first |
-| 73b | **GEN.2** | Scope probe: which `SupportedV3` clauses does the IVC key fail? | M5 | INFRA · KAT · 2 h · Sonnet | REF.11 | after REF.11 | PLAN-V3-cards (area GEN) |
+| 72a | **WID.2** | KAT: the ported partials render the IVC verifier byte for byte | M9 | GEN · KAT · 1 h · Sonnet | — | READY | PLAN-V3-cards (area WID); D-P72 |
+| 72b | **WID.1** | Land the widening statements (no frozen edit) | M9 | INFRA · PORT · 2 h · Sonnet | ST.1, SIM.1, SIM.2 | after ST.1, SIM.1, SIM.2 | PLAN-V3-cards (area WID); D-P72 |
+| 72c | **WID.3** | Exporter for the decider key (production SRS, no proof) | M9 | INFRA · PORT · 2.5 h · Sonnet | REF.11 | after REF.11 | PLAN-V3-cards (area WID); D-P72 |
+| 72d | **WID.4** | Test fixture F2 under one seeded test SRS (D-P72 clauses 7, 8) | M9 | INFRA · PORT · 2.5 h · Sonnet | WID.3 | after WID.3 | PLAN-V3-cards (area WID); D-P72 |
+| 72e | **GEN.2** | Clause table of the widened class on both test keys | M9 | INFRA · KAT · 1.5 h · Sonnet | WID.3, WID.1 | after WID.3, WID.1 | PLAN-V3-cards (area WID); D-P72 |
+| 72f | **WID.5** | `generateAll` in accumulator and external-evaluator mode; three artifact gates | M9 | GEN · PORT · 2.5 h · strongest | OBJ.7, WID.3 | after OBJ.7, WID.3 | PLAN-V3-cards (area WID); D-P72 |
+| 72g | **WID.6** | The evaluator as an object: `evalBodyOf` and its scans | M9 | GEN · STATEMENT · 2.5 h · strongest | WID.5, OBJ.2 | after WID.5, OBJ.2 | PLAN-V3-cards (area WID); D-P72 |
+| 72g2 | **WID.7** | `ivcRender` and its validity by computation (test) | M9 | GEN · KAT · 2.5 h · strongest | WID.5, WID.6, WID.4, OBJ.9 | after WID.5, WID.6, WID.4, OBJ.9 | PLAN-V3-cards (area WID); D-P72: a test — the F2 analogue of OBJ.8/OBJ.9 |
+| 72h | **WID.8** | Reference gate at F2: the accumulator, `alpha` and the two pairing inputs | M9 | ALG · KAT · 2.5 h · Sonnet | REF.10, WID.4, WID.1, WID.7 | after REF.10, WID.4, WID.1, WID.7 | PLAN-V3-cards (area WID); D-P72 |
+| 72i | **WID.9** | Acceptance gate at F2 (test SRS) | M9 | ALG · KAT · 2 h · Sonnet | WID.8, REF.12, WID.5, WID.7 | after WID.8, REF.12, WID.5, WID.7 | PLAN-V3-cards (area WID); D-P72 |
+| 73 | **T3.0** | Certificate-cost probe: choose how the kernel checks a symbolic execution | M5 | SEM · PROBE · 2.5 h · strongest | — | OPTIONAL (D-P71): off the path | PLAN-V3-cards; nothing depends on it: loops are not unrolled (GEN.3) |
+| 73a | **GEN.0** | Land parametric execution: `vk_all_param` for every constant table and scope | M5 | SEM · PORT · 2 h · Sonnet | T3.1b | after T3.1b | PLAN-V3-cards (area GEN); D-P71: first of the M5 proof cards; may be pulled forward when blocked |
+| 73b | **GEN.3** | Land the loop rule for a symbolic bound | M5 | SEM · PORT · 1.5 h · Sonnet | T3.1b | after T3.1b | PLAN-V3-cards (areas GEN, GEN-ROWS); may be pulled forward when blocked |
+| 73c | **GEN.4** | The inliner distributes over a concatenation | M5 | GEN · PROOF · 2 h · strongest | — | READY | PLAN-V3-cards (areas GEN, GEN-ROWS); may be pulled forward when blocked |
+| 73d | **GEN.5** | Land the generic row statements and their shared definitions | M5 | SEM · PORT · 2 h · Sonnet | RECON.3, RECON.1b | after RECON.3, RECON.1b | PLAN-V3-cards (area GEN-ROWS); every GEN-ROWS child waits for it |
 | 74 | **T3.1** | Land the wp engine and the lawful executable Bridge dialect | M5 | SEM · PORT · 2 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked |
+| 74a | **T3.1b** | Land the `wp_run` tactic and the existence statements | M5 | SEM · PORT · 1.5 h · Sonnet | T3.1 | after T3.1 | PLAN-V3-cards (area GEN); lands `wp_run` (T3.4 is dropped); may be pulled forward when blocked |
 | 75 | **T3.3** | Generated slice literals with pins | M5 | GEN · EMIT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked; D-P71: a test only (feeds W14), never a proof |
-| 76 | **T3.2** | Totality: wpSS_exists | M5 | SEM · PROOF · 2.5 h · strongest | T3.1 | after T3.1 | PLAN-V3-cards |
+| 76 | **T3.2** | Totality: wpSS_exists | M5 | SEM · PROOF · 2.5 h · strongest | T3.1b, GEN.0 | after T3.1b, GEN.0 | PLAN-V3-cards |
 | 77 | **T3.4** | TraceReturn at the deployment (calibration A) | M5 | SEM · PROOF · 2 h · Sonnet | T3.1, T3.3 | DROPPED (D-P71) | PLAN-V3-cards; the row is proved for every `R` (`tr_blockSound`, `tr_blockProgress`); SIM.7 migrates it |
 | 78 | **T3.5** | Word and memory layer, accepted by the vkLoading residue | M5 | ALG · PROOF · 2.5 h · strongest | T3.1 | after T3.1 | PLAN-V3-cards |
-| 79 | **HLP.1** | Helper call summaries | M5 | SEM · PROOF · 2.5 h · strongest | T3.1, T3.3, T3.5 | after T3.1, T3.3, T3.5 | PLAN-V3-cards |
+| 79 | **HLP.1** | Helper call summaries | M5 | SEM · SKELETON · 2 h · strongest | GEN.0, T3.5 | after GEN.0, T3.5 | PLAN-V3-cards; D-P71: restated for every render |
+| 79a | **HLP.1.a** | The helper block of every render | M5 | GEN · PORT · 0.5 h · Sonnet | GEN.5 | after GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 79b | **HLP.1.b** | batch_invert: the forward pass | M5 | SEM · PROOF · 2.5 h · strongest | GEN.3, HLP.1.a, T3.9.a, GEN.5 | after GEN.3, HLP.1.a, T3.9.a, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 79c | **HLP.1.c** | batch_invert: the backward pass and the summary | M5 | SEM · STATEMENT · 2.5 h · strongest | HLP.1.b, T3.5, GEN.5 | after HLP.1.b, T3.5, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
 | 80 | **T3.6** | vkLoading row at the deployment (calibration B) | M5 | SEM · PROOF · 2.5 h · strongest | T3.4, T3.5 | REPLACED BY GEN.1 (D-P71) | PLAN-V3-cards; do not run |
-| 80a | **GEN.1** | The vkLoading row for every render (calibration; replaces T3.6) | M5 | SEM · PROOF · 2.5 h · strongest | GEN.0, SIM.8, T3.2, T3.5, T3.11 | after GEN.0, SIM.8, T3.2, T3.5, T3.11 | PLAN-V3-cards (area GEN); D-P71: a missed Accept line goes to the human |
-| 81 | **T3.7** | Statement-level driver with cuts, accepted by the lagrange slice | M5 | SEM · PROOF · 2.5 h · strongest | T3.0, T3.1 | after T3.0, T3.1 | PLAN-V3-cards |
+| 80a | **GEN.1** | The vkLoading row for every render (calibration B; replaces T3.6) | M5 | SEM · PROOF · 2.5 h · strongest | GEN.0, SIM.8, T3.2, T3.5, T3.11, OBJ.4, RECON.3 | after GEN.0, SIM.8, T3.2, T3.5, T3.11, OBJ.4, RECON.3 | PLAN-V3-cards (area GEN); D-P71: calibration B — a missed Accept line goes to the human |
+| 81 | **T3.7** | Statement-level driver with cuts, accepted by the lagrange slice | M5 | SEM · PROOF · 2.5 h · strongest | T3.0, T3.1 | DROPPED (D-P71) | PLAN-V3-cards; its deliverable is a proof on the fixture's literal slice |
 | 82 | **T3.8** | Field-arithmetic bridge, accepted by x_n = x^(2^k) | M5 | ALG · PROOF · 2 h · strongest | T3.5 | after T3.5 | PLAN-V3-cards |
-| 83 | **T3.9** | Lagrange row at the deployment (calibration C) | M5 | SEM · PROOF · 2.5 h · strongest | T3.7, T3.8 | after T3.7, T3.8 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
+| 83 | **T3.9** | Lagrange row for every render (calibration C) | M5 | SEM · PROOF · 2.5 h · strongest | GEN.1, GEN.3, HLP.1.c, T3.8, OBJ.4, T3.9.a–h, RECON.3 | after GEN.1, GEN.3, HLP.1.c, T3.8, OBJ.4, T3.9.a–h, RECON.3 | PLAN-V3-cards; D-P71: restated for every render |
+| 83a | **T3.9.a** | Lagrange loop 1: k squarings (first use of the loop rule) | M5 | SEM · PROOF · 2 h · strongest | GEN.3, T3.8, GEN.5 | after GEN.3, T3.8, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83b | **T3.9.b** | Lagrange loop 2: the denominators | M5 | SEM · PROOF · 2 h · Sonnet | T3.9.a, T3.5, GEN.5 | after T3.9.a, T3.5, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83c | **T3.9.c** | Lagrange loop 3: inverses to Lagrange values | M5 | SEM · PROOF · 1.5 h · Sonnet | T3.9.b, GEN.5 | after T3.9.b, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83d | **T3.9.d** | Lagrange loop 4: l_blind | M5 | SEM · PROOF · 1 h · Sonnet | T3.9.a, GEN.5 | after T3.9.a, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83e | **T3.9.e** | Lagrange loop 5: the instance polynomial | M5 | SEM · PROOF · 1.5 h · Sonnet | T3.9.a, GEN.5 | after T3.9.a, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83f | **T3.9.g** | The Lagrange word relation is the verifier's Lagrange step | M5 | ALG · PROOF · 2.5 h · strongest | T3.8, GEN.5 | after T3.8, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 83g | **T3.9.h** | Lagrange: the poisoned half | M5 | SEM · PROOF · 1.5 h · Sonnet | HLP.1.c, T3.9.a–e, GEN.5 | after HLP.1.c, T3.9.a–e, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
 | 84 | **ST.16** | BodyTotal: the requirements table | M5 | SEM · PROBE · 2 h · Sonnet | ST.5 | after ST.5 | PLAN-V3-cards |
-| 85 | **T3.10** | Quotient numerator: classify, choose the route, state the contract | M5 | SEM · STATEMENT · 2 h · strongest | T3.3 | after T3.3 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 86 | **SIM.6** | The prefix rows: prefix_sim and prefix_prog | M5 | SEM · PROOF · 2.5 h · strongest | SIM.2 | after SIM.2 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
+| 85 | **T3.10** | Quotient numerator: route B only | M5 | SEM · STATEMENT · 2.5 h · strongest | OBJ.2, OBJ.14, OBJ.15 | after OBJ.2, OBJ.14, OBJ.15 | PLAN-V3-cards; D-P71: restated for every render |
+| 86 | **SIM.6** | The prefix rows: prefix_sim and prefix_prog | M5 | SEM · PROOF · 2.5 h · strongest | SIM.2, RECON.2, OBJ.4, SIM.6.a–d, RECON.3 | after SIM.2, RECON.2, OBJ.4, SIM.6.a–d, RECON.3 | PLAN-V3-cards; D-P71: restated for every render |
+| 86a | **SIM.6.a** | The model's shape flags under validity | M5 | GEN · PROOF · 1 h · strongest | RECON.1, GEN.5 | after RECON.1, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 86b | **SIM.6.b** | The static half of abiHeadOk | M5 | ALG · PROOF · 1 h · strongest | RECON.1, GEN.5 | after RECON.1, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 86c | **SIM.6.c** | The ABI guard | M5 | SEM · PROOF · 2 h · strongest | GEN.0, OBJ.4, SIM.6.b, GEN.5 | after GEN.0, OBJ.4, SIM.6.b, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 86d | **SIM.6.d** | Function definitions execute as a no-op | M5 | SEM · PROOF · 0.5 h · Sonnet | GEN.5 | after GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
 | 87 | **ST.13** | runBody_mono | M5 | SEM · PROOF · 2 h · strongest | ST.5 | after ST.5 | PLAN-V3-cards |
+| 87a | **RECON.3** | Move the row families to the widened shape (D-P72 clause 1) | M6/M9 | SEM · STATEMENT · 2.5 h · strongest | RECON.2, WID.1 | after RECON.2, WID.1 | PLAN-V3-cards (area WID); D-P72 clause 1: before any ROW card of M6 |
 | 88 | **SIM.5** | Prove quiet_init | M6 | INFRA · PROOF · 2.5 h · strongest | SIM.4 | after SIM.4 | PLAN-V3-cards |
 | 89 | **ST.9** | twoOutcomes_of_exitDiscipline: expressions and builtins | M6 | SEM · PROOF · 2.5 h · strongest | — (merged into SIM.4–SIM.5) | DO NOT RUN | PLAN-V3-cards; merged into SIM.4–SIM.5: do not run separately |
 | 90 | **ST.10** | twoOutcomes_of_exitDiscipline: statements and the return tail | M6 | SEM · PROOF · 2.5 h · strongest | — (merged into SIM.5) | DO NOT RUN | PLAN-V3-cards; merged into SIM.5: do not run separately |
@@ -137,17 +170,50 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 92 | **SIM.10** | xcript_total: the transcript-only prefix always exists on decodable calldata | M6 | ALG · PROOF · 2.5 h · strongest | SIM.1 | after SIM.1 | PLAN-V3-cards |
 | 93 | **SIM.11** | The fault table as a gate and as a theorem statement | M6 | ALG · KAT · 2 h · Sonnet | SIM.1 | after SIM.1 | PLAN-V3-cards |
 | 94 | **SIM.12** | PCS row decomposition: the decode-exists lemma | M6 | SEM · STATEMENT · 2 h · strongest | SIM.2, SIM.1 | after SIM.2, SIM.1 | PLAN-V3-cards |
-| 95 | **ROW.TP** | TranscriptParser row: skeleton and requirements table | M6 | SEM · SKELETON · 2 h · strongest | SIM.2, SIM.10, T3.6 (calibration B), OBJ.2 | after SIM.2, SIM.10, T3.6, OBJ.2 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 96 | **ROW.Q** | Quotient row: contract and route | M6 | SEM · SKELETON · 2.5 h · strongest | T3.10 (calibration D), OBJ.2, SIM.2 | after T3.10, OBJ.2, SIM.2 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 97 | **ROW.PCS** | PCS row: decode-exists and the MSM loops | M6 | SEM · SKELETON · 2.5 h · strongest | ROW.Q, SIM.12, T3.9, the M1 exit gate | after ROW.Q, SIM.12, T3.9, the M1 exit gate | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 98 | **ROW.FP** | FinalPairing row, restated | M6 | SEM · PROOF · 2.5 h · strongest | ROW.PCS, PL.1, REF.5, T3.5 | after ROW.PCS, PL.1, REF.5, T3.5 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 99 | **TOT.1** | Totality at F1: `TotalV3 poseidonRender` | M6 | SEM · PROOF · 2.5 h · strongest | ROW.FP, T3.2, ST.13, ST.16, SIM.6 | after ROW.FP, T3.2, ST.13, ST.16, SIM.6 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 100 | **PL.H** | The headline | M7 | INFRA · PROOF · 1 h · strongest | every ROW card, TOT.1, SIM.5, SIM.6, ST.11–ST.13 | after every ROW card, TOT.1, SIM.5, SIM.6, ST.11–ST.13 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 101 | **DG.9** | The DONE commit | M7 | INFRA · KAT · 1 h · Sonnet | DG.3, DG.4, DG.5, DG.6, DG.7, DG.8 | after DG.3, DG.4, DG.5, DG.6, DG.7, DG.8 | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 102 | **PL.E** | End to end and the English statement | M8 | ALG · PROOF · 2.5 h · strongest | PL.H | after PL.H | PLAN-V3-cards; D-P71: restated by PL.G — do not brief as written |
-| 103 | **OBJ.13** | Structured emitter for AccumulatorHelpers | optional | GEN · EMIT · 2 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
-| 104 | **OBJ.14** | Structured emitter for QuotientHelpers | optional | GEN · EMIT · 0.75 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
-| 105 | **OBJ.15** | Structured emitter for the QVM interpreter template | optional | GEN · EMIT · 2.5 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |
+| 95 | **ROW.TP** | TranscriptParser row for every render | M6 | SEM · SKELETON · 2.5 h · strongest | GEN.1, GEN.3, GEN.4, HLP.1, SIM.10, OBJ.4, RECON.3 | after GEN.1, GEN.3, GEN.4, HLP.1, SIM.10, OBJ.4, RECON.3 | PLAN-V3-cards; D-P71: restated for every render |
+| 95a | **ROW.TP.1** | A walk loop is constant-free | M6 | GEN · PROOF · 1 h · Sonnet | GEN.4, GEN.5 | after GEN.4, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95b | **ROW.TP.2** | The walk loop, one lemma for six sections | M6 | SEM · PROOF · 2.5 h · strongest | GEN.3, ROW.TP.3, T3.5, GEN.5 | after GEN.3, ROW.TP.3, T3.5, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95c | **ROW.TP.6** | The parser's read schedule is the layout's slot list | M6 | ALG · PROOF · 2 h · strongest | OBJ.7, GEN.5 | after OBJ.7, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95d | **ROW.TP.7** | The parser computes TpPost | M6 | SEM · PROOF · 2.5 h · strongest | ROW.TP.1–6, GEN.1, GEN.5 | after ROW.TP.1–6, GEN.1, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95e | **ROW.TP.8** | TpPost is the staged boundary | M6 | ALG · PROOF · 2 h · strongest | SIM.10, GEN.5 | after SIM.10, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95f | **ROW.TP.9** | The parser: the poisoned half | M6 | SEM · PROOF · 1.5 h · Sonnet | ROW.TP.2, ROW.TP.4, GEN.5 | after ROW.TP.2, ROW.TP.4, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 95h | **ROW.TP.3** | The four parser helper summaries (`common_word`, `common_uncompressed_g1`, `squeeze_to`, `transcript_init`) | M6 | SEM · STATEMENT+PROOF · — · strongest | ROW.TP | ISSUED BY ROW.TP (step 1): no card until ROW.TP merges | — |
+| 95i | **ROW.TP.4** | The three scalar loops (instance run, evals spill, q_evals run) | M6 | SEM · STATEMENT+PROOF · — · strongest | ROW.TP, GEN.3 | ISSUED BY ROW.TP (step 1): no card until ROW.TP merges | — |
+| 95j | **ROW.TP.5** | The inlined parser refines the fold of `tpEvents` | M6 | SEM · STATEMENT+PROOF · — · strongest | ROW.TP, GEN.4 | ISSUED BY ROW.TP (step 2): no card until ROW.TP merges | — |
+| 96 | **ROW.Q** | Quotient row for every render: route B | M6 | SEM · SKELETON · 2.5 h · strongest | T3.10, OBJ.2, OBJ.14, OBJ.15, SIM.2, RECON.3 | after T3.10, OBJ.2, OBJ.14, OBJ.15, SIM.2, RECON.3 | PLAN-V3-cards; D-P71: restated for every render; issues about 30 children (the card's Guidance lists them): only ROW.Q.1 and ROW.Q.6 are written |
+| 96a | **ROW.Q.1** | The linearization loop | M6 | SEM · PROOF · 1.5 h · Sonnet | T3.9.a, GEN.5 | after T3.9.a, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 96b | **ROW.Q.6** | qvm_compile_correct_identity | M6 | ALG · PROOF · 2.5 h · strongest | GEN.5 | after GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 97 | **ROW.PCS** | PCS row for every render | M6 | SEM · SKELETON · 2.5 h · strongest | ROW.Q, SIM.12, T3.9, GEN.4, the M1 exit gate, RECON.3 | after ROW.Q, SIM.12, T3.9, GEN.4, the M1 exit gate, RECON.3 | PLAN-V3-cards; D-P71: restated for every render; issues the children for PCS blocks 1, 3–6, the coverage invariant and `scalar_inv`: only ROW.PCS.2 and ROW.PCS.9 are written |
+| 97a | **ROW.PCS.2** | PCS block 2: the x1 power table | M6 | SEM · PROOF · 1.5 h · Sonnet | T3.9.b, GEN.5 | after T3.9.b, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 97b | **ROW.PCS.9** | A raw walk with valid frames decodes | M6 | ALG · PROOF · 1 h · Sonnet | SIM.1, GEN.5 | after SIM.1, GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 98 | **ROW.FP** | FinalPairing row for every render | M6 | SEM · PROOF · 2.5 h · strongest | ROW.PCS, PL.1, REF.5, HLP.1, RECON.1, RECON.3 | after ROW.PCS, PL.1, REF.5, HLP.1, RECON.1, RECON.3 | PLAN-V3-cards; D-P71: restated for every render |
+| 99 | **TOT.1** | Totality for every render: `TotalV3 R product` | M6 | SEM · PROOF · 2.5 h · strongest | ROW.FP, T3.2, GEN.3 (existence form), SIM.6, RECON.1, RECON.3 | after ROW.FP, T3.2, GEN.3 (existence form), SIM.6, RECON.1, RECON.3 | PLAN-V3-cards; D-P71: restated for every render |
+| 99a | **TOT.1.a** | A program without gas() runs the same under every gas oracle | M6 | SEM · PROOF · 2.5 h · strongest | GEN.5 | after GEN.5 | PLAN-V3-cards (area GEN-ROWS) |
+| 99m | **WID.11** | The two ALG obligations and the limb lemma | M9 | ALG · PROOF · 2.5 h · strongest | WID.1 | after WID.1 | PLAN-V3-cards (area WID); D-P72 |
+| 99n | **WID.12** | Call summaries for the six accumulator helpers | M9 | SEM · PROOF · 2.5 h · strongest | HLP.1, WID.11, OBJ.2, OBJ.13 | after HLP.1, WID.11, OBJ.2, OBJ.13 | PLAN-V3-cards (area WID); D-P72 |
+| 99o | **WID.13** | vkLoading row, accumulator arm: establish `AccInv` | M9 | SEM · SKELETON · 2.5 h · strongest | GEN.1, RECON.3, WID.12 | after GEN.1, RECON.3, WID.12 | PLAN-V3-cards (area WID); D-P72 |
+| 99p | **WID.14** | Frame clauses: three rows do not write the accumulator slots | M9 | SEM · PROOF · 2 h · strongest | ROW.TP, T3.9, ROW.PCS, RECON.3 | after ROW.TP, T3.9, ROW.PCS, RECON.3 | PLAN-V3-cards (area WID); D-P72 |
+| 99q | **WID.15** | finalPairing row, batching arm: `BatchedInv` | M9 | SEM · SKELETON · 2.5 h · strongest | ROW.FP, RECON.3, WID.11 | after ROW.FP, RECON.3, WID.11 | PLAN-V3-cards (area WID); D-P72 |
+| 99r | **WID.16** | quotientLin row, external arm | M9 | SEM · SKELETON · 2.5 h · strongest | ROW.Q, RECON.3, WID.6 | after ROW.Q, RECON.3, WID.6 | PLAN-V3-cards (area WID); D-P72 |
+| 99s | **WID.17** | The evaluator body: shape, agreement, totality | M9 | SEM · SKELETON · 2.5 h · strongest | ROW.Q, WID.6 | after ROW.Q, WID.6 | PLAN-V3-cards (area WID); D-P72 |
+| 99t | **WID.19** | Totality, widened | M9 | SEM · PROOF · 2.5 h · strongest | TOT.1, WID.16, WID.17 | after TOT.1, WID.16, WID.17 | PLAN-V3-cards (area WID); D-P72 |
+| 100 | **PL.H** | The headline: `lowering_correct` | M7 | INFRA · PROOF · 1 h · strongest | every ROW card and its children, TOT.1, SIM.5, SIM.6, ST.11–ST.13, RECON.2 | after every ROW card and its children, TOT.1, SIM.5, SIM.6, ST.11–ST.13, RECON.2 | PLAN-V3-cards; D-P71: restated for every render |
+| 100a | **WID.H** | The widened headline and the definition of done | M9 | INFRA · PROOF · 1.5 h · strongest | PL.H, RECON.3, WID.13–WID.19, WID.9 | after PL.H, RECON.3, WID.13–WID.19, WID.9 | PLAN-V3-cards (area WID); D-P72 |
+| 101 | **DG.9** | The DONE commit | M7 | INFRA · KAT · 1 h · Sonnet | DG.3, DG.4, DG.5, DG.6, DG.7, DG.8, PL.H, WID.H, CERT.H | after DG.3, DG.4, DG.5, DG.6, DG.7, DG.8, PL.H, WID.H, CERT.H | PLAN-V3-cards; D-P71: restated for every render |
+| 102 | **PL.E** | End to end and the English statement | M8 | ALG · PROOF · 2.5 h · strongest | PL.H | after PL.H | PLAN-V3-cards; D-P71: restated for every render |
+| 103 | **OBJ.13** | Structured emitter for AccumulatorHelpers | M9 | GEN · EMIT · 2 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards; M9: needed by WID.12 (the accumulator helpers as a tree) |
+| 104 | **OBJ.14** | Structured emitter for QuotientHelpers | M6 | GEN · EMIT · 0.75 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards; M6: needed by ROW.Q (D-P71: no tree emitter for the numerator helpers) |
+| 105 | **OBJ.15** | Structured emitter for the QVM interpreter template | M6 | GEN · EMIT · 2.5 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards; M6: needed by ROW.Q (D-P71: the interpreter template as a tree) |
+| 106 | **CERT.0** | Land the certified statement (no frozen edit) | M10 | GEN · PORT · 2 h · Sonnet | OBJ.7, ST.1 | after OBJ.7, ST.1 | PLAN-V3-cards (area CERT); D-P73 |
+| 107 | **CERT.1** | Probe the two suspects: `v3_planMeta` and `v3_cdBound` | M10 | GEN · PROBE · 2.5 h · strongest | CERT.0 | after CERT.0 | PLAN-V3-cards (area CERT); D-P73 |
+| 108 | **CERT.2** | Route A: the generator prints the tree | M10 | GEN · PORT · 2.5 h · strongest | OBJ.13, OBJ.14, OBJ.15, ROW.Q, OBJ.7, CERT.0 | after OBJ.13, OBJ.14, OBJ.15, ROW.Q, OBJ.7, CERT.0 | PLAN-V3-cards (area CERT); D-P73 |
+| 109 | **CERT.3** | `Constants.sol` is printed from the constant table | M10 | GEN · PORT · 2 h · Sonnet | CERT.0 | after CERT.0 | PLAN-V3-cards (area CERT); D-P73 |
+| 110 | **CERT.4** | Family (a): what the generator's own validation checks | M10 | GEN · PROOF · 2.5 h · strongest | CERT.0 | after CERT.0 | PLAN-V3-cards (area CERT); D-P73 |
+| 111 | **CERT.5** | Family (b): syntactic invariants of the tree emitters | M10 | GEN · SKELETON · 2.5 h · strongest | CERT.0, GEN.4, the tree emitter complete (as CERT.2) | after CERT.0, GEN.4, the tree emitter complete (as CERT.2) | PLAN-V3-cards (area CERT); D-P73 |
+| 112 | **CERT.6** | Family (c): builder lemmas | M10 | GEN · PROOF · 2.5 h · strongest | CERT.0, CERT.3 | after CERT.0, CERT.3 | PLAN-V3-cards (area CERT); D-P73 |
+| 113 | **CERT.7** | Family (c)+(d): the payload and the key, through the codec laws | M10 | GEN · PROOF · 2.5 h · strongest | CERT.6, REF.5 | after CERT.6, REF.5 | PLAN-V3-cards (area CERT); D-P73 |
+| 114 | **CERT.8** | `generate` runs on a real key | M10 | GEN · PORT · 2.5 h · strongest | CERT.0, REF.5g | after CERT.0, REF.5g | PLAN-V3-cards (area CERT); D-P73 |
+| 115 | **CERT.H** | `generator_correct`, and the definition of done | M10 | INFRA · PROOF · 1.5 h · strongest | CERT.1–CERT.8, PL.H, WID.H | after CERT.1–CERT.8, PL.H, WID.H | PLAN-V3-cards (area CERT); D-P73 |
 
 ### Leads for the cards above (PLAN-V3 §10.1, verified at `4e18c65`; re-check before relying on one)
 
