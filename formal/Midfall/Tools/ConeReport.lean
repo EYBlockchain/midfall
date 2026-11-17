@@ -32,6 +32,7 @@ import Midfall.LoweringV2.Statements
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV2.Blocks.VkLoading
 import Midfall.Instances.PoseidonV2
 import Midfall.Tools.ConeSorries
 
@@ -68,3 +69,12 @@ import Midfall.Tools.ConeSorries
 --    because no per-block proof reaches the headline until the generic hinge blockContracts_of_valid
 --    (Blocks.lean:152, still sorry) is proved.
 #cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
+
+-- S.4's own roots: the vkLoading row and the sorry-free part of its interface. The row's cone count
+--    is 3 by construction (the clean walk, the poisoned walk, the exhibited run - named in
+--    Blocks/VkLoading.lean section 6); vk_slice is 0. The acceptance finding is that the FOUR roots
+--    above do NOT move, because no per-block row reaches the headline until the generic hinge
+--    blockContracts_of_valid (Blocks.lean:152, still sorry) is proved.
+#cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow
+#cone_sorries Midfall.LoweringV2.Blocks.VkLoading.vk_slice
+#cone_avoids Midfall.LoweringV2.Blocks.VkLoading.vk_blockRow [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]

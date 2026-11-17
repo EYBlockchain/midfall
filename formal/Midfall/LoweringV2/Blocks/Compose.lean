@@ -35,6 +35,7 @@
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Blocks.FinalPairing
 import Midfall.LoweringV2.Blocks.TraceReturn
+import Midfall.LoweringV2.Blocks.VkLoading
 
 namespace Midfall.LoweringV2.Blocks
 
@@ -71,6 +72,20 @@ theorem fp_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     FinalPairing.fp_finalPairing_contracts R product hR hslots hpc H vkAddr cd ms instW inst Snap
       hdec hinst hsnap Partial.finalPairing rfl
 
+/-- **ROW vkLoading, IN M.1'S OWN WRAPPER (S.4).** The third of the six, and unlike the two below
+    it is NOT sorry-free: VkLoading.vk_blockRow carries the three named gaps of
+    Blocks/VkLoading.lean section 6 (the clean walk, the poisoned walk, the exhibited run) and TWO
+    render hypotheses Valid does not supply - vkPins and vkProgressPins, the constant-table facts
+    that file's header explains. It lands here anyway because it fixes the SHAPE the four missing
+    rows must have, and because the interface it needed (that file's sections 1-4: the slice form
+    with the shadow-list refinement T.1 did not need, the site inversion, the fail helper at an
+    ARBITRARY selector site, the recurring assign inversion, the VEnv set/get fact) is sorry-free
+    and is what S.5, S.6 and S.7 can reuse verbatim. -/
+theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hpins : VkLoading.vkPins R) (hppins : VkLoading.vkProgressPins R) :
+    BlockRow R product Partial.vkLoading :=
+  VkLoading.vk_blockRow R product hpins hppins
+
 /-- **TWO OF THE SIX ROWS COMPOSE.** The demonstration that `BlockRow` is the right shape: both
     proved contracts fit §6's wrapper with no refinement of `Frame`/`Clean`/`Poisoned` and no
     new field — the only things they need that `Valid` does not give are the two render pins. Read
@@ -85,6 +100,7 @@ theorem blockContractsAt_twoRows (R : Render p G₁ G₂ Gₜ) (product : Pairin
       · exact fp_blockRow R product hslots
       · exact tr_blockRow R product hpin
 
+#print axioms Midfall.LoweringV2.Blocks.vk_blockRow
 #print axioms Midfall.LoweringV2.Blocks.tr_blockRow
 #print axioms Midfall.LoweringV2.Blocks.blockContractsAt_twoRows
 
