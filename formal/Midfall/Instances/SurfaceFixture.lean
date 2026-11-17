@@ -2019,7 +2019,8 @@ theorem plantedPcsPlaceholderStillSupported :
     emitted slice is empty and the placeholder is one statement, so the replanted main is
     LONGER than the emitted main by exactly one - and a length check would catch this plant
     at the fixture. That is the easy case. The line that matters is the last one: at the Kzg
-    fixture plan the same plant differs by more than a hundred statements, and in both cases
+    fixture plan the same plant differs by more than a hundred statements - counted DEEP since
+    G1.4b, because the emission is one region block at the top level - and in both cases
     the plant differs from the emitter on exactly the slice it plants and on no other. -/
 def plantPcsPlaceholderLengthVisible_ok : Bool :=
   (plantMainWith plantBlkPcsPlaceholder).length = (GenAst.emitMain fxPlan).length + 1 &&
@@ -2029,7 +2030,17 @@ def plantPcsPlaceholderLengthVisible_ok : Bool :=
         (q != Partial.pcs)) &&
     (GenAst.emitPartial fxPlan Partial.pcs).isEmpty &&
     (plantBlkPcsPlaceholder Partial.pcs fxPlan).length == 1 &&
-    (GenAst.emitPartial GenAst.pcsFixturePlan Partial.pcs).length > 100 &&
+    -- G1.4b: the same shape fact as GenAstDispatch.emitPlaceholderIsTotal_ok. Since the pcs arm
+    -- emits the partition as `Stmt.block` scopes instead of flattening it, the real slice is ONE
+    -- region statement at the top level - the same length as the plant - so it is the DEEP count
+    -- that says the plant differs from the emitter by more than a hundred statements here, and it
+    -- additionally pins the ten-block partition the flat length check never could.
+    (match GenAst.emitPartial GenAst.pcsFixturePlan Partial.pcs with
+     | [Stmt.block body] => body.length == 10 &&
+         (body.map (fun s => match s with
+           | Stmt.block inner => inner.length
+           | _ => 1)).foldl (fun n k => n + k) 0 > 100
+     | _ => false) &&
     (Midfall.Lowering.partials.all fun q =>
       SyntaxEq.stmtsBeq (plantBlkPcsPlaceholder q GenAst.pcsFixturePlan)
         (GenAst.emitPartial GenAst.pcsFixturePlan q) == (q != Partial.pcs))

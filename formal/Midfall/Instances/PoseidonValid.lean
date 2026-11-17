@@ -29,7 +29,7 @@
                                   gap (c) plus the dependent-motive obstruction).
     5   inputs          PROVED    unchanged. k = 6 = vk.domain.k.
     6   codegen         REFUTED   unchanged in kind (WP-G1, the un-emitted includes), bigger on both
-                                  sides now: AST 6761 tokens against text 14054 (was 3156/10433) -
+                                  sides now: AST 6779 tokens against text 14054 (was 3156/10433) -
                                   the pcs arm emits 225 statements where it used to emit none.
     7   closed          PROVED    unchanged.
     8   slots           PROVED    FLIPPED. `numNegLagranges` 9 against `blindingFactors + 1` = 9
@@ -292,7 +292,7 @@ theorem deciding_codegen_guard :
     `GenAst.emitSlices` does not emit. AXIOM:
     deciding_codegen_witness._native.native_decide.ax_1_1. -/
 theorem deciding_codegen_witness :
-    (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length = 6761 ∧
+    (yulTokens (YulSemantics.EVM.print (mainAsmRaw poseidonPv))).length = 6779 ∧
       (mainAssemblyTokens poseidonM).length = 14054 := by
   native_decide
 

@@ -52,8 +52,9 @@
 -- partition the text emitter identified with leading comments survives only positionally.
 -- pcsTaggedFromPlan re-derives the ROLE LIST from the plan (set count and x1-power count,
 -- both read off the meta and the Data rather than passed in) and zips it onto the emitted
--- blocks; emitPcsTagging_ok pins that the zip is total, that flattening it gives back
--- exactly what the dispatcher returns, and that the block tagged pairingInputs is the one
+-- blocks; emitPcsTagging_ok pins that the zip is total, that scoping each block of it and
+-- wrapping the ten in one region block gives back exactly what the dispatcher returns, and that
+-- the block tagged pairingInputs is the one
 -- that writes PAIRING_RHS_MPTR. That is the partition as an inductable structure with the
 -- comment's values carried beside it.
 --
@@ -109,13 +110,26 @@ def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
 /-! ### The pcs arm -/
 
 /-- THE PCS SLICE OF ONE PLAN VIEW: computationsAst applied to the plan's own meta, Data,
-    memory and truncation flag, flattened into the single Block Op the pin expects.
+    memory and truncation flag, emitted as NESTED BLOCK SCOPES - one `Stmt.block` per
+    partition block, all of them inside one `Stmt.block` for the region - so that the block
+    the pin receives has the artifact's brace structure.
 
-    WHY FLATTENED: 'blk' returns a Block Op, i.e. a statement list, and the text emitter's
-    block partition is a list of statement lists that the template concatenates inside one
-    region - the braces the token gates add are the comparator's, not the artifact's. So the
-    flattening is faithful to the render. The partition is NOT lost: it is recoverable
-    through pcsTaggedFromPlan below, which is what the tagging is for.
+    WHY SCOPED AND NOT FLATTENED (G1.4). This arm used to end in `blocks.flatten`, justified
+    by "the braces the token gates add are the comparator's, not the artifact's". That
+    sentence is true of the OUTER comparator and FALSE of the inner scopes. The artifact's
+    PCS region is `renderPcs`'s own `{` wrapper (VerifierPartials.lean:2392) with one `{`
+    scope per generated sub-block - the template prints both, no gate adds them - and in Yul
+    a `{` opens a `let` scope (YulSemantics/Ast.lean:65-66, `block` is "a nested block,
+    introducing a new scope"). Dropping the nine pairs was therefore a SCOPING change to the
+    emitted program, not a spelling change: the flattened arm put the whole slice's
+    declarations into the enclosing block's scope where the artifact puts them in nine
+    narrower ones. Measured at the deployment: text pcs 3623 tokens / 26 brace pairs against
+    the flattened arm's 3605 / 17, and the 3571 NON-brace tokens were already identical - so
+    the entire residue was those nine pairs, and emitting them closes the row at `equal
+    true` without moving one non-brace token.
+
+    The partition is not lost either way: it was recoverable through pcsTaggedFromPlan
+    below, and now it is present in the emission as well.
 
     WHY THE ERROR ARM IS THE EMPTY BLOCK: computationsAst aborts where the Rust indexes a
     vector it assumes is long enough (KZ:1788 and KZ:1376, the selector-column reads) and at
@@ -131,7 +145,8 @@ def partialIsEmitted (q : Partial) : Bool := emittedPartials.contains q
 def emitPcsFromPlan (pv : PlanView) : Block Op :=
   match Midfall.Lowering.GenAstPcs.computationsAst pv.meta_ pv.dat pv.memory
       pv.truncatedChallenges false with
-  | .ok blocks => blocks.flatten
+  | .ok [] => []
+  | .ok blocks => [Stmt.block (blocks.map Stmt.block)]
   | .error _ => []
 
 /-- The plan's own PCS shape: how many intermediate point sets and how many x1 powers the
@@ -264,8 +279,8 @@ def emitPcsDispatch_beq_ok : Bool :=
       | none => false) &&
     tagged.length == 10
 
-/-- GATE 46 (THE TRIPWIRE, at the dispatch). The flattened emitted slice tokenises to the
-    text port's flattened blocks - the same comparison computationsAst_tokens_ok makes per
+/-- GATE 46 (THE TRIPWIRE, at the dispatch). The emitted slice tokenises to the text port's
+    blocks WITH their block scopes - the same comparison computationsAst_tokens_ok makes per
     block, now made on the ONE block the dispatcher actually returns - and under all four
     combinations of the two booleans at the emitter level. The dispatch itself always takes
     the production arm (trace = false), so the trace rows are checked against the emitter and
@@ -277,7 +292,15 @@ def emitPcsDispatch_tokens_ok : Bool :=
   let emitted := emitPartial pcsFixturePlan .pcs
   let txt := unF (Midfall.Generator.computations KzgKats.metaF KzgKats.dataF KzgKats.memF
     false false) []
-  yulTokens ("{" ++ String.intercalate "\n" (txt.flatten) ++ "}") == yulTokens (EVM.print emitted) &&
+  -- G1.4b: the emitted slice now CARRIES the partition as `Stmt.block` scopes, so the comparator
+  -- wraps each text block in its own `{`/`}` pair - the ten scopes the artifact's `renderPcs`
+  -- region prints - inside the region pair, and the outermost pair is the one `EVM.print` puts
+  -- around the block it is handed, exactly as before. Under the flattened arm this line compared
+  -- one pair against one pair and was blind to the nine the emitter had dropped; it now pins them,
+  -- which is what makes it stronger and not merely different: reverting the scoping reddens it.
+  let txtScoped := "{" ++ String.intercalate "\n"
+    ((txt.map fun b => ["{"] ++ b ++ ["}"]).flatten) ++ "}"
+  yulTokens ("{" ++ txtScoped ++ "}") == yulTokens (EVM.print emitted) &&
     ([(false, false), (true, false), (false, true), (true, true)] : List (Bool × Bool)).all
       fun (tq, tr) =>
         let t := unF (Midfall.Generator.computations KzgKats.metaF KzgKats.dataF KzgKats.memF
@@ -387,7 +410,10 @@ def emitPcsReadsOnlyFourFields_ok : Bool :=
 
 /-- GATE 49 (THE TAGGING IS THE PARTITION, and the partition is inductable). The role list
     the plan implies has the same length as the block list the plan emits, no block is empty,
-    flattening the tagged list gives back EXACTLY what the dispatcher returns, and the three
+    wrapping each tagged block in its own `Stmt.block` scope inside ONE region block gives back
+    EXACTLY what the dispatcher returns - G1.4b: this is the partition as the emission carries it,
+    not merely as the tagging recovers it, so a flattening regression reddens this line too -
+    and the three
     roles whose identity the comments used to carry are pinned by what their blocks WRITE:
     pairingInputs writes PAIRING_RHS_MPTR, fEval writes F_EVAL_MPTR, finalMsm writes V_MPTR.
     The deployed arithmetic is the last two lines: three sets and at least one x1 power give
@@ -401,7 +427,8 @@ def emitPcsTagging_ok : Bool :=
   tagged.length == blocks.length &&
     tagged.length == 10 &&
     (tagged.all fun (_, b) => ! b.isEmpty) &&
-    SyntaxEq.stmtsBeq ((tagged.map Prod.snd).flatten) (emitPartial pcsFixturePlan .pcs) &&
+    SyntaxEq.stmtsBeq [Stmt.block ((tagged.map Prod.snd).map Stmt.block)]
+      (emitPartial pcsFixturePlan .pcs) &&
     (tagged.filter fun p => match p.fst with
       | GenAstPcs.Kats.PcsBlockRole.qEvalSet _ => true | _ => false).length == 5 &&
     GenAstPcs.Kats.writesTo tagged GenAstPcs.Kats.PcsBlockRole.pairingInputs "PAIRING_RHS_MPTR" &&
@@ -497,12 +524,25 @@ def emitPlaceholderIsTotal_ok : Bool :=
     ! SyntaxEq.stmtsBeq (emitPlaceholder .transcriptParser)
       (emitTranscriptParserDeployed) &&
     -- P-PLANVIEW: the seventh placeholder-vs-real pair, and the one the standing note is
-    -- about. The pcs placeholder is ONE statement and the real slice is hundreds, so a
-    -- length check separates them for free here - which is exactly why the conjunct is
-    -- written as stmtsBeq and the length is asserted separately below rather than being
-    -- the test.
+    -- about. The pcs placeholder is ONE statement and so - since G1.4b emitted the partition as
+    -- block scopes instead of flattening it - is the real slice, at the TOP level. So a top-level
+    -- length check no longer separates them and the conjunct is written as stmtsBeq, with the
+    -- DEEP count asserted separately below rather than being the test.
     ! SyntaxEq.stmtsBeq (emitPlaceholder .pcs) (emitPcsFromPlan pcsFixturePlan) &&
-    (emitPlaceholder .pcs).length == 1 && (emitPcsFromPlan pcsFixturePlan).length > 100 &&
+    (emitPlaceholder .pcs).length == 1 &&
+    -- G1.4b: the real slice is now ONE region statement, so the top-level length no longer
+    -- separates it from the dummy - the DEEP count does, through the same `[Stmt.block body]`
+    -- idiom this gate already uses for quotientLin and vkLoading below. It pins MORE than the
+    -- flat `.length > 100` it replaces: the region wrapper exists, it carries the ten-block
+    -- partition, and the partition holds over a hundred statements between them (151 measured).
+    -- The totality this conjunct exists to protect - the pcs arm emits a real body and not a
+    -- stub - is therefore still asserted, and asserted about the shape the arm now has.
+    (match emitPcsFromPlan pcsFixturePlan with
+     | [Stmt.block body] => body.length == 10 &&
+         (body.map (fun s => match s with
+           | Stmt.block inner => inner.length
+           | _ => 1)).foldl (fun n k => n + k) 0 > 100
+     | _ => false) &&
     -- the shape fact that makes the previous two lines load-bearing: same top-level length,
     -- so nothing but stmtsBeq separates the dummy from the real scope.
     (emitPlaceholder .quotientLin).length == 1 && (emitQuotientLinAt 6).length == 1 &&
