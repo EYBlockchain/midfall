@@ -284,6 +284,70 @@ theorem runBody_iff_slices (R : Render p G₁ G₂ Gₜ) (vkAddr : U256)
           ExecStmts (D := Bridge.Dialect c g) (R.scope c g) V₁ st₁ R.slices V' st' o := by
   sorry
 
+/-! #### Sequencing plumbing: the two composition facts the vendored layer lacks
+
+  `StmtsContractAll.append` (Contracts.lean:156) composes the FORALL-RUNS half of a block
+  contract over `++`. `StmtsTotal` also carries an EXISTENTIAL half (`StmtsContract`, vendor
+  `Contract.lean:94`) and that layer has no `++` rule for it: `StmtsContract.cons`
+  (Contract.lean:143) is over `::`, so it cannot express a multi-statement slice. The two
+  lemmas below are the missing rule and the run composition it needs. Both are big-step
+  plumbing with no render content in them, which is why they live here and not in a block.
+-/
+
+/-- Forward run composition over `++`: the mirror of `Step.stmts_append_inv`
+    (Contracts.lean:115). A normal run of `ss₁` followed by a run of `ss₂` is a run of the
+    concatenation. -/
+theorem ExecStmts.append {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {ss₁ ss₂ : Block D.Op}
+    {V V₁ V' : VEnv D} {st st₁ st' : D.State} {o : Outcome}
+    (h₁ : ExecStmts D funs V st ss₁ V₁ st₁ .normal)
+    (h₂ : ExecStmts D funs V₁ st₁ ss₂ V' st' o) :
+    ExecStmts D funs V st (ss₁ ++ ss₂) V' st' o := by
+  revert V st h₂
+  induction ss₁ with
+  | nil =>
+      intro V st h₁ h₂
+      cases h₁ with | seqNil => exact h₂
+  | cons s rest ih =>
+      intro V st h₁ h₂
+      rcases Step.stmts_cons_inv h₁ with ⟨V₂, st₂, hs, hr⟩ | ⟨hs, hne⟩
+      · exact Step.seqCons hs (ih hr h₂)
+      · exact absurd rfl hne
+
+/-- Existential sequencing over `++`: the mirror of `StmtsContractAll.append`. The head must
+    finish `.normal` at `mid`, which is exactly what a `BlockProgress` handoff gives. -/
+theorem StmtsContract.append {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    {funs : FunEnv D} {ss₁ ss₂ : Block D.Op}
+    {pre mid : VEnv D → D.State → Prop}
+    {post : VEnv D → D.State → VEnv D → D.State → Outcome → Prop}
+    (h₁ : StmtsContract funs ss₁ pre (fun _ _ V' st' o => o = .normal ∧ mid V' st'))
+    (h₂ : ∀ V st, pre V st →
+      StmtsContract funs ss₂ mid (fun _ _ V' st' o => post V st V' st' o)) :
+    StmtsContract funs (ss₁ ++ ss₂) pre post := by
+  intro V st hpre
+  obtain ⟨V₁, st₁, o₁, hrun, hon, hmid⟩ := h₁ V st hpre
+  subst hon
+  obtain ⟨V', st', o, hrun', hpost⟩ := h₂ V st hpre V₁ st₁ hmid
+  exact ⟨V', st', o, ExecStmts.append hrun hrun', hpost⟩
+
+/-- At any block other than `traceReturn`, `exitOk` IS the clean handoff: the `match` of §6:85
+    takes its catch-all arm, so the post is `o = .normal ∧ Clean R q.pre.next`. Read the other
+    way this is the fact the sequencing chain spends at every handoff except the last. -/
+theorem exitOk_of_ne {R : Render p G₁ G₂ Gₜ} {q : Partial} (hq : q ≠ .traceReturn)
+    {Snap : Snapshot p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U256} {cd : Bytes}
+    {c : ExternalCalls} {g : ExternalGas} {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    {o : Outcome} :
+    exitOk R q Snap H vkAddr cd V' st' o →
+      o = .normal ∧ Clean R q.pre.next Snap H vkAddr cd V' st' := by
+  cases q
+  · exact fun h => h
+  · exact fun h => h
+  · exact fun h => h
+  · exact fun h => h
+  · exact fun h => h
+  · exact fun h => h
+  · exact fun _ => absurd rfl hq
+
 /-- **PER-BLOCK SEQUENCING, SOUNDNESS HALF** (WP-M5b). Seven `BlockSound`s compose to one contract
     for the concatenation: from a `Clean` boundary at `.start`, every run of the whole slice list
     either reverts or finishes the way `traceReturn` finishes.
@@ -296,14 +360,16 @@ theorem runBody_iff_slices (R : Render p G₁ G₂ Gₜ) (vkAddr : U256)
     `.vk` → `.transcript` → `.lagrange` → `.quotient` → `.pcs` → `.pairing`, which is
     `Partial.pre` applied to the tail of `Render.slices`'s own concatenation order.
 
-    THE ONE ARM THE PER-BLOCK CONTRACTS DO NOT GIVE. The postcondition here has NO `o = .normal ∧
-    Poisoned` arm: after `traceReturn` there is no fall-through, because `traceReturn` reverts on
-    `iszero(success)` and otherwise returns. `BlockSound R .traceReturn` as §6 states it does NOT
-    say that — its poisoned arm `(o = .normal ∧ Poisoned ...)` is satisfiable on paper. So this
-    lemma is strictly stronger than 7 copies of `BlockSound`, and the extra fact belongs to the
-    FinalPairing/TraceReturn cards (FP.0, T.1), not here. Recorded as a §6 expressiveness finding:
-    it is NOT fixable by adding a field to `Frame`/`Clean`, because it is about a POST, not about a
-    boundary predicate. -/
+    THE ARM THAT USED TO BLOCK THIS LEMMA IS NOW GATED AWAY (D-P49, S.3). The postcondition here
+    has NO `o = .normal ∧ Poisoned` arm: after `traceReturn` there is no fall-through, because
+    `traceReturn` reverts on `iszero(success)` and otherwise returns. Before the gate, §6 offered
+    that arm at `.traceReturn` too — it is satisfiable on paper — so the lemma was NOT derivable
+    from seven copies of `BlockSound` and S.1 proved the ceiling. §6:97 and §6:101 now gate both
+    poisoned arms on `q ≠ .traceReturn`, which deletes the arm at exactly the one block that has
+    no successor to hand it to. With that in place this lemma IS seven copies of `BlockSound` plus
+    `StmtsContractAll.append`: no block card owes a new fact and nothing was added to
+    `Frame`/`Clean`. The expressiveness lesson stands as S.1 recorded it: the hole was about a
+    POST, not about a boundary predicate, so no field could ever have fixed it. -/
 theorem slices_seq_sound (R : Render p G₁ G₂ Gₜ) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)
     (vkAddr : U256) (cd : Bytes) (c : ExternalCalls) (g : ExternalGas)
     (h7 : ∀ q : Partial, BlockSound R q Snap H vkAddr c g cd) :
@@ -311,17 +377,95 @@ theorem slices_seq_sound (R : Render p G₁ G₂ Gₜ) (Snap : Snapshot p G₁ G
         (fun V st => Clean R .start Snap H vkAddr cd V st)
         (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
           exitOk R .traceReturn Snap H vkAddr cd V' st' o) := by
-  sorry
+  let DD := Bridge.Dialect c g
+  let funs : FunEnv DD := R.scope c g
+  -- the handoff predicate at boundary k, named in the docstring: clean, or poisoned by an
+  -- earlier block. Both halves are needed because a failed precompile is only caught later.
+  let midAt (k : Checkpoint) : VEnv DD → EvmState → Prop :=
+    fun V st => Clean R k Snap H vkAddr cd V st ∨ Poisoned R H vkAddr cd V st
+  -- what the whole list must establish: the revert arm, or the way traceReturn finishes
+  let FINAL : VEnv DD → EvmState → Outcome → Prop :=
+    fun V' st' o => (o = .halt ∧ Reverted st') ∨ exitOk R .traceReturn Snap H vkAddr cd V' st' o
+  -- the post a handoff at k must satisfy: continue clean-or-poisoned at k, or stop now
+  let endAt (k : Checkpoint) : VEnv DD → EvmState → VEnv DD → EvmState → Outcome → Prop :=
+    fun _ _ V' st' o => (o = .normal ∧ midAt k V' st') ∨ (o ≠ .normal ∧ FINAL V' st' o)
+  -- one slice, entered at its own boundary: BlockSound's two conjuncts are read together,
+  -- the clean one by §6's exitOk arm and the poisoned one by its surviving arm.
+  have hand (q : Partial) (hq : q ≠ .traceReturn) :
+      StmtsContractAll (D := DD) funs (R.slice q) (midAt q.pre) (endAt q.pre.next) := by
+    intro V st hpre V' st' o hrun
+    rcases hpre with hc | hp
+    · rcases ((h7 q).1 V st hc V' st' o hrun) with ⟨rfl, hrev⟩ | hok | ⟨_, rfl, hpo⟩
+      · exact Or.inr ⟨by simp, Or.inl ⟨rfl, hrev⟩⟩
+      · obtain ⟨hon, hcl⟩ := exitOk_of_ne hq hok
+        exact Or.inl ⟨hon, Or.inl hcl⟩
+      · exact Or.inl ⟨rfl, Or.inr hpo⟩
+    · rcases ((h7 q).2 V st hp V' st' o hrun) with ⟨rfl, hrev⟩ | ⟨_, rfl, hpo⟩
+      · exact Or.inr ⟨by simp, Or.inl ⟨rfl, hrev⟩⟩
+      · exact Or.inl ⟨rfl, Or.inr hpo⟩
+  -- the terminal slice. THIS is where the D-P49 gate is spent: at .traceReturn both
+  -- poisoned arms of §6:97/:101 are gated off, so the only arms offered are the two the
+  -- conclusion asks for, and the impossible ones close on q ≠ .traceReturn by reflexivity.
+  have hlast : StmtsContractAll (D := DD) funs (R.slice .traceReturn) (midAt .pairing)
+      (fun _ _ V' st' o => FINAL V' st' o) := by
+    intro V st hpre V' st' o hrun
+    rcases hpre with hc | hp
+    · rcases ((h7 .traceReturn).1 V st hc V' st' o hrun) with hrev | hok | ⟨hne, _, _⟩
+      · exact Or.inl hrev
+      · exact Or.inr hok
+      · exact absurd rfl hne
+    · rcases ((h7 .traceReturn).2 V st hp V' st' o hrun) with hrev | ⟨hne, _, _⟩
+      · exact Or.inl hrev
+      · exact absurd rfl hne
+  -- two plumbing steps, used once per handoff
+  have post_mono {ss : Block DD.Op} {pre : VEnv DD → EvmState → Prop}
+      {P Q : VEnv DD → EvmState → VEnv DD → EvmState → Outcome → Prop}
+      (h : StmtsContractAll (D := DD) funs ss pre P)
+      (hPQ : ∀ V st V' st' o, P V st V' st' o → Q V st V' st' o) :
+      StmtsContractAll (D := DD) funs ss pre Q :=
+    fun V st hp V' st' o hrun => hPQ V st V' st' o (h V st hp V' st' o hrun)
+  have lift (k k' : Checkpoint) (V st V' st' o) (h : endAt k V st V' st' o) :
+      (o = .normal ∧ midAt k V' st') ∨ (o ≠ .normal ∧ endAt k' V st V' st' o) :=
+    h.elim (fun hm => Or.inl hm) (fun hn => Or.inr ⟨hn.1, Or.inr ⟨hn.1, hn.2⟩⟩)
+  -- the six handoffs, in Render.slices' own order: .start → .vk → .transcript → .lagrange
+  -- → .quotient → .pcs → .pairing. The first is entered at Clean alone (nothing has failed
+  -- yet); the rest are entered at the disjunction, which is why hand carries both arms.
+  have c1 : StmtsContractAll (D := DD) funs (R.slice .vkLoading)
+      (fun V st => Clean R .start Snap H vkAddr cd V st) (endAt .vk) :=
+    fun V st hc => hand .vkLoading (by decide) V st (Or.inl hc)
+  have c2 := StmtsContractAll.append
+    (post_mono c1 (fun V st V' st' h' => lift .vk .transcript V st V' st' h'))
+    (fun _ _ _ => hand .transcriptParser (by decide))
+  have c3 := StmtsContractAll.append
+    (post_mono c2 (fun V st V' st' h' => lift .transcript .lagrange V st V' st' h'))
+    (fun _ _ _ => hand .lagrange (by decide))
+  have c4 := StmtsContractAll.append
+    (post_mono c3 (fun V st V' st' h' => lift .lagrange .quotient V st V' st' h'))
+    (fun _ _ _ => hand .quotientLin (by decide))
+  have c5 := StmtsContractAll.append
+    (post_mono c4 (fun V st V' st' h' => lift .quotient .pcs V st V' st' h'))
+    (fun _ _ _ => hand .pcs (by decide))
+  have c6 := StmtsContractAll.append
+    (post_mono c5 (fun V st V' st' h' => lift .pcs .pairing V st V' st' h'))
+    (fun _ _ _ => hand .finalPairing (by decide))
+  exact StmtsContractAll.append c6 (fun _ _ _ => hlast)
 
 /-- **PER-BLOCK SEQUENCING, PROGRESS HALF** (WP-M5b): the seven `BlockProgress`es compose to a
     TOTAL contract for the concatenation — a run exists, and every run finishes the `traceReturn`
     way. Under the honest calls nothing fails, so the mid at each handoff is `Clean R k` alone and
     no `Poisoned` disjunct is needed; that is the only difference from `slices_seq_sound`.
 
-    COST EVIDENCE: `StmtsTotal = StmtsContract ∧ StmtsContractAll` (Blocks.lean:49), so the proof is
-    the same six handoffs twice, the existential half additionally needing the prefix run to exist.
-    Note the hypothesis is gated on `DualMSM.check = true` inside `BlockContractsAt`, which is where
-    the `.pairing` arm of `Inv` gets its decision clause. -/
+    COST EVIDENCE, MEASURED AFTER THE PROOF (F.1): 66 lines, UNDER C.2's 90-130 estimate, and the
+    file still elaborates in about two seconds with no heartbeat change. `StmtsTotal = StmtsContract
+    ∧ StmtsContractAll` (Blocks.lean:49), so the proof IS the same six handoffs twice. But the
+    existential half does NOT need the prefix run to exist: this statement is about `R.slices` from
+    a `Clean R .start` boundary, so each link is one `BlockProgress` existence half re-read through
+    `exitOk_of_ne`. Exhibiting a run of the PREFIX is `prefix_run_clean` and `runBody_iff_slices`'
+    job, not this lemma's — the earlier note claiming otherwise over-costed this card. What the
+    vendored layer really lacked was an `++` rule for `StmtsContract` at all (`StmtsContract.cons`,
+    Contract.lean:143, is over `::`), so `StmtsContract.append` and the forward `ExecStmts.append`
+    it needs are proved above. Note the hypothesis is gated on `DualMSM.check = true` inside
+    `BlockContractsAt`, which is where the `.pairing` arm of `Inv` gets its decision clause. -/
 theorem slices_seq_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
     (h7 : ∀ q : Partial, BlockProgress R q Snap H vkAddr product cd) :
@@ -329,7 +473,72 @@ theorem slices_seq_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProd
         (R.scope _ _) R.slices
         (fun V st => Clean R .start Snap H vkAddr cd V st)
         (fun _ _ V' st' o => exitOk R .traceReturn Snap H vkAddr cd V' st' o) := by
-  sorry
+  let DD := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0)
+  let funs : FunEnv DD := R.scope _ _
+  -- Under the honest calls nothing fails, so the handoff is Clean alone: no Poisoned
+  -- disjunct, which is the only difference from slices_seq_sound.
+  let midAt (k : Checkpoint) : VEnv DD → EvmState → Prop :=
+    fun V st => Clean R k Snap H vkAddr cd V st
+  let FINAL : VEnv DD → EvmState → Outcome → Prop :=
+    fun V' st' o => exitOk R .traceReturn Snap H vkAddr cd V' st' o
+  let endAt (k : Checkpoint) : VEnv DD → EvmState → VEnv DD → EvmState → Outcome → Prop :=
+    fun _ _ V' st' o => (o = .normal ∧ midAt k V' st') ∨ (o ≠ .normal ∧ FINAL V' st' o)
+  have post_mono {ss : Block DD.Op} {pre : VEnv DD → EvmState → Prop}
+      {P Q : VEnv DD → EvmState → VEnv DD → EvmState → Outcome → Prop}
+      (h : StmtsContractAll (D := DD) funs ss pre P)
+      (hPQ : ∀ V st V' st' o, P V st V' st' o → Q V st V' st' o) :
+      StmtsContractAll (D := DD) funs ss pre Q :=
+    fun V st hp V' st' o hrun => hPQ V st V' st' o (h V st hp V' st' o hrun)
+  have lift (k k' : Checkpoint) (V st V' st' o) (h : endAt k V st V' st' o) :
+      (o = .normal ∧ midAt k V' st') ∨ (o ≠ .normal ∧ endAt k' V st V' st' o) :=
+    h.elim (fun hm => Or.inl hm) (fun hn => Or.inr ⟨hn.1, Or.inr ⟨hn.1, hn.2⟩⟩)
+  -- HALF 1 OF 2, EVERY RUN IS GOOD: the six handoffs over the disjunction-free mid.
+  have hand (q : Partial) (hq : q ≠ .traceReturn) :
+      StmtsContractAll (D := DD) funs (R.slice q) (midAt q.pre) (endAt q.pre.next) := by
+    intro V st hpre V' st' o hrun
+    obtain ⟨hon, hcl⟩ := exitOk_of_ne hq ((h7 q).2 V st hpre V' st' o hrun)
+    exact Or.inl ⟨hon, hcl⟩
+  have hlast : StmtsContractAll (D := DD) funs (R.slice .traceReturn) (midAt .pairing)
+      (fun _ _ V' st' o => FINAL V' st' o) := (h7 .traceReturn).2
+  have c1 : StmtsContractAll (D := DD) funs (R.slice .vkLoading) (midAt .start) (endAt .vk) :=
+    hand .vkLoading (by decide)
+  have c2 := StmtsContractAll.append
+    (post_mono c1 (fun V st V' st' h' => lift .vk .transcript V st V' st' h'))
+    (fun _ _ _ => hand .transcriptParser (by decide))
+  have c3 := StmtsContractAll.append
+    (post_mono c2 (fun V st V' st' h' => lift .transcript .lagrange V st V' st' h'))
+    (fun _ _ _ => hand .lagrange (by decide))
+  have c4 := StmtsContractAll.append
+    (post_mono c3 (fun V st V' st' h' => lift .lagrange .quotient V st V' st' h'))
+    (fun _ _ _ => hand .quotientLin (by decide))
+  have c5 := StmtsContractAll.append
+    (post_mono c4 (fun V st V' st' h' => lift .quotient .pcs V st V' st' h'))
+    (fun _ _ _ => hand .pcs (by decide))
+  have c6 := StmtsContractAll.append
+    (post_mono c5 (fun V st V' st' h' => lift .pcs .pairing V st V' st' h'))
+    (fun _ _ _ => hand .finalPairing (by decide))
+  have hall := StmtsContractAll.append c6 (fun _ _ _ => hlast)
+  -- HALF 2 OF 2, A RUN EXISTS. StmtsContract has no ++ rule in the vendored layer (that is
+  -- why StmtsContract.append is proved above), so the existential chain is built here with
+  -- the same six handoffs. Each link is the BlockProgress existence half, re-read through
+  -- exitOk_of_ne; nothing about the prefix run is needed — the statement is about R.slices.
+  have hex (q : Partial) (hq : q ≠ .traceReturn) :
+      StmtsContract (D := DD) funs (R.slice q) (midAt q.pre)
+        (fun _ _ V' st' o => o = .normal ∧ midAt q.pre.next V' st') := by
+    intro V st h
+    obtain ⟨V', st', o, hrun, hok⟩ := (h7 q).1 V st h
+    exact ⟨V', st', o, hrun, exitOk_of_ne hq hok⟩
+  have hlex : StmtsContract (D := DD) funs (R.slice .traceReturn) (midAt .pairing)
+      (fun _ _ V' st' o => FINAL V' st' o) := (h7 .traceReturn).1
+  have d1 : StmtsContract (D := DD) funs (R.slice .vkLoading) (midAt .start)
+      (fun _ _ V' st' o => o = .normal ∧ midAt .vk V' st') := hex .vkLoading (by decide)
+  have d2 := StmtsContract.append d1 (fun _ _ _ => hex .transcriptParser (by decide))
+  have d3 := StmtsContract.append d2 (fun _ _ _ => hex .lagrange (by decide))
+  have d4 := StmtsContract.append d3 (fun _ _ _ => hex .quotientLin (by decide))
+  have d5 := StmtsContract.append d4 (fun _ _ _ => hex .pcs (by decide))
+  have d6 := StmtsContract.append d5 (fun _ _ _ => hex .finalPairing (by decide))
+  have hcon := StmtsContract.append d6 (fun _ _ _ => hlex)
+  exact ⟨hcon, hall⟩
 
 /-- **TRANSPORT, HYPOTHESIS HALF** (WP-M5c): the `noWritersFuel` scan is insensitive to the two
     addresses the wrapper binds. `Render.Valid.noWriters` pins `NoWriters (R.prog 0 0)` and the

@@ -597,7 +597,7 @@ only computable reading — R.4's premise stands, and it is the `sG2Prepared := 
 | **F.2-G4** **frozen §2's docstring now misstates the measurement**: `Statements.lean:179-181` says "C.4 still refutes six of the original eleven clauses at `poseidonRender`"; at this commit four are refuted and `slots` is a theorem | `#print axioms Midfall.Instances.PoseidonValid.poseidonValid_slots` | no `sorryAx` (clause 8 PROVED at the render, ten `native_decide` uses). Frozen file, so the fix is a decision plus a `Frozen.sha256` re-hash, not an edit |
 | **F.2-G5** `PoseidonValid.lean:132` prints a **stale** deciding value for clause 2 ("derived proofLen 1792 against the plan's 4320") while the same file's own defs say 4224/4320 and its header says 4224 | `#eval deciding_layout_derivedProofLen` · `#eval deciding_layout_planProofLen` | `4224` · `4320`. The 1792 is D.3's number at `protocolPlanDefault`, superseded by F.1. Not a soundness problem (`deciding_layout` is a sorry-free Prop-level refutation), but the file claims "every value in it is printed by this file" |
 
-### R.2 — WP-G1 region inventory (`Valid.codegen`)  **[READY]**
+### R.2 — WP-G1 region inventory (`Valid.codegen`)  **[MERGED 8c5f237 - arithmetic closes token-for-token; 4 EMIT cards cut]**
 GEN · PROBE · box 1 h · Sonnet · after nothing
 
 - **Goal.** The list of regions the `GenAst` emitter does not produce yet, so WP-G1 (PLAN-V2:232) can
