@@ -1,10 +1,36 @@
 # STATUS — overwritten by every ticket (≤ 1 page)
 
-**As of:** `70f8111` (2026-11-16 21:30Z). v1 frozen at `formal/v1-final`.
+**As of:** `1009658` (2026-11-17 01:25Z). v1 frozen at `formal/v1-final`.
 
 **Plan:** `docs/plans/PLAN-V2.md` · `docs/plans/EXECUTION-V2.md` · queue `docs/QUEUE.md`.
 Scope decision **D-P44**. `docs/PLAN.md` points at V2.
 
+## ✅ THE HEADLINE NOW EXISTS — cone is the measure from here
+
+`lowering_equivalence_poseidon (product : PairingProduct) : LoweringEquivalence poseidonRender product`
+is stated for **every** product in `Instances/PoseidonV2.lean` (merged `1009658`), proved from exactly
+three named sorried lemmas. **Full `verify.sh` exit 0.** The root the DONE test names now has a number:
+
+- `cone_avoids lowering_equivalence_poseidon: ok (14 modules)`
+- **`cone_sorries lowering_equivalence_poseidon: 5`** — `blockContracts_of_valid`,
+  `lowering_equivalence_of_blocks`, `poseidon_quotient_block`, `poseidon_rejects`, `poseidon_valid`.
+- Axioms: standard three + the five D-P36a curve constants + **exactly one** `native_decide` axiom
+  (`…poseidonModel_isOk._native.native_decide.ax_1_1`) + `sorryAx`. **§6 DONE requires cone 0 and no
+  `sorryAx`.**
+- Register 47, 143 modules, 1393 KATs / 102 files.
+
+**`poseidon_valid` is REFUTED-AT-TYPED-IN-META, not open.** Three independent obstacles:
+(1) `Valid.layout` and (2) `Valid.circuitMeta` — `planM.protocol = protocolPlanDefault` (D.3); and
+(3) **`Valid.model` is not machine-dischargeable at all** — the kernel won't reduce `poseidonModel`
+(`decide` and `rfl` both fail), and the 71-field record has no `BEq`/`DecidableEq`, so none of the
+three channels `Statements.lean:136-138` names can close it **even with a bare `Model`**.
+
+**⚠ GATE-DESIGN HOLE FOUND BY C.1:** `#imports_avoid` is **file-level**. D.2's `cone_avoids ok` was
+true only because nothing imported the render yet — the check could not have failed. `PoseidonEnv`
+transitively imported **10 of the AVOID 14** through one edge (`→ CurveSurface`) that existed only for
+an unreferenced `rfl` pin. C.1 moved the pin to `CurveSurface.lean` and made the imports explicit;
+`PoseidonEnv` closure is now 0 AVOID and D.2's 14 gates still pass. **Any future `cone_avoids ok` is
+only meaningful once the root actually imports what it claims to avoid.**
 **Headline:** `lowering_equivalence_poseidon` — **not yet stated** (C.1). Status word: *not stated*.
 
 **Cone roots** (`ConeReport`, printed by `verify.sh`):
@@ -49,9 +75,10 @@ and `HypothesesInhabited` must not be reported as evidence of readiness in the m
 **Register** (not progress): **44**, zero `UNOWNED`. **KAT**: 1352 / 99 files, pinned.
 `verify.sh` exit **0**. Frozen hashes match.
 
-**In flight:** none. **C.1 is BLOCKED** (see the ProtocolPlan decision above) — so the SEM/ALG chain
-(T.1, P.1 via FP.0 via C.2) has no cone root to attach to yet. **Nothing in the queue can move a cone
-until the ProtocolPlan question is answered.** Q0.5 still BLOCKED on R-72.
+**In flight:** none. **Next READY: M0.1** (after C.1) — measure the blocks' frames; it feeds C.2, the
+first card that can reduce the headline cone from 5.
+**Still blocked on human:** ProtocolPlan provenance (blocks `poseidon_valid`, now 3 obstacles) · R-72
+(Q0.5) · `poseidonModel` totality · real `g1CodecZ.ofCompressed?` (blocks D.3 check 3).
 **Chain note:** T.1 and P.1 depend on FP.0, which depends on C.2; C.2 status was NOT checked this
 session, so verify it before assuming the SEM/ALG chain is reachable.
 **Two decisions are not mine:** WP-I2 needs `poseidonModel` totality and a real `ofCompressed?` -

@@ -266,7 +266,7 @@ GEN · KAT · box 2 h · Sonnet · after D.1, D.2
 - **Stop if.** Any of checks 1–4 is false. Report NEGATIVE with the first differing value. Do not edit
   the fixtures or the typed-in profile.
 
-### C.1 — State the headline at the deployment; fix the cone
+### C.1 — State the headline at the deployment; fix the cone  **[MERGED 1009658 - headline stated, cone=5]**
 SEM · SKELETON · box 2 h · strongest · after D.3
 
 - **Goal.** `lowering_equivalence_poseidon` exists, is proved from named sorried lemmas, and becomes
