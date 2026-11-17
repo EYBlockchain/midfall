@@ -386,18 +386,18 @@ theorem readBytes_storeWord_one (mem : Nat → UInt8) (p : Nat) :
   rfl
 
 
-/-! ## 3. INTERFACE STEP 6 - the fail helper, PARTLY stepped
+/-! ## 3. INTERFACE STEP 6 - the fail helper: the two halves T.1 delivered
 
   The revert arm of every block contract in §6 comes from fail(sel), so what is proved here is stated
   for the helper as the render hoists it, not for TraceReturn's guard: T.5's fp_stmt_steps needs the
-  same facts at .finalPairing with a different selector, and they are the ONLY thing there. TWO facts
-  are delivered: fail_lookup (the scope resolves the name, by rfl) and revertedOf_revert (a revert
-  record is Reverted, whatever the payload). THE THIRD - tr_fail_reverts, the inversion of the call
-  itself - is NOT finished here, and that is the one gap that keeps BlockSound's second conjunct open.
-  The exact state it stops at, and the case-name work left, are written into T.5's card so the next
-  card does not rediscover them. Note what the shape does NOT need: the selector value. fail writes
-  shl(224, sel) at 0x00 and reverts four bytes, so the halt record is a revert whatever sel is - which
-  is why the inlined ERR_PROOF_REJECTED site, like the return window, never needs to be resolved. -/
+  same facts at .finalPairing with a different selector, and they are the ONLY thing there. T.1
+  delivered two: fail_lookup (the scope resolves the name, by rfl) and revertedOf_revert (a revert
+  record is Reverted, whatever the payload), and stopped at the call. THE THIRD - tr_fail_reverts, the
+  inversion of the call itself - IS finished here, in §3.1, and it is what closes BlockSound's second
+  conjunct (tr_poison_walk, §4). T.5 cites tr_fail_reverts rather than reproving it. Note what the
+  shape does NOT need: the selector value. fail writes shl(224, sel) at 0x00 and reverts four bytes,
+  so the halt record is a revert whatever sel is - which is why the inlined ERR_PROOF_REJECTED site,
+  like the return window, never needs to be resolved. -/
 
 /-- The fail definition, as the render's own scope resolves it. rfl: hoist is a top-level filterMap
     and lookupFun short-circuits, so the whole inlined helper block is never normalised to the last
@@ -475,12 +475,257 @@ theorem tr_ret_o {R : Render p G₁ G₂ Gₜ} {funs : FunEnv (Bridge.Dialect c 
                             (.ok [] st') := hbi
                           simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
 
+/-! ## 3.1 INTERFACE STEP 6, COMPLETED: the inversion of the fail call
+
+  T.1 delivered the two halves above and stopped at the call. Composing them is four case-name
+  iterations plus ONE new fact: the helper's own mstore of shl(224, sel) never halts, which is what
+  the seqCons branch of the body split needs (T.1 named that requirement and did not prove it).
+  THE NAME IS PINNED: T.5's fp_stmt_steps cites tr_fail_reverts - it is the same fact at
+  .finalPairing with a different selector site, which is why the lemma is stated for an ARBITRARY
+  function environment with the helper's declaration handed in as a hypothesis rather than at
+  R.scope, and why nothing in it mentions the site's VALUE.
+
+  THE ONE NON-OBVIOUS MOVE: tr_fail_expr takes the result index as a VARIABLE (r : EResult D) and
+  tr_fail_reverts feeds it a syntactically abstract Step. Had the call been cased directly at a use
+  site whose index is `.vals [] st'`, `cases` cannot eliminate the callOk branch - it would have to
+  solve `decl.rets.map (fun r => ...) = []` for a declaration it has not seen yet, the substitution
+  coming only after. An abstract index keeps every equation as a hypothesis and the elimination goes
+  through. That, not the revert inversion, is where the hour went. -/
+
+/-- The fail helper's declaration, as every render's scope resolves it: one parameter `sel`, no
+    returns, and the two-statement body AssemblyHelpers.yul:291-295 emits. Named so the call
+    inversion can state its hypothesis once; defeq to the literal record `fail_lookup` proves, and
+    `fail_lookup` is unchanged. -/
+def failFDecl {c : ExternalCalls} {g : ExternalGas} : FDecl (Bridge.Dialect c g) :=
+  { params := ["sel"], rets := [],
+    body := [Stmt.exprStmt (Expr.builtin Op.mstore
+        [Expr.lit (.number 0),
+         Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]]),
+      Stmt.exprStmt (Expr.builtin Op.revert [Expr.lit (.number 0), Expr.lit (.number 4)])] }
+
+/-- A literal never halts, and neither does a variable: an unbound variable is STUCK, not halted,
+    because Step.var is the only rule for Expr.var and it needs a binding. -/
+theorem trExprLit_ne_halts {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₂ : EvmState} {n : Nat}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.lit (.number n)) (.halt st₂)) : False :=
+  by cases h
+
+theorem trExprVar_ne_halts {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₂ : EvmState} {x : String}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (Expr.var x) (.halt st₂)) : False :=
+  by cases h
+
+/-- A one-element argument list halts only through its element. The element is evaluated at the
+    state the empty list left, which is why the non-halting fact is handed in as a hypothesis over
+    EVERY state rather than at the caller's own. -/
+theorem trArgs1_halt_inv {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₂ : EvmState} {e : Expr EVM.Op}
+    (h : Step (Bridge.Dialect c g) funs V st (Code.args [e]) (.eres (.halt st₂)))
+    (hne : ∀ (st₁ : EvmState),
+      EvalExpr (Bridge.Dialect c g) funs V st₁ e (.halt st₂) → False) : False := by
+  cases h with
+  | argsRestHalt h' => cases h'
+  | argsHeadHalt _ h' => exact hne _ h'
+
+/-- The inlined ERR_PROOF_REJECTED site never halts - the same two-case argument as trRet_ne_halts,
+    at the other stuck site, and the reason the call's `callArgsHalt` arm is unreachable. -/
+theorem trErr_ne_halts {R : Render p G₁ G₂ Gₜ} {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st₂ : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st (trErrExpr R.consts) (.halt st₂)) : False := by
+  classical
+  cases hmv : R.consts.lookup "ERR_PROOF_REJECTED" with
+  | some v =>
+      rw [show trErrExpr R.consts = Expr.lit (.number v) from by simp [trErrExpr, hmv]] at h
+      cases h
+  | none =>
+      rw [show trErrExpr R.consts = Expr.var "ERR_PROOF_REJECTED" from by simp [trErrExpr, hmv]] at h
+      cases h
+
+/-- **shl IS NON-HALTING**, the fact T.1's handoff named. shl is a local binary operation, so its
+    builtin step is an `.ok` for every argument pair, and its two arguments are a literal and a
+    variable, neither of which halts. -/
+theorem tr_shl_ne_halts {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₂ : EvmState}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]) (.halt st₂)) : False := by
+  cases h with
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hlit =>
+          cases hnil with
+          | argsCons hnil2 hvar =>
+              cases hnil2 with
+              | argsNil =>
+                  cases hlit with
+                  | lit =>
+                      rename_i st₁ v
+                      simp [Bridge.Dialect, builtinWithExternal, stepOp, bin] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h =>
+          exact (trArgs1_halt_inv h (fun st₁ hh => trExprVar_ne_halts hh)).elim
+      | argsHeadHalt _ h => exact (trExprLit_ne_halts h).elim
+
+/-- The helper's word store never halts: its outcome is normal. The same index trick as
+    tr_mstore_o, at the helper's own arguments - and here the store's VALUE is a shl rather than a
+    literal, which is why tr_shl_ne_halts is reached from the builtinArgsHalt arm. -/
+theorem tr_fail_mstore_o {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.exprStmt (Expr.builtin Op.mstore
+        [Expr.lit (.number 0),
+         Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]])) V' st' o) :
+    o = .normal := by
+  cases h with
+  | exprStmt _ => rfl
+  | exprStmtHalt hex =>
+      cases hex with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hlit =>
+              cases hnil with
+              | argsCons hnil2 hshl =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hlit with
+                      | lit =>
+                          rename_i st₁ v
+                          simp [Bridge.Dialect, builtinWithExternal, stepOp] at hbi
+      | builtinArgsHalt hargs =>
+          cases hargs with
+          | argsRestHalt h =>
+              exact (trArgs1_halt_inv h (fun st₁ hh => tr_shl_ne_halts hh)).elim
+          | argsHeadHalt _ h => exact (trExprLit_ne_halts h).elim
+
+/-- **revert(0, 4) INVERTED**: the outcome is halt and the record is a revert, so revertedOf_revert
+    applies to it. The payload is the four scratch bytes and is NOT named here - the post needs only
+    that the kind is revert, which is what makes the lemma selector-independent. -/
+theorem tr_fail_revert_halt {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (Stmt.exprStmt (Expr.builtin Op.revert
+        [Expr.lit (.number 0), Expr.lit (.number 4)])) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  cases h with
+  | exprStmtHalt hex =>
+      cases hex with
+      | builtinHalt hargs hbi =>
+          cases hargs with
+          | argsCons hnil hlit =>
+              cases hnil with
+              | argsCons hnil2 hlit2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hlit with
+                      | lit =>
+                          cases hlit2 with
+                          | lit =>
+                              refine ⟨rfl, ?_⟩
+                              have h4 : (Bridge.Dialect c g).Builtin Op.revert
+                                [(0 : U256), (4 : U256)] st (.halt st') := hbi
+                              simp only [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+                              rw [Option.some.injEq, BuiltinResult.halt.injEq] at h4
+                              rw [← h4]
+                              exact revertedOf_revert rfl
+      | builtinArgsHalt hargs => cases hargs with
+        | argsRestHalt h =>
+            exact (trArgs1_halt_inv h (fun st₁ hh => trExprLit_ne_halts hh)).elim
+        | argsHeadHalt _ h => exact (trExprLit_ne_halts h).elim
+  | exprStmt hex =>
+      cases hex with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hnil hlit =>
+              cases hnil with
+              | argsCons hnil2 hlit2 =>
+                  cases hnil2 with
+                  | argsNil =>
+                      cases hlit with
+                      | lit =>
+                          cases hlit2 with
+                          | lit =>
+                              have h4 : (Bridge.Dialect c g).Builtin Op.revert
+                                [(0 : U256), (4 : U256)] st (.ok [] st') := hbi
+                              simp [Bridge.Dialect, builtinWithExternal, stepOp] at h4
+
+/-- The helper's two-statement body: EVERY run halts with a revert record. This is the two
+    Step.stmts_cons_inv splits T.1 described; the seqCons branch of the first split is the only
+    place tr_shl_ne_halts is needed, and the seqStop branch of the second is the revert arm. -/
+theorem tr_fail_body {funs : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st
+        [Stmt.exprStmt (Expr.builtin Op.mstore
+            [Expr.lit (.number 0),
+             Expr.builtin Op.shl [Expr.lit (.number 224), Expr.var "sel"]]),
+         Stmt.exprStmt (Expr.builtin Op.revert
+            [Expr.lit (.number 0), Expr.lit (.number 4)])]
+        V' st' o) : o = .halt ∧ Reverted st' := by
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with
+      ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrest with
+        ⟨V₂, st₂, h₂, hnil⟩ | ⟨h₂, hne₂⟩
+    · exact absurd (tr_fail_revert_halt h₂).1
+        (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+    · exact tr_fail_revert_halt h₂
+  · exact absurd (tr_fail_mstore_o h₁) hne
+
+/-- The call EXPRESSION inversion, at an abstract result index (see this section's header). -/
+theorem tr_fail_expr {R : Render p G₁ G₂ Gₜ}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState} {r : EResult (Bridge.Dialect c g)}
+    (hlookup : lookupFun funs "fail" = some (failFDecl, funs'))
+    (h : Step (Bridge.Dialect c g) funs V st
+        (Code.expr (Expr.call "fail" [trErrExpr R.consts])) (Res.eres r)) :
+    ∃ st₂, r = .halt st₂ ∧ Reverted st₂ := by
+  cases h with
+  | callOk hargs hlookup' hlen hbody ho =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          obtain ⟨ho', hrev⟩ := tr_fail_body hstmts
+          cases ho with
+          | inl hn =>
+              exact absurd (hn.symm.trans ho')
+                (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+          | inr hl =>
+              exact absurd (hl.symm.trans ho')
+                (by decide : (Outcome.leave : Outcome) ≠ Outcome.halt)
+  | callHalt hargs hlookup' hlen hbody =>
+      rw [hlookup] at hlookup'
+      cases hlookup'
+      cases hbody with
+      | block hstmts =>
+          exact ⟨_, rfl, (tr_fail_body hstmts).2⟩
+  | callArgsHalt hargs =>
+      exact (trArgs1_halt_inv hargs (fun st₁ hh => trErr_ne_halts hh)).elim
+
+/-- **INTERFACE STEP 6, THE THIRD FACT - `tr_fail_reverts`.** The inversion of the fail call
+    itself: a run of `fail(<selector site>)` in ANY scope stack that resolves `fail` to the helper
+    halts with a revert record, whatever the selector site is and whatever value it holds.
+    **T.5's fp_stmt_steps cites this lemma** (T.1's note: write it once, have both cite it) - it is
+    the same fact at `.finalPairing` with `ERR_PRECOMPILE_FAILED` in place of
+    `ERR_PROOF_REJECTED`, and only the site's non-halting is used, never its value. -/
+theorem tr_fail_reverts {R : Render p G₁ G₂ Gₜ}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (hlookup : lookupFun funs "fail" = some (failFDecl, funs'))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.exprStmt (Expr.call "fail" [trErrExpr R.consts])) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  cases h with
+  | exprStmt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := tr_fail_expr hlookup hex
+      exact absurd hr (by simp)
+  | exprStmtHalt hex =>
+      obtain ⟨st₂, hr, hrev⟩ := tr_fail_expr hlookup hex
+      cases hr
+      exact ⟨rfl, hrev⟩
+
 /-! ## 4. THE NODE, CLOSED
 
   WHAT IS CLOSED HERE: BlockProgress R .traceReturn - §6's TOTAL contract (Blocks.lean:106), both
-  halves, sorry-free - and BlockSound's FIRST conjunct (Blocks.lean:92), as tr_sound_clean. BlockSound's
-  second conjunct (the poisoned walk) is NOT closed: its only content is the fail inversion of §3, and
-  the case-name work is recorded in T.5's card rather than guessed at here.
+  halves, sorry-free (T.1) - and BlockSound R .traceReturn, BOTH conjuncts (tr_blockSound): conjunct 1
+  as tr_sound_clean (T.1) and conjunct 2 as tr_poison_walk (T.2), whose only content is the fail
+  inversion of §3.1. TraceReturn has no remaining node.
 
   What the clean walk spends: q.pre is .pairing, so the clean boundary is Clean R .pairing - and the
   ONLY part of it used is VEnv.get V "success" = some 1, the third conjunct of Clean. No Inv clause is
@@ -526,6 +771,100 @@ theorem tr_sound_clean (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
   · obtain ⟨_, _, h3⟩ := tr_guard_skip hsucc h₁
     exact absurd h3 hne
 
+
+/-- **INTERFACE STEP 2, THE POISONED DUAL.** On a poisoned boundary `success` is 0, so the guard
+    expression is `iszero(0) = 1` and the arm FIRES. Same route as tr_iszero_val - invert the local
+    builtin straight through stepOp, never through dialect_deterministic. -/
+theorem tr_iszero_zero {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st : EvmState} {r : EResult (Bridge.Dialect c g)}
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+      (Expr.builtin Op.iszero [Expr.var "success"]) r) : r = .vals [1] st := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget =>
+                  simp_all [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w]
+                  exact hbi.1.symm
+  | builtinHalt hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar =>
+          cases hnil with
+          | argsNil =>
+              cases hvar with
+              | var hget => simp [Bridge.Dialect, builtinWithExternal, stepOp, un, b2w] at hbi
+  | builtinArgsHalt hargs =>
+      cases hargs with
+      | argsRestHalt h => cases h
+      | argsHeadHalt _ h => cases h
+
+/-- **S3 + S6 COMPOSED: the guard fires and the arm reverts.** The dual of tr_guard_skip - there the
+    body was never entered and the outcome was .normal; here the body IS entered, it is the one-statement
+    fail call, and tr_fail_reverts closes the walk. Note the `Step.block` rule pushes `hoist` of the
+    arm onto the scope stack, and `hoist` of a body with no function definitions is the empty scope -
+    which is why the lookup hypothesis transfers by defeq and `fail_lookup` needs no second copy. -/
+theorem tr_guard_reverts {R : Render p G₁ G₂ Gₜ}
+    {funs funs' : FunEnv (Bridge.Dialect c g)}
+    {V V' : VEnv (Bridge.Dialect c g)} {st st' : EvmState} {o : Outcome}
+    (hlookup : lookupFun funs "fail" = some (failFDecl, funs'))
+    (hs : VEnv.get V "success" = some (0 : U256))
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.cond (Expr.builtin Op.iszero [Expr.var "success"])
+          [Stmt.exprStmt (Expr.call "fail" [trErrExpr R.consts])]) V' st' o) :
+    o = .halt ∧ Reverted st' := by
+  have hnz1 : ¬((1 : U256) = (Bridge.Dialect c g).zero) := by
+    show (1 : U256) ≠ 0
+    decide
+  cases h with
+  | ifTrue hc hnz hbody =>
+      have h1 := tr_iszero_zero hs hc
+      cases h1
+      cases hbody with
+      | block hstmts =>
+          have hl : lookupFun
+              (hoist (Bridge.Dialect c g)
+                [Stmt.exprStmt (Expr.call "fail" [trErrExpr R.consts])] :: funs) "fail" =
+              some (failFDecl, funs') := by
+            show lookupFun funs "fail" = some (failFDecl, funs')
+            exact hlookup
+          rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hstmts with
+              ⟨V₁, st₁, h₁, hnil⟩ | ⟨h₁, hne⟩
+          · exact absurd (tr_fail_reverts hl h₁).1
+              (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+          · exact tr_fail_reverts hl h₁
+  | ifFalse hc hz =>
+      have h1 := tr_iszero_zero hs hc
+      cases h1
+      exact absurd hz hnz1
+  | ifHalt hc =>
+      have h1 := tr_iszero_zero hs hc
+      cases h1
+
+/-- **BlockSound'S SECOND CONJUNCT - THE POISONED WALK.** From a poisoned boundary every run of the
+    TraceReturn slice halts with a revert record: the guard fires on `success = 0` and the fail arm
+    reverts, so the tail (the store and the return) is never reached and a pending failure cannot be
+    laundered into a return. The second arm of §6's post - `.normal` and still poisoned - is
+    unreachable for THIS slice, unlike the five slices whose guard is elsewhere; it is not needed,
+    since the disjunction is satisfied by the revert arm. -/
+theorem tr_poison_walk (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
+    {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (hpois : Poisoned R H vkAddr cd V st)
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {o : Outcome}
+    (hrun : ExecStmts (Bridge.Dialect c g) (R.scope c g) V st
+      (R.slice Partial.traceReturn) V' st' o) :
+    (o = .halt ∧ Reverted st') ∨ (o = .normal ∧ Poisoned R H vkAddr cd V' st') := by
+  rw [tr_slice R] at hrun
+  have hsucc : VEnv.get V "success" = some (0 : U256) := hpois.2
+  have hl : lookupFun (R.scope c g) "fail" = some (failFDecl, R.scope c g) := fail_lookup R
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) hrun with
+      ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · exact absurd (tr_guard_reverts hl hsucc h₁).1
+      (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · exact Or.inl (tr_guard_reverts hl hsucc h₁)
 
 /-- The honest dialect BlockProgress runs at, and its scope. -/
 abbrev Dhonest (product : PairingProduct) :=
@@ -625,5 +964,25 @@ theorem tr_blockProgress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
     BlockProgress R Partial.traceReturn Snap H vkAddr product cd :=
   ⟨fun V st h => tr_progress_ex R product hpin Snap H vkAddr cd h,
    fun V st h V' st' o hrun => tr_progress_all R product Snap H vkAddr cd h hrun⟩
+
+/-- **NODE 1 CLOSED, THE OTHER HALF: BlockSound R .traceReturn** - §6's soundness contract
+    (Blocks.lean:92) at the dialect the consumer actually asks for, which is
+    \`permissive (callsOf product)\` with an arbitrary gas oracle: conjunct 1 is tr_sound_clean (T.1)
+    and conjunct 2 is tr_poison_walk (this card). Nothing here needs the trRetMptr pin - both
+    conjuncts are forall-runs halves, so the run is a hypothesis and the return-window binding is a
+    CONSEQUENCE of it, exactly as the header predicts.
+
+    SCOPE OF THE CLAIM, stated plainly because it is a real restriction: BlockSound takes \`c\` as a
+    parameter, and this wraps conjunct 1 at the PERMISSIVE dialect only, because that is how
+    tr_sound_clean was stated and this card may not rewrite it. tr_poison_walk is proved at ANY
+    \`c\`, so a later card that wants the fully general \`BlockSound R .traceReturn ... c ...\` needs
+    only a permissive-free restatement of the clean walk - no new semantics.
+    \`Render.BlockContractsAt\` asks for \`permissive (callsOf product)\` (Blocks.lean:125), so this
+    is the whole obligation the hinge has for this block. -/
+theorem tr_blockSound (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (g : ExternalGas) (cd : Bytes) :
+    BlockSound R Partial.traceReturn Snap H vkAddr (permissive (callsOf product)) g cd :=
+  ⟨fun V st h V' st' o hrun => tr_sound_clean R product Snap H vkAddr cd g h hrun,
+   fun V st h V' st' o hrun => tr_poison_walk R H vkAddr cd h hrun⟩
 
 end Midfall.LoweringV2.Blocks.TraceReturn

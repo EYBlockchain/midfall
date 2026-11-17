@@ -60,3 +60,11 @@ import Midfall.Tools.ConeSorries
 #cone_sorries Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress
 #cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockProgress [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
 #cone_avoids Midfall.LoweringV2.Blocks.FinalPairing.fp_finalPairing_contracts [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
+
+#cone_sorries Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound
+-- T.2's own root: TraceReturn's SOUNDNESS contract, both conjuncts, hand-proved with no sorry.
+--    Conjunct 2 is the poisoned walk, whose whole content is tr_fail_reverts (the lemma T.5 cites).
+--    The count is 0 by construction; the acceptance finding is that the three roots above do NOT move,
+--    because no per-block proof reaches the headline until the generic hinge blockContracts_of_valid
+--    (Blocks.lean:152, still sorry) is proved.
+#cone_avoids Midfall.LoweringV2.Blocks.TraceReturn.tr_blockSound [Midfall.Lowering.Surface, Midfall.Lowering.Partials, Midfall.Lowering.Obligations, Midfall.Lowering.Accumulator, Midfall.Lowering.AccEncoding, Midfall.Lowering.RunEmitted, Midfall.Lowering.FrameWalk, Midfall.Yul.ShellModel, Midfall.Yul.ImportSolcIR, Midfall.Yul.IRCheck, Midfall.Instances.ImportedIR, Midfall.Instances.IrCheckBlindness, Midfall.Instances.RunShellInversion, Midfall.Instances.RunShellInhabited]
