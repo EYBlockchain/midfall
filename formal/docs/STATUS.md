@@ -77,3 +77,41 @@ against 14,054). CERT.1 probes two suspect lemmas first; a refuted one goes to t
 **Waiting on human:** paste the goal prompt (`v2-bundle/docs/GOAL-PROMPT.md`, everything below its
 line) as the orchestrator's `/goal`: **the prompt changed with D-P71 and D-P72.** D-P72 clause 9
 asks the generator's owner for a free-memory guard in the evaluator template.
+
+## ⚠ WAITING ON HUMAN — a REFUTED node is in the cone, and DG.6 cannot clear it
+
+**Found while checking DG.6's preconditions at `9a3d619` (not by briefing it blindly).**
+
+- `theorem poseidon_valid : poseidonRender.Valid := by sorry` is **still in the tree**
+  (`Instances/PoseidonV2.lean:190`).
+- Its **negation is proved**: `poseidonRender_notValid : ¬ poseidonRender.Valid`
+  (`PoseidonValid.lean:468`).
+- **DG.2's own gate reports it**: `ok: 58 sorried declarations, 9 in the headline cone, 1 REFUTED`.
+
+**This is a live W13 violation.** W13 requires a sorry whose negation is proved to be **deleted in the
+same commit as the refutation** — the refutation landed two rounds ago (C.4) and the sorry is still
+there. And W13's other clause: **a cone containing a refuted leaf is reported as UNREACHABLE, never as
+a number.** We are reporting `9`.
+
+**Why DG.6 cannot fix it.** DG.6's NEEDS names *"the ticket (statements area) that deletes
+`poseidon_valid` or turns `Valid` into a hypothesis"* — **that ticket has not run and I cannot identify
+it from the V3 table.** DG.6's step 1 is literally `After poseidon_valid is gone, add…`. Its `after`
+column says only `DG.2`, which is merged, so **the table says READY while the NEEDS say otherwise.**
+**The tool itself already exists** (`Done.lean:410`, `#assert_no_refuted_sorry`), so DG.6 is one line —
+but only once the statements ticket lands.
+
+**Three questions:**
+1. **Which V3 card deletes or re-hypotheses `poseidon_valid`?** Is it ST.4 (D-P45's `HypothesesInhabited`
+   work) or an M3 statements card? The table does not say, and DG.6 depends on it.
+2. **Under D-P71, `poseidon_valid` is a proof at a fixture** — `poseidonRender.Valid` names a fixture.
+   **Should it simply be deleted as V2 residue rather than repaired?** Under the restatement the
+   theorem is `lowering_correct` over every render with `ValidV3`; a fixture-level `Valid` sorry may
+   have no consumer at all in V3.
+3. **Should the report print UNREACHABLE rather than 9** while a refuted leaf sits in the cone, per
+   W13's final clause? If so that is a DG.2/DG.6 gate change, and I would rather you say so than have
+   me reinterpret my own gate.
+
+**Until answered I am starting no PROOF or SKELETON card** (the loop's rule for an open question of
+this kind). INFRA cards that do not depend on it — **DG.7** (CI that runs and can pass, after DG.0+DG.2,
+both merged) and **DG.8** (STATUS generated from the report, after DG.2) — are READY and are the next
+things I will brief.
