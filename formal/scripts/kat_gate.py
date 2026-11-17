@@ -95,8 +95,23 @@ EVAL = re.compile(
 # gap pinned as a falsifiable obligation rather than hidden; and the three counts D.1's typed-in meta
 # agrees with vk.json on). So the file count goes 100 -> 101 and the total 1361 -> 1375. No gate was
 # deleted; the delta is +14/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1375
-EXPECTED_KAT_FILES = 101
+# D.3 (GEN/KAT) adds Midfall/Instances/PoseidonCoherence.lean: a NEW file in the suite carrying
+# EIGHTEEN '#eval' gates. Fifteen expect true and three record a measured NEGATIVE as its own
+# expectation, which kat_gate has always treated as first-class: check 1's `Valid.layout` clause
+# (false, the typed-in meta's protocol is the default so fromProtocol empties every commitment
+# section), check 1's `proofLen == trace.proof_len` clause (false, 4320 repacked against 2640
+# compressed - the card conflated the two widths), and check 2's `Valid.circuitMeta` clause (false,
+# D.2's gap A on one side and constraintSystemMetaDefault on the other). The other fifteen are the
+# positive half: the derived proof length as a value (1792), the layout's slot schedule against the
+# fixture's 72 reads and 2640 bytes, the two-width tiling, the meta constructor's .ok, the
+# field-by-field attribution of the check-2 mismatch, the three agreeing counts, the ten
+# Lean-squeezed Fiat-Shamir challenges against transcript_log, the whole 327-comparison replay with
+# an empty failure list, the derived absorb prefix, three one-byte corruptions of proof.bin with
+# their first-differing challenge indices (6, 0 and none), the reddened replay on a corrupt bundle,
+# and two labelled DIAGNOSTICS that localise check 3's blocker to the render's G1 codec rather than
+# to the layout or the decoder. No gate was deleted; the delta is +18/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1393
+EXPECTED_KAT_FILES = 102
 
 # Only these shapes count as #eval output.
 #
