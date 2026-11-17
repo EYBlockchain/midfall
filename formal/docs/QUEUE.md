@@ -154,6 +154,29 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | **T.3**, **S.5**, **S.6** | The engine's kernel check on the lagrange loop is not bounded yet; do not apply D-P57's hand-proof fallback on that ground before PLAN-V3 card T3.0 has measured it |
 | every card | The tip (`4e18c65`) still fails `kat_gate.py`: 1397 annotated checks against a pinned 1393, and two `-- expect TRUE` annotations that can never match `true` (`DeployedProfile.lean:857`, `PoseidonCoherence.lean:502`). The sorry register is back in sync since F.1. Card **DG.0** below fixes it and needs no decision |
 
+### DG.1 — Make the two repack gates honest, and the fixture bundle consistent  **[READY — BLOCKS §6 DONE]**
+
+INFRA · KAT · box 1 h · Sonnet · after DG.0 · **relates to R.5**
+
+- **Goal.** `checks.sh` exits 0 **for the right reason.** Two defects, both found by DG.0:
+  1. **`Calldata.lean:916-917` pass vacuously when the dump directory is absent.** A gate that returns
+     `true` because its input is missing is not a gate. **Add a presence guard so an absent artifact is
+     NOT-COMPUTABLE (or an explicit skip the report names), never a silent `true`.**
+  2. **The tracked dump directory is mixed-vintage** (orchestrator-verified: `proof.bin`/`instance.be`
+     Nov 17, `calldata.bin` Oct 29, `git status` clean ⇒ committed state). **Resolve to ONE consistent
+     vintage.** Because the prover's blinding is non-deterministic, a fresh full regeneration cannot
+     reproduce the committed `calldata.bin` — so **the honest options are: revert the dump to the
+     Oct 29 set, or track a consistent `proof.bin`+`calldata.bin` pair produced together.** **Name
+     which, and say what it costs D.3's `trace.json` pins.**
+- **Needs.** DG.0's report; `Calldata.lean:916-917`; the dump dir listing; `check_baseline_pins.py`
+  (already reports the dump `proof.bin` has moved); R.5.
+- **Does NOT need.** Any proof; the emitter cards; block rows; frozen files.
+- **Accept.** `bash scripts/checks.sh` **exits 0**; the two gates either genuinely pass on a consistent
+  bundle or are reported as NOT-COMPUTABLE — **not silently true.** Cone unchanged at 9.
+- **Stop if.** Making them green requires editing an `expect` value or deleting an artifact to exploit
+  the vacuity. **That is the failure mode, not the fix.**
+
+---
 ### DG.0 — Make the gates green at the tip  **[READY — no decision needed; run before the next PROOF card]**  **[V3: row 1 of the V3 table]**
 INFRA · KAT · box 1 h · Sonnet · after —
 
