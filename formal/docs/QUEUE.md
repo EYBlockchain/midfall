@@ -73,7 +73,7 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 27 | **REF.10** | The encoder-first compressed law | M1 | ALG · PROOF · 2.5 h · strongest | REF.9 | after REF.9 | PLAN-V3-cards |
 | 28 | **REF.12** | Acceptance gate at the known trapdoor | M1 | ALG · KAT · 1.5 h · Sonnet | REF.8, REF.11 | after REF.8, REF.11 | PLAN-V3-cards |
 | 29 | **OBJ.0** | Object decisions: the scope, and `ValidV3` | M2 | DECISION · DECISION · 0.5 h · orchestrator + human | PL.0 or earlier | DONE — D-P65, D-P67 signed | PLAN-V3-cards |
-| 30 | **G1.4b** | Land the pcs block scopes + the 5 gate updates (D-P51) | M2 | GEN · EMIT · Sonnet | F.1 | READY | V2 card below; needs `t/G1.4` on origin (see its Needs) |
+| 30 | **G1.4b** | Land the pcs block scopes + the 5 gate updates (D-P51) | M2 | GEN · EMIT · Sonnet | F.1 | **MERGED 9f76fcb** | V2 card below; needs `t/G1.4` on origin (see its Needs) |
 | 31 | **OBJ.1** | Land the Yul token parser with its round-trip KATs | M2 | INFRA · KAT · 1.5 h · Sonnet | — | **MERGED 75aa799** | PLAN-V3-cards |
 | 32 | **G1.1** | EMIT `AccumulatorHelpers` (823 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | **MERGED f6f951c** | V2 card below; one commit with G1.2, OBJ.2, ST.3 (D-P65) |
 | 33 | **G1.2** | EMIT `QuotientHelpers` (68 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | **MERGED f6f951c** | V2 card below; one commit with G1.1, OBJ.2, ST.3 (D-P65) |
