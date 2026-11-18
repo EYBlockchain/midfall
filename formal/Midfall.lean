@@ -132,6 +132,7 @@ import Midfall.Yul.WpFalsifiers
 import Midfall.Yul.WpTac
 import Midfall.Yul.WpTacTest
 import Midfall.Yul.WpX
+import Midfall.Yul.LoopRule
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements
