@@ -21,7 +21,7 @@ logs go to a temporary directory; nothing is written into the repository. One ar
 
 The measurements cited in PLAN-V3 §3 are the `#eval` output in those logs: for example
 `reference/RunABC.log` is the staged run of the Lean verifier on the Rust proof, and
-`statements/StatementsV3Deploy.log` is the clause table at the fixture.
+`statements/StatementsV3Deploy.log` the clause table at the fixture now lives in the tree module Midfall/Instances/StatementsV3Deploy.lean, gated by kat_gate.py; the evidence file is a retired pointer plus the two refutations the single text cannot express (RECON.1b-iii).
 
 ## Contents
 

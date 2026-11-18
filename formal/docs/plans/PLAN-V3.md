@@ -200,7 +200,7 @@ card named in the last column, which re-checks it at the then-current commit.
 |---|---|---|---|
 | `../ReviewProbes.lean` | the review's machine-checked findings, self-checking | 0 | DG.0 |
 | `statements/StatementsV3.lean` (990 lines) | the repaired surface in namespace `Midfall.LoweringV3`: `calldataOfV3`, `PlanMeta`, `PayloadAgrees`, `scopeV3`, `noShadowB`, `ExitDiscipline`, `TwoOutcomes`, `EntryFrameV3`, `G1CodecHeadlineLaws`, `BodyTotal`, `LoweringEquivalenceV3`, `RejectsV3`, `CompleteV3`, `TotalV3`, `HypothesesInhabitedV3`, `EndToEndV3`; **`lowering_equivalenceV3_of` proved** | 4 stated obligations | ST.1 |
-| `statements/StatementsV3Deploy.lean` | the surface evaluated at the fixture data | 0 | ST.1 |
+| `statements/StatementsV3Deploy.lean` | **RETIRED (RECON.1b-iii)** - the fixture clause table now lives in the tree module `Midfall/Instances/StatementsV3Deploy.lean`; this file keeps only `poseidon_payloadAgrees_not`, which refutes the D-P67 fallback and cannot be expressed against the single text | 0 | ST.1 |
 | `statements/StatementsV3Falsifiers.lean` | proofs that the frozen text is broken (double repack, `numPointSets = 0`, padded calldata, `EnvAgrees` free in `delta` and commitments, `rejects_of_not_accepts` ⇒ `False`) | 0 | ST.1 |
 | `soundness/SoundnessV3.lean` (1483 lines) | the staged Lean view (`rawDecode`, `pcsReads`, `linearizeFull`, `leanStage`), `StageInv`, `BlockSim`, `BlockProgS`, the exit scan; **all glue proved**, including `lowering_equivalence_of_stages`, `tr_blockSim`, `tr_blockProgS`, `fp_blockSim_of_blockSound`, `two_outcomes_of_exitShape` | 6 leaves | SIM.1–SIM.3 |
 | `soundness/RawDecode.lean` | `decodeCalldata_eq_raw`, stand-alone | 0 | SIM.1 |
