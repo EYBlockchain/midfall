@@ -9,7 +9,7 @@
   would duplicate a proved declaration, so this file uses Midfall.Yul.WpBridge.BLive instead. No
   statement and no proof step was restated.
 
-  WHAT IS HERE. Two registered holes, one proved bridge, and the totality half (T3.2):
+  WHAT IS HERE. One registered hole, two proved bridges, and the totality half (T3.2):
 
     * wp_exists          THE FIVE-CLASS EXISTENCE CONJUNCTION - the mirror image of wp_sound with an
                          EXISTENTIAL conclusion, by one induction on fuel. PROVED here (T3.2). Its
@@ -24,18 +24,22 @@
                          demonic Bopen is sound for every call relation and is NOT live at
                          ExternalCalls.none, because a staticcall has no response. This is why the
                          existence half runs at Bfun (Bfun_live) and not at Bopen.
-    * loadWord_storeWord the memory layer's central missing lemma. T3.5 owns it.
+    * loadWord_storeWord the memory layer's read-over-write lemma. PROVED here (T3.5) from
+                         Midfall/Yul/Word.lean: the equal window reassembles, the disjoint window is
+                         invisible, and the overlap is genuinely undetermined (see the lemma).
     * mulmod_toFr        the arithmetic layer's central missing lemma. T3.8 owns it.
     * runs_agree_of_wp   PROVED here: prefix determinism WITHOUT dialect_deterministic (finding C-3),
                          by two applications of WpTac.allRuns_of_wp.
 
   D-P71: no native_decide in this file, and none is needed - wp_exists and runs_agree_of_wp are
-  term-level arguments over the engine and its soundness theorem. The two remaining holes
-  (loadWord_storeWord, mulmod_toFr) are REGISTERED in SORRY.md, not carried. The axiom gate for the
+  term-level arguments over the engine and its soundness theorem, and loadWord_storeWord is a
+  fold-level argument over the vendored byte model (Midfall/Yul/Word.lean). The one remaining hole
+  (mulmod_toFr) is REGISTERED in SORRY.md, not carried. The axiom gate for the
   T3.2 theorems is a #assert_axioms block at the end of Midfall/Yul/VKP.lean, which is the file that
   imports Midfall.Tools.Done.
 -/
 import Midfall.Yul.WpTac
+import Midfall.Yul.Word
 import Midfall.Lowering.Qvm
 set_option autoImplicit false
 
@@ -426,13 +430,29 @@ theorem runs_agree_of_wp {c : ExternalCalls} {g : ExternalGas} {n : Nat}
   have b := allRuns_of_wp n h V₂ st₂ o₂ h₂
   exact ⟨a.1.trans b.1.symm, a.2.1.trans b.2.1.symm, a.2.2.trans b.2.2.symm⟩
 
-/-- The memory layer's central missing lemma (statement only): word read over word write at
-    non-overlapping or equal 32-byte windows. NOT IN THE TREE (grep `loadWord.*storeWord`: 0 hits). -/
+/-- **Read over write at the word layer (T3.5, PROVED).** A 32-byte load after a 32-byte store:
+    at the SAME address the stored word reads back (`Word.loadWord_storeWord_same`, whose engine is
+    the big-endian reassembly `Word.reassemble`); at a DISJOINT address the store is invisible
+    (`Word.loadWord_storeWord_disjoint`); and in the OVERLAP case nothing is determined - the word
+    depends on the stored bytes and on the old memory together - so that branch keeps the term
+    itself. The third branch is not a gap in the proof: the card's own falsifier, that
+    `loadWord (storeWord mem p v) (p+1) = v`, fails already at `v = 1#256` on the zero memory
+    (the shifted read is `256`, and `256 ≠ 1` by `decide`), so no side-condition-free strengthening
+    of this statement exists. The layer lives in
+    `Midfall/Yul/Word.lean`; the statement is verbatim the memo's 3.3 proposal, unchanged. -/
 theorem loadWord_storeWord (mem : Nat → UInt8) (p q : Nat) (v : U256) :
     loadWord (storeWord mem p v) q =
       if q = p then v else if q + 32 ≤ p ∨ p + 32 ≤ q then loadWord mem q
       else loadWord (storeWord mem p v) q := by
-  sorry
+  by_cases hpq : q = p
+  · subst hpq
+    rw [ite_eq_left (rfl : q = q)]
+    exact Word.loadWord_storeWord_same mem q v
+  · rw [ite_eq_right hpq]
+    by_cases hd : q + 32 ≤ p ∨ p + 32 ≤ q
+    · rw [ite_eq_left hd]
+      exact Word.loadWord_storeWord_disjoint mem p q v hd
+    · rw [ite_eq_right hd]
 
 /-- The arithmetic layer's central missing lemma (statement only): EVM `mulmod` at the scalar
     modulus is field multiplication on canonical words. `qvmToFr_mul` (Qvm.lean:148) is the Nat-level
@@ -447,4 +467,5 @@ theorem mulmod_toFr (a b : U256) :
 #print axioms wpSS_exists
 #print axioms Bopen_not_live
 #print axioms runs_agree_of_wp
+#print axioms loadWord_storeWord
 end Midfall.Yul.WpX

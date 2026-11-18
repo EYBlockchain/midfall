@@ -71,8 +71,13 @@ owner() {
 # loadWord_storeWord to T3.5 (the word and memory layer) and :1369, :1373 and :1375 give mulmod_toFr
 # to T3.8 (the field-arithmetic bridge). The card's single-owner line for those two was a premise
 # error, reported on the T3.1b ticket rather than copied into the register.
-    Midfall.Yul.WpX.loadWord_storeWord)
-      echo 'V3 T3.5 - the word and memory layer: loadWord over storeWord at equal and disjoint 32-byte windows (cards.md:1312, :1319)' ;;
+#
+# CLOSED by T3.5. Midfall.Yul.WpX.loadWord_storeWord is PROVED in Midfall/Yul/WpX.lean, from the
+# word and memory layer landed in Midfall/Yul/Word.lean: the equal 32-byte window reassembles the stored
+# word, a disjoint window is invisible to the read, and the OVERLAP case is genuinely undetermined - it
+# keeps the term itself, which is what the registered statement says. No hypothesis was added and the
+# statement is verbatim the memo's 3.3 proposal. Its owner row is gone from this list and from the
+# register; the mulmod_toFr row below stays with T3.8.
     Midfall.Yul.WpX.mulmod_toFr)
       echo 'V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373)' ;;
 # ---- GEN.0: the one sorry that came with the parametric-execution port (Midfall/Yul/VKP.lean). ----
