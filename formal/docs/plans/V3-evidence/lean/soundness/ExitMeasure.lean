@@ -1,6 +1,13 @@
 /- MEASUREMENT (scratch): the exit scan of SoundnessV3.lean §4, evaluated on the AST the theorem
    runs at HEAD (asmOf poseidonPv poseidonM 0 0). The scan is copied verbatim from SoundnessV3.lean
-   because a scratch file cannot be imported. -/
+   because a scratch file cannot be imported.
+
+   RECON.1b-i: ST.3 landed a scan of the same name in this file's open namespace
+   (`Midfall.LoweringV2.exitScan`, Statements.lean:452), so the three measurements below are
+   qualified to THIS file's copy - the §4 scan of the design, which is what is being measured.
+   (They are not the same function: the landed one treats a `for` POST block as outside the loop,
+   §4's copy as inside it, so `break` in a post block is flagged there and not here. The
+   measurements start from `false false`, where the two agree.) -/
 import Midfall.Instances.PoseidonValid
 set_option autoImplicit false
 open Midfall Midfall.Generator Midfall.Lowering Midfall.LoweringV2
@@ -50,14 +57,14 @@ def sl (q : Partial) : YulBlock := sliceOf poseidonPv poseidonM q
   [Partial.vkLoading, .transcriptParser, .lagrange, .quotientLin, .pcs, .finalPairing, .traceReturn].map
     (fun q => (sl q).length))
 -- whole program: must be FALSE (it contains the one `return`)
-#eval exitScan 100000 false false (.b progHead)
+#eval _root_.exitScan 100000 false false (.b progHead)
 -- program without its last statement (the `return` of TraceReturn): must be TRUE
-#eval exitScan 100000 false false (.b progHead.dropLast)
+#eval _root_.exitScan 100000 false false (.b progHead.dropLast)
 -- the last statement is the `return`
 #eval match progHead.getLast? with
   | some (Stmt.exprStmt (Expr.builtin Op.ret _)) => true
   | _ => false
 -- everything before the TraceReturn slice (3 statements): must be TRUE
-#eval exitScan 100000 false false (.b (progHead.take (progHead.length - 3)))
+#eval _root_.exitScan 100000 false false (.b (progHead.take (progHead.length - 3)))
 -- the TraceReturn slice is the last three statements of the program
 #eval (sl .traceReturn).length == 3

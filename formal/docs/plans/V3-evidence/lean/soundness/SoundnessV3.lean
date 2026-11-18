@@ -15,6 +15,23 @@
         the generic lift that carries `fp_blockSound` over.
     §7  Evidence: two executable falsifiers and the leaf register (`#cone_sorries`).
 
+  RECON.1b-i REBASE - this file elaborates at HEAD again (227b00c). Three adaptations, all
+  name/arity/scope EXCEPT the one marked STATEMENT, and no conclusion of any lemma moved:
+    * run_split / run_join: ST.3/D-P65 changed the scope to [hoist helpers ++ hoist slices], so
+      prog_slices_decomp's second conjunct is now the equation [hoist (R.prog vkAddr 0)] =
+      R.scope c g that the old hand-written 'show [hoist R.helpers] = _' step was reconstructing.
+      Both steps are now 'hhoist.symm'.
+    * lowering_equivalence_of_stages: ST.4 added the fourth conjunct BodyTotal (discharged by the
+      REGISTERED tree sorry bodyTotal_of_valid, exactly as the frozen Blocks.lean:778 does) and made
+      the codec bundle a hypothesis of ALL FOUR conjuncts, introduced once after 'hpc'.
+    * STATEMENT (the only type that moved): Render.ProgContracts and completeness_of_progs cited the
+      pre-ST.4 seven-law G1CodecLaws as the row premise; the headline now supplies only
+      G1CodecHeadlineLaws and four do not give seven. Both cite G1CodecHeadlineLaws now - the same
+      move ST.4 made to the frozen BlockContractsAt / BlockRow gate (Blocks.lean:722-730) and the
+      shape the green StatementsV3.lean:820,856,864,874 rows already use. The obligation gets
+      HARDER (the rows must hold under four laws, not seven); nothing was weakened to get green.
+    * The six sorries below are unchanged in number and identity.
+
   RULE FOLLOWED: definitions are real; leaf obligations (one per block / one per Lean-only fact) are
   `sorry`; every composition lemma is PROVED.
 
@@ -756,9 +773,7 @@ theorem run_split (R : Render p G₁ G₂ Gₜ) (vkAddr : U256) (c : ExternalCal
       · cases obs
         simp only at heq ⊢
         rw [heq]
-      · have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := by
-          show [hoist (Bridge.Dialect c g) R.helpers] = _
-          rw [hhoist]
+      · have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := hhoist.symm
         rw [hscope]
         have hbody : R.preBlock vkAddr ++ R.slices = R.prog vkAddr 0 := by
           rw [hprog]; rfl
@@ -1072,7 +1087,7 @@ def BlockProgS (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : 
 /-- **WHERE `CompleteSide` ENTERS.** Only the `.lagrange` row reads it (x^n ≠ 1). -/
 def _root_.Midfall.LoweringV2.Render.ProgContracts (R : Render p G₁ G₂ Gₜ)
     (product : PairingProduct) : Prop :=
-  R.Valid → SimPins R → Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product → G1CodecLaws R.E.g1 →
+  R.Valid → SimPins R → Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product → G1CodecHeadlineLaws R.E.g1 →
   ∀ (H : Hash) (vkAddr : U256) (cd : Bytes), LeanAccepts R H cd → CompleteSide R H cd →
     ∀ q : Partial, BlockProgS R q H vkAddr product cd
 
@@ -1185,9 +1200,7 @@ theorem run_join (R : Render p G₁ G₂ Gₜ) (vkAddr : U256) (c : ExternalCall
       (R.preBlock vkAddr ++ R.slices) V' st' o) :
     RunBody R vkAddr 0 c g st₀ ⟨committedState st₀ st', o⟩ := by
   obtain ⟨hprog, hhoist⟩ := prog_slices_decomp R vkAddr 0 c g
-  have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := by
-    show [hoist (Bridge.Dialect c g) R.helpers] = _
-    rw [hhoist]
+  have hscope : R.scope c g = [hoist (Bridge.Dialect c g) (R.prog vkAddr 0)] := hhoist.symm
   have hbody : R.preBlock vkAddr ++ R.slices = R.prog vkAddr 0 := by
     rw [hprog]; rfl
   rw [hscope, hbody] at hrun
@@ -1199,7 +1212,7 @@ theorem completeness_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingPr
     (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
     (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
-    (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) (hcodec : G1CodecLaws R.E.g1) :
+    (hacc : LeanAccepts R H cd) (hcomp : CompleteSide R H cd) (hcodec : G1CodecHeadlineLaws R.E.g1) :
     (∃ obs, RunBody R vkAddr 0 (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ obs) ∧
       ∀ obs, RunBody R vkAddr 0 (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ obs →
         obs.view = returnView st₀ := by
@@ -1227,12 +1240,12 @@ theorem lowering_equivalence_of_stages (R : Render p G₁ G₂ Gₜ) (product : 
     (hR : R.Valid) (hpins : SimPins R) (hexit : R.ExitOk)
     (hsim : R.SimContracts product) (hprog : R.ProgContracts product) :
     LoweringEquivalence R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc
-  refine ⟨?_, ?_, ?_⟩
+  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec
+  refine ⟨?_, ?_, ?_, bodyTotal_of_valid R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc⟩
   · intro g obs hobs hret hside
     exact soundness_of_sims R product hR hpins hsim W Lyt H vkAddr cd st₀ hdep hentry hpc
       g obs hobs hret hside
-  · intro hacc hcomp hcodec
+  · intro hacc hcomp
     exact completeness_of_progs R product hR hpins hprog W Lyt H vkAddr cd st₀ hdep hentry hpc
       hacc hcomp hcodec
   · intro g obs hobs
