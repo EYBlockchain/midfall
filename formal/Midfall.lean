@@ -126,6 +126,7 @@ import Midfall.Yul.Builtins
 import Midfall.Yul.ImportSolcIR
 import Midfall.Yul.ShellModel
 import Midfall.Yul.IRCheck
+import Midfall.Yul.WordAttr
 import Midfall.Yul.Word
 import Midfall.Yul.Wp
 import Midfall.Yul.WpBridge

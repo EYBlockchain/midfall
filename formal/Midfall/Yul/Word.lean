@@ -44,6 +44,7 @@
   gate.
 -/
 import YulSemantics.Dialect.EVMExec
+import Midfall.Yul.WordAttr
 set_option autoImplicit false
 
 namespace Midfall.Yul.Word
@@ -374,6 +375,32 @@ macro_rules
         Midfall.Yul.Word.touchMemory2_returndata, Midfall.Yul.Word.touchMemory2_halted, Midfall.Yul.Word.loadWord_storeWord_same,
         Midfall.Yul.Word.loadWord_storeWord_disjoint, Midfall.Yul.Word.loadWord_copyInto, Midfall.Yul.Word.loadWord_copyReturn,
         Midfall.Yul.Word.mstore_step, Midfall.Yul.Word.mstore_mload, $fs,*])
+
+/-! ### `yul_word` as a real simp attribute (ticket WORDATTR)
+
+The SAME 29 lemmas, in the same order, tagged with the attribute registered in
+`Midfall/Yul/WordAttr.lean`. That is what lets the set be handed to `simp` in the two positions
+the macro pair above cannot reach - at a location, and anywhere but first in the list:
+
+```lean
+simp only [Midfall.Yul.Word.yul_word] at h
+simp only [extra1, Midfall.Yul.Word.yul_word]
+```
+
+ANNOTATION ONLY: no statement and no proof step in this file is changed by this block, and the
+list below is the list above. The macro pair stays so T3.5's existing call sites keep elaborating
+exactly as they did. -/
+attribute [Midfall.Yul.Word.yul_word]
+  Midfall.Yul.Word.b2w_eq_zero_lit Midfall.Yul.Word.b2w_eq_one_lit Midfall.Yul.Word.b2w_ne_zero_lit
+  Midfall.Yul.Word.b2w_decide_eq_one_iff Midfall.Yul.Word.b2w_iszero_eq_one Midfall.Yul.Word.b2w_iszero_eq_zero
+  Midfall.Yul.Word.one_and_b2w Midfall.Yul.Word.b2w_and_b2w Midfall.Yul.Word.b2w_and_one
+  Midfall.Yul.Word.b2w_or_b2w Midfall.Yul.Word.touchMemory_memory Midfall.Yul.Word.touchMemory_storage
+  Midfall.Yul.Word.touchMemory_transient Midfall.Yul.Word.touchMemory_env Midfall.Yul.Word.touchMemory_returndata
+  Midfall.Yul.Word.touchMemory_logs Midfall.Yul.Word.touchMemory_selfdestructs Midfall.Yul.Word.touchMemory_halted
+  Midfall.Yul.Word.touchMemory_activeWords Midfall.Yul.Word.touchMemory2_memory Midfall.Yul.Word.touchMemory2_env
+  Midfall.Yul.Word.touchMemory2_returndata Midfall.Yul.Word.touchMemory2_halted Midfall.Yul.Word.loadWord_storeWord_same
+  Midfall.Yul.Word.loadWord_storeWord_disjoint Midfall.Yul.Word.loadWord_copyInto Midfall.Yul.Word.loadWord_copyReturn
+  Midfall.Yul.Word.mstore_step Midfall.Yul.Word.mstore_mload
 
 open Midfall.Yul.Word
 #print axioms loadWord_storeWord_same
