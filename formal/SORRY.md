@@ -102,10 +102,8 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Yul.Bridge.RunCommitted_keccakOf | Midfall.Yul.Bridge | theorem | OPEN | - | `2e73797d4a998bae` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
 | Midfall.Yul.Bridge.Run_worldEq_of_noWriters | Midfall.Yul.Bridge | theorem | OPEN | ROOT | `e15a14387c645048` | V3 SIM.5 - the shared Step induction (ST.10 cites it) |
 | Midfall.Yul.Bridge.keccakOf_invariant | Midfall.Yul.Bridge | theorem | OPEN | - | `d30baf9a5253b859` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
-| Midfall.Yul.VKP.wpSS_exists_C | Midfall.Yul.VKP | theorem | OPEN | - | `125013600b0d25e4` | V3 T3.2 - totality with live summaries: same induction as Midfall.Yul.WpX.wpSS_exists (which this generalises via CLive_of_none), plus the summarised-call case (statement from scratch VKP.lean:372; GEN.1 step 4 depends on it) |
 | Midfall.Yul.WpX.loadWord_storeWord | Midfall.Yul.WpX | theorem | OPEN | - | `e9369d152b5a2708` | V3 T3.5 - the word and memory layer: loadWord over storeWord at equal and disjoint 32-byte windows (cards.md:1312, :1319) |
 | Midfall.Yul.WpX.mulmod_toFr | Midfall.Yul.WpX | theorem | OPEN | - | `6ceb8a7f24adad12` | V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373) |
-| Midfall.Yul.WpX.wpSS_exists | Midfall.Yul.WpX | theorem | OPEN | - | `9f3f9e843fa6a905` | V3 T3.2 - totality: build the Step derivation by induction on fuel (statement from scratch WPX.lean:24; BLive is landed in Midfall/Yul/WpBridge.lean) |
 
 ## Upstream sorries we must not depend on
 

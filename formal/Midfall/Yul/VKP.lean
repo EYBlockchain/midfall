@@ -36,15 +36,18 @@
     §1 vkSite_lit, vkSite_var, vkBodyV, vkBody_eq_vkBodyV   the parametric body
     §2 reverted_iff, failT, Cfail, Cfail_sound, allRuns_of_wp_fail   the `fail` call summary
     §3 IsBit + 3 lemmas, vk_all_param, vk_all_param_mem     the parametric run
-    §4 CLive, CLive_of_none, wpSS_exists_C (SORRY), Cfail_live   the existence half
+    §4 CLive, CLive_of_none, wpSS_exists_C, Cfail_live       the existence half
 
-  THE ONE SORRY. `wpSS_exists_C` is a STATEMENT only (the existence half with live summaries;
-  `wpSS_exists` is its `CLive_of_none` instance). It is REGISTERED IN SORRY.md UNDER ONE OWNER:
-  T3.2 - the same card that owns `Midfall.Yul.WpX.wpSS_exists` (SORRY.md:107), per the round-78
-  audit of this card. GEN.1 step 4 depends on it. `Cfail_live` (proved) is what makes the summary
-  usable by it. W12: the witness is `Cfail_live` and the falsifier is the source's §4 measurement -
-  with `Cnone` and a variable scope `wp_run` leaves three leaves STUCK at `Option.rec ...
-  (lookupFun ... "fail")` and the declaration does not kernel-check, so the summary is load-bearing.
+  THE REGISTERED SORRY IS CLOSED (T3.2). `wpSS_exists_C` was landed by GEN.0 as a STATEMENT only
+  (the existence half with live summaries; `Midfall.Yul.WpX.wpSS_exists` is its `CLive_of_none`
+  instance) and was REGISTERED IN SORRY.md UNDER ONE OWNER: T3.2 - the same card that owns
+  `WpX.wpSS_exists` (SORRY.md:107), per the round-78 audit of this card. GEN.1 step 4 depends on it
+  and now has it: it is a PROJECTION of the single fuel induction `WpX.wp_exists`, whose
+  summary-liveness binder `CLive` is definitionally, so there is one induction and not two.
+  `Cfail_live` (proved) is what makes the summary usable by it. W12: the witness is `Cfail_live`
+  and the falsifier is the source's §4 measurement - with `Cnone` and a variable scope `wp_run`
+  leaves three leaves STUCK at `Option.rec ... (lookupFun ... "fail")` and the declaration does not
+  kernel-check, so the summary is load-bearing.
 
   D-P71: NO `native_decide` anywhere in this file, and none is needed. `poseidonRender_notValid`
   is untouched and stays sorry-free; nothing here reads a render fixture.
@@ -417,14 +420,18 @@ theorem CLive_of_none (hC : ∀ funs fn args st, C funs fn args st = none) : CLi
   rw [hC] at hT
   cases hT
 
-/-- **THE LEMMA THE EXISTENCE HALF NEEDS (statement).** `wpSS_exists` with live summaries instead
-    of none. SORRY `wpSS_exists_C`: same induction as `wpSS_exists` (itself a sorry, card T3.2),
-    one more case - at a summarised call take the run `CLive` gives. -/
+/-- **THE LEMMA THE EXISTENCE HALF NEEDS, PROVED (T3.2).** `wpSS_exists` with live summaries
+    instead of none. It is the `CLive` instance of the ONE fuel induction `WpX.wp_exists`: `CLive`
+    above is DEFINITIONALLY the summary-liveness binder of that theorem, so this is a projection and
+    not a second proof - which is also why `wpSS_exists` (`WpX.lean:363`) is the `CLive_of_none`
+    instance of THIS one, exactly as `CLive_of_none`'s own docstring says. The one case this has and
+    `wpSS_exists` does not is the summarised call: `hC` names the callee, its arity and a RUN of its
+    body, already in the shape `Step.callOk` / `Step.callHalt` wants, so nothing is inlined there. -/
 theorem wpSS_exists_C (B : BT D) (hB : BLive D B) (hC : CLive D C)
     {n : Nat} {funs : FunEnv D} {V : VEnv D} {st : D.State} {ss : Block D.Op}
     {Q : VEnv D → D.State → Outcome → Prop} (h : wpSS D B C n funs V st ss Q) :
-    ∃ V' st' o, ExecStmts D funs V st ss V' st' o ∧ Q V' st' o := by
-  sorry
+    ∃ V' st' o, ExecStmts D funs V st ss V' st' o ∧ Q V' st' o :=
+  (WpX.wp_exists D B C hB hC n).2.2.2.1 funs V st ss Q h
 end Live
 
 /-- The `fail` summary is live: the helper body always has a run (an `mstore`, then a `revert`),
@@ -479,4 +486,20 @@ theorem Cfail_live (c : ExternalCalls) (g : ExternalGas) :
 #assert_axioms vk_all_param_mem [propext, Classical.choice, Quot.sound] native []
 #print axioms Cfail_live
 #assert_axioms Cfail_live [propext, Classical.choice, Quot.sound] native []
+
+/- THE T3.2 AXIOM GATE (D-P71). Both existence theorems are pinned here rather than in
+    `WpX.lean` because this is the file that imports `Midfall.Tools.Done`: a `sorryAx`, a
+    `native_decide` axiom, or any other axiom in either proof is now a BUILD ERROR and not a line
+    somebody has to remember to read. `wpSS_exists_C` rests on `propext` alone (it is a projection
+    of `WpX.wp_exists`, which rests on `propext` alone), and the falsifier `Bopen_not_live` adds
+    `Quot.sound` for the same reason `Bfun_live` does: its statement mentions the vendored EVM state,
+    whose world is a quotient. -/
+#print axioms wpSS_exists_C
+#assert_axioms wpSS_exists_C [propext]
+#print axioms Midfall.Yul.WpX.wpSS_exists
+#assert_axioms Midfall.Yul.WpX.wpSS_exists [propext]
+#print axioms Midfall.Yul.WpX.wp_exists
+#assert_axioms Midfall.Yul.WpX.wp_exists [propext]
+#print axioms Midfall.Yul.WpX.Bopen_not_live
+#assert_axioms Midfall.Yul.WpX.Bopen_not_live [propext, Quot.sound]
 end Midfall.Yul.VKP
