@@ -119,3 +119,97 @@ the reason the whole exporter exists. Note the honest limit: byte-identity over 
 corpus is conformance evidence, not proof of equivalence for every Rust input.
 The formal claim is the lowering work (M5-M8), not this.
 
+## Schema 2 - REF.11: the test SRS, the trapdoor, calldata, mutations, manifest
+
+Schema 2 is **additive**. The `schema` integer stays 1 - the committed Lean
+importer parses it, and the card's acceptance is that the Filecoin bundle's
+existing fields stay byte-identical apart from added keys. The extension is named
+by `params.json:schema_extension = 2`.
+
+### Two bundles, one exporter
+
+`MIDFALL_CONFORMANCE_SRS` selects the SRS, and each mode owns its own directory so
+neither export can overwrite the other:
+
+| value | bundle | directory | trapdoor |
+|---|---|---|---|
+| unset, or `filecoin` | **F0** | `formal/fixtures/conformance/poseidon/` | unknown (ceremony secret) |
+| `unsafe:<seed>` | **F1** | `formal/fixtures/conformance/poseidon-testsrs/` | exported (D-P63) |
+
+F1 is built by `ParamsKZG::unsafe_setup(K, ChaCha8Rng::seed_from_u64(seed))`
+(`proofs/src/poly/kzg/params.rs:98-135`). That call draws the toxic scalar as the
+first thing it takes from the rng, so a second stream from the same seed
+reproduces it; the exporter asserts `g2 * s == s_g2` before writing anything, so a
+wrong re-derivation is a panic and not a silent pin.
+
+**The trapdoor is public.** D-P63: F1 exists so that acceptance, the `-s*G2` pin and
+the generator's own SRS check become computations. No soundness of the proof
+system is claimed for this SRS, and `SrsEncodes` is not a hypothesis of `Done`.
+
+### New `params.json` keys
+
+| key | meaning |
+|---|---|
+| `schema_extension` | `2`, naming this additive extension |
+| `srs_kind` | `"filecoin"` or `"unsafe-seeded"` |
+| `srs_seed` / `srs_seed_hex` | the seed passed to `ChaCha8Rng::seed_from_u64`; `null` for F0 |
+| `trapdoor_s_be_hex` | the 32-byte big-endian trapdoor `s`; `null` for F0 |
+| `trapdoor_note` | what the trapdoor is and is not, stated in the bundle |
+| `g2_eip_hex`, `s_g2_eip_hex`, `neg_s_g2_eip_hex` | the 256-byte EIP-2537 padded forms, eight 32-byte words `x.c0_hi, x.c0_lo, x.c1_hi, x.c1_lo, y.c0_hi, y.c0_lo, y.c1_hi, y.c1_lo` |
+| `srs_sha256` | sha256 of the whole serialized SRS (`write_custom`, `SerdeFormat::Processed`: k, all monomial G1 powers, all Lagrange G1 powers, g2, s_g2) |
+
+The EIP forms come from the verifier's own encoder
+(`lowering::encoding::g2_to_u256s`, re-exported as `__test_only_g2_to_u256s`), not a
+second copy: the pin the Lean side checks is the pin the Solidity constructor
+embeds. `neg_s_g2_eip_hex` is `-s*G2`, the second pairing argument; the pre-existing
+`n_g2_compressed_hex` is `-G2`, the first one. `srs_sha256` hashes the whole SRS
+rather than only the two G2 points, because pinning g2 and s_g2 alone would not
+pin the G1 powers the commitments are made from.
+
+### New `trace.json` keys
+
+`proof_hex` (proof.bin as hex, so a JSON-only reader can pin the exact bytes),
+`srs_kind`, `srs_seed`, and the `reproducibility` block below.
+
+### `calldata.bin`, `evm.json`, `mutations.json`, `manifest.sha256`
+
+* `calldata.bin` - the bytes of one `Halo2Verifier.verifyProof` call, produced by
+  `SolidityGenerator::encode_calldata` on the same proof, instances and SRS the
+  native run accepted.
+* `evm.json` - that calldata rendered, compiled with the pinned solc, deployed and
+  called on revm 19 (Prague, EIP-2537 precompiles): status, `accepted`, gas, output
+  word, solc version. Requires the `evm` feature; without it the file is still
+  written with `evm_executed: false` and the calldata digest, so the bundle's shape
+  does not silently depend on the feature set.
+* `mutations.json` - the corpus. `reads[]` tiles proof.bin into the 72 transcript
+  reads (offsets and widths taken from the accepted run and asserted to tile it
+  exactly). Then one single-bit mutation per read - the low bit of that read's
+  first byte - plus four structural shapes (last byte truncated, half truncated,
+  empty, a zero byte appended) and one control (the unmutated proof). Every
+  mutant is scored by the real verifier (`prepare` plus the KZG pairing check), so
+  `verdict` and `error` are the verifier's own answer and REF.12 replays classes
+  rather than re-deriving them. An accepting mutant is printed as a FINDING, not
+  hidden; at the current tip only the control accepts.
+* `manifest.sha256` - `sha256sum -c` input over the nine bundle files in a fixed
+  order.
+
+### Reproducibility: what a run pins and what it does not
+
+**Read this before concluding anything from a hash.** The prover's inter-limb
+quotient blinding draws from `OsRng` (`proofs/src/plonk/prover.rs:121-131`,
+`blind_quotient_limbs` under `cfg(not(feature = "single-h-commitment"))`). The seeded
+`prover_rng` does not reach it. So:
+
+* **reproduces byte for byte across runs**: `vk.json`, `cs.json`, `params.json`,
+  `instances.json` - the circuit-and-SRS half, including `trapdoor_s_be_hex` and
+  `srs_sha256`.
+* **does not reproduce**: `proof.bin` and everything derived from it - `trace.json`,
+  `calldata.bin`, `evm.json` (including its gas figure), `mutations.json`. The
+  divergence starts where the H-limb commitments begin (byte 720 of 2640 at the
+  poseidon fixture) and propagates through every later challenge.
+
+Therefore **`manifest.sha256` pins one run; it is not a regeneration check.** Two
+independent export runs produce different manifests. Fixing that means seeding
+`blind_quotient_limbs`, which is a `proofs/src` change and out of scope for D-P58.
+The exporter records this in `trace.json:reproducibility` so the bundle carries its
+own caveat.

@@ -74,11 +74,11 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 28 | **REF.12** | Acceptance gate at the known trapdoor | M1 | ALG · KAT · 1.5 h · Sonnet | REF.8, REF.11 | after REF.8, REF.11 | PLAN-V3-cards |
 | 29 | **OBJ.0** | Object decisions: the scope, and `ValidV3` | M2 | DECISION · DECISION · 0.5 h · orchestrator + human | PL.0 or earlier | DONE — D-P65, D-P67 signed | PLAN-V3-cards |
 | 30 | **G1.4b** | Land the pcs block scopes + the 5 gate updates (D-P51) | M2 | GEN · EMIT · Sonnet | F.1 | READY | V2 card below; needs `t/G1.4` on origin (see its Needs) |
-| 31 | **OBJ.1** | Land the Yul token parser with its round-trip KATs | M2 | INFRA · KAT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards |
-| 32 | **G1.1** | EMIT `AccumulatorHelpers` (823 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | V2 card below; one commit with G1.2, OBJ.2, ST.3 (D-P65) |
-| 33 | **G1.2** | EMIT `QuotientHelpers` (68 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | V2 card below; one commit with G1.1, OBJ.2, ST.3 (D-P65) |
-| 34 | **OBJ.2** | Complete the program: accumulator helpers, quotient region, pcs scopes | M2 | GEN · EMIT · 2.5 h · strongest | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | PLAN-V3-cards; replaces G1.3; one commit with G1.1, G1.2, ST.3 (D-P65) |
-| 35 | **ST.3** | Cut-over A: the block scope and the slices move | M2 | INFRA · PORT · 1.5 h · Sonnet | G1.4b, OBJ.1 | after G1.4b, OBJ.1 | PLAN-V3-cards; one commit with G1.1, G1.2, OBJ.2 (D-P65) |
+| 31 | **OBJ.1** | Land the Yul token parser with its round-trip KATs | M2 | INFRA · KAT · 1.5 h · Sonnet | — | **MERGED 75aa799** | PLAN-V3-cards |
+| 32 | **G1.1** | EMIT `AccumulatorHelpers` (823 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | **MERGED f6f951c** | V2 card below; one commit with G1.2, OBJ.2, ST.3 (D-P65) |
+| 33 | **G1.2** | EMIT `QuotientHelpers` (68 tokens) — in the D-P65 batch | M2 | GEN · EMIT · Sonnet | G1.4b, OBJ.1 | **MERGED f6f951c** | V2 card below; one commit with G1.1, OBJ.2, ST.3 (D-P65) |
+| 34 | **OBJ.2** | Complete the program: accumulator helpers, quotient region, pcs scopes | M2 | GEN · EMIT · 2.5 h · strongest | G1.4b, OBJ.1 | **MERGED f6f951c** | PLAN-V3-cards; replaces G1.3; one commit with G1.1, G1.2, ST.3 (D-P65) |
+| 35 | **ST.3** | Cut-over A: the block scope and the slices move | M2 | INFRA · PORT · 1.5 h · Sonnet | G1.4b, OBJ.1 | **MERGED f6f951c** | PLAN-V3-cards; one commit with G1.1, G1.2, OBJ.2 (D-P65) |
 | 36 | **ST.11** | prog_slices_decompV3 | M2 | GEN · PROOF · 2.5 h · strongest | ST.3, ST.6 | after ST.3, ST.6 | PLAN-V3-cards |
 | 37 | **ST.12** | scans_prog_addr_indep | M2 | GEN · PROOF · 2 h · Sonnet | ST.5 | after ST.5 | PLAN-V3-cards |
 | 38 | **OBJ.4** | One constants-coherence clause and its generic lookup lemmas | M2 | GEN · STATEMENT · 2 h · Sonnet | OBJ.2 | after OBJ.2 | PLAN-V3-cards |

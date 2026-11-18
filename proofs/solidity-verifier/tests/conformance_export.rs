@@ -43,6 +43,7 @@ use std::path::{Path, PathBuf};
 
 use ff::{Field, PrimeField};
 use group::{Curve, Group};
+use halo2_solidity_verifier::{GeneratorConfig, SolidityGenerator, __test_only_g2_to_u256s};
 use midnight_circuits::{
     hash::poseidon::PoseidonChip,
     instructions::{hash::HashCPU, AssignmentInstructions, PublicInputInstructions},
@@ -56,11 +57,13 @@ use midnight_proofs::{
         CommitmentLabel,
     },
     transcript::{CircuitTranscript, Hashable, Sampleable, Transcript},
+    utils::SerdeFormat,
 };
 use midnight_zk_stdlib::{utils::plonk_api::srs_for_test, Relation, ZkStdLib, ZkStdLibArch};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use serde_json::json;
+use sha2::Sha256;
 use sha3::{Digest, Keccak256};
 
 type F = Fq;
@@ -303,12 +306,307 @@ fn is_proof_read_id(id: u64) -> bool {
             .contains(&id)
 }
 
-fn out_dir() -> PathBuf {
+// ---------------------------------------------------------------------------
+// REF.11: which SRS the bundle is generated under
+// ---------------------------------------------------------------------------
+
+/// The SRS selector, MIDFALL_CONFORMANCE_SRS.
+///
+/// * unset, or 'filecoin' - the production Filecoin ceremony SRS that
+///   'srs_for_test' loads from $SRS_DIR. This is **F0**, the bundle already
+///   committed at 'formal/fixtures/conformance/poseidon/'. Its trapdoor is
+///   unknown, so the Lean side can replay acceptance but cannot *compute* it.
+/// * 'unsafe:<seed>' - a seeded test SRS, ParamsKZG::unsafe_setup(K,
+///   ChaCha8Rng::seed_from_u64(seed)) (proofs/src/poly/kzg/params.rs:98-135).
+///   The trapdoor is re-derived from the same seed and exported into
+///   'params.json', which is what D-P63 approves and what turns both the
+///   reference gate and the acceptance gate into computations. This is **F1**,
+///   written to 'formal/fixtures/conformance/poseidon-testsrs/'.
+///
+/// **The trapdoor is public.** D-P63: no soundness of the proof system is
+/// claimed for F1; SrsEncodes is not a hypothesis of Done.
+enum SrsMode {
+    Filecoin,
+    Unsafe { seed: u64 },
+}
+
+impl SrsMode {
+    fn from_env() -> Self {
+        let raw = match env::var("MIDFALL_CONFORMANCE_SRS") {
+            Err(_) => return SrsMode::Filecoin,
+            Ok(v) => v,
+        };
+        if raw.is_empty() || raw == "filecoin" {
+            return SrsMode::Filecoin;
+        }
+        let rest = raw.strip_prefix("unsafe:").ok_or_else(|| raw.clone()).and_then(|rest| {
+            parse_seed(rest).map(|seed| SrsMode::Unsafe { seed }).ok_or_else(|| {
+                format!("not a u64 seed (decimal or 0x-hex): {rest}")
+            })
+        });
+        match rest {
+            Ok(m) => m,
+            Err(why) => panic!("MIDFALL_CONFORMANCE_SRS must be empty, 'filecoin', or \
+                                'unsafe:<seed>'; got {raw:?} ({why})"),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            SrsMode::Filecoin => "filecoin",
+            SrsMode::Unsafe { .. } => "unsafe-seeded",
+        }
+    }
+
+    fn seed(&self) -> Option<u64> {
+        match self {
+            SrsMode::Filecoin => None,
+            SrsMode::Unsafe { seed } => Some(*seed),
+        }
+    }
+
+    /// The bundle directory this mode owns. F0 and F1 are separate directories,
+    /// so generating F1 can never touch the committed Filecoin bundle.
+    fn default_dir(&self) -> PathBuf {
+        let leaf = match self {
+            SrsMode::Filecoin => "poseidon",
+            SrsMode::Unsafe { .. } => "poseidon-testsrs",
+        };
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../formal/fixtures/conformance")
+            .join(leaf)
+    }
+}
+
+fn parse_seed(s: &str) -> Option<u64> {
+    if let Some(h) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        u64::from_str_radix(h, 16).ok()
+    } else {
+        s.parse::<u64>().ok()
+    }
+}
+
+/// sha256 of a byte string, lowercase hex. Used for the SRS digest and for
+/// 'manifest.sha256', so the manifest hashes the same bytes 'sha256sum -c' is
+/// later pointed at.
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
+
+/// The 256-byte EIP-2537 padded form of a G2 point, as hex: eight 32-byte words
+/// x.c0_hi, x.c0_lo, x.c1_hi, x.c1_lo, y.c0_hi, y.c0_lo, y.c1_hi, y.c1_lo.
+///
+/// This is NOT a second encoder. It calls '__test_only_g2_to_u256s', which is the
+/// crate's own 'lowering::encoding::g2_to_u256s' - the exact function the
+/// generated verifier's constructor embeds. Exporting through it means the pin
+/// the Lean side checks is the pin the Solidity side actually uses.
+fn g2_eip_hex(p: &midnight_curves::G2Projective) -> String {
+    let words = __test_only_g2_to_u256s(&p.to_affine());
+    let mut out = Vec::with_capacity(256);
+    for w in words {
+        out.extend_from_slice(&w.to_be_bytes::<32>());
+    }
+    debug_assert_eq!(out.len(), 256);
+    hex::encode(out)
+}
+
+/// The SRS as one canonical byte string: ParamsKZG::write_custom in
+/// SerdeFormat::Processed - k, every monomial G1 power, every Lagrange G1 power,
+/// then g2 and s_g2. Hashing this pins the whole SRS rather than only its two G2
+/// elements, so a different trapdoor cannot slip through while g2 and s_g2
+/// happen to agree.
+fn srs_bytes(srs: &Params) -> Vec<u8> {
+    let mut buf = Vec::new();
+    srs.write_custom(&mut buf, SerdeFormat::Processed)
+        .expect("serialize the SRS for its manifest digest");
+    buf
+}
+
+/// Build the SRS this mode asks for, and - for the seeded mode - the trapdoor it
+/// was built with.
+///
+/// 'unsafe_setup' draws the toxic scalar as the FIRST thing it takes from the rng
+/// (params.rs:106, 'let s = <E::Fr>::random(rng)'), before any parallel work. So
+/// a second stream from the same seed reproduces exactly that scalar, and the
+/// assert below proves the re-derivation is the real one rather than a guess that
+/// happens to look plausible. Bls12::Fr IS Fq (curves/src/bls12_381/mod.rs:31),
+/// the same 'F' this circuit is built over, so the scalar needs no conversion.
+fn build_srs(mode: &SrsMode, relation: &PoseidonExample) -> (Params, Option<F>) {
+    match mode {
+        SrsMode::Filecoin => {
+            let srs_dir = env::var("SRS_DIR").unwrap_or_else(|_| {
+                concat!(env!("CARGO_MANIFEST_DIR"), "/../../zk_stdlib/examples/assets").to_string()
+            });
+            env::set_var("SRS_DIR", &srs_dir);
+            (srs_for_test(relation, Some(K)), None)
+        }
+        SrsMode::Unsafe { seed } => {
+            let s = F::random(ChaCha8Rng::seed_from_u64(*seed));
+            let srs = Params::unsafe_setup(K, ChaCha8Rng::seed_from_u64(*seed));
+            assert_eq!(
+                srs.g2() * s,
+                srs.s_g2(),
+                "REF.11 stop condition: the trapdoor re-derived from seed {seed} does not \
+                 generate the SRS's own s_g2, so it is not that SRS's trapdoor"
+            );
+            assert_eq!(
+                midnight_curves::G2Projective::generator() * s,
+                srs.s_g2(),
+                "REF.11: the SRS's g2 must be the standard generator, or the exported \
+                 g2_eip_hex pins a different deployment than the pairing check uses"
+            );
+            (srs, Some(s))
+        }
+    }
+}
+
+/// Run the real verifier pipeline on one candidate proof and return
+/// '(verdict, error_class)' exactly as the honest run above does it: 'prepare'
+/// for the transcript framing and the algebraic identities, then the pairing
+/// check 'prepare' deliberately leaves to the caller (poly/kzg/msm.rs:284).
+///
+/// The mutation corpus is scored with this and nothing else, so a mutant's
+/// recorded verdict is the verifier's own answer, not the exporter's opinion.
+fn run_verifier(
+    vk: &Vk,
+    params_verifier: &midnight_proofs::poly::kzg::params::ParamsVerifierKZG<Bls12>,
+    committed_pi: &[G1Projective],
+    pi: &[F],
+    candidate: &[u8],
+) -> (String, serde_json::Value) {
+    let mut transcript = Recording::init_from_bytes(candidate);
+    let committed: [&[G1Projective]; 1] = [committed_pi];
+    let public: [&[F]; 1] = [pi];
+    match prepare::<F, KZGCommitmentScheme<Bls12>, Recording>(
+        vk,
+        &committed,
+        &[&public],
+        &mut transcript,
+    ) {
+        Ok(guard) => match transcript.assert_empty() {
+            Ok(()) => {
+                if guard.check(params_verifier) {
+                    ("accept".to_string(), serde_json::Value::Null)
+                } else {
+                    ("reject".to_string(), json!("opening"))
+                }
+            }
+            Err(_) => ("reject".to_string(), json!("transcript_notFound")),
+        },
+        Err(Error::InvalidInstances) => ("reject".to_string(), json!("invalidInstances")),
+        Err(Error::Opening) => ("reject".to_string(), json!("opening")),
+        Err(Error::Transcript(e)) => (
+            "reject".to_string(),
+            json!(format!("transcript:{:?}", e.kind())),
+        ),
+        Err(other) => ("reject".to_string(), json!(format!("{other:?}"))),
+    }
+}
+
+fn out_dir(mode: &SrsMode) -> PathBuf {
     if let Ok(dir) = env::var("MIDFALL_CONFORMANCE_OUT") {
         return PathBuf::from(dir);
     }
-    // tests live in proofs/solidity-verifier/tests; the bundle goes to the Lean tree.
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../formal/fixtures/conformance/poseidon")
+    mode.default_dir()
+}
+
+// ---------------------------------------------------------------------------
+// REF.11: the EVM leg
+// ---------------------------------------------------------------------------
+
+/// Render, deploy and call the generated Solidity verifier on the SAME proof the
+/// native verifier just accepted, and record what it said. This is the leg that
+/// makes the bundle a *reference gate* rather than a Rust-only trace: acceptance
+/// is checked against the artifact Lean's calldata has to match.
+///
+/// Requires the 'evm' feature (revm + the pinned solc). Without it the file is
+/// still written, with 'evm_executed: false', so the bundle's shape does not
+/// depend on the feature set and a reader can tell the two apart.
+#[cfg(feature = "evm")]
+fn evm_leg(
+    generator: &SolidityGenerator<'_>,
+    calldata: &[u8],
+    native_verdict: &str,
+) -> serde_json::Value {
+    use halo2_solidity_verifier::{
+        compile_solidity, solc_version, CallOutcome, Evm, QuotientLowering, RenderOptions, RenderVk,
+    };
+    let artifacts = generator
+        .render(RenderOptions {
+            vk: RenderVk::Separate,
+            quotient_lowering: QuotientLowering::Vm,
+            ..RenderOptions::default()
+        })
+        .expect("render the verifier for the EVM leg");
+    let verifier_solidity = artifacts.verifier;
+    let vk_solidity = artifacts
+        .verifying_key
+        .expect("a separate-VK render includes the VK");
+
+    let mut evm = Evm::default();
+    let vk_address = evm.create(compile_solidity(&vk_solidity));
+    let verifier_address =
+        evm.create_with_address_arg(compile_solidity(&verifier_solidity), vk_address);
+
+    let (status, accepted, gas_used, output_hex) =
+        match evm.try_call_with_gas(verifier_address, calldata.to_vec(), 5_000_000_000) {
+            CallOutcome::Success { gas_used, output, .. } => (
+                "success".to_string(),
+                output == [vec![0u8; 31], vec![1]].concat(),
+                gas_used,
+                hex::encode(&output),
+            ),
+            CallOutcome::Revert { gas_used, output } => {
+                ("revert".to_string(), false, gas_used, hex::encode(&output))
+            }
+            CallOutcome::Halt { gas_used, reason } => {
+                ("halt".to_string(), false, gas_used, format!("{reason}"))
+            }
+        };
+
+    assert!(
+        accepted,
+        "REF.11: the generated Solidity verifier must ACCEPT the proof the native verifier \
+         accepted (native verdict = {native_verdict}); status={status} output=0x{output_hex}"
+    );
+
+    json!({
+        "schema": 1,
+        "evm_executed": true,
+        "engine": "revm 19 (Prague, EIP-2537 precompiles)",
+        "solc": solc_version().unwrap_or_else(|e| format!("unavailable: {e}")),
+        "quotient_lowering": "Vm",
+        "render_vk": "Separate",
+        "calldata_len": calldata.len(),
+        "calldata_sha256": sha256_hex(calldata),
+        "status": status,
+        "accepted": accepted,
+        "gas_used": gas_used,
+        "output_hex": output_hex,
+        "native_verdict": native_verdict,
+        "note": "the same proof.bin, instances and SRS as the native run; calldata.bin is the \
+                 exact bytes of this call.",
+    })
+}
+
+/// The 'evm' feature is off, so nothing was deployed. Recorded rather than faked:
+/// the calldata is still the real encoder's output, but no EVM verdict exists.
+#[cfg(not(feature = "evm"))]
+fn evm_leg(
+    _generator: &SolidityGenerator<'_>,
+    calldata: &[u8],
+    native_verdict: &str,
+) -> serde_json::Value {
+    json!({
+        "schema": 1,
+        "evm_executed": false,
+        "reason": "this test binary was built without the 'evm' feature; re-run with \
+                   --features rust-verifier-trace,evm and SOLC pointed at the pinned solc to \
+                   produce the EVM leg",
+        "calldata_len": calldata.len(),
+        "calldata_sha256": sha256_hex(calldata),
+        "native_verdict": native_verdict,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -317,12 +615,12 @@ fn out_dir() -> PathBuf {
 
 #[test]
 fn export_poseidon_conformance_bundle() {
-    let srs_dir = env::var("SRS_DIR").unwrap_or_else(|_| {
-        concat!(env!("CARGO_MANIFEST_DIR"), "/../../zk_stdlib/examples/assets").to_string()
-    });
-    env::set_var("SRS_DIR", &srs_dir);
+    // REF.11: which SRS this bundle is built under. F0 (filecoin) and F1
+    // (unsafe-seeded) own separate bundle directories, so neither export can
+    // overwrite the other. See SrsMode.
+    let srs_mode = SrsMode::from_env();
     let relation = PoseidonExample;
-    let srs: Params = srs_for_test(&relation, Some(K));
+    let (srs, trapdoor): (Params, Option<F>) = build_srs(&srs_mode, &relation);
     let vk = midnight_zk_stdlib::setup_vk(&srs, &relation);
     let pk = midnight_zk_stdlib::setup_pk(&relation, &vk);
     let vk: &Vk = vk.vk();
@@ -621,8 +919,24 @@ fn export_poseidon_conformance_bundle() {
         "extended_k": domain.extended_k(),
     });
 
-    let params_json = json!({
+    // REF.11 schema 2: the SRS provenance the acceptance gate needs. The
+    // 'schema' integer is deliberately left at 1 - the card's acceptance is that
+    // the Filecoin bundle's EXISTING fields stay byte-identical apart from added
+    // keys, and the committed Lean importer parses schema 1. 'schema_extension'
+    // names the additive version instead, so a reader can tell which keys are new
+    // without a breaking change.
+    //
+    // The three *_eip_hex fields are the 256-byte EIP-2537 padded forms the
+    // generated verifier's constructor embeds, produced by the verifier's own
+    // encoder (see g2_eip_hex). 'neg_s_g2_eip_hex' is -s*G2, the second pairing
+    // argument; 'n_g2_compressed_hex' above stays -G2, the first one.
+    //
+    // 'srs_sha256' hashes the whole serialized SRS, not just the two G2 points:
+    // pinning g2 and s_g2 alone would not pin the 2^k G1 powers the commitments
+    // are made from.
+    let mut params_json = json!({
         "schema": 1,
+        "schema_extension": 2,
         "curve": "BLS12-381",
         "format": "compressed",
         "g1_compressed_hex": point_hex(&G1Projective::generator()),
@@ -631,7 +945,21 @@ fn export_poseidon_conformance_bundle() {
         "n_g2_compressed_hex": g2_hex(&(-srs.g2()).into()),
         "note": "n_g2 is -g2, the negated generator the final pairing uses                  (poly/kzg/msm.rs:283-292 builds the second term from n_g2_prepared).",
         "max_k": midnight_proofs::poly::commitment::Params::max_k(&srs),
+        "srs_kind": srs_mode.kind(),
+        "srs_seed": srs_mode.seed(),
+        "srs_seed_hex": srs_mode.seed().map(|s| format!("{s:#018x}")),
+        "trapdoor_s_be_hex": trapdoor.map(|s| be_hex(&s)),
+        "g2_eip_hex": g2_eip_hex(&srs.g2()),
+        "s_g2_eip_hex": g2_eip_hex(&srs.s_g2()),
+        "neg_s_g2_eip_hex": g2_eip_hex(&(-srs.s_g2())),
+        "srs_sha256": sha256_hex(&srs_bytes(&srs)),
     });
+    if trapdoor.is_none() {
+        // F0's trapdoor is the ceremony's secret: absent, not zero and not guessed.
+        params_json["trapdoor_note"] = json!("unknown: the Filecoin ceremony SRS has no exported trapdoor (D-P63 is about F1 only)");
+    } else {
+        params_json["trapdoor_note"] = json!("PUBLIC by construction (D-P63): no soundness of the proof system is claimed for this SRS");
+    }
 
     let instances_json = json!({
         "schema": 1,
@@ -647,6 +975,27 @@ fn export_poseidon_conformance_bundle() {
         "error": error_class,
         "pairing_check": pairing_check,
         "proof_len": proof.len(),
+        // REF.11: the proof as hex alongside proof.bin, so a reader that only
+        // parses JSON (the Lean runner) can pin the exact bytes without a second
+        // file, and so trace.json alone carries the run it describes.
+        "proof_hex": hex::encode(&proof),
+        "srs_kind": srs_mode.kind(),
+        "srs_seed": srs_mode.seed(),
+        // Stated in the bundle, not only in the docs, because it changes what a
+        // reader may conclude from manifest.sha256. The prover's inter-limb
+        // quotient blinding draws from OsRng (proofs/src/plonk/prover.rs:121-131,
+        // blind_quotient_limbs under cfg(not(single-h-commitment))), so proof.bin
+        // differs on every export run - and with it trace.json, calldata.bin,
+        // evm.json and mutations.json. What DOES reproduce byte for byte is the
+        // circuit-and-SRS half: vk.json, cs.json, params.json, instances.json.
+        // Fixing the prover is a proofs/src change and out of scope (D-P58), so the
+        // honest contract is: one bundle is one run, pinned by its manifest.
+        "reproducibility": {
+            "deterministic_files": ["vk.json", "cs.json", "params.json", "instances.json"],
+            "run_dependent_files": ["proof.bin", "trace.json", "calldata.bin", "evm.json", "mutations.json"],
+            "run_dependent_because": "blind_quotient_limbs calls F::random(OsRng) (proofs/src/plonk/prover.rs:121-131); the seeded prover_rng does not reach it",
+            "pinned_by": "manifest.sha256",
+        },
         "fixture_match": fixture_match,
         "transcript_log": log,
         "dual_msm": {
@@ -763,16 +1112,189 @@ fn export_poseidon_conformance_bundle() {
         ],
     });
 
-    let dir = if mode == "committed" { PathBuf::from(out_dir().to_str().unwrap().to_string() + "_committed") } else { out_dir() };
+    // --- REF.11: where each proof read lives in proof.bin ---------------------
+    //
+    // The transcript reads the proof strictly left to right, so the byte range of
+    // read i is the running sum of the widths recorded on the earlier reads. The
+    // exporter does not guess the layout: it takes the widths from the same
+    // Recording the accepted run went through, and asserts they tile the proof.
+    let mut reads: Vec<(String, usize, usize)> = Vec::new();
+    {
+        let mut cursor = 0usize;
+        let mut it = read_names.iter();
+        for e in &transcript.events {
+            if let Ev::Read { wire, .. } = e {
+                let name = it.next().cloned().unwrap_or_else(|| "?untitled".to_string());
+                reads.push((name, cursor, wire.len()));
+                cursor += wire.len();
+                assert_eq!(
+                    &proof[cursor - wire.len()..cursor],
+                    wire.as_slice(),
+                    "exporter: read {} is not the bytes the transcript actually consumed",
+                    reads.len() - 1
+                );
+            }
+        }
+        assert_eq!(
+            cursor,
+            proof.len(),
+            "exporter: the {} transcript reads cover {} bytes but proof.bin is {} bytes, so a \
+             mutation corpus keyed on read offsets would miss part of the proof",
+            reads.len(),
+            cursor,
+            proof.len()
+        );
+    }
+
+    // --- REF.11: the mutation corpus -------------------------------------------
+    //
+    // One single-bit mutation per read - the low bit of that read's first byte -
+    // plus the structural set the card names (a truncation and an appended byte).
+    // Every mutant goes back through the REAL verifier (run_verifier), so the
+    // recorded verdict and error class are the verifier's own answer and REF.12
+    // can replay the corpus against Lean and compare classes rather than re-derive
+    // them. Nothing here is assumed to reject: an accepting mutant is a finding, so
+    // it is counted and printed rather than hidden.
+    let mut mutants: Vec<serde_json::Value> = Vec::new();
+    {
+        let record =
+            |tag: &str,
+             kind: &str,
+             read_index: Option<usize>,
+             byte_offset: Option<usize>,
+             bit: Option<u8>,
+             candidate: Vec<u8>,
+             out: &mut Vec<serde_json::Value>| {
+            let (verdict, error) =
+                run_verifier(vk, &params_verifier, &committed_pi, &pi, &candidate);
+            out.push(json!({
+                "tag": tag,
+                "kind": kind,
+                "read_index": read_index,
+                "read_name": read_index.map(|i| reads[i].0.clone()),
+                "byte_offset": byte_offset,
+                "bit": bit,
+                "len": candidate.len(),
+                "sha256": sha256_hex(&candidate),
+                "verdict": verdict,
+                "error": error,
+            }));
+        };
+
+        for (i, (_, off, _)) in reads.iter().enumerate() {
+            let mut m = proof.clone();
+            m[*off] ^= 0x01;
+            record(
+                &format!("read[{}].first_byte.bit0", i),
+                "single_bit_flip",
+                Some(i),
+                Some(*off),
+                Some(0),
+                m,
+                &mut mutants,
+            );
+        }
+
+        // The structural set: shapes a single bit flip cannot produce.
+        let mut trunc1 = proof.clone();
+        trunc1.pop();
+        record("truncate_last_byte", "truncation", None, Some(proof.len() - 1), None, trunc1, &mut mutants);
+        let mut trunc_half = proof.clone();
+        trunc_half.truncate(proof.len() / 2);
+        record("truncate_half", "truncation", None, Some(proof.len() / 2), None, trunc_half, &mut mutants);
+        let mut appended = proof.clone();
+        appended.push(0x00);
+        record("append_zero_byte", "trailing_byte", None, Some(proof.len()), None, appended, &mut mutants);
+        record("empty_proof", "truncation", None, Some(0), None, Vec::new(), &mut mutants);
+        // The honest proof itself, scored through the same path, so a reader can
+        // see the corpus harness agrees with trace.json's verdict before trusting
+        // any of the rejects.
+        record("unmutated", "control", None, None, None, proof.clone(), &mut mutants);
+
+        let accepted: Vec<&str> = mutants
+            .iter()
+            .filter(|m| m["verdict"] == json!("accept"))
+            .map(|m| m["tag"].as_str().unwrap_or("?"))
+            .collect();
+        if accepted.len() != 1 || accepted[0] != "unmutated" {
+            eprintln!(
+                "[conformance-export] FINDING: the mutation corpus did not behave as expected; \
+                 accepted = {:?}",
+                accepted
+            );
+        }
+    }
+
+    let mutations_json = json!({
+        "schema": 1,
+        "fixture": "poseidon",
+        "srs_kind": srs_mode.kind(),
+        "proof_len": proof.len(),
+        "reads": reads.iter().enumerate().map(|(i, (name, off, len))| json!({
+            "index": i, "name": name, "offset": off, "len": len,
+        })).collect::<Vec<_>>(),
+        "corpus_size": mutants.len(),
+        "single_bit_per_read": reads.len(),
+        "structural": 4,
+        "control": 1,
+        "mutants": mutants,
+        "note": "each mutant is scored by the real Rust verifier (prepare + the KZG pairing \
+                 check), so verdict and error are what REF.12 must reproduce in Lean.",
+    });
+
+    // --- REF.11: the EVM leg, from the same run --------------------------------
+    let generator = SolidityGenerator::new(
+        &srs,
+        vk,
+        GeneratorConfig::new(pi.len(), NUM_COMMITTED_INSTANCES),
+    );
+    let calldata = generator
+        .encode_calldata(&proof, &pi)
+        .expect("the generated verifier must encode this proof as calldata");
+    let evm_json = evm_leg(&generator, &calldata, verdict);
+
+    // --- write the bundle -------------------------------------------------------
+    let dir = if mode == "committed" { PathBuf::from(out_dir(&srs_mode).to_str().unwrap().to_string() + "_committed") } else { out_dir(&srs_mode) };
     fs::create_dir_all(&dir).expect("create the conformance output directory");
-    fs::write(dir.join("vk.json"), serde_json::to_string_pretty(&vk_json).unwrap()).unwrap();
-    fs::write(dir.join("params.json"), serde_json::to_string_pretty(&params_json).unwrap())
-        .unwrap();
-    fs::write(dir.join("instances.json"), serde_json::to_string_pretty(&instances_json).unwrap())
-        .unwrap();
+    let write_json = |dir: &Path, name: &str, v: &serde_json::Value| {
+        fs::write(dir.join(name), serde_json::to_string_pretty(v).unwrap())
+            .unwrap_or_else(|e| panic!("write {name}: {e}"));
+    };
+    write_json(&dir, "vk.json", &vk_json);
+    write_json(&dir, "params.json", &params_json);
+    write_json(&dir, "instances.json", &instances_json);
     fs::write(dir.join("proof.bin"), &proof).unwrap();
-    fs::write(dir.join("trace.json"), serde_json::to_string_pretty(&trace_json).unwrap()).unwrap();
-    fs::write(dir.join("cs.json"), serde_json::to_string_pretty(&cs_json).unwrap()).unwrap();
+    write_json(&dir, "trace.json", &trace_json);
+    write_json(&dir, "cs.json", &cs_json);
+    fs::write(dir.join("calldata.bin"), &calldata).unwrap();
+    write_json(&dir, "evm.json", &evm_json);
+    write_json(&dir, "mutations.json", &mutations_json);
+
+    // --- manifest.sha256 --------------------------------------------------------
+    //
+    // One bundle is ONE run: proof.bin is not reproducible across runs (see the
+    // reproducibility block in trace.json), so the bundle is pinned by this
+    // manifest rather than by regeneration. The format is plain 'sha256sum -c'
+    // input, files in a fixed order, paths relative to the bundle directory.
+    const BUNDLE_FILES: [&str; 9] = [
+        "vk.json",
+        "cs.json",
+        "params.json",
+        "instances.json",
+        "proof.bin",
+        "trace.json",
+        "calldata.bin",
+        "evm.json",
+        "mutations.json",
+    ];
+    let mut manifest = String::new();
+    for name in BUNDLE_FILES {
+        let bytes = fs::read(dir.join(name)).unwrap_or_else(|e| panic!("read back {name}: {e}"));
+        manifest.push_str(&format!("{}  {}\n", sha256_hex(&bytes), name));
+    }
+    fs::write(dir.join("manifest.sha256"), &manifest).expect("write manifest.sha256");
+
+    let manifest_digest = sha256_hex(manifest.as_bytes());
 
     let identities = (0u64..)
         .take_while(|j| {
@@ -780,13 +1302,18 @@ fn export_poseidon_conformance_bundle() {
         })
         .count();
     eprintln!(
-        "[conformance-export] {} verdict={verdict} pairing={pairing_check} log={} reads={} \
-         identities={} trace_events={} proof={} bytes fixture_match={fixture_match}",
+        "[conformance-export] {} srs={} verdict={verdict} pairing={pairing_check} log={} reads={} \
+         identities={} trace_events={} proof={} bytes calldata={} mutants={} \
+         manifest_sha256={} fixture_match={fixture_match}",
         dir.display(),
+        srs_mode.kind(),
         log.len(),
         read_i,
         identities,
         trace_events.len(),
         proof.len(),
+        calldata.len(),
+        mutants.len(),
+        manifest_digest,
     );
 }

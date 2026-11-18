@@ -1,0 +1,1371 @@
+{
+  "control": 1,
+  "corpus_size": 77,
+  "fixture": "poseidon",
+  "mutants": [
+    {
+      "bit": 0,
+      "byte_offset": 0,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 0,
+      "read_name": "proof_advice_commitment",
+      "sha256": "27e67080fa8bcd1ebc8d3090b768ce94374752f0a7fb419177d51f16021078ed",
+      "tag": "read[0].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 48,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 1,
+      "read_name": "proof_advice_commitment",
+      "sha256": "48a2b3615304d5f117b3915ebb9d132d25404ce1b5d2062a07e75500b4c40625",
+      "tag": "read[1].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 96,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 2,
+      "read_name": "proof_advice_commitment",
+      "sha256": "0d299e57faa2b83b8dc950f2ee611e43a670694e717efafaad6f37f87a85b9f7",
+      "tag": "read[2].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 144,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 3,
+      "read_name": "proof_advice_commitment",
+      "sha256": "00d4908691fb655433437696da5b1fa6459dd40962e706162bbc9d46c51c3dbd",
+      "tag": "read[3].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 192,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 4,
+      "read_name": "proof_advice_commitment",
+      "sha256": "0c08760e10557ba292279f5437dc4a292a39709bb458b27bec54960960936077",
+      "tag": "read[4].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 240,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 5,
+      "read_name": "proof_advice_commitment",
+      "sha256": "3299835533798a207ad01d3714a8ab4aa35d6cc3791d79253450d30262423207",
+      "tag": "read[5].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 288,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 6,
+      "read_name": "proof_advice_commitment",
+      "sha256": "2a9ea2a22e61f6b500a72129324d4fac1a4d976e27d68864a87338355a71dad0",
+      "tag": "read[6].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 336,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 7,
+      "read_name": "proof_advice_commitment",
+      "sha256": "186dfddde8b6767b673199378517bf55b7306a518228577c907ca0d5f636641e",
+      "tag": "read[7].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 384,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 8,
+      "read_name": "proof_lookup_multiplicity_commitment",
+      "sha256": "c6010e6a0552bf012d76662c17b1b269465fa05a58b64266371189daad5542e1",
+      "tag": "read[8].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 432,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 9,
+      "read_name": "proof_permutation_product_commitment",
+      "sha256": "6135ec461698a9399bc9ca4460e3e77edd850d847d7b6aad9d5a23ecdb741ea1",
+      "tag": "read[9].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 480,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 10,
+      "read_name": "proof_permutation_product_commitment",
+      "sha256": "94130416af1f45a1d6ea9a8254a53b39f34a041127d3a0d332b77ce4a239e851",
+      "tag": "read[10].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 528,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 11,
+      "read_name": "proof_permutation_product_commitment",
+      "sha256": "51c12188cf9d74f7111cf40d18de6ba67e31157a4291a550affda19065658b85",
+      "tag": "read[11].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 576,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 12,
+      "read_name": "proof_lookup_helper_commitment",
+      "sha256": "13cc5064bc04a96ea0020e86ac9d606a95d818c4a7d12d28253d8809c5a0f697",
+      "tag": "read[12].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 624,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 13,
+      "read_name": "proof_lookup_accumulator_commitment",
+      "sha256": "d22c685083be94aa1133122ca2090e1e7ec9baa3c624acd12e3fafb6cd7ff13a",
+      "tag": "read[13].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 672,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 14,
+      "read_name": "proof_trash_commitment",
+      "sha256": "8dd91e43a4d9f8efde787040da7940d81ed36ac7a1c952622aa42de28216cd96",
+      "tag": "read[14].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 720,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 15,
+      "read_name": "proof_quotient_commitment",
+      "sha256": "2d5c7ff129eb99c93dcfa9d558f382a532db259f2053b7e0a74c7344409abbe5",
+      "tag": "read[15].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 768,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 16,
+      "read_name": "proof_quotient_commitment",
+      "sha256": "499c8dda69a523dd84608d74dda3664e66ee200c74537537c1a6287a5102ced1",
+      "tag": "read[16].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 816,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 17,
+      "read_name": "proof_quotient_commitment",
+      "sha256": "69f4330125dcfbdd6652b15074221048a35987c8d337c89a7828d6b2df720181",
+      "tag": "read[17].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 864,
+      "error": "transcript:Other",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 18,
+      "read_name": "proof_quotient_commitment",
+      "sha256": "6422fdcc2e1a7228f6937e148b9678e367cd6de95dab1d067de28412a96507b8",
+      "tag": "read[18].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 912,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 19,
+      "read_name": "proof_committed_instance_eval",
+      "sha256": "d525b1870024ffe73aeed17cd7f4815d4b15e68b4bbc302a1b0fddf018d15cec",
+      "tag": "read[19].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 944,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 20,
+      "read_name": "proof_advice_eval",
+      "sha256": "c075e52137ca671e360672391cc3f02f68b3d523a3b08d5fe3382a1dbd7d4c11",
+      "tag": "read[20].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 976,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 21,
+      "read_name": "proof_advice_eval",
+      "sha256": "cf30fe1a117d8a1ac2bd84b0c09970834f8eed94bdcdc9087530374e12453af6",
+      "tag": "read[21].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1008,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 22,
+      "read_name": "proof_advice_eval",
+      "sha256": "32205b043c5858250338a4cb3b8bc5f9639602ba14e9ffe2d434a4c42d72dc6f",
+      "tag": "read[22].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1040,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 23,
+      "read_name": "proof_advice_eval",
+      "sha256": "bb406ebcab129e3e22e34d5273107223edc9e031b8b78754e8eb05669e688516",
+      "tag": "read[23].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1072,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 24,
+      "read_name": "proof_advice_eval",
+      "sha256": "147ab4eacb7b44b975e2fab780613d5a3a7eb6f792458bac109440eeed25a5bc",
+      "tag": "read[24].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1104,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 25,
+      "read_name": "proof_advice_eval",
+      "sha256": "4cc3837f1094255112d1b43f90a6a0b14f8ec1836ec6b905c5d48dbaca740f13",
+      "tag": "read[25].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1136,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 26,
+      "read_name": "proof_advice_eval",
+      "sha256": "4227b4e9372a3280aa68430c150c9dc8d7415c24d95507e52fa801aed43bc5a3",
+      "tag": "read[26].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1168,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 27,
+      "read_name": "proof_advice_eval",
+      "sha256": "7c2a8efabfec2d9ac077cb507bae7326ba87ebd9521a1b3ec1c28986c9c08df5",
+      "tag": "read[27].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1200,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 28,
+      "read_name": "proof_advice_eval",
+      "sha256": "c0feda0aae5b7025effdd7c699fcd3966f61527a1da03742dda15880c2398910",
+      "tag": "read[28].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1232,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 29,
+      "read_name": "proof_advice_eval",
+      "sha256": "d0530eb6dcbd64e7afd091af5e9ebb6e08204c85b7f24b5dbf47a3f8fd25ead2",
+      "tag": "read[29].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1264,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 30,
+      "read_name": "proof_advice_eval",
+      "sha256": "2ee0041e626a091925fd4092dafcdde367dbed6cde33e72ceac85395b88a4759",
+      "tag": "read[30].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1296,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 31,
+      "read_name": "proof_fixed_eval",
+      "sha256": "a44869aa84bf23a622e01fcce7582fe7d10ee7de2c6dc23b3731a4e7dbcd1b07",
+      "tag": "read[31].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1328,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 32,
+      "read_name": "proof_fixed_eval",
+      "sha256": "6140db1b2e8b90fe5ce1c02b49d3957970271147cbdbab13b56197c47d1f384d",
+      "tag": "read[32].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1360,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 33,
+      "read_name": "proof_fixed_eval",
+      "sha256": "3a47f1183a73b100f82d562bbe488f5528b5adc153116066056dbe69d6a835af",
+      "tag": "read[33].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1392,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 34,
+      "read_name": "proof_fixed_eval",
+      "sha256": "9e1767754ae4198b148b83514420b60838a81a029a7b522daa9dcb957829e92c",
+      "tag": "read[34].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1424,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 35,
+      "read_name": "proof_fixed_eval",
+      "sha256": "cd4781b713c8566b46c731328767df987c7931a399c80f64e68c7347c97a6fdc",
+      "tag": "read[35].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1456,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 36,
+      "read_name": "proof_fixed_eval",
+      "sha256": "4b0501097e0f1aa917625d29a82b6db416384fca9913b87b66bc48e5998fe404",
+      "tag": "read[36].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1488,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 37,
+      "read_name": "proof_fixed_eval",
+      "sha256": "50927e61cf61061f2086b14cefb050b7cb29e9b09c3d67005740289b86d34734",
+      "tag": "read[37].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1520,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 38,
+      "read_name": "proof_fixed_eval",
+      "sha256": "5aa861d16a5b2be476589dc11643fdb8efb3da5670fcad5d426cfd93b7b9f4d4",
+      "tag": "read[38].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1552,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 39,
+      "read_name": "proof_fixed_eval",
+      "sha256": "b5a14f981a4b2adbb2ef60f2f015a35b47c3e8f1c25ec645920f96c087272eb6",
+      "tag": "read[39].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1584,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 40,
+      "read_name": "proof_fixed_eval",
+      "sha256": "eb2acad941610857dc4a5cd1d3066de349d1321f18d3053d731567d80ad4bb21",
+      "tag": "read[40].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1616,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 41,
+      "read_name": "proof_fixed_eval",
+      "sha256": "286dab93a50dc8d6a530425f26baf99a974f37d5f6292a2f096adb703a66227c",
+      "tag": "read[41].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1648,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 42,
+      "read_name": "proof_fixed_eval",
+      "sha256": "d1a386bd43ef44ee7afda669fa066dcd922d7fb6039ba5b35da78863fe5a8f81",
+      "tag": "read[42].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1680,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 43,
+      "read_name": "proof_fixed_eval",
+      "sha256": "76dd0d3716f81880ccd34c4cecffc544dd9a4469e78047eb879f77dd65d74962",
+      "tag": "read[43].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1712,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 44,
+      "read_name": "proof_fixed_eval",
+      "sha256": "664f4fbeb413d5346296ac195a468134b77d5908553bd7587796f056a56c2088",
+      "tag": "read[44].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1744,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 45,
+      "read_name": "proof_fixed_eval",
+      "sha256": "845af30020a054e1fc83d7cf861c8ce8b4b79a3243d492b51452a61573659773",
+      "tag": "read[45].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1776,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 46,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "a1a02cac1f0dd8efe3d0d06617f2a04bcf5ec9557501787a29ac50cc591d4061",
+      "tag": "read[46].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1808,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 47,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "7fb56b506e1b8c17295debc5e160388cb185dc610462a999923b6d1d22f449ed",
+      "tag": "read[47].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1840,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 48,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "0d6b0fbf747564f6712985f13ca6d162deb66653a31baa95364d03807994e653",
+      "tag": "read[48].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1872,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 49,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "0b47c2e5eef2de6d9567c11321a3d27e3c8936563cd2360c2a229e2c528a638e",
+      "tag": "read[49].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1904,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 50,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "0ec945a5683ba41eabf548e1b1f546d17c06a072cafd060521f148e45e3f515a",
+      "tag": "read[50].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1936,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 51,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "f5dd580c6cfdbd784f606e29a2522106dd3e697c1773d694e7982a6a3a7e226e",
+      "tag": "read[51].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 1968,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 52,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "f75c2e2a9eac85a7ab3a8bfdbfa55367092295f75f6e06266a86cfce98a91ae7",
+      "tag": "read[52].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2000,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 53,
+      "read_name": "proof_permutation_common_eval",
+      "sha256": "0f0943ee02dea2a4472427e6d0c7fff219293e168fb664ec49e05db60b8840eb",
+      "tag": "read[53].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2032,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 54,
+      "read_name": "proof_permutation_product_eval",
+      "sha256": "24c7ad76a3f2730811de75fab49fccf5186bab34f7d0d371622ee91cd43a55a9",
+      "tag": "read[54].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2064,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 55,
+      "read_name": "proof_permutation_product_next_eval",
+      "sha256": "6b40883ea716460d7e9e77e97b380e1ee0355c833afe8784c406fe25c189c37b",
+      "tag": "read[55].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2096,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 56,
+      "read_name": "proof_permutation_product_last_eval",
+      "sha256": "2f3dcff5c26caae2993c185aa80e273f01b4d9da06d2c256fbe7d34861976b65",
+      "tag": "read[56].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2128,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 57,
+      "read_name": "proof_permutation_product_eval",
+      "sha256": "c363d8db8e7917d3b877c7740904038b68e616ef3857489e66a4a9dc069a9775",
+      "tag": "read[57].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2160,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 58,
+      "read_name": "proof_permutation_product_next_eval",
+      "sha256": "7fc5cbda4a96e1c67e053e9453231c125bf95bb5c83db914b8aacb3b8c7bd4b3",
+      "tag": "read[58].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2192,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 59,
+      "read_name": "proof_permutation_product_last_eval",
+      "sha256": "c750958528954f892eebe758e34428ab280996b32cc891447024f405bfbed6bb",
+      "tag": "read[59].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2224,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 60,
+      "read_name": "proof_permutation_product_eval",
+      "sha256": "f4cce8f7423ecd3bd3c447a9a7088ba91f1fb7a0457828b4fc9d5f083ff15ddb",
+      "tag": "read[60].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2256,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 61,
+      "read_name": "proof_permutation_product_next_eval",
+      "sha256": "1af423724572ba5fb92d05b1a73a77a56d44463ebc5fae95d256b2ba9b3e10d5",
+      "tag": "read[61].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2288,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 62,
+      "read_name": "proof_lookup_multiplicity_eval",
+      "sha256": "1aa59a2b2fda5732e7efd29a3fb7aef82dbfcbac81a7bc3bdfbf7446d6ef8104",
+      "tag": "read[62].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2320,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 63,
+      "read_name": "proof_lookup_helper_eval",
+      "sha256": "8442d0d32107d5413145e5462c16356d19df3386d3b4b33cb45b521bab50492c",
+      "tag": "read[63].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2352,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 64,
+      "read_name": "proof_lookup_accumulator_eval",
+      "sha256": "90345f1454fade8497b576bed694afc91d2ab230728a1f3075a8f645784cc537",
+      "tag": "read[64].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2384,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 65,
+      "read_name": "proof_lookup_accumulator_next_eval",
+      "sha256": "de479b857f0694c2bf2e836f7ef961d761f5de6792b9e2748db7003277aa063b",
+      "tag": "read[65].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2416,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 66,
+      "read_name": "proof_trash_eval",
+      "sha256": "1d93773d8509326620472ee027e6ae42245793abeecdf8542d70fc6ce9cd4b05",
+      "tag": "read[66].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2448,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 67,
+      "read_name": "proof_f_com",
+      "sha256": "8709c6a374884c422abbf9001e905a23a8842f0df20552ab83501347e51afea4",
+      "tag": "read[67].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2496,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 68,
+      "read_name": "proof_q_eval",
+      "sha256": "48db750eca0b00abb60b2e31fea2dc61e3220b59f824cea23f25665ead2702aa",
+      "tag": "read[68].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2528,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 69,
+      "read_name": "proof_q_eval",
+      "sha256": "0161707fd8be5eb779a4514c865ba19230be8baa908b7fd5835cb7188650d3ad",
+      "tag": "read[69].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2560,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 70,
+      "read_name": "proof_q_eval",
+      "sha256": "3c20d77431c8a1d6be5acaef4de320fb4dca75c491d10040ae952b4c4e34fe47",
+      "tag": "read[70].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": 0,
+      "byte_offset": 2592,
+      "error": "opening",
+      "kind": "single_bit_flip",
+      "len": 2640,
+      "read_index": 71,
+      "read_name": "proof_pi",
+      "sha256": "2e9435ed955f2161fa4b13edeaf9801326eece2181550a41922fb8037ca59547",
+      "tag": "read[71].first_byte.bit0",
+      "verdict": "reject"
+    },
+    {
+      "bit": null,
+      "byte_offset": 2639,
+      "error": "opening",
+      "kind": "truncation",
+      "len": 2639,
+      "read_index": null,
+      "read_name": null,
+      "sha256": "75b954fb749286cab397495f8ce2ceea6577cd5985e2ec22c772f627dbcc981f",
+      "tag": "truncate_last_byte",
+      "verdict": "reject"
+    },
+    {
+      "bit": null,
+      "byte_offset": 1320,
+      "error": "transcript:UnexpectedEof",
+      "kind": "truncation",
+      "len": 1320,
+      "read_index": null,
+      "read_name": null,
+      "sha256": "1400e2c896ff0e1749262ff7fb411a5dfc4ed323df6bdf89082190179d31cedc",
+      "tag": "truncate_half",
+      "verdict": "reject"
+    },
+    {
+      "bit": null,
+      "byte_offset": 2640,
+      "error": "transcript_notFound",
+      "kind": "trailing_byte",
+      "len": 2641,
+      "read_index": null,
+      "read_name": null,
+      "sha256": "d11d8d5a1102567a2d045373921ffa645dc0f253f2f1f8df0a4d0f7b2ab89460",
+      "tag": "append_zero_byte",
+      "verdict": "reject"
+    },
+    {
+      "bit": null,
+      "byte_offset": 0,
+      "error": "transcript:UnexpectedEof",
+      "kind": "truncation",
+      "len": 0,
+      "read_index": null,
+      "read_name": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "tag": "empty_proof",
+      "verdict": "reject"
+    },
+    {
+      "bit": null,
+      "byte_offset": null,
+      "error": null,
+      "kind": "control",
+      "len": 2640,
+      "read_index": null,
+      "read_name": null,
+      "sha256": "98745f266801f23626d407851336bdf15b5e21545c66734f6bae8ed2ad476264",
+      "tag": "unmutated",
+      "verdict": "accept"
+    }
+  ],
+  "note": "each mutant is scored by the real Rust verifier (prepare + the KZG pairing check), so verdict and error are what REF.12 must reproduce in Lean.",
+  "proof_len": 2640,
+  "reads": [
+    {
+      "index": 0,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 0
+    },
+    {
+      "index": 1,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 48
+    },
+    {
+      "index": 2,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 96
+    },
+    {
+      "index": 3,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 144
+    },
+    {
+      "index": 4,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 192
+    },
+    {
+      "index": 5,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 240
+    },
+    {
+      "index": 6,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 288
+    },
+    {
+      "index": 7,
+      "len": 48,
+      "name": "proof_advice_commitment",
+      "offset": 336
+    },
+    {
+      "index": 8,
+      "len": 48,
+      "name": "proof_lookup_multiplicity_commitment",
+      "offset": 384
+    },
+    {
+      "index": 9,
+      "len": 48,
+      "name": "proof_permutation_product_commitment",
+      "offset": 432
+    },
+    {
+      "index": 10,
+      "len": 48,
+      "name": "proof_permutation_product_commitment",
+      "offset": 480
+    },
+    {
+      "index": 11,
+      "len": 48,
+      "name": "proof_permutation_product_commitment",
+      "offset": 528
+    },
+    {
+      "index": 12,
+      "len": 48,
+      "name": "proof_lookup_helper_commitment",
+      "offset": 576
+    },
+    {
+      "index": 13,
+      "len": 48,
+      "name": "proof_lookup_accumulator_commitment",
+      "offset": 624
+    },
+    {
+      "index": 14,
+      "len": 48,
+      "name": "proof_trash_commitment",
+      "offset": 672
+    },
+    {
+      "index": 15,
+      "len": 48,
+      "name": "proof_quotient_commitment",
+      "offset": 720
+    },
+    {
+      "index": 16,
+      "len": 48,
+      "name": "proof_quotient_commitment",
+      "offset": 768
+    },
+    {
+      "index": 17,
+      "len": 48,
+      "name": "proof_quotient_commitment",
+      "offset": 816
+    },
+    {
+      "index": 18,
+      "len": 48,
+      "name": "proof_quotient_commitment",
+      "offset": 864
+    },
+    {
+      "index": 19,
+      "len": 32,
+      "name": "proof_committed_instance_eval",
+      "offset": 912
+    },
+    {
+      "index": 20,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 944
+    },
+    {
+      "index": 21,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 976
+    },
+    {
+      "index": 22,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1008
+    },
+    {
+      "index": 23,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1040
+    },
+    {
+      "index": 24,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1072
+    },
+    {
+      "index": 25,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1104
+    },
+    {
+      "index": 26,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1136
+    },
+    {
+      "index": 27,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1168
+    },
+    {
+      "index": 28,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1200
+    },
+    {
+      "index": 29,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1232
+    },
+    {
+      "index": 30,
+      "len": 32,
+      "name": "proof_advice_eval",
+      "offset": 1264
+    },
+    {
+      "index": 31,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1296
+    },
+    {
+      "index": 32,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1328
+    },
+    {
+      "index": 33,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1360
+    },
+    {
+      "index": 34,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1392
+    },
+    {
+      "index": 35,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1424
+    },
+    {
+      "index": 36,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1456
+    },
+    {
+      "index": 37,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1488
+    },
+    {
+      "index": 38,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1520
+    },
+    {
+      "index": 39,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1552
+    },
+    {
+      "index": 40,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1584
+    },
+    {
+      "index": 41,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1616
+    },
+    {
+      "index": 42,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1648
+    },
+    {
+      "index": 43,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1680
+    },
+    {
+      "index": 44,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1712
+    },
+    {
+      "index": 45,
+      "len": 32,
+      "name": "proof_fixed_eval",
+      "offset": 1744
+    },
+    {
+      "index": 46,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1776
+    },
+    {
+      "index": 47,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1808
+    },
+    {
+      "index": 48,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1840
+    },
+    {
+      "index": 49,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1872
+    },
+    {
+      "index": 50,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1904
+    },
+    {
+      "index": 51,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1936
+    },
+    {
+      "index": 52,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 1968
+    },
+    {
+      "index": 53,
+      "len": 32,
+      "name": "proof_permutation_common_eval",
+      "offset": 2000
+    },
+    {
+      "index": 54,
+      "len": 32,
+      "name": "proof_permutation_product_eval",
+      "offset": 2032
+    },
+    {
+      "index": 55,
+      "len": 32,
+      "name": "proof_permutation_product_next_eval",
+      "offset": 2064
+    },
+    {
+      "index": 56,
+      "len": 32,
+      "name": "proof_permutation_product_last_eval",
+      "offset": 2096
+    },
+    {
+      "index": 57,
+      "len": 32,
+      "name": "proof_permutation_product_eval",
+      "offset": 2128
+    },
+    {
+      "index": 58,
+      "len": 32,
+      "name": "proof_permutation_product_next_eval",
+      "offset": 2160
+    },
+    {
+      "index": 59,
+      "len": 32,
+      "name": "proof_permutation_product_last_eval",
+      "offset": 2192
+    },
+    {
+      "index": 60,
+      "len": 32,
+      "name": "proof_permutation_product_eval",
+      "offset": 2224
+    },
+    {
+      "index": 61,
+      "len": 32,
+      "name": "proof_permutation_product_next_eval",
+      "offset": 2256
+    },
+    {
+      "index": 62,
+      "len": 32,
+      "name": "proof_lookup_multiplicity_eval",
+      "offset": 2288
+    },
+    {
+      "index": 63,
+      "len": 32,
+      "name": "proof_lookup_helper_eval",
+      "offset": 2320
+    },
+    {
+      "index": 64,
+      "len": 32,
+      "name": "proof_lookup_accumulator_eval",
+      "offset": 2352
+    },
+    {
+      "index": 65,
+      "len": 32,
+      "name": "proof_lookup_accumulator_next_eval",
+      "offset": 2384
+    },
+    {
+      "index": 66,
+      "len": 32,
+      "name": "proof_trash_eval",
+      "offset": 2416
+    },
+    {
+      "index": 67,
+      "len": 48,
+      "name": "proof_f_com",
+      "offset": 2448
+    },
+    {
+      "index": 68,
+      "len": 32,
+      "name": "proof_q_eval",
+      "offset": 2496
+    },
+    {
+      "index": 69,
+      "len": 32,
+      "name": "proof_q_eval",
+      "offset": 2528
+    },
+    {
+      "index": 70,
+      "len": 32,
+      "name": "proof_q_eval",
+      "offset": 2560
+    },
+    {
+      "index": 71,
+      "len": 48,
+      "name": "proof_pi",
+      "offset": 2592
+    }
+  ],
+  "schema": 1,
+  "single_bit_per_read": 72,
+  "srs_kind": "unsafe-seeded",
+  "structural": 4
+}

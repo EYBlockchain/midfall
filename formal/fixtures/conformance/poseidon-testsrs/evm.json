@@ -1,0 +1,16 @@
+{
+  "accepted": true,
+  "calldata_len": 4484,
+  "calldata_sha256": "8a563bef54d9cbd524a2bf5d785251ab9e451e62ae374cc4f2aa0ee781ff5987",
+  "engine": "revm 19 (Prague, EIP-2537 precompiles)",
+  "evm_executed": true,
+  "gas_used": 638093,
+  "native_verdict": "accept",
+  "note": "the same proof.bin, instances and SRS as the native run; calldata.bin is the exact bytes of this call.",
+  "output_hex": "0000000000000000000000000000000000000000000000000000000000000001",
+  "quotient_lowering": "Vm",
+  "render_vk": "Separate",
+  "schema": 1,
+  "solc": "0.8.30+commit.73712a01.Darwin.appleclang",
+  "status": "success"
+}

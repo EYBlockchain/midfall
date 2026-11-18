@@ -1,0 +1,275 @@
+{
+  "advice_column_phase": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+  ],
+  "advice_queries": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      4,
+      0
+    ],
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      1
+    ],
+    [
+      2,
+      1
+    ],
+    [
+      5,
+      0
+    ],
+    [
+      6,
+      0
+    ],
+    [
+      7,
+      0
+    ]
+  ],
+  "blinding_factors": 8,
+  "cs_degree": 5,
+  "extended_k": 8,
+  "fixed_commitments_compressed_hex": [
+    "920cca6567a33af711bc781cc9b1c0f968e3519d155bfae5ac48d5a1f1148cdf43b52e4c54ef9f78bda9793d5220e03a",
+    "a2f6c5aa933b480b0e8b1e5bd06d61f44d5821ce2cfaaf858e42dd2c4dc7bc4aea4d19c5c4e99752f4d7436bc948cb05",
+    "ab64f73e813c2f633f591c1962873d29febe017f3122b37bef2504c6e6e5779d434fc50d1879794b034529589d88176d",
+    "88a580dc8f3f6f89c57168e5a67d033665ac9deed9653b6868d2a29cfaf41782b7b2fa92addf4908835a04c5223a3c3c",
+    "8c58680b90f51526c0cf6fe44472edf8df85dc2336c43d2d87f129a375098582fba4b5fd00fbcc80855ef0c38679753f",
+    "841f80dd6a6dd4147062076e507d9c55401cf6e18e310fbc71d13c7d5bf422bb1dcf7e89704fb999688a92e30bdfde04",
+    "8dbb3c847c8179e558ef34ee2dba712394b406223d20aede1f22746025ed1b27517a48b1bdf1e4ce702a91d0758815d1",
+    "a8e9545f121a38a63a32735d1aed392e25f2a70aea117d23934b77fc75cff91ba9ce1fb74c8219d3f5ace3a47f9f974f",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "b87b0f376a4725fcce502378ba7bc5f9c4e8bc4f2d11c54ecbf2461ff963b6eb98b4c0c31a98c15d6d47624f79ec93fb",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "8150dd51d8166e8d4975042c7bb7dc441754a153ccbf0722d61ce497b906503745404ac3fc022f7af9dc69ac6a3575ec",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "90c108675e9bed5d8726e5fcf48fe0ac356be9df8b266324dcd8a8b4ee2618df45d180537fdc21ad5265999e69d22aa0",
+    "c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    "880536781f2e9920108cd01263ec09fb870f2467ecd3b62f94ccd6525131454a9f3ee911d1c57792387c044d2dbc8db8",
+    "857c9b7948d6cd6d97dd7099f4d4e078814312a5b727b9abcdfb64ce1b0e02f9796fee197f027660df3622ef0d6f7dd1"
+  ],
+  "fixed_queries": [
+    [
+      9,
+      0
+    ],
+    [
+      4,
+      0
+    ],
+    [
+      5,
+      0
+    ],
+    [
+      6,
+      0
+    ],
+    [
+      7,
+      0
+    ],
+    [
+      8,
+      0
+    ],
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ],
+    [
+      2,
+      0
+    ],
+    [
+      3,
+      0
+    ],
+    [
+      10,
+      0
+    ],
+    [
+      11,
+      0
+    ],
+    [
+      12,
+      0
+    ],
+    [
+      13,
+      0
+    ],
+    [
+      14,
+      0
+    ],
+    [
+      15,
+      0
+    ],
+    [
+      16,
+      0
+    ],
+    [
+      17,
+      0
+    ],
+    [
+      18,
+      0
+    ]
+  ],
+  "instance_queries": [
+    [
+      0,
+      0
+    ],
+    [
+      1,
+      0
+    ]
+  ],
+  "k": 6,
+  "n": 64,
+  "nb_public_inputs": 1,
+  "num_advice_columns": 8,
+  "num_challenges": 0,
+  "num_committed_instances": 1,
+  "num_fixed_columns": 19,
+  "num_instance_columns": 2,
+  "num_lookups": 1,
+  "num_trashcans": 1,
+  "omega_be_hex": "45af6345ec055e4d14a1e27164d8fdbd2d967f4be2f951558140d032f0a9ee53",
+  "omega_inv_be_hex": "640d097461a2eeaf4e84b3cd7dc75b61db872ef3dce28e788d28c143168bba2c",
+  "permutation_commitments_compressed_hex": [
+    "97aa8c561e26ee1ecb12d284edd45474b2eebb514d16b66f58b550340146d88e123994caef371df9d26b43dbfec7672a",
+    "87ba6df7767efe6e317ce6c0caff120753aaebd101ce2ac61bf87b59512c5304de50e7081accb7a48ce72a8181098859",
+    "894a1e7f037b58f8ad06fe2c74e7739df8179f59e775aa945d084ceaf0b458c5fe9ff2dadaef40fc42034d4076b399e0",
+    "96b9ffdff8b45b7bdb6cb00e363ad768b7a42d1f1ecc9763cc25bacf9d5c7c12cc26e1ec398845b7ee66e7fca64c5915",
+    "8dd75943b228fb75e92eed847d9cc8b382798fb946eeacac21043ac5104d704f1b38a7978f05bc7aa5cca10ada534f69",
+    "a27307c194a502759a38d86d92b7fd770dc04ba5f33b87b8577a515c03a2268c57cde6634eecd908191e079eddd179cb",
+    "924eda5fd162904f0dcccbd27758b3a444665d36c1ca8b89be7b001dfcee9580128f658dd8698847db0776894f671ba5",
+    "ae6f1393baea8e806d7874ca0591e269c998540a5bf7bedfabc249bc759cfa9d3564411566711e9cab1c5bdabec2f795"
+  ],
+  "quotient_poly_degree": 4,
+  "scalar_num_bits": 255,
+  "schema": 1,
+  "selector_flags": [
+    {
+      "col_idx": 0,
+      "is_simple": false
+    },
+    {
+      "col_idx": 1,
+      "is_simple": false
+    },
+    {
+      "col_idx": 2,
+      "is_simple": false
+    },
+    {
+      "col_idx": 3,
+      "is_simple": false
+    },
+    {
+      "col_idx": 4,
+      "is_simple": false
+    },
+    {
+      "col_idx": 5,
+      "is_simple": false
+    },
+    {
+      "col_idx": 6,
+      "is_simple": false
+    },
+    {
+      "col_idx": 7,
+      "is_simple": false
+    },
+    {
+      "col_idx": 8,
+      "is_simple": false
+    },
+    {
+      "col_idx": 9,
+      "is_simple": false
+    },
+    {
+      "col_idx": 10,
+      "is_simple": false
+    },
+    {
+      "col_idx": 11,
+      "is_simple": false
+    },
+    {
+      "col_idx": 12,
+      "is_simple": false
+    },
+    {
+      "col_idx": 13,
+      "is_simple": true
+    },
+    {
+      "col_idx": 14,
+      "is_simple": true
+    },
+    {
+      "col_idx": 15,
+      "is_simple": true
+    },
+    {
+      "col_idx": 16,
+      "is_simple": false
+    },
+    {
+      "col_idx": 17,
+      "is_simple": true
+    },
+    {
+      "col_idx": 18,
+      "is_simple": false
+    }
+  ],
+  "transcript_repr_be_hex": "3e5bdd926c70c3ff442e60d11c7078accdb9a37dc6ba50b3cb0b37d344d1b780",
+  "truncated_challenges": true
+}
