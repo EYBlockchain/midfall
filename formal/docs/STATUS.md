@@ -294,3 +294,264 @@ written. Each needs its premises re-verified against HEAD first, which is most o
 round now costs.** A cheap fix exists and is a human call: **run one card whose job is to re-verify and
 correct the Needs/Accept lines of the M5-M6 cards against the current tree**, so subsequent cards are
 briefable from the plan again.
+
+## PLAN-V3 card-premise audit (round 78)
+
+**INFRA · PROBE · branch `t/PLAN-AUDIT` from `82346a1`. Docs only: nothing under `formal/Midfall/`,
+no frozen file, no `vendor/`, no `scripts/` was touched.** Every `Needs` path, line citation and
+`VERIFY FIRST` command of the M5 and M6 blocks of `docs/plans/PLAN-V3-cards.md` was run against the
+tree at this commit; corrections carry their command output in the card text. **45 cards and
+card-children were corrected**, plus an audit banner at the head of the M5 block and one at the head of
+the GEN-ROWS area. Audited and found EXACT as written, with no edit needed: `T3.0` (scratch line counts
+419/72/171), `T3.3`, `T3.10` (except `emitQuotientNumeratorA`, which is really
+`emitQuotientNumerator` at `GenAst.lean:789`), `T3.11` (`Calldata.lean:257` = `repackThenEncode` ✓),
+`T3.9.h`, `ROW.Q.6` (`Qvm.lean:619-631` and `:1436` ✓), `ROW.PCS.2` (`GenAstPcs.lean:163-176` ✓),
+`TOT.1.a` (`Bridge.lean:1221` and `:1100` ✓). Tree pins unchanged
+(`bash formal/scripts/checks.sh` exits 0): sorry register **66 declarations / 10 in the headline
+cone / 1 REFUTED**; KAT **1525 checks / 112 files** (which carries the object fingerprint pins 14,109
+and `0x3149ae4f...bef176`, `kat_gate.py:165-166`); frozen hashes `Statements.lean`,
+`LoweringV2/Program.lean`, `LoweringV2/Shared.lean`, `LoweringV2/Statements.lean` all **OK**; the
+statement-fingerprint line prints 375 fragments across 10 `LoweringCorrect` fields.
+
+### THE ONE FINDING THAT BINDS EVERYTHING ELSE
+
+**`bash docs/plans/V3-evidence/check.sh soundness` is RED at HEAD.** It exits 1:
+
+```
+ok    soundness/SoundnessV3               13s  (6 sorry warnings)
+ok    soundness/RawDecode                  9s  (0 sorry warnings)
+ok    soundness/ExitMeasure                7s  (0 sorry warnings)
+ok    soundness/PointSets                  4s  (0 sorry warnings)
+ok    statements/StatementsV3              7s  (4 sorry warnings)
+FAIL  soundness/GeneratorRows             10s
+FAIL  soundness/GeneratorRowsWitness       2s
+```
+
+`GeneratorRowsWitness` fails only as a cascade (`unknown module prefix 'GeneratorRows'`). The 15
+`GeneratorRows.lean` errors are all the same thing: **the evidence still reads the PRE-RECON.1
+`Valid`**, so RECON.1b is unfinished (`227b00c feat(formal): RECON.1b - two evidence files rebased
+onto the single ValidV3; the other two are blocked by a red evidence tree`). This is NOT an M5/M6
+premise failure and no M5/M6 card can fix it. **Nine cards' `VERIFY FIRST` lines were false at HEAD
+for this reason alone** (`T3.9`, `HLP.1`, `GEN.4`, `GEN.5`, `TOT.1`, `ROW.TP`, `ROW.PCS`, `ROW.FP`,
+`SIM.6`, plus the `GEN-ROWS` preamble and the children that inherit it). Each now says so and names
+RECON.1b as owner, instead of inviting a subagent to restate the rows to dodge a red gate.
+
+By contrast **`check.sh prooftech` is GREEN: 12/12 `ok`, exit 0** (`P1_Exec, WP, Lits, WPBridge,
+WPTac, TR, VK (1 sorry), LAGP, WPX (3 sorries), E3, VKP (1 sorry), LoopRule (0 sorries)`).
+
+### CARDS CORRECTED, WITH THE COMMAND THAT JUSTIFIES IT
+
+* **T3.1** — marked **MERGED, do not run**: `git log --oneline -- Midfall/Yul/Wp.lean` →
+  `76b7183 feat(formal): T3.1 - the wp engine is in the tree`.
+* **T3.1b** — marked **MERGED** (`5a6cbf0`). Its `Needs` re-lists `BLive`, which T3.1 had already
+  landed: `grep -n 'def BLive' Midfall/Yul/WpBridge.lean` → `243`. `wp_run` is at **:262**, not :221
+  (`grep -n 'elab "wp_run"' WPTac.lean` → `262`; :221 is a comment). Its `VERIFY FIRST` is now TRUE.
+* **T3.2 / T3.5 / T3.8** — the three scratch statements they need are TREE sorries with owners
+  already registered: `grep -n 'theorem wpSS_exists' Midfall/Yul/WpX.lean` → `42` (sorry :46,
+  `SORRY.md:107` owner T3.2); `loadWord_storeWord` → `WpX.lean:69` (sorry :73, `SORRY.md:105` owner
+  T3.5); `mulmod_toFr` → `WpX.lean:78` (sorry :82, `SORRY.md:106` owner T3.8). T3.8's
+  `Qvm.lean:143-169` and `qvmFrModulus_eq_r` at :133 are EXACT. T3.5's VK.lean leaf is real:
+  `ok prooftech/VK 4s (1 sorry warnings)`, `vk_all` :26 with its sorry at :42.
+* **T3.9** — emitter `GenAst.lean:681-761` → **:861-945** (`sed -n '681p'` prints
+  `[ yset "ok" (ycall "check_acc_coord_packing"`, an accumulator line; `grep -n '^def emitLagrangeAt'`
+  → `861`); `leanStage` :336 → **:353**; `agree_of_one` :1259 → **:1272**; `StageInv` → :556; the
+  `.lagrange` clauses :779-787 → **:779-789**; all fourteen §5 symbols given with their real lines
+  (`lag_slice` 442 … `lag_blockProgS` 628, `batch_invert_summary` 317).
+* **GEN.0** — `VERIFY FIRST` confirmed TRUE; `vkSite` :94 and `vkBody` :152 EXACT; `maxRecDepth` at
+  :221 and :279 exactly as Do step 5 says; the sorry-owner conflict (card text says GEN.1's, Do step 4
+  says T3.2's) resolved to T3.2 per `SORRY.md:107`.
+* **GEN.1** — `vk_poison_walk` :735 → **:750**; the three sorries :728/:743/:756 → **:743/:758/:773**;
+  the card's own counting command is wrong (`grep -c sorry Midfall/LoweringV2/Blocks/VkLoading.lean`
+  prints **10**, seven of them the word "sorry" inside docstrings — the working command is
+  `grep -n '^  sorry'`); `vkPins_of_valid` and `vkProgressPins_of_valid` **do not exist anywhere**;
+  card marked **NOT READY** for two independent reasons.
+* **GEN.3** — `VERIFY FIRST` confirmed TRUE: `ok prooftech/LoopRule 4s (0 sorry warnings)`,
+  `wc -l LoopRule.lean` → 522 exactly as claimed; `Contracts.lean:298` (`countdown_or_halt`) EXACT.
+* **GEN.4** — `ProgramLemmas.lean:27` → **:31** (the sorry is at :35): :27 is a docstring line inside
+  the file's header comment and declares nothing. `inlineScan_append` is still a sorry ✓
+  (`GeneratorRows.lean:721`, sorry :726). **Accept flagged unsatisfiable as scoped.**
+* **GEN.5** — blocked on three counts, each with its command: the evidence file is red, RECON.3 has
+  not run, and `test -f Midfall/LoweringV2/RowsGen.lean` → absent (this card creates it).
+* **HLP.1** — `prooftech/WP.lean:197` (`CSound`) is the scratch line; the tree copy is
+  `Midfall/Yul/Wp.lean:224`. `GenAst.lean:251-580` (the eight emitters) and `VkLoading.lean:449`
+  (`vk_fail_reverts`) are EXACT. `VERIFY FIRST` false, and `#print axioms helpers_eq` cannot run.
+* **HLP.1.a** — `emitHelpers` :579 → **:580**; **the card's own STOP condition is TRIGGERED at HEAD**
+  (the `helpers_eq` kernel mismatch). **HLP.1.b/c** — emitters :499-505 and :465-542 confirmed EXACT,
+  `Bridge.lean:731` (`permissive`) EXACT; both blocked by the red area and by T3.9.a/T3.5 not having run.
+* **TOT.1** — `SoundnessV3.lean:1182` (`run_join`) → **:1197** (:1182 is blank); `wpSS_exists` and
+  `Bfun` re-pointed to `WpX.lean:42` and `WpBridge.lean:248`; `total_correct` confirmed PROVED from
+  exactly the four leaves the card names (`GeneratorRows.lean:1365`).
+* **ROW.TP** — emitter :1011-1178 → **:1289-1397** (`grep -n '^def emitTranscriptParserAt'` → 1289);
+  `MirrorAt` :506 → **:523**, `rawSlots` :88 → **:105**, `rawDecode` :107 → **:124**, `xcript_total`
+  :1354 → **:1367**; helpers :320-389 confirmed EXACT; `Arith.lean:284` EXACT.
+* **ROW.Q** — the five "builder sorries in scope" citations named the SORRY line, not the declaration:
+  :631 → **:619**, :698 → **:689**, :713 → **:705**, :768 → **:751**, :995 → **:984**
+  (`grep -n sorry Midfall/Lowering/Qvm.lean` → exactly `631, 698, 713, 768, 995`);
+  `QvmFold` :338 → **:327**, :376 → **:364**, :434 → **:407**, refutation :718-749 → **:705-750**;
+  `linearizeFull` :289 → **:306**; the six "proved and reusable" `Qvm.lean` lines (:1197, :1481,
+  :1864, :2588, :916, :334) are ALL EXACT.
+* **ROW.PCS** — block 5 :342-473 → **:425-484**; `GenAstDispatch.lean:131` → **:145**
+  (`emitPcsFromPlan`; :131 is a docstring line, and the evidence's own PG-PCS-EMIT note carries the
+  same stale number); `decodeCalldata_isSome_iff` :197 → **:214**; `hasMultiPointSet` :577 → **:594**;
+  `scalar_inv` `GenAst.lean:441` → **:447** (`emitScalarInvAt`); the other eight `GenAstPcs` lines
+  (:131, :163, :193, :254, :317, :485, :587) confirmed EXACT.
+* **ROW.FP** — `fp_blockSim_of_blockSound` :1314 → **:1327**; `emitEcPairingAt` :265-292 → **:302**;
+  the four `FinalPairing.lean` lines (:278, :314, :352, :148) confirmed EXACT; **PG-G2SLOTS recorded
+  OPEN with its exact goal state** (see below).
+* **SIM.5** — `SoundnessV3.lean:902` → **:917** (`grep -n '^theorem quiet_init'` → 917; :902 is
+  `def Render.slices6`).
+* **SIM.6** — `prefix_sim` :772 → **:787**, `prefix_prog` :1170 → **:1185**, `preBlock` :736 →
+  **:753**; `Program.lean:66-116` and `Blocks.lean:191-198` EXACT; **`Frame` has no `cdSize`**
+  (`grep -n cdSize Midfall/LoweringV2/Blocks.lean` → one docstring hit at :862).
+* **SIM.6.a / SIM.6.b** — `Statements.lean:197` (`Valid.model`) and `:192` (`Valid.layout`) are not
+  `Valid` fields at all: `Render.Valid` has exactly seven clauses
+  (`generated, inputs, program, noWriters, env, payload, supported`, `LoweringV2/Statements.lean:1020-1046`).
+  The real sources are `Render.model` at `Statements.lean:149`, `SupportedV2.layout` at `:210`,
+  `SupportedV2.embeddedQuotient` at `:216` and `SupportedV2.separateVk` at `:218` — which is what the
+  cards' own Do steps say to rewrite with.
+* **SIM.6.c / SIM.6.d** — `abiHeadOk` :67 → **:84**; `stmts_append_run` :1084 → **:1099**;
+  `VkLoading.lean:528` and `:284` EXACT; `Program.lean` is FROZEN
+  (`sha256sum -c Midfall/LoweringV2/Frozen.sha256` → `Program.lean: OK`), so SIM.6.c may read it and
+  must not edit it.
+* **SIM.9 / SIM.10 / SIM.11** — all three cite `Midfall/Lowering/Stage.lean`, which **does not
+  exist**: `test -f Midfall/Lowering/Stage.lean` → absent. It is SIM.1's deliverable and SIM.1 is
+  READY, not merged. SIM.10's `Verifier.lean:94-217` and `:839-934` and its `G1Agreement.lean:2006`
+  falsifier citation are all EXACT (`sed -n '94p'` → `def parseTrace`, `839p` → `def readAlgebra`,
+  `2006p` → `ofCompressed? := fun _ => none`).
+* **SIM.11** — **Accept unsatisfiable as written**: the fault-site counts are 99 occurrences and 70
+  distinct strings, not 88 and 63 (`grep -rho 'Fault.panic "[^"]*"' Midfall/Halo2/Exec/` counts 99;
+  piped through `sort -u` it counts 70). `lean_fault_table` :1368 → **:1381**.
+* **SIM.12** — `Calldata.lean:1351` (`points_subgroup_checked_generator`) EXACT.
+* **T3.9.a–e** — five emitter citations pointed at the ACCUMULATOR emitters; corrected to :872, :880,
+  :898, :909, :918 (`sed -n '692p'` → `ylet "next_lo"`, `sed -n '872p'` →
+  `yfor [ylet "idx" (ylit 0)] (yop Op.lt [yvar "idx", yvar "k"])`). `lag_sq_loop_form` (:461) and
+  `lagInner_length` (:455) confirmed PROVED as the cards claim; the four `VkLoading.lean` helper
+  lines (:553, :578, :284, :611) are EXACT.
+* **T3.9.g** — **the best-founded card in the audit**: `Snapshot.lean:230`/`:217`/`:519`,
+  `Verifier.lean:245`, `Inv.lean:533`, `Qvm.lean:143-169` all EXACT, and its KAT was measured:
+  `lake env lean` on a probe file printed `true` for `Midfall.Lowering.snapshotLagrangeStepKats_ok`.
+* **ROW.TP.1/2/6/7/8/9** — `g1WalkLoop` :1011-1024 → **:1238-1247**; `cdSlice` :481 → **:498**;
+  `snapshotXcriptRun` :255 → **:272**; `xcript_total`/`padSnap`/`leanStage`/`Agree` →
+  **1367/287/353/549**; `Inv.lean:302`, `Calldata.lean:279` and `:288`, `Bridge.lean:451`,
+  `InlineConstants.lean:287-372` and `:407` confirmed EXACT.
+* **ROW.Q.1** — emitter :840-864 → **:1020-1047** (`sed -n '840p'` → `/-! ### Lagrange -/`).
+  `qlinInner_length` (:865) confirmed PROVED. **ROW.Q.6** — `Qvm.lean:619-631` EXACT,
+  `arms_agreement_hypotheses_satisfiable` :1436 EXACT, and the five-sorry `VERIFY FIRST` is TRUE.
+* **ROW.PCS.2** — `GenAstPcs.lean:163-176` EXACT. **ROW.PCS.9** — `SoundnessV3` :197 → **:214**,
+  :118 → **:135**, :107 → **:124**, :1400 → **:1413**; `Shared.lean:106` EXACT.
+* **GEN-ROWS preamble** — the area's evidence base marked RED with the full `check.sh` output and
+  the 40 sorry lines listed (`grep -c` on `^[[:space:]]*sorry` → 40, as the preamble claims).
+
+### PREMISE GAPS THAT REMAIN OPEN — WITH EXACT GOAL STATE (nothing deleted, nothing lowered)
+
+1. **PG-VKPINS / PG-VKPROGRESSPINS** (blocks GEN.1 step 1, and with it the vkLoading row).
+   `vk_all_param_mem` needs 15 constant lookups; 4 were to come from `hR.vkPins` and
+   `hR.vkProgressPins`. At HEAD `Render.Valid` is
+   `{ generated, inputs, program, noWriters, env, payload, supported }`
+   (`LoweringV2/Statements.lean:1020-1046`) — **neither is a field** and no projection lemma exists
+   (`grep -rn 'vkPins_of_valid' formal/Midfall formal/docs/plans/V3-evidence/lean` → no output). The
+   structures themselves exist (`Statements.lean:231`, `:249`). Already measured NOT DERIVABLE from
+   the current table facts (rounds 76-77 of this file). **Needs a new lemma or a human decision — not
+   a card.**
+2. **PG-RETURNMPTR** (blocks `rows_correct`'s TraceReturn arm, hence GEN.5 and PL.H). Goal state:
+   `GeneratorRows.lean:1135` projects `hR.returnMptr`; the compiler says
+   `Invalid field returnMptr: The environment does not contain
+   Midfall.LoweringV2.Render.Valid.returnMptr`. The fact is not lost: it is now a THEOREM
+   (`returnMptr_of_valid`, `LoweringV2/Statements.lean:1086`, via `returnMptr_of_programOk` `:954`),
+   so the repair is a re-point. Owner: RECON.1b.
+3. **PG-SLOTS and PG-ENV-ARITY** (`GeneratorRows.lean:228`): `hR.slots` is not a field, and `hR.env`
+   now has type `EnvAgrees R.E R.vk R.pv R.params R.sG2gen` where the evidence expects four
+   arguments. Owner: RECON.1b.
+4. **PG-CODEC-LAWS** (`GeneratorRows.lean:1129-1134`): the six `*_blockProgS` calls pass
+   `hcodec : G1CodecHeadlineLaws R.E.g1` where the tree's rows now demand `G1CodecLaws R.E.g1`.
+   Owner: RECON.1b (or RECON.2 step 3, which is the card that re-gated the rows on the four-law
+   bundle).
+5. **PG-HELPERS-EQ** (blocks HLP.1, HLP.1.a and every helper-summary child):
+   `(kernel) declaration type mismatch 'Midfall.LoweringV2.V3.Gen.helpers_eq'` at
+   `GeneratorRows.lean:408`. The two sides PRINT IDENTICALLY in the error, which is the signature of a
+   reduction difference — `R.helpers` no longer unfolds to the eight-`funDef` list — not of a
+   changed emitter text. HLP.1.a's own STOP branch is the live branch. **Do not edit the lemma.**
+6. **PG-QSLICE** (`GeneratorRows.lean:854`, `:857`):
+   `R.slice Partial.quotientLin` is no longer definitionally
+   `Inline.inlineContractConstants R.consts (GenAst.emitQuotientLinAt R.pv.k)`. Blocks ROW.Q and
+   T3.10; caused by the OBJ.14/OBJ.15 emitter work landing after the evidence was written.
+7. **PG-PCS-COMPUTATIONS** (`GeneratorRows.lean:963`): `computationsAst … = .ok blocks` no longer
+   reduces the `match` inside `pcs_slice_of_ok`'s statement (unsolved goal
+   `… (match Except.ok blocks with | .ok blocks => [Stmt.block (List.map Stmt.block blocks)] …) =
+   Inline.inlineContractConstants R.consts blocks.flatten`). Blocks ROW.PCS step 2.
+8. **PG-PCS-EMIT** (ROW.PCS step 1): `PG_pcsEmits` is a bare
+   `def … : Prop := ∃ blocks, computationsAst … = .ok blocks ∧ blocks ≠ []` (`GeneratorRows.lean:201`)
+   with **no projection and no tree occurrence** (`grep -rn 'PG_pcsEmits' formal/Midfall` → none).
+   The fault arms it must exclude are `GenAstPcs.lean:433`, `:407`, `:461`.
+9. **PG-G2SLOTS** (ROW.FP `VERIFY FIRST`): `PayloadAgrees.g2Base` and `.negSG2` DO exist
+   (`Statements.lean:357`, `:360`) but state `… = R.encG2 P.g₂` and `… = R.encG2 R.sG2gen⁻¹`, while
+   `fpG2Slots` (`Blocks/FinalPairing.lean:234`) asks for
+   `vkG2Words R.pv vkG2BaseSlot = R.encG2 R.params.nG2Prepared`. The missing bridge is
+   `nG2Prepared = P.g₂`: `grep -rn 'nG2Prepared' formal/Midfall/LoweringV2/Statements.lean` → no output.
+10. **PG-FRAMECD** (SIM.6 `VERIFY FIRST`): `Frame` (`LoweringV2/Blocks.lean:56`) has no `cdSize`
+    field; adding it is RECON.2 step 2 and RECON.2 has not run.
+11. **PG-NEGLAG** (T3.9 "Stop if"): `2 ≤ R.pv.numNegLagranges` is still not derivable from `hR` —
+    `GeneratorRows.lean:209-213` records that `EnvAgrees.negLagranges` yields 1 when
+    `blindingFactors` is an error. Unchanged; still a human question, still not a hypothesis to add.
+12. **PG-GASFREE** (TOT.1 Do step 1): `gasFree_of_valid` needs a `gasFree` clause that `programOk`
+    does not have. Recorded in the card; not added.
+13. **PG-STAGE-FILE** (SIM.9, SIM.10, SIM.11): all three cite `Midfall/Lowering/Stage.lean`, which
+    does not exist until SIM.1 runs. Not a defect — a forward reference — but it makes three M6 cards
+    unreachable while SIM.1 sits READY.
+
+### CARDS WHOSE ACCEPT IS UNSATISFIABLE AS SCOPED
+
+* **GEN.4** — `#assert_axioms Midfall.LoweringV2.V3.Gen.inlineScan_append …` names a declaration in
+  the `V3.Gen` namespace, which lives in `GeneratorRows.lean`: an evidence file GEN.4 may not land
+  (GEN.5 lands it) and which does not elaborate at HEAD. The proof is reachable in
+  `InlineConstants.lean`/`ProgramLemmas.lean`; the ASSERTION TARGET is not. Recorded; requirement kept.
+* **SIM.11** — "the gate prints 88 classified / 0 unclassified (63 distinct Fault.panic literals
+  today)". The tree has 99 occurrences / 70 distinct, so a gate that prints 88 can never print it.
+  Corrected requirement written into the card: N classified where N is what the gate enumerates — 70
+  distinct site strings at `82346a1` — and the FAULTS.md row set must equal that set. Same ambition,
+  right number.
+* **GEN.1** — its own `VERIFY FIRST` declares the card NOT READY unless the coherence clause is in the
+  tree; with PG-VKPINS open and GEN.0 unrun, its Accept is currently UNREACHABLE rather than wrong.
+  Flagged as such, not trimmed.
+* **T3.1b** — its Accept is ALREADY SATISFIED (`wp_run` in the tree, `lake build` green, frozen
+  hashes unchanged). Re-running it duplicates `BLive`.
+
+### REDUNDANCY FOUND (work already merged)
+
+* **T3.1** (`76b7183`) and **T3.1b** (`5a6cbf0`) are both merged, yet `QUEUE.md` still shows T3.1 as
+  READY and T3.1b as "after T3.1". **The queue needs the same rebase the plan got.**
+* T3.1b's `Needs` re-lists `BLive` (landed by T3.1 at `WpBridge.lean:243`) — the exact defect the
+  brief named, still in the card text.
+* `WPX.lean`'s three sorries are already registered with owners T3.2, T3.5, T3.8 (`SORRY.md:105-107`),
+  so those three cards' `Needs` lines pointing at the scratch file describe work the register already
+  tracks in the tree.
+* `returnMptr` (RECON.1's D-P71 addition 7) is already a theorem in the tree
+  (`returnMptr_of_valid`, `Statements.lean:1086`); only the evidence's projection is stale.
+* `identityCorrespondence_of_bridge_fixed` — ROW.Q step 1's deliverable — is **already PROVED** at
+  `GeneratorRows.lean:913`, while ROW.Q's `Needs` still lists it as content to produce.
+
+### FALSE PREMISES IN THE PLAN-AUDIT BRIEF ITSELF
+
+1. **"T3.1b … its `VERIFY FIRST` ('WPTac and WPX print ok') is FALSE."** It is **TRUE at `82346a1`**:
+   `check.sh prooftech` prints `ok prooftech/WPTac 4s (0 sorry warnings)` and
+   `ok prooftech/WPX 3s (3 sorry warnings)`, 12/12 ok, exit 0. PT.1 (`1b9d376`) repaired it. The
+   brief's claim is one commit stale — the same failure mode it was written to catch.
+2. **"the cause I gave for that failure was ALSO wrong"** — now moot, but for the record the real cause
+   was the `helpersLit` pin in the `prooftech` area, not a `Lits.lean` import:
+   `1b9d376 fix(formal): PT.1 - the stale helpersLit pin is repaired; prooftech goes from 9 FAIL to
+   12/12 ok`.
+3. The brief's scope list omits **T3.1/T3.1b**, the two cards whose merged status is exactly what
+   makes GEN.0, GEN.3 and T3.2 briefable; and it says "the remaining M5 and M6 cards" while
+   `QUEUE.md` still lists T3.1 as READY.
+4. Confirmed TRUE in the brief, so no correction needed: `vkPins`/`vkProgressPins` have no projection
+   and are not derivable; `hR.returnMptr` at `GeneratorRows:1135` has no source; `PG-PCS-EMIT` has no
+   projection; GEN.4's `ProgramLemmas.lean:27` anchor is a docstring line with no declaration; and
+   every tree pin the brief quoted (66/10/1, cone 10, KAT 1525/112, frozen hashes OK, fingerprint
+   14,109 / `0x3149ae4f...bef176`) reproduces exactly.
+
+### WHAT THIS AUDIT DOES NOT FIX
+
+It does not rebase `GeneratorRows.lean` (RECON.1b), does not add `Frame.cdSize` (RECON.2), does not
+state the `gasFree` clause (TOT.1 step 1), does not write the `vkPins` derivation (a human decision),
+and does not touch `QUEUE.md`. **The cheapest next card in the tree is not an M5 proof card: it is the
+rest of RECON.1b, because that is what turns nine `VERIFY FIRST` lines from false into true.**

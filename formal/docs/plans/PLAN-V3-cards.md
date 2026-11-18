@@ -1057,7 +1057,11 @@ INFRA · PROBE · box 1.5 h · Sonnet · after SIM.3
 INFRA · PROOF · box 2.5 h · strongest · after SIM.4
 
 - **Goal.** Close the leaf quiet_init (and Run_worldEq_of_noWriters if SIM.4 found one shared induction).
-- **Needs.** SIM.4's lemma and estimate; SoundnessV3.lean:902 (statement).
+- **Needs.** SIM.4's lemma and estimate; `SoundnessV3.lean:902` (statement) — **STALE: the `quiet_init`
+  statement is at `SoundnessV3.lean:917` (`grep -n '^theorem quiet_init' SoundnessV3.lean` →
+  `917:theorem quiet_init (R : Render p G₁ G₂ Gₜ) (hx : R.ExitOk) (vkAddr : U256)`); :902 is
+  `def Render.slices6`, a different declaration.** SIM.4 has not run (`QUEUE.md` row 62), so this card
+  is not READY either.
 - **Does NOT need.** Any block row; any Lean verifier fact.
 - **Do.**
   1. Finish the Step induction over statements, loops and user calls
@@ -1074,13 +1078,24 @@ SEM · PROOF · box 2.5 h · strongest · after SIM.2, RECON.2, OBJ.4, SIM.6.a�
 
 - **Goal.** For every valid render: from an entry frame, every run of the code before the first
   slice reverts or ends at `StageInv .start`; under honest calls and accepted calldata a run exists.
-- **Needs.** `SoundnessV3.lean`: `prefix_sim` (:772), `prefix_prog` (:1170), `preBlock` (:736),
-  `StageInv`, `BaseInv`. `GeneratorRows.lean` §4: `model_flags_of_valid`, `layout_static_of_valid`,
-  `abi_guard_sem`, `funDefs_noop`, `helpers_funDefs` (proved). `Program.lean:66-116`;
-  `Blocks.lean:191-198`. Premise gaps PG-NOSHADOW, PG-FRMOD, PG-G1ID, `NUM_INSTANCE_CPTR` and
-  `TRANSCRIPT_MPTR` of PG-CONSTS-TP: supplied by `ValidV3` after RECON.1 and OBJ.4.
+- **Needs.** `SoundnessV3.lean`: `prefix_sim` (**:787**, card said :772), `prefix_prog` (**:1185**, card
+  said :1170), `preBlock` (**:753**, card said :736) — `grep -n '^theorem prefix_sim\|^theorem prefix_prog\|^
+  def _root_.Midfall.LoweringV2.Render.preBlock' SoundnessV3.lean` → `787, 1185, 753`;
+  `StageInv` (:556), `BaseInv`. `GeneratorRows.lean` §4: `model_flags_of_valid` (:376),
+  `layout_static_of_valid` (:382), `abi_guard_sem` (:389), `funDefs_noop` (:400), `helpers_funDefs` (:426,
+  proved). `Program.lean:66-116` ✓ (`abiGuardBlock` at :67); `Blocks.lean:191-198` ✓ (`Render.preSlice`
+  at :192). Premise gaps PG-NOSHADOW, PG-FRMOD, PG-G1ID, `NUM_INSTANCE_CPTR` and `TRANSCRIPT_MPTR` of
+  PG-CONSTS-TP: supplied by `ValidV3` after RECON.1 and OBJ.4.
 - **Does NOT need.** A snapshot, `LeanAccepts` (for `prefix_sim`), a fixture, `native_decide`, loops.
 - **VERIFY FIRST.** `check.sh soundness`; the four children are closed; `Frame` has `cdSize`.
+  **[AUDIT: TWO OF THREE FALSE AT `82346a1`.** `check.sh soundness` exits 1 (owner RECON.1b); the four
+  children are open sorries (`GeneratorRows.lean` :378, :385, :397, :404); and **`Frame` has NO `cdSize`
+  field** — `grep -n 'cdSize' Midfall/LoweringV2/Blocks.lean` returns only a docstring mention of
+  `EntryFrame.cdSize` at :862, and `structure Frame` begins at :56. Adding `Frame.cdSize` is RECON.2
+  step 2, and RECON.2 has not run (`QUEUE.md` row 45). **PREMISE GAP: PG-FRAMECD — open; exact goal
+  state: `Frame` at `Blocks.lean:56-64` has fields `{c g …}` and no size bound, so `prefix_sim`'s
+  `cdSize` hypothesis has no source.** This card is after SIM.2, RECON.2, OBJ.4, SIM.6.a–d and RECON.3:
+  none merged.]**
 - **Do.**
   1. `preSlice` in statement-list form: `model_flags_of_valid` makes `wrapperLocals` the single
      `let vk`; push the inliner through the three groups with `inlineScan_append` (GEN.4).
@@ -1140,7 +1155,11 @@ SEM · STATEMENT · box 1.5 h · Sonnet · after SIM.2
 ALG · PROOF · box 2.5 h · strongest · after SIM.1
 
 - **Goal.** Prove leanStage_prefix strengthened to field agreement, including that snapshotOf succeeding implies snapshotXcriptRun succeeds with the same eight PCS reads.
-- **Needs.** Stage.lean; Snapshot.lean (snapshotPcsStep, snapshotOf); Kzg/MultiOpen.lean (phaseA, phaseB, phaseC); TranscriptLog.lean (Pres lemmas).
+- **Needs.** `Stage.lean` - **DOES NOT EXIST AT HEAD: `test -f Midfall/Lowering/Stage.lean` -> absent.
+  It is the DELIVERABLE OF SIM.1, which has not run (`QUEUE.md` row 56, status READY), and SIM.9 is
+  `after SIM.1`.** `Snapshot.lean` ✓ (`snapshotPcsStep` :255, `snapshotOf` :349);
+  `Kzg/MultiOpen.lean` ✓ (`test -f Midfall/Halo2/Exec/Kzg/MultiOpen.lean` -> yes);
+  `TranscriptLog.lean` ✓ (`test -f Midfall/Halo2/Exec/TranscriptLog.lean` -> yes).
 - **Does NOT need.** Any Yul; the pairing.
 - **Do.**
   1. Steps .transcript → .lagrange → .quotient: unfold the binds (linearize_eq_full for the last)
@@ -1156,7 +1175,14 @@ ALG · PROOF · box 2.5 h · strongest · after SIM.1
 ALG · PROOF · box 2.5 h · strongest · after SIM.1
 
 - **Goal.** Close the leaf xcript_total: no dynamic fault is reachable in parseTrace, readAlgebra and pcsReads once the calldata decodes.
-- **Needs.** Stage.lean; Verifier.lean:94-217 and :839-934; Valid.circuitMeta, Valid.layout, SupportedV2; SimPins.compressedEnc; the scalar round trip frOfRepr? (frToRepr s).
+- **Needs.** `Stage.lean` - **DOES NOT EXIST AT HEAD (SIM.1's deliverable; SIM.1 has not run).**
+  `Verifier.lean:94-217` ✓ EXACT (`sed -n '94p'` -> `def parseTrace ...`) and `:839-934` ✓ EXACT
+  (`sed -n '839p'` -> `def readAlgebra ...`); `SimPins.compressedEnc` ✓; the falsifier citation
+  `G1Agreement.lean:2006` ✓ EXACT (`sed -n '2006p' Midfall/Instances/G1Agreement.lean` ->
+  `ofCompressed? := fun _ => none`). **`Valid.circuitMeta` and `Valid.layout` are NOT fields of
+  `Render.Valid` (seven clauses: `generated, inputs, program, noWriters, env, payload, supported`,
+  `LoweringV2/Statements.lean:1020-1046`); the layout fact lives on `SupportedV2.layout`
+  (`Statements.lean:210`) as `hR.supported.layout`. PREMISE GAP PG-VALID-FIELDS: OPEN.**
 - **Does NOT need.** linearize, phaseA/B/C algebra, the pairing, SoundSide.
 - **Do.**
   1. Show the Lean read schedule (count and kind of reads) equals plan.slots for a valid render
@@ -1172,7 +1198,12 @@ ALG · PROOF · box 2.5 h · strongest · after SIM.1
 ALG · KAT · box 2 h · Sonnet · after SIM.1
 
 - **Goal.** Make the fault-site table checkable: every Lean fault site string is classified, and the classification is the statement lean_fault_table.
-- **Needs.** The table in this memo; the 88 site strings of Midfall/Halo2/Exec; scripts/checks.sh.
+- **Needs.** The table in this memo; **the site-string count is 99 occurrences / 70 distinct strings,
+  not 88 / 63: `grep -rho 'Fault.panic "[^"]*"' Midfall/Halo2/Exec/ | wc -l` -> `99`, and
+  `... | sort -u | wc -l` -> `70`** (the plan's numbers predate the M2/OBJ.2 emitter work);
+  `scripts/checks.sh` ✓ exists. `Stage.lean` - **DOES NOT EXIST (SIM.1's deliverable).**
+  `SoundnessV3.lean:1368` (`lean_fault_table`) - **STALE: :1381** (`grep -n '^theorem
+  lean_fault_table' SoundnessV3.lean` -> `1381`).
 - **Does NOT need.** Any proof.
 - **Do.**
   1. Write formal/docs/FAULTS.md: one row per site string with class (static / dynamic), owner block, contract check file:line
@@ -1180,7 +1211,15 @@ ALG · KAT · box 2 h · Sonnet · after SIM.1
   3. State lean_fault_table (SoundnessV3.lean:1368) in Stage.lean as a registered sorry marked FALSE AT HEAD until the reference repairs
   4. Add executable KATs for the three dynamic rows that can be driven without a pairing: logup.rs:460, kzg/mod.rs:479, DuplicatedQuery at x = 0
 - **Deliverable.** FAULTS.md; the gate; `theorem lean_fault_table (R) (hR : R.Valid) (hpins : SimPins R) (H) (cd) (ms) (instW) (inst) (hdec : Decoded R cd ms instW inst) (hside : SoundSide R H cd) : (∃ S, snapshotOf R.E H R.vk inst ms none = .ok S) ∨ (∃ S2, snapshotOfAlgebra R.E H R.vk inst ms = .ok S2 ∧ S2.alg.x = 0) ∨ prepareMsgs (Gₜ := Gₜ) R.E H Features.solidity R.vk inst ms = .error (Fault.panic "proofs/src/poly/kzg/mod.rs:479")`.
-- **Accept.** The gate prints 88 classified / 0 unclassified (63 distinct Fault.panic literals today); adding a new panic site to Exec without a FAULTS.md row reddens it; the three KATs evaluate true.
+- **Accept.** The gate prints 88 classified / 0 unclassified (63 distinct Fault.panic literals today);
+  adding a new panic site to Exec without a FAULTS.md row reddens it; the three KATs evaluate true.
+  **[AUDIT: **UNSATISFIABLE AS WRITTEN.** The counts are wrong at HEAD: measured 99 occurrences / 70
+  distinct (`grep -rho 'Fault.panic "[^"]*"' Midfall/Halo2/Exec/ | wc -l` -> 99; `sort -u | wc -l` ->
+  70). A gate that prints "88 classified" can never print it. **CORRECTED REQUIREMENT (same ambition,
+  right number): the gate prints N classified / 0 unclassified where N is the count the gate itself
+  enumerates - 70 distinct site strings at `82346a1` - and the FAULTS.md row set must equal that set.**
+  Recorded here rather than silently retyped, because the plan's 63/88 pair is what every later fault
+  table will be checked against.]**
 - **Stop if.** A site classified static turns out to depend on the proof bytes or the hash: that is a new divergence; stop and report it before anything else.
 - **Guidance.** I classified by reading the main sites, not all 88. Treat every `static` as a claim to be confirmed when its row is written.
 
@@ -1189,7 +1228,12 @@ ALG · KAT · box 2 h · Sonnet · after SIM.1
 SEM · STATEMENT · box 2 h · strongest · after SIM.2, SIM.1
 
 - **Goal.** State the one obligation the PCS row has that no row had before: a normal exit with success = 1 implies the calldata decodes, and x = 0 and x3 in a point set revert.
-- **Needs.** StageInv .quotient (Mirror, LeanRaw); Eip2537.Holds.g1Decodes; points_subgroup_checked_generator (Calldata.lean:1351); decodeCalldata_isSome_iff; the generator's coverage invariant (kzg/mod.rs:723-740 and its Lean port validateAbsorbedG1PrecompileCoverage); hasMultiPointSet.
+- **Needs.** `StageInv .quotient` (`SoundnessV3.lean:556`); `Eip2537.Holds.g1Decodes`;
+  `points_subgroup_checked_generator` (`Calldata.lean:1351`) ✓ EXACT (`grep -n '^theorem
+  points_subgroup_checked_generator' Midfall/Lowering/Calldata.lean` -> `1351`);
+  `decodeCalldata_isSome_iff` (**SoundnessV3.lean:214**, card said :197); the generator's coverage
+  invariant (`kzg/mod.rs:723-740` and its Lean port `validateAbsorbedG1PrecompileCoverage`);
+  `hasMultiPointSet` (**SoundnessV3.lean:594**, card said :577).
 - **Does NOT need.** The MSM algebra (that is the agreement half of the row).
 - **Do.**
   1. State pcs_decoded: from StageInv .quotient, every run of the PCS slice that exits normally with success = 1 satisfies LeanRaw .pcs
@@ -1205,6 +1249,44 @@ SEM · STATEMENT · box 2 h · strongest · after SIM.2, SIM.1
 ---
 
 ## M5 — proof technology  (waits for: D-P68; 12 cards, 26 box-hours)
+
+> **CARD-PREMISE AUDIT (PLAN-AUDIT, 2026-11-18, re-measured at HEAD `82346a1`).** Every `Needs`
+> path, line citation and `VERIFY FIRST` command in the M5/M6 blocks was run against the tree.
+> Full command outputs are in `docs/STATUS.md` §"PLAN-V3 card-premise audit (round 78)". Three
+> findings bind EVERY card in these blocks:
+>
+> 1. **`bash docs/plans/V3-evidence/check.sh soundness` is RED at HEAD.** It prints
+>    `FAIL soundness/GeneratorRows` (15 errors) and `FAIL soundness/GeneratorRowsWitness`
+>    (cascade: `unknown module prefix 'GeneratorRows'`). `SoundnessV3`, `RawDecode`,
+>    `ExitMeasure`, `PointSets` and `statements/StatementsV3` all print `ok`. The 15 errors are
+>    the evidence file still reading the PRE-RECON.1 `Valid`. The errors, verbatim: at :228:12
+>    slots is not a field of structure `Render.Valid`; at :229:12 vkPins is not a field; at
+>    :229:42 vkProgressPins is not a field; at :228:4 a type mismatch on `hR.env` (`EnvAgrees` now
+>    takes a fifth argument `sG2gen`); at :408:8 a kernel declaration type mismatch on `helpers_eq`;
+>    at :854:0 and :857:83, `R.slice Partial.quotientLin` is no longer definitionally
+>    `inlineContractConstants R.consts (emitQuotientLinAt R.pv.k)`; at :963:84 unsolved goals on
+>    `computationsAst`; at :1129:60 to :1134:63, `hcodec` is a `G1CodecHeadlineLaws` where a
+>    `G1CodecLaws` is expected; and at :1135:52, invalid field returnMptr.
+>    **Owner: RECON.1b** (its two unrebased files), not any M5/M6 card. A card that
+>    finds `check.sh soundness` red for these reasons is NOT blocked on its own premise: it is
+>    blocked on RECON.1b, and must say so rather than restate the rows.
+> 2. **`bash docs/plans/V3-evidence/check.sh prooftech` is GREEN at HEAD** — 12/12 `ok`, exit 0
+>    (repaired by PT.1, `1b9d376`). `WPTac` and `WPX` print `ok`; `WPX` carries 3 sorry warnings;
+>    `VKP` prints `ok` with 1; `LoopRule` prints `ok` with 0.
+> 3. **T3.1 and T3.1b are MERGED** (`76b7183`, `5a6cbf0`): the engine is in the tree as
+>    `Midfall/Yul/Wp.lean` (444 lines), `WpBridge.lean` (277), `WpTac.lean` (271), `WpX.lean` (85),
+>    `WpFalsifiers.lean` (207), `WpTacTest.lean` (57). Every citation of a SCRATCH file
+>    (`WP.lean`, `WPX.lean`, `WPTac.lean`, `VK.lean`, `LAGP.lean`, `Lits.lean`, `TR.lean`,
+>    `VKP.lean`, `LoopRule.lean`, `P1_Exec.lean`, `WPBridge.lean`) is now a citation of
+>    `docs/plans/V3-evidence/lean/prooftech/…`, which still exists and still typechecks — but for
+>    `BLive`, `Bfun`, `CSound`, `wpSS_exists`, `wp_run`, `loadWord_storeWord` and `mulmod_toFr`
+>    the **tree** copy is the one to cite, and it is cited below.
+>
+> Line citations in `docs/plans/V3-evidence/lean/soundness/SoundnessV3.lean` were stale by
+> **+13 to +23** lines across 28 re-measured declarations (`abiHeadOk` +17, `quiet_init` +15,
+> `agree_of_one` +13, `ProgContracts` +23; the file grew after RECON.1b-i, `b086937`); in
+> `lean/statements/StatementsV3.lean` by **−1**. Both are corrected below, declaration by
+> declaration, with the `grep -n` that found each.
 
 ### T3.0 — Certificate-cost probe: choose how the kernel checks a symbolic execution
 
@@ -1227,12 +1309,19 @@ SEM · PROBE · box 2.5 h · strongest · after —
 - **Stop if.** No strategy meets the threshold in the box: stop and open decision D-P68 (reflective executor) with the table attached. Do not raise maxRecDepth or maxHeartbeats to pass.
 - **Guidance.** Measured so far: fuel 400 gives 33 s, fuel 40 gives 1.85 s for the same 30 steps; let-naming and literal replacement are not the cause (33.9 s and 33.3 s with them off). Loops cost about 62 ms per step against 1.2 ms on TraceReturn at the same fuel, cause unknown. Always run under lim.sh: one run with maxRecDepth 100000 went past 300 s.
 
-### T3.1 — Land the wp engine and the lawful executable Bridge dialect
+### T3.1 — Land the wp engine and the lawful executable Bridge dialect  **[MERGED `76b7183` — DO NOT RUN]**
+
+> **PLAN-AUDIT.** Landed: `git log --oneline -- Midfall/Yul/Wp.lean` → `76b7183 feat(formal): T3.1 -
+> the wp engine is in the tree, and wp_sound rests on propext alone`. `ls formal/Midfall/Yul/` →
+> `Wp.lean WpBridge.lean WpFalsifiers.lean WpTac.lean WpTacTest.lean WpX.lean`. Every later card's
+> `after T3.1` / `after T3.1b` is therefore SATISFIED at HEAD.
 
 SEM · PORT · box 2 h · Sonnet · after —
 
 - **Goal.** Move the proved engine into the tree unchanged in content.
-- **Needs.** Scratch WP.lean (419 lines), WPBridge.lean (72), P1_Exec.lean (171); vendor/yul-semantics BigStep.lean; Midfall/Yul/Bridge.lean.
+- **Needs.** Scratch WP.lean (419 lines), WPBridge.lean (72), P1_Exec.lean (171); vendor/yul-semantics
+  BigStep.lean; Midfall/Yul/Bridge.lean. **[AUDIT: `wc -l` on the three scratch files → 419 / 72 / 171,
+  all three exact; `test -f formal/vendor/yul-semantics/YulSemantics/BigStep.lean` → exists.]**
 - **Does NOT need.** The driver tactic, any deployment fact, vendor edits.
 - **Do.**
   1. Create Midfall/Yul/Wp.lean from WP.lean (imports YulSemantics only).
@@ -1253,6 +1342,10 @@ SEM · PROOF · box 2.5 h · strongest · after T3.1b, GEN.0
 
 - **Goal.** From one wp evaluation obtain a run as well as all-runs, so a block's StmtsTotal contract is a single execution and non-stuckness (finding C-1) is a by-product.
 - **Needs.** Wp.lean; BLive and the statement wpSS_exists in scratch WPX.lean; Step constructors.
+  **[AUDIT: all three are now TREE facts, not scratch — `grep -n 'theorem wpSS_exists' formal/Midfall/Yul/WpX.lean`
+  → `42` (its `sorry` is at :46 and `SORRY.md:107` registers `Midfall.Yul.WpX.wpSS_exists` with owner
+  "V3 T3.2"); `grep -n 'def BLive' formal/Midfall/Yul/WpBridge.lean` → `243`; `grep -n 'def Bfun' …` → `248`.
+  The scratch `WPX.lean:24` statement is the same text at one different line number. Cite the tree.]**
 - **Does NOT need.** The driver, deployment facts, Bopen (use Bfun).
 - **Do.**
   1. State the five-class conjunction mirroring wp_sound with an existential conclusion.
@@ -1309,7 +1402,14 @@ SEM · PROOF · box 2 h · Sonnet · after T3.1, T3.3
 ALG · PROOF · box 2.5 h · strongest · after T3.1
 
 - **Goal.** Supply the lemmas the residues need: Boolean words, touchMemory projections, read-over-write, calldata words.
-- **Needs.** EVMExec.lean definitions (loadWord, storeWord, copyInto, copyReturn, wordFrom, touchMemory, b2w); the scratch VK.lean normal-exit leaf; statements loadWord_storeWord in WPX.lean.
+- **Needs.** EVMExec.lean definitions (loadWord, storeWord, copyInto, copyReturn, wordFrom, touchMemory,
+  b2w); the scratch VK.lean normal-exit leaf; statements loadWord_storeWord in WPX.lean.
+  **[AUDIT: `test -f formal/vendor/yul-semantics/YulSemantics/Dialect/EVMExec.lean` → exists.
+  `grep -n 'theorem loadWord_storeWord' formal/Midfall/Yul/WpX.lean` → `69` (sorry :73; `SORRY.md:105`
+  registers it with owner "V3 T3.5"). The scratch copy has it at `WPX.lean:82`. The VK.lean leaf is
+  real: `grep -n 'theorem vk_all\|sorry' …/prooftech/VK.lean` → `26:theorem vk_all …`, `42: sorry`, and
+  `check.sh prooftech` prints `ok prooftech/VK 4s (1 sorry warnings)` — so T3.5's Accept ("the sorry in
+  vk_all disappears") is satisfiable as scoped.]**
 - **Does NOT need.** ZMod, the verifier, loops.
 - **Do.**
   1. Midfall/Yul/Word.lean: b2w_eq_zero_iff, one_and_b2w, b2w_and_b2w, iszero form, stated on the literal forms simp actually produces (1#256).
@@ -1366,7 +1466,12 @@ SEM · PROOF · box 2.5 h · strongest · after T3.0, T3.1
 ALG · PROOF · box 2 h · strongest · after T3.5
 
 - **Goal.** Relate EVM mulmod/addmod at the scalar modulus to ZMod, under canonicity where needed.
-- **Needs.** qvmToFr_add, qvmToFr_mul, qvmToFr_neg (Lowering/Qvm.lean:143-169); the statement mulmod_toFr in WPX.lean; the lagrange first-loop residue.
+- **Needs.** qvmToFr_add, qvmToFr_mul, qvmToFr_neg (`Lowering/Qvm.lean:143-169`); the statement
+  `mulmod_toFr` in `WPX.lean`; the lagrange first-loop residue.
+  **[AUDIT: `grep -n 'theorem qvmToFr_add' Midfall/Lowering/Qvm.lean` → `143` ✓ EXACT; the Guidance's
+  `qvmFrModulus_eq_r (Qvm.lean:133)` → `133:theorem qvmFrModulus_eq_r : qvmFrModulus = Midfall.Assumptions.r := by decide` ✓ EXACT.
+  `mulmod_toFr` is now a TREE sorry: `grep -n 'theorem mulmod_toFr' Midfall/Yul/WpX.lean` → `78`
+  (sorry :82; `SORRY.md:106` owner "V3 T3.8"). Scratch copy: `WPX.lean:91`.]**
 - **Does NOT need.** Yul semantics, memory.
 - **Do.**
   1. Name the word operations (wMulmod, wAddmod) and prove them equal to the stepOp lambdas.
@@ -1383,14 +1488,25 @@ SEM · PROOF · box 2.5 h · strongest · after GEN.1, GEN.3, HLP.1.c, T3.8, OBJ
 
 - **Goal.** `lag_blockSim` and `lag_blockProgS` for every `R`, from the children. This is the first
   row with loops and a demonic `staticcall`; its measured cost prices everything after it.
-- **Needs.** `GeneratorRows.lean` §5: `lag_slice`, `lagInner`, `lagInner_length`, the five loop
-  lemmas, `LagWords`, `LagRel`, `lag_agrees`, `lag_poison`, `lag_blockSim`, `lag_blockProgS`;
-  `batch_invert_summary`. Emitter `GenAst.lean:681-761`. `SoundnessV3.lean`: `StageInv`, `leanStage`
-  (:336), `agree_of_one` (:1259). `Inv.lean:725` (`InvAt`, the `.lagrange` clauses :779-787).
-  Premise gaps PG-NOSHADOW, PG-CONSTS-LAG, PG-FRMOD, PG-NEGLAG.
+- **Needs.** `GeneratorRows.lean` §5: `lag_slice` (:442), `lagInner` (:447), `lagInner_length` (:455,
+  PROVED), the five loop lemmas `lag_sq_loop` (:471), `lag_denoms_loop` (:483), `lag_second_pass_loop`
+  (:504), `lag_lblind_loop` (:533), `lag_instance_loop` (:552) — all five `sorry` — `lag_sq_loop_form`
+  (:461, PROVED), `LagWords` (:571), `LagRel` (:579), `lag_agrees` (:595), `lag_poison` (:611),
+  `lag_blockSim` (:621), `lag_blockProgS` (:628); `batch_invert_summary` (:317). Emitter
+  `GenAst.lean:861-945` (`emitLagrangeAt` :861, `emitLagrange` :946) — **the card said
+  `GenAst.lean:681-761`, which at HEAD is the ACCUMULATOR emitters: `sed -n '681p' Midfall/Lowering/GenAst.lean`
+  → `[ yset "ok" (ycall "check_acc_coord_packing"`.** `SoundnessV3.lean`: `StageInv` (:556), `leanStage`
+  (:353), `agree_of_one` (:1272) — **the card said :336 and :1259; `grep -n 'def leanStage\|theorem agree_of_one'`
+  → `353:`, `1272:`.** `Inv.lean:725` (`InvAt` ✓ exact) with the `.lagrange` clauses at
+  `Inv.lean:779-789` (`sed -n '779p'` → `(if Checkpoint.lagrange ≤ k then`; the card said 779-787).
 - **Does NOT need.** A fixture, literal slices, `native_decide`, PCS, the quotient.
 - **VERIFY FIRST.** `check.sh soundness`; children closed; `GeneratorRowsWitness.lean` still prints
   `lagChildrenHyps = true` and `(6, 1, 9, some 10688, some 26560, some 4452)`.
+  **[AUDIT: FALSE AT `82346a1` — `check.sh soundness` prints `FAIL soundness/GeneratorRows` (15 errors)
+  and `FAIL soundness/GeneratorRowsWitness`; the witness `#eval`s therefore do not run at all. Owner of
+  the red is RECON.1b, not this card (see the M5 audit banner). The two `#eval` lines are still present
+  in the file (`grep -n 'lagChildrenHyps' GeneratorRowsWitness.lean` → `25`, `37`, `38`), so the pin is
+  live — it simply cannot be read until the area is green. Do NOT restate `lag_blockSim` to dodge it.]**
 - **Do.**
   1. T3.9.f (in this card): the fixed-text statements between the loops and the nine tail
      statements, by GEN.0's parametric execution; the result is a `StmtsContractAll` for the whole
@@ -1426,13 +1542,27 @@ SEM · STATEMENT · box 2.5 h · strongest · after OBJ.2, OBJ.14, OBJ.15
 
 - **Goal.** A typechecked contract for the interpreter loop of the numerator block as an emitter
   prints it, for every program, with witness and falsifier. Route A is excluded by D-P71.
-- **Needs.** `GeneratorRows.lean` §7: `QInterpRefines` (the contract shape, parametric in the
-  emitted block), `qlin_slice`, `qlinInner`. `Generator/Quotient/VmReference.lean:902`
-  (`evalQuotientIdentity`); `Lowering/Qvm.lean:189-214` (`Valuation`, `evalExprρ`, `memOfρ`);
-  OBJ.15's `emitQuotientNumeratorA`; `Generator/LoweringPlan.lean:392-420` (`QuotientReadModel`).
+- **Needs.** `GeneratorRows.lean` §7: `QInterpRefines` (:896 - the contract shape, parametric in the
+  emitted block; **it is a sorry-free `def` in a file that does not compile at HEAD**), `qlin_slice`
+  (:855), `qlinInner` (:860). `Generator/Quotient/VmReference.lean:902` (`evalQuotientIdentity`)
+  ✓ EXACT (`grep -n '^def evalQuotientIdentity' Midfall/Generator/Quotient/VmReference.lean` -> `902`);
+  `Lowering/Qvm.lean:189-214` (`Valuation`, `evalExprρ`, `memOfρ`) ✓ EXACT (`sed -n '189p'` ->
+  `abbrev Valuation := Nat → Nat → QVMFr`); OBJ.15's `emitQuotientNumeratorA` - **NO SUCH DECLARATION:
+  `grep -rn 'emitQuotientNumeratorA' formal/Midfall` -> no output; the emitter is `emitQuotientNumerator`
+  at `GenAst.lean:789` (`grep -n '^def emitQuotientNumerator' -> 789`)**;
+  `Generator/LoweringPlan.lean:392-420` (`QuotientReadModel`) - **WRONG FILE: `QuotientReadModel` is a
+  `structure` at `Midfall/Generator/Quotient/VmValidator.lean:467` (`grep -rn 'structure
+  QuotientReadModel' Midfall` -> that one line); `LoweringPlan.lean:392-420` at HEAD is a docstring
+  about `saturating_sub`.**
 - **Does NOT need.** A fixture; the builder sorries (they are ROW.Q's children, not this card's).
 - **VERIFY FIRST.** OBJ.15's emitter exists and its `stmtsBeq` gate against the parse is green at F1
-  and at the all-arms context. If it does not exist: STOP (PG-Q-OBJECT).
+  and at the all-arms context. If it does not exist: STOP (PG-Q-OBJECT). **[AUDIT at `82346a1`: the
+  emitter EXISTS under a different name - `GenAst.lean:789` `emitQuotientNumerator`, gated by
+  `Midfall/Instances/M2BatchKats.lean:158-159` (`SyntaxEq.stmtsBeq (reg t) (GenAst.emitQuotientNumerator ctx)`),
+  and `bash formal/scripts/checks.sh` passes its KAT section (1525 checks / 112 files, exit 0), so the
+  gate is green. **PG-Q-OBJECT IS NOT TRIGGERED - only the card's name is wrong.** The contract this
+  card must instantiate, `QInterpRefines`, is in the RED evidence file, so the statement cannot be
+  typechecked until RECON.1b lands. OBJ.14 and OBJ.15 have not run (`QUEUE.md` rows 104, 105).]**
 - **Do.**
   1. Name the interpreter's state in the Yul environment: program counter, stack pointer, the
      program and constant windows. Define `AtSegment`, `Top`, `Agrees` (the frame valuation) as
@@ -1869,14 +1999,28 @@ SEM · SKELETON · box 2 h · strongest · after GEN.0, T3.5
 - **Goal.** For every render, each helper a row calls has (a) a definition lemma: the block scope
   resolves the name to the body its emitter prints; (b) a word-level summary of that body at an
   arbitrary constant table. A row then executes a call site in one step, for every `R`.
-- **Needs.** `GeneratorRows.lean` §3: `HelperIs`, `helperBody`, `fail_is`, `batch_invert_is`,
-  `helpers_are`, `helpers_eq` (all PROVED), `BatchInvertPost`, `batch_invert_summary`,
-  `bi_forward_loop` (stated). `Midfall/Lowering/GenAst.lean:251-580` (the eight emitters).
-  `prooftech/WP.lean:197` (`CSound`). `Blocks/VkLoading.lean:449` (`vk_fail_reverts`: the `fail`
-  summary, already for any scope).
+- **Needs.** `GeneratorRows.lean` §3: `HelperIs` (:259), `helperBody` (:132), `fail_is` (:268),
+  `batch_invert_is` (:275), `helpers_are` (:283), `helpers_eq` (:408, **PROVED IN THE FILE BUT NOW A
+  KERNEL TYPE MISMATCH — see VERIFY FIRST**), `helpers_funDefs` (:426, proved), `BatchInvertPost` (:300),
+  `batch_invert_summary` (:317, sorry), `bi_forward_loop` (:336, sorry). Emitter
+  `Midfall/Lowering/GenAst.lean:251-580` (the eight emitters) ✓ EXACT: `grep -n '^def emitFail\|^def emitHelpers'
+  Midfall/Lowering/GenAst.lean` → `252`, `580`. `prooftech/WP.lean:197` (`CSound`) ✓ in the scratch copy
+  (`grep -n 'def CSound' WP.lean` → `197`) — **but the tree copy is `Midfall/Yul/Wp.lean:224`
+  (`grep -n 'def CSound' Midfall/Yul/Wp.lean` → `224`); cite the tree.** `Blocks/VkLoading.lean:449`
+  (`vk_fail_reverts`: the `fail` summary, already for any scope) ✓ EXACT (`grep -n 'theorem vk_fail_reverts'
+  …` → `449`).
 - **Does NOT need.** Literal helpers (`helpersLit`), `native_decide`, any Lean-verifier fact, the
   accumulator helpers.
 - **VERIFY FIRST.** `check.sh soundness`; `#print axioms helpers_eq` shows the standard three.
+  **[AUDIT: BOTH FALSE AT `82346a1`.** `check.sh soundness` exits 1 (`FAIL soundness/GeneratorRows`),
+  and the second command cannot run because `helpers_eq` no longer elaborates: the log prints
+  ``GeneratorRows.lean:408:8: error: (kernel) declaration type mismatch, 'Midfall.LoweringV2.V3.Gen.helpers_eq'
+  has type … [Stmt.funDef "fail" …] = […] but it is expected to have type … R.helpers = […]"`. That is
+  HLP.1.a's own declared STOP condition ("\`kernel_rfl\` is refused on \`helpers_eq\` at the tip:
+  \`emitHelpers\` changed") — **TRIGGERED AT HEAD, and it is a premise gap, not this card's bug:** the
+  eight-emitter list the lemma states no longer matches what `R.helpers` computes to after the M2/OBJ.2
+  emitter work. Owner: RECON.1b (rebase) + whoever changed `emitHelpers`. Do NOT restate `helpers_eq`
+  inside HLP.1.]**
 - **Do.**
   1. Port §3's definitions and the four proved lemmas (child HLP.1.a).
   2. State one summary per helper in the shape of `batch_invert_summary`: a `StmtsContractAll` over
@@ -1907,15 +2051,28 @@ SEM · PROOF · box 2.5 h · strongest · after ROW.FP, T3.2, GEN.3 (existence f
 - **Goal.** `theorem total_correct (R) (product) (hR : R.Valid) (hmp : hasMultiPointSet R = true) :
   Midfall.LoweringV3.TotalV3 R product` with no sorried leaf. The composition is PROVED in the
   evidence; this card and its children close the four leaves.
-- **Needs.** `GeneratorRows.lean` §10: `gasFreeScan`, `GasFree`, `gasFree_of_valid`,
-  `runBody_gas_oblivious`, `stmts_append_stop`, `LiveTo`, `live_append` (PROVED), `LivePre`,
-  `BlockLive`, `block_live`, `prefix_live`, `slices_live`, `total_correct` (PROVED from the leaves).
-  `StatementsV3.lean:747-876`. `prooftech/WPX.lean:24` (`wpSS_exists`), `:33` (`Bfun`);
-  `prooftech/P1_Exec.lean` (`callsOf_graph`). `SoundnessV3.lean:1182` (`run_join`).
+- **Needs.** `GeneratorRows.lean` §10: `gasFreeScan` (:1215), `GasFree` (:1247), `gasFree_of_valid`
+  (:1260, sorry), `runBody_gas_oblivious` (:1266, sorry), `stmts_append_stop`, `LiveTo`, `live_append`
+  (:1297, PROVED), `LivePre`, `BlockLive`, `block_live` (:1335, sorry), `prefix_live` (:1342, sorry),
+  `slices_live` (:1352), `total_correct` (:1365, **PROVED from the leaves** — as this card says).
+  `StatementsV3.lean:747-876` ✓ region exists. `prooftech/WPX.lean:24` (`wpSS_exists`) ✓ and `:33`
+  (`Bfun`) ✓ in the scratch copy — **tree copies: `Midfall/Yul/WpX.lean:42` and
+  `Midfall/Yul/WpBridge.lean:248`** (`grep -n 'theorem wpSS_exists' Midfall/Yul/WpX.lean` → `42`;
+  `grep -n 'def Bfun' Midfall/Yul/WpBridge.lean` → `248`). `prooftech/P1_Exec.lean` (`callsOf_graph`) ✓
+  exists, 171 lines, `check.sh prooftech` prints `ok prooftech/P1_Exec 5s (0 sorry warnings)`.
+  `SoundnessV3.lean:1182` (`run_join`) — **STALE: `grep -n 'theorem run_join' SoundnessV3.lean` → `1197`
+  (`:1182` is blank).**
 - **Does NOT need.** `LeanAccepts`, `SoundSide`, `CompleteSide`, a snapshot, a fixture, the
   permissive relation.
 - **VERIFY FIRST.** `check.sh soundness`; `#cone_sorries total_correct` prints the four leaves and
-  `prog_slices_decomp`.
+  `prog_slices_decomp`. **[AUDIT: FALSE AT `82346a1` — `check.sh soundness` exits 1, so no olean exists
+  and `#cone_sorries total_correct` cannot be run at all (`unknown module prefix 'GeneratorRows'`).
+  The claim itself is consistent with the source: `total_correct` at `GeneratorRows.lean:1365` is proved
+  from `gasFree_of_valid`, `runBody_gas_oblivious`, `block_live`, `prefix_live` — the four leaves — and
+  `prog_slices_decomp` is a tree sorry. **RECORDED, NOT ABSORBED: `gasFree_of_valid` needs a `gasFree`
+  clause that `Render.Valid` does not have (Do step 1 says so), and `block_live` is asked at a poisoned
+  boundary before `.pcs` (PG-LIVEPRE). This card is after ROW.FP, T3.2, GEN.3, SIM.6, RECON.1 and
+  RECON.3 — of those, only RECON.1 is merged.**]**
 - **Do.**
   1. **What replaces the scan of the literal program.** Add `gasFree : gasFreeScan <fuel>
      (.b (R.prog 0 0)) = true` to `programOk` (RECON.1's text), next to `noWriters`; it is decided
@@ -1941,16 +2098,26 @@ SEM · PROOF · box 2.5 h · strongest · after ROW.FP, T3.2, GEN.3 (existence f
 SEM · SKELETON · box 2.5 h · strongest · after GEN.1, GEN.3, GEN.4, HLP.1, SIM.10, OBJ.4, RECON.3
 
 - **Goal.** `tp_blockSim` and `tp_blockProgS` for every `R`, from named leaves.
-- **Needs.** `GeneratorRows.lean` §6: `TEv`, `tpEvents`, `Render.tpEvents`, `tp_events_slots`,
-  `inline_g1WalkLoop`, `g1walk_loop_sem`, `XcriptSlots`, `TpPost`, `tp_computes`, `tp_agrees`,
-  `tp_poison`, `tp_blockSim` (PROVED from the three leaves), `tp_blockProgS`. Emitter
-  `GenAst.lean:1011-1178`; helpers `:320-389`. `SoundnessV3.lean`: `MirrorAt` (:506), `rawSlots`
-  (:88), `rawDecode` (:107), `xcript_total` (:1354). Premise gaps PG-CONSTS-TP, PG-FRMOD,
-  PG-NOSHADOW, PG-PARSER, PG-TPBUF.
+- **Needs.** `GeneratorRows.lean` §6: `TEv` / `TEv.slot?` (:696), `tpEvents` (:671),
+  `Render.tpEvents` (:702), `tp_events_slots` (:712, sorry), `inline_g1WalkLoop` (:730, sorry),
+  `g1walk_loop_sem` (:741, sorry), `XcriptSlots` (:764), `TpPost` (:780), `tp_computes` (:790, sorry),
+  `tp_agrees` (:801, sorry), `tp_poison` (:809, sorry), `tp_blockSim` (:817, PROVED from the three
+  leaves ✓ — it is not in the file's 40-sorry list), `tp_blockProgS` (:830, sorry). Emitter
+  `GenAst.lean:1289-1397` (`emitTranscriptParserAt` :1289, `emitTranscriptParser` :1398) — **the card
+  said `GenAst.lean:1011-1178`; `sed -n '1011p' Midfall/Lowering/GenAst.lean` → a docstring line "Every
+  call in this block is a dialect built-in", and `grep -n '^def emitTranscriptParserAt' → 1289`.**
+  helpers `:320-389` ✓ EXACT (`emitTranscriptInit` :321, `emitCommonWord` :332,
+  `emitCommonUncompressedG1` :358, `emitSqueezeTo` :379). `SoundnessV3.lean`: `MirrorAt` (:523, was :506),
+  `rawSlots` (:105, was :88), `rawDecode` (:124, was :107), `xcript_total` (:1367, was :1354) —
+  `grep -n '^structure MirrorAt\|^def rawSlots\|^def rawDecode\|^theorem xcript_total' SoundnessV3.lean`
+  → `523, 105, 124, 1367`. Premise gaps PG-CONSTS-TP, PG-FRMOD, PG-NOSHADOW, PG-PARSER, PG-TPBUF.
 - **Does NOT need.** `ofEip?` or any curve fact outside `Agree`; the algebra of `linearize`; PCS; a
   fixture.
 - **VERIFY FIRST.** `check.sh soundness`; `GeneratorRowsWitness.lean` prints `(true, 72, 72)` for the
-  schedule and `false` for the mutated plan view.
+  schedule and `false` for the mutated plan view. **[AUDIT: FALSE AT `82346a1` — `check.sh soundness`
+  exits 1 and `GeneratorRowsWitness` fails to compile (`unknown module prefix 'GeneratorRows'`), so
+  neither `#eval` can be read. Owner: RECON.1b. The witness declarations themselves are present
+  (`grep -n 'tp_events_slots_F1\|tp_events_slots_falsifier' GeneratorRowsWitness.lean` → `124`, `129`).]**
 - **Do.**
   1. State the four helper summaries (child ROW.TP.3) and the three scalar loops (ROW.TP.4:
      instance run, evals spill, q_evals run) in the shape of `g1walk_loop_sem`.
@@ -1980,21 +2147,34 @@ SEM · SKELETON · box 2.5 h · strongest · after T3.10, OBJ.2, OBJ.14, OBJ.15,
 
 - **Goal.** `q_blockSim` and `q_blockProgS` for every `R` from named leaves, with the builder's
   correctness in scope.
-- **Needs.** `GeneratorRows.lean` §7: `qlin_split_loop`, `QInterpRefines`,
-  `identityCorrespondence_of_bridge_fixed` (PROVED), `q_blockSim`, `q_blockProgS`. T3.10's contract.
-  **Builder sorries now in scope:** `Lowering/Qvm.lean:631` (`qvm_compile_correct_identity`), `:698`
-  (`qvm_compile_correct_certifier`), `:713` (`qvm_compile_correct_program`), `:768`
-  (`qvm_validated_noBoundsFault`), `:995` (`builder_segments_total`); `Lowering/QvmFold.lean:338`
-  (`identityCorrespondence_of_bridge`, refuted by the file at :718-749), `:376`
-  (`quotientFold_matches_linearization`), `:434` (`qvm_compile_correct_stream`). Proved and
-  reusable: `Qvm.lean:1197` (`evalQuotientIdentityStep_consumed_agrees`), `:1481`
-  (`evalQuotientIdentityLoop_fuelNeverBinds`), `:1864` (`…_readsWithinStride`), `:2588`
-  (`…_constSlot_namedByWalker`), `:916` (`qvm_validated_windows`), `:334`
-  (`evalQuotientExpr_memOfρ`). `SoundnessV3.lean:289` (`linearizeFull`).
+- **Needs.** `GeneratorRows.lean` §7: `qlin_split_loop` (:875, sorry), `QInterpRefines` (:896),
+  `identityCorrespondence_of_bridge_fixed` (:913, PROVED ✓), `q_blockSim` (:933, sorry),
+  `q_blockProgS` (:939, sorry). T3.10's contract (NOT IN THE TREE: `grep -rn 'QInterpRefines' formal/Midfall`
+  → no output; T3.10 has not run). **Builder sorries now in scope** — the card cites the SORRY line and
+  names the declaration, which is 6-19 lines earlier; both are given:
+  `Lowering/Qvm.lean` :619 `qvm_compile_correct_identity` (sorry :631), :689
+  `qvm_compile_correct_certifier` (sorry :698), :705 `qvm_compile_correct_program` (sorry :713), :751
+  `qvm_validated_noBoundsFault` (sorry :768), :984 `builder_segments_total` (sorry :995) —
+  `grep -n 'sorry' Midfall/Lowering/Qvm.lean` → `631, 698, 713, 768, 995` (exactly five).
+  `Lowering/QvmFold.lean` :327 `identityCorrespondence_of_bridge` (card said :338), :364
+  `quotientFold_matches_linearization` (card said :376), :407 `qvm_compile_correct_stream` (card said
+  :434) — `grep -n '^theorem identityCorrespondence_of_bridge \|^theorem quotientFold_matches\|^theorem
+  qvm_compile_correct_stream' Midfall/Lowering/QvmFold.lean` → `327, 364, 407`; refuted by the file at
+  `:705-750` (`bridgeCounterexampleExprs` :706, `bridgeCounterexample_conclusion_fails` :748 — the card
+  said :718-749). Proved and reusable: `Qvm.lean:1197` ✓, `:1481` ✓, `:1864` ✓, `:2588` ✓, `:916` ✓,
+  `:334` ✓ — **all six EXACT** (`grep -n '^theorem evalQuotientIdentityStep_consumed_agrees\|^theorem
+  evalQuotientIdentityLoop_fuelNeverBinds\|^theorem evalQuotientExpr_memOfρ\|^theorem qvm_validated_windows'
+  Midfall/Lowering/Qvm.lean` → `1197, 1481, 334, 916`). `SoundnessV3.lean:289` (`linearizeFull`) —
+  **STALE: `grep -n 'def linearizeFull' SoundnessV3.lean` → `306`.**
 - **Does NOT need.** A fixture; route A's reflective check.
 - **VERIFY FIRST.** T3.10's contract typechecks. `streamIsInterpretedOnly` (`QvmFold.lean:385`) is
   false at F1 (it has inline and native items): confirm by `#eval`, because the stream theorem at
-  :434 assumes it.
+  `:434` assumes it. **[AUDIT: HALF TRUE. `grep -n 'def streamIsInterpretedOnly' Midfall/Lowering/QvmFold.lean`
+  → `385` ✓ EXACT, but the theorem that assumes it is at :407, not :434. "T3.10's contract typechecks"
+  is FALSE: T3.10 has not run, so `QInterpRefines` exists only in the RED evidence file
+  (`GeneratorRows.lean:896`). **THIS CARD IS NOT READY: it is after T3.10, OBJ.14, OBJ.15, SIM.2 and
+  RECON.3, none of which is merged (`QUEUE.md` rows 85, 104, 105, 57, 87a); the sixth dependency, OBJ.2,
+  **is** merged (`f6f951c feat(formal): M2 batch - the render is now generated`).]**]**
 - **Do.**
   1. Replace `identityCorrespondence_of_bridge` by the corrected lemma; delete the refuted
      statement in the same commit (W13).
@@ -2032,13 +2212,28 @@ SEM · SKELETON · box 2.5 h · strongest · after T3.10, OBJ.2, OBJ.14, OBJ.15,
 SEM · SKELETON · box 2.5 h · strongest · after ROW.Q, SIM.12, T3.9, GEN.4, the M1 exit gate, RECON.3
 
 - **Goal.** `pcs_blockSim` and `pcs_blockProgS` for every `R` from named leaves.
-- **Needs.** `GeneratorRows.lean` §8: `PG_pcsEmits`, `pcs_slice_of_ok`, `pcs_slice_of_fault` (both
-  PROVED), `wPowers`, `pcs_b2_sem`, `decode_exists`, `pcs_blockSim`, `pcs_blockProgS`. Emitters
-  `GenAstPcs.lean:131` (block 1), `:163` (2), `:193` (3), `:254`, `:317` (4), `:342-473` (5), `:485`
-  (6), `:587` (`computationsAst`); `GenAstDispatch.lean:131`. `SoundnessV3.lean:197`
-  (`decodeCalldata_isSome_iff`), `:577` (`hasMultiPointSet`). `scalar_inv` (`Lowering/GenAst.lean:441`).
+- **Needs.** `GeneratorRows.lean` §8: `PG_pcsEmits` (:201), `pcs_slice_of_ok` (:960) and
+  `pcs_slice_of_fault` (:969) (both PROVED ✓ — neither is in the file's 40-sorry list), `wPowers` (:978),
+  `pcs_b2_sem` (:986, sorry), `decode_exists` (:1005, sorry), `pcs_blockSim` (:1013, sorry),
+  `pcs_blockProgS` (:1019, sorry). Emitters `GenAstPcs.lean`: :131 (block 1) ✓, :163 (2) ✓, :193 (3) ✓,
+  :254 (`pcsSetBlockAst`) ✓, :317 (4) ✓, **:425-484 (block 5 — `grep -n '^def pcsBlock5Ast' → 425`;
+  the card said `:342-473`**), :485 (6) ✓, :587 (`computationsAst`) ✓ — nine of ten EXACT;
+  `GenAstDispatch.lean:131` → **STALE: :131 is a docstring line ("The partition is not lost either
+  way…"); the declaration the gap is about is `145:def emitPcsFromPlan (pv : PlanView) : Block Op`**
+  (the evidence's own PG-PCS-EMIT docstring carries the same stale :131). `SoundnessV3.lean:197`
+  (`decodeCalldata_isSome_iff`) → **:214**; `:577` (`hasMultiPointSet`) → **:594**
+  (`grep -n '^theorem decodeCalldata_isSome_iff\|^def hasMultiPointSet' SoundnessV3.lean` → `214, 594`).
+  `scalar_inv` (`Lowering/GenAst.lean:441`) → **:447** (`grep -n '^def emitScalarInvAt' Midfall/Lowering/GenAst.lean`
+  → `447`; :441 is a `yset "inv"` line inside it).
 - **Does NOT need.** The pairing; `DualMSM.check`; a fixture.
 - **VERIFY FIRST.** `GeneratorRowsWitness.lean` prints `225` and `"ok, 8 blocks"` for F1's plan view.
+  **[AUDIT: CANNOT RUN AT `82346a1` — `check.sh soundness` fails `GeneratorRowsWitness` with
+  `unknown module prefix 'GeneratorRows'` (cascade from the 15 `GeneratorRows` errors). Owner: RECON.1b.
+  **PG-PCS-EMIT IS STILL AN OPEN PREMISE GAP WITH NO PROJECTION** (`GeneratorRows.lean:201` defines
+  `PG_pcsEmits` as a bare `def … : Prop := ∃ blocks, computationsAst … = .ok blocks ∧ blocks ≠ []`;
+  nothing in `Render.Valid` supplies it — `grep -rn 'PG_pcsEmits' formal/Midfall` → no output). Do step 1
+  says "prove it or name the fault arm and stop": at HEAD the answer is the second branch, and the
+  fault arms are `GenAstPcs.lean:433`, `:407`, `:461` (three `throw (…Fault.panic…) sites).]**
 - **Do.**
   1. PG-PCS-EMIT: prove `PG_pcsEmits R` from `hR` and `SimPins.multiPoint`, or name the fault arm
      that `Valid` does not exclude (`GenAstPcs.lean:433`, `:407`, `:461`) and stop.
@@ -2070,14 +2265,32 @@ SEM · SKELETON · box 2.5 h · strongest · after ROW.Q, SIM.12, T3.9, GEN.4, t
 SEM · PROOF · box 2.5 h · strongest · after ROW.PCS, PL.1, REF.5, HLP.1, RECON.1, RECON.3
 
 - **Goal.** `fp_blockSim` and `fp_blockProgS` for every `R`, proved.
-- **Needs.** `GeneratorRows.lean` §9: `fp_poison` (PROVED from the tree's `fp_stmt_steps`),
-  `ec_pairing_sem`, `fp_blockSim`, `fp_blockProgS`, `PG_g2Slots`. `Blocks/FinalPairing.lean`:
-  `fp_pairing_algebra` (:278, true as stated), `ec_pairing_contract` (:314, false as stated:
-  RV-23), `fp_stmt_steps` (:352), `fpFrame` (:148). `SoundnessV3.lean:1314`
-  (`fp_blockSim_of_blockSound`). Emitters `GenAst.lean:649-654`, `:265-292`.
+- **Needs.** `GeneratorRows.lean` §9: `fp_poison` (:1037, PROVED from the tree's `fp_stmt_steps` ✓),
+  `ec_pairing_sem` (:1056, sorry), `fp_blockSim` (:1077, sorry), `fp_blockProgS` (:1083, sorry),
+  `PG_g2Slots` (:207). `Blocks/FinalPairing.lean`: `fp_pairing_algebra` (:278) ✓, `ec_pairing_contract`
+  (:314) ✓, `fp_stmt_steps` (:352) ✓, `fpFrame` (:148) ✓ — **all four EXACT**
+  (`grep -n '^theorem fp_pairing_algebra\|^theorem ec_pairing_contract\|^theorem fp_stmt_steps\|^def fpFrame' Midfall/LoweringV2/Blocks/FinalPairing.lean`
+  → `278, 314, 352, 148`). `SoundnessV3.lean:1314` (`fp_blockSim_of_blockSound`) — **STALE: :1327**
+  (`grep -n '^theorem fp_blockSim_of_blockSound' SoundnessV3.lean` → `1327`). Emitters
+  `GenAst.lean:649-654` ✓ (`emitIsBlsPMinusOne` :650) and `:265-292` → **:302-320**
+  (`grep -n '^def emitEcPairingAt' Midfall/Lowering/GenAst.lean` → `302`).
 - **Does NOT need.** A pairing implementation; a fixture; loops.
 - **VERIFY FIRST.** `check.sh soundness`; `ValidV3` supplies `PayloadAgrees.g2Base`, `.negSG2`
-  (PG-G2SLOTS); if not, STOP.
+  (PG-G2SLOTS); if not, STOP. **[AUDIT AT `82346a1`: HALF TRUE, AND THE TRUE HALF NEEDS CARE.**
+  (i) `check.sh soundness` exits 1 (`FAIL soundness/GeneratorRows`; owner RECON.1b).
+  (ii) The two clauses DO exist: `grep -n 'g2Base\|negSG2' Midfall/LoweringV2/Statements.lean` →
+  `357: g2Base : vkG2Words R.pv vkG2BaseSlot = R.encG2 P.g₂` and `360: negSG2 : vkG2Words R.pv
+  vkNegSG2BaseSlot = R.encG2 R.sG2gen⁻¹`, reached as `hR.payload.g2Base` / `hR.payload.negSG2` through
+  `Render.Valid.payload`. **BUT they are not the fact `PG_g2Slots` asks for:
+  `Blocks/FinalPairing.lean:234` defines `fpG2Slots` over `R.params.nG2Prepared` and
+  `R.params.sG2Prepared`, not over `P.g₂` and `R.sG2gen⁻¹`, and its own docstring records that "V2's
+  `Valid` has no `VkSlotsAgree` field". PREMISE GAP PG-G2SLOTS: OPEN. Exact goal state:
+  `vkG2Words R.pv vkG2BaseSlot = R.encG2 R.params.nG2Prepared` from `hR : Render.Valid R`; the
+  available projection yields `… = R.encG2 P.g₂`. The bridge needs a lemma about the prepared forms
+  (`nG2Prepared = P.g₂`), which does not exist: `grep -rn 'nG2Prepared' formal/Midfall/LoweringV2/Statements.lean`
+  → no output. **State the bridge as a downstream lemma; do NOT restate `fpG2Slots` to make this
+  VERIFY FIRST pass.** This card is after ROW.PCS, PL.1, REF.5, HLP.1, RECON.1 and RECON.3 — of those
+  only RECON.1 (`5a536ad`) is merged.
 - **Do.**
   1. Close `ec_pairing_sem` by GEN.0's parametric execution with the `fail` summary: the
      `staticcall` forks over every permitted response; on success the response is the honest one.
@@ -2195,13 +2408,23 @@ SEM · PORT · box 2 h · Sonnet · after T3.1b
 - **Goal.** `vkBodyV`, `vkBody_eq_vkBodyV`, `vk_all_param`, `vk_all_param_mem`, `Cfail_sound` and
   `Cfail_live` are in the tree, and the P1/P2 table above is re-measured at the tip.
 - **Needs.** `docs/plans/V3-evidence/lean/prooftech/VKP.lean` (426 lines; one named sorry,
-  `wpSS_exists_C`, which is GEN.1's); T3.1's landed engine (`wp_sound`, `CSound`) and T3.1b's (`wp_run`, `WPX`);
-  `Midfall/LoweringV2/Blocks/VkLoading.lean` (`vkSite` :94, `vkBody` :152);
-  `Blocks/TraceReturn.lean` (`tr_fail_body`: the fact the `fail` summary is built from).
+  `wpSS_exists_C`, which is GEN.1's); T3.1's landed engine (`wp_sound`, `CSound`) and T3.1b's (`wp_run`,
+  `WPX`); `Midfall/LoweringV2/Blocks/VkLoading.lean` (`vkSite` :94, `vkBody` :152);
+  **[AUDIT: `grep -n 'def vkSite' Midfall/LoweringV2/Blocks/VkLoading.lean` → `94` ✓ EXACT;
+  `grep -n 'def vkBody' …` → `152` ✓ EXACT. `grep -n 'tr_fail_body' Midfall/LoweringV2/Blocks/TraceReturn.lean`
+  → present. Note the card text says the sorry is "GEN.1's" here and Do step 4 says "owner: T3.2";
+  `SORRY.md` does not yet list it (the file is not in the tree). Resolve to ONE owner — T3.2, per
+  `SORRY.md:107` which already keys `Midfall.Yul.WpX.wpSS_exists` to T3.2.]**
 - **Does NOT need.** `Inv`, `Clean`, `StageInv`, `Frame`, the Lean verifier, any algebra, any
   other block, any fixture, `native_decide`.
 - **VERIFY FIRST.** `bash docs/plans/V3-evidence/check.sh prooftech`: `VKP` prints `ok` with 1
-  sorry warning.
+  sorry warning. **[AUDIT: TRUE at `82346a1` — the run prints `ok prooftech/VKP 5s (1 sorry warnings)`,
+  12/12 ok, exit 0. `wc -l VKP.lean` → 426 ✓ as the Needs says; the one sorry is `wpSS_exists_C` at :372,
+  which this card registers with owner T3.2. `grep -n maxRecDepth VKP.lean` → `221`, `279` ✓ exactly as
+  Do step 5 says. T3.1b and T3.1 are MERGED (`5a6cbf0`, `76b7183`), so this card's `after T3.1b` is
+  satisfied and its Needs' "T3.1's landed engine (`wp_sound`, `CSound") and T3.1b's (`wp_run`, `WPX")" now
+  names tree files: `Midfall/Yul/Wp.lean:236` `wp_sound`, `Midfall/Yul/Wp.lean:224` `CSound",
+  `Midfall/Yul/WpTac.lean:262` `wp_run`, `Midfall/Yul/WpX.lean` (85 lines).]**
 - **Do.**
   1. Port `VKP.lean` verbatim into the module T3.1 created for the engine's clients; change only
      imports and the namespace.
@@ -2240,6 +2463,10 @@ SEM · PORT · box 1.5 h · Sonnet · after T3.1b
 - **Does NOT need.** Any block, any fixture, `Midfall/Yul/Contracts.lean:298`
   (`countdown_or_halt` needs a count and `Inv 0 → guard = 0`; this rule needs neither).
 - **VERIFY FIRST.** `check.sh prooftech`: `LoopRule` prints `ok` with 0 sorry warnings.
+  **[AUDIT: TRUE at `82346a1` — `ok prooftech/LoopRule 4s (0 sorry warnings)`, area exit 0.
+  `wc -l LoopRule.lean` → 522 ✓ exactly as the Needs says. T3.1b is MERGED (`5a6cbf0`), so this card's
+  `after T3.1b` is satisfied. `grep -n 'theorem ExecLoopAll.countdown_or_halt' Midfall/Yul/Contracts.lean`
+  → `298` ✓ EXACT, as the Does-NOT-need citation claims.]**
 - **Do.** Port the file verbatim next to the engine; `#assert_axioms` on the three rules and the
   witness; copy the loop table into the module docstring.
 - **Deliverable.**
@@ -2269,7 +2496,15 @@ SEM · PORT · box 1.5 h · Sonnet · after T3.1b
   `sumLoop_all_needs_bound` shows what a dropped no-overflow hypothesis costs: the witness fails
   at `n = 2^256`. Every loop card states its bound hypothesis and its falsifier in that form.
 
-### T3.1b — Land the `wp_run` tactic and the existence statements
+### T3.1b — Land the `wp_run` tactic and the existence statements  **[MERGED `5a6cbf0` — DO NOT RUN]**
+
+> **PLAN-AUDIT.** Landed by `5a6cbf0 feat(formal): T3.1b - wp_run is in the tree`. **REDUNDANCY IN
+> THIS CARD'S `Needs`:** it re-lists `BLive`, which T3.1 had already landed — at HEAD
+> `grep -n 'def BLive' Midfall/Yul/WpBridge.lean` → `243:def BLive (D : Dialect) [DecidableEq D.Value] (B : BT D) : Prop :=`
+> (and `grep -n 'def Bfun' Midfall/Yul/WpBridge.lean` → `248`). Re-running the card would duplicate a
+> proved declaration. Its `Does NOT need.` line is also wrong in one particular: `Lits.lean` is NOT
+> dispensable for nothing here, but the card's stop condition ("WPTac.lean depends on Lits.lean")
+> never fired — `grep -n import Midfall/Yul/WpTac.lean` shows no `Lits` import.
 
 SEM · PORT · box 1.5 h · Sonnet · after T3.1
 
@@ -2277,8 +2512,18 @@ SEM · PORT · box 1.5 h · Sonnet · after T3.1
   (which import both) compile. T3.4 used to land the tactic and is dropped.
 - **Needs.** `docs/plans/V3-evidence/lean/prooftech/WPTac.lean` (`wp_run` :221, the options
   `wpLets`, `wpDebug`), `WPX.lean` (`BLive`, `wpSS_exists` :24; 3 sorry warnings); T3.1's module.
+  **[AUDIT: the elab is at :262 in the scratch copy, not :221 — `grep -n 'elab "wp_run"' WPTac.lean` →
+  `262:elab "wp_run" : tactic => do`; :221 is `/-- Core loop of wp_run`. In the LANDED tree file
+  `Midfall/Yul/WpTac.lean` the elab is also at :262. `grep -n 'theorem wpSS_exists' WPX.lean` → `24` ✓;
+  `grep -n 'def BLive' WPX.lean` → `17` ✓ — but `BLive` is ALSO in the tree at
+  `Midfall/Yul/WpBridge.lean:243` (landed by T3.1), which is the redundancy this card's `Needs` carries.]**
 - **Does NOT need.** Any block, any fixture, `Lits.lean`, `TR.lean`, `VK.lean`.
 - **VERIFY FIRST.** `bash docs/plans/V3-evidence/check.sh prooftech`: `WPTac` and `WPX` print `ok`.
+  **[AUDIT: TRUE at `82346a1` — the run prints `ok prooftech/WPTac 4s (0 sorry warnings)` and
+  `ok prooftech/WPX 3s (3 sorry warnings)`, 12/12 ok, exit 0. This line was FALSE when the card was
+  written and was repaired by PT.1 (`1b9d376 fix(formal): PT.1 - the stale helpersLit pin is repaired;
+  prooftech goes from 9 FAIL to 12/12 ok`). The diagnosis in the T3.1b brief that blamed `Lits.lean`
+  was itself wrong: the failure was the `helpersLit` pin, in the `prooftech` area, not an import.]**
 - **Do.** Port the two files verbatim next to the engine; register `WPX.lean`'s three sorries
   (owner: T3.2); `#print axioms` on one closed `wp_run` example (the engine's own test).
 - **Deliverable.** The tactic and the statements in the tree.
@@ -2295,18 +2540,36 @@ SEM · PROOF · box 2.5 h · strongest · after GEN.0, SIM.8, T3.2, T3.5, T3.11,
   and hours. This is the first block row proved on the D-P71 route and the number every later
   estimate starts from.
 - **Needs.** SIM.8's statements (`vk_sim_clean`, `vk_poison_walk`, `vk_prog`; today only
-  `vk_poison_walk` exists, `Blocks/VkLoading.lean:735`, with sorries at `:728`, `:743`, `:756`);
-  GEN.0's `vk_all_param`, `vk_all_param_mem`, `Cfail_sound`, `Cfail_live`, and the statement
-  `wpSS_exists_C` with `CLive`; `Blocks/VkLoading.lean` §1–§5 (`vk_slice` :189,
-  `vk_poison_step` :631, `vk_get_set_of_some` :611, `vkPins_of_valid` :685,
-  `vkProgressPins_of_valid` :688); T3.5's simp set `yul_word`; `StageInv` at `.start` and `.vk`.
+  `vk_poison_walk` exists — at `Blocks/VkLoading.lean:750`, **not :735** (`grep -n 'theorem vk_poison_walk'
+  Midfall/LoweringV2/Blocks/VkLoading.lean` → `750`; :735 is the `(`g : ExternalGas) :` signature line of
+  the previous declaration) — with its three sorries at **:743, :758, :773**, **not** `:728, :743, :756`
+  (`grep -n sorry` → `743: sorry`, `758: sorry`, `773: sorry`);
+  `wpSS_exists_C` with `CLive` (scratch `VKP.lean:372`, `381`, `169` — `grep -n 'theorem wpSS_exists_C\|
+  theorem Cfail_live\|theorem Cfail_sound' VKP.lean` → `372`, `381`, `169` ✓); `Blocks/VkLoading.lean`
+  §1–§5 (`vk_slice` :189 ✓, `vk_poison_step` :631 ✓, `vk_get_set_of_some` :611 ✓ — all three EXACT;
+  **`vkPins_of_valid` :685 and `vkProgressPins_of_valid` :688 DO NOT EXIST**: `grep -rn 'vkPins_of_valid\|
+  vkProgressPins_of_valid' formal/Midfall formal/docs/plans/V3-evidence/lean` → **no output**. The
+  structures `vkPins` (`LoweringV2/Statements.lean:231`) and `vkProgressPins` (`:249`) exist but are
+  **not fields of `Render.Valid`**, whose seven clauses are `generated, inputs, program, noWriters,
+  env, payload, supported` (`sed -n '1020,1046p' Midfall/LoweringV2/Statements.lean`). **PREMISE GAP
+  PG-VKPINS: OPEN — see the STATUS audit section for the exact goal state.**); T3.5's simp set
+  `yul_word` (does not exist yet — T3.5 has not run); `StageInv` at `.start` and `.vk`
+  (`SoundnessV3.lean:556`).
 - **Does NOT need.** Loops, `staticcall`, `ZMod`, any fixture, `native_decide`. (True for the base
   class only: the accumulator arm, with two literal-bound loops and two `staticcall`s, is WID.13.)
-- **VERIFY FIRST.** GEN.0 is merged with verdict P2. T3.11's exhibit is PRESENT (W14).
-  `grep -c sorry Midfall/LoweringV2/Blocks/VkLoading.lean` counts exactly the three named above.
-  **The 15 constant lookups:** `vkPins` and `vkProgressPins` give 4 of them; the other 11 come
-  from the constant-coherence clause (OBJ.4 / `programOk`'s `constsCoherent`). If that clause is
-  not in the tree, this card is NOT READY.
+- **VERIFY FIRST.** GEN.0 is merged with verdict P2 (**NOT merged: GEN.0 has not run — `git log --oneline
+  -- Midfall/Yul/ | head` shows only T3.1b (`5a6cbf0`) and T3.1 (`76b7183`) since P-DET; there is no `vk_all_param` in the
+  tree: `grep -rn 'vk_all_param' formal/Midfall` → no output**). T3.11's exhibit is PRESENT (W14) ✓
+  (`b20511c feat(formal): T3.11 - the W14 executable exhibit`).
+  `grep -c sorry Midfall/LoweringV2/Blocks/VkLoading.lean` counts exactly the three named above —
+  **FALSE AS A COMMAND: it prints `10`, because seven of the ten are the word "sorry" inside docstrings
+  (`:30, :60, :67, :68, :71, :681, :781`). The command that actually counts the holes is
+  `grep -n '^  sorry' Midfall/LoweringV2/Blocks/VkLoading.lean` → `743`, `758`, `773` (3).**
+  **[AUDIT: `constsCoherent` IS in the tree
+  (`Midfall/LoweringV2/Statements.lean:891`), but the `vkPins`/`vkProgressPins` half is NOT: neither is
+  a `Render.Valid` field and no projection lemma exists (PG-VKPINS above). **THIS CARD IS NOT READY AT
+  HEAD, for two independent reasons: GEN.0 has not run, and PG-VKPINS is open.** It is also after
+  SIM.8, T3.2, T3.5, T3.11, OBJ.4 and RECON.3, of which only T3.11 is merged.]**
 - **Do.**
   1. Instantiate `vk_all_param_mem`'s 17 hypotheses: 4 from `hR.vkPins` / `hR.vkProgressPins`,
      11 from the coherence clause, 2 (`vk`, `success` unbound) from `noShadow`; the scope
@@ -2403,6 +2666,32 @@ proved) and `GeneratorRowsWitness.lean` (tests at F1; `native_decide` occurs onl
 `design/rows-generic.md`.
 
 - **Every signature quoted in a card is a declaration of `GeneratorRows.lean`; find it by name.**
+>
+> **PLAN-AUDIT (`82346a1`): THE EVIDENCE THIS WHOLE AREA RESTS ON DOES NOT COMPILE.**
+> `bash docs/plans/V3-evidence/check.sh soundness` exits 1:
+> ```
+> ok    soundness/SoundnessV3               13s  (6 sorry warnings)
+> ok    soundness/RawDecode                  9s  (0 sorry warnings)
+> ok    soundness/ExitMeasure                7s  (0 sorry warnings)
+> ok    soundness/PointSets                  4s  (0 sorry warnings)
+> ok    statements/StatementsV3              7s  (4 sorry warnings)
+> FAIL  soundness/GeneratorRows             10s
+> FAIL  soundness/GeneratorRowsWitness       2s
+> ```
+> The 15 `GeneratorRows.lean` errors are `:228:12 slots is not a field of structure Render.Valid`,
+> `:229:12 vkPins ...`, `:229:42 vkProgressPins ...`, `:228:4` `hR.env` arity (`EnvAgrees` now ends in
+> `sG2gen`), `:408:8 (kernel) declaration type mismatch 'helpers_eq'`, `:854:0`/`:857:83`
+> (`R.slice Partial.quotientLin` is no longer definitionally
+> `inlineContractConstants R.consts (emitQuotientLinAt R.pv.k)`), `:963:84` unsolved goals on
+> `computationsAst`, `:1129:60`-`:1134:63` (`G1CodecHeadlineLaws` supplied where `G1CodecLaws` is
+> expected) and `:1135:52 Invalid field returnMptr`. **None of these is an M5/M6 card's premise: they
+> are RECON.1b's unfinished rebase (`227b00c` merged two of the four files and records that the other
+> two "are blocked by a red evidence tree"). Every `VERIFY FIRST` in this area that says
+> "`check.sh soundness`" is FALSE AT HEAD for that reason and that reason only - the requirement
+> stands, the gate is red upstream.** The 40 named open obligations are otherwise intact; the sorries
+> are at `:330, 359, 378, 385, 397, 404, 479, 500, 523, 546, 567, 607, 617, 625, 633, 715, 726, 735,
+> 760, 796, 805, 814, 835, 887, 937, 944, 1000, 1010, 1017, 1024, 1073, 1081, 1088, 1100, 1108, 1146,
+> 1262, 1270, 1338, 1349` (40, as the preamble says).
 - `R.Valid` is today's name. After RECON.1 read `ValidV3 R`; each `PG_*` definition marked [V3]
   in `GeneratorRows.lean` §2 becomes a projection of `hR`. After RECON.3 (D-P72) the row families
   are the `W` families and each row is transported by the proved reduction.
@@ -2428,6 +2717,13 @@ SEM · PORT · box 2 h · Sonnet · after RECON.3, RECON.1b
   owner card.
 - **Needs.** `docs/plans/V3-evidence/lean/soundness/GeneratorRows.lean` as rebased by RECON.1b and
   re-pointed by RECON.3; `GeneratorRowsWitness.lean` (lands under `Midfall/Instances/`).
+  **[AUDIT: **BLOCKED ON THREE COUNTS, RECORDED NOT ABSORBED.** (i) `GeneratorRows.lean` is NOT rebased:
+  `check.sh soundness` → `FAIL soundness/GeneratorRows` with 15 errors (`slots`/`vkPins`/`vkProgressPins`/
+  `returnMptr` are not `Render.Valid` fields; `helpers_eq` kernel mismatch; `G1CodecHeadlineLaws` vs
+  `G1CodecLaws` at :1129-1134). RECON.1b is only half merged (`227b00c … two evidence files rebased;
+  the other two are blocked by a red evidence tree`). (ii) RECON.3 has not run (it is after RECON.2 and
+  WID.1, both unmerged: `QUEUE.md` rows 45 and 72b). (iii) The target module does not exist and must not
+  yet: `test -f Midfall/LoweringV2/RowsGen.lean` → absent ✓ (this card creates it).]**
 - **Do.** Port verbatim; change imports and the namespace; register each sorry with the card id
   that closes it (the card whose Goal names the lemma).
 - **Deliverable.** The module; the register rows; the witness module.
@@ -2447,12 +2743,28 @@ GEN · PROOF · box 2 h · strongest · after —
 
 - **Goal.** Isolate one statement group of an emitter whose output contains a symbolic list, so that
   the list-induction children of ROW.TP and ROW.PCS can be stated about a group.
-- **Needs.** `Midfall/Lowering/InlineConstants.lean:320-389` (`inlineStmtStep`, `inlineStep`,
-  `inlineScan`, `boundOf` :263); `Midfall/LoweringV2/ProgramLemmas.lean:27` (`inline_append`, a
-  sorry); evidence `GeneratorRows.lean`: `inlineScan_append`.
+- **Needs.** `Midfall/Lowering/InlineConstants.lean:320-389` (`inlineStmtStep` :320, `inlineStep` :361,
+  `inlineScan` :372, `boundOf` :263 — **all four EXACT**: `grep -n '^def inlineStmtStep\|^def inlineStep\|^
+  def inlineScan\|^def boundOf' Midfall/Lowering/InlineConstants.lean` → `320, 361, 372, 263`);
+  `Midfall/LoweringV2/ProgramLemmas.lean:31` (`inline_append`, a sorry at :35) — **the card cited :27,
+  which is a DOCSTRING line in the file's header comment and names no declaration:
+  `sed -n '27p' Midfall/LoweringV2/ProgramLemmas.lean` → "\`Midfall/LoweringV2/Statements.lean\`, which this
+  file now imports, and which \`inline_append\` below states its…"; the declaration is `31:theorem
+  inline_append (consts : List (String × Nat)) (a b : YulBlock)` and the file has exactly one sorry
+  (`grep -n sorry …` → `35`).**; evidence `GeneratorRows.lean:721`: `inlineScan_append` (`grep -n
+  'theorem inlineScan_append' …GeneratorRows.lean` → `721`, sorry at :726 — **still a sorry ✓ as this
+  card's VERIFY FIRST claims**).
 - **Does NOT need.** Any semantics, any render, `noShadow`.
 - **VERIFY FIRST.** `bash docs/plans/V3-evidence/check.sh soundness` passes; `inlineScan_append` is
-  still a sorry there.
+  still a sorry there. **[AUDIT: HALF FALSE AT `82346a1` — the second clause is TRUE (`sorry` at
+  `GeneratorRows.lean:726`), the first is FALSE: `check.sh soundness` exits 1 with
+  `FAIL soundness/GeneratorRows` / `FAIL soundness/GeneratorRowsWitness` (15 errors, all in the
+  RECON.1b rebase, none in the inliner). This is the "both anchors bad" that put the card in HELD:
+  the anchor that fails is the AREA, not the lemma. GEN.4's own work — `inlineScan_append` and
+  `inline_append` — does not depend on `GeneratorRows.lean` elaborating: it needs only
+  `InlineConstants.lean` and `ProgramLemmas.lean`, both of which build. **The card is runnable now if
+  its VERIFY FIRST is read as "the inliner files build"; the `#assert_axioms …V3.Gen.inlineScan_append`
+  Accept line is NOT, because that namespace lives in the red file — see the Accept note below.]**
 - **Do.**
   1. Prove the accumulator lemma: for the fold of `inlineStep`, `(foldl f acc (a ++ b)) = foldl f
      (foldl f acc a) b` (`List.foldl_append`), and by induction on `a` that the fold's `sh` field is
@@ -2469,6 +2781,15 @@ GEN · PROOF · box 2 h · strongest · after —
 - **Deliverable.** `inlineScan_append`, `inline_append` (sorry removed), the falsifier.
 - **Accept.** `#assert_axioms Midfall.LoweringV2.V3.Gen.inlineScan_append [propext, Classical.choice,
   Quot.sound] native []`; `grep -c sorry Midfall/LoweringV2/ProgramLemmas.lean` is 0.
+  **[AUDIT: **UNSATISFIABLE AS SCOPED.** The first line names a declaration in namespace
+  `Midfall.LoweringV2.V3.Gen`, which is `GeneratorRows.lean` — an EVIDENCE file that GEN.5 (not GEN.4)
+  lands into the tree, and which does not elaborate at HEAD. GEN.4 is forbidden from touching it (it is
+  evidence, and its rebasing belongs to RECON.1b). So GEN.4 can prove `inlineScan_append` only in a
+  module it is allowed to create (`InlineConstants.lean` is frozen-adjacent but refinable:
+  `Midfall/Lowering/Frozen.sha256` does not cover it — `sha256sum -c Midfall/LoweringV2/Frozen.sha256` lists
+  only `Statements.lean, Program.lean, Shared.lean, LoweringV2/Statements.lean`). **RECORDED, NOT
+  LOWERED: the card must state where `inlineScan_append` lands so that the asserted name exists; the
+  requirement itself stands.** The second line IS satisfiable: `grep -c sorry` is 1 today.]**
 - **Stop if.** Step 3 needs a hypothesis `inline_append` does not have: report the block that
   separates them; do not change `inline_append`'s statement.
 - **Guidance.** Never unfold `inlineScan` at fuel 64: state everything at `fuel + 1`. Sonnet-only
@@ -2479,10 +2800,19 @@ GEN · PROOF · box 2 h · strongest · after —
 GEN · PORT · box 0.5 h · Sonnet · after —
 
 - **Goal.** Land the definition lemmas, which are proved.
-- **Needs.** `GeneratorRows.lean`: `kernel_rfl`, `helperBody`, `HelperIs`, `fail_is`,
-  `batch_invert_is`, `helpers_are`, `helpers_eq`, `helpers_funDefs`.
+- **Needs.** `GeneratorRows.lean`: `kernel_rfl`, `helperBody` (:132), `HelperIs` (:259), `fail_is` (:268),
+  `batch_invert_is` (:275), `helpers_are` (:283), `helpers_eq` (:408), `helpers_funDefs` (:426).
 - **Does NOT need.** Anything else.
-- **VERIFY FIRST.** `check.sh soundness` passes.
+- **VERIFY FIRST.** `check.sh soundness` passes. **[AUDIT: FALSE AT `82346a1` - the area exits 1, and
+  for THIS card the failure is not incidental: the log's `:408:8 (kernel) declaration type mismatch,
+  'Midfall.LoweringV2.V3.Gen.helpers_eq'` IS exactly this card's declared STOP condition ("kernel_rfl
+  is refused on helpers_eq at the tip: emitHelpers changed"). **IT IS TRIGGERED AT HEAD.**
+  `grep -n '^def emitHelpers' Midfall/Lowering/GenAst.lean` -> `580` (the card cites `:579`, a
+  docstring line), and `GenAst.lean` now also has `emitHelpersWithout` (:589). **PREMISE GAP
+  PG-HELPERS-EQ: OPEN. Exact goal state: `R.helpers = [funDef "fail" ..., funDef "ec_pairing" ...]` -
+  the two sides PRINT IDENTICALLY in the error, which is the signature of a reduction difference
+  (`R.helpers` no longer unfolds to that list), not of a changed emitter text. Do not edit the lemma;
+  report it for RECON.1b / the emitter owner.**]**
 - **Do.**
   1. Create `Midfall/LoweringV2/Helpers.lean`; port the eight declarations verbatim.
   2. Add the negative test as a comment with its output: `theorem neg … : (lagInner consts k n
@@ -2506,8 +2836,12 @@ SEM · PROOF · box 2.5 h · strongest · after GEN.3, HLP.1.a, T3.9.a
   `MemSameOutside`. Emitter `GenAst.lean:499-505`. The loop rule (GEN.3) or
   `ExecLoopAll.countdown_or_halt` (`Midfall/Yul/Contracts.lean:298`). T3.5's `loadWord_storeWord`.
 - **Does NOT need.** The modexp call, the backward pass, primality of `r`.
-- **VERIFY FIRST.** `check.sh soundness`; `bi_forward_loop` is a sorry; T3.9.a is closed (it is the
-  first loop closed with GEN.3 and supplies the script).
+- **VERIFY FIRST.** `check.sh soundness`; `bi_forward_loop` is a sorry (TRUE: `GeneratorRows.lean:336`,
+  sorry at :359 - 23 lines below the declaration, not adjacent); T3.9.a is closed. **[AUDIT at
+  `82346a1`: the AREA IS RED (owner RECON.1b) and T3.9.a has NOT run, so the script this card copies
+  does not exist yet. Emitter `GenAst.lean:499-505` is EXACT - `sed -n '500p'` -> `, yfor [] (yop Op.lt
+  [yvar "mptr", yop Op.sub [yvar "mptr_end", ylit 0x20]]) []`, the forward loop. "T3.5's
+  `loadWord_storeWord`" is a TREE sorry at `Midfall/Yul/WpX.lean:69` (T3.5 has not run).]**
 - **Do.**
   1. `have hform : seg (helperBody consts GenAst.emitBatchInvertAt) 10 1 = [<the loop>] := by
      kernel_rfl` (the move of `lag_sq_loop_form`).
@@ -2537,7 +2871,10 @@ SEM · STATEMENT · box 2.5 h · strongest · after HLP.1.b, T3.5
   call; statement 5 the single-element arm). `Bridge` modexp facts used by `permissive`
   (`Bridge.lean:731`); `Eip2537` modexp honesty.
 - **Does NOT need.** The Lean verifier; `ZMod` beyond one lemma (below).
-- **VERIFY FIRST.** HLP.1.b closed; `batch_invert_summary` typechecks.
+- **VERIFY FIRST.** HLP.1.b closed; `batch_invert_summary` typechecks. **[AUDIT at `82346a1`: HLP.1.b
+  has not run; `batch_invert_summary` (`GeneratorRows.lean:317`, sorry :330) cannot be read because the
+  area is red. Emitter `GenAst.lean:465-542` ✓ EXACT (`grep -n '^def emitBatchInvert' → 466`);
+  `Bridge.lean:731` (`permissive`) ✓ EXACT (`grep -n '^def permissive' Midfall/Yul/Bridge.lean → 731`).]**
 - **Do.**
   1. State `bi_backward_loop` in the shape of `bi_forward_loop` (bound: batch words minus two);
      invariant: `all_inv` is the inverse of the product of the words not yet recovered, words above
@@ -2563,10 +2900,23 @@ GEN · PROOF · box 1 h · strongest · after RECON.1
 
 - **Goal.** `theorem model_flags_of_valid (R) (hR : R.Valid) : R.model.embeddedVk.isNone = true ∧
   R.model.quotientExternal.isSome = false`.
-- **Needs.** `Statements.lean:197` (`Valid.model`), `:130-134` (`embeddedQuotient`, `separateVk`);
-  `Midfall/Generator/Artifacts.lean` (`generateVerifierFromPlan`).
+- **Needs.** `Statements.lean:197` (`Valid.model`) and `:130-134` (`embeddedQuotient`, `separateVk`) —
+  **BOTH CITATIONS ARE WRONG AT HEAD. There is no `Valid.model` field: `Render.Valid` has exactly seven
+  clauses (`generated, inputs, program, noWriters, env, payload, supported`,
+  `Midfall/LoweringV2/Statements.lean:1020-1046`), and `sed -n '197p'` prints a line of the `scope`
+  docstring. The real sources are: `Render.model` is a field of `Render` itself at
+  `Statements.lean:149` (`model : Model`), and the two flags the proof uses are fields of
+  `SupportedV2` at `Statements.lean:216` (`embeddedQuotient : R.flags.externalQuotient = false ∧
+  R.flags.expectedQuotient = none`) and `:218` (`separateVk : R.flags.separate = true`) — reached as
+  `hR.supported.embeddedQuotient` / `hR.supported.separateVk`, which is exactly what the card's own Do
+  step 2 says to rewrite with. `Midfall/Generator/Artifacts.lean` ✓ exists
+  (`generateVerifierFromPlan` present).
 - **Does NOT need.** Semantics, the plan's contents.
 - **VERIFY FIRST.** `check.sh soundness`; the lemma is a sorry.
+  **[AUDIT: HALF TRUE — `model_flags_of_valid` IS a sorry (`GeneratorRows.lean:376`, sorry at :378 ✓),
+  but `check.sh soundness` exits 1 at `82346a1` (`FAIL soundness/GeneratorRows`, 15 errors, owner
+  RECON.1b), so the sorry cannot be read from a compiled interface. Do not treat the red as this
+  card's premise failing.]**
 - **Do.**
   1. Unfold `generateVerifierFromPlan` to the two record fields; name the two `if`s that set them.
   2. Rewrite with `hR.supported.separateVk` and `hR.supported.embeddedQuotient`; split on the
@@ -2587,11 +2937,21 @@ ALG · PROOF · box 1 h · strongest · after RECON.1
 - **Goal.** `theorem layout_static_of_valid (R) (hR : R.Valid) : R.plan.proofLayout.proofCptr =
   abiVerifyProofProofCptr ∧ R.plan.proofLayout.proofEnd = R.plan.proofLayout.proofCptr +
   R.plan.proofLayout.proofLen`.
-- **Needs.** `Statements.lean:192` (`Valid.layout`); `Midfall/Generator/Abi.lean`
-  (`ProofCalldataLayout.fromProtocol`).
+- **Needs.** `Statements.lean:192` (`Valid.layout`) — **WRONG AT HEAD: `sed -n '192p'` prints a
+  docstring line of `Render.scope`. The layout clause is `SupportedV2.layout` at
+  `Midfall/LoweringV2/Statements.lean:210` (`layout : R.plan.memory.map.WellFormed ∧
+  R.plan.memory.validate.isOk = true`), reached as `hR.supported.layout`.**
+  `Midfall/Generator/Abi.lean` ✓ exists and `ProofCalldataLayout.fromProtocol` is at `Abi.lean:334`
+  (`grep -n 'def ProofCalldataLayout.fromProtocol' → 334`).
 - **Does NOT need.** Semantics.
-- **VERIFY FIRST.** The lemma is a sorry; at F1 `(proofCptr, proofEnd, proofLen,
-  abiVerifyProofProofCptr)` prints `(100, 4420, 4320, 100)`.
+- **VERIFY FIRST.** The lemma is a sorry ✓ (`GeneratorRows.lean:382`, sorry at :385); at F1
+  `(proofCptr, proofEnd, proofLen, abiVerifyProofProofCptr)` prints `(100, 4420, 4320, 100)`.
+  **[AUDIT: the sorry half is TRUE. The `#eval` half could not be re-measured in this audit: the
+  `Model`/layout accessors named do not resolve from a probe file (`lake env lean /tmp/probe1.lean` →
+  "Unknown identifier `poseidonM.proofLayout.proofCptr`" — `proofLayout` hangs off `R.plan`, not off
+  `poseidonM`). **OPEN ITEM: the four numerals are UNVERIFIED at HEAD; re-run with
+  `poseidonRender.plan.proofLayout` before relying on them.** Note `abiVerifyProofProofCptr` is a
+  top-level `def` at `Generator/Abi.lean:132`, not a `Model` field.]**
 - **Do.**
   1. Unfold `fromProtocol`; the first conjunct is the constructor's first field.
   2. `proofLen` is defined as a difference or `proofEnd` as a sum: find which, and close by `omega`
@@ -2609,13 +2969,18 @@ SEM · PROOF · box 2 h · strongest · after GEN.0, OBJ.4, SIM.6.b
 
 - **Goal.** `abi_guard_sem`: every run of the inlined `abiGuardBlock` reverts, or changes nothing
   and `abiHeadOk R.plan.proofLayout cd = true`.
-- **Needs.** `GeneratorRows.lean`: `abi_guard_sem`. `Program.lean:66-76`. `SoundnessV3.lean:67`
-  (`abiHeadOk`). `Blocks/VkLoading.lean:528` (`vk_ok_calldataload`), `:284` (`vk_nh_binary`). OBJ.4's
-  lookup lemmas for `NUM_INSTANCE_CPTR`, `ERR_BAD_CALLDATA_SHAPE`; the model's three ABI numerals
-  (`abiSelectorBytes`, `abiProofHeadOffset`, `abiInstancesHeadCptr`).
+- **Needs.** `GeneratorRows.lean`: `abi_guard_sem` (:389, sorry :397). `Program.lean:66-76` ✓ EXACT
+  (`abiGuardBlock` at :67; `test -f Midfall/LoweringV2/Program.lean` → yes, and it is one of the four
+  FROZEN files: `sha256sum -c Midfall/LoweringV2/Frozen.sha256` covers `Program.lean` — **this card may
+  NOT edit it**). `SoundnessV3.lean:67` (`abiHeadOk`) — **STALE: :84** (`grep -n '^def abiHeadOk'
+  SoundnessV3.lean` → `84`; :67 is a section header comment). `Blocks/VkLoading.lean:528`
+  (`vk_ok_calldataload`) ✓ EXACT and `:284` (`vk_nh_binary`) ✓ EXACT. OBJ.4's lookup lemmas for
+  `NUM_INSTANCE_CPTR`, `ERR_BAD_CALLDATA_SHAPE`; the model's three ABI numerals
+  (`abiSelectorBytes`, `abiProofHeadOffset`, `abiInstancesHeadCptr`) — all three are `Model` fields set
+  in `Generator/Artifacts.lean:596-598` ✓.
 - **Does NOT need.** Memory, the scope (no call), loops.
 - **VERIFY FIRST.** `check.sh soundness`; `(poseidonM.abiSelectorBytes, poseidonM.abiProofHeadOffset,
-  poseidonM.abiInstancesHeadCptr)` prints `(4, 64, 36)`.
+  `poseidonM.abiInstancesHeadCptr)` prints `(4, 64, 36)`.
 - **Do.**
   1. Statement-list form by `kernel_rfl` (one `Stmt.cond`).
   2. Guard true: the body is `mstore` then `revert(0, 4)`: `Reverted`.
@@ -2636,8 +3001,10 @@ SEM · PROOF · box 0.5 h · Sonnet · after —
 
 - **Goal.** `theorem funDefs_noop (funs) (b) (hb : ∀ s ∈ b, ∃ n ps rs body, s = Stmt.funDef n ps rs
   body) (V st V' st' o) (h : ExecStmts D funs V st b V' st' o) : V' = V ∧ st' = st ∧ o = .normal`.
-- **Needs.** `vendor/yul-semantics/YulSemantics/BigStep.lean` (`Step.funDef`, `seqCons`, `seqStop`);
-  `SoundnessV3.lean:1084` (`stmts_append_run`: the induction to copy).
+- **Needs.** `vendor/yul-semantics/YulSemantics/BigStep.lean` (`Step.funDef`, `seqCons`, `seqStop`) ✓
+  file exists (`test -f` → yes). `SoundnessV3.lean:1084` (`stmts_append_run`: the induction to copy) —
+  **STALE: :1099** (`grep -n '^theorem stmts_append_run' SoundnessV3.lean` → `1099`; :1084 is a
+  `StageInv` application line).
 - **Does NOT need.** The EVM dialect.
 - **VERIFY FIRST.** The lemma is a sorry; `helpers_funDefs` is proved.
 - **Do.**
@@ -2655,13 +3022,21 @@ SEM · PROOF · box 0.5 h · Sonnet · after —
 SEM · PROOF · box 2 h · strongest · after GEN.3, T3.8
 
 - **Goal.** Close `lag_sq_loop`, and with it fix the script every later loop card copies.
-- **Needs.** `GeneratorRows.lean`: `lag_sq_loop`, `lag_sq_loop_form` (PROVED), `wPow2`, `wMulmod`.
-  Emitter `GenAst.lean:692-694`. The loop rule (GEN.3); `Midfall/Yul/Contracts.lean:298`
-  (`ExecLoopAll.countdown_or_halt`). `Blocks/VkLoading.lean:553` (`vk_assign_inv`), `:578`
-  (`vk_assign_nh`), `:284` (`vk_nh_binary`), `:611` (`vk_get_set_of_some`). T3.8's `wMulmod` =
-  `stepOp` lemma.
+- **Needs.** `GeneratorRows.lean`: `lag_sq_loop` (:471, sorry :479), `lag_sq_loop_form` (:461, PROVED ✓ -
+  not in the file's sorry list), `wPow2` (:103), `wMulmod` (:95). Emitter `GenAst.lean:872`
+  (`sed -n '872p' Midfall/Lowering/GenAst.lean` -> `, yfor [ylet "idx" (ylit 0)] (yop Op.lt [yvar "idx",
+  yvar "k"])`) - **the card said `GenAst.lean:692-694`, which at HEAD is the ACCUMULATOR loop
+  (`sed -n '692p'` -> `, ylet "next_lo" (yop Op.add [yvar "lo", ylit 1])`).** The loop rule (GEN.3) has
+  not run. `Midfall/Yul/Contracts.lean:298` (`countdown_or_halt`) ✓ EXACT.
+  `Blocks/VkLoading.lean:553` (`vk_assign_inv`) ✓, `:578` (`vk_assign_nh`) ✓, `:284` (`vk_nh_binary`) ✓,
+  `:611` (`vk_get_set_of_some`) ✓ - all four EXACT. T3.8's `wMulmod` = `stepOp` lemma: not in the tree
+  (T3.8 has not run).
 - **Does NOT need.** Memory, calldata, `ZMod`, the scope.
-- **VERIFY FIRST.** `check.sh soundness`; `lag_sq_loop_form` has the standard axioms.
+- **VERIFY FIRST.** `check.sh soundness`; `lag_sq_loop_form` has the standard axioms. **[AUDIT: the
+  second half is TRUE in source (`GeneratorRows.lean:461` is proved, not sorried) but UNREADABLE at
+  `82346a1` because the area is red (owner RECON.1b). GEN.3 has not run, so the loop rule this card is
+  the FIRST USE of does not exist in the tree yet: `grep -rn 'allRuns_for_cons_wp' formal/Midfall` ->
+  no output. THIS CARD IS NOT READY: after GEN.3, T3.8, GEN.5 - none merged.]**
 - **Do.**
   1. `rw [lag_sq_loop_form]`; `simp only [Blocks.VkLoading.vkSite, hr]` turns the `r` site into
      `Expr.var "r"`.
@@ -2689,7 +3064,10 @@ SEM · PROOF · box 2 h · Sonnet · after T3.9.a, T3.5
 
 - **Goal.** Close `lag_denoms_loop` (bound `n + m`).
 - **Needs.** `GeneratorRows.lean`: `lag_denoms_loop`, `omegaPows`, `wAddmod`, `MemSameOutside`.
-  Emitter `GenAst.lean:700-705`. T3.9.a's script. T3.5's `loadWord_storeWord`.
+  Emitter `GenAst.lean:880` (`yfor [ylet "pow_of_omega" ...]`; **the card said :700-705, which is
+  `emitAccumulatorHelpersAt`'s loop - `sed -n '700p'` -> "the parameter on
+  'emitAccumulatorHelpersAt'. -/"**). T3.9.a's script (does not exist: T3.9.a has not run). T3.5's
+  `loadWord_storeWord` = tree sorry `Midfall/Yul/WpX.lean:69`.
 - **Does NOT need.** The scope, calldata.
 - **VERIFY FIRST.** T3.9.a closed; the lemma is a sorry.
 - **Do.**
@@ -2713,7 +3091,8 @@ SEM · PROOF · box 1.5 h · Sonnet · after T3.9.b
 
 - **Goal.** Close `lag_second_pass_loop` (bound `n + m`).
 - **Needs.** `GeneratorRows.lean`: `lag_second_pass_loop`. Emitter `GenAst.lean:718-725`.
-  T3.9.b's proof (same window, same walk).
+  T3.9.b's proof (same window, same walk) - **does not exist: T3.9.b has not run.** Emitter
+  `GenAst.lean:898` (**the card said :718-725, another accumulator loop**).
 - **Does NOT need.** The scope, calldata.
 - **VERIFY FIRST.** T3.9.b closed.
 - **Do.**
@@ -2731,7 +3110,8 @@ SEM · PROOF · box 1.5 h · Sonnet · after T3.9.b
 SEM · PROOF · box 1 h · Sonnet · after T3.9.a
 
 - **Goal.** Close `lag_lblind_loop` (bound `m − 2`, no memory write).
-- **Needs.** `GeneratorRows.lean`: `lag_lblind_loop`, `wSum`. Emitter `GenAst.lean:729-733`.
+- **Needs.** `GeneratorRows.lean`: `lag_lblind_loop` (:533, sorry :546), `wSum` (:526). Emitter
+  `GenAst.lean:909` (**the card said :729-733, which is an accumulator `mstore` line**).
 - **Does NOT need.** Read-over-write.
 - **VERIFY FIRST.** T3.9.a closed.
 - **Do.**
@@ -2749,8 +3129,10 @@ SEM · PROOF · box 1 h · Sonnet · after T3.9.a
 SEM · PROOF · box 1.5 h · Sonnet · after T3.9.a
 
 - **Goal.** Close `lag_instance_loop` (bound `n`, two cursors, `calldataload`).
-- **Needs.** `GeneratorRows.lean`: `lag_instance_loop`. Emitter `GenAst.lean:738-746`.
-  `Blocks/VkLoading.lean:528` (`vk_ok_calldataload`); `Lowering/Calldata.lean:279` (`cdWord`).
+- **Needs.** `GeneratorRows.lean`: `lag_instance_loop` (:552, sorry :567). Emitter `GenAst.lean:918`
+  (**the card said :738-746, which is `def emitAccumulatorHelpers`**).
+  `Blocks/VkLoading.lean:528` (`vk_ok_calldataload`) ✓ EXACT; `Lowering/Calldata.lean:279` (`cdWord`)
+  ✓ EXACT (`grep -n '^def cdWord' Midfall/Lowering/Calldata.lean` -> `279`).
 - **Does NOT need.** Memory writes.
 - **VERIFY FIRST.** T3.9.a closed.
 - **Do.**
@@ -2775,8 +3157,15 @@ ALG · PROOF · box 2.5 h · strongest · after T3.8
   `omegaOrder`, `negLagranges`, `modulus`); `Lowering/Qvm.lean:143-169` (the `mulmod`/`addmod`
   homomorphism lemmas to copy for `frWord`).
 - **Does NOT need.** Semantics, memory, the scope.
-- **VERIFY FIRST.** `check.sh soundness`; `snapshotLagrangeStepKats_ok` (`Snapshot.lean:519`) still
+- **VERIFY FIRST.** `check.sh soundness`; `snapshotLagrangeStepKats_ok` (`Snapshot.lean:519` ✓ EXACT -
+  `grep -n '^def snapshotLagrangeStepKats_ok' Midfall/Lowering/Snapshot.lean` -> `519`) still
   evaluates to `true`.
+  **[AUDIT at `82346a1`: the KAT half is TRUE - `lake env lean /tmp/probe1.lean` printed `true` for
+  `Midfall.Lowering.snapshotLagrangeStepKats_ok`. The `check.sh soundness` half is FALSE (area red,
+  owner RECON.1b). Every other citation on this card is EXACT: `Snapshot.lean:230`
+  (`snapshotLagrangeStep`), `:217` (`instanceEvalOf`), `Verifier.lean:245` (`lagrangeTriple`),
+  `Inv.lean:533` (`EnvAgrees`), `Qvm.lean:143-169` (`qvmToFr_add` & co). T3.9.g is the best-founded
+  card in this audit; its only false premise is the shared red area.]**
 - **Do.**
   1. `frWord` homomorphism: `wMulmod (frWord a) (frWord b) (ofNat p) = frWord (a * b)`, the same for
      `wAddmod`, and `ofNat p - frWord a` under `addmod` is negation.
@@ -2822,8 +3211,10 @@ GEN · PROOF · box 1 h · Sonnet · after GEN.4
   walk = true) (hp : Inline.shadowed sh "proof_cptr" = true) (hb : Inline.shadowed sh "buf_len" =
   true) : (Inline.inlineScan (fuel + 2) consts sh [GenAst.g1WalkLoop walk bytes]).blks =
   [GenAst.g1WalkLoop walk bytes]`.
-- **Needs.** `InlineConstants.lean:287-372`; `GenAst.lean:1011-1024`;
-  `inExpr_keeps_shadowed` (`InlineConstants.lean:407`).
+- **Needs.** `InlineConstants.lean:287-372` ✓ EXACT (`grep -n '^def inExpr' -> 287`,
+  `'^def inlineScan' -> 372`); `GenAst.lean:1238-1247` (`grep -n '^def g1WalkLoop'
+  Midfall/Lowering/GenAst.lean` -> `1238`; **the card said :1011-1024, a docstring region**);
+  `inExpr_keeps_shadowed` (`InlineConstants.lean:407`) ✓ EXACT.
 - **Does NOT need.** Semantics.
 - **VERIFY FIRST.** The lemma is a sorry.
 - **Do.**
@@ -2841,11 +3232,15 @@ GEN · PROOF · box 1 h · Sonnet · after GEN.4
 SEM · PROOF · box 2.5 h · strongest · after GEN.3, ROW.TP.3, T3.5
 
 - **Goal.** Close `g1walk_loop_sem` (bound `j`, the section's frame count).
-- **Needs.** `GeneratorRows.lean`: `g1walk_loop_sem`. Emitter `GenAst.lean:1011-1024`. The
-  `common_uncompressed_g1` summary (ROW.TP.3). `SoundnessV3.lean:481` (`cdSlice`);
-  `Lowering/Calldata.lean:288` (`g1WordsOk`). T3.9.b's script (memory-writing loop).
+- **Needs.** `GeneratorRows.lean`: `g1walk_loop_sem` (:741, sorry :760). Emitter
+  `GenAst.lean:1238-1247` (`grep -n '^def g1WalkLoop' Midfall/Lowering/GenAst.lean` -> `1238`;
+  **the card said :1011-1024, a docstring region**). The
+  `common_uncompressed_g1` summary (ROW.TP.3 - not issued: ROW.TP has not run). `SoundnessV3.lean:498`
+  (`cdSlice`; **the card said :481 - `grep -n '^def cdSlice' SoundnessV3.lean` -> `498`**);
 - **Does NOT need.** The Lean transcript; keccak.
-- **VERIFY FIRST.** ROW.TP.3's `common_uncompressed_g1` summary is closed; T3.9.b closed.
+- **VERIFY FIRST.** ROW.TP.3's `common_uncompressed_g1` summary is closed; T3.9.b closed. **[AUDIT at
+  `82346a1`: NEITHER is closed - ROW.TP.3 is "ISSUED BY ROW.TP (step 1): no card until ROW.TP merges"
+  (`QUEUE.md` row 95h) and T3.9.b has not run. THIS CARD IS NOT REACHABLE.]**
 - **Do.**
   1. Init binds `end := proof_cptr + 128 j` (no wrap: `ha`, `hcd`).
   2. Invariant with `i` frames done: three cursors at `+128 i`; buffer and walk windows hold
@@ -2869,13 +3264,17 @@ ALG · PROOF · box 2 h · strongest · after OBJ.7
 
 - **Goal.** `theorem tp_events_slots (R) (hR : R.Valid) : R.tpEvents.filterMap TEv.slot? =
   (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout).slots`.
-- **Needs.** `GeneratorRows.lean`: `tpEvents`, `TEv.slot?`, `tp_events_slots`;
-  `GeneratorRowsWitness.lean`: `tp_events_slots_F1`, `tp_events_slots_falsifier`.
-  `Lowering/Inv.lean:302` (`parserFactsOfPlan`); `Lowering/Calldata.lean`
+- **Needs.** `GeneratorRows.lean`: `tpEvents` (:671), `TEv.slot?` (:696), `tp_events_slots` (:712,
+  sorry :715);
+  `Lowering/Inv.lean:302` (`parserFactsOfPlan`) ✓ EXACT (`grep -n '^def parserFactsOfPlan'
+  Midfall/Lowering/Inv.lean` -> `302`); `Lowering/Calldata.lean`
   (`RepackedProofLayoutPlan.fromProofLayout`); `Generator/Artifacts.lean` (where `userPhases` and
   `lookupHPlusAcc` are computed).
 - **Does NOT need.** Semantics.
-- **VERIFY FIRST.** The witness file's two theorems still hold.
+- **VERIFY FIRST.** The witness file's two theorems still hold. **[AUDIT at `82346a1`: both exist
+  (`grep -n 'tp_events_slots_F1\|tp_events_slots_falsifier' GeneratorRowsWitness.lean` -> `124`,
+  `129`) but neither can be read: the `soundness` area is red (owner RECON.1b). OBJ.7 is merged
+  (`13d2834`), so this card's `after OBJ.7` is satisfied.]**
 - **Do.**
   1. Write `fromProofLayout … .slots` as a concatenation of ten sections (one `simp` lemma).
   2. Section by section: `filterMap` of a `tpWalk` is `replicate (bytes/128) .g1`; of the squeezes,
@@ -2895,9 +3294,11 @@ ALG · PROOF · box 2 h · strongest · after OBJ.7
 SEM · PROOF · box 2.5 h · strongest · after ROW.TP.1–6, GEN.1
 
 - **Goal.** Close `tp_computes` from the fold lemma (ROW.TP.5) and the loop lemmas.
-- **Needs.** `GeneratorRows.lean`: `tp_computes`, `TpPost`, `XcriptSlots`. `SoundnessV3.lean:506`
-  (`MirrorAt`), `:107` (`rawDecode`), `:255` (`snapshotXcriptRun`). `Yul/Bridge.lean:451`
-  (`hashOfBytes_readBytes`).
+- **Needs.** `GeneratorRows.lean`: `tp_computes` (:790, sorry :796), `TpPost` (:780), `XcriptSlots`
+  (:764). `SoundnessV3.lean`: `MirrorAt` (**:523**, card said :506), `rawDecode` (**:124**, card said
+  :107), `snapshotXcriptRun` (**:272**, card said :255) - `grep -n '^structure MirrorAt|^def rawDecode|
+  ^def snapshotXcriptRun' SoundnessV3.lean` -> `523, 124, 272`. `Yul/Bridge.lean:451`
+  (`hashOfBytes_readBytes`) ✓ EXACT.
 - **Does NOT need.** Point validity.
 - **VERIFY FIRST.** ROW.TP.5 closed.
 - **Do.**
@@ -2920,8 +3321,11 @@ SEM · PROOF · box 2.5 h · strongest · after ROW.TP.1–6, GEN.1
 ALG · PROOF · box 2 h · strongest · after SIM.10
 
 - **Goal.** Close `tp_agrees`: `TpPost R H vkAddr cd V st → StageInv R H vkAddr cd .transcript V st`.
-- **Needs.** `GeneratorRows.lean`: `tp_agrees`. `SoundnessV3.lean`: `xcript_total` (:1354),
-  `padSnap` (:270), `leanStage` (:336), `Agree` (:532). `Inv.lean:725` (`.transcript` clauses
+- **Needs.** `GeneratorRows.lean`: `tp_agrees` (:801, sorry :805). `SoundnessV3.lean`: `xcript_total`
+  (**:1367**, card said :1354), `padSnap` (**:287**, card said :270), `leanStage` (**:353**, card said
+  :336), `Agree` (**:549**, card said :532) - `grep -n '^theorem xcript_total|^def padSnap|^def
+  leanStage|^def Agree' SoundnessV3.lean` -> `1367, 287, 353, 549`. `Inv.lean:725` (`InvAt`) ✓ EXACT,
+  `.transcript` clauses :757-776 ✓ (`sed -n '757p'` -> `(if Checkpoint.transcript <= k then`).
   :757-776).
 - **Does NOT need.** Semantics.
 - **VERIFY FIRST.** SIM.10 closed.
@@ -2941,8 +3345,10 @@ ALG · PROOF · box 2 h · strongest · after SIM.10
 SEM · PROOF · box 1.5 h · Sonnet · after ROW.TP.2, ROW.TP.4
 
 - **Goal.** Close `tp_poison`.
-- **Needs.** `GeneratorRows.lean`: `tp_poison`. `Blocks/VkLoading.lean:631` (`vk_poison_step`: an
-  `and(success, …)` assignment keeps `success = 0`), `:467` (`vk_guard_fires`), `:449`.
+- **Needs.** `GeneratorRows.lean`: `tp_poison` (:809, sorry :814). `Blocks/VkLoading.lean:631`
+  (`vk_poison_step`: an `and(success, …)` assignment keeps `success = 0`) ✓ EXACT, `:467`
+  (`vk_guard_fires`) ✓ EXACT, `:449` (`vk_fail_reverts`) ✓ EXACT — `grep -n '^theorem vk_poison_step\|^theorem
+  vk_guard_fires\|^theorem vk_fail_reverts' Midfall/LoweringV2/Blocks/VkLoading.lean` → `631, 467, 449`.
 - **Does NOT need.** Any computed value.
 - **VERIFY FIRST.** The loop lemmas are closed.
 - **Do.**
@@ -2960,8 +3366,12 @@ SEM · PROOF · box 1.5 h · Sonnet · after ROW.TP.2, ROW.TP.4
 SEM · PROOF · box 1.5 h · Sonnet · after T3.9.a
 
 - **Goal.** Close `qlin_split_loop` (bound `k`), then the nine-statement scope.
-- **Needs.** `GeneratorRows.lean`: `qlin_slice`, `qlinInner`, `qlinInner_length`, `wSplit`,
-  `qlin_split_loop`. Emitter `GenAst.lean:840-864`. T3.9.a's script.
+- **Needs.** `GeneratorRows.lean`: `qlin_slice` (:855), `qlinInner` (:860), `qlinInner_length` (:865,
+  PROVED ✓), `wSplit` (:869),
+  `qlin_split_loop` (:875, sorry :887). Emitter `GenAst.lean:1020-1047` (`grep -n
+  '^def emitQuotientLinAt' Midfall/Lowering/GenAst.lean` -> `1020`; the loop is at :1031) - **the card
+  said :840-864, which is the Lagrange section header: `sed -n '840p'` -> "/-! ### Lagrange -/"**.
+  T3.9.a's script (absent: T3.9.a has not run).
 - **Does NOT need.** The numerator, memory inside the loop.
 - **VERIFY FIRST.** T3.9.a closed; `qlinInner_length` proved.
 - **Do.**
@@ -3031,10 +3441,14 @@ ALG · PROOF · box 1 h · Sonnet · after SIM.1
 - **Goal.** `theorem decode_exists (R) (cd) (raw) (instW) (hraw : rawDecode (p := p)
   R.plan.proofLayout R.cfg.numInstances cd = some (raw, instW)) (hpts : ∀ b, RawMsg.g1 b ∈ raw →
   (R.E.g1.ofEip? b).isSome = true) : ∃ ms instW' inst, Decoded R cd ms instW' inst`.
-- **Needs.** `SoundnessV3.lean:197` (`decodeCalldata_isSome_iff`, proved), `:118` (`liftRaw`),
-  `:107` (`rawDecode`: its last guard is `inst.all (· < p)`); `Shared.lean:106` (`instOfWords?`).
+- **Needs.** `SoundnessV3.lean`: `decodeCalldata_isSome_iff` (**:214**, card said :197), `liftRaw`
+  (**:135**, card said :118), `rawDecode` (**:124**, card said :107) - `grep -n '^theorem
+  decodeCalldata_isSome_iff|^def liftRaw|^def rawDecode' SoundnessV3.lean` -> `214, 135, 124`;
 - **Does NOT need.** Semantics.
-- **VERIFY FIRST.** `rawDecodeAgreesKats_ok` (`SoundnessV3.lean:1400`) evaluates to `true`.
+- **VERIFY FIRST.** `rawDecodeAgreesKats_ok` (`SoundnessV3.lean:`**1413**, card said :1400 - `grep -n
+  '^def rawDecodeAgreesKats_ok' SoundnessV3.lean` -> `1413`) evaluates to `true`. **[AUDIT: this is an
+  EVIDENCE-file def, so it cannot be evaluated while the area is red; the tree-side analogue
+  `Midfall.Lowering.snapshotLagrangeStepKats_ok` was measured `true` at `82346a1`.]**
 - **Do.**
   1. `raw.mapM (liftRaw c)` is `some` when every `g1` frame decodes: induction on `raw`.
   2. `decodeCalldata_isSome_iff` gives `ms`.

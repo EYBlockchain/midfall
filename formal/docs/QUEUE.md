@@ -132,7 +132,7 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 73b | **GEN.3** | Land the loop rule for a symbolic bound | M5 | SEM · PORT · 1.5 h · Sonnet | T3.1b | after T3.1b | PLAN-V3-cards (areas GEN, GEN-ROWS); may be pulled forward when blocked |
 | 73c | **GEN.4** | The inliner distributes over a concatenation | M5 | GEN · PROOF · 2 h · strongest | — | **HELD - both premises fail at HEAD** | PLAN-V3-cards (areas GEN, GEN-ROWS); may be pulled forward when blocked |
 | 73d | **GEN.5** | Land the generic row statements and their shared definitions | M5 | SEM · PORT · 2 h · Sonnet | RECON.3, RECON.1b | after RECON.3, RECON.1b | PLAN-V3-cards (area GEN-ROWS); every GEN-ROWS child waits for it |
-| 74 | **T3.1** | Land the wp engine and the lawful executable Bridge dialect | M5 | SEM · PORT · 2 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked |
+| 74 | **T3.1** | Land the wp engine and the lawful executable Bridge dialect | M5 | SEM · PORT · 2 h · Sonnet | — | **MERGED 76b7183** | PLAN-V3-cards; may be pulled forward when blocked |
 | 74a | **T3.1b** | Land the `wp_run` tactic and the existence statements | M5 | SEM · PORT · 1.5 h · Sonnet | T3.1 | after T3.1 | PLAN-V3-cards (area GEN); lands `wp_run` (T3.4 is dropped); may be pulled forward when blocked |
 | 75 | **T3.3** | Generated slice literals with pins | M5 | GEN · EMIT · 1.5 h · Sonnet | — | READY | PLAN-V3-cards; may be pulled forward when blocked; D-P71: a test only (feeds W14), never a proof |
 | 76 | **T3.2** | Totality: wpSS_exists | M5 | SEM · PROOF · 2.5 h · strongest | T3.1b, GEN.0 | after T3.1b, GEN.0 | PLAN-V3-cards |
