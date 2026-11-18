@@ -58,6 +58,7 @@ import Midfall.Generator.Quotient.FoldCompute
 import Midfall.Generator.Quotient.Evaluator
 import Midfall.Generator.Quotient.QuotientBlocks
 import Midfall.Generator.LoweringPlan
+import Midfall.Generator.PlanNew
 import Midfall.Generator.Evm
 import Midfall.Generator.Calldata
 import Midfall.Generator.Builder
@@ -114,6 +115,7 @@ import Midfall.Instances.PairingProduct
 import Midfall.Instances.YulParseKats
 import Midfall.Instances.M2BatchKats
 import Midfall.Instances.ObjectFingerprint
+import Midfall.Instances.PlanNewKats
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals

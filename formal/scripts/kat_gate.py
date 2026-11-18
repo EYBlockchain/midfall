@@ -171,8 +171,28 @@ EVAL = re.compile(
 # `mainAsmRaw` (`objectIsTheInlinedProgram_ok`), which is the card's own guidance. No gate was
 # deleted or edited. So the file count goes 104 -> 105 and the total 1440 -> 1445: the delta is
 # +5/+1 and nothing else moved. All five were run through `lake env lean` before this line moved.
-EXPECTED_KAT_TOTAL = 1445
-EXPECTED_KAT_FILES = 105
+# OBJ.6 (V3 row 40) adds Midfall/Instances/PlanNewKats.lean: a NEW file in the suite carrying FOURTEEN
+# '#eval ... -- expect true' gates, all of them a ported quotient-glue function checked against DATA THE
+# RUST EMITTED and not against a second Lean computation. frFieldCtx_matchesArtifact_ok (the R9 field
+# dictionary, DELTA against curves/src/bls12_381/fq.rs:492 and powNat against a hand-written
+# square-and-multiply); quotientPlan_shape_ok (inline 4 / items 9 / native 3 / perm 7 / lookup 3 / tail 1
+# / maxPower 21, the four identity counts against the protocol plan cs.json yields and the max power
+# against Halo2Verifier.sol); quotientBuild_matchesPayload_ok (THE HEADLINE: the emitted bytecode and
+# const table equal the two quotient sections of Halo2VerifyingKey.sol, 88 bytes / 1 const / max stack 2);
+# quotientProgram_matchesTypedIn_ok (all twelve template-program fields against the program read out of
+# the deployed artifact); quotientNativeScratchWords_matchesStackRegion_ok (25 words, corroborated by the
+# artifact's own 0x6c60 spill ceiling); compactQuotientProgramFor_matchesBuild_ok; quotientManifest_
+# preservesStream_ok (the QVM:388-473 bridge); quotientOpcodeUsage_table_ok and quotientMemUsage_table_ok
+# (31 and 9 singleton probes, so a transposed row is visible); quotientTemplateProgram_reservationAborts_ok
+# (the four QRS:202/:204/:205/:209 aborts FIRED); templateProgramPanicSites_areTheRecordedOnes_ok (reads
+# quotient.rs and pins every cited line, the panicSites pattern); quotientPlan_inlineCountFalsifier_ok (the
+# card's falsifier: inline count 3 changes the program bytes, and the local copy is first checked to
+# reproduce the port at 4); showSourceDebug_shapes_ok; validateExecutionManifest_rejects_ok (both Err
+# messages fired). Midfall/Generator/PlanNew.lean carries NO gate of its own - it is the port, and a
+# theorem-bearing Generator file may not import the fixture. So the file count goes 105 -> 106 and the
+# total 1445 -> 1459. No gate was deleted; the delta is +14/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1459
+EXPECTED_KAT_FILES = 106
 
 # Only these shapes count as #eval output.
 #

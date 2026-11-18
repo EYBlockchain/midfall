@@ -46,9 +46,10 @@
 --    `quotient_external_frame` / `quotient_external_frame_from_bounds` (QRS:760-794) are
 --    small pure functions over records this tree already has. They are NOT blocked on the
 --    Evaluator. plan.rs needs all three, so they are ported here with their QRS cites and the
---    mis-filing is reported. What IS genuinely blocked and is therefore NOT ported:
---    `compact_quotient_computation_blocks` (QRS:2000, renders Yul through the Evaluator) and
---    everything in `direct/` (M10).
+--    mis-filing is reported. What was genuinely blocked and so NOT ported here: everything in
+--    `direct/` (M10). `compact_quotient_computation_blocks` (QRS:2000) was blocked on the
+--    Evaluator and is NOT any more - P-09h landed the Evaluator and QRS:2000 is ported at
+--    QuotientBlocks.lean:856. This line was stale for two packages before OBJ.6 fixed it.
 --
 -- NOT PORTED, WITH THE BLOCKERS NAMED (hazard 6; context for required finding (c)).
 -- * PL:124-137 `lowering_plan` / `lowering_plan_for`, PL:235-329 `LoweringPlan::new` and
@@ -60,21 +61,25 @@
 --   the `VkBuildEnv` stub. That was FALSE: it is ported at LayoutMemory.lean:140, and
 --   Layout.lean:716 says "IS now ported" outright - the note was read as history rather
 --   than conclusion. `ConstraintSystemMeta` and `Data` are ported too (Encoding.lean:364,
---   :551). What genuinely blocks these constructors is narrower: `quotient_program_plan`
---   (QRS:426) and `build_quotient_program_items` (QRS:2102) need the Evaluator and the
---   halo2 ConstraintSystem; `compact_quotient_computation_blocks` (QRS:2000) needs the
---   Evaluator; `quotient_template_program` (QRS:189) is unported; and the Direct row is
---   deferred to M10. Porting `new` on top of the `VkBuildEnv` stub would still be wrong -
---   it would yield a plan whose `memory` field is a stub artifact, the exact vacuity class
---   the P-SE attack pass is about - so the record, accessors and validators are ported
---   and the pipeline is not, with no gate pretending otherwise. But porting `new`
---   properly is worth a dedicated attempt rather than impossible, and nobody should
---   re-derive the wrong reason and stop.
+--   :551). What blocked these constructors was narrower than this header first said, and what
+--   remained has now landed. `quotient_program_plan` (QRS:426),
+--   `build_quotient_program_items` / `_with_limb_ops` (QRS:2102, :2120),
+--   `quotient_template_program` (QRS:189), `native_callback_scratch_words` (QRS:1448) and
+--   `compact_quotient_program_for` (QRS:166) are ported in Generator/PlanNew.lean (OBJ.6),
+--   each gated against the deployed payload, and the halo2 ConstraintSystem the first two need
+--   is in the tree too, rebuilt from cs.json (PoseidonFixture.lean:394, F.1). What is STILL not
+--   ported is the constructor itself - PL:235-329 `LoweringPlan::new` and PL:165-231
+--   `new_direct` - which is OBJ.7, plus the Direct row, deferred to M10. Porting `new` on top
+--   of the `VkBuildEnv` stub would still be wrong: it would yield a plan whose `memory` field
+--   is a stub artifact, the exact vacuity class the P-SE attack pass is about. The record,
+--   accessors and validators stay P-11's; the pipeline is PlanNew's.
 -- * PL:151-154 `vm_quotient_mut`: a `&mut self` test accessor with no Lean analogue (its
 --   only Rust callers corrupt a finalized program before re-rendering it).
--- * PL:392-406 `compact_quotient_blocks`: needs QRS:2000 (above). It is the one hole in
---   `quotient_rendering`, which is ported with that emitter passed in as an argument - the
---   `VkBuildEnv` pattern (Vk.lean:398-421) spelled for a single callee.
+-- * PL:392-406 `compact_quotient_blocks`: needed QRS:2000, which is now ported
+--   (QuotientBlocks.lean:856), so nothing but the constructor separates this module from it.
+--   `quotient_rendering` stays ported with the emitter passed in as an argument - the
+--   `VkBuildEnv` pattern (Vk.lean:398-421) spelled for a single callee - and OBJ.7's
+--   `compactBlocksOf` is the call site that fills it.
 --
 -- DEVIATIONS AND HAZARD NOTES.
 -- * R2: `meta` is a Lean command modifier, so the field is `meta_` (the convention
