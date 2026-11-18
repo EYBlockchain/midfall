@@ -364,7 +364,8 @@ theorem fp_stmt_steps (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (H : Hash) (v
     every hash, VK address, calldata and snapshot witness,
 
     * `∀ g, BlockSound R .finalPairing Snap H vkAddr (permissive (callsOf product)) g cd`, and
-    * `BlockProgress R .finalPairing Snap H vkAddr product cd`, gated on `G1CodecLaws`,
+    * `BlockProgress R .finalPairing Snap H vkAddr product cd`, gated on
+      `G1CodecHeadlineLaws` (ST.4, D-P64),
       `ChallengesGood` and `DualMSM.check = true` exactly as §6 gates it.
 
     So this IS the pair the card asks for, in the shape C.2's `slices_seq_sound`/`slices_seq_progress`
@@ -475,7 +476,7 @@ theorem fp_blockProgress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
     (hinst : instOfWords? (p := p) instW = some inst)
     (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
-    (hcodec : G1CodecLaws R.E.g1) (hcg : ChallengesGood R.vk Snap)
+    (hcodec : G1CodecHeadlineLaws R.E.g1) (hcg : ChallengesGood R.vk Snap)
     (hdual : DualMSM.check Snap.c.dual R.params = true) :
     BlockProgress R Partial.finalPairing Snap H vkAddr product cd :=
   ((fp_finalPairing_contracts R product hR hslots) hpc H vkAddr cd ms instW inst Snap hdec hinst

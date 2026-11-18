@@ -42,6 +42,8 @@ owner() {
       echo 'V3 PL.H via rejectsV3_of_rows - V2 C.3 staged rejection contracts' ;;
     Midfall.LoweringV2.blockContracts_of_valid)
       echo 'V3 SIM.7 - deletes the old composition (RV-10: false as stated until RECON.1 PayloadAgrees)' ;;
+    Midfall.LoweringV2.bodyTotal_of_valid)
+      echo 'V3 ST.5 - TotalV3: the totality conjunct D-P64 (f) lands with the four-obligation composition; discharged by the exit-discipline scan (ST.10/ST.12)' ;;
     Midfall.LoweringV2.noWriters_prog)
       echo 'V3 ST.12 - scans_prog_addr_indep removes it' ;;
     Midfall.LoweringV2.prefix_run_clean)

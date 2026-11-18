@@ -242,8 +242,14 @@ theorem poseidon_block_contracts (product : PairingProduct) (hR : poseidonRender
 
     Proved from exactly three sorried lemmas - `poseidon_valid` (REFUTED-AT-TYPED-IN-META),
     `poseidon_quotient_block` (open), `poseidon_rejects` (open) - through the generic composition
-    theorem `lowering_equivalence_of_blocks`. `#cone_sorries` on it is the progress measure of
-    EXECUTION-V2 §6, printed by ConeReport. -/
+    theorem `lowering_equivalence_of_blocks`. ST.4's headline asks every conjunct for
+    `G1CodecHeadlineLaws`, and the progress half of `BlockContractsAt` is now gated on the SAME
+    bundle (ST.5 step 3, pulled forward: the seven frozen laws are not derivable from four, and
+    the only in-tree witness at a real codec, `CurveSurface.g1CodecZ_laws`, sits behind the
+    `imports_avoid` wall of `Tools/ConeReport.lean`, so citing it here would have polluted the
+    cone). The fourth conjunct, totality, is the composition's own registered sorry
+    `bodyTotal_of_valid`. `#cone_sorries` on it is the progress measure of EXECUTION-V2 §6,
+    printed by ConeReport. -/
 theorem lowering_equivalence_poseidon (product : PairingProduct) :
     LoweringEquivalence poseidonRender product :=
   lowering_equivalence_of_blocks poseidonRender product poseidon_valid

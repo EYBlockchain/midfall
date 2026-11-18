@@ -80,10 +80,11 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.LoweringV2.Blocks.FinalPairing.fp_pairing_algebra | Midfall.LoweringV2.Blocks.FinalPairing | theorem | OPEN | - | `ff71682088fb8833` | V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps |
 | Midfall.LoweringV2.Blocks.FinalPairing.fp_stmt_steps | Midfall.LoweringV2.Blocks.FinalPairing | theorem | OPEN | - | `3a5e133d052af026` | V2 (PLAN-V2): FP.0 FinalPairing skeleton - P.1 algebra, T.4 staticcall, T.5 steps |
 | Midfall.LoweringV2.Blocks.VkLoading.vk_poison_walk | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `26e8c971c0e3695b` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
-| Midfall.LoweringV2.Blocks.VkLoading.vk_progress | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `35c86f33674c0c37` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
+| Midfall.LoweringV2.Blocks.VkLoading.vk_progress | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `27383cf076f32568` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
 | Midfall.LoweringV2.Blocks.VkLoading.vk_sound_clean | Midfall.LoweringV2.Blocks.VkLoading | theorem | OPEN | - | `af938e7c295cf4c2` | V2 (PLAN-V2): S.4/S.9 vkLoading row - Q0.x/Q1.x cards, see docs/QUEUE.md |
 | Midfall.LoweringV2.blockContracts_of_valid | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `cad933e437381137` | V3 SIM.7 - deletes the old composition (RV-10: false as stated until RECON.1 PayloadAgrees) |
-| Midfall.LoweringV2.end_to_end | Midfall.LoweringV2.Blocks | theorem | OPEN | - | `c9395770f8876fdf` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
+| Midfall.LoweringV2.bodyTotal_of_valid | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `567141948b3e3b83` | V3 ST.5 - TotalV3: the totality conjunct D-P64 (f) lands with the four-obligation composition; discharged by the exit-discipline scan (ST.10/ST.12) |
+| Midfall.LoweringV2.end_to_end | Midfall.LoweringV2.Blocks | theorem | OPEN | - | `937db535983dbffe` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall.LoweringV2.hoist_prog_addr_indep | Midfall.LoweringV2.Blocks | theorem | OPEN | - | `9b58bf8246b39da5` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall.LoweringV2.inline_append | Midfall.LoweringV2.ProgramLemmas | theorem | OPEN | - | `60d11701168a999f` | V2 (PLAN-V2): Q0.x/Q1.x cards - see docs/QUEUE.md |
 | Midfall.LoweringV2.noWriters_prog | Midfall.LoweringV2.Blocks | theorem | OPEN | ROOT | `2b62208f4c1f0276` | V3 ST.12 - scans_prog_addr_indep removes it |

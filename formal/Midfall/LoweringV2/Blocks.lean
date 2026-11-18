@@ -123,7 +123,8 @@ def Render.BlockContractsAt (R : Render p G₁ G₂ Gₜ) (product : PairingProd
     snapshotOf R.E H R.vk inst ms none = .ok Snap →
     ∀ q : Partial, P q →
       (∀ g : ExternalGas, BlockSound R q Snap H vkAddr (permissive (callsOf product)) g cd) ∧
-      (G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap → DualMSM.check Snap.c.dual R.params = true →
+      (G1CodecHeadlineLaws R.E.g1 → ChallengesGood R.vk Snap →
+        DualMSM.check Snap.c.dual R.params = true →
         BlockProgress R q Snap H vkAddr product cd)
 
 /-- PROGRAM-LEVEL REJECTION: if the Lean verifier does not accept (outside the logup-panic bad set),
@@ -680,10 +681,27 @@ theorem returnData_of_committed_ret (st₀ st' : EvmState)
     (⟨committedState st₀ st', .halt⟩ : Obs).returnData = abiTrue := by
   simp only [Obs.returnData, halted_committedState, hh]
 
+/-- **TOTALITY, THE FOURTH CONJUNCT OF THE HEADLINE** (D-P64, landed by ST.4). From every entry
+    frame of a deployed valid render, under the honest precompiles and any TOTAL gas oracle, a run
+    of the body exists - whatever the calldata. Nothing in the frozen text before ST.4 said this,
+    which is why conjuncts 1 and 3 were satisfiable by a program that gets stuck.
+
+    OBLIGATION (ST.5, whose `TotalV3` is this statement generalised over the frame and paired with
+    the other three obligations). WHAT WOULD DISCHARGE IT: the scan that the program never reaches
+    a stuck state - `ExitDiscipline` plus `NoWriters` over the closed program (staging §I), which
+    is ST.10's and ST.12's work. The interface is pinned here so the composition has a named hole,
+    registered in SORRY.md, and not a silent one. -/
+theorem bodyTotal_of_valid (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.Valid)
+    (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) :
+    BodyTotal R product vkAddr st₀ := by
+  sorry
+
 /-- **COMPOSITION (WP-M5).** A valid render whose blocks satisfy their contracts and whose program
     rejects what Lean rejects satisfies the headline. Everything semantic is in the seven named
-    obligations of §7.1; what is proved here is the `∀`/`∃`/`∨` plumbing that wires them to the
-    frozen `LoweringEquivalence`, and it contains no `sorry`.
+    obligations of §7.1 plus `bodyTotal_of_valid` above; what is proved here is the `∀`/`∃`/`∨`
+    plumbing that wires them to the frozen `LoweringEquivalence`, and it contains no `sorry`.
 
     THE THREE COMPOSITION STEPS, in the order the brief asks for them.
     1. PREFIX: `prog_slices_decomp` + `prefix_run_clean` + `runBody_iff_slices` turn a `RunBody`
@@ -699,11 +717,21 @@ theorem returnData_of_committed_ret (st₀ st' : EvmState)
     NOTE ON WHAT `hB` IS ASKED FOR: the predicate is `fun _ => True`, i.e. ALL SEVEN blocks,
     including `.quotientLin` — which is the block C.1 sorried separately as
     `poseidon_quotient_block`, and whose emitted region is 122 of 6572 tokens (M0.1). The
-    composition does not get to skip it: `slices_seq_sound` chains over all seven. -/
+    composition does not get to skip it: `slices_seq_sound` chains over all seven.
+
+    WHAT ST.4 CHANGED HERE. The headline now takes `G1CodecHeadlineLaws` (four laws) as a
+    hypothesis of ALL FOUR conjuncts and conjunct 2 carries no codec premise of its own, so the
+    bundle arrives once, at the top, and is what `seqProgress` feeds to the rows. That moved the
+    progress gate of `BlockContractsAt` and `BlockRow` from the frozen seven to these four (ST.5
+    step 3, pulled forward: four do not give seven, and the only in-tree witness at a real codec,
+    `CurveSurface.g1CodecZ_laws`, sits behind the `imports_avoid` wall of
+    `Tools/ConeReport.lean`). Every row on the progress half is a REGISTERED sorry, so the
+    stronger demand costs no proof today - it is a harder obligation, not an easier one. Conjunct
+    4 is `bodyTotal_of_valid` above, a registered sorry, not a gap in the plumbing. -/
 theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : R.Valid) (hB : R.BlockContractsAt product (fun _ => True)) (hrej : R.Rejects product) :
     LoweringEquivalence R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc
+  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec
   /- STEP 0. Unpack `hB` at an explicit snapshot witness: the two families of per-block contracts,
      for the permissive dialect (soundness) and the honest one (progress). -/
   have hcontracts (ms : List (Msg (Fr p) G₁)) (instW : Array Word256) (inst : Array (Fr p))
@@ -714,7 +742,7 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
       (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap) :
       (∀ (q : Partial) (gg : ExternalGas),
           BlockSound R q Snap H vkAddr (permissive (callsOf product)) gg cd) ∧
-        (∀ (q : Partial), G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap →
+        (∀ (q : Partial), G1CodecHeadlineLaws R.E.g1 → ChallengesGood R.vk Snap →
           DualMSM.check Snap.c.dual R.params = true → BlockProgress R q Snap H vkAddr product cd) :=
     ⟨fun q gg => (hB hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap q trivial).1 gg,
       fun q => (hB hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap q trivial).2⟩
@@ -738,7 +766,7 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
         some (ms, instW))
       (hinst : instOfWords? (p := p) instW = some inst)
       (hsnap : snapshotOf R.E H R.vk inst ms none = .ok Snap)
-      (hcodec : G1CodecLaws R.E.g1) (hcg : ChallengesGood R.vk Snap)
+      (hcodec : G1CodecHeadlineLaws R.E.g1) (hcg : ChallengesGood R.vk Snap)
       (hdual : DualMSM.check Snap.c.dual R.params = true) :
       StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
           (R.scope _ _) R.slices
@@ -747,7 +775,7 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
     slices_seq_progress R product Snap H vkAddr cd
       (fun q => (hcontracts ms instW inst Snap hdec hinst hsnap).2 q hcodec hcg hdual)
 
-  refine ⟨?_, ?_, ?_⟩
+  refine ⟨?_, ?_, ?_, bodyTotal_of_valid R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc⟩
   · -- (1) SOUNDNESS: a returning run under permissive calls returns ABI `true`, and Lean accepts.
     intro gg obs hobs hret hside
     by_cases hacc : LeanAccepts R H cd
@@ -769,7 +797,7 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
       exact absurd (hrej W Lyt H vkAddr cd st₀ gg obs hdep hentry hpc hside hacc hobs)
         (not_isRevertOrHalt_of_isReturn hret)
   · -- (2) COMPLETENESS: if Lean accepts, an honest run exists and every honest run returns.
-    intro hacc hcomp hcodec
+    intro hacc hcomp
     obtain ⟨ms, instW, inst, Snap, V₁, st₁, hdec, hinst, hsnap, hdual, hclean, hpre⟩ :=
       prefix_run_clean R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc
         (callsOf product) (ExternalGas.ofFun fun _ => 0) hacc
@@ -830,12 +858,16 @@ theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : 
   `R.qblocks = <port> R.plan` - a decidable fact, never a semantic hypothesis. -/
 
 /-- An entry frame exists for every calldata carrying the selector, in a world that sends no
-    value. OBLIGATION (WP-I2); it is what keeps `end_to_end`'s right-hand side from being vacuous. -/
+    value, whose length is a word. OBLIGATION (WP-I2); it is what keeps `end_to_end`'s right-hand
+    side from being vacuous. The extra premise `hcd` is D-P64/ST.4 (`EntryFrame.cdSize`); every
+    EVM frame satisfies it, and `Instances/StatementsV3Falsifiers.lean` F3 is the exhibit that
+    without it the frame admits a calldata the Lean verifier cannot accept. -/
 theorem entryFrame_inhabited (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
-    (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) :
-    EntryFrameInhabited R W Lyt H cd hsel hcv ht := by
-  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel⟩
+    (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t)
+    (hcd : cd.size < 2 ^ 256) :
+    EntryFrameInhabited R W Lyt H cd hsel hcv ht hcd := by
+  refine ⟨initState W Lyt H cd (fun _ => 0), ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel, hcd⟩
   · exact fun a _ => rfl
   · obtain ⟨t, ht₁, ht₂⟩ := ht
     refine ⟨t, ht₁, ?_⟩
@@ -854,12 +886,11 @@ theorem end_to_end (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR 
     (hEq : LoweringEquivalence R product)
     (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256)
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
-    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLaws R.E.g1)
-    (hcomp : R.E.g1.compressedRoundtrip)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
     (hside : ∀ cd, calldataOf R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd) :
-    EndToEnd R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec hcomp inst π hn hside := by
+    EndToEnd R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside := by
   sorry
 
 /-! ### 7.0 M.1's reduction: the hinge is SIX ROWS, and here is their shape
@@ -904,7 +935,8 @@ def BlockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (q : Parti
     instOfWords? (p := p) instW = some inst →
     snapshotOf R.E H R.vk inst ms none = .ok Snap →
     (∀ g : ExternalGas, BlockSound R q Snap H vkAddr (permissive (callsOf product)) g cd) ∧
-    (G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap → DualMSM.check Snap.c.dual R.params = true →
+    (G1CodecHeadlineLaws R.E.g1 → ChallengesGood R.vk Snap →
+      DualMSM.check Snap.c.dual R.params = true →
       BlockProgress R q Snap H vkAddr product cd)
 
 /-- Rows to `BlockContractsAt`: re-association only, no content, no `sorry`. -/

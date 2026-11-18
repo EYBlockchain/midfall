@@ -141,9 +141,13 @@ def calldataOfV3 (R : Render p G₁ G₂ Gₜ) (π : Bytes) (inst : Array (Fr p)
   Midfall.Lowering.repackThenEncode (p := p) R.cfg.numInstances
     (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π inst
 
-/-- The frozen composition, as a function of exactly the three things it reads off the render,
-    so that it can be EVALUATED on the in-tree toy data (a `Render` needs a prime-order group and
-    a pairing; `CdKats.ToyG` is a two-point type). -/
+/-- The FROZEN composition, as a function of exactly the three things it reads off the render, so
+    that it can be EVALUATED on the in-tree toy data (a `Render` needs a prime-order group and
+    a pairing; `CdKats.ToyG` is a two-point type). PINNED VERBATIM AS OF ST.4 (the D-P27 pattern:
+    an amended frozen statement keeps its old text as a named definition next to the exhibit that
+    shows why it was wrong): until ST.4 the live `LoweringV2.calldataOf` WAS this term, by `rfl`,
+    and the bridge lemma said so. From ST.4 on the live def is `repackThenEncode`, the bridge is
+    false and is gone, and this core is what the falsifier `frozenCalldata_isOk` evaluates. -/
 def frozenCalldataCore {G : Type} (numInstances : Nat) (plan : RepackedProofLayoutPlan)
     (c : G1Codec G) (π : Bytes) (inst : Array (Fr p)) :
     Except Midfall.Generator.GeneratorError Bytes :=
@@ -151,11 +155,6 @@ def frozenCalldataCore {G : Type} (numInstances : Nat) (plan : RepackedProofLayo
       Midfall.Generator.GeneratorError.fromRepackError >>= fun π' =>
     Midfall.Lowering.encodeCalldata (p := p) numInstances plan c π' inst
 
-/-- The core IS the frozen `calldataOf`, by `rfl`. -/
-theorem frozenCalldataOf_eq_core (R : Render p G₁ G₂ Gₜ) (π : Bytes) (inst : Array (Fr p)) :
-    Midfall.LoweringV2.calldataOf R π inst =
-      frozenCalldataCore R.cfg.numInstances
-        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π inst := rfl
 
 section CalldataWitness
 open Midfall.Lowering.CdKats
@@ -670,7 +669,7 @@ structure EntryFrameV3 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.La
 theorem EntryFrameV3.toV2 {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrameV3 R W Lyt H cd st) :
     EntryFrame R W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
 
 /-- **INHABITATION**, the V3 form of `Blocks.lean:624 entryFrame_inhabited`: one more premise
     (`hcd`), the same witness. PROVED. -/

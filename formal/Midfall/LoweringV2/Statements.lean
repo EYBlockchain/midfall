@@ -29,6 +29,36 @@
      calls are stuck, which made every forall-runs contract vacuous on the paths that matter.
      Completeness contracts are TOTAL (a run exists AND every run is good).
 
+  5. THE V3 CUT-OVER (D-P64, landed by ST.4). §3 `EntryFrame`, §5 `LoweringEquivalence`, §8
+     `HypothesesInhabited`/`EntryFrameInhabited` and §9 `calldataOf`/`EndToEnd` now read as the
+     signed V3 text, ported verbatim from the staging module `Midfall/LoweringV3/Statements.lean`
+     under their V2 names. What changed, and why each change is load-bearing:
+     * `calldataOf` is `Lowering.repackThenEncode`. The frozen composition called `repackProof`
+       and then `encodeCalldata`, which repacks its proof argument AGAIN: the second repack sees
+       `repackedLen` bytes where it demands `compressedLen`, so the frozen term never returned
+       `.ok`. Witness `calldataOfV3_witness_ok`, falsifier `frozenCalldata_isOk` (staging §A),
+       F1 in `Instances/StatementsV3Falsifiers.lean`.
+     * `EntryFrame` gained `cdSize : cd.size < 2 ^ 256`. `calldatasize` is a WORD while
+       `decodeCalldata` compares `cd.size` in `Nat`, so `cd ++ (2^256 zero bytes)` ran exactly
+       like `cd` and was rejected by Lean: conjunct 1 was FALSE, not merely unproved. Falsifier
+       F3 (`entryFrame_inhabited_padded` against the pinned pre-ST.4 frame,
+       `entryFrameV3_refuses_padded` against the repaired one); witness `entryFrame_inhabited`,
+       proved with the bound.
+     * `G1CodecHeadlineLaws` (`LoweringV2/Codec.lean`) is now a hypothesis of EVERY conjunct,
+       where the frozen seven covered conjunct 2 only - and there they were the seven WITHOUT the
+       encoder-first law, which hold at a codec that decodes nothing and so makes `LeanAccepts`
+       identically false (`g1CodecZ_laws` proves that, `g1CodecZ_not_headlineLaws` refutes the
+       headline bundle at the same codec). Conjunct 2 no longer carries its own codec premise.
+     * Conjunct 4, `BodyTotal`, is new: nothing in the frozen headline said the modelled program
+       has a run at all, so conjuncts 1 and 3 were forall-runs statements a stuck program
+       satisfies. Its witness is the generic satisfiability of `GasTotal` (`gasTotal_ofFun`,
+       `gasTotal_any` in the staging module) and its refusal is `not_gasTotal_none`.
+     * `HypothesesInhabited` fixes the hash at `keccak256` and asks for `LeanAccepts` (finding
+       H+1: `DeploymentV2.vkHash` pins `H` at the VK runtime bytes only, so an existential hash
+       is met by a hash constant elsewhere and every challenge then ignores the proof). This
+       supersedes D-P45's decode-chain conjunct, which `LeanAccepts` implies; the R-72 teeth are
+       kept (`Instances/R72GateProbe.lean`, `gate_now_forces_a_real_decode`).
+
   First-headline scope (`SupportedV2`): no accumulator, embedded quotient VM, separate VK
   contract, production render. Each restriction is lifted by a named later package.
 
@@ -41,6 +71,7 @@
   still resolve. No statement text was changed by the split. -/
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Shared
+import Midfall.LoweringV2.Codec
 import Midfall.Lowering.Snapshot
 import Midfall.Lowering.Calldata
 import Midfall.Assumptions.Eip2537
@@ -266,7 +297,9 @@ structure DeploymentV2 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (H : Hash) (v
     `TRANSCRIPT_MPTR` (solc's prologue under the pinned compiler, MF-2), zero call value (the
     function is `view`), and the `verifyProof` selector. `activeWords` is left free because solc's
     prologue touches memory. Recorded in the trusted-base table (PLAN §1) as a replacement for the
-    two solc rows; NOT validated against any compiler output inside Lean. -/
+    two solc rows; NOT validated against any compiler output inside Lean. The sixth field,
+    `cdSize`, is D-P64/ST.4: the five frozen fields admit a calldata whose length is not a word,
+    and the semantics cannot tell it apart from the short one. -/
 structure EntryFrame (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (st : EvmState) : Prop where
   shape : ∃ (mem₀ : Nat → UInt8) (aw : U256),
@@ -275,6 +308,15 @@ structure EntryFrame (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layo
   fmp : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ (loadWord st.memory 0x40).toNat ≤ t
   callvalue : st.env.callvalue = 0
   selector : bytesTake cd 0 4 = some fnSigVerifyProof
+  /-- THE CALLDATA LENGTH IS A WORD (D-P64, item (e)). `calldatasize` is
+      `BitVec.ofNat 256 st.env.calldata.length` (`EVMExec.lean:792`) while `decodeCalldata`
+      compares `cd.size` in `Nat` (`Calldata.lean:341`), so without this bound
+      `cd ++ (2^256 zero bytes)` runs exactly like `cd` - same `calldatasize`, same
+      `calldataload`/`calldatacopy` - and is rejected by Lean: conjunct 1 is FALSE. THE WEAKEST
+      bound that repairs the statement, and a fact about every EVM frame. A tighter
+      "realistic" bound (2^32, the gas limit) would shrink the set of covered frames and buy no
+      proof step: every calldata offset the program computes is a constant of the render. -/
+  cdSize : cd.size < 2 ^ 256
 
 /-- The honest precompiles (EIP-2537 G1ADD / G1MSM / PAIRING_CHECK, modexp). No evaluator slot:
     the first headline covers embedded-quotient renders only. -/
@@ -315,90 +357,137 @@ def CompleteSide (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) : Prop :=
 
 /-! ## 5. THE HEADLINE -/
 
+/-- The gas oracle answers in every state. `ExternalGas.ofFun f` and `ExternalGas.any` are total;
+    `ExternalGas.none` is not (`gasTotal_ofFun`, `gasTotal_any`, `not_gasTotal_none`, staging
+    §F, all PROVED). -/
+def GasTotal (g : ExternalGas) : Prop := ∀ st, ∃ w, g.Gas st w
+
+/-- **TOTALITY** (D-P64, conjunct 4). From every entry frame of a deployed render, under the honest
+    precompiles and any total gas oracle, the body has a run - whatever the calldata.
+
+    WHY THIS SHAPE. `gas()` is the one builtin whose step is `∃ w, g.Gas st w ∧ ...`
+    (`EVMExec.lean`, `builtinWithExternal`): under `ExternalGas.none` it is stuck. The supported
+    renders never emit `gas()` (trace, gas checkpoints and the external evaluator are excluded by
+    `SupportedV2`), so existence would hold for every oracle there - but that needs one more scan.
+    Asking for a TOTAL oracle instead is what a real chain provides and what stays true when the
+    scope restrictions are lifted. And the permissive form is NOT the statement to ask for:
+    `permissive c` admits the failed response to every request (`Bridge.lean:1433`,
+    `permissive_failResp_call`), so "a permissive run exists" is witnessed by the run whose FIRST
+    precompile call fails and reverts - it says nothing about the paths on which the precompiles
+    answer. An honest run is a permissive run (`callsOf_le_permissive`, staging §F, PROVED), so
+    the permissive form follows. -/
+def BodyTotal (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (vkAddr : U256)
+    (st₀ : EvmState) : Prop :=
+  ∀ g : ExternalGas, GasTotal g → ∃ obs, RunBody R vkAddr 0 (callsOf product) g st₀ obs
+
 /-- **Lowering equivalence for one render.** For every world the render is deployed into, every
-    hash, every calldata and every entry frame:
+    hash, every calldata and every entry frame, under honest-or-failing precompiles and a lawful
+    codec:
 
     1. soundness - under precompiles that may fail but never lie, and ANY gas oracle, a run that
        returns returns ABI `true`, and the Lean verifier accepts;
     2. completeness - if the Lean verifier accepts, an honest run exists and every honest run
        returns ABI `true` with the world unchanged;
-    3. two outcomes - every run returns ABI `true` or reverts/halts with the world unchanged.
+    3. two outcomes - every run returns ABI `true` or reverts/halts with the world unchanged;
+    4. totality - under the honest precompiles and any total gas oracle, a run exists.
 
-    No hypothesis mentions the program. -/
+    No hypothesis mentions the program. The codec laws are a hypothesis of ALL FOUR conjuncts
+    (D-P64): they were a hypothesis of conjunct 2 only, and there the frozen seven without the
+    encoder-first law - which is why soundness was vacuous at a codec that decodes nothing.
+    Conjunct 2 therefore carries no local codec premise of its own. -/
 def LoweringEquivalence (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
   ∀ (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState),
     DeploymentV2 R W H vkAddr → EntryFrame R W Lyt H cd st₀ →
-    Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product →
+    Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product → G1CodecHeadlineLaws R.E.g1 →
     (∀ (g : ExternalGas) (obs : Obs),
         RunBody R vkAddr 0 (permissive (callsOf product)) g st₀ obs → obs.isReturn →
         SoundSide R H cd → obs.returnData = abiTrue ∧ LeanAccepts R H cd) ∧
-    (LeanAccepts R H cd → CompleteSide R H cd → G1CodecLaws R.E.g1 →
+    (LeanAccepts R H cd → CompleteSide R H cd →
         (∃ obs, RunBody R vkAddr 0 (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ obs) ∧
         ∀ obs, RunBody R vkAddr 0 (callsOf product) (ExternalGas.ofFun fun _ => 0) st₀ obs →
           obs.view = returnView st₀) ∧
     (∀ (g : ExternalGas) (obs : Obs),
         RunBody R vkAddr 0 (permissive (callsOf product)) g st₀ obs →
-        obs.view = returnView st₀ ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged st₀))
+        obs.view = returnView st₀ ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged st₀)) ∧
+    BodyTotal R product vkAddr st₀
 
 /-! ## 8. Non-vacuity (D-P23, applied to the WHOLE hypothesis set this time) -/
 
-/-- Every hypothesis of `LoweringEquivalence` holds at once at this render, at a calldata that
-    ACTUALLY DECODES, PARSES AND REPLAYS. Must be PROVED at each deployment the headline is claimed
-    for.
+/-- Every hypothesis of `LoweringEquivalence` holds at once at this render, AT KECCAK, with a
+    calldata the Lean verifier ACCEPTS and the side conditions admit. Must be PROVED at each
+    deployment the headline is claimed for.
 
-    THE LAST THREE CONJUNCTS ARE THE D-P45 REPAIR (R-72). `SoundSide` and `CompleteSide` are both
-    universals over `decodeCalldata … = some (ms, instW)`, so each goes TRUE exactly when nothing
-    decodes: without the `decodeCalldata` / `instOfWords?` / `snapshotOf` chain the gate was
-    satisfiable at the bare 4-byte `verifyProof` selector, which never decodes (`Instances/R72GateProbe.lean`,
-    `sel_nondecode` + `gate_weak` + `no_accept_at_gate_cd` - the witness, landed). `LeanAccepts` was
-    NOT adopted, and there is no run-existence conjunct: D-P45 records why (the former is not
-    computable at a real SRS, the latter is redundant given the headline).
+    WHY THE HASH IS `keccak256` AND NOT `∃ H` (D-P64, finding H+1). `DeploymentV2.vkHash` pins `H`
+    at the VK runtime bytes only, so an existential hash is met by a hash constant elsewhere,
+    every challenge is then independent of the proof, and `π := 1` with a solved-for `fCom` passes
+    `DualMSM.check` for any params.
 
-    STATED LIMIT (D-P45). Headline + gate certify that the side conditions are NON-VACUOUS at a real
-    calldata. They do NOT certify that some calldata is ACCEPTED at the deployment. The protection
-    against a Lean verifier that rejects everything is structural - `Valid.slots` and the base pins -
-    not a witness here. -/
+    WHY `LeanAccepts` (D-P64, superseding D-P45's decode chain, R-72). Without it the gate is
+    satisfied by a codec that decodes nothing: `SoundSide` and `CompleteSide` are both universals
+    over `decodeCalldata … = some (ms, instW)`, so each goes TRUE exactly when nothing decodes -
+    the bare 4-byte `verifyProof` selector satisfied the pre-D-P45 gate and the pre-ST.4 one alike
+    (`Instances/R72GateProbe.lean`, `sel_nondecode` + `gate_weak` + `no_accept_at_gate_cd`, and
+    `Instances/StatementsV3Falsifiers.lean` F8). `LeanAccepts` implies the decode chain, so the
+    D-P45 teeth are kept and sharpened: `gate_now_forces_a_real_decode` still holds of this gate.
+    `SoundSide` follows from `LeanAccepts` (`soundSide_of_leanAccepts`, staging §K, PROVED) and is
+    kept for symmetry with the hypotheses of conjunct 1.
+
+    STATED LIMIT. Headline + gate certify that the side conditions are NON-VACUOUS at an ACCEPTING
+    calldata; together they exclude "the contract never returns" (`returns_of_inhabited`, staging
+    §K, PROVED). What they do NOT certify is that the codec of the render LAWFULLY decodes: at
+    today's deployment the gate is REFUTED, because `poseidonRender.E.g1` is the placeholder
+    `g1CodecZ`, whose `ofCompressed?` is `none` (`Instances/StatementsV3Deploy.lean`,
+    `poseidon_notInhabitedV3`; the law set itself is satisfiable on the same carrier,
+    `lawsV3_satisfiable_at_G1z`). That is the finding, not a hole in this file: the gate is what
+    forces the real G1 codec before the headline is claimed. -/
 def HypothesesInhabited (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
-  ∃ (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState),
-    DeploymentV2 R W H vkAddr ∧ EntryFrame R W Lyt H cd st₀ ∧
-      Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ SoundSide R H cd ∧ CompleteSide R H cd ∧
-      (∃ ms instW inst Snap,
-        decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
-        instOfWords? (p := p) instW = some inst ∧
-        snapshotOf R.E H R.vk inst ms none = .ok Snap) ∧
-      G1CodecLaws R.E.g1
+  ∃ (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState),
+    DeploymentV2 R W keccak256 vkAddr ∧ EntryFrame R W Lyt keccak256 cd st₀ ∧
+      Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product ∧ G1CodecHeadlineLaws R.E.g1 ∧
+      LeanAccepts R keccak256 cd ∧ SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd
 
 /-- THE STATEMENT OF `entryFrame_inhabited` AS A PROP (Q0.3 wrapper). The binder telescope is
     `entryFrame_inhabited`'s, verbatim, and the body is its conclusion, verbatim: the wrapper is
-    a DEFINITIONAL one (`EntryFrameInhabited R W Lyt H cd hsel hcv ht = ∃ st₀, EntryFrame R W Lyt
-    H cd st₀` holds by `rfl`), so wrapping changes no proposition. The theorem itself is stated as
-    `EntryFrameInhabited ...` in `Blocks.lean` (REFINABLE). -/
+    a DEFINITIONAL one (`EntryFrameInhabited R W Lyt H cd hsel hcv ht hcd = ∃ st₀, EntryFrame R W
+    Lyt H cd st₀` holds by `rfl`), so wrapping changes no proposition. The extra premise `hcd` is
+    D-P64/ST.4: the frame now carries a calldata bound, so inhabitation has to be given it - and
+    the theorem in `Blocks.lean` (REFINABLE) proves it for every calldata whose length is a word,
+    which is every EVM frame. -/
 def EntryFrameInhabited (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
     (cd : Bytes) (hsel : bytesTake cd 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
-    (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) : Prop :=
+    (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t)
+    (hcd : cd.size < 2 ^ 256) : Prop :=
   ∃ st₀, EntryFrame R W Lyt H cd st₀
 
 /-! ## 9. End to end, from the compressed Rust proof -/
 
-/-- The calldata the ported repacker and encoder produce for a compressed proof. -/
+/-- The calldata the ported repacker and encoder produce for a compressed proof: the tree's own
+    intended composition, `Lowering.repackThenEncode` (`Calldata.lean:257`) - ONE repack, then the
+    encoder (D-P64, item (a)). The frozen text called `repackProof` and then `encodeCalldata`, and
+    `encodeCalldata` (`Calldata.lean:241-250`) repacks its proof argument AGAIN: the second repack
+    sees `repackedLen` bytes where it demands `compressedLen` and throws `lengthMismatch`, so the
+    frozen term never returned `.ok` and every `EndToEnd` right-hand side was false. Witness
+    `calldataOfV3_witness_ok` and falsifier `frozenCalldata_isOk` (staging §A, both gated KATs),
+    F1 in `Instances/StatementsV3Falsifiers.lean`, which pins the two lengths (416 against 176 on
+    the toy data, 4320 against 2640 at the deployment). -/
 def calldataOf (R : Render p G₁ G₂ Gₜ) (π : Bytes) (inst : Array (Fr p)) :
     Except Midfall.Generator.GeneratorError Bytes :=
-  (repackProof (p := p) (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π).mapError
-      Midfall.Generator.GeneratorError.fromRepackError >>= fun π' =>
-    encodeCalldata (p := p) R.cfg.numInstances
-      (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π' inst
+  Midfall.Lowering.repackThenEncode (p := p) R.cfg.numInstances
+    (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π inst
 
 /-- THE STATEMENT OF `end_to_end` AS A PROP (Q0.3 wrapper). The binder telescope is `end_to_end`'s
     verbatim and the body is its conclusion verbatim, so the two forms are equal by `rfl`: the
-    wrapper adds no hypothesis, drops none, and reorders none. The theorem is stated as
-    `EndToEnd R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec hcomp inst π hn hside` in
+    wrapper adds no hypothesis, drops none, and reorders none. D-P64/ST.4 changed ONE premise pair
+    here: the two frozen codec hypotheses (`G1CodecLaws` and `compressedRoundtrip`, the second a
+    field of the first) are now the single bundle `G1CodecLawsV3` (`LoweringV2/Codec.lean`) - the
+    seven plus the encoder-first law the round trip to Rust bytes actually needs. The theorem is
+    stated as `EndToEnd R product hR hEq W Lyt vkAddr hdep hcv hpc hcodec inst π hn hside` in
     `Blocks.lean` (REFINABLE). -/
 def EndToEnd (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.Valid)
     (hEq : LoweringEquivalence R product)
     (W : ExecEnv) (Lyt : EVM.Layout) (vkAddr : U256)
     (hdep : DeploymentV2 R W keccak256 vkAddr) (hcv : W.callvalue = 0)
-    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLaws R.E.g1)
-    (hcomp : R.E.g1.compressedRoundtrip)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecLawsV3 R.E.g1)
     (inst : Array (Fr p)) (π : Bytes) (hn : inst.size = R.cfg.numInstances)
     (hside : ∀ cd, calldataOf R π inst = .ok cd →
       SoundSide R keccak256 cd ∧ CompleteSide R keccak256 cd) : Prop :=

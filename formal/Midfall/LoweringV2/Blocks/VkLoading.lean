@@ -745,13 +745,15 @@ theorem vk_poison_walk (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) 
 /-- **GAP 3 OF 3 - `BlockProgress R .vkLoading`.** `StmtsTotal` is `StmtsContract ∧ StmtsContractAll`,
     so this needs a run EXHIBITED from a clean boundary, which needs the guard of statement 1 to be
     passable: hence `vkProgressPins`. Note the honest gate it is put under is §6's
-    `G1CodecLaws ∧ ChallengesGood ∧ DualMSM.check`, and `.vkLoading` reads none of the three - the
+    `G1CodecHeadlineLaws ∧ ChallengesGood ∧ DualMSM.check` (ST.4 moved the progress gate to the
+    headline bundle, D-P64), and `.vkLoading` reads none of the three - the
     VK block's progress does not depend on the pairing at all, which is worth saying because it
     means this gap is independent of P.1 and T.4. -/
 theorem vk_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.Valid)
     (hpins : vkPins R) (hppins : vkProgressPins R) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)
     (vkAddr : U256) (cd : Bytes) :
-    G1CodecLaws R.E.g1 → ChallengesGood R.vk Snap → DualMSM.check Snap.c.dual R.params = true →
+    G1CodecHeadlineLaws R.E.g1 → ChallengesGood R.vk Snap →
+      DualMSM.check Snap.c.dual R.params = true →
       BlockProgress R Partial.vkLoading Snap H vkAddr product cd := by
   sorry
 

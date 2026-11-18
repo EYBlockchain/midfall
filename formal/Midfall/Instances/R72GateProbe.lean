@@ -44,6 +44,13 @@
   gate does next. gate_now_forces_a_real_decode is the same finding stated forward: it is a theorem
   about the AMENDED gate that no calldata of the R-72 shape can witness it.
 
+  THE ST.4 REPAIR (D-P64). The live gate now asks for `LeanAccepts` at `keccak256` instead of the
+  D-P45 decode chain and no longer quantifies the hash, so `gate_now_forces_a_real_decode` reads
+  its decode out of `LeanAccepts` - the same finding, now immediate: an accepting calldata decodes.
+  `HypothesesInhabitedPreD45` is untouched: it pins the PRE-D-P45 CONJUNCTION and cites `EntryFrame`
+  by name, so the `cdSize` field ST.4 added to the live frame does not move the pinned text (the
+  selector calldata is 4 bytes, well inside the bound).
+
   WHY HERE, IN Instances/. Nothing in this file is cited by the frozen surface, and the dependency
   runs Instances -> Statements, never back (D-P17). No native_decide is used: the two cdWord facts
   are closed by rfl, so every theorem here sits on [propext, Classical.choice, Quot.sound] and
@@ -122,6 +129,7 @@ theorem gate_weak (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (vkAd
   unfold HypothesesInhabitedPreD45
   obtain ⟨st₀, hent⟩ := entryFrame_inhabited R (probeW R.plan.vk.runtimeBytes.data.toList vkAddr)
     probeLyt keccak256 Midfall.Generator.fnSigVerifyProof probe_hsel rfl ht
+    (by decide : Midfall.Generator.fnSigVerifyProof.size < 2 ^ 256)
   refine ⟨probeW R.plan.vk.runtimeBytes.data.toList vkAddr, probeLyt, keccak256, vkAddr,
     Midfall.Generator.fnSigVerifyProof, st₀, ?_, hent, hpc, ?_, ?_⟩
   · exact ⟨rfl, probeW_wf _ _, probeW_code _ _, rfl, hsize, hdisj⟩
@@ -149,8 +157,8 @@ theorem gate_now_forces_a_real_decode (R : Render p G₁ G₂ Gₜ) (product : P
     ∃ (cd : Bytes) (ms : List (Msg (Fr p) G₁)) (instW : Array Word256),
       decodeCalldata (p := p) R.plan.proofLayout R.cfg.numInstances R.E.g1 cd = some (ms, instW) ∧
       cd ≠ Midfall.Generator.fnSigVerifyProof := by
-  obtain ⟨_W, _Lyt, _H, _vkAddr, cd, _st₀, _hdep, _hent, _hpc, _hss, _hcs, hdecode, _hlaw⟩ := h
-  obtain ⟨ms, instW, _inst, _Snap, hdec, _, _⟩ := hdecode
+  obtain ⟨_W, _Lyt, _vkAddr, cd, _st₀, _hdep, _hent, _hpc, _hcodec, hacc, _hss, _hcs⟩ := h
+  obtain ⟨ms, instW, _inst, hdec, _, _⟩ := hacc
   refine ⟨cd, ms, instW, hdec, ?_⟩
   intro heq
   rw [heq, sel_nondecode] at hdec

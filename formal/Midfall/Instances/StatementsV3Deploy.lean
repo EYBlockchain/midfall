@@ -302,7 +302,7 @@ def transcriptMptrPin_ok : Bool :=
 #check (Midfall.Instances.CurveSurface.g1CodecZ_laws : G1CodecLaws g1CodecZ)
 
 /-- FALSIFIER: it does not satisfy the V3 headline laws. PROVED. -/
-theorem g1CodecZ_not_headlineLaws : ¬ G1CodecHeadlineLaws g1CodecZ := by
+theorem g1CodecZ_not_headlineLaws : ¬ Midfall.LoweringV3.G1CodecHeadlineLaws g1CodecZ := by
   intro h
   have h1 := h.compressedEncoderFirst 1
   have h2 : g1CodecZ.ofCompressed? (g1CodecZ.toCompressed 1) = none := rfl
@@ -338,9 +338,12 @@ theorem exists_injective_comp :
     laws. PROVED, with no curve arithmetic. Its compressed half is an abstract injection, NOT the
     ZCash format: enough for `LoweringEquivalenceV3`, not for `EndToEndV3`'s link to Rust bytes. -/
 theorem lawsV3_satisfiable_at_G1z :
-    ∃ c : G1Codec G₁z, c.toEip = g1CodecZ.toEip ∧ c.ofEip? = g1CodecZ.ofEip? ∧ G1CodecLawsV3 c := by
+    ∃ c : G1Codec G₁z, c.toEip = g1CodecZ.toEip ∧ c.ofEip? = g1CodecZ.ofEip? ∧
+      Midfall.LoweringV3.G1CodecLawsV3 c := by
   obtain ⟨comp, hinj, hw⟩ := exists_injective_comp
-  exact ⟨withCompressed g1CodecZ comp, rfl, rfl, withCompressed_lawsV3 g1CodecZ Midfall.Instances.CurveSurface.g1CodecZ_laws comp hinj hw⟩
+  exact ⟨Midfall.LoweringV3.withCompressed g1CodecZ comp, rfl, rfl,
+    Midfall.LoweringV3.withCompressed_lawsV3 g1CodecZ
+      Midfall.Instances.CurveSurface.g1CodecZ_laws comp hinj hw⟩
 
 #print axioms lawsV3_satisfiable_at_G1z
 #print axioms poseidon_notInhabitedV3

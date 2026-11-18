@@ -11,7 +11,8 @@
 
     F1  the frozen `calldataOf` repacks twice                       (Statements.lean:335-340)
     F2  the frozen `circuitMeta` forces `numPointSets = 0`          (Statements.lean:186-190)
-    F3  `calldatasize` wraps, `decodeCalldata` does not             (Statements.lean:240-247)
+    F3  `calldatasize` wraps, `decodeCalldata` does not             (Statements.lean §3, the
+        pre-ST.4 frame pinned here as `EntryFramePreST4`; the live frame now refuses it)
     F4  `EnvAgrees` pins neither `delta` nor any commitment         (Inv.lean:533-579)
     F5  the frozen seven codec laws hold at a codec that decodes nothing
     F6  `[hoist (R.prog 0 0)]` breaks `fail_lookup := rfl`
@@ -201,14 +202,39 @@ theorem leanAccepts_pad_false (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Byt
   rw [padBytes_size] at h2
   omega
 
-/-- And the frozen `EntryFrame` admits the padded calldata whenever it admits the original (the
-    selector is the first four bytes): nothing in the frozen surface excludes it. -/
+/-- THE PRE-ST.4 TEXT OF `LoweringV2.EntryFrame`, PINNED VERBATIM (the D-P27 pattern: an amended
+    frozen statement keeps its old text as a named proposition next to the exhibit that shows why
+    it was wrong). ST.4 added the sixth field `cdSize`, which is exactly what F3 is about: the five
+    fields below admit the padded calldata, the live six refuse it. The proof below is the
+    pre-ST.4 proof of `Blocks.lean`'s `entryFrame_inhabited`, verbatim, at the padded calldata. -/
+structure EntryFramePreST4 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash)
+    (cd : Bytes) (st : EvmState) : Prop where
+  shape : ∃ (mem₀ : Nat → UInt8) (aw : U256),
+    st = { Midfall.LoweringV2.initState W Lyt H cd mem₀ with activeWords := aw }
+  zeroAbove : Midfall.LoweringV2.ZeroAbove st.memory
+  fmp : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ (loadWord st.memory 0x40).toNat ≤ t
+  callvalue : st.env.callvalue = 0
+  selector : bytesTake cd 0 4 = some fnSigVerifyProof
+
+/-- And the FROZEN frame - the pinned five-field text above - admits the padded calldata whenever
+    it admits the original (the selector is the first four bytes): nothing in it excludes the
+    padding. Against the live frame the same statement is FALSE, which is the repair. -/
 theorem entryFrame_inhabited_padded (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout)
     (H : Hash) (cd : Bytes) (N : Nat)
     (hsel : bytesTake (padBytes cd N) 0 4 = some fnSigVerifyProof) (hcv : W.callvalue = 0)
     (ht : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) :
-    ∃ st₀, EntryFrame R W Lyt H (padBytes cd N) st₀ :=
-  entryFrame_inhabited R W Lyt H (padBytes cd N) hsel hcv ht
+    ∃ st₀, EntryFramePreST4 R W Lyt H (padBytes cd N) st₀ := by
+  refine ⟨Midfall.LoweringV2.initState W Lyt H (padBytes cd N) (fun _ => 0),
+    ⟨fun _ => 0, 0, rfl⟩, ?_, ?_, hcv, hsel⟩
+  · exact fun a _ => rfl
+  · obtain ⟨t, ht₁, ht₂⟩ := ht
+    refine ⟨t, ht₁, ?_⟩
+    have h0 :
+        (loadWord ((Midfall.LoweringV2.initState W Lyt H (padBytes cd N)
+          (fun _ : Nat => (0 : UInt8)))).memory 0x40).toNat = 0 := by
+      show (loadWord (fun _ : Nat => (0 : UInt8)) 0x40).toNat = 0
+      decide
+    rw [h0]; omega
 
 /-- The V3 frame refuses it: the bound is exactly what separates the two. -/
 theorem entryFrameV3_refuses_padded (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.Layout)
@@ -351,7 +377,7 @@ theorem deployment_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {H : Hash} {
 theorem entryFrame_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrame R W Lyt H cd st) :
     EntryFrame (bumpInst R) W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
 
 /-- But the Lean verifier of the bumped render rejects everything `R` accepts: the expected
     calldata length moved by 32. -/
