@@ -113,6 +113,7 @@ import Midfall.Instances.RunLegRouted
 import Midfall.Instances.PairingProduct
 import Midfall.Instances.YulParseKats
 import Midfall.Instances.M2BatchKats
+import Midfall.Instances.ObjectFingerprint
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals

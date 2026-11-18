@@ -2286,6 +2286,54 @@ the scope edit is not in it. Evidence: copies of the five block files compile wi
 under this scope (`design/statements.md` §2(d)); the alternative `[hoist (R.prog 0 0)]` breaks
 `fail_lookup := rfl` and is rejected.
 
+### OBJ.5 addendum — THE OBJECT FINGERPRINT (V3 row 39, landed after OBJ.2)
+
+This decision is the one that fixes what `Frozen.sha256` covers, so the complement of that coverage
+belongs here. The manifest hashes three FILES — `LoweringV2/Program.lean`,
+`LoweringV2/Shared.lean`, `LoweringV2/Statements.lean`. The program the headline quantifies over is
+in none of them: after this decision's own re-hash it is COMPUTED, by
+`asmOf poseidonPv poseidonM 0 0`, out of the AST emitters under `Midfall/Lowering/GenAst*.lean` and
+the render model under `Midfall/Generator/`. One literal changed in one emitter changes what the
+theorem is about and leaves every frozen hash green. `Midfall/Instances/ObjectFingerprint.lean`
+pins the computed object instead. **The two values, measured on the POST-M2 tree (at `e67415b`):**
+
+| the pin | the literal |
+|---|---|
+| `objectTokens.length` — `yulTokens (EVM.print (asmOf poseidonPv poseidonM 0 0)).length` | `14109` |
+| `objectKeccak` — `keccak256` of that printed string | `0x3149ae4fa6733f4f6e9df8a68ef58afce365cfa456fe5073225ba44fe3bef176` |
+
+The declaration is `theorem object_fingerprint : (objectTokens.length, objectKeccak) = (14109,
+0x3149ae4f…bef176) := by native_decide`, and it lives in `Instances/` for D-P17's reason:
+`native_decide` is confined there and `scripts/checks.sh` enforces that. It is an instance fact
+about the poseidon render, NOT a clause of D-P67's `ValidV3` — what it buys is the standing claim
+that D-P67's `program` clause and the frozen files are still about the same program from one package
+to the next.
+
+Three things worth recording with the numbers.
+
+- **The object is the INLINED program, not `mainAsmRaw`** (the card's guidance): 76 statements over
+  14,109 tokens, against `mainAsmRaw`'s 74 over 14,054 — OBJ.2's number, unchanged by this card.
+  The constant table is part of what the theorem runs, so `objectIsTheInlinedProgram_ok` reddens if
+  a later card re-points the fingerprint at the raw block.
+- **The two halves are not redundant, and the digest is the half with the teeth.** A token COUNT is
+  blind to a change of a literal's VALUE: `32` and `33` are one token each.
+  `objectFingerprintTeeth_ok` measures exactly that — moving `GenAst.emitQuotientLinAt`'s `0x20`
+  linearization payload offset to `0x21` leaves the count at 14109 and moves the digest to
+  `0x7f0f7c93e9ce9d0d034a2ef01876f9bdb312c058d4f5ec805fd0a1df869c1695`.
+- **`keccak256` here is a pure Lean definition** (PLAN-V3 §4's correction of V2's rule 9):
+  `Midfall/Common/Keccak.lean:15`, `bytesToWordBE (VCVio.Algorithms.Keccak.keccak256 bs)`, VCVio's
+  FFI-free Keccak-f[1600]. So `native_decide` runs compiled code for the same definition the
+  statement names, and there is no second implementation for the gate and the theorem to disagree
+  about. There is no FFI keccak in this tree.
+
+**FALSIFIER, RUN AND PASSED.** `ylit 0x20` → `ylit 0x21` at `Midfall/Lowering/GenAst.lean:1043`
+(one line, the emitter, not a frozen file): `object_fingerprint` fails with
+`Tactic native_decide evaluated that the proposition (objectTokens.length, objectKeccak) = (14109,
+0x3149…) is false`, the KAT file exits 1, and `sha256sum -c Midfall/LoweringV2/Frozen.sha256`
+reports OK for all three files and exits 0. The edit was reverted by editing it back: the file is
+byte-identical to HEAD and the gate is green again. That asymmetry is the deliverable — the frozen
+hashes cannot see this change and this gate can.
+
 ## D-P66 — **Approved: the non-vacuity gate for F1 (amends D-P45)**
 
 > Drafted as PLAN-V3 §2.2 row 66 (`docs/DECISIONS-PENDING.md` §12). **Status: APPROVED.**

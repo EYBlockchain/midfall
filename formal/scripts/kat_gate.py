@@ -158,8 +158,21 @@ EVAL = re.compile(
 # gate was deleted or edited. So the file count goes 102 -> 103 and the total 1400 -> 1417: the delta
 # is +17/+1 and nothing else moved. All seventeen were run through `lake env lean` before
 # this line moved.
-EXPECTED_KAT_TOTAL = 1440
-EXPECTED_KAT_FILES = 104
+# OBJ.5 (V3 row 39) adds Midfall/Instances/ObjectFingerprint.lean: a NEW file in the suite carrying
+# FIVE annotated '#eval ... -- expect' gates - the fingerprint of the OBJECT the headline is about,
+# the program `asmOf poseidonPv poseidonM 0 0`, which is COMPUTED by the emitters and so is invisible
+# to `Frozen.sha256` (three files, none of them an emitter). The five: the token count of
+# `EVM.print` of that program, pinned as the literal 14109; the `keccak256` of the same printed
+# string, pinned as the literal 0x3149ae4f...bef176; the two halves together as one Bool
+# (`objectFingerprint_ok`, the same fact as the `native_decide` theorem `object_fingerprint` in the
+# file, in the shape this script can name); the IN-TREE falsifier (`objectFingerprintTeeth_ok`: one
+# literal of the linearization payload offset moves the digest and NOT the token count, which is why
+# both halves are pinned and not one); and the guard that the object is the INLINED program and not
+# `mainAsmRaw` (`objectIsTheInlinedProgram_ok`), which is the card's own guidance. No gate was
+# deleted or edited. So the file count goes 104 -> 105 and the total 1440 -> 1445: the delta is
+# +5/+1 and nothing else moved. All five were run through `lake env lean` before this line moved.
+EXPECTED_KAT_TOTAL = 1445
+EXPECTED_KAT_FILES = 105
 
 # Only these shapes count as #eval output.
 #
