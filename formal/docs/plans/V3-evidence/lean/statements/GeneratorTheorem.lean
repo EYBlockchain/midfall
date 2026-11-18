@@ -4,6 +4,14 @@
   EVIDENCE, not landed code (see ../../README.md). Card PL.H lands this file's statements in the
   tree; cards DG.4 / DG.9 land `GeneratorDone`.
 
+  RECON.1b REBASE. Every theorem here is stated over the ONE `Midfall.LoweringV3.ValidV3` — the
+  seven-clause text RECON.1 landed at `Midfall/LoweringV3/Statements.lean:1116` — and this file now
+  imports that landed module, NOT the eighteen-clause draft still kept in `StatementsV3.lean` beside
+  it (the D-P67 fallback, which RECON.1's Guidance keeps in the evidence directory). One file, one
+  `ValidV3`: nothing here names a second text, and no clause is read that the single text does not
+  have. Where the old text had a clause the new one folds into `programOk`, the projection named by
+  RECON.1 is used (`exitDiscipline_of_valid`, `noWriters` is a clause).
+
   WHAT IS HERE
     §1  The four obligations of the V3 headline, each stated FOR EVERY RENDER from `ValidV3 R`.
         `twoOutcomes_correct` is proved from two `ValidV3` clauses. The other three are the open
@@ -18,8 +26,8 @@
   `../soundness/GeneratorRows.lean`: `statements/` and `soundness/` are separate roots of
   `check.sh`, and cards RECON.1 / RECON.2 own their reconciliation.
 -/
-import StatementsV3
-import StatementsV3Falsifiers
+import Midfall.LoweringV3.Statements
+import Midfall.Instances.StatementsV3Falsifiers
 
 set_option autoImplicit false
 
@@ -37,10 +45,12 @@ variable [Group G₁] [Group G₂] [Group Gₜ]
 
 /-! ## §1. The four obligations, for every render -/
 
-/-- Obligation 1 (syntactic). PROVED from the two scan clauses of `ValidV3`. Its own cone still
-    holds the two sorries of `twoOutcomes_of_scans` (`StatementsV3.lean`; cards ST.11, ST.12). -/
+/-- Obligation 1 (syntactic). PROVED from the two scan clauses of the single `ValidV3`: `noWriters`
+    is a clause, and the exit scan is the projection `exitDiscipline_of_valid` of the `program`
+    clause (RECON.1 addition 5 — ONE scan in the text, not two). Its own cone still holds the two
+    sorries of `twoOutcomes_of_scans` (`Midfall/LoweringV3/Statements.lean`; cards ST.11, ST.12). -/
 theorem twoOutcomes_correct (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) : TwoOutcomes R :=
-  twoOutcomes_of_scans R hR.noWriters hR.exitDiscipline
+  twoOutcomes_of_scans R hR.noWriters (exitDiscipline_of_valid hR)
 
 /-- Obligation 2 (soundness). OPEN: this is `rejectsV3_of_sims` applied to the staged rows of
     `GeneratorRows.lean` (`rows_correct`); cards RECON.2, SIM.5, and every ROW card. -/
@@ -71,7 +81,8 @@ theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct
 
 /-! ## §3. The definition of done, with no fixture in the headline -/
 
-/-- The non-vacuity gate at a GIVEN calldata: `HypothesesInhabitedV3` (`StatementsV3.lean:923`)
+/-- The non-vacuity gate at a GIVEN calldata: `HypothesesInhabitedV3`
+    (`Midfall/LoweringV3/Statements.lean:1483`)
     with `cd` supplied by the caller, so that the gate speaks about the test bundle's calldata and
     not about some calldata. -/
 def GateAtV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (cd : Bytes) : Prop :=
@@ -115,8 +126,10 @@ open Midfall.Instances.PoseidonV2
 
 /-- WITNESS (shape). The generic headline instantiates at the test render; nothing else is
     needed there. The hypothesis `ValidV3 poseidonRender` is refuted today
-    (`StatementsV3Deploy.lean: poseidon_payloadAgrees_not`) and becomes provable at the exit of
-    milestone M4; until then this `example` shows the instantiation typechecks. -/
+    (`Midfall/Instances/PoseidonValid.lean: poseidonRender_notValid`, sorry-free through `supported`;
+    `generated` refutes it independently, `Midfall/Instances/StatementsV3Deploy.lean`) and becomes
+    provable at the exit of milestone M4; until then this `example` shows the instantiation
+    typechecks. `Valid poseidonRender` is NOT inhabited and this card did not weaken a clause. -/
 example (product : PairingProduct) (hR : ValidV3 poseidonRender) :
     LoweringEquivalenceV3 poseidonRender product :=
   lowering_correct poseidonRender product hR

@@ -32,6 +32,27 @@
       `(hR : R.ValidV3)`, `SimPins R` is derived (`simPins_of_laws`), `EntryFrame` becomes
       `EntryFrameV3`, and the `PG_*` of §2 marked [V3] become projections of `hR`.
 
+  RECON.1b STATUS — **THIS FILE IS NOT REBASED, AND IT IS NOT TYPECHECKED.** Two independent causes,
+  neither of them this card's edit:
+    (i) Its import `SoundnessV3.lean` does not elaborate at HEAD (3 errors: `R.scope c g` now
+        unfolds to `hoist … (R.prog vkAddr 0)`, not `hoist … R.helpers` — ST.3 landed the scope
+        after this file was written — and `lowering_equivalence_of_stages`' anonymous constructor
+        predates ST.4's fourth conjunct). Until that file is rebased nothing here can be checked,
+        and RECON.1b will not blind-edit 1381 lines it cannot compile.
+    (ii) ST.6 cut the frozen `Render.Valid` over to the seven clauses, so §2's
+        `breakCompressed_valid` still projects `hR.slots`, `hR.vkPins` and `hR.vkProgressPins`
+        — clauses that no longer exist. `simPins_not_of_valid` cites the same bundle.
+  THE PROJECTION MAP for whoever rebases it (each is a theorem of the single text, proved in
+  `Midfall/LoweringV3/Statements.lean`): PG-NOSHADOW → `noShadow_of_programOk (programOkB_of_valid hR)`;
+  PG-CONSTS-LAG and PG-CONSTS-TP → `expectedConsts_lookups` + `lookup_expectedConsts_of_programOkB`;
+  PG-FRMOD → `frModulus_of_valid`; PG-NEGLAG → `negLagranges_of_valid`; PG-G1ID →
+  `g1IdentityFloor_of_valid`; PG-EXIT → `exitDiscipline_of_valid` + `exitShape_of_exitDiscipline`;
+  PG-G2SLOTS → `hR.payload.g2Base` / `.negSG2` with `hR.env`. **NO projection exists for
+  PG-PCS-EMIT** (a generator lemma, still unowned) **or for the `vkPins`/`vkProgressPins` pair** —
+  see the RECON.1b-PINS obligation recorded in `object/GeneratorCertified.lean` §5: those two
+  bundles are NOT derivable from the single text today, so the `.vkLoading` row keeps them as free
+  premises. That is a finding about the class, not an obstacle.
+
   `sorry` REGISTER: printed by `#cone_sorries` at the end; every one is a named theorem.
 -/
 import SoundnessV3

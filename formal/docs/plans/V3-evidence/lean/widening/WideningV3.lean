@@ -5,10 +5,14 @@
   IVC decider verifier is in. Every statement is for EVERY render `R`; no fixture occurs.
   (The file keeps its first name; it began as the design of a second fixture.)
 
-  SPECIFICATION, NOT LANDED CODE. Typechecked against the built tree (Lean sources of c22b51a; HEAD
-  moved during the session by commits that touch no file under formal/Midfall) and against the
-  compiled V3 evidence file `StatementsV3.lean` (see ../../check.sh). Nothing here is imported by
-  the build. Design memo: ../../statements.md.
+  SPECIFICATION, NOT LANDED CODE. Typechecked against the built tree. RECON.1b REBASE: this file now
+  imports the LANDED single text `Midfall/LoweringV3/Statements.lean` and no longer the
+  eighteen-clause draft of `StatementsV3.lean`, which stays in the evidence directory as the D-P67
+  fallback. `ValidCore` is no longer a copy of a second validity text: it is the six non-scope
+  clauses OF THE SINGLE TEXT, and `validV3_iff_core` ties it back to `ValidV3` in both directions.
+  `SupportedV3` is gone from the tree (RECON.1 step 4), so the scope vocabulary here is the frozen
+  `SupportedV2` that the single text's `supported` clause carries. Nothing here is imported by the
+  build. Design memo: ../../statements.md.
 
   Sections
     §A  scope            SupportedCore, AccShape, ExternalPinned, SupportedW
@@ -27,7 +31,7 @@
   Every `sorry` below is a STATED OBLIGATION (listed in the memo §10); every definition and every
   theorem statement elaborates.
 -/
-import StatementsV3
+import Midfall.LoweringV3.Statements
 import Midfall.Lowering.Accumulator
 
 namespace Midfall.LoweringW
@@ -44,8 +48,11 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ## §A. Scope -/
 
-/-- The ten clauses of `SupportedV3` (`StatementsV3.lean:592`) that do NOT mention the accumulator
-    or the quotient mode. Verbatim; shared by F1 and F2. -/
+/-- The ten clauses of `SupportedV2` (`Midfall/LoweringV2/Statements.lean:202`) — the scope clause
+    the single `ValidV3` carries — that do NOT mention the accumulator or the quotient mode.
+    Verbatim; shared by F1 and F2. RECON.1 step 4 deleted `SupportedV3`/`WellFormedV3` from the
+    staging module, so `wf` is the frozen `WellFormed` here too: the repaired permutation clause
+    lives in `programOk` as `permCommMatchRepaired`, i.e. inside `ValidCore.program`. -/
 structure SupportedCore (R : Render p G₁ G₂ Gₜ) : Prop where
   advice : R.vk.cs.numAdviceColumns ≠ 0
   instShape : R.vk.cs.numInstanceColumns = 2 ∧ R.cfg.numCommittedInstances = 1
@@ -56,12 +63,12 @@ structure SupportedCore (R : Render p G₁ G₂ Gₜ) : Prop where
     LoweringV2.ptReadable (R.E.g1.toEip C)
   layout : R.plan.memory.map.WellFormed ∧ R.plan.memory.validate.isOk = true
   production : R.flags.trace = false ∧ R.flags.gasCheckpoints = false
-  wf : WellFormedV3 R.vk Features.solidity
+  wf : R.vk.WellFormed Features.solidity
   separateVk : R.flags.separate = true
 
-/-- `SupportedV3` is the core plus its two first-headline restrictions. PROVED. -/
-theorem supportedV3_iff_core (R : Render p G₁ G₂ Gₜ) :
-    SupportedV3 R ↔ SupportedCore R ∧ R.cfg.accumulator = none ∧
+/-- `SupportedV2` is the core plus its two first-headline restrictions. PROVED. -/
+theorem supportedV2_iff_core (R : Render p G₁ G₂ Gₜ) :
+    SupportedV2 R ↔ SupportedCore R ∧ R.cfg.accumulator = none ∧
       (R.flags.externalQuotient = false ∧ R.flags.expectedQuotient = none) :=
   ⟨fun h => ⟨⟨h.advice, h.instShape, h.noRotInst, h.singlePhase, h.hLimbs, h.vkPoints, h.layout,
       h.production, h.wf, h.separateVk⟩, h.noAcc, h.embeddedQuotient⟩,
@@ -93,8 +100,8 @@ structure AccShape (R : Render p G₁ G₂ Gₜ) (enc : Midfall.Generator.Accumu
 def ExternalPinned (R : Render p G₁ G₂ Gₜ) : Prop :=
   R.flags.externalQuotient = true ∧ ∃ len hash, R.flags.expectedQuotient = some (len, hash)
 
-/-- **THE WIDENED SUPPORTED CLASS.** `SupportedV3` with `noAcc` replaced by `acc` and
-    `embeddedQuotient` replaced by `quotient`. Four corners; V3's class is (none, embedded) and
+/-- **THE WIDENED SUPPORTED CLASS.** `SupportedV2` — the single text's `supported` clause — with
+    `noAcc` replaced by `acc` and `embeddedQuotient` replaced by `quotient`. Four corners; V3's class is (none, embedded) and
     the IVC decider verifier is (collapsed, external pinned).
 
     `accKind` is the RECOMMENDED first cut (decision W-2 of the memo): only the point-and-scalar
@@ -110,22 +117,22 @@ structure SupportedW (R : Render p G₁ G₂ Gₜ) : Prop where
     ExternalPinned R
 
 /-- V3's class is inside the widened one. PROVED. -/
-theorem SupportedW.ofV3 {R : Render p G₁ G₂ Gₜ} (h : SupportedV3 R) : SupportedW R :=
-  let ⟨c, ha, hq⟩ := (supportedV3_iff_core R).mp h
+theorem SupportedW.ofV3 {R : Render p G₁ G₂ Gₜ} (h : SupportedV2 R) : SupportedW R :=
+  let ⟨c, ha, hq⟩ := (supportedV2_iff_core R).mp h
   ⟨c, Or.inl ha, fun enc he => (by rw [ha] at he; cases he), Or.inl hq⟩
 
 /-- And it is exactly the corner (none, embedded). PROVED. -/
-theorem supportedV3_iff_W (R : Render p G₁ G₂ Gₜ) :
-    SupportedV3 R ↔ SupportedW R ∧ R.cfg.accumulator = none ∧
+theorem supportedV2_iff_W (R : Render p G₁ G₂ Gₜ) :
+    SupportedV2 R ↔ SupportedW R ∧ R.cfg.accumulator = none ∧
       (R.flags.externalQuotient = false ∧ R.flags.expectedQuotient = none) :=
   ⟨fun h => ⟨SupportedW.ofV3 h, h.noAcc, h.embeddedQuotient⟩,
-   fun ⟨hW, ha, hq⟩ => (supportedV3_iff_core R).mpr ⟨hW.core, ha, hq⟩⟩
+   fun ⟨hW, ha, hq⟩ => (supportedV2_iff_core R).mpr ⟨hW.core, ha, hq⟩⟩
 
 /-- FALSIFIER of "the IVC class is already supported": a render in accumulator mode is outside
-    `SupportedV3`. PROVED. -/
-theorem acc_not_supportedV3 (R : Render p G₁ G₂ Gₜ)
+    the single text's scope clause `SupportedV2`. PROVED. -/
+theorem acc_not_supportedV2 (R : Render p G₁ G₂ Gₜ)
     (enc : Midfall.Generator.AccumulatorEncoding) (h : R.cfg.accumulator = some enc) :
-    ¬ SupportedV3 R := by
+    ¬ SupportedV2 R := by
   intro h3
   rw [h3.noAcc] at h
   cases h
@@ -472,7 +479,7 @@ structure WorldW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (product : Pairi
   dep : DeploymentV2 R W H vkAddr
   entry : EntryFrameV3 R W Lyt H cd st₀
   pc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product
-  codec : G1CodecHeadlineLaws R.E.g1
+  codec : Midfall.LoweringV3.G1CodecHeadlineLaws R.E.g1
   evaluator : isExternal R → QPinnedEnv R W qAddr ∧
     accountKey qAddr ∉ ([0x0b, 0x0c, 0x0f, 0x05] : List Nat) ∧
     EvaluatorTrust R Q W Lyt qAddr evalRel
@@ -507,7 +514,8 @@ def TwoOutcomesW (R : Render p G₁ G₂ Gₜ) : Prop :=
     `qAddr`). PROVED from them: no evaluator fact and no accumulator fact enters conjunct 3,
     whatever the evaluator answers. -/
 theorem twoOutcomesW_of_scans (R : Render p G₁ G₂ Gₜ)
-    (hw : NoWriters (R.prog 0 0)) (hx : ExitDiscipline (R.prog 0 0)) : TwoOutcomesW R := by
+    (hw : NoWriters (R.prog 0 0)) (hx : Midfall.LoweringV3.ExitDiscipline (R.prog 0 0)) :
+    TwoOutcomesW R := by
   intro vkAddr qAddr c g st₀ obs hobs
   obtain ⟨V', hrun⟩ := hobs
   obtain ⟨hw', hx'⟩ := scans_prog_addr_indep R vkAddr qAddr hw hx
@@ -517,7 +525,7 @@ theorem twoOutcomesW_of_scans (R : Render p G₁ G₂ Gₜ)
 theorem TwoOutcomesW.toV3 {R : Render p G₁ G₂ Gₜ} (h : TwoOutcomesW R) : TwoOutcomes R :=
   fun vkAddr c g st₀ obs hobs => h vkAddr 0 c g st₀ obs hobs
 
-/-- **LOWERING EQUIVALENCE, WIDENED.** V3's text (`StatementsV3.lean:818`) with four substitutions:
+/-- **LOWERING EQUIVALENCE, WIDENED.** V3's text (`Midfall/LoweringV3/Statements.lean:1378`) with four substitutions:
     the evaluator address is a variable `qAddr`; `callsW` for `callsOf`; `LeanAcceptsAcc` for
     `LeanAccepts`; `WorldW` for the four V3 hypotheses (it adds two that are vacuous at V3's
     class). `SoundSide`, `CompleteSide`, `EntryFrameV3`, `RunBody`, `GasTotal`, `returnView` are
@@ -546,7 +554,7 @@ def LoweringEquivalenceW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (product
     (∀ (g : ExternalGas) (obs : Obs),
         RunBody R vkAddr qAddr (permissive (callsW R product qAddr evalRel)) g st₀ obs →
         obs.view = returnView st₀ ∨ (obs.isRevertOrHalt ∧ obs.worldUnchanged st₀)) ∧
-    (∀ g : ExternalGas, GasTotal g →
+    (∀ g : ExternalGas, Midfall.LoweringV3.GasTotal g →
         ∃ obs, RunBody R vkAddr qAddr (callsW R product qAddr evalRel) g st₀ obs)
 
 /-- PROGRAM-LEVEL REJECTION, widened (`RejectsV3`). -/
@@ -577,7 +585,7 @@ def TotalW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (product : PairingProd
     (st₀ : EvmState)
     (evalRel : YulSemantics.EVM.CallRequest → EvmState → CallResponse → Prop),
     WorldW R Q product W Lyt H vkAddr qAddr cd st₀ evalRel →
-    ∀ g : ExternalGas, GasTotal g →
+    ∀ g : ExternalGas, Midfall.LoweringV3.GasTotal g →
       ∃ obs, RunBody R vkAddr qAddr (callsW R product qAddr evalRel) g st₀ obs
 
 /-- OPTIONAL STRENGTHENING of conjunct 2 (decision W-5): completeness under EVERY total gas
@@ -589,7 +597,7 @@ def CompleteAnyGasW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (product : Pa
     (st₀ : EvmState)
     (evalRel : YulSemantics.EVM.CallRequest → EvmState → CallResponse → Prop),
     WorldW R Q product W Lyt H vkAddr qAddr cd st₀ evalRel →
-    LeanAcceptsAcc R H cd → CompleteSide R H cd → ∀ g : ExternalGas, GasTotal g →
+    LeanAcceptsAcc R H cd → CompleteSide R H cd → ∀ g : ExternalGas, Midfall.LoweringV3.GasTotal g →
       (∃ obs, RunBody R vkAddr qAddr (callsW R product qAddr evalRel) g st₀ obs) ∧
       ∀ obs, RunBody R vkAddr qAddr (callsW R product qAddr evalRel) g st₀ obs →
         obs.view = returnView st₀
@@ -748,37 +756,66 @@ def PairingInputsAgree (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
 
 /-! ## §G. Validity, and the target -/
 
-/-- `ValidV3` (`StatementsV3.lean:613`) minus its `supported` clause. Verbatim otherwise; RECON.1
-    will replace this text by the seven-clause one and the widening follows it. -/
+/-- The `model` clause of the old eighteen-clause text is NOT a clause of the single text: it is
+    inside `generated`. This is the projection that replaces it, PROVED by inverting the four binds
+    of `generateAll`. Nothing was restated to make it go through: the equation is verbatim the one
+    the old `model` clause carried. -/
+theorem ok_bind_iff {α β γ : Type} (x : Except α β) (f : β → Except α γ) {η : γ} :
+    (x >>= f) = .ok η ↔ ∃ y, x = .ok y ∧ f y = .ok η := by
+  constructor
+  · cases x with
+    | error e => intro h; cases h
+    | ok y => intro h; exact ⟨y, rfl, h⟩
+  · rintro ⟨y, rfl, hy⟩; exact hy
+
+theorem model_of_generated {R : Render p G₁ G₂ Gₜ} (h : Midfall.LoweringV3.GeneratedBy R) :
+    generateVerifierFromPlan (fun _ _ => R.qblocks) R.inputs R.flags R.plan = .ok R.model := by
+  obtain ⟨out, hg, hplan, hq, hm⟩ := h
+  rw [Midfall.LoweringV3.generated] at hg
+  simp only [generateAll, Bind.bind] at hg
+  obtain ⟨rawMeta, _, h1⟩ := (ok_bind_iff _ _).mp hg
+  obtain ⟨plan, _, h2⟩ := (ok_bind_iff _ _).mp h1
+  obtain ⟨blocks, _, h3⟩ := (ok_bind_iff _ _).mp h2
+  obtain ⟨model, hgen, h4⟩ := (ok_bind_iff _ _).mp h3
+  cases h5 : model.validateLayout with
+  | error e => simp only [h5] at h4; cases h4
+  | ok u =>
+    simp only [h5] at h4
+    have hA : { plan := plan, qblocks := blocks, model := model } = out :=
+      Except.ok.inj (show Except.ok { plan := plan, qblocks := blocks, model := model } =
+        Except.ok out from h4)
+    have hp : plan = R.plan := (congrArg GenOut.plan hA).trans hplan
+    have hb : blocks = R.qblocks := (congrArg GenOut.qblocks hA).trans hq
+    have hm' : model = R.model := (congrArg GenOut.model hA).trans hm
+    subst hp; subst hb; subst hm'
+    exact hgen
+
+/-- **THE SIX NON-SCOPE CLAUSES OF THE SINGLE `ValidV3`.** Not a second text: every field type is a
+    clause type of `Midfall.LoweringV3.ValidV3` (`Statements.lean:1116`) — `generated`, `inputs`,
+    `program`, `noWriters`, `env`, `payload` — and `validV3_iff_core` below is the only way in or
+    out. The widening replaces ONE clause of the single text, the scope clause `supported :
+    SupportedV2 R`, by `SupportedW`; everything else is that text unchanged. The old copy of the
+    eighteen-clause text that stood here is deleted (RECON.1b Do step 1): its `circuitMeta`,
+    `layout`, `invariants` and `model` are now inside `generated` (projection
+    `model_of_generated`), its `codegen`, `closed`, `noShadow`, `cdBound`, `transcriptMptr` are
+    conjuncts of `programOk` (projections `cdBound_of_valid`, `transcriptMptr_of_valid`,
+    `noShadow_of_programOk`), and its `vkPins` / `vkProgressPins` are NOT clauses of the single
+    text at all — see the obligation recorded at `object/GeneratorCertified.lean` §5. -/
 structure ValidCore (R : Render p G₁ G₂ Gₜ) : Prop where
-  circuitMeta : PlanMeta R
-  layout : ProofCalldataLayout.fromProtocol R.plan.meta_.protocol abiVerifyProofProofCptr
-      R.plan.meta_.numEvals R.plan.meta_.numPointSets = .ok R.plan.proofLayout
-  invariants : R.plan.validateGeneratorInvariants = .ok (.ok ())
-  model : generateVerifierFromPlan (fun _ _ => R.qblocks) R.inputs R.flags R.plan = .ok R.model
+  generated : Midfall.LoweringV3.GeneratedBy R
   inputs : R.inputs.numInstances = R.cfg.numInstances ∧
     R.inputs.accEncoding = R.cfg.accumulator ∧ R.inputs.k = R.vk.domain.k ∧
     R.inputs.truncatedChallenges = Features.solidity.truncatedChallenges
-  codegen : CodegenAgrees R.pv R.model
-  closed : mainClosed R.pv R.model = true
-  slots : EnvAgrees R.E R.vk R.pv R.params R.sG2gen
-  payload : PayloadAgrees R
+  program : Midfall.LoweringV3.programOk R
   noWriters : NoWriters (R.prog 0 0)
-  exitDiscipline : ExitDiscipline (R.prog 0 0)
-  noShadow : noShadowB R = true
-  cdBound : R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 256
-  transcriptMptr : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t
-  vkPins : vkPins R
-  vkProgressPins : vkProgressPins R
+  env : EnvAgrees R.E R.vk R.pv R.params R.sG2gen
+  payload : Midfall.LoweringV3.PayloadAgrees R
 
-/-- `ValidV3` is the core plus `SupportedV3`. PROVED. -/
-theorem validV3_iff_core (R : Render p G₁ G₂ Gₜ) : ValidV3 R ↔ ValidCore R ∧ SupportedV3 R :=
-  ⟨fun h => ⟨⟨h.circuitMeta, h.layout, h.invariants, h.model, h.inputs, h.codegen, h.closed,
-      h.slots, h.payload, h.noWriters, h.exitDiscipline, h.noShadow, h.cdBound, h.transcriptMptr,
-      h.vkPins, h.vkProgressPins⟩, h.supported⟩,
-   fun ⟨c, s⟩ => ⟨c.circuitMeta, c.layout, c.invariants, c.model, c.inputs, c.codegen, c.closed,
-      c.slots, c.payload, s, c.noWriters, c.exitDiscipline, c.noShadow, c.cdBound,
-      c.transcriptMptr, c.vkPins, c.vkProgressPins⟩⟩
+/-- `ValidV3` is the core plus the single text's scope clause. PROVED, both directions, by
+    re-associating seven clauses. -/
+theorem validV3_iff_core (R : Render p G₁ G₂ Gₜ) : ValidV3 R ↔ ValidCore R ∧ SupportedV2 R :=
+  ⟨fun h => ⟨⟨h.generated, h.inputs, h.program, h.noWriters, h.env, h.payload⟩, h.supported⟩,
+   fun ⟨c, s⟩ => ⟨c.generated, c.inputs, c.program, c.noWriters, c.env, c.payload, s⟩⟩
 
 /-- The pins an external render adds; each is a lookup in the render's own constant table or a
     computation on the evaluator object. -/
@@ -795,7 +832,7 @@ structure EvalPins (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) : Prop where
   /-- The evaluator body is closed (no free name: otherwise it is stuck, and totality fails). -/
   evalClosed : (freeNames Q.body).isEmpty = true
 
-/-- **VALIDITY, WIDENED.** `ValidV3` with `SupportedW` for `SupportedV3`, plus the evaluator pins
+/-- **VALIDITY, WIDENED.** `ValidV3` with `SupportedW` for the single text's `supported` clause, plus the evaluator pins
     for a render that calls one. Checked per circuit by computation, as `ValidV3` is (D-P71.3). -/
 structure ValidW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) : Prop where
   core : ValidCore R
@@ -815,7 +852,7 @@ theorem model_quotientMode (R : Render p G₁ G₂ Gₜ)
 theorem ValidW.ofV3 {R : Render p G₁ G₂ Gₜ} (Q : EvalObject) (h : ValidV3 R) : ValidW R Q := by
   obtain ⟨hc, hs⟩ := (validV3_iff_core R).mp h
   refine ⟨hc, SupportedW.ofV3 hs, fun he => ?_⟩
-  have hm := model_quotientMode R hc.model
+  have hm := model_quotientMode R (model_of_generated hc.generated)
   rw [hs.embeddedQuotient.1] at hm
   unfold isExternal at he
   rw [he] at hm
@@ -825,7 +862,7 @@ theorem ValidW.ofV3 {R : Render p G₁ G₂ Gₜ} (Q : EvalObject) (h : ValidV3 
 theorem quotientExternal_none_of_V3 {R : Render p G₁ G₂ Gₜ} (hR : ValidV3 R) :
     R.model.quotientExternal = none := by
   obtain ⟨hc, hs⟩ := (validV3_iff_core R).mp hR
-  have hm := model_quotientMode R hc.model
+  have hm := model_quotientMode R (model_of_generated hc.generated)
   rw [hs.embeddedQuotient.1] at hm
   cases hqe : R.model.quotientExternal with
   | none => rfl
@@ -873,8 +910,8 @@ theorem evalModel_emptyBody (outMptr : Nat) (W : ExecEnv) (Lyt : EVM.Layout) (qA
 
 /-! ## Axiom audit -/
 
-#print axioms supportedV3_iff_W
-#print axioms acc_not_supportedV3
+#print axioms supportedV2_iff_W
+#print axioms acc_not_supportedV2
 #print axioms verifyMsgs_ok_iff
 #print axioms leanAcceptsAcc_iff_noAcc
 #print axioms soundSide_of_leanAcceptsAcc

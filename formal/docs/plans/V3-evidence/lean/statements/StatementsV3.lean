@@ -151,11 +151,10 @@ def frozenCalldataCore {G : Type} (numInstances : Nat) (plan : RepackedProofLayo
       Midfall.Generator.GeneratorError.fromRepackError >>= fun π' =>
     Midfall.Lowering.encodeCalldata (p := p) numInstances plan c π' inst
 
-/-- The core IS the frozen `calldataOf`, by `rfl`. -/
-theorem frozenCalldataOf_eq_core (R : Render p G₁ G₂ Gₜ) (π : Bytes) (inst : Array (Fr p)) :
-    Midfall.LoweringV2.calldataOf R π inst =
-      frozenCalldataCore R.cfg.numInstances
-        (RepackedProofLayoutPlan.fromProofLayout R.plan.proofLayout) R.E.g1 π inst := rfl
+/-! DELETED (RECON.1b, carrying ST.4's deletion into this fallback text): until ST.4 the live
+    `LoweringV2.calldataOf` WAS `frozenCalldataCore` by `rfl`; from ST.4 on the live def is
+    `repackThenEncode`, so the bridge lemma is FALSE and is gone. `frozenCalldata_isOk` below is
+    what the falsifier measures instead. -/
 
 section CalldataWitness
 open Midfall.Lowering.CdKats
@@ -226,7 +225,7 @@ def scopeV3 (R : Render p G₁ G₂ Gₜ) (c : ExternalCalls) (g : ExternalGas) 
     the standalone slices and not in the program). solc rejects such shadowing, so the clause also
     aligns the model with Solidity. -/
 def noShadowCore (pv : PlanView) (m : Model) : Bool :=
-  (topBinders (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv)).all
+  (topBinders (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m)).all
     fun x => !((constTableOf m).map Prod.fst).contains x
 
 /-- The render-level face of `noShadowCore`. -/
@@ -670,7 +669,7 @@ structure EntryFrameV3 (R : Render p G₁ G₂ Gₜ) (W : ExecEnv) (Lyt : EVM.La
 theorem EntryFrameV3.toV2 {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
     {cd : Bytes} {st : EvmState} (h : EntryFrameV3 R W Lyt H cd st) :
     EntryFrame R W Lyt H cd st :=
-  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector⟩
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
 
 /-- **INHABITATION**, the V3 form of `Blocks.lean:624 entryFrame_inhabited`: one more premise
     (`hcd`), the same witness. PROVED. -/

@@ -12,9 +12,27 @@
 
       LEAN_PATH="$BASE_LP:$OUT/object:$OUT/statements" lake env lean GeneratorCertified.lean
 
+  RECON.1b STATUS — **THIS FILE IS NOT REBASED, AND IT IS NOT TYPECHECKED.** Its import
+  `ObjectV3Full.lean` does not elaborate at HEAD: ST.6 ported the clause machinery
+  (`programOk`, `constsCoherent`, `payloadWord`, `expectedConsts`, `generateAll`, `g1WordsBytes`,
+  `funSigsOf`, `parsedMain?`, …) into `Midfall/LoweringV2/Statements.lean` **in the same
+  `Midfall.LoweringV2` namespace** that `ObjectV3Full.lean` declares its own copies in — 43 errors,
+  of which 15 are "has already been declared". So the object text and the frozen text are no longer
+  two names for one thing: the frozen file now OWNS the object text's vocabulary. RECON.1b will not
+  edit a file it cannot compile, and the repair belongs to the object area (rename the object file's
+  private copies, or delete them now that the frozen file carries them).
+  WHAT THE REBASE WILL BE, once that is fixed: ONE theorem, `generator_certified`, concluding the
+  single `Midfall.LoweringV3.ValidV3`; `generator_certified_V3` and the §5 lemmas that restate the
+  eighteen-clause clauses (`v3_planMeta`, `v3_layout`, `v3_invariants`, `v3_model`, `v3_codegen`,
+  `v3_closed`, `v3_noShadow`, `v3_cdBound`, `v3_transcriptMptr`) collapse into the `program` and
+  `generated` clauses — `model_of_generated` (proved in `widening/WideningV3.lean` §G by RECON.1b)
+  is the one that recovers the `model` equation from `generated`. The pin half is
+  RECON.1b-PINS below.
+
   Sections
    1. The generator's input (`GenInput`), the whole generator (`generate` = `generate_vk` then
       `generateAll`), and `renderOf`.
+
    2. `SupportedInput`: the scope, input-only.
    3. One lemma statement per output-side clause of `Render.ValidV3` (and per sub-clause of
       `programOk`); each `sorry` is the body of a named theorem.
@@ -454,12 +472,49 @@ theorem v3_payload (hg : Generates gi o) (hs : SupportedInput gi) :
     Midfall.LoweringV3.PayloadAgrees (renderOf gi o) := by
   sorry -- (c)+(d): the same five groups as section 3 at the V3 slot names, plus `delta` = hs.deltaLiteral
 
-/-- The three pin clauses are consequences of the object text, not new obligations. -/
+/-- **RECON.1b-PINS — THE PIN-BUNDLE DEBT, RECORDED HERE WITH AN OWNER, NOT LANDED.**
+
+  ST.6 retired `vkPins` / `vkProgressPins` as clauses 12-13 of `Render.Valid` (D-P67: the seven
+  clauses subsume them) and the single `ValidV3` says "the pin bundles are NOT clauses -
+  `constsCoherent` is, and `vkPins` / `vkProgressPins` / `transcriptMptr` are theorems of it".
+  **That derivation is NOT in the tree, and this card measured that it CANNOT be landed as it
+  stands.** Field by field, against `Midfall/LoweringV3/Statements.lean:622-728`
+  (`expectedConsts`) and the seven clauses:
+
+  * `transcriptMptr` — **PROVED in the tree** (`transcriptMptr_of_valid`, from `constsCoherent`
+    plus the `TRANSCRIPT_MPTR` floor conjunct of `programOkB`). No debt.
+  * `vkPins.vkMptr` — **derivable**: `("VK_MPTR", cAddr M.vkMptr)` is an unconditional arm of
+    `expectedConsts`, so the six-line `lookup_expectedConsts_of_programOkB` script closes it.
+  * `vkPins.payloadLen`, `vkProgressPins.vkLen`, `vkProgressPins.vkHash` — **NOT derivable
+    today**: those three names are emitted only in the `m.expectedVkCodehash = some (…)` arm of
+    `expectedConsts`, so the render's `programOk` does not pin them unless
+    `R.model.expectedVkCodehash.isSome` is assumed; and the table pins `EXPECTED_VK_LENGTH` to
+    `pv.vk.len + 1` while the pin demands `R.plan.vk.runtimeBytes.size`, so a data fact
+    `runtimeBytes.size = pv.vk.len + 1` (Models builder) is needed as well.
+  * `vkPins.numInst` (`R.pv.numInstances = R.cfg.numInstances`) — **not a table fact at all**:
+    the table carries `NUM_INSTANCES_MPTR`, a pointer, not the count. It needs a plan-view lemma
+    relating `pv.numInstances` to `inputs.numInstances` (then `hR.inputs.1` finishes it).
+  * `vkPins.disjoint` — **not a table fact**: window geometry. The candidate source is the
+    `supported.layout.1` clause (`R.plan.memory.map.WellFormed`) plus the `pv.vk.len` extent of
+    the VK window; nobody has proved that `WellFormed` separates `g1_identity` from `vk`.
+
+  **CONSEQUENCE, STATED PLAINLY:** the `.vkLoading` rows in the frozen tree
+  (`Blocks/Compose.lean:91`, `Blocks/VkLoading.lean:734`) still take `vkPins R` and
+  `vkProgressPins R` as FREE PREMISES — the pre-D-P50 shape. A premise that is silently free is
+  how a theorem stops meaning anything, so this is not allowed to vanish into a green gate.
+
+  **OWNER.** OBJ.6/OBJ.7's author owns the two model facts (`expectedVkCodehash.isSome`,
+  `runtimeBytes.size = pv.vk.len + 1`); the `pv.numInstances` and `map.WellFormed ⇒ disjoint`
+  lemmas are RECON.1's owner (they are clause consequences, so they belong beside the projections
+  in `Midfall/LoweringV3/Statements.lean`, not in a block file). Until all five land, no card may
+  claim the pin bundle is a theorem of `ValidV3`. This file's `v3_pins_of_valid` is the sorry that
+  names the gap; it is NOT counted as discharged by RECON.1b. -/
 theorem v3_pins_of_valid {R : Render p G₁ G₂ Gₜ} (h : R.ValidV3) :
     (∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t) ∧ vkPins R ∧
       vkProgressPins R := by
-  sorry -- (c) S: the six-line script of `ValidV3.vkMptr_const` per name; `disjoint` from the
-        --   memory map (a); `vkLen` needs runtimeBytes.size = len + 1 (Models builder)
+  sorry -- RECON.1b-PINS: 1 of 6 fields is a clean constsCoherent consequence; 3 need
+        --   model.expectedVkCodehash.isSome + runtimeBytes.size = pv.vk.len + 1; numInst and
+        --   disjoint are not table facts at all. See the obligation above — NOT landed here.
 
 end V3
 
