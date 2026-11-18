@@ -129,6 +129,9 @@ import Midfall.Yul.IRCheck
 import Midfall.Yul.Wp
 import Midfall.Yul.WpBridge
 import Midfall.Yul.WpFalsifiers
+import Midfall.Yul.WpTac
+import Midfall.Yul.WpTacTest
+import Midfall.Yul.WpX
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements

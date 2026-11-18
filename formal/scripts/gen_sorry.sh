@@ -64,6 +64,18 @@ owner() {
       echo 'V3 ST.12 - the two scans ignore the addresses the wrapper binds as let literals. Experiment: same cost class as noWriters_prog (Blocks.lean:340), which it subsumes' ;;
     Midfall.LoweringV3.runBody_mono)
       echo 'V3 ST.13 - monotonicity in the call relation (Bridge layer). Experiment: induction on Step; the call relation occurs only in externalCall (EVMExec.lean), in a positive position' ;;
+    # ---- T3.1b: the three WPX statements that came with the wp_run port (Midfall/Yul/WpX.lean). ----
+    # The T3.1b card says "register WPX.lean's three sorries (owner: T3.2)". Only wpSS_exists is
+    # T3.2's: PLAN-V3-cards.md:1312 and :1319 give loadWord_storeWord to T3.5 (the word and memory
+    # layer) and :1369, :1373 and :1375 give mulmod_toFr to T3.8 (the field-arithmetic bridge). Each
+    # row therefore names the card the PLAN says removes it; the card's single-owner line is a premise
+    # error, reported on the T3.1b ticket rather than copied into the register.
+    Midfall.Yul.WpX.wpSS_exists)
+      echo 'V3 T3.2 - totality: build the Step derivation by induction on fuel (statement from scratch WPX.lean:24; BLive is landed in Midfall/Yul/WpBridge.lean)' ;;
+    Midfall.Yul.WpX.loadWord_storeWord)
+      echo 'V3 T3.5 - the word and memory layer: loadWord over storeWord at equal and disjoint 32-byte windows (cards.md:1312, :1319)' ;;
+    Midfall.Yul.WpX.mulmod_toFr)
+      echo 'V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373)' ;;
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
