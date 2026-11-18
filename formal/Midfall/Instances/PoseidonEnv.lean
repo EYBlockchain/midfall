@@ -222,12 +222,50 @@ def poseidonVkExec : VerifyingKey (Fr blsR) G₁z :=
     csDegree := poseidonVkData.csDegree,
     transcriptRepr := poseidonTranscriptRepr }
 
+/-- **THE FIELD CONSTANT `Fr::DELTA`.** `delta := 2` was C.2's placeholder: a value that is
+    trivially a field element and nothing more, carried because `VerifierEnv` needs SOME delta and
+    nothing in the render read it. OBJ.8 step 2 replaces it with the constant the artifact was
+    generated with, because the `generated` clause DOES read it: `Render.generated` passes
+    `R.E.delta` into `generateAll`, and OBJ.7's gate 9 measures that the DELTA reaches the emitted
+    quotient code - at `delta := 2` the generated text differs from the artifact in 3 lines and the
+    block record itself changes, which is what refuted `GeneratedBy poseidonRender`.
+
+    THE VALUE IS NOT PASTED BLIND. It is `Fr::DELTA = 7^(2^32) mod r` - multiplicative generator 7,
+    two-adicity 32 - the literal in `curves/src/bls12_381/fq.rs:492`, and gate 1 of OBJ.6
+    (`PlanNewKats.frFieldCtx_matchesArtifact_ok`) already pins it against the string the exported
+    build inputs carry. `poseidonDelta_isArtifactLiteral_ok` below is this card's own KAT: the same
+    hex, checked against `poseidonInputs.frDelta` (the exported literal) AND against the
+    generator-theoretic value `modPow 7 (2^32) blsR`, so a drift in either direction reddens it. -/
+def poseidonDelta : Fr blsR :=
+  0x08634d0aa021aaf843cab354fabb0062f6502437c6a09c006c083479590189d7
+
+/-- **KAT (OBJ.8 step 2).** Three independent names for one number: the constant above, the
+    artifact's own exported `frDelta` string, and `7^(2^32) mod r`. WITNESS.
+    AXIOM: poseidonDelta_isArtifactLiteral_ok._native.native_decide.ax_1_1. -/
+theorem poseidonDelta_isArtifactLiteral_ok :
+    poseidonDelta.val == 0x08634d0aa021aaf843cab354fabb0062f6502437c6a09c006c083479590189d7 ∧
+      poseidonInputs.frDelta ==
+        "0x8634d0aa021aaf843cab354fabb0062f6502437c6a09c006c083479590189d7" ∧
+      poseidonDelta.val == modPow 7 (2 ^ 32) blsR := by
+  native_decide
+
+/-- **FALSIFIER (OBJ.8 step 2).** The placeholder is refuted against the same three names, so the
+    clause that was failing was failing for a reason and not for a typo: at `delta := 2` the render's
+    DELTA is not the DELTA the artifact was generated with. -/
+theorem poseidonDelta_notThePlaceholder : (2 : Fr blsR).val ≠ poseidonDelta.val := by
+  native_decide
+
 /-- **TERM 1 OF 5.** The verifier environment at the exhibit's G1 codec. Noncomputable because
     g1CodecZ is, exactly like curveE; the pin below is what says it is the SAME codec and not a
     look-alike. field is the repaired constants of section 3, so the environment's own field record
-    is the one whose root reproduces the deployment's omega. -/
+    is the one whose root reproduces the deployment's omega. `delta` is the field constant of the
+    gate above, NOT the old placeholder 2 (OBJ.8 step 2). -/
 noncomputable def poseidonE : VerifierEnv blsR G₁z G2fold blsGT :=
-  { g1 := g1CodecZ, field := poseidonFc, delta := 2, fewerPointSetsRuntime := false }
+  { g1 := g1CodecZ, field := poseidonFc, delta := poseidonDelta,
+    fewerPointSetsRuntime := false }
+
+/-- The render's DELTA IS the field constant, by the kernel and not by a tactic. -/
+theorem poseidonE_delta_isFieldConstant : poseidonE.delta = poseidonDelta := rfl
 
 /-- **TERM 4 OF 5.** The Surface's sG2gen slot for the deployment. Gap B: the deployment's s·G₂ is in
     params.json only as s_g2_compressed_hex, and G2fold = Exp blsR is the exponent carrier, so

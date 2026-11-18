@@ -151,7 +151,10 @@ def dataConjunct_ok : Bool :=
 
 -- the eight codec-free fields, in the order of `payloadScalarsB`:
 -- numInstances, k, nInv, omega, omegaInv, omegaInvToL, accWords, delta
-theorem poseidonE_delta : poseidonRender.E.delta = 2 := rfl
+/-- OBJ.8 step 2 moved the render's DELTA off the placeholder 2 and onto the field constant, so
+    the pin now reads against `poseidonDelta` - and it is still an `rfl`, which is the point: the
+    render carries the constant and not a copy of it. -/
+theorem poseidonE_delta : poseidonRender.E.delta = poseidonDelta := rfl
 
 /-- The literal the render carries as `frDelta` IS Fr::DELTA = 7^(2^32) mod r (multiplicative
     generator 7, two-adicity 32), and it is below r: both halves of the memo's (true, true). -/
@@ -160,12 +163,16 @@ def frDeltaIsGeneratorPow_ok : Bool :=
     decide (Inline.natOfLiteral poseidonInputs.frDelta < Yul.blsR)) == (true, true)
 #eval frDeltaIsGeneratorPow_ok -- expect true
 
-/-- The fixture render's DELTA is the placeholder 2 and NOT the literal the artifact's quotient block
-    prints. Under the single text this is no longer a `PayloadAgrees` field (RECON.1 step 3 drops it):
-    it is why `generated` fails at today's fixture - see the two #check lines below. -/
-theorem poseidon_delta_not :
-    ¬ (poseidonRender.E.delta.val = Inline.natOfLiteral poseidonRender.inputs.frDelta) := by
-  show ¬ ((2 : Fr Yul.blsR).val = Inline.natOfLiteral poseidonInputs.frDelta)
+/-- **THE REFUTATION THAT DIED (OBJ.8 step 2).** RECON.1 measured the opposite of this: that the
+    render's DELTA was the placeholder 2 and NOT the literal the artifact's quotient blocks print,
+    and named that as the reason `generated` fails at the fixture. Step 2 replaces the placeholder
+    with the field constant, so the equation now HOLDS and the old `poseidon_delta_not` is retired
+    with it. Under the single text this was never a `PayloadAgrees` field (RECON.1 step 3 drops
+    `delta`); it is the `generated` clause that reads `E.delta`, and the two #check lines below are
+    its witness and falsifier. -/
+theorem poseidon_delta_is :
+    poseidonRender.E.delta.val = Inline.natOfLiteral poseidonRender.inputs.frDelta := by
+  show poseidonDelta.val = Inline.natOfLiteral poseidonInputs.frDelta
   native_decide
 
 /-! ## (RECON.1) THE CLAUSE TABLE AT F1: one witness line and one falsifier line per clause of the
@@ -292,14 +299,20 @@ def recon1_permComm_falsifier_ok : Bool :=
           commitments := poseidonVkExec.permutation.commitments.extract 0 3 } }
 #eval recon1_permComm_falsifier_ok -- expect true
 
-/- **`generated`: WITNESS and FALSIFIER, both OBJ.7's gates.** Gate 4
+/- **`generated`: WITNESS and FALSIFIER, both OBJ.7's gates - AND OBJ.8'S MEASUREMENT.** Gate 4
     (`generateAll_textIsTheArtifactButForBuildId_ok`): with the fixture's real DELTA the generator's
     text IS the artifact but for BUILD_ID. Gate 9 (`generateAll_falsifierDeltaAndOmega_ok`): with
-    `delta := 2` - WHICH IS WHAT `poseidonRender.E.delta` CARRIES (`poseidonE_delta`) - the generated
-    quotient blocks are NOT the render's, so the `generated` clause is REFUTED at today's fixture and
-    the card's acceptance line "`delta := 2` falsifies `generated` (not `payload`)" is these two gates.
-    OBJ.8 is the card that rebuilds the fixture render from the generator; until then `generated` is a
-    clause the fixture does not meet, and this says so out loud rather than weakening it. -/
+    `delta := 2` the generated quotient blocks are NOT the render's - and `delta := 2` USED to be
+    what `poseidonRender.E.delta` carried, which is why RECON.1 could name gate 9 as this fixture's
+    refutation of `generated`. **OBJ.8 step 2 set `poseidonE.delta` to the field constant
+    (`poseidonDelta`), so gate 9 no longer refutes the clause at this render: the DELTA refutation
+    DIED.** What refutes `generated` now is the PAYLOAD, measured sorry-free as
+    `PoseidonValid.poseidonValid_generated_not`: `Render.generated` reads the generator's payload from
+    `R.plan.vk`, this render's plan carries the parsed artifact payload, and `generateAll` refuses it
+    at quotient.rs:202 (OBJ.7 gate 11). Step 3 - the render rebuilt from `generateAll` - is the row
+    that closes it; it needs a frozen decision about where the payload lives, and it is recorded
+    rather than forced. Gate 9 remains the card's falsifier of the GENERATOR (delta reaches the text);
+    it is no longer a statement about this render. -/
 #check @Midfall.Instances.GeneratedKats.generateAll_textIsTheArtifactButForBuildId_ok
 #check @Midfall.Instances.GeneratedKats.generateAll_falsifierDeltaAndOmega_ok
 

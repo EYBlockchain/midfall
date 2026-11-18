@@ -1,5 +1,6 @@
 import Midfall.Common.Word
 import Midfall.Common.Bytes
+import Midfall.Common.Except
 import Midfall.Common.Codec
 import Midfall.Common.Keccak
 import Midfall.Assumptions.Pairing

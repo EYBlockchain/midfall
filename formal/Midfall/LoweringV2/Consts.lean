@@ -383,10 +383,58 @@ theorem vkPins_disjoint_is_not_a_table_fact (R : Render p G₁ G₂ Gₜ) :
 
 /-! ## 5. THE PIN BUNDLES, ASSEMBLED FROM THE DERIVATIONS
 
-  `vkPins` and `vkProgressPins` are frozen structures (`Statements.lean:231`, `:249`) and this
-  card does NOT delete them: no signed decision authorises a frozen edit in THIS card (see the
-  report). What this section does is make them CONCLUSIONS instead of premises wherever the table
-  can carry them, so the only thing a block row still asks for is the residual of section 4. -/
+  **THEY MOVED HERE IN OBJ.8 STEP 4 (D-P67).** `vkPins` and `vkProgressPins` used to be declared in
+  `Statements.lean` section 2 - first as clauses 12-13 of `Render.Valid` (D-P50/S.9), then, after
+  ST.6 cut `Valid` over to the seven V3 clauses, as two frozen structures that were not clauses of
+  anything. OBJ.8 deletes them from the frozen surface, and this is where they land: they are a
+  REFINABLE PREMISE BUNDLE of one block row, not a statement of the theory. Field for field the
+  text is unchanged - same six fields, same order, same names, same types - so `Blocks/VkLoading.lean`
+  and `Instances/PoseidonPins.lean` keep citing exactly what they cited. What changed is only which
+  file is allowed to be edited without a re-hash, which is exactly what D-P67 was for.
+
+  WHAT THEY STILL ASK FOR, AND WHY. Four of the six fields are theorems of `program`
+  (`constsCoherent`), and this section derives all four. Two are not table facts at all, and no
+  lemma here can produce them: `numInst` (section 4, `vkPins_numInst_is_not_a_table_fact`) and
+  `disjoint` (section 4, `vkPins_disjoint_is_not_a_table_fact`). A third fact gates the three
+  guarded lookups: `vkCodehashArm R.model`. Those THREE are the residuals OBJ.8's report names as
+  rows (a), (b) and (c); they are premises of `vk_blockRow`, not clauses of `Valid`, and adding a
+  clause to `Valid` to make them close is the one move the card forbids. -/
+
+/-- **THE FOUR `vkLoading` RENDER PINS (D-P50; the text is S.4's `Blocks/VkLoading.lean` section 5,
+    moved to `Statements.lean` by S.9 and back out again by OBJ.8 step 4 - see §5 above and
+    `Statements.lean` §2B). `Clean R .vk` postulates `Inv .vk`, whose first clause pins memory at
+    `ptrAddr R.pv.memory.vkMptr` to `R.pv.vk.bytes`, and the block writes to the inlined `VK_MPTR`
+    and copies `EXPECTED_VK_PAYLOAD_LENGTH` bytes. Nothing in `Frame`, `Clean`, `Inv` or any other
+    `Valid` clause says the render's CONSTANT TABLE agrees with its own PLAN VIEW about where that
+    window is, how long the payload is, and how many instances the calldata carries - and without
+    pins 1, 2 and 4 `BlockSound R .vkLoading` is FALSE, not merely unproved: a render whose table
+    points `VK_MPTR` elsewhere copies the payload to the wrong address, exits `normal` with
+    `success = 1`, and satisfies neither `Clean .vk` nor `Poisoned`. Each is a computation at a
+    real deployment, and S.8 PROVED all four at `poseidonRender` sorry-free
+    (`Instances/PoseidonPins.lean`). -/
+structure vkPins (R : Render p G₁ G₂ Gₜ) : Prop where
+  /-- The table's VK window is the plan view's VK window. -/
+  vkMptr : ∃ m, R.consts.lookup "VK_MPTR" = some m ∧ m = ptrAddr R.pv.memory.vkMptr
+  /-- The table's payload length is the payload's own length. -/
+  payloadLen : ∃ m, R.consts.lookup "EXPECTED_VK_PAYLOAD_LENGTH" = some m ∧ m = R.pv.vk.len
+  /-- The plan view's instance count is the configuration's, which is the one `decodeCalldata`
+      was called with. -/
+  numInst : R.pv.numInstances = R.cfg.numInstances
+  /-- The VK window does not overlap the g1_identity window `Inv` pins to zero at every
+      checkpoint. -/
+  disjoint : ptrAddr R.pv.memory.g1IdentityMptr + 128 ≤ ptrAddr R.pv.memory.vkMptr ∨
+    ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ ptrAddr R.pv.memory.g1IdentityMptr
+
+/-- The two MORE the `.vkLoading` PROGRESS half needs (D-P50; S.4's `Blocks/VkLoading.lean`
+    section 5, moved with `vkPins`). The guard of the block's first statement has to be PASSABLE,
+    which is a fact about the table and the deployed runtime rather than about any run: soundness
+    gets it from the run, progress has to exhibit one. S.8 PROVED both at `poseidonRender`
+    sorry-free (`Instances/PoseidonPins.lean`). -/
+structure vkProgressPins (R : Render p G₁ G₂ Gₜ) : Prop where
+  vkLen : ∃ m, R.consts.lookup "EXPECTED_VK_LENGTH" = some m ∧ m = R.plan.vk.runtimeBytes.size
+  vkHash : ∃ m, R.consts.lookup "EXPECTED_VK_CODEHASH_WORD" = some m ∧
+    m = (keccak256 R.plan.vk.runtimeBytes).toNat
+
 
 /-- The four table-fact fields of `vkPins`, derived; the two residual fields named by hypothesis. -/
 theorem vkPins_of_valid (R : Render p G₁ G₂ Gₜ) (hR : Render.Valid R)

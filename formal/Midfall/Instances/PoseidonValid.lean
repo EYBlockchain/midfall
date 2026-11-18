@@ -10,53 +10,76 @@
   applied to it instead of a transcription of counts. That moves FOUR of C.4's six refutations.
   The table below is the F.1 re-measurement; every value in it is printed by this file.
 
-    #   clause          verdict   deciding value (F.1)
-    1   circuitMeta     PROVED    derived numEvals 48 against the plan's 48 (was 27 vs 48), and the
-                                  whole record agrees: `deciding_circuitMeta` is true by rfl-level
-                                  comparison of the derived meta against `poseidonPlanV2.meta_`.
-    2   layout          REFUTED   `fromProtocol` on the REAL protocol gives proofLen 4224 against the
-                                  plan's transcribed 4320. New reason, narrower: the 96-byte gap is
-                                  the `num_point_sets` / `num_dummy_evals` that
-                                  `LoweringPlan::new` sets AFTER `from_constraint_system`
-                                  (ENC:506 `setNumPointSets`), which is the fallback F.1 excludes.
-    3   invariants      REFUTED   no longer the linearization-query refusal - the real protocol's PCS
-                                  schedule DOES end with it. Now check 16: planned PcsMemory
-                                  {rotPoints 28, x1Powers 65, qEvalSet 0, qEvalSourceTable 0,
-                                  qComTraceMsm 0 terms} against recomputed {3, 33, 6, 33, 39};
-                                  finalMsm agrees at 47 terms / 7520 bytes. The typed-in
-                                  `poseidonLayoutConfig.pcs` is P-13's observation of the artifact.
-    4   model           SORRY     unchanged: true by construction, not machine-dischargeable (C.4's
-                                  gap (c) plus the dependent-motive obstruction).
-    5   inputs          PROVED    unchanged. k = 6 = vk.domain.k.
-    6   codegen         PROVED    FLIPPED BY M2 (G1.1 + G1.2 + OBJ.2): WP-G1 closed, AST 14054 tokens
-                                  / 74 statements against text 14054 (was 6779/66). `codegenStruct` is the
-    7   closed          PROVED    unchanged.
-    8   slots           PROVED    FLIPPED. `numNegLagranges` 9 against `blindingFactors + 1` = 9
-                                  (was 9 vs 7: the empty CS recomputed blinding_factors to 6 while
-                                  vk.json always said 8). All ten `EnvAgrees` clauses now hold.
-    9   supported       REFUTED   narrowed to ONE field. `csDegreeMatches` now HOLDS - the ported
-                                  degree on the exported gates is 5 = the imported cs_degree - and
-                                  `permutationCommitmentsMatch` still fails: 8 sigma commitments
-                                  against `divCeil 8 3` = 3 z-chunks. That clause compares the VK's
-                                  per-COLUMN sigma commitments with the proof's per-CHUNK z count;
-                                  it is a v1 `Exec/VerifyingKey` defect, not a data gap.
-   10   noWriters       PROVED    unchanged in verdict, higher fuel: 200 is now EXHAUSTED (the main
-                                  block grew), 2000 and 20000 both answer true.
-   11   transcriptMptr  PROVED    unchanged. TRANSCRIPT_MPTR = 4096.
-   12   vkPins          PROVED    unchanged (S.8/S.9): VK_MPTR, payload length, instance count,
-                                  disjointness all hold at the derived plan view.
-   13   vkProgressPins  PROVED    unchanged (S.8/S.9): EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH.
-   14   returnMptr      PROVED    NEW (D-P48, clause and discharge landed together by Q0.5):
-                                  RETURN_MPTR = some 4096, so tr_blockProgress's existence half is
-                                  reachable from `R.Valid` at all.
+  ## THE SEVEN-CLAUSE TABLE (OBJ.8 step 5 - THE AUTHORITY FOR `Render.Valid` AT F1)
 
-  So 10 PROVED, 3 REFUTED, 1 SORRY out of fourteen clauses - from 9/4/1 (was 6/6/1 of thirteen). `poseidonRender.Valid` is STILL unsatisfiable and
-  `poseidonRender_notValid` now runs through clause 2 rather than clause 1, because clause 1 became
-  a theorem. What is left is no longer "the constraint system is missing": it is
-  `LoweringPlan::new`'s post-constructor sizing (clauses 2 and 3) and one v1 `WellFormed` field
-  (clause 9). The AST emitter (clause 6) is no longer one of them: M2 closed it by building
-  the three missing includes, and `deciding_codegenStruct` now ties the AST to the parse of
-  the generator text and not merely to its token stream.
+  ST.6 (D-P67) cut the frozen `Render.Valid` over to the seven V3 clauses, and OBJ.8 re-measured
+  every one of them at `poseidonRender`. The fourteen-row table C.4/F.1 kept is retired below this
+  block; the per-clause lemmas it cites still exist and are still what decides each verdict, but the
+  VERDICTS are these seven, and every cell is what was MEASURED at this commit, not what the card
+  predicted. `#check` lines and the deciding lemmas are in the sections that follow.
+
+    #  frozen clause    verdict    deciding evidence at `poseidonRender`
+    1  generated        REFUTED    NOT for the reason the card predicted. OBJ.8 step 2 replaced
+                                   `poseidonE.delta := 2` with the field constant, which killed the
+                                   delta refutation OBJ.7 gate 9 measured. What is left is bigger:
+                                   `Render.generated` reads the payload from `R.plan.vk`, and the
+                                   render's plan carries the PARSED artifact payload, which
+                                   `generateAll` REFUSES at quotient.rs:202 ("VK must carry
+                                   quotient constants") - OBJ.7 gate 11. Measured sorry-free as
+                                   `poseidonValid_generated_not`. Step 3 (the render rebuilt from
+                                   `generateAll`) is the card's own split; see section V3.
+    2  inputs           PROVED     `poseidonValid_inputs`, unchanged: three `rfl` and one
+                                   `native_decide` (k = 6 = vk.domain.k).
+    3  program          OPEN       The decidable bundle `programOkB poseidonRender = true` is PROVED
+                                   by computation (`StatementsV3Deploy.recon1_programOkB_ok`, seven
+                                   conjuncts all true) and so are `codegen`/`closed`/`transcriptMptr`
+                                   below; the two Prop halves (`GasCallOk`, `ExitDiscipline`) are not
+                                   yet stated-and-proved at the render. That is OBJ.9 steps 3-4.
+    4  noWriters        PROVED     `poseidonValid_noWriters`, fuel 2000 exhibited.
+    5  env              PROVED     `poseidonValid_slots` - all ten `EnvAgrees` clauses, unchanged
+                                   ("env as before" in the card's Accept line).
+    6  payload          HALF       The seven codec-free fields are PROVED by computation
+                                   (`recon1_payload_scalars_ok`, and `digest` separately); the five
+                                   point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`,
+                                   `permutationComms`) are OPEN - `toEip` is noncomputable at the
+                                   placeholder codec, exactly the card's "point half OPEN".
+    7  supported        REFUTED    THROUGH ONE FIELD ONLY, as the card requires:
+                                   `SupportedV2.wf.permutationCommitmentsMatch` - 8 sigma
+                                   commitments against `divCeil 8 3` = 3. The other ten fields are
+                                   PROVED (`poseidonValid_supported_rest`) and `vkPoints` is PROVED
+                                   (`poseidonValid_supported_vkPoints`). R.7 owns the repair.
+
+  SO: 4 PROVED, 1 HALF-PROVED, 1 OPEN, 2 REFUTED out of seven, and `poseidonRender_notValid` still
+  holds - it runs through `supported` and, since step 2, INDEPENDENTLY through `generated` again, but
+  through the payload and not the delta. `Render.Valid` is therefore NOT yet inhabited at the fixture,
+  and the two clauses that stop it are `generated` (this card's step 3, blocked on the payload
+  circularity section V3 names) and `supported.wf` (R.7). Reporting it as inhabited would be the lie
+  the brief warns about.
+
+  ## THE RETIRED FOURTEEN-ROW TABLE (F.1's measurement of the pre-ST.6 text; kept for provenance)
+
+    #   clause          verdict   deciding value (F.1)
+    1   circuitMeta     PROVED    derived numEvals 48 against the plan's 48.
+    2   layout          REFUTED   `fromProtocol` on the REAL protocol gives proofLen 4224 against
+                                  the plan's transcribed 4320. Now a conjunct of `generated`.
+    3   invariants      REFUTED   check 16: planned PcsMemory against recomputed. Now `generated`.
+    4   model           SORRY     true by construction, not machine-dischargeable. Now `generated`.
+    5   inputs          PROVED    unchanged; it is clause 2 of the seven.
+    6   codegen         PROVED    FLIPPED BY M2 (G1.1 + G1.2 + OBJ.2): AST 14054 tokens / 74
+                                  statements against text 14054 (was 6779/66). Now `program`.
+    7   closed          PROVED    unchanged. Now `program` (`mainClosed`).
+    8   slots           PROVED    all ten `EnvAgrees` clauses. Now `env`.
+    9   supported       REFUTED   narrowed to ONE field: `permutationCommitmentsMatch`. Still a
+                                  clause, and still the refutation.
+    10  noWriters       PROVED    fuel 2000/20000 true; 200 EXHAUSTED. Still a clause.
+    11  transcriptMptr  PROVED    TRANSCRIPT_MPTR = 4096. Now a theorem of `program`.
+    12  vkPins          PROVED    VK_MPTR, payload length, instance count, disjointness. NOT a
+                                  clause; four of the six are theorems of `program` and the
+                                  structures themselves left the frozen surface in OBJ.8 step 4.
+    13  vkProgressPins  PROVED    EXPECTED_VK_LENGTH and EXPECTED_VK_CODEHASH. Same fate.
+    14  returnMptr      PROVED    RETURN_MPTR = some 4096. A THEOREM of `program`.
+
+  So 10 PROVED, 3 REFUTED, 1 SORRY out of the retired fourteen.
 
   ## WHAT WAS NOT TOUCHED
 
@@ -519,6 +542,145 @@ theorem poseidonValid_returnMptr :
   show ∃ m, (constTableOf poseidonM).lookup "RETURN_MPTR" = some m
   exact ⟨4096, by native_decide⟩
 
+/-! ## V3. THE SEVEN FROZEN CLAUSES, AND THE ONE ROW THIS CARD COULD NOT CLOSE (OBJ.8 step 3/5)
+
+  The table in the header is the verdict. This section is the EVIDENCE for the two cells the card
+  expected to flip and did not, and the exact goal state of the row OBJ.8 records instead of forcing.
+
+  **WHY STEP 3 CANNOT LAND WITHOUT A FROZEN DECISION.** `Render.generated` reads the generator
+  payload from `R.plan.vk` - the payload is smuggled in through the plan, because `Render` has no
+  payload field and OBJ.7 forbade porting `generateVk` (OBJ.10 owns it). So the clause says
+  "the plan is what `generateAll` returns when you feed it THIS plan's own payload". At the fixture
+  that is a CIRCLE with no fixed point in the current record: the render's plan carries the PARSED
+  artifact payload (`poseidonVkGen`, four reservation fields absent), `generateAll` refuses that
+  payload at quotient.rs:202 (OBJ.7 gate 11), and so `generated poseidonRender` is not merely
+  unproved - it is FALSE, and the delta fix cannot touch it. The two ways out are both frozen edits
+  and neither is this card's to make unilaterally:
+    (i) give `Render` a `payload : Halo2VerifyingKey` field and read `generated` from it, or
+    (ii) set `poseidonRender.plan := poseidonGen.getOk h` and prove `(poseidonGen.getOk h).vk =
+        poseidonVkFilled`, which needs a `DecidableEq Halo2VerifyingKey` that `Models.lean` does
+        not derive (a v1 edit, forbidden here).
+  Either way the render's `plan`/`model` stop unfolding by `rfl` to `poseidonPlanV2`/`poseidonM`,
+  and every `show ... at poseidonPv` transfer in this file, in `PoseidonCoherence.lean` and in
+  `PoseidonPins.lean` has to be re-pointed and re-decided - which is why the card's own split note
+  (steps 1-3 separable from step 4) is the honest shape and step 3 is the row recorded here.
+
+  WHAT THE GENERATOR DOES REPRODUCE, MEASURED. Run at the fixture on the FILLED payload and the
+  field constant, `generateAll` agrees with this render on 16 of the 18 cheap faces you can compare
+  without a `DecidableEq`: `meta_.numEvals` 48, `numDummyEvals`, `rotationLast`, `proofLayout`
+  proofLen 4320 / proofEnd, `vk.len` 4576, `vk.runtimeBytes.size`, `vk.constants.length`,
+  `memory.validate.isOk`, `memory.map.WellFormed`, and on the model `frDelta`, `numInstances`,
+  `buildId`, `vkLen`, `proofLen`, `expectedVkCodehash`. It DISAGREES on two, and both are findings:
+  `meta_.numPointSets` (the converged meta versus the raw `ConstraintSystemMeta.new` this render
+  carries - `Generated.lean`'s own header predicts exactly this) and `qblocks`. So even with the
+  payload circle cut, `generated` needs OBJ.6/OBJ.7's converged-meta question settled first.
+
+  THE THREE RESIDUALS OF STEP 4, MEASURED AT THE FIXTURE (the brief's (a), (b), (c)). None of the
+  three is a clause of `ValidV3` and none is a table fact (OBJ.4 proved the last two are not); each
+  is a premise of `vk_blockRow`. At `poseidonRender` all three are TRUE and are proved here by
+  computation, which is what makes them rows and not blockers:
+    (a) `poseidon_residual_numInst`  - `pv.numInstances = cfg.numInstances` (1 = 1). Its GENERIC
+        source is a `generateAll` lemma `out.model.numInstances = cfg.numInstances`; the model
+        field is `inputs.numInstances` (ART:280) and the `inputs` clause gives `inputs.numInstances
+        = cfg.numInstances`, so the generic lemma is one unfolding of `generateVerifierFromPlan`
+        away - OWNER: OBJ.9/OBJ.12, file `LoweringV2/Generated.lean` (refinable).
+    (b) `poseidon_residual_disjoint` - the g1_identity / VK window inequality. Its generic source is
+        a layout lemma `memory.map.WellFormed -> disjointness` - OWNER: the WellFormed repair area
+        (R.7's neighbours); `supported.layout` already carries the hypothesis at the render.
+    (c) `poseidon_residual_codehashArm` - `expectedVkCodehash.IsSome`. Its generic source is a
+        `generateAll` lemma `flags.separate = true -> (out.model).expectedVkCodehash.IsSome`;
+        `Artifacts.lean:524` is that `if` - OWNER: OBJ.9, one unfolding away.
+  No hypothesis was added to `ValidV3` to make any of them close, and no pin bundle was left
+  silently free: the two structures moved to `Consts.lean` §5 and the three premises are on the row.
+-/
+
+/-- **THE COMPUTABLE FACE OF `Render.generated poseidonRender`.** `poseidonRender` is noncomputable,
+    so the VM cannot run `generated poseidonRender` itself - but every argument it reads unfolds by
+    `rfl` (`poseidonVk_eq`, `poseidonCfg_eq`, `poseidonPlan_eq`, `poseidonInputs_eq`,
+    `poseidonFlags_eq`, `poseidonRender_E_isD2`), so this IS the same term, and the verdict below is
+    the clause's. -/
+def poseidonGenRender : Except Fault GenOut :=
+  generateAll Features.solidity poseidonDelta poseidonVkExec poseidonConfig poseidonPlanV2.vk
+    poseidonInputs poseidonFlags
+
+theorem poseidonGenRender_eq_generated : generated poseidonRender = poseidonGenRender := rfl
+
+/-- **THE MEASURED REFUTATION OF THE `generated` CLAUSE, AND ITS SITE.** The generator refuses the
+    payload this render's plan carries: quotient.rs:202, "VK must carry quotient constants".
+    WITNESS of the refutation and FALSIFIER of the clause in one line. AXIOM:
+    poseidon_generated_notOk._native.native_decide.ax_1_1. -/
+theorem poseidon_generated_notOk : poseidonGenRender.isOk = false := by native_decide
+
+/-- The refusal is at the PAYLOAD and not at the delta: the same run with the four reservation fields
+    filled is `.ok` (`GeneratedKats.generateAll_textIsTheArtifactButForBuildId_ok`, gate 4). Stated as
+    a Bool because `GenOut` has no `DecidableEq`; the site string is what the gate reads. AXIOM:
+    poseidon_generated_panicsAtQuotient202._native.native_decide.ax_1_1. -/
+theorem poseidon_generated_panicsAtQuotient202 :
+    (match poseidonGenRender with
+      | .error (Fault.panic s) => s.contains "quotient.rs:202"
+      | _ => false) = true := by native_decide
+
+/-- **CLAUSE 1 OF THE SEVEN - REFUTED.** `GeneratedBy poseidonRender` does not hold. This is the
+    second refutation of `poseidonRender.Valid` and it is INDEPENDENT of `supported`: OBJ.8 step 2
+    killed the DELTA reason (`poseidonDelta_isArtifactLiteral_ok`) and this replaces it with the
+    PAYLOAD reason. Sorry-free, so `poseidonRender_notValid` below could run through either. -/
+theorem poseidonValid_generated_not : ¬ GeneratedBy poseidonRender := by
+  rintro ⟨out, ho, _, _, _⟩
+  have h1 : poseidonGenRender.isOk = true := by rw [← poseidonGenRender_eq_generated, ho]; rfl
+  have h2 := poseidon_generated_notOk
+  rw [h1] at h2
+  exact absurd h2 (by decide)
+
+/-- **RESIDUAL (a) AT THE FIXTURE.** `vk_blockRow`'s `hnum`. True here by computation; generic only
+    once `Generated.lean` states `out.model.numInstances = cfg.numInstances`. AXIOM:
+    poseidon_residual_numInst._native.native_decide.ax_1_1. -/
+theorem poseidon_residual_numInst :
+    poseidonRender.pv.numInstances = poseidonRender.cfg.numInstances := by
+  show poseidonPv.numInstances = poseidonConfig.numInstances
+  native_decide
+
+/-- **RESIDUAL (b) AT THE FIXTURE.** `vk_blockRow`'s `hdisj`. The hypothesis its generic source needs
+    (`supported.layout`, i.e. `memory.map.WellFormed`) is PROVED at this render already
+    (`poseidonValid_supported_rest`), which is what makes this a row and not a blocker. AXIOM:
+    poseidon_residual_disjoint._native.native_decide.ax_1_1. -/
+theorem poseidon_residual_disjoint :
+    ptrAddr poseidonRender.pv.memory.g1IdentityMptr + 128
+      ≤ ptrAddr poseidonRender.pv.memory.vkMptr ∨
+    ptrAddr poseidonRender.pv.memory.vkMptr + poseidonRender.pv.vk.len
+      ≤ ptrAddr poseidonRender.pv.memory.g1IdentityMptr := by
+  show ptrAddr poseidonPv.memory.g1IdentityMptr + 128 ≤ ptrAddr poseidonPv.memory.vkMptr ∨
+    ptrAddr poseidonPv.memory.vkMptr + poseidonPv.vk.len ≤ ptrAddr poseidonPv.memory.g1IdentityMptr
+  native_decide
+
+/-- **RESIDUAL (c) AT THE FIXTURE.** `vk_blockRow`'s `hcode`. `flags.separate = true` is proved at
+    `poseidonValid_supported_rest`; the generic step from it to the `IsSome` is the `if` at
+    `Artifacts.lean:524`, i.e. one unfolding of `generateVerifierFromPlan`. AXIOM:
+    poseidon_residual_codehashArm._native.native_decide.ax_1_1. -/
+theorem poseidon_residual_codehashArm : ∃ x, poseidonRender.model.expectedVkCodehash = some x := by
+  show ∃ x, poseidonM.expectedVkCodehash = some x
+  -- The witness is the option's own `getD`: the arm is `some` exactly when the match reduces to
+  -- `some` of its own default, which is what the VM decides here. AXIOM:
+  -- poseidon_residual_codehashArm._native.native_decide.ax_1_1.
+  exact ⟨poseidonM.expectedVkCodehash.getD 0, by native_decide⟩
+
+/-- THE SEVEN CLAUSES AS ONE HONEST CONJUNCTION, so no cell of the table above is prose only:
+    `inputs`, `noWriters` and `env` hold; `generated` and `supported` are refuted, each by a
+    sorry-free theorem above. -/
+theorem poseidonValid_seven_summary :
+    (¬ GeneratedBy poseidonRender) ∧ (¬ SupportedV2 poseidonRender) ∧
+      (poseidonRender.inputs.numInstances = poseidonRender.cfg.numInstances) ∧
+      NoWriters (poseidonRender.prog 0 0) ∧
+      EnvAgrees poseidonRender.E poseidonRender.vk poseidonRender.pv poseidonRender.params
+        poseidonRender.sG2gen :=
+  ⟨poseidonValid_generated_not, poseidonValid_supported_not, poseidonValid_inputs.1,
+    poseidonValid_noWriters, poseidonValid_slots⟩
+
+
+#print axioms Midfall.Instances.PoseidonValid.poseidon_generated_notOk
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_generated_not
+#print axioms Midfall.Instances.PoseidonValid.poseidon_residual_numInst
+#print axioms Midfall.Instances.PoseidonValid.poseidon_residual_disjoint
+#print axioms Midfall.Instances.PoseidonValid.poseidon_residual_codehashArm
 /-! ## THE HEADLINE OF THIS CARD -/
 
 /-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Several of its clauses are false at this
@@ -527,9 +689,11 @@ theorem poseidonValid_returnMptr :
     seven V3 clauses, so the refutation runs through `supported`: `wf.permutationCommitmentsMatch`
     is FALSE at this deployment - 8 sigma commitments against `divCeil 8 3` = 3 z-chunks - and
     `poseidonValid_supported_not` is sorry-free, so this theorem is one projection and one
-    application. `generated` refutes it too, independently: `poseidonRender.E.delta = 2` is not the
-    DELTA the generator was run with, so OBJ.7 gate 9 refutes `GeneratedBy poseidonRender`; ST.7
-    measures both and rewrites this file's table.
+    application. `generated` refutes it too, INDEPENDENTLY, and OBJ.8 CHANGED WHY: step 2 replaced
+    `poseidonE.delta := 2` with the field constant, which killed OBJ.7 gate 9's DELTA refutation
+    (`poseidonDelta_isArtifactLiteral_ok`), and what is left is `poseidonValid_generated_not` - the
+    generator refuses the payload this render's plan carries, at quotient.rs:202. Two clauses, two
+    owners: `generated` is OBJ.8 step 3 (recorded, not forced), `supported.wf` is R.7.
 
     What the retired clauses became: `circuitMeta`, `layout`, `invariants` and `model` collapsed
     into `generated`; `codegen`, `closed`, `transcriptMptr` and the two `vkLoading` pin bundles into

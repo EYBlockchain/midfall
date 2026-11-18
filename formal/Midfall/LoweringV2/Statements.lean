@@ -73,20 +73,24 @@
        (`codegenAgrees`, `mainClosed`, `transcriptMptr_of_valid`); `returnMptr` is a THEOREM of
        `constsCoherent` (`returnMptr_of_valid`), not a clause - D-P48's obligation is carried, not
        dropped.
-     * `vkPins` and `vkProgressPins` (D-P50/S.9) are NOT clauses of the seven. Their successor is
-       `program`: all six are facts about the constant table, and `constsCoherent` is the clause
-       that says the table is the plan view's. The derivation is `v3_pins_of_valid`
-       (`GeneratorCertified.lean:458` in the object text), which is NOT in this tree - RECON.1b
-       ports it - so until then the `.vkLoading` row carries the two bundles as free premises
-       again, exactly the pre-D-P50 shape and exactly what `tr_blockRow`/`fp_blockRow` still do.
-       The pins are demanded by the same theorem that always demanded them; nothing was relaxed.
+      * `vkPins` and `vkProgressPins` (D-P50/S.9) are NOT clauses of the seven, and OBJ.8
+        step 4 deleted the two structures from this file: their successor is `program`, four of their
+        six fields are theorems of `constsCoherent` (`Consts.vkPins_of_valid`,
+        `Consts.vkProgressPins_of_valid`), and the three that are not - `numInst`, `disjoint`, and the
+        `expectedVkCodehash` arm the guarded lookups need - are recorded as premises of
+        `vk_blockRow` and nowhere else. The bundles themselves moved to `Consts.lean` §5 unchanged;
+        see §2B. Nothing was relaxed and no pin was left silently free.
      * `slots` is `env` and `supported` is `supported`: same text, `EnvAgrees` and `SupportedV2`,
        unchanged. `inputs` and `noWriters` are unchanged.
-     `poseidonRender.Valid` REMAINS UNSATISFIABLE and `poseidonRender_notValid` is still proved -
-     now through `supported`, whose `wf.permutationCommitmentsMatch` is false at F1 (8 against 3)
-     until R.7 repairs it, and independently through `generated`, which OBJ.7 gate 9 refutes because
-     `poseidonRender.E.delta = 2`. Read `Instances/PoseidonValid.lean` for the per-clause verdicts;
-     ST.7 re-measures that table against these seven.
+     `poseidonRender.Valid` REMAINS UNSATISFIABLE and `poseidonRender_notValid` is still
+     proved - through `supported`, whose `wf.permutationCommitmentsMatch` is false at F1 (8 against
+     3) until R.7 repairs it, and INDEPENDENTLY through `generated`. OBJ.8 step 2 fixed the DELTA
+     the render carries, and that refutation of `generated` DIED with the placeholder 2; what
+     refutes `generated` now is the PAYLOAD - the clause reads it from `R.plan.vk`, and this
+     render's plan carries the parsed artifact payload, which `generateAll` refuses at
+     quotient.rs:202 (OBJ.7 gate 11). Step 3, the render rebuilt from `generateAll`, is the row
+     that closes it; it is recorded in `Instances/PoseidonValid.lean` §V3 and was not forced here.
+     That file's header table is the seven-clause measurement.
 
   First-headline scope (`SupportedV2`): no accumulator, embedded quotient VM, separate VK
   contract, production render. Each restriction is lifted by a named later package.
@@ -128,9 +132,11 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
     directly: `generated` is the clause that pins them to `generateAll` run on THIS render's own
     inputs and DELTA. Before ST.6 the file could not say that - `generateAll` was not ported - and
     checked the plan against the VK instead (`circuitMeta`, `layout`, `invariants`); WP-G4 turns
-    those into lemmas about the ported constructor. `qblocks` is the output of the unported
-    QRS:2000 `compact_quotient_computation_blocks` (GAP G3); it is CHECKED, not trusted, because the
-    quotient block contract must be proved about the code it produces. -/
+    those into lemmas about the ported constructor. `qblocks` is the output of QRS:2000
+    `compact_quotient_computation_blocks`, ported by OBJ.7 as
+    `Generator.QuotientFold.compactBlocksOf`; it is CHECKED against the artifact by OBJ.7
+    gate 8 and not trusted, because the quotient block contract must be proved about the
+    code it produces. -/
 structure Render (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
     [Group G₁] [Group G₂] [Group Gₜ]
     [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
@@ -217,40 +223,25 @@ structure SupportedV2 (R : Render p G₁ G₂ Gₜ) : Prop where
   /-- The deployed profile; the embedded-VK render is WP-X3. -/
   separateVk : R.flags.separate = true
 
-/-- THE FOUR `vkLoading` RENDER PINS (D-P50; the text is S.4's `Blocks/VkLoading.lean` section 5,
-    moved here by S.9 so that `Valid` can CARRY them). `Clean R .vk` postulates `Inv .vk`, whose
-    first clause pins memory at `ptrAddr R.pv.memory.vkMptr` to `R.pv.vk.bytes`, and the block
-    writes to the inlined `VK_MPTR` and copies `EXPECTED_VK_PAYLOAD_LENGTH` bytes. Nothing in
-    `Frame`, `Clean`, `Inv` or any other `Valid` clause says the render's CONSTANT TABLE agrees with
-    its own PLAN VIEW about where that window is, how long the payload is, and how many instances
-    the calldata carries - and without pins 1, 2 and 4 `BlockSound R .vkLoading` is FALSE, not
-    merely unproved: a render whose table points `VK_MPTR` elsewhere copies the payload to the
-    wrong address, exits `normal` with `success = 1`, and satisfies neither `Clean .vk` nor
-    `Poisoned`. Each is a computation at a real deployment, and S.8 PROVED all four at
-    `poseidonRender` sorry-free (`Instances/PoseidonPins.lean`). -/
-structure vkPins (R : Render p G₁ G₂ Gₜ) : Prop where
-  /-- The table's VK window is the plan view's VK window. -/
-  vkMptr : ∃ m, R.consts.lookup "VK_MPTR" = some m ∧ m = ptrAddr R.pv.memory.vkMptr
-  /-- The table's payload length is the payload's own length. -/
-  payloadLen : ∃ m, R.consts.lookup "EXPECTED_VK_PAYLOAD_LENGTH" = some m ∧ m = R.pv.vk.len
-  /-- The plan view's instance count is the configuration's, which is the one `decodeCalldata`
-      was called with. -/
-  numInst : R.pv.numInstances = R.cfg.numInstances
-  /-- The VK window does not overlap the g1_identity window `Inv` pins to zero at every
-      checkpoint. -/
-  disjoint : ptrAddr R.pv.memory.g1IdentityMptr + 128 ≤ ptrAddr R.pv.memory.vkMptr ∨
-    ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ ptrAddr R.pv.memory.g1IdentityMptr
+/-! ## 2B. THE `.vkLoading` PIN BUNDLES HAVE LEFT THIS FILE (OBJ.8 step 4, D-P67)
 
-/-- The two MORE the `.vkLoading` PROGRESS half needs (D-P50; S.4's `Blocks/VkLoading.lean`
-    section 5, moved for the same reason as `vkPins`). The guard of the block's first statement has
-    to be PASSABLE, which is a fact about the table and the deployed runtime rather than about any
-    run: soundness gets it from the run, progress has to exhibit one. S.8 PROVED both at
-    `poseidonRender` sorry-free (`Instances/PoseidonPins.lean`). -/
-structure vkProgressPins (R : Render p G₁ G₂ Gₜ) : Prop where
-  vkLen : ∃ m, R.consts.lookup "EXPECTED_VK_LENGTH" = some m ∧ m = R.plan.vk.runtimeBytes.size
-  vkHash : ∃ m, R.consts.lookup "EXPECTED_VK_CODEHASH_WORD" = some m ∧
-    m = (keccak256 R.plan.vk.runtimeBytes).toNat
+  `vkPins` and `vkProgressPins` were declared here from D-P50/S.9 until OBJ.8 deleted them in this
+  re-hash. They were never clauses of the seven: ST.6 cut `Render.Valid` over to `ValidV3`, whose
+  `program` clause carries `constsCoherent`, and four of the six fields are theorems of it
+  (`Consts.vkPins_of_valid`, `Consts.vkProgressPins_of_valid`). What is NOT a theorem of it is the
+  reason the two structures survive at all, and it is recorded rather than papered over:
+  `numInst` mentions no constant, `disjoint` mentions no constant, and `expectedVkCodehash` is
+  `none` unless the render has a VK-codehash arm - THREE RESIDUALS, named at their exact goal
+  state in `Blocks/VkLoading.lean` §5 and carried as premises of `vk_blockRow`. A frozen statement
+  may not rest on a refinable definition (D-P65); a REFINABLE premise bundle may, so the two
+  structures now live in `Midfall/LoweringV2/Consts.lean` §5, field for field unchanged, next to
+  the derivations that build them. Nothing was relaxed and nothing was silently freed.
 
+  WHY THE DELETION COULD NOT HAPPEN EARLIER. D-P67's condition was that the frozen surface be
+  re-hashed only once BOTH RECON.1 and OBJ.7 had merged - the successor of the two bundles is
+  `program`, and `program` is `generateAll`-backed only from OBJ.7 on. Both merged at bdc05a8,
+  which is what makes this the card that does it; OBJ.4 deliberately made no frozen edit because
+  the deletion is step 4 of this one. -/
 
 /-! ## 2A. THE V3 CLAUSE MACHINERY (ST.6, D-P67) - PORTED VERBATIM FROM THE STAGING MODULE
 
@@ -1002,9 +993,10 @@ def GeneratedBy (R : Render p G₁ G₂ Gₜ) : Prop :=
     projects the second.
   * `exitDiscipline`: kept, as ONE scan, inside `programOk` (addition 5).
   * `cdBound`, `transcriptMptr`, `vkPins`, `vkProgressPins`: the first two are conjuncts of
-    `programOkB`; the pin bundles are NOT clauses - `constsCoherent` is, and `vkPins` /
-    `vkProgressPins` / `transcriptMptr` are theorems of it (`GeneratorCertified.lean:458` proves the
-    bundle; RECON.1b ports it).
+    `programOkB`; the pin bundles are NOT clauses and OBJ.8 step 4 deleted the two structures from
+    this file - `constsCoherent` is the clause, four of the six pin fields are theorems of it
+    (`Consts.vkPins_of_valid`, `Consts.vkProgressPins_of_valid`), and the three residuals that are
+    not are premises of `vk_blockRow`. See §2B.
   * `payload`: the object text's field list - `digest` in, `delta` out (card step 3).
   * `supported : SupportedV2 R` (frozen), NOT `SupportedV3`: step 4 deletes `SupportedV3` and
     `WellFormedV3`. The repaired permutation clause that `WellFormedV3.wf` carried is kept as
@@ -1040,13 +1032,21 @@ structure Render.Valid (R : Render p G₁ G₂ Gₜ) : Prop where
       the meantime as `permCommMatchRepaired`). -/
   supported : SupportedV2 R
 
-/-! **`Render.Valid` IS NOT INHABITED AT THE FIXTURE, AND ST.6 DID NOT CHANGE THAT.** The cut-over
-  moved seven clauses in and fourteen out; it weakened none of them, and `poseidonRender.Valid` is
-  still refuted - `Instances/PoseidonValid.lean`, `poseidonRender_notValid`, sorry-free, now running
-  through `supported` (`wf.permutationCommitmentsMatch`, 8 sigma commitments against `divCeil 8 3` = 3,
-  R.7's repair) and independently refutable through `generated` (`poseidonRender.E.delta = 2`, OBJ.7
-  gate 9). The per-clause witness and falsifier lines for all seven are
-  `Instances/StatementsV3Deploy.lean` section (RECON.1); ST.7 re-points them at these frozen names.
+/-! **`Render.Valid` IS NOT INHABITED AT THE FIXTURE, AND OBJ.8 DID NOT CHANGE THAT - IT
+  NARROWED WHY.** The cut-over moved seven clauses in and fourteen out and weakened none of them.
+  `poseidonRender_notValid` (`Instances/PoseidonValid.lean`) is sorry-free and runs through
+  `supported` (`wf.permutationCommitmentsMatch`, 8 sigma commitments against `divCeil 8 3` = 3,
+  R.7's repair). It is INDEPENDENTLY refutable through `generated`, and OBJ.8 step 2 changed the
+  reason: the placeholder `delta := 2` is gone - the render now carries the field constant, pinned
+  by `PoseidonEnv.poseidonDelta_isArtifactLiteral_ok` against the artifact's own `frDelta` literal
+  and against `7^(2^32) mod r` - so OBJ.7 gate 9 no longer refutes the clause at this render. What
+  refutes it is the payload: `Render.generated` reads the generator's payload from `R.plan.vk`, the
+  render's plan carries the PARSED artifact payload, and `generateAll` refuses that payload at
+  quotient.rs:202 (OBJ.7 gate 11). Measured sorry-free as `poseidonValid_generated_not`. OBJ.8 step
+  3 - the render's plan, qblocks and model as projections of `generateAll` - is the row that closes
+  it; it needs a frozen decision about where the payload lives (`Render` has no payload field) and
+  is recorded in §V3 of that file rather than forced here. The per-clause witness and falsifier
+  lines for all seven are `Instances/StatementsV3Deploy.lean` and `Instances/PoseidonValid.lean`.
   -/
 /-! ### Projections: what the rows and the headline used to read off the eighteen-clause text. -/
 
