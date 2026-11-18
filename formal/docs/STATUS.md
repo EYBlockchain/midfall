@@ -207,3 +207,37 @@ SIM.1 is READY independently (after SIM.0)
   `permutationCommitmentsMatch`, 8 vs 3 - R.7 repairs) and `generated` (`E.delta = 2` - OBJ.8
   rebuilds). **Both pre-existing and signed-known; neither weakened.** This is the concrete reason
   D-P71 forbids proving at a fixture: the fixture fails two clauses of the headline predicate.
+
+## HARD RULE (self-imposed after a real collision, round 69): never launch a subagent from a dirty tree
+
+**What happened.** I briefed RECON.1b-i, then - while it was mid-flight - ran `git checkout -b t/T3.1
+formal/baseline`. **Its uncommitted edits were already in the working tree, so git carried them onto the
+new branch.** The second agent saw modified `SoundnessV3.lean`/`ExitMeasure.lean` it could not account
+for and reported a concurrent editor. **I then told it the other agent had "touched nothing", which was
+false** - by timestamps the foreign edits landed at 09:41:07 and ~09:42, before its first write at
+09:43:05. **The merged diff is multi-author.**
+
+**Why disjoint files do not save you.** The hazard is not two agents editing the same file. It is that
+**uncommitted work travels across a branch switch**, so an agent inherits a tree it cannot explain and
+either corrupts the merge or wastes its box reconciling.
+
+**The rule:**
+  1. **`git status --porcelain` must be empty before creating a branch for a new card.** Not "probably".
+     Empty.
+  2. **One card in flight per working tree.** If a second is needed, it waits - even when the files are
+     disjoint.
+  3. **Never assert what another agent did or did not touch without checking.** I did, to be reassuring.
+
+**A second lesson from the same card: my acceptance line was unsatisfiable.** I wrote "`check.sh
+soundness` goes FAIL to ok" while forbidding the card from rebasing `GeneratorRows`, which that area
+compiles. **The card delivered the real thing (both in-scope files green) and told me the line was
+wrong.** Before writing an acceptance condition, check that the card is allowed to touch everything it
+would need to.
+
+**A third: the card volunteered a statement change I had told it to hunt for, and it was the safe
+direction** - `ProgContracts`/`completeness_of_progs` moved from seven codec laws to four, making the
+rows' obligation strictly harder with every conclusion untouched. **And it surfaced a real fork: the
+landed `LoweringV2.exitScan` and the §4 design copy disagree on `break`/`continue` inside a `for` post
+block.** They agree on every measurement taken so far, so nothing is broken today, but **two scans with
+one name differ on a real input class, and that sits upstream of every block-row proof. Needs a human
+decision.**
