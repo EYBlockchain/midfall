@@ -126,6 +126,9 @@ import Midfall.Yul.Builtins
 import Midfall.Yul.ImportSolcIR
 import Midfall.Yul.ShellModel
 import Midfall.Yul.IRCheck
+import Midfall.Yul.Wp
+import Midfall.Yul.WpBridge
+import Midfall.Yul.WpFalsifiers
 import Midfall.Assumptions.Codec
 import Midfall.Assumptions.Eip2537
 import Midfall.Statements
@@ -137,6 +140,7 @@ import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.ProgramLemmas
 import Midfall.LoweringV2.Generated
 import Midfall.LoweringV2.Statements
+import Midfall.LoweringV2.HonestExec
 import Midfall.LoweringV2.Blocks
 import Midfall.Instances.R72GateProbe
 import Midfall.LoweringV2.Blocks.FinalPairing

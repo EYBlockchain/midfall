@@ -231,8 +231,24 @@ EVAL = re.compile(
 # at this file's OBJ.1 note and duplicated there by mainRtLine_ok / guardRtLine_ok; ST.1c does not touch
 # that file. No gate was deleted, edited or re-spelled anywhere else: the delta is +28/+3 and nothing
 # else moved.
-EXPECTED_KAT_TOTAL = 1514
-EXPECTED_KAT_FILES = 110
+# T3.1 moved both pins deliberately, in the commit that landed the wp engine. ONE NEW FILE carries
+# the +6/+1 and every gate in it is an annotated `#eval ... -- expect ...`, all six in
+# Midfall/Yul/WpFalsifiers.lean: addIsValued_ok (true - stepOp Op.add returns EXACTLY ONE word, the
+# premise FALSIFIER 1 turns on); wpAtZero (false - FALSIFIER 2, and the #eval is decided by an
+# `isFalse` instance that IS the theorem, so the print is checked against the proof and not against a
+# second implementation); interpZeroFuel_ok (true - the executable mirror: Interp.run at fuel 0
+# reports outOfFuel, so fuel bounds termination on both sides of honest_adequacy); wpNondetFixesResponse
+# (false - THE KAT: the DEMONIC Bopen cannot fix the staticcall response at Bridge.nondetBlock, proved
+# by wpS_sound against the failing run Bridge.run_staticcall_mstore exhibits); execBuiltinFixesByte_ok
+# (true - the functional contrast: execBuiltin DOES fix the byte, which is why T3.2's existence half
+# runs at Bfun and not at Bopen); honestRunByte_ok (true - honestExec runs nondetBlock to a normal
+# outcome with byte 31 CLEAR, measured, so the program honest_adequacy quantifies over is a program
+# that runs). No gate was deleted, edited or re-spelled anywhere else: the delta is +6/+1 and nothing
+# else moved. The engine itself (Midfall/Yul/Wp.lean, Midfall/Yul/WpBridge.lean,
+# Midfall/LoweringV2/HonestExec.lean) carries NO #eval line: it is proved code, and its axiom sets are
+# pinned by `#assert_axioms` in the falsifier file, which is a build error and not a print.
+EXPECTED_KAT_TOTAL = 1520
+EXPECTED_KAT_FILES = 111
 
 # Only these shapes count as #eval output.
 #
