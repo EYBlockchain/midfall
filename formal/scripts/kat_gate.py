@@ -219,8 +219,20 @@ EVAL = re.compile(
 # messages). Midfall/LoweringV2/Generated.lean and Midfall/Generator/PlanNew.lean carry NO gate of their own -
 # they are the port, and a theorem-bearing file may not import the fixture. So the file count goes 106 -> 107
 # and the total 1459 -> 1472. No gate was deleted; the delta is +13/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1472
-EXPECTED_KAT_FILES = 107
+# ST.1c moved both pins deliberately, in the commit that landed the V3 staging surface on the POST-M2
+# baseline. THREE NEW FILES carry the +28/+3, every one of them an annotated `#eval ... -- expect ...`:
+# Midfall/LoweringV3/Statements.lean (2: calldataOfV3_witness_ok -- expect true, the repaired
+# repack-then-encode reproduces the frozen composition's calldata at the p = 17 toy codec and decodes
+# back; frozenCalldata_isOk -- expect false, the falsifier: the frozen repack-then-repack path never
+# returns .ok at the same data), Midfall/Instances/StatementsV3Deploy.lean (19) and
+# Midfall/Instances/StatementsV3Falsifiers.lean (7). ST.1b's 25 measurement wrappers are carried with
+# them, so NO line in any of the three is an unannotated #eval. The only two unannotated #eval lines
+# in the whole tree are OBJ.1's own acceptance prints (YulParseKats.lean:49 and :51), documented above
+# at this file's OBJ.1 note and duplicated there by mainRtLine_ok / guardRtLine_ok; ST.1c does not touch
+# that file. No gate was deleted, edited or re-spelled anywhere else: the delta is +28/+3 and nothing
+# else moved.
+EXPECTED_KAT_TOTAL = 1500
+EXPECTED_KAT_FILES = 110
 
 # Only these shapes count as #eval output.
 #

@@ -52,6 +52,16 @@ owner() {
       echo 'V3 SIM.7 - deletes runBody_iff_slices' ;;
     Midfall.Yul.Bridge.Run_worldEq_of_noWriters)
       echo 'V3 SIM.5 - the shared Step induction (ST.10 cites it)' ;;
+    # ---- ST.1: the four V3 staging obligations, landed in Midfall/LoweringV3/Statements.lean. ----
+    # Each owner names the card that discharges it and the experiment its docstring gives.
+    Midfall.LoweringV3.prog_slices_decompV3)
+      echo 'V3 ST.11 - restated structural decomposition. Experiment: inline_append five times against noShadowB, List.filterMap_append for hoist, and hoist (preSlice) = hoist (mainLocalsInlined) = []' ;;
+    Midfall.LoweringV3.twoOutcomes_of_exitDiscipline)
+      echo 'V3 ST.10 - replaces rejects_of_not_accepts (WP-M5c). Experiment: one induction on Step in the shape of Bridge.Run_worldEq_of_noWriters (Bridge.lean:1221), then Step.stmts_append_inv at the tail and mstore/ret by simp [stepOp]' ;;
+    Midfall.LoweringV3.scans_prog_addr_indep)
+      echo 'V3 ST.12 - the two scans ignore the addresses the wrapper binds as let literals. Experiment: same cost class as noWriters_prog (Blocks.lean:340), which it subsumes' ;;
+    Midfall.LoweringV3.runBody_mono)
+      echo 'V3 ST.13 - monotonicity in the call relation (Bridge layer). Experiment: induction on Step; the call relation occurs only in externalCall (EVMExec.lean), in a positive position' ;;
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
