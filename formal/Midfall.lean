@@ -152,3 +152,4 @@ import Midfall.Tools.ConeReport
 import Midfall.LoweringV3.Statements
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.StatementsV3Falsifiers
+import Midfall.Instances.PoseidonExhibit

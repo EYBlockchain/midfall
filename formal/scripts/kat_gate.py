@@ -247,8 +247,29 @@ EVAL = re.compile(
 # else moved. The engine itself (Midfall/Yul/Wp.lean, Midfall/Yul/WpBridge.lean,
 # Midfall/LoweringV2/HonestExec.lean) carries NO #eval line: it is proved code, and its axiom sets are
 # pinned by `#assert_axioms` in the falsifier file, which is a build error and not a print.
-EXPECTED_KAT_TOTAL = 1520
-EXPECTED_KAT_FILES = 111
+# T3.11 (V3 W14 exhibit, D-P71: A TEST, NEVER A PREMISE OF A PROOF) adds Midfall/Instances/PoseidonExhibit.lean:
+# a NEW file in the suite carrying FIVE annotated '#eval ... -- expect true' gates - the executable exhibit that
+# runs the emitted program at the open honest dialect (Midfall/LoweringV2/HonestExec.lean, T3.1) on the F1
+# bundle's real calldata, and shows a byte-flip mutant NOT reaching that outcome. The five:
+# fixtureCalldata_isTheBundleBytes_ok (the card's Needs as a term: Lowering.repackThenEncode on the bundle's
+# proof.bin + instances.json reproduces calldata.bin BYTE FOR BYTE, 4,484 bytes, keccak pinned - REF.14's
+# question, answered equal); entryFrame_shape_ok (the frame is the theorem's EntryFrame as far as a Bool can
+# say: selector, zero call value, VK runtime and codehash at the address the program reads, the free-memory
+# clause, D-P64's length bound, DeploymentV2's disjointness); exhibitProg_isThePinnedObject_ok (the program run
+# is structurally the object OBJ.5 fingerprints, so the exhibit is about the headline's program);
+# fixture_returns_abiTrue_ok (THE FIXTURE RUN: Interp.run from the entry-like frame halts with
+# return(abiTrue), measured 22.3 s at fuel 10,000,000 - stuck and outOfFuel both read as no-halt and so fail
+# the gate); mutants_revert_ok (THE TEETH: eight one-bit / one-byte mutants of the same calldata - three head
+# words, the instance count, a truncation, a trailing byte, two G1 x-coordinate pad bytes - each reverting with
+# the four bytes the render's OWN const table assigns to ERR_BAD_CALLDATA_SHAPE or ERR_BAD_POINT_ENCODING, so
+# the payloads are computed and not pasted). No gate was deleted or edited. So the file count goes 111 -> 112
+# and the total 1520 -> 1525: the delta is +5/+1 and nothing else moved. All five were run through
+# 'lake env lean' before this line moved, and the whole file evaluates in 28.9 s (the card's bound is 30 s; the
+# single 22.3 s fixture run is what the budget buys - two further measured mutants, the ERR_PRECOMPILE_FAILED
+# class at 6.99 s and the instance-word flip that still returns abiTrue under the mocked PairingProduct, are
+# recorded in the file's header instead of gated, for that reason).
+EXPECTED_KAT_TOTAL = 1525
+EXPECTED_KAT_FILES = 112
 
 # Only these shapes count as #eval output.
 #
