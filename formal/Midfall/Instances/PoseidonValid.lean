@@ -523,7 +523,21 @@ theorem poseidonValid_returnMptr :
 
 /-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Several of its clauses are false at this
     render (the header table above is the current verdict per clause, and it is the authority - a
-    count in prose here would already be stale again); one refutation is enough and this uses clause 1. This is the card's own stop condition
+    count in prose here would already be stale again). ST.6 (D-P67) cut the frozen text over to the
+    seven V3 clauses, so the refutation runs through `supported`: `wf.permutationCommitmentsMatch`
+    is FALSE at this deployment - 8 sigma commitments against `divCeil 8 3` = 3 z-chunks - and
+    `poseidonValid_supported_not` is sorry-free, so this theorem is one projection and one
+    application. `generated` refutes it too, independently: `poseidonRender.E.delta = 2` is not the
+    DELTA the generator was run with, so OBJ.7 gate 9 refutes `GeneratedBy poseidonRender`; ST.7
+    measures both and rewrites this file's table.
+
+    What the retired clauses became: `circuitMeta`, `layout`, `invariants` and `model` collapsed
+    into `generated`; `codegen`, `closed`, `transcriptMptr` and the two `vkLoading` pin bundles into
+    `program` (`codegenAgrees`, `mainClosed`, `constsCoherent` are conjuncts of `programOkB`);
+    `returnMptr` is a THEOREM of `constsCoherent` (`returnMptr_of_valid`); `slots` is `env`, same
+    text, new name; `noWriters` and `inputs` and `supported` are unchanged.
+
+    This is the card's own stop condition
     stated as a theorem rather than as a report line: C.1's `poseidon_valid` sorry is not an
     unfinished proof, it is an impossible one, and the only way to finish it is upstream - a
     `poseidonMeta` whose `protocol` is the real `ProtocolPlan`, which needs the halo2 constraint
@@ -533,6 +547,6 @@ theorem poseidonValid_returnMptr :
     (`Statements` section 5), so C.1's headline survives as stated; `Valid` enters only through
     `blockContracts_of_valid`, which is where the sorry sits. -/
 theorem poseidonRender_notValid : ¬ poseidonRender.Valid :=
-  fun h => poseidonValid_layout_not h.layout
+  fun h => poseidonValid_supported_not h.supported
 
 end Midfall.Instances.PoseidonValid

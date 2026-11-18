@@ -72,21 +72,24 @@ theorem fp_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     FinalPairing.fp_finalPairing_contracts R product hR hslots hpc H vkAddr cd ms instW inst Snap
       hdec hinst hsnap Partial.finalPairing rfl
 
-/-- **ROW vkLoading, IN M.1'S OWN WRAPPER (S.4, REWIRED BY D-P50/S.9).** The third of the six, and
-    unlike the two below it is NOT sorry-free: `VkLoading.vk_blockRow` carries the three named gaps
-    of Blocks/VkLoading.lean section 6 (the clean walk, the poisoned walk, the exhibited run). It no
-    longer carries the two render hypotheses it used to: `vkPins` and `vkProgressPins` became
-    clauses 12-13 of `Valid` under D-P50 and S.8 PROVED all six at the deployment sorry-free
-    (`Instances/PoseidonPins.lean`), so this row takes nothing that `BlockRow` does not already
-    ask for - unlike `tr_blockRow` and `fp_blockRow` below, which still carry `trRetMptr` and
-    `fpG2Slots` as free premises. It lands here anyway because it fixes the SHAPE the four missing
-    rows must have, and because the interface it needed (that file's sections 1-4: the slice form
-    with the shadow-list refinement T.1 did not need, the site inversion, the fail helper at an
-    ARBITRARY selector site, the recurring assign inversion, the VEnv set/get fact) is sorry-free
-    and is what S.5, S.6 and S.7 can reuse verbatim. -/
-theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
-    BlockRow R product Partial.vkLoading :=
-  VkLoading.vk_blockRow R product
+/-- **ROW vkLoading, IN M.1'S OWN WRAPPER (S.4, REWIRED BY D-P50/S.9, REWIRED AGAIN BY ST.6).
+    The third of the six, and unlike the two below it is NOT sorry-free: `VkLoading.vk_blockRow`
+    carries the three named gaps of Blocks/VkLoading.lean section 6 (the clean walk, the poisoned
+    walk, the exhibited run). Under D-P50 it carried no render hypothesis at all, because `vkPins`
+    and `vkProgressPins` were clauses 12-13 of `Valid`; ST.6 (D-P67) cut `Valid` over to the seven
+    V3 clauses, in which the two bundles are not clauses but obligations of the `program` clause -
+    and the derivation of the bundles from `constsCoherent` is RECON.1b's, not this tree's. So all
+    three rows that exist now carry a render pin as a free premise: `vkPins`/`vkProgressPins` here,
+    `fpG2Slots` and `trRetMptr` below. S.8's deployment proofs
+    (`Instances/PoseidonPins.lean`) are what discharge them at `poseidonRender`. It lands here
+    anyway because it fixes the SHAPE the four missing rows must have, and because the interface it
+    needed (that file's sections 1-4: the slice form with the shadow-list refinement T.1 did not
+    need, the site inversion, the fail helper at an ARBITRARY selector site, the recurring assign
+    inversion, the VEnv set/get fact) is sorry-free and is what S.5, S.6 and S.7 can reuse
+    verbatim. -/
+theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hpins : vkPins R) (hppins : vkProgressPins R) : BlockRow R product Partial.vkLoading :=
+  VkLoading.vk_blockRow R product hpins hppins
 
 /-- **TWO OF THE SIX ROWS COMPOSE.** The demonstration that `BlockRow` is the right shape: both
     proved contracts fit §6's wrapper with no refinement of `Frame`/`Clean`/`Poisoned` and no

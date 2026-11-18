@@ -7,10 +7,13 @@
   REFINABLE (Q0.3): this file is NOT in `Frozen.sha256`. It holds exactly §5 of the original
   `Program.lean`, moved verbatim; the section number is kept so PLAN-V2's references resolve.
   Nothing here may be imported BY the frozen surface (that would make a refinable fact a premise
-  of a frozen statement).
+  of a frozen statement) - and since ST.6 the direction is visible in the import list: this file
+  imports `Statements.lean`, not the other way round, because `topBinders` moved into the frozen
+  surface with the clause that reads it.
 -/
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Shared
+import Midfall.LoweringV2.Statements
 
 namespace Midfall.LoweringV2
 
@@ -19,8 +22,9 @@ open YulSemantics YulSemantics.EVM
 
 /-! ## 5. Generator-side obligations (theorems; owned by WP-A) -/
 
-/-- The names a block binds at its top level (`let`, function names). -/
-def topBinders (b : YulBlock) : List String := b.flatMap Inline.boundOf
+/- `topBinders` MOVED OUT by ST.6 (D-P67): it is the head of the frozen `noShadowCore` clause
+    text, and a frozen statement may not rest on this refinable file (D-P65). It now lives in
+    `Midfall/LoweringV2/Statements.lean`, which this file now imports, and which `inline_append` below states its hypothesis on. Same text, same `Inline.boundOf`. -/
 
 /-- Inlining distributes over concatenation when the left block binds no constant name at top
     level. This is what licenses proving contracts per slice and composing them. OBLIGATION. -/

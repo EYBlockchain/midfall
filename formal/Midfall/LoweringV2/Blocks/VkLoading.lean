@@ -681,12 +681,27 @@ theorem vk_poison_step {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge
     `vkProgressPins poseidonRender` sorry-free (S.8's probes), landed by S.9 in
     `Instances/PoseidonPins.lean`. -/
 
-/-- **THE PINS ARE A PROJECTION NOW, NOT A HYPOTHESIS (D-P50).** -/
-theorem vkPins_of_valid (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) : vkPins R := hR.vkPins
+/- **THE PINS ARE NOT CLAUSES ANY MORE, AND THEY ARE NOT RELAXED (ST.6, D-P67).** From D-P50/S.9
+    until ST.6, `vkPins R` and `vkProgressPins R` were clauses 12 and 13 of `Render.Valid`. D-P67
+    fixes the frozen text at SEVEN clauses - `generated, inputs, program, noWriters, env, payload,
+    supported` - and the two bundles are not among them. Their successor clause is `program`: every
+    one of the six pins is a fact about the render's CONSTANT TABLE and about that table agreeing
+    with its own plan view, which is exactly `constsCoherent`, a conjunct of `programOkB` and
+    therefore of `Render.Valid.program`. The staging text says so in terms
+    (`LoweringV3/Statements.lean`, section V: "the pin bundles are NOT clauses - `constsCoherent`
+    is, and `vkPins` / `vkProgressPins` / `transcriptMptr` are theorems of it"), and it names the
+    derivation: `GeneratorCertified.lean:458` (`v3_pins_of_valid`). **That derivation is NOT in
+    this tree - RECON.1b ports it.** What IS in the tree is the half that derivation runs on, ported
+    by ST.6: `lookup_expectedConsts_of_programOkB` and `expectedConsts_lookups` in
+    `Statements.lean`, and the `VK_MPTR` / `EXPECTED_VK_PAYLOAD_LENGTH` entries of
+    `expectedConsts` that they read.
 
-/-- The progress half, likewise (D-P50). -/
-theorem vkProgressPins_of_valid (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) : vkProgressPins R :=
-  hR.vkProgressPins
+    So the honest state after ST.6 is the PRE-D-P50 SHAPE and not a weakened text: the six pins are
+    still demanded, unchanged in content, and the `.vkLoading` row carries them as free premises
+    exactly as `tr_blockRow` carries `trRetMptr` and `fp_blockRow` carries `fpG2Slots`. What D-P50
+    bought - that the hinge `blockContracts_of_valid` discharges them from `hR` alone - is on
+    RECON.1b's tab, and this card says so rather than pretending the bundle is proved. -/
+
 
 /-! ## 6. WHAT THIS CARD DID NOT CLOSE, STATED AT EXACTLY THE SHAPE THE CONSUMER ASKS FOR
 
@@ -759,18 +774,18 @@ theorem vk_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
 
 /-- **THE ROW, ASSEMBLED FROM THE THREE GAPS.** Sorry-free given them: this is re-association only,
     exactly the shape `tr_blockRow` / `fp_blockRow` have in `Blocks/Compose.lean`, and it is what
-    `blockContracts_of_valid_of_rows` (Blocks.lean:713) consumes as its `hvk` argument. SINCE D-P50 IT
-    CARRIES NO PIN HYPOTHESES AT ALL: `vkPins` and `vkProgressPins` are clauses 12 and 13 of `Valid`,
-    so the row is `BlockRow R product .vkLoading` outright and the pins arrive through the `hR` the
-    row already takes - which is exactly what the hinge needed and what distinguishes this row from
-    `tr_blockRow` / `fp_blockRow`, which still carry `trRetMptr` / `fpG2Slots` as free premises. The
-    three gaps are still `sorry`, so THE ROW IS STILL NOT CLOSED. -/
-theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) :
-    BlockRow R product Partial.vkLoading := by
+    `blockContracts_of_valid_of_rows` (Blocks.lean:955) consumes as its `hvk` argument. SINCE ST.6
+    (D-P67) IT CARRIES THE TWO PIN BUNDLES AS FREE PREMISES AGAIN - the pre-D-P50 shape, and the
+    shape `tr_blockRow` and `fp_blockRow` never left: `Valid` is seven clauses and `vkPins` /
+    `vkProgressPins` are not among them, so the row takes as a premise what its successor clause
+    `program` will one day derive (section 5 above; RECON.1b). The three gaps are still `sorry`, so
+    THE ROW IS STILL NOT CLOSED. -/
+theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (hpins : vkPins R) (hppins : vkProgressPins R) : BlockRow R product Partial.vkLoading := by
   intro hR _hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap
-  refine ⟨fun g => ⟨vk_sound_clean R product hR hR.vkPins Snap H vkAddr cd g,
+  refine ⟨fun g => ⟨vk_sound_clean R product hR hpins Snap H vkAddr cd g,
       vk_poison_walk R product hR Snap H vkAddr cd g⟩, fun _hcodec _hcg _hdual =>
-      vk_progress R product hR hR.vkPins hR.vkProgressPins Snap H vkAddr cd _hcodec _hcg _hdual⟩
+      vk_progress R product hR hpins hppins Snap H vkAddr cd _hcodec _hcg _hdual⟩
 
 #print axioms Midfall.LoweringV2.Blocks.VkLoading.vk_slice
 #print axioms Midfall.LoweringV2.Blocks.VkLoading.vk_assign_inv

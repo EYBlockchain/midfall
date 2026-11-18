@@ -105,12 +105,29 @@ theorem new_numPointSets_zero {F : Type} (feat : Features) (cs : ConstraintSyste
       have h' := Except.ok.inj h
       rw [← h']
 
-/-- So every render satisfying the FROZEN `Valid` has a plan meta with zero point sets - and by
+/-- So every render satisfying the FROZEN clause 1 has a plan meta with zero point sets - and by
     the frozen `layout` clause a proof layout with no `q_eval` words. Rust's plan has
-    `kzg::num_point_sets` of them (3 at the deployment). -/
-theorem frozenValid_numPointSets_zero (R : Render p G₁ G₂ Gₜ) (h : R.Valid) :
+    `kzg::num_point_sets` of them (3 at the deployment).
+
+    ST.6 (D-P67) cut the frozen `Render.Valid` over to the seven V3 clauses, and `circuitMeta` is
+    not one of them: it collapsed into `generated`. F2 is a falsifier of the OLD text, so the old
+    clause is PINNED here, verbatim, as a Prop copy - the same move ST.4 made with `EntryFramePreST4`
+    and `frozenCalldataCore` when ST.4 retired the text they falsified. What F2 says is unchanged:
+    a render whose plan meta is what `ConstraintSystemMeta.new` returns has zero point sets, and no
+    faithful plan does. -/
+def ValidPreST6_circuitMeta (R : Render p G₁ G₂ Gₜ) : Prop :=
+  ConstraintSystemMeta.new Features.solidity R.vk.cs R.cfg.numCommittedInstances = .ok R.plan.meta_
+
+/-- The frozen `layout` clause, likewise pinned: `ProofCalldataLayout.fromProtocol` on a meta whose
+    `numPointSets` is the raw zero derives a layout with no `q_eval` words. -/
+def ValidPreST6_layout (R : Render p G₁ G₂ Gₜ) : Prop :=
+  ProofCalldataLayout.fromProtocol R.plan.meta_.protocol abiVerifyProofProofCptr
+    R.plan.meta_.numEvals R.plan.meta_.numPointSets = .ok R.plan.proofLayout
+
+theorem frozenValid_numPointSets_zero (R : Render p G₁ G₂ Gₜ)
+    (h : ValidPreST6_circuitMeta R) :
     R.plan.meta_.numPointSets = 0 :=
-  new_numPointSets_zero _ _ _ _ h.circuitMeta
+  new_numPointSets_zero _ _ _ _ h
 
 /-- While the V3 clause gives the generator's count. -/
 theorem planMeta_numPointSets (R : Render p G₁ G₂ Gₜ) (h : PlanMeta R) :

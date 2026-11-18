@@ -59,6 +59,35 @@
        supersedes D-P45's decode-chain conjunct, which `LeanAccepts` implies; the R-72 teeth are
        kept (`Instances/R72GateProbe.lean`, `gate_now_forces_a_real_decode`).
 
+  6. THE V3 CUT-OVER C (D-P67, landed by ST.6). §2 `Render.Valid` now reads as the single V3 text
+     RECON.1 produced: SEVEN clauses - `generated, inputs, program, noWriters, env, payload,
+     supported` - verbatim `Midfall/LoweringV3/Statements.lean` §V with the staging module's clause
+     machinery (§D `noShadowCore`, §C `PayloadAgrees`, §I the exit scan, §N `programOk`) ported with
+     it, because a frozen statement may not rest on a refinable definition (D-P65). What changed,
+     and where every retired obligation went:
+     * `circuitMeta`, `layout`, `invariants`, `model` (four clauses) collapse into `generated`:
+       the plan, the compact quotient blocks and the model ARE what `generateAll` returns for this
+       render's own inputs, DELTA included. `PlanMeta` and `planLayoutB` stay measurements in the
+       staging module and `Instances/`; they are not clauses of either text.
+     * `codegen`, `closed`, `transcriptMptr` are conjuncts or theorems of `program`
+       (`codegenAgrees`, `mainClosed`, `transcriptMptr_of_valid`); `returnMptr` is a THEOREM of
+       `constsCoherent` (`returnMptr_of_valid`), not a clause - D-P48's obligation is carried, not
+       dropped.
+     * `vkPins` and `vkProgressPins` (D-P50/S.9) are NOT clauses of the seven. Their successor is
+       `program`: all six are facts about the constant table, and `constsCoherent` is the clause
+       that says the table is the plan view's. The derivation is `v3_pins_of_valid`
+       (`GeneratorCertified.lean:458` in the object text), which is NOT in this tree - RECON.1b
+       ports it - so until then the `.vkLoading` row carries the two bundles as free premises
+       again, exactly the pre-D-P50 shape and exactly what `tr_blockRow`/`fp_blockRow` still do.
+       The pins are demanded by the same theorem that always demanded them; nothing was relaxed.
+     * `slots` is `env` and `supported` is `supported`: same text, `EnvAgrees` and `SupportedV2`,
+       unchanged. `inputs` and `noWriters` are unchanged.
+     `poseidonRender.Valid` REMAINS UNSATISFIABLE and `poseidonRender_notValid` is still proved -
+     now through `supported`, whose `wf.permutationCommitmentsMatch` is false at F1 (8 against 3)
+     until R.7 repairs it, and independently through `generated`, which OBJ.7 gate 9 refutes because
+     `poseidonRender.E.delta = 2`. Read `Instances/PoseidonValid.lean` for the per-clause verdicts;
+     ST.7 re-measures that table against these seven.
+
   First-headline scope (`SupportedV2`): no accumulator, embedded quotient VM, separate VK
   contract, production render. Each restriction is lifted by a named later package.
 
@@ -69,6 +98,7 @@
   wrapper Props `EntryFrameInhabited` and `EndToEnd` defined below, which are the same
   propositions definitionally. Section numbers are kept as they were so PLAN-V2's references
   still resolve. No statement text was changed by the split. -/
+import Midfall.LoweringV2.Generated
 import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.Shared
 import Midfall.LoweringV2.Codec
@@ -87,16 +117,18 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Group G₁] [Group G₂] [Group Gₜ]
   [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] [PrimeOrderWith Gₜ p]
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
-  [Module (ZMod p) (Additive Gₜ)] [AdmissiblePairing G₁ G₂ Gₜ]
+  [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
 
 /-! ## 1. One render -/
 
 /-- One render: the verifier-side inputs (what the Lean verifier reads), the generator-side build
     inputs, and the generator OUTPUTS that `Valid` checks.
 
-    `plan` is an output of `LoweringPlan::new` (P-11), which is not ported yet; until it is, `Valid`
-    checks the plan against the VK instead (`circuitMeta`, `layout`, `invariants`) and WP-G4 turns those
-    clauses into lemmas about the ported constructor. `qblocks` is the output of the unported
+    `plan`, `qblocks` and `model` are outputs of the generator. Since D-P67/ST.6 `Valid` says so
+    directly: `generated` is the clause that pins them to `generateAll` run on THIS render's own
+    inputs and DELTA. Before ST.6 the file could not say that - `generateAll` was not ported - and
+    checked the plan against the VK instead (`circuitMeta`, `layout`, `invariants`); WP-G4 turns
+    those into lemmas about the ported constructor. `qblocks` is the output of the unported
     QRS:2000 `compact_quotient_computation_blocks` (GAP G3); it is CHECKED, not trusted, because the
     quotient block contract must be proved about the code it produces. -/
 structure Render (p : ℕ) [Fact (Nat.Prime p)] (G₁ G₂ Gₜ : Type)
@@ -219,63 +251,856 @@ structure vkProgressPins (R : Render p G₁ G₂ Gₜ) : Prop where
   vkHash : ∃ m, R.consts.lookup "EXPECTED_VK_CODEHASH_WORD" = some m ∧
     m = (keccak256 R.plan.vk.runtimeBytes).toNat
 
-/-- VALIDITY: every clause is a fact about the render that is decided by computation at a
-    deployment (by `decide`, `rfl` or, in `Instances/`, `native_decide`). None is a semantic
-    obligation about the program.
 
-    The clauses ARE the fields of the structure below, in order. No count of them is given here, on
-    purpose: a count in prose rots the moment a clause is added and a pointer does not. D-P50/S.9
-    added the two `vkLoading` pin bundles at the end: S.4
-    had shown `BlockSound R .vkLoading` is FALSE without them, so the hinge `blockContracts_of_valid`
-    - which takes `hR : R.Valid` and must yield a row for EVERY `Partial` - could not have been
-    proved from its own stated hypothesis while they were free premises of the row. Adding clauses
-    only strengthens `Valid` (D-P50, rationale 3), and every bundle is PROVED at the deployment, so
-    none is a guessed premise. What this does NOT change: `poseidonRender.Valid` remains
-    unsatisfiable. `poseidonRender_notValid` in `Instances/PoseidonValid.lean` refutes it, and that
-    file's header carries the per-clause table of which clauses are PROVED, REFUTED or SORRY at the
-    deployment - read the table, not this comment, for the current verdicts. -/
+/-! ## 2A. THE V3 CLAUSE MACHINERY (ST.6, D-P67) - PORTED VERBATIM FROM THE STAGING MODULE
+
+  Everything below in 2A and V is Midfall/LoweringV3/Statements.lean sections D, C, I, N, V and its
+  projections, copied token for token and renamed only where the frozen surface already owns the
+  name (ValidV3 -> Render.Valid). RECON.1 landed the single seven-clause text there; ST.6 makes the
+  frozen surface read as it. Nothing here is a paraphrase: where the staging text explains a clause,
+  that explanation is the explanation of the frozen clause too, and the staging module stays the
+  authority for the measurements (Instances/StatementsV3Deploy.lean, ...Falsifiers.lean).
+
+  WHY IT MOVES INTO THE FROZEN FILE AND NOT INTO A REFINABLE ONE: Render.Valid is a frozen
+  statement, and a frozen statement may not rest on a refinable definition (D-P65, the reason
+  Render.slices and Render.scope moved in by ST.3). programOk, PayloadAgrees and GeneratedBy are
+  the TEXT of three of its seven clauses.
+
+  WHAT WAS NOT PORTED, and why: only the clause texts move. The staging module's `PlanMeta`/
+  `planMetaB`/`planLayoutB` (its §B) stay there - RECON.1 deleted them as clauses and
+  `Instances/StatementsV3Deploy.lean` and `...Falsifiers.lean` measure them; `TwoOutcomes` and its
+  two obligation lemmas (staging §I) belong to the headline, which is ST.5's and ST.8-ST.10's, not
+  to `Valid`; `ExitShape` (staging §V) belongs to SIM.3; `slicesV3`/`scopeV3` (staging §D) are the
+  frozen `Render.slices`/`Render.scope`, already cut over by ST.3; and the frozen §3-§5, §8-§9
+  codec, entry-frame, headline and calldata text is ST.4's cut-over under D-P64, unchanged here. -/
+
+/-- The names a block binds at its top level (let, function names). MOVED HERE from
+    ProgramLemmas.lean by ST.6: noShadowCore below is a frozen clause text and may not rest on the
+    refinable file (the same rule as Render.slices, D-P65); ProgramLemmas.lean now imports this
+    file for it. Same text, same Inline.boundOf. -/
+def topBinders (b : YulBlock) : List String := b.flatMap Inline.boundOf
+
+/-- NO SHADOWING, decidably: no top-level binder of the un-inlined program is a constant name.
+    This is the side condition of `inline_append` (`ProgramLemmas.lean:27`), without which
+    `prog_slices_decomp` is false (findings B-5, D-13: a model constant named `r` is substituted in
+    the standalone slices and not in the program). solc rejects such shadowing, so the clause also
+    aligns the model with Solidity. -/
+def noShadowCore (pv : PlanView) (m : Model) : Bool :=
+  (topBinders (abiGuardBlock m ++ wrapperLocals m 0 0 ++ mainAsmRaw pv m)).all
+    fun x => !((constTableOf m).map Prod.fst).contains x
+
+/-- The render-level face of `noShadowCore`. -/
+def noShadowB (R : Render p G₁ G₂ Gₜ) : Bool := noShadowCore R.pv R.model
+/-! ## §C. The payload-content pins (c)
+
+  OLD: `Valid.slots : EnvAgrees ...` (`Statements.lean:205`, `Inv.lean:533-579`) ties the payload
+  `R.pv.vk` to the Lean key through ONE word, `vkDigestWord`. v1 had `VkSlotsAgree`
+  (`Inv.lean:608-634`) for the three base slots; V2 dropped it. Nothing pins the commitment words,
+  the domain words, or `E.delta`. -/
+
+/-- Header word `i` of the payload image. `getD` past the end is the zero word, so a pin about a
+    slot the payload does not have is false for every non-zero expected value. -/
+def payloadWord (PV : PlanView) (i : Nat) : Word256 := (PV.vk.constants.getD i ("", 0)).2
+
+/-- The 128-byte EIP-2537 image of one payload commitment: `x_hi ‖ x_lo ‖ y_hi ‖ y_lo`, the order
+    `Halo2VerifyingKey.bytes` writes (`Models.lean:475-481`). -/
+def g1WordsBytes (w : G1Words) : Bytes :=
+  wordToBytesBE w.xHi ++ wordToBytesBE w.xLo ++ wordToBytesBE w.yHi ++ wordToBytesBE w.yLo
+
+/-- **THE PAYLOAD AGREES WITH THE LEAN KEY.** One structure for every payload word the contract
+    reads and every environment constant the generator emits as a literal. Slot numbers are
+    `vkHeaderTemplateSlotsDefault`'s (`Models.lean:734`), never literals. `vkDigest` (slot 0) is
+    NOT repeated here: it stays `EnvAgrees.vkDigestWord`. -/
+structure PayloadAgrees (R : Render p G₁ G₂ Gₜ) : Prop where
+  /-- The object text's first field (card step 3): header word 0 is the Lean key's transcript
+      representation. THE OVERLAP IS KEPT BECAUSE THE CARD NAMES THE FIELD: `EnvAgrees.vkDigestWord`
+      (`Inv.lean:579`) states the same equation, and the 18-clause text omitted it here for that
+      reason. It is redundant with `env`, not with `generated`. -/
+  digest : payloadWord R.pv vkHeaderTemplateSlotsDefault.vkDigest =
+    frWord R.vk.transcriptRepr
+  /-- Justifies `eq(mload(NUM_INSTANCES_MPTR), <num_instances>)` in VkLoading (progress: the
+      guard passes) - slot 1. -/
+  numInstances : payloadWord R.pv vkHeaderTemplateSlotsDefault.numInstances =
+    BitVec.ofNat 256 R.cfg.numInstances
+  /-- Justifies `eq(mload(K_MPTR), <k>)` in VkLoading - slot 2. -/
+  k : payloadWord R.pv vkHeaderTemplateSlotsDefault.k = BitVec.ofNat 256 R.vk.domain.k
+  /-- Justifies `mload(N_INV_MPTR)` in Lagrange (`l_i_common := mulmod(x_n_minus_1, N_INV, r)`);
+      Lean uses `barycentricWeight`, tied to this value by `EnvAgrees.baryWeight` - slot 3. -/
+  nInv : payloadWord R.pv vkHeaderTemplateSlotsDefault.nInv =
+    frWord ((((2 ^ R.vk.domain.k : ℕ) : Fr p))⁻¹)
+  /-- Justifies `mload(OMEGA_MPTR)` in Lagrange (the `x - omega^i` walk) and in the PCS rotation
+      points; Lean rotates by `vk.domain.omega` - slot 4. -/
+  omega : payloadWord R.pv vkHeaderTemplateSlotsDefault.omega = frWord R.vk.domain.omega
+  /-- Justifies `mload(OMEGA_INV_MPTR)` in the PCS rotation points (negative rotations) -
+      slot 5. -/
+  omegaInv : payloadWord R.pv vkHeaderTemplateSlotsDefault.omegaInv =
+    frWord R.vk.domain.omegaInv
+  /-- Justifies `mload(OMEGA_INV_TO_L_MPTR)`, the start of both Lagrange loops:
+      `omega_inv ^ |rotation_last|` (`Vk.lean:724-726`, VK:115-118) - slot 6. -/
+  omegaInvToL : payloadWord R.pv vkHeaderTemplateSlotsDefault.omegaInvToL =
+    frWord (R.vk.domain.omegaInv ^ R.plan.meta_.rotationLast.natAbs)
+  /-- Justifies the four `eq(mload(*ACC*_MPTR), <literal>)` guards in VkLoading: the header's
+      accumulator quadruple is the configuration's (`accWordsOfEncoding`, `Inv.lean:259`) -
+      slots 7-10. -/
+  accWords :
+    ((payloadWord R.pv vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
+      (payloadWord R.pv vkHeaderTemplateSlotsDefault.accOffset).toNat,
+      (payloadWord R.pv vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
+      (payloadWord R.pv vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
+    accWordsOfEncoding R.cfg.accumulator
+  /-- Justifies `mcopy(_, G1_BASE_MPTR, 0x80)` in the PCS final MSM (the `-v * G` term): the slot
+      holds the encoding of the generator Lean's `DualMSM` uses (`P.g₁`). v1
+      `VkSlotsAgree.g1BaseWords` - slot 11. -/
+  g1Base : vkG1Words R.pv vkG1BaseSlot = R.E.g1.toEip P.g₁
+  /-- Justifies `mcopy(add(scratch, 0x80), G2_BASE_MPTR, 0x100)` in `ec_pairing`. v1
+      `VkSlotsAgree.g2BaseWords` - slot 15. -/
+  g2Base : vkG2Words R.pv vkG2BaseSlot = R.encG2 P.g₂
+  /-- Justifies `mcopy(add(scratch, 0x200), NEG_S_G2_BASE_MPTR, 0x100)` in `ec_pairing`. v1
+      `VkSlotsAgree.negSG2Words` - slot 23. -/
+  negSG2 : vkG2Words R.pv vkNegSG2BaseSlot = R.encG2 R.sG2gen⁻¹
+  /-- Justifies every read of a fixed-commitment EcPoint in the PCS MSMs (the payload section
+      after the header constants): the words are the EIP encoding of the Lean key's own
+      commitments, in order. -/
+  fixedComms : R.pv.vk.fixedComms.map g1WordsBytes =
+    R.vk.fixedCommitments.toList.map R.E.g1.toEip
+  /-- Same for the permutation (sigma) commitments, the last payload section. -/
+  permutationComms : R.pv.vk.permutationComms.map g1WordsBytes =
+    R.vk.permutation.commitments.toList.map R.E.g1.toEip
+  /- **`delta` IS DROPPED (card step 3).** The 18-clause text pinned the emitted `frDelta` literal
+      against `R.E.delta`; the single text does not, because `generated` already pins `R.E.delta`
+      against the program: OBJ.7's gate 9 (`GeneratedKats.generateAll_falsifierDeltaAndOmega_ok`)
+      measures that `delta := 2` changes the generated text AND the quotient blocks, so DELTA reaches
+      the text through the generator and not through a payload equation - and `inputs.frDelta` alone is
+      INERT at the deployment (`Artifacts.lean:129-135`: the one template site that interpolates it is
+      inside the `when None` arm P-13c never renders; `Deploy.frDeltaIsGeneratorPow_ok` measures the literal's own value
+      halves). The card's acceptance line - "`delta := 2` falsifies `generated` (not `payload`)" - is
+      gate 9, and `Deploy.recon1_programOkB_ok` measures the bundle that reads the table. -/
+
+/-- The decidable face of the seven fields that mention no codec and no group element: the header
+    scalars (`digest` included) and the accumulator quadruple. `StatementsV3Deploy.lean` evaluates it. The
+    five remaining fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`, `permutationComms`) compare
+    payload bytes with `toEip` of group elements: each needs a codec fact (`toEip` is
+    noncomputable at `g1CodecZ`) and, for the three base slots, a pairing whose generators are
+    pinned (finding H-2). -/
+def payloadScalarsB (PV : PlanView) (numInstances k : Nat) (omega omegaInv : Fr p)
+    (rotationLast : Int) (acc : Option Midfall.Generator.AccumulatorEncoding) : List Bool :=
+  let s := vkHeaderTemplateSlotsDefault
+  [ payloadWord PV s.numInstances == BitVec.ofNat 256 numInstances,
+    payloadWord PV s.k == BitVec.ofNat 256 k,
+    payloadWord PV s.nInv == frWord ((((2 ^ k : ℕ) : Fr p))⁻¹),
+    payloadWord PV s.omega == frWord omega,
+    payloadWord PV s.omegaInv == frWord omegaInv,
+    payloadWord PV s.omegaInvToL == frWord (omegaInv ^ rotationLast.natAbs),
+    ((payloadWord PV s.hasAccumulator).toNat, (payloadWord PV s.accOffset).toNat,
+      (payloadWord PV s.numAccLimbs).toNat, (payloadWord PV s.numAccLimbBits).toNat) ==
+        accWordsOfEncoding acc ]
+/-! ## §I. The exit discipline (i) - THE SCAN ONLY
+
+  OLD (`Blocks.lean:356-363`): `rejects_of_not_accepts`, a sorried lemma with neither `SoundSide`
+  nor `R.Valid`, concluding `obs.isRevertOrHalt` from `¬ LeanAccepts`. FALSE on the logup-panic
+  set (the contract accepts there, `Inv.lean:698-706`) and false for every render whose
+  `cfg.numInstances` is perturbed (finding A+1).
+
+  NEW: conjunct 3 does not need any rejection lemma. Every run of the program either returns ABI
+  `true` or is a non-committing halt, with the world unchanged, WHATEVER the Lean verifier says,
+  for every call relation, every gas oracle and every start state. Three syntactic facts give it:
+    1. `NoWriters` (already `Valid.noWriters`) - the world is unchanged;
+    2. no `stop`, `selfdestruct` or `return` builtin occurs outside the designated tail, so the
+       only halts the body can produce are `revert`, `invalid`, `invalidMemoryAccess`,
+       `staticViolation` - all non-committing (`HaltKind.commits`);
+    3. the program ends with `mstore(p, 1)  return(p, 0x20)` and has no `leave` outside a
+       function nor `break`/`continue` outside a loop, so a run that does not halt earlier
+       reaches that tail and returns `abiTrue`. -/
+
+/-- The builtins that end the frame with a COMMITTING halt. -/
+def isCommittingExit : EVM.Op → Bool
+  | .stop | .ret | .selfdestruct => true
+  | _ => false
+
+/-- One layer of the exit scan, in the shape of `Bridge.noWritersStep` (`Bridge.lean:1069`), with
+    two context bits: inside a function body (where `leave` is legal) and inside a loop body
+    (where `break` / `continue` are). -/
+def exitStep (inFun inLoop : Bool) : Scan → (Bool → Bool → Scan → Bool) → Bool
+  | .e (.lit _), _ => true
+  | .e (.var _), _ => true
+  | .e (.builtin op args), rec => !isCommittingExit op && rec inFun inLoop (.es args)
+  | .e (.call _ args), rec => rec inFun inLoop (.es args)
+  | .es [], _ => true
+  | .es (e :: rest), rec => rec inFun inLoop (.e e) && rec inFun inLoop (.es rest)
+  | .s (.block body), rec => rec inFun inLoop (.b body)
+  | .s (.funDef _ _ _ body), rec => rec true false (.b body)
+  | .s (.letDecl _ none), _ => true
+  | .s (.letDecl _ (some e)), rec => rec inFun inLoop (.e e)
+  | .s (.assign _ e), rec => rec inFun inLoop (.e e)
+  | .s (.cond c body), rec => rec inFun inLoop (.e c) && rec inFun inLoop (.b body)
+  | .s (.switch c cases dflt), rec =>
+      rec inFun inLoop (.e c) && rec inFun inLoop (.cs cases) &&
+        (match dflt with | none => true | some d => rec inFun inLoop (.b d))
+  | .s (.forLoop init c post body), rec =>
+      rec inFun false (.b init) && rec inFun false (.e c) && rec inFun false (.b post) &&
+        rec inFun true (.b body)
+  | .s (.exprStmt e), rec => rec inFun inLoop (.e e)
+  | .s .break, _ => inLoop
+  | .s .continue, _ => inLoop
+  | .s .leave, _ => inFun
+  | .b [], _ => true
+  | .b (s :: ss), rec => rec inFun inLoop (.s s) && rec inFun inLoop (.b ss)
+  | .cs [], _ => true
+  | .cs ((_, b) :: rest), rec => rec inFun inLoop (.b b) && rec inFun inLoop (.cs rest)
+
+/-- Fuel-bounded scan; exhaustion answers `false` (R-37), as in `noWritersScan`. -/
+def exitScan : Nat → Bool → Bool → Scan → Bool
+  | 0, _, _, _ => false
+  | n + 1, f, l, sc => exitStep f l sc (exitScan n)
+
+/-- The program minus its designated tail `mstore(p, 1)  return(p, 0x20)`, when it has one. -/
+def returnTail? (b : Block EVM.Op) : Option (Block EVM.Op) :=
+  match b.reverse with
+  | Stmt.exprStmt (Expr.builtin EVM.Op.ret
+        [Expr.lit (Literal.number p₁), Expr.lit (Literal.number n)]) ::
+      Stmt.exprStmt (Expr.builtin EVM.Op.mstore
+        [Expr.lit (Literal.number p₂), Expr.lit (Literal.number v)]) :: initRev =>
+      if p₁ = p₂ ∧ n = 32 ∧ v = 1 then some initRev.reverse else none
+  | _ => none
+
+/-- The whole check: the tail is there and nothing before it can commit or escape. -/
+def exitDisciplineFuel (n : Nat) (b : Block EVM.Op) : Bool :=
+  match returnTail? b with
+  | some init => exitScan n false false (.b init)
+  | none => false
+
+/-- The only committing exit of the block is its final `return` of the word 1. -/
+def ExitDiscipline (b : Block EVM.Op) : Prop := ∃ n, exitDisciplineFuel n b = true
+
+/-- WITNESS: the shape `traceReturn` ends the program with passes. PROVED by `decide`. -/
+theorem exitDiscipline_witness :
+    ExitDiscipline (yul% {
+      if iszero(calldataload(0)) { mstore(0, 7) revert(0, 4) }
+      mstore(4096, 1)
+      return(4096, 32) }) :=
+  ⟨16, by decide⟩
+
+/-- FALSIFIERS: an early `return`, a `stop`, a missing tail and a top-level `leave` are each
+    refused at the fuel that accepts the witness. PROVED by `decide`. -/
+theorem exitDiscipline_refuses :
+    exitDisciplineFuel 16 (yul% { return(0, 32) mstore(4096, 1) return(4096, 32) }) = false ∧
+    exitDisciplineFuel 16 (yul% { if calldataload(0) { stop() } mstore(4096, 1) return(4096, 32) })
+      = false ∧
+    exitDisciplineFuel 16 (yul% { mstore(4096, 1) }) = false ∧
+    exitDisciplineFuel 16 (yul% { mstore(4096, 2) return(4096, 32) }) = false ∧
+    exitDisciplineFuel 16 (yul% { leave mstore(4096, 1) return(4096, 32) }) = false := by
+  decide
+/-! ## §N. THE PROGRAM CHECKS: one decidable bundle with the seven D-P71 clauses folded in (RECON.1)
+
+  THE BASE IS THE OBJECT TEXT (`ObjectV3Full.lean:747-755`, `programOkWith`): `codegenStruct`,
+  `constsCoherent`, `callsResolved`, `noShadow`, `mainClosed`, `0x80 ≤ transcriptMptr`. RECON.1 step 2
+  adds the frozen token clause (`codegenAgrees`), ONE exit scan, `cdBound` and `hasMultiPointSet`; the
+  D-P71 blockquote adds `gasScan`, the transcript region (PG-TPBUF), `0x80 ≤ g1IdentityMptr`
+  (PG-G1ID), `2 ≤ numNegLagranges` (PG-NEGLAG) and the repaired permutation clause that step 4 deletes
+  with `WellFormedV3`. `FR_MODULUS = p` and `returnMptr` are NOT conjuncts: they are THEOREMS of
+  `constsCoherent` (additions 6 and 7), proved below.
+
+  WHY `programOk` IS A `Prop` AND NOT THE OBJECT TEXT'S `Bool`: two conjuncts - the exit scan and the
+  gas scan - are fuel-bounded scans stated as `∃ n, scan n = true`, exactly as `NoWriters` is
+  (`Bridge.lean:1108`). Folding them into one `Bool` would pin a fuel in the statement and make the
+  class depend on the witness: a render whose program needs one more unit of fuel than the pin would
+  be excluded by a number that means nothing. So `programOkB` is the decidable bundle the clause table
+  evaluates and `programOk` is `programOkB = true` conjoined with the two scans. Nothing is weakened
+  and nothing is invented.
+
+  `constsCoherent`, `expectedConsts`, `callsResolved` and `noShadowProg` are the object text's, ported
+  verbatim except where the tree's own names differ (`mainAsmRaw` takes the model since WP-G1;
+  `FR_MODULUS` is the tree's `frModulusConstant` and not a second copy of the literal). -/
+
+/-- Byte address of a layout pointer (same adapter as `Inv.ptrAddr`). -/
+def cAddr (q : Ptr) : Nat := Value.asUsizeNat q.value
+
+/-- THE CONTRACT CONSTANT TABLE AS DATA, in the order of `templates/partials/verifier/Constants.sol`.
+    Every address is read from the PLAN VIEW (the record `Inv` reads), every length from the plan
+    view's payload, every calldata pointer from the plan view's proof layout. Only the build-time
+    numbers that the plan view does not carry come from the model: the three optional-arm selectors
+    (`expectedVkCodehash`, `quotientExternal`/`expectedQuotient*`, `expectedHasAccumulator`), the
+    gas schedule and the two derived gas numbers. The 14 trailing entries are template literals. -/
+def expectedConsts (pv : PlanView) (m : Model) : List (String × Nat) :=
+  let M := pv.memory
+  let H := m.vkHeader
+  let hdr (w : Nat) : Nat := cAddr (Ptr.add M.vkMptr w)
+  (match m.expectedVkCodehash with
+    | some _ =>
+        [ ("EXPECTED_VK_PAYLOAD_LENGTH", pv.vk.len)
+        , ("EXPECTED_VK_LENGTH", pv.vk.len + 1)
+        , ("EXPECTED_VK_CODEHASH_WORD", (keccak256 pv.vk.runtimeBytes).toNat) ]
+    | none => []) ++
+  (match m.quotientExternal, m.expectedQuotientCodehash with
+    | some _, some h =>
+        [ ("EXPECTED_QUOTIENT_LENGTH", m.expectedQuotientLen.getD 0)
+        , ("EXPECTED_QUOTIENT_CODEHASH_WORD", h.toNat) ]
+    | _, _ => []) ++
+  [ ("PROOF_LEN_CPTR", pv.proofLayout.proofCptr - 32)
+  , ("PROOF_CPTR", pv.proofLayout.proofCptr)
+  , ("NUM_INSTANCE_CPTR", pv.proofLayout.proofEnd)
+  , ("INSTANCE_CPTR", pv.proofLayout.proofEnd + 32)
+  , ("TRANSCRIPT_MPTR", M.transcriptMptr)
+  , ("RETURN_MPTR", M.verifierReturnMptr)
+  , ("VK_MPTR", cAddr M.vkMptr)
+  , ("VK_DIGEST_MPTR", hdr H.vkDigest)
+  , ("NUM_INSTANCES_MPTR", hdr H.numInstances)
+  , ("K_MPTR", hdr H.k)
+  , ("N_INV_MPTR", hdr H.nInv)
+  , ("OMEGA_MPTR", hdr H.omega)
+  , ("OMEGA_INV_MPTR", hdr H.omegaInv)
+  , ("OMEGA_INV_TO_L_MPTR", hdr H.omegaInvToL)
+  , ("HAS_ACCUMULATOR_MPTR", hdr H.hasAccumulator)
+  , ("ACC_OFFSET_MPTR", hdr H.accOffset)
+  , ("NUM_ACC_LIMBS_MPTR", hdr H.numAccLimbs)
+  , ("NUM_ACC_LIMB_BITS_MPTR", hdr H.numAccLimbBits)
+  , ("G1_BASE_MPTR", hdr H.g1Base)
+  , ("G2_BASE_MPTR", hdr H.g2Base)
+  , ("NEG_S_G2_BASE_MPTR", hdr H.negSG2Base)
+  , ("CHALLENGE_MPTR", cAddr M.challengeMptr)
+  , ("THETA_MPTR", cAddr M.thetaMptr)
+  , ("BETA_MPTR", cAddr M.betaMptr)
+  , ("GAMMA_MPTR", cAddr M.gammaMptr)
+  , ("TRASH_CHALLENGE_MPTR", cAddr M.trashChallengeMptr)
+  , ("Y_MPTR", cAddr M.yMptr)
+  , ("X_MPTR", cAddr M.xMptr)
+  , ("X1_MPTR", cAddr M.x1Mptr)
+  , ("X2_MPTR", cAddr M.x2Mptr)
+  , ("X3_MPTR", cAddr M.x3Mptr)
+  , ("X4_MPTR", cAddr M.x4Mptr)
+  , ("F_COM_MPTR", cAddr M.fComMptr)
+  , ("PI_MPTR", cAddr M.piMptr)
+  , ("ACC_LHS_MPTR", cAddr M.accLhsMptr)
+  , ("ACC_RHS_MPTR", cAddr M.accRhsMptr)
+  , ("X_N_MPTR", cAddr M.xNMptr)
+  , ("X_N_MINUS_1_INV_MPTR", cAddr M.xNMinus1InvMptr)
+  , ("L_LAST_MPTR", cAddr M.lLastMptr)
+  , ("L_BLIND_MPTR", cAddr M.lBlindMptr)
+  , ("L_0_MPTR", cAddr M.l0Mptr)
+  , ("INSTANCE_EVAL_MPTR", cAddr M.instanceEvalMptr)
+  , ("QUOTIENT_EVAL_MPTR", cAddr M.quotientEvalMptr)
+  , ("QUOTIENT_MPTR", cAddr M.quotientMptr)
+  , ("F_EVAL_MPTR", cAddr M.fEvalMptr)
+  , ("V_MPTR", cAddr M.vMptr)
+  , ("FINAL_COM_MPTR", cAddr M.finalComMptr)
+  , ("PAIRING_LHS_MPTR", cAddr M.pairingLhsMptr)
+  , ("PAIRING_RHS_MPTR", cAddr M.pairingRhsMptr)
+  , ("ROT_POINTS_MPTR", cAddr M.rotPointsMptr)
+  , ("X1_POWERS_MPTR", cAddr M.x1PowersMptr)
+  , ("Q_COM_MPTR", cAddr M.qComMptr)
+  , ("Q_EVAL_SET_MPTR", cAddr M.qEvalSetMptr)
+  , ("Q_EVAL_CPTR_MPTR", cAddr M.qEvalCptrMptr)
+  , ("G1_IDENTITY_MPTR", cAddr M.g1IdentityMptr)
+  , ("REVERSED_EVALS_MPTR", cAddr M.reversedEvalsMptr)
+  , ("SELECTOR_ACC_MPTR", M.selectorAccMptr)
+  , ("QUOTIENT_RETURN_MPTR", M.quotientReturnMptr)
+  , ("BATCH_INV_SCRATCH_MPTR", M.batchInvertScratchMptr)
+  , ("LAGRANGE_DENOMS_MPTR", M.lagrangeDenomsMptr)
+  , ("TRACE_U256_MPTR", M.traceU256Mptr)
+  , ("ADVICE_COMMS_MPTR_BASE", cAddr M.adviceCommsMptrBase)
+  , ("LOOKUP_M_COMMS_MPTR_BASE", cAddr M.lookupMCommsMptrBase)
+  , ("PERM_Z_COMMS_MPTR_BASE", cAddr M.permZCommsMptrBase)
+  , ("LOOKUP_HELPER_COMMS_MPTR_BASE", cAddr M.lookupHelperCommsMptrBase)
+  , ("LOOKUP_Z_COMMS_MPTR_BASE", cAddr M.lookupZCommsMptrBase)
+  , ("TRASHCAN_COMMS_MPTR_BASE", cAddr M.trashcanCommsMptrBase)
+  , ("QUOTIENT_LIMB_COMMS_MPTR_BASE", cAddr M.quotientLimbCommsMptrBase)
+  , ("G1ADD_GAS", m.templateConstants.gas.g1add)
+  , ("G1MSM_GAS_1PAIR", m.templateConstants.gas.g1msmOnePair)
+  , ("PAIRING_GAS_2PAIR", m.templateConstants.gas.pairingTwoPair)
+  , ("MODEXP_GAS", m.templateConstants.gas.modexp)
+  , ("G1MSM_GAS_SMOKE", m.constructorG1msmSmokeGas) ] ++
+  (if m.expectedHasAccumulator then [("ACC_RHS_MSM_GAS", m.accRhsMsmGas)] else []) ++
+  [ ("ERR_BAD_CALLDATA_SHAPE", 0x1b99e37c)
+  , ("ERR_VK_MISMATCH", 0xa447d73e)
+  , ("ERR_NON_CANONICAL_SCALAR", 0x77530042)
+  , ("ERR_BAD_POINT_ENCODING", 0xf27905ec)
+  , ("ERR_PRECOMPILE_FAILED", 0x84e81692)
+  , ("ERR_PROOF_REJECTED", 0xc3b0d8cd)
+  , ("ERR_QUOTIENT_PROGRAM_INVALID", 0x3cc81b89)
+  , ("ERR_MEMORY_LAYOUT_VIOLATED", 0xc9888d23)
+  , ("FR_MODULUS", frModulusConstant)
+  , ("BLS_P_HI", 0x1a0111ea397fe69a4b1ba7b6434bacd7)
+  , ("BLS_P_MINUS_ONE_LO", 0x64774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa)
+  , ("BLS_P_MINUS_ONE_PACKED_0", 0xf38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaaa)
+  , ("BLS_P_MINUS_ONE_PACKED_0_WITH_ID_FLAG", 0xf38512bf6730d2a0f6b0f6241eabfffeb153ffffbafeffffffffaaaa)
+  , ("BLS_P_MINUS_ONE_PACKED_1", 0x1a0111ea397fe69a4b1ba7b6434bacd764774b84) ]
+
+/-- The names the un-inlined program reads that it does not bind: exactly the contract constants
+    plus the two wrapper locals. Includes the ABI guard block, which `mainClosed` omits. -/
+def progConstNames (pv : PlanView) (m : Model) : List String :=
+  (Midfall.LoweringV2.freeNames (abiGuardBlock m ++ mainAsmRaw pv m)).filter
+    fun x => x != "vk" && x != "quotientEvaluator"
+
+/-- Every constant line of the rendered `Constants.sol` that declares a `uint256 internal constant`
+    has a LITERAL right-hand side (decimal or 0x-hex digits only) - the KAT `Program.lean:55-57`
+    asks for and never got. Without it `solConstantLine?` silently mis-parses `sub(0, 0x20)`. -/
+def constLinesLiteral (m : Model) : Bool :=
+  ((renderConstants (partialCtxOfVerifier m)).splitOn "\n").all fun l =>
+    match l.splitOn "uint256 internal constant " with
+    | [_, rest] =>
+        (match rest.splitOn "=" with
+         | [_, rhs] =>
+             let v := ((rhs.splitOn ";").headD "").trimAscii.toString
+             let digits := if v.startsWith "0x" then (v.drop 2).toString else v
+             !digits.isEmpty && digits.all fun c => c.isDigit || ('a' ≤ c && c ≤ 'f')
+         | _ => false)
+    | _ => true
+
+/-- **THE ONE CONSTANTS-COHERENCE CLAUSE.** Four conjuncts, all computations on the render:
+    1. first-headline scope: no Direct lowering (its constant lines are free strings);
+    2. every constant line parses as a literal;
+    3. the table read back from the rendered text IS the data-level table of the plan view;
+    4. no name is declared twice, and every name the program reads is declared. -/
+def constsCoherent (pv : PlanView) (m : Model) : Bool :=
+  m.quotientDirect.isNone &&
+  constLinesLiteral m &&
+  constTableOf m == expectedConsts pv m &&
+  decide (((expectedConsts pv m).map Prod.fst).Nodup) &&
+  (progConstNames pv m).all fun x => ((expectedConsts pv m).map Prod.fst).contains x
+
+
+mutual
+def callSitesE : Expr EVM.Op → List (String × Nat)
+  | Expr.call f args => (f, args.length) :: callSitesEs args
+  | Expr.builtin _ args => callSitesEs args
+  | _ => []
+def callSitesEs : List (Expr EVM.Op) → List (String × Nat)
+  | [] => []
+  | e :: es => callSitesE e ++ callSitesEs es
+end
+
+mutual
+def callSitesS : Stmt EVM.Op → List (String × Nat)
+  | Stmt.block body => callSitesSs body
+  | Stmt.funDef _ _ _ body => callSitesSs body
+  | Stmt.letDecl _ (some e) => callSitesE e
+  | Stmt.assign _ e => callSitesE e
+  | Stmt.cond c body => callSitesE c ++ callSitesSs body
+  | Stmt.switch c cases dflt =>
+      callSitesE c ++ callSitesSC cases ++
+        (match dflt with | some d => callSitesSs d | none => [])
+  | Stmt.forLoop init c post body =>
+      callSitesSs init ++ callSitesE c ++ callSitesSs post ++ callSitesSs body
+  | Stmt.exprStmt e => callSitesE e
+  | _ => []
+termination_by s => sizeOf s
+def callSitesSs : List (Stmt EVM.Op) → List (String × Nat)
+  | [] => []
+  | s :: ss => callSitesS s ++ callSitesSs ss
+termination_by ss => sizeOf ss
+def callSitesSC : List (Literal × List (Stmt EVM.Op)) → List (String × Nat)
+  | [] => []
+  | (_, body) :: rest => callSitesSs body ++ callSitesSC rest
+termination_by cs => sizeOf cs
+end
+
+/-- The functions a block defines at its top level, with their arities. -/
+def funSigsOf (blk : YulBlock) : List (String × Nat) :=
+  blk.filterMap fun s => match s with | .funDef n ps _ _ => some (n, ps.length) | _ => none
+
+/-- Every user call resolves to a top-level definition of the main block with the same arity;
+    no definition is named after a built-in; no name is defined twice. With it, a `.call` node
+    can never be a mis-spelled built-in and no run is stuck on an unresolved callee. -/
+def callsResolved (main : YulBlock) : Bool :=
+  let sigs := funSigsOf main
+  (callSitesSs main).all (fun c => sigs.contains c) &&
+    sigs.all (fun s => (EVM.parse s.1).isNone) &&
+    decide ((sigs.map Prod.fst).Nodup)
+
+/-- No binder of the program - at ANY depth, `boundSs` - is the name of a contract constant (solc
+    rejects it too). This is the hypothesis `inline_append` needs, the object text's `noShadow`, and the
+    stricter of the two shadowing scans: `noShadowCore` (§D) checks top-level binders only and is the
+    face the registered `prog_slices_decompV3` cites, so `programOkB` carries both and
+    `noShadow_of_programOk` projects the second. The B-5 hazard is a model constant named `r`: it is
+    substituted at every `mulmod(…, r)` site of a standalone slice and not in the program. -/
+def noShadowProg (consts : List (String × Nat)) (prog : YulBlock) : Bool :=
+  (Midfall.LoweringV2.boundSs prog).all fun x => !(consts.map Prod.fst).contains x
+
+/- The `noShadow` and `callsResolved` witness/falsifier pair is an EVALUATION, not a `decide`:
+    both scans end in `List.contains` on strings, whose `Decidable` instance does not reduce in the
+    kernel here. See `Deploy.recon1_scans_ok` - a binder named `FR_MODULUS` (as a `let` and as a
+    function parameter) is refused, a plain binder passes; a call to a declared function resolves, an
+    undeclared call and a function named after a built-in do not. -/
+
+/-- The builtins whose FIRST argument is the gas the frame hands the callee: the four call ops and
+    the two create ops. **D-P71 addition 1 (PG-GAS)** reads "gas() occurs only as the gas argument of
+    a call", NOT "no gas()": the external-evaluator render calls the evaluator as
+    `staticcall(gas(), …)` (D-P72), so "no gas()" would exclude every external-evaluator render and
+    every widened one. TOT.1 needs exactly this fact. -/
+def takesGasArg : EVM.Op → Bool
+  | .call | .staticcall | .delegatecall | .callcode | .create | .create2 => true
+  | _ => false
+
+/-- One layer of the gas scan, in the shape of `noWritersStep` (`Bridge.lean:1069`). A call op skips
+    its own `gas()` argument and scans the rest; every other op rejects `gas()` in any position, and
+    a `gas()` nested inside a call's OTHER arguments is rejected because that position is not a call
+    op's first argument. -/
+def gasStep : Scan → (Scan → Bool) → Bool
+  | .e (.lit _), _ => true
+  | .e (.var _), _ => true
+  | .e (.builtin op args), rec =>
+      if takesGasArg op then
+        match args with
+        | Expr.builtin EVM.Op.gas [] :: rest => rec (.es rest)
+        | _ => rec (.es args)
+      else ! (op == EVM.Op.gas) && rec (.es args)
+  | .e (.call _ args), rec => rec (.es args)
+  | .es [], _ => true
+  | .es (e :: rest), rec => rec (.e e) && rec (.es rest)
+  | .s (.block body), rec => rec (.b body)
+  | .s (.funDef _ _ _ body), rec => rec (.b body)
+  | .s (.letDecl _ none), _ => true
+  | .s (.letDecl _ (some e)), rec => rec (.e e)
+  | .s (.assign _ e), rec => rec (.e e)
+  | .s (.cond c body), rec => rec (.e c) && rec (.b body)
+  | .s (.switch c cases dflt), rec =>
+      rec (.e c) && rec (.cs cases) &&
+        (match dflt with | none => true | some d => rec (.b d))
+  | .s (.forLoop init c post body), rec =>
+      rec (.b init) && rec (.e c) && rec (.b post) && rec (.b body)
+  | .s (.exprStmt e), rec => rec (.e e)
+  | .s .break, _ => true
+  | .s .continue, _ => true
+  | .s .leave, _ => true
+  | .b [], _ => true
+  | .b (s :: ss), rec => rec (.s s) && rec (.b ss)
+  | .cs [], _ => true
+  | .cs ((_, b) :: rest), rec => rec (.b b) && rec (.cs rest)
+
+/-- Fuel-bounded gas scan; exhaustion answers `false` (R-37), as `noWritersScan` and `exitScan` do. -/
+def gasScan : Nat → Scan → Bool
+  | 0, _ => false
+  | n + 1, sc => gasStep sc (gasScan n)
+
+/-- **D-P71 addition 1.** Every `gas()` of the block is the gas argument of a call. -/
+def GasCallOk (b : Block EVM.Op) : Prop := ∃ n, gasScan n (.b b) = true
+
+/-- WITNESS: a call's own `gas()` passes the scan - the arm that "no gas()" would have excluded, and
+    the arm every external-evaluator render lives in. PROVED by `decide`. -/
+theorem gasCallOk_witness : GasCallOk (yul% {
+    if iszero(staticcall(gas(), 0x0b, 0, 0x100, 0x80, 0x80)) { revert(0, 4) }
+    mstore(4096, 1)
+    return(4096, 32) }) :=
+  ⟨16, by decide⟩
+
+/-- FALSIFIER: the same `gas()` outside a call's gas argument - as a value, as a call's SECOND
+    argument, and inside a call's offset argument - is refused at the fuel that accepts the witness;
+    zero fuel refuses even the empty block (R-37). PROVED by `decide`. -/
+theorem gasCallOk_refuses :
+    gasScan 16 (.b (yul% { mstore(0, gas()) })) = false ∧
+    gasScan 16 (.b (yul% { pop(gas()) })) = false ∧
+    gasScan 16 (.b (yul% { let a := staticcall(0, gas(), 0, 0, 0, 0) })) = false ∧
+    gasScan 16 (.b (yul% { let a := staticcall(gas(), 0x0b, gas(), 0, 0, 0) })) = false ∧
+    gasScan 0 (.b (yul% { })) = false := by
+  decide
+
+/-- Two half-open byte ranges meet. -/
+def spansMeet (a b : Nat × Nat) : Bool := !(a.1 + a.2 ≤ b.1 || b.1 + b.2 ≤ a.1)
+
+/-- The bytes the transcript parser writes into memory: every walk window, each base paired with the
+    length of the section walked into it (`GenAst.g1WalkLoop` bounds each loop by its section's
+    `byteLen`): the six commitment bases, the two single-absorb destinations and the evals run. -/
+def walkWindowsOf (pv : PlanView) : List (Nat × Nat) :=
+  let M := pv.memory
+  let L := pv.proofLayout
+  let sum (ss : List ProofSection) : Nat := (ss.map (·.byteLen)).foldl (· + ·) 0
+  [ (ptrAddr M.adviceCommsMptrBase, sum L.advicePhases),
+    (ptrAddr M.lookupMCommsMptrBase, L.lookupMultiplicities.byteLen),
+    (ptrAddr M.permZCommsMptrBase, L.permutationProducts.byteLen),
+    (ptrAddr M.lookupHelperCommsMptrBase, sum (L.lookups.map (·.helpers))),
+    (ptrAddr M.trashcanCommsMptrBase, L.trash.byteLen),
+    (ptrAddr M.quotientLimbCommsMptrBase, L.quotientLimbs.byteLen),
+    (ptrAddr M.fComMptr, L.fCom.byteLen),
+    (ptrAddr M.piMptr, L.pi.byteLen),
+    (ptrAddr M.reversedEvalsMptr, L.evals.byteLen) ]
+
+/-- The longest run of absorbs between two squeezes: one whole section (each walk absorbs its section
+    before the squeeze that follows it), or the instance run, absorbed at 128 bytes per instance. -/
+def longestAbsorbRunOf (pv : PlanView) (numInstances : Nat) : Nat :=
+  let L := pv.proofLayout
+  (L.advicePhases.map (·.byteLen) ++
+    [L.lookupMultiplicities.byteLen, L.permutationProducts.byteLen, L.trash.byteLen,
+      L.quotientLimbs.byteLen, L.evals.byteLen, L.qEvals.byteLen,
+      128 * numInstances]).foldl Nat.max 0
+
+/-- **D-P71 addition 2 (PG-TPBUF), stated as a CLAUSE and not as a lemma, and the reason is
+    measured: it does NOT follow from `memory.map.WellFormed`.** Two independent reasons, both in the
+    tree. (1) `WellFormed` is PHASE-SCOPED: it routes disjointness through `memoryLifetimeIntersects`
+    (`Layout.lean:1114-1119`), and gate 14 of `LayoutMemory.lean:884-911` measures FIFTY-FOUR pairs of
+    poseidon regions that share bytes under it while the global byte-disjointness predicate on the
+    same map is FALSE - so `SupportedV2.layout` cannot give byte-disjointness between the transcript
+    region and a walk window. (2) `WellFormed` bounds a region START by `0x80` and checks alignment
+    and NOTHING about capacity (gate 15, `LayoutMemory.lean:928-960`: "WellFormed IS strictly weaker
+    than `validate`"); the absorb run is a capacity demand. ROW.TP step 3 was to check which - this is
+    the check, and the answer is "clause". -/
+def transcriptRegionOk (pv : PlanView) (numInstances : Nat) : Bool :=
+  match pv.memory.map.region "transcript_buffer" with
+  | none => false
+  | some t => decide (longestAbsorbRunOf pv numInstances ≤ t.len) &&
+      (walkWindowsOf pv).all fun w => !spansMeet (t.start, t.len) w
+
+/-- **D-P71 addition 3 (PG-G1ID).** `EntryFrameV3'` was declined under D-P64, so the only memory the
+    frame knows is zero is what `ZeroAbove` gives from `0x80` up: the `g1_identity` window that
+    `BaseInv .start` pins to zero has to lie above that floor. A REAL restriction, not a formality:
+    the default layout puts `g1IdentityMptr` at 0 (`Layout.lean:1732`). -/
+def g1IdentityFloor (pv : PlanView) : Bool := decide (0x80 ≤ ptrAddr pv.memory.g1IdentityMptr)
+
+/-- **D-P71 addition 4 (PG-NEGLAG).** The block reads `l_blind` from word 1 and starts the instance
+    walk at `max 2 numNegLagranges` (`GenAst.lean:727-733`), so at `numNegLagranges < 2` it computes
+    values the Lean verifier does not. `EnvAgrees.negLagranges` gives
+    `numNegLagranges = blindingFactors.toOption.getD 0 + 1`, which is 1 when `blindingFactors` is an
+    error - so this does NOT follow from the frozen `EnvAgrees`, and step 4 deletes the
+    `WellFormedV3` that did not carry it either. A REAL restriction. -/
+def negLagrangesFloor (pv : PlanView) : Bool := decide (2 ≤ pv.numNegLagranges)
+
+/-- The card's clause-2 addition: the calldata length the contract expects fits a word, as a
+    computation (the `Prop` face is `EntryFrameV3.cdSize`). -/
+def cdBoundB (pv : PlanView) (numInstances : Nat) : Bool :=
+  decide (pv.proofLayout.proofEnd + 32 + 32 * numInstances < 2 ^ 256)
+
+/-- The card's clause-2 addition, and the one `SimPins` field that is a program fact: some static
+    point set has two points, so the `x = 0` row of the fault table is discharged by a revert in the
+    PCS block (Lean and Rust deduplicate opening points BY VALUE, `Kzg/Utils.lean:137`). -/
+def hasMultiPointSet (pv : PlanView) : Bool :=
+  match Midfall.Generator.intermediateSets pv.meta_ pv.dat with
+  | .ok s => (s.pointSets.any fun ps => decide (2 ≤ ps.length))
+  | .error _ => false
+
+/-- **D-P59's repaired `WellFormed.permutationCommitmentsMatch`, kept as a computation.** Step 4
+    deletes `WellFormedV3`, and `supported` is the FROZEN `SupportedV2`, whose `wf` field still means
+    `divCeil columns (csDegree - 2)` - FALSE at the deployment (8 against 3, `Deploy`'s
+    `wellFormedPermCounts_ok`) and repaired by R.7. The corrected clause is one sigma commitment per
+    permutation COLUMN (`keygen.rs:244-250`, `permutation.rs:123`); it lives here until R.7 merges, at
+    which point it is `supported.wf.permutationCommitmentsMatch` and can be dropped from here. -/
+def permCommMatchRepaired (vk : VerifyingKey (Fr p) G₁) : Bool :=
+  vk.permutation.commitments.size == vk.cs.permutation.columns.size
+
+/-- **ONE BUNDLE FOR THE PROGRAM.** Everything about the emitted program that a computation at a
+    render decides: it is the parse of the text (`codegenStruct`, structural) AND the token equality
+    the frozen surface states (`codegenAgrees`, the card's "frozen token clause"); its constant table
+    is the plan view's (`constsCoherent`); every call resolves; no binder shadows a constant (both the
+    object text's every-binder scan and the `noShadowB` face `prog_slices_decompV3` cites); after
+    inlining only the wrapper locals are free (`mainClosed`); the transcript base is above Solidity's
+    reserved words; and the five D-P71 floors and bounds. -/
+def programOkCore (pv : PlanView) (m : Model) (numInstances : Nat)
+    (vk : VerifyingKey (Fr p) G₁) : Bool :=
+  let main := mainAsmRaw pv m
+  let consts := constTableOf m
+  codegenStruct main m &&
+  codegenAgrees pv m &&
+  constsCoherent pv m &&
+  callsResolved main &&
+  noShadowProg consts (abiGuardBlock m ++ wrapperLocals m 0 0 ++ main) &&
+  noShadowCore pv m &&
+  mainClosed pv m &&
+  decide (0x80 ≤ pv.memory.transcriptMptr) &&
+  cdBoundB pv numInstances &&
+  hasMultiPointSet pv &&
+  transcriptRegionOk pv numInstances &&
+  g1IdentityFloor pv &&
+  negLagrangesFloor pv &&
+  permCommMatchRepaired vk
+
+/-- The render-level face. The fixture render is `noncomputable` (its model is the typed-in artifact
+    value), so `Deploy` evaluates `programOkCore` at the render's own computable fields and
+    `programOkB_of_valid` is the projection. -/
+def programOkB (R : Render p G₁ G₂ Gₜ) : Bool :=
+  programOkCore R.pv R.model R.cfg.numInstances R.vk
+
+/-- **THE PROGRAM CLAUSE**: the bundle above plus the TWO SCANS. Both are `∃ n` propositions and stay
+    out of the `Bool` so that no fuel is pinned in the statement (section header). ONE exit scan
+    (D-P71 addition 5): `ExitDiscipline` is the scan of §I and `ExitShape` below is the SAME
+    `exitScan` applied to a different block - there is no second scan function in the tree. -/
+def programOk (R : Render p G₁ G₂ Gₜ) : Prop :=
+  programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline (R.prog 0 0)
+/-- The three names the projections read are in the data table for EVERY plan view and model,
+    whatever the four optional arms of the model hold. -/
+theorem expectedConsts_lookups (pv : PlanView) (m : Model) :
+    (expectedConsts pv m).lookup "FR_MODULUS" = some frModulusConstant ∧
+    (expectedConsts pv m).lookup "RETURN_MPTR" = some pv.memory.verifierReturnMptr ∧
+    (expectedConsts pv m).lookup "TRANSCRIPT_MPTR" = some pv.memory.transcriptMptr := by
+  cases h1 : m.expectedVkCodehash <;> cases h2 : m.quotientExternal <;>
+    cases h3 : m.expectedQuotientCodehash <;> cases h4 : m.expectedHasAccumulator <;>
+      simp [expectedConsts, h1, h2, h3, h4, List.lookup]
+
+/-- **THE CONSTS-COHERENCE PROJECTION**: the render's table IS the data table, so a lookup in one is
+    a lookup in the other. Every table projection below is this lemma plus `expectedConsts_lookups`.
+    This is what `GeneratorCertified.lean:458` (`v3_pins_of_valid`) runs on; RECON.1b ports the pin
+    bundles through it. -/
+theorem lookup_expectedConsts_of_programOkB {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true)
+    (name : String) :
+    (constTableOf R.model).lookup name = (expectedConsts R.pv R.model).lookup name := by
+  have hc := hp
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  have hcc := hc.1.1.1.1.1.1.1.1.1.1.1.2
+  simp only [constsCoherent, Bool.and_eq_true] at hcc
+  rw [eq_of_beq hcc.1.1.2]
+
+/-- **D-P71 addition 6 (PG-FRMOD): NOT a clause.** `FR_MODULUS = p` is `constsCoherent` together with
+    `EnvAgrees.modulus`, and here is the proof, so the rows get it as a projection of `hR.program` and
+    `hR.env` and the text carries no redundant conjunct. -/
+theorem frModulus_of_programOk_of_modulus {R : Render p G₁ G₂ Gₜ}
+    (hp : programOkB R = true) (hmod : p = frModulusConstant) :
+    R.consts.lookup "FR_MODULUS" = some p := by
+  have h : (constTableOf R.model).lookup "FR_MODULUS" = some frModulusConstant := by
+    rw [lookup_expectedConsts_of_programOkB hp, (expectedConsts_lookups R.pv R.model).1]
+  exact h.trans (congrArg Option.some hmod.symm)
+
+/-- **D-P71 addition 7: NOT a clause either.** `returnMptr` (`Valid.returnMptr`, the clause Q0.5 added
+    to the frozen surface) is carried over as a THEOREM of the single text: the table IS
+    `expectedConsts`, and `expectedConsts` declares `RETURN_MPTR`. This is the object text's
+    `Render.ValidV3.returnMptr_const`, restated for the reconciled clause; the TraceReturn progress
+    row reads exactly this. -/
+theorem returnMptr_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
+    ∃ m, R.consts.lookup "RETURN_MPTR" = some m := by
+  refine ⟨R.pv.memory.verifierReturnMptr, ?_⟩
+  show (constTableOf R.model).lookup "RETURN_MPTR" = some R.pv.memory.verifierReturnMptr
+  rw [lookup_expectedConsts_of_programOkB hp, (expectedConsts_lookups R.pv R.model).2.1]
+
+/-- The two D-P71 floors as `Prop`s the rows cite, discharged from the bundle. -/
+theorem g1IdentityFloor_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
+    0x80 ≤ ptrAddr R.pv.memory.g1IdentityMptr := by
+  have hc := hp
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  exact of_decide_eq_true hc.1.1.2
+
+theorem negLagranges_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
+    2 ≤ R.pv.numNegLagranges := by
+  have hc := hp
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  exact of_decide_eq_true hc.1.2
+
+/-- **THE GENERATED-BY CLAUSE** (the object text's `Render.GeneratedBy`, `ObjectV3Full.lean:615`): the
+    plan, the compact quotient blocks and the model are what `generateAll` returns for THIS render's
+    own verifier-side inputs - including `R.E.delta`, which is how DELTA reaches the program text
+    (finding H-7). It replaces the frozen clauses 1-4 (`circuitMeta`, `layout`, `invariants`,
+    `model`), the `validate_layout` gap B-7, the VM-lowering gap B+3 and `vkPins.numInst`. -/
+def generated (R : Render p G₁ G₂ Gₜ) : Except Fault GenOut :=
+  generateAll Features.solidity R.E.delta R.vk R.cfg R.plan.vk R.inputs R.flags
+
+def GeneratedBy (R : Render p G₁ G₂ Gₜ) : Prop :=
+  ∃ out, generated R = .ok out ∧ out.plan = R.plan ∧ out.qblocks = R.qblocks ∧ out.model = R.model
+
+/-! ## §V. VALIDITY - THE SINGLE TEXT (RECON.1's seven clauses, cut over onto the frozen surface by
+  ST.6 under D-P67)
+
+  ONE structure, seven clauses, and it is now the FROZEN text: `Render.Valid` below is `ValidV3` of
+  `Midfall/LoweringV3/Statements.lean` copied field for field, with the staging module's clause
+  machinery (§2A above) ported with it. The base is the object text's seven clauses
+  (`ObjectV3Full.lean:762-779`); the
+  eighteen-clause draft of `StatementsV3.lean:613` is the FALLBACK if D-P67 is struck and stays in the
+  evidence directory, not here (the card's Guidance). Where the two texts disagreed:
+
+  * `circuitMeta`, `layout`, `invariants`, `model` (four clauses of the 18-clause text) collapse into
+    `generated` - the object text's `GeneratedBy`, which is what the card's step 1 ("take the object
+    text's seven-clause structure as the base") means in practice. `PlanMeta` stays in the staging
+    module, where `Deploy` and `Falsifiers` measure it; it is not a clause of either text.
+  * `noShadow`: the object text scans EVERY binder (`boundSs`); the 18-clause text scanned top-level
+    binders only (`noShadowCore`). Both are conjuncts of `programOkB` - not a union of two texts but a
+    strictness ordering: the every-binder scan is the one `inline_append` needs, and the top-level face
+    is the one the registered `prog_slices_decompV3` cites. Neither is dropped; `noShadow_of_programOk`
+    projects the second.
+  * `exitDiscipline`: kept, as ONE scan, inside `programOk` (addition 5).
+  * `cdBound`, `transcriptMptr`, `vkPins`, `vkProgressPins`: the first two are conjuncts of
+    `programOkB`; the pin bundles are NOT clauses - `constsCoherent` is, and `vkPins` /
+    `vkProgressPins` / `transcriptMptr` are theorems of it (`GeneratorCertified.lean:458` proves the
+    bundle; RECON.1b ports it).
+  * `payload`: the object text's field list - `digest` in, `delta` out (card step 3).
+  * `supported : SupportedV2 R` (frozen), NOT `SupportedV3`: step 4 deletes `SupportedV3` and
+    `WellFormedV3`. The repaired permutation clause that `WellFormedV3.wf` carried is kept as
+    `permCommMatchRepaired`, a conjunct of `programOkB`, because `SupportedV2` is frozen and cannot
+    gain a field; `supported.wf` is refuted at the deployment until R.7 merges and this card reports
+    that rather than weakening it. -/
+
+/-- **VALIDITY, V3 - THE ONE TEXT.** Seven clauses in four groups: what the generator produced
+    (`generated`, `inputs`), what the program is (`program`, `noWriters`), what the environment and the
+    payload say (`env`, `payload`), and the scope (`supported`). Every clause except the five
+    codec-bearing fields of `payload` and `SupportedV2.vkPoints` is decided by computation at a
+    deployment; the clause table is in `Midfall/Instances/StatementsV3Deploy.lean`. -/
 structure Render.Valid (R : Render p G₁ G₂ Gₜ) : Prop where
-  /-- The plan's circuit meta IS the ported meta of the verifier's own constraint system. This is
-      the clause v1 could not state, and whose absence let `realSurface` pair a 72-slot plan with
-      an 8-read VK. -/
-  circuitMeta : ConstraintSystemMeta.new Features.solidity R.vk.cs R.cfg.numCommittedInstances =
-    .ok R.plan.meta_
-  /-- The calldata layout is the generator's own derivation from that meta (`plan.rs` `new`). -/
-  layout : ProofCalldataLayout.fromProtocol R.plan.meta_.protocol abiVerifyProofProofCptr
-      R.plan.meta_.numEvals R.plan.meta_.numPointSets = .ok R.plan.proofLayout
-  /-- The plan passes the generator's own invariant validation (`plan.rs:427-437`). -/
-  invariants : R.plan.validateGeneratorInvariants = .ok (.ok ())
-  /-- The render model is the ported `artifacts.rs` output on this plan. -/
-  model : generateVerifierFromPlan (fun _ _ => R.qblocks) R.inputs R.flags R.plan = .ok R.model
-  /-- The build inputs are the configuration's and the VK's, not independent numbers. -/
+  /-- G. Plan, compact quotient blocks and model are the generator's output for THIS constraint
+      system, configuration, payload and DELTA (the object text's clause 1). -/
+  generated : GeneratedBy R
+  /-- G. The build inputs are the configuration's and the key's (frozen clause 5, unchanged; the
+      18-clause text's `inputs` is verbatim the same). -/
   inputs : R.inputs.numInstances = R.cfg.numInstances ∧
     R.inputs.accEncoding = R.cfg.accumulator ∧ R.inputs.k = R.vk.domain.k ∧
     R.inputs.truncatedChallenges = Features.solidity.truncatedChallenges
-  /-- The AST the semantics runs is the text the ported codegen prints (`Program.lean` §4). -/
-  codegen : CodegenAgrees R.pv R.model
-  /-- After inlining, the main block's only free names are the two wrapper locals. -/
-  closed : mainClosed R.pv R.model = true
-  /-- The payload words the contract loads (VK header, field constants, domain, G1/G2 bases)
-      agree with the environment and VK the Lean verifier uses. -/
-  slots : EnvAgrees R.E R.vk R.pv R.params R.sG2gen
-  supported : SupportedV2 R
-  /-- The generated program performs no world write (no `sstore`, `tstore`, `log*`, `create*`,
-      value-bearing `call`), decided by the `Bridge.noWritersFuel` scan. -/
+  /-- P. The program checks: one decidable bundle plus the two scans (D-P71 additions 1-5 and the
+      card's four additions, all inside). -/
+  program : programOk R
+  /-- P. No world write (frozen clause 10, unchanged). -/
   noWriters : NoWriters (R.prog 0 0)
-  /-- The generator's own `TRANSCRIPT_MPTR` lies above Solidity's reserved words, so an entry
-      frame exists (`entryFrame_inhabited`). -/
-  transcriptMptr : ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t
-  /-- THE TWO `vkLoading` PIN BUNDLES (D-P50, landed by S.9 from S.8's proved discharge): the six
-      `vkLoading` pins. `Blocks/VkLoading.lean` section 5 says what each one buys and
-      `Instances/PoseidonPins.lean` decides all six at `poseidonRender` with no `sorryAx`. -/
-  vkPins : vkPins R
-  vkProgressPins : vkProgressPins R
-  /-- The terminal arm's return window is bound in the render's own constant table (D-P48, landed
-      here). `tr_blockProgress`'s EXISTENCE half must exhibit a run of `return(RETURN_MPTR, 0x20)`,
-      and nothing in `Frame`, `Clean` or `Inv` binds that site - so progress carries a data
-      obligation soundness does not. PROVED at the deployment: `RETURN_MPTR = some 4096`, in
-      `pinnedConstants` (`Instances/PoseidonValid.lean`, `poseidonValid_returnMptr`). -/
-  returnMptr : ∃ m, R.consts.lookup "RETURN_MPTR" = some m
+  /-- K. Field, domain and G2 parameters agree (frozen clause 8, unchanged). Carries
+      `modulus : p = frModulusConstant`, which with `constsCoherent` is PG-FRMOD (addition 6). -/
+  env : EnvAgrees R.E R.vk R.pv R.params R.sG2gen
+  /-- K. Every payload word is the Lean key's. -/
+  payload : PayloadAgrees R
+  /-- S. Scope (frozen `SupportedV2`; `wf.permutationCommitmentsMatch` is repaired by R.7 and kept in
+      the meantime as `permCommMatchRepaired`). -/
+  supported : SupportedV2 R
+
+/-! **`Render.Valid` IS NOT INHABITED AT THE FIXTURE, AND ST.6 DID NOT CHANGE THAT.** The cut-over
+  moved seven clauses in and fourteen out; it weakened none of them, and `poseidonRender.Valid` is
+  still refuted - `Instances/PoseidonValid.lean`, `poseidonRender_notValid`, sorry-free, now running
+  through `supported` (`wf.permutationCommitmentsMatch`, 8 sigma commitments against `divCeil 8 3` = 3,
+  R.7's repair) and independently refutable through `generated` (`poseidonRender.E.delta = 2`, OBJ.7
+  gate 9). The per-clause witness and falsifier lines for all seven are
+  `Instances/StatementsV3Deploy.lean` section (RECON.1); ST.7 re-points them at these frozen names.
+  -/
+/-! ### Projections: what the rows and the headline used to read off the eighteen-clause text. -/
+
+theorem programOkB_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) : programOkB R = true :=
+  hR.program.1
+
+theorem noShadow_of_programOk {R : Render p G₁ G₂ Gₜ} (hp : programOkB R = true) :
+    noShadowCore R.pv R.model = true := by
+  have hc := hp
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  exact hc.1.1.1.1.1.1.1.1.2
+
+theorem cdBound_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    R.plan.proofLayout.proofEnd + 32 + 32 * R.cfg.numInstances < 2 ^ 256 := by
+  have hc := programOkB_of_valid hR
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  exact of_decide_eq_true hc.1.1.1.1.1.2
+
+theorem hasMultiPointSet_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    hasMultiPointSet R.pv = true := by
+  have hc := programOkB_of_valid hR
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  exact hc.1.1.1.1.2
+
+theorem transcriptMptr_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    ∃ t, R.consts.lookup "TRANSCRIPT_MPTR" = some t ∧ 0x80 ≤ t := by
+  have hc := programOkB_of_valid hR
+  simp only [programOkB, programOkCore, Bool.and_eq_true] at hc
+  refine ⟨R.pv.memory.transcriptMptr, ?_, of_decide_eq_true hc.1.1.1.1.1.1.2⟩
+  show (constTableOf R.model).lookup "TRANSCRIPT_MPTR" = some R.pv.memory.transcriptMptr
+  rw [lookup_expectedConsts_of_programOkB (programOkB_of_valid hR),
+    (expectedConsts_lookups R.pv R.model).2.2]
+theorem frModulus_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    R.consts.lookup "FR_MODULUS" = some p :=
+  frModulus_of_programOk_of_modulus (programOkB_of_valid hR) hR.env.modulus
+
+theorem returnMptr_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    ∃ m, R.consts.lookup "RETURN_MPTR" = some m :=
+  returnMptr_of_programOk (programOkB_of_valid hR)
+
+/-- (`g1IdentityAbove`, §E, is this same inequality stated at the render.) -/
+theorem g1IdentityFloor_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    0x80 ≤ ptrAddr R.pv.memory.g1IdentityMptr :=
+  g1IdentityFloor_of_programOk (programOkB_of_valid hR)
+
+theorem negLagranges_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    2 ≤ R.pv.numNegLagranges := negLagranges_of_programOk (programOkB_of_valid hR)
+
+theorem exitDiscipline_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) :
+    ExitDiscipline (R.prog 0 0) := hR.program.2.2
+
+theorem gasCallOk_of_valid {R : Render p G₁ G₂ Gₜ} (hR : Render.Valid R) : GasCallOk (R.prog 0 0) :=
+  hR.program.2.1
+
 
 /-! ## 3. The world, the entry frame, the calls -/
 
