@@ -268,8 +268,12 @@ EVAL = re.compile(
 # single 22.3 s fixture run is what the budget buys - two further measured mutants, the ERR_PRECOMPILE_FAILED
 # class at 6.99 s and the instance-word flip that still returns abiTrue under the mocked PairingProduct, are
 # recorded in the file's header instead of gated, for that reason).
-EXPECTED_KAT_TOTAL = 1525
-EXPECTED_KAT_FILES = 112
+# OBJ.4 moved both pins deliberately: Midfall/Instances/ConstsKats.lean is a NEW file in the suite
+# carrying FIFTEEN '#eval ... -- expect ...' gates — the clause at the fixture, its five conjuncts,
+# the three plan-view falsifiers, the model-only non-falsifier, the eight lookups, the runtime-length
+# data fact and the two residual pins. No gate was deleted; the delta is +15/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1540
+EXPECTED_KAT_FILES = 113
 
 # Only these shapes count as #eval output.
 #

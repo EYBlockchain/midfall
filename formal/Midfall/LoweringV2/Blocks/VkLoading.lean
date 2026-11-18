@@ -70,6 +70,7 @@
 
   THREE `sorry` IN THIS FILE, ALL IN §6, ALL NAMED ABOVE.
 -/
+import Midfall.LoweringV2.Consts
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.Blocks.TraceReturn
 
@@ -690,17 +691,36 @@ theorem vk_poison_step {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge
     therefore of `Render.Valid.program`. The staging text says so in terms
     (`LoweringV3/Statements.lean`, section V: "the pin bundles are NOT clauses - `constsCoherent`
     is, and `vkPins` / `vkProgressPins` / `transcriptMptr` are theorems of it"), and it names the
-    derivation: `GeneratorCertified.lean:458` (`v3_pins_of_valid`). **That derivation is NOT in
-    this tree - RECON.1b ports it.** What IS in the tree is the half that derivation runs on, ported
-    by ST.6: `lookup_expectedConsts_of_programOkB` and `expectedConsts_lookups` in
-    `Statements.lean`, and the `VK_MPTR` / `EXPECTED_VK_PAYLOAD_LENGTH` entries of
-    `expectedConsts` that they read.
+    derivation: `GeneratorCertified.lean:458` (`v3_pins_of_valid`). **OBJ.4 ported FOUR of the six fields and proved the
+    other two are not table facts at all.** `Midfall/LoweringV2/Consts.lean` derives `vkMptr`,
+    `payloadLen`, `vkLen` and `vkHash` from `Render.Valid` alone (`vkPins_of_valid`,
+    `vkProgressPins_of_valid`), on top of the half ST.6 had already ported
+    (`lookup_expectedConsts_of_programOkB`, `expectedConsts_lookups`). Two things ST.6 had not
+    supplied and OBJ.4 had to: `cAddr = ptrAddr` and the DATA FACT
+    `vk.runtimeBytes.size = vk.len + 1` (`Halo2VerifyingKey.runtimeBytes_size`). RECON.1b was right
+    that payloadLen / vkLen / vkHash need a data fact; this is the fact, sorry-free, no
+    `native_decide`.
 
-    So the honest state after ST.6 is the PRE-D-P50 SHAPE and not a weakened text: the six pins are
-    still demanded, unchanged in content, and the `.vkLoading` row carries them as free premises
-    exactly as `tr_blockRow` carries `trRetMptr` and `fp_blockRow` carries `fpG2Slots`. What D-P50
-    bought - that the hinge `blockContracts_of_valid` discharges them from `hR` alone - is on
-    RECON.1b's tab, and this card says so rather than pretending the bundle is proved. -/
+    WHAT STILL CANNOT COME FROM THIS CLAUSE, and this is the finding. `constsCoherent` equates two
+    CONSTANT TABLES, so it can only ever deliver a LOOKUP. Two pins contain no lookup:
+    * `numInst` is `R.pv.numInstances = R.cfg.numInstances`, which rewrites to
+      `R.model.numInstances = R.cfg.numInstances` (`Consts.Render.pv_numInstances`, by `rfl`). Its
+      source is the `generated` clause plus a lemma that `generateAll` copies the configuration
+      count into the model (`Generated.lean:135`) - OBJ.7s, not a lookup.
+    * `disjoint` is an inequality between two plan-view addresses with a payload length in it. Its
+      source is `supported.layout` (`memory.map.WellFormed`, `Layout.lean:1127`) plus a layout
+      lemma. Not a lookup either.
+    A third fact gates the three guarded lookups: `expectedVkCodehash` is
+    `if flags.separate then some _ else none` (`Artifacts.lean:524`), so `vkCodehashArm` too comes
+    from `generated` + `supported.separateVk`, not from the table.
+
+    So the honest state after OBJ.4 is: the `.vkLoading` row no longer takes two opaque bundles, it
+    takes EXACTLY the three named residuals above, and everything else is derived from `hR`. Nothing
+    here weakens a pin - the six fields are unchanged in content and four are now theorems.
+    `tr_blockRow` now takes NOTHING (`Consts.trRetMptr_of_valid`: `RETURN_MPTR` is an unconditional
+    entry); `fp_blockRow` still carries `fpG2Slots`, an unresolved human decision. What D-P50 bought
+    - that the hinge `blockContracts_of_valid` discharges the whole bundle from `hR` alone - is STILL
+    open, and it is open because of `numInst` and `disjoint`, not because of the table. -/
 
 
 /-! ## 6. WHAT THIS CARD DID NOT CLOSE, STATED AT EXACTLY THE SHAPE THE CONSUMER ASKS FOR
@@ -781,8 +801,17 @@ theorem vk_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR
     `program` will one day derive (section 5 above; RECON.1b). The three gaps are still `sorry`, so
     THE ROW IS STILL NOT CLOSED. -/
 theorem vk_blockRow (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
-    (hpins : vkPins R) (hppins : vkProgressPins R) : BlockRow R product Partial.vkLoading := by
+    (hcode : vkCodehashArm R.model)
+    (hnum : R.pv.numInstances = R.cfg.numInstances)
+    (hdisj : ptrAddr R.pv.memory.g1IdentityMptr + 128 ≤ ptrAddr R.pv.memory.vkMptr ∨
+      ptrAddr R.pv.memory.vkMptr + R.pv.vk.len ≤ ptrAddr R.pv.memory.g1IdentityMptr) :
+    BlockRow R product Partial.vkLoading := by
   intro hR _hpc H vkAddr cd ms instW inst Snap hdec hinst hsnap
+  -- THE REWIRE (OBJ.4): the two bundles are BUILT here, not handed in. Four of their six fields are
+  -- table lookups and `Consts.lean` derives all four from `hR`; the two that remain as premises
+  -- (`hnum`, `hdisj`) are the residual of `Consts.lean` §4 and are NOT table facts.
+  have hpins : vkPins R := vkPins_of_valid R hR hcode hnum hdisj
+  have hppins : vkProgressPins R := vkProgressPins_of_valid R hR hcode
   refine ⟨fun g => ⟨vk_sound_clean R product hR hpins Snap H vkAddr cd g,
       vk_poison_walk R product hR Snap H vkAddr cd g⟩, fun _hcodec _hcg _hdual =>
       vk_progress R product hR hpins hppins Snap H vkAddr cd _hcodec _hcg _hdual⟩

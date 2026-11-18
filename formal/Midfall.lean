@@ -81,6 +81,7 @@ import Midfall.Instances.PoseidonCoherence
 import Midfall.Instances.PoseidonV2
 import Midfall.Instances.PoseidonValid
 import Midfall.Instances.PoseidonPins
+import Midfall.Instances.ConstsKats
 import Midfall.Generator.Vk
 import Midfall.Lowering.Types
 import Midfall.Lowering.AccEncoding
@@ -147,6 +148,7 @@ import Midfall.LoweringV2.Program
 import Midfall.LoweringV2.ProgramLemmas
 import Midfall.LoweringV2.Generated
 import Midfall.LoweringV2.Statements
+import Midfall.LoweringV2.Consts
 import Midfall.LoweringV2.HonestExec
 import Midfall.LoweringV2.Blocks
 import Midfall.Instances.R72GateProbe
