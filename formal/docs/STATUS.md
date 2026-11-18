@@ -54,6 +54,34 @@ SIM.11. **`T3.9.g` is NOT ready** (needs T3.8 + GEN.5).
    data-loss bug. Check row counts before and after anything Report.lean touches.
 8. **`docs/PROGRESS.md:118` is stale** (says 64 sorries, KAT 1142/76) - regenerate or retire.
 
+## ⚠ CORRECTION (round 97): the `vkPins` item is NOT a human blocker. I was wrong for ~15 rounds.
+
+**I repeatedly told the human that `vkPins`/`vkProgressPins` had no projection, were measured NOT
+DERIVABLE, and therefore required a human decision before M5 could exit. That is false.** The plan
+assigns it to a card:
+
+> **`PLAN-V3-cards.md:466` — OBJ.8: "Replace `Render.Valid` by the seven clauses; **delete `vkPins` and
+> `vkProgressPins`; adapt `Blocks.lean` consumers**."** Its step 2 also fixes the `generated`-clause
+> failure I called a second blocker: **"Set `poseidonE.delta` to the field constant with a KAT against
+> `0x08634d0a...89d7`"** - and step 3 rebuilds `poseidonRender`'s plan/qblocks/model as projections of
+> `generateAll`. **Its Stop-if already handles the gap I escalated: "a `Blocks.lean` lemma needs a fact
+> that neither `ValidV3` nor an OBJ.4 lemma gives: record it as one row."**
+
+**So the two things I called hard human blockers are OBJ.8's job, and OBJ.8 is one card away:**
+`OBJ.4` (after OBJ.2, merged) **→ OBJ.8** (after OBJ.0 ✅, ST.3 ✅, OBJ.4, OBJ.7 ✅).
+
+**Also corrected here:** the `omega`-flip hole is **documented in `PLAN-V3.md:1123` as a known limit**, not
+a discovery; and `PLAN-V3.md:143` records that D-P46's three base-slot pins are **"Implemented by
+`PayloadAgrees` (D-P67)"**. **The pattern of my error: I reasoned from what the current tree lacked
+instead of searching the card list for what was already scheduled to supply it.** That is the same
+failure I made with `kat_gate` pass-2, with `poseidon_valid`, and with `check.sh soundness` - **and the
+fix is the same: grep the plan before declaring a blocker.**
+
+**Still genuinely human-only:** DG.7's CI branch permission (its own Needs says "a human to…"), the
+DECISION cards (SIM.0, OBJ.17), and the `gen_sorry.sh` silent-truncation data-loss bug, which no card
+owns. **`exitScan` canonical form is a named design item (`PLAN-V3.md:711`, cards `:1028`) but the two
+copies' disagreement is still worth a ruling.**
+
 ## HOW TO WORK THIS PROJECT (hard-won, see sections below)
 - **`git status --porcelain` must be EMPTY before creating a card branch. One card in flight per tree.**
   Uncommitted work travels across a branch switch; this caused a real multi-author merge.
