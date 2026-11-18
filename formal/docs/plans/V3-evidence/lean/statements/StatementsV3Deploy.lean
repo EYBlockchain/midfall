@@ -1,9 +1,64 @@
 /-
-  StatementsV3Deploy (SCRATCH - design area "statements", PLAN-V3)
+  StatementsV3Deploy — **RETIRED** (card RECON.1b-iii, 2026-11-18).
 
-  THE V3 SURFACE EVALUATED AT THE DEPLOYMENT DATA (`Midfall.Instances`). In the tree this content
-  belongs in `Midfall/Instances/` (D-P17); it is a separate file here for the same reason.
-  Imports the scratch module `StatementsV3` (compiled to an olean in the scratch directory).
+  THIS FILE WAS THE PRE-LANDING SCRATCH COPY OF `Midfall/Instances/StatementsV3Deploy.lean`. The
+  content LANDED: ST.1c put the deployment measurements in the tree on the post-M2 baseline, ST.1b
+  turned every print into an annotated gate, and RECON.1 added the clause table at F1. The tree
+  module is gated by `scripts/kat_gate.py` (its ST.1c note counts **19** annotated
+  `#eval ... -- expect ...` gates in it), so the landed copy is machine-checked harder than this
+  scratch original ever was. This file stopped elaborating when ST.4/ST.6 cut the frozen surface
+  over: its four errors were all ONE cause — `metaDataForStableStaticLayout` became
+  `metaDataForStableStaticLayoutInputs` in the tree, taking a `ConstraintSystemMeta` where this
+  file passed a `VerifierBuildInputs` and returning a different four-tuple (this file's old 69-77).
+
+  WHERE EACH SECTION LANDED (tree module `Midfall/Instances/StatementsV3Deploy.lean`):
+    (b) circuitMeta / layout at the two plans -> planToday, planFaithful, derivedProofLen,
+        planTupleB, todayTuple_ok, faithfulTuple_ok, faithfulTuple_detectsPerturbation_ok,
+        rustDerivationB, rustDerivation_ok, layoutBasesB, layoutBasesAgree_ok, dataConjunct_ok,
+        wellFormedPermCounts_ok
+    (c) the payload at the deployment -> poseidonE_delta, poseidon_delta_not,
+        frDeltaIsGeneratorPow_ok, recon1_payload_scalars_ok, recon1_payload_digest_ok,
+        recon1_payload_digest_falsifier_ok, recon1_payload_flipOmega_ok, commitmentCounts_ok,
+        identityFixedCommIndices_ok, identityPermCommCount_ok, baseSlotWidths_ok
+    (d), (i), (e) the decidable clauses at the deployment AST -> recon1_programOkB_ok,
+        recon1_scans_ok, recon1_gas_ok, recon1_supported_gap_ok, exitDisciplineAtDeploy_ok,
+        mainBlockTokenCounts_ok, cdBound_ok, recon1_cdBound_falsifier_ok, transcriptMptrPin_ok,
+        recon1_tpbuf_numbers_ok, recon1_tpbuf_falsifier_ok, recon1_g1Identity_falsifier_ok,
+        recon1_negLagranges_falsifier_ok, recon1_multiPoint_ok, recon1_permComm_falsifier_ok,
+        recon1_constsCoherent_falsifier_ok
+    (g), (j) the codec laws and WellFormedV3 at the deployment codec -> g1CodecZ_not_headlineLaws,
+        poseidon_notInhabitedV3, exists_injective_comp, lawsV3_satisfiable_at_G1z
+  Every `#eval` print this file made survives in the tree as a gated `*_ok` Bool against the SAME
+  literal — `("today", true, false, false, 4224, 4320)`, `("faithful", false, true, true, 4320,
+  4320)`, `(10496, 10496, 3, 48, 0, true, false)`, the ten layout bases all true, `(19, 19, 8, 8)`,
+  `[8, 10, 11, 12, 14, 16]`, `0`, `(128, 256, 256, false)`, `(8, 8, 3)`, `(true, true, false)`,
+  `[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9]`, `(4484, true)`, `(some 4096, 21760)`. The prints had to
+  become Bools because kat_gate.py:40 reads an expectation as [^\s,]+, so a tuple or list print
+  cannot carry one (ST.1b's note at section (b)). Nothing measured here was dropped for being
+  inconvenient.
+
+  WHAT THIS FILE HELD THAT THE TREE DOES NOT — ONE THEOREM, KEPT LIVE BELOW, NOT DELETED.
+  `poseidon_payloadAgrees_not` is the only declaration here with no counterpart in the landed
+  module. It refutes the `PayloadAgrees` of the D-P67 EIGHTEEN-CLAUSE fallback text kept in
+  `StatementsV3.lean` beside this file, which still has a `delta` field; the single `ValidV3`
+  (`Midfall/LoweringV3/Statements.lean:1116`) DROPPED that field on purpose at RECON.1 step 3, so
+  the statement is NOT EXPRESSIBLE against the landed text — the drop is recorded at
+  `Midfall/LoweringV3/Statements.lean:424` ("`delta` IS DROPPED (card step 3)"),
+  `Midfall/Instances/StatementsV3Falsifiers.lean:285-293` says of its twin `payloadAgrees_pins_delta`
+  "the old theorem is deleted rather than restated", and
+  `Midfall/Instances/StatementsV3Deploy.lean:306-311` says the refutation "is GONE with that field, and the F1 refutation of the single text now sits
+  in `generated`". It is still CITED: `PLAN-V3-cards.md:753` (ST.1's acceptance: "Falsifier of the
+  ticket: `PayloadAgrees poseidonRender` is refuted by `poseidon_payloadAgrees_not`"),
+  `PLAN-V3-cards.md:1716` (the `Done` card proves `not_done_today` from it) and
+  `design/statements.md:138). Cited, so kept. Under the single text the delta refutation lives in
+  `GeneratedKats.generateAll_falsifierDeltaAndOmega_ok`, which the tree module pins.
+
+  WHY THE FILE IS STILL IN THE GATE AND NOT REMOVED: `check.sh` names it in the `statements` area
+  (line 44). Retiring it from the gate would mean editing `check.sh`, which is a gate change under
+  D-P69 and not this card's to make. So the file stays, and now carries only what is still its own.
+  NOTE FOR THE ORCHESTRATOR, OUT OF THIS CARD'S REACH TO FIX: `docs/plans/V3-evidence/README.md:24`
+  still says "`statements/StatementsV3Deploy.log` is the clause table at the fixture". The clause
+  table is in the tree module now; the log of this file no longer prints it.
 -/
 import StatementsV3
 import Midfall.Instances.PoseidonValid
@@ -19,207 +74,24 @@ open Midfall.Instances Midfall.Instances.PoseidonEnv Midfall.Instances.PoseidonI
 open Midfall.Instances.PoseidonV2 Midfall.Instances.PoseidonValid
 open Midfall.LoweringV2 Midfall.LoweringV3
 
-/-! ## (b) circuitMeta / layout: the frozen pair and the repaired pair, at two plans -/
-
--- Where the names live.
-#check @Midfall.Instances.PoseidonInputs.poseidonPlanV2
-#check @Midfall.Generator.metaDataForStableStaticLayout
-#check @Midfall.Generator.numPointSets
-#check @Midfall.Generator.ConstraintSystemMeta.setNumPointSets
-
-/-- Today's plan: `meta_` is the RAW `ConstraintSystemMeta.new` output (numPointSets = 0). -/
-def planToday : LoweringPlan Unit Unit := poseidonPlanV2
-
-/-- The faithful plan: the same record with the meta post-processed as `vk.rs:519` does. -/
-def planFaithful : LoweringPlan Unit Unit :=
-  { poseidonPlanV2 with meta_ := poseidonPlanV2.meta_.setNumPointSets 3 }
-
-def derivedProofLen (plan : LoweringPlan Unit Unit) : Nat :=
-  match ProofCalldataLayout.fromProtocol plan.meta_.protocol abiVerifyProofProofCptr
-      plan.meta_.numEvals plan.meta_.numPointSets with
-  | .ok l => l.proofLen | .error _ => 0
-
--- (frozen clause 1, frozen/unchanged clause 2, V3 clause 1, derived proofLen, plan proofLen)
-#eval ("today", frozenCircuitMetaB poseidonVkExec.cs 1 planToday, planLayoutB planToday,
-  planMetaB poseidonVkExec.cs 1 planToday, derivedProofLen planToday, planToday.proofLayout.proofLen)
-#eval ("faithful", frozenCircuitMetaB poseidonVkExec.cs 1 planFaithful, planLayoutB planFaithful,
-  planMetaB poseidonVkExec.cs 1 planFaithful, derivedProofLen planFaithful,
-  planFaithful.proofLayout.proofLen)
-
-/-- The Rust derivation itself, `vk.rs:525-547` through the port, with the memory-layout callee
-    instantiated at the PORTED `VerifierMemoryLayout.new`. The three quotient callbacks are not
-    reached by `metaDataForStableStaticLayout`. -/
-def layoutEnv : VkBuildEnv Unit :=
-  { newVerifierMemoryLayout := VerifierMemoryLayout.new
-    compactQuotientProgramFor := fun _ _ => .error (Fault.panic "unused")
-    quotientProgramPlan := fun _ _ => .error (Fault.panic "unused")
-    buildQuotientProgramItems := fun _ => .error (Fault.panic "unused") }
-
-def rawMeta : ConstraintSystemMeta :=
-  match ConstraintSystemMeta.new Features.solidity poseidonVkExec.cs 1 with
-  | .ok m => m | .error _ => constraintSystemMetaDefault
-
-def buildInputs : VerifierBuildInputs Yul.blsR G₁z Unit :=
-  { params := { gLagrange := [], g2 := (), sG2 := () }
-    vk := poseidonVkExec, numInstances := 1, numCommittedInstances := 1
-    accEncoding := none, meta_ := rawMeta }
-
--- (vkMptr derived, vkMptr of the plan, numPointSets, numEvals, numDummyEvals,
---  derived meta == faithful plan meta, derived meta == today's plan meta)
-#eval (match metaDataForStableStaticLayout Features.solidity layoutEnv buildInputs poseidonPlanV2.vk with
-  | .ok (vkMptr, m, _, _) =>
-      (ptrAddr vkMptr, ptrAddr poseidonPlanV2.vkMptr, m.numPointSets, m.numEvals, m.numDummyEvals,
-        m == planFaithful.meta_, m == planToday.meta_)
-  | .error _ => (0, 0, 0, 0, 0, false, false))
-
--- the ten layout bases `Data.new` reads: the Rust-faithful layout against the plan's own layout
-#eval (match metaDataForStableStaticLayout Features.solidity layoutEnv buildInputs poseidonPlanV2.vk with
-  | .ok (_, _, _, mem) =>
-      let pm := poseidonPlanV2.memory
-      [ptrAddr mem.vkMptr == ptrAddr pm.vkMptr, ptrAddr mem.challengeMptr == ptrAddr pm.challengeMptr,
-       ptrAddr mem.thetaMptr == ptrAddr pm.thetaMptr,
-       ptrAddr mem.reversedEvalsMptr == ptrAddr pm.reversedEvalsMptr,
-       ptrAddr mem.commsMptrBase == ptrAddr pm.commsMptrBase,
-       ptrAddr mem.lookupMCommsMptrBase == ptrAddr pm.lookupMCommsMptrBase,
-       ptrAddr mem.permZCommsMptrBase == ptrAddr pm.permZCommsMptrBase,
-       ptrAddr mem.lookupHelperCommsMptrBase == ptrAddr pm.lookupHelperCommsMptrBase,
-       ptrAddr mem.lookupZCommsMptrBase == ptrAddr pm.lookupZCommsMptrBase,
-       ptrAddr mem.trashcanCommsMptrBase == ptrAddr pm.trashcanCommsMptrBase]
-  | .error _ => [])
-
--- the `Data` conjunct of `PlanMeta`: `setNumDummyEvals 0` is the identity on the raw meta, and
--- `Data.new` of it on the plan's own payload and memory is `.ok` - `poseidonPlanV2.data` is by
--- definition that value (`DeployedProfile.lean:216 poseidonData`)
-#eval (rawMeta.setNumDummyEvals 0 == rawMeta,
-  (match Data.new (rawMeta.setNumDummyEvals 0) poseidonPlanV2.vk poseidonPlanV2.memory with
-   | .ok d => (true, d.fixedComms.length, d.permutationComms.length, d.adviceComms.length)
-   | .error _ => (false, 0, 0, 0)),
-  (poseidonPlanV2.data.fixedComms.length, poseidonPlanV2.data.permutationComms.length,
-    poseidonPlanV2.data.adviceComms.length))
-
-/-! ## (c) PayloadAgrees at the deployment -/
-
-theorem poseidonE_delta : poseidonRender.E.delta = 2 := rfl
-
--- the eight codec-free fields, in the order of `payloadScalarsB`:
--- numInstances, k, nInv, omega, omegaInv, omegaInvToL, accWords, delta
-#eval payloadScalarsB (p := Yul.blsR) poseidonPv 1 poseidonVkExec.domain.k
-  poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv poseidonPlanV2.meta_.rotationLast
-  poseidonConfig.accumulator (2 : Fr Yul.blsR) poseidonInputs.frDelta
-
--- the same with the field's real DELTA in place of the placeholder 2
-#eval payloadScalarsB (p := Yul.blsR) poseidonPv 1 poseidonVkExec.domain.k
-  poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv poseidonPlanV2.meta_.rotationLast
-  poseidonConfig.accumulator
-  ((Inline.natOfLiteral poseidonInputs.frDelta : ℕ) : Fr Yul.blsR) poseidonInputs.frDelta
-
--- the literal IS Fr::DELTA = 7^(2^32) mod r (multiplicative generator 7, two-adicity 32)
-#eval (Inline.natOfLiteral poseidonInputs.frDelta == modPow 7 (2 ^ 32) Yul.blsR,
-  decide (Inline.natOfLiteral poseidonInputs.frDelta < Yul.blsR))
-
-/-- The `delta` field is FALSE at today's render. Concrete deployment fact. -/
+/-- The `delta` field is FALSE at today's render. Concrete deployment fact. Carried verbatim from
+    the pre-landing copy; the same statement is landed at
+    `Midfall/Instances/StatementsV3Deploy.lean`, but this file cannot import that module — Lean
+    refuses the fallback text and the single text in one environment ("environment already contains
+    'Midfall.LoweringV3.withCompressed'"), which is exactly why the theorem below has to stay on
+    this side of the line. -/
 theorem poseidon_delta_not :
     ¬ (poseidonRender.E.delta.val = Inline.natOfLiteral poseidonRender.inputs.frDelta) := by
   show ¬ ((2 : Fr Yul.blsR).val = Inline.natOfLiteral poseidonInputs.frDelta)
   native_decide
 
-/-- So `PayloadAgrees poseidonRender` is refuted, by its `delta` field alone. -/
+/-- So `PayloadAgrees poseidonRender` is refuted, by its `delta` field alone. **AT THE FALLBACK
+    TEXT**: `PayloadAgrees` resolves to the eighteen-clause copy in `StatementsV3.lean` (D-P67),
+    the only `PayloadAgrees` that still pins `frDelta`. The single text has no such field, so
+    this refutation belongs to the fallback and cannot move into the tree. -/
 theorem poseidon_payloadAgrees_not : ¬ PayloadAgrees poseidonRender :=
   fun h => poseidon_delta_not h.delta
 
--- commitments: (payload fixed count, Lean fixed count, payload perm count, Lean perm count)
-#eval (poseidonPv.vk.fixedComms.length, poseidonVkExec.fixedCommitments.size,
-  poseidonPv.vk.permutationComms.length, poseidonVkExec.permutation.commitments.size)
-
--- which payload fixed commitments are the identity image (128 zero bytes): the Lean key has ALL
--- nineteen at the identity, the payload only these
-#eval (poseidonPv.vk.fixedComms.zipIdx.filter
-  (fun (w, _) => g1WordsBytes w == natToBytesBE 0 128)).map (·.2)
-#eval ((poseidonPv.vk.permutationComms.filter
-  (fun w => g1WordsBytes w == natToBytesBE 0 128)).length)
-
--- the three base slots hold non-zero images of the right widths (content needs the codec)
-#eval ((vkG1Words poseidonPv vkG1BaseSlot).size, (vkG2Words poseidonPv vkG2BaseSlot).size,
-  (vkG2Words poseidonPv vkNegSG2BaseSlot).size,
-  vkG2Words poseidonPv vkG2BaseSlot == vkG2Words poseidonPv vkNegSG2BaseSlot)
-
-/-! ## (j) WellFormedV3 at the deployment -/
-
--- (VK sigma commitments, permutation columns [V3 clause], divCeil columns (csDegree-2) [frozen clause])
-#eval (poseidonVkExec.permutation.commitments.size, poseidonVkExec.cs.permutation.columns.size,
-  divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2))
-
-/-! ## (d), (i), (e) the three new decidable clauses at the deployment AST -/
-
--- noShadow
-#eval noShadowCore poseidonPv poseidonM
-
--- exitDiscipline: the tail is found, and the scan passes (fuel 20000 as for noWriters)
-#eval ((returnTail? (asmOf poseidonPv poseidonM 0 0)).isSome,
-  exitDisciplineFuel 20000 (asmOf poseidonPv poseidonM 0 0),
-  exitDisciplineFuel 200 (asmOf poseidonPv poseidonM 0 0))
-
--- the same discipline read off the GENERATOR'S TEXT (which has the regions the AST still lacks):
--- token counts of (return, stop, selfdestruct, invalid, gas, call, delegatecall, callcode, create,
--- create2, staticcall) in the main assembly block
-#eval (["return", "stop", "selfdestruct", "invalid", "gas", "call", "delegatecall", "callcode",
-  "create", "create2", "staticcall"].map fun t => (mainAssemblyTokens poseidonM).count t)
-
--- cdBound: the expected calldata length
-#eval (poseidonPlanV2.proofLayout.proofEnd + 32 + 32 * poseidonConfig.numInstances,
-  decide (poseidonPlanV2.proofLayout.proofEnd + 32 + 32 * poseidonConfig.numInstances < 2 ^ 256))
-
--- the g1_identity pin of the EntryFrameV3' option
-#eval ((constTableOf poseidonM).lookup "TRANSCRIPT_MPTR", ptrAddr poseidonPv.memory.g1IdentityMptr)
-
-/-! ## (g) the codec laws at the deployment codec -/
-
--- The tree's own proof that the placeholder codec satisfies all seven FROZEN laws.
-#check (Midfall.Instances.CurveSurface.g1CodecZ_laws : G1CodecLaws g1CodecZ)
-
-/-- FALSIFIER: it does not satisfy the V3 headline laws. PROVED. -/
-theorem g1CodecZ_not_headlineLaws : ¬ G1CodecHeadlineLaws g1CodecZ := by
-  intro h
-  have h1 := h.compressedEncoderFirst 1
-  have h2 : g1CodecZ.ofCompressed? (g1CodecZ.toCompressed 1) = none := rfl
-  rw [h2] at h1
-  cases h1
-
-/-- So the repaired gate is RED at today's render, for every product: the gate cannot be met by a
-    codec that decodes nothing. PROVED. -/
-theorem poseidon_notInhabitedV3 (product : PairingProduct) :
-    ¬ HypothesesInhabitedV3 poseidonRender product := by
-  rintro ⟨_, _, _, _, _, _, _, _, hcodec, _⟩
-  exact g1CodecZ_not_headlineLaws hcodec
-
-/-- An injective 48-byte image of `G₁z` exists: the carrier has `blsR < 256^48` elements. -/
-theorem exists_injective_comp :
-    ∃ comp : G₁z → Bytes, Function.Injective comp ∧ ∀ Q, (comp Q).size = g1CompressedWidth := by
-  classical
-  have hcard : Nat.card G₁z = Yul.blsR := PrimeOrderWith.hCard
-  have hpos : 0 < Nat.card G₁z := by rw [hcard]; decide
-  have hfin : Finite G₁z := Nat.finite_of_card_ne_zero (Nat.pos_iff_ne_zero.mp hpos)
-  obtain ⟨e⟩ : Nonempty (G₁z ≃ Fin (Nat.card G₁z)) := ⟨Finite.equivFin G₁z⟩
-  refine ⟨fun Q => bytesNatBE (e Q).val 48, ?_, fun Q => bytesNatBE_size _ _⟩
-  intro Q Q' h
-  have h' := congrArg bytesToNatBE h
-  simp only [bytesToNatBE_bytesNatBE] at h'
-  have hle : Nat.card G₁z ≤ 256 ^ 48 := by rw [hcard]; decide
-  have hlt : ∀ X : G₁z, (e X).val < 256 ^ 48 := fun X => lt_of_lt_of_le (e X).isLt hle
-  rw [Nat.mod_eq_of_lt (hlt Q), Nat.mod_eq_of_lt (hlt Q')] at h'
-  exact e.injective (Fin.ext h')
-
-/-- WITNESS (joint satisfiability at the deployment carrier). A codec on `G₁z` with the SAME
-    EIP half as `g1CodecZ` - the half `Eip2537.Holds` is exhibited for - satisfies all eight V3
-    laws. PROVED, with no curve arithmetic. Its compressed half is an abstract injection, NOT the
-    ZCash format: enough for `LoweringEquivalenceV3`, not for `EndToEndV3`'s link to Rust bytes. -/
-theorem lawsV3_satisfiable_at_G1z :
-    ∃ c : G1Codec G₁z, c.toEip = g1CodecZ.toEip ∧ c.ofEip? = g1CodecZ.ofEip? ∧ G1CodecLawsV3 c := by
-  obtain ⟨comp, hinj, hw⟩ := exists_injective_comp
-  exact ⟨withCompressed g1CodecZ comp, rfl, rfl, withCompressed_lawsV3 g1CodecZ Midfall.Instances.CurveSurface.g1CodecZ_laws comp hinj hw⟩
-
-#print axioms lawsV3_satisfiable_at_G1z
-#print axioms poseidon_notInhabitedV3
 #print axioms poseidon_payloadAgrees_not
 
 end Midfall.LoweringV3.Deploy
