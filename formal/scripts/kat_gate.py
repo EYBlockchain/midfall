@@ -272,7 +272,19 @@ EVAL = re.compile(
 # carrying FIFTEEN '#eval ... -- expect ...' gates — the clause at the fixture, its five conjuncts,
 # the three plan-view falsifiers, the model-only non-falsifier, the eight lookups, the runtime-length
 # data fact and the two residual pins. No gate was deleted; the delta is +15/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1540
+# R.7 (= REF.3, D-P59) moved EXPECTED_KAT_TOTAL 1540 -> 1543 deliberately and the file count NOT AT ALL:
+# THREE NEW '#eval ... -- expect true' gates, all in the EXISTING Midfall/Instances/StatementsV3Falsifiers.lean
+# section F7, which is where the mis-ported permutation clause was already pinned. The three:
+# f7_repairedHolds_ok (the WITNESS - the repaired WellFormed.permutationCommitmentsMatch holds at the
+# fixture key, 8 sigma commitments against the 8 permutation COLUMNS vk.json and cs.json both name);
+# f7_oldDivCeilRefuted_ok (the retired right-hand side, kept as REF.3's own Accept-line falsifier:
+# divCeil 8 3 = 3 and 3 != 8, the count the PROOF carries rather than the count the VK holds); and
+# f7MutantCounts_ok (the TEETH of the repair: the same key with one commitment dropped and with one
+# appended reads (7, 8, 9), and beside it the sorry-free theorems f7_mutantNotWellFormed and
+# f7_mutantAppendNotWellFormed refuse both mutants through the repaired field alone - W12). No gate was
+# deleted, edited or re-spelled; the two docstrings R.7 corrected (PoseidonEnv gates 4 and 13) keep
+# their expectations, and gate 13's flipped conjunct still prints true. The delta is +3/+0.
+EXPECTED_KAT_TOTAL = 1543
 EXPECTED_KAT_FILES = 113
 
 # Only these shapes count as #eval output.

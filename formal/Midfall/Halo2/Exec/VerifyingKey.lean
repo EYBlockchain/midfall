@@ -96,10 +96,10 @@ def VerifyingKey.hashInto (vk : VerifyingKey (Fr p) G₁) : TranscriptM Unit :=
     conjunct is assessment F7 (hLimbs) at VK level: the quotient degree is
     cs_degree - 1, which is what pins how many limb commitments the verifier
     reads out of the proof (verifier.rs:288).
-  * permutationCommitmentsMatch - read_product_commitments reads one
-    commitment per CHUNK of permutation columns, and Committed::evaluate then
-    indexes the vector by chunk, so a mismatch is an out-of-bounds read rather
-    than an error (finding P1 again).
+  * permutationCommitmentsMatch - the VK carries one sigma commitment per
+    permutation COLUMN: permutation.rs:123 reads (0..argument.columns.len())
+    and keygen.rs:244-250 pushes one per column, so a mismatch is an
+    out-of-bounds read in permutation::VerifyingKey::evaluate (finding P1).
   * fixedCommitmentsMatch - the verifier indexes vk.fixed_commitments by the
     column indices the CS names.
   * singlePhase - plan Section 13: multi-phase circuits are excluded, and the
@@ -113,7 +113,7 @@ structure VerifyingKey.WellFormed (vk : VerifyingKey (Fr p) G₁) (F : Features)
     vk.domain.quotientPolyDegree = vk.csDegree - 1
   permutationCommitmentsMatch :
     vk.permutation.commitments.size =
-      divCeil vk.cs.permutation.columns.size (vk.csDegree - 2)
+      vk.cs.permutation.columns.size
   fixedCommitmentsMatch : vk.fixedCommitments.size = vk.cs.numFixedColumns
   singlePhase : vk.cs.numChallenges = 0
   committedInstancesOn : F.committedInstances = true
@@ -138,8 +138,8 @@ local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
 -- A key over Fr 17 on the size-4 domain hand-computed in Exec/Domain (omega =
 -- 13). j = 3 gives quotient_poly_degree 2, which is what cs_degree - 1 = 2
 -- demands, so domainConsistent's second conjunct is exercised rather than
--- assumed. The permutation argument has no columns, so the chunk count is 0 and
--- the commitments vector is legitimately empty.
+-- assumed. The permutation argument has no columns, so the commitment count is
+-- 0 as well and the vector is legitimately empty.
 def vkKats_ok : Bool :=
   match EvaluationDomain.new (F := Fr 17) fc17 3 2 with
   | .error _ => false
@@ -153,7 +153,7 @@ def vkKats_ok : Bool :=
       dom.quotientPolyDegree == 2 && dom.n == 4 && vk.n == 4 &&
       vk.csDegree - 2 == 1 &&
       vk.permutation.commitments.size ==
-        divCeil vk.cs.permutation.columns.size (vk.csDegree - 2) &&
+        vk.cs.permutation.columns.size &&
       vk.fixedCommitments.size == vk.cs.numFixedColumns &&
       vk.cs.numChallenges == 0 &&
       (match (vk.hashInto).run (Transcript.initFromBytes Bytes.empty) with

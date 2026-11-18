@@ -356,29 +356,31 @@ def recon1_payload_digest_falsifier_ok : Bool :=
       vkHeaderTemplateSlotsDefault.vkDigest != frWord poseidonVkExec.transcriptRepr
 #eval recon1_payload_digest_falsifier_ok -- expect true
 
-/-- **`supported` at F1: REFUTED, and the refutation is the frozen clause, not the repaired one.**
-    `SupportedV2.wf` demands `divCeil columns (csDegree - 2)` = 3 against the VK's 8 sigma
-    commitments (`wellFormedPermCounts_ok`); the repaired clause (`permCommMatchRepaired`, kept in
-    `programOkB`) is TRUE at the same key. R.7 repairs the frozen predicate; this card does not
-    weaken `supported` to hide the gap. -/
+/-- **`supported` at F1: THE THREE COUNTS, RE-MEASURED AFTER R.7.** The tuple is unchanged - 8 sigma
+    commitments, 8 permutation columns, and `divCeil 8 3` = 3 - but the CLAUSE moved: since R.7
+    (D-P59) `SupportedV2.wf.permutationCommitmentsMatch` compares the first two and so HOLDS, and
+    the third is what used to refute it. `supported` is now PROVED at the render
+    (`PoseidonValid.poseidonValid_supported`); `permCommMatchRepaired` remains in `programOkB` as
+    the same fact, computed. -/
 def recon1_supported_gap_ok : Bool :=
   (poseidonVkExec.permutation.commitments.size, poseidonVkExec.cs.permutation.columns.size,
     divCeil poseidonVkExec.cs.permutation.columns.size
       (poseidonVkExec.csDegree - 2)) == (8, 8, 3)
 #eval recon1_supported_gap_ok -- expect true
 
-/- **The four clauses RECON.1 did NOT change, with their existing F1 discharges.** `inputs`, `env`
-    and `noWriters` are PROVED at the fixture; `supported` is REFUTED there, narrowed to the ONE frozen
-    field `permutationCommitmentsMatch` (8 sigma commitments against `divCeil 8 3` = 3) - which is
-    precisely the clause `permCommMatchRepaired` keeps true in `programOkB` until R.7 repairs the frozen
-    predicate. `generated` replaces the three frozen clauses whose verdicts were `layout_not`,
+/- **The four clauses RECON.1 did NOT change, with their existing F1 discharges.** `inputs`, `env`,
+    `noWriters` and - since R.7 (D-P59) - `supported` are PROVED at the fixture. `supported` was
+    REFUTED through the ONE frozen field `permutationCommitmentsMatch` (8 sigma commitments against
+    `divCeil 8 3` = 3); R.7 restated that field as the column comparison the Rust VK actually makes,
+    which `permCommMatchRepaired` had kept true in `programOkB` all along. `generated` replaces the
+    three frozen clauses whose verdicts were `layout_not`,
     `invariants_not` and `model` (two REFUTED, one SORRY): at the derived render the generator run IS
-    the artifact but for BUILD_ID (OBJ.7 gate 4), and at today's typed-in render `delta := 2` refutes
-    it (OBJ.7 gate 9). -/
+    the artifact but for BUILD_ID (OBJ.7 gate 4), and at today's typed-in render the PARSED PAYLOAD
+    refutes it (OBJ.8 step 2, quotient.rs:202). -/
 #check @Midfall.Instances.PoseidonValid.poseidonValid_inputs
 #check @Midfall.Instances.PoseidonValid.poseidonValid_slots
 #check @Midfall.Instances.PoseidonValid.poseidonValid_noWriters
-#check @Midfall.Instances.PoseidonValid.poseidonValid_supported_not
+#check @Midfall.Instances.PoseidonValid.poseidonValid_supported
 #check @Midfall.Instances.PoseidonValid.poseidonValid_returnMptr
 #check @Midfall.Instances.PoseidonValid.poseidonValid_transcriptMptr
 
@@ -435,8 +437,8 @@ def baseSlotWidths_ok : Bool :=
 
 -- (VK sigma commitments, permutation columns [V3 clause], divCeil columns (csDegree-2) [frozen clause])
 /-- WellFormed.permutationCommitmentsMatch at the deployment: (8, 8, 3) = sigma commitments in the VK,
-    permutation columns (the V3 clause, which agrees), and divCeil columns (csDegree - 2) (the frozen
-    clause's right-hand side, which does not). This is the field the supported lemma refutes. -/
+    permutation columns (the clause R.7/D-P59 now states, and which therefore HOLDS), and divCeil
+    columns (csDegree - 2) (the retired right-hand side, the PROOF's chunk count, which does not). -/
 def wellFormedPermCounts_ok : Bool :=
   (poseidonVkExec.permutation.commitments.size, poseidonVkExec.cs.permutation.columns.size,
     divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2)) == (8, 8, 3)

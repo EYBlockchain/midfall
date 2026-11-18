@@ -16,7 +16,7 @@
     F4  `EnvAgrees` pins neither `delta` nor any commitment         (Inv.lean:533-579)
     F5  the frozen seven codec laws hold at a codec that decodes nothing
     F6  `[hoist (R.prog 0 0)]` breaks `fail_lookup := rfl`
-    F7  `WellFormed.permutationCommitmentsMatch` at the deployment
+    F7  `WellFormed.permutationCommitmentsMatch`: repaired by R.7, witness AND mutant falsified
     F8  the frozen gate does not ask for `LeanAccepts`
     F9  `rejects_of_not_accepts` contradicts any accepted calldata with a returning run
 -/
@@ -337,7 +337,7 @@ example (R : Render p G₁ G₂ Gₜ) {c : ExternalCalls} {g : ExternalGas} : Tr
             scopeA R c g) := rfl
   trivial
 
-/-! ## F7. `WellFormed.permutationCommitmentsMatch` at the deployment -/
+/-! ## F7. `WellFormed.permutationCommitmentsMatch` at the deployment - REPAIRED (R.7, D-P59) -/
 
 section F7
 open Midfall.Instances Midfall.Instances.PoseidonEnv
@@ -350,6 +350,64 @@ def f7WellFormedCounts_ok : Bool :=
   (poseidonVkExec.permutation.commitments.size, poseidonVkExec.cs.permutation.columns.size,
     divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2)) == (8, 8, 3)
 #eval f7WellFormedCounts_ok -- expect true
+
+
+/-- **THE REPAIRED CLAUSE HAS TEETH (R.7 / D-P59, W12: WITNESS *AND* FALSIFIER).** The clause now
+    compares the VK's sigma commitments with the permutation COLUMNS. WITNESS: at `poseidonVkExec`
+    both are 8 and the whole `WellFormed` bundle is proved
+    (`Instances/PoseidonValid.lean`'s `deciding_supported_wf`). FALSIFIER: the same key with ONE
+    commitment DROPPED (7 against 8) and with ONE APPENDED (9 against 8) is REFUSED by the repaired
+    clause itself - the mutant differs from the fixture key in the `permutation` field and nowhere
+    else, so nothing was side-conditioned to catch it. A repair that made everything pass would leave
+    these two theorems unprovable. -/
+def f7MutDrop : VerifyingKey (Fr blsR) G₁z :=
+  { poseidonVkExec with permutation := { commitments := poseidonVkExec.permutation.commitments.pop } }
+def f7MutAppend : VerifyingKey (Fr blsR) G₁z :=
+  { poseidonVkExec with permutation :=
+      { commitments := poseidonVkExec.permutation.commitments.push (1 : G₁z) } }
+
+/-- (7, 8, 9): the drop mutant's commitment count, the column count BOTH mutants must match to be
+    well-formed, and the append mutant's count. The CS is untouched by either mutation, which is
+    what makes the second component the same 8 the fixture has. -/
+def f7MutantCounts_ok : Bool :=
+  (f7MutDrop.permutation.commitments.size, f7MutDrop.cs.permutation.columns.size,
+    f7MutAppend.permutation.commitments.size) == (7, 8, 9)
+#eval f7MutantCounts_ok -- expect true
+
+/-- THE WITNESS AS A GATE: the repaired clause holds at the fixture key, 8 = 8. The theorem beside it
+    is `PoseidonValid.deciding_supported_perm`; this is the same fact the VM can read. -/
+def f7_repairedHolds_ok : Bool :=
+  poseidonVkExec.permutation.commitments.size ==
+    poseidonVkExec.cs.permutation.columns.size
+#eval f7_repairedHolds_ok -- expect true
+
+theorem f7_mutantDrop_perm : f7MutDrop.permutation.commitments.size ≠
+    f7MutDrop.cs.permutation.columns.size := by native_decide
+theorem f7_mutantAppend_perm : f7MutAppend.permutation.commitments.size ≠
+    f7MutAppend.cs.permutation.columns.size := by native_decide
+
+/-- **THE FALSIFIER, AS AN UNINHABITED `WellFormed`.** One projection and one application: the
+    repaired field is what refuses each mutant. -/
+theorem f7_mutantNotWellFormed : ¬ f7MutDrop.WellFormed Features.solidity :=
+  fun h => f7_mutantDrop_perm h.permutationCommitmentsMatch
+theorem f7_mutantAppendNotWellFormed : ¬ f7MutAppend.WellFormed Features.solidity :=
+  fun h => f7_mutantAppend_perm h.permutationCommitmentsMatch
+
+/-- **THE OLD CLAUSE'S FALSIFIER, KEPT (REF.3's Accept line).** `divCeil 8 3 = 3 ≠ 8`: the retired
+    right-hand side is the number of permutation PRODUCT commitments the PROOF carries
+    (`permutation/verifier.rs:41-45`, ported as `Permutation.readProductCommitments`), which is why
+    it refuted a correct VK. The `divCeil` itself stays in the tree where it belongs -
+    `Spec/Degrees.lean`'s `numPermSets` still computes it for the proof's chunks. -/
+def f7_oldDivCeilRefuted_ok : Bool :=
+  divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2) == 3
+    && divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2) !=
+        poseidonVkExec.permutation.commitments.size
+#eval f7_oldDivCeilRefuted_ok -- expect true
+
+#print axioms f7_mutantDrop_perm
+#print axioms f7_mutantAppend_perm
+#print axioms f7_mutantNotWellFormed
+#print axioms f7_mutantAppendNotWellFormed
 
 end F7
 

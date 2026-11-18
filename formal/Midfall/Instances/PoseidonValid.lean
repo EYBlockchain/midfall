@@ -43,18 +43,20 @@
                                    point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`,
                                    `permutationComms`) are OPEN - `toEip` is noncomputable at the
                                    placeholder codec, exactly the card's "point half OPEN".
-    7  supported        REFUTED    THROUGH ONE FIELD ONLY, as the card requires:
-                                   `SupportedV2.wf.permutationCommitmentsMatch` - 8 sigma
-                                   commitments against `divCeil 8 3` = 3. The other ten fields are
-                                   PROVED (`poseidonValid_supported_rest`) and `vkPoints` is PROVED
-                                   (`poseidonValid_supported_vkPoints`). R.7 owns the repair.
+    7  supported        PROVED     REPAIRED AND DISCHARGED BY R.7 (D-P59). The field
+                                   `wf.permutationCommitmentsMatch` compared the VK's sigma commitments
+                                   against `divCeil columns (csDegree - 2)` - the count the PROOF
+                                   carries, one product commitment per chunk - and now compares them
+                                   against the permutation COLUMNS: 8 = 8 at `poseidonVkExec`
+                                   (`deciding_supported_perm`), and `poseidonValid_supported` proves
+                                   all twelve fields. FALSIFIER: `f7_mutantNotWellFormed`.
 
-  SO: 4 PROVED, 1 HALF-PROVED, 1 OPEN, 2 REFUTED out of seven, and `poseidonRender_notValid` still
-  holds - it runs through `supported` and, since step 2, INDEPENDENTLY through `generated` again, but
-  through the payload and not the delta. `Render.Valid` is therefore NOT yet inhabited at the fixture,
-  and the two clauses that stop it are `generated` (this card's step 3, blocked on the payload
-  circularity section V3 names) and `supported.wf` (R.7). Reporting it as inhabited would be the lie
-  the brief warns about.
+  SO: 5 PROVED, 1 HALF-PROVED, 1 OPEN, 1 REFUTED out of seven, and `poseidonRender_notValid` still
+  holds - it now runs through `generated` ALONE, because R.7 CLOSED the `supported` refutation: the
+  old route is gone, not merely unused. `Render.Valid` is therefore NOT yet inhabited at the fixture,
+  and the single clause that stops it is `generated` (OBJ.8 step 3, blocked on the payload
+  circularity section V3 names). Reporting it as inhabited would be the lie the brief warns about.
+  Nothing here was weakened to make F1 fit: the clause now compares what the Rust VK actually holds.
 
   ## THE RETIRED FOURTEEN-ROW TABLE (F.1's measurement of the pre-ST.6 text; kept for provenance)
 
@@ -87,8 +89,10 @@
   with `fun h => poseidonRender_notValid h |>.elim` would close the hole by proving its negation,
   which is a DIFFERENT theorem from the one `lowering_equivalence_poseidon` consumes - the headline
   would then be vacuous rather than open, and that is C.1's call to make, not this card's.
-  `Statements.lean` is frozen; `Blocks.lean` sections 6 and 7 are C.2's; no v1 file, no fixture and
-  no gate script was edited.
+  `Statements.lean` is frozen; `Blocks.lean` sections 6 and 7 are C.2's. R.7 (D-P59) edited TWO
+  v1 files under its recorded exception - `Halo2/Exec/VerifyingKey.lean` (the clause, its docstring
+  bullet and the in-file KAT, line count unchanged) and `Halo2/Spec/Degrees.lean:101-103` (docstring
+  only, line count unchanged) - plus `scripts/kat_gate.py`'s KAT pins; no fixture was touched.
 
   ## native_decide, AND WHAT EACH USE COSTS
 
@@ -423,7 +427,7 @@ theorem poseidonValid_slots :
   show poseidonPv.numNegLagranges = poseidonVkExec.cs.blindingFactors.toOption.getD 0 + 1
   exact poseidonValid_slots_negLagranges
 
-/-! ## 9. supported - REFUTED -/
+/-! ## 9. supported - PROVED (R.7, D-P59) -/
 
 /-- **CLAUSE 9'S FIRST FACE IS CLOSED BY F.1.** `SupportedV2.wf.csDegreeMatches` demands
     `vk.cs.degree = .ok vk.csDegree`. C.4 measured the ported degree recomputing to 3 against the
@@ -434,28 +438,57 @@ theorem deciding_supported_degree :
     (match poseidonVkExec.cs.degree with | .ok d => d | .error _ => 0) = poseidonVkExec.csDegree := by
   native_decide
 
-/-- The second failing `WellFormed` clause, so the refutation is not one unlucky field: 8
-    permutation commitments against `divCeil 0 3 = 0`, because vk.json names permutation
-    COMMITMENTS but no permutation COLUMNS. AXIOM:
+/-- **THE REPAIRED CLAUSE, DECIDED AT F1 (R.7 / D-P59).** `WellFormed.permutationCommitmentsMatch`
+    now compares the VK's sigma commitments with the permutation COLUMNS - one per column, which is
+    what the reference builds: `proofs/src/plonk/permutation.rs:123` reads
+    `(0..argument.columns.len())` and `permutation/keygen.rs:244-250` commits
+    `Vec::with_capacity(p.columns.len())`, one push per permutation polynomial. The `divCeil` that
+    used to sit here is the count the PROOF carries (one product commitment per chunk,
+    `permutation/verifier.rs:41-45`, ported as `Permutation.readProductCommitments`), never the VK's.
+    WITNESS: both sides are 8 at `poseidonVkExec` - vk.json lists 8
+    `permutation_commitments_compressed_hex` (PoseidonEnv gate 1) and F.1's cs.json names 8
+    `permutation.columns` (gate 13). AXIOM:
     deciding_supported_perm._native.native_decide.ax_1_1. -/
 theorem deciding_supported_perm :
-    poseidonVkExec.permutation.commitments.size ≠
-      divCeil poseidonVkExec.cs.permutation.columns.size (poseidonVkExec.csDegree - 2) := by
-  native_decide
+    poseidonVkExec.permutation.commitments.size =
+      poseidonVkExec.cs.permutation.columns.size := by native_decide
 
-/-- **CLAUSE 9 OF 13 - STILL REFUTED, BY ONE FIELD, AND IT IS NOT THE EXPORT'S.**
-    `SupportedV2 poseidonRender` requires `R.vk.WellFormed Features.solidity`, whose first clause
-    `csDegreeMatches` demands `vk.cs.degree = .ok vk.csDegree`. With `gates = #[]` - D.2 gap A,
-    vk.json carries no gates at all - the ported `ConstraintSystem.degree` recomputes to 3 while
-    the imported `cs_degree` is 5. Those two are the render's OWN vk and its OWN cs, so this is not
-    the typed-in meta; it is the missing constraint system, and it is the same gap that blocks
-    clauses 1, 2, 3 and 8 from the other side. -/
-theorem poseidonValid_supported_not : ¬ SupportedV2 poseidonRender := by
-  intro h
-  exact deciding_supported_perm h.wf.permutationCommitmentsMatch
+/-- `csDegreeMatches` in the shape the clause states it: `deciding_supported_degree` decides the
+    match, and the `.error` arm is the one the fixture does not take (`csDegree` is vk.json's 5).
+    AXIOMS: deciding_supported_degree_eq._native.native_decide.ax_1_1, ax_1_2. -/
+theorem deciding_supported_degree_eq :
+    poseidonVkExec.cs.degree = .ok poseidonVkExec.csDegree := by
+  cases h' : poseidonVkExec.cs.degree with
+  | ok d =>
+      have h := deciding_supported_degree
+      simp only [h'] at h
+      exact congrArg Except.ok h
+  | error e =>
+      have h := deciding_supported_degree
+      simp only [h'] at h
+      exact absurd h (by native_decide)
 
-/-- The eleven `SupportedV2` fields that DO hold, so clause 9's refutation is located. Every one is
-    a computation at the render's own vk, plan and flags. AXIOMS:
+/-- **ALL SEVEN `WellFormed` FIELDS AT THE FIXTURE KEY (R.7 step 5).** Six are computations on the
+    imported key; `permutationCommitmentsMatch` is the repaired one above. AXIOMS:
+    deciding_supported_wf._native.native_decide.ax_1_1 through ax_1_4, plus the ones named above. -/
+theorem deciding_supported_wf : poseidonVkExec.WellFormed Features.solidity :=
+  { csDegreeMatches := deciding_supported_degree_eq,
+    chunkLenPositive := by native_decide,
+    domainConsistent := by native_decide,
+    permutationCommitmentsMatch := deciding_supported_perm,
+    fixedCommitmentsMatch := by native_decide,
+    singlePhase := by native_decide,
+    committedInstancesOn := rfl }
+
+/- **CLAUSE 9 WAS REFUTED HERE UNTIL R.7.** The refutation `poseidonValid_supported_not` ran
+    through `wf.permutationCommitmentsMatch` - the mis-ported field D-P59 repairs. At the fixture the
+    VK's 8 sigma commitments ARE the 8 permutation COLUMNS (`deciding_supported_perm`), and the
+    `divCeil 8 3` = 3 that used to refute the clause is the number of product commitments the PROOF
+    carries, not the number the VK holds. The whole clause is proved below, once the twelve fields it
+    needs are in scope. -/
+
+/-- The eleven `SupportedV2` fields that hold independently of `wf`, so clause 9's proof is
+    located. Every one is a computation at the render's own vk, plan and flags. AXIOMS:
     poseidonValid_supported_rest._native.native_decide.ax_1_1 through ax_1_7. -/
 theorem poseidonValid_supported_rest :
     poseidonVkExec.cs.numAdviceColumns ≠ 0 ∧
@@ -494,6 +527,20 @@ theorem poseidonValid_supported_vkPoints :
   subst hC1
   show ptReadable (g1zToEip (1 : G₁z))
   exact ⟨(0, 0), by native_decide, by native_decide⟩
+
+/-- **CLAUSE 9 OF THE SEVEN - PROVED (R.7 step 5, D-P59).** All twelve `SupportedV2` fields at
+    `poseidonRender`: the eleven computations of `poseidonValid_supported_rest`, `vkPoints` from the
+    generator clauses above, and `wf` from `deciding_supported_wf` - whose repaired field is
+    `deciding_supported_perm`. Nothing was weakened to get here: the clause text is D-P59's
+    `vk.permutation.commitments.size = vk.cs.permutation.columns.size`, and the FALSIFIER that shows
+    the repaired clause still has teeth is `Instances/StatementsV3Falsifiers.f7_mutantNotWellFormed`
+    (one sigma commitment dropped: 7 against 8, refused). NO new axiom beyond the native_decide ones
+    named above: `#print axioms poseidonValid_supported`. -/
+theorem poseidonValid_supported : SupportedV2 poseidonRender := by
+  obtain ⟨hadvice, hinst1, hinst2, hsphase, hlimbs, hlay1, hlay2, hprod1, hprod2, hnoacc,
+    hemb1, hemb2, hsep, _hci, hnorot⟩ := poseidonValid_supported_rest
+  refine ⟨hadvice, ⟨hinst1, hinst2⟩, hnorot, hsphase, hlimbs, poseidonValid_supported_vkPoints,
+    ⟨hlay1, hlay2⟩, ⟨hprod1, hprod2⟩, deciding_supported_wf, hnoacc, ⟨hemb1, hemb2⟩, hsep⟩
 
 /-! ## 10. noWriters - PROVED -/
 
@@ -620,10 +667,11 @@ theorem poseidon_generated_panicsAtQuotient202 :
       | .error (Fault.panic s) => s.contains "quotient.rs:202"
       | _ => false) = true := by native_decide
 
-/-- **CLAUSE 1 OF THE SEVEN - REFUTED.** `GeneratedBy poseidonRender` does not hold. This is the
-    second refutation of `poseidonRender.Valid` and it is INDEPENDENT of `supported`: OBJ.8 step 2
-    killed the DELTA reason (`poseidonDelta_isArtifactLiteral_ok`) and this replaces it with the
-    PAYLOAD reason. Sorry-free, so `poseidonRender_notValid` below could run through either. -/
+/-- **CLAUSE 1 OF THE SEVEN - REFUTED, AND NOW THE ONLY REFUTATION.** `GeneratedBy poseidonRender`
+    does not hold. It was the second refutation of `poseidonRender.Valid`, INDEPENDENT of
+    `supported`: OBJ.8 step 2 killed the DELTA reason (`poseidonDelta_isArtifactLiteral_ok`) and this
+    replaces it with the PAYLOAD reason. R.7 then closed the `supported` one, so `poseidonRender_notValid`
+    below runs through THIS theorem and no other. -/
 theorem poseidonValid_generated_not : ¬ GeneratedBy poseidonRender := by
   rintro ⟨out, ho, _, _, _⟩
   have h1 : poseidonGenRender.isOk = true := by rw [← poseidonGenRender_eq_generated, ho]; rfl
@@ -664,15 +712,15 @@ theorem poseidon_residual_codehashArm : ∃ x, poseidonRender.model.expectedVkCo
   exact ⟨poseidonM.expectedVkCodehash.getD 0, by native_decide⟩
 
 /-- THE SEVEN CLAUSES AS ONE HONEST CONJUNCTION, so no cell of the table above is prose only:
-    `inputs`, `noWriters` and `env` hold; `generated` and `supported` are refuted, each by a
+    `inputs`, `noWriters`, `env` and - since R.7 - `supported` hold; `generated` is refuted by a
     sorry-free theorem above. -/
 theorem poseidonValid_seven_summary :
-    (¬ GeneratedBy poseidonRender) ∧ (¬ SupportedV2 poseidonRender) ∧
+    (¬ GeneratedBy poseidonRender) ∧ SupportedV2 poseidonRender ∧
       (poseidonRender.inputs.numInstances = poseidonRender.cfg.numInstances) ∧
       NoWriters (poseidonRender.prog 0 0) ∧
       EnvAgrees poseidonRender.E poseidonRender.vk poseidonRender.pv poseidonRender.params
         poseidonRender.sG2gen :=
-  ⟨poseidonValid_generated_not, poseidonValid_supported_not, poseidonValid_inputs.1,
+  ⟨poseidonValid_generated_not, poseidonValid_supported, poseidonValid_inputs.1,
     poseidonValid_noWriters, poseidonValid_slots⟩
 
 
@@ -681,19 +729,24 @@ theorem poseidonValid_seven_summary :
 #print axioms Midfall.Instances.PoseidonValid.poseidon_residual_numInst
 #print axioms Midfall.Instances.PoseidonValid.poseidon_residual_disjoint
 #print axioms Midfall.Instances.PoseidonValid.poseidon_residual_codehashArm
+#print axioms Midfall.Instances.PoseidonValid.deciding_supported_degree_eq
+#print axioms Midfall.Instances.PoseidonValid.deciding_supported_perm
+#print axioms Midfall.Instances.PoseidonValid.deciding_supported_wf
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_supported
 /-! ## THE HEADLINE OF THIS CARD -/
 
 /-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Several of its clauses are false at this
     render (the header table above is the current verdict per clause, and it is the authority - a
-    count in prose here would already be stale again). ST.6 (D-P67) cut the frozen text over to the
-    seven V3 clauses, so the refutation runs through `supported`: `wf.permutationCommitmentsMatch`
-    is FALSE at this deployment - 8 sigma commitments against `divCeil 8 3` = 3 z-chunks - and
-    `poseidonValid_supported_not` is sorry-free, so this theorem is one projection and one
-    application. `generated` refutes it too, INDEPENDENTLY, and OBJ.8 CHANGED WHY: step 2 replaced
-    `poseidonE.delta := 2` with the field constant, which killed OBJ.7 gate 9's DELTA refutation
-    (`poseidonDelta_isArtifactLiteral_ok`), and what is left is `poseidonValid_generated_not` - the
-    generator refuses the payload this render's plan carries, at quotient.rs:202. Two clauses, two
-    owners: `generated` is OBJ.8 step 3 (recorded, not forced), `supported.wf` is R.7.
+    count in prose here would already be stale again). **R.7 (D-P59) CLOSED THE `supported`
+    REFUTATION:** `wf.permutationCommitmentsMatch` now compares the VK's sigma commitments with the
+    permutation COLUMNS - 8 against 8 at this key - and `poseidonValid_supported` proves the whole
+    clause sorry-free, so `Valid` is no longer refutable through `supported` at all. THE ROUTE IS NOW
+    `generated` ALONE: `poseidonValid_generated_not`, sorry-free, because the generator refuses the
+    payload this render's plan carries at quotient.rs:202. OBJ.8 step 2 killed the older DELTA
+    refutation (`poseidonDelta_isArtifactLiteral_ok`) by replacing `poseidonE.delta := 2` with the
+    field constant, and the payload took its place. One clause, one owner: `generated` is OBJ.8
+    step 3, and closing it needs a decision this card does not own - a frozen `Render.payload` field
+    or a v1 `DecidableEq` (recorded at §V3, not attempted here).
 
     What the retired clauses became: `circuitMeta`, `layout`, `invariants` and `model` collapsed
     into `generated`; `codegen`, `closed`, `transcriptMptr` and the two `vkLoading` pin bundles into
@@ -711,6 +764,8 @@ theorem poseidonValid_seven_summary :
     (`Statements` section 5), so C.1's headline survives as stated; `Valid` enters only through
     `blockContracts_of_valid`, which is where the sorry sits. -/
 theorem poseidonRender_notValid : ¬ poseidonRender.Valid :=
-  fun h => poseidonValid_supported_not h.supported
+  fun h => poseidonValid_generated_not h.generated
+
+#print axioms Midfall.Instances.PoseidonValid.poseidonRender_notValid
 
 end Midfall.Instances.PoseidonValid

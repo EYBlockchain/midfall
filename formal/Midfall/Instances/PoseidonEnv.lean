@@ -64,9 +64,9 @@
      It does agree with vk.json on numLookups = 1, numTrashcans = 1 and numSimpleSelectors = 4, and
      gate 14 pins that agreement. CONSEQUENCE, stated and gated and NOT papered over: with gates = #[]
      the ported ConstraintSystem.degree recomputes to 3 while the fixture says cs_degree = 5, so
-     VerifyingKey.WellFormed.csDegreeMatches is NOT dischargable from vk.json. poseidonVkExec is
-     therefore delivered WITHOUT a WellFormed proof, and gate 13 is a pin on the gap: it goes FALSE
-     the day someone fills gates from a real source, which is when WellFormed becomes reachable. No
+     VerifyingKey.WellFormed.csDegreeMatches was NOT dischargable from vk.json. poseidonVkExec was
+     delivered WITHOUT a WellFormed proof and gate 13 pinned the gap. F.1 filled gates from cs.json and
+     R.7 repaired `permutationCommitmentsMatch` (D-P59), so gate 13 now pins the two clauses HOLDING. No
      gate data was invented. Also open, same cause: unblindedAdviceColumns, generalColumnAnnotations,
      constants, minimumDegree - vk.json has none of them, so they are ConstraintSystem.default's
      empties.
@@ -390,9 +390,9 @@ def poseidonVk_omega_ok : Bool :=
 
 /-- GATE 4 (the card's column counts). Every count in the CS is vk.json's and the commitment arrays
     have the lengths vk.json implies. WellFormed.fixedCommitmentsMatch IS discharged here, as a fact
-    about the term rather than a structure proof. WellFormed.permutationCommitmentsMatch is NOT: with
-    no permutation columns in the fixture, divCeil 0 3 = 0 against 8 commitments, and gate 13 pins
-    that failure instead of hiding it. -/
+    about the term rather than a structure proof. WellFormed.permutationCommitmentsMatch is discharged
+    the same way at gate 13 since R.7 repaired the clause (D-P59): 8 sigma commitments against the 8
+    permutation COLUMNS F.1's cs.json exports - one per column, as `permutation.rs:123` builds them. -/
 def poseidonVk_columnCounts_ok : Bool :=
   poseidonCs.numFixedColumns == 19 && poseidonCs.numAdviceColumns == 8
     && poseidonCs.numInstanceColumns == 2 && poseidonCs.numChallenges == 0
@@ -514,15 +514,15 @@ def poseidonRootRepair_ok : Bool :=
         | .ok d => d.omega != poseidonOmega && d.n == poseidonVkData.n
         | .error _ => false)
 
-/-- GATE 13 (THE GAP PIN, CLOSED BY F.1 - AND ONE REMAINING). D.2 shipped this WITHOUT a
+/-- GATE 13 (THE GAP PIN, CLOSED BY F.1 - AND THE LAST HOLE CLOSED BY R.7). D.2 shipped this WITHOUT a
     `WellFormed` proof and pinned WHY: an empty `gates` array made the ported degree recompute to 3
     against the imported 5, and an empty `permutation.columns` made the commitment count unreadable.
     F.1's `cs.json` fills both. So the gate now reads the other way, and it is still falsifiable in
     both halves: the degree clause HOLDS (the ported `ConstraintSystem.degree` on the exported gates
     is 5, equal to vk.json's `cs_degree` - which is also the evidence that the unexportable
-    `minimum_degree` did not bind), and `permutationCommitmentsMatch` STILL FAILS, 8 sigma
-    commitments against `divCeil 8 3` = 3 z-chunks. That second half is a v1 clause defect, not a
-    data gap: the reference commits one sigma polynomial per permutation COLUMN. -/
+    `minimum_degree` did not bind), and `permutationCommitmentsMatch` HOLDS SINCE R.7 REPAIRED IT
+    (D-P59): 8 sigma commitments against the 8 permutation COLUMNS, one per column as
+    `permutation.rs:123` builds them - not against the proof's `divCeil 8 3` = 3 z-chunks. -/
 def poseidonWellFormed_closed_ok : Bool :=
   -- the four structures are present, by the exporter's own counts
   poseidonCs.gates.size == 5 && poseidonCs.lookups.size == poseidonVkData.numLookups
@@ -531,9 +531,9 @@ def poseidonWellFormed_closed_ok : Bool :=
     -- and the degree clause that D.2 could not discharge now discharges
     && (match poseidonCs.degree with | .ok d => d == poseidonVkExec.csDegree | .error _ => false)
     && (match poseidonCs.blindingFactors with | .ok b => b == poseidonCsData.blindingFactors | .error _ => false)
-    -- the remaining WellFormed failure, pinned so it cannot be quietly re-stated away
-    && !(poseidonVkExec.permutation.commitments.size ==
-        divCeil poseidonCs.permutation.columns.size (poseidonVkExec.csDegree - 2))
+    -- the clause R.7 repaired (D-P59): one sigma commitment per permutation COLUMN, 8 = 8
+    && poseidonVkExec.permutation.commitments.size ==
+        poseidonCs.permutation.columns.size
     -- the fields cs.json cannot reach are still the defaults, and SAY so
     && poseidonCs.unblindedAdviceColumns.isEmpty && poseidonCs.generalColumnAnnotations.isEmpty
     && poseidonCs.constants.isEmpty && poseidonCs.minimumDegree == none
@@ -626,7 +626,7 @@ end Midfall.Instances.PoseidonEnvKats
 #eval Midfall.Instances.PoseidonEnvKats.poseidonEncG2_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonParams_bytes_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonRootRepair_ok -- expect true
-#eval Midfall.Instances.PoseidonEnvKats.poseidonWellFormed_closed_ok -- expect true (F.1 closed D.2 gap A except permutationCommitmentsMatch)
+#eval Midfall.Instances.PoseidonEnvKats.poseidonWellFormed_closed_ok -- expect true (F.1 closed D.2 gap A; R.7 closed permutationCommitmentsMatch)
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_crossCheck_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_derived_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_matchesTypedIn_ok -- expect true

@@ -98,9 +98,9 @@ def CircuitIndex.blindingFactors (idx : CircuitIndex (Fr p)) : Nat :=
 /-- How many permutation product polynomials, i.e. the number of column chunks.
     rust: plonk/permutation/verifier.rs:41 (`let chunk_len = vk.cs_degree - 2`)
     and :45 (`columns.chunks(chunk_len)`), ported as
-    `Permutation.readProductCommitments`; Exec/VerifyingKey.lean's
-    `permutationCommitmentsMatch` states the same `divCeil` against the VK's
-    commitment count.
+    `Permutation.readProductCommitments`. That is the count the PROOF carries,
+    one product commitment per chunk; the VK's sigma commitments are one per
+    COLUMN, and `permutationCommitmentsMatch` states THAT against the VK's count.
     WHERE USED: the number of permutation identities folded by `y`
     (`numConstraints`) and the number of distinct point sets the permutation
     contributes to `queryShapes`. -/
