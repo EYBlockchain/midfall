@@ -241,3 +241,56 @@ landed `LoweringV2.exitScan` and the §4 design copy disagree on `break`/`contin
 block.** They agree on every measurement taken so far, so nothing is broken today, but **two scans with
 one name differ on a real input class, and that sits upstream of every block-row proof. Needs a human
 decision.**
+
+## GEN.4 HELD - not briefable. Both of its stated premises fail at `1b9d376`.
+
+**GEN.4's `VERIFY FIRST` says: "`check.sh soundness` passes; `inlineScan_append` is still a sorry
+there." I ran it. It does not pass:**
+
+```
+ok SoundnessV3 (6 sorries) · ok RawDecode · ok ExitMeasure · ok PointSets · ok StatementsV3
+FAIL GeneratorRows · FAIL GeneratorRowsWitness
+```
+
+**`inlineScan_append` lives in `GeneratorRows.lean`, which does not compile** - so the declaration
+cannot be imported or read as a premise. **Separately, `ProgramLemmas.lean:27`, which the card cites as
+"`inline_append`, a sorry", is a DOCSTRING LINE - `grep -n inline_append` returns only that prose
+mention, no declaration.** So both of the card's two evidence anchors are bad.
+
+**Per the loop - "a line that fails means: fix the card, do not brief it" - I am not briefing GEN.4.**
+
+## WHAT ACTUALLY UNBLOCKS IT, and it is not a small card
+
+`GeneratorRows` has **15 error sites in 5 classes** (classified by RECON.1b-i). Four are mechanical:
+  (b) `helpers_eq:408` - `R.helpers` no longer unfolds to the 8-funDef list (G1.2 splice)
+  (c) `854/857` - `R.slice .quotientLin` is no longer defeq to the emitter output, same cause
+  (d) `963` PCS row - one `simp` on the new `computationsAst` return shape
+  (e) `1129-1135` - six `*_blockProgS` binders must move to `G1CodecHeadlineLaws`; **and `hR.returnMptr`
+      at :1135 has NO SOURCE in the header map - a genuine gap, not an edit**
+**But class (a) is a premise gap, not work:** `breakCompressed_valid` projects `hR.slots/.vkPins/
+.vkProgressPins`, which ST.6 deleted, and **the two pin bundles have NO PROJECTION (RECON.1b-iv).**
+
+> **So `check.sh soundness` cannot go green until the `vkPins` derivation exists, and that derivation
+> was measured to be NOT DERIVABLE from the current table facts** (`numInst` and `disjoint` are not
+> table facts at all; `payloadLen`/`vkLen`/`vkHash` need `expectedVkCodehash.isSome` plus a
+> `runtimeBytes.size = pv.vk.len + 1` data fact). **That is a human decision or a new lemma, not a
+> card I can brief.**
+
+## THE CARD-PREMISE DEFECT RATE IS NOW THE BINDING CONSTRAINT ON THIS PROJECT
+
+**Six consecutive cards have shipped with a Needs, Accept or VERIFY FIRST line that the tree
+contradicts:** T3.1 (`WPX.lean` missing from Needs, `BLive` already landed, "engine's own test"
+nonexistent) · T3.1b (`BLive` duplicate, `VERIFY FIRST` false, and **my own stated cause for the
+failure was also wrong**) · PT.1 ("several literals stale" - exactly one was) · ST.6 (falsifier
+declaration that does not exist, all Needs line numbers stale) · RECON.1b (four evidence paths absent)
+· GEN.4 (both anchors bad).
+
+**The cards are not careless. The plan was written against a tree that M2, M3 and RECON.1 have since
+moved under.** Every card that reads the tree before editing has caught this; every card that trusted
+the card text would not have.
+
+**Consequence for the critical path: the remaining M5/M6 cards cannot be briefed from the plan as
+written. Each needs its premises re-verified against HEAD first, which is most of what an orchestrator
+round now costs.** A cheap fix exists and is a human call: **run one card whose job is to re-verify and
+correct the Needs/Accept lines of the M5-M6 cards against the current tree**, so subsequent cards are
+briefable from the plan again.
