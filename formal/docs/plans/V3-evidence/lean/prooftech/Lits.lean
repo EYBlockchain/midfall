@@ -5,6 +5,71 @@ namespace Midfall.Scratch.ProofTech.Lits
 open Midfall Midfall.Lowering Midfall.LoweringV2 Midfall.Instances.PoseidonValid
 open YulSemantics YulSemantics.EVM
 
+/-! **RE-PINNED BY PT.1 (evidence-only). This literal was PRE-M2: it carried EIGHT funDefs; the
+    tree now emits THIRTEEN, and the eight was the stale half - not a regression the pin caught.**
+
+    WHY IT MOVED. helpersOf is GenAst.emitHelpers pv ++ GenAst.emitAccumulatorHelpers
+    (Midfall/LoweringV2/Program.lean:138-140). The second half - the five accumulator codecs
+    load_acc_coord_shifted, is_bls_p_minus_one, check_acc_coord_packing, load_acc_coord,
+    load_acc_point - landed with the D-P52 batch: G1.1 (EMIT AccumulatorHelpers, 823 tokens) and
+    G1.2 / G1.2c (EMIT QuotientHelpers, carrying D-P65's block-scope repair), both APPROVED in
+    docs/design.md (D-P52 "one batched Program.lean re-hash for G1.1-G1.3"; D-P65 "the block scope,
+    in D-P52's re-hash"; docs/DECISIONS-PENDING.md section 11) and merged as f6f951c. M2B's own
+    report records the change as measured and deliberate: helpersOf 8 -> 13 funDefs, block scope
+    8 -> 15 hoisted names. This file was never re-generated with the batch, so native_decide
+    evaluated FALSE, Lits failed, and the failure cascaded WPBridge -> WPTac -> TR / VK / LAGP /
+    WPX / VKP / LoopRule.
+
+    INDEPENDENT JUSTIFICATION - that 13 is what the emitter OUGHT to emit, established OUTSIDE this
+    file and outside the emitter it pins:
+      1. THE RUST ARTIFACT (external witness, not produced by this Lean tree).
+         proofs/solidity-verifier/target/poseidon-fixture-dump/Halo2Verifier.sol - the tracked
+         artifact that Midfall/Instances/PoseidonInputs.lean bakes in via include_str - declares
+         exactly THIRTEEN functions inside verifyProof's assembly block, in exactly this order:
+         fail (630), scalar_inv (640), transcript_init (673), common_word (680),
+         common_uncompressed_g1 (715), squeeze_to (741), batch_invert (776), ec_pairing (895),
+         load_acc_coord_shifted (953), is_bls_p_minus_one (986), check_acc_coord_packing (993),
+         load_acc_coord (1017), load_acc_point (1050). The only other in-assembly definitions are
+         q_program_fail (1593) and q_pow5 (1614), which are SLICE-level, not helpers: 13 helpers +
+         2 slice functions = the 15 hoisted names. The artifact says the helper set is 13, not 8.
+         And the artifact is not a loose analogue of what this tree emits: gate D.1-8
+         (Midfall/Instances/PoseidonInputs.lean:283 poseidonRender_bytesExact_ok) renders this
+         contract BYTE-EXACT from the model - 175,908 chars, 3,024 lines - and
+         M2BatchKats.accRegion_isTheParse_ok (at :91) pins the emitted accumulator AST to the parse
+         of that render's AccumulatorHelpers region, so artifact text, render text and emitted tree
+         are one closed chain rather than three things hoped to agree.
+      2. THE GREEN OBJECT FINGERPRINT. Midfall/Instances/ObjectFingerprint.lean pins the closed
+         program asmOf poseidonPv poseidonM 0 0 at 14,109 tokens / 0x3149ae4f...bef176
+         (object_fingerprint, native_decide), and it is GREEN at this commit - measured true by
+         kat_gate, not asserted here. The helpers are INSIDE that hashed program (mainAsmRaw =
+         mainGuardBlock ++ emitHelpers ++ emitAccumulatorHelpers ++ mainLocals ++ emitSlicesM), so
+         a helper set that was wrong - missing, extra, or an altered body - would move the digest.
+         The 13-helper literal is therefore CONSISTENT WITH the green fingerprint: it is the set
+         the fingerprint is already certifying. The 8-helper literal was certifying a program the
+         tree stopped emitting at f6f951c.
+      2b. WHY 8 IS STILL RIGHT SOMEWHERE ELSE, so this is not a misreading of the OBJ.6 KATs: the
+         "helpers 8/8" pin is about GenAst.emitHelpers, NOT helpersOf. Gate 51
+         (GenAst.lean:2857 emitHelpersOrder_matchesTemplate_ok, and :3108 length == 8) pins
+         emitHelpers to the AssemblyHelpers render's eight names, and Program.lean:132-137 says in
+         as many words that the five codecs are deliberately NOT appended to emitHelpers because
+         gate 51 pins its eight. helpersOf is the WIDER function - emitHelpers ++ emitAccumulator-
+         Helpers - introduced for the per-block contracts. So the landed 8/8 KAT and a 13-helper
+         helpersOf are the same fact, not a contradiction: 8 + 5 = 13.
+      3. THE TREE'S OWN KATs. Midfall/Instances/M2BatchKats.lean:204 helpersOfNames_ok pins these
+         same 13 names in this same order (evaluates true); decompConj1_ok / decompConj2_ok witness
+         prog_slices_decomp with helpersOf pv m in exactly this shape (true); scopeNameCount_ok
+         pins 15 (true); codegenAgrees_ok ties the AST to the ported codegen's tokens (true).
+
+    AUDIT OF THE OTHER FOUR PINS. Every *Lit_eq in this file was re-derived from the tree by
+    GenLits.lean and diffed against the checked-in text: traceReturnLit, vkLoadingLit, lagrangeLit
+    and finalPairingLit are BYTE-IDENTICAL to what the tree emits today, so their pins still
+    elaborate. M2B moved sliceOf only for .quotientLin, which this file does not pin. helpersLit is
+    the ONLY stale literal in this file.
+
+    native_decide, STANDING CAVEAT. The pin below is stmtsBeq_eq _ _ (by native_decide): it is
+    COMPILER TRUST, not a proof - it says the compiled emitter and this literal agree, and it
+    inherits PoseidonV2.poseidonModel_isOk's native_decide axiom (see #print axioms at the end of
+    the file). The three witnesses above are what make the re-pin more than a self-tautology. -/
 def helpersLit : Block EVM.Op :=
   [YulSemantics.Stmt.funDef
    "fail"
@@ -764,7 +829,439 @@ def helpersLit : Block EVM.Op :=
          (YulSemantics.Expr.call
            "fail"
            [YulSemantics.Expr.lit (YulSemantics.Literal.number 3283146957)])],
-    YulSemantics.Stmt.assign ["ret"] (YulSemantics.Expr.lit (YulSemantics.Literal.number 1))]]
+    YulSemantics.Stmt.assign ["ret"] (YulSemantics.Expr.lit (YulSemantics.Literal.number 1))],
+ YulSemantics.Stmt.funDef
+   "load_acc_coord_shifted"
+   ["src", "bits", "n", "base", "limbs_per_word"]
+   ["hi", "lo"]
+   [YulSemantics.Stmt.letDecl
+      ["mask"]
+      (some (YulSemantics.Expr.builtin
+         (YulSemantics.EVM.Op.sub)
+         [YulSemantics.Expr.var "base", YulSemantics.Expr.lit (YulSemantics.Literal.number 1)])),
+    YulSemantics.Stmt.forLoop
+      [YulSemantics.Stmt.letDecl
+         ["i"]
+         (some (YulSemantics.Expr.lit (YulSemantics.Literal.number 0)))]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.lt)
+        [YulSemantics.Expr.var "i", YulSemantics.Expr.var "n"])
+      [YulSemantics.Stmt.assign
+         ["i"]
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.add)
+           [YulSemantics.Expr.var "i", YulSemantics.Expr.lit (YulSemantics.Literal.number 1)])]
+      [YulSemantics.Stmt.letDecl
+         ["packed"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.calldataload)
+            [YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.add)
+               [YulSemantics.Expr.var "src",
+                YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.mul)
+                  [YulSemantics.Expr.builtin
+                     (YulSemantics.EVM.Op.div)
+                     [YulSemantics.Expr.var "i", YulSemantics.Expr.var "limbs_per_word"],
+                   YulSemantics.Expr.lit (YulSemantics.Literal.number 32)]]])),
+       YulSemantics.Stmt.letDecl
+         ["limb"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.and)
+            [YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.shr)
+               [YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.mul)
+                  [YulSemantics.Expr.builtin
+                     (YulSemantics.EVM.Op.mod)
+                     [YulSemantics.Expr.var "i", YulSemantics.Expr.var "limbs_per_word"],
+                   YulSemantics.Expr.var "bits"],
+                YulSemantics.Expr.var "packed"],
+             YulSemantics.Expr.var "mask"])),
+       YulSemantics.Stmt.letDecl
+         ["shift"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.mul)
+            [YulSemantics.Expr.var "i", YulSemantics.Expr.var "bits"])),
+       YulSemantics.Stmt.cond
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.lt)
+           [YulSemantics.Expr.var "shift", YulSemantics.Expr.lit (YulSemantics.Literal.number 256)])
+         [YulSemantics.Stmt.assign
+            ["lo"]
+            (YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "lo",
+               YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.shl)
+                 [YulSemantics.Expr.var "shift", YulSemantics.Expr.var "limb"]]),
+          YulSemantics.Stmt.cond
+            (YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.gt)
+              [YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.add)
+                 [YulSemantics.Expr.var "shift", YulSemantics.Expr.var "bits"],
+               YulSemantics.Expr.lit (YulSemantics.Literal.number 256)])
+            [YulSemantics.Stmt.assign
+               ["hi"]
+               (YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.add)
+                 [YulSemantics.Expr.var "hi",
+                  YulSemantics.Expr.builtin
+                    (YulSemantics.EVM.Op.shr)
+                    [YulSemantics.Expr.builtin
+                       (YulSemantics.EVM.Op.sub)
+                       [YulSemantics.Expr.lit (YulSemantics.Literal.number 256),
+                        YulSemantics.Expr.var "shift"],
+                     YulSemantics.Expr.var "limb"]])]],
+       YulSemantics.Stmt.cond
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.iszero)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.lt)
+              [YulSemantics.Expr.var "shift",
+               YulSemantics.Expr.lit (YulSemantics.Literal.number 256)]])
+         [YulSemantics.Stmt.assign
+            ["hi"]
+            (YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "hi",
+               YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.shl)
+                 [YulSemantics.Expr.builtin
+                    (YulSemantics.EVM.Op.sub)
+                    [YulSemantics.Expr.var "shift",
+                     YulSemantics.Expr.lit (YulSemantics.Literal.number 256)],
+                  YulSemantics.Expr.var "limb"]])]]],
+ YulSemantics.Stmt.funDef
+   "is_bls_p_minus_one"
+   ["hi", "lo"]
+   ["yes"]
+   [YulSemantics.Stmt.assign
+      ["yes"]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.and)
+        [YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.eq)
+           [YulSemantics.Expr.var "hi",
+            YulSemantics.Expr.lit
+              (YulSemantics.Literal.number 34565483545414906068789196026815425751)],
+         YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.eq)
+           [YulSemantics.Expr.var "lo",
+            YulSemantics.Expr.lit
+              (YulSemantics.Literal.number
+                45442060874369865957053122457065728162598490762543039060009208264153100167850)]])],
+ YulSemantics.Stmt.funDef
+   "check_acc_coord_packing"
+   ["src", "bits", "n", "limbs_per_word"]
+   ["ok"]
+   [YulSemantics.Stmt.assign ["ok"] (YulSemantics.Expr.lit (YulSemantics.Literal.number 1)),
+    YulSemantics.Stmt.letDecl
+      ["coord_words"]
+      (some (YulSemantics.Expr.builtin
+         (YulSemantics.EVM.Op.div)
+         [YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.add)
+            [YulSemantics.Expr.var "n",
+             YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.sub)
+               [YulSemantics.Expr.var "limbs_per_word",
+                YulSemantics.Expr.lit (YulSemantics.Literal.number 1)]],
+          YulSemantics.Expr.var "limbs_per_word"])),
+    YulSemantics.Stmt.forLoop
+      [YulSemantics.Stmt.letDecl
+         ["word_idx"]
+         (some (YulSemantics.Expr.lit (YulSemantics.Literal.number 0)))]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.lt)
+        [YulSemantics.Expr.var "word_idx", YulSemantics.Expr.var "coord_words"])
+      [YulSemantics.Stmt.assign
+         ["word_idx"]
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.add)
+           [YulSemantics.Expr.var "word_idx",
+            YulSemantics.Expr.lit (YulSemantics.Literal.number 1)])]
+      [YulSemantics.Stmt.letDecl
+         ["remaining"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.sub)
+            [YulSemantics.Expr.var "n",
+             YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.mul)
+               [YulSemantics.Expr.var "word_idx", YulSemantics.Expr.var "limbs_per_word"]])),
+       YulSemantics.Stmt.letDecl ["limbs_in_word"] (some (YulSemantics.Expr.var "limbs_per_word")),
+       YulSemantics.Stmt.cond
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.lt)
+           [YulSemantics.Expr.var "remaining", YulSemantics.Expr.var "limbs_per_word"])
+         [YulSemantics.Stmt.assign ["limbs_in_word"] (YulSemantics.Expr.var "remaining")],
+       YulSemantics.Stmt.letDecl
+         ["used_bits"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.mul)
+            [YulSemantics.Expr.var "limbs_in_word", YulSemantics.Expr.var "bits"])),
+       YulSemantics.Stmt.cond
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.lt)
+           [YulSemantics.Expr.var "used_bits",
+            YulSemantics.Expr.lit (YulSemantics.Literal.number 256)])
+         [YulSemantics.Stmt.assign
+            ["ok"]
+            (YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.and)
+              [YulSemantics.Expr.var "ok",
+               YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.lt)
+                 [YulSemantics.Expr.builtin
+                    (YulSemantics.EVM.Op.calldataload)
+                    [YulSemantics.Expr.builtin
+                       (YulSemantics.EVM.Op.add)
+                       [YulSemantics.Expr.var "src",
+                        YulSemantics.Expr.builtin
+                          (YulSemantics.EVM.Op.mul)
+                          [YulSemantics.Expr.var "word_idx",
+                           YulSemantics.Expr.lit (YulSemantics.Literal.number 32)]]],
+                  YulSemantics.Expr.builtin
+                    (YulSemantics.EVM.Op.shl)
+                    [YulSemantics.Expr.var "used_bits",
+                     YulSemantics.Expr.lit (YulSemantics.Literal.number 1)]]])]]],
+ YulSemantics.Stmt.funDef
+   "load_acc_coord"
+   ["src", "bits", "n", "base", "limbs_per_word"]
+   ["ok", "hi", "lo"]
+   [YulSemantics.Stmt.assign
+      ["ok"]
+      (YulSemantics.Expr.call
+        "check_acc_coord_packing"
+        [YulSemantics.Expr.var "src",
+         YulSemantics.Expr.var "bits",
+         YulSemantics.Expr.var "n",
+         YulSemantics.Expr.var "limbs_per_word"]),
+    YulSemantics.Stmt.assign
+      ["hi", "lo"]
+      (YulSemantics.Expr.call
+        "load_acc_coord_shifted"
+        [YulSemantics.Expr.var "src",
+         YulSemantics.Expr.var "bits",
+         YulSemantics.Expr.var "n",
+         YulSemantics.Expr.var "base",
+         YulSemantics.Expr.var "limbs_per_word"]),
+    YulSemantics.Stmt.assign
+      ["ok"]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.and)
+        [YulSemantics.Expr.var "ok",
+         YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.or)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.lt)
+              [YulSemantics.Expr.var "hi",
+               YulSemantics.Expr.lit
+                 (YulSemantics.Literal.number 34565483545414906068789196026815425751)],
+            YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.and)
+              [YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.eq)
+                 [YulSemantics.Expr.var "hi",
+                  YulSemantics.Expr.lit
+                    (YulSemantics.Literal.number 34565483545414906068789196026815425751)],
+               YulSemantics.Expr.builtin
+                 (YulSemantics.EVM.Op.iszero)
+                 [YulSemantics.Expr.builtin
+                    (YulSemantics.EVM.Op.gt)
+                    [YulSemantics.Expr.var "lo",
+                     YulSemantics.Expr.lit
+                       (YulSemantics.Literal.number
+                         45442060874369865957053122457065728162598490762543039060009208264153100167850)]]]]]),
+    YulSemantics.Stmt.letDecl
+      ["was_p_minus_one"]
+      (some (YulSemantics.Expr.call
+         "is_bls_p_minus_one"
+         [YulSemantics.Expr.var "hi", YulSemantics.Expr.var "lo"])),
+    YulSemantics.Stmt.cond
+      (YulSemantics.Expr.var "was_p_minus_one")
+      [YulSemantics.Stmt.assign ["hi"] (YulSemantics.Expr.lit (YulSemantics.Literal.number 0)),
+       YulSemantics.Stmt.assign ["lo"] (YulSemantics.Expr.lit (YulSemantics.Literal.number 0))],
+    YulSemantics.Stmt.cond
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.iszero)
+        [YulSemantics.Expr.var "was_p_minus_one"])
+      [YulSemantics.Stmt.letDecl
+         ["next_lo"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.add)
+            [YulSemantics.Expr.var "lo", YulSemantics.Expr.lit (YulSemantics.Literal.number 1)])),
+       YulSemantics.Stmt.assign
+         ["hi"]
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.add)
+           [YulSemantics.Expr.var "hi",
+            YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.lt)
+              [YulSemantics.Expr.var "next_lo", YulSemantics.Expr.var "lo"]]),
+       YulSemantics.Stmt.assign ["lo"] (YulSemantics.Expr.var "next_lo")],
+    YulSemantics.Stmt.assign
+      ["ok"]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.and)
+        [YulSemantics.Expr.var "ok",
+         YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.lt)
+           [YulSemantics.Expr.var "hi",
+            YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.shl)
+              [YulSemantics.Expr.lit (YulSemantics.Literal.number 128),
+               YulSemantics.Expr.lit (YulSemantics.Literal.number 1)]]])],
+ YulSemantics.Stmt.funDef
+   "load_acc_point"
+   ["dst", "src", "bits", "n", "base"]
+   ["ok", "is_id"]
+   [YulSemantics.Stmt.letDecl
+      ["limbs_per_word"]
+      (some (YulSemantics.Expr.lit (YulSemantics.Literal.number 4))),
+    YulSemantics.Stmt.letDecl
+      ["coord_words"]
+      (some (YulSemantics.Expr.builtin
+         (YulSemantics.EVM.Op.div)
+         [YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.add)
+            [YulSemantics.Expr.var "n",
+             YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.sub)
+               [YulSemantics.Expr.var "limbs_per_word",
+                YulSemantics.Expr.lit (YulSemantics.Literal.number 1)]],
+          YulSemantics.Expr.var "limbs_per_word"])),
+    YulSemantics.Stmt.letDecl
+      ["flag"]
+      (some (YulSemantics.Expr.builtin
+         (YulSemantics.EVM.Op.calldataload)
+         [YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.add)
+            [YulSemantics.Expr.var "src",
+             YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.mul)
+               [YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.mul)
+                  [YulSemantics.Expr.lit (YulSemantics.Literal.number 2),
+                   YulSemantics.Expr.var "coord_words"],
+                YulSemantics.Expr.lit (YulSemantics.Literal.number 32)]]])),
+    YulSemantics.Stmt.assign
+      ["ok"]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.lt)
+        [YulSemantics.Expr.var "flag", YulSemantics.Expr.lit (YulSemantics.Literal.number 2)]),
+    YulSemantics.Stmt.assign
+      ["is_id"]
+      (YulSemantics.Expr.builtin
+        (YulSemantics.EVM.Op.eq)
+        [YulSemantics.Expr.var "flag", YulSemantics.Expr.lit (YulSemantics.Literal.number 1)]),
+    YulSemantics.Stmt.cond
+      (YulSemantics.Expr.var "is_id")
+      [YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 0)]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 32)],
+            YulSemantics.Expr.lit (YulSemantics.Literal.number 0)]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 64)],
+            YulSemantics.Expr.lit (YulSemantics.Literal.number 0)]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 96)],
+            YulSemantics.Expr.lit (YulSemantics.Literal.number 0)])],
+    YulSemantics.Stmt.cond
+      (YulSemantics.Expr.builtin (YulSemantics.EVM.Op.iszero) [YulSemantics.Expr.var "is_id"])
+      [YulSemantics.Stmt.letDecl
+         ["x_ok", "x_hi", "x_lo"]
+         (some (YulSemantics.Expr.call
+            "load_acc_coord"
+            [YulSemantics.Expr.var "src",
+             YulSemantics.Expr.var "bits",
+             YulSemantics.Expr.var "n",
+             YulSemantics.Expr.var "base",
+             YulSemantics.Expr.var "limbs_per_word"])),
+       YulSemantics.Stmt.letDecl
+         ["y_ok", "y_hi", "y_lo"]
+         (some (YulSemantics.Expr.call
+            "load_acc_coord"
+            [YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.add)
+               [YulSemantics.Expr.var "src",
+                YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.mul)
+                  [YulSemantics.Expr.var "coord_words",
+                   YulSemantics.Expr.lit (YulSemantics.Literal.number 32)]],
+             YulSemantics.Expr.var "bits",
+             YulSemantics.Expr.var "n",
+             YulSemantics.Expr.var "base",
+             YulSemantics.Expr.var "limbs_per_word"])),
+       YulSemantics.Stmt.assign
+         ["ok"]
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.and)
+           [YulSemantics.Expr.var "ok",
+            YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.and)
+              [YulSemantics.Expr.var "x_ok", YulSemantics.Expr.var "y_ok"]]),
+       YulSemantics.Stmt.letDecl
+         ["decoded_zero"]
+         (some (YulSemantics.Expr.builtin
+            (YulSemantics.EVM.Op.iszero)
+            [YulSemantics.Expr.builtin
+               (YulSemantics.EVM.Op.or)
+               [YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.or)
+                  [YulSemantics.Expr.var "x_hi", YulSemantics.Expr.var "x_lo"],
+                YulSemantics.Expr.builtin
+                  (YulSemantics.EVM.Op.or)
+                  [YulSemantics.Expr.var "y_hi", YulSemantics.Expr.var "y_lo"]]])),
+       YulSemantics.Stmt.assign
+         ["ok"]
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.and)
+           [YulSemantics.Expr.var "ok",
+            YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.iszero)
+              [YulSemantics.Expr.var "decoded_zero"]]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.var "dst", YulSemantics.Expr.var "x_hi"]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 32)],
+            YulSemantics.Expr.var "x_lo"]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 64)],
+            YulSemantics.Expr.var "y_hi"]),
+       YulSemantics.Stmt.exprStmt
+         (YulSemantics.Expr.builtin
+           (YulSemantics.EVM.Op.mstore)
+           [YulSemantics.Expr.builtin
+              (YulSemantics.EVM.Op.add)
+              [YulSemantics.Expr.var "dst", YulSemantics.Expr.lit (YulSemantics.Literal.number 96)],
+            YulSemantics.Expr.var "y_lo"])]]]
 
 def traceReturnLit : Block EVM.Op :=
   [YulSemantics.Stmt.cond
