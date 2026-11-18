@@ -11,6 +11,7 @@
 import Midfall.LoweringV3.Statements
 import Midfall.Instances.PoseidonValid
 import Midfall.Instances.CurveSurface
+import Midfall.Instances.GeneratedKats
 import Midfall.Generator.Vk
 set_option autoImplicit false
 
@@ -148,47 +149,237 @@ def dataConjunct_ok : Bool :=
 
 /-! ## (c) PayloadAgrees at the deployment -/
 
-theorem poseidonE_delta : poseidonRender.E.delta = 2 := rfl
-
 -- the eight codec-free fields, in the order of `payloadScalarsB`:
 -- numInstances, k, nInv, omega, omegaInv, omegaInvToL, accWords, delta
-/-- The eight codec-free PayloadAgrees fields at today's render, in the order of payloadScalarsB:
-    numInstances, k, nInv, omega, omegaInv, omegaInvToL, accWords all hold; delta does not. -/
-def payloadScalarsPlaceholder_ok : Bool :=
-  payloadScalarsB (p := Yul.blsR) poseidonPv 1 poseidonVkExec.domain.k
-    poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv poseidonPlanV2.meta_.rotationLast
-    poseidonConfig.accumulator (2 : Fr Yul.blsR) poseidonInputs.frDelta ==
-    [true, true, true, true, true, true, true, false]
-#eval payloadScalarsPlaceholder_ok -- expect true
+theorem poseidonE_delta : poseidonRender.E.delta = 2 := rfl
 
--- the same with the field's real DELTA in place of the placeholder 2
-/-- The same eight with the field's real DELTA in place of the placeholder 2: all eight hold, so the
-    single refuting field of poseidon_payloadAgrees_not is delta and nothing else among the scalars. -/
-def payloadScalarsRealDelta_ok : Bool :=
-  payloadScalarsB (p := Yul.blsR) poseidonPv 1 poseidonVkExec.domain.k
-    poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv poseidonPlanV2.meta_.rotationLast
-    poseidonConfig.accumulator
-    ((Inline.natOfLiteral poseidonInputs.frDelta : ℕ) : Fr Yul.blsR) poseidonInputs.frDelta ==
-    [true, true, true, true, true, true, true, true]
-#eval payloadScalarsRealDelta_ok -- expect true
-
--- the literal IS Fr::DELTA = 7^(2^32) mod r (multiplicative generator 7, two-adicity 32)
-/-- The literal IS Fr::DELTA = 7^(2^32) mod r (multiplicative generator 7, two-adicity 32), and it
-    is below r: both halves of the memo's (true, true). -/
+/-- The literal the render carries as `frDelta` IS Fr::DELTA = 7^(2^32) mod r (multiplicative
+    generator 7, two-adicity 32), and it is below r: both halves of the memo's (true, true). -/
 def frDeltaIsGeneratorPow_ok : Bool :=
   (Inline.natOfLiteral poseidonInputs.frDelta == modPow 7 (2 ^ 32) Yul.blsR,
     decide (Inline.natOfLiteral poseidonInputs.frDelta < Yul.blsR)) == (true, true)
 #eval frDeltaIsGeneratorPow_ok -- expect true
 
-/-- The `delta` field is FALSE at today's render. Concrete deployment fact. -/
+/-- The fixture render's DELTA is the placeholder 2 and NOT the literal the artifact's quotient block
+    prints. Under the single text this is no longer a `PayloadAgrees` field (RECON.1 step 3 drops it):
+    it is why `generated` fails at today's fixture - see the two #check lines below. -/
 theorem poseidon_delta_not :
     ¬ (poseidonRender.E.delta.val = Inline.natOfLiteral poseidonRender.inputs.frDelta) := by
   show ¬ ((2 : Fr Yul.blsR).val = Inline.natOfLiteral poseidonInputs.frDelta)
   native_decide
 
-/-- So `PayloadAgrees poseidonRender` is refuted, by its `delta` field alone. -/
-theorem poseidon_payloadAgrees_not : ¬ PayloadAgrees poseidonRender :=
-  fun h => poseidon_delta_not h.delta
+/-! ## (RECON.1) THE CLAUSE TABLE AT F1: one witness line and one falsifier line per clause of the
+    single `ValidV3`. W12/W15: a clause with no falsifier is a clause that cannot fail.
+
+    Read with the per-clause verdicts of `§V` of `Midfall/LoweringV3/Statements.lean`. The fixture
+    render itself is `noncomputable` (its model is the typed-in artifact value), so every line below
+    evaluates the clause at the COMPUTABLE fixture data - `poseidonPv`, `poseidonM`,
+    `poseidonPlanV2`, `poseidonConfig`, `poseidonVkExec` - which are the render's own fields
+    (`poseidonRender_plan_isD1`, `poseidonRender_vk_isD2`). -/
+
+/-- The program clause's decidable bundle at F1: `programOkB`, and each conjunct that RECON.1 added or
+    folded, all TRUE. One line, seven facts. -/
+def recon1_programOkB_ok : Bool :=
+  (Midfall.LoweringV3.programOkCore poseidonPv poseidonM poseidonConfig.numInstances
+      poseidonVkExec,
+    Midfall.LoweringV3.constsCoherent poseidonPv poseidonM,
+    Midfall.LoweringV3.callsResolved (mainAsmRaw poseidonPv poseidonM),
+    Midfall.LoweringV3.transcriptRegionOk poseidonPv poseidonConfig.numInstances,
+    Midfall.LoweringV3.g1IdentityFloor poseidonPv,
+    Midfall.LoweringV3.negLagrangesFloor poseidonPv,
+    Midfall.LoweringV3.permCommMatchRepaired poseidonVkExec) ==
+    (true, true, true, true, true, true, true)
+#eval recon1_programOkB_ok -- expect true
+
+/-- FALSIFIER of the `constsCoherent` conjunct: move the plan view's transcript base and the table no
+    longer equals the data table (`Consts2.lean`'s `pvShifted`, ported). -/
+def recon1_constsCoherent_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.constsCoherent
+      { poseidonPv with memory := { poseidonPv.memory with
+          transcriptMptr := poseidonPv.memory.transcriptMptr + 32 } } poseidonM
+#eval recon1_constsCoherent_falsifier_ok -- expect true
+
+/-- FALSIFIER of PG-G1ID (addition 3): the default layout's `g1IdentityMptr` is 0
+    (`Layout.lean:1732`), and 0x80 ≤ 0 is false - so the clause excludes a real shape, it does not
+    merely describe the deployment. -/
+def recon1_g1Identity_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.g1IdentityFloor { poseidonPv with memory :=
+      { poseidonPv.memory with g1IdentityMptr := ptrMemory (valueFromNat 0x40) } }
+#eval recon1_g1Identity_falsifier_ok -- expect true
+
+/-- FALSIFIER of PG-NEGLAG (addition 4): `numNegLagranges = 1` is what
+    `EnvAgrees.negLagranges` allows when `blindingFactors` is an error
+    (`blindingFactors.getD 0 + 1 = 1`), and the clause refuses it. -/
+def recon1_negLagranges_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.negLagrangesFloor { poseidonPv with numNegLagranges := 1 }
+#eval recon1_negLagranges_falsifier_ok -- expect true
+
+/-- FALSIFIER of `cdBound`: an instance count that pushes the expected calldata length past a word.
+    The clause is the arithmetic that makes the contract's `calldatasize` test and
+    `decodeCalldata`'s `Nat` test the same test, and it can fail. -/
+def recon1_cdBound_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.cdBoundB poseidonPv (2 ^ 256)
+#eval recon1_cdBound_falsifier_ok -- expect true
+
+/-- FALSIFIER of PG-TPBUF (addition 2), both halves: a walk window moved into the transcript region,
+    and an absorb run longer than the region. -/
+def recon1_tpbuf_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.transcriptRegionOk { poseidonPv with memory :=
+      { poseidonPv.memory with
+          adviceCommsMptrBase := ptrMemory (valueFromNat poseidonPv.memory.transcriptMptr) } }
+      poseidonConfig.numInstances &&
+  ! Midfall.LoweringV3.transcriptRegionOk { poseidonPv with proofLayout :=
+      { poseidonPv.proofLayout with evals :=
+          { poseidonPv.proofLayout.evals with byteLen := 99999 } } }
+      poseidonConfig.numInstances
+#eval recon1_tpbuf_falsifier_ok -- expect true
+
+/-- The PG-TPBUF numbers, printed: the transcript region is (4096, 4096) - start 0x1000, 128 words -
+    and the longest absorb run at F1 is 1536 bytes, so the capacity half holds with room; the nine
+    walk windows are all above it. -/
+def recon1_tpbuf_numbers_ok : Bool :=
+  (Midfall.LoweringV3.longestAbsorbRunOf poseidonPv poseidonConfig.numInstances,
+    (poseidonPv.memory.map.region "transcript_buffer").map fun r => (r.start, r.len),
+    (Midfall.LoweringV3.walkWindowsOf poseidonPv).all fun w => w.1 ≥ 0x1000 + 4096) ==
+    (1536, some (4096, 4096), true)
+#eval recon1_tpbuf_numbers_ok -- expect true
+
+/-- **`hasMultiPointSet`: WITNESS at F1 and a falsifier of the test it runs.** The clause asks that
+    SOME static point set has two points; at F1 the sets are [[0],[0,1],[0,-9]] (`SoundnessV3`'s
+    measurement) so it holds. The falsifier is the predicate itself on the other shape - a plan whose
+    sets are all singletons fails it, and the `.error` arm of the definition fails it too. A
+    render-level mutation (a real `Data` with only singleton sets) is NOT landed here: it needs a
+    second fixture plan, and this card is a statement card. -/
+def recon1_multiPoint_ok : Bool :=
+  (Midfall.LoweringV3.hasMultiPointSet poseidonPv,
+    ([[0],[1]].any fun ps => decide (2 ≤ ps.length)),
+    ([[0],[0,1]].any fun ps => decide (2 ≤ ps.length))) == (true, false, true)
+#eval recon1_multiPoint_ok -- expect true
+
+/-- WITNESS and FALSIFIER of the two program scans `programOkB` runs on the AST, as evaluations (the
+    kernel cannot reduce `List.contains` on strings, so these are not `decide` proofs).
+    `callsResolved`: a call to a declared function resolves; an undeclared call does not; a function
+    named after a built-in does not (the definition's second conjunct - a `.call` node can never be a
+    mis-spelled built-in). `noShadowProg`: a binder named after a contract constant is refused, as a
+    `let` and as a function parameter; a plain binder passes (the B-5 hazard `inline_append` needs). -/
+def recon1_scans_ok : Bool :=
+  (Midfall.LoweringV3.callsResolved
+      [Stmt.funDef "g" [] [] [], Stmt.exprStmt (Expr.call "g" [])],
+    Midfall.LoweringV3.callsResolved [Stmt.exprStmt (Expr.call "g" [])],
+    Midfall.LoweringV3.callsResolved
+      [Stmt.funDef "add" [] [] [], Stmt.exprStmt (Expr.call "add" [])],
+    Midfall.LoweringV3.noShadowProg [("FR_MODULUS", 5)]
+      [Stmt.letDecl ["FR_MODULUS"] (some (Expr.lit (Literal.number 1)))],
+    Midfall.LoweringV3.noShadowProg [("FR_MODULUS", 5)]
+      [Stmt.funDef "ff" ["FR_MODULUS"] [] [Stmt.letDecl ["y"] (some (Expr.lit (Literal.number 1)))]],
+    Midfall.LoweringV3.noShadowProg [("FR_MODULUS", 5)]
+      [Stmt.letDecl ["r"] (some (Expr.lit (Literal.number 1)))]) ==
+    (true, false, false, false, false, true)
+#eval recon1_scans_ok -- expect true
+/-- WITNESS of PG-GAS (addition 1) at F1: the emitted program passes the scan at fuel 20000. The
+    token count of `gas` in the main block is 0 (`mainBlockTokenCounts_ok`), so F1 is the EASY case -
+    the clause's teeth are for the external-evaluator render, and the scan-level witness and
+    falsifier are `gasCallOk_witness` / `gasCallOk_refuses` in the staging module (a call's own
+    `gas()` passes; a `gas()` as a value, as a second argument, or nested in an offset fails). -/
+def recon1_gas_ok : Bool := Midfall.LoweringV3.gasScan 20000 (.b (asmOf poseidonPv poseidonM 0 0))
+#eval recon1_gas_ok -- expect true
+
+/-- FALSIFIER of `permCommMatchRepaired`: three sigma commitments against eight columns - the frozen
+    clause's own number - is refused. -/
+def recon1_permComm_falsifier_ok : Bool :=
+  ! Midfall.LoweringV3.permCommMatchRepaired { poseidonVkExec with permutation :=
+      { poseidonVkExec.permutation with
+          commitments := poseidonVkExec.permutation.commitments.extract 0 3 } }
+#eval recon1_permComm_falsifier_ok -- expect true
+
+/- **`generated`: WITNESS and FALSIFIER, both OBJ.7's gates.** Gate 4
+    (`generateAll_textIsTheArtifactButForBuildId_ok`): with the fixture's real DELTA the generator's
+    text IS the artifact but for BUILD_ID. Gate 9 (`generateAll_falsifierDeltaAndOmega_ok`): with
+    `delta := 2` - WHICH IS WHAT `poseidonRender.E.delta` CARRIES (`poseidonE_delta`) - the generated
+    quotient blocks are NOT the render's, so the `generated` clause is REFUTED at today's fixture and
+    the card's acceptance line "`delta := 2` falsifies `generated` (not `payload`)" is these two gates.
+    OBJ.8 is the card that rebuilds the fixture render from the generator; until then `generated` is a
+    clause the fixture does not meet, and this says so out loud rather than weakening it. -/
+#check @Midfall.Instances.GeneratedKats.generateAll_textIsTheArtifactButForBuildId_ok
+#check @Midfall.Instances.GeneratedKats.generateAll_falsifierDeltaAndOmega_ok
+
+/-- **`payload`, the seven decidable fields at F1** (`digest` measured separately below): all hold.
+    The five codec-bearing fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`, `permutationComms`)
+    compare payload bytes with `toEip` of group elements and `toEip` is noncomputable at the
+    placeholder codec, so they are neither proved nor refuted here - which is why the 18-clause text's
+    refutation of `PayloadAgrees poseidonRender` (carried by the `delta` field alone) is GONE with that
+    field, and the F1 refutation of the single text now sits in `generated`. -/
+def recon1_payload_scalars_ok : Bool :=
+  payloadScalarsB (p := Yul.blsR) poseidonPv 1 poseidonVkExec.domain.k
+    poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv poseidonPlanV2.meta_.rotationLast
+    poseidonConfig.accumulator == [true, true, true, true, true, true, true]
+#eval recon1_payload_scalars_ok -- expect true
+
+/-- FALSIFIER of `payload` that needs no codec: flip the payload's OMEGA word. The generator still
+    accepts the perturbed payload (that is OBJ.7's NON-falsifier, gate 9's second half), so this is
+    exactly the hole `PayloadAgrees` exists to close - and it closes it. -/
+def recon1_payload_flipOmega_ok : Bool :=
+  let bump (i : Nat) (v : Halo2VerifyingKey) : Halo2VerifyingKey :=
+    { v with constants := v.constants.zipIdx.map fun (c, j) =>
+        if j == i then (c.1, c.2 + 1) else c }
+  payloadScalarsB (p := Yul.blsR) { poseidonPv with vk := bump 4 poseidonPv.vk } 1
+    poseidonVkExec.domain.k poseidonVkExec.domain.omega poseidonVkExec.domain.omegaInv
+    poseidonPlanV2.meta_.rotationLast poseidonConfig.accumulator ==
+    [true, true, true, false, true, true, true]
+#eval recon1_payload_flipOmega_ok -- expect true
+
+/-- WITNESS of `payload.digest` at F1: header word 0 is the exec key's transcript representation. -/
+def recon1_payload_digest_ok : Bool :=
+  Midfall.LoweringV3.payloadWord poseidonPv vkHeaderTemplateSlotsDefault.vkDigest ==
+    frWord poseidonVkExec.transcriptRepr
+#eval recon1_payload_digest_ok -- expect true
+
+/-- FALSIFIER of `payload.digest`: bump word 0. -/
+def recon1_payload_digest_falsifier_ok : Bool :=
+  let v := poseidonPv.vk
+  Midfall.LoweringV3.payloadWord { poseidonPv with vk :=
+      { v with constants := v.constants.zipIdx.map fun (c, j) =>
+          if j == 0 then (c.1, c.2 + 1) else c } }
+      vkHeaderTemplateSlotsDefault.vkDigest != frWord poseidonVkExec.transcriptRepr
+#eval recon1_payload_digest_falsifier_ok -- expect true
+
+/-- **`supported` at F1: REFUTED, and the refutation is the frozen clause, not the repaired one.**
+    `SupportedV2.wf` demands `divCeil columns (csDegree - 2)` = 3 against the VK's 8 sigma
+    commitments (`wellFormedPermCounts_ok`); the repaired clause (`permCommMatchRepaired`, kept in
+    `programOkB`) is TRUE at the same key. R.7 repairs the frozen predicate; this card does not
+    weaken `supported` to hide the gap. -/
+def recon1_supported_gap_ok : Bool :=
+  (poseidonVkExec.permutation.commitments.size, poseidonVkExec.cs.permutation.columns.size,
+    divCeil poseidonVkExec.cs.permutation.columns.size
+      (poseidonVkExec.csDegree - 2)) == (8, 8, 3)
+#eval recon1_supported_gap_ok -- expect true
+
+/- **The four clauses RECON.1 did NOT change, with their existing F1 discharges.** `inputs`, `env`
+    and `noWriters` are PROVED at the fixture; `supported` is REFUTED there, narrowed to the ONE frozen
+    field `permutationCommitmentsMatch` (8 sigma commitments against `divCeil 8 3` = 3) - which is
+    precisely the clause `permCommMatchRepaired` keeps true in `programOkB` until R.7 repairs the frozen
+    predicate. `generated` replaces the three frozen clauses whose verdicts were `layout_not`,
+    `invariants_not` and `model` (two REFUTED, one SORRY): at the derived render the generator run IS
+    the artifact but for BUILD_ID (OBJ.7 gate 4), and at today's typed-in render `delta := 2` refutes
+    it (OBJ.7 gate 9). -/
+#check @Midfall.Instances.PoseidonValid.poseidonValid_inputs
+#check @Midfall.Instances.PoseidonValid.poseidonValid_slots
+#check @Midfall.Instances.PoseidonValid.poseidonValid_noWriters
+#check @Midfall.Instances.PoseidonValid.poseidonValid_supported_not
+#check @Midfall.Instances.PoseidonValid.poseidonValid_returnMptr
+#check @Midfall.Instances.PoseidonValid.poseidonValid_transcriptMptr
+
+/- The ONE exit scan (addition 5): the rows' `ExitShape` is the same `exitScan` the clause uses, and
+    the staging module proves `exitShape_of_exitDiscipline`, so no second scan exists in the tree. -/
+#check @Midfall.LoweringV3.exitShape_of_exitDiscipline
+#check @Midfall.LoweringV3.gasCallOk_of_valid
+#check @Midfall.LoweringV3.frModulus_of_valid
+#check @Midfall.LoweringV3.returnMptr_of_valid
+#check @Midfall.LoweringV3.g1IdentityFloor_of_valid
+#check @Midfall.LoweringV3.negLagranges_of_valid
+#check @Midfall.LoweringV3.cdBound_of_valid
+#check @Midfall.LoweringV3.hasMultiPointSet_of_valid
+#check @Midfall.LoweringV3.transcriptMptr_of_valid
 
 -- commitments: (payload fixed count, Lean fixed count, payload perm count, Lean perm count)
 /-- The commitment counts agree between the payload and the Lean key: 19 fixed and 8 permutation on
@@ -347,6 +538,5 @@ theorem lawsV3_satisfiable_at_G1z :
 
 #print axioms lawsV3_satisfiable_at_G1z
 #print axioms poseidon_notInhabitedV3
-#print axioms poseidon_payloadAgrees_not
 
 end Midfall.LoweringV3.Deploy

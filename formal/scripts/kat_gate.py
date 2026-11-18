@@ -231,7 +231,7 @@ EVAL = re.compile(
 # at this file's OBJ.1 note and duplicated there by mainRtLine_ok / guardRtLine_ok; ST.1c does not touch
 # that file. No gate was deleted, edited or re-spelled anywhere else: the delta is +28/+3 and nothing
 # else moved.
-EXPECTED_KAT_TOTAL = 1500
+EXPECTED_KAT_TOTAL = 1514
 EXPECTED_KAT_FILES = 110
 
 # Only these shapes count as #eval output.

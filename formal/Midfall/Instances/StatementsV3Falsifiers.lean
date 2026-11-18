@@ -265,14 +265,15 @@ theorem envAgrees_commitments_free {E : VerifierEnv p G₁ G₂ Gₜ} {vk : Veri
   ⟨h.modulus, h.truncWidth, h.domainN, h.baryWeight, h.omegaInvMul, h.omegaOrder, h.negLagranges,
     h.nG2, h.sG2, h.vkDigestWord⟩
 
-/-- `PayloadAgrees` is NOT blind to `delta`: two renders that differ only there cannot both
-    satisfy it. -/
-theorem payloadAgrees_pins_delta (R : Render p G₁ G₂ Gₜ) (d : Fr p)
-    (h : PayloadAgrees R) (h' : PayloadAgrees { R with E := { R.E with delta := d } }) :
-    d = R.E.delta := by
-  have h1 : R.E.delta.val = Inline.natOfLiteral R.inputs.frDelta := h.delta
-  have h2 : d.val = Inline.natOfLiteral R.inputs.frDelta := h'.delta
-  exact ZMod.val_injective p (h2.trans h1.symm)
+/- **`PayloadAgrees` IS BLIND TO `delta` NOW, ON PURPOSE (RECON.1 step 3).** The 18-clause text had
+   a `delta` field and this file proved `payloadAgrees_pins_delta` from it: two renders differing
+   only in `E.delta` could not both satisfy `PayloadAgrees`. The single text drops that field because
+   the `generated` clause pins `E.delta` against the PROGRAM instead - OBJ.7's gate 9
+   (`GeneratedKats.generateAll_falsifierDeltaAndOmega_ok`) measures that `delta := 2` changes the
+   generated text AND the quotient blocks, while gate 9's second half measures that flipping a
+   payload word does NOT make the generator refuse, which is why `PayloadAgrees` is still needed
+   alongside `generated`. The card's acceptance line - "`delta := 2` falsifies `generated` (not
+   `payload`)" - is exactly this swap, so the old theorem is deleted rather than restated. -/
 
 /-! ## F5. The frozen codec bundle is met by a codec that decodes nothing -/
 
