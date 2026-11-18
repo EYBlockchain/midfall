@@ -188,3 +188,22 @@ sorry the gate detects). **I did not check this.** Evidence I have not read:
   - whether §5 M0's listing order is a **dependency order** at all.
 
 **Treat it as a question to verify before briefing DG.6, not as a plan defect to report.**
+
+## DEPENDENCY CHAIN NOT VISIBLE IN THE after COLUMNS (found by reading card prose, rounds 62-64)
+
+**The V3 table after-columns understate M3 ordering. The real chain, from the card prose:**
+
+```
+RECON.1 (DONE 5a536ad) -> RECON.1b -> RECON.2 -> ST.5
+                      -> ST.6  (also needs RECON.1 for D-P67)
+ST.5 also needs SIM.0 (D-P68) and SIM.2, both gated behind RECON.2
+SIM.1 is READY independently (after SIM.0)
+```
+
+- **ST.5 after says only ST.4, but its header says Changed by RECON.2**, and RECON.2 is
+  `after SIM.1, ST.1, RECON.1`. **Briefing ST.5 from the after-column alone would fail.**
+- **RECON.2 note: before SIM.0 (D-P68), SIM.2, ST.5** - so RECON.2 gates three cards.
+- **ValidV3 currently has TWO clauses unsatisfiable at F1**: `supported` (frozen
+  `permutationCommitmentsMatch`, 8 vs 3 - R.7 repairs) and `generated` (`E.delta = 2` - OBJ.8
+  rebuilds). **Both pre-existing and signed-known; neither weakened.** This is the concrete reason
+  D-P71 forbids proving at a fixture: the fixture fails two clauses of the headline predicate.

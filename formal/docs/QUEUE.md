@@ -87,7 +87,7 @@ When a card merges, change its status to `MERGED <hash>` and re-evaluate the row
 | 41 | **OBJ.7** | LoweringPlan.newFromVk, compactBlocksOf, generateAll | M2 | GEN · PORT · 2 h · strongest | OBJ.6 | after OBJ.6 | PLAN-V3-cards |
 | 42 | **OBJ.16** | Probe: does the port reproduce the three other in-scope fixtures | M2 | GEN · PROBE · 1 h · Sonnet | OBJ.7 | after OBJ.7 | PLAN-V3-cards |
 | 43 | **R.3** | Make `Valid.model` dischargeable (D-P56) | M2 | GEN · PROOF · strongest | F.1 | READY | V2 card below; OBJ.8 offers a second route |
-| 44 | **RECON.1** | One `ValidV3`: reconcile the two typechecked texts | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.7, ST.1 | after OBJ.7, ST.1 | PLAN-V3-cards; before ST.6 and D-P67 lands |
+| 44 | **RECON.1** | One `ValidV3`: reconcile the two typechecked texts | M3 | GEN · STATEMENT · 2.5 h · strongest | OBJ.7, ST.1 | **MERGED 5a536ad** | PLAN-V3-cards; before ST.6 and D-P67 lands |
 | 44b | **RECON.1b** | Rebase the generic evidence onto the single `ValidV3` | M3 | GEN · STATEMENT · 2.5 h · strongest | RECON.1 | after RECON.1 | PLAN-V3-cards; D-P71: rebases the generic evidence onto the single `ValidV3` |
 | 45 | **RECON.2** | One composition: the four V3 obligations from the staged rows | M3 | SEM · SKELETON · 2.5 h · strongest | SIM.1, ST.1, RECON.1 | after SIM.1, ST.1, RECON.1 | PLAN-V3-cards; before SIM.2 and ST.5 |
 | 46 | **ST.2** | Statement-surface decisions | M3 | DECISION · DECISION · 0.5 h · orchestrator + human | ST.1 | DONE — D-P64, D-P66 signed | PLAN-V3-cards |
