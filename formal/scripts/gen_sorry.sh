@@ -76,6 +76,14 @@ owner() {
       echo 'V3 T3.5 - the word and memory layer: loadWord over storeWord at equal and disjoint 32-byte windows (cards.md:1312, :1319)' ;;
     Midfall.Yul.WpX.mulmod_toFr)
       echo 'V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373)' ;;
+    # ---- GEN.0: the one sorry that came with the parametric-execution port (Midfall/Yul/VKP.lean). ----
+    # ONE OWNER, per the round-78 audit of the GEN.0 card: the card text says "GEN.1's" in Needs and
+    # "owner: T3.2" in Do step 4. It is T3.2's, because it is the liveness generalisation of
+    # Midfall.Yul.WpX.wpSS_exists, which SORRY.md:107 already keys to T3.2, and because PLAN-V3-cards
+    # D-P71 note (:1338) makes T3.2 ("Also prove wpSS_exists_C") the card that removes it. GEN.1 step
+    # 4 depends on it; a registered sorry with two claimed owners is a sorry nobody closes.
+    Midfall.Yul.VKP.wpSS_exists_C)
+      echo 'V3 T3.2 - totality with live summaries: same induction as Midfall.Yul.WpX.wpSS_exists (which this generalises via CLive_of_none), plus the summarised-call case (statement from scratch VKP.lean:372; GEN.1 step 4 depends on it)' ;;
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
