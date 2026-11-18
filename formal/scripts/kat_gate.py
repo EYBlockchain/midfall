@@ -191,8 +191,36 @@ EVAL = re.compile(
 # messages fired). Midfall/Generator/PlanNew.lean carries NO gate of its own - it is the port, and a
 # theorem-bearing Generator file may not import the fixture. So the file count goes 105 -> 106 and the
 # total 1445 -> 1459. No gate was deleted; the delta is +14/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1459
-EXPECTED_KAT_FILES = 106
+# OBJ.7 (V3 row 41) adds Midfall/Instances/GeneratedKats.lean: a NEW file in the suite carrying THIRTEEN
+# '#eval ... -- expect true' gates, every one of them either pinned to data the Rust emitted or labelled in
+# place as having no direct Rust witness. vkReceiverRefactor_wrapperEqualsCore_ok (the card's Do 1: the four
+# Vk.lean defs now take (meta, numInstances) and the &self wrappers return the same values - a Lean signature
+# fact, stated as such); generateAll_planFields_matchesArtifact_ok (VK_MPTR, PROOF_LEN and the instance count
+# READ OUT of Halo2Verifier.sol by the Evm.lean artifact readers, plus sorted_simple); generateAll_metaIsConverged_ok
+# (REVIEW-V3 A-1 pinned to the artifact: raw meta has num_point_sets 0 and yields 4224 proof bytes, the plan's
+# converged meta yields the deployed 4320); generateAll_textIsTheArtifactButForBuildId_ok (THE HEADLINE: the
+# contract rendered from the generator's own model equals the tracked artifact in 3023 of 3024 lines and 175908
+# of 175908 bytes, and the one differing line is named as the BUILD_ID line on both sides);
+# generateAll_invariantsOk_ok (the pass, plus TWO plans that are REJECTED with the Rust's own messages, so the
+# checker is shown to have teeth); generateAll_certificationOk_ok (the dual-build certification passes AND THE
+# FINDING: at poseidon the limb-opcode baseline is byte-identical to the optimized build because no limb opcode
+# appears in the artifact's own used_ops, so the certification is vacuous at this fixture in Rust too - and the
+# gate proves the function is not a no-op by rejecting a build of a different item stream);
+# newFromVk_programIsTheDeployedOne_ok (all twelve template-program fields of the CONSTRUCTOR's plan against the
+# deployed program); compactBlocksOf_matchesArtifact_ok (five of six quotient block families equal to the Yul
+# sliced out of Halo2Verifier.sol, the sixth equal flattened with the slicing reason given);
+# generateAll_falsifierDeltaAndOmega_ok (delta := 2 reddens 3 lines and the block record; a flipped omega word
+# is NOT refused - the PayloadAgrees hole, measured); generateAll_falsifierPayloadWord_ok (one flipped
+# quotient_program word -> vk.rs:457, message included); generateAll_falsifierNoReservation_ok (the parsed
+# payload with no reservation fields -> quotient.rs:202 and NOT the card's :204, OBJ.6's handoff re-measured);
+# generatedPanicSites_areTheRecordedOnes_ok (reads plan.rs, vk.rs and artifacts.rs and pins every cited line,
+# including the card's own off-by-one: compact_quotient_blocks is PL:391-406 and not :381-394);
+# generateAll_layoutValidate_ok (the ART:337-339 guard passes AND rejects two drifted models with the Rust's
+# messages). Midfall/LoweringV2/Generated.lean and Midfall/Generator/PlanNew.lean carry NO gate of their own -
+# they are the port, and a theorem-bearing file may not import the fixture. So the file count goes 106 -> 107
+# and the total 1459 -> 1472. No gate was deleted; the delta is +13/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1472
+EXPECTED_KAT_FILES = 107
 
 # Only these shapes count as #eval output.
 #

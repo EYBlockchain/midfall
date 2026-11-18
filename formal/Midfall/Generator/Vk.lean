@@ -954,13 +954,26 @@ def transcriptBufferLayoutForMeta (meta_ : ConstraintSystemMeta) (numInstances :
 /-- rust: VK:562-599 (VerifierBuildInputs::static_working_memory_size_for_meta)
     @formal-baseline. Private in the Rust. Six candidate ends and
     itertools::max(...).unwrap(); the unwrap cannot fail on a six-element array and
-    the port keeps the Option anyway so VK:598 stays a visible site. -/
-def staticWorkingMemorySizeForMeta (inputs : VerifierBuildInputs p G₁ G₂)
-    (meta_ : ConstraintSystemMeta) : Except Fault Nat := do
+    the port keeps the Option anyway so VK:598 stays a visible site.
+
+    OBJ.7 RECEIVER REFACTOR (card Do 1), stated once for all four defs it touches. The Rust
+    is a method on &self and the body reads TWO fields of it: the meta passed in as the
+    argument (VK:575-576) and self.num_instances (VK:566). The port therefore takes those
+    two values and not the record, which is the same deviation OBJ.6's header records for the
+    quotient glue (PlanNew.lean:28-37, R1 arity) and for the same reason: the caller that
+    owns the pipeline - OBJ.7's newFromVk - has the meta and the instance count in hand and
+    has no VerifierBuildInputs to spend, because the Rust's inputs is built around a
+    generate_vk it does not run. Fabricating one to satisfy the old signature would have put
+    params := { gLagrange := [], g2 := (), sG2 := () } - five fields the body never reads -
+    into the port of a constructor. The &self form is KEPT as a one-line wrapper below
+    (staticWorkingMemorySizeForInputs), which is what generateVk and the six VkKats that
+    already called these four names now call, so no gate's content moved. -/
+def staticWorkingMemorySizeForMeta (meta_ : ConstraintSystemMeta) (numInstances : Nat) :
+    Except Fault Nat := do
   -- VK:564
   let pcsComputation := staticWorkingMemorySize
   -- VK:565-566
-  let transcript ← transcriptBufferLayoutForMeta meta_ inputs.numInstances
+  let transcript ← transcriptBufferLayoutForMeta meta_ numInstances
   let transcriptWords := transcript.words
   -- VK:567-575: the six ends, in the Rust's order.
   let transcriptEnd := transcriptBufferStart + transcriptWords * wordBytes
@@ -976,6 +989,13 @@ def staticWorkingMemorySizeForMeta (inputs : VerifierBuildInputs p G₁ G₂)
   | some v => Except.ok v
   | none => throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:598")
 
+/-- The &self form of staticWorkingMemorySizeForMeta, kept as a wrapper (see the note on that
+    def): the two arguments it forwards are the two fields of the receiver the Rust reads.
+    Lean-side scaffolding, not a Rust item. -/
+def staticWorkingMemorySizeForInputs (inputs : VerifierBuildInputs p G₁ G₂)
+    (meta_ : ConstraintSystemMeta) : Except Fault Nat :=
+  staticWorkingMemorySizeForMeta meta_ inputs.numInstances
+
 /-- rust: VK:601-608 (VerifierBuildInputs::transcript_buffer_words_bound),
     #[cfg(test)] in the reference and marked test-only here - the convention
     Layout.lean:41-45 and Kzg.lean:51-56 record. It is in the plan's item map, so
@@ -988,17 +1008,27 @@ def transcriptBufferWordsBound (meta_ : ConstraintSystemMeta) (numInstances : Na
     The last line, VerifierMemoryLayout::new(meta, vk, vk_mptr, config)
     (MEM:591-973), is the unported callee threaded through VkBuildEnv; see the
     header. Everything above it - the two config fields the reference fills - is
-    ported and gated by memoryLayoutFor_config_ok. -/
-def memoryLayoutFor (env : VkBuildEnv Plan) (inputs : VerifierBuildInputs p G₁ G₂)
-    (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    ported and gated by memoryLayoutFor_config_ok.
+    OBJ.7 RECEIVER REFACTOR (card Do 1; the note on staticWorkingMemorySizeForMeta is the
+    one statement of it): the body reads exactly one field of the receiver, num_instances
+    (VK:557-559), so the port takes that value and not the record. The &self form is kept as
+    memoryLayoutForInputs below. -/
+def memoryLayoutFor (env : VkBuildEnv Plan) (meta_ : ConstraintSystemMeta)
+    (numInstances : Nat) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
     (config : VerifierMemoryLayoutConfig) : Except Fault VerifierMemoryLayout := do
   -- VK:557-558
-  let t ← transcriptBufferLayoutForMeta meta_ inputs.numInstances
+  let t ← transcriptBufferLayoutForMeta meta_ numInstances
   let config1 := { config with transcriptWords := t.words }
   -- VK:559
-  let config2 := { config1 with numInstances := inputs.numInstances }
+  let config2 := { config1 with numInstances := numInstances }
   -- VK:560
   Except.ok (env.newVerifierMemoryLayout meta_ vk vkMptr config2)
+
+/-- The &self form of memoryLayoutFor, kept as a wrapper. Lean-side scaffolding. -/
+def memoryLayoutForInputs (env : VkBuildEnv Plan) (inputs : VerifierBuildInputs p G₁ G₂)
+    (meta_ : ConstraintSystemMeta) (vk : Halo2VerifyingKey) (vkMptr : Ptr)
+    (config : VerifierMemoryLayoutConfig) : Except Fault VerifierMemoryLayout :=
+  memoryLayoutFor env meta_ inputs.numInstances vk vkMptr config
 
 /-- rust: VK:474-523 (VerifierBuildInputs::meta_data_for_vk) @formal-baseline.
     The Phase 3 / outer-fewer-point-sets two-pass Data construction the 16-line
@@ -1007,25 +1037,28 @@ def memoryLayoutFor (env : VkBuildEnv Plan) (inputs : VerifierBuildInputs p G₁
     Features.solidity, so the zero arm is the deployed one and the comment's claim
     that "the result is byte-identical to the pre-Phase-3 single-pass path" is what
     metaDataForVk_featureOff_ok checks.
-    The Rust's (*self.meta).clone() at VK:504 is Lean's ordinary value copy. -/
+    The Rust's (*self.meta).clone() at VK:504 is Lean's ordinary value copy.
+    OBJ.7 RECEIVER REFACTOR (card Do 1): the body reads two receiver fields - self.meta
+    (VK:497, VK:503, VK:504) and self.num_instances (through memory_layout_for) - so the
+    port takes those two values. The &self form is kept as metaDataForVkInputs below. -/
 def metaDataForVk (feat : Features) (env : VkBuildEnv Plan)
-    (inputs : VerifierBuildInputs p G₁ G₂)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat)
     (vk : Halo2VerifyingKey) (vkMptr : Ptr) :
     Except Fault (ConstraintSystemMeta × Data × VerifierMemoryLayout) := do
   -- VK:497-502: pass 1 against the raw meta.
-  let rawMemory ← memoryLayoutFor env inputs inputs.meta_ vk vkMptr
+  let rawMemory ← memoryLayoutFor env meta_ numInstances vk vkMptr
     verifierMemoryLayoutConfigDefault
   -- VK:503
-  let rawData ← Data.new inputs.meta_ vk rawMemory
+  let rawData ← Data.new meta_ vk rawMemory
   -- VK:504-509
-  let meta0 := inputs.meta_
+  let meta0 := meta_
   let nDummy ← if feat.outerFewerPointSets then numDummyQueries meta0 rawData
                  else Except.ok 0
   -- VK:510-511
   let mainEvals := meta0.numEvals
   let meta1 := meta0.setNumDummyEvals nDummy
   -- VK:512-514
-  let memory ← memoryLayoutFor env inputs meta1 vk vkMptr
+  let memory ← memoryLayoutFor env meta1 numInstances vk vkMptr
     verifierMemoryLayoutConfigDefault
   let data0 ← Data.new meta1 vk memory
   -- VK:515-517
@@ -1036,33 +1069,47 @@ def metaDataForVk (feat : Features) (env : VkBuildEnv Plan)
   -- metaDataForVk_pointSetsOrder_ok is what pins it.
   let nSets ← numPointSets meta1 data
   let meta2 := meta1.setNumPointSets nSets
-  let memory2 ← memoryLayoutFor env inputs meta2 vk vkMptr
+  let memory2 ← memoryLayoutFor env meta2 numInstances vk vkMptr
     verifierMemoryLayoutConfigDefault
   Except.ok (meta2, data, memory2)
+
+/-- The &self form of metaDataForVk, kept as a wrapper. Lean-side scaffolding. -/
+def metaDataForVkInputs (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂)
+    (vk : Halo2VerifyingKey) (vkMptr : Ptr) :
+    Except Fault (ConstraintSystemMeta × Data × VerifierMemoryLayout) :=
+  metaDataForVk feat env inputs.meta_ inputs.numInstances vk vkMptr
 
 /-- rust: VK:525-547 (VerifierBuildInputs::meta_data_for_stable_static_layout)
     @formal-baseline. for _ in 0..3 with an early return becomes a List.range 3
     fold carrying an Option result and short-circuiting once it is some - the
     early-exit-flag pattern Abi.lean:535 sets - so both the iteration count and the
     vk_mptr reassignment of VK:543 are preserved. The panic at VK:546 is reached
-    exactly when three iterations did not settle. -/
+    exactly when three iterations did not settle.
+    OBJ.7 RECEIVER REFACTOR (card Do 1): the loop reads self.meta once (VK:535) and
+    self.num_instances only through the two callees, so the port takes the meta and the
+    instance count. The &self form is kept as metaDataForStableStaticLayoutInputs below and
+    is what generateVk calls, because generate_vk IS a method on the receiver (VK:378-382).
+    NOTE THE SHADOWING: the Rust's loop body rebinds `let (meta, data, _) = ...`; the port
+    names the converged meta `metaOut` so the parameter stays visible, which is what the
+    third iteration's static-size query needs to read. -/
 def metaDataForStableStaticLayout (feat : Features) (env : VkBuildEnv Plan)
-    (inputs : VerifierBuildInputs p G₁ G₂)
+    (meta_ : ConstraintSystemMeta) (numInstances : Nat)
     (vk : Halo2VerifyingKey) :
     Except Fault (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) := do
   -- VK:535
-  let start ← staticWorkingMemorySizeForMeta inputs inputs.meta_
+  let start ← staticWorkingMemorySizeForMeta meta_ numInstances
   let startPtr := ptrMemory (valueFromNat start)
   -- VK:537-544
   let (result, _) ← (List.range 3).foldlM
     (fun st _ => do
       if st.1.isSome then Except.ok st else do
         let vkMptr := st.2
-        let (meta_, data, memory) ← metaDataForVk feat env inputs vk vkMptr
-        let planned ← staticWorkingMemorySizeForMeta inputs meta_
+        let (metaOut, data, memory) ← metaDataForVk feat env meta_ numInstances vk vkMptr
+        let planned ← staticWorkingMemorySizeForMeta metaOut numInstances
         let cur ← Value.asUsize vkMptr.value
         if planned == cur then
-          Except.ok (some (vkMptr, meta_, data, memory), vkMptr)
+          Except.ok (some (vkMptr, metaOut, data, memory), vkMptr)
         else
           Except.ok (none, ptrMemory (valueFromNat planned)))
     (none, startPtr)
@@ -1070,6 +1117,13 @@ def metaDataForStableStaticLayout (feat : Features) (env : VkBuildEnv Plan)
   match result with
   | some r => Except.ok r
   | none => throw (Fault.panic "proofs/solidity-verifier/src/lowering/vk.rs:546")
+
+/-- The &self form of metaDataForStableStaticLayout, kept as a wrapper: this is the call
+    generate_vk (VK:378, VK:450) and plan.rs's constructor (PL:238) make on the receiver. -/
+def metaDataForStableStaticLayoutInputs (feat : Features) (env : VkBuildEnv Plan)
+    (inputs : VerifierBuildInputs p G₁ G₂) (vk : Halo2VerifyingKey) :
+    Except Fault (Ptr × ConstraintSystemMeta × Data × VerifierMemoryLayout) :=
+  metaDataForStableStaticLayout feat env inputs.meta_ inputs.numInstances vk
 
 /-! ## generate_vk (rust: VK:353-472)
 
@@ -1115,7 +1169,7 @@ def generateVk (feat : Features) (env : VkBuildEnv Plan)
           quotientConstOffsetWords := none, quotientConstWords := 0,
           quotientProgramOffsetWords := none, quotientProgramWords := 0 }
       -- VK:378-382
-      let (_, meta_, data, _) ← metaDataForStableStaticLayout feat env inputs vkZ
+      let (_, meta_, data, _) ← metaDataForStableStaticLayoutInputs feat env inputs vkZ
       let candidate ← env.compactQuotientProgramFor meta_ data
       let candidateConstWords := candidate.consts.length
       let candidateProgramWords := PackedProgramCodec.wordLenForBytes candidate.bytes.size
@@ -1188,7 +1242,7 @@ def generateVk (feat : Features) (env : VkBuildEnv Plan)
     vkFilled
   -- VK:450-455
   let (_, finalMeta, finalData, _) ←
-    metaDataForStableStaticLayout feat env inputs vkFilled2
+    metaDataForStableStaticLayoutInputs feat env inputs vkFilled2
   let finalPlan ← env.quotientProgramPlan finalMeta finalData
   let finalQuotientBuild ← env.buildQuotientProgramItems finalPlan
   -- VK:456-463: the two "changed after materialisation" asserts.
@@ -2091,7 +2145,7 @@ def transcriptBufferWordsBound_ok : Bool :=
     changes" (VK:586-588). -/
 def staticWorkingMemorySizeForMeta_ok : Bool :=
   let m := inputsV.meta_
-  match staticWorkingMemorySizeForMeta inputsV m with
+  match staticWorkingMemorySizeForInputs inputsV m with
   | .error _ => false
   | .ok v =>
     let tw := (orNat (transcriptBufferLayoutForMeta m inputsV.numInstances)
@@ -2106,7 +2160,7 @@ def staticWorkingMemorySizeForMeta_ok : Bool :=
     candidates.length == 6 && v == (natMaximum candidates).getD 0
       && candidates.all (fun c => c <= v)
       && v == candidates.head?.getD 0
-      && (match staticWorkingMemorySizeForMeta inputsV
+      && (match staticWorkingMemorySizeForInputs inputsV
             { m with numSimpleSelectors := 400 } with
           | .error _ => false
           | .ok v2 => v2 == quotientReturnBufferStart + (2 + 400) * wordBytes && v2 > v)
@@ -2124,7 +2178,7 @@ def memoryLayoutFor_config_ok : Bool :=
   let expected := orNat
     (Except.map (fun t => t.words) (transcriptBufferLayoutForMeta inputsV.meta_
       inputsV.numInstances)) 999
-  match memoryLayoutFor envV inputsV inputsV.meta_ renderVkV
+  match memoryLayoutForInputs envV inputsV inputsV.meta_ renderVkV
       (ptrMemory (valueFromNat 0x4000)) verifierMemoryLayoutConfigDefault with
   | .error _ => false
   | .ok mem =>
@@ -2140,7 +2194,7 @@ def memoryLayoutFor_config_ok : Bool :=
     PERTURBATION RUN: forcing n_dummy to 1 reddens the first three conjuncts;
     calling setNumDummyEvals with mainEvals instead of n reddens the second. -/
 def metaDataForVk_featureOff_ok : Bool :=
-  match metaDataForVk Features.solidity envV inputsV renderVkV
+  match metaDataForVkInputs Features.solidity envV inputsV renderVkV
       (ptrMemory (valueFromNat 0x4000)) with
   | .error _ => false
   | .ok (meta_, data, mem) =>
@@ -2160,7 +2214,7 @@ def metaDataForVk_featureOff_ok : Bool :=
     PERTURBATION RUN: swapping the last two statements of metaDataForVk reddens the
     first conjunct. -/
 def metaDataForVk_pointSetsOrder_ok : Bool :=
-  match metaDataForVk Features.solidity envV inputsV renderVkV
+  match metaDataForVkInputs Features.solidity envV inputsV renderVkV
       (ptrMemory (valueFromNat 0x4000)) with
   | .error _ => false
   | .ok (meta_, _, mem) =>
@@ -2181,7 +2235,7 @@ def metaDataForVk_pointSetsOrder_ok : Bool :=
     metaDataForVk_featureOff_ok. -/
 def metaDataForVk_featureOn_ok : Bool :=
   let feat : Features := { Features.solidity with outerFewerPointSets := true }
-  match metaDataForVk feat envV inputsV renderVkV
+  match metaDataForVkInputs feat envV inputsV renderVkV
       (ptrMemory (valueFromNat 0x4000)) with
   | .error _ => false
   | .ok (meta_, data, _) =>
@@ -2197,7 +2251,7 @@ def metaDataForVk_featureOn_ok : Bool :=
     because the fixture settles on the second iteration; that is stated rather than
     hidden, and it is why the panic arm below is a real attempt and not a formality. -/
 def metaDataForStableStaticLayout_ok : Bool :=
-  match metaDataForStableStaticLayout Features.solidity envV inputsV renderVkV with
+  match metaDataForStableStaticLayoutInputs Features.solidity envV inputsV renderVkV with
   | .error _ => false
   | .ok (vkMptr, meta_, data, _) =>
     -- the pointer that came back is the one the PLAN asked for, which is not the
@@ -2205,9 +2259,9 @@ def metaDataForStableStaticLayout_ok : Bool :=
     -- meta, and setting num_point_sets moves the transcript bound (9024 to 9184
     -- here), so the second iteration is the one that settles.
     ptrBeq vkMptr (ptrMemory (valueFromNat
-      (orNat (staticWorkingMemorySizeForMeta inputsV meta_) 999)))
-      && orNat (staticWorkingMemorySizeForMeta inputsV inputsV.meta_) 999
-          != orNat (staticWorkingMemorySizeForMeta inputsV meta_) 998
+      (orNat (staticWorkingMemorySizeForInputs inputsV meta_) 999)))
+      && orNat (staticWorkingMemorySizeForInputs inputsV inputsV.meta_) 999
+          != orNat (staticWorkingMemorySizeForInputs inputsV meta_) 998
       && meta_.numPointSets > 0
       && data.dummyEvalWords.isEmpty
 

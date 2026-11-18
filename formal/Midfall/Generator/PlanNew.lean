@@ -85,12 +85,35 @@
 -- its iteration order is unobservable. R9: the Field/PrimeField dictionary is FieldCtx
 -- (Evaluator.lean:175-195) and frFieldCtx is its Fr p instance. R10: everything is
 -- computable; nothing here is partial.
+--
+-- OBJ.7 LANDED ON TOP OF THIS FILE, as this header predicted. Four items were added:
+-- envOf (the VkBuildEnv the four callbacks above fill for real, so no caller has to stub
+-- them), vkCarriesBuild (VK:443-448's two writes re-checked at VK:456-463), newFromVk
+-- (PL:235-329, the constructor, for a payload it is handed instead of one it generates) and
+-- compactBlocksOf (PL:391-406). GenOut and generateAll are in LoweringV2/Generated.lean.
+-- THE FAULT-STRING CONVENTION IS INHERITED, NOT REINVENTED: every new panic site here and in
+-- Generated.lean is siteX line ("message") - path:line PLUS the Rust's message - exactly as
+-- siteQ does for quotient.rs above, and the message carries the Rust's {err} payload where
+-- the reference formats one. Two consequences, both stated rather than left to drift: the
+-- card's predicted "PANIC vk.rs:457" is the bare form and the fired string is
+-- 'vk.rs:457 (quotient bytecode changed after VK payload materialization)'; and the card's
+-- predicted "PANIC quotient.rs:204" for a payload with no reservation fields is :202, as the
+-- header above already measured. GeneratedKats gate 12 reads plan.rs, vk.rs and
+-- artifacts.rs and pins every cited line, so neither off-by-one can survive silently.
+-- THE CARD'S RANGE FOR compact_quotient_blocks IS OFF: plan.rs:381-394 is
+-- quotient_external_frame (:381-389) plus the docstring and signature head of
+-- compact_quotient_blocks (:391-396); the body is :396-406. The port cites :391-406.
 
 import Midfall.Common.Codec
+import Midfall.Generator.Abi
 import Midfall.Generator.Encoding
+import Midfall.Generator.Kzg
 import Midfall.Generator.Layout
+import Midfall.Generator.LayoutMemory
 import Midfall.Generator.LoweringPlan
+import Midfall.Generator.Vk
 import Midfall.Generator.Quotient.Evaluator
+import Midfall.Generator.Quotient.VmCertify
 import Midfall.Generator.Quotient.FoldCompute
 import Midfall.Generator.Quotient.FoldTypes
 import Midfall.Generator.Quotient.QuotientBlocks
@@ -580,5 +603,195 @@ def quotientTemplateProgram (build : QuotientProgramBuild) (vk : Halo2VerifyingK
           programMptr := pn (vkMptr.add progOff)
           guards := guards },
         memory.quotientStackMptr, stateSlots)
+
+/-! ## OBJ.7: the constructor (rust: PL:235-329) and the block call it feeds (PL:391-406) -/
+
+/-- The panic-site prefix for plan.rs, in the SAME form as siteQ above (file header: THE
+    FAULT-STRING CONVENTION). Lean-side scaffolding, not a Rust item. -/
+def planPath : String := "proofs/solidity-verifier/src/lowering/plan.rs"
+
+/-- rust: PL:310, PL:326 - the two `unwrap_or_else(|err| panic!("{...}"))` sites of the
+    constructor. The Rust's message is static text plus the Err payload, and a Fault carries
+    a String, so BOTH survive here: unlike P-11's bare sites (LoweringPlan.lean:83-95) the
+    message and the reason travel together. -/
+def sitePlan (line : Nat) (msg : String) : String :=
+  planPath ++ ":" ++ toString line ++ " (" ++ msg ++ ")"
+
+/-- The panic-site prefix for vk.rs, same form. Vk.lean's own sites are bare (vkSite,
+    Vk.lean:1312) because P-11's rule predates siteQ; this card does not restate them. -/
+def vkPath : String := "proofs/solidity-verifier/src/lowering/vk.rs"
+
+/-- rust: VK:456-459 and VK:460-463, the two assert_eq!s. The line cited is the line holding
+    the pair of operands being compared, which is the convention Vk.lean:1250 and :1252
+    already use for the SAME two asserts in generateVk (:457 and :461). -/
+def siteVk (line : Nat) (msg : String) : String :=
+  vkPath ++ ":" ++ toString line ++ " (" ++ msg ++ ")"
+
+/-- The panic-site prefix for artifacts.rs, same form. Artifacts.lean:80-88 already lists
+    artifacts.rs:339 as a site with the message 'invalid generated verifier layout: {err}'
+    recorded in the comment; the port of the panic itself is here because the Rust raises it
+    inside generate_verifier_from_plan, which is what generateAll is. -/
+def artPath : String := "proofs/solidity-verifier/src/lowering/artifacts.rs"
+
+/-- rust: ART:337-339. -/
+def siteArt (line : Nat) (msg : String) : String :=
+  artPath ++ ":" ++ toString line ++ " (" ++ msg ++ ")"
+
+/-- Vk.lean:405-421 (VkBuildEnv) spelled as DATA for the four VerifierBuildInputs methods vk.rs
+    reaches through &self. Until OBJ.6 those four items did not exist, so every caller had to
+    stub them - PlanNewKats:106-110 and Vk.lean's own gates still pass a `Unit` plan and three
+    panicking callbacks because they only ever exercise newVerifierMemoryLayout. THIS FILLS ALL
+    FOUR with the ports above, which is what OBJ.6's header predicted ("OBJ.7 fills its
+    quotientProgramPlan and compactQuotientProgramFor fields from these defs").
+
+    The two projections to VkQuotientBuild are the Rust's own: VK:380 and VK:382 read
+    candidate.consts and candidate.bytes and nothing else of the five-field build, and
+    Vk.lean:386-391 says so. The Plan parameter is QuotientProgramPlan, the real plan type,
+    not an opaque Unit. -/
+def envOf {F : Type} [BEq F] (field : FieldCtx F) (cs : ConstraintSystem F) :
+    VkBuildEnv QuotientProgramPlan :=
+  { newVerifierMemoryLayout := VerifierMemoryLayout.new
+    compactQuotientProgramFor := fun meta_ dat =>
+      (compactQuotientProgramFor field cs meta_ dat).map fun (b, _) =>
+        { bytes := b.bytes, consts := b.consts }
+    quotientProgramPlan := fun meta_ dat => quotientProgramPlan field cs meta_ dat
+    buildQuotientProgramItems := fun plan =>
+      (buildQuotientProgramItems plan.items plan.selectorFold).map fun b =>
+        { bytes := b.bytes, consts := b.consts } }
+
+/-- **rust: VK:443-448 re-checked at VK:456-463.** generate_vk writes the const table and the
+    packed program into the payload at two offsets it reserved, then rebuilds the plan from the
+    WRITTEN payload and asserts the two builds still agree: `assert_eq!(final_quotient_build
+    .bytes, quotient_program_build.bytes)` at :456-459 and the consts pair at :460-463. The
+    Lean port of that pair, for a payload that arrives as an INPUT instead of one generate_vk
+    produced: the two sections the payload carries must BE the build the plan lowered.
+
+    WHY IT IS NEEDED AT ALL. newFromVk does not run generate_vk (the card forbids it and OBJ.10
+    owns it), so the payload is a parameter. A payload whose quotient sections are not the
+    program the plan lowered would render a verifier whose VK points at bytecode the plan never
+    produced, and nothing else in the pipeline would notice - the template program only checks
+    the LENGTHS fit (QRS:205, :209), never the CONTENT. This is the content check, and it is
+    what makes the card's falsifier fire: flip one quotient_program word in the payload and the
+    generator refuses at vk.rs:457 instead of emitting a contract that cannot verify anything.
+
+    The zero fill is the Rust's own: VK:403-410 reserves `quotient_const_words` /
+    `quotient_program_words` slots and only the first `consts.len()` / `chunks.len()` are
+    written, so the tail of each section is zeros. -/
+def vkCarriesBuild (vk : Halo2VerifyingKey) (build : QuotientProgramBuild) : Bool :=
+  match vk.quotientConstOffsetWords, vk.quotientProgramOffsetWords with
+  | some qc, some qp =>
+      let words := vk.constants.map (·.2)
+      let prog := PackedProgramCodec.encodeWords build.bytes
+      (words.drop qc).take vk.quotientConstWords ==
+          build.consts ++ List.replicate (vk.quotientConstWords - build.consts.length) 0 &&
+        (words.drop qp).take vk.quotientProgramWords ==
+          prog ++ List.replicate (vk.quotientProgramWords - prog.length) 0
+  | _, _ => false
+
+/-- **rust: PL:235-329 (LoweringPlan::new)**, ported for a payload it is handed rather than one
+    it generates - hence the name. Every statement of the reference is here, in order, with its
+    line: the stable static layout (:238), the proof layout from the POST-PROCESSED meta
+    (:239-244), the quotient plan (:246) with sorted_simple taken BEFORE the build (:247), the
+    build (:248-249), the native scratch width (:250-251), the stack budget (:252-255), the
+    state words (:256-257), the PCS requirements (:258), the memory layout with the four config
+    overrides (:259-270), the operand model (:271-279), the template handoff (:280-289), the
+    record (:291-308), the invariant validation (:309-310) and the dual-build certification
+    (:312-326).
+
+    WHAT IS NOT HERE, AND WHY. `inputs.generate_vk()` (:237) is the one line of the constructor
+    this does not run: the card forbids it and OBJ.10 owns its split, so the payload is the
+    argument `vk` - which is exactly why the reference's own re-check at VK:456-463 has to move
+    to the end of this function (vkCarriesBuild) instead of staying inside generate_vk. The
+    Direct row (:165-231) is M10.
+
+    THE RECEIVER DEVIATION IS OBJ.6'S, INHERITED: the Rust reaches the circuit through
+    `inputs.vk.cs()` and the two fields of `inputs` the callees read are `meta` and
+    `num_instances`, so the port takes `field`, `cs`, `rawMeta`, `numInstances` and
+    `accEncoding` and no VerifierBuildInputs. (`meta` is a Lean command modifier and cannot
+    be a binder - R2, the same reason the plan field is `meta_`.) plan.rs:266's
+    `Self::acc_msm_terms(inputs)` is already ported as `accMsmTerms` taking exactly those two
+    fields (LoweringPlan.lean:684, hazard 1), so nothing new is invented here.
+
+    THE THREE ABORTS ARE PANICS IN THE REFERENCE AND PANICS HERE (R4), with the message kept
+    (file header): PL:310 'generator invariant violation: {err}', PL:326 'quotient dual-build
+    certification failed: {err}', VK:457 'quotient bytecode changed after VK payload
+    materialization'. The first two carry the Err payload the Rust formats; validateGenerator
+    Invariants' own Fault channel (the internal panic sites it reaches, PL:420/:461/:503) is
+    propagated unchanged rather than re-labelled as an invariant violation, because the Rust
+    aborts at the inner site too. -/
+def newFromVk {F : Type} [BEq F] (feat : Features) (field : FieldCtx F)
+    (cs : ConstraintSystem F) (rawMeta : ConstraintSystemMeta) (numInstances : Nat)
+    (accEncoding : Option Midfall.Generator.AccumulatorEncoding)
+    (vk : Halo2VerifyingKey) : Except Fault (LoweringPlan Unit Unit) := do
+  let env := envOf field cs
+  -- PL:238
+  let (vkMptr, meta_, dat, _) <- metaDataForStableStaticLayout feat env rawMeta numInstances vk
+  -- PL:239-244: from the meta AFTER set_num_dummy_evals / set_num_point_sets, which is the
+  -- finding frozen clause 1 could not see (REVIEW-V3 A-1).
+  let proofLayout <- ProofCalldataLayout.fromProtocol meta_.protocol abiVerifyProofProofCptr
+    meta_.numEvals meta_.numPointSets
+  -- PL:246-247
+  let qplan <- quotientProgramPlan field cs meta_ dat
+  let sortedSimple := qplan.sortedSimple
+  -- PL:248-249
+  let build <- buildQuotientProgramItems qplan.items qplan.selectorFold
+  -- PL:250-255
+  let nativeWords <- nativeCallbackScratchWords field cs meta_ dat qplan
+  let stackWords := quotientStackWordsForBuild build nativeWords
+  -- PL:256-258
+  let stateWords := quotientStateWords qplan.selectorFold
+  let pcsReq <- memoryRequirements meta_ dat
+  -- PL:259-270 (acc_msm_terms at :266)
+  let accTerms <- accMsmTerms accEncoding numInstances
+  let memory <- memoryLayoutFor env meta_ numInstances vk vkMptr
+    { verifierMemoryLayoutConfigDefault with
+      quotientStateWords := stateWords
+      quotientStackWords := stackWords
+      accMsmTerms := accTerms
+      pcs := pcsReq }
+  -- PL:271-289
+  let opModel <- quotientOperandModel meta_ dat vk vkMptr memory build qplan.selectorFold
+  let (program, stackMptr, stateSlots) <-
+    quotientTemplateProgram build vk vkMptr memory qplan.selectorFold opModel
+  -- PL:291-308
+  let plan : LoweringPlan Unit Unit :=
+    LoweringPlan.mk vk vkMptr meta_ dat proofLayout QuotientLowering.vm sortedSimple
+      (some { plan := qplan, build := build, program := program, stackMptr := stackMptr,
+              stateSlots := stateSlots }) none pcsReq memory
+  -- PL:309-310
+  match plan.validateGeneratorInvariants with
+  | .ok (.ok ()) => pure ()
+  | .ok (.error err) =>
+      throw (Fault.panic (sitePlan 310 ("generator invariant violation: " ++ err)))
+  | .error f => throw f
+  -- PL:312-326: the baseline build is the SAME item stream with the limb recognizers off.
+  let baseline <- buildQuotientProgramItemsWithLimbOps qplan.items qplan.selectorFold false
+  match QuotientCertify.certifyQuotientBuildsAgree qplan build baseline vk with
+  | .ok () => pure ()
+  | .error err =>
+      throw (Fault.panic (sitePlan 326 ("quotient dual-build certification failed: " ++ err)))
+  -- VK:456-463, moved to the constructor because the payload is an input here.
+  unless vkCarriesBuild vk build do
+    throw (Fault.panic (siteVk 457 "quotient bytecode changed after VK payload materialization"))
+  pure plan
+
+/-- rust: PL:391-406 (LoweringPlan::compact_quotient_blocks). "Generate local
+    compact-VM/native-callback Yul blocks for inline renders." THE CARD'S RANGE IS OFF: the
+    card cites :381-394, which is quotient_external_frame plus this item's docstring and
+    signature head; the body runs :396-406.
+
+    The Rust is a method on the plan and reaches the circuit through `inputs.vk.cs()`, so the
+    port takes the field dictionary and the constraint system as arguments (the OBJ.6 receiver
+    deviation, inherited) and the plan as a value. `self.vm_quotient()` (:397) is the faulting
+    projection LoweringPlan.lean:313 already ports; the pair QRS:2000 returns is destructured
+    and the fold-site list dropped, exactly as :398-405 does. This is the call site
+    LoweringPlan.lean:75-77 names as filling the injected emitter of quotientRendering. -/
+def compactBlocksOf {F : Type} [BEq F] (field : FieldCtx F) (cs : ConstraintSystem F)
+    (L : LoweringPlan Unit Unit) (trace : Bool) :
+    Except Fault QuotientComputationBlocks := do
+  let q <- L.vmQuotient
+  let (blocks, _) <- compactQuotientComputationBlocks field cs L.meta_ L.data q.plan
+    q.stackMptr q.stateSlots trace
+  pure blocks
 
 end Midfall.Generator.PlanNew

@@ -134,7 +134,11 @@ structure Probe where
 
 def probe : Except Fault Probe := do
   let vk <- vkFilled
-  let (vkMptr, meta_, dat, _) <- metaDataForStableStaticLayout Features.solidity envB inputsB vk
+  -- OBJ.7's receiver refactor (card Do 1) moved the four layout helpers off
+  -- VerifierBuildInputs and onto (meta, numInstances). This is the &self wrapper, so the
+  -- gate's content is unchanged; GeneratedKats gate 1 pins wrapper == core for all four.
+  let (vkMptr, meta_, dat, _) <-
+    metaDataForStableStaticLayoutInputs Features.solidity envB inputsB vk
   let parts <- quotientIdentityParts field cs meta_ dat
   let plan <- quotientProgramPlan field cs meta_ dat
   let build <- buildQuotientProgramItems plan.items plan.selectorFold
@@ -142,7 +146,7 @@ def probe : Except Fault Probe := do
   let stackWords := quotientStackWordsForBuild build nativeWords
   let pcsReq <- memoryRequirements meta_ dat
   let accTerms <- accMsmTerms inputsB.accEncoding inputsB.numInstances
-  let memory <- memoryLayoutFor envB inputsB meta_ vk vkMptr
+  let memory <- memoryLayoutForInputs envB inputsB meta_ vk vkMptr
     { verifierMemoryLayoutConfigDefault with
       quotientStateWords := quotientStateWords plan.selectorFold
       quotientStackWords := stackWords
