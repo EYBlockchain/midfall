@@ -102,7 +102,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Yul.Bridge.RunCommitted_keccakOf | Midfall.Yul.Bridge | theorem | OPEN | - | `2e73797d4a998bae` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
 | Midfall.Yul.Bridge.Run_worldEq_of_noWriters | Midfall.Yul.Bridge | theorem | OPEN | ROOT | `e15a14387c645048` | V3 SIM.5 - the shared Step induction (ST.10 cites it) |
 | Midfall.Yul.Bridge.keccakOf_invariant | Midfall.Yul.Bridge | theorem | OPEN | - | `d30baf9a5253b859` | P-SE stage 1-2: Yul run/contracts layer (semantic equivalence) |
-| Midfall.Yul.WpX.mulmod_toFr | Midfall.Yul.WpX | theorem | OPEN | - | `6ceb8a7f24adad12` | V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373) |
 
 ## Upstream sorries we must not depend on
 

@@ -502,4 +502,25 @@ theorem Cfail_live (c : ExternalCalls) (g : ExternalGas) :
 #assert_axioms Midfall.Yul.WpX.wp_exists [propext]
 #print axioms Midfall.Yul.WpX.Bopen_not_live
 #assert_axioms Midfall.Yul.WpX.Bopen_not_live [propext, Quot.sound]
+/- THE T3.8 AXIOM GATE (D-P71). The arithmetic bridge, pinned here for the same reason: this is the
+    file that imports `Midfall.Tools.Done`, so a `sorryAx`, a `native_decide` axiom, or any other
+    axiom in the six lemmas below is a BUILD ERROR. All four bridges rest on `propext,
+    Classical.choice, Quot.sound` - exactly the set `qvmToFr_add`/`qvmToFr_mul` carry in
+    `Lowering/Qvm.lean`, which is the `ZMod` bridge they mirror - and the two `stepOp` namings drop
+    `Classical.choice` because they never reach the field. `frModulusWord_toNat` is `propext` alone:
+    the only decision anywhere in the section is `decide` on a 256-bit `Nat` comparison, which
+    generates NO axiom (contrast `Lean.ofReduceBool`, which a Bool-shaped `decide` would leave behind
+    and which this gate rejects). -/
+#print axioms Midfall.Yul.WpX.mulmod_toFr
+#assert_axioms Midfall.Yul.WpX.mulmod_toFr [propext, Classical.choice, Quot.sound]
+#print axioms Midfall.Yul.WpX.addmod_toFr
+#assert_axioms Midfall.Yul.WpX.addmod_toFr [propext, Classical.choice, Quot.sound]
+#print axioms Midfall.Yul.WpX.subFr_toFr
+#assert_axioms Midfall.Yul.WpX.subFr_toFr [propext, Classical.choice, Quot.sound]
+#print axioms Midfall.Yul.WpX.subFr_needsCanonicity
+#assert_axioms Midfall.Yul.WpX.subFr_needsCanonicity [propext, Classical.choice, Quot.sound]
+#print axioms Midfall.Yul.WpX.stepOp_mulmod_atFr
+#assert_axioms Midfall.Yul.WpX.stepOp_mulmod_atFr [propext, Quot.sound]
+#print axioms Midfall.Yul.WpX.frModulusWord_toNat
+#assert_axioms Midfall.Yul.WpX.frModulusWord_toNat [propext]
 end Midfall.Yul.VKP

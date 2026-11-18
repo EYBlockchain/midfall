@@ -9,7 +9,7 @@
   would duplicate a proved declaration, so this file uses Midfall.Yul.WpBridge.BLive instead. No
   statement and no proof step was restated.
 
-  WHAT IS HERE. One registered hole, two proved bridges, and the totality half (T3.2):
+  WHAT IS HERE. Three proved bridges, the totality half (T3.2), and the arithmetic layer (T3.8):
 
     * wp_exists          THE FIVE-CLASS EXISTENCE CONJUNCTION - the mirror image of wp_sound with an
                          EXISTENTIAL conclusion, by one induction on fuel. PROVED here (T3.2). Its
@@ -27,16 +27,22 @@
     * loadWord_storeWord the memory layer's read-over-write lemma. PROVED here (T3.5) from
                          Midfall/Yul/Word.lean: the equal window reassembles, the disjoint window is
                          invisible, and the overlap is genuinely undetermined (see the lemma).
-    * mulmod_toFr        the arithmetic layer's central missing lemma. T3.8 owns it.
+    * mulmod_toFr        the arithmetic layer's bridge. PROVED here (T3.8): EVM mulmod at the scalar
+                         modulus IS field multiplication in Fr r = ZMod r, and addmod is addition.
+                         Neither needs a canonicity hypothesis (see the lemma); wSubFr is the third
+                         bridge and the only one that does, with its failure gated below it.
     * runs_agree_of_wp   PROVED here: prefix determinism WITHOUT dialect_deterministic (finding C-3),
                          by two applications of WpTac.allRuns_of_wp.
 
   D-P71: no native_decide in this file, and none is needed - wp_exists and runs_agree_of_wp are
-  term-level arguments over the engine and its soundness theorem, and loadWord_storeWord is a
-  fold-level argument over the vendored byte model (Midfall/Yul/Word.lean). The one remaining hole
-  (mulmod_toFr) is REGISTERED in SORRY.md, not carried. The axiom gate for the
-  T3.2 theorems is a #assert_axioms block at the end of Midfall/Yul/VKP.lean, which is the file that
-  imports Midfall.Tools.Done.
+  term-level arguments over the engine and its soundness theorem, loadWord_storeWord is a
+  fold-level argument over the vendored byte model (Midfall/Yul/Word.lean), and the T3.8 arithmetic
+  bridge is a closed-term argument over the modulus literal: the only decision it makes is `decide` on
+  the 256-bit comparison qvmFrModulus < 2^256, measured at well under a millisecond, and no gate here
+  searches the field. THIS FILE NOW HAS NO SORRY: mulmod_toFr was the last one and it is PROVED, so
+  SORRY.md lost its row (register 64 -> 63). The axiom gate for the
+  T3.2 and T3.8 theorems is a #assert_axioms block at the end of Midfall/Yul/VKP.lean, which is the
+  file that imports Midfall.Tools.Done.
 -/
 import Midfall.Yul.WpTac
 import Midfall.Yul.Word
@@ -454,18 +460,144 @@ theorem loadWord_storeWord (mem : Nat → UInt8) (p q : Nat) (v : U256) :
       exact Word.loadWord_storeWord_disjoint mem p q v hd
     · rw [ite_eq_right hd]
 
-/-- The arithmetic layer's central missing lemma (statement only): EVM `mulmod` at the scalar
-    modulus is field multiplication on canonical words. `qvmToFr_mul` (Qvm.lean:148) is the Nat-level
-    half that exists. -/
+/-! ### The arithmetic layer: EVM `mulmod`/`addmod` at the scalar modulus (T3.8) -/
+
+/-- The scalar modulus as a 256-bit WORD: what the generated Yul binds to `r` and passes as the third
+    argument of every `mulmod`/`addmod` (`Midfall/Lowering/GenAstPcs.lean:106` is
+    `x_pow_of_omega := mulmod(x_pow_of_omega, w, r)`). `frModulusWord_toNat` says the embedding is
+    exact; `frModulusWord_ne` is what makes EVM's `if n = 0 then 0 else ...` guard take its arithmetic
+    branch at this modulus. -/
+def frModulusWord : U256 := BitVec.ofNat 256 Midfall.Generator.qvmFrModulus
+
+/-- **The modulus literal is canonical at 256 bits**, so the wrap EVM performs loses nothing. This is
+    the ONLY fact about the size of the literal the bridge uses, and it is a `decide` on a 256-bit `Nat`
+    comparison - a closed-term reduction (measured: well under a millisecond, the same cost class as
+    `qvmFrModulus_eq_r` at Qvm.lean:133), not a search over field elements. -/
+theorem frModulusWord_toNat : frModulusWord.toNat = Midfall.Generator.qvmFrModulus := by
+  have h : Midfall.Generator.qvmFrModulus < 2 ^ 256 := by decide
+  show (BitVec.ofNat 256 Midfall.Generator.qvmFrModulus).toNat = _
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt h]
+
+/-- The scalar modulus is not the zero word, so the `addmod`/`mulmod` zero-guard never fires here. -/
+theorem frModulusWord_ne : frModulusWord ≠ 0 := by
+  intro h
+  have h2 : frModulusWord.toNat = 0 := by rw [h]; rfl
+  rw [frModulusWord_toNat] at h2
+  exact absurd h2 (by decide : Midfall.Generator.qvmFrModulus ≠ 0)
+
+/-- EVM `mulmod(a, b, r)` at the scalar modulus: `stepOp`'s `.mulmod` arm (`EVMExec.lean:722`) applied
+    to the third argument `frModulusWord` - see `stepOp_mulmod_atFr`. -/
+def wMulmod (a b : U256) : U256 :=
+  BitVec.ofNat 256 ((a.toNat * b.toNat) % Midfall.Generator.qvmFrModulus)
+
+/-- EVM `addmod(a, b, r)` at the scalar modulus: `stepOp`'s `.addmod` arm (`EVMExec.lean:721`) applied
+    to `frModulusWord`. -/
+def wAddmod (a b : U256) : U256 :=
+  BitVec.ofNat 256 ((a.toNat + b.toNat) % Midfall.Generator.qvmFrModulus)
+
+/-- EVM `sub(r, x)` at the scalar modulus - the `subFrom` helper the generator emits for a field
+    subtraction (`GenAstPcs.lean:117` builds `addmod(a, sub(r, b), r)`). Unlike `wMulmod` and `wAddmod`
+    this one is a field negation only for a CANONICAL `x`: `subFr_toFr` carries the hypothesis and
+    `subFr_needsCanonicity` shows it cannot be dropped. -/
+def wSubFr (x : U256) : U256 := frModulusWord - x
+
+/-- **THE NAMING STEP, PROVED (card Do 1).** At the scalar modulus the EVM step IS the named word
+    operation: the third argument is nonzero, so the `if` takes the arithmetic branch and the word that
+    comes out is `wMulmod a b`. Same for `addmod`. These two are what make the bridge below a bridge
+    about EVM `mulmod` rather than about a bare `Nat` identity. -/
+theorem stepOp_mulmod_atFr (a b : U256) (st : EvmState) :
+    stepOp Op.mulmod [a, b, frModulusWord] st = some (.ok [wMulmod a b] st) := by
+  simp only [stepOp, ter, wMulmod, frModulusWord_toNat]
+  rw [ite_eq_right frModulusWord_ne]
+
+/-- The `addmod` twin of `stepOp_mulmod_atFr`. -/
+theorem stepOp_addmod_atFr (a b : U256) (st : EvmState) :
+    stepOp Op.addmod [a, b, frModulusWord] st = some (.ok [wAddmod a b] st) := by
+  simp only [stepOp, ter, wAddmod, frModulusWord_toNat]
+  rw [ite_eq_right frModulusWord_ne]
+
+/-- **THE ARITHMETIC BRIDGE (T3.8, PROVED - the last hole in this file).** EVM `mulmod` at the scalar
+    modulus is field multiplication in `Fr r = ZMod r` (`Midfall/Lowering/Qvm.lean:136,139`). NO
+    canonicity hypothesis is needed and none was added, on either side:
+
+      * the left word is `wMulmod a b` by definition, and `(x * y) % qvmFrModulus < qvmFrModulus <
+        2^256`, so the 256-bit wrap the opcode performs is the identity here - the only place the
+        literal's SIZE is used at all (`frModulusWord_toNat`);
+      * the `% qvmFrModulus` the opcode applies is the reduction `ZMod` applies anyway
+        (`ZMod.natCast_mod`), which is the same reason `qvmToFr_add`/`qvmToFr_mul` (Qvm.lean:143,148)
+        need no hypothesis - only `qvmToFr_neg` does, because `m - a` is not `-a` once `a >= m`;
+      * the right side is a product of CASTS, so a non-canonical input word `a >= r` is no obstacle:
+        `qvmToFr` maps it to its residue on both sides of the equation.
+
+    The statement is verbatim the registered one; `qvmToFr_mul` is the `QVMFr`-level twin. -/
 theorem mulmod_toFr (a b : U256) :
     Midfall.Lowering.qvmToFr
         (BitVec.ofNat 256 ((a.toNat * b.toNat) % Midfall.Generator.qvmFrModulus)).toNat =
       Midfall.Lowering.qvmToFr a.toNat * Midfall.Lowering.qvmToFr b.toNat := by
-  sorry
+  show Midfall.Lowering.qvmToFr (wMulmod a b).toNat =
+    Midfall.Lowering.qvmToFr a.toNat * Midfall.Lowering.qvmToFr b.toNat
+  have hlt : (a.toNat * b.toNat) % Midfall.Generator.qvmFrModulus < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (by decide : 0 < Midfall.Generator.qvmFrModulus))
+      (Nat.le_of_lt (by decide : Midfall.Generator.qvmFrModulus < 2 ^ 256))
+  unfold wMulmod
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  unfold Midfall.Lowering.qvmToFr
+  rw [Midfall.Lowering.qvmFrModulus_eq_r, ZMod.natCast_mod, ← Nat.cast_mul]
+
+/-- **THE `addmod` TWIN (card Do 2).** EVM `addmod` at the scalar modulus is field addition, for the
+    same two reasons: the sum is reduced below `r < 2^256` before the wrap, and the cast absorbs the
+    reduction. No canonicity hypothesis, and none is needed. -/
+theorem addmod_toFr (a b : U256) :
+    Midfall.Lowering.qvmToFr (wAddmod a b).toNat =
+      Midfall.Lowering.qvmToFr a.toNat + Midfall.Lowering.qvmToFr b.toNat := by
+  have hlt : (a.toNat + b.toNat) % Midfall.Generator.qvmFrModulus < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (by decide : 0 < Midfall.Generator.qvmFrModulus))
+      (Nat.le_of_lt (by decide : Midfall.Generator.qvmFrModulus < 2 ^ 256))
+  unfold wAddmod
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  unfold Midfall.Lowering.qvmToFr
+  rw [Midfall.Lowering.qvmFrModulus_eq_r, ZMod.natCast_mod, ← Nat.cast_add]
+
+/-- **`sub(r, x)` IS NEGATION FOR A CANONICAL WORD (card Do 2, the third bridge).** This is the one
+    arithmetic bridge that needs the hypothesis: `r - x` is the field negation of `x` only while the
+    word subtraction does not wrap, i.e. while `x.toNat <= r` - and the canonical window `x.toNat < r`
+    is what the verifier's own range checks supply. The word-level form of `qvmToFr_neg`
+    (Qvm.lean:156), which carries the same hypothesis for the same reason. -/
+theorem subFr_toFr (x : U256) (hx : x.toNat < Midfall.Generator.qvmFrModulus) :
+    Midfall.Lowering.qvmToFr (wSubFr x).toNat = - Midfall.Lowering.qvmToFr x.toNat := by
+  have hlt : Midfall.Generator.qvmFrModulus < 2 ^ 256 := by decide
+  have key : 2 ^ 256 - x.toNat + Midfall.Generator.qvmFrModulus
+      = Midfall.Generator.qvmFrModulus - x.toNat + 2 ^ 256 := by omega
+  have hb : Midfall.Generator.qvmFrModulus - x.toNat < 2 ^ 256 := by omega
+  have hsub : (wSubFr x).toNat = Midfall.Generator.qvmFrModulus - x.toNat := by
+    show (frModulusWord - x).toNat = _
+    rw [BitVec.toNat_sub, frModulusWord_toNat, key, Nat.add_mod, Nat.mod_self, Nat.add_zero,
+      Nat.mod_mod, Nat.mod_eq_of_lt hb]
+  unfold Midfall.Lowering.qvmToFr
+  rw [hsub, Nat.cast_sub (Nat.le_of_lt hx), Midfall.Lowering.qvmFrModulus_eq_r,
+    ZMod.natCast_self, zero_sub]
+
+/-- **THE HYPOTHESIS IN `subFr_toFr` IS LOAD-BEARING**, on a concrete value: at the non-canonical word
+    `r + 1` the word subtraction wraps to `2^256 - 1`, whose residue mod `r` is not `-1`, so the bridge
+    fails. Note where the card's own falsifier line is wrong: it says the negation bridge fails at
+    `x = r`, but at `x = r` BOTH sides are `0` - the first failure is at `r + 1`. What DOES fail at
+    `x = r` is INJECTIVITY, and the tree already gates that as `qvmToFr_needsCanonicity_ok`
+    (Qvm.lean:2893): `qvmToFr r = qvmToFr 0` with `r != 0`. -/
+theorem subFr_needsCanonicity :
+    ¬ (Midfall.Lowering.qvmToFr (wSubFr (BitVec.ofNat 256 (Midfall.Generator.qvmFrModulus + 1))).toNat
+      = - Midfall.Lowering.qvmToFr (BitVec.ofNat 256 (Midfall.Generator.qvmFrModulus + 1)).toNat) := by
+  intro h
+  exact absurd h (by decide)
 
 #print axioms wp_exists
 #print axioms wpSS_exists
 #print axioms Bopen_not_live
 #print axioms runs_agree_of_wp
 #print axioms loadWord_storeWord
+#print axioms mulmod_toFr
+#print axioms addmod_toFr
+#print axioms subFr_toFr
+#print axioms subFr_needsCanonicity
+#print axioms stepOp_mulmod_atFr
+#print axioms frModulusWord_toNat
 end Midfall.Yul.WpX

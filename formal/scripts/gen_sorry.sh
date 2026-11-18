@@ -77,9 +77,16 @@ owner() {
 # word, a disjoint window is invisible to the read, and the OVERLAP case is genuinely undetermined - it
 # keeps the term itself, which is what the registered statement says. No hypothesis was added and the
 # statement is verbatim the memo's 3.3 proposal. Its owner row is gone from this list and from the
-# register; the mulmod_toFr row below stays with T3.8.
-    Midfall.Yul.WpX.mulmod_toFr)
-      echo 'V3 T3.8 - the field-arithmetic bridge: mulmod at qvmFrModulus is Fr multiplication (cards.md:1369, :1373)' ;;
+# register.
+#
+# CLOSED by T3.8. Midfall.Yul.WpX.mulmod_toFr is PROVED in Midfall/Yul/WpX.lean - it was the last sorry
+# in that file. EVM mulmod at the scalar modulus IS field multiplication in Fr r = ZMod r, and the
+# registered statement needed NO canonicity hypothesis: the % qvmFrModulus the opcode applies is the
+# reduction ZMod applies anyway (as in qvmToFr_add/qvmToFr_mul), and the result is already below
+# 2^256, so the word wrap is the identity. The card's addmod twin (addmod_toFr), the named word
+# operations (wMulmod/wAddmod/wSubFr) and their stepOp equalities, and subFr_toFr - the one bridge that
+# DOES need x < r, with subFr_needsCanonicity showing the failure at r+1 - landed beside it. No
+# hypothesis was added to the registered statement and it is verbatim what was registered.
 # ---- GEN.0: the one sorry that came with the parametric-execution port (Midfall/Yul/VKP.lean). ----
 # CLOSED by T3.2. The round-78 audit resolved the 3-way owner conflict to T3.2 (D-P71: "Also prove
 # wpSS_exists_C"), and GEN.1 step 4 now has it: wpSS_exists_C and Midfall.Yul.WpX.wpSS_exists are both
