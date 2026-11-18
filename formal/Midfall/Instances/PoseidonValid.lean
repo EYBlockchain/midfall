@@ -30,19 +30,31 @@
                                    `generateAll`) is the card's own split; see section V3.
     2  inputs           PROVED     `poseidonValid_inputs`, unchanged: three `rfl` and one
                                    `native_decide` (k = 6 = vk.domain.k).
-    3  program          OPEN       The decidable bundle `programOkB poseidonRender = true` is PROVED
-                                   by computation (`StatementsV3Deploy.recon1_programOkB_ok`, seven
-                                   conjuncts all true) and so are `codegen`/`closed`/`transcriptMptr`
-                                   below; the two Prop halves (`GasCallOk`, `ExitDiscipline`) are not
-                                   yet stated-and-proved at the render. That is OBJ.9 steps 3-4.
-    4  noWriters        PROVED     `poseidonValid_noWriters`, fuel 2000 exhibited.
+    3  program          PROVED     MOVED OPEN -> PROVED BY OBJ.9 STEP 3: `poseidonValid_program`.
+                                   All three halves are now THEOREMS at the render: the decidable
+                                   bundle `programOkB poseidonRender = true` (`deciding_programOkB`,
+                                   fourteen conjuncts, ~11 s of COMPILED evaluation - the card's
+                                   five-conjunct split was NOT needed and was NOT taken), plus
+                                   `GasCallOk` and `ExitDiscipline`, each witnessed at fuel 20000.
+                                   Before this card the bundle existed only as a VM `def`
+                                   (`StatementsV3Deploy.recon1_programOkB_ok`), never as a theorem.
+    4  noWriters        PROVED     `poseidonValid_noWriters`, fuel 20000 exhibited (OBJ.9 step 4:
+                                   C.4 needed 200, F.1 exhibited 2000, this card raises the exhibit to
+                                   the fuel the two program scans use, and 20000 is proved true at
+                                   `deciding_noWriters_fuel`, so the exhibit is not at its limit).
     5  env              PROVED     `poseidonValid_slots` - all ten `EnvAgrees` clauses, unchanged
                                    ("env as before" in the card's Accept line).
-    6  payload          HALF       The seven codec-free fields are PROVED by computation
-                                   (`recon1_payload_scalars_ok`, and `digest` separately); the five
-                                   point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`,
+    6  payload          HALF       STILL HALF, AND NOW WITH THEOREMS WHERE IT HAD `#eval`S: OBJ.9
+                                   step 5 lands `poseidonValid_payload_scalars`, the EIGHT codec-free
+                                   facts (`digest`, `numInstances`, `k`, `nInv`, `omega`,
+                                   `omegaInv`, `omegaInvToL`, `accWords`) as ONE theorem at the
+                                   render, where before they existed only as the VM booleans
+                                   `recon1_payload_scalars_ok` and `recon1_payload_digest_ok`. The
+                                   five point fields (`g1Base`, `g2Base`, `negSG2`, `fixedComms`,
                                    `permutationComms`) are OPEN - `toEip` is noncomputable at the
-                                   placeholder codec, exactly the card's "point half OPEN".
+                                   placeholder codec, exactly the card's "point half OPEN". NOT a
+                                   PROVED cell: eight of thirteen fields is a half, and it is
+                                   reported as a half.
     7  supported        PROVED     REPAIRED AND DISCHARGED BY R.7 (D-P59). The field
                                    `wf.permutationCommitmentsMatch` compared the VK's sigma commitments
                                    against `divCeil columns (csDegree - 2)` - the count the PROOF
@@ -51,12 +63,22 @@
                                    (`deciding_supported_perm`), and `poseidonValid_supported` proves
                                    all twelve fields. FALSIFIER: `f7_mutantNotWellFormed`.
 
-  SO: 5 PROVED, 1 HALF-PROVED, 1 OPEN, 1 REFUTED out of seven, and `poseidonRender_notValid` still
-  holds - it now runs through `generated` ALONE, because R.7 CLOSED the `supported` refutation: the
-  old route is gone, not merely unused. `Render.Valid` is therefore NOT yet inhabited at the fixture,
-  and the single clause that stops it is `generated` (OBJ.8 step 3, blocked on the payload
-  circularity section V3 names). Reporting it as inhabited would be the lie the brief warns about.
-  Nothing here was weakened to make F1 fit: the clause now compares what the Rust VK actually holds.
+  SO, RE-MEASURED BY OBJ.9 (GEN/PROOF, branch t/OBJ.9 from 2f3f39d): **5 PROVED, 1 HALF-PROVED,
+  0 OPEN, 1 REFUTED out of seven.** OBJ.9 moved exactly ONE cell - `program` OPEN -> PROVED - and
+  strengthened the evidence behind `payload`'s half without moving its verdict. `inputs`,
+  `noWriters`, `env` and `supported` were already PROVED at 2f3f39d and are re-measured, not
+  re-claimed. `poseidonRender_notValid` still holds and still runs through `generated` ALONE,
+  because R.7 CLOSED the `supported` refutation: the old route is gone, not merely unused.
+  `Render.Valid` - the frozen name of the one text `Midfall.LoweringV3.ValidV3` - is therefore
+  STILL NOT INHABITED at the fixture, and the single clause that stops it is `generated`: OBJ.9
+  step 1 was ATTEMPTED AND REFUTED, not skipped (exact goal state at section V3). Reporting it as
+  inhabited would be the lie the brief warns about. Nothing here was weakened to make F1 fit: the
+  clause now compares what the Rust VK actually holds.
+
+  OBJ.9's own finding, recorded rather than fixed: the PLAN ORDERS THIS WRONG. PLAN-V3 section 5 puts
+  OBJ.9 in M3 ("the clause table at F1") and OBJ.10 in M4 ("the artifact" pair), so M3 is expected to
+  close `generated` at the fixture BEFORE M4 lands the data-level base payload `generateVkFromBase`
+  that `generated` needs. Step 1 cannot succeed in that order. See section V3 for the two exits.
 
   ## THE RETIRED FOURTEEN-ROW TABLE (F.1's measurement of the pre-ST.6 text; kept for provenance)
 
@@ -553,15 +575,18 @@ theorem deciding_noWriters_fuel :
       noWritersFuel 20000 (asmOf poseidonPv poseidonM 0 0) = true := by
   native_decide
 
-/-- **CLAUSE 10 OF 13 - PROVED, AT A HIGHER FUEL THAN C.4 NEEDED.** The generated program performs
-    no world write - no `sstore`, `tstore`, `log*`, `create*` or value-bearing `call`. C.4 exhibited
-    fuel 200; with the real protocol the pcs arm emits 225 statements instead of nothing, the main
-    block is bigger, and 200 is now EXHAUSTED (measured false) while 2000 and 20000 both answer true.
-    The fuel is exhibited at 2000 below.
-    AXIOM: poseidonValid_noWriters._native.native_decide.ax_1_1. -/
+/-- **CLAUSE 4 OF THE SEVEN - PROVED, AND RE-EXHIBITED AT FUEL 20000 BY OBJ.9 STEP 4.** The
+    generated program performs no world write - no `sstore`, `tstore`, `log*`, `create*` or
+    value-bearing `call`. C.4 exhibited fuel 200; with the real protocol the pcs arm emits 225
+    statements instead of nothing, the main block is bigger, and 200 is now EXHAUSTED (measured
+    false) while 2000 and 20000 both answer true (`deciding_noWriters_fuel`). OBJ.9 step 4 raises
+    the exhibited witness to 20000, the SAME fuel the two program scans and `ExitDiscipline` are
+    witnessed at, so the four fuel-bounded clauses of the text are all read at one fuel and none of
+    them is at its limit. The statement is unchanged - `NoWriters` pins no fuel - and only the
+    witness moved. AXIOM: poseidonValid_noWriters._native.native_decide.ax_1_1. -/
 theorem poseidonValid_noWriters : NoWriters (poseidonRender.prog 0 0) := by
   show NoWriters (asmOf poseidonPv poseidonM 0 0)
-  exact ⟨2000, by native_decide⟩
+  exact ⟨20000, by native_decide⟩
 
 /-! ## 11. transcriptMptr - PROVED -/
 
@@ -589,10 +614,203 @@ theorem poseidonValid_returnMptr :
   show ∃ m, (constTableOf poseidonM).lookup "RETURN_MPTR" = some m
   exact ⟨4096, by native_decide⟩
 
+/-! ## 15. program - PROVED (OBJ.9 step 3) -/
+
+/-- **THE DECIDABLE BUNDLE OF THE `program` CLAUSE, AS A THEOREM (OBJ.9 STEP 3).** Before this card
+    `programOkB poseidonRender = true` existed only as a VM `def` plus a `#eval`
+    (`StatementsV3Deploy.recon1_programOkB_ok`, seven facts printed as one 7-tuple). Here it is the
+    whole fourteen-conjunct bundle proved at the render: `codegenStruct`, `codegenAgrees`,
+    `constsCoherent`, `callsResolved`, `noShadowProg`, `noShadowCore`, `mainClosed`, the
+    `TRANSCRIPT_MPTR` floor, `cdBoundB`, `hasMultiPointSet`, `transcriptRegionOk`,
+    `g1IdentityFloor`, `negLagrangesFloor` and `permCommMatchRepaired`.
+
+    THE RENDER IS NONCOMPUTABLE, so the decision runs on the computable faces and is transferred back
+    by `show` - that is, by the kernel: `poseidonPv_eq`, `poseidonM_eq`, `poseidonCfg_eq` and
+    `poseidonVk_eq` are all `rfl`. COST, MEASURED: ~11 s of compiled evaluation at the default
+    `maxRecDepth` and default heartbeats. NOTHING WAS RAISED. The card's Stop-if named a
+    five-conjunct split if this exceeded 60 s; it did not, so the Bool is landed whole and the split
+    was not taken. AXIOM: deciding_programOkB._native.native_decide.ax_1_1. -/
+theorem deciding_programOkB : programOkB poseidonRender = true := by
+  show programOkCore poseidonPv poseidonM poseidonConfig.numInstances poseidonVkExec = true
+  native_decide
+
+/-- **PG-GAS AT THE FIXTURE, AS A THEOREM (OBJ.9 step 3).** `recon1_gas_ok` measured
+    `gasScan 20000 (.b (asmOf poseidonPv poseidonM 0 0)) = true` in the VM; this is the same fact as
+    a proposition, at the render's own program. F1 is the EASY case for this scan - the main block
+    contains no `gas` token at all (`StatementsV3Deploy.mainBlockTokenCounts_ok`) - so the witness
+    costs ~2 s and the clause's teeth are for the external-evaluator render. AXIOM:
+    deciding_gasCallOk._native.native_decide.ax_1_1. -/
+theorem deciding_gasCallOk : GasCallOk (poseidonRender.prog 0 0) := by
+  show GasCallOk (asmOf poseidonPv poseidonM 0 0)
+  exact ⟨20000, by native_decide⟩
+
+/-- **THE ONE EXIT SCAN AT THE FIXTURE, AS A THEOREM (OBJ.9 step 3).** `exitDisciplineAtDeploy_ok`
+    measured the triple (tail found, passes at 20000, FAILS at 200) in the VM; the fuel is therefore
+    exhibited above its measured threshold of 299 and not at its limit, so the verdict is a real scan
+    of the block and not an exhaustion answer. Same transfer by `show`, same cost class. AXIOM:
+    deciding_exitDiscipline._native.native_decide.ax_1_1. -/
+theorem deciding_exitDiscipline : ExitDiscipline (poseidonRender.prog 0 0) := by
+  show ExitDiscipline (asmOf poseidonPv poseidonM 0 0)
+  exact ⟨20000, by native_decide⟩
+
+/-- **CLAUSE 3 OF THE SEVEN - PROVED BY OBJ.9 STEP 3.** `programOk poseidonRender`: the decidable
+    bundle plus the two scans, all three halves theorems at the render. This is the ONE cell of the
+    seven-clause table this card moved: OPEN -> PROVED. Nothing was weakened to get it - the clause
+    text is RECON.1's, the bundle is the fourteen conjuncts `programOkCore` computes, and the two
+    scans are the `∃ n` forms the text states, each witnessed at fuel 20000 rather than at a fuel
+    pinned in the statement. AXIOMS: deciding_programOkB / deciding_gasCallOk /
+    deciding_exitDiscipline, one `._native.native_decide.ax_1_1` each. -/
+theorem poseidonValid_program : programOk poseidonRender :=
+  ⟨deciding_programOkB, deciding_gasCallOk, deciding_exitDiscipline⟩
+
+/-! ## 16. payload - the scalar half, landed as THEOREMS (OBJ.9 step 5) -/
+
+/-- **THE EIGHT CODEC-FREE FIELDS OF `PayloadAgrees poseidonRender`, AS ONE THEOREM (OBJ.9 STEP 5).**
+    `digest`, `numInstances`, `k`, `nInv`, `omega`, `omegaInv`, `omegaInvToL` and `accWords`:
+    every field of the clause that mentions no codec and no group element. Before this card these
+    existed only as two VM booleans (`recon1_payload_scalars_ok`, seven facts, and
+    `recon1_payload_digest_ok`). The five that remain OPEN - `g1Base`, `g2Base`, `negSG2`,
+    `fixedComms`, `permutationComms` - compare payload bytes with `toEip` of a group element, and
+    `toEip` is noncomputable at the placeholder codec (`g1CodecZ`), so they are neither proved nor
+    refuted here: `payload` STAYS HALF, eight of thirteen fields.
+
+    Each conjunct is verbatim the corresponding field type at `R := poseidonRender`; the `show` is
+    the kernel transferring from the render to D.1's and D.2's computable terms, and
+    `poseidonValid_payload_scalars_are_fields` below is the machine-checked tie that says these eight
+    equations ARE eight fields of the structure and not eight equations that merely look like them.
+    AXIOM: poseidonValid_payload_scalars._native.native_decide.ax_1_1. -/
+theorem poseidonValid_payload_scalars :
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.vkDigest
+      = frWord poseidonRender.vk.transcriptRepr ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numInstances
+      = BitVec.ofNat 256 poseidonRender.cfg.numInstances ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.k
+      = BitVec.ofNat 256 poseidonRender.vk.domain.k ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.nInv
+      = frWord (((2 ^ poseidonRender.vk.domain.k : ℕ) : Fr blsR))⁻¹ ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omega
+      = frWord poseidonRender.vk.domain.omega ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omegaInv
+      = frWord poseidonRender.vk.domain.omegaInv ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omegaInvToL
+      = frWord (poseidonRender.vk.domain.omegaInv
+        ^ poseidonRender.plan.meta_.rotationLast.natAbs) ∧
+    ((payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.accOffset).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
+      accWordsOfEncoding poseidonRender.cfg.accumulator := by
+  show payloadWord poseidonPv vkHeaderTemplateSlotsDefault.vkDigest
+        = frWord poseidonVkExec.transcriptRepr ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.numInstances
+        = BitVec.ofNat 256 poseidonConfig.numInstances ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.k
+        = BitVec.ofNat 256 poseidonVkExec.domain.k ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.nInv
+        = frWord (((2 ^ poseidonVkExec.domain.k : ℕ) : Fr blsR))⁻¹ ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.omega
+        = frWord poseidonVkExec.domain.omega ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.omegaInv
+        = frWord poseidonVkExec.domain.omegaInv ∧
+      payloadWord poseidonPv vkHeaderTemplateSlotsDefault.omegaInvToL
+        = frWord (poseidonVkExec.domain.omegaInv ^ poseidonPlanV2.meta_.rotationLast.natAbs) ∧
+      ((payloadWord poseidonPv vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
+        (payloadWord poseidonPv vkHeaderTemplateSlotsDefault.accOffset).toNat,
+        (payloadWord poseidonPv vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
+        (payloadWord poseidonPv vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
+        accWordsOfEncoding poseidonConfig.accumulator
+  native_decide
+
+/-- **THE TIE, CHECKED AND NOT PROSE.** The eight conjuncts above are the eight FIELD TYPES of
+    `PayloadAgrees poseidonRender`, in field order: this term typechecks only if each projection has
+    exactly the conjunct claimed, so the conjunction is a sub-list of the clause and not an imitation
+    of it. No axiom: it is eight structure projections. -/
+theorem poseidonValid_payload_scalars_are_fields (P : PayloadAgrees poseidonRender) :
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.vkDigest
+      = frWord poseidonRender.vk.transcriptRepr ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numInstances
+      = BitVec.ofNat 256 poseidonRender.cfg.numInstances ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.k
+      = BitVec.ofNat 256 poseidonRender.vk.domain.k ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.nInv
+      = frWord (((2 ^ poseidonRender.vk.domain.k : ℕ) : Fr blsR))⁻¹ ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omega
+      = frWord poseidonRender.vk.domain.omega ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omegaInv
+      = frWord poseidonRender.vk.domain.omegaInv ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.omegaInvToL
+      = frWord (poseidonRender.vk.domain.omegaInv
+        ^ poseidonRender.plan.meta_.rotationLast.natAbs) ∧
+    ((payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.hasAccumulator).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.accOffset).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numAccLimbs).toNat,
+      (payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.numAccLimbBits).toNat) =
+      accWordsOfEncoding poseidonRender.cfg.accumulator :=
+  ⟨P.digest, P.numInstances, P.k, P.nInv, P.omega, P.omegaInv, P.omegaInvToL, P.accWords⟩
+
+/-- **THE DECIDABLE HALF OF `ValidV3 poseidonRender`, IN ONE DECLARATION (OBJ.9's deliverable).**
+    Five of the seven clauses - `inputs`, `program`, `noWriters`, `env`, `supported` - plus the
+    eight scalar facts of `payload`. What is NOT here is the whole of `payload` (five point fields,
+    OPEN at the placeholder codec) and `generated` (REFUTED, section V3), and the absence of
+    `generated` from this conjunction is exactly why `ValidV3 poseidonRender` is still uninhabited.
+    No new axiom: every conjunct is one of the theorems above. -/
+theorem poseidonValid_decidableHalf :
+    (poseidonRender.inputs.numInstances = poseidonRender.cfg.numInstances ∧
+      poseidonRender.inputs.accEncoding = poseidonRender.cfg.accumulator ∧
+      poseidonRender.inputs.k = poseidonRender.vk.domain.k ∧
+      poseidonRender.inputs.truncatedChallenges = Features.solidity.truncatedChallenges) ∧
+    programOk poseidonRender ∧ NoWriters (poseidonRender.prog 0 0) ∧
+      EnvAgrees poseidonRender.E poseidonRender.vk poseidonRender.pv poseidonRender.params
+        poseidonRender.sG2gen ∧
+    SupportedV2 poseidonRender ∧
+    payloadWord poseidonRender.pv vkHeaderTemplateSlotsDefault.vkDigest
+      = frWord poseidonRender.vk.transcriptRepr :=
+  ⟨poseidonValid_inputs, poseidonValid_program, poseidonValid_noWriters, poseidonValid_slots,
+    poseidonValid_supported, poseidonValid_payload_scalars.1⟩
+
 /-! ## V3. THE SEVEN FROZEN CLAUSES, AND THE ONE ROW THIS CARD COULD NOT CLOSE (OBJ.8 step 3/5)
 
   The table in the header is the verdict. This section is the EVIDENCE for the two cells the card
   expected to flip and did not, and the exact goal state of the row OBJ.8 records instead of forcing.
+
+  **OBJ.9 ATTEMPTED STEP 1 AND STOPPED ON THIS WALL - THE EXACT GOAL STATE.** OBJ.9's step 1 names a
+  route, `Except.eq_ok_getOk` (`Midfall/Common/Except.lean`, landed by OBJ.8 for exactly this), and
+  the route was run, not assumed. `GeneratedBy poseidonRender` needs an `out` with
+  `generated poseidonRender = .ok out`, and `eq_ok_getOk` supplies it from ONE hypothesis:
+
+    h : (generated poseidonRender).isOk = true
+
+  `poseidonRender` is noncomputable, so the VM cannot run `generated poseidonRender` itself; every
+  argument it reads unfolds by `rfl` (`poseidonGenRender_eq_generated`), so the hypothesis is the
+  same proposition at the computable face `poseidonGenRender`. Measured there, at this commit, by
+  `native_decide`:
+
+    Tactic `native_decide` evaluated that the proposition
+      poseidonGenRender.isOk = true
+    is false
+
+  That is the wall, stated as a goal state and not as an opinion: the hypothesis `eq_ok_getOk` needs
+  is FALSE, and its negation is the sorry-free `poseidon_generated_notOk` above. Step 1 is therefore
+  not hard, not slow and not heartbeat-bound - it is IMPOSSIBLE at this commit, and any attempt to
+  force it would be a proof of `False` from `poseidonValid_generated_not`. The clause was NOT
+  weakened, NOT restated, and NOT bypassed; steps 2-5 landed and this row is recorded.
+
+  **THE PLAN-ORDERING DEFECT THIS EXPOSES, AND THE TWO EXITS (OBJ.9's finding, named and not fixed).**
+  PLAN-V3 section 5 places OBJ.9 in **M3** (line "M3 | ... ST.6 with OBJ.8, REF.7, ST.15, OBJ.9, ST.7
+  ...", the clause table at F1) and OBJ.10 in **M4** ("M4 | ... OBJ.10, OBJ.12", the artifact pair).
+  But `generated` reads the payload from `R.plan.vk`, and the only thing that can put a
+  `generateAll`-acceptable payload there is OBJ.10's `generateVkFromBase` / `baseVkOfKeyData` - an
+  M4 deliverable. **M3 as written cannot close `generated` before M4 exists.** The two exits, each of
+  which needs a signature this card does not hold:
+    (i) REORDER: pull OBJ.10 (and OBJ.11's G2 exports) forward into M3, or move the `generated` row
+        of the clause table out of M3 and into M4, so the table is complete only after the artifact
+        pair lands; or
+    (ii) WIDEN: give `Render` a frozen `payload : Halo2VerifyingKey` field and read `generated`
+        from it instead of from `R.plan.vk`, which cuts the circle without waiting for the port - a
+        FROZEN-surface edit (W15: a sixth re-hash and a signature). This is exactly the first of the
+        two frozen ways out listed a few lines below ("WHY STEP 3 CANNOT LAND WITHOUT A FROZEN
+        DECISION", option (i)), and it is the only exit that does not wait on M4.
+  This card names the defect and takes neither exit.
 
   **WHY STEP 3 CANNOT LAND WITHOUT A FROZEN DECISION.** `Render.generated` reads the generator
   payload from `R.plan.vk` - the payload is smuggled in through the plan, because `Render` has no
@@ -733,6 +951,17 @@ theorem poseidonValid_seven_summary :
 #print axioms Midfall.Instances.PoseidonValid.deciding_supported_perm
 #print axioms Midfall.Instances.PoseidonValid.deciding_supported_wf
 #print axioms Midfall.Instances.PoseidonValid.poseidonValid_supported
+-- OBJ.9: the five clause theorems this card lands or re-measures. STEP 2 and STEP 4 already
+-- existed and are re-printed here because the card names them; STEPS 3 and 5 are new.
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_inputs
+#print axioms Midfall.Instances.PoseidonValid.deciding_programOkB
+#print axioms Midfall.Instances.PoseidonValid.deciding_gasCallOk
+#print axioms Midfall.Instances.PoseidonValid.deciding_exitDiscipline
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_program
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_noWriters
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_payload_scalars
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_payload_scalars_are_fields
+#print axioms Midfall.Instances.PoseidonValid.poseidonValid_decidableHalf
 /-! ## THE HEADLINE OF THIS CARD -/
 
 /-- **`poseidonRender.Valid` IS UNSATISFIABLE.** Several of its clauses are false at this
@@ -747,6 +976,18 @@ theorem poseidonValid_seven_summary :
     field constant, and the payload took its place. One clause, one owner: `generated` is OBJ.8
     step 3, and closing it needs a decision this card does not own - a frozen `Render.payload` field
     or a v1 `DecidableEq` (recorded at §V3, not attempted here).
+
+    **OBJ.9 RE-MEASURED ALL SEVEN ON 2f3f39d AND DID NOT CHANGE THIS.** Step 1 was attempted through
+    the route the card names (`Except.eq_ok_getOk`) and the ONE hypothesis it needs was DECIDED FALSE
+    by the VM - section V3 prints the exact goal state and the exact tactic message - so `generated`
+    is still REFUTED, still sorry-free, and still the ONLY refutation. Steps 2-5 landed: `program`
+    moved OPEN -> PROVED (`poseidonValid_program`); `noWriters` was re-exhibited at fuel 20000;
+    `inputs` was re-measured unchanged; and the eight scalar facts of `payload` are now theorems
+    (`poseidonValid_payload_scalars`) instead of VM `def`s. SIX of the seven clauses are now decided
+    at the fixture - five PROVED and one HALF - and `ValidV3 poseidonRender` is STILL UNINHABITED, by
+    exactly one clause. `poseidonRender_notValid` below is unchanged, still routes through
+    `h.generated` alone, and is PROVED rather than dangling: that is the invariant this card had to
+    preserve, and it is preserved.
 
     What the retired clauses became: `circuitMeta`, `layout`, `invariants` and `model` collapsed
     into `generated`; `codegen`, `closed`, `transcriptMptr` and the two `vkLoading` pin bundles into

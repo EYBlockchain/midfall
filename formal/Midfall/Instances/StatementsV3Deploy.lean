@@ -368,19 +368,31 @@ def recon1_supported_gap_ok : Bool :=
       (poseidonVkExec.csDegree - 2)) == (8, 8, 3)
 #eval recon1_supported_gap_ok -- expect true
 
-/- **The four clauses RECON.1 did NOT change, with their existing F1 discharges.** `inputs`, `env`,
-    `noWriters` and - since R.7 (D-P59) - `supported` are PROVED at the fixture. `supported` was
-    REFUTED through the ONE frozen field `permutationCommitmentsMatch` (8 sigma commitments against
-    `divCeil 8 3` = 3); R.7 restated that field as the column comparison the Rust VK actually makes,
-    which `permCommMatchRepaired` had kept true in `programOkB` all along. `generated` replaces the
-    three frozen clauses whose verdicts were `layout_not`,
+/- **THE FIVE CLAUSES THAT ARE THEOREMS AT THE FIXTURE, RE-LISTED BY OBJ.9 (GEN/PROOF).**
+    `inputs`, `env`, `noWriters`, `supported` and - since OBJ.9 step 3 - `program` are PROVED at the
+    fixture. Until this card `program` was the one clause whose decidable bundle existed HERE, as
+    the VM `def` `recon1_programOkB_ok` above, and nowhere as a theorem: OBJ.9 lands
+    `poseidonValid_program` - that bundle plus `GasCallOk` and `ExitDiscipline`, each scan witnessed
+    at fuel 20000 - as a proposition at the render, and it moves the `program` cell OPEN -> PROVED.
+    OBJ.9 step 5 likewise promotes the eight codec-free payload facts measured by
+    `recon1_payload_scalars_ok` and `recon1_payload_digest_ok` into the theorem
+    `poseidonValid_payload_scalars`; `payload` STAYS HALF, the five point fields are codec-blocked.
+    `supported` was REFUTED through the ONE frozen field `permutationCommitmentsMatch` (8 sigma
+    commitments against `divCeil 8 3` = 3); R.7 restated that field as the column comparison the
+    Rust VK actually makes, which `permCommMatchRepaired` had kept true in `programOkB` all along.
+    `generated` replaces the three frozen clauses whose verdicts were `layout_not`,
     `invariants_not` and `model` (two REFUTED, one SORRY): at the derived render the generator run IS
     the artifact but for BUILD_ID (OBJ.7 gate 4), and at today's typed-in render the PARSED PAYLOAD
-    refutes it (OBJ.8 step 2, quotient.rs:202). -/
+    refutes it (OBJ.8 step 2, quotient.rs:202). OBJ.9 ATTEMPTED step 1 through `Except.eq_ok_getOk`
+    and found the hypothesis it needs decided FALSE - see `PoseidonValid.lean` section V3 for the
+    exact goal state and the plan-ordering finding. -/
 #check @Midfall.Instances.PoseidonValid.poseidonValid_inputs
 #check @Midfall.Instances.PoseidonValid.poseidonValid_slots
 #check @Midfall.Instances.PoseidonValid.poseidonValid_noWriters
 #check @Midfall.Instances.PoseidonValid.poseidonValid_supported
+#check @Midfall.Instances.PoseidonValid.poseidonValid_program
+#check @Midfall.Instances.PoseidonValid.poseidonValid_payload_scalars
+#check @Midfall.Instances.PoseidonValid.poseidonValid_decidableHalf
 #check @Midfall.Instances.PoseidonValid.poseidonValid_returnMptr
 #check @Midfall.Instances.PoseidonValid.poseidonValid_transcriptMptr
 
