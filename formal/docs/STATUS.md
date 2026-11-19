@@ -46,3 +46,18 @@ A: A0 = card PL.H0 · B: B1, B2 · C: C1 · D: none yet (D2 waits for B1, B2)
 `92d5a41` + `ccf6367` FALS2 (a cited falsifier was false, one OPEN; citations corrected) · `44d0acd`
 WID.11 (register 79 → 77) · `cd736ff` QEMIT3 — none moved a PROGRESS line
 (`#cone_sorries lowering_correct` = 2 throughout).
+## ST.13 - FAILED at round 142, work left on branch t/ST.13, NOT merged
+
+**`lake build` fails on `Midfall.Yul.Bridge`** despite a diff with zero sorries and a comment claiming
+'PROVED (ST.13)'. Errors: cannot synthesise implicit `alpha`/`c'` at `Bridge.lean:367`; unsolved
+goals plus an unused `simp` argument at `:374`; `Unknown identifier funenvMv_cons` at `:379`. **A card's
+own report that something is proved is a lead; `lake build` is the fact.**
+
+**Salvageable, do not re-derive:** the monotonicity chain `fdeclMv`/`fscopeMv`/`funenvMv` ->
+`externalCall_mono` -> `builtin_mono` -> `step_mono` -> `run_mono` -> `runCommitted_mono`, plus the design
+finding that the call relation occurs only in `externalCall` (`EVMExec.lean:889`) in a positive position,
+`finishCall` chooses everything the caller observes about a response, and `VEnv`/`Code`/`EvmState` do not
+depend on the relation. **Resume in `/Users/julian/midfall-c` on `t/ST.13`.**
+
+---
+
