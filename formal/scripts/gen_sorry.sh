@@ -54,6 +54,11 @@ owner() {
       echo 'V3 SIM.7 - deletes runBody_iff_slices' ;;
     Midfall.Yul.Bridge.Run_worldEq_of_noWriters)
       echo 'V3 SIM.5 - the shared Step induction (ST.10 cites it)' ;;
+    # ---- SIM.1: the staged Lean view, landed in Midfall/Lowering/Stage.lean. ----
+    # The scratch file records this leaf as ALG / Lean-only / NOT used by the glue, so it is outside
+    # the headline cone; SIM.9 is the card that proves it (strengthened to field agreement).
+    Midfall.Lowering.Stage.leanStage_prefix)
+      echo 'V3 SIM.9 - leanStage coherence: the staged chain is a chain, with equal fields (leaf of SoundnessV3 section 1; not used by the glue)' ;;
     # ---- ST.1: the four V3 staging obligations, landed in Midfall/LoweringV3/Statements.lean. ----
     # Each owner names the card that discharges it and the experiment its docstring gives.
     Midfall.LoweringV3.prog_slices_decompV3)

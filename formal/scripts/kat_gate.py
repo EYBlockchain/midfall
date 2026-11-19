@@ -284,8 +284,15 @@ EVAL = re.compile(
 # f7_mutantAppendNotWellFormed refuse both mutants through the repaired field alone - W12). No gate was
 # deleted, edited or re-spelled; the two docstrings R.7 corrected (PoseidonEnv gates 4 and 13) keep
 # their expectations, and gate 13's flipped conjunct still prints true. The delta is +3/+0.
-EXPECTED_KAT_TOTAL = 1543
-EXPECTED_KAT_FILES = 113
+# SIM.1 (V3 row 56) adds Midfall/Instances/StageKats.lean: a NEW file in the suite carrying THREE
+# '#eval ... -- expect true' gates, two of them ported VERBATIM from section 7 of the design-evidence
+# scratch file (rawDecodeAgreesKats_ok, xZeroCollapseKats_ok - both printed true there and print true
+# here) and one written by the card's Do step 4 (pcsReadsKats_ok, the eight values of the transcript-only
+# PCS read schedule at Fr 17 / natG1Codec, with the read-schedule widths and the >= p rejection pinned
+# beside them). No gate was deleted or edited. The delta is +3/+1 and nothing else moved; all three were
+# run through 'lake env lean' before this line moved (the whole file evaluates in 3.6 s).
+EXPECTED_KAT_TOTAL = 1546
+EXPECTED_KAT_FILES = 114
 
 # Only these shapes count as #eval output.
 #

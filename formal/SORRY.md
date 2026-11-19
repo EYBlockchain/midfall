@@ -44,6 +44,7 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Instances.PoseidonV2.poseidon_rejects | Midfall.Instances.PoseidonV2 | theorem | OPEN | ROOT | `3e7a72dcd164821a` | V3 PL.H via rejectsV3_of_rows - V2 C.3 staged rejection contracts |
 | Midfall.Instances.PoseidonV2.poseidon_valid | Midfall.Instances.PoseidonV2 | theorem | REFUTED | ROOT | `278d212235ac6153` | V3 PL.1 - deletes it: the negation poseidonRender_notValid is PROVED (REFUTED: as stated it proves False) |
 | Midfall.Instances.PoseidonValid.poseidonValid_model | Midfall.Instances.PoseidonValid | theorem | OPEN | - | `512589e39c0f0f04` | V2 (PLAN-V2): C.4 Valid.model - no Inhabited Model, kernel cannot reduce poseidonModel |
+| Midfall.Lowering.Stage.leanStage_prefix | Midfall.Lowering.Stage | theorem | OPEN | - | `6a12d9b2e6313461` | V3 SIM.9 - leanStage coherence: the staged chain is a chain, with equal fields (leaf of SoundnessV3 section 1; not used by the glue) |
 | Midfall.Lowering.builder_segments_total | Midfall.Lowering.Qvm | theorem | OPEN | - | `19417891ad4c8eb2` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.calldata_canonical | Midfall.Lowering.Calldata | theorem | OPEN | - | `93ce23c8ec4508b3` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.calldata_roundtrip | Midfall.Lowering.Calldata | theorem | OPEN | - | `2946ab985d3e04ff` | P-SE: semantic equivalence obligations |

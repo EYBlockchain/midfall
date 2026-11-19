@@ -92,6 +92,7 @@ import Midfall.Lowering.Calldata
 import Midfall.Lowering.SemanticEquivalence
 import Midfall.Lowering.Checkpoint
 import Midfall.Lowering.Snapshot
+import Midfall.Lowering.Stage
 import Midfall.Lowering.Inv
 import Midfall.Lowering.GenAst
 import Midfall.Lowering.GenAstPcs
@@ -119,6 +120,7 @@ import Midfall.Instances.M2BatchKats
 import Midfall.Instances.ObjectFingerprint
 import Midfall.Instances.PlanNewKats
 import Midfall.Instances.GeneratedKats
+import Midfall.Instances.StageKats
 import Midfall.Security.SRS
 import Midfall.Security.Challenges
 import Midfall.Yul.Externals
