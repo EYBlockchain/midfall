@@ -559,7 +559,9 @@ theorem slices_seq_progress (R : Render p G₁ G₂ Gₜ) (product : PairingProd
     headline runs `R.prog vkAddr 0`, so `Bridge.Run_worldEq_of_noWriters` cannot be cited without
     this step. The two addresses occur only as `Stmt.letDecl ... (some (lit ...))` right-hand sides
     in `wrapperLocals` (Program.lean:105-108), and `noWritersScan` classifies ops, not literal values.
-    Same cost class as `hoist_prog_addr_indep` (sorried, Blocks.lean:145). -/
+    Same cost class as `hoist_prog_addr_indep` (sorried, Blocks.lean:158). Subsumed by
+    `scans_prog_addr_indep` (`LoweringV3/Statements.lean:578`, ST.12), which lands the same
+    address-independence for BOTH scans and so retires this one; see `SORRY.md`. -/
 theorem noWriters_prog (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (vkAddr qAddr : U256) :
     NoWriters (R.prog vkAddr qAddr) := by
   sorry
@@ -568,14 +570,42 @@ theorem noWriters_prog (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (vkAddr qAdd
 
     PREMISE GAP, FOUND BY THIS CARD. The brief says composition reuses `Render.Rejects`. It cannot
     stand alone: `Rejects` demands `SoundSide R H cd` as a hypothesis, and the THIRD conjunct of the
-    frozen `LoweringEquivalence` (Statements.lean:250-262) carries no `SoundSide` at all. So the
-    case split in conjunct 3 has a branch — `¬ LeanAccepts` with no `SoundSide` — that `hrej` cannot
-    reach. `SoundSide` excludes the logup-panic bad set, which is a COMPLETENESS side condition:
-    nothing in the "Lean rejects, so the contract reverts" direction needs it, so the hypothesis is
-    spurious for this use. Deleting it from `Rejects` would strengthen a §6 shape by REMOVING a
-    hypothesis, which this card is not authorised to do (§6 refinement is add-fields-to-`Frame`/
-    `Clean` only), so it is named as a separate obligation. Conjunct 1 below DOES use `hrej`
-    directly, where `SoundSide` is available. -/
+    frozen `LoweringEquivalence` (`LoweringV2/Statements.lean:1234-1236`) carries no `SoundSide` at
+    all. So the case split in conjunct 3 has a branch — `¬ LeanAccepts` with no `SoundSide` — that
+    `hrej` cannot reach, and it is named here as a separate obligation. Conjunct 1 below DOES use
+    `hrej` directly, where `SoundSide` is available.
+
+    **THE SENTENCE THIS CARD GOT WRONG, CORRECTED BY ST.5.** The text above it claimed `SoundSide` is
+    "a COMPLETENESS side condition", spurious for this use, and so droppable from a rejection
+    obligation. It is the opposite: `SoundSide` is what keeps the rejection direction TRUE. On the
+    logup-panic bad set the contract RETURNS while the Lean verifier does not accept, so "Lean
+    rejects, therefore the contract reverts" is FALSE there — and this statement, which drops
+    `SoundSide` and carries no `R.Valid` either, is refutable: `rejects_of_not_accepts_contradiction`
+    (`Instances/StatementsV3Falsifiers.lean:476`, F9) derives `False` from it plus ONE accepting
+    calldata with a returning permissive run, at any render whatever. The landed V3 text says so
+    explicitly: `RejectsV3` (`LoweringV3/Statements.lean:1413`) KEEPS `SoundSide` and gains nothing
+    else. (ST.5 Guidance: "the frozen docstring calling SoundSide a completeness condition is wrong;
+    do not carry it".)
+
+    **ITS REPLACEMENT HAS LANDED (RECON.2, `61b4f5e`).** `rejectsV3_of_sims`
+    (`LoweringV3/Composition.lean:192`) concludes `RejectsV3` from `ValidV3` and the staged
+    simulation rows, and V3 needs no rejection lemma for conjunct 3 at all: conjunct 3 is an instance
+    of `TwoOutcomes` (`conj3_of_twoOutcomes`, `LoweringV3/Statements.lean:1395`, PROVED). ST.5's
+    step 1 ("add the TwoOutcomes definitions and the three sorried obligations") and step 2 ("replace
+    `lowering_equivalence_of_blocks`") are therefore RECON.2's landed work and are NOT restated here:
+    RECON.2's Goal is ONE composition and ONE `ValidV3` in the tree, and a second statement of any of
+    the four obligations in this file is exactly the duplicate it forbids.
+
+    **WHY ST.5 DOES NOT DELETE THIS LEMMA.** Its only proof consumer is conjunct 3's `¬ LeanAccepts`
+    branch below, and that branch cannot be re-sourced from inside this file.
+    `LoweringV3/Statements.lean:32` imports `Midfall.LoweringV2.Blocks`, so this module cannot import
+    anything under `LoweringV3/` without a cycle: `TwoOutcomes` is unreachable from here. And the two
+    copies of the exit scan (`LoweringV2/Statements.lean:464` and `LoweringV3/Statements.lean:529`,
+    same text, different constants) mean `exitDiscipline_of_valid` at the V2 `Render.Valid` does not
+    feed `twoOutcomes_of_scans` without a new scan-agreement proof — a fresh obligation, not a wiring.
+    So the deletion goes in the same commit as the retirement of the consumer it breaks (W13), which is
+    SIM.7's registered work on this composition; see the `removed by` column of `SORRY.md` for
+    `Midfall.LoweringV2.rejects_of_not_accepts`. -/
 theorem rejects_of_not_accepts (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
     (g : ExternalGas) (obs : Obs)
@@ -739,7 +769,24 @@ theorem bodyTotal_of_valid (R : Render p G₁ G₂ Gₜ) (product : PairingProdu
     `CurveSurface.g1CodecZ_laws`, sits behind the `imports_avoid` wall of
     `Tools/ConeReport.lean`). Every row on the progress half is a REGISTERED sorry, so the
     stronger demand costs no proof today - it is a harder obligation, not an easier one. Conjunct
-    4 is `bodyTotal_of_valid` above, a registered sorry, not a gap in the plumbing. -/
+    4 is `bodyTotal_of_valid` above, a registered sorry, not a gap in the plumbing.
+
+    WHAT ST.5 FOUND (after RECON.2, `61b4f5e`). ST.5's step 1 and step 2 are RECON.2's landed work,
+    not this file's: the four V3 obligations and the one V3 composition are
+    `Midfall/LoweringV3/Composition.lean` (`twoOutcomesV3_of_valid` :178 PROVED,
+    `rejectsV3_of_sims` :192, `completeV3_of_progs` :202, `totalV3_of_stages` :214, and
+    `lowering_equivalenceV3_of_rows` :225 - each stated exactly ONCE, each against the single
+    `ValidV3` at `LoweringV3/Statements.lean:1116`), glued by the already-proved
+    `lowering_equivalenceV3_of`. Nothing of theirs is restated here: a second statement in this file
+    is the duplicate RECON.2's Goal forbids, and it would look green. Step 3 is complete: no
+    `G1CodecLaws` (seven-law) demand survives in this file or in `Blocks/*.lean` - the progress halves
+    of `BlockContractsAt` (:128) and `BlockRow` (:988) are on `G1CodecHeadlineLaws`, and the soundness
+    halves carry no codec premise, which is not a gap: `BlockSound` constrains the run, not the codec,
+    so gating it would add a vacuous premise and move a registered statement hash for nothing. What
+    remains of ST.5 is the deletion of `rejects_of_not_accepts` (:609), and it is BLOCKED HERE: the
+    conjunct-3 branch below is its only consumer, this module cannot reach `TwoOutcomes` (import cycle,
+    `LoweringV3/Statements.lean:32`), and the V2/V3 copies of `ExitDiscipline` are different constants.
+    It goes in the same commit as the retirement of this composition - SIM.7 - per W13. -/
 theorem lowering_equivalence_of_blocks (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : R.Valid) (hB : R.BlockContractsAt product (fun _ => True)) (hrej : R.Rejects product) :
     LoweringEquivalence R product := by

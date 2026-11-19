@@ -43,13 +43,13 @@ owner() {
     Midfall.LoweringV2.blockContracts_of_valid)
       echo 'V3 SIM.7 - deletes the old composition (RV-10: false as stated until RECON.1 PayloadAgrees)' ;;
     Midfall.LoweringV2.bodyTotal_of_valid)
-      echo 'V3 ST.5 - TotalV3: the totality conjunct D-P64 (f) lands with the four-obligation composition; discharged by the exit-discipline scan (ST.10/ST.12)' ;;
+      echo 'V3 SIM.7 - the V2 totality conjunct D-P64 (f); RECON.2 landed the V3 twin totalV3_of_stages (Composition.lean:214), so this V2 sorry retires with the old composition, not under ST.5' ;;
     Midfall.LoweringV2.noWriters_prog)
       echo 'V3 ST.12 - scans_prog_addr_indep removes it' ;;
     Midfall.LoweringV2.prefix_run_clean)
       echo 'V3 SIM.7 - deletes prefix_run_clean' ;;
     Midfall.LoweringV2.rejects_of_not_accepts)
-      echo 'V3 ST.5 - deletes rejects_of_not_accepts' ;;
+      echo 'V3 SIM.7 with ST.5 - ST.5 (61b4f5e+): replacement rejectsV3_of_sims LANDED (Composition.lean:192) and F9 proves this statement derives False (StatementsV3Falsifiers.lean:476), but its only consumer is the V2 composition conjunct 3 (Blocks.lean:904) and LoweringV2/Blocks cannot import LoweringV3 (cycle: V3/Statements.lean:32), so W13 pairs the deletion with the consumer retirement' ;;
     Midfall.LoweringV2.runBody_iff_slices)
       echo 'V3 SIM.7 - deletes runBody_iff_slices' ;;
     Midfall.Yul.Bridge.Run_worldEq_of_noWriters)
