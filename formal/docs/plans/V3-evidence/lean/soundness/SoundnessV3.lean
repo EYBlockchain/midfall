@@ -23,7 +23,9 @@
       Both steps are now 'hhoist.symm'.
     * lowering_equivalence_of_stages: ST.4 added the fourth conjunct BodyTotal (discharged by the
       REGISTERED tree sorry bodyTotal_of_valid, exactly as the frozen Blocks.lean:778 does) and made
-      the codec bundle a hypothesis of ALL FOUR conjuncts, introduced once after 'hpc'.
+      the codec bundle a hypothesis of ALL FOUR conjuncts, introduced once after 'hpc'. SUPERSEDED by
+      RECON.2 step 6: the declaration is DELETED (retirement notice in section 5); the one composition
+      is Midfall/LoweringV3/Composition.lean.
     * STATEMENT (the only type that moved): Render.ProgContracts and completeness_of_progs cited the
       pre-ST.4 seven-law G1CodecLaws as the row premise; the headline now supplies only
       G1CodecHeadlineLaws and four do not give seven. Both cite G1CodecHeadlineLaws now - the same
@@ -1231,25 +1233,27 @@ theorem completeness_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingPr
     rw [heq] at hw ⊢
     exact view_eq_returnView_of_committed st₀ st' hw hh
 
-/-- **THE HEADLINE FROM THE STAGED CONTRACTS (PROVED).** `Render.Rejects`, `BlockSound`,
-    `BlockProgress`, `prefix_run_clean`, `runBody_iff_slices`, `slices_seq_sound`,
-    `slices_seq_progress` and `rejects_of_not_accepts` do not occur, and NO hypothesis beyond the
-    frozen headline's own is used: the side conditions are exactly `SoundSide` (conjunct 1) and
-    `CompleteSide` (conjunct 2), each consumed by one row. -/
-theorem lowering_equivalence_of_stages (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
-    (hR : R.Valid) (hpins : SimPins R) (hexit : R.ExitOk)
-    (hsim : R.SimContracts product) (hprog : R.ProgContracts product) :
-    LoweringEquivalence R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec
-  refine ⟨?_, ?_, ?_, bodyTotal_of_valid R product hR W Lyt H vkAddr cd st₀ hdep hentry hpc⟩
-  · intro g obs hobs hret hside
-    exact soundness_of_sims R product hR hpins hsim W Lyt H vkAddr cd st₀ hdep hentry hpc
-      g obs hobs hret hside
-  · intro hacc hcomp
-    exact completeness_of_progs R product hR hpins hprog W Lyt H vkAddr cd st₀ hdep hentry hpc
-      hacc hcomp hcodec
-  · intro g obs hobs
-    exact two_outcomes_of_exitShape R hR hexit W Lyt H vkAddr cd st₀ hentry _ g obs hobs
+/-! **RETIRED BY RECON.2 (step 6): THERE IS NO SECOND COMPOSITION.**
+
+    This file used to carry `lowering_equivalence_of_stages`, the staged headline over the frozen V2
+    `LoweringEquivalence`, `R.Valid`, `SimPins` and the entry-frame-guarded `two_outcomes_of_exitShape`
+    route. RECON.2 deletes it. The ONE composition of the staged rows is now in the built tree:
+
+      Midfall/LoweringV3/Composition.lean
+        twoOutcomesV3_of_valid, rejectsV3_of_sims, completeV3_of_progs, totalV3_of_stages
+        lowering_equivalenceV3_of_rows : ValidV3 R -> SimRowsV3 -> ProgRowsV3 -> LoweringEquivalenceV3
+
+    Four differences, each one of RECON.2's steps: the validity hypothesis is the SINGLE `ValidV3`
+    (LoweringV3/Statements.lean:1116, seven clauses) and not the frozen `Render.Valid`; the pin bundle
+    `SimPins` is dissolved into `G1CodecHeadlineLaws` plus `ValidV3.program` (step 4); conjunct 3 goes
+    through `twoOutcomes_of_scans`, unconditional in the state, and not through `Render.ExitOk`
+    (step 5); and the conclusion is the V3 headline, whose `EntryFrameV3` carries `cdSize` (step 2).
+
+    Everything above this notice stays exactly as it was and is still what SIM.2 lands: `StageInv`,
+    `BlockSim`, `SimContracts`, `ProgContracts`, `prefix_sim`, `prefix_prog`, `soundness_of_sims`,
+    `rejects_of_sims`, `completeness_of_progs`, `tr_exit_any` and `quiet_init` are all live evidence for
+    the rows. Only the composition is retired, because a second composition over a predicate nobody
+    will use is the failure mode RECON.2 exists to prevent. -/
 
 /-! ## 6. Migration: existing proved rows against the new contract (PROVED) -/
 
@@ -1473,7 +1477,8 @@ end Evidence
 #cone_sorries Midfall.LoweringV2.V3.soundness_of_sims
 #cone_sorries Midfall.LoweringV2.V3.two_outcomes_of_exitShape
 #cone_sorries Midfall.LoweringV2.V3.completeness_of_progs
-#cone_sorries Midfall.LoweringV2.V3.lowering_equivalence_of_stages
+-- lowering_equivalence_of_stages: RETIRED by RECON.2 step 6 (see the notice in section 5). The one
+-- composition is Midfall/LoweringV3/Composition.lean; its cone lists print in that file.
 #cone_sorries Midfall.LoweringV2.lowering_equivalence_of_blocks
 
 

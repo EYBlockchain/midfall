@@ -63,6 +63,18 @@ structure Frame (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : B
   vkNonEmpty : R.plan.vk.runtimeBytes.size ≠ 0
   r : ∃ rv, R.consts.lookup "FR_MODULUS" = some rv ∧ VEnv.get V "r" = some (BitVec.ofNat 256 rv)
   vk : VEnv.get V "vk" = some vkAddr
+  /-- **RECON.2 step 2 - the §6 refinement "a field added to `Frame`".** The calldata size bound
+      reaches EVERY row this way, and not as a free hypothesis: §6 property (iv) says world, keccak
+      and local facts enter through `Frame`. Without it the vkLoading row of the staged simulation
+      contract is FALSE as stated - `calldatasize` is `BitVec.ofNat 256 st.env.calldata.length`
+      (`EVMExec.lean:792`) while `decodeCalldata` compares `cd.size` in `Nat`
+      (`Calldata.lean:341`), so `cd ++ (2^256 zero bytes)` has the same `calldatasize`, the same
+      `calldataload`/`calldatacopy` and therefore the same `Frame` as far as the program can tell,
+      but is rejected by the Lean verifier. `Frame.cdSize_falsifier` in
+      `Midfall/LoweringV3/Composition.lean` exhibits it. The bound is a fact about every EVM frame
+      and every row reads it off `EntryFrameV3.cdSize`
+      (`LoweringV3/Statements.lean:1227`), so no row has to prove it. -/
+  cdSize : cd.size < 2 ^ 256
 
 /-- A clean boundary: `Inv` at checkpoint `k` for the Lean snapshot, the frame, `success = 1`. -/
 def Clean (R : Render p G₁ G₂ Gₜ) (k : Checkpoint) (Snap : Snapshot p G₁ G₂ Gₜ) (H : Hash)

@@ -69,6 +69,18 @@ owner() {
       echo 'V3 ST.12 - the two scans ignore the addresses the wrapper binds as let literals. Experiment: same cost class as noWriters_prog (Blocks.lean:340), which it subsumes' ;;
     Midfall.LoweringV3.runBody_mono)
       echo 'V3 ST.13 - monotonicity in the call relation (Bridge layer). Experiment: induction on Step; the call relation occurs only in externalCall (EVMExec.lean), in a positive position' ;;
+    # ---- RECON.2: the ONE composition, landed in Midfall/LoweringV3/Composition.lean. ----
+    # Three of the four V3 obligations are skeletons here: the composition is stated once, against the
+    # single ValidV3 (LoweringV3/Statements.lean:1116), and the holes are the ROWS, which are SIM.2's
+    # and SIM.6's to discharge. The fourth obligation, twoOutcomesV3_of_valid, is PROVED and so has no
+    # row: its cone leaves are the ST.10 and ST.12 holes above. Each row carries its W12 witness and
+    # falsifier in Composition.lean section 5.
+    Midfall.LoweringV3.rejectsV3_of_sims)
+      echo 'V3 SIM.2 + SIM.6 - the fourteen staged simulation rows sequenced, plus the prefix row; the proof is the evidence rejects_of_sims (SoundnessV3.lean:822) over StageBnd' ;;
+    Midfall.LoweringV3.completeV3_of_progs)
+      echo 'V3 SIM.2 + SIM.6 - the seven staged progress rows sequenced, plus the prefix progress row; the proof is the evidence completeness_of_progs (SoundnessV3.lean:1210) re-gated on G1CodecHeadlineLaws' ;;
+    Midfall.LoweringV3.totalV3_of_stages)
+      echo 'V3 SIM.2 + SIM.6 + ST.13 - existence from the sequenced progress rows, then runBody_mono to upgrade the zero gas oracle of the rows to the arbitrary total oracle TotalV3 quantifies over' ;;
 # ---- T3.1b: the WPX statements that came with the wp_run port (Midfall/Yul/WpX.lean). ----
 # The T3.1b card says "register WPX.lean's three sorries (owner: T3.2)". Only wpSS_exists was
 # T3.2's, and T3.2 has now PROVED it - so its owner row is gone from this list and from the register,

@@ -162,6 +162,7 @@ import Midfall.Lowering.LegacyVacuity
 import Midfall.Tools.Done
 import Midfall.Tools.ConeReport
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.Composition
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.StatementsV3Falsifiers
 import Midfall.Instances.PoseidonExhibit
