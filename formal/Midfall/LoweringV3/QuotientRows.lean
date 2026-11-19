@@ -181,10 +181,13 @@ NAMED LEAVES (card steps 3 and 4; a filled proof's cone is exactly these):
     native identity), 'qEmitPostVmFamily_shape' (post-VM suffix), 'qEmitNativePermutationA_shape' and
     'qEmitNativeLookupA_shape' (the two native loop families), all in
     'Midfall.Lowering.GenAst', with the consumer corollaries in section 10 below. PROVED, not stated:
-    the twins QEMIT and QEMIT2 landed are the induction targets. The two native loop families carry
-    the empty-circuit arm, the one-block shape and the compactor induction; their per-item induction
-    is named as a gap ('qEmitLookupBlockA_stepFunctions_gap') because the step functions those two
-    producers hand to 'mapM' are inner lambdas. -/
+    the twins QEMIT and QEMIT2 landed are the induction targets. QEMIT3 CLOSED the two
+    native loop families: their 'mapM' step functions and the compactor's inner 'let rec go' are
+    top-level 'def's now, so 'qEmitNativeLookupA_shape' is the per-item value lemma ROW.Q.5 printed as
+    unreachable and 'qPushMstoreMloadLiteralRunsA_rejected' and 'qPushMstoreMloadLiteralRunsA_run3' are the
+    family-4 per-entry run decomposition (one store for a rejected entry, one loop for a run of
+    three). WHAT IS NOT LANDED, NAMED: the accumulator split for an ARBITRARY running block - see
+    'qMloadRunGoA_split_gap' in that file. -/
 theorem q_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
@@ -790,5 +793,23 @@ theorem q_rowQ5_families_agree (ids : List QuotientIdentity) (k : Nat) (fold : S
 #assert_axioms Midfall.Lowering.GenAst.qEmitNativePermutationA_none [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.Lowering.GenAst.qEmitNativeLookupA_none [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_nil [propext] native []
+
+-- QEMIT3: the family-4 and family-5 per-item leaves, proved in 'GenAstQvmFamilies.lean' once the lift
+-- made the inner steps top-level defs. Empty cones again: these are leaves, not skeletons.
+#cone_sorries Midfall.Lowering.GenAst.qEmitNativeLookupA_shape
+#cone_sorries Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_rejected
+#cone_sorries Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_run3
+#assert_axioms Midfall.Lowering.GenAst.qMloadRunGoA_zero [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qMloadRunGoA_out_of_range [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_rejected [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_run3 [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitPermutationStagingA_empty [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qMapM_all_stateT [propext, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qFlatten_length_of_singleton [propext, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qStateT_run_bind_ok [propext, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitLookupRegionA_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitLookupPerItemStepA_shape [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitLookupRegionA_items [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeLookupA_shape [propext, Classical.choice, Quot.sound] native []
 
 end Midfall.LoweringV3.QuotientRows
