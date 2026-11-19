@@ -1,6 +1,6 @@
 # STATUS - midfall
 
-## 1. Verified at `ab7517a` - PROGRESS
+## 1. Verified at `077a3c5` - PROGRESS
 **No full `verify.sh` has been run this session.** (o) = orchestrator-printed, (c) = worker-printed.
 
     root lowering_correct .... 2 sorried leaves (c, LH c1bb557): lowering_correctW, model_quotientMode
@@ -12,9 +12,9 @@
                                clause table 5 PROVED / 1 HALF / 1 REFUTED (c, OBJ.9 + R.7)
     root lowering_correctW ... not yet reported (WP C0)
     root generator_correct ... not yet reported (WP D2)
-    outside the cones ........ register 77 (o); V2 cone 10 / 1 REFUTED / 0 VACUOUS (c)
+    outside the cones ........ register 91 rows / 22 ROOT (o, regenerated post-merge); V2 cone 10/1 REFUTED (c)
                                KAT 1621/117 (c, pin verified o); fingerprint 14,109/0x3149ae4f... (c)
-    reference gate ........... nativeReplay_ok true, 21 checks, 0 failures (c, B2 interim, UNMERGED)
+    reference gate ........... MERGED (B2, 077a3c5): nativeReplay_ok true, 21 checks, 0 failures
     full verify.sh ......... KILLED, VERIFY_EXIT=143 SIGTERM (o) - NOT a pass
 
 **CORRECTION, and it is mine: the full `verify.sh` I ran after merging A0 was KILLED -
@@ -30,8 +30,8 @@ commit; I regenerated and cross-checked the register myself at 90 rows / 22 ROOT
 so it must be re-run with no other gate in flight before any number below is called a verify.sh
 copy.
 ## 2. In flight
-- **A0** (PL.H0) - /Users/julian/midfall-b - t/PL.H0 - since 17:55 - 8 h strongest
-- **B2** (reference gate) - /Users/julian/midfall-c - t/B2 - since 18:20 - 8 h strongest
+- **A3** (vkLoading INTEGRATED, calibration B) - /Users/julian/midfall-b - t/A3 - since 18:55 - 8 h strongest
+- **B2** MERGED at 077a3c5. One slot free: B1 (4 h Sonnet) or C1 (8 h strongest) are READY.
   WIP: cdb9da2 REF.2, 1a9a093 REF.1, fe9507f REF.4/5/8, 1a47c35 register+pins
 - Preserved, not running: t/ST.13 at f71105d - monotonicity chain, DOES NOT BUILD; A2 absorbs it.
   Do not trust its 'PROVED (ST.13)' comment.
@@ -55,10 +55,13 @@ copy.
 6. **Stale frozen prose** LoweringV2/Statements.lean:85-92 / :1037-1039 (says the refutation runs
    through supported; it runs through generated since R.7). **Batch into the next re-hash.**
 
+7. **REF.6 Do 2 vs `PoseidonCoherence.lean`** - setting `poseidonE := <g1CodecC, ...>` falsifies three
+   existing `rfl` pins the card omits from Needs (`:427`, `:433`, `:454`). A D.2 coherence change needing
+   a decision, not silent absorption. **Blocks: B4 (ValidV3 at F1).**
 ## 5. Last three merges
-- 44d0acd WID.11 - register 79 -> 77 (first fall); root cone UNCHANGED at 2
-- ccf6367 FALS2 - check.sh statements 1 -> 0; poseidon_payloadAgrees_not is OPEN, not refuted
-- b62e29e RECON.1b-iv - check.sh widening 1 -> 0 (one import; the pins were MOVED not deleted)
+- 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
+- 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed
+- 1f2fd09 correction - post-A0 verify.sh was KILLED (143), not a pass; re-run with no gate in flight
 
 ---
 
