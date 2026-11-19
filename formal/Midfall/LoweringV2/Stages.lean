@@ -555,6 +555,33 @@ theorem run_join (R : Render p G₁ G₂ Gₜ) (vkAddr : U256) (c : ExternalCall
   rw [hscope, hbody] at hrun
   exact ⟨restore [] V', st', Step.block hrun, rfl⟩
 
+/-- **SIM.6.d's DELIVERABLE, LANDED HERE (dialect-generic, no premise gap).** A block whose every
+    statement is a function definition is a NO-OP step sequence: the environment, the state and the
+    outcome are the ones it started with. This is the fact the prefix walk needs for R.helpers
+    (Render.preBlock puts the helper definitions between the two guards and the main locals), and it
+    is SIM.6's own 0.5 h child card: SIM.6.a-d are prerequisites of SIM.6 and had not landed in this
+    tree, so the piece of them that needs nothing beyond the vendored Step rules is proved here
+    rather than left as a hole inside a hole. Only Step.funDef (BigStep.lean:223) and
+    Step.stmts_cons_inv are used - no EVM, no render, no computation. -/
+theorem funDefs_noop {D : YulSemantics.Dialect} [DecidableEq D.Value]
+    (funs : FunEnv D) (b : Block D.Op)
+    (hb : forall s, s ∈ b -> ∃ (n : String) (ps rs : List String) (body : Block D.Op),
+      s = Stmt.funDef n ps rs body)
+    {V V' : VEnv D} {st st' : D.State} {o : Outcome}
+    (h : ExecStmts D funs V st b V' st' o) : V' = V ∧ st' = st ∧ o = .normal := by
+  induction b with
+  | nil => cases h with | seqNil => exact ⟨rfl, rfl, rfl⟩
+  | cons s rest ih =>
+      have hrest : ∀ x ∈ rest, ∃ (n : String) (ps rs : List String) (body : Block D.Op),
+          x = Stmt.funDef n ps rs body := fun x hx => hb x (List.Mem.tail s hx)
+      rcases Step.stmts_cons_inv (D := D) h with ⟨V₁, st₁, h₁, h₂⟩ | ⟨h₁, hne⟩
+      · obtain ⟨n, ps, rs, body, rfl⟩ := hb s (List.Mem.head rest)
+        cases h₁ with | funDef =>
+        obtain ⟨hV, hst, ho⟩ := ih hrest h₂
+        exact ⟨hV, hst, ho⟩
+      · obtain ⟨n, ps, rs, body, rfl⟩ := hb s (List.Mem.head rest)
+        cases h₁ with | funDef => exact absurd rfl hne
+
 /-- **LEAF (SEM, SIM.6): THE PREFIX ROW, SOUNDNESS SIDE.** From an entry frame every run of the prefix
     reverts (ABI guard, memory guard) or ends at a staged boundary at `.start`. No `LeanAccepts` and
     no snapshot in the statement: `StageInv .start` is `Frame`, `success = 1` and the three
@@ -727,6 +754,9 @@ theorem stageInv_drops_to_bnd_form (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkA
 #cone_sorries Midfall.LoweringV2.slices_seq_prog
 #cone_sorries Midfall.LoweringV2.finSim_refutes_empty
 #cone_sorries Midfall.LoweringV2.run_split
+
+#print axioms Midfall.LoweringV2.funDefs_noop
+#cone_sorries Midfall.LoweringV2.funDefs_noop
 
 #print axioms Midfall.LoweringV2.StageInv
 #print axioms Midfall.LoweringV2.BlockSim
