@@ -7,7 +7,9 @@
   WideningStages - the STAGED INVARIANTS and BLOCK ROWS the widening adds or changes, for EVERY render.
 
   LANDED AS A STATEMENT SURFACE BY WID.1 - still SPECIFICATION, NOT PROVED CODE: the three registered
-  obligations in this file are `instWords_of_decoded`, `batchedCheck_iff_contract`, `lowering_correctW`.
+  obligation left in this file is `lowering_correctW`: `instWords_of_decoded` and
+  `batchedCheck_iff_contract` were closed by WID.11, together with the limb lemma
+  `solCoordHiLo_eq_portSplit`.
   Built on the landed staging vocabulary - `Midfall/LoweringV2/Stages.lean` (`StageInv`, `BlockSim`,
   `BlockProgS`) and `Midfall/Lowering/Stage.lean` (`leanStage`, `Decoded`, `LeanRaw`) - and on
   `Midfall/LoweringV3/Widening.lean`; in the evidence tree these were `SoundnessV3.lean` and
@@ -138,13 +140,134 @@ def instWordsRaw (R : Render p G₁ G₂ Gₜ) (cd : Bytes) : Array Word256 :=
   (Array.range R.cfg.numInstances).map fun i =>
     BitVec.ofNat 256 (bytesToNatBE (cdSlice cd (R.plan.proofLayout.proofEnd + 32 + 32 * i) 32))
 
+private theorem range_succ_head : ∀ n : Nat,
+    List.range (n + 1) = 0 :: (List.range n).map (fun x => x + 1) := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ m ih =>
+      have h1 : List.range (Nat.succ (m + 1))
+          = (0 :: List.map (fun x => x + 1) (List.range m)) ++ [m + 1] := by
+        rw [List.range_succ, ih]
+      have h2 : 0 :: List.map (fun x => x + 1) (List.range (Nat.succ m))
+          = 0 :: (List.map (fun x => x + 1) (List.range m) ++ [m + 1]) := by
+        rw [List.range_succ, List.map_append, List.map_singleton]
+      rw [h1, h2]
+      rfl
+
+private theorem foldl_range_head?_eq_take (bl : List UInt8) :
+    ∀ (n : Nat), n ≤ bl.length → ∀ (init : Nat),
+      (List.range n).foldl
+          (fun acc j => acc * 256 + ((bl.drop j).head?.map UInt8.toNat).getD 0) init
+        = (bl.take n).foldl (fun acc x => acc * 256 + x.toNat) init := by
+  induction bl with
+  | nil =>
+      intro n hn init
+      rw [List.length_nil] at hn
+      have hn0 : n = 0 := by omega
+      subst hn0
+      rfl
+  | cons a t ih =>
+      intro n hn init
+      cases n with
+      | zero => rfl
+      | succ m =>
+          have hm : m ≤ t.length := by rw [List.length_cons] at hn; omega
+          have hstep : (fun x y => x * 256 + ((List.drop (y + 1) (a :: t)).head?.map UInt8.toNat).getD 0)
+              = (fun x y => x * 256 + ((List.drop y t).head?.map UInt8.toNat).getD 0) := by
+            funext x y
+            have hd : List.drop (y + 1) (a :: t) = List.drop y t := by
+              show List.drop (Nat.succ y) (a :: t) = _
+              rw [List.drop_cons (Nat.succ_pos y)]
+              have : Nat.succ y - 1 = y := by omega
+              rw [this]
+            rw [hd]
+          rw [range_succ_head m, List.foldl_cons, List.drop_zero, List.head?_cons,
+              Option.map_some, Option.getD_some, List.foldl_map, hstep,
+              ih m hm (init * 256 + a.toNat), List.take_cons (by omega : 0 < m + 1),
+              List.foldl_cons]
+          simp
+
+theorem cdWord_eq_bytesToNatBE (cd : Bytes) (i : Nat) (h : i + 32 ≤ cd.size) :
+    cdWord cd i = BitVec.ofNat 256 (bytesToNatBE (cdSlice cd i 32)) := by
+  have hlen : cd.data.toList.length = cd.size := Array.length_toList
+  have h32 : 32 ≤ (cd.data.toList.drop i).length := by
+    rw [List.length_drop, hlen]
+    omega
+  have hf : (List.range 32).foldl
+        (fun acc j => acc * 256 + ((cd.data.toList.drop (i + j)).head?.map UInt8.toNat).getD 0) 0
+      = ((cd.data.toList.drop i).take 32).foldl (fun acc x => acc * 256 + x.toNat) 0 := by
+    have := foldl_range_head?_eq_take (cd.data.toList.drop i) 32 h32 0
+    simp only [List.drop_drop] at this
+    exact this
+  unfold cdWord bytesToNatBE cdSlice
+  dsimp only
+  rw [hf, ← Array.foldl_toList, Array.toArray_toList]
+
+theorem rawDecode_inst_eq {L : ProofCalldataLayout} {n : Nat} {cd : Bytes}
+    {raw : List (RawMsg p)} {iw : Array Word256}
+    (h : rawDecode (p := p) L n cd = some (raw, iw)) :
+    (iw = ((List.range n).map (fun i => cdWord cd (L.proofEnd + 32 + 32 * i))).toArray) ∧
+      (cd.size = L.proofEnd + 32 + 32 * n) := by
+  unfold rawDecode at h
+  split_ifs at h with henv
+  · cases h2 : rawSlots (p := p) cd (RepackedProofLayoutPlan.fromProofLayout L).slots
+        L.proofCptr with
+    | none => rw [h2] at h; cases h
+    | some x =>
+      obtain ⟨ms, cur⟩ := x
+      rw [h2] at h
+      dsimp only at h
+      split_ifs at h with hh
+      · have hinj := Option.some.inj h
+        rw [Prod.mk.injEq] at hinj
+        refine ⟨hinj.2.symm, ?_⟩
+        simp only [envelopeOk, abiHeadOk, Bool.and_eq_true] at henv
+        have hsz : (cd.size == L.proofEnd + 32 + 32 * n) = true := by tauto
+        rw [← Nat.beq_eq]
+        exact hsz
 /-- OBLIGATION (ALG, Lean only): on a calldata that decodes, the decoder's instance words are the
     raw ones. About `decodeCalldata` alone (`Calldata.lean:341`). -/
 theorem instWords_of_decoded (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (ms : List (Msg (Fr p) G₁))
     (instW : Array Word256) (inst : Array (Fr p)) (h : Decoded R cd ms instW inst) :
     instW = instWordsRaw R cd := by
-  sorry
-
+  obtain ⟨hdec, _⟩ := h
+  -- The instance read is the RAW walk's: `decodeCalldata_eq_raw` moves it whole to `rawDecode`,
+  -- which reads `cdWord` at the same cursor `instWordsRaw` reads it at.
+  rw [decodeCalldata_eq_raw] at hdec
+  cases hr : rawDecode (p := p) R.plan.proofLayout R.cfg.numInstances cd with
+  | none => rw [hr] at hdec; cases hdec
+  | some r =>
+    obtain ⟨raw, iw⟩ := r
+    rw [hr] at hdec
+    simp only [Option.bind] at hdec
+    cases hm : raw.mapM (liftRaw (p := p) R.E.g1) with
+    | none => rw [hm] at hdec; cases hdec
+    | some ms' =>
+      rw [hm] at hdec
+      simp only [Option.map] at hdec
+      have hinj := Option.some.inj hdec
+      rw [Prod.mk.injEq] at hinj
+      obtain ⟨hinst, hsize⟩ := rawDecode_inst_eq hr
+      rw [← hinj.2, hinst]
+      unfold instWordsRaw
+      refine (Array.toList_inj (α := Word256)).mp ?_
+      simp only [Array.toList_map, Array.toList_range]
+      -- the two reads agree index by index, and both folds are over `List.range`
+      have hmap : ∀ k : Nat, k ≤ R.cfg.numInstances →
+          (List.range k).map (fun i => cdWord cd (R.plan.proofLayout.proofEnd + 32 + 32 * i))
+            = (List.range k).map (fun i =>
+                BitVec.ofNat 256 (bytesToNatBE
+                  (cdSlice cd (R.plan.proofLayout.proofEnd + 32 + 32 * i) 32))) := by
+        intro k
+        induction k with
+        | zero => intro _; rfl
+        | succ m ih =>
+            intro hk
+            rw [List.range_succ, List.map_append, List.map_append,
+                ih (by omega), List.map_singleton, List.map_singleton]
+            rw [cdWord_eq_bytesToNatBE cd _ (by rw [hsize]; omega)]
+      exact hmap R.cfg.numInstances (Nat.le_refl _)
 /-- The accumulator of the calldata decodes (the progress-side premise of the vkLoading row). -/
 def AccDecodes (R : Render p G₁ G₂ Gₜ) (cd : Bytes) : Prop :=
   ∀ enc, R.cfg.accumulator = some enc →
@@ -534,10 +657,149 @@ def BatchedInv (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) (st : EvmSt
         bytesAt st (ptrAddr R.pv.memory.pairingRhsMptr) 128 =
           R.E.g1.toEip (batchedInputs R H S.c.dual a).2
 
+/-! ### The limb lemma: the contract's `(hi, lo)` reconstruction IS the port's sum-and-split
+
+  A 7x56-bit coordinate is spread over `coordinateWords = 2` instance words - four limbs in
+  the first, three in the second - and the contract rebuilds it into the EIP-2537 pair the
+  precompiles take. Its loop (IVC `Halo2Verifier.sol:980-1009`) keeps TWO 256-bit
+  accumulators and has an explicit straddle arm at :998-1002, because limb 4 starts at bit
+  224 and ends at bit 280: it crosses the boundary the pair is split at. The port keeps ONE
+  unbounded `Nat` sum (`loadAccCoordShifted`, `Exec/Accumulator.lean:366-370`) and splits it
+  afterwards (`decodeAccCoord`, :393-394). `solCoordHiLo_eq_portSplit` below is that these
+  are the same integer, in the card's form: an equation between two `Nat` functions of seven
+  limbs below `2^56`. The seven limbs are arguments, not a fixture (rule D-P71).
+
+  WITNESS (rule W12): `Midfall.LoweringW.Tests.decoder_accepts`
+  (`Instances/WideningTests.lean:79`) - the port's decoder rebuilds the four coordinates of
+  the Rust-made IVC accumulator, each from seven limbs below `2^56`, and they are the
+  expected ones and on the curve. FALSIFIER: `limb_straddle_arm_is_load_bearing` - delete
+  the arm at :998-1002 and a limb that straddles the boundary (`x4 = 2^32`) reconstructs to
+  `hi = 0` instead of `hi = 1`, so the lemma is about the contract as written, not about a
+  simplification of it. -/
+
+/-- One step of the contract's loop (IVC `Halo2Verifier.sol:993-1007`) on limb `l` at index
+    `i`, with EVM word arithmetic: `add` and `shl` reduce mod `2^256` and `shr` is
+    division. `shl` followed by `add` is one reduction of `hi + l * 2^shift`, so it is
+    written that way. The `straddle` flag selects the arm at :998-1002; `false` is the
+    falsifier's mutant. -/
+def solCoordGo : Bool → List Nat → Nat → Nat × Nat → Nat × Nat
+  | _, [], _, acc => acc
+  | straddle, l :: rest, i, acc =>
+      let hi := acc.1
+      let lo := acc.2
+      let shift := accLimbBits * i
+      let acc' :=
+        if shift < 256 then
+          (if straddle && shift + accLimbBits > 256 then
+              (hi + l / 2 ^ (256 - shift)) % 2 ^ 256 else hi,
+           (lo + l * 2 ^ shift) % 2 ^ 256)
+        else ((hi + l * 2 ^ (shift - 256)) % 2 ^ 256, lo)
+      solCoordGo straddle rest (i + 1) acc'
+
+def solCoordHiLo (x₀ x₁ x₂ x₃ x₄ x₅ x₆ : Nat) : Nat × Nat :=
+  solCoordGo true [x₀, x₁, x₂, x₃, x₄, x₅, x₆] 0 (0, 0)
+
+def portSum (x₀ x₁ x₂ x₃ x₄ x₅ x₆ : Nat) : Nat :=
+  x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + x₄ * 2 ^ 224 + x₅ * 2 ^ 280 + x₆ * 2 ^ 336
+
+def portSplit (x₀ x₁ x₂ x₃ x₄ x₅ x₆ : Nat) : Nat × Nat :=
+  (portSum x₀ x₁ x₂ x₃ x₄ x₅ x₆ / 2 ^ 256, portSum x₀ x₁ x₂ x₃ x₄ x₅ x₆ % 2 ^ 256)
+
+/-- **FALSIFIER (rule W12) for the limb lemma.** With the straddle arm at IVC
+    `Halo2Verifier.sol:998-1002` deleted, a limb that crosses the 256-bit boundary is
+    lost: at `x4 = 2^32` with every other limb zero the coordinate is `2^280`, whose high
+    word is 1, and the mutant reports 0. So the lemma is about the contract as written. -/
+theorem limb_straddle_arm_is_load_bearing :
+    (portSplit 0 0 0 0 (2 ^ 32) 0 0).1 = 1 ∧
+      (solCoordGo false [0, 0, 0, 0, 2 ^ 32, 0, 0] 0 (0, 0)).1 = 0 := by
+  constructor
+  · have hv : portSum 0 0 0 0 (2 ^ 32) 0 0 = 2 ^ 256 := (Nat.pow_add 2 32 224).symm
+    rw [portSplit, hv, Nat.div_self (by norm_num : 0 < (2:Nat)^256)]
+  · simp [solCoordGo, accLimbBits]
+
+/-- **THE LIMB LEMMA (WID.11).** The contract's `(hi, lo)` reconstruction of a 7x56-bit
+    coordinate (`solCoordHiLo`: IVC `Halo2Verifier.sol:980-1009`, straddle arm included) is
+    the port's sum-and-split of the same seven limbs (`portSplit`: `loadAccCoordShifted`,
+    then `/ 2^256` and `% 2^256` as `decodeAccCoord` does it). Generic in the seven limbs;
+    the bounds are the limb width, which is what `checkAccCoordPacking` enforces in the
+    contract. -/
+theorem solCoordHiLo_eq_portSplit (x₀ x₁ x₂ x₃ x₄ x₅ x₆ : Nat)
+    (h₀ : x₀ < 2 ^ accLimbBits) (h₁ : x₁ < 2 ^ accLimbBits) (h₂ : x₂ < 2 ^ accLimbBits)
+    (h₃ : x₃ < 2 ^ accLimbBits) (h₄ : x₄ < 2 ^ accLimbBits) (h₅ : x₅ < 2 ^ accLimbBits)
+    (h₆ : x₆ < 2 ^ accLimbBits) :
+    solCoordHiLo x₀ x₁ x₂ x₃ x₄ x₅ x₆ = portSplit x₀ x₁ x₂ x₃ x₄ x₅ x₆ := by
+  have h₀' : x₀ < 2 ^ 56 := h₀
+  have h₁' : x₁ < 2 ^ 56 := h₁
+  have h₂' : x₂ < 2 ^ 56 := h₂
+  have h₃' : x₃ < 2 ^ 56 := h₃
+  have h₄' : x₄ < 2 ^ 56 := h₄
+  have h₅' : x₅ < 2 ^ 56 := h₅
+  have h₆' : x₆ < 2 ^ 56 := h₆
+  have e1 : x₁ * 2 ^ 56 < 2 ^ 112 :=
+    (Nat.mul_lt_mul_of_pos_right h₁' (by norm_num)).trans_eq (Nat.pow_add 2 56 56)
+  have e2 : x₂ * 2 ^ 112 < 2 ^ 168 :=
+    (Nat.mul_lt_mul_of_pos_right h₂' (by norm_num)).trans_eq (Nat.pow_add 2 56 112)
+  have e3 : x₃ * 2 ^ 168 < 2 ^ 224 :=
+    (Nat.mul_lt_mul_of_pos_right h₃' (by norm_num)).trans_eq (Nat.pow_add 2 56 168)
+  have e5 : x₅ * 2 ^ 24 < 2 ^ 80 :=
+    (Nat.mul_lt_mul_of_pos_right h₅' (by norm_num)).trans_eq (Nat.pow_add 2 56 24)
+  have e6 : x₆ * 2 ^ 80 < 2 ^ 136 :=
+    (Nat.mul_lt_mul_of_pos_right h₆' (by norm_num)).trans_eq (Nat.pow_add 2 56 80)
+  have p137 : (2 : Nat) ^ 137 ≤ 2 ^ 256 := by norm_num
+  set A := x₄ / 2 ^ 32 with hAdef
+  set r := x₄ % 2 ^ 32 with hrdef
+  have d4 : A ≤ x₄ := Nat.div_le_self _ _
+  have s0 : x₀ < 2 ^ 256 := Nat.lt_of_lt_of_le h₀' (by norm_num)
+  have s1 : x₀ + x₁ * 2 ^ 56 < 2 ^ 256 := by omega
+  have s2 : x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 < 2 ^ 256 := by omega
+  have s3 : x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 < 2 ^ 256 := by omega
+  have t1 : A < 2 ^ 256 := Nat.lt_of_le_of_lt d4 (by omega)
+  have t2 : A + x₅ * 2 ^ 24 < 2 ^ 256 := by omega
+  have t3 : A + x₅ * 2 ^ 24 + x₆ * 2 ^ 80 < 2 ^ 256 := by omega
+  have hfold : solCoordHiLo x₀ x₁ x₂ x₃ x₄ x₅ x₆
+      = (A + x₅ * 2 ^ 24 + x₆ * 2 ^ 80,
+          (x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + x₄ * 2 ^ 224) % 2 ^ 256) := by
+    simp [solCoordHiLo, solCoordGo, accLimbBits, t2, t3]
+    exact Nat.mod_eq_of_lt t3
+  have q0 : x₄ = 2 ^ 32 * A + r := (Nat.div_add_mod x₄ (2 ^ 32)).symm
+  have r4 : r < 2 ^ 32 := Nat.mod_lt _ (by norm_num : 0 < (2 : Nat) ^ 32)
+  have f1 : 2 ^ 32 * 2 ^ 224 = 2 ^ 256 := Nat.pow_add 2 32 224
+  have f1b : 2 ^ 32 * A * 2 ^ 224 = 2 ^ 256 * A := by
+    rw [Nat.mul_comm (2 ^ 32), Nat.mul_assoc, f1, Nat.mul_comm]
+  have f2 : 2 ^ 280 = 2 ^ 24 * 2 ^ 256 := by rw [← Nat.pow_add]
+  have f3 : 2 ^ 336 = 2 ^ 80 * 2 ^ 256 := by rw [← Nat.pow_add]
+  have lo3 : x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 < 2 ^ 224 := by omega
+  have rem : r * 2 ^ 224 ≤ (2 ^ 32 - 1) * 2 ^ 224 :=
+    Nat.mul_le_mul_right _ (Nat.le_pred_of_lt r4)
+  have rem2 : (2 ^ 32 - 1) * 2 ^ 224 = 2 ^ 256 - 2 ^ 224 := by
+    rw [Nat.sub_mul, f1]
+    omega
+  have loLt : x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + r * 2 ^ 224 < 2 ^ 256 := by
+    omega
+  have hlo : (x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + x₄ * 2 ^ 224) % 2 ^ 256
+      = x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + r * 2 ^ 224 := by
+    have h1 : x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + x₄ * 2 ^ 224
+        = 2 ^ 256 * A +
+            (x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + r * 2 ^ 224) := by
+      rw [q0, Nat.add_mul, f1b]
+      ring
+    rw [h1, Nat.add_comm (2 ^ 256 * A), Nat.add_mul_mod_self_left,
+        Nat.mod_eq_of_lt loLt]
+  have v : portSum x₀ x₁ x₂ x₃ x₄ x₅ x₆
+      = (x₀ + x₁ * 2 ^ 56 + x₂ * 2 ^ 112 + x₃ * 2 ^ 168 + r * 2 ^ 224) +
+          2 ^ 256 * (A + x₅ * 2 ^ 24 + x₆ * 2 ^ 80) := by
+    unfold portSum
+    rw [q0, Nat.add_mul, f1b, f2, f3]
+    ring
+  rw [hfold, portSplit, v, hlo,
+      Nat.add_mul_div_left _ _ (by norm_num : 0 < (2 : Nat) ^ 256),
+      Nat.add_mul_mod_self_left, Nat.div_eq_of_lt loLt, Nat.mod_eq_of_lt loLt]
+  exact Prod.ext (by omega) rfl
+
 /-- OBLIGATION (ALG, no Yul): the batched check is the contract's pairing equation on the two
-    batched inputs. `batchedCheck_eq` (`Accumulator.lean:1194`, proved) plus the orientation lift
-    `dualMsm_check_iff_contract` (`:1320`, proved); the same two pins `hn`, `hs` as without an
-    accumulator. This is the ALG half of the widened finalPairing row. -/
+    batched inputs. `batchedCheck_eq` (`Accumulator.lean:1194`, proved) plus the orientation
+    lift `dualMsm_check_iff_contract` (`:1320`, proved): the same two pins `hn`, `hs`, and
+    bilinearity in both G2 slots. This is the ALG half of the widened finalPairing row. -/
 theorem batchedCheck_iff_contract (R : Render p G₁ G₂ Gₜ) (H : Hash)
     (d : DualMSM (Fr p) G₁ G₂ Gₜ) (a : KzgAcc (Fr p) G₁ G₂ Gₜ) (g2 negSG2 : G₂)
     (hn : R.params.nG2Prepared = g2⁻¹) (hs : R.params.sG2Prepared = negSG2⁻¹)
@@ -547,8 +809,41 @@ theorem batchedCheck_iff_contract (R : Render p G₁ G₂ Gₜ) (H : Hash)
           (a.fullyCollapse accBases).1 (a.fullyCollapse accBases).2) d a accBases = true ↔
       Midfall.Lowering.contractPairingHolds (p := p) (Gₜ := Gₜ) g2 negSG2
         (batchedInputs R H d a).1 (batchedInputs R H d a).2 := by
-  sorry
-
+  -- α is the same scalar on both sides: `fullyCollapse` IS the pair of evaluated sides
+  -- (`Exec/Accumulator.lean:852-855`), and `batchedInputs` builds the two points from it.
+  set α : Fr p := alphaOf (p := p) H (vkDigestWordOf R) R.E.g1 d.left.eval d.right.eval
+    (a.lhs.eval accBases) (a.rhs.eval accBases) with hα
+  show batchedCheck R.params α d a accBases = true ↔
+      Midfall.Lowering.contractPairingHolds (p := p) (Gₜ := Gₜ) g2 negSG2
+        (d.left.eval * gsmul (p := p) α (a.lhs.eval accBases))
+        (d.right.eval * gsmul (p := p) α (a.rhs.eval accBases))
+  -- the two pins negate both G2 slots: that IS the orientation swap of
+  -- `dualMsm_check_iff_contract`, and it is applied to the arguments, never restated.
+  have hs' : (Additive.ofMul R.params.sG2Prepared : Additive G₂) = - Additive.ofMul negSG2 := by
+    rw [hs]
+    rfl
+  have hn' : (Additive.ofMul R.params.nG2Prepared : Additive G₂) = - Additive.ofMul g2 := by
+    rw [hn]
+    rfl
+  rw [batchedCheck_eq R.params d a accBases hWf α, hs', hn']
+  simp only [LinearMap.map_neg]
+  unfold Midfall.Lowering.contractPairingHolds
+  rw [show (Additive.ofMul (d.right.eval * gsmul (p := p) α (a.rhs.eval accBases)) : Additive G₁)
+        = Additive.ofMul d.right.eval + α • Additive.ofMul (a.rhs.eval accBases) from rfl,
+      show (Additive.ofMul (d.left.eval * gsmul (p := p) α (a.lhs.eval accBases)) : Additive G₁)
+        = Additive.ofMul d.left.eval + α • Additive.ofMul (a.lhs.eval accBases) from rfl,
+      LinearMap.map_add, LinearMap.map_add, LinearMap.add_apply, LinearMap.add_apply,
+      LinearMap.map_smul, LinearMap.map_smul, LinearMap.smul_apply, LinearMap.smul_apply]
+  -- the batched equation is the negation of the contract's, so the two `= 0` propositions agree.
+  refine ⟨fun h => ?_, fun h => ?_⟩
+  · rw [← neg_eq_zero]
+    convert h using 2
+    simp only [smul_add, smul_neg, neg_add]
+    abel
+  · rw [← neg_eq_zero]
+    convert h using 2
+    simp only [smul_add, smul_neg, neg_add, neg_neg, neg_zero]
+    abel
 /-! ## §6. The widened row families -/
 
 /-- How block `q` finishes when nothing failed, widened. -/
@@ -734,6 +1029,13 @@ theorem lowering_correct_of_W (R : Render p G₁ G₂ Gₜ) (product : PairingPr
 #print axioms leanAcceptsAcc_of_final          -- sorryAx: the tree's snapshotOf_prepareMsgs
 #print axioms leanFinalAcc_of_accepts          -- sorryAx: the tree's snapshotOf_prepareMsgs
 #print axioms evalRel_answers
-#print axioms accDecodes_of_leanAcceptsAcc     -- sorryAx: instWords_of_decoded
+#print axioms accDecodes_of_leanAcceptsAcc
+
+#print axioms cdWord_eq_bytesToNatBE
+#print axioms rawDecode_inst_eq
+#print axioms instWords_of_decoded
+#print axioms solCoordHiLo_eq_portSplit
+#print axioms limb_straddle_arm_is_load_bearing
+#print axioms batchedCheck_iff_contract
 
 end Midfall.LoweringW
