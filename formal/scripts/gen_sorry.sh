@@ -26,6 +26,28 @@
 # non-ASCII identifiers (G1, Gt), which made the register rewrite itself differently depending on who
 # ran it. Nothing is sliced from source text any more: the declaration column is a name the kernel
 # printed, so the hazard is gone rather than worked around.
+# FAILURE PATHS ARE GUARDED (GSHARD). This script was the instrument of a data loss at least three times
+# (OBJ.6, OBJ.7, and a near-miss on ST.6), because the scan ran inside a PROCESS SUBSTITUTION:
+#
+#     table=$(while read ... done < <(bash scripts/sorries.sh --env))
+#
+# The shell DISCARDS the exit status of a process substitution, and the `while read` loop over the dead
+# producer exits 0, so a `Report.lean` that failed - or that succeeded and printed no `SORRY ` line at
+# all - looked exactly like a tree with no sorries: an empty table, and the header plus nothing written
+# over a 79-row register. `set -euo pipefail` does not help: there is no pipe here and nothing non-zero
+# ever reached the shell. Three guards now stand between a broken scan and the file:
+#
+#   * a scan that exits non-zero, that yields ZERO rows, or whose lines do not all render as well-formed
+#     register rows aborts BEFORE SORRY.md is touched, exits 1, and names the cause;
+#   * a table with FEWER rows than the file on disk aborts unless `--allow-shrink` is passed, and both
+#     counts are printed either way: a card that closes a sorry shrinks the register by a few rows, a
+#     broken scan shrinks it by all of them;
+#   * the replacement is staged in a temp file in the same directory, re-read and re-counted from disk,
+#     and only then `mv`d into place, so an interrupted or partial run cannot leave a truncated register
+#     behind.
+#
+# The SUCCESS PATH IS UNCHANGED, and that is the acceptance test: on a healthy tree the bytes written are
+# the bytes already committed, so `git diff formal/SORRY.md` after a normal run must stay empty.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -180,23 +202,141 @@ owner() {
   esac
 }
 
-BT='`'
-table=$(while read -r decl mod kind status cone hash; do
-      printf '| %s | %s | %s | %s | %s | %s%s%s | %s |\n' \
-        "$decl" "$mod" "$kind" "$status" "$cone" "$BT" "$hash" "$BT" "$(owner "$decl")"
-    done < <(bash scripts/sorries.sh --env))
+# ---- options ---------------------------------------------------------------------------------------
+# `--allow-shrink` is the ONLY way this script will make the register shorter, and it has to be typed out
+# on purpose: a card that CLOSES a sorry knows it is closing one, and a scan that failed does not.
+ALLOW_SHRINK=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-shrink) ALLOW_SHRINK=1 ;;
+    -h|--help)
+      printf '%s\n' \
+        'usage: bash scripts/gen_sorry.sh [--allow-shrink]' \
+        '' \
+        'Regenerate the table in SORRY.md from `bash scripts/sorries.sh --env`. The table is never' \
+        'hand-edited: this script is the only thing that writes it.' \
+        '' \
+        '  --allow-shrink   accept a new table with FEWER rows than the file on disk - the normal case' \
+        '                   when a card closes sorries. Without it any shrink is refused and both counts' \
+        '                   are printed, so a scan that failed cannot overwrite a healthy register.' \
+        '  -h, --help       this text' \
+        '' \
+        'Every failure aborts BEFORE SORRY.md is touched and exits non-zero. The replacement is staged in' \
+        'a temp file in this directory, re-read and re-counted from disk, and only then moved into place.'
+      exit 0 ;;
+    *) printf 'gen_sorry.sh: unknown argument: %s (known: --allow-shrink, --help)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
+BT='`'
+
+# A register row, counted as checks.sh counts them: six plain columns, a 16-hex-digit statement hash,
+# then the owner. Keeping this pattern in step with the gate's is what makes the guards below mean what
+# the gate means - a row either of them cannot parse is a row that does not exist.
+ROW_RE='^\| [^ |]+ \| [^ |]+ \| [^ |]+ \| [^ |]+ \| [^ |]+ \| `([0-9a-f]{16})` \|'
+count_rows()      { grep -cE "$ROW_RE" "$1" || true; }   # grep -c prints 0 and exits 1 on a zero count
+count_rows_text() { printf '%s\n' "$1" | grep -cE "$ROW_RE" || true; }
+
+# ---- preconditions on the file we are about to replace ---------------------------------------------
 HEADER='| declaration | module | kind | status | cone | statement | removed by |'
 grep -q "^$HEADER$" SORRY.md || {
   echo 'gen_sorry.sh: SORRY.md has no table header row; restore it from git first' >&2
   exit 1
 }
+# Both anchors below are copied VERBATIM into the new file, so a missing anchor is not a formatting
+# detail: the copy would silently drop everything after it. Same class of loss, same refusal.
+grep -q '^## Upstream sorries' SORRY.md || {
+  echo 'gen_sorry.sh: SORRY.md has no "## Upstream sorries" section; restore it from git first' >&2
+  exit 1
+}
+old_rows=$(count_rows SORRY.md)
+
+# ---- the scan: its exit status is now the FIRST thing checked --------------------------------------
+# `if !` is the fix. The old form ran the scan in a process substitution, whose status the shell
+# discards, so a failed Report.lean was indistinguishable from a tree with no holes in it.
+if ! inventory=$(bash scripts/sorries.sh --env); then
+  echo 'gen_sorry.sh: ABORT - scripts/sorries.sh --env exited non-zero: lake env lean' >&2
+  echo 'gen_sorry.sh: scripts/Report.lean failed to build or to run (its verdicts are Lean errors on' >&2
+  echo 'gen_sorry.sh: purpose, so a real gate failure lands here). SORRY.md NOT WRITTEN - the register' >&2
+  echo "gen_sorry.sh: on disk is preserved byte-for-byte at $old_rows rows." >&2
+  exit 1
+fi
+
+table=$(while read -r decl mod kind status cone hash; do
+      # a blank line is not a declaration. The old form read to EOF and produced nothing; this one must
+      # not manufacture a row of empty columns out of an empty inventory.
+      [ -n "$decl" ] || continue
+      printf '| %s | %s | %s | %s | %s | %s%s%s | %s |\n' \
+        "$decl" "$mod" "$kind" "$status" "$cone" "$BT" "$hash" "$BT" "$(owner "$decl")"
+    done <<< "$inventory")
+
+new_rows=$(count_rows_text "$table")
+inv_rows=$(printf '%s\n' "$inventory" | grep -cv '^[[:space:]]*$' || true)
+
+# ---- guard 1: an empty inventory is never a register --------------------------------------------------
+# There is NO flag for this one, and that is deliberate: a zero-row table is what a failed scan looks
+# like, and no card in this plan is close enough to a sorry-free tree for the ambiguity to be worth
+# trading away. The day the last sorry is proved is a change to this guard, made in one line with the
+# register at one row, not a flag typed under pressure.
+if [ "$new_rows" -eq 0 ]; then
+  echo 'gen_sorry.sh: ABORT - the environment scan exited 0 but produced NO register rows' >&2
+  echo "gen_sorry.sh: ($inv_rows non-blank inventory line(s), none of them a well-formed row). Writing" >&2
+  echo "gen_sorry.sh: that would collapse SORRY.md from $old_rows rows to a header and nothing, which is" >&2
+  echo 'gen_sorry.sh: the data loss this script is known for. SORRY.md NOT WRITTEN; the file on disk is' >&2
+  echo "gen_sorry.sh: preserved byte-for-byte at $old_rows rows. First check whether the scan prints" >&2
+  echo "gen_sorry.sh: 'SORRY ' lines at all: bash scripts/sorries.sh --env | wc -l." >&2
+  exit 1
+fi
+
+# ---- guard 2: every inventory line must render as a well-formed row ---------------------------------
+if [ "$new_rows" -ne "$inv_rows" ]; then
+  echo "gen_sorry.sh: ABORT - the scan printed $inv_rows inventory line(s) but only $new_rows render as" >&2
+  echo 'gen_sorry.sh: well-formed register rows (six plain columns and a 16-hex-digit statement hash, the' >&2
+  echo "gen_sorry.sh: shape checks.sh parses). A row that does not parse would drop off the register" >&2
+  echo "gen_sorry.sh: silently, i.e. a sorry would stop being gated. SORRY.md NOT WRITTEN; the file is" >&2
+  echo "gen_sorry.sh: preserved at $old_rows rows." >&2
+  exit 1
+fi
+
+# ---- guard 3: never shrink without being told to -----------------------------------------------------
+if [ "$new_rows" -lt "$old_rows" ] && [ "$ALLOW_SHRINK" -ne 1 ]; then
+  echo "gen_sorry.sh: ABORT - refusing to SHRINK the register: $old_rows rows on disk, $new_rows rows" >&2
+  echo "gen_sorry.sh: from the scan, a loss of $((old_rows - new_rows)) rows. A card that legitimately" >&2
+  echo 'gen_sorry.sh: closes sorries shrinks by a few rows and says so: re-run with --allow-shrink. A' >&2
+  echo 'gen_sorry.sh: scan that half-failed shrinks by all of them, which is why this is a refusal and' >&2
+  echo 'gen_sorry.sh: not a warning. SORRY.md NOT WRITTEN; the file is preserved at '"$old_rows"' rows.' >&2
+  exit 1
+fi
+if [ "$new_rows" -lt "$old_rows" ]; then
+  printf 'gen_sorry.sh: --allow-shrink: register %s -> %s rows (-%s), as instructed.\n' \
+    "$old_rows" "$new_rows" "$((old_rows - new_rows))" >&2
+else
+  printf 'gen_sorry.sh: register rows: %s on disk -> %s from the scan.\n' "$old_rows" "$new_rows" >&2
+fi
+
+# ---- staged, verified, atomic replace ----------------------------------------------------------------
 head=$(sed -n "1,/^| declaration | module |/p" SORRY.md)
 tail=$(sed -n '/^## Upstream sorries/,$p' SORRY.md)
+# Staged in THIS directory so the mv below is a rename on one filesystem and never a half-copied file.
+tmp=$(mktemp "SORRY.md.new.XXXXXX") || {
+  echo 'gen_sorry.sh: ABORT - could not create a staging file next to SORRY.md' >&2
+  exit 1
+}
+trap 'rm -f "$tmp"' EXIT
+trap 'rm -f "$tmp"; exit 130' INT TERM
 {
   printf '%s\n' "$head"
   printf '%s\n' "$table"
   printf '\n%s\n' "$tail"
-} > SORRY.md.new
-mv SORRY.md.new SORRY.md
+} > "$tmp"
+# Re-read what actually reached the disk before it is allowed to BECOME the register: a partial write -
+# disk full, a signal, a shell that died mid-printf - must never be moved into place.
+if [ "$(count_rows "$tmp")" -ne "$new_rows" ] || ! grep -q "^$HEADER$" "$tmp"; then
+  echo "gen_sorry.sh: ABORT - the staged file came back with $(count_rows "$tmp") rows, not the $new_rows" >&2
+  echo 'gen_sorry.sh: the scan reported, or without its header row. SORRY.md NOT WRITTEN; the file is' >&2
+  echo "gen_sorry.sh: preserved at $old_rows rows." >&2
+  exit 1
+fi
+mv "$tmp" SORRY.md
+trap - EXIT
 printf '%s\n' "$table"
