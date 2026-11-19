@@ -126,6 +126,20 @@ owner() {
     Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop)
       echo 'V3 ROW.Q - T3.10 landed the contract (Midfall/Lowering/QuotientInterp.lean: QInterpRefines, ported from the evidence file GeneratorRows.lean:896 and adapted to D-P72 memory windows); this is route B one-off lemma: the emitted interpreter loop refines evalQuotientIdentity on one identity segment' ;;
 
+    # ---- WID.1: the widening STATEMENTS, landed in Midfall/LoweringV3/Widening.lean and
+    # Midfall/LoweringV3/WideningStages.lean (D-P72 clause 1: the class is widened for EVERY render,
+    # never at a fixture, so D-P71's rule is respected - the IVC instance is a test, WID.4/WID.7).
+    # None of the four is in the headline cone: nothing in the tree consumes `lowering_correctW` until
+    # RECON.3 routes the rows into it, so the cone is still the same ten leaves. ----
+    Midfall.LoweringW.lowering_correctW)
+      echo 'V3 WID.H - THE TARGET: the widened generic theorem, stated with the evaluator contract as a hypothesis (hQ : isExternal R -> EvalContracts R Q) because without it the statement is false for an arbitrary Q (ValidW.emptyBody + evalModel_emptyBody, both PROVED). WID.6 ties Q to the generated body, WID.17 proves EvalContracts, WID.H drops hQ; the decomposition is lowering_equivalenceW_of plus the row families SimContractsW/ProgContractsW, which RECON.3 discharges' ;;
+    Midfall.LoweringW.model_quotientMode)
+      echo 'V3 WID.H - generator fact (Artifacts.lean:534-537): the model externalises the quotient exactly when the flag says so. W12 witness: #eval at one embedded and one external model' ;;
+    Midfall.LoweringW.instWords_of_decoded)
+      echo 'V3 WID.11 - ALG, Lean only: on a calldata that decodes, the decoder instance words are the raw ones (a statement about decodeCalldata alone); premise of accDecodes_of_leanAcceptsAcc in the vkLoading progress row' ;;
+    Midfall.LoweringW.batchedCheck_iff_contract)
+      echo 'V3 WID.11 - ALG, no Yul: the batched check IS the contract pairing equation on the two batched inputs (batchedCheck_eq + dualMsm_check_iff_contract, same hn/hs pins as without an accumulator); the ALG half of the widened finalPairing row' ;;
+
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;

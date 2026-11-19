@@ -321,8 +321,23 @@ EVAL = re.compile(
 # card's one named hole (Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop, owned by ROW.Q), the
 # headline cone stayed at 10 leaves / 1 REFUTED / 0 VACUOUS, and the object fingerprint re-printed at
 # 14,109 tokens / 0x3149ae4f...bef176. The delta is +4/+1.
-EXPECTED_KAT_TOTAL = 1569
-EXPECTED_KAT_FILES = 115
+# WID.1 moved EXPECTED_KAT_TOTAL 1569 -> 1574 and EXPECTED_KAT_FILES 115 -> 116 deliberately: FIVE NEW
+# '#eval ... -- expect true' gates, all in the NEW Midfall/Instances/WideningTests.lean, which is the
+# test half of the card (rule W12: witnesses and falsifiers that are COMPUTATIONS, never proofs - D-P71
+# keeps the statements for every render and puts the fixture here). They are noTail_ok (the IVC encoding
+# is in the shape AccShape admits: no fixed-base tail, 12 payload words); noTail_refuses (four shapes the
+# class excludes, three of them shapes the generator refuses anyway); pointPair_noTail (the point-pair
+# kind is left out by accKind, not by noTail - the clause the memo's decision W-2 says may be struck);
+# decoder_accepts (the ported limb decoder rebuilds the Rust-made accumulator: both points non-identity,
+# both coordinates as computed outside Lean, both on y^2 = x^3 + 4, both carried scalars 1); and
+# decoder_refuses (the e2e test's two mutations plus three more, including the identity-flagged encoding
+# that decodes to 128 zero bytes - the reason WorldW carries idLaw). No gate was deleted, edited or
+# re-spelled. The sorry register moved 70 -> 74 by the card's four named holes (Midfall.LoweringW.
+# lowering_correctW / model_quotientMode / instWords_of_decoded / batchedCheck_iff_contract, owned by
+# WID.H, WID.H and WID.11), the headline cone stayed at 10 leaves / 1 REFUTED / 0 VACUOUS, and the object
+# fingerprint re-printed at 14,109 tokens / 0x3149ae4f...bef176. The delta is +5/+1.
+EXPECTED_KAT_TOTAL = 1574
+EXPECTED_KAT_FILES = 116
 
 # Only these shapes count as #eval output.
 #
