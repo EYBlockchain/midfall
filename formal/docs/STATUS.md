@@ -46,6 +46,48 @@ A: A0 = card PL.H0 · B: B1, B2 · C: C1 · D: none yet (D2 waits for B1, B2)
 `92d5a41` + `ccf6367` FALS2 (a cited falsifier was false, one OPEN; citations corrected) · `44d0acd`
 WID.11 (register 79 → 77) · `cd736ff` QEMIT3 — none moved a PROGRESS line
 (`#cone_sorries lowering_correct` = 2 throughout).
+## THE ORDER IS NOW WORK PACKAGES (D-P74 + D-P75, signed 2026-11-19) - read this before the V3 table
+
+**D-P75 amends EXECUTION-V2 sections 2-4, 7, W6, W8 and PLAN-V3 sections 7, 10.3. The order is the
+COMPLETION table at the top of `QUEUE.md`; the V3 table below it is now card REFERENCE, not the
+order.** Loop step 1 changes accordingly: take the first READY WP row for a free worker.
+
+- **Unit** = one WORK PACKAGE: one outcome on the PROGRESS report, absorbing the cards in its row.
+  **The absorbed cards are guidance; the WP's Accept is the contract.**
+- **Box**: 8 h for `strongest`, 4 h for `Sonnet`. **WIP commit every 45 min on the WP branch.** If
+  a worker's context runs out, re-brief it on the SAME WP from its last WIP commit.
+- **Concurrency: AT MOST TWO WORKERS**, each in its own **long-lived WARM** worktree, on different
+  tracks, or one track only if their files are disjoint. **Workers never edit `SORRY.md` or the KAT
+  pins by hand.**
+- **Progress is the report**: sorried leaves of each root (`lowering_correct`, `lowering_sound`,
+  then `lowering_correctW`, `generator_correct`), block rows INTEGRATED (of 7), exhibits PRESENT
+  (of 4), `ValidV3` inhabited at F1. **Every WP must name the line it moves. TWO CONSECUTIVE
+  MERGED WPs THAT MOVE NO LINE GO TO THE HUMAN.**
+- **D-P75 item 5 relief**: while `ValidV3` has no F1 inhabitant (until WP B4), W12's WITNESS for a
+  statement over `ValidV3` may be the named gap `gap_lowering_correct_witness_unexhibited`.
+  **The falsifier is still required and must be proved.**
+- **D-P74 route**: `lowering_correct` is proved through `lowering_equivalenceV3_of_rows`, NOT
+  through `lowering_correct_of_W` (which stays in the tree, unused by the root). **One row shape:
+  `BlockSim`/`BlockProgS` over `StageInv`; `StageBnd`, `BlockSimV3`, `BlockProgV3` and the lemmas
+  that only compare against them are DELETED.** ROOT, `#cone_report` and `verify.sh` key to
+  `lowering_correct`; the V2 fixture headline is reported RETIRED until PL.H deletes it.
+
+**WP STATE as of `548ce8b`: A0 (= PL.H0) is RUNNING in `/Users/julian/midfall-b` on `t/PL.H0`,
+8 h, strongest.** **A1, A2 and A3 are all `after A0` - nothing else can start until A0 merges.**
+A2 absorbs ST.13 and should resume from the preserved WIP `f71105d` on `t/ST.13` in
+`/Users/julian/midfall-c` (WARM, has `.lake`) - **do not re-derive that monotonicity chain, and
+do not trust its 'PROVED (ST.13)' comment: the build fails.**
+
+**MEASURED COSTS THAT BLOW WP BOXES - plan around all of them: a COLD worktree build is ~50 min**
+(Mathlib from source, no cache), **`checks.sh` is 13-35 min** and longer under contention, and
+**`ram_guard --limit 6G -- lake build` is KILLED (peak 11.79 GiB) leaving `.olean` files missing,
+which produces a FALSE red on the register - always plain `lake build`.** **A fresh worktree
+cannot pass `checks.sh` at all until the 4 untracked F1 fixture binaries
+(`proof.bin`/`calldata.bin`/`instance.be`) are copied in - `Calldata.lean:306-310` admits a fresh
+clone has always been red there. Seed them at worktree creation, not after.**
+
+---
+
 ## ST.13 - FAILED at round 142, work left on branch t/ST.13, NOT merged
 
 **`lake build` fails on `Midfall.Yul.Bridge`** despite a diff with zero sorries and a comment claiming
