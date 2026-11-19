@@ -15,7 +15,20 @@
     outside the cones ........ register 77 (o); V2 cone 10 / 1 REFUTED / 0 VACUOUS (c)
                                KAT 1621/117 (c, pin verified o); fingerprint 14,109/0x3149ae4f... (c)
     reference gate ........... nativeReplay_ok true, 21 checks, 0 failures (c, B2 interim, UNMERGED)
+    full verify.sh ......... KILLED, VERIFY_EXIT=143 SIGTERM (o) - NOT a pass
 
+**CORRECTION, and it is mine: the full `verify.sh` I ran after merging A0 was KILLED -
+`VERIFY_EXIT=143` (SIGTERM), not 0.** The background job reported "completed, exit code 0"
+because my wrapper's `echo` ran after `verify.sh` died; the log ends mid-`assert_axioms` output
+and never reaches `cone_report` / `sorry_sweep` / `block_coverage`. **Cause: I ran full
+`verify.sh` in the main tree while A3 was starting a ~50 min cold `lake build` in another
+worktree - the prompt's OPERATIONAL section says explicitly not to run two gates at once. I broke
+my own rule and then misread the wrapper exit.** A0 is not in doubt on the evidence that DOES
+exist (worker printed `lake build` green, `verify.sh --quick` exit 0, `checks.sh` exit 0 at its
+commit; I regenerated and cross-checked the register myself at 90 rows / 22 ROOT / 0 UNOWNED /
+1 REFUTED, frozen hashes verify) - **but the full-`verify.sh` PROGRESS block is still not sourced,**
+so it must be re-run with no other gate in flight before any number below is called a verify.sh
+copy.
 ## 2. In flight
 - **A0** (PL.H0) - /Users/julian/midfall-b - t/PL.H0 - since 17:55 - 8 h strongest
 - **B2** (reference gate) - /Users/julian/midfall-c - t/B2 - since 18:20 - 8 h strongest
