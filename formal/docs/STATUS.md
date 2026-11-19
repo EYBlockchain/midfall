@@ -81,6 +81,29 @@ land the gate artefact in the SAME commit as REF.5 Do step 2, definition-ising t
 Do not read a card's Needs and trust them. I asserted a fact about the tree from a card's prose, and a
 worker had to stop me.**
 
+
+**REF.5g FINAL, and it narrowed the remaining work to one file.** The gate's own words prove the five are
+live: unmodified `check_frozen_axioms.py` exits 0 printing `ok: D-P36a probe - holds_exhibited depends on
+exactly [Classical.choice, bls12_381Pairing, blsGT, blsGT_group, blsGT_module, blsGT_primeOrder,
+Quot.sound, propext] ... and 8 exhibit halves carry no sorryAx`; with the allow-list emptied it exits 1
+with `FROZEN STATEMENT AXIOMS BROKEN (5)`, one per constant.
+
+> **Measured: `holds_exhibited_noAxiom`, `holds_exhibited_C` and `pairingC` are ALL on the standard three.**
+> **`holds_exhibited` is the only theorem still pulling the five, and only because of an INSTANCE CHOICE at
+> `Instances/HoldsFinal.lean:57-58`.** **So the distance from this tree to an empty allow-list is one
+> instance, not a refactor.**
+
+**Corrected dependency set: SIX files, not the three on the card** - add `scripts/DoneTest.lean:41-43,
+66-68, 118-120` (three `#guard_msgs` fixtures, one pinning `ok (9 named, 1 native)`),
+`Midfall/Tools/ConeReport.lean:89-94`, and `docs/PLAN.md` section 1. **Paths are `formal/scripts/...`, not
+`scripts/...` from the repo root.** **Preserved artefacts: `/tmp/REF.5g-allowlist.patch` (44+/26-,
+`git apply --check --reverse` passes) and `/tmp/REF.5g-pending.md`, whose sections 4 and 6 hold the drafted
+registry-record change spanning `ObligationsGates.lean:650-693`+`:716` and
+`check_hypothesis_bundles.py:110,124-135,155` - deliberately NOT done, since a partial move reddens both
+the Python gate and `lake build`.** **Other gates it printed green: check_hypothesis_bundles (8 bundles /
+7 exhibited / 23 spec bundles), check_statement_fingerprints (375 fragments), verify.sh --quick with
+`assert_axioms lowering_correct` AND `lowering_sound` both `ok (4 named, 0 native)`.**
+
 ## 5. Last three merges
 - 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
 - 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed
