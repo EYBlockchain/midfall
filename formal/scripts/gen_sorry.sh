@@ -97,12 +97,49 @@ owner() {
     # and SIM.6's to discharge. The fourth obligation, twoOutcomesV3_of_valid, is PROVED and so has no
     # row: its cone leaves are the ST.10 and ST.12 holes above. Each row carries its W12 witness and
     # falsifier in Composition.lean section 5.
-    Midfall.LoweringV3.rejectsV3_of_sims)
-      echo 'V3 SIM.2 + SIM.6 - the fourteen staged simulation rows sequenced, plus the prefix row; the proof is the evidence rejects_of_sims (SoundnessV3.lean:822) over StageBnd' ;;
-    Midfall.LoweringV3.completeV3_of_progs)
-      echo 'V3 SIM.2 + SIM.6 - the seven staged progress rows sequenced, plus the prefix progress row; the proof is the evidence completeness_of_progs (SoundnessV3.lean:1210) re-gated on G1CodecHeadlineLaws' ;;
-    Midfall.LoweringV3.totalV3_of_stages)
-      echo 'V3 SIM.2 + SIM.6 + ST.13 - existence from the sequenced progress rows, then runBody_mono to upgrade the zero gas oracle of the rows to the arbitrary total oracle TotalV3 quantifies over' ;;
+    # ---- PL.H0 (D-P74): THE ROOT IS ONE TREE, SO THESE ARE THE ROOT LEAVES. ----
+    # rejectsV3_of_sims, completeV3_of_progs and totalV3_of_stages were RECON.2's three skeletons.
+    # PL.H0 PROVES the first two as glue and DELETES the third (BodyTotal quantifies over every
+    # calldata while ProgRowsV3 assumes LeanAccepts), so no owner row stands under those names any
+    # more. What the cone reads now is: fourteen row leaves (Rows.lean, one per block and direction),
+    # the two prefix rows (Stages.lean, SIM.6), and four totality leaves (Totality.lean, TOT.1).
+    Midfall.LoweringV3.vk_blockSim)
+      echo 'V3 GEN.1 (WP A3) - the vkLoading simulation row at BlockSim over StageInv (Rows.lean); evidence GeneratorRows.lean:1096 at the V3 reading' ;;
+    Midfall.LoweringV3.vk_blockProgS)
+      echo 'V3 GEN.1 (WP A3) - the vkLoading progress row at BlockProgS (Rows.lean); evidence GeneratorRows.lean:1103' ;;
+    Midfall.LoweringV3.tp_blockSim)
+      echo 'V3 ROW.TP (WP A6) - the transcriptParser simulation row (Rows.lean); children tp_computes / tp_agrees / tp_poison land with ROW.TP; evidence GeneratorRows.lean:817' ;;
+    Midfall.LoweringV3.tp_blockProgS)
+      echo 'V3 ROW.TP (WP A6) - the transcriptParser progress row (Rows.lean); evidence GeneratorRows.lean:830, leaf ROW.TP.10' ;;
+    Midfall.LoweringV3.lag_blockSim)
+      echo 'V3 T3.9 (WP A4) - the lagrange simulation row (Rows.lean); children loops a-e, HLP.1.b, lag_agrees, lag_poison; evidence GeneratorRows.lean:621' ;;
+    Midfall.LoweringV3.lag_blockProgS)
+      echo 'V3 T3.9 (WP A4) - the lagrange progress row, the only reader of CompleteSide (Rows.lean); evidence GeneratorRows.lean:628' ;;
+    Midfall.LoweringV3.pcs_blockSim)
+      echo 'V3 ROW.PCS (WP A10) - the pcs simulation row (Rows.lean); evidence GeneratorRows.lean:1013' ;;
+    Midfall.LoweringV3.pcs_blockProgS)
+      echo 'V3 ROW.PCS (WP A10) - the pcs progress row; decode half is ROW.PCS decode_exists (Rows.lean); evidence GeneratorRows.lean:1019' ;;
+    Midfall.LoweringV3.fp_blockSim)
+      echo 'V3 ROW.FP (WP A11) - the finalPairing simulation row (Rows.lean); children ec_pairing_sem, fp_pairing_algebra, fp_poison; evidence GeneratorRows.lean:1077' ;;
+    Midfall.LoweringV3.fp_blockProgS)
+      echo 'V3 ROW.FP (WP A11) - the finalPairing progress row (Rows.lean); evidence GeneratorRows.lean:1083' ;;
+    # tr_blockSim / tr_blockProgS have NO owner row: PL.H0 took the card's optional step-4 lift and
+    # PROVED both from TraceReturn.tr_sound_clean_noarm / tr_poison_walk_noarm / tr_blockProgress,
+    # with trRetMptr derived from ValidV3 (LoweringV3.returnMptr_of_valid). They left the register.
+    Midfall.LoweringV3.prefix_simV3)
+      echo 'V3 SIM.6 (WP A1) - prefix_sim (LoweringV2/Stages.lean:595) RESTATED over ValidV3 by PL.H0 Stop-if 2: ValidV3.toV2 fails on the program field (LoweringV3.programOk and LoweringV2.programOk are parallel copies, not defeq), so the V3 glue cannot spend the V2 row. Conclusion verbatim; only hR moves. Discharges the moment the programOk bridge lands.' ;;
+    Midfall.LoweringV3.prefix_progV3)
+      echo 'V3 SIM.6 (WP A1) - prefix_prog (LoweringV2/Stages.lean:612) RESTATED over ValidV3 by PL.H0 Stop-if 2, same reason and same verbatim conclusion as prefix_simV3.' ;;
+    Midfall.LoweringV3.gasFree_of_valid)
+      echo 'V3 TOT.1 (WP A12) - the program of a valid render executes no gas(): decidable scan GasFree (Totality.lean); evidence premise gap PG-GAS, GeneratorRows.lean:1260' ;;
+    Midfall.LoweringV3.runBody_gas_oblivious)
+      echo 'V3 TOT.1.a (WP A12) - a gas-free program has the same runs under every gas oracle; one Step induction in the shape of Bridge.Run_worldEq_of_noWriters (Totality.lean; evidence GeneratorRows.lean:1266)' ;;
+    Midfall.LoweringV3.block_live)
+      echo 'V3 TOT.1 (WP A12) - per-block existence from a boundary a run can actually be at (LivePre, Totality.lean); leaves TOT.1.b-h, one per block (evidence GeneratorRows.lean:1335)' ;;
+    Midfall.LoweringV3.prefix_live)
+      echo 'V3 TOT.1 with SIM.6 (WP A12/A1) - prefix existence: the ABI guard and the memory guard each revert or pass and both are runs (Totality.lean; evidence GeneratorRows.lean:1342)' ;;
+    Midfall.LoweringV2.prog_slices_decomp)
+      echo 'V3 ST.11 - the structural decomposition of R.prog into preBlock ++ slices, which run_split and run_join are proved from (Blocks.lean:234); the shared decomposition leaf of both roots' ;;
     # ---- SIM.2: the staged boundary and the staged contracts, landed in Midfall/LoweringV2/Stages.lean.
     # The two prefix rows are SIM.6's: SIM.2 lands the split form they hand over, the sequenced chains
     # they compose with, and the PROVED fit (whole_program_sim / whole_program_prog), so each hole is one

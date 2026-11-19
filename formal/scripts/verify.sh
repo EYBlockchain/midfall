@@ -23,11 +23,17 @@ cd "$(dirname "$0")/.."
 # ConeReport is a Lean file whose #imports_avoid / #cone_avoids / #cone_sorries commands log their
 # verdicts as `info` messages. `lake env lean` re-elaborates it, so the lines print even when the
 # build is cached and `lake build` would say nothing at all.
+# D-P74 item 3 re-keys the progress root to Midfall.LoweringV3.lowering_correct. That declaration
+# cannot be elaborated inside ConeReport.lean: ConeReport's own #imports_avoid gate reddens on
+# Midfall.Lowering.Accumulator, which LoweringV3/Widening.lean imports. So the V3 root's cone and its
+# axiom gate are printed by LoweringV3/GeneratorTheorem.lean, and cone_report runs BOTH files and
+# scans the joined output - the V2 cone checks stay, the assert they carried moves to the V3 root.
 cone_report() {
   local out
-  if ! out=$(lake env lean Midfall/Tools/ConeReport.lean 2>&1); then
+  if ! out=$( { lake env lean Midfall/Tools/ConeReport.lean 2>&1; \
+                lake env lean Midfall/LoweringV3/GeneratorTheorem.lean 2>&1; } ); then
     printf '%s\n' "$out"
-    echo 'verify.sh: ConeReport failed (lean exited non-zero)' >&2
+    echo 'verify.sh: ConeReport / GeneratorTheorem failed (lean exited non-zero)' >&2
     return 1
   fi
   if printf '%s\n' "$out" | grep -Eq 'imports_avoid: imports|: touches '; then
@@ -35,11 +41,14 @@ cone_report() {
     echo 'verify.sh: ConeReport reported a cone violation' >&2
     return 1
   fi
-  # The axiom half of DONE is ASSERTED by `#assert_axioms` in ConeReport.lean (review J-1, G-9);
-  # this requires the assertion to still be THERE, so deleting the line cannot turn it green.
+  # The axiom half of DONE is ASSERTED by `#assert_axioms` - in ConeReport.lean for the retired V2
+  # headline and in LoweringV3/GeneratorTheorem.lean for the V3 root (review J-1, G-9); this requires
+  # the assertion to still be THERE, so deleting the line cannot turn it green. The V3 root's
+  # assertion is the one with an EMPTY native list (D-P71's own gate).
   local want
   for want in 'imports_avoid: ok' \
-      'assert_axioms Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon: ok'; do
+      'assert_axioms Midfall.LoweringV3.lowering_correct: ok' \
+      'assert_axioms Midfall.LoweringV3.lowering_sound: ok'; do
     if ! printf '%s\n' "$out" | grep -Fq "$want"; then
       printf '%s\n' "$out"
       echo "verify.sh: ConeReport did not print '$want'" >&2

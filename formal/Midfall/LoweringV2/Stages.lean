@@ -1,10 +1,10 @@
 /-
   Midfall.LoweringV2.Stages
 
-  SIM.2 - THE STAGED BOUNDARY AND THE STAGED CONTRACTS. This is the vocabulary that RECON.2's three
-  sorried obligations quantify over: Composition.lean's rejectsV3_of_sims (:192), completeV3_of_progs
-  (:202) and totalV3_of_stages (:214) each name "the rows sequenced (SIM.2)" and "the prefix row
-  (SIM.6)" as their leaves. This file lands the boundary refinement (StageInv, with the BaseInv / Mirror /
+  SIM.2 - THE STAGED BOUNDARY AND THE STAGED CONTRACTS, AND NOW THE ONLY ROW SHAPE IN THE TREE
+  (D-P74 item 2). This is the vocabulary the V3 obligations quantify over: Composition.lean's
+  rejectsV3_of_sims and completeV3_of_progs - PROVED glue since PL.H0 - name "the rows sequenced
+  (SIM.2)" and "the prefix row (SIM.6)" as their leaves; conjunct 4 goes through Totality.lean. This file lands the boundary refinement (StageInv, with the BaseInv / Mirror /
   Agree clauses RECON.2 had to write out inline), the two per-block contracts (BlockSim, BlockProgS), the
   sequencing that turns seven rows into ONE whole-program contract, the run decomposition that puts a
   RunBody and a slice run in the same breath, and the two prefix leaves as REGISTERED holes.
@@ -21,14 +21,13 @@
   the card that fills rejectsV3_of_sims lives IN Composition.lean, and if Stages.lean imported
   Composition.lean that hole could never be filled in place - the same cycle ST.5 declined to rewire.
   The boundary-generic definitions below (exitSimAt / exitProgAt / BlockSimAt / BlockProgAt / MidAt and
-  the _of lemmas) are what buys the reuse instead: RECON.2's StageBnd, BlockSimV3 and BlockProgV3 are
-  INSTANCES of them, by delta reduction, with nothing restated. Five bridges were CHECKED at this
-  commit against a scratch file importing both this module and Midfall.LoweringV3.Composition, each closed
-  by the hypothesis alone: a BlockSimV3 row is a BlockSimAt row at (fun k V st => StageBnd R H vkAddr cd k
-  V st); likewise BlockProgV3 / BlockProgAt; slices_seq_sim_at applied to seven BlockSimV3 rows gives the
-  whole-program contract at StageBnd; slices_seq_prog_at applied to ProgRowsV3 gives the total one; and
-  StageInv drops to StageBnd by a four-field projection (landed below as stageInv_drops_to_bnd_form, which
-  is the half of it this file can state). The scratch is deliberately NOT landed: landing it would be the
+  the _of lemmas) are what buys the reuse instead. **D-P74 item 2 made this file's shape the ONLY row
+  shape**: PL.H0 re-pointed Midfall.LoweringV3.SimRowsV3 / ProgRowsV3 at BlockSim / BlockProgS and
+  DELETED RECON.2's StageBnd, BlockSimV3 and BlockProgV3, so the V3 composition consumes these
+  contracts directly and there is nothing left to bridge. The bridges were checked at the time against
+  a scratch file importing both this module and Midfall.LoweringV3.Composition, each closed by the
+  hypothesis alone; the four-field projection stageInv_drops_to_bnd_form below is the half of that
+  this file can still state. The scratch is deliberately NOT landed: landing it would be the
   V3 import this file must not have.
 
   WHAT THE CARD ASKED FOR AND IS NOT HERE, WITH THE REASON (card steps 1 and 4 predate RECON.2, which
@@ -88,8 +87,9 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   `LeanRaw k` (what the contract has established about the calldata bytes so far), `Mirror k`
   (memory regions that are verbatim copies of calldata sections - the D-5 clauses, which need no Lean
   value at all), and `Agree k` (for EVERY decoding, the Lean prefix at k exists and `Inv` holds for
-  it). RECON.2's `StageBnd` is this family with `BaseInv` and `Mirror` dropped: it writes the
-  `Agree` clause inline because the name did not exist yet. -/
+  it). RECON.2's deleted `StageBnd` was this family with `BaseInv` and `Mirror` dropped: it wrote
+  the `Agree` clause inline because the name did not exist yet. D-P74 item 2 retires it: the V3
+  bundles read `StageInv` itself. -/
 
 /-- The checkpoint whose `Inv` clauses mention no snapshot field. -/
 def baseCk : Checkpoint → Checkpoint
@@ -159,7 +159,7 @@ def Mirror (R : Render p G₁ G₂ Gₜ) (cd : Bytes) (st : EvmState) : Checkpoi
   | _ => True
 
 /-- The decode-relative half: for every decoding, the Lean prefix exists and `Inv` holds for it. This
-    is the clause RECON.2 wrote inline as the last conjunct of `StageBnd` (Composition.lean:85-87); it
+    is the clause RECON.2 wrote inline as the last conjunct of its (now deleted) `StageBnd`; it
     is the same proposition, named. -/
 def Agree (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes) (k : Checkpoint)
     {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
@@ -175,7 +175,7 @@ def StageInv (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Byte
 
 /-- **THE BOUNDARY SHAPE, GENERIC IN THE BOUNDARY PREDICATE.** Everything in sections 2 and 3 is proved
     over this, so ONE copy of the sequencing serves every boundary: `StageInv` here, and RECON.2's
-    `StageBnd` from the V3 side, with nothing restated. The `traceReturn` arm is boundary-free: it is
+    the V3 side's boundary, with nothing restated. The `traceReturn` arm is boundary-free: it is
     where the closed Lean stage leaves the program, which is the fact rejection reads. -/
 def exitSimAt (R : Render p G₁ G₂ Gₜ) (H : Hash) (_vkAddr : U256) (cd : Bytes)
     {c : ExternalCalls} {g : ExternalGas}
@@ -336,7 +336,7 @@ def Mid (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes) (k
 
 /-- What the whole slice list may end in: a revert, or ABI `true` together with the closed Lean stage.
     **THE LEAN FACT LEAVES THE PROGRAM HERE**, which is what the old `slices_seq_sound` dropped. It is
-    boundary-free, so the same `FinSim` closes the chain at `StageInv` and at `StageBnd`. -/
+    boundary-free, so the same `FinSim` closes the chain at every boundary this shape is spent at. -/
 def FinSim (R : Render p G₁ G₂ Gₜ) (H : Hash) (cd : Bytes)
     {c : ExternalCalls} {g : ExternalGas} (_V' : VEnv (Bridge.Dialect c g)) (st' : EvmState)
     (o : Outcome) : Prop :=
@@ -385,8 +385,8 @@ theorem blockSim_final_of {R : Render p G₁ G₂ Gₜ} {H : Hash} {vkAddr : U25
 
 /-- **SEQUENCING, SIMULATION, GENERIC IN THE BOUNDARY.** Seven rows compose to ONE contract for
     `R.slices`: from a boundary at `.start`, every run reverts or returns ABI `true` WITH
-    `LeanFinal`. This is the lemma `rejectsV3_of_sims` consumes: instantiated at RECON.2's
-    `StageBnd` it turns the seven `BlockSimV3` rows of `SimRowsV3` into a whole-program contract,
+    `LeanFinal`. This is the lemma `rejectsV3_of_sims` consumes: instantiated at `StageInv` it turns
+    the seven `BlockSim` rows of `SimRowsV3` into a whole-program contract,
     and the `LeanFinal` in `FinSim` is what `leanAccepts_of_final` (Stage.lean:426) turns back into
     `LeanAccepts`. -/
 theorem slices_seq_sim_at (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
@@ -466,10 +466,11 @@ theorem blockProg_step {R : Render p G₁ G₂ Gₜ} {q : Partial} {H : Hash} {v
   blockProg_step_of hq h
 
 /-- **SEQUENCING, PROGRESS (replaces `slices_seq_progress`), PROVED - BOTH HALVES, GENERIC IN THE
-    BOUNDARY.** This is the lemma `completeV3_of_progs` and `totalV3_of_stages` consume: instantiated
-    at `StageBnd` it turns the seven `BlockProgV3` rows of `ProgRowsV3` into one total contract
-    over `R.slices`, existence included - which is why `totalV3_of_stages` needs only `runBody_mono`
-    on top of it, not a second row bundle. -/
+    BOUNDARY.** This is the lemma `completeV3_of_progs` consumes: instantiated at `StageInv` it turns
+    the seven `BlockProgS` rows of `ProgRowsV3` into one total contract over `R.slices`, existence
+    included. Conjunct 4 does NOT come this way: `BodyTotal` quantifies over every calldata while
+    `ProgRowsV3` assumes `LeanAccepts`, so PL.H0 routes it through `totalV3_correct`
+    (LoweringV3/Totality.lean) and deletes `totalV3_of_stages`. -/
 theorem slices_seq_prog_at (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (H : Hash)
     (vkAddr : U256) (cd : Bytes)
     {B : Checkpoint → VEnv (Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
@@ -607,8 +608,8 @@ theorem prefix_sim (R : Render p G₁ G₂ Gₜ) (hR : R.Valid) (W : ExecEnv) (L
 
     REGISTERED HOLE. WITNESS: `whole_program_prog` below is PROVED. FALSIFIER: the same pair -
     `stageInv_start_not_vacuous` refuses a vacuous boundary, and the existence half is not free: the
-    zero gas oracle and the honest call relation are fixed here, which is why `totalV3_of_stages` needs
-    `runBody_mono` (ST.13) on top of the sequenced rows. -/
+    zero gas oracle and the honest call relation are fixed here. PL.H0 routes conjunct 4 through
+    `totalV3_correct` (LoweringV3/Totality.lean), which needs `prefix_live` and not this row. -/
 theorem prefix_prog (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : R.Valid)
     (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
     (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
@@ -640,7 +641,7 @@ theorem whole_program_sim (R : Render p G₁ G₂ Gₜ) (st₀ : EvmState) (H : 
   seq_final hp hs
 
 /-- **WITNESS FOR `prefix_prog` (W12): the progress leaves FIT**, existence half included - which is
-    what `CompleteV3` and `TotalV3` both need and what makes `totalV3_of_stages` a separate leaf. -/
+    what `CompleteV3` needs; `TotalV3` is a separate tree (LoweringV3/Totality.lean, PL.H0). -/
 theorem whole_program_prog (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (st₀ : EvmState)
     (H : Hash) (vkAddr : U256) (cd : Bytes)
     (hp : StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
@@ -709,8 +710,8 @@ theorem exitSim_refutes_normal_traceReturn (R : Render p G₁ G₂ Gₜ) (H : Ha
   exact absurd h.1 (by decide)
 
 /-- **FALSIFIER FOR `BlockProgS` (W12):** the progress post of the terminal block demands the HALT
-    with the ABI-true return; weaken it to "any outcome" and both `completeV3_of_progs` and
-    `totalV3_of_stages` become vacuously true of every render while concluding nothing. -/
+    with the ABI-true return; weaken it to "any outcome" and `completeV3_of_progs` becomes vacuously
+    true of every render while concluding nothing. -/
 theorem exitProg_refutes_normal_traceReturn (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
     (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) :
@@ -729,14 +730,12 @@ theorem stageInv_start_conjuncts (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAdd
       BaseInv R .start V st ∧ LeanRaw R cd .start ∧ Mirror R cd st .start :=
   ⟨h.1, h.2.1, h.2.2.1, h.2.2.2.1, h.2.2.2.2.1⟩
 
-/-- **THE PROJECTION THE V3 SIDE NEEDS, LANDED AS FAR AS THIS FILE MAY GO.** Drop `BaseInv` and
-    `Mirror` from `StageInv` and what is left is exactly RECON.2's `StageBnd`: `Frame`, the success bit,
-    `LeanRaw`, and the decode-relative `Agree` clause it wrote inline at Composition.lean:85-87. So
-    `StageInv` is a REFINEMENT of the boundary the headline reads, not a rival to it - which is what lets
-    the rows be proved against the richer boundary while the composition keeps reading the cheaper one.
-    The type as written here names only V2 constants on purpose: `StageBnd` lives in `LoweringV3`, and
-    this file may not import it (header). With the four fields below the V3-side bridge is
-    `⟨h.1, h.2.1, h.2.2.2.1, h.2.2.2.2.2⟩` against `StageBnd`, verified at this commit. -/
+/-- **THE FOUR-FIELD PROJECTION, KEPT AS A FACT ABOUT `StageInv` ITSELF.** Drop `BaseInv` and
+    `Mirror` from `StageInv` and what is left is `Frame`, the success bit, `LeanRaw` and the
+    decode-relative `Agree` clause - i.e. the cheaper boundary RECON.2 used to write as `StageBnd`,
+    deleted by D-P74 item 2. The projection is kept because it says how little of `StageInv` a caller
+    has to use, and RECON.3's corner reduction reads it. The type names only V2 constants on purpose:
+    this file may not import `LoweringV3` (header). -/
 theorem stageInv_drops_to_bnd_form (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
     (k : Checkpoint) {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
     (st : EvmState) (h : StageInv R H vkAddr cd k V st) :

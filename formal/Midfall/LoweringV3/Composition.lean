@@ -1,56 +1,47 @@
 /-
   Midfall.LoweringV3.Composition
 
-  RECON.2 - THE ONE COMPOSITION: the four V3 obligations from the staged rows.
+  PL.H0 (D-P74) - **THE ONE COMPOSITION, OVER THE ONE ROW SHAPE.**
 
-  THE HAZARD THIS FILE IS WRITTEN AGAINST. There is exactly ONE ValidV3 in the tree:
-  Midfall/LoweringV3/Statements.lean:1116, seven clauses - generated, inputs, program, noWriters,
-  env, payload, supported (RECON.1). The eighteen-clause text at
-  docs/plans/V3-evidence/lean/statements/StatementsV3.lean is the D-P67-strike FALLBACK and is NOT
-  imported here, and is not read by anything in this file. The line "#check @Midfall.LoweringV3.ValidV3.mk"
-  at the bottom prints the seven-field constructor: that is the machine-checked proof of this claim,
-  because over the fallback it prints eighteen fields with different names.
+  WHAT D-P74 CHANGED HERE. (1) The row bundles `SimRowsV3`/`ProgRowsV3` conclude SIM.2's
+  `BlockSim`/`BlockProgS` over `StageInv` (`Midfall/LoweringV2/Stages.lean`) - the shape every ROW
+  card proves - and NOT RECON.2's `BlockSimV3`/`BlockProgV3` over `StageBnd`. `StageBnd`,
+  `exitSimBnd`, `exitProgBnd`, `BlockSimV3` and `BlockProgV3` are DELETED (D-P74 item 2); the
+  `CompositionW.lean` lemmas that only compared against them went in the same commit. RECON.3 measured
+  the two boundaries as INCOMPARABLE and refused to re-point another card's deliverable; D-P74 makes
+  it this card's. (2) `lowering_equivalenceV3_of_rows` is now the route the root takes, and conjunct 4
+  comes from `totalV3_correct` (Totality.lean), not from `totalV3_of_stages`, which is deleted:
+  `BodyTotal` quantifies over EVERY calldata while `ProgRowsV3` assumes `LeanAccepts`.
 
-  WHAT "ONE COMPOSITION" MEANS. The V3 headline LoweringEquivalenceV3 (Statements.lean:1378) is four
-  obligations - TwoOutcomes (:553), RejectsV3 (:1413), CompleteV3 (:1422), TotalV3 (:1432) - and
-  lowering_equivalenceV3_of (:1442) already glues the four to the headline with no sorry. This file
-  supplies the FOUR WAYS IN, each stated ONCE, each taking ValidV3:
+  THE HAZARD THIS FILE IS WRITTEN AGAINST. There is exactly ONE `ValidV3` in the tree:
+  `Midfall/LoweringV3/Statements.lean:1116`, seven clauses - generated, inputs, program, noWriters,
+  env, payload, supported. The eighteen-clause text at
+  `docs/plans/V3-evidence/lean/statements/StatementsV3.lean` is the D-P67-strike FALLBACK and is not
+  imported here. `#check @Midfall.LoweringV3.ValidV3.mk` at the bottom prints the seven-field
+  constructor: that is the machine-checked proof of this claim.
 
-    1. twoOutcomesV3_of_valid  - PROVED, via twoOutcomes_of_scans (step 5: the scan route,
-       unconditional in the state; the entry-frame-guarded two_outcomes_of_exitShape route of the
-       evidence file is NOT ported, and tr_exit_any / quiet_init stay evidence-only leaves of it).
-    2. rejectsV3_of_sims       - SKELETON (step 4).
-    3. completeV3_of_progs     - SKELETON (step 4).
-    4. totalV3_of_stages       - SKELETON (conjunct 4, D-P64 (f)).
+  GLUE IS PROVED, NEVER SORRIED (EXECUTION-V2 §4, SKELETON). `rejectsV3_of_sims` and
+  `completeV3_of_progs` were RECON.2's skeletons; both are PROVED here from the sequenced rows, the
+  prefix rows and the two run decompositions, so the sorries now sit on the ROWS (Rows.lean), on the
+  two PREFIX rows (Stages.lean), on the four TOTALITY leaves (Totality.lean) and on the shared
+  scan/decomposition leaves - and nowhere else. A glue step that needed a fact no leaf supplied would
+  add a NAMED LEAF, never a hypothesis (D-P74's binding condition); none did.
 
-  lowering_equivalenceV3_of_rows then glues them, and it is the only V3 composition in the tree: the
-  old staged one, lowering_equivalence_of_stages, is deleted from the evidence file by this card
-  (step 6), and the V2 block-row composition lowering_equivalence_of_blocks is not restated here (the
-  card: "the old rows are not composed again").
+  THE CALADATA SIZE BOUND REACHES EVERY ROW: `Frame` (Blocks.lean:56) carries
+  `cdSize : cd.size < 2 ^ 256`, so every boundary built from it - `StageInv`, and through it
+  `BlockSim`/`BlockProgS` - carries the bound, and no row states it separately. `cdSize_falsifier`
+  is the exhibit.
 
-  THE CALLDATA SIZE BOUND REACHES EVERY ROW (step 2). Frame (Midfall/LoweringV2/Blocks.lean:56) now
-  carries cdSize : cd.size < 2 ^ 256, so every boundary predicate built from Frame - Clean, Poisoned,
-  exitOk, and the staged boundary StageBnd below - carries the bound, and no row states it separately.
-  That is section 6 property (iv): these facts enter through Frame, never as a free hypothesis.
-  cdSize_falsifier is the exhibit (step 1, W12).
+  THE PIN BUNDLE IS DISSOLVED: the evidence's `SimPins` had four fields; three are conjuncts of
+  `G1CodecHeadlineLaws` and the fourth is a conjunct of `ValidV3.program`
+  (`pins_from_valid_and_headlineLaws`, PROVED). No clause was added to `ValidV3` to get them.
 
-  THE PIN BUNDLE IS DISSOLVED (step 4). The evidence file's SimPins had four fields. Three are
-  conjuncts of G1CodecHeadlineLaws (compressedEncoderFirst, eipRoundtrip, toEip_one) and the fourth,
-  hasMultiPointSet R = true, is a conjunct of programOk and so a projection of ValidV3.program.
-  pins_from_valid_and_headlineLaws is that fact, PROVED. No clause was added to ValidV3 to get it.
-
-  THE ROWS ARE RE-GATED ON FOUR LAWS, NOT SEVEN (step 3). SimRowsV3 and ProgRowsV3 take
-  G1CodecHeadlineLaws R.E.g1 (four), never G1CodecLaws (seven). No V3 row needs a fifth law, so
-  D-P64's bundle does not grow; the seven-law demand survives only in the frozen V2 BlockProgress,
-  which this card does not touch.
-
-  W12/W13 DISCIPLINE. Each sorried obligation carries a WITNESS (its hypotheses are the right ones and
-  are jointly available - proved) and a FALSIFIER (a degenerate weakening exhibited false - proved).
-  None is refuted: the cone prints 1 REFUTED at baseline (poseidon_valid, a V2 fixture sorry) and this
-  card adds none. No native_decide occurs in this file, and the headline root
-  lowering_equivalence_poseidon does not import it.
+  W12/W13 DISCIPLINE. The V2 cone has exactly 1 REFUTED (`poseidon_valid`, a V2 fixture sorry); this
+  card adds none. No `native_decide` occurs in this file or in the cone of `lowering_correct`.
 -/
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.Totality
+import Midfall.LoweringV2.Stages
 import Midfall.Lowering.Stage
 import Midfall.Tools.ConeSorries
 set_option autoImplicit false
@@ -69,95 +60,80 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Module (ZMod p) (Additive G₁)] [Module (ZMod p) (Additive G₂)]
   [Module (ZMod p) (Additive Gₜ)] [P : AdmissiblePairing G₁ G₂ Gₜ]
 
-/-! ## §1. The staged boundary, over the SINGLE ValidV3 -/
+/-! ## §1. The two prefix rows AT THE V3 VALIDITY (the card's Stop-if 2, taken and reported) -/
 
-/-- **THE STAGED BOUNDARY.** The V3 form of the evidence file's StageInv (SoundnessV3.lean:556; the
-    card cites :539 - see the drift report), written with the vocabulary the built tree actually has:
-    Frame (which now carries cdSize), LeanRaw, Decoded and leanStage from Midfall/Lowering/Stage.lean
-    (SIM.1), and Inv. The evidence file splits Inv into BaseInv plus a snapshot half and adds a Mirror
-    clause; those two names do not exist in the tree - they are SIM.2's - so the snapshot half is
-    written here in full. This is a BOUNDARY PREDICATE, not a composition: SIM.2 lands BlockSim over
-    it and proves the rows, and RECON.2 is the card that fixes the shape the headline reads. -/
-def StageBnd (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256) (cd : Bytes)
-    (k : Checkpoint) {c : ExternalCalls} {g : ExternalGas}
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState) : Prop :=
-  Frame R H vkAddr cd V st ∧ VEnv.get V "success" = some (1 : U256) ∧ LeanRaw R cd k ∧
-    ∀ ms instW inst, Decoded R cd ms instW inst →
-      ∃ S, leanStage R H inst ms k = .ok S ∧
-        Midfall.Lowering.Inv (calls := c) (gas := g) R.E R.params k R.pv S V st
+/-! **WHY `ValidV3.toV2` (card step 2) IS NOT LANDED.** The field copy fails, and it fails on ONE
+    field: `h.program : LoweringV3.programOk R` is not the frozen `LoweringV2.programOk R`. The two
+    texts are the same SHAPE - `programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline
+    (R.prog 0 0)`, `LoweringV2/Statements.lean:905` against `LoweringV3/Statements.lean:1012`, and
+    `programOkCore`/`programOkB` are byte-identical modulo a comment line - but each module's copy
+    resolves its helper names inside its own namespace, so `LoweringV3.programOkB R = true` and
+    `LoweringV2.programOkB R = true` are NOT definitionally equal (measured at this commit:
+    `⌈fun (R) (h : LoweringV3.programOkB R = true) => (h : LoweringV2.programOkB R = true)⌉` is
+    rejected). Bridging them is the decidable-scan equivalence the RECON.1 cut-over never claimed to
+    prove; it is a card of its own, not a convenience, and PL.H0 does not weaken `ValidV3` or add a
+    clause to buy it. THE CARD'S OWN FALLBACK IS THEREFORE TAKEN (Stop-if 2): the two prefix rows,
+    which are sorried and so hide nothing, are RESTATED over `ValidV3`. They are named
+    `prefix_simV3` / `prefix_progV3` below, they differ from SIM.6's `prefix_sim` / `prefix_prog`
+    ONLY in the validity hypothesis, and each is discharged the moment the bridge above lands. -/
 
-/-- How block q finishes a soundness run: revert, or the staged boundary at q.pre.next, except
-    TraceReturn, which returns ABI true and hands out the closed Lean stage. -/
-def exitSimBnd (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : U256)
-    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
-    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop :=
-  match q with
-  | .traceReturn => o = .halt ∧ st'.halted = some (.ret, abiTrue) ∧ LeanFinal R H cd
-  | _ => o = .normal ∧ StageBnd R H vkAddr cd q.pre.next V' st'
+/-- **THE PREFIX ROW, SOUNDNESS SIDE, OVER `ValidV3`** - SIM.6's `prefix_sim`
+    (`Midfall/LoweringV2/Stages.lean:595`) restated at the V3 validity, exactly as PL.H0's Stop-if 2
+    prescribes. The conclusion is VERBATIM SIM.6's; only `hR` moves. LEAF (SIM.6, WP A1).
+    WITNESS: `gap_lowering_correct_witness_unexhibited`. FALSIFIER: `stageInv_start_not_vacuous` and
+    `finSim_refutes_empty` (Stages.lean:663, :692, PROVED), and `whole_program_sim` (:629, PROVED)
+    shows the post this leaves is the pre `slices_seq_sim` asks for. -/
+theorem prefix_simV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (W : ExecEnv) (Lyt : EVM.Layout)
+    (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
+    (c : ExternalCalls) (g : ExternalGas) :
+    StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.preBlock vkAddr)
+      (fun V st => V = [] ∧ st = st₀)
+      (splitPost (fun V st => Mid R H vkAddr cd .start V st)
+        (fun V' st' o => FinSim R H cd V' st' o)) := by
+  sorry
 
-/-- How block q finishes a progress run: the same, without the Lean fact (under LeanAccepts it is a
-    hypothesis, read off at the return). -/
-def exitProgBnd (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : U256)
-    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
-    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) (o : Outcome) : Prop :=
-  match q with
-  | .traceReturn => o = .halt ∧ st'.halted = some (.ret, abiTrue)
-  | _ => o = .normal ∧ StageBnd R H vkAddr cd q.pre.next V' st'
+/-- **THE PREFIX ROW, PROGRESS SIDE, OVER `ValidV3`** - SIM.6's `prefix_prog`
+    (`Midfall/LoweringV2/Stages.lean:612`) restated the same way; conclusion verbatim, only `hR`
+    moves. LEAF (SIM.6, WP A1). WITNESS: `gap_lowering_correct_witness_unexhibited`. FALSIFIER:
+    `stageInv_start_not_vacuous` (PROVED) plus `whole_program_prog` (Stages.lean:644, PROVED). -/
+theorem prefix_progV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
+    (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrame R W Lyt H cd st₀)
+    (hacc : LeanAccepts R H cd) :
+    StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
+      (R.scope _ _) (R.preBlock vkAddr)
+      (fun V st => V = [] ∧ st = st₀)
+      (fun _ _ V' st' o => o = .normal ∧ StageInv R H vkAddr cd .start V' st') := by
+  sorry
 
-/-- **THE STAGED SIMULATION CONTRACT OF ONE BLOCK, V3**: every run of the CLOSED slice R.slice q in
-    scope, from the staged boundary, reverts / exits at the next boundary / stays poisoned; from a
-    poisoned boundary it reverts or stays poisoned, never laundered. -/
-def BlockSimV3 (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : U256)
-    (c : ExternalCalls) (g : ExternalGas) (cd : Bytes) : Prop :=
-  StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.slice q)
-      (StageBnd R H vkAddr cd q.pre)
-      (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨ exitSimBnd R q H vkAddr cd V' st' o ∨
-        (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st')) ∧
-    StmtsContractAll (D := Bridge.Dialect c g) (R.scope c g) (R.slice q)
-      (fun V st => Poisoned R H vkAddr cd V st)
-      (fun _ _ V' st' o => (o = .halt ∧ Reverted st') ∨
-        (q ≠ .traceReturn ∧ o = .normal ∧ Poisoned R H vkAddr cd V' st'))
+/-! ## §2. The two row bundles: ONE row shape, four codec laws, pinned by ValidV3 -/
 
-/-- **THE STAGED PROGRESS CONTRACT OF ONE BLOCK, V3**, over the SAME boundary: total, under the honest
-    precompiles and the zero gas oracle. -/
-def BlockProgV3 (R : Render p G₁ G₂ Gₜ) (q : Partial) (H : Hash) (vkAddr : U256)
-    (product : PairingProduct) (cd : Bytes) : Prop :=
-  StmtsTotal (D := Bridge.Dialect (callsOf product) (ExternalGas.ofFun fun _ => 0))
-      (R.scope _ _) (R.slice q)
-      (StageBnd R H vkAddr cd q.pre)
-      (fun _ _ V' st' o => exitProgBnd R q H vkAddr cd V' st' o)
-
-/-! ## §2. The two row bundles: re-gated on FOUR codec laws (step 3), pinned by ValidV3 (step 4) -/
-
-/-- **THE STAGED SIMULATION ROWS, V3.** The evidence file's Render.SimContracts (SoundnessV3.lean:621;
-    the card cites :604) restated against the SINGLE ValidV3 and re-gated on the four-law bundle.
-    Three changes, one per card step:
-    * the validity hypothesis becomes ValidV3 R (step 4: the landed seven-clause text);
-    * the SimPins hypothesis disappears: its three codec fields are conjuncts of
-      G1CodecHeadlineLaws, which the headline already assumes, and its fourth is ValidV3.program
-      (step 4, and pins_from_valid_and_headlineLaws);
-    * the seven-law G1CodecLaws is not asked for anywhere (step 3). -/
+/-- **THE SIMULATION ROWS, V3.** One row per block and direction, at SIM.2's boundary: the seven
+    `BlockSim`s over `StageInv`. The binders are RECON.2's - `ValidV3`, the four-law codec bundle,
+    the precompile assumption, then `SoundSide` - and only the CONCLUSION moved, from `BlockSimV3`
+    over `StageBnd` to `BlockSim` over `StageInv` (D-P74 item 2). `q_blockSim`
+    (QuotientRows.lean:191) is already stated at this shape, which is what the re-pointing was for. -/
 def SimRowsV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
   ∀ (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
       (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product),
     ∀ (H : Hash) (vkAddr : U256) (cd : Bytes), SoundSide R H cd →
       ∀ (q : Partial) (g : ExternalGas),
-        BlockSimV3 R q H vkAddr (permissive (callsOf product)) g cd
+        BlockSim R q H vkAddr (permissive (callsOf product)) g cd
 
-/-- **THE STAGED PROGRESS ROWS, V3.** The evidence file's Render.ProgContracts (SoundnessV3.lean:1088;
-    the card cites :1065) restated the same way. RECON.1b-i had already put G1CodecHeadlineLaws there;
-    what this card changes is the validity hypothesis. -/
+/-- **THE PROGRESS ROWS, V3.** The seven `BlockProgS`s over `StageInv`, same binders, same
+    one-word change (`BlockProgV3` -> `BlockProgS`). -/
 def ProgRowsV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) : Prop :=
   ∀ (hR : ValidV3 R) (hcodec : G1CodecHeadlineLaws R.E.g1)
       (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product),
     ∀ (H : Hash) (vkAddr : U256) (cd : Bytes),
       LeanAccepts R H cd → CompleteSide R H cd →
-        ∀ q : Partial, BlockProgV3 R q H vkAddr product cd
+        ∀ q : Partial, BlockProgS R q H vkAddr product cd
 
-/-- **WITNESS THAT THE PIN BUNDLE IS DISSOLVED (step 4, PROVED).** Every field the evidence file's
-    SimPins carried is supplied by hypotheses the headline already has: three by the four-law codec
-    bundle, the fourth by ValidV3.program. The rows need no separate bundle, and no clause was added
-    to ValidV3 to get them. -/
+/-- **WITNESS THAT THE PIN BUNDLE IS DISSOLVED (PROVED).** Every field the evidence file's `SimPins`
+    carried is supplied by hypotheses the headline already has: three by the four-law codec bundle,
+    the fourth by `ValidV3.program`. The rows need no separate bundle, and no clause was added to
+    `ValidV3` to get them. -/
 theorem pins_from_valid_and_headlineLaws (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1) :
     (∀ Q : G₁, R.E.g1.ofCompressed? (R.E.g1.toCompressed Q) = some Q) ∧
@@ -166,89 +142,95 @@ theorem pins_from_valid_and_headlineLaws (R : Render p G₁ G₂ Gₜ) (hR : Val
   ⟨hcodec.compressedEncoderFirst, hcodec.eipRoundtrip, hcodec.toEip_one,
     hasMultiPointSet_of_valid hR⟩
 
-/-! ## §3. The four obligations, each stated ONCE against ValidV3 -/
+/-! ## §3. The four obligations: two PROVED here, one PROVED in Totality, one PROVED by scans -/
 
-/-- **OBLIGATIONS 1 AND 3: TWO OUTCOMES.** Card step 5: the scan route, unconditional in the state.
-    ValidV3.noWriters is frozen clause 10 and exitDiscipline_of_valid projects the exit scan out of
-    ValidV3.program, so both hypotheses of twoOutcomes_of_scans are read off the landed text - no
-    clause was added. PROVED from those two; its cone is exactly the two named leaves ST.10 and ST.12.
-    The entry-frame-guarded evidence route (two_outcomes_of_exitShape, SoundnessV3.lean:1038; the card
-    cites :1023) is NOT ported: it needs Render.ExitOk, which the single text does not carry, and its
-    leaves tr_exit_any and quiet_init stay in the evidence file. -/
+/-- **OBLIGATIONS 1 AND 3: TWO OUTCOMES.** The scan route, unconditional in the state.
+    `ValidV3.noWriters` is frozen clause 10 and `exitDiscipline_of_valid` projects the exit scan out
+    of `ValidV3.program`, so both hypotheses of `twoOutcomes_of_scans` are read off the landed text.
+    PROVED from those two; its cone is the named scan leaves ST.10 and ST.12. -/
 theorem twoOutcomesV3_of_valid (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) :
     TwoOutcomes R :=
   twoOutcomes_of_scans R hR.noWriters (exitDiscipline_of_valid hR)
 
-/-- **OBLIGATION 1, SOUNDNESS HALF: PROGRAM-LEVEL REJECTION, V3.** Card step 4's restatement.
-    SoundSide stays a hypothesis of the bundle (it excludes the logup-panic set, where the contract
-    accepts and Lean panics - the set on which the frozen rejects_of_not_accepts was FALSE), and the
-    conclusion is "not obs.isReturn", which with TwoOutcomes is the same as obs.isRevertOrHalt.
-
-    SKELETON. The proof is the evidence file's rejects_of_sims (SoundnessV3.lean:822): four lines once
-    the whole-program contract is available - factor the run at the prefix/slice boundary, spend the
-    sequenced rows, read LeanAccepts off the TraceReturn exit through LeanFinal. NAMED LEAVES: the
-    per-partial rows of SimRowsV3 sequenced (SIM.2) and the prefix row (SIM.6). The card's "Does NOT
-    need" puts any block proof out of scope, so the hole is registered here and not filled. -/
+/-- **OBLIGATION 1, SOUNDNESS HALF: PROGRAM-LEVEL REJECTION, V3. PROVED** (PL.H0 step 3a) - it was
+    RECON.2's skeleton. The proof is the evidence's `soundness_of_sims`
+    (SoundnessV3.lean:804) + `rejects_of_sims` (:824) at the ONE row shape: factor the committed run
+    at the prefix/slice boundary (`run_split`, from the ST.11 leaf `prog_slices_decomp`), spend the
+    sequenced `BlockSim` rows (`slices_seq_sim`) after the prefix row (`prefix_sim`, SIM.6's leaf,
+    reached through `ValidV3.toV2` and `EntryFrameV3.toV2`), close the chain with `seq_final`, and
+    read `LeanAccepts` off the TraceReturn exit through `leanAccepts_of_final`
+    (Lowering/Stage.lean:426). `hna` contradicts what a returning run therefore carries.
+    NO NEW LEAF WAS NEEDED: every fact the step asks for is supplied by a leaf the card names. -/
 theorem rejectsV3_of_sims (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : ValidV3 R) (hsim : SimRowsV3 R product) : RejectsV3 R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec hside hna g obs hobs hret
-  sorry
+  intro W Lyt H vkAddr cd st₀ g obs hdep hentry hpc hcodec hside hna hobs hret
+  obtain ⟨V', st', o, heq, hrun⟩ :=
+    run_split R vkAddr (permissive (callsOf product)) g st₀ obs hobs
+  have hall := seq_final
+    (prefix_simV3 R hR W Lyt H vkAddr cd st₀ hdep hentry.toV2
+      (permissive (callsOf product)) g)
+    (slices_seq_sim R H vkAddr cd (permissive (callsOf product)) g
+      (fun q => hsim hR hcodec hpc H vkAddr cd hside q g))
+  have hfin := hall [] st₀ ⟨rfl, rfl⟩ V' st' o hrun
+  rw [heq] at hret
+  rcases hfin with ⟨rfl, hrev⟩ | ⟨rfl, hh, hlean⟩
+  · exact absurd (isRevertOrHalt_of_Reverted st₀ st' hrev) (not_isRevertOrHalt_of_isReturn hret)
+  · exact hna (leanAccepts_of_final hlean)
 
-/-- **OBLIGATION 2: COMPLETENESS, V3.** Card step 4's restatement, re-gated on the four laws (step 3)
-    and reading ValidV3 instead of the frozen Valid. SKELETON: the proof is the evidence file's
-    completeness_of_progs (SoundnessV3.lean:1210; the card cites :1197) with the codec premise at the
-    four laws, which is all the rows of ProgRowsV3 ask for. NAMED LEAVES: the seven progress rows
-    (SIM.2) and the prefix progress row (SIM.6). -/
+/-- **OBLIGATION 2: COMPLETENESS, V3. PROVED** (PL.H0 step 3b) - it was RECON.2's skeleton. The proof
+    is the evidence's `completeness_of_progs` (SoundnessV3.lean:1212) at the ONE row shape: the
+    prefix progress row and the sequenced `BlockProgS` rows compose to one total contract
+    (`total_append`, `slices_seq_prog`); existence is `run_join`, and the view half is
+    `worldEq_of_runBody` (frozen clause 10 plus the ST.12 scan) against `run_split`. -/
 theorem completeV3_of_progs (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : ValidV3 R) (hprog : ProgRowsV3 R product) : CompleteV3 R product := by
   intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec hacc hcomp
-  sorry
-
-/-- **OBLIGATION 4: TOTALITY, V3.** Under the honest precompiles and ANY total gas oracle a run
-    exists, from every entry frame. D-P64 (f) generalises the frozen V2 BodyTotal over the frame; the
-    V3 statement is Statements.lean:1432. SKELETON: the same row bundle as obligation 2 plus
-    runBody_mono (ST.13) to move from the zero gas oracle the rows fix to the arbitrary total oracle
-    this obligation quantifies over - which is why this is a separate leaf and not a projection of
-    completeV3_of_progs. NAMED LEAVES: the progress rows (SIM.2), the prefix progress row (SIM.6),
-    runBody_mono (ST.13). -/
-theorem totalV3_of_stages (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
-    (hR : ValidV3 R) (hprog : ProgRowsV3 R product) : TotalV3 R product := by
-  intro W Lyt H vkAddr cd st₀ hdep hentry hpc hcodec
-  sorry
+  have htot := total_append
+    (prefix_progV3 R product hR W Lyt H vkAddr cd st₀ hdep hentry.toV2 hacc)
+    (slices_seq_prog R product H vkAddr cd
+      (fun q => hprog hR hcodec hpc H vkAddr cd hacc hcomp q))
+  refine ⟨?_, ?_⟩
+  · obtain ⟨V', st', o, hrun, _⟩ := htot.1 [] st₀ ⟨rfl, rfl⟩
+    exact ⟨_, run_join R vkAddr _ _ st₀ V' st' o hrun⟩
+  · intro obs hobs
+    obtain ⟨V', st', o, heq, hrun⟩ := run_split R vkAddr _ _ st₀ obs hobs
+    obtain ⟨ho, hh⟩ := htot.2 [] st₀ ⟨rfl, rfl⟩ V' st' o hrun
+    subst ho
+    rw [heq] at hobs ⊢
+    -- The view half comes from TwoOutcomes (proved from the two scans), NOT from
+    -- worldEq_of_runBody: that lemma wants the frozen R.Valid, which ValidV3 does not supply (§1).
+    rcases twoOutcomesV3_of_valid R hR vkAddr (callsOf product) (ExternalGas.ofFun fun _ => 0)
+        st₀ _ hobs with hview | ⟨hrh, _⟩
+    · exact hview
+    · have hret : (⟨committedState st₀ st', .halt⟩ : Obs).isReturn := by
+        refine ⟨abiTrue, ?_⟩
+        rw [halted_committedState]
+        exact hh
+      exact absurd hrh (not_isRevertOrHalt_of_isReturn hret)
 
 /-! ## §4. THE ONE COMPOSITION -/
 
 /-- **THE HEADLINE, V3, FROM THE FOUR OBLIGATIONS.** The only V3 composition in the tree. PROVED with
-    no sorry of its own: the gluing lemma lowering_equivalenceV3_of is already proved at
-    Statements.lean:1442, so every sorryAx in this theorem's cone comes from the four obligations
-    above and from nowhere else. -/
+    no sorry of its own: the gluing lemma `lowering_equivalenceV3_of` is already proved at
+    Statements.lean:1442, obligations 1-3 are proved above, and conjunct 4 is `totalV3_correct`
+    (Totality.lean:proved glue over four named leaves). Every `sorryAx` in this theorem's cone comes
+    from a ROW, a PREFIX row, a TOTALITY leaf or a shared scan/decomposition leaf. -/
 theorem lowering_equivalenceV3_of_rows (R : Render p G₁ G₂ Gₜ)
     (product : PairingProduct) (hR : ValidV3 R) (hsim : SimRowsV3 R product)
     (hprog : ProgRowsV3 R product) : LoweringEquivalenceV3 R product :=
   lowering_equivalenceV3_of R product (twoOutcomesV3_of_valid R hR)
     (rejectsV3_of_sims R product hR hsim) (completeV3_of_progs R product hR hprog)
-    (totalV3_of_stages R product hR hprog)
+    (totalV3_correct R product hR)
 
 /-! ## §5. WITNESSES AND FALSIFIERS (W12) -/
 
-/-- **THE PADDED-CALLDATA FALSIFIER (card step 1).** The bound cd.size < 2 ^ 256 is not decoration:
-    the vkLoading row of the staged simulation contract is FALSE without it. The mechanism, exhibited
-    decidable and with no giant value built:
-
-    * the EVM sees the calldata length only as a WORD - calldatasize is
-      BitVec.ofNat 256 st.env.calldata.length (EVMExec.lean:792) - so padding by exactly 2 ^ 256 zero
-      bytes leaves calldatasize, and hence every calldataload and calldatacopy the program performs,
-      unchanged: conjunct (1);
-    * the Lean decoder compares cd.size in Nat (Calldata.lean:341), so the same padding trips its
-      length guard and it REJECTS the padded call although the frame cannot tell the two calls apart:
-      conjunct (2) says the two views disagree at exactly this length;
-    * conjunct (3) is the negation about the statement shape the card asks for: the inference "the
-      frame's word view of the length determines the decoder's Nat view" is FALSE, because a length
-      that is 0 to the frame and 2 ^ 256 to the decoder exists.
-
-    Frame.cdSize is what refuses to admit such a frame, so every row built on Frame - Clean, Poisoned,
-    exitOk, StageBnd - inherits the refusal. That is the Goal's "the calldata size bound reaches every
-    row", and it is why no row had to state the bound itself. -/
+/-- **THE PADDED-CALADATA FALSIFIER.** The bound `cd.size < 2 ^ 256` is not decoration: the vkLoading
+    row of the staged simulation contract is FALSE without it. The EVM sees the calldata length only
+    as a WORD (`calldatasize` is `BitVec.ofNat 256 st.env.calldata.length`, EVMExec.lean:792), so
+    padding by exactly 2 ^ 256 zero bytes leaves every `calldataload`/`calldatacopy` unchanged,
+    while the Lean decoder compares `cd.size` in `Nat` (Calldata.lean:341) and REJECTS the padded
+    call. `Frame.cdSize` is what refuses such a frame, so every row built on `Frame` - `Clean`,
+    `Poisoned`, `exitOk`, `StageInv` - inherits the refusal. -/
 theorem cdSize_falsifier :
     (BitVec.ofNat 256 (2 ^ 256) = 0) ∧
     ((2 ^ 256 : ℕ) ≠ 0 ∧ (2 ^ 256) % 2 ^ 256 = 0) ∧
@@ -257,56 +239,43 @@ theorem cdSize_falsifier :
   intro h
   exact absurd (h rfl) (by decide : (2 ^ 256 : ℕ) ≠ 0)
 
-/-- **WITNESS FOR OBLIGATION 1 (W12): the row postcondition carries the Lean half, so the hypotheses
-    are the right shape and are reachable.** The TraceReturn arm of exitSimBnd hands out LeanFinal -
-    the calldata decodes and the closed Lean stage exists - which is the fact the rejection conclusion
-    needs: rejectsV3_of_sims is proved by contradicting hna with it, via the tree lemma
-    leanAccepts_of_final that the evidence file uses at SoundnessV3.lean:819. PROVED, and it is the
-    projection the composition will actually use, which is what "the hypotheses hold together" means
-    here: nothing in the bundle is unreachable from ValidV3. -/
-theorem exitSimBnd_carries_the_lean_half (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+/-- **WITNESS FOR THE SIMULATION SIDE (W12, PROVED): the row postcondition carries the Lean half.**
+    The TraceReturn arm of SIM.2's `exitSim` hands out `LeanFinal` - the calldata decodes and the
+    closed Lean stage exists - which is exactly the fact `rejectsV3_of_sims` spends through
+    `leanAccepts_of_final`. So the bundle is reachable from `ValidV3` and the hypotheses are the
+    right shape. (RECON.2's twin over `exitSimBnd` went with `StageBnd`.) -/
+theorem exitSim_carries_the_lean_half (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
     (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState)
-    (h : exitSimBnd R .traceReturn H vkAddr cd V' st' .halt) : LeanFinal R H cd := h.2.2
+    (h : exitSim R .traceReturn H vkAddr cd V' st' .halt) : LeanFinal R H cd := h.2.2
 
-/-- **FALSIFIER FOR OBLIGATION 1 (W12): the simulation rows are not satisfied by a fall-through.** If
-    the TraceReturn arm of exitSimBnd were weakened to allow a NORMAL exit - the v1 defect, a contract
-    a stuck or empty program satisfies - then the bundle would be trivially satisfiable while the
-    rejection conclusion stays open. Exhibited false: the traceReturn post refuses .normal outright. -/
-theorem exitSimBnd_refutes_normal_traceReturn (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
-    (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
-    (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) :
-    ¬ exitSimBnd R .traceReturn H vkAddr cd V' st' .normal := by
-  intro h
-  exact absurd h.1 (by decide)
-
-/-- **WITNESS FOR OBLIGATIONS 2 AND 4 (W12): the hypotheses hold together.** ProgRowsV3 asks of the
-    render exactly three things - ValidV3, the four-law codec bundle, the precompile assumption - and
-    all three are hypotheses of the headline itself (Statements.lean:1379-1381), so the bundle adds no
-    premise the conclusion does not already carry and the two cannot be jointly contradictory while the
-    headline is satisfiable. PROVED as the projection the composition uses. -/
+/-- **WITNESS FOR OBLIGATIONS 2 AND 4 (W12, PROVED): the hypotheses hold together.** `ProgRowsV3`
+    asks of the render exactly three things - `ValidV3`, the four-law codec bundle, the precompile
+    assumption - and all three are hypotheses of the headline itself, so the bundle adds no premise the
+    conclusion does not already carry. Re-pointed at `BlockProgS` with the bundles. -/
 theorem progRows_reach_a_row (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
     (hR : ValidV3 R) (hprog : ProgRowsV3 R product)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product)
     (H : Hash) (vkAddr : U256) (cd : Bytes) (hacc : LeanAccepts R H cd)
-    (hcomp : CompleteSide R H cd) : ∀ q : Partial, BlockProgV3 R q H vkAddr product cd :=
+    (hcomp : CompleteSide R H cd) : ∀ q : Partial, BlockProgS R q H vkAddr product cd :=
   hprog hR hcodec hpc H vkAddr cd hacc hcomp
 
 /-- **FALSIFIER FOR OBLIGATIONS 2 AND 4 (W12): the progress rows are not satisfied by a program that
     falls off the end.** The progress post of the TraceReturn block demands a HALT with the ABI-true
     return; weaken it to "any outcome" and both obligations become vacuously true of every render while
-    concluding nothing. Exhibited false at the statement shape, decidable. -/
-theorem exitProgBnd_refutes_fallthrough (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
+    concluding nothing. PROVED at SIM.2's own `exitProg` - `exitProg_refutes_normal_traceReturn`,
+    Stages.lean:714 - which is the reason RECON.2's `exitProgBnd_refutes_fallthrough` retired with
+    `exitProgBnd` rather than being restated a second time. -/
+theorem exitProg_refutes_fallthrough (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr : U256)
     (cd : Bytes) {c : ExternalCalls} {g : ExternalGas}
     (V' : VEnv (Bridge.Dialect c g)) (st' : EvmState) :
-    ¬ exitProgBnd R .traceReturn H vkAddr cd V' st' .normal := by
-  intro h
-  exact absurd h.1 (by decide)
+    ¬ exitProg R .traceReturn H vkAddr cd V' st' .normal :=
+  exitProg_refutes_normal_traceReturn R H vkAddr cd V' st'
 
-/-- **WITNESS FOR THE SCAN PAIR (W12): the two hypotheses of twoOutcomes_of_scans hold together at an
-    actual block**, so obligation 1/3 is not stated over an uninhabitable pair. PROVED by decide at
-    the same toy block exitDiscipline_witness uses. -/
+/-- **WITNESS FOR THE SCAN PAIR (W12): the two hypotheses of `twoOutcomes_of_scans` hold together at
+    an actual block**, so obligation 1/3 is not stated over an uninhabitable pair. PROVED by decide at
+    the same toy block `exitDiscipline_witness` uses. -/
 theorem twoOutcomes_hypotheses_together :
     ∃ (b : Block EVM.Op), NoWriters b ∧ ExitDiscipline b :=
   ⟨yul% { if iszero(calldataload(0)) { mstore(0, 7) revert(0, 4) }
@@ -314,12 +283,11 @@ theorem twoOutcomes_hypotheses_together :
            return(4096, 32) },
     ⟨⟨16, by decide⟩, exitDiscipline_witness⟩⟩
 
-/-! ## §6. What M3's exit gate consumes: the leaf lists, and the landed-text check -/
+/-! ## §6. Cone lists and axiom prints -/
 
 #cone_sorries Midfall.LoweringV3.twoOutcomesV3_of_valid
 #cone_sorries Midfall.LoweringV3.rejectsV3_of_sims
 #cone_sorries Midfall.LoweringV3.completeV3_of_progs
-#cone_sorries Midfall.LoweringV3.totalV3_of_stages
 #cone_sorries Midfall.LoweringV3.lowering_equivalenceV3_of_rows
 
 /-! **THE LANDED-TEXT PROOF.** Seven fields, and they are the landed ones: generated, inputs, program,
@@ -327,22 +295,20 @@ theorem twoOutcomes_hypotheses_together :
     arity and different names. -/
 #check @Midfall.LoweringV3.ValidV3.mk
 
-/-! One obligation's hypothesis as landed: rejectsV3_of_sims's first premise is the seven-clause
-    ValidV3 of LoweringV3/Statements.lean:1116, and its program clause is the V3 programOk bundle. -/
+-- One obligation's hypothesis as landed: rejectsV3_of_sims's first premise is the seven-clause
+--    ValidV3 of LoweringV3/Statements.lean:1116, and its program clause is the V3 programOk bundle.
 #check fun (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) => hR.program
 
--- The three boundary definitions are DEFINITIONS, not holes: none of them uses sorryAx, which is why
--- the cone lists above name only the five obligations and nothing of RECON.2's own scaffolding.
-#print axioms Midfall.LoweringV3.StageBnd
-#print axioms Midfall.LoweringV3.exitSimBnd
-#print axioms Midfall.LoweringV3.BlockSimV3
-
-#print axioms Midfall.LoweringV3.twoOutcomesV3_of_valid
+#print axioms Midfall.LoweringV3.prefix_simV3
+#print axioms Midfall.LoweringV3.prefix_progV3
 #print axioms Midfall.LoweringV3.rejectsV3_of_sims
 #print axioms Midfall.LoweringV3.completeV3_of_progs
-#print axioms Midfall.LoweringV3.totalV3_of_stages
 #print axioms Midfall.LoweringV3.lowering_equivalenceV3_of_rows
+#print axioms Midfall.LoweringV3.twoOutcomesV3_of_valid
 #print axioms Midfall.LoweringV3.cdSize_falsifier
 #print axioms Midfall.LoweringV3.pins_from_valid_and_headlineLaws
+#print axioms Midfall.LoweringV3.exitSim_carries_the_lean_half
+#print axioms Midfall.LoweringV3.exitProg_refutes_fallthrough
+#print axioms Midfall.LoweringV3.progRows_reach_a_row
 
 end Midfall.LoweringV3

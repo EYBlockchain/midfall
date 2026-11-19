@@ -46,8 +46,8 @@
       base (SimRowsV3 / ProgRowsV3, Composition.lean:140, :150)     widened (SimContractsW /
                                                                      ProgContractsW,
                                                                      WideningStages.lean:586, :620)
-      boundary  StageBnd (four fields)                              StageInvW (seven: + BaseInvW,
-      per-block BlockSimV3 / BlockProgV3                            Mirror, AccInv, quotientEvaluator)
+      boundary  StageInv (six fields, after D-P74)                  StageInvW (eight: + BaseInvW,
+      per-block BlockSim / BlockProgS                               Mirror, AccInv, quotientEvaluator)
       calls     callsOf product                                     BlockSimW / BlockProgSW
       validity  ValidV3 R (scope clause SupportedV2: has noAcc)     callsW R product qAddr evalRel
       acceptance LeanAccepts R H cd                                ValidW R Q (scope SupportedW: NO
@@ -70,14 +70,15 @@
     THE WIDENED SHAPE, so that nothing is restated when the two new arms are added"). Section 1 proves
     that at the corner a widened row IS SIM.2's row, and section 2 lands the corner consequence. WHAT
     SECTION 2 ALSO REPORTS IS THIS CARD'S MOST IMPORTANT OUTPUT: a widened row does NOT reach RECON.2's
-    SimRowsV3 / ProgRowsV3. Those conclude BlockSimV3 / BlockProgV3 at RECON.2's own FOUR-FIELD StageBnd.
-    As a PREDICATE StageBnd is WEAKER than StageInvW (it drops BaseInvW and Mirror), but a contract
-    "every run from pre ends in post" moves one way in the pre and the other in the post, so a WEAKER
-    predicate makes a STRONGER contract: BlockSimV3 quantifies over more starting states than BlockSimW
-    and asks less of each. The two are therefore INCOMPARABLE - neither implies the other, and no
-    transport lemma exists between them to be landed. So "stated once" costs one more thing than the
-    card knew: RECON.2's two bundles have to be read at SIM.2's StageInv boundary - which §1 proves IS
-    the widened boundary at the corner - for a widened proof to discharge the V3 headline. That is a
+    SimRowsV3 / ProgRowsV3. Those concluded BlockSimV3 / BlockProgV3 at RECON.2's own FOUR-FIELD
+    StageBnd. As a PREDICATE StageBnd is WEAKER than StageInvW (it drops BaseInvW and Mirror), but a
+    contract "every run from pre ends in post" moves one way in the pre and the other in the post, so a
+    WEAKER predicate makes a STRONGER contract: BlockSimV3 quantified over more starting states than
+    BlockSimW and asked less of each. The two were therefore INCOMPARABLE - neither implies the other,
+    and no transport lemma existed to be landed. So "stated once" costs one more thing than the card
+    knew: RECON.2's two bundles have to be read at SIM.2's StageInv boundary - which §1 proves IS
+    the widened boundary at the corner - for a widened proof to discharge the V3 headline. **D-P74
+    item 2 made exactly this re-pointing PL.H0's deliverable, and it is landed.** That is a
     decision about another card's deliverable, and this card reports it rather than making it
     unilaterally. One PROOF per row; two STATEMENTS because there are two headlines, and the gap between
     the widened headline and the V3 one is §2's finding, not §1's.
@@ -182,18 +183,10 @@ theorem poisonedW_iff (R : Render p G₁ G₂ Gₜ) (H : Hash) (vkAddr qAddr : U
     PoisonedW R H vkAddr qAddr cd V st ↔ Poisoned R H vkAddr cd V st :=
   ⟨fun h => h.1, fun hp => ⟨hp, fun he => absurd he hext⟩⟩
 
-/-- **PIECE 3, the boundary half.** StageInvW reaches RECON.2's StageBnd at the corner: the widened
-    invariant is V3's StageInv (stageInvW_iff_V3), and StageInv drops to StageBnd
-    (stageInv_drops_to_bnd_form, SIM.2's four-field projection). PROVED by composing the two. -/
-theorem stageInvW_to_StageBnd (R : Render p G₁ G₂ Gₜ) (hacc : R.cfg.accumulator = none)
-    (hq : R.model.quotientExternal = none) (H : Hash) (vkAddr qAddr : U256) (cd : Bytes)
-    (k : Checkpoint) {c : ExternalCalls} {g : ExternalGas} (V : VEnv (Bridge.Dialect c g))
-    (st : EvmState) (h : StageInvW R H vkAddr qAddr cd k V st) :
-    LoweringV3.StageBnd R H vkAddr cd k V st := by
-  obtain ⟨hf, hs, hlr, hagr⟩ :=
-    stageInv_drops_to_bnd_form R H vkAddr cd k V st
-      ((stageInvW_iff_V3 R hacc (not_isExternal_of_embedded R hq) H vkAddr qAddr cd k V st).mp h)
-  exact ⟨hf, hs, hlr, hagr⟩
+-- PIECE 3, the boundary half, is stageInvW_iff_V3 ALONE (WideningStages.lean, PROVED). RECON.2's
+-- StageBnd and the projection stageInvW_to_StageBnd that reached it were DELETED by PL.H0 under
+-- D-P74 item 2: the V3 bundles now read SIM.2's StageInv directly, so the drop-to-four-fields step
+-- has no consumer left. Nothing else in this file used it.
 
 /-- **PIECE 4, the simulation exit.** At the corner the widened clean exit of block q is SIM.2's, both
     ways: the traceReturn arms differ only by LeanFinalAcc vs LeanFinal (piece 1) and the other arms
@@ -316,21 +309,15 @@ theorem blockProgSW_iff_blockProgS (R : Render p G₁ G₂ Gₜ) (hacc : R.cfg.a
       exact (exitProgW_iff_exitProg R hacc hq q H vkAddr qAddr cd V' st' o).mpr
         (h₂ V st ((stageInvW_iff_V3 R hacc hext H vkAddr qAddr cd q.pre V st).mp hW) V' st' o hrun)
 
-/-- **THE HALF THAT FAILS, AND THE CLAUSES THAT MAKE IT FAIL (the card's stop condition: "Stop if. The
-    reduction is false for a clause of StageInvW: report the clause").** REPORTED, NOT PAPERED OVER.
-    StageInvW carries EIGHT conjuncts; RECON.2's StageBnd carries FOUR. The four it has are Frame, the
-    success bit, LeanRaw and the decode-relative Agree clause; the four it lacks are BaseInvW, Mirror,
-    the accumulator invariant (accFrom k = true -> AccInv) and the evaluator-address clause
-    (isExternal R -> VEnv.get V "quotientEvaluator" = some qAddr). At the corner the last two collapse
-    by stageInvW_iff_V3, but **BaseInvW and Mirror are simply ABSENT from StageBnd** and no corner
-    hypothesis brings them back. PROVED below as the two-field projection StageBnd cannot perform.
-
-    CONSEQUENCE, and it is the most important thing this card found: see §2's finding. -/
-theorem stageInvW_has_two_clauses_StageBnd_drops (R : Render p G₁ G₂ Gₜ) (H : Hash)
-    (vkAddr qAddr : U256) (cd : Bytes) (k : Checkpoint) {c : ExternalCalls} {g : ExternalGas}
-    (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
-    (h : StageInvW R H vkAddr qAddr cd k V st) :
-    Mirror R cd st k ∧ BaseInvW R cd k V st := ⟨h.2.2.2.2.1, h.2.2.1⟩
+/-! **THE HALF THAT FAILED, AND THE CLAUSES THAT MADE IT FAIL (RECON.3's stop condition: "Stop if.
+    The reduction is false for a clause of StageInvW: report the clause").** REPORTED, NOT PAPERED
+    OVER, AND NOW RESOLVED BY D-P74. StageInvW carries EIGHT conjuncts; RECON.2's now-deleted StageBnd
+    carried FOUR. The four it lacked were BaseInvW and Mirror (plus, off the corner, the accumulator
+    invariant and the evaluator-address clause). A contract "every run from pre ends in post" moves one
+    way in the pre and the other in the post, so the two boundaries were INCOMPARABLE and no transport
+    lemma existed to be landed. **D-P74 item 2 took the decision RECON.3 correctly refused to take: the
+    V3 bundles are read at SIM.2's StageInv boundary**, so the incomparability is gone - which is what
+    lets a widened row discharge the V3 headline through blockSimW_iff_blockSim below. -/
 
 /-- **FALSIFIER OF "THE BASE ROWS ALREADY SAY SOMETHING AT AN ACCUMULATOR RENDER".** For six of the
     seven blocks the base per-block contract's PRE-BOUNDARY is unsatisfiable in accumulator mode, by
@@ -352,33 +339,36 @@ theorem stageInv_unreachable_at_acc (R : Render p G₁ G₂ Gₜ)
 
   WHAT THE CARD ASKED FOR AND WHAT IS PROVABLE. The card's step 2 asks for the reduction at
   BlockSimW <-> BlockSim, and §1 proves it. The natural next sentence - "so a widened row discharges
-  RECON.2's SimRowsV3" - is FALSE, and this card found it by trying to prove it. RECON.2's
-  SimRowsV3 / ProgRowsV3 (Composition.lean:140, :150) conclude BlockSimV3 / BlockProgV3, which are
-  StmtsContractAll at RECON.2's OWN boundary StageBnd (Composition.lean:81), a FOUR-field predicate.
-  A contract "every run from pre ends in post" is transportable across a boundary change only when the
-  pre gets STRONGER while the post gets WEAKER, or both move together as an EQUIVALENCE. StageBnd ->
-  StageInvW goes the wrong way for the pre: StageBnd is weaker, so a row stated at StageBnd must
-  handle more starting states than one stated at StageInvW, and the widened row simply does not cover
-  them. SIM.2 saw this coming and wrote the only thing that is true about the two boundaries:
-  stageInv_drops_to_bnd_form (Stages.lean:713) is a PROJECTION, StageInv being "a REFINEMENT of the
-  boundary the headline reads, not a rival to it". A projection is not an equivalence, so BlockSimV3
-  and BlockSimW are INCOMPARABLE, and no transport lemma between them exists to be landed.
+  RECON.2's SimRowsV3" - was FALSE as RECON.2 had it, and this card found that by trying to prove it.
+  RECON.2's SimRowsV3 / ProgRowsV3 concluded BlockSimV3 / BlockProgV3, StmtsContractAll at RECON.2's
+  OWN boundary StageBnd, a FOUR-field predicate. A contract "every run from pre ends in post" is
+  transportable across a boundary change only when the pre gets STRONGER while the post gets WEAKER,
+  or both move together as an EQUIVALENCE. StageBnd -> StageInvW went the wrong way for the pre:
+  StageBnd was weaker, so a row stated at StageBnd had to handle more starting states than one stated
+  at StageInvW, and the widened row simply did not cover them. SIM.2 saw this coming and wrote the
+  only thing that is true about the two boundaries: stageInv_drops_to_bnd_form (Stages.lean) is a
+  PROJECTION, StageInv being "a REFINEMENT of the boundary the headline reads, not a rival to it". A
+  projection is not an equivalence, so BlockSimV3 and BlockSimW were INCOMPARABLE, and no transport
+  lemma between them existed to be landed. **PL.H0 (D-P74 item 2) resolved this by deleting the
+  StageBnd family and re-pointing both bundles at BlockSim / BlockProgS over StageInv**, which is the
+  boundary §1 proves StageInvW coincides with at the corner.
 
   WHAT THAT MEANS FOR THE PLAN, IN ONE SENTENCE: the M6 rows, to be proved once in the widened shape
   (D-P72 clause 1), must be read at SIM.2's StageInv boundary - which §1 shows is exactly StageInvW at
-  the corner - and RECON.2's two row bundles name StageBnd instead. Either RECON.2's SimRowsV3 /
+  the corner - and RECON.2's two row bundles named StageBnd instead. Either RECON.2's SimRowsV3 /
   ProgRowsV3 are re-pointed at BlockSim / BlockProgS (a two-word edit to another card's deliverable,
   which this card's brief says is a decision and not a convenience), or the rows are proved twice at
-  two boundaries, which is what D-P72 clause 1 exists to prevent. THIS CARD DOES NOT MAKE THAT
-  DECISION: it lands the reduction that is true, states the corner consequence that is provable, and
-  reports the gap. -/
+  two boundaries, which is what D-P72 clause 1 exists to prevent. THIS CARD DID NOT MAKE THAT DECISION:
+  it landed the reduction that is true, stated the corner consequence that is provable, and reported
+  the gap. **D-P74 (signed 2026-11-19) made the decision, and PL.H0 landed the re-pointing.** -/
 
 /-- **THE CORNER CONSEQUENCE OF THE WIDENED SIMULATION ROWS.** Every hypothesis SimContractsW asks
     beyond what is needed here is supplied at the corner and is VACUOUS there: ValidW R Q from ValidV3 R
     (ValidW.ofV3), EvalContracts R Q and the evaluator trust from not_isExternal_of_embedded, idLaw
     from R.cfg.accumulator = none, and qAddr := 0 / evalRel := fun _ _ _ => False because the widened
     contract stops reading them once callsW_embedded has fired. The conclusion is SIM.2's row - the one
-    §1's reduction reaches - NOT RECON.2's BlockSimV3, for the reason in the section header. PROVED. -/
+    §1's reduction reaches - NOT RECON.2's deleted BlockSimV3, for the reason in the section header.
+    PROVED, and it is the transport D-P74 item 1 routes M9 through. -/
 theorem blockSim_of_simContractsW (R : Render p G₁ G₂ Gₜ) (Q : EvalObject)
     (product : PairingProduct) (hR : LoweringV3.ValidV3 R)
     (hcodec : LoweringV3.G1CodecHeadlineLaws R.E.g1)
@@ -418,7 +408,7 @@ theorem blockProgS_of_progContractsW (R : Render p G₁ G₂ Gₜ) (Q : EvalObje
 
   lowering_equivalence_of_stagesW: the widened headline from SimContractsW, ProgContractsW,
   EvalContracts (a hypothesis of both bundles), TotalW and the scans - proved by replaying RECON.2's
-  composition with StageInvW in place of StageBnd. The gluing step is NOT restated: it is
+  composition with StageInvW in place of StageInv. The gluing step is NOT restated: it is
   lowering_equivalenceW_of (Widening.lean:620), which WID.1 landed and this card's Needs list told it
   to use.
 
@@ -445,8 +435,8 @@ theorem twoOutcomesW_of_valid (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (hR
     the widened prefix row (SIM.6), the accumulator arms of the vkLoading and finalPairing rows (WID.13,
     WID.15), the external arm of the quotientLin row (WID.16), and the frame clauses the one-arm rows
     owe StageInvW - the two accumulator slots are not written and quotientEvaluator is not assigned
-    (WID.14). The proof is RECON.2's rejectsV3_of_sims shape (Composition.lean:192) with StageInvW for
-    StageBnd and LeanAcceptsAcc for LeanAccepts: the traceReturn arm of exitSimW hands out LeanFinalAcc
+    (WID.14). The proof is RECON.2's rejectsV3_of_sims shape (Composition.lean) with StageInvW for
+    StageInv and LeanAcceptsAcc for LeanAccepts: the traceReturn arm of exitSimW hands out LeanFinalAcc
     and leanAcceptsAcc_of_final (WideningStages.lean:394) is the link rejection reads. No block proof is
     in scope (D-P72 clause 1 is a STATEMENT obligation), so the hole is registered here, not filled. -/
 theorem rejectsW_of_sims (R : Render p G₁ G₂ Gₜ) (Q : EvalObject) (product : PairingProduct)
@@ -564,12 +554,10 @@ theorem corner_is_reachable (R : Render p G₁ G₂ Gₜ) (Q : EvalObject)
 
 #assert_axioms Midfall.LoweringW.leanFinalAcc_iff [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.poisonedW_iff [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringW.stageInvW_to_StageBnd [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.exitSimW_iff_exitSim [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.exitProgW_iff_exitProg [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.blockSimW_iff_blockSim [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.blockProgSW_iff_blockProgS [propext, Classical.choice, Quot.sound] native []
-#assert_axioms Midfall.LoweringW.stageInvW_has_two_clauses_StageBnd_drops [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.stageInv_unreachable_at_acc [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringW.v3_class_excludes_an_accumulator_render [propext, Classical.choice, Quot.sound] native []
 
@@ -603,14 +591,12 @@ theorem corner_is_reachable (R : Render p G₁ G₂ Gₜ) (Q : EvalObject)
 -- The reduction and the transport: PROVED, so their cones name only the leaves they route through.
 #print axioms Midfall.LoweringW.leanFinalAcc_iff
 #print axioms Midfall.LoweringW.poisonedW_iff
-#print axioms Midfall.LoweringW.stageInvW_to_StageBnd
 #print axioms Midfall.LoweringW.blockSimW_iff_blockSim
 #print axioms Midfall.LoweringW.blockProgSW_iff_blockProgS
 #print axioms Midfall.LoweringW.blockSim_of_simContractsW
 #print axioms Midfall.LoweringW.blockProgS_of_progContractsW
 #print axioms Midfall.LoweringW.exitSimW_iff_exitSim
 #print axioms Midfall.LoweringW.exitProgW_iff_exitProg
-#print axioms Midfall.LoweringW.stageInvW_has_two_clauses_StageBnd_drops
 #print axioms Midfall.LoweringW.stageInv_unreachable_at_acc
 #print axioms Midfall.LoweringW.twoOutcomesW_of_valid
 #print axioms Midfall.LoweringW.completeW_of_progs

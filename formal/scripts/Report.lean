@@ -24,8 +24,13 @@ open Midfall.Tools.Done
 open Midfall Midfall.Lowering Midfall.LoweringV2 Midfall.Generator
 open Midfall.Instances.PoseidonValid
 
--- (i) the headline cone, leaf by leaf, and its axioms
-#cone_report Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon under [Midfall]
+-- (i) THE PROGRESS ROOT (D-P74 item 3): the V3 generator theorem, leaf by leaf, and beside it the
+--    first milestone (the soundness half). The V2 fixture headline is reported as RETIRED until PL.H
+--    deletes it; it is no longer what the register's ROOT column or this report measures.
+#cone_report Midfall.LoweringV3.lowering_correct under [Midfall]
+#cone_report Midfall.LoweringV3.lowering_sound under [Midfall]
+#eval IO.println "RETIRED (D-P74 item 3): Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon - the V2 fixture headline; reported here as retired, deleted by PL.H (WP A13). Its cone is not the progress measure."
+#cone_sorries Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
 
 -- (ii) executable exhibits (names fixed by PLAN-V3; none exists at this commit)
 #exhibits [Midfall.Instances.PoseidonExhibit.fixture_returns_abiTrue_ok,
@@ -44,7 +49,7 @@ open Midfall.Instances.PoseidonValid
    Midfall.Assumptions.bls12_381Pairing] nativeModules [Midfall.Instances]
 
 -- the register and the closure manifest
-#sorry_sweep [Midfall] root Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon
+#sorry_sweep [Midfall] root Midfall.LoweringV3.lowering_correct
 #closure_fingerprint [Midfall.LoweringV2.LoweringEquivalence, Midfall.LoweringV2.Render.Valid,
   Midfall.LoweringV2.HypothesesInhabited, Midfall.LoweringV2.EndToEnd,
   Midfall.LoweringV2.EntryFrameInhabited] under [Midfall, YulSemantics]
