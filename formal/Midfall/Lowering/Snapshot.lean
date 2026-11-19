@@ -98,7 +98,7 @@ structure Linearization (F G : Type) where
 def linComBuckets {F C : Type} (q : VerifierQuery F C) : Array F :=
   match q.commitment with
   | .linear _ scalars _ => scalars
-  | .onePiece _ => #[]
+  | .onePiece _ _ => #[]
 
 /-- The eval of a linearization query, named so the Inv clause reads as one
     projection: QUOTIENT_EVAL_MPTR := linComEval L.linCom. -/
@@ -494,7 +494,7 @@ def linComHoleKats_ok : Bool :=
       eval := 9 }
   linComBuckets q == (#[5, 6] : Array (Fr 17)) && linComEval q == (9 : Fr 17) &&
     -- a one-piece linearization has no buckets at all
-    linComBuckets (VerifierQuery.new 1 CommitmentLabel.noLabel 7 2) == (#[] : Array (Fr 17)) &&
+    linComBuckets (VerifierQuery.new 1 CommitmentLabel.noLabel (.anon 7) 7 2) == (#[] : Array (Fr 17)) &&
     -- and the hole is never filled by the witness either
     (witnessSnapshot (p := 17) (G₁ := Nat) (G₂ := Nat) (Gₜ := Nat)).lin.isNone &&
     (witnessSnapshot (p := 17) (G₁ := Nat) (G₂ := Nat) (Gₜ := Nat)).acc.isNone

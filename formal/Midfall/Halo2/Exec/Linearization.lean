@@ -142,7 +142,7 @@ def linearizationKats_ok : Bool :=
           | .linear ps ss ls =>
               ps.toList == [3, 9] && (ss.map ZMod.val).toList == [14, 6] &&
               ls.toList == [CommitmentLabel.noLabel, CommitmentLabel.fixed 0]
-          | .onePiece _ => false
+          | .onePiece _ _ => false
 
 -- an identity naming a column the VK does not have is the verifier.rs:84 panic.
 def linearizationPanicKats_ok : Bool :=

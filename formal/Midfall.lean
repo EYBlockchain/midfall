@@ -8,6 +8,8 @@ import Midfall.Assumptions.BasePrime
 import Midfall.Assumptions.TwoAdicity
 import Midfall.Instances.ExponentModel
 import Midfall.Instances.NativeE2E
+-- REF.8 - the reference gate: the tree's own verifier replayed against the Rust trace
+import Midfall.Instances.NativeReplay
 import Midfall.Instances.StatementsRepair
 import Midfall.Instances.ChallengeStream
 import Midfall.Halo2.Exec.Circuit
@@ -67,6 +69,8 @@ import Midfall.Instances.Bls12_381
 import Midfall.Instances.Bls12_381G1
 import Midfall.Instances.G1Agreement
 import Midfall.Instances.G1PointCount
+-- REF.4 (D-P62) - the computable G1 codec on G₁z
+import Midfall.Instances.G1Compressed
 import Midfall.Instances.Fp2
 import Midfall.Instances.G2Agreement
 import Midfall.Instances.G2Codec
@@ -74,6 +78,8 @@ import Midfall.Instances.HoldsStaging
 import Midfall.Assumptions.CurvePairing
 import Midfall.Instances.HoldsFinal
 import Midfall.Instances.CurveSurface
+-- REF.5 (D-P62(a)) - the deployment pairing, constructed
+import Midfall.Instances.PairingByConstruction
 import Midfall.Instances.IrCheckBlindness
 import Midfall.Instances.DeployedProfile
 import Midfall.Instances.PoseidonInputs

@@ -136,11 +136,13 @@ def zC : Fr 17 := 11
     point sets `[[zA, zB], [zC]]` and `buildQ` permutes them to `[[zC], [zA, zB]]`.
     The linearization-style query is the singleton, labelled `custom "lin"`. -/
 def mpQueries : Array (VerifierQuery (Fr 17) (Exp 17)) :=
-  #[ VerifierQuery.new zA (CommitmentLabel.advice 0) (ex 11) 2,
-     VerifierQuery.new zB (CommitmentLabel.advice 1) (ex 11) 3,
-     VerifierQuery.new zA (CommitmentLabel.fixed 0) (ex 12) 4,
-     VerifierQuery.new zB (CommitmentLabel.fixed 1) (ex 12) 5,
-     VerifierQuery.new zC (CommitmentLabel.custom "lin") (ex 13) 6 ]
+  -- REF.1: two queries share ONE commitment here, so they share one slot - the
+  -- allocation is what groups them, not the label and not the point.
+  #[ VerifierQuery.new zA (CommitmentLabel.advice 0) (.anon 11) (ex 11) 2,
+     VerifierQuery.new zB (CommitmentLabel.advice 1) (.anon 11) (ex 11) 3,
+     VerifierQuery.new zA (CommitmentLabel.fixed 0) (.anon 12) (ex 12) 4,
+     VerifierQuery.new zB (CommitmentLabel.fixed 1) (.anon 12) (ex 12) 5,
+     VerifierQuery.new zC (CommitmentLabel.custom "lin") (.anon 13) (ex 13) 6 ]
 
 /-- The proof stream `multiPrepare` consumes: `f_com` (kzg/mod.rs:447), the two
     `q_evals_on_x3` (one per point set, :461-467) and `pi` (:531). -/
@@ -269,11 +271,11 @@ def expOf9 (x : Exp 1009) : Nat := x.toAdd.val
 
 /-- The same five-query shape as section 1, over `Fr 1009`. -/
 def mp9Queries : Array (VerifierQuery (Fr 1009) (Exp 1009)) :=
-  #[ VerifierQuery.new 3 (CommitmentLabel.advice 0) (ex9 11) 2,
-     VerifierQuery.new 5 (CommitmentLabel.advice 1) (ex9 11) 3,
-     VerifierQuery.new 3 (CommitmentLabel.fixed 0) (ex9 12) 4,
-     VerifierQuery.new 5 (CommitmentLabel.fixed 1) (ex9 12) 5,
-     VerifierQuery.new 11 (CommitmentLabel.custom "lin") (ex9 13) 6 ]
+  #[ VerifierQuery.new 3 (CommitmentLabel.advice 0) (.anon 11) (ex9 11) 2,
+     VerifierQuery.new 5 (CommitmentLabel.advice 1) (.anon 11) (ex9 11) 3,
+     VerifierQuery.new 3 (CommitmentLabel.fixed 0) (.anon 12) (ex9 12) 4,
+     VerifierQuery.new 5 (CommitmentLabel.fixed 1) (.anon 12) (ex9 12) 5,
+     VerifierQuery.new 11 (CommitmentLabel.custom "lin") (.anon 13) (ex9 13) 6 ]
 
 /-- `f_com` = 7 and the first `q_evals_on_x3` = 0 are chosen so that the squeezed x3
     is 744, i.e. above 256, so the truncation actually bites. -/

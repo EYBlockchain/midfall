@@ -263,11 +263,22 @@ section Kats
 
 local instance : Fact (Nat.Prime 17) := ⟨by decide⟩
 
+/-- The KAT commitment type is `Nat`, and the natural reading of "commitment 5" is
+    "the 5th allocation", so the slot is `.anon com`: slot equality then coincides
+    with the value equality these KATs were written against, and their expected
+    point-set layout is unchanged by D-P61. -/
 def vq17 (point : Fr 17) (com : Nat) (eval : Fr 17) : VerifierQuery (Fr 17) Nat :=
-  { point, commitmentLabel := .noLabel, commitment := .onePiece com, eval }
+  { point, commitmentLabel := .noLabel, commitment := .onePiece (.anon com) com, eval }
 
 def eqNatRef : CommitmentReference (Fr 17) Nat → CommitmentReference (Fr 17) Nat → Bool
-  | .onePiece a, .onePiece b => a == b
+  | .onePiece s _, .onePiece t _ => s == t
+  | .linear p1 s1 _, .linear p2 s2 _ => p1 == p2 && s1 == s2
+  | _, _ => false
+
+/-- THE OLD RELATION, kept as the falsifier below: value equality on one-piece
+    commitments, which is what the port did before D-P61. -/
+def eqNatRefOld : CommitmentReference (Fr 17) Nat → CommitmentReference (Fr 17) Nat → Bool
+  | .onePiece _ x, .onePiece _ y => x == y
   | .linear p1 s1 _, .linear p2 s2 _ => p1 == p2 && s1 == s2
   | _, _ => false
 
@@ -312,11 +323,88 @@ def dummyPanicKats_ok : Bool :=
       [(5, 1), (5, 1)] with
   | .error (Fault.panic "proofs/src/poly/kzg/utils.rs:158") => true
   | _ => false
+/-- **REF.1 / D-P61 - THE WITNESS.** The shape of fixtures/conformance/poseidon: the
+    committed instance is the identity (instances.json c000..00), fixed columns
+    8, 10, 11, 12 and 16 are the identity (vk.json), all six are opened at x
+    (rotation 0) and none is a simple selector. Point 5 stands for x. Six DISTINCT
+    allocations that happen to hold the SAME point: the tree's own
+    CommitmentReference.beq must keep them apart, and does - six entries, one
+    point set, each eval in its own entry. -/
+def fixtureShape_groups_ok : Bool :=
+  match constructIntermediateSets (F := Fr 17) (C := Nat) CommitmentReference.beq
+      (#[ VerifierQuery.new 5 (.instance_ 0) (.instance_ 0 0) 0 1,
+          VerifierQuery.new 5 (.fixed 8)  (.fixed 8)  0 2,
+          VerifierQuery.new 5 (.fixed 10) (.fixed 10) 0 3,
+          VerifierQuery.new 5 (.fixed 11) (.fixed 11) 0 4,
+          VerifierQuery.new 5 (.fixed 12) (.fixed 12) 0 5,
+          VerifierQuery.new 5 (.fixed 16) (.fixed 16) 0 6 ]) with
+  | .ok (cms, pointSets) =>
+      cms.size == 6 && pointSets.size == 1 &&
+        (cms.toList.map fun cd => (cd.evals.map ZMod.val).toList)
+          == [[1], [2], [3], [4], [5], [6]] &&
+        cms.toList.all fun cd => cd.setIndex == 0 && cd.pointIndices.toList == [0]
+  | .error _ => false
+
+/-- **REF.1 / D-P61 - THE FALSIFIER.** The SAME input under the pre-D-P61 relation -
+    value equality on one-piece commitments, with the value relation otherwise kept
+    intact - returns Error.opening. This is the failure that stopped the reference
+    gate: the real key's six identity commitments at x merged into one entry and the
+    second opening of "the same polynomial at the same point" was rejected. If this
+    KAT ever reads false, the old relation has been reinstated somewhere. -/
+def fixtureShape_old_rejects_ok : Bool :=
+  match constructIntermediateSets (F := Fr 17) (C := Nat) eqNatRefOld
+      (#[ VerifierQuery.new 5 (.instance_ 0) (.instance_ 0 0) 0 1,
+          VerifierQuery.new 5 (.fixed 8)  (.fixed 8)  0 2,
+          VerifierQuery.new 5 (.fixed 10) (.fixed 10) 0 3,
+          VerifierQuery.new 5 (.fixed 11) (.fixed 11) 0 4,
+          VerifierQuery.new 5 (.fixed 12) (.fixed 12) 0 5,
+          VerifierQuery.new 5 (.fixed 16) (.fixed 16) 0 6 ]) with
+  | .error (Fault.error Error.opening) => true
+  | _ => false
+
+/-- A GENUINE duplicate - the SAME allocation at the SAME point - is still
+    Error::DuplicatedQuery, collapsed to Error.opening (utils.rs:58,
+    plonk/verifier.rs:651). The repair does not loosen the check the check was for. -/
+def duplicate_still_rejects_ok : Bool :=
+  match constructIntermediateSets (F := Fr 17) (C := Nat) CommitmentReference.beq
+      (#[ VerifierQuery.new 5 (.fixed 8) (.fixed 8) 0 2,
+          VerifierQuery.new 5 (.fixed 8) (.fixed 8) 0 3 ]) with
+  | .error (Fault.error Error.opening) => true
+  | _ => false
+
+/-- ... even when the two VALUES differ: the reference never looks at them, so a
+    repeated slot is rejected whatever the pointee claims. -/
+def duplicate_slot_distinct_values_rejects_ok : Bool :=
+  match constructIntermediateSets (F := Fr 17) (C := Nat) CommitmentReference.beq
+      (#[ VerifierQuery.new 5 (.fixed 8) (.fixed 8) 7 2,
+          VerifierQuery.new 5 (.fixed 8) (.fixed 8) 9 3 ]) with
+  | .error (Fault.error Error.opening) => true
+  | _ => false
+
+/-- One allocation opened at TWO points is ONE entry with two point indices (the
+    advice column queried at x and at omega x), whatever the labels say - and a
+    different allocation at the same point is a different entry in the same set. -/
+def oneSlotTwoPoints_ok : Bool :=
+  match constructIntermediateSets (F := Fr 17) (C := Nat) CommitmentReference.beq
+      (#[ VerifierQuery.new 5 .noLabel (.permProduct 0 0) 11 2,
+          VerifierQuery.new 6 .noLabel (.permProduct 0 0) 11 3,
+          VerifierQuery.new 5 .noLabel (.permProduct 0 1) 11 4 ]) with
+  | .ok (cms, pointSets) =>
+      cms.size == 2 && pointSets.size == 2 &&
+        (cms.toList.map fun cd => cd.pointIndices.toList) == [[0, 1], [0]] &&
+        (cms.toList.map fun cd => (cd.evals.map ZMod.val).toList) == [[2, 3], [4]]
+  | .error _ => false
+
 end Kats
 
 #eval Midfall.Halo2.cisKats_ok        -- expect true
 #eval Midfall.Halo2.cisDupKats_ok    -- expect true
 #eval Midfall.Halo2.dummyKats_ok     -- expect true
 #eval Midfall.Halo2.dummyPanicKats_ok -- expect true
+#eval Midfall.Halo2.fixtureShape_groups_ok -- expect true
+#eval Midfall.Halo2.fixtureShape_old_rejects_ok -- expect true
+#eval Midfall.Halo2.duplicate_still_rejects_ok -- expect true
+#eval Midfall.Halo2.duplicate_slot_distinct_values_rejects_ok -- expect true
+#eval Midfall.Halo2.oneSlotTwoPoints_ok -- expect true
 
 end Midfall.Halo2

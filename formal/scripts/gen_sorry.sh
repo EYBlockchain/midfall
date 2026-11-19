@@ -224,6 +224,9 @@ owner() {
     Midfall.LoweringW.batchedCheck_iff_contract)
       echo 'V3 WID.11 - ALG, no Yul: the batched check IS the contract pairing equation on the two batched inputs (batchedCheck_eq + dualMsm_check_iff_contract, same hn/hs pins as without an accumulator); the ALG half of the widened finalPairing row' ;;
 
+    Midfall.Instances.g1CodecC_compressedEncoderFirst)
+      echo 'B3 REF.9 + REF.10 (D-P62, the codec laws at the deployment) - the encoder-first compressed law at g1CodecC: fpSqrt recovers y from x and the sign bit (REF.9), then the law (REF.10). Stated by B2 (REF.4) because the deployment needs the computable codec g1CodecC to EXIST before the reference gate can decode a proof point, and the decoder-first half is proved there; the gate does not read this direction.' ;;
+
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;

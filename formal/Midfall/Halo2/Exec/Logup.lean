@@ -194,20 +194,22 @@ def Committed.evaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} (coms : Comm
     The Rust takes `vk: &VerifyingKey<F, CS>` and reads only `vk.domain` (:178);
     the port takes the domain, as Exec/Permutation does. -/
 def Evaluated.queries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
-    (ev : Evaluated (Fr p) G₁) (domain : EvaluationDomain (Fr p)) (x : Fr p) :
+    (ev : Evaluated (Fr p) G₁) (domain : EvaluationDomain (Fr p)) (x : Fr p)
+    (proof lookup : Nat := 0) :
     Array (VerifierQuery (Fr p) G₁) :=
   let xNext := domain.rotateOmega x Rotation.next
   -- verifier.rs:180-185
-  let mQuery := [VerifierQuery.new x CommitmentLabel.noLabel
+  let mQuery := [VerifierQuery.new x CommitmentLabel.noLabel (.lookupM proof lookup)
                     ev.committed.multiplicities ev.evaluated.multiplicitiesEval]
   -- verifier.rs:187-193
-  let helperQueries := (List.zip ev.committed.helperPolys.toList
-                                          ev.evaluated.helperEvals.toList).map
-    fun (com, eval) => VerifierQuery.new x CommitmentLabel.noLabel com eval
+  let helperQueries := (List.zip (List.range ev.committed.helperPolys.size)
+      (List.zip ev.committed.helperPolys.toList ev.evaluated.helperEvals.toList)).map
+    fun (j, (com, eval)) =>
+      VerifierQuery.new x CommitmentLabel.noLabel (.lookupHelper proof lookup j) com eval
   -- verifier.rs:195-208
-  let zQueries := [ VerifierQuery.new x CommitmentLabel.noLabel ev.committed.accumulator
-                      ev.evaluated.accumulatorEval,
-                    VerifierQuery.new xNext CommitmentLabel.noLabel
+  let zQueries := [ VerifierQuery.new x CommitmentLabel.noLabel (.lookupAcc proof lookup)
+                      ev.committed.accumulator ev.evaluated.accumulatorEval,
+                    VerifierQuery.new xNext CommitmentLabel.noLabel (.lookupAcc proof lookup)
                       ev.committed.accumulator ev.evaluated.accumulatorNextEval ]
   (mQuery ++ helperQueries ++ zQueries).toArray
 
@@ -388,7 +390,7 @@ def queriesKats_ok : Bool :=
       (qs.map fun q => q.point.val) == #[5, 5, 5, 5, 14] &&
       (qs.map fun q => q.eval.val) == #[2, 4, 3, 5, 6] &&
       (qs.map fun q => match q.commitment with
-        | .onePiece c => c
+        | .onePiece _ c => c
         | .linear _ _ _ => 0) == #[1, 7, 8, 9, 9] &&
       -- the helper zip truncates: one helper eval against two commitments gives
       -- four queries, not five, and nothing fails

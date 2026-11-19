@@ -141,9 +141,12 @@ def poseidonAdviceColumn (idx : Nat) : Column :=
   { index := idx, columnType := Any.advice { phase := { val :=
       (poseidonVkData.adviceColumnPhases[idx]?.getD 0) } } }
 
-/-- A JSON rotation is an i32, so it becomes Rotation.value and never Rotation.cur: the port's own
-    header records that the two are distinct inhabitants here and one value in Rust, and an importer
-    that collapsed them would silently deduplicate queries the reference keeps apart. -/
+/-- A JSON rotation is an i32, so it becomes Rotation.value and never Rotation.cur. This is SAFE
+    for deduplication only because REF.2 repaired `BEq Rotation` to compare the integer, as Rust's
+    derived `PartialEq` on `Rotation(pub i32)` does: `Rotation.value 0 == Rotation.cur` is true
+    here and in Rust, so a query the reference deduplicates, this import deduplicates. Before REF.2
+    the structural instance kept the two spellings apart and the verifier could not find the key's
+    own permutation queries (pinned by `poseidonPermutationQueries_ok`). -/
 def poseidonRotation (r : Int) : Rotation := Rotation.value r
 
 def poseidonAdviceQueries : Array (Column × Rotation) :=
@@ -182,8 +185,9 @@ def jFieldBE (o : JValue) (k : String) : Except String (Fr blsR) := do
   return (bytesToNatBE b : Fr blsR)
 
 /-- A rotation as the reference's raw i32, so Rotation.value and never .cur/.next/.prev -
-    the same choice poseidonRotation makes for the query lists, for the same reason:
-    collapsing them would deduplicate queries the reference keeps apart. -/
+    the same choice poseidonRotation makes for the query lists. Since REF.2 the two spellings are
+    EQUAL by the repaired `BEq Rotation`, so this is a naming convention and not a divergence:
+    `Rotation.value 0` and `Rotation.cur` find the same query, exactly as in Rust. -/
 def jRotationOf (o : JValue) (k : String) : Except String Rotation := do
   let r ← jIntVal (← jObject o k)
   return (Rotation.value r)

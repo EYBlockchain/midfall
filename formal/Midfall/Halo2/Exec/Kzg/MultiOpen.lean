@@ -35,12 +35,16 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
   [Module (ZMod p) (Additive Gₜ)]
   [P : AdmissiblePairing G₁ G₂ Gₜ]
 
-/-- The commitment comparison the port uses where the Rust uses pointer
-    equality (docs/REVIEW.md R-7): value equality, with the labels ignored
-    exactly as the Rust PartialEq does. Lengths are compared explicitly because
-    Vec equality in Rust is length-plus-elements, while List.zip truncates. -/
+/-- The commitment comparison `multi_prepare` groups by. D-P61 (card REF.1) CLOSES
+    docs/REVIEW.md R-7: the `OnePiece` arm is `std::ptr::eq` (query.rs:125), modelled
+    as equality of the allocation SLOT - the group value is not consulted, so two
+    distinct allocations holding the same point stay apart exactly as in the
+    reference. The `Linear` arm is unchanged: `Vec<&Commitment> == Vec<&Commitment>`
+    goes through `PartialEq for &T`, which dereferences, so points compare by value and
+    scalars by value, and the labels are ignored. Lengths are compared explicitly
+    because Vec equality in Rust is length-plus-elements while List.zip truncates. -/
 def kzgCommitBeq : CommitmentReference (Fr p) G₁ → CommitmentReference (Fr p) G₁ → Bool
-  | .onePiece x, .onePiece y => decideBool (P.decEqG₁ x y)
+  | .onePiece s _, .onePiece t _ => s == t
   | .linear p1 s1 _, .linear p2 s2 _ =>
       p1.size == p2.size && s1.size == s2.size &&
       (List.zip p1.toList p2.toList).all (fun (x, y) => decideBool (P.decEqG₁ x y)) &&

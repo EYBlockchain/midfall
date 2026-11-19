@@ -264,7 +264,7 @@ def Committed.evaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
     descending, and never the last set (whose `last_eval` is `None`). -/
 def Evaluated.queries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
     (ev : Evaluated (Fr p) G₁) (domain : EvaluationDomain (Fr p))
-    (blindingFactors : Nat) (x : Fr p) :
+    (blindingFactors : Nat) (x : Fr p) (proof : Nat := 0) :
     Except Fault (Array (VerifierQuery (Fr p) G₁)) := do
   -- verifier.rs:150-152
   let xNext := domain.rotateOmega x Rotation.next
@@ -276,15 +276,17 @@ def Evaluated.queries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   let head ← (List.zip (List.range ev.sets.size) ev.sets.toList).mapM fun (i, set) => do
     let c ← atIndex coms i "proofs/src/plonk/permutation/verifier.rs:161"
     let c' ← atIndex coms i "proofs/src/plonk/permutation/verifier.rs:167"
-    return [ VerifierQuery.new x CommitmentLabel.noLabel c set.permutationProductEval,
-             VerifierQuery.new xNext CommitmentLabel.noLabel c' set.permutationProductNextEval ]
+    return [ VerifierQuery.new x CommitmentLabel.noLabel (.permProduct proof i)
+               c set.permutationProductEval,
+             VerifierQuery.new xNext CommitmentLabel.noLabel (.permProduct proof i)
+               c' set.permutationProductNextEval ]
   -- verifier.rs:172-181
   let tail ← ((List.range ev.sets.size).reverse.drop 1).mapM fun i => do
     let set ← atIndex ev.sets i "proofs/src/plonk/permutation/verifier.rs:173"
     let c ← atIndex coms i "proofs/src/plonk/permutation/verifier.rs:177"
     match set.permutationProductLastEval with
     | none => .error (Fault.panic "proofs/src/plonk/permutation/verifier.rs:178")
-    | some e => return [VerifierQuery.new xLast CommitmentLabel.noLabel c e]
+    | some e => return [VerifierQuery.new xLast CommitmentLabel.noLabel (.permProduct proof i) c e]
   return ((List.flatten head).toArray ++ (List.flatten tail).toArray)
 
 /-- rust: proofs/src/plonk/permutation/verifier.rs:185-198
@@ -303,7 +305,7 @@ def CommonEvaluated.queries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
   let pairs := List.zip vkey.commitments.toList common.permutationEvals.toList
   ((List.zip (List.range pairs.length) pairs).map
     fun (i, (commitment, eval)) =>
-      VerifierQuery.new x (CommitmentLabel.permutation i) commitment eval).toArray
+      VerifierQuery.new x (CommitmentLabel.permutation i) (.sigma i) commitment eval).toArray
 
 /-- rust: proofs/src/plonk/permutation.rs:244-253 and :264-273 - the same
     `match column.column_type()` closure body, written twice in the Rust.
@@ -552,7 +554,7 @@ def queries_kats_ok : Bool :=
         (qs.map fun q => q.point.val) == #[5, 14, 5, 14, 12] &&
         (qs.map fun q => q.eval.val) == #[1, 2, 4, 5, 3] &&
         (qs.map fun q => match q.commitment with
-          | .onePiece c => c
+          | .onePiece _ c => c
           | .linear _ _ _ => 0).toList == [10, 10, 20, 20, 10] &&
         (qs.map fun q => match q.commitmentLabel with
           | .noLabel => true
@@ -602,7 +604,7 @@ def commonQueries_kats_ok : Bool :=
   (qs.map fun q => q.eval.val) == #[7, 8] &&
   (qs.map fun q => q.point.val) == #[13, 13] &&
   (qs.map fun q => match q.commitment with
-    | .onePiece c => c
+    | .onePiece _ c => c
     | .linear _ _ _ => 0) == #[100, 200]
 
 /-- One fixed column, one set, one permutation eval, over `Fr 17`:

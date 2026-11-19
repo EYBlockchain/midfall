@@ -111,25 +111,44 @@ namespace Midfall.Halo2
 
 /-- rust: proofs/src/poly/mod.rs:509 (`pub struct Rotation(pub i32)`) and its
     `cur`/`next`/`prev` constructors at :511-526. The plan's module map assigns
-    `Rotation` to this row (the placeholder had it here), `Exec/Domain.lean`
-    extends it with `Rotation.int`, and `Exec/Poly.lean` records the same
-    representational caveat; `deriving BEq` is new and needed, because the
-    query-index lookups below compare `(Column, Rotation)` pairs, which is the
-    `==` on the Rust tuple at circuit.rs:2012, :2027 and :2043.
+    `Rotation` to this row (the placeholder had it here), and `Exec/Poly.lean`
+    records the same representational caveat.
 
-    THE HAZARD, inherited from the placeholder rather than introduced:
-    `Rotation.cur` and `Rotation.value 0` are two inhabitants in Lean and one
-    `i32` in Rust, so a Rust `rotation == Rotation::cur()` must be read as
-    `rotation.int == 0`, never as structural equality. A query pushed as
-    `(col, Rotation::cur())` and looked up as `Rotation(0)` deduplicates in Rust
-    and does *not* deduplicate here. Pinned by a KAT below; it cannot bite the
-    verifier itself, because every rotation on the verify path is built by
-    `query_*`/`create_gate` and looked up by `get_*_query_index` through the same
-    constructor, but it can bite a hand-written `ConstraintSystem`, which is
-    exactly what the conformance exporter will feed us. -/
+    THE REPRESENTATION, AND WHY EQUALITY IS NOT STRUCTURAL. The Rust is a NEWTYPE
+    over one `i32`: `cur`, `next`, `prev` are three *names* for the three integers
+    0, 1, -1, and `#[derive(PartialEq)]` compares the integer. So
+    `Rotation::cur() == Rotation(0)` is TRUE in Rust. Lean's closed inductive has
+    four distinct constructors, so structural `BEq` would make it FALSE - and
+    that is not a cosmetic difference: `get_*_query_index` deduplicate by
+    `==` on `(Column, Rotation)` (circuit.rs:2012, :2027, :2043), so a key whose
+    query list spells rotation 0 as `Rotation(0)` while the verifier asks with
+    `Rotation::cur()` does not find its own query. The reference verifier then
+    takes the `expect_index` path and PANICS; on the imported poseidon key that
+    is `circuit.rs:2084` on the first permutation column, which is what REF.2
+    fixes. The instance below is therefore the Rust's own equality, and
+    `Rotation.int` - the integer the Rust tuple field `.0` carries, which is what
+    `rotate_omega` and `l_i_range` read - sits next to the type it reads.
+
+    RESIDUAL, PINNED BY A KAT BELOW: the two spellings are now EQUAL, which is
+    what Rust does, but a hand-built `ConstraintSystem` can still push the same
+    query twice under two spellings and get one entry, where the pre-REF.2 port
+    gave two. That is agreement with Rust, not a divergence. -/
 inductive Rotation where
   | cur | next | prev | value (v : Int)
-  deriving BEq
+
+/-- rust: `Rotation(pub i32)` - the tuple field `.0`. Moved up from
+    `Exec/Domain.lean` (REF.2) because the `BEq` instance below reads it, and an
+    instance has to be registered before the structures that carry a `Rotation`
+    field derive their own equality. -/
+def Rotation.int : Rotation → Int
+  | .cur => 0
+  | .next => 1
+  | .prev => -1
+  | .value v => v
+
+/-- THE REPAIRED EQUALITY (REF.2): equality of the integer, as Rust's derived
+    `PartialEq` on `Rotation(pub i32)` does. -/
+instance : BEq Rotation := ⟨fun a b => a.int == b.int⟩
 
 /-! ### Phases (rust: proofs/src/plonk/circuit.rs:100-157) -/
 
@@ -471,9 +490,10 @@ def Column.next {F : Type} (c : Column) : Expression F := c.queryCell Rotation.n
 def Column.prev {F : Type} (c : Column) : Expression F := c.queryCell Rotation.prev
 
 /-- rust: proofs/src/plonk/circuit.rs:77-79 (`Column::rot(rotation: i32)`),
-    which is `query_cell(Rotation(rotation))`: the raw tuple constructor, so
-    `rot 0` is `Rotation.value 0` and *not* `Rotation.cur` (see the hazard note on
-    `Rotation`). -/
+    which is `query_cell(Rotation(rotation))`: the raw tuple constructor, so the
+    term here is `Rotation.value 0` and not `Rotation.cur`. Since REF.2 the two are
+    EQUAL under `BEq Rotation` (both carry integer 0), which is what Rust does, so the
+    distinction is about the term, not about the query it finds. -/
 def Column.rot {F : Type} (c : Column) (rotation : Int) : Expression F :=
   c.queryCell (Rotation.value rotation)
 
@@ -1888,8 +1908,16 @@ def columnAny_kats_ok : Bool :=
       (Expression.fixed { index := none, columnIndex := 2, rotation := Rotation.next } :
         Expression (Fr 17)) &&
     Column.queryCell (F := Fr 17) colAdvice Rotation.cur == (eAdviceNone : Expression (Fr 17)) &&
-    Column.cur (F := Fr 17) colFixed != Column.rot (F := Fr 17) colFixed 0 &&
-    (Rotation.cur == Rotation.value 0) == false
+    -- REF.2: this clause read `!=` before the repair, pinning the divergence. In Rust
+    -- `Column::cur()` is `query_cell(Rotation::cur())` and `Column::rot(0)` is
+    -- `query_cell(Rotation(0))`, and `Expression` derives `PartialEq`, so the two
+    -- EXPRESSIONS are equal there - which is what they are here now that `BEq Rotation`
+    -- compares the integer. Agreement with Rust, not a loosened expectation.
+    Column.cur (F := Fr 17) colFixed == Column.rot (F := Fr 17) colFixed 0 &&
+    (Rotation.cur == Rotation.value 0) == true &&
+    (Rotation.next == Rotation.value 1) == true &&
+    (Rotation.prev == Rotation.value (-1)) == true &&
+    (Rotation.cur == Rotation.next) == false
 
 /-- `Expression::degree` (circuit.rs:1206-1220) and the operator impls
     (:1336-1462), panics and short-circuits included. The last block is the
@@ -2063,9 +2091,10 @@ def csDegree_kats_ok : Bool :=
     `phases` on an empty system is one phase, not none: the Rust renders
     `0..=max_phase` with `unwrap_or_default()`, so the verifier's phase loop always
     runs even for a circuit with no advice columns at all. The `queryFixedIndex`
-    block also shows the `Rotation` hazard biting a real deduplication: asking for
-    `(col, Rotation.value 0)` after `(col, Rotation.cur)` appends a second query
-    here, where Rust would have returned the first. The advice counter is
+    block is the REF.2 repair pinned: asking for `(col, Rotation.value 0)` after
+    `(col, Rotation.cur)` returns the FIRST query's index and appends nothing, because
+    `BEq Rotation` now compares the integer as Rust's derived `PartialEq` does. Before
+    REF.2 this clause read `== 1` and pinned the divergence. The advice counter is
     *per column*, not per query: a second distinct query on column 0 bumps
     `numAdviceQueries[0]` from 1 to 2 rather than appending a third entry, which is
     what `blinding_factors` then reads as "this column is opened twice". -/
@@ -2080,7 +2109,8 @@ def csAccessors_kats_ok : Bool :=
       "proofs/src/plonk/circuit.rs:2084" &&
     (csWithFixedQuery.queryFixedIndex colFixed Rotation.cur).2 == 0 &&
     ((csWithFixedQuery.queryFixedIndex colFixed Rotation.cur).1.fixedQueries.size) == 1 &&
-    (csWithFixedQuery.queryFixedIndex colFixed (Rotation.value 0)).2 == 1 &&
+    (csWithFixedQuery.queryFixedIndex colFixed (Rotation.value 0)).2 == 0 &&
+    ((csWithFixedQuery.queryFixedIndex colFixed (Rotation.value 0)).1.fixedQueries.size) == 1 &&
     okNat (csWithAdviceQuery.getAnyQueryIndex colAdvice Rotation.cur) == 0 &&
     (match csWithAdviceQuery.queryAdviceIndex colAdvice Rotation.cur with
       | .ok (_, i) => i == 0

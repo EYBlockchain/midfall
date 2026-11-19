@@ -612,6 +612,27 @@ def poseidonMeta_crossCheck_ok : Bool :=
     && poseidonPlanV2.meta_.numSimpleSelectors == 4 && poseidonPlanV2.meta_.numLookups == 1
     && poseidonPlanV2.meta_.numTrashcans == 1
 
+/-- **KAT (REF.2): the rotation repair at the imported key.** The eight permutation columns of
+    `poseidonCs` are queried by the verifier with `Rotation.cur`, but the importer writes the
+    query lists straight from cs.json's i32s, so they are spelled `Rotation.value 0`. Under the
+    old structural `BEq Rotation` the two spellings did not match and every one of the eight
+    `getAnyQueryIndex` calls took the `expect_index` panic at `circuit.rs:2074` / `:2084` /
+    `:2094` - which is the first thing that stopped the reference gate (REF.8). With the repaired
+    instance all eight resolve, to the indices the reference's own deduplication gives:
+    `0, 0, 1, 2, 3, 4, 0, 1`. The advice columns share query slots, which is why the first four
+    permutation columns all answer 0. -/
+def poseidonPermutationQueries_ok : Bool :=
+  poseidonCs.permutation.columns.size == 8
+    && (poseidonCs.permutation.columns.toList.zip
+          ([0, 0, 1, 2, 3, 4, 0, 1] : List Nat)).all
+        (fun (c, want) => match poseidonCs.getAnyQueryIndex c Rotation.cur with
+          | .ok i => i == want
+          | .error _ => false)
+  && (poseidonCs.permutation.columns.toList.all fun c =>
+        match poseidonCs.getAnyQueryIndex c (Rotation.value 0) with
+        | .ok _ => true
+        | .error _ => false)
+
 end Midfall.Instances.PoseidonEnvKats
 
 #eval Midfall.Instances.PoseidonEnvKats.poseidonVkParse_ok -- expect true
@@ -631,4 +652,5 @@ end Midfall.Instances.PoseidonEnvKats
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_derived_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonMeta_matchesTypedIn_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonLookup_chunks_kat_ok -- expect true
+#eval Midfall.Instances.PoseidonEnvKats.poseidonPermutationQueries_ok -- expect true
 #eval Midfall.Instances.PoseidonEnvKats.poseidonCs_counts_ok -- expect true

@@ -754,7 +754,7 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
       adviceCommitments.toList) adviceEvals.toList)
       permutationsEvaluated.toList) lookupsEvaluated.toList) trashcansEvaluated.toList
   -- :588-628 the flat_map body, per proof
-  let perProof ← zipped.mapM fun e => do
+  let perProof ← (List.zip (List.range zipped.length) zipped).mapM fun (proof, e) => do
     let ci := e.1.1.1.1.1.1
     let ie := e.1.1.1.1.1.2
     let ac := e.1.1.1.1.2
@@ -768,7 +768,7 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
       let com ← Permutation.atIndex ac q.2.1.index "proofs/src/plonk/verifier.rs:605"
       let ev ← Permutation.atIndex ae q.1 "proofs/src/plonk/verifier.rs:606"
       pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
-        (CommitmentLabel.advice q.2.1.index) com ev]
+        (CommitmentLabel.advice q.2.1.index) (.advice proof q.2.1.index) com ev]
     -- :610-623 instance queries, filter_map keeps only the committed columns
     let inst ← (List.zip (List.range vk.cs.instanceQueries.size)
         vk.cs.instanceQueries.toList).mapM fun q => do
@@ -776,18 +776,23 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
         let com ← Permutation.atIndex ci q.2.1.index "proofs/src/plonk/verifier.rs:616"
         let ev ← Permutation.atIndex ie q.1 "proofs/src/plonk/verifier.rs:617"
         pure [VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
-          (CommitmentLabel.instance_ q.2.1.index) com ev]
+          (CommitmentLabel.instance_ q.2.1.index) (.instance_ proof q.2.1.index) com ev]
       else
         pure []
     -- :624 permutation.queries(vk, x). blinding_factors is computed INSIDE the
     -- Rust fn (:150), so the i32::MAX panic at circuit.rs:2510 is observed here,
     -- after this proof's advice and instance queries have been built.
     let bf ← vk.cs.blindingFactors
-    let perm ← pe.queries (p := p) vk.domain bf x
-    -- :625-626 lookups then trashcans, flat over the per-proof vectors
-    let lk := le.flatMap (fun lq => lq.queries (p := p) vk.domain x)
-    let tr := te.flatMap (fun tq => tq.queries (p := p) x)
-    pure (adv.flatten ++ inst.flatten ++ perm.toList ++ lk.toList ++ tr.toList)
+    let perm ← pe.queries (p := p) vk.domain bf x proof
+    -- :625-626 lookups then trashcans, flat over the per-proof vectors. D-P61 (card
+    -- REF.1) numbers them: each lookup argument owns its m, its helpers and its
+    -- accumulator (logup/verifier.rs:180-208), and each trashcan its own commitment
+    -- (trash/verifier.rs:70), so the index is part of the allocation's identity.
+    let lk := (List.zip (List.range le.size) le.toList).flatMap fun (l, lq) =>
+      (lq.queries (p := p) vk.domain x proof l).toList
+    let tr := (List.zip (List.range te.size) te.toList).flatMap fun (i, tq) =>
+      (tq.queries (p := p) x proof i).toList
+    pure (adv.flatten ++ inst.flatten ++ perm.toList ++ lk ++ tr)
   -- :629-644 fixed queries, AFTER the per-proof block, filtered to non-simple
   let fixed ← ((List.zip (List.range vk.cs.fixedQueries.size)
       vk.cs.fixedQueries.toList).filter
@@ -796,7 +801,7 @@ def collectQueries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
       "proofs/src/plonk/verifier.rs:640"
     let ev ← Permutation.atIndex fixedEvals q.1 "proofs/src/plonk/verifier.rs:641"
     pure (VerifierQuery.new (vk.domain.rotateOmega x q.2.2)
-      (CommitmentLabel.fixed q.2.1.index) com ev)
+      (CommitmentLabel.fixed q.2.1.index) (.fixed q.2.1.index) com ev)
   -- :645-646 the sigma openings, then the linearization polynomial, last
   let common := permutationsCommon.queries (p := p) vk.permutation x
   pure ((perProof.flatten ++ fixed ++ common.toList ++ [linCom]).toArray)
@@ -1217,7 +1222,7 @@ def cqVk : VerifyingKey (Fr 17) Nat :=
 
 def collectQueries_kats_ok : Bool :=
   let lin : VerifierQuery (Fr 17) Nat :=
-    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") (.anon 99) 99 3
   match Verifier.collectQueries (p := 17) 1 cqVk 5
       (#[#[50]] : Array (Array Nat)) (#[#[60]] : Array (Array Nat))
       (#[#[7]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
@@ -1234,7 +1239,7 @@ def collectQueries_kats_ok : Bool :=
       (qs.map (fun q => ZMod.val q.eval)).toList == [8, 7, 9, 3] &&
       (qs.map (fun q => ZMod.val q.point)).toList == [5, 5, 5, 5] &&
       (qs.map (fun q => match q.commitment with
-        | .onePiece c => c
+        | .onePiece _ c => c
         | .linear _ _ _ => 0)).toList == [60, 50, 70, 99]
 
 /-- The committed-instance filter and the R-14 index coupling in one check.
@@ -1256,7 +1261,7 @@ def collectQueriesOrder_kats_ok : Bool :=
   let vk : VerifyingKey (Fr 17) Nat :=
     { cqVk with cs := cs, fixedCommitments := #[70, 71] }
   let lin : VerifierQuery (Fr 17) Nat :=
-    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") (.anon 99) 99 3
   match Verifier.collectQueries (p := 17) 0 vk 5
       (#[#[]] : Array (Array Nat)) (#[#[60]] : Array (Array Nat))
       (#[#[]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
@@ -1277,7 +1282,7 @@ def collectQueriesOrder_kats_ok : Bool :=
     the advice line, not the fixed one, because the advice chain runs first. -/
 def collectQueriesPanic_kats_ok : Bool :=
   let lin : VerifierQuery (Fr 17) Nat :=
-    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") (.anon 99) 99 3
   match Verifier.collectQueries (p := 17) 0 cqVk 5
       (#[#[]] : Array (Array Nat)) (#[#[]] : Array (Array Nat))
       (#[#[]] : Array (Array (Fr 17))) (#[#[8]] : Array (Array (Fr 17)))
@@ -1293,7 +1298,7 @@ def collectQueriesPanic_kats_ok : Bool :=
     proof contributes NOTHING at all - no error, no partial row. -/
 def collectQueriesZip_kats_ok : Bool :=
   let lin : VerifierQuery (Fr 17) Nat :=
-    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") 99 3
+    VerifierQuery.new 5 (CommitmentLabel.custom "linearization_poly") (.anon 99) 99 3
   match Verifier.collectQueries (p := 17) 0 cqVk 5
       (#[#[50], #[51]] : Array (Array Nat)) (#[#[60], #[61]] : Array (Array Nat))
       (#[#[7], #[7]] : Array (Array (Fr 17))) (#[#[8], #[8]] : Array (Array (Fr 17)))

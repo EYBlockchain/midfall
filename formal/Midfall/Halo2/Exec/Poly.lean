@@ -339,8 +339,9 @@ inductive PolyError where
     and proofs/solidity-verifier/src/builder/mod.rs:15 (the generator imports it).
 
     Where the port lives: the *type* is `Midfall.Halo2.Rotation`,
-    Exec/Circuit.lean:13-15, and the integer the Rust tuple field `.0` carries is
-    `Rotation.int`, Exec/Domain.lean:85-94. The three constructors coincide by
+    Exec/Circuit.lean, and the integer the Rust tuple field `.0` carries is
+    `Rotation.int`, now in Exec/Circuit.lean too (REF.2 moved it next to the type and
+    defined `BEq Rotation` in terms of it). The three constructors coincide by
     name, which is why nothing new is needed: `Rotation::cur()` is `Rotation.cur`,
     `Rotation::next()` is `Rotation.next`, `Rotation::prev()` is `Rotation.prev`,
     and `Rotation(i)` is `Rotation.value i`.
@@ -350,7 +351,9 @@ inductive PolyError where
     than as `Int`, which makes it *not* isomorphic to the Rust `i32`.
     (a) `Rotation.cur` and `Rotation.value 0` are two distinct inhabitants in
     Lean and one value in Rust, so a Rust test of `rotation == Rotation::cur()`
-    must be ported as `rotation.int == 0`, never as structural equality.
+    must be ported as `rotation.int == 0`, never as structural equality - which is
+    exactly what the REF.2 instance does, and why `rotationTag` below still tells the
+    two spellings apart while `==` and `Rotation.int` do not.
     (b) `Rotation.value` admits every `Int`, including magnitudes outside the
     `i32` range the Rust cannot express, so anything that bounds a rotation by
     `i32::MIN`/`i32::MAX` (see the `rotate` note above, and R-5's `i32::abs`) has

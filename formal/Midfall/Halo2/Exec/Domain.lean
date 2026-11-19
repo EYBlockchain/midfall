@@ -82,16 +82,10 @@ structure EvaluationDomain (F : Type) where
   /-- rust: domain.rs:31 (barycentric_weight: F) -/
   barycentricWeight : F
 
-/-- rust: proofs/src/poly/mod.rs:509 (`pub struct Rotation(pub i32)`) and
-    :511-527 (`cur`, `next`, `prev`). Exec/Circuit.lean models `Rotation` as a
-    closed inductive because that is the form the constraint-system port needs;
-    this recovers the integer the Rust tuple field `.0` carries, which is what
-    `rotate_omega` and `l_i_range` read. -/
-def Rotation.int : Rotation → Int
-  | .cur => 0
-  | .next => 1
-  | .prev => -1
-  | .value v => v
+-- `Rotation.int` used to live here. REF.2 moved it to `Exec/Circuit.lean`, next to
+-- the inductive it reads, because the repaired `BEq Rotation` instance is defined in
+-- terms of it and has to precede the structures that derive equality over a `Rotation`
+-- field. `rotate_omega` and `l_i_range` below call it unchanged.
 
 /-- rust: proofs/src/poly/domain.rs:37-142 (`EvaluationDomain::new`).
 

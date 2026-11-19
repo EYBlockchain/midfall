@@ -362,8 +362,29 @@ EVAL = re.compile(
 # ObjectFingerprint.objectFingerprint_ok). No gate was deleted, edited or re-spelled. The register stayed 79, the
 # headline cone 10 / 1 REFUTED / 0 VACUOUS, and the object fingerprint re-printed at 14,109 tokens /
 # 0x3149ae4f...bef176. The delta is +25/+0.
-EXPECTED_KAT_TOTAL = 1621
-EXPECTED_KAT_FILES = 117
+# B2 (the reference gate: REF.1, REF.2, REF.4, REF.5, REF.6-pin, REF.8) moved EXPECTED_KAT_TOTAL 1621 -> 1633 and
+# EXPECTED_KAT_FILES 117 -> 118 deliberately: ELEVEN NEW '#eval ... -- expect true' gates across THREE
+# files, one of them new. REF.2 adds poseidonPermutationQueries_ok (the eight permutation columns of the
+# imported key resolve under the repaired BEq Rotation, at the indices the reference's own deduplication
+# gives). REF.1 adds the five grouping KATs to Exec/Kzg/Utils.lean - fixtureShape_groups_ok (the witness:
+# six distinct allocations holding the identity stay six entries) and fixtureShape_old_rejects_ok (the
+# falsifier: the pre-D-P61 value relation returns Error.opening on the SAME input), plus
+# duplicate_still_rejects_ok, duplicate_slot_distinct_values_rejects_ok and oneSlotTwoPoints_ok, which pin
+# that the repair did not loosen the duplicate check it exists to perform. REF.4/REF.8 add the new file
+# Midfall/Instances/NativeReplay.lean with nativeReplay_ok (THE REFERENCE GATE: 21 comparisons - ten
+# challenges by name, the whole read schedule byte for byte, transcript exhaustion at 2640, the 1+45 dual
+# MSM terms by label/scalar/point, both MSM evaluations, and DualMSM.check at the exported trapdoor - all
+# against the Rust's own trace.json, at F1), nativeReplay_delta2_differs_ok and
+# nativeReplay_mutated_differs_ok (the two falsifiers: delta := 2 reddens 3 comparisons, a flipped proof
+# byte reddens 8), nativeReplay_proofAgrees_ok (trace.json's proof_hex IS the tracked proof.bin, 2640
+# bytes, verdict accept, 1+45 terms), and g1CodecC_fixturePoints_ok (every G1 point of the fixture decodes
+# through the computable codec and satisfies decoder-first, the EIP round trip and both widths). No gate
+# was deleted, edited or re-spelled. The object fingerprint re-printed at 14,109 tokens /
+# 0x3149ae4f...bef176 and 'assert_axioms Midfall.LoweringV3.lowering_correct' stayed ok (4 named, 0 native).
+# The delta is +12/+1: the twelfth is poseidonRealCommitments_matchPayload_ok, the REF.6 pin that the 27 decoded
+# commitments of vk.json ARE the payload words the generator emits, with the placeholder key as its falsifier.
+EXPECTED_KAT_TOTAL = 1633
+EXPECTED_KAT_FILES = 118
 
 # Only these shapes count as #eval output.
 #

@@ -45,14 +45,63 @@ def CommitmentLabel.text : CommitmentLabel → String
   | .noLabel => "-"
 
 
+/-- **THE ALLOCATION** a `&CS::Commitment` points into (D-P61, card REF.1).
+    One constructor per place the reference verifier takes such a reference when it
+    builds a `VerifierQuery::OnePiece` - the only producers of a one-piece
+    commitment:
+
+      advice        plonk/verifier.rs:605        &advice_commitments[column.index()]
+      instance_     plonk/verifier.rs:616        &committed_instances[column.index()]
+      permProduct   permutation/verifier.rs:161, :167, :177
+                                                 &self.coms.permutation_product_commitments[i]
+      lookupM       logup/verifier.rs:183        &self.committed.multiplicities
+      lookupHelper  logup/verifier.rs:192        an element of self.committed.helper_polys
+      lookupAcc     logup/verifier.rs:199, :205  &self.committed.accumulator
+      trash         trash/verifier.rs:70         &self.committed.trash_commitment
+      fixed         plonk/verifier.rs:640        &vk.fixed_commitments[column.index()]
+      sigma         permutation/verifier.rs:192  an element of vkey.commitments
+      anon          a fresh allocation the caller numbers itself: the KATs, and the
+                    shape model of Spec/Degrees.lean, whose linearization term is one
+                    shape and not a bag of its terms.
+
+    WHY THIS EXISTS. `std::ptr::eq` on two such references is true exactly when the
+    two slots are equal: each slot names one element of one live `Vec` (or one struct
+    field) of a non-zero-sized type, distinct elements have distinct addresses, and
+    every vector is alive for the whole of `multi_prepare` because the query vector
+    borrows them, so no address is reused. Comparing one-piece commitments by VALUE
+    instead (what the port did before D-P61) merges allocations that happen to hold
+    the same point: on the poseidon fixture the six identity fixed-column
+    commitments opened at x collapse into one entry, and `constructIntermediateSets`
+    reports the second opening of "the same polynomial at the same point" as
+    `Error::DuplicatedQuery`, which the caller renders as `Error.opening`
+    (utils.rs:55-58, plonk/verifier.rs:651). The reference ACCEPTS that proof.
+    REVIEW-V3 RV-03/RV-04; the witness and the falsifier are the KATs at the foot of
+    Exec/Kzg/Utils.lean. -/
+inductive CommitSlot where
+  | advice (proof col : Nat)
+  | instance_ (proof col : Nat)
+  | permProduct (proof set : Nat)
+  | lookupM (proof lookup : Nat)
+  | lookupHelper (proof lookup j : Nat)
+  | lookupAcc (proof lookup : Nat)
+  | trash (proof idx : Nat)
+  | fixed (col : Nat)
+  | sigma (i : Nat)
+  | anon (n : Nat)
+  deriving BEq, DecidableEq, Repr
+
 /-- rust: proofs/src/poly/query.rs:72-101
     (enum CommitmentReference). The Rust holds `&CS::Commitment` references;
     Lean has no lifetimes, so the port owns the commitments (rule R6 takes
     Vec -> Array, and a `&T` becomes a `T`). That is only safe because nothing
-    in the verifier mutates a commitment through the reference. -/
+    in the verifier mutates a commitment through the reference.
+
+    D-P61 (card REF.1) adds the ADDRESS the reference carried: a Rust `&T` is an
+    address AND a pointee, and `PartialEq` (query.rs:117-133) reads the address for
+    `OnePiece`. See `CommitSlot` above for why that is observable. -/
 inductive CommitmentReference (F C : Type) where
-  /-- A single commitment. -/
-  | onePiece (com : C)
+  /-- A single commitment, together with the allocation it was taken from. -/
+  | onePiece (slot : CommitSlot) (com : C)
   /-- A linear combination: points, scalars, and a label per term. -/
   | linear (points : Array C) (scalars : Array F) (labels : Array CommitmentLabel)
 
@@ -60,17 +109,15 @@ inductive CommitmentReference (F C : Type) where
     CommitmentReference). READ THIS BEFORE USING IT AS A DEDUPLICATION KEY.
     The Rust compares OnePiece variants with std::ptr::eq - *address*, not
     value - and for Linear it compares points and scalars but explicitly
-    ignores the labels. A value-equality port is therefore not the same
-    relation: two distinct allocations holding the same point compare unequal
-    in Rust and equal here. Where the verifier groups queries by commitment
-    (construct_intermediate_sets) that difference is observable, so the
-    grouping work package must decide explicitly whether Rust is relying on
-    identity or on value and record which. The label-blindness is ported
-    exactly: two Linears with different labels are equal. -/
+    ignores the labels. D-P61 (card REF.1) DECIDED the question this comment used
+    to leave open: Rust relies on IDENTITY, so the OnePiece arm compares the
+    allocation slot and never looks at the value. Two distinct allocations holding
+    the same point compare unequal here, exactly as in Rust. The label-blindness is
+    ported exactly: two Linears with different labels are equal. -/
 def CommitmentReference.beq {F C : Type} [BEq F] [BEq C]
     (a b : CommitmentReference F C) : Bool :=
   match a, b with
-  | .onePiece x, .onePiece y => x == y
+  | .onePiece s _, .onePiece t _ => s == t
   | .linear p1 s1 _, .linear p2 s2 _ => p1 == p2 && s1 == s2
   | _, _ => false
 
@@ -81,7 +128,7 @@ def CommitmentReference.beq {F C : Type} [BEq F] [BEq C]
 def CommitmentReference.asTerms {F C : Type} [One F]
     (cr : CommitmentReference F C) : Except Fault (Array (F × C)) :=
   match cr with
-  | .onePiece com => .ok #[(1, com)]
+  | .onePiece _ com => .ok #[(1, com)]
   | .linear points scalars _ =>
       if points.size != scalars.size then
         .error (Fault.panic "proofs/src/poly/query.rs:151")
@@ -102,10 +149,11 @@ structure VerifierQuery (F C : Type) where
   eval : F
 
 /-- rust: proofs/src/poly/query.rs:179-195 (VerifierQuery::new): a one-piece
-    commitment. -/
+    commitment. D-P61 (card REF.1) adds `slot`: the caller names the ALLOCATION the
+    Rust reference points into, next to the value it points at. -/
 def VerifierQuery.new {F C : Type} (point : F) (commitmentLabel : CommitmentLabel)
-    (commitment : C) (eval : F) : VerifierQuery F C :=
-  { point, commitmentLabel, commitment := .onePiece commitment, eval }
+    (slot : CommitSlot) (commitment : C) (eval : F) : VerifierQuery F C :=
+  { point, commitmentLabel, commitment := .onePiece slot commitment, eval }
 
 /-- rust: proofs/src/poly/query.rs:197-233 (VerifierQuery::new_linear).
     Two panic sites, :217 and :222, both length agreement between points,

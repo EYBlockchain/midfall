@@ -133,9 +133,10 @@ def Committed.evaluate {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type} (coms : Comm
     trash polynomial is not opened at any rotation, which is what makes this the
     cheapest of the three arguments' query lists. -/
 def Evaluated.queries {p : ℕ} [Fact (Nat.Prime p)] {G₁ : Type}
-    (ev : Evaluated (Fr p) G₁) (x : Fr p) : Array (VerifierQuery (Fr p) G₁) :=
-  #[VerifierQuery.new x CommitmentLabel.noLabel ev.committed.trashCommitment
-      ev.evaluated.trashEval]
+    (ev : Evaluated (Fr p) G₁) (x : Fr p) (proof idx : Nat := 0) :
+    Array (VerifierQuery (Fr p) G₁) :=
+  #[VerifierQuery.new x CommitmentLabel.noLabel (.trash proof idx)
+      ev.committed.trashCommitment ev.evaluated.trashEval]
 
 /-- rust: proofs/src/plonk/trash.rs:58-88 (`Evaluated::expressions`), the
     compressed-constraint identity, reached from `partially_evaluate_identities`
@@ -268,7 +269,7 @@ def readKats_ok : Bool :=
             | #[q] => q.point.val == 11 && q.eval.val == 9 &&
                        (match q.commitmentLabel with | .noLabel => true | _ => false) &&
                        (match q.commitment with
-                        | .onePiece c => c == 42
+                        | .onePiece _ c => c == 42
                         | .linear _ _ _ => false)
             | _ => false))
 

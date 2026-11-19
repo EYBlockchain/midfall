@@ -527,8 +527,23 @@ def CircuitIndex.queryShapes (idx : CircuitIndex (Fr p)) :
   -- permutation/verifier.rs:150-152
   let xLast := pt (Rotation.value
     (Permutation.negI32 (Permutation.asI32 (idx.blindingFactors + 1))))
+  -- D-P61 (card REF.1): the shape model already names the allocation, so the slot is
+  -- read off the ShapeCom. The map is injective, so slot equality here is exactly the
+  -- ShapeCom equality these counts were written against - and shapeSets still calls
+  -- the tree's own CommitmentReference.beq.
+  let slot (c : ShapeCom) : CommitSlot := match c with
+    | .advice i => .advice 0 i
+    | .instance_ i => .instance_ 0 i
+    | .permProduct i => .permProduct 0 i
+    | .logupM i => .lookupM 0 i
+    | .logupHelper i j => .lookupHelper 0 i j
+    | .logupZ i => .lookupAcc 0 i
+    | .trash i => .trash 0 i
+    | .fixed i => .fixed i
+    | .sigma i => .sigma i
+    | .linearization => .anon 0
   let q (point : Fr p) (c : ShapeCom) : VerifierQuery (Fr p) ShapeCom :=
-    VerifierQuery.new point CommitmentLabel.noLabel c 0
+    VerifierQuery.new point CommitmentLabel.noLabel (slot c) c 0
   -- verifier.rs:584-594: advice queries, in `advice_queries` order.
   let adv := idx.cs.adviceQueries.toList.map fun w : Column × Rotation =>
     q (pt w.2) (ShapeCom.advice w.1.index)
