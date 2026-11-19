@@ -135,6 +135,42 @@ DECISION cards (SIM.0, OBJ.17), and the `gen_sorry.sh` silent-truncation data-lo
 owns. **`exitScan` canonical form is a named design item (`PLAN-V3.md:711`, cards `:1028`) but the two
 copies' disagreement is still worth a ruling.**
 
+## PARALLEL-AGENT RULE (authorised by the human, round 127; ENFORCED)
+
+**Two agents MAY run concurrently, each in its own `git worktree`. The old "one card in flight per tree"**
+**rule still applies WITHIN a tree, and these four constraints are binding:**
+
+1. **ONE WORKTREE PER AGENT, ALWAYS.** `/Users/julian/midfall` is the primary; extras are
+   `git worktree add -b t/<ID> /Users/julian/midfall-b formal/baseline`. **A brief MUST name the
+   absolute worktree path and set the agent's `cwd` to it.** **Never `git checkout` another branch inside
+   someone else's worktree; never run `git worktree` commands from a card.**
+   *Why: uncommitted work rides across a checkout. This caused a real multi-author collision at round ~55*
+   *and again with OBJ.4, where I switched branches under a live agent and then misdescribed the diff.*
+
+2. **AT MOST ONE AGENT MAY TOUCH THE REGISTER OR THE KAT PINS.** The shared chokepoints are
+   `formal/SORRY.md`, `formal/scripts/gen_sorry.sh`, `formal/scripts/kat_gate.py`, and any file that
+   regenerates them. **Two cards that both add a gate will both re-pin `EXPECTED_KAT_TOTAL` from the same**
+   **baseline, and whichever merges second silently deletes the first card's rows.** A second concurrent
+   agent must therefore be **gate-neutral**: it adds no sorry, no KAT gate, and no `gen_sorry.sh` owner row.
+
+3. **GATE-NEUTRAL MEANS ALSO: no frozen file, no `Statements.lean`, no `Blocks.lean`, no**
+   **`Composition*.lean`, no `Midfall.lean`.** Those are where parallel edits collide, and `Midfall.lean`
+   is edited by nearly every card that adds a module - **two agents adding modules will conflict there, so**
+   **at most one concurrent agent may add a module.**
+
+4. **THE ORCHESTRATOR MERGES SERIALLY, ONE BRANCH AT A TIME, AND RE-RUNS `checks.sh` AFTER EACH MERGE.**
+   **Never merge two branches in one commit.** **After the second merge, re-verify the register and KAT**
+   **counts from scratch** - a pin that was correct for each branch alone may be wrong for their union.
+
+**SUITABLE parallel partners (all verified gate-neutral in practice):** evidence-area cards
+(`check.sh <area>`, no `lake build` needed at all), script maintenance that touches ONE script, doc/ledger
+work, and `Instances/`-only hygiene. **UNSUITABLE: anything EMIT (they contend for the fingerprint),**
+**anything that rewires `Blocks.lean`/`Statements.lean`, and two PROOF cards in the same cone.**
+
+**Cost, measured:** a fresh worktree has no `.lake`, so the second agent pays a full `lake build`
+(~5,283 jobs, ~9.1 GB of oleans, ~10-20 min) before it can do anything. **Disk and RAM are not the**
+**limit (218 GB free, 86% memory free at round 127) - the merge surface is.**
+
 ## HOW TO WORK THIS PROJECT (hard-won, see sections below)
 - **`git status --porcelain` must be EMPTY before creating a card branch. One card in flight per tree.**
   Uncommitted work travels across a branch switch; this caused a real multi-author merge.
