@@ -306,7 +306,7 @@ EVAL = re.compile(
 # flag combinations); qhA_limb7ArmsDiffer_ok (the two arms are not one arm twice). No gate was deleted,
 # edited or re-spelled. The object fingerprint was re-printed at 14,109 tokens / 0x3149ae4f...bef176 after
 # this line moved, and the sorry register stayed 69. The delta is +8/+0.
-EXPECTED_KAT_TOTAL = 1554
+EXPECTED_KAT_TOTAL = 1565
 EXPECTED_KAT_FILES = 114
 
 # Only these shapes count as #eval output.

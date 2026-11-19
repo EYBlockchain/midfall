@@ -98,6 +98,7 @@ import Midfall.Lowering.GenAst
 import Midfall.Lowering.GenAstPcs
 import Midfall.Lowering.GenAstDispatch
 import Midfall.Lowering.GenAstQuotient
+import Midfall.Lowering.GenAstQvm
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
 import Midfall.Lowering.QvmFold
