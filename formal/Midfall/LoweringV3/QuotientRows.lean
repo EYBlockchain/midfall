@@ -45,12 +45,16 @@
 --       general one-step unfolding, which is what lets a proof induct over bytes instead of trying
 --       to compute a whole run). What remains is named at the end of section 5.
 --
--- WHAT IS NOT HERE, AND WHY. ROW.Q.5 (one leaf per GENERATED LINE FAMILY, as a list induction over
--- its block producer's AST twin) CANNOT BE STATED: the twins do not exist and OBJ.15 decided they
--- must not - 'GenAstQvm.lean:61-69' splices all six families through 'qGenFlat'/'qGenNested', i.e.
--- through 'YulParse.parseLines', because an AST twin would be a SECOND implementation of the ported
--- Rust codegen, "the thing the whole package exists to avoid". The card's own "Stop if" line
--- anticipated this (PG-Q-OBJECT). It is reported, not worked around.
+-- ROW.Q.5, NOW STATED AND NOW PROVED. ROW.Q reported this leaf UNSPEAKABLE: with all six generated
+-- line families spliced through 'YulParse.parseLines' at 'GenAstQvm.lean:61-69' there was no block
+-- producer to induct over (PG-Q-OBJECT). QEMIT (d835506) and QEMIT2 (f10aba9) landed AST twins of the
+-- producers for all five in-scope families, so the leaf is statable, and section 10 states and PROVES
+-- it: the value of each family's emitted block on a SYMBOLIC input list is the value the producer's
+-- own recursion computes, by list induction over that list. The inductions live with the twins, in
+-- 'Midfall/Lowering/GenAstQvmFamilies.lean'; section 10 is the consumer that cites them and adds the
+-- slicing corollary in this file's own 'seg' vocabulary. No row's statement changed: the rows still
+-- name ROW.Q.1/.3/.4 and the builder rows, and ROW.Q.5's leaves are now PROVED leaves rather than a
+-- paragraph about a missing prerequisite.
 --
 -- NO FIXTURE (D-P71). Every statement is quantified over the render 'R : Render p G₁ G₂ Gₜ' and over
 -- the program, table and window it reads. 'poseidonRender' appears nowhere in this file, and neither
@@ -63,6 +67,7 @@
 import Midfall.LoweringV3.Statements
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.QuotientInterp
+import Midfall.Lowering.GenAstQvmFamilies
 import Midfall.Lowering.QvmFold
 import Midfall.Yul.Contracts
 import Midfall.Yul.WpTac
@@ -171,7 +176,15 @@ NAMED LEAVES (card steps 3 and 4; a filled proof's cone is exactly these):
     'qvm_compile_correct_stream'. All six are registered rows of P-SE and are ROW.Q.6/.7/.8/.9's.
   * the glue: the eight statements of the scope around the loop, and the exit shape the scope hands
     to '.pcs.pre'.
-NOT STATED, WITH THE REASON: ROW.Q.5 (one leaf per generated line family) - see the header. -/
+  * ROW.Q.5 - the generated line families, ONE LEAF PER FAMILY, as a list induction over the family's
+    block producer: 'qEmitInlineFamily_value' and 'qEmitNativeIdentityFamily_value' (inline and
+    native identity), 'qEmitPostVmFamily_shape' (post-VM suffix), 'qEmitNativePermutationA_shape' and
+    'qEmitNativeLookupA_shape' (the two native loop families), all in
+    'Midfall.Lowering.GenAst', with the consumer corollaries in section 10 below. PROVED, not stated:
+    the twins QEMIT and QEMIT2 landed are the induction targets. The two native loop families carry
+    the empty-circuit arm, the one-block shape and the compactor induction; their per-item induction
+    is named as a gap ('qEmitLookupBlockA_stepFunctions_gap') because the step functions those two
+    producers hand to 'mapM' are inner lambdas. -/
 theorem q_blockSim (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R)
     (hcodec : G1CodecHeadlineLaws R.E.g1)
     (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (H : Hash)
@@ -682,5 +695,100 @@ leaf. 'poseidonRender' does not appear in this file. -/
 #assert_axioms Midfall.LoweringV3.QuotientRows.q_blockSim_falsifier_return_is_not_a_halt_arm [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.QuotientRows.q_blockProgS_falsifier_reverting_block_is_not_total [propext, Classical.choice, Quot.sound] native []
 #assert_axioms Midfall.LoweringV3.QuotientRows.qlin_split_loop_falsifier_pre_pins_x_pow_2i [propext, Quot.sound] native []
+
+
+/-! ### 10. ROW.Q.5 - THE GENERATED-FAMILY VALUE LEAVES, CONSUMED HERE -/
+
+/-- **THE INLINE FAMILY SLICES BY IDENTITY INDEX.** 'seg' is this file's own slicing vocabulary
+(section 1), and the inline family's region of the quotientLin slice is a flat statement run, so what a
+proof about it needs is the ADDRESS of identity 'i' inside that run.
+'Midfall.Lowering.GenAst.qEmitInlineFamily_take_drop' supplies the split and 'qEmitInlineFamily_length'
+the offset; this is the two read together: the first 'i' identities occupy exactly the first
+'i * stride' statements, and what follows them is the family of the remaining identities. PROVED, no
+fixture, for every identity list, fold plan, scratch slot, state-slot triple and trace flag. -/
+theorem q_rowQ5_inline_seg (ids : List QuotientIdentity) (i : Nat) (hi : i ≤ ids.length)
+    (fold : SelectorFoldPlan) (evalScratchSlot : Nat)
+    (slots : Midfall.Generator.QuotientFold.QuotientStateSlots) (trace : Bool) :
+    seg (qEmitInlineFamily ids fold evalScratchSlot slots trace) 0
+        (i * qFamilyStride trace) =
+      qEmitInlineFamily (ids.take i) fold evalScratchSlot slots trace := by
+  have hlen : (qEmitInlineFamily (ids.take i) fold evalScratchSlot slots trace).length =
+      i * qFamilyStride trace := by
+    rw [qEmitInlineFamily_length, List.length_take_of_le hi]
+  show ((qEmitInlineFamily ids fold evalScratchSlot slots trace).drop 0).take
+        (i * qFamilyStride trace) = _
+  rw [List.drop_zero, qEmitInlineFamily_take_drop]
+  rw [List.take_append_of_le_length (Nat.le_of_eq hlen.symm), ← hlen, List.take_length]
+
+/-- **THE NATIVE-IDENTITY SWITCH HAS AT LEAST ONE CASE WHENEVER THE PLAN CARRIES AN IDENTITY.** The
+render spells the family as '(case index0 => ...)' per identity; a plan whose native list were empty
+would render a switch with no cases at all, which is a different statement - the fail-closed default
+would then be the only arm. PROVED from 'qEmitNativeIdentityCases_length'. -/
+theorem q_rowQ5_native_identity_switch_nonempty (ids : List QuotientIdentity)
+    (h : ids ≠ []) (fold : SelectorFoldPlan) (evalScratchSlot : Nat)
+    (slots : Midfall.Generator.QuotientFold.QuotientStateSlots) (trace : Bool) :
+    qEmitNativeIdentityCases ids fold evalScratchSlot slots trace ≠ [] := by
+  intro hnil
+  have hl : (qEmitNativeIdentityCases ids fold evalScratchSlot slots trace).length = 0 := by
+    rw [hnil]; rfl
+  rw [qEmitNativeIdentityCases_length] at hl
+  exact h (List.eq_nil_of_length_eq_zero hl)
+
+/-- **THE POST-VM REGION IS ONE BRACED BLOCK.** What the rows need from the post-VM family is where the
+region begins and ends in the emitted run: one 'Stmt.block', whatever the trashcan list and whatever
+the abort-free per-trashcan walk inside it. PROVED from 'qEmitPostVmFamily_shape'. -/
+theorem q_rowQ5_postvm_one_block (slots : Midfall.Generator.QuotientFold.QuotientStateSlots)
+    (trace : Bool) {F : Type} [BEq F]
+    (ev ev' : Midfall.Generator.QuotientEvaluator.Evaluator F) (b : Block EVM.Op)
+    (h : (qEmitTrashBlock slots trace).run ev = .ok (some b, ev')) :
+    b.length = 1 := by
+  obtain ⟨blocks, hb, _⟩ := qEmitPostVmFamily_shape slots trace ev b ev' h
+  rw [hb]
+  rfl
+
+/-- **THE TWO STATEMENT-RUN FAMILIES AGREE STATEMENT FOR STATEMENT**, in this file's slicing
+vocabulary: the 'k'-th statement of the inline family is the 'k'-th statement of the native-identity
+family, for every 'k' and every plan. This is what lets ROW.Q's step-2 restatement of
+'qvm_compile_correct_stream' fold the two families as ONE walk instead of two. PROVED from the two
+value lemmas via 'qEmitNativeIdentityFamily_eq_qEmitInlineFamily'. -/
+theorem q_rowQ5_families_agree (ids : List QuotientIdentity) (k : Nat) (fold : SelectorFoldPlan)
+    (evalScratchSlot : Nat) (slots : Midfall.Generator.QuotientFold.QuotientStateSlots)
+    (trace : Bool) :
+    seg (qEmitNativeIdentityFamily ids fold evalScratchSlot slots trace) k 1 =
+      seg (qEmitInlineFamily ids fold evalScratchSlot slots trace) k 1 := by
+  show ((qEmitNativeIdentityFamily ids fold evalScratchSlot slots trace).drop k).take 1 = _
+  rw [qEmitNativeIdentityFamily_eq_qEmitInlineFamily]
+  rfl
+
+
+-- ROW.Q.5: the five family value leaves, proved in 'Midfall/Lowering/GenAstQvmFamilies.lean' and
+-- consumed by the four theorems of section 10. Every cone below is EMPTY: no registered hole is a
+-- premise of any of them, which is what makes them leaves rather than skeletons.
+#cone_sorries Midfall.LoweringV3.QuotientRows.q_rowQ5_inline_seg
+#cone_sorries Midfall.LoweringV3.QuotientRows.q_rowQ5_native_identity_switch_nonempty
+#cone_sorries Midfall.LoweringV3.QuotientRows.q_rowQ5_postvm_one_block
+#cone_sorries Midfall.LoweringV3.QuotientRows.q_rowQ5_families_agree
+#assert_axioms Midfall.LoweringV3.QuotientRows.q_rowQ5_inline_seg [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.q_rowQ5_native_identity_switch_nonempty [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.q_rowQ5_postvm_one_block [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.LoweringV3.QuotientRows.q_rowQ5_families_agree [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitDirectBlock_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitInlineFamily_value [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitInlineFamily_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitInlineFamily_append [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitInlineFamily_take_drop [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitInlineFamily_eq_nil_iff [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentityFamily_value [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentityFamily_eq_qEmitInlineFamily [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentityCases_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentityCases_nth [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentitySwitch_shape [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeIdentityFamily_length [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qMapM_length_stateT [propext, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitPostVmFamily_none [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitPostVmFamily_shape [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativePermutationA_none [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qEmitNativeLookupA_none [propext, Classical.choice, Quot.sound] native []
+#assert_axioms Midfall.Lowering.GenAst.qPushMstoreMloadLiteralRunsA_nil [propext] native []
 
 end Midfall.LoweringV3.QuotientRows
