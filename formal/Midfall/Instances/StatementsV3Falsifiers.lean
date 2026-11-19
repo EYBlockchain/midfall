@@ -19,8 +19,11 @@
     F7  `WellFormed.permutationCommitmentsMatch`: repaired by R.7, witness AND mutant falsified
     F8  the frozen gate does not ask for `LeanAccepts`
     F9  `rejects_of_not_accepts` contradicts any accepted calldata with a returning run
+    F10 the generator theorem with its `hR : ValidV3 R` dropped is refuted (LH's W12 falsifier),
+        plus the typecheck witness of the root at `poseidonRender` - a hypothesis, not a witness
 -/
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.GeneratorTheorem
 import Midfall.Instances.PoseidonValid
 import Midfall.Instances.CurveSurface
 set_option autoImplicit false
@@ -484,6 +487,71 @@ theorem rejects_of_not_accepts_contradiction (R : Render p G₁ G₂ Gₜ) (prod
     (rejects_of_not_accepts (bumpInst R) product W Lyt H vkAddr cd st₀ g obs (deployment_bump hdep)
       (entryFrame_bump hentry) hpc (leanAccepts_bump_false R H cd hacc) hobs)
 
+/-! ## F10. The generator theorem NEEDS its `hR : ValidV3 R` - LH's W12 falsifier -/
+
+/- **WHY THIS IS HERE AND NOT IN `Midfall/LoweringV3/GeneratorTheorem.lean`.** The falsifier is a
+    statement about a MUTANT RENDER (`bumpInst R`), and the render machinery that makes it cheap
+    lives in `Instances/`. checks.sh's Instances import-confinement gate forbids a theorem-bearing
+    file outside `Instances/` from importing one, so the root is stated in `LoweringV3` and its
+    falsifier lands here, beside F1-F9, exactly where the evidence file put the machinery
+    (docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean §4). Nothing here cites the root:
+    the falsifier reads `LoweringEquivalenceV3` directly, so no axiom of this file can enter the
+    root's cone, and `#assert_axioms Midfall.LoweringV3.lowering_correct ... native []` stays empty. -/
+section F10
+
+/-- The V3 entry frame transfers to the bumped render field by field: no field of `EntryFrameV3`
+    reads `cfg.numInstances` (the sixth, `cdSize`, is a bound on `cd`, not on the render). -/
+theorem entryFrameV3_bump {R : Render p G₁ G₂ Gₜ} {W : ExecEnv} {Lyt : EVM.Layout} {H : Hash}
+    {cd : Bytes} {st : EvmState} (h : EntryFrameV3 R W Lyt H cd st) :
+    EntryFrameV3 (bumpInst R) W Lyt H cd st :=
+  ⟨h.shape, h.zeroAbove, h.fmp, h.callvalue, h.selector, h.cdSize⟩
+
+/-- **FALSIFIER OF THE WEAKENING (rule W12, and the objective's own guard).** Take the root as the
+    plan states it and DROP `hR : ValidV3 R`: the headline would then hold of EVERY render. It does
+    not. Take any render `R` with ONE accepted calldata and a returning permissive run - which is
+    what conjunct 2 of the headline promises at every render the gate is proved for - and bump its
+    public-instance count by one. `bumpInst R` has `R`'s program, constants and runs by `rfl`,
+    `R`'s deployment and entry frame field by field (`deployment_bump`, `entryFrameV3_bump`),
+    and `R`'s codec and `encG2` by projection - but its Lean verifier rejects everything `R`
+    accepts, because the expected calldata length moved by 32 (`leanAccepts_bump_false`). So at
+    `bumpInst R` the same run returns and Lean does not accept: conjunct 1 is FALSE. And
+    `bumpInst R` is not `ValidV3` - its `inputs` clause fails - which is precisely the class
+    `hR` carves out. PROVED, no `sorry`.
+
+    WHAT THIS IS NOT: it is not a refutation of the root, and not a witness for it. It says the
+    hypothesis is load-bearing. The witness - a render with `ValidV3 R` - is blocked and recorded
+    as `gap_lowering_correct_witness_unexhibited` (LoweringV3/GeneratorTheorem.lean): `generated`
+    is refuted at F1, so no render in the tree satisfies the hypothesis today, and none was invented
+    to make this section look better. -/
+theorem lowering_correct_needs_valid (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
+    (W : ExecEnv) (Lyt : EVM.Layout) (H : Hash) (vkAddr : U256) (cd : Bytes) (st₀ : EvmState)
+    (g : ExternalGas) (obs : Obs)
+    (hdep : DeploymentV2 R W H vkAddr) (hentry : EntryFrameV3 R W Lyt H cd st₀)
+    (hpc : Eip2537.Holds R.E.g1 ⟨R.encG2⟩ product) (hcodec : G1CodecHeadlineLaws R.E.g1)
+    (hacc : LeanAccepts R H cd) (hss : SoundSide (bumpInst R) H cd)
+    (hobs : RunBody R vkAddr 0 (permissive (callsOf product)) g st₀ obs)
+    (hret : obs.isReturn) :
+    ¬ ∀ R' : Render p G₁ G₂ Gₜ, LoweringEquivalenceV3 R' product := by
+  intro hall
+  obtain ⟨h1, _, _, _⟩ := hall (bumpInst R) W Lyt H vkAddr cd st₀ (deployment_bump hdep)
+    (entryFrameV3_bump hentry) hpc hcodec
+  exact leanAccepts_bump_false R H cd hacc (h1 g obs hobs hret hss).2
+
+/-- **THE ROOT INSTANTIATES AT THE FIXTURE - A TYPECHECK, NOT A WITNESS (W12).** D-P71 forbids a
+    fixture in the statement, so the only thing a fixture can show is that the generic statement is
+    USABLE at one: this `example` is the root applied to `poseidonRender`. It takes
+    `hR : ValidV3 poseidonRender` AS A HYPOTHESIS and therefore says nothing about that
+    hypothesis having an inhabitant - it does not, today (`poseidonValid_generated_not`,
+    `Instances/PoseidonValid.lean:893`, and the cause is the `quotient.rs:202` refusal recorded
+    in `gap_lowering_correct_witness_unexhibited`. The evidence file's own words: "until then this
+    `example` shows the instantiation typechecks". `#print axioms` on it would show `sorryAx`
+    - the root's two open leaves - which is the finding, not a hole of this file (as with F9). -/
+example (product : PairingProduct) (hR : ValidV3 Midfall.Instances.PoseidonV2.poseidonRender) :
+    LoweringEquivalenceV3 Midfall.Instances.PoseidonV2.poseidonRender product :=
+  Midfall.LoweringV3.lowering_correct Midfall.Instances.PoseidonV2.poseidonRender product hR
+
+end F10
+
 #print axioms new_numPointSets_zero
 #print axioms frozenValid_numPointSets_zero
 #print axioms leanAccepts_pad_false
@@ -491,5 +559,7 @@ theorem rejects_of_not_accepts_contradiction (R : Render p G₁ G₂ Gₜ) (prod
 #print axioms envAgrees_delta_free
 #print axioms leanAccepts_bump_false
 #print axioms rejects_of_not_accepts_contradiction
+#print axioms entryFrameV3_bump
+#print axioms lowering_correct_needs_valid
 
 end Midfall.LoweringV3.Falsifiers
