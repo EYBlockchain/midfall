@@ -653,7 +653,7 @@ INFRA · STATEMENT · box 1.5 h · Sonnet · after —
 - **Deliverable.** Three modules in the tree: namespaces Midfall.LoweringV3, Midfall.LoweringV3.Deploy, Midfall.LoweringV3.Falsifiers, with the declarations listed in the memo.
 - **Accept.** `lake build Midfall.LoweringV3.Statements Midfall.Instances.StatementsV3Deploy Midfall.Instances.StatementsV3Falsifiers` green. Printed values equal the measurements: `true`/`false` (calldata), `("today", true, false, false, 4224, 4320)`, `("faithful", false, true, true, 4320, 4320)`, `(10496, 10496, 3, 48, 0, true, false)`. `#print axioms lowering_equivalenceV3_of` and `lawsV3_satisfiable_at_G1z` show `[propext, Classical.choice, Quot.sound]`. `#print axioms rejects_of_not_accepts_contradiction` shows sorryAx. Falsifier of the ticket: changing `planFaithful` to `setNumPointSets 2` turns the second tuple's third and fourth components false.
 - **Stop if.** Any of the three files fails to compile at the ticket's base commit (a Lean source changed since 2cad8cc): stop and report the first error; do not repair statements inside this ticket.
-- **Guidance.** The Falsifiers file has theorems and imports Instances, so it must live under Midfall/Instances (D-P17). Do not use `simp` on anything containing `List.replicate (2 ^ 256) _`. `native_decide` appears only in the Deploy file, for `poseidon_delta_not`.
+- **Guidance.** The Falsifiers file has theorems and imports Instances, so it must live under Midfall/Instances (D-P17). Do not use `simp` on anything containing `List.replicate (2 ^ 256) _`. `native_decide` appears only in the Deploy file, for `poseidon_delta_not`. **FALS2 addendum: the `native_decide` use in the Deploy file was for `poseidon_delta_not`, which FALS2 proved FALSE of everything and retired; the corrected fact is `poseidon_delta_is_at_fallback`.**
 
 ### ST.2 — Statement-surface decisions  **[DONE — signed 2026-11-17]**
 
@@ -750,7 +750,7 @@ GEN · PORT · box 2.5 h · Sonnet · after ST.4, RECON.1
   4. Fix every consumer of `hR.circuitMeta` / `hR.supported.wf`.
   5. Re-hash (final).
 - **Deliverable.** `Render.Valid` with the V3 clause set; the exit scan; PayloadAgrees.
-- **Accept.** `lake build` green; `exitDiscipline_witness` and `exitDiscipline_refuses` build by `decide`; the staged Falsifiers F2 builds against a Prop copy of the old clause 1. Falsifier of the ticket: `PayloadAgrees poseidonRender` is refuted by `poseidon_payloadAgrees_not`.
+- **Accept.** `lake build` green; `exitDiscipline_witness` and `exitDiscipline_refuses` build by `decide`; the staged Falsifiers F2 builds against a Prop copy of the old clause 1. Falsifier of the ticket: `PayloadAgrees poseidonRender` is refuted by `poseidon_payloadAgrees_not`. **FALS2 addendum: `poseidon_payloadAgrees_not` is OPEN, not refuted - its 5 point fields are undecidable because `g1CodecZ` is noncomputable. It is now a bare `Prop`, so a `Prop` copy is all it can supply.**
 - **Stop if.** Stating `PayloadAgrees` requires importing Generator/Vk.lean into the frozen file: stop; the scratch text does not need it.
 - **Guidance.** Slot numbers come from `vkHeaderTemplateSlotsDefault`, never literals. `Op` is ambiguous in files that open both namespaces; write `EVM.Op`.
 
@@ -1713,7 +1713,7 @@ INFRA · STATEMENT · box 2 h · Sonnet · after DG.1, ST.1, REF.8
      `artifact : ArtifactEq poseidonRender.model poseidonVerifierDump`,
      `vkArtifact : renderHalo2VerifyingKey poseidonRender.plan.vk = poseidonVkDump`.
   3. Prove `not_done_today (cd) : ¬ Done cd` from `¬ ValidV3 poseidonRender`
-     (`StatementsV3Deploy.lean: poseidon_payloadAgrees_not`) through `proof.nonvacuous.1`.
+     (`StatementsV3Deploy.lean: poseidon_payloadAgrees_not`) through `proof.nonvacuous.1`. **FALS2: that name is now a bare `Prop`, not a proof term - this route has no proof behind it and must be re-sourced or the card re-scoped.**
   4. Add `Done` to the closure roots in `Report.lean`.
 - **Deliverable.** `Done`, `not_done_today`.
 - **Accept.** `#print axioms not_done_today` shows no `sorryAx`. W12: the falsifier is

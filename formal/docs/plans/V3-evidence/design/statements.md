@@ -135,7 +135,7 @@ Decidability:
 Other measurements:
 - Counts agree: `(19, 19, 8, 8)`.
 - The payload's identity fixed commitments are at indices `[8, 10, 11, 12, 14, 16]`, six of them. The review lists five; index 14 is also all-zero in `Halo2VerifyingKey.sol` (:189-192). The Lean key has all nineteen at the identity.
-- Falsifiers, proved: `envAgrees_delta_free` and `envAgrees_commitments_free` (the frozen `EnvAgrees` survives any `delta` and any commitments); `payloadAgrees_pins_delta`; `poseidon_payloadAgrees_not`.
+- Falsifiers, proved (**FALS2 exception: `poseidon_payloadAgrees_not` below is OPEN, not proved - see the note at the end of this list**): `envAgrees_delta_free` and `envAgrees_commitments_free` (the frozen `EnvAgrees` survives any `delta` and any commitments); `payloadAgrees_pins_delta`; `poseidon_payloadAgrees_not`.
 - Constraint on WP-G1: the AST emitter for the native permutation block must take its `delta` literal from `R.inputs.frDelta`. In the VM arm the text's literal comes from `R.qblocks`; only `CodegenAgrees` then ties the two.
 
 ### (d) Scope and decomposition
