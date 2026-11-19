@@ -58,6 +58,29 @@ copy.
 7. **REF.6 Do 2 vs `PoseidonCoherence.lean`** - setting `poseidonE := <g1CodecC, ...>` falsifies three
    existing `rfl` pins the card omits from Needs (`:427`, `:433`, `:454`). A D.2 coherence change needing
    a decision, not silent absorption. **Blocks: B4 (ValidV3 at F1).**
+### REF.5g - STOPPED CORRECTLY, not a blocker for the shortest path (round 140)
+
+**My error, ninth instance: I told REF.5g the five D-P36a axioms were unused and the gate edit was
+'follow-through'. I had not checked.** They are still declared as `axiom` at
+`Midfall/Assumptions/CurvePairing.lean:69,74,81,88,101` (that file's only commit is `5a10e21`), and
+`Instances/HoldsFinal.lean:57-58` uses `blsGT` as the `G_t` carrier via the axiom-built instance at
+`CurvePairing.lean:103`. Eight further sites name them, and three hard pins were NOT on the card's Needs:
+`Midfall/Tools/ConeReport.lean:89-94`, `scripts/DoneTest.lean:41-43/66-68/118-120`, and PLAN.md section 1.
+**B2 landed REF.5's construction (077a3c5) but NOT REF.5 Do step 2, the deletion - so REF.5g's precondition
+is unmet and emptying `HOLDS_EXPECTED` would assert a trusted base the tree does not have.**
+
+**WHY IT IS OFF THE SHORTEST PATH ANYWAY: the V3 root does not depend on those five axioms.**
+`assert_axioms lowering_correct` prints `ok (4 named, 0 native)` - standard three plus `sorryAx`. The five
+are pinned in the V2 root, which D-P74 item 3 already reports RETIRED. **So completing REF.5 is a
+trusted-base cleanup for the final claim, not a step toward `lowering_correct`.** REF.5g's patch is kept
+uncommitted in /Users/julian/midfall-c with a write-up at /tmp/REF.5g-pending.md, and its recommendation -
+land the gate artefact in the SAME commit as REF.5 Do step 2, definition-ising the five names so
+`holds_exhibited` becomes standard-three without a HoldsFinal edit - is recorded for when it is picked up.
+
+**LESSON, FOR ME AND FOR CARDS: when a gate asserts an axiom list, `grep -rn` for the axioms themselves.
+Do not read a card's Needs and trust them. I asserted a fact about the tree from a card's prose, and a
+worker had to stop me.**
+
 ## 5. Last three merges
 - 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
 - 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed
