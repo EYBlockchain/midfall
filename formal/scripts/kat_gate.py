@@ -306,8 +306,23 @@ EVAL = re.compile(
 # flag combinations); qhA_limb7ArmsDiffer_ok (the two arms are not one arm twice). No gate was deleted,
 # edited or re-spelled. The object fingerprint was re-printed at 14,109 tokens / 0x3149ae4f...bef176 after
 # this line moved, and the sorry register stayed 69. The delta is +8/+0.
-EXPECTED_KAT_TOTAL = 1565
-EXPECTED_KAT_FILES = 114
+# T3.10 moved EXPECTED_KAT_TOTAL 1565 -> 1569 and EXPECTED_KAT_FILES 114 -> 115 deliberately: FOUR NEW
+# '#eval ... -- expect true' gates, all in the NEW Midfall/Instances/QInterpWitnessF1.lean, which is the
+# fixture half of the card (D-P71: the contract and its witnesses/falsifiers are PROOFS in
+# Midfall/Lowering/QuotientInterp.lean; the F1 instance and the teeth are tests here). They are
+# qinterpArmFamilies_cover_ok (the arm-family table in the contract file IS the emitter's arm list at
+# BOTH OBJ.15 acceptance contexts - 31 labels at all-flags, 10 at the deployment - in both directions, so
+# an arm added, deleted or renumbered in GenAstQvm reddens it); qinterpRowTracksTheProgram_ok (the loop the
+# contract is stated about moves when opUsage, stackMptr, len, programMptr or constMptr moves, and does not
+# move when nothing does - the gate that reddens if the row is ever pinned to one program);
+# qinterpF1_hypotheses_inhabited_ok (the F1 witness's two hypotheses exhibited JOINTLY at the deployment,
+# check_hypothesis_bundles' rule); qinterpWindowIsThePrograms_ok (the window the contract quantifies over is
+# the program's own). No gate was deleted, edited or re-spelled. The sorry register moved 69 -> 70 by the
+# card's one named hole (Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop, owned by ROW.Q), the
+# headline cone stayed at 10 leaves / 1 REFUTED / 0 VACUOUS, and the object fingerprint re-printed at
+# 14,109 tokens / 0x3149ae4f...bef176. The delta is +4/+1.
+EXPECTED_KAT_TOTAL = 1569
+EXPECTED_KAT_FILES = 115
 
 # Only these shapes count as #eval output.
 #

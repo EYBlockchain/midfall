@@ -118,6 +118,14 @@ owner() {
 # CLOSED by T3.2. The round-78 audit resolved the 3-way owner conflict to T3.2 (D-P71: "Also prove
 # wpSS_exists_C"), and GEN.1 step 4 now has it: wpSS_exists_C and Midfall.Yul.WpX.wpSS_exists are both
 # projections of the one fuel induction Midfall.Yul.WpX.wp_exists.
+    # ---- T3.10: the quotient-interpreter CONTRACT landed in Midfall/Lowering/QuotientInterp.lean. ----
+    # The card is a STATEMENT card: it lands QInterpRefines typechecked with W12 witnesses and falsifiers
+    # and does NOT prove it. The one sorry is the row itself - the one-off lemma route B needs - and it is
+    # ROW.Q's to discharge, not a shape gap: QPROBE measured that the emitted loop does not execute at any
+    # fuel by unrolling, which is why the contract exists.
+    Midfall.Lowering.QuotientInterp.qinterpRefines_qvmLoop)
+      echo 'V3 ROW.Q - T3.10 landed the contract (Midfall/Lowering/QuotientInterp.lean: QInterpRefines, ported from the evidence file GeneratorRows.lean:896 and adapted to D-P72 memory windows); this is route B one-off lemma: the emitted interpreter loop refines evalQuotientIdentity on one identity segment' ;;
+
     # ---- everything else: the owner the register carried, re-keyed by declaration name ----
     Midfall.Halo2.Spec.*)         echo 'Phase 4 (spec layer)' ;;
     Midfall.Instances.PoseidonV2.*) echo 'V2 (PLAN-V2): C.1 headline lemmas - WP-M0 blocks, D.3 circuit gap' ;;
