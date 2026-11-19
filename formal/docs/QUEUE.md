@@ -15,8 +15,62 @@ when its `after` tickets are merged.
 - **Since PL.0 (2026-11-17) the plan is PLAN-V3** (D-P60). The order is the **V3 table** directly
   below: take its first READY row. A V2 card further down runs only where that table lists it;
   every other V2 card is marked MERGED INTO, SUPERSEDED or DONE.
+- **Since D-P75 (signed 2026-11-19) the order is the COMPLETION table** directly
+  below; the V3 table becomes card reference.
+
+## COMPLETION — the order (D-P75)
+
+**One row = one WORK PACKAGE (WP):** one outcome on the report (`v2-bundle/docs/GOAL-PROMPT.md`,
+PROGRESS), absorbing the PLAN-V3 cards it lists. Take the first READY row for a free worker; a row is
+READY when every WP in its `after` column is MERGED and the decisions it names are signed. The
+absorbed cards (`docs/plans/PLAN-V3-cards.md`, `### <ID> —`, or the V2 cards further down) are
+guidance; the Accept is the contract. Built 2026-11-19 from the V3 table reconciled with the git log
+at `44d0acd`: every one of the 118 open cards is absorbed below; merged cards are not listed.
+Tracks: **A** the headline rows (critical path) · **B** reference, artifact, non-vacuity, DONE ·
+**C** widening (M9) · **D** end to end (M8) and certification (M10). At most two workers (D-P75).
+
+| WP | Accept: the report line it moves | absorbs | after | box | status |
+|---|---|---|---|---|---|
+| **A0** | `lowering_correct` is one tree of named leaves; ROOT re-keyed to it; `lowering_sound` reported (PL.H0's Accept) | PL.H0, GEN.5 (row half) | — | 8 h · strongest | READY |
+| **A1** | `prefix_sim`, `prefix_prog` proved: both leave the two roots | SIM.6, SIM.6.a–c, SIM.6's e/f split (`ef19950`; SIM.6.d landed there) | A0 | 8 h · strongest | |
+| **A2** | the shared leaves proved: decomposition, scans, `runBody_mono`, `quiet_init` | ST.8, ST.11, ST.12, ST.13, SIM.3, SIM.4, SIM.5, GEN.4 | A0 | 8 h · strongest | |
+| **A3** | vkLoading INTEGRATED (calibration B) | GEN.1, SIM.8, T3.6, the `vk_all` leaf | A0 | 8 h · strongest | |
+| **A4** | lagrange INTEGRATED (calibration C: re-estimate what remains) | T3.0, T3.9, T3.9.a–e, T3.9.g, T3.9.h | A3 | 8 h · strongest | |
+| **A5** | helper summaries proved and consumed by a row | HLP.1, HLP.1.a–c | A4 | 8 h · strongest | |
+| **A6** | transcriptParser INTEGRATED | SIM.9, SIM.10, SIM.11, ROW.TP, ROW.TP.1–9 | A2, A3, A5 | 8 h · strongest | |
+| **A7** | quotient 1/2: every named leaf of `q_blockSim` but the interpreter arms, incl. a proved bridge from the structured twins (OBJ.14/15, QEMIT) to `R.slice` | ROW.Q.1, ROW.Q.4, ROW.Q.5 family 4 (family 5 proved in `cd736ff`, QEMIT3) | A4 | 8 h · strongest | |
+| **A8** | quotientLin INTEGRATED | ROW.Q.3 (`qinterpRefines_qvmLoop`, eight arms), ROW.Q.6–9 | A7 | 8 h · strongest | |
+| **A9** | PCS 1/2: decode-exists proved; the PCS skeleton with its children | SIM.12, ROW.PCS, ROW.PCS.2, ROW.PCS.9 | A2, A8, B2 | 8 h · strongest | |
+| **A10** | pcs INTEGRATED | the ROW.PCS children A9 lists | A9 | 8 h · strongest | |
+| **A11** | finalPairing and traceReturn INTEGRATED; the old composition retired | ROW.FP, SIM.7 | A5, A10, B1, B2 | 8 h · strongest | |
+| **A12** | the totality leaves proved | ST.16, TOT.1, TOT.1.a | A1, A11 | 8 h · strongest | |
+| **A13** | `lowering_correct`: 0 leaves, `native []`, `sorryAx` out of the allow-list | PL.H | A1–A12 | 2 h · strongest | |
+| **B1** | gates: no registered sorry refuted, refuted ones out (W13); CI or its local negative control; DG.3 and OBJ.17 put to the human | DG.6, PL.1, DG.7, DG.3, S.10, ST.1 (check ST.1c `582c3b8` first), OBJ.17 | — | 4 h · Sonnet | READY |
+| **B2** | the reference gate green: `nativeReplay_ok` (REF.8) | REF.1, REF.2, REF.4, REF.5, REF.5g, REF.6, R.6, ST.18, OBJ.11, REF.8 | — | 8 h · strongest | READY |
+| **B3** | the codec laws proved at the deployment | REF.9, REF.10, ST.14, ST.17, REF.13, REF.14 | B2 | 8 h · strongest | |
+| **B4** | `ValidV3 poseidonRender` inhabited (the `generated` clause) | OBJ.8 step 3 (open since `a4605c1`), R.3, ST.15, ST.7, REF.7, OBJ.16 | B2 | 8 h · strongest | |
+| **B5** | artifact gates: both `.sol` files byte for byte; slice literals pinned | OBJ.10, OBJ.12, T3.3 | B2 | 4 h · Sonnet | |
+| **B6** | exhibits 4 of 4 PRESENT; `Done` stated with its refutation | REF.12, DG.4, DG.5 | B1, B2 | 6 h · strongest | |
+| **C0** | `lowering_correctW` is one tree (W glue proved through `blockSimW_iff_blockSim`) and reported as a root | the sorried glue of `CompositionW.lean`: `rejectsW_of_sims`, `completeAnyGasW_of_progs`, `totalW_of_stages` | A0 | 8 h · strongest | |
+| **C1** | F2 exists: the IVC fixture exported; the widened clause table | WID.2, WID.3, WID.4, GEN.2 | — | 8 h · strongest | READY |
+| **C2** | the IVC object: `ValidW ivcRender` by computation | OBJ.13, WID.5, WID.6, WID.7 | C1 | 8 h · strongest | |
+| **C3** | the reference and acceptance gates at F2 | WID.8, WID.9 | B3, B6, C2 | 4 h · Sonnet | |
+| **C4** | accumulator arms 1/2: helper summaries, `AccInv` (WID.11's ALG obligations merged in `44d0acd`) | WID.12, WID.13 | A3, A5, C0, C2 | 8 h · strongest | |
+| **C5** | accumulator arms 2/2: frame clauses, `BatchedInv`, the external quotient arm | WID.14, WID.15, WID.16 | A6, A8, A10, A11, C4 | 8 h · strongest | |
+| **C6** | the evaluator body; widened totality | WID.17, WID.19 | A12, C5 | 8 h · strongest | |
+| **C7** | `lowering_correctW`: 0 leaves; the F2 gates | WID.H | A13, C3, C6 | 2 h · strongest | |
+| **D1** | `end_to_end` for every render; the English statement in STATUS.md | PL.E | A13 | 6 h · strongest | |
+| **D2** | the certified statement lands and is reported as a root; suspects probed; `generate` runs on a real key | CERT.0, CERT.1, CERT.3, CERT.8 | B1, B2 | 8 h · strongest | |
+| **D3** | route A: the generator prints the tree; its syntactic invariants | CERT.2, CERT.5 | A2, A8, C2, D2 | 8 h · strongest | |
+| **D4** | the validation, builder and codec families | CERT.4, CERT.6, CERT.7 | B2, D2 | 8 h · strongest | |
+| **D5** | `generator_correct`: 0 leaves | CERT.H | A13, C7, D3, D4 | 2 h · strongest | |
+| **D6** | the DONE commit: `verify.sh` prints PLAN-V3 §6 | DG.9 | A13, B6, C7, D1, D5 | 2 h · Sonnet | |
 
 ## V3 — THE LIVE ORDER (PLAN-V3 §5; cut over by PL.0, 2026-11-17)
+
+> **Since D-P75 this table is card reference, not the order** (the COMPLETION table above is). Its
+> statuses are stale since `64ffdf9` (2026-11-18 14:25): the merges after that are not marked here,
+> and the git log is the record.
 
 **How to use this table.** It is the queue: take the **first row whose status is READY**. A row is
 READY when every card in its `after` column is merged, and the decision it names is signed (all of

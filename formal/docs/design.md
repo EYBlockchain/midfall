@@ -2657,3 +2657,76 @@ sound up to one value of `alpha` per input.
 **Not decided here.** Whether the contracts that are deployed are produced by the Lean generator
 or by the Rust one. Until the Lean `generate` runs on a real key, a deployed contract is covered
 by a per-deployment comparison with what the Lean generator prints (clause 4).
+
+## D-P74 — **Approved: wire the headline first; one row shape; the progress root is `lowering_correct` (amends D-P72's routing of `lowering_correct`, D-P68's boundary)**
+
+> **Status: APPROVED.** Drafted 2026-11-19 at `b62e29e`, after a review of the 33 commits of
+> `7a9baa9~1..b62e29e`: no merge moved the headline. Signed off: the human, 2026-11-19, in a Copilot
+> session in VS Code (tree at `44d0acd`), answering the sign-off form *"Sign D-P74: wire the headline
+> first"* with **yes**. The human's requirement: *"i want to complete v3 plan fully"*.
+> Evidence: `ef19950` (SIM.6: the V3 composition lies outside the cone of the V2 root the register
+> tracks); `c1bb557` (LH: `lowering_correct` is a corollary of the sorried `lowering_correctW`);
+> `ca2ed23` (RECON.3: `BlockSimV3` over `StageBnd` is incomparable with `BlockSim` over `StageInv`;
+> `blockSimW_iff_blockSim` proved). Card: PL.H0 (`docs/plans/PLAN-V3-cards.md`).
+
+**Decision.**
+
+1. **Route.** `lowering_correct` is proved from the base rows through
+   `lowering_equivalenceV3_of_rows`. `lowering_correct_of_W` stays in the tree; the root does not
+   use it. The statement does not change. `lowering_correctW` (M9) is proved from the same
+   `BlockSim` rows through `blockSimW_iff_blockSim` for the blocks that do not touch the
+   accumulator, plus the accumulator arms of area WID.
+2. **One row shape.** Row bundles, rows and compositions use `BlockSim`/`BlockProgS` over `StageInv`
+   (`Midfall/LoweringV2/Stages.lean`). `StageBnd`, `BlockSimV3`, `BlockProgV3` and the lemmas that
+   only compare against them are deleted.
+3. **Progress root.** The register's ROOT column, `#cone_report` and `verify.sh` are keyed to
+   `Midfall.LoweringV3.lowering_correct`. `lowering_sound` (conjuncts 1 and 3) is reported beside it
+   as the first milestone; `lowering_correctW` (from WP C0) and `generator_correct` (from WP D2) are
+   reported as further lines. The V2 fixture headline is reported as RETIRED until PL.H deletes it.
+4. **Wire first.** PL.H0 (PL.H brought forward as a SKELETON) runs before any row WP; PL.H stays the
+   closing card.
+
+**Conditions (applied, not chosen).** A glue step that needs a fact no leaf supplies adds a named
+leaf, never a hypothesis on a bundle or a root (D-P71). A row false for some valid render goes to
+the human.
+
+## D-P75 — **Approved: complete PLAN-V3 by work packages (amends EXECUTION-V2 §2–§4, §7, W6, W8; PLAN-V3 §7, §10.3; the goal prompt's "Scope")**
+
+> **Status: APPROVED.** Drafted 2026-11-19 at `b62e29e`. Signed off: the human, 2026-11-19, in a
+> Copilot session in VS Code (tree at `44d0acd`), answering the sign-off form *"Sign D-P75: complete
+> PLAN-V3 fully by work packages"* with **yes**. The human's requirements: *"i want to complete v3
+> plan fully"*; *"i feel like the model could do more at once"*.
+> Evidence, measured over `7a9baa9~1..b62e29e`: 28 cards merged and 7 met their Accept line; most
+> used 40–55 min of a 2–2.5 h box; cold-worktree builds of 28–50 min ate whole boxes; `QUEUE.md`
+> and `ETA.md` were not updated once; the register went 66 → 79 while no reported root moved.
+
+**Decision.**
+
+1. **Scope.** All of PLAN-V3: M5–M7 (`lowering_correct`), M8 (`end_to_end`), M9 (`lowering_correctW`),
+   M10 (`generator_correct`) and the DONE commit (DG.9). Nothing is deferred or cut.
+2. **Unit of work.** A WORK PACKAGE (WP): one outcome on the report (item 4), absorbing the PLAN-V3
+   cards listed in its row of the COMPLETION table at the top of `QUEUE.md`. The absorbed cards are
+   guidance; the WP's Accept is the contract.
+3. **Box.** At most 8 h for `strongest`, 4 h for `Sonnet`; a WIP commit every 45 min. The worker plans
+   and splits inside the WP, corrects a false premise inside the WP's goal and reports it. A worker
+   whose context runs out is re-briefed on the same WP from its last WIP commit.
+4. **Progress is the report.** The sorried leaves of each reported root (`lowering_correct`,
+   `lowering_sound`, later `lowering_correctW`, `generator_correct`); block rows INTEGRATED (of 7);
+   exhibits PRESENT (of 4); `ValidV3` inhabited at F1. Every WP names the line it moves. Two
+   consecutive merged WPs that move no line go to the human.
+5. **Statement surface.** A new sorried declaration is allowed only as a leaf of a reported root's
+   cone or as a child that the same WP consumes; registered sorries outside the cones must not grow.
+   While `ValidV3` has no inhabitant at F1 (until WP B4), W12's witness for a statement over
+   `ValidV3` may be the named gap that blocks it (`gap_lowering_correct_witness_unexhibited`); its
+   falsifier is still required.
+6. **Concurrency.** At most two workers, each in its own long-lived warm worktree, on different
+   tracks, or on one track when their files are disjoint. Workers never edit `SORRY.md`, the KAT pins
+   or `gen_sorry.sh` owner rows: the orchestrator regenerates them after each merge and runs the full
+   `verify.sh` once per merge.
+7. **Records.** Per WP: the commit message (at most 25 lines), one `STATUS.md` overwrite (one page),
+   the WP's row of the COMPLETION table. `ETA.md` is retired; the V3 table of `QUEUE.md` is card
+   reference only.
+
+**Conditions (applied, not chosen).** W1–W5, W7, W9–W15 and PLAN-V3 §4 still bind except where items
+2–7 say otherwise. The calibration points remain: a missed threshold stops the dependent WPs and goes
+to the human.

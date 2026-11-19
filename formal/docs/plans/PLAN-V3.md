@@ -967,6 +967,9 @@ and `#assert_axioms rows_correct [propext, Classical.choice, Quot.sound] native 
 
 ### M7 — The headline (card PL.H)
 
+> **D-P74 (signed 2026-11-19):** card PL.H0 wires this headline FIRST, as a skeleton whose cone is the row
+> leaves (WP A0 of the COMPLETION table, `QUEUE.md`); PL.H only closes it.
+
 ```lean
 theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
     LoweringEquivalenceV3 R product
@@ -1270,6 +1273,9 @@ the present render) and is deleted in the commit that proves `generator_done`.
 
 ## 7. Briefing: the template, and what makes a card workable by Sonnet 5.5
 
+> **Amended by D-P75 (signed 2026-11-19):** the unit of execution is a work package (≤ 8 h strongest, ≤ 4 h
+> Sonnet) that absorbs these cards; the brief template is the goal prompt's THE LOOP, step 3.
+
 EXECUTION-V2 §3, unchanged, with one line added to every brief:
 
 ```
@@ -1401,6 +1407,10 @@ re-estimates by analogy, stating the sample size.
   measurement is re-run by the card that relies on it (EXECUTION-V2 §2.3).
 
 ## 10. Cut-over: how the orchestrator picks this up
+
+> **Superseded for execution by D-P75 (signed 2026-11-19):** the orchestrator's goal is
+> `v2-bundle/docs/GOAL-PROMPT.md` as rewritten on 2026-11-19, and the order is the COMPLETION table
+> of `QUEUE.md`. This section is kept as history.
 
 **Nothing in this section needs a new decision except where it says so.** It is written so that the
 next orchestrator session can act on it from `STATUS.md` + `QUEUE.md` alone.

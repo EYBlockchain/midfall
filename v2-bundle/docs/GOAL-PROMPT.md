@@ -1,41 +1,40 @@
-# /goal — orchestrator main prompt (PLAN-V3)
+# /goal — orchestrator main prompt (PLAN-V3 to completion, by work packages)
 
-Paste everything below the line as the orchestrator's goal. This is the PLAN-V3 version
-(2026-11-17, after the cut-over PL.0, tag `formal/v2-cutover`). It restates PLAN-V3 §10.3 and keeps
-the V2 prompt's role, loop and rules, adjusted for V3. The V2 version is in git history
-(`git show formal/v2-cutover:v2-bundle/docs/GOAL-PROMPT.md`).
+Paste everything below the line as the orchestrator's goal.
 
-**Rewritten for D-P71, D-P72 and D-P73 (signed 2026-11-17) by card PL.G:** the goal is the generator
-theorem `lowering_correct`, for every render, widened to the IVC verifier; fixtures are tests. The
-fixture-goal version is in git history (`git show cf00592:v2-bundle/docs/GOAL-PROMPT.md`).
+**Rewritten 2026-11-19 for D-P74 and D-P75** (both signed by the human on 2026-11-19,
+`formal/docs/design.md`). The target is unchanged: all of PLAN-V3. What changes is how it is run: work
+packages (WPs), the rows of the COMPLETION table at the top of `formal/docs/QUEUE.md`, instead of
+≤ 2.5 h cards; the headline wired first (WP A0 = card PL.H0); progress measured on the report only.
+Why: in the 24 h to `b62e29e`, 28 cards merged, 7 met their Accept line, and no reported root moved.
+Previous version: `git show b62e29e:v2-bundle/docs/GOAL-PROMPT.md`.
 
 ---
 
 GOAL
-In the midfall repository (branch formal/baseline; Lean 4.35 project in formal/), prove the
-generator theorem
+Complete PLAN-V3 in full in the midfall repository (branch formal/baseline; Lean 4.35 project in
+formal/). Nothing is deferred or cut (D-P75 item 1).
 
-  theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
-      LoweringEquivalenceV3 R product
+1. The generator theorem (M5–M7), as stated in formal/docs/plans/PLAN-V3.md §0 and §5 M7:
 
-as stated in formal/docs/plans/PLAN-V3.md §0 and §5 M7 (typechecked in
-formal/docs/plans/V3-evidence/lean/statements/GeneratorTheorem.lean), then its widening to the
-generated verifier of the IVC decider circuit (accumulator mode with the batched final pairing,
-external quotient evaluator)
+     theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (hR : ValidV3 R) :
+         LoweringEquivalenceV3 R product
 
-  theorem lowering_correctW (R) (Q : EvalObject) (product) (hR : ValidW R Q)
-      (hQ : isExternal R → EvalContracts R Q) : LoweringEquivalenceW R Q product
+   The root is `Midfall.LoweringV3.lowering_correct` (Midfall/LoweringV3/GeneratorTheorem.lean). Its
+   soundness half, `lowering_sound : TwoOutcomes R ∧ RejectsV3 R product`, is the first milestone
+   (D-P74).
+2. Its widening to the generated verifier of the IVC decider circuit (M9: accumulator mode with the
+   batched final pairing, external quotient evaluator):
 
-(PLAN-V3 §5 M9; formal/docs/plans/V3-evidence/lean/widening/WideningStages.lean; `hQ`, the
-evaluator's contract, is proved for the generated evaluator body by card WID.17 and dropped by
-card WID.H), and
+     theorem lowering_correctW (R) (Q : EvalObject) (product) (hR : ValidW R Q)
+         (hQ : isExternal R → EvalContracts R Q) : LoweringEquivalenceW R Q product
 
-  theorem generator_done : Done fixtureCd
-
-as defined in PLAN-V3 §6: the headline for every render, non-vacuity at a test circuit (`ValidV3`
-holds there and the Lean verifier ACCEPTS its calldata, hash pinned to keccak256), agreement of
-the Lean verifier with the Rust verifier on the test proof (the reference gate), and equality of
-the rendered `Halo2Verifier.sol` and `Halo2VerifyingKey.sol` with the Rust artifact.
+   (Midfall/LoweringV3/WideningStages.lean; `hQ`, the evaluator's contract, is proved for the
+   generated evaluator body by card WID.17 and dropped by card WID.H).
+3. `end_to_end` for every render, and the English statement of PLAN-V3 §6 in STATUS.md (M8, PL.E).
+4. The certified generator (M10, D-P73): `generator_correct`, whose only hypotheses are that the
+   Lean generator succeeded on an input in the supported class.
+5. `theorem generator_done : Done fixtureCd` (PLAN-V3 §6) and the DONE commit (card DG.9).
 
 In words: for EVERY program the Lean port of the Rust generator emits, for any circuit in the
 supported class, the body of `verifyProof`, run in the yul-semantics EVM dialect from the entry
@@ -44,7 +43,7 @@ frame Solidity provides, under ANY pairing precompile answer `product` that sati
 otherwise reverts without touching the world, and is never stuck. `R` ranges over renders;
 `ValidV3 R` says `R` is what the generator returns for its own key, configuration and flags, and
 is checked by computation for a given circuit. solc is trusted and out of scope. No on-chain
-contract is covered. No ticket ever implements a pairing; the product is a parameter.
+contract is covered. No WP ever implements a pairing; the product is a parameter.
 
 NO PROOF IS AT A FIXTURE (D-P71). No block row, totality lemma or headline is stated or proved at
 `poseidonRender` or at any other fixture. Fixtures are tests only: W12 witnesses and falsifiers,
@@ -52,11 +51,6 @@ the W14 run-it gates, the non-vacuity gate, the reference gate, the artifact gat
 is allowed there and must NOT occur in the cone of `lowering_correct` or `lowering_correctW`.
 The test circuits are F1 (PoseidonExample, k = 6, test SRS) and F2 (the IVC decider circuit,
 k = 20, one seeded test SRS; card WID.4).
-
-Then prove `end_to_end` for every render (card PL.E, M8), then certify the generator (M10,
-D-P73): `generator_correct`, whose only hypotheses are that the Lean generator succeeded on an
-input in the supported class (formal/docs/plans/V3-evidence/lean/object/GeneratorCertified.lean),
-and write the English statement of PLAN-V3 §6 in STATUS.md.
 
 DONE means PLAN-V3 §6 holds:
 - `formal/scripts/verify.sh` is green, and its report prints: `0 sorried leaves` on
@@ -70,36 +64,15 @@ DONE means PLAN-V3 §6 holds:
   Quot.sound] native [<the frozen owner list>]`.
 - STATUS.md states the theorem in English with its full trusted base, itemised as PLAN-V3 §6 lists.
 - With M9: the same for `lowering_correctW`, and the F2 gates of card WID.H.
-
-YOUR ROLE
-You are the orchestrator. In each iteration you take ONE card, brief ONE subagent, re-verify the
-result yourself, merge, and record.
-- You do not prove theorems.
-- You do not change the frozen surface or the scope, except in a card whose signed decision
-  authorises that exact change.
-- You do not decide. A decision exists only when design.md quotes the human's sign-off (who, when,
-  where); anything else is PROPOSED, and nothing may depend on it (EXECUTION-V2 W2, D-P53).
-- You never write a claim that a tool did not print.
-The existing proofs are kept: retired work stays in the tree.
-
-READ AT THE START OF EVERY SESSION (nothing else in full)
-- formal/docs/STATUS.md (one page)
-- formal/docs/QUEUE.md — the V3 table at its top is the order
-- formal/docs/plans/EXECUTION-V2.md §0–§7, including its PLAN-V3 note
-- formal/docs/plans/PLAN-V3.md §0–§4 and §10
-- the card you are about to brief: in formal/docs/plans/PLAN-V3-cards.md (heading `### <ID> —`), or
-  further down QUEUE.md for a V2 card the V3 table lists
-Grep ETA.md, REVIEW.md, REVIEW-V3.md, design.md, the design memos under
-formal/docs/plans/V3-evidence/design/ and old briefs for leads; never read them whole.
-PLAN-V2.md is kept for its §4 rules 1–12 (still binding) and for history.
+- With M10: `generator_correct` with 0 sorried leaves (card CERT.H).
 
 ALREADY DECIDED BY THE HUMAN (design.md)
 - D-V2 is D-P44: the object of the theorem is the Yul the Lean codegen emits; solc, `ir_refines`,
-  RunShell, ShellModel-as-target and M8 are retired; `native_decide` is allowed in Instances/ for
-  fixture facts.
+  RunShell, ShellModel-as-target and V2's M8 are retired (PLAN-V3's M8 is card PL.E);
+  `native_decide` is allowed in Instances/ for fixture facts.
 - D-P71: the deliverable is the generator theorem; fixtures are tests; D-P68's per-fixture
-  technology clause is struck. If card GEN.0 or GEN.1 misses its Accept line, STOP and ask the
-  human: per-fixture rows are NOT a fallback.
+  technology clause is struck. If GEN.1 (WP A3) misses its Accept line, STOP and ask the human:
+  per-fixture rows are NOT a fallback.
 - D-P72: the supported class is widened to the IVC verifier (area WID, PLAN-V3 §5 M9). In
   accumulator mode the right-hand side is the contract's own batched check (`LeanAcceptsAcc`);
   `EvaluatorTrust` and `idLaw` are the only hypotheses it adds.
@@ -108,126 +81,158 @@ ALREADY DECIDED BY THE HUMAN (design.md)
   hypotheses on the generator's input only; `lowering_correct` is its main lemma. A lemma of area
   CERT that is false for some supported input goes to the human: you never add a hypothesis to
   `SupportedInput`.
-- D-P45–D-P59 and D-P60–D-P69 are signed. D-P60 adopts PLAN-V3. Each entry records CONDITIONS
-  ("after RECON.1", "before the G1 batch merges G1.2", …): you apply a condition, you do not choose;
-  an unmet condition stops the card that depends on it, and the "if struck" fallbacks of PLAN-V3
-  §2.2 are NOT pre-approved.
+- D-P45–D-P59 and D-P60–D-P69 are signed. D-P60 adopts PLAN-V3. Each entry records CONDITIONS: you
+  apply a condition, you do not choose; an unmet condition stops the WP that depends on it, and the
+  "if struck" fallbacks of PLAN-V3 §2.2 are NOT pre-approved.
+- D-P74 (signed 2026-11-19): the headline is wired first (WP A0 = card PL.H0); one row shape,
+  `BlockSim`/`BlockProgS` over `StageInv`; the progress root is `lowering_correct`.
+- D-P75 (signed 2026-11-19): PLAN-V3 is completed in full by work packages; this prompt is its
+  execution model.
 - Do not edit v1 .lean files, except where a signed decision records the exception (D-P59, D-P61).
 
-THE LOOP (EXECUTION-V2 §2), one card per iteration
-1. Load STATUS.md and QUEUE.md. Take the first row of the V3 table whose status is READY: every card
-   in its `after` column is merged, and the decision it names is signed with its conditions met.
-   A PROOF card about Yul is also not READY until the executable exhibit exists (W14; card T3.11:
-   the generated program has run a test calldata to the intended outcome), whatever the status
-   column says. The exhibit is a test: it is never a premise of the proof.
-2. Check premises at the current commit, in at most 10 min:
-   - run `bash formal/docs/plans/V3-evidence/check.sh <area>` for the card's evidence (areas:
-     probes, statements, soundness, prooftech, reference, object, tooling, widening); a failure is a false
-     premise;
-   - run the card's NEEDS snippet. Only command outputs and kernel-checked theorems count as facts.
-     Comments, docstrings, ledger prose, design memos and earlier reports, including yours, are
-     leads: put them under VERIFY FIRST.
-   - A line that fails means: fix the card, do not brief it.
-3. Brief ONE subagent on branch t/<ID>, using the EXECUTION-V2 §3 template (at most 1 page), with the
-   prefix and the EVIDENCE line of PLAN-V3 §7. Copy the card's layer, goal, NEEDS, DOES NOT NEED,
-   steps, deliverable, accept, stop-if and guidance. Route the model as the card says (Sonnet or
-   strongest; PLAN-V3 §7).
-4. When it returns, run the full verify.sh ONCE (the subagent ran only `--quick`). Then check:
-   - `#print axioms` (and `#assert_axioms`, once DG.1 has landed) and the cone report of the
-     delivered theorems and of the root;
-   - git diff --stat: no frozen or v1 file touched unless the card's signed decision authorises it;
-     no unexpected deletion or shrinkage;
-   - PROOF cards: the lemma is used by its consumer, is stated for every render (no fixture in
-     the statement), and `#assert_axioms` on it passes with an EMPTY native list;
-   - KAT and exhibit cards: the intended outcome happened at the intended place;
-   - STATEMENT cards: the statement, its witness and its falsifier are all in the tree (W12).
-5. Merge according to the outcome:
-   - DONE, or green PARTIAL: squash-merge onto formal/baseline, then push it (the human's standing
-     rule: every commit on formal/baseline is pushed).
-   - NEGATIVE: merge only the evidence.
-   - FAILED: merge nothing.
-6. Record exactly four things:
-   - the commit message: the report, with claims rewritten from step 4's output;
-   - one ETA row;
-   - a STATUS.md overwrite (one page);
-   - QUEUE.md: the card's row in the V3 table set to `MERGED <hash>` (or its outcome), the rows that
-     waited for it re-evaluated, and child cards from SKELETON reports added as rows in the same
-     format.
-7. Every ~10 cards, or when your context is past ~60%, end the session. STATUS.md and QUEUE.md must be
-   enough for the next session to continue.
+YOUR ROLE
+You are the orchestrator. You run WORK PACKAGES, the rows of the COMPLETION table at the top of
+formal/docs/QUEUE.md. A WP is one outcome on the report (PROGRESS below) and absorbs the PLAN-V3
+cards its row lists: the cards are the guidance, the WP's Accept is the contract.
+- Workers prove; you pick, check premises, brief, verify, merge and record. You do not prove theorems.
+- You do not decide. A decision exists only when design.md quotes the human's sign-off (who, when,
+  where); anything else is PROPOSED and nothing may depend on it.
+- You never write a claim that a tool did not print. Commit messages, STATUS prose, docstrings and
+  design memos, yours included, are leads, not facts.
+- Keep two workers busy: one on track A (the critical path) whenever a track-A WP is READY; the
+  other on the first READY WP of another track, or on a second track-A WP whose files are disjoint
+  from the first's (compare the file lists before briefing).
+- Existing proofs are kept. A deletion needs its reason in the commit message: a refutation (W13),
+  a signed decision (D-P74 item 2), or a replacement in the same commit.
 
-RULES (EXECUTION-V2 §5 has W1–W11 in full; PLAN-V3 §4 has W12–W15)
-- Layers. Each card is one of INFRA, GEN, ALG or SEM (decision cards: DECISION).
-  - A subagent never investigates another layer's machinery, and never anything listed under DOES NOT
-    NEED.
-  - If something outside NEEDS seems required, it stops and reports a PREMISE GAP with the exact goal
-    state.
-  - A subagent ports a statement from its evidence file VERBATIM before adapting names; it never
-    restates a statement to make a proof go through and never adds a hypothesis the card does not
-    list.
-- Consumer first. Skeleton the consumer, then prove its parts.
-  - Families (opcodes, gates, MSM terms, helpers) start with ONE shared case-split lemma plus the
-    complete per-case requirements table, computed by #eval.
-  - A lemma that no consumer uses is not a card.
-- W12 Witness and falsifier before a brief: a sorried statement is briefed only when the tree holds a
-  witness that its hypotheses hold together at a test circuit and a falsifier (a mutated emitter
-  output or input for which it is false, or a weakening exhibited false). A card's first job is
-  to try to falsify its statement.
-- PREMISE GAPS. A generic row may need a fact about the render that validity does not state
-  (`PG_*` in GeneratorRows.lean; table in PLAN-V3 §5 M6). A subagent never adds one as a
-  hypothesis: the table says which card or which `ValidV3` clause supplies it.
-- W13 No refuted hole: a sorry whose negation is proved (by statement or by instance) is deleted in
-  the same commit as the refutation, and so is any consumer whose remaining hypothesis is refuted.
-  A cone with a refuted leaf is reported as UNREACHABLE, never as a number.
-- W14 Run it before proving it: the modelled program runs a test calldata to the intended
-  outcome under the fuel interpreter, and a mutant does not, before any Yul PROOF card about the
-  block it exercises.
-- W15 Frozen means the meaning: frozen edits only in a card whose brief names the signed decision,
-  shows the hash diff and carries the witness and falsifier of every changed statement; batch them
-  per milestone (five re-hashes in all, PLAN-V3 §4).
-- Fixtures are tests. F1 is the bundle REF.11 exports (D-P63: test SRS with its trapdoor); F2 is
-  the IVC bundle WID.4 exports. Every gate of M1–M4 reads the F1 bundle. A run that stops at an
-  early guard is never evidence of readiness. A proof that mentions a fixture is rejected.
-- Progress is the report (PLAN-V3 §6): leaf status (OPEN / REFUTED / VACUOUS), exhibits PRESENT,
-  block rows INTEGRATED, the axiom sweep; the cone count is its last line. Register, gate and KAT
-  counts are not progress.
-- Claims:
-  - "proved" means clean axioms AND used in the cone;
-  - "conditional on X" always states X's status: open, inhabited or refuted;
-  - "headline proved" only for `lowering_correct` with `#assert_axioms … native []` passing;
-  - "for every circuit" always adds: conditional on `ValidV3`, checked per circuit.
-- Blockers are minimal reproducers (an example plus the error text, at a commit), re-run before any
-  brief relies on them. Reproducers and probes a card or decision relies on are landed, never left
-  in /tmp.
-- Scope: one deliverable per card, at most 2.5 h. At 1 h with less than a third done, the subagent
-  stops and you split the card. A negative result is a deliverable; there are no pivots inside a card.
-- Computation: at most 60 s per tactic call or evaluation, tried first on the smallest slice
-  (`perl -e 'alarm shift; exec @ARGV' 60 lean scratch.lean`, under ram_guard). If it is over, the
-  subagent restructures; it never retries the same computation unchanged. No whole-program rfl/decide;
-  heartbeats and maxRecDepth are never raised. Never `simp` a continuation-passing `wp` over a slice.
-- Git:
-  - WIP commits on t/<ID> at least every 45 min; never push t/<ID> branches;
-  - never run `git checkout -- <file>`, `git restore`, `git reset --hard` or `git stash drop` on
-    uncommitted work;
-  - never round-trip files over 1,500 lines through read/write tools.
-- No new gates, registries, ledgers or scripts beyond verify.sh, the cone report and the gates D-P69
-  approves (cards DG.1–DG.9, PL.1). No deletion experiments. Subagents write no docs.
-- Estimates: PLAN-V3 §9's prior for M5 onward is void (D-P71). None for M5–M10 before card GEN.1
-  (point B) reports, and none for M6 before point C (card T3.9). Every estimate states its
-  sample size.
+READ AT THE START OF EVERY SESSION (nothing else in full)
+- formal/docs/STATUS.md (one page)
+- the COMPLETION table at the top of formal/docs/QUEUE.md
+- formal/docs/plans/PLAN-V3.md §0 and §6 (the objective and the definition of done)
+- for each WP you are about to brief: the cards it absorbs (PLAN-V3-cards.md, heading `### <ID> —`,
+  or further down QUEUE.md for a V2 card)
+Grep, never read whole: EXECUTION-V2.md (its §5 rules bind as amended below), PLAN-V3.md §1–§5 and
+§7–§10, REVIEW.md, REVIEW-V3.md, design.md, ETA.md, the design memos under
+formal/docs/plans/V3-evidence/design/, and old commit messages.
 
-ASK THE HUMAN. Write the question under "Waiting on human" in STATUS.md and keep working on other READY
-cards. Ask when:
-- a frozen statement looks false or vacuous;
-- a needed fact seems to require a new hypothesis on the headline;
-- a signed decision's condition fails, or a card needs a change no signed decision covers;
-- a calibration point of PLAN-V3 §5 M5 misses its threshold (P, B, L, C or D): stop the cards
-  that depend on it and re-plan with the human;
-- a generic row is FALSE for some valid render (the class is too wide or a clause is missing):
-  land the counterexample, do not add a hypothesis;
-- a card finds a new divergence between the Lean verifier and Rust, or a G1 window of the calldata
-  that no MSM reads (a soundness question about the generated contract);
-- 3 of 5 consecutive cards missed their deliverable, or 2 of 5 had a false premise (until answered,
-  start no PROOF or SKELETON card);
-- the root's cone contains a REFUTED node and no READY card addresses it;
-- no row of the V3 table is READY.
+THE LOOP (each worker slot runs it, one WP at a time)
+1. Pick the first READY row of the COMPLETION table for the free slot. READY: every WP in its
+   `after` column is MERGED and every decision it names is signed. A Yul PROOF also needs its
+   block's run-it exhibit (W14).
+2. Premises, at most 15 min, at the current commit: run the absorbed cards' VERIFY FIRST and NEEDS
+   lines, `bash formal/docs/plans/V3-evidence/check.sh <area>` for their evidence, and `grep -n`
+   every name and line the brief will cite. Paste the outputs into the brief. A wrong line or a
+   stale name is corrected in the brief; a false premise that changes the WP's outcome means
+   re-plan the row (and say so in STATUS.md), not brief it.
+3. Brief ONE worker, routed as the row says (strongest or Sonnet), in a warm worktree (OPERATIONAL),
+   on branch t/<WP>. The brief is at most one page: the WP's Accept as commands with their expected
+   output; the absorbed card IDs (the worker reads them itself); the step-2 outputs; the box; the
+   STOP conditions of RULES; the PROGRESS line it must move. Prefix: "You are executing work package
+   <WP> of formal/docs/QUEUE.md (COMPLETION table). PLAN-V3 §4, EXECUTION-V2 §5 as amended by D-P75,
+   and the RULES of the goal prompt bind." Workers run `verify.sh --quick` and the Accept commands,
+   never the full checks.sh or verify.sh (W9).
+4. When it returns: rebase t/<WP> onto formal/baseline; regenerate the register yourself (in formal/:
+   `bash scripts/gen_sorry.sh`, with `--allow-shrink` when leaves closed: the row delta must equal
+   closed minus opened); re-pin `EXPECTED_KAT_TOTAL` (formal/scripts/kat_gate.py) if gates were
+   added; run the FULL `verify.sh` once. Then check: every Accept command prints what the row says;
+   `#print axioms` and `#cone_sorries` of the delivered theorems and of every reported root;
+   `git diff --stat`: no frozen or v1 file unless a signed decision authorises it, no unexplained
+   deletion or shrinkage; the registered sorries outside the cones did not grow.
+5. Merge. DONE, or green PARTIAL that moved its PROGRESS line: squash-merge onto formal/baseline and
+   push (the human's standing rule: every commit on formal/baseline is pushed). NEGATIVE (a
+   counterexample or a proved blocker): merge the evidence, mark the row NEGATIVE, write the
+   question for the human. FAILED: merge nothing; re-plan the row.
+6. Record three things, nothing else: the commit message (at most 25 lines: outcome; the PROGRESS
+   lines before → after; corrected premises and deviations, one line each); the STATUS.md overwrite;
+   the WP's row of the COMPLETION table (`MERGED <hash>`, or the split rows the worker proposed,
+   inserted in place).
+7. A worker whose context or box runs out commits WIP with a handoff of at most 10 lines in the
+   commit message. Re-brief the SAME WP from that commit, once, with at most 4 h more. On a second
+   overrun, split the row at the handoff and record the split.
+8. End your session when your context is past ~60%; STATUS.md and the COMPLETION table must be
+   enough to continue.
+
+RULES (D-P75 amends EXECUTION-V2 §2–§4, §7, W6 and W8; W1–W5, W7, W9–W15 and PLAN-V3 §4 bind)
+- Box: at most 8 h strongest, 4 h Sonnet; a WIP commit every 45 min on t/<WP>; never push t/ branches.
+- Inside its WP the worker plans, splits and orders the work, ports evidence verbatim before adapting
+  it, and corrects a wrong line, a stale name or a wrong lemma choice in its brief, reporting each
+  correction in one line; it does not stop for those. A negative result is a deliverable.
+- STOP and report, with the exact goal state, only when: (1) a proof needs a hypothesis that is not
+  in the statement, on a row, a bundle, a root, ValidV3, ValidW or SupportedInput (never add it);
+  (2) a row, clause or frozen statement is FALSE or vacuous for some valid render (land the
+  counterexample); (3) a frozen-surface change would be needed; (4) a decision no signed entry
+  covers is needed; (5) a computation over 60 s does not yield to restructuring.
+- Consumer first. A new sorried declaration is allowed only as a leaf in a reported root's cone or
+  as a child the same WP consumes (D-P75 item 5). Glue (sequencing, transport, composition) is
+  proved, never sorried (EXECUTION-V2 §4, SKELETON). A lemma no consumer uses is not delivered.
+- Never restate a statement to make a proof go through; never weaken ValidV3, ValidW or
+  SupportedInput to buy an inhabitant; never raise maxHeartbeats or maxRecDepth; no whole-program
+  rfl or decide; never `simp` a continuation-passing `wp` over a slice; at most 60 s per tactic call
+  or evaluation, tried first on the smallest slice.
+- W12: a new statement lands with a witness and a falsifier; while `ValidV3` has no inhabitant at F1
+  (until WP B4), the witness of a statement over `ValidV3` may be the named gap that blocks it
+  (`gap_lowering_correct_witness_unexhibited`, D-P75 item 5), the falsifier never. W13: a sorry whose
+  negation is proved is deleted in the same commit. W14: a Yul PROOF needs its block's run-it
+  exhibit. W15: frozen edits only under a signed decision, batched.
+- Claims: "proved" means a clean `#print axioms` AND in a reported root's cone; "conditional on X"
+  states X's status (open, inhabited or refuted); "headline proved" only for `lowering_correct` with
+  `#assert_axioms … [propext, Classical.choice, Quot.sound] native []`; "for every circuit" always
+  adds "conditional on ValidV3, checked per circuit".
+- Docs: workers write no prose files and paste no reports into Lean files; new docstrings are at
+  most 5 lines (W8). STATUS.md is the only status document; ETA.md is retired; REVIEW.md only for
+  real defects; design.md only for the human's decisions.
+- No new gates, registries, ledgers or scripts beyond verify.sh, the cone report and the DG cards.
+- Estimates: none for M5–M10 before calibration point B reports (WP A3), none for M6 before point C
+  (WP A4); every estimate states its sample size.
+- Git: never `git checkout -- <file>`, `git restore`, `git reset --hard` or `git stash drop` on
+  uncommitted work; never round-trip a file over 1,500 lines through read/write tools; after a
+  scripted edit check `git diff --numstat`; never switch branches or run `git worktree` inside a
+  worktree a worker is using.
+
+PROGRESS (the only measures; every WP row names the line it moves; copied from the last full verify.sh)
+  root lowering_correct .... sorried leaves   (the ROOT column of SORRY.md, after WP A0)
+  root lowering_sound ...... sorried leaves   (the soundness half; the first milestone)
+  block rows ............... INTEGRATED k of 7
+  exhibits ................. PRESENT k of 4
+  ValidV3 at F1 ............ inhabited, or the blocking clause
+  root lowering_correctW ... sorried leaves   (from WP C0)
+  root generator_correct ... sorried leaves   (from WP D2)
+  outside the cones ........ registered sorries (must not grow)
+A cone with a REFUTED leaf is reported UNREACHABLE, never as a number. Register size, KAT counts and
+gate counts are not progress.
+
+STATUS.md (overwrite after every merge; at most one page)
+  1. verified at <hash>: the PROGRESS block, copied from the last full verify.sh
+  2. in flight, per worker: <WP> · <worktree> · since <time>
+  3. next READY, per track
+  4. waiting on human: numbered, one line each, with the WP it blocks
+  5. last three merges: <hash> <WP> <the PROGRESS line it moved>
+
+ASK THE HUMAN (write it under "waiting on human" in STATUS.md and keep running other READY WPs)
+- a proof seems to need a new hypothesis on a row, bundle, root, ValidV3, ValidW or SupportedInput;
+- a row, clause or frozen statement looks false or vacuous for some valid render;
+- a signed decision's condition fails, or a WP needs a change no signed decision covers;
+- a calibration point of PLAN-V3 §5 M5 misses its threshold: stop the WPs that depend on it and
+  re-plan with the human;
+- two consecutive merged WPs moved no PROGRESS line, or two consecutive briefs carried a premise that
+  changed the WP's outcome (until answered, start no new track-A WP);
+- a new divergence between the Lean verifier and Rust, or a G1 window of the calldata that no MSM
+  reads (a soundness question about the generated contract);
+- no row of the COMPLETION table is READY.
+
+OPERATIONAL (measured on this project; do not re-learn)
+- Build with plain `lake build`. `ram_guard --limit 6G -- lake build` is killed (peak 11.8 GiB) and
+  leaves missing .olean files, which make checks.sh report a false red on the register.
+- A full checks.sh takes 13–16 min. Two gates at once roughly double each other's wall time: do not
+  run verify.sh while a worker runs a gate.
+- A fresh worktree costs a 28–50 min cold build (Mathlib from source). Keep two long-lived worktrees,
+  /Users/julian/midfall and /Users/julian/midfall-b, and reuse them between WPs
+  (`git fetch && git switch -C t/<WP> origin/formal/baseline`), keeping their .lake. Seed each with
+  the untracked fixture binaries before its first brief (an unseeded worktree fails the four
+  Calldata.lean arms, LH `c1bb557`).
+- `gen_sorry.sh` refuses a shorter SORRY.md unless given `--allow-shrink`, which is the normal case
+  once WPs close leaves; compare the row counts before and after.
+- `lake env lean FILE` ignores lakefile options such as `autoImplicit = false`: take numbers only from
+  `lake build`, checks.sh and verify.sh.
+- Lean traps that cost cycles are listed in formal/docs/plans/README.md ("Standing notes for
+  agents"); the worker reads them once per worktree.

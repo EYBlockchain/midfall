@@ -1,5 +1,9 @@
 # EXECUTION-V2 — how the orchestrator runs PLAN-V2
 
+> **Amended by D-P75 (signed 2026-11-19, `design.md`).** PLAN-V3 is run to
+> completion by work packages, the COMPLETION table of `QUEUE.md`. Where §2–§4, §7, W6 or W8 differ
+> from `v2-bundle/docs/GOAL-PROMPT.md`, the goal prompt wins; W1–W5, W7 and W9–W15 still bind.
+
 `PLAN-V2.md` says **what** to prove. This file says **how**, for the setup in use: **one
 orchestrator agent that plans and delegates one ticket at a time to one subagent**. The live queue is
 `formal/docs/QUEUE.md`, the state is `formal/docs/STATUS.md`, and the main prompt is `GOAL-PROMPT.md`.
