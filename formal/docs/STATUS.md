@@ -171,6 +171,42 @@ work, and `Instances/`-only hygiene. **UNSUITABLE: anything EMIT (they contend f
 (~5,283 jobs, ~9.1 GB of oleans, ~10-20 min) before it can do anything. **Disk and RAM are not the**
 **limit (218 GB free, 86% memory free at round 127) - the merge surface is.**
 
+## ST.13 - FAILED, work left on branch t/ST.13, NOT merged (round 142)
+
+The agent was stopped before it could report, so I inspected its worktree instead of assuming.
+Branch t/ST.13 at 44d0acd, 2 files uncommitted (+234/-5): Midfall/Yul/Bridge.lean +219 and
+Midfall/LoweringV3/Statements.lean +20/-5. Zero sorries in the diff, and the obligation comment in
+LoweringV3/Statements.lean had been changed from 'OBLIGATION (Bridge layer)' to 'PROVED (ST.13)'
+- so it looked finished.
+
+**IT IS NOT. `lake build` FAILS on Midfall.Yul.Bridge.** I compiled the file directly; the errors
+are at Bridge.lean:367 (cannot synthesise implicit argument alpha, and c' at three positions),
+:374 (unsolved goals, plus a 'This simp argument is unused' warning), and :379 (Unknown identifier
+funenvMv_cons). So it was cut off mid-edit and its own PROVED comment is a claim its build does not
+support. Per the loop, FAILED means merge nothing: nothing was merged, and the branch is left
+intact with its uncommitted work so the next card resumes rather than restarts.
+
+WHAT IS PROBABLY SALVAGEABLE - the monotonicity chain is the right shape and is exactly what ST.13
+needs: fdeclMv / fscopeMv / funenvMv (transporting the function environment between call
+relations), then funenvMv_cons, fscopeMv_hoist, find?_fscopeMv, lookupFun_funenvMv, and the
+ascending chain externalCall_mono -> builtin_mono -> step_mono -> run_mono -> runCommitted_mono.
+Its design note is a real finding worth keeping: the call relation occurs only in externalCall
+(EVMExec.lean:889) in a positive position, everything the caller observes about a response is
+chosen by the function finishCall of it, and VEnv / Code / EvmState do not depend on the relation,
+so the transport is confined. That is the argument the card asked for; it was just not finished.
+
+RESUME INSTRUCTIONS FOR THE NEXT ST.13 CARD: work in /Users/julian/midfall-c on t/ST.13 and do NOT
+re-derive the chain. Three concrete defects: (a) funenvMv_cons is referenced at :379 but is not in
+scope there - check definition order; (b) the implicit alpha and c' at :367 need to be made
+explicit or annotated; (c) :374 has an unsolved goal and an unused simp argument. Then run
+lake build and paste #print axioms Midfall.LoweringV3.runBody_mono before claiming anything.
+
+PROCESS NOTE: a card's own report that something is proved is a lead; lake build is the fact.
+This is the third unverified claim I nearly carried today (after the closure digest and a git
+ancestry assertion), and the only one caught by running the build.
+
+---
+
 ## HOW TO WORK THIS PROJECT (hard-won, see sections below)
 - **`git status --porcelain` must be EMPTY before creating a card branch. One card in flight per tree.**
   Uncommitted work travels across a branch switch; this caused a real multi-author merge.
