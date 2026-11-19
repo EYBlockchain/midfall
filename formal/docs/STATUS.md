@@ -13,7 +13,7 @@
     root lowering_correctW ... not yet reported (WP C0)
     root generator_correct ... not yet reported (WP D2)
     outside the cones ........ register 91 rows / 22 ROOT (o, regenerated post-merge); V2 cone 10/1 REFUTED (c)
-                               KAT 1621/117 (c, pin verified o); fingerprint 14,109/0x3149ae4f... (c)
+                               KAT 1633/118 (o, pin verified post-merge); fingerprint 14,109/0x3149ae4f... (c)
     reference gate ........... MERGED (B2, 077a3c5): nativeReplay_ok true, 21 checks, 0 failures
     full verify.sh ......... KILLED, VERIFY_EXIT=143 SIGTERM (o) - NOT a pass
 
