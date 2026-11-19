@@ -2310,10 +2310,135 @@ SEM · PROOF · box 2.5 h · strongest · after ROW.PCS, PL.1, REF.5, HLP.1, REC
 - **Guidance.** The helper's `leave` on `success = 0` is never reached: the slice's guard reverts
   first. Sonnet-only split: step 1 / 2 / 3 / 4 frame / 4 algebra and `Inv` / 5.
 
+### PL.H0 — Wire the headline first: `lowering_correct` as ONE tree of named leaves
+
+SEM+INFRA · SKELETON · box 8 h (D-P75; WIP commit every 45 min) · strongest · after RECON.2, SIM.2,
+RECON.3, ROW.Q, LH (all merged) · before every ROW card, SIM.6, SIM.7, TOT.1, PL.H · absorbs GEN.5's
+row half · WP A0 of the COMPLETION table (`QUEUE.md`) · D-P74 and D-P75 signed 2026-11-19
+
+- **Why this card.** No card merged on 2026-11-19 moved the headline. The register's ROOT column
+  tracks the V2 fixture theorem (10 leaves, one REFUTED). SIM.6 (`ef19950`) measured the V3
+  composition outside that cone; LH (`c1bb557`) routed `lowering_correct` through the sorried
+  `lowering_correctW`; RECON.3 (`ca2ed23`) proved the bundles' `StageBnd` rows incomparable with the
+  `BlockSim` rows every ROW card proves. Until the root is one tree, no row proof counts.
+- **Goal.** `lowering_correct`'s proof reaches, through PROVED glue, one named `sorry` per block and
+  direction, the two prefix rows, the totality leaves and the shared scan/decomposition leaves, and
+  nothing else; the register and the cone report count that tree.
+- **Decision D-P74 (signed 2026-11-19; the full text is in `design.md`).**
+  (a) `lowering_correct` is proved from the base rows (`lowering_equivalenceV3_of_rows`), not from
+  `lowering_correct_of_W`; its statement does not change; `lowering_correctW` (M9) is proved later
+  from the same rows via `blockSimW_iff_blockSim` plus the accumulator arms. (b) One row shape:
+  `BlockSim`/`BlockProgS` over `StageInv`; `StageBnd` and its contracts are deleted. (c) The progress
+  root is `lowering_correct`; `lowering_sound` (conjuncts 1 and 3) is the first milestone. (d) This
+  card runs first on the critical path (the full text is D-P74 in `design.md`).
+- **Needs** (all checked at `44d0acd`).
+  - `Midfall/LoweringV3/Composition.lean`: `StageBnd` :81 and the §1 contracts over it; `SimRowsV3`
+    :140, `ProgRowsV3` :150; `rejectsV3_of_sims` :192, `completeV3_of_progs` :202,
+    `totalV3_of_stages` (all `sorry`); `lowering_equivalenceV3_of_rows` :225 (proved from the four).
+  - `Midfall/LoweringV2/Stages.lean`: `StageInv` :171, `BlockSim` :222, `BlockProgS` :243,
+    `slices_seq_sim` :429, `slices_seq_prog` :496, `run_split`/`run_join` (§3), `prefix_sim` :595 and
+    `prefix_prog` :612 (`sorry`; both take `hR : R.Valid` and the V2 `EntryFrame`),
+    `whole_program_sim`/`whole_program_prog` (§4, proved).
+  - `Midfall/LoweringV3/Statements.lean`: `ValidV3` :1116 (the same seven fields as `Render.Valid`,
+    `LoweringV2/Statements.lean:1012`), `hasMultiPointSet_of_valid` :1156, `EntryFrameV3.toV2` :1230,
+    `BodyTotal` :1318, `RejectsV3` :1413, `CompleteV3` :1422, `TotalV3` :1432,
+    `lowering_equivalenceV3_of` :1442 (proved).
+  - `Midfall/Lowering/Stage.lean:426` `leanAccepts_of_final`; `QuotientRows.lean:191/:204`
+    `q_blockSim`/`q_blockProgS` (`sorry`, already over `BlockSim`/`BlockProgS` with the bundles'
+    binders); `GeneratorTheorem.lean:147` `lowering_correct`; `CompositionW.lean:235`
+    `blockSimW_iff_blockSim`.
+  - Evidence (leads; the soundness area is red at HEAD): `V3-evidence/lean/soundness/SoundnessV3.lean`
+    :824 `rejects_of_sims`, :1212 `completeness_of_progs`; `…/soundness/GeneratorRows.lean` :1197
+    `rejectsV3_of_rows` (the glue term, `hentry.toV2` included) and §10 :1215-1365 (`total_correct`,
+    proved from `gasFree_of_valid` :1260, `runBody_gas_oblivious` :1266, `block_live` :1335,
+    `prefix_live` :1342).
+  - Root plumbing: `scripts/Report.lean:28,:47`; `Midfall/Tools/ConeReport.lean:50,:52,:89`;
+    `scripts/verify.sh:42`; `scripts/gen_sorry.sh:178`.
+- **Does NOT need.** Any block-row proof (the optional traceReturn lift excepted); the QEMIT twins;
+  M9 beyond removing `StageBnd` references; non-vacuity at F1 (`ValidV3 poseidonRender` is
+  uninhabited: `gap_lowering_correct_witness_unexhibited` stays named, a separate track); KAT pins;
+  the red evidence areas.
+- **Do.**
+  1. *One row shape.* Re-point `SimRowsV3` at `BlockSim R q H vkAddr (permissive (callsOf product))
+     g cd` and `ProgRowsV3` at `BlockProgS R q H vkAddr product cd`, binders unchanged. Delete
+     `StageBnd`, `exitSimBnd`, `exitProgBnd`, `BlockSimV3`, `BlockProgV3` and the `CompositionW.lean`
+     lemmas that only compare against them; keep `blockSimW_iff_blockSim` and the W bundles. If a W
+     declaration other than those comparisons needs `StageBnd`, stop and report it.
+  2. `theorem ValidV3.toV2 (h : ValidV3 R) : R.Valid`, by field copy.
+  3. *Glue, proved.* (a) `rejectsV3_of_sims` from `SimRowsV3`, `prefix_sim` (via `ValidV3.toV2`,
+     `EntryFrameV3.toV2`), `slices_seq_sim`, `whole_program_sim`, `run_split`, `leanAccepts_of_final`
+     (port evidence `rejects_of_sims`). (b) `completeV3_of_progs` from `ProgRowsV3`, `prefix_prog`,
+     `slices_seq_prog`, `whole_program_prog`, `run_split`/`run_join` (port `completeness_of_progs`).
+     (c) Totality: `BodyTotal` asks for a run at EVERY calldata, while `ProgRowsV3` assumes
+     `LeanAccepts`, so `totalV3_of_stages` cannot be proved from its hypothesis at a rejecting
+     calldata. Confirm by unfolding, then port evidence §10 as `totalV3_correct (hR : ValidV3 R) :
+     TotalV3 R product` (`hasMultiPointSet` from :1156) with its four leaves registered (owners
+     TOT.1, TOT.1.a), and delete `totalV3_of_stages`. If the unfolding shows the old route works,
+     prove that instead.
+  4. *The row statements (GEN.5's row half).* Port from evidence `GeneratorRows.lean` into a new
+     `Midfall/LoweringV3/Rows.lean`, at the V3 reading ROW.Q used (`hR : R.Valid` → `ValidV3 R`;
+     `hpins : SimPins R` and `G1CodecLaws` → `hcodec : G1CodecHeadlineLaws R.E.g1`), under the
+     evidence names their owner cards deliver: `vk_` :1096/:1103 (GEN.1), `tp_` :817/:830 (ROW.TP),
+     `lag_` :621/:628 (T3.9), `pcs_` :1013/:1019 (ROW.PCS), `fp_` :1077/:1083 (ROW.FP)
+     `…_blockSim`/`…_blockProgS`, as registered sorries with docstrings of at most 5 lines naming the
+     owner; `q_` is already in `QuotientRows.lean`; `tr_blockSim`/`tr_blockProgS` as SIM.7 states
+     them (no `hR`). Optional, at most 1 h: prove the two `tr_` rows by lifting
+     `TraceReturn.tr_blockSound` (`Blocks/Compose.lean:59`); otherwise they stay SIM.7's leaves. Then
+     `sim_rows : SimRowsV3 R product` and `prog_rows : ProgRowsV3 R product` (evidence :1111/:1125),
+     proved by `cases q`. Port NO child lemma: each row's children land with the WP that proves the
+     row (consumer first). GEN.5's target `LoweringV2/RowsGen.lean` is obsolete: the rows need
+     `ValidV3`, which `LoweringV2` cannot import.
+  5. *Route the root.* `lowering_equivalenceV3_of_rows` takes conjunct 4 from `totalV3_correct`;
+     `lowering_correct := lowering_equivalenceV3_of_rows R product hR (sim_rows R product)
+     (prog_rows R product)`. `lowering_correct_of_W` stays in the tree, unused by the root. Add
+     `theorem lowering_sound (hR : ValidV3 R) : TwoOutcomes R ∧ RejectsV3 R product` beside it.
+  6. *Re-key the progress root* from `Midfall.Instances.PoseidonV2.lowering_equivalence_poseidon` to
+     `Midfall.LoweringV3.lowering_correct` in the four plumbing files (and at every other hit of
+     `grep -rn lowering_equivalence_poseidon scripts Midfall/Tools`); report `#cone_sorries
+     Midfall.LoweringV3.lowering_sound` beside it; keep the V2 headline as one line marked RETIRED;
+     add a `gen_sorry.sh` owner row for every new ROOT leaf; regenerate `SORRY.md` with
+     `gen_sorry.sh`.
+- **Deliverable.** The root goes through proved glue to named leaves only, and the register counts
+  that tree.
+- **Accept** (paste the output).
+  - `#cone_sorries Midfall.LoweringV3.lowering_correct` prints only: the step-4 leaves and
+    `q_blockSim`/`q_blockProgS`; `prefix_sim`, `prefix_prog`; one decomposition leaf
+    (`prog_slices_decomp` or `prog_slices_decompV3`); the scan leaves
+    (`twoOutcomes_of_exitDiscipline`, `scans_prog_addr_indep`, and `Run_worldEq_of_noWriters` if they
+    cite it); `runBody_mono` only if still used; the four totality leaves. It prints none of
+    `lowering_correctW`, `model_quotientMode`, `rejectsV3_of_sims`, `completeV3_of_progs`,
+    `totalV3_of_stages`.
+  - `#cone_sorries Midfall.LoweringV3.lowering_sound` prints only Sim leaves, `prefix_sim`, the
+    decomposition leaf and the scan leaves.
+  - `#assert_axioms Midfall.LoweringV3.lowering_correct [propext, Classical.choice, Quot.sound,
+    sorryAx] native []` passes; no glue declaration of steps 2-5 (`ValidV3.toV2`, the obligations,
+    `totalV3_correct`, `sim_rows`, `prog_rows`, `lowering_sound`) is a row of `SORRY.md`.
+  - `grep -rnE '^(def|theorem) (StageBnd|BlockSimV3|BlockProgV3|exitSimBnd|exitProgBnd)\b' Midfall`
+    is empty; `Frozen.sha256` verifies.
+  - `SORRY.md`'s ROOT count equals the first line's count, and no ROOT row is UNOWNED.
+  - Full `verify.sh` is green.
+- **Stop if.** (1) A glue step needs a fact no leaf or hypothesis supplies: never add a hypothesis to
+  a bundle or to the root; add ONE named leaf with the exact goal in its docstring. A third such leaf
+  means the decomposition is wrong: stop and report. (2) `ValidV3.toV2` fails on a field: report
+  it, and restate the two prefix rows over `ValidV3` (they are sorried, so nothing is hidden; record
+  the RESTATED rows). (3) A frozen file would change, or a declaration needs more than 60 s.
+  (4) At 3 h step 3a does not compile: commit WIP and report the goal state.
+- **Guidance.** The glue is short once the shapes agree: evidence `rejectsV3_of_rows` is a three-line
+  term. Spend the box on 3c and 6. Do not prove or restate any row: owner cards prove the step-4
+  leaves IN PLACE, so their statement is the leaf's. This is PL.H brought forward as a SKELETON; PL.H
+  stays the closing card. Expected effect: ROOT goes from "10, UNREACHABLE" to the true V3 leaf
+  count (about 20-25), and from then on every ROW, SIM.6 and TOT.1 card lowers it.
+- **EVIDENCE (W12).** Witness `whole_program_sim`, `whole_program_prog` (Stages.lean §4, proved: the
+  prefix and slice leaves fit) · falsifier `finSim_refutes_empty` :692,
+  `exitSim_refutes_normal_traceReturn`, `exitProg_refutes_normal_traceReturn` (Stages.lean §4,
+  proved) · exhibit n/a.
+
 ### PL.H — The headline: `lowering_correct` [D-P71: RESTATED]
 
-INFRA · PROOF · box 1 h · strongest · after every ROW card and its children, TOT.1, SIM.5, SIM.6, ST.11–ST.13, RECON.2
+INFRA · PROOF · box 1 h · strongest · after PL.H0, every ROW card and its children, TOT.1, SIM.5, SIM.6, ST.11–ST.13, RECON.2
 
+- **Since PL.H0.** The root, its glue and its leaves are in the tree; this card only deletes
+  `sorryAx` from the allow-list once `#cone_sorries Midfall.LoweringV3.lowering_correct` prints 0.
 - **Goal.** `theorem lowering_correct (R : Render p G₁ G₂ Gₜ) (product : PairingProduct)
   (hR : ValidV3 R) : LoweringEquivalenceV3 R product`, sorry-free, with no fixture and no
   `native_decide` in its cone.
@@ -2711,6 +2836,11 @@ proved) and `GeneratorRowsWitness.lean` (tests at F1; `native_decide` occurs onl
 
 SEM · PORT · box 2 h · Sonnet · after RECON.3, RECON.1b
 
+- **Since D-P74/D-P75 (2026-11-19).** Its row half (the row statements, `sim_rows`, `prog_rows`) is
+  absorbed by PL.H0 into `Midfall/LoweringV3/Rows.lean`. The rest (§0 shared definitions, §2 premise
+  gaps, §3 helper lemmas, the rows' children) lands with the WP that consumes it (COMPLETION table,
+  `QUEUE.md`). Its Accept line is wrong as written: `sim_rows` is a case split over sorried rows, so
+  `#print axioms sim_rows` shows `sorryAx` until the rows are proved.
 - **Goal.** `GeneratorRows.lean` is in the tree as `Midfall/LoweringV2/RowsGen.lean`: §0 (shared
   definitions: `seg`, `wMulmod`, `wPow2`, `lagInner`, the tactic `kernel_rfl`), §1 (the
   composition), the row statements and their stated children as named sorries, registered by
