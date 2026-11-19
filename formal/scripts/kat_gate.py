@@ -342,7 +342,27 @@ EVAL = re.compile(
 # (three acceptance gates per family at the deployment, the derived generator run and the all-arms
 # context, plus text teeth, field reach and the shape gates). So the file count goes 116 -> 117 and the
 # total 1574 -> 1596. No gate was deleted; the delta is +22/+1 and nothing else moved.
-EXPECTED_KAT_TOTAL = 1596
+# QEMIT2 (PG-Q-OBJECT, completes the five line families) moved EXPECTED_KAT_TOTAL 1596 -> 1621 deliberately and
+# EXPECTED_KAT_FILES NOT AT ALL: TWENTY-FIVE NEW '#eval ... -- expect true' gates, all appended to QEMIT's own
+# Midfall/Instances/QvmFamilyKats.lean. They are the prerequisite twin qem2RunsBattery_ok (nineteen synthetic
+# entry lists tie to pushMstoreMloadLiteralRuns statement for statement, covering every rejection path),
+# qem2RunsRejectionsReach_ok (each rejection emits a SINGLE and no loop, on both sides), qem2RunsStrideArmsDiffer_ok
+# (the 0x20 and mul arms are two arms), qem2RunsTeeth_ok (four scaffolding tokens of the compactor's own text),
+# qem2RunsCompacts_ok (the compactor is not a no-op); the permutation family qemPerm_isTheParse_ok /
+# _isTheProducerDerived_ok / _allArms_ok (the three acceptance targets, 1,038 tokens), _teethText_ok (six tokens),
+# _usesTheRunsTwin_ok (four of the family's seven loops come from the prerequisite), _fieldsReach_ok (ten
+# perturbations, each tying to the producer and moving the tree), _emptyArm_ok, _continuityArmReaches_ok,
+# _baseUnused_ok; the lookup family qemLookup_isTheParse_ok / _isTheProducerDerived_ok / _allArms_ok (458 tokens,
+# plus trace=true as the third context), _teethText_ok (six tokens), _fieldsReach_ok (seven perturbations),
+# _emptyArm_ok, qemLookup_k2ArmReaches_ok and qemLookup_sharedPrefixArm_ok (the two arms the deployment never
+# reaches, exercised on synthetic circuits - the shared-prefix one caught a real defect in this card's first
+# draft, where the product/prefix/suffix/sum loops had been put inside the 'none' arm instead of after the match),
+# qemLookup_k0ArmUnreachable_ok (the k == 0 arm is measured unreachable through chunkByDegree, not assumed);
+# and qem2_fiveFamiliesAreDistinct_ok with qem2_fingerprintUntouched_ok (the artifact guard, now also reading
+# ObjectFingerprint.objectFingerprint_ok). No gate was deleted, edited or re-spelled. The register stayed 79, the
+# headline cone 10 / 1 REFUTED / 0 VACUOUS, and the object fingerprint re-printed at 14,109 tokens /
+# 0x3149ae4f...bef176. The delta is +25/+0.
+EXPECTED_KAT_TOTAL = 1621
 EXPECTED_KAT_FILES = 117
 
 # Only these shapes count as #eval output.
