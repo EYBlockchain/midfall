@@ -1,8 +1,84 @@
 /-
-  StatementsV3 (SCRATCH - design area "statements", PLAN-V3)
+  StatementsV3 — **THE D-P67 EIGHTEEN-CLAUSE FALLBACK** (status set by card RECON.1b-iv,
+  2026-11-19; design area "statements", PLAN-V3).
+
+  WHAT THIS FILE IS, AND WHY IT IS NOT REDUCED TO A POINTER. This is NOT a scratch twin whose body
+  landed and can therefore be thinned, which is the shape RECON.1b-iii gave
+  `StatementsV3Deploy.lean` and `StatementsV3Falsifiers.lean`. The text here deliberately did NOT
+  land: the tree carries a DIFFERENT validity text. The landed module says so about itself at
+  `Midfall/LoweringV3/Statements.lean:1085-1090` — "the eighteen-clause draft of
+  `StatementsV3.lean:613` is the FALLBACK if D-P67 is struck and stays in the evidence directory,
+  not here (the card's Guidance)" — and `PLAN-V3-cards.md:1923` (RECON.1's own Guidance) says
+  "The 18-clause text in `StatementsV3.lean` is the fallback if D-P67 is struck; keep it in the
+  evidence directory, not in the staging module." So if D-P67 is ever struck, THIS FILE IS WHAT YOU
+  REBUILD FROM, and thinning it to a pointer would destroy the contingency it exists to preserve.
+  Four live evidence modules also import it as their statement surface —
+  `statements/StatementsV3Deploy.lean`, `statements/StatementsV3Falsifiers.lean`,
+  `soundness/GeneratorRows.lean`, `object/CertMeasure.lean` — and `check.sh` precompiles it for the
+  `statements`, `soundness`, `object` and `widening` areas (lines 44, 48, 57, 66). It cannot import
+  the landed module instead: Lean refuses the two texts in one environment ("environment already
+  contains 'Midfall.LoweringV3.withCompressed'"), which is why the whole surface has to stay
+  self-contained here rather than being trimmed to the clauses the tree lacks.
+
+  WHY IT WAS RED, AND THE ONE-LINE REPAIR (this card). Three errors, ONE root cause: OBJ.8 moved
+  `vkPins` and `vkProgressPins` out of `Midfall/LoweringV2/Statements.lean` into
+  `Midfall/LoweringV2/Consts.lean` (see the note at `Midfall/LoweringV2/Statements.lean:228`), and
+  this file's import set reached the former but not the latter. So clauses 16 and 17 of `ValidV3`
+  (:646, :647) were unknown identifiers, `ValidV3` never entered the environment, and
+  `EndToEndV3`'s `hR : ValidV3 R` failed as a cascade. The repair is the added
+  `import Midfall.LoweringV2.Consts` below the imports: the two structures are UNCHANGED, they
+  moved. NOT ONE CLAUSE, DEFINITION, WITNESS OR FALSIFIER BELOW WAS DELETED, RESTATED OR RELAXED —
+  the file elaborates again exactly as it did before OBJ.8, with the same four `sorry` obligations
+  (`prog_slices_decompV3`, `twoOutcomes_of_exitDiscipline`, `scans_prog_addr_indep`,
+  `runBody_mono`) and the same two gated prints.
+
+  WHERE THE LIVE TEXT NOW LIVES (the single text, and what became of each section of this one):
+    `ValidV3` (:617, eighteen clauses) -> ONE seven-clause `Midfall.LoweringV3.ValidV3` at
+        `Midfall/LoweringV3/Statements.lean:1116`; `circuitMeta`, `layout`, `invariants` and
+        `model` collapse into `generated`, `cdBound`/`transcriptMptr` fold into `programOkB`, and
+        `vkPins`/`vkProgressPins` are NOT clauses there at all (they are theorems of
+        `constsCoherent`, `Midfall/LoweringV2/Consts.lean:440`).
+    `PayloadAgrees` (:377) -> landed at `Midfall/LoweringV3/Statements.lean:369` WITHOUT the
+        `delta` field (:431) — RECON.1 step 3 drops it on purpose; `generated` pins `E.delta`.
+    `SupportedV3` (:596) and `WellFormedV3` (:287) -> DELETED from the tree at RECON.1 step 4; the
+        single text uses the frozen `SupportedV2`, and the one repaired clause survives as the
+        computation `permCommMatchRepaired`. THESE TWO STRUCTURES AND THE `delta` FIELD ARE WHAT
+        ONLY THIS FILE CARRIES: they are the fallback's unique content and they are KEPT LIVE.
+    §G, §A, §D, §B, §I, §E, §F, §K -> landed essentially verbatim into
+        `Midfall/LoweringV3/Statements.lean` (1560 lines) and, at the deployment, into
+        `Midfall/Instances/StatementsV3Deploy.lean` and `Midfall/Instances/StatementsV3Falsifiers.lean`.
+
+  W12 HUNT RESULT (nothing here was silently dropped). Inbound citations found by
+  `grep -rn 'StatementsV3' formal/docs formal/*.md`: `design/statements.md:10,15,16,22`;
+  `design/ivc-widening.md:75`; `design/ivc-object-reference.md:262`;
+  `design/generator-certified.md:22,82,85,96,157,163`; `design/statements.md:138` (via the two
+  refutations RECON.1b-iii kept); `README.md:33,53`; `PLAN-V3.md:187,202,229,231,502,584,951`;
+  `PLAN-V3-cards.md:646,739,1261,1288,1716,1886,1901,1923,1960,2058,2358,2616,2677,3514,3670,4005,4097,4137`;
+  `DECISIONS-PENDING.md:113,141,153`; `docs/design.md:2259,2344,2441`; `STATUS.md:73,437,511`.
+  Every one of them cites a declaration that is STILL HERE and still elaborating. The witnesses and
+  falsifiers that exist ONLY in this file — `calldataOfV3_witness_ok` (:172, expect true),
+  `frozenCalldata_isOk` (:185, expect false), `exitDiscipline_witness` (:533),
+  `exitDiscipline_refuses` (:542), `withCompressed_lawsV3`, `fail_lookupV3`, `slicesV3_eq`,
+  `hoist_prog_addr_indepV3`, `twoOutcomes_of_scans`, `scans_prog_addr_indep`,
+  `twoOutcomes_of_exitDiscipline`, `entryFrame_inhabitedV3`, `EntryFrameV3.toOption`,
+  `EntryFrameV3.toV2`, `callsOf_le_permissive`, `runBody_mono`, `BodyTotal.permissive`,
+  `gasTotal_ofFun`, `gasTotal_any`, `not_gasTotal_none`, `leanAccepts_unchanged`,
+  `conj3_of_twoOutcomes`, `lowering_equivalenceV3_of`, `soundSide_of_leanAccepts`,
+  `returns_of_inhabited`, `cdSize_of_decodes`, `G1CodecLawsV3.headline` — are ALL KEPT LIVE.
+  NOTE FOR THE ORCHESTRATOR, OUT OF THIS CARD'S REACH: `statements/StatementsV3Deploy.lean` was
+  red behind this file and is STILL red once this file is green, for a different and larger reason —
+  OBJ.8 step 2 moved the fixture's DELTA onto the field constant, so the tree now PROVES the
+  opposite of what that file keeps live: `Midfall/Instances/StatementsV3Deploy.lean:169-176`
+  ("THE REFUTATION THAT DIED") proves `poseidon_delta_is`, the negation of the evidence file's
+  `poseidon_delta_not`, and `Midfall/Instances/StatementsV3Deploy.lean:323` says the delta-only
+  refutation of `PayloadAgrees poseidonRender` "is GONE with that field". Retiring a cited
+  falsifier is not this card's to do.
+
+  ORIGINAL DESIGN NOTE, kept for the rebuild:
 
   THE REPAIRED STATEMENT SURFACE, as it should read after sign-off. Typechecked against the built
-  tree with `lake env lean` from formal/. Nothing here is in the repository.
+  tree with `lake env lean` from formal/. Nothing here is in the repository — except that from
+  RECON.1 on the LANDED text is the seven-clause one, and this is the eighteen-clause contingency.
 
   Naming: every repaired item carries a V3 suffix (or a new name) and lives in
   `Midfall.LoweringV3`, so nothing clashes with the frozen `Midfall.LoweringV2` text it replaces.
@@ -12,11 +88,11 @@
     §G  codec laws                         (g)
     §A  calldataOfV3                       (a)
     §D  scopeV3, slicesV3, noShadow        (d)
-    §J  WellFormedV3                       (j)
+    §J  WellFormedV3                       (j)          [fallback-only: deleted from the tree]
     §B  PlanMeta (circuitMeta + data)      (b)
-    §C  PayloadAgrees                      (c)
+    §C  PayloadAgrees                      (c)          [fallback-only: the `delta` field]
     §I  ExitDiscipline, TwoOutcomes        (i)
-    §V  SupportedV3, ValidV3
+    §V  SupportedV3, ValidV3               [fallback-only: the eighteen clauses]
     §E  EntryFrameV3                       (e)
     §F  GasTotal, the totality conjunct    (f)
     §K  LoweringEquivalenceV3, the four-obligation composition,
@@ -30,6 +106,11 @@
 -/
 import Midfall.LoweringV2.Blocks
 import Midfall.LoweringV2.ProgramLemmas
+-- RECON.1b-iv: `vkPins` / `vkProgressPins` (clauses 16-17 of `ValidV3` below) moved out of
+-- `Midfall/LoweringV2/Statements.lean` into `Midfall/LoweringV2/Consts.lean` at OBJ.8. `Blocks`
+-- reaches the former but not the latter, so the fallback text needs the explicit import to keep
+-- citing them. The two structures are UNCHANGED - OBJ.8 moved them, it did not delete them.
+import Midfall.LoweringV2.Consts
 set_option autoImplicit false
 
 namespace Midfall.LoweringV3
