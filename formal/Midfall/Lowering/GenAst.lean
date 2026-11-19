@@ -1075,13 +1075,79 @@ def emitQPow5 : Block Op :=
     rendered when 'quotientLimb7Helper' / 'quotientWideLimb7Helper' is set. They are NOT
     Bool-selectable in any meaningful sense: each interpolates a coefficient LIST
     ('limb7YulCoeffs' / 'wideLimb7YulCoeffs', 6 entries at the deployed render) into a chain of
-    addmod/mulmod statements, and each render is 203 tokens against this region's 68. A flag-only
+    addmod/mulmod statements, and each render is 135 tokens against this region's 68 (measured at
+    OBJ.14 by 'qhA_isTheParseAllFlags_ok'; this header said 203, which is neither arm's count). A flag-only
     emitter would emit NOTHING when those flags are set, i.e. be silently wrong for exactly the
     renders they describe. They are out of scope here and gate 62 says so on its own face: it
     hypothesises both flags FALSE. Converting them needs the coefficient list as an input, which is
-    a widening of this signature and not a branch inside it. -/
+    a widening of this signature and not a branch inside it.
+
+    OBJ.14 MADE THAT WIDENING: 'emitQuotientHelpersA' below takes the 'PartialCtx' and emits all four
+    arms under the three flags. This function is kept as the pow5-only shape G1.2's gates 62/64 and the
+    M2 model-aware splice read, and 'qhA_agreesWithG12_ok' pins that the two cannot drift. -/
 def emitQuotientHelpersAt (pow5 : Bool) : Block Op :=
   emitQProgramFail ++ (if pow5 then emitQPow5 else [])
+
+/-- The body of a limb7 arm: one 'addmod' per coefficient, in table order.
+
+    THE TEMPLATE'S TWO SPELLINGS OF THE ACCUMULATOR ARE KEPT DISTINCT. The first statement reads
+    'addmod(x0, ...)' and every later one reads 'addmod(z, ...)' - the Jinja 'loop.first' test at
+    T:QuotientHelpers.yul:50-54 and again at :73-77, not an optimisation the AST may fold away.
+    A body that emitted 'z' in the first slot too would still be arithmetically x0 + sum, and
+    'stmtsBeq' would catch it: the parse has 'x0' there and the tree has 'z'.
+
+    THE INDEX IS 'loop.index', WHICH IS ONE-BASED: coefficient i (zero-based here) multiplies
+    'x{i+1}', so six coefficients address x1..x6 and x0 is the unmultiplied base term. The index
+    is paired in from 'List.range' rather than recursed for, so the function is structurally
+    decreasing on nothing and cannot cost a fuel or depth argument anywhere. -/
+def qLimb7Body (coeffs : List String) : Block Op :=
+  List.zipWith (fun (coeff : String) (i : Nat) =>
+    yset "z" (yop Op.addmod
+      [ (if i == 0 then yvar "x0" else yvar "z")
+      , yop Op.mulmod [ylit (hexLiteral coeff), yvar ("x" ++ toString (i + 1)), yvar "q_r"]
+      , yvar "q_r"])) coeffs (List.range coeffs.length)
+
+/-- One limb7-shaped definition: the seven parameters and the 'q_r' binding are the TEMPLATE'S
+    literal text (T:QuotientHelpers.yul:47-48, :70-71) and come from here; only the body statements
+    come from the table. That asymmetry is deliberate: a short table must not silently shrink the
+    signature the call sites pass seven arguments to. 'limbCoeffArrays_length_ok' (Models.lean:909,
+    :921) is what pins both tables at six, i.e. at LIN_COEFFS = LIMBS - 1. -/
+def qLimb7Fun (name : String) (coeffs : List String) : Block Op :=
+  [ yfun name ["x0", "x1", "x2", "x3", "x4", "x5", "x6"] ["z"]
+      (ylet "q_r" (yvar "FR_MODULUS") :: qLimb7Body coeffs) ]
+
+/-- T:QuotientHelpers.yul:35-58, the 'quotient_limb7_helper' arm: the 7-limb foreign-field linear
+    combination over Fr, iterating 'limb7YulCoeffs'. -/
+def emitQLimb7 (coeffs : List String) : Block Op := qLimb7Fun "q_limb7" coeffs
+
+/-- T:QuotientHelpers.yul:59-80, the 'quotient_wide_limb7_helper' arm: the pairwise-product side of
+    foreign-field multiplication, iterating 'wideLimb7YulCoeffs'. The template's own text differs
+    from 'q_limb7' only in the name, the two comment blocks and which table the loop reads, so this
+    is the same emitter at a different name and table - and 'qhA_limb7ArmsDiffer_ok' in
+    Midfall/Instances/M2BatchKats.lean is the gate that says so rather than leaving it as a reading
+    of the template. -/
+def emitQWideLimb7 (coeffs : List String) : Block Op := qLimb7Fun "q_limb7_wide" coeffs
+
+/-- THE WHOLE QuotientHelpers REGION AS AN AST, UNDER ALL THREE FLAGS (OBJ.14). The four arms of
+    T:partials/quotient_numerator/QuotientHelpers.yul in the template's own order: 'q_program_fail'
+    unconditionally (the text port renders it outside every 'if'), then 'q_pow5' on
+    'quotientPow5Helper', then 'q_limb7' on 'quotientLimb7Helper', then 'q_limb7_wide' on
+    'quotientWideLimb7Helper'. Nothing is hard-coded: the two flags the deployed fixture clears are
+    exercised by the all-flags context of 'qhA_isTheParseAllFlags_ok', and the tables those two arms
+    iterate arrive through 'PartialCtx' exactly as the render model carries them.
+
+    WHY THIS IS NOT A SECOND IMPLEMENTATION OF THE NUMERATOR. The card excludes the numerator block
+    (OBJ.15 owns it, and OBJ.2 landed it as a PARSE). This region is 68 tokens at the fixture against
+    that one's 6,384, it interpolates nothing the model does not already carry as a field, and it is
+    the only part of the quotient template that the old path emitted STRUCTURALLY - so widening the
+    flag parameter here closes the last hand-written hole in the region without touching the parsed
+    half. 'emitQuotientHelpersA' agrees with 'emitQuotientHelpersAt' wherever the old emitter was
+    defined to speak ('qhA_agreesWithG12_ok'), so the two paths cannot drift. -/
+def emitQuotientHelpersA (c : PartialCtx) : Block Op :=
+  emitQProgramFail ++
+  (if c.quotientPow5Helper then emitQPow5 else []) ++
+  (if c.quotientLimb7Helper then emitQLimb7 c.limb7YulCoeffs else []) ++
+  (if c.quotientWideLimb7Helper then emitQWideLimb7 c.wideLimb7YulCoeffs else [])
 
 /-! ### VkLoading -/
 

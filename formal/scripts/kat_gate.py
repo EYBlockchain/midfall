@@ -291,7 +291,22 @@ EVAL = re.compile(
 # PCS read schedule at Fr 17 / natG1Codec, with the read-schedule widths and the >= p rejection pinned
 # beside them). No gate was deleted or edited. The delta is +3/+1 and nothing else moved; all three were
 # run through 'lake env lean' before this line moved (the whole file evaluates in 3.6 s).
-EXPECTED_KAT_TOTAL = 1546
+# OBJ.14 moved EXPECTED_KAT_TOTAL 1546 -> 1554 deliberately and the file count NOT AT ALL: EIGHT NEW
+# '#eval ... -- expect true' gates, all in the EXISTING Midfall/Instances/M2BatchKats.lean section 2,
+# which is where G1.2 already pinned the QuotientHelpers region. They are the card's acceptance plus its
+# teeth: qhA_isTheParseFixture_ok (stmtsBeq against the parse at the fixture, 68 tokens = 23 + 45);
+# qhA_isTheParseAllFlags_ok (the same tie with all three helper flags on, 338 tokens - the context the
+# card names, and the one a fixture-only pass would let an emitter skip both limb7 arms through);
+# qhA_agreesWithG12_ok (THE FINGERPRINT GUARD: wherever emitQuotientHelpersAt was defined to speak the new
+# emitQuotientHelpersA emits the same tree, so the tracked object cannot move); qhA_teethFixture_ok (the
+# card's two falsifiers - shl(224 -> 225 and mulmod(x2, x2, q_r) -> mulmod(x2, x, q_r)); qhA_teethLimb7_ok
+# (one coefficient digit moves, and the template's loop.first split between addmod(x0, ...) and addmod(z, ...)
+# is shown load-bearing); qhA_tablesReach_ok (correctness at two SYNTHETIC tables, so the tables are inputs
+# and not a transcription of the deployed one); qhA_flagsSelect_ok (the definition inventory at each of five
+# flag combinations); qhA_limb7ArmsDiffer_ok (the two arms are not one arm twice). No gate was deleted,
+# edited or re-spelled. The object fingerprint was re-printed at 14,109 tokens / 0x3149ae4f...bef176 after
+# this line moved, and the sorry register stayed 69. The delta is +8/+0.
+EXPECTED_KAT_TOTAL = 1554
 EXPECTED_KAT_FILES = 114
 
 # Only these shapes count as #eval output.

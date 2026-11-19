@@ -132,6 +132,138 @@ def qhMutationTeeth_ok : Bool :=
     the model, and not an assumption about it. -/
 #eval m.quotientPow5Helper -- expect true
 
+
+/-! #### OBJ.14 - the same region as an AST under ALL THREE flags, including the two limb7 arms
+
+  G1.2 emitted 'q_program_fail' and 'q_pow5' and named the two limb7 arms as the hole it left, on
+  the ground that a flag-only emitter "would emit NOTHING when those flags are set, i.e. be silently
+  wrong for exactly the renders they describe". OBJ.14 closes that hole the way the header said it
+  had to: 'GenAst.emitQuotientHelpersA' takes the 'PartialCtx', so the coefficient tables are an
+  INPUT and not a hard-coded copy. Acceptance is the card's own: 'stmtsBeq' against the PARSE of the
+  render at the fixture AND at a context with all three flags on - the fixture alone would pass with
+  the two limb7 arms deleted, which is the failure mode the card names.
+
+  THE FINGERPRINT DOES NOT MOVE, AND THAT IS A GATE AND NOT AN ASSUMPTION. The tracked object is the
+  deployed program, whose render takes pow5 only; 'qhA_agreesWithG12_ok' pins that at every context
+  the OLD emitter was defined to speak, the new one emits the same tree. Nothing the artifact reads
+  changed. -/
+
+/-- The same region with every helper flag the template tests turned on. The tables are already
+    populated at this ctx (Artifacts copies them at ART:681-683), so this is a flag change and not a
+    synthetic model. -/
+def qhAllFlags : PartialCtx :=
+  { ctx with quotientPow5Helper := true, quotientLimb7Helper := true,
+             quotientWideLimb7Helper := true }
+
+/-- ACCEPTANCE 1 OF 2 (THE FIXTURE): the parse of the generator's own QuotientHelpers text IS the
+    tree 'emitQuotientHelpersA' builds, and the region is the 68 tokens the card measures - 23 for
+    'q_program_fail' plus 45 for 'q_pow5'. -/
+def qhA_isTheParseFixture_ok : Bool :=
+  let t := renderQuotientHelpers ctx
+  beqRegion t (GenAst.emitQuotientHelpersA ctx) &&
+    (yulTokens t).length == 68 &&
+    (yulTokens (GenAst.renderFunction t "q_program_fail")).length == 23 &&
+    (yulTokens (GenAst.renderFunction t "q_pow5")).length == 45
+#eval qhA_isTheParseFixture_ok -- expect true
+
+/-- ACCEPTANCE 2 OF 2 (ALL THREE FLAGS ON): the same tie at a context where BOTH limb7 arms render.
+    338 = 23 + 45 + 135 + 135, and the two arms are the same shape over two DIFFERENT tables. -/
+def qhA_isTheParseAllFlags_ok : Bool :=
+  let t := renderQuotientHelpers qhAllFlags
+  beqRegion t (GenAst.emitQuotientHelpersA qhAllFlags) &&
+    (yulTokens t).length == 338 &&
+    (yulTokens (GenAst.renderFunction t "q_limb7")).length == 135 &&
+    (yulTokens (GenAst.renderFunction t "q_limb7_wide")).length == 135 &&
+    (GenAst.emitQuotientHelpersA qhAllFlags).length == 4
+#eval qhA_isTheParseAllFlags_ok -- expect true
+
+/-- THE FINGERPRINT GUARD: where the old emitter spoke, the new one says the same thing. Both arms of
+    this are needed - the fixture has pow5 on, and the pow5-off context is the other value the old
+    signature could take. -/
+def qhA_agreesWithG12_ok : Bool :=
+  SyntaxEq.stmtsBeq (GenAst.emitQuotientHelpersA ctx)
+    (GenAst.emitQuotientHelpersAt ctx.quotientPow5Helper) &&
+    SyntaxEq.stmtsBeq (GenAst.emitQuotientHelpersA { ctx with quotientPow5Helper := false })
+      (GenAst.emitQuotientHelpersAt false)
+#eval qhA_agreesWithG12_ok -- expect true
+
+/-- TEETH AT THE FIXTURE (the card's two falsifiers, both on CODE tokens - the first
+    '0x3cc81b89' in this text is inside a comment and is invisible to 'yulTokens', which is why
+    'qhMutationTeeth_ok' above mutates the shift instead). -/
+def qhA_teethFixture_ok : Bool :=
+  let t := renderQuotientHelpers ctx
+  let t1 := mutateFirst "shl(224," "shl(225," t
+  let t2 := mutateFirst "mulmod(x2, x2, q_r)" "mulmod(x2, x, q_r)" t
+  beqRegion t (GenAst.emitQuotientHelpersA ctx) &&
+    ! beqRegion t1 (GenAst.emitQuotientHelpersA ctx) &&
+    ! beqRegion t2 (GenAst.emitQuotientHelpersA ctx) && t != t1 && t != t2
+#eval qhA_teethFixture_ok -- expect true
+
+/-- TEETH ON THE LIMB7 ARMS. (a) one coefficient digit moves and the all-flags tie reddens; (b) the
+    template's 'loop.first' split between 'addmod(x0, ...)' and 'addmod(z, ...)' is load-bearing -
+    spell the first slot 'z' and the parse no longer matches, which is the one place an emitter could
+    write an arithmetically identical and structurally wrong body. -/
+def qhA_teethLimb7_ok : Bool :=
+  let t := renderQuotientHelpers qhAllFlags
+  let t1 := mutateFirst "mulmod(0x1000," "mulmod(0x1001," t
+  let t2 := mutateFirst "addmod(x0," "addmod(z," t
+  beqRegion t (GenAst.emitQuotientHelpersA qhAllFlags) &&
+    ! beqRegion t1 (GenAst.emitQuotientHelpersA qhAllFlags) &&
+    ! beqRegion t2 (GenAst.emitQuotientHelpersA qhAllFlags) && t != t1 && t != t2
+#eval qhA_teethLimb7_ok -- expect true
+
+/-- THE TABLES REACH THE PROGRAM, at a table the deployed model does not carry. The emitter is a
+    function of 'c.limb7YulCoeffs' / 'c.wideLimb7YulCoeffs': it ties to the parse at BOTH synthetic
+    tables and the two trees differ. A hard-coded copy of the deployed table would tie at the fixture
+    and at 'qhAllFlags' and fail here. -/
+def qhA_tablesReach_ok : Bool :=
+  let c1 : PartialCtx := { qhAllFlags with
+    limb7YulCoeffs := ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6"] }
+  let c2 : PartialCtx := { c1 with limb7YulCoeffs := ["0x1", "0x2", "0x3", "0x4", "0x5", "0x7"] }
+  let c3 : PartialCtx := { qhAllFlags with
+    wideLimb7YulCoeffs := ["0x1", "0x2", "0x3", "0x4", "0x5", "0x6"] }
+  let c4 : PartialCtx := { c3 with wideLimb7YulCoeffs := ["0x1", "0x2", "0x3", "0x4", "0x5", "0x7"] }
+  beqRegion (renderQuotientHelpers c1) (GenAst.emitQuotientHelpersA c1) &&
+    beqRegion (renderQuotientHelpers c2) (GenAst.emitQuotientHelpersA c2) &&
+    beqRegion (renderQuotientHelpers c3) (GenAst.emitQuotientHelpersA c3) &&
+    ! SyntaxEq.stmtsBeq (GenAst.emitQuotientHelpersA c1) (GenAst.emitQuotientHelpersA c2) &&
+    ! SyntaxEq.stmtsBeq (GenAst.emitQuotientHelpersA c3) (GenAst.emitQuotientHelpersA c4)
+#eval qhA_tablesReach_ok -- expect true
+
+/-- THE FLAGS SELECT, one arm at a time: the definition inventory of the emitted region is exactly
+    what the three flags say, and each single-flag context ties to its own render. 'q_program_fail'
+    is outside every 'if' in the template and so is unconditional here too. -/
+def qhA_flagsSelect_ok : Bool :=
+  let names (c : PartialCtx) : List String :=
+    (GenAst.emitQuotientHelpersA c).filterMap fun
+      | Stmt.funDef n _ _ _ => some n
+      | _ => none
+  let one (c : PartialCtx) := beqRegion (renderQuotientHelpers c) (GenAst.emitQuotientHelpersA c)
+  names ctx == ["q_program_fail", "q_pow5"] &&
+    names { ctx with quotientPow5Helper := false } == ["q_program_fail"] &&
+    names { ctx with quotientLimb7Helper := true } ==
+      ["q_program_fail", "q_pow5", "q_limb7"] &&
+    names { ctx with quotientWideLimb7Helper := true } ==
+      ["q_program_fail", "q_pow5", "q_limb7_wide"] &&
+    names qhAllFlags == ["q_program_fail", "q_pow5", "q_limb7", "q_limb7_wide"] &&
+    one { ctx with quotientLimb7Helper := true } &&
+    one { ctx with quotientWideLimb7Helper := true } &&
+    one { ctx with quotientPow5Helper := false }
+#eval qhA_flagsSelect_ok -- expect true
+
+/-- THE TWO LIMB7 ARMS ARE NOT ONE ARM TWICE: same shape, different name, different table. The wide
+    table carries two 256-bit coefficients the narrow one does not, so the trees differ even though
+    the emitters share a body builder. -/
+def qhA_limb7ArmsDiffer_ok : Bool :=
+  let l7 := GenAst.emitQLimb7 ctx.limb7YulCoeffs
+  let w7 := GenAst.emitQWideLimb7 ctx.wideLimb7YulCoeffs
+  ! SyntaxEq.stmtsBeq l7 w7 &&
+    (l7.filterMap fun | Stmt.funDef n _ _ _ => some n | _ => none) == ["q_limb7"] &&
+    (w7.filterMap fun | Stmt.funDef n _ _ _ => some n | _ => none) == ["q_limb7_wide"] &&
+    ctx.limb7YulCoeffs != ctx.wideLimb7YulCoeffs &&
+    ctx.limb7YulCoeffs.length == 6 && ctx.wideLimb7YulCoeffs.length == 6
+#eval qhA_limb7ArmsDiffer_ok -- expect true
+
 /-! ## 3. OBJ.2 - the numerator as a PARSE, and what that does and does not check -/
 
 /-- The numerator parses, is one block, and its tokens round-trip: 6,384 in, 6,384 out. This is the
