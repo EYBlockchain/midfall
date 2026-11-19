@@ -99,6 +99,7 @@ import Midfall.Lowering.GenAstPcs
 import Midfall.Lowering.GenAstDispatch
 import Midfall.Lowering.GenAstQuotient
 import Midfall.Lowering.GenAstQvm
+import Midfall.Lowering.GenAstQvmFamilies
 import Midfall.Lowering.QuotientInterp
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
@@ -119,6 +120,7 @@ import Midfall.Instances.RunLegRouted
 import Midfall.Instances.PairingProduct
 import Midfall.Instances.YulParseKats
 import Midfall.Instances.M2BatchKats
+import Midfall.Instances.QvmFamilyKats
 import Midfall.Instances.QInterpWitnessF1
 import Midfall.Instances.ObjectFingerprint
 import Midfall.Instances.PlanNewKats

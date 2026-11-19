@@ -336,8 +336,14 @@ EVAL = re.compile(
 # lowering_correctW / model_quotientMode / instWords_of_decoded / batchedCheck_iff_contract, owned by
 # WID.H, WID.H and WID.11), the headline cone stayed at 10 leaves / 1 REFUTED / 0 VACUOUS, and the object
 # fingerprint re-printed at 14,109 tokens / 0x3149ae4f...bef176. The delta is +5/+1.
-EXPECTED_KAT_TOTAL = 1574
-EXPECTED_KAT_FILES = 116
+# QEMIT (PG-Q-OBJECT) moved both pins deliberately, in the commit that added the gates: TWENTY-TWO NEW
+# '#eval ... -- expect true' gates in a NEW file Midfall/Instances/QvmFamilyKats.lean - the AST twins of
+# the block producers for the inline prefix, the native-identity bodies and the post-VM trash suffix
+# (three acceptance gates per family at the deployment, the derived generator run and the all-arms
+# context, plus text teeth, field reach and the shape gates). So the file count goes 116 -> 117 and the
+# total 1574 -> 1596. No gate was deleted; the delta is +22/+1 and nothing else moved.
+EXPECTED_KAT_TOTAL = 1596
+EXPECTED_KAT_FILES = 117
 
 # Only these shapes count as #eval output.
 #
