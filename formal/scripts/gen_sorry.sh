@@ -137,6 +137,18 @@ owner() {
       echo 'V3 WID.H - generator fact (Artifacts.lean:534-537): the model externalises the quotient exactly when the flag says so. W12 witness: #eval at one embedded and one external model' ;;
     Midfall.LoweringW.instWords_of_decoded)
       echo 'V3 WID.11 - ALG, Lean only: on a calldata that decodes, the decoder instance words are the raw ones (a statement about decodeCalldata alone); premise of accDecodes_of_leanAcceptsAcc in the vkLoading progress row' ;;
+    # ---- RECON.3: the WIDENED COMPOSITION, landed in Midfall/LoweringV3/CompositionW.lean (D-P72
+    # clause 1). Three skeletons, one per RECON.2 skeleton, each with its named leaves in its docstring;
+    # the fourth obligation (twoOutcomesW_of_valid) and the glue are PROVED and have no row. None is in
+    # the headline cone: the cone is rooted at lowering_equivalence_poseidon and nothing there reads a W
+    # declaration, so the cone stays at ten leaves. Owners are the M6 row cards plus the WID arms.
+    Midfall.LoweringW.rejectsW_of_sims)
+      echo 'V3 SIM.2 + SIM.6 re-pointed at BlockSimW, with WID.13/WID.14/WID.15/WID.16 - the widened rejection; the proof is the rejectsV3_of_sims shape of RECON.2 (Composition.lean:192) over StageInvW and LeanAcceptsAcc' ;;
+    Midfall.LoweringW.completeAnyGasW_of_progs)
+      echo 'V3 SIM.2 + SIM.6 re-pointed at BlockProgSW, plus ST.13 (runBody_mono) and WID.19 - the widened completeness at EVERY total gas oracle (D-P72 clause 5); CompleteW is then PROVED from it by CompleteAnyGasW.toComplete' ;;
+    Midfall.LoweringW.totalW_of_stages)
+      echo 'V3 SIM.2 + SIM.6 re-pointed at BlockProgSW, plus WID.19 and EvalBodyTotal (WideningStages.lean:492 via evalRel_answers) - the widened totality; a separate leaf, not a projection of conjunct 2, for the reason RECON.2 gives at Composition.lean:207-213' ;;
+
     Midfall.LoweringW.batchedCheck_iff_contract)
       echo 'V3 WID.11 - ALG, no Yul: the batched check IS the contract pairing equation on the two batched inputs (batchedCheck_eq + dualMsm_check_iff_contract, same hn/hs pins as without an accumulator); the ALG half of the widened finalPairing row' ;;
 

@@ -12,6 +12,8 @@
   test only: that run's proof does not belong to the tracked contracts (memo §7).
 -/
 import Midfall.LoweringV3.WideningStages
+import Midfall.LoweringV3.CompositionW
+import Midfall.Instances.PoseidonV2
 
 namespace Midfall.LoweringW.Tests
 
@@ -105,6 +107,54 @@ def decoder_refuses : Bool :=
    | some (bs, false) => coordOfEip bs 0 == 1 && coordOfEip bs 1 == 1 && !onCurve 1 1
    | _ => false) &&
   (loadAccPoint ivcEnc withIdCoords 4).isNone
+
+/-! ## RECON.3's witness: THE REDUCTION AT A REAL RENDER
+
+  The card's Accept asks for "the reduction instantiated at `poseidonRender`". It is below, and half of
+  it cannot be closed the way the card expects - reported rather than hidden.
+
+  THE ACCUMULATOR HALF CLOSES: `poseidonRender.cfg.accumulator = none` is `rfl`, because `cfg` is the
+  tracked `poseidonConfig` value and `GeneratorConfig.new` puts the accumulator field where the kernel
+  can see it (`poseidonValid_supported_rest` proves the same fact as one conjunct of a larger `rfl`
+  chain). So `blockSimW_iff_blockSim` fires at the render with that hypothesis discharged.
+
+  THE QUOTIENT HALF DOES NOT, AND CANNOT YET: `poseidonRender.model.quotientExternal = none` is NOT
+  `rfl`, and it is not a `decide` either. `PoseidonV2.lean:50-52` records the measured reason - "the
+  kernel will NOT reduce `poseidonModel`; `by decide` and `rfl` on `poseidonModel.isOk = true` both
+  fail ... so `generateVerifierFromPlan` is VM-reducible and not kernel-reducible" - and `poseidonRender`
+  is `noncomputable`, so no `native_decide` can reach it either. The fact is TRUE (the render's flags
+  say `externalQuotient = false`, `poseidonValid_supported_rest`), and the lemma that turns a flag into
+  a model equation is `model_quotientMode` (Widening.lean:853), which is a REGISTERED sorry owned by
+  WID.H. So the witness carries that one hypothesis by name. This is the card's own rule D-P71 read
+  back at the card: a fixture is a witness, not a proof, and where the fixture cannot compute the gap is
+  named rather than decided away. -/
+
+section Recon3
+open YulSemantics YulSemantics.EVM Midfall.Yul Midfall.Yul.Bridge Midfall.Lowering Midfall.Assumptions
+open Midfall.LoweringV2 Midfall.Lowering.Stage
+
+/-- **THE REDUCTION AT `poseidonRender` (RECON.3's Accept).** At the render the widened per-block
+    simulation contract and SIM.2's are the same proposition. `blockSimW_iff_blockSim` with the
+    accumulator half discharged by `rfl`; see the section header for why the quotient half is a named
+    hypothesis and which registered leaf removes it. -/
+theorem reduction_at_poseidonRender (q : Midfall.Lowering.Partial) (H : Hash)
+    (vkAddr qAddr : U256) (c : ExternalCalls) (g : ExternalGas) (cd : Bytes)
+    (hq : Midfall.Instances.PoseidonV2.poseidonRender.model.quotientExternal = none) :
+    BlockSimW Midfall.Instances.PoseidonV2.poseidonRender q H vkAddr qAddr c g cd ↔
+      Midfall.LoweringV2.BlockSim Midfall.Instances.PoseidonV2.poseidonRender q H vkAddr c g cd :=
+  blockSimW_iff_blockSim _ (by rfl) hq q H vkAddr qAddr c g cd
+
+/-- **THE SAME FOR THE PROGRESS SIDE.** -/
+theorem reduction_prog_at_poseidonRender (q : Midfall.Lowering.Partial) (H : Hash)
+    (vkAddr qAddr : U256) (product : PairingProduct)
+    (evalRel : EVM.CallRequest → EvmState → CallResponse → Prop)
+    (cd : Bytes)
+    (hq : Midfall.Instances.PoseidonV2.poseidonRender.model.quotientExternal = none) :
+    BlockProgSW Midfall.Instances.PoseidonV2.poseidonRender q H vkAddr qAddr product evalRel cd ↔
+      Midfall.LoweringV2.BlockProgS Midfall.Instances.PoseidonV2.poseidonRender q H vkAddr product cd :=
+  blockProgSW_iff_blockProgS _ (by rfl) hq q H vkAddr qAddr product evalRel cd
+
+end Recon3
 
 #eval noTail_ok          -- expect true
 #eval noTail_refuses     -- expect true

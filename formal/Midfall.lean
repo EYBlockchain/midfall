@@ -167,6 +167,7 @@ import Midfall.Tools.Done
 import Midfall.Tools.ConeReport
 import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.Composition
+import Midfall.LoweringV3.CompositionW
 import Midfall.LoweringV3.Widening
 import Midfall.LoweringV3.WideningStages
 import Midfall.Instances.StatementsV3Deploy
