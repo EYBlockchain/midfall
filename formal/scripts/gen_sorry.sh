@@ -81,6 +81,16 @@ owner() {
       echo 'V3 SIM.2 + SIM.6 - the seven staged progress rows sequenced, plus the prefix progress row; the proof is the evidence completeness_of_progs (SoundnessV3.lean:1210) re-gated on G1CodecHeadlineLaws' ;;
     Midfall.LoweringV3.totalV3_of_stages)
       echo 'V3 SIM.2 + SIM.6 + ST.13 - existence from the sequenced progress rows, then runBody_mono to upgrade the zero gas oracle of the rows to the arbitrary total oracle TotalV3 quantifies over' ;;
+    # ---- SIM.2: the staged boundary and the staged contracts, landed in Midfall/LoweringV2/Stages.lean.
+    # The two prefix rows are SIM.6's: SIM.2 lands the split form they hand over, the sequenced chains
+    # they compose with, and the PROVED fit (whole_program_sim / whole_program_prog), so each hole is one
+    # row and not a shape. Neither is in the headline cone: nothing imports Stages.lean yet, and the three
+    # RECON.2 holes that consume these leaves live in Composition.lean, whose bridge to this file is the
+    # boundary-generic instantiation documented in the Stages.lean header.
+    Midfall.LoweringV2.prefix_sim)
+      echo 'V3 SIM.6 - the prefix row, soundness side: from an EntryFrame every run of Render.preBlock reverts or reaches Mid .start (Stages.lean); SIM.2 landed the split form and the fit' ;;
+    Midfall.LoweringV2.prefix_prog)
+      echo 'V3 SIM.6 - the prefix row, progress side: the prefix run exists and every run reaches StageInv .start (Stages.lean); SIM.2 landed the fit with slices_seq_prog' ;;
 # ---- T3.1b: the WPX statements that came with the wp_run port (Midfall/Yul/WpX.lean). ----
 # The T3.1b card says "register WPX.lean's three sorries (owner: T3.2)". Only wpSS_exists was
 # T3.2's, and T3.2 has now PROVED it - so its owner row is gone from this list and from the register,
