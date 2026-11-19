@@ -6,11 +6,11 @@
 
 | | |
 |---|---|
-| sorry register | **63** declarations / **10** in the headline cone / **1 REFUTED** |
+| sorry register | **74** declarations / **10** in the headline cone / **1 REFUTED** / **0 VACUOUS-in-cone** |
 | cone headline | **10** (`lowering_equivalence_poseidon`) |
-| KAT | **1525** checks / **112** files, both pinned |
+| KAT | **1574** checks / **116** files, both pinned |
 | object fingerprint | **14,109 tokens / `0x3149ae4f...bef176`** - pinned, must not move on a statement card |
-| frozen | `Statements.lean`, `Program.lean`, `Shared.lean` all OK; re-hashed twice this milestone (D-P64 ST.4, D-P67 ST.6) |
+| frozen | all OK; **three** re-hashes used: ST.4 (D-P64), ST.6 (D-P67), OBJ.8 (D-P67) -> `Statements.lean` now `d6987cef...` |
 | exhibits | **2 PRESENT / 2 MISSING of 4** - the missing two are REF.12's Lean-verifier half |
 
 **Proved this session, all on `[propext]`-class axioms, no `native_decide` in the cone:**
@@ -23,6 +23,59 @@
 fuel-60 `wpSS`/`ExecStmts` term; totality half adds ~2x that. **The word layer (0.009-3.1 ms) and the
 field bridge (~31 ms) are CHEAP closed terms and do NOT add to it.**
 
+## STATE REFRESH (round 119, at `56f7844`) - supersedes the numbers above where they differ
+
+**Merged since the round-93 header: OBJ.4, OBJ.8, R.7, OBJ.9, WORDATTR, RECON.1b(-ii,-iii), SIM.1, RECON.2, ST.5, SIM.2, OBJ.14, OBJ.15, T3.10, WID.1.**
+
+**`ValidV3` clause table at F1 (measured, OBJ.9 + R.7): `inputs` PROVED - `program` PROVED -
+`noWriters` PROVED - `env` PROVED - `supported` PROVED (R.7 repaired
+`permutationCommitmentsMatch` under D-P59) - `payload` HALF (8 of 13 fields) - `generated`
+REFUTED.** **`ValidV3 poseidonRender` is STILL NOT INHABITED, by exactly one clause:
+`generated` reads the payload from `R.plan.vk`, the render carries the PARSED payload, and
+`generateAll` refuses it at `quotient.rs:202`.** **M3 exit gate permits this: the gate asks
+every clause `true`, OR the clause that is not, NAMED WITH A REASON.**
+
+**THE CRITICAL PATH IS NOW:** `RECON.3` (after RECON.2 + WID.1, both merged -> READY) ->
+`ROW.Q`. **ROW.Q also needs two things T3.10 documented: (i) confirm the `cursor < exprEnd`
+reading of `inWindow`, and (ii) a kernel-reducible bridge for `evalQuotientIdentity`, which is
+NOT reducible even on the empty program (`rfl` fails; a `where`-`go` the kernel will not
+unfold). `Qvm.lean` already has 102 `evalQuotientIdentityStep` refs and
+`evalQuotientIdentityLoop_fuelNeverBinds` proved at :1481 - a gap to close, not a wall.**
+Parallel branch: SIM.6 / ST.13 (the two prefix leaves SIM.2 left) -> GEN.1/GEN.5/HLP.1 ->
+T3.9 (point C) -> M6 rows -> PL.H.
+
+**QPROBE MEASURED COSTS - USE THESE, NOT THE OLD ONES.** ~**3 s of kernel per unrolled 256-bit
+mulmod iteration** (n=3 fit); straight-line ~14 ms/statement; **2x fuel = 2.65x kernel** (not
+linear in fuel); each `staticcall` rebuilds symbolic memory and multiplies the demonic
+`forall resp` branch (PCS block 5 has NO loop and still times out at 143 s). **The old "~240 ms
+per 13-statement block" figure is off by ~70x on anything that loops or calls out.**
+Extrapolated row set: **~7.4 h pure kernel (range 3-18 h), EXCLUDING the quotient row, which is
+undefined without route B.** Full table at `/tmp/QPROBE-REPORT.md` (may not survive reboot).
+
+**OPERATIONAL, LEARNED THE HARD WAY: run PLAIN `lake build`. `ram_guard --limit 6G -- lake build`
+is KILLED (peak 11.79 GiB) and leaves `.olean` files MISSING, which makes `checks.sh` report a
+FALSE red on the register. The machine has ~16 GiB available; the guard is the problem.
+`checks.sh` wall is ~13-14 min.**
+
+**CORRECTED FALSE PREMISES OF MINE, so they do not get re-escalated: (1) `vkPins` was never a
+human blocker (OBJ.8 deleted the clauses; OBJ.4 proved `numInst`/`disjoint` are not table facts
+and landed two theorems named for that absence). (2) `lowering_correct` DOES NOT EXIST as a
+declaration yet - it is a named future deliverable (`Obligations.lean:263`); the live headline
+root is `lowering_equivalence_poseidon`, whose native list is PINED NON-EMPTY
+(`ConeReport.lean:89`: `poseidonModel_isOk`). The invariant is ADD NONE, not empty. (3) SIM.0 is
+DONE (D-P68 signed 2026-11-17, "Do not run"). (4) M9 is NOT wholly off-path: WID.1 gates
+RECON.3 gates ROW.Q. (5) DG.6 IS on-path - M3 gate needs `#assert_no_refuted_sorry`. (6) The
+`generated` ordering needs no decision: M3 gate accepts a named non-true clause.**
+
+**STILL GENUINELY HUMAN-ONLY:** DG.7 CI branch permission (avoidable - do the negative control
+locally) - the `gen_sorry.sh` silent-truncation bug (NO card owns it; truncates `SORRY.md` to 1
+row if `Report.lean` fails) - `exitScan` canonical form is OWNED BY SIM.3, not a human item.
+**NEW, needs a call: `statements/StatementsV3` (the D-P67 fallback) is now permanently
+un-buildable - it cites `vkPins`/`vkProgressPins` and its own `ValidV3`, all deleted by RECON.1 -
+so `check.sh widening` exits non-zero forever. Retire it as RECON.1b-iii retired the other two
+twins, or accept a permanently red line.**
+
+---
 ## THE CRITICAL PATH, IN ONE LINE
 
 > **`vkPins`/`vkProgressPins` have NO PROJECTION and are measured NOT DERIVABLE from current table
