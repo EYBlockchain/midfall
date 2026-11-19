@@ -479,5 +479,229 @@ theorem touchMemory_proj (st : EvmState) (o n : Nat) :
       (touchMemory st o n).memory = st.memory :=
   ⟨rfl, rfl, rfl⟩
 
+/-! ## 5. THE CLEAN WALK: VALUE EXTRACTION
+
+  Three small inversions the clean walk needs and no existing file states at the shape it wants:
+  the iszero guard's value, the eq builtin's value, and the recurring assign with its RESULT STATE
+  as an index rather than a fresh existential (Blocks/VkLoading.lean:554 vk_assign_inv hides the
+  state equation, which is what makes it awkward to chain).
+-/
+
+/-- The iszero(success) guard value, read off the step: b2w of the bit test on the binding. -/
+theorem vk_iszero_val {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₁ : EvmState} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.iszero [vkSucc]) (.vals [cv] st₁)) :
+    cv = b2w (decide (VEnv.get V "success" = (0 : U256))) := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hnil hvar => cases hnil with
+        | argsNil => cases hvar with
+          | var hg =>
+              simp only [builtinWithExternal, stepOp, un] at hbi
+              cases hbi
+              rw [hg]
+              simp
+
+/-- An eq step answers the bit of the equality of its two argument values, in the order the
+    semantics imposes (argsCons takes the tail first, BigStep.lean:209): B from st, then A. -/
+theorem vk_eq_val {A B : Expr EVM.Op}
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)}
+    {st st₁ : EvmState} {cv : U256}
+    (h : EvalExpr (Bridge.Dialect c g) funs V st
+        (Expr.builtin Op.eq [A, B]) (.vals [cv] st₁)) :
+    ∃ (av bv : U256) (st₀ st₂ : EvmState),
+        EvalExpr (Bridge.Dialect c g) funs V st B (.vals [bv] st₀)
+      ∧ EvalExpr (Bridge.Dialect c g) funs V st₀ A (.vals [av] st₂)
+      ∧ st₂ = st₁ ∧ cv = b2w (decide (av = bv)) := by
+  cases h with
+  | builtinOk hargs hbi =>
+      cases hargs with
+      | argsCons hrest hx => cases hrest with
+        | argsCons hnil h2 => cases hnil with
+          | argsNil =>
+              simp only [builtinWithExternal, stepOp, bin] at hbi
+              cases hbi
+              exact ⟨_, _, _, _, h2, hx, rfl, rfl⟩
+
+/-- **The recurring assign, inverted with the RESULT STATE as an index.** -/
+theorem vk_assign_inv2 {funs : FunEnv (Bridge.Dialect c g)} {V V' : VEnv (Bridge.Dialect c g)}
+    {st st' : EvmState} {A B succExpr : Expr EVM.Op}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.assign ["success"] (Expr.builtin Op.and [succExpr,
+          Expr.builtin Op.eq [A, B]])) V' st' .normal) :
+    ∃ (yv xv : U256) (st₀ : EvmState),
+        EvalExpr (Bridge.Dialect c g) funs V st (Expr.builtin Op.eq [A, B]) (.vals [yv] st₀)
+      ∧ EvalExpr (Bridge.Dialect c g) funs V st₀ succExpr (.vals [xv] st')
+      ∧ V' = VEnv.set V "success" (xv &&& yv) := by
+  cases h with
+  | assignVal he hlen =>
+      cases he with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hrest hx => cases hrest with
+            | argsCons hnil h2 => cases hnil with
+              | argsNil =>
+                  simp only [builtinWithExternal, stepOp, bin] at hbi
+                  cases hbi
+                  exact ⟨_, _, _, h2, hx, rfl⟩
+
+/-- A cross-check peeled on a NORMAL run: the tail runs from the updated environment, and the value
+    it writes is (what succExpr read) and (the bit of the comparison). -/
+theorem vk_hdr_bit (R : Render p G₁ G₂ Gₜ) (A B succExpr : Expr EVM.Op)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {ss : Block EVM.Op} {Vb : VEnv (Bridge.Dialect c g)} {stb : EvmState}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st
+          (Stmt.assign ["success"] (Expr.builtin Op.and [succExpr,
+            Expr.builtin Op.eq [A, B]]) :: ss) Vb stb .normal) :
+    ∃ (x av bv : U256) (V₁ : VEnv (Bridge.Dialect c g)),
+        V₁ = VEnv.set V "success" (x &&& b2w (decide (av = bv)))
+      ∧ ∃ (st₁ st₂ : EvmState),
+          ExecStmts (Bridge.Dialect c g) funs V₁ st₁ ss Vb stb .normal
+        ∧ EvalExpr (Bridge.Dialect c g) funs V st₂ succExpr (.vals [x] st₁) := by
+  rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h with ⟨V₁, st₁, h₁, hrest⟩ | ⟨h₁, hne⟩
+  · obtain ⟨yv, xv, st₀, heq, hxv, hV⟩ := vk_assign_inv2 h₁
+    obtain ⟨av, bv, sta, stb', hbv, hav, hst, hyv⟩ := vk_eq_val heq
+    subst hyv
+    exact ⟨xv, av, bv, V₁, hV, st₁, st₀, hrest, hxv⟩
+  · exact absurd rfl hne
+
+/-- Reading a variable right after setting it, when it was bound: the last write wins. -/
+theorem vk_get_set {V : VEnv (Bridge.Dialect c g)} {x : Ident} {w v : U256}
+    (h : VEnv.get V x = some w) : VEnv.get (VEnv.set V x v) x = some v := by
+  classical
+  induction V with
+  | nil => cases h
+  | cons p rest ih =>
+      cases p with
+      | mk z u =>
+          by_cases hz : z = x
+          . subst hz
+            simp [VEnv.get, VEnv.set]
+          . rw [show VEnv.set ((z, u) :: rest) x v = (z, u) :: VEnv.set rest x v from
+                  by simp [VEnv.set, hz]]
+            simpa [VEnv.get, List.find?, hz] using ih (by
+              have h2 : VEnv.get ((z, u) :: rest) x = some w := h
+              simpa [VEnv.get, List.find?, hz] using h2)
+
+/-! ## 6. THE CLEAN WALK - THE SUCCESS BIT SURVIVES ALL THIRTEEN STATEMENTS -/
+
+/-- One clean cross-check: the tail runs from an environment whose success is STILL a bit. The
+    comparison is never analysed - only the fact that this dialect answers eq with a bit, so the
+    and-chain cannot leave {0,1}. -/
+theorem vk_hdr_step (R : Render p G₁ G₂ Gₜ) (A B : Expr EVM.Op)
+    {funs : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {s : U256} (hget : VEnv.get V "success" = some s)
+    (hbit : Midfall.Yul.VKP.IsBit s)
+    {ss : Block EVM.Op} {Vb : VEnv (Bridge.Dialect c g)} {stb : EvmState}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st
+          (Stmt.assign ["success"] (Expr.builtin Op.and [vkSucc,
+            Expr.builtin Op.eq [A, B]]) :: ss) Vb stb .normal) :
+    ∃ (V₁ : VEnv (Bridge.Dialect c g)) (s₁ : U256),
+        (∃ st₁, ExecStmts (Bridge.Dialect c g) funs V₁ st₁ ss Vb stb .normal)
+      ∧ VEnv.get V₁ "success" = some s₁
+      ∧ Midfall.Yul.VKP.IsBit s₁ := by
+  obtain ⟨x, av, bv, V₁, hV, st₁, st₂, hrest, hxv⟩ := vk_hdr_bit R A B vkSucc h
+  have hxs : x = s := Option.some.inj ((vk_var_hsite hxv).symm.trans hget)
+  have hg1 : VEnv.get V₁ "success" = some (x &&& b2w (decide (av = bv))) :=
+    hV ▸ vk_get_set hget
+  have hb1 : Midfall.Yul.VKP.IsBit (x &&& b2w (decide (av = bv))) := by
+    rw [hxs]
+    exact Midfall.Yul.VKP.isBit_and_b2w _ hbit
+  exact ⟨V₁, x &&& b2w (decide (av = bv)), ⟨st₁, hrest⟩, hg1, hb1⟩
+
+/-- The guard iszero(success) SKIPPED (normal outcome, environment unchanged): the bit is 1. -/
+theorem vkS9_skip (R : Render p G₁ G₂ Gₜ) (err : String)
+    {funs funs' : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    {s : U256} (hget : VEnv.get V "success" = some s) (hbit : Midfall.Yul.VKP.IsBit s)
+    (hfail : lookupFun funs "fail" = some (failFDecl, funs'))
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st
+        (Stmt.cond (Expr.builtin Op.iszero [vkSucc])
+          [Stmt.exprStmt (Expr.call "fail" [vkSite err R.consts])]) V' st' .normal) :
+    V' = V ∧ s = 1 := by
+  cases h with
+  | ifFalse hc hz =>
+      refine ⟨rfl, ?_⟩
+      have hv := vk_iszero_val hc
+      rw [hv] at hz
+      rw [hget] at hz
+      rcases hbit with hs | hs
+      · exact absurd hs (by
+          intro hh
+          rw [hh] at hz
+          have hz' : (1 : U256) = (0 : U256) := hz
+          exact absurd hz' (by decide))
+      · exact hs
+  | ifTrue _ _ hbody =>
+      cases hbody with
+      | block hstmts =>
+          exact absurd (vk_arm_reverts (vkArm_fail_lookup hfail)
+            (fun _ _ hh => vkSite_ne_halts hh) hstmts).1
+            (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+
+/-- **The clean walk's core.** From success = 1, every NORMAL run of the closed vkLoading body ends
+    with success = 1: the three guards cannot have fired (their arms revert), and each of the nine
+    cross-checks replaces the bit by (the bit) and (a bit), so the chain cannot leave {0,1} and the
+    last skip forces it back to 1. No pin is needed for THIS fact - the pins are what turn it into
+    StageInv .vk, and section 4 records why that part is blocked. -/
+theorem vkBody_clean_success (R : Render p G₁ G₂ Gₜ)
+    {funs funs' : FunEnv (Bridge.Dialect c g)} {V : VEnv (Bridge.Dialect c g)} {st : EvmState}
+    (hfail : lookupFun funs "fail" = some (failFDecl, funs'))
+    (hsucc : VEnv.get V "success" = some (1 : U256))
+    {V' : VEnv (Bridge.Dialect c g)} {st' : EvmState} {n k w o l b q : Nat}
+    (h : ExecStmts (Bridge.Dialect c g) funs V st
+        (vkBody R.consts n k w o l b q) V' st' .normal) :
+    VEnv.get V' "success" = some (1 : U256) := by
+  rw [vkBody_nil] at h
+  rcases vkS1_peel R hfail h with ⟨ho, _⟩ | ⟨st₁, h₁⟩
+  · exact absurd ho (by decide : (Outcome.normal : Outcome) ≠ Outcome.halt)
+  · obtain ⟨st₂, h₂⟩ := vkS2_peel R h₁
+    rw [show vkSucc0 R.consts = vkSucc from vkSucc0_var R] at h₂
+    obtain ⟨V₃, s₃, ⟨st₃, h₃⟩, hg₃, hb₃⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "NUM_INSTANCES_MPTR" R.consts])
+        (Expr.lit (.number n)) hsucc Midfall.Yul.VKP.isBit_one h₂
+    obtain ⟨V₄, s₄, ⟨st₄, h₄⟩, hg₄, hb₄⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "K_MPTR" R.consts]) (Expr.lit (.number k))
+        hg₃ hb₃ h₃
+    obtain ⟨V₅, s₅, ⟨st₅, h₅⟩, hg₅, hb₅⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "HAS_ACCUMULATOR_MPTR" R.consts])
+        (Expr.lit (.number w)) hg₄ hb₄ h₄
+    obtain ⟨V₆, s₆, ⟨st₆, h₆⟩, hg₆, hb₆⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "ACC_OFFSET_MPTR" R.consts])
+        (Expr.lit (.number o)) hg₅ hb₅ h₅
+    obtain ⟨V₇, s₇, ⟨st₇, h₇⟩, hg₇, hb₇⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "NUM_ACC_LIMBS_MPTR" R.consts])
+        (Expr.lit (.number l)) hg₆ hb₆ h₆
+    obtain ⟨V₈, s₈, ⟨st₈, h₈⟩, hg₈, hb₈⟩ :=
+      vk_hdr_step R (Expr.builtin Op.mload [vkSite "NUM_ACC_LIMB_BITS_MPTR" R.consts])
+        (Expr.lit (.number b)) hg₇ hb₇ h₇
+    rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h₈ with
+        ⟨V₉, st₉, h₉, hrest₉⟩ | ⟨h₉, hne₉⟩
+    · obtain ⟨hV₉, hs₉⟩ := vkS9_skip R "ERR_VK_MISMATCH" hg₈ hb₈ hfail h₉
+      rw [hV₉] at hrest₉
+      obtain ⟨V₁₀, s₁₀, ⟨st₁₀, h₁₀⟩, hg₁₀, hb₁₀⟩ :=
+        vk_hdr_step R (Expr.lit (.number q))
+          (Expr.builtin Op.calldataload [vkSite "PROOF_LEN_CPTR" R.consts]) hg₈ hb₈ hrest₉
+      obtain ⟨V₁₁, s₁₁, ⟨st₁₁, h₁₁⟩, hg₁₁, hb₁₁⟩ :=
+        vk_hdr_step R (Expr.lit (.number n))
+          (Expr.builtin Op.calldataload [vkSite "NUM_INSTANCE_CPTR" R.consts]) hg₁₀ hb₁₀ h₁₀
+      obtain ⟨V₁₂, s₁₂, ⟨st₁₂, h₁₂⟩, hg₁₂, hb₁₂⟩ :=
+        vk_hdr_step R (Expr.builtin Op.calldatasize [])
+          (Expr.builtin Op.add [vkSite "INSTANCE_CPTR" R.consts, Expr.lit (.number (n * 32))])
+          hg₁₁ hb₁₁ h₁₁
+      rcases Step.stmts_cons_inv (D := Bridge.Dialect c g) h₁₂ with
+          ⟨V₁₃, st₁₃, h₁₃, hnil⟩ | ⟨h₁₃, hne₁₃⟩
+      · obtain ⟨hV₁₃, hs₁₃⟩ :=
+          vkS9_skip R "ERR_BAD_CALLDATA_SHAPE" hg₁₂ hb₁₂ hfail h₁₃
+        cases hnil
+        rw [hV₁₃, ← hs₁₃]
+        exact hg₁₂
+      · exact absurd rfl hne₁₃
+    · exact absurd rfl hne₉
+
+#print axioms Midfall.LoweringV3.VkRow.vkBody_clean_success
+#print axioms Midfall.LoweringV3.VkRow.vk_poison_walkV3
 
 end Midfall.LoweringV3.VkRow
