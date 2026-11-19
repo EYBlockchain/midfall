@@ -170,6 +170,7 @@ import Midfall.LoweringV3.Composition
 import Midfall.LoweringV3.CompositionW
 import Midfall.LoweringV3.Widening
 import Midfall.LoweringV3.WideningStages
+import Midfall.LoweringV3.QuotientRows
 import Midfall.Instances.StatementsV3Deploy
 import Midfall.Instances.StatementsV3Falsifiers
 import Midfall.Instances.PoseidonExhibit

@@ -33,8 +33,8 @@
 --     frame valuation, i.e. that the QVM memory ρ_frame reads at each literal pointer
 --     is the value partiallyEvaluateIdentities used for that column eval. That is the
 --     QuotientReadModel / QuotientNumeratorBlock.yul window layer (P-13, M6-5), and
---     identityCorrespondence_of_bridge below states the derivation with exactly that
---     one named hypothesis instead of a bundle.
+--     identityCorrespondence_of_bridge_fixed (LoweringV3/QuotientRows.lean) states the
+--     derivation with exactly that one named obligation added, and it is PROVED.
 -- So: IdentityCorrespondence is now DERIVABLE-MODULO-ONE-LAYER, not unportable. The
 -- fold theorem keeps hcorr as a binder (the plan says so and it is right for today),
 -- but the hole is no longer "the bridge does not exist".
@@ -213,7 +213,7 @@ def SelectorFoldConsistent (plan : QuotientProgramPlan) : Prop :=
     The sketch's doc comment names quotient_expr_from_expression as the reason this can
     only be assumed. That is stale - the bridge is ported (QuotientBlocks.lean:308) and
     so is the producer that applies it (:976). What is still owed is the frame
-    valuation, which identityCorrespondence_of_bridge below turns into three named
+    valuation, which identityCorrespondence_of_bridge_fixed turns into four named
     hypotheses with named owners instead of a hypothesis bundle. -/
 def IdentityCorrespondence (plan : QuotientProgramPlan)
     (exprs : Array (Option Nat × FrR)) (vals : List QVMFr) : Prop :=
@@ -286,56 +286,33 @@ theorem nth?_bucketPositionOf (xs : List Nat) (a : Nat) (h : a ∈ xs) :
   rw [hn]
   exact hget
 
-/-- THE DERIVATION, stated as a theorem with three named hypotheses instead of a
-    postulated bundle. Each hypothesis has an owner, and none of them is the conclusion:
-      horder - the two producers emit one entry per identity.
-               partiallyEvaluateIdentities (Exec/Verifier.lean:253) returns an
-               Array (Option Nat × Fr p) in gate/permutation/lookup/trash order;
-               quotientIdentityParts (QuotientBlocks.lean:976) builds its stream from the
-               same four families in the same order and asserts the counts against the
-               protocol plan at Q:941-960. The agreement is a lemma about two ported
-               functions.
-      hvals  - vals are the QVM's own evaluations of the plan's expressions under the
-               frame valuation ρ. This is the half the bridge exists for: a gate
-               identity's expr field IS quotientExprFromPlonkExpr of the very Expression
-               partiallyEvaluateIdentities evaluated, so what remains is
-               evaluation-agreement across the bridge, per memory slot.
-      htags  - the bucket-key translation: the plan's selector index s names position s
-               of sortedSimple and the verifier's tag names the fixed column stored
-               there. nth?_bucketPositionOf above is the proof-key, because the producer
-               stamps the index as positionOf sortedSimple col
-               (QuotientBlocks.lean:998-1000).
-    PROOF HOLE (M6/M7): hvals is the one that still needs the Yul window layer -
-    QuotientReadModel's four windows and nine token bases (LoweringPlan.lean:392-420)
-    tied to the verifier's evaluation environment. That is ONE layer, not a bundle, and
-    it is the honest answer to whether IdentityCorrespondence is dischargeable now: the
-    blocker P-11 named (an unported function) is gone; what is left is a stated
-    valuation-agreement obligation with a named owner.
-
-    FALSE AS WRITTEN - P-QVM FINDING, see QvmFoldKats.bridgeCounterexample_* below. The
-    three hypotheses pin the LENGTH of 'exprs', the value of 'vals', and the FIRST
-    projection of every 'exprs' entry (the bucket tag). The conclusion's value conjunct
-    needs the SECOND projection: 'exprs[i]?.map Prod.snd = some (qvmToFr (vals[i]?.getD 0))'.
-    No hypothesis mentions 'Prod.snd' of 'exprs' at all, so the value half is not
-    derivable, and the exhibit at the end of this file satisfies all three hypotheses while
-    refuting the conclusion. What the derivation needs is a fourth hypothesis saying the
-    verifier-side value equals the QVM-side value - which is the frame-valuation obligation
-    this def already names as 'hvals' owner. So the repair is not a different proof, it is
-    moving one named obligation from the conclusion into a hypothesis, and that is a
-    statement change a human has to accept: this package does not edit a registered
-    statement to make it provable (standing instruction), so the hole stays a hole. -/
-theorem identityCorrespondence_of_bridge (plan : QuotientProgramPlan)
-    (exprs : Array (Option Nat × FrR)) (vals : List QVMFr) (ρ : Valuation)
-    (horder : exprs.size = (globalIdentities plan).length)
-    (hvals : vals = (globalIdentities plan).map
-              fun id => (evalExprρ ρ id.expr).toOption.getD 0)
-    (htags : ∀ i (h : i < (globalIdentities plan).length),
-              (exprs[i]?.map Prod.fst) =
-                some (match (globalIdentities plan)[i]'h |>.target with
-                      | .main => (none : Option Nat)
-                      | .selector s => plan.sortedSimple[s]?)) :
-    IdentityCorrespondence plan exprs vals := by
-  sorry
+-- RETIRED BY ROW.Q (PLAN-V3 card ROW.Q step 1), W13: THE REFUTED STATEMENT IS DELETED, NOT
+--    REPAIRED IN PLACE. What used to sit here was
+--
+--        theorem identityCorrespondence_of_bridge (plan) (exprs) (vals) (rho)
+--          (horder) (hvals) (htags) : IdentityCorrespondence plan exprs vals
+--
+--    and it is FALSE as stated: this file exhibits, at bridgeCounterexamplePlan /
+--    bridgeCounterexampleExprs / bridgeCounterexampleVals, an environment in which all three
+--    hypotheses hold (718, 'bridgeCounterexample_hypotheses_hold') and the conclusion fails (749,
+--    'bridgeCounterexample_conclusion_fails'). The gap is that no hypothesis mentions 'Prod.snd' of
+--    'exprs', so the value half of the conclusion is not derivable - the finding recorded in the
+--    deleted statement's own docstring, and the reason the repair is a STATEMENT change and not a
+--    proof.
+--
+--    THE CORRECTED STATEMENT, WITH ITS PROOF, IS
+--    'Midfall.LoweringV3.QuotientRows.identityCorrespondence_of_bridge_fixed': the same three
+--    hypotheses plus 'hsnd', the value-agreement hypothesis
+--    'exprs[i]?.map Prod.snd = some (qvmToFr (vals[i]?.getD 0))'. It is PROVED (no sorry), on
+--    [propext, Classical.choice, Quot.sound], and it is ported verbatim from the evidence file
+--    (GeneratorRows.lean:913), which had already written the repair.
+--
+--    WHAT THE DELETION DOES NOT CHANGE: the frame-valuation obligation stays. 'hsnd' is exactly the
+--    hypothesis the old docstring named as needing 'the Yul window layer - QuotientReadModel's four
+--    windows and nine token bases (LoweringPlan.lean:392-420) tied to the verifier's evaluation
+--    environment'. Moving a named obligation from the conclusion into a hypothesis is what the
+--    repair does; discharging it is ROW.Q.4's card, and 'hvals' above still says who owns it.
+--
 
 /-- The verifier-side scalars the linearization MSM opens the quotient limbs with:
     (1 - xn)·sf^i for i < n, the list computeLinearizationCommitment builds at
@@ -357,7 +334,8 @@ def limbScalars {F : Type} [Field F] (n : Nat) (xn sf : F) : List F :=
     bucket_horner_with_gaps + groupedAdd_as_sum, i.e. that the sparse gap/tail scheme
     reproduces Σ vᵢ·y^(m-1-i) per bucket and that groupedAdd's key order is the
     ascending column order. hcorr stays a binder because the frame layer above is not
-    discharged yet - identityCorrespondence_of_bridge says exactly what would remove it.
+    discharged yet - identityCorrespondence_of_bridge_fixed (LoweringV3/QuotientRows.lean) says
+    exactly what would remove it.
     The statement is FALSE without hcons (a gap off by one moves a bucket by a factor y,
     foldGapOffByOneFlipsBucket_ok) and without hvals (non-canonical representatives break
     qvmToFr's homomorphism, Qvm.lean's qvmToFr_needsCanonicity_ok). -/
