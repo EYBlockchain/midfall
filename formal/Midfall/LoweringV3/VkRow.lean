@@ -473,12 +473,6 @@ theorem isBit_b2w (b : Bool) : Midfall.Yul.VKP.IsBit (b2w b) := by
   unfold Midfall.Yul.VKP.IsBit
   cases b <;> simp [b2w]
 
-/-- touchMemory moves activeWords and nothing else. -/
-theorem touchMemory_proj (st : EvmState) (o n : Nat) :
-    (touchMemory st o n).env = st.env ∧ (touchMemory st o n).halted = st.halted ∧
-      (touchMemory st o n).memory = st.memory :=
-  ⟨rfl, rfl, rfl⟩
-
 /-! ## 5. THE CLEAN WALK: VALUE EXTRACTION
 
   Three small inversions the clean walk needs and no existing file states at the shape it wants:
@@ -704,4 +698,94 @@ theorem vkBody_clean_success (R : Render p G₁ G₂ Gₜ)
 #print axioms Midfall.LoweringV3.VkRow.vkBody_clean_success
 #print axioms Midfall.LoweringV3.VkRow.vk_poison_walkV3
 
+/-! ## 7. THE STATE TRANSFER: WHAT THE SLICE DOES AND DOES NOT TOUCH
+
+  Every builtin this slice reads leaves the environment record, the halt record and memory exactly
+  alone; the mload and calldataload reads move only the active-word high-water mark
+  (touchMemory_proj); and the single write is the extcodecopy, whose effect is the copyInto window.
+  That is the whole of the Frame transfer and of the memory half of Inv .vk, and it needs no pin.
+-/
+
+/-- touchMemory moves activeWords and nothing else. -/
+theorem touchMemory_proj (st : EvmState) (o n : Nat) :
+    (touchMemory st o n).env = st.env ∧ (touchMemory st o n).halted = st.halted ∧
+      (touchMemory st o n).memory = st.memory :=
+  ⟨rfl, rfl, rfl⟩
+
+/-- mload touches the word window and nothing else. -/
+theorem vk_st_mload {a : U256} {st st₂ : EvmState} {rets : List U256}
+    (h : (Bridge.Dialect c g).Builtin Op.mload [a] st (.ok rets st₂)) :
+    st₂.env = st.env ∧ st₂.halted = st.halted ∧ st₂.memory = st.memory := by
+  simp only [builtinWithExternal, stepOp] at h
+  cases h
+  exact touchMemory_proj _ _ _
+
+/-- calldataload reads calldata and changes no state at all. -/
+theorem vk_st_calldataload {a : U256} {st st₂ : EvmState} {rets : List U256}
+    (h : (Bridge.Dialect c g).Builtin Op.calldataload [a] st (.ok rets st₂)) :
+    st₂.env = st.env ∧ st₂.halted = st.halted ∧ st₂.memory = st.memory := by
+  simp only [builtinWithExternal, stepOp, rd1] at h
+  cases h
+  exact ⟨rfl, rfl, rfl⟩
+
+/-- calldatasize and the two extcode reads: no state change. -/
+theorem vk_st_rd1 {op : EVM.Op} (hop : op = Op.calldatasize \/ op = Op.extcodesize \/
+      op = Op.extcodehash) {a : U256} {st st₂ : EvmState} {rets : List U256}
+    (h : (Bridge.Dialect c g).Builtin op [a] st (.ok rets st₂)) :
+    st₂.env = st.env ∧ st₂.halted = st.halted ∧ st₂.memory = st.memory := by
+  rcases hop with rfl | rfl | rfl
+  · simp only [builtinWithExternal, stepOp, rd0] at h; cases h <;> (try exact ⟨rfl, rfl, rfl⟩)
+  · simp only [builtinWithExternal, stepOp, rd1] at h; cases h; exact ⟨rfl, rfl, rfl⟩
+  · simp only [builtinWithExternal, stepOp, rd1] at h; cases h; exact ⟨rfl, rfl, rfl⟩
+
+theorem vk_st_pure1 {op : EVM.Op} (hop : op = Op.iszero) {a : U256} {st st₂ : EvmState}
+    {rets : List U256} (h : (Bridge.Dialect c g).Builtin op [a] st (.ok rets st₂)) :
+    st₂.env = st.env ∧ st₂.halted = st.halted ∧ st₂.memory = st.memory := by
+  subst hop
+  simp only [builtinWithExternal, stepOp, un] at h
+  cases h
+  exact ⟨rfl, rfl, rfl⟩
+
+theorem vk_st_pure2 {op : EVM.Op} (hop : op = Op.eq \/ op = Op.and \/ op = Op.add)
+    {a b : U256} {st st₂ : EvmState} {rets : List U256}
+    (h : (Bridge.Dialect c g).Builtin op [a, b] st (.ok rets st₂)) :
+    st₂.env = st.env ∧ st₂.halted = st.halted ∧ st₂.memory = st.memory := by
+  rcases hop with rfl | rfl | rfl
+  all_goals
+    simp only [builtinWithExternal, stepOp, bin] at h
+    cases h
+    exact ⟨rfl, rfl, rfl⟩
+
+/-- **The extcodecopy step, memory half.** The window the block writes, read off the run at a
+    render's table: the four argument sites are pure reads, so the state the copy starts from has
+    the same memory as the state the statement started from, and the copy touches neither env nor
+    the halt record. -/
+theorem vkS2_memory {R : Render p G₁ G₂ Gₜ} {funs : FunEnv (Bridge.Dialect c g)}
+    {V : VEnv (Bridge.Dialect c g)} {st st' : EvmState}
+    (h : ExecStmt (Bridge.Dialect c g) funs V st (vkS2 R.consts) V st' .normal) :
+    st'.env = st.env ∧ st'.halted = st.halted ∧
+      ∃ (dst src n : Nat) (code : List UInt8), st'.memory = copyInto st.memory dst src n code := by
+  cases h with
+  | exprStmt hex =>
+      cases hex with
+      | builtinOk hargs hbi =>
+          cases hargs with
+          | argsCons hrest hx => cases hrest with
+            | argsCons hrest2 h2 => cases hrest2 with
+              | argsCons hrest3 h3 => cases hrest3 with
+                | argsCons hnil h4 => cases hnil with
+                  | argsNil =>
+                      obtain ⟨_, he4⟩ := vkSite_val h4
+                      subst he4
+                      cases h3 with
+                      | lit =>
+                          obtain ⟨_, he2⟩ := vkSite_val h2
+                          subst he2
+                          obtain ⟨_, hex⟩ := vkSite_val hx
+                          subst hex
+                          simp only [builtinWithExternal, stepOp] at hbi
+                          cases hbi
+                          exact ⟨rfl, rfl, _, _, _, _, rfl⟩
+
 end Midfall.LoweringV3.VkRow
+
