@@ -125,6 +125,59 @@ the Python gate and `lake build`.** **Other gates it printed green: check_hypoth
    OBJ.8); (3) state the row with the bound as a hypothesis - REFUSED on the record.** Once ruled, about
    1 h of reassembly closes `vk_blockSim` from what is already proved.
    **Blocks: A3 (then `vk_blockProgS`), and by extension A4-A12.**
+8. **PG-SHADOWDECOMP - THE CONE'S DECOMPOSITION LEAF IS THE V2 STATEMENT, AND IT NEEDS THE FACT
+   ONLY `prog_slices_decompV3` CARRIES (WP-A2, measured at `444df14`).** The root cone prints
+   `Midfall.LoweringV2.prog_slices_decomp` (`LoweringV2/Blocks.lean:234`) and NOT
+   `Midfall.LoweringV3.prog_slices_decompV3` (`LoweringV3/Statements.lean:244`). The V2 text is
+   stated for a GENERIC render with no side condition:
+
+   ```
+   theorem prog_slices_decomp (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
+       (c : ExternalCalls) (g : ExternalGas) :
+       R.prog vkAddr qAddr =
+           R.preSlice vkAddr qAddr ++ R.helpers ++ R.mainLocalsInlined ++ R.slices ∧
+         [hoist (Bridge.Dialect c g) (R.prog vkAddr qAddr)] = R.scope c g
+   ```
+
+   Conjunct 1 is `inline (A++B++C++D++E++F) = inline (A++B++C) ++ inline D ++ inline E ++ inline F`,
+   which is `Inline.inline_append` at five cuts, and whose third cut's left block ends in
+   `mainLocals` - the two statements that bind `r` and `success` at top level. `constTableOf`
+   filters exactly `vk` and `success` out of the table (`LoweringV2/Program.lean:59-63`), so a model
+   whose rendered `Constants.sol` declares a constant named `r` (or `quotientEvaluator`) makes the
+   equation FALSE, not merely unproved: the slices' reads of `r` are substituted on the right-hand side
+   and left free on the left. That is findings B-5/D-13, and it is why ST.11 restated the leaf with
+   `hns : noShadowB R = true`. **The hypothesis is not missing from the tree - `programOkB` carries
+   `noShadowCore pv m` and `noShadow_of_programOk` projects it from `ValidV3.program`; it is missing
+   from the V2 STATEMENT.** So the closure is a re-point, not a proof: `run_split`
+   (`LoweringV2/Stages.lean:528`) and `run_join` (`:552`) are the only consumers of the V2 leaf,
+   they live in A1's file, and each holds the `ValidV3`-class facts needed to feed
+   `prog_slices_decompV3 R hns vkAddr qAddr c g`. **Blocks: the cone's `prog_slices_decomp` row, and
+   it needs `inline_append` (GEN.4, registered, cone `-`) proved first. WP-A2 did not reach it inside
+   its box; the goal state above is the exact one.**
+
+9. **PG-WORLDEQ (ST.10/SIM.3): `twoOutcomes_of_exitDiscipline` is one Step induction behind a
+   second registered hole.** Its conclusion is
+   `(⟨stObs, o⟩ : Obs).view = returnView st₀ ∨ (isRevertOrHalt ∧ worldUnchanged st₀)` and BOTH arms
+   read `WorldEq st₀ stObs` (`returnView` is st₀'s own world with the halt set), so the leaf is not
+   reachable without `Midfall.Yul.Bridge.Run_worldEq_of_noWriters` (`Bridge.lean:1221`, registered
+   OPEN, cone `-`, "removed by V3 SIM.5 - the shared Step induction (ST.10 cites it)"). Its own
+   docstring prices it: subterm closure of the fuel-bounded scan plus the per-op table over the ~70
+   local ops and `finishCall` for staticcall - "the same 77-constructor cost class as
+   dialect_deterministic". WP-A2's box went to ST.12; this row is NOT closed and no hypothesis was
+   added to the leaf. **Blocks: the cone's `twoOutcomes_of_exitDiscipline` row, hence
+   `twoOutcomes_of_scans`, hence conjunct 3 of both roots.**
+
+10. **`snapshotOf_prepareMsgs` is a REPLAY-EVIDENCE obligation, not a Lean one (WP-A2: read, not
+    proved).** `Midfall/Lowering/Snapshot.lean:380`'s own docstring says the `.ok` half is an unfolding
+    plus a case split on the collapse, while the `isOk` half "additionally needs that no phase this
+    file runs can fault where prepareMsgs succeeds, which is a claim that the Exec refactor is a cut
+    and not a reordering (rule R1), and that claim is exactly what the D6 KATs and the conformance
+    replay evidence, not a Lean proof". It is the cone's oldest ROOT row (since `a2557e7`). WP-A2
+    records it rather than inventing a hypothesis: the fact nothing supplies is that the Exec refactor
+    is a cut and not a reordering, and the tree's evidence for it lives in `Instances/`, which D-P71
+    keeps out of this cone. **Blocks: 1 ROOT row of both roots; needs a decision - accept the replay
+    gate as the evidence and retire the row, or port `prepare`'s schedule onto the phase records.**
+
 ## 5. Last three merges
 - 077a3c5 B2 - reference gate green (nativeReplay_ok, 21 checks, 0 failures); a section-6 gate met
 - 930c33c A0/PL.H0 - root lowering_correct UNREACHABLE/10 -> 22 OPEN leaves, native 0; ROOT re-keyed

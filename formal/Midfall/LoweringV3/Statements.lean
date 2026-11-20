@@ -572,14 +572,837 @@ theorem twoOutcomes_of_exitDiscipline (b : Block EVM.Op) (hw : NoWriters b) (hx 
       ((⟨stObs, o⟩ : Obs).isRevertOrHalt ∧ (⟨stObs, o⟩ : Obs).worldUnchanged st₀) := by
   sorry
 
+/-! # A2 (ST.12): the two scans do not read the VALUE of a literal
+
+  \`scans_prog_addr_indep\` says the two syntactic scans of the closed program do not see the two
+  addresses the wrapper binds as let literals. The whole section below is the machinery that lemma
+  needs and nothing else: an eraser, a congruence for each of the two scans, a congruence for the
+  constant inliner, and the transfer.
+
+  THE ERASURE IS NOT TOTAL. \`exitDisciplineFuel\` splits the block at its return tail by matching
+  the tail's literal VALUES (\`returnTail?\`), so an eraser that zeroes every literal would erase the
+  very evidence the split reads. \`eraseS\` therefore erases only the right-hand sides of \`let\` /
+  \`:=\` - which is where the wrapper addresses land - and leaves every other literal EXACTLY as it
+  is. The two statements of the return tail are \`exprStmt\`s: they are untouched, a block has a
+  return tail exactly when its erasure does, and the transfer of \`returnTail?\` is a reflection
+  (\`eraseB_cons_inv\`) rather than a guess.
+
+  WHY THE WALK IS INVARIANT WITHOUT AN INDUCTION ON ITS FUEL: the difference never reaches a
+  sub-block. A let of a literal has none, so \`inlineStmtStep\`'s recursion argument is never called
+  at a differing statement, and one congruence for the expression walk plus one for the block fold
+  is the whole argument. Measured: this section elaborates in seconds; no heartbeat was raised. -/
+
+section A2ScanBlind
+open Midfall.Lowering.Inline
+
+/-! ## ST.12 machinery: neither scan reads the VALUE of a literal
+
+  scans_prog_addr_indep says the two syntactic scans of the closed program do not see the two
+  addresses the wrapper binds as let literals.
+
+  THE ERASURE IS NOT TOTAL. exitDisciplineFuel splits the block at its return tail by matching the
+  tail's literal VALUES (returnTail?), so an eraser that zeroes every literal would erase the very
+  evidence the split reads. eraseS therefore erases only the right-hand sides of let / := - which is
+  where the wrapper addresses land - and leaves every other literal EXACTLY as it is. The two
+  statements of the return tail are exprStmts, so they are untouched: the transfer of returnTail?
+  is an identity, not a congruence. -/
+
+mutual
+/-- Every literal payload in an expression, erased. -/
+def eraseE : Expr EVM.Op → Expr EVM.Op
+  | .lit _ => .lit (.number 0)
+  | .var x => .var x
+  | .builtin op args => .builtin op (eraseEs args)
+  | .call f args => .call f (eraseEs args)
+
+/-- eraseE, lifted to a list. -/
+def eraseEs : List (Expr EVM.Op) → List (Expr EVM.Op)
+  | [] => []
+  | e :: es => eraseE e :: eraseEs es
+
+/-- The literals of let / := right-hand sides, erased; every other literal left alone. -/
+def eraseS : Stmt EVM.Op → Stmt EVM.Op
+  | .letDecl xs e => .letDecl xs (e.map eraseE)
+  | .assign xs e => .assign xs (eraseE e)
+  | .block b => .block (eraseB b)
+  | .funDef n ps rs body => .funDef n ps rs (eraseB body)
+  | .cond c body => .cond c (eraseB body)
+  | .switch c cs d => .switch c (eraseCs cs) (eraseOd d)
+  | .forLoop init c post body => .forLoop (eraseB init) c (eraseB post) (eraseB body)
+  | s => s
+
+/-- eraseS, lifted to a block. -/
+def eraseB : List (Stmt EVM.Op) → List (Stmt EVM.Op)
+  | [] => []
+  | s :: ss => eraseS s :: eraseB ss
+
+/-- eraseB, lifted over switch case arms: the case LABEL is a literal the scan never reads, and
+    returnTail? never sees one, so it is left alone too. -/
+def eraseCs : List (Literal × List (Stmt EVM.Op)) → List (Literal × List (Stmt EVM.Op))
+  | [] => []
+  | p :: ps => (p.1, eraseB p.2) :: eraseCs ps
+
+/-- eraseB, lifted over the optional switch default. -/
+def eraseOd : Option (List (Stmt EVM.Op)) → Option (List (Stmt EVM.Op))
+  | none => none
+  | some b => some (eraseB b)
+end
+
+/-- The same erasure at the five positions a scan can stand at. -/
+def eraseScan : Scan → Scan
+  | .e e => .e (eraseE e)
+  | .es es => .es (eraseEs es)
+  | .s s => .s (eraseS s)
+  | .b b => .b (eraseB b)
+  | .cs cs => .cs (eraseCs cs)
+
+@[simp] theorem eraseEs_nil : eraseEs [] = [] := rfl
+@[simp] theorem eraseB_nil : eraseB [] = [] := rfl
+theorem eraseB_cons (s : Stmt EVM.Op) (b : List (Stmt EVM.Op)) :
+    eraseB (s :: b) = eraseS s :: eraseB b := rfl
+
+
+/-- Erasing does not change what a statement BINDS: boundOf reads names, never a value. -/
+theorem eraseS_boundOf (s : Stmt EVM.Op) : boundOf (eraseS s) = boundOf s := by
+  cases s <;> rfl
+
+/-- An exprStmt is left EXACTLY alone by the erasure, and nothing else becomes one. -/
+theorem eraseS_exprStmt_inv {s : Stmt EVM.Op} {e : Expr EVM.Op}
+    (h : eraseS s = .exprStmt e) : s = .exprStmt e := by
+  cases s <;> simp_all [eraseS]
+
+/-- The erasure of a concatenation. -/
+theorem eraseB_append (x y : List (Stmt EVM.Op)) :
+    eraseB (x ++ y) = eraseB x ++ eraseB y := by
+  induction x with
+  | nil => rfl
+  | cons s rest ih => simp [eraseB, ih]
+/-! ### The writer scan cannot see an erased literal -/
+
+theorem noWritersStep_erase (sc : Scan) (rec : Scan → Bool)
+    (h : ∀ sc', rec sc' = rec (eraseScan sc')) :
+    noWritersStep sc rec = noWritersStep (eraseScan sc) rec := by
+  cases sc with
+  | e x =>
+      refine match x with
+      | Expr.lit _ => rfl
+      | Expr.var _ => rfl
+      | Expr.builtin op args => by
+          show (! Op.isWriter op && rec (Scan.es args)) =
+            (! Op.isWriter op && rec (Scan.es (eraseEs args)))
+          rw [h (Scan.es args)]; rfl
+      | Expr.call _ args => by
+          show rec (Scan.es args) = rec (Scan.es (eraseEs args))
+          rw [h (Scan.es args)]; rfl
+  | es xs =>
+      induction xs with
+      | nil => rfl
+      | cons a rest ih =>
+          show (rec (Scan.e a) && rec (Scan.es rest)) =
+            (rec (Scan.e (eraseE a)) && rec (Scan.es (eraseEs rest)))
+          rw [h (Scan.e a), h (Scan.es rest)]; rfl
+  | s x =>
+      refine match x with
+      | Stmt.block b => by
+          show rec (Scan.b b) = rec (Scan.b (eraseB b)); rw [h (Scan.b b)]; rfl
+      | Stmt.funDef _ _ _ body => by
+          show rec (Scan.b body) = rec (Scan.b (eraseB body)); rw [h (Scan.b body)]; rfl
+      | Stmt.letDecl _ val => by
+          cases val with
+          | none => rfl
+          | some e => show rec (Scan.e e) = rec (Scan.e (eraseE e)); rw [h (Scan.e e)]; rfl
+      | Stmt.assign _ e => by
+          show rec (Scan.e e) = rec (Scan.e (eraseE e)); rw [h (Scan.e e)]; rfl
+      | Stmt.cond c body => by
+          show (rec (Scan.e c) && rec (Scan.b body)) =
+            (rec (Scan.e c) && rec (Scan.b (eraseB body)))
+          rw [h (Scan.b body)]; rfl
+      | Stmt.switch c cs d => by
+          show (rec (Scan.e c) && rec (Scan.cs cs) &&
+                match d with | none => true | some db => rec (Scan.b db)) =
+               (rec (Scan.e c) && rec (Scan.cs (eraseCs cs)) &&
+                match eraseOd d with | none => true | some db => rec (Scan.b db))
+          rw [h (Scan.cs cs)]
+          cases d with
+          | none => rfl
+          | some db =>
+              show (rec (Scan.e c) && rec (Scan.cs (eraseCs cs)) && rec (Scan.b db)) =
+                   (rec (Scan.e c) && rec (Scan.cs (eraseCs cs)) && rec (Scan.b (eraseB db)))
+              rw [h (Scan.b db)]; rfl
+      | Stmt.forLoop init c post body => by
+          show (rec (Scan.b init) && rec (Scan.e c) && rec (Scan.b post) && rec (Scan.b body)) =
+               (rec (Scan.b (eraseB init)) && rec (Scan.e c) && rec (Scan.b (eraseB post)) &&
+                rec (Scan.b (eraseB body)))
+          rw [h (Scan.b init), h (Scan.b post), h (Scan.b body)]; rfl
+      | Stmt.exprStmt _ => rfl
+      | Stmt.break => rfl
+      | Stmt.continue => rfl
+      | Stmt.leave => rfl
+  | b bs =>
+      induction bs with
+      | nil => rfl
+      | cons s rest ih =>
+          show (rec (Scan.s s) && rec (Scan.b rest)) =
+            (rec (Scan.s (eraseS s)) && rec (Scan.b (eraseB rest)))
+          rw [h (Scan.s s), h (Scan.b rest)]; rfl
+  | cs xs =>
+      induction xs with
+      | nil => rfl
+      | cons p rest ih =>
+          show (rec (Scan.b p.2) && rec (Scan.cs rest)) =
+            (rec (Scan.b (eraseB p.2)) && rec (Scan.cs (eraseCs rest)))
+          rw [h (Scan.b p.2), h (Scan.cs rest)]; rfl
+
+theorem noWritersScan_erase (n : Nat) : ∀ (sc : Scan),
+    noWritersScan n sc = noWritersScan n (eraseScan sc) := by
+  induction n with
+  | zero => intro sc; rfl
+  | succ n ih =>
+      intro sc
+      show noWritersStep sc (noWritersScan n) = noWritersStep (eraseScan sc) (noWritersScan n)
+      exact noWritersStep_erase sc (noWritersScan n) ih
+
+/-- The congruence form: two scans with the same erasure have the same answer. -/
+theorem noWritersScan_congr (n : Nat) (sc₁ sc₂ : Scan)
+    (h : eraseScan sc₁ = eraseScan sc₂) : noWritersScan n sc₁ = noWritersScan n sc₂ :=
+  calc noWritersScan n sc₁ = noWritersScan n (eraseScan sc₁) := noWritersScan_erase n sc₁
+    _ = noWritersScan n (eraseScan sc₂) := congrArg (noWritersScan n) h
+    _ = noWritersScan n sc₂ := (noWritersScan_erase n sc₂).symm
+
+theorem noWritersFuel_congr (n : Nat) (b₁ b₂ : List (Stmt EVM.Op))
+    (h : eraseB b₁ = eraseB b₂) : noWritersFuel n b₁ = noWritersFuel n b₂ :=
+  noWritersScan_congr n (Scan.b b₁) (Scan.b b₂) (congrArg Scan.b h)
+
+/-- NoWriters is a statement about the erased block only. -/
+theorem noWriters_of_eraseB_eq {b₁ b₂ : List (Stmt EVM.Op)} (h : eraseB b₁ = eraseB b₂)
+    (hw : NoWriters b₁) : NoWriters b₂ := by
+  obtain ⟨n, hn⟩ := hw
+  exact ⟨n, by rw [noWritersFuel_congr n b₂ b₁ h.symm]; exact hn⟩
+
+
+
+/-! ### The exit scan cannot see an erased literal either -/
+
+theorem exitStep_erase (fu la : Bool) (sc : Scan) (rec : Bool → Bool → Scan → Bool)
+    (h : ∀ fu la sc', rec fu la sc' = rec fu la (eraseScan sc')) :
+    exitStep fu la sc rec = exitStep fu la (eraseScan sc) rec := by
+  cases sc with
+  | e x =>
+      refine match x with
+      | Expr.lit _ => rfl
+      | Expr.var _ => rfl
+      | Expr.builtin op args => by
+          show (! isCommittingExit op && rec fu la (Scan.es args)) =
+            (! isCommittingExit op && rec fu la (Scan.es (eraseEs args)))
+          rw [h fu la (Scan.es args)]; rfl
+      | Expr.call _ args => by
+          show rec fu la (Scan.es args) = rec fu la (Scan.es (eraseEs args))
+          rw [h fu la (Scan.es args)]; rfl
+  | es xs =>
+      induction xs with
+      | nil => rfl
+      | cons a rest ih =>
+          show (rec fu la (Scan.e a) && rec fu la (Scan.es rest)) =
+            (rec fu la (Scan.e (eraseE a)) && rec fu la (Scan.es (eraseEs rest)))
+          rw [h fu la (Scan.e a), h fu la (Scan.es rest)]; rfl
+  | s x =>
+      refine match x with
+      | Stmt.block b => by
+          show rec fu la (Scan.b b) = rec fu la (Scan.b (eraseB b))
+          rw [h fu la (Scan.b b)]; rfl
+      | Stmt.funDef _ _ _ body => by
+          show rec true false (Scan.b body) = rec true false (Scan.b (eraseB body))
+          rw [h true false (Scan.b body)]; rfl
+      | Stmt.letDecl _ val => by
+          cases val with
+          | none => rfl
+          | some e =>
+              show rec fu la (Scan.e e) = rec fu la (Scan.e (eraseE e))
+              rw [h fu la (Scan.e e)]; rfl
+      | Stmt.assign _ e => by
+          show rec fu la (Scan.e e) = rec fu la (Scan.e (eraseE e))
+          rw [h fu la (Scan.e e)]; rfl
+      | Stmt.cond c body => by
+          show (rec fu la (Scan.e c) && rec fu la (Scan.b body)) =
+            (rec fu la (Scan.e c) && rec fu la (Scan.b (eraseB body)))
+          rw [h fu la (Scan.b body)]; rfl
+      | Stmt.switch c cs d => by
+          show (rec fu la (Scan.e c) && rec fu la (Scan.cs cs) &&
+                match d with | none => true | some db => rec fu la (Scan.b db)) =
+               (rec fu la (Scan.e c) && rec fu la (Scan.cs (eraseCs cs)) &&
+                match eraseOd d with | none => true | some db => rec fu la (Scan.b db))
+          rw [h fu la (Scan.cs cs)]
+          cases d with
+          | none => rfl
+          | some db =>
+              show (rec fu la (Scan.e c) && rec fu la (Scan.cs (eraseCs cs)) &&
+                    rec fu la (Scan.b db)) =
+                   (rec fu la (Scan.e c) && rec fu la (Scan.cs (eraseCs cs)) &&
+                    rec fu la (Scan.b (eraseB db)))
+              rw [h fu la (Scan.b db)]; rfl
+      | Stmt.forLoop init c post body => by
+          show (rec fu false (Scan.b init) && rec fu false (Scan.e c) &&
+                rec fu false (Scan.b post) && rec fu true (Scan.b body)) =
+               (rec fu false (Scan.b (eraseB init)) && rec fu false (Scan.e c) &&
+                rec fu false (Scan.b (eraseB post)) && rec fu true (Scan.b (eraseB body)))
+          rw [h fu false (Scan.b init), h fu false (Scan.b post), h fu true (Scan.b body)]; rfl
+      | Stmt.exprStmt _ => rfl
+      | Stmt.break => rfl
+      | Stmt.continue => rfl
+      | Stmt.leave => rfl
+  | b bs =>
+      induction bs with
+      | nil => rfl
+      | cons s rest ih =>
+          show (rec fu la (Scan.s s) && rec fu la (Scan.b rest)) =
+            (rec fu la (Scan.s (eraseS s)) && rec fu la (Scan.b (eraseB rest)))
+          rw [h fu la (Scan.s s), h fu la (Scan.b rest)]; rfl
+  | cs xs =>
+      induction xs with
+      | nil => rfl
+      | cons p rest ih =>
+          show (rec fu la (Scan.b p.2) && rec fu la (Scan.cs rest)) =
+            (rec fu la (Scan.b (eraseB p.2)) && rec fu la (Scan.cs (eraseCs rest)))
+          rw [h fu la (Scan.b p.2), h fu la (Scan.cs rest)]; rfl
+
+theorem exitScan_erase (n : Nat) : ∀ (fu la : Bool) (sc : Scan),
+    exitScan n fu la sc = exitScan n fu la (eraseScan sc) := by
+  induction n with
+  | zero => intro fu la sc; rfl
+  | succ n ih =>
+      intro fu la sc
+      show exitStep fu la sc (exitScan n) = exitStep fu la (eraseScan sc) (exitScan n)
+      exact exitStep_erase fu la sc (exitScan n) ih
+
+theorem exitScan_congr (n : Nat) (fu la : Bool) (sc₁ sc₂ : Scan)
+    (h : eraseScan sc₁ = eraseScan sc₂) :
+    exitScan n fu la sc₁ = exitScan n fu la sc₂ :=
+  calc exitScan n fu la sc₁ = exitScan n fu la (eraseScan sc₁) := exitScan_erase n fu la sc₁
+    _ = exitScan n fu la (eraseScan sc₂) := congrArg (exitScan n fu la) h
+    _ = exitScan n fu la sc₂ := (exitScan_erase n fu la sc₂).symm
+
+
+/-! ### The constant inliner cannot see a literal either
+
+  The program is the inliner applied to a block whose only address-dependent part is two let
+  literals, so the erasure of the OUTPUT has to be shown to depend only on the erasure of the
+  INPUT. The difference never reaches a sub-block - a let of a literal has none - so the walk's
+  recursion is never called at a differing statement and no induction on the walk's fuel is
+  needed: one congruence for the expression walk, one for the block fold. -/
+
+/-- The erasure of the expression walk depends only on the erasure of its input: the walk reads a
+    NAME and a shadow list, never a literal payload. Stated for lists so that the nested List
+    occurrences of Expr are discharged by one induction on the fuel. -/
+theorem inExpr_eraseE : ∀ (fuel : Nat) (as as' : List (Expr EVM.Op)) (consts : Consts)
+    (sh : List String), eraseEs as = eraseEs as' →
+      eraseEs (as.map fun a => inExpr fuel a consts sh) =
+        eraseEs (as'.map fun a => inExpr fuel a consts sh) := by
+  intro fuel
+  induction fuel with
+  | zero =>
+      intro as as' consts sh h
+      simpa [inExpr] using h
+  | succ fuel ih =>
+      intro as
+      induction as with
+      | nil =>
+          intro as' consts sh h
+          cases as' with
+          | nil => rfl
+          | cons a' rest => exact absurd h (by simp [eraseEs])
+      | cons a as ih' =>
+          intro as' consts sh h
+          cases as' with
+          | nil => exact absurd h.symm (by simp [eraseEs])
+          | cons a' rest =>
+              have hhead : eraseE a = eraseE a' := List.head_eq_of_cons_eq h
+              have htail : eraseEs as = eraseEs rest := List.tail_eq_of_cons_eq h
+              have hstep : eraseE (inExpr (fuel+1) a consts sh) =
+                  eraseE (inExpr (fuel+1) a' consts sh) := by
+                refine match a with
+                | Expr.lit _ => by
+                    refine match a' with
+                    | Expr.lit _ => by simp [inExpr, eraseE]
+                    | Expr.var _ => by simp [eraseE] at hhead
+                    | Expr.builtin _ _ => by simp [eraseE] at hhead
+                    | Expr.call _ _ => by simp [eraseE] at hhead
+                | Expr.var x => by
+                    refine match a' with
+                    | Expr.lit _ => by simp [eraseE] at hhead
+                    | Expr.var x' => by
+                        have hx : x = x' := by simpa [eraseE] using hhead
+                        subst hx
+                        by_cases hs : shadowed sh x
+                        · simp [inExpr, hs]
+                        · simp [inExpr, hs]
+                    | Expr.builtin _ _ => by simp [eraseE] at hhead
+                    | Expr.call _ _ => by simp [eraseE] at hhead
+                | Expr.builtin op args => by
+                    refine match a' with
+                    | Expr.lit _ => by simp [eraseE] at hhead
+                    | Expr.var _ => by simp [eraseE] at hhead
+                    | Expr.builtin op' args' => by
+                        have hop : op = op' := by
+                          simpa [eraseE] using congrArg
+                            (fun x : Expr EVM.Op => match x with
+                              | Expr.builtin o _ => o | _ => op) hhead
+                        subst hop
+                        have hargs : eraseEs args = eraseEs args' := by
+                          simpa [eraseE] using congrArg
+                            (fun x : Expr EVM.Op => match x with
+                              | Expr.builtin _ a => a | _ => eraseEs args) hhead
+                        show eraseE (Expr.builtin op (args.map fun a => inExpr fuel a consts sh)) =
+                             eraseE (Expr.builtin op (args'.map fun a => inExpr fuel a consts sh))
+                        simp only [eraseE]
+                        exact congrArg (Expr.builtin op) (ih args args' consts sh hargs)
+                    | Expr.call _ _ => by simp [eraseE] at hhead
+                | Expr.call fn args => by
+                    refine match a' with
+                    | Expr.lit _ => by simp [eraseE] at hhead
+                    | Expr.var _ => by simp [eraseE] at hhead
+                    | Expr.builtin _ _ => by simp [eraseE] at hhead
+                    | Expr.call fn' args' => by
+                        have hf : fn = fn' := by
+                          simpa [eraseE] using congrArg
+                            (fun x : Expr EVM.Op => match x with
+                              | Expr.call i _ => i | _ => fn) hhead
+                        subst hf
+                        have hargs : eraseEs args = eraseEs args' := by
+                          simpa [eraseE] using congrArg
+                            (fun x : Expr EVM.Op => match x with
+                              | Expr.call _ a => a | _ => eraseEs args) hhead
+                        show eraseE (Expr.call fn (args.map fun a => inExpr fuel a consts sh)) =
+                             eraseE (Expr.call fn (args'.map fun a => inExpr fuel a consts sh))
+                        simp only [eraseE]
+                        exact congrArg (Expr.call fn) (ih args args' consts sh hargs)
+              show eraseE (inExpr (fuel+1) a consts sh) ::
+                  eraseEs (as.map fun x => inExpr (fuel+1) x consts sh) =
+                eraseE (inExpr (fuel+1) a' consts sh) ::
+                  eraseEs (rest.map fun x => inExpr (fuel+1) x consts sh)
+              rw [hstep, ih' rest consts sh htail]
+
+/-- One let of a literal: the walk's output, erased, does not see the value. -/
+theorem inExpr_lit (consts : Consts) (sh : List String) (u v : Nat) :
+    eraseE (inExpr exprFuel (Expr.lit (.number u)) consts sh) =
+      eraseE (inExpr exprFuel (Expr.lit (.number v)) consts sh) := by
+  show eraseE (Expr.lit (.number u)) = eraseE (Expr.lit (.number v))
+  rfl
+
+/-- The block fold's step, named so the fold can be talked about. -/
+def foldAt (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) : Acc :=
+  let r := inlineStmtStep rec consts acc.sh s
+  { blks := acc.blks ++ [r.1], sh := acc.sh ++ boundOf s, exhausted := acc.exhausted || r.2 }
+
+theorem inlineStep_foldl (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts)
+    (sh : List String) (bl : List (Stmt EVM.Op)) :
+    (inlineStep rec consts sh bl).blks =
+      (bl.foldl (foldAt rec consts) { blks := [], sh := sh, exhausted := false }).blks := rfl
+
+/-- The fold, from two accumulators that agree on their shadow list and on the erasure of their
+    statements, ends in accumulators that agree on the erasure. -/
+theorem foldl_eraseB_congr (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts) :
+    ∀ (Q : List (Stmt EVM.Op)) (acc acc' : Acc), acc.sh = acc'.sh →
+      eraseB acc.blks = eraseB acc'.blks →
+      eraseB (Q.foldl (foldAt rec consts) acc).blks =
+        eraseB (Q.foldl (foldAt rec consts) acc').blks := by
+  intro Q
+  induction Q with
+  | nil => intro acc acc' _ hbl; exact hbl
+  | cons s rest ih =>
+      intro acc acc' hsh hbl
+      show eraseB (rest.foldl (foldAt rec consts) (foldAt rec consts acc s)).blks =
+           eraseB (rest.foldl (foldAt rec consts) (foldAt rec consts acc' s)).blks
+      refine ih _ _ ?_ ?_
+      · show acc.sh ++ boundOf s = acc'.sh ++ boundOf s; rw [hsh]
+      · show eraseB (acc.blks ++ [(inlineStmtStep rec consts acc.sh s).1]) =
+             eraseB (acc'.blks ++ [(inlineStmtStep rec consts acc'.sh s).1])
+        rw [hsh, eraseB_append, eraseB_append, hbl]
+
+/-- The walk at a let of a literal: the erasure of the output does not see the value, and the
+    binder list is unchanged. -/
+theorem inlineStmtStep_letLit (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts)
+    (sh : List String) (xs : List String) (u v : Nat) :
+    eraseS (inlineStmtStep rec consts sh (Stmt.letDecl xs (some (Expr.lit (.number u))))).1 =
+      eraseS (inlineStmtStep rec consts sh (Stmt.letDecl xs (some (Expr.lit (.number v))))).1 := by
+  show eraseS (Stmt.letDecl xs (some (inExpr exprFuel (Expr.lit (.number u)) consts sh))) =
+       eraseS (Stmt.letDecl xs (some (inExpr exprFuel (Expr.lit (.number v)) consts sh)))
+  simp only [eraseS, Option.map_some]
+  rw [inExpr_lit consts sh u v]
+
+theorem boundOf_letLit (xs : List String) (u : Nat) :
+    boundOf (Stmt.letDecl xs (some (Expr.lit (.number u)))) = xs := rfl
+
+/-- One differing let-of-a-literal anywhere inside the block the walk runs on: the erasure of the
+    walk's output does not see it. -/
+theorem foldl_eraseB_local (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts)
+    (init : Acc) (P Q : List (Stmt EVM.Op)) (xs : List String) (u v : Nat) :
+    let su := Stmt.letDecl xs (some (Expr.lit (.number u)))
+    let sv := Stmt.letDecl xs (some (Expr.lit (.number v)))
+    eraseB (List.foldl (foldAt rec consts) init (P ++ [su] ++ Q)).blks =
+      eraseB (List.foldl (foldAt rec consts) init (P ++ [sv] ++ Q)).blks := by
+  intro su sv
+  set accP := List.foldl (foldAt rec consts) init P with haccP
+  have hsplit (w : Nat) : List.foldl (foldAt rec consts) init
+      (P ++ [Stmt.letDecl xs (some (Expr.lit (.number w)))] ++ Q) =
+      List.foldl (foldAt rec consts)
+        (foldAt rec consts accP (Stmt.letDecl xs (some (Expr.lit (.number w))))) Q := by
+    have h2 : List.foldl (foldAt rec consts) accP
+        [Stmt.letDecl xs (some (Expr.lit (.number w)))] =
+        foldAt rec consts accP (Stmt.letDecl xs (some (Expr.lit (.number w)))) := rfl
+    rw [List.foldl_append, List.foldl_append, ← haccP, h2]
+  rw [hsplit u, hsplit v]
+  have hsh : (foldAt rec consts accP su).sh = (foldAt rec consts accP sv).sh := by
+    show accP.sh ++ boundOf su = accP.sh ++ boundOf sv
+    rw [show boundOf su = xs from rfl, show boundOf sv = xs from rfl]
+  have hbl : eraseB (foldAt rec consts accP su).blks =
+      eraseB (foldAt rec consts accP sv).blks := by
+    show eraseB (accP.blks ++ [(inlineStmtStep rec consts accP.sh su).1]) =
+      eraseB (accP.blks ++ [(inlineStmtStep rec consts accP.sh sv).1])
+    rw [eraseB_append, eraseB_append]
+    dsimp only [su, sv] at *
+    congr 1
+  exact foldl_eraseB_congr rec consts Q _ _ hsh hbl
+
+/-- The walk over a block is insensitive, up to erasure, to one let-of-a-literal inside it. -/
+theorem inlineScan_eraseB_local (consts : Consts) (sh : List String)
+    (P Q : List (Stmt EVM.Op)) (xs : List String) (u v : Nat) :
+    let su := Stmt.letDecl xs (some (Expr.lit (.number u)))
+    let sv := Stmt.letDecl xs (some (Expr.lit (.number v)))
+    eraseB ((inlineScan inlineFuel consts sh (P ++ [su] ++ Q)).blks) =
+      eraseB ((inlineScan inlineFuel consts sh (P ++ [sv] ++ Q)).blks) := by
+  intro su sv
+  show eraseB ((inlineStep (inlineScan (inlineFuel - 1) consts) consts sh (P ++ [su] ++ Q)).blks) =
+      eraseB ((inlineStep (inlineScan (inlineFuel - 1) consts) consts sh (P ++ [sv] ++ Q)).blks)
+  rw [inlineStep_foldl, inlineStep_foldl]
+  exact foldl_eraseB_local (inlineScan (inlineFuel - 1) consts) consts
+    { blks := [], sh := sh, exhausted := false } P Q xs u v
+
+
+
+
+
+
+
+
+/-! ### The return tail survives the erasure
+
+  exitDisciplineFuel splits the block at its return tail, and the split reads the tail's literal
+  VALUES. That is exactly why eraseS erases only let right-hand sides: an exprStmt is left alone by
+  eraseS and nothing else becomes one, so the split is the same split on two blocks with the same
+  erasure, and the two inits have the same erasure. -/
+
+theorem eraseB_reverse (b : List (Stmt EVM.Op)) :
+    eraseB (List.reverse b) = List.reverse (eraseB b) := by
+  induction b with
+  | nil => rfl
+  | cons s rest ih =>
+      rw [List.reverse_cons, eraseB_append, ih]
+      show List.reverse (eraseB rest) ++ [eraseS s] = (eraseS s :: eraseB rest).reverse
+      rw [List.reverse_cons]
+
+/-- The two statements a return tail is made of, named. -/
+@[match_pattern] abbrev retTailStmt (p₁ n : Nat) : Stmt EVM.Op :=
+  Stmt.exprStmt (Expr.builtin EVM.Op.ret [Expr.lit (.number p₁), Expr.lit (.number n)])
+
+@[match_pattern] abbrev mstoreTailStmt (p₂ v : Nat) : Stmt EVM.Op :=
+  Stmt.exprStmt (Expr.builtin EVM.Op.mstore [Expr.lit (.number p₂), Expr.lit (.number v)])
+
+theorem eraseS_retTail (p₁ n : Nat) : eraseS (retTailStmt p₁ n) = retTailStmt p₁ n := rfl
+theorem eraseS_mstoreTail (p₂ v : Nat) : eraseS (mstoreTailStmt p₂ v) = mstoreTailStmt p₂ v := rfl
+
+/-- The erasure reflects a two-statement head of exprStmts: if the erased block begins with two,
+    so does the block, with the same two and an erased remainder. -/
+theorem eraseB_cons_inv {l : List (Stmt EVM.Op)} {p₁ p₂ nn vv : Nat} {r : List (Stmt EVM.Op)}
+    (h : eraseB l = retTailStmt p₁ nn :: mstoreTailStmt p₂ vv :: r) :
+    ∃ l', l = retTailStmt p₁ nn :: mstoreTailStmt p₂ vv :: l' ∧ eraseB l' = r := by
+  match hl : l with
+  | [] => exact absurd h (by simp [eraseB])
+  | [_] => exact absurd h (by simp [eraseB] at h)
+  | x :: y :: rest =>
+      have hx : eraseS x = retTailStmt p₁ nn := List.head_eq_of_cons_eq h
+      have h2 : eraseS y :: eraseB rest = mstoreTailStmt p₂ vv :: r :=
+        List.tail_eq_of_cons_eq h
+      have hy : eraseS y = mstoreTailStmt p₂ vv := List.head_eq_of_cons_eq h2
+      have hr : eraseB rest = r := List.tail_eq_of_cons_eq h2
+      exact ⟨rest, by rw [eraseS_exprStmt_inv hx, eraseS_exprStmt_inv hy], hr⟩
+
+/-- INVERSION of the tail match: if it answers some, the block ends in the two tail statements and
+    the init is what the match returns. The case tree below IS the match's own pattern: every branch
+    that does not reach it answers none, so it cannot be the witness. -/
+theorem returnTail?_some {b : Block EVM.Op} {t : Block EVM.Op}
+    (h : returnTail? b = some t) :
+    ∃ (p₁ p₂ n v : Nat) (initRev : List (Stmt EVM.Op)),
+      b.reverse = retTailStmt p₁ n :: mstoreTailStmt p₂ v :: initRev ∧
+        p₁ = p₂ ∧ n = 32 ∧ v = 1 ∧ t = initRev.reverse := by
+  have h2 := h
+  rw [returnTail?] at h2
+  match hb : List.reverse b with
+  | [] => rw [hb] at h2; simp at h2
+  | [_] => rw [hb] at h2; simp at h2
+  | retTailStmt p₁ n :: mstoreTailStmt p₂ v :: initRev =>
+      rw [hb] at h2
+      simp at h2
+      obtain ⟨⟨ha, hb', hc⟩, hd⟩ := h2
+      exact ⟨p₁, p₂, n, v, initRev, rfl, ha, hb', hc, hd.symm⟩
+  | a :: c :: r =>
+      rw [hb] at h2
+      cases a with
+      | exprStmt e =>
+          cases e with
+          | builtin op args =>
+              cases op with
+              | ret =>
+                  cases args with
+                  | nil =>
+                      simp at h2
+                  | cons x xs =>
+                      cases xs with
+                      | nil =>
+                          simp at h2
+                      | cons y ys =>
+                          cases ys with
+                          | cons p q =>
+                              simp at h2
+                          | nil =>
+                              cases x with
+                              | lit l1 =>
+                                  cases l1 with
+                                  | number p₁ =>
+                                      cases y with
+                                      | lit l2 =>
+                                          cases l2 with
+                                          | number n =>
+                                              cases c with
+                                              | exprStmt e2 =>
+                                                  cases e2 with
+                                                  | builtin op2 args2 =>
+                                                      cases op2 with
+                                                      | mstore =>
+                                                          cases args2 with
+                                                          | nil =>
+                                                              simp at h2
+                                                          | cons x2 xs2 =>
+                                                              cases xs2 with
+                                                              | nil =>
+                                                                  simp at h2
+                                                              | cons y2 ys2 =>
+                                                                  cases ys2 with
+                                                                  | cons p2 q2 =>
+                                                                      simp at h2
+                                                                  | nil =>
+                                                                      cases x2 with
+                                                                      | lit l3 =>
+                                                                          cases l3 with
+                                                                          | number p₂ =>
+                                                                              cases y2 with
+                                                                              | lit l4 =>
+                                                                                  cases l4 with
+                                                                                  | number v =>
+                                                                                      simp at h2
+                                                                                      obtain ⟨⟨ha, hb', hc⟩, hd⟩ := h2
+                                                                                      exact ⟨p₁, p₂, n, v, r, rfl, ha, hb', hc, hd.symm⟩
+                                                                                  | _ =>
+                                                                                      simp at h2
+                                                                              | _ =>
+                                                                                  simp at h2
+                                                                          | _ =>
+                                                                              simp at h2
+                                                                      | _ =>
+                                                                          simp at h2
+                                                      | _ =>
+                                                          simp at h2
+                                                  | _ =>
+                                                      simp at h2
+                                              | _ =>
+                                                  simp at h2
+                                          | _ =>
+                                              simp at h2
+                                      | _ =>
+                                          simp at h2
+                                  | _ =>
+                                      simp at h2
+                              | _ =>
+                                  simp at h2
+              | _ =>
+                  simp at h2
+          | _ =>
+              simp at h2
+      | _ =>
+          simp at h2
+
+theorem exitDiscipline_of_eraseB_eq {b₁ b₂ : Block EVM.Op} (h : eraseB b₁ = eraseB b₂)
+    (hx : ExitDiscipline b₁) : ExitDiscipline b₂ := by
+  obtain ⟨n, hn⟩ := hx
+  have hnt : returnTail? b₁ ≠ none := by
+    intro hnone
+    have : exitDisciplineFuel n b₁ = false := by
+      unfold exitDisciplineFuel
+      rw [hnone]
+    rw [this] at hn
+    exact Bool.noConfusion hn
+  obtain ⟨t, ht⟩ : ∃ t, returnTail? b₁ = some t := by
+    rcases h' : returnTail? b₁ with _ | t
+    · exact absurd h' hnt
+    · exact ⟨t, rfl⟩
+  obtain ⟨p₁, p₂, nn, vv, rev₁, hb₁, hp, hn32, hv1, ht₁⟩ := returnTail?_some ht
+  subst hn32
+  subst hv1
+  subst ht₁
+  have h2' : eraseB b₂.reverse =
+      retTailStmt p₁ 32 :: mstoreTailStmt p₂ 1 :: eraseB rev₁ := by
+    have hrev : eraseB b₁.reverse = eraseB b₂.reverse := by
+      rw [eraseB_reverse, eraseB_reverse, h]
+    rw [hb₁] at hrev
+    exact (by simpa [eraseB_cons, eraseS_retTail, eraseS_mstoreTail] using hrev.symm)
+  obtain ⟨rev₂, hb₂, her₂⟩ := eraseB_cons_inv h2'
+  have hback : exitDisciplineFuel n b₁ = exitScan n false false (Scan.b rev₁.reverse) := by
+    unfold exitDisciplineFuel
+    rw [ht]
+  rw [hback] at hn
+  have hcongr : eraseScan (Scan.b rev₂.reverse) = eraseScan (Scan.b rev₁.reverse) := by
+    show Scan.b (eraseB rev₂.reverse) = Scan.b (eraseB rev₁.reverse)
+    rw [eraseB_reverse, her₂, ← eraseB_reverse]
+  have hfuel : exitDisciplineFuel n b₂ = exitScan n false false (Scan.b rev₂.reverse) := by
+    unfold exitDisciplineFuel
+    rw [returnTail?, hb₂]
+    simp [hp]
+  refine ⟨n, ?_⟩
+  rw [hfuel]
+  exact (exitScan_congr n false false (Scan.b rev₂.reverse) (Scan.b rev₁.reverse) hcongr).symm ▸ hn
+
+/-! ### ST.12: the two scans ignore the two wrapper addresses -/
+
+/-- A whole block of let-of-a-literal statements: the fold, and so the walk, does not see their
+    values. -/
+theorem foldl_eraseB_lets (rec : List String → List (Stmt EVM.Op) → SRes) (consts : Consts) :
+    ∀ (s₁ s₂ : List (Stmt EVM.Op)) (acc : Acc) (Q : List (Stmt EVM.Op)),
+      eraseB s₁ = eraseB s₂ →
+      (∀ x ∈ s₁, ∃ (bs : List String) (u : Nat), x = Stmt.letDecl bs (some (Expr.lit (.number u)))) →
+      (∀ x ∈ s₂, ∃ (bs : List String) (u : Nat), x = Stmt.letDecl bs (some (Expr.lit (.number u)))) →
+      eraseB ((s₁ ++ Q).foldl (foldAt rec consts) acc).blks =
+        eraseB ((s₂ ++ Q).foldl (foldAt rec consts) acc).blks := by
+  intro s₁
+  induction s₁ with
+  | nil =>
+      intro s₂ acc Q herase h₁ h₂
+      cases s₂ with
+      | nil => rfl
+      | cons y ys => exact absurd herase (by simp [eraseB])
+  | cons x xs ih =>
+      intro s₂ acc Q herase h₁ h₂
+      cases s₂ with
+      | nil => exact absurd herase (by simp [eraseB])
+      | cons y ys =>
+          have hxy : eraseS x = eraseS y := List.head_eq_of_cons_eq herase
+          have hrest : eraseB xs = eraseB ys := List.tail_eq_of_cons_eq herase
+          obtain ⟨bs, u, hx0⟩ := h₁ x (by simp)
+          obtain ⟨bs', v, hy0⟩ := h₂ y (by simp)
+          subst hx0
+          subst hy0
+          have hnames : bs = bs' := by
+            have := congrArg (fun s : Stmt EVM.Op =>
+                match s with | Stmt.letDecl n _ => n | _ => []) hxy
+            simpa [eraseS] using this
+          subst hnames
+          have hstep : eraseB (foldAt rec consts acc (Stmt.letDecl bs (some (Expr.lit (.number u))))).blks =
+              eraseB (foldAt rec consts acc (Stmt.letDecl bs (some (Expr.lit (.number v))))).blks := by
+            show eraseB (acc.blks ++
+                  [(inlineStmtStep rec consts acc.sh
+                      (Stmt.letDecl bs (some (Expr.lit (.number u))))).1]) =
+                eraseB (acc.blks ++
+                  [(inlineStmtStep rec consts acc.sh
+                      (Stmt.letDecl bs (some (Expr.lit (.number v))))).1])
+            rw [eraseB_append, eraseB_append]
+            congr 1
+          have hsh : (foldAt rec consts acc (Stmt.letDecl bs (some (Expr.lit (.number u))))).sh =
+              (foldAt rec consts acc (Stmt.letDecl bs (some (Expr.lit (.number v))))).sh := by
+            show acc.sh ++ boundOf _ = acc.sh ++ boundOf _
+            rw [show boundOf (Stmt.letDecl bs (some (Expr.lit (.number u)))) = bs from rfl,
+                show boundOf (Stmt.letDecl bs (some (Expr.lit (.number v)))) = bs from rfl]
+          rw [List.cons_append, List.cons_append, List.foldl_cons, List.foldl_cons]
+          refine Eq.trans ?_ (foldl_eraseB_congr rec consts (ys ++ Q) _ _ hsh hstep)
+          exact ih ys (foldAt rec consts acc (Stmt.letDecl bs (some (Expr.lit (.number u))))) Q hrest
+            (fun z hz => h₁ z (by simp [hz])) (fun z hz => h₂ z (by simp [hz]))
+
+/-- The walk over a block is insensitive, up to erasure, to a block of let-of-a-literal statements
+    spliced into it. -/
+theorem inlineScan_eraseB_lets (consts : Consts) (sh : List String) (P Q : List (Stmt EVM.Op))
+    (s₁ s₂ : List (Stmt EVM.Op))
+    (herase : eraseB s₁ = eraseB s₂)
+    (h₁ : ∀ x ∈ s₁, ∃ (bs : List String) (u : Nat), x = Stmt.letDecl bs (some (Expr.lit (.number u))))
+    (h₂ : ∀ x ∈ s₂, ∃ (bs : List String) (u : Nat), x = Stmt.letDecl bs (some (Expr.lit (.number u)))) :
+    eraseB ((inlineScan inlineFuel consts sh (P ++ s₁ ++ Q)).blks) =
+      eraseB ((inlineScan inlineFuel consts sh (P ++ s₂ ++ Q)).blks) := by
+  set rec' := inlineScan (inlineFuel - 1) consts with hrec'
+  set init0 : Acc := { blks := [], sh := sh, exhausted := false } with hinit0
+  show eraseB ((inlineStep rec' consts sh (P ++ s₁ ++ Q)).blks) =
+      eraseB ((inlineStep rec' consts sh (P ++ s₂ ++ Q)).blks)
+  rw [inlineStep_foldl, inlineStep_foldl]
+  have h : eraseB ((s₁ ++ Q).foldl (foldAt rec' consts) (P.foldl (foldAt rec' consts) init0)).blks =
+      eraseB ((s₂ ++ Q).foldl (foldAt rec' consts) (P.foldl (foldAt rec' consts) init0)).blks :=
+    foldl_eraseB_lets rec' consts s₁ s₂ (P.foldl (foldAt rec' consts) init0) Q herase h₁ h₂
+  have e1 : (P ++ s₁ ++ Q).foldl (foldAt rec' consts) init0 =
+      (s₁ ++ Q).foldl (foldAt rec' consts) (P.foldl (foldAt rec' consts) init0) := by
+    simp only [List.foldl_append]
+  have e2 : (P ++ s₂ ++ Q).foldl (foldAt rec' consts) init0 =
+      (s₂ ++ Q).foldl (foldAt rec' consts) (P.foldl (foldAt rec' consts) init0) := by
+    simp only [List.foldl_append]
+  rw [e1, e2]
+  exact h
+
+/-- The two wrapper bindings, erased: the addresses are gone, and every one of them is a let of a
+    literal. -/
+theorem eraseB_wrapperLocals (m : Model) (a b a' b' : U256) :
+    eraseB (wrapperLocals m a b) = eraseB (wrapperLocals m a' b') := by
+  unfold wrapperLocals
+  split <;> split <;> simp [eraseB, eraseS, eraseE, lit]
+
+theorem mem_wrapperLocals (m : Model) (a b : U256) (x : Stmt EVM.Op)
+    (hx : x ∈ wrapperLocals m a b) :
+    ∃ (bs : List String) (u : Nat), x = Stmt.letDecl bs (some (Expr.lit (.number u))) := by
+  unfold wrapperLocals at hx
+  split at hx
+  · split at hx
+    · simp only [List.mem_append, List.mem_singleton] at hx
+      rcases hx with h | h
+      · exact ⟨["vk"], BitVec.toNat a, by rw [h]; simp [lit]⟩
+      · exact ⟨["quotientEvaluator"], BitVec.toNat b, by rw [h]; simp [lit]⟩
+    · simp only [List.mem_append, List.mem_singleton, List.not_mem_nil, or_false] at hx
+      exact ⟨["vk"], BitVec.toNat a, by rw [hx]; simp [lit]⟩
+  · split at hx
+    · simp only [List.mem_append, List.mem_singleton, List.not_mem_nil, false_or] at hx
+      exact ⟨["quotientEvaluator"], BitVec.toNat b, by rw [hx]; simp [lit]⟩
+    · exact absurd hx (by simp)
+
+theorem eraseB_asmOf_eq (pv : PlanView) (m : Model) (a b a' b' : U256) :
+    eraseB (asmOf pv m a b) = eraseB (asmOf pv m a' b') := by
+  show eraseB (Inline.inlineContractConstants (constTableOf m)
+        (abiGuardBlock m ++ wrapperLocals m a b ++ mainAsmRaw pv m)) =
+      eraseB (Inline.inlineContractConstants (constTableOf m)
+        (abiGuardBlock m ++ wrapperLocals m a' b' ++ mainAsmRaw pv m))
+  show eraseB ((Inline.inlineScan Inline.inlineFuel (constTableOf m) []
+        (abiGuardBlock m ++ wrapperLocals m a b ++ mainAsmRaw pv m)).blks) =
+      eraseB ((Inline.inlineScan Inline.inlineFuel (constTableOf m) []
+        (abiGuardBlock m ++ wrapperLocals m a' b' ++ mainAsmRaw pv m)).blks)
+  exact inlineScan_eraseB_lets (constTableOf m) [] (abiGuardBlock m) (mainAsmRaw pv m)
+    (wrapperLocals m a b) (wrapperLocals m a' b')
+    (eraseB_wrapperLocals m a b a' b')
+    (fun x hx => mem_wrapperLocals m a b x hx)
+    (fun x hx => mem_wrapperLocals m a' b' x hx)
+
+end A2ScanBlind
+
 /-- The two scans are insensitive to the two addresses the wrapper binds (they occur only as
-    `let` literals). OBLIGATION, same cost class as `noWriters_prog` (`Blocks.lean:340`), which it
+    \`let\` literals). PROVED (WP-A2, ST.12): the two programs are equal after \`eraseB\`, and neither
+    scan reads a literal payload. This retires \`noWriters_prog\` (\`Blocks.lean:340\`), which it
     subsumes. -/
 theorem scans_prog_addr_indep (R : Render p G₁ G₂ Gₜ) (vkAddr qAddr : U256)
     (hw : NoWriters (R.prog 0 0)) (hx : ExitDiscipline (R.prog 0 0)) :
     NoWriters (R.prog vkAddr qAddr) ∧ ExitDiscipline (R.prog vkAddr qAddr) := by
-  sorry
-
+  have he : eraseB (R.prog 0 0) = eraseB (R.prog vkAddr qAddr) :=
+    eraseB_asmOf_eq R.pv R.model 0 0 vkAddr qAddr
+  exact ⟨noWriters_of_eraseB_eq he hw, exitDiscipline_of_eraseB_eq he hx⟩
 /-- `TwoOutcomes` from the two decidable render facts. PROVED from the two obligations above. -/
 theorem twoOutcomes_of_scans (R : Render p G₁ G₂ Gₜ)
     (hw : NoWriters (R.prog 0 0)) (hx : ExitDiscipline (R.prog 0 0)) : TwoOutcomes R := by
@@ -1544,7 +2367,9 @@ theorem cdSize_of_decodes {G : Type} (L : ProofCalldataLayout) (numInstances : N
 #print axioms cdSize_of_decodes                -- no sorryAx
 #print axioms fail_lookupV3                    -- no sorryAx
 #print axioms hoist_prog_addr_indepV3          -- sorryAx: prog_slices_decompV3
-#print axioms twoOutcomes_of_scans             -- sorryAx: twoOutcomes_of_exitDiscipline, scans_prog_addr_indep
+#check Midfall.LoweringV3.scans_prog_addr_indep   -- ST.12 (WP-A2): PROVED
+#print axioms scans_prog_addr_indep         -- no sorryAx
+#print axioms twoOutcomes_of_scans             -- sorryAx: twoOutcomes_of_exitDiscipline
 #print axioms programOkB_of_valid                -- no sorryAx
 #print axioms frModulus_of_valid                 -- no sorryAx
 #print axioms returnMptr_of_valid                -- no sorryAx
