@@ -174,6 +174,7 @@ import Midfall.Lowering.LegacyVacuity
 import Midfall.Tools.Done
 import Midfall.Tools.ConeReport
 import Midfall.LoweringV3.Statements
+import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV3.Composition
 import Midfall.LoweringV3.CompositionW
 import Midfall.LoweringV3.Widening

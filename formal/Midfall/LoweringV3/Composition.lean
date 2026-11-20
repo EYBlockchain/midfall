@@ -41,6 +41,7 @@
 -/
 import Midfall.LoweringV3.Statements
 import Midfall.LoweringV3.Totality
+import Midfall.LoweringV3.PrefixV3
 import Midfall.LoweringV2.Stages
 import Midfall.Lowering.Stage
 import Midfall.Tools.ConeSorries
@@ -122,7 +123,13 @@ theorem prefix_simV3 (R : Render p G₁ G₂ Gₜ) (hR : ValidV3 R) (W : ExecEnv
       (fun V st => V = [] ∧ st = st₀)
       (splitPost (fun V st => Mid R H vkAddr cd .start V st)
         (fun V' st' o => FinSim R H cd V' st' o)) := by
-  sorry
+  intro V st ⟨hV, hst⟩ V' st' o hrun
+  subst hV
+  subst hst
+  rcases prefix_walk (pfxFacts_of_validV3 hR) hdep hentry hrun with
+      ⟨hn, hsi, -, -⟩ | ⟨ho, hrev, -⟩
+  · exact Or.inl ⟨hn, Or.inl hsi⟩
+  · exact Or.inr ⟨fun h => absurd h (by rw [ho]; decide), Or.inl ⟨ho, hrev⟩⟩
 
 /-- **THE PREFIX ROW, PROGRESS SIDE, OVER `ValidV3`** - SIM.6's `prefix_prog`
     (`Midfall/LoweringV2/Stages.lean:612`) restated the same way; conclusion verbatim, only `hR`
@@ -136,7 +143,10 @@ theorem prefix_progV3 (R : Render p G₁ G₂ Gₜ) (product : PairingProduct) (
       (R.scope _ _) (R.preBlock vkAddr)
       (fun V st => V = [] ∧ st = st₀)
       (fun _ _ V' st' o => o = .normal ∧ StageInv R H vkAddr cd .start V' st') := by
-  sorry
+  have hf := pfxFacts_of_validV3 hR
+  exact prefix_prog_core hf hdep hentry
+    (pfxAbiWord_zero_of_leanAccepts hf hentry hacc)
+    (pfxMemWord_zero_of_entry hf hentry (transcriptMptr_lt hR))
 
 /-! ## §2. The two row bundles: ONE row shape, four codec laws, pinned by ValidV3 -/
 
