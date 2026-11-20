@@ -942,6 +942,1210 @@ theorem qArmValueAll_neg {c : ExternalCalls} {g : ExternalGas}
         V' = VEnv.set V "q_top" (BitVec.ofNat 256 (qvmFrNeg x.toNat))) :=
   StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg) (qArmValue_neg ctx program tcq funs x hx)
 
+/-! ### I. THE POW5 ARM (QARMS - the second arm value refinement; register-only)
+
+QVAL's section H landed NEG and named POW5 as the closest remaining arm, abandoning at a cap on three
+mechanical obstacles. All three are cleared here, one at a time:
+
+  * (a) 'VEnv.set' / 'VEnv.get' at a SYMBOLIC environment do not reduce, so the two cons/set facts
+    'venvGet_cons_ne' and 'venvSet_cons_ne' are landed as theorems instead of being asked of 'rfl';
+  * (b) the 'letVal' environment is a CONS, and annotating it at the open dialect is where the
+    'Dialect.Value' projection unification fails. It is not fought: the cons is written at the
+    ABSTRACTION the projection lives under ('VEnv D' with 'D' a variable, 'w : D.Value'), where no
+    unification with 'U256' is ever asked, and the single instance the arm needs ('("q2", x) :: V') is
+    discharged by 'rfl' at the literal name;
+  * (c) the 'argsCons' nesting swap: 'mulmod' takes its arguments right-to-left but collects them in
+    SOURCE order ('BigStep.lean:209-212'), so the inner 'mulmod(q2, q2, r)' sits in the MIDDLE of the
+    outer argument list and its derivation is the second hypothesis of the outer 'argsCons', not the
+    first.
+
+**NO CANONICITY HYPOTHESIS, AND THAT IS A REAL DIFFERENCE FROM NEG.** 'qvmFrMul' reduces by
+'qvmFrModulus' before the 256-bit wrap, so 'wMulmod a b' is the field product for EVERY 'a', 'b' -
+the same reason 'mulmod_toFr' (WpX.lean:533) carries no hypothesis while 'qvmToFr_neg' does. So
+'qArmValue_pow5' is stated for an arbitrary register word, with no 'x.toNat < qvmFrModulus'.
+
+**THE ONE STRUCTURAL DIFFERENCE FROM NEG.** The arm introduces a local ('let q2 := ...'), so the
+final environment is not 'VEnv.set V "q_top" w' but the cons of that local onto the updated
+environment. The postcondition says exactly that; nothing is hidden by weakening, and the every-run
+form is still 'of_det' at the two ORACLE functionality facts. -/
+
+/-! **FOUR NOTES FOR THE NEXT CARD, WRITTEN DOWN SO THEY ARE NOT RE-LEARNED (QARMS).**
+
+1. **DO NOT ATTEMPT A DEFINITIONAL TIE ON AN ARITHMETIC ARM.** The emitted POW5 computes
+   'v * (v^2)^2 mod r'; the reference 'qStepValue_pow5' pushes '((v * v^2) mod r * v^2) mod r'. Those
+   are DIFFERENT BRACKETINGS and agree only through 'qvmFrMul_pow5_nest', a real arithmetic lemma -
+   never 'rfl'. Assume the same for every arm whose emitted expression re-associates or re-nests the
+   reference's. THE EXCEPTION, AND IT IS INFORMATION: where emitted and reference apply the SAME named
+   word operation in the SAME order the tie IS 'rfl' - see 'wAddmod_eq_qvmFrAdd' / 'wMulmod_eq_qvmFrMul'
+   below. So try 'rfl' once; if it fails go straight to the arithmetic lemma and do not fight it.
+2. **PER-ARM PRECONDITIONS, NOT A UNIFORM ONE.** POW5 needs NO canonicity hypothesis ('qvmFrMul' reduces
+   by 'qvmFrModulus' before the wrap and 'qvmFrModulus < 2^256', the same reason 'mulmod_toFr'
+   (WpX.lean:533) is hypothesis-free) while NEG NEEDS 'x.toNat < qvmFrModulus' ('subFr_needsCanonicity').
+   A single uniform side-condition for ROW.Q.3's value half would be either wrong or needlessly strong,
+   and adding one to a row is out of bounds (RULES). Land per-arm preconditions and let the composition
+   take them individually.
+3. **THE CONS-ENVIRONMENT PATTERN - QVAL'S ABANDONED OBSTACLE (b), CLEARED.** An arm that introduces a
+   'let' ends in a CONS environment, and annotating that cons at the open dialect is where the
+   'Dialect.Value' projection unification fails. The way through is NOT to annotate: state the
+   environment facts as theorems over an ABSTRACT dialect ('VEnv D', 'w : D.Value'), where no
+   unification with 'U256' is ever asked - 'venvGet_cons_ne', 'venvSet_cons_ne', 'venvGet_set_same',
+   'venvGet_set_ne' below - and let the every-run contract ALLOW the extra binding in its post. The cons
+   itself at a literal name ('("q2", x) :: V') reduces by 'rfl' because 'DecidableEq String' decides two
+   literals.
+4. **TACTIC NOISE THAT COSTS A BOX OTHERWISE (the Lean version on this tree).** 'if_pos'/'if_neg' are
+   DEPRECATED - use 'ite_eq_left'/'ite_eq_right'. 'List.find?' unfolds to 'match decide (y = x)', so
+   rewrite with 'decide_eq_false h' / 'decide_eq_true', not 'if_neg'. 'Nat.mul_mod' must be given its
+   arguments EXPLICITLY ('Nat.mul_mod a (b % m) m') because 'rw' otherwise picks the RHS match first and
+   leaves 'a % m % m * (b % m % m) % m'. 'BitVec.toNat_inj' is the WRONG direction here; use
+   'BitVec.eq_of_toNat_eq'. And 'Step.assignVal' needs '(vars := [...])' plus '(by rfl)' (not bare 'rfl')
+   when the statement is ascribed rather than refined. -/
+
+/-- 'VEnv.get' through a cons whose name is DIFFERENT from the one looked up: the local a 'let'
+    introduces does not shadow a register the next statement reads. This is obstacle (a): at a
+    symbolic tail the projection does not reduce, so it is a theorem. -/
+theorem venvGet_cons_ne {D : YulSemantics.Dialect} (V : VEnv D) (y x : Ident) (w : D.Value)
+    (hxy : y ≠ x) : VEnv.get ((y, w) :: V) x = VEnv.get V x := by
+  have h : ((y, w) :: V).find? (fun p : Ident × D.Value => p.1 = x) =
+      V.find? (fun p : Ident × D.Value => p.1 = x) := by
+    simp only [List.find?, decide_eq_false hxy]
+  exact congrArg (fun o : Option (Ident × D.Value) => o.map (·.2)) h
+
+/-- 'VEnv.set' through such a cons: the update passes the local by and lands in the outer
+    environment, so the arm's final environment splits into the cons and the register write. -/
+theorem venvSet_cons_ne {D : YulSemantics.Dialect} (V : VEnv D) (y x : Ident) (w v : D.Value)
+    (hxy : y ≠ x) : VEnv.set ((y, w) :: V) x v = (y, w) :: VEnv.set V x v := by
+  simp only [VEnv.set]
+  rw [ite_eq_right hxy]
+
+/-- EVM 'mulmod(a, b, r)' at the scalar modulus, read as a natural: the field product 'qvmFrMul'.
+    No canonicity hypothesis - the reduction by 'qvmFrModulus < 2^256' makes the wrap lossless. -/
+theorem wMulmod_toNat (a b : U256) :
+    (wMulmod a b).toNat = qvmFrMul a.toNat b.toNat := by
+  have hlt : (a.toNat * b.toNat) % qvmFrModulus < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (by decide : 0 < qvmFrModulus))
+      (Nat.le_of_lt qvmFrModulus_lt256)
+  show (BitVec.ofNat 256 ((a.toNat * b.toNat) % qvmFrModulus)).toNat = _
+  rw [BitVec.toNat_ofNat, Nat.mod_eq_of_lt hlt]
+  rfl
+
+/-- Replacing a factor by its residue changes nothing. -/
+theorem mul_mod_residue_left (m a b : Nat) : (a * (b % m)) % m = (a * b) % m := by
+  rw [Nat.mul_mod a (b % m) m, Nat.mod_mod b m, Nat.mul_mod a b m]
+
+/-- The twin, on the left factor. -/
+theorem mul_mod_residue_right (m a b : Nat) : ((a % m) * b) % m = (a * b) % m := by
+  rw [Nat.mul_mod (a % m) b m, Nat.mod_mod a m, Nat.mul_mod a b m]
+
+/-- **THE NESTING TIE.** The arm computes 'v * ((v*v)² mod r) mod r'; the reference computes
+    '((v * (v*v mod r)) mod r) * (v*v mod r) mod r'. Both are 'v^5 mod r', and neither needs the
+    operand to be canonical. -/
+theorem qvmFrMul_pow5_nest (v : QVMFr) :
+    qvmFrMul v (qvmFrMul (qvmFrMul v v) (qvmFrMul v v)) =
+      qvmFrMul (qvmFrMul v (qvmFrMul v v)) (qvmFrMul v v) := by
+  unfold qvmFrMul
+  rw [mul_mod_residue_left, ← Nat.mul_assoc, mul_mod_residue_right]
+
+/-- **THE ARITHMETIC TIE FOR POW5**, the twin of 'wAddmod_eq_qvmFrNeg': the word the arm computes IS
+    the value 'qStepValue_pow5' pushes. -/
+theorem wMulmod_eq_qvmFrPow5 (x : U256) :
+    wMulmod x (wMulmod (wMulmod x x) (wMulmod x x)) =
+      BitVec.ofNat 256 (qvmFrMul (qvmFrMul x.toNat (qvmFrMul x.toNat x.toNat))
+        (qvmFrMul x.toNat x.toNat)) := by
+  have hlt : qvmFrMul (qvmFrMul x.toNat (qvmFrMul x.toNat x.toNat)) (qvmFrMul x.toNat x.toNat)
+      < 2 ^ 256 :=
+    Nat.lt_of_lt_of_le (Nat.mod_lt _ (by decide : 0 < qvmFrModulus))
+      (Nat.le_of_lt qvmFrModulus_lt256)
+  refine BitVec.eq_of_toNat_eq ?_
+  rw [wMulmod_toNat, wMulmod_toNat, wMulmod_toNat, qvmFrMul_pow5_nest, BitVec.toNat_ofNat,
+    Nat.mod_eq_of_lt hlt]
+
+/-- 'mulmod' at the scalar modulus, at the OPEN dialect: the Bridge dialect's 'Builtin' IS the
+    'stepOp' graph, so this is 'rfl' - the general form of 'dialect_builtin_addmod_neg'. -/
+theorem dialect_builtin_mulmod_atFr {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (a b : U256) :
+    (Bridge.Dialect c g).Builtin Op.mulmod [a, b, frModulusWord] st (.ok [wMulmod a b] st) := rfl
+
+/-- **THE POW5 ARM RUNS, AND LANDS ON THE REFERENCE'S VALUE.** The twin of 'qArmRun_neg' for the
+    emitter's own 'GenAst.qArmBodyPow5': two 'mulmod' steps and a 'let', every one of them a 'Step'
+    constructor of the vendored judgment, no 'wp' slice and no fuel. -/
+theorem qArmRun_pow5 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (x : U256)
+    (hget_top : VEnv.get V "q_top" = some x) (hget_r : VEnv.get V "r" = some frModulusWord) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyPow5 ctx program tcq)
+      (("q2", wMulmod x x) ::
+        VEnv.set V "q_top" (wMulmod x (wMulmod (wMulmod x x) (wMulmod x x)))) st .normal := by
+  -- obstacle (a): the reads of the SECOND statement go through the cons the 'let' introduced.
+  have hne : ("q2" : Ident) ≠ "q_top" := by decide
+  have hget2_top : VEnv.get (("q2", wMulmod x x) :: V) "q_top" = some x := by
+    rw [venvGet_cons_ne V "q2" "q_top" (wMulmod x x) hne]; exact hget_top
+  have hget2_r : VEnv.get (("q2", wMulmod x x) :: V) "r" = some frModulusWord := by
+    rw [venvGet_cons_ne V "q2" "r" (wMulmod x x) (by decide : ("q2" : Ident) ≠ "r")]
+    exact hget_r
+  have hget2_q2 : VEnv.get (("q2", wMulmod x x) :: V) "q2" = some (wMulmod x x) := rfl
+  -- statement 1: q2 := mulmod(q_top, q_top, r)
+  have hargs1 : Step (D := Bridge.Dialect c g) funs V st
+      (.args [yvar "q_top", yvar "q_top", yvar "r"])
+      (.eres (.vals [x, x, frModulusWord] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_top", yvar "r"])
+      (restvals := [x, frModulusWord]) (st1 := st) (v := x) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := x) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget_r))
+        (Step.var (D := Bridge.Dialect c g) hget_top))
+      (Step.var (D := Bridge.Dialect c g) hget_top)
+  have hexpr1 : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.mulmod [yvar "q_top", yvar "q_top", yvar "r"]))
+      (.eres (.vals [wMulmod x x] st)) :=
+    Step.builtinOk hargs1 (dialect_builtin_mulmod_atFr st x x)
+  have hstmt1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (ylet "q2" (yop Op.mulmod [yvar "q_top", yvar "q_top", yvar "r"])))
+      (.sres (("q2", wMulmod x x) :: V) st .normal) :=
+    Step.letVal hexpr1 rfl
+  -- statement 2: q_top := mulmod(q_top, mulmod(q2, q2, r), r). Obstacle (c): the inner 'mulmod' is
+  -- the SECOND hypothesis of the outer 'argsCons' - right-to-left evaluation, source-order results.
+  have hargs2i : Step (D := Bridge.Dialect c g) funs (("q2", wMulmod x x) :: V) st
+      (.args [yvar "q2", yvar "q2", yvar "r"])
+      (.eres (.vals [wMulmod x x, wMulmod x x, frModulusWord] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q2", yvar "r"])
+      (restvals := [wMulmod x x, frModulusWord]) (st1 := st) (v := wMulmod x x) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := wMulmod x x) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget2_r))
+        (Step.var (D := Bridge.Dialect c g) hget2_q2))
+      (Step.var (D := Bridge.Dialect c g) hget2_q2)
+  have hexpr2i : Step (D := Bridge.Dialect c g) funs (("q2", wMulmod x x) :: V) st
+      (.expr (yop Op.mulmod [yvar "q2", yvar "q2", yvar "r"]))
+      (.eres (.vals [wMulmod (wMulmod x x) (wMulmod x x)] st)) :=
+    Step.builtinOk hargs2i (dialect_builtin_mulmod_atFr st (wMulmod x x) (wMulmod x x))
+  have hargs2 : Step (D := Bridge.Dialect c g) funs (("q2", wMulmod x x) :: V) st
+      (.args [yvar "q_top", yop Op.mulmod [yvar "q2", yvar "q2", yvar "r"], yvar "r"])
+      (.eres (.vals [x, wMulmod (wMulmod x x) (wMulmod x x), frModulusWord] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g)
+      (rest := [yop Op.mulmod [yvar "q2", yvar "q2", yvar "r"], yvar "r"])
+      (restvals := [wMulmod (wMulmod x x) (wMulmod x x), frModulusWord]) (st1 := st) (v := x)
+      (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := wMulmod (wMulmod x x) (wMulmod x x)) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget2_r))
+        hexpr2i)
+      (Step.var (D := Bridge.Dialect c g) hget2_top)
+  have hexpr2 : Step (D := Bridge.Dialect c g) funs (("q2", wMulmod x x) :: V) st
+      (.expr (yop Op.mulmod [yvar "q_top", yop Op.mulmod [yvar "q2", yvar "q2", yvar "r"],
+        yvar "r"]))
+      (.eres (.vals [wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))] st)) :=
+    Step.builtinOk hargs2
+      (dialect_builtin_mulmod_atFr st x (wMulmod (wMulmod x x) (wMulmod x x)))
+  have hstmt2 : Step (D := Bridge.Dialect c g) funs (("q2", wMulmod x x) :: V) st
+      (.stmt (yset "q_top"
+        (yop Op.mulmod [yvar "q_top", yop Op.mulmod [yvar "q2", yvar "q2", yvar "r"], yvar "r"])))
+      (.sres (("q2", wMulmod x x) ::
+        VEnv.set V "q_top" (wMulmod x (wMulmod (wMulmod x x) (wMulmod x x)))) st .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"])
+      (vals := [wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))]) hexpr2 (by rfl)
+  unfold GenAst.qArmBodyPow5
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q2", wMulmod x x) :: V)) (st1 := st)
+    hstmt1 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g) (V1 := (("q2", wMulmod x x) ::
+    VEnv.set V "q_top" (wMulmod x (wMulmod (wMulmod x x) (wMulmod x x))))) (st1 := st)
+    hstmt2 (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM POW5: THE VALUE REFINEMENT, PROVED.** 'qArmBodyPow5' refines 'qStepValue_pow5': the arm
+    replaces 'q_top' by 'qvmFrMul (qvmFrMul v (qvmFrMul v v)) (qvmFrMul v v)' for the 'v' the register
+    held - the reference's 'v*(v^2)^2' shape, not 'v^4*v' - leaves the machine state alone, and
+    terminates normally. Stated as 'StmtsContract', so it EXHIBITS the run. -/
+theorem qArmValue_pow5 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (x : U256) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPow5 ctx program tcq)
+      (fun V st => VEnv.get V "q_top" = some x ∧ VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = (("q2", wMulmod x x) :: VEnv.set V "q_top"
+          (BitVec.ofNat 256 (qvmFrMul (qvmFrMul x.toNat (qvmFrMul x.toNat x.toNat))
+            (qvmFrMul x.toNat x.toNat))))) := by
+  intro V st hpre
+  have hrun := qArmRun_pow5 ctx program tcq funs V st x hpre.1 hpre.2
+  rw [wMulmod_eq_qvmFrPow5 x] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM POW5: THE EVERY-RUN FORM.** As for NEG: 'of_det' at 'Bridge.dialect_deterministic', whose
+    only extra hypotheses are the two ORACLE functionality facts - not row facts. -/
+theorem qArmValueAll_pow5 {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (x : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyPow5 ctx program tcq)
+      (fun V st => VEnv.get V "q_top" = some x ∧ VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = (("q2", wMulmod x x) :: VEnv.set V "q_top"
+          (BitVec.ofNat 256 (qvmFrMul (qvmFrMul x.toNat (qvmFrMul x.toNat x.toNat))
+            (qvmFrMul x.toNat x.toNat))))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_pow5 ctx program tcq funs x)
+
+/-! ### J. THE ADD AND MUL ARMS (QARMS - the first MEMORY-READING arm value refinements)
+
+These are the first arms whose emitted side reads memory, so they establish the shape the other 19
+memory-reading arms will need. Three new facts appear and none of them is a row fact:
+
+  * the guard 'if q_sp == program.stackMptr then fail' is discharged by 'Step.ifFalse' at
+    'b2w (decide (sp = stackMptr)) = D.zero' - a WORD fact about the emitted test, pinned by the
+    precondition 'sp ≠ stackMptr', which is exactly the register the contract's own 'AtSegment' pins;
+  * 'mload' CHANGES THE STATE: 'stepOp .mload' returns 'touchMemory st p 32' (EVMExec.lean:749-751),
+    so unlike NEG and POW5 the post-state is not the pre-state. The postcondition says which state it
+    is, and the reader equation 'loadWord st.memory (sp - 32).toNat = y' is what ties the emitted read
+    to the reference's popped operand - the same shape section B uses ('constAt consts slot 0 = .ok v'),
+    a reader equation and not a new axiom;
+  * the reads after the 'q_sp' write go through 'VEnv.set' at a symbolic environment - obstacle (a),
+    discharged by 'venvGet_set_same' / 'venvGet_set_ne'.
+
+**THE TIE HERE IS 'rfl', AND THAT IS THE INFORMATION NOTE 1 ASKED FOR.** 'add' emits
+'addmod(mload(q_sp), q_top, r)' and the reference pushes 'qvmFrAdd next top' - the SAME named word
+operation in the SAME operand order (the reference's head is its top, so the first pop is the RIGHT
+operand: 'qStepValue_add' states 'next' before 'top' for exactly this reason). So
+'wAddmod_eq_qvmFrAdd' is definitional and no arithmetic lemma is needed. POW5 was the hard case because
+it RE-NESTED. -/
+
+/-- 'VEnv.get' at a 'VEnv.set' of a DIFFERENT name: the write does not disturb the register read.
+    Needs the name present, which the register pinning supplies; at a symbolic environment neither half
+    reduces. -/
+theorem venvGet_cons_eq {D : YulSemantics.Dialect} (V : VEnv D) (x : Ident) (w : D.Value) :
+    VEnv.get ((x, w) :: V) x = some w := by
+  simp [VEnv.get, List.find?]
+
+theorem venvGet_set_ne {D : YulSemantics.Dialect} (V : VEnv D) (y x : Ident) (v w : D.Value)
+    (hxy : y ≠ x) (hw : VEnv.get V x = some w) : VEnv.get (VEnv.set V y v) x = some w := by
+  induction V with
+  | nil => exact absurd hw (by simp [VEnv.get])
+  | cons p rest ih =>
+    cases p with | mk z u =>
+    by_cases hzx : z = x
+    · -- the head IS the register read; because y ≠ x the write passed it by, so the value is unchanged
+      have hnezy : ¬ (z = y) := fun h => hxy (h.symm.trans hzx)
+      have h1 : VEnv.set ((z, u) :: rest) y v = (z, u) :: VEnv.set rest y v := by
+        simp [VEnv.set, hnezy]
+      have hget : VEnv.get ((z, u) :: VEnv.set rest y v) x = some u := by
+        rw [← hzx]
+        exact venvGet_cons_eq (VEnv.set rest y v) z u
+      have hw' : VEnv.get ((z, u) :: rest) x = some u := by
+        rw [← hzx]
+        exact venvGet_cons_eq rest z u
+      rw [h1, hget]
+      rw [hw'] at hw
+      exact hw
+    · by_cases hzy : z = y
+      · have h1 : VEnv.set ((z, u) :: rest) y v = (y, v) :: rest := by simp [VEnv.set, hzy]
+        have hget : VEnv.get rest x = some w := by
+          rw [← venvGet_cons_ne rest z x u hzx]
+          exact hw
+        rw [h1, venvGet_cons_ne rest y x v hxy]
+        exact hget
+      · have h1 : VEnv.set ((z, u) :: rest) y v = (z, u) :: VEnv.set rest y v := by
+          simp [VEnv.set, hzy]
+        have hget : VEnv.get rest x = some w := by
+          rw [← venvGet_cons_ne rest z x u hzx]
+          exact hw
+        rw [h1, venvGet_cons_ne (VEnv.set rest y v) z x u hzx]
+        exact ih hget
+
+/-- 'VEnv.get' at a 'VEnv.set' of the SAME name: the register write is visible to the next statement.
+    QVAL's obstacle (a) in its exact form - 'VEnv.set' at a symbolic environment does not reduce. -/
+theorem venvGet_set_same {D : YulSemantics.Dialect} (V : VEnv D) (x : Ident) (v w : D.Value)
+    (hw : VEnv.get V x = some w) : VEnv.get (VEnv.set V x v) x = some v := by
+  induction V with
+  | nil => exact absurd hw (by simp [VEnv.get])
+  | cons p rest ih =>
+    cases p with | mk y u =>
+    by_cases hxy : y = x
+    · have hset : VEnv.set ((y, u) :: rest) x v = (x, v) :: rest := by simp [VEnv.set, hxy]
+      rw [hset]
+      simp [VEnv.get, List.find?]
+    · have hgetp : VEnv.get ((y, u) :: rest) x = VEnv.get rest x := venvGet_cons_ne rest y x u hxy
+      rw [hgetp] at hw
+      have hset : VEnv.set ((y, u) :: rest) x v = (y, u) :: VEnv.set rest x v := by
+        simp [VEnv.set, hxy]
+      rw [hset, venvGet_cons_ne (VEnv.set rest x v) y x u hxy]
+      exact ih hw
+
+/-- **THE 'rfl' TIES (note 1's exception).** EVM 'addmod'/'mulmod' at the scalar modulus ARE the named
+    field operations, in the same operand order, so no arithmetic lemma is needed. -/
+theorem wAddmod_eq_qvmFrAdd (a b : U256) :
+    wAddmod a b = BitVec.ofNat 256 (qvmFrAdd a.toNat b.toNat) := rfl
+
+/-- The 'mulmod' twin of 'wAddmod_eq_qvmFrAdd'. -/
+theorem wMulmod_eq_qvmFrMul (a b : U256) :
+    wMulmod a b = BitVec.ofNat 256 (qvmFrMul a.toNat b.toNat) := rfl
+
+/-- 'mload' at the open dialect: the value is the memory fold and the STATE MOVES - 'touchMemory'. -/
+theorem dialect_builtin_mload {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (p : U256) :
+    (Bridge.Dialect c g).Builtin Op.mload [p] st
+      (.ok [loadWord st.memory p.toNat] (touchMemory st p.toNat 32)) := rfl
+
+/-- EVM 'sub' at the open dialect - the guard-free binary case. -/
+theorem dialect_builtin_sub {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (a b : U256) :
+    (Bridge.Dialect c g).Builtin Op.sub [a, b] st (.ok [a - b] st) := rfl
+
+/-- EVM 'eq' at the open dialect: the word 'b2w (decide (a = b))', state unchanged. -/
+theorem dialect_builtin_eq {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (a b : U256) :
+    (Bridge.Dialect c g).Builtin Op.eq [a, b] st (.ok [b2w (decide (a = b))] st) := rfl
+
+/-- The general 'addmod' at the scalar modulus ('dialect_builtin_addmod_neg' is this at 'a = 0'). -/
+theorem dialect_builtin_addmod_atFr {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (a b : U256) :
+    (Bridge.Dialect c g).Builtin Op.addmod [a, b, frModulusWord] st (.ok [wAddmod a b] st) := rfl
+
+/-- **ARM ADD RUNS.** The guard is FALSE (the stack is not empty), 'q_sp' moves down one slot, and the
+    word left in 'q_top' is 'wAddmod y x' for 'y' the word the memory holds at the new 'q_sp' - which
+    'wAddmod_eq_qvmFrAdd' identifies with the 'qvmFrAdd next top' that 'qStepValue_add' pushes. The
+    state is the one 'mload' touched. -/
+theorem qArmRun_add {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (sp x y : U256)
+    (hget_sp : VEnv.get V "q_sp" = some sp)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr)
+    (hget_top : VEnv.get V "q_top" = some x)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hload : loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyAdd ctx program tcq)
+      (VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wAddmod y x))
+      (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) .normal := by
+  have hsp32 : sp - BitVec.ofNat 256 32 = sp - BitVec.ofNat 256 32 := rfl
+  -- obstacle (a): the reads of statement 3 go through the 'q_sp' write of statement 2
+  have hset_top : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" = some x :=
+    venvGet_set_ne V "q_sp" "q_top" (sp - BitVec.ofNat 256 32) x
+      (by decide : ("q_sp" : Ident) ≠ "q_top") hget_top
+  have hset_r : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "r" = some frModulusWord :=
+    venvGet_set_ne V "q_sp" "r" (sp - BitVec.ofNat 256 32) frModulusWord
+      (by decide : ("q_sp" : Ident) ≠ "r") hget_r
+  have hset_sp : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_sp" =
+      some (sp - BitVec.ofNat 256 32) :=
+    venvGet_set_same V "q_sp" (sp - BitVec.ofNat 256 32) sp hget_sp
+  -- statement 1: the empty-stack guard, taking its FALSE branch
+  have hargs_g : Step (D := Bridge.Dialect c g) funs V st
+      (.args [yvar "q_sp", ylit program.stackMptr])
+      (.eres (.vals [sp, BitVec.ofNat 256 program.stackMptr] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit program.stackMptr])
+      (restvals := [BitVec.ofNat 256 program.stackMptr]) (st1 := st) (v := sp) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+        (v := BitVec.ofNat 256 program.stackMptr) (st2 := st)
+        (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g) hget_sp)
+  have hcond : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.eq [yvar "q_sp", ylit program.stackMptr]))
+      (.eres (.vals [b2w (decide (sp = BitVec.ofNat 256 program.stackMptr))] st)) :=
+    Step.builtinOk hargs_g (dialect_builtin_eq st sp (BitVec.ofNat 256 program.stackMptr))
+  have hzero : b2w (decide (sp = BitVec.ofNat 256 program.stackMptr)) = (Bridge.Dialect c g).zero := by
+    rw [decide_eq_false hsp]
+    rfl
+  have hstmt1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (yif (yop Op.eq [yvar "q_sp", ylit program.stackMptr])
+        [yexpr (ycall "q_program_fail" [])]))
+      (.sres V st .normal) :=
+    Step.ifFalse hcond hzero
+  -- statement 2: q_sp := q_sp - 32
+  have hargs_s : Step (D := Bridge.Dialect c g) funs V st
+      (.args [yvar "q_sp", ylit 32]) (.eres (.vals [sp, BitVec.ofNat 256 32] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 32])
+      (restvals := [BitVec.ofNat 256 32]) (st1 := st) (v := sp) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+        (v := BitVec.ofNat 256 32) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g) hget_sp)
+  have hexpr_s : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.sub [yvar "q_sp", ylit 32]))
+      (.eres (.vals [sp - BitVec.ofNat 256 32] st)) :=
+    Step.builtinOk hargs_s (dialect_builtin_sub st sp (BitVec.ofNat 256 32))
+  have hstmt2 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (yset "q_sp" (yop Op.sub [yvar "q_sp", ylit 32])))
+      (.sres (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_sp"])
+      (vals := [sp - BitVec.ofNat 256 32]) hexpr_s (by rfl)
+  -- statement 3: q_top := addmod(mload(q_sp), q_top, r) - the mload moves the state
+  have hml0 : Step (D := Bridge.Dialect c g) funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.mload [yvar "q_sp"]))
+      (.eres (.vals [loadWord st.memory (sp - BitVec.ofNat 256 32).toNat]
+        (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.builtinOk (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+      (st1 := st) (v := sp - BitVec.ofNat 256 32) (st2 := st)
+      (Step.argsNil (D := Bridge.Dialect c g))
+      (Step.var (D := Bridge.Dialect c g) hset_sp))
+      (dialect_builtin_mload st (sp - BitVec.ofNat 256 32))
+  have hml : Step (D := Bridge.Dialect c g) funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.mload [yvar "q_sp"]))
+      (.eres (.vals [y] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) := by
+    rw [← hload]
+    exact hml0
+  have hargs3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.args [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"])
+      (.eres (.vals [y, x, frModulusWord] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_top", yvar "r"])
+      (restvals := [x, frModulusWord]) (st1 := st) (v := y)
+      (st2 := touchMemory st (sp - BitVec.ofNat 256 32).toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := x) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hset_r))
+        (Step.var (D := Bridge.Dialect c g) hset_top))
+      hml
+  have hexpr3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.addmod [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"]))
+      (.eres (.vals [wAddmod y x] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.builtinOk hargs3
+      (dialect_builtin_addmod_atFr (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) y x)
+  have hstmt3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.stmt (yset "q_top"
+        (yop Op.addmod [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"])))
+      (.sres (VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wAddmod y x))
+        (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [wAddmod y x]) hexpr3
+      (by rfl)
+  unfold GenAst.qArmBodyAdd
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := V) (st1 := st) hstmt1 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) (st1 := st) hstmt2 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wAddmod y x))
+    (st1 := touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) hstmt3
+    (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM ADD: THE VALUE REFINEMENT, PROVED.** -/
+theorem qArmValue_add {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (sp x y : U256)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyAdd ctx program tcq)
+      (fun V st => VEnv.get V "q_sp" = some sp ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory st (sp - BitVec.ofNat 256 32).toNat 32 ∧
+        V' = VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top"
+          (BitVec.ofNat 256 (qvmFrAdd y.toNat x.toNat))) := by
+  intro V st hpre
+  have hrun := qArmRun_add ctx program tcq funs V st sp x y hpre.1 hsp hpre.2.1 hpre.2.2.1 hpre.2.2.2
+  rw [wAddmod_eq_qvmFrAdd] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM ADD: THE EVERY-RUN FORM.** -/
+theorem qArmValueAll_add {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (sp x y : U256)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyAdd ctx program tcq)
+      (fun V st => VEnv.get V "q_sp" = some sp ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory st (sp - BitVec.ofNat 256 32).toNat 32 ∧
+        V' = VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top"
+          (BitVec.ofNat 256 (qvmFrAdd y.toNat x.toNat))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_add ctx program tcq funs sp x y hsp)
+
+/-- **ARM MUL RUNS.** The twin of 'qArmRun_add' with the product. -/
+theorem qArmRun_mul {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (sp x y : U256)
+    (hget_sp : VEnv.get V "q_sp" = some sp)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr)
+    (hget_top : VEnv.get V "q_top" = some x)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hload : loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyMul ctx program tcq)
+      (VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wMulmod y x))
+      (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) .normal := by
+  have hset_top : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" = some x :=
+    venvGet_set_ne V "q_sp" "q_top" (sp - BitVec.ofNat 256 32) x
+      (by decide : ("q_sp" : Ident) ≠ "q_top") hget_top
+  have hset_r : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "r" = some frModulusWord :=
+    venvGet_set_ne V "q_sp" "r" (sp - BitVec.ofNat 256 32) frModulusWord
+      (by decide : ("q_sp" : Ident) ≠ "r") hget_r
+  have hset_sp : VEnv.get (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_sp" =
+      some (sp - BitVec.ofNat 256 32) :=
+    venvGet_set_same V "q_sp" (sp - BitVec.ofNat 256 32) sp hget_sp
+  have hargs_g : Step (D := Bridge.Dialect c g) funs V st
+      (.args [yvar "q_sp", ylit program.stackMptr])
+      (.eres (.vals [sp, BitVec.ofNat 256 program.stackMptr] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit program.stackMptr])
+      (restvals := [BitVec.ofNat 256 program.stackMptr]) (st1 := st) (v := sp) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+        (v := BitVec.ofNat 256 program.stackMptr) (st2 := st)
+        (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g) hget_sp)
+  have hcond : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.eq [yvar "q_sp", ylit program.stackMptr]))
+      (.eres (.vals [b2w (decide (sp = BitVec.ofNat 256 program.stackMptr))] st)) :=
+    Step.builtinOk hargs_g (dialect_builtin_eq st sp (BitVec.ofNat 256 program.stackMptr))
+  have hzero : b2w (decide (sp = BitVec.ofNat 256 program.stackMptr)) = (Bridge.Dialect c g).zero := by
+    rw [decide_eq_false hsp]
+    rfl
+  have hstmt1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (yif (yop Op.eq [yvar "q_sp", ylit program.stackMptr])
+        [yexpr (ycall "q_program_fail" [])]))
+      (.sres V st .normal) :=
+    Step.ifFalse hcond hzero
+  have hargs_s : Step (D := Bridge.Dialect c g) funs V st
+      (.args [yvar "q_sp", ylit 32]) (.eres (.vals [sp, BitVec.ofNat 256 32] st)) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 32])
+      (restvals := [BitVec.ofNat 256 32]) (st1 := st) (v := sp) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+        (v := BitVec.ofNat 256 32) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g) hget_sp)
+  have hexpr_s : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.sub [yvar "q_sp", ylit 32]))
+      (.eres (.vals [sp - BitVec.ofNat 256 32] st)) :=
+    Step.builtinOk hargs_s (dialect_builtin_sub st sp (BitVec.ofNat 256 32))
+  have hstmt2 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (yset "q_sp" (yop Op.sub [yvar "q_sp", ylit 32])))
+      (.sres (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_sp"])
+      (vals := [sp - BitVec.ofNat 256 32]) hexpr_s (by rfl)
+  have hml0 : Step (D := Bridge.Dialect c g) funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.mload [yvar "q_sp"]))
+      (.eres (.vals [loadWord st.memory (sp - BitVec.ofNat 256 32).toNat]
+        (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.builtinOk (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+      (st1 := st) (v := sp - BitVec.ofNat 256 32) (st2 := st)
+      (Step.argsNil (D := Bridge.Dialect c g))
+      (Step.var (D := Bridge.Dialect c g) hset_sp))
+      (dialect_builtin_mload st (sp - BitVec.ofNat 256 32))
+  have hml : Step (D := Bridge.Dialect c g) funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.mload [yvar "q_sp"]))
+      (.eres (.vals [y] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) := by
+    rw [← hload]
+    exact hml0
+  have hargs3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.args [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"])
+      (.eres (.vals [y, x, frModulusWord] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_top", yvar "r"])
+      (restvals := [x, frModulusWord]) (st1 := st) (v := y)
+      (st2 := touchMemory st (sp - BitVec.ofNat 256 32).toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := x) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hset_r))
+        (Step.var (D := Bridge.Dialect c g) hset_top))
+      hml
+  have hexpr3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.expr (yop Op.mulmod [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"]))
+      (.eres (.vals [wMulmod y x] (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32))) :=
+    Step.builtinOk hargs3
+      (dialect_builtin_mulmod_atFr (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) y x)
+  have hstmt3 : Step (D := Bridge.Dialect c g)
+      funs (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) st
+      (.stmt (yset "q_top"
+        (yop Op.mulmod [yop Op.mload [yvar "q_sp"], yvar "q_top", yvar "r"])))
+      (.sres (VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wMulmod y x))
+        (touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [wMulmod y x]) hexpr3
+      (by rfl)
+  unfold GenAst.qArmBodyMul
+  refine Step.seqCons (D := Bridge.Dialect c g) (V1 := V) (st1 := st) hstmt1 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) (st1 := st) hstmt2 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top" (wMulmod y x))
+    (st1 := touchMemory st (sp - BitVec.ofNat 256 32).toNat 32) hstmt3
+    (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM MUL: THE VALUE REFINEMENT, PROVED.** -/
+theorem qArmValue_mul {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (sp x y : U256)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyMul ctx program tcq)
+      (fun V st => VEnv.get V "q_sp" = some sp ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory st (sp - BitVec.ofNat 256 32).toNat 32 ∧
+        V' = VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top"
+          (BitVec.ofNat 256 (qvmFrMul y.toNat x.toNat))) := by
+  intro V st hpre
+  have hrun := qArmRun_mul ctx program tcq funs V st sp x y hpre.1 hsp hpre.2.1 hpre.2.2.1 hpre.2.2.2
+  rw [wMulmod_eq_qvmFrMul] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM MUL: THE EVERY-RUN FORM.** -/
+theorem qArmValueAll_mul {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (sp x y : U256)
+    (hsp : sp ≠ BitVec.ofNat 256 program.stackMptr) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyMul ctx program tcq)
+      (fun V st => VEnv.get V "q_sp" = some sp ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "r" = some frModulusWord ∧
+        loadWord st.memory (sp - BitVec.ofNat 256 32).toNat = y)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory st (sp - BitVec.ofNat 256 32).toNat 32 ∧
+        V' = VEnv.set (VEnv.set V "q_sp" (sp - BitVec.ofNat 256 32)) "q_top"
+          (BitVec.ofNat 256 (qvmFrMul y.toNat x.toNat))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_mul ctx program tcq funs sp x y hsp)
+
+/-! ### K. THE ADD_CONST_U8 / MUL_CONST_U8 ARMS (QARMS - the operand DECODE enters)
+
+These are the first arms whose emitted side DECODES ITS OWN OPERAND from memory: 'qconst =
+byte(0, mload(q_pc))' is the arm reading its own slot index out of the program window, and then it
+reads the constant table at 'q_const_mptr + 32*qconst'. Two reads, one of them at an address the arm
+computes. The reference side of the same two reads is 'constAt consts b₀ 0 = .ok v'
+('qStepValue_addConstU8'), so the tie is a PAIR of reader equations, and they are stated at the
+EMITTED expressions - 'loadWord st.memory pc.toNat >>> 248 &&& 0xff' for the decode and
+'loadWord st.memory (cb + (b₀ <<< 5)).toNat' for the table read - which is what makes them
+checkable against 'AgreesProgram'/'AgreesConsts' later instead of against a fixture.
+
+**THE 'Midfall/Yul/Word.lean' SECTION 8 BRIDGES ARE NOT NEEDED HERE, AND THAT IS THE POINT.**
+'loadWord_topByte' / 'loadWord_topByte_mask' identify the DECODED BYTE with a memory byte
+'mem p'. Stating the hypothesis at the emitted expression instead means the arm theorem is independent
+of how the byte got there, and the byte-level bridge becomes the composition's job (one use per arm,
+not one per theorem). The 'shl 5' / 'byte 0' shifts are 'rfl' at the open dialect. -/
+
+/-- 'byte(0, w)' at the open dialect: the vendored case is '(w >>> (248 - 8*i.toNat)) &&& 0xff'
+    (EVMExec.lean:738) and at 'i = 0' the guard '32 ≤ i.toNat' is false, so this is 'rfl'. -/
+theorem dialect_builtin_byte0 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (w : U256) :
+    (Bridge.Dialect c g).Builtin Op.byte [BitVec.ofNat 256 0, w] st
+      (.ok [(w >>> 248) &&& 0xff] st) := rfl
+
+/-- 'shl(5, w)' at the open dialect (EVMExec.lean:739: 'val <<< shift.toNat'). -/
+theorem dialect_builtin_shl5 {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (w : U256) :
+    (Bridge.Dialect c g).Builtin Op.shl [BitVec.ofNat 256 5, w] st (.ok [w <<< 5] st) := rfl
+
+/-- Plain 'add' at the open dialect - the pointer arithmetic, not the field addition. -/
+theorem dialect_builtin_add {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (a b : U256) :
+    (Bridge.Dialect c g).Builtin Op.add [a, b] st (.ok [a + b] st) := rfl
+
+/-- **ARM ADD_CONST_U8 RUNS.** The arm decodes its slot index from the program window, advances
+    'q_pc' by one, and leaves 'q_top' at 'wAddmod x v' for 'v' the constant table's word at that slot -
+    which 'wAddmod_eq_qvmFrAdd' identifies with the 'qvmFrAdd acc v' that 'qStepValue_addConstU8'
+    pushes. The state is the one BOTH 'mload's touched. -/
+theorem qArmRun_addConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (pc cb x : U256) (b₀ : Nat) (v : U256)
+    (hget_pc : VEnv.get V "q_pc" = some pc) (hget_top : VEnv.get V "q_top" = some x)
+    (hget_cb : VEnv.get V "q_const_mptr" = some cb)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hbyte : (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀)
+    (hconst : loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyAddConstU8 ctx program tcq)
+      (("qconst", BitVec.ofNat 256 b₀) ::
+        VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wAddmod x v))
+      (touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32) .normal := by
+  -- statement 1: let qconst := byte(0, mload(q_pc)) - the operand DECODE, and it MOVES the state
+  have hmlpc : Step (D := Bridge.Dialect c g) funs V st (.args [yop Op.mload [yvar "q_pc"]])
+      (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+      (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32)
+      (Step.argsNil (D := Bridge.Dialect c g))
+      (Step.builtinOk (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := st) (v := pc) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+        (Step.var (D := Bridge.Dialect c g) hget_pc))
+        (dialect_builtin_mload st pc))
+  have hbyteexpr : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]]))
+      (.eres (.vals [BitVec.ofNat 256 b₀] (touchMemory st pc.toNat 32))) := by
+    have h := Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yop Op.mload [yvar "q_pc"]])
+        (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32)
+        (v := BitVec.ofNat 256 0) (st2 := touchMemory st pc.toNat 32)
+        hmlpc (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)))
+      (dialect_builtin_byte0 (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+    rw [hbyte] at h
+    exact h
+  have hstmt1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (ylet "qconst" (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) :: V) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal hbyteexpr rfl
+  -- statement 2: q_pc := q_pc + 1
+  have hargs_pc : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32) (.args [yvar "q_pc", ylit 1])
+      (.eres (.vals [pc, BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1])
+      (restvals := [BitVec.ofNat 256 1]) (st1 := touchMemory st pc.toNat 32) (v := pc)
+      (st2 := touchMemory st pc.toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 1)
+        (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g)
+        (by rw [venvGet_cons_ne V "qconst" "q_pc" (BitVec.ofNat 256 b₀)
+          (by decide : ("qconst" : Ident) ≠ "q_pc")]; exact hget_pc))
+  have hexpr_pc : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "q_pc", ylit 1]))
+      (.eres (.vals [pc + BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk hargs_pc
+      (dialect_builtin_add (touchMemory st pc.toNat 32) pc (BitVec.ofNat 256 1))
+  have hstmt2 : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32)
+      (.stmt (yset "q_pc" (yop Op.add [yvar "q_pc", ylit 1])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"])
+      (vals := [pc + BitVec.ofNat 256 1]) hexpr_pc (by rfl)
+  -- statement 3: q_top := addmod(q_top, mload(q_const_mptr + (qconst << 5)), r)
+  have hget3_qconst :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "qconst" = some (BitVec.ofNat 256 b₀) := venvGet_cons_eq _ _ _
+  have hget3_top :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "q_top" = some x := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "q_top"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "q_top")]
+    exact venvGet_set_ne V "q_pc" "q_top" (pc + BitVec.ofNat 256 1) x
+      (by decide : ("q_pc" : Ident) ≠ "q_top") hget_top
+  have hget3_cb :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "q_const_mptr" = some cb := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "q_const_mptr"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "q_const_mptr")]
+    exact venvGet_set_ne V "q_pc" "q_const_mptr" (pc + BitVec.ofNat 256 1) cb
+      (by decide : ("q_pc" : Ident) ≠ "q_const_mptr") hget_cb
+  have hget3_r :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "r" = some frModulusWord := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "r"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "r")]
+    exact venvGet_set_ne V "q_pc" "r" (pc + BitVec.ofNat 256 1) frModulusWord
+      (by decide : ("q_pc" : Ident) ≠ "r") hget_r
+  have hshl : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.shl [ylit 5, yvar "qconst"]))
+      (.eres (.vals [BitVec.ofNat 256 b₀ <<< 5] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "qconst"])
+        (restvals := [BitVec.ofNat 256 b₀]) (st1 := touchMemory st pc.toNat 32)
+        (v := BitVec.ofNat 256 5) (st2 := touchMemory st pc.toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 b₀)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget3_qconst))
+        (Step.lit (D := Bridge.Dialect c g)))
+      (dialect_builtin_shl5 (touchMemory st pc.toNat 32) (BitVec.ofNat 256 b₀))
+  have hptr : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]))
+      (.eres (.vals [cb + (BitVec.ofNat 256 b₀ <<< 5)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g)
+        (rest := [yop Op.shl [ylit 5, yvar "qconst"]]) (restvals := [BitVec.ofNat 256 b₀ <<< 5])
+        (st1 := touchMemory st pc.toNat 32) (v := cb) (st2 := touchMemory st pc.toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 b₀ <<< 5)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) hshl)
+        (Step.var (D := Bridge.Dialect c g) hget3_cb))
+      (dialect_builtin_add (touchMemory st pc.toNat 32) cb (BitVec.ofNat 256 b₀ <<< 5))
+  have hcm : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]]))
+      (.eres (.vals [v]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) := by
+    have h := Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := touchMemory st pc.toNat 32) (v := cb + (BitVec.ofNat 256 b₀ <<< 5))
+        (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) hptr)
+      (dialect_builtin_mload (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)))
+    rw [Midfall.Yul.Word.touchMemory_memory st pc.toNat 32] at h
+    rw [hconst] at h
+    exact h
+  have hargs3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.args [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])
+      (.eres (.vals [x, v, frModulusWord]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g)
+      (rest := [yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])
+      (restvals := [v, frModulusWord])
+      (st1 := touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+      (v := x)
+      (st2 := touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := touchMemory st pc.toNat 32) (v := v)
+        (st2 := touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := frModulusWord)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget3_r))
+        hcm)
+      (Step.var (D := Bridge.Dialect c g) hget3_top)
+  have hexpr3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.addmod [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"]))
+      (.eres (.vals [wAddmod x v]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) :=
+    Step.builtinOk hargs3
+      (dialect_builtin_addmod_atFr
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32) x v)
+  have hstmt3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.stmt (yset "q_top" (yop Op.addmod [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) ::
+        VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wAddmod x v))
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+        .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [wAddmod x v]) hexpr3
+      (by rfl)
+  unfold GenAst.qArmBodyAddConstU8
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) :: V) (st1 := touchMemory st pc.toNat 32) hstmt1 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+    (st1 := touchMemory st pc.toNat 32) hstmt2 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) ::
+      VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wAddmod x v))
+    (st1 := touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+    hstmt3 (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM ADD_CONST_U8: THE VALUE REFINEMENT, PROVED.** -/
+theorem qArmValue_addConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cb x : U256) (b₀ : Nat) (v : U256) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyAddConstU8 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "q_const_mptr" = some cb ∧ VEnv.get V "r" = some frModulusWord ∧
+        (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀ ∧
+        loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32 ∧
+        V' = (("qconst", BitVec.ofNat 256 b₀) ::
+          VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top"
+            (BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)))) := by
+  intro V st hpre
+  have hrun := qArmRun_addConstU8 ctx program tcq funs V st pc cb x b₀ v hpre.1 hpre.2.1 hpre.2.2.1
+    hpre.2.2.2.1 hpre.2.2.2.2.1 hpre.2.2.2.2.2
+  rw [wAddmod_eq_qvmFrAdd] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM ADD_CONST_U8: THE EVERY-RUN FORM.** -/
+theorem qArmValueAll_addConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cb x : U256) (b₀ : Nat) (v : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyAddConstU8 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "q_const_mptr" = some cb ∧ VEnv.get V "r" = some frModulusWord ∧
+        (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀ ∧
+        loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32 ∧
+        V' = (("qconst", BitVec.ofNat 256 b₀) ::
+          VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top"
+            (BitVec.ofNat 256 (qvmFrAdd x.toNat v.toNat)))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_addConstU8 ctx program tcq funs pc cb x b₀ v)
+
+/-! ### L. THE MUL_CONST_U8 ARM (QARMS)
+
+The twin of section K with the product: 'mulmod(q_top, mload(q_const_mptr + 32*qconst), r)' against
+'qStepValue_mulConstU8''s 'qvmFrMul acc v'. Same two reader equations, same decode, same state
+threading - and again the tie is 'wMulmod_eq_qvmFrMul', which is 'rfl'. It is landed as a separate
+theorem rather than a lemma schema on purpose: the arms differ in their guards and their reads, and a
+schema that hides that is worth less than the copy. -/
+
+/-- **ARM MUL_CONST_U8 RUNS.** The arm decodes its slot index from the program window, advances
+    'q_pc' by one, and leaves 'q_top' at 'wMulmod x v' for 'v' the constant table's word at that slot -
+    which 'wMulmod_eq_qvmFrMul' identifies with the 'qvmFrMul acc v' that 'qStepValue_mulConstU8'
+    pushes. The state is the one BOTH 'mload's touched. -/
+theorem qArmRun_mulConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (pc cb x : U256) (b₀ : Nat) (v : U256)
+    (hget_pc : VEnv.get V "q_pc" = some pc) (hget_top : VEnv.get V "q_top" = some x)
+    (hget_cb : VEnv.get V "q_const_mptr" = some cb)
+    (hget_r : VEnv.get V "r" = some frModulusWord)
+    (hbyte : (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀)
+    (hconst : loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyMulConstU8 ctx program tcq)
+      (("qconst", BitVec.ofNat 256 b₀) ::
+        VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wMulmod x v))
+      (touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32) .normal := by
+  -- statement 1: let qconst := byte(0, mload(q_pc)) - the operand DECODE, and it MOVES the state
+  have hmlpc : Step (D := Bridge.Dialect c g) funs V st (.args [yop Op.mload [yvar "q_pc"]])
+      (.eres (.vals [loadWord st.memory pc.toNat] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+      (v := loadWord st.memory pc.toNat) (st2 := touchMemory st pc.toNat 32)
+      (Step.argsNil (D := Bridge.Dialect c g))
+      (Step.builtinOk (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := st) (v := pc) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+        (Step.var (D := Bridge.Dialect c g) hget_pc))
+        (dialect_builtin_mload st pc))
+  have hbyteexpr : Step (D := Bridge.Dialect c g) funs V st
+      (.expr (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]]))
+      (.eres (.vals [BitVec.ofNat 256 b₀] (touchMemory st pc.toNat 32))) := by
+    have h := Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yop Op.mload [yvar "q_pc"]])
+        (restvals := [loadWord st.memory pc.toNat]) (st1 := touchMemory st pc.toNat 32)
+        (v := BitVec.ofNat 256 0) (st2 := touchMemory st pc.toNat 32)
+        hmlpc (Step.lit (D := Bridge.Dialect c g) (l := Literal.number 0)))
+      (dialect_builtin_byte0 (touchMemory st pc.toNat 32) (loadWord st.memory pc.toNat))
+    rw [hbyte] at h
+    exact h
+  have hstmt1 : Step (D := Bridge.Dialect c g) funs V st
+      (.stmt (ylet "qconst" (yop Op.byte [ylit 0, yop Op.mload [yvar "q_pc"]])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) :: V) (touchMemory st pc.toNat 32) .normal) :=
+    Step.letVal hbyteexpr rfl
+  -- statement 2: q_pc := q_pc + 1
+  have hargs_pc : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32) (.args [yvar "q_pc", ylit 1])
+      (.eres (.vals [pc, BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g) (rest := [ylit 1])
+      (restvals := [BitVec.ofNat 256 1]) (st1 := touchMemory st pc.toNat 32) (v := pc)
+      (st2 := touchMemory st pc.toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 1)
+        (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) Step.lit)
+      (Step.var (D := Bridge.Dialect c g)
+        (by rw [venvGet_cons_ne V "qconst" "q_pc" (BitVec.ofNat 256 b₀)
+          (by decide : ("qconst" : Ident) ≠ "q_pc")]; exact hget_pc))
+  have hexpr_pc : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32) (.expr (yop Op.add [yvar "q_pc", ylit 1]))
+      (.eres (.vals [pc + BitVec.ofNat 256 1] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk hargs_pc
+      (dialect_builtin_add (touchMemory st pc.toNat 32) pc (BitVec.ofNat 256 1))
+  have hstmt2 : Step (D := Bridge.Dialect c g) funs (("qconst", BitVec.ofNat 256 b₀) :: V)
+      (touchMemory st pc.toNat 32)
+      (.stmt (yset "q_pc" (yop Op.add [yvar "q_pc", ylit 1])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        (touchMemory st pc.toNat 32) .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_pc"])
+      (vals := [pc + BitVec.ofNat 256 1]) hexpr_pc (by rfl)
+  -- statement 3: q_top := mulmod(q_top, mload(q_const_mptr + (qconst << 5)), r)
+  have hget3_qconst :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "qconst" = some (BitVec.ofNat 256 b₀) := venvGet_cons_eq _ _ _
+  have hget3_top :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "q_top" = some x := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "q_top"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "q_top")]
+    exact venvGet_set_ne V "q_pc" "q_top" (pc + BitVec.ofNat 256 1) x
+      (by decide : ("q_pc" : Ident) ≠ "q_top") hget_top
+  have hget3_cb :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "q_const_mptr" = some cb := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "q_const_mptr"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "q_const_mptr")]
+    exact venvGet_set_ne V "q_pc" "q_const_mptr" (pc + BitVec.ofNat 256 1) cb
+      (by decide : ("q_pc" : Ident) ≠ "q_const_mptr") hget_cb
+  have hget3_r :
+      VEnv.get (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+        "r" = some frModulusWord := by
+    rw [venvGet_cons_ne (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "qconst" "r"
+      (BitVec.ofNat 256 b₀) (by decide : ("qconst" : Ident) ≠ "r")]
+    exact venvGet_set_ne V "q_pc" "r" (pc + BitVec.ofNat 256 1) frModulusWord
+      (by decide : ("q_pc" : Ident) ≠ "r") hget_r
+  have hshl : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.shl [ylit 5, yvar "qconst"]))
+      (.eres (.vals [BitVec.ofNat 256 b₀ <<< 5] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "qconst"])
+        (restvals := [BitVec.ofNat 256 b₀]) (st1 := touchMemory st pc.toNat 32)
+        (v := BitVec.ofNat 256 5) (st2 := touchMemory st pc.toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 b₀)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget3_qconst))
+        (Step.lit (D := Bridge.Dialect c g)))
+      (dialect_builtin_shl5 (touchMemory st pc.toNat 32) (BitVec.ofNat 256 b₀))
+  have hptr : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]))
+      (.eres (.vals [cb + (BitVec.ofNat 256 b₀ <<< 5)] (touchMemory st pc.toNat 32))) :=
+    Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g)
+        (rest := [yop Op.shl [ylit 5, yvar "qconst"]]) (restvals := [BitVec.ofNat 256 b₀ <<< 5])
+        (st1 := touchMemory st pc.toNat 32) (v := cb) (st2 := touchMemory st pc.toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := BitVec.ofNat 256 b₀ <<< 5)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) hshl)
+        (Step.var (D := Bridge.Dialect c g) hget3_cb))
+      (dialect_builtin_add (touchMemory st pc.toNat 32) cb (BitVec.ofNat 256 b₀ <<< 5))
+  have hcm : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]]))
+      (.eres (.vals [v]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) := by
+    have h := Step.builtinOk
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+        (st1 := touchMemory st pc.toNat 32) (v := cb + (BitVec.ofNat 256 b₀ <<< 5))
+        (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g)) hptr)
+      (dialect_builtin_mload (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)))
+    rw [Midfall.Yul.Word.touchMemory_memory st pc.toNat 32] at h
+    rw [hconst] at h
+    exact h
+  have hargs3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.args [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])
+      (.eres (.vals [x, v, frModulusWord]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) :=
+    Step.argsCons (D := Bridge.Dialect c g)
+      (rest := [yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])
+      (restvals := [v, frModulusWord])
+      (st1 := touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+      (v := x)
+      (st2 := touchMemory (touchMemory st pc.toNat 32)
+        (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := touchMemory st pc.toNat 32) (v := v)
+        (st2 := touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := [])
+          (st1 := touchMemory st pc.toNat 32) (v := frModulusWord)
+          (st2 := touchMemory st pc.toNat 32) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget3_r))
+        hcm)
+      (Step.var (D := Bridge.Dialect c g) hget3_top)
+  have hexpr3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.expr (yop Op.mulmod [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"]))
+      (.eres (.vals [wMulmod x v]
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32))) :=
+    Step.builtinOk hargs3
+      (dialect_builtin_mulmod_atFr
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32) x v)
+  have hstmt3 : Step (D := Bridge.Dialect c g)
+      funs (("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+      (touchMemory st pc.toNat 32)
+      (.stmt (yset "q_top" (yop Op.mulmod [yvar "q_top",
+        yop Op.mload [yop Op.add [yvar "q_const_mptr", yop Op.shl [ylit 5, yvar "qconst"]]],
+        yvar "r"])))
+      (.sres (("qconst", BitVec.ofNat 256 b₀) ::
+        VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wMulmod x v))
+        (touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+        .normal) :=
+    Step.assignVal (D := Bridge.Dialect c g) (vars := ["q_top"]) (vals := [wMulmod x v]) hexpr3
+      (by rfl)
+  unfold GenAst.qArmBodyMulConstU8
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) :: V) (st1 := touchMemory st pc.toNat 32) hstmt1 ?_
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) :: VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1))
+    (st1 := touchMemory st pc.toNat 32) hstmt2 ?_
+  exact Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := ("qconst", BitVec.ofNat 256 b₀) ::
+      VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top" (wMulmod x v))
+    (st1 := touchMemory (touchMemory st pc.toNat 32) (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32)
+    hstmt3 (Step.seqNil (D := Bridge.Dialect c g))
+
+/-- **ARM MUL_CONST_U8: THE VALUE REFINEMENT, PROVED.** -/
+theorem qArmValue_mulConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cb x : U256) (b₀ : Nat) (v : U256) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyMulConstU8 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "q_const_mptr" = some cb ∧ VEnv.get V "r" = some frModulusWord ∧
+        (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀ ∧
+        loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32 ∧
+        V' = (("qconst", BitVec.ofNat 256 b₀) ::
+          VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top"
+            (BitVec.ofNat 256 (qvmFrMul x.toNat v.toNat)))) := by
+  intro V st hpre
+  have hrun := qArmRun_mulConstU8 ctx program tcq funs V st pc cb x b₀ v hpre.1 hpre.2.1 hpre.2.2.1
+    hpre.2.2.2.1 hpre.2.2.2.2.1 hpre.2.2.2.2.2
+  rw [wMulmod_eq_qvmFrMul] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM MUL_CONST_U8: THE EVERY-RUN FORM.** -/
+theorem qArmValueAll_mulConstU8 {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (pc cb x : U256) (b₀ : Nat) (v : U256) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyMulConstU8 ctx program tcq)
+      (fun V st => VEnv.get V "q_pc" = some pc ∧ VEnv.get V "q_top" = some x ∧
+        VEnv.get V "q_const_mptr" = some cb ∧ VEnv.get V "r" = some frModulusWord ∧
+        (loadWord st.memory pc.toNat >>> 248) &&& 0xff = BitVec.ofNat 256 b₀ ∧
+        loadWord st.memory (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat = v)
+      (fun V st V' st' o => o = .normal ∧
+        st' = touchMemory (touchMemory st pc.toNat 32)
+          (cb + (BitVec.ofNat 256 b₀ <<< 5)).toNat 32 ∧
+        V' = (("qconst", BitVec.ofNat 256 b₀) ::
+          VEnv.set (VEnv.set V "q_pc" (pc + BitVec.ofNat 256 1)) "q_top"
+            (BitVec.ofNat 256 (qvmFrMul x.toNat v.toNat)))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg)
+    (qArmValue_mulConstU8 ctx program tcq funs pc cb x b₀ v)
+
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_addConstU8
+#check @Midfall.LoweringV3.QuotientFrame.qArmValueAll_addConstU8
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_mulConstU8
+#check @Midfall.LoweringV3.QuotientFrame.qArmValueAll_mulConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_addConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_addConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_addConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_mulConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_mulConstU8
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_mulConstU8
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_add
+#check @Midfall.LoweringV3.QuotientFrame.qArmValueAll_add
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_mul
+#check @Midfall.LoweringV3.QuotientFrame.qArmValueAll_mul
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_add
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_add
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_add
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_mul
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_mul
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_mul
+#print axioms Midfall.LoweringV3.QuotientFrame.venvGet_set_ne
+#print axioms Midfall.LoweringV3.QuotientFrame.wAddmod_eq_qvmFrAdd
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_pow5
+#check @Midfall.LoweringV3.QuotientFrame.qArmValueAll_pow5
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_pow5
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_pow5
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_pow5
+#print axioms Midfall.LoweringV3.QuotientFrame.wMulmod_eq_qvmFrPow5
+#print axioms Midfall.LoweringV3.QuotientFrame.qvmFrMul_pow5_nest
+
 #print axioms Midfall.LoweringV3.QuotientFrame.evalQuotientIdentity_one
 #print axioms Midfall.LoweringV3.QuotientFrame.qStepValue_pushConst
 #print axioms Midfall.LoweringV3.QuotientFrame.qStepValue_add
