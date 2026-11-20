@@ -1007,4 +1007,576 @@ theorem foldlM_linStep_ok {G₁ : Type} (vk : VerifyingKey F G₁) :
               refine ⟨hc1, by rw [hI.2, noneSnds]⟩
 
 
+
+
+/-! ## QLIN2: the last mile (steps (c) and (d) of QFOLD's header)
+
+    Everything added below is still generic (D-P71). It supplies the four pieces QLIN named:
+    (i) `linBucket_stream` / `linBucket_stream_none`, the reverse walk read off a stream whose
+    entries carry their own position; (ii) `wellSpaced_proj`, `WellSpaced` for a bucket's
+    sub-stream from the "gap is the distance to the previous position" property, plus the
+    `endIdx` bookkeeping it needs; (iii) nothing - canonicity is a plan-level induction and lives
+    in QvmFold.lean; (iv) `gfoldGo_mem_keys`, `keyAsc_filter`, `keyAsc_map_some` for the scalar
+    ORDER; and (v) `newLinear_ok`, the reading of `VerifierQuery.newLinear` back from its own
+    success, which did not exist. -/
+
+/-- The `val` component of a stream of bucket entries: the tagged list the verifier's grouped
+    walk consumes. -/
+def streamVals : List (Option Nat × BEntry F) → List (Option Nat × F) :=
+  List.map fun p => (p.1, p.2.val)
+
+theorem exp_shift (n o i : Nat) : n + (o + 1) - 1 - i = n + 1 + o - 1 - i := by omega
+
+/-! ### (i) A stream-indexed `linBucket` -/
+
+theorem linBucket_stream_aux (y : F) (s : Nat) :
+    ∀ (xs : List (Option Nat × BEntry F)) (o : Nat),
+      (∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = o + i) →
+      linBucket y xs.length (streamVals xs) (some s)
+        = ((proj s xs).map fun e => e.val * y ^ (xs.length + o - 1 - e.idx)).sum := by
+  intro xs
+  induction xs with
+  | nil => intro o _; rfl
+  | cons a as ih =>
+      intro o hidx
+      cases a with
+      | mk k b =>
+      have hb : b.idx = o := (hidx 0 (by simp)).trans (by omega)
+      have htail : ∀ i < as.length, (as.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = o + 1 + i := by
+        intro i hi
+        exact (hidx (i + 1) (by simp [hi])).trans (by omega)
+      show (if k == some s then y ^ as.length * b.val else 0)
+            + linBucket y as.length (streamVals as) (some s)
+          = ((proj s ((k, b) :: as)).map fun e => e.val * y ^ (as.length + 1 + o - 1 - e.idx)).sum
+      rw [ih (o + 1) htail]
+      have htail2 : ((proj s as).map fun e => e.val * y ^ (as.length + (o + 1) - 1 - e.idx))
+          = ((proj s as).map fun e => e.val * y ^ (as.length + 1 + o - 1 - e.idx)) := by
+        refine map_eq_map_of_mem _ _ (proj s as) ?_
+        intro e _
+        rw [exp_shift]
+      rw [htail2]
+      by_cases hk : (k == some s) = true
+      · have hk' : k = some s := Iff.mp obEq hk
+        subst hk'
+        rw [proj_same, if_pos hk, List.map_cons, List.sum_cons, hb,
+            show as.length + 1 + o - 1 - o = as.length by omega,
+            mul_comm (y ^ as.length) b.val]
+      · rw [if_neg hk, zero_add]
+        cases k with
+        | none => rw [proj_none]
+        | some k' =>
+            have hne : ¬ (k' == s) = true := by
+              intro h
+              apply hk
+              show (some k' == some s) = true
+              rw [beq_iff_eq]
+              exact congrArg some (Iff.mp beq_iff_eq h)
+            rw [proj_ne s k' b as hne]
+
+/-- (i) The stream-indexed `linBucket`: for a stream whose entry at position `i` carries
+    `idx = i`, the linearization's weighted bucket sum at key `some s` is the naive
+    global-power sum over that bucket's own sub-stream. -/
+theorem linBucket_stream (y : F) (s : Nat) (xs : List (Option Nat × BEntry F))
+    (hidx : ∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = i) :
+    linBucket y xs.length (streamVals xs) (some s)
+      = ((proj s xs).map fun e => e.val * y ^ (xs.length - 1 - e.idx)).sum := by
+  have h2 : ∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = 0 + i := by
+    intro i hi
+    exact by simpa using hidx i hi
+  simpa using linBucket_stream_aux y s xs 0 h2
+
+/-- (i), the `none` key: the main accumulator's weighted sum. Every position advances the main
+    accumulator by one power of `y` and only the `none` entries contribute a value, so the
+    same reverse walk reads back `mainEntries`. -/
+theorem linBucket_stream_none_aux (y : F) :
+    ∀ (xs : List (Option Nat × BEntry F)) (o : Nat),
+      (∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = o + i) →
+      linBucket y xs.length (streamVals xs) none
+        = ((mainEntries xs).map fun e => e.val * y ^ (xs.length + o - 1 - e.idx)).sum := by
+  intro xs
+  induction xs with
+  | nil => intro o _; rfl
+  | cons a as ih =>
+      intro o hidx
+      cases a with
+      | mk k b =>
+      have htail : ∀ i < as.length, (as.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = o + 1 + i := by
+        intro i hi
+        exact (hidx (i + 1) (by simp [hi])).trans (by omega)
+      show (if k == none then y ^ as.length * b.val else 0)
+            + linBucket y as.length (streamVals as) none
+          = ((mainEntries ((k, b) :: as)).map fun e => e.val * y ^ (as.length + 1 + o - 1 - e.idx)).sum
+      rw [ih (o + 1) htail]
+      have htail2 : ((mainEntries as).map fun e => e.val * y ^ (as.length + (o + 1) - 1 - e.idx))
+          = ((mainEntries as).map fun e => e.val * y ^ (as.length + 1 + o - 1 - e.idx)) := by
+        refine map_eq_map_of_mem _ _ (mainEntries as) ?_
+        intro e _
+        rw [exp_shift]
+      rw [htail2]
+      by_cases hk : (k == none) = true
+      · have hk' : k = none := Iff.mp obEq hk
+        subst hk'
+        rw [if_pos hk, mainEntries_none, List.map_cons, List.sum_cons]
+        have hb : b.idx = o := (hidx 0 (by simp)).trans (by omega)
+        rw [hb, show as.length + 1 + o - 1 - o = as.length by omega,
+            mul_comm (y ^ as.length) b.val]
+      · rw [if_neg hk]
+        have hme : mainEntries ((k, b) :: as) = ⟨b.idx, 1, 0⟩ :: mainEntries as := by
+          show (⟨b.idx, 1, if k == none then b.val else 0⟩ :: mainEntries as) = _
+          rw [if_neg hk]
+        rw [hme, List.map_cons, List.sum_cons, zero_mul, zero_add]
+
+theorem linBucket_stream_none (y : F) (xs : List (Option Nat × BEntry F))
+    (hidx : ∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = i) :
+    linBucket y xs.length (streamVals xs) none
+      = ((mainEntries xs).map fun e => e.val * y ^ (xs.length - 1 - e.idx)).sum := by
+  have h2 : ∀ i < xs.length, (xs.getD i ⟨none, ⟨0, 0, 0⟩⟩).2.idx = 0 + i := by
+    intro i hi
+    exact by simpa using hidx i hi
+  simpa using linBucket_stream_none_aux y xs 0 h2
+
+def noPair : Option Nat × BEntry F := (none, ⟨0, 0, 0⟩)
+def idxAt (xs : List (Option Nat × BEntry F)) (i : Nat) : Nat := (xs.getD i noPair).2.idx
+def gapAt (xs : List (Option Nat × BEntry F)) (i : Nat) : Nat := (xs.getD i noPair).2.gap
+def hasKey (s : Nat) (xs : List (Option Nat × BEntry F)) (i : Nat) : Prop :=
+  (xs.getD i noPair).1 = some s
+
+theorem head_hasKey {s : Nat} (b : BEntry F) (xs : List (Option Nat × BEntry F)) :
+    hasKey s ((some s, b) :: xs) 0 := by show (some s : Option Nat) = some s; rfl
+theorem notHead_hasKey {s : Nat} (k : Option Nat) (b : BEntry F)
+    (xs : List (Option Nat × BEntry F)) (h : ¬ (k == some s) = true) :
+    ¬ hasKey s ((k, b) :: xs) 0 := fun hh => h (by rw [obEq]; exact hh)
+theorem tail_hasKey {s : Nat} (k : Option Nat) (b : BEntry F)
+    (xs : List (Option Nat × BEntry F)) (i : Nat) :
+    hasKey s ((k, b) :: xs) (i + 1) ↔ hasKey s xs i := Iff.rfl
+theorem tail_idxAt (k : Option Nat) (b : BEntry F)
+    (xs : List (Option Nat × BEntry F)) (i : Nat) :
+    idxAt ((k, b) :: xs) (i + 1) = idxAt xs i := rfl
+theorem tail_gapAt (k : Option Nat) (b : BEntry F)
+    (xs : List (Option Nat × BEntry F)) (i : Nat) :
+    gapAt ((k, b) :: xs) (i + 1) = gapAt xs i := rfl
+theorem head_idxAt {s : Nat} (b : BEntry F) (xs : List (Option Nat × BEntry F)) :
+    idxAt ((some s, b) :: xs) 0 = b.idx := rfl
+theorem head_gapAt {s : Nat} (b : BEntry F) (xs : List (Option Nat × BEntry F)) :
+    gapAt ((some s, b) :: xs) 0 = b.gap := rfl
+
+theorem proj_head_not {s : Nat} (a : Option Nat × BEntry F)
+    (xs : List (Option Nat × BEntry F)) (h : ¬ hasKey s (a :: xs) 0) :
+    proj s (a :: xs) = proj s xs := by
+  cases a with
+  | mk k b =>
+  cases k with
+  | none => exact proj_none s b xs
+  | some k' =>
+      have hne : ¬ (k' == s) = true := by
+        intro hh
+        apply h
+        show some k' = some s
+        exact Iff.mp obEq hh
+      exact proj_ne s k' b xs hne
+
+/-- The gap hypothesis for a bucket's sub-stream, read at consecutive positions. -/
+theorem gapAt_consecutive (s : Nat) (xs : List (Option Nat × BEntry F)) :
+    (∀ i j, i < j → j < xs.length → hasKey s xs i → hasKey s xs j →
+        (∀ k, i < k → k < j → ¬ hasKey s xs k) → gapAt xs j = j - i) →
+    ∀ i j, i < j → j < xs.length → hasKey s xs i → hasKey s xs j →
+        (∀ k, i < k → k < j → ¬ hasKey s xs k) → gapAt xs j = j - i := id
+
+/-! ### (ii) `WellSpaced` for a bucket's sub-stream -/
+
+theorem spacedAfter_proj {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)) (P p : Nat),
+    (∀ i < xs.length, idxAt xs i = P + i) →
+    (∀ i < xs.length, hasKey s xs i → p < P + i) →
+    (∀ i j, i < j → j < xs.length → hasKey s xs i → hasKey s xs j →
+        (∀ k, i < k → k < j → ¬ hasKey s xs k) → gapAt xs j = j - i) →
+    (∀ j < xs.length, hasKey s xs j → (∀ k, k < j → ¬ hasKey s xs k) →
+        gapAt xs j = P + j - p) →
+    SpacedAfter p (proj s xs) := by
+  intro xs
+  induction xs with
+  | nil => intro P p _ _ _ _; exact SpacedAfter.nil p
+  | cons a as ih =>
+      intro P p hidx hgt hcon hfirst
+      cases a with
+      | mk k b =>
+      by_cases hk : (k == some s) = true
+      · have hk' : k = some s := Iff.mp obEq hk
+        subst hk'
+        have hb : b.idx = P := by rw [← head_idxAt (xs := as)]; exact hidx 0 (by simp)
+        have h1 : p < b.idx := by rw [hb]; exact hgt 0 (by simp) (head_hasKey b as)
+        have h2 : b.gap = b.idx - p := by
+          have h3 := hfirst 0 (by simp) (head_hasKey b as)
+            (fun j hj => absurd hj (by omega))
+          rw [head_gapAt] at h3
+          rw [hb]
+          simpa using h3
+        rw [proj_same]
+        refine SpacedAfter.cons p b (proj s as) h1 h2 ?_
+        rw [hb]
+        refine ih (P + 1) P ?_ ?_ ?_ ?_
+        · intro i hi
+          rw [← tail_idxAt (some s) b as i]
+          exact (hidx (i + 1) (by simp [hi])).trans (by omega)
+        · intro i hi _
+          omega
+        · intro i j hij hj hki hkj hmid
+          have h := hcon (i + 1) (j + 1) (by omega) (by simp [hj]) hki hkj
+            (fun k hk1 hk2 => by
+              cases k with
+              | zero => exact absurd hk1 (by omega)
+              | succ k' => exact hmid k' (by omega) (by omega))
+          rw [tail_gapAt] at h
+          exact h.trans (by omega)
+        · intro j hj hjk hmid
+          have h := hcon 0 (j + 1) (by omega) (by simp [hj]) (head_hasKey b as) hjk
+            (fun k hk1 hk2 => by
+              cases k with
+              | zero => exact absurd hk1 (by omega)
+              | succ k' => exact hmid k' (by omega))
+          rw [tail_gapAt] at h
+          rw [h]
+          omega
+      · have hnot : ¬ hasKey s ((k, b) :: as) 0 := notHead_hasKey k b as hk
+        rw [proj_head_not (a := (k, b)) (xs := as) hnot]
+        refine ih (P + 1) p ?_ ?_ ?_ ?_
+        · intro i hi
+          have h2 := hidx (i + 1) (by simp [hi])
+          rw [tail_idxAt] at h2
+          omega
+        · intro i hi hki
+          have h2 := hgt (i + 1) (by simp [hi]) hki
+          omega
+        · intro i j hij hj hki hkj hmid
+          have h := hcon (i + 1) (j + 1) (by omega) (by simp [hj]) hki hkj
+            (fun k hk1 hk2 => by
+              cases k with
+              | zero => exact absurd hk1 (by omega)
+              | succ k' => exact hmid k' (by omega) (by omega))
+          rw [tail_gapAt] at h
+          omega
+        · intro j hj hjk hmid
+          have h := hfirst (j + 1) (by simp [hj]) hjk
+            (fun k hk1 => by
+              cases k with
+              | zero => exact hnot
+              | succ k' => exact hmid k' (by omega))
+          rw [tail_gapAt] at h
+          omega
+
+/-! ### Bucket-position bookkeeping -/
+
+theorem proj_nil_of {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)),
+    (∀ i < xs.length, ¬ hasKey s xs i) → proj s xs = [] := by
+  intro xs h
+  induction xs with
+  | nil => rfl
+  | cons a as ih =>
+      cases a with
+      | mk k b =>
+      by_cases hk : (k == some s) = true
+      · exfalso
+        exact h 0 (by simp) (Iff.mp obEq hk)
+      · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)]
+        exact ih (fun i hi => h (i + 1) (by simp [hi]))
+
+theorem proj_ne_nil_of {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)) (i : Nat),
+    hasKey s xs i → proj s xs ≠ [] := by
+  intro xs
+  induction xs with
+  | nil => intro i h; exact absurd h (by simp [hasKey, noPair])
+  | cons a as ih =>
+      intro i h
+      cases a with
+      | mk k b =>
+      cases i with
+      | zero =>
+          have hk : k = some s := h
+          subst hk
+          rw [proj_same]
+          intro hbad
+          exact absurd hbad (by simp)
+      | succ u =>
+          by_cases hk : (k == some s) = true
+          · have hk' : k = some s := Iff.mp obEq hk
+            subst hk'
+            rw [proj_same]
+            intro hbad
+            exact absurd hbad (by simp)
+          · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)]
+            exact ih u h
+
+/-- The last index of a bucket's sub-stream: the position of its last entry. -/
+theorem endIdx_proj {s : Nat} : ∀ (xs : List (Option Nat × BEntry F)) (j : Nat),
+    j < xs.length → hasKey s xs j →
+      (∀ k, j < k → k < xs.length → ¬ hasKey s xs k) →
+      endIdx (proj s xs) = idxAt xs j := by
+  intro xs
+  induction xs with
+  | nil => intro j hj _ _; exact absurd hj (by simp)
+  | cons a as ih =>
+      intro j hj hkey htail
+      cases a with
+      | mk k b =>
+      cases j with
+      | zero =>
+          have hk : k = some s := hkey
+          subst hk
+          have hn : ∀ i < as.length, ¬ hasKey s as i := by
+            intro i hi hh
+            exact htail (i + 1) (by omega) (by simp [hi]) ((tail_hasKey (some s) b as i).mpr hh)
+          rw [proj_same, proj_nil_of as hn, endIdx]
+          rfl
+      | succ u =>
+          have hlen : u < as.length := by simpa using hj
+          have htail' : ∀ k, u < k → k < as.length → ¬ hasKey s as k := by
+            intro k hk1 hk2
+            exact htail (k + 1) (by omega) (by simpa using hk2)
+          have hres : endIdx (proj s as) = idxAt as u := ih u hlen hkey htail'
+          by_cases hk : (k == some s) = true
+          · have hk' : k = some s := Iff.mp obEq hk
+            subst hk'
+            have hne : proj s as ≠ [] := proj_ne_nil_of as u hkey
+            rw [proj_same]
+            cases ps : proj s as with
+            | nil => exact absurd ps hne
+            | cons f rest =>
+                rw [show endIdx (b :: f :: rest) = endIdx (f :: rest) from rfl, ← ps]
+                exact hres
+          · rw [proj_head_not (a := (k, b)) (xs := as) (notHead_hasKey k b as hk)]
+            exact hres
+
+theorem spacedAfter_le : ∀ (ps : List (BEntry F)) (p : Nat),
+    SpacedAfter p ps → ∀ e ∈ ps, e.idx ≤ endIdx ps := by
+  intro ps
+  induction ps with
+  | nil => intro p _ e he; exact absurd he (by simp)
+  | cons f rest ih =>
+      intro p h e he
+      cases rest with
+      | nil =>
+          have hf : e = f := by simpa using he
+          rw [hf, endIdx]
+      | cons g rest' =>
+          have hsp : SpacedAfter f.idx (g :: rest') := spacedAfter_tail p f (g :: rest') h
+          rcases List.mem_cons.mp he with he | he
+          · rw [he, show endIdx (f :: g :: rest') = endIdx (g :: rest') from rfl]
+            exact spacedAfter_endIdx f.idx (g :: rest') hsp (by simp)
+          · have hle : e.idx ≤ endIdx (g :: rest') := ih f.idx hsp e he
+            rw [show endIdx (f :: g :: rest') = endIdx (g :: rest') from rfl]
+            exact hle
+
+theorem wellSpaced_le {ps : List (BEntry F)} (h : WellSpaced ps) :
+    ∀ e ∈ ps, e.idx ≤ endIdx ps := by
+  cases ps with
+  | nil => intro e he; exact absurd he (by simp)
+  | cons f rest =>
+      intro e he
+      rcases List.mem_cons.mp he with he | he
+      · rw [he]
+        cases rest with
+        | nil => rw [endIdx]
+        | cons g rest' =>
+            rw [show endIdx (f :: g :: rest') = endIdx (g :: rest') from rfl]
+            exact spacedAfter_endIdx f.idx (g :: rest') h (by simp)
+      · cases rest with
+        | nil => exact absurd he (by simp)
+        | cons g rest' =>
+            rw [show endIdx (f :: g :: rest') = endIdx (g :: rest') from rfl]
+            exact spacedAfter_le (g :: rest') f.idx h e he
+
+theorem endIdx_le_of : ∀ (ps : List (BEntry F)) (L : Nat),
+    (∀ e ∈ ps, e.idx ≤ L) → ps ≠ [] → endIdx ps ≤ L := by
+  intro ps L hle hne
+  cases ps with
+  | nil => exact absurd hne (by simp)
+  | cons f rest =>
+      cases rest with
+      | nil => rw [endIdx]; exact hle f (by simp)
+      | cons g rest' =>
+          rw [show endIdx (f :: g :: rest') = endIdx (g :: rest') from rfl]
+          exact endIdx_le_of (g :: rest') L
+            (fun e he => hle e (List.mem_cons.mpr (Or.inr he))) (by simp)
+
+theorem sum_mul_right {E : Type} [Field E] (l : List E) (b : E) :
+    l.sum * b = (l.map fun x => x * b).sum := by
+  induction l with
+  | nil => simp
+  | cons a as ih => rw [List.sum_cons, add_mul, ih, List.map_cons, List.sum_cons]
+
+/-- The naive bucket sum with the tail exponent folded in. -/
+theorem bfoldTarget_at (y : F) (ps : List (BEntry F)) (L : Nat)
+    (hwell : WellSpaced ps) (hle : ∀ e ∈ ps, e.idx ≤ L) :
+    bfoldTarget y ps * y ^ (L - endIdx ps)
+      = (ps.map fun e => e.val * y ^ (L - e.idx)).sum := by
+  by_cases hnil : ps = []
+  · subst hnil
+    rw [bfoldTarget, endIdx, Nat.sub_zero, zero_mul, List.map_nil, List.sum_nil]
+  · rw [bfoldTarget_naive y ps hwell, sum_mul_right, List.map_map]
+    refine congrArg List.sum (map_eq_map_of_mem _ _ ps ?_)
+    intro e he
+    show (e.val * y ^ (endIdx ps - e.idx)) * y ^ (L - endIdx ps) = e.val * y ^ (L - e.idx)
+    have h1 : e.idx ≤ endIdx ps := wellSpaced_le hwell e he
+    have h2 : endIdx ps ≤ L := endIdx_le_of ps L hle hnil
+    rw [mul_assoc, ← pow_add]
+    rw [show (endIdx ps - e.idx) + (L - endIdx ps) = L - e.idx by omega]
+
+/-- The keys the grouped walk has recorded after consuming `xs`: the accumulator's keys plus
+    every key that occurs in `xs`. -/
+theorem gfoldGo_mem_keys (y : F) : ∀ (xs : List (Option Nat × F)) (p : F)
+    (acc : List (Option Nat × F)) (q : Option Nat),
+      q ∈ (gfoldGo y xs p acc).map Prod.fst ↔ q ∈ acc.map Prod.fst ∨ ∃ e ∈ xs, e.1 = q := by
+  intro xs
+  induction xs with
+  | nil => intro p acc q; simp [gfoldGo]
+  | cons a as ih =>
+      intro p acc q
+      cases a with
+      | mk k v =>
+      show q ∈ (gfoldGo y as (p * y) (groupedAdd acc k (p * v))).map Prod.fst ↔ _
+      rw [ih (p * y) (groupedAdd acc k (p * v)) q, mem_keys_groupedAdd acc k (p * v) q]
+      constructor
+      · intro h
+        rcases h with h | h
+        · rcases h with hk | hacc
+          · exact Or.inr ⟨(k, v), List.mem_cons.mpr (Or.inl rfl), hk.symm⟩
+          · exact Or.inl hacc
+        · obtain ⟨e, he, hke⟩ := h
+          exact Or.inr ⟨e, List.mem_cons.mpr (Or.inr he), hke⟩
+      · intro h
+        rcases h with hacc | hex
+        · exact Or.inl (Or.inr hacc)
+        · obtain ⟨e, he, hke⟩ := hex
+          rcases List.mem_cons.mp he with rfl | he
+          · exact Or.inl (Or.inl hke.symm)
+          · exact Or.inr ⟨e, he, hke⟩
+
+/-- Key-ascendingness survives filtering. -/
+theorem keyAsc_filter : ∀ (xs : List (Option Nat)) (p : Option Nat → Bool),
+    KeyAsc xs → KeyAsc (xs.filter p) := by
+  intro xs
+  induction xs with
+  | nil => intro p _; exact trivial
+  | cons x rest ih =>
+      intro p h
+      by_cases hx : p x = true
+      · rw [List.filter_cons_of_pos hx]
+        refine ⟨?_, ih p h.2⟩
+        intro y hy
+        exact h.1 y (List.mem_filter.mp hy).1
+      · rw [List.filter_cons_of_neg hx]
+        exact ih p h.2
+
+theorem isSome_some (q : Option Nat) : (match q with | some _ => true | none => false) =
+    Option.isSome q := by cases q <;> rfl
+
+/-- Reading `VerifierQuery.newLinear` back from its own success: the two length checks passed
+    and the query is the linear combination it built. The port writes the checks with `unless`,
+    which elaborates to an `if (a == b) = true`, so the case split is on the `Bool` and the
+    equalities are recovered with `beq_iff_eq`. -/
+theorem newLinear_ok {F C : Type} {q : VerifierQuery F C} {point : F} {label : CommitmentLabel}
+    {points : Array C} {scalars : Array F} {baseLabels : Array CommitmentLabel} {eval : F}
+    (h : VerifierQuery.newLinear point label points scalars baseLabels eval = .ok q) :
+    points.size = scalars.size ∧ points.size = baseLabels.size ∧
+      q = ⟨point, label, CommitmentReference.linear points scalars baseLabels, eval⟩ := by
+  cases hb1 : (points.size == scalars.size) with
+  | true =>
+      cases hb2 : (points.size == baseLabels.size) with
+      | true =>
+          rw [VerifierQuery.newLinear] at h
+          rw [hb1, hb2] at h
+          simp at h
+          exact ⟨Iff.mp beq_iff_eq hb1, Iff.mp beq_iff_eq hb2, by cases h; rfl⟩
+      | false =>
+          rw [VerifierQuery.newLinear] at h
+          rw [hb1, hb2] at h
+          cases h
+  | false =>
+      rw [VerifierQuery.newLinear] at h
+      rw [hb1] at h
+      cases h
+
+/-- Reading computeLinearizationCommitment back from its own success (verifier.rs:45-104):
+    the grouped list is the reverse weighted walk, the emitted scalars are the limb scalars
+    followed by the some-bucket totals in list order, and the expected evaluation is the
+    none-bucket subtracted from zero. This is step (d) of QFOLD's header, and it is generic
+    (D-P71): no plan, no fixture, no field-specific fact. The verifier.rs:84 guard is resolved
+    by split, and the impossible branch closes because a do-block that begins with throw is an
+    error. -/
+theorem computeLinearizationCommitment_ok {F G₁ : Type} [Field F] [BEq F]
+    (exprs : Array (Option Nat × F)) (vk : VerifyingKey F G₁) (x y xn sf : F)
+    (limbs : Array G₁) (q : VerifierQuery F G₁)
+    (hq : Midfall.Halo2.computeLinearizationCommitment exprs vk x y xn sf limbs = .ok q) :
+    ∃ (grouped : List (Option Nat × F)) (pts : List G₁) (labs : List CommitmentLabel),
+      grouped = (exprs.toList.reverse.foldl (init := (([] : List (Option Nat × F)), (1 : F)))
+          (fun st e => (groupedAdd st.1 e.1 (st.2 * e.2), st.2 * y))).1 ∧
+      q.eval = (0 : F) - (noneSnds grouped).sum ∧
+      q.commitment = CommitmentReference.linear pts.toArray
+        (((List.range limbs.size).foldl
+            (init := (([] : List F), (1 : F) - xn))
+            (fun (acc : List F × F) _ => (acc.1 ++ [acc.2], acc.2 * sf))).1
+          ++ someSnds grouped).toArray labs.toArray := by
+  rw [Midfall.Halo2.computeLinearizationCommitment] at hq
+  dsimp only at hq
+  split at hq
+  next =>
+    exact absurd hq (by simp [Bind.bind, Except.bind])
+  next =>
+    obtain ⟨st, h1, h2⟩ := peel_bind_ok hq
+    have hI := foldlM_linStep_ok vk _
+      (limbs.toList,
+        (List.foldl (fun acc x => (acc.1 ++ [acc.2], acc.2 * sf)) ([], 1 - xn)
+            (List.range limbs.size)).1,
+        List.replicate limbs.size CommitmentLabel.noLabel, 0)
+      st.1 st.2.1 st.2.2.1 st.2.2.2 h1
+    cases st with
+    | mk pts sc =>
+    cases sc with
+    | mk scals l =>
+    cases l with
+    | mk labs ee =>
+    have hnl := newLinear_ok h2
+    refine ⟨(List.foldl (fun st e => (groupedAdd st.1 e.1 (st.2 * e.2), st.2 * y)) ([], 1)
+        exprs.toList.reverse).1, pts, labs, rfl, ?_, ?_⟩
+    · rw [hnl.2.2]
+      simpa using hI.2
+    · rw [hnl.2.2]
+      rw [hI.1]
+
+/-- Two streams of the same length whose keys agree for one chosen key at every position and
+    whose values agree at every position have the same weighted bucket sum. This is what lets
+    the linearization read its buckets by FIXED COLUMN while the fold indexes them by
+    SELECTOR POSITION: the correspondence hypothesis supplies the positionwise equivalence. -/
+theorem linBucket_congr (y : F) (xs ys : List (Option Nat × F)) (q q' : Option Nat)
+    (hlen : xs.length = ys.length)
+    (hkey : ∀ i < xs.length, (xs.getD i (q, 0)).1 = q ↔ (ys.getD i (q', 0)).1 = q')
+    (hval : ∀ i < xs.length, (xs.getD i (q, 0)).2 = (ys.getD i (q', 0)).2) :
+    linBucket y xs.length xs q = linBucket y ys.length ys q' := by
+  induction xs generalizing ys q q' with
+  | nil =>
+      cases ys with
+      | nil => rfl
+      | cons b bs => exact absurd hlen (by simp)
+  | cons a as ih =>
+      cases ys with
+      | nil => exact absurd hlen.symm (by simp)
+      | cons b bs =>
+      cases a with
+      | mk k v =>
+      cases b with
+      | mk k' v' =>
+      have h0 : as.length = bs.length := by simpa using hlen
+      have htail : linBucket y as.length as q = linBucket y bs.length bs q' :=
+        ih bs q q' h0 (fun i hi => hkey (i + 1) (by simp [hi]))
+          (fun i hi => hval (i + 1) (by simp [hi]))
+      show (if k == q then y ^ as.length * v else 0) + linBucket y as.length as q
+          = (if k' == q' then y ^ bs.length * v' else 0) + linBucket y bs.length bs q'
+      rw [htail]
+      have hk : (k == q) = true ↔ (k' == q') = true := by
+        constructor <;> intro hh
+        · exact Iff.mpr obEq ((hkey 0 (by simp)).mp (Iff.mp obEq hh))
+        · exact Iff.mpr obEq ((hkey 0 (by simp)).mpr (Iff.mp obEq hh))
+      have hv : v = v' := hval 0 (by simp)
+      by_cases hq1 : (k == q) = true
+      · rw [if_pos hq1, if_pos (hk.mp hq1), h0, hv]
+      · rw [if_neg hq1, if_neg (fun hh => hq1 (hk.mpr hh))]
 end Midfall.Lowering

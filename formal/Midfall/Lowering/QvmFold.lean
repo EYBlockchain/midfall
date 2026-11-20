@@ -483,6 +483,90 @@ theorem ffState_foldl (yv : QVMFr) (sf : SelectorFoldPlan) :
 
 
 
+
+
+/-! ## QLIN2: the position bridge for the abstract stream
+
+    QFOLD's header named four remaining steps; QLIN landed (a) and (b) and named (c) and (d).
+    The generic halves of all five are now in QvmFoldLin (stream-indexed linBucket, WellSpaced
+    for a projection, the scalar-order pieces, newLinear_ok and the reading of
+    computeLinearizationCommitment). What the instantiation still needs, and what this section
+    supplies, is the bridge from the stream's getD/nth? to the plan's own identity list: the
+    list-index API this toolchain lacks (no List.get?_map, get?_zip or get_range') is proved
+    locally here, and nth?_linStream names the entry the stream carries at a position. -/
+
+theorem get?_map {α β : Type} (f : α → β) (xs : List α) (i : Nat) :
+    (xs.map f)[i]? = (xs[i]?).map f := by
+  induction xs with
+  | nil => rfl
+  | cons a as ih => cases i <;> simp [ih]
+
+theorem get?_zip {α β : Type} (xs : List α) (ys : List β) (i : Nat) (hi : i < xs.length)
+    (hj : i < ys.length) : (xs.zip ys)[i]? = some (xs[i]'hi, ys[i]'hj) := by
+  induction xs generalizing ys i with
+  | nil => exact absurd hi (by simp)
+  | cons a as ih =>
+      cases ys with
+      | nil => exact absurd hj (by simp)
+      | cons b bs =>
+          cases i with
+          | zero => rfl
+          | succ u => exact ih bs u (by simpa using hi) (by simpa using hj)
+
+theorem getD_eq_of_get? {α : Type} : ∀ (xs : List α) (i : Nat) (d a : α),
+    xs[i]? = some a → xs.getD i d = a := by
+  intro xs
+  induction xs with
+  | nil => intro i d a h; exact absurd h (by simp)
+  | cons x rest ih =>
+      intro i d a h
+      cases i with
+      | zero => simpa using h
+      | succ u => exact ih u d a (by simpa using h)
+
+theorem get?_range : ∀ (n : Nat), ∀ (o i : Nat), i < n →
+    (List.range' o n)[i]? = some (o + i) := by
+  intro n
+  induction n with
+  | zero => intro o i hi; exact absurd hi (by simp)
+  | succ n ih =>
+      intro o i hi
+      cases i with
+      | zero => rw [range'_succ]; simp
+      | succ u =>
+          rw [range'_succ]
+          exact (ih (o + 1) u (by omega)).trans (congrArg some (by omega))
+
+/-- The entry the abstract stream carries at a position of the global y-batch: the identity,
+    its value, and the position itself. -/
+theorem nth?_linStream (plan : QuotientProgramPlan) (vals : List QVMFr) (i : Nat)
+    (hi : i < (globalIdentities plan).length) (hi2 : i < vals.length) :
+    (linStream plan vals)[i]? =
+      some (streamEntry plan.selectorFold
+        (Prod.mk (Prod.mk ((globalIdentities plan)[i]'hi) ((vals[i]'hi2))) i)) := by
+  have hz : i < (List.zip (globalIdentities plan) vals).length := by
+    rw [List.length_zip]
+    omega
+  have hr : i < (List.range' 0 (globalIdentities plan).length).length := by
+    simp
+    omega
+  have h5 : (List.zip (globalIdentities plan) vals)[i]'hz
+      = Prod.mk ((globalIdentities plan)[i]'hi) ((vals[i]'hi2)) := by
+    simpa using get?_zip (globalIdentities plan) vals i hi hi2
+  have h4 : (List.range' 0 (globalIdentities plan).length)[i]'hr = i := by
+    have h := get?_range (globalIdentities plan).length 0 i (by simpa using hr)
+    simpa using h
+  have huf : linStream plan vals = List.map (streamEntry plan.selectorFold)
+      (List.zip (List.zip (globalIdentities plan) vals)
+        (List.range' 0 (globalIdentities plan).length)) := rfl
+  rw [huf, get?_map]
+  rw [get?_zip (List.zip (globalIdentities plan) vals)
+    (List.range' 0 (globalIdentities plan).length) i hz hr]
+  rw [h5, h4]
+  rfl
+
+
+
 /-- THE HEADLINE FOLD STATEMENT. The whole-stream fold over the plan's identity values
     equals what computeLinearizationCommitment computes from the verifier's partially
     evaluated identities: the query's expected evaluation is -qn (the None bucket,
