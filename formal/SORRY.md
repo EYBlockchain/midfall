@@ -64,7 +64,6 @@ comments but not string literals. The environment scan needs no exemption.
 | Midfall.Lowering.partialProgress_not_of_alwaysReverts | Midfall.Lowering.Partials | theorem | OPEN | - | `be6592a893f09eb2` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.partialSound_of_alwaysReverts | Midfall.Lowering.Partials | theorem | OPEN | - | `a8d81d9728b159f8` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.pcs_spec | Midfall.Lowering.Partials | theorem | OPEN | - | `cb944a2ab0dd5d56` | P-SE: semantic equivalence obligations |
-| Midfall.Lowering.quotientFold_matches_linearization | Midfall.Lowering.QvmFold | theorem | OPEN | - | `0c02c670544a79fb` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.quotientLin_spec | Midfall.Lowering.Partials | theorem | OPEN | - | `1d49cb9e6cf29a90` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.qvm_compile_correct_certifier | Midfall.Lowering.Qvm | theorem | OPEN | - | `562667ac0251841e` | P-SE: semantic equivalence obligations |
 | Midfall.Lowering.qvm_compile_correct_identity | Midfall.Lowering.Qvm | theorem | OPEN | - | `4855c6b810d4ec8b` | P-SE: semantic equivalence obligations |
