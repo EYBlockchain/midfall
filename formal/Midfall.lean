@@ -183,6 +183,7 @@ import Midfall.LoweringV3.WideningStages
 import Midfall.LoweringV3.Totality
 import Midfall.LoweringV3.QuotientRows
 import Midfall.LoweringV3.QuotientFrame
+import Midfall.LoweringV3.QuotientArms
 import Midfall.LoweringV3.Rows
 import Midfall.LoweringV3.VkRow
 import Midfall.LoweringV3.MemoryPairs

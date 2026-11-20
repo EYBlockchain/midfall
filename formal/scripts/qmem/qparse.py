@@ -1,0 +1,111 @@
+import re, sys
+
+GENFILE = '/Users/julian/midfall-c/formal/Midfall/Lowering/GenAstQvm.lean'
+D = "Bridge.Dialect c g"
+
+def sv(n):
+    return "BitVec.ofNat 256 %s" % n
+
+PUNCT = set('[](),')
+
+def tokenize(s):
+    out, i = [], 0
+    while i < len(s):
+        c = s[i]
+        if c in ' \n\t':
+            i += 1; continue
+        if c == '[' and s.startswith('[]', i):
+            out.append('[]'); i += 2; continue
+        if c in PUNCT:
+            out.append(c); i += 1; continue
+        if c == '"':
+            j = i + 1
+            while s[j] != '"':
+                j += 1
+            out.append(s[i:j+1]); i = j + 1; continue
+        j = i
+        while j < len(s) and s[j] not in ' [](),\n\t':
+            j += 1
+        out.append(s[i:j]); i = j
+    return out
+
+class P:
+    def __init__(self, toks): self.t = toks; self.i = 0
+    def peek(self): return self.t[self.i] if self.i < len(self.t) else None
+    def eat(self, x=None):
+        v = self.t[self.i]; self.i += 1
+        if x and v != x: raise Exception('expected %r got %r at %d' % (x, v, self.i))
+        return v
+
+def L(p):
+    """parse a bracketed list (or a single paren-expr) into a python list"""
+    t = p.peek()
+    if t == '[':
+        p.eat('[')
+        items = []
+        if p.peek() != ']':
+            while True:
+                items.append(parse_expr(p))
+                if p.peek() == ',': p.eat(','); continue
+                break
+        p.eat(']')
+        return items
+    if t == '[]':
+        p.eat('[]'); return []
+    return [parse_expr(p)]
+
+def parse_expr(p):
+    t = p.peek()
+    if t == '(':
+        p.eat('(')
+        e = parse_expr(p)
+        while p.peek() == ')':
+            p.eat(')')
+            break
+        return e
+    if t == '[' or t == '[]':
+        return ('list', L(p))
+    return parse_node(p)
+
+def parse_node(p):
+    t = p.eat()
+    if t == 'ylet':
+        name = p.eat(); return ('let', name[1:-1], parse_expr(p))
+    if t == 'yset':
+        name = p.eat(); return ('set', name[1:-1], parse_expr(p))
+    if t == 'yexpr':
+        return ('expr', parse_expr(p))
+    if t == 'yif':
+        c = parse_expr(p); return ('if', c, L(p))
+    if t == 'yfor':
+        init = L(p); cond = parse_expr(p); post = L(p); body = L(p)
+        return ('for', init, cond, post, body)
+    if t == 'yop':
+        op = p.eat().split('.')[-1]; return ('op', op, L(p))
+    if t == 'yvar':
+        return ('var', p.eat()[1:-1])
+    if t == 'ylit':
+        return ('lit', p.eat())
+    if t == 'ycall':
+        nm = p.eat()[1:-1]; return ('call', nm, L(p))
+    if t == 'Stmt.switch':
+        c = parse_expr(p); cs = parse_expr(p); d = parse_expr(p)
+        return ('switch', c, cs, d)
+    raise Exception('unknown node %r (next %r)' % (t, p.peek()))
+
+def arm_body(name):
+    src = open(GENFILE).read()
+    i = src.find('def %s ' % name)
+    assert i >= 0, name
+    j = src.find(': Block Op :=', i)
+    assert j > 0, name
+    k = src.find('\n\n', j)
+    body = src[j + len(': Block Op :='):k]
+    p = P(tokenize(body))
+    return L(p)
+
+if __name__ == '__main__':
+    for nm in sys.argv[1:]:
+        print('=====', nm)
+        for s in arm_body(nm):
+            print('   ', s)
