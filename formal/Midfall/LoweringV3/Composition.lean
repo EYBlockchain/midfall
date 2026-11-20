@@ -62,6 +62,37 @@ variable {p : ℕ} [Fact (Nat.Prime p)] {G₁ G₂ Gₜ : Type}
 
 /-! ## §1. The two prefix rows AT THE V3 VALIDITY (the card's Stop-if 2, taken and reported) -/
 
+/-! **A1 MEASURED THE BRIDGE. IT LANDS FOR `generated` AND DOES NOT LAND FOR `program`.**
+    A0 left this pair "discharged the moment the bridge lands". A1 tested every duplicated name in the
+    transitive closure of the two `programOk` copies at this commit (`/tmp/bridge_probe`, one
+    `rfl`/`Iff.rfl` per name, run with `lake env lean`). The result is not uniform:
+
+    * `generated`, `GeneratedBy`, `expectedConsts`, `cAddr`, `constsCoherent`, `noShadowProg`,
+      `noShadowCore`, `progConstNames`, `constLinesLiteral`, `cdBoundB`, `hasMultiPointSet`,
+      `transcriptRegionOk`, `walkWindowsOf`, `longestAbsorbRunOf`, `spansMeet`, `g1IdentityFloor`,
+      `negLagrangesFloor` and `permCommMatchRepaired` ARE definitionally equal across the two
+      namespaces - each pair has byte-identical text over shared leaves, so `rfl` closes it. In
+      particular `LoweringV3.GeneratedBy R ↔ LoweringV2.GeneratedBy R` is `Iff.rfl`, so every
+      `generated`-clause peel proved in `LoweringV2/Stages.lean` §3B is available here WITHOUT a
+      second copy.
+    * `callsResolved`, `gasScan` and `exitDisciplineFuel` are NOT. The first because
+      `callSitesSs`/`callSitesS`/`callSitesE`/`callSitesEs` is a `mutual` block, and Lean compiles
+      mutual recursion through `WellFounded.fix`, whose index and proof arguments differ between two
+      copies even when the bodies are identical - the same wall `Lowering/InlineConstants.lean:296-303`
+      records for `inExpr`. The other two because their step functions sit behind the same mutual/fix
+      shape. `programOkB` contains `callsResolved`, so `programOk` does not transfer, and
+      `ValidV3.toV2` still fails on exactly the field A0 named.
+    * Therefore the duplicate pair is NOT collapsed: `prefix_simV3`/`prefix_progV3` stay as written.
+      What A1 did instead is cheaper and does not need the bridge at all: the two rows' PROOF is being
+      written in `LoweringV2/Stages.lean` §3B-§3D against namespace-free facts about `R`'s own fields
+      (the three consts lookups, the three model numerals, the two wrapper flags, the two
+      `proofLayout` statics, the g1 floor, `p = frModulusConstant`), each of which BOTH validities
+      project - `LoweringV3/Statements.lean` already proves `lookup_expectedConsts_of_programOkB`,
+      `g1IdentityFloor_of_programOk`, `cdBound_of_valid` and `frModulus_of_programOk_of_modulus` over
+      its own copy. So one core proof serves both rows without any `programOk` bridge, and the bridge
+      is no longer on the critical path.
+    -/
+
 /-! **WHY `ValidV3.toV2` (card step 2) IS NOT LANDED.** The field copy fails, and it fails on ONE
     field: `h.program : LoweringV3.programOk R` is not the frozen `LoweringV2.programOk R`. The two
     texts are the same SHAPE - `programOkB R = true ∧ GasCallOk (R.prog 0 0) ∧ ExitDiscipline
