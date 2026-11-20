@@ -92,6 +92,7 @@
 -- NO Midfall/Instances/ IMPORT (D-P17).
 
 import Midfall.Lowering.Qvm
+import Midfall.Lowering.QvmFoldLin
 import Midfall.Halo2.Exec.Linearization
 import Midfall.Halo2.Exec.VerifyingKey
 import Midfall.Generator.Quotient.FoldCompute
@@ -322,6 +323,165 @@ theorem nth?_bucketPositionOf (xs : List Nat) (a : Nat) (h : a ∈ xs) :
 def limbScalars {F : Type} [Field F] (n : Nat) (xn sf : F) : List F :=
   ((List.range n).foldl (fun (acc : List F × F) _ => (acc.1 ++ [acc.2], acc.2 * sf))
     ([], 1 - xn)).1
+
+/-! ## QLIN: instantiating QFOLD's generic arithmetic at a plan
+
+    QFOLD's header named four remaining steps and said the row was wiring, not ideas. This
+    section lands steps (a) and (b) as named lemmas: the abstract stream at a plan, and the
+    per-step / whole-fold transport from `foldStep` (QVMFr arithmetic) to `fstep`
+    (`FrR` field arithmetic). Everything generic they need is in
+    `Midfall.Lowering.QvmFoldLin`, which this file now imports. The row itself is still open:
+    steps (c) and (d) - `WellSpaced` on the projected stream at a plan, and the reading of
+    `computeLinearizationCommitment`'s success - are not yet wired here. -/
+
+theorem qvmToFr_val (y : FrR) : qvmToFr y.val = y := by
+  unfold qvmToFr
+  exact (ZMod.natCast_val (R := FrR) y).trans (by rw [ZMod.cast_id])
+
+/-- The fold's own power, read in the field. -/
+theorem qvmToFr_pow_of (yv : QVMFr) (y : FrR) (hy : qvmToFr yv = y) :
+    ∀ (n : Nat), qvmToFr (qvmFrPow yv n) = y ^ n := by
+  intro n
+  induction n with
+  | zero => show qvmToFr (1 % qvmFrModulus) = y ^ 0; rfl
+  | succ n ih =>
+      show qvmToFr (qvmFrMul (qvmFrPow yv n) yv) = y ^ (n + 1)
+      rw [qvmToFr_mul, ih, hy, pow_succ]
+
+theorem qvmToFr_pow (y : FrR) (n : Nat) : qvmToFr (qvmFrPow y.val n) = y ^ n :=
+  qvmToFr_pow_of y.val y (qvmToFr_val y) n
+
+theorem getD_map {α β : Type} (f : α → β) (l : List α) (i : Nat) (d : α) :
+    (l.map f).getD i (f d) = f (l.getD i d) := by
+  induction l with
+  | nil => rfl
+  | cons a as ih => cases i <;> simp [ih]
+
+theorem sum_mul {E : Type} [Field E] (l : List E) (b : E) :
+    l.sum * b = (l.map fun x => x * b).sum := by
+  induction l with
+  | nil => simp
+  | cons a as ih => rw [List.sum_cons, add_mul, ih, List.map_cons, List.sum_cons]
+
+/-- The stream's bucket key at an identity: its own target. -/
+def streamKey (id : QuotientIdentity) : Option Nat :=
+  match id.target with | .main => (none : Option Nat) | .selector s => some s
+
+/-- The entry the abstract stream carries at a position of the global y-batch. -/
+def streamEntry (sf : SelectorFoldPlan) (a : (QuotientIdentity × QVMFr) × Nat) :
+    Option Nat × BEntry FrR :=
+  (streamKey a.1.1, ⟨a.2, (sf.gapFor a.1.1).getD 0, qvmToFr a.1.2⟩)
+
+/-- (a) The abstract stream at a plan: one entry per position of `globalIdentities`. The bucket
+    key is the identity's own target, so `fstep`'s `modify` lands on the same bucket as
+    `foldStep`'s; the index is the position (`SelectorFoldConsistent`'s second conjunct
+    makes that exact); the gap is the plan's own `gapFor`; and the value is the QVM's value read
+    in the field - the half `IdentityCorrespondence` ties to the verifier's tagged array. -/
+def linStream (plan : QuotientProgramPlan) (vals : List QVMFr) :
+    List (Option Nat × BEntry FrR) :=
+  let ids := globalIdentities plan
+  List.map (streamEntry plan.selectorFold)
+    (List.zip (List.zip ids vals) (List.range' 0 ids.length))
+
+/-- The `val` component of the stream: the tagged list the verifier's grouped walk consumes. -/
+def streamPairs (xs : List (Option Nat × BEntry FrR)) : List (Option Nat × FrR) :=
+  xs.map fun p => (p.1, p.2.val)
+
+theorem length_linStream (plan : QuotientProgramPlan) (vals : List QVMFr)
+    (h : (globalIdentities plan).length ≤ vals.length) :
+    (linStream plan vals).length = (globalIdentities plan).length := by
+  show List.length (List.map (streamEntry plan.selectorFold)
+      (List.zip (List.zip (globalIdentities plan) vals)
+        (List.range' 0 (globalIdentities plan).length)))
+      = (globalIdentities plan).length
+  have h2 : (List.range' 0 (globalIdentities plan).length).length
+      = (globalIdentities plan).length := by simp
+  have h3 : (List.zip (globalIdentities plan) vals).length
+      = (globalIdentities plan).length := by
+    rw [List.length_zip, Nat.min_eq_left h]
+  simp only [List.length_map, List.length_zip, h2, h3, Nat.min_self]
+
+/-- (b) The QVM fold's state read in the field. -/
+def ffState (st : FoldState) : FFold FrR := ⟨qvmToFr st.qn, st.buckets.map qvmToFr⟩
+
+theorem map_modify {α β : Type} (f : α → β) (g : α → α) (h : β → β)
+    (c : ∀ a, f (g a) = h (f a)) :
+    ∀ (l : List α) (i : Nat), (l.modify i g).map f = (l.map f).modify i h := by
+  intro l
+  induction l with
+  | nil => intro i; simp [List.modify_nil]
+  | cons a as ih =>
+      intro i
+      cases i with
+      | zero =>
+          show f (g a) :: as.map f = h (f a) :: as.map f
+          rw [c]
+      | succ u =>
+          have h1 : ((a :: as).modify (u + 1) g) = a :: as.modify u g := rfl
+          have h2 : ((f a :: as.map f).modify (u + 1) h) = f a :: (as.map f).modify u h := rfl
+          simp only [h1, h2, List.map_cons, ih]
+
+/-- (b) The per-step transport: `foldStep` read in the field is `fstep`. This is where
+    `qvmToFr_add`, `qvmToFr_mul`, `qvmToFr_pow` and `qvmToFr_val` do their work,
+    and it needs no canonicity hypothesis: `foldStep`'s `if gap = 0` arm is `fstep`'s
+    `y ^ 0` arm. -/
+theorem ffState_foldStep (yv : QVMFr) (sf : SelectorFoldPlan) (st : FoldState)
+    (id : QuotientIdentity) (v : QVMFr) (idx gap : Nat)
+    (hgap : gap = (sf.gapFor id).getD 0) :
+    ffState (foldStep yv sf st id v)
+      = fstep (qvmToFr yv) (ffState st) (streamEntry sf ((id, v), idx)) := by
+  obtain ⟨m1, m2, m3, target, m4⟩ := id
+  dsimp only [streamEntry, streamKey]
+  cases target with
+  | main =>
+      rw [foldStep]
+      dsimp only
+      simp only [ffState, fstep_none]
+      rw [qvmToFr_add, qvmToFr_mul]
+  | selector s =>
+      rw [foldStep]
+      dsimp only
+      simp only [ffState, fstep_some, ← hgap]
+      have hb : (st.buckets.modify s fun b =>
+              qvmFrAdd (if gap = 0 then b else qvmFrMul b (qvmFrPow yv gap)) v).map qvmToFr
+            = (st.buckets.map qvmToFr).modify s fun x => x * qvmToFr yv ^ gap + qvmToFr v := by
+        refine map_modify qvmToFr
+          (fun b => qvmFrAdd (if gap = 0 then b else qvmFrMul b (qvmFrPow yv gap)) v)
+          (fun x => x * qvmToFr yv ^ gap + qvmToFr v) ?_ st.buckets s
+        intro b
+        by_cases hg : gap = 0
+        · rw [if_pos hg, qvmToFr_add, hg, pow_zero, mul_one]
+        · rw [if_neg hg, qvmToFr_add, qvmToFr_mul, qvmToFr_pow_of yv (qvmToFr yv) rfl]
+      rw [hb]
+      rw [qvmToFr_mul]
+
+/-- (b), the whole fold: the QVM fold's state read in the field is the field fold over the same
+    abstract stream, starting the positions at `o`. -/
+theorem ffState_foldl (yv : QVMFr) (sf : SelectorFoldPlan) :
+    ∀ (src : List (QuotientIdentity × QVMFr)) (o : Nat) (st : FoldState),
+      ffState (List.foldl (fun st a => foldStep yv sf st a.1 a.2) st src)
+        = List.foldl (fstep (qvmToFr yv)) (ffState st)
+            (List.map (streamEntry sf) (List.zip src (List.range' o src.length))) := by
+  intro src
+  induction src with
+  | nil => intro o st; rfl
+  | cons a rest ih =>
+      intro o st
+      show ffState (List.foldl (fun st x => foldStep yv sf st x.1 x.2)
+            (foldStep yv sf st a.1 a.2) rest) = _
+      have h1 : ffState (foldStep yv sf st a.1 a.2)
+          = fstep (qvmToFr yv) (ffState st) (streamEntry sf ((a, o))) :=
+        ffState_foldStep yv sf st a.1 a.2 o ((sf.gapFor a.1).getD 0) rfl
+      have h2 := ih (o + 1) (foldStep yv sf st a.1 a.2)
+      rw [h1] at h2
+      have hzip : List.zip (a :: rest) (List.range' o (rest.length + 1))
+          = (a, o) :: List.zip rest (List.range' (o + 1) rest.length) := rfl
+      rw [List.length_cons] at *
+      rw [hzip, List.map_cons, List.foldl_cons]
+      exact h2
+
+
+
 
 /-- THE HEADLINE FOLD STATEMENT. The whole-stream fold over the plan's identity values
     equals what computeLinearizationCommitment computes from the verifier's partially

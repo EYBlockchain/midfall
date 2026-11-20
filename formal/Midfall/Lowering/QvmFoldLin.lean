@@ -736,4 +736,275 @@ theorem ffold_buckets (y : F) (xs : List (Option Nat × BEntry F)) (s : Nat) :
                   getD_modify_ne _ _ s s' (fun he => hss he)]
 
 
+/-! ## Instantiation support (QLIN)
+
+    Everything below is still generic (D-P71): it speaks about an abstract list of
+    (key, gap, index, value) entries and about the verifier's own grouped walk, never about a
+    plan or a fixture. What it supplies is the last mile QFOLD's header named as remaining:
+    the reverse-walk sum read off an indexed list (`linBucket_range`), the filtered
+    sub-list / sum-with-an-if bridge (`proj_map_sum_eq`), `WellSpaced` for a
+    bucket's sub-stream (`wellSpaced_proj`), the foldl that produces the verifier's
+    grouped list written as `gfoldGo` (`gfoldGo_foldl`), and a reading of
+    `computeLinearizationCommitment`'s emit step that names the appended scalars and the
+    subtracted None bucket (`foldlM_linStep_ok`). -/
+
+theorem range'_succ (o n : Nat) : List.range' o (n + 1) = o :: List.range' (o + 1) n := rfl
+
+/-- The sum over a bucket's sub-list is the sum over the whole stream with a zero for every
+    entry that is not in the bucket. No index hypothesis is needed: the entries are carried
+    through unchanged by `proj`. -/
+theorem proj_map_sum_eq (f : BEntry F → F) (s : Nat)
+    (xs : List (Option Nat × BEntry F)) :
+    ((proj s xs).map f).sum = (xs.map fun p => if p.1 == some s then f p.2 else 0).sum := by
+  induction xs with
+  | nil => rfl
+  | cons a as ih =>
+      cases a with
+      | mk k b =>
+      rw [List.map_cons, List.sum_cons]
+      by_cases hk : (k == some s) = true
+      · have hke : k = some s := Iff.mp beq_iff_eq hk
+        subst hke
+        rw [proj_same, List.map_cons, List.sum_cons, ih]
+        rw [if_pos (by rw [beq_iff_eq])]
+      · rw [if_neg hk]
+        cases k with
+        | none => rw [proj_none, zero_add]; exact ih
+        | some k' =>
+            have hne : ¬ (k' == s) = true := by
+              intro h
+              apply hk
+              rw [beq_iff_eq]
+              exact congrArg some (Iff.mp beq_iff_eq h)
+            rw [proj_ne s k' b as hne, zero_add]
+            exact ih
+
+/-- `linBucket` read as an indexed sum: the entry at position i of a list whose indices
+    start at o carries y to the power (o + length - 1 - i), i.e. its distance from the END of
+    the stream. This is the reverse walk of verifier.rs:75 made available termwise, which is
+    what lets a bucket's sparse fold be matched against it. -/
+theorem linBucket_range_aux (y : F) (q : Option Nat) :
+    ∀ (xs : List (Option Nat × F)) (o : Nat),
+      linBucket y xs.length xs q
+        = ((xs.zip (List.range' o xs.length)).map fun p =>
+            if p.1.1 == q then y ^ (xs.length + o - 1 - p.2) * p.1.2 else 0).sum := by
+  intro xs
+  induction xs with
+  | nil => intro o; rfl
+  | cons a as ih =>
+      intro o
+      cases a with
+      | mk k v =>
+      show (if k == q then y ^ as.length * v else 0) + linBucket y as.length as q = _
+      rw [ih (o + 1)]
+      simp only [List.length_cons, range'_succ]
+      have hzip : ((k, v) :: as).zip (o :: List.range' (o + 1) as.length)
+          = ((k, v), o) :: as.zip (List.range' (o + 1) as.length) := rfl
+      have hfun : (fun p : (Option Nat × F) × Nat =>
+            if p.1.1 == q then y ^ (as.length + 1 + o - 1 - p.2) * p.1.2 else 0)
+          = (fun p : (Option Nat × F) × Nat =>
+            if p.1.1 == q then y ^ (as.length + (o + 1) - 1 - p.2) * p.1.2 else 0) := by
+        funext p
+        cases p with
+        | mk e i =>
+        show (if e.1 == q then y ^ (as.length + 1 + o - 1 - i) * e.2 else 0) = _
+        rw [show as.length + 1 + o - 1 - i = as.length + (o + 1) - 1 - i from by omega]
+      rw [hzip, hfun]
+      simp only [List.map_cons, List.sum_cons]
+      have hexp : as.length + (o + 1) - 1 - o = as.length := by omega
+      rw [hexp]
+
+theorem linBucket_range (y : F) (xs : List (Option Nat × F)) (q : Option Nat) :
+    linBucket y xs.length xs q
+      = ((xs.zip (List.range' 0 xs.length)).map fun p =>
+          if p.1.1 == q then y ^ (xs.length - 1 - p.2) * p.1.2 else 0).sum := by
+  simpa using linBucket_range_aux y q xs 0
+
+/-- A stream whose entries carry their own position as `idx` and a gap of 1 is spaced
+    after `o - 1`: consecutive indices, consecutive gaps. The main accumulator's stream
+    is of exactly this shape. -/
+theorem spacedAfter_consecutive : ∀ (ps : List (BEntry F)) (o : Nat), 1 ≤ o →
+    (∀ i < ps.length, (ps.getD i ⟨0, 0, 0⟩).idx = o + i) →
+    (∀ i < ps.length, (ps.getD i ⟨0, 0, 0⟩).gap = 1) →
+    SpacedAfter (o - 1) ps := by
+  intro ps
+  induction ps with
+  | nil => intro o _ _ _; exact SpacedAfter.nil (o - 1)
+  | cons e ps ih =>
+      intro o ho hidx hgap
+      have he : e.idx = o := hidx 0 (by simp)
+      have hrest : ∀ i < ps.length, (ps.getD i ⟨0, 0, 0⟩).idx = (o + 1) + i := by
+        intro i hi
+        have h : (e :: ps).getD (i + 1) ⟨0, 0, 0⟩ = ps.getD i ⟨0, 0, 0⟩ := rfl
+        rw [← h]
+        have := hidx (i + 1) (by simp [hi])
+        omega
+      have hgaprest : ∀ i < ps.length, (ps.getD i ⟨0, 0, 0⟩).gap = 1 := by
+        intro i hi
+        have h : (e :: ps).getD (i + 1) ⟨0, 0, 0⟩ = ps.getD i ⟨0, 0, 0⟩ := rfl
+        rw [← h]
+        exact hgap (i + 1) (by simp [hi])
+      have htail : SpacedAfter e.idx ps := by
+        rw [he]
+        exact ih (o + 1) (by omega) hrest hgaprest
+      refine SpacedAfter.cons (o - 1) e ps (by omega) ?_ htail
+      have h1 : e.gap = 1 := hgap 0 (by simp)
+      rw [he]
+      omega
+
+/-- The verifier's grouped walk is `gfoldGo` with starting power 1 and an empty
+    accumulator: `foldl` over the reversed expression list, exactly as
+    `computeLinearizationCommitment` writes it. -/
+theorem gfoldGo_foldl (y : F) : ∀ (xs : List (Option Nat × F)) (acc : List (Option Nat × F))
+    (p : F),
+    (xs.foldl (init := (acc, p))
+        (fun st e => (groupedAdd st.1 e.1 (st.2 * e.2), st.2 * y)))
+        = (gfoldGo y xs p acc, p * y ^ xs.length) := by
+  intro xs
+  induction xs with
+  | nil => intro acc p; simp [gfoldGo]
+  | cons a as ih =>
+      intro acc p
+      cases a with
+      | mk k v =>
+      show (as.foldl (init := (groupedAdd acc k (p * v), p * y))
+            (fun st e => (groupedAdd st.1 e.1 (st.2 * e.2), st.2 * y))) = _
+      rw [ih (groupedAdd acc k (p * v)) (p * y)]
+      show (gfoldGo y as (p * y) (groupedAdd acc k (p * v)),
+            p * y * y ^ as.length) = (gfoldGo y as (p * y) (groupedAdd acc k (p * v)), _)
+      have hpow : p * y * y ^ as.length = p * y ^ (as.length + 1) := by
+        rw [pow_succ]
+        ring
+      rw [hpow, List.length_cons]
+
+/-- The values the linearization's MSM gets from the grouped list: the `some` entries,
+    in list order. -/
+def someSnds : List (Option Nat × F) → List F
+  | [] => []
+  | (some _, v) :: xs => v :: someSnds xs
+  | (none, _) :: xs => someSnds xs
+
+/-- The values folded into the expected evaluation instead of a point: the `none`
+    entries. -/
+def noneSnds : List (Option Nat × F) → List F
+  | [] => []
+  | (some _, v) :: xs => noneSnds xs
+  | (none, v) :: xs => v :: noneSnds xs
+
+theorem someSnds_map_tabulate (ks : List (Option Nat)) (f : Option Nat → F) :
+    someSnds (ks.map fun q => (q, f q))
+      = (ks.filter fun q => match q with | some _ => true | none => false).map f := by
+  induction ks with
+  | nil => rfl
+  | cons k ks ih =>
+      rw [List.map_cons, List.filter_cons]
+      cases k with
+      | none =>
+          show someSnds (ks.map fun q => (q, f q))
+            = (ks.filter fun q => match q with | some _ => true | none => false).map f
+          exact ih
+      | some c =>
+          show f (some c) :: someSnds (ks.map fun q => (q, f q))
+            = f (some c)
+              :: (ks.filter fun q => match q with | some _ => true | none => false).map f
+          exact congrArg (List.cons (f (some c))) ih
+
+/-- The `none` bucket's total is exactly what `linValAt none` reads back: the sum of the
+    `none` entries. This is the identity that turns the emit fold's subtraction into the
+    verifier's `expected_eval -= eval`. -/
+theorem linValAt_none (acc : List (Option Nat × F)) :
+    linValAt none acc = (noneSnds acc).sum := by
+  induction acc with
+  | nil => rfl
+  | cons a rest ih =>
+      cases a with
+      | mk k v =>
+      rw [linValAt_cons, ih]
+      cases k with
+      | none => rw [noneSnds, if_pos (by rw [beq_iff_eq]), List.sum_cons]
+      | some c =>
+          rw [noneSnds]
+          rw [if_neg (by intro h; exact absurd (Iff.mp beq_iff_eq h) (by simp)), zero_add]
+
+/-- A successful monadic bind has a successful left action and a successful continuation on
+    its result. The same shape as `Midfall.Lowering.peel_bind` (Qvm.lean:792), restated
+    here because this file does not import Qvm.lean and must not: the linearization leaf is
+    below the QVM in the dependency order. -/
+theorem peel_bind_ok {α β ε : Type} {x : Except ε α} {k : α → Except ε β} {b : β}
+    (h : (x >>= k) = .ok b) : ∃ a, x = .ok a ∧ k a = .ok b := by
+  cases x with
+  | ok a => exact ⟨a, rfl, h⟩
+  | error e => cases h
+
+/-- The emit step of `computeLinearizationCommitment` (verifier.rs:80-94), named so it
+    can be reasoned about: the local lambda inside the port is defeq to this. -/
+def linStep {G₁ : Type} (vk : VerifyingKey F G₁)
+    (st : List G₁ × List F × List CommitmentLabel × F) (entry : Option Nat × F) :
+    Except Fault (List G₁ × List F × List CommitmentLabel × F) :=
+  match entry with
+  | (some colIdx, eval) =>
+      match vk.fixedCommitments[colIdx]? with
+      | none => .error (Fault.panic "proofs/src/plonk/linearization/verifier.rs:84")
+      | some com =>
+        .ok (st.1 ++ [com], st.2.1 ++ [eval], st.2.2.1 ++ [CommitmentLabel.fixed colIdx],
+          st.2.2.2)
+  | (none, eval) => .ok (st.1, st.2.1, st.2.2.1, st.2.2.2 - eval)
+
+/-- What a successful emit fold records: the appended scalars are exactly the `some`
+    entries' values in list order, and the expected evaluation is the starting value minus the
+    `none` entries' sum. No sortedness is needed here - that is what `keySorted_tabulate`
+    is for. -/
+theorem foldlM_linStep_ok {G₁ : Type} (vk : VerifyingKey F G₁) :
+    ∀ (grouped : List (Option Nat × F))
+      (st : List G₁ × List F × List CommitmentLabel × F)
+      (pts : List G₁) (scals : List F) (labs : List CommitmentLabel) (ee : F),
+      grouped.foldlM (linStep vk) st = .ok (pts, scals, labs, ee) →
+      scals = st.2.1 ++ someSnds grouped ∧ ee = st.2.2.2 - (noneSnds grouped).sum := by
+  intro grouped
+  induction grouped with
+  | nil =>
+      intro st pts scals labs ee h
+      cases st with
+      | mk p sc =>
+        cases sc with
+        | mk s2 l2 =>
+        rw [List.foldlM_nil] at h
+        have h2 : Except.ok (p, s2, l2) = Except.ok (pts, scals, labs, ee) := h
+        cases h2
+        exact ⟨by simp [someSnds], by simp [noneSnds, sub_zero]⟩
+  | cons a rest ih =>
+      intro st pts scals labs ee h
+      cases a with
+      | mk k v =>
+      rw [List.foldlM_cons] at h
+      cases k with
+      | none =>
+          rw [linStep] at h
+          have h2 : List.foldlM (linStep vk) (st.1, st.2.1, st.2.2.1, st.2.2.2 - v) rest
+              = Except.ok (pts, scals, labs, ee) := h
+          have hI := ih _ pts scals labs ee h2
+          refine ⟨by rw [hI.1, someSnds], by rw [hI.2, noneSnds, List.sum_cons, sub_sub]⟩
+      | some c =>
+          cases hcm : vk.fixedCommitments[c]? with
+          | none =>
+              have hbad : linStep vk st (some c, v)
+                  = .error (Fault.panic "proofs/src/plonk/linearization/verifier.rs:84") := by
+                rw [linStep, hcm]
+              rw [hbad] at h
+              have h' : Except.error (Fault.panic "proofs/src/plonk/linearization/verifier.rs:84")
+                  = Except.ok (pts, scals, labs, ee) := h
+              cases h'
+          | some com =>
+              rw [linStep] at h
+              simp only [hcm] at h
+              have h2 : List.foldlM (linStep vk)
+                    (st.1 ++ [com], st.2.1 ++ [v], st.2.2.1 ++ [CommitmentLabel.fixed c],
+                      st.2.2.2) rest = Except.ok (pts, scals, labs, ee) := h
+              have hI := ih _ pts scals labs ee h2
+              have hc1 : scals = st.2.1 ++ someSnds ((some c, v) :: rest) := by
+                rw [hI.1]
+                simp [someSnds]
+              refine ⟨hc1, by rw [hI.2, noneSnds]⟩
+
+
 end Midfall.Lowering
