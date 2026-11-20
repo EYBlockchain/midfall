@@ -590,4 +590,319 @@ def naiveTransformIsWrong_ok : Bool :=
 #eval inlineShadowingKats_ok           -- expect true
 #eval naiveTransformIsWrong_ok         -- expect true
 
+/-! ### GEN.4 - the inliner distributes over a concatenation
+
+    TWO HALVES, NEITHER ABOUT A RENDER. (1) `inlineScan_append`: the walk is a `List.foldl`, so it
+    splits over `a ++ b` with the left block's binders THREADED into the right scan's shadow list -
+    `List.foldl_append` plus two accumulator facts about `stepAcc`. (2) `inlineScan_irrel`: a shadow
+    list that names no constant of the table is inert, so under `inline_append`'s `topBinders`
+    hypothesis the threaded scan collapses to the standalone one. `Midfall.LoweringV2.inline_append`
+    (`LoweringV2/ProgramLemmas.lean`) is (1) + (2) at `inlineFuel`. Everything is stated at
+    `fuel + 1` and the walk is NEVER unfolded at a literal fuel, which is what keeps each `rfl` here
+    cheap; the two falsifiers below are `rfl` at fuel 1 for the same reason.
+-/
+
+/-- `List.map` congruence, stated locally: `List.congr`/`List.map_congr` are not available here,
+    and the tree's own precedent is `LoweringV3/VkWindow.lean`'s `map_congr_of`. -/
+theorem inline_map_congr {α β : Type} (f g : α -> β) (l : List α) (h : ∀ x, f x = g x) :
+    List.map f l = List.map g l := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+      rw [List.map_cons, List.map_cons, h a]
+      exact congrArg (List.cons (g a)) ih
+
+/-- The `inlineStep` fold's starting accumulator: no statements yet, shadow list `sh`, nothing
+    exhausted. Named so its projections are lemmas. -/
+def initAcc (sh : List String) : Acc := { blks := [], sh := sh, exhausted := false }
+
+theorem initAcc_blks (sh : List String) : (initAcc sh).blks = [] := rfl
+theorem initAcc_sh (sh : List String) : (initAcc sh).sh = sh := rfl
+theorem initAcc_exhausted (sh : List String) : (initAcc sh).exhausted = false := rfl
+
+/-- The same shadow list, no accumulated statements, nothing exhausted. -/
+def resetAcc (acc : Acc) : Acc := { blks := [], sh := acc.sh, exhausted := false }
+
+theorem resetAcc_eq (acc : Acc) :
+    resetAcc acc = { blks := [], sh := acc.sh, exhausted := false } := rfl
+theorem resetAcc_blks (acc : Acc) : (resetAcc acc).blks = [] := rfl
+theorem resetAcc_sh (acc : Acc) : (resetAcc acc).sh = acc.sh := rfl
+theorem resetAcc_exhausted (acc : Acc) : (resetAcc acc).exhausted = false := rfl
+theorem resetAcc_initAcc (sh : List String) : resetAcc (initAcc sh) = initAcc sh := rfl
+
+/-- One step of the `inlineStep` fold, named so that the fold can be reasoned about: this is
+    `inlineStep`'s own accumulator lambda verbatim, and `inlineStep_eq_foldl` is the bridge. -/
+def stepAcc (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) : Acc :=
+  { blks := acc.blks ++ [(inlineStmtStep rec consts acc.sh s).1],
+    sh := acc.sh ++ boundOf s,
+    exhausted := acc.exhausted || (inlineStmtStep rec consts acc.sh s).2 }
+
+theorem stepAcc_blks (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) :
+    (stepAcc rec consts acc s).blks = acc.blks ++ [(inlineStmtStep rec consts acc.sh s).1] := rfl
+
+theorem stepAcc_sh (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) :
+    (stepAcc rec consts acc s).sh = acc.sh ++ boundOf s := rfl
+
+theorem stepAcc_exhausted (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) :
+    (stepAcc rec consts acc s).exhausted =
+      (acc.exhausted || (inlineStmtStep rec consts acc.sh s).2) := rfl
+
+theorem resetAcc_stepAcc (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (acc : Acc) (s : Stmt EVM.Op) :
+    resetAcc (stepAcc rec consts acc s) = resetAcc (stepAcc rec consts (resetAcc acc) s) := by
+  rw [resetAcc_eq, resetAcc_eq, stepAcc_sh, stepAcc_sh, resetAcc_sh]
+
+theorem inlineStep_eq_foldl (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts)
+    (sh : List String) (bl : List (Stmt EVM.Op)) :
+    inlineStep rec consts sh bl =
+      { blks := (bl.foldl (stepAcc rec consts) (initAcc sh)).blks,
+        exhausted := (bl.foldl (stepAcc rec consts) (initAcc sh)).exhausted } := by
+  unfold inlineStep stepAcc initAcc
+  rfl
+
+theorem foldl_stepAcc_sh (rec : List String -> List (Stmt EVM.Op) -> SRes) (consts : Consts) :
+    ∀ (bl : List (Stmt EVM.Op)) (acc : Acc),
+      (bl.foldl (stepAcc rec consts) acc).sh = acc.sh ++ bl.flatMap boundOf := by
+  intro bl
+  induction bl with
+  | nil => intro acc; rw [List.foldl_nil, List.flatMap_nil, List.append_nil]
+  | cons s bl ih =>
+      intro acc
+      rw [List.foldl_cons, ih, stepAcc_sh, List.flatMap_cons, List.append_assoc]
+
+theorem foldl_stepAcc_blks_split (rec : List String -> List (Stmt EVM.Op) -> SRes)
+    (consts : Consts) :
+    ∀ (bl : List (Stmt EVM.Op)) (acc : Acc),
+      (bl.foldl (stepAcc rec consts) acc).blks =
+        acc.blks ++ (bl.foldl (stepAcc rec consts) (resetAcc acc)).blks := by
+  intro bl
+  induction bl with
+  | nil => intro acc; rw [List.foldl_nil, List.foldl_nil, resetAcc_blks, List.append_nil]
+  | cons s bl ih =>
+      intro acc
+      have A : (s :: bl).foldl (stepAcc rec consts) acc
+          = bl.foldl (stepAcc rec consts) (stepAcc rec consts acc s) := by rw [List.foldl_cons]
+      have B : (s :: bl).foldl (stepAcc rec consts) (resetAcc acc)
+          = bl.foldl (stepAcc rec consts) (stepAcc rec consts (resetAcc acc) s) :=
+        by rw [List.foldl_cons]
+      rw [A, ih (stepAcc rec consts acc s), B, ih (stepAcc rec consts (resetAcc acc) s)]
+      rw [stepAcc_blks, stepAcc_blks, resetAcc_blks, resetAcc_sh, resetAcc_stepAcc]
+      rw [List.nil_append, ← List.append_assoc]
+
+/-- **GEN.4 STEP 2.** The scan of a concatenation is the scan of the left block followed by the scan
+    of the right block AT THE SHADOW LIST THE LEFT BLOCK LEAVES BEHIND. The threading is not
+    decoration: `inlineScan_append_is_threaded` below falsifies the unthreaded form. -/
+theorem inlineScan_append (fuel : Nat) (consts : Consts) (sh : List String)
+    (a b : List (Stmt EVM.Op)) :
+    (inlineScan (fuel + 1) consts sh (a ++ b)).blks =
+      (inlineScan (fuel + 1) consts sh a).blks ++
+        (inlineScan (fuel + 1) consts (sh ++ a.flatMap boundOf) b).blks := by
+  have h1 : ∀ (bl : List (Stmt EVM.Op)) (s : List String),
+      (inlineScan (fuel + 1) consts s bl).blks =
+        (bl.foldl (stepAcc (inlineScan fuel consts) consts) (initAcc s)).blks := by
+    intro bl s
+    rw [show (inlineScan (fuel + 1) consts s bl).blks =
+          (inlineStep (inlineScan fuel consts) consts s bl).blks from rfl,
+        inlineStep_eq_foldl]
+  rw [h1, h1, h1, List.foldl_append, foldl_stepAcc_blks_split]
+  rw [resetAcc_eq, foldl_stepAcc_sh, initAcc_sh]
+  rw [show initAcc (sh ++ a.flatMap boundOf) =
+        { blks := [], sh := sh ++ a.flatMap boundOf, exhausted := false } from rfl]
+
+/-! #### A shadow list that names no constant is inert -/
+
+theorem shadowed_append_or (sh t : List String) (x : String) :
+    shadowed (sh ++ t) x = (shadowed sh x || shadowed t x) := by
+  induction sh generalizing t with
+  | nil => simp [shadowed]
+  | cons y ys ih =>
+      by_cases h : y == x
+      · simp [shadowed, h, ih]
+      · simp [shadowed, h, ih]
+
+theorem shadowed_true_iff_mem (sh : List String) (x : String) :
+    shadowed sh x = true ↔ x ∈ sh := by
+  induction sh with
+  | nil => simp [shadowed]
+  | cons y ys ih =>
+      by_cases h : y = x
+      · subst h
+        simp [shadowed]
+      · have hb : ¬ (y == x) := fun hh => h (beq_iff_eq.mp hh)
+        have hxy : ¬ (x = y) := fun hh => h hh.symm
+        simp [shadowed, hb, ih, hxy]
+
+theorem lookup_none_of_not_mem (consts : Consts) (x : String) (h : x ∉ consts.map Prod.fst) :
+    consts.lookup x = none := by
+  induction consts with
+  | nil => rfl
+  | cons c rest ih =>
+      cases c with
+      | mk k b =>
+        have hcf : ¬ (x == k) := by
+          intro heq
+          exact h (by simp [beq_iff_eq.mp heq])
+        have hrest : x ∉ rest.map Prod.fst := by
+          intro hx
+          exact h (by simp [hx])
+        simp only [List.lookup_cons, hcf]
+        exact ih hrest
+
+theorem inExpr_irrel (consts : Consts) (sh : List String)
+    (hsh : ∀ x ∈ sh, x ∉ consts.map Prod.fst) :
+    ∀ (fuel : Nat) (t : List String) (e : Expr EVM.Op),
+      inExpr fuel e consts (sh ++ t) = inExpr fuel e consts t := by
+  intro fuel
+  induction fuel with
+  | zero => intro t e; rfl
+  | succ F ih =>
+      intro t e
+      cases e with
+      | lit l => rfl
+      | var x =>
+          by_cases h1 : shadowed t x
+          · have h2 : shadowed (sh ++ t) x = true := by
+              rw [shadowed_append_or, h1]
+              simp
+            simp [inExpr, h1, h2]
+          · by_cases h2 : shadowed (sh ++ t) x
+            · have h1f : shadowed t x = false := by
+                cases hz : shadowed t x with
+                | true => exact absurd hz h1
+                | false => rfl
+              have hx : x ∈ sh := by
+                rw [shadowed_append_or] at h2
+                rw [h1f, Bool.or_false] at h2
+                rwa [shadowed_true_iff_mem] at h2
+              have hl : consts.lookup x = none :=
+                lookup_none_of_not_mem consts x (hsh x hx)
+              simp [inExpr, h1, h2, hl]
+            · simp [inExpr, h1, h2]
+      | builtin op args =>
+          simp only [inExpr]
+          congr 1
+          exact inline_map_congr (fun a => inExpr F a consts (sh ++ t))
+            (fun a => inExpr F a consts t) args (fun a => ih t a)
+      | call f args =>
+          simp only [inExpr]
+          congr 1
+          exact inline_map_congr (fun a => inExpr F a consts (sh ++ t))
+            (fun a => inExpr F a consts t) args (fun a => ih t a)
+
+theorem inlineStmtStep_irrel (rec₁ rec₂ : List String -> List (Stmt EVM.Op) -> SRes)
+    (consts : Consts) (sh : List String) (hsh : ∀ x ∈ sh, x ∉ consts.map Prod.fst)
+    (hrec : ∀ (u : List String) (bl : List (Stmt EVM.Op)), rec₁ (sh ++ u) bl = rec₂ u bl) :
+    ∀ (t : List String) (s : Stmt EVM.Op),
+      inlineStmtStep rec₁ consts (sh ++ t) s = inlineStmtStep rec₂ consts t s := by
+  intro t s
+  have key : ∀ (u : List String) (e : Expr EVM.Op),
+      inExpr exprFuel e consts (sh ++ u) = inExpr exprFuel e consts u :=
+    inExpr_irrel consts sh hsh exprFuel
+  cases s with
+  | block b => simp only [inlineStmtStep, hrec]
+  | funDef n ps rs body => simp only [inlineStmtStep, hrec, List.append_assoc]
+  | letDecl xs e => simp only [inlineStmtStep, key]
+  | assign xs e => simp only [inlineStmtStep, key]
+  | cond c body => simp only [inlineStmtStep, hrec, key]
+  | «switch» c cs d => simp only [inlineStmtStep, hrec, key]
+  | forLoop init c post body => simp only [inlineStmtStep, hrec, key, List.append_assoc]
+  | exprStmt e => simp only [inlineStmtStep, key]
+  | «break» => rfl
+  | «continue» => rfl
+  | «leave» => rfl
+
+theorem foldl_stepAcc_irrel (rec₁ rec₂ : List String -> List (Stmt EVM.Op) -> SRes)
+    (consts : Consts) (sh : List String) (_hsh : ∀ x ∈ sh, x ∉ consts.map Prod.fst)
+    (h : ∀ (t : List String) (s : Stmt EVM.Op),
+        inlineStmtStep rec₁ consts (sh ++ t) s = inlineStmtStep rec₂ consts t s) :
+    ∀ (bl : List (Stmt EVM.Op)) (acc₁ acc₂ : Acc),
+      acc₁.blks = acc₂.blks → acc₁.exhausted = acc₂.exhausted → acc₁.sh = sh ++ acc₂.sh →
+      (bl.foldl (stepAcc rec₁ consts) acc₁).blks = (bl.foldl (stepAcc rec₂ consts) acc₂).blks ∧
+      (bl.foldl (stepAcc rec₁ consts) acc₁).sh = sh ++ (bl.foldl (stepAcc rec₂ consts) acc₂).sh ∧
+      (bl.foldl (stepAcc rec₁ consts) acc₁).exhausted =
+        (bl.foldl (stepAcc rec₂ consts) acc₂).exhausted := by
+  intro bl
+  induction bl with
+  | nil => intro acc₁ acc₂ h1 h2 h3; rw [List.foldl_nil, List.foldl_nil]; exact ⟨h1, h3, h2⟩
+  | cons s bl ih =>
+      intro acc₁ acc₂ h1 h2 h3
+      have hgs : inlineStmtStep rec₁ consts acc₁.sh s = inlineStmtStep rec₂ consts acc₂.sh s := by
+        rw [h3]
+        exact h acc₂.sh s
+      have hbs : (stepAcc rec₁ consts acc₁ s).blks = (stepAcc rec₂ consts acc₂ s).blks := by
+        rw [stepAcc_blks, stepAcc_blks, h1, hgs]
+      have hes : (stepAcc rec₁ consts acc₁ s).exhausted =
+          (stepAcc rec₂ consts acc₂ s).exhausted := by
+        rw [stepAcc_exhausted, stepAcc_exhausted, h2, hgs]
+      have hss : (stepAcc rec₁ consts acc₁ s).sh = sh ++ (stepAcc rec₂ consts acc₂ s).sh := by
+        rw [stepAcc_sh, stepAcc_sh, h3, List.append_assoc]
+      rw [List.foldl_cons, List.foldl_cons]
+      exact ih _ _ hbs hes hss
+
+theorem inlineStep_irrel (rec₁ rec₂ : List String -> List (Stmt EVM.Op) -> SRes)
+    (consts : Consts) (sh : List String) (hsh : ∀ x ∈ sh, x ∉ consts.map Prod.fst)
+    (hrec : ∀ (u : List String) (bl : List (Stmt EVM.Op)), rec₁ (sh ++ u) bl = rec₂ u bl) :
+    ∀ (t : List String) (bl : List (Stmt EVM.Op)),
+      inlineStep rec₁ consts (sh ++ t) bl = inlineStep rec₂ consts t bl := by
+  have h := inlineStmtStep_irrel rec₁ rec₂ consts sh hsh hrec
+  intro t bl
+  rw [inlineStep_eq_foldl, inlineStep_eq_foldl]
+  have hh := foldl_stepAcc_irrel rec₁ rec₂ consts sh hsh h bl
+    (initAcc (sh ++ t)) (initAcc t) rfl rfl rfl
+  rw [hh.1, hh.2.2]
+
+theorem inlineScan_irrel (consts : Consts) :
+    ∀ (fuel : Nat) (sh t : List String) (bl : List (Stmt EVM.Op)),
+      (∀ x ∈ sh, x ∉ consts.map Prod.fst) →
+      inlineScan fuel consts (sh ++ t) bl = inlineScan fuel consts t bl := by
+  intro fuel
+  induction fuel with
+  | zero => intro sh t bl _; rfl
+  | succ F ih =>
+      intro sh t bl hsh
+      refine inlineStep_irrel (inlineScan F consts) (inlineScan F consts) consts sh hsh ?_ t bl
+      intro u bl
+      exact ih sh u bl hsh
+
+/-! #### The falsifier: the threading is load-bearing (GEN.4 step 4) -/
+
+def inlineAppendFalsA : List (Stmt EVM.Op) :=
+  [Stmt.letDecl ["X"] (some (Expr.lit (Literal.number 1)))]
+
+def inlineAppendFalsB : List (Stmt EVM.Op) :=
+  [Stmt.exprStmt (Expr.builtin EVM.Op.mstore [Expr.var "X", Expr.lit (Literal.number 0)])]
+
+/-- Does the second statement of the block read `X` as a VARIABLE? A hand-written observation, used
+    because `SyntaxEq.stmtsBeq` is compiled through `WellFounded.fix` and does not reduce in the
+    kernel, so `decide` gets stuck on it (measured). -/
+def readsX : List (Stmt EVM.Op) -> Bool
+  | [_, Stmt.exprStmt (Expr.builtin _ (Expr.var "X" :: _))] => true
+  | _ => false
+
+/-- The UNTHREADED equation - second scan at the ORIGINAL shadow list - is FALSE: `a` binds `X`,
+    `b` reads `X`, and `X` is a constant name, so threading leaves the read alone and not threading
+    substitutes 7 into it. GEN.4 step 4's falsifier, and the reason `inline_append` carries a
+    `topBinders` side condition at all. -/
+theorem inlineScan_append_is_threaded :
+    ¬ ((inlineScan 1 [("X", 7)] [] (inlineAppendFalsA ++ inlineAppendFalsB)).blks =
+       (inlineScan 1 [("X", 7)] [] inlineAppendFalsA).blks ++
+        (inlineScan 1 [("X", 7)] [] inlineAppendFalsB).blks) := by
+  intro h
+  have h1 : readsX ((inlineScan 1 [("X", 7)] []
+      (inlineAppendFalsA ++ inlineAppendFalsB)).blks) = true := rfl
+  have h2 : readsX ((inlineScan 1 [("X", 7)] [] inlineAppendFalsA).blks
+      ++ (inlineScan 1 [("X", 7)] [] inlineAppendFalsB).blks) = false := rfl
+  rw [h] at h1
+  rw [h2] at h1
+  exact absurd h1 Bool.false_ne_true
+
 end Midfall.Lowering.Inline
+
+-- GEN.4: the two new facts are sorry-free, and their axiom sets are the standard three minus
+-- `Classical.choice` (the walk is computational).
+#print axioms Midfall.Lowering.Inline.inlineScan_append
+#print axioms Midfall.Lowering.Inline.inlineScan_append_is_threaded

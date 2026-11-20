@@ -153,7 +153,30 @@ the Python gate and `lake build`.** **Other gates it printed green: check_hypoth
    they live in A1's file, and each holds the `ValidV3`-class facts needed to feed
    `prog_slices_decompV3 R hns vkAddr qAddr c g`. **Blocks: the cone's `prog_slices_decomp` row, and
    it needs `inline_append` (GEN.4, registered, cone `-`) proved first. WP-A2 did not reach it inside
-   its box; the goal state above is the exact one.**
+   its box; the goal state above is the exact one.
+
+   **GEN.4 CLOSED THE `inline_append` HALF (this work package, on `t/GEN4`).**
+   `Midfall.LoweringV2.inline_append` (`ProgramLemmas.lean:31`) is PROVED - statement unchanged, no
+   hypothesis added to `ValidV3`/`ValidW`, axioms `[propext, Classical.choice, Quot.sound]`, no
+   `native_decide`. It rests on `Midfall.Lowering.Inline.inlineScan_append`
+   (`Lowering/InlineConstants.lean`, the threaded accumulator fact: `foldl_stepAcc_sh` +
+   `foldl_stepAcc_blks_split` + `List.foldl_append`) and on `Inline.inlineScan_irrel`, which is the
+   projection the shadow condition was always meant to do: a shadow list naming no constant is inert,
+   so `topBinders a` collapses to `[]`. TWO PROVED FALSIFIERS, both by `rfl` on a hand-written
+   observation (`SyntaxEq.stmtsBeq` is compiled through `WellFounded.fix` and does not kernel-reduce,
+   measured): `Inline.inlineScan_append_is_threaded` (the unthreaded scan equation is FALSE) and
+   `inline_append_needs_h` (this statement with `h` dropped is FALSE) - the B-5/D-13 `r` hazard,
+   exhibited rather than asserted. **WHAT REMAINS IS THE RE-POINT, AND IT IS NOT A CONE DROP ON ITS
+   OWN.** `run_split`/`run_join` (`LoweringV2/Stages.lean:528`/`:552`) still cite the V2 leaf, which
+   stays FALSE for a valid render until they do not. The V3-side twin must live where the import is
+   legal (`PrefixV3.lean`, A1b's pattern) and take `hns : noShadowB R = true` projected by
+   `noShadow_of_programOk` - `Stages.lean` may NOT import `LoweringV3`. Because `prog_slices_decompV3`
+   is itself still a sorry, the re-point MOVES the ROOT row from the V2 leaf to the V3 leaf and leaves
+   both cones where they are (A1b's measurement, re-confirmed by this card: `inline_append` alone moves
+   neither cone, its register row was cone `-`). The count drops only when ST.11 proves the V3 text;
+   the `inline_append` ingredient is no longer missing, and what ST.11's own note lists besides it -
+   `List.filterMap_append` for `hoist`, `hoist preSlice = hoist mainLocalsInlined = []` - are emitter
+   facts, not shadow facts.**
 
 9. **PG-WORLDEQ (ST.10/SIM.3): `twoOutcomes_of_exitDiscipline` is one Step induction behind a
    second registered hole.** Its conclusion is

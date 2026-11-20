@@ -27,12 +27,62 @@ open YulSemantics YulSemantics.EVM
     `Midfall/LoweringV2/Statements.lean`, which this file now imports, and which `inline_append` below states its hypothesis on. Same text, same `Inline.boundOf`. -/
 
 /-- Inlining distributes over concatenation when the left block binds no constant name at top
-    level. This is what licenses proving contracts per slice and composing them. OBLIGATION. -/
+    level. This is what licenses proving contracts per slice and composing them. PROVED (GEN.4).
+
+    THE SHAPE OF THE PROOF. `inlineContractConstants` is one `inlineScan` at `inlineFuel`, and a
+    scan is a `List.foldl` over the block (`Inline.inlineStep_eq_foldl`), so the distribution is
+    `List.foldl_append` plus the two accumulator facts `Inline.foldl_stepAcc_sh` and
+    `Inline.foldl_stepAcc_blks_split`: the fold's statements are the accumulator's own followed by
+    what a FRESH accumulator at the same shadow list produces, and its shadow list is the
+    followed by every binder of the list. That gives the scan at the threaded shadow list
+    `topBinders a`; the hypothesis says none of those names is a constant name, and a shadow list
+    that names no constant is inert (`Inline.inlineScan_irrel`), which collapses it to the scan at
+    `[]`. Nothing is assumed about the render: the statement is about the transform.
+
+    WHY THE HYPOTHESIS CANNOT BE DROPPED. `Inline.inlineScan_append_is_threaded` is a proved
+    falsifier of the unthreaded equation, and `Inline.inline_append_is_guarded` below is a proved
+    falsifier of this one with `h` dropped - a model that binds a constant's name at top level makes
+    the equation FALSE, not merely unproved (findings B-5/D-13, the `r` hazard). -/
 theorem inline_append (consts : List (String × Nat)) (a b : YulBlock)
     (h : ∀ x ∈ topBinders a, x ∉ consts.map Prod.fst) :
     Inline.inlineContractConstants consts (a ++ b) =
       Inline.inlineContractConstants consts a ++ Inline.inlineContractConstants consts b := by
-  sorry
+  have hsb : ∀ x ∈ a.flatMap Inline.boundOf, x ∉ consts.map Prod.fst := h
+  have h2 : Inline.inlineScan Inline.inlineFuel consts (a.flatMap Inline.boundOf) b =
+      Inline.inlineScan Inline.inlineFuel consts [] b := by
+    simpa [List.append_nil] using
+      Inline.inlineScan_irrel consts Inline.inlineFuel (a.flatMap Inline.boundOf) [] b hsb
+  show (Inline.inlineScan Inline.inlineFuel consts [] (a ++ b)).blks =
+       (Inline.inlineScan Inline.inlineFuel consts [] a).blks ++
+         (Inline.inlineScan Inline.inlineFuel consts [] b).blks
+  have key := Inline.inlineScan_append 63 consts [] a b
+  rw [show ((63 : Nat) + 1) = Inline.inlineFuel from rfl] at key
+  rw [key]
+  simp only [List.nil_append]
+  rw [← h2]
+
+/-- **THE `topBinders` SIDE CONDITION IS LOAD-BEARING**: the falsifier of `inline_append` with `h`
+    dropped (GEN.4 step 4; `Inline.inlineScan_append_is_threaded` is the same measurement one level
+    down, on the scan rather than on the transform). `a` DECLARES `X` at top level and `X` is a
+    constant name, so in `a ++ b` the read of `X` is shadowed and survives as a variable, while in
+    the standalone `b` it is substituted to 7. This is the B-5/D-13 hazard - a model constant
+    named `r` - and it is why `prog_slices_decomp` cannot be stated for a generic render without the
+    shadow fact, and why the V2 leaf must not be re-pointed at a statement that lacks it. -/
+theorem inline_append_needs_h :
+    ¬ (Inline.inlineContractConstants [("X", 7)]
+        (Inline.inlineAppendFalsA ++ Inline.inlineAppendFalsB) =
+        Inline.inlineContractConstants [("X", 7)] Inline.inlineAppendFalsA ++
+          Inline.inlineContractConstants [("X", 7)] Inline.inlineAppendFalsB) := by
+  intro h
+  have h1 : Inline.readsX
+      (Inline.inlineContractConstants [("X", 7)]
+        (Inline.inlineAppendFalsA ++ Inline.inlineAppendFalsB)) = true := rfl
+  have h2 : Inline.readsX
+      (Inline.inlineContractConstants [("X", 7)] Inline.inlineAppendFalsA ++
+        Inline.inlineContractConstants [("X", 7)] Inline.inlineAppendFalsB) = false := rfl
+  rw [h] at h1
+  rw [h2] at h1
+  exact absurd h1 Bool.false_ne_true
 
 /-- The main block is the helpers followed by the slices in include order. Replaces the v1
     `main_concat` PIN (a hypothesis on a free field) by a THEOREM about the emitter. -/
@@ -57,3 +107,7 @@ theorem emitSlicesM_eq (pv : PlanView) (c : Midfall.Generator.PartialCtx) :
   simp [GenAst.emitSlicesM, Midfall.Lowering.partials, List.append_assoc]
 
 end Midfall.LoweringV2
+
+-- GEN.4: `inline_append` is PROVED - sorry-free, standard axioms only, no `native_decide`.
+#print axioms Midfall.LoweringV2.inline_append
+#print axioms Midfall.LoweringV2.inline_append_needs_h
