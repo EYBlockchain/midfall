@@ -199,18 +199,26 @@ Q1 STATUS (this box: what landed, what is measured-blocked, and where the leaves
     'evalQuotientIdentity_one' - the first theorem in the tree to name the reference VM's output -
     including 'evalQuotientIdentity_empty', which is the exact equation QuotientInterp.lean:354
     records as FAILING by 'rfl'.
-  * ROW.Q.3 is LANDED ON THE DISPATCH SIDE and blocked on the EMITTER SIDE, and the block is now
-    measured rather than assumed. 'selectSwitch' does not reduce under 'simp' even at a literal
-    label, because its 'decide' is on 'D.litValue (Literal.number n)'; 'qDialect_litValue_number' is
-    'rfl', and with 'decide_eq_true' the dispatch reduces at a SYMBOLIC template table
-    ('qSwitch_arm', 'qSwitch_failClosed' - the latter is the prose fail-closed claim at
-    QuotientInterp.lean:102, now a theorem). But the arm BODIES are not reachable from the emitter:
-    'simp only [qvmOpcodeArms, qvmNativeArms, qvmFoldArms]' with all 31 'opUsage' flags pinned dies
-    with a deterministic timeout at 'whnf' (200000 heartbeats, ~11 s), because unfolding the
-    definition normalises all 31 bodies before 'List.lookup' can act. An arm lemma therefore cannot
-    name the emitted block. The fix is the QEMIT3 precedent - lift each arm body to a top-level 'def'
-    in 'GenAstQvm.lean' so a lemma can state the arm generically - which is an emitter change this
-    card does not make unasked. NONE of the eight 'QArmFamily' arms is closed.
+  * ROW.Q.3 IS LANDED ON THREE SIDES AND OPEN ON ONE. (i) DISPATCH: 'selectSwitch' does not reduce
+    under 'simp' even at a literal label, because its 'decide' is on 'D.litValue (Literal.number n)';
+    'qDialect_litValue_number' is 'rfl', and with 'decide_eq_true' the dispatch reduces at a SYMBOLIC
+    template table ('qSwitch_arm', 'qSwitch_failClosed' - the latter is the prose fail-closed claim at
+    QuotientInterp.lean:102, now a theorem). (ii) IDENTIFICATION: the emitter change Q1 named as the
+    blocker was made by QEMIT4 - every one of the 31 arm bodies is a top-level 'def' 'qArmBodyX' in
+    'GenAstQvm.lean' (a binding change, values untouched: the 'numA_*' reconstruction gates and the
+    object fingerprint are unmoved), and ALL EIGHT 'QArmFamily' THEOREMS ARE PROVED
+    ('qArmFamily_push/token/arith/fused/run/limb/fold/native', QuotientInterp.lean section 6.5): for
+    every arm, the emitter's own arm list carries the named body at that arm's label. Q1's sentence
+    "NONE of the eight 'QArmFamily' arms is closed" is STALE and is corrected here. (iii) VALUE, for
+    the register-only arms: QVAL lands the first instances of the other half QEMIT4 declined to
+    manufacture - 'qArmValue_neg' (QuotientFrame.lean section H) is a 'StmtsContract' whose proof is
+    a 'Step' derivation EXECUTING the emitter's own 'qArmBodyNeg' and landing 'q_top' on the very
+    'qvmFrNeg v' that 'qStepValue_neg' pushes. (iv) STILL OPEN, NAMED: the 'StmtsContractAll'
+    every-run form of those arms (the halt case tree, or 'of_det' at oracle functionality); the 20
+    arms that read memory (their pre must pin 'loadWord' against the reference reader - the operand
+    decode bridge is now landed as 'Midfall/Yul.Word.loadWord_topByte' / '_mask', which also closes
+    the F2 opcode-fetch gap); and the three count-prefixed arms of QuotientFrame.lean section F, whose
+    value half is the 'foldRangeIdxM' <-> 'yfor' loop induction and is NOT landed.
   * ROW.Q.1 is UNTOUCHED. The invariant is 'x_pow_2i = x^(2^i)' and 'x_pow_2i_minus1 = x^(2^i - 1)'
     modulo 'r' after 'i' iterations of the two-statement body at GenAst.lean:1033-1036; it needs a
     'Step.forLoop' induction with a 'mulmod' arithmetic step over 'wSplit'. That is a loop-invariant

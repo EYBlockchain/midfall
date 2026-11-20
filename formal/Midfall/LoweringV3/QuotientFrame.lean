@@ -44,6 +44,7 @@
 -- and W13 do not bite. The three axioms are the standard ones.
 import Midfall.Lowering.QuotientInterp
 import Midfall.Lowering.Qvm
+import Midfall.Yul.WpX
 
 set_option autoImplicit false
 
@@ -786,6 +787,161 @@ theorem qvmLoop_body (ctx : PartialCtx) (program : QuotientProgram)
               ++ GenAst.qvmFoldArms ctx program tcq)
             (some [yexpr (ycall "q_program_fail" [])])]) := rfl
 
+
+/-! ### H. THE EMITTED-SIDE VALUE REFINEMENT (QVAL - ROW.Q.3's value half, first instances)
+
+**WHAT THIS SECTION IS, AND WHY IT WAS NOT LANDED BEFORE.** QEMIT4 landed the 31-body lift and all
+eight 'QArmFamily' theorems and drew the line explicitly: those are gadget IDENTIFICATION - the
+emitter's own arm list carries the named body at that arm's label - and "the VALUE half (arm effect
+refines the reference step) is NOT landed and was not manufactured". Section B is the reference side:
+'qStepValue_X' says what 'evalQuotientIdentityStep' PUSHES at arm X. Nothing in the tree said what
+'qArmBodyX' does. THIS SECTION SAYS IT, for the arms whose effect is register-only, and it is a
+theorem and not a comment.
+
+**IS THE TIE ALREADY IMPLIED BY IDENTIFICATION PLUS A VALUE EQUATION? NO - AND HERE IS THE EXACT
+HOLE.** 'qArmFamily_arith' gives '(Literal.number tcq.op.neg, qArmBodyNeg ctx program tcq) ∈
+qvmOpcodeArms ctx program tcq'; 'qStepValue_neg' gives 'evalQuotientIdentityStep (qOpNeg :: rest)
+consts 0 qOpNeg (v :: stack) mem = .ok { stack := qvmFrNeg v :: stack, ... }'. Neither mentions the
+other: the first is a LIST MEMBERSHIP about a Yul block, the second an EQUATION about the reference
+interpreter, and there is no function anywhere in the tree from a 'Block EVM.Op' to its register
+transfer. So the tie is a third fact, and it needs the vendored big-step semantics applied to the
+emitted block. That is what 'qArmRun_neg' below is: a derivation in 'Step' - the same judgment the
+contract's 'StmtsContract' is written over - that EXECUTES the emitter's own arm body and names the
+word it leaves in 'q_top'.
+
+**THE SHAPE, AND WHY THE HYPOTHESES LOOK LIKE SECTION B'S.** The pre pins the registers the arm reads,
+by 'VEnv.get' equations, exactly as 'AtSegment'/'qinterpTop' pin them in the contract and exactly as
+section B pins readers by 'constAt consts slot 0 = .ok v' equations. The 'x.toNat < qvmFrModulus'
+bound is the canonicity of the reference field element in the register - the same fact
+'qvmToFr_injOn' (Qvm.lean:169) needs and for the same reason. No row, 'ValidV3', bundle or the root
+gains a hypothesis (RULES); nothing names a fixture (D-P71); there is no 'native_decide' and no sorry.
+
+**THE ARITHMETIC BRIDGE IS NOT NEW WORK.** 'wAddmod', 'wSubFr', 'frModulusWord' and
+'stepOp_addmod_atFr' are T3.8's (Midfall/Yul/WpX.lean), and 'wSubFr' is exactly the 'sub(r, q_top)'
+the NEG arm emits. What was missing was the 'wSubFr'/'wAddmod' -> 'qvmFrNeg' step, which is
+'wAddmod_neg' below; it needs the canonicity bound, and 'subFr_needsCanonicity' (WpX) is the gate that
+says that bound cannot be dropped.
+
+**WHAT IS STILL OPEN, NAMED.** (a) The 'StmtsContractAll' (every-run) form of these two arms: the
+existential is what 'qArmValue_*' gives, and the forall form additionally needs the arm's operand
+expressions shown not to halt - a case tree over 'Step' for each arm's expression, mechanical but not
+short, or 'StmtsContractAll.of_det' at 'Bridge.dialect_deterministic', which asks for
+'c.Functional' and 'g.Functional' and so is NOT free at an arbitrary call relation. (b) The 20 arms
+that read memory: their pre must also pin 'loadWord st.memory p' against the reference reader, and
+the operand DECODE ('shr 240 (mload q_pc)' = 'b₀ * 256 + b₁') is the 'loadWord_topByte' /
+'loadWord_top2' bridge now landed in 'Midfall/Yul/Word.lean' section 8. (c) The three count-prefixed
+arms of section F: their value half is a loop induction over 'foldRangeIdxM' against a 'yfor', and it
+is NOT landed - see section F. -/
+
+open Midfall.Yul.WpX
+
+/-- The modulus literal is canonical at 256 bits, so the wrap EVM performs loses nothing. -/
+theorem qvmFrModulus_lt256 : qvmFrModulus < 2 ^ 256 :=
+  frModulusWord_toNat ▸ (BitVec.isLt frModulusWord)
+
+/-- **THE NEG ARM'S OPERAND EXPRESSIONS, AT THE OPEN DIALECT.** 'sub(r, q_top)' and
+    'addmod(0, sub(r, q_top), r)' are 'stepOp' arms whose result is T3.8's 'wSubFr' / 'wAddmod'.
+    Both are 'rfl': the Bridge dialect's 'Builtin' IS the 'stepOp' graph. -/
+theorem dialect_builtin_sub_neg {c : ExternalCalls} {g : ExternalGas} (st : EvmState) (x : U256) :
+    (Bridge.Dialect c g).Builtin Op.sub [frModulusWord, x] st (.ok [wSubFr x] st) := rfl
+
+/-- The 'addmod' half of the NEG arm's operand expression. -/
+theorem dialect_builtin_addmod_neg {c : ExternalCalls} {g : ExternalGas}
+    (st : EvmState) (x : U256) :
+    (Bridge.Dialect c g).Builtin Op.addmod [BitVec.ofNat 256 0, wSubFr x, frModulusWord] st
+      (.ok [wAddmod 0 (wSubFr x)] st) := rfl
+
+/-- 'EVM sub(r, x)' at a canonical 'x' is the natural subtraction 'r - x'. -/
+theorem wSubFr_toNat_neg (x : U256) (hx : x.toNat ≤ qvmFrModulus) :
+    (wSubFr x).toNat = qvmFrModulus - x.toNat := by
+  show (frModulusWord - x).toNat = _
+  rw [BitVec.toNat_sub, frModulusWord_toNat]
+  have h1 : (2 : Nat) ^ 256 - x.toNat + qvmFrModulus = (qvmFrModulus - x.toNat) + 2 ^ 256 := by
+    have : x.toNat ≤ 2 ^ 256 := Nat.le_trans hx (Nat.le_of_lt qvmFrModulus_lt256)
+    omega
+  have hlt : qvmFrModulus - x.toNat < 2 ^ 256 := Nat.lt_of_le_of_lt (Nat.sub_le _ _) qvmFrModulus_lt256
+  rw [h1, Nat.add_comm, Nat.add_mod, Nat.mod_self, Nat.zero_add, Nat.mod_mod, Nat.mod_eq_of_lt hlt]
+
+/-- **THE ARITHMETIC TIE FOR NEG.** The word the arm computes IS the field negation
+    'qvmFrNeg v' that 'qStepValue_neg' pushes, for a canonical 'v'. -/
+theorem wAddmod_eq_qvmFrNeg (x : U256) (hx : x.toNat < qvmFrModulus) :
+    wAddmod 0 (wSubFr x) = BitVec.ofNat 256 (qvmFrNeg x.toNat) := by
+  have h2 : ((0 : U256).toNat + (wSubFr x).toNat) % qvmFrModulus = qvmFrNeg x.toNat := by
+    rw [wSubFr_toNat_neg x (Nat.le_of_lt hx), show ((0 : U256).toNat) = 0 from rfl, Nat.zero_add]
+    unfold Midfall.Generator.qvmFrNeg
+    rfl
+  rw [wAddmod, h2]
+
+/-- **THE NEG ARM RUNS, AND LANDS ON THE REFERENCE'S VALUE.** Executing the emitter's own lifted
+    body 'GenAst.qArmBodyNeg' in the vendored big-step semantics, from any register state whose
+    'q_top'/'r' are as pinned, terminates normally with 'q_top' updated to 'wAddmod 0 (wSubFr x)' -
+    the word 'wAddmod_eq_qvmFrNeg' identifies with 'qvmFrNeg x.toNat'. Every step is a 'Step'
+    constructor of the vendored judgment: no slice is unrolled by 'wp', no fuel is chosen, and the
+    register reads are the same 'VEnv.get' equations the contract's own predicates supply. -/
+theorem qArmRun_neg {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (V : VEnv (Bridge.Dialect c g)) (st : EvmState)
+    (x : U256)
+    (hget_top : VEnv.get V "q_top" = some x) (hget_r : VEnv.get V "r" = some frModulusWord) :
+    ExecStmts (Bridge.Dialect c g) funs V st (GenAst.qArmBodyNeg ctx program tcq)
+      (VEnv.set V "q_top" (wAddmod 0 (wSubFr x))) st .normal := by
+  refine Step.seqCons (D := Bridge.Dialect c g)
+    (V1 := VEnv.set V "q_top" (wAddmod 0 (wSubFr x))) (st1 := st) ?_ Step.seqNil
+  refine Step.assignVal (D := Bridge.Dialect c g)
+    (vals := [wAddmod 0 (wSubFr x)]) ?_ (by rfl)
+  exact Step.builtinOk
+    (Step.argsCons (D := Bridge.Dialect c g)
+      (rest := [yop Op.sub [yvar "r", yvar "q_top"], yvar "r"])
+      (restvals := [wSubFr x, frModulusWord]) (st1 := st) (v := BitVec.ofNat 256 0) (st2 := st)
+      (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "r"]) (restvals := [frModulusWord])
+        (st1 := st) (v := wSubFr x) (st2 := st)
+        (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+          (v := frModulusWord) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+          (Step.var (D := Bridge.Dialect c g) hget_r))
+        (Step.builtinOk (D := Bridge.Dialect c g)
+          (Step.argsCons (D := Bridge.Dialect c g) (rest := [yvar "q_top"]) (restvals := [x])
+            (st1 := st) (v := frModulusWord) (st2 := st)
+            (Step.argsCons (D := Bridge.Dialect c g) (rest := []) (restvals := []) (st1 := st)
+              (v := x) (st2 := st) (Step.argsNil (D := Bridge.Dialect c g))
+              (Step.var (D := Bridge.Dialect c g) hget_top))
+            (Step.var (D := Bridge.Dialect c g) hget_r)) (dialect_builtin_sub_neg st x)))
+      Step.lit) (dialect_builtin_addmod_neg st x)
+
+/-- **ARM NEG: THE VALUE REFINEMENT, PROVED.** 'qArmBodyNeg' refines 'qStepValue_neg': the arm's
+    effect on the QVM registers is to replace 'q_top' by 'qvmFrNeg v' for the canonical 'v' the
+    register held, leave the machine state alone, and terminate normally - which is exactly the
+    'stack := qvmFrNeg v :: stack, consumed := 1, mem := mem' that section B's 'qStepValue_neg'
+    names, read through the register encoding 'qinterpTop' uses. Stated as 'StmtsContract', the
+    existential contract the vendored 'wp' soundness theorem produces: it EXHIBITS the run. -/
+theorem qArmValue_neg {c : ExternalCalls} {g : ExternalGas}
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (x : U256) (hx : x.toNat < qvmFrModulus) :
+    StmtsContract (D := Bridge.Dialect c g) funs (GenAst.qArmBodyNeg ctx program tcq)
+      (fun V st => VEnv.get V "q_top" = some x ∧ VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = VEnv.set V "q_top" (BitVec.ofNat 256 (qvmFrNeg x.toNat))) := by
+  intro V st hpre
+  have hrun := qArmRun_neg ctx program tcq funs V st x hpre.1 hpre.2
+  rw [wAddmod_eq_qvmFrNeg x hx] at hrun
+  exact ⟨_, _, _, hrun, ⟨rfl, rfl, rfl⟩⟩
+
+/-- **ARM NEG: THE EVERY-RUN FORM.** 'StmtsContractAll' is what 'QInterpRefines' is written over, and
+    the existential of 'qArmValue_neg' becomes it by determinism: at a FUNCTIONAL call relation and a
+    FUNCTIONAL gas oracle every built-in of the open dialect is single-valued
+    ('Bridge.dialect_deterministic'), so the one run 'qArmValue_neg' exhibits is the only run. The
+    two functionality hypotheses are about the oracles and not about a row, a bundle or 'ValidV3'
+    (RULES); they are what the tree's own 'StmtsContractAll.of_det' (Midfall/Yul/Contracts.lean:268)
+    asks for, and 'Midfall/LoweringV2' discharges them at 'permissive (callsOf product)'. -/
+theorem qArmValueAll_neg {c : ExternalCalls} {g : ExternalGas}
+    (hc : c.Functional) (hg : g.Functional)
+    (ctx : PartialCtx) (program : QuotientProgram) (tcq : QuotientVmTemplateConstants)
+    (funs : FunEnv (Bridge.Dialect c g)) (x : U256) (hx : x.toNat < qvmFrModulus) :
+    StmtsContractAll (D := Bridge.Dialect c g) funs (GenAst.qArmBodyNeg ctx program tcq)
+      (fun V st => VEnv.get V "q_top" = some x ∧ VEnv.get V "r" = some frModulusWord)
+      (fun V st V' st' o => o = .normal ∧ st' = st ∧
+        V' = VEnv.set V "q_top" (BitVec.ofNat 256 (qvmFrNeg x.toNat))) :=
+  StmtsContractAll.of_det (Bridge.dialect_deterministic hc hg) (qArmValue_neg ctx program tcq funs x hx)
+
 #print axioms Midfall.LoweringV3.QuotientFrame.evalQuotientIdentity_one
 #print axioms Midfall.LoweringV3.QuotientFrame.qStepValue_pushConst
 #print axioms Midfall.LoweringV3.QuotientFrame.qStepValue_add
@@ -804,5 +960,10 @@ theorem qvmLoop_body (ctx : PartialCtx) (program : QuotientProgram)
 #check @Midfall.LoweringV3.QuotientFrame.evalQuotientIdentity_one
 #check @Midfall.LoweringV3.QuotientFrame.qStepValue_addMulMemMem
 #check @Midfall.LoweringV3.QuotientFrame.AgreesFrame_memOfρ
+#check @Midfall.LoweringV3.QuotientFrame.qArmValue_neg
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValueAll_neg
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmRun_neg
+#print axioms Midfall.LoweringV3.QuotientFrame.qArmValue_neg
+#print axioms Midfall.LoweringV3.QuotientFrame.wAddmod_eq_qvmFrNeg
 
 end Midfall.LoweringV3.QuotientFrame

@@ -326,6 +326,191 @@ theorem loadWord_copyReturn (memory : Nat → UInt8) (dst size q : Nat) (data : 
   rw [foldl_congr _ _ _ (fun (i : Nat) (hi : i ∈ List.range 32) (acc : U256) =>
     congrArg (fun x : UInt8 => (acc : U256) <<< 8 ||| BitVec.ofNat 256 x.toNat) (pt i hi)) _]
 
+/-! ## 8. The bitand fact and the big-endian TOP-byte bridge (QVAL)
+
+THE BLOCKER QEMIT4 NAMED AND COULD NOT CLEAR. 'QuotientFrame.lean' section F2 records that the whole
+opcode-fetch gap is one BitVec fact about 'loadWord', and that the last step that would not go was the
+mask: 'n < 256 -> n &&& 255 = n', which "no 'Nat.bitand' lemma resolves". THE REASON IS A NAME: in
+this toolchain there is NO 'Nat.bitand' constant at all. 'n &&& m' on 'Nat' elaborates to 'Nat.land',
+which is 'Nat.bitwise and' - so every 'Nat.bitand' search was empty by construction, and 'omega'
+cannot do it because '&&&' is not linear. Core has the two facts that DO resolve it,
+'Nat.testBit_bitwise' and 'Nat.testBit_two_pow_sub_one', and the lemma is a few lines with them. It is
+landed here rather than by importing Mathlib into a cone file: 'Word.lean' imports only
+'YulSemantics.Dialect.EVMExec' and 'Midfall.Yul.WordAttr', and everything in this section is proved
+from core 'Nat'/'BitVec' lemmas, so no cone moves and no new import appears in any file (RULES, and
+the reason QEMIT4 stopped).
+
+THE BRIDGE F2 ASKED FOR is then a corollary of the same machinery. 'loadWord' is a 'foldl' over
+'List.range 32' that shifts left by 8 and ors in a byte, so the word's TOP byte is its FIRST memory
+byte. 'qFoldBytes_shift' is the general statement - shifting the fold right by '8 * d' truncates it
+to its first 'm' bytes - and 'loadWord_topByte' / 'loadWord_topByte_mask' are the two shapes the
+interpreter's 'byte(0, mload(q_pc))' and 'shr 240 (mload(q_pc))' need. F2's remaining step was the
+head-term division plus a 'List.range (n+1)' reindexing; the induction below is on the number of bytes
+shifted OFF rather than on the length of the sum, so the reindexing never arises, and the head-term
+division is 'div_shift_key'. -/
+
+/-- **THE BITAND FACT QEMIT4 COULD NOT PROVE.** 'n &&& (2^k - 1)' is 'n' when 'n' fits in 'k' bits.
+    Core-only: 'Nat.land' is 'Nat.bitwise and', the two sides are compared bit by bit with
+    'Nat.eq_of_testBit_eq', the mask's bits are 'Nat.testBit_two_pow_sub_one', and the bits above
+    position 'k' of an 'n < 2^k' are zero by 'Nat.testBit_mod_two_pow'. -/
+theorem land_eq_self_of_lt_two_pow {k n : Nat} (h : n < 2 ^ k) : n &&& (2 ^ k - 1) = n := by
+  refine Nat.eq_of_testBit_eq (fun i => ?_)
+  have hbw : n &&& (2 ^ k - 1) = Nat.bitwise (fun a b => a && b) n (2 ^ k - 1) := rfl
+  rw [hbw, Nat.testBit_bitwise (by simp), Nat.testBit_two_pow_sub_one]
+  by_cases hi : i < k
+  · rw [decide_eq_true hi]
+    simp
+  · rw [decide_eq_false hi]
+    have h1 : (n % 2 ^ k).testBit i = (decide (i < k) && n.testBit i) :=
+      Nat.testBit_mod_two_pow n k i
+    rw [Nat.mod_eq_of_lt h, decide_eq_false (Nat.not_lt.mpr (Nat.le_of_not_lt hi))] at h1
+    have h2 : n.testBit i = false := by rw [h1]; simp
+    rw [h2]
+    simp
+
+/-- The instance the opcode fetch needs: 'n < 256 -> n &&& 255 = n'. -/
+theorem land_255_eq_self {n : Nat} (h : n < 256) : n &&& 255 = n :=
+  land_eq_self_of_lt_two_pow (k := 8) (show n < 2 ^ 8 from h)
+
+/-- The same fact at 'BitVec 256', which is the shape the interpreter's 'Op.byte' needs. -/
+theorem bitvec_land_255_eq_self {x : U256} (h : x.toNat < 256) : x &&& 255#256 = x := by
+  refine BitVec.eq_of_toNat_eq ?_
+  rw [BitVec.toNat_and]
+  have h255 : ((255#256 : U256)).toNat = 255 := by decide
+  rw [h255]
+  exact land_255_eq_self h
+
+/-- The 'n'-byte big-endian prefix fold: 'loadWord' is this at 'n = 32' with 'g i = mem (p + i)'. -/
+def qFoldBytes (g : Nat → UInt8) (n : Nat) : U256 :=
+  (List.range n).foldl (fun acc i => acc <<< 8 ||| BitVec.ofNat 256 (g i).toNat) (0 : U256)
+
+theorem pow256_eq (n : Nat) : (256 : Nat) ^ n = 2 ^ (8 * n) := by
+  rw [show (256 : Nat) = 2 ^ 8 from rfl, ← Nat.pow_mul]
+
+/-- 'x * 256 ||| b = x * 256 + b' for a byte 'b': the '|||' is an addition because the low 8 bits of
+    'x * 256' are zero. The same fact as the LOW-byte 'lowByte_or_rest' above, at the other end. -/
+theorem or_add_eq_of_lt256 (x b : Nat) (hb : b < 256) : x * 256 ||| b = x * 256 + b := by
+  have h := Nat.shiftLeft_add_eq_or_of_lt (i := 8) (b := b) (by omega : b < 2 ^ 8) x
+  rw [Nat.shiftLeft_eq] at h
+  exact h.symm
+
+/-- Division by the next power: dropping a low byte and a further '8e' bits is dropping '8e' bits.
+    This is the head-term division step F2 names. -/
+theorem div_shift_key (a b e : Nat) (hb : b < 256) :
+    (a * 256 + b) / 2 ^ (8 * (e + 1)) = a / 2 ^ (8 * e) := by
+  have hden : (2 : Nat) ^ (8 * (e + 1)) = 2 ^ (8 * e) * 256 := by
+    rw [show (8 * (e + 1) : Nat) = 8 * e + 8 by omega, Nat.pow_add]
+  have hstep : (a * 256 + b) / 256 = a := by
+    rw [Nat.add_comm, Nat.mul_comm a 256,
+      Nat.add_mul_div_left _ _ (by decide : (0 : Nat) < 256), Nat.div_eq_of_lt hb, Nat.zero_add]
+  rw [hden, Nat.mul_comm (2 ^ (8 * e)) 256, ← Nat.div_div_eq_div_mul, hstep]
+
+/-- One more byte on the end of the fold. -/
+theorem qFoldBytes_succ (g : Nat → UInt8) (k : Nat) :
+    qFoldBytes g (k + 1) = qFoldBytes g k <<< 8 ||| BitVec.ofNat 256 (g k).toNat := by
+  show (List.range (k + 1)).foldl (fun (acc : U256) i =>
+        acc <<< 8 ||| BitVec.ofNat 256 (g i).toNat) (0 : U256)
+      = ((List.range k).foldl (fun (acc : U256) i =>
+          acc <<< 8 ||| BitVec.ofNat 256 (g i).toNat) (0 : U256)) <<< 8
+          ||| BitVec.ofNat 256 (g k).toNat
+  rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+
+/-- **THE NO-TRUNCATION BOUND** F2 asked for: for 'n ≤ 32' the fold fits in 'n' bytes, so no
+    intermediate '<<< 8' ever loses a bit of the 256-bit word. -/
+theorem qFoldBytes_lt (g : Nat → UInt8) :
+    ∀ (n : Nat), n ≤ 32 → (qFoldBytes g n).toNat < 256 ^ n := by
+  intro n
+  induction n with
+  | zero => intro _; show ((0 : U256)).toNat < 1; decide
+  | succ n ih =>
+      intro hn
+      have hlt : (qFoldBytes g n).toNat < 256 ^ n := ih (by omega)
+      have hb : (g n).toNat < 256 := UInt8.toNat_lt _
+      have hA : (qFoldBytes g n).toNat * 2 ^ 8 < 2 ^ 256 := by
+        have hle : (256 : Nat) ^ (n + 1) ≤ 2 ^ 256 := by
+          rw [pow256_eq]; exact Nat.pow_le_pow_right (by decide) (by omega)
+        have := Nat.mul_lt_mul_of_pos_right hlt (by decide : 0 < 2 ^ 8)
+        rw [← Nat.pow_succ] at this; omega
+      rw [qFoldBytes_succ, BitVec.toNat_or, BitVec.toNat_shiftLeft, BitVec.toNat_ofNat,
+        Nat.shiftLeft_eq, Nat.mod_eq_of_lt hA, Nat.mod_eq_of_lt (by omega : (g n).toNat < 2 ^ 256),
+        or_add_eq_of_lt256 (qFoldBytes g n).toNat (g n).toNat hb, Nat.pow_succ]
+      have hle := Nat.mul_le_mul (Nat.succ_le_of_lt hlt) (Nat.le_refl (256 : Nat))
+      rw [Nat.succ_eq_add_one, Nat.add_mul, Nat.one_mul] at hle
+      exact Nat.lt_of_lt_of_le (Nat.add_lt_add_left hb _) hle
+
+/-- **THE CLOSED-FORM CONSEQUENCE F2 COULD NOT FINISH.** Shifting an 'm + d' byte fold right by
+    '8 * d' truncates it to its first 'm' bytes. The head-term division step, the no-truncation bound
+    and the reindexing are all inside this one induction - and the induction is on the number of bytes
+    shifted OFF, not on the length of the sum, so the 'List.range (n+1) = 0 :: map (+1) (range n)'
+    reindexing F2 says is needed never arises. -/
+theorem qFoldBytes_shift (g : Nat → UInt8) : ∀ (d : Nat), ∀ (m : Nat), 1 ≤ m → m + d ≤ 32 →
+    (qFoldBytes g (m + d)) >>> (8 * d) = qFoldBytes g m := by
+  intro d
+  induction d with
+  | zero => intro m _ _; rw [Nat.mul_zero, BitVec.ushiftRight_zero, Nat.add_zero]
+  | succ d ih =>
+      intro m hm hle
+      have hle' : m + d ≤ 32 := by omega
+      have hlt : (qFoldBytes g (m + d)).toNat < 256 ^ (m + d) := qFoldBytes_lt g (m + d) hle'
+      have hb : (g (m + d)).toNat < 256 := UInt8.toNat_lt _
+      have hA : (qFoldBytes g (m + d)).toNat * 2 ^ 8 < 2 ^ 256 := by
+        have hle2 : (256 : Nat) ^ (m + d + 1) ≤ 2 ^ 256 := by
+          rw [pow256_eq]; exact Nat.pow_le_pow_right (by decide) (by omega)
+        have := Nat.mul_lt_mul_of_pos_right hlt (by decide : 0 < 2 ^ 8)
+        rw [← Nat.pow_succ] at this; omega
+      have hstep : qFoldBytes g (m + d + 1) =
+          qFoldBytes g (m + d) <<< 8 ||| BitVec.ofNat 256 (g (m + d)).toNat :=
+        qFoldBytes_succ g (m + d)
+      have hto : ((qFoldBytes g (m + d) <<< 8) ||| BitVec.ofNat 256 (g (m + d)).toNat).toNat =
+          (qFoldBytes g (m + d)).toNat * 256 + (g (m + d)).toNat := by
+        rw [BitVec.toNat_or, BitVec.toNat_shiftLeft, BitVec.toNat_ofNat, Nat.shiftLeft_eq,
+          Nat.mod_eq_of_lt hA, Nat.mod_eq_of_lt (by omega : (g (m + d)).toNat < 2 ^ 256),
+          or_add_eq_of_lt256 (qFoldBytes g (m + d)).toNat (g (m + d)).toNat hb]
+      refine BitVec.eq_of_toNat_eq ?_
+      rw [show (m + (d + 1) : Nat) = m + d + 1 from rfl, hstep, BitVec.toNat_ushiftRight,
+        Nat.shiftRight_eq_div_pow, hto, div_shift_key,
+        ← Nat.shiftRight_eq_div_pow, ← BitVec.toNat_ushiftRight, ih m hm hle']
+      exact hb
+
+/-- 'loadWord' IS the 32-byte fold, offset by 'p'. 'rfl' - recorded because every lemma above is
+    stated about 'qFoldBytes'. -/
+theorem loadWord_qFoldBytes (mem : Nat → UInt8) (p : Nat) :
+    loadWord mem p = qFoldBytes (fun i => mem (p + i)) 32 := rfl
+
+/-- The top 'n' bytes of a big-endian word read, for '1 ≤ n ≤ 32'. -/
+theorem loadWord_top (mem : Nat → UInt8) (p n : Nat) (hn : 1 ≤ n) (hn2 : n ≤ 32) :
+    (loadWord mem p) >>> (8 * (32 - n)) = qFoldBytes (fun i => mem (p + i)) n := by
+  rw [loadWord_qFoldBytes, ← qFoldBytes_shift (fun i => mem (p + i)) (32 - n) n hn]
+  · rw [show n + (32 - n) = 32 from by omega]
+  · omega
+
+/-- **THE SHIFT FORM.** The top byte of a big-endian 32-byte word read IS the first memory byte. -/
+theorem loadWord_topByte (mem : Nat → UInt8) (p : Nat) :
+    (loadWord mem p) >>> 248 = BitVec.ofNat 256 (mem p).toNat := by
+  have h : (loadWord mem p) >>> (8 * (32 - 1)) = qFoldBytes (fun i => mem (p + i)) 1 :=
+    loadWord_top mem p 1 (by decide) (by decide)
+  show (loadWord mem p) >>> 248 = _
+  rw [show (8 * (32 - 1) : Nat) = 248 from rfl] at h
+  simpa [qFoldBytes, List.range_one, List.foldl_cons, List.foldl_nil] using h
+
+/-- The top TWO bytes: what 'shr 240 (mload(q_pc))' reads on a PUSH_CONST / PUSH_MEM_U16 arm. -/
+theorem loadWord_top2 (mem : Nat → UInt8) (p : Nat) :
+    (loadWord mem p) >>> 240 = qFoldBytes (fun i => mem (p + i)) 2 := by
+  have h : (loadWord mem p) >>> (8 * (32 - 2)) = qFoldBytes (fun i => mem (p + i)) 2 :=
+    loadWord_top mem p 2 (by decide) (by decide)
+  rwa [show (8 * (32 - 2) : Nat) = 240 from rfl] at h
+
+/-- **THE MASKED FORM - THE EXACT GOAL STATE F2 RECORDS, LANDED.** 'Op.byte' computes
+    '(x >>> (8*(31-n))) &&& 0xff' and not the bare shift ('vendor EVMExec.lean:738'), so this is the
+    equation the opcode fetch actually needs: with the bitand fact above, the masked form reduces to
+    the same first memory byte the shift form gives. -/
+theorem loadWord_topByte_mask (mem : Nat → UInt8) (p : Nat) :
+    ((loadWord mem p) >>> 248) &&& 255#256 = BitVec.ofNat 256 (mem p).toNat := by
+  rw [loadWord_topByte]
+  refine bitvec_land_255_eq_self ?_
+  rw [BitVec.toNat_ofNat]
+  exact Nat.lt_of_le_of_lt (Nat.mod_le _ _) (UInt8.toNat_lt _)
+
 /-- The `mstore` step shape: the state update `stepOp` builds writes `storeWord` and touches
     memory, and its `memory` field is exactly `storeWord`. -/
 theorem mstore_step (st : EvmState) (p : Nat) (v : U256) :
@@ -408,3 +593,14 @@ open Midfall.Yul.Word
 #print axioms loadWord_copyInto
 #print axioms loadWord_copyReturn
 #print axioms reassemble
+#print axioms land_eq_self_of_lt_two_pow
+#print axioms land_255_eq_self
+#print axioms bitvec_land_255_eq_self
+#print axioms qFoldBytes_lt
+#print axioms qFoldBytes_shift
+#print axioms loadWord_topByte
+#print axioms loadWord_topByte_mask
+-- The new section adds nothing to the 'yul_word' simp set on purpose: that set is a fixed 29-lemma
+-- list (the macro pair and the attribute list must stay in step), and none of these lemmas is a
+-- rewrite rule other files want fired automatically.
+#print axioms Midfall.Yul.Word.land_eq_self_of_lt_two_pow
