@@ -109,6 +109,7 @@ import Midfall.Lowering.GenAstQvmFamilies
 import Midfall.Lowering.QuotientInterp
 import Midfall.Lowering.Surface
 import Midfall.Lowering.Qvm
+import Midfall.Lowering.QvmFoldLin
 import Midfall.Lowering.QvmFold
 import Midfall.Lowering.Partials
 import Midfall.Lowering.RunEmitted
